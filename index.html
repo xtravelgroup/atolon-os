@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Atolon OS — Beach Club Management</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;500;600;700&family=Lato:wght@300;400;700&display=swap" rel="stylesheet" />
+    <style>
+      *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+      body { font-family: 'Lato', sans-serif; background: #0D1B3E; color: #fff; -webkit-font-smoothing: antialiased; }
+      h1, h2, h3, h4, h5, h6 { font-family: 'Barlow Condensed', sans-serif; }
+      ::-webkit-scrollbar { width: 6px; }
+      ::-webkit-scrollbar-track { background: #0D1B3E; }
+      ::-webkit-scrollbar-thumb { background: #1E3566; border-radius: 3px; }
+      input, select, textarea, button { font-family: 'Lato', sans-serif; }
+      /* Date input: white calendar icon for dark theme */
+      input[type="date"] { color-scheme: dark; position: relative; }
+      input[type="date"]::-webkit-calendar-picker-indicator {
+        filter: invert(1) brightness(2);
+        cursor: pointer;
+        opacity: 1;
+        padding: 4px;
+      }
+      /* Firefox */
+      input[type="date"]::-moz-calendar-picker-indicator { filter: invert(1); }
+      /* Ensure placeholder text is visible */
+      input[type="date"]::-webkit-datetime-edit { color: #fff; }
+      input[type="date"]::-webkit-datetime-edit-fields-wrapper { color: #fff; }
+      @keyframes spin { to { transform: rotate(360deg); } }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script>
+      // Abrir picker al hacer click en cualquier parte del input de fecha
+      document.addEventListener("click", function(e) {
+        if (e.target.type === "date") {
+          try { e.target.showPicker(); } catch(_) {}
+        }
+      });
+    </script>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>
