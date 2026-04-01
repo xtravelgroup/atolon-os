@@ -380,7 +380,7 @@ function NuevaReserva({ agencia, user, onCreated, vistaPrecios = "ambos" }) {
               <input type="date" value={form.fecha}
                 onChange={e => { checkDisponibilidad(e.target.value); setForm(f => ({ ...f, salida_id: "" })); }}
                 onClick={e => { try { e.target.showPicker(); } catch(_) {} }}
-                min={todayStr()} style={{ ...IS, fontSize: 15, padding: "14px", cursor: "pointer" }} />
+                min={todayStr()} style={{ ...IS, fontSize: isMobile ? 13 : 15, padding: isMobile ? "10px 12px" : "14px", cursor: "pointer" }} />
             </div>
             <div>
               <label style={LS}>Adultos</label>
