@@ -204,12 +204,12 @@ export default function AtolanOS({ activeModule = "dashboard", onNavigate, modul
         display: "flex", flexDirection: "column", overflow: "hidden",
       }}>
         <div style={{
-          padding: collapsed ? "20px 12px" : "20px 20px", borderBottom: `1px solid ${B.navyLight}`,
-          display: "flex", alignItems: "center", gap: 12, cursor: "pointer",
+          padding: collapsed ? "20px 8px" : "24px 16px", borderBottom: `1px solid ${B.navyLight}`,
+          display: "flex", justifyContent: "center", alignItems: "center", cursor: "pointer",
         }} onClick={() => setCollapsed(c => !c)}>
           {collapsed
-            ? <img src="/favicon-blue.png" alt="Atolon" style={{ width: 36, height: 36, objectFit: "contain", flexShrink: 0 }} />
-            : <img src="/atolon-logo-white.png" alt="Atolon Beach Club" style={{ height: 36, objectFit: "contain", flexShrink: 0 }} />
+            ? <img src="/favicon-blue.png" alt="Atolon" style={{ width: 48, height: 48, objectFit: "contain" }} />
+            : <img src="/atolon-logo-white.png" alt="Atolon Beach Club" style={{ height: 72, objectFit: "contain" }} />
           }
         </div>
         <div style={{ flex: 1, overflowY: "auto", padding: "12px 8px" }}>
