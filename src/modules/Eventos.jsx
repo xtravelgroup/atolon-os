@@ -104,8 +104,8 @@ function EventoModal({ evento, categoria, salidas, aliados, onClose, onSaved, on
   const tiposOpt = isGrupo ? TIPOS_GRUPO : TIPOS_EVT;
 
   const [form, setForm]       = useState(isEdit
-    ? { ...evento, pax: String(evento.pax || ""), valor: String(evento.valor || ""), aliado_id: evento.aliado_id || "", salidas_grupo: evento.salidas_grupo || [] }
-    : { nombre: "", tipo: tiposOpt[0], fecha: "", pax: "", valor: "", aliado_id: "", salidas_grupo: [], contacto: "", tel: "", email: "", stage: "Consulta", notas: "", categoria });
+    ? { ...evento, pax: String(evento.pax || ""), valor: String(evento.valor || ""), aliado_id: evento.aliado_id || "", vendedor: evento.vendedor || "", salidas_grupo: evento.salidas_grupo || [] }
+    : { nombre: "", tipo: tiposOpt[0], fecha: "", pax: "", valor: "", aliado_id: "", vendedor: "", salidas_grupo: [], contacto: "", tel: "", email: "", stage: "Consulta", notas: "", categoria });
   const [saving,    setSaving]    = useState(false);
   const [horaInput, setHoraInput] = useState(""); // for custom salida input
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
@@ -152,6 +152,7 @@ function EventoModal({ evento, categoria, salidas, aliados, onClose, onSaved, on
       notas:        form.notas,
       categoria:    form.categoria || categoria,
       aliado_id:    form.aliado_id || null,
+      vendedor:     form.vendedor || "",
     };
     let savedId = evento?.id;
     if (isEdit) {
@@ -276,15 +277,20 @@ function EventoModal({ evento, categoria, salidas, aliados, onClose, onSaved, on
           </div>
 
           {/* Aliado B2B */}
-          {aliados.length > 0 && (
-            <div>
-              <label style={LS}>Aliado B2B (agencia / hotel / comisionista)</label>
-              <select value={form.aliado_id} onChange={e => set("aliado_id", e.target.value)} style={IS}>
-                <option value="">Sin aliado (directo)</option>
-                {aliados.map(a => <option key={a.id} value={a.id}>{a.nombre} — {a.tipo}</option>)}
-              </select>
-            </div>
-          )}
+          <div>
+            <label style={LS}>Aliado B2B (agencia / hotel / comisionista)</label>
+            <select value={form.aliado_id} onChange={e => set("aliado_id", e.target.value)} style={IS}>
+              <option value="">Sin aliado (directo)</option>
+              {aliados.map(a => <option key={a.id} value={a.id}>{a.nombre} — {a.tipo}</option>)}
+            </select>
+          </div>
+
+          {/* Vendedor */}
+          <div>
+            <label style={LS}>Vendedor responsable</label>
+            <input value={form.vendedor} onChange={e => set("vendedor", e.target.value)}
+              placeholder="Nombre del vendedor..." style={IS} />
+          </div>
 
           <div>
             <label style={LS}>Notas</label>
@@ -328,7 +334,8 @@ function KanbanBoard({ items, isGrupo, onEdit, onBeo, onLink }) {
                 </div>
                 <div style={{ fontSize: 15, fontWeight: 700, color: B.sand, marginBottom: 6 }}>{ev.valor ? COP(ev.valor) : ""}</div>
                 {ev.contacto && <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)" }}>{ev.contacto}</div>}
-                {ev.aliado_id && <div style={{ fontSize: 11, color: B.sky, marginBottom: 8 }}>🤝 {aliados.find(a => a.id === ev.aliado_id)?.nombre || ev.aliado_id}</div>}
+                {ev.aliado_id && <div style={{ fontSize: 11, color: B.sky, marginBottom: 4 }}>🤝 {aliados.find(a => a.id === ev.aliado_id)?.nombre || ev.aliado_id}</div>}
+                {ev.vendedor && <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginBottom: 4 }}>👤 {ev.vendedor}</div>}
                 <div style={{ display: "flex", gap: 6 }}>
                   {!isGrupo && (
                     <button onClick={e => { e.stopPropagation(); onBeo(ev); }}
