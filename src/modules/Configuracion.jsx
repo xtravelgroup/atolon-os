@@ -45,23 +45,27 @@ export default function Configuracion() {
 
   const fetchConfig = useCallback(async () => {
     if (!supabase) { setLoading(false); return; }
-    const { data } = await supabase.from("configuracion").select("*").eq("id", "atolon").single();
-    if (data) {
-      // Si la DB no tiene llaves Wompi pero sí existen en .env, migrarlas automáticamente
-      if (!data.wompi_pub_key && ENV_WOMPI_PUB) {
-        await supabase.from("configuracion").update({
-          wompi_pub_key: ENV_WOMPI_PUB,
-          wompi_integrity_key: ENV_WOMPI_INTEGRITY,
-        }).eq("id", "atolon");
-        data.wompi_pub_key = ENV_WOMPI_PUB;
-        data.wompi_integrity_key = ENV_WOMPI_INTEGRITY;
+    try {
+      const { data } = await supabase.from("configuracion").select("*").eq("id", "atolon").single();
+      if (data) {
+        // Si la DB no tiene llaves Wompi pero sí existen en .env, migrarlas automáticamente
+        if (!data.wompi_pub_key && ENV_WOMPI_PUB) {
+          await supabase.from("configuracion").update({
+            wompi_pub_key: ENV_WOMPI_PUB,
+            wompi_integrity_key: ENV_WOMPI_INTEGRITY,
+          }).eq("id", "atolon");
+          data.wompi_pub_key = ENV_WOMPI_PUB;
+          data.wompi_integrity_key = ENV_WOMPI_INTEGRITY;
+        }
+        setConfig(data);
+        setNegocio({ nombre_empresa: data.nombre_empresa || "", nit: data.nit || "", telefono: data.telefono || "", email: data.email || "", direccion: data.direccion || "", ciudad: data.ciudad || "", website: data.website || "" });
+        setTelMuelle(data.tel_muelle || "");
+        setCuentas(data.cuentas_bancarias || []);
+        setWompiForm({ pub_key: data.wompi_pub_key || "", integrity_key: data.wompi_integrity_key || "" });
+        setStripeForm({ pub_key: data.stripe_pub_key || "", secret_key: data.stripe_secret_key || "", tasa_usd: String(data.tasa_usd || "4200") });
       }
-      setConfig(data);
-      setNegocio({ nombre_empresa: data.nombre_empresa || "", nit: data.nit || "", telefono: data.telefono || "", email: data.email || "", direccion: data.direccion || "", ciudad: data.ciudad || "", website: data.website || "" });
-      setTelMuelle(data.tel_muelle || "");
-      setCuentas(data.cuentas_bancarias || []);
-      setWompiForm({ pub_key: data.wompi_pub_key || "", integrity_key: data.wompi_integrity_key || "" });
-      setStripeForm({ pub_key: data.stripe_pub_key || "", secret_key: data.stripe_secret_key || "", tasa_usd: String(data.tasa_usd || "4200") });
+    } catch (e) {
+      console.error("fetchConfig error:", e);
     }
     setLoading(false);
   }, [ENV_WOMPI_PUB, ENV_WOMPI_INTEGRITY]);
