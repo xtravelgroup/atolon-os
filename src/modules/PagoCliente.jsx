@@ -35,23 +35,91 @@ function fmtTime(secs) {
   return `${m}:${s}`;
 }
 
+function qrUrl(data, size = 200) {
+  return `https://api.qrserver.com/v1/create-qr-code/?data=${encodeURIComponent(data)}&size=${size}x${size}&bgcolor=162040&color=C8B99A&margin=10&format=png`;
+}
+
 // ─── pantalla: Pago Completado ──────────────────────────────────────────────
 function PagoOk({ reserva }) {
+  const zarpeLink = `https://atolon.co/zarpe-info?id=${reserva.id}`;
+  const waMensaje = encodeURIComponent(
+    `✅ ¡Reserva confirmada en Atolon Beach Club!\n\n` +
+    `👤 ${reserva.nombre}\n` +
+    `📅 ${new Date(reserva.fecha + "T12:00:00").toLocaleDateString("es-CO", { weekday: "long", day: "numeric", month: "long" })}\n` +
+    `🏝️ ${reserva.tipo} · ${reserva.pax} personas\n\n` +
+    `🚢 Embarque: Muelle de La Bodeguita — Puerta 1\n` +
+    `⏰ Llegar 20 min antes de la salida\n` +
+    `💵 Impuesto de muelle: $18.000 COP (no incluido)\n\n` +
+    `📄 Completa tus datos de zarpe aquí:\n${zarpeLink}`
+  );
+
   return (
-    <div style={{ textAlign: "center", padding: "60px 20px" }}>
-      <div style={{ fontSize: 72, marginBottom: 16 }}>✅</div>
-      <h2 style={{ fontFamily: "'Barlow Condensed', sans-serif", fontSize: 32, marginBottom: 8, color: B.success }}>¡Pago recibido!</h2>
-      <p style={{ color: "rgba(255,255,255,0.5)", marginBottom: 24, fontSize: 15 }}>
-        Tu reserva en Atolon Beach Club está confirmada
-      </p>
-      <div style={{ background: B.navyMid, borderRadius: 14, padding: 24, maxWidth: 360, margin: "0 auto", textAlign: "left", fontSize: 14, lineHeight: 2 }}>
-        <div><span style={{ color: B.sand }}>Nombre:</span> {reserva.nombre}</div>
-        <div><span style={{ color: B.sand }}>Fecha:</span> {new Date(reserva.fecha + "T12:00:00").toLocaleDateString("es-CO", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}</div>
-        <div><span style={{ color: B.sand }}>Pasadía:</span> {reserva.tipo}</div>
-        <div><span style={{ color: B.sand }}>Personas:</span> {reserva.pax}</div>
-        <div><span style={{ color: B.sand }}>Total:</span> <strong style={{ color: B.success }}>{COP(reserva.total)}</strong></div>
+    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+      {/* Success header */}
+      <div style={{ textAlign: "center", padding: "20px 0 8px" }}>
+        <div style={{ fontSize: 56, marginBottom: 12 }}>✅</div>
+        <h2 style={{ fontFamily: "'Barlow Condensed', sans-serif", fontSize: 28, marginBottom: 6, color: B.success }}>¡Pago recibido!</h2>
+        <p style={{ color: "rgba(255,255,255,0.5)", fontSize: 14 }}>Tu reserva está confirmada</p>
       </div>
-      <p style={{ marginTop: 24, fontSize: 12, color: "rgba(255,255,255,0.3)" }}>Presenta esta pantalla al llegar al club</p>
+
+      {/* QR code */}
+      <div style={{ background: B.navyMid, borderRadius: 18, padding: 24, textAlign: "center", border: `1px solid rgba(200,185,154,0.2)` }}>
+        <div style={{ fontSize: 12, color: B.sand, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 14 }}>Código de embarque</div>
+        <div style={{ display: "inline-block", padding: 10, background: "#162040", borderRadius: 14, border: `2px solid ${B.sand}`, marginBottom: 12 }}>
+          <img
+            src={qrUrl(reserva.id, 160)}
+            alt={`QR ${reserva.id}`}
+            width={160} height={160}
+            style={{ display: "block", borderRadius: 6 }}
+          />
+        </div>
+        <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontSize: 20, fontWeight: 700, letterSpacing: 2, color: B.sand }}>{reserva.id}</div>
+        <div style={{ fontSize: 11, color: "rgba(255,255,255,0.3)", marginTop: 4 }}>Muestra este QR al llegar al muelle</div>
+      </div>
+
+      {/* Reservation summary */}
+      <div style={{ background: B.navyMid, borderRadius: 14, padding: 18, fontSize: 13, lineHeight: 2.2 }}>
+        <div style={{ display: "flex", justifyContent: "space-between" }}><span style={{ color: B.sand }}>Nombre</span><span style={{ fontWeight: 600 }}>{reserva.nombre}</span></div>
+        <div style={{ display: "flex", justifyContent: "space-between" }}><span style={{ color: B.sand }}>Fecha</span><span style={{ textTransform: "capitalize" }}>{new Date(reserva.fecha + "T12:00:00").toLocaleDateString("es-CO", { weekday: "short", day: "numeric", month: "long" })}</span></div>
+        <div style={{ display: "flex", justifyContent: "space-between" }}><span style={{ color: B.sand }}>Pasadía</span><span>{reserva.tipo}</span></div>
+        <div style={{ display: "flex", justifyContent: "space-between" }}><span style={{ color: B.sand }}>Personas</span><span>{reserva.pax}</span></div>
+        <div style={{ display: "flex", justifyContent: "space-between", borderTop: `1px solid ${B.navyLight}`, paddingTop: 8, marginTop: 4 }}>
+          <span style={{ fontWeight: 700 }}>Total pagado</span>
+          <span style={{ fontWeight: 700, color: B.success, fontFamily: "'Barlow Condensed', sans-serif", fontSize: 17 }}>{COP(reserva.total)}</span>
+        </div>
+      </div>
+
+      {/* Embarkation info */}
+      <div style={{ background: "rgba(52,211,153,0.06)", borderRadius: 14, padding: 18, border: "1px solid rgba(52,211,153,0.2)" }}>
+        <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 10, color: B.success }}>🚢 Información de embarque</div>
+        <div style={{ fontSize: 13, lineHeight: 2.3, color: "rgba(255,255,255,0.8)" }}>
+          <div>📍 <strong>Muelle de La Bodeguita — Puerta 1</strong></div>
+          <div>⏰ Llegar <strong>20 minutos antes</strong> de la salida</div>
+          <div>💵 Impuesto de muelle: <strong style={{ color: B.sand }}>COP 18.000</strong> (no incluido)</div>
+          <div>🆔 Traer documento de identidad original</div>
+        </div>
+      </div>
+
+      {/* Zarpe link */}
+      <a href={zarpeLink}
+        style={{ display: "block", background: "rgba(200,185,154,0.12)", border: `1px solid rgba(200,185,154,0.3)`, borderRadius: 14, padding: "16px 20px", textDecoration: "none", color: B.white }}>
+        <div style={{ fontWeight: 700, fontSize: 14, color: B.sand, marginBottom: 4 }}>📄 Completa tus datos de zarpe</div>
+        <div style={{ fontSize: 12, color: "rgba(255,255,255,0.45)", lineHeight: 1.5 }}>
+          Ingresa nombre, identificación y nacionalidad de todos los viajeros para agilizar el embarque.
+        </div>
+        <div style={{ marginTop: 8, fontSize: 12, color: B.sand }}>Abrir →</div>
+      </a>
+
+      {/* WhatsApp save */}
+      <a href={`https://wa.me/?text=${waMensaje}`} target="_blank" rel="noreferrer"
+        style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, background: "#25D366", borderRadius: 14, padding: "14px 20px", textDecoration: "none", color: "#fff", fontWeight: 700, fontSize: 14 }}>
+        <span style={{ fontSize: 20 }}>💬</span>
+        Guardar confirmación en WhatsApp
+      </a>
+
+      <p style={{ textAlign: "center", fontSize: 11, color: "rgba(255,255,255,0.25)", paddingBottom: 8 }}>
+        Atolon Beach Club · Cartagena de Indias
+      </p>
     </div>
   );
 }
@@ -115,6 +183,15 @@ export default function PagoCliente() {
             ultimo_contacto: hoy,
           }).eq("id", leadIdParam);
         }
+        // Enviar email de confirmación
+        const { data: res } = await supabase.from("reservas").select("*").eq("id", reservaId).single();
+        if (res?.contacto?.includes("@")) {
+          fetch("https://ncdyttgxuicyruathkxd.supabase.co/functions/v1/send-confirmation", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(res),
+          }).catch(() => {}); // fire and forget
+        }
         fetchReserva();
       }
     })();
@@ -155,7 +232,7 @@ export default function PagoCliente() {
 
   if (loading) return wrap(<div style={{ textAlign: "center", color: "rgba(255,255,255,0.4)", padding: 40 }}>Cargando...</div>);
   if (error) return wrap(<div style={{ textAlign: "center", color: B.danger, padding: 40 }}>{error}</div>);
-  if (yaPagado || pagoOk) return wrap(<PagoOk reserva={reserva} />);
+  if (yaPagado) return wrap(<PagoOk reserva={reserva} />);
   if (expirado) return wrap(<LinkExpirado />);
 
   return wrap(

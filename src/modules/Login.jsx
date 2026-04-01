@@ -50,12 +50,7 @@ export default function Login() {
       }}>
         {/* Logo */}
         <div style={{ textAlign: "center", marginBottom: 32 }}>
-          <div style={{
-            width: 52, height: 52, borderRadius: 14, margin: "0 auto 14px",
-            background: `linear-gradient(135deg, ${B.sand}, ${B.sky})`,
-            display: "flex", alignItems: "center", justifyContent: "center",
-            fontWeight: 800, color: B.navy, fontSize: 22,
-          }}>A</div>
+          <img src="/atolon-logo-white.png" alt="Atolon Beach Club" style={{ width: 180, margin: "0 auto 14px", display: "block" }} />
           <div style={{ fontSize: 22, fontWeight: 800, color: B.white }}>Atolon OS</div>
           <div style={{ fontSize: 13, color: "rgba(255,255,255,0.4)", marginTop: 4 }}>
             {mode === "login"  && "Ingresa a tu cuenta"}

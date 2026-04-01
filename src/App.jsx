@@ -25,6 +25,7 @@ import Contenido from "./modules/Contenido";
 import Upsells from "./modules/Upsells";
 import Menus from "./modules/Menus";
 import CheckIn from "./modules/CheckIn";
+import ZarpeInfo from "./modules/ZarpeInfo";
 
 const MODULE_MAP = {
   pasadias: <Pasadias />,
@@ -47,7 +48,7 @@ const MODULE_MAP = {
 };
 
 // Public routes — no auth required
-const PUBLIC_ROUTES = ["empleados", "agencia", "booking", "pago", "reset-password"];
+const PUBLIC_ROUTES = ["empleados", "agencia", "booking", "pago", "reset-password", "zarpe-info"];
 
 function getRoute() {
   return window.location.pathname.replace(/^\//, "") || "";
@@ -78,6 +79,7 @@ export default function App() {
   if (route === "booking")        return <BookingPopup />;
   if (route.startsWith("pago"))   return <PagoCliente />;
   if (route === "reset-password") return <ResetPassword />;
+  if (route === "zarpe-info")     return <ZarpeInfo />;
 
   // Loading auth state
   if (session === undefined) return null;
