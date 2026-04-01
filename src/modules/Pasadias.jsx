@@ -339,7 +339,16 @@ function TabPasadias({ pasadias, onRefresh }) {
   const addItem = async () => {
     if (!supabase || !newItem.trim()) return;
     const orden = items.length + 1;
-    await supabase.from("pasadia_incluye").insert({ id: `INC-${Date.now()}`, pasadia_id: selected.id, descripcion: newItem.trim(), descripcion_en: newItemEn.trim(), orden });
+    // Auto-translate to English if not provided
+    let enText = newItemEn.trim();
+    if (!enText) {
+      try {
+        const res = await fetch(`https://api.mymemory.translated.net/get?q=${encodeURIComponent(newItem.trim())}&langpair=es|en`);
+        const json = await res.json();
+        enText = json?.responseData?.translatedText || "";
+      } catch { /* ignore, leave empty */ }
+    }
+    await supabase.from("pasadia_incluye").insert({ id: `INC-${Date.now()}`, pasadia_id: selected.id, descripcion: newItem.trim(), descripcion_en: enText, orden });
     const { data } = await supabase.from("pasadia_incluye").select("*").eq("pasadia_id", selected.id).order("orden");
     setItems(data || []);
     setNewItem("");
