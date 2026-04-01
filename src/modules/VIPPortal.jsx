@@ -6,12 +6,12 @@ const IS = { width: "100%", padding: "12px 16px", borderRadius: 10, background: 
 const LS = { fontSize: 11, color: B.sand, display: "block", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.08em" };
 
 const BENEFICIOS = {
-  coral: { pct: 5,  camas: 2,     personas: 2, color: "#f87171", label: "Coral Member", icon: "🪸", desc: "Entry level – acceso base",
-           embarcacionPropia: false, personasLancha: 2, transporteOcean: null },
-  reef:  { pct: 8,  camas: 4,     personas: 4, color: "#34d399", label: "Reef Member",  icon: "🐚", desc: "Cliente frecuente – upgrades y perks",
-           embarcacionPropia: false, personasLancha: 4, transporteOcean: null },
-  ocean: { pct: 10, camas: "VIP", personas: 6, color: "#60a5fa", label: "Ocean Member", icon: "🌊", desc: "Elite – experiencia completa",
-           embarcacionPropia: true, personasLancha: 6, transporteOcean: 50000 },
+  coral: { pct: 5,  camas: 2,     personas: 2, personasPropia: 4, personasLancha: 2, color: "#f87171", label: "Coral Member", icon: "🪸", desc: "Entry level – acceso base",
+           embarcacionPropia: true, transporte: 50000, descuentoPasadia: 10 },
+  reef:  { pct: 8,  camas: 4,     personas: 4, personasPropia: 6, personasLancha: 4, color: "#34d399", label: "Reef Member",  icon: "🐚", desc: "Cliente frecuente – upgrades y perks",
+           embarcacionPropia: true, transporte: 50000, descuentoPasadia: 12, adicionalConsumible: 100000 },
+  ocean: { pct: 10, camas: "VIP", personas: 6, personasPropia: null, personasLancha: 6, color: "#60a5fa", label: "Ocean Member", icon: "🌊", desc: "Elite – experiencia completa",
+           embarcacionPropia: true, transporte: 50000, descuentoPasadia: 15, adicionalConsumible: 100000 },
 };
 
 const CARD_GRADIENTS = {
@@ -76,13 +76,27 @@ function MembershipCard({ miembro, fullWidth = true }) {
             {miembro.nivel === "ocean" ? (
               <>
                 🛏 Camas VIP ilimitadas<br />
-                🚤 Embarcación propia · sin límite de pax<br />
-                ⛵ Lancha Atolon hasta {b.personasLancha} pax · <span style={{ color: b.color }}>$50.000 transporte</span><br />
+                🚤 Emb. propia · personas ilimitadas<br />
+                ⛵ Lancha Atolon {b.personasLancha} pax · <span style={{ color: b.color }}>$50.000</span><br />
+                ➕ Pax adicionales · <span style={{ color: b.color }}>$100.000 consumibles</span><br />
+                🏖 {b.descuentoPasadia}% descuento pasadías<br />
                 💰 {b.pct}% en puntos (sin imp. ni propina)
+              </>
+            ) : miembro.nivel === "reef" ? (
+              <>
+                🛏 {b.camas} camas de playa<br />
+                🚤 Emb. propia hasta {b.personasPropia} pax<br />
+                ⛵ Lancha Atolon {b.personasLancha} pax · <span style={{ color: b.color }}>$50.000</span><br />
+                ➕ Pax adicionales · <span style={{ color: b.color }}>$100.000 consumibles</span><br />
+                🏖 {b.descuentoPasadia}% descuento pasadías<br />
+                💰 {b.pct}% del consumo en puntos
               </>
             ) : (
               <>
-                🛏 {b.camas} camas · 🍽 {b.personas} personas<br />
+                🛏 {b.camas} camas de playa<br />
+                🚤 Emb. propia hasta {b.personasPropia} pax<br />
+                ⛵ Lancha Atolon {b.personasLancha} pax · <span style={{ color: b.color }}>$50.000</span><br />
+                🏖 {b.descuentoPasadia}% descuento pasadías<br />
                 💰 {b.pct}% del consumo en puntos
               </>
             )}
@@ -398,15 +412,22 @@ function ReservaModal({ tipo, miembro, onClose, onCreated }) {
 
             {/* Resumen si es lancha Atolon Ocean */}
             {tipo === "llegada" && llegadaTipo === "lancha_atolon" && (
-              <div style={{ background: B.sand + "18", border: `1px solid ${B.sand}33`, borderRadius: 10, padding: "12px 16px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <div>
-                  <div style={{ fontSize: 12, fontWeight: 700, color: B.sand }}>⛵ Lancha Atolon</div>
-                  <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginTop: 2 }}>Máx. {b.personasLancha} personas</div>
+              <div style={{ background: B.sand + "18", border: `1px solid ${B.sand}33`, borderRadius: 10, padding: "12px 16px" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: b.adicionalConsumible ? 8 : 0 }}>
+                  <div>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: B.sand }}>⛵ Lancha Atolon</div>
+                    <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginTop: 2 }}>Hasta {b.personasLancha} personas incluidas</div>
+                  </div>
+                  <div style={{ textAlign: "right" }}>
+                    <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)" }}>Transporte</div>
+                    <div style={{ fontSize: 18, fontWeight: 800, color: B.sand }}>$50.000</div>
+                  </div>
                 </div>
-                <div style={{ textAlign: "right" }}>
-                  <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)" }}>Costo de transporte</div>
-                  <div style={{ fontSize: 18, fontWeight: 800, color: B.sand }}>$50.000</div>
-                </div>
+                {b.adicionalConsumible && (
+                  <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", borderTop: `1px solid ${B.sand}22`, paddingTop: 8 }}>
+                    ➕ Personas adicionales: <strong style={{ color: B.sand }}>$100.000 c/u en consumo</strong>
+                  </div>
+                )}
               </div>
             )}
             {tipo === "llegada" && llegadaTipo === "propia" && (
@@ -540,14 +561,14 @@ function MainPortal({ miembro: initialMiembro, onLogout }) {
         {/* Reservas */}
         <div style={{ background: B.navyMid, borderRadius: 16, padding: "24px", marginBottom: 20 }}>
           <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 16, fontFamily: "'Barlow Condensed', sans-serif" }}>Mis Reservas</div>
-          <div style={{ display: "grid", gridTemplateColumns: b.embarcacionPropia ? "1fr 1fr 1fr" : "1fr 1fr", gap: 10, marginBottom: 20 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginBottom: 20 }}>
             <button onClick={() => setShowReserva("cama_playa")} style={{
               padding: "18px 12px", background: "rgba(255,255,255,0.05)", border: `1px solid rgba(255,255,255,0.1)`,
               borderRadius: 12, cursor: "pointer", textAlign: "center", color: "#fff",
             }}>
               <div style={{ fontSize: 26, marginBottom: 5 }}>🛏</div>
               <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 3 }}>Cama de Playa</div>
-              <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)" }}>{b.embarcacionPropia ? "Camas VIP" : `Hasta ${b.camas} camas`}</div>
+              <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)" }}>{miembro.nivel === "ocean" ? "Camas VIP" : `${b.camas} camas incluidas`}</div>
             </button>
             <button onClick={() => setShowReserva("restaurante")} style={{
               padding: "18px 12px", background: "rgba(255,255,255,0.05)", border: `1px solid rgba(255,255,255,0.1)`,
@@ -557,16 +578,14 @@ function MainPortal({ miembro: initialMiembro, onLogout }) {
               <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 3 }}>Restaurante</div>
               <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)" }}>Hasta {b.personas} personas</div>
             </button>
-            {b.embarcacionPropia && (
-              <button onClick={() => setShowReserva("llegada")} style={{
-                padding: "18px 12px", background: `rgba(96,165,250,0.1)`, border: `1px solid ${b.color}44`,
-                borderRadius: 12, cursor: "pointer", textAlign: "center", color: "#fff",
-              }}>
-                <div style={{ fontSize: 26, marginBottom: 5 }}>⛵</div>
-                <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 3 }}>Reservar Llegada</div>
-                <div style={{ fontSize: 11, color: b.color }}>Propia o Atolon</div>
-              </button>
-            )}
+            <button onClick={() => setShowReserva("llegada")} style={{
+              padding: "18px 12px", background: `rgba(96,165,250,0.08)`, border: `1px solid ${b.color}44`,
+              borderRadius: 12, cursor: "pointer", textAlign: "center", color: "#fff",
+            }}>
+              <div style={{ fontSize: 26, marginBottom: 5 }}>⛵</div>
+              <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 3 }}>Reservar Llegada</div>
+              <div style={{ fontSize: 11, color: b.color }}>Propia o Atolon</div>
+            </button>
           </div>
 
           {loading ? (
