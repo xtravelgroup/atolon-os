@@ -6,13 +6,32 @@ const CORS = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
+/** Fetch live USD→COP rate from free API (no key required). */
+async function fetchLiveTasa(): Promise<number | null> {
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 4000);
+    const res = await fetch(
+      "https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/usd.json",
+      { signal: controller.signal }
+    );
+    clearTimeout(timer);
+    if (!res.ok) return null;
+    const data = await res.json();
+    const cop = data?.usd?.cop;
+    if (cop && cop > 1000) return Math.round(cop);
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
 
   try {
     const { reserva_id, total_cop, nombre, email, tipo, fecha } = await req.json();
 
-    // Read Stripe secret key from configuracion table
     const supabase = createClient(
       Deno.env.get("SUPABASE_URL")!,
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
@@ -24,37 +43,47 @@ serve(async (req) => {
       .single();
 
     const stripeKey = config?.stripe_secret_key;
-    const tasaUsd   = Number(config?.tasa_usd) || 4200;
     if (!stripeKey) {
       return new Response(JSON.stringify({ error: "Stripe no configurado" }), {
         status: 400, headers: { ...CORS, "Content-Type": "application/json" },
       });
     }
 
-    const origin = req.headers.get("origin") || "https://atolon.co";
+    // 1. Try live rate — 2. Fall back to DB rate — 3. Fall back to 4200
+    const liveTasa = await fetchLiveTasa();
+    const tasaUsd  = liveTasa ?? (Number(config?.tasa_usd) || 4200);
+
+    // Persist live rate to DB so Configuracion shows it (fire-and-forget)
+    if (liveTasa) {
+      supabase.from("configuracion")
+        .update({ tasa_usd: liveTasa, tasa_usd_updated_at: new Date().toISOString() })
+        .eq("id", "atolon")
+        .then(() => {});
+    }
+
+    const origin     = req.headers.get("origin") || "https://atolon.co";
     const successUrl = `${origin}/pago/${reserva_id}?stripe=ok&session_id={CHECKOUT_SESSION_ID}`;
     const cancelUrl  = `${origin}/pago/${reserva_id}?stripe=cancel`;
 
-    // Build Stripe Checkout Session via REST API
-    // Convert COP → USD (Stripe amount in cents)
-    const totalUsd     = total_cop / tasaUsd;
-    const amountCents  = Math.round(totalUsd * 100);
+    // Convert COP → USD cents
+    const totalUsd    = total_cop / tasaUsd;
+    const amountCents = Math.round(totalUsd * 100);
 
     const params = new URLSearchParams({
-      "payment_method_types[]": "card",
-      "mode": "payment",
-      "success_url": successUrl,
-      "cancel_url": cancelUrl,
-      "line_items[0][quantity]": "1",
-      "line_items[0][price_data][currency]": "usd",
-      "line_items[0][price_data][unit_amount]": String(amountCents),
-      "line_items[0][price_data][product_data][name]": tipo || "Pasadia Atolon Beach Club",
+      "payment_method_types[]":                               "card",
+      "mode":                                                 "payment",
+      "success_url":                                          successUrl,
+      "cancel_url":                                           cancelUrl,
+      "line_items[0][quantity]":                              "1",
+      "line_items[0][price_data][currency]":                  "usd",
+      "line_items[0][price_data][unit_amount]":               String(amountCents),
+      "line_items[0][price_data][product_data][name]":        tipo || "Pasadia Atolon Beach Club",
       "line_items[0][price_data][product_data][description]": fecha
         ? `Reserva ${reserva_id} — ${fecha} (COP ${total_cop.toLocaleString("es-CO")})`
         : `Reserva ${reserva_id}`,
-      "metadata[reserva_id]": reserva_id,
-      "metadata[total_cop]": String(total_cop),
-      "metadata[tasa_usd]": String(tasaUsd),
+      "metadata[reserva_id]":  reserva_id,
+      "metadata[total_cop]":   String(total_cop),
+      "metadata[tasa_usd]":    String(tasaUsd),
     });
 
     if (email) params.set("customer_email", email);
@@ -63,13 +92,12 @@ serve(async (req) => {
       method: "POST",
       headers: {
         "Authorization": `Bearer ${stripeKey}`,
-        "Content-Type": "application/x-www-form-urlencoded",
+        "Content-Type":  "application/x-www-form-urlencoded",
       },
       body: params.toString(),
     });
 
     const session = await stripeRes.json();
-
     if (!stripeRes.ok) {
       console.error("Stripe error:", session);
       return new Response(JSON.stringify({ error: session.error?.message || "Error Stripe" }), {
@@ -77,7 +105,7 @@ serve(async (req) => {
       });
     }
 
-    return new Response(JSON.stringify({ url: session.url }), {
+    return new Response(JSON.stringify({ url: session.url, tasa_usd: tasaUsd }), {
       headers: { ...CORS, "Content-Type": "application/json" },
     });
 

@@ -435,8 +435,15 @@ export default function Configuracion() {
                     <div style={{ padding: "10px 14px", background: B.navy, borderRadius: 8, fontSize: 12, color: B.success, fontFamily: "monospace" }}>••••••••••••••••••••</div>
                   </div>
                   <div>
-                    <label style={LS}>Tasa USD</label>
-                    <div style={{ padding: "10px 14px", background: B.navy, borderRadius: 8, fontSize: 12, color: B.sand }}>1 USD = ${(config.tasa_usd || 4200).toLocaleString("es-CO")} COP</div>
+                    <label style={LS}>Tasa USD <span style={{ background: "#635BFF33", color: "#a5b4fc", padding: "1px 7px", borderRadius: 8, fontSize: 10, marginLeft: 4 }}>Auto</span></label>
+                    <div style={{ padding: "10px 14px", background: B.navy, borderRadius: 8, fontSize: 12, color: B.sand }}>
+                      1 USD = ${(config.tasa_usd || 4200).toLocaleString("es-CO")} COP
+                      {config.tasa_usd_updated_at && (
+                        <div style={{ fontSize: 10, color: "rgba(255,255,255,0.3)", marginTop: 3 }}>
+                          Actualizado: {new Date(config.tasa_usd_updated_at).toLocaleString("es-CO", { dateStyle: "short", timeStyle: "short" })}
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
               )}
@@ -467,12 +474,17 @@ export default function Configuracion() {
                       <div style={{ fontSize: 11, color: "rgba(255,255,255,0.3)", marginTop: 4 }}>Se usa en el servidor (Supabase Edge Function) para crear el PaymentIntent. Nunca se expone al cliente.</div>
                     </div>
                     <div>
-                      <label style={LS}>Tasa de cambio <span style={{ color: "rgba(255,255,255,0.3)" }}>(COP por 1 USD)</span></label>
-                      <input type="number" value={stripeForm.tasa_usd} onChange={e => setStripeForm(f => ({ ...f, tasa_usd: e.target.value }))}
-                        placeholder="4200"
-                        style={{ ...IS, width: 160 }} />
+                      <label style={LS}>Tasa de cambio <span style={{ background: "#635BFF33", color: "#a5b4fc", padding: "1px 7px", borderRadius: 8, fontSize: 10, marginLeft: 4 }}>Se actualiza automáticamente cada día</span></label>
+                      <div style={{ padding: "10px 14px", background: B.navy, borderRadius: 8, fontSize: 13, color: B.sand }}>
+                        1 USD = ${(Number(stripeForm.tasa_usd) || 4200).toLocaleString("es-CO")} COP
+                        {config?.tasa_usd_updated_at && (
+                          <span style={{ fontSize: 10, color: "rgba(255,255,255,0.3)", marginLeft: 10 }}>
+                            Última actualización: {new Date(config.tasa_usd_updated_at).toLocaleString("es-CO", { dateStyle: "short", timeStyle: "short" })}
+                          </span>
+                        )}
+                      </div>
                       <div style={{ fontSize: 11, color: "rgba(255,255,255,0.3)", marginTop: 4 }}>
-                        Ej: si 1 USD = $4.200 COP, escribe <strong style={{ color: "rgba(255,255,255,0.5)" }}>4200</strong>. El cobro en Stripe siempre será en USD.
+                        La tasa se consulta en tiempo real al momento del pago y se actualiza en la DB diariamente a las 8am.
                       </div>
                     </div>
                     <div style={{ padding: "10px 14px", background: B.warning + "11", borderRadius: 8, border: `1px solid ${B.warning}22`, fontSize: 12, color: B.warning }}>
