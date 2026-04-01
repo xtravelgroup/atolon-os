@@ -19,11 +19,12 @@ serve(async (req) => {
     );
     const { data: config } = await supabase
       .from("configuracion")
-      .select("stripe_secret_key")
+      .select("stripe_secret_key, tasa_usd")
       .eq("id", "atolon")
       .single();
 
     const stripeKey = config?.stripe_secret_key;
+    const tasaUsd   = Number(config?.tasa_usd) || 4200;
     if (!stripeKey) {
       return new Response(JSON.stringify({ error: "Stripe no configurado" }), {
         status: 400, headers: { ...CORS, "Content-Type": "application/json" },
@@ -35,19 +36,25 @@ serve(async (req) => {
     const cancelUrl  = `${origin}/pago/${reserva_id}?stripe=cancel`;
 
     // Build Stripe Checkout Session via REST API
+    // Convert COP → USD (Stripe amount in cents)
+    const totalUsd     = total_cop / tasaUsd;
+    const amountCents  = Math.round(totalUsd * 100);
+
     const params = new URLSearchParams({
       "payment_method_types[]": "card",
       "mode": "payment",
       "success_url": successUrl,
       "cancel_url": cancelUrl,
       "line_items[0][quantity]": "1",
-      "line_items[0][price_data][currency]": "cop",
-      "line_items[0][price_data][unit_amount]": String(Math.round(total_cop * 100)),
+      "line_items[0][price_data][currency]": "usd",
+      "line_items[0][price_data][unit_amount]": String(amountCents),
       "line_items[0][price_data][product_data][name]": tipo || "Pasadia Atolon Beach Club",
       "line_items[0][price_data][product_data][description]": fecha
-        ? `Reserva ${reserva_id} — ${fecha}`
+        ? `Reserva ${reserva_id} — ${fecha} (COP ${total_cop.toLocaleString("es-CO")})`
         : `Reserva ${reserva_id}`,
       "metadata[reserva_id]": reserva_id,
+      "metadata[total_cop]": String(total_cop),
+      "metadata[tasa_usd]": String(tasaUsd),
     });
 
     if (email) params.set("customer_email", email);

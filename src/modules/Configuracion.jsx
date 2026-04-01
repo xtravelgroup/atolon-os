@@ -32,7 +32,7 @@ export default function Configuracion() {
 
   // Integraciones
   const [wompiForm,    setWompiForm]    = useState({ pub_key: "", integrity_key: "" });
-  const [stripeForm,   setStripeForm]   = useState({ pub_key: "", secret_key: "" });
+  const [stripeForm,   setStripeForm]   = useState({ pub_key: "", secret_key: "", tasa_usd: "4200" });
   const [savingInt,    setSavingInt]    = useState(null);   // "wompi" | "stripe" | null
   const [showWompi,    setShowWompi]    = useState(false);
   const [showStripe,   setShowStripe]   = useState(false);
@@ -61,7 +61,7 @@ export default function Configuracion() {
       setTelMuelle(data.tel_muelle || "");
       setCuentas(data.cuentas_bancarias || []);
       setWompiForm({ pub_key: data.wompi_pub_key || "", integrity_key: data.wompi_integrity_key || "" });
-      setStripeForm({ pub_key: data.stripe_pub_key || "", secret_key: data.stripe_secret_key || "" });
+      setStripeForm({ pub_key: data.stripe_pub_key || "", secret_key: data.stripe_secret_key || "", tasa_usd: String(data.tasa_usd || "4200") });
     }
     setLoading(false);
   }, [ENV_WOMPI_PUB, ENV_WOMPI_INTEGRITY]);
@@ -137,7 +137,7 @@ export default function Configuracion() {
   const saveStripe = async () => {
     if (!supabase || savingInt) return;
     setSavingInt("stripe");
-    await supabase.from("configuracion").update({ stripe_pub_key: stripeForm.pub_key.trim(), stripe_secret_key: stripeForm.secret_key.trim(), updated_at: new Date().toISOString() }).eq("id", "atolon");
+    await supabase.from("configuracion").update({ stripe_pub_key: stripeForm.pub_key.trim(), stripe_secret_key: stripeForm.secret_key.trim(), tasa_usd: Number(stripeForm.tasa_usd) || 4200, updated_at: new Date().toISOString() }).eq("id", "atolon");
     await fetchConfig();
     setSavingInt(null); setShowStripe(false);
   };
@@ -425,7 +425,7 @@ export default function Configuracion() {
 
               {/* Llaves actuales */}
               {stripeConectado && !showStripe && (
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 16 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginTop: 16 }}>
                   <div>
                     <label style={LS}>Llave pública</label>
                     <div style={{ padding: "10px 14px", background: B.navy, borderRadius: 8, fontSize: 12, color: "#a5b4fc", fontFamily: "monospace" }}>{mask(config.stripe_pub_key)}</div>
@@ -433,6 +433,10 @@ export default function Configuracion() {
                   <div>
                     <label style={LS}>Llave secreta</label>
                     <div style={{ padding: "10px 14px", background: B.navy, borderRadius: 8, fontSize: 12, color: B.success, fontFamily: "monospace" }}>••••••••••••••••••••</div>
+                  </div>
+                  <div>
+                    <label style={LS}>Tasa USD</label>
+                    <div style={{ padding: "10px 14px", background: B.navy, borderRadius: 8, fontSize: 12, color: B.sand }}>1 USD = ${(config.tasa_usd || 4200).toLocaleString("es-CO")} COP</div>
                   </div>
                 </div>
               )}
@@ -461,6 +465,15 @@ export default function Configuracion() {
                         <button onClick={() => setShowStripeSecret(v => !v)} style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", color: "rgba(255,255,255,0.4)", fontSize: 12, cursor: "pointer" }}>{showStripeSecret ? "Ocultar" : "Ver"}</button>
                       </div>
                       <div style={{ fontSize: 11, color: "rgba(255,255,255,0.3)", marginTop: 4 }}>Se usa en el servidor (Supabase Edge Function) para crear el PaymentIntent. Nunca se expone al cliente.</div>
+                    </div>
+                    <div>
+                      <label style={LS}>Tasa de cambio <span style={{ color: "rgba(255,255,255,0.3)" }}>(COP por 1 USD)</span></label>
+                      <input type="number" value={stripeForm.tasa_usd} onChange={e => setStripeForm(f => ({ ...f, tasa_usd: e.target.value }))}
+                        placeholder="4200"
+                        style={{ ...IS, width: 160 }} />
+                      <div style={{ fontSize: 11, color: "rgba(255,255,255,0.3)", marginTop: 4 }}>
+                        Ej: si 1 USD = $4.200 COP, escribe <strong style={{ color: "rgba(255,255,255,0.5)" }}>4200</strong>. El cobro en Stripe siempre será en USD.
+                      </div>
                     </div>
                     <div style={{ padding: "10px 14px", background: B.warning + "11", borderRadius: 8, border: `1px solid ${B.warning}22`, fontSize: 12, color: B.warning }}>
                       ⚠️ La llave secreta tiene acceso total a tu cuenta Stripe. Guárdala solo aquí y nunca en el código fuente.
