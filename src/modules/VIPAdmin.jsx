@@ -60,9 +60,11 @@ function MembershipCard({ miembro }) {
       {/* Decorative circles */}
       <div style={{ position: "absolute", top: -40, right: -40, width: 180, height: 180, borderRadius: "50%", background: "rgba(255,255,255,0.05)" }} />
       <div style={{ position: "absolute", bottom: -60, right: 40, width: 240, height: 240, borderRadius: "50%", background: "rgba(255,255,255,0.03)" }} />
+      {/* Fish watermark */}
+      <img src="/atolon-peces.png" alt="" style={{ position: "absolute", bottom: -8, right: -8, width: 160, opacity: 0.12, pointerEvents: "none", userSelect: "none" }} />
 
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 24, position: "relative" }}>
-        <div style={{ fontSize: 13, fontWeight: 700, letterSpacing: 3, opacity: 0.7, textTransform: "uppercase" }}>✦ ATOLÓN SOCIETY</div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 20, position: "relative" }}>
+        <img src="/atolon-logo-white.png" alt="Atolon" style={{ height: 24, opacity: 0.9, display: "block" }} />
         <span style={{
           padding: "4px 14px", borderRadius: 20, fontSize: 12, fontWeight: 700,
           background: "rgba(255,255,255,0.15)", backdropFilter: "blur(4px)",
@@ -90,22 +92,22 @@ function MembershipCard({ miembro }) {
           <div style={{ fontSize: 10, opacity: 0.5, textTransform: "uppercase", letterSpacing: 1, marginBottom: 4 }}>BENEFICIOS ACTIVOS</div>
           {miembro.nivel === "ocean" ? (
             <div style={{ fontSize: 12, opacity: 0.85, lineHeight: 1.9 }}>
+              🚤 Embarcación propia · <span style={{ color: b.color }}>personas ilimitadas</span><br />
+              ⛵ Lancha Atolon hasta {b.personasLancha} pax · <span style={{ color: b.color }}>$50.000 por persona</span><br />
               🛏 Camas VIP ilimitadas<br />
-              🚤 Emb. propia · personas ilimitadas<br />
-              ⛵ Lancha {b.personasLancha} pax · <span style={{ color: b.color }}>$50.000</span> + pax adicionales <span style={{ color: b.color }}>$100.000 consumibles</span><br />
               🏖 {b.descuentoPasadia}% descuento pasadías · 💰 {b.pct}% en puntos
             </div>
           ) : miembro.nivel === "reef" ? (
             <div style={{ fontSize: 12, opacity: 0.85, lineHeight: 1.9 }}>
-              🛏 {b.camas} camas por visita · 🚤 Emb. propia hasta {b.personasPropia} pax<br />
-              ⛵ Lancha {b.personasLancha} pax · <span style={{ color: b.color }}>$50.000</span> · pax extra <span style={{ color: b.color }}>$100.000 consumibles</span><br />
-              🏖 {b.descuentoPasadia}% descuento pasadías · 💰 {b.pct}% en puntos
+              🚤 Embarcación propia hasta <span style={{ color: b.color }}>{b.personasPropia} pax</span><br />
+              ⛵ Lancha Atolon hasta {b.personasLancha} pax · <span style={{ color: b.color }}>$50.000 por persona</span> · pax extra <span style={{ color: b.color }}>$100.000 consumibles</span><br />
+              🛏 {b.camas} camas por visita · 🏖 {b.descuentoPasadia}% descuento pasadías · 💰 {b.pct}% en puntos
             </div>
           ) : (
             <div style={{ fontSize: 12, opacity: 0.85, lineHeight: 1.9 }}>
-              🛏 {b.camas} cama por visita · 🚤 Emb. propia hasta {b.personasPropia} pax<br />
-              ⛵ Lancha {b.personasLancha} pax · <span style={{ color: b.color }}>$50.000</span> · pax extra <span style={{ color: b.color }}>$100.000 consumibles</span><br />
-              🏖 {b.descuentoPasadia}% descuento pasadías · 💰 {b.pct}% en puntos
+              🚤 Embarcación propia hasta <span style={{ color: b.color }}>{b.personasPropia} pax</span><br />
+              ⛵ Lancha Atolon hasta {b.personasLancha} pax · <span style={{ color: b.color }}>$50.000 por persona</span> · pax extra <span style={{ color: b.color }}>$100.000 consumibles</span><br />
+              🛏 {b.camas} cama por visita · 🏖 {b.descuentoPasadia}% descuento pasadías · 💰 {b.pct}% en puntos
             </div>
           )}
         </div>

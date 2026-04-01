@@ -40,12 +40,15 @@ function MembershipCard({ miembro, fullWidth = true }) {
       width: fullWidth ? "100%" : "auto",
       boxSizing: "border-box",
     }}>
+      {/* Decorative circles */}
       <div style={{ position: "absolute", top: -50, right: -50, width: 220, height: 220, borderRadius: "50%", background: "rgba(255,255,255,0.05)" }} />
       <div style={{ position: "absolute", bottom: -70, right: 30, width: 280, height: 280, borderRadius: "50%", background: "rgba(255,255,255,0.03)" }} />
-      <div style={{ position: "absolute", top: 40, right: -20, width: 140, height: 140, borderRadius: "50%", background: "rgba(255,255,255,0.04)" }} />
+      {/* Fish watermark */}
+      <img src="/atolon-peces.png" alt="" style={{ position: "absolute", bottom: -10, right: -10, width: 190, opacity: 0.12, pointerEvents: "none", userSelect: "none" }} />
 
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 28, position: "relative" }}>
-        <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 3, opacity: 0.65, textTransform: "uppercase" }}>✦ ATOLÓN SOCIETY</div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 22, position: "relative" }}>
+        {/* Logo */}
+        <img src="/atolon-logo-white.png" alt="Atolon" style={{ height: 28, opacity: 0.9, display: "block" }} />
         <div style={{
           padding: "5px 16px", borderRadius: 20, fontSize: 12, fontWeight: 700,
           background: "rgba(255,255,255,0.12)", backdropFilter: "blur(8px)",
@@ -75,27 +78,26 @@ function MembershipCard({ miembro, fullWidth = true }) {
           <div style={{ fontSize: 13, opacity: 0.85, lineHeight: 1.9 }}>
             {miembro.nivel === "ocean" ? (
               <>
+                🚤 Embarcación propia · <span style={{ color: b.color }}>personas ilimitadas</span><br />
+                ⛵ Lancha Atolon hasta {b.personasLancha} pax · <span style={{ color: b.color }}>$50.000 por persona</span><br />
                 🛏 Camas VIP ilimitadas<br />
-                🚤 Emb. propia · personas ilimitadas<br />
-                ⛵ Lancha Atolon {b.personasLancha} pax · <span style={{ color: b.color }}>$50.000</span><br />
-                ➕ Pax adicionales · <span style={{ color: b.color }}>$100.000 consumibles</span><br />
                 🏖 {b.descuentoPasadia}% descuento pasadías<br />
                 💰 {b.pct}% en puntos (sin imp. ni propina)
               </>
             ) : miembro.nivel === "reef" ? (
               <>
+                🚤 Embarcación propia hasta <span style={{ color: b.color }}>{b.personasPropia} pax</span><br />
+                ⛵ Lancha Atolon hasta {b.personasLancha} pax · <span style={{ color: b.color }}>$50.000 por persona</span><br />
                 🛏 {b.camas} camas por visita<br />
-                🚤 Emb. propia hasta {b.personasPropia} pax<br />
-                ⛵ Lancha {b.personasLancha} pax · <span style={{ color: b.color }}>$50.000</span><br />
                 ➕ Pax extra · <span style={{ color: b.color }}>$100.000 consumibles</span><br />
                 🏖 {b.descuentoPasadia}% descuento pasadías<br />
                 💰 {b.pct}% del consumo en puntos
               </>
             ) : (
               <>
+                🚤 Embarcación propia hasta <span style={{ color: b.color }}>{b.personasPropia} pax</span><br />
+                ⛵ Lancha Atolon hasta {b.personasLancha} pax · <span style={{ color: b.color }}>$50.000 por persona</span><br />
                 🛏 {b.camas} cama por visita<br />
-                🚤 Emb. propia hasta {b.personasPropia} pax<br />
-                ⛵ Lancha {b.personasLancha} pax · <span style={{ color: b.color }}>$50.000</span><br />
                 ➕ Pax extra · <span style={{ color: b.color }}>$100.000 consumibles</span><br />
                 🏖 {b.descuentoPasadia}% descuento pasadías<br />
                 💰 {b.pct}% del consumo en puntos
@@ -400,7 +402,7 @@ function ReservaModal({ tipo, miembro, onClose, onCreated }) {
                 <span style={{ fontSize: 30 }}>⛵</span>
                 <div>
                   <div style={{ fontWeight: 700, fontSize: 15 }}>Lancha de Atolon</div>
-                  <div style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", marginTop: 3 }}>Hasta {b.personasLancha} personas · Solo pagas <strong style={{ color: B.sand }}>$50.000 por transporte</strong></div>
+                  <div style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", marginTop: 3 }}>Hasta {b.personasLancha} personas · <strong style={{ color: B.sand }}>$50.000 por persona</strong></div>
                 </div>
               </div>
             </button>
