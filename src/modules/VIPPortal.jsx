@@ -312,27 +312,28 @@ function SubirReciboModal({ miembro, onClose, onSubmitted }) {
     setPreview(URL.createObjectURL(f));
   };
 
+  const b = BENEFICIOS[miembro.nivel] || BENEFICIOS.coral;
+  const montoNum      = parseFloat(monto) || 0;
+  const baseConsumo   = montoNum / 1.08;          // quitar 8% impuesto
+  const puntosCalc    = Math.floor(baseConsumo * b.pct / 100 / 10);
+
   const handleSubmit = async () => {
     if (!file) { setError("Selecciona una foto del recibo"); return; }
-    if (!monto || isNaN(parseFloat(monto))) { setError("Ingresa el monto del consumo"); return; }
+    if (!monto || isNaN(parseFloat(monto))) { setError("Ingresa el total que aparece en el recibo"); return; }
     setUploading(true); setError("");
     let recibo_url = null;
-    // Upload to Supabase storage
     if (supabase) {
       const ext = file.name.split(".").pop();
       const path = `${miembro.id}/${uid()}.${ext}`;
-      const { data: upData, error: upErr } = await supabase.storage.from("vip-recibos").upload(path, file);
+      const { error: upErr } = await supabase.storage.from("vip-recibos").upload(path, file);
       if (upErr) { setError("Error subiendo imagen: " + upErr.message); setUploading(false); return; }
       const { data: urlData } = supabase.storage.from("vip-recibos").getPublicUrl(path);
       recibo_url = urlData?.publicUrl || null;
     }
-    // Insert transaction
-    const b = BENEFICIOS[miembro.nivel] || BENEFICIOS.coral;
-    const montoNum = parseFloat(monto);
-    const puntosEstimados = Math.floor(montoNum * b.pct / 100 / 10); // rough estimate
     const { error: txErr } = await supabase.from("vip_transacciones").insert({
       id: uid(), miembro_id: miembro.id, tipo: "ganados",
-      puntos: puntosEstimados, descripcion: "Recibo pendiente de validación",
+      puntos: puntosCalc,
+      descripcion: `Recibo pendiente de validación · Base sin imp: $${Math.round(baseConsumo).toLocaleString("es-CO")}`,
       recibo_url, monto_consumo: montoNum, validado: false,
     });
     if (txErr) { setError(txErr.message); setUploading(false); return; }
@@ -379,18 +380,40 @@ function SubirReciboModal({ miembro, onClose, onSubmitted }) {
                 )}
               </div>
             </div>
+            {/* Monto del recibo */}
             <div>
-              <label style={LS}>Monto del consumo (COP)</label>
-              <input type="number" value={monto} onChange={e => setMonto(e.target.value)} placeholder="Ej: 150000" style={IS} />
+              <label style={{ ...LS, fontSize: 12, color: "rgba(255,255,255,0.55)", fontStyle: "italic", textTransform: "none", letterSpacing: 0 }}>
+                Ingresa el número que aparece en tu cuenta donde dice:
+              </label>
+              <div style={{ fontSize: 13, color: B.sand, fontWeight: 700, marginBottom: 8, marginTop: 4 }}>
+                "El total del consumo al momento es: $___"
+              </div>
+              <input type="number" value={monto} onChange={e => setMonto(e.target.value)} placeholder="Ej: 150000" style={IS} inputMode="numeric" />
             </div>
-            <div style={{ background: "rgba(255,255,255,0.05)", borderRadius: 10, padding: "12px 16px", fontSize: 13, color: "rgba(255,255,255,0.6)", lineHeight: 1.6 }}>
-              Con tu nivel <strong style={{ color: BENEFICIOS[miembro.nivel]?.color }}>
-                {BENEFICIOS[miembro.nivel]?.icon} {BENEFICIOS[miembro.nivel]?.label}
-              </strong>, ganas el <strong>{BENEFICIOS[miembro.nivel]?.pct}%</strong> en puntos.
-              {monto && !isNaN(parseFloat(monto)) && (
-                <span> Puntos estimados: <strong style={{ color: B.success }}>~{Math.floor(parseFloat(monto) * (BENEFICIOS[miembro.nivel]?.pct || 5) / 100 / 10).toLocaleString("es-CO")} pts</strong></span>
-              )}
-            </div>
+
+            {/* Preview puntos */}
+            {montoNum > 0 && (
+              <div style={{ background: "rgba(255,255,255,0.05)", borderRadius: 10, padding: "14px 16px", fontSize: 13, lineHeight: 1.8 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+                  <span style={{ color: "rgba(255,255,255,0.5)" }}>Total recibo</span>
+                  <span>${montoNum.toLocaleString("es-CO")}</span>
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+                  <span style={{ color: "rgba(255,255,255,0.5)" }}>Menos 8% impuesto</span>
+                  <span style={{ color: B.danger }}>− ${Math.round(montoNum - baseConsumo).toLocaleString("es-CO")}</span>
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 10, paddingBottom: 10, borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
+                  <span style={{ color: "rgba(255,255,255,0.5)" }}>Base para puntos</span>
+                  <span>${Math.round(baseConsumo).toLocaleString("es-CO")}</span>
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <span style={{ color: "rgba(255,255,255,0.6)" }}>
+                    Puntos a ganar <span style={{ color: b.color }}>({b.pct}% · {b.icon} {b.label})</span>
+                  </span>
+                  <span style={{ fontSize: 18, fontWeight: 800, color: B.success }}>+{puntosCalc.toLocaleString("es-CO")} pts</span>
+                </div>
+              </div>
+            )}
             {error && <div style={{ color: B.danger, fontSize: 13 }}>{error}</div>}
             <button onClick={handleSubmit} disabled={uploading} style={{ padding: "14px", background: uploading ? B.navyLight : B.success, color: "#fff", border: "none", borderRadius: 12, fontWeight: 700, fontSize: 15, cursor: uploading ? "default" : "pointer" }}>
               {uploading ? "Subiendo..." : "Enviar Recibo"}
