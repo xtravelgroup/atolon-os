@@ -221,8 +221,7 @@ export default function PagoCliente() {
     <div style={{ minHeight: "100vh", background: B.navy, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 20 }}>
       {/* Header */}
       <div style={{ textAlign: "center", marginBottom: 32 }}>
-        <div style={{ width: 56, height: 56, borderRadius: 14, background: `linear-gradient(135deg, ${B.sand}, ${B.sky})`, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 12px", fontSize: 24, fontWeight: 700, color: B.navy }}>A</div>
-        <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontSize: 20, letterSpacing: 1, color: "rgba(255,255,255,0.6)" }}>ATOLON BEACH CLUB</div>
+        <img src="/atolon-logo-white.png" alt="Atolon Beach Club" style={{ height: 52, objectFit: "contain", display: "block", margin: "0 auto" }} />
       </div>
       <div style={{ background: B.navyMid, borderRadius: 20, padding: 32, width: "100%", maxWidth: 440 }}>
         {content}

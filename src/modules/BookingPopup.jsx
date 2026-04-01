@@ -1117,11 +1117,7 @@ export default function BookingPopup() {
         {/* Brand header */}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <div style={{ width: 36, height: 36, borderRadius: 8, background: C.primary, display: "flex", alignItems: "center", justifyContent: "center", color: "white", fontWeight: 900, fontSize: 16 }}>A</div>
-            <div>
-              <div style={{ fontSize: 14, fontWeight: 700, color: C.text }}>Atolon Beach Club</div>
-              <div style={{ fontSize: 11, color: C.textMid }}>Isla Tierra Bomba · Cartagena</div>
-            </div>
+            <img src="/atolon-logo.png" alt="Atolon Beach Club" style={{ height: 40, objectFit: "contain" }} />
           </div>
           <div style={{ display: "flex", gap: 4 }}>
             {["es","en"].map(l => (

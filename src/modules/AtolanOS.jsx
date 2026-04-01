@@ -207,13 +207,10 @@ export default function AtolanOS({ activeModule = "dashboard", onNavigate, modul
           padding: collapsed ? "20px 12px" : "20px 20px", borderBottom: `1px solid ${B.navyLight}`,
           display: "flex", alignItems: "center", gap: 12, cursor: "pointer",
         }} onClick={() => setCollapsed(c => !c)}>
-          <div style={{
-            width: 36, height: 36, borderRadius: 8,
-            background: `linear-gradient(135deg, ${B.sand}, ${B.sky})`,
-            display: "flex", alignItems: "center", justifyContent: "center",
-            fontWeight: 700, color: B.navy, fontSize: 16, flexShrink: 0,
-          }}>A</div>
-          {!collapsed && <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontSize: 18, fontWeight: 700, whiteSpace: "nowrap" }}>Atolon OS</div>}
+          {collapsed
+            ? <img src="/favicon-blue.png" alt="Atolon" style={{ width: 36, height: 36, objectFit: "contain", flexShrink: 0 }} />
+            : <img src="/atolon-logo-white.png" alt="Atolon Beach Club" style={{ height: 36, objectFit: "contain", flexShrink: 0 }} />
+          }
         </div>
         <div style={{ flex: 1, overflowY: "auto", padding: "12px 8px" }}>
           {NAV.map(n => {
