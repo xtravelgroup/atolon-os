@@ -170,13 +170,18 @@ function PasajerosModal({ reserva, onClose, onSaved, autoCheckin = false }) {
 }
 
 // ─── Zarpe PDF (new window) ───────────────────────────────────────────────────
-function generarZarpe(salida, reservas, fecha, despacho) {
+function generarZarpe(salida, reservas, fecha, despacho, embarcacionesFlota = []) {
   // Group reservas by embarcacion_asignada
   const groups = {};
   reservas.forEach(r => {
     const key = r.embarcacion_asignada || "Sin embarcación asignada";
     if (!groups[key]) groups[key] = [];
     groups[key].push(r);
+  });
+  // Attach fleet data to first item of each group for the header block
+  Object.entries(groups).forEach(([bote, resGroup]) => {
+    const embObj = embarcacionesFlota.find(e => e.nombre === bote) || {};
+    resGroup[0]._embarcacionObj = embObj;
   });
   const groupEntries = Object.entries(groups);
   const multipleBoats = groupEntries.length > 1 || (groupEntries.length === 1 && groupEntries[0][0] !== "Sin embarcación asignada");
@@ -198,9 +203,31 @@ function generarZarpe(salida, reservas, fecha, despacho) {
           <td style="font-weight:600">${p.nombre || "—"}</td>
           <td>${p.identificacion || "—"}</td>
           <td>${p.nacionalidad || "—"}</td>
-          <td style="text-align:center">☐</td>
         </tr>`).join("");
     return groupHeader + rows;
+  }).join("");
+
+  // Build per-boat embarcacion info block for header
+  const boteInfoBlocks = groupEntries.map(([bote, resGroup]) => {
+    const emb = resGroup[0]?._embarcacionObj || {};
+    return `
+      <div style="background:#f4f6fb;border:1px solid #d0d8ee;border-radius:8px;padding:12px 16px;margin-bottom:10px;">
+        <div style="font-weight:700;font-size:13px;color:#1E3566;margin-bottom:8px;">🚢 ${bote}</div>
+        <table style="width:100%;font-size:11px;border-collapse:collapse;">
+          <tr>
+            <td style="padding:3px 8px 3px 0;color:#555;width:110px;">Matrícula:</td>
+            <td style="padding:3px 0;font-weight:600;">${emb.matricula || "_______________"}</td>
+            <td style="padding:3px 8px 3px 16px;color:#555;width:90px;">Piloto:</td>
+            <td style="padding:3px 0;font-weight:600;">${emb.capitan || "_______________"}</td>
+          </tr>
+          <tr>
+            <td style="padding:3px 8px 3px 0;color:#555;">Cédula piloto:</td>
+            <td style="padding:3px 0;font-weight:600;">${emb.piloto_cedula || "_______________"}</td>
+            <td style="padding:3px 8px 3px 16px;color:#555;">Celular piloto:</td>
+            <td style="padding:3px 0;font-weight:600;">${emb.piloto_celular || "_______________"}</td>
+          </tr>
+        </table>
+      </div>`;
   }).join("");
 
   const html = `<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8">
@@ -209,16 +236,14 @@ function generarZarpe(salida, reservas, fecha, despacho) {
       * { box-sizing: border-box; margin: 0; padding: 0; }
       body { font-family: Arial, sans-serif; padding: 28px 36px; color: #111; font-size: 12px; }
       h1 { font-size: 20px; color: #1E3566; }
-      .header { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #1E3566; padding-bottom: 14px; margin-bottom: 18px; }
-      .meta { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px 24px; margin-bottom: 18px; }
+      .header { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #1E3566; padding-bottom: 14px; margin-bottom: 14px; }
+      .meta { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px 24px; margin-bottom: 14px; }
       .meta div { padding: 3px 0; border-bottom: 1px solid #eee; }
       .codigo { font-size: 16px; font-weight: 900; color: #1E3566; letter-spacing: 2px; }
       table { width: 100%; border-collapse: collapse; }
       th { background: #1E3566; color: white; padding: 8px; text-align: left; font-size: 11px; }
       td { padding: 7px 8px; border-bottom: 1px solid #eee; }
       tr:nth-child(even):not([style]) { background: #f9f9f9; }
-      .firmas { margin-top: 36px; display: grid; grid-template-columns: 1fr 1fr; gap: 50px; font-size: 11px; color: #666; }
-      .firma { border-top: 1px solid #999; padding-top: 6px; text-align: center; }
       .footer { margin-top: 16px; font-size: 10px; color: #aaa; text-align: center; }
       @media print { @page { margin: 1cm; } }
     </style>
@@ -226,7 +251,7 @@ function generarZarpe(salida, reservas, fecha, despacho) {
     <div class="header">
       <div>
         <h1>ZARPE DE PASAJEROS</h1>
-        <div style="color:#666;margin-top:4px">Atolon Beach Club — Muelle Cartagena</div>
+        <div style="color:#666;margin-top:4px">Atolon Beach Club</div>
       </div>
       <div style="text-align:right">
         ${despacho?.zarpe_codigo ? `<div style="margin-bottom:4px;font-size:11px;color:#666">CÓDIGO ZARPE</div><div class="codigo">${despacho.zarpe_codigo}</div>` : `<div style="color:#aaa;font-size:11px">Pendiente código zarpe</div>`}
@@ -234,25 +259,22 @@ function generarZarpe(salida, reservas, fecha, despacho) {
     </div>
     <div class="meta">
       <div><b>Fecha:</b> ${new Date(fecha + "T12:00:00").toLocaleDateString("es-CO", { weekday:"long", day:"numeric", month:"long", year:"numeric" })}</div>
-      <div><b>Salida:</b> ${salida.nombre} — ${salida.hora}</div>
-      <div><b>Regreso:</b> ${salida.hora_regreso}</div>
+      <div><b>Hora salida:</b> ${salida.hora} &nbsp;·&nbsp; Regreso ${salida.hora_regreso}</div>
       <div><b>Total pasajeros:</b> ${totalPax}</div>
+      <div><b>Salida:</b> Muelle de La Bodeguita</div>
+      <div><b>Destino:</b> Tierra Bomba</div>
       <div><b>Generado:</b> ${new Date().toLocaleString("es-CO")}</div>
     </div>
+    ${boteInfoBlocks}
     <table>
       <thead><tr>
         <th style="width:5%">#</th>
-        <th style="width:38%">Nombre Completo</th>
-        <th style="width:27%">No. Identificación</th>
-        <th style="width:20%">Nacionalidad</th>
-        <th style="width:10%;text-align:center">Check-in</th>
+        <th style="width:42%">Nombre Completo</th>
+        <th style="width:30%">No. Identificación</th>
+        <th style="width:23%">Nacionalidad</th>
       </tr></thead>
       <tbody>${bodyRows}</tbody>
     </table>
-    <div class="firmas">
-      <div class="firma">Capitán / Responsable embarcación</div>
-      <div class="firma">Firma Capitanía de Puerto</div>
-    </div>
     <div class="footer">Atolon Beach Club — ${new Date().toLocaleString("es-CO")}</div>
   </body></html>`;
 
@@ -447,7 +469,7 @@ export default function CheckIn() {
                     )}
                   </div>
                 </div>
-                <button onClick={() => generarZarpe(salida, resDesal, fecha, despacho)}
+                <button onClick={() => generarZarpe(salida, resDesal, fecha, despacho, embarcaciones)}
                   style={{ padding: "8px 12px", borderRadius: 8, background: B.navyLight, color: B.white, border: "none", fontSize: 12, fontWeight: 600, cursor: "pointer", flexShrink: 0 }}>
                   📄 Zarpe
                 </button>
