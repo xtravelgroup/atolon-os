@@ -77,6 +77,7 @@ function NuevaReserva({ agencia, user, onCreated, vistaPrecios = "ambos" }) {
   const [showPagoModal, setShowPagoModal] = useState(false);
   const [showTransferModal, setShowTransferModal] = useState(false);
   const [linkPago, setLinkPago] = useState("");
+  const [pagoAbierto, setPagoAbierto] = useState(null); // { tipo:"wompi"|"cliente_paga", url, total }
   const [uploadingComp, setUploadingComp] = useState(false);
   const [cuentaBancaria, setCuentaBancaria] = useState(null);
   const [premiosDisponibles, setPremiosDisponibles] = useState([]); // [{incentivo, saldo}]
@@ -286,11 +287,11 @@ function NuevaReserva({ agencia, user, onCreated, vistaPrecios = "ambos" }) {
     // ── Post-save: acción según método ──────────────────────────────────
     if (esClientePaga) {
       setLinkPago(linkGenerado);
+      setPagoAbierto({ tipo: "cliente_paga", url: linkGenerado, total: totalFinal });
     } else if (esWompi) {
       const wompiUrl = await wompiCheckoutUrl({ referencia: reservaId, totalCOP: totalFinal, email: form.contacto?.includes("@") ? form.contacto : "" });
-      const win = window.open(wompiUrl, "wompi_checkout", "width=560,height=760,left=200,top=60");
-      if (!win) setLinkPago(wompiUrl);
-      else { setMsg(`Checkout Wompi abierto — ${COP(totalFinal)}`); setTimeout(() => setMsg(""), 6000); }
+      window.open(wompiUrl, "_blank");
+      setPagoAbierto({ tipo: "wompi", url: wompiUrl, total: totalFinal });
     } else if (esTransfComp) {
       setMsg(`✅ Comprobante recibido — Reserva confirmada ${COP(totalFinal)}`);
       setTimeout(() => setMsg(""), 6000);
@@ -314,8 +315,12 @@ function NuevaReserva({ agencia, user, onCreated, vistaPrecios = "ambos" }) {
       setTimeout(() => setMsg(""), 6000);
     }
 
-    setForm({ tipo: "", fecha: "", salida_id: "", nombre: "", contacto: "", pax: 1, pax_a: 1, pax_n: 0, notas: "" });
-    setStep(1); setSaving(false); onCreated();
+    // Para pagos externos (wompi/clientePaga) NO resetear el form — el agente puede volver
+    if (!esWompi && !esClientePaga) {
+      setForm({ tipo: "", fecha: "", salida_id: "", nombre: "", contacto: "", pax: 1, pax_a: 1, pax_n: 0, notas: "" });
+      setStep(1);
+    }
+    setSaving(false); onCreated();
   };
 
   // ── Upload comprobante de transferencia ──────────────────────────────────
@@ -691,31 +696,52 @@ function NuevaReserva({ agencia, user, onCreated, vistaPrecios = "ambos" }) {
         </div>
       )}
 
-      {/* ── MODAL LINK DE PAGO (Cliente Paga) ── */}
-      {linkPago && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 999 }}>
-          <div style={{ background: B.navyMid, borderRadius: 20, padding: 36, width: 460, textAlign: "center", boxShadow: "0 20px 60px rgba(0,0,0,0.6)" }}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 12, marginBottom: 12 }}>
-              <div style={{ width: 48, height: 48, borderRadius: 12, background: "#5B4CF5", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22, fontWeight: 900, color: "#fff" }}>W</div>
-              <h3 style={{ fontFamily: "'Barlow Condensed', sans-serif", fontSize: 26, color: B.success }}>Link de pago generado</h3>
-            </div>
-            <p style={{ fontSize: 13, color: "rgba(255,255,255,0.5)", marginBottom: 24 }}>Envía este link al cliente por WhatsApp o email para que pague con Wompi</p>
+      {/* ── MODAL PAGO ABIERTO (Wompi o Cliente Paga) ── */}
+      {pagoAbierto && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.75)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 999, padding: 16 }}>
+          <div style={{ background: B.navyMid, borderRadius: 20, padding: 32, width: "100%", maxWidth: 460, textAlign: "center", boxShadow: "0 20px 60px rgba(0,0,0,0.6)" }}>
 
-            <div style={{ background: B.navy, borderRadius: 10, padding: "14px 16px", marginBottom: 16, display: "flex", alignItems: "center", gap: 10 }}>
-              <div style={{ flex: 1, fontSize: 13, color: B.sky, wordBreak: "break-all", textAlign: "left" }}>{linkPago}</div>
-              <button onClick={() => { navigator.clipboard.writeText(linkPago); }} style={{ background: B.sky, color: B.navy, border: "none", borderRadius: 6, padding: "8px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>Copiar</button>
-            </div>
+            {pagoAbierto.tipo === "wompi" ? (
+              <>
+                <div style={{ width: 56, height: 56, borderRadius: 14, background: "#5B4CF5", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 14px", fontSize: 26, fontWeight: 900, color: "#fff" }}>W</div>
+                <h3 style={{ fontFamily: "'Barlow Condensed', sans-serif", fontSize: 24, marginBottom: 6 }}>Checkout Wompi abierto</h3>
+                <p style={{ fontSize: 13, color: "rgba(255,255,255,0.45)", marginBottom: 20, lineHeight: 1.6 }}>
+                  Se abrió una nueva pestaña con el checkout de Wompi por <strong style={{ color: B.white }}>{COP(pagoAbierto.total)}</strong>.<br />Completa el pago allá y vuelve aquí.
+                </p>
+                <button onClick={() => window.open(pagoAbierto.url, "_blank")}
+                  style={{ width: "100%", padding: "13px", background: "#5B4CF5", color: "#fff", border: "none", borderRadius: 10, fontWeight: 700, fontSize: 14, cursor: "pointer", marginBottom: 10 }}>
+                  🔁 Volver a abrir Wompi
+                </button>
+              </>
+            ) : (
+              <>
+                <div style={{ width: 56, height: 56, borderRadius: 14, background: B.sky, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 14px", fontSize: 24 }}>🔗</div>
+                <h3 style={{ fontFamily: "'Barlow Condensed', sans-serif", fontSize: 24, marginBottom: 6 }}>Link de pago generado</h3>
+                <p style={{ fontSize: 13, color: "rgba(255,255,255,0.45)", marginBottom: 16, lineHeight: 1.6 }}>
+                  Envía este link al cliente — tiene <strong style={{ color: B.warning }}>15 minutos</strong> para pagar<br/>{COP(pagoAbierto.total)}
+                </p>
+                <div style={{ background: B.navy, borderRadius: 10, padding: "12px 14px", marginBottom: 12, display: "flex", alignItems: "center", gap: 10 }}>
+                  <div style={{ flex: 1, fontSize: 12, color: B.sky, wordBreak: "break-all", textAlign: "left" }}>{pagoAbierto.url}</div>
+                  <button onClick={() => navigator.clipboard.writeText(pagoAbierto.url)}
+                    style={{ background: B.sky, color: B.navy, border: "none", borderRadius: 6, padding: "7px 12px", fontSize: 11, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>Copiar</button>
+                </div>
+                <a href={`https://wa.me/?text=${encodeURIComponent(`Hola! Aquí está tu link de pago para el pasadía en Atolon Beach Club 🌊\n\n${pagoAbierto.url}`)}`}
+                  target="_blank" rel="noreferrer"
+                  style={{ display: "block", width: "100%", padding: "12px", background: "#25D366", color: "#fff", borderRadius: 10, fontWeight: 700, fontSize: 14, textDecoration: "none", marginBottom: 10 }}>
+                  📱 Compartir por WhatsApp
+                </a>
+              </>
+            )}
 
-            <div style={{ background: B.warning + "15", borderRadius: 10, padding: "12px 16px", marginBottom: 16, fontSize: 13, color: B.warning }}>
-              ⏱ El cliente tiene <strong>15 minutos</strong> para completar el pago · {COP(precioPublico * totalPax)}
-            </div>
-
-            <a href={`https://wa.me/?text=${encodeURIComponent(`Hola! Aquí está tu link de pago para el pasadía en Atolon Beach Club 🌊\n\n${linkPago}`)}`}
-              target="_blank" rel="noreferrer"
-              style={{ display: "block", width: "100%", padding: "13px", background: "#25D366", color: "#fff", border: "none", borderRadius: 8, fontWeight: 700, fontSize: 14, cursor: "pointer", textAlign: "center", textDecoration: "none", marginBottom: 10 }}>
-              📱 Compartir por WhatsApp
-            </a>
-            <button onClick={() => setLinkPago("")} style={{ width: "100%", padding: "12px", background: "none", border: `1px solid ${B.navyLight}`, borderRadius: 8, color: "rgba(255,255,255,0.5)", fontSize: 13, cursor: "pointer" }}>Cerrar</button>
+            {/* Botón volver al carrito */}
+            <button onClick={() => { setPagoAbierto(null); setLinkPago(""); setShowPagoModal(true); }}
+              style={{ width: "100%", padding: "12px", background: "none", border: `1px solid ${B.navyLight}`, borderRadius: 10, color: B.sand, fontSize: 13, fontWeight: 600, cursor: "pointer", marginBottom: 8 }}>
+              ← Usar otro método de pago
+            </button>
+            <button onClick={() => { setPagoAbierto(null); setLinkPago(""); setForm({ tipo: "", fecha: "", salida_id: "", nombre: "", contacto: "", pax: 1, pax_a: 1, pax_n: 0, notas: "" }); setStep(1); }}
+              style={{ width: "100%", padding: "10px", background: "none", border: "none", color: "rgba(255,255,255,0.3)", fontSize: 12, cursor: "pointer" }}>
+              ✓ Pago completado — Cerrar
+            </button>
           </div>
         </div>
       )}
