@@ -77,6 +77,7 @@ const PRODUCTS = [
     slug:         "after-island",
     pasadiaId:    "PAS-AFT",
     tipo:         "After Island",
+    noSalida:     true,  // no departure time — asks for vessel name + arrival time
     precio:       170000,  // adultos público
     precioNeto:   170000,
     precioNino:   120000,  // niños público
@@ -146,6 +147,8 @@ export default function BookingPopup() {
   const [salidas,     setSalidas]     = useState([]); // all active salidas
   const [selSalida,   setSelSalida]   = useState(null); // selected salida object
   const [disponSal,   setDisponSal]   = useState({}); // salida_id → spots remaining for selDate
+  const [embarcacion, setEmbarcacion] = useState(""); // After Island: vessel name
+  const [horaLlegada, setHoraLlegada] = useState(""); // After Island: estimated arrival time
   const [loadingSal,  setLoadingSal]  = useState(false);
   const [fotoPrincipal, setFotoPrincipal] = useState("");
   const [fotosExtra,    setFotosExtra]    = useState([]);
@@ -385,6 +388,8 @@ export default function BookingPopup() {
         link_pago:      payUrl,
         link_expira_at: linkExpira,
         notas:          [
+          embarcacion ? `Embarcación: ${embarcacion}` : null,
+          horaLlegada ? `Llegada estimada: ${horaLlegada}` : null,
           paxI > 0 ? `Infants: ${paxI}` : null,
           selUpsells.length > 0 ? `Extras: ${selUpsells.map(u => u.nombre).join(", ")}` : null,
           form.notas || null,
@@ -655,8 +660,41 @@ export default function BookingPopup() {
           </div>
         )}
 
+        {/* After Island — vessel name + arrival time instead of salida */}
+        {product?.noSalida && !grupoLock && selDate && (
+          <div style={{ marginBottom: 24 }}>
+            <h3 style={{ fontSize: 15, fontWeight: 700, color: C.text, marginBottom: 12 }}>
+              {isEN ? "Vessel details" : "Detalles de la embarcación"}
+            </h3>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              <div>
+                <label style={{ fontSize: 12, color: C.textMid, display: "block", marginBottom: 5 }}>
+                  {isEN ? "Vessel / boat name" : "Nombre de la embarcación"}
+                </label>
+                <input
+                  value={embarcacion}
+                  onChange={e => setEmbarcacion(e.target.value)}
+                  placeholder={isEN ? "e.g. Sea Breeze" : "Ej: Sea Breeze"}
+                  style={{ width: "100%", padding: "11px 14px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 14, color: C.text, background: C.bg, outline: "none", boxSizing: "border-box" }}
+                />
+              </div>
+              <div>
+                <label style={{ fontSize: 12, color: C.textMid, display: "block", marginBottom: 5 }}>
+                  {isEN ? "Estimated arrival time" : "Hora aproximada de llegada"}
+                </label>
+                <input
+                  type="time"
+                  value={horaLlegada}
+                  onChange={e => setHoraLlegada(e.target.value)}
+                  style={{ width: "100%", padding: "11px 14px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 14, color: C.text, background: C.bg, outline: "none", boxSizing: "border-box" }}
+                />
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Salidas (departure times) — regular mode */}
-        {!grupoLock && selDate && (
+        {!grupoLock && !product?.noSalida && selDate && (
           <div style={{ marginBottom: 24 }}>
             <h3 style={{ fontSize: 15, fontWeight: 700, color: C.text, marginBottom: 12 }}>
               {isEN ? "Select departure time" : "Selecciona el horario de salida"}
@@ -749,7 +787,8 @@ export default function BookingPopup() {
 
         {/* CTA button */}
         {(() => {
-          const ready = selDate && (selSalida || grupoLock) && paxA >= product.minA;
+          const afterOk = product.noSalida ? (embarcacion.trim() && horaLlegada) : true;
+          const ready = selDate && (selSalida || grupoLock || product.noSalida) && paxA >= product.minA && afterOk;
           return (
             <>
               <button
