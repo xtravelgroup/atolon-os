@@ -1795,9 +1795,9 @@ function FichaAliado({ aliado, onBack, onRefresh }) {
 
   const resetPin = async (user) => {
     setResetPinId(user.id);
-    const pin = String(Math.floor(100000 + Math.random() * 900000));
-    await supabase.from("b2b_usuarios").update({ pin }).eq("id", user.id);
-    setNewPin({ userId: user.id, pin });
+    const clave = String(Math.floor(100000 + Math.random() * 900000));
+    await supabase.from("b2b_usuarios").update({ clave }).eq("id", user.id);
+    setNewPin({ userId: user.id, clave });
     setResetPinId(null);
     fetchB2bUsers();
   };
@@ -1843,7 +1843,7 @@ function FichaAliado({ aliado, onBack, onRefresh }) {
       nombre: newUserForm.nombre,
       email: newUserForm.email.toLowerCase(),
       rol: newUserForm.rol,
-      pin: newUserForm.clave || null,
+      clave: newUserForm.clave || null,
       activo: true,
     });
     setSavingUser(false);
@@ -2311,14 +2311,14 @@ function FichaAliado({ aliado, onBack, onRefresh }) {
                   <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
                     <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 8, background: B.sky + "22", color: B.sky }}>{u.rol || "vendedor"}</span>
                     <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 8, background: u.activo ? B.success + "22" : B.danger + "22", color: u.activo ? B.success : B.danger }}>{u.activo ? "Activo" : "Inactivo"}</span>
-                    {u.pin && <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 8, background: "rgba(255,255,255,0.08)", color: "rgba(255,255,255,0.4)" }}>Clave configurada</span>}
+                    {u.clave && <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 8, background: "rgba(255,255,255,0.08)", color: "rgba(255,255,255,0.4)" }}>Clave configurada</span>}
                   </div>
                   {/* Mostrar nueva clave recién generada */}
                   {newPin?.userId === u.id && (
                     <div style={{ marginTop: 8, padding: "8px 12px", borderRadius: 8, background: B.success + "18", border: `1px solid ${B.success}33`, display: "flex", alignItems: "center", gap: 10 }}>
                       <span style={{ fontSize: 12, color: B.success }}>✓ Nueva clave: </span>
-                      <strong style={{ fontSize: 16, letterSpacing: 4, color: B.white }}>{newPin.pin}</strong>
-                      <button onClick={() => { navigator.clipboard.writeText(newPin.pin); }}
+                      <strong style={{ fontSize: 16, letterSpacing: 4, color: B.white }}>{newPin.clave}</strong>
+                      <button onClick={() => { navigator.clipboard.writeText(newPin.clave); }}
                         style={{ background: "none", border: "none", color: B.sky, fontSize: 11, cursor: "pointer" }}>Copiar</button>
                       <button onClick={() => setNewPin(null)}
                         style={{ background: "none", border: "none", color: "rgba(255,255,255,0.3)", fontSize: 12, cursor: "pointer" }}>✕</button>

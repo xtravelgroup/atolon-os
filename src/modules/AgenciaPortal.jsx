@@ -35,7 +35,7 @@ function LoginScreen({ onLogin }) {
     if (err || !data) { setError("Email no encontrado o usuario inactivo"); setLoading(false); return; }
     if (data.aliados_b2b?.estado !== "activo") { setError("La agencia no esta activa"); setLoading(false); return; }
     // Verificar clave si el usuario tiene una configurada
-    if (data.pin && pin.trim() !== data.pin) { setError("Clave incorrecta"); setLoading(false); return; }
+    if (data.clave && pin.trim() !== data.clave) { setError("Clave incorrecta"); setLoading(false); return; }
     onLogin({ user: data, agencia: data.aliados_b2b });
   };
 
@@ -2253,7 +2253,7 @@ function SetPasswordScreen({ user, onDone }) {
     if (clave.length < 6)    { setError("La clave debe tener mínimo 6 caracteres"); return; }
     if (clave !== clave2)    { setError("Las claves no coinciden"); return; }
     setSaving(true);
-    const { error: err } = await supabase.from("b2b_usuarios").update({ pin: clave }).eq("id", user.id);
+    const { error: err } = await supabase.from("b2b_usuarios").update({ clave: clave }).eq("id", user.id);
     if (err) { setError("Error al guardar. Intenta de nuevo."); setSaving(false); return; }
     setSaving(false);
     onDone(clave);
@@ -2351,10 +2351,10 @@ export default function AgenciaPortal() {
   if (!session) return <LoginScreen onLogin={setSession} />;
 
   // Primera vez sin clave → forzar creación de clave
-  if (!session.user.pin) return (
+  if (!session.user.clave) return (
     <SetPasswordScreen
       user={session.user}
-      onDone={(nuevaClave) => setSession(prev => ({ ...prev, user: { ...prev.user, pin: nuevaClave } }))}
+      onDone={(nuevaClave) => setSession(prev => ({ ...prev, user: { ...prev.user, clave: nuevaClave } }))}
     />
   );
 
