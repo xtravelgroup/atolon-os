@@ -825,6 +825,16 @@ function HistorialReservas({ agencia, vendedorId }) {
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(null); // reserva id being uploaded
   const [expandedId, setExpandedId] = useState(null);
+  const [openingWompi, setOpeningWompi] = useState(null); // reserva id
+
+  const pagarConWompi = async (r) => {
+    setOpeningWompi(r.id);
+    const url = await wompiCheckoutUrl({ referencia: r.id, totalCOP: r.total, email: r.contacto?.includes("@") ? r.contacto : "" });
+    await supabase.from("reservas").update({ forma_pago: "wompi", link_pago: url }).eq("id", r.id);
+    window.open(url, "_blank");
+    setOpeningWompi(null);
+    fetchR();
+  };
 
   const fetchR = useCallback(async () => {
     if (!supabase) return;
@@ -950,6 +960,33 @@ function HistorialReservas({ agencia, vendedorId }) {
                           style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "8px 14px", background: B.success + "22", color: B.success, borderRadius: 8, fontSize: 13, textDecoration: "none", fontWeight: 600 }}>
                           📎 Ver comprobante
                         </a>
+                      </div>
+                    )}
+
+                    {/* BOTONES PAGO — solo si está pendiente_pago */}
+                    {isPendPago && (
+                      <div style={{ marginBottom: 14 }}>
+                        <div style={{ fontSize: 11, color: B.sand, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 10 }}>Completar pago</div>
+                        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                          {/* Wompi */}
+                          <button onClick={() => pagarConWompi(r)} disabled={openingWompi === r.id}
+                            style={{ flex: "1 1 140px", padding: "14px 12px", borderRadius: 12, border: "2px solid #5B4CF5", background: openingWompi === r.id ? "#5B4CF533" : "#5B4CF511", color: "#fff", cursor: "pointer", textAlign: "center" }}>
+                            <div style={{ width: 32, height: 32, borderRadius: 8, background: "#5B4CF5", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 8px", fontSize: 16, fontWeight: 900, color: "#fff" }}>W</div>
+                            <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 2 }}>{openingWompi === r.id ? "Abriendo..." : "Pagar con Wompi"}</div>
+                            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.45)" }}>Tarjeta débito / crédito</div>
+                          </button>
+                          {/* Transferencia */}
+                          <label style={{ flex: "1 1 140px", padding: "14px 12px", borderRadius: 12, border: `2px solid ${B.warning}66`, background: B.warning + "11", color: "#fff", cursor: "pointer", textAlign: "center", display: "block" }}>
+                            <div style={{ fontSize: 28, marginBottom: 8 }}>🏦</div>
+                            <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 2 }}>
+                              {uploading === r.id ? "Subiendo..." : "Transferencia"}
+                            </div>
+                            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.45)" }}>Sube tu comprobante</div>
+                            <input type="file" accept="image/*,.pdf" style={{ display: "none" }}
+                              disabled={uploading === r.id}
+                              onChange={e => e.target.files[0] && handleComprobanteUpload(r, e.target.files[0])} />
+                          </label>
+                        </div>
                       </div>
                     )}
 
