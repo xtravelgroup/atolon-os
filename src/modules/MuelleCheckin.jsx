@@ -28,6 +28,40 @@ function ModalNuevaLlegada({ tipo, fecha, reserva, onClose, onSaved }) {
   const esRest   = tipo === "restaurante";
   const esLancha = tipo === "lancha_atolon";
 
+  // Paso 0 solo para lanchas: seleccionar salida o manual
+  const [paso, setPaso]       = useState(esLancha ? 0 : 1);
+  const [salidas, setSalidas] = useState([]);
+  const [salidaInfo, setSalidaInfo] = useState(null); // { nombre, pax_a_esperado, pax_n_esperado }
+
+  useEffect(() => {
+    if (!esLancha || !supabase) return;
+    // Traer salidas activas con sus reservas del día para calcular pax esperados
+    Promise.all([
+      supabase.from("salidas").select("*").eq("activo", true).order("hora"),
+      supabase.from("reservas").select("pax, pax_a, pax_n, salida_id, estado")
+        .eq("fecha", fecha).neq("estado", "cancelado"),
+    ]).then(([{ data: sals }, { data: res }]) => {
+      const reservaMap = {};
+      (res || []).forEach(r => {
+        if (!reservaMap[r.salida_id]) reservaMap[r.salida_id] = { pax_a: 0, pax_n: 0 };
+        reservaMap[r.salida_id].pax_a += Number(r.pax_a || r.pax || 1);
+        reservaMap[r.salida_id].pax_n += Number(r.pax_n || 0);
+      });
+      setSalidas((sals || []).map(s => ({ ...s, _pax_a: reservaMap[s.id]?.pax_a || 0, _pax_n: reservaMap[s.id]?.pax_n || 0 })));
+    });
+  }, [esLancha, fecha]);
+
+  const seleccionarSalida = (sal) => {
+    setSalidaInfo(sal);
+    setF(p => ({
+      ...p,
+      embarcacion_nombre: sal.nombre,
+      pax_a: sal._pax_a || 1,
+      pax_n: sal._pax_n || 0,
+    }));
+    setPaso(1);
+  };
+
   const [f, setF] = useState({
     embarcacion_nombre: reserva?.embarcacion_asignada || "",
     matricula: "",
@@ -116,11 +150,68 @@ function ModalNuevaLlegada({ tipo, fecha, reserva, onClose, onSaved }) {
 
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
           <div>
-            <div style={{ fontSize: 18, fontWeight: 800 }}>{tipoIcon} Registrar Llegada</div>
+            <div style={{ fontSize: 18, fontWeight: 800 }}>{tipoIcon} {paso === 0 ? "¿Cuál lancha llegó?" : "Registrar Llegada"}</div>
             <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginTop: 3 }}>{tipoLabel}{reserva ? ` — ${reserva.nombre}` : ""}</div>
           </div>
           <button onClick={onClose} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.3)", fontSize: 20, cursor: "pointer" }}>✕</button>
         </div>
+
+        {/* ── PASO 0: Seleccionar salida (solo Lanchas Atolon) ── */}
+        {paso === 0 && (
+          <div>
+            <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginBottom: 14 }}>
+              Selecciona la embarcación que salió de la bodeguita, o regístrala manualmente.
+            </div>
+
+            {salidas.length === 0 && (
+              <div style={{ fontSize: 13, color: "rgba(255,255,255,0.3)", textAlign: "center", padding: "20px 0" }}>
+                Cargando salidas...
+              </div>
+            )}
+
+            <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 16 }}>
+              {salidas.map(sal => (
+                <button key={sal.id} onClick={() => seleccionarSalida(sal)}
+                  style={{ padding: "14px 18px", borderRadius: 12, border: `2px solid ${B.sky}33`, background: B.navy, color: "#fff", cursor: "pointer", textAlign: "left", display: "flex", alignItems: "center", gap: 14 }}>
+                  <span style={{ fontSize: 26 }}>⛵</span>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontWeight: 700, fontSize: 15 }}>{sal.nombre}</div>
+                    <div style={{ fontSize: 12, color: "rgba(255,255,255,0.45)", marginTop: 3, display: "flex", gap: 12, flexWrap: "wrap" }}>
+                      {sal.hora && <span>🕐 Salió {fmtHora(sal.hora)}</span>}
+                      {(sal._pax_a + sal._pax_n) > 0 && (
+                        <span>👥 {sal._pax_a + sal._pax_n} pax{sal._pax_n > 0 ? ` (${sal._pax_a}A + ${sal._pax_n}N)` : ""}</span>
+                      )}
+                    </div>
+                  </div>
+                  <span style={{ fontSize: 12, color: B.sky, fontWeight: 600 }}>Seleccionar →</span>
+                </button>
+              ))}
+            </div>
+
+            <button onClick={() => { setF(p => ({ ...p, embarcacion_nombre: "" })); setPaso(1); }}
+              style={{ width: "100%", padding: "12px", borderRadius: 10, border: `1px solid rgba(255,255,255,0.15)`, background: "none", color: "rgba(255,255,255,0.5)", fontSize: 13, cursor: "pointer" }}>
+              ✏️ Agregar manualmente
+            </button>
+          </div>
+        )}
+
+        {/* ── PASO 1: Formulario ── */}
+        {paso === 1 && (
+        <div>
+          {/* Info de salida seleccionada */}
+          {esLancha && salidaInfo && (
+            <div style={{ background: B.sky + "15", border: `1px solid ${B.sky}33`, borderRadius: 10, padding: "10px 14px", marginBottom: 16, display: "flex", alignItems: "center", gap: 10 }}>
+              <span style={{ fontSize: 20 }}>⛵</span>
+              <div style={{ flex: 1, fontSize: 13 }}>
+                <strong>{salidaInfo.nombre}</strong>
+                {salidaInfo.hora && <span style={{ color: "rgba(255,255,255,0.5)", marginLeft: 8 }}>salió {fmtHora(salidaInfo.hora)}</span>}
+              </div>
+              <button onClick={() => setPaso(0)} style={{ background: "none", border: "none", color: B.sky, fontSize: 12, cursor: "pointer", fontWeight: 600 }}>← Cambiar</button>
+            </div>
+          )}
+          {esLancha && !salidaInfo && (
+            <button onClick={() => setPaso(0)} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.4)", fontSize: 12, cursor: "pointer", marginBottom: 14, padding: 0 }}>← Ver lanchas programadas</button>
+          )}
 
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 16px" }}>
           <div style={{ gridColumn: "1 / -1", marginBottom: 14 }}>
@@ -198,6 +289,8 @@ function ModalNuevaLlegada({ tipo, fecha, reserva, onClose, onSaved }) {
             {uploadingFoto ? "Subiendo foto..." : saving ? "Registrando..." : "⚓ Registrar Llegada"}
           </button>
         </div>
+        </div>
+        )}
       </div>
     </div>
   );
