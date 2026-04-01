@@ -22,6 +22,7 @@ const NAV = [
   { key: "requisiciones", label: "Requisiciones", icon: "\u2706" },
   { key: "contenido",     label: "Contenido",     icon: "📢" },
   { key: "upsells",       label: "Upsells",       icon: "⬆" },
+  { key: "menus",         label: "Menús",         icon: "🍽️" },
   { key: "configuracion", label: "Configuración", icon: "⚙" },
   { key: "usuarios",      label: "Usuarios",      icon: "👥" },
 ];
