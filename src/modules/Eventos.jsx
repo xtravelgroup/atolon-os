@@ -106,9 +106,17 @@ function EventoModal({ evento, categoria, salidas, aliados, vendedores, onClose,
   const [form, setForm]       = useState(isEdit
     ? { ...evento, pax: String(evento.pax || ""), valor: String(evento.valor || ""), aliado_id: evento.aliado_id || "", vendedor: evento.vendedor || "", salidas_grupo: evento.salidas_grupo || [] }
     : { nombre: "", tipo: tiposOpt[0], fecha: "", pax: "", valor: "", aliado_id: "", vendedor: "", salidas_grupo: [], contacto: "", tel: "", email: "", stage: "Consulta", notas: "", categoria });
-  const [saving,    setSaving]    = useState(false);
-  const [horaInput, setHoraInput] = useState(""); // for custom salida input
+  const [saving,      setSaving]      = useState(false);
+  const [horaInput,   setHoraInput]   = useState("");
+  const [aliadoSearch,setAliadoSearch]= useState("");
+  const [aliadoOpen,  setAliadoOpen]  = useState(false);
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+
+  const aliadoSeleccionado = aliados.find(a => a.id === form.aliado_id);
+  const aliadosFiltrados   = aliados.filter(a =>
+    a.nombre.toLowerCase().includes(aliadoSearch.toLowerCase()) ||
+    a.tipo.toLowerCase().includes(aliadoSearch.toLowerCase())
+  );
 
   // Toggle existing salida on/off in salidas_grupo
   const toggleSalida = (s) => {
@@ -276,13 +284,55 @@ function EventoModal({ evento, categoria, salidas, aliados, vendedores, onClose,
             </div>
           </div>
 
-          {/* Aliado B2B */}
-          <div>
+          {/* Aliado B2B — searchable */}
+          <div style={{ position: "relative" }}>
             <label style={LS}>Aliado B2B (agencia / hotel / comisionista)</label>
-            <select value={form.aliado_id} onChange={e => set("aliado_id", e.target.value)} style={IS}>
-              <option value="">Sin aliado (directo)</option>
-              {aliados.map(a => <option key={a.id} value={a.id}>{a.nombre} — {a.tipo}</option>)}
-            </select>
+            <div
+              onClick={() => { setAliadoOpen(o => !o); setAliadoSearch(""); }}
+              style={{ ...IS, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "space-between", userSelect: "none" }}
+            >
+              <span style={{ color: aliadoSeleccionado ? B.white : "rgba(255,255,255,0.3)" }}>
+                {aliadoSeleccionado ? `${aliadoSeleccionado.nombre} — ${aliadoSeleccionado.tipo}` : "Sin aliado (directo)"}
+              </span>
+              <span style={{ opacity: 0.4 }}>▾</span>
+            </div>
+            {aliadoOpen && (
+              <div style={{
+                position: "absolute", zIndex: 100, top: "100%", left: 0, right: 0,
+                background: B.navyMid, border: `1px solid ${B.navyLight}`, borderRadius: 10,
+                boxShadow: "0 8px 24px #0006", marginTop: 4, overflow: "hidden",
+              }}>
+                <input
+                  autoFocus
+                  value={aliadoSearch}
+                  onChange={e => setAliadoSearch(e.target.value)}
+                  placeholder="Buscar agencia, hotel, comisionista..."
+                  style={{ width: "100%", padding: "10px 14px", background: B.navy, border: "none", borderBottom: `1px solid ${B.navyLight}`, color: B.white, fontSize: 13, outline: "none", boxSizing: "border-box" }}
+                />
+                <div style={{ maxHeight: 220, overflowY: "auto" }}>
+                  <div
+                    onClick={() => { set("aliado_id", ""); setAliadoOpen(false); }}
+                    style={{ padding: "10px 14px", cursor: "pointer", fontSize: 13, color: "rgba(255,255,255,0.4)", borderBottom: `1px solid ${B.navyLight}22` }}
+                    onMouseEnter={e => e.currentTarget.style.background = B.navyLight}
+                    onMouseLeave={e => e.currentTarget.style.background = "transparent"}
+                  >Sin aliado (directo)</div>
+                  {aliadosFiltrados.map(a => (
+                    <div key={a.id}
+                      onClick={() => { set("aliado_id", a.id); setAliadoOpen(false); }}
+                      style={{ padding: "10px 14px", cursor: "pointer", fontSize: 13, borderBottom: `1px solid ${B.navyLight}22` }}
+                      onMouseEnter={e => e.currentTarget.style.background = B.navyLight}
+                      onMouseLeave={e => e.currentTarget.style.background = "transparent"}
+                    >
+                      <span style={{ color: B.white, fontWeight: 600 }}>{a.nombre}</span>
+                      <span style={{ color: "rgba(255,255,255,0.4)", marginLeft: 8, fontSize: 11 }}>{a.tipo}</span>
+                    </div>
+                  ))}
+                  {aliadosFiltrados.length === 0 && (
+                    <div style={{ padding: "12px 14px", color: "rgba(255,255,255,0.3)", fontSize: 13 }}>Sin resultados</div>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Vendedor */}
