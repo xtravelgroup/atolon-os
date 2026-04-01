@@ -6,9 +6,12 @@ const IS = { width: "100%", padding: "10px 14px", borderRadius: 8, background: B
 const LS = { fontSize: 11, color: B.sand, display: "block", marginBottom: 5, textTransform: "uppercase", letterSpacing: "0.06em" };
 
 const BENEFICIOS = {
-  coral:  { pct: 5,  camas: 2, personas: 2, color: "#f87171", label: "Coral Member",  icon: "🪸", desc: "Entry level – acceso base" },
-  reef:   { pct: 8,  camas: 4, personas: 4, color: "#34d399", label: "Reef Member",   icon: "🐚", desc: "Cliente frecuente – upgrades y perks" },
-  ocean:  { pct: 12, camas: 6, personas: 6, color: "#60a5fa", label: "Ocean Member",  icon: "🌊", desc: "Elite – experiencia completa" },
+  coral: { pct: 5,  camas: 2,     personas: 2, color: "#f87171", label: "Coral Member", icon: "🪸", desc: "Entry level – acceso base",
+           embarcacionPropia: false, personasLancha: 2, transporteOcean: null },
+  reef:  { pct: 8,  camas: 4,     personas: 4, color: "#34d399", label: "Reef Member",  icon: "🐚", desc: "Cliente frecuente – upgrades y perks",
+           embarcacionPropia: false, personasLancha: 4, transporteOcean: null },
+  ocean: { pct: 10, camas: "VIP", personas: 6, color: "#60a5fa", label: "Ocean Member", icon: "🌊", desc: "Elite – experiencia completa",
+           embarcacionPropia: true, personasLancha: 6, transporteOcean: 50000 },
 };
 
 const CARD_GRADIENTS = {
@@ -85,9 +88,18 @@ function MembershipCard({ miembro }) {
         </div>
         <div>
           <div style={{ fontSize: 10, opacity: 0.5, textTransform: "uppercase", letterSpacing: 1, marginBottom: 4 }}>BENEFICIOS ACTIVOS</div>
-          <div style={{ fontSize: 13, opacity: 0.8 }}>
-            🛏 {b.camas} camas · 🍽 {b.personas} personas · 💰 {b.pct}% en puntos
-          </div>
+          {miembro.nivel === "ocean" ? (
+            <div style={{ fontSize: 12, opacity: 0.85, lineHeight: 1.9 }}>
+              🛏 Camas VIP ilimitadas<br />
+              🚤 Embarcación propia sin límite de pax<br />
+              ⛵ Lancha Atolon hasta {b.personasLancha} pax · <span style={{ color: b.color }}>$50.000 transporte</span><br />
+              💰 {b.pct}% en puntos (sin imp. ni propina)
+            </div>
+          ) : (
+            <div style={{ fontSize: 13, opacity: 0.8 }}>
+              🛏 {b.camas} camas · 🍽 {b.personas} personas · 💰 {b.pct}% en puntos
+            </div>
+          )}
         </div>
       </div>
     </div>

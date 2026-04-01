@@ -6,9 +6,12 @@ const IS = { width: "100%", padding: "12px 16px", borderRadius: 10, background: 
 const LS = { fontSize: 11, color: B.sand, display: "block", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.08em" };
 
 const BENEFICIOS = {
-  coral: { pct: 5,  camas: 2, personas: 2, color: "#f87171", label: "Coral Member", icon: "🪸", desc: "Entry level – acceso base" },
-  reef:  { pct: 8,  camas: 4, personas: 4, color: "#34d399", label: "Reef Member",  icon: "🐚", desc: "Cliente frecuente – upgrades y perks" },
-  ocean: { pct: 12, camas: 6, personas: 6, color: "#60a5fa", label: "Ocean Member", icon: "🌊", desc: "Elite – experiencia completa" },
+  coral: { pct: 5,  camas: 2,     personas: 2, color: "#f87171", label: "Coral Member", icon: "🪸", desc: "Entry level – acceso base",
+           embarcacionPropia: false, personasLancha: 2, transporteOcean: null },
+  reef:  { pct: 8,  camas: 4,     personas: 4, color: "#34d399", label: "Reef Member",  icon: "🐚", desc: "Cliente frecuente – upgrades y perks",
+           embarcacionPropia: false, personasLancha: 4, transporteOcean: null },
+  ocean: { pct: 10, camas: "VIP", personas: 6, color: "#60a5fa", label: "Ocean Member", icon: "🌊", desc: "Elite – experiencia completa",
+           embarcacionPropia: true, personasLancha: 6, transporteOcean: 50000 },
 };
 
 const CARD_GRADIENTS = {
@@ -68,10 +71,21 @@ function MembershipCard({ miembro, fullWidth = true }) {
           </div>
         </div>
         <div>
-          <div style={{ fontSize: 9, opacity: 0.45, textTransform: "uppercase", letterSpacing: 2, marginBottom: 4 }}>BENEFICIOS ACTIVOS</div>
-          <div style={{ fontSize: 14, opacity: 0.85, lineHeight: 1.7 }}>
-            🛏 {b.camas} camas · 🍽 {b.personas} personas<br />
-            💰 {b.pct}% del consumo en puntos
+          <div style={{ fontSize: 9, opacity: 0.45, textTransform: "uppercase", letterSpacing: 2, marginBottom: 6 }}>BENEFICIOS ACTIVOS</div>
+          <div style={{ fontSize: 13, opacity: 0.85, lineHeight: 1.9 }}>
+            {miembro.nivel === "ocean" ? (
+              <>
+                🛏 Camas VIP ilimitadas<br />
+                🚤 Embarcación propia · sin límite de pax<br />
+                ⛵ Lancha Atolon hasta {b.personasLancha} pax · <span style={{ color: b.color }}>$50.000 transporte</span><br />
+                💰 {b.pct}% en puntos (sin imp. ni propina)
+              </>
+            ) : (
+              <>
+                🛏 {b.camas} camas · 🍽 {b.personas} personas<br />
+                💰 {b.pct}% del consumo en puntos
+              </>
+            )}
           </div>
         </div>
       </div>
@@ -302,63 +316,145 @@ function SubirReciboModal({ miembro, onClose, onSubmitted }) {
 // ══════════════════════════════════════════════════════
 function ReservaModal({ tipo, miembro, onClose, onCreated }) {
   const b = BENEFICIOS[miembro.nivel] || BENEFICIOS.coral;
+  const esOcean = miembro.nivel === "ocean";
+
+  // Para llegada en lancha (Ocean): seleccionar tipo de llegada
+  const [llegadaTipo, setLlegadaTipo] = useState(
+    tipo === "llegada" ? (esOcean ? null : "lancha_atolon") : null
+  );
+
   const [form, setForm] = useState({ fecha: "", hora: "", personas: 1, notas: "" });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
-  const maxPersonas = tipo === "cama_playa" ? b.camas : b.personas;
-  const titulo = tipo === "restaurante" ? "🍽 Reservar Restaurante" : "🛏 Reservar Cama de Playa";
-
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+
+  const maxPersonas = tipo === "cama_playa" ? (esOcean ? 20 : b.camas)
+                    : tipo === "restaurante" ? b.personas
+                    : llegadaTipo === "lancha_atolon" ? b.personasLancha
+                    : 99; // embarcación propia: sin límite real
+
+  const titulo = tipo === "restaurante" ? "🍽 Reservar Restaurante"
+               : tipo === "cama_playa"  ? "🛏 Reservar Cama de Playa"
+               : "⛵ Reservar Llegada";
 
   const handleCreate = async () => {
     if (!form.fecha) { setError("Selecciona una fecha"); return; }
+    if (tipo === "llegada" && !llegadaTipo) { setError("Selecciona cómo llegas"); return; }
     setSaving(true);
+    const tipoFinal = tipo === "llegada"
+      ? (llegadaTipo === "propia" ? "lancha_propia" : "lancha_atolon")
+      : tipo;
     const { error: err } = await supabase.from("vip_reservas").insert({
-      id: uid(), miembro_id: miembro.id, tipo,
+      id: uid(), miembro_id: miembro.id, tipo: tipoFinal,
       fecha: form.fecha, hora: form.hora || null,
-      personas: form.personas, notas: form.notas || null,
+      personas: form.personas,
+      notas: [
+        llegadaTipo === "lancha_atolon" ? `Transporte Atolon: $50,000` : null,
+        form.notas || null,
+      ].filter(Boolean).join(" · ") || null,
     });
     if (err) { setError(err.message); setSaving(false); return; }
-    setSaving(false);
-    onCreated();
-    onClose();
+    setSaving(false); onCreated(); onClose();
   };
 
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.8)", zIndex: 1000, display: "flex", alignItems: "flex-end", justifyContent: "center" }}>
-      <div style={{ background: B.navyMid, borderRadius: "20px 20px 0 0", width: "100%", maxWidth: 560, padding: "28px 24px 40px" }}>
+      <div style={{ background: B.navyMid, borderRadius: "20px 20px 0 0", width: "100%", maxWidth: 560, padding: "28px 24px 40px", maxHeight: "90vh", overflowY: "auto" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
-          <h3 style={{ margin: 0, fontSize: 20, fontFamily: "'Barlow Condensed', sans-serif" }}>{titulo}</h3>
+          <h3 style={{ margin: 0, fontSize: 20, fontWeight: 800 }}>{titulo}</h3>
           <button onClick={onClose} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.5)", fontSize: 24, cursor: "pointer" }}>×</button>
         </div>
-        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-          <div>
-            <label style={LS}>Fecha</label>
-            <input type="date" value={form.fecha} onChange={e => set("fecha", e.target.value)} style={IS} />
+
+        {/* Selección tipo llegada (solo Ocean, solo tipo=llegada) */}
+        {tipo === "llegada" && esOcean && !llegadaTipo && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            <div style={{ fontSize: 13, color: "rgba(255,255,255,0.5)", marginBottom: 4 }}>¿Cómo llegas a Atolon?</div>
+            <button onClick={() => setLlegadaTipo("propia")}
+              style={{ padding: "18px 20px", borderRadius: 14, border: `2px solid ${b.color}44`, background: B.navy, color: "#fff", cursor: "pointer", textAlign: "left" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+                <span style={{ fontSize: 30 }}>🚤</span>
+                <div>
+                  <div style={{ fontWeight: 700, fontSize: 15 }}>Embarcación propia</div>
+                  <div style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", marginTop: 3 }}>Sin límite de personas · Acceso camas VIP · Sin costo de transporte</div>
+                </div>
+              </div>
+            </button>
+            <button onClick={() => setLlegadaTipo("lancha_atolon")}
+              style={{ padding: "18px 20px", borderRadius: 14, border: `2px solid ${B.sky}44`, background: B.navy, color: "#fff", cursor: "pointer", textAlign: "left" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+                <span style={{ fontSize: 30 }}>⛵</span>
+                <div>
+                  <div style={{ fontWeight: 700, fontSize: 15 }}>Lancha de Atolon</div>
+                  <div style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", marginTop: 3 }}>Hasta {b.personasLancha} personas · Solo pagas <strong style={{ color: B.sand }}>$50.000 por transporte</strong></div>
+                </div>
+              </div>
+            </button>
           </div>
-          {tipo === "restaurante" && (
+        )}
+
+        {/* Formulario */}
+        {(tipo !== "llegada" || llegadaTipo) && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+
+            {/* Resumen si es lancha Atolon Ocean */}
+            {tipo === "llegada" && llegadaTipo === "lancha_atolon" && (
+              <div style={{ background: B.sand + "18", border: `1px solid ${B.sand}33`, borderRadius: 10, padding: "12px 16px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: B.sand }}>⛵ Lancha Atolon</div>
+                  <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginTop: 2 }}>Máx. {b.personasLancha} personas</div>
+                </div>
+                <div style={{ textAlign: "right" }}>
+                  <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)" }}>Costo de transporte</div>
+                  <div style={{ fontSize: 18, fontWeight: 800, color: B.sand }}>$50.000</div>
+                </div>
+              </div>
+            )}
+            {tipo === "llegada" && llegadaTipo === "propia" && (
+              <div style={{ background: b.color + "18", border: `1px solid ${b.color}33`, borderRadius: 10, padding: "12px 16px" }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: b.color }}>🚤 Embarcación propia · Sin límite de pax</div>
+                <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginTop: 2 }}>Acceso directo a camas VIP</div>
+              </div>
+            )}
+
+            {/* Cambiar selección */}
+            {tipo === "llegada" && esOcean && (
+              <button onClick={() => setLlegadaTipo(null)} style={{ background: "none", border: "none", color: B.sky, fontSize: 12, cursor: "pointer", textAlign: "left", padding: 0 }}>
+                ← Cambiar tipo de llegada
+              </button>
+            )}
+
             <div>
-              <label style={LS}>Hora</label>
+              <label style={LS}>Fecha</label>
+              <input type="date" value={form.fecha} onChange={e => set("fecha", e.target.value)} style={IS} />
+            </div>
+            <div>
+              <label style={LS}>Hora (opcional)</label>
               <input type="time" value={form.hora} onChange={e => set("hora", e.target.value)} style={IS} />
             </div>
-          )}
-          <div>
-            <label style={LS}>Personas (máx. {maxPersonas})</label>
-            <select value={form.personas} onChange={e => set("personas", parseInt(e.target.value))} style={{ ...IS, cursor: "pointer" }}>
-              {Array.from({ length: maxPersonas }, (_, i) => i + 1).map(n => (
-                <option key={n} value={n}>{n} persona{n !== 1 ? "s" : ""}</option>
-              ))}
-            </select>
+            <div>
+              <label style={LS}>
+                {llegadaTipo === "propia" ? "Personas aprox." : `Personas (máx. ${maxPersonas === 99 ? "ilimitado" : maxPersonas})`}
+              </label>
+              {llegadaTipo === "propia" ? (
+                <input type="number" min="1" value={form.personas} onChange={e => set("personas", parseInt(e.target.value) || 1)} style={IS} />
+              ) : (
+                <select value={form.personas} onChange={e => set("personas", parseInt(e.target.value))} style={{ ...IS, cursor: "pointer" }}>
+                  {Array.from({ length: maxPersonas === 99 ? 30 : maxPersonas }, (_, i) => i + 1).map(n => (
+                    <option key={n} value={n}>{n} persona{n !== 1 ? "s" : ""}</option>
+                  ))}
+                </select>
+              )}
+            </div>
+            <div>
+              <label style={LS}>Notas</label>
+              <input value={form.notas} onChange={e => set("notas", e.target.value)} placeholder="Ocasión especial, preferencias..." style={IS} />
+            </div>
+            {error && <div style={{ color: B.danger, fontSize: 13 }}>{error}</div>}
+            <button onClick={handleCreate} disabled={saving} style={{ padding: "14px", background: saving ? B.navyLight : B.sky, color: "#fff", border: "none", borderRadius: 12, fontWeight: 700, fontSize: 15, cursor: saving ? "default" : "pointer" }}>
+              {saving ? "Enviando..." : "Confirmar Reserva →"}
+            </button>
           </div>
-          <div>
-            <label style={LS}>Notas</label>
-            <input value={form.notas} onChange={e => set("notas", e.target.value)} placeholder="Ocasión especial, alergias, preferencias..." style={IS} />
-          </div>
-          {error && <div style={{ color: B.danger, fontSize: 13 }}>{error}</div>}
-          <button onClick={handleCreate} disabled={saving} style={{ padding: "14px", background: saving ? B.navyLight : B.sky, color: "#fff", border: "none", borderRadius: 12, fontWeight: 700, fontSize: 15, cursor: saving ? "default" : "pointer", boxShadow: saving ? "none" : "0 4px 16px rgba(142,202,230,0.3)" }}>
-            {saving ? "Enviando..." : "Confirmar Reserva →"}
-          </button>
-        </div>
+        )}
       </div>
     </div>
   );
@@ -444,29 +540,33 @@ function MainPortal({ miembro: initialMiembro, onLogout }) {
         {/* Reservas */}
         <div style={{ background: B.navyMid, borderRadius: 16, padding: "24px", marginBottom: 20 }}>
           <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 16, fontFamily: "'Barlow Condensed', sans-serif" }}>Mis Reservas</div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 20 }}>
+          <div style={{ display: "grid", gridTemplateColumns: b.embarcacionPropia ? "1fr 1fr 1fr" : "1fr 1fr", gap: 10, marginBottom: 20 }}>
             <button onClick={() => setShowReserva("cama_playa")} style={{
-              padding: "20px 16px", background: "rgba(255,255,255,0.05)", border: `1px solid rgba(255,255,255,0.1)`,
-              borderRadius: 12, cursor: "pointer", textAlign: "center", color: "#fff", transition: "background 0.2s",
-            }}
-              onMouseEnter={e => e.currentTarget.style.background = "rgba(255,255,255,0.1)"}
-              onMouseLeave={e => e.currentTarget.style.background = "rgba(255,255,255,0.05)"}
-            >
-              <div style={{ fontSize: 28, marginBottom: 6 }}>🛏</div>
-              <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 4 }}>Cama de Playa</div>
-              <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)" }}>Hasta {b.camas} camas</div>
+              padding: "18px 12px", background: "rgba(255,255,255,0.05)", border: `1px solid rgba(255,255,255,0.1)`,
+              borderRadius: 12, cursor: "pointer", textAlign: "center", color: "#fff",
+            }}>
+              <div style={{ fontSize: 26, marginBottom: 5 }}>🛏</div>
+              <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 3 }}>Cama de Playa</div>
+              <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)" }}>{b.embarcacionPropia ? "Camas VIP" : `Hasta ${b.camas} camas`}</div>
             </button>
             <button onClick={() => setShowReserva("restaurante")} style={{
-              padding: "20px 16px", background: "rgba(255,255,255,0.05)", border: `1px solid rgba(255,255,255,0.1)`,
-              borderRadius: 12, cursor: "pointer", textAlign: "center", color: "#fff", transition: "background 0.2s",
-            }}
-              onMouseEnter={e => e.currentTarget.style.background = "rgba(255,255,255,0.1)"}
-              onMouseLeave={e => e.currentTarget.style.background = "rgba(255,255,255,0.05)"}
-            >
-              <div style={{ fontSize: 28, marginBottom: 6 }}>🍽</div>
-              <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 4 }}>Restaurante</div>
+              padding: "18px 12px", background: "rgba(255,255,255,0.05)", border: `1px solid rgba(255,255,255,0.1)`,
+              borderRadius: 12, cursor: "pointer", textAlign: "center", color: "#fff",
+            }}>
+              <div style={{ fontSize: 26, marginBottom: 5 }}>🍽</div>
+              <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 3 }}>Restaurante</div>
               <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)" }}>Hasta {b.personas} personas</div>
             </button>
+            {b.embarcacionPropia && (
+              <button onClick={() => setShowReserva("llegada")} style={{
+                padding: "18px 12px", background: `rgba(96,165,250,0.1)`, border: `1px solid ${b.color}44`,
+                borderRadius: 12, cursor: "pointer", textAlign: "center", color: "#fff",
+              }}>
+                <div style={{ fontSize: 26, marginBottom: 5 }}>⛵</div>
+                <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 3 }}>Reservar Llegada</div>
+                <div style={{ fontSize: 11, color: b.color }}>Propia o Atolon</div>
+              </button>
+            )}
           </div>
 
           {loading ? (

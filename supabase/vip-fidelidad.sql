@@ -30,7 +30,7 @@ CREATE TABLE IF NOT EXISTS vip_transacciones (
 CREATE TABLE IF NOT EXISTS vip_reservas (
   id text PRIMARY KEY,
   miembro_id text REFERENCES vip_miembros(id) ON DELETE CASCADE,
-  tipo text NOT NULL CHECK (tipo IN ('restaurante','cama_playa')),
+  tipo text NOT NULL CHECK (tipo IN ('restaurante','cama_playa','lancha_atolon','lancha_propia')),
   fecha date NOT NULL,
   hora time,
   personas int DEFAULT 1,
