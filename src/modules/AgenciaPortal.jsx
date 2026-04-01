@@ -1144,13 +1144,25 @@ function IncentivosPortal({ agencia }) {
               </div>
             )}
 
-            {/* Beneficio */}
-            {inc.beneficio && (
+            {/* Beneficio — para tipo meta (no acumulacion) */}
+            {inc.tipo !== "acumulacion" && inc.beneficio && (
               <div style={{ marginTop: 14, padding: "10px 14px", background: B.sand + "11", borderRadius: 8, border: `1px solid ${B.sand}22`, display: "flex", alignItems: "center", gap: 10 }}>
                 <span style={{ fontSize: 18 }}>🎁</span>
                 <div>
                   <div style={{ fontSize: 10, color: B.sand, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 2 }}>Premio al cumplir</div>
                   <div style={{ fontSize: 13, fontWeight: 600 }}>{inc.beneficio}</div>
+                </div>
+              </div>
+            )}
+            {/* Para acumulacion: mostrar qué se gana por periodo */}
+            {inc.tipo === "acumulacion" && inc.acum_beneficio_desc && (
+              <div style={{ marginTop: 14, padding: "10px 14px", background: B.sand + "11", borderRadius: 8, border: `1px solid ${B.sand}22`, display: "flex", alignItems: "center", gap: 10 }}>
+                <span style={{ fontSize: 18 }}>🎁</span>
+                <div>
+                  <div style={{ fontSize: 10, color: B.sand, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 2 }}>Premio al cumplir</div>
+                  <div style={{ fontSize: 13, fontWeight: 600 }}>
+                    {inc.acum_beneficio_cant > 1 ? `${inc.acum_beneficio_cant}× ` : ""}{inc.acum_beneficio_desc}
+                  </div>
                 </div>
               </div>
             )}
@@ -1479,7 +1491,7 @@ function PreferenciasAgencia({ agencia, onSaved }) {
 
       {/* Sub-tabs */}
       <div style={{ display: "flex", gap: 0, marginBottom: 24, background: B.navyMid, borderRadius: 10, padding: 4 }}>
-        {[["datos", "📋 Datos de la agencia"], ["precios", "💲 Vista de precios"]].map(([k, l]) => (
+        {[["datos", "📋 Datos"], ["precios", "💲 Precios"], ["vendedores", "👥 Vendedores"]].map(([k, l]) => (
           <button key={k} onClick={() => setSubTab(k)}
             style={{ flex: 1, padding: "10px 16px", borderRadius: 7, border: "none", cursor: "pointer", fontSize: 13, fontWeight: subTab === k ? 700 : 500, background: subTab === k ? B.sky : "transparent", color: subTab === k ? B.navy : "rgba(255,255,255,0.5)", transition: "all 0.15s" }}>
             {l}
@@ -1615,6 +1627,9 @@ function PreferenciasAgencia({ agencia, onSaved }) {
           </button>
         </div>
       )}
+
+      {/* ── VENDEDORES ── */}
+      {subTab === "vendedores" && <GestionVendedores agencia={agencia} />}
     </div>
   );
 }
@@ -2121,7 +2136,6 @@ export default function AgenciaPortal() {
           {[
             ["reservar", "Nueva Reserva"],
             ["historial", "Mis Reservas"],
-            ...(isAdmin ? [["vendedores", "Vendedores"]] : []),
             ["qr", "Link / QR"],
             ["grupos", "🎪 Grupos"],
             ...(!isAdmin ? [["puntos", "🏆 Mis Puntos"]] : []),
@@ -2139,7 +2153,6 @@ export default function AgenciaPortal() {
 
         {tab === "reservar" && <NuevaReserva agencia={agencia} user={user} onCreated={() => setRefreshKey(k => k + 1)} vistaPrecios={vistaPrecios} />}
         {tab === "historial" && <HistorialReservas key={refreshKey} agencia={agencia} vendedorId={isAdmin ? null : user.id} />}
-        {tab === "vendedores" && isAdmin && <GestionVendedores agencia={agencia} />}
         {tab === "qr" && <QRSection agencia={agencia} />}
         {tab === "grupos" && <GruposPortal agencia={agencia} />}
         {tab === "puntos" && !isAdmin && <PuntosVendedor user={user} agencia={agencia} />}
