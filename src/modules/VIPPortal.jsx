@@ -501,18 +501,28 @@ function ReservaModal({ tipo, miembro, onClose, onCreated }) {
   const [form, setForm] = useState({ fecha: "", hora: "", personas: 1, notas: "" });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [cierreDia, setCierreDia] = useState(false); // true = día cerrado total
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
-  // tipo="llegada" siempre es embarcación propia
+  // Al cambiar fecha, verificar si hay cierre total
+  useEffect(() => {
+    if (!form.fecha || !supabase) { setCierreDia(false); return; }
+    supabase.from("cierres").select("tipo")
+      .eq("fecha", form.fecha).eq("activo", true).eq("tipo", "total")
+      .then(({ data }) => setCierreDia(data && data.length > 0));
+  }, [form.fecha]);
+
   const titulo = "🚤 Reservar Llegada Propia";
 
   const handleCreate = async () => {
     if (!form.fecha) { setError("Selecciona una fecha"); return; }
     setSaving(true);
+    // Auto-confirmar si el día está abierto; pendiente si hay cierre total
+    const estado = cierreDia ? "pendiente" : "confirmada";
     const { error: err } = await supabase.from("vip_reservas").insert({
       id: uid(), miembro_id: miembro.id, tipo: "lancha_propia",
       fecha: form.fecha, hora: form.hora || null,
-      personas: form.personas,
+      personas: form.personas, estado,
       notas: form.notas || null,
     });
     if (err) { setError(err.message); setSaving(false); return; }
@@ -549,6 +559,16 @@ function ReservaModal({ tipo, miembro, onClose, onCreated }) {
             <label style={LS}>Notas</label>
             <input value={form.notas} onChange={e => set("notas", e.target.value)} placeholder="Nombre de la embarcación, ocasión especial..." style={IS} />
           </div>
+          {cierreDia && (
+            <div style={{ background: "#E8A02018", border: "1px solid #E8A02044", borderRadius: 10, padding: "11px 14px", fontSize: 12, color: "#E8A020", lineHeight: 1.5 }}>
+              ⚠️ Atolon está cerrado ese día. Tu reserva quedará <strong>pendiente de confirmación</strong> por nuestro equipo.
+            </div>
+          )}
+          {!cierreDia && form.fecha && (
+            <div style={{ background: B.success + "15", border: `1px solid ${B.success}33`, borderRadius: 10, padding: "10px 14px", fontSize: 12, color: B.success }}>
+              ✓ Tu reserva se confirmará automáticamente
+            </div>
+          )}
           {error && <div style={{ color: B.danger, fontSize: 13 }}>{error}</div>}
           <button onClick={handleCreate} disabled={saving} style={{ padding: "14px", background: saving ? B.navyLight : B.sky, color: "#fff", border: "none", borderRadius: 12, fontWeight: 700, fontSize: 15, cursor: saving ? "default" : "pointer" }}>
             {saving ? "Enviando..." : "Confirmar Llegada →"}
