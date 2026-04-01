@@ -568,10 +568,44 @@ const PASADIA_PRODUCTS = [
   { id: "AFT",  icon: "🌙", label: "After Island",       precio: 170000, precioNino: 120000, tieneNino: true },
 ];
 
+// Shared availability fetcher — same logic as BookingPopup
+async function fetchDisponSal(fecha) {
+  const [{ data: sals }, { data: reservasDay }, { data: cierresDay }, { data: ovrs }] = await Promise.all([
+    supabase.from("salidas").select("*").eq("activo", true).order("hora"),
+    supabase.from("reservas").select("salida_id, pax").eq("fecha", fecha).neq("estado", "cancelado"),
+    supabase.from("cierres").select("tipo, salidas").eq("fecha", fecha).eq("activo", true),
+    supabase.from("salidas_override").select("salida_id, accion").eq("fecha", fecha),
+  ]);
+  const allSals = sals || [];
+  const paxBySal = {};
+  (reservasDay || []).forEach(r => {
+    if (r.salida_id) paxBySal[r.salida_id] = (paxBySal[r.salida_id] || 0) + (r.pax || 0);
+  });
+  const cierre = (cierresDay || [])[0] || null;
+  const ovrMap = {};
+  (ovrs || []).forEach(o => { ovrMap[o.salida_id] = o.accion; });
+
+  return allSals.map(s => {
+    let disp;
+    if (ovrMap[s.id] === "cerrar") { disp = -1; }
+    else if (ovrMap[s.id] === "abrir") { disp = Math.max(0, (s.capacidad_total || 30) - (paxBySal[s.id] || 0)); }
+    else if (cierre?.tipo === "total" || (cierre?.salidas || []).includes(s.id)) { disp = -1; }
+    else if (s.auto_apertura) {
+      const fixedFull = allSals.filter(f => !f.auto_apertura)
+        .every(f => (paxBySal[f.id] || 0) / (f.capacidad_total || 1) >= 0.9);
+      disp = fixedFull ? Math.max(0, (s.capacidad_total || 30) - (paxBySal[s.id] || 0)) : -1;
+    } else {
+      disp = Math.max(0, (s.capacidad_total || 30) - (paxBySal[s.id] || 0));
+    }
+    return { ...s, disp };
+  }).filter(s => s.disp > 0); // solo disponibles
+}
+
 function LanchaAtolonModal({ miembro, onClose, onCreated }) {
   const b = BENEFICIOS[miembro.nivel] || BENEFICIOS.coral;
   const [fecha, setFecha]       = useState("");
   const [salidas, setSalidas]   = useState([]);
+  const [loadingSal, setLoadingSal] = useState(false);
   const [salidaSel, setSalida]  = useState(null);
   const [pax, setPax]           = useState(1);
   const [notas, setNotas]       = useState("");
@@ -580,8 +614,8 @@ function LanchaAtolonModal({ miembro, onClose, onCreated }) {
 
   useEffect(() => {
     if (!fecha || !supabase) return;
-    supabase.from("salidas").select("*").eq("activo", true).order("hora")
-      .then(({ data }) => { setSalidas(data || []); setSalida(null); });
+    setLoadingSal(true); setSalida(null);
+    fetchDisponSal(fecha).then(s => { setSalidas(s); setLoadingSal(false); });
   }, [fecha]);
 
   const total = 50000 * pax;
@@ -621,9 +655,13 @@ function LanchaAtolonModal({ miembro, onClose, onCreated }) {
 
           {fecha && (
             <div>
-              <label style={LS}>Salida</label>
-              {salidas.length === 0 ? (
-                <div style={{ fontSize: 13, color: "rgba(255,255,255,0.4)", padding: "10px 0" }}>Cargando salidas...</div>
+              <label style={LS}>Salida disponible</label>
+              {loadingSal ? (
+                <div style={{ fontSize: 13, color: "rgba(255,255,255,0.4)", padding: "10px 0" }}>Verificando disponibilidad...</div>
+              ) : salidas.length === 0 ? (
+                <div style={{ background: B.danger + "18", border: `1px solid ${B.danger}33`, borderRadius: 10, padding: "12px 16px", fontSize: 13, color: B.danger }}>
+                  No hay salidas disponibles para esta fecha
+                </div>
               ) : (
                 <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                   {salidas.map(s => (
@@ -631,9 +669,15 @@ function LanchaAtolonModal({ miembro, onClose, onCreated }) {
                       padding: "12px 16px", borderRadius: 10, textAlign: "left", cursor: "pointer", color: "#fff",
                       background: salidaSel?.id === s.id ? B.sky + "22" : "rgba(255,255,255,0.04)",
                       border: `1.5px solid ${salidaSel?.id === s.id ? B.sky : "rgba(255,255,255,0.1)"}`,
+                      display: "flex", justifyContent: "space-between", alignItems: "center",
                     }}>
-                      <span style={{ fontWeight: 700 }}>{s.hora}</span>
-                      <span style={{ color: "rgba(255,255,255,0.5)", marginLeft: 10, fontSize: 13 }}>{s.nombre}</span>
+                      <div>
+                        <span style={{ fontWeight: 700 }}>{s.hora}</span>
+                        <span style={{ color: "rgba(255,255,255,0.5)", marginLeft: 10, fontSize: 13 }}>{s.nombre}</span>
+                      </div>
+                      <span style={{ fontSize: 11, color: B.success, background: B.success + "22", padding: "3px 10px", borderRadius: 20 }}>
+                        {s.disp} cupos
+                      </span>
                     </button>
                   ))}
                 </div>
@@ -681,6 +725,7 @@ function ComprarPasadiaModal({ miembro, onClose, onCreated }) {
   const [producto, setProducto]  = useState(null);
   const [fecha, setFecha]        = useState("");
   const [salidas, setSalidas]    = useState([]);
+  const [loadingSal, setLoadingSal] = useState(false);
   const [salidaSel, setSalida]   = useState(null);
   const [paxA, setPaxA]          = useState(1);
   const [paxN, setPaxN]          = useState(0);
@@ -690,8 +735,8 @@ function ComprarPasadiaModal({ miembro, onClose, onCreated }) {
 
   useEffect(() => {
     if (!fecha || !supabase || producto?.id === "AFT") return;
-    supabase.from("salidas").select("*").eq("activo", true).order("hora")
-      .then(({ data }) => { setSalidas(data || []); setSalida(null); });
+    setLoadingSal(true); setSalida(null);
+    fetchDisponSal(fecha).then(s => { setSalidas(s); setLoadingSal(false); });
   }, [fecha, producto]);
 
   const precioA = producto ? Math.round(producto.precio * (1 - pct / 100)) : 0;
@@ -770,9 +815,13 @@ function ComprarPasadiaModal({ miembro, onClose, onCreated }) {
           {/* Salidas (excepto After Island) */}
           {fecha && producto && producto.id !== "AFT" && (
             <div>
-              <label style={LS}>Salida</label>
-              {salidas.length === 0 ? (
-                <div style={{ fontSize: 13, color: "rgba(255,255,255,0.4)", padding: "8px 0" }}>Cargando salidas...</div>
+              <label style={LS}>Salida disponible</label>
+              {loadingSal ? (
+                <div style={{ fontSize: 13, color: "rgba(255,255,255,0.4)", padding: "8px 0" }}>Verificando disponibilidad...</div>
+              ) : salidas.length === 0 ? (
+                <div style={{ background: B.danger + "18", border: `1px solid ${B.danger}33`, borderRadius: 10, padding: "12px 16px", fontSize: 13, color: B.danger }}>
+                  No hay salidas disponibles para esta fecha
+                </div>
               ) : (
                 <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                   {salidas.map(s => (
@@ -780,9 +829,15 @@ function ComprarPasadiaModal({ miembro, onClose, onCreated }) {
                       padding: "11px 16px", borderRadius: 10, textAlign: "left", cursor: "pointer", color: "#fff",
                       background: salidaSel?.id === s.id ? B.sky + "22" : "rgba(255,255,255,0.04)",
                       border: `1.5px solid ${salidaSel?.id === s.id ? B.sky : "rgba(255,255,255,0.1)"}`,
+                      display: "flex", justifyContent: "space-between", alignItems: "center",
                     }}>
-                      <span style={{ fontWeight: 700 }}>{s.hora}</span>
-                      <span style={{ color: "rgba(255,255,255,0.5)", marginLeft: 10, fontSize: 13 }}>{s.nombre}</span>
+                      <div>
+                        <span style={{ fontWeight: 700 }}>{s.hora}</span>
+                        <span style={{ color: "rgba(255,255,255,0.5)", marginLeft: 10, fontSize: 13 }}>{s.nombre}</span>
+                      </div>
+                      <span style={{ fontSize: 11, color: B.success, background: B.success + "22", padding: "3px 10px", borderRadius: 20 }}>
+                        {s.disp} cupos
+                      </span>
                     </button>
                   ))}
                 </div>
