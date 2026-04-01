@@ -126,7 +126,7 @@ function MayaChat() {
 
   const send = () => {
     if (!input.trim()) return;
-    setMsgs(p => [...p, { from: "user", text: input }, { from: "maya", text: "Entendido. Esta funcionalidad se conectara a la API de Claude pronto." }]);
+    setMsgs(p => [...p, { from: "user", text: input }, { from: "maya", text: "Entendido. Pronto podré ayudarte con eso." }]);
     setInput("");
   };
 
