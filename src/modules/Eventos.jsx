@@ -105,7 +105,7 @@ function EventoModal({ evento, categoria, salidas, aliados, vendedores, onClose,
 
   const [form, setForm]       = useState(isEdit
     ? { ...evento, pax: String(evento.pax || ""), valor: String(evento.valor || ""), aliado_id: evento.aliado_id || "", vendedor: evento.vendedor || "", salidas_grupo: evento.salidas_grupo || [] }
-    : { nombre: "", tipo: tiposOpt[0], fecha: "", pax: "", valor: "", aliado_id: "", vendedor: "", salidas_grupo: [], contacto: "", tel: "", email: "", stage: "Consulta", notas: "", categoria });
+    : { nombre: "", tipo: tiposOpt[0], fecha: "", pax: "", valor: "", aliado_id: "", vendedor: "", salidas_grupo: [], contacto: "", tel: "", email: "", empresa: "", nit: "", cargo: "", direccion: "", montaje: "", hora_ini: "", hora_fin: "", vencimiento: "", stage: "Consulta", notas: "", categoria });
   const [saving,      setSaving]      = useState(false);
   const [horaInput,   setHoraInput]   = useState("");
   const [aliadoSearch,setAliadoSearch]= useState("");
@@ -156,6 +156,14 @@ function EventoModal({ evento, categoria, salidas, aliados, vendedores, onClose,
       contacto:     form.contacto,
       tel:          form.tel,
       email:        form.email,
+      empresa:      form.empresa || "",
+      nit:          form.nit || "",
+      cargo:        form.cargo || "",
+      direccion:    form.direccion || "",
+      montaje:      form.montaje || "",
+      hora_ini:     form.hora_ini || "",
+      hora_fin:     form.hora_fin || "",
+      vencimiento:  form.vencimiento || "",
       stage:        form.stage,
       notas:        form.notas,
       categoria:    form.categoria || categoria,
@@ -283,6 +291,55 @@ function EventoModal({ evento, categoria, salidas, aliados, vendedores, onClose,
               <input type="email" value={form.email} onChange={e => set("email", e.target.value)} style={IS} placeholder="correo@ejemplo.com" />
             </div>
           </div>
+
+          {/* Datos de cotización — solo para eventos */}
+          {!isGrupo && (
+            <>
+              <div style={{ borderTop: `1px solid ${B.navyLight}`, paddingTop: 16, marginTop: 4 }}>
+                <div style={{ fontSize: 11, color: B.sand, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 12, fontWeight: 700 }}>Datos para cotización</div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                    <div>
+                      <label style={LS}>Empresa / Cliente</label>
+                      <input value={form.empresa} onChange={e => set("empresa", e.target.value)} style={IS} placeholder="Nombre de la empresa o cliente" />
+                    </div>
+                    <div>
+                      <label style={LS}>NIT / Identificación</label>
+                      <input value={form.nit} onChange={e => set("nit", e.target.value)} style={IS} placeholder="900123456-7" />
+                    </div>
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                    <div>
+                      <label style={LS}>Cargo del contacto</label>
+                      <input value={form.cargo} onChange={e => set("cargo", e.target.value)} style={IS} placeholder="Gerente, Organizador..." />
+                    </div>
+                    <div>
+                      <label style={LS}>Dirección</label>
+                      <input value={form.direccion} onChange={e => set("direccion", e.target.value)} style={IS} placeholder="Dirección del cliente" />
+                    </div>
+                  </div>
+                  <div>
+                    <label style={LS}>Tipo de Montaje</label>
+                    <input value={form.montaje} onChange={e => set("montaje", e.target.value)} style={IS} placeholder="Coctel, Cena, Auditorio..." />
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
+                    <div>
+                      <label style={LS}>Hora Inicio</label>
+                      <input value={form.hora_ini} onChange={e => set("hora_ini", e.target.value)} style={IS} placeholder="10:00" />
+                    </div>
+                    <div>
+                      <label style={LS}>Hora Final</label>
+                      <input value={form.hora_fin} onChange={e => set("hora_fin", e.target.value)} style={IS} placeholder="18:00" />
+                    </div>
+                    <div>
+                      <label style={LS}>Vencimiento cotización</label>
+                      <input type="date" value={form.vencimiento} onChange={e => set("vencimiento", e.target.value)} style={IS} />
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </>
+          )}
 
           {/* Aliado B2B — searchable */}
           <div style={{ position: "relative" }}>
@@ -425,10 +482,17 @@ function calcLine(l) {
   return { sub, tax, total: sub + tax };
 }
 
-function SectionTable({ title, color, rows, setRows, showNoches = false }) {
-  const addRow = () => setRows(r => [...r, { ...EMPTY_LINE }]);
-  const upd    = (i, k, v) => setRows(r => r.map((x, j) => j === i ? { ...x, [k]: v } : x));
-  const del    = (i) => setRows(r => r.filter((_, j) => j !== i));
+const MENU_TIPOS = ["Menú de Banquetes", "Menú Restaurant", "Custom Menu"];
+
+function SectionTable({ title, color, rows, setRows, showNoches = false, showMenuType = false }) {
+  const [menuPicker, setMenuPicker] = useState(false);
+
+  const addRow = (menu_tipo = "") => {
+    setRows(r => [...r, { ...EMPTY_LINE, menu_tipo }]);
+    setMenuPicker(false);
+  };
+  const upd = (i, k, v) => setRows(r => r.map((x, j) => j === i ? { ...x, [k]: v } : x));
+  const del = (i) => setRows(r => r.filter((_, j) => j !== i));
 
   const totals = rows.reduce((acc, l) => {
     const { sub, tax, total } = calcLine(l);
@@ -443,21 +507,39 @@ function SectionTable({ title, color, rows, setRows, showNoches = false }) {
   );
 
   return (
-    <div style={{ marginBottom: 24 }}>
+    <div style={{ marginBottom: 24, position: "relative" }}>
       <div style={{ background: color, padding: "10px 14px", borderRadius: "8px 8px 0 0", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <span style={{ fontWeight: 700, color: B.white, fontSize: 14 }}>{title}</span>
-        <button onClick={addRow} style={{ background: "rgba(255,255,255,0.2)", border: "none", color: B.white, borderRadius: 6, padding: "4px 12px", fontSize: 12, cursor: "pointer", fontWeight: 600 }}>+ Agregar</button>
+        <button onClick={() => showMenuType ? setMenuPicker(p => !p) : addRow()}
+          style={{ background: "rgba(255,255,255,0.2)", border: "none", color: B.white, borderRadius: 6, padding: "4px 12px", fontSize: 12, cursor: "pointer", fontWeight: 600 }}>+ Agregar</button>
       </div>
+
+      {/* Menu type picker */}
+      {menuPicker && (
+        <div style={{ background: B.navyMid, border: `1px solid ${B.navyLight}`, borderRadius: 10, padding: 16, marginBottom: 0, position: "absolute", right: 0, top: 42, zIndex: 10, boxShadow: "0 8px 24px #0006", minWidth: 280 }}>
+          <div style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", marginBottom: 10 }}>Selecciona el tipo de menú:</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {MENU_TIPOS.map(t => (
+              <button key={t} onClick={() => addRow(t)}
+                style={{ padding: "10px 16px", borderRadius: 8, background: B.navy, border: `1px solid ${B.navyLight}`, color: B.white, fontSize: 13, cursor: "pointer", textAlign: "left", fontWeight: 600 }}>
+                {t}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       <table style={{ width: "100%", borderCollapse: "collapse", background: B.navyMid }}>
         <thead>
           <tr>
-            <th style={{ ...th, background: color + "cc", width: "35%" }}>Concepto</th>
+            <th style={{ ...th, background: color + "cc", width: showMenuType ? "30%" : "35%" }}>Concepto</th>
+            {showMenuType && <th style={{ ...th, background: color + "cc", width: "14%" }}>Tipo Menú</th>}
             <th style={{ ...th, background: color + "cc", width: "8%", textAlign: "center" }}>Cant.</th>
             {showNoches && <th style={{ ...th, background: color + "cc", width: "8%", textAlign: "center" }}>Noches</th>}
             <th style={{ ...th, background: color + "cc", width: "15%", textAlign: "right" }}>Valor Unit.</th>
             <th style={{ ...th, background: color + "cc", width: "8%", textAlign: "center" }}>IVA %</th>
-            <th style={{ ...th, background: color + "cc", width: "15%", textAlign: "right" }}>Subtotal</th>
-            <th style={{ ...th, background: color + "cc", width: "15%", textAlign: "right" }}>Total</th>
+            <th style={{ ...th, background: color + "cc", width: "12%", textAlign: "right" }}>Subtotal</th>
+            <th style={{ ...th, background: color + "cc", width: "12%", textAlign: "right" }}>Total</th>
             <th style={{ ...th, background: color + "cc", width: "4%" }}></th>
           </tr>
         </thead>
@@ -467,6 +549,15 @@ function SectionTable({ title, color, rows, setRows, showNoches = false }) {
             return (
               <tr key={i}>
                 <td style={td}>{inp(l.concepto, e => upd(i, "concepto", e.target.value))}</td>
+                {showMenuType && (
+                  <td style={td}>
+                    <select value={l.menu_tipo || ""} onChange={e => upd(i, "menu_tipo", e.target.value)}
+                      style={{ background: "transparent", border: "none", color: B.white, fontSize: 11, outline: "none", width: "100%", cursor: "pointer" }}>
+                      <option value="">—</option>
+                      {MENU_TIPOS.map(t => <option key={t} value={t}>{t}</option>)}
+                    </select>
+                  </td>
+                )}
                 <td style={{ ...td, textAlign: "center" }}>{inp(l.cantidad, e => upd(i, "cantidad", Number(e.target.value)), "number", "60px")}</td>
                 {showNoches && <td style={{ ...td, textAlign: "center" }}>{inp(l.noches, e => upd(i, "noches", Number(e.target.value)), "number", "60px")}</td>}
                 <td style={{ ...td, textAlign: "right" }}>{inp(l.valor_unit, e => upd(i, "valor_unit", Number(e.target.value)), "number", "100px")}</td>
@@ -480,7 +571,7 @@ function SectionTable({ title, color, rows, setRows, showNoches = false }) {
             );
           })}
           {rows.length === 0 && (
-            <tr><td colSpan={showNoches ? 8 : 7} style={{ ...td, textAlign: "center", color: "rgba(255,255,255,0.3)", padding: 16 }}>Sin ítems — haz click en "+ Agregar"</td></tr>
+            <tr><td colSpan={showNoches ? (showMenuType ? 9 : 8) : (showMenuType ? 8 : 7)} style={{ ...td, textAlign: "center", color: "rgba(255,255,255,0.3)", padding: 16 }}>Sin ítems — haz click en "+ Agregar"</td></tr>
           )}
         </tbody>
         {rows.length > 0 && (
@@ -503,22 +594,22 @@ function CotizacionModal({ evento, aliados, onClose, onSaved }) {
   const [espacios,  setEspacios]  = useState(saved.espacios  || []);
   const [alimentos, setAlimentos] = useState(saved.alimentos || []);
   const [servicios, setServicios] = useState(saved.servicios || []);
-  const [header, setHeader] = useState({
-    empresa:    saved.empresa    || evento.contacto || "",
-    nit:        saved.nit        || "",
-    contacto:   saved.contacto   || evento.contacto || "",
-    cargo:      saved.cargo      || "",
-    telefono:   saved.telefono   || evento.tel || "",
-    email:      saved.email      || evento.email || "",
-    direccion:  saved.direccion  || "",
-    montaje:    saved.montaje    || "",
-    hora_ini:   saved.hora_ini   || "",
-    hora_fin:   saved.hora_fin   || "",
-    vencimiento:saved.vencimiento|| "",
-  });
   const [saving, setSaving] = useState(false);
 
-  const setH = (k, v) => setHeader(h => ({ ...h, [k]: v }));
+  // Header data comes directly from the evento record
+  const header = {
+    empresa:     evento.empresa    || evento.contacto || "",
+    nit:         evento.nit        || "",
+    contacto:    evento.contacto   || "",
+    cargo:       evento.cargo      || "",
+    telefono:    evento.tel        || "",
+    email:       evento.email      || "",
+    direccion:   evento.direccion  || "",
+    montaje:     evento.montaje    || "",
+    hora_ini:    evento.hora_ini   || "",
+    hora_fin:    evento.hora_fin   || "",
+    vencimiento: evento.vencimiento|| "",
+  };
 
   const sumSection = (rows) => rows.reduce((acc, l) => {
     const { sub, tax, total } = calcLine(l);
@@ -534,7 +625,7 @@ function CotizacionModal({ evento, aliados, onClose, onSaved }) {
 
   async function guardar(marcarCotizado = false) {
     setSaving(true);
-    const data = { espacios, alimentos, servicios, ...header };
+    const data = { espacios, alimentos, servicios };
     const upd  = { cotizacion_data: data };
     if (marcarCotizado) upd.stage = "Cotizado";
     await supabase.from("eventos").update(upd).eq("id", evento.id);
@@ -547,14 +638,6 @@ function CotizacionModal({ evento, aliados, onClose, onSaved }) {
     guardar();
     setTimeout(() => window.print(), 400);
   }
-
-  const hFld = (label, key, half = false) => (
-    <div style={{ flex: half ? "0 0 calc(50% - 6px)" : "0 0 100%" }}>
-      <label style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", display: "block", marginBottom: 3, textTransform: "uppercase" }}>{label}</label>
-      <input value={header[key]} onChange={e => setH(key, e.target.value)}
-        style={{ width: "100%", background: B.navy, border: `1px solid ${B.navyLight}`, borderRadius: 6, color: B.white, fontSize: 13, padding: "7px 10px", outline: "none", boxSizing: "border-box" }} />
-    </div>
-  );
 
   return (
     <>
@@ -657,27 +740,25 @@ function CotizacionModal({ evento, aliados, onClose, onSaved }) {
             <button onClick={onClose} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.5)", fontSize: 22, cursor: "pointer" }}>✕</button>
           </div>
 
-          {/* Client info */}
+          {/* Client info — read-only summary from evento */}
           <div style={{ background: B.navyMid, borderRadius: 10, padding: 16, marginBottom: 20 }}>
-            <div style={{ fontSize: 12, fontWeight: 700, color: B.sand, marginBottom: 12, textTransform: "uppercase", letterSpacing: "0.06em" }}>Datos del cliente</div>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
-              {hFld("Empresa / Cliente", "empresa", true)}
-              {hFld("NIT / Identificación", "nit", true)}
-              {hFld("Contacto", "contacto", true)}
-              {hFld("Cargo", "cargo", true)}
-              {hFld("Teléfono", "telefono", true)}
-              {hFld("Email", "email", true)}
-              {hFld("Dirección", "direccion", true)}
-              {hFld("Tipo de Montaje", "montaje", true)}
-              {hFld("Hora Inicio", "hora_ini", true)}
-              {hFld("Hora Final", "hora_fin", true)}
-              {hFld("Vencimiento cotización", "vencimiento", true)}
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: B.sand, textTransform: "uppercase", letterSpacing: "0.06em" }}>Datos del cliente</div>
+              <div style={{ fontSize: 11, color: "rgba(255,255,255,0.3)" }}>Editables desde el evento ✏️</div>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "6px 16px" }}>
+              {[["Empresa", header.empresa], ["NIT", header.nit], ["Contacto", header.contacto], ["Cargo", header.cargo], ["Teléfono", header.telefono], ["Email", header.email], ["Dirección", header.direccion], ["Montaje", header.montaje], ["Hora inicio", header.hora_ini], ["Hora final", header.hora_fin], ["Vencimiento", header.vencimiento]].map(([k, v]) => (
+                <div key={k}>
+                  <div style={{ fontSize: 10, color: "rgba(255,255,255,0.3)", textTransform: "uppercase", letterSpacing: "0.05em" }}>{k}</div>
+                  <div style={{ fontSize: 13, color: v ? B.white : "rgba(255,255,255,0.2)" }}>{v || "—"}</div>
+                </div>
+              ))}
             </div>
           </div>
 
           {/* Sections */}
           <SectionTable title="Espacios / Alojamiento" color="#1E3566" rows={espacios} setRows={setEspacios} showNoches />
-          <SectionTable title="Alimentos y Bebidas"    color="#2E7D52" rows={alimentos} setRows={setAlimentos} />
+          <SectionTable title="Alimentos y Bebidas"    color="#2E7D52" rows={alimentos} setRows={setAlimentos} showMenuType />
           <SectionTable title="Otros Servicios"        color="#7B4F12" rows={servicios} setRows={setServicios} />
 
           {/* Grand total */}
@@ -742,6 +823,9 @@ export default function Eventos() {
       notas: e.notas || "", categoria: e.categoria || "evento",
       salidas_grupo: e.salidas_grupo || [], aliado_id: e.aliado_id || "",
       vendedor: e.vendedor || "", cotizacion_data: e.cotizacion_data || {},
+      empresa: e.empresa || "", nit: e.nit || "", cargo: e.cargo || "",
+      direccion: e.direccion || "", montaje: e.montaje || "",
+      hora_ini: e.hora_ini || "", hora_fin: e.hora_fin || "", vencimiento: e.vencimiento || "",
     })));
     if (salR.data) setSalidas(salR.data);
     if (aliR.data) setAliados(aliR.data);
