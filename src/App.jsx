@@ -1,5 +1,8 @@
 import { useState, useEffect } from "react";
+import { supabase } from "./lib/supabase";
 import AtolanOS from "./modules/AtolanOS";
+import Login from "./modules/Login";
+import ResetPassword from "./modules/ResetPassword";
 import Pasadias from "./modules/Pasadias";
 import Reservas from "./modules/Reservas";
 import FloorPlan from "./modules/FloorPlan";
@@ -39,13 +42,23 @@ const MODULE_MAP = {
   usuarios: <Usuarios />,
 };
 
+// Public routes — no auth required
+const PUBLIC_ROUTES = ["empleados", "agencia", "booking", "pago", "reset-password"];
+
 function getRoute() {
   return window.location.pathname.replace(/^\//, "") || "";
 }
 
 export default function App() {
-  const [route, setRoute] = useState(getRoute());
+  const [route, setRoute]               = useState(getRoute());
   const [activeModule, setActiveModule] = useState("dashboard");
+  const [session, setSession]           = useState(undefined); // undefined = loading
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data }) => setSession(data.session));
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_e, s) => setSession(s));
+    return () => subscription.unsubscribe();
+  }, []);
 
   useEffect(() => {
     const onPop = () => setRoute(getRoute());
@@ -53,20 +66,28 @@ export default function App() {
     return () => window.removeEventListener("popstate", onPop);
   }, []);
 
-  const navigate = (mod) => {
-    setActiveModule(mod);
-  };
+  const navigate = (mod) => setActiveModule(mod);
 
-  if (route === "empleados") return <EmpleadoPortal />;
-  if (route === "agencia") return <AgenciaPortal />;
-  if (route === "booking") return <BookingPopup />;
-  if (route.startsWith("pago")) return <PagoCliente />;
+  // Public routes — accessible without login
+  if (route === "empleados")      return <EmpleadoPortal />;
+  if (route === "agencia")        return <AgenciaPortal />;
+  if (route === "booking")        return <BookingPopup />;
+  if (route.startsWith("pago"))   return <PagoCliente />;
+  if (route === "reset-password") return <ResetPassword />;
 
+  // Loading auth state
+  if (session === undefined) return null;
+
+  // Not logged in
+  if (!session) return <Login />;
+
+  // Logged in — show OS
   return (
     <AtolanOS
       activeModule={activeModule}
       onNavigate={navigate}
       moduleContent={MODULE_MAP[activeModule] || null}
+      userEmail={session.user?.email}
     />
   );
 }

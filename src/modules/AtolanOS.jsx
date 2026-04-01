@@ -2,6 +2,11 @@ import { useState, useEffect, useCallback } from "react";
 import { B, COP, todayDisplay, todayStr } from "../brand";
 import { supabase } from "../lib/supabase";
 
+async function logout() {
+  await supabase.auth.signOut();
+  window.location.reload();
+}
+
 const NAV = [
   { key: "dashboard", label: "Dashboard", icon: "\u2302" },
   { key: "pasadias", label: "Pasadias", icon: "\u2600" },
@@ -185,7 +190,7 @@ function MayaChat() {
   );
 }
 
-export default function AtolanOS({ activeModule = "dashboard", onNavigate, moduleContent }) {
+export default function AtolanOS({ activeModule = "dashboard", onNavigate, moduleContent, userEmail }) {
   const [collapsed, setCollapsed] = useState(false);
   const w = collapsed ? 64 : 220;
 
@@ -227,11 +232,25 @@ export default function AtolanOS({ activeModule = "dashboard", onNavigate, modul
             );
           })}
         </div>
-        {!collapsed && (
-          <div style={{ padding: "16px 20px", borderTop: `1px solid ${B.navyLight}`, fontSize: 11, color: "rgba(255,255,255,0.3)" }}>
-            Atolon Beach Club v1.0
+        <div style={{ padding: "12px 8px", borderTop: `1px solid ${B.navyLight}` }}>
+          {!collapsed && userEmail && (
+            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.3)", padding: "0 8px 8px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {userEmail}
+            </div>
+          )}
+          <div onClick={logout}
+            style={{
+              display: "flex", alignItems: "center", gap: 12,
+              padding: "10px 14px", borderRadius: 8, cursor: "pointer",
+              color: "rgba(255,255,255,0.4)", transition: "background 0.15s",
+            }}
+            onMouseEnter={e => { e.currentTarget.style.background = "#D6454522"; e.currentTarget.style.color = "#F87171"; }}
+            onMouseLeave={e => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "rgba(255,255,255,0.4)"; }}
+          >
+            <span style={{ fontSize: 16, width: 20, textAlign: "center", flexShrink: 0 }}>⎋</span>
+            {!collapsed && <span style={{ fontSize: 14, whiteSpace: "nowrap" }}>Cerrar sesión</span>}
           </div>
-        )}
+        </div>
       </div>
 
       {/* Main content */}
