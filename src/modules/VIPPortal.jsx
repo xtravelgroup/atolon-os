@@ -642,31 +642,16 @@ function MainPortal({ miembro: initialMiembro, onLogout }) {
         {/* Reservas */}
         <div style={{ background: B.navyMid, borderRadius: 16, padding: isMobile ? "20px 16px" : "24px", marginBottom: 16 }}>
           <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 14, fontFamily: "'Barlow Condensed', sans-serif" }}>Mis Reservas</div>
-          <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "1fr 1fr 1fr", gap: 8, marginBottom: 16 }}>
-            <button onClick={() => setShowReserva("cama_playa")} style={{
-              padding: isMobile ? "14px 8px" : "18px 12px", background: "rgba(255,255,255,0.05)", border: `1px solid rgba(255,255,255,0.1)`,
-              borderRadius: 12, cursor: "pointer", textAlign: "center", color: "#fff",
-            }}>
-              <div style={{ fontSize: isMobile ? 22 : 26, marginBottom: 4 }}>🛏</div>
-              <div style={{ fontWeight: 700, fontSize: isMobile ? 12 : 13, marginBottom: 2 }}>Cama de Playa</div>
-              <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)" }}>{miembro.nivel === "ocean" ? "Camas VIP" : `${b.camas} camas incluidas`}</div>
-            </button>
-            <button onClick={() => setShowReserva("restaurante")} style={{
-              padding: isMobile ? "14px 8px" : "18px 12px", background: "rgba(255,255,255,0.05)", border: `1px solid rgba(255,255,255,0.1)`,
-              borderRadius: 12, cursor: "pointer", textAlign: "center", color: "#fff",
-            }}>
-              <div style={{ fontSize: isMobile ? 22 : 26, marginBottom: 4 }}>🍽</div>
-              <div style={{ fontWeight: 700, fontSize: isMobile ? 12 : 13, marginBottom: 2 }}>Restaurante</div>
-              <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)" }}>Hasta {b.personas} personas</div>
-            </button>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 8, marginBottom: 16 }}>
             <button onClick={() => setShowReserva("llegada")} style={{
-              padding: isMobile ? "14px 8px" : "18px 12px", background: `rgba(96,165,250,0.08)`, border: `1px solid ${b.color}44`,
-              borderRadius: 12, cursor: "pointer", textAlign: "center", color: "#fff",
-              gridColumn: isMobile ? "1 / -1" : "auto",
+              padding: "18px 20px", background: `rgba(96,165,250,0.08)`, border: `1px solid ${b.color}44`,
+              borderRadius: 12, cursor: "pointer", textAlign: "left", color: "#fff", display: "flex", alignItems: "center", gap: 16,
             }}>
-              <div style={{ fontSize: isMobile ? 22 : 26, marginBottom: 4 }}>⛵</div>
-              <div style={{ fontWeight: 700, fontSize: isMobile ? 12 : 13, marginBottom: 2 }}>Reservar Llegada</div>
-              <div style={{ fontSize: 10, color: b.color }}>Propia o Atolon</div>
+              <div style={{ fontSize: 28 }}>⛵</div>
+              <div>
+                <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 2 }}>Reservar Llegada</div>
+                <div style={{ fontSize: 11, color: b.color }}>Embarcación propia o Lancha Atolon</div>
+              </div>
             </button>
           </div>
 
@@ -679,7 +664,9 @@ function MainPortal({ miembro: initialMiembro, onLogout }) {
               {reservas.slice(0, 5).map(r => (
                 <div key={r.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: "rgba(255,255,255,0.04)", borderRadius: 10, padding: "12px 14px" }}>
                   <div>
-                    <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 2 }}>{r.tipo === "restaurante" ? "🍽 Restaurante" : "🛏 Cama de Playa"}</div>
+                    <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 2 }}>
+                      {r.tipo === "lancha_propia" ? "🚤 Llegada propia" : r.tipo === "lancha_atolon" ? "⛵ Lancha Atolon" : r.tipo === "restaurante" ? "🍽 Restaurante" : r.tipo === "cama_playa" ? "🛏 Cama de Playa" : r.tipo}
+                    </div>
                     <div style={{ fontSize: 12, color: "rgba(255,255,255,0.5)" }}>{r.fecha} · {r.personas} persona{r.personas !== 1 ? "s" : ""}</div>
                   </div>
                   <span style={{ fontSize: 11, padding: "3px 10px", borderRadius: 20, background: (estadoColor[r.estado] || "#fff") + "22", color: estadoColor[r.estado] || "#fff" }}>
