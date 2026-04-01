@@ -511,42 +511,22 @@ function SubirReciboModal({ miembro, onClose, onSubmitted }) {
 // ══════════════════════════════════════════════════════
 function ReservaModal({ tipo, miembro, onClose, onCreated }) {
   const b = BENEFICIOS[miembro.nivel] || BENEFICIOS.coral;
-  const esOcean = miembro.nivel === "ocean";
-
-  // Para llegada en lancha (Ocean): seleccionar tipo de llegada
-  const [llegadaTipo, setLlegadaTipo] = useState(
-    tipo === "llegada" ? (esOcean ? null : "lancha_atolon") : null
-  );
-
   const [form, setForm] = useState({ fecha: "", hora: "", personas: 1, notas: "" });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
-  const maxPersonas = tipo === "cama_playa" ? (esOcean ? 20 : b.camas)
-                    : tipo === "restaurante" ? b.personas
-                    : llegadaTipo === "lancha_atolon" ? b.personasLancha
-                    : 99; // embarcación propia: sin límite real
-
-  const titulo = tipo === "restaurante" ? "🍽 Reservar Restaurante"
-               : tipo === "cama_playa"  ? "🛏 Reservar Cama de Playa"
-               : "⛵ Reservar Llegada";
+  // tipo="llegada" siempre es embarcación propia
+  const titulo = "🚤 Reservar Llegada Propia";
 
   const handleCreate = async () => {
     if (!form.fecha) { setError("Selecciona una fecha"); return; }
-    if (tipo === "llegada" && !llegadaTipo) { setError("Selecciona cómo llegas"); return; }
     setSaving(true);
-    const tipoFinal = tipo === "llegada"
-      ? (llegadaTipo === "propia" ? "lancha_propia" : "lancha_atolon")
-      : tipo;
     const { error: err } = await supabase.from("vip_reservas").insert({
-      id: uid(), miembro_id: miembro.id, tipo: tipoFinal,
+      id: uid(), miembro_id: miembro.id, tipo: "lancha_propia",
       fecha: form.fecha, hora: form.hora || null,
       personas: form.personas,
-      notas: [
-        llegadaTipo === "lancha_atolon" ? `Transporte Atolon: $50,000` : null,
-        form.notas || null,
-      ].filter(Boolean).join(" · ") || null,
+      notas: form.notas || null,
     });
     if (err) { setError(err.message); setSaving(false); return; }
     setSaving(false); onCreated(); onClose();
@@ -555,108 +535,38 @@ function ReservaModal({ tipo, miembro, onClose, onCreated }) {
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.8)", zIndex: 1000, display: "flex", alignItems: "flex-end", justifyContent: "center" }}>
       <div style={{ background: B.navyMid, borderRadius: "20px 20px 0 0", width: "100%", maxWidth: 560, padding: "28px 24px 40px", maxHeight: "90vh", overflowY: "auto" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
           <h3 style={{ margin: 0, fontSize: 20, fontWeight: 800 }}>{titulo}</h3>
           <button onClick={onClose} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.5)", fontSize: 24, cursor: "pointer" }}>×</button>
         </div>
 
-        {/* Selección tipo llegada (solo Ocean, solo tipo=llegada) */}
-        {tipo === "llegada" && esOcean && !llegadaTipo && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-            <div style={{ fontSize: 13, color: "rgba(255,255,255,0.5)", marginBottom: 4 }}>¿Cómo llegas a Atolon?</div>
-            <button onClick={() => setLlegadaTipo("propia")}
-              style={{ padding: "18px 20px", borderRadius: 14, border: `2px solid ${b.color}44`, background: B.navy, color: "#fff", cursor: "pointer", textAlign: "left" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-                <span style={{ fontSize: 30 }}>🚤</span>
-                <div>
-                  <div style={{ fontWeight: 700, fontSize: 15 }}>Embarcación propia</div>
-                  <div style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", marginTop: 3 }}>Sin límite de personas · Acceso camas VIP · Sin costo de transporte</div>
-                </div>
-              </div>
-            </button>
-            <button onClick={() => setLlegadaTipo("lancha_atolon")}
-              style={{ padding: "18px 20px", borderRadius: 14, border: `2px solid ${B.sky}44`, background: B.navy, color: "#fff", cursor: "pointer", textAlign: "left" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-                <span style={{ fontSize: 30 }}>⛵</span>
-                <div>
-                  <div style={{ fontWeight: 700, fontSize: 15 }}>Lancha de Atolon</div>
-                  <div style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", marginTop: 3 }}>Hasta {b.personasLancha} personas · <strong style={{ color: B.sand }}>$50.000 por persona</strong></div>
-                </div>
-              </div>
-            </button>
+        {/* Badge */}
+        <div style={{ background: b.color + "18", border: `1px solid ${b.color}33`, borderRadius: 10, padding: "10px 14px", marginBottom: 18, fontSize: 12, color: b.color }}>
+          🚤 Embarcación propia · Sin costo de transporte · {miembro.nivel === "ocean" ? "Personas ilimitadas" : `Hasta ${b.personasPropia} personas`}
+        </div>
+
+        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          <div>
+            <label style={LS}>Fecha de llegada</label>
+            <input type="date" value={form.fecha} onChange={e => set("fecha", e.target.value)} style={IS} />
           </div>
-        )}
-
-        {/* Formulario */}
-        {(tipo !== "llegada" || llegadaTipo) && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-
-            {/* Resumen si es lancha Atolon Ocean */}
-            {tipo === "llegada" && llegadaTipo === "lancha_atolon" && (
-              <div style={{ background: B.sand + "18", border: `1px solid ${B.sand}33`, borderRadius: 10, padding: "12px 16px" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: b.adicionalConsumible ? 8 : 0 }}>
-                  <div>
-                    <div style={{ fontSize: 12, fontWeight: 700, color: B.sand }}>⛵ Lancha Atolon</div>
-                    <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginTop: 2 }}>Hasta {b.personasLancha} personas incluidas</div>
-                  </div>
-                  <div style={{ textAlign: "right" }}>
-                    <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)" }}>Transporte</div>
-                    <div style={{ fontSize: 18, fontWeight: 800, color: B.sand }}>$50.000</div>
-                  </div>
-                </div>
-                {b.adicionalConsumible && (
-                  <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", borderTop: `1px solid ${B.sand}22`, paddingTop: 8 }}>
-                    ➕ Personas adicionales: <strong style={{ color: B.sand }}>$100.000 c/u en consumo</strong>
-                  </div>
-                )}
-              </div>
-            )}
-            {tipo === "llegada" && llegadaTipo === "propia" && (
-              <div style={{ background: b.color + "18", border: `1px solid ${b.color}33`, borderRadius: 10, padding: "12px 16px" }}>
-                <div style={{ fontSize: 12, fontWeight: 700, color: b.color }}>🚤 Embarcación propia · Sin límite de pax</div>
-                <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginTop: 2 }}>Acceso directo a camas VIP</div>
-              </div>
-            )}
-
-            {/* Cambiar selección */}
-            {tipo === "llegada" && esOcean && (
-              <button onClick={() => setLlegadaTipo(null)} style={{ background: "none", border: "none", color: B.sky, fontSize: 12, cursor: "pointer", textAlign: "left", padding: 0 }}>
-                ← Cambiar tipo de llegada
-              </button>
-            )}
-
-            <div>
-              <label style={LS}>Fecha</label>
-              <input type="date" value={form.fecha} onChange={e => set("fecha", e.target.value)} style={IS} />
-            </div>
-            <div>
-              <label style={LS}>Hora (opcional)</label>
-              <input type="time" value={form.hora} onChange={e => set("hora", e.target.value)} style={IS} />
-            </div>
-            <div>
-              <label style={LS}>
-                {llegadaTipo === "propia" ? "Personas aprox." : `Personas (máx. ${maxPersonas === 99 ? "ilimitado" : maxPersonas})`}
-              </label>
-              {llegadaTipo === "propia" ? (
-                <input type="number" min="1" value={form.personas} onChange={e => set("personas", parseInt(e.target.value) || 1)} style={IS} />
-              ) : (
-                <select value={form.personas} onChange={e => set("personas", parseInt(e.target.value))} style={{ ...IS, cursor: "pointer" }}>
-                  {Array.from({ length: maxPersonas === 99 ? 30 : maxPersonas }, (_, i) => i + 1).map(n => (
-                    <option key={n} value={n}>{n} persona{n !== 1 ? "s" : ""}</option>
-                  ))}
-                </select>
-              )}
-            </div>
-            <div>
-              <label style={LS}>Notas</label>
-              <input value={form.notas} onChange={e => set("notas", e.target.value)} placeholder="Ocasión especial, preferencias..." style={IS} />
-            </div>
-            {error && <div style={{ color: B.danger, fontSize: 13 }}>{error}</div>}
-            <button onClick={handleCreate} disabled={saving} style={{ padding: "14px", background: saving ? B.navyLight : B.sky, color: "#fff", border: "none", borderRadius: 12, fontWeight: 700, fontSize: 15, cursor: saving ? "default" : "pointer" }}>
-              {saving ? "Enviando..." : "Confirmar Reserva →"}
-            </button>
+          <div>
+            <label style={LS}>Hora estimada (opcional)</label>
+            <input type="time" value={form.hora} onChange={e => set("hora", e.target.value)} style={IS} />
           </div>
-        )}
+          <div>
+            <label style={LS}>Personas aprox.</label>
+            <input type="number" min="1" value={form.personas} onChange={e => set("personas", parseInt(e.target.value) || 1)} style={IS} />
+          </div>
+          <div>
+            <label style={LS}>Notas</label>
+            <input value={form.notas} onChange={e => set("notas", e.target.value)} placeholder="Nombre de la embarcación, ocasión especial..." style={IS} />
+          </div>
+          {error && <div style={{ color: B.danger, fontSize: 13 }}>{error}</div>}
+          <button onClick={handleCreate} disabled={saving} style={{ padding: "14px", background: saving ? B.navyLight : B.sky, color: "#fff", border: "none", borderRadius: 12, fontWeight: 700, fontSize: 15, cursor: saving ? "default" : "pointer" }}>
+            {saving ? "Enviando..." : "Confirmar Llegada →"}
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -1178,7 +1088,82 @@ function MainPortal({ miembro: initialMiembro, onLogout }) {
             </div>
           )}
         </div>
+
+        {/* Mi Perfil */}
+        <PerfilSection miembro={miembro} onUpdated={(updated) => setMiembro(m => ({ ...m, ...updated }))} />
+
       </div>
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════
+// PERFIL — editar email y teléfono
+// ══════════════════════════════════════════════════════
+function PerfilSection({ miembro, onUpdated }) {
+  const [editing, setEditing] = useState(false);
+  const [email, setEmail]     = useState(miembro.email || "");
+  const [tel, setTel]         = useState(miembro.telefono || "");
+  const [saving, setSaving]   = useState(false);
+  const [ok, setOk]           = useState(false);
+  const [error, setError]     = useState("");
+
+  const handleSave = async () => {
+    if (!email.trim()) { setError("El email no puede estar vacío"); return; }
+    setSaving(true); setError("");
+    const { error: err } = await supabase.from("vip_miembros")
+      .update({ email: email.trim().toLowerCase(), telefono: tel.trim() || null })
+      .eq("id", miembro.id);
+    if (err) { setError(err.message); setSaving(false); return; }
+    setSaving(false); setOk(true); setEditing(false);
+    onUpdated({ email: email.trim().toLowerCase(), telefono: tel.trim() || null });
+    setTimeout(() => setOk(false), 3000);
+  };
+
+  return (
+    <div style={{ background: B.navyMid, borderRadius: 16, padding: "20px", marginTop: 16 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: editing ? 16 : 0 }}>
+        <div style={{ fontSize: 15, fontWeight: 700, fontFamily: "'Barlow Condensed', sans-serif" }}>Mi Perfil</div>
+        {!editing && (
+          <button onClick={() => { setEditing(true); setOk(false); }} style={{ background: "none", border: `1px solid rgba(255,255,255,0.15)`, borderRadius: 8, color: "rgba(255,255,255,0.6)", fontSize: 12, padding: "5px 12px", cursor: "pointer" }}>
+            ✏️ Editar
+          </button>
+        )}
+      </div>
+
+      {!editing ? (
+        <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 8 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}>
+            <span style={{ color: "rgba(255,255,255,0.45)" }}>Email</span>
+            <span>{miembro.email}</span>
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}>
+            <span style={{ color: "rgba(255,255,255,0.45)" }}>Teléfono</span>
+            <span>{miembro.telefono || <span style={{ color: "rgba(255,255,255,0.25)" }}>—</span>}</span>
+          </div>
+          {ok && <div style={{ fontSize: 12, color: B.success, marginTop: 4 }}>✓ Datos actualizados</div>}
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          <div>
+            <label style={LS}>Email</label>
+            <input type="email" value={email} onChange={e => setEmail(e.target.value)} style={IS} />
+          </div>
+          <div>
+            <label style={LS}>Teléfono</label>
+            <input type="tel" value={tel} onChange={e => setTel(e.target.value)} placeholder="+57 300 000 0000" style={IS} />
+          </div>
+          {error && <div style={{ color: B.danger, fontSize: 12 }}>{error}</div>}
+          <div style={{ display: "flex", gap: 8 }}>
+            <button onClick={() => setEditing(false)} style={{ flex: 1, padding: "11px", background: "rgba(255,255,255,0.06)", border: "none", borderRadius: 10, color: "rgba(255,255,255,0.5)", fontSize: 13, cursor: "pointer" }}>
+              Cancelar
+            </button>
+            <button onClick={handleSave} disabled={saving} style={{ flex: 2, padding: "11px", background: saving ? B.navyLight : B.sky, border: "none", borderRadius: 10, color: saving ? "rgba(255,255,255,0.3)" : "#fff", fontWeight: 700, fontSize: 13, cursor: saving ? "default" : "pointer" }}>
+              {saving ? "Guardando..." : "Guardar cambios"}
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
