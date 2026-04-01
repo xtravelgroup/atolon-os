@@ -256,6 +256,7 @@ function TabPasadias({ pasadias, onRefresh }) {
   const [newForm, setNewForm] = useState({ nombre: "", precio: "", precio_neto_agencia: "", min_pax: 1, descripcion: "", web_publica: true });
   const [items, setItems] = useState([]);
   const [newItem, setNewItem] = useState("");
+  const [newItemEn, setNewItemEn] = useState("");
   const [uploadingMain, setUploadingMain] = useState(false);
   const [uploadingExtra, setUploadingExtra] = useState(false);
 
@@ -338,10 +339,17 @@ function TabPasadias({ pasadias, onRefresh }) {
   const addItem = async () => {
     if (!supabase || !newItem.trim()) return;
     const orden = items.length + 1;
-    await supabase.from("pasadia_incluye").insert({ id: `INC-${Date.now()}`, pasadia_id: selected.id, descripcion: newItem.trim(), orden });
+    await supabase.from("pasadia_incluye").insert({ id: `INC-${Date.now()}`, pasadia_id: selected.id, descripcion: newItem.trim(), descripcion_en: newItemEn.trim(), orden });
     const { data } = await supabase.from("pasadia_incluye").select("*").eq("pasadia_id", selected.id).order("orden");
     setItems(data || []);
     setNewItem("");
+    setNewItemEn("");
+  };
+
+  const updateItemEn = async (id, value) => {
+    if (!supabase) return;
+    await supabase.from("pasadia_incluye").update({ descripcion_en: value }).eq("id", id);
+    setItems(prev => prev.map(it => it.id === id ? { ...it, descripcion_en: value } : it));
   };
 
   const deleteItem = async (id) => {
@@ -460,6 +468,12 @@ function TabPasadias({ pasadias, onRefresh }) {
                 <div key={item.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", background: B.navy, borderRadius: 8 }}>
                   <span style={{ fontSize: 12, color: B.sand, fontWeight: 700, minWidth: 20 }}>{i + 1}.</span>
                   <span style={{ flex: 1, fontSize: 13 }}>{item.descripcion}</span>
+                  <input
+                    defaultValue={item.descripcion_en || ""}
+                    onBlur={e => updateItemEn(item.id, e.target.value)}
+                    placeholder="English..."
+                    style={{ flex: 1, fontSize: 12, padding: "4px 8px", borderRadius: 6, background: B.navyMid, border: `1px solid ${B.navyLight}`, color: "rgba(255,255,255,0.6)", outline: "none" }}
+                  />
                   <button onClick={() => deleteItem(item.id)} style={{ background: "none", border: "none", color: B.danger, cursor: "pointer", fontSize: 14, opacity: 0.5, padding: "2px 6px" }}>{"\u2715"}</button>
                 </div>
               ))}
@@ -467,8 +481,11 @@ function TabPasadias({ pasadias, onRefresh }) {
             </div>
             <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
               <input value={newItem} onChange={e => setNewItem(e.target.value)} onKeyDown={e => e.key === "Enter" && addItem()}
-                placeholder="Ej: Transporte ida y vuelta..."
+                placeholder="Español..."
                 style={{ flex: 1, padding: "9px 12px", borderRadius: 8, background: B.navy, border: `1px solid ${B.navyLight}`, color: B.white, fontSize: 13, outline: "none" }} />
+              <input value={newItemEn} onChange={e => setNewItemEn(e.target.value)} onKeyDown={e => e.key === "Enter" && addItem()}
+                placeholder="English..."
+                style={{ flex: 1, padding: "9px 12px", borderRadius: 8, background: B.navy, border: `1px solid ${B.navyLight}`, color: "rgba(255,255,255,0.6)", fontSize: 13, outline: "none" }} />
               <button onClick={addItem} style={{ background: B.sky, color: B.navy, border: "none", borderRadius: 8, padding: "0 16px", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>+</button>
             </div>
           </div>
