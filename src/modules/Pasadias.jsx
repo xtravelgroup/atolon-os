@@ -99,6 +99,25 @@ function TabCalendario({ salidas, cierres, embarcaciones }) {
     fetchMonthData();
   };
 
+  // Add virtual capacity (Sin Lancha or quick +N)
+  const addCapacidadVirtual = async (fecha, salidaId, capacidad, label = "Sin Lancha") => {
+    if (!supabase) return;
+    const existing = (overrides[fecha] || {})[salidaId];
+    const extras = existing?.extra_embarcaciones || [];
+    const newEntry = { id: `virtual-${Date.now()}`, nombre: `${label} (+${capacidad})`, capacidad, virtual: true };
+    const newExtras = [...extras, newEntry];
+    if (existing) {
+      await supabase.from("salidas_override").update({ extra_embarcaciones: newExtras }).eq("id", existing.id);
+    } else {
+      await supabase.from("salidas_override").insert({
+        id: `OVR-${Date.now()}`, fecha, salida_id: salidaId,
+        accion: isDefaultVisible(fecha, salidaId) ? "abrir" : "abrir",
+        extra_embarcaciones: newExtras,
+      });
+    }
+    fetchMonthData();
+  };
+
   // Build calendar grid
   const dias = [];
   for (let i = 0; i < primerDia; i++) dias.push(null);
@@ -197,7 +216,9 @@ function TabCalendario({ salidas, cierres, embarcaciones }) {
               </div>
               {getSalidasVisibles(fecha).map(s => {
                 const paxVendidos = resDia[s.id] || 0;
-                const cap = s.capacidad_total || 1;
+                const ovr = (overrides[fecha] || {})[s.id];
+                const extraCap = (ovr?.extra_embarcaciones || []).reduce((sum, e) => sum + (e.capacidad || 0), 0);
+                const cap = (s.capacidad_total || 1) + extraCap;
                 const pct = cap > 0 ? paxVendidos / cap : 0;
                 const barColor = pct >= 1 ? B.danger : pct >= 0.7 ? B.warning : B.success;
                 return (
@@ -277,16 +298,28 @@ function TabCalendario({ salidas, cierres, embarcaciones }) {
                       <div style={{ fontSize: 12, fontWeight: 600, color: capTotal - pax > 0 ? B.success : B.danger, marginBottom: 8 }}>
                         {capTotal - pax > 0 ? `${capTotal - pax} disponibles` : "LLENO"}
                       </div>
-                      {/* Agregar embarcación extra */}
+                      {/* Agregar embarcación real */}
                       {disponibles.length > 0 && (
                         <select defaultValue="" onChange={e => { if (e.target.value) { addExtraEmbarcacion(selectedDay, s.id, e.target.value); e.target.value = ""; } }}
-                          style={{ width: "100%", padding: "6px 10px", borderRadius: 8, background: B.navyLight, border: `1px solid ${B.navyLight}`, color: B.white, fontSize: 11, cursor: "pointer", marginBottom: 8, outline: "none" }}>
-                          <option value="">+ Agregar embarcación...</option>
+                          style={{ width: "100%", padding: "6px 10px", borderRadius: 8, background: B.navyLight, border: `1px solid ${B.navyLight}`, color: B.white, fontSize: 11, cursor: "pointer", marginBottom: 6, outline: "none" }}>
+                          <option value="">⛵ Agregar embarcación...</option>
                           {disponibles.map(e => (
                             <option key={e.id} value={e.id}>{e.nombre} — {e.tipo} ({e.capacidad} pax)</option>
                           ))}
                         </select>
                       )}
+                      {/* Sin Lancha — cupos rápidos */}
+                      <div style={{ marginBottom: 8 }}>
+                        <div style={{ fontSize: 10, color: "rgba(255,255,255,0.35)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 }}>Sin Lancha</div>
+                        <div style={{ display: "flex", gap: 4, justifyContent: "center", flexWrap: "wrap" }}>
+                          {[15, 20, 40, 50].map(n => (
+                            <button key={n} onClick={() => addCapacidadVirtual(selectedDay, s.id, n)}
+                              style={{ padding: "4px 10px", borderRadius: 6, background: B.sky + "22", color: B.sky, border: `1px solid ${B.sky}44`, fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
+                              +{n}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
                     </>
                   ) : (
                     <div style={{ padding: "16px 0", fontSize: 13, color: B.danger }}>CERRADA</div>
