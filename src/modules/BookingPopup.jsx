@@ -1117,7 +1117,7 @@ export default function BookingPopup() {
         {/* Brand header */}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
           <div style={{ flex: 1, textAlign: "center" }}>
-            <img src="/atolon-peces.png" alt="Atolon Beach Club" style={{ height: 80, objectFit: "contain" }} />
+            <img src="/atolon-peces.png" alt="Atolon Beach Club" style={{ height: 130, objectFit: "contain" }} />
           </div>
           <div style={{ display: "flex", gap: 4 }}>
             {["es","en"].map(l => (
