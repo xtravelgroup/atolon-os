@@ -48,7 +48,7 @@ function LoginScreen({ onLogin }) {
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
           <input value={email} onChange={e => setEmail(e.target.value)} placeholder="Email del vendedor" onKeyDown={e => e.key === "Enter" && handleLogin()}
             style={{ ...IS, textAlign: "center", fontSize: 14 }} />
-          <input type="password" value={pin} onChange={e => setPin(e.target.value)} placeholder="Clave (opcional)" maxLength={20} onKeyDown={e => e.key === "Enter" && handleLogin()}
+          <input type="password" value={pin} onChange={e => setPin(e.target.value)} placeholder="Clave de acceso" maxLength={20} onKeyDown={e => e.key === "Enter" && handleLogin()}
             style={{ ...IS, textAlign: "center", fontSize: 14, letterSpacing: 8 }} />
           {error && <div style={{ color: B.danger, fontSize: 13 }}>{error}</div>}
           <button onClick={handleLogin} disabled={loading}
