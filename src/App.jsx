@@ -116,8 +116,8 @@ export default function App() {
   // Fetch WhatsApp number from configuracion
   useEffect(() => {
     if (!supabase) return;
-    supabase.from("configuracion").select("telefono").eq("id", "atolon").single()
-      .then(({ data }) => { if (data?.telefono) setWaPhone(data.telefono); });
+    supabase.from("configuracion").select("whatsapp").eq("id", "atolon").single()
+      .then(({ data }) => { if (data?.whatsapp) setWaPhone(data.whatsapp); });
   }, []);
 
   const navigate = (mod) => setActiveModule(mod);
