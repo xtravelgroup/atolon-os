@@ -477,7 +477,7 @@ function NuevaReserva({ agencia, user, onCreated, vistaPrecios = "ambos" }) {
           {form.tipo && !esSinEmb && salidasParaMostrar.length > 0 && (
             <div>
               <label style={{ ...LS, marginBottom: 12 }}>Selecciona Horario</label>
-              <div style={{ display: "grid", gridTemplateColumns: `repeat(${Math.min(salidasParaMostrar.length, 4)}, 1fr)`, gap: 12 }}>
+              <div style={{ display: "grid", gridTemplateColumns: isMobile ? "repeat(2, 1fr)" : `repeat(${Math.min(salidasParaMostrar.length, 4)}, 1fr)`, gap: isMobile ? 8 : 12 }}>
                 {salidasParaMostrar.map(s => {
                   const paxVendidos = disponibilidad[s.id] || 0;
                   const cap = s.capacidad_total || 0;
@@ -489,11 +489,11 @@ function NuevaReserva({ agencia, user, onCreated, vistaPrecios = "ambos" }) {
                   return (
                     <div key={s.id} onClick={() => selectable && setForm(f => ({ ...f, salida_id: s.id }))}
                       style={{
-                        background: selected ? B.sky + "15" : B.navy, borderRadius: 10, padding: 16, textAlign: "center",
+                        background: selected ? B.sky + "15" : B.navy, borderRadius: 10, padding: isMobile ? "12px 8px" : 16, textAlign: "center",
                         border: `2px solid ${selected ? B.sky : !selectable ? B.danger + "33" : requiereVerif ? B.warning + "66" : B.navyLight}`,
                         cursor: selectable ? "pointer" : "default", opacity: !selectable ? 0.4 : 1,
                       }}>
-                      <div style={{ fontSize: 28, fontWeight: 700, fontFamily: "'Barlow Condensed', sans-serif", color: selected ? B.sky : B.white }}>{s.hora}</div>
+                      <div style={{ fontSize: isMobile ? 22 : 28, fontWeight: 700, fontFamily: "'Barlow Condensed', sans-serif", color: selected ? B.sky : B.white }}>{s.hora}</div>
                       <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginBottom: 8 }}>{s.nombre}</div>
                       {!lleno && <div style={{ fontSize: 13, fontWeight: 600, color: B.success, marginTop: 4 }}>Disponible</div>}
                       {lleno && !requiereVerif && <div style={{ fontSize: 13, fontWeight: 600, color: B.danger, marginTop: 4 }}>No disponible</div>}
