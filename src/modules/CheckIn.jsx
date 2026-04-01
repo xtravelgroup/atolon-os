@@ -234,7 +234,6 @@ function generarZarpe(salida, reservas, fecha, despacho) {
       <div class="firma">Firma Capitanía de Puerto</div>
     </div>
     <div class="footer">Atolon Beach Club — ${new Date().toLocaleString("es-CO")}</div>
-    <script>window.onload = () => { window.print(); }<\/script>
   </body></html>`;
 
   const win = window.open("", "_blank");
