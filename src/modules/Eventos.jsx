@@ -52,14 +52,32 @@ function BEOPreview({ evento, onClose }) {
 
 // ─── Link del grupo ───────────────────────────────────────────────────────────
 function GrupoLink({ evento, onClose }) {
-  const [copied, setCopied] = useState(false);
+  const [copied,   setCopied]   = useState(false);
+  const [showRes,  setShowRes]  = useState(false);
+  const [reservas, setReservas] = useState(null);
+  const [loadingR, setLoadingR] = useState(false);
   const url = `${window.location.origin}/booking?grupo=${evento.id}`;
   const copy = () => { navigator.clipboard.writeText(url); setCopied(true); setTimeout(() => setCopied(false), 2000); };
+
+  const toggleReservas = async () => {
+    if (showRes) { setShowRes(false); return; }
+    setShowRes(true);
+    if (reservas !== null) return;
+    setLoadingR(true);
+    let q = supabase.from("reservas").select("*").eq("canal", "GRUPO").eq("fecha", evento.fecha);
+    if (evento.aliado_id) q = q.eq("aliado_id", evento.aliado_id);
+    const { data } = await q.order("created_at", { ascending: false });
+    setReservas(data || []);
+    setLoadingR(false);
+  };
+
+  const totalPax  = (reservas || []).reduce((s, r) => s + (r.pax || 0), 0);
+  const totalCOP  = (reservas || []).reduce((s, r) => s + (r.total || 0), 0);
 
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 999 }}
       onClick={e => e.target === e.currentTarget && onClose()}>
-      <div style={{ background: B.navyMid, borderRadius: 16, padding: 32, width: 500, boxShadow: "0 20px 60px rgba(0,0,0,0.5)" }}>
+      <div style={{ background: B.navyMid, borderRadius: 16, padding: 32, width: 560, maxHeight: "90vh", overflowY: "auto", boxShadow: "0 20px 60px rgba(0,0,0,0.5)" }}>
         <div style={{ textAlign: "center", marginBottom: 24 }}>
           <div style={{ fontSize: 40, marginBottom: 8 }}>🔗</div>
           <h3 style={{ fontSize: 18, fontWeight: 700 }}>Link de compra del grupo</h3>
@@ -73,14 +91,51 @@ function GrupoLink({ evento, onClose }) {
           {url}
         </div>
 
-        <div style={{ display: "flex", gap: 10, marginBottom: 20 }}>
+        <div style={{ display: "flex", gap: 10, marginBottom: 12 }}>
           <button onClick={copy} style={{ flex: 1, padding: "11px", background: copied ? B.success : B.sky, color: B.navy, border: "none", borderRadius: 8, fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
             {copied ? "✓ Copiado!" : "📋 Copiar link"}
           </button>
           <button onClick={() => window.open(url, "_blank")} style={{ flex: 1, padding: "11px", background: B.navyLight, color: B.white, border: "none", borderRadius: 8, fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
             👁 Ver página
           </button>
+          <button onClick={toggleReservas} style={{ flex: 1, padding: "11px", background: showRes ? B.sand + "33" : B.navyLight, color: showRes ? B.sand : B.white, border: `1px solid ${showRes ? B.sand + "55" : "transparent"}`, borderRadius: 8, fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
+            📋 Reservas{reservas ? ` (${reservas.length})` : ""}
+          </button>
         </div>
+
+        {/* ── Lista de reservas ── */}
+        {showRes && (
+          <div style={{ background: B.navy, borderRadius: 10, padding: 16, marginBottom: 12 }}>
+            {loadingR ? (
+              <div style={{ textAlign: "center", color: "rgba(255,255,255,0.3)", fontSize: 13, padding: "16px 0" }}>Cargando...</div>
+            ) : reservas?.length === 0 ? (
+              <div style={{ textAlign: "center", color: "rgba(255,255,255,0.3)", fontSize: 13, padding: "16px 0" }}>Aún no hay reservas en este grupo</div>
+            ) : (
+              <>
+                {/* Totales */}
+                <div style={{ display: "flex", gap: 16, marginBottom: 12, padding: "8px 12px", background: B.navyMid, borderRadius: 8 }}>
+                  <span style={{ fontSize: 12, color: "rgba(255,255,255,0.5)" }}>Total personas: <strong style={{ color: B.white }}>{totalPax}</strong></span>
+                  <span style={{ fontSize: 12, color: "rgba(255,255,255,0.5)" }}>Total recaudado: <strong style={{ color: B.success }}>{COP(totalCOP)}</strong></span>
+                </div>
+                {/* Filas */}
+                {reservas.map(r => (
+                  <div key={r.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0", borderBottom: `1px solid ${B.navyLight}`, fontSize: 13 }}>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontWeight: 600 }}>{r.nombre}</div>
+                      <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)" }}>{r.id} · {r.pax} pax · {r.tipo}</div>
+                    </div>
+                    <div style={{ textAlign: "right" }}>
+                      <div style={{ fontWeight: 700, color: B.sand, fontSize: 13 }}>{COP(r.total)}</div>
+                      <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 10, background: r.estado === "confirmado" ? B.success + "22" : B.warning + "22", color: r.estado === "confirmado" ? B.success : B.warning }}>
+                        {r.estado}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </>
+            )}
+          </div>
+        )}
 
         <div style={{ background: B.navy, borderRadius: 10, padding: "14px 16px", fontSize: 13, lineHeight: 1.8, color: "rgba(255,255,255,0.5)" }}>
           <div>📅 <strong style={{ color: B.white }}>{fmtFecha(evento.fecha)}</strong></div>

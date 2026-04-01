@@ -1929,6 +1929,132 @@ function MediaPortal() {
 }
 
 // ═══════════════════════════════════════════════
+// GRUPOS PORTAL
+// ═══════════════════════════════════════════════
+function GruposPortal({ agencia }) {
+  const [grupos,   setGrupos]   = useState([]);
+  const [loading,  setLoading]  = useState(true);
+  const [expanded, setExpanded] = useState(null);
+  const [resMap,   setResMap]   = useState({});
+  const [loadingR, setLoadingR] = useState(null);
+
+  useEffect(() => {
+    if (!supabase) { setLoading(false); return; }
+    supabase.from("eventos").select("*")
+      .eq("aliado_id", agencia.id)
+      .eq("categoria", "grupo")
+      .order("fecha", { ascending: false })
+      .then(({ data }) => { setGrupos(data || []); setLoading(false); });
+  }, [agencia.id]);
+
+  const toggleReservas = async (evt) => {
+    if (expanded === evt.id) { setExpanded(null); return; }
+    setExpanded(evt.id);
+    if (resMap[evt.id]) return;
+    setLoadingR(evt.id);
+    let q = supabase.from("reservas").select("*").eq("canal", "GRUPO").eq("fecha", evt.fecha);
+    if (evt.aliado_id) q = q.eq("aliado_id", evt.aliado_id);
+    const { data } = await q.order("created_at", { ascending: false });
+    setResMap(m => ({ ...m, [evt.id]: data || [] }));
+    setLoadingR(null);
+  };
+
+  const bookingUrl = (evt) => `${window.location.origin}/booking?grupo=${evt.id}`;
+
+  if (loading) return <div style={{ padding: 40, textAlign: "center", color: "rgba(255,255,255,0.3)" }}>Cargando grupos...</div>;
+
+  if (grupos.length === 0) return (
+    <div style={{ background: B.navyMid, borderRadius: 14, padding: 48, textAlign: "center" }}>
+      <div style={{ fontSize: 40, marginBottom: 12 }}>🎪</div>
+      <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 6 }}>No tienes grupos activos</div>
+      <div style={{ fontSize: 13, color: "rgba(255,255,255,0.4)" }}>Los grupos que Atolon cree para tu agencia aparecerán aquí.</div>
+    </div>
+  );
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      <div style={{ fontSize: 13, color: "rgba(255,255,255,0.4)", marginBottom: 4 }}>
+        Grupos y eventos abiertos para tu agencia. Cada participante compra su pasadía usando el link del grupo.
+      </div>
+      {grupos.map(evt => {
+        const res    = resMap[evt.id] || [];
+        const isOpen = expanded === evt.id;
+        const url    = bookingUrl(evt);
+        const totalPax = res.reduce((s, r) => s + (r.pax || 0), 0);
+        const totalCOP = res.reduce((s, r) => s + (r.total || 0), 0);
+        const hoy      = todayStr();
+        const pasado   = evt.fecha < hoy;
+
+        return (
+          <div key={evt.id} style={{ background: B.navyMid, borderRadius: 14, border: `1px solid ${pasado ? B.navyLight : B.sky + "44"}`, overflow: "hidden" }}>
+            {/* Header */}
+            <div style={{ padding: "16px 20px", display: "flex", alignItems: "center", gap: 14 }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                  <span style={{ fontWeight: 700, fontSize: 15 }}>{evt.nombre}</span>
+                  {pasado
+                    ? <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 8, background: "rgba(255,255,255,0.1)", color: "rgba(255,255,255,0.3)" }}>Finalizado</span>
+                    : <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 8, background: B.success + "22", color: B.success }}>Activo</span>
+                  }
+                </div>
+                <div style={{ fontSize: 12, color: "rgba(255,255,255,0.5)" }}>
+                  📅 {fmtFecha(evt.fecha)} &nbsp;·&nbsp; 🌴 {evt.tipo}
+                  {(evt.salidas_grupo || []).length > 0 && <> &nbsp;·&nbsp; ⛵ {[...evt.salidas_grupo].sort((a,b)=>a.hora.localeCompare(b.hora)).map(s=>s.hora).join(" · ")}</>}
+                  {evt.pax && <> &nbsp;·&nbsp; 👥 {evt.pax} cupos</>}
+                </div>
+              </div>
+              {/* Botones */}
+              <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
+                <button onClick={() => { navigator.clipboard.writeText(url); }}
+                  style={{ padding: "8px 14px", background: B.sky + "22", color: B.sky, border: `1px solid ${B.sky}44`, borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+                  📋 Copiar link
+                </button>
+                <button onClick={() => toggleReservas(evt)}
+                  style={{ padding: "8px 14px", background: isOpen ? B.sand + "22" : B.navyLight, color: isOpen ? B.sand : B.white, border: `1px solid ${isOpen ? B.sand + "44" : "transparent"}`, borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+                  📋 Ver reservas{isOpen && resMap[evt.id] ? ` (${resMap[evt.id].length})` : ""}
+                </button>
+              </div>
+            </div>
+
+            {/* Reservas expandidas */}
+            {isOpen && (
+              <div style={{ borderTop: `1px solid ${B.navyLight}`, padding: "16px 20px", background: B.navy }}>
+                {loadingR === evt.id ? (
+                  <div style={{ textAlign: "center", color: "rgba(255,255,255,0.3)", fontSize: 13, padding: "12px 0" }}>Cargando reservas...</div>
+                ) : res.length === 0 ? (
+                  <div style={{ textAlign: "center", color: "rgba(255,255,255,0.3)", fontSize: 13, padding: "12px 0" }}>Aún no hay reservas en este grupo.</div>
+                ) : (
+                  <>
+                    <div style={{ display: "flex", gap: 20, marginBottom: 12, padding: "8px 12px", background: B.navyMid, borderRadius: 8 }}>
+                      <span style={{ fontSize: 12, color: "rgba(255,255,255,0.5)" }}>👥 Personas: <strong style={{ color: B.white }}>{totalPax}</strong></span>
+                      <span style={{ fontSize: 12, color: "rgba(255,255,255,0.5)" }}>💵 Total: <strong style={{ color: B.success }}>{COP(totalCOP)}</strong></span>
+                    </div>
+                    {res.map(r => (
+                      <div key={r.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "8px 0", borderBottom: `1px solid ${B.navyLight}`, fontSize: 13 }}>
+                        <div style={{ flex: 1 }}>
+                          <div style={{ fontWeight: 600 }}>{r.nombre}</div>
+                          <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)" }}>{r.id} · {r.pax} pax · {r.tipo}</div>
+                        </div>
+                        <div style={{ textAlign: "right" }}>
+                          <div style={{ fontWeight: 700, color: B.sand }}>{COP(r.total)}</div>
+                          <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 10, background: r.estado === "confirmado" ? B.success + "22" : B.warning + "22", color: r.estado === "confirmado" ? B.success : B.warning }}>
+                            {r.estado}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════
 // MAIN PORTAL
 // ═══════════════════════════════════════════════
 export default function AgenciaPortal() {
@@ -1997,6 +2123,7 @@ export default function AgenciaPortal() {
             ["historial", "Mis Reservas"],
             ...(isAdmin ? [["vendedores", "Vendedores"]] : []),
             ["qr", "Link / QR"],
+            ["grupos", "🎪 Grupos"],
             ...(!isAdmin ? [["puntos", "🏆 Mis Puntos"]] : []),
             ...(isAdmin ? [["incentivos", "🎯 Incentivos"]] : []),
             ["info", "📢 Novedades"],
@@ -2014,6 +2141,7 @@ export default function AgenciaPortal() {
         {tab === "historial" && <HistorialReservas key={refreshKey} agencia={agencia} vendedorId={isAdmin ? null : user.id} />}
         {tab === "vendedores" && isAdmin && <GestionVendedores agencia={agencia} />}
         {tab === "qr" && <QRSection agencia={agencia} />}
+        {tab === "grupos" && <GruposPortal agencia={agencia} />}
         {tab === "puntos" && !isAdmin && <PuntosVendedor user={user} agencia={agencia} />}
         {tab === "incentivos" && isAdmin && <IncentivosPortal agencia={agencia} />}
         {tab === "info"  && <InfoPortal />}
