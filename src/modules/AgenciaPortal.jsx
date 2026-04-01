@@ -29,7 +29,7 @@ function LoginScreen({ onLogin }) {
   return (
     <div style={{ minHeight: "100vh", background: B.navy, display: "flex", alignItems: "center", justifyContent: "center" }}>
       <div style={{ background: B.navyMid, borderRadius: 16, padding: 40, width: 400, textAlign: "center" }}>
-        <div style={{ width: 64, height: 64, borderRadius: 12, background: `linear-gradient(135deg, ${B.sand}, ${B.sky})`, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 20px", fontSize: 28, fontWeight: 700, color: B.navy }}>A</div>
+        <img src="/atolon-logo-white.png" alt="Atolon Beach Club" style={{ height: 72, objectFit: "contain", display: "block", margin: "0 auto 20px" }} />
         <h2 style={{ fontFamily: "'Barlow Condensed', sans-serif", fontSize: 24, marginBottom: 4 }}>Portal de Agencias</h2>
         <p style={{ fontSize: 13, color: "rgba(255,255,255,0.4)", marginBottom: 28 }}>Atolon Beach Club</p>
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
