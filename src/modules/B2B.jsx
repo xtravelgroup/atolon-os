@@ -2026,7 +2026,7 @@ function NuevoAliadoModal({ onClose, onSave }) {
         <h3 style={{ marginBottom: 20, fontSize: 17, fontWeight: 700 }}>Nuevo Aliado B2B</h3>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 16px" }}>
           <div style={{ gridColumn: "1 / -1", marginBottom: 14 }}><label style={LS}>Nombre del Aliado</label><input value={f.nombre} onChange={e => s("nombre", e.target.value)} placeholder="Nombre de la empresa" style={IS} /></div>
-          <div style={{ marginBottom: 14 }}><label style={LS}>Tipo</label><select value={f.tipo} onChange={e => s("tipo", e.target.value)} style={IS}><option>Hotel</option><option>Agencia</option><option>Freelance</option><option>Event Planner</option></select></div>
+          <div style={{ marginBottom: 14 }}><label style={LS}>Tipo</label><select value={f.tipo} onChange={e => s("tipo", e.target.value)} style={IS}><option value="Hotel">Hotel</option><option value="Agencia">Agencia</option><option value="Freelance">Freelance</option><option value="Event Planner">Event Planner</option></select></div>
           <div style={{ marginBottom: 14 }}><label style={LS}>Contacto</label><input value={f.contacto} onChange={e => s("contacto", e.target.value)} placeholder="Nombre del contacto" style={IS} /></div>
           <div style={{ marginBottom: 14 }}><label style={LS}>Telefono</label><input value={f.tel} onChange={e => s("tel", e.target.value)} placeholder="+57 ..." style={IS} /></div>
           <div style={{ marginBottom: 14 }}><label style={LS}>Email</label><input value={f.email} onChange={e => s("email", e.target.value)} placeholder="email@aliado.com" style={IS} /></div>
