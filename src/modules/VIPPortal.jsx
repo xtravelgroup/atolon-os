@@ -302,14 +302,12 @@ function SubirReciboModal({ miembro, onClose, onSubmitted }) {
   const [file, setFile]           = useState(null);
   const [preview, setPreview]     = useState(null);
   const [analyzing, setAnalyzing] = useState(false);
-  const [monto, setMonto]         = useState(null);
+  const [monto, setMonto]         = useState(null);   // null = IA no leyó (se sube igual)
   const [aiTexto, setAiTexto]     = useState("");
-  const [aiError, setAiError]     = useState(false);
-  const [fechaRecibo, setFechaRecibo] = useState(null); // fecha extraída por IA
+  const [fechaRecibo, setFechaRecibo] = useState(null);
   const [uploading, setUploading] = useState(false);
   const [success, setSuccess]     = useState(false);
   const [error, setError]         = useState("");
-  const [manualMonto, setManualMonto] = useState("");
   const fileRef = useRef();
 
   const baseConsumo = monto ? monto / 1.08 : 0;
@@ -327,7 +325,7 @@ function SubirReciboModal({ miembro, onClose, onSubmitted }) {
     if (!f) return;
     setFile(f);
     setPreview(URL.createObjectURL(f));
-    setMonto(null); setAiTexto(""); setAiError(false); setError(""); setManualMonto(""); setFechaRecibo(null);
+    setMonto(null); setAiTexto(""); setError(""); setFechaRecibo(null);
 
     setAnalyzing(true);
     try {
@@ -336,16 +334,14 @@ function SubirReciboModal({ miembro, onClose, onSubmitted }) {
       const { data, error: fnErr } = await supabase.functions.invoke("analyze-recibo", {
         body: { imageBase64, mediaType },
       });
-      if (fnErr) throw new Error(fnErr.message);
-      if (data?.encontrado && data.monto > 0) {
+      if (!fnErr && data?.encontrado && data.monto > 0) {
         setMonto(data.monto);
         setAiTexto(data.texto || "");
         if (data.fecha) setFechaRecibo(data.fecha);
-      } else {
-        setAiError(true);
       }
+      // Si la IA no pudo leer: monto queda null, se sube igual para revisión manual
     } catch {
-      setAiError(true);
+      // silencioso — igual se puede enviar
     } finally {
       setAnalyzing(false);
     }
@@ -363,8 +359,7 @@ function SubirReciboModal({ miembro, onClose, onSubmitted }) {
   }, [fechaRecibo]);
 
   const handleSubmit = async () => {
-    if (!file)  { setError("Selecciona una foto del recibo"); return; }
-    if (!monto) { setError("No se pudo leer el monto — sube otra foto o ingrésalo manualmente"); return; }
+    if (!file) { setError("Selecciona una foto del recibo"); return; }
     setUploading(true); setError("");
 
     let recibo_url = null;
@@ -377,9 +372,11 @@ function SubirReciboModal({ miembro, onClose, onSubmitted }) {
 
     const { error: txErr } = await supabase.from("vip_transacciones").insert({
       id: uid(), miembro_id: miembro.id, tipo: "ganados",
-      puntos: puntosCalc,
-      descripcion: `Pendiente validación · ${aiTexto || `Total: $${monto.toLocaleString("es-CO")}`}${fechaRecibo ? ` · Fecha: ${fechaRecibo}` : ""}`,
-      recibo_url, monto_consumo: monto, validado: false,
+      puntos: puntosCalc,  // 0 si IA no leyó — admin asigna al validar
+      descripcion: monto
+        ? `Pendiente validación · ${aiTexto || `Total: $${monto.toLocaleString("es-CO")}`}${fechaRecibo ? ` · Fecha: ${fechaRecibo}` : ""}`
+        : "Pendiente revisión manual — monto no legible",
+      recibo_url, monto_consumo: monto || null, validado: false,
     });
     if (txErr) { setError(txErr.message); setUploading(false); return; }
     setUploading(false); setSuccess(true);
@@ -439,16 +436,6 @@ function SubirReciboModal({ miembro, onClose, onSubmitted }) {
               </div>
             )}
 
-            {/* IA no pudo leer */}
-            {aiError && !analyzing && (
-              <div style={{ background: B.danger + "15", border: `1px solid ${B.danger}33`, borderRadius: 10, padding: "14px 16px" }}>
-                <div style={{ fontSize: 13, fontWeight: 700, color: B.danger, marginBottom: 6 }}>⚠️ No se pudo leer el recibo</div>
-                <div style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", marginBottom: 10 }}>Intenta con otra foto más clara o ingresa el total manualmente:</div>
-                <input type="number" value={manualMonto} onChange={e => { setManualMonto(e.target.value); setMonto(parseFloat(e.target.value) || null); }}
-                  placeholder="Total del recibo en pesos" style={IS} inputMode="numeric" />
-              </div>
-            )}
-
             {/* Alerta de fecha */}
             {fechaRecibo && reservaMatch === false && !analyzing && (
               <div style={{ background: "#E8A02018", border: "1px solid #E8A02044", borderRadius: 10, padding: "12px 16px", display: "flex", gap: 10 }}>
@@ -495,9 +482,9 @@ function SubirReciboModal({ miembro, onClose, onSubmitted }) {
 
             {error && <div style={{ color: B.danger, fontSize: 13 }}>{error}</div>}
 
-            <button onClick={handleSubmit} disabled={uploading || analyzing || !monto}
-              style={{ padding: "14px", background: (uploading || analyzing || !monto) ? B.navyLight : B.success, color: (uploading || analyzing || !monto) ? "rgba(255,255,255,0.3)" : "#fff", border: "none", borderRadius: 12, fontWeight: 700, fontSize: 15, cursor: (uploading || analyzing || !monto) ? "default" : "pointer" }}>
-              {uploading ? "Enviando..." : analyzing ? "Analizando..." : !monto ? "Sube una foto del recibo" : "Enviar Recibo →"}
+            <button onClick={handleSubmit} disabled={uploading || analyzing || !file}
+              style={{ padding: "14px", background: (uploading || analyzing || !file) ? B.navyLight : B.success, color: (uploading || analyzing || !file) ? "rgba(255,255,255,0.3)" : "#fff", border: "none", borderRadius: 12, fontWeight: 700, fontSize: 15, cursor: (uploading || analyzing || !file) ? "default" : "pointer" }}>
+              {uploading ? "Enviando..." : analyzing ? "Analizando..." : !file ? "Sube una foto del recibo" : "Enviar Recibo →"}
             </button>
           </div>
         )}
