@@ -8,6 +8,16 @@ import { asignarPuntosReserva, getSaldoPuntos, getRankingAgencia, getPuntosConfi
 const IS = { width: "100%", padding: "10px 14px", borderRadius: 8, background: B.navy, border: `1px solid ${B.navyLight}`, color: B.white, fontSize: 13, outline: "none", boxSizing: "border-box" };
 const LS = { fontSize: 11, color: B.sand, display: "block", marginBottom: 5, textTransform: "uppercase", letterSpacing: "0.06em" };
 
+function useDevice() {
+  const [w, setW] = useState(window.innerWidth);
+  useEffect(() => {
+    const handler = () => setW(window.innerWidth);
+    window.addEventListener("resize", handler);
+    return () => window.removeEventListener("resize", handler);
+  }, []);
+  return { isMobile: w < 768, isTablet: w >= 768 && w < 1100 };
+}
+
 // ═══════════════════════════════════════════════
 // LOGIN
 // ═══════════════════════════════════════════════
@@ -53,6 +63,7 @@ function LoginScreen({ onLogin }) {
 // NUEVA RESERVA B2B
 // ═══════════════════════════════════════════════
 function NuevaReserva({ agencia, user, onCreated, vistaPrecios = "ambos" }) {
+  const { isMobile } = useDevice();
   const [step, setStep] = useState(1);
   const [convenios, setConvenios] = useState([]);
   const [pasadiasDB, setPasadiasDB] = useState([]);
@@ -363,7 +374,7 @@ function NuevaReserva({ agencia, user, onCreated, vistaPrecios = "ambos" }) {
         return (
         <div>
           {/* Row 1: Fecha + Adultos + Ninos */}
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16, marginBottom: 20 }}>
+          <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr 1fr", gap: isMobile ? 12 : 16, marginBottom: 20 }}>
             <div>
               <label style={LS}>Fecha</label>
               <input type="date" value={form.fecha}
@@ -395,7 +406,7 @@ function NuevaReserva({ agencia, user, onCreated, vistaPrecios = "ambos" }) {
           {form.fecha && !cierres.some(c => c.tipo === "total") && (
             <div style={{ marginBottom: 20 }}>
               <label style={{ ...LS, marginBottom: 12 }}>Tipo de Pasadia</label>
-              <div style={{ display: "grid", gridTemplateColumns: `repeat(${Math.min(convenios.length, 4)}, 1fr)`, gap: 12 }}>
+              <div style={{ display: "grid", gridTemplateColumns: `repeat(${Math.min(convenios.length, isMobile ? 2 : 4)}, 1fr)`, gap: 12 }}>
                 {convenios.map(c => {
                   const pas = pasadiasDB.find(p => p.nombre === c.tipo_pasadia);
                   const selected = form.tipo === c.tipo_pasadia;
@@ -495,7 +506,7 @@ function NuevaReserva({ agencia, user, onCreated, vistaPrecios = "ambos" }) {
             <button onClick={() => setStep(1)} style={{ background: B.navyLight, border: "none", borderRadius: 6, padding: "6px 14px", color: B.sand, fontSize: 12, cursor: "pointer" }}>Cambiar</button>
           </div>
 
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 16px" }}>
+          <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: isMobile ? 0 : "0 16px" }}>
             <div style={{ marginBottom: 14 }}>
               <label style={LS}>Pasadia</label>
               <div style={{ padding: "10px 14px", background: B.navy, borderRadius: 8 }}>
@@ -2110,6 +2121,8 @@ function GruposPortal({ agencia }) {
 // MAIN PORTAL
 // ═══════════════════════════════════════════════
 export default function AgenciaPortal() {
+  const { isMobile, isTablet } = useDevice();
+  const MOBILE_TABS = ["reservar", "historial", "qr", "info", "media"];
   const [session, setSession] = useState(null);
   const [tab, setTab]         = useState("reservar");
   const [refreshKey, setRefreshKey] = useState(0);
@@ -2132,6 +2145,10 @@ export default function AgenciaPortal() {
       .then(({ data }) => setTelMuelle(data?.tel_muelle || ""));
   }, [session]);
 
+  useEffect(() => {
+    if (isMobile && !MOBILE_TABS.includes(tab)) setTab("reservar");
+  }, [isMobile]);
+
   if (!session) return <LoginScreen onLogin={setSession} />;
 
   const { user, agencia } = session;
@@ -2150,26 +2167,26 @@ export default function AgenciaPortal() {
   return (
     <div style={{ minHeight: "100vh", background: B.navy }}>
       {/* Header */}
-      <div style={{ padding: "12px 28px", background: B.navyMid, display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: `1px solid ${B.navyLight}` }}>
+      <div style={{ padding: isMobile ? "10px 16px" : isTablet ? "12px 20px" : "12px 28px", background: B.navyMid, display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: `1px solid ${B.navyLight}` }}>
         <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-          <img src="/atolon-logo-white.png" alt="Atolon Beach Club" style={{ height: 80, objectFit: "contain" }} />
-          <div style={{ width: 1, height: 28, background: B.navyLight }} />
+          <img src="/atolon-logo-white.png" alt="Atolon Beach Club" style={{ height: isMobile ? 44 : isTablet ? 60 : 80, objectFit: "contain" }} />
+          {!isMobile && <div style={{ width: 1, height: 28, background: B.navyLight }} />}
           <div>
-            <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontSize: 16, fontWeight: 600 }}>Portal de Agencias</span>
-            <span style={{ fontSize: 12, color: B.sand, marginLeft: 12 }}>{agencia.nombre}</span>
+            {!isMobile && <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontSize: 16, fontWeight: 600 }}>Portal de Agencias</span>}
+            <span style={{ fontSize: isMobile ? 13 : 12, color: B.sand, marginLeft: isMobile ? 0 : 12 }}>{agencia.nombre}</span>
           </div>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <span style={{ fontSize: 12, color: "rgba(255,255,255,0.5)" }}>{user.nombre}</span>
-          <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 10, background: B.sky + "22", color: B.sky }}>{user.rol}</span>
+          {!isMobile && <span style={{ fontSize: 12, color: "rgba(255,255,255,0.5)" }}>{user.nombre}</span>}
+          {!isMobile && <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 10, background: B.sky + "22", color: B.sky }}>{user.rol}</span>}
           <button onClick={() => setSession(null)} style={{ padding: "6px 14px", borderRadius: 6, background: B.navyLight, color: B.white, border: "none", fontSize: 12, cursor: "pointer" }}>Salir</button>
         </div>
       </div>
 
       {/* Content */}
-      <div style={{ maxWidth: 900, margin: "0 auto", padding: 28 }}>
+      <div style={{ maxWidth: isMobile ? "100%" : 900, margin: "0 auto", padding: isMobile ? "16px 12px" : isTablet ? "20px 16px" : 28 }}>
         {/* Tabs */}
-        <div style={{ display: "flex", gap: 4, marginBottom: 24 }}>
+        <div style={{ display: "flex", gap: 4, marginBottom: 24, overflowX: "auto", WebkitOverflowScrolling: "touch", scrollbarWidth: "none" }}>
           {[
             ["reservar", "Nueva Reserva"],
             ["historial", "Mis Reservas"],
@@ -2180,9 +2197,10 @@ export default function AgenciaPortal() {
             ["info", "📢 Novedades"],
             ["media", "📲 Redes Sociales"],
             ...(isAdmin ? [["preferencias", "⚙ Preferencias"]] : []),
-          ].map(([k, l]) => (
+          ].filter(([k]) => !isMobile || MOBILE_TABS.includes(k)).map(([k, l]) => (
             <button key={k} onClick={() => setTab(k)} style={{
-              padding: "10px 20px", borderRadius: 8, border: "none", cursor: "pointer", fontSize: 13, fontWeight: 600,
+              padding: isMobile ? "10px 14px" : "10px 20px", borderRadius: 8, border: "none", cursor: "pointer",
+              fontSize: isMobile ? 12 : 13, fontWeight: 600, flexShrink: 0,
               background: tab === k ? B.sky : B.navyMid, color: tab === k ? B.navy : B.sand,
             }}>{l}</button>
           ))}
@@ -2199,7 +2217,7 @@ export default function AgenciaPortal() {
         {tab === "preferencias" && isAdmin && <PreferenciasAgencia agencia={agencia} onSaved={handlePrefsSaved} />}
 
         {/* ── Footer: agente comercial + muelle ── */}
-        <div style={{ marginTop: 48, borderTop: `1px solid ${B.navyLight}`, paddingTop: 24, display: "flex", gap: 16, flexWrap: "wrap", alignItems: "stretch" }}>
+        <div style={{ marginTop: isMobile ? 32 : 48, borderTop: `1px solid ${B.navyLight}`, paddingTop: isMobile ? 20 : 24, display: "flex", flexDirection: isMobile ? "column" : "row", gap: 16, flexWrap: "wrap", alignItems: "stretch" }}>
           {/* Agente comercial */}
           <div style={{ flex: "1 1 260px", background: B.navyMid, borderRadius: 14, padding: "18px 22px", display: "flex", gap: 14, alignItems: "center", border: `1px solid ${B.navyLight}` }}>
             <div style={{ width: 48, height: 48, borderRadius: 24, background: vendedor ? (vendedor.avatar_color || B.sky) : B.navyLight, display: "flex", alignItems: "center", justifyContent: "center", fontSize: vendedor ? 16 : 22, fontWeight: 700, color: B.navy, flexShrink: 0 }}>
