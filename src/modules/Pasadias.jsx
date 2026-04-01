@@ -56,15 +56,46 @@ function TabCalendario({ salidas, cierres, embarcaciones }) {
     if (!supabase) return;
     const existing = (overrides[fecha] || {})[salidaId];
     if (existing) {
-      // Remove override (revert to default)
       await supabase.from("salidas_override").delete().eq("id", existing.id);
     } else {
-      // Create override: if currently visible, close it; if hidden, open it
       await supabase.from("salidas_override").insert({
         id: `OVR-${Date.now()}`, fecha, salida_id: salidaId,
         accion: currentlyVisible ? "cerrar" : "abrir",
+        extra_embarcaciones: [],
       });
     }
+    fetchMonthData();
+  };
+
+  // Add or remove an extra embarcación for a specific day+salida
+  const addExtraEmbarcacion = async (fecha, salidaId, embId) => {
+    if (!supabase) return;
+    const emb = embarcaciones.find(e => e.id === embId);
+    if (!emb) return;
+    const existing = (overrides[fecha] || {})[salidaId];
+    const extras = existing?.extra_embarcaciones || [];
+    if (extras.some(e => e.id === embId)) return; // ya está
+    const newExtras = [...extras, { id: emb.id, nombre: emb.nombre, capacidad: emb.capacidad }];
+    if (existing) {
+      await supabase.from("salidas_override").update({ extra_embarcaciones: newExtras }).eq("id", existing.id);
+    } else {
+      // Get default visibility to preserve it
+      const defaultVisible = isDefaultVisible(fecha, salidaId);
+      await supabase.from("salidas_override").insert({
+        id: `OVR-${Date.now()}`, fecha, salida_id: salidaId,
+        accion: defaultVisible ? "abrir" : "abrir",
+        extra_embarcaciones: newExtras,
+      });
+    }
+    fetchMonthData();
+  };
+
+  const removeExtraEmbarcacion = async (fecha, salidaId, embId) => {
+    if (!supabase) return;
+    const existing = (overrides[fecha] || {})[salidaId];
+    if (!existing) return;
+    const newExtras = (existing.extra_embarcaciones || []).filter(e => e.id !== embId);
+    await supabase.from("salidas_override").update({ extra_embarcaciones: newExtras }).eq("id", existing.id);
     fetchMonthData();
   };
 
@@ -205,6 +236,14 @@ function TabCalendario({ salidas, cierres, embarcaciones }) {
               const pct = cap > 0 ? pax / cap : 0;
               const botes = (s.embarcaciones || []).map(eid => embarcaciones.find(e => e.id === eid)).filter(Boolean);
               const barColor = pct >= 1 ? B.danger : pct >= 0.7 ? B.warning : B.success;
+              const override     = (overrides[selectedDay] || {})[s.id];
+              const extraBotes   = override?.extra_embarcaciones || [];
+              const capTotal     = cap + extraBotes.reduce((sum, e) => sum + (e.capacidad || 0), 0);
+              const pctTotal     = capTotal > 0 ? pax / capTotal : 0;
+              const barColorTotal= pctTotal >= 1 ? B.danger : pctTotal >= 0.7 ? B.warning : B.success;
+              // Embarcaciones disponibles para agregar (activas, no asignadas a esta salida ni ya en extras)
+              const asignadas    = botes.map(b => b.id);
+              const disponibles  = embarcaciones.filter(e => e.estado === "activo" && !asignadas.includes(e.id) && !extraBotes.some(x => x.id === e.id));
               return (
                 <div key={s.id} style={{ background: B.navy, borderRadius: 10, padding: 16, textAlign: "center", opacity: isOpen ? 1 : 0.4, border: `2px solid ${isOpen ? B.navyLight : B.danger + "44"}` }}>
                   <div style={{ fontSize: 11, color: B.sand, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>{s.nombre}</div>
@@ -212,19 +251,42 @@ function TabCalendario({ salidas, cierres, embarcaciones }) {
                   <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginBottom: 8 }}>Regreso: {s.hora_regreso}</div>
                   {isOpen ? (
                     <>
-                      <div style={{ fontSize: 36, fontWeight: 700, fontFamily: "'Barlow Condensed', sans-serif", color: barColor }}>{pax}<span style={{ fontSize: 16, color: "rgba(255,255,255,0.4)" }}>/{cap}</span></div>
+                      <div style={{ fontSize: 36, fontWeight: 700, fontFamily: "'Barlow Condensed', sans-serif", color: barColorTotal }}>{pax}<span style={{ fontSize: 16, color: "rgba(255,255,255,0.4)" }}>/{capTotal}</span></div>
                       <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginBottom: 8 }}>pax vendidos</div>
                       <div style={{ height: 6, background: B.navyLight, borderRadius: 3, overflow: "hidden", marginBottom: 8 }}>
-                        <div style={{ width: `${Math.min(pct * 100, 100)}%`, height: "100%", background: barColor, borderRadius: 3 }} />
+                        <div style={{ width: `${Math.min(pctTotal * 100, 100)}%`, height: "100%", background: barColorTotal, borderRadius: 3 }} />
                       </div>
-                      <div style={{ display: "flex", gap: 4, justifyContent: "center", flexWrap: "wrap", marginBottom: 8 }}>
+                      {/* Embarcaciones asignadas */}
+                      <div style={{ display: "flex", gap: 4, justifyContent: "center", flexWrap: "wrap", marginBottom: 4 }}>
                         {botes.map(b => (
-                          <span key={b.id} style={{ fontSize: 10, padding: "2px 8px", borderRadius: 10, background: B.navyLight, color: "rgba(255,255,255,0.5)" }}>{b.nombre} ({b.capacidad})</span>
+                          <span key={b.id} style={{ fontSize: 10, padding: "2px 8px", borderRadius: 10, background: B.navyLight, color: "rgba(255,255,255,0.5)" }}>⛵ {b.nombre} ({b.capacidad})</span>
                         ))}
                       </div>
-                      <div style={{ fontSize: 12, fontWeight: 600, color: cap - pax > 0 ? B.success : B.danger, marginBottom: 10 }}>
-                        {cap - pax > 0 ? `${cap - pax} disponibles` : "LLENO"}
+                      {/* Embarcaciones extra del día */}
+                      {extraBotes.length > 0 && (
+                        <div style={{ display: "flex", gap: 4, justifyContent: "center", flexWrap: "wrap", marginBottom: 4 }}>
+                          {extraBotes.map(b => (
+                            <span key={b.id} style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 10, padding: "2px 8px 2px 10px", borderRadius: 10, background: B.success + "22", color: B.success, border: `1px solid ${B.success}44` }}>
+                              ⛵ {b.nombre} ({b.capacidad})
+                              <button onClick={() => removeExtraEmbarcacion(selectedDay, s.id, b.id)}
+                                style={{ background: "none", border: "none", color: B.danger, cursor: "pointer", fontSize: 12, lineHeight: 1, padding: 0 }}>✕</button>
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                      <div style={{ fontSize: 12, fontWeight: 600, color: capTotal - pax > 0 ? B.success : B.danger, marginBottom: 8 }}>
+                        {capTotal - pax > 0 ? `${capTotal - pax} disponibles` : "LLENO"}
                       </div>
+                      {/* Agregar embarcación extra */}
+                      {disponibles.length > 0 && (
+                        <select defaultValue="" onChange={e => { if (e.target.value) { addExtraEmbarcacion(selectedDay, s.id, e.target.value); e.target.value = ""; } }}
+                          style={{ width: "100%", padding: "6px 10px", borderRadius: 8, background: B.navyLight, border: `1px solid ${B.navyLight}`, color: B.white, fontSize: 11, cursor: "pointer", marginBottom: 8, outline: "none" }}>
+                          <option value="">+ Agregar embarcación...</option>
+                          {disponibles.map(e => (
+                            <option key={e.id} value={e.id}>{e.nombre} — {e.tipo} ({e.capacidad} pax)</option>
+                          ))}
+                        </select>
+                      )}
                     </>
                   ) : (
                     <div style={{ padding: "16px 0", fontSize: 13, color: B.danger }}>CERRADA</div>
@@ -232,7 +294,7 @@ function TabCalendario({ salidas, cierres, embarcaciones }) {
                   <button onClick={() => toggleOverride(selectedDay, s.id, isOpen)} style={{
                     width: "100%", padding: "8px", borderRadius: 8, border: "none", fontSize: 12, fontWeight: 700, cursor: "pointer",
                     background: isOpen ? B.danger + "22" : B.success + "22", color: isOpen ? B.danger : B.success,
-                  }}>{isOpen ? "Cerrar este dia" : "Abrir este dia"}</button>
+                  }}>{isOpen ? "Cerrar esta salida" : "Abrir esta salida"}</button>
                   {hasOverride && <div style={{ fontSize: 10, color: B.warning, marginTop: 4 }}>Override activo</div>}
                 </div>
               );
