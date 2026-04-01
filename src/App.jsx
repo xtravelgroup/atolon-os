@@ -73,19 +73,21 @@ export default function App() {
 
   const navigate = (mod) => setActiveModule(mod);
 
-  // Public routes — accessible without login
+  // Always-public routes (no auth needed ever)
   if (route === "empleados")      return <EmpleadoPortal />;
   if (route === "agencia" || route === "") return <AgenciaPortal />;
   if (route === "booking")        return <BookingPopup />;
   if (route.startsWith("pago"))   return <PagoCliente />;
   if (route === "reset-password") return <ResetPassword />;
   if (route === "zarpe-info")     return <ZarpeInfo />;
-  if (route === "login")          return <Login />;
 
   // Loading auth state
   if (session === undefined) return null;
 
-  // Not logged in — redirect to login page
+  // /login: show login form if not authenticated, else fall through to OS
+  if (route === "login" && !session) return <Login />;
+
+  // Not logged in from any other route
   if (!session) return <Login />;
 
   // Logged in — show OS
