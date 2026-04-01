@@ -1737,7 +1737,7 @@ function FichaAliado({ aliado, onBack, onRefresh }) {
     fetchLocaciones();
   };
 
-  const tipoBg = aliado.tipo === "Hotel" ? B.sky : aliado.tipo === "Agencia" ? B.sand : B.pink;
+  const tipoBg = aliado.tipo === "Hotel" ? B.sky : aliado.tipo === "Agencia" ? B.sand : aliado.tipo === "Freelance" ? B.success : aliado.tipo === "Event Planner" ? B.pink : B.pink;
 
   return (
     <div>
@@ -1769,7 +1769,7 @@ function FichaAliado({ aliado, onBack, onRefresh }) {
               {editing ? (
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 12px" }}>
                   {[
-                    ["nombre", "Nombre"], ["tipo", "Tipo", ["Hotel", "Agencia", "Revendedor"]],
+                    ["nombre", "Nombre"], ["tipo", "Tipo", ["Hotel", "Agencia", "Freelance", "Event Planner"]],
                     ["rut", "RUT"], ["rnt", "RNT"], ["contacto", "Contacto"],
                     ["tel", "Telefono"], ["email", "Email"], ["comision", "Comision %"],
                     ["estado", "Estado", ["activo", "inactivo"]],
@@ -2026,7 +2026,7 @@ function NuevoAliadoModal({ onClose, onSave }) {
         <h3 style={{ marginBottom: 20, fontSize: 17, fontWeight: 700 }}>Nuevo Aliado B2B</h3>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 16px" }}>
           <div style={{ gridColumn: "1 / -1", marginBottom: 14 }}><label style={LS}>Nombre del Aliado</label><input value={f.nombre} onChange={e => s("nombre", e.target.value)} placeholder="Nombre de la empresa" style={IS} /></div>
-          <div style={{ marginBottom: 14 }}><label style={LS}>Tipo</label><select value={f.tipo} onChange={e => s("tipo", e.target.value)} style={IS}><option>Hotel</option><option>Agencia</option><option>Revendedor</option></select></div>
+          <div style={{ marginBottom: 14 }}><label style={LS}>Tipo</label><select value={f.tipo} onChange={e => s("tipo", e.target.value)} style={IS}><option>Hotel</option><option>Agencia</option><option>Freelance</option><option>Event Planner</option></select></div>
           <div style={{ marginBottom: 14 }}><label style={LS}>Contacto</label><input value={f.contacto} onChange={e => s("contacto", e.target.value)} placeholder="Nombre del contacto" style={IS} /></div>
           <div style={{ marginBottom: 14 }}><label style={LS}>Telefono</label><input value={f.tel} onChange={e => s("tel", e.target.value)} placeholder="+57 ..." style={IS} /></div>
           <div style={{ marginBottom: 14 }}><label style={LS}>Email</label><input value={f.email} onChange={e => s("email", e.target.value)} placeholder="email@aliado.com" style={IS} /></div>
@@ -2121,11 +2121,17 @@ function AliadosList() {
       </div>
 
       <div style={{ display: "flex", gap: 12, marginBottom: 16 }}>
-        {["todos", "hotel", "agencia", "revendedor"].map(f => (
-          <button key={f} onClick={() => setFilter(f)} style={{
+        {[
+          { val: "todos", label: "Todos" },
+          { val: "hotel", label: "Hoteles" },
+          { val: "agencia", label: "Agencias" },
+          { val: "freelance", label: "Freelance" },
+          { val: "event planner", label: "Event Planners" },
+        ].map(f => (
+          <button key={f.val} onClick={() => setFilter(f.val)} style={{
             padding: "8px 16px", borderRadius: 8, border: "none", cursor: "pointer", fontSize: 13,
-            background: filter === f ? B.sand : B.navyMid, color: filter === f ? B.navy : B.white,
-          }}>{f === "todos" ? "Todos" : f.charAt(0).toUpperCase() + f.slice(1) + "es"}</button>
+            background: filter === f.val ? B.sand : B.navyMid, color: filter === f.val ? B.navy : B.white,
+          }}>{f.label}</button>
         ))}
         <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Buscar aliado..."
           style={{ marginLeft: "auto", padding: "8px 14px", borderRadius: 8, background: B.navyMid, border: `1px solid ${B.navyLight}`, color: B.white, fontSize: 13, width: 220 }} />
@@ -2154,7 +2160,7 @@ function AliadosList() {
                     )}
                   </div>
                 </td>
-                <td style={{ padding: "14px 16px" }}><span style={{ fontSize: 11, padding: "3px 10px", borderRadius: 20, background: a.tipo === "Hotel" ? B.sky + "33" : a.tipo === "Agencia" ? B.sand + "33" : B.pink + "33", color: a.tipo === "Hotel" ? B.sky : a.tipo === "Agencia" ? B.sand : B.pink }}>{a.tipo}</span></td>
+                <td style={{ padding: "14px 16px" }}><span style={{ fontSize: 11, padding: "3px 10px", borderRadius: 20, background: a.tipo === "Hotel" ? B.sky + "33" : a.tipo === "Agencia" ? B.sand + "33" : a.tipo === "Freelance" ? B.success + "33" : B.pink + "33", color: a.tipo === "Hotel" ? B.sky : a.tipo === "Agencia" ? B.sand : a.tipo === "Freelance" ? B.success : B.pink }}>{a.tipo}</span></td>
                 <td style={{ padding: "14px 16px", fontSize: 13, color: "rgba(255,255,255,0.6)" }}>{a.rut || "\u2014"}</td>
                 <td style={{ padding: "14px 16px", fontSize: 13, color: "rgba(255,255,255,0.6)" }}>{a.rnt || "\u2014"}</td>
                 <td style={{ padding: "14px 16px", fontSize: 13 }}><div>{a.contacto}</div><div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)" }}>{a.email}</div></td>
