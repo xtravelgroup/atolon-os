@@ -76,7 +76,7 @@ const PRODUCTS = [
     icon:         "🛥️",
     color:        "#0E7490",
     desc:         "Máximo lujo 100% consumible · Traslado en yate privado · Chef a bordo · Menú degustación · Acceso VIP. Mínimo 4 personas.",
-    desc_en:      "Ultimate luxury, 100% all-inclusive · Private yacht transfer · On-board chef · Tasting menu · Full VIP access. Minimum 4 people.",
+    desc_en:      "Ultimate luxury · 100% redeemable on Food & Beverage · Private yacht transfer · On-board chef · Tasting menu · Full VIP access. Minimum 4 people.",
     includes:     ["Transfer en yate privado", "Chef a bordo", "Menú degustación", "Acceso VIP todas las áreas", "Experiencia personalizada"],
     includes_en:  ["Private yacht transfer", "On-board chef", "Tasting menu", "Full VIP area access", "Personalized experience"],
   },
