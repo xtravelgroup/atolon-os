@@ -1,4 +1,5 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
+import QRCode from "qrcode";
 import { B, COP, todayStr, fmtFecha } from "../brand";
 import { supabase } from "../lib/supabase";
 import { wompiCheckoutUrl, WOMPI_INTEGRITY_KEY } from "../lib/wompi";
@@ -957,31 +958,67 @@ function HistorialReservas({ agencia, vendedorId }) {
 // ═══════════════════════════════════════════════
 function QRSection({ agencia }) {
   const qrUrl = `${window.location.origin}/booking?ref=${agencia.id}`;
+  const canvasRef = useRef(null);
   const [copied, setCopied] = useState(false);
+  const [qrDataUrl, setQrDataUrl] = useState(null);
+
+  useEffect(() => {
+    QRCode.toCanvas(canvasRef.current, qrUrl, {
+      width: 280,
+      margin: 2,
+      color: { dark: "#0B1A2C", light: "#FFFFFF" },
+    }, (err) => {
+      if (!err && canvasRef.current) {
+        setQrDataUrl(canvasRef.current.toDataURL("image/png"));
+      }
+    });
+  }, [qrUrl]);
 
   const copy = () => {
     navigator.clipboard.writeText(qrUrl).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000); });
   };
 
+  const downloadQR = () => {
+    if (!qrDataUrl) return;
+    const a = document.createElement("a");
+    a.href = qrDataUrl;
+    a.download = `QR-${agencia.nombre.replace(/\s+/g, "_")}.png`;
+    a.click();
+  };
+
   return (
-    <div style={{ background: B.navyMid, borderRadius: 12, padding: 24, textAlign: "center" }}>
-      <h3 style={{ fontSize: 16, color: B.sand, marginBottom: 16 }}>Link de Venta Directa</h3>
-      <p style={{ fontSize: 13, color: "rgba(255,255,255,0.5)", marginBottom: 16 }}>Comparte este link con tus clientes. Todas las ventas quedaran registradas como tuyas automaticamente.</p>
-      <div style={{ background: B.navy, borderRadius: 8, padding: "14px 20px", marginBottom: 16, fontSize: 13, wordBreak: "break-all", color: B.sky }}>{qrUrl}</div>
-      <div style={{ display: "flex", gap: 10, justifyContent: "center" }}>
-        <button onClick={copy} style={{ padding: "10px 24px", borderRadius: 8, border: "none", background: copied ? B.success : B.sky, color: copied ? B.white : B.navy, fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
-          {copied ? "Copiado!" : "Copiar Link"}
+    <div style={{ background: B.navyMid, borderRadius: 12, padding: 28 }}>
+      <h3 style={{ fontSize: 18, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, marginBottom: 4 }}>Link / QR de Venta</h3>
+      <p style={{ fontSize: 13, color: "rgba(255,255,255,0.45)", marginBottom: 24, lineHeight: 1.6 }}>
+        Comparte este link o QR con tus clientes. Todas las ventas quedan registradas automáticamente a tu agencia.
+      </p>
+
+      {/* Link */}
+      <div style={{ background: B.navy, borderRadius: 10, padding: "14px 18px", marginBottom: 16, display: "flex", alignItems: "center", gap: 12 }}>
+        <div style={{ flex: 1, fontSize: 13, wordBreak: "break-all", color: B.sky }}>{qrUrl}</div>
+        <button onClick={copy}
+          style={{ flexShrink: 0, padding: "8px 18px", borderRadius: 8, border: "none", background: copied ? B.success : B.sky, color: copied ? "#fff" : B.navy, fontWeight: 700, fontSize: 12, cursor: "pointer", whiteSpace: "nowrap", transition: "background 0.2s" }}>
+          {copied ? "✓ Copiado" : "Copiar"}
         </button>
       </div>
-      <div style={{ marginTop: 20, padding: 20, background: B.navy, borderRadius: 12, display: "inline-block" }}>
-        <div style={{ width: 160, height: 160, background: B.white, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center" }}>
-          {/* QR placeholder - in production use a QR library */}
-          <div style={{ textAlign: "center", color: B.navy, fontSize: 11 }}>
-            <div style={{ fontSize: 36, marginBottom: 4 }}>QR</div>
-            <div>{agencia.nombre}</div>
-            <div style={{ fontSize: 9, color: "#666", marginTop: 4 }}>{agencia.id}</div>
-          </div>
+
+      {/* QR Canvas + Descarga */}
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 20 }}>
+        <div style={{ padding: 16, background: "#FFFFFF", borderRadius: 16, boxShadow: "0 4px 24px rgba(0,0,0,0.4)" }}>
+          <canvas ref={canvasRef} style={{ display: "block", borderRadius: 8 }} />
         </div>
+        <div style={{ textAlign: "center" }}>
+          <div style={{ fontSize: 13, color: "rgba(255,255,255,0.5)", marginBottom: 4 }}>{agencia.nombre}</div>
+          {agencia.codigo_fijo && (
+            <div style={{ fontSize: 11, color: B.sand, letterSpacing: "0.1em", fontFamily: "'Barlow Condensed', sans-serif" }}>
+              {agencia.codigo_fijo}
+            </div>
+          )}
+        </div>
+        <button onClick={downloadQR} disabled={!qrDataUrl}
+          style={{ padding: "12px 32px", borderRadius: 10, border: "none", background: qrDataUrl ? B.sand : B.navyLight, color: qrDataUrl ? B.navy : "rgba(255,255,255,0.3)", fontWeight: 700, fontSize: 14, cursor: qrDataUrl ? "pointer" : "default", display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ fontSize: 18 }}>⬇</span> Descargar QR (PNG)
+        </button>
       </div>
     </div>
   );
