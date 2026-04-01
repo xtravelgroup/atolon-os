@@ -354,15 +354,34 @@ export default function BookingPopup() {
     if (method === "wompi") {
       payUrl = await wompiCheckoutUrl({ referencia: reservaId, totalCOP: grandTotal, email: form.email, redirectUrl: redirectBase });
     } else if (method === "stripe") {
-      // Stripe: redirect to Stripe checkout (requires backend or Payment Links)
-      // For now use a Stripe Payment Link or fallback notice
-      const stripeLink = import.meta.env.VITE_STRIPE_PAYMENT_LINK || "";
-      if (stripeLink) {
-        payUrl = `${stripeLink}?prefilled_email=${encodeURIComponent(form.email)}&client_reference_id=${reservaId}`;
-      } else {
-        // Fallback: open wompi if Stripe not configured
-        payUrl = await wompiCheckoutUrl({ referencia: reservaId, totalCOP: grandTotal, email: form.email });
-        method = "wompi";
+      try {
+        const stripeRes = await fetch(
+          "https://ncdyttgxuicyruathkxd.supabase.co/functions/v1/create-stripe-session",
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              reserva_id: reservaId,
+              total_cop:  grandTotal,
+              nombre:     form.nombre,
+              email:      form.email,
+              tipo:       product.tipo,
+              fecha:      selDate,
+            }),
+          }
+        );
+        const stripeData = await stripeRes.json();
+        if (stripeData.url) {
+          payUrl = stripeData.url;
+        } else {
+          alert(stripeData.error || "No se pudo iniciar el pago con Stripe. Intenta con tarjeta nacional.");
+          setSaving(false);
+          return;
+        }
+      } catch {
+        alert("Error de conexión con Stripe. Intenta con tarjeta nacional.");
+        setSaving(false);
+        return;
       }
     }
 
@@ -1086,20 +1105,18 @@ export default function BookingPopup() {
               </button>
             )}
 
-            {/* Stripe — show only if payment link configured */}
-            {import.meta.env.VITE_STRIPE_PAYMENT_LINK && (
-              <button onClick={() => handleReservar("stripe")} disabled={saving}
-                style={{ display: "flex", alignItems: "center", gap: 14, width: "100%", padding: "14px 18px", borderRadius: 10, border: `1.5px solid ${C.border}`, background: C.bg, cursor: saving ? "wait" : "pointer", textAlign: "left", transition: "all 0.15s" }}
-                onMouseEnter={e => { e.currentTarget.style.borderColor = "#635BFF"; e.currentTarget.style.background = "#F5F3FF"; }}
-                onMouseLeave={e => { e.currentTarget.style.borderColor = C.border; e.currentTarget.style.background = C.bg; }}>
-                <div style={{ width: 40, height: 40, borderRadius: 10, background: "#635BFF", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, fontWeight: 900, color: "white", fontSize: 16 }}>S</div>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontWeight: 700, fontSize: 14, color: C.text }}>{isEN ? "International Card" : "Tarjeta Internacional"}</div>
-                  <div style={{ fontSize: 12, color: C.textMid }}>Visa · Mastercard · Amex · Apple Pay · Google Pay</div>
-                </div>
-                <div style={{ fontSize: 14, fontWeight: 800, color: "#635BFF" }}>{COP(grandTotal)}</div>
-              </button>
-            )}
+            {/* Stripe — tarjeta internacional */}
+            <button onClick={() => handleReservar("stripe")} disabled={saving}
+              style={{ display: "flex", alignItems: "center", gap: 14, width: "100%", padding: "14px 18px", borderRadius: 10, border: `1.5px solid ${C.border}`, background: C.bg, cursor: saving ? "wait" : "pointer", textAlign: "left", transition: "all 0.15s" }}
+              onMouseEnter={e => { e.currentTarget.style.borderColor = "#635BFF"; e.currentTarget.style.background = "#F5F3FF"; }}
+              onMouseLeave={e => { e.currentTarget.style.borderColor = C.border; e.currentTarget.style.background = C.bg; }}>
+              <div style={{ width: 40, height: 40, borderRadius: 10, background: "#635BFF", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, fontWeight: 900, color: "white", fontSize: 16 }}>S</div>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontWeight: 700, fontSize: 14, color: C.text }}>{isEN ? "International Card" : "Tarjeta Internacional"}</div>
+                <div style={{ fontSize: 12, color: C.textMid }}>Visa · Mastercard · Amex · Apple Pay · Google Pay</div>
+              </div>
+              <div style={{ fontSize: 14, fontWeight: 800, color: "#635BFF" }}>{COP(grandTotal)}</div>
+            </button>
           </div>
         </div>
         <div style={{ textAlign: "center", marginTop: 12, fontSize: 11, color: C.textLight }}>

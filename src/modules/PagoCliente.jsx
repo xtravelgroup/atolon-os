@@ -5,10 +5,10 @@ import { wompiCheckoutUrl, wompiTransactionStatus } from "../lib/wompi";
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 function getReservaId() {
-  // /pago/R-1234567  or  /pago?id=R-1234567  or  /pago?reserva=WEB-xxx
+  // /pago/R-1234567  or  /pago/WEB-xxx  or  /pago?id=R-1234567  or  /pago?reserva=WEB-xxx
   const parts = window.location.pathname.split("/");
   const fromPath = parts[parts.length - 1];
-  if (fromPath && fromPath.startsWith("R-")) return fromPath;
+  if (fromPath && (fromPath.startsWith("R-") || fromPath.startsWith("WEB-"))) return fromPath;
   const p = new URLSearchParams(window.location.search);
   return p.get("reserva") || p.get("id") || "";
 }
