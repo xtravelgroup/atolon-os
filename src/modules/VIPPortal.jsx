@@ -297,54 +297,98 @@ function SetPasswordScreen({ miembro, onDone }) {
 // SUBIR RECIBO MODAL
 // ══════════════════════════════════════════════════════
 function SubirReciboModal({ miembro, onClose, onSubmitted }) {
-  const [monto, setMonto] = useState("");
-  const [file, setFile] = useState(null);
-  const [preview, setPreview] = useState(null);
+  const b = BENEFICIOS[miembro.nivel] || BENEFICIOS.coral;
+
+  const [file, setFile]           = useState(null);
+  const [preview, setPreview]     = useState(null);
+  const [analyzing, setAnalyzing] = useState(false);
+  const [monto, setMonto]         = useState(null);
+  const [aiTexto, setAiTexto]     = useState("");
+  const [aiError, setAiError]     = useState(false);
+  const [fechaRecibo, setFechaRecibo] = useState(null); // fecha extraída por IA
   const [uploading, setUploading] = useState(false);
-  const [success, setSuccess] = useState(false);
-  const [error, setError] = useState("");
+  const [success, setSuccess]     = useState(false);
+  const [error, setError]         = useState("");
+  const [manualMonto, setManualMonto] = useState("");
   const fileRef = useRef();
 
-  const handleFile = (e) => {
+  const baseConsumo = monto ? monto / 1.08 : 0;
+  const puntosCalc  = monto ? Math.floor(baseConsumo * b.pct / 100 / 10) : 0;
+
+  const toBase64 = (f) => new Promise((res, rej) => {
+    const reader = new FileReader();
+    reader.onload = () => res(reader.result.split(",")[1]);
+    reader.onerror = rej;
+    reader.readAsDataURL(f);
+  });
+
+  const handleFile = async (e) => {
     const f = e.target.files[0];
     if (!f) return;
     setFile(f);
     setPreview(URL.createObjectURL(f));
+    setMonto(null); setAiTexto(""); setAiError(false); setError(""); setManualMonto(""); setFechaRecibo(null);
+
+    setAnalyzing(true);
+    try {
+      const imageBase64 = await toBase64(f);
+      const mediaType   = f.type || "image/jpeg";
+      const { data, error: fnErr } = await supabase.functions.invoke("analyze-recibo", {
+        body: { imageBase64, mediaType },
+      });
+      if (fnErr) throw new Error(fnErr.message);
+      if (data?.encontrado && data.monto > 0) {
+        setMonto(data.monto);
+        setAiTexto(data.texto || "");
+        if (data.fecha) setFechaRecibo(data.fecha);
+      } else {
+        setAiError(true);
+      }
+    } catch {
+      setAiError(true);
+    } finally {
+      setAnalyzing(false);
+    }
   };
 
-  const b = BENEFICIOS[miembro.nivel] || BENEFICIOS.coral;
-  const montoNum      = parseFloat(monto) || 0;
-  const baseConsumo   = montoNum / 1.08;          // quitar 8% impuesto
-  const puntosCalc    = Math.floor(baseConsumo * b.pct / 100 / 10);
+  // Validar que la fecha del recibo coincida con una reserva del miembro
+  const [reservaMatch, setReservaMatch] = useState(null); // null=no revisado, true=ok, false=no match
+  useEffect(() => {
+    if (!fechaRecibo || !supabase) return;
+    supabase.from("vip_reservas").select("fecha, tipo, estado")
+      .eq("miembro_id", miembro.id)
+      .eq("fecha", fechaRecibo)
+      .neq("estado", "cancelada")
+      .then(({ data }) => setReservaMatch(data && data.length > 0));
+  }, [fechaRecibo]);
 
   const handleSubmit = async () => {
-    if (!file) { setError("Selecciona una foto del recibo"); return; }
-    if (!monto || isNaN(parseFloat(monto))) { setError("Ingresa el total que aparece en el recibo"); return; }
+    if (!file)  { setError("Selecciona una foto del recibo"); return; }
+    if (!monto) { setError("No se pudo leer el monto — sube otra foto o ingrésalo manualmente"); return; }
     setUploading(true); setError("");
+
     let recibo_url = null;
-    if (supabase) {
-      const ext = file.name.split(".").pop();
-      const path = `${miembro.id}/${uid()}.${ext}`;
-      const { error: upErr } = await supabase.storage.from("vip-recibos").upload(path, file);
-      if (upErr) { setError("Error subiendo imagen: " + upErr.message); setUploading(false); return; }
-      const { data: urlData } = supabase.storage.from("vip-recibos").getPublicUrl(path);
-      recibo_url = urlData?.publicUrl || null;
-    }
+    const ext  = file.name.split(".").pop();
+    const path = `${miembro.id}/${uid()}.${ext}`;
+    const { error: upErr } = await supabase.storage.from("vip-recibos").upload(path, file);
+    if (upErr) { setError("Error subiendo imagen: " + upErr.message); setUploading(false); return; }
+    const { data: urlData } = supabase.storage.from("vip-recibos").getPublicUrl(path);
+    recibo_url = urlData?.publicUrl || null;
+
     const { error: txErr } = await supabase.from("vip_transacciones").insert({
       id: uid(), miembro_id: miembro.id, tipo: "ganados",
       puntos: puntosCalc,
-      descripcion: `Recibo pendiente de validación · Base sin imp: $${Math.round(baseConsumo).toLocaleString("es-CO")}`,
-      recibo_url, monto_consumo: montoNum, validado: false,
+      descripcion: `Pendiente validación · ${aiTexto || `Total: $${monto.toLocaleString("es-CO")}`}${fechaRecibo ? ` · Fecha: ${fechaRecibo}` : ""}`,
+      recibo_url, monto_consumo: monto, validado: false,
     });
     if (txErr) { setError(txErr.message); setUploading(false); return; }
-    setUploading(false);
-    setSuccess(true);
+    setUploading(false); setSuccess(true);
     setTimeout(() => { onSubmitted(); onClose(); }, 2500);
   };
 
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.8)", zIndex: 1000, display: "flex", alignItems: "flex-end", justifyContent: "center" }}>
-      <div style={{ background: B.navyMid, borderRadius: "20px 20px 0 0", width: "100%", maxWidth: 560, padding: "28px 24px 40px", maxHeight: "85vh", overflowY: "auto" }}>
+      <div style={{ background: B.navyMid, borderRadius: "20px 20px 0 0", width: "100%", maxWidth: 560, padding: "28px 24px 40px", maxHeight: "90vh", overflowY: "auto" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
           <h3 style={{ margin: 0, fontSize: 20, fontFamily: "'Barlow Condensed', sans-serif" }}>📸 Subir Recibo</h3>
           <button onClick={onClose} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.5)", fontSize: 24, cursor: "pointer" }}>×</button>
@@ -352,71 +396,108 @@ function SubirReciboModal({ miembro, onClose, onSubmitted }) {
 
         {success ? (
           <div style={{ textAlign: "center", padding: "40px 20px" }}>
-            <div style={{ fontSize: 48, marginBottom: 16 }}>✅</div>
-            <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 8 }}>¡Recibo recibido!</div>
+            <div style={{ fontSize: 52, marginBottom: 16 }}>✅</div>
+            <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 8 }}>¡Recibo enviado!</div>
             <div style={{ fontSize: 14, color: "rgba(255,255,255,0.6)", lineHeight: 1.6 }}>
               Tu recibo está en revisión. Los puntos se acreditarán en las próximas 24 horas.
             </div>
           </div>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-            <div>
-              <label style={LS}>Foto del recibo</label>
-              <input ref={fileRef} type="file" accept="image/*" capture="environment" onChange={handleFile} style={{ display: "none" }} />
-              <div onClick={() => fileRef.current?.click()} style={{
-                border: `2px dashed ${B.navyLight}`, borderRadius: 12, padding: "24px", textAlign: "center",
-                cursor: "pointer", background: "rgba(255,255,255,0.03)", transition: "border-color 0.2s",
-              }}
-                onMouseEnter={e => e.currentTarget.style.borderColor = B.sky}
-                onMouseLeave={e => e.currentTarget.style.borderColor = B.navyLight}
-              >
-                {preview ? (
-                  <img src={preview} alt="Preview" style={{ maxHeight: 200, borderRadius: 8, maxWidth: "100%", objectFit: "contain" }} />
-                ) : (
-                  <div>
-                    <div style={{ fontSize: 32, marginBottom: 8 }}>📷</div>
-                    <div style={{ fontSize: 14, color: "rgba(255,255,255,0.6)" }}>Toca para tomar o seleccionar foto</div>
+
+            {/* Zona foto */}
+            <input ref={fileRef} type="file" accept="image/*" capture="environment" onChange={handleFile} style={{ display: "none" }} />
+            <div onClick={() => fileRef.current?.click()} style={{
+              border: `2px dashed ${analyzing ? B.sky : preview ? B.success : B.navyLight}`,
+              borderRadius: 14, padding: preview ? "12px" : "32px", textAlign: "center",
+              cursor: "pointer", background: "rgba(255,255,255,0.03)", transition: "all 0.2s",
+            }}>
+              {preview ? (
+                <img src={preview} alt="Recibo" style={{ maxHeight: 220, borderRadius: 8, maxWidth: "100%", objectFit: "contain", display: "block", margin: "0 auto" }} />
+              ) : (
+                <>
+                  <div style={{ fontSize: 40, marginBottom: 10 }}>📷</div>
+                  <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 4 }}>Toma o sube la foto del recibo</div>
+                  <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)" }}>La IA lee el total automáticamente</div>
+                </>
+              )}
+            </div>
+            {preview && (
+              <button onClick={() => fileRef.current?.click()} style={{ background: "none", border: "none", color: B.sky, fontSize: 12, cursor: "pointer", textAlign: "center" }}>
+                📷 Cambiar foto
+              </button>
+            )}
+
+            {/* IA analizando */}
+            {analyzing && (
+              <div style={{ background: B.sky + "15", border: `1px solid ${B.sky}33`, borderRadius: 10, padding: "14px 16px", display: "flex", alignItems: "center", gap: 12 }}>
+                <div style={{ fontSize: 20 }}>🤖</div>
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: B.sky }}>Analizando recibo con IA...</div>
+                  <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>Leyendo el total del consumo</div>
+                </div>
+              </div>
+            )}
+
+            {/* IA no pudo leer */}
+            {aiError && !analyzing && (
+              <div style={{ background: B.danger + "15", border: `1px solid ${B.danger}33`, borderRadius: 10, padding: "14px 16px" }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: B.danger, marginBottom: 6 }}>⚠️ No se pudo leer el recibo</div>
+                <div style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", marginBottom: 10 }}>Intenta con otra foto más clara o ingresa el total manualmente:</div>
+                <input type="number" value={manualMonto} onChange={e => { setManualMonto(e.target.value); setMonto(parseFloat(e.target.value) || null); }}
+                  placeholder="Total del recibo en pesos" style={IS} inputMode="numeric" />
+              </div>
+            )}
+
+            {/* Alerta de fecha */}
+            {fechaRecibo && reservaMatch === false && !analyzing && (
+              <div style={{ background: "#E8A02018", border: "1px solid #E8A02044", borderRadius: 10, padding: "12px 16px", display: "flex", gap: 10 }}>
+                <span style={{ fontSize: 18 }}>⚠️</span>
+                <div style={{ fontSize: 12, color: "#E8A020", lineHeight: 1.5 }}>
+                  La fecha del recibo (<strong>{fechaRecibo}</strong>) no coincide con ninguna reserva registrada. El equipo lo revisará manualmente.
+                </div>
+              </div>
+            )}
+            {fechaRecibo && reservaMatch === true && !analyzing && (
+              <div style={{ background: B.success + "15", border: `1px solid ${B.success}33`, borderRadius: 10, padding: "10px 14px", fontSize: 12, color: B.success }}>
+                ✓ Fecha del recibo coincide con tu reserva del {fechaRecibo}
+              </div>
+            )}
+
+            {/* Resultado IA */}
+            {monto && !analyzing && (
+              <div style={{ background: "rgba(255,255,255,0.05)", borderRadius: 12, padding: "16px", fontSize: 13, lineHeight: 1.9 }}>
+                {aiTexto && (
+                  <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", marginBottom: 10, fontStyle: "italic" }}>
+                    📄 "{aiTexto}"
                   </div>
                 )}
-              </div>
-            </div>
-            {/* Monto del recibo */}
-            <div>
-              <label style={{ ...LS, fontSize: 12, color: "rgba(255,255,255,0.55)", fontStyle: "italic", textTransform: "none", letterSpacing: 0 }}>
-                Ingresa el número que aparece en tu cuenta donde dice:
-              </label>
-              <div style={{ fontSize: 13, color: B.sand, fontWeight: 700, marginBottom: 8, marginTop: 4 }}>
-                "El total del consumo al momento es: $___"
-              </div>
-              <input type="number" value={monto} onChange={e => setMonto(e.target.value)} placeholder="Ej: 150000" style={IS} inputMode="numeric" />
-            </div>
-
-            {/* Preview puntos */}
-            {montoNum > 0 && (
-              <div style={{ background: "rgba(255,255,255,0.05)", borderRadius: 10, padding: "14px 16px", fontSize: 13, lineHeight: 1.8 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 2 }}>
                   <span style={{ color: "rgba(255,255,255,0.5)" }}>Total recibo</span>
-                  <span>${montoNum.toLocaleString("es-CO")}</span>
+                  <span>${monto.toLocaleString("es-CO")}</span>
                 </div>
-                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 2 }}>
                   <span style={{ color: "rgba(255,255,255,0.5)" }}>Menos 8% impuesto</span>
-                  <span style={{ color: B.danger }}>− ${Math.round(montoNum - baseConsumo).toLocaleString("es-CO")}</span>
+                  <span style={{ color: B.danger }}>− ${Math.round(monto - baseConsumo).toLocaleString("es-CO")}</span>
                 </div>
-                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 10, paddingBottom: 10, borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
-                  <span style={{ color: "rgba(255,255,255,0.5)" }}>Base para puntos</span>
+                <div style={{ display: "flex", justifyContent: "space-between", paddingBottom: 10, marginBottom: 10, borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
+                  <span style={{ color: "rgba(255,255,255,0.5)" }}>Base consumo</span>
                   <span>${Math.round(baseConsumo).toLocaleString("es-CO")}</span>
                 </div>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                   <span style={{ color: "rgba(255,255,255,0.6)" }}>
-                    Puntos a ganar <span style={{ color: b.color }}>({b.pct}% · {b.icon} {b.label})</span>
+                    Puntos {b.icon} <span style={{ color: b.color }}>{b.pct}%</span>
                   </span>
-                  <span style={{ fontSize: 18, fontWeight: 800, color: B.success }}>+{puntosCalc.toLocaleString("es-CO")} pts</span>
+                  <span style={{ fontSize: 22, fontWeight: 800, color: B.success }}>+{puntosCalc.toLocaleString("es-CO")} pts</span>
                 </div>
               </div>
             )}
+
             {error && <div style={{ color: B.danger, fontSize: 13 }}>{error}</div>}
-            <button onClick={handleSubmit} disabled={uploading} style={{ padding: "14px", background: uploading ? B.navyLight : B.success, color: "#fff", border: "none", borderRadius: 12, fontWeight: 700, fontSize: 15, cursor: uploading ? "default" : "pointer" }}>
-              {uploading ? "Subiendo..." : "Enviar Recibo"}
+
+            <button onClick={handleSubmit} disabled={uploading || analyzing || !monto}
+              style={{ padding: "14px", background: (uploading || analyzing || !monto) ? B.navyLight : B.success, color: (uploading || analyzing || !monto) ? "rgba(255,255,255,0.3)" : "#fff", border: "none", borderRadius: 12, fontWeight: 700, fontSize: 15, cursor: (uploading || analyzing || !monto) ? "default" : "pointer" }}>
+              {uploading ? "Enviando..." : analyzing ? "Analizando..." : !monto ? "Sube una foto del recibo" : "Enviar Recibo →"}
             </button>
           </div>
         )}
