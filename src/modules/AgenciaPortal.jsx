@@ -379,28 +379,29 @@ function NuevaReserva({ agencia, user, onCreated, vistaPrecios = "ambos" }) {
         return (
         <div>
           {/* Row 1: Fecha + Adultos + Ninos */}
-          <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr 1fr", gap: isMobile ? 12 : 16, marginBottom: 20 }}>
+          {/* Mobile: fecha a la izquierda (mitad) + adultos derecha, niños abajo */}
+          <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "1fr 1fr 1fr", gap: isMobile ? 10 : 16, marginBottom: 20 }}>
             <div>
               <label style={LS}>Fecha</label>
               <input type="date" value={form.fecha}
                 onChange={e => { checkDisponibilidad(e.target.value); setForm(f => ({ ...f, salida_id: "" })); }}
                 onClick={e => { try { e.target.showPicker(); } catch(_) {} }}
-                min={todayStr()} style={{ ...IS, fontSize: isMobile ? 13 : 15, padding: isMobile ? "10px 12px" : "14px", cursor: "pointer" }} />
+                min={todayStr()} style={{ ...IS, fontSize: 13, padding: "9px 10px", cursor: "pointer" }} />
             </div>
             <div>
               <label style={LS}>Adultos</label>
-              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                <button onClick={() => setForm(f => ({ ...f, pax_a: Math.max(1, (f.pax_a || 1) - 1) }))} style={{ width: 36, height: 36, borderRadius: 8, background: B.navy, border: `1px solid ${B.navyLight}`, color: B.white, fontSize: 18, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>-</button>
-                <span style={{ fontSize: 22, fontWeight: 700, minWidth: 30, textAlign: "center", fontFamily: "'Barlow Condensed', sans-serif" }}>{form.pax_a || 1}</span>
-                <button onClick={() => setForm(f => ({ ...f, pax_a: (f.pax_a || 1) + 1 }))} style={{ width: 36, height: 36, borderRadius: 8, background: B.navy, border: `1px solid ${B.navyLight}`, color: B.white, fontSize: 18, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>+</button>
+              <div style={{ display: "flex", alignItems: "center", gap: isMobile ? 6 : 10 }}>
+                <button onClick={() => setForm(f => ({ ...f, pax_a: Math.max(1, (f.pax_a || 1) - 1) }))} style={{ width: 32, height: 32, borderRadius: 8, background: B.navy, border: `1px solid ${B.navyLight}`, color: B.white, fontSize: 18, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>-</button>
+                <span style={{ fontSize: 20, fontWeight: 700, minWidth: 24, textAlign: "center", fontFamily: "'Barlow Condensed', sans-serif" }}>{form.pax_a || 1}</span>
+                <button onClick={() => setForm(f => ({ ...f, pax_a: (f.pax_a || 1) + 1 }))} style={{ width: 32, height: 32, borderRadius: 8, background: B.navy, border: `1px solid ${B.navyLight}`, color: B.white, fontSize: 18, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>+</button>
               </div>
             </div>
-            <div>
+            <div style={isMobile ? { gridColumn: "1 / -1" } : {}}>
               <label style={LS}>Ninos</label>
-              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                <button onClick={() => setForm(f => ({ ...f, pax_n: Math.max(0, (f.pax_n || 0) - 1) }))} style={{ width: 36, height: 36, borderRadius: 8, background: B.navy, border: `1px solid ${B.navyLight}`, color: B.white, fontSize: 18, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>-</button>
-                <span style={{ fontSize: 22, fontWeight: 700, minWidth: 30, textAlign: "center", fontFamily: "'Barlow Condensed', sans-serif" }}>{form.pax_n || 0}</span>
-                <button onClick={() => setForm(f => ({ ...f, pax_n: (f.pax_n || 0) + 1 }))} style={{ width: 36, height: 36, borderRadius: 8, background: B.navy, border: `1px solid ${B.navyLight}`, color: B.white, fontSize: 18, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>+</button>
+              <div style={{ display: "flex", alignItems: "center", gap: isMobile ? 6 : 10 }}>
+                <button onClick={() => setForm(f => ({ ...f, pax_n: Math.max(0, (f.pax_n || 0) - 1) }))} style={{ width: 32, height: 32, borderRadius: 8, background: B.navy, border: `1px solid ${B.navyLight}`, color: B.white, fontSize: 18, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>-</button>
+                <span style={{ fontSize: 20, fontWeight: 700, minWidth: 24, textAlign: "center", fontFamily: "'Barlow Condensed', sans-serif" }}>{form.pax_n || 0}</span>
+                <button onClick={() => setForm(f => ({ ...f, pax_n: (f.pax_n || 0) + 1 }))} style={{ width: 32, height: 32, borderRadius: 8, background: B.navy, border: `1px solid ${B.navyLight}`, color: B.white, fontSize: 18, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>+</button>
               </div>
             </div>
           </div>
