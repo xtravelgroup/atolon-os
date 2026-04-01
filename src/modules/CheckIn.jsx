@@ -7,14 +7,13 @@ const LS = { fontSize: 11, color: B.sand, display: "block", marginBottom: 5, tex
 
 const NACS = ["Colombiana", "Americana", "Venezolana", "Brasileña", "Argentina", "Chilena", "Peruana", "Mexicana", "Española", "Francesa", "Alemana", "Italiana", "Canadiense", "Inglesa", "Otra"];
 
-// ─── Zarpe print styles ───────────────────────────────────────────────────────
-const ZARPE_STYLE = `
-  @media print {
-    body > * { display: none !important; }
-    #zarpe-print { display: block !important; position: fixed; inset: 0; background: white; z-index: 99999; padding: 24px 32px; color: #000; font-family: Arial, sans-serif; }
-  }
-  #zarpe-print { display: none; }
-`;
+// helper: is passenger data complete for zarpe?
+const paxCompleto = (res) => {
+  const paxArr = res.pasajeros || [];
+  const total  = (res.pax_a || 0) + (res.pax_n || 0) || res.pax || 1;
+  if (paxArr.length < total) return false;
+  return paxArr.every(p => p.nombre?.trim() && p.identificacion?.trim());
+};
 
 // ─── QR Scanner ──────────────────────────────────────────────────────────────
 function QRScanner({ onScan, onClose }) {
@@ -99,7 +98,7 @@ function QRScanner({ onScan, onClose }) {
 }
 
 // ─── Pasajeros Editor (for zarpe) ────────────────────────────────────────────
-function PasajerosModal({ reserva, onClose, onSaved }) {
+function PasajerosModal({ reserva, onClose, onSaved, autoCheckin = false }) {
   const total = (reserva.pax_a || 0) + (reserva.pax_n || 0) || reserva.pax || 1;
   const init  = reserva.pasajeros?.length > 0
     ? reserva.pasajeros
@@ -114,7 +113,9 @@ function PasajerosModal({ reserva, onClose, onSaved }) {
 
   const save = async () => {
     setSaving(true);
-    await supabase.from("reservas").update({ pasajeros: pax }).eq("id", reserva.id);
+    const updates = { pasajeros: pax };
+    if (autoCheckin) updates.checkin_at = new Date().toISOString();
+    await supabase.from("reservas").update(updates).eq("id", reserva.id);
     setSaving(false);
     onSaved();
     onClose();
@@ -124,6 +125,11 @@ function PasajerosModal({ reserva, onClose, onSaved }) {
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.75)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 999 }}
       onClick={e => e.target === e.currentTarget && onClose()}>
       <div style={{ background: B.navyMid, borderRadius: 16, padding: 28, width: 540, maxHeight: "90vh", overflowY: "auto", boxShadow: "0 20px 60px rgba(0,0,0,0.6)" }}>
+        {autoCheckin && (
+          <div style={{ background: B.warning + "22", border: `1px solid ${B.warning}44`, borderRadius: 8, padding: "10px 14px", marginBottom: 14, fontSize: 13, color: B.warning }}>
+            ⚠️ Faltan datos para el zarpe. Completa la información para hacer check-in.
+          </div>
+        )}
         <h3 style={{ fontSize: 17, fontWeight: 700, marginBottom: 4 }}>Pasajeros — {reserva.nombre}</h3>
         <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginBottom: 20 }}>{total} persona{total !== 1 ? "s" : ""}</div>
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
@@ -154,7 +160,7 @@ function PasajerosModal({ reserva, onClose, onSaved }) {
         <div style={{ display: "flex", gap: 10, marginTop: 20 }}>
           <button onClick={onClose} style={{ flex: 1, padding: "11px", background: "none", border: `1px solid ${B.navyLight}`, borderRadius: 8, color: "rgba(255,255,255,0.4)", fontSize: 13, cursor: "pointer" }}>Cancelar</button>
           <button onClick={save} disabled={saving} style={{ flex: 2, padding: "11px", background: B.sand, color: B.navy, border: "none", borderRadius: 8, fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
-            {saving ? "Guardando..." : "Guardar pasajeros"}
+            {saving ? "Guardando..." : autoCheckin ? "Guardar y hacer Check-in ✓" : "Guardar pasajeros"}
           </button>
         </div>
       </div>
@@ -162,58 +168,78 @@ function PasajerosModal({ reserva, onClose, onSaved }) {
   );
 }
 
-// ─── Zarpe Print ─────────────────────────────────────────────────────────────
-function imprimirZarpe(salida, reservas, fecha, despacho) {
+// ─── Zarpe PDF (new window) ───────────────────────────────────────────────────
+function generarZarpe(salida, reservas, fecha, despacho) {
   const todos = reservas.flatMap(r =>
     r.pasajeros?.length > 0
       ? r.pasajeros
       : [{ nombre: r.nombre, identificacion: "—", nacionalidad: "—" }]
   );
-  const el = document.getElementById("zarpe-print");
-  el.innerHTML = `
-    <div style="text-align:center;margin-bottom:20px;border-bottom:2px solid #1E3566;padding-bottom:16px">
-      <div style="font-size:22px;font-weight:900;color:#1E3566">ZARPE DE PASAJEROS</div>
-      <div style="font-size:13px;color:#666;margin-top:4px">Atolon Beach Club — Muelle Cartagena</div>
+  const html = `<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8">
+    <title>Zarpe — ${salida.nombre} ${salida.hora} — ${fecha}</title>
+    <style>
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      body { font-family: Arial, sans-serif; padding: 28px 36px; color: #111; font-size: 12px; }
+      h1 { font-size: 20px; color: #1E3566; }
+      .header { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #1E3566; padding-bottom: 14px; margin-bottom: 18px; }
+      .meta { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px 24px; margin-bottom: 18px; }
+      .meta div { padding: 3px 0; border-bottom: 1px solid #eee; }
+      .codigo { font-size: 16px; font-weight: 900; color: #1E3566; letter-spacing: 2px; }
+      table { width: 100%; border-collapse: collapse; }
+      th { background: #1E3566; color: white; padding: 8px; text-align: left; font-size: 11px; }
+      td { padding: 7px 8px; border-bottom: 1px solid #eee; }
+      tr:nth-child(even) { background: #f9f9f9; }
+      .firmas { margin-top: 36px; display: grid; grid-template-columns: 1fr 1fr; gap: 50px; font-size: 11px; color: #666; }
+      .firma { border-top: 1px solid #999; padding-top: 6px; text-align: center; }
+      .footer { margin-top: 16px; font-size: 10px; color: #aaa; text-align: center; }
+      @media print { @page { margin: 1cm; } }
+    </style>
+  </head><body>
+    <div class="header">
+      <div>
+        <h1>ZARPE DE PASAJEROS</h1>
+        <div style="color:#666;margin-top:4px">Atolon Beach Club — Muelle Cartagena</div>
+      </div>
+      <div style="text-align:right">
+        ${despacho?.zarpe_codigo ? `<div style="margin-bottom:4px;font-size:11px;color:#666">CÓDIGO ZARPE</div><div class="codigo">${despacho.zarpe_codigo}</div>` : `<div style="color:#aaa;font-size:11px">Pendiente código zarpe</div>`}
+      </div>
     </div>
-    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px 24px;margin-bottom:20px;font-size:12px">
+    <div class="meta">
       <div><b>Fecha:</b> ${new Date(fecha + "T12:00:00").toLocaleDateString("es-CO", { weekday:"long", day:"numeric", month:"long", year:"numeric" })}</div>
       <div><b>Salida:</b> ${salida.nombre} — ${salida.hora}</div>
       <div><b>Regreso:</b> ${salida.hora_regreso}</div>
       <div><b>Total pasajeros:</b> ${todos.length}</div>
-      <div><b>Generado:</b> ${new Date().toLocaleTimeString("es-CO")}</div>
-      ${despacho?.zarpe_codigo ? `<div><b style="color:#1E3566">Código Zarpe:</b> <span style="font-size:15px;font-weight:900;letter-spacing:2px">${despacho.zarpe_codigo}</span></div>` : ""}
+      <div><b>Generado:</b> ${new Date().toLocaleString("es-CO")}</div>
     </div>
-    <table style="width:100%;border-collapse:collapse;font-size:12px">
-      <thead>
-        <tr style="background:#1E3566;color:white">
-          <th style="padding:8px;text-align:left;width:5%">#</th>
-          <th style="padding:8px;text-align:left;width:40%">Nombre Completo</th>
-          <th style="padding:8px;text-align:left;width:25%">No. Identificación</th>
-          <th style="padding:8px;text-align:left;width:20%">Nacionalidad</th>
-          <th style="padding:8px;text-align:center;width:10%">Check-in</th>
-        </tr>
-      </thead>
+    <table>
+      <thead><tr>
+        <th style="width:5%">#</th>
+        <th style="width:38%">Nombre Completo</th>
+        <th style="width:27%">No. Identificación</th>
+        <th style="width:20%">Nacionalidad</th>
+        <th style="width:10%;text-align:center">Check-in</th>
+      </tr></thead>
       <tbody>
-        ${todos.map((p, i) => `
-          <tr style="background:${i % 2 === 0 ? "#f9f9f9" : "white"}">
-            <td style="padding:7px 8px;border-bottom:1px solid #eee">${i + 1}</td>
-            <td style="padding:7px 8px;border-bottom:1px solid #eee;font-weight:600">${p.nombre || "—"}</td>
-            <td style="padding:7px 8px;border-bottom:1px solid #eee">${p.identificacion || "—"}</td>
-            <td style="padding:7px 8px;border-bottom:1px solid #eee">${p.nacionalidad || "—"}</td>
-            <td style="padding:7px 8px;border-bottom:1px solid #eee;text-align:center">☐</td>
-          </tr>
-        `).join("")}
+        ${todos.map((p, i) => `<tr>
+          <td>${i + 1}</td>
+          <td style="font-weight:600">${p.nombre || "—"}</td>
+          <td>${p.identificacion || "—"}</td>
+          <td>${p.nacionalidad || "—"}</td>
+          <td style="text-align:center">☐</td>
+        </tr>`).join("")}
       </tbody>
     </table>
-    <div style="margin-top:32px;display:grid;grid-template-columns:1fr 1fr;gap:40px;font-size:11px;color:#666">
-      <div style="border-top:1px solid #999;padding-top:8px;text-align:center">Capitán / Responsable embarcación</div>
-      <div style="border-top:1px solid #999;padding-top:8px;text-align:center">Firma Capitanía de Puerto</div>
+    <div class="firmas">
+      <div class="firma">Capitán / Responsable embarcación</div>
+      <div class="firma">Firma Capitanía de Puerto</div>
     </div>
-    <div style="margin-top:20px;font-size:10px;color:#aaa;text-align:center">
-      Documento generado por Atolon OS — ${new Date().toLocaleString("es-CO")}
-    </div>
-  `;
-  window.print();
+    <div class="footer">Atolon Beach Club — ${new Date().toLocaleString("es-CO")}</div>
+    <script>window.onload = () => { window.print(); }<\/script>
+  </body></html>`;
+
+  const win = window.open("", "_blank");
+  win.document.write(html);
+  win.document.close();
 }
 
 // ─── Main ────────────────────────────────────────────────────────────────────
@@ -247,9 +273,20 @@ export default function CheckIn() {
 
   useEffect(() => { load(); }, [load]);
 
-  // ── Check-in toggle
+  // ── Check-in toggle (prompts zarpe data if missing)
   const toggleCheckin = async (res) => {
-    const val = res.checkin_at ? null : new Date().toISOString();
+    if (res.checkin_at) {
+      // Un-check: direct
+      await supabase.from("reservas").update({ checkin_at: null }).eq("id", res.id);
+      setReservas(prev => prev.map(r => r.id === res.id ? { ...r, checkin_at: null } : r));
+      return;
+    }
+    if (!paxCompleto(res)) {
+      // Missing zarpe info — open modal with autoCheckin flag
+      setEditPax({ ...res, _autoCheckin: true });
+      return;
+    }
+    const val = new Date().toISOString();
     await supabase.from("reservas").update({ checkin_at: val }).eq("id", res.id);
     setReservas(prev => prev.map(r => r.id === res.id ? { ...r, checkin_at: val } : r));
   };
@@ -307,11 +344,8 @@ export default function CheckIn() {
 
   return (
     <>
-      <style>{ZARPE_STYLE}</style>
-      <div id="zarpe-print" />
-
       {scanning && <QRScanner onScan={handleScan} onClose={() => setScanning(false)} />}
-      {editPax  && <PasajerosModal reserva={editPax} onClose={() => setEditPax(null)} onSaved={load} />}
+      {editPax  && <PasajerosModal reserva={editPax} autoCheckin={!!editPax._autoCheckin} onClose={() => setEditPax(null)} onSaved={load} />}
 
       {/* Scan feedback toast */}
       {scanMsg && (
@@ -390,7 +424,7 @@ export default function CheckIn() {
                 </div>
               </div>
               <div style={{ display: "flex", gap: 8 }}>
-                <button onClick={() => imprimirZarpe(salida, resDesal, fecha, despacho)}
+                <button onClick={() => generarZarpe(salida, resDesal, fecha, despacho)}
                   style={{ padding: "10px 16px", borderRadius: 8, background: B.navyLight, color: B.white, border: "none", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
                   📄 Zarpe
                 </button>
