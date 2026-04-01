@@ -1751,16 +1751,22 @@ function FichaAliado({ aliado, onBack, onRefresh }) {
   const [showContactForm, setShowContactForm] = useState(null); // locacion_id or "aliado"
   const [uploading, setUploading] = useState(null);
   const [editing, setEditing] = useState(false);
-  const [editForm, setEditForm] = useState({ nombre: aliado.nombre, tipo: aliado.tipo, contacto: aliado.contacto, tel: aliado.tel, email: aliado.email, comision: aliado.comision, rut: aliado.rut, rnt: aliado.rnt, estado: aliado.estado, vendedor_id: aliado.vendedor_id || "" });
+  const [editForm, setEditForm] = useState({ nombre: aliado.nombre, tipo: aliado.tipo, contacto: aliado.contacto, tel: aliado.tel, email: aliado.email, rut: aliado.rut, rnt: aliado.rnt, estado: aliado.estado, vendedor_id: aliado.vendedor_id || "" });
   const [savingEdit, setSavingEdit] = useState(false);
   const [tab, setTab] = useState("general"); // general | convenios
   const [vendedores, setVendedores] = useState([]);
   const [rntHistorial, setRntHistorial] = useState([]);
   const [approvingCert, setApprovingCert] = useState(false);
-  const [b2bUsers, setB2bUsers]     = useState([]);
-  const [sendingEmail, setSendingEmail] = useState(null); // userId
-  const [resetPinId, setResetPinId] = useState(null);    // userId
-  const [newPin, setNewPin]         = useState(null);    // { userId, pin }
+  const [b2bUsers, setB2bUsers]         = useState([]);
+  const [sendingEmail, setSendingEmail]   = useState(null);
+  const [resetPinId, setResetPinId]       = useState(null);
+  const [newPin, setNewPin]               = useState(null);
+  const [creditSols, setCreditSols]       = useState([]);
+  const [showCreditForm, setShowCreditForm] = useState(false);
+  const [creditForm, setCreditForm]       = useState({ monto: "", dias: "" });
+  const [savingCredit, setSavingCredit]   = useState(false);
+  const [approvingCredit, setApprovingCredit] = useState(null);
+  const [currentUserRol, setCurrentUserRol]   = useState(null);
 
   const fetchB2bUsers = useCallback(async () => {
     if (!supabase) return;
@@ -1792,6 +1798,59 @@ function FichaAliado({ aliado, onBack, onRefresh }) {
     fetchB2bUsers();
   };
 
+  const fetchCreditSols = useCallback(async () => {
+    if (!supabase) return;
+    const { data } = await supabase.from("b2b_credito_solicitudes").select("*").eq("aliado_id", aliado.id).order("created_at", { ascending: false });
+    setCreditSols(data || []);
+  }, [aliado.id]);
+
+  const solicitarCredito = async () => {
+    if (!supabase || savingCredit || !creditForm.monto || !creditForm.dias) return;
+    setSavingCredit(true);
+    const monto = Number(creditForm.monto);
+    const estado = "pendiente_gv"; // always starts at GV
+    await supabase.from("b2b_credito_solicitudes").insert({
+      id: `CRED-${Date.now()}`, aliado_id: aliado.id,
+      monto, dias: Number(creditForm.dias), estado,
+      solicitado_por: "admin",
+    });
+    setSavingCredit(false); setShowCreditForm(false); setCreditForm({ monto: "", dias: "" });
+    fetchCreditSols();
+  };
+
+  const aprobarCredito = async (sol, userRol) => {
+    if (!supabase || approvingCredit) return;
+    setApprovingCredit(sol.id);
+    const monto = sol.monto;
+    let nuevoEstado;
+    if (userRol === "gerente_ventas") {
+      if (monto <= 4000000) nuevoEstado = "aprobado";
+      else nuevoEstado = "pendiente_gg";
+    } else if (userRol === "gerente_general") {
+      if (monto <= 8000000) nuevoEstado = "aprobado";
+      else nuevoEstado = "pendiente_director";
+    } else if (userRol === "director") {
+      nuevoEstado = "aprobado";
+    }
+    const now = new Date().toISOString();
+    const upd = { estado: nuevoEstado };
+    if (userRol === "gerente_ventas")  { upd.aprobado_gv_por = "admin";  upd.aprobado_gv_en  = now; }
+    if (userRol === "gerente_general") { upd.aprobado_gg_por = "admin";  upd.aprobado_gg_en  = now; }
+    if (userRol === "director")        { upd.aprobado_dir_por = "admin"; upd.aprobado_dir_en = now; }
+    await supabase.from("b2b_credito_solicitudes").update(upd).eq("id", sol.id);
+    if (nuevoEstado === "aprobado") {
+      await supabase.from("aliados_b2b").update({ credito_monto: sol.monto, credito_dias: sol.dias }).eq("id", aliado.id);
+      onRefresh();
+    }
+    setApprovingCredit(null); fetchCreditSols();
+  };
+
+  const rechazarCredito = async (sol) => {
+    if (!supabase) return;
+    await supabase.from("b2b_credito_solicitudes").update({ estado: "rechazado", rechazado_en: new Date().toISOString() }).eq("id", sol.id);
+    fetchCreditSols();
+  };
+
   const fetchRntHistorial = useCallback(async () => {
     if (!supabase) return;
     const { data } = await supabase.from("b2b_rnt_historial").select("*").eq("aliado_id", aliado.id).order("subido_en", { ascending: false });
@@ -1804,8 +1863,14 @@ function FichaAliado({ aliado, onBack, onRefresh }) {
         .then(({ data }) => setVendedores(data || []));
       fetchRntHistorial();
       fetchB2bUsers();
+      fetchCreditSols();
+      // Obtener rol del usuario actual
+      supabase.auth.getUser().then(({ data: { user } }) => {
+        if (user?.email) supabase.from("usuarios").select("rol_id").eq("email", user.email.toLowerCase()).single()
+          .then(({ data }) => setCurrentUserRol(data?.rol_id || null));
+      });
     }
-  }, [fetchRntHistorial, fetchB2bUsers]);
+  }, [fetchRntHistorial, fetchB2bUsers, fetchCreditSols]);
 
   const approveCert = async () => {
     if (!supabase || approvingCert || !aliado.cert_bancaria_pendiente_url) return;
@@ -1835,7 +1900,7 @@ function FichaAliado({ aliado, onBack, onRefresh }) {
     setSavingEdit(true);
     const { error } = await supabase.from("aliados_b2b").update({
       nombre: editForm.nombre, tipo: editForm.tipo, contacto: editForm.contacto,
-      tel: editForm.tel, email: editForm.email, comision: Number(editForm.comision) || 0,
+      tel: editForm.tel, email: editForm.email,
       rut: editForm.rut, rnt: editForm.rnt, estado: editForm.estado,
       vendedor_id: editForm.vendedor_id || null,
     }).eq("id", aliado.id);
@@ -1952,7 +2017,7 @@ function FichaAliado({ aliado, onBack, onRefresh }) {
                   {[
                     ["nombre", "Nombre"], ["tipo", "Tipo", ["Hotel", "Agencia", "Freelance", "Event Planner"]],
                     ["rut", "RUT"], ["rnt", "RNT"], ["contacto", "Contacto"],
-                    ["tel", "Telefono"], ["email", "Email"], ["comision", "Comision %"],
+                    ["tel", "Telefono"], ["email", "Email"],
                     ["estado", "Estado", ["activo", "inactivo"]],
                   ].map(([key, label, opts]) => (
                     <div key={key} style={{ marginBottom: 10 }}>
@@ -1981,7 +2046,9 @@ function FichaAliado({ aliado, onBack, onRefresh }) {
                 </div>
               ) : (
                 <div style={{ fontSize: 13, lineHeight: 2.4 }}>
-                  {[["RUT", aliado.rut], ["RNT", aliado.rnt], ["Contacto", aliado.contacto], ["Telefono", aliado.tel], ["Email", aliado.email], ["Comision", aliado.comision ? `${aliado.comision}%` : "\u2014"]].map(([l, v]) => (
+                  {[["RUT", aliado.rut], ["RNT", aliado.rnt], ["Contacto", aliado.contacto], ["Telefono", aliado.tel], ["Email", aliado.email],
+                    ["Crédito", aliado.credito_monto ? `$${Number(aliado.credito_monto).toLocaleString("es-CO")}` : "—"],
+                    ["Días crédito", aliado.credito_dias ? `${aliado.credito_dias} días` : "—"]].map(([l, v]) => (
                     <div key={l}><span style={{ color: "rgba(255,255,255,0.4)", minWidth: 90, display: "inline-block" }}>{l}:</span> <strong>{v || "\u2014"}</strong></div>
                   ))}
                   {/* Vendedor */}
@@ -2157,6 +2224,113 @@ function FichaAliado({ aliado, onBack, onRefresh }) {
             ))}
           </div>
 
+          {/* Crédito */}
+          <div style={{ background: B.navyMid, borderRadius: 12, padding: 24, marginBottom: 20 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+              <h3 style={{ fontSize: 15, color: B.sand, margin: 0 }}>💳 Crédito B2B</h3>
+              <button onClick={() => setShowCreditForm(s => !s)} style={{ background: B.sky, color: B.navy, border: "none", borderRadius: 8, padding: "7px 16px", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>
+                + Solicitar crédito
+              </button>
+            </div>
+
+            {/* Crédito activo */}
+            {(aliado.credito_monto || aliado.credito_dias) && (
+              <div style={{ background: B.success + "18", border: `1px solid ${B.success}44`, borderRadius: 10, padding: "14px 18px", marginBottom: 14, display: "flex", gap: 24 }}>
+                <div>
+                  <div style={{ fontSize: 11, color: B.success, textTransform: "uppercase", letterSpacing: 1 }}>Monto aprobado</div>
+                  <div style={{ fontSize: 20, fontWeight: 800, color: B.white }}>${Number(aliado.credito_monto || 0).toLocaleString("es-CO")}</div>
+                </div>
+                <div>
+                  <div style={{ fontSize: 11, color: B.success, textTransform: "uppercase", letterSpacing: 1 }}>Días de crédito</div>
+                  <div style={{ fontSize: 20, fontWeight: 800, color: B.white }}>{aliado.credito_dias} días</div>
+                </div>
+                <span style={{ alignSelf: "center", fontSize: 11, padding: "4px 12px", borderRadius: 10, background: B.success + "33", color: B.success, fontWeight: 700 }}>✓ Vigente</span>
+              </div>
+            )}
+
+            {/* Form solicitar */}
+            {showCreditForm && (
+              <div style={{ background: B.navy, borderRadius: 10, padding: 16, marginBottom: 14, display: "flex", gap: 12, alignItems: "flex-end" }}>
+                <div style={{ flex: 1 }}>
+                  <label style={{ ...LS, fontSize: 10 }}>Monto ($)</label>
+                  <input type="number" value={creditForm.monto} onChange={e => setCreditForm(f => ({ ...f, monto: e.target.value }))}
+                    placeholder="Ej: 5000000" style={{ ...IS, fontSize: 13 }} />
+                </div>
+                <div style={{ width: 120 }}>
+                  <label style={{ ...LS, fontSize: 10 }}>Días de crédito</label>
+                  <input type="number" value={creditForm.dias} onChange={e => setCreditForm(f => ({ ...f, dias: e.target.value }))}
+                    placeholder="Ej: 30" style={{ ...IS, fontSize: 13 }} />
+                </div>
+                <button onClick={solicitarCredito} disabled={savingCredit || !creditForm.monto || !creditForm.dias}
+                  style={{ padding: "10px 18px", borderRadius: 8, border: "none", background: savingCredit ? B.navyLight : B.sand, color: B.navy, fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
+                  {savingCredit ? "..." : "Enviar"}
+                </button>
+                <button onClick={() => setShowCreditForm(false)} style={{ padding: "10px 14px", borderRadius: 8, border: `1px solid ${B.navyLight}`, background: "none", color: "rgba(255,255,255,0.4)", fontSize: 13, cursor: "pointer" }}>✕</button>
+              </div>
+            )}
+
+            {/* Reglas de aprobación */}
+            <div style={{ display: "flex", gap: 8, marginBottom: creditSols.length > 0 ? 14 : 0, flexWrap: "wrap" }}>
+              {[
+                { label: "Hasta $4.000.000", desc: "Gerente de Ventas", color: B.sky },
+                { label: "$4M – $8M", desc: "Gte. Ventas + Gte. General", color: B.warning },
+                { label: "Más de $8M", desc: "GV + GG + Director", color: B.pink },
+              ].map(r => (
+                <div key={r.label} style={{ flex: 1, minWidth: 140, background: B.navy, borderRadius: 8, padding: "8px 12px", borderLeft: `3px solid ${r.color}` }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: r.color }}>{r.label}</div>
+                  <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>{r.desc}</div>
+                </div>
+              ))}
+            </div>
+
+            {/* Solicitudes historial */}
+            {creditSols.length > 0 && creditSols.map(sol => {
+              const canApproveGV  = currentUserRol === "gerente_ventas"  && sol.estado === "pendiente_gv";
+              const canApproveGG  = currentUserRol === "gerente_general" && sol.estado === "pendiente_gg";
+              const canApproveDir = currentUserRol === "director"        && sol.estado === "pendiente_director";
+              const canApprove = canApproveGV || canApproveGG || canApproveDir;
+              const statusMap = {
+                pendiente_gv:       { label: "Pendiente Gte. Ventas",   color: B.warning },
+                pendiente_gg:       { label: "Pendiente Gte. General",  color: B.sky },
+                pendiente_director: { label: "Pendiente Director",      color: B.pink },
+                aprobado:           { label: "Aprobado",                color: B.success },
+                rechazado:          { label: "Rechazado",               color: B.danger },
+              };
+              const st = statusMap[sol.estado] || { label: sol.estado, color: B.sand };
+              return (
+                <div key={sol.id} style={{ background: B.navy, borderRadius: 10, padding: "12px 16px", marginBottom: 8, border: `1px solid ${st.color}33` }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}>
+                    <div>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <span style={{ fontWeight: 700, fontSize: 15 }}>${Number(sol.monto).toLocaleString("es-CO")}</span>
+                        <span style={{ fontSize: 12, color: "rgba(255,255,255,0.4)" }}>· {sol.dias} días</span>
+                        <span style={{ fontSize: 11, padding: "2px 9px", borderRadius: 8, background: st.color + "22", color: st.color, fontWeight: 600 }}>{st.label}</span>
+                      </div>
+                      <div style={{ fontSize: 11, color: "rgba(255,255,255,0.3)", marginTop: 3 }}>
+                        Solicitado: {new Date(sol.created_at).toLocaleDateString("es-CO", { day: "2-digit", month: "short", year: "numeric" })}
+                        {sol.aprobado_gv_en  && <span> · ✓ GV {new Date(sol.aprobado_gv_en).toLocaleDateString("es-CO",  { day: "2-digit", month: "short" })}</span>}
+                        {sol.aprobado_gg_en  && <span> · ✓ GG {new Date(sol.aprobado_gg_en).toLocaleDateString("es-CO",  { day: "2-digit", month: "short" })}</span>}
+                        {sol.aprobado_dir_en && <span> · ✓ Dir {new Date(sol.aprobado_dir_en).toLocaleDateString("es-CO", { day: "2-digit", month: "short" })}</span>}
+                      </div>
+                    </div>
+                    {canApprove && (
+                      <div style={{ display: "flex", gap: 8 }}>
+                        <button onClick={() => aprobarCredito(sol, currentUserRol)} disabled={approvingCredit === sol.id}
+                          style={{ padding: "7px 16px", borderRadius: 8, border: "none", background: B.success, color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+                          {approvingCredit === sol.id ? "..." : "✓ Aprobar"}
+                        </button>
+                        <button onClick={() => rechazarCredito(sol)}
+                          style={{ padding: "7px 14px", borderRadius: 8, border: `1px solid ${B.danger}44`, background: "none", color: B.danger, fontSize: 12, cursor: "pointer" }}>
+                          ✕ Rechazar
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
           {/* Locaciones */}
           <div style={{ background: B.navyMid, borderRadius: 12, padding: 24 }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
@@ -2239,7 +2413,7 @@ function LocacionModal({ onClose, onSave }) {
 // NUEVO ALIADO MODAL
 // ═══════════════════════════════════════════════
 function NuevoAliadoModal({ onClose, onSave }) {
-  const [f, setF] = useState({ nombre: "", tipo: "Hotel", contacto: "", tel: "", email: "", comision: "", rut: "", rnt: "" });
+  const [f, setF] = useState({ nombre: "", tipo: "Hotel", contacto: "", tel: "", email: "", credito_monto: "", credito_dias: "", rut: "", rnt: "" });
   const [saving, setSaving] = useState(false);
   const s = (k, v) => setF(p => ({ ...p, [k]: v }));
   const handleSave = async () => {
@@ -2253,7 +2427,7 @@ function NuevoAliadoModal({ onClose, onSave }) {
       const last = maxData?.[0]?.codigo_fijo ? parseInt(maxData[0].codigo_fijo.replace("ATO-", "")) : 0;
       codigoFijo = "ATO-" + String(last + 1).padStart(5, "0");
     }
-    await onSave({ id: `B2B-${Date.now()}`, nombre: f.nombre, tipo: f.tipo, contacto: f.contacto, tel: f.tel, email: f.email, comision: Number(f.comision) || 0, rut: f.rut, rnt: f.rnt, estado: "activo", pax_mes: 0, revenue: 0, codigo_fijo: codigoFijo });
+    await onSave({ id: `B2B-${Date.now()}`, nombre: f.nombre, tipo: f.tipo, contacto: f.contacto, tel: f.tel, email: f.email, credito_monto: Number(f.credito_monto) || null, credito_dias: Number(f.credito_dias) || null, rut: f.rut, rnt: f.rnt, estado: "activo", pax_mes: 0, revenue: 0, codigo_fijo: codigoFijo });
   };
   return (
     <div style={{ position: "fixed", inset: 0, background: "#000A", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center" }}
@@ -2266,7 +2440,8 @@ function NuevoAliadoModal({ onClose, onSave }) {
           <div style={{ marginBottom: 14 }}><label style={LS}>Contacto</label><input value={f.contacto} onChange={e => s("contacto", e.target.value)} placeholder="Nombre del contacto" style={IS} /></div>
           <div style={{ marginBottom: 14 }}><label style={LS}>Telefono</label><input value={f.tel} onChange={e => s("tel", e.target.value)} placeholder="+57 ..." style={IS} /></div>
           <div style={{ marginBottom: 14 }}><label style={LS}>Email</label><input value={f.email} onChange={e => s("email", e.target.value)} placeholder="email@aliado.com" style={IS} /></div>
-          <div style={{ marginBottom: 14 }}><label style={LS}>Comision %</label><input value={f.comision} onChange={e => s("comision", e.target.value)} placeholder="12" type="number" style={IS} /></div>
+          <div style={{ marginBottom: 14 }}><label style={LS}>Crédito (monto $)</label><input value={f.credito_monto} onChange={e => s("credito_monto", e.target.value)} placeholder="Ej: 5000000" type="number" style={IS} /></div>
+          <div style={{ marginBottom: 14 }}><label style={LS}>Días de crédito</label><input value={f.credito_dias} onChange={e => s("credito_dias", e.target.value)} placeholder="Ej: 30" type="number" style={IS} /></div>
           <div style={{ marginBottom: 14 }}><label style={LS}>RUT</label><input value={f.rut} onChange={e => s("rut", e.target.value)} placeholder="NIT o RUT" style={IS} /></div>
           <div style={{ marginBottom: 14 }}><label style={LS}>RNT</label><input value={f.rnt} onChange={e => s("rnt", e.target.value)} placeholder="Registro Nacional de Turismo" style={IS} /></div>
         </div>
@@ -2377,7 +2552,7 @@ function AliadosList() {
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
           <thead>
             <tr style={{ borderBottom: `1px solid ${B.navyLight}` }}>
-              {["Aliado", "Tipo", "RUT", "RNT", "Contacto", "Vendedor", "Comision", "Estado"].map(h => (
+              {["Aliado", "Tipo", "RUT", "RNT", "Contacto", "Vendedor", "Crédito", "Estado"].map(h => (
                 <th key={h} style={{ padding: "14px 16px", textAlign: "left", fontSize: 12, color: B.sand, textTransform: "uppercase", letterSpacing: 1 }}>{h}</th>
               ))}
             </tr>
@@ -2405,7 +2580,7 @@ function AliadosList() {
                     ? <div style={{ display: "flex", alignItems: "center", gap: 6 }}><div style={{ width: 24, height: 24, borderRadius: 12, background: v.avatar_color || B.sky, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 9, fontWeight: 700, color: B.navy, flexShrink: 0 }}>{v.nombre.split(" ").map(w=>w[0]).join("").slice(0,2)}</div><span style={{ fontSize: 12 }}>{v.nombre.split(" ")[0]}</span></div>
                     : <span style={{ color: "rgba(255,255,255,0.25)", fontSize: 12 }}>—</span>; })()}
                 </td>
-                <td style={{ padding: "14px 16px", fontSize: 13 }}>{a.comision}%</td>
+                <td style={{ padding: "14px 16px", fontSize: 13 }}>{a.credito_monto ? `$${Number(a.credito_monto).toLocaleString("es-CO")} · ${a.credito_dias || 0}d` : <span style={{ color: "rgba(255,255,255,0.25)" }}>—</span>}</td>
                 <td style={{ padding: "14px 16px" }}><span style={{ fontSize: 11, padding: "3px 10px", borderRadius: 20, background: a.estado === "activo" ? B.success : B.navyLight }}>{a.estado === "activo" ? "Activo" : "Inactivo"}</span></td>
               </tr>
             ))}
