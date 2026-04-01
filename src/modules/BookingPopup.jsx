@@ -42,7 +42,9 @@ const PRODUCTS = [
     icon:         "🌴",
     color:        "#0D1B3E",
     desc:         "Acceso full day · Lancha ida y vuelta · Cóctel de bienvenida · Almuerzo con postre · Cama de playa · Toallas · WiFi",
+    desc_en:      "Full day access · Round-trip boat transfer · Welcome cocktail · Lunch with dessert · Beach lounger · Towels · WiFi",
     includes:     ["Lancha ida y vuelta", "Cóctel de bienvenida", "Almuerzo con postre", "Cama de playa VIP", "Toallas", "WiFi"],
+    includes_en:  ["Round-trip boat transfer", "Welcome cocktail", "Lunch with dessert", "VIP beach lounger", "Towels", "WiFi"],
   },
   {
     slug:         "exclusive-pass",
@@ -57,7 +59,9 @@ const PRODUCTS = [
     icon:         "⭐",
     color:        "#7C3AED",
     desc:         "Experiencia premium con pool cabana · Zona privada · Open bar · Atención personalizada. Mínimo 2 personas.",
+    desc_en:      "Premium experience with pool cabana · Private area · Open bar · Personalized service. Minimum 2 people.",
     includes:     ["Todo del VIP Pass", "Zona privada reservada", "Open bar premium", "Atención personalizada"],
+    includes_en:  ["Everything in VIP Pass", "Reserved private area", "Premium open bar", "Personalized service"],
   },
   {
     slug:         "atolon-experience",
@@ -72,7 +76,9 @@ const PRODUCTS = [
     icon:         "🛥️",
     color:        "#0E7490",
     desc:         "Máximo lujo 100% consumible · Traslado en yate privado · Chef a bordo · Menú degustación · Acceso VIP. Mínimo 4 personas.",
+    desc_en:      "Ultimate luxury, 100% all-inclusive · Private yacht transfer · On-board chef · Tasting menu · Full VIP access. Minimum 4 people.",
     includes:     ["Transfer en yate privado", "Chef a bordo", "Menú degustación", "Acceso VIP todas las áreas", "Experiencia personalizada"],
+    includes_en:  ["Private yacht transfer", "On-board chef", "Tasting menu", "Full VIP area access", "Personalized experience"],
   },
   {
     slug:         "after-island",
@@ -85,11 +91,14 @@ const PRODUCTS = [
     precioNetoNino: 100000, // niños neto (+ $50.000 consumibles)
     noNinos:      false,
     ninoNota:     "+$50.000 consumibles incluidos",
+    ninoNota_en:  "+$50,000 consumables included",
     minA:         1,
     icon:         "🌙",
     color:        "#B45309",
     desc:         "Llega en tu propia embarcación · Disfruta la isla al atardecer con música, coctelería y vistas únicas.",
+    desc_en:      "Arrive on your own vessel · Enjoy the island at sunset with music, cocktails and stunning views.",
     includes:     ["Traslado en lancha", "Acceso tarde–noche", "Barra de cócteles", "Música y DJ"],
+    includes_en:  ["Boat transfer", "Afternoon–night access", "Cocktail bar", "Music & DJ"],
   },
 ];
 
@@ -492,7 +501,7 @@ export default function BookingPopup() {
               <div style={{ width: 48, height: 48, borderRadius: 12, background: C.bgCard, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 24, flexShrink: 0 }}>{p.icon}</div>
               <div style={{ flex: 1 }}>
                 <div style={{ fontSize: 15, fontWeight: 700, color: C.text }}>{p.tipo}</div>
-                <div style={{ fontSize: 12, color: C.textMid, marginTop: 2, lineHeight: 1.4 }}>{p.desc.split("·")[0].trim()}</div>
+                <div style={{ fontSize: 12, color: C.textMid, marginTop: 2, lineHeight: 1.4 }}>{(isEN ? p.desc_en : p.desc).split("·")[0].trim()}</div>
               </div>
               <div style={{ textAlign: "right", flexShrink: 0 }}>
                 <div style={{ fontSize: 15, fontWeight: 800, color: C.accent }}>{COP(p.precio)}</div>
@@ -610,7 +619,7 @@ export default function BookingPopup() {
               <>
                 <PaxRow
                   label={isEN ? "Children" : "Niños"}
-                  sub={`${isEN ? "Up to 12 years" : "Hasta 12 años"} · ${COP(product.precioNino)}${product.ninoNota ? " · " + product.ninoNota : ""}`}
+                  sub={`${isEN ? "Up to 12 years" : "Hasta 12 años"} · ${COP(product.precioNino)}${product.ninoNota ? " · " + (isEN ? (product.ninoNota_en || product.ninoNota) : product.ninoNota) : ""}`}
                   val={paxN}
                   onDec={() => setPaxN(n => Math.max(0, n - 1))}
                   onInc={() => setPaxN(n => Math.min(30, n + 1))}
