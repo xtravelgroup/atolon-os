@@ -55,7 +55,7 @@ const PRODUCTS = [
     minA:         2,
     icon:         "⭐",
     color:        "#7C3AED",
-    desc:         "Experiencia premium para grupos · Zona privada · Open bar · Atención personalizada. Mínimo 2 personas.",
+    desc:         "Experiencia premium con pool cabana · Zona privada · Open bar · Atención personalizada. Mínimo 2 personas.",
     includes:     ["Todo del VIP Pass", "Zona privada reservada", "Open bar premium", "Atención personalizada"],
   },
   {
@@ -70,7 +70,7 @@ const PRODUCTS = [
     minA:         4,
     icon:         "🛥️",
     color:        "#0E7490",
-    desc:         "El máximo lujo · Traslado en yate privado · Chef a bordo · Menú degustación · Acceso VIP. Mínimo 4 personas.",
+    desc:         "Máximo lujo 100% consumible · Traslado en yate privado · Chef a bordo · Menú degustación · Acceso VIP. Mínimo 4 personas.",
     includes:     ["Transfer en yate privado", "Chef a bordo", "Menú degustación", "Acceso VIP todas las áreas", "Experiencia personalizada"],
   },
   {
@@ -87,7 +87,7 @@ const PRODUCTS = [
     minA:         1,
     icon:         "🌙",
     color:        "#B45309",
-    desc:         "La fiesta no para · Disfruta la isla al atardecer con música, coctelería y vistas únicas.",
+    desc:         "Llega en tu propia embarcación · Disfruta la isla al atardecer con música, coctelería y vistas únicas.",
     includes:     ["Traslado en lancha", "Acceso tarde–noche", "Barra de cócteles", "Música y DJ"],
   },
 ];
