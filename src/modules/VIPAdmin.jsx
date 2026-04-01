@@ -6,12 +6,12 @@ const IS = { width: "100%", padding: "10px 14px", borderRadius: 8, background: B
 const LS = { fontSize: 11, color: B.sand, display: "block", marginBottom: 5, textTransform: "uppercase", letterSpacing: "0.06em" };
 
 const BENEFICIOS = {
-  coral: { pct: 5,  camas: 2,     personas: 2, personasPropia: 4,    personasLancha: 2, color: "#f87171", label: "Coral Member", icon: "🪸", desc: "Entry level – acceso base",
-           embarcacionPropia: true,  transporte: 50000, descuentoPasadia: 10, adicionalConsumible: null },
-  reef:  { pct: 8,  camas: 4,     personas: 4, personasPropia: 6,    personasLancha: 4, color: "#34d399", label: "Reef Member",  icon: "🐚", desc: "Cliente frecuente – upgrades y perks",
+  coral: { pct: 5,  camas: 1,     personas: 2, personasPropia: 4,    personasLancha: 2, color: "#f87171", label: "Coral Member", icon: "🪸", desc: "Entry level – acceso base",
+           embarcacionPropia: true,  transporte: 50000, descuentoPasadia: 10, adicionalConsumible: 100000 },
+  reef:  { pct: 8,  camas: 2,     personas: 4, personasPropia: 6,    personasLancha: 4, color: "#34d399", label: "Reef Member",  icon: "🐚", desc: "Cliente frecuente – upgrades y perks",
            embarcacionPropia: true,  transporte: 50000, descuentoPasadia: 12, adicionalConsumible: 100000 },
   ocean: { pct: 10, camas: "VIP", personas: 6, personasPropia: null, personasLancha: 6, color: "#60a5fa", label: "Ocean Member", icon: "🌊", desc: "Elite – experiencia completa",
-           embarcacionPropia: true,  transporte: 50000, descuentoPasadia: 15, adicionalConsumible: 100000 },
+           embarcacionPropia: true,  transporte: 50000, descuentoPasadia: 15, adicionalConsumible: null },
 };
 
 const CARD_GRADIENTS = {
@@ -97,14 +97,14 @@ function MembershipCard({ miembro }) {
             </div>
           ) : miembro.nivel === "reef" ? (
             <div style={{ fontSize: 12, opacity: 0.85, lineHeight: 1.9 }}>
-              🛏 {b.camas} camas · 🚤 Emb. propia hasta {b.personasPropia} pax<br />
-              ⛵ Lancha {b.personasLancha} pax · <span style={{ color: b.color }}>$50.000</span> + pax adicionales <span style={{ color: b.color }}>$100.000 consumibles</span><br />
+              🛏 {b.camas} camas por visita · 🚤 Emb. propia hasta {b.personasPropia} pax<br />
+              ⛵ Lancha {b.personasLancha} pax · <span style={{ color: b.color }}>$50.000</span> · pax extra <span style={{ color: b.color }}>$100.000 consumibles</span><br />
               🏖 {b.descuentoPasadia}% descuento pasadías · 💰 {b.pct}% en puntos
             </div>
           ) : (
             <div style={{ fontSize: 12, opacity: 0.85, lineHeight: 1.9 }}>
-              🛏 {b.camas} camas · 🚤 Emb. propia hasta {b.personasPropia} pax<br />
-              ⛵ Lancha {b.personasLancha} pax · <span style={{ color: b.color }}>$50.000 transporte</span><br />
+              🛏 {b.camas} cama por visita · 🚤 Emb. propia hasta {b.personasPropia} pax<br />
+              ⛵ Lancha {b.personasLancha} pax · <span style={{ color: b.color }}>$50.000</span> · pax extra <span style={{ color: b.color }}>$100.000 consumibles</span><br />
               🏖 {b.descuentoPasadia}% descuento pasadías · 💰 {b.pct}% en puntos
             </div>
           )}
