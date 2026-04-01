@@ -1974,7 +1974,7 @@ export default function AgenciaPortal() {
       {/* Header */}
       <div style={{ padding: "12px 28px", background: B.navyMid, display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: `1px solid ${B.navyLight}` }}>
         <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-          <img src="/atolon-logo-white.png" alt="Atolon Beach Club" style={{ height: 40, objectFit: "contain" }} />
+          <img src="/atolon-logo-white.png" alt="Atolon Beach Club" style={{ height: 80, objectFit: "contain" }} />
           <div style={{ width: 1, height: 28, background: B.navyLight }} />
           <div>
             <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontSize: 16, fontWeight: 600 }}>Portal de Agencias</span>
