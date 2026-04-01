@@ -786,7 +786,7 @@ function NuevaReserva({ agencia, user, onCreated, vistaPrecios = "ambos" }) {
 // ═══════════════════════════════════════════════
 // GESTIONAR VENDEDORES
 // ═══════════════════════════════════════════════
-function GestionVendedores({ agencia }) {
+function GestionVendedores({ agencia, vendedorAsesor }) {
   const [vendedores, setVendedores] = useState([]);
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ nombre: "", email: "", rol: "vendedor" });
@@ -804,6 +804,28 @@ function GestionVendedores({ agencia }) {
     if (!supabase || !form.nombre.trim() || !form.email.trim() || saving) return;
     setSaving(true);
     await supabase.from("b2b_usuarios").insert({ id: `USR-${Date.now()}`, aliado_id: agencia.id, nombre: form.nombre, email: form.email.toLowerCase().trim(), rol: form.rol, activo: true });
+    // Notificar al vendedor asesor de Atolon por email
+    if (vendedorAsesor?.email && supabase) {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/notify-b2b-user`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${session?.access_token || import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+          },
+          body: JSON.stringify({
+            vendedor_email:  vendedorAsesor.email,
+            vendedor_nombre: vendedorAsesor.nombre,
+            agencia_nombre:  agencia.nombre,
+            nuevo_nombre:    form.nombre,
+            nuevo_email:     form.email.toLowerCase().trim(),
+            nuevo_rol:       form.rol,
+            portal_url:      window.location.origin + "/agencia",
+          }),
+        }).catch(() => {}); // silencioso si falla
+      } catch (_) {}
+    }
     fetch(); setShowForm(false); setForm({ nombre: "", email: "", rol: "vendedor" }); setSaving(false);
   };
 
@@ -1526,7 +1548,7 @@ function DocumentosAgencia({ agencia, onRefresh }) {
   );
 }
 
-function PreferenciasAgencia({ agencia, onSaved }) {
+function PreferenciasAgencia({ agencia, onSaved, vendedor }) {
   const [subTab, setSubTab] = useState("datos");
 
   // ── Datos de la agencia ──────────────────────────────
@@ -1774,7 +1796,7 @@ function PreferenciasAgencia({ agencia, onSaved }) {
       )}
 
       {/* ── VENDEDORES ── */}
-      {subTab === "vendedores" && <GestionVendedores agencia={agencia} />}
+      {subTab === "vendedores" && <GestionVendedores agencia={agencia} vendedorAsesor={vendedor} />}
     </div>
   );
 }
@@ -2311,7 +2333,7 @@ export default function AgenciaPortal() {
     const { agencia } = session;
     // Fetch vendedor asignado a la agencia
     if (agencia.vendedor_id) {
-      supabase.from("usuarios").select("id, nombre, telefono, avatar_color, rol_id")
+      supabase.from("usuarios").select("id, nombre, email, telefono, avatar_color, rol_id")
         .eq("id", agencia.vendedor_id).single()
         .then(({ data }) => setVendedor(data || null));
     } else {
@@ -2399,7 +2421,7 @@ export default function AgenciaPortal() {
         {tab === "incentivos" && isAdmin && <IncentivosPortal agencia={agencia} />}
         {tab === "info"  && <InfoPortal />}
         {tab === "media" && <MediaPortal />}
-        {tab === "preferencias" && isAdmin && <PreferenciasAgencia agencia={agencia} onSaved={handlePrefsSaved} />}
+        {tab === "preferencias" && isAdmin && <PreferenciasAgencia agencia={agencia} onSaved={handlePrefsSaved} vendedor={vendedor} />}
 
         {/* ── Footer: agente comercial + muelle ── */}
         <div style={{ marginTop: isMobile ? 32 : 48, borderTop: `1px solid ${B.navyLight}`, paddingTop: isMobile ? 20 : 24, display: "flex", flexDirection: isMobile ? "column" : "row", gap: 16, flexWrap: "wrap", alignItems: "stretch" }}>
