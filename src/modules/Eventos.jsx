@@ -430,7 +430,7 @@ export default function Eventos() {
     const [evtR, salR, aliR, vendR] = await Promise.all([
       supabase.from("eventos").select("*").order("fecha", { ascending: true }),
       supabase.from("salidas").select("id, hora, nombre").eq("activo", true).order("orden"),
-      supabase.from("aliados_b2b").select("id, nombre, tipo").eq("activo", true).order("nombre"),
+      supabase.from("aliados_b2b").select("id, nombre, tipo").order("nombre"),
       supabase.from("usuarios").select("id, nombre").in("rol_id", ["ventas", "gerente_ventas"]).eq("activo", true).order("nombre"),
     ]);
     if (evtR.data) setTodos(evtR.data.map(e => ({
