@@ -192,6 +192,7 @@ import ZarpeInfo from "./modules/ZarpeInfo";
 import Analitica from "./modules/Analitica";
 import MuelleCheckin from "./modules/MuelleCheckin";
 import VIPAdmin from "./modules/VIPAdmin";
+import VIPPortal from "./modules/VIPPortal";
 
 const MODULE_MAP = {
   pasadias: <Pasadias />,
@@ -268,6 +269,7 @@ export default function App() {
   if (route.startsWith("pago"))   return <><PagoCliente /><WhatsAppFloat phone={waPhone} /></>;
   if (route === "reset-password") return <><ResetPassword /><WhatsAppFloat phone={waPhone} /></>;
   if (route === "zarpe-info")     return <><ZarpeInfo /><WhatsAppFloat phone={waPhone} /></>;
+  if (route === "society")        return <VIPPortal />;
 
   // Loading auth state
   if (session === undefined) return null;
