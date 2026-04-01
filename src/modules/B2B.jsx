@@ -991,6 +991,108 @@ function CreditosAgencia({ aliadoId }) {
 // ═══════════════════════════════════════════════
 // VISITAS AGENCIA
 // ═══════════════════════════════════════════════
+// ═══════════════════════════════════════════════
+// EVENTOS / GRUPOS B2B
+// ═══════════════════════════════════════════════
+const STAGE_COLOR_EV = { Consulta: "#E8A020", Cotizado: "#38BDF8", Confirmado: "#22C55E", Realizado: "rgba(255,255,255,0.3)" };
+const COP_EV = (n) => n ? "$" + Math.round(n).toLocaleString("es-CO") : "—";
+
+function EventosGruposB2B({ aliadoId }) {
+  const [items, setItems]     = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [filterCat, setFilterCat] = useState("todos"); // todos | evento | grupo
+
+  useEffect(() => {
+    if (!supabase) { setLoading(false); return; }
+    supabase.from("eventos")
+      .select("id, nombre, tipo, fecha, pax, valor, stage, categoria, contacto, tel, email, notas, created_at")
+      .eq("aliado_id", aliadoId)
+      .order("fecha", { ascending: false })
+      .then(({ data }) => { setItems(data || []); setLoading(false); });
+  }, [aliadoId]);
+
+  const filtered = items.filter(i => filterCat === "todos" || i.categoria === filterCat);
+
+  const totales = {
+    todos:    items.length,
+    evento:   items.filter(i => i.categoria === "evento").length,
+    grupo:    items.filter(i => i.categoria === "grupo").length,
+    confirmados: items.filter(i => i.stage === "Confirmado" || i.stage === "Realizado").length,
+    revenue:  items.filter(i => i.stage === "Confirmado" || i.stage === "Realizado").reduce((s, i) => s + (i.valor || 0), 0),
+  };
+
+  return (
+    <div style={{ background: B.navyMid, borderRadius: 12, padding: 24 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
+        <h3 style={{ fontSize: 15, color: B.sand, margin: 0 }}>Eventos & Grupos</h3>
+        <div style={{ display: "flex", gap: 8 }}>
+          {[["todos","Todos"], ["evento","Eventos"], ["grupo","Grupos"]].map(([v, l]) => (
+            <button key={v} onClick={() => setFilterCat(v)} style={{
+              padding: "6px 14px", borderRadius: 8, border: "none", cursor: "pointer", fontSize: 12, fontWeight: 600,
+              background: filterCat === v ? B.sky : B.navy, color: filterCat === v ? B.navy : B.sand,
+            }}>{l}</button>
+          ))}
+        </div>
+      </div>
+
+      {/* Stats */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 20 }}>
+        {[
+          { label: "Total", val: totales.todos, color: B.sand },
+          { label: "Eventos", val: totales.evento, color: B.sky },
+          { label: "Grupos", val: totales.grupo, color: "#A78BFA" },
+          { label: "Revenue confirmado", val: COP_EV(totales.revenue), color: B.success },
+        ].map(({ label, val, color }) => (
+          <div key={label} style={{ background: B.navy, borderRadius: 10, padding: "12px 14px", textAlign: "center" }}>
+            <div style={{ fontSize: 18, fontWeight: 700, color }}>{val}</div>
+            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>{label}</div>
+          </div>
+        ))}
+      </div>
+
+      {loading && <div style={{ textAlign: "center", padding: 40, color: "rgba(255,255,255,0.3)", fontSize: 13 }}>Cargando...</div>}
+      {!loading && filtered.length === 0 && (
+        <div style={{ textAlign: "center", padding: 40, color: "rgba(255,255,255,0.3)", fontSize: 13 }}>
+          <div style={{ fontSize: 32, marginBottom: 8 }}>🎪</div>
+          No hay {filterCat === "todos" ? "eventos ni grupos" : filterCat + "s"} registrados para este aliado.
+        </div>
+      )}
+
+      {!loading && filtered.length > 0 && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {filtered.map(ev => (
+            <div key={ev.id} style={{ background: B.navy, borderRadius: 10, padding: "14px 16px", borderLeft: `3px solid ${STAGE_COLOR_EV[ev.stage] || B.sand}` }}>
+              <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
+                <div style={{ flex: 1 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                    <span style={{ fontSize: 14, fontWeight: 700, color: B.white }}>{ev.nombre || ev.tipo}</span>
+                    <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 10, background: ev.categoria === "grupo" ? "#A78BFA33" : B.sky + "33", color: ev.categoria === "grupo" ? "#A78BFA" : B.sky, fontWeight: 600, textTransform: "uppercase" }}>
+                      {ev.categoria === "grupo" ? "Grupo" : "Evento"}
+                    </span>
+                    <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 10, background: (STAGE_COLOR_EV[ev.stage] || B.sand) + "22", color: STAGE_COLOR_EV[ev.stage] || B.sand, fontWeight: 600 }}>
+                      {ev.stage}
+                    </span>
+                  </div>
+                  <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+                    {ev.fecha && <span style={{ fontSize: 12, color: "rgba(255,255,255,0.5)" }}>📅 {new Date(ev.fecha + "T12:00:00").toLocaleDateString("es-CO", { day: "2-digit", month: "short", year: "numeric" })}</span>}
+                    {ev.pax > 0 && <span style={{ fontSize: 12, color: "rgba(255,255,255,0.5)" }}>👥 {ev.pax} pax</span>}
+                    {ev.tipo && ev.nombre !== ev.tipo && <span style={{ fontSize: 12, color: "rgba(255,255,255,0.4)" }}>· {ev.tipo}</span>}
+                    {ev.contacto && <span style={{ fontSize: 12, color: "rgba(255,255,255,0.4)" }}>👤 {ev.contacto}</span>}
+                  </div>
+                  {ev.notas && <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", marginTop: 6, fontStyle: "italic" }}>{ev.notas}</div>}
+                </div>
+                <div style={{ textAlign: "right", flexShrink: 0 }}>
+                  {ev.valor > 0 && <div style={{ fontSize: 15, fontWeight: 700, color: B.success }}>{COP_EV(ev.valor)}</div>}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 const TIPOS_VISITA   = ["presencial", "virtual", "telefonica", "feria/evento"];
 const ESTADOS_VISITA = ["programada", "realizada", "cancelada", "reprogramada"];
 const ESTADO_VISITA_COLOR = { programada: B.sky, realizada: B.success, cancelada: B.danger, reprogramada: B.warning };
@@ -1753,7 +1855,7 @@ function FichaAliado({ aliado, onBack, onRefresh }) {
 
       {/* Tabs */}
       <div style={{ display: "flex", gap: 4, marginBottom: 20 }}>
-        {[["general", "Ficha General"], ["convenios", "Convenios & Tarifas"], ["historial", "Historial Reservas"], ["visitas", "Visitas"], ["incentivos", "🎯 Incentivos"], ["puntos", "🏆 AtoCoins"]].map(([k, l]) => (
+        {[["general", "Ficha General"], ["convenios", "Convenios & Tarifas"], ["historial", "Historial Reservas"], ["eventos", "🎪 Eventos/Grupos"], ["visitas", "Visitas"], ["incentivos", "🎯 Incentivos"], ["puntos", "🏆 AtoCoins"]].map(([k, l]) => (
           <button key={k} onClick={() => setTab(k)} style={{
             padding: "9px 20px", borderRadius: 8, border: "none", cursor: "pointer", fontSize: 13, fontWeight: 600,
             background: tab === k ? B.sky : B.navyMid, color: tab === k ? B.navy : B.sand,
@@ -1962,6 +2064,7 @@ function FichaAliado({ aliado, onBack, onRefresh }) {
       )}
 
       {tab === "historial"  && <HistorialReservasB2B aliadoId={aliado.id} />}
+      {tab === "eventos"    && <EventosGruposB2B aliadoId={aliado.id} />}
       {tab === "visitas"    && <VisitasAgencia aliadoId={aliado.id} aliado={aliado} />}
       {tab === "incentivos" && <IncentivosAgencia aliadoId={aliado.id} />}
       {tab === "puntos"     && <PuntosAgencia aliado={aliado} />}
