@@ -215,16 +215,32 @@ function generarZarpe(salida, reservas, fecha, despacho, embarcacionesFlota = []
         <div style="font-weight:700;font-size:13px;color:#1E3566;margin-bottom:8px;">🚢 ${bote}</div>
         <table style="width:100%;font-size:11px;border-collapse:collapse;">
           <tr>
-            <td style="padding:3px 8px 3px 0;color:#555;width:110px;">Matrícula:</td>
-            <td style="padding:3px 0;font-weight:600;">${emb.matricula || "_______________"}</td>
-            <td style="padding:3px 8px 3px 16px;color:#555;width:90px;">Piloto:</td>
-            <td style="padding:3px 0;font-weight:600;">${emb.capitan || "_______________"}</td>
+            <td style="padding:3px 8px 3px 0;color:#555;width:90px;">Matrícula:</td>
+            <td colspan="3" style="padding:3px 0;font-weight:600;">${emb.matricula || "_______________"}</td>
+          </tr>
+          <tr style="background:#eef1f8;">
+            <td style="padding:4px 8px 4px 0;color:#333;font-weight:700;">Capitán 1</td>
+            <td style="padding:4px 8px;color:#555;width:80px;">Nombre:</td>
+            <td style="padding:4px 8px;font-weight:600;">${emb.capitan || "_______________"}</td>
+            <td style="padding:4px 0;"></td>
           </tr>
           <tr>
-            <td style="padding:3px 8px 3px 0;color:#555;">Cédula piloto:</td>
-            <td style="padding:3px 0;font-weight:600;">${emb.piloto_cedula || "_______________"}</td>
-            <td style="padding:3px 8px 3px 16px;color:#555;">Celular piloto:</td>
-            <td style="padding:3px 0;font-weight:600;">${emb.piloto_celular || "_______________"}</td>
+            <td style="padding:3px 8px 3px 0;color:#555;"></td>
+            <td style="padding:3px 8px;color:#555;">Cédula:</td>
+            <td style="padding:3px 8px;font-weight:600;">${emb.piloto_cedula || "_______________"}</td>
+            <td style="padding:3px 0;font-weight:600;color:#555;">Cel: ${emb.piloto_celular || "_______________"}</td>
+          </tr>
+          <tr style="background:#eef1f8;">
+            <td style="padding:4px 8px 4px 0;color:#333;font-weight:700;">Capitán 2</td>
+            <td style="padding:4px 8px;color:#555;">Nombre:</td>
+            <td style="padding:4px 8px;font-weight:600;">${emb.piloto2_nombre || "_______________"}</td>
+            <td style="padding:4px 0;"></td>
+          </tr>
+          <tr>
+            <td style="padding:3px 8px 3px 0;color:#555;"></td>
+            <td style="padding:3px 8px;color:#555;">Cédula:</td>
+            <td style="padding:3px 8px;font-weight:600;">${emb.piloto2_cedula || "_______________"}</td>
+            <td style="padding:3px 0;font-weight:600;color:#555;">Cel: ${emb.piloto2_celular || "_______________"}</td>
           </tr>
         </table>
       </div>`;

@@ -689,8 +689,8 @@ function TabEmbarcaciones({ embarcaciones, onRefresh }) {
   const createEmb = async () => {
     if (!supabase || !newForm.nombre.trim() || saving) return;
     setSaving(true);
-    await supabase.from("embarcaciones").insert({ id: `B${String(Date.now()).slice(-3)}`, nombre: newForm.nombre, tipo: newForm.tipo, capacidad: Number(newForm.capacidad) || 0, capitan: newForm.capitan, estado: newForm.estado, propiedad: newForm.propiedad, costo_renta: Number(newForm.costo_renta) || 0, matricula: newForm.matricula || null, piloto_cedula: newForm.piloto_cedula || null, piloto_celular: newForm.piloto_celular || null });
-    onRefresh(); setShowNew(false); setNewForm({ nombre: "", tipo: "", capacidad: "", capitan: "", estado: "activo", propiedad: "propia", costo_renta: "", matricula: "", piloto_cedula: "", piloto_celular: "" }); setSaving(false);
+    await supabase.from("embarcaciones").insert({ id: `B${String(Date.now()).slice(-3)}`, nombre: newForm.nombre, tipo: newForm.tipo, capacidad: Number(newForm.capacidad) || 0, capitan: newForm.capitan, estado: newForm.estado, propiedad: newForm.propiedad, costo_renta: Number(newForm.costo_renta) || 0, matricula: newForm.matricula || null, piloto_cedula: newForm.piloto_cedula || null, piloto_celular: newForm.piloto_celular || null, piloto2_nombre: newForm.piloto2_nombre || null, piloto2_cedula: newForm.piloto2_cedula || null, piloto2_celular: newForm.piloto2_celular || null });
+    onRefresh(); setShowNew(false); setNewForm({ nombre: "", tipo: "", capacidad: "", capitan: "", estado: "activo", propiedad: "propia", costo_renta: "", matricula: "", piloto_cedula: "", piloto_celular: "", piloto2_nombre: "", piloto2_cedula: "", piloto2_celular: "" }); setSaving(false);
   };
 
   const startEdit = (e) => { setEditing(e.id); setForm({ ...e }); };
@@ -700,6 +700,7 @@ function TabEmbarcaciones({ embarcaciones, onRefresh }) {
       nombre: form.nombre, tipo: form.tipo, capacidad: Number(form.capacidad) || 0,
       estado: form.estado, capitan: form.capitan, notas: form.notas,
       matricula: form.matricula, piloto_cedula: form.piloto_cedula, piloto_celular: form.piloto_celular,
+      piloto2_nombre: form.piloto2_nombre, piloto2_cedula: form.piloto2_cedula, piloto2_celular: form.piloto2_celular,
       propiedad: form.propiedad || "propia", costo_renta: Number(form.costo_renta) || 0,
     }).eq("id", form.id);
     onRefresh(); setEditing(null);
@@ -733,7 +734,8 @@ function TabEmbarcaciones({ embarcaciones, onRefresh }) {
               {e.propiedad === "rentada" && e.costo_renta > 0 && <div><span style={{ color: "rgba(255,255,255,0.4)" }}>Costo:</span> <strong style={{ color: B.warning }}>{COP(e.costo_renta)}</strong></div>}
             </div>
             {e.matricula && <div style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", marginBottom: 4 }}>Matrícula: <strong style={{ color: B.sky }}>{e.matricula}</strong></div>}
-            {e.capitan && <div style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", marginBottom: 4 }}>Piloto: {e.capitan}{e.piloto_cedula ? ` · CC ${e.piloto_cedula}` : ""}{e.piloto_celular ? ` · ${e.piloto_celular}` : ""}</div>}
+            {e.capitan && <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginBottom: 2 }}>Cap 1: {e.capitan}{e.piloto_cedula ? ` · ${e.piloto_cedula}` : ""}{e.piloto_celular ? ` · ${e.piloto_celular}` : ""}</div>}
+            {e.piloto2_nombre && <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginBottom: 4 }}>Cap 2: {e.piloto2_nombre}{e.piloto2_cedula ? ` · ${e.piloto2_cedula}` : ""}{e.piloto2_celular ? ` · ${e.piloto2_celular}` : ""}</div>}
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingTop: 12, borderTop: `1px solid ${B.navyLight}` }}>
               <div style={{ fontSize: 11, color: "rgba(255,255,255,0.3)" }}>ID: {e.id}</div>
               <button onClick={() => startEdit(e)} style={{ background: B.navyLight, color: B.white, border: "none", borderRadius: 6, padding: "6px 14px", fontSize: 11, cursor: "pointer" }}>Editar</button>
@@ -746,7 +748,10 @@ function TabEmbarcaciones({ embarcaciones, onRefresh }) {
         <div style={{ position: "fixed", inset: 0, background: "#000A", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center" }} onClick={e => e.target === e.currentTarget && setEditing(null)}>
           <div style={{ background: B.navyMid, borderRadius: 16, padding: 28, width: 460 }}>
             <h3 style={{ marginBottom: 20, fontSize: 17, fontWeight: 700 }}>Editar Embarcacion</h3>
-            {[["nombre", "Nombre"], ["tipo", "Tipo"], ["capacidad", "Capacidad (pax)", "number"], ["matricula", "Matrícula"], ["capitan", "Piloto / Capitán"], ["piloto_cedula", "Cédula Piloto"], ["piloto_celular", "Celular Piloto"]].map(([k, l, t]) => (
+            {[["nombre", "Nombre"], ["tipo", "Tipo"], ["capacidad", "Capacidad (pax)", "number"], ["matricula", "Matrícula"],
+              ["capitan", "Capitán 1 — Nombre"], ["piloto_cedula", "Capitán 1 — Cédula"], ["piloto_celular", "Capitán 1 — Celular"],
+              ["piloto2_nombre", "Capitán 2 — Nombre"], ["piloto2_cedula", "Capitán 2 — Cédula"], ["piloto2_celular", "Capitán 2 — Celular"]
+            ].map(([k, l, t]) => (
               <div key={k} style={{ marginBottom: 14 }}>
                 <label style={{ fontSize: 11, color: B.sand, display: "block", marginBottom: 5, textTransform: "uppercase" }}>{l}</label>
                 <input type={t || "text"} value={form[k] || ""} onChange={ev => setForm(f => ({ ...f, [k]: ev.target.value }))} style={{ width: "100%", padding: "9px 12px", borderRadius: 8, background: B.navy, border: `1px solid ${B.navyLight}`, color: B.white, fontSize: 13, outline: "none", boxSizing: "border-box" }} />
@@ -785,7 +790,11 @@ function TabEmbarcaciones({ embarcaciones, onRefresh }) {
         <div style={{ position: "fixed", inset: 0, background: "#000A", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center" }} onClick={e => e.target === e.currentTarget && setShowNew(false)}>
           <div style={{ background: B.navyMid, borderRadius: 16, padding: 28, width: 460 }}>
             <h3 style={{ marginBottom: 20, fontSize: 17, fontWeight: 700 }}>Nueva Embarcacion</h3>
-            {[["nombre", "Nombre", "Ej: Caribe I"], ["tipo", "Tipo", "Ej: Lancha 24'"], ["capacidad", "Capacidad (pax)", "12", "number"], ["matricula", "Matrícula", "Ej: MN-1234"], ["capitan", "Piloto / Capitán", "Nombre completo"], ["piloto_cedula", "Cédula Piloto", "Número de cédula"], ["piloto_celular", "Celular Piloto", "Ej: 3001234567"]].map(([k, l, ph, t]) => (
+            {[
+              ["nombre", "Nombre", "Ej: Caribe I"], ["tipo", "Tipo", "Ej: Lancha 24'"], ["capacidad", "Capacidad (pax)", "12", "number"], ["matricula", "Matrícula", "Ej: MN-1234"],
+              ["capitan", "Capitán 1 — Nombre", "Nombre completo"], ["piloto_cedula", "Capitán 1 — Cédula", "Número de cédula"], ["piloto_celular", "Capitán 1 — Celular", "Ej: 3001234567"],
+              ["piloto2_nombre", "Capitán 2 — Nombre", "Nombre completo"], ["piloto2_cedula", "Capitán 2 — Cédula", "Número de cédula"], ["piloto2_celular", "Capitán 2 — Celular", "Ej: 3001234567"],
+            ].map(([k, l, ph, t]) => (
               <div key={k} style={{ marginBottom: 14 }}>
                 <label style={LS2}>{l}</label>
                 <input type={t || "text"} value={newForm[k]} onChange={ev => setNewForm(f => ({ ...f, [k]: ev.target.value }))} placeholder={ph} style={IS} />
