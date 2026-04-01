@@ -13,7 +13,7 @@ const NAV = [
   { key: "pasadias", label: "Pasadias", icon: "\u2600" },
   { key: "reservas", label: "Reservas", icon: "\u2693" },
   { key: "checkin",  label: "Check-in", icon: "✅" },
-  { key: "muelle",   label: "Muelle",   icon: "⚓" },
+  { key: "muelle",   label: "Llegadas",  icon: "⚓" },
   { key: "floorplan", label: "Floor Plan", icon: "\u25A6" },
   { key: "comercial", label: "Comercial", icon: "\u2605" },
   { key: "b2b", label: "B2B", icon: "\u2637" },
