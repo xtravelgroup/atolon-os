@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { B, COP, todayStr } from "../brand";
 import { supabase } from "../lib/supabase";
+import { useMobile } from "../lib/useMobile";
 
 const ESTADO_BOTE = { activo: { bg: B.success + "22", color: B.success }, mantenimiento: { bg: B.warning + "22", color: B.warning }, inactivo: { bg: B.navyLight, color: "rgba(255,255,255,0.4)" } };
 
@@ -1013,6 +1014,7 @@ function TabSalidas({ salidas, embarcaciones, cierres, onRefreshSalidas, onRefre
 // MAIN COMPONENT
 // ═══════════════════════════════════════════════
 export default function Pasadias() {
+  const isMobile = useMobile();
   const [tab, setTab] = useState("calendario");
   const [loading, setLoading] = useState(true);
   const [pasadias, setPasadias] = useState([]);
@@ -1061,25 +1063,26 @@ export default function Pasadias() {
       </div>
 
       {/* KPI Cards */}
-      <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 24 }}>
+      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(4, 1fr)", gap: isMobile ? 8 : 12, marginBottom: 20 }}>
         {[
           { label: "Tipos de Pasadia", val: pasadias.filter(p => p.activo).length, color: B.sand },
           { label: "Embarcaciones Activas", val: `${botesActivos} / ${embarcaciones.length}`, color: B.sky },
           { label: "Salidas Activas", val: salidasData.filter(s => s.activo).length, color: B.success },
-          { label: "Capacidad Total / Dia", val: `${capTotal} pax`, color: B.pink },
+          { label: "Capacidad / Día", val: `${capTotal} pax`, color: B.pink },
         ].map(s => (
-          <div key={s.label} style={{ background: B.navyMid, borderRadius: 12, padding: "16px 20px", flex: "1 1 200px", borderLeft: `4px solid ${s.color}`, minWidth: 180 }}>
-            <div style={{ fontSize: 11, color: B.sand, textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 6 }}>{s.label}</div>
-            <div style={{ fontSize: 26, fontWeight: 700, fontFamily: "'Barlow Condensed', sans-serif" }}>{s.val}</div>
+          <div key={s.label} style={{ background: B.navyMid, borderRadius: 10, padding: isMobile ? "12px 14px" : "16px 20px", borderLeft: `4px solid ${s.color}` }}>
+            <div style={{ fontSize: isMobile ? 10 : 11, color: B.sand, textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 4 }}>{s.label}</div>
+            <div style={{ fontSize: isMobile ? 22 : 26, fontWeight: 700, fontFamily: "'Barlow Condensed', sans-serif" }}>{s.val}</div>
           </div>
         ))}
       </div>
 
       {/* Tabs */}
-      <div style={{ display: "flex", gap: 4, marginBottom: 20 }}>
-        {[["calendario", "Calendario"], ["pasadias", "Pasadias"], ["embarcaciones", "Embarcaciones"], ["salidas", "Salidas & Cierres"]].map(([k, l]) => (
+      <div style={{ display: "flex", gap: 4, marginBottom: 16, overflowX: "auto", paddingBottom: 4 }}>
+        {[["calendario", "📅 Calendario"], ["pasadias", "🎫 Pasadias"], ["embarcaciones", "⛵ Embarcaciones"], ["salidas", "🕐 Salidas"]].map(([k, l]) => (
           <button key={k} onClick={() => setTab(k)} style={{
-            padding: "9px 20px", borderRadius: 8, border: "none", cursor: "pointer", fontSize: 13, fontWeight: 600,
+            padding: isMobile ? "8px 14px" : "9px 20px", borderRadius: 8, border: "none", cursor: "pointer",
+            fontSize: isMobile ? 12 : 13, fontWeight: 600, flexShrink: 0,
             background: tab === k ? B.sky : B.navyMid, color: tab === k ? B.navy : B.sand,
           }}>{l}</button>
         ))}

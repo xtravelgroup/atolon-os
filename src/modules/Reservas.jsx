@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { B, COP, SALIDAS, FLOTA, PASADIAS, todayStr, fmtFecha } from "../brand";
 import { supabase } from "../lib/supabase";
+import { useMobile } from "../lib/useMobile";
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -136,7 +137,7 @@ function DepartureCard({ salida, paxCount }) {
 
 // ── modal ─────────────────────────────────────────────────────────────────────
 
-function ReservaModal({ onClose, onSave }) {
+function ReservaModal({ onClose, onSave, isMobile }) {
   const [form, setForm] = useState(EMPTY_FORM);
   const [errors, setErrors] = useState({});
 
@@ -195,15 +196,16 @@ function ReservaModal({ onClose, onSave }) {
       <div style={{
         background: B.navyMid,
         border: `1px solid ${B.navyLight}`,
-        borderRadius: 16,
+        borderRadius: isMobile ? 0 : 16,
         width: "100%",
-        maxWidth: 560,
-        maxHeight: "90vh",
+        maxWidth: isMobile ? "100%" : 560,
+        maxHeight: isMobile ? "100%" : "90vh",
+        height: isMobile ? "100%" : "auto",
         overflowY: "auto",
-        padding: 28,
+        padding: isMobile ? "20px 16px" : 28,
         display: "flex",
         flexDirection: "column",
-        gap: 20,
+        gap: 16,
       }}>
         {/* title */}
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -217,7 +219,7 @@ function ReservaModal({ onClose, onSave }) {
         </div>
 
         {/* form grid */}
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+        <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 14 }}>
           {/* nombre – full width */}
           <div style={{ ...fieldStyle, gridColumn: "1 / -1" }}>
             <label style={labelStyle}>Nombre del titular</label>
@@ -354,6 +356,7 @@ function ReservaModal({ onClose, onSave }) {
 // ── main component ────────────────────────────────────────────────────────────
 
 export default function Reservas() {
+  const isMobile = useMobile();
   const [reservas, setReservas]     = useState([]);
   const [loading, setLoading]       = useState(true);
   const [search, setSearch]         = useState("");
@@ -502,57 +505,44 @@ export default function Reservas() {
     <div style={{
       background: B.navy,
       minHeight: "100vh",
-      padding: "28px 28px 60px",
+      padding: isMobile ? "0 0 60px" : "28px 28px 60px",
       fontFamily: "'Inter', 'Helvetica Neue', sans-serif",
       color: B.white,
       boxSizing: "border-box",
     }}>
       {/* ── page header ── */}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 28 }}>
-        <div>
-          <h1 style={{
-            fontFamily: "'Barlow Condensed', sans-serif",
-            fontSize: 34,
-            fontWeight: 800,
-            color: B.sand,
-            margin: 0,
-            letterSpacing: 1,
-            display: "flex",
-            alignItems: "center",
-            gap: 10,
-          }}>
-            Reservas &amp; Salidas
-            {supabase && !loading && (
-              <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 10, background: "#4CAF7D22", color: "#4CAF7D" }}>
-                LIVE
-              </span>
-            )}
-          </h1>
-          <div style={{ fontSize: 13, color: B.sky, marginTop: 4 }}>{today}</div>
-        </div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: isMobile ? 16 : 28 }}>
+        <h1 style={{
+          fontFamily: "'Barlow Condensed', sans-serif",
+          fontSize: isMobile ? 24 : 34,
+          fontWeight: 800,
+          color: B.sand,
+          margin: 0,
+          letterSpacing: 1,
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+        }}>
+          Reservas
+          {supabase && !loading && (
+            <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 10, background: "#4CAF7D22", color: "#4CAF7D" }}>LIVE</span>
+          )}
+        </h1>
         <button
           onClick={() => setShowModal(true)}
           style={{
-            background: B.sky,
-            border: "none",
-            borderRadius: 8,
-            color: B.navy,
-            padding: "10px 22px",
-            fontSize: 15,
-            fontWeight: 700,
-            cursor: "pointer",
-            display: "flex",
-            alignItems: "center",
-            gap: 8,
-            flexShrink: 0,
+            background: B.sky, border: "none", borderRadius: 8, color: B.navy,
+            padding: isMobile ? "10px 14px" : "10px 22px",
+            fontSize: isMobile ? 13 : 15, fontWeight: 700, cursor: "pointer",
+            display: "flex", alignItems: "center", gap: 6, flexShrink: 0,
           }}
         >
-          <span style={{ fontSize: 20, lineHeight: 1, marginTop: -1 }}>+</span> Nueva Reserva
+          <span style={{ fontSize: 18, lineHeight: 1 }}>+</span> {isMobile ? "Nueva" : "Nueva Reserva"}
         </button>
       </div>
 
       {/* ── summary kpis ── */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 14, marginBottom: 24 }}>
+      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(3, 1fr)", gap: isMobile ? 8 : 14, marginBottom: isMobile ? 16 : 24 }}>
         {[
           { label: "Total Pax hoy",   value: totalPax,           unit: "personas",  color: B.sky  },
           { label: "Total abonado",   value: COP(totalAbono),    unit: "",          color: B.success },
@@ -569,7 +559,7 @@ export default function Reservas() {
       </div>
 
       {/* ── departure board ── */}
-      <div style={{ marginBottom: 28 }}>
+      {!isMobile && <div style={{ marginBottom: 28 }}>
         <h2 style={{
           fontFamily: "'Barlow Condensed', sans-serif",
           fontSize: 20,
@@ -587,198 +577,163 @@ export default function Reservas() {
         </div>
       </div>
 
+      }
+
       {/* ── reservations table ── */}
-      <div style={cardStyle}>
+      <div style={isMobile ? {} : cardStyle}>
         {/* table header */}
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, flexWrap: "wrap", gap: 12 }}>
-          <h2 style={{
-            fontFamily: "'Barlow Condensed', sans-serif",
-            fontSize: 20,
-            fontWeight: 700,
-            color: B.sand,
-            margin: 0,
-            letterSpacing: 0.5,
-          }}>
-            Lista de Reservas
-            <span style={{ fontSize: 14, fontWeight: 500, color: B.sky, marginLeft: 10 }}>
-              ({filtered.length})
-            </span>
-          </h2>
-
-          <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-            {/* search */}
-            <div style={{ position: "relative" }}>
-              <span style={{
-                position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)",
-                color: B.sand, fontSize: 14, pointerEvents: "none",
-              }}>⌕</span>
-              <input
-                value={search}
-                onChange={e => setSearch(e.target.value)}
-                placeholder="Buscar reserva…"
-                style={{
-                  background: B.navyLight,
-                  border: `1px solid ${B.navyLight}`,
-                  borderRadius: 8,
-                  color: B.white,
-                  padding: "8px 12px 8px 30px",
-                  fontSize: 14,
-                  width: 200,
-                  outline: "none",
-                }}
-              />
-            </div>
-
-            {/* estado filter pills */}
+        <div style={{ marginBottom: 12 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+            <h2 style={{ fontFamily: "'Barlow Condensed', sans-serif", fontSize: isMobile ? 18 : 20, fontWeight: 700, color: B.sand, margin: 0 }}>
+              Lista de Reservas <span style={{ fontSize: 13, fontWeight: 500, color: B.sky }}>({filtered.length})</span>
+            </h2>
+          </div>
+          {/* search */}
+          <div style={{ position: "relative", marginBottom: 10 }}>
+            <span style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: B.sand, fontSize: 14, pointerEvents: "none" }}>⌕</span>
+            <input
+              value={search} onChange={e => setSearch(e.target.value)} placeholder="Buscar reserva…"
+              style={{ background: B.navyLight, border: `1px solid ${B.navyLight}`, borderRadius: 8, color: B.white, padding: "10px 12px 10px 30px", fontSize: 14, width: "100%", outline: "none", boxSizing: "border-box" }}
+            />
+          </div>
+          {/* filter pills */}
+          <div style={{ display: "flex", gap: 6, overflowX: "auto", paddingBottom: 4 }}>
             {["todos", "confirmado", "pendiente", "cancelado"].map(e => (
-              <button key={e} style={pillStyle(filterEstado === e)} onClick={() => setFilter(e)}>
+              <button key={e} style={{ ...pillStyle(filterEstado === e), flexShrink: 0, fontSize: 12 }} onClick={() => setFilter(e)}>
                 {e.charAt(0).toUpperCase() + e.slice(1)}
               </button>
             ))}
           </div>
         </div>
 
-        {/* table scroll wrapper */}
-        <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 860 }}>
-            <thead>
-              <tr>
-                {["#", "Nombre", "Tipo", "Pax", "Salida", "Canal", "Total", "Abono", "Estado", "Acciones"].map(h => (
-                  <th key={h} style={thStyle}>{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {loading ? (
-                <tr>
-                  <td colSpan={10} style={{ ...tdStyle, textAlign: "center", color: B.sand, padding: "32px 0" }}>
-                    Cargando reservas…
-                  </td>
-                </tr>
-              ) : filtered.length === 0 ? (
-                <tr>
-                  <td colSpan={10} style={{ ...tdStyle, textAlign: "center", padding: "48px 0" }}>
-                    <div style={{ fontSize: 32, marginBottom: 10, opacity: 0.4 }}>🏝️</div>
-                    <div style={{ fontSize: 15, fontWeight: 700, color: B.sand, marginBottom: 4 }}>
-                      No hay reservas para hoy
-                    </div>
-                    <div style={{ fontSize: 13, color: B.sky }}>
-                      Las reservas que ingreses aparecerán aquí.
-                    </div>
-                  </td>
-                </tr>
-              ) : filtered.map(r => {
+        {/* Mobile card list */}
+        {isMobile ? (
+          loading ? (
+            <div style={{ textAlign: "center", padding: "40px 0", color: B.sand }}>Cargando reservas…</div>
+          ) : filtered.length === 0 ? (
+            <div style={{ textAlign: "center", padding: "40px 0" }}>
+              <div style={{ fontSize: 32, marginBottom: 8, opacity: 0.4 }}>🏝️</div>
+              <div style={{ fontSize: 14, color: B.sand }}>No hay reservas</div>
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {filtered.map(r => {
                 const salida = SALIDAS.find(s => s.id === r.salida);
                 const saldo = r.total - r.abono;
                 return (
-                  <tr key={r.id} style={{ transition: "background 0.15s" }}
-                    onMouseEnter={e => e.currentTarget.style.background = B.navyLight + "55"}
-                    onMouseLeave={e => e.currentTarget.style.background = "transparent"}
-                  >
-                    <td style={{ ...tdStyle, color: B.sky, fontWeight: 700, fontSize: 13 }}>{r.id}</td>
-                    <td style={{ ...tdStyle, fontWeight: 600 }}>
-                      <div>{r.nombre}</div>
-                      {r.notas && (
-                        <div style={{ fontSize: 11, color: B.sand, marginTop: 2, maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                          {r.notas}
-                        </div>
-                      )}
-                    </td>
-                    <td style={{ ...tdStyle, color: B.sand, fontSize: 13 }}>{r.tipo}</td>
-                    <td style={{ ...tdStyle, textAlign: "center", fontWeight: 700, color: B.sky }}>{r.pax}</td>
-                    <td style={tdStyle}>
-                      <div style={{ fontWeight: 700 }}>{r.salida}</div>
-                      {salida && <div style={{ fontSize: 11, color: B.sky }}>{salida.hora}</div>}
-                    </td>
-                    <td style={tdStyle}>
-                      <span style={{
-                        background: B.navyLight,
-                        borderRadius: 6,
-                        padding: "2px 8px",
-                        fontSize: 12,
-                        color: B.sky,
-                        fontWeight: 600,
-                      }}>
-                        {r.canal}
-                      </span>
-                    </td>
-                    <td style={{ ...tdStyle, fontWeight: 700, color: B.white }}>{COP(r.total)}</td>
-                    <td style={tdStyle}>
-                      <div style={{ fontWeight: 700, color: B.success }}>{COP(r.abono)}</div>
-                      {saldo > 0 && (
-                        <div style={{ fontSize: 11, color: B.warning }}>Saldo: {COP(saldo)}</div>
-                      )}
-                    </td>
-                    <td style={tdStyle}>
-                      <StatusBadge estado={r.estado} />
-                    </td>
-                    <td style={tdStyle}>
-                      <div style={{ display: "flex", gap: 6 }}>
-                        <button
-                          onClick={() => toggleEstado(r.id)}
-                          title="Cambiar estado"
-                          style={{
-                            background: B.navyLight,
-                            border: "none",
-                            borderRadius: 6,
-                            color: B.sky,
-                            padding: "5px 10px",
-                            fontSize: 13,
-                            cursor: "pointer",
-                            fontWeight: 600,
-                          }}>
-                          ↻
-                        </button>
-                        <button
-                          onClick={() => deleteReserva(r.id)}
-                          title="Eliminar"
-                          style={{
-                            background: B.danger + "22",
-                            border: `1px solid ${B.danger}44`,
-                            borderRadius: 6,
-                            color: B.danger,
-                            padding: "5px 10px",
-                            fontSize: 13,
-                            cursor: "pointer",
-                            fontWeight: 600,
-                          }}>
-                          ✕
-                        </button>
+                  <div key={r.id} style={{ background: B.navyMid, borderRadius: 12, padding: "14px 16px", border: `1px solid ${B.navyLight}` }}>
+                    {/* Row 1: nombre + badge + actions */}
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 8 }}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontWeight: 700, fontSize: 15, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.nombre}</div>
+                        <div style={{ fontSize: 11, color: B.sky, marginTop: 1 }}>{r.id}</div>
                       </div>
-                    </td>
-                  </tr>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+                        <StatusBadge estado={r.estado} />
+                        <button onClick={() => toggleEstado(r.id)} title="Cambiar estado"
+                          style={{ background: B.navyLight, border: "none", borderRadius: 8, color: B.sky, padding: "7px 10px", fontSize: 16, cursor: "pointer" }}>↻</button>
+                        <button onClick={() => deleteReserva(r.id)} title="Eliminar"
+                          style={{ background: B.danger + "22", border: `1px solid ${B.danger}44`, borderRadius: 8, color: B.danger, padding: "7px 10px", fontSize: 14, cursor: "pointer" }}>✕</button>
+                      </div>
+                    </div>
+                    {/* Row 2: details */}
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap", fontSize: 12 }}>
+                      <span style={{ background: B.navyLight, borderRadius: 6, padding: "2px 8px", color: B.sand }}>{r.pax} pax</span>
+                      <span style={{ background: B.navyLight, borderRadius: 6, padding: "2px 8px", color: "rgba(255,255,255,0.6)" }}>{r.tipo}</span>
+                      <span style={{ background: B.navyLight, borderRadius: 6, padding: "2px 8px", color: B.sky }}>{r.salida}{salida ? ` · ${salida.hora}` : ""}</span>
+                      <span style={{ background: B.navyLight, borderRadius: 6, padding: "2px 8px", color: "rgba(255,255,255,0.5)" }}>{r.canal}</span>
+                    </div>
+                    {/* Row 3: money */}
+                    <div style={{ display: "flex", gap: 16, marginTop: 8, fontSize: 13 }}>
+                      <div><span style={{ color: "rgba(255,255,255,0.4)" }}>Total: </span><span style={{ fontWeight: 700 }}>{COP(r.total)}</span></div>
+                      <div><span style={{ color: "rgba(255,255,255,0.4)" }}>Abono: </span><span style={{ fontWeight: 700, color: B.success }}>{COP(r.abono)}</span></div>
+                      {saldo > 0 && <div><span style={{ color: B.warning, fontWeight: 700 }}>Saldo: {COP(saldo)}</span></div>}
+                    </div>
+                    {r.notas && <div style={{ marginTop: 6, fontSize: 11, color: B.sand, opacity: 0.7 }}>{r.notas}</div>}
+                  </div>
                 );
               })}
-            </tbody>
-          </table>
-        </div>
-
-        {/* table footer summary */}
-        {filtered.length > 0 && (
-          <div style={{
-            display: "flex",
-            gap: 24,
-            justifyContent: "flex-end",
-            paddingTop: 14,
-            borderTop: `1px solid ${B.navyLight}`,
-            marginTop: 4,
-            flexWrap: "wrap",
-          }}>
-            {[
-              { label: "Subtotal abonado", value: COP(filtered.reduce((s, r) => s + r.abono, 0)), color: B.success },
-              { label: "Subtotal venta",   value: COP(filtered.reduce((s, r) => s + r.total, 0)), color: B.sand    },
-            ].map(f => (
-              <div key={f.label} style={{ textAlign: "right" }}>
-                <div style={{ fontSize: 11, color: B.sand, textTransform: "uppercase", letterSpacing: 0.5 }}>{f.label}</div>
-                <div style={{ fontSize: 16, fontWeight: 800, color: f.color, fontFamily: "'Barlow Condensed', sans-serif" }}>{f.value}</div>
+            </div>
+          )
+        ) : (
+          /* Desktop table */
+          <>
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 860 }}>
+                <thead>
+                  <tr>
+                    {["#", "Nombre", "Tipo", "Pax", "Salida", "Canal", "Total", "Abono", "Estado", "Acciones"].map(h => (
+                      <th key={h} style={thStyle}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {loading ? (
+                    <tr><td colSpan={10} style={{ ...tdStyle, textAlign: "center", color: B.sand, padding: "32px 0" }}>Cargando reservas…</td></tr>
+                  ) : filtered.length === 0 ? (
+                    <tr>
+                      <td colSpan={10} style={{ ...tdStyle, textAlign: "center", padding: "48px 0" }}>
+                        <div style={{ fontSize: 32, marginBottom: 10, opacity: 0.4 }}>🏝️</div>
+                        <div style={{ fontSize: 15, fontWeight: 700, color: B.sand, marginBottom: 4 }}>No hay reservas para hoy</div>
+                        <div style={{ fontSize: 13, color: B.sky }}>Las reservas que ingreses aparecerán aquí.</div>
+                      </td>
+                    </tr>
+                  ) : filtered.map(r => {
+                    const salida = SALIDAS.find(s => s.id === r.salida);
+                    const saldo = r.total - r.abono;
+                    return (
+                      <tr key={r.id} style={{ transition: "background 0.15s" }}
+                        onMouseEnter={e => e.currentTarget.style.background = B.navyLight + "55"}
+                        onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                        <td style={{ ...tdStyle, color: B.sky, fontWeight: 700, fontSize: 13 }}>{r.id}</td>
+                        <td style={{ ...tdStyle, fontWeight: 600 }}>
+                          <div>{r.nombre}</div>
+                          {r.notas && <div style={{ fontSize: 11, color: B.sand, marginTop: 2, maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.notas}</div>}
+                        </td>
+                        <td style={{ ...tdStyle, color: B.sand, fontSize: 13 }}>{r.tipo}</td>
+                        <td style={{ ...tdStyle, textAlign: "center", fontWeight: 700, color: B.sky }}>{r.pax}</td>
+                        <td style={tdStyle}>
+                          <div style={{ fontWeight: 700 }}>{r.salida}</div>
+                          {salida && <div style={{ fontSize: 11, color: B.sky }}>{salida.hora}</div>}
+                        </td>
+                        <td style={tdStyle}><span style={{ background: B.navyLight, borderRadius: 6, padding: "2px 8px", fontSize: 12, color: B.sky, fontWeight: 600 }}>{r.canal}</span></td>
+                        <td style={{ ...tdStyle, fontWeight: 700, color: B.white }}>{COP(r.total)}</td>
+                        <td style={tdStyle}>
+                          <div style={{ fontWeight: 700, color: B.success }}>{COP(r.abono)}</div>
+                          {saldo > 0 && <div style={{ fontSize: 11, color: B.warning }}>Saldo: {COP(saldo)}</div>}
+                        </td>
+                        <td style={tdStyle}><StatusBadge estado={r.estado} /></td>
+                        <td style={tdStyle}>
+                          <div style={{ display: "flex", gap: 6 }}>
+                            <button onClick={() => toggleEstado(r.id)} title="Cambiar estado" style={{ background: B.navyLight, border: "none", borderRadius: 6, color: B.sky, padding: "5px 10px", fontSize: 13, cursor: "pointer", fontWeight: 600 }}>↻</button>
+                            <button onClick={() => deleteReserva(r.id)} title="Eliminar" style={{ background: B.danger + "22", border: `1px solid ${B.danger}44`, borderRadius: 6, color: B.danger, padding: "5px 10px", fontSize: 13, cursor: "pointer", fontWeight: 600 }}>✕</button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            {filtered.length > 0 && (
+              <div style={{ display: "flex", gap: 24, justifyContent: "flex-end", paddingTop: 14, borderTop: `1px solid ${B.navyLight}`, marginTop: 4, flexWrap: "wrap" }}>
+                {[
+                  { label: "Subtotal abonado", value: COP(filtered.reduce((s, r) => s + r.abono, 0)), color: B.success },
+                  { label: "Subtotal venta",   value: COP(filtered.reduce((s, r) => s + r.total, 0)), color: B.sand    },
+                ].map(f => (
+                  <div key={f.label} style={{ textAlign: "right" }}>
+                    <div style={{ fontSize: 11, color: B.sand, textTransform: "uppercase", letterSpacing: 0.5 }}>{f.label}</div>
+                    <div style={{ fontSize: 16, fontWeight: 800, color: f.color, fontFamily: "'Barlow Condensed', sans-serif" }}>{f.value}</div>
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
+            )}
+          </>
         )}
       </div>
 
       {/* ── modal ── */}
-      {showModal && <ReservaModal onClose={() => setShowModal(false)} onSave={addReserva} />}
+      {showModal && <ReservaModal onClose={() => setShowModal(false)} onSave={addReserva} isMobile={isMobile} />}
     </div>
   );
 }

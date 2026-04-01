@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { B, todayStr } from "../brand";
 import { supabase } from "../lib/supabase";
+import { useMobile } from "../lib/useMobile";
 
 const IS = { width: "100%", padding: "9px 12px", borderRadius: 8, background: B.navy, border: `1px solid ${B.navyLight}`, color: B.white, fontSize: 13, outline: "none", boxSizing: "border-box" };
 const LS = { fontSize: 11, color: B.sand, display: "block", marginBottom: 5, textTransform: "uppercase", letterSpacing: "0.06em" };
@@ -262,6 +263,7 @@ function generarZarpe(salida, reservas, fecha, despacho) {
 
 // ─── Main ────────────────────────────────────────────────────────────────────
 export default function CheckIn() {
+  const isMobile = useMobile();
   const [fecha,          setFecha]          = useState(todayStr());
   const [salidas,        setSalidas]        = useState([]);
   const [reservas,       setReservas]       = useState([]);
@@ -386,22 +388,20 @@ export default function CheckIn() {
 
       <div>
         {/* Header */}
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20, flexWrap: "wrap", gap: 12 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-            <h2 style={{ fontSize: 22, fontWeight: 600 }}>Check-in · Muelle</h2>
-            <input type="date" value={fecha} onChange={e => { setFecha(e.target.value); setTabSalida(null); }}
-              style={{ ...IS, width: "auto", fontSize: 13 }} />
-          </div>
-          <div style={{ display: "flex", gap: 10 }}>
+        <div style={{ marginBottom: 16 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginBottom: 10 }}>
+            <h2 style={{ fontSize: isMobile ? 18 : 22, fontWeight: 600, margin: 0 }}>Check-in · Muelle</h2>
             <button onClick={() => setScanning(true)}
-              style={{ background: B.sky, color: B.navy, border: "none", borderRadius: 10, padding: "12px 20px", fontWeight: 700, fontSize: 14, cursor: "pointer", display: "flex", alignItems: "center", gap: 8 }}>
-              📷 Escanear QR
+              style={{ background: B.sky, color: B.navy, border: "none", borderRadius: 10, padding: isMobile ? "10px 14px" : "12px 20px", fontWeight: 700, fontSize: isMobile ? 13 : 14, cursor: "pointer", display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
+              📷 {isMobile ? "QR" : "Escanear QR"}
             </button>
           </div>
+          <input type="date" value={fecha} onChange={e => { setFecha(e.target.value); setTabSalida(null); }}
+            style={{ ...IS, width: isMobile ? "100%" : "auto", fontSize: 14 }} />
         </div>
 
         {/* Salida tabs */}
-        <div style={{ display: "flex", gap: 4, marginBottom: 20, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: 6, marginBottom: 16, overflowX: isMobile ? "auto" : "visible", paddingBottom: isMobile ? 4 : 0 }}>
           {salidas.map(s => {
             const resS   = reservas.filter(r => r.salida_id === s.id);
             const chkS   = resS.filter(r => r.checkin_at).reduce((a, r) => a + (r.pax || 0), 0);
@@ -411,13 +411,14 @@ export default function CheckIn() {
             return (
               <button key={s.id} onClick={() => setTabSalida(s.id)}
                 style={{
-                  padding: "10px 18px", borderRadius: 10, border: `2px solid ${isActive ? B.sky : B.navyLight}`,
+                  padding: isMobile ? "10px 16px" : "10px 18px",
+                  borderRadius: 10, border: `2px solid ${isActive ? B.sky : B.navyLight}`,
                   background: isActive ? B.sky + "22" : B.navyMid, color: isActive ? B.sky : "rgba(255,255,255,0.6)",
-                  cursor: "pointer", textAlign: "left",
+                  cursor: "pointer", textAlign: "left", flexShrink: 0,
                 }}>
-                <div style={{ fontSize: 16, fontWeight: 800, fontFamily: "'Barlow Condensed', sans-serif" }}>{s.hora}</div>
-                <div style={{ fontSize: 11, color: chkS === totS && totS > 0 ? B.success : "rgba(255,255,255,0.4)" }}>
-                  {chkS}/{totS} pax {despS ? "· ✈ DESPACHADO" : ""}
+                <div style={{ fontSize: isMobile ? 18 : 16, fontWeight: 800, fontFamily: "'Barlow Condensed', sans-serif" }}>{s.hora}</div>
+                <div style={{ fontSize: 11, color: chkS === totS && totS > 0 ? B.success : "rgba(255,255,255,0.4)", whiteSpace: "nowrap" }}>
+                  {chkS}/{totS} {despS ? "✈" : "pax"}
                 </div>
               </button>
             );
@@ -429,37 +430,32 @@ export default function CheckIn() {
         ) : (
           <>
             {/* Salida header */}
-            <div style={{ background: B.navyMid, borderRadius: 12, padding: "16px 20px", marginBottom: 16, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12 }}>
-              <div>
-                <div style={{ fontSize: 20, fontWeight: 700, fontFamily: "'Barlow Condensed', sans-serif" }}>
-                  {salida.nombre} — {salida.hora}
-                  <span style={{ fontSize: 14, fontWeight: 400, color: "rgba(255,255,255,0.4)", marginLeft: 12 }}>Regreso {salida.hora_regreso}</span>
-                </div>
-                <div style={{ display: "flex", gap: 20, marginTop: 6 }}>
-                  <span style={{ fontSize: 13 }}>
-                    <span style={{ color: B.success, fontWeight: 700 }}>{checkedIn}</span>
-                    <span style={{ color: "rgba(255,255,255,0.4)" }}>/{totalPax} pax en muelle</span>
-                  </span>
-                  <span style={{ fontSize: 13, color: "rgba(255,255,255,0.4)" }}>
-                    {resDesal.filter(r => r.checkin_at).length}/{resDesal.length} reservas
-                  </span>
-                  {despacho && (
-                    <span style={{ fontSize: 13, color: B.success, fontWeight: 700 }}>
-                      ✈ Despachado {new Date(despacho.despachado_at).toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit" })}
+            <div style={{ background: B.navyMid, borderRadius: 12, padding: isMobile ? "12px 14px" : "16px 20px", marginBottom: 12 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10, marginBottom: 8 }}>
+                <div>
+                  <div style={{ fontSize: isMobile ? 17 : 20, fontWeight: 700, fontFamily: "'Barlow Condensed', sans-serif" }}>
+                    {salida.nombre} — {salida.hora}
+                    <span style={{ fontSize: 12, fontWeight: 400, color: "rgba(255,255,255,0.4)", marginLeft: 8 }}>↩ {salida.hora_regreso}</span>
+                  </div>
+                  <div style={{ display: "flex", gap: 12, marginTop: 4, flexWrap: "wrap" }}>
+                    <span style={{ fontSize: 13 }}>
+                      <span style={{ color: B.success, fontWeight: 700 }}>{checkedIn}</span>
+                      <span style={{ color: "rgba(255,255,255,0.4)" }}>/{totalPax} pax</span>
                     </span>
-                  )}
+                    {despacho && (
+                      <span style={{ fontSize: 12, color: B.success, fontWeight: 700 }}>✈ {new Date(despacho.despachado_at).toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit" })}</span>
+                    )}
+                  </div>
                 </div>
-              </div>
-              <div style={{ display: "flex", gap: 8 }}>
                 <button onClick={() => generarZarpe(salida, resDesal, fecha, despacho)}
-                  style={{ padding: "10px 16px", borderRadius: 8, background: B.navyLight, color: B.white, border: "none", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
+                  style={{ padding: "8px 12px", borderRadius: 8, background: B.navyLight, color: B.white, border: "none", fontSize: 12, fontWeight: 600, cursor: "pointer", flexShrink: 0 }}>
                   📄 Zarpe
                 </button>
-                <button onClick={() => despachar(salida)}
-                  style={{ padding: "10px 20px", borderRadius: 8, background: despacho ? B.success + "33" : B.sand, color: despacho ? B.success : B.navy, border: despacho ? `1px solid ${B.success}` : "none", fontWeight: 700, fontSize: 14, cursor: "pointer" }}>
-                  {despacho ? "✈ Embarcación despachada" : "✈ Despachar embarcación"}
-                </button>
               </div>
+              <button onClick={() => despachar(salida)}
+                style={{ width: "100%", padding: "11px", borderRadius: 8, background: despacho ? B.success + "33" : B.sand, color: despacho ? B.success : B.navy, border: despacho ? `1px solid ${B.success}` : "none", fontWeight: 700, fontSize: 14, cursor: "pointer" }}>
+                {despacho ? "✈ Embarcación despachada" : "✈ Despachar embarcación"}
+              </button>
             </div>
 
             {/* Código de zarpe */}
@@ -508,18 +504,20 @@ export default function CheckIn() {
                   return (
                     <div key={res.id} style={{
                       background: checked ? B.success + "15" : B.navyMid,
-                      borderRadius: 12, padding: "14px 16px",
+                      borderRadius: 12, padding: isMobile ? "12px 12px" : "14px 16px",
                       border: `2px solid ${checked ? B.success + "55" : B.navyLight}`,
-                      display: "flex", alignItems: "center", gap: 16,
+                      display: "flex", alignItems: "center", gap: isMobile ? 12 : 16,
                       transition: "all 0.15s",
                     }}>
                       {/* Check-in button */}
                       <button onClick={() => toggleCheckin(res)}
                         style={{
-                          width: 52, height: 52, borderRadius: 26, border: "none", flexShrink: 0,
+                          width: isMobile ? 60 : 52, height: isMobile ? 60 : 52,
+                          borderRadius: isMobile ? 30 : 26, border: "none", flexShrink: 0,
                           background: checked ? B.success : B.navyLight,
                           color: checked ? B.navy : "rgba(255,255,255,0.3)",
-                          fontSize: checked ? 26 : 22, cursor: "pointer",
+                          fontSize: checked ? (isMobile ? 30 : 26) : (isMobile ? 24 : 22),
+                          cursor: "pointer",
                           display: "flex", alignItems: "center", justifyContent: "center",
                           fontWeight: 700, transition: "all 0.15s",
                         }}>
@@ -575,11 +573,13 @@ export default function CheckIn() {
                       <button onClick={() => setEditPax(res)}
                         title="Datos para zarpe"
                         style={{
-                          padding: "8px 12px", borderRadius: 8, border: `1px solid ${tienePax ? B.success + "44" : B.navyLight}`,
+                          padding: isMobile ? "10px 12px" : "8px 12px",
+                          borderRadius: 8, border: `1px solid ${tienePax ? B.success + "44" : B.navyLight}`,
                           background: tienePax ? B.success + "15" : "transparent",
-                          color: tienePax ? B.success : "rgba(255,255,255,0.3)", fontSize: 11, cursor: "pointer", flexShrink: 0, whiteSpace: "nowrap",
+                          color: tienePax ? B.success : "rgba(255,255,255,0.3)",
+                          fontSize: isMobile ? 18 : 11, cursor: "pointer", flexShrink: 0, whiteSpace: "nowrap",
                         }}>
-                        {tienePax ? "✓ Zarpe" : "📋 Zarpe"}
+                        {isMobile ? (tienePax ? "✓" : "📋") : (tienePax ? "✓ Zarpe" : "📋 Zarpe")}
                       </button>
                     </div>
                   );

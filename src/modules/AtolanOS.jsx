@@ -1,4 +1,5 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
+import { useMobile } from "../lib/useMobile";
 import { B, COP, todayDisplay, todayStr } from "../brand";
 import { supabase } from "../lib/supabase";
 
@@ -193,21 +194,40 @@ function MayaChat() {
 }
 
 export default function AtolanOS({ activeModule = "dashboard", onNavigate, moduleContent, userEmail }) {
-  const [collapsed, setCollapsed] = useState(false);
+  const isMobile = useMobile();
+  const [collapsed, setCollapsed] = useState(() => typeof window !== "undefined" && window.innerWidth < 768);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const w = collapsed ? 64 : 220;
+
+  const navigate = (key) => {
+    onNavigate?.(key);
+    if (isMobile) setSidebarOpen(false);
+  };
 
   return (
     <div style={{ display: "flex", height: "100vh", overflow: "hidden" }}>
+      {/* Mobile overlay */}
+      {isMobile && sidebarOpen && (
+        <div onClick={() => setSidebarOpen(false)} style={{
+          position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 99,
+        }} />
+      )}
+
       {/* Sidebar */}
       <div style={{
-        width: w, background: B.navyMid, transition: "width 0.2s", flexShrink: 0,
+        width: isMobile ? 240 : w,
+        background: B.navyMid, transition: "transform 0.2s, width 0.2s", flexShrink: 0,
         display: "flex", flexDirection: "column", overflow: "hidden",
+        ...(isMobile ? {
+          position: "fixed", top: 0, left: 0, height: "100vh", zIndex: 100,
+          transform: sidebarOpen ? "translateX(0)" : "translateX(-100%)",
+        } : {}),
       }}>
         <div style={{
-          padding: collapsed ? "20px 8px" : "24px 16px", borderBottom: `1px solid ${B.navyLight}`,
-          display: "flex", justifyContent: "center", alignItems: "center", cursor: "pointer",
-        }} onClick={() => setCollapsed(c => !c)}>
-          {collapsed
+          padding: (collapsed && !isMobile) ? "20px 8px" : "24px 16px", borderBottom: `1px solid ${B.navyLight}`,
+          display: "flex", justifyContent: "center", alignItems: "center", cursor: isMobile ? "default" : "pointer",
+        }} onClick={() => !isMobile && setCollapsed(c => !c)}>
+          {(collapsed && !isMobile)
             ? <img src="/favicon-blue.png" alt="Atolon" style={{ width: 48, height: 48, objectFit: "contain" }} />
             : <img src="/atolon-logo-white.png" alt="Atolon Beach Club" style={{ height: 72, objectFit: "contain" }} />
           }
@@ -216,7 +236,7 @@ export default function AtolanOS({ activeModule = "dashboard", onNavigate, modul
           {NAV.map(n => {
             const active = activeModule === n.key;
             return (
-              <div key={n.key} onClick={() => onNavigate?.(n.key)}
+              <div key={n.key} onClick={() => navigate(n.key)}
                 style={{
                   display: "flex", alignItems: "center", gap: 12,
                   padding: collapsed ? "10px 14px" : "10px 14px", borderRadius: 8,
@@ -256,26 +276,33 @@ export default function AtolanOS({ activeModule = "dashboard", onNavigate, modul
       <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
         {/* TopBar */}
         <div style={{
-          height: 60, padding: "0 28px", display: "flex", alignItems: "center", justifyContent: "space-between",
+          height: 56, padding: isMobile ? "0 16px" : "0 28px",
+          display: "flex", alignItems: "center", justifyContent: "space-between",
           borderBottom: `1px solid ${B.navyLight}`, flexShrink: 0,
         }}>
-          <div>
-            <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontSize: 20, fontWeight: 600 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            {isMobile && (
+              <button onClick={() => setSidebarOpen(true)} style={{
+                background: "none", border: "none", color: B.white, fontSize: 22,
+                cursor: "pointer", padding: "4px 6px", lineHeight: 1,
+              }}>☰</button>
+            )}
+            <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontSize: isMobile ? 17 : 20, fontWeight: 600 }}>
               {NAV.find(n => n.key === activeModule)?.label || "Dashboard"}
             </span>
-            <span style={{ fontSize: 13, color: "rgba(255,255,255,0.4)", marginLeft: 16 }}>{todayDisplay()}</span>
+            {!isMobile && <span style={{ fontSize: 13, color: "rgba(255,255,255,0.4)" }}>{todayDisplay()}</span>}
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
             <div style={{
-              width: 34, height: 34, borderRadius: 17, background: B.navyLight,
+              width: 32, height: 32, borderRadius: 16, background: B.navyLight,
               display: "flex", alignItems: "center", justifyContent: "center",
-              fontSize: 13, cursor: "pointer",
+              fontSize: 12, cursor: "pointer",
             }}>JD</div>
           </div>
         </div>
 
         {/* Content area */}
-        <div style={{ flex: 1, overflowY: "auto", padding: 28 }}>
+        <div style={{ flex: 1, overflowY: "auto", padding: isMobile ? "16px 12px" : 28 }}>
           {moduleContent || <Dashboard />}
         </div>
       </div>
