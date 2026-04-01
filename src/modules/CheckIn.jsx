@@ -170,11 +170,38 @@ function PasajerosModal({ reserva, onClose, onSaved, autoCheckin = false }) {
 
 // ─── Zarpe PDF (new window) ───────────────────────────────────────────────────
 function generarZarpe(salida, reservas, fecha, despacho) {
-  const todos = reservas.flatMap(r =>
-    r.pasajeros?.length > 0
-      ? r.pasajeros
-      : [{ nombre: r.nombre, identificacion: "—", nacionalidad: "—" }]
-  );
+  // Group reservas by embarcacion_asignada
+  const groups = {};
+  reservas.forEach(r => {
+    const key = r.embarcacion_asignada || "Sin embarcación asignada";
+    if (!groups[key]) groups[key] = [];
+    groups[key].push(r);
+  });
+  const groupEntries = Object.entries(groups);
+  const multipleBoats = groupEntries.length > 1 || (groupEntries.length === 1 && groupEntries[0][0] !== "Sin embarcación asignada");
+
+  let totalPax = 0;
+  let rowNum = 1;
+  const bodyRows = groupEntries.map(([bote, resGroup]) => {
+    const paxList = resGroup.flatMap(r =>
+      r.pasajeros?.length > 0
+        ? r.pasajeros
+        : [{ nombre: r.nombre, identificacion: "—", nacionalidad: "—" }]
+    );
+    totalPax += paxList.length;
+    const groupHeader = multipleBoats
+      ? `<tr style="background:#1E3566;color:white;"><td colspan="5" style="padding:7px 8px;font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:1px;">🚢 ${bote} — ${paxList.length} pasajero${paxList.length !== 1 ? "s" : ""}</td></tr>`
+      : "";
+    const rows = paxList.map(p => `<tr>
+          <td>${rowNum++}</td>
+          <td style="font-weight:600">${p.nombre || "—"}</td>
+          <td>${p.identificacion || "—"}</td>
+          <td>${p.nacionalidad || "—"}</td>
+          <td style="text-align:center">☐</td>
+        </tr>`).join("");
+    return groupHeader + rows;
+  }).join("");
+
   const html = `<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8">
     <title>Zarpe — ${salida.nombre} ${salida.hora} — ${fecha}</title>
     <style>
@@ -188,7 +215,7 @@ function generarZarpe(salida, reservas, fecha, despacho) {
       table { width: 100%; border-collapse: collapse; }
       th { background: #1E3566; color: white; padding: 8px; text-align: left; font-size: 11px; }
       td { padding: 7px 8px; border-bottom: 1px solid #eee; }
-      tr:nth-child(even) { background: #f9f9f9; }
+      tr:nth-child(even):not([style]) { background: #f9f9f9; }
       .firmas { margin-top: 36px; display: grid; grid-template-columns: 1fr 1fr; gap: 50px; font-size: 11px; color: #666; }
       .firma { border-top: 1px solid #999; padding-top: 6px; text-align: center; }
       .footer { margin-top: 16px; font-size: 10px; color: #aaa; text-align: center; }
@@ -208,7 +235,7 @@ function generarZarpe(salida, reservas, fecha, despacho) {
       <div><b>Fecha:</b> ${new Date(fecha + "T12:00:00").toLocaleDateString("es-CO", { weekday:"long", day:"numeric", month:"long", year:"numeric" })}</div>
       <div><b>Salida:</b> ${salida.nombre} — ${salida.hora}</div>
       <div><b>Regreso:</b> ${salida.hora_regreso}</div>
-      <div><b>Total pasajeros:</b> ${todos.length}</div>
+      <div><b>Total pasajeros:</b> ${totalPax}</div>
       <div><b>Generado:</b> ${new Date().toLocaleString("es-CO")}</div>
     </div>
     <table>
@@ -219,15 +246,7 @@ function generarZarpe(salida, reservas, fecha, despacho) {
         <th style="width:20%">Nacionalidad</th>
         <th style="width:10%;text-align:center">Check-in</th>
       </tr></thead>
-      <tbody>
-        ${todos.map((p, i) => `<tr>
-          <td>${i + 1}</td>
-          <td style="font-weight:600">${p.nombre || "—"}</td>
-          <td>${p.identificacion || "—"}</td>
-          <td>${p.nacionalidad || "—"}</td>
-          <td style="text-align:center">☐</td>
-        </tr>`).join("")}
-      </tbody>
+      <tbody>${bodyRows}</tbody>
     </table>
     <div class="firmas">
       <div class="firma">Capitán / Responsable embarcación</div>
@@ -243,29 +262,32 @@ function generarZarpe(salida, reservas, fecha, despacho) {
 
 // ─── Main ────────────────────────────────────────────────────────────────────
 export default function CheckIn() {
-  const [fecha,      setFecha]      = useState(todayStr());
-  const [salidas,    setSalidas]    = useState([]);
-  const [reservas,   setReservas]   = useState([]);
-  const [despachos,  setDespachos]  = useState([]);
-  const [tabSalida,  setTabSalida]  = useState(null);
-  const [scanning,   setScanning]   = useState(false);
-  const [scanMsg,    setScanMsg]    = useState(null); // { ok, text }
-  const [editPax,    setEditPax]    = useState(null); // reserva to edit pasajeros
-  const [search,     setSearch]     = useState("");
-  const [loading,    setLoading]    = useState(true);
+  const [fecha,          setFecha]          = useState(todayStr());
+  const [salidas,        setSalidas]        = useState([]);
+  const [reservas,       setReservas]       = useState([]);
+  const [despachos,      setDespachos]      = useState([]);
+  const [embarcaciones,  setEmbarcaciones]  = useState([]);
+  const [tabSalida,      setTabSalida]      = useState(null);
+  const [scanning,       setScanning]       = useState(false);
+  const [scanMsg,        setScanMsg]        = useState(null); // { ok, text }
+  const [editPax,        setEditPax]        = useState(null); // reserva to edit pasajeros
+  const [search,         setSearch]         = useState("");
+  const [loading,        setLoading]        = useState(true);
 
   const load = useCallback(async () => {
     if (!supabase) { setLoading(false); return; }
     setLoading(true);
-    const [salR, resR, desR] = await Promise.all([
+    const [salR, resR, desR, embR] = await Promise.all([
       supabase.from("salidas").select("*").eq("activo", true).order("orden"),
       supabase.from("reservas").select("*").eq("fecha", fecha).neq("estado", "cancelado").order("nombre"),
       supabase.from("salida_despachos").select("*").eq("fecha", fecha),
+      supabase.from("embarcaciones").select("id, nombre").order("nombre"),
     ]);
     const sals = salR.data || [];
     setSalidas(sals);
     setReservas(resR.data || []);
     setDespachos(desR.data || []);
+    setEmbarcaciones(embR.data || []);
     if (sals.length > 0 && !tabSalida) setTabSalida(sals[0].id);
     setLoading(false);
   }, [fecha]);
@@ -317,6 +339,12 @@ export default function CheckIn() {
     const rec = { id, fecha, salida_id: salida.id, despachado_at: new Date().toISOString() };
     await supabase.from("salida_despachos").insert(rec);
     setDespachos(prev => [...prev.filter(d => d.salida_id !== salida.id), rec]);
+  };
+
+  const assignEmbarcacion = async (resId, nombre) => {
+    const val = nombre || null;
+    await supabase.from("reservas").update({ embarcacion_asignada: val }).eq("id", resId);
+    setReservas(prev => prev.map(r => r.id === resId ? { ...r, embarcacion_asignada: val } : r));
   };
 
   const salida = salidas.find(s => s.id === tabSalida);
@@ -520,6 +548,27 @@ export default function CheckIn() {
                           )}
                         </div>
                         {res.contacto && <div style={{ fontSize: 11, color: "rgba(255,255,255,0.3)", marginTop: 2 }}>{res.contacto}</div>}
+                        {/* Embarcación selector */}
+                        {embarcaciones.length > 0 && (
+                          <div style={{ marginTop: 6 }}>
+                            <select
+                              value={res.embarcacion_asignada || ""}
+                              onChange={e => assignEmbarcacion(res.id, e.target.value)}
+                              onClick={e => e.stopPropagation()}
+                              style={{
+                                fontSize: 11, padding: "3px 8px", borderRadius: 6,
+                                background: res.embarcacion_asignada ? B.sky + "22" : B.navy,
+                                border: `1px solid ${res.embarcacion_asignada ? B.sky + "66" : B.navyLight}`,
+                                color: res.embarcacion_asignada ? B.sky : "rgba(255,255,255,0.4)",
+                                cursor: "pointer", outline: "none",
+                              }}>
+                              <option value="">🚢 Sin embarcación</option>
+                              {embarcaciones.map(e => (
+                                <option key={e.id} value={e.nombre}>{e.nombre}</option>
+                              ))}
+                            </select>
+                          </div>
+                        )}
                       </div>
 
                       {/* Pasajeros / Zarpe button */}

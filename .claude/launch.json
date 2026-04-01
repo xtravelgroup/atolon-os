@@ -2,11 +2,10 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "atolon-dev",
+      "name": "atolon-os",
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev"],
-      "port": 5173,
-      "cwd": "/Users/erickern/Desktop/atolon-os"
+      "port": 5173
     }
   ]
 }

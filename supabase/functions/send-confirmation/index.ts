@@ -18,7 +18,7 @@ interface Reserva {
 }
 
 function qrUrl(id: string) {
-  return `https://api.qrserver.com/v1/create-qr-code/?data=${encodeURIComponent(id)}&size=200x200&bgcolor=0D1B3E&color=C8B99A&margin=12&format=png`;
+  return `https://api.qrserver.com/v1/create-qr-code/?data=${encodeURIComponent(id)}&size=200x200&bgcolor=0D1B3E&color=FFFFFF&margin=12&format=png`;
 }
 
 function formatFecha(fecha: string) {
@@ -49,8 +49,7 @@ function buildHtml(r: Reserva): string {
 
         <!-- Logo -->
         <tr><td align="center" style="padding-bottom:28px;">
-          <img src="https://atolon.co/atolon-peces.png" alt="Atolon Beach Club" width="220" style="display:block;margin:0 auto 16px;" />
-          <img src="https://atolon.co/atolon-logo-white.png" alt="Atolon Beach Club" width="180" style="display:block;margin:0 auto;" />
+          <img src="https://atolon.co/atolon-peces.png" alt="Atolon Beach Club" width="200" style="display:block;margin:0 auto;" />
         </td></tr>
 
         <!-- Hero -->
@@ -62,11 +61,11 @@ function buildHtml(r: Reserva): string {
 
         <!-- QR Code -->
         <tr><td align="center" style="background:#1A2855;padding:28px;">
-          <p style="margin:0 0 16px;font-size:11px;color:#C8B99A;text-transform:uppercase;letter-spacing:2px;">Tu código de embarque</p>
-          <div style="display:inline-block;padding:12px;background:#0D1B3E;border-radius:16px;border:2px solid #C8B99A;">
+          <p style="margin:0 0 16px;font-size:11px;color:#FFFFFF;text-transform:uppercase;letter-spacing:2px;">Tu código de embarque</p>
+          <div style="display:inline-block;padding:12px;background:#0D1B3E;border-radius:16px;border:2px solid #FFFFFF;">
             <img src="${qrUrl(r.id)}" width="160" height="160" alt="QR ${r.id}" style="display:block;border-radius:8px;" />
           </div>
-          <p style="margin:14px 0 4px;font-size:18px;font-weight:700;letter-spacing:3px;color:#C8B99A;font-family:'Courier New',monospace;">${r.id}</p>
+          <p style="margin:14px 0 4px;font-size:18px;font-weight:700;letter-spacing:3px;color:#FFFFFF;font-family:'Courier New',monospace;">${r.id}</p>
           <p style="margin:0;font-size:12px;color:rgba(255,255,255,0.3);">Muestra este QR al llegar al muelle</p>
         </td></tr>
 
@@ -119,7 +118,7 @@ function buildHtml(r: Reserva): string {
             <table cellpadding="0" cellspacing="0">
               <tr><td style="padding:5px 0;font-size:13px;color:rgba(255,255,255,0.8);">📍&nbsp; <strong>Muelle de La Bodeguita — Puerta 1</strong></td></tr>
               <tr><td style="padding:5px 0;font-size:13px;color:rgba(255,255,255,0.8);">⏰&nbsp; Llegar <strong>20 minutos antes</strong> de la salida</td></tr>
-              <tr><td style="padding:5px 0;font-size:13px;color:rgba(255,255,255,0.8);">💵&nbsp; Impuesto de muelle: <strong style="color:#C8B99A;">COP 18.000</strong> (no incluido)</td></tr>
+              <tr><td style="padding:5px 0;font-size:13px;color:rgba(255,255,255,0.8);">💵&nbsp; Impuesto de muelle: <strong style="color:#FFFFFF;">COP 18.000</strong> (no incluido)</td></tr>
             </table>
           </div>
         </td></tr>
@@ -127,7 +126,7 @@ function buildHtml(r: Reserva): string {
         <!-- Suggestions -->
         <tr><td style="background:#162040;padding:0 28px 24px;">
           <div style="background:#1C1E0F;border-radius:14px;padding:20px;border:1px solid rgba(200,185,154,0.15);">
-            <p style="margin:0 0 14px;font-size:14px;font-weight:700;color:#C8B99A;">☀️ Recomendaciones</p>
+            <p style="margin:0 0 14px;font-size:14px;font-weight:700;color:#FFFFFF;">☀️ Recomendaciones</p>
             <table cellpadding="0" cellspacing="0">
               <tr><td style="padding:4px 0;font-size:13px;color:rgba(255,255,255,0.7);">🧴&nbsp; Bloqueador solar</td></tr>
               <tr><td style="padding:4px 0;font-size:13px;color:rgba(255,255,255,0.7);">👙&nbsp; Traje de baño y ropa ligera</td></tr>
@@ -142,9 +141,9 @@ function buildHtml(r: Reserva): string {
         <tr><td style="background:#162040;padding:0 28px 32px;">
           <table width="100%" cellpadding="0" cellspacing="0" style="background:rgba(200,185,154,0.1);border-radius:14px;border:1px solid rgba(200,185,154,0.25);">
             <tr><td style="padding:20px 24px;">
-              <p style="margin:0 0 6px;font-size:14px;font-weight:700;color:#C8B99A;">📄 Completa tus datos de zarpe</p>
+              <p style="margin:0 0 6px;font-size:14px;font-weight:700;color:#FFFFFF;">📄 Completa tus datos de zarpe</p>
               <p style="margin:0 0 16px;font-size:12px;color:rgba(255,255,255,0.45);line-height:1.6;">Ingresa el nombre, identificación y nacionalidad de todos los viajeros para agilizar el trámite en el muelle.</p>
-              <a href="${zarpeLink}" style="display:inline-block;background:#C8B99A;color:#0D1B3E;text-decoration:none;padding:12px 24px;border-radius:10px;font-size:14px;font-weight:700;">Completar datos →</a>
+              <a href="${zarpeLink}" style="display:inline-block;background:#FFFFFF;color:#0D1B3E;text-decoration:none;padding:12px 24px;border-radius:10px;font-size:14px;font-weight:700;">Completar datos →</a>
             </td></tr>
           </table>
         </td></tr>
