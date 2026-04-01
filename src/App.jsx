@@ -24,6 +24,7 @@ import Usuarios from "./modules/Usuarios";
 import Contenido from "./modules/Contenido";
 import Upsells from "./modules/Upsells";
 import Menus from "./modules/Menus";
+import CheckIn from "./modules/CheckIn";
 
 const MODULE_MAP = {
   pasadias: <Pasadias />,
@@ -39,6 +40,7 @@ const MODULE_MAP = {
   requisiciones: <Requisiciones />,
   contenido: <Contenido />,
   upsells:   <Upsells />,
+  checkin:   <CheckIn />,
   menus:     <Menus />,
   configuracion: <Configuracion />,
   usuarios: <Usuarios />,
