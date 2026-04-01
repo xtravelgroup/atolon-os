@@ -19,6 +19,7 @@ const NAV = [
   { key: "eventos", label: "Eventos", icon: "\u266B" },
   { key: "contratos", label: "Contratos", icon: "\u2709" },
   { key: "financiero", label: "Financiero", icon: "\u2261" },
+  { key: "analitica",  label: "Analítica",  icon: "📊" },
   { key: "presupuesto", label: "Presupuesto", icon: "\u25CB" },
   { key: "activos", label: "Activos", icon: "\u2692" },
   { key: "requisiciones", label: "Requisiciones", icon: "\u2706" },

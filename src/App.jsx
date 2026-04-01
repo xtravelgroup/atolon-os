@@ -189,6 +189,7 @@ import Upsells from "./modules/Upsells";
 import Menus from "./modules/Menus";
 import CheckIn from "./modules/CheckIn";
 import ZarpeInfo from "./modules/ZarpeInfo";
+import Analitica from "./modules/Analitica";
 
 const MODULE_MAP = {
   pasadias: <Pasadias />,
@@ -208,6 +209,7 @@ const MODULE_MAP = {
   menus:     <Menus />,
   configuracion: <Configuracion />,
   usuarios: <Usuarios />,
+  analitica: <Analitica />,
 };
 
 // Public routes — no auth required

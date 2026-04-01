@@ -2,10 +2,11 @@
 // Route: /booking?tipo=vip-pass&lang=es
 // Or: /booking (shows product selector first)
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { COP } from "../brand";
 import { supabase } from "../lib/supabase";
 import { wompiCheckoutUrl } from "../lib/wompi";
+import AtolanTrack from "../lib/AtolanTrack";
 
 // ── Palette (light theme) ───────────────────────────────────────────────────
 const C = {
@@ -159,6 +160,25 @@ export default function BookingPopup() {
   const [incluye,       setIncluye]       = useState([]); // items from pasadia_incluye
   const [leadId,        setLeadId]        = useState("");
 
+  // AtolanTrack: init on mount, mark funnel step 1
+  useEffect(() => {
+    AtolanTrack.init().then(() => {
+      AtolanTrack.evento("booking_widget_visto", {}, "booking");
+      AtolanTrack.embudo_paso(1, {});
+    });
+  }, []);
+
+  // AtolanTrack: paso 4 debounced on email input
+  const _emailDebounceRef = useRef(null);
+  useEffect(() => {
+    if (!form.email) return;
+    clearTimeout(_emailDebounceRef.current);
+    _emailDebounceRef.current = setTimeout(() => {
+      AtolanTrack.embudo_paso(4, { email: form.email });
+    }, 800);
+    return () => clearTimeout(_emailDebounceRef.current);
+  }, [form.email]);
+
   // Load group event when ?grupo= param present
   useEffect(() => {
     if (!grupoQ || !supabase) return;
@@ -279,6 +299,11 @@ export default function BookingPopup() {
   const total      = totalA + totalN + totalExtras;
   const paxTotal   = paxA + paxN + paxI;
 
+  // AtolanTrack: paso 5 when reaching payment step
+  useEffect(() => {
+    if (step === 3) AtolanTrack.embudo_paso(5, {});
+  }, [step]);
+
   // Load upsells when reaching step 3 — skip entirely for group bookings
   useEffect(() => {
     if (step !== 3 || !supabase || !product) return;
@@ -303,6 +328,7 @@ export default function BookingPopup() {
     setSelDate("");
     setSelSalida(null);
     setStep(1);
+    AtolanTrack.embudo_paso(3, { paquete: p.tipo });
   }
 
   // When switching to noNinos product, clear children counts
@@ -313,6 +339,7 @@ export default function BookingPopup() {
   function handleSelectDate(iso) {
     setSelDate(iso);
     setSelSalida(null);
+    AtolanTrack.embudo_paso(2, {});
   }
 
   function prevMonth() {
@@ -420,6 +447,9 @@ export default function BookingPopup() {
         qr_code:        `ATOLON-WEB-${Date.now()}`,
       });
     }
+    // AtolanTrack: conversion event
+    await AtolanTrack.conversion(reservaId, grandTotal);
+
     setSaving(false);
     window.location.href = payUrl;
   }

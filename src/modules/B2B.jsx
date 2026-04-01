@@ -1767,6 +1767,10 @@ function FichaAliado({ aliado, onBack, onRefresh }) {
   const [savingCredit, setSavingCredit]   = useState(false);
   const [approvingCredit, setApprovingCredit] = useState(null);
   const [currentUserRol, setCurrentUserRol]   = useState(null);
+  const [showPromesaModal, setShowPromesaModal] = useState(null); // sol object
+  const [showAddUserForm, setShowAddUserForm]   = useState(false);
+  const [newUserForm, setNewUserForm]           = useState({ nombre: "", email: "", rol: "vendedor", clave: "" });
+  const [savingUser, setSavingUser]             = useState(false);
 
   const fetchB2bUsers = useCallback(async () => {
     if (!supabase) return;
@@ -1804,18 +1808,48 @@ function FichaAliado({ aliado, onBack, onRefresh }) {
     setCreditSols(data || []);
   }, [aliado.id]);
 
-  const solicitarCredito = async () => {
-    if (!supabase || savingCredit || !creditForm.monto || !creditForm.dias) return;
+  const solicitarCredito = async (formData) => {
+    if (!supabase || savingCredit || !formData.monto || !formData.dias) return;
     setSavingCredit(true);
-    const monto = Number(creditForm.monto);
-    const estado = "pendiente_gv"; // always starts at GV
+    const { monto, dias, ...formulario } = formData;
     await supabase.from("b2b_credito_solicitudes").insert({
       id: `CRED-${Date.now()}`, aliado_id: aliado.id,
-      monto, dias: Number(creditForm.dias), estado,
+      monto: Number(monto), dias: Number(dias), estado: "pendiente_gv",
       solicitado_por: "admin",
+      formulario_solicitud: formulario,
     });
-    setSavingCredit(false); setShowCreditForm(false); setCreditForm({ monto: "", dias: "" });
+    setSavingCredit(false); setShowCreditForm(false);
     fetchCreditSols();
+  };
+
+  const firmarPromesa = async (sol, firmanteNombre, archivoUrl) => {
+    if (!supabase) return;
+    const now = new Date().toISOString();
+    await supabase.from("b2b_credito_solicitudes").update({
+      promesa_firmada_url: archivoUrl || null,
+      promesa_firmada_en: now,
+      promesa_firmada_por: firmanteNombre,
+    }).eq("id", sol.id);
+    setShowPromesaModal(null);
+    fetchCreditSols();
+  };
+
+  const addB2bUser = async () => {
+    if (!supabase || savingUser || !newUserForm.nombre || !newUserForm.email) return;
+    setSavingUser(true);
+    await supabase.from("b2b_usuarios").insert({
+      id: `U-${Date.now()}`,
+      aliado_id: aliado.id,
+      nombre: newUserForm.nombre,
+      email: newUserForm.email.toLowerCase(),
+      rol: newUserForm.rol,
+      pin: newUserForm.clave || null,
+      activo: true,
+    });
+    setSavingUser(false);
+    setShowAddUserForm(false);
+    setNewUserForm({ nombre: "", email: "", rol: "vendedor", clave: "" });
+    fetchB2bUsers();
   };
 
   const aprobarCredito = async (sol, userRol) => {
@@ -2174,14 +2208,79 @@ function FichaAliado({ aliado, onBack, onRefresh }) {
           <div style={{ background: B.navyMid, borderRadius: 12, padding: 24, marginBottom: 20 }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
               <h3 style={{ fontSize: 15, color: B.sand, margin: 0 }}>Acceso al Portal B2B</h3>
-              <a href={window.location.origin + "/agencia"} target="_blank" rel="noopener noreferrer"
-                style={{ fontSize: 11, color: B.sky, textDecoration: "none" }}>
-                🔗 Ver portal →
-              </a>
+              <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                <a href={window.location.origin + "/agencia"} target="_blank" rel="noopener noreferrer"
+                  style={{ fontSize: 11, color: B.sky, textDecoration: "none" }}>
+                  🔗 Ver portal →
+                </a>
+                <button onClick={() => {
+                  const portalUrl = window.location.origin + "/agencia";
+                  const nombre = aliado.contacto || aliado.nombre;
+                  const email  = aliado.email;
+                  if (!email) { alert("Este aliado no tiene email registrado."); return; }
+                  const subject = encodeURIComponent("Bienvenido al Portal de Agencias — Atolon Beach Club");
+                  const body = encodeURIComponent(
+                    `Hola ${nombre},\n\n` +
+                    `Te damos la bienvenida al Portal de Agencias de Atolon Beach Club 🌴\n\n` +
+                    `Desde el portal podrás hacer seguimiento a tus reservas, consultar disponibilidad y más.\n\n` +
+                    `Ingresa en: ${portalUrl}\n` +
+                    `Email de acceso: ${email}\n\n` +
+                    `Saludos,\nEquipo Atolon Beach Club`
+                  );
+                  window.open(`mailto:${email}?subject=${subject}&body=${body}`, "_blank");
+                }}
+                  style={{ padding: "6px 14px", borderRadius: 8, border: "none", background: B.success, color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+                  ✉ Enviar Bienvenida
+                </button>
+                <button onClick={() => setShowAddUserForm(s => !s)}
+                  style={{ padding: "6px 14px", borderRadius: 8, border: "none", background: B.sky, color: B.navy, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+                  + Usuario
+                </button>
+              </div>
             </div>
-            {b2bUsers.length === 0 && (
+
+            {/* Form agregar usuario */}
+            {showAddUserForm && (
+              <div style={{ background: B.navy, borderRadius: 10, padding: 16, marginBottom: 16, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                <div>
+                  <label style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", display: "block", marginBottom: 4 }}>NOMBRE</label>
+                  <input value={newUserForm.nombre} onChange={e => setNewUserForm(f => ({ ...f, nombre: e.target.value }))}
+                    placeholder="Nombre completo" style={{ ...IS, fontSize: 13 }} />
+                </div>
+                <div>
+                  <label style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", display: "block", marginBottom: 4 }}>EMAIL</label>
+                  <input value={newUserForm.email} onChange={e => setNewUserForm(f => ({ ...f, email: e.target.value }))}
+                    placeholder="correo@agencia.com" style={{ ...IS, fontSize: 13 }} />
+                </div>
+                <div>
+                  <label style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", display: "block", marginBottom: 4 }}>ROL</label>
+                  <select value={newUserForm.rol} onChange={e => setNewUserForm(f => ({ ...f, rol: e.target.value }))} style={{ ...IS, fontSize: 13 }}>
+                    <option value="vendedor">Vendedor</option>
+                    <option value="admin">Administrador</option>
+                    <option value="gerente">Gerente</option>
+                  </select>
+                </div>
+                <div>
+                  <label style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", display: "block", marginBottom: 4 }}>CLAVE (opcional)</label>
+                  <input value={newUserForm.clave} onChange={e => setNewUserForm(f => ({ ...f, clave: e.target.value }))}
+                    placeholder="Dejar vacío para sin clave" style={{ ...IS, fontSize: 13 }} />
+                </div>
+                <div style={{ gridColumn: "1 / -1", display: "flex", gap: 8, marginTop: 4 }}>
+                  <button onClick={() => setShowAddUserForm(false)}
+                    style={{ flex: 1, padding: "9px", borderRadius: 8, border: `1px solid ${B.navyLight}`, background: "none", color: "rgba(255,255,255,0.4)", fontSize: 13, cursor: "pointer" }}>
+                    Cancelar
+                  </button>
+                  <button onClick={addB2bUser} disabled={savingUser || !newUserForm.nombre || !newUserForm.email}
+                    style={{ flex: 2, padding: "9px", borderRadius: 8, border: "none", background: savingUser ? B.navyLight : B.sky, color: savingUser ? "rgba(255,255,255,0.4)" : B.navy, fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
+                    {savingUser ? "Guardando..." : "Crear Usuario"}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {b2bUsers.length === 0 && !showAddUserForm && (
               <div style={{ textAlign: "center", padding: "20px 0", color: "rgba(255,255,255,0.3)", fontSize: 13 }}>
-                No hay usuarios del portal registrados para este aliado.
+                No hay usuarios del portal registrados. Haz clic en <strong style={{ color: B.sky }}>+ Usuario</strong> para agregar uno.
               </div>
             )}
             {b2bUsers.map(u => (
@@ -2234,39 +2333,45 @@ function FichaAliado({ aliado, onBack, onRefresh }) {
             </div>
 
             {/* Crédito activo */}
-            {(aliado.credito_monto || aliado.credito_dias) && (
-              <div style={{ background: B.success + "18", border: `1px solid ${B.success}44`, borderRadius: 10, padding: "14px 18px", marginBottom: 14, display: "flex", gap: 24 }}>
-                <div>
-                  <div style={{ fontSize: 11, color: B.success, textTransform: "uppercase", letterSpacing: 1 }}>Monto aprobado</div>
-                  <div style={{ fontSize: 20, fontWeight: 800, color: B.white }}>${Number(aliado.credito_monto || 0).toLocaleString("es-CO")}</div>
+            {(aliado.credito_monto || aliado.credito_dias) && (() => {
+              const solAprobada = creditSols.find(s => s.estado === "aprobado");
+              const promesaFirmada = solAprobada?.promesa_firmada_en;
+              return (
+                <div style={{ background: promesaFirmada ? B.success + "18" : B.warning + "18", border: `1px solid ${promesaFirmada ? B.success : B.warning}44`, borderRadius: 10, padding: "14px 18px", marginBottom: 14 }}>
+                  <div style={{ display: "flex", gap: 24, alignItems: "center", flexWrap: "wrap" }}>
+                    <div>
+                      <div style={{ fontSize: 11, color: promesaFirmada ? B.success : B.warning, textTransform: "uppercase", letterSpacing: 1 }}>Monto aprobado</div>
+                      <div style={{ fontSize: 20, fontWeight: 800, color: B.white }}>${Number(aliado.credito_monto || 0).toLocaleString("es-CO")}</div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: 11, color: promesaFirmada ? B.success : B.warning, textTransform: "uppercase", letterSpacing: 1 }}>Días de crédito</div>
+                      <div style={{ fontSize: 20, fontWeight: 800, color: B.white }}>{aliado.credito_dias} días</div>
+                    </div>
+                    {promesaFirmada
+                      ? <span style={{ alignSelf: "center", fontSize: 11, padding: "4px 12px", borderRadius: 10, background: B.success + "33", color: B.success, fontWeight: 700 }}>✓ Vigente</span>
+                      : <span style={{ alignSelf: "center", fontSize: 11, padding: "4px 12px", borderRadius: 10, background: B.warning + "33", color: B.warning, fontWeight: 700 }}>⚠ Pendiente firma promesa</span>
+                    }
+                  </div>
+                  {!promesaFirmada && solAprobada && (
+                    <div style={{ marginTop: 10 }}>
+                      <button onClick={() => setShowPromesaModal(solAprobada)}
+                        style={{ padding: "8px 18px", borderRadius: 8, border: "none", background: B.sand, color: B.navy, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+                        📄 Firmar Promesa de Pago para activar crédito
+                      </button>
+                    </div>
+                  )}
                 </div>
-                <div>
-                  <div style={{ fontSize: 11, color: B.success, textTransform: "uppercase", letterSpacing: 1 }}>Días de crédito</div>
-                  <div style={{ fontSize: 20, fontWeight: 800, color: B.white }}>{aliado.credito_dias} días</div>
-                </div>
-                <span style={{ alignSelf: "center", fontSize: 11, padding: "4px 12px", borderRadius: 10, background: B.success + "33", color: B.success, fontWeight: 700 }}>✓ Vigente</span>
-              </div>
-            )}
+              );
+            })()}
 
-            {/* Form solicitar */}
+            {/* Modal solicitar — se abre desde el botón */}
             {showCreditForm && (
-              <div style={{ background: B.navy, borderRadius: 10, padding: 16, marginBottom: 14, display: "flex", gap: 12, alignItems: "flex-end" }}>
-                <div style={{ flex: 1 }}>
-                  <label style={{ ...LS, fontSize: 10 }}>Monto ($)</label>
-                  <input type="number" value={creditForm.monto} onChange={e => setCreditForm(f => ({ ...f, monto: e.target.value }))}
-                    placeholder="Ej: 5000000" style={{ ...IS, fontSize: 13 }} />
-                </div>
-                <div style={{ width: 120 }}>
-                  <label style={{ ...LS, fontSize: 10 }}>Días de crédito</label>
-                  <input type="number" value={creditForm.dias} onChange={e => setCreditForm(f => ({ ...f, dias: e.target.value }))}
-                    placeholder="Ej: 30" style={{ ...IS, fontSize: 13 }} />
-                </div>
-                <button onClick={solicitarCredito} disabled={savingCredit || !creditForm.monto || !creditForm.dias}
-                  style={{ padding: "10px 18px", borderRadius: 8, border: "none", background: savingCredit ? B.navyLight : B.sand, color: B.navy, fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
-                  {savingCredit ? "..." : "Enviar"}
-                </button>
-                <button onClick={() => setShowCreditForm(false)} style={{ padding: "10px 14px", borderRadius: 8, border: `1px solid ${B.navyLight}`, background: "none", color: "rgba(255,255,255,0.4)", fontSize: 13, cursor: "pointer" }}>✕</button>
-              </div>
+              <SolicitudCreditoModal
+                aliado={aliado}
+                saving={savingCredit}
+                onClose={() => setShowCreditForm(false)}
+                onSubmit={solicitarCredito}
+              />
             )}
 
             {/* Reglas de aprobación */}
@@ -2313,18 +2418,38 @@ function FichaAliado({ aliado, onBack, onRefresh }) {
                         {sol.aprobado_dir_en && <span> · ✓ Dir {new Date(sol.aprobado_dir_en).toLocaleDateString("es-CO", { day: "2-digit", month: "short" })}</span>}
                       </div>
                     </div>
-                    {canApprove && (
-                      <div style={{ display: "flex", gap: 8 }}>
-                        <button onClick={() => aprobarCredito(sol, currentUserRol)} disabled={approvingCredit === sol.id}
-                          style={{ padding: "7px 16px", borderRadius: 8, border: "none", background: B.success, color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
-                          {approvingCredit === sol.id ? "..." : "✓ Aprobar"}
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                      {canApprove && (
+                        <>
+                          <button onClick={() => aprobarCredito(sol, currentUserRol)} disabled={approvingCredit === sol.id}
+                            style={{ padding: "7px 16px", borderRadius: 8, border: "none", background: B.success, color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+                            {approvingCredit === sol.id ? "..." : "✓ Aprobar"}
+                          </button>
+                          <button onClick={() => rechazarCredito(sol)}
+                            style={{ padding: "7px 14px", borderRadius: 8, border: `1px solid ${B.danger}44`, background: "none", color: B.danger, fontSize: 12, cursor: "pointer" }}>
+                            ✕ Rechazar
+                          </button>
+                        </>
+                      )}
+                      {/* Promesa de pago — solo cuando aprobado */}
+                      {sol.estado === "aprobado" && !sol.promesa_firmada_en && (
+                        <button onClick={() => setShowPromesaModal(sol)}
+                          style={{ padding: "7px 16px", borderRadius: 8, border: "none", background: B.sand, color: B.navy, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+                          📄 Firmar Promesa de Pago
                         </button>
-                        <button onClick={() => rechazarCredito(sol)}
-                          style={{ padding: "7px 14px", borderRadius: 8, border: `1px solid ${B.danger}44`, background: "none", color: B.danger, fontSize: 12, cursor: "pointer" }}>
-                          ✕ Rechazar
+                      )}
+                      {sol.estado === "aprobado" && sol.promesa_firmada_en && (
+                        <span style={{ fontSize: 11, padding: "4px 12px", borderRadius: 8, background: B.success + "22", color: B.success, fontWeight: 600, alignSelf: "center" }}>
+                          ✅ Promesa firmada · {new Date(sol.promesa_firmada_en).toLocaleDateString("es-CO", { day: "2-digit", month: "short" })}
+                        </span>
+                      )}
+                      {sol.formulario_solicitud && Object.keys(sol.formulario_solicitud).length > 0 && (
+                        <button onClick={() => alert(JSON.stringify(sol.formulario_solicitud, null, 2))}
+                          style={{ padding: "7px 12px", borderRadius: 8, border: `1px solid ${B.navyLight}`, background: "none", color: "rgba(255,255,255,0.4)", fontSize: 11, cursor: "pointer" }}>
+                          📋 Ver solicitud
                         </button>
-                      </div>
-                    )}
+                      )}
+                    </div>
                   </div>
                 </div>
               );
@@ -2376,6 +2501,14 @@ function FichaAliado({ aliado, onBack, onRefresh }) {
       {tab === "puntos"     && <PuntosAgencia aliado={aliado} />}
 
       {showLocForm && <LocacionModal onClose={() => setShowLocForm(false)} onSave={addLocacion} />}
+      {showPromesaModal && (
+        <PromesaPagoModal
+          sol={showPromesaModal}
+          aliado={aliado}
+          onClose={() => setShowPromesaModal(null)}
+          onFirmar={firmarPromesa}
+        />
+      )}
     </div>
   );
 }
@@ -2410,10 +2543,259 @@ function LocacionModal({ onClose, onSave }) {
 }
 
 // ═══════════════════════════════════════════════
+// SOLICITUD DE CRÉDITO MODAL
+// ═══════════════════════════════════════════════
+function SolicitudCreditoModal({ aliado, saving, onClose, onSubmit }) {
+  const [f, setF] = useState({
+    razon_social: aliado.nombre || "",
+    nit: aliado.rut || "",
+    representante_legal: "",
+    cc_representante: "",
+    tel: aliado.tel || "",
+    email: aliado.email || "",
+    direccion: "",
+    ciudad: "Cartagena",
+    actividad_economica: "",
+    monto: "",
+    dias: "",
+    justificacion: "",
+  });
+  const s = (k, v) => setF(p => ({ ...p, [k]: v }));
+  const handleSubmit = () => {
+    if (!f.monto || !f.dias || !f.representante_legal) return;
+    onSubmit(f);
+  };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "#000C", zIndex: 2000, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
+      onClick={e => e.target === e.currentTarget && onClose()}>
+      <div style={{ background: B.navyMid, borderRadius: 18, padding: 32, width: 620, maxWidth: "100%", maxHeight: "90vh", overflowY: "auto" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 24 }}>
+          <div>
+            <h3 style={{ margin: 0, fontSize: 18, fontWeight: 800 }}>📋 Solicitud de Crédito B2B</h3>
+            <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginTop: 4 }}>
+              Este formulario se adjuntará a la solicitud de aprobación
+            </div>
+          </div>
+          <button onClick={onClose} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.3)", fontSize: 20, cursor: "pointer" }}>✕</button>
+        </div>
+
+        {/* Datos de la empresa */}
+        <div style={{ fontSize: 11, color: B.sand, fontWeight: 700, letterSpacing: "0.08em", marginBottom: 10, textTransform: "uppercase" }}>Datos de la Empresa</div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 16px" }}>
+          <div style={{ gridColumn: "1 / -1", marginBottom: 12 }}>
+            <label style={LS}>Razón Social</label>
+            <input value={f.razon_social} onChange={e => s("razon_social", e.target.value)} style={IS} />
+          </div>
+          <div style={{ marginBottom: 12 }}>
+            <label style={LS}>NIT / RUT</label>
+            <input value={f.nit} onChange={e => s("nit", e.target.value)} placeholder="900.123.456-7" style={IS} />
+          </div>
+          <div style={{ marginBottom: 12 }}>
+            <label style={LS}>Actividad Económica</label>
+            <input value={f.actividad_economica} onChange={e => s("actividad_economica", e.target.value)} placeholder="Ej: Agencia de viajes" style={IS} />
+          </div>
+          <div style={{ marginBottom: 12 }}>
+            <label style={LS}>Teléfono</label>
+            <input value={f.tel} onChange={e => s("tel", e.target.value)} style={IS} />
+          </div>
+          <div style={{ marginBottom: 12 }}>
+            <label style={LS}>Email</label>
+            <input value={f.email} onChange={e => s("email", e.target.value)} style={IS} />
+          </div>
+          <div style={{ marginBottom: 12 }}>
+            <label style={LS}>Dirección</label>
+            <input value={f.direccion} onChange={e => s("direccion", e.target.value)} placeholder="Cra 5 #34-12" style={IS} />
+          </div>
+          <div style={{ marginBottom: 12 }}>
+            <label style={LS}>Ciudad</label>
+            <input value={f.ciudad} onChange={e => s("ciudad", e.target.value)} style={IS} />
+          </div>
+        </div>
+
+        {/* Representante legal */}
+        <div style={{ fontSize: 11, color: B.sand, fontWeight: 700, letterSpacing: "0.08em", marginBottom: 10, marginTop: 8, textTransform: "uppercase" }}>Representante Legal</div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 16px" }}>
+          <div style={{ marginBottom: 12 }}>
+            <label style={LS}>Nombre completo <span style={{ color: B.danger }}>*</span></label>
+            <input value={f.representante_legal} onChange={e => s("representante_legal", e.target.value)} placeholder="Nombre y apellidos" style={IS} />
+          </div>
+          <div style={{ marginBottom: 12 }}>
+            <label style={LS}>Cédula / NIT</label>
+            <input value={f.cc_representante} onChange={e => s("cc_representante", e.target.value)} placeholder="No. de documento" style={IS} />
+          </div>
+        </div>
+
+        {/* Condiciones del crédito */}
+        <div style={{ fontSize: 11, color: B.sand, fontWeight: 700, letterSpacing: "0.08em", marginBottom: 10, marginTop: 8, textTransform: "uppercase" }}>Condiciones Solicitadas</div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 16px" }}>
+          <div style={{ marginBottom: 12 }}>
+            <label style={LS}>Monto solicitado ($) <span style={{ color: B.danger }}>*</span></label>
+            <input type="number" value={f.monto} onChange={e => s("monto", e.target.value)} placeholder="Ej: 5.000.000" style={IS} />
+          </div>
+          <div style={{ marginBottom: 12 }}>
+            <label style={LS}>Días de crédito <span style={{ color: B.danger }}>*</span></label>
+            <input type="number" value={f.dias} onChange={e => s("dias", e.target.value)} placeholder="Ej: 30" style={IS} />
+          </div>
+          <div style={{ gridColumn: "1 / -1", marginBottom: 12 }}>
+            <label style={LS}>Justificación / Uso del crédito</label>
+            <textarea value={f.justificacion} onChange={e => s("justificacion", e.target.value)}
+              placeholder="Describe el propósito del crédito y cómo se usará..."
+              rows={3} style={{ ...IS, resize: "vertical" }} />
+          </div>
+        </div>
+
+        {/* Reglas */}
+        <div style={{ background: B.navy, borderRadius: 10, padding: "12px 16px", marginBottom: 20, fontSize: 12, color: "rgba(255,255,255,0.4)", lineHeight: 1.6 }}>
+          ℹ️ La solicitud será enviada a <strong style={{ color: B.sky }}>Gerente de Ventas</strong> para aprobación. Montos superiores a $4M requieren aprobación adicional de Gerente General. Superiores a $8M requieren aprobación del Director.
+        </div>
+
+        <div style={{ display: "flex", gap: 10 }}>
+          <button onClick={onClose}
+            style={{ flex: 1, padding: "12px", borderRadius: 10, border: `1px solid ${B.navyLight}`, background: "none", color: "rgba(255,255,255,0.4)", fontSize: 14, cursor: "pointer" }}>
+            Cancelar
+          </button>
+          <button onClick={handleSubmit} disabled={saving || !f.monto || !f.dias || !f.representante_legal}
+            style={{ flex: 2, padding: "12px", borderRadius: 10, border: "none",
+              background: saving || !f.monto || !f.dias || !f.representante_legal ? B.navyLight : B.sand,
+              color: saving ? "rgba(255,255,255,0.4)" : B.navy,
+              fontSize: 14, fontWeight: 700, cursor: "pointer" }}>
+            {saving ? "Enviando..." : "📤 Enviar Solicitud de Crédito"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════
+// PROMESA DE PAGO MODAL
+// ═══════════════════════════════════════════════
+function PromesaPagoModal({ sol, aliado, onClose, onFirmar }) {
+  const [firmante, setFirmante] = useState(sol.formulario_solicitud?.representante_legal || "");
+  const [archivoUrl, setArchivoUrl] = useState("");
+  const [uploading, setUploading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const fechaHoy = new Date().toLocaleDateString("es-CO", { day: "2-digit", month: "long", year: "numeric" });
+  const monto = Number(sol.monto).toLocaleString("es-CO");
+  const form = sol.formulario_solicitud || {};
+
+  const handleUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file || !supabase) return;
+    setUploading(true);
+    const ext = file.name.split(".").pop();
+    const path = `promesas/${sol.id}-firmada.${ext}`;
+    const { data, error } = await supabase.storage.from("b2b-docs").upload(path, file, { upsert: true });
+    if (!error) {
+      const { data: urlData } = supabase.storage.from("b2b-docs").getPublicUrl(path);
+      setArchivoUrl(urlData.publicUrl);
+    }
+    setUploading(false);
+  };
+
+  const handleFirmar = async () => {
+    if (!firmante.trim()) return;
+    setSaving(true);
+    await onFirmar(sol, firmante, archivoUrl);
+    setSaving(false);
+  };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "#000C", zIndex: 2000, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
+      onClick={e => e.target === e.currentTarget && onClose()}>
+      <div style={{ background: B.navyMid, borderRadius: 18, padding: 32, width: 640, maxWidth: "100%", maxHeight: "92vh", overflowY: "auto" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 24 }}>
+          <div>
+            <h3 style={{ margin: 0, fontSize: 18, fontWeight: 800 }}>📄 Promesa de Pago</h3>
+            <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginTop: 4 }}>
+              Crédito aprobado por ${monto} · {sol.dias} días
+            </div>
+          </div>
+          <button onClick={onClose} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.3)", fontSize: 20, cursor: "pointer" }}>✕</button>
+        </div>
+
+        {/* Documento de promesa */}
+        <div style={{ background: "#fff", color: "#111", borderRadius: 12, padding: "32px 36px", marginBottom: 24, fontSize: 13, lineHeight: 1.8, fontFamily: "'Georgia', serif" }}>
+          <div style={{ textAlign: "center", marginBottom: 24 }}>
+            <div style={{ fontSize: 16, fontWeight: 800, textTransform: "uppercase", letterSpacing: 2 }}>PROMESA DE PAGO</div>
+            <div style={{ fontSize: 12, color: "#555", marginTop: 4 }}>Contrato de Crédito Comercial — Atolon Beach Club</div>
+          </div>
+
+          <p>En la ciudad de Cartagena de Indias, a los {fechaHoy}, entre:</p>
+
+          <p><strong>ACREEDOR:</strong> ATOLON BEACH CLUB S.A.S., identificada con NIT 901.234.567-8, representada legalmente por su Director Comercial, denominada en adelante "ATOLON".</p>
+
+          <p><strong>DEUDOR:</strong> {form.razon_social || aliado.nombre}, identificada con NIT/CC {form.nit || aliado.rut || "_______________"}, representada por <strong>{form.representante_legal || "_______________"}</strong> con C.C. {form.cc_representante || "_______________"}, en adelante el "ALIADO".</p>
+
+          <p>Las partes acuerdan las siguientes condiciones de crédito comercial:</p>
+
+          <ol style={{ paddingLeft: 20 }}>
+            <li style={{ marginBottom: 8 }}><strong>MONTO DEL CRÉDITO:</strong> El ALIADO recibirá una línea de crédito por valor de <strong>COP ${monto}</strong> (pesos colombianos).</li>
+            <li style={{ marginBottom: 8 }}><strong>PLAZO:</strong> El plazo para el pago de cada obligación contraída será de <strong>{sol.dias} días calendario</strong> contados a partir de la fecha de prestación del servicio.</li>
+            <li style={{ marginBottom: 8 }}><strong>CONDICIONES:</strong> El crédito se usará exclusivamente para la adquisición de servicios ofrecidos por ATOLON BEACH CLUB. Cualquier mora en el pago genera intereses de mora a la tasa máxima legal vigente.</li>
+            <li style={{ marginBottom: 8 }}><strong>INCUMPLIMIENTO:</strong> El incumplimiento en el pago dará lugar a la suspensión inmediata de la línea de crédito y al cobro judicial de las sumas adeudadas.</li>
+            <li style={{ marginBottom: 8 }}><strong>VIGENCIA:</strong> Este acuerdo tiene vigencia de un (1) año a partir de la firma, renovable por acuerdo mutuo.</li>
+          </ol>
+
+          <div style={{ marginTop: 32, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24 }}>
+            <div style={{ borderTop: "1px solid #333", paddingTop: 8 }}>
+              <div style={{ fontSize: 11, color: "#555" }}>ATOLON BEACH CLUB</div>
+              <div style={{ fontSize: 12, marginTop: 4 }}>Director Comercial</div>
+            </div>
+            <div style={{ borderTop: "1px solid #333", paddingTop: 8 }}>
+              <div style={{ fontSize: 11, color: "#555" }}>{form.razon_social || aliado.nombre}</div>
+              <div style={{ fontSize: 12, marginTop: 4 }}>{form.representante_legal || "Representante Legal"}</div>
+            </div>
+          </div>
+        </div>
+
+        {/* Sección de firma */}
+        <div style={{ background: B.navy, borderRadius: 12, padding: 20, marginBottom: 20 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 14, color: B.sand }}>✍ Confirmar Firma del Documento</div>
+          <div style={{ marginBottom: 12 }}>
+            <label style={LS}>Nombre de quien firma <span style={{ color: B.danger }}>*</span></label>
+            <input value={firmante} onChange={e => setFirmante(e.target.value)}
+              placeholder="Nombre completo del representante legal" style={IS} />
+          </div>
+          <div>
+            <label style={LS}>Adjuntar documento firmado (opcional)</label>
+            <div style={{ display: "flex", gap: 12, alignItems: "center", marginTop: 6 }}>
+              <label style={{ padding: "9px 16px", borderRadius: 8, border: `1px dashed ${B.navyLight}`, cursor: "pointer", fontSize: 12, color: uploading ? B.muted : B.sky }}>
+                {uploading ? "Subiendo..." : archivoUrl ? "✓ Archivo cargado" : "📎 Subir PDF o imagen firmada"}
+                <input type="file" accept=".pdf,image/*" onChange={handleUpload} style={{ display: "none" }} />
+              </label>
+              {archivoUrl && (
+                <a href={archivoUrl} target="_blank" rel="noopener noreferrer"
+                  style={{ fontSize: 12, color: B.sky }}>Ver documento →</a>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <div style={{ display: "flex", gap: 10 }}>
+          <button onClick={onClose}
+            style={{ flex: 1, padding: "12px", borderRadius: 10, border: `1px solid ${B.navyLight}`, background: "none", color: "rgba(255,255,255,0.4)", fontSize: 14, cursor: "pointer" }}>
+            Cancelar
+          </button>
+          <button onClick={handleFirmar} disabled={saving || !firmante.trim()}
+            style={{ flex: 2, padding: "12px", borderRadius: 10, border: "none",
+              background: saving || !firmante.trim() ? B.navyLight : B.success,
+              color: saving ? "rgba(255,255,255,0.4)" : "#fff",
+              fontSize: 14, fontWeight: 700, cursor: "pointer" }}>
+            {saving ? "Registrando..." : "✅ Confirmar Firma y Activar Crédito"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════
 // NUEVO ALIADO MODAL
 // ═══════════════════════════════════════════════
 function NuevoAliadoModal({ onClose, onSave }) {
-  const [f, setF] = useState({ nombre: "", tipo: "Hotel", contacto: "", tel: "", email: "", credito_monto: "", credito_dias: "", rut: "", rnt: "" });
+  const [f, setF] = useState({ nombre: "", tipo: "Hotel", contacto: "", tel: "", email: "", rut: "", rnt: "" });
   const [saving, setSaving] = useState(false);
   const s = (k, v) => setF(p => ({ ...p, [k]: v }));
   const handleSave = async () => {
@@ -2427,7 +2809,7 @@ function NuevoAliadoModal({ onClose, onSave }) {
       const last = maxData?.[0]?.codigo_fijo ? parseInt(maxData[0].codigo_fijo.replace("ATO-", "")) : 0;
       codigoFijo = "ATO-" + String(last + 1).padStart(5, "0");
     }
-    await onSave({ id: `B2B-${Date.now()}`, nombre: f.nombre, tipo: f.tipo, contacto: f.contacto, tel: f.tel, email: f.email, credito_monto: Number(f.credito_monto) || null, credito_dias: Number(f.credito_dias) || null, rut: f.rut, rnt: f.rnt, estado: "activo", pax_mes: 0, revenue: 0, codigo_fijo: codigoFijo });
+    await onSave({ id: `B2B-${Date.now()}`, nombre: f.nombre, tipo: f.tipo, contacto: f.contacto, tel: f.tel, email: f.email, rut: f.rut, rnt: f.rnt, estado: "activo", pax_mes: 0, revenue: 0, codigo_fijo: codigoFijo });
   };
   return (
     <div style={{ position: "fixed", inset: 0, background: "#000A", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center" }}
@@ -2440,8 +2822,6 @@ function NuevoAliadoModal({ onClose, onSave }) {
           <div style={{ marginBottom: 14 }}><label style={LS}>Contacto</label><input value={f.contacto} onChange={e => s("contacto", e.target.value)} placeholder="Nombre del contacto" style={IS} /></div>
           <div style={{ marginBottom: 14 }}><label style={LS}>Telefono</label><input value={f.tel} onChange={e => s("tel", e.target.value)} placeholder="+57 ..." style={IS} /></div>
           <div style={{ marginBottom: 14 }}><label style={LS}>Email</label><input value={f.email} onChange={e => s("email", e.target.value)} placeholder="email@aliado.com" style={IS} /></div>
-          <div style={{ marginBottom: 14 }}><label style={LS}>Crédito (monto $)</label><input value={f.credito_monto} onChange={e => s("credito_monto", e.target.value)} placeholder="Ej: 5000000" type="number" style={IS} /></div>
-          <div style={{ marginBottom: 14 }}><label style={LS}>Días de crédito</label><input value={f.credito_dias} onChange={e => s("credito_dias", e.target.value)} placeholder="Ej: 30" type="number" style={IS} /></div>
           <div style={{ marginBottom: 14 }}><label style={LS}>RUT</label><input value={f.rut} onChange={e => s("rut", e.target.value)} placeholder="NIT o RUT" style={IS} /></div>
           <div style={{ marginBottom: 14 }}><label style={LS}>RNT</label><input value={f.rnt} onChange={e => s("rnt", e.target.value)} placeholder="Registro Nacional de Turismo" style={IS} /></div>
         </div>
