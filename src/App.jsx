@@ -190,6 +190,7 @@ import Menus from "./modules/Menus";
 import CheckIn from "./modules/CheckIn";
 import ZarpeInfo from "./modules/ZarpeInfo";
 import Analitica from "./modules/Analitica";
+import MuelleCheckin from "./modules/MuelleCheckin";
 
 const MODULE_MAP = {
   pasadias: <Pasadias />,
@@ -206,6 +207,7 @@ const MODULE_MAP = {
   contenido: <Contenido />,
   upsells:   <Upsells />,
   checkin:   <CheckIn />,
+  muelle:    <MuelleCheckin />,
   menus:     <Menus />,
   configuracion: <Configuracion />,
   usuarios: <Usuarios />,
