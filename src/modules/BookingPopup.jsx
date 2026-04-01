@@ -1137,7 +1137,9 @@ export default function BookingPopup() {
 
         {/* Brand header */}
         <div style={{ position: "relative", textAlign: "center", marginBottom: 20 }}>
-          <img src="/atolon-peces.png" alt="Atolon Beach Club" style={{ height: 195, objectFit: "contain" }} />
+          <a href="https://www.atoloncartagena.com" target="_blank" rel="noopener noreferrer">
+            <img src="/atolon-peces.png" alt="Atolon Beach Club" style={{ height: 195, objectFit: "contain", display: "block", margin: "0 auto" }} />
+          </a>
           <div style={{ position: "absolute", top: "50%", right: 0, transform: "translateY(-50%)", display: "flex", gap: 4 }}>
             {["es","en"].map(l => (
               <a key={l} href={grupoQ ? `?grupo=${grupoQ}&lang=${l}` : `?tipo=${product?.slug || tipoQ}&lang=${l}`}
@@ -1157,8 +1159,14 @@ export default function BookingPopup() {
         </div>
 
         {/* Footer */}
-        <div style={{ textAlign: "center", marginTop: 16, fontSize: 11, color: C.textLight }}>
-          Atolon Beach Club · Reservas y consultas: reservas@atolonbeachclub.com
+        <div style={{ textAlign: "center", marginTop: 16, fontSize: 11, color: C.textLight, lineHeight: 1.9 }}>
+          <div>Atolon Beach Club</div>
+          <div>
+            <a href="mailto:reservas@atoloncartagena.com" style={{ color: C.primary, textDecoration: "none" }}>reservas@atoloncartagena.com</a>
+          </div>
+          <div>
+            <a href="https://www.atoloncartagena.com" target="_blank" rel="noopener noreferrer" style={{ color: C.primary, textDecoration: "none" }}>www.atoloncartagena.com</a>
+          </div>
         </div>
         <div style={{ display: "flex", justifyContent: "center", gap: 20, marginTop: 10 }}>
           <a href="/" style={{ fontSize: 11, color: C.textLight, textDecoration: "none", opacity: 0.5 }}>
