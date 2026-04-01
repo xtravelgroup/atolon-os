@@ -38,6 +38,7 @@ export default function Configuracion() {
   const [showStripe,   setShowStripe]   = useState(false);
   const [showStripeSecret, setShowStripeSecret] = useState(false);
   const [showWompiInt,     setShowWompiInt]     = useState(false);
+  const [copied,           setCopied]           = useState({});
 
   // Llaves desde .env.local como fallback
   const ENV_WOMPI_PUB       = import.meta.env.VITE_WOMPI_PUB_KEY        || "";
@@ -153,6 +154,13 @@ export default function Configuracion() {
     setStripeForm({ pub_key: "", secret_key: "" });
     await fetchConfig();
     setSavingInt(null);
+  };
+
+  const doCopy = (key, text) => {
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(c => ({ ...c, [key]: true }));
+      setTimeout(() => setCopied(c => ({ ...c, [key]: false })), 2000);
+    });
   };
 
   const TABS = [
@@ -536,13 +544,6 @@ export default function Configuracion() {
           { slug: "atolon-experience", tipo: "Atolon Experience", icon: "🛥️" },
           { slug: "after-island",      tipo: "After Island",      icon: "🌙" },
         ];
-        const [copied, setCopied] = useState({});
-        const doCopy = (key, text) => {
-          navigator.clipboard.writeText(text).then(() => {
-            setCopied(c => ({ ...c, [key]: true }));
-            setTimeout(() => setCopied(c => ({ ...c, [key]: false })), 2000);
-          });
-        };
 
         return (
           <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
