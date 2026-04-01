@@ -364,7 +364,7 @@ function EventoModal({ evento, categoria, salidas, aliados, vendedores, onClose,
 }
 
 // ─── Kanban board ─────────────────────────────────────────────────────────────
-function KanbanBoard({ items, isGrupo, onEdit, onBeo, onLink }) {
+function KanbanBoard({ items, isGrupo, onEdit, onBeo, onLink, onCotizar, aliados }) {
   return (
     <div style={{ display: "grid", gridTemplateColumns: `repeat(${STAGES.length}, 1fr)`, gap: 16 }}>
       {STAGES.map(stage => (
@@ -388,10 +388,14 @@ function KanbanBoard({ items, isGrupo, onEdit, onBeo, onLink }) {
                 {ev.contacto && <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)" }}>{ev.contacto}</div>}
                 {ev.aliado_id && <div style={{ fontSize: 11, color: B.sky, marginBottom: 4 }}>🤝 {aliados.find(a => a.id === ev.aliado_id)?.nombre || ev.aliado_id}</div>}
                 {ev.vendedor && <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginBottom: 4 }}>👤 {ev.vendedor}</div>}
-                <div style={{ display: "flex", gap: 6 }}>
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                   {!isGrupo && (
                     <button onClick={e => { e.stopPropagation(); onBeo(ev); }}
                       style={{ fontSize: 11, padding: "4px 10px", borderRadius: 6, background: B.navyLight, color: B.white, border: "none", cursor: "pointer" }}>Ver BEO</button>
+                  )}
+                  {!isGrupo && (
+                    <button onClick={e => { e.stopPropagation(); onCotizar(ev); }}
+                      style={{ fontSize: 11, padding: "4px 10px", borderRadius: 6, background: B.sand + "33", color: B.sand, border: `1px solid ${B.sand}44`, cursor: "pointer", fontWeight: 600 }}>📋 Cotizar</button>
                   )}
                   {isGrupo && (
                     <button onClick={e => { e.stopPropagation(); onLink(ev); }}
@@ -412,6 +416,303 @@ function KanbanBoard({ items, isGrupo, onEdit, onBeo, onLink }) {
   );
 }
 
+// ─── Cotización Modal ──────────────────────────────────────────────────────────
+const EMPTY_LINE = { concepto: "", cantidad: 1, noches: 1, valor_unit: 0, iva: 19 };
+
+function calcLine(l) {
+  const sub  = l.cantidad * (l.noches || 1) * l.valor_unit;
+  const tax  = sub * (l.iva / 100);
+  return { sub, tax, total: sub + tax };
+}
+
+function SectionTable({ title, color, rows, setRows, showNoches = false }) {
+  const addRow = () => setRows(r => [...r, { ...EMPTY_LINE }]);
+  const upd    = (i, k, v) => setRows(r => r.map((x, j) => j === i ? { ...x, [k]: v } : x));
+  const del    = (i) => setRows(r => r.filter((_, j) => j !== i));
+
+  const totals = rows.reduce((acc, l) => {
+    const { sub, tax, total } = calcLine(l);
+    return { sub: acc.sub + sub, tax: acc.tax + tax, total: acc.total + total };
+  }, { sub: 0, tax: 0, total: 0 });
+
+  const th = { padding: "8px 10px", fontSize: 11, fontWeight: 700, color: B.white, textTransform: "uppercase", letterSpacing: "0.05em", background: color, textAlign: "left" };
+  const td = { padding: "6px 8px", fontSize: 12, borderBottom: `1px solid ${B.navyLight}` };
+  const inp = (val, onChange, type = "text", w = "100%") => (
+    <input type={type} value={val} onChange={onChange}
+      style={{ width: w, background: "transparent", border: "none", color: B.white, fontSize: 12, outline: "none", padding: "2px 4px" }} />
+  );
+
+  return (
+    <div style={{ marginBottom: 24 }}>
+      <div style={{ background: color, padding: "10px 14px", borderRadius: "8px 8px 0 0", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <span style={{ fontWeight: 700, color: B.white, fontSize: 14 }}>{title}</span>
+        <button onClick={addRow} style={{ background: "rgba(255,255,255,0.2)", border: "none", color: B.white, borderRadius: 6, padding: "4px 12px", fontSize: 12, cursor: "pointer", fontWeight: 600 }}>+ Agregar</button>
+      </div>
+      <table style={{ width: "100%", borderCollapse: "collapse", background: B.navyMid }}>
+        <thead>
+          <tr>
+            <th style={{ ...th, background: color + "cc", width: "35%" }}>Concepto</th>
+            <th style={{ ...th, background: color + "cc", width: "8%", textAlign: "center" }}>Cant.</th>
+            {showNoches && <th style={{ ...th, background: color + "cc", width: "8%", textAlign: "center" }}>Noches</th>}
+            <th style={{ ...th, background: color + "cc", width: "15%", textAlign: "right" }}>Valor Unit.</th>
+            <th style={{ ...th, background: color + "cc", width: "8%", textAlign: "center" }}>IVA %</th>
+            <th style={{ ...th, background: color + "cc", width: "15%", textAlign: "right" }}>Subtotal</th>
+            <th style={{ ...th, background: color + "cc", width: "15%", textAlign: "right" }}>Total</th>
+            <th style={{ ...th, background: color + "cc", width: "4%" }}></th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((l, i) => {
+            const { sub, total } = calcLine(l);
+            return (
+              <tr key={i}>
+                <td style={td}>{inp(l.concepto, e => upd(i, "concepto", e.target.value))}</td>
+                <td style={{ ...td, textAlign: "center" }}>{inp(l.cantidad, e => upd(i, "cantidad", Number(e.target.value)), "number", "60px")}</td>
+                {showNoches && <td style={{ ...td, textAlign: "center" }}>{inp(l.noches, e => upd(i, "noches", Number(e.target.value)), "number", "60px")}</td>}
+                <td style={{ ...td, textAlign: "right" }}>{inp(l.valor_unit, e => upd(i, "valor_unit", Number(e.target.value)), "number", "100px")}</td>
+                <td style={{ ...td, textAlign: "center" }}>{inp(l.iva, e => upd(i, "iva", Number(e.target.value)), "number", "50px")}</td>
+                <td style={{ ...td, textAlign: "right", color: B.sand }}>{COP(sub)}</td>
+                <td style={{ ...td, textAlign: "right", fontWeight: 700 }}>{COP(total)}</td>
+                <td style={{ ...td, textAlign: "center" }}>
+                  <button onClick={() => del(i)} style={{ background: "none", border: "none", color: B.danger, cursor: "pointer", fontSize: 14 }}>✕</button>
+                </td>
+              </tr>
+            );
+          })}
+          {rows.length === 0 && (
+            <tr><td colSpan={showNoches ? 8 : 7} style={{ ...td, textAlign: "center", color: "rgba(255,255,255,0.3)", padding: 16 }}>Sin ítems — haz click en "+ Agregar"</td></tr>
+          )}
+        </tbody>
+        {rows.length > 0 && (
+          <tfoot>
+            <tr>
+              <td colSpan={showNoches ? 5 : 4} style={{ padding: "8px 10px", fontSize: 12, color: B.sand, textAlign: "right", fontWeight: 600 }}>TOTAL {title.toUpperCase()}</td>
+              <td style={{ padding: "8px 10px", textAlign: "right", color: B.sand, fontSize: 12 }}>{COP(totals.sub)}</td>
+              <td style={{ padding: "8px 10px", textAlign: "right", fontWeight: 700, color: B.white }}>{COP(totals.total)}</td>
+              <td></td>
+            </tr>
+          </tfoot>
+        )}
+      </table>
+    </div>
+  );
+}
+
+function CotizacionModal({ evento, aliados, onClose, onSaved }) {
+  const saved  = evento.cotizacion_data || {};
+  const [espacios,  setEspacios]  = useState(saved.espacios  || []);
+  const [alimentos, setAlimentos] = useState(saved.alimentos || []);
+  const [servicios, setServicios] = useState(saved.servicios || []);
+  const [header, setHeader] = useState({
+    empresa:    saved.empresa    || evento.contacto || "",
+    nit:        saved.nit        || "",
+    contacto:   saved.contacto   || evento.contacto || "",
+    cargo:      saved.cargo      || "",
+    telefono:   saved.telefono   || evento.tel || "",
+    email:      saved.email      || evento.email || "",
+    direccion:  saved.direccion  || "",
+    montaje:    saved.montaje    || "",
+    hora_ini:   saved.hora_ini   || "",
+    hora_fin:   saved.hora_fin   || "",
+    vencimiento:saved.vencimiento|| "",
+  });
+  const [saving, setSaving] = useState(false);
+
+  const setH = (k, v) => setHeader(h => ({ ...h, [k]: v }));
+
+  const sumSection = (rows) => rows.reduce((acc, l) => {
+    const { sub, tax, total } = calcLine(l);
+    return { sub: acc.sub + sub, tax: acc.tax + tax, total: acc.total + total };
+  }, { sub: 0, tax: 0, total: 0 });
+
+  const totEsp = sumSection(espacios);
+  const totAli = sumSection(alimentos);
+  const totSer = sumSection(servicios);
+  const grandTotal = totEsp.total + totAli.total + totSer.total;
+
+  const aliado = aliados.find(a => a.id === evento.aliado_id);
+
+  async function guardar(marcarCotizado = false) {
+    setSaving(true);
+    const data = { espacios, alimentos, servicios, ...header };
+    const upd  = { cotizacion_data: data };
+    if (marcarCotizado) upd.stage = "Cotizado";
+    await supabase.from("eventos").update(upd).eq("id", evento.id);
+    setSaving(false);
+    onSaved();
+    if (marcarCotizado) onClose();
+  }
+
+  function imprimir() {
+    guardar();
+    setTimeout(() => window.print(), 400);
+  }
+
+  const hFld = (label, key, half = false) => (
+    <div style={{ flex: half ? "0 0 calc(50% - 6px)" : "0 0 100%" }}>
+      <label style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", display: "block", marginBottom: 3, textTransform: "uppercase" }}>{label}</label>
+      <input value={header[key]} onChange={e => setH(key, e.target.value)}
+        style={{ width: "100%", background: B.navy, border: `1px solid ${B.navyLight}`, borderRadius: 6, color: B.white, fontSize: 13, padding: "7px 10px", outline: "none", boxSizing: "border-box" }} />
+    </div>
+  );
+
+  return (
+    <>
+      {/* Print styles */}
+      <style>{`
+        @media print {
+          body > * { display: none !important; }
+          #cotizacion-print { display: block !important; position: fixed; inset: 0; background: white; z-index: 99999; padding: 32px; color: #000; }
+          #cotizacion-print table { page-break-inside: avoid; }
+        }
+        #cotizacion-print { display: none; }
+      `}</style>
+
+      {/* Printable area */}
+      <div id="cotizacion-print">
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 24, borderBottom: "3px solid #1E3566", paddingBottom: 16 }}>
+          <div>
+            <div style={{ fontSize: 28, fontWeight: 900, color: "#1E3566" }}>ATOLON</div>
+            <div style={{ fontSize: 12, color: "#666" }}>Beach Club · Cartagena, Colombia</div>
+          </div>
+          <div style={{ textAlign: "right" }}>
+            <div style={{ fontSize: 20, fontWeight: 700, color: "#1E3566" }}>COTIZACIÓN</div>
+            <div style={{ fontSize: 12, color: "#666" }}>{evento.id}</div>
+            <div style={{ fontSize: 12, color: "#666" }}>Fecha: {new Date().toLocaleDateString("es-CO")}</div>
+            {header.vencimiento && <div style={{ fontSize: 12, color: "#666" }}>Vence: {header.vencimiento}</div>}
+          </div>
+        </div>
+
+        {/* Event info grid */}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "4px 24px", marginBottom: 20, fontSize: 12 }}>
+          {[["EVENTO", evento.tipo], ["FECHA EVENTO", evento.fecha ? new Date(evento.fecha).toLocaleDateString("es-CO") : ""], ["EMPRESA / CLIENTE", header.empresa], ["NIT", header.nit], ["CONTACTO", header.contacto], ["CARGO", header.cargo], ["TELÉFONO", header.telefono], ["EMAIL", header.email], ["DIRECCIÓN", header.direccion], ["ALIADO B2B", aliado?.nombre || ""], ["TIPO DE MONTAJE", header.montaje], ["NÚM. PAX", evento.pax], ["HORA INICIO", header.hora_ini], ["HORA FINAL", header.hora_fin]].map(([k, v]) => v ? (
+            <div key={k} style={{ borderBottom: "1px solid #eee", padding: "4px 0", display: "flex", gap: 8 }}>
+              <span style={{ fontWeight: 700, color: "#1E3566", minWidth: 140 }}>{k}:</span>
+              <span>{v}</span>
+            </div>
+          ) : null)}
+        </div>
+
+        {/* Sections */}
+        {[["ESPACIOS", "#1E3566", espacios, true], ["ALIMENTOS Y BEBIDAS", "#2E7D52", alimentos, false], ["OTROS SERVICIOS", "#7B4F12", servicios, false]].map(([title, color, rows, noches]) => rows.length > 0 && (
+          <div key={title} style={{ marginBottom: 20 }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
+              <thead>
+                <tr style={{ background: color, color: "white" }}>
+                  <th style={{ padding: "6px 8px", textAlign: "left", width: "35%" }}>{title}</th>
+                  <th style={{ padding: "6px 8px", textAlign: "center", width: "8%" }}>CANT.</th>
+                  {noches && <th style={{ padding: "6px 8px", textAlign: "center", width: "8%" }}>NOCHES</th>}
+                  <th style={{ padding: "6px 8px", textAlign: "right", width: "15%" }}>VALOR UNIT.</th>
+                  <th style={{ padding: "6px 8px", textAlign: "right", width: "12%" }}>SUBTOTAL</th>
+                  <th style={{ padding: "6px 8px", textAlign: "center", width: "8%" }}>IVA</th>
+                  <th style={{ padding: "6px 8px", textAlign: "right", width: "14%" }}>TOTAL</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((l, i) => {
+                  const { sub, tax, total } = calcLine(l);
+                  return (
+                    <tr key={i} style={{ background: i % 2 === 0 ? "#f9f9f9" : "white" }}>
+                      <td style={{ padding: "5px 8px" }}>{l.concepto}</td>
+                      <td style={{ padding: "5px 8px", textAlign: "center" }}>{l.cantidad}</td>
+                      {noches && <td style={{ padding: "5px 8px", textAlign: "center" }}>{l.noches}</td>}
+                      <td style={{ padding: "5px 8px", textAlign: "right" }}>{COP(l.valor_unit)}</td>
+                      <td style={{ padding: "5px 8px", textAlign: "right" }}>{COP(sub)}</td>
+                      <td style={{ padding: "5px 8px", textAlign: "center" }}>{l.iva}%</td>
+                      <td style={{ padding: "5px 8px", textAlign: "right", fontWeight: 600 }}>{COP(total)}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        ))}
+
+        {/* Totals */}
+        <div style={{ marginLeft: "auto", width: 320, borderTop: "2px solid #1E3566", paddingTop: 12, fontSize: 13 }}>
+          {[["Total Espacios", totEsp.total], ["Total Alimentos & Bebidas", totAli.total], ["Total Otros Servicios", totSer.total]].map(([k, v]) => v > 0 && (
+            <div key={k} style={{ display: "flex", justifyContent: "space-between", padding: "3px 0", color: "#444" }}>
+              <span>{k}</span><span>{COP(v)}</span>
+            </div>
+          ))}
+          <div style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", fontWeight: 900, fontSize: 16, color: "#1E3566", borderTop: "1px solid #1E3566", marginTop: 6 }}>
+            <span>TOTAL EVENTO</span><span>{COP(grandTotal)}</span>
+          </div>
+        </div>
+
+        <div style={{ marginTop: 32, fontSize: 10, color: "#aaa", textAlign: "center" }}>
+          Esta cotización es válida hasta {header.vencimiento || "—"}. Los precios están en COP e incluyen IVA donde aplica.
+        </div>
+      </div>
+
+      {/* Modal UI */}
+      <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 999, display: "flex", alignItems: "flex-start", justifyContent: "center", overflowY: "auto", padding: "20px 0" }}>
+        <div style={{ background: B.navy, borderRadius: 16, width: "90vw", maxWidth: 900, padding: 28, margin: "auto" }}>
+          {/* Header */}
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+            <div>
+              <div style={{ fontSize: 18, fontWeight: 700 }}>Cotización — {evento.nombre}</div>
+              <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)" }}>{evento.tipo} · {evento.fecha ? new Date(evento.fecha).toLocaleDateString("es-CO") : ""} · {evento.pax} pax</div>
+            </div>
+            <button onClick={onClose} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.5)", fontSize: 22, cursor: "pointer" }}>✕</button>
+          </div>
+
+          {/* Client info */}
+          <div style={{ background: B.navyMid, borderRadius: 10, padding: 16, marginBottom: 20 }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: B.sand, marginBottom: 12, textTransform: "uppercase", letterSpacing: "0.06em" }}>Datos del cliente</div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
+              {hFld("Empresa / Cliente", "empresa", true)}
+              {hFld("NIT / Identificación", "nit", true)}
+              {hFld("Contacto", "contacto", true)}
+              {hFld("Cargo", "cargo", true)}
+              {hFld("Teléfono", "telefono", true)}
+              {hFld("Email", "email", true)}
+              {hFld("Dirección", "direccion", true)}
+              {hFld("Tipo de Montaje", "montaje", true)}
+              {hFld("Hora Inicio", "hora_ini", true)}
+              {hFld("Hora Final", "hora_fin", true)}
+              {hFld("Vencimiento cotización", "vencimiento", true)}
+            </div>
+          </div>
+
+          {/* Sections */}
+          <SectionTable title="Espacios / Alojamiento" color="#1E3566" rows={espacios} setRows={setEspacios} showNoches />
+          <SectionTable title="Alimentos y Bebidas"    color="#2E7D52" rows={alimentos} setRows={setAlimentos} />
+          <SectionTable title="Otros Servicios"        color="#7B4F12" rows={servicios} setRows={setServicios} />
+
+          {/* Grand total */}
+          <div style={{ background: B.navyMid, borderRadius: 10, padding: "14px 20px", marginBottom: 20, display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 32 }}>
+            {[["Espacios", totEsp.total], ["Alimentos", totAli.total], ["Servicios", totSer.total]].map(([k, v]) => v > 0 && (
+              <div key={k} style={{ textAlign: "right" }}>
+                <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", textTransform: "uppercase" }}>{k}</div>
+                <div style={{ fontSize: 14, fontWeight: 600 }}>{COP(v)}</div>
+              </div>
+            ))}
+            <div style={{ textAlign: "right", borderLeft: `2px solid ${B.sand}`, paddingLeft: 24 }}>
+              <div style={{ fontSize: 11, color: B.sand, textTransform: "uppercase" }}>Total Evento</div>
+              <div style={{ fontSize: 22, fontWeight: 800, color: B.sand }}>{COP(grandTotal)}</div>
+            </div>
+          </div>
+
+          {/* Actions */}
+          <div style={{ display: "flex", gap: 10 }}>
+            <button onClick={onClose} style={{ padding: "11px 20px", background: "none", border: `1px solid ${B.navyLight}`, borderRadius: 8, color: "rgba(255,255,255,0.4)", fontSize: 13, cursor: "pointer" }}>Cancelar</button>
+            <button onClick={() => guardar(false)} disabled={saving} style={{ padding: "11px 20px", background: B.navyLight, color: B.white, border: "none", borderRadius: 8, fontSize: 13, cursor: "pointer" }}>
+              {saving ? "Guardando..." : "💾 Guardar"}
+            </button>
+            <button onClick={imprimir} style={{ padding: "11px 20px", background: B.sky + "33", color: B.sky, border: `1px solid ${B.sky}44`, borderRadius: 8, fontSize: 13, cursor: "pointer", fontWeight: 600 }}>
+              🖨 Imprimir / PDF
+            </button>
+            <button onClick={() => guardar(true)} disabled={saving} style={{ flex: 1, padding: "11px", background: B.sand, color: B.navy, border: "none", borderRadius: 8, fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
+              ✓ Guardar y Marcar Cotizado
+            </button>
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
+
 // ─── Main ─────────────────────────────────────────────────────────────────────
 export default function Eventos() {
   const [todos,     setTodos]     = useState([]);
@@ -419,10 +720,11 @@ export default function Eventos() {
   const [aliados,   setAliados]   = useState([]);
   const [vendedores,setVendedores]= useState([]);
   const [loading,   setLoading]   = useState(true);
-  const [tab,     setTab]     = useState("evento");
-  const [beo,     setBeo]     = useState(null);
-  const [modal,   setModal]   = useState(null);
-  const [linkEvt, setLinkEvt] = useState(null);
+  const [tab,        setTab]        = useState("evento");
+  const [beo,        setBeo]        = useState(null);
+  const [modal,      setModal]      = useState(null);
+  const [linkEvt,    setLinkEvt]    = useState(null);
+  const [cotizacion, setCotizacion] = useState(null);
 
   const fetchTodos = useCallback(async () => {
     if (!supabase) { setLoading(false); return; }
@@ -439,7 +741,7 @@ export default function Eventos() {
       contacto: e.contacto || "", tel: e.tel || "", email: e.email || "",
       notas: e.notas || "", categoria: e.categoria || "evento",
       salidas_grupo: e.salidas_grupo || [], aliado_id: e.aliado_id || "",
-      vendedor: e.vendedor || "",
+      vendedor: e.vendedor || "", cotizacion_data: e.cotizacion_data || {},
     })));
     if (salR.data) setSalidas(salR.data);
     if (aliR.data) setAliados(aliR.data);
@@ -497,10 +799,11 @@ export default function Eventos() {
         ))}
       </div>
 
-      <KanbanBoard items={items} isGrupo={isGrupo} onEdit={ev => setModal(ev)} onBeo={setBeo} onLink={setLinkEvt} />
+      <KanbanBoard items={items} isGrupo={isGrupo} aliados={aliados} onEdit={ev => setModal(ev)} onBeo={setBeo} onLink={setLinkEvt} onCotizar={setCotizacion} />
 
-      {beo     && <BEOPreview evento={beo} onClose={() => setBeo(null)} />}
-      {linkEvt && <GrupoLink evento={linkEvt} onClose={() => setLinkEvt(null)} />}
+      {beo        && <BEOPreview evento={beo} onClose={() => setBeo(null)} />}
+      {linkEvt    && <GrupoLink evento={linkEvt} onClose={() => setLinkEvt(null)} />}
+      {cotizacion && <CotizacionModal evento={cotizacion} aliados={aliados} onClose={() => setCotizacion(null)} onSaved={fetchTodos} />}
       {modal   && (
         <EventoModal
           evento={modal === "new" ? null : modal}
