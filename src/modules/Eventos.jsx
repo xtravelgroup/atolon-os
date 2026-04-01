@@ -475,8 +475,73 @@ function EventoModal({ evento, categoria, salidas, aliados, vendedores, onClose,
   );
 }
 
+// ─── Modal reservas de grupo ──────────────────────────────────────────────────
+function ReservasGrupoModal({ evento, onClose }) {
+  const [reservas, setReservas] = useState(null);
+
+  useEffect(() => {
+    if (!supabase) return;
+    let q = supabase.from("reservas").select("*").eq("canal", "GRUPO").eq("fecha", evento.fecha);
+    if (evento.aliado_id) q = q.eq("aliado_id", evento.aliado_id);
+    q.order("created_at", { ascending: false }).then(({ data }) => setReservas(data || []));
+  }, [evento]);
+
+  const totalPax = (reservas || []).reduce((s, r) => s + (r.pax || 0), 0);
+  const totalCOP = (reservas || []).reduce((s, r) => s + (r.total || 0), 0);
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 999 }}
+      onClick={e => e.target === e.currentTarget && onClose()}>
+      <div style={{ background: B.navyMid, borderRadius: 16, padding: 28, width: 540, maxHeight: "85vh", overflowY: "auto", boxShadow: "0 20px 60px rgba(0,0,0,0.5)" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 20 }}>
+          <div>
+            <h3 style={{ fontSize: 17, fontWeight: 700, marginBottom: 4 }}>👥 Reservas del grupo</h3>
+            <div style={{ fontSize: 13, color: "rgba(255,255,255,0.5)" }}>{evento.nombre} · {fmtFecha(evento.fecha)}</div>
+          </div>
+          <button onClick={onClose} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.4)", fontSize: 20, cursor: "pointer", lineHeight: 1 }}>✕</button>
+        </div>
+
+        {reservas === null ? (
+          <div style={{ textAlign: "center", padding: "32px 0", color: "rgba(255,255,255,0.3)" }}>Cargando...</div>
+        ) : reservas.length === 0 ? (
+          <div style={{ textAlign: "center", padding: "32px 0", color: "rgba(255,255,255,0.3)", fontSize: 14 }}>
+            <div style={{ fontSize: 32, marginBottom: 10 }}>📭</div>
+            Aún no hay reservas en este grupo.
+          </div>
+        ) : (
+          <>
+            <div style={{ display: "flex", gap: 20, padding: "10px 14px", background: B.navy, borderRadius: 10, marginBottom: 14 }}>
+              <span style={{ fontSize: 13, color: "rgba(255,255,255,0.5)" }}>👥 <strong style={{ color: B.white }}>{totalPax} personas</strong></span>
+              <span style={{ fontSize: 13, color: "rgba(255,255,255,0.5)" }}>💵 <strong style={{ color: B.success }}>{COP(totalCOP)}</strong></span>
+              <span style={{ fontSize: 13, color: "rgba(255,255,255,0.5)" }}>🎟 <strong style={{ color: B.white }}>{reservas.length} reservas</strong></span>
+            </div>
+            {reservas.map(r => (
+              <div key={r.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 0", borderBottom: `1px solid ${B.navyLight}` }}>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontWeight: 600, fontSize: 14 }}>{r.nombre}</div>
+                  <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>
+                    {r.id} · {r.tipo} · {r.pax} {r.pax === 1 ? "persona" : "personas"}
+                  </div>
+                </div>
+                <div style={{ textAlign: "right", flexShrink: 0 }}>
+                  <div style={{ fontWeight: 700, color: B.sand, fontSize: 14 }}>{COP(r.total)}</div>
+                  <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 10,
+                    background: r.estado === "confirmado" ? B.success + "22" : r.estado === "cancelado" ? B.danger + "22" : B.warning + "22",
+                    color:      r.estado === "confirmado" ? B.success : r.estado === "cancelado" ? B.danger : B.warning }}>
+                    {r.estado}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ─── Kanban board ─────────────────────────────────────────────────────────────
-function KanbanBoard({ items, isGrupo, onEdit, onBeo, onLink, onCotizar, aliados }) {
+function KanbanBoard({ items, isGrupo, onEdit, onBeo, onLink, onCotizar, onReservas, aliados }) {
   return (
     <div style={{ display: "grid", gridTemplateColumns: `repeat(${STAGES.length}, 1fr)`, gap: 16 }}>
       {STAGES.map(stage => (
@@ -512,6 +577,10 @@ function KanbanBoard({ items, isGrupo, onEdit, onBeo, onLink, onCotizar, aliados
                   {isGrupo && (
                     <button onClick={e => { e.stopPropagation(); onLink(ev); }}
                       style={{ fontSize: 11, padding: "4px 10px", borderRadius: 6, background: B.sky + "33", color: B.sky, border: `1px solid ${B.sky}44`, cursor: "pointer" }}>🔗 Ver link</button>
+                  )}
+                  {isGrupo && (
+                    <button onClick={e => { e.stopPropagation(); onReservas(ev); }}
+                      style={{ fontSize: 11, padding: "4px 10px", borderRadius: 6, background: B.sand + "22", color: B.sand, border: `1px solid ${B.sand}44`, cursor: "pointer" }}>👥 Reservas</button>
                   )}
                 </div>
               </div>
@@ -859,8 +928,9 @@ export default function Eventos() {
   const [tab,        setTab]        = useState("evento");
   const [beo,        setBeo]        = useState(null);
   const [modal,      setModal]      = useState(null);
-  const [linkEvt,    setLinkEvt]    = useState(null);
-  const [cotizacion, setCotizacion] = useState(null);
+  const [linkEvt,     setLinkEvt]    = useState(null);
+  const [reservasEvt, setReservasEvt] = useState(null);
+  const [cotizacion,  setCotizacion] = useState(null);
 
   const fetchTodos = useCallback(async () => {
     if (!supabase) { setLoading(false); return; }
@@ -938,10 +1008,11 @@ export default function Eventos() {
         ))}
       </div>
 
-      <KanbanBoard items={items} isGrupo={isGrupo} aliados={aliados} onEdit={ev => setModal(ev)} onBeo={setBeo} onLink={setLinkEvt} onCotizar={setCotizacion} />
+      <KanbanBoard items={items} isGrupo={isGrupo} aliados={aliados} onEdit={ev => setModal(ev)} onBeo={setBeo} onLink={setLinkEvt} onCotizar={setCotizacion} onReservas={setReservasEvt} />
 
-      {beo        && <BEOPreview evento={beo} onClose={() => setBeo(null)} />}
-      {linkEvt    && <GrupoLink evento={linkEvt} onClose={() => setLinkEvt(null)} />}
+      {beo          && <BEOPreview evento={beo} onClose={() => setBeo(null)} />}
+      {linkEvt      && <GrupoLink evento={linkEvt} onClose={() => setLinkEvt(null)} />}
+      {reservasEvt  && <ReservasGrupoModal evento={reservasEvt} onClose={() => setReservasEvt(null)} />}
       {cotizacion && <CotizacionModal evento={cotizacion} aliados={aliados} onClose={() => setCotizacion(null)} onSaved={fetchTodos} />}
       {modal   && (
         <EventoModal
