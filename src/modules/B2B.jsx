@@ -1653,12 +1653,13 @@ function FichaAliado({ aliado, onBack, onRefresh }) {
   const saveEdit = async () => {
     if (!supabase || savingEdit) return;
     setSavingEdit(true);
-    await supabase.from("aliados_b2b").update({
+    const { error } = await supabase.from("aliados_b2b").update({
       nombre: editForm.nombre, tipo: editForm.tipo, contacto: editForm.contacto,
       tel: editForm.tel, email: editForm.email, comision: Number(editForm.comision) || 0,
       rut: editForm.rut, rnt: editForm.rnt, estado: editForm.estado,
       vendedor_id: editForm.vendedor_id || null,
     }).eq("id", aliado.id);
+    if (error) { alert("Error al guardar: " + error.message); setSavingEdit(false); return; }
     await onRefresh();
     setEditing(false); setSavingEdit(false);
   };
