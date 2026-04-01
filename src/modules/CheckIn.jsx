@@ -278,7 +278,7 @@ function generarZarpe(salida, reservas, fecha, despacho, embarcacionesFlota = []
       <div><b>Hora salida:</b> ${salida.hora} &nbsp;·&nbsp; Regreso ${salida.hora_regreso}</div>
       <div><b>Total pasajeros:</b> ${totalPax}</div>
       <div><b>Salida:</b> Muelle de La Bodeguita</div>
-      <div><b>Destino:</b> Tierra Bomba</div>
+      <div><b>Destino:</b> Boca Chica, Tierra Bomba</div>
       <div><b>Generado:</b> ${new Date().toLocaleString("es-CO")}</div>
     </div>
     ${boteInfoBlocks}
