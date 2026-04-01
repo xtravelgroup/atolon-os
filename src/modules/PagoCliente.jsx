@@ -238,7 +238,11 @@ export default function PagoCliente() {
         "https://ncdyttgxuicyruathkxd.supabase.co/functions/v1/create-stripe-session",
         {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+            "apikey": import.meta.env.VITE_SUPABASE_ANON_KEY,
+          },
           body: JSON.stringify({
             reserva_id: reserva.id,
             total_cop:  reserva.total,
