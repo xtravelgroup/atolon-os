@@ -192,8 +192,8 @@ export default function BookingPopup() {
           setFotoActiva(0);
         }
       });
-    supabase.from("pasadia_incluye").select("descripcion").eq("pasadia_id", product.pasadiaId).order("orden")
-      .then(({ data }) => setIncluye((data || []).map(r => r.descripcion)));
+    supabase.from("pasadia_incluye").select("descripcion, descripcion_en").eq("pasadia_id", product.pasadiaId).order("orden")
+      .then(({ data }) => setIncluye(data || []));
   }, [product]);
 
   // Load month-level availability + salidas catalog
@@ -529,7 +529,7 @@ export default function BookingPopup() {
             <div style={{ display: "flex", flexWrap: "wrap", gap: "6px 16px" }}>
               {incluye.map((item, i) => (
                 <div key={i} style={{ fontSize: 12, color: C.textMid, display: "flex", alignItems: "center", gap: 5 }}>
-                  <span style={{ color: C.success, fontWeight: 700 }}>✓</span> {item}
+                  <span style={{ color: C.success, fontWeight: 700 }}>✓</span> {isEN && item.descripcion_en ? item.descripcion_en : item.descripcion}
                 </div>
               ))}
             </div>
