@@ -56,27 +56,33 @@ function ModalNuevaLlegada({ tipo, fecha, reserva, onClose, onSaved }) {
     reader.readAsDataURL(file);
   };
 
+  const [errorMsg, setErrorMsg] = useState(null);
+
   const handleGuardar = async () => {
     if (!supabase || saving) return;
+    setErrorMsg(null);
     setSaving(true);
     const id = `ML-${Date.now()}`;
 
+    // Subir foto (si falla, igual registramos sin foto)
     let foto_url = null;
     if (fotoFile) {
       setUploadingFoto(true);
-      const ext = fotoFile.name.split(".").pop();
-      const path = `${id}.${ext}`;
-      const { data: upData, error: upErr } = await supabase.storage
-        .from("muelle-fotos")
-        .upload(path, fotoFile, { upsert: true });
-      if (!upErr && upData) {
-        const { data: urlData } = supabase.storage.from("muelle-fotos").getPublicUrl(path);
-        foto_url = urlData?.publicUrl || null;
-      }
+      try {
+        const ext = fotoFile.name.split(".").pop();
+        const path = `${id}.${ext}`;
+        const { data: upData, error: upErr } = await supabase.storage
+          .from("muelle-fotos")
+          .upload(path, fotoFile, { upsert: true });
+        if (!upErr && upData) {
+          const { data: urlData } = supabase.storage.from("muelle-fotos").getPublicUrl(path);
+          foto_url = urlData?.publicUrl || null;
+        }
+      } catch (_) {}
       setUploadingFoto(false);
     }
 
-    await supabase.from("muelle_llegadas").insert({
+    const payload = {
       id, fecha, tipo,
       embarcacion_nombre: f.embarcacion_nombre || null,
       matricula:          f.matricula || null,
@@ -87,9 +93,16 @@ function ModalNuevaLlegada({ tipo, fecha, reserva, onClose, onSaved }) {
       hora_llegada: f.hora_llegada || null,
       estado: "llegó",
       notas: f.notas || null,
-      foto_url,
-    });
+    };
+    // Solo incluir foto_url si está disponible (columna puede no existir aún)
+    if (foto_url) payload.foto_url = foto_url;
+
+    const { error } = await supabase.from("muelle_llegadas").insert(payload);
     setSaving(false);
+    if (error) {
+      setErrorMsg(error.message);
+      return;
+    }
     onSaved();
   };
 
@@ -171,6 +184,11 @@ function ModalNuevaLlegada({ tipo, fecha, reserva, onClose, onSaved }) {
           </div>
         )}
 
+        {errorMsg && (
+          <div style={{ background: "#ff000022", border: "1px solid #ff000055", borderRadius: 8, padding: "10px 14px", marginTop: 12, fontSize: 12, color: "#ff6b6b" }}>
+            ⚠️ {errorMsg}
+          </div>
+        )}
         <div style={{ display: "flex", gap: 10, marginTop: 8 }}>
           <button onClick={onClose} style={{ flex: 1, padding: "11px", borderRadius: 10, border: `1px solid ${B.navyLight}`, background: "none", color: "rgba(255,255,255,0.4)", fontSize: 13, cursor: "pointer" }}>
             Cancelar
