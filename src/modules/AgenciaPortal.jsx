@@ -486,7 +486,7 @@ function NuevaReserva({ agencia, user, onCreated, vistaPrecios = "ambos" }) {
           )}
 
           {(form.salida_id || (form.tipo && esSinEmb)) && (
-            <button onClick={() => setStep(2)} style={{ width: "100%", padding: "14px", borderRadius: 8, border: "none", background: B.sky, color: B.navy, fontSize: 14, fontWeight: 700, cursor: "pointer", marginTop: 20 }}>
+            <button onClick={() => { setStep(2); window.scrollTo({ top: 0, behavior: "smooth" }); }} style={{ width: "100%", padding: "14px", borderRadius: 8, border: "none", background: B.sky, color: B.navy, fontSize: 14, fontWeight: 700, cursor: "pointer", marginTop: 20 }}>
               Continuar
             </button>
           )}
@@ -503,7 +503,7 @@ function NuevaReserva({ agencia, user, onCreated, vistaPrecios = "ambos" }) {
               <div style={{ fontSize: 14, fontWeight: 600 }}>{new Date(form.fecha + "T12:00:00").toLocaleDateString("es-CO", { weekday: "long", day: "numeric", month: "long" })}</div>
               <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)" }}>Salida: {salidas.find(s => s.id === form.salida_id)?.hora} — {salidas.find(s => s.id === form.salida_id)?.nombre} | {form.pax_a || 1} adultos{(form.pax_n || 0) > 0 ? ` + ${form.pax_n} ninos` : ""}</div>
             </div>
-            <button onClick={() => setStep(1)} style={{ background: B.navyLight, border: "none", borderRadius: 6, padding: "6px 14px", color: B.sand, fontSize: 12, cursor: "pointer" }}>Cambiar</button>
+            <button onClick={() => { setStep(1); window.scrollTo({ top: 0, behavior: "smooth" }); }} style={{ background: B.navyLight, border: "none", borderRadius: 6, padding: "6px 14px", color: B.sand, fontSize: 12, cursor: "pointer" }}>Cambiar</button>
           </div>
 
           <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: isMobile ? 0 : "0 16px" }}>
@@ -544,7 +544,7 @@ function NuevaReserva({ agencia, user, onCreated, vistaPrecios = "ambos" }) {
           )}
 
           <div style={{ display: "flex", gap: 10 }}>
-            <button onClick={() => setStep(1)} style={{ flex: 1, padding: "14px", borderRadius: 8, border: `1px solid ${B.navyLight}`, background: "none", color: B.sand, fontSize: 13, cursor: "pointer" }}>Atras</button>
+            <button onClick={() => { setStep(1); window.scrollTo({ top: 0, behavior: "smooth" }); }} style={{ flex: 1, padding: "14px", borderRadius: 8, border: `1px solid ${B.navyLight}`, background: "none", color: B.sand, fontSize: 13, cursor: "pointer" }}>Atras</button>
             <button onClick={() => setShowPagoModal(true)} disabled={saving || !form.tipo || !form.nombre.trim()}
               style={{ flex: 2, padding: "14px", borderRadius: 8, border: "none", background: saving || !form.tipo || !form.nombre.trim() ? B.navyLight : B.sky, color: saving || !form.tipo || !form.nombre.trim() ? "rgba(255,255,255,0.4)" : B.navy, fontSize: 14, fontWeight: 700, cursor: saving || !form.tipo || !form.nombre.trim() ? "default" : "pointer" }}>
               {saving ? "Creando..." : "Confirmar Reserva"}
