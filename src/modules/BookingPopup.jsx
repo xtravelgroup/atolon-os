@@ -498,7 +498,7 @@ export default function BookingPopup() {
         {/* Group event banner */}
         {grupoEvt && (
           <div style={{ background: "#EEF2FF", borderRadius: 10, padding: "12px 16px", marginBottom: 16, border: "1.5px solid #C7D2FE" }}>
-            <div style={{ fontSize: 11, fontWeight: 700, color: C.accent, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 3 }}>Reserva de Grupo</div>
+            <div style={{ fontSize: 11, fontWeight: 700, color: C.accent, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 3 }}>{isEN ? "Group Reservation" : "Reserva de Grupo"}</div>
             <div style={{ fontSize: 15, fontWeight: 700, color: C.text }}>{grupoEvt.nombre}</div>
             <div style={{ fontSize: 12, color: C.textMid, marginTop: 2 }}>
               📅 {fmtDate(grupoEvt.fecha, langQ)}
