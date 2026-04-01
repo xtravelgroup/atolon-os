@@ -492,232 +492,12 @@ function LlegadaCard({ llegada, onEstadoChange, onDelete }) {
   );
 }
 
-// ─── Tab: Lanchas Atolon ──────────────────────────────────────────────────────
-function TabLanchas({ fecha, llegadas, onRefresh, onNuevaLlegada }) {
-  const [salidas, setSalidas] = useState([]);
-  const [reservasPorSalida, setReservasPorSalida] = useState({});
-  const [tabSalida, setTabSalida] = useState(null);
-
-  useEffect(() => {
-    if (!supabase) return;
-    supabase.from("salidas").select("*").eq("activo", true).order("hora")
-      .then(({ data }) => {
-        setSalidas(data || []);
-        if (data?.length > 0 && !tabSalida) setTabSalida(data[0].id);
-      });
-    supabase.from("reservas").select("id, nombre, pax, pax_a, pax_n, tipo, checkin_at, estado, embarcacion_asignada, salida_id, contacto")
-      .eq("fecha", fecha).neq("estado", "cancelado")
-      .then(({ data }) => {
-        const map = {};
-        (data || []).forEach(r => {
-          if (!map[r.salida_id]) map[r.salida_id] = [];
-          map[r.salida_id].push(r);
-        });
-        setReservasPorSalida(map);
-      });
-  }, [fecha]);
-
-  const llegadasLancha = llegadas.filter(l => l.tipo === "lancha_atolon");
-
-  return (
-    <div>
-      {/* Tabs de salidas */}
-      {salidas.length > 0 && (
-        <div style={{ display: "flex", gap: 8, marginBottom: 20, overflowX: "auto", paddingBottom: 4 }}>
-          {salidas.map(s => {
-            const res = reservasPorSalida[s.id] || [];
-            const paxTotal = res.reduce((t, r) => t + (r.pax || 1), 0);
-            const yaLlego  = llegadasLancha.some(l => l.salida_id === s.id || l.embarcacion_nombre === s.nombre);
-            return (
-              <button key={s.id} onClick={() => setTabSalida(s.id)}
-                style={{ padding: "10px 18px", borderRadius: 10, border: "none", cursor: "pointer", whiteSpace: "nowrap", fontSize: 13, fontWeight: 600,
-                  background: tabSalida === s.id ? B.sky : B.navyMid,
-                  color: tabSalida === s.id ? B.navy : "rgba(255,255,255,0.7)" }}>
-                ⛵ {s.nombre}
-                <span style={{ marginLeft: 6, fontSize: 11, opacity: 0.8 }}>{fmtHora(s.hora)}</span>
-                {paxTotal > 0 && <span style={{ marginLeft: 6, fontSize: 11 }}>· {paxTotal} pax</span>}
-                {yaLlego && <span style={{ marginLeft: 6, fontSize: 11, color: B.success }}>✓</span>}
-              </button>
-            );
-          })}
-        </div>
-      )}
-
-      {/* Detalle salida seleccionada */}
-      {tabSalida && (() => {
-        const sal = salidas.find(s => s.id === tabSalida);
-        const res = reservasPorSalida[tabSalida] || [];
-        const paxTotal = res.reduce((t, r) => t + (r.pax || 1), 0);
-        const llegadaSal = llegadasLancha.find(l => l.salida_id === tabSalida || l.embarcacion_nombre === sal?.nombre);
-
-        return (
-          <div>
-            {sal && (
-              <div style={{ background: B.navyMid, borderRadius: 14, padding: "16px 20px", marginBottom: 16, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
-                <div>
-                  <div style={{ fontSize: 16, fontWeight: 800 }}>⛵ {sal.nombre}</div>
-                  <div style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", marginTop: 3 }}>
-                    Salida: <strong>{fmtHora(sal.hora)}</strong> · Regreso: <strong>{fmtHora(sal.hora_regreso)}</strong> · {paxTotal} pasajeros
-                  </div>
-                </div>
-                {!llegadaSal ? (
-                  <button onClick={() => onNuevaLlegada("lancha_atolon", null, sal)}
-                    style={{ padding: "9px 18px", borderRadius: 10, border: "none", background: B.sky, color: B.navy, fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
-                    ⚓ Registrar llegada a isla
-                  </button>
-                ) : (
-                  <span style={{ fontSize: 12, padding: "6px 14px", borderRadius: 10, background: B.success + "22", color: B.success, fontWeight: 700 }}>
-                    ✓ Llegó {fmtHora(llegadaSal.hora_llegada)}
-                  </span>
-                )}
-              </div>
-            )}
-
-            {/* Lista de reservas de esta salida */}
-            {res.length === 0 ? (
-              <div style={{ textAlign: "center", padding: 24, color: "rgba(255,255,255,0.3)", fontSize: 13 }}>No hay reservas para esta salida</div>
-            ) : (
-              res.map(r => (
-                <div key={r.id} style={{ background: B.navyMid, borderRadius: 10, padding: "12px 16px", marginBottom: 8, display: "flex", alignItems: "center", gap: 12 }}>
-                  <div style={{ width: 10, height: 10, borderRadius: 5, background: r.checkin_at ? B.success : "rgba(255,255,255,0.15)", flexShrink: 0 }} />
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontWeight: 600, fontSize: 14 }}>{r.nombre}</div>
-                    <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>
-                      {r.pax || 1} pax · {r.tipo}
-                      {r.checkin_at && <span style={{ color: B.success, marginLeft: 8 }}>✓ Check-in {r.checkin_at.slice(11, 16)}</span>}
-                    </div>
-                  </div>
-                  {r.contacto && <span style={{ fontSize: 11, color: "rgba(255,255,255,0.3)" }}>{r.contacto}</span>}
-                </div>
-              ))
-            )}
-          </div>
-        );
-      })()}
-
-      {/* Llegadas registradas de lanchas propias */}
-      {llegadasLancha.length > 0 && (
-        <div style={{ marginTop: 20 }}>
-          <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginBottom: 10, textTransform: "uppercase", letterSpacing: "0.05em" }}>Registro de llegadas</div>
-          {llegadasLancha.map(l => (
-            <LlegadaCard key={l.id} llegada={l} onEstadoChange={onRefresh} onDelete={async () => { await supabase.from("muelle_llegadas").delete().eq("id", l.id); onRefresh(); }} />
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ─── Tab: After Island ────────────────────────────────────────────────────────
-function TabAfterIsland({ fecha, llegadas, onRefresh, onNuevaLlegada }) {
-  const [reservas, setReservas] = useState([]);
-
-  useEffect(() => {
-    if (!supabase) return;
-    supabase.from("reservas").select("id, nombre, pax, pax_a, pax_n, contacto, estado, checkin_at, embarcacion_asignada")
-      .eq("fecha", fecha).ilike("tipo", "%after%").neq("estado", "cancelado")
-      .then(({ data }) => setReservas(data || []));
-  }, [fecha]);
-
-  const llegadasAfter = llegadas.filter(l => l.tipo === "after_island");
-  const registradasIds = new Set(llegadasAfter.map(l => l.reserva_id).filter(Boolean));
-
-  return (
-    <div>
-      {/* Botón nuevo After Island walk-in */}
-      <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 16 }}>
-        <button onClick={() => onNuevaLlegada("after_island", null, null)}
-          style={{ padding: "9px 18px", borderRadius: 10, border: "none", background: B.sand, color: B.navy, fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
-          🌙 + After Island walk-in
-        </button>
-      </div>
-
-      {/* Reservas After Island del día */}
-      {reservas.length > 0 && (
-        <div style={{ marginBottom: 20 }}>
-          <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginBottom: 10, textTransform: "uppercase", letterSpacing: "0.05em" }}>After Island con reserva ({reservas.length})</div>
-          {reservas.map(r => {
-            const yaRegistrada = registradasIds.has(r.id);
-            return (
-              <div key={r.id} style={{ background: B.navyMid, borderRadius: 12, padding: "14px 18px", marginBottom: 10, border: `1px solid ${yaRegistrada ? B.success + "44" : "rgba(255,255,255,0.07)"}` }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-                  <div style={{ fontSize: 20 }}>🌙</div>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontWeight: 700, fontSize: 15 }}>{r.nombre}</div>
-                    <div style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", marginTop: 3 }}>
-                      {r.pax || 1} pax · {r.contacto || "Sin contacto"}
-                      {r.embarcacion_asignada && <span> · {r.embarcacion_asignada}</span>}
-                    </div>
-                  </div>
-                  {yaRegistrada
-                    ? <span style={{ fontSize: 12, padding: "5px 12px", borderRadius: 8, background: B.success + "22", color: B.success, fontWeight: 700 }}>✓ Llegó</span>
-                    : <button onClick={() => onNuevaLlegada("after_island", r, null)}
-                        style={{ padding: "7px 14px", borderRadius: 8, border: "none", background: B.sky, color: B.navy, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
-                        ⚓ Registrar llegada
-                      </button>
-                  }
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
-
-      {/* Llegadas After Island registradas (walk-in o con reserva) */}
-      {llegadasAfter.length > 0 && (
-        <div>
-          <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginBottom: 10, textTransform: "uppercase", letterSpacing: "0.05em" }}>Llegadas registradas ({llegadasAfter.length})</div>
-          {llegadasAfter.map(l => (
-            <LlegadaCard key={l.id} llegada={l} onEstadoChange={onRefresh} onDelete={async () => { await supabase.from("muelle_llegadas").delete().eq("id", l.id); onRefresh(); }} />
-          ))}
-        </div>
-      )}
-
-      {reservas.length === 0 && llegadasAfter.length === 0 && (
-        <div style={{ textAlign: "center", padding: 40, color: "rgba(255,255,255,0.3)", fontSize: 13 }}>
-          No hay After Island programados para hoy.<br />Usa el botón para registrar llegadas walk-in.
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ─── Tab: Restaurante ─────────────────────────────────────────────────────────
-function TabRestaurante({ fecha, llegadas, onRefresh, onNuevaLlegada }) {
-  const llegadasRest = llegadas.filter(l => l.tipo === "restaurante");
-
-  return (
-    <div>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-        <div style={{ fontSize: 13, color: "rgba(255,255,255,0.5)" }}>
-          {llegadasRest.length > 0 ? `${llegadasRest.length} embarcación${llegadasRest.length !== 1 ? "es" : ""} · ${llegadasRest.reduce((t, l) => t + (l.pax_total || 0), 0)} personas` : "Sin llegadas registradas"}
-        </div>
-        <button onClick={() => onNuevaLlegada("restaurante", null, null)}
-          style={{ padding: "9px 18px", borderRadius: 10, border: "none", background: B.success, color: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
-          🍽️ + Registrar llegada
-        </button>
-      </div>
-
-      {llegadasRest.length === 0 ? (
-        <div style={{ textAlign: "center", padding: 40, color: "rgba(255,255,255,0.3)", fontSize: 13 }}>
-          No hay llegadas al restaurante registradas.<br />Usa el botón para registrar embarcaciones que llegan solo a consumo.
-        </div>
-      ) : (
-        llegadasRest.map(l => (
-          <LlegadaCard key={l.id} llegada={l} onEstadoChange={onRefresh} onDelete={async () => { await supabase.from("muelle_llegadas").delete().eq("id", l.id); onRefresh(); }} />
-        ))
-      )}
-    </div>
-  );
-}
-
 // ─── MAIN MODULE ──────────────────────────────────────────────────────────────
 export default function MuelleCheckin() {
   const { isMobile } = useMobile();
-  const [fecha, setFecha] = useState(todayStr());
-  const [tab, setTab]     = useState("lanchas");
+  const [fecha, setFecha]   = useState(todayStr());
   const [llegadas, setLlegadas] = useState([]);
-  const [modal, setModal] = useState(null); // { tipo, reserva, salida }
+  const [modal, setModal]   = useState(null);
 
   const fetchLlegadas = useCallback(async () => {
     if (!supabase) return;
@@ -727,77 +507,101 @@ export default function MuelleCheckin() {
 
   useEffect(() => { fetchLlegadas(); }, [fetchLlegadas]);
 
-  // KPIs
-  const totalPax    = llegadas.reduce((t, l) => t + (l.pax_total || 0), 0);
-  const enIsla      = llegadas.filter(l => l.estado === "en_isla" || l.estado === "llegó").reduce((t, l) => t + (l.pax_total || 0), 0);
-  const salieron    = llegadas.filter(l => l.estado === "salió").reduce((t, l) => t + (l.pax_total || 0), 0);
+  const totalPax     = llegadas.reduce((t, l) => t + (l.pax_total || 0), 0);
+  const enIsla       = llegadas.filter(l => l.estado === "en_isla" || l.estado === "llegó").reduce((t, l) => t + (l.pax_total || 0), 0);
+  const salieron     = llegadas.filter(l => l.estado === "salió").reduce((t, l) => t + (l.pax_total || 0), 0);
   const totalCobrado = llegadas.reduce((t, l) => t + (l.total_cobrado || 0), 0);
 
-  const TABS = [
-    { key: "lanchas",     label: "⛵ Lanchas Atolon",  color: B.sky },
-    { key: "after",       label: "🌙 After Island",     color: B.sand },
-    { key: "restaurante", label: "🍽️ Restaurante",     color: B.success },
+  const porTipo = (tipo) => llegadas.filter(l => l.tipo === tipo);
+
+  const SECCIONES = [
+    { tipo: "lancha_atolon", icon: "⛵", label: "Lanchas Atolon",  color: B.sky,     btnBg: B.sky,     btnColor: B.navy },
+    { tipo: "after_island",  icon: "🌙", label: "After Island",    color: B.sand,    btnBg: B.sand,    btnColor: B.navy },
+    { tipo: "restaurante",   icon: "🍽️", label: "Restaurante",    color: B.success, btnBg: B.success, btnColor: "#fff"  },
   ];
 
-  const handleNuevaLlegada = (tipo, reserva, salida) => {
-    setModal({ tipo, reserva, salida });
+  const delLlegada = async (id) => {
+    await supabase.from("muelle_llegadas").delete().eq("id", id);
+    fetchLlegadas();
   };
 
   return (
     <div style={{ padding: isMobile ? "16px 12px" : "24px", fontFamily: "'Inter','Segoe UI',sans-serif", color: "#e2e8f0", minHeight: "100vh" }}>
+
       {/* Header */}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 24, flexWrap: "wrap", gap: 12 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20, flexWrap: "wrap", gap: 12 }}>
         <div>
-          <h2 style={{ margin: 0, fontSize: isMobile ? 20 : 24, fontWeight: 800, color: "#fff" }}>⚓ Muelle — Llegadas a Isla</h2>
-          <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginTop: 4 }}>Control de embarcaciones que llegan a Isla Tierra Bomba</div>
+          <h2 style={{ margin: 0, fontSize: isMobile ? 20 : 24, fontWeight: 800, color: "#fff" }}>⚓ Llegadas a Isla</h2>
+          <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginTop: 4 }}>Control de embarcaciones · Isla Tierra Bomba</div>
         </div>
         <input type="date" value={fecha} onChange={e => setFecha(e.target.value)}
           style={{ ...IS, width: "auto", fontSize: 14, padding: "8px 14px" }} />
       </div>
 
       {/* KPIs */}
-      <div style={{ display: "grid", gridTemplateColumns: `repeat(${isMobile ? 2 : 4}, 1fr)`, gap: 12, marginBottom: 24 }}>
+      <div style={{ display: "grid", gridTemplateColumns: `repeat(${isMobile ? 2 : 4}, 1fr)`, gap: 10, marginBottom: 20 }}>
         {[
-          { label: "Total pax llegados", value: totalPax, color: B.sky },
-          { label: "Actualmente en isla", value: enIsla, color: B.success },
-          { label: "Ya se fueron", value: salieron, color: "rgba(255,255,255,0.4)" },
-          { label: "Cobrado en muelle", value: COP(totalCobrado), color: B.sand },
+          { label: "Total llegados", value: totalPax,        color: B.sky },
+          { label: "En isla ahora",  value: enIsla,          color: B.success },
+          { label: "Ya se fueron",   value: salieron,        color: "rgba(255,255,255,0.4)" },
+          { label: "Cobrado",        value: COP(totalCobrado), color: B.sand },
         ].map(({ label, value, color }) => (
-          <div key={label} style={{ background: B.navyMid, borderRadius: 12, padding: "16px 18px", border: "1px solid rgba(255,255,255,0.07)" }}>
-            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>{label}</div>
-            <div style={{ fontSize: 22, fontWeight: 800, color }}>{value}</div>
+          <div key={label} style={{ background: B.navyMid, borderRadius: 12, padding: "14px 16px", border: "1px solid rgba(255,255,255,0.07)" }}>
+            <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 5 }}>{label}</div>
+            <div style={{ fontSize: 20, fontWeight: 800, color }}>{value}</div>
           </div>
         ))}
       </div>
 
-      {/* Tabs */}
-      <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
-        {TABS.map(t => (
-          <button key={t.key} onClick={() => setTab(t.key)}
-            style={{ padding: "9px 18px", borderRadius: 10, border: "none", cursor: "pointer", fontSize: 13, fontWeight: 600,
-              background: tab === t.key ? t.color : B.navyMid,
-              color: tab === t.key ? (t.key === "after" ? B.navy : t.key === "lanchas" ? B.navy : "#fff") : "rgba(255,255,255,0.6)" }}>
-            {t.label}
-            {(() => {
-              const count = llegadas.filter(l => l.tipo === (t.key === "lanchas" ? "lancha_atolon" : t.key === "after" ? "after_island" : "restaurante")).length;
-              return count > 0 ? <span style={{ marginLeft: 6, fontSize: 11, opacity: 0.8 }}>({count})</span> : null;
-            })()}
+      {/* Botones de registro */}
+      <div style={{ display: "flex", gap: 10, marginBottom: 22, flexWrap: "wrap" }}>
+        {SECCIONES.map(({ tipo, icon, label, btnBg, btnColor }) => (
+          <button key={tipo} onClick={() => setModal({ tipo, reserva: null })}
+            style={{ flex: 1, minWidth: 120, padding: "12px 16px", borderRadius: 12, border: "none", background: btnBg, color: btnColor, fontWeight: 700, fontSize: 13, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+            <span style={{ fontSize: 18 }}>{icon}</span> + {label}
           </button>
         ))}
       </div>
 
-      {/* Tab content */}
-      {tab === "lanchas" && (
-        <TabLanchas fecha={fecha} llegadas={llegadas} onRefresh={fetchLlegadas} onNuevaLlegada={handleNuevaLlegada} />
-      )}
-      {tab === "after" && (
-        <TabAfterIsland fecha={fecha} llegadas={llegadas} onRefresh={fetchLlegadas} onNuevaLlegada={handleNuevaLlegada} />
-      )}
-      {tab === "restaurante" && (
-        <TabRestaurante fecha={fecha} llegadas={llegadas} onRefresh={fetchLlegadas} onNuevaLlegada={handleNuevaLlegada} />
+      {/* Lista unificada por sección */}
+      {SECCIONES.map(({ tipo, icon, label, color }) => {
+        const lista = porTipo(tipo);
+        return (
+          <div key={tipo} style={{ marginBottom: 28 }}>
+            {/* Cabecera de sección */}
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+              <span style={{ fontSize: 16 }}>{icon}</span>
+              <span style={{ fontWeight: 700, fontSize: 14, color }}>{label}</span>
+              <span style={{ fontSize: 12, color: "rgba(255,255,255,0.35)" }}>
+                {lista.length > 0
+                  ? `${lista.length} embarcación${lista.length !== 1 ? "es" : ""} · ${lista.reduce((t, l) => t + (l.pax_total || 0), 0)} pax`
+                  : "Sin llegadas"}
+              </span>
+              <div style={{ flex: 1, height: 1, background: "rgba(255,255,255,0.07)" }} />
+            </div>
+
+            {/* Cards */}
+            {lista.length === 0 ? (
+              <div style={{ fontSize: 12, color: "rgba(255,255,255,0.2)", padding: "10px 0 0 4px", fontStyle: "italic" }}>
+                Ninguna registrada todavía
+              </div>
+            ) : (
+              lista.map(l => (
+                <LlegadaCard key={l.id} llegada={l} onEstadoChange={fetchLlegadas} onDelete={() => delLlegada(l.id)} />
+              ))
+            )}
+          </div>
+        );
+      })}
+
+      {/* Estado vacío global */}
+      {llegadas.length === 0 && (
+        <div style={{ textAlign: "center", padding: "40px 0", color: "rgba(255,255,255,0.2)", fontSize: 14 }}>
+          No hay llegadas registradas para este día
+        </div>
       )}
 
-      {/* Modal */}
+      {/* Modal registro */}
       {modal && (
         <ModalNuevaLlegada
           tipo={modal.tipo}
