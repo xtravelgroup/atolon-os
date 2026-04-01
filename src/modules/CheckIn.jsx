@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { B, todayStr } from "../brand";
 import { supabase } from "../lib/supabase";
 import { useMobile } from "../lib/useMobile";
+import jsQR from "jsqr";
 
 const IS = { width: "100%", padding: "9px 12px", borderRadius: 8, background: B.navy, border: `1px solid ${B.navyLight}`, color: B.white, fontSize: 13, outline: "none", boxSizing: "border-box" };
 const LS = { fontSize: 11, color: B.sand, display: "block", marginBottom: 5, textTransform: "uppercase", letterSpacing: "0.06em" };
@@ -18,11 +19,11 @@ const paxCompleto = (res) => {
 
 // ─── QR Scanner ──────────────────────────────────────────────────────────────
 function QRScanner({ onScan, onClose }) {
-  const videoRef  = useRef(null);
-  const streamRef = useRef(null);
-  const rafRef    = useRef(null);
+  const videoRef   = useRef(null);
+  const canvasRef  = useRef(null);
+  const streamRef  = useRef(null);
+  const rafRef     = useRef(null);
   const [error, setError] = useState("");
-  const [scanning, setScanning] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -32,12 +33,35 @@ function QRScanner({ onScan, onClose }) {
         streamRef.current = stream;
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
-          videoRef.current.play();
-          setScanning(true);
-          scanLoop();
+          videoRef.current.play().then(() => {
+            if (active) rafRef.current = requestAnimationFrame(tick);
+          });
         }
       })
       .catch(() => setError("No se pudo acceder a la cámara. Asegúrate de dar permiso."));
+
+    const tick = () => {
+      const video  = videoRef.current;
+      const canvas = canvasRef.current;
+      if (!video || !canvas || video.readyState < 2) {
+        rafRef.current = requestAnimationFrame(tick);
+        return;
+      }
+      const w = video.videoWidth;
+      const h = video.videoHeight;
+      if (!w || !h) { rafRef.current = requestAnimationFrame(tick); return; }
+      canvas.width  = w;
+      canvas.height = h;
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(video, 0, 0, w, h);
+      const imageData = ctx.getImageData(0, 0, w, h);
+      const code = jsQR(imageData.data, w, h, { inversionAttempts: "dontInvert" });
+      if (code?.data) {
+        onScan(code.data);
+        return;
+      }
+      rafRef.current = requestAnimationFrame(tick);
+    };
 
     return () => {
       active = false;
@@ -45,26 +69,6 @@ function QRScanner({ onScan, onClose }) {
       if (streamRef.current) streamRef.current.getTracks().forEach(t => t.stop());
     };
   }, []);
-
-  const scanLoop = () => {
-    if (!("BarcodeDetector" in window)) return;
-    const detector = new window.BarcodeDetector({ formats: ["qr_code"] });
-    const detect = async () => {
-      if (!videoRef.current || videoRef.current.readyState < 2) {
-        rafRef.current = requestAnimationFrame(detect);
-        return;
-      }
-      try {
-        const codes = await detector.detect(videoRef.current);
-        if (codes.length > 0) {
-          onScan(codes[0].rawValue);
-          return;
-        }
-      } catch (_) {}
-      rafRef.current = requestAnimationFrame(detect);
-    };
-    rafRef.current = requestAnimationFrame(detect);
-  };
 
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.95)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", zIndex: 9999 }}>
@@ -74,8 +78,9 @@ function QRScanner({ onScan, onClose }) {
       ) : (
         <div style={{ position: "relative", width: 300, height: 300, borderRadius: 16, overflow: "hidden", border: `3px solid ${B.sand}` }}>
           <video ref={videoRef} style={{ width: "100%", height: "100%", objectFit: "cover" }} muted playsInline />
+          <canvas ref={canvasRef} style={{ display: "none" }} />
           {/* Corner markers */}
-          {["0 0", "0 auto", "auto 0", "auto"].map((m, i) => (
+          {[0,1,2,3].map(i => (
             <div key={i} style={{
               position: "absolute", width: 30, height: 30,
               top: i < 2 ? 8 : "auto", bottom: i >= 2 ? 8 : "auto",
@@ -86,11 +91,6 @@ function QRScanner({ onScan, onClose }) {
               borderRight: i % 2 !== 0 ? `3px solid ${B.sand}` : "none",
             }} />
           ))}
-          {scanning && !("BarcodeDetector" in window) && (
-            <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.6)" }}>
-              <div style={{ color: B.warning, fontSize: 12, textAlign: "center", padding: 16 }}>BarcodeDetector no soportado en este navegador. Usa Chrome en Android.</div>
-            </div>
-          )}
         </div>
       )}
       <button onClick={onClose} style={{ marginTop: 24, padding: "12px 32px", borderRadius: 10, background: B.navyLight, color: B.white, border: "none", fontSize: 14, fontWeight: 700, cursor: "pointer" }}>Cancelar</button>
