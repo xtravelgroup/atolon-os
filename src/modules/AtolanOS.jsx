@@ -29,6 +29,7 @@ const NAV = [
   { key: "menus",         label: "Menús",         icon: "🍽️" },
   { key: "configuracion", label: "Configuración", icon: "⚙" },
   { key: "usuarios",      label: "Usuarios",      icon: "👥" },
+  { key: "vip",          label: "Society",       icon: "✦" },
 ];
 
 // KPIs are now loaded from Supabase in the Dashboard component

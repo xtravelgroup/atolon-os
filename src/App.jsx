@@ -191,6 +191,7 @@ import CheckIn from "./modules/CheckIn";
 import ZarpeInfo from "./modules/ZarpeInfo";
 import Analitica from "./modules/Analitica";
 import MuelleCheckin from "./modules/MuelleCheckin";
+import VIPAdmin from "./modules/VIPAdmin";
 
 const MODULE_MAP = {
   pasadias: <Pasadias />,
@@ -212,6 +213,7 @@ const MODULE_MAP = {
   configuracion: <Configuracion />,
   usuarios: <Usuarios />,
   analitica: <Analitica />,
+  vip: <VIPAdmin />,
 };
 
 // Public routes — no auth required
