@@ -98,7 +98,7 @@ function GrupoLink({ evento, onClose }) {
 }
 
 // ─── Modal crear/editar ───────────────────────────────────────────────────────
-function EventoModal({ evento, categoria, salidas, aliados, onClose, onSaved, onShowLink }) {
+function EventoModal({ evento, categoria, salidas, aliados, vendedores, onClose, onSaved, onShowLink }) {
   const isEdit   = !!evento?.id;
   const isGrupo  = categoria === "grupo";
   const tiposOpt = isGrupo ? TIPOS_GRUPO : TIPOS_EVT;
@@ -288,8 +288,10 @@ function EventoModal({ evento, categoria, salidas, aliados, onClose, onSaved, on
           {/* Vendedor */}
           <div>
             <label style={LS}>Vendedor responsable</label>
-            <input value={form.vendedor} onChange={e => set("vendedor", e.target.value)}
-              placeholder="Nombre del vendedor..." style={IS} />
+            <select value={form.vendedor} onChange={e => set("vendedor", e.target.value)} style={IS}>
+              <option value="">Sin asignar</option>
+              {vendedores.map(v => <option key={v.id} value={v.nombre}>{v.nombre}</option>)}
+            </select>
           </div>
 
           <div>
@@ -362,10 +364,11 @@ function KanbanBoard({ items, isGrupo, onEdit, onBeo, onLink }) {
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
 export default function Eventos() {
-  const [todos,   setTodos]   = useState([]);
-  const [salidas, setSalidas] = useState([]);
-  const [aliados, setAliados] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [todos,     setTodos]     = useState([]);
+  const [salidas,   setSalidas]   = useState([]);
+  const [aliados,   setAliados]   = useState([]);
+  const [vendedores,setVendedores]= useState([]);
+  const [loading,   setLoading]   = useState(true);
   const [tab,     setTab]     = useState("evento");
   const [beo,     setBeo]     = useState(null);
   const [modal,   setModal]   = useState(null);
@@ -374,10 +377,11 @@ export default function Eventos() {
   const fetchTodos = useCallback(async () => {
     if (!supabase) { setLoading(false); return; }
     setLoading(true);
-    const [evtR, salR, aliR] = await Promise.all([
+    const [evtR, salR, aliR, vendR] = await Promise.all([
       supabase.from("eventos").select("*").order("fecha", { ascending: true }),
       supabase.from("salidas").select("id, hora, nombre").eq("activo", true).order("orden"),
       supabase.from("aliados_b2b").select("id, nombre, tipo").eq("activo", true).order("nombre"),
+      supabase.from("usuarios").select("id, nombre").in("rol_id", ["ventas", "gerente_ventas"]).eq("activo", true).order("nombre"),
     ]);
     if (evtR.data) setTodos(evtR.data.map(e => ({
       id: e.id, nombre: e.nombre, tipo: e.tipo, fecha: e.fecha,
@@ -385,9 +389,11 @@ export default function Eventos() {
       contacto: e.contacto || "", tel: e.tel || "", email: e.email || "",
       notas: e.notas || "", categoria: e.categoria || "evento",
       salidas_grupo: e.salidas_grupo || [], aliado_id: e.aliado_id || "",
+      vendedor: e.vendedor || "",
     })));
     if (salR.data) setSalidas(salR.data);
     if (aliR.data) setAliados(aliR.data);
+    if (vendR.data) setVendedores(vendR.data);
     setLoading(false);
   }, []);
 
@@ -451,6 +457,7 @@ export default function Eventos() {
           categoria={modal === "new" ? tab : modal.categoria}
           salidas={salidas}
           aliados={aliados}
+          vendedores={vendedores}
           onClose={() => setModal(null)}
           onSaved={fetchTodos}
           onShowLink={setLinkEvt}
