@@ -23,3 +23,10 @@ ALTER TABLE muelle_llegadas ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "muelle_all" ON muelle_llegadas FOR ALL TO authenticated USING (true) WITH CHECK (true);
 
 CREATE INDEX IF NOT EXISTS muelle_llegadas_fecha_idx ON muelle_llegadas(fecha);
+
+-- Foto embarcación
+ALTER TABLE muelle_llegadas ADD COLUMN IF NOT EXISTS foto_url text;
+
+-- Storage bucket para fotos de muelle (ejecutar una sola vez desde Supabase dashboard)
+-- INSERT INTO storage.buckets (id, name, public) VALUES ('muelle-fotos', 'muelle-fotos', true) ON CONFLICT DO NOTHING;
+-- CREATE POLICY "muelle_fotos_all" ON storage.objects FOR ALL TO authenticated USING (bucket_id = 'muelle-fotos') WITH CHECK (bucket_id = 'muelle-fotos');

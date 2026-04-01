@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { B, todayStr } from "../brand";
 import { supabase } from "../lib/supabase";
 import { useMobile } from "../lib/useMobile";
+import { wompiCheckoutUrl } from "../lib/wompi";
 
 const IS = { width: "100%", padding: "10px 14px", borderRadius: 8, background: B.navyLight, border: `1px solid rgba(255,255,255,0.1)`, color: "#fff", fontSize: 13, outline: "none", boxSizing: "border-box", fontFamily: "inherit" };
 const LS = { fontSize: 11, color: "rgba(255,255,255,0.5)", display: "block", marginBottom: 5, textTransform: "uppercase", letterSpacing: "0.06em" };
@@ -17,11 +18,19 @@ const ESTADO_COLOR = {
   salió:    { bg: B.navyLight, color: "rgba(255,255,255,0.35)", label: "Salió" },
 };
 
+// ─── Precios After Island ─────────────────────────────────────────────────────
+const PRECIO_AFTER_A = 170000;
+const PRECIO_AFTER_N = 120000;
+
 // ─── Modal Registro Llegada ───────────────────────────────────────────────────
 function ModalNuevaLlegada({ tipo, fecha, reserva, onClose, onSaved }) {
-  const esAfter = tipo === "after_island";
-  const esRest  = tipo === "restaurante";
+  const esAfter  = tipo === "after_island";
+  const esRest   = tipo === "restaurante";
   const esLancha = tipo === "lancha_atolon";
+
+  // Paso 1: datos de la embarcación / Paso 2 (solo After): cobro
+  const [paso, setPaso] = useState(1);
+  const [llegadaId, setLlegadaId] = useState(null);
 
   const [f, setF] = useState({
     embarcacion_nombre: reserva?.embarcacion_asignada || "",
@@ -29,35 +38,98 @@ function ModalNuevaLlegada({ tipo, fecha, reserva, onClose, onSaved }) {
     pax_a: reserva ? (reserva.pax_a || reserva.pax || 1) : 1,
     pax_n: reserva ? (reserva.pax_n || 0) : 0,
     hora_llegada: hoyHora(),
-    total_cobrado: esAfter ? "" : "",
-    metodo_pago: "efectivo",
     notas: "",
   });
-  const [saving, setSaving] = useState(false);
-  const s = (k, v) => setF(p => ({ ...p, [k]: v }));
 
-  const paxTotal = Number(f.pax_a) + Number(f.pax_n);
+  // Foto
+  const [fotoFile, setFotoFile]   = useState(null);
+  const [fotoPreview, setFotoPreview] = useState(null);
+  const [uploadingFoto, setUploadingFoto] = useState(false);
 
-  const handleSave = async () => {
-    if (!supabase || saving) return;
-    setSaving(true);
+  // Cobro (paso 2)
+  const [cobro, setCobro]         = useState({ metodo: null, email: "", telefono: "", linkUrl: "", linkGenerado: false, monto: 0 });
+  const [savingPaso1, setSavingPaso1] = useState(false);
+  const [savingCobro, setSavingCobro] = useState(false);
+
+  const handleFotoChange = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setFotoFile(file);
+    const reader = new FileReader();
+    reader.onload = (ev) => setFotoPreview(ev.target.result);
+    reader.readAsDataURL(file);
+  };
+
+  const s  = (k, v) => setF(p => ({ ...p, [k]: v }));
+  const sc = (k, v) => setCobro(p => ({ ...p, [k]: v }));
+
+  const paxTotal   = Number(f.pax_a) + Number(f.pax_n);
+  const montoAfter = Number(f.pax_a) * PRECIO_AFTER_A + Number(f.pax_n) * PRECIO_AFTER_N;
+
+  // ── Paso 1: guardar llegada ───────────────────────────────────────────────
+  const handlePaso1 = async () => {
+    if (!supabase || savingPaso1) return;
+    setSavingPaso1(true);
+    const id = `ML-${Date.now()}`;
+
+    // Subir foto si hay una
+    let foto_url = null;
+    if (fotoFile) {
+      setUploadingFoto(true);
+      const ext = fotoFile.name.split(".").pop();
+      const path = `${id}.${ext}`;
+      const { data: upData, error: upErr } = await supabase.storage
+        .from("muelle-fotos")
+        .upload(path, fotoFile, { upsert: true });
+      if (!upErr && upData) {
+        const { data: urlData } = supabase.storage.from("muelle-fotos").getPublicUrl(path);
+        foto_url = urlData?.publicUrl || null;
+      }
+      setUploadingFoto(false);
+    }
+
     await supabase.from("muelle_llegadas").insert({
-      id: `ML-${Date.now()}`,
-      fecha,
-      tipo,
+      id, fecha, tipo,
       embarcacion_nombre: f.embarcacion_nombre || null,
-      matricula: f.matricula || null,
-      pax_a: Number(f.pax_a) || 0,
-      pax_n: Number(f.pax_n) || 0,
+      matricula:          f.matricula || null,
+      pax_a:     Number(f.pax_a) || 0,
+      pax_n:     Number(f.pax_n) || 0,
       pax_total: paxTotal,
       reserva_id: reserva?.id || null,
       hora_llegada: f.hora_llegada || null,
       estado: "llegó",
-      total_cobrado: Number(f.total_cobrado) || 0,
-      metodo_pago: f.total_cobrado ? f.metodo_pago : null,
       notas: f.notas || null,
+      foto_url,
     });
-    setSaving(false);
+    setSavingPaso1(false);
+    if (esAfter) {
+      setLlegadaId(id);
+      setCobro(p => ({ ...p, monto: montoAfter }));
+      setPaso(2);
+    } else {
+      onSaved();
+    }
+  };
+
+  // ── Paso 2: registrar cobro ───────────────────────────────────────────────
+  const handleCobro = async (metodo) => {
+    if (!supabase || savingCobro || !llegadaId) return;
+    if (metodo === "link") {
+      // Generar link Wompi
+      setSavingCobro(true);
+      const ref = llegadaId;
+      const url = await wompiCheckoutUrl({ referencia: ref, totalCOP: cobro.monto, email: cobro.email || "" });
+      await supabase.from("muelle_llegadas").update({ metodo_pago: "link", total_cobrado: cobro.monto }).eq("id", llegadaId);
+      sc("linkUrl", url);
+      sc("linkGenerado", true);
+      sc("metodo", "link");
+      setSavingCobro(false);
+      return;
+    }
+    // Efectivo o Datáfono — marcar como cobrado
+    setSavingCobro(true);
+    await supabase.from("muelle_llegadas").update({ total_cobrado: cobro.monto, metodo_pago: metodo }).eq("id", llegadaId);
+    setSavingCobro(false);
     onSaved();
   };
 
@@ -68,75 +140,205 @@ function ModalNuevaLlegada({ tipo, fecha, reserva, onClose, onSaved }) {
     <div style={{ position: "fixed", inset: 0, background: "#000B", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
       onClick={e => e.target === e.currentTarget && onClose()}>
       <div style={{ background: B.navyMid, borderRadius: 18, padding: 28, width: 500, maxWidth: "100%", maxHeight: "90vh", overflowY: "auto" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 22 }}>
+
+        {/* Header */}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
           <div>
-            <div style={{ fontSize: 18, fontWeight: 800 }}>{tipoIcon} Registrar Llegada</div>
+            <div style={{ fontSize: 18, fontWeight: 800 }}>{tipoIcon} {paso === 1 ? "Registrar Llegada" : "Cobro After Island"}</div>
             <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginTop: 3 }}>{tipoLabel}{reserva ? ` — ${reserva.nombre}` : ""}</div>
           </div>
           <button onClick={onClose} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.3)", fontSize: 20, cursor: "pointer" }}>✕</button>
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 16px" }}>
-          <div style={{ gridColumn: "1 / -1", marginBottom: 14 }}>
-            <label style={LS}>Nombre / ID embarcación</label>
-            <input value={f.embarcacion_nombre} onChange={e => s("embarcacion_nombre", e.target.value)}
-              placeholder={esLancha ? "Ej: Atolon I" : "Ej: Patricia, Barco sin nombre..."} style={IS} />
+        {/* Indicador de pasos (solo After) */}
+        {esAfter && (
+          <div style={{ display: "flex", gap: 6, marginBottom: 22, marginTop: 10 }}>
+            {["Embarcación", "Cobro"].map((lbl, i) => (
+              <div key={lbl} style={{ flex: 1, height: 4, borderRadius: 2, background: paso > i ? B.sky : "rgba(255,255,255,0.12)" }} />
+            ))}
           </div>
-          {!esLancha && (
-            <div style={{ gridColumn: "1 / -1", marginBottom: 14 }}>
-              <label style={LS}>Matrícula (opcional)</label>
-              <input value={f.matricula} onChange={e => s("matricula", e.target.value)} placeholder="Ej: CT-1234" style={IS} />
-            </div>
-          )}
-          <div style={{ marginBottom: 14 }}>
-            <label style={LS}>Adultos</label>
-            <input type="number" min="0" value={f.pax_a} onChange={e => s("pax_a", e.target.value)} style={IS} />
-          </div>
-          <div style={{ marginBottom: 14 }}>
-            <label style={LS}>Niños</label>
-            <input type="number" min="0" value={f.pax_n} onChange={e => s("pax_n", e.target.value)} style={IS} />
-          </div>
-          <div style={{ marginBottom: 14 }}>
-            <label style={LS}>Hora llegada</label>
-            <input type="time" value={f.hora_llegada} onChange={e => s("hora_llegada", e.target.value)} style={IS} />
-          </div>
-          <div style={{ marginBottom: 14 }}>
-            <label style={LS}>Total cobrado (si aplica)</label>
-            <input type="number" value={f.total_cobrado} onChange={e => s("total_cobrado", e.target.value)}
-              placeholder={esAfter ? "170000" : "0"} style={IS} />
-          </div>
-          {f.total_cobrado > 0 && (
-            <div style={{ marginBottom: 14 }}>
-              <label style={LS}>Método de pago</label>
-              <select value={f.metodo_pago} onChange={e => s("metodo_pago", e.target.value)} style={IS}>
-                <option value="efectivo">Efectivo</option>
-                <option value="transferencia">Transferencia</option>
-                <option value="datafono">Datáfono</option>
-              </select>
-            </div>
-          )}
-          <div style={{ gridColumn: "1 / -1", marginBottom: 14 }}>
-            <label style={LS}>Notas</label>
-            <input value={f.notas} onChange={e => s("notas", e.target.value)} placeholder="Observaciones..." style={IS} />
-          </div>
-        </div>
+        )}
+        {!esAfter && <div style={{ marginBottom: 20 }} />}
 
-        {paxTotal > 0 && (
-          <div style={{ background: B.sky + "18", borderRadius: 10, padding: "10px 16px", marginBottom: 16, fontSize: 13, color: B.sky }}>
-            Total: <strong>{paxTotal} persona{paxTotal !== 1 ? "s" : ""}</strong>
-            {f.total_cobrado > 0 && <span style={{ marginLeft: 12 }}>· {COP(f.total_cobrado)} vía <strong>{f.metodo_pago}</strong></span>}
+        {/* ── PASO 1: Datos embarcación ── */}
+        {paso === 1 && (
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 16px" }}>
+            <div style={{ gridColumn: "1 / -1", marginBottom: 14 }}>
+              <label style={LS}>Nombre / ID embarcación</label>
+              <input value={f.embarcacion_nombre} onChange={e => s("embarcacion_nombre", e.target.value)}
+                placeholder={esLancha ? "Ej: Atolon I" : "Ej: Patricia, sin nombre..."} style={IS} />
+            </div>
+            {!esLancha && (
+              <div style={{ gridColumn: "1 / -1", marginBottom: 14 }}>
+                <label style={LS}>Matrícula (opcional)</label>
+                <input value={f.matricula} onChange={e => s("matricula", e.target.value)} placeholder="Ej: CT-1234" style={IS} />
+              </div>
+            )}
+            <div style={{ marginBottom: 14 }}>
+              <label style={LS}>Adultos</label>
+              <input type="number" min="0" value={f.pax_a} onChange={e => s("pax_a", e.target.value)} style={IS} />
+            </div>
+            <div style={{ marginBottom: 14 }}>
+              <label style={LS}>Niños</label>
+              <input type="number" min="0" value={f.pax_n} onChange={e => s("pax_n", e.target.value)} style={IS} />
+            </div>
+            <div style={{ marginBottom: 14 }}>
+              <label style={LS}>Hora llegada</label>
+              <input type="time" value={f.hora_llegada} onChange={e => s("hora_llegada", e.target.value)} style={IS} />
+            </div>
+            <div style={{ marginBottom: 14 }}>
+              <label style={LS}>Notas</label>
+              <input value={f.notas} onChange={e => s("notas", e.target.value)} placeholder="Observaciones..." style={IS} />
+            </div>
+
+            {/* Foto embarcación */}
+            <div style={{ gridColumn: "1 / -1", marginBottom: 4 }}>
+              <label style={LS}>Foto embarcación (opcional)</label>
+              {fotoPreview ? (
+                <div style={{ position: "relative", display: "inline-block" }}>
+                  <img src={fotoPreview} alt="preview" style={{ width: "100%", maxHeight: 180, objectFit: "cover", borderRadius: 10, border: `1px solid rgba(255,255,255,0.12)` }} />
+                  <button onClick={() => { setFotoFile(null); setFotoPreview(null); }}
+                    style={{ position: "absolute", top: 6, right: 6, background: "rgba(0,0,0,0.6)", border: "none", color: "#fff", borderRadius: "50%", width: 26, height: 26, cursor: "pointer", fontSize: 13, display: "flex", alignItems: "center", justifyContent: "center" }}>✕</button>
+                  <label style={{ position: "absolute", bottom: 6, right: 6, background: "rgba(0,0,0,0.6)", color: "#fff", fontSize: 11, padding: "4px 10px", borderRadius: 8, cursor: "pointer", fontWeight: 600 }}>
+                    Cambiar
+                    <input type="file" accept="image/*" style={{ display: "none" }} onChange={handleFotoChange} />
+                  </label>
+                </div>
+              ) : (
+                <label style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, width: "100%", padding: "20px", borderRadius: 10, border: `2px dashed rgba(255,255,255,0.15)`, background: B.navyLight, cursor: "pointer", color: "rgba(255,255,255,0.4)", fontSize: 13 }}>
+                  <span style={{ fontSize: 24 }}>📷</span>
+                  <span>Toca para agregar foto</span>
+                  <input type="file" accept="image/*" capture="environment" style={{ display: "none" }} onChange={handleFotoChange} />
+                </label>
+              )}
+            </div>
           </div>
         )}
 
-        <div style={{ display: "flex", gap: 10 }}>
-          <button onClick={onClose} style={{ flex: 1, padding: "11px", borderRadius: 10, border: `1px solid ${B.navyLight}`, background: "none", color: "rgba(255,255,255,0.4)", fontSize: 13, cursor: "pointer" }}>
-            Cancelar
-          </button>
-          <button onClick={handleSave} disabled={saving}
-            style={{ flex: 2, padding: "11px", borderRadius: 10, border: "none", background: saving ? B.navyLight : B.sky, color: saving ? "rgba(255,255,255,0.4)" : B.navy, fontSize: 14, fontWeight: 700, cursor: "pointer" }}>
-            {saving ? "Registrando..." : "⚓ Registrar Llegada"}
-          </button>
-        </div>
+        {/* Resumen pax + precio (paso 1, After Island) */}
+        {paso === 1 && esAfter && paxTotal > 0 && (
+          <div style={{ background: B.sand + "18", border: `1px solid ${B.sand}33`, borderRadius: 10, padding: "12px 16px", marginBottom: 16 }}>
+            <div style={{ fontSize: 12, color: B.sand, marginBottom: 6, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em" }}>💰 Valor a cobrar</div>
+            <div style={{ display: "flex", gap: 16, fontSize: 13 }}>
+              {Number(f.pax_a) > 0 && <span>{f.pax_a} adulto{f.pax_a > 1 ? "s" : ""} × {COP(PRECIO_AFTER_A)} = <strong>{COP(Number(f.pax_a) * PRECIO_AFTER_A)}</strong></span>}
+              {Number(f.pax_n) > 0 && <span>{f.pax_n} niño{f.pax_n > 1 ? "s" : ""} × {COP(PRECIO_AFTER_N)} = <strong>{COP(Number(f.pax_n) * PRECIO_AFTER_N)}</strong></span>}
+            </div>
+            <div style={{ fontSize: 18, fontWeight: 800, color: B.sand, marginTop: 6 }}>Total: {COP(montoAfter)}</div>
+          </div>
+        )}
+
+        {/* ── PASO 2: Cobro ── */}
+        {paso === 2 && (
+          <div>
+            {/* Resumen */}
+            <div style={{ background: B.sand + "18", border: `1px solid ${B.sand}33`, borderRadius: 12, padding: "14px 18px", marginBottom: 22 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div>
+                  <div style={{ fontSize: 12, color: B.sand, fontWeight: 700, marginBottom: 4 }}>🌙 After Island — {f.embarcacion_nombre || "Embarcación"}</div>
+                  <div style={{ fontSize: 12, color: "rgba(255,255,255,0.5)" }}>
+                    {f.pax_a} adulto{f.pax_a > 1 ? "s" : ""}{f.pax_n > 0 ? ` + ${f.pax_n} niño${f.pax_n > 1 ? "s" : ""}` : ""} · Llegó {f.hora_llegada}
+                  </div>
+                </div>
+                <div style={{ fontSize: 22, fontWeight: 800, color: B.sand }}>{COP(cobro.monto)}</div>
+              </div>
+            </div>
+
+            {!cobro.linkGenerado ? (
+              <>
+                <div style={{ fontSize: 13, color: "rgba(255,255,255,0.5)", marginBottom: 14 }}>¿Cómo se realiza el cobro?</div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                  {/* Datáfono */}
+                  <button onClick={() => handleCobro("datafono")} disabled={savingCobro}
+                    style={{ padding: "16px 20px", borderRadius: 12, border: `2px solid ${B.sky}44`, background: cobro.metodo === "datafono" ? B.sky + "22" : B.navy, color: "#fff", cursor: "pointer", display: "flex", alignItems: "center", gap: 14, textAlign: "left" }}>
+                    <span style={{ fontSize: 28 }}>💳</span>
+                    <div>
+                      <div style={{ fontWeight: 700, fontSize: 14 }}>Datáfono</div>
+                      <div style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", marginTop: 2 }}>Cobrar con datáfono físico en el muelle</div>
+                    </div>
+                    <span style={{ marginLeft: "auto", fontSize: 13, fontWeight: 700, color: B.sky }}>{COP(cobro.monto)}</span>
+                  </button>
+
+                  {/* Efectivo */}
+                  <button onClick={() => handleCobro("efectivo")} disabled={savingCobro}
+                    style={{ padding: "16px 20px", borderRadius: 12, border: `2px solid ${B.success}44`, background: cobro.metodo === "efectivo" ? B.success + "22" : B.navy, color: "#fff", cursor: "pointer", display: "flex", alignItems: "center", gap: 14, textAlign: "left" }}>
+                    <span style={{ fontSize: 28 }}>💵</span>
+                    <div>
+                      <div style={{ fontWeight: 700, fontSize: 14 }}>Efectivo</div>
+                      <div style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", marginTop: 2 }}>Cobrar en efectivo en el muelle</div>
+                    </div>
+                    <span style={{ marginLeft: "auto", fontSize: 13, fontWeight: 700, color: B.success }}>{COP(cobro.monto)}</span>
+                  </button>
+
+                  {/* Enviar Link */}
+                  <div style={{ padding: "16px 20px", borderRadius: 12, border: `2px solid ${B.sand}44`, background: B.navy }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 12 }}>
+                      <span style={{ fontSize: 28 }}>🔗</span>
+                      <div>
+                        <div style={{ fontWeight: 700, fontSize: 14 }}>Enviar Link de Pago</div>
+                        <div style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", marginTop: 2 }}>Wompi · El cliente paga desde su celular</div>
+                      </div>
+                      <span style={{ marginLeft: "auto", fontSize: 13, fontWeight: 700, color: B.sand }}>{COP(cobro.monto)}</span>
+                    </div>
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <input value={cobro.email} onChange={e => sc("email", e.target.value)}
+                        placeholder="Email del cliente (opcional)" style={{ ...IS, flex: 1, fontSize: 12 }} />
+                      <button onClick={() => handleCobro("link")} disabled={savingCobro}
+                        style={{ padding: "10px 16px", borderRadius: 8, border: "none", background: B.sand, color: B.navy, fontWeight: 700, fontSize: 13, cursor: "pointer", whiteSpace: "nowrap" }}>
+                        {savingCobro ? "..." : "Generar →"}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                <button onClick={onSaved} style={{ width: "100%", marginTop: 16, padding: "10px", borderRadius: 10, border: `1px solid rgba(255,255,255,0.1)`, background: "none", color: "rgba(255,255,255,0.3)", fontSize: 12, cursor: "pointer" }}>
+                  Omitir cobro por ahora
+                </button>
+              </>
+            ) : (
+              /* Link generado */
+              <div style={{ textAlign: "center" }}>
+                <div style={{ fontSize: 40, marginBottom: 12 }}>🔗</div>
+                <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 6 }}>Link de pago generado</div>
+                <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginBottom: 20 }}>Envíalo por WhatsApp o cópialo</div>
+
+                <div style={{ background: B.navy, borderRadius: 10, padding: "12px 16px", marginBottom: 16, fontSize: 11, wordBreak: "break-all", color: B.sky, textAlign: "left" }}>
+                  {cobro.linkUrl}
+                </div>
+
+                <div style={{ display: "flex", gap: 10, marginBottom: 16 }}>
+                  <button onClick={() => navigator.clipboard.writeText(cobro.linkUrl)}
+                    style={{ flex: 1, padding: "11px", borderRadius: 10, border: `1px solid ${B.sky}44`, background: "none", color: B.sky, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
+                    📋 Copiar link
+                  </button>
+                  <a href={`https://wa.me/?text=${encodeURIComponent(`Hola 👋 Aquí está tu link de pago para el After Island en Atolon Beach Club 🌙\n\n${cobro.linkUrl}`)}`}
+                    target="_blank" rel="noopener noreferrer"
+                    style={{ flex: 1, padding: "11px", borderRadius: 10, border: "none", background: "#25D366", color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer", textDecoration: "none", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="16" height="16"><path fill="#fff" d="M16 2C8.28 2 2 8.28 2 16c0 2.46.66 4.77 1.8 6.77L2 30l7.43-1.76A13.93 13.93 0 0 0 16 30c7.72 0 14-6.28 14-14S23.72 2 16 2Z"/></svg>
+                    WhatsApp
+                  </a>
+                </div>
+
+                <button onClick={onSaved}
+                  style={{ width: "100%", padding: "12px", borderRadius: 10, border: "none", background: B.sky, color: B.navy, fontSize: 14, fontWeight: 700, cursor: "pointer" }}>
+                  ✓ Listo
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Botón continuar (paso 1) */}
+        {paso === 1 && (
+          <div style={{ display: "flex", gap: 10, marginTop: 4 }}>
+            <button onClick={onClose} style={{ flex: 1, padding: "11px", borderRadius: 10, border: `1px solid ${B.navyLight}`, background: "none", color: "rgba(255,255,255,0.4)", fontSize: 13, cursor: "pointer" }}>
+              Cancelar
+            </button>
+            <button onClick={handlePaso1} disabled={savingPaso1 || uploadingFoto}
+              style={{ flex: 2, padding: "11px", borderRadius: 10, border: "none", background: (savingPaso1 || uploadingFoto) ? B.navyLight : B.sky, color: (savingPaso1 || uploadingFoto) ? "rgba(255,255,255,0.4)" : B.navy, fontSize: 14, fontWeight: 700, cursor: "pointer" }}>
+              {uploadingFoto ? "Subiendo foto..." : savingPaso1 ? "Registrando..." : esAfter ? "Registrar → Cobro" : "⚓ Registrar Llegada"}
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -166,6 +368,11 @@ function LlegadaCard({ llegada, onEstadoChange, onDelete }) {
 
   return (
     <div style={{ background: B.navyMid, borderRadius: 12, padding: "14px 18px", marginBottom: 10, border: `1px solid ${est.color}33` }}>
+      {llegada.foto_url && (
+        <a href={llegada.foto_url} target="_blank" rel="noopener noreferrer" style={{ display: "block", marginBottom: 10 }}>
+          <img src={llegada.foto_url} alt="embarcación" style={{ width: "100%", maxHeight: 140, objectFit: "cover", borderRadius: 8, border: `1px solid rgba(255,255,255,0.08)` }} />
+        </a>
+      )}
       <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
         <div style={{ fontSize: 22, flexShrink: 0 }}>{tipoIcon}</div>
         <div style={{ flex: 1, minWidth: 0 }}>
