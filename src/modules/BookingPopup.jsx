@@ -1086,7 +1086,7 @@ export default function BookingPopup() {
           </div>
           <div style={{ display: "flex", gap: 4 }}>
             {["es","en"].map(l => (
-              <a key={l} href={`?tipo=${tipoQ}&lang=${l}`}
+              <a key={l} href={grupoQ ? `?grupo=${grupoQ}&lang=${l}` : `?tipo=${tipoQ}&lang=${l}`}
                 style={{ fontSize: 11, fontWeight: 700, padding: "3px 9px", borderRadius: 6, background: langQ === l ? C.primary : "white", color: langQ === l ? "white" : C.textMid, border: `1px solid ${langQ === l ? C.primary : C.border}`, cursor: "pointer", textDecoration: "none" }}>
                 {l.toUpperCase()}
               </a>
