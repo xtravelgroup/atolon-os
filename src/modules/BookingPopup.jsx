@@ -1115,11 +1115,9 @@ export default function BookingPopup() {
       <div style={{ width: "100%", maxWidth: 480 }}>
 
         {/* Brand header */}
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
-          <div style={{ flex: 1, textAlign: "center" }}>
-            <img src="/atolon-peces.png" alt="Atolon Beach Club" style={{ height: 130, objectFit: "contain" }} />
-          </div>
-          <div style={{ display: "flex", gap: 4 }}>
+        <div style={{ position: "relative", textAlign: "center", marginBottom: 20 }}>
+          <img src="/atolon-peces.png" alt="Atolon Beach Club" style={{ height: 130, objectFit: "contain" }} />
+          <div style={{ position: "absolute", top: "50%", right: 0, transform: "translateY(-50%)", display: "flex", gap: 4 }}>
             {["es","en"].map(l => (
               <a key={l} href={grupoQ ? `?grupo=${grupoQ}&lang=${l}` : `?tipo=${product?.slug || tipoQ}&lang=${l}`}
                 style={{ fontSize: 11, fontWeight: 700, padding: "3px 9px", borderRadius: 6, background: langQ === l ? C.primary : "white", color: langQ === l ? "white" : C.textMid, border: `1px solid ${langQ === l ? C.primary : C.border}`, cursor: "pointer", textDecoration: "none" }}>
