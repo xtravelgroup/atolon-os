@@ -101,13 +101,13 @@ function MembershipCard({ miembro }) {
             <div style={{ fontSize: 12, opacity: 0.85, lineHeight: 1.9 }}>
               🚤 Embarcación propia hasta <span style={{ color: b.color }}>{b.personasPropia} pax</span><br />
               ⛵ Lancha Atolon hasta {b.personasLancha} pax · <span style={{ color: b.color }}>$50.000 por persona</span> · pax extra <span style={{ color: b.color }}>$100.000 consumibles</span><br />
-              🛏 {b.camas} camas por visita · 🏖 {b.descuentoPasadia}% descuento pasadías · 💰 {b.pct}% en puntos
+              🛏 {b.camas} Camas de Playa por visita · 🏖 {b.descuentoPasadia}% descuento pasadías · 💰 {b.pct}% en puntos
             </div>
           ) : (
             <div style={{ fontSize: 12, opacity: 0.85, lineHeight: 1.9 }}>
               🚤 Embarcación propia hasta <span style={{ color: b.color }}>{b.personasPropia} pax</span><br />
               ⛵ Lancha Atolon hasta {b.personasLancha} pax · <span style={{ color: b.color }}>$50.000 por persona</span> · pax extra <span style={{ color: b.color }}>$100.000 consumibles</span><br />
-              🛏 {b.camas} cama por visita · 🏖 {b.descuentoPasadia}% descuento pasadías · 💰 {b.pct}% en puntos
+              🛏 {b.camas} Cama de Playa por visita · 🏖 {b.descuentoPasadia}% descuento pasadías · 💰 {b.pct}% en puntos
             </div>
           )}
         </div>

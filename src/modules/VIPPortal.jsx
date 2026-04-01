@@ -80,7 +80,7 @@ function CardContent({ miembro, compact = false }) {
               <>
                 🚤 Embarcación propia hasta <span style={{ color: b.color }}>{b.personasPropia} pax</span><br />
                 ⛵ Lancha Atolon hasta {b.personasLancha} pax · <span style={{ color: b.color }}>$50.000 por persona</span><br />
-                🛏 {b.camas} camas por visita<br />
+                🛏 {b.camas} Camas de Playa por visita<br />
                 ➕ Pax extra · <span style={{ color: b.color }}>$100.000 consumibles</span><br />
                 🏖 {b.descuentoPasadia}% descuento pasadías<br />
                 💰 {b.pct}% del consumo en puntos
@@ -89,7 +89,7 @@ function CardContent({ miembro, compact = false }) {
               <>
                 🚤 Embarcación propia hasta <span style={{ color: b.color }}>{b.personasPropia} pax</span><br />
                 ⛵ Lancha Atolon hasta {b.personasLancha} pax · <span style={{ color: b.color }}>$50.000 por persona</span><br />
-                🛏 {b.camas} cama por visita<br />
+                🛏 {b.camas} Cama de Playa por visita<br />
                 ➕ Pax extra · <span style={{ color: b.color }}>$100.000 consumibles</span><br />
                 🏖 {b.descuentoPasadia}% descuento pasadías<br />
                 💰 {b.pct}% del consumo en puntos
