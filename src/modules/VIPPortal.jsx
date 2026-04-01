@@ -41,7 +41,7 @@ function CardContent({ miembro, compact = false }) {
   return (
     <>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: compact ? 16 : 22, position: "relative" }}>
-        <img src="/atolon-logo-white.png" alt="Atolon" style={{ height: compact ? 54 : 72, opacity: 0.9, display: "block" }} />
+        <img src="/atolon-logo-white.png" alt="Atolon" style={{ height: compact ? 80 : 110, opacity: 0.9, display: "block" }} />
         <div style={{
           padding: compact ? "4px 12px" : "5px 16px", borderRadius: 20, fontSize: compact ? 11 : 12, fontWeight: 700,
           background: "rgba(255,255,255,0.12)", backdropFilter: "blur(8px)",
@@ -559,6 +559,286 @@ function ReservaModal({ tipo, miembro, onClose, onCreated }) {
 }
 
 // ══════════════════════════════════════════════════════
+// LANCHA ATOLON MODAL
+// ══════════════════════════════════════════════════════
+const PASADIA_PRODUCTS = [
+  { id: "VIP",  icon: "🌴", label: "VIP Pass",          precio: 320000, precioNino: 240000, tieneNino: true },
+  { id: "EXC",  icon: "⭐", label: "Exclusive Pass",     precio: 590000, precioNino: 0,      tieneNino: false },
+  { id: "EXP",  icon: "🛥", label: "Atolon Experience",  precio: 1100000,precioNino: 0,     tieneNino: false },
+  { id: "AFT",  icon: "🌙", label: "After Island",       precio: 170000, precioNino: 120000, tieneNino: true },
+];
+
+function LanchaAtolonModal({ miembro, onClose, onCreated }) {
+  const b = BENEFICIOS[miembro.nivel] || BENEFICIOS.coral;
+  const [fecha, setFecha]       = useState("");
+  const [salidas, setSalidas]   = useState([]);
+  const [salidaSel, setSalida]  = useState(null);
+  const [pax, setPax]           = useState(1);
+  const [notas, setNotas]       = useState("");
+  const [saving, setSaving]     = useState(false);
+  const [error, setError]       = useState("");
+
+  useEffect(() => {
+    if (!fecha || !supabase) return;
+    supabase.from("salidas").select("*").eq("activo", true).order("hora")
+      .then(({ data }) => { setSalidas(data || []); setSalida(null); });
+  }, [fecha]);
+
+  const total = 50000 * pax;
+
+  const handleCreate = async () => {
+    if (!fecha)     { setError("Selecciona una fecha"); return; }
+    if (!salidaSel) { setError("Selecciona una salida"); return; }
+    setSaving(true);
+    const { error: err } = await supabase.from("vip_reservas").insert({
+      id: uid(), miembro_id: miembro.id, tipo: "lancha_atolon",
+      fecha, hora: salidaSel.hora, personas: pax,
+      notas: [`Salida: ${salidaSel.nombre} ${salidaSel.hora}`, `Transporte: ${(50000).toLocaleString("es-CO")} × ${pax} = $${total.toLocaleString("es-CO")}`, notas].filter(Boolean).join(" · "),
+    });
+    if (err) { setError(err.message); setSaving(false); return; }
+    setSaving(false); onCreated(); onClose();
+  };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.82)", zIndex: 1000, display: "flex", alignItems: "flex-end", justifyContent: "center" }}>
+      <div style={{ background: B.navyMid, borderRadius: "20px 20px 0 0", width: "100%", maxWidth: 560, padding: "28px 24px 44px", maxHeight: "92vh", overflowY: "auto" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 22 }}>
+          <h3 style={{ margin: 0, fontSize: 20, fontWeight: 800 }}>⛵ Lancha Atolon</h3>
+          <button onClick={onClose} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.5)", fontSize: 24, cursor: "pointer" }}>×</button>
+        </div>
+
+        {/* Info */}
+        <div style={{ background: B.sand + "15", border: `1px solid ${B.sand}30`, borderRadius: 10, padding: "12px 16px", marginBottom: 18, fontSize: 13, color: B.sand, lineHeight: 1.6 }}>
+          Hasta <strong>{b.personasLancha} personas</strong> incluidas · <strong>$50.000 por persona</strong> de transporte
+          {b.adicionalConsumible && <span style={{ color: "rgba(255,255,255,0.5)" }}> · Pax extra: ${(100000).toLocaleString("es-CO")} consumibles</span>}
+        </div>
+
+        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          <div>
+            <label style={LS}>Fecha</label>
+            <input type="date" value={fecha} onChange={e => setFecha(e.target.value)} style={IS} />
+          </div>
+
+          {fecha && (
+            <div>
+              <label style={LS}>Salida</label>
+              {salidas.length === 0 ? (
+                <div style={{ fontSize: 13, color: "rgba(255,255,255,0.4)", padding: "10px 0" }}>Cargando salidas...</div>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  {salidas.map(s => (
+                    <button key={s.id} onClick={() => setSalida(s)} style={{
+                      padding: "12px 16px", borderRadius: 10, textAlign: "left", cursor: "pointer", color: "#fff",
+                      background: salidaSel?.id === s.id ? B.sky + "22" : "rgba(255,255,255,0.04)",
+                      border: `1.5px solid ${salidaSel?.id === s.id ? B.sky : "rgba(255,255,255,0.1)"}`,
+                    }}>
+                      <span style={{ fontWeight: 700 }}>{s.hora}</span>
+                      <span style={{ color: "rgba(255,255,255,0.5)", marginLeft: 10, fontSize: 13 }}>{s.nombre}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          <div>
+            <label style={LS}>Personas (máx. {b.personasLancha})</label>
+            <select value={pax} onChange={e => setPax(parseInt(e.target.value))} style={{ ...IS, cursor: "pointer" }}>
+              {Array.from({ length: b.personasLancha }, (_, i) => i + 1).map(n => (
+                <option key={n} value={n}>{n} persona{n !== 1 ? "s" : ""}</option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label style={LS}>Notas</label>
+            <input value={notas} onChange={e => setNotas(e.target.value)} placeholder="Ocasión especial, preferencias..." style={IS} />
+          </div>
+
+          {/* Total */}
+          <div style={{ background: "rgba(255,255,255,0.05)", borderRadius: 10, padding: "12px 16px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <span style={{ fontSize: 13, color: "rgba(255,255,255,0.6)" }}>Total transporte</span>
+            <span style={{ fontSize: 20, fontWeight: 800, color: B.sand }}>${total.toLocaleString("es-CO")}</span>
+          </div>
+
+          {error && <div style={{ color: B.danger, fontSize: 13 }}>{error}</div>}
+          <button onClick={handleCreate} disabled={saving} style={{ padding: "14px", background: saving ? B.navyLight : B.sky, color: "#fff", border: "none", borderRadius: 12, fontWeight: 700, fontSize: 15, cursor: saving ? "default" : "pointer" }}>
+            {saving ? "Enviando..." : "Confirmar Reserva →"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════
+// COMPRAR PASADIA MODAL
+// ══════════════════════════════════════════════════════
+function ComprarPasadiaModal({ miembro, onClose, onCreated }) {
+  const b = BENEFICIOS[miembro.nivel] || BENEFICIOS.coral;
+  const pct = b.descuentoPasadia;
+
+  const [producto, setProducto]  = useState(null);
+  const [fecha, setFecha]        = useState("");
+  const [salidas, setSalidas]    = useState([]);
+  const [salidaSel, setSalida]   = useState(null);
+  const [paxA, setPaxA]          = useState(1);
+  const [paxN, setPaxN]          = useState(0);
+  const [notas, setNotas]        = useState("");
+  const [saving, setSaving]      = useState(false);
+  const [error, setError]        = useState("");
+
+  useEffect(() => {
+    if (!fecha || !supabase || producto?.id === "AFT") return;
+    supabase.from("salidas").select("*").eq("activo", true).order("hora")
+      .then(({ data }) => { setSalidas(data || []); setSalida(null); });
+  }, [fecha, producto]);
+
+  const precioA = producto ? Math.round(producto.precio * (1 - pct / 100)) : 0;
+  const precioN = producto ? Math.round((producto.precioNino || 0) * (1 - pct / 100)) : 0;
+  const total   = precioA * paxA + precioN * paxN;
+
+  const handleCreate = async () => {
+    if (!producto)           { setError("Selecciona un tipo de pasadía"); return; }
+    if (!fecha)              { setError("Selecciona una fecha"); return; }
+    if (!salidaSel && producto.id !== "AFT") { setError("Selecciona una salida"); return; }
+    setSaving(true);
+    const { error: err } = await supabase.from("vip_reservas").insert({
+      id: uid(), miembro_id: miembro.id, tipo: "lancha_atolon",
+      fecha, hora: salidaSel?.hora || null,
+      personas: paxA + paxN,
+      notas: [
+        `Pasadía: ${producto.label}`,
+        `Adultos: ${paxA} × $${precioA.toLocaleString("es-CO")}`,
+        paxN > 0 ? `Niños: ${paxN} × $${precioN.toLocaleString("es-CO")}` : null,
+        `Descuento Society ${pct}% aplicado`,
+        `Total: $${total.toLocaleString("es-CO")}`,
+        salidaSel ? `Salida: ${salidaSel.nombre} ${salidaSel.hora}` : null,
+        notas || null,
+      ].filter(Boolean).join(" · "),
+    });
+    if (err) { setError(err.message); setSaving(false); return; }
+    setSaving(false); onCreated(); onClose();
+  };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.82)", zIndex: 1000, display: "flex", alignItems: "flex-end", justifyContent: "center" }}>
+      <div style={{ background: B.navyMid, borderRadius: "20px 20px 0 0", width: "100%", maxWidth: 560, padding: "28px 24px 44px", maxHeight: "92vh", overflowY: "auto" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 22 }}>
+          <h3 style={{ margin: 0, fontSize: 20, fontWeight: 800 }}>🏖 Comprar Pasadía</h3>
+          <button onClick={onClose} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.5)", fontSize: 24, cursor: "pointer" }}>×</button>
+        </div>
+
+        <div style={{ background: b.color + "18", border: `1px solid ${b.color}33`, borderRadius: 10, padding: "10px 14px", marginBottom: 18, fontSize: 13, color: b.color }}>
+          {b.icon} {b.label} — <strong>{pct}% de descuento</strong> aplicado automáticamente
+        </div>
+
+        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          {/* Producto */}
+          <div>
+            <label style={LS}>Tipo de pasadía</label>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {PASADIA_PRODUCTS.map(p => {
+                const pa = Math.round(p.precio * (1 - pct / 100));
+                const pn = Math.round((p.precioNino || 0) * (1 - pct / 100));
+                return (
+                  <button key={p.id} onClick={() => setProducto(p)} style={{
+                    padding: "12px 16px", borderRadius: 10, textAlign: "left", cursor: "pointer", color: "#fff",
+                    background: producto?.id === p.id ? B.sky + "22" : "rgba(255,255,255,0.04)",
+                    border: `1.5px solid ${producto?.id === p.id ? B.sky : "rgba(255,255,255,0.1)"}`,
+                    display: "flex", justifyContent: "space-between", alignItems: "center",
+                  }}>
+                    <div>
+                      <span style={{ fontWeight: 700 }}>{p.icon} {p.label}</span>
+                      {p.tieneNino && <span style={{ color: "rgba(255,255,255,0.4)", fontSize: 11, marginLeft: 8 }}>· Niños: ${pn.toLocaleString("es-CO")}</span>}
+                    </div>
+                    <div style={{ textAlign: "right" }}>
+                      <div style={{ fontSize: 13, color: "rgba(255,255,255,0.35)", textDecoration: "line-through" }}>${p.precio.toLocaleString("es-CO")}</div>
+                      <div style={{ fontWeight: 800, color: B.success }}>${pa.toLocaleString("es-CO")}</div>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <div>
+            <label style={LS}>Fecha</label>
+            <input type="date" value={fecha} onChange={e => setFecha(e.target.value)} style={IS} />
+          </div>
+
+          {/* Salidas (excepto After Island) */}
+          {fecha && producto && producto.id !== "AFT" && (
+            <div>
+              <label style={LS}>Salida</label>
+              {salidas.length === 0 ? (
+                <div style={{ fontSize: 13, color: "rgba(255,255,255,0.4)", padding: "8px 0" }}>Cargando salidas...</div>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  {salidas.map(s => (
+                    <button key={s.id} onClick={() => setSalida(s)} style={{
+                      padding: "11px 16px", borderRadius: 10, textAlign: "left", cursor: "pointer", color: "#fff",
+                      background: salidaSel?.id === s.id ? B.sky + "22" : "rgba(255,255,255,0.04)",
+                      border: `1.5px solid ${salidaSel?.id === s.id ? B.sky : "rgba(255,255,255,0.1)"}`,
+                    }}>
+                      <span style={{ fontWeight: 700 }}>{s.hora}</span>
+                      <span style={{ color: "rgba(255,255,255,0.5)", marginLeft: 10, fontSize: 13 }}>{s.nombre}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Pax */}
+          {producto && (
+            <div style={{ display: "grid", gridTemplateColumns: producto.tieneNino ? "1fr 1fr" : "1fr", gap: 10 }}>
+              <div>
+                <label style={LS}>Adultos</label>
+                <select value={paxA} onChange={e => setPaxA(parseInt(e.target.value))} style={{ ...IS, cursor: "pointer" }}>
+                  {Array.from({ length: 20 }, (_, i) => i + 1).map(n => <option key={n} value={n}>{n}</option>)}
+                </select>
+              </div>
+              {producto.tieneNino && (
+                <div>
+                  <label style={LS}>Niños (hasta 12)</label>
+                  <select value={paxN} onChange={e => setPaxN(parseInt(e.target.value))} style={{ ...IS, cursor: "pointer" }}>
+                    {Array.from({ length: 11 }, (_, i) => i).map(n => <option key={n} value={n}>{n}</option>)}
+                  </select>
+                </div>
+              )}
+            </div>
+          )}
+
+          <div>
+            <label style={LS}>Notas</label>
+            <input value={notas} onChange={e => setNotas(e.target.value)} placeholder="Ocasión especial, peticiones..." style={IS} />
+          </div>
+
+          {/* Total */}
+          {producto && (
+            <div style={{ background: "rgba(255,255,255,0.05)", borderRadius: 10, padding: "14px 16px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span style={{ fontSize: 13, color: "rgba(255,255,255,0.6)" }}>Total con descuento {pct}%</span>
+                <span style={{ fontSize: 22, fontWeight: 800, color: B.success }}>${total.toLocaleString("es-CO")}</span>
+              </div>
+              <div style={{ fontSize: 11, color: "rgba(255,255,255,0.3)", marginTop: 4 }}>
+                El equipo de Atolon confirmará tu reserva y coordina el pago
+              </div>
+            </div>
+          )}
+
+          {error && <div style={{ color: B.danger, fontSize: 13 }}>{error}</div>}
+          <button onClick={handleCreate} disabled={saving} style={{ padding: "14px", background: saving ? B.navyLight : B.success, color: "#fff", border: "none", borderRadius: 12, fontWeight: 700, fontSize: 15, cursor: saving ? "default" : "pointer" }}>
+            {saving ? "Enviando..." : "Solicitar Pasadía →"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════
 // MAIN PORTAL
 // ══════════════════════════════════════════════════════
 function MainPortal({ miembro: initialMiembro, onLogout }) {
@@ -569,6 +849,8 @@ function MainPortal({ miembro: initialMiembro, onLogout }) {
   const [showRecibo, setShowRecibo] = useState(false);
   const [showReserva, setShowReserva] = useState(null);
   const [showCardFull, setShowCardFull] = useState(false);
+  const [showLancha, setShowLancha] = useState(false);
+  const [showPasadia, setShowPasadia] = useState(false);
   const w = useW();
   const isMobile = w < 640;
 
@@ -597,8 +879,10 @@ function MainPortal({ miembro: initialMiembro, onLogout }) {
 
   return (
     <div style={{ minHeight: "100vh", background: B.navy, fontFamily: "inherit" }}>
-      {showRecibo && <SubirReciboModal miembro={miembro} onClose={() => setShowRecibo(false)} onSubmitted={load} />}
-      {showReserva && <ReservaModal tipo={showReserva} miembro={miembro} onClose={() => setShowReserva(null)} onCreated={load} />}
+      {showRecibo   && <SubirReciboModal miembro={miembro} onClose={() => setShowRecibo(false)} onSubmitted={load} />}
+      {showReserva  && <ReservaModal tipo={showReserva} miembro={miembro} onClose={() => setShowReserva(null)} onCreated={load} />}
+      {showLancha   && <LanchaAtolonModal miembro={miembro} onClose={() => setShowLancha(false)} onCreated={load} />}
+      {showPasadia  && <ComprarPasadiaModal miembro={miembro} onClose={() => setShowPasadia(false)} onCreated={load} />}
       {showCardFull && <CardFullscreen miembro={miembro} onClose={() => setShowCardFull(false)} />}
 
       {/* Header */}
@@ -642,15 +926,35 @@ function MainPortal({ miembro: initialMiembro, onLogout }) {
         {/* Reservas */}
         <div style={{ background: B.navyMid, borderRadius: 16, padding: isMobile ? "20px 16px" : "24px", marginBottom: 16 }}>
           <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 14, fontFamily: "'Barlow Condensed', sans-serif" }}>Mis Reservas</div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 8, marginBottom: 16 }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 16 }}>
             <button onClick={() => setShowReserva("llegada")} style={{
-              padding: "18px 20px", background: `rgba(96,165,250,0.08)`, border: `1px solid ${b.color}44`,
+              padding: "16px 20px", background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.12)",
               borderRadius: 12, cursor: "pointer", textAlign: "left", color: "#fff", display: "flex", alignItems: "center", gap: 16,
             }}>
-              <div style={{ fontSize: 28 }}>⛵</div>
+              <div style={{ fontSize: 26 }}>🚤</div>
               <div>
-                <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 2 }}>Reservar Llegada</div>
-                <div style={{ fontSize: 11, color: b.color }}>Embarcación propia o Lancha Atolon</div>
+                <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 2 }}>Reservar Llegada Propia</div>
+                <div style={{ fontSize: 11, color: "rgba(255,255,255,0.45)" }}>Notifica tu llegada en embarcación propia</div>
+              </div>
+            </button>
+            <button onClick={() => setShowLancha(true)} style={{
+              padding: "16px 20px", background: `rgba(96,165,250,0.08)`, border: `1px solid ${B.sky}44`,
+              borderRadius: 12, cursor: "pointer", textAlign: "left", color: "#fff", display: "flex", alignItems: "center", gap: 16,
+            }}>
+              <div style={{ fontSize: 26 }}>⛵</div>
+              <div>
+                <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 2 }}>Reservar Lancha Atolon</div>
+                <div style={{ fontSize: 11, color: B.sky }}>Hasta {b.personasLancha} pax · $50.000 por persona</div>
+              </div>
+            </button>
+            <button onClick={() => setShowPasadia(true)} style={{
+              padding: "16px 20px", background: `rgba(52,211,153,0.08)`, border: `1px solid ${B.success}44`,
+              borderRadius: 12, cursor: "pointer", textAlign: "left", color: "#fff", display: "flex", alignItems: "center", gap: 16,
+            }}>
+              <div style={{ fontSize: 26 }}>🏖</div>
+              <div>
+                <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 2 }}>Comprar Pasadía</div>
+                <div style={{ fontSize: 11, color: B.success }}>{b.descuentoPasadia}% de descuento Society aplicado</div>
               </div>
             </button>
           </div>
@@ -723,21 +1027,34 @@ function MainPortal({ miembro: initialMiembro, onLogout }) {
 // ══════════════════════════════════════════════════════
 // MAIN EXPORT
 // ══════════════════════════════════════════════════════
+const SESSION_KEY = "vip_society_session";
+
 export default function VIPPortal() {
-  const [session, setSession] = useState(null);
+  const [session, setSession] = useState(() => {
+    try { const s = localStorage.getItem(SESSION_KEY); return s ? JSON.parse(s) : null; } catch { return null; }
+  });
   const [forceSetClave, setForceSetClave] = useState(false);
 
   const handleLogin = (miembro) => {
+    localStorage.setItem(SESSION_KEY, JSON.stringify(miembro));
     setSession(miembro);
     if (!miembro.clave) setForceSetClave(true);
   };
 
   const handlePasswordSet = (newClave) => {
-    setSession(s => ({ ...s, clave: newClave }));
+    setSession(s => {
+      const updated = { ...s, clave: newClave };
+      localStorage.setItem(SESSION_KEY, JSON.stringify(updated));
+      return updated;
+    });
     setForceSetClave(false);
   };
 
-  const handleLogout = () => { setSession(null); setForceSetClave(false); };
+  const handleLogout = () => {
+    localStorage.removeItem(SESSION_KEY);
+    setSession(null);
+    setForceSetClave(false);
+  };
 
   if (!session) return <LoginScreen onLogin={handleLogin} />;
   if (forceSetClave) return <SetPasswordScreen miembro={session} onDone={handlePasswordSet} />;
