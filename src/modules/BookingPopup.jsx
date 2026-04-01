@@ -1116,7 +1116,7 @@ export default function BookingPopup() {
 
         {/* Brand header */}
         <div style={{ position: "relative", textAlign: "center", marginBottom: 20 }}>
-          <img src="/atolon-peces.png" alt="Atolon Beach Club" style={{ height: 130, objectFit: "contain" }} />
+          <img src="/atolon-peces.png" alt="Atolon Beach Club" style={{ height: 195, objectFit: "contain" }} />
           <div style={{ position: "absolute", top: "50%", right: 0, transform: "translateY(-50%)", display: "flex", gap: 4 }}>
             {["es","en"].map(l => (
               <a key={l} href={grupoQ ? `?grupo=${grupoQ}&lang=${l}` : `?tipo=${product?.slug || tipoQ}&lang=${l}`}
