@@ -185,12 +185,37 @@ function ModalNuevaLlegada({ tipo, fecha, reserva, onClose, onSaved }) {
   );
 }
 
-// ─── Modal Cobro After Island ────────────────────────────────────────────────
+// ─── Modal Cobro After Island (paso 1: editar datos · paso 2: cobrar) ────────
 function ModalCobro({ llegada, onClose, onSaved }) {
-  const monto = Number(llegada.pax_a) * PRECIO_AFTER_A + Number(llegada.pax_n) * PRECIO_AFTER_N;
+  const [paso, setPaso] = useState(1);
+  const [f, setF] = useState({
+    embarcacion_nombre: llegada.embarcacion_nombre || "",
+    matricula: llegada.matricula || "",
+    pax_a: llegada.pax_a ?? 0,
+    pax_n: llegada.pax_n ?? 0,
+    notas: llegada.notas || "",
+  });
+  const sf = (k, v) => setF(p => ({ ...p, [k]: v }));
+
+  const monto = Number(f.pax_a) * PRECIO_AFTER_A + Number(f.pax_n) * PRECIO_AFTER_N;
   const [cobro, setCobro] = useState({ email: "", linkUrl: "", linkGenerado: false });
   const [saving, setSaving] = useState(false);
   const sc = (k, v) => setCobro(p => ({ ...p, [k]: v }));
+
+  const handleConfirmarDatos = async () => {
+    if (!supabase || saving) return;
+    setSaving(true);
+    await supabase.from("muelle_llegadas").update({
+      embarcacion_nombre: f.embarcacion_nombre || null,
+      matricula: f.matricula || null,
+      pax_a: Number(f.pax_a) || 0,
+      pax_n: Number(f.pax_n) || 0,
+      pax_total: Number(f.pax_a) + Number(f.pax_n),
+      notas: f.notas || null,
+    }).eq("id", llegada.id);
+    setSaving(false);
+    setPaso(2);
+  };
 
   const handleCobro = async (metodo) => {
     if (!supabase || saving) return;
@@ -214,29 +239,91 @@ function ModalCobro({ llegada, onClose, onSaved }) {
       onClick={e => e.target === e.currentTarget && onClose()}>
       <div style={{ background: B.navyMid, borderRadius: 18, padding: 28, width: 480, maxWidth: "100%", maxHeight: "90vh", overflowY: "auto" }}>
 
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+        {/* Header */}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
           <div>
-            <div style={{ fontSize: 18, fontWeight: 800 }}>🌙 Cobro After Island</div>
-            <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginTop: 3 }}>{llegada.embarcacion_nombre || "Embarcación"}</div>
+            <div style={{ fontSize: 18, fontWeight: 800 }}>🌙 After Island — {paso === 1 ? "Verificar datos" : "Cobro"}</div>
+            <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginTop: 3 }}>{f.embarcacion_nombre || "Embarcación"}</div>
           </div>
           <button onClick={onClose} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.3)", fontSize: 20, cursor: "pointer" }}>✕</button>
         </div>
 
-        {/* Resumen */}
-        <div style={{ background: B.sand + "18", border: `1px solid ${B.sand}33`, borderRadius: 12, padding: "14px 18px", marginBottom: 22 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <div>
-              <div style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", marginBottom: 4 }}>
-                {llegada.pax_a} adulto{llegada.pax_a !== 1 ? "s" : ""}{llegada.pax_n > 0 ? ` + ${llegada.pax_n} niño${llegada.pax_n !== 1 ? "s" : ""}` : ""} · ⚓ {fmtHora(llegada.hora_llegada)}
+        {/* Barra de pasos */}
+        <div style={{ display: "flex", gap: 6, marginBottom: 22, marginTop: 10 }}>
+          {["Verificar datos", "Cobro"].map((lbl, i) => (
+            <div key={lbl} style={{ flex: 1, height: 4, borderRadius: 2, background: paso > i ? B.sand : "rgba(255,255,255,0.12)" }} />
+          ))}
+        </div>
+
+        {/* ── PASO 1: Editar datos ── */}
+        {paso === 1 && (
+          <>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 16px" }}>
+              <div style={{ gridColumn: "1 / -1", marginBottom: 14 }}>
+                <label style={LS}>Nombre / ID embarcación</label>
+                <input value={f.embarcacion_nombre} onChange={e => sf("embarcacion_nombre", e.target.value)} placeholder="Ej: Patricia..." style={IS} />
               </div>
-              <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", display: "flex", gap: 10, flexWrap: "wrap" }}>
-                {llegada.pax_a > 0 && <span>{llegada.pax_a} × {COP(PRECIO_AFTER_A)}</span>}
-                {llegada.pax_n > 0 && <span>{llegada.pax_n} × {COP(PRECIO_AFTER_N)}</span>}
+              <div style={{ gridColumn: "1 / -1", marginBottom: 14 }}>
+                <label style={LS}>Matrícula (opcional)</label>
+                <input value={f.matricula} onChange={e => sf("matricula", e.target.value)} placeholder="Ej: CT-1234" style={IS} />
+              </div>
+              <div style={{ marginBottom: 14 }}>
+                <label style={LS}>Adultos</label>
+                <input type="number" min="0" value={f.pax_a} onChange={e => sf("pax_a", e.target.value)} style={IS} />
+              </div>
+              <div style={{ marginBottom: 14 }}>
+                <label style={LS}>Niños</label>
+                <input type="number" min="0" value={f.pax_n} onChange={e => sf("pax_n", e.target.value)} style={IS} />
+              </div>
+              <div style={{ gridColumn: "1 / -1", marginBottom: 4 }}>
+                <label style={LS}>Notas</label>
+                <input value={f.notas} onChange={e => sf("notas", e.target.value)} placeholder="Observaciones..." style={IS} />
               </div>
             </div>
-            <div style={{ fontSize: 24, fontWeight: 800, color: B.sand }}>{COP(monto)}</div>
-          </div>
-        </div>
+
+            {/* Preview monto */}
+            {(Number(f.pax_a) + Number(f.pax_n)) > 0 && (
+              <div style={{ background: B.sand + "18", border: `1px solid ${B.sand}33`, borderRadius: 10, padding: "12px 16px", margin: "16px 0" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <div style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", display: "flex", gap: 14, flexWrap: "wrap" }}>
+                    {Number(f.pax_a) > 0 && <span>{f.pax_a}A × {COP(PRECIO_AFTER_A)}</span>}
+                    {Number(f.pax_n) > 0 && <span>{f.pax_n}N × {COP(PRECIO_AFTER_N)}</span>}
+                  </div>
+                  <div style={{ fontSize: 18, fontWeight: 800, color: B.sand }}>{COP(monto)}</div>
+                </div>
+              </div>
+            )}
+
+            <div style={{ display: "flex", gap: 10, marginTop: 8 }}>
+              <button onClick={onClose} style={{ flex: 1, padding: "11px", borderRadius: 10, border: `1px solid ${B.navyLight}`, background: "none", color: "rgba(255,255,255,0.4)", fontSize: 13, cursor: "pointer" }}>
+                Cancelar
+              </button>
+              <button onClick={handleConfirmarDatos} disabled={saving}
+                style={{ flex: 2, padding: "11px", borderRadius: 10, border: "none", background: saving ? B.navyLight : B.sand, color: saving ? "rgba(255,255,255,0.4)" : B.navy, fontSize: 14, fontWeight: 700, cursor: "pointer" }}>
+                {saving ? "Guardando..." : "Confirmar → Cobrar"}
+              </button>
+            </div>
+          </>
+        )}
+
+        {/* ── PASO 2: Cobro ── */}
+        {paso === 2 && (
+          <>
+            {/* Resumen */}
+            <div style={{ background: B.sand + "18", border: `1px solid ${B.sand}33`, borderRadius: 12, padding: "14px 18px", marginBottom: 22 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div>
+                  <div style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", marginBottom: 4 }}>
+                    {f.pax_a} adulto{f.pax_a !== 1 ? "s" : ""}{f.pax_n > 0 ? ` + ${f.pax_n} niño${f.pax_n !== 1 ? "s" : ""}` : ""} · ⚓ {fmtHora(llegada.hora_llegada)}
+                  </div>
+                  <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", display: "flex", gap: 10, flexWrap: "wrap" }}>
+                    {Number(f.pax_a) > 0 && <span>{f.pax_a} × {COP(PRECIO_AFTER_A)}</span>}
+                    {Number(f.pax_n) > 0 && <span>{f.pax_n} × {COP(PRECIO_AFTER_N)}</span>}
+                  </div>
+                </div>
+                <div style={{ fontSize: 24, fontWeight: 800, color: B.sand }}>{COP(monto)}</div>
+              </div>
+            </div>
 
         {!cobro.linkGenerado ? (
           <>
@@ -299,6 +386,8 @@ function ModalCobro({ llegada, onClose, onSaved }) {
               ✓ Listo
             </button>
           </div>
+        )}
+          </>
         )}
       </div>
     </div>
