@@ -151,9 +151,11 @@ export default function PagoCliente() {
   const yaPagado = reserva?.estado === "confirmado" || reserva?.estado === "pagado";
 
   // Wompi redirige con ?id=TRANSACTION_ID después del pago
+  // Stripe redirige con ?stripe=ok después del pago
   const params       = new URLSearchParams(window.location.search);
   const wompiTxId    = params.get("id") || "";
   const leadIdParam  = params.get("lead") || "";
+  const stripeOk     = params.get("stripe") === "ok";
 
   const fetchReserva = useCallback(async () => {
     if (!supabase || !reservaId) { setError("Link inválido"); setLoading(false); return; }
@@ -197,6 +199,25 @@ export default function PagoCliente() {
     })();
   }, [wompiTxId, reservaId, leadIdParam, fetchReserva]);
 
+  // Cuando Stripe redirige de vuelta con ?stripe=ok
+  useEffect(() => {
+    if (!stripeOk || !reservaId || !supabase) return;
+    (async () => {
+      await supabase.from("reservas").update({
+        estado: "confirmado", forma_pago: "stripe", saldo: 0,
+      }).eq("id", reservaId);
+      const { data: res } = await supabase.from("reservas").select("*").eq("id", reservaId).single();
+      if (res?.contacto?.includes("@")) {
+        fetch("https://ncdyttgxuicyruathkxd.supabase.co/functions/v1/send-confirmation", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(res),
+        }).catch(() => {});
+      }
+      fetchReserva();
+    })();
+  }, [stripeOk, reservaId, fetchReserva]);
+
   const pagarWompi = async () => {
     if (!reserva) return;
     setProcesando("wompi");
@@ -210,10 +231,35 @@ export default function PagoCliente() {
   };
 
   const pagarStripe = async () => {
+    if (!reserva) return;
     setProcesando("stripe");
-    // TODO: llamar Edge Function para crear Stripe Checkout Session
-    alert("Stripe internacional — próximamente disponible. Usa transferencia o llama a la agencia.");
-    setProcesando("");
+    try {
+      const res = await fetch(
+        "https://ncdyttgxuicyruathkxd.supabase.co/functions/v1/create-stripe-session",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            reserva_id: reserva.id,
+            total_cop:  reserva.total,
+            nombre:     reserva.nombre,
+            email:      reserva.contacto?.includes("@") ? reserva.contacto : undefined,
+            tipo:       reserva.tipo,
+            fecha:      reserva.fecha,
+          }),
+        }
+      );
+      const data = await res.json();
+      if (data.url) {
+        window.location.href = data.url;
+      } else {
+        alert(data.error || "No se pudo iniciar el pago con Stripe. Intenta de nuevo.");
+        setProcesando("");
+      }
+    } catch {
+      alert("Error de conexión. Intenta de nuevo.");
+      setProcesando("");
+    }
   };
 
   // ── Layout wrapper ──────────────────────────────────────────────────────
