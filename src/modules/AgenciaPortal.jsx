@@ -34,6 +34,8 @@ function LoginScreen({ onLogin }) {
     const { data, error: err } = await supabase.from("b2b_usuarios").select("*, aliados_b2b(id, nombre, tipo, comision, estado, precio_vista_admin, precio_vista_vendedor, modalidad_puntos, vendedor_id, contacto, tel, email, codigo, codigo_fijo, rnt_url, rnt_pendiente_url, cert_bancaria_url, cert_bancaria_pendiente_url, cert_bancaria_solicitud_fecha)").eq("email", email.toLowerCase().trim()).eq("activo", true).single();
     if (err || !data) { setError("Email no encontrado o usuario inactivo"); setLoading(false); return; }
     if (data.aliados_b2b?.estado !== "activo") { setError("La agencia no esta activa"); setLoading(false); return; }
+    // Verificar clave si el usuario tiene una configurada
+    if (data.pin && pin.trim() !== data.pin) { setError("Clave incorrecta"); setLoading(false); return; }
     onLogin({ user: data, agencia: data.aliados_b2b });
   };
 
@@ -46,7 +48,7 @@ function LoginScreen({ onLogin }) {
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
           <input value={email} onChange={e => setEmail(e.target.value)} placeholder="Email del vendedor" onKeyDown={e => e.key === "Enter" && handleLogin()}
             style={{ ...IS, textAlign: "center", fontSize: 14 }} />
-          <input type="password" value={pin} onChange={e => setPin(e.target.value)} placeholder="PIN (opcional)" maxLength={6} onKeyDown={e => e.key === "Enter" && handleLogin()}
+          <input type="password" value={pin} onChange={e => setPin(e.target.value)} placeholder="Clave (opcional)" maxLength={20} onKeyDown={e => e.key === "Enter" && handleLogin()}
             style={{ ...IS, textAlign: "center", fontSize: 14, letterSpacing: 8 }} />
           {error && <div style={{ color: B.danger, fontSize: 13 }}>{error}</div>}
           <button onClick={handleLogin} disabled={loading}

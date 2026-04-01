@@ -3,6 +3,7 @@ import { B, COP, PASADIAS, fmtFecha } from "../brand";
 import { supabase } from "../lib/supabase";
 import { asignarPuntosReserva, getRankingAgencia, getPuntosConfig } from "../lib/puntos";
 import Incentivos from "./Incentivos";
+import { EventoModal, ReservasGrupoModal } from "./Eventos";
 
 const IS = { width: "100%", padding: "9px 12px", borderRadius: 8, background: B.navy, border: `1px solid ${B.navyLight}`, color: B.white, fontSize: 13, outline: "none", boxSizing: "border-box" };
 const LS = { fontSize: 11, color: B.sand, display: "block", marginBottom: 5, textTransform: "uppercase", letterSpacing: "0.06em" };
@@ -998,27 +999,38 @@ const STAGE_COLOR_EV = { Consulta: "#E8A020", Cotizado: "#38BDF8", Confirmado: "
 const COP_EV = (n) => n ? "$" + Math.round(n).toLocaleString("es-CO") : "—";
 
 function EventosGruposB2B({ aliadoId }) {
-  const [items, setItems]     = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [filterCat, setFilterCat] = useState("todos"); // todos | evento | grupo
+  const [items, setItems]         = useState([]);
+  const [loading, setLoading]     = useState(true);
+  const [filterCat, setFilterCat] = useState("todos");
+  const [editEvento, setEditEvento]       = useState(null);  // evento a editar
+  const [verReservas, setVerReservas]     = useState(null);  // evento para ver invitados
+  const [salidas, setSalidas]             = useState([]);
+  const [aliados, setAliados]             = useState([]);
+  const [vendedores, setVendedores]       = useState([]);
+
+  const fetchItems = useCallback(async () => {
+    if (!supabase) { setLoading(false); return; }
+    const { data } = await supabase.from("eventos").select("*")
+      .eq("aliado_id", aliadoId).order("fecha", { ascending: false });
+    setItems(data || []); setLoading(false);
+  }, [aliadoId]);
 
   useEffect(() => {
-    if (!supabase) { setLoading(false); return; }
-    supabase.from("eventos")
-      .select("id, nombre, tipo, fecha, pax, valor, stage, categoria, contacto, tel, email, notas, created_at")
-      .eq("aliado_id", aliadoId)
-      .order("fecha", { ascending: false })
-      .then(({ data }) => { setItems(data || []); setLoading(false); });
-  }, [aliadoId]);
+    fetchItems();
+    if (!supabase) return;
+    // prefetch para EventoModal
+    supabase.from("salidas").select("id, hora, nombre").eq("activo", true).order("orden").then(({ data }) => setSalidas(data || []));
+    supabase.from("aliados_b2b").select("id, nombre, tipo").order("nombre").then(({ data }) => setAliados(data || []));
+    supabase.from("usuarios").select("id, nombre").in("rol_id", ["ventas", "gerente_ventas"]).eq("activo", true).order("nombre").then(({ data }) => setVendedores(data || []));
+  }, [fetchItems]);
 
   const filtered = items.filter(i => filterCat === "todos" || i.categoria === filterCat);
 
   const totales = {
-    todos:    items.length,
-    evento:   items.filter(i => i.categoria === "evento").length,
-    grupo:    items.filter(i => i.categoria === "grupo").length,
-    confirmados: items.filter(i => i.stage === "Confirmado" || i.stage === "Realizado").length,
-    revenue:  items.filter(i => i.stage === "Confirmado" || i.stage === "Realizado").reduce((s, i) => s + (i.valor || 0), 0),
+    todos:   items.length,
+    evento:  items.filter(i => i.categoria === "evento").length,
+    grupo:   items.filter(i => i.categoria === "grupo").length,
+    revenue: items.filter(i => i.stage === "Confirmado" || i.stage === "Realizado").reduce((s, i) => s + (i.valor || 0), 0),
   };
 
   return (
@@ -1061,10 +1073,16 @@ function EventosGruposB2B({ aliadoId }) {
       {!loading && filtered.length > 0 && (
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
           {filtered.map(ev => (
-            <div key={ev.id} style={{ background: B.navy, borderRadius: 10, padding: "14px 16px", borderLeft: `3px solid ${STAGE_COLOR_EV[ev.stage] || B.sand}` }}>
+            <div key={ev.id}
+              onClick={() => setEditEvento(ev)}
+              style={{ background: B.navy, borderRadius: 10, padding: "14px 16px",
+                borderLeft: `3px solid ${STAGE_COLOR_EV[ev.stage] || B.sand}`,
+                cursor: "pointer", transition: "background 0.15s" }}
+              onMouseEnter={e => e.currentTarget.style.background = B.navyLight}
+              onMouseLeave={e => e.currentTarget.style.background = B.navy}>
               <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
                 <div style={{ flex: 1 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4, flexWrap: "wrap" }}>
                     <span style={{ fontSize: 14, fontWeight: 700, color: B.white }}>{ev.nombre || ev.tipo}</span>
                     <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 10, background: ev.categoria === "grupo" ? "#A78BFA33" : B.sky + "33", color: ev.categoria === "grupo" ? "#A78BFA" : B.sky, fontWeight: 600, textTransform: "uppercase" }}>
                       {ev.categoria === "grupo" ? "Grupo" : "Evento"}
@@ -1081,13 +1099,38 @@ function EventosGruposB2B({ aliadoId }) {
                   </div>
                   {ev.notas && <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", marginTop: 6, fontStyle: "italic" }}>{ev.notas}</div>}
                 </div>
-                <div style={{ textAlign: "right", flexShrink: 0 }}>
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 8, flexShrink: 0 }}>
                   {ev.valor > 0 && <div style={{ fontSize: 15, fontWeight: 700, color: B.success }}>{COP_EV(ev.valor)}</div>}
+                  {ev.categoria === "grupo" && (
+                    <button onClick={e => { e.stopPropagation(); setVerReservas(ev); }}
+                      style={{ fontSize: 11, padding: "4px 10px", borderRadius: 7, border: `1px solid ${B.navyLight}`, background: "none", color: B.sand, cursor: "pointer", whiteSpace: "nowrap" }}>
+                      👥 Ver invitados
+                    </button>
+                  )}
                 </div>
               </div>
             </div>
           ))}
         </div>
+      )}
+
+      {/* Modal editar evento */}
+      {editEvento && (
+        <EventoModal
+          evento={editEvento}
+          categoria={editEvento.categoria}
+          salidas={salidas}
+          aliados={aliados}
+          vendedores={vendedores}
+          onClose={() => setEditEvento(null)}
+          onSaved={fetchItems}
+          onShowLink={() => {}}
+        />
+      )}
+
+      {/* Modal lista invitados */}
+      {verReservas && (
+        <ReservasGrupoModal evento={verReservas} onClose={() => setVerReservas(null)} />
       )}
     </div>
   );
@@ -1714,6 +1757,40 @@ function FichaAliado({ aliado, onBack, onRefresh }) {
   const [vendedores, setVendedores] = useState([]);
   const [rntHistorial, setRntHistorial] = useState([]);
   const [approvingCert, setApprovingCert] = useState(false);
+  const [b2bUsers, setB2bUsers]     = useState([]);
+  const [sendingEmail, setSendingEmail] = useState(null); // userId
+  const [resetPinId, setResetPinId] = useState(null);    // userId
+  const [newPin, setNewPin]         = useState(null);    // { userId, pin }
+
+  const fetchB2bUsers = useCallback(async () => {
+    if (!supabase) return;
+    const { data } = await supabase.from("b2b_usuarios").select("*").eq("aliado_id", aliado.id).order("nombre");
+    setB2bUsers(data || []);
+  }, [aliado.id]);
+
+  const sendWelcomeEmail = async (user) => {
+    setSendingEmail(user.id);
+    const portalUrl = window.location.origin + "/agencia";
+    const subject = encodeURIComponent(`Bienvenido al Portal de Agencias — Atolon Beach Club`);
+    const body = encodeURIComponent(
+      `Hola ${user.nombre},\n\n` +
+      `Te damos la bienvenida al Portal de Agencias de Atolon Beach Club 🌴\n\n` +
+      `Ingresa con tu correo registrado en:\n${portalUrl}\n\n` +
+      `Email de acceso: ${user.email}\n\n` +
+      `Saludos,\nEquipo Atolon Beach Club`
+    );
+    window.open(`mailto:${user.email}?subject=${subject}&body=${body}`, "_blank");
+    setSendingEmail(null);
+  };
+
+  const resetPin = async (user) => {
+    setResetPinId(user.id);
+    const pin = String(Math.floor(100000 + Math.random() * 900000));
+    await supabase.from("b2b_usuarios").update({ pin }).eq("id", user.id);
+    setNewPin({ userId: user.id, pin });
+    setResetPinId(null);
+    fetchB2bUsers();
+  };
 
   const fetchRntHistorial = useCallback(async () => {
     if (!supabase) return;
@@ -1726,8 +1803,9 @@ function FichaAliado({ aliado, onBack, onRefresh }) {
       supabase.from("usuarios").select("id, nombre, rol_id, avatar_color").eq("activo", true).order("nombre")
         .then(({ data }) => setVendedores(data || []));
       fetchRntHistorial();
+      fetchB2bUsers();
     }
-  }, [fetchRntHistorial]);
+  }, [fetchRntHistorial, fetchB2bUsers]);
 
   const approveCert = async () => {
     if (!supabase || approvingCert || !aliado.cert_bancaria_pendiente_url) return;
@@ -2023,6 +2101,60 @@ function FichaAliado({ aliado, onBack, onRefresh }) {
               showAddForm={showContactForm === "aliado"}
               setShowAddForm={(v) => setShowContactForm(v ? "aliado" : null)}
             />
+          </div>
+
+          {/* Acceso al Portal */}
+          <div style={{ background: B.navyMid, borderRadius: 12, padding: 24, marginBottom: 20 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+              <h3 style={{ fontSize: 15, color: B.sand, margin: 0 }}>Acceso al Portal B2B</h3>
+              <a href={window.location.origin + "/agencia"} target="_blank" rel="noopener noreferrer"
+                style={{ fontSize: 11, color: B.sky, textDecoration: "none" }}>
+                🔗 Ver portal →
+              </a>
+            </div>
+            {b2bUsers.length === 0 && (
+              <div style={{ textAlign: "center", padding: "20px 0", color: "rgba(255,255,255,0.3)", fontSize: 13 }}>
+                No hay usuarios del portal registrados para este aliado.
+              </div>
+            )}
+            {b2bUsers.map(u => (
+              <div key={u.id} style={{ background: B.navy, borderRadius: 10, padding: "14px 16px", marginBottom: 10, display: "flex", alignItems: "center", gap: 14 }}>
+                {/* Avatar */}
+                <div style={{ width: 38, height: 38, borderRadius: 19, background: B.sky + "33", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 15, flexShrink: 0 }}>
+                  {u.nombre?.charAt(0) || "?"}
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontWeight: 700, fontSize: 13 }}>{u.nombre}</div>
+                  <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginTop: 1 }}>{u.email}</div>
+                  <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
+                    <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 8, background: B.sky + "22", color: B.sky }}>{u.rol || "vendedor"}</span>
+                    <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 8, background: u.activo ? B.success + "22" : B.danger + "22", color: u.activo ? B.success : B.danger }}>{u.activo ? "Activo" : "Inactivo"}</span>
+                    {u.pin && <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 8, background: "rgba(255,255,255,0.08)", color: "rgba(255,255,255,0.4)" }}>Clave configurada</span>}
+                  </div>
+                  {/* Mostrar nueva clave recién generada */}
+                  {newPin?.userId === u.id && (
+                    <div style={{ marginTop: 8, padding: "8px 12px", borderRadius: 8, background: B.success + "18", border: `1px solid ${B.success}33`, display: "flex", alignItems: "center", gap: 10 }}>
+                      <span style={{ fontSize: 12, color: B.success }}>✓ Nueva clave: </span>
+                      <strong style={{ fontSize: 16, letterSpacing: 4, color: B.white }}>{newPin.pin}</strong>
+                      <button onClick={() => { navigator.clipboard.writeText(newPin.pin); }}
+                        style={{ background: "none", border: "none", color: B.sky, fontSize: 11, cursor: "pointer" }}>Copiar</button>
+                      <button onClick={() => setNewPin(null)}
+                        style={{ background: "none", border: "none", color: "rgba(255,255,255,0.3)", fontSize: 12, cursor: "pointer" }}>✕</button>
+                    </div>
+                  )}
+                </div>
+                <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
+                  <button onClick={() => sendWelcomeEmail(u)} disabled={sendingEmail === u.id}
+                    style={{ padding: "7px 14px", borderRadius: 8, border: "none", background: B.sky, color: B.navy, fontSize: 12, fontWeight: 700, cursor: sendingEmail === u.id ? "default" : "pointer", opacity: sendingEmail === u.id ? 0.6 : 1 }}>
+                    {sendingEmail === u.id ? "..." : "✉ Bienvenida"}
+                  </button>
+                  <button onClick={() => resetPin(u)} disabled={resetPinId === u.id}
+                    style={{ padding: "7px 14px", borderRadius: 8, border: `1px solid ${B.navyLight}`, background: "none", color: B.sand, fontSize: 12, fontWeight: 600, cursor: resetPinId === u.id ? "default" : "pointer", opacity: resetPinId === u.id ? 0.6 : 1 }}>
+                    {resetPinId === u.id ? "..." : "🔑 Nueva clave"}
+                  </button>
+                </div>
+              </div>
+            ))}
           </div>
 
           {/* Locaciones */}

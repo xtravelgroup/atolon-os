@@ -153,7 +153,7 @@ function GrupoLink({ evento, onClose }) {
 }
 
 // ─── Modal crear/editar ───────────────────────────────────────────────────────
-function EventoModal({ evento, categoria, salidas, aliados, vendedores, onClose, onSaved, onShowLink }) {
+export function EventoModal({ evento, categoria, salidas, aliados, vendedores, onClose, onSaved, onShowLink }) {
   const isEdit   = !!evento?.id;
   const isGrupo  = categoria === "grupo";
   const tiposOpt = isGrupo ? TIPOS_GRUPO : TIPOS_EVT;
@@ -476,7 +476,7 @@ function EventoModal({ evento, categoria, salidas, aliados, vendedores, onClose,
 }
 
 // ─── Modal reservas de grupo ──────────────────────────────────────────────────
-function ReservasGrupoModal({ evento, onClose }) {
+export function ReservasGrupoModal({ evento, onClose }) {
   const [reservas, setReservas] = useState(null);
 
   useEffect(() => {
