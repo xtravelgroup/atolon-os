@@ -2,6 +2,128 @@ import { useState, useEffect } from "react";
 import { supabase } from "./lib/supabase";
 import AtolanOS from "./modules/AtolanOS";
 
+// ── Force Change Password ───────────────────────────────────────────────────
+function ForceChangePassword({ userEmail, onDone }) {
+  const [pass, setPass]     = useState("");
+  const [pass2, setPass2]   = useState("");
+  const [error, setError]   = useState("");
+  const [saving, setSaving] = useState(false);
+  const [show, setShow]     = useState(false);
+  const [show2, setShow2]   = useState(false);
+
+  const IS = {
+    width: "100%", padding: "12px 14px", borderRadius: 10,
+    border: "1.5px solid rgba(255,255,255,0.12)", background: "rgba(255,255,255,0.06)",
+    color: "#fff", fontSize: 15, outline: "none", boxSizing: "border-box",
+    fontFamily: "inherit",
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setError("");
+    if (pass.length < 8)          { setError("La contraseña debe tener mínimo 8 caracteres"); return; }
+    if (pass === "Atolon123")      { setError("No puedes seguir usando la clave temporal"); return; }
+    if (pass !== pass2)            { setError("Las contraseñas no coinciden"); return; }
+    setSaving(true);
+    // 1. Cambiar la clave en Supabase Auth
+    const { error: authErr } = await supabase.auth.updateUser({ password: pass });
+    if (authErr) { setError(authErr.message); setSaving(false); return; }
+    // 2. Apagar la bandera en la tabla usuarios
+    await supabase.from("usuarios").update({ must_change_password: false }).eq("email", userEmail.toLowerCase());
+    setSaving(false);
+    onDone();
+  };
+
+  return (
+    <div style={{
+      minHeight: "100vh", background: B.navy,
+      display: "flex", alignItems: "center", justifyContent: "center",
+      fontFamily: "'Inter', 'Segoe UI', sans-serif",
+    }}>
+      <div style={{
+        width: 420, maxWidth: "92vw",
+        background: B.navyMid, borderRadius: 20,
+        padding: "40px 36px", boxShadow: "0 24px 64px #0008",
+      }}>
+        <div style={{ textAlign: "center", marginBottom: 28 }}>
+          <img src="/atolon-logo-white.png" alt="Atolon" style={{ width: 140, margin: "0 auto 16px", display: "block" }} />
+          <div style={{ fontSize: 22, fontWeight: 800, color: "#fff", marginBottom: 6 }}>Cambia tu contraseña</div>
+          <div style={{ fontSize: 13, color: "rgba(255,255,255,0.45)", lineHeight: 1.6 }}>
+            Por seguridad debes crear una contraseña personal antes de continuar. No podrás omitir este paso.
+          </div>
+        </div>
+
+        <div style={{ background: "#E8A02022", border: "1px solid #E8A02055", borderRadius: 10, padding: "12px 16px", marginBottom: 24, display: "flex", gap: 10, alignItems: "flex-start" }}>
+          <span style={{ fontSize: 18, flexShrink: 0 }}>⚠️</span>
+          <div style={{ fontSize: 13, color: "#E8A020", lineHeight: 1.5 }}>
+            Estás usando la contraseña temporal <strong>Atolon123</strong>. Crea una nueva contraseña para proteger tu cuenta.
+          </div>
+        </div>
+
+        <form onSubmit={handleSubmit}>
+          <div style={{ marginBottom: 14 }}>
+            <label style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", display: "block", marginBottom: 6 }}>NUEVA CONTRASEÑA</label>
+            <div style={{ position: "relative" }}>
+              <input type={show ? "text" : "password"} value={pass} onChange={e => setPass(e.target.value)}
+                placeholder="Mínimo 8 caracteres" required style={{ ...IS, paddingRight: 44 }} />
+              <button type="button" onClick={() => setShow(s => !s)}
+                style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", color: "rgba(255,255,255,0.4)", cursor: "pointer", fontSize: 16 }}>
+                {show ? "🙈" : "👁"}
+              </button>
+            </div>
+          </div>
+          <div style={{ marginBottom: 20 }}>
+            <label style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", display: "block", marginBottom: 6 }}>CONFIRMAR CONTRASEÑA</label>
+            <div style={{ position: "relative" }}>
+              <input type={show2 ? "text" : "password"} value={pass2} onChange={e => setPass2(e.target.value)}
+                placeholder="Repite la contraseña" required style={{ ...IS, paddingRight: 44 }} />
+              <button type="button" onClick={() => setShow2(s => !s)}
+                style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", color: "rgba(255,255,255,0.4)", cursor: "pointer", fontSize: 16 }}>
+                {show2 ? "🙈" : "👁"}
+              </button>
+            </div>
+          </div>
+
+          {/* Indicadores de fortaleza */}
+          {pass.length > 0 && (
+            <div style={{ display: "flex", gap: 6, marginBottom: 14 }}>
+              {[
+                { ok: pass.length >= 8,           label: "8+ chars" },
+                { ok: /[A-Z]/.test(pass),          label: "Mayúscula" },
+                { ok: /[0-9]/.test(pass),          label: "Número" },
+                { ok: pass !== "Atolon123",        label: "No temporal" },
+              ].map(({ ok, label }) => (
+                <div key={label} style={{ flex: 1, textAlign: "center", padding: "4px 0", borderRadius: 6, background: ok ? B.success + "22" : "rgba(255,255,255,0.06)", border: `1px solid ${ok ? B.success + "55" : "transparent"}` }}>
+                  <div style={{ fontSize: 10, color: ok ? B.success : "rgba(255,255,255,0.3)", fontWeight: 600 }}>{ok ? "✓" : "·"} {label}</div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {error && (
+            <div style={{ background: "#D6454522", border: "1px solid #D6454544", borderRadius: 8, padding: "10px 14px", fontSize: 13, color: "#F87171", marginBottom: 16 }}>
+              {error}
+            </div>
+          )}
+
+          <button type="submit" disabled={saving}
+            style={{ width: "100%", padding: "14px", borderRadius: 10, border: "none", background: saving ? B.navyLight : B.sky, color: saving ? "rgba(255,255,255,0.4)" : B.navy, fontSize: 15, fontWeight: 700, cursor: saving ? "default" : "pointer" }}>
+            {saving ? "Guardando..." : "Guardar y entrar →"}
+          </button>
+
+          <div style={{ textAlign: "center", marginTop: 16 }}>
+            <button type="button"
+              onClick={async () => { await supabase.auth.signOut(); }}
+              style={{ background: "none", border: "none", color: "rgba(255,255,255,0.35)", fontSize: 13, cursor: "pointer" }}>
+              ¿Olvidaste tu clave? — Cerrar sesión e ingresar con otra contraseña
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 // ── Floating WhatsApp Button ────────────────────────────────────────────────
 function WhatsAppFloat({ phone }) {
   const [hovered, setHovered] = useState(false);
@@ -100,6 +222,7 @@ export default function App() {
   const [activeModule, setActiveModule] = useState("dashboard");
   const [session, setSession]           = useState(undefined); // undefined = loading
   const [waPhone, setWaPhone]           = useState(null);
+  const [mustChange, setMustChange]     = useState(false); // force password change
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => setSession(data.session));
@@ -119,6 +242,13 @@ export default function App() {
     supabase.from("configuracion").select("whatsapp").eq("id", "atolon").single()
       .then(({ data }) => { if (data?.whatsapp) setWaPhone(data.whatsapp); });
   }, []);
+
+  // Verificar si el usuario debe cambiar su clave
+  useEffect(() => {
+    if (!session?.user?.email || !supabase) { setMustChange(false); return; }
+    supabase.from("usuarios").select("must_change_password").eq("email", session.user.email.toLowerCase()).single()
+      .then(({ data }) => setMustChange(!!data?.must_change_password));
+  }, [session]);
 
   const navigate = (mod) => setActiveModule(mod);
 
@@ -141,6 +271,9 @@ export default function App() {
 
   // Not logged in from any other route
   if (!session) return <><Login /><WhatsAppFloat phone={waPhone} /></>;
+
+  // Logged in but must change password first
+  if (mustChange) return <ForceChangePassword userEmail={session.user.email} onDone={() => setMustChange(false)} />;
 
   // Logged in — show OS (internal, no WhatsApp button)
   return (

@@ -118,7 +118,8 @@ function UsuarioModal({ usuario, roles, onClose, onSaved }) {
     if (isEdit) {
       await supabase.from("usuarios").update(row).eq("id", usuario.id);
     } else {
-      await supabase.from("usuarios").insert({ id: `USR-${Date.now()}`, ...row });
+      // Nuevo usuario: debe cambiar la clave Atolon123 en su primer ingreso
+      await supabase.from("usuarios").insert({ id: `USR-${Date.now()}`, ...row, must_change_password: true });
     }
     setSaving(false);
     onSaved();
