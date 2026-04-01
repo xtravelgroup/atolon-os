@@ -22,60 +22,52 @@ const CARD_GRADIENTS = {
 
 function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
 
-// ══════════════════════════════════════════════════════
-// MEMBERSHIP CARD
-// ══════════════════════════════════════════════════════
-function MembershipCard({ miembro, fullWidth = true }) {
-  const b = BENEFICIOS[miembro.nivel] || BENEFICIOS.coral;
-  const gradient = CARD_GRADIENTS[miembro.nivel] || CARD_GRADIENTS.coral;
-  return (
-    <div style={{
-      background: gradient,
-      borderRadius: 20,
-      padding: "32px 36px",
-      color: "#fff",
-      position: "relative",
-      overflow: "hidden",
-      boxShadow: "0 20px 60px rgba(0,0,0,0.5)",
-      width: fullWidth ? "100%" : "auto",
-      boxSizing: "border-box",
-    }}>
-      {/* Decorative circles */}
-      <div style={{ position: "absolute", top: -50, right: -50, width: 220, height: 220, borderRadius: "50%", background: "rgba(255,255,255,0.05)" }} />
-      <div style={{ position: "absolute", bottom: -70, right: 30, width: 280, height: 280, borderRadius: "50%", background: "rgba(255,255,255,0.03)" }} />
-      {/* Fish watermark */}
-      <img src="/atolon-peces.png" alt="" style={{ position: "absolute", bottom: -10, right: -10, width: 190, opacity: 0.12, pointerEvents: "none", userSelect: "none" }} />
+// ─── Responsive hook ────────────────────────────────────────────────────────
+function useW() {
+  const [w, setW] = useState(() => window.innerWidth);
+  useEffect(() => {
+    const h = () => setW(window.innerWidth);
+    window.addEventListener("resize", h);
+    return () => window.removeEventListener("resize", h);
+  }, []);
+  return w;
+}
 
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 22, position: "relative" }}>
-        {/* Logo */}
-        <img src="/atolon-logo-white.png" alt="Atolon" style={{ height: 28, opacity: 0.9, display: "block" }} />
+// ══════════════════════════════════════════════════════
+// MEMBERSHIP CARD CONTENT (shared between card + fullscreen)
+// ══════════════════════════════════════════════════════
+function CardContent({ miembro, compact = false }) {
+  const b = BENEFICIOS[miembro.nivel] || BENEFICIOS.coral;
+  return (
+    <>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: compact ? 16 : 22, position: "relative" }}>
+        <img src="/atolon-logo-white.png" alt="Atolon" style={{ height: compact ? 54 : 72, opacity: 0.9, display: "block" }} />
         <div style={{
-          padding: "5px 16px", borderRadius: 20, fontSize: 12, fontWeight: 700,
+          padding: compact ? "4px 12px" : "5px 16px", borderRadius: 20, fontSize: compact ? 11 : 12, fontWeight: 700,
           background: "rgba(255,255,255,0.12)", backdropFilter: "blur(8px)",
-          color: b.color, border: `1px solid ${b.color}77`,
-          letterSpacing: 1,
+          color: b.color, border: `1px solid ${b.color}77`, letterSpacing: 1,
         }}>
           {b.icon} {b.label.toUpperCase()}
         </div>
       </div>
 
-      <div style={{ marginBottom: 24, position: "relative" }}>
-        <div style={{ fontSize: 26, fontWeight: 800, fontFamily: "'Barlow Condensed', sans-serif", marginBottom: 6, letterSpacing: "-0.01em" }}>
+      <div style={{ marginBottom: compact ? 16 : 24, position: "relative" }}>
+        <div style={{ fontSize: compact ? 20 : 26, fontWeight: 800, fontFamily: "'Barlow Condensed', sans-serif", marginBottom: 4, letterSpacing: "-0.01em" }}>
           {miembro.nombre}
         </div>
-        <div style={{ fontSize: 12, opacity: 0.5, letterSpacing: 3, fontFamily: "monospace" }}>{miembro.numero_membresia || "—"}</div>
+        <div style={{ fontSize: 11, opacity: 0.5, letterSpacing: 3, fontFamily: "monospace" }}>{miembro.numero_membresia || "—"}</div>
       </div>
 
-      <div style={{ display: "flex", gap: 32, flexWrap: "wrap", position: "relative" }}>
+      <div style={{ display: "flex", flexDirection: compact ? "column" : "row", gap: compact ? 14 : 32, flexWrap: "wrap", position: "relative" }}>
         <div>
           <div style={{ fontSize: 9, opacity: 0.45, textTransform: "uppercase", letterSpacing: 2, marginBottom: 4 }}>PUNTOS DISPONIBLES</div>
-          <div style={{ fontSize: 32, fontWeight: 800, fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: "-0.02em" }}>
+          <div style={{ fontSize: compact ? 26 : 32, fontWeight: 800, fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: "-0.02em" }}>
             ◉ {(miembro.puntos_disponibles || 0).toLocaleString("es-CO")}
           </div>
         </div>
         <div>
           <div style={{ fontSize: 9, opacity: 0.45, textTransform: "uppercase", letterSpacing: 2, marginBottom: 6 }}>BENEFICIOS ACTIVOS</div>
-          <div style={{ fontSize: 13, opacity: 0.85, lineHeight: 1.9 }}>
+          <div style={{ fontSize: compact ? 12 : 13, opacity: 0.85, lineHeight: 1.9 }}>
             {miembro.nivel === "ocean" ? (
               <>
                 🚤 Embarcación propia · <span style={{ color: b.color }}>personas ilimitadas</span><br />
@@ -106,6 +98,88 @@ function MembershipCard({ miembro, fullWidth = true }) {
           </div>
         </div>
       </div>
+    </>
+  );
+}
+
+// ══════════════════════════════════════════════════════
+// FULLSCREEN CARD (mobile tap)
+// ══════════════════════════════════════════════════════
+function CardFullscreen({ miembro, onClose }) {
+  const b = BENEFICIOS[miembro.nivel] || BENEFICIOS.coral;
+  const gradient = CARD_GRADIENTS[miembro.nivel] || CARD_GRADIENTS.coral;
+  const qrData = encodeURIComponent(miembro.numero_membresia || miembro.id);
+  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=180x180&bgcolor=000000&color=ffffff&data=${qrData}`;
+
+  return (
+    <div style={{ position: "fixed", inset: 0, zIndex: 2000, background: "rgba(0,0,0,0.92)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 20 }}
+      onClick={onClose}>
+      <div style={{ width: "100%", maxWidth: 420 }} onClick={e => e.stopPropagation()}>
+        {/* Card */}
+        <div style={{ background: gradient, borderRadius: 20, padding: "28px 24px", color: "#fff", position: "relative", overflow: "hidden", boxShadow: "0 24px 64px rgba(0,0,0,0.7)", marginBottom: 20 }}>
+          <div style={{ position: "absolute", top: -50, right: -50, width: 200, height: 200, borderRadius: "50%", background: "rgba(255,255,255,0.05)" }} />
+          <div style={{ position: "absolute", bottom: -60, right: 20, width: 240, height: 240, borderRadius: "50%", background: "rgba(255,255,255,0.03)" }} />
+          <img src="/atolon-peces.png" alt="" style={{ position: "absolute", bottom: -8, right: -8, width: 160, opacity: 0.12, pointerEvents: "none" }} />
+          <CardContent miembro={miembro} compact />
+        </div>
+
+        {/* QR Code */}
+        <div style={{ background: "rgba(255,255,255,0.06)", borderRadius: 16, padding: "24px", textAlign: "center" }}>
+          <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", letterSpacing: 2, textTransform: "uppercase", marginBottom: 16 }}>Código de Membresía</div>
+          <div style={{ display: "inline-block", background: "#000", borderRadius: 12, padding: 12, marginBottom: 14 }}>
+            <img src={qrUrl} alt="QR" style={{ width: 160, height: 160, display: "block" }} />
+          </div>
+          <div style={{ fontSize: 13, fontFamily: "monospace", color: b.color, letterSpacing: 3, fontWeight: 700 }}>
+            {miembro.numero_membresia || miembro.id}
+          </div>
+          <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", marginTop: 6 }}>{miembro.nombre}</div>
+        </div>
+
+        <button onClick={onClose} style={{ marginTop: 20, width: "100%", padding: "13px", background: "rgba(255,255,255,0.1)", border: "1px solid rgba(255,255,255,0.15)", borderRadius: 12, color: "rgba(255,255,255,0.7)", fontSize: 14, cursor: "pointer" }}>
+          Cerrar
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════
+// MEMBERSHIP CARD
+// ══════════════════════════════════════════════════════
+function MembershipCard({ miembro, onTap }) {
+  const w = useW();
+  const isMobile = w < 640;
+  const b = BENEFICIOS[miembro.nivel] || BENEFICIOS.coral;
+  const gradient = CARD_GRADIENTS[miembro.nivel] || CARD_GRADIENTS.coral;
+  return (
+    <div
+      onClick={isMobile && onTap ? onTap : undefined}
+      style={{
+        background: gradient,
+        borderRadius: 20,
+        padding: isMobile ? "22px 20px" : "32px 36px",
+        color: "#fff",
+        position: "relative",
+        overflow: "hidden",
+        boxShadow: "0 20px 60px rgba(0,0,0,0.5)",
+        width: "100%",
+        boxSizing: "border-box",
+        cursor: isMobile && onTap ? "pointer" : "default",
+      }}>
+      {/* Decorative circles */}
+      <div style={{ position: "absolute", top: -50, right: -50, width: 220, height: 220, borderRadius: "50%", background: "rgba(255,255,255,0.05)" }} />
+      <div style={{ position: "absolute", bottom: -70, right: 30, width: 280, height: 280, borderRadius: "50%", background: "rgba(255,255,255,0.03)" }} />
+      {/* Fish watermark */}
+      <img src="/atolon-peces.png" alt="" style={{ position: "absolute", bottom: -10, right: -10, width: isMobile ? 140 : 190, opacity: 0.12, pointerEvents: "none", userSelect: "none" }} />
+
+      <CardContent miembro={miembro} compact={isMobile} />
+
+      {/* Mobile tap hint */}
+      {isMobile && onTap && (
+        <div style={{ position: "absolute", bottom: 12, right: 16, fontSize: 10, opacity: 0.35, letterSpacing: 1 }}>
+          Toca para ver QR →
+        </div>
+      )}
     </div>
   );
 }
@@ -493,7 +567,10 @@ function MainPortal({ miembro: initialMiembro, onLogout }) {
   const [txs, setTxs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showRecibo, setShowRecibo] = useState(false);
-  const [showReserva, setShowReserva] = useState(null); // 'restaurante' | 'cama_playa'
+  const [showReserva, setShowReserva] = useState(null);
+  const [showCardFull, setShowCardFull] = useState(false);
+  const w = useW();
+  const isMobile = w < 640;
 
   const load = async () => {
     if (!supabase) { setLoading(false); return; }
@@ -522,72 +599,74 @@ function MainPortal({ miembro: initialMiembro, onLogout }) {
     <div style={{ minHeight: "100vh", background: B.navy, fontFamily: "inherit" }}>
       {showRecibo && <SubirReciboModal miembro={miembro} onClose={() => setShowRecibo(false)} onSubmitted={load} />}
       {showReserva && <ReservaModal tipo={showReserva} miembro={miembro} onClose={() => setShowReserva(null)} onCreated={load} />}
+      {showCardFull && <CardFullscreen miembro={miembro} onClose={() => setShowCardFull(false)} />}
 
       {/* Header */}
-      <div style={{ background: B.navyMid, borderBottom: `1px solid ${B.navyLight}`, padding: "16px 20px", display: "flex", justifyContent: "space-between", alignItems: "center", position: "sticky", top: 0, zIndex: 100 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <img src="/favicon-blue.png" alt="Atolon" style={{ height: 36, objectFit: "contain" }} />
+      <div style={{ background: B.navyMid, borderBottom: `1px solid ${B.navyLight}`, padding: isMobile ? "12px 16px" : "16px 20px", display: "flex", justifyContent: "space-between", alignItems: "center", position: "sticky", top: 0, zIndex: 100 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <img src="/favicon-blue.png" alt="Atolon" style={{ height: isMobile ? 28 : 36, objectFit: "contain" }} />
           <div>
-            <div style={{ fontSize: 15, fontWeight: 800, letterSpacing: 1 }}>✦ Atolón Society</div>
-            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)" }}>Atolon Beach Club</div>
+            <div style={{ fontSize: isMobile ? 13 : 15, fontWeight: 800, letterSpacing: 1 }}>✦ Atolón Society</div>
+            <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)" }}>Atolon Beach Club</div>
           </div>
         </div>
-        <button onClick={onLogout} style={{ background: "none", border: `1px solid rgba(255,255,255,0.15)`, borderRadius: 8, color: "rgba(255,255,255,0.5)", fontSize: 13, padding: "7px 14px", cursor: "pointer" }}>
+        <button onClick={onLogout} style={{ background: "none", border: `1px solid rgba(255,255,255,0.15)`, borderRadius: 8, color: "rgba(255,255,255,0.5)", fontSize: 12, padding: "6px 12px", cursor: "pointer" }}>
           Salir
         </button>
       </div>
 
-      <div style={{ maxWidth: 640, margin: "0 auto", padding: "24px 16px 60px" }}>
+      <div style={{ maxWidth: 640, margin: "0 auto", padding: isMobile ? "16px 12px 80px" : "24px 20px 60px" }}>
         {/* Membership Card */}
-        <div style={{ marginBottom: 28 }}>
-          <MembershipCard miembro={miembro} />
+        <div style={{ marginBottom: 20 }}>
+          <MembershipCard miembro={miembro} onTap={() => setShowCardFull(true)} />
         </div>
 
         {/* Mis Puntos */}
-        <div style={{ background: B.navyMid, borderRadius: 16, padding: "24px", marginBottom: 20, textAlign: "center" }}>
+        <div style={{ background: B.navyMid, borderRadius: 16, padding: isMobile ? "20px 16px" : "24px", marginBottom: 16, textAlign: "center" }}>
           <div style={{ fontSize: 11, color: B.sand, textTransform: "uppercase", letterSpacing: 2, marginBottom: 8 }}>Mis Puntos Disponibles</div>
-          <div style={{ fontSize: 56, fontWeight: 800, fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: "-0.02em", color: b.color, lineHeight: 1 }}>
+          <div style={{ fontSize: isMobile ? 44 : 56, fontWeight: 800, fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: "-0.02em", color: b.color, lineHeight: 1 }}>
             {(miembro.puntos_disponibles || 0).toLocaleString("es-CO")}
           </div>
-          <div style={{ fontSize: 14, color: "rgba(255,255,255,0.5)", marginTop: 8 }}>
+          <div style={{ fontSize: 13, color: "rgba(255,255,255,0.5)", marginTop: 8 }}>
             Equivalen a <strong style={{ color: B.success }}>{COP(equivalenciaCOP)}</strong> en consumos
           </div>
           <button onClick={() => setShowRecibo(true)} style={{
-            marginTop: 20, padding: "13px 28px", background: `linear-gradient(135deg, ${B.sky}, #3b82f6)`,
+            marginTop: 16, padding: "13px 28px", background: `linear-gradient(135deg, ${B.sky}, #3b82f6)`,
             color: "#fff", border: "none", borderRadius: 12, fontWeight: 700, fontSize: 14, cursor: "pointer",
-            boxShadow: "0 4px 16px rgba(59,130,246,0.35)",
+            boxShadow: "0 4px 16px rgba(59,130,246,0.35)", width: isMobile ? "100%" : "auto",
           }}>
             📸 Subir Recibo
           </button>
         </div>
 
         {/* Reservas */}
-        <div style={{ background: B.navyMid, borderRadius: 16, padding: "24px", marginBottom: 20 }}>
-          <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 16, fontFamily: "'Barlow Condensed', sans-serif" }}>Mis Reservas</div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginBottom: 20 }}>
+        <div style={{ background: B.navyMid, borderRadius: 16, padding: isMobile ? "20px 16px" : "24px", marginBottom: 16 }}>
+          <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 14, fontFamily: "'Barlow Condensed', sans-serif" }}>Mis Reservas</div>
+          <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "1fr 1fr 1fr", gap: 8, marginBottom: 16 }}>
             <button onClick={() => setShowReserva("cama_playa")} style={{
-              padding: "18px 12px", background: "rgba(255,255,255,0.05)", border: `1px solid rgba(255,255,255,0.1)`,
+              padding: isMobile ? "14px 8px" : "18px 12px", background: "rgba(255,255,255,0.05)", border: `1px solid rgba(255,255,255,0.1)`,
               borderRadius: 12, cursor: "pointer", textAlign: "center", color: "#fff",
             }}>
-              <div style={{ fontSize: 26, marginBottom: 5 }}>🛏</div>
-              <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 3 }}>Cama de Playa</div>
-              <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)" }}>{miembro.nivel === "ocean" ? "Camas VIP" : `${b.camas} camas incluidas`}</div>
+              <div style={{ fontSize: isMobile ? 22 : 26, marginBottom: 4 }}>🛏</div>
+              <div style={{ fontWeight: 700, fontSize: isMobile ? 12 : 13, marginBottom: 2 }}>Cama de Playa</div>
+              <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)" }}>{miembro.nivel === "ocean" ? "Camas VIP" : `${b.camas} camas incluidas`}</div>
             </button>
             <button onClick={() => setShowReserva("restaurante")} style={{
-              padding: "18px 12px", background: "rgba(255,255,255,0.05)", border: `1px solid rgba(255,255,255,0.1)`,
+              padding: isMobile ? "14px 8px" : "18px 12px", background: "rgba(255,255,255,0.05)", border: `1px solid rgba(255,255,255,0.1)`,
               borderRadius: 12, cursor: "pointer", textAlign: "center", color: "#fff",
             }}>
-              <div style={{ fontSize: 26, marginBottom: 5 }}>🍽</div>
-              <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 3 }}>Restaurante</div>
-              <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)" }}>Hasta {b.personas} personas</div>
+              <div style={{ fontSize: isMobile ? 22 : 26, marginBottom: 4 }}>🍽</div>
+              <div style={{ fontWeight: 700, fontSize: isMobile ? 12 : 13, marginBottom: 2 }}>Restaurante</div>
+              <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)" }}>Hasta {b.personas} personas</div>
             </button>
             <button onClick={() => setShowReserva("llegada")} style={{
-              padding: "18px 12px", background: `rgba(96,165,250,0.08)`, border: `1px solid ${b.color}44`,
+              padding: isMobile ? "14px 8px" : "18px 12px", background: `rgba(96,165,250,0.08)`, border: `1px solid ${b.color}44`,
               borderRadius: 12, cursor: "pointer", textAlign: "center", color: "#fff",
+              gridColumn: isMobile ? "1 / -1" : "auto",
             }}>
-              <div style={{ fontSize: 26, marginBottom: 5 }}>⛵</div>
-              <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 3 }}>Reservar Llegada</div>
-              <div style={{ fontSize: 11, color: b.color }}>Propia o Atolon</div>
+              <div style={{ fontSize: isMobile ? 22 : 26, marginBottom: 4 }}>⛵</div>
+              <div style={{ fontWeight: 700, fontSize: isMobile ? 12 : 13, marginBottom: 2 }}>Reservar Llegada</div>
+              <div style={{ fontSize: 10, color: b.color }}>Propia o Atolon</div>
             </button>
           </div>
 
