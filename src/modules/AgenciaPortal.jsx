@@ -2215,6 +2215,86 @@ function GruposPortal({ agencia }) {
 }
 
 // ═══════════════════════════════════════════════
+// SET PASSWORD (primera vez)
+// ═══════════════════════════════════════════════
+function SetPasswordScreen({ user, onDone }) {
+  const [clave, setClave]   = useState("");
+  const [clave2, setClave2] = useState("");
+  const [show, setShow]     = useState(false);
+  const [show2, setShow2]   = useState(false);
+  const [error, setError]   = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setError("");
+    if (clave.length < 6)    { setError("La clave debe tener mínimo 6 caracteres"); return; }
+    if (clave !== clave2)    { setError("Las claves no coinciden"); return; }
+    setSaving(true);
+    const { error: err } = await supabase.from("b2b_usuarios").update({ pin: clave }).eq("id", user.id);
+    if (err) { setError("Error al guardar. Intenta de nuevo."); setSaving(false); return; }
+    setSaving(false);
+    onDone(clave);
+  };
+
+  return (
+    <div style={{ minHeight: "100vh", background: B.navy, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Inter','Segoe UI',sans-serif" }}>
+      <div style={{ background: B.navyMid, borderRadius: 20, padding: "40px 36px", width: 420, maxWidth: "92vw", boxShadow: "0 24px 64px #0008" }}>
+        <div style={{ textAlign: "center", marginBottom: 28 }}>
+          <img src="/atolon-logo-white.png" alt="Atolon" style={{ width: 120, margin: "0 auto 16px", display: "block" }} />
+          <div style={{ fontSize: 21, fontWeight: 800, color: "#fff", marginBottom: 6 }}>Crea tu clave de acceso</div>
+          <div style={{ fontSize: 13, color: "rgba(255,255,255,0.45)", lineHeight: 1.6 }}>
+            Es tu primera vez en el portal. Por seguridad debes crear una clave personal antes de continuar.
+          </div>
+        </div>
+
+        <div style={{ background: "#38bdf822", border: "1px solid #38bdf844", borderRadius: 10, padding: "10px 14px", marginBottom: 22, fontSize: 13, color: B.sky }}>
+          👋 Hola <strong>{user.nombre}</strong> — {user.email}
+        </div>
+
+        <form onSubmit={handleSubmit}>
+          <div style={{ marginBottom: 14 }}>
+            <label style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", display: "block", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em" }}>Nueva clave</label>
+            <div style={{ position: "relative" }}>
+              <input type={show ? "text" : "password"} value={clave} onChange={e => setClave(e.target.value)}
+                placeholder="Mínimo 6 caracteres" required
+                style={{ ...IS, paddingRight: 44 }} />
+              <button type="button" onClick={() => setShow(s => !s)}
+                style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", color: "rgba(255,255,255,0.4)", cursor: "pointer", fontSize: 16 }}>
+                {show ? "🙈" : "👁"}
+              </button>
+            </div>
+          </div>
+          <div style={{ marginBottom: 20 }}>
+            <label style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", display: "block", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em" }}>Confirmar clave</label>
+            <div style={{ position: "relative" }}>
+              <input type={show2 ? "text" : "password"} value={clave2} onChange={e => setClave2(e.target.value)}
+                placeholder="Repite la clave" required
+                style={{ ...IS, paddingRight: 44 }} />
+              <button type="button" onClick={() => setShow2(s => !s)}
+                style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", color: "rgba(255,255,255,0.4)", cursor: "pointer", fontSize: 16 }}>
+                {show2 ? "🙈" : "👁"}
+              </button>
+            </div>
+          </div>
+
+          {error && (
+            <div style={{ background: "#ef444422", border: "1px solid #ef444444", borderRadius: 8, padding: "10px 14px", fontSize: 13, color: "#f87171", marginBottom: 16 }}>
+              {error}
+            </div>
+          )}
+
+          <button type="submit" disabled={saving}
+            style={{ width: "100%", padding: 14, borderRadius: 10, border: "none", background: saving ? B.navyLight : B.sand, color: saving ? "rgba(255,255,255,0.4)" : B.navy, fontSize: 15, fontWeight: 700, cursor: saving ? "default" : "pointer" }}>
+            {saving ? "Guardando..." : "Guardar y entrar →"}
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════
 // MAIN PORTAL
 // ═══════════════════════════════════════════════
 export default function AgenciaPortal() {
@@ -2247,6 +2327,14 @@ export default function AgenciaPortal() {
   }, [isMobile]);
 
   if (!session) return <LoginScreen onLogin={setSession} />;
+
+  // Primera vez sin clave → forzar creación de clave
+  if (!session.user.pin) return (
+    <SetPasswordScreen
+      user={session.user}
+      onDone={(nuevaClave) => setSession(prev => ({ ...prev, user: { ...prev.user, pin: nuevaClave } }))}
+    />
+  );
 
   const { user, agencia } = session;
   const isAdmin = user.rol === "admin";
