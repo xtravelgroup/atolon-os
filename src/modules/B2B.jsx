@@ -2213,11 +2213,27 @@ function FichaAliado({ aliado, onBack, onRefresh }) {
                   style={{ fontSize: 11, color: B.sky, textDecoration: "none" }}>
                   🔗 Ver portal →
                 </a>
-                <button onClick={() => {
+                <button onClick={async () => {
                   const portalUrl = window.location.origin + "/agencia";
                   const nombre = aliado.contacto || aliado.nombre;
                   const email  = aliado.email;
                   if (!email) { alert("Este aliado no tiene email registrado."); return; }
+                  // Crear usuario en b2b_usuarios si no existe
+                  if (supabase) {
+                    const { data: existing } = await supabase.from("b2b_usuarios")
+                      .select("id").eq("email", email.toLowerCase().trim()).single();
+                    if (!existing) {
+                      await supabase.from("b2b_usuarios").insert({
+                        id: `U-${Date.now()}`,
+                        aliado_id: aliado.id,
+                        nombre: nombre,
+                        email: email.toLowerCase().trim(),
+                        rol: "vendedor",
+                        activo: true,
+                      });
+                      fetchB2bUsers();
+                    }
+                  }
                   const subject = encodeURIComponent("Bienvenido al Portal de Agencias — Atolon Beach Club");
                   const body = encodeURIComponent(
                     `Hola ${nombre},\n\n` +
