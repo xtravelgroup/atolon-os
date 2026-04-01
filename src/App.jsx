@@ -48,7 +48,7 @@ const MODULE_MAP = {
 };
 
 // Public routes — no auth required
-const PUBLIC_ROUTES = ["empleados", "agencia", "booking", "pago", "reset-password", "zarpe-info"];
+const PUBLIC_ROUTES = ["empleados", "agencia", "booking", "pago", "reset-password", "zarpe-info", "login", ""];
 
 function getRoute() {
   return window.location.pathname.replace(/^\//, "") || "";
@@ -75,16 +75,17 @@ export default function App() {
 
   // Public routes — accessible without login
   if (route === "empleados")      return <EmpleadoPortal />;
-  if (route === "agencia")        return <AgenciaPortal />;
+  if (route === "agencia" || route === "") return <AgenciaPortal />;
   if (route === "booking")        return <BookingPopup />;
   if (route.startsWith("pago"))   return <PagoCliente />;
   if (route === "reset-password") return <ResetPassword />;
   if (route === "zarpe-info")     return <ZarpeInfo />;
+  if (route === "login")          return <Login />;
 
   // Loading auth state
   if (session === undefined) return null;
 
-  // Not logged in
+  // Not logged in — redirect to login page
   if (!session) return <Login />;
 
   // Logged in — show OS

@@ -1139,6 +1139,14 @@ export default function BookingPopup() {
         <div style={{ textAlign: "center", marginTop: 16, fontSize: 11, color: C.textLight }}>
           Atolon Beach Club · Reservas y consultas: reservas@atolonbeachclub.com
         </div>
+        <div style={{ display: "flex", justifyContent: "center", gap: 20, marginTop: 10 }}>
+          <a href="/" style={{ fontSize: 11, color: C.textLight, textDecoration: "none", opacity: 0.5 }}>
+            Portal Agencias
+          </a>
+          <a href="/login" style={{ fontSize: 11, color: C.textLight, textDecoration: "none", opacity: 0.5 }}>
+            Colaborador Login
+          </a>
+        </div>
       </div>
     </div>
   );
