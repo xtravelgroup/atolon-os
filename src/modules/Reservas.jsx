@@ -1103,8 +1103,8 @@ export default function Reservas() {
     if (!supabase) { setLoading(false); return; }
     setLoading(true);
 
-    // Auto-cancelar reservas pendiente_pago con más de 60 minutos
-    const expireThreshold = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    // Auto-cancelar reservas pendiente_pago con más de 30 minutos (fallback si el cron falla)
+    const expireThreshold = new Date(Date.now() - 30 * 60 * 1000).toISOString();
     await supabase.from("reservas")
       .update({ estado: "cancelado" })
       .eq("estado", "pendiente_pago")

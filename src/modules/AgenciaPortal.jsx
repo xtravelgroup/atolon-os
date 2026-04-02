@@ -223,7 +223,7 @@ function NuevaReserva({ agencia, user, onCreated, vistaPrecios = "ambos" }) {
     } else if (esClientePaga) {
       // Cliente tiene 15 min para pagar
       estado = "pendiente_pago";
-      linkExpira = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+      linkExpira = new Date(Date.now() + 30 * 60 * 1000).toISOString();
     } else if (esTransfComp) {
       // Comprobante ya subido → confirmar
       estado = "confirmado";
