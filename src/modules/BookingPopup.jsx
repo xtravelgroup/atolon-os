@@ -214,21 +214,32 @@ export default function BookingPopup() {
 
   // In group mode, salidas come from grupoEvt.salidas_grupo — no auto-preselect needed
 
-  // Load photos + includes for selected product
+  // Load photos, includes, and live prices from DB for selected product
   useEffect(() => {
     if (!supabase || !product) return;
-    supabase.from("pasadias").select("foto_principal_url, fotos_adicionales")
+    supabase.from("pasadias")
+      .select("foto_principal_url, fotos_adicionales, precio, precio_neto_agencia, precio_nino, precio_neto_nino, nino_nota")
       .eq("id", product.pasadiaId).single()
       .then(({ data }) => {
         if (data) {
           setFotoPrincipal(data.foto_principal_url || "");
           setFotosExtra(data.fotos_adicionales || []);
           setFotoActiva(0);
+          // Override hardcoded prices with live DB values
+          setProduct(prev => ({
+            ...prev,
+            precio:         data.precio         ?? prev.precio,
+            precioNeto:     data.precio_neto_agencia ?? prev.precioNeto,
+            precioNino:     data.precio_nino     ?? prev.precioNino,
+            precioNetoNino: data.precio_neto_nino ?? prev.precioNetoNino,
+            ninoNota:       data.nino_nota       ?? prev.ninoNota,
+            noNinos:        (data.precio_nino === 0 || data.precio_nino === null) ? true : prev.noNinos,
+          }));
         }
       });
     supabase.from("pasadia_incluye").select("descripcion, descripcion_en").eq("pasadia_id", product.pasadiaId).order("orden")
       .then(({ data }) => setIncluye(data || []));
-  }, [product]);
+  }, [product?.pasadiaId]); // only re-run when product ID changes, not on every price update
 
   // Load month-level availability + salidas catalog
   useEffect(() => {
@@ -465,6 +476,7 @@ export default function BookingPopup() {
           form.notas || null,
         ].filter(Boolean).join(" | ") || null,
         qr_code:        `ATOLON-WEB-${Date.now()}`,
+        lead_id:        leadId || null,
       });
     }
     // AtolanTrack: conversion event

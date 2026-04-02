@@ -169,6 +169,76 @@ function PasajerosModal({ reserva, onClose, onSaved, autoCheckin = false }) {
   );
 }
 
+// ─── Colaboradores Modal ─────────────────────────────────────────────────────
+function ColaboradoresModal({ salidaId, fecha, despacho, onClose, onSaved }) {
+  const init = despacho?.colaboradores?.length > 0
+    ? despacho.colaboradores
+    : [{ nombre: "", cedula: "", rol: "" }];
+  const [colabs, setColabs] = useState(init);
+  const [saving, setSaving] = useState(false);
+
+  const set = (i, k, v) => setColabs(p => p.map((x, j) => j === i ? { ...x, [k]: v } : x));
+  const add = () => setColabs(p => [...p, { nombre: "", cedula: "", rol: "" }]);
+  const remove = (i) => setColabs(p => p.filter((_, j) => j !== i));
+
+  const save = async () => {
+    setSaving(true);
+    const filtered = colabs.filter(c => c.nombre.trim());
+    if (despacho) {
+      await supabase.from("salida_despachos").update({ colaboradores: filtered }).eq("id", despacho.id);
+    } else {
+      const id = `DESP-${Date.now()}`;
+      await supabase.from("salida_despachos").insert({ id, fecha, salida_id: salidaId, colaboradores: filtered });
+    }
+    setSaving(false);
+    onSaved();
+    onClose();
+  };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.75)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 999 }}
+      onClick={e => e.target === e.currentTarget && onClose()}>
+      <div style={{ background: B.navyMid, borderRadius: 16, padding: 28, width: 520, maxHeight: "90vh", overflowY: "auto", boxShadow: "0 20px 60px rgba(0,0,0,0.6)" }}>
+        <h3 style={{ fontSize: 17, fontWeight: 700, marginBottom: 4 }}>Colaboradores en embarcación</h3>
+        <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginBottom: 20 }}>Tripulación y staff que salen con el zarpe</div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {colabs.map((c, i) => (
+            <div key={i} style={{ background: B.navy, borderRadius: 10, padding: 12, display: "flex", gap: 8, alignItems: "flex-start" }}>
+              <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 8 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                  <div>
+                    <label style={LS}>Nombre completo</label>
+                    <input value={c.nombre} onChange={e => set(i, "nombre", e.target.value)} style={IS} placeholder="Nombre y apellido" />
+                  </div>
+                  <div>
+                    <label style={LS}>Cédula</label>
+                    <input value={c.cedula} onChange={e => set(i, "cedula", e.target.value)} style={IS} placeholder="No. identificación" />
+                  </div>
+                </div>
+                <div>
+                  <label style={LS}>Rol / Cargo</label>
+                  <input value={c.rol} onChange={e => set(i, "rol", e.target.value)} style={IS} placeholder="Ej: Capitán, Salvavidas, Guía..." />
+                </div>
+              </div>
+              <button onClick={() => remove(i)}
+                style={{ marginTop: 22, padding: "6px 10px", borderRadius: 8, background: "none", border: `1px solid ${B.danger}44`, color: B.danger, cursor: "pointer", fontSize: 16, flexShrink: 0 }}>✕</button>
+            </div>
+          ))}
+        </div>
+        <button onClick={add} style={{ marginTop: 10, width: "100%", padding: "9px", borderRadius: 8, background: "none", border: `1px dashed ${B.navyLight}`, color: "rgba(255,255,255,0.4)", fontSize: 13, cursor: "pointer" }}>
+          + Agregar colaborador
+        </button>
+        <div style={{ display: "flex", gap: 10, marginTop: 20 }}>
+          <button onClick={onClose} style={{ flex: 1, padding: "11px", background: "none", border: `1px solid ${B.navyLight}`, borderRadius: 8, color: "rgba(255,255,255,0.4)", fontSize: 13, cursor: "pointer" }}>Cancelar</button>
+          <button onClick={save} disabled={saving} style={{ flex: 2, padding: "11px", background: B.sand, color: B.navy, border: "none", borderRadius: 8, fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
+            {saving ? "Guardando..." : "Guardar colaboradores"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Zarpe PDF (new window) ───────────────────────────────────────────────────
 function generarZarpe(salida, reservas, fecha, despacho, embarcacionesFlota = []) {
   // Group reservas by embarcacion_asignada
@@ -291,6 +361,28 @@ function generarZarpe(salida, reservas, fecha, despacho, embarcacionesFlota = []
       </tr></thead>
       <tbody>${bodyRows}</tbody>
     </table>
+    ${despacho?.colaboradores?.length > 0 ? `
+    <div style="margin-top:20px;">
+      <div style="background:#1E3566;color:white;padding:8px 10px;font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:1px;border-radius:4px 4px 0 0;">
+        👥 Tripulación / Colaboradores — ${despacho.colaboradores.length} persona${despacho.colaboradores.length !== 1 ? "s" : ""}
+      </div>
+      <table style="border-radius:0 0 4px 4px;overflow:hidden;">
+        <thead><tr>
+          <th style="width:5%">#</th>
+          <th style="width:40%">Nombre Completo</th>
+          <th style="width:30%">Cédula</th>
+          <th style="width:25%">Rol / Cargo</th>
+        </tr></thead>
+        <tbody>
+          ${despacho.colaboradores.map((c, i) => `<tr>
+            <td>${i + 1}</td>
+            <td style="font-weight:600">${c.nombre || "—"}</td>
+            <td>${c.cedula || "—"}</td>
+            <td>${c.rol || "—"}</td>
+          </tr>`).join("")}
+        </tbody>
+      </table>
+    </div>` : ""}
     <div class="footer">Atolon Beach Club — ${new Date().toLocaleString("es-CO")}</div>
   </body></html>`;
 
@@ -311,6 +403,7 @@ export default function CheckIn() {
   const [scanning,       setScanning]       = useState(false);
   const [scanMsg,        setScanMsg]        = useState(null); // { ok, text }
   const [editPax,        setEditPax]        = useState(null); // reserva to edit pasajeros
+  const [editColabs,     setEditColabs]     = useState(false);
   const [search,         setSearch]         = useState("");
   const [loading,        setLoading]        = useState(true);
 
@@ -413,6 +506,15 @@ export default function CheckIn() {
     <>
       {scanning && <QRScanner onScan={handleScan} onClose={() => setScanning(false)} />}
       {editPax  && <PasajerosModal reserva={editPax} autoCheckin={!!editPax._autoCheckin} onClose={() => setEditPax(null)} onSaved={load} />}
+      {editColabs && salida && (
+        <ColaboradoresModal
+          salidaId={salida.id}
+          fecha={fecha}
+          despacho={despacho}
+          onClose={() => setEditColabs(false)}
+          onSaved={load}
+        />
+      )}
 
       {/* Scan feedback toast */}
       {scanMsg && (
@@ -485,10 +587,16 @@ export default function CheckIn() {
                     )}
                   </div>
                 </div>
-                <button onClick={() => generarZarpe(salida, resDesal, fecha, despacho, embarcaciones)}
-                  style={{ padding: "8px 12px", borderRadius: 8, background: B.navyLight, color: B.white, border: "none", fontSize: 12, fontWeight: 600, cursor: "pointer", flexShrink: 0 }}>
-                  📄 Zarpe
-                </button>
+                <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
+                  <button onClick={() => setEditColabs(true)}
+                    style={{ padding: "8px 12px", borderRadius: 8, background: despacho?.colaboradores?.length > 0 ? B.sky + "22" : B.navyLight, color: despacho?.colaboradores?.length > 0 ? B.sky : "rgba(255,255,255,0.6)", border: `1px solid ${despacho?.colaboradores?.length > 0 ? B.sky + "55" : "transparent"}`, fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
+                    👥 {despacho?.colaboradores?.length > 0 ? `${despacho.colaboradores.length}` : "Colabs"}
+                  </button>
+                  <button onClick={() => generarZarpe(salida, resDesal, fecha, despacho, embarcaciones)}
+                    style={{ padding: "8px 12px", borderRadius: 8, background: B.navyLight, color: B.white, border: "none", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
+                    📄 Zarpe
+                  </button>
+                </div>
               </div>
               <button onClick={() => despachar(salida)}
                 style={{ width: "100%", padding: "11px", borderRadius: 8, background: despacho ? B.success + "33" : B.sand, color: despacho ? B.success : B.navy, border: despacho ? `1px solid ${B.success}` : "none", fontWeight: 700, fontSize: 14, cursor: "pointer" }}>

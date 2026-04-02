@@ -1,11 +1,13 @@
 import { useState, useEffect, useCallback } from "react";
-import { B, COP, SALIDAS, FLOTA, PASADIAS, todayStr, fmtFecha, colNowMins } from "../brand";
+import { B, COP, PASADIAS, todayStr, fmtFecha } from "../brand";
 import { supabase } from "../lib/supabase";
 import { useMobile } from "../lib/useMobile";
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
-const CANALES = ["Web", "WhatsApp", "B2B", "Teléfono", "Walk-in"];
+const CANALES   = ["Web", "WhatsApp", "B2B", "Teléfono", "Walk-in"];
+const VENDEDORES = ["Sin asignar", "Valentina Ríos", "Camilo Herrera", "Natalia Ospina", "Juan Estrada"];
+const FORMAS_PAGO = ["Transferencia", "Efectivo", "Wompi", "CXC", "Enviar Link de Pago"];
 
 const ESTADO_STYLE = {
   confirmado: { bg: B.success + "22", color: B.success, label: "Confirmado" },
@@ -13,20 +15,21 @@ const ESTADO_STYLE = {
   cancelado:  { bg: B.danger  + "22", color: B.danger,  label: "Cancelado"  },
 };
 
-// pax already booked per salida from reservas data
-function paxPorSalida(reservas) {
+// pax already booked per salida from reservas data (uses DB salida ids)
+function paxPorSalida(reservas, salidas) {
   const map = {};
-  SALIDAS.forEach(s => (map[s.id] = 0));
+  salidas.forEach(s => (map[s.id] = 0));
   reservas.forEach(r => {
     if (r.estado !== "cancelado" && map[r.salida] !== undefined)
-      map[r.salida] += r.pax;
+      map[r.salida] += (r.pax || 0);
   });
   return map;
 }
 
 const EMPTY_FORM = {
-  nombre: "", tipo: PASADIAS[0].tipo, pax: 1, salida: SALIDAS[0].id,
-  canal: CANALES[0], precio: PASADIAS[0].precio, abono: 0, notas: "",
+  nombre: "", contacto: "", tipo: PASADIAS[0]?.tipo || "", pax_a: 1, pax_n: 0,
+  salida_id: "", canal: "WhatsApp", precio: PASADIAS[0]?.precio || 0,
+  abono: 0, forma_pago: "Transferencia", aliado_id: "", vendedor: "Sin asignar", notas: "",
 };
 
 // ── sub-components ────────────────────────────────────────────────────────────
@@ -51,84 +54,44 @@ function StatusBadge({ estado }) {
 }
 
 function DepartureCard({ salida, paxCount }) {
-  const pct = paxCount / salida.cap;
+  const cap = salida.capacidad_total || 30;
+  const pct = paxCount / cap;
   const full = pct >= 1;
   const almostFull = pct >= 0.75;
   const barColor = full ? B.danger : almostFull ? B.warning : B.success;
   const statusLabel = full ? "LLENO" : almostFull ? "CASI LLENO" : "DISPONIBLE";
   const statusColor = full ? B.danger : almostFull ? B.warning : B.success;
+  const disp = Math.max(0, cap - paxCount);
 
   return (
     <div style={{
-      background: B.navyMid,
-      border: `1px solid ${B.navyLight}`,
-      borderRadius: 12,
-      padding: "18px 20px",
-      flex: 1,
-      minWidth: 0,
-      display: "flex",
-      flexDirection: "column",
-      gap: 10,
+      background: B.navyMid, border: `1px solid ${B.navyLight}`, borderRadius: 12,
+      padding: "18px 20px", flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 10,
     }}>
-      {/* header row */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
         <div>
           <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontSize: 22, fontWeight: 700, color: B.sand, letterSpacing: 1 }}>
-            {salida.id}
+            {salida.nombre}
           </div>
           <div style={{ fontSize: 28, fontWeight: 800, color: B.white, fontFamily: "'Barlow Condensed', sans-serif", lineHeight: 1.1 }}>
             {salida.hora}
           </div>
-          <div style={{ fontSize: 12, color: B.sky, marginTop: 2 }}>
-            Regreso {salida.regreso}
-          </div>
+          <div style={{ fontSize: 12, color: B.sky, marginTop: 2 }}>Regreso {salida.hora_regreso}</div>
         </div>
-        <span style={{
-          background: statusColor + "22",
-          color: statusColor,
-          border: `1px solid ${statusColor}44`,
-          borderRadius: 20,
-          padding: "3px 10px",
-          fontSize: 11,
-          fontWeight: 700,
-          letterSpacing: 0.5,
-        }}>
-          {statusLabel}
-        </span>
-      </div>
-
-      {/* boats */}
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
-        {salida.botes.map(b => (
-          <span key={b} style={{
-            background: B.navyLight,
-            color: B.sky,
-            borderRadius: 6,
-            padding: "2px 8px",
-            fontSize: 12,
-            fontWeight: 600,
-          }}>
-            {b}
+        <div style={{ textAlign: "right" }}>
+          <span style={{ background: statusColor + "22", color: statusColor, border: `1px solid ${statusColor}44`, borderRadius: 20, padding: "3px 10px", fontSize: 11, fontWeight: 700 }}>
+            {statusLabel}
           </span>
-        ))}
+          <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginTop: 4 }}>{disp} disponibles</div>
+        </div>
       </div>
-
-      {/* capacity bar */}
       <div>
         <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 5 }}>
           <span style={{ fontSize: 12, color: B.sand }}>Pasajeros</span>
-          <span style={{ fontSize: 13, fontWeight: 700, color: B.white }}>
-            {paxCount} / {salida.cap}
-          </span>
+          <span style={{ fontSize: 13, fontWeight: 700, color: B.white }}>{paxCount} / {cap}</span>
         </div>
         <div style={{ background: B.navyLight, borderRadius: 4, height: 6, overflow: "hidden" }}>
-          <div style={{
-            width: `${Math.min(pct * 100, 100)}%`,
-            height: "100%",
-            background: barColor,
-            borderRadius: 4,
-            transition: "width 0.4s ease",
-          }} />
+          <div style={{ width: `${Math.min(pct * 100, 100)}%`, height: "100%", background: barColor, borderRadius: 4, transition: "width 0.4s ease" }} />
         </div>
       </div>
     </div>
@@ -137,8 +100,8 @@ function DepartureCard({ salida, paxCount }) {
 
 // ── ReservaDetalle ────────────────────────────────────────────────────────────
 
-function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile }) {
-  const [tab, setTab]       = useState("detalles"); // detalles | pasajeros | historial
+function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList = [], aliadoList = [] }) {
+  const [tab, setTab]       = useState("detalles");
   const [editing, setEdit]  = useState(false);
   const [saving, setSaving] = useState(false);
   const [form, setForm]     = useState({
@@ -154,12 +117,17 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile }) {
     total:     r0.total     || 0,
     estado:    r0.estado    || "pendiente",
     notas:     r0.notas     || "",
+    forma_pago: r0.forma_pago || "Transferencia",
+    vendedor:   r0.vendedor  || "Sin asignar",
+    aliado_id:  r0.aliado_id || "",
   });
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
   // Use stored saldo from DB; only recompute when user edits total or abono
   const saldo = editing ? (form.total - form.abono) : (r0.saldo ?? form.total - form.abono);
-  const salida = SALIDAS.find(s => s.id === form.salida_id);
+  const salida = salidaList.find(s => s.id === form.salida_id);
+  const aliado = aliadoList.find(a => a.id === form.aliado_id);
+  const tieneCXC = aliado && (aliado.cupo_credito || 0) > 0;
 
   const handleSave = async () => {
     if (!supabase) return;
@@ -180,6 +148,9 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile }) {
       saldo:     Number(form.total) - Number(form.abono),
       estado:    form.estado,
       notas:     form.notas,
+      forma_pago: form.forma_pago || null,
+      vendedor:   form.vendedor !== "Sin asignar" ? form.vendedor : null,
+      aliado_id:  form.aliado_id || null,
     }).eq("id", r0.id);
     setSaving(false);
     setEdit(false);
@@ -334,14 +305,31 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile }) {
                   {editing ? (
                     <select style={IS} value={form.salida_id} onChange={e => set("salida_id", e.target.value)}>
                       <option value="">Sin asignar</option>
-                      {SALIDAS.map(s => <option key={s.id} value={s.id}>{s.id} — {s.hora}</option>)}
+                      {salidaList.map(s => <option key={s.id} value={s.id}>{s.hora} — {s.nombre}</option>)}
                     </select>
-                  ) : <div style={{ fontSize: 14 }}>{r0.salida ? `${r0.salida}${salida ? ` — ${salida.hora}` : ""}` : "—"}</div>}
+                  ) : <div style={{ fontSize: 14 }}>{salida ? `${salida.hora} — ${salida.nombre}` : r0.salida || "—"}</div>}
                 </div>
-                {r0.agencia && <div style={{ gridColumn: "1 / -1" }}>
-                  <label style={LS}>Agencia</label>
-                  <div style={{ fontSize: 14, color: B.sky }}>{r0.agencia}</div>
-                </div>}
+                <div>
+                  <label style={LS}>Vendedor</label>
+                  {editing ? (
+                    <select style={IS} value={form.vendedor} onChange={e => set("vendedor", e.target.value)}>
+                      {VENDEDORES.map(v => <option key={v} value={v}>{v}</option>)}
+                    </select>
+                  ) : <div style={{ fontSize: 14, color: r0.vendedor ? B.white : "rgba(255,255,255,0.3)" }}>{r0.vendedor || "Sin asignar"}</div>}
+                </div>
+                <div style={{ gridColumn: "1 / -1" }}>
+                  <label style={LS}>Agencia B2B</label>
+                  {editing ? (
+                    <select style={IS} value={form.aliado_id} onChange={e => set("aliado_id", e.target.value)}>
+                      <option value="">Sin agencia</option>
+                      {aliadoList.map(a => <option key={a.id} value={a.id}>{a.nombre}</option>)}
+                    </select>
+                  ) : (
+                    <div style={{ fontSize: 14, color: aliado ? B.sky : "rgba(255,255,255,0.3)" }}>
+                      {aliado ? aliado.nombre : (r0.agencia || "Sin agencia")}
+                    </div>
+                  )}
+                </div>
                 <div style={{ gridColumn: "1 / -1" }}>
                   <label style={LS}>Notas</label>
                   {editing ? <textarea rows={3} style={{ ...IS, resize: "vertical" }} value={form.notas} onChange={e => set("notas", e.target.value)} placeholder="Observaciones especiales…" /> :
@@ -377,11 +365,25 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile }) {
                       <label style={LS}>Abono (COP)</label>
                       <input type="number" min={0} style={IS} value={form.abono} onChange={e => set("abono", Number(e.target.value))} />
                     </div>
+                    <div style={{ gridColumn: "1 / -1" }}>
+                      <label style={LS}>Forma de pago</label>
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                        {FORMAS_PAGO.filter(f => f !== "CXC" || tieneCXC).map(fp => (
+                          <button key={fp} onClick={() => set("forma_pago", fp)} style={{
+                            padding: "5px 12px", borderRadius: 20,
+                            border: `1px solid ${form.forma_pago === fp ? B.sky : B.navyLight}`,
+                            background: form.forma_pago === fp ? B.sky + "22" : "transparent",
+                            color: form.forma_pago === fp ? B.sky : "rgba(255,255,255,0.5)",
+                            fontSize: 12, fontWeight: 600, cursor: "pointer",
+                          }}>{fp}</button>
+                        ))}
+                      </div>
+                    </div>
                   </div>
                 )}
-                {r0.forma_pago && (
+                {!editing && (r0.forma_pago || form.forma_pago) && (
                   <div style={{ marginTop: 10, fontSize: 13, color: "rgba(255,255,255,0.5)" }}>
-                    Método de pago: <strong style={{ color: B.sky }}>{r0.forma_pago}</strong>
+                    Método de pago: <strong style={{ color: B.sky }}>{r0.forma_pago || form.forma_pago}</strong>
                   </div>
                 )}
               </div>
@@ -432,7 +434,8 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile }) {
                 { icon: "✏️", label: "Última modificación", value: fmtDT(r0.updated_at), color: B.sand   },
                 r0.forma_pago && { icon: "💳", label: "Método de pago", value: r0.forma_pago, color: B.white },
                 r0.canal && { icon: "📡", label: "Canal de venta",    value: r0.canal, color: B.white },
-                r0.agencia && { icon: "🏢", label: "Agencia",           value: r0.agencia, color: B.sky },
+                r0.vendedor && { icon: "🧑‍💼", label: "Vendedor",         value: r0.vendedor, color: B.sand },
+                (aliado || r0.agencia) && { icon: "🏢", label: "Agencia B2B", value: aliado?.nombre || r0.agencia, color: B.sky },
                 r0.ci && { icon: "✅", label: "Check-in realizado",  value: fmtDT(r0.ci), color: B.success },
                 r0.co && { icon: "🏁", label: "Check-out",            value: fmtDT(r0.co), color: B.sand },
                 r0.ep && { icon: "🌅", label: "Llegada temprana",     value: "Activado",   color: B.warning },
@@ -456,9 +459,10 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile }) {
 
 // ── modal ─────────────────────────────────────────────────────────────────────
 
-function ReservaModal({ onClose, onSave, isMobile }) {
-  const [form, setForm] = useState(EMPTY_FORM);
-  const [errors, setErrors] = useState({});
+function ReservaModal({ onClose, onSave, isMobile, salidaList = [], aliadoList = [], paxMap = {}, fechaDefault }) {
+  const [form, setForm]       = useState({ ...EMPTY_FORM, salida_id: salidaList[0]?.id || "" });
+  const [errors, setErrors]   = useState({});
+  const [linkPago, setLinkPago] = useState("");
 
   const set = (k, v) => {
     setForm(f => {
@@ -467,204 +471,263 @@ function ReservaModal({ onClose, onSave, isMobile }) {
         const p = PASADIAS.find(p => p.tipo === v);
         if (p) next.precio = p.precio;
       }
+      if (k === "aliado_id") {
+        // if aliado selected, default to CXC if they have credit; else reset
+        const aliado = aliadoList.find(a => a.id === v);
+        if (!aliado || !aliado.cupo_credito) next.forma_pago = "Transferencia";
+      }
       return next;
     });
     setErrors(e => ({ ...e, [k]: undefined }));
   };
 
+  const aliado = aliadoList.find(a => a.id === form.aliado_id);
+  const tieneCXC = aliado && (aliado.cupo_credito || 0) > 0;
+  const formasPagoDisp = form.forma_pago === "Enviar Link de Pago"
+    ? FORMAS_PAGO
+    : FORMAS_PAGO.filter(f => f !== "CXC" || tieneCXC);
+
+  // Availability per salida
+  const getDisp = (sal) => {
+    const cap = sal.capacidad_total || 30;
+    const usados = paxMap[sal.id] || 0;
+    return Math.max(0, cap - usados);
+  };
+
   const validate = () => {
     const e = {};
     if (!form.nombre.trim()) e.nombre = "Requerido";
-    if (form.pax < 1)        e.pax    = "Min 1";
+    if (!form.salida_id)     e.salida_id = "Requerido";
+    if ((Number(form.pax_a) + Number(form.pax_n)) < 1) e.pax_a = "Min 1 pax";
     if (form.precio < 0)     e.precio = "Inválido";
     if (form.abono < 0)      e.abono  = "Inválido";
     return e;
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     const e = validate();
     if (Object.keys(e).length) { setErrors(e); return; }
-    onSave(form);
-    onClose();
+    const isLink = form.forma_pago === "Enviar Link de Pago";
+    const reservaId = await onSave({ ...form, _isLink: isLink });
+    if (isLink && reservaId) {
+      setLinkPago(`${window.location.origin}/pago?reserva=${reservaId}`);
+    } else {
+      onClose();
+    }
   };
 
-  const inputStyle = (err) => ({
-    background: B.navyLight,
-    border: `1px solid ${err ? B.danger : B.navyLight + "80"}`,
-    borderRadius: 8,
-    color: B.white,
-    padding: "9px 12px",
-    fontSize: 14,
-    width: "100%",
-    outline: "none",
-    boxSizing: "border-box",
+  const IS = (err) => ({
+    background: "#0D1B3E", border: `1px solid ${err ? B.danger : B.navyLight}`,
+    borderRadius: 8, color: B.white, padding: "9px 12px", fontSize: 14,
+    width: "100%", outline: "none", boxSizing: "border-box", fontFamily: "inherit",
   });
+  const LS = { fontSize: 11, color: B.sand, fontWeight: 600, marginBottom: 4, display: "block", textTransform: "uppercase", letterSpacing: "0.05em" };
+  const FS = { display: "flex", flexDirection: "column", gap: 4 };
+  const G2 = { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 14 };
 
-  const labelStyle = { fontSize: 12, color: B.sand, fontWeight: 600, marginBottom: 4, display: "block" };
-  const fieldStyle = { display: "flex", flexDirection: "column", gap: 4 };
+  if (linkPago) {
+    return (
+      <div style={{ position: "fixed", inset: 0, zIndex: 1000, background: "#00000088", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+        <div style={{ background: B.navyMid, border: `1px solid ${B.navyLight}`, borderRadius: 16, width: "100%", maxWidth: 480, padding: 32, textAlign: "center" }}>
+          <div style={{ fontSize: 40, marginBottom: 12 }}>🔗</div>
+          <div style={{ fontSize: 18, fontWeight: 700, color: B.white, marginBottom: 8 }}>Reserva creada</div>
+          <div style={{ fontSize: 13, color: B.sand, marginBottom: 20 }}>Copia y envía este link de pago al cliente:</div>
+          <div style={{ background: "#0D1B3E", borderRadius: 10, padding: "14px 16px", marginBottom: 16, wordBreak: "break-all", fontSize: 13, color: B.sky, fontFamily: "monospace" }}>{linkPago}</div>
+          <div style={{ display: "flex", gap: 10 }}>
+            <button onClick={() => { navigator.clipboard?.writeText(linkPago); }} style={{ flex: 1, padding: "11px", background: B.navyLight, border: "none", borderRadius: 8, color: B.white, fontWeight: 700, cursor: "pointer" }}>📋 Copiar</button>
+            <button onClick={onClose} style={{ flex: 1, padding: "11px", background: B.sky, border: "none", borderRadius: 8, color: B.navy, fontWeight: 700, cursor: "pointer" }}>✓ Listo</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div style={{
-      position: "fixed", inset: 0, zIndex: 1000,
-      background: "#00000088",
-      display: "flex", alignItems: "center", justifyContent: "center",
-      padding: 20,
-    }}
-      onClick={e => e.target === e.currentTarget && onClose()}
-    >
-      <div style={{
-        background: B.navyMid,
-        border: `1px solid ${B.navyLight}`,
-        borderRadius: isMobile ? 0 : 16,
-        width: "100%",
-        maxWidth: isMobile ? "100%" : 560,
-        maxHeight: isMobile ? "100%" : "90vh",
-        height: isMobile ? "100%" : "auto",
-        overflowY: "auto",
-        padding: isMobile ? "20px 16px" : 28,
-        display: "flex",
-        flexDirection: "column",
-        gap: 16,
-      }}>
+    <div style={{ position: "fixed", inset: 0, zIndex: 1000, background: "#00000088", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}
+      onClick={e => e.target === e.currentTarget && onClose()}>
+      <div style={{ background: B.navyMid, border: `1px solid ${B.navyLight}`, borderRadius: isMobile ? 0 : 16, width: "100%", maxWidth: isMobile ? "100%" : 600, maxHeight: isMobile ? "100%" : "92vh", height: isMobile ? "100%" : "auto", overflowY: "auto", padding: isMobile ? "20px 16px" : 28, display: "flex", flexDirection: "column", gap: 16 }}>
+
         {/* title */}
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <h2 style={{ fontFamily: "'Barlow Condensed', sans-serif", fontSize: 24, fontWeight: 700, color: B.sand, margin: 0 }}>
-            Nueva Reserva
-          </h2>
-          <button onClick={onClose} style={{
-            background: "none", border: "none", color: B.sand, fontSize: 22,
-            cursor: "pointer", lineHeight: 1, padding: "2px 6px", borderRadius: 6,
-          }}>×</button>
+          <h2 style={{ fontFamily: "'Barlow Condensed', sans-serif", fontSize: 24, fontWeight: 700, color: B.sand, margin: 0 }}>Nueva Reserva</h2>
+          <button onClick={onClose} style={{ background: "none", border: "none", color: B.sand, fontSize: 22, cursor: "pointer", lineHeight: 1, padding: "2px 6px" }}>×</button>
         </div>
 
-        {/* form grid */}
-        <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 14 }}>
-          {/* nombre – full width */}
-          <div style={{ ...fieldStyle, gridColumn: "1 / -1" }}>
-            <label style={labelStyle}>Nombre del titular</label>
-            <input
-              style={inputStyle(errors.nombre)}
-              value={form.nombre}
-              onChange={e => set("nombre", e.target.value)}
-              placeholder="Ej: Valentina Ospina"
-            />
+        {/* ── Titular ── */}
+        <div style={G2}>
+          <div style={{ ...FS, gridColumn: "1 / -1" }}>
+            <label style={LS}>Nombre del titular *</label>
+            <input style={IS(errors.nombre)} value={form.nombre} onChange={e => set("nombre", e.target.value)} placeholder="Ej: Valentina Ospina" autoFocus />
             {errors.nombre && <span style={{ fontSize: 11, color: B.danger }}>{errors.nombre}</span>}
           </div>
-
-          {/* tipo */}
-          <div style={fieldStyle}>
-            <label style={labelStyle}>Tipo de pase</label>
-            <select style={inputStyle()} value={form.tipo} onChange={e => set("tipo", e.target.value)}>
-              {PASADIAS.map(p => (
-                <option key={p.tipo} value={p.tipo}>{p.tipo}</option>
-              ))}
-            </select>
+          <div style={FS}>
+            <label style={LS}>Teléfono / Email</label>
+            <input style={IS()} value={form.contacto} onChange={e => set("contacto", e.target.value)} placeholder="WhatsApp o email" />
           </div>
-
-          {/* pax */}
-          <div style={fieldStyle}>
-            <label style={labelStyle}>Pax</label>
-            <input
-              type="number" min={1} style={inputStyle(errors.pax)}
-              value={form.pax}
-              onChange={e => set("pax", Number(e.target.value))}
-            />
-            {errors.pax && <span style={{ fontSize: 11, color: B.danger }}>{errors.pax}</span>}
-          </div>
-
-          {/* salida */}
-          <div style={fieldStyle}>
-            <label style={labelStyle}>Salida</label>
-            <select style={inputStyle()} value={form.salida} onChange={e => set("salida", e.target.value)}>
-              {SALIDAS.map(s => (
-                <option key={s.id} value={s.id}>{s.id} — {s.hora} ({s.botes.join(", ")})</option>
-              ))}
-            </select>
-          </div>
-
-          {/* canal */}
-          <div style={fieldStyle}>
-            <label style={labelStyle}>Canal</label>
-            <select style={inputStyle()} value={form.canal} onChange={e => set("canal", e.target.value)}>
+          <div style={FS}>
+            <label style={LS}>Canal</label>
+            <select style={IS()} value={form.canal} onChange={e => set("canal", e.target.value)}>
               {CANALES.map(c => <option key={c} value={c}>{c}</option>)}
             </select>
           </div>
+        </div>
 
-          {/* precio */}
-          <div style={fieldStyle}>
-            <label style={labelStyle}>Precio total (COP)</label>
-            <input
-              type="number" min={0} style={inputStyle(errors.precio)}
-              value={form.precio}
-              onChange={e => set("precio", Number(e.target.value))}
-            />
-            {errors.precio && <span style={{ fontSize: 11, color: B.danger }}>{errors.precio}</span>}
+        <div style={{ borderTop: `1px solid ${B.navyLight}` }} />
+
+        {/* ── Producto y salida ── */}
+        <div style={G2}>
+          <div style={FS}>
+            <label style={LS}>Tipo de pase</label>
+            <select style={IS()} value={form.tipo} onChange={e => set("tipo", e.target.value)}>
+              {PASADIAS.map(p => <option key={p.tipo} value={p.tipo}>{p.tipo}</option>)}
+            </select>
           </div>
-
-          {/* abono */}
-          <div style={fieldStyle}>
-            <label style={labelStyle}>Abono (COP)</label>
-            <input
-              type="number" min={0} style={inputStyle(errors.abono)}
-              value={form.abono}
-              onChange={e => set("abono", Number(e.target.value))}
-            />
-            {errors.abono && <span style={{ fontSize: 11, color: B.danger }}>{errors.abono}</span>}
+          <div style={FS}>
+            <label style={LS}>Precio por pax (COP)</label>
+            <input type="number" min={0} style={IS(errors.precio)} value={form.precio} onChange={e => set("precio", Number(e.target.value))} />
           </div>
-
-          {/* notas – full width */}
-          <div style={{ ...fieldStyle, gridColumn: "1 / -1" }}>
-            <label style={labelStyle}>Notas</label>
-            <textarea
-              rows={3}
-              style={{ ...inputStyle(), resize: "vertical", fontFamily: "inherit" }}
-              value={form.notas}
-              onChange={e => set("notas", e.target.value)}
-              placeholder="Observaciones, peticiones especiales…"
-            />
+          <div style={FS}>
+            <label style={LS}>Adultos</label>
+            <input type="number" min={0} style={IS(errors.pax_a)} value={form.pax_a} onChange={e => set("pax_a", Number(e.target.value))} />
+            {errors.pax_a && <span style={{ fontSize: 11, color: B.danger }}>{errors.pax_a}</span>}
+          </div>
+          <div style={FS}>
+            <label style={LS}>Niños (0–12)</label>
+            <input type="number" min={0} style={IS()} value={form.pax_n} onChange={e => set("pax_n", Number(e.target.value))} />
           </div>
         </div>
 
-        {/* precio preview */}
-        <div style={{
-          background: B.navyLight,
-          borderRadius: 8,
-          padding: "12px 16px",
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-        }}>
-          <span style={{ fontSize: 13, color: B.sand }}>Saldo pendiente</span>
-          <span style={{ fontSize: 18, fontWeight: 800, color: form.precio - form.abono > 0 ? B.warning : B.success }}>
-            {COP(Math.max(0, form.precio - form.abono))}
-          </span>
+        {/* Salida selector con disponibilidad */}
+        <div style={FS}>
+          <label style={LS}>Horario de salida *</label>
+          {salidaList.length === 0 ? (
+            <div style={{ fontSize: 13, color: B.warning }}>No hay salidas activas para esta fecha</div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {salidaList.map(s => {
+                const disp = getDisp(s);
+                const full = disp === 0;
+                const sel  = form.salida_id === s.id;
+                return (
+                  <div key={s.id} onClick={() => !full && set("salida_id", s.id)} style={{
+                    background: sel ? B.sky + "22" : "#0D1B3E",
+                    border: `1.5px solid ${sel ? B.sky : full ? B.danger + "44" : B.navyLight}`,
+                    borderRadius: 10, padding: "12px 14px", cursor: full ? "not-allowed" : "pointer",
+                    opacity: full ? 0.5 : 1, display: "flex", justifyContent: "space-between", alignItems: "center",
+                    transition: "all 0.15s",
+                  }}>
+                    <div>
+                      <div style={{ fontWeight: 700, fontSize: 15, color: sel ? B.sky : B.white, fontFamily: "'Barlow Condensed', sans-serif" }}>
+                        {s.hora} — {s.nombre}
+                      </div>
+                      <div style={{ fontSize: 11, color: "rgba(255,255,255,0.45)", marginTop: 2 }}>
+                        Regreso {s.hora_regreso}
+                      </div>
+                    </div>
+                    <div style={{ textAlign: "right" }}>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: full ? B.danger : disp <= 5 ? B.warning : B.success }}>
+                        {full ? "LLENO" : `${disp} disp.`}
+                      </div>
+                      <div style={{ fontSize: 11, color: "rgba(255,255,255,0.3)" }}>{(paxMap[s.id] || 0)}/{s.capacidad_total || 30} pax</div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          {errors.salida_id && <span style={{ fontSize: 11, color: B.danger }}>{errors.salida_id}</span>}
         </div>
+
+        <div style={{ borderTop: `1px solid ${B.navyLight}` }} />
+
+        {/* ── Venta / Asignación ── */}
+        <div style={G2}>
+          <div style={FS}>
+            <label style={LS}>Vendedor</label>
+            <select style={IS()} value={form.vendedor} onChange={e => set("vendedor", e.target.value)}>
+              {VENDEDORES.map(v => <option key={v} value={v}>{v}</option>)}
+            </select>
+          </div>
+          <div style={FS}>
+            <label style={LS}>Agencia B2B</label>
+            <select style={IS()} value={form.aliado_id} onChange={e => set("aliado_id", e.target.value)}>
+              <option value="">Sin agencia</option>
+              {aliadoList.map(a => <option key={a.id} value={a.id}>{a.nombre}{a.cupo_credito ? ` (CXC $${(a.cupo_credito/1000).toFixed(0)}k)` : ""}</option>)}
+            </select>
+          </div>
+        </div>
+
+        <div style={{ borderTop: `1px solid ${B.navyLight}` }} />
+
+        {/* ── Pago ── */}
+        <div>
+          <div style={{ fontSize: 12, fontWeight: 700, color: B.sand, textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 12 }}>💳 Abono inicial</div>
+          <div style={G2}>
+            <div style={FS}>
+              <label style={LS}>Forma de pago</label>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                {formasPagoDisp.map(fp => (
+                  <button key={fp} onClick={() => set("forma_pago", fp)} style={{
+                    padding: "6px 12px", borderRadius: 20, border: `1px solid ${form.forma_pago === fp ? B.sky : B.navyLight}`,
+                    background: form.forma_pago === fp ? B.sky + "22" : "transparent",
+                    color: form.forma_pago === fp ? B.sky : "rgba(255,255,255,0.5)",
+                    fontSize: 12, fontWeight: 600, cursor: "pointer",
+                  }}>{fp}</button>
+                ))}
+              </div>
+            </div>
+            {form.forma_pago !== "Enviar Link de Pago" && (
+              <div style={FS}>
+                <label style={LS}>Monto abono (COP)</label>
+                <input type="number" min={0} style={IS(errors.abono)} value={form.abono} onChange={e => set("abono", Number(e.target.value))} />
+              </div>
+            )}
+          </div>
+          {form.forma_pago === "Enviar Link de Pago" && (
+            <div style={{ marginTop: 10, fontSize: 13, color: B.warning, background: B.warning + "11", border: `1px solid ${B.warning}44`, borderRadius: 8, padding: "10px 14px" }}>
+              ⚠️ Se generará un link de pago para enviar al cliente. La reserva quedará en estado pendiente hasta que pague.
+            </div>
+          )}
+          {form.forma_pago === "CXC" && aliado && (
+            <div style={{ marginTop: 10, fontSize: 13, color: B.sky, background: B.sky + "11", border: `1px solid ${B.sky}44`, borderRadius: 8, padding: "10px 14px" }}>
+              💳 Cargo a cuenta corriente de <strong>{aliado.nombre}</strong> · Cupo disponible: <strong>{COP(aliado.cupo_credito)}</strong>
+            </div>
+          )}
+        </div>
+
+        {/* Notas */}
+        <div style={FS}>
+          <label style={LS}>Notas</label>
+          <textarea rows={2} style={{ ...IS(), resize: "vertical" }} value={form.notas} onChange={e => set("notas", e.target.value)} placeholder="Observaciones, peticiones especiales…" />
+        </div>
+
+        {/* Preview totales */}
+        {form.tipo && (
+          <div style={{ background: "#0D1B3E", borderRadius: 10, padding: "12px 16px", display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
+            {(() => {
+              const pax = Number(form.pax_a) + Number(form.pax_n);
+              const total = pax * Number(form.precio);
+              const abono = form.forma_pago === "Enviar Link de Pago" ? 0 : Number(form.abono);
+              const saldo = total - abono;
+              return [
+                { label: "Total",  value: COP(total), color: B.white   },
+                { label: "Abono",  value: COP(abono), color: B.success },
+                { label: "Saldo",  value: COP(Math.max(0, saldo)), color: saldo > 0 ? B.warning : B.success },
+              ].map(p => (
+                <div key={p.label}>
+                  <div style={{ fontSize: 11, color: B.sand, textTransform: "uppercase", letterSpacing: "0.05em" }}>{p.label}</div>
+                  <div style={{ fontSize: 18, fontWeight: 800, color: p.color, fontFamily: "'Barlow Condensed', sans-serif" }}>{p.value}</div>
+                </div>
+              ));
+            })()}
+          </div>
+        )}
 
         {/* actions */}
         <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
-          <button onClick={onClose} style={{
-            background: "none",
-            border: `1px solid ${B.navyLight}`,
-            borderRadius: 8,
-            color: B.sand,
-            padding: "9px 20px",
-            fontSize: 14,
-            cursor: "pointer",
-            fontWeight: 600,
-          }}>
-            Cancelar
-          </button>
-          <button onClick={handleSave} style={{
-            background: B.sky,
-            border: "none",
-            borderRadius: 8,
-            color: B.navy,
-            padding: "9px 24px",
-            fontSize: 14,
-            cursor: "pointer",
-            fontWeight: 700,
-          }}>
-            Guardar reserva
+          <button onClick={onClose} style={{ background: "none", border: `1px solid ${B.navyLight}`, borderRadius: 8, color: B.sand, padding: "9px 20px", fontSize: 14, cursor: "pointer", fontWeight: 600 }}>Cancelar</button>
+          <button onClick={handleSave} style={{ background: B.sky, border: "none", borderRadius: 8, color: B.navy, padding: "9px 24px", fontSize: 14, cursor: "pointer", fontWeight: 700 }}>
+            {form.forma_pago === "Enviar Link de Pago" ? "🔗 Crear y Generar Link" : "💾 Guardar reserva"}
           </button>
         </div>
       </div>
@@ -693,6 +756,8 @@ function mapRow(r) {
     pax_a:       r.pax_a,
     pax_n:       r.pax_n,
     agencia:     r.agencia,
+    aliado_id:   r.aliado_id,
+    vendedor:    r.vendedor,
     precio_u:    r.precio_u,
     total:       r.total,
     abono:       r.abono,
@@ -705,6 +770,7 @@ function mapRow(r) {
     ext_regreso: r.ext_regreso,
     notas:       r.notas,
     forma_pago:  r.forma_pago,
+    lead_id:     r.lead_id,
     pasajeros:   r.pasajeros,
     created_at:  r.created_at,
     updated_at:  r.updated_at,
@@ -715,8 +781,10 @@ export default function Reservas() {
   const isMobile = useMobile();
   const [reservasHoy,    setReservasHoy]    = useState([]);
   const [reservasManana, setReservasManana] = useState([]);
+  const [salidas,        setSalidas]        = useState([]);
+  const [aliados,        setAliados]        = useState([]);
   const [loading, setLoading]       = useState(true);
-  const [tabDia,  setTabDia]        = useState("hoy"); // "hoy" | "manana"
+  const [tabDia,  setTabDia]        = useState("hoy");
   const [search, setSearch]         = useState("");
   const [filterEstado, setFilter]   = useState("todos");
   const [showModal, setShowModal]   = useState(false);
@@ -728,12 +796,16 @@ export default function Reservas() {
   const fetchReservas = useCallback(async () => {
     if (!supabase) { setLoading(false); return; }
     setLoading(true);
-    const [resHoy, resManana] = await Promise.all([
+    const [resHoy, resManana, salR, aliR] = await Promise.all([
       supabase.from("reservas").select("*").eq("fecha", today).order("salida_id"),
       supabase.from("reservas").select("*").eq("fecha", tomorrow).order("salida_id"),
+      supabase.from("salidas").select("*").eq("activo", true).order("orden"),
+      supabase.from("aliados_b2b").select("id, nombre, cupo_credito").eq("estado", "activo").order("nombre"),
     ]);
     if (resHoy.data)    setReservasHoy(resHoy.data.map(mapRow));
     if (resManana.data) setReservasManana(resManana.data.map(mapRow));
+    if (salR.data)      setSalidas(salR.data);
+    if (aliR.data)      setAliados(aliR.data);
     setLoading(false);
   }, [today, tomorrow]);
 
@@ -741,7 +813,7 @@ export default function Reservas() {
 
   // Active dataset based on tab
   const reservas = tabDia === "hoy" ? reservasHoy : reservasManana;
-  const paxMap = paxPorSalida(reservas);
+  const paxMap = paxPorSalida(reservas, salidas);
 
   const filtered = reservas.filter(r => {
     const matchSearch = r.nombre.toLowerCase().includes(search.toLowerCase()) ||
@@ -756,25 +828,36 @@ export default function Reservas() {
   const totalVenta = reservas.filter(r => r.estado !== "cancelado").reduce((s, r) => s + r.total, 0);
 
   const addReserva = async (form) => {
-    if (!supabase) return;
+    if (!supabase) return null;
+    const pax   = Number(form.pax_a) + Number(form.pax_n);
+    const total = pax * Number(form.precio);
+    const isLink = form._isLink;
+    const abono  = isLink ? 0 : (Number(form.abono) || 0);
+    const reservaId = `R-${Date.now()}`;
     const row = {
-      id:        `R-${Date.now()}`,
-      fecha:     tabDia === "manana" ? tomorrow : today,
-      salida_id: form.salida,
-      tipo:      form.tipo,
-      canal:     form.canal,
-      nombre:    form.nombre,
-      contacto:  form.contacto || '',
-      pax:       Number(form.pax),
-      precio_u:  Number(form.precio),
-      total:     Number(form.pax) * Number(form.precio),
-      abono:     Number(form.abono) || 0,
-      saldo:     (Number(form.pax) * Number(form.precio)) - (Number(form.abono) || 0),
-      estado:    'pendiente',
-      notas:     form.notas || '',
+      id:         reservaId,
+      fecha:      tabDia === "manana" ? tomorrow : today,
+      salida_id:  form.salida_id,
+      tipo:       form.tipo,
+      canal:      form.canal,
+      nombre:     form.nombre.trim(),
+      contacto:   form.contacto || "",
+      pax,
+      pax_a:      Number(form.pax_a),
+      pax_n:      Number(form.pax_n),
+      precio_u:   Number(form.precio),
+      total,
+      abono,
+      saldo:      total - abono,
+      estado:     isLink ? "pendiente_pago" : (abono >= total ? "confirmado" : "pendiente"),
+      forma_pago: isLink ? "link_pago" : form.forma_pago,
+      aliado_id:  form.aliado_id || null,
+      vendedor:   form.vendedor !== "Sin asignar" ? form.vendedor : null,
+      notas:      form.notas || "",
     };
     await supabase.from("reservas").insert(row);
     fetchReservas();
+    return reservaId;
   };
 
   const toggleEstado = async (id) => {
@@ -784,6 +867,13 @@ export default function Reservas() {
     const cycle = { pendiente: "confirmado", confirmado: "cancelado", cancelado: "pendiente" };
     const nextEstado = cycle[r.estado] || "pendiente";
     await supabase.from("reservas").update({ estado: nextEstado }).eq("id", id);
+    // Si se confirma manualmente y la reserva tiene un lead, cerrarlo
+    if (nextEstado === "confirmado" && r.lead_id) {
+      await supabase.from("leads").update({
+        stage: "Cerrado Ganado",
+        ultimo_contacto: new Date().toLocaleDateString("en-CA", { timeZone: "America/Bogota" }),
+      }).eq("id", r.lead_id);
+    }
     fetchReservas();
   };
 
@@ -914,25 +1004,18 @@ export default function Reservas() {
       </div>
 
       {/* ── departure board ── */}
-      {!isMobile && <div style={{ marginBottom: 28 }}>
-        <h2 style={{
-          fontFamily: "'Barlow Condensed', sans-serif",
-          fontSize: 20,
-          fontWeight: 700,
-          color: B.sand,
-          margin: "0 0 14px",
-          letterSpacing: 0.5,
-        }}>
-          Tablero de Salidas
-        </h2>
-        <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
-          {SALIDAS.map(s => (
-            <DepartureCard key={s.id} salida={s} paxCount={paxMap[s.id] || 0} />
-          ))}
+      {!isMobile && salidas.length > 0 && (
+        <div style={{ marginBottom: 28 }}>
+          <h2 style={{ fontFamily: "'Barlow Condensed', sans-serif", fontSize: 20, fontWeight: 700, color: B.sand, margin: "0 0 14px", letterSpacing: 0.5 }}>
+            Tablero de Salidas
+          </h2>
+          <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
+            {salidas.map(s => (
+              <DepartureCard key={s.id} salida={s} paxCount={paxMap[s.id] || 0} />
+            ))}
+          </div>
         </div>
-      </div>
-
-      }
+      )}
 
       {/* ── reservations table ── */}
       <div style={isMobile ? {} : cardStyle}>
@@ -973,8 +1056,8 @@ export default function Reservas() {
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
               {filtered.map(r => {
-                const salida = SALIDAS.find(s => s.id === r.salida);
-                const saldo = r.total - r.abono;
+                const salida = salidas.find(s => s.id === r.salida);
+                const saldo = r.saldo ?? (r.total - r.abono);
                 return (
                   <div key={r.id} onClick={() => setDetalle(r)} style={{ background: B.navyMid, borderRadius: 12, padding: "14px 16px", border: `1px solid ${B.navyLight}`, cursor: "pointer" }}>
                     {/* Row 1: nombre + badge + actions */}
@@ -995,7 +1078,7 @@ export default function Reservas() {
                     <div style={{ display: "flex", gap: 8, flexWrap: "wrap", fontSize: 12 }}>
                       <span style={{ background: B.navyLight, borderRadius: 6, padding: "2px 8px", color: B.sand }}>{r.pax} pax</span>
                       <span style={{ background: B.navyLight, borderRadius: 6, padding: "2px 8px", color: "rgba(255,255,255,0.6)" }}>{r.tipo}</span>
-                      <span style={{ background: B.navyLight, borderRadius: 6, padding: "2px 8px", color: B.sky }}>{r.salida}{salida ? ` · ${salida.hora}` : ""}</span>
+                      <span style={{ background: B.navyLight, borderRadius: 6, padding: "2px 8px", color: B.sky }}>{salida ? `${salida.hora} · ${salida.nombre}` : r.salida || "—"}</span>
                       <span style={{ background: B.navyLight, borderRadius: 6, padding: "2px 8px", color: "rgba(255,255,255,0.5)" }}>{r.canal}</span>
                     </div>
                     {/* Row 3: money */}
@@ -1034,8 +1117,8 @@ export default function Reservas() {
                       </td>
                     </tr>
                   ) : filtered.map(r => {
-                    const salida = SALIDAS.find(s => s.id === r.salida);
-                    const saldo = r.total - r.abono;
+                    const salida = salidas.find(s => s.id === r.salida);
+                    const saldo = r.saldo ?? (r.total - r.abono);
                     return (
                       <tr key={r.id} onClick={() => setDetalle(r)} style={{ transition: "background 0.15s", cursor: "pointer" }}
                         onMouseEnter={e => e.currentTarget.style.background = B.navyLight + "55"}
@@ -1048,8 +1131,8 @@ export default function Reservas() {
                         <td style={{ ...tdStyle, color: B.sand, fontSize: 13 }}>{r.tipo}</td>
                         <td style={{ ...tdStyle, textAlign: "center", fontWeight: 700, color: B.sky }}>{r.pax}</td>
                         <td style={tdStyle}>
-                          <div style={{ fontWeight: 700 }}>{r.salida}</div>
-                          {salida && <div style={{ fontSize: 11, color: B.sky }}>{salida.hora}</div>}
+                          <div style={{ fontWeight: 700, color: B.sky }}>{salida ? salida.hora : r.salida || "—"}</div>
+                          {salida && <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)" }}>{salida.nombre}</div>}
                         </td>
                         <td style={tdStyle}><span style={{ background: B.navyLight, borderRadius: 6, padding: "2px 8px", fontSize: 12, color: B.sky, fontWeight: 600 }}>{r.canal}</span></td>
                         <td style={{ ...tdStyle, fontWeight: 700, color: B.white }}>{COP(r.total)}</td>
@@ -1088,8 +1171,26 @@ export default function Reservas() {
       </div>
 
       {/* ── modals ── */}
-      {showModal && <ReservaModal onClose={() => setShowModal(false)} onSave={addReserva} isMobile={isMobile} />}
-      {detalle && <ReservaDetalle reserva={detalle} isMobile={isMobile} onClose={() => setDetalle(null)} onUpdated={() => { fetchReservas(); setDetalle(null); }} />}
+      {showModal && (
+        <ReservaModal
+          onClose={() => setShowModal(false)}
+          onSave={addReserva}
+          isMobile={isMobile}
+          salidaList={salidas}
+          aliadoList={aliados}
+          paxMap={paxMap}
+        />
+      )}
+      {detalle && (
+        <ReservaDetalle
+          reserva={detalle}
+          isMobile={isMobile}
+          onClose={() => setDetalle(null)}
+          onUpdated={() => { fetchReservas(); setDetalle(null); }}
+          salidaList={salidas}
+          aliadoList={aliados}
+        />
+      )}
     </div>
   );
 }

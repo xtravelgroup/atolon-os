@@ -349,7 +349,7 @@ function TabPasadias({ pasadias, onRefresh }) {
   const [showNew, setShowNew] = useState(false);
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState({});
-  const [newForm, setNewForm] = useState({ nombre: "", precio: "", precio_neto_agencia: "", min_pax: 1, descripcion: "", web_publica: true });
+  const [newForm, setNewForm] = useState({ nombre: "", precio: "", precio_neto_agencia: "", precio_nino: "", precio_neto_nino: "", nino_nota: "", min_pax: 1, descripcion: "", web_publica: true });
   const [items, setItems] = useState([]);
   const [newItem, setNewItem] = useState("");
   const [newItemEn, setNewItemEn] = useState("");
@@ -374,8 +374,16 @@ function TabPasadias({ pasadias, onRefresh }) {
   const saveEdit = async () => {
     if (!supabase) return;
     await supabase.from("pasadias").update({
-      nombre: form.nombre, precio: Number(form.precio) || 0, precio_neto_agencia: Number(form.precio_neto_agencia) || 0,
-      descripcion: form.descripcion, min_pax: Number(form.min_pax) || 1, web_publica: form.web_publica, activo: form.activo,
+      nombre: form.nombre,
+      precio: Number(form.precio) || 0,
+      precio_neto_agencia: Number(form.precio_neto_agencia) || 0,
+      precio_nino: Number(form.precio_nino) || 0,
+      precio_neto_nino: Number(form.precio_neto_nino) || 0,
+      nino_nota: form.nino_nota || null,
+      descripcion: form.descripcion,
+      min_pax: Number(form.min_pax) || 1,
+      web_publica: form.web_publica,
+      activo: form.activo,
     }).eq("id", form.id);
     onRefresh(); setEditing(false);
     const fresh = { ...selected, ...form, precio: Number(form.precio) || 0, min_pax: Number(form.min_pax) || 1 };
@@ -491,9 +499,12 @@ function TabPasadias({ pasadias, onRefresh }) {
               <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
                 <div><label style={LS}>Nombre</label><input value={form.nombre} onChange={e => setForm(f => ({ ...f, nombre: e.target.value }))} style={IS} /></div>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
-                  <div><label style={LS}>Precio Publico</label><input type="number" value={form.precio} onChange={e => setForm(f => ({ ...f, precio: e.target.value }))} style={IS} /></div>
-                  <div><label style={LS}>Neto Agencia</label><input type="number" value={form.precio_neto_agencia || ""} onChange={e => setForm(f => ({ ...f, precio_neto_agencia: e.target.value }))} style={IS} /></div>
+                  <div><label style={LS}>Precio Adulto Público</label><input type="number" value={form.precio} onChange={e => setForm(f => ({ ...f, precio: e.target.value }))} style={IS} /></div>
+                  <div><label style={LS}>Neto Adulto Agencia</label><input type="number" value={form.precio_neto_agencia || ""} onChange={e => setForm(f => ({ ...f, precio_neto_agencia: e.target.value }))} style={IS} /></div>
                   <div><label style={LS}>Min. Pax</label><input type="number" value={form.min_pax} onChange={e => setForm(f => ({ ...f, min_pax: e.target.value }))} style={IS} /></div>
+                  <div><label style={LS}>Precio Niño Público</label><input type="number" value={form.precio_nino || ""} onChange={e => setForm(f => ({ ...f, precio_nino: e.target.value }))} placeholder="0 = no aplica" style={IS} /></div>
+                  <div><label style={LS}>Neto Niño Agencia</label><input type="number" value={form.precio_neto_nino || ""} onChange={e => setForm(f => ({ ...f, precio_neto_nino: e.target.value }))} placeholder="0 = no aplica" style={IS} /></div>
+                  <div><label style={LS}>Nota Niño</label><input value={form.nino_nota || ""} onChange={e => setForm(f => ({ ...f, nino_nota: e.target.value }))} placeholder="Ej: +$50k consumibles" style={IS} /></div>
                 </div>
                 <div><label style={LS}>Descripcion</label><textarea value={form.descripcion || ""} onChange={e => setForm(f => ({ ...f, descripcion: e.target.value }))} rows={3} style={{ ...IS, resize: "vertical" }} /></div>
                 <div style={{ display: "flex", gap: 16 }}>
@@ -510,11 +521,23 @@ function TabPasadias({ pasadias, onRefresh }) {
                 </div>
               </div>
             ) : (
-              <div style={{ fontSize: 13, lineHeight: 2.4 }}>
-                <div><span style={{ color: "rgba(255,255,255,0.4)" }}>Precio Publico:</span> <strong style={{ color: B.sand }}>{COP(selected.precio)}</strong></div>
-                <div><span style={{ color: "rgba(255,255,255,0.4)" }}>Neto Agencia:</span> <strong style={{ color: B.warning }}>{COP(selected.precio_neto_agencia)}</strong></div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, fontSize: 13 }}>
+                {[
+                  { label: "Precio Adulto Público",  value: COP(selected.precio),                color: B.sand    },
+                  { label: "Neto Adulto Agencia",    value: COP(selected.precio_neto_agencia),   color: B.warning },
+                  { label: "Precio Niño Público",    value: selected.precio_nino > 0 ? COP(selected.precio_nino) : "No aplica",      color: selected.precio_nino > 0 ? B.sky : "rgba(255,255,255,0.3)" },
+                  { label: "Neto Niño Agencia",      value: selected.precio_neto_nino > 0 ? COP(selected.precio_neto_nino) : "No aplica", color: selected.precio_neto_nino > 0 ? B.warning : "rgba(255,255,255,0.3)" },
+                ].map(r => (
+                  <div key={r.label} style={{ background: "#0D1B3E", borderRadius: 8, padding: "10px 14px" }}>
+                    <div style={{ fontSize: 10, color: B.sand, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 3 }}>{r.label}</div>
+                    <div style={{ fontSize: 17, fontWeight: 700, fontFamily: "'Barlow Condensed', sans-serif", color: r.color }}>{r.value}</div>
+                  </div>
+                ))}
+              </div>
+              {selected.nino_nota && <div style={{ marginTop: 10, fontSize: 12, color: B.sky, background: B.sky + "11", border: `1px solid ${B.sky}22`, borderRadius: 8, padding: "8px 12px" }}>ℹ️ Nota niños: {selected.nino_nota}</div>}
+              <div style={{ marginTop: 12, fontSize: 13, lineHeight: 2 }}>
                 <div><span style={{ color: "rgba(255,255,255,0.4)" }}>Min. Pax:</span> <strong>{selected.min_pax}</strong></div>
-                <div><span style={{ color: "rgba(255,255,255,0.4)" }}>Web Publica:</span> <strong>{selected.web_publica ? "Si" : "No (Solo B2B)"}</strong></div>
+                <div><span style={{ color: "rgba(255,255,255,0.4)" }}>Web Publica:</span> <strong>{selected.web_publica ? "Sí" : "No (Solo B2B)"}</strong></div>
                 <div><span style={{ color: "rgba(255,255,255,0.4)" }}>Estado:</span> <strong style={{ color: selected.activo ? B.success : B.danger }}>{selected.activo ? "Activo" : "Inactivo"}</strong></div>
                 {selected.descripcion && <div style={{ marginTop: 8, color: "rgba(255,255,255,0.5)", lineHeight: 1.6 }}>{selected.descripcion}</div>}
               </div>
@@ -604,13 +627,17 @@ function TabPasadias({ pasadias, onRefresh }) {
     setSaving(true);
     const maxOrden = pasadias.reduce((m, p) => Math.max(m, p.orden || 0), 0);
     await supabase.from("pasadias").insert({
-      id: `PAS-${Date.now()}`, nombre: newForm.nombre, precio: Number(newForm.precio) || 0,
+      id: `PAS-${Date.now()}`, nombre: newForm.nombre,
+      precio: Number(newForm.precio) || 0,
       precio_neto_agencia: Number(newForm.precio_neto_agencia) || 0,
+      precio_nino: Number(newForm.precio_nino) || 0,
+      precio_neto_nino: Number(newForm.precio_neto_nino) || 0,
+      nino_nota: newForm.nino_nota || null,
       min_pax: Number(newForm.min_pax) || 1, descripcion: newForm.descripcion,
       web_publica: newForm.web_publica, activo: true, orden: maxOrden + 1,
     });
     onRefresh(); setShowNew(false); setSaving(false);
-    setNewForm({ nombre: "", precio: "", precio_neto_agencia: "", min_pax: 1, descripcion: "", web_publica: true });
+    setNewForm({ nombre: "", precio: "", precio_neto_agencia: "", precio_nino: "", precio_neto_nino: "", nino_nota: "", min_pax: 1, descripcion: "", web_publica: true });
   };
 
   // GRID VIEW
@@ -630,6 +657,7 @@ function TabPasadias({ pasadias, onRefresh }) {
                   <div style={{ fontSize: 17, fontWeight: 700 }}>{p.nombre}</div>
                   <div style={{ fontSize: 28, fontWeight: 700, color: B.sand, fontFamily: "'Barlow Condensed', sans-serif", marginTop: 4 }}>{COP(p.precio)}</div>
                   {p.precio_neto_agencia > 0 && <div style={{ fontSize: 12, color: B.warning }}>Neto agencia: {COP(p.precio_neto_agencia)}</div>}
+                  {p.precio_nino > 0 && <div style={{ fontSize: 12, color: B.sky }}>Niño: {COP(p.precio_nino)}{p.precio_neto_nino > 0 ? ` · neto ${COP(p.precio_neto_nino)}` : ""}</div>}
                 </div>
                 <div style={{ display: "flex", gap: 6 }}>
                   {p.web_publica && <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 10, background: B.sky + "22", color: B.sky }}>WEB</span>}
@@ -656,9 +684,12 @@ function TabPasadias({ pasadias, onRefresh }) {
             <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
               <div><label style={LS}>Nombre</label><input value={newForm.nombre} onChange={e => setNewForm(f => ({ ...f, nombre: e.target.value }))} placeholder="Ej: VIP Pass" style={IS} /></div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
-                <div><label style={LS}>Precio Publico</label><input type="number" value={newForm.precio} onChange={e => setNewForm(f => ({ ...f, precio: e.target.value }))} placeholder="320000" style={IS} /></div>
-                <div><label style={LS}>Neto Agencia</label><input type="number" value={newForm.precio_neto_agencia} onChange={e => setNewForm(f => ({ ...f, precio_neto_agencia: e.target.value }))} placeholder="272000" style={IS} /></div>
+                <div><label style={LS}>Precio Adulto Público</label><input type="number" value={newForm.precio} onChange={e => setNewForm(f => ({ ...f, precio: e.target.value }))} placeholder="320000" style={IS} /></div>
+                <div><label style={LS}>Neto Adulto Agencia</label><input type="number" value={newForm.precio_neto_agencia} onChange={e => setNewForm(f => ({ ...f, precio_neto_agencia: e.target.value }))} placeholder="272000" style={IS} /></div>
                 <div><label style={LS}>Min. Pax</label><input type="number" value={newForm.min_pax} onChange={e => setNewForm(f => ({ ...f, min_pax: e.target.value }))} style={IS} /></div>
+                <div><label style={LS}>Precio Niño Público</label><input type="number" value={newForm.precio_nino} onChange={e => setNewForm(f => ({ ...f, precio_nino: e.target.value }))} placeholder="0 = no aplica" style={IS} /></div>
+                <div><label style={LS}>Neto Niño Agencia</label><input type="number" value={newForm.precio_neto_nino} onChange={e => setNewForm(f => ({ ...f, precio_neto_nino: e.target.value }))} placeholder="0 = no aplica" style={IS} /></div>
+                <div><label style={LS}>Nota Niño</label><input value={newForm.nino_nota} onChange={e => setNewForm(f => ({ ...f, nino_nota: e.target.value }))} placeholder="+$50k consumibles..." style={IS} /></div>
               </div>
               <div><label style={LS}>Descripcion</label><textarea value={newForm.descripcion} onChange={e => setNewForm(f => ({ ...f, descripcion: e.target.value }))} rows={3} placeholder="Que incluye este pasadia..." style={{ ...IS, resize: "vertical" }} /></div>
               <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, cursor: "pointer" }}>

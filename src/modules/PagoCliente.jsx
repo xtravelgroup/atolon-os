@@ -175,16 +175,17 @@ export default function PagoCliente() {
       if (status === "APPROVED") {
         const hoy = new Date().toLocaleDateString("en-CA", { timeZone: "America/Bogota" });
         // Confirmar reserva
-        const { data: resData } = await supabase.from("reservas").select("total").eq("id", reservaId).single();
+        const { data: resData } = await supabase.from("reservas").select("total, lead_id").eq("id", reservaId).single();
         await supabase.from("reservas").update({
           estado: "confirmado", forma_pago: "wompi", saldo: 0, abono: resData?.total || 0,
         }).eq("id", reservaId);
-        // Cerrar lead en Comercial
-        if (leadIdParam) {
+        // Cerrar lead en Comercial (URL param o lead_id guardado en la reserva)
+        const lid = leadIdParam || resData?.lead_id;
+        if (lid) {
           await supabase.from("leads").update({
             stage: "Cerrado Ganado",
             ultimo_contacto: hoy,
-          }).eq("id", leadIdParam);
+          }).eq("id", lid);
         }
         // Enviar email de confirmación
         const { data: res } = await supabase.from("reservas").select("*").eq("id", reservaId).single();
@@ -204,10 +205,18 @@ export default function PagoCliente() {
   useEffect(() => {
     if (!stripeOk || !reservaId || !supabase) return;
     (async () => {
-      const { data: resDataS } = await supabase.from("reservas").select("total").eq("id", reservaId).single();
+      const hoy = new Date().toLocaleDateString("en-CA", { timeZone: "America/Bogota" });
+      const { data: resDataS } = await supabase.from("reservas").select("total, lead_id").eq("id", reservaId).single();
       await supabase.from("reservas").update({
         estado: "confirmado", forma_pago: "stripe", saldo: 0, abono: resDataS?.total || 0,
       }).eq("id", reservaId);
+      // Cerrar lead en Comercial
+      const lid = leadIdParam || resDataS?.lead_id;
+      if (lid) {
+        await supabase.from("leads").update({
+          stage: "Cerrado Ganado", ultimo_contacto: hoy,
+        }).eq("id", lid);
+      }
       const { data: res } = await supabase.from("reservas").select("*").eq("id", reservaId).single();
       if (res?.contacto?.includes("@")) {
         fetch("https://ncdyttgxuicyruathkxd.supabase.co/functions/v1/send-confirmation", {
