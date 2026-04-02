@@ -606,12 +606,28 @@ async function fetchDisponSal(fecha) {
   const ovrMap = {};
   (ovrs || []).forEach(o => { ovrMap[o.salida_id] = o.accion; });
 
+  // 45-min cutoff for today
+  const todayISO = new Date().toISOString().slice(0, 10);
+  const isToday = fecha === todayISO;
+  const nowMins = isToday ? (() => { const n = new Date(); return n.getHours() * 60 + n.getMinutes(); })() : -1;
+
   return allSals.map(s => {
     let disp;
     if (ovrMap[s.id] === "cerrar") { disp = -1; }
     else if (ovrMap[s.id] === "abrir") { disp = Math.max(0, (s.capacidad_total || 30) - (paxBySal[s.id] || 0)); }
     else if (cierre?.tipo === "total" || (cierre?.salidas || []).includes(s.id)) { disp = -1; }
-    else if (s.auto_apertura) {
+    else if (isToday && s.hora) {
+      // Close sales 45 minutes before departure
+      const [h, m] = s.hora.split(":").map(Number);
+      if (nowMins >= (h * 60 + m) - 45) { disp = -1; }
+      else if (s.auto_apertura) {
+        const fixedFull = allSals.filter(f => !f.auto_apertura)
+          .every(f => (paxBySal[f.id] || 0) / (f.capacidad_total || 1) >= 0.9);
+        disp = fixedFull ? Math.max(0, (s.capacidad_total || 30) - (paxBySal[s.id] || 0)) : -1;
+      } else {
+        disp = Math.max(0, (s.capacidad_total || 30) - (paxBySal[s.id] || 0));
+      }
+    } else if (s.auto_apertura) {
       const fixedFull = allSals.filter(f => !f.auto_apertura)
         .every(f => (paxBySal[f.id] || 0) / (f.capacidad_total || 1) >= 0.9);
       disp = fixedFull ? Math.max(0, (s.capacidad_total || 30) - (paxBySal[s.id] || 0)) : -1;

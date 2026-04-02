@@ -281,6 +281,10 @@ export default function BookingPopup() {
       const ovrMap = {};
       (ovrR.data || []).forEach(o => { ovrMap[o.salida_id] = o.accion; });
 
+      // 45-min cutoff: if date is today, close salidas within 45 mins
+      const isToday = selDate === isoToday();
+      const nowMins = isToday ? (() => { const n = new Date(); return n.getHours() * 60 + n.getMinutes(); })() : -1;
+
       const result = {};
       salidas.forEach(s => {
         // Check if this salida is available on this date
@@ -289,6 +293,11 @@ export default function BookingPopup() {
         if (cierre) {
           if (cierre.tipo === "total") { result[s.id] = -1; return; }
           if ((cierre.salidas || []).includes(s.id)) { result[s.id] = -1; return; }
+        }
+        // Close sales 45 minutes before departure when booking for today
+        if (isToday && s.hora) {
+          const [h, m] = s.hora.split(":").map(Number);
+          if (nowMins >= (h * 60 + m) - 45) { result[s.id] = -1; return; }
         }
         if (s.auto_apertura) {
           // Auto-open only if fixed salidas are 90%+ full
