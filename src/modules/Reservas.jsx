@@ -3,6 +3,11 @@ import { B, COP, PASADIAS, todayStr, fmtFecha } from "../brand";
 import { supabase } from "../lib/supabase";
 import { useMobile } from "../lib/useMobile";
 
+const fmtHora = (ts) => {
+  if (!ts) return "";
+  return new Date(ts).toLocaleTimeString("es-CO", { timeZone: "America/Bogota", hour: "2-digit", minute: "2-digit" });
+};
+
 // ── helpers ──────────────────────────────────────────────────────────────────
 
 const CANALES   = ["Web", "WhatsApp", "B2B", "Teléfono", "Walk-in"];
@@ -777,13 +782,313 @@ function mapRow(r) {
   };
 }
 
+// ═══════════════════════════════════════════════
+// TAB: CALENDARIO MENSUAL (moved from Pasadias)
+// ═══════════════════════════════════════════════
+function TabCalendario({ salidas, cierres, embarcaciones }) {
+  const hoy = todayStr();
+  const [mesOffset, setMesOffset] = useState(0);
+  const [reservasPorDia, setReservasPorDia] = useState({});
+  const [overrides, setOverrides] = useState({});
+  const [selectedDay, setSelectedDay] = useState(null);
+
+  const now = new Date();
+  const mesDate = new Date(now.getFullYear(), now.getMonth() + mesOffset, 1);
+  const year = mesDate.getFullYear();
+  const month = mesDate.getMonth();
+  const mesNombre = mesDate.toLocaleDateString("es-CO", { month: "long", year: "numeric" });
+  const primerDia = new Date(year, month, 1).getDay();
+  const diasEnMes = new Date(year, month + 1, 0).getDate();
+
+  const fetchMonthData = useCallback(() => {
+    if (!supabase) return;
+    const desde = `${year}-${String(month + 1).padStart(2, "0")}-01`;
+    const hasta = `${year}-${String(month + 1).padStart(2, "0")}-${String(diasEnMes).padStart(2, "0")}`;
+    supabase.from("reservas").select("fecha, salida_id, pax").gte("fecha", desde).lte("fecha", hasta).neq("estado", "cancelado")
+      .then(({ data }) => {
+        const map = {};
+        (data || []).forEach(r => {
+          if (!map[r.fecha]) map[r.fecha] = {};
+          if (!map[r.fecha][r.salida_id]) map[r.fecha][r.salida_id] = 0;
+          map[r.fecha][r.salida_id] += r.pax || 0;
+        });
+        setReservasPorDia(map);
+      });
+    supabase.from("salidas_override").select("*").gte("fecha", desde).lte("fecha", hasta)
+      .then(({ data }) => {
+        const map = {};
+        (data || []).forEach(o => {
+          if (!map[o.fecha]) map[o.fecha] = {};
+          map[o.fecha][o.salida_id] = o;
+        });
+        setOverrides(map);
+      });
+  }, [year, month, diasEnMes]);
+
+  useEffect(() => { fetchMonthData(); }, [fetchMonthData]);
+
+  const toggleOverride = async (fecha, salidaId, currentlyVisible) => {
+    if (!supabase) return;
+    const existing = (overrides[fecha] || {})[salidaId];
+    if (existing) {
+      await supabase.from("salidas_override").delete().eq("id", existing.id);
+    } else {
+      await supabase.from("salidas_override").insert({
+        id: `OVR-${Date.now()}`, fecha, salida_id: salidaId,
+        accion: currentlyVisible ? "cerrar" : "abrir",
+        extra_embarcaciones: [],
+      });
+    }
+    fetchMonthData();
+  };
+
+  const addExtraEmbarcacion = async (fecha, salidaId, embId) => {
+    if (!supabase) return;
+    const emb = embarcaciones.find(e => e.id === embId);
+    if (!emb) return;
+    const existing = (overrides[fecha] || {})[salidaId];
+    const extras = existing?.extra_embarcaciones || [];
+    if (extras.some(e => e.id === embId)) return;
+    const newExtras = [...extras, { id: emb.id, nombre: emb.nombre, capacidad: emb.capacidad }];
+    if (existing) {
+      await supabase.from("salidas_override").update({ extra_embarcaciones: newExtras }).eq("id", existing.id);
+    } else {
+      await supabase.from("salidas_override").insert({
+        id: `OVR-${Date.now()}`, fecha, salida_id: salidaId,
+        accion: isDefaultVisible(fecha, salidaId) ? "abrir" : "abrir",
+        extra_embarcaciones: newExtras,
+      });
+    }
+    fetchMonthData();
+  };
+
+  const removeExtraEmbarcacion = async (fecha, salidaId, embId) => {
+    if (!supabase) return;
+    const existing = (overrides[fecha] || {})[salidaId];
+    if (!existing) return;
+    const newExtras = (existing.extra_embarcaciones || []).filter(e => e.id !== embId);
+    await supabase.from("salidas_override").update({ extra_embarcaciones: newExtras }).eq("id", existing.id);
+    fetchMonthData();
+  };
+
+  const addCapacidadVirtual = async (fecha, salidaId, capacidad, label = "Sin Lancha") => {
+    if (!supabase) return;
+    const existing = (overrides[fecha] || {})[salidaId];
+    const extras = existing?.extra_embarcaciones || [];
+    const newEntry = { id: `virtual-${Date.now()}`, nombre: `${label} (+${capacidad})`, capacidad, virtual: true };
+    const newExtras = [...extras, newEntry];
+    if (existing) {
+      await supabase.from("salidas_override").update({ extra_embarcaciones: newExtras }).eq("id", existing.id);
+    } else {
+      await supabase.from("salidas_override").insert({
+        id: `OVR-${Date.now()}`, fecha, salida_id: salidaId,
+        accion: isDefaultVisible(fecha, salidaId) ? "abrir" : "abrir",
+        extra_embarcaciones: newExtras,
+      });
+    }
+    fetchMonthData();
+  };
+
+  const dias = [];
+  for (let i = 0; i < primerDia; i++) dias.push(null);
+  for (let d = 1; d <= diasEnMes; d++) dias.push(d);
+
+  const getCierreForDate = (fecha) => cierres.find(c => c.activo && c.fecha === fecha);
+  const salidasActivas = salidas.filter(s => s.activo);
+
+  const getSalidasVisibles = (fecha) => {
+    const cierre = getCierreForDate(fecha);
+    const resDia = reservasPorDia[fecha] || {};
+    const dayOverrides = overrides[fecha] || {};
+    return salidasActivas.filter(s => {
+      const ovr = dayOverrides[s.id];
+      if (ovr) return ovr.accion === "abrir";
+      if (cierre) {
+        if (cierre.tipo === "total") return false;
+        if ((cierre.salidas || []).includes(s.id)) return false;
+      }
+      if (!s.auto_apertura) return true;
+      const fijas = salidasActivas.filter(f => !f.auto_apertura);
+      return fijas.every(f => (resDia[f.id] || 0) / (f.capacidad_total || 1) >= 0.9);
+    });
+  };
+
+  const isDefaultVisible = (fecha, salidaId) => {
+    const cierre = getCierreForDate(fecha);
+    const resDia = reservasPorDia[fecha] || {};
+    const s = salidasActivas.find(x => x.id === salidaId);
+    if (!s) return false;
+    if (cierre) {
+      if (cierre.tipo === "total") return false;
+      if ((cierre.salidas || []).includes(s.id)) return false;
+    }
+    if (!s.auto_apertura) return true;
+    const fijas = salidasActivas.filter(f => !f.auto_apertura);
+    return fijas.every(f => (resDia[f.id] || 0) / (f.capacidad_total || 1) >= 0.9);
+  };
+
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 20, marginBottom: 20 }}>
+        <button onClick={() => setMesOffset(m => m - 1)} style={{ background: B.navyLight, border: "none", borderRadius: 8, padding: "8px 16px", color: B.white, cursor: "pointer", fontSize: 16 }}>{"\u2190"}</button>
+        <h3 style={{ fontSize: 20, fontWeight: 700, fontFamily: "'Barlow Condensed', sans-serif", textTransform: "capitalize", minWidth: 200, textAlign: "center" }}>{mesNombre}</h3>
+        <button onClick={() => setMesOffset(m => m + 1)} style={{ background: B.navyLight, border: "none", borderRadius: 8, padding: "8px 16px", color: B.white, cursor: "pointer", fontSize: 16 }}>{"\u2192"}</button>
+      </div>
+      <div style={{ display: "flex", gap: 16, justifyContent: "center", marginBottom: 16, fontSize: 11 }}>
+        <span><span style={{ display: "inline-block", width: 10, height: 10, borderRadius: 5, background: B.success, marginRight: 4 }} />Disponible</span>
+        <span><span style={{ display: "inline-block", width: 10, height: 10, borderRadius: 5, background: B.warning, marginRight: 4 }} />+70% ocupado</span>
+        <span><span style={{ display: "inline-block", width: 10, height: 10, borderRadius: 5, background: B.danger, marginRight: 4 }} />Lleno / Cerrado</span>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4, marginBottom: 4 }}>
+        {["Dom", "Lun", "Mar", "Mie", "Jue", "Vie", "Sab"].map(d => (
+          <div key={d} style={{ textAlign: "center", fontSize: 11, color: B.sand, padding: "6px 0", fontWeight: 600 }}>{d}</div>
+        ))}
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4 }}>
+        {dias.map((dia, i) => {
+          if (!dia) return <div key={`empty-${i}`} />;
+          const fecha = `${year}-${String(month + 1).padStart(2, "0")}-${String(dia).padStart(2, "0")}`;
+          const isHoy = fecha === hoy;
+          const cierre = getCierreForDate(fecha);
+          const resDia = reservasPorDia[fecha] || {};
+          const isPast = fecha < hoy;
+          return (
+            <div key={dia} onClick={() => setSelectedDay(selectedDay === fecha ? null : fecha)}
+              style={{
+                background: cierre ? B.danger + "22" : isHoy ? B.sky + "15" : B.navyMid,
+                borderRadius: 8, padding: "8px 6px", minHeight: 90, cursor: "pointer",
+                border: isHoy ? `2px solid ${B.sky}` : selectedDay === fecha ? `2px solid ${B.sand}` : `1px solid ${B.navyLight}`,
+                opacity: isPast ? 0.5 : 1, transition: "border 0.15s",
+              }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                <span style={{ fontSize: 14, fontWeight: isHoy ? 700 : 400, color: isHoy ? B.sky : B.white }}>{dia}</span>
+                {cierre && <span style={{ fontSize: 8, padding: "1px 5px", borderRadius: 8, background: B.danger, color: B.white }}>CERRADO</span>}
+              </div>
+              {getSalidasVisibles(fecha).map(s => {
+                const paxVendidos = resDia[s.id] || 0;
+                const ovr = (overrides[fecha] || {})[s.id];
+                const extraCap = (ovr?.extra_embarcaciones || []).reduce((sum, e) => sum + (e.capacidad || 0), 0);
+                const cap = (s.capacidad_total || 1) + extraCap;
+                const pct = cap > 0 ? paxVendidos / cap : 0;
+                const barColor = pct >= 1 ? B.danger : pct >= 0.7 ? B.warning : B.success;
+                return (
+                  <div key={s.id} style={{ marginBottom: 3 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 9, color: "rgba(255,255,255,0.5)" }}>
+                      <span>{s.hora}</span>
+                      <span style={{ fontWeight: 600, color: paxVendidos > 0 ? B.white : "rgba(255,255,255,0.25)" }}>{paxVendidos}/{cap}</span>
+                    </div>
+                    <div style={{ height: 3, background: B.navy, borderRadius: 2, overflow: "hidden" }}>
+                      <div style={{ width: `${Math.min(pct * 100, 100)}%`, height: "100%", background: barColor, borderRadius: 2 }} />
+                    </div>
+                  </div>
+                );
+              })}
+              {cierre && <div style={{ fontSize: 9, color: B.danger, marginTop: 2 }}>{cierre.motivo}</div>}
+            </div>
+          );
+        })}
+      </div>
+      {selectedDay && (
+        <div style={{ background: B.navyMid, borderRadius: 12, padding: 24, marginTop: 16 }}>
+          <h4 style={{ fontSize: 16, fontWeight: 700, marginBottom: 16 }}>
+            {new Date(selectedDay + "T12:00:00").toLocaleDateString("es-CO", { weekday: "long", day: "numeric", month: "long" })}
+            {getCierreForDate(selectedDay) && <span style={{ fontSize: 12, padding: "3px 10px", borderRadius: 12, background: B.danger, color: B.white, marginLeft: 12 }}>CERRADO — {getCierreForDate(selectedDay).motivo}</span>}
+          </h4>
+          <div style={{ display: "grid", gridTemplateColumns: `repeat(${salidasActivas.length}, 1fr)`, gap: 12 }}>
+            {salidasActivas.map(s => {
+              const visibles = getSalidasVisibles(selectedDay);
+              const isOpen = visibles.some(v => v.id === s.id);
+              const hasOverride = (overrides[selectedDay] || {})[s.id];
+              const pax = (reservasPorDia[selectedDay] || {})[s.id] || 0;
+              const cap = s.capacidad_total || 0;
+              const botes = (s.embarcaciones || []).map(eid => embarcaciones.find(e => e.id === eid)).filter(Boolean);
+              const override = (overrides[selectedDay] || {})[s.id];
+              const extraBotes = override?.extra_embarcaciones || [];
+              const capTotal = cap + extraBotes.reduce((sum, e) => sum + (e.capacidad || 0), 0);
+              const pctTotal = capTotal > 0 ? pax / capTotal : 0;
+              const barColorTotal = pctTotal >= 1 ? B.danger : pctTotal >= 0.7 ? B.warning : B.success;
+              const asignadas = botes.map(b => b.id);
+              const disponibles = embarcaciones.filter(e => e.estado === "activo" && !asignadas.includes(e.id) && !extraBotes.some(x => x.id === e.id));
+              return (
+                <div key={s.id} style={{ background: B.navy, borderRadius: 10, padding: 16, textAlign: "center", opacity: isOpen ? 1 : 0.4, border: `2px solid ${isOpen ? B.navyLight : B.danger + "44"}` }}>
+                  <div style={{ fontSize: 11, color: B.sand, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>{s.nombre}</div>
+                  <div style={{ fontSize: 22, fontWeight: 700, fontFamily: "'Barlow Condensed', sans-serif", color: isOpen ? B.sky : B.danger }}>{s.hora}</div>
+                  <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginBottom: 8 }}>Regreso: {s.hora_regreso}</div>
+                  {isOpen ? (
+                    <>
+                      <div style={{ fontSize: 36, fontWeight: 700, fontFamily: "'Barlow Condensed', sans-serif", color: barColorTotal }}>{pax}<span style={{ fontSize: 16, color: "rgba(255,255,255,0.4)" }}>/{capTotal}</span></div>
+                      <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginBottom: 8 }}>pax vendidos</div>
+                      <div style={{ height: 6, background: B.navyLight, borderRadius: 3, overflow: "hidden", marginBottom: 8 }}>
+                        <div style={{ width: `${Math.min(pctTotal * 100, 100)}%`, height: "100%", background: barColorTotal, borderRadius: 3 }} />
+                      </div>
+                      <div style={{ display: "flex", gap: 4, justifyContent: "center", flexWrap: "wrap", marginBottom: 4 }}>
+                        {botes.map(b => (
+                          <span key={b.id} style={{ fontSize: 10, padding: "2px 8px", borderRadius: 10, background: B.navyLight, color: "rgba(255,255,255,0.5)" }}>⛵ {b.nombre} ({b.capacidad})</span>
+                        ))}
+                      </div>
+                      {extraBotes.length > 0 && (
+                        <div style={{ display: "flex", gap: 4, justifyContent: "center", flexWrap: "wrap", marginBottom: 4 }}>
+                          {extraBotes.map(b => (
+                            <span key={b.id} style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 10, padding: "2px 8px 2px 10px", borderRadius: 10, background: B.success + "22", color: B.success, border: `1px solid ${B.success}44` }}>
+                              ⛵ {b.nombre} ({b.capacidad})
+                              <button onClick={() => removeExtraEmbarcacion(selectedDay, s.id, b.id)}
+                                style={{ background: "none", border: "none", color: B.danger, cursor: "pointer", fontSize: 12, lineHeight: 1, padding: 0 }}>✕</button>
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                      <div style={{ fontSize: 12, fontWeight: 600, color: capTotal - pax > 0 ? B.success : B.danger, marginBottom: 8 }}>
+                        {capTotal - pax > 0 ? `${capTotal - pax} disponibles` : "LLENO"}
+                      </div>
+                      {disponibles.length > 0 && (
+                        <select defaultValue="" onChange={e => { if (e.target.value) { addExtraEmbarcacion(selectedDay, s.id, e.target.value); e.target.value = ""; } }}
+                          style={{ width: "100%", padding: "6px 10px", borderRadius: 8, background: B.navyLight, border: `1px solid ${B.navyLight}`, color: B.white, fontSize: 11, cursor: "pointer", marginBottom: 6, outline: "none" }}>
+                          <option value="">⛵ Agregar embarcación...</option>
+                          {disponibles.map(e => (
+                            <option key={e.id} value={e.id}>{e.nombre} — {e.tipo} ({e.capacidad} pax)</option>
+                          ))}
+                        </select>
+                      )}
+                      <div style={{ marginBottom: 8 }}>
+                        <div style={{ fontSize: 10, color: "rgba(255,255,255,0.35)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 }}>Sin Lancha</div>
+                        <div style={{ display: "flex", gap: 4, justifyContent: "center", flexWrap: "wrap" }}>
+                          {[15, 20, 40, 50].map(n => (
+                            <button key={n} onClick={() => addCapacidadVirtual(selectedDay, s.id, n)}
+                              style={{ padding: "4px 10px", borderRadius: 6, background: B.sky + "22", color: B.sky, border: `1px solid ${B.sky}44`, fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
+                              +{n}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </>
+                  ) : (
+                    <div style={{ padding: "16px 0", fontSize: 13, color: B.danger }}>CERRADA</div>
+                  )}
+                  <button onClick={() => toggleOverride(selectedDay, s.id, isOpen)} style={{
+                    width: "100%", padding: "8px", borderRadius: 8, border: "none", fontSize: 12, fontWeight: 700, cursor: "pointer",
+                    background: isOpen ? B.danger + "22" : B.success + "22", color: isOpen ? B.danger : B.success,
+                  }}>{isOpen ? "Cerrar esta salida" : "Abrir esta salida"}</button>
+                  {hasOverride && <div style={{ fontSize: 10, color: B.warning, marginTop: 4 }}>Override activo</div>}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function Reservas() {
   const isMobile = useMobile();
   const [reservasHoy,    setReservasHoy]    = useState([]);
   const [reservasManana, setReservasManana] = useState([]);
   const [salidas,        setSalidas]        = useState([]);
   const [aliados,        setAliados]        = useState([]);
+  const [cierres,        setCierres]        = useState([]);
+  const [embarcaciones,  setEmbarcaciones]  = useState([]);
   const [loading, setLoading]       = useState(true);
+  const [tab,     setTab]           = useState("reservas"); // "reservas" | "calendario"
   const [tabDia,  setTabDia]        = useState("hoy");
   const [search, setSearch]         = useState("");
   const [filterEstado, setFilter]   = useState("todos");
@@ -796,16 +1101,20 @@ export default function Reservas() {
   const fetchReservas = useCallback(async () => {
     if (!supabase) { setLoading(false); return; }
     setLoading(true);
-    const [resHoy, resManana, salR, aliR] = await Promise.all([
+    const [resHoy, resManana, salR, aliR, cierreR, embR] = await Promise.all([
       supabase.from("reservas").select("*").eq("fecha", today).order("salida_id"),
       supabase.from("reservas").select("*").eq("fecha", tomorrow).order("salida_id"),
-      supabase.from("salidas").select("*").eq("activo", true).order("orden"),
+      supabase.from("salidas").select("*").order("orden"),
       supabase.from("aliados_b2b").select("id, nombre, cupo_credito").eq("estado", "activo").order("nombre"),
+      supabase.from("cierres").select("*").order("fecha"),
+      supabase.from("embarcaciones").select("*").order("nombre"),
     ]);
     if (resHoy.data)    setReservasHoy(resHoy.data.map(mapRow));
     if (resManana.data) setReservasManana(resManana.data.map(mapRow));
     if (salR.data)      setSalidas(salR.data);
     if (aliR.data)      setAliados(aliR.data);
+    if (cierreR.data)   setCierres(cierreR.data);
+    if (embR.data)      setEmbarcaciones(embR.data);
     setLoading(false);
   }, [today, tomorrow]);
 
@@ -963,6 +1272,24 @@ export default function Reservas() {
         </button>
       </div>
 
+      {/* ── Main tab: Reservas / Calendario ── */}
+      <div style={{ display: "flex", gap: 6, marginBottom: 20 }}>
+        {[["reservas", "⚓ Reservas"], ["calendario", "📅 Calendario"]].map(([k, l]) => (
+          <button key={k} onClick={() => setTab(k)} style={{
+            padding: "9px 22px", borderRadius: 8, border: "none", cursor: "pointer",
+            fontSize: 13, fontWeight: 600,
+            background: tab === k ? B.sky : B.navyMid,
+            color: tab === k ? B.navy : B.sand,
+          }}>{l}</button>
+        ))}
+      </div>
+
+      {tab === "calendario" && (
+        <TabCalendario salidas={salidas} cierres={cierres} embarcaciones={embarcaciones} />
+      )}
+
+      {tab === "reservas" && <>
+
       {/* ── Day tabs ── */}
       <div style={{ display: "flex", gap: 8, marginBottom: isMobile ? 16 : 20 }}>
         {[
@@ -1010,7 +1337,7 @@ export default function Reservas() {
             Tablero de Salidas
           </h2>
           <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
-            {salidas.map(s => (
+            {salidas.filter(s => s.activo !== false).map(s => (
               <DepartureCard key={s.id} salida={s} paxCount={paxMap[s.id] || 0} />
             ))}
           </div>
@@ -1064,7 +1391,10 @@ export default function Reservas() {
                     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 8 }}>
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ fontWeight: 700, fontSize: 15, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.nombre}</div>
-                        <div style={{ fontSize: 11, color: B.sky, marginTop: 1 }}>{r.id}</div>
+                        <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginTop: 1 }}>
+                          {r.id}
+                          {r.created_at && <span style={{ marginLeft: 8, color: B.sand }}>⏱ {fmtHora(r.created_at)}</span>}
+                        </div>
                       </div>
                       <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
                         <StatusBadge estado={r.estado} />
@@ -1126,7 +1456,8 @@ export default function Reservas() {
                         <td style={{ ...tdStyle, color: B.sky, fontWeight: 700, fontSize: 13 }}>{r.id}</td>
                         <td style={{ ...tdStyle, fontWeight: 600 }}>
                           <div>{r.nombre}</div>
-                          {r.notas && <div style={{ fontSize: 11, color: B.sand, marginTop: 2, maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.notas}</div>}
+                          {r.created_at && <div style={{ fontSize: 11, color: B.sand, marginTop: 1 }}>⏱ {fmtHora(r.created_at)}</div>}
+                          {r.notas && <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginTop: 1, maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.notas}</div>}
                         </td>
                         <td style={{ ...tdStyle, color: B.sand, fontSize: 13 }}>{r.tipo}</td>
                         <td style={{ ...tdStyle, textAlign: "center", fontWeight: 700, color: B.sky }}>{r.pax}</td>
@@ -1191,6 +1522,7 @@ export default function Reservas() {
           aliadoList={aliados}
         />
       )}
+      </> /* end tab === "reservas" */}
     </div>
   );
 }
