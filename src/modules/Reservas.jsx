@@ -106,9 +106,13 @@ function DepartureCard({ salida, paxCount }) {
 // ── ReservaDetalle ────────────────────────────────────────────────────────────
 
 function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList = [], aliadoList = [] }) {
-  const [tab, setTab]       = useState("detalles");
-  const [editing, setEdit]  = useState(false);
-  const [saving, setSaving] = useState(false);
+  const [tab, setTab]           = useState("detalles");
+  const [editing, setEdit]      = useState(false);
+  const [saving, setSaving]     = useState(false);
+  const [showCancelModal, setShowCancelModal] = useState(false);
+  const [showDateModal, setShowDateModal]     = useState(false);
+  const [cancelNombre, setCancelNombre]       = useState(r0.nombre || "");
+  const [newFecha, setNewFecha]               = useState(r0.fecha  || "");
   const [form, setForm]     = useState({
     nombre:    r0.nombre    || "",
     contacto:  r0.contacto  || "",
@@ -164,8 +168,83 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
 
   const handleEstado = async (estado) => {
     if (!supabase) return;
+    // Reservas confirmadas no se pueden devolver a pendiente manualmente
+    if (r0.estado === "confirmado") return;
     await supabase.from("reservas").update({ estado }).eq("id", r0.id);
     set("estado", estado);
+    onUpdated();
+  };
+
+  // ── Política de cancelación según polizas Atolón ──────────────────────────
+  const calcPolitica = () => {
+    const now         = new Date();
+    const serviceDate = new Date(r0.fecha + "T08:00:00");
+    const purchaseDate= new Date(r0.created_at);
+    const hoursUntil  = (serviceDate - now) / 3_600_000;
+    const calDaysUntil= (serviceDate - now) / 86_400_000;
+    const daysSincePurchase = (now - purchaseDate) / 86_400_000;
+    // Retracto: compra no presencial, ≤5 días hábiles desde compra, servicio >5 días calendario
+    const noPresencial = !["Walk-in", "Presencial"].includes(r0.canal);
+    const bizDays = daysSincePurchase * (5 / 7);
+    if (noPresencial && bizDays <= 5 && calDaysUntil > 5) {
+      return { tipo: "retracto", pct: 100, monto: r0.total, refundType: "dinero",
+        label: "Derecho de Retracto (Ley 1480)",
+        desc: "100% devolución al medio de pago original dentro de los plazos legales." };
+    }
+    if (hoursUntil > 48) {
+      return { tipo: "politica", pct: 100, monto: r0.total, refundType: "credito",
+        label: "Cancelación > 48 h",
+        desc: "100% en crédito · Vigencia 12 meses · Transferible · No redimible en dinero." };
+    }
+    if (hoursUntil >= 24) {
+      const monto = Math.round(r0.total * 0.70);
+      return { tipo: "politica", pct: 70, monto, refundType: "credito",
+        label: "Cancelación 24–48 h",
+        desc: "70% en crédito · Vigencia 12 meses · Transferible · No redimible en dinero." };
+    }
+    return { tipo: "noshow", pct: 0, monto: 0, refundType: "ninguno",
+      label: "Menos de 24 h / No show",
+      desc: "No aplica crédito ni reprogramación según política de cancelación." };
+  };
+
+  const handleCancelacion = async () => {
+    if (!supabase) return;
+    setSaving(true);
+    const pol = calcPolitica();
+    const nota = `Cancelado el ${new Date().toLocaleString("es-CO")} — ${pol.label}`;
+    await supabase.from("reservas").update({
+      estado: "cancelado",
+      notas: r0.notas ? `${r0.notas}\n${nota}` : nota,
+    }).eq("id", r0.id);
+    if (pol.refundType === "credito" && pol.monto > 0) {
+      const vigencia = new Date();
+      vigencia.setFullYear(vigencia.getFullYear() + 1);
+      await supabase.from("creditos").insert({
+        id: `CRD-${Date.now()}`,
+        reserva_id:     r0.id,
+        cliente_nombre: cancelNombre,
+        cliente_email:  r0.email || null,
+        monto:          pol.monto,
+        saldo:          pol.monto,
+        motivo:         pol.label,
+        tipo:           pol.tipo,
+        vigencia_hasta: vigencia.toISOString().slice(0, 10),
+        transferible:   true,
+      });
+    }
+    setSaving(false);
+    setShowCancelModal(false);
+    set("estado", "cancelado");
+    onUpdated();
+  };
+
+  const handleCambioFecha = async () => {
+    if (!supabase || !newFecha) return;
+    setSaving(true);
+    await supabase.from("reservas").update({ fecha: newFecha }).eq("id", r0.id);
+    set("fecha", newFecha);
+    setSaving(false);
+    setShowDateModal(false);
     onUpdated();
   };
 
@@ -195,6 +274,7 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
   };
 
   return (
+    <>
     <div style={{ position: "fixed", inset: 0, zIndex: 1100, background: "rgba(0,0,0,0.75)", display: "flex", alignItems: isMobile ? "flex-end" : "center", justifyContent: "center", padding: isMobile ? 0 : 20 }}
       onClick={e => e.target === e.currentTarget && onClose()}>
       <div style={{
@@ -226,20 +306,25 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
             </div>
           </div>
 
-          {/* Estado buttons */}
-          <div style={{ display: "flex", gap: 6, marginBottom: 16, flexWrap: "wrap" }}>
-            {ESTADO_BTNS.map(b => (
-              <button key={b.key} onClick={() => handleEstado(b.key)} style={{
-                background: form.estado === b.key ? b.color + "33" : "transparent",
-                border: `1px solid ${form.estado === b.key ? b.color : B.navyLight}`,
-                borderRadius: 20,
-                color: form.estado === b.key ? b.color : "rgba(255,255,255,0.4)",
-                padding: "4px 14px",
-                fontSize: 12,
-                fontWeight: 700,
-                cursor: "pointer",
-              }}>{b.label}</button>
-            ))}
+          {/* Estado — confirmado: solo cambio fecha o cancelación con política */}
+          <div style={{ display: "flex", gap: 6, marginBottom: 16, flexWrap: "wrap", alignItems: "center" }}>
+            {r0.estado === "confirmado" ? (
+              <>
+                <span style={{ fontSize: 12, padding: "4px 14px", borderRadius: 20, background: B.success + "33", border: `1px solid ${B.success}`, color: B.success, fontWeight: 700 }}>✓ Confirmado</span>
+                <button onClick={() => { setNewFecha(r0.fecha || ""); setShowDateModal(true); }} style={{ background: "transparent", border: `1px solid ${B.sky}`, borderRadius: 20, color: B.sky, padding: "4px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>📅 Cambiar Fecha</button>
+                <button onClick={() => { setCancelNombre(r0.nombre || ""); setShowCancelModal(true); }} style={{ background: "transparent", border: `1px solid ${B.danger}`, borderRadius: 20, color: B.danger, padding: "4px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>❌ Cancelar Reserva</button>
+              </>
+            ) : (
+              ESTADO_BTNS.map(b => (
+                <button key={b.key} onClick={() => handleEstado(b.key)} style={{
+                  background: form.estado === b.key ? b.color + "33" : "transparent",
+                  border: `1px solid ${form.estado === b.key ? b.color : B.navyLight}`,
+                  borderRadius: 20,
+                  color: form.estado === b.key ? b.color : "rgba(255,255,255,0.4)",
+                  padding: "4px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer",
+                }}>{b.label}</button>
+              ))
+            )}
           </div>
 
           {/* Tabs */}
@@ -459,6 +544,75 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
         </div>
       </div>
     </div>
+
+    {/* ── Modal: Cambiar Fecha ── */}
+    {showDateModal && (
+      <div style={{ position: "fixed", inset: 0, zIndex: 1200, background: "rgba(0,0,0,0.8)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}
+        onClick={e => e.target === e.currentTarget && setShowDateModal(false)}>
+        <div style={{ background: B.navyMid, borderRadius: 16, padding: 28, width: 340, border: `1px solid ${B.navyLight}` }}>
+          <h3 style={{ fontSize: 17, fontWeight: 700, marginBottom: 20 }}>📅 Cambiar Fecha</h3>
+          <div style={{ marginBottom: 8, fontSize: 12, color: "rgba(255,255,255,0.5)" }}>Fecha actual: <strong style={{ color: B.white }}>{fmtFecha(r0.fecha)}</strong></div>
+          <div style={{ marginBottom: 20 }}>
+            <label style={{ fontSize: 11, color: B.sand, display: "block", marginBottom: 6, textTransform: "uppercase" }}>Nueva Fecha</label>
+            <input type="date" value={newFecha} onChange={e => setNewFecha(e.target.value)}
+              style={{ width: "100%", padding: "10px 12px", borderRadius: 8, background: B.navy, border: `1px solid ${B.navyLight}`, color: B.white, fontSize: 14, outline: "none", boxSizing: "border-box" }} />
+          </div>
+          <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginBottom: 20 }}>⚠️ Sujeto a disponibilidad. Diferencias tarifarias son asumidas por el cliente.</div>
+          <div style={{ display: "flex", gap: 10 }}>
+            <button onClick={() => setShowDateModal(false)} style={{ flex: 1, padding: "10px", borderRadius: 8, background: B.navyLight, border: "none", color: B.white, fontSize: 13, cursor: "pointer" }}>Cancelar</button>
+            <button onClick={handleCambioFecha} disabled={saving || !newFecha || newFecha === r0.fecha}
+              style={{ flex: 1, padding: "10px", borderRadius: 8, background: B.sky, border: "none", color: B.navy, fontSize: 13, fontWeight: 700, cursor: "pointer", opacity: (!newFecha || newFecha === r0.fecha) ? 0.5 : 1 }}>
+              {saving ? "Guardando..." : "Confirmar Cambio"}
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
+
+    {/* ── Modal: Cancelación con Política ── */}
+    {showCancelModal && (() => {
+      const pol = calcPolitica();
+      return (
+        <div style={{ position: "fixed", inset: 0, zIndex: 1200, background: "rgba(0,0,0,0.85)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}
+          onClick={e => e.target === e.currentTarget && setShowCancelModal(false)}>
+          <div style={{ background: B.navyMid, borderRadius: 16, padding: 28, width: 420, border: `1px solid ${B.danger}44` }}>
+            <h3 style={{ fontSize: 17, fontWeight: 700, marginBottom: 4, color: B.danger }}>❌ Cancelar Reserva</h3>
+            <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginBottom: 20 }}>{r0.id} · {r0.nombre}</div>
+
+            {/* Política aplicable */}
+            <div style={{ background: pol.refundType === "dinero" ? B.success + "15" : pol.refundType === "credito" ? B.sky + "15" : B.danger + "15", borderRadius: 10, padding: "14px 16px", marginBottom: 20, border: `1px solid ${pol.refundType === "dinero" ? B.success + "44" : pol.refundType === "credito" ? B.sky + "44" : B.danger + "44"}` }}>
+              <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.06em", color: "rgba(255,255,255,0.5)", marginBottom: 6 }}>Política aplicable</div>
+              <div style={{ fontSize: 15, fontWeight: 700, color: B.white, marginBottom: 6 }}>{pol.label}</div>
+              <div style={{ fontSize: 12, color: "rgba(255,255,255,0.6)" }}>{pol.desc}</div>
+              {pol.monto > 0 && (
+                <div style={{ marginTop: 12, fontSize: 22, fontWeight: 800, fontFamily: "'Barlow Condensed', sans-serif", color: pol.refundType === "dinero" ? B.success : B.sky }}>
+                  {COP(pol.monto)} <span style={{ fontSize: 13, fontWeight: 400, color: "rgba(255,255,255,0.5)" }}>{pol.refundType === "dinero" ? "reembolso" : "en crédito"}</span>
+                </div>
+              )}
+            </div>
+
+            {/* Nombre para el crédito */}
+            {pol.refundType === "credito" && pol.monto > 0 && (
+              <div style={{ marginBottom: 20 }}>
+                <label style={{ fontSize: 11, color: B.sand, display: "block", marginBottom: 6, textTransform: "uppercase" }}>Crédito a nombre de</label>
+                <input value={cancelNombre} onChange={e => setCancelNombre(e.target.value)}
+                  style={{ width: "100%", padding: "10px 12px", borderRadius: 8, background: B.navy, border: `1px solid ${B.sky}`, color: B.white, fontSize: 14, outline: "none", boxSizing: "border-box" }} />
+                <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", marginTop: 6 }}>El crédito queda registrado a este nombre. Vigencia 12 meses, transferible.</div>
+              </div>
+            )}
+
+            <div style={{ display: "flex", gap: 10 }}>
+              <button onClick={() => setShowCancelModal(false)} style={{ flex: 1, padding: "11px", borderRadius: 8, background: B.navyLight, border: "none", color: B.white, fontSize: 13, cursor: "pointer" }}>Volver</button>
+              <button onClick={handleCancelacion} disabled={saving}
+                style={{ flex: 1, padding: "11px", borderRadius: 8, background: B.danger, border: "none", color: B.white, fontSize: 13, fontWeight: 700, cursor: "pointer", opacity: saving ? 0.6 : 1 }}>
+                {saving ? "Procesando..." : "Confirmar Cancelación"}
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    })()}
+    </>
   );
 }
 
