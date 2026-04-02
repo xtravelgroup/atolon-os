@@ -673,64 +673,73 @@ function ReservaModal({ onClose, onSave, isMobile }) {
 
 // ── main component ────────────────────────────────────────────────────────────
 
+function tomorrowStr() {
+  const d = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Bogota" }));
+  d.setDate(d.getDate() + 1);
+  return d.toLocaleDateString("en-CA");
+}
+
+function mapRow(r) {
+  return {
+    id:          r.id,
+    fecha:       r.fecha,
+    salida:      r.salida_id,
+    tipo:        r.tipo,
+    canal:       r.canal,
+    nombre:      r.nombre,
+    contacto:    r.contacto,
+    pax:         r.pax,
+    pax_a:       r.pax_a,
+    pax_n:       r.pax_n,
+    agencia:     r.agencia,
+    precio_u:    r.precio_u,
+    total:       r.total,
+    abono:       r.abono,
+    saldo:       r.saldo,
+    estado:      r.estado,
+    ep:          r.ep,
+    ci:          r.ci,
+    co:          r.co,
+    extension:   r.extension,
+    ext_regreso: r.ext_regreso,
+    notas:       r.notas,
+    forma_pago:  r.forma_pago,
+    pasajeros:   r.pasajeros,
+    created_at:  r.created_at,
+    updated_at:  r.updated_at,
+  };
+}
+
 export default function Reservas() {
   const isMobile = useMobile();
-  const [reservas, setReservas]     = useState([]);
+  const [reservasHoy,    setReservasHoy]    = useState([]);
+  const [reservasManana, setReservasManana] = useState([]);
   const [loading, setLoading]       = useState(true);
+  const [tabDia,  setTabDia]        = useState("hoy"); // "hoy" | "manana"
   const [search, setSearch]         = useState("");
   const [filterEstado, setFilter]   = useState("todos");
   const [showModal, setShowModal]   = useState(false);
   const [detalle, setDetalle]       = useState(null);
 
-  const today = todayStr();
+  const today    = todayStr();
+  const tomorrow = tomorrowStr();
 
   const fetchReservas = useCallback(async () => {
-    if (!supabase) {
-      setReservas([]);
-      setLoading(false);
-      return;
-    }
+    if (!supabase) { setLoading(false); return; }
     setLoading(true);
-    const { data, error } = await supabase
-      .from("reservas")
-      .select("*")
-      .eq("fecha", todayStr())
-      .order("fecha", { ascending: false });
-    if (!error && data) {
-      setReservas(data.map(r => ({
-        id:        r.id,
-        fecha:     r.fecha,
-        salida:    r.salida_id,
-        tipo:      r.tipo,
-        canal:     r.canal,
-        nombre:    r.nombre,
-        contacto:  r.contacto,
-        pax:       r.pax,
-        pax_a:     r.pax_a,
-        pax_n:     r.pax_n,
-        agencia:   r.agencia,
-        precio_u:  r.precio_u,
-        total:     r.total,
-        abono:     r.abono,
-        saldo:     r.saldo,
-        estado:    r.estado,
-        ep:        r.ep,
-        ci:        r.ci,
-        co:        r.co,
-        extension: r.extension,
-        ext_regreso: r.ext_regreso,
-        notas:      r.notas,
-        forma_pago: r.forma_pago,
-        pasajeros:  r.pasajeros,
-        created_at: r.created_at,
-        updated_at: r.updated_at,
-      })));
-    }
+    const [resHoy, resManana] = await Promise.all([
+      supabase.from("reservas").select("*").eq("fecha", today).order("salida_id"),
+      supabase.from("reservas").select("*").eq("fecha", tomorrow).order("salida_id"),
+    ]);
+    if (resHoy.data)    setReservasHoy(resHoy.data.map(mapRow));
+    if (resManana.data) setReservasManana(resManana.data.map(mapRow));
     setLoading(false);
-  }, []);
+  }, [today, tomorrow]);
 
   useEffect(() => { fetchReservas(); }, [fetchReservas]);
 
+  // Active dataset based on tab
+  const reservas = tabDia === "hoy" ? reservasHoy : reservasManana;
   const paxMap = paxPorSalida(reservas);
 
   const filtered = reservas.filter(r => {
@@ -749,7 +758,7 @@ export default function Reservas() {
     if (!supabase) return;
     const row = {
       id:        `R-${Date.now()}`,
-      fecha:     todayStr(),
+      fecha:     tabDia === "manana" ? tomorrow : today,
       salida_id: form.salida,
       tipo:      form.tipo,
       canal:     form.canal,
@@ -861,6 +870,29 @@ export default function Reservas() {
         >
           <span style={{ fontSize: 18, lineHeight: 1 }}>+</span> {isMobile ? "Nueva" : "Nueva Reserva"}
         </button>
+      </div>
+
+      {/* ── Day tabs ── */}
+      <div style={{ display: "flex", gap: 8, marginBottom: isMobile ? 16 : 20 }}>
+        {[
+          { key: "hoy",    label: "Hoy",    fecha: today,    count: reservasHoy.filter(r => r.estado !== "cancelado").reduce((s,r) => s + r.pax, 0) },
+          { key: "manana", label: "Mañana", fecha: tomorrow, count: reservasManana.filter(r => r.estado !== "cancelado").reduce((s,r) => s + r.pax, 0) },
+        ].map(t => (
+          <button key={t.key} onClick={() => { setTabDia(t.key); setSearch(""); setFilter("todos"); }} style={{
+            display: "flex", alignItems: "center", gap: 8,
+            background: tabDia === t.key ? B.sky + "22" : B.navyMid,
+            border: `1px solid ${tabDia === t.key ? B.sky : B.navyLight}`,
+            borderRadius: 10, padding: "10px 20px", cursor: "pointer",
+            color: tabDia === t.key ? B.sky : B.sand, fontWeight: 700, fontSize: 14,
+            transition: "all 0.15s",
+          }}>
+            <span>{t.key === "hoy" ? "☀️" : "🌙"} {t.label}</span>
+            <span style={{ background: tabDia === t.key ? B.sky : B.navyLight, color: tabDia === t.key ? B.navy : B.sand, borderRadius: 20, padding: "1px 9px", fontSize: 12, fontWeight: 800 }}>
+              {t.count} pax
+            </span>
+            <span style={{ fontSize: 11, opacity: 0.6 }}>{t.fecha}</span>
+          </button>
+        ))}
       </div>
 
       {/* ── summary kpis ── */}
