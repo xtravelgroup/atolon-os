@@ -791,6 +791,10 @@ function TabCalendario({ salidas, cierres, embarcaciones }) {
   const [reservasPorDia, setReservasPorDia] = useState({});
   const [overrides, setOverrides] = useState({});
   const [selectedDay, setSelectedDay] = useState(null);
+  const [selectedSalida, setSelectedSalida] = useState(null);
+  const [resDetalle, setResDetalle] = useState([]);
+  const [loadingRes, setLoadingRes] = useState(false);
+  const [selectedReserva, setSelectedReserva] = useState(null);
 
   const now = new Date();
   const mesDate = new Date(now.getFullYear(), now.getMonth() + mesOffset, 1);
@@ -826,6 +830,7 @@ function TabCalendario({ salidas, cierres, embarcaciones }) {
   }, [year, month, diasEnMes]);
 
   useEffect(() => { fetchMonthData(); }, [fetchMonthData]);
+  useEffect(() => { setSelectedSalida(null); setResDetalle([]); setSelectedReserva(null); }, [selectedDay]);
 
   const toggleOverride = async (fecha, salidaId, currentlyVisible) => {
     if (!supabase) return;
@@ -887,6 +892,27 @@ function TabCalendario({ salidas, cierres, embarcaciones }) {
       });
     }
     fetchMonthData();
+  };
+
+  const loadReservasSalida = async (salidaId) => {
+    if (!supabase || !selectedDay) return;
+    if (selectedSalida === salidaId) { setSelectedSalida(null); setResDetalle([]); setSelectedReserva(null); return; }
+    setSelectedSalida(salidaId);
+    setSelectedReserva(null);
+    setLoadingRes(true);
+    const { data } = await supabase.from("reservas").select("*")
+      .eq("fecha", selectedDay).eq("salida_id", salidaId)
+      .neq("estado", "cancelado").order("created_at");
+    setResDetalle(data || []);
+    setLoadingRes(false);
+  };
+
+  const ESTADO_CAL = {
+    confirmado:            { bg: B.success + "22", color: B.success, label: "Confirmado" },
+    pendiente:             { bg: B.warning + "22", color: B.warning, label: "Pendiente"  },
+    pendiente_pago:        { bg: B.warning + "22", color: B.warning, label: "Pend. Pago" },
+    pendiente_comprobante: { bg: B.sky    + "22", color: B.sky,     label: "Pend. Comp" },
+    cancelado:             { bg: B.danger  + "22", color: B.danger,  label: "Cancelado"  },
   };
 
   const dias = [];
@@ -1009,8 +1035,11 @@ function TabCalendario({ salidas, cierres, embarcaciones }) {
               const barColorTotal = pctTotal >= 1 ? B.danger : pctTotal >= 0.7 ? B.warning : B.success;
               const asignadas = botes.map(b => b.id);
               const disponibles = embarcaciones.filter(e => e.estado === "activo" && !asignadas.includes(e.id) && !extraBotes.some(x => x.id === e.id));
+              const isSelSal = selectedSalida === s.id;
               return (
-                <div key={s.id} style={{ background: B.navy, borderRadius: 10, padding: 16, textAlign: "center", opacity: isOpen ? 1 : 0.4, border: `2px solid ${isOpen ? B.navyLight : B.danger + "44"}` }}>
+                <div key={s.id}
+                  onClick={() => isOpen && loadReservasSalida(s.id)}
+                  style={{ background: B.navy, borderRadius: 10, padding: 16, textAlign: "center", opacity: isOpen ? 1 : 0.4, cursor: isOpen ? "pointer" : "default", border: `2px solid ${isSelSal ? B.sand : isOpen ? B.navyLight : B.danger + "44"}`, transition: "border 0.15s" }}>
                   <div style={{ fontSize: 11, color: B.sand, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>{s.nombre}</div>
                   <div style={{ fontSize: 22, fontWeight: 700, fontFamily: "'Barlow Condensed', sans-serif", color: isOpen ? B.sky : B.danger }}>{s.hora}</div>
                   <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginBottom: 8 }}>Regreso: {s.hora_regreso}</div>
@@ -1031,7 +1060,7 @@ function TabCalendario({ salidas, cierres, embarcaciones }) {
                           {extraBotes.map(b => (
                             <span key={b.id} style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 10, padding: "2px 8px 2px 10px", borderRadius: 10, background: B.success + "22", color: B.success, border: `1px solid ${B.success}44` }}>
                               ⛵ {b.nombre} ({b.capacidad})
-                              <button onClick={() => removeExtraEmbarcacion(selectedDay, s.id, b.id)}
+                              <button onClick={(e) => { e.stopPropagation(); removeExtraEmbarcacion(selectedDay, s.id, b.id); }}
                                 style={{ background: "none", border: "none", color: B.danger, cursor: "pointer", fontSize: 12, lineHeight: 1, padding: 0 }}>✕</button>
                             </span>
                           ))}
@@ -1041,7 +1070,7 @@ function TabCalendario({ salidas, cierres, embarcaciones }) {
                         {capTotal - pax > 0 ? `${capTotal - pax} disponibles` : "LLENO"}
                       </div>
                       {disponibles.length > 0 && (
-                        <select defaultValue="" onChange={e => { if (e.target.value) { addExtraEmbarcacion(selectedDay, s.id, e.target.value); e.target.value = ""; } }}
+                        <select defaultValue="" onClick={e => e.stopPropagation()} onChange={e => { if (e.target.value) { addExtraEmbarcacion(selectedDay, s.id, e.target.value); e.target.value = ""; } }}
                           style={{ width: "100%", padding: "6px 10px", borderRadius: 8, background: B.navyLight, border: `1px solid ${B.navyLight}`, color: B.white, fontSize: 11, cursor: "pointer", marginBottom: 6, outline: "none" }}>
                           <option value="">⛵ Agregar embarcación...</option>
                           {disponibles.map(e => (
@@ -1053,7 +1082,7 @@ function TabCalendario({ salidas, cierres, embarcaciones }) {
                         <div style={{ fontSize: 10, color: "rgba(255,255,255,0.35)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 }}>Sin Lancha</div>
                         <div style={{ display: "flex", gap: 4, justifyContent: "center", flexWrap: "wrap" }}>
                           {[15, 20, 40, 50].map(n => (
-                            <button key={n} onClick={() => addCapacidadVirtual(selectedDay, s.id, n)}
+                            <button key={n} onClick={(e) => { e.stopPropagation(); addCapacidadVirtual(selectedDay, s.id, n); }}
                               style={{ padding: "4px 10px", borderRadius: 6, background: B.sky + "22", color: B.sky, border: `1px solid ${B.sky}44`, fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
                               +{n}
                             </button>
@@ -1064,7 +1093,7 @@ function TabCalendario({ salidas, cierres, embarcaciones }) {
                   ) : (
                     <div style={{ padding: "16px 0", fontSize: 13, color: B.danger }}>CERRADA</div>
                   )}
-                  <button onClick={() => toggleOverride(selectedDay, s.id, isOpen)} style={{
+                  <button onClick={(e) => { e.stopPropagation(); toggleOverride(selectedDay, s.id, isOpen); }} style={{
                     width: "100%", padding: "8px", borderRadius: 8, border: "none", fontSize: 12, fontWeight: 700, cursor: "pointer",
                     background: isOpen ? B.danger + "22" : B.success + "22", color: isOpen ? B.danger : B.success,
                   }}>{isOpen ? "Cerrar esta salida" : "Abrir esta salida"}</button>
@@ -1073,6 +1102,91 @@ function TabCalendario({ salidas, cierres, embarcaciones }) {
               );
             })}
           </div>
+
+          {/* ── Lista de reservas de la salida seleccionada ── */}
+          {selectedSalida && (
+            <div style={{ marginTop: 20 }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+                <h5 style={{ fontSize: 14, fontWeight: 700, margin: 0, color: B.white }}>
+                  {salidasActivas.find(s => s.id === selectedSalida)?.nombre} · {salidasActivas.find(s => s.id === selectedSalida)?.hora}
+                  <span style={{ fontWeight: 400, color: "rgba(255,255,255,0.4)", marginLeft: 8 }}>({resDetalle.length} reservas)</span>
+                </h5>
+                <button onClick={() => { setSelectedSalida(null); setResDetalle([]); setSelectedReserva(null); }}
+                  style={{ background: "none", border: "none", color: "rgba(255,255,255,0.4)", cursor: "pointer", fontSize: 20, lineHeight: 1 }}>✕</button>
+              </div>
+              {loadingRes ? (
+                <div style={{ textAlign: "center", padding: 20, color: "rgba(255,255,255,0.4)" }}>Cargando...</div>
+              ) : resDetalle.length === 0 ? (
+                <div style={{ textAlign: "center", padding: 20, color: "rgba(255,255,255,0.3)", fontSize: 13 }}>Sin reservas para esta salida</div>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                  {resDetalle.map(r => {
+                    const est = ESTADO_CAL[r.estado] || { bg: B.navyLight, color: B.white, label: r.estado };
+                    const isSelR = selectedReserva?.id === r.id;
+                    return (
+                      <div key={r.id} onClick={() => setSelectedReserva(isSelR ? null : r)}
+                        style={{ background: isSelR ? B.navyLight : B.navy, borderRadius: 8, padding: "12px 16px", cursor: "pointer", border: `1px solid ${isSelR ? B.sand : B.navyLight}`, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, transition: "border 0.15s" }}>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontWeight: 600, fontSize: 14, color: B.white, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{r.nombre}</div>
+                          <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>{r.tipo} · {r.pax} pax · {r.forma_pago || "—"} · ⏱ {fmtHora(r.created_at)}</div>
+                        </div>
+                        <div style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
+                          <span style={{ fontWeight: 700, fontSize: 14, color: B.white }}>{COP(r.total || 0)}</span>
+                          <span style={{ fontSize: 11, padding: "3px 10px", borderRadius: 10, background: est.bg, color: est.color, fontWeight: 600 }}>{est.label}</span>
+                          <span style={{ fontSize: 12, color: "rgba(255,255,255,0.3)" }}>{isSelR ? "▲" : "▼"}</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ── Detalle de la reserva seleccionada ── */}
+          {selectedReserva && (
+            <div style={{ background: B.navy, borderRadius: 12, padding: 20, marginTop: 12, border: `1px solid ${B.sand}55` }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
+                <div>
+                  <h5 style={{ fontSize: 18, fontWeight: 700, margin: 0, color: B.white }}>{selectedReserva.nombre}</h5>
+                  <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginTop: 4 }}>{selectedReserva.id}</div>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <span style={{ fontSize: 12, padding: "4px 12px", borderRadius: 10, background: (ESTADO_CAL[selectedReserva.estado] || {}).bg || B.navyLight, color: (ESTADO_CAL[selectedReserva.estado] || {}).color || B.white, fontWeight: 700 }}>
+                    {(ESTADO_CAL[selectedReserva.estado] || {}).label || selectedReserva.estado}
+                  </span>
+                  <button onClick={() => setSelectedReserva(null)} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.4)", cursor: "pointer", fontSize: 20, lineHeight: 1 }}>✕</button>
+                </div>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10 }}>
+                {[
+                  ["Tipo pasadía", selectedReserva.tipo || "—"],
+                  ["Fecha salida",  fmtFecha(selectedReserva.fecha)],
+                  ["Hora reserva",  fmtHora(selectedReserva.created_at)],
+                  ["Pax adultos",   selectedReserva.pax_adultos ?? selectedReserva.pax ?? "—"],
+                  ["Pax niños",     selectedReserva.pax_ninos ?? "—"],
+                  ["Total",         COP(selectedReserva.total || 0)],
+                  ["Abono",         COP(selectedReserva.abono || 0)],
+                  ["Saldo",         COP((selectedReserva.total || 0) - (selectedReserva.abono || 0))],
+                  ["Forma de pago", selectedReserva.forma_pago || "—"],
+                  ["Canal",         selectedReserva.canal || "—"],
+                  ["Email",         selectedReserva.email || "—"],
+                  ["Teléfono",      selectedReserva.telefono || "—"],
+                ].map(([label, value]) => (
+                  <div key={label} style={{ background: B.navyMid, borderRadius: 8, padding: "10px 14px" }}>
+                    <div style={{ fontSize: 10, color: "rgba(255,255,255,0.35)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>{label}</div>
+                    <div style={{ fontSize: 13, color: B.white, fontWeight: 600, wordBreak: "break-all" }}>{String(value)}</div>
+                  </div>
+                ))}
+              </div>
+              {selectedReserva.notas && (
+                <div style={{ background: B.navyMid, borderRadius: 8, padding: "10px 14px", marginTop: 10 }}>
+                  <div style={{ fontSize: 10, color: "rgba(255,255,255,0.35)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>Notas</div>
+                  <div style={{ fontSize: 13, color: B.white }}>{selectedReserva.notas}</div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>
