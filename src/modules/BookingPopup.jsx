@@ -131,7 +131,9 @@ function fmtDate(iso, lang) {
 // ── Main component ───────────────────────────────────────────────────────────
 export default function BookingPopup() {
   const params  = new URLSearchParams(window.location.search);
-  const tipoQ   = params.get("tipo") || "";
+  // Support both /booking?tipo=after-island and /booking/after-island
+  const pathSlug = window.location.pathname.replace(/^\/booking\/?/, "").split("?")[0] || "";
+  const tipoQ   = params.get("tipo") || pathSlug || "";
   const grupoQ  = params.get("grupo") || "";   // grupo mode: EVT-xxx
   const langQ   = (params.get("lang") || "es").toLowerCase();
   const isEN    = langQ === "en";

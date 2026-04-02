@@ -135,6 +135,10 @@ function NuevoMiembroModal({ onClose, onCreated, totalMiembros }) {
       nivel: form.nivel, numero_membresia,
     });
     if (err) { setError(err.message); setSaving(false); return; }
+    // Enviar correo de bienvenida (no bloquea si falla)
+    supabase.functions.invoke("vip-bienvenida", {
+      body: { nombre: form.nombre.trim(), email: form.email.toLowerCase().trim(), nivel: form.nivel, numero_membresia },
+    }).catch(() => {});
     onCreated();
     onClose();
   };
