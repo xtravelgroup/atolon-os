@@ -42,7 +42,7 @@ export default function Financiero() {
     supabase.from("reservas")
       .select("fecha, total, tipo, canal, forma_pago, pax, estado")
       .gte("fecha", desdeStr)
-      .not("estado", "in", '("cancelado","pendiente_pago")')
+      .eq("estado", "confirmado")
       .then(({ data }) => {
         setReservas(data || []);
         setLoading(false);

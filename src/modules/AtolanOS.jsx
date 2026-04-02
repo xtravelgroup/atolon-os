@@ -67,13 +67,13 @@ function Dashboard() {
       const [ventasHoyR, paxHoyR, paxMananaR, leadsHoyR, evtR, reqR] = await Promise.all([
         // Pasadías vendidos y revenue: filtrar por cuándo se CREÓ la reserva
         supabase.from("reservas").select("total")
-          .neq("estado", "cancelado")
+          .eq("estado", "confirmado")
           .gte("created_at", inicioHoy)
           .lte("created_at", finHoy),
-        // Pax hoy: pasajeros cuyo viaje es HOY
-        supabase.from("reservas").select("pax").eq("fecha", hoy).neq("estado", "cancelado"),
-        // Pax mañana: pasajeros cuyo viaje es MAÑANA
-        supabase.from("reservas").select("pax").eq("fecha", mananaStr).neq("estado", "cancelado"),
+        // Pax hoy: pasajeros cuyo viaje es HOY (solo confirmados)
+        supabase.from("reservas").select("pax").eq("fecha", hoy).eq("estado", "confirmado"),
+        // Pax mañana: pasajeros cuyo viaje es MAÑANA (solo confirmados)
+        supabase.from("reservas").select("pax").eq("fecha", mananaStr).eq("estado", "confirmado"),
         // Leads creados hoy aún activos
         supabase.from("leads").select("id")
           .not("stage", "in", '("Cerrado Ganado","Perdido")')
