@@ -32,7 +32,7 @@ function paxPorSalida(reservas, salidas) {
 }
 
 const EMPTY_FORM = {
-  nombre: "", contacto: "", tipo: PASADIAS[0]?.tipo || "", pax_a: 1, pax_n: 0,
+  nombre: "", contacto: "", telefono: "", tipo: PASADIAS[0]?.tipo || "", pax_a: 1, pax_n: 0,
   salida_id: "", canal: "WhatsApp", precio: PASADIAS[0]?.precio || 0,
   abono: 0, forma_pago: "Transferencia", aliado_id: "", vendedor: "Sin asignar", notas: "",
 };
@@ -113,9 +113,11 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
   const [showDateModal, setShowDateModal]     = useState(false);
   const [cancelNombre, setCancelNombre]       = useState(r0.nombre || "");
   const [newFecha, setNewFecha]               = useState(r0.fecha  || "");
+  const [creditDestB2B, setCreditDestB2B]     = useState(false); // true = crédito va al aliado B2B
   const [form, setForm]     = useState({
     nombre:    r0.nombre    || "",
     contacto:  r0.contacto  || "",
+    telefono:  r0.telefono  || "",
     fecha:     r0.fecha     || "",
     salida_id: r0.salida    || "",
     tipo:      r0.tipo      || "",
@@ -138,13 +140,22 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
   const aliado = aliadoList.find(a => a.id === form.aliado_id);
   const tieneCXC = aliado && (aliado.cupo_credito || 0) > 0;
 
+  // 24-hour lock: if confirmed and service is within 24h, block edits and date changes
+  const horasHastaServicio = r0.fecha
+    ? (new Date(r0.fecha + "T08:00:00") - new Date()) / 3_600_000
+    : Infinity;
+  const dentro24h = r0.estado === "confirmado" && horasHastaServicio < 24 && horasHastaServicio > -48;
+
   const handleSave = async () => {
     if (!supabase) return;
     setSaving(true);
     const pax = Number(form.pax_a) + Number(form.pax_n);
+    const emailUpd = form.contacto.trim().includes("@") ? form.contacto.trim() : (r0.email || null);
     await supabase.from("reservas").update({
       nombre:    form.nombre.trim(),
       contacto:  form.contacto.trim(),
+      email:     emailUpd,
+      telefono:  form.telefono.trim() || null,
       fecha:     form.fecha,
       salida_id: form.salida_id,
       tipo:      form.tipo,
@@ -249,17 +260,20 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
     if (pol.refundType === "credito" && pol.monto > 0) {
       const vigencia = new Date();
       vigencia.setFullYear(vigencia.getFullYear() + 1);
+      const esB2B = creditDestB2B && !!aliado;
       await supabase.from("creditos").insert({
         id: `CRD-${Date.now()}`,
         reserva_id:     r0.id,
-        cliente_nombre: cancelNombre,
-        cliente_email:  r0.email || null,
+        cliente_nombre: esB2B ? aliado.nombre : cancelNombre,
+        cliente_email:  esB2B ? (aliado.email || null) : (r0.email || null),
+        aliado_id:      esB2B ? aliado.id : null,
         monto:          pol.monto,
         saldo:          pol.monto,
         motivo:         pol.label,
-        tipo:           pol.tipo,
+        tipo:           esB2B ? "b2b" : pol.tipo,
         vigencia_hasta: vigencia.toISOString().slice(0, 10),
         transferible:   true,
+        notas:          esB2B ? `Crédito a cuenta B2B de ${aliado.nombre}` : null,
       });
     }
     setSaving(false);
@@ -331,17 +345,22 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
               </div>
             </div>
             <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-              {!editing && <button onClick={() => setEdit(true)} style={{ background: B.navyLight, border: `1px solid ${B.navyLight}`, borderRadius: 8, color: B.sky, padding: "7px 14px", fontSize: 13, cursor: "pointer", fontWeight: 600 }}>✏️ Editar</button>}
+              {!editing && !dentro24h && <button onClick={() => setEdit(true)} style={{ background: B.navyLight, border: `1px solid ${B.navyLight}`, borderRadius: 8, color: B.sky, padding: "7px 14px", fontSize: 13, cursor: "pointer", fontWeight: 600 }}>✏️ Editar</button>}
               <button onClick={onClose} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.4)", fontSize: 24, cursor: "pointer", lineHeight: 1, padding: "2px 6px" }}>×</button>
             </div>
           </div>
 
           {/* Estado — confirmado: solo cambio fecha o cancelación con política */}
+          {dentro24h && (
+            <div style={{ background: B.warning + "18", border: `1px solid ${B.warning}55`, borderRadius: 8, padding: "8px 14px", marginBottom: 10, fontSize: 12, color: B.warning, fontWeight: 600 }}>
+              🔒 Menos de 24 h para el servicio — no se permiten modificaciones ni cambios de fecha. Solo cancelación según política (sin crédito).
+            </div>
+          )}
           <div style={{ display: "flex", gap: 6, marginBottom: 16, flexWrap: "wrap", alignItems: "center" }}>
             {r0.estado === "confirmado" ? (
               <>
                 <span style={{ fontSize: 12, padding: "4px 14px", borderRadius: 20, background: B.success + "33", border: `1px solid ${B.success}`, color: B.success, fontWeight: 700 }}>✓ Confirmado</span>
-                <button onClick={() => { setNewFecha(r0.fecha || ""); setShowDateModal(true); }} style={{ background: "transparent", border: `1px solid ${B.sky}`, borderRadius: 20, color: B.sky, padding: "4px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>📅 Cambiar Fecha</button>
+                {!dentro24h && <button onClick={() => { setNewFecha(r0.fecha || ""); setShowDateModal(true); }} style={{ background: "transparent", border: `1px solid ${B.sky}`, borderRadius: 20, color: B.sky, padding: "4px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>📅 Cambiar Fecha</button>}
                 <button onClick={() => { setCancelNombre(r0.nombre || ""); setShowCancelModal(true); }} style={{ background: "transparent", border: `1px solid ${B.danger}`, borderRadius: 20, color: B.danger, padding: "4px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>❌ Cancelar Reserva</button>
               </>
             ) : (
@@ -385,9 +404,14 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
                     <div style={{ fontSize: 15, fontWeight: 700 }}>{r0.nombre}</div>}
                 </div>
                 <div>
-                  <label style={LS}>Contacto (email/tel)</label>
-                  {editing ? <input style={IS} value={form.contacto} onChange={e => set("contacto", e.target.value)} placeholder="email o teléfono" /> :
-                    <div style={{ fontSize: 14, color: r0.contacto ? B.white : "rgba(255,255,255,0.3)" }}>{r0.contacto || "—"}</div>}
+                  <label style={LS}>Email</label>
+                  {editing ? <input style={IS} value={form.contacto} onChange={e => set("contacto", e.target.value)} placeholder="correo@ejemplo.com" /> :
+                    <div style={{ fontSize: 14, color: r0.contacto ? B.sky : "rgba(255,255,255,0.3)" }}>{r0.email || r0.contacto || "—"}</div>}
+                </div>
+                <div>
+                  <label style={LS}>Teléfono / WhatsApp</label>
+                  {editing ? <input style={IS} value={form.telefono} onChange={e => set("telefono", e.target.value)} placeholder="+57 300 000 0000" /> :
+                    <div style={{ fontSize: 14, color: r0.telefono ? B.white : "rgba(255,255,255,0.3)" }}>{r0.telefono || "—"}</div>}
                 </div>
                 <div>
                   <label style={LS}>Canal</label>
@@ -511,7 +535,7 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
               {/* Save / Cancel */}
               {editing && (
                 <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", paddingTop: 4 }}>
-                  <button onClick={() => { setEdit(false); setForm({ nombre: r0.nombre||"", contacto: r0.contacto||"", fecha: r0.fecha||"", salida_id: r0.salida||"", tipo: r0.tipo||"", canal: r0.canal||"", pax_a: r0.pax_a??r0.pax??1, pax_n: r0.pax_n??0, abono: r0.abono||0, total: r0.total||0, estado: r0.estado||"pendiente", notas: r0.notas||"" }); }} style={{ background: "none", border: `1px solid ${B.navyLight}`, borderRadius: 8, color: B.sand, padding: "9px 20px", fontSize: 14, cursor: "pointer", fontWeight: 600 }}>
+                  <button onClick={() => { setEdit(false); setForm({ nombre: r0.nombre||"", contacto: r0.contacto||"", telefono: r0.telefono||"", fecha: r0.fecha||"", salida_id: r0.salida||"", tipo: r0.tipo||"", canal: r0.canal||"", pax_a: r0.pax_a??r0.pax??1, pax_n: r0.pax_n??0, abono: r0.abono||0, total: r0.total||0, estado: r0.estado||"pendiente", notas: r0.notas||"" }); }} style={{ background: "none", border: `1px solid ${B.navyLight}`, borderRadius: 8, color: B.sand, padding: "9px 20px", fontSize: 14, cursor: "pointer", fontWeight: 600 }}>
                     Cancelar
                   </button>
                   <button onClick={handleSave} disabled={saving} style={{ background: B.sky, border: "none", borderRadius: 8, color: B.navy, padding: "9px 24px", fontSize: 14, cursor: "pointer", fontWeight: 700, opacity: saving ? 0.6 : 1 }}>
@@ -621,13 +645,43 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
               )}
             </div>
 
+            {/* Destino del crédito — cliente o B2B */}
+            {pol.refundType === "credito" && pol.monto > 0 && aliado && (
+              <div style={{ marginBottom: 16 }}>
+                <label style={{ fontSize: 11, color: B.sand, display: "block", marginBottom: 8, textTransform: "uppercase" }}>Destino del crédito</label>
+                <div style={{ display: "flex", gap: 8 }}>
+                  {[
+                    { key: false, label: "👤 Cliente" },
+                    { key: true,  label: `🏢 B2B — ${aliado.nombre}` },
+                  ].map(opt => (
+                    <button key={String(opt.key)} onClick={() => { setCreditDestB2B(opt.key); if (!opt.key) setCancelNombre(r0.nombre || ""); }}
+                      style={{ flex: 1, padding: "9px 10px", borderRadius: 8, border: `1.5px solid ${creditDestB2B === opt.key ? B.sky : B.navyLight}`, background: creditDestB2B === opt.key ? B.sky + "22" : "transparent", color: creditDestB2B === opt.key ? B.sky : "rgba(255,255,255,0.5)", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* Nombre para el crédito */}
             {pol.refundType === "credito" && pol.monto > 0 && (
               <div style={{ marginBottom: 20 }}>
-                <label style={{ fontSize: 11, color: B.sand, display: "block", marginBottom: 6, textTransform: "uppercase" }}>Crédito a nombre de</label>
-                <input value={cancelNombre} onChange={e => setCancelNombre(e.target.value)}
-                  style={{ width: "100%", padding: "10px 12px", borderRadius: 8, background: B.navy, border: `1px solid ${B.sky}`, color: B.white, fontSize: 14, outline: "none", boxSizing: "border-box" }} />
-                <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", marginTop: 6 }}>El crédito queda registrado a este nombre. Vigencia 12 meses, transferible.</div>
+                <label style={{ fontSize: 11, color: B.sand, display: "block", marginBottom: 6, textTransform: "uppercase" }}>
+                  {creditDestB2B && aliado ? "Agencia B2B" : "Crédito a nombre de"}
+                </label>
+                {creditDestB2B && aliado ? (
+                  <div style={{ padding: "10px 12px", borderRadius: 8, background: B.navy, border: `1px solid ${B.sky}44`, color: B.sky, fontSize: 14, fontWeight: 600 }}>
+                    🏢 {aliado.nombre}
+                  </div>
+                ) : (
+                  <input value={cancelNombre} onChange={e => setCancelNombre(e.target.value)}
+                    style={{ width: "100%", padding: "10px 12px", borderRadius: 8, background: B.navy, border: `1px solid ${B.sky}`, color: B.white, fontSize: 14, outline: "none", boxSizing: "border-box" }} />
+                )}
+                <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", marginTop: 6 }}>
+                  {creditDestB2B && aliado
+                    ? "El crédito se registra en la cuenta del aliado B2B. Vigencia 12 meses, transferible."
+                    : "El crédito queda registrado a este nombre. Vigencia 12 meses, transferible."}
+                </div>
               </div>
             )}
 
@@ -686,6 +740,7 @@ function ReservaModal({ onClose, onSave, isMobile, salidaList = [], aliadoList =
   const validate = () => {
     const e = {};
     if (!form.nombre.trim()) e.nombre = "Requerido";
+    if (!form.telefono.trim() || !/^[\d\s+\-()\\.]{7,}$/.test(form.telefono)) e.telefono = "Teléfono requerido";
     if (!form.salida_id)     e.salida_id = "Requerido";
     if ((Number(form.pax_a) + Number(form.pax_n)) < 1) e.pax_a = "Min 1 pax";
     if (form.precio < 0)     e.precio = "Inválido";
@@ -750,8 +805,13 @@ function ReservaModal({ onClose, onSave, isMobile, salidaList = [], aliadoList =
             {errors.nombre && <span style={{ fontSize: 11, color: B.danger }}>{errors.nombre}</span>}
           </div>
           <div style={FS}>
-            <label style={LS}>Teléfono / Email</label>
-            <input style={IS()} value={form.contacto} onChange={e => set("contacto", e.target.value)} placeholder="WhatsApp o email" />
+            <label style={LS}>Email</label>
+            <input style={IS()} value={form.contacto} onChange={e => set("contacto", e.target.value)} placeholder="correo@ejemplo.com" />
+          </div>
+          <div style={FS}>
+            <label style={LS}>Teléfono / WhatsApp *</label>
+            <input style={IS(errors.telefono)} value={form.telefono} onChange={e => set("telefono", e.target.value)} placeholder="+57 300 000 0000" />
+            {errors.telefono && <span style={{ fontSize: 11, color: B.danger }}>{errors.telefono}</span>}
           </div>
           <div style={FS}>
             <label style={LS}>Canal</label>
@@ -1475,6 +1535,7 @@ export default function Reservas() {
     const isLink = form._isLink;
     const abono  = isLink ? 0 : (Number(form.abono) || 0);
     const reservaId = `R-${Date.now()}`;
+    const emailVal = form.contacto?.trim().includes("@") ? form.contacto.trim() : null;
     const row = {
       id:         reservaId,
       fecha:      tabDia === "manana" ? tomorrow : today,
@@ -1483,6 +1544,8 @@ export default function Reservas() {
       canal:      form.canal,
       nombre:     form.nombre.trim(),
       contacto:   form.contacto || "",
+      email:      emailVal,
+      telefono:   form.telefono?.trim() || null,
       pax,
       pax_a:      Number(form.pax_a),
       pax_n:      Number(form.pax_n),

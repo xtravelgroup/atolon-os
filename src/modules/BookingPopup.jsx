@@ -152,6 +152,7 @@ export default function BookingPopup() {
   const [step,       setStep]      = useState(matchedProduct ? 1 : 0); // 0=select, 1=booking, 2=info, 3=done
   const [form,      setForm]      = useState({ nombre: "", email: "", telefono: "", notas: "" });
   const [errors,    setErrors]    = useState({});
+  const [termsAccepted, setTermsAccepted] = useState(false);
   const [saving,    setSaving]    = useState(false);
   const [linkPago,  setLinkPago]  = useState("");
   const [dispon,      setDispon]      = useState({}); // ISO → remaining total
@@ -967,8 +968,29 @@ export default function BookingPopup() {
           />
         </div>
 
+        {/* T&C Acceptance */}
+        <div style={{ marginBottom: 20, padding: "14px 16px", borderRadius: 10, background: "#F8F9FF", border: `1.5px solid ${termsAccepted ? "#1B4FD8" : "#E2E8F0"}`, transition: "border-color 0.2s" }}>
+          <label style={{ display: "flex", gap: 12, alignItems: "flex-start", cursor: "pointer" }}>
+            <input
+              type="checkbox"
+              checked={termsAccepted}
+              onChange={e => setTermsAccepted(e.target.checked)}
+              style={{ width: 18, height: 18, marginTop: 1, flexShrink: 0, accentColor: "#1B4FD8", cursor: "pointer" }}
+            />
+            <span style={{ fontSize: 12, color: "#475569", lineHeight: 1.5 }}>
+              {isEN
+                ? "I have read and accept the cancellation policy. I understand that this service is non-refundable. Cancellation 48h+ before service: 100% credit valid 12 months. Cancellation 24–48h: 70% credit. Less than 24h or no-show: no refund or credit."
+                : "He leído y acepto la política de cancelación. Entiendo que este servicio es no reembolsable en dinero. Cancelación con más de 48h: 100% en crédito vigente 12 meses. Cancelación 24–48h: 70% en crédito. Menos de 24h o no-show: sin crédito ni reembolso."}
+            </span>
+          </label>
+          {!termsAccepted && errors.terms && (
+            <div style={{ fontSize: 11, color: "#DC2626", marginTop: 6, marginLeft: 30 }}>{errors.terms}</div>
+          )}
+        </div>
+
         <button onClick={async () => {
           if (!validateForm()) return;
+          if (!termsAccepted) { setErrors(e => ({ ...e, terms: isEN ? "You must accept the terms to continue" : "Debes aceptar los términos para continuar" })); return; }
           // Crear lead en Comercial con stage "Nuevo"
           if (supabase) {
             const lid = `LEAD-WEB-${Date.now()}`;
@@ -994,11 +1016,11 @@ export default function BookingPopup() {
           }
           setStep(3);
         }}
-          style={{ width: "100%", padding: "15px 0", borderRadius: 10, border: "none", background: C.primary, color: "white", fontSize: 15, fontWeight: 700, cursor: "pointer", letterSpacing: "0.03em", marginBottom: 10 }}>
+          style={{ width: "100%", padding: "15px 0", borderRadius: 10, border: "none", background: termsAccepted ? C.primary : "#94A3B8", color: "white", fontSize: 15, fontWeight: 700, cursor: termsAccepted ? "pointer" : "not-allowed", letterSpacing: "0.03em", marginBottom: 10, transition: "background 0.2s", opacity: termsAccepted ? 1 : 0.7 }}>
           {isEN ? "Continue →" : "Continuar →"}
         </button>
         <div style={{ textAlign: "center", fontSize: 11, color: C.textLight }}>
-          🔒 {isEN ? "Secure payment · No refunds" : "Pago seguro · Política de no reembolso"}
+          🔒 {isEN ? "Secure payment · Cancellation policy applies" : "Pago seguro · Aplica política de cancelación"}
         </div>
 
         {/* Hidden — payment buttons moved to upsell step */}

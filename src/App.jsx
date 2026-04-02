@@ -194,6 +194,7 @@ import MuelleCheckin from "./modules/MuelleCheckin";
 import VIPAdmin from "./modules/VIPAdmin";
 import Clientes from "./modules/Clientes";
 import VIPPortal from "./modules/VIPPortal";
+import Staffing from "./modules/Staffing";
 
 const MODULE_MAP = {
   pasadias: <Pasadias />,
@@ -209,6 +210,7 @@ const MODULE_MAP = {
   requisiciones: <Requisiciones />,
   contenido: <Contenido />,
   upsells:   <Upsells />,
+  staffing:  <Staffing />,
   checkin:   <CheckIn />,
   muelle:    <MuelleCheckin />,
   menus:     <Menus />,
