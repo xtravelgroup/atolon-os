@@ -161,12 +161,20 @@ function NuevaReserva({ agencia, user, onCreated, vistaPrecios = "ambos" }) {
   // Determine visible salidas for selected date
   const getSalidasDisponibles = () => {
     const cierre = cierres.find(c => c.activo);
+    const todayISO = new Date().toISOString().slice(0, 10);
+    const isToday = form.fecha === todayISO;
+    const nowMins = isToday ? (() => { const n = new Date(); return n.getHours() * 60 + n.getMinutes(); })() : -1;
     return salidas.filter(s => {
       const ovr = overrides[s.id];
       if (ovr) return ovr.accion === "abrir";
       if (cierre) {
         if (cierre.tipo === "total") return false;
         if ((cierre.salidas || []).includes(s.id)) return false;
+      }
+      // Close sales 45 minutes before departure when booking for today
+      if (isToday && s.hora) {
+        const [h, m] = s.hora.split(":").map(Number);
+        if (nowMins >= (h * 60 + m) - 45) return false;
       }
       if (!s.auto_apertura) return true;
       const fijas = salidas.filter(f => !f.auto_apertura);
