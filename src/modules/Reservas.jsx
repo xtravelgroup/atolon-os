@@ -157,7 +157,8 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile }) {
   });
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
-  const saldo = form.total - form.abono;
+  // Use stored saldo from DB; only recompute when user edits total or abono
+  const saldo = editing ? (form.total - form.abono) : (r0.saldo ?? form.total - form.abono);
   const salida = SALIDAS.find(s => s.id === form.salida_id);
 
   const handleSave = async () => {

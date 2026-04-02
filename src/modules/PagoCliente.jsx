@@ -175,8 +175,9 @@ export default function PagoCliente() {
       if (status === "APPROVED") {
         const hoy = new Date().toLocaleDateString("en-CA", { timeZone: "America/Bogota" });
         // Confirmar reserva
+        const { data: resData } = await supabase.from("reservas").select("total").eq("id", reservaId).single();
         await supabase.from("reservas").update({
-          estado: "confirmado", forma_pago: "wompi", saldo: 0,
+          estado: "confirmado", forma_pago: "wompi", saldo: 0, abono: resData?.total || 0,
         }).eq("id", reservaId);
         // Cerrar lead en Comercial
         if (leadIdParam) {
@@ -203,8 +204,9 @@ export default function PagoCliente() {
   useEffect(() => {
     if (!stripeOk || !reservaId || !supabase) return;
     (async () => {
+      const { data: resDataS } = await supabase.from("reservas").select("total").eq("id", reservaId).single();
       await supabase.from("reservas").update({
-        estado: "confirmado", forma_pago: "stripe", saldo: 0,
+        estado: "confirmado", forma_pago: "stripe", saldo: 0, abono: resDataS?.total || 0,
       }).eq("id", reservaId);
       const { data: res } = await supabase.from("reservas").select("*").eq("id", reservaId).single();
       if (res?.contacto?.includes("@")) {
