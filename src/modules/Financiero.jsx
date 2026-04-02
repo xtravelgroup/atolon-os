@@ -40,7 +40,7 @@ export default function Financiero() {
     desde.setMonth(desde.getMonth() - 12);
     const desdeStr = desde.toISOString().slice(0, 10);
     supabase.from("reservas")
-      .select("fecha, total, tipo, canal, pax, estado")
+      .select("fecha, total, tipo, canal, forma_pago, pax, estado")
       .gte("fecha", desdeStr)
       .not("estado", "in", '("cancelado","pendiente_pago")')
       .then(({ data }) => {
@@ -89,12 +89,24 @@ export default function Financiero() {
       .sort((a, b) => b.val - a.val);
   };
 
+  const ingresosPorPago = (mes) => {
+    const groups = {};
+    resDeMes(mes).forEach(r => {
+      const p = r.forma_pago || "Sin registrar";
+      groups[p] = (groups[p] || 0) + (r.total || 0);
+    });
+    return Object.entries(groups)
+      .map(([cat, val]) => ({ cat, val }))
+      .sort((a, b) => b.val - a.val);
+  };
+
   // ── Derived numbers ────────────────────────────────────────────────────────
   const resA = resDeMes(mesActual);
   const resC = resDeMes(mesComparar);
   const tiposA = ingresosPorTipo(mesActual);
   const tiposC = ingresosPorTipo(mesComparar);
   const canalesA = ingresosPorCanal(mesActual);
+  const pagosA   = ingresosPorPago(mesActual);
 
   const totalA     = tiposA.reduce((s, r) => s + r.val, 0);
   const totalC     = tiposC.reduce((s, r) => s + r.val, 0);
@@ -185,7 +197,7 @@ export default function Financiero() {
         ))}
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16 }}>
         {/* ── Ingresos por Tipo de Pasadia ── */}
         <div style={{ background: B.navyMid, borderRadius: 12, overflow: "hidden" }}>
           <div style={{ padding: "14px 20px", borderBottom: `1px solid ${B.navyLight}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -252,6 +264,42 @@ export default function Financiero() {
                 </div>
                 <div style={{ height: 3, background: B.navy, borderRadius: 2, overflow: "hidden" }}>
                   <div style={{ width: `${pctOfTotal}%`, height: "100%", background: B.sky, borderRadius: 2 }} />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* ── Ingresos por Método de Pago ── */}
+        <div style={{ background: B.navyMid, borderRadius: 12, overflow: "hidden" }}>
+          <div style={{ padding: "14px 20px", borderBottom: `1px solid ${B.navyLight}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <h3 style={{ fontSize: 15, color: B.warning, margin: 0 }}>Por Método de Pago</h3>
+            <span style={{ fontWeight: 700, fontSize: 14 }}>{pagosA.length} métodos</span>
+          </div>
+          {pagosA.length === 0 ? (
+            <div style={{ padding: "32px 20px", textAlign: "center", color: "rgba(255,255,255,0.25)", fontSize: 13 }}>
+              Sin ventas en {fmtMes(mesActual)}
+            </div>
+          ) : pagosA.map((r, i) => {
+            const pctOfTotal = totalA > 0 ? (r.val / totalA) * 100 : 0;
+            const count = resA.filter(res => (res.forma_pago || "Sin registrar") === r.cat).length;
+            return (
+              <div key={r.cat} style={{
+                padding: "11px 20px",
+                borderBottom: i < pagosA.length - 1 ? `1px solid ${B.navyLight}` : "none",
+              }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 5 }}>
+                  <div>
+                    <span style={{ fontSize: 13 }}>{r.cat}</span>
+                    <span style={{ fontSize: 11, color: "rgba(255,255,255,0.3)", marginLeft: 8 }}>{count} res.</span>
+                  </div>
+                  <div style={{ textAlign: "right" }}>
+                    <div style={{ fontSize: 13, fontWeight: 700 }}>{COP(r.val)}</div>
+                    <div style={{ fontSize: 10, color: "rgba(255,255,255,0.35)" }}>{pctOfTotal.toFixed(1)}%</div>
+                  </div>
+                </div>
+                <div style={{ height: 3, background: B.navy, borderRadius: 2, overflow: "hidden" }}>
+                  <div style={{ width: `${pctOfTotal}%`, height: "100%", background: B.warning, borderRadius: 2 }} />
                 </div>
               </div>
             );
