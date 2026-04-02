@@ -1087,6 +1087,7 @@ export default function Reservas() {
   const [aliados,        setAliados]        = useState([]);
   const [cierres,        setCierres]        = useState([]);
   const [embarcaciones,  setEmbarcaciones]  = useState([]);
+  const [overridesMap,   setOverridesMap]   = useState({}); // { fecha: { salida_id: override } }
   const [loading, setLoading]       = useState(true);
   const [tab,     setTab]           = useState("reservas"); // "reservas" | "calendario"
   const [tabDia,  setTabDia]        = useState("hoy");
@@ -1101,13 +1102,14 @@ export default function Reservas() {
   const fetchReservas = useCallback(async () => {
     if (!supabase) { setLoading(false); return; }
     setLoading(true);
-    const [resHoy, resManana, salR, aliR, cierreR, embR] = await Promise.all([
+    const [resHoy, resManana, salR, aliR, cierreR, embR, ovrR] = await Promise.all([
       supabase.from("reservas").select("*").eq("fecha", today).order("salida_id"),
       supabase.from("reservas").select("*").eq("fecha", tomorrow).order("salida_id"),
       supabase.from("salidas").select("*").order("orden"),
       supabase.from("aliados_b2b").select("id, nombre, cupo_credito").eq("estado", "activo").order("nombre"),
       supabase.from("cierres").select("*").order("fecha"),
       supabase.from("embarcaciones").select("*").order("nombre"),
+      supabase.from("salidas_override").select("*").in("fecha", [today, tomorrow]),
     ]);
     if (resHoy.data)    setReservasHoy(resHoy.data.map(mapRow));
     if (resManana.data) setReservasManana(resManana.data.map(mapRow));
@@ -1115,6 +1117,14 @@ export default function Reservas() {
     if (aliR.data)      setAliados(aliR.data);
     if (cierreR.data)   setCierres(cierreR.data);
     if (embR.data)      setEmbarcaciones(embR.data);
+    if (ovrR.data) {
+      const omap = {};
+      ovrR.data.forEach(o => {
+        if (!omap[o.fecha]) omap[o.fecha] = {};
+        omap[o.fecha][o.salida_id] = o;
+      });
+      setOverridesMap(omap);
+    }
     setLoading(false);
   }, [today, tomorrow]);
 
@@ -1123,6 +1133,22 @@ export default function Reservas() {
   // Active dataset based on tab
   const reservas = tabDia === "hoy" ? reservasHoy : reservasManana;
   const paxMap = paxPorSalida(reservas, salidas);
+
+  // Determine which salidas are open for a given date (respects cierres + overrides)
+  const getSalidasAbiertas = (fecha) => {
+    const cierre = cierres.find(c => c.activo && c.fecha === fecha);
+    const dayOvr = overridesMap[fecha] || {};
+    return salidas.filter(s => {
+      if (!s.activo) return false;
+      const ovr = dayOvr[s.id];
+      if (ovr) return ovr.accion === "abrir"; // override wins
+      if (cierre) {
+        if (cierre.tipo === "total") return false;
+        if ((cierre.salidas || []).includes(s.id)) return false;
+      }
+      return true; // active, no cierre, no override → open
+    });
+  };
 
   const filtered = reservas.filter(r => {
     const matchSearch = r.nombre.toLowerCase().includes(search.toLowerCase()) ||
@@ -1337,7 +1363,7 @@ export default function Reservas() {
             Tablero de Salidas
           </h2>
           <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
-            {salidas.filter(s => s.activo !== false).map(s => (
+            {getSalidasAbiertas(tabDia === "hoy" ? today : tomorrow).map(s => (
               <DepartureCard key={s.id} salida={s} paxCount={paxMap[s.id] || 0} />
             ))}
           </div>
