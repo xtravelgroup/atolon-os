@@ -1102,6 +1102,14 @@ export default function Reservas() {
   const fetchReservas = useCallback(async () => {
     if (!supabase) { setLoading(false); return; }
     setLoading(true);
+
+    // Auto-cancelar reservas pendiente_pago con más de 60 minutos
+    const expireThreshold = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    await supabase.from("reservas")
+      .update({ estado: "cancelado" })
+      .eq("estado", "pendiente_pago")
+      .lt("created_at", expireThreshold);
+
     const [resHoy, resManana, salR, aliR, cierreR, embR, ovrR] = await Promise.all([
       supabase.from("reservas").select("*").eq("fecha", today).order("salida_id"),
       supabase.from("reservas").select("*").eq("fecha", tomorrow).order("salida_id"),

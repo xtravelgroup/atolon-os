@@ -403,7 +403,7 @@ export default function BookingPopup() {
   async function handleReservar(method = "wompi") {
     setSaving(true);
     const reservaId  = `WEB-${Date.now()}`;
-    const linkExpira = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+    const linkExpira = new Date(Date.now() + 60 * 60 * 1000).toISOString();
     const grandTotal = totalA + totalN + selUpsells.reduce((s, u) => s + (u.por_persona ? u.precio * (paxA + paxN) : u.precio), 0);
     let   payUrl     = "";
 
