@@ -84,7 +84,7 @@ function TabPublicaciones() {
     fetchItems();
   };
 
-  const hoy = new Date().toISOString().split("T")[0];
+  const hoy = new Date().toLocaleDateString("en-CA", { timeZone: "America/Bogota" });
   const filtrados = filtro === "todos" ? items : items.filter(it => it.tipo === filtro);
 
   return (

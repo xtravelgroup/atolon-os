@@ -16,6 +16,12 @@ export const COP = n => n ? `$${Math.round(n).toLocaleString("es-CO")}` : "\u201
 export const COPfull = n => n ? `$${Math.round(n).toLocaleString("es-CO")} COP` : "\u2014";
 export const todayStr = () => new Date().toLocaleDateString("en-CA", { timeZone: "America/Bogota" });
 export const todayDisplay = () => new Date().toLocaleDateString("es-CO", { timeZone: "America/Bogota", weekday: "long", day: "numeric", month: "long", year: "numeric" });
+// Current time in minutes since midnight — Colombia timezone (UTC-5)
+export const colNowMins = () => {
+  const t = new Date().toLocaleString("en-US", { timeZone: "America/Bogota", hour: "2-digit", minute: "2-digit", hour12: false });
+  const [h, m] = t.split(":").map(Number);
+  return h * 60 + m;
+};
 // Format YYYY-MM-DD → DD-MM-AAAA for display
 export const fmtFecha = (d) => { if (!d) return "\u2014"; const p = d.split("-"); return p.length === 3 ? `${p[2]}-${p[1]}-${p[0]}` : d; };
 

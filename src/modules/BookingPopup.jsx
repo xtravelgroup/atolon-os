@@ -281,9 +281,9 @@ export default function BookingPopup() {
       const ovrMap = {};
       (ovrR.data || []).forEach(o => { ovrMap[o.salida_id] = o.accion; });
 
-      // 45-min cutoff: if date is today, close salidas within 45 mins
+      // 45-min cutoff: if date is today, close salidas within 45 mins (Colombia timezone)
       const isToday = selDate === isoToday();
-      const nowMins = isToday ? (() => { const n = new Date(); return n.getHours() * 60 + n.getMinutes(); })() : -1;
+      const nowMins = isToday ? (() => { const t = new Date().toLocaleString("en-US", { timeZone: "America/Bogota", hour: "2-digit", minute: "2-digit", hour12: false }); const [h, m] = t.split(":").map(Number); return h * 60 + m; })() : -1;
 
       const result = {};
       salidas.forEach(s => {

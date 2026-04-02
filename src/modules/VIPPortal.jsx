@@ -606,10 +606,10 @@ async function fetchDisponSal(fecha) {
   const ovrMap = {};
   (ovrs || []).forEach(o => { ovrMap[o.salida_id] = o.accion; });
 
-  // 45-min cutoff for today
-  const todayISO = new Date().toISOString().slice(0, 10);
+  // 45-min cutoff for today (Colombia timezone)
+  const todayISO = new Date().toLocaleDateString("en-CA", { timeZone: "America/Bogota" });
   const isToday = fecha === todayISO;
-  const nowMins = isToday ? (() => { const n = new Date(); return n.getHours() * 60 + n.getMinutes(); })() : -1;
+  const nowMins = isToday ? (() => { const t = new Date().toLocaleString("en-US", { timeZone: "America/Bogota", hour: "2-digit", minute: "2-digit", hour12: false }); const [h, m] = t.split(":").map(Number); return h * 60 + m; })() : -1;
 
   return allSals.map(s => {
     let disp;

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { B, COP, SALIDAS, FLOTA, PASADIAS, todayStr, fmtFecha } from "../brand";
+import { B, COP, SALIDAS, FLOTA, PASADIAS, todayStr, fmtFecha, colNowMins } from "../brand";
 import { supabase } from "../lib/supabase";
 import { useMobile } from "../lib/useMobile";
 
@@ -694,6 +694,7 @@ export default function Reservas() {
     const { data, error } = await supabase
       .from("reservas")
       .select("*")
+      .eq("fecha", todayStr())
       .order("fecha", { ascending: false });
     if (!error && data) {
       setReservas(data.map(r => ({

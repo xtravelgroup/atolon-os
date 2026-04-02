@@ -161,9 +161,9 @@ function NuevaReserva({ agencia, user, onCreated, vistaPrecios = "ambos" }) {
   // Determine visible salidas for selected date
   const getSalidasDisponibles = () => {
     const cierre = cierres.find(c => c.activo);
-    const todayISO = new Date().toISOString().slice(0, 10);
+    const todayISO = new Date().toLocaleDateString("en-CA", { timeZone: "America/Bogota" });
     const isToday = form.fecha === todayISO;
-    const nowMins = isToday ? (() => { const n = new Date(); return n.getHours() * 60 + n.getMinutes(); })() : -1;
+    const nowMins = isToday ? (() => { const t = new Date().toLocaleString("en-US", { timeZone: "America/Bogota", hour: "2-digit", minute: "2-digit", hour12: false }); const [h, m] = t.split(":").map(Number); return h * 60 + m; })() : -1;
     return salidas.filter(s => {
       const ovr = overrides[s.id];
       if (ovr) return ovr.accion === "abrir";
