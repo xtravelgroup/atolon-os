@@ -46,9 +46,14 @@ export default function Clientes() {
     if (!supabase) return;
     setSelected(cliente);
     setLoadingPerfil(true);
+    // Buscar reservas por email (nuevo campo) O por contacto (campo legado que guardaba el email)
     const [resR, crdR] = await Promise.all([
-      supabase.from("reservas").select("*").eq("email", cliente.email).order("fecha", { ascending: false }),
-      supabase.from("creditos").select("*").eq("cliente_email", cliente.email).order("created_at", { ascending: false }),
+      supabase.from("reservas").select("*")
+        .or(`email.eq.${cliente.email},contacto.eq.${cliente.email}`)
+        .order("fecha", { ascending: false }),
+      supabase.from("creditos").select("*")
+        .eq("cliente_email", cliente.email)
+        .order("created_at", { ascending: false }),
     ]);
     setReservas(resR.data || []);
     setCreditos(crdR.data || []);
@@ -97,7 +102,10 @@ export default function Clientes() {
                 onMouseLeave={e => e.currentTarget.style.borderColor = B.navyLight}>
                 <div>
                   <div style={{ fontWeight: 700, fontSize: 15, color: B.white }}>{c.nombre || "Sin nombre"}</div>
-                  <div style={{ fontSize: 12, color: "rgba(255,255,255,0.45)", marginTop: 3 }}>{c.email} {c.telefono ? `· ${c.telefono}` : ""}</div>
+                  <div style={{ fontSize: 12, color: B.sky, marginTop: 3 }}>✉️ {c.email}</div>
+                  <div style={{ fontSize: 12, color: c.telefono ? "rgba(255,255,255,0.5)" : "rgba(255,255,255,0.2)", marginTop: 2 }}>
+                    📱 {c.telefono || "Sin teléfono"}
+                  </div>
                 </div>
                 <div style={{ display: "flex", gap: 16, alignItems: "center", flexShrink: 0 }}>
                   <div style={{ textAlign: "right" }}>
@@ -134,10 +142,22 @@ export default function Clientes() {
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 12 }}>
                   <div>
                     <div style={{ fontSize: 24, fontWeight: 800, fontFamily: "'Barlow Condensed', sans-serif", color: B.white }}>{selected.nombre || "Sin nombre"}</div>
-                    <div style={{ fontSize: 13, color: B.sky, marginTop: 4 }}>{selected.email}</div>
-                    {selected.telefono && <div style={{ fontSize: 13, color: "rgba(255,255,255,0.5)", marginTop: 2 }}>📱 {selected.telefono}</div>}
-                    {selected.canal_origen && <div style={{ fontSize: 12, color: "rgba(255,255,255,0.35)", marginTop: 4 }}>Canal: {selected.canal_origen}</div>}
-                    <div style={{ fontSize: 12, color: "rgba(255,255,255,0.25)", marginTop: 2 }}>Cliente desde: {fmtFecha(selected.created_at?.slice(0,10))}</div>
+                    {/* Email — siempre visible y copiable */}
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8, background: B.navy, borderRadius: 8, padding: "7px 12px", width: "fit-content" }}>
+                      <span style={{ fontSize: 14 }}>✉️</span>
+                      <span style={{ fontSize: 13, color: B.sky, fontWeight: 600, letterSpacing: "0.01em" }}>{selected.email}</span>
+                    </div>
+                    {/* Teléfono — siempre visible */}
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6, background: B.navy, borderRadius: 8, padding: "7px 12px", width: "fit-content" }}>
+                      <span style={{ fontSize: 14 }}>📱</span>
+                      <span style={{ fontSize: 13, color: selected.telefono ? B.white : "rgba(255,255,255,0.3)", fontWeight: 600 }}>
+                        {selected.telefono || "Sin teléfono registrado"}
+                      </span>
+                    </div>
+                    <div style={{ display: "flex", gap: 12, marginTop: 8, fontSize: 11, color: "rgba(255,255,255,0.35)" }}>
+                      {selected.canal_origen && <span>Canal: {selected.canal_origen}</span>}
+                      <span>Cliente desde: {fmtFecha(selected.created_at?.slice(0,10))}</span>
+                    </div>
                   </div>
                   <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
                     {[

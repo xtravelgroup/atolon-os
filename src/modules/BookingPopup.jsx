@@ -456,6 +456,8 @@ export default function BookingPopup() {
         canal:          grupoEvt ? "GRUPO" : "WEB",
         aliado_id:      grupoEvt?.aliado_id || null,
         nombre:         form.nombre,
+        email:          form.email,
+        telefono:       form.telefono || null,
         contacto:       form.email,
         pax:            paxA + paxN,
         pax_a:          paxA,

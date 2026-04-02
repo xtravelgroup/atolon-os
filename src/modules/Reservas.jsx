@@ -168,20 +168,24 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
   };
 
   const upsertCliente = async (reserva) => {
-    if (!supabase || !reserva.email) return;
+    // email se guarda en reserva.email (nuevo campo) o fallback a reserva.contacto si tiene @
+    const emailKey = reserva.email || (reserva.contacto?.includes("@") ? reserva.contacto : null);
+    if (!supabase || !emailKey) return;
     const { data: allRes } = await supabase.from("reservas")
-      .select("total").eq("email", reserva.email).eq("estado", "confirmado");
+      .select("total")
+      .or(`email.eq.${emailKey},contacto.eq.${emailKey}`)
+      .eq("estado", "confirmado");
     const totalReservas = (allRes || []).length;
     const totalGastado  = (allRes || []).reduce((s, r) => s + (r.total || 0), 0);
     const { data: crdR } = await supabase.from("creditos")
-      .select("saldo").eq("cliente_email", reserva.email)
+      .select("saldo").eq("cliente_email", emailKey)
       .eq("redimido", false).gte("vigencia_hasta", new Date().toISOString().slice(0,10));
     const creditoDisp = (crdR || []).reduce((s, c) => s + (c.saldo || 0), 0);
     await supabase.from("clientes").upsert({
-      id:                reserva.email,
-      email:             reserva.email,
+      id:                emailKey,
+      email:             emailKey,
       nombre:            reserva.nombre,
-      telefono:          reserva.telefono || reserva.contacto || null,
+      telefono:          reserva.telefono || null,
       canal_origen:      reserva.canal || null,
       primera_reserva_id: reserva.id,
       total_reservas:    totalReservas,
