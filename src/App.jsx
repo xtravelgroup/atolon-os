@@ -192,6 +192,7 @@ import ZarpeInfo from "./modules/ZarpeInfo";
 import Analitica from "./modules/Analitica";
 import MuelleCheckin from "./modules/MuelleCheckin";
 import VIPAdmin from "./modules/VIPAdmin";
+import Clientes from "./modules/Clientes";
 import VIPPortal from "./modules/VIPPortal";
 
 const MODULE_MAP = {
@@ -215,6 +216,7 @@ const MODULE_MAP = {
   usuarios: <Usuarios />,
   analitica: <Analitica />,
   vip: <VIPAdmin />,
+  clientes: <Clientes />,
 };
 
 // Public routes — no auth required

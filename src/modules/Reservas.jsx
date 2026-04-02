@@ -161,9 +161,34 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
       vendedor:   form.vendedor !== "Sin asignar" ? form.vendedor : null,
       aliado_id:  form.aliado_id || null,
     }).eq("id", r0.id);
+    if (form.estado === "confirmado") await upsertCliente({ ...r0, ...form, pax: Number(form.pax_a) + Number(form.pax_n) });
     setSaving(false);
     setEdit(false);
     onUpdated();
+  };
+
+  const upsertCliente = async (reserva) => {
+    if (!supabase || !reserva.email) return;
+    const { data: allRes } = await supabase.from("reservas")
+      .select("total").eq("email", reserva.email).eq("estado", "confirmado");
+    const totalReservas = (allRes || []).length;
+    const totalGastado  = (allRes || []).reduce((s, r) => s + (r.total || 0), 0);
+    const { data: crdR } = await supabase.from("creditos")
+      .select("saldo").eq("cliente_email", reserva.email)
+      .eq("redimido", false).gte("vigencia_hasta", new Date().toISOString().slice(0,10));
+    const creditoDisp = (crdR || []).reduce((s, c) => s + (c.saldo || 0), 0);
+    await supabase.from("clientes").upsert({
+      id:                reserva.email,
+      email:             reserva.email,
+      nombre:            reserva.nombre,
+      telefono:          reserva.telefono || reserva.contacto || null,
+      canal_origen:      reserva.canal || null,
+      primera_reserva_id: reserva.id,
+      total_reservas:    totalReservas,
+      total_gastado:     totalGastado,
+      credito_disponible: creditoDisp,
+      updated_at:        new Date().toISOString(),
+    }, { onConflict: "email" });
   };
 
   const handleEstado = async (estado) => {
@@ -172,6 +197,7 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
     if (r0.estado === "confirmado") return;
     await supabase.from("reservas").update({ estado }).eq("id", r0.id);
     set("estado", estado);
+    if (estado === "confirmado") await upsertCliente({ ...r0, estado: "confirmado" });
     onUpdated();
   };
 
