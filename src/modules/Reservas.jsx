@@ -135,6 +135,324 @@ function DepartureCard({ salida, paxCount }) {
   );
 }
 
+// ── ReservaDetalle ────────────────────────────────────────────────────────────
+
+function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile }) {
+  const [tab, setTab]       = useState("detalles"); // detalles | pasajeros | historial
+  const [editing, setEdit]  = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [form, setForm]     = useState({
+    nombre:    r0.nombre    || "",
+    contacto:  r0.contacto  || "",
+    fecha:     r0.fecha     || "",
+    salida_id: r0.salida    || "",
+    tipo:      r0.tipo      || "",
+    canal:     r0.canal     || "",
+    pax_a:     r0.pax_a     ?? r0.pax ?? 1,
+    pax_n:     r0.pax_n     ?? 0,
+    abono:     r0.abono     || 0,
+    total:     r0.total     || 0,
+    estado:    r0.estado    || "pendiente",
+    notas:     r0.notas     || "",
+  });
+
+  const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+  const saldo = form.total - form.abono;
+  const salida = SALIDAS.find(s => s.id === form.salida_id);
+
+  const handleSave = async () => {
+    if (!supabase) return;
+    setSaving(true);
+    const pax = Number(form.pax_a) + Number(form.pax_n);
+    await supabase.from("reservas").update({
+      nombre:    form.nombre.trim(),
+      contacto:  form.contacto.trim(),
+      fecha:     form.fecha,
+      salida_id: form.salida_id,
+      tipo:      form.tipo,
+      canal:     form.canal,
+      pax_a:     Number(form.pax_a),
+      pax_n:     Number(form.pax_n),
+      pax,
+      abono:     Number(form.abono),
+      total:     Number(form.total),
+      saldo:     Number(form.total) - Number(form.abono),
+      estado:    form.estado,
+      notas:     form.notas,
+    }).eq("id", r0.id);
+    setSaving(false);
+    setEdit(false);
+    onUpdated();
+  };
+
+  const handleEstado = async (estado) => {
+    if (!supabase) return;
+    await supabase.from("reservas").update({ estado }).eq("id", r0.id);
+    set("estado", estado);
+    onUpdated();
+  };
+
+  const IS = {
+    background: "#0D1B3E",
+    border: `1px solid ${B.navyLight}`,
+    borderRadius: 8,
+    color: B.white,
+    padding: "9px 12px",
+    fontSize: 14,
+    width: "100%",
+    outline: "none",
+    boxSizing: "border-box",
+    fontFamily: "inherit",
+  };
+  const LS = { fontSize: 11, color: B.sand, fontWeight: 600, marginBottom: 4, display: "block", textTransform: "uppercase", letterSpacing: "0.05em" };
+
+  const ESTADO_BTNS = [
+    { key: "confirmado", label: "✓ Confirmado", color: B.success },
+    { key: "pendiente",  label: "⏳ Pendiente",  color: B.warning },
+    { key: "cancelado",  label: "✕ Cancelado",   color: B.danger  },
+  ];
+
+  const fmtDT = (ts) => {
+    if (!ts) return "—";
+    return new Date(ts).toLocaleString("es-CO", { dateStyle: "medium", timeStyle: "short" });
+  };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, zIndex: 1100, background: "rgba(0,0,0,0.75)", display: "flex", alignItems: isMobile ? "flex-end" : "center", justifyContent: "center", padding: isMobile ? 0 : 20 }}
+      onClick={e => e.target === e.currentTarget && onClose()}>
+      <div style={{
+        background: B.navyMid,
+        border: isMobile ? "none" : `1px solid ${B.navyLight}`,
+        borderRadius: isMobile ? "20px 20px 0 0" : 16,
+        width: "100%",
+        maxWidth: isMobile ? "100%" : 680,
+        maxHeight: isMobile ? "93dvh" : "90vh",
+        display: "flex",
+        flexDirection: "column",
+        overflow: "hidden",
+      }}>
+
+        {/* ── Header ── */}
+        <div style={{ padding: "18px 24px 0", flexShrink: 0 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
+            <div>
+              <div style={{ fontSize: 12, color: B.sky, fontFamily: "monospace", marginBottom: 3 }}>{r0.id}</div>
+              <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontSize: 22, fontWeight: 800, color: B.white }}>{r0.nombre}</div>
+              <div style={{ fontSize: 13, color: B.sand, marginTop: 2 }}>
+                {r0.fecha ? new Date(r0.fecha + "T12:00:00").toLocaleDateString("es-CO", { weekday: "long", day: "numeric", month: "long" }) : "—"}
+                {salida && <> &nbsp;·&nbsp; ⛵ {salida.hora}</>}
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              {!editing && <button onClick={() => setEdit(true)} style={{ background: B.navyLight, border: `1px solid ${B.navyLight}`, borderRadius: 8, color: B.sky, padding: "7px 14px", fontSize: 13, cursor: "pointer", fontWeight: 600 }}>✏️ Editar</button>}
+              <button onClick={onClose} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.4)", fontSize: 24, cursor: "pointer", lineHeight: 1, padding: "2px 6px" }}>×</button>
+            </div>
+          </div>
+
+          {/* Estado buttons */}
+          <div style={{ display: "flex", gap: 6, marginBottom: 16, flexWrap: "wrap" }}>
+            {ESTADO_BTNS.map(b => (
+              <button key={b.key} onClick={() => handleEstado(b.key)} style={{
+                background: form.estado === b.key ? b.color + "33" : "transparent",
+                border: `1px solid ${form.estado === b.key ? b.color : B.navyLight}`,
+                borderRadius: 20,
+                color: form.estado === b.key ? b.color : "rgba(255,255,255,0.4)",
+                padding: "4px 14px",
+                fontSize: 12,
+                fontWeight: 700,
+                cursor: "pointer",
+              }}>{b.label}</button>
+            ))}
+          </div>
+
+          {/* Tabs */}
+          <div style={{ display: "flex", gap: 0, borderBottom: `1px solid ${B.navyLight}` }}>
+            {["detalles", "pasajeros", "historial"].map(t => (
+              <button key={t} onClick={() => setTab(t)} style={{
+                background: "none", border: "none", borderBottom: tab === t ? `2px solid ${B.sky}` : "2px solid transparent",
+                color: tab === t ? B.sky : "rgba(255,255,255,0.4)",
+                padding: "10px 16px", fontSize: 13, fontWeight: 700, cursor: "pointer",
+                textTransform: "capitalize", marginBottom: -1,
+              }}>{t.charAt(0).toUpperCase() + t.slice(1)}</button>
+            ))}
+          </div>
+        </div>
+
+        {/* ── Content ── */}
+        <div style={{ flex: 1, overflowY: "auto", padding: "20px 24px 24px" }}>
+
+          {/* ── Tab: Detalles ── */}
+          {tab === "detalles" && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+
+              {/* Datos principales */}
+              <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 14 }}>
+                <div style={{ gridColumn: "1 / -1" }}>
+                  <label style={LS}>Titular</label>
+                  {editing ? <input style={IS} value={form.nombre} onChange={e => set("nombre", e.target.value)} /> :
+                    <div style={{ fontSize: 15, fontWeight: 700 }}>{r0.nombre}</div>}
+                </div>
+                <div>
+                  <label style={LS}>Contacto (email/tel)</label>
+                  {editing ? <input style={IS} value={form.contacto} onChange={e => set("contacto", e.target.value)} placeholder="email o teléfono" /> :
+                    <div style={{ fontSize: 14, color: r0.contacto ? B.white : "rgba(255,255,255,0.3)" }}>{r0.contacto || "—"}</div>}
+                </div>
+                <div>
+                  <label style={LS}>Canal</label>
+                  {editing ? (
+                    <select style={IS} value={form.canal} onChange={e => set("canal", e.target.value)}>
+                      {CANALES.map(c => <option key={c} value={c}>{c}</option>)}
+                    </select>
+                  ) : <div style={{ fontSize: 14 }}>{r0.canal || "—"}</div>}
+                </div>
+                <div>
+                  <label style={LS}>Tipo de pase</label>
+                  {editing ? (
+                    <select style={IS} value={form.tipo} onChange={e => set("tipo", e.target.value)}>
+                      {PASADIAS.map(p => <option key={p.tipo} value={p.tipo}>{p.tipo}</option>)}
+                    </select>
+                  ) : <div style={{ fontSize: 14 }}>{r0.tipo || "—"}</div>}
+                </div>
+                <div>
+                  <label style={LS}>Pax adultos</label>
+                  {editing ? <input type="number" min={0} style={IS} value={form.pax_a} onChange={e => set("pax_a", Number(e.target.value))} /> :
+                    <div style={{ fontSize: 14 }}>{r0.pax_a ?? r0.pax ?? "—"}</div>}
+                </div>
+                <div>
+                  <label style={LS}>Pax niños (0–12)</label>
+                  {editing ? <input type="number" min={0} style={IS} value={form.pax_n} onChange={e => set("pax_n", Number(e.target.value))} /> :
+                    <div style={{ fontSize: 14 }}>{r0.pax_n ?? 0}</div>}
+                </div>
+                <div>
+                  <label style={LS}>Fecha</label>
+                  {editing ? <input type="date" style={IS} value={form.fecha} onChange={e => set("fecha", e.target.value)} /> :
+                    <div style={{ fontSize: 14 }}>{r0.fecha || "—"}</div>}
+                </div>
+                <div>
+                  <label style={LS}>Horario de salida</label>
+                  {editing ? (
+                    <select style={IS} value={form.salida_id} onChange={e => set("salida_id", e.target.value)}>
+                      <option value="">Sin asignar</option>
+                      {SALIDAS.map(s => <option key={s.id} value={s.id}>{s.id} — {s.hora}</option>)}
+                    </select>
+                  ) : <div style={{ fontSize: 14 }}>{r0.salida ? `${r0.salida}${salida ? ` — ${salida.hora}` : ""}` : "—"}</div>}
+                </div>
+                {r0.agencia && <div style={{ gridColumn: "1 / -1" }}>
+                  <label style={LS}>Agencia</label>
+                  <div style={{ fontSize: 14, color: B.sky }}>{r0.agencia}</div>
+                </div>}
+                <div style={{ gridColumn: "1 / -1" }}>
+                  <label style={LS}>Notas</label>
+                  {editing ? <textarea rows={3} style={{ ...IS, resize: "vertical" }} value={form.notas} onChange={e => set("notas", e.target.value)} placeholder="Observaciones especiales…" /> :
+                    <div style={{ fontSize: 13, color: r0.notas ? B.sand : "rgba(255,255,255,0.3)" }}>{r0.notas || "Sin notas"}</div>}
+                </div>
+              </div>
+
+              {/* Divider */}
+              <div style={{ borderTop: `1px solid ${B.navyLight}` }} />
+
+              {/* Pagos */}
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 700, color: B.sand, textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 14 }}>💳 Pagos</div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginBottom: 14 }}>
+                  {[
+                    { label: "Total", value: COP(form.total), color: B.white },
+                    { label: "Abonado", value: COP(form.abono), color: B.success },
+                    { label: "Saldo", value: COP(Math.max(0, saldo)), color: saldo > 0 ? B.warning : B.success },
+                  ].map(p => (
+                    <div key={p.label} style={{ background: "#0D1B3E", borderRadius: 10, padding: "12px 14px" }}>
+                      <div style={{ fontSize: 11, color: B.sand, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 }}>{p.label}</div>
+                      <div style={{ fontSize: 17, fontWeight: 800, color: p.color, fontFamily: "'Barlow Condensed', sans-serif" }}>{p.value}</div>
+                    </div>
+                  ))}
+                </div>
+                {editing && (
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                    <div>
+                      <label style={LS}>Total (COP)</label>
+                      <input type="number" min={0} style={IS} value={form.total} onChange={e => set("total", Number(e.target.value))} />
+                    </div>
+                    <div>
+                      <label style={LS}>Abono (COP)</label>
+                      <input type="number" min={0} style={IS} value={form.abono} onChange={e => set("abono", Number(e.target.value))} />
+                    </div>
+                  </div>
+                )}
+                {r0.forma_pago && (
+                  <div style={{ marginTop: 10, fontSize: 13, color: "rgba(255,255,255,0.5)" }}>
+                    Método de pago: <strong style={{ color: B.sky }}>{r0.forma_pago}</strong>
+                  </div>
+                )}
+              </div>
+
+              {/* Save / Cancel */}
+              {editing && (
+                <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", paddingTop: 4 }}>
+                  <button onClick={() => { setEdit(false); setForm({ nombre: r0.nombre||"", contacto: r0.contacto||"", fecha: r0.fecha||"", salida_id: r0.salida||"", tipo: r0.tipo||"", canal: r0.canal||"", pax_a: r0.pax_a??r0.pax??1, pax_n: r0.pax_n??0, abono: r0.abono||0, total: r0.total||0, estado: r0.estado||"pendiente", notas: r0.notas||"" }); }} style={{ background: "none", border: `1px solid ${B.navyLight}`, borderRadius: 8, color: B.sand, padding: "9px 20px", fontSize: 14, cursor: "pointer", fontWeight: 600 }}>
+                    Cancelar
+                  </button>
+                  <button onClick={handleSave} disabled={saving} style={{ background: B.sky, border: "none", borderRadius: 8, color: B.navy, padding: "9px 24px", fontSize: 14, cursor: "pointer", fontWeight: 700, opacity: saving ? 0.6 : 1 }}>
+                    {saving ? "Guardando…" : "💾 Guardar cambios"}
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ── Tab: Pasajeros ── */}
+          {tab === "pasajeros" && (
+            <div>
+              {(!r0.pasajeros || r0.pasajeros.length === 0) ? (
+                <div style={{ textAlign: "center", padding: "32px 0", color: "rgba(255,255,255,0.3)" }}>
+                  <div style={{ fontSize: 32, marginBottom: 8 }}>🧍</div>
+                  <div style={{ fontSize: 14 }}>No hay datos de pasajeros registrados</div>
+                </div>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                  {r0.pasajeros.map((p, i) => (
+                    <div key={i} style={{ background: "#0D1B3E", borderRadius: 10, padding: "14px 16px" }}>
+                      <div style={{ fontWeight: 700, marginBottom: 4 }}>{p.nombre || `Pasajero ${i + 1}`}</div>
+                      <div style={{ fontSize: 13, color: B.sand, display: "flex", gap: 16, flexWrap: "wrap" }}>
+                        {p.identificacion && <span>🪪 {p.identificacion}</span>}
+                        {p.nacionalidad && <span>🌍 {p.nacionalidad}</span>}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ── Tab: Historial ── */}
+          {tab === "historial" && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              {[
+                { icon: "🗓", label: "Reserva creada",    value: fmtDT(r0.created_at), color: B.sky    },
+                { icon: "✏️", label: "Última modificación", value: fmtDT(r0.updated_at), color: B.sand   },
+                r0.forma_pago && { icon: "💳", label: "Método de pago", value: r0.forma_pago, color: B.white },
+                r0.canal && { icon: "📡", label: "Canal de venta",    value: r0.canal, color: B.white },
+                r0.agencia && { icon: "🏢", label: "Agencia",           value: r0.agencia, color: B.sky },
+                r0.ci && { icon: "✅", label: "Check-in realizado",  value: fmtDT(r0.ci), color: B.success },
+                r0.co && { icon: "🏁", label: "Check-out",            value: fmtDT(r0.co), color: B.sand },
+                r0.ep && { icon: "🌅", label: "Llegada temprana",     value: "Activado",   color: B.warning },
+                r0.extension && { icon: "🌙", label: "Extensión",         value: `${r0.extension} día(s) · Regreso ${r0.ext_regreso || "—"}`, color: B.sand },
+              ].filter(Boolean).map((item, i) => (
+                <div key={i} style={{ background: "#0D1B3E", borderRadius: 10, padding: "14px 16px", display: "flex", alignItems: "center", gap: 14 }}>
+                  <span style={{ fontSize: 20, flexShrink: 0 }}>{item.icon}</span>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 11, color: B.sand, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 2 }}>{item.label}</div>
+                    <div style={{ fontSize: 14, fontWeight: 600, color: item.color }}>{item.value}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── modal ─────────────────────────────────────────────────────────────────────
 
 function ReservaModal({ onClose, onSave, isMobile }) {
@@ -362,6 +680,7 @@ export default function Reservas() {
   const [search, setSearch]         = useState("");
   const [filterEstado, setFilter]   = useState("todos");
   const [showModal, setShowModal]   = useState(false);
+  const [detalle, setDetalle]       = useState(null);
 
   const today = todayStr();
 
@@ -399,7 +718,9 @@ export default function Reservas() {
         co:        r.co,
         extension: r.extension,
         ext_regreso: r.ext_regreso,
-        notas:     r.notas,
+        notas:      r.notas,
+        forma_pago: r.forma_pago,
+        pasajeros:  r.pasajeros,
         created_at: r.created_at,
         updated_at: r.updated_at,
       })));
@@ -621,7 +942,7 @@ export default function Reservas() {
                 const salida = SALIDAS.find(s => s.id === r.salida);
                 const saldo = r.total - r.abono;
                 return (
-                  <div key={r.id} style={{ background: B.navyMid, borderRadius: 12, padding: "14px 16px", border: `1px solid ${B.navyLight}` }}>
+                  <div key={r.id} onClick={() => setDetalle(r)} style={{ background: B.navyMid, borderRadius: 12, padding: "14px 16px", border: `1px solid ${B.navyLight}`, cursor: "pointer" }}>
                     {/* Row 1: nombre + badge + actions */}
                     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 8 }}>
                       <div style={{ flex: 1, minWidth: 0 }}>
@@ -630,9 +951,9 @@ export default function Reservas() {
                       </div>
                       <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
                         <StatusBadge estado={r.estado} />
-                        <button onClick={() => toggleEstado(r.id)} title="Cambiar estado"
+                        <button onClick={e => { e.stopPropagation(); toggleEstado(r.id); }} title="Cambiar estado"
                           style={{ background: B.navyLight, border: "none", borderRadius: 8, color: B.sky, padding: "7px 10px", fontSize: 16, cursor: "pointer" }}>↻</button>
-                        <button onClick={() => deleteReserva(r.id)} title="Eliminar"
+                        <button onClick={e => { e.stopPropagation(); deleteReserva(r.id); }} title="Eliminar"
                           style={{ background: B.danger + "22", border: `1px solid ${B.danger}44`, borderRadius: 8, color: B.danger, padding: "7px 10px", fontSize: 14, cursor: "pointer" }}>✕</button>
                       </div>
                     </div>
@@ -682,7 +1003,7 @@ export default function Reservas() {
                     const salida = SALIDAS.find(s => s.id === r.salida);
                     const saldo = r.total - r.abono;
                     return (
-                      <tr key={r.id} style={{ transition: "background 0.15s" }}
+                      <tr key={r.id} onClick={() => setDetalle(r)} style={{ transition: "background 0.15s", cursor: "pointer" }}
                         onMouseEnter={e => e.currentTarget.style.background = B.navyLight + "55"}
                         onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
                         <td style={{ ...tdStyle, color: B.sky, fontWeight: 700, fontSize: 13 }}>{r.id}</td>
@@ -703,7 +1024,7 @@ export default function Reservas() {
                           {saldo > 0 && <div style={{ fontSize: 11, color: B.warning }}>Saldo: {COP(saldo)}</div>}
                         </td>
                         <td style={tdStyle}><StatusBadge estado={r.estado} /></td>
-                        <td style={tdStyle}>
+                        <td style={tdStyle} onClick={e => e.stopPropagation()}>
                           <div style={{ display: "flex", gap: 6 }}>
                             <button onClick={() => toggleEstado(r.id)} title="Cambiar estado" style={{ background: B.navyLight, border: "none", borderRadius: 6, color: B.sky, padding: "5px 10px", fontSize: 13, cursor: "pointer", fontWeight: 600 }}>↻</button>
                             <button onClick={() => deleteReserva(r.id)} title="Eliminar" style={{ background: B.danger + "22", border: `1px solid ${B.danger}44`, borderRadius: 6, color: B.danger, padding: "5px 10px", fontSize: 13, cursor: "pointer", fontWeight: 600 }}>✕</button>
@@ -732,8 +1053,9 @@ export default function Reservas() {
         )}
       </div>
 
-      {/* ── modal ── */}
+      {/* ── modals ── */}
       {showModal && <ReservaModal onClose={() => setShowModal(false)} onSave={addReserva} isMobile={isMobile} />}
+      {detalle && <ReservaDetalle reserva={detalle} isMobile={isMobile} onClose={() => setDetalle(null)} onUpdated={() => { fetchReservas(); setDetalle(null); }} />}
     </div>
   );
 }
