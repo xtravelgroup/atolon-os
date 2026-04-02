@@ -1,154 +1,299 @@
-import { useState } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { B, COP } from "../brand";
+import { supabase } from "../lib/supabase";
 
-const PERIODS = ["Mar 2026", "Feb 2026", "Ene 2026"];
-const DATA = {
-  "Mar 2026": {
-    ingresos: [
-      { cat: "Pasadias", val: 142800000 },
-      { cat: "Eventos", val: 45000000 },
-      { cat: "B2B Comisiones", val: 18200000 },
-      { cat: "Bar & Restaurante", val: 32500000 },
-      { cat: "Tienda", val: 4800000 },
-    ],
-    gastos: [
-      { cat: "Nomina", val: 48000000 },
-      { cat: "Combustible Flota", val: 12500000 },
-      { cat: "Alimentos & Bebidas", val: 18700000 },
-      { cat: "Mantenimiento", val: 8200000 },
-      { cat: "Marketing", val: 6500000 },
-      { cat: "Servicios Publicos", val: 3800000 },
-      { cat: "Seguros", val: 4200000 },
-      { cat: "Otros", val: 5600000 },
-    ],
-  },
-  "Feb 2026": {
-    ingresos: [
-      { cat: "Pasadias", val: 128500000 },
-      { cat: "Eventos", val: 38000000 },
-      { cat: "B2B Comisiones", val: 15800000 },
-      { cat: "Bar & Restaurante", val: 28900000 },
-      { cat: "Tienda", val: 3200000 },
-    ],
-    gastos: [
-      { cat: "Nomina", val: 48000000 },
-      { cat: "Combustible Flota", val: 11800000 },
-      { cat: "Alimentos & Bebidas", val: 16200000 },
-      { cat: "Mantenimiento", val: 15400000 },
-      { cat: "Marketing", val: 5200000 },
-      { cat: "Servicios Publicos", val: 3800000 },
-      { cat: "Seguros", val: 4200000 },
-      { cat: "Otros", val: 4100000 },
-    ],
-  },
-  "Ene 2026": {
-    ingresos: [
-      { cat: "Pasadias", val: 165200000 },
-      { cat: "Eventos", val: 52000000 },
-      { cat: "B2B Comisiones", val: 22100000 },
-      { cat: "Bar & Restaurante", val: 38400000 },
-      { cat: "Tienda", val: 6100000 },
-    ],
-    gastos: [
-      { cat: "Nomina", val: 52000000 },
-      { cat: "Combustible Flota", val: 14200000 },
-      { cat: "Alimentos & Bebidas", val: 21500000 },
-      { cat: "Mantenimiento", val: 6800000 },
-      { cat: "Marketing", val: 8900000 },
-      { cat: "Servicios Publicos", val: 4100000 },
-      { cat: "Seguros", val: 4200000 },
-      { cat: "Otros", val: 3800000 },
-    ],
-  },
+// Format "2026-03" → "marzo 2026"
+function fmtMes(mesStr) {
+  if (!mesStr) return "—";
+  const [y, m] = mesStr.split("-");
+  return new Date(parseInt(y), parseInt(m) - 1, 1)
+    .toLocaleDateString("es-CO", { month: "long", year: "numeric" });
+}
+
+function pctDelta(curr, prev) {
+  if (!prev) return null;
+  const d = (curr - prev) / prev;
+  return { val: d, label: d >= 0 ? `+${(d * 100).toFixed(1)}%` : `${(d * 100).toFixed(1)}%` };
+}
+
+const SEL = {
+  padding: "8px 14px", borderRadius: 8,
+  background: B.navyMid, border: `1px solid ${B.navyLight}`,
+  color: B.white, fontSize: 13, outline: "none", cursor: "pointer",
 };
 
 export default function Financiero() {
-  const [period, setPeriod] = useState("Mar 2026");
-  const [compare, setCompare] = useState("Feb 2026");
+  const [reservas,  setReservas]  = useState([]);
+  const [loading,   setLoading]   = useState(true);
 
-  const d = DATA[period];
-  const c = DATA[compare];
-  const totalIng = d.ingresos.reduce((s, r) => s + r.val, 0);
-  const totalGas = d.gastos.reduce((s, r) => s + r.val, 0);
-  const utilidad = totalIng - totalGas;
-  const cTotalIng = c.ingresos.reduce((s, r) => s + r.val, 0);
-  const cTotalGas = c.gastos.reduce((s, r) => s + r.val, 0);
-  const cUtilidad = cTotalIng - cTotalGas;
-  const pct = v => v > 0 ? `+${((v) * 100).toFixed(1)}%` : `${((v) * 100).toFixed(1)}%`;
+  // Current Colombia month as default
+  const nowCO = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Bogota" }));
+  const defaultMes = `${nowCO.getFullYear()}-${String(nowCO.getMonth() + 1).padStart(2, "0")}`;
+
+  const [mesActual,   setMesActual]   = useState(defaultMes);
+  const [mesComparar, setMesComparar] = useState("");
+
+  // Load last 13 months of non-cancelled reservas
+  useEffect(() => {
+    if (!supabase) { setLoading(false); return; }
+    const desde = new Date(nowCO);
+    desde.setMonth(desde.getMonth() - 12);
+    const desdeStr = desde.toISOString().slice(0, 10);
+    supabase.from("reservas")
+      .select("fecha, total, tipo, canal, pax, estado")
+      .gte("fecha", desdeStr)
+      .not("estado", "in", '("cancelado","pendiente_pago")')
+      .then(({ data }) => {
+        setReservas(data || []);
+        setLoading(false);
+      });
+  }, []);
+
+  // Available months derived from data (+ current month always present)
+  const meses = useMemo(() => {
+    const set = new Set((reservas || []).map(r => r.fecha?.slice(0, 7)).filter(Boolean));
+    set.add(defaultMes);
+    return Array.from(set).sort().reverse();
+  }, [reservas]);
+
+  // Set default comparison to previous month once data loads
+  useEffect(() => {
+    if (meses.length > 1 && !mesComparar) {
+      const idx = meses.indexOf(mesActual);
+      setMesComparar(meses[idx + 1] || meses[1]);
+    }
+  }, [meses]);
+
+  // ── Per-month helpers ──────────────────────────────────────────────────────
+  const resDeMes = (mes) => reservas.filter(r => r.fecha?.startsWith(mes));
+
+  const ingresosPorTipo = (mes) => {
+    const groups = {};
+    resDeMes(mes).forEach(r => {
+      const cat = r.tipo || "Otros";
+      groups[cat] = (groups[cat] || 0) + (r.total || 0);
+    });
+    return Object.entries(groups)
+      .map(([cat, val]) => ({ cat, val }))
+      .sort((a, b) => b.val - a.val);
+  };
+
+  const ingresosPorCanal = (mes) => {
+    const groups = {};
+    resDeMes(mes).forEach(r => {
+      const c = r.canal || "Directo";
+      groups[c] = (groups[c] || 0) + (r.total || 0);
+    });
+    return Object.entries(groups)
+      .map(([cat, val]) => ({ cat, val }))
+      .sort((a, b) => b.val - a.val);
+  };
+
+  // ── Derived numbers ────────────────────────────────────────────────────────
+  const resA = resDeMes(mesActual);
+  const resC = resDeMes(mesComparar);
+  const tiposA = ingresosPorTipo(mesActual);
+  const tiposC = ingresosPorTipo(mesComparar);
+  const canalesA = ingresosPorCanal(mesActual);
+
+  const totalA     = tiposA.reduce((s, r) => s + r.val, 0);
+  const totalC     = tiposC.reduce((s, r) => s + r.val, 0);
+  const reservasA  = resA.length;
+  const reservasC  = resC.length;
+  const paxA       = resA.reduce((s, r) => s + (r.pax || 0), 0);
+  const ticketA    = reservasA > 0 ? totalA / reservasA : 0;
+  const ticketC    = reservasC > 0 ? totalC / reservasC : 0;
+
+  if (loading) {
+    return (
+      <div style={{ padding: "60px 0", textAlign: "center", color: B.sand, fontSize: 15 }}>
+        Cargando datos financieros…
+      </div>
+    );
+  }
+
+  const deltaIng  = pctDelta(totalA, totalC);
+  const deltaRes  = pctDelta(reservasA, reservasC);
+  const deltaTick = pctDelta(ticketA, ticketC);
 
   return (
     <div>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
-        <h2 style={{ fontSize: 22, fontWeight: 600 }}>Estado Financiero (P&L)</h2>
-        <div style={{ display: "flex", gap: 12 }}>
-          <select value={period} onChange={e => setPeriod(e.target.value)}
-            style={{ padding: "8px 14px", borderRadius: 8, background: B.navyMid, border: `1px solid ${B.navyLight}`, color: B.white, fontSize: 13 }}>
-            {PERIODS.map(p => <option key={p}>{p}</option>)}
+      {/* ── Header ── */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 24, flexWrap: "wrap", gap: 12 }}>
+        <div>
+          <h2 style={{ fontSize: 22, fontWeight: 600, margin: 0 }}>Financiero — Ingresos</h2>
+          <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginTop: 4 }}>
+            Ventas reales desde reservas confirmadas · Colombia
+          </div>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <select value={mesActual} onChange={e => setMesActual(e.target.value)} style={SEL}>
+            {meses.map(m => <option key={m} value={m}>{fmtMes(m)}</option>)}
           </select>
-          <select value={compare} onChange={e => setCompare(e.target.value)}
-            style={{ padding: "8px 14px", borderRadius: 8, background: B.navyMid, border: `1px solid ${B.navyLight}`, color: B.white, fontSize: 13 }}>
-            {PERIODS.filter(p => p !== period).map(p => <option key={p}>{p}</option>)}
+          <span style={{ color: "rgba(255,255,255,0.3)", fontSize: 13 }}>vs</span>
+          <select value={mesComparar} onChange={e => setMesComparar(e.target.value)} style={SEL}>
+            <option value="">Sin comparar</option>
+            {meses.filter(m => m !== mesActual).map(m => <option key={m} value={m}>{fmtMes(m)}</option>)}
           </select>
         </div>
       </div>
 
-      <div style={{ display: "flex", gap: 12, marginBottom: 24 }}>
+      {/* ── KPI Cards ── */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 24 }}>
         {[
-          { label: "Ingresos", val: totalIng, delta: (totalIng - cTotalIng) / cTotalIng, color: B.success },
-          { label: "Gastos", val: totalGas, delta: (totalGas - cTotalGas) / cTotalGas, color: B.danger },
-          { label: "Utilidad Neta", val: utilidad, delta: (utilidad - cUtilidad) / cUtilidad, color: B.sand },
-          { label: "Margen", val: null, pctVal: `${((utilidad / totalIng) * 100).toFixed(1)}%`, color: B.sky },
-        ].map(s => (
-          <div key={s.label} style={{ background: B.navyMid, borderRadius: 12, padding: "16px 20px", flex: 1, borderLeft: `4px solid ${s.color}` }}>
-            <div style={{ fontSize: 12, color: B.sand, textTransform: "uppercase", letterSpacing: 1 }}>{s.label}</div>
-            <div style={{ fontSize: 24, fontWeight: 700, fontFamily: "'Barlow Condensed', sans-serif" }}>{s.pctVal || COP(s.val)}</div>
-            {s.delta !== undefined && <div style={{ fontSize: 12, color: s.delta >= 0 ? B.success : B.danger, marginTop: 2 }}>{pct(s.delta)} vs {compare}</div>}
+          {
+            label: "Ingresos Totales",
+            val: COP(totalA),
+            delta: deltaIng,
+            color: B.success,
+          },
+          {
+            label: "Reservas",
+            val: String(reservasA),
+            delta: deltaRes,
+            color: B.sky,
+          },
+          {
+            label: "Pax en el mes",
+            val: String(paxA),
+            delta: null,
+            color: B.sand,
+          },
+          {
+            label: "Ticket Promedio",
+            val: COP(ticketA),
+            delta: deltaTick,
+            color: B.warning,
+          },
+        ].map(k => (
+          <div key={k.label} style={{
+            background: B.navyMid, borderRadius: 12, padding: "16px 20px",
+            borderLeft: `4px solid ${k.color}`,
+          }}>
+            <div style={{ fontSize: 11, color: B.sand, textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>
+              {k.label}
+            </div>
+            <div style={{ fontSize: 22, fontWeight: 700, fontFamily: "'Barlow Condensed', sans-serif" }}>
+              {k.val}
+            </div>
+            {k.delta && mesComparar && (
+              <div style={{ fontSize: 11, marginTop: 4, color: k.delta.val >= 0 ? B.success : B.danger }}>
+                {k.delta.label} vs {fmtMes(mesComparar)}
+              </div>
+            )}
           </div>
         ))}
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-        {/* Ingresos */}
+        {/* ── Ingresos por Tipo de Pasadia ── */}
         <div style={{ background: B.navyMid, borderRadius: 12, overflow: "hidden" }}>
-          <div style={{ padding: "16px 20px", borderBottom: `1px solid ${B.navyLight}`, display: "flex", justifyContent: "space-between" }}>
-            <h3 style={{ fontSize: 16, color: B.success }}>Ingresos</h3>
-            <span style={{ fontWeight: 700 }}>{COP(totalIng)}</span>
+          <div style={{ padding: "14px 20px", borderBottom: `1px solid ${B.navyLight}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <h3 style={{ fontSize: 15, color: B.success, margin: 0 }}>Por Tipo de Pasadía</h3>
+            <span style={{ fontWeight: 700, fontSize: 14 }}>{COP(totalA)}</span>
           </div>
-          {d.ingresos.map((r, i) => {
-            const cv = c.ingresos.find(cr => cr.cat === r.cat)?.val || 0;
-            const delta = cv ? (r.val - cv) / cv : 0;
+          {tiposA.length === 0 ? (
+            <div style={{ padding: "32px 20px", textAlign: "center", color: "rgba(255,255,255,0.25)", fontSize: 13 }}>
+              Sin ventas en {fmtMes(mesActual)}
+            </div>
+          ) : tiposA.map((r, i) => {
+            const prev = tiposC.find(c => c.cat === r.cat)?.val || 0;
+            const d = pctDelta(r.val, prev);
+            const pctOfTotal = totalA > 0 ? (r.val / totalA) * 100 : 0;
             return (
-              <div key={r.cat} style={{ padding: "12px 20px", borderBottom: i < d.ingresos.length - 1 ? `1px solid ${B.navyLight}` : "none", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <span style={{ fontSize: 13 }}>{r.cat}</span>
-                <div style={{ textAlign: "right" }}>
-                  <div style={{ fontSize: 14, fontWeight: 600 }}>{COP(r.val)}</div>
-                  <div style={{ fontSize: 11, color: delta >= 0 ? B.success : B.danger }}>{pct(delta)}</div>
+              <div key={r.cat} style={{
+                padding: "11px 20px",
+                borderBottom: i < tiposA.length - 1 ? `1px solid ${B.navyLight}` : "none",
+              }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 5 }}>
+                  <span style={{ fontSize: 13 }}>{r.cat}</span>
+                  <div style={{ textAlign: "right" }}>
+                    <div style={{ fontSize: 13, fontWeight: 700 }}>{COP(r.val)}</div>
+                    {d && mesComparar && (
+                      <div style={{ fontSize: 10, color: d.val >= 0 ? B.success : B.danger }}>{d.label}</div>
+                    )}
+                  </div>
+                </div>
+                <div style={{ height: 3, background: B.navy, borderRadius: 2, overflow: "hidden" }}>
+                  <div style={{ width: `${pctOfTotal}%`, height: "100%", background: B.success, borderRadius: 2 }} />
                 </div>
               </div>
             );
           })}
         </div>
 
-        {/* Gastos */}
+        {/* ── Ingresos por Canal ── */}
         <div style={{ background: B.navyMid, borderRadius: 12, overflow: "hidden" }}>
-          <div style={{ padding: "16px 20px", borderBottom: `1px solid ${B.navyLight}`, display: "flex", justifyContent: "space-between" }}>
-            <h3 style={{ fontSize: 16, color: B.danger }}>Gastos</h3>
-            <span style={{ fontWeight: 700 }}>{COP(totalGas)}</span>
+          <div style={{ padding: "14px 20px", borderBottom: `1px solid ${B.navyLight}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <h3 style={{ fontSize: 15, color: B.sky, margin: 0 }}>Por Canal de Venta</h3>
+            <span style={{ fontWeight: 700, fontSize: 14 }}>{reservasA} reservas</span>
           </div>
-          {d.gastos.map((r, i) => {
-            const cv = c.gastos.find(cr => cr.cat === r.cat)?.val || 0;
-            const delta = cv ? (r.val - cv) / cv : 0;
+          {canalesA.length === 0 ? (
+            <div style={{ padding: "32px 20px", textAlign: "center", color: "rgba(255,255,255,0.25)", fontSize: 13 }}>
+              Sin ventas en {fmtMes(mesActual)}
+            </div>
+          ) : canalesA.map((r, i) => {
+            const pctOfTotal = totalA > 0 ? (r.val / totalA) * 100 : 0;
+            const count = resA.filter(res => (res.canal || "Directo") === r.cat).length;
             return (
-              <div key={r.cat} style={{ padding: "12px 20px", borderBottom: i < d.gastos.length - 1 ? `1px solid ${B.navyLight}` : "none", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <span style={{ fontSize: 13 }}>{r.cat}</span>
-                <div style={{ textAlign: "right" }}>
-                  <div style={{ fontSize: 14, fontWeight: 600 }}>{COP(r.val)}</div>
-                  <div style={{ fontSize: 11, color: delta <= 0 ? B.success : B.danger }}>{pct(delta)}</div>
+              <div key={r.cat} style={{
+                padding: "11px 20px",
+                borderBottom: i < canalesA.length - 1 ? `1px solid ${B.navyLight}` : "none",
+              }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 5 }}>
+                  <div>
+                    <span style={{ fontSize: 13 }}>{r.cat}</span>
+                    <span style={{ fontSize: 11, color: "rgba(255,255,255,0.3)", marginLeft: 8 }}>{count} res.</span>
+                  </div>
+                  <div style={{ textAlign: "right" }}>
+                    <div style={{ fontSize: 13, fontWeight: 700 }}>{COP(r.val)}</div>
+                    <div style={{ fontSize: 10, color: "rgba(255,255,255,0.35)" }}>{pctOfTotal.toFixed(1)}%</div>
+                  </div>
+                </div>
+                <div style={{ height: 3, background: B.navy, borderRadius: 2, overflow: "hidden" }}>
+                  <div style={{ width: `${pctOfTotal}%`, height: "100%", background: B.sky, borderRadius: 2 }} />
                 </div>
               </div>
             );
           })}
         </div>
+      </div>
+
+      {/* ── Evolución mensual (últimos 6 meses) ── */}
+      {meses.length > 1 && (
+        <div style={{ background: B.navyMid, borderRadius: 12, padding: 20, marginTop: 16 }}>
+          <h3 style={{ fontSize: 15, color: B.sand, margin: "0 0 16px" }}>Evolución Mensual</h3>
+          <div style={{ display: "flex", gap: 8, alignItems: "flex-end", height: 100 }}>
+            {meses.slice(0, 6).reverse().map(mes => {
+              const total = resDeMes(mes).reduce((s, r) => s + (r.total || 0), 0);
+              const maxT  = Math.max(...meses.slice(0, 6).map(m => resDeMes(m).reduce((s, r) => s + (r.total || 0), 0)), 1);
+              const h = Math.max((total / maxT) * 80, total > 0 ? 4 : 0);
+              const isSelected = mes === mesActual;
+              return (
+                <div key={mes} onClick={() => setMesActual(mes)}
+                  style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 6, cursor: "pointer" }}>
+                  <div style={{ fontSize: 10, color: isSelected ? B.sky : "rgba(255,255,255,0.4)", fontWeight: isSelected ? 700 : 400 }}>
+                    {COP(total)}
+                  </div>
+                  <div style={{
+                    width: "100%", height: h, borderRadius: 4,
+                    background: isSelected ? B.sky : B.navyLight,
+                    transition: "all 0.2s",
+                    border: isSelected ? `2px solid ${B.sky}` : "none",
+                  }} />
+                  <div style={{ fontSize: 10, color: isSelected ? B.sky : "rgba(255,255,255,0.4)", textAlign: "center", textTransform: "capitalize" }}>
+                    {new Date(mes + "-15").toLocaleDateString("es-CO", { month: "short" })}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* ── Info footer ── */}
+      <div style={{ marginTop: 16, fontSize: 11, color: "rgba(255,255,255,0.2)", textAlign: "center" }}>
+        Solo ingresos de reservas confirmadas · Los gastos se registran en módulo de Requisiciones
       </div>
     </div>
   );
