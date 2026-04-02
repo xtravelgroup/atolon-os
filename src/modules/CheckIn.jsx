@@ -240,84 +240,65 @@ function ColaboradoresModal({ salidaId, fecha, despacho, onClose, onSaved }) {
 }
 
 // ─── Zarpe PDF (new window) ───────────────────────────────────────────────────
-function generarZarpe(salida, reservas, fecha, despacho, embarcacionesFlota = []) {
-  // Group reservas by embarcacion_asignada
-  const groups = {};
-  reservas.forEach(r => {
-    const key = r.embarcacion_asignada || "Sin embarcación asignada";
-    if (!groups[key]) groups[key] = [];
-    groups[key].push(r);
-  });
-  // Attach fleet data to first item of each group for the header block
-  Object.entries(groups).forEach(([bote, resGroup]) => {
-    const embObj = embarcacionesFlota.find(e => e.nombre === bote) || {};
-    resGroup[0]._embarcacionObj = embObj;
-  });
-  const groupEntries = Object.entries(groups);
-  const multipleBoats = groupEntries.length > 1 || (groupEntries.length === 1 && groupEntries[0][0] !== "Sin embarcación asignada");
+// Generate zarpe for a SINGLE embarcación
+function generarZarpe(salida, reservas, fecha, despacho, emb) {
+  // emb: full embarcacion object — only show passengers assigned to this boat
+  const resDeEmb = emb
+    ? reservas.filter(r => r.embarcacion_asignada === emb.nombre)
+    : reservas; // fallback: all (should not normally happen)
 
-  let totalPax = 0;
   let rowNum = 1;
-  const bodyRows = groupEntries.map(([bote, resGroup]) => {
-    const paxList = resGroup.flatMap(r =>
-      r.pasajeros?.length > 0
-        ? r.pasajeros
-        : [{ nombre: r.nombre, identificacion: "—", nacionalidad: "—" }]
-    );
-    totalPax += paxList.length;
-    const groupHeader = multipleBoats
-      ? `<tr style="background:#1E3566;color:white;"><td colspan="5" style="padding:7px 8px;font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:1px;">🚢 ${bote} — ${paxList.length} pasajero${paxList.length !== 1 ? "s" : ""}</td></tr>`
-      : "";
-    const rows = paxList.map(p => `<tr>
-          <td>${rowNum++}</td>
-          <td style="font-weight:600">${p.nombre || "—"}</td>
-          <td>${p.identificacion || "—"}</td>
-          <td>${p.nacionalidad || "—"}</td>
-        </tr>`).join("");
-    return groupHeader + rows;
-  }).join("");
+  const paxList = resDeEmb.flatMap(r =>
+    r.pasajeros?.length > 0
+      ? r.pasajeros
+      : [{ nombre: r.nombre, identificacion: "—", nacionalidad: "—" }]
+  );
+  const totalPax = paxList.length;
 
-  // Build per-boat embarcacion info block for header
-  const boteInfoBlocks = groupEntries.map(([bote, resGroup]) => {
-    const emb = resGroup[0]?._embarcacionObj || {};
-    return `
-      <div style="background:#f4f6fb;border:1px solid #d0d8ee;border-radius:8px;padding:12px 16px;margin-bottom:10px;">
-        <div style="font-weight:700;font-size:13px;color:#1E3566;margin-bottom:8px;">🚢 ${bote}</div>
-        <table style="width:100%;font-size:11px;border-collapse:collapse;">
-          <tr>
-            <td style="padding:3px 8px 3px 0;color:#555;width:90px;">Matrícula:</td>
-            <td colspan="3" style="padding:3px 0;font-weight:600;">${emb.matricula || "_______________"}</td>
-          </tr>
-          <tr style="background:#eef1f8;">
-            <td style="padding:4px 8px 4px 0;color:#333;font-weight:700;">Capitán 1</td>
-            <td style="padding:4px 8px;color:#555;width:80px;">Nombre:</td>
-            <td style="padding:4px 8px;font-weight:600;">${emb.capitan || "_______________"}</td>
-            <td style="padding:4px 0;"></td>
-          </tr>
-          <tr>
-            <td style="padding:3px 8px 3px 0;color:#555;"></td>
-            <td style="padding:3px 8px;color:#555;">Cédula:</td>
-            <td style="padding:3px 8px;font-weight:600;">${emb.piloto_cedula || "_______________"}</td>
-            <td style="padding:3px 0;font-weight:600;color:#555;">Cel: ${emb.piloto_celular || "_______________"}</td>
-          </tr>
-          <tr style="background:#eef1f8;">
-            <td style="padding:4px 8px 4px 0;color:#333;font-weight:700;">Capitán 2</td>
-            <td style="padding:4px 8px;color:#555;">Nombre:</td>
-            <td style="padding:4px 8px;font-weight:600;">${emb.piloto2_nombre || "_______________"}</td>
-            <td style="padding:4px 0;"></td>
-          </tr>
-          <tr>
-            <td style="padding:3px 8px 3px 0;color:#555;"></td>
-            <td style="padding:3px 8px;color:#555;">Cédula:</td>
-            <td style="padding:3px 8px;font-weight:600;">${emb.piloto2_cedula || "_______________"}</td>
-            <td style="padding:3px 0;font-weight:600;color:#555;">Cel: ${emb.piloto2_celular || "_______________"}</td>
-          </tr>
-        </table>
-      </div>`;
-  }).join("");
+  const bodyRows = paxList.map(p => `<tr>
+      <td>${rowNum++}</td>
+      <td style="font-weight:600">${p.nombre || "—"}</td>
+      <td>${p.identificacion || "—"}</td>
+      <td>${p.nacionalidad || "—"}</td>
+    </tr>`).join("");
+
+  const boteBlock = emb ? `
+    <div style="background:#f4f6fb;border:1px solid #d0d8ee;border-radius:8px;padding:12px 16px;margin-bottom:14px;">
+      <div style="font-weight:700;font-size:14px;color:#1E3566;margin-bottom:8px;">🚢 ${emb.nombre}</div>
+      <table style="width:100%;font-size:11px;border-collapse:collapse;">
+        <tr>
+          <td style="padding:3px 8px 3px 0;color:#555;width:90px;">Matrícula:</td>
+          <td colspan="3" style="padding:3px 0;font-weight:600;">${emb.matricula || "_______________"}</td>
+        </tr>
+        <tr style="background:#eef1f8;">
+          <td style="padding:4px 8px 4px 0;color:#333;font-weight:700;">Capitán 1</td>
+          <td style="padding:4px 8px;color:#555;width:80px;">Nombre:</td>
+          <td style="padding:4px 8px;font-weight:600;">${emb.capitan || "_______________"}</td>
+          <td></td>
+        </tr>
+        <tr>
+          <td style="padding:3px 8px 3px 0;color:#555;"></td>
+          <td style="padding:3px 8px;color:#555;">Cédula:</td>
+          <td style="padding:3px 8px;font-weight:600;">${emb.piloto_cedula || "_______________"}</td>
+          <td style="padding:3px 0;font-weight:600;color:#555;">Cel: ${emb.piloto_celular || "_______________"}</td>
+        </tr>
+        <tr style="background:#eef1f8;">
+          <td style="padding:4px 8px 4px 0;color:#333;font-weight:700;">Capitán 2</td>
+          <td style="padding:4px 8px;color:#555;">Nombre:</td>
+          <td style="padding:4px 8px;font-weight:600;">${emb.piloto2_nombre || "_______________"}</td>
+          <td></td>
+        </tr>
+        <tr>
+          <td style="padding:3px 8px 3px 0;color:#555;"></td>
+          <td style="padding:3px 8px;color:#555;">Cédula:</td>
+          <td style="padding:3px 8px;font-weight:600;">${emb.piloto2_cedula || "_______________"}</td>
+          <td style="padding:3px 0;font-weight:600;color:#555;">Cel: ${emb.piloto2_celular || "_______________"}</td>
+        </tr>
+      </table>
+    </div>` : "";
 
   const html = `<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8">
-    <title>Zarpe — ${salida.nombre} ${salida.hora} — ${fecha}</title>
+    <title>Zarpe — ${emb?.nombre || "General"} — ${salida.nombre} ${salida.hora} — ${fecha}</title>
     <style>
       * { box-sizing: border-box; margin: 0; padding: 0; }
       body { font-family: Arial, sans-serif; padding: 28px 36px; color: #111; font-size: 12px; }
@@ -351,7 +332,7 @@ function generarZarpe(salida, reservas, fecha, despacho, embarcacionesFlota = []
       <div><b>Destino:</b> Boca Chica, Tierra Bomba</div>
       <div><b>Generado:</b> ${new Date().toLocaleString("es-CO")}</div>
     </div>
-    ${boteInfoBlocks}
+    ${boteBlock}
     <table>
       <thead><tr>
         <th style="width:5%">#</th>
@@ -414,7 +395,7 @@ export default function CheckIn() {
       supabase.from("salidas").select("*").eq("activo", true).order("orden"),
       supabase.from("reservas").select("*").eq("fecha", fecha).neq("estado", "cancelado").order("nombre"),
       supabase.from("salida_despachos").select("*").eq("fecha", fecha),
-      supabase.from("embarcaciones").select("id, nombre").order("nombre"),
+      supabase.from("embarcaciones").select("*").order("nombre"),
     ]);
     const sals = salR.data || [];
     setSalidas(sals);
@@ -587,15 +568,22 @@ export default function CheckIn() {
                     )}
                   </div>
                 </div>
-                <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
+                <div style={{ display: "flex", gap: 8, flexShrink: 0, flexWrap: "wrap", justifyContent: "flex-end" }}>
                   <button onClick={() => setEditColabs(true)}
                     style={{ padding: "8px 12px", borderRadius: 8, background: despacho?.colaboradores?.length > 0 ? B.sky + "22" : B.navyLight, color: despacho?.colaboradores?.length > 0 ? B.sky : "rgba(255,255,255,0.6)", border: `1px solid ${despacho?.colaboradores?.length > 0 ? B.sky + "55" : "transparent"}`, fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
                     👥 {despacho?.colaboradores?.length > 0 ? `${despacho.colaboradores.length}` : "Colabs"}
                   </button>
-                  <button onClick={() => generarZarpe(salida, resDesal, fecha, despacho, embarcaciones)}
-                    style={{ padding: "8px 12px", borderRadius: 8, background: B.navyLight, color: B.white, border: "none", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
-                    📄 Zarpe
-                  </button>
+                  {/* Zarpe button per assigned embarcación */}
+                  {(salida.embarcaciones || []).map(embId => {
+                    const emb = embarcaciones.find(e => e.id === embId);
+                    if (!emb) return null;
+                    return (
+                      <button key={embId} onClick={() => generarZarpe(salida, resDesal, fecha, despacho, emb)}
+                        style={{ padding: "8px 12px", borderRadius: 8, background: B.navyLight, color: B.white, border: "none", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
+                        📄 {emb.nombre}
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
               <button onClick={() => despachar(salida)}
@@ -693,26 +681,31 @@ export default function CheckIn() {
                         </div>
                         {res.contacto && <div style={{ fontSize: 11, color: "rgba(255,255,255,0.3)", marginTop: 2 }}>{res.contacto}</div>}
                         {/* Embarcación selector */}
-                        {embarcaciones.length > 0 && (
-                          <div style={{ marginTop: 6 }}>
-                            <select
-                              value={res.embarcacion_asignada || ""}
-                              onChange={e => assignEmbarcacion(res.id, e.target.value)}
-                              onClick={e => e.stopPropagation()}
-                              style={{
-                                fontSize: 11, padding: "3px 8px", borderRadius: 6,
-                                background: res.embarcacion_asignada ? B.sky + "22" : B.navy,
-                                border: `1px solid ${res.embarcacion_asignada ? B.sky + "66" : B.navyLight}`,
-                                color: res.embarcacion_asignada ? B.sky : "rgba(255,255,255,0.4)",
-                                cursor: "pointer", outline: "none",
-                              }}>
-                              <option value="">🚢 Sin embarcación</option>
-                              {embarcaciones.map(e => (
-                                <option key={e.id} value={e.nombre}>{e.nombre}</option>
-                              ))}
-                            </select>
-                          </div>
-                        )}
+                        {(salida.embarcaciones || []).length > 0 && (() => {
+                          const embsDeEstaSalida = (salida.embarcaciones || [])
+                            .map(eid => embarcaciones.find(e => e.id === eid))
+                            .filter(Boolean);
+                          return (
+                            <div style={{ marginTop: 6 }}>
+                              <select
+                                value={res.embarcacion_asignada || ""}
+                                onChange={e => assignEmbarcacion(res.id, e.target.value)}
+                                onClick={e => e.stopPropagation()}
+                                style={{
+                                  fontSize: 11, padding: "3px 8px", borderRadius: 6,
+                                  background: res.embarcacion_asignada ? B.sky + "22" : B.navy,
+                                  border: `1px solid ${res.embarcacion_asignada ? B.sky + "66" : B.navyLight}`,
+                                  color: res.embarcacion_asignada ? B.sky : "rgba(255,255,255,0.4)",
+                                  cursor: "pointer", outline: "none",
+                                }}>
+                                <option value="">🚢 Sin embarcación</option>
+                                {embsDeEstaSalida.map(e => (
+                                  <option key={e.id} value={e.nombre}>{e.nombre}</option>
+                                ))}
+                              </select>
+                            </div>
+                          );
+                        })()}
                       </div>
 
                       {/* Pasajeros / Zarpe button */}
