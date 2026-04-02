@@ -48,23 +48,35 @@ function KpiCard({ label, value, sub, color }) {
 }
 
 function Dashboard() {
-  const [kpis, setKpis] = useState({ pax: 0, reservas: 0, leads: 0, eventos: 0 });
+  const [kpis, setKpis] = useState({});
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     if (!supabase) { setLoading(false); return; }
     const load = async () => {
       const hoy = todayStr();
-      const [resR, leadsR, evtR, reqR] = await Promise.all([
+      // tomorrow in Colombia timezone
+      const manana = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Bogota" }));
+      manana.setDate(manana.getDate() + 1);
+      const mananaStr = manana.toLocaleDateString("en-CA");
+
+      const [resHoyR, resMananaR, leadsHoyR, evtR, reqR] = await Promise.all([
         supabase.from("reservas").select("pax, total").eq("fecha", hoy).neq("estado", "cancelado"),
-        supabase.from("leads").select("id").not("stage", "in", '("Cerrado Ganado","Perdido")'),
+        supabase.from("reservas").select("pax").eq("fecha", mananaStr).neq("estado", "cancelado"),
+        supabase.from("leads").select("id").not("stage", "in", '("Cerrado Ganado","Perdido")')
+          .gte("created_at", hoy + "T00:00:00-05:00")
+          .lte("created_at", hoy + "T23:59:59-05:00"),
         supabase.from("eventos").select("id").in("stage", ["Consulta", "Cotizado", "Confirmado"]),
         supabase.from("requisiciones").select("id").eq("estado", "Pendiente"),
       ]);
+
+      const resHoy = resHoyR.data || [];
       setKpis({
-        pax: (resR.data || []).reduce((s, r) => s + (r.pax || 0), 0),
-        revenue: (resR.data || []).reduce((s, r) => s + (r.total || 0), 0),
-        leads: (leadsR.data || []).length,
+        pasadiasVendidos: resHoy.length,
+        revenue: resHoy.reduce((s, r) => s + (r.total || 0), 0),
+        leadsHoy: (leadsHoyR.data || []).length,
+        paxHoy: resHoy.reduce((s, r) => s + (r.pax || 0), 0),
+        paxManana: (resMananaR.data || []).reduce((s, r) => s + (r.pax || 0), 0),
         eventos: (evtR.data || []).length,
         reqPendientes: (reqR.data || []).length,
       });
@@ -73,23 +85,55 @@ function Dashboard() {
     load();
   }, []);
 
+  const v = (k) => loading ? "..." : (typeof kpis[k] === "number" ? kpis[k] : "—");
+
   return (
     <div>
+      {/* Fila 1: Ventas de hoy */}
+      <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginBottom: 16 }}>
+        <KpiCard
+          label="Pasadías Vendidos Hoy"
+          value={loading ? "..." : String(kpis.pasadiasVendidos ?? 0)}
+          sub="reservas confirmadas hoy"
+          color={B.sky}
+        />
+        <KpiCard
+          label="Revenue Hoy"
+          value={loading ? "..." : COP(kpis.revenue || 0)}
+          sub="total en ventas del día"
+          color={B.success}
+        />
+        <KpiCard
+          label="Leads Activos Hoy"
+          value={loading ? "..." : String(kpis.leadsHoy ?? 0)}
+          sub="leads nuevos activos hoy"
+          color={B.pink}
+        />
+      </div>
+      {/* Fila 2: Pax */}
       <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginBottom: 32 }}>
-        <KpiCard label="Pax Hoy" value={loading ? "..." : String(kpis.pax)} sub="reservas confirmadas" color={B.sky} />
-        <KpiCard label="Revenue Hoy" value={loading ? "..." : COP(kpis.revenue || 0)} color={B.success} />
-        <KpiCard label="Leads Activos" value={loading ? "..." : String(kpis.leads)} color={B.pink} />
-        <KpiCard label="Eventos Pipeline" value={loading ? "..." : String(kpis.eventos)} color={B.sand} />
+        <KpiCard
+          label="Pax Hoy"
+          value={loading ? "..." : String(kpis.paxHoy ?? 0)}
+          sub={`pasajeros · ${new Date().toLocaleDateString("es-CO", { timeZone: "America/Bogota", weekday: "long", day: "numeric", month: "short" })}`}
+          color={B.sand}
+        />
+        <KpiCard
+          label="Pax Mañana"
+          value={loading ? "..." : String(kpis.paxManana ?? 0)}
+          sub="pasajeros confirmados mañana"
+          color={B.navyLight}
+        />
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
         <div style={{ background: B.navyMid, borderRadius: 12, padding: 24 }}>
           <h3 style={{ color: B.sand, marginBottom: 16, fontSize: 18 }}>Estado del Sistema</h3>
           {[
-            { label: "Reservas", table: "reservas", color: B.sky },
-            { label: "Leads", table: "leads", color: B.pink },
-            { label: "Eventos", table: "eventos", color: B.sand },
-            { label: "Requisiciones", table: "requisiciones", color: B.warning },
-            { label: "Activos", table: "activos", color: B.success },
+            { label: "Reservas", color: B.sky },
+            { label: "Leads", color: B.pink },
+            { label: "Eventos", color: B.sand },
+            { label: "Requisiciones", color: B.warning },
+            { label: "Activos", color: B.success },
           ].map(s => (
             <div key={s.label} style={{
               display: "flex", justifyContent: "space-between", alignItems: "center",
@@ -108,13 +152,13 @@ function Dashboard() {
           ))}
         </div>
         <div style={{ background: B.navyMid, borderRadius: 12, padding: 24 }}>
-          <h3 style={{ color: B.sand, marginBottom: 16, fontSize: 18 }}>Resumen Rapido</h3>
-          <div style={{ fontSize: 13, lineHeight: 2.2, color: "rgba(255,255,255,0.7)" }}>
-            <div>Requisiciones pendientes: <strong style={{ color: B.warning }}>{kpis.reqPendientes || 0}</strong></div>
-            <div>Leads en pipeline: <strong style={{ color: B.pink }}>{kpis.leads}</strong></div>
-            <div>Eventos activos: <strong style={{ color: B.sand }}>{kpis.eventos}</strong></div>
+          <h3 style={{ color: B.sand, marginBottom: 16, fontSize: 18 }}>Resumen Rápido</h3>
+          <div style={{ fontSize: 13, lineHeight: 2.4, color: "rgba(255,255,255,0.7)" }}>
+            <div>Requisiciones pendientes: <strong style={{ color: B.warning }}>{kpis.reqPendientes ?? 0}</strong></div>
+            <div>Eventos activos: <strong style={{ color: B.sand }}>{kpis.eventos ?? 0}</strong></div>
+            <div>Revenue hoy: <strong style={{ color: B.success }}>{loading ? "..." : COP(kpis.revenue || 0)}</strong></div>
             <div style={{ marginTop: 16, fontSize: 12, color: "rgba(255,255,255,0.3)" }}>
-              Los datos se cargan en tiempo real desde Supabase. Agrega registros desde cada modulo para ver los KPIs actualizados.
+              Datos en tiempo real desde Supabase · Zona horaria Colombia
             </div>
           </div>
         </div>

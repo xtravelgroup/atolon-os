@@ -521,26 +521,28 @@ function TabPasadias({ pasadias, onRefresh }) {
                 </div>
               </div>
             ) : (
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, fontSize: 13 }}>
-                {[
-                  { label: "Precio Adulto Público",  value: COP(selected.precio),                color: B.sand    },
-                  { label: "Neto Adulto Agencia",    value: COP(selected.precio_neto_agencia),   color: B.warning },
-                  { label: "Precio Niño Público",    value: selected.precio_nino > 0 ? COP(selected.precio_nino) : "No aplica",      color: selected.precio_nino > 0 ? B.sky : "rgba(255,255,255,0.3)" },
-                  { label: "Neto Niño Agencia",      value: selected.precio_neto_nino > 0 ? COP(selected.precio_neto_nino) : "No aplica", color: selected.precio_neto_nino > 0 ? B.warning : "rgba(255,255,255,0.3)" },
-                ].map(r => (
-                  <div key={r.label} style={{ background: "#0D1B3E", borderRadius: 8, padding: "10px 14px" }}>
-                    <div style={{ fontSize: 10, color: B.sand, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 3 }}>{r.label}</div>
-                    <div style={{ fontSize: 17, fontWeight: 700, fontFamily: "'Barlow Condensed', sans-serif", color: r.color }}>{r.value}</div>
-                  </div>
-                ))}
-              </div>
-              {selected.nino_nota && <div style={{ marginTop: 10, fontSize: 12, color: B.sky, background: B.sky + "11", border: `1px solid ${B.sky}22`, borderRadius: 8, padding: "8px 12px" }}>ℹ️ Nota niños: {selected.nino_nota}</div>}
-              <div style={{ marginTop: 12, fontSize: 13, lineHeight: 2 }}>
-                <div><span style={{ color: "rgba(255,255,255,0.4)" }}>Min. Pax:</span> <strong>{selected.min_pax}</strong></div>
-                <div><span style={{ color: "rgba(255,255,255,0.4)" }}>Web Publica:</span> <strong>{selected.web_publica ? "Sí" : "No (Solo B2B)"}</strong></div>
-                <div><span style={{ color: "rgba(255,255,255,0.4)" }}>Estado:</span> <strong style={{ color: selected.activo ? B.success : B.danger }}>{selected.activo ? "Activo" : "Inactivo"}</strong></div>
-                {selected.descripcion && <div style={{ marginTop: 8, color: "rgba(255,255,255,0.5)", lineHeight: 1.6 }}>{selected.descripcion}</div>}
-              </div>
+              <>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, fontSize: 13 }}>
+                  {[
+                    { label: "Precio Adulto Público",  value: COP(selected.precio),                color: B.sand    },
+                    { label: "Neto Adulto Agencia",    value: COP(selected.precio_neto_agencia),   color: B.warning },
+                    { label: "Precio Niño Público",    value: selected.precio_nino > 0 ? COP(selected.precio_nino) : "No aplica",      color: selected.precio_nino > 0 ? B.sky : "rgba(255,255,255,0.3)" },
+                    { label: "Neto Niño Agencia",      value: selected.precio_neto_nino > 0 ? COP(selected.precio_neto_nino) : "No aplica", color: selected.precio_neto_nino > 0 ? B.warning : "rgba(255,255,255,0.3)" },
+                  ].map(r => (
+                    <div key={r.label} style={{ background: "#0D1B3E", borderRadius: 8, padding: "10px 14px" }}>
+                      <div style={{ fontSize: 10, color: B.sand, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 3 }}>{r.label}</div>
+                      <div style={{ fontSize: 17, fontWeight: 700, fontFamily: "'Barlow Condensed', sans-serif", color: r.color }}>{r.value}</div>
+                    </div>
+                  ))}
+                </div>
+                {selected.nino_nota && <div style={{ marginTop: 10, fontSize: 12, color: B.sky, background: B.sky + "11", border: `1px solid ${B.sky}22`, borderRadius: 8, padding: "8px 12px" }}>ℹ️ Nota niños: {selected.nino_nota}</div>}
+                <div style={{ marginTop: 12, fontSize: 13, lineHeight: 2 }}>
+                  <div><span style={{ color: "rgba(255,255,255,0.4)" }}>Min. Pax:</span> <strong>{selected.min_pax}</strong></div>
+                  <div><span style={{ color: "rgba(255,255,255,0.4)" }}>Web Publica:</span> <strong>{selected.web_publica ? "Sí" : "No (Solo B2B)"}</strong></div>
+                  <div><span style={{ color: "rgba(255,255,255,0.4)" }}>Estado:</span> <strong style={{ color: selected.activo ? B.success : B.danger }}>{selected.activo ? "Activo" : "Inactivo"}</strong></div>
+                  {selected.descripcion && <div style={{ marginTop: 8, color: "rgba(255,255,255,0.5)", lineHeight: 1.6 }}>{selected.descripcion}</div>}
+                </div>
+              </>
             )}
           </div>
 
