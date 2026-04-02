@@ -60,23 +60,36 @@ function Dashboard() {
       manana.setDate(manana.getDate() + 1);
       const mananaStr = manana.toLocaleDateString("en-CA");
 
-      const [resHoyR, resMananaR, leadsHoyR, evtR, reqR] = await Promise.all([
-        supabase.from("reservas").select("pax, total").eq("fecha", hoy).neq("estado", "cancelado"),
+      // Ventas creadas HOY (created_at en zona Colombia)
+      const inicioHoy = hoy + "T00:00:00-05:00";
+      const finHoy    = hoy + "T23:59:59-05:00";
+
+      const [ventasHoyR, paxHoyR, paxMananaR, leadsHoyR, evtR, reqR] = await Promise.all([
+        // Pasadías vendidos y revenue: filtrar por cuándo se CREÓ la reserva
+        supabase.from("reservas").select("total")
+          .neq("estado", "cancelado")
+          .gte("created_at", inicioHoy)
+          .lte("created_at", finHoy),
+        // Pax hoy: pasajeros cuyo viaje es HOY
+        supabase.from("reservas").select("pax").eq("fecha", hoy).neq("estado", "cancelado"),
+        // Pax mañana: pasajeros cuyo viaje es MAÑANA
         supabase.from("reservas").select("pax").eq("fecha", mananaStr).neq("estado", "cancelado"),
-        supabase.from("leads").select("id").not("stage", "in", '("Cerrado Ganado","Perdido")')
-          .gte("created_at", hoy + "T00:00:00-05:00")
-          .lte("created_at", hoy + "T23:59:59-05:00"),
+        // Leads creados hoy aún activos
+        supabase.from("leads").select("id")
+          .not("stage", "in", '("Cerrado Ganado","Perdido")')
+          .gte("created_at", inicioHoy)
+          .lte("created_at", finHoy),
         supabase.from("eventos").select("id").in("stage", ["Consulta", "Cotizado", "Confirmado"]),
         supabase.from("requisiciones").select("id").eq("estado", "Pendiente"),
       ]);
 
-      const resHoy = resHoyR.data || [];
+      const ventasHoy = ventasHoyR.data || [];
       setKpis({
-        pasadiasVendidos: resHoy.length,
-        revenue: resHoy.reduce((s, r) => s + (r.total || 0), 0),
+        pasadiasVendidos: ventasHoy.length,
+        revenue: ventasHoy.reduce((s, r) => s + (r.total || 0), 0),
         leadsHoy: (leadsHoyR.data || []).length,
-        paxHoy: resHoy.reduce((s, r) => s + (r.pax || 0), 0),
-        paxManana: (resMananaR.data || []).reduce((s, r) => s + (r.pax || 0), 0),
+        paxHoy: (paxHoyR.data || []).reduce((s, r) => s + (r.pax || 0), 0),
+        paxManana: (paxMananaR.data || []).reduce((s, r) => s + (r.pax || 0), 0),
         eventos: (evtR.data || []).length,
         reqPendientes: (reqR.data || []).length,
       });
