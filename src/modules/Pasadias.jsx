@@ -425,6 +425,7 @@ function TabEmbarcaciones({ embarcaciones, onRefresh }) {
               <div style={{ display: "flex", gap: 6, flexDirection: "column", alignItems: "flex-end" }}>
                 <span style={{ fontSize: 10, padding: "3px 10px", borderRadius: 12, background: ec.bg, color: ec.color, fontWeight: 600 }}>{e.estado}</span>
                 <span style={{ fontSize: 10, padding: "3px 10px", borderRadius: 12, background: e.propiedad === "rentada" ? B.warning + "22" : B.success + "22", color: e.propiedad === "rentada" ? B.warning : B.success, fontWeight: 600 }}>{e.propiedad === "rentada" ? "Rentada" : "Propia"}</span>
+                {e._usos > 0 && <span style={{ fontSize: 10, padding: "3px 10px", borderRadius: 12, background: B.sky + "22", color: B.sky, fontWeight: 600 }}>⚓ {e._usos} viajes</span>}
               </div>
             </div>
             <div style={{ display: "flex", gap: 16, marginBottom: 8, fontSize: 13 }}>
@@ -739,8 +740,25 @@ export default function Pasadias() {
 
   const fetchEmbarcaciones = useCallback(async () => {
     if (!supabase) return;
-    const { data } = await supabase.from("embarcaciones").select("*").order("nombre");
-    setEmbarcaciones(data || []);
+    const [embR, resR] = await Promise.all([
+      supabase.from("embarcaciones").select("*"),
+      supabase.from("reservas").select("embarcacion_asignada").neq("estado", "cancelado").not("embarcacion_asignada", "is", null),
+    ]);
+    const embs = embR.data || [];
+    const usosMap = {};
+    (resR.data || []).forEach(r => {
+      if (r.embarcacion_asignada) usosMap[r.embarcacion_asignada] = (usosMap[r.embarcacion_asignada] || 0) + 1;
+    });
+    const embsConUsos = embs.map(e => ({ ...e, _usos: usosMap[e.nombre] || 0 }));
+    // Propias primero, luego por uso descendente, luego por nombre
+    embsConUsos.sort((a, b) => {
+      const propA = a.propiedad === "propia" ? 0 : 1;
+      const propB = b.propiedad === "propia" ? 0 : 1;
+      if (propA !== propB) return propA - propB;
+      if (b._usos !== a._usos) return b._usos - a._usos;
+      return (a.nombre || "").localeCompare(b.nombre || "");
+    });
+    setEmbarcaciones(embsConUsos);
   }, []);
 
   const fetchSalidas = useCallback(async () => {
