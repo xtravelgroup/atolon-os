@@ -407,6 +407,64 @@ function generarZarpe(salida, reservas, fecha, despacho, emb) {
   win.document.close();
 }
 
+// ─── Zarpe Codigo Row — una fila por embarcación despachada ──────────────────
+function ZarpeCodigoRow({ desp, setDespachos }) {
+  const [editing, setEditing] = useState(false);
+  const [input,   setInput]   = useState(desp.zarpe_codigo || "");
+  const [saving,  setSaving]  = useState(false);
+
+  const save = async () => {
+    if (!input.trim()) return;
+    setSaving(true);
+    await supabase.from("salida_despachos")
+      .update({ zarpe_codigo: input.trim(), zarpe_generado: true })
+      .eq("id", desp.id);
+    setDespachos(prev => prev.map(d =>
+      d.id === desp.id ? { ...d, zarpe_codigo: input.trim(), zarpe_generado: true } : d
+    ));
+    setSaving(false);
+    setEditing(false);
+  };
+
+  return (
+    <div style={{ background: B.navyMid, borderRadius: 10, padding: "12px 16px" }}>
+      <div style={{ fontSize: 11, color: B.sand, marginBottom: 6 }}>
+        🚢 {desp.embarcacion_nombre || "Embarcación"} &nbsp;·&nbsp;
+        ✈ {new Date(desp.despachado_at).toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit" })}
+      </div>
+      {desp.zarpe_codigo && !editing ? (
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <span style={{ fontSize: 20, fontWeight: 900, letterSpacing: 4, color: B.sky }}>{desp.zarpe_codigo}</span>
+          <button onClick={() => { setInput(desp.zarpe_codigo); setEditing(true); }}
+            style={{ fontSize: 11, padding: "3px 8px", borderRadius: 6, background: "none", border: `1px solid ${B.navyLight}`, color: "rgba(255,255,255,0.4)", cursor: "pointer" }}>
+            Cambiar
+          </button>
+        </div>
+      ) : (
+        <div style={{ display: "flex", gap: 8 }}>
+          <input
+            value={input}
+            onChange={e => setInput(e.target.value.toUpperCase())}
+            placeholder="Código zarpe..."
+            onKeyDown={e => e.key === "Enter" && save()}
+            style={{ ...IS, flex: 1, fontSize: 14, fontWeight: 700, letterSpacing: 3 }}
+          />
+          <button onClick={save} disabled={saving || !input.trim()}
+            style={{ padding: "8px 14px", borderRadius: 8, background: B.sand, color: B.navy, border: "none", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
+            {saving ? "..." : "Guardar"}
+          </button>
+          {editing && (
+            <button onClick={() => setEditing(false)}
+              style={{ padding: "8px 12px", borderRadius: 8, background: "none", border: `1px solid ${B.navyLight}`, color: "rgba(255,255,255,0.4)", fontSize: 13, cursor: "pointer" }}>
+              ✕
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Main ────────────────────────────────────────────────────────────────────
 export default function CheckIn() {
   const isMobile = useMobile();
@@ -421,9 +479,10 @@ export default function CheckIn() {
   const [scanMsg,        setScanMsg]        = useState(null); // { ok, text }
   const [editPax,        setEditPax]        = useState(null); // reserva to edit pasajeros
   const [editColabs,     setEditColabs]     = useState(false);
-  const [qrReserva,      setQrReserva]      = useState(null); // reserva to show QR for
-  const [confirmCheckin, setConfirmCheckin] = useState(null); // reserva pendiente de confirmar
+  const [qrReserva,      setQrReserva]      = useState(null);
+  const [confirmCheckin, setConfirmCheckin] = useState(null);
   const [ciSaving,       setCiSaving]       = useState(false);
+  const [despacharModal, setDespacharModal] = useState(null); // { salida, allEmbs }
   const [search,         setSearch]         = useState("");
   const [loading,        setLoading]        = useState(true);
 
@@ -488,17 +547,28 @@ export default function CheckIn() {
     setTimeout(() => setScanMsg(null), 3500);
   };
 
-  // ── Despachar
-  const despachar = async (salida) => {
-    const existing = despachos.find(d => d.salida_id === salida.id);
+  // ── Despachar una embarcación específica
+  const despachar = async (salida, embNombre) => {
+    // Si ya existe despacho para esa embarcación, confirmar re-despacho
+    const existing = despachos.find(d => d.salida_id === salida.id && d.embarcacion_nombre === embNombre);
     if (existing) {
-      if (!window.confirm("Esta salida ya fue despachada. ¿Registrar de nuevo?")) return;
+      if (!window.confirm(`${embNombre} ya fue despachada. ¿Registrar de nuevo?`)) return;
       await supabase.from("salida_despachos").delete().eq("id", existing.id);
     }
     const id = `DESP-${Date.now()}`;
-    const rec = { id, fecha, salida_id: salida.id, despachado_at: new Date().toISOString() };
+    const rec = { id, fecha, salida_id: salida.id, embarcacion_nombre: embNombre, despachado_at: new Date().toISOString() };
     await supabase.from("salida_despachos").insert(rec);
-    setDespachos(prev => [...prev.filter(d => d.salida_id !== salida.id), rec]);
+    setDespachos(prev => [...prev.filter(d => !(d.salida_id === salida.id && d.embarcacion_nombre === embNombre)), rec]);
+    setDespacharModal(null);
+  };
+
+  // ── Click en botón Despachar: si hay 1 bote → directo; si hay varios → modal
+  const handleDespachar = (salida, allEmbs) => {
+    if (allEmbs.length <= 1) {
+      despachar(salida, allEmbs[0]?.nombre || salida.nombre);
+    } else {
+      setDespacharModal({ salida, allEmbs });
+    }
   };
 
   const assignEmbarcacion = async (resId, nombre) => {
@@ -512,7 +582,8 @@ export default function CheckIn() {
   const resFiltradas = search
     ? resDesal.filter(r => r.nombre?.toLowerCase().includes(search.toLowerCase()))
     : resDesal;
-  const despacho = despachos.find(d => d.salida_id === tabSalida);
+  const despachosDesal = despachos.filter(d => d.salida_id === tabSalida); // uno por embarcación
+  const despacho = despachosDesal[0] || null; // compat: colaboradores usan el primero
   const checkedIn = resDesal.filter(r => r.checkin_at).reduce((s, r) => s + (r.pax || 0), 0);
   const totalPax  = resDesal.reduce((s, r) => s + (r.pax || 0), 0);
 
@@ -636,6 +707,42 @@ export default function CheckIn() {
         />
       )}
 
+      {/* ── Modal: seleccionar embarcación para despachar ── */}
+      {despacharModal && (
+        <div
+          style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.82)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 9997, padding: 16 }}
+          onClick={e => e.target === e.currentTarget && setDespacharModal(null)}>
+          <div style={{ background: B.navyMid, borderRadius: 20, padding: "28px 24px", width: "100%", maxWidth: 380, boxShadow: "0 24px 64px rgba(0,0,0,0.6)" }}>
+            <div style={{ fontSize: 18, fontWeight: 800, color: B.white, marginBottom: 4 }}>¿Qué embarcación sale?</div>
+            <div style={{ fontSize: 13, color: "rgba(255,255,255,0.4)", marginBottom: 20 }}>
+              {despacharModal.salida.nombre} &nbsp;·&nbsp; {despacharModal.salida.hora}
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {despacharModal.allEmbs.map(emb => {
+                const yaDespachada = despachosDesal.some(d => d.embarcacion_nombre === emb.nombre);
+                return (
+                  <button key={emb.id} onClick={() => despachar(despacharModal.salida, emb.nombre)}
+                    style={{
+                      padding: "14px 16px", borderRadius: 12, textAlign: "left", cursor: "pointer", border: "none",
+                      background: yaDespachada ? B.success + "22" : B.navy,
+                      outline: `2px solid ${yaDespachada ? B.success + "66" : B.navyLight}`,
+                      color: yaDespachada ? B.success : B.white,
+                    }}>
+                    <div style={{ fontWeight: 700, fontSize: 16 }}>🚢 {emb.nombre}</div>
+                    {yaDespachada && <div style={{ fontSize: 12, marginTop: 3, color: B.success }}>✈ Ya despachada — registrar de nuevo</div>}
+                    {emb.capitan && !yaDespachada && <div style={{ fontSize: 12, marginTop: 3, color: "rgba(255,255,255,0.4)" }}>Capitán: {emb.capitan}</div>}
+                  </button>
+                );
+              })}
+            </div>
+            <button onClick={() => setDespacharModal(null)}
+              style={{ marginTop: 16, width: "100%", padding: "11px", borderRadius: 10, background: "none", border: `1px solid ${B.navyLight}`, color: "rgba(255,255,255,0.4)", fontSize: 13, cursor: "pointer" }}>
+              Cancelar
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Scan feedback toast */}
       {scanMsg && (
         <div style={{
@@ -728,7 +835,7 @@ export default function CheckIn() {
                     // Combinar sin duplicados
                     const allEmbs = [...baseEmbs, ...extraEmbs.filter(e => !baseEmbs.some(b => b.id === e.id))];
                     return allEmbs.map(emb => (
-                      <button key={emb.id} onClick={() => generarZarpe(salida, resDesal, fecha, despacho, emb)}
+                      <button key={emb.id} onClick={() => generarZarpe(salida, resDesal, fecha, despachosDesal.find(d => d.embarcacion_nombre === emb.nombre) || null, emb)}
                         style={{ padding: "8px 12px", borderRadius: 8, background: emb._extra ? B.sky + "22" : B.navyLight, color: emb._extra ? B.sky : B.white, border: emb._extra ? `1px solid ${B.sky}44` : "none", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
                         📄 {emb.nombre}
                       </button>
@@ -736,34 +843,38 @@ export default function CheckIn() {
                   })()}
                 </div>
               </div>
-              <button onClick={() => despachar(salida)}
-                style={{ width: "100%", padding: "11px", borderRadius: 8, background: despacho ? B.success + "33" : B.sand, color: despacho ? B.success : B.navy, border: despacho ? `1px solid ${B.success}` : "none", fontWeight: 700, fontSize: 14, cursor: "pointer" }}>
-                {despacho ? "✈ Embarcación despachada" : "✈ Despachar embarcación"}
-              </button>
+              {/* Botón despachar — usa allEmbs ya calculadas arriba */}
+              {(() => {
+                const override2 = overrides.find(o => o.salida_id === salida.id);
+                const extraE2 = (override2?.extra_embarcaciones || []).map(e => {
+                  const full = embarcaciones.find(eb => eb.id === e.id);
+                  return full ? { ...full, _extra: true } : { id: e.id, nombre: e.nombre, _extra: true };
+                });
+                const baseE2 = (salida.embarcaciones || []).map(eid => {
+                  const emb = embarcaciones.find(e => e.id === eid);
+                  return emb ? { ...emb } : null;
+                }).filter(Boolean);
+                const allEmbs2 = [...baseE2, ...extraE2.filter(e => !baseE2.some(b => b.id === e.id))];
+                const todasDespachadas = allEmbs2.length > 0 && allEmbs2.every(e => despachosDesal.some(d => d.embarcacion_nombre === e.nombre));
+                return (
+                  <button
+                    onClick={() => handleDespachar(salida, allEmbs2)}
+                    style={{ width: "100%", padding: "11px", borderRadius: 8, fontWeight: 700, fontSize: 14, cursor: "pointer",
+                      background: todasDespachadas ? B.success + "33" : B.sand,
+                      color: todasDespachadas ? B.success : B.navy,
+                      border: todasDespachadas ? `1px solid ${B.success}` : "none" }}>
+                    {todasDespachadas ? "✈ Todas despachadas" : despachosDesal.length > 0 ? `✈ Despachar otra (${despachosDesal.length} ya)` : "✈ Despachar embarcación"}
+                  </button>
+                );
+              })()}
             </div>
 
-            {/* Código de zarpe */}
-            {despacho && (
-              <div style={{ background: B.navyMid, borderRadius: 10, padding: "12px 16px", marginBottom: 12, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-                <div style={{ fontSize: 12, color: B.sand, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", whiteSpace: "nowrap" }}>Código Zarpe</div>
-                {despacho.zarpe_codigo ? (
-                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                    <span style={{ fontSize: 18, fontWeight: 800, color: B.success, fontFamily: "monospace", letterSpacing: 2 }}>{despacho.zarpe_codigo}</span>
-                    <button onClick={() => setDespachos(prev => prev.map(d => d.id === despacho.id ? { ...d, zarpe_codigo: "" } : d))}
-                      style={{ fontSize: 11, padding: "3px 8px", borderRadius: 6, background: "none", border: `1px solid ${B.navyLight}`, color: "rgba(255,255,255,0.3)", cursor: "pointer" }}>Cambiar</button>
-                  </div>
-                ) : (
-                  <div style={{ display: "flex", gap: 8, flex: 1 }}>
-                    <input value={zarpeInput} onChange={e => setZarpeInput(e.target.value)}
-                      onKeyDown={e => e.key === "Enter" && guardarZarpeCodigo()}
-                      placeholder="Ingresa el código asignado por Capitanía..."
-                      style={{ ...IS, flex: 1, minWidth: 200 }} />
-                    <button onClick={guardarZarpeCodigo} disabled={!zarpeInput.trim() || zarpeSaving}
-                      style={{ padding: "9px 16px", borderRadius: 8, background: B.sand, color: B.navy, border: "none", fontWeight: 700, fontSize: 13, cursor: "pointer", whiteSpace: "nowrap" }}>
-                      {zarpeSaving ? "..." : "Registrar"}
-                    </button>
-                  </div>
-                )}
+            {/* Código de zarpe — uno por embarcación despachada */}
+            {despachosDesal.length > 0 && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 12 }}>
+                {despachosDesal.map(desp => (
+                  <ZarpeCodigoRow key={desp.id} desp={desp} setDespachos={setDespachos} />
+                ))}
               </div>
             )}
 
