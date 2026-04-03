@@ -66,8 +66,8 @@ function Dashboard() {
       const inicioHoy = hoy + "T00:00:00-05:00";
       const finHoy    = hoy + "T23:59:59-05:00";
 
-      const [ventasHoyR, paxHoyR, paxMananaR, leadsHoyR, evtR, reqR] = await Promise.all([
-        // Pasadías vendidos y revenue: filtrar por cuándo se CREÓ la reserva
+      const [ventasHoyR, paxHoyR, paxMananaR, leadsHoyR, evtR, reqR, cobR, cobR2] = await Promise.all([
+        // Pasadías vendidos hoy: filtrar por cuándo se CREÓ la reserva
         supabase.from("reservas").select("total")
           .eq("estado", "confirmado")
           .gte("created_at", inicioHoy)
@@ -83,12 +83,17 @@ function Dashboard() {
           .lte("created_at", finHoy),
         supabase.from("eventos").select("id").in("stage", ["Consulta", "Cotizado", "Confirmado"]),
         supabase.from("requisiciones").select("id").eq("estado", "Pendiente"),
+        // Cobrado hoy: abono con fecha_pago = hoy (registrado manualmente)
+        supabase.from("reservas").select("abono").eq("fecha_pago", hoy).neq("estado", "cancelado"),
+        // Cobrado hoy: abono sin fecha_pago pero creado hoy (web/Wompi automático)
+        supabase.from("reservas").select("abono").is("fecha_pago", null).gte("created_at", inicioHoy).lte("created_at", finHoy).gt("abono", 0).neq("estado", "cancelado"),
       ]);
 
       const ventasHoy = ventasHoyR.data || [];
+      const cobradoHoy = [...(cobR.data || []), ...(cobR2.data || [])].reduce((s, r) => s + (r.abono || 0), 0);
       setKpis({
         pasadiasVendidos: ventasHoy.length,
-        revenue: ventasHoy.reduce((s, r) => s + (r.total || 0), 0),
+        revenue: cobradoHoy,
         leadsHoy: (leadsHoyR.data || []).length,
         paxHoy: (paxHoyR.data || []).reduce((s, r) => s + (r.pax || 0), 0),
         paxManana: (paxMananaR.data || []).reduce((s, r) => s + (r.pax || 0), 0),
@@ -115,7 +120,7 @@ function Dashboard() {
         <KpiCard
           label="Revenue Hoy"
           value={loading ? "..." : COP(kpis.revenue || 0)}
-          sub="total en ventas del día"
+          sub="cobrado hoy (fecha de pago)"
           color={B.success}
         />
         <KpiCard
