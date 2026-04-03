@@ -514,15 +514,15 @@ export default function CheckIn() {
   const doCheckin = async (res) => {
     setCiSaving(true);
     const val = new Date().toISOString();
-    await supabase.from("reservas").update({ checkin_at: val }).eq("id", res.id);
-    setReservas(prev => prev.map(r => r.id === res.id ? { ...r, checkin_at: val } : r));
+    await supabase.from("reservas").update({ checkin_at: val, estado: "check_in" }).eq("id", res.id);
+    setReservas(prev => prev.map(r => r.id === res.id ? { ...r, checkin_at: val, estado: "check_in" } : r));
     setCiSaving(false);
     setConfirmCheckin(null);
   };
 
   const doUnCheckin = async (res) => {
-    await supabase.from("reservas").update({ checkin_at: null }).eq("id", res.id);
-    setReservas(prev => prev.map(r => r.id === res.id ? { ...r, checkin_at: null } : r));
+    await supabase.from("reservas").update({ checkin_at: null, estado: "confirmado" }).eq("id", res.id);
+    setReservas(prev => prev.map(r => r.id === res.id ? { ...r, checkin_at: null, estado: "confirmado" } : r));
   };
 
   // Mantener toggleCheckin para el escáner QR (que ya confirmó por escaneo)

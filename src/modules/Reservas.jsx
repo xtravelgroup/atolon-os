@@ -15,9 +15,12 @@ const VENDEDORES = ["Sin asignar"]; // fallback; real list loaded from usuarios 
 const FORMAS_PAGO = ["Transferencia", "Efectivo", "Wompi", "SKY", "CXC", "Enviar Link de Pago"];
 
 const ESTADO_STYLE = {
-  confirmado: { bg: B.success + "22", color: B.success, label: "Confirmado" },
-  pendiente:  { bg: B.warning + "22", color: B.warning, label: "Pendiente"  },
-  cancelado:  { bg: B.danger  + "22", color: B.danger,  label: "Cancelado"  },
+  confirmado:            { bg: B.success + "22", color: B.success, label: "Confirmado"   },
+  check_in:              { bg: B.sky     + "22", color: B.sky,     label: "Check-In ✓"  },
+  pendiente:             { bg: B.warning + "22", color: B.warning, label: "Pendiente"    },
+  pendiente_pago:        { bg: B.warning + "22", color: B.warning, label: "Pend. Pago"  },
+  pendiente_comprobante: { bg: B.sky     + "22", color: B.sky,     label: "Pend. Comp"  },
+  cancelado:             { bg: B.danger  + "22", color: B.danger,  label: "Cancelado"   },
 };
 
 // pax already booked per salida from reservas data (uses DB salida ids)
