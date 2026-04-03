@@ -769,18 +769,42 @@ export default function CheckIn() {
                         })()}
                       </div>
 
-                      {/* Pasajeros / Zarpe button — abre QR para que el cliente llene */}
-                      <button onClick={() => setQrReserva(res)}
-                        title="Check-in pasajero"
-                        style={{
-                          padding: isMobile ? "10px 12px" : "8px 12px",
-                          borderRadius: 8, border: `1px solid ${tienePax ? B.success + "44" : B.navyLight}`,
-                          background: tienePax ? B.success + "15" : "transparent",
-                          color: tienePax ? B.success : "rgba(255,255,255,0.3)",
-                          fontSize: isMobile ? 18 : 11, cursor: "pointer", flexShrink: 0, whiteSpace: "nowrap",
-                        }}>
-                        {isMobile ? (tienePax ? "✓" : "📋") : (tienePax ? "✓ Zarpe" : "📋 Zarpe")}
-                      </button>
+                      {/* Right-side actions: check-in + zarpe QR */}
+                      <div style={{ display: "flex", flexDirection: "column", gap: 6, flexShrink: 0 }}>
+                        {/* Check-in directo */}
+                        <button
+                          onClick={() => toggleCheckin(res)}
+                          title={checked ? "Deshacer check-in" : "Hacer check-in"}
+                          style={{
+                            padding: isMobile ? "9px 12px" : "7px 12px",
+                            borderRadius: 8,
+                            border: `1px solid ${checked ? B.success + "55" : B.navyLight}`,
+                            background: checked ? B.success + "22" : B.navyLight,
+                            color: checked ? B.success : "rgba(255,255,255,0.5)",
+                            fontSize: isMobile ? 15 : 11, fontWeight: 700,
+                            cursor: "pointer", whiteSpace: "nowrap",
+                          }}>
+                          {checked
+                            ? (isMobile ? "✓" : "✓ CI")
+                            : (isMobile ? "○" : "○ CI")}
+                        </button>
+
+                        {/* Zarpe QR */}
+                        <button
+                          onClick={() => setQrReserva(res)}
+                          title="Datos para zarpe / QR cliente"
+                          style={{
+                            padding: isMobile ? "9px 12px" : "7px 12px",
+                            borderRadius: 8,
+                            border: `1px solid ${tienePax ? B.success + "44" : B.navyLight}`,
+                            background: tienePax ? B.success + "15" : "transparent",
+                            color: tienePax ? B.success : "rgba(255,255,255,0.3)",
+                            fontSize: isMobile ? 15 : 11,
+                            cursor: "pointer", whiteSpace: "nowrap",
+                          }}>
+                          {isMobile ? (tienePax ? "📋✓" : "📋") : (tienePax ? "✓ Zarpe" : "📋 Zarpe")}
+                        </button>
+                      </div>
                     </div>
                   );
                 })}
