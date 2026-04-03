@@ -1700,15 +1700,26 @@ export default function Reservas() {
       : (fechaFiltro ? reservasFecha : reservasFuturas);
   const paxMap = paxPorSalida(reservas, salidas);
 
-  // Determine which salidas are open for a given date (respects cierres + overrides)
+  // Determine which salidas are open for a given date (respects cierres + overrides + 30-min cutoff)
   const getSalidasAbiertas = (fecha, paxMapOverride) => {
     const cierre = cierres.find(c => c.activo && c.fecha === fecha);
     const dayOvr = overridesMap[fecha] || {};
     const pm = paxMapOverride || paxMap; // pax counts for cascade check
     const activas = salidas.filter(s => s.activo);
     const sorted = [...activas].sort((a, b) => a.hora.localeCompare(b.hora));
+    // Para hoy: calcular minutos restantes hasta cada salida
+    const esHoy = fecha === today;
+    const ahoraMin = esHoy
+      ? new Date().getHours() * 60 + new Date().getMinutes()
+      : null;
     return sorted.filter((s, idx) => {
       if (!s.activo) return false;
+      // Corte de 30 min: si es hoy y la salida es en menos de 30 min (o ya pasó), cerrar
+      if (esHoy && s.hora) {
+        const [hh, mm] = s.hora.split(":").map(Number);
+        const salidaMin = hh * 60 + mm;
+        if (ahoraMin >= salidaMin - 30) return false;
+      }
       const ovr = dayOvr[s.id];
       if (ovr) return ovr.accion === "abrir"; // override always wins
       if (cierre) {
