@@ -399,11 +399,12 @@ export default function CheckIn() {
     ]);
     const res = resR.data || [];
     // Solo salidas con pasajeros ese día
-    setSalidas((salR.data || []).filter(s => res.some(r => r.salida_id === s.id)));
+    const salsConPax = (salR.data || []).filter(s => res.some(r => r.salida_id === s.id));
+    setSalidas(salsConPax);
     setReservas(res);
     setDespachos(desR.data || []);
     setEmbarcaciones(embR.data || []);
-    if (sals.length > 0 && !tabSalida) setTabSalida(sals[0].id);
+    if (salsConPax.length > 0 && !tabSalida) setTabSalida(salsConPax[0].id);
     setLoading(false);
   }, [fecha]);
 
