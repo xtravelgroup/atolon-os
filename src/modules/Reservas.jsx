@@ -747,8 +747,18 @@ function ReservaModal({ onClose, onSave, isMobile, salidaList = [], aliadoList =
     ? FORMAS_PAGO
     : FORMAS_PAGO.filter(f => f !== "CXC" || tieneCXC);
 
-  // Salidas visible for selected date
-  const salidasFecha = (getSalidasVisibles && form.fecha) ? getSalidasVisibles(form.fecha) : salidaList;
+  // Salidas visible for selected date — respects cierres/overrides + cascade 75% auto-apertura
+  const salidasBase = (getSalidasVisibles && form.fecha) ? getSalidasVisibles(form.fecha) : salidaList;
+  const salidasFecha = (() => {
+    const sorted = [...salidasBase].sort((a, b) => a.hora.localeCompare(b.hora));
+    return sorted.filter((s, idx) => {
+      if (!s.auto_apertura) return true;
+      if (idx === 0) return true;
+      const prev = sorted[idx - 1];
+      const pct = (paxMapFecha[prev.id] || 0) / (prev.capacidad_total || 1);
+      return pct >= 0.75;
+    });
+  })();
 
   // Availability per salida (uses live fetch for selected date)
   const getDisp = (sal) => {
