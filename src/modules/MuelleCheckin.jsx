@@ -77,6 +77,7 @@ function ModalNuevaLlegada({ tipo, fecha, reserva, onClose, onSaved }) {
     setF(p => ({
       ...p,
       embarcacion_nombre: lancha.nombre,
+      matricula: lancha.matricula || p.matricula,
       pax_a: sal._pax_a || 1,
       pax_n: sal._pax_n || 0,
     }));
@@ -220,11 +221,11 @@ function ModalNuevaLlegada({ tipo, fecha, reserva, onClose, onSaved }) {
                         <span style={{ fontSize: 24 }}>⛵</span>
                         <div style={{ flex: 1 }}>
                           <div style={{ fontWeight: 700, fontSize: 15 }}>{lancha.nombre}</div>
-                          {lancha.capitan && (
-                            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>
-                              Cap: {lancha.capitan}
-                            </div>
-                          )}
+                          <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>
+                            {lancha.matricula && <span>{lancha.matricula}</span>}
+                            {lancha.matricula && lancha.capitan && <span style={{ margin: "0 6px" }}>·</span>}
+                            {lancha.capitan && <span>Cap: {lancha.capitan}</span>}
+                          </div>
                         </div>
                         <span style={{ fontSize: 12, color: B.sky, fontWeight: 600 }}>Seleccionar →</span>
                       </button>

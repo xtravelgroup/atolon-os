@@ -158,6 +158,18 @@ export default function CierreCaja() {
   const fileRef   = useRef(null);
   const cameraRef = useRef(null);
 
+  // Logged-in user
+  const [userNombre, setUserNombre] = useState("");
+  useEffect(() => {
+    if (!supabase) return;
+    supabase.auth.getSession().then(async ({ data: { session } }) => {
+      if (!session?.user?.email) return;
+      const { data } = await supabase.from("usuarios").select("nombre")
+        .eq("email", session.user.email.toLowerCase()).single();
+      if (data?.nombre) { setUserNombre(data.nombre); setCajero(data.nombre); }
+    });
+  }, []);
+
   // Form state
   const [area, setArea]         = useState("ayb");
   const [fecha, setFecha]       = useState(todayStr());
@@ -394,8 +406,9 @@ export default function CierreCaja() {
             <div style={{ fontSize: 12, color: B.sand, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 16 }}>Datos del comprobante</div>
             <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr 1fr 1fr", gap: 14 }}>
               <div>
-                <label style={LS}>Cajero *</label>
-                <input value={cajero} onChange={e => setCajero(e.target.value)} placeholder="Nombre del cajero" style={IS} />
+                <label style={LS}>Cajero</label>
+                <input value={cajero} onChange={e => setCajero(e.target.value)}
+                  placeholder="Nombre del cajero" style={{ ...IS, background: userNombre ? B.navyLight : B.navy }} />
               </div>
               <div>
                 <label style={LS}>Caja #</label>
