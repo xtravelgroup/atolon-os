@@ -26,6 +26,7 @@ const NAV_GROUPS = [
       { key: "clientes", label: "Clientes",  icon: "👤" },
       { key: "b2b",      label: "B2B",       icon: "☯" },
       { key: "eventos",  label: "Eventos",   icon: "♫" },
+      { key: "upsells",  label: "Upsells",   icon: "⬆" },
     ],
   },
   {
@@ -69,7 +70,6 @@ const NAV_BOTTOM = [
   { key: "floorplan",     label: "Floor Plan",     icon: "▦" },
   { key: "comercial",     label: "Comercial",      icon: "★" },
   { key: "contratos",     label: "Contratos",      icon: "✉" },
-  { key: "upsells",       label: "Upsells",        icon: "⬆" },
   { key: "menus",         label: "Menús",          icon: "🍽️" },
   { key: "configuracion", label: "Configuración",  icon: "⚙" },
   { key: "usuarios",      label: "Usuarios",       icon: "👥" },
