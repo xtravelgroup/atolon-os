@@ -40,12 +40,14 @@ function qrUrl(data, size = 200) {
 }
 
 // ─── pantalla: Pago Completado ──────────────────────────────────────────────
-function PagoOk({ reserva }) {
+function PagoOk({ reserva, salida }) {
   const zarpeLink = `https://atolon.co/zarpe-info?id=${reserva.id}`;
+  const horaTexto = salida?.hora ? `Salida: ${salida.hora}${salida.hora_regreso ? ` · Regreso: ${salida.hora_regreso}` : ""}` : "";
   const waMensaje = encodeURIComponent(
     `✅ ¡Reserva confirmada en Atolon Beach Club!\n\n` +
     `👤 ${reserva.nombre}\n` +
     `📅 ${new Date(reserva.fecha + "T12:00:00").toLocaleDateString("es-CO", { weekday: "long", day: "numeric", month: "long" })}\n` +
+    (salida?.hora ? `⏰ Salida: ${salida.hora}${salida.hora_regreso ? ` · Regreso aprox. ${salida.hora_regreso}` : ""}\n` : "") +
     `🏝️ ${reserva.tipo} · ${reserva.pax} personas\n\n` +
     `🚢 Embarque: Muelle de La Bodeguita — Puerta 1\n` +
     `⏰ Llegar 20 min antes de la salida\n` +
@@ -81,6 +83,14 @@ function PagoOk({ reserva }) {
       <div style={{ background: B.navyMid, borderRadius: 14, padding: 18, fontSize: 13, lineHeight: 2.2 }}>
         <div style={{ display: "flex", justifyContent: "space-between" }}><span style={{ color: B.sand }}>Nombre</span><span style={{ fontWeight: 600 }}>{reserva.nombre}</span></div>
         <div style={{ display: "flex", justifyContent: "space-between" }}><span style={{ color: B.sand }}>Fecha</span><span style={{ textTransform: "capitalize" }}>{new Date(reserva.fecha + "T12:00:00").toLocaleDateString("es-CO", { weekday: "short", day: "numeric", month: "long" })}</span></div>
+        {salida?.hora && (
+          <div style={{ display: "flex", justifyContent: "space-between" }}>
+            <span style={{ color: B.sand }}>Hora salida</span>
+            <span style={{ fontWeight: 700, color: B.sky }}>
+              {salida.hora}{salida.hora_regreso ? ` → ${salida.hora_regreso}` : ""}
+            </span>
+          </div>
+        )}
         <div style={{ display: "flex", justifyContent: "space-between" }}><span style={{ color: B.sand }}>Pasadía</span><span>{reserva.tipo}</span></div>
         <div style={{ display: "flex", justifyContent: "space-between" }}><span style={{ color: B.sand }}>Personas</span><span>{reserva.pax}</span></div>
         <div style={{ display: "flex", justifyContent: "space-between", borderTop: `1px solid ${B.navyLight}`, paddingTop: 8, marginTop: 4 }}>
@@ -142,6 +152,7 @@ function LinkExpirado() {
 export default function PagoCliente() {
   const reservaId = getReservaId();
   const [reserva, setReserva] = useState(null);
+  const [salida,  setSalida]  = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [procesando, setProcesando] = useState("");
@@ -162,6 +173,11 @@ export default function PagoCliente() {
     const { data, error: err } = await supabase.from("reservas").select("*").eq("id", reservaId).single();
     if (err || !data) { setError("Reserva no encontrada"); setLoading(false); return; }
     setReserva(data);
+    // Traer salida para mostrar la hora de salida
+    if (data.salida_id) {
+      const { data: sal } = await supabase.from("salidas").select("id, nombre, hora, hora_regreso").eq("id", data.salida_id).single();
+      if (sal) setSalida(sal);
+    }
     setLoading(false);
   }, [reservaId]);
 
@@ -294,7 +310,7 @@ export default function PagoCliente() {
 
   if (loading) return wrap(<div style={{ textAlign: "center", color: "rgba(255,255,255,0.4)", padding: 40 }}>Cargando...</div>);
   if (error) return wrap(<div style={{ textAlign: "center", color: B.danger, padding: 40 }}>{error}</div>);
-  if (yaPagado) return wrap(<PagoOk reserva={reserva} />);
+  if (yaPagado) return wrap(<PagoOk reserva={reserva} salida={salida} />);
   if (expirado) return wrap(<LinkExpirado />);
 
   return wrap(
