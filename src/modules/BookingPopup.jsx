@@ -969,22 +969,14 @@ export default function BookingPopup() {
         </div>
 
         {/* T&C Acceptance */}
-        <div style={{ marginBottom: 20, padding: "14px 16px", borderRadius: 10, background: "#F8F9FF", border: `1.5px solid ${termsAccepted ? "#1B4FD8" : "#E2E8F0"}`, transition: "border-color 0.2s" }}>
-          <label style={{ display: "flex", gap: 12, alignItems: "flex-start", cursor: "pointer" }}>
-            <input
-              type="checkbox"
-              checked={termsAccepted}
-              onChange={e => setTermsAccepted(e.target.checked)}
-              style={{ width: 18, height: 18, marginTop: 1, flexShrink: 0, accentColor: "#1B4FD8", cursor: "pointer" }}
-            />
-            <span style={{ fontSize: 12, color: "#475569", lineHeight: 1.5 }}>
-              {isEN
-                ? "I have read and accept the cancellation policy. I understand that this service is non-refundable. Cancellation 48h+ before service: 100% credit valid 12 months. Cancellation 24–48h: 70% credit. Less than 24h or no-show: no refund or credit."
-                : "He leído y acepto la política de cancelación. Entiendo que este servicio es no reembolsable en dinero. Cancelación con más de 48h: 100% en crédito vigente 12 meses. Cancelación 24–48h: 70% en crédito. Menos de 24h o no-show: sin crédito ni reembolso."}
-            </span>
-          </label>
+        <div
+          onClick={() => setTermsAccepted(v => !v)}
+          style={{ marginBottom: 20, padding: "14px 16px", borderRadius: 10, background: termsAccepted ? "#EEF2FF" : "#F8F9FF", border: `1.5px solid ${termsAccepted ? "#1B4FD8" : "#E2E8F0"}`, transition: "all 0.2s", cursor: "pointer", textAlign: "center" }}>
+          <span style={{ fontSize: 13, color: termsAccepted ? "#1B4FD8" : "#475569", fontWeight: termsAccepted ? 600 : 400 }}>
+            {isEN ? "I accept the terms and conditions" : "Acepto los términos y condiciones"}
+          </span>
           {!termsAccepted && errors.terms && (
-            <div style={{ fontSize: 11, color: "#DC2626", marginTop: 6, marginLeft: 30 }}>{errors.terms}</div>
+            <div style={{ fontSize: 11, color: "#DC2626", marginTop: 4 }}>{errors.terms}</div>
           )}
         </div>
 
