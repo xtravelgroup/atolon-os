@@ -2,9 +2,11 @@ import { useState, useEffect } from "react";
 import { supabase } from "../lib/supabase";
 
 const NACS = [
-  "Colombiana", "Americana", "Venezolana", "Brasileña", "Argentina",
-  "Chilena", "Peruana", "Mexicana", "Española", "Francesa",
-  "Alemana", "Italiana", "Canadiense", "Inglesa", "Otra",
+  // Prioritarias
+  "Colombiana", "Americana", "Mexicana", "Ecuatoriana", "Peruana",
+  "Española", "Chilena", "Brasileña", "Argentina", "Francesa", "Alemana",
+  // Resto alfabético
+  "Canadiense", "Inglesa", "Italiana", "Venezolana", "Otra",
 ];
 
 const B = {

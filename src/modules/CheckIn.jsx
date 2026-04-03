@@ -7,7 +7,13 @@ import jsQR from "jsqr";
 const IS = { width: "100%", padding: "9px 12px", borderRadius: 8, background: B.navy, border: `1px solid ${B.navyLight}`, color: B.white, fontSize: 13, outline: "none", boxSizing: "border-box" };
 const LS = { fontSize: 11, color: B.sand, display: "block", marginBottom: 5, textTransform: "uppercase", letterSpacing: "0.06em" };
 
-const NACS = ["Colombiana", "Americana", "Venezolana", "Brasileña", "Argentina", "Chilena", "Peruana", "Mexicana", "Española", "Francesa", "Alemana", "Italiana", "Canadiense", "Inglesa", "Otra"];
+const NACS = [
+  // Prioritarias
+  "Colombiana", "Americana", "Mexicana", "Ecuatoriana", "Peruana",
+  "Española", "Chilena", "Brasileña", "Argentina", "Francesa", "Alemana",
+  // Resto alfabético
+  "Canadiense", "Inglesa", "Italiana", "Venezolana", "Otra",
+];
 
 // helper: is passenger data complete for zarpe?
 const paxCompleto = (res) => {
