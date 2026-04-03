@@ -397,9 +397,10 @@ export default function CheckIn() {
       supabase.from("salida_despachos").select("*").eq("fecha", fecha),
       supabase.from("embarcaciones").select("*").order("nombre"),
     ]);
-    const sals = salR.data || [];
-    setSalidas(sals);
-    setReservas(resR.data || []);
+    const res = resR.data || [];
+    // Solo salidas con pasajeros ese día
+    setSalidas((salR.data || []).filter(s => res.some(r => r.salida_id === s.id)));
+    setReservas(res);
     setDespachos(desR.data || []);
     setEmbarcaciones(embR.data || []);
     if (sals.length > 0 && !tabSalida) setTabSalida(sals[0].id);
