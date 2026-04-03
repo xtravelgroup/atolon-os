@@ -1922,7 +1922,7 @@ export default function Reservas() {
           salidaList={salidas}
           aliadoList={aliados}
           paxMap={paxMap}
-          getSalidasVisibles={getSalidasVisibles}
+          getSalidasVisibles={getSalidasAbiertas}
           fechaDefault={tabDia === "manana" ? tomorrow : today}
         />
       )}
