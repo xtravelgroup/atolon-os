@@ -622,8 +622,8 @@ export default function CheckIn() {
                 <span style={{ marginLeft: 8, color: B.sand, fontWeight: 700 }}>{confirmCheckin.pax} pax</span>
               </div>
 
-              {/* Alerta saldo pendiente */}
-              {saldo > 0 && (
+              {/* Alerta saldo pendiente — no aplica para CXC */}
+              {saldo > 0 && confirmCheckin.forma_pago !== "CXC" && (
                 <div style={{ background: "#E8402018", border: "1px solid #E8402066", borderRadius: 12, padding: "12px 14px", marginBottom: 14 }}>
                   <div style={{ fontSize: 13, color: "#FF6B6B", fontWeight: 700, marginBottom: 2 }}>
                     💳 Saldo pendiente de cobro
@@ -947,7 +947,7 @@ export default function CheckIn() {
                         <div style={{ fontSize: 16, fontWeight: 700, color: nameColor, marginBottom: 2 }}>
                           {res.nombre}
                         </div>
-                        {(res.saldo || 0) > 0 && (
+                        {(res.saldo || 0) > 0 && res.forma_pago !== "CXC" && (
                           <div style={{ display: "inline-flex", alignItems: "center", gap: 5, background: "#FF4D4D18", border: "1px solid #FF4D4D55", borderRadius: 6, padding: "2px 8px", marginBottom: 5, fontSize: 11, color: "#FF6B6B", fontWeight: 700 }}>
                             💳 Saldo: {COP(res.saldo)}
                           </div>
