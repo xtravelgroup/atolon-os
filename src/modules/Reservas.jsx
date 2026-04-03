@@ -11,8 +11,8 @@ const fmtHora = (ts) => {
 // ── helpers ──────────────────────────────────────────────────────────────────
 
 const CANALES   = ["Web", "WhatsApp", "B2B", "Teléfono", "Walk-in"];
-const VENDEDORES = ["Sin asignar"]; // fallback; real list loaded from empleados
-const FORMAS_PAGO = ["Transferencia", "Efectivo", "Wompi", "CXC", "Enviar Link de Pago"];
+const VENDEDORES = ["Sin asignar", "Valentina Ríos", "Camilo Herrera", "Natalia Ospina", "Juan Estrada"]; // fallback; real list loaded from empleados
+const FORMAS_PAGO = ["Transferencia", "Efectivo", "Wompi", "SKY", "CXC", "Enviar Link de Pago"];
 
 const ESTADO_STYLE = {
   confirmado: { bg: B.success + "22", color: B.success, label: "Confirmado" },
@@ -134,6 +134,7 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
     estado:    r0.estado    || "pendiente",
     notas:     r0.notas     || "",
     forma_pago: r0.forma_pago || "Transferencia",
+    fecha_pago: r0.fecha_pago ? (r0.fecha_pago + "").slice(0, 10) : "",
     vendedor:   r0.vendedor  || "Sin asignar",
     aliado_id:  r0.aliado_id || "",
   });
@@ -174,6 +175,7 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
       estado:    form.estado,
       notas:     form.notas,
       forma_pago: form.forma_pago || null,
+      fecha_pago: form.fecha_pago || null,
       vendedor:   form.vendedor !== "Sin asignar" ? form.vendedor : null,
       aliado_id:  form.aliado_id || null,
     }).eq("id", r0.id);
@@ -547,6 +549,10 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
                           }}>{fp}</button>
                         ))}
                       </div>
+                    </div>
+                    <div>
+                      <label style={LS}>Fecha de pago</label>
+                      <input type="date" style={IS} value={form.fecha_pago || ""} onChange={e => set("fecha_pago", e.target.value)} />
                     </div>
                   </div>
                 )}
@@ -1581,7 +1587,7 @@ export default function Reservas() {
   const [reservasFecha,  setReservasFecha]  = useState([]);
   const [salidas,        setSalidas]        = useState([]);
   const [aliados,        setAliados]        = useState([]);
-  const [vendedores,     setVendedores]     = useState([]);
+  const [vendedores,     setVendedores]     = useState(VENDEDORES);
   const [cierres,        setCierres]        = useState([]);
   const [embarcaciones,  setEmbarcaciones]  = useState([]);
   const [overridesMap,   setOverridesMap]   = useState({});
@@ -1620,7 +1626,7 @@ export default function Reservas() {
     ]);
     if (resHoy.data)    setReservasHoy(resHoy.data.map(mapRow));
     if (resManana.data) setReservasManana(resManana.data.map(mapRow));
-    if (empR.data)      setVendedores(["Sin asignar", ...(empR.data.map(e => e.nombre))]);
+    if (empR.data && empR.data.length > 0) setVendedores(["Sin asignar", ...(empR.data.map(e => e.nombre))]);
     if (salR.data)      setSalidas(salR.data);
     if (aliR.data)      setAliados(aliR.data);
     if (cierreR.data)   setCierres(cierreR.data);
