@@ -11,7 +11,7 @@ const fmtHora = (ts) => {
 // ── helpers ──────────────────────────────────────────────────────────────────
 
 const CANALES   = ["Web", "WhatsApp", "B2B", "Teléfono", "Walk-in"];
-const VENDEDORES = ["Sin asignar", "Valentina Ríos", "Camilo Herrera", "Natalia Ospina", "Juan Estrada"];
+const VENDEDORES = ["Sin asignar"]; // fallback; real list loaded from empleados
 const FORMAS_PAGO = ["Transferencia", "Efectivo", "Wompi", "CXC", "Enviar Link de Pago"];
 
 const ESTADO_STYLE = {
@@ -105,12 +105,16 @@ function DepartureCard({ salida, paxCount }) {
 
 // ── ReservaDetalle ────────────────────────────────────────────────────────────
 
-function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList = [], aliadoList = [] }) {
+function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList = [], aliadoList = [], vendedoresList = VENDEDORES }) {
   const [tab, setTab]           = useState("detalles");
   const [editing, setEdit]      = useState(false);
   const [saving, setSaving]     = useState(false);
   const [showCancelModal, setShowCancelModal] = useState(false);
   const [showDateModal, setShowDateModal]     = useState(false);
+  const [showPagoModal, setShowPagoModal]     = useState(false);
+  const [pagoMonto, setPagoMonto]             = useState(0);
+  const [pagoForma, setPagoForma]             = useState("Transferencia");
+  const [pagoFecha, setPagoFecha]             = useState(todayStr());
   const [cancelNombre, setCancelNombre]       = useState(r0.nombre || "");
   const [newFecha, setNewFecha]               = useState(r0.fecha  || "");
   const [creditDestB2B, setCreditDestB2B]     = useState(false); // true = crédito va al aliado B2B
@@ -175,6 +179,24 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
     if (form.estado === "confirmado") await upsertCliente({ ...r0, ...form, pax: Number(form.pax_a) + Number(form.pax_n) });
     setSaving(false);
     setEdit(false);
+    onUpdated();
+  };
+
+  const handlePago = async () => {
+    if (!supabase || pagoMonto <= 0) return;
+    setSaving(true);
+    const nuevoAbono = (r0.abono || 0) + Number(pagoMonto);
+    const nuevoSaldo = (r0.total || 0) - nuevoAbono;
+    const nuevoEstado = nuevoSaldo <= 0 ? "confirmado" : r0.estado;
+    await supabase.from("reservas").update({
+      abono:      nuevoAbono,
+      saldo:      Math.max(0, nuevoSaldo),
+      estado:     nuevoEstado,
+      forma_pago: pagoForma,
+      fecha_pago: pagoFecha,
+    }).eq("id", r0.id);
+    setSaving(false);
+    setShowPagoModal(false);
     onUpdated();
   };
 
@@ -457,7 +479,7 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
                   <label style={LS}>Vendedor</label>
                   {editing ? (
                     <select style={IS} value={form.vendedor} onChange={e => set("vendedor", e.target.value)}>
-                      {VENDEDORES.map(v => <option key={v} value={v}>{v}</option>)}
+                      {vendedoresList.map(v => <option key={v} value={v}>{v}</option>)}
                     </select>
                   ) : <div style={{ fontSize: 14, color: r0.vendedor ? B.white : "rgba(255,255,255,0.3)" }}>{r0.vendedor || "Sin asignar"}</div>}
                 </div>
@@ -528,7 +550,14 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
                 {!editing && (r0.forma_pago || form.forma_pago) && (
                   <div style={{ marginTop: 10, fontSize: 13, color: "rgba(255,255,255,0.5)" }}>
                     Método de pago: <strong style={{ color: B.sky }}>{r0.forma_pago || form.forma_pago}</strong>
+                    {r0.fecha_pago && <span style={{ marginLeft: 10 }}>· Fecha: <strong style={{ color: B.sand }}>{new Date(r0.fecha_pago + "T12:00:00").toLocaleDateString("es-CO", { day: "numeric", month: "short", year: "numeric" })}</strong></span>}
                   </div>
+                )}
+                {!editing && saldo > 0 && (
+                  <button onClick={() => { setPagoMonto(saldo); setPagoFecha(todayStr()); setPagoForma(r0.forma_pago || "Transferencia"); setShowPagoModal(true); }}
+                    style={{ marginTop: 14, background: B.success + "22", border: `1px solid ${B.success}`, borderRadius: 8, color: B.success, padding: "9px 18px", fontSize: 13, fontWeight: 700, cursor: "pointer", width: "100%" }}>
+                    💳 Registrar Pago
+                  </button>
                 )}
               </div>
 
@@ -598,6 +627,49 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
         </div>
       </div>
     </div>
+
+    {/* ── Modal: Registrar Pago ── */}
+    {showPagoModal && (
+      <div style={{ position: "fixed", inset: 0, zIndex: 1200, background: "rgba(0,0,0,0.8)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}
+        onClick={e => e.target === e.currentTarget && setShowPagoModal(false)}>
+        <div style={{ background: B.navyMid, borderRadius: 16, padding: 28, width: 360, border: `1px solid ${B.navyLight}` }}>
+          <h3 style={{ fontSize: 17, fontWeight: 700, marginBottom: 20, color: B.white }}>💳 Registrar Pago</h3>
+          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+            <div>
+              <label style={{ fontSize: 11, color: B.sand, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", display: "block", marginBottom: 4 }}>Monto (COP)</label>
+              <input type="number" min={0} max={saldo} value={pagoMonto} onChange={e => setPagoMonto(Number(e.target.value))}
+                style={{ background: "#0D1B3E", border: `1px solid ${B.navyLight}`, borderRadius: 8, color: B.white, padding: "9px 12px", fontSize: 14, width: "100%", boxSizing: "border-box", outline: "none" }} />
+              <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginTop: 4 }}>Saldo actual: {COP(saldo)}</div>
+            </div>
+            <div>
+              <label style={{ fontSize: 11, color: B.sand, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", display: "block", marginBottom: 4 }}>Fecha de pago *</label>
+              <input type="date" value={pagoFecha} onChange={e => setPagoFecha(e.target.value)}
+                style={{ background: "#0D1B3E", border: `1px solid ${B.navyLight}`, borderRadius: 8, color: B.white, padding: "9px 12px", fontSize: 14, width: "100%", boxSizing: "border-box", outline: "none" }} />
+            </div>
+            <div>
+              <label style={{ fontSize: 11, color: B.sand, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", display: "block", marginBottom: 8 }}>Forma de pago</label>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                {FORMAS_PAGO.filter(f => f !== "Enviar Link de Pago" && f !== "CXC").map(fp => (
+                  <button key={fp} onClick={() => setPagoForma(fp)} style={{
+                    padding: "5px 12px", borderRadius: 20, fontSize: 12, fontWeight: 600, cursor: "pointer",
+                    border: `1px solid ${pagoForma === fp ? B.sky : B.navyLight}`,
+                    background: pagoForma === fp ? B.sky + "22" : "transparent",
+                    color: pagoForma === fp ? B.sky : "rgba(255,255,255,0.5)",
+                  }}>{fp}</button>
+                ))}
+              </div>
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: 10, marginTop: 22 }}>
+            <button onClick={() => setShowPagoModal(false)} style={{ flex: 1, background: "none", border: `1px solid ${B.navyLight}`, borderRadius: 8, color: B.sand, padding: "10px", fontSize: 14, cursor: "pointer", fontWeight: 600 }}>Cancelar</button>
+            <button onClick={handlePago} disabled={saving || pagoMonto <= 0 || !pagoFecha}
+              style={{ flex: 2, background: B.success, border: "none", borderRadius: 8, color: B.navy, padding: "10px", fontSize: 14, cursor: "pointer", fontWeight: 700, opacity: (saving || pagoMonto <= 0 || !pagoFecha) ? 0.5 : 1 }}>
+              {saving ? "Guardando…" : `Registrar ${COP(pagoMonto)}`}
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
 
     {/* ── Modal: Cambiar Fecha ── */}
     {showDateModal && (
@@ -702,7 +774,7 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
 
 // ── modal ─────────────────────────────────────────────────────────────────────
 
-function ReservaModal({ onClose, onSave, isMobile, salidaList = [], aliadoList = [], paxMap = {}, fechaDefault, getSalidasVisibles }) {
+function ReservaModal({ onClose, onSave, isMobile, salidaList = [], aliadoList = [], vendedoresList = VENDEDORES, paxMap = {}, fechaDefault, getSalidasVisibles }) {
   const initFecha = fechaDefault || todayStr();
   const [form, setForm]       = useState({ ...EMPTY_FORM, fecha: initFecha, salida_id: "" });
   const [errors, setErrors]   = useState({});
@@ -930,7 +1002,7 @@ function ReservaModal({ onClose, onSave, isMobile, salidaList = [], aliadoList =
           <div style={FS}>
             <label style={LS}>Vendedor</label>
             <select style={IS()} value={form.vendedor} onChange={e => set("vendedor", e.target.value)}>
-              {VENDEDORES.map(v => <option key={v} value={v}>{v}</option>)}
+              {vendedoresList.map(v => <option key={v} value={v}>{v}</option>)}
             </select>
           </div>
           <div style={FS}>
@@ -1484,14 +1556,17 @@ export default function Reservas() {
   const isMobile = useMobile();
   const [reservasHoy,    setReservasHoy]    = useState([]);
   const [reservasManana, setReservasManana] = useState([]);
+  const [reservasFecha,  setReservasFecha]  = useState([]);
   const [salidas,        setSalidas]        = useState([]);
   const [aliados,        setAliados]        = useState([]);
+  const [vendedores,     setVendedores]     = useState([]);
   const [cierres,        setCierres]        = useState([]);
   const [embarcaciones,  setEmbarcaciones]  = useState([]);
-  const [overridesMap,   setOverridesMap]   = useState({}); // { fecha: { salida_id: override } }
+  const [overridesMap,   setOverridesMap]   = useState({});
   const [loading, setLoading]       = useState(true);
-  const [tab,     setTab]           = useState("reservas"); // "reservas" | "calendario"
+  const [tab,     setTab]           = useState("reservas");
   const [tabDia,  setTabDia]        = useState("hoy");
+  const [fechaFiltro, setFechaFiltro] = useState(""); // for "otra fecha" tab
   const [search, setSearch]         = useState("");
   const [filterEstado, setFilter]   = useState("todos");
   const [showModal, setShowModal]   = useState(false);
@@ -1511,7 +1586,7 @@ export default function Reservas() {
       .eq("estado", "pendiente_pago")
       .lt("created_at", expireThreshold);
 
-    const [resHoy, resManana, salR, aliR, cierreR, embR, ovrR] = await Promise.all([
+    const [resHoy, resManana, salR, aliR, cierreR, embR, ovrR, empR] = await Promise.all([
       supabase.from("reservas").select("*").eq("fecha", today).order("salida_id"),
       supabase.from("reservas").select("*").eq("fecha", tomorrow).order("salida_id"),
       supabase.from("salidas").select("*").order("orden"),
@@ -1519,9 +1594,11 @@ export default function Reservas() {
       supabase.from("cierres").select("*").order("fecha"),
       supabase.from("embarcaciones").select("*").order("nombre"),
       supabase.from("salidas_override").select("*").in("fecha", [today, tomorrow]),
+      supabase.from("empleados").select("id, nombre, cargo").eq("activo", true).order("nombre"),
     ]);
     if (resHoy.data)    setReservasHoy(resHoy.data.map(mapRow));
     if (resManana.data) setReservasManana(resManana.data.map(mapRow));
+    if (empR.data)      setVendedores(["Sin asignar", ...(empR.data.map(e => e.nombre))]);
     if (salR.data)      setSalidas(salR.data);
     if (aliR.data)      setAliados(aliR.data);
     if (cierreR.data)   setCierres(cierreR.data);
@@ -1539,8 +1616,15 @@ export default function Reservas() {
 
   useEffect(() => { fetchReservas(); }, [fetchReservas]);
 
+  // Fetch reservas for a custom date
+  useEffect(() => {
+    if (tabDia !== "fecha" || !fechaFiltro || !supabase) return;
+    supabase.from("reservas").select("*").eq("fecha", fechaFiltro).order("salida_id")
+      .then(({ data }) => setReservasFecha((data || []).map(mapRow)));
+  }, [tabDia, fechaFiltro]);
+
   // Active dataset based on tab
-  const reservas = tabDia === "hoy" ? reservasHoy : reservasManana;
+  const reservas = tabDia === "hoy" ? reservasHoy : tabDia === "manana" ? reservasManana : reservasFecha;
   const paxMap = paxPorSalida(reservas, salidas);
 
   // Determine which salidas are open for a given date (respects cierres + overrides)
@@ -1729,7 +1813,7 @@ export default function Reservas() {
       {tab === "reservas" && <>
 
       {/* ── Day tabs ── */}
-      <div style={{ display: "flex", gap: 8, marginBottom: isMobile ? 16 : 20 }}>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: isMobile ? 16 : 20, alignItems: "center" }}>
         {[
           { key: "hoy",    label: "Hoy",    fecha: today,    count: reservasHoy.filter(r => r.estado !== "cancelado").reduce((s,r) => s + r.pax, 0) },
           { key: "manana", label: "Mañana", fecha: tomorrow, count: reservasManana.filter(r => r.estado !== "cancelado").reduce((s,r) => s + r.pax, 0) },
@@ -1749,6 +1833,19 @@ export default function Reservas() {
             <span style={{ fontSize: 11, opacity: 0.6 }}>{t.fecha}</span>
           </button>
         ))}
+        {/* Otra fecha */}
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <button onClick={() => { setTabDia("fecha"); setSearch(""); setFilter("todos"); }} style={{
+            background: tabDia === "fecha" ? B.sand + "22" : B.navyMid,
+            border: `1px solid ${tabDia === "fecha" ? B.sand : B.navyLight}`,
+            borderRadius: 10, padding: "10px 16px", cursor: "pointer",
+            color: tabDia === "fecha" ? B.sand : "rgba(255,255,255,0.4)", fontWeight: 700, fontSize: 14,
+          }}>📅 Otra fecha</button>
+          {tabDia === "fecha" && (
+            <input type="date" value={fechaFiltro} onChange={e => setFechaFiltro(e.target.value)}
+              style={{ background: "#0D1B3E", border: `1px solid ${B.sand}`, borderRadius: 8, color: B.white, padding: "8px 10px", fontSize: 13, outline: "none" }} />
+          )}
+        </div>
       </div>
 
       {/* ── summary kpis ── */}
@@ -1947,9 +2044,10 @@ export default function Reservas() {
           isMobile={isMobile}
           salidaList={salidas}
           aliadoList={aliados}
+          vendedoresList={vendedores}
           paxMap={paxMap}
           getSalidasVisibles={getSalidasAbiertas}
-          fechaDefault={tabDia === "manana" ? tomorrow : today}
+          fechaDefault={tabDia === "manana" ? tomorrow : tabDia === "fecha" && fechaFiltro ? fechaFiltro : today}
         />
       )}
       {detalle && (
@@ -1960,6 +2058,7 @@ export default function Reservas() {
           onUpdated={() => { fetchReservas(); setDetalle(null); }}
           salidaList={salidas}
           aliadoList={aliados}
+          vendedoresList={vendedores}
         />
       )}
       </> /* end tab === "reservas" */}
