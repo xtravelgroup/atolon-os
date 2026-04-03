@@ -839,6 +839,10 @@ function ReservaModal({ onClose, onSave, isMobile, salidaList = [], aliadoList =
         const aliado = aliadoList.find(a => a.id === v);
         if (!aliado || !aliado.cupo_credito) next.forma_pago = "Transferencia";
       }
+      // CXC = crédito, no hay abono en efectivo
+      if (k === "forma_pago" && v === "CXC") {
+        next.abono = 0;
+      }
       return next;
     });
     setErrors(e => ({ ...e, [k]: undefined }));
@@ -1721,7 +1725,7 @@ export default function Reservas() {
     const pax   = Number(form.pax_a) + Number(form.pax_n);
     const total = pax * Number(form.precio);
     const isLink = form._isLink;
-    const abono  = isLink ? 0 : (Number(form.abono) || 0);
+    const abono  = isLink ? 0 : (form.forma_pago === "CXC" ? 0 : (Number(form.abono) || 0));
     const reservaId = `R-${Date.now()}`;
     const emailVal = form.contacto?.trim().includes("@") ? form.contacto.trim() : null;
     const row = {
