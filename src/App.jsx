@@ -196,6 +196,8 @@ import Clientes from "./modules/Clientes";
 import VIPPortal from "./modules/VIPPortal";
 import Staffing from "./modules/Staffing";
 import SelfCheckIn from "./modules/SelfCheckIn";
+import Historial from "./modules/Historial";
+import CierreCaja from "./modules/CierreCaja";
 
 const MODULE_MAP = {
   pasadias: <Pasadias />,
@@ -220,6 +222,8 @@ const MODULE_MAP = {
   analitica: <Analitica />,
   vip: <VIPAdmin />,
   clientes: <Clientes />,
+  historial: <Historial />,
+  cierre_caja: <CierreCaja />,
 };
 
 // Public routes — no auth required

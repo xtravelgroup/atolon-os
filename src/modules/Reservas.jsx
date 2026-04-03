@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { B, COP, PASADIAS, todayStr, fmtFecha } from "../brand";
 import { supabase } from "../lib/supabase";
 import { useMobile } from "../lib/useMobile";
+import { logAccion } from "../lib/logAccion";
 
 const fmtHora = (ts) => {
   if (!ts) return "";
@@ -201,6 +202,10 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
       forma_pago: pagoForma,
       fecha_pago: pagoFecha,
     }).eq("id", r0.id);
+    logAccion({ modulo: "reservas", accion: "registrar_pago", tabla: "reservas", registroId: r0.id,
+      datosAntes: { abono: r0.abono, saldo: r0.saldo, estado: r0.estado },
+      datosDespues: { abono: nuevoAbono, saldo: Math.max(0, nuevoSaldo), estado: nuevoEstado, forma_pago: pagoForma },
+      notas: `Pago ${COP(pagoMonto)} vía ${pagoForma}` });
     setSaving(false);
     setShowPagoModal(false);
     onUpdated();
@@ -306,6 +311,10 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
         notas:          esB2B ? `Crédito a cuenta B2B de ${aliado.nombre}` : null,
       });
     }
+    logAccion({ modulo: "reservas", accion: "cancelar_reserva", tabla: "reservas", registroId: r0.id,
+      datosAntes: { estado: r0.estado, total: r0.total, abono: r0.abono },
+      datosDespues: { estado: "cancelado" },
+      notas: `${pol.label} — Reembolso: ${pol.refundType} ${COP(pol.monto)}` });
     setSaving(false);
     setShowCancelModal(false);
     set("estado", "cancelado");
@@ -316,6 +325,8 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
     if (!supabase || !newFecha) return;
     setSaving(true);
     await supabase.from("reservas").update({ fecha: newFecha }).eq("id", r0.id);
+    logAccion({ modulo: "reservas", accion: "cambiar_fecha", tabla: "reservas", registroId: r0.id,
+      datosAntes: { fecha: r0.fecha }, datosDespues: { fecha: newFecha } });
     set("fecha", newFecha);
     setSaving(false);
     setShowDateModal(false);
@@ -1785,6 +1796,8 @@ export default function Reservas() {
       notas:           form.notas || "",
     };
     await supabase.from("reservas").insert(row);
+    logAccion({ modulo: "reservas", accion: "crear_reserva", tabla: "reservas", registroId: row.id,
+      datosDespues: row, notas: `Canal: ${row.canal} · ${row.pax} pax · ${COP(row.total)}` });
     fetchReservas();
     return reservaId;
   };

@@ -36,8 +36,9 @@ const NAV_GROUPS = [
     icon: "🔧",
     color: "#22c55e",
     items: [
-      { key: "checkin", label: "Check-in", icon: "✅" },
-      { key: "muelle",  label: "Llegadas", icon: "⚓" },
+      { key: "checkin",     label: "Check-in",    icon: "✅" },
+      { key: "muelle",      label: "Llegadas",    icon: "⚓" },
+      { key: "cierre_caja", label: "Cierre Caja", icon: "💵" },
     ],
   },
   {
@@ -71,6 +72,7 @@ const NAV_BOTTOM = [
   { key: "floorplan",     label: "Floor Plan",     icon: "▦" },
   { key: "contratos",     label: "Contratos",      icon: "✉" },
   { key: "menus",         label: "Menús",          icon: "🍽️" },
+  { key: "historial",     label: "Historial",      icon: "📋" },
   { key: "configuracion", label: "Configuración",  icon: "⚙" },
   { key: "usuarios",      label: "Usuarios",       icon: "👥" },
 ];

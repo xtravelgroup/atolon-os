@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { B, todayStr, COP } from "../brand";
+import { logAccion } from "../lib/logAccion";
 import { supabase } from "../lib/supabase";
 import { useMobile } from "../lib/useMobile";
 import jsQR from "jsqr";
@@ -515,6 +516,10 @@ export default function CheckIn() {
     setCiSaving(true);
     const val = new Date().toISOString();
     await supabase.from("reservas").update({ checkin_at: val, estado: "check_in" }).eq("id", res.id);
+    logAccion({ modulo: "checkin", accion: "check_in", tabla: "reservas", registroId: res.id,
+      datosAntes: { checkin_at: null, estado: res.estado },
+      datosDespues: { checkin_at: val, estado: "check_in" },
+      notas: `${res.nombre} · ${res.pax} pax` });
     setReservas(prev => prev.map(r => r.id === res.id ? { ...r, checkin_at: val, estado: "check_in" } : r));
     setCiSaving(false);
     setConfirmCheckin(null);
@@ -522,6 +527,9 @@ export default function CheckIn() {
 
   const doUnCheckin = async (res) => {
     await supabase.from("reservas").update({ checkin_at: null, estado: "confirmado" }).eq("id", res.id);
+    logAccion({ modulo: "checkin", accion: "revertir_checkin", tabla: "reservas", registroId: res.id,
+      datosAntes: { checkin_at: res.checkin_at, estado: "check_in" },
+      datosDespues: { checkin_at: null, estado: "confirmado" } });
     setReservas(prev => prev.map(r => r.id === res.id ? { ...r, checkin_at: null, estado: "confirmado" } : r));
   };
 
@@ -558,6 +566,8 @@ export default function CheckIn() {
     const id = `DESP-${Date.now()}`;
     const rec = { id, fecha, salida_id: salida.id, embarcacion_nombre: embNombre, despachado_at: new Date().toISOString() };
     await supabase.from("salida_despachos").insert(rec);
+    logAccion({ modulo: "checkin", accion: "despachar_embarcacion", tabla: "salida_despachos", registroId: id,
+      datosDespues: rec, notas: `${embNombre} · ${salida.nombre} ${salida.hora}` });
     setDespachos(prev => [...prev.filter(d => !(d.salida_id === salida.id && d.embarcacion_nombre === embNombre)), rec]);
     setDespacharModal(null);
   };
