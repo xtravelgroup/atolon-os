@@ -807,21 +807,24 @@ function ReservaModal({ onClose, onSave, isMobile, salidaList = [], aliadoList =
   const [form, setForm]       = useState({ ...EMPTY_FORM, fecha: initFecha, salida_id: "" });
   const [errors, setErrors]   = useState({});
   const [linkPago, setLinkPago] = useState("");
-  const [paxMapFecha, setPaxMapFecha] = useState(paxMap); // availability for selected date
+  const [paxMapFecha,    setPaxMapFecha]    = useState(paxMap); // pax by salida for selected date
+  const [overridesFecha, setOverridesFecha] = useState({});    // salidas_override map for selected date
 
-  // Fetch real pax counts for the selected date
+  // Fetch real pax counts + overrides for the selected date
   useEffect(() => {
     if (!supabase || !form.fecha) return;
-    supabase.from("reservas")
-      .select("salida_id, pax, estado")
-      .eq("fecha", form.fecha)
-      .neq("estado", "cancelado")
-      .then(({ data }) => {
-        const map = {};
-        salidaList.forEach(s => (map[s.id] = 0));
-        (data || []).forEach(r => { map[r.salida_id] = (map[r.salida_id] || 0) + (r.pax || 0); });
-        setPaxMapFecha(map);
-      });
+    Promise.all([
+      supabase.from("reservas").select("salida_id, pax, estado").eq("fecha", form.fecha).neq("estado", "cancelado"),
+      supabase.from("salidas_override").select("*").eq("fecha", form.fecha),
+    ]).then(([resR, ovrR]) => {
+      const map = {};
+      salidaList.forEach(s => (map[s.id] = 0));
+      (resR.data || []).forEach(r => { map[r.salida_id] = (map[r.salida_id] || 0) + (r.pax || 0); });
+      setPaxMapFecha(map);
+      const omap = {};
+      (ovrR.data || []).forEach(o => { omap[o.salida_id] = o; });
+      setOverridesFecha(omap);
+    });
   }, [form.fecha, salidaList]);
 
   const set = (k, v) => {
@@ -855,16 +858,22 @@ function ReservaModal({ onClose, onSave, isMobile, salidaList = [], aliadoList =
       if (!s.auto_apertura) return true;
       if (idx === 0) return true;
       const prev = sorted[idx - 1];
-      const pct = (paxMapFecha[prev.id] || 0) / (prev.capacidad_total || 1);
+      const prevCap = (prev.capacidad_total || 1) + (overridesFecha[prev.id]?.extra_embarcaciones || []).reduce((sum, e) => sum + (e.capacidad || 0), 0);
+      const pct = (paxMapFecha[prev.id] || 0) / prevCap;
       return pct >= 0.75;
     });
   })();
 
-  // Availability per salida (uses live fetch for selected date)
+  // Effective capacity including extra boats from calendar overrides
+  const getCapacity = (sal) => {
+    const extraCap = (overridesFecha[sal.id]?.extra_embarcaciones || []).reduce((sum, e) => sum + (e.capacidad || 0), 0);
+    return (sal.capacidad_total || 30) + extraCap;
+  };
+
+  // Availability per salida (uses live fetch + calendar overrides for selected date)
   const getDisp = (sal) => {
-    const cap = sal.capacidad_total || 30;
     const usados = paxMapFecha[sal.id] || 0;
-    return Math.max(0, cap - usados);
+    return Math.max(0, getCapacity(sal) - usados);
   };
 
   const validate = () => {
@@ -1013,7 +1022,7 @@ function ReservaModal({ onClose, onSave, isMobile, salidaList = [], aliadoList =
                       <div style={{ fontSize: 13, fontWeight: 700, color: full ? B.danger : disp <= 5 ? B.warning : B.success }}>
                         {full ? "LLENO" : `${disp} disp.`}
                       </div>
-                      <div style={{ fontSize: 11, color: "rgba(255,255,255,0.3)" }}>{(paxMapFecha[s.id] || 0)}/{s.capacidad_total || 30} pax</div>
+                      <div style={{ fontSize: 11, color: "rgba(255,255,255,0.3)" }}>{(paxMapFecha[s.id] || 0)}/{getCapacity(s)} pax</div>
                     </div>
                   </div>
                 );
