@@ -1628,8 +1628,9 @@ export default function Reservas() {
     if (ovrR.data) {
       const omap = {};
       ovrR.data.forEach(o => {
-        if (!omap[o.fecha]) omap[o.fecha] = {};
-        omap[o.fecha][o.salida_id] = o;
+        const fk = (o.fecha || "").slice(0, 10); // normalize date to YYYY-MM-DD
+        if (!omap[fk]) omap[fk] = {};
+        omap[fk][o.salida_id] = o;
       });
       setOverridesMap(omap);
     }
