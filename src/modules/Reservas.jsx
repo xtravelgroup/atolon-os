@@ -105,7 +105,7 @@ function DepartureCard({ salida, paxCount, extraCap = 0 }) {
 
 // ── ReservaDetalle ────────────────────────────────────────────────────────────
 
-function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList = [], aliadoList = [], vendedoresList = VENDEDORES }) {
+function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList = [], aliadoList = [], vendedoresList = VENDEDORES, pasadiaList = PASADIAS }) {
   const [tab, setTab]           = useState("detalles");
   const [editing, setEdit]      = useState(false);
   const [saving, setSaving]     = useState(false);
@@ -452,7 +452,7 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
                   <label style={LS}>Tipo de pase</label>
                   {editing ? (
                     <select style={IS} value={form.tipo} onChange={e => set("tipo", e.target.value)}>
-                      {PASADIAS.map(p => <option key={p.tipo} value={p.tipo}>{p.tipo}</option>)}
+                      {pasadiaList.map(p => <option key={p.tipo} value={p.tipo}>{p.tipo}</option>)}
                     </select>
                   ) : <div style={{ fontSize: 14 }}>{r0.tipo || "—"}</div>}
                 </div>
@@ -802,7 +802,7 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
 
 // ── modal ─────────────────────────────────────────────────────────────────────
 
-function ReservaModal({ onClose, onSave, isMobile, salidaList = [], aliadoList = [], vendedoresList = VENDEDORES, paxMap = {}, fechaDefault, getSalidasVisibles }) {
+function ReservaModal({ onClose, onSave, isMobile, salidaList = [], aliadoList = [], vendedoresList = VENDEDORES, pasadiaList = PASADIAS, paxMap = {}, fechaDefault, getSalidasVisibles }) {
   const initFecha = fechaDefault || todayStr();
   const [form, setForm]       = useState({ ...EMPTY_FORM, fecha: initFecha, salida_id: "" });
   const [errors, setErrors]   = useState({});
@@ -828,7 +828,7 @@ function ReservaModal({ onClose, onSave, isMobile, salidaList = [], aliadoList =
     setForm(f => {
       const next = { ...f, [k]: v };
       if (k === "tipo") {
-        const p = PASADIAS.find(p => p.tipo === v);
+        const p = pasadiaList.find(p => p.tipo === v);
         if (p) next.precio = p.precio;
       }
       if (k === "aliado_id") {
@@ -964,7 +964,7 @@ function ReservaModal({ onClose, onSave, isMobile, salidaList = [], aliadoList =
           <div style={FS}>
             <label style={LS}>Tipo de pase</label>
             <select style={IS()} value={form.tipo} onChange={e => set("tipo", e.target.value)}>
-              {PASADIAS.map(p => <option key={p.tipo} value={p.tipo}>{p.tipo}</option>)}
+              {pasadiaList.map(p => <option key={p.tipo} value={p.tipo}>{p.tipo}</option>)}
             </select>
           </div>
           <div style={FS}>
@@ -1591,6 +1591,7 @@ export default function Reservas() {
   const [salidas,        setSalidas]        = useState([]);
   const [aliados,        setAliados]        = useState([]);
   const [vendedores,     setVendedores]     = useState(VENDEDORES);
+  const [pasadias,       setPasadias]       = useState(PASADIAS);
   const [cierres,        setCierres]        = useState([]);
   const [embarcaciones,  setEmbarcaciones]  = useState([]);
   const [overridesMap,   setOverridesMap]   = useState({});
@@ -1617,7 +1618,7 @@ export default function Reservas() {
       .eq("estado", "pendiente_pago")
       .lt("created_at", expireThreshold);
 
-    const [resHoy, resManana, salR, aliR, cierreR, embR, ovrR, empR] = await Promise.all([
+    const [resHoy, resManana, salR, aliR, cierreR, embR, ovrR, empR, pasR] = await Promise.all([
       supabase.from("reservas").select("*").eq("fecha", today).order("salida_id"),
       supabase.from("reservas").select("*").eq("fecha", tomorrow).order("salida_id"),
       supabase.from("salidas").select("*").order("orden"),
@@ -1626,10 +1627,12 @@ export default function Reservas() {
       supabase.from("embarcaciones").select("*").order("nombre"),
       supabase.from("salidas_override").select("*").in("fecha", [today, tomorrow]),
       supabase.from("usuarios").select("id, nombre, rol_id").in("rol_id", ["ventas", "gerente_ventas"]).order("nombre"),
+      supabase.from("pasadias").select("id, nombre, precio").eq("activo", true).order("orden"),
     ]);
     if (resHoy.data)    setReservasHoy(resHoy.data.map(mapRow));
     if (resManana.data) setReservasManana(resManana.data.map(mapRow));
     if (empR.data && empR.data.length > 0) setVendedores(["Sin asignar", ...(empR.data.map(e => e.nombre))]);
+    if (pasR.data && pasR.data.length > 0) setPasadias(pasR.data.map(p => ({ tipo: p.nombre, precio: p.precio })));
     if (salR.data)      setSalidas(salR.data);
     if (aliR.data)      setAliados(aliR.data);
     if (cierreR.data)   setCierres(cierreR.data);
@@ -2092,6 +2095,7 @@ export default function Reservas() {
           salidaList={salidas}
           aliadoList={aliados}
           vendedoresList={vendedores}
+          pasadiaList={pasadias}
           paxMap={paxMap}
           getSalidasVisibles={getSalidasAbiertas}
           fechaDefault={tabDia === "manana" ? tomorrow : tabDia === "fecha" && fechaFiltro ? fechaFiltro : today}
@@ -2106,6 +2110,7 @@ export default function Reservas() {
           salidaList={salidas}
           aliadoList={aliados}
           vendedoresList={vendedores}
+          pasadiaList={pasadias}
         />
       )}
       </> /* end tab === "reservas" */}
