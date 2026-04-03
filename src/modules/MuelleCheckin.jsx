@@ -47,7 +47,10 @@ function ModalNuevaLlegada({ tipo, fecha, reserva, onClose, onSaved }) {
         reservaMap[r.salida_id].pax_a += Number(r.pax_a || r.pax || 1);
         reservaMap[r.salida_id].pax_n += Number(r.pax_n || 0);
       });
-      setSalidas((sals || []).map(s => ({ ...s, _pax_a: reservaMap[s.id]?.pax_a || 0, _pax_n: reservaMap[s.id]?.pax_n || 0 })));
+      // Solo salidas con pasajeros ese día
+      setSalidas((sals || [])
+        .filter(s => !!reservaMap[s.id])
+        .map(s => ({ ...s, _pax_a: reservaMap[s.id]?.pax_a || 0, _pax_n: reservaMap[s.id]?.pax_n || 0 })));
     });
   }, [esLancha, fecha]);
 
