@@ -1,8 +1,9 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { B, todayStr } from "../brand";
 import { supabase } from "../lib/supabase";
 import { useMobile } from "../lib/useMobile";
 import { wompiCheckoutUrl } from "../lib/wompi";
+import { logAccion } from "../lib/logAccion";
 
 const IS = { width: "100%", padding: "10px 14px", borderRadius: 8, background: B.navyLight, border: `1px solid rgba(255,255,255,0.1)`, color: "#fff", fontSize: 13, outline: "none", boxSizing: "border-box", fontFamily: "inherit" };
 const LS = { fontSize: 11, color: "rgba(255,255,255,0.5)", display: "block", marginBottom: 5, textTransform: "uppercase", letterSpacing: "0.06em" };
@@ -635,15 +636,129 @@ function LlegadaCard({ llegada, onEstadoChange, onDelete }) {
 const TIPO_LABEL = { lancha_atolon: "Lancha Atolon", after_island: "After Island", restaurante: "Restaurante" };
 const TIPO_ICON  = { lancha_atolon: "⛵", after_island: "🌙", restaurante: "🍽️" };
 
+// Fila con edición inline de notas
+function BitacoraFila({ r, onUpdated, isMobile }) {
+  const [editando, setEditando] = useState(false);
+  const [notas,    setNotas]    = useState(r.notas || "");
+  const [saving,   setSaving]   = useState(false);
+  const [recien,   setRecien]   = useState(false); // flash "editado"
+  const taRef = useRef(null);
+  const ec = ESTADO_COLOR[r.estado] || ESTADO_COLOR.esperada;
+
+  const guardarNota = async () => {
+    if (!supabase) return;
+    setSaving(true);
+    const notasAntes = r.notas || "";
+    await supabase.from("muelle_llegadas").update({ notas: notas.trim() || null }).eq("id", r.id);
+    await logAccion({
+      modulo: "muelle",
+      accion: "editar_nota",
+      tabla: "muelle_llegadas",
+      registroId: r.id,
+      datosAntes: { notas: notasAntes },
+      datosDespues: { notas: notas.trim() || null },
+      notas: `Nota editada en bitácora — ${r.embarcacion_nombre || r.id}`,
+    });
+    setSaving(false);
+    setEditando(false);
+    setRecien(true);
+    setTimeout(() => setRecien(false), 4000);
+    onUpdated(r.id, notas.trim() || null);
+  };
+
+  const cancelar = () => { setNotas(r.notas || ""); setEditando(false); };
+
+  if (isMobile) return (
+    <div style={{ background: recien ? B.sky + "12" : B.navyMid, borderRadius: 12, padding: "12px 14px", border: `1px solid ${recien ? B.sky + "44" : "rgba(255,255,255,0.06)"}`, transition: "all 0.4s" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 6 }}>
+        <div>
+          <span style={{ fontWeight: 700, fontSize: 13 }}>{TIPO_ICON[r.tipo]} {r.embarcacion_nombre || "—"}</span>
+          {r.matricula && <span style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", marginLeft: 6 }}>{r.matricula}</span>}
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          {recien && <span style={{ fontSize: 9, color: B.sky, fontWeight: 700, textTransform: "uppercase" }}>✎ editado</span>}
+          <span style={{ fontSize: 10, background: ec.bg, color: ec.color, padding: "3px 8px", borderRadius: 20, fontWeight: 600 }}>{ec.label}</span>
+        </div>
+      </div>
+      <div style={{ display: "flex", gap: 14, fontSize: 11, color: "rgba(255,255,255,0.45)", flexWrap: "wrap", marginBottom: 8 }}>
+        <span>📅 {r.fecha}</span>
+        {r.hora_llegada && <span>⚓ {r.hora_llegada?.slice(0,5)}</span>}
+        {r.hora_salida  && <span>⛵ {r.hora_salida?.slice(0,5)}</span>}
+        <span>👥 {r.pax_total || 0} pax</span>
+      </div>
+      {/* Notas editables */}
+      {editando ? (
+        <div style={{ marginTop: 6 }}>
+          <textarea ref={taRef} value={notas} onChange={e => setNotas(e.target.value)} rows={2} autoFocus
+            style={{ ...IS, fontSize: 12, resize: "vertical", padding: "8px 10px" }} placeholder="Agregar nota..." />
+          <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
+            <button onClick={guardarNota} disabled={saving}
+              style={{ flex: 1, padding: "8px", borderRadius: 8, border: "none", background: B.sky, color: B.navy, fontWeight: 700, fontSize: 12, cursor: "pointer" }}>
+              {saving ? "…" : "✓ Guardar"}
+            </button>
+            <button onClick={cancelar} style={{ padding: "8px 14px", borderRadius: 8, border: "none", background: B.navyLight, color: "rgba(255,255,255,0.5)", fontSize: 12, cursor: "pointer" }}>✕</button>
+          </div>
+        </div>
+      ) : (
+        <div onClick={() => setEditando(true)} style={{ cursor: "pointer", padding: "6px 8px", borderRadius: 8, background: "rgba(255,255,255,0.03)", border: "1px dashed rgba(255,255,255,0.08)", minHeight: 28 }}>
+          {notas
+            ? <span style={{ fontSize: 11, color: "rgba(255,255,255,0.45)", fontStyle: "italic" }}>{notas}</span>
+            : <span style={{ fontSize: 11, color: "rgba(255,255,255,0.18)" }}>+ Agregar nota…</span>}
+        </div>
+      )}
+    </div>
+  );
+
+  // Desktop: fila de tabla
+  return (
+    <tr style={{ borderBottom: "1px solid rgba(255,255,255,0.04)", background: recien ? B.sky + "0a" : "transparent", transition: "background 0.4s" }}>
+      <td style={{ padding: "9px 10px", color: "rgba(255,255,255,0.6)", whiteSpace: "nowrap" }}>{r.fecha}</td>
+      <td style={{ padding: "9px 10px", whiteSpace: "nowrap" }}>{TIPO_ICON[r.tipo]} <span style={{ color: "rgba(255,255,255,0.5)", fontSize: 11 }}>{TIPO_LABEL[r.tipo] || r.tipo}</span></td>
+      <td style={{ padding: "9px 10px", fontWeight: 600 }}>{r.embarcacion_nombre || "—"}</td>
+      <td style={{ padding: "9px 10px", color: "rgba(255,255,255,0.35)", fontSize: 11 }}>{r.matricula || "—"}</td>
+      <td style={{ padding: "9px 10px", color: "rgba(255,255,255,0.5)", whiteSpace: "nowrap" }}>{r.hora_llegada ? r.hora_llegada.slice(0,5) : "—"}</td>
+      <td style={{ padding: "9px 10px", color: "rgba(255,255,255,0.5)", whiteSpace: "nowrap" }}>{r.hora_salida ? r.hora_salida.slice(0,5) : "—"}</td>
+      <td style={{ padding: "9px 10px", textAlign: "center" }}>{r.pax_total || 0}</td>
+      <td style={{ padding: "9px 10px" }}>
+        <span style={{ fontSize: 10, background: ec.bg, color: ec.color, padding: "3px 8px", borderRadius: 20, fontWeight: 600, whiteSpace: "nowrap" }}>{ec.label}</span>
+      </td>
+      {/* Notas editables inline */}
+      <td style={{ padding: "6px 8px", minWidth: 200 }}>
+        {editando ? (
+          <div style={{ display: "flex", gap: 6, alignItems: "flex-start" }}>
+            <textarea value={notas} onChange={e => setNotas(e.target.value)} rows={2} autoFocus
+              style={{ ...IS, fontSize: 11, resize: "none", padding: "5px 8px", flex: 1, minWidth: 140 }} placeholder="Nota..." />
+            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              <button onClick={guardarNota} disabled={saving}
+                style={{ padding: "5px 10px", borderRadius: 6, border: "none", background: B.sky, color: B.navy, fontWeight: 700, fontSize: 11, cursor: "pointer", whiteSpace: "nowrap" }}>
+                {saving ? "…" : "✓"}
+              </button>
+              <button onClick={cancelar}
+                style={{ padding: "5px 8px", borderRadius: 6, border: "none", background: B.navyLight, color: "rgba(255,255,255,0.4)", fontSize: 11, cursor: "pointer" }}>✕</button>
+            </div>
+          </div>
+        ) : (
+          <div onClick={() => setEditando(true)}
+            style={{ cursor: "pointer", padding: "5px 8px", borderRadius: 6, border: "1px dashed rgba(255,255,255,0.06)", minHeight: 26, display: "flex", alignItems: "center", gap: 6, color: notas ? "rgba(255,255,255,0.45)" : "rgba(255,255,255,0.18)", fontSize: 11 }}>
+            {notas
+              ? <><span style={{ fontStyle: "italic", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 180 }}>{notas}</span>{recien && <span style={{ fontSize: 9, color: B.sky, fontWeight: 700, flexShrink: 0 }}>✎</span>}</>
+              : <span>+ nota</span>}
+          </div>
+        )}
+      </td>
+    </tr>
+  );
+}
+
 function BitacoraLlegadas({ isMobile }) {
-  const hoy = todayStr();
+  const hoy   = todayStr();
   const hace7 = new Date(Date.now() - 6 * 86400000).toISOString().slice(0, 10);
 
-  const [desde, setDesde]   = useState(hace7);
-  const [hasta, setHasta]   = useState(hoy);
-  const [tipo,  setTipo]    = useState("todos");
-  const [busca, setBusca]   = useState("");
-  const [rows,  setRows]    = useState([]);
+  const [desde,   setDesde]   = useState(hace7);
+  const [hasta,   setHasta]   = useState(hoy);
+  const [tipo,    setTipo]    = useState("todos");
+  const [busca,   setBusca]   = useState("");
+  const [rows,    setRows]    = useState([]);
   const [loading, setLoading] = useState(false);
 
   const fetchBitacora = useCallback(async () => {
@@ -661,6 +776,10 @@ function BitacoraLlegadas({ isMobile }) {
 
   useEffect(() => { fetchBitacora(); }, [fetchBitacora]);
 
+  // Actualiza nota localmente sin refetch
+  const handleUpdated = (id, nuevaNota) =>
+    setRows(prev => prev.map(r => r.id === id ? { ...r, notas: nuevaNota } : r));
+
   const filtradas = busca.trim()
     ? rows.filter(r =>
         (r.embarcacion_nombre || "").toLowerCase().includes(busca.toLowerCase()) ||
@@ -669,9 +788,7 @@ function BitacoraLlegadas({ isMobile }) {
       )
     : rows;
 
-  const totalPax    = filtradas.reduce((t, r) => t + (r.pax_total || 0), 0);
-  const totalCobrado = filtradas.reduce((t, r) => t + (r.total_cobrado || 0), 0);
-
+  const totalPax = filtradas.reduce((t, r) => t + (r.pax_total || 0), 0);
   const ISsm = { ...IS, padding: "8px 12px", fontSize: 12 };
 
   return (
@@ -701,13 +818,12 @@ function BitacoraLlegadas({ isMobile }) {
         </div>
       </div>
 
-      {/* KPIs resumen */}
-      <div style={{ display: "grid", gridTemplateColumns: `repeat(${isMobile ? 2 : 4}, 1fr)`, gap: 10, marginBottom: 18 }}>
+      {/* KPIs */}
+      <div style={{ display: "grid", gridTemplateColumns: `repeat(${isMobile ? 2 : 3}, 1fr)`, gap: 10, marginBottom: 18 }}>
         {[
-          { label: "Registros",   value: filtradas.length, color: B.sky },
-          { label: "Total pax",   value: totalPax,         color: B.sand },
-          { label: "Cobrado",     value: COP(totalCobrado),color: "#4ade80" },
-          { label: "Días",        value: [...new Set(filtradas.map(r => r.fecha))].length, color: "rgba(255,255,255,0.5)" },
+          { label: "Registros", value: filtradas.length, color: B.sky },
+          { label: "Total pax", value: totalPax,         color: B.sand },
+          { label: "Días",      value: [...new Set(filtradas.map(r => r.fecha))].length, color: "rgba(255,255,255,0.5)" },
         ].map(({ label, value, color }) => (
           <div key={label} style={{ background: B.navyMid, borderRadius: 10, padding: "12px 14px", border: "1px solid rgba(255,255,255,0.06)" }}>
             <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 }}>{label}</div>
@@ -716,79 +832,32 @@ function BitacoraLlegadas({ isMobile }) {
         ))}
       </div>
 
-      {/* Tabla */}
+      {/* Lista / Tabla */}
       {loading ? (
         <div style={{ textAlign: "center", padding: "40px 0", color: "rgba(255,255,255,0.3)", fontSize: 13 }}>Cargando...</div>
       ) : filtradas.length === 0 ? (
         <div style={{ textAlign: "center", padding: "40px 0", color: "rgba(255,255,255,0.2)", fontSize: 13 }}>Sin registros para este período</div>
       ) : isMobile ? (
-        /* Mobile: cards */
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          {filtradas.map(r => {
-            const ec = ESTADO_COLOR[r.estado] || ESTADO_COLOR.esperada;
-            return (
-              <div key={r.id} style={{ background: B.navyMid, borderRadius: 12, padding: "12px 14px", border: "1px solid rgba(255,255,255,0.06)" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 6 }}>
-                  <div>
-                    <span style={{ fontWeight: 700, fontSize: 13 }}>{TIPO_ICON[r.tipo]} {r.embarcacion_nombre || "—"}</span>
-                    {r.matricula && <span style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", marginLeft: 6 }}>{r.matricula}</span>}
-                  </div>
-                  <span style={{ fontSize: 10, background: ec.bg, color: ec.color, padding: "3px 8px", borderRadius: 20, fontWeight: 600 }}>{ec.label}</span>
-                </div>
-                <div style={{ display: "flex", gap: 16, fontSize: 11, color: "rgba(255,255,255,0.45)", flexWrap: "wrap" }}>
-                  <span>📅 {r.fecha}</span>
-                  {r.hora_llegada && <span>⚓ {r.hora_llegada?.slice(0,5)}</span>}
-                  {r.hora_salida  && <span>⛵ {r.hora_salida?.slice(0,5)}</span>}
-                  <span>👥 {r.pax_total || 0} pax</span>
-                  {(r.total_cobrado || 0) > 0 && <span style={{ color: "#4ade80", fontWeight: 600 }}>{COP(r.total_cobrado)}</span>}
-                  {r.forma_pago && <span>{r.forma_pago}</span>}
-                </div>
-                {r.notas && <div style={{ fontSize: 11, color: "rgba(255,255,255,0.3)", marginTop: 5, fontStyle: "italic" }}>{r.notas}</div>}
-              </div>
-            );
-          })}
+          {filtradas.map(r => <BitacoraFila key={r.id} r={r} onUpdated={handleUpdated} isMobile />)}
         </div>
       ) : (
-        /* Desktop: tabla */
         <div style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
             <thead>
               <tr style={{ borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
-                {["Fecha", "Tipo", "Embarcación", "Matr.", "Llegó", "Salió", "Pax", "Estado", "Cobrado", "Forma pago", "Notas"].map(h => (
+                {["Fecha", "Tipo", "Embarcación", "Matr.", "Llegó", "Salió", "Pax", "Estado", "Notas"].map(h => (
                   <th key={h} style={{ padding: "8px 10px", textAlign: "left", color: "rgba(255,255,255,0.4)", fontWeight: 600, fontSize: 10, textTransform: "uppercase", letterSpacing: "0.05em", whiteSpace: "nowrap" }}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {filtradas.map((r, i) => {
-                const ec = ESTADO_COLOR[r.estado] || ESTADO_COLOR.esperada;
-                return (
-                  <tr key={r.id} style={{ borderBottom: "1px solid rgba(255,255,255,0.04)", background: i % 2 === 0 ? "transparent" : "rgba(255,255,255,0.015)" }}>
-                    <td style={{ padding: "9px 10px", color: "rgba(255,255,255,0.6)", whiteSpace: "nowrap" }}>{r.fecha}</td>
-                    <td style={{ padding: "9px 10px", whiteSpace: "nowrap" }}>{TIPO_ICON[r.tipo]} <span style={{ color: "rgba(255,255,255,0.5)", fontSize: 11 }}>{TIPO_LABEL[r.tipo] || r.tipo}</span></td>
-                    <td style={{ padding: "9px 10px", fontWeight: 600 }}>{r.embarcacion_nombre || "—"}</td>
-                    <td style={{ padding: "9px 10px", color: "rgba(255,255,255,0.35)", fontSize: 11 }}>{r.matricula || "—"}</td>
-                    <td style={{ padding: "9px 10px", color: "rgba(255,255,255,0.5)", whiteSpace: "nowrap" }}>{r.hora_llegada ? r.hora_llegada.slice(0,5) : "—"}</td>
-                    <td style={{ padding: "9px 10px", color: "rgba(255,255,255,0.5)", whiteSpace: "nowrap" }}>{r.hora_salida  ? r.hora_salida.slice(0,5)  : "—"}</td>
-                    <td style={{ padding: "9px 10px", textAlign: "center" }}>{r.pax_total || 0}</td>
-                    <td style={{ padding: "9px 10px" }}>
-                      <span style={{ fontSize: 10, background: ec.bg, color: ec.color, padding: "3px 8px", borderRadius: 20, fontWeight: 600, whiteSpace: "nowrap" }}>{ec.label}</span>
-                    </td>
-                    <td style={{ padding: "9px 10px", fontWeight: 700, color: (r.total_cobrado || 0) > 0 ? "#4ade80" : "rgba(255,255,255,0.2)" }}>
-                      {(r.total_cobrado || 0) > 0 ? COP(r.total_cobrado) : "—"}
-                    </td>
-                    <td style={{ padding: "9px 10px", color: "rgba(255,255,255,0.4)", fontSize: 11 }}>{r.forma_pago || "—"}</td>
-                    <td style={{ padding: "9px 10px", color: "rgba(255,255,255,0.3)", fontSize: 11, maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.notas || "—"}</td>
-                  </tr>
-                );
-              })}
+              {filtradas.map(r => <BitacoraFila key={r.id} r={r} onUpdated={handleUpdated} isMobile={false} />)}
             </tbody>
             <tfoot>
               <tr style={{ borderTop: "2px solid rgba(255,255,255,0.1)" }}>
                 <td colSpan={6} style={{ padding: "10px", fontSize: 11, color: "rgba(255,255,255,0.35)", fontWeight: 600 }}>TOTAL ({filtradas.length} registros)</td>
                 <td style={{ padding: "10px", fontWeight: 800, color: B.sky }}>{totalPax}</td>
-                <td />
-                <td style={{ padding: "10px", fontWeight: 800, color: "#4ade80" }}>{COP(totalCobrado)}</td>
                 <td colSpan={2} />
               </tr>
             </tfoot>
