@@ -778,34 +778,41 @@ export default function CheckIn() {
             ) : (
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 {resFiltradas.map(res => {
-                  const checked = !!res.checkin_at;
-                  const tienePax = res.pasajeros?.length > 0;
+                  const checked  = !!res.checkin_at;
+                  const tienePax = paxCompleto(res);
+                  // Estado visual: verde completo = check-in + zarpe OK; ámbar = check-in sin zarpe; gris = sin check-in
+                  const listo    = checked && tienePax;
+                  const parcial  = checked && !tienePax;
+                  const cardBg     = listo ? B.success + "22" : parcial ? "#E8A02012" : B.navyMid;
+                  const cardBorder = listo ? B.success + "77" : parcial ? "#E8A02044" : B.navyLight;
+                  const nameColor  = listo ? B.success    : parcial ? "#E8A020" : B.white;
+                  const circBg     = listo ? B.success    : parcial ? "#E8A02033" : B.navyLight;
+                  const circColor  = listo ? B.navy       : parcial ? "#E8A020"  : "rgba(255,255,255,0.3)";
                   return (
                     <div key={res.id} style={{
-                      background: checked ? B.success + "15" : B.navyMid,
+                      background: cardBg,
                       borderRadius: 12, padding: isMobile ? "12px 12px" : "14px 16px",
-                      border: `2px solid ${checked ? B.success + "55" : B.navyLight}`,
+                      border: `2px solid ${cardBorder}`,
                       display: "flex", alignItems: "center", gap: isMobile ? 12 : 16,
-                      transition: "all 0.15s",
+                      transition: "all 0.2s",
                     }}>
-                      {/* Check-in button */}
-                      <button onClick={() => toggleCheckin(res)}
-                        style={{
-                          width: isMobile ? 60 : 52, height: isMobile ? 60 : 52,
-                          borderRadius: isMobile ? 30 : 26, border: "none", flexShrink: 0,
-                          background: checked ? B.success : B.navyLight,
-                          color: checked ? B.navy : "rgba(255,255,255,0.3)",
-                          fontSize: checked ? (isMobile ? 30 : 26) : (isMobile ? 24 : 22),
-                          cursor: "pointer",
+                      {/* Círculo de estado (solo visual, click en botón CI derecho) */}
+                      <div style={{
+                          width: isMobile ? 52 : 46, height: isMobile ? 52 : 46,
+                          borderRadius: "50%", flexShrink: 0,
+                          background: circBg,
+                          color: circColor,
+                          fontSize: checked ? (isMobile ? 26 : 22) : (isMobile ? 22 : 18),
                           display: "flex", alignItems: "center", justifyContent: "center",
-                          fontWeight: 700, transition: "all 0.15s",
+                          fontWeight: 800, transition: "all 0.2s",
+                          border: parcial ? "2px solid #E8A02055" : "none",
                         }}>
-                        {checked ? "✓" : "○"}
-                      </button>
+                        {listo ? "✓" : parcial ? "✓" : "○"}
+                      </div>
 
                       {/* Info */}
                       <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontSize: 16, fontWeight: 700, color: checked ? B.success : B.white, marginBottom: 2 }}>
+                        <div style={{ fontSize: 16, fontWeight: 700, color: nameColor, marginBottom: 2 }}>
                           {res.nombre}
                         </div>
                         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", fontSize: 12, color: "rgba(255,255,255,0.5)" }}>
