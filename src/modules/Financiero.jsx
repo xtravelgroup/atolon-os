@@ -346,12 +346,16 @@ export default function Financiero() {
 
       {/* ── P & L Tab ── */}
       {tab === "pl" && (() => {
-        const ing   = totalCierres(periodoActual);
+        const ingPasadias = totalA;                               // reservas confirmadas
+        const ingCierres  = totalCierres(periodoActual);          // cierres_caja (A&B, etc.)
+        const ing   = ingPasadias + ingCierres;
         const gas   = totalGastos(periodoActual);
         const util  = ing - gas;
         const margen = ing > 0 ? (util / ing) * 100 : 0;
         const cats  = gastosPorCategoria(periodoActual);
-        const ingC  = totalCierres(periodoComparar || "");
+        const ingPasadiasC = totalC;
+        const ingCierresC  = totalCierres(periodoComparar || "");
+        const ingC  = ingPasadiasC + ingCierresC;
         const gasC  = totalGastos(periodoComparar || "");
         const utilC = ingC - gasC;
 
@@ -406,20 +410,20 @@ export default function Financiero() {
 
               {/* Ingresos */}
               <Row label="INGRESOS" val={ing} bold color={B.success} delta={ingC ? (ing - ingC) / (ingC || 1) : null} />
-              {cierresDePeriodo(periodoActual).length === 0
-                ? <div style={{ padding: "8px 20px 8px 36px", fontSize: 12, color: "rgba(255,255,255,0.3)" }}>Sin cierres de caja registrados</div>
-                : (() => {
-                    const AREA_LABEL = { ayb: "Alimentos y Bebidas", pasadias: "Pasadías", after_island: "After Island", otros: "Otros" };
-                    const byArea = {};
-                    cierresDePeriodo(periodoActual).forEach(c => {
-                      const k = c.area || "otros";
-                      byArea[k] = (byArea[k] || 0) + (c.total_ventas || c.total_general || 0);
-                    });
-                    return Object.entries(byArea).map(([area, val]) => (
-                      <Row key={area} label={AREA_LABEL[area] || area} val={val} sub />
-                    ));
-                  })()
-              }
+              {ingPasadias > 0 && <Row label="Pasadías" val={ingPasadias} sub />}
+              {(() => {
+                const AREA_LABEL = { ayb: "Alimentos y Bebidas", pasadias: "Pasadías (Caja)", after_island: "After Island", otros: "Otros" };
+                const byArea = {};
+                cierresDePeriodo(periodoActual).forEach(c => {
+                  const k = c.area || "otros";
+                  byArea[k] = (byArea[k] || 0) + (c.total_ventas || c.total_general || 0);
+                });
+                const entries = Object.entries(byArea);
+                if (entries.length === 0) return null;
+                return entries.map(([area, val]) => (
+                  <Row key={area} label={AREA_LABEL[area] || area} val={val} sub />
+                ));
+              })()}
 
               {/* Gastos */}
               <div style={{ height: 1, background: B.navyLight, margin: "4px 0" }} />
