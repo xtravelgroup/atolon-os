@@ -58,8 +58,8 @@ function StatusBadge({ estado }) {
   );
 }
 
-function DepartureCard({ salida, paxCount }) {
-  const cap = salida.capacidad_total || 30;
+function DepartureCard({ salida, paxCount, extraCap = 0 }) {
+  const cap = (salida.capacidad_total || 30) + extraCap;
   const pct = paxCount / cap;
   const full = pct >= 1;
   const almostFull = pct >= 0.75;
@@ -1907,10 +1907,12 @@ export default function Reservas() {
               const abiertas = fechaBoard ? getSalidasAbiertas(fechaBoard) : [];
               // also include salidas not "open" but that have actual reservations
               const conReservas = salidas.filter(s => s.activo && (paxMap[s.id] || 0) > 0 && !abiertas.find(a => a.id === s.id));
-              return [...abiertas, ...conReservas].sort((a, b) => a.hora.localeCompare(b.hora));
-            })().map(s => (
-              <DepartureCard key={s.id} salida={s} paxCount={paxMap[s.id] || 0} />
-            ))}
+              const dayOvr = fechaBoard ? (overridesMap[fechaBoard] || {}) : {};
+              return [...abiertas, ...conReservas].sort((a, b) => a.hora.localeCompare(b.hora)).map(s => {
+                const extraCap = (dayOvr[s.id]?.extra_embarcaciones || []).reduce((sum, e) => sum + (e.capacidad || 0), 0);
+                return <DepartureCard key={s.id} salida={s} paxCount={paxMap[s.id] || 0} extraCap={extraCap} />;
+              });
+            })()}
           </div>
         </div>
       )}
