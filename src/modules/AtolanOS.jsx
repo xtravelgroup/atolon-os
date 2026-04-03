@@ -390,7 +390,6 @@ export default function AtolanOS({ activeModule = "dashboard", onNavigate, modul
 
           {/* Groups */}
           {NAV_GROUPS.map(group => {
-            const isOpen = openGroups[group.key];
             const hasActive = group.items.some(i => activeModule === (MODULE_KEY_MAP[i.key] || i.key));
             return (
               <div key={group.key} style={{ marginBottom: 4 }}>
