@@ -1604,6 +1604,7 @@ export default function Reservas() {
   const [cierres,        setCierres]        = useState([]);
   const [embarcaciones,  setEmbarcaciones]  = useState([]);
   const [overridesMap,   setOverridesMap]   = useState({});
+  const [cobradoHoy,     setCobradoHoy]     = useState(0);
   const [loading, setLoading]       = useState(true);
   const [tab,     setTab]           = useState("reservas");
   const [tabDia,  setTabDia]        = useState("hoy");
@@ -1627,7 +1628,7 @@ export default function Reservas() {
       .eq("estado", "pendiente_pago")
       .lt("created_at", expireThreshold);
 
-    const [resHoy, resManana, salR, aliR, cierreR, embR, ovrR, empR, pasR] = await Promise.all([
+    const [resHoy, resManana, salR, aliR, cierreR, embR, ovrR, empR, pasR, cobR] = await Promise.all([
       supabase.from("reservas").select("*").eq("fecha", today).order("salida_id"),
       supabase.from("reservas").select("*").eq("fecha", tomorrow).order("salida_id"),
       supabase.from("salidas").select("*").order("orden"),
@@ -1637,11 +1638,13 @@ export default function Reservas() {
       supabase.from("salidas_override").select("*").in("fecha", [today, tomorrow]),
       supabase.from("usuarios").select("id, nombre, rol_id").in("rol_id", ["ventas", "gerente_ventas"]).order("nombre"),
       supabase.from("pasadias").select("id, nombre, precio").eq("activo", true).order("orden"),
+      supabase.from("reservas").select("abono").eq("fecha_pago", today).neq("estado", "cancelado"),
     ]);
     if (resHoy.data)    setReservasHoy(resHoy.data.map(mapRow));
     if (resManana.data) setReservasManana(resManana.data.map(mapRow));
     if (empR.data && empR.data.length > 0) setVendedores(["Sin asignar", ...(empR.data.map(e => e.nombre))]);
     if (pasR.data && pasR.data.length > 0) setPasadias(pasR.data.map(p => ({ tipo: p.nombre, precio: p.precio })));
+    if (cobR.data) setCobradoHoy((cobR.data).reduce((s, r) => s + (r.abono || 0), 0));
     if (salR.data)      setSalidas(salR.data);
     if (aliR.data)      setAliados(aliR.data);
     if (cierreR.data)   setCierres(cierreR.data);
@@ -1902,9 +1905,9 @@ export default function Reservas() {
       {/* ── summary kpis ── */}
       <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(3, 1fr)", gap: isMobile ? 8 : 14, marginBottom: isMobile ? 16 : 24 }}>
         {[
-          { label: "Total Pax hoy",   value: totalPax,           unit: "personas",  color: B.sky  },
-          { label: "Total abonado",   value: COP(totalAbono),    unit: "",          color: B.success },
-          { label: "Venta total",     value: COP(totalVenta),    unit: "",          color: B.sand },
+          { label: "Total Pax hoy",   value: totalPax,              unit: "personas",  color: B.sky  },
+          { label: "Cobrado hoy",     value: COP(cobradoHoy),       unit: "fecha pago = hoy", color: B.success },
+          { label: "Venta total",     value: COP(totalVenta),       unit: "servicio hoy",      color: B.sand },
         ].map(k => (
           <div key={k.label} style={{ ...cardStyle, padding: "16px 20px" }}>
             <div style={{ fontSize: 12, color: B.sand, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.6 }}>{k.label}</div>

@@ -111,7 +111,7 @@ export default function Analitica() {
       {/* Header */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 28, flexWrap: "wrap", gap: 12 }}>
         <div>
-          <h1 style={{ margin: 0, fontSize: 24, fontWeight: 800, color: "#fff" }}>📊 AtolanTrack</h1>
+          <h1 style={{ margin: 0, fontSize: 24, fontWeight: 800, color: "#fff" }}>📊 AtolonTrack</h1>
           <div style={{ fontSize: 13, color: B.muted, marginTop: 4 }}>Analítica de conversión en tiempo real</div>
         </div>
         <div style={{ display: "flex", gap: 8 }}>
@@ -193,7 +193,7 @@ export default function Analitica() {
       </div>
 
       <div style={{ marginTop: 16, fontSize: 11, color: B.muted, textAlign: "center" }}>
-        AtolanTrack v1.0 · Datos actualizados en tiempo real desde Supabase
+        AtolonTrack v1.0 · Datos actualizados en tiempo real desde Supabase
       </div>
     </div>
   );

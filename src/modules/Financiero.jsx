@@ -89,10 +89,23 @@ export default function Financiero() {
       .sort((a, b) => b.val - a.val);
   };
 
+  const normForma = (f) => {
+    if (!f) return "Sin registrar";
+    const s = f.trim().toLowerCase();
+    if (s === "wompi")            return "Wompi";
+    if (s === "web" || s === "web booking") return "Web";
+    if (s === "transferencia")    return "Transferencia";
+    if (s === "efectivo")         return "Efectivo";
+    if (s === "sky" || s === "sky bookings") return "SKY";
+    if (s === "cxc")              return "CXC";
+    if (s === "link_pago" || s === "link de pago" || s === "enviar link de pago") return "Link de Pago";
+    return f.trim();
+  };
+
   const ingresosPorPago = (mes) => {
     const groups = {};
     resDeMes(mes).forEach(r => {
-      const p = r.forma_pago || "Sin registrar";
+      const p = normForma(r.forma_pago);
       groups[p] = (groups[p] || 0) + (r.total || 0);
     });
     return Object.entries(groups)
@@ -282,7 +295,7 @@ export default function Financiero() {
             </div>
           ) : pagosA.map((r, i) => {
             const pctOfTotal = totalA > 0 ? (r.val / totalA) * 100 : 0;
-            const count = resA.filter(res => (res.forma_pago || "Sin registrar") === r.cat).length;
+            const count = resA.filter(res => normForma(res.forma_pago) === r.cat).length;
             return (
               <div key={r.cat} style={{
                 padding: "11px 20px",
