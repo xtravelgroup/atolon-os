@@ -411,8 +411,13 @@ export default function CierreCaja() {
                   placeholder="Nombre del cajero" style={{ ...IS, background: userNombre ? B.navyLight : B.navy }} />
               </div>
               <div>
-                <label style={LS}>Caja #</label>
-                <input value={numCaja} onChange={e => setNumCaja(e.target.value)} placeholder="Ej: Caja 1" style={IS} />
+                <label style={LS}>Caja</label>
+                <select value={numCaja} onChange={e => setNumCaja(e.target.value)} style={IS}>
+                  <option value="">— Seleccionar —</option>
+                  {["Bar", "Bar Playa", "Room Service", "Eventos"].map(c => (
+                    <option key={c} value={c}>{c}</option>
+                  ))}
+                </select>
               </div>
               <div>
                 <label style={LS}>No. Comprobante</label>
