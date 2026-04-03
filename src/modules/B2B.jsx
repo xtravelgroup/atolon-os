@@ -1407,7 +1407,11 @@ function IncentivosAgencia({ aliadoId }) {
       .select("*")
       .or(`aliado_id.is.null,aliado_id.eq.${aliadoId}`)
       .order("fecha_fin", { ascending: true });
-    const inc = data || [];
+    // Filter out global incentivos that have been excluded for this agency
+    const inc = (data || []).filter(i => {
+      if (i.aliado_id !== null) return true; // agency-specific: always show
+      return !(i.excluidos_aliados || []).includes(aliadoId); // global: hide if excluded
+    });
     setIncentivos(inc);
 
     const prog = {};
@@ -1457,6 +1461,14 @@ function IncentivosAgencia({ aliadoId }) {
     fetchAll();
   };
 
+  const quitarGlobal = async (inc) => {
+    // Add this agency to the exclusion list of the global incentivo
+    const actual = inc.excluidos_aliados || [];
+    if (actual.includes(aliadoId)) return;
+    await supabase.from("b2b_incentivos").update({ excluidos_aliados: [...actual, aliadoId] }).eq("id", inc.id);
+    fetchAll();
+  };
+
   const fmtMeta = (tipo, val) => tipo === "meta_revenue" ? COP(val) : Number(val).toLocaleString();
   const hoy = new Date().toISOString().slice(0, 10);
 
@@ -1501,7 +1513,11 @@ function IncentivosAgencia({ aliadoId }) {
                   <div style={{ fontSize: 10, color: "rgba(255,255,255,0.35)" }}>{fmtMeta(inc.tipo, p.actual)} / {fmtMeta(inc.tipo, inc.meta_valor)}</div>
                 </div>
               )}
-              {!esGlobal && (
+              {esGlobal ? (
+                <button onClick={() => quitarGlobal(inc)} style={{ background: B.danger + "22", color: B.danger, border: `1px solid ${B.danger}44`, borderRadius: 6, padding: "4px 10px", fontSize: 11, cursor: "pointer", fontWeight: 600 }}>
+                  ✕ Quitar
+                </button>
+              ) : (
                 <button onClick={() => toggleActivo(inc.id, inc.activo)} style={{ background: inc.activo ? B.danger + "22" : B.success + "22", color: inc.activo ? B.danger : B.success, border: "none", borderRadius: 6, padding: "4px 10px", fontSize: 11, cursor: "pointer" }}>
                   {inc.activo ? "Desactivar" : "Activar"}
                 </button>
@@ -1736,6 +1752,160 @@ function PuntosAgencia({ aliado }) {
             </div>
           )}
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════
+// TAB CRÉDITO / CXC
+// ═══════════════════════════════════════════════
+function CreditoAgencia({ aliado }) {
+  const [reservasCXC, setReservasCXC] = useState([]);
+  const [loading, setLoading]         = useState(true);
+  const [pagandoId, setPagandoId]     = useState(null);
+  const [pagoMonto, setPagoMonto]     = useState("");
+  const [pagoFecha, setPagoFecha]     = useState(new Date().toISOString().slice(0, 10));
+  const [saving, setSaving]           = useState(false);
+  const [msg, setMsg]                 = useState(null);
+
+  const fetchCXC = useCallback(async () => {
+    setLoading(true);
+    const { data } = await supabase
+      .from("reservas")
+      .select("id, nombre, fecha, tipo, pax, total, abono, saldo, estado, created_at")
+      .eq("aliado_id", aliado.id)
+      .eq("forma_pago", "CXC")
+      .neq("estado", "cancelado")
+      .order("fecha", { ascending: false });
+    setReservasCXC(data || []);
+    setLoading(false);
+  }, [aliado.id]);
+
+  useEffect(() => { fetchCXC(); }, [fetchCXC]);
+
+  const cupo     = aliado.cupo_credito || 0;
+  const usado    = reservasCXC.reduce((s, r) => s + (r.saldo || 0), 0);
+  const disponible = Math.max(0, cupo - usado);
+  const pctUsado = cupo > 0 ? Math.min(100, (usado / cupo) * 100) : 0;
+
+  const registrarPago = async (res) => {
+    const monto = parseFloat(pagoMonto.replace(/[^0-9.]/g, ""));
+    if (!monto || monto <= 0) return;
+    setSaving(true);
+    const nuevoAbono = (res.abono || 0) + monto;
+    const nuevoSaldo = Math.max(0, (res.total || 0) - nuevoAbono);
+    const nuevoEstado = nuevoSaldo <= 0 ? "confirmado" : res.estado;
+    await supabase.from("reservas").update({
+      abono: nuevoAbono, saldo: nuevoSaldo, estado: nuevoEstado,
+      fecha_pago: pagoFecha,
+    }).eq("id", res.id);
+    setMsg(`✅ Pago de ${COP(monto)} registrado para ${res.nombre}`);
+    setPagandoId(null); setPagoMonto(""); setSaving(false);
+    fetchCXC();
+    setTimeout(() => setMsg(null), 4000);
+  };
+
+  if (loading) return <div style={{ color: "rgba(255,255,255,0.4)", padding: 40, textAlign: "center" }}>Cargando cuenta corriente...</div>;
+
+  const rowStyle = { display: "grid", gridTemplateColumns: "1fr 100px 110px 110px 110px 90px auto", gap: 8, alignItems: "center", padding: "12px 16px", borderBottom: `1px solid rgba(255,255,255,0.05)` };
+
+  return (
+    <div>
+      {msg && <div style={{ background: B.success + "22", border: `1px solid ${B.success}44`, borderRadius: 10, padding: "10px 16px", marginBottom: 16, fontSize: 13, color: B.success }}>{msg}</div>}
+
+      {/* Balance cards */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 14, marginBottom: 24 }}>
+        {[
+          { label: "Cupo Total", value: COP(cupo), color: "#fff" },
+          { label: "Saldo Pendiente", value: COP(usado), color: usado > cupo * 0.8 ? B.danger : B.sand },
+          { label: "Disponible", value: COP(disponible), color: disponible > 0 ? B.success : B.danger },
+        ].map(c => (
+          <div key={c.label} style={{ background: B.navyMid, borderRadius: 12, padding: "18px 22px", border: `1px solid rgba(255,255,255,0.07)` }}>
+            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 }}>{c.label}</div>
+            <div style={{ fontSize: 24, fontWeight: 800, color: c.color, fontFamily: "'Barlow Condensed', sans-serif" }}>{c.value}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Barra de uso */}
+      <div style={{ background: B.navyMid, borderRadius: 12, padding: "16px 22px", marginBottom: 20, border: `1px solid rgba(255,255,255,0.07)` }}>
+        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8, fontSize: 12, color: "rgba(255,255,255,0.5)" }}>
+          <span>Uso del cupo</span>
+          <span>{pctUsado.toFixed(1)}%</span>
+        </div>
+        <div style={{ height: 10, background: "rgba(255,255,255,0.08)", borderRadius: 5, overflow: "hidden" }}>
+          <div style={{ height: "100%", width: `${pctUsado}%`, background: pctUsado > 80 ? B.danger : pctUsado > 60 ? B.sand : B.success, borderRadius: 5, transition: "width 0.5s" }} />
+        </div>
+      </div>
+
+      {/* Tabla reservas CXC */}
+      <div style={{ background: B.navyMid, borderRadius: 12, border: `1px solid rgba(255,255,255,0.07)`, overflow: "hidden" }}>
+        <div style={{ padding: "16px 20px", borderBottom: `1px solid rgba(255,255,255,0.07)` }}>
+          <h3 style={{ margin: 0, fontSize: 15, fontWeight: 700 }}>Reservas en Cuenta Corriente ({reservasCXC.length})</h3>
+        </div>
+
+        {/* Header */}
+        <div style={{ ...rowStyle, background: "rgba(255,255,255,0.03)", borderBottom: `1px solid rgba(255,255,255,0.08)`, fontWeight: 700, fontSize: 11, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+          <span>Cliente / Tipo</span>
+          <span>Fecha</span>
+          <span style={{ textAlign: "right" }}>Total</span>
+          <span style={{ textAlign: "right" }}>Abonado</span>
+          <span style={{ textAlign: "right" }}>Saldo</span>
+          <span>Estado</span>
+          <span></span>
+        </div>
+
+        {reservasCXC.length === 0 && (
+          <div style={{ padding: "32px 20px", textAlign: "center", color: "rgba(255,255,255,0.3)", fontSize: 13 }}>
+            No hay reservas CXC activas
+          </div>
+        )}
+
+        {reservasCXC.map(r => (
+          <div key={r.id}>
+            <div style={rowStyle}>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 600 }}>{r.nombre}</div>
+                <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)" }}>{r.id} · {r.tipo} · {r.pax} pax</div>
+              </div>
+              <span style={{ fontSize: 12, color: "rgba(255,255,255,0.6)" }}>{r.fecha}</span>
+              <span style={{ textAlign: "right", fontSize: 13, fontWeight: 600 }}>{COP(r.total)}</span>
+              <span style={{ textAlign: "right", fontSize: 13, color: (r.abono || 0) > 0 ? B.success : "rgba(255,255,255,0.3)" }}>{COP(r.abono || 0)}</span>
+              <span style={{ textAlign: "right", fontSize: 13, fontWeight: 700, color: (r.saldo || 0) > 0 ? B.sand : B.success }}>{COP(r.saldo || 0)}</span>
+              <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 12, background: r.estado === "confirmado" ? B.success + "22" : B.sand + "22", color: r.estado === "confirmado" ? B.success : B.sand }}>{r.estado}</span>
+              {(r.saldo || 0) > 0 && (
+                <button onClick={() => { setPagandoId(pagandoId === r.id ? null : r.id); setPagoMonto(""); }}
+                  style={{ background: B.sky + "22", color: B.sky, border: `1px solid ${B.sky}44`, borderRadius: 6, padding: "4px 10px", fontSize: 11, cursor: "pointer", fontWeight: 600, whiteSpace: "nowrap" }}>
+                  💰 Registrar pago
+                </button>
+              )}
+            </div>
+
+            {/* Pago inline */}
+            {pagandoId === r.id && (
+              <div style={{ background: B.navyLight + "44", margin: "0 16px 12px", borderRadius: 10, padding: 14, display: "flex", gap: 10, alignItems: "flex-end" }}>
+                <div style={{ flex: 1 }}>
+                  <label style={{ ...LS, fontSize: 10 }}>Monto recibido</label>
+                  <input type="number" value={pagoMonto} onChange={e => setPagoMonto(e.target.value)}
+                    placeholder={`Máx ${COP(r.saldo)}`} style={{ ...IS, fontSize: 13 }} />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <label style={{ ...LS, fontSize: 10 }}>Fecha del pago</label>
+                  <input type="date" value={pagoFecha} onChange={e => setPagoFecha(e.target.value)} style={{ ...IS, fontSize: 13 }} />
+                </div>
+                <button onClick={() => registrarPago(r)} disabled={saving}
+                  style={{ background: B.success, color: "#fff", border: "none", borderRadius: 8, padding: "9px 18px", fontSize: 13, fontWeight: 700, cursor: saving ? "default" : "pointer", opacity: saving ? 0.6 : 1 }}>
+                  {saving ? "..." : "Guardar"}
+                </button>
+                <button onClick={() => setPagandoId(null)}
+                  style={{ background: "none", border: `1px solid ${B.navyLight}`, borderRadius: 8, padding: "9px 14px", color: "rgba(255,255,255,0.5)", fontSize: 13, cursor: "pointer" }}>
+                  Cancelar
+                </button>
+              </div>
+            )}
+          </div>
+        ))}
       </div>
     </div>
   );
@@ -2032,7 +2202,7 @@ function FichaAliado({ aliado, onBack, onRefresh }) {
 
       {/* Tabs */}
       <div style={{ display: "flex", gap: 4, marginBottom: 20 }}>
-        {[["general", "Ficha General"], ["convenios", "Convenios & Tarifas"], ["historial", "Historial Reservas"], ["eventos", "🎪 Eventos/Grupos"], ["visitas", "Visitas"], ["incentivos", "🎯 Incentivos"], ["puntos", "🏆 AtoCoins"]].map(([k, l]) => (
+        {[["general", "Ficha General"], ["convenios", "Convenios & Tarifas"], ["historial", "Historial Reservas"], ["eventos", "🎪 Eventos/Grupos"], ["visitas", "Visitas"], ["incentivos", "🎯 Incentivos"], ["puntos", "🏆 AtoCoins"], ...(aliado.cupo_credito > 0 ? [["credito", "💳 Crédito"]] : [])].map(([k, l]) => (
           <button key={k} onClick={() => setTab(k)} style={{
             padding: "9px 20px", borderRadius: 8, border: "none", cursor: "pointer", fontSize: 13, fontWeight: 600,
             background: tab === k ? B.sky : B.navyMid, color: tab === k ? B.navy : B.sand,
@@ -2515,6 +2685,7 @@ function FichaAliado({ aliado, onBack, onRefresh }) {
       {tab === "visitas"    && <VisitasAgencia aliadoId={aliado.id} aliado={aliado} />}
       {tab === "incentivos" && <IncentivosAgencia aliadoId={aliado.id} />}
       {tab === "puntos"     && <PuntosAgencia aliado={aliado} />}
+      {tab === "credito"    && <CreditoAgencia aliado={aliado} />}
 
       {showLocForm && <LocacionModal onClose={() => setShowLocForm(false)} onSave={addLocacion} />}
       {showPromesaModal && (

@@ -90,7 +90,7 @@ export default function Financiero() {
   };
 
   const normForma = (f) => {
-    if (!f) return "Sin registrar";
+    if (!f) return "Pago Pendiente";
     const s = f.trim().toLowerCase();
     if (s === "wompi")            return "Wompi";
     if (s === "web" || s === "web booking") return "Web";

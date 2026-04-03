@@ -3,8 +3,9 @@
   "configurations": [
     {
       "name": "atolon-os",
-      "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev"],
+      "runtimeExecutable": "/opt/homebrew/bin/node",
+      "runtimeArgs": ["/opt/homebrew/lib/node_modules/npm/bin/npm-cli.js", "run", "dev", "--", "--host"],
+      "cwd": "/Users/erickern/Desktop/atolon-os",
       "port": 5173
     }
   ]

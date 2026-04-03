@@ -1628,7 +1628,10 @@ export default function Reservas() {
       .eq("estado", "pendiente_pago")
       .lt("created_at", expireThreshold);
 
-    const [resHoy, resManana, salR, aliR, cierreR, embR, ovrR, empR, pasR, cobR] = await Promise.all([
+    const todayStart = `${today}T00:00:00.000Z`;
+    const tomorrowStart = `${tomorrow}T00:00:00.000Z`;
+
+    const [resHoy, resManana, salR, aliR, cierreR, embR, ovrR, empR, pasR, cobR, cobR2] = await Promise.all([
       supabase.from("reservas").select("*").eq("fecha", today).order("salida_id"),
       supabase.from("reservas").select("*").eq("fecha", tomorrow).order("salida_id"),
       supabase.from("salidas").select("*").order("orden"),
@@ -1638,13 +1641,17 @@ export default function Reservas() {
       supabase.from("salidas_override").select("*").in("fecha", [today, tomorrow]),
       supabase.from("usuarios").select("id, nombre, rol_id").in("rol_id", ["ventas", "gerente_ventas"]).order("nombre"),
       supabase.from("pasadias").select("id, nombre, precio").eq("activo", true).order("orden"),
+      // Pagos con fecha_pago = hoy (registrados manualmente)
       supabase.from("reservas").select("abono").eq("fecha_pago", today).neq("estado", "cancelado"),
+      // Pagos sin fecha_pago pero creados hoy con abono > 0 (web/Wompi automáticos)
+      supabase.from("reservas").select("abono").is("fecha_pago", null).gte("created_at", todayStart).lt("created_at", tomorrowStart).gt("abono", 0).neq("estado", "cancelado"),
     ]);
     if (resHoy.data)    setReservasHoy(resHoy.data.map(mapRow));
     if (resManana.data) setReservasManana(resManana.data.map(mapRow));
     if (empR.data && empR.data.length > 0) setVendedores(["Sin asignar", ...(empR.data.map(e => e.nombre))]);
     if (pasR.data && pasR.data.length > 0) setPasadias(pasR.data.map(p => ({ tipo: p.nombre, precio: p.precio })));
-    if (cobR.data) setCobradoHoy((cobR.data).reduce((s, r) => s + (r.abono || 0), 0));
+    const totalCobrado = [(cobR.data || []), (cobR2.data || [])].flat().reduce((s, r) => s + (r.abono || 0), 0);
+    setCobradoHoy(totalCobrado);
     if (salR.data)      setSalidas(salR.data);
     if (aliR.data)      setAliados(aliR.data);
     if (cierreR.data)   setCierres(cierreR.data);
