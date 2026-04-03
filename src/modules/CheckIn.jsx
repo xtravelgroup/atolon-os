@@ -397,7 +397,7 @@ export default function CheckIn() {
       supabase.from("reservas").select("*").eq("fecha", fecha).neq("estado", "cancelado").order("nombre"),
       supabase.from("salida_despachos").select("*").eq("fecha", fecha),
       supabase.from("embarcaciones").select("*").order("nombre"),
-      supabase.from("salidas_override").select("*").eq("fecha", fecha),
+      supabase.from("salidas_override").select("*").gte("fecha", fecha).lt("fecha", fecha + "T23:59:59"),
     ]);
     const res = resR.data || [];
     // Solo salidas con pasajeros ese día
@@ -691,11 +691,16 @@ export default function CheckIn() {
                           )}
                         </div>
                         {res.contacto && <div style={{ fontSize: 11, color: "rgba(255,255,255,0.3)", marginTop: 2 }}>{res.contacto}</div>}
-                        {/* Embarcación selector */}
-                        {(salida.embarcaciones || []).length > 0 && (() => {
-                          const embsDeEstaSalida = (salida.embarcaciones || [])
+                        {/* Embarcación selector — base + extras del calendario */}
+                        {(() => {
+                          const override = overrides.find(o => o.salida_id === salida.id);
+                          const baseEmbs = (salida.embarcaciones || [])
                             .map(eid => embarcaciones.find(e => e.id === eid))
                             .filter(Boolean);
+                          const extraEmbs = (override?.extra_embarcaciones || [])
+                            .filter(e => !baseEmbs.some(b => b.id === e.id));
+                          const todasEmbs = [...baseEmbs, ...extraEmbs];
+                          if (todasEmbs.length === 0) return null;
                           return (
                             <div style={{ marginTop: 6 }}>
                               <select
@@ -710,7 +715,7 @@ export default function CheckIn() {
                                   cursor: "pointer", outline: "none",
                                 }}>
                                 <option value="">🚢 Sin embarcación</option>
-                                {embsDeEstaSalida.map(e => (
+                                {todasEmbs.map(e => (
                                   <option key={e.id} value={e.nombre}>{e.nombre}</option>
                                 ))}
                               </select>
