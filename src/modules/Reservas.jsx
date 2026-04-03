@@ -1707,11 +1707,13 @@ export default function Reservas() {
     const pm = paxMapOverride || paxMap; // pax counts for cascade check
     const activas = salidas.filter(s => s.activo);
     const sorted = [...activas].sort((a, b) => a.hora.localeCompare(b.hora));
-    // Para hoy: calcular minutos restantes hasta cada salida
+    // Para hoy: calcular minutos actuales en hora Colombia (UTC-5)
     const esHoy = fecha === today;
-    const ahoraMin = esHoy
-      ? new Date().getHours() * 60 + new Date().getMinutes()
-      : null;
+    const ahoraMin = esHoy ? (() => {
+      const now = new Date();
+      const bog = new Date(now.toLocaleString("en-US", { timeZone: "America/Bogota" }));
+      return bog.getHours() * 60 + bog.getMinutes();
+    })() : null;
     return sorted.filter((s, idx) => {
       if (!s.activo) return false;
       // Corte de 30 min: si es hoy y la salida es en menos de 30 min (o ya pasó), cerrar
