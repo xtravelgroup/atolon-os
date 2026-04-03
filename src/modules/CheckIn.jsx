@@ -947,6 +947,11 @@ export default function CheckIn() {
                         <div style={{ fontSize: 16, fontWeight: 700, color: nameColor, marginBottom: 2 }}>
                           {res.nombre}
                         </div>
+                        {(res.saldo || 0) > 0 && (
+                          <div style={{ display: "inline-flex", alignItems: "center", gap: 5, background: "#FF4D4D18", border: "1px solid #FF4D4D55", borderRadius: 6, padding: "2px 8px", marginBottom: 5, fontSize: 11, color: "#FF6B6B", fontWeight: 700 }}>
+                            💳 Saldo: {COP(res.saldo)}
+                          </div>
+                        )}
                         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", fontSize: 12, color: "rgba(255,255,255,0.5)" }}>
                           <span style={{ fontWeight: 700, color: B.sand, fontSize: 13 }}>
                             {res.pax} pax
