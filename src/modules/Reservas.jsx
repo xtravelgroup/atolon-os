@@ -118,6 +118,7 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
   const [cancelNombre, setCancelNombre]       = useState(r0.nombre || "");
   const [newFecha, setNewFecha]               = useState(r0.fecha  || "");
   const [creditDestB2B, setCreditDestB2B]     = useState(false); // true = crédito va al aliado B2B
+  const [retractoMode, setRetractoMode]       = useState("retracto"); // "retracto" | "credito" when in retracto period
   const [form, setForm]     = useState({
     nombre:    r0.nombre    || "",
     contacto:  r0.contacto  || "",
@@ -274,12 +275,14 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
     if (!supabase) return;
     setSaving(true);
     const pol = calcPolitica();
-    const nota = `Cancelado el ${new Date().toLocaleString("es-CO")} — ${pol.label}`;
+    // During retracto, user can choose dinero (retracto) or credito
+    const efectiveRefundType = pol.tipo === "retracto" && retractoMode === "credito" ? "credito" : pol.refundType;
+    const nota = `Cancelado el ${new Date().toLocaleString("es-CO")} — ${pol.label}${pol.tipo === "retracto" && retractoMode === "credito" ? " (cliente optó por crédito)" : ""}`;
     await supabase.from("reservas").update({
       estado: "cancelado",
       notas: r0.notas ? `${r0.notas}\n${nota}` : nota,
     }).eq("id", r0.id);
-    if (pol.refundType === "credito" && pol.monto > 0) {
+    if (efectiveRefundType === "credito" && pol.monto > 0) {
       const vigencia = new Date();
       vigencia.setFullYear(vigencia.getFullYear() + 1);
       const esB2B = creditDestB2B && !!aliado;
@@ -717,8 +720,27 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
               )}
             </div>
 
+            {/* Retracto: ofrecer opción de crédito en lugar de devolución */}
+            {pol.tipo === "retracto" && (
+              <div style={{ marginBottom: 16 }}>
+                <label style={{ fontSize: 11, color: B.sand, display: "block", marginBottom: 8, textTransform: "uppercase" }}>¿Cómo desea el reembolso?</label>
+                <div style={{ display: "flex", gap: 8 }}>
+                  {[
+                    { key: "retracto", label: "💸 Devolución de dinero", desc: "Retracto Ley 1480" },
+                    { key: "credito",  label: "🎟️ Crédito a favor",       desc: "100% vigencia 12 meses" },
+                  ].map(opt => (
+                    <button key={opt.key} onClick={() => setRetractoMode(opt.key)}
+                      style={{ flex: 1, padding: "10px 8px", borderRadius: 8, border: `1.5px solid ${retractoMode === opt.key ? B.success : B.navyLight}`, background: retractoMode === opt.key ? B.success + "22" : "transparent", color: retractoMode === opt.key ? B.success : "rgba(255,255,255,0.5)", fontSize: 12, fontWeight: 700, cursor: "pointer", textAlign: "center" }}>
+                      <div>{opt.label}</div>
+                      <div style={{ fontSize: 10, fontWeight: 400, marginTop: 2, opacity: 0.7 }}>{opt.desc}</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* Destino del crédito — cliente o B2B */}
-            {pol.refundType === "credito" && pol.monto > 0 && aliado && (
+            {(pol.refundType === "credito" || (pol.tipo === "retracto" && retractoMode === "credito")) && pol.monto > 0 && aliado && (
               <div style={{ marginBottom: 16 }}>
                 <label style={{ fontSize: 11, color: B.sand, display: "block", marginBottom: 8, textTransform: "uppercase" }}>Destino del crédito</label>
                 <div style={{ display: "flex", gap: 8 }}>
@@ -736,7 +758,7 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
             )}
 
             {/* Nombre para el crédito */}
-            {pol.refundType === "credito" && pol.monto > 0 && (
+            {(pol.refundType === "credito" || (pol.tipo === "retracto" && retractoMode === "credito")) && pol.monto > 0 && (
               <div style={{ marginBottom: 20 }}>
                 <label style={{ fontSize: 11, color: B.sand, display: "block", marginBottom: 6, textTransform: "uppercase" }}>
                   {creditDestB2B && aliado ? "Agencia B2B" : "Crédito a nombre de"}

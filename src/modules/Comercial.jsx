@@ -12,8 +12,8 @@ const ETAPAS = ["Nuevo", "Contactado", "Cotizado", "Cerrado Ganado", "Perdido"];
 
 // ─── Vendor stats derived from leads ─────────────────────────────────────────
 
-function buildVendorStats(leads) {
-  return VENDEDORES.map(v => {
+function buildVendorStats(leads, list = VENDEDORES) {
+  return list.map(v => {
     const vLeads = leads.filter(l => l.vendedor === v);
     const cerrados = vLeads.filter(l => l.etapa === "Cerrado Ganado");
     const revenue = cerrados.reduce((s, l) => s + l.valorEstimado, 0);
@@ -334,11 +334,28 @@ function Modal({ open, onClose, onSubmit }) {
 function LeadDetail({ lead, onClose, onUpdateEtapa }) {
   if (!lead) return null;
   const accent = ETAPA_COLORS[lead.etapa]?.accent || B.sky;
+  const [pendingEtapa, setPendingEtapa] = useState(null); // "Cerrado Ganado" pending confirmation
+  const [fechaPago, setFechaPago]       = useState(new Date().toLocaleDateString("en-CA"));
+
+  const IS = { background: "#0D1B3E", border: `1px solid ${B.navyLight}`, borderRadius: 8, color: B.white, padding: "8px 12px", fontSize: 14, width: "100%", boxSizing: "border-box", outline: "none" };
+
+  const handleEtapaClick = (e) => {
+    if (e === "Cerrado Ganado") { setPendingEtapa(e); return; }
+    onUpdateEtapa(lead.id, e, null);
+    onClose();
+  };
+
+  const confirmCerrado = () => {
+    if (!fechaPago) return;
+    onUpdateEtapa(lead.id, "Cerrado Ganado", fechaPago);
+    onClose();
+  };
+
   return (
     <div style={{
       position: "fixed", inset: 0, background: "#000A", zIndex: 1000,
       display: "flex", alignItems: "center", justifyContent: "center",
-    }} onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
+    }} onClick={e => { if (e.target === e.currentTarget) { setPendingEtapa(null); onClose(); } }}>
       <div style={{
         background: B.navyMid, borderRadius: 16, padding: 28, width: 440, maxWidth: "95vw",
         boxShadow: "0 20px 60px #0008",
@@ -361,6 +378,7 @@ function LeadDetail({ lead, onClose, onUpdateEtapa }) {
             ["Días en etapa", lead.diasEtapa],
             ["Próxima Acción", lead.proximaAccion],
             ["Etapa actual", lead.etapa],
+            ...(lead.fechaPago ? [["Fecha de pago", lead.fechaPago]] : []),
           ].map(([k, v]) => (
             <div key={k}>
               <div style={{ fontSize: 10, color: B.sand, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 3 }}>{k}</div>
@@ -369,25 +387,40 @@ function LeadDetail({ lead, onClose, onUpdateEtapa }) {
           ))}
         </div>
 
-        <div>
-          <div style={{ fontSize: 11, color: B.sand, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 }}>Mover a etapa</div>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-            {ETAPAS.map(e => (
-              <button
-                key={e}
-                onClick={() => { onUpdateEtapa(lead.id, e); onClose(); }}
-                style={{
-                  padding: "6px 12px", borderRadius: 20, fontSize: 11, fontWeight: 600,
-                  cursor: "pointer",
-                  background: e === lead.etapa ? (ETAPA_COLORS[e]?.accent || B.sky) : B.navyLight,
-                  color: e === lead.etapa ? B.navy : B.white,
-                  border: `1px solid ${e === lead.etapa ? (ETAPA_COLORS[e]?.accent || B.sky) : B.navyLight}`,
-                  transition: "all 0.15s",
-                }}
-              >{e}</button>
-            ))}
+        {/* Fecha de pago modal inline when moving to Cerrado Ganado */}
+        {pendingEtapa === "Cerrado Ganado" ? (
+          <div style={{ background: B.success + "18", border: `1px solid ${B.success}55`, borderRadius: 10, padding: 16, marginBottom: 4 }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: B.success, marginBottom: 12 }}>🏆 Cerrar como Ganado</div>
+            <div style={{ marginBottom: 12 }}>
+              <label style={{ fontSize: 11, color: B.sand, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", display: "block", marginBottom: 4 }}>Fecha de pago *</label>
+              <input type="date" value={fechaPago} onChange={e => setFechaPago(e.target.value)} style={IS} />
+            </div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button onClick={() => setPendingEtapa(null)} style={{ flex: 1, background: "none", border: `1px solid ${B.navyLight}`, borderRadius: 8, color: B.sand, padding: "8px", fontSize: 13, cursor: "pointer", fontWeight: 600 }}>Cancelar</button>
+              <button onClick={confirmCerrado} disabled={!fechaPago} style={{ flex: 2, background: B.success, border: "none", borderRadius: 8, color: B.navy, padding: "8px", fontSize: 13, cursor: "pointer", fontWeight: 700, opacity: !fechaPago ? 0.5 : 1 }}>✓ Confirmar cierre</button>
+            </div>
           </div>
-        </div>
+        ) : (
+          <div>
+            <div style={{ fontSize: 11, color: B.sand, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 }}>Mover a etapa</div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+              {ETAPAS.map(e => (
+                <button
+                  key={e}
+                  onClick={() => handleEtapaClick(e)}
+                  style={{
+                    padding: "6px 12px", borderRadius: 20, fontSize: 11, fontWeight: 600,
+                    cursor: "pointer",
+                    background: e === lead.etapa ? (ETAPA_COLORS[e]?.accent || B.sky) : B.navyLight,
+                    color: e === lead.etapa ? B.navy : B.white,
+                    border: `1px solid ${e === lead.etapa ? (ETAPA_COLORS[e]?.accent || B.sky) : B.navyLight}`,
+                    transition: "all 0.15s",
+                  }}
+                >{e}</button>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -397,12 +430,20 @@ function LeadDetail({ lead, onClose, onUpdateEtapa }) {
 
 export default function Comercial() {
   const [leads, setLeads] = useState([]);
+  const [vendedoresList, setVendedoresList] = useState(VENDEDORES);
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
   const [selectedLead, setSelectedLead] = useState(null);
   const [filterVendedor, setFilterVendedor] = useState("Todos");
   const [filterCanal, setFilterCanal] = useState("Todos");
   const [activeTab, setActiveTab] = useState("kanban");
+
+  // Load vendedores from empleados table
+  useEffect(() => {
+    if (!supabase) return;
+    supabase.from("empleados").select("nombre").eq("activo", true).order("nombre")
+      .then(({ data }) => { if (data?.length) setVendedoresList(data.map(e => e.nombre)); });
+  }, []);
 
   const fetchLeads = useCallback(async () => {
     if (!supabase) {
@@ -433,6 +474,7 @@ export default function Comercial() {
         notas: r.notas,
         etiquetas: r.etiquetas,
         perdidoRazon: r.perdido_razon,
+        fechaPago: r.fecha_pago || null,
       })));
     }
     setLoading(false);
@@ -457,16 +499,15 @@ export default function Comercial() {
     fetchLeads();
   }
 
-  async function updateEtapa(id, newStage) {
+  async function updateEtapa(id, newStage, fechaPago = null) {
     if (!supabase) return;
-    await supabase
-      .from("leads")
-      .update({ stage: newStage, ultimo_contacto: new Date().toLocaleDateString("en-CA") })
-      .eq("id", id);
+    const upd = { stage: newStage, ultimo_contacto: new Date().toLocaleDateString("en-CA") };
+    if (newStage === "Cerrado Ganado" && fechaPago) upd.fecha_pago = fechaPago;
+    await supabase.from("leads").update(upd).eq("id", id);
     fetchLeads();
   }
 
-  const vendorStats = buildVendorStats(leads);
+  const vendorStats = buildVendorStats(leads, vendedoresList);
 
   const selectStyle = {
     padding: "7px 12px", borderRadius: 8, background: B.navyLight,
@@ -533,7 +574,7 @@ export default function Comercial() {
           <span style={{ fontSize: 11, color: B.sand, textTransform: "uppercase", letterSpacing: "0.06em" }}>Filtrar por:</span>
           <select value={filterVendedor} onChange={e => setFilterVendedor(e.target.value)} style={selectStyle}>
             <option value="Todos">Todos los vendedores</option>
-            {VENDEDORES.map(v => <option key={v} value={v}>{v}</option>)}
+            {vendedoresList.map(v => <option key={v} value={v}>{v}</option>)}
           </select>
           <select value={filterCanal} onChange={e => setFilterCanal(e.target.value)} style={selectStyle}>
             <option value="Todos">Todos los canales</option>
