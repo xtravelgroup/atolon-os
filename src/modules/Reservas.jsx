@@ -11,7 +11,7 @@ const fmtHora = (ts) => {
 // ── helpers ──────────────────────────────────────────────────────────────────
 
 const CANALES   = ["Web", "WhatsApp", "B2B", "Teléfono", "Walk-in"];
-const VENDEDORES = ["Sin asignar", "Valentina Ríos", "Camilo Herrera", "Natalia Ospina", "Juan Estrada"]; // fallback; real list loaded from empleados
+const VENDEDORES = ["Sin asignar"]; // fallback; real list loaded from usuarios (ventas + gerente_ventas)
 const FORMAS_PAGO = ["Transferencia", "Efectivo", "Wompi", "SKY", "CXC", "Enviar Link de Pago"];
 
 const ESTADO_STYLE = {
@@ -1622,7 +1622,7 @@ export default function Reservas() {
       supabase.from("cierres").select("*").order("fecha"),
       supabase.from("embarcaciones").select("*").order("nombre"),
       supabase.from("salidas_override").select("*").in("fecha", [today, tomorrow]),
-      supabase.from("empleados").select("id, nombre, cargo").eq("activo", true).order("nombre"),
+      supabase.from("usuarios").select("id, nombre, rol_id").in("rol_id", ["ventas", "gerente_ventas"]).order("nombre"),
     ]);
     if (resHoy.data)    setReservasHoy(resHoy.data.map(mapRow));
     if (resManana.data) setReservasManana(resManana.data.map(mapRow));
