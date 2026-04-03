@@ -32,7 +32,7 @@ function paxPorSalida(reservas, salidas) {
 }
 
 const EMPTY_FORM = {
-  nombre: "", contacto: "", telefono: "", tipo: PASADIAS[0]?.tipo || "", pax_a: 1, pax_n: 0,
+  nombre: "", contacto: "", telefono: "", fecha: "", tipo: PASADIAS[0]?.tipo || "", pax_a: 1, pax_n: 0,
   salida_id: "", canal: "WhatsApp", precio: PASADIAS[0]?.precio || 0,
   abono: 0, forma_pago: "Transferencia", aliado_id: "", vendedor: "Sin asignar", notas: "",
 };
@@ -702,8 +702,9 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
 
 // ── modal ─────────────────────────────────────────────────────────────────────
 
-function ReservaModal({ onClose, onSave, isMobile, salidaList = [], aliadoList = [], paxMap = {}, fechaDefault }) {
-  const [form, setForm]       = useState({ ...EMPTY_FORM, salida_id: salidaList[0]?.id || "" });
+function ReservaModal({ onClose, onSave, isMobile, salidaList = [], aliadoList = [], paxMap = {}, fechaDefault, getSalidasVisibles }) {
+  const initFecha = fechaDefault || todayStr();
+  const [form, setForm]       = useState({ ...EMPTY_FORM, fecha: initFecha, salida_id: "" });
   const [errors, setErrors]   = useState({});
   const [linkPago, setLinkPago] = useState("");
 
@@ -730,6 +731,9 @@ function ReservaModal({ onClose, onSave, isMobile, salidaList = [], aliadoList =
     ? FORMAS_PAGO
     : FORMAS_PAGO.filter(f => f !== "CXC" || tieneCXC);
 
+  // Salidas visible for selected date
+  const salidasFecha = (getSalidasVisibles && form.fecha) ? getSalidasVisibles(form.fecha) : salidaList;
+
   // Availability per salida
   const getDisp = (sal) => {
     const cap = sal.capacidad_total || 30;
@@ -741,6 +745,7 @@ function ReservaModal({ onClose, onSave, isMobile, salidaList = [], aliadoList =
     const e = {};
     if (!form.nombre.trim()) e.nombre = "Requerido";
     if (!form.telefono.trim() || !/^[\d\s+\-()\\.]{7,}$/.test(form.telefono)) e.telefono = "Teléfono requerido";
+    if (!form.fecha)         e.fecha = "Requerido";
     if (!form.salida_id)     e.salida_id = "Requerido";
     if ((Number(form.pax_a) + Number(form.pax_n)) < 1) e.pax_a = "Min 1 pax";
     if (form.precio < 0)     e.precio = "Inválido";
@@ -819,6 +824,11 @@ function ReservaModal({ onClose, onSave, isMobile, salidaList = [], aliadoList =
               {CANALES.map(c => <option key={c} value={c}>{c}</option>)}
             </select>
           </div>
+          <div style={FS}>
+            <label style={LS}>Fecha de servicio *</label>
+            <input type="date" style={IS(errors.fecha)} value={form.fecha} onChange={e => { set("fecha", e.target.value); set("salida_id", ""); }} />
+            {errors.fecha && <span style={{ fontSize: 11, color: B.danger }}>{errors.fecha}</span>}
+          </div>
         </div>
 
         <div style={{ borderTop: `1px solid ${B.navyLight}` }} />
@@ -849,11 +859,11 @@ function ReservaModal({ onClose, onSave, isMobile, salidaList = [], aliadoList =
         {/* Salida selector con disponibilidad */}
         <div style={FS}>
           <label style={LS}>Horario de salida *</label>
-          {salidaList.length === 0 ? (
-            <div style={{ fontSize: 13, color: B.warning }}>No hay salidas activas para esta fecha</div>
+          {salidasFecha.length === 0 ? (
+            <div style={{ fontSize: 13, color: B.warning }}>No hay salidas abiertas para esta fecha</div>
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-              {salidaList.map(s => {
+              {salidasFecha.map(s => {
                 const disp = getDisp(s);
                 const full = disp === 0;
                 const sel  = form.salida_id === s.id;
@@ -1538,7 +1548,7 @@ export default function Reservas() {
     const emailVal = form.contacto?.trim().includes("@") ? form.contacto.trim() : null;
     const row = {
       id:         reservaId,
-      fecha:      tabDia === "manana" ? tomorrow : today,
+      fecha:      form.fecha || (tabDia === "manana" ? tomorrow : today),
       salida_id:  form.salida_id,
       tipo:       form.tipo,
       canal:      form.canal,
@@ -1905,6 +1915,8 @@ export default function Reservas() {
           salidaList={salidas}
           aliadoList={aliados}
           paxMap={paxMap}
+          getSalidasVisibles={getSalidasVisibles}
+          fechaDefault={tabDia === "manana" ? tomorrow : today}
         />
       )}
       {detalle && (
