@@ -155,7 +155,8 @@ function HistorialCierres({ refresh }) {
 // ─── Main ─────────────────────────────────────────────────────────────────────
 export default function CierreCaja() {
   const { isMobile } = useMobile();
-  const fileRef = useRef(null);
+  const fileRef   = useRef(null);
+  const cameraRef = useRef(null);
 
   // Form state
   const [area, setArea]         = useState("ayb");
@@ -403,36 +404,48 @@ export default function CierreCaja() {
 
             {/* Upload */}
             <div style={{ marginTop: 14 }}>
-              <label style={LS}>Comprobante PDF / Imagen</label>
-              <div
-                onClick={() => fileRef.current?.click()}
-                style={{
-                  border: `1px dashed ${fileUrl ? "#4ade80" : "rgba(255,255,255,0.15)"}`,
-                  borderRadius: 10, padding: "14px 18px", cursor: "pointer",
-                  background: fileUrl ? "#4ade8010" : "transparent",
-                  display: "flex", alignItems: "center", gap: 12,
-                }}>
-                <span style={{ fontSize: 22 }}>{uploadingFile ? "⏳" : fileUrl ? "✅" : "📎"}</span>
-                <div>
-                  <div style={{ fontSize: 13, color: fileUrl ? "#4ade80" : "rgba(255,255,255,0.5)" }}>
-                    {uploadingFile ? "Subiendo…" : fileUrl ? "Comprobante cargado" : file ? file.name : "Adjuntar comprobante"}
-                  </div>
-                  {!fileUrl && !uploadingFile && (
-                    <div style={{ fontSize: 11, color: "rgba(255,255,255,0.25)", marginTop: 2 }}>PDF, JPG o PNG</div>
-                  )}
-                  {fileUrl && (
+              <label style={LS}>Comprobante</label>
+
+              {/* Si ya hay archivo cargado */}
+              {fileUrl ? (
+                <div style={{ border: "1px solid #4ade8044", borderRadius: 10, padding: "12px 16px", background: "#4ade8010", display: "flex", alignItems: "center", gap: 12 }}>
+                  <span style={{ fontSize: 22 }}>✅</span>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 13, color: "#4ade80", fontWeight: 600 }}>Comprobante cargado</div>
                     <a href={fileUrl} target="_blank" rel="noopener noreferrer"
-                      onClick={e => e.stopPropagation()}
                       style={{ fontSize: 11, color: B.sky, textDecoration: "none", marginTop: 2, display: "block" }}>
                       Ver archivo ↗
                     </a>
-                  )}
+                  </div>
+                  <button onClick={() => { setFile(null); setFileUrl(""); setParseStatus(null); setParseMsg(""); }}
+                    style={{ background: "none", border: "none", color: "rgba(255,255,255,0.3)", fontSize: 18, cursor: "pointer" }}>✕</button>
                 </div>
-                {fileUrl && (
-                  <button onClick={e => { e.stopPropagation(); setFile(null); setFileUrl(""); }}
-                    style={{ marginLeft: "auto", background: "none", border: "none", color: "rgba(255,255,255,0.3)", fontSize: 18, cursor: "pointer" }}>✕</button>
-                )}
-              </div>
+              ) : uploadingFile ? (
+                <div style={{ border: "1px solid rgba(255,255,255,0.1)", borderRadius: 10, padding: "14px 18px", display: "flex", alignItems: "center", gap: 12 }}>
+                  <span style={{ fontSize: 22 }}>⏳</span>
+                  <div style={{ fontSize: 13, color: "rgba(255,255,255,0.5)" }}>Subiendo y analizando…</div>
+                </div>
+              ) : (
+                /* Botones: Tomar foto + Adjuntar archivo */
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                  <button onClick={() => cameraRef.current?.click()}
+                    style={{ padding: "14px 12px", borderRadius: 10, border: "1px dashed rgba(142,202,230,0.35)", background: "rgba(142,202,230,0.06)", cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
+                    <span style={{ fontSize: 26 }}>📷</span>
+                    <span style={{ fontSize: 12, fontWeight: 700, color: B.sky }}>Tomar foto</span>
+                    <span style={{ fontSize: 10, color: "rgba(255,255,255,0.25)" }}>Cámara → IA auto-completa</span>
+                  </button>
+                  <button onClick={() => fileRef.current?.click()}
+                    style={{ padding: "14px 12px", borderRadius: 10, border: "1px dashed rgba(255,255,255,0.12)", background: "transparent", cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
+                    <span style={{ fontSize: 26 }}>📎</span>
+                    <span style={{ fontSize: 12, fontWeight: 700, color: "rgba(255,255,255,0.5)" }}>Adjuntar archivo</span>
+                    <span style={{ fontSize: 10, color: "rgba(255,255,255,0.25)" }}>PDF, JPG o PNG</span>
+                  </button>
+                </div>
+              )}
+
+              {/* Inputs ocultos */}
+              <input ref={cameraRef} type="file" accept="image/*" capture="environment" style={{ display: "none" }}
+                onChange={e => handleFile(e.target.files[0])} />
               <input ref={fileRef} type="file" accept=".pdf,image/*" style={{ display: "none" }}
                 onChange={e => handleFile(e.target.files[0])} />
               {/* Parse status */}
