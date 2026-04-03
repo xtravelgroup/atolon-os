@@ -1894,7 +1894,13 @@ export default function Reservas() {
             Tablero de Salidas
           </h2>
           <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
-            {getSalidasAbiertas(tabDia === "hoy" ? today : tomorrow).map(s => (
+            {(() => {
+              const fechaBoard = tabDia === "hoy" ? today : tabDia === "manana" ? tomorrow : fechaFiltro;
+              const abiertas = fechaBoard ? getSalidasAbiertas(fechaBoard) : [];
+              // also include salidas not "open" but that have actual reservations
+              const conReservas = salidas.filter(s => s.activo && (paxMap[s.id] || 0) > 0 && !abiertas.find(a => a.id === s.id));
+              return [...abiertas, ...conReservas].sort((a, b) => a.hora.localeCompare(b.hora));
+            })().map(s => (
               <DepartureCard key={s.id} salida={s} paxCount={paxMap[s.id] || 0} />
             ))}
           </div>
