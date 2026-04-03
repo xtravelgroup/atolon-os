@@ -1131,12 +1131,14 @@ function tomorrowStr() {
 function mapRow(r) {
   return {
     id:          r.id,
-    fecha:       r.fecha,
+    fecha:       (r.fecha || "").slice(0, 10),  // normalize to YYYY-MM-DD
     salida:      r.salida_id,
     tipo:        r.tipo,
     canal:       r.canal,
     nombre:      r.nombre,
     contacto:    r.contacto,
+    telefono:    r.telefono,
+    email:       r.email,
     pax:         r.pax,
     pax_a:       r.pax_a,
     pax_n:       r.pax_n,
@@ -1155,6 +1157,7 @@ function mapRow(r) {
     ext_regreso: r.ext_regreso,
     notas:       r.notas,
     forma_pago:  r.forma_pago,
+    fecha_pago:  r.fecha_pago ? (r.fecha_pago + "").slice(0, 10) : null,
     lead_id:     r.lead_id,
     pasajeros:   r.pasajeros,
     created_at:  r.created_at,
