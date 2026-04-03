@@ -8,31 +8,80 @@ async function logout() {
   window.location.reload();
 }
 
-const NAV = [
-  { key: "dashboard", label: "Dashboard", icon: "\u2302" },
-  { key: "pasadias", label: "Pasadias", icon: "\u2600" },
-  { key: "reservas", label: "Reservas", icon: "\u2693" },
-  { key: "clientes", label: "Clientes", icon: "👤" },
-  { key: "staffing", label: "Staffing",  icon: "👥" },
-  { key: "checkin",  label: "Check-in", icon: "✅" },
-  { key: "muelle",   label: "Llegadas",  icon: "⚓" },
-  { key: "floorplan", label: "Floor Plan", icon: "\u25A6" },
-  { key: "comercial", label: "Comercial", icon: "\u2605" },
-  { key: "b2b", label: "B2B", icon: "\u2637" },
-  { key: "eventos", label: "Eventos", icon: "\u266B" },
-  { key: "contratos", label: "Contratos", icon: "\u2709" },
-  { key: "financiero", label: "Financiero", icon: "\u2261" },
-  { key: "analitica",  label: "Analítica",  icon: "📊" },
-  { key: "presupuesto", label: "Presupuesto", icon: "\u25CB" },
-  { key: "activos", label: "Activos", icon: "\u2692" },
-  { key: "requisiciones", label: "Requisiciones", icon: "\u2706" },
-  { key: "contenido",     label: "Contenido",     icon: "📢" },
-  { key: "upsells",       label: "Upsells",       icon: "⬆" },
-  { key: "menus",         label: "Menús",         icon: "🍽️" },
-  { key: "configuracion", label: "Configuración", icon: "⚙" },
-  { key: "usuarios",      label: "Usuarios",      icon: "👥" },
-  { key: "vip",          label: "Society",       icon: "✦" },
+// Módulos sueltos (siempre visibles, fuera de grupos)
+const NAV_TOP = [
+  { key: "dashboard", label: "Dashboard", icon: "⌂" },
 ];
+
+// Grupos colapsables
+const NAV_GROUPS = [
+  {
+    key: "comercial",
+    label: "Comercial",
+    icon: "⭐",
+    color: "#38bdf8",
+    items: [
+      { key: "pasadias", label: "Pasadías",  icon: "☀" },
+      { key: "reservas", label: "Reservas",  icon: "⚓" },
+      { key: "clientes", label: "Clientes",  icon: "👤" },
+      { key: "b2b",      label: "B2B",       icon: "☯" },
+      { key: "eventos",  label: "Eventos",   icon: "♫" },
+    ],
+  },
+  {
+    key: "operaciones",
+    label: "Operaciones",
+    icon: "🔧",
+    color: "#22c55e",
+    items: [
+      { key: "checkin", label: "Check-in", icon: "✅" },
+      { key: "muelle",  label: "Llegadas", icon: "⚓" },
+    ],
+  },
+  {
+    key: "marketing",
+    label: "Marketing",
+    icon: "📢",
+    color: "#ec4899",
+    items: [
+      { key: "analitica", label: "Analítica", icon: "📊" },
+      { key: "contenido", label: "Contenido", icon: "📢" },
+      { key: "vip",       label: "Society",   icon: "✦" },
+    ],
+  },
+  {
+    key: "finanzas",
+    label: "Finanzas",
+    icon: "💰",
+    color: "#f5c842",
+    items: [
+      { key: "financiero",    label: "Financiero",    icon: "≡" },
+      { key: "presupuesto",   label: "Presupuesto",   icon: "○" },
+      { key: "activos",       label: "Activos",       icon: "⚒" },
+      { key: "requisiciones", label: "Requisiciones", icon: "✆" },
+    ],
+  },
+];
+
+// Bottom (sistema + módulos sin grupo aún)
+const NAV_BOTTOM = [
+  { key: "staffing",      label: "Staffing",      icon: "👥" },
+  { key: "floorplan",     label: "Floor Plan",     icon: "▦" },
+  { key: "comercial",     label: "Comercial",      icon: "★" },
+  { key: "contratos",     label: "Contratos",      icon: "✉" },
+  { key: "upsells",       label: "Upsells",        icon: "⬆" },
+  { key: "menus",         label: "Menús",          icon: "🍽️" },
+  { key: "configuracion", label: "Configuración",  icon: "⚙" },
+  { key: "usuarios",      label: "Usuarios",       icon: "👥" },
+];
+
+// Flat lookup for topbar title
+const ALL_ITEMS = [
+  ...NAV_TOP,
+  ...NAV_GROUPS.flatMap(g => g.items),
+  ...NAV_BOTTOM,
+];
+const MODULE_KEY_MAP = {};
 
 // KPIs are now loaded from Supabase in the Dashboard component
 
@@ -264,11 +313,49 @@ export default function AtolanOS({ activeModule = "dashboard", onNavigate, modul
   const isMobile = useMobile();
   const [collapsed, setCollapsed] = useState(() => typeof window !== "undefined" && window.innerWidth < 768);
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const w = collapsed ? 64 : 220;
+
+  // Which group is the active module in?
+  const activeGroup = NAV_GROUPS.find(g => g.items.some(i => i.key === activeModule))?.key || null;
+  // Open groups state — auto-open the group containing the active module
+  const [openGroups, setOpenGroups] = useState(() => activeGroup ? { [activeGroup]: true } : {});
+
+  const w = collapsed ? 64 : 224;
 
   const navigate = (key) => {
-    onNavigate?.(key);
+    const realKey = MODULE_KEY_MAP[key] || key;
+    onNavigate?.(realKey);
     if (isMobile) setSidebarOpen(false);
+  };
+
+  const toggleGroup = (key) => {
+    setOpenGroups(p => ({ ...p, [key]: !p[key] }));
+  };
+
+  // Auto-expand group when active module changes
+  useEffect(() => {
+    if (activeGroup) setOpenGroups(p => ({ ...p, [activeGroup]: true }));
+  }, [activeGroup]);
+
+  const NavItem = ({ item, indent = false }) => {
+    const active = activeModule === (MODULE_KEY_MAP[item.key] || item.key);
+    return (
+      <div onClick={() => navigate(item.key)}
+        style={{
+          display: "flex", alignItems: "center", gap: 10,
+          padding: indent ? "7px 10px 7px 20px" : "9px 12px",
+          borderRadius: 7, cursor: "pointer", marginBottom: 1,
+          background: active ? `rgba(255,255,255,0.1)` : "transparent",
+          color: active ? B.white : "rgba(255,255,255,0.55)",
+          transition: "background 0.12s, color 0.12s",
+          borderLeft: active && indent ? `2px solid ${B.sky}` : indent ? "2px solid transparent" : "none",
+        }}
+        onMouseEnter={e => { if (!active) e.currentTarget.style.background = "rgba(255,255,255,0.05)"; }}
+        onMouseLeave={e => { if (!active) e.currentTarget.style.background = "transparent"; }}
+      >
+        <span style={{ fontSize: indent ? 13 : 15, width: 18, textAlign: "center", flexShrink: 0, opacity: active ? 1 : 0.7 }}>{item.icon}</span>
+        {!collapsed && <span style={{ fontSize: indent ? 13 : 14, whiteSpace: "nowrap", fontWeight: active ? 600 : 400 }}>{item.label}</span>}
+      </div>
+    );
   };
 
   return (
@@ -290,51 +377,91 @@ export default function AtolanOS({ activeModule = "dashboard", onNavigate, modul
           transform: sidebarOpen ? "translateX(0)" : "translateX(-100%)",
         } : {}),
       }}>
+        {/* Logo */}
         <div style={{
-          padding: (collapsed && !isMobile) ? "20px 8px" : "24px 16px", borderBottom: `1px solid ${B.navyLight}`,
-          display: "flex", justifyContent: "center", alignItems: "center", cursor: isMobile ? "default" : "pointer",
+          padding: (collapsed && !isMobile) ? "20px 8px" : "20px 16px",
+          borderBottom: `1px solid ${B.navyLight}`,
+          display: "flex", justifyContent: "center", alignItems: "center",
+          cursor: isMobile ? "default" : "pointer",
         }} onClick={() => !isMobile && setCollapsed(c => !c)}>
           {(collapsed && !isMobile)
-            ? <img src="/favicon-blue.png" alt="Atolon" style={{ width: 48, height: 48, objectFit: "contain" }} />
-            : <img src="/atolon-logo-white.png" alt="Atolon Beach Club" style={{ height: 72, objectFit: "contain" }} />
+            ? <img src="/favicon-blue.png" alt="Atolon" style={{ width: 40, height: 40, objectFit: "contain" }} />
+            : <img src="/atolon-logo-white.png" alt="Atolon Beach Club" style={{ height: 60, objectFit: "contain" }} />
           }
         </div>
-        <div style={{ flex: 1, overflowY: "auto", padding: "12px 8px" }}>
-          {NAV.map(n => {
-            const active = activeModule === n.key;
+
+        {/* Nav */}
+        <div style={{ flex: 1, overflowY: "auto", padding: "10px 8px" }}>
+
+          {/* Top items (Dashboard) */}
+          {NAV_TOP.map(n => <NavItem key={n.key} item={n} />)}
+
+          {/* Divider */}
+          <div style={{ height: 1, background: `${B.navyLight}88`, margin: "8px 4px" }} />
+
+          {/* Groups */}
+          {NAV_GROUPS.map(group => {
+            const isOpen = openGroups[group.key];
+            const hasActive = group.items.some(i => activeModule === (MODULE_KEY_MAP[i.key] || i.key));
             return (
-              <div key={n.key} onClick={() => navigate(n.key)}
-                style={{
-                  display: "flex", alignItems: "center", gap: 12,
-                  padding: collapsed ? "10px 14px" : "10px 14px", borderRadius: 8,
-                  cursor: "pointer", marginBottom: 2,
-                  background: active ? B.navyLight : "transparent",
-                  color: active ? B.white : "rgba(255,255,255,0.6)",
-                  transition: "background 0.15s",
-                }}>
-                <span style={{ fontSize: 16, width: 20, textAlign: "center", flexShrink: 0 }}>{n.icon}</span>
-                {!collapsed && <span style={{ fontSize: 14, whiteSpace: "nowrap" }}>{n.label}</span>}
+              <div key={group.key} style={{ marginBottom: 2 }}>
+                {/* Group header */}
+                <div onClick={() => !collapsed && toggleGroup(group.key)}
+                  style={{
+                    display: "flex", alignItems: "center", gap: 10,
+                    padding: "8px 12px", borderRadius: 7, cursor: "pointer",
+                    background: hasActive ? `${group.color}18` : "transparent",
+                    color: hasActive ? group.color : "rgba(255,255,255,0.45)",
+                    transition: "background 0.12s",
+                    userSelect: "none",
+                  }}
+                  onMouseEnter={e => e.currentTarget.style.background = hasActive ? `${group.color}22` : "rgba(255,255,255,0.04)"}
+                  onMouseLeave={e => e.currentTarget.style.background = hasActive ? `${group.color}18` : "transparent"}
+                >
+                  <span style={{ fontSize: 14, width: 18, textAlign: "center", flexShrink: 0 }}>{group.icon}</span>
+                  {!collapsed && (
+                    <>
+                      <span style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", flex: 1 }}>{group.label}</span>
+                      <span style={{ fontSize: 10, opacity: 0.5, transition: "transform 0.2s", display: "inline-block", transform: isOpen ? "rotate(90deg)" : "rotate(0deg)" }}>▶</span>
+                    </>
+                  )}
+                </div>
+
+                {/* Group items */}
+                {(isOpen || collapsed) && (
+                  <div style={{ marginTop: 1 }}>
+                    {group.items.map(item => <NavItem key={item.key} item={item} indent={!collapsed} />)}
+                  </div>
+                )}
               </div>
             );
           })}
+
+          {/* Divider */}
+          <div style={{ height: 1, background: `${B.navyLight}88`, margin: "8px 4px" }} />
+
+          {/* Bottom items */}
+          {NAV_BOTTOM.map(n => <NavItem key={n.key} item={n} />)}
         </div>
-        <div style={{ padding: "12px 8px", borderTop: `1px solid ${B.navyLight}` }}>
+
+        {/* Footer */}
+        <div style={{ padding: "10px 8px", borderTop: `1px solid ${B.navyLight}` }}>
           {!collapsed && userEmail && (
-            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.3)", padding: "0 8px 8px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            <div style={{ fontSize: 10, color: "rgba(255,255,255,0.25)", padding: "0 8px 6px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
               {userEmail}
             </div>
           )}
           <div onClick={logout}
             style={{
-              display: "flex", alignItems: "center", gap: 12,
-              padding: "10px 14px", borderRadius: 8, cursor: "pointer",
-              color: "rgba(255,255,255,0.4)", transition: "background 0.15s",
+              display: "flex", alignItems: "center", gap: 10,
+              padding: "9px 12px", borderRadius: 7, cursor: "pointer",
+              color: "rgba(255,255,255,0.35)", transition: "background 0.12s",
             }}
-            onMouseEnter={e => { e.currentTarget.style.background = "#D6454522"; e.currentTarget.style.color = "#F87171"; }}
-            onMouseLeave={e => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "rgba(255,255,255,0.4)"; }}
+            onMouseEnter={e => { e.currentTarget.style.background = "#D6454518"; e.currentTarget.style.color = "#F87171"; }}
+            onMouseLeave={e => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "rgba(255,255,255,0.35)"; }}
           >
-            <span style={{ fontSize: 16, width: 20, textAlign: "center", flexShrink: 0 }}>⎋</span>
-            {!collapsed && <span style={{ fontSize: 14, whiteSpace: "nowrap" }}>Cerrar sesión</span>}
+            <span style={{ fontSize: 15, width: 18, textAlign: "center", flexShrink: 0 }}>⎋</span>
+            {!collapsed && <span style={{ fontSize: 13, whiteSpace: "nowrap" }}>Cerrar sesión</span>}
           </div>
         </div>
       </div>
@@ -343,9 +470,9 @@ export default function AtolanOS({ activeModule = "dashboard", onNavigate, modul
       <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
         {/* TopBar */}
         <div style={{
-          height: 56, padding: isMobile ? "0 16px" : "0 28px",
+          height: 54, padding: isMobile ? "0 16px" : "0 28px",
           display: "flex", alignItems: "center", justifyContent: "space-between",
-          borderBottom: `1px solid ${B.navyLight}`, flexShrink: 0,
+          borderBottom: `1px solid ${B.navyLight}`, flexShrink: 0, background: B.navy,
         }}>
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
             {isMobile && (
@@ -354,16 +481,22 @@ export default function AtolanOS({ activeModule = "dashboard", onNavigate, modul
                 cursor: "pointer", padding: "4px 6px", lineHeight: 1,
               }}>☰</button>
             )}
-            <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontSize: isMobile ? 17 : 20, fontWeight: 600 }}>
-              {NAV.find(n => n.key === activeModule)?.label || "Dashboard"}
+            {/* Breadcrumb: Grupo > Módulo */}
+            {activeGroup && !isMobile && (
+              <span style={{ fontSize: 12, color: "rgba(255,255,255,0.3)", fontWeight: 500 }}>
+                {NAV_GROUPS.find(g => g.key === activeGroup)?.label} ›
+              </span>
+            )}
+            <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontSize: isMobile ? 17 : 20, fontWeight: 700 }}>
+              {ALL_ITEMS.find(n => (MODULE_KEY_MAP[n.key] || n.key) === activeModule)?.label || "Dashboard"}
             </span>
-            {!isMobile && <span style={{ fontSize: 13, color: "rgba(255,255,255,0.4)" }}>{todayDisplay()}</span>}
+            {!isMobile && <span style={{ fontSize: 12, color: "rgba(255,255,255,0.3)" }}>{todayDisplay()}</span>}
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <div style={{
               width: 32, height: 32, borderRadius: 16, background: B.navyLight,
               display: "flex", alignItems: "center", justifyContent: "center",
-              fontSize: 12, cursor: "pointer",
+              fontSize: 11, fontWeight: 700, cursor: "pointer", color: "rgba(255,255,255,0.6)",
             }}>JD</div>
           </div>
         </div>
