@@ -1916,9 +1916,9 @@ export default function Reservas() {
       {/* ── summary kpis ── */}
       <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(3, 1fr)", gap: isMobile ? 8 : 14, marginBottom: isMobile ? 16 : 24 }}>
         {[
-          { label: "Total Pax hoy",   value: totalPax,              unit: "personas",  color: B.sky  },
-          { label: "Cobrado hoy",     value: COP(cobradoHoy),       unit: "fecha pago = hoy", color: B.success },
-          { label: "Venta total",     value: COP(totalVenta),       unit: "servicio hoy",      color: B.sand },
+          { label: "Total Pax",  value: totalPax,         unit: "personas",           color: B.sky     },
+          { label: "Revenue",    value: COP(totalAbono),  unit: "cobrado del día",    color: B.success },
+          { label: "Venta Total",value: COP(totalVenta),  unit: "total en reservas",  color: B.sand    },
         ].map(k => (
           <div key={k.label} style={{ ...cardStyle, padding: "16px 20px" }}>
             <div style={{ fontSize: 12, color: B.sand, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.6 }}>{k.label}</div>
