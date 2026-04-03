@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
-import { B, COP, fmtFecha } from "../brand";
+import { B, COP, fmtFecha, todayStr } from "../brand";
 import { supabase } from "../lib/supabase";
+import { useMobile } from "../lib/useMobile";
 
 const STAGES       = ["Consulta", "Cotizado", "Confirmado", "Realizado"];
 const TIPOS_EVT    = ["Matrimonio", "Cumpleaños", "Corporativo", "Despedida de Solteros", "Aniversario", "Grado", "Otro"];
@@ -918,8 +919,213 @@ function CotizacionModal({ evento, aliados, onClose, onSaved }) {
   );
 }
 
+// ─── Calendario de Eventos ────────────────────────────────────────────────────
+const STAGE_COLOR = {
+  Consulta:  B.warning,
+  Cotizado:  B.sky,
+  Confirmado: B.success,
+  Realizado: "rgba(255,255,255,0.3)",
+};
+const STAGE_ICON = { Consulta: "💬", Cotizado: "📋", Confirmado: "✅", Realizado: "✓" };
+const CAT_ICON   = { evento: "🎉", grupo: "👥" };
+
+function CalendarioEventos({ todos, onEdit, isMobile }) {
+  const hoy = todayStr();
+  const [mesOffset, setMesOffset]   = useState(0);
+  const [selectedDay, setSelectedDay] = useState(null);
+  const [filtro, setFiltro]         = useState("todos"); // "todos" | "evento" | "grupo"
+
+  const now     = new Date();
+  const mesDate = new Date(now.getFullYear(), now.getMonth() + mesOffset, 1);
+  const year    = mesDate.getFullYear();
+  const month   = mesDate.getMonth();
+  const mesNombre  = mesDate.toLocaleDateString("es-CO", { month: "long", year: "numeric" });
+  const primerDia  = new Date(year, month, 1).getDay();
+  const diasEnMes  = new Date(year, month + 1, 0).getDate();
+
+  // Build day map from todos filtered by visible month
+  const desde = `${year}-${String(month + 1).padStart(2, "0")}-01`;
+  const hasta = `${year}-${String(month + 1).padStart(2, "0")}-${String(diasEnMes).padStart(2, "0")}`;
+  const filtered = todos.filter(e => {
+    if (!e.fecha) return false;
+    if (e.fecha < desde || e.fecha > hasta) return false;
+    if (filtro !== "todos" && e.categoria !== filtro) return false;
+    return true;
+  });
+
+  const porDia = {};
+  filtered.forEach(e => {
+    if (!porDia[e.fecha]) porDia[e.fecha] = [];
+    porDia[e.fecha].push(e);
+  });
+
+  const dias = [];
+  for (let i = 0; i < primerDia; i++) dias.push(null);
+  for (let d = 1; d <= diasEnMes; d++) dias.push(d);
+
+  const maxPerCell = isMobile ? 2 : 3;
+  const eventosDelDia = selectedDay ? (porDia[selectedDay] || []) : [];
+
+  const btnNav = { background: B.navyLight, border: "none", borderRadius: 8, padding: isMobile ? "8px 14px" : "8px 18px", color: B.white, cursor: "pointer", fontSize: 16, minHeight: 38 };
+
+  return (
+    <div>
+      {/* Navigation */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 16, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <button onClick={() => { setMesOffset(m => m - 1); setSelectedDay(null); }} style={btnNav}>←</button>
+          <h3 style={{ fontSize: isMobile ? 16 : 20, fontWeight: 700, fontFamily: "'Barlow Condensed', sans-serif", textTransform: "capitalize", minWidth: isMobile ? 120 : 180, textAlign: "center" }}>{mesNombre}</h3>
+          <button onClick={() => { setMesOffset(m => m + 1); setSelectedDay(null); }} style={btnNav}>→</button>
+        </div>
+        {/* Filtro */}
+        <div style={{ display: "flex", gap: 4 }}>
+          {[["todos", "Todos"], ["evento", "🎉 Eventos"], ["grupo", "👥 Grupos"]].map(([k, l]) => (
+            <button key={k} onClick={() => setFiltro(k)}
+              style={{ padding: "6px 12px", borderRadius: 8, border: "none", fontSize: 12, fontWeight: 600, cursor: "pointer",
+                background: filtro === k ? B.sand : B.navyLight,
+                color:      filtro === k ? B.navy : "rgba(255,255,255,0.55)" }}>
+              {l}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Legend */}
+      <div style={{ display: "flex", gap: isMobile ? 8 : 16, marginBottom: 14, flexWrap: "wrap" }}>
+        {STAGES.map(s => (
+          <span key={s} style={{ fontSize: 11, color: "rgba(255,255,255,0.6)", display: "flex", alignItems: "center", gap: 4 }}>
+            <span style={{ display: "inline-block", width: 8, height: 8, borderRadius: 4, background: STAGE_COLOR[s], flexShrink: 0 }} />
+            {s}
+          </span>
+        ))}
+      </div>
+
+      {/* Day headers */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 3, marginBottom: 3 }}>
+        {["Dom","Lun","Mar","Mié","Jue","Vie","Sáb"].map(d => (
+          <div key={d} style={{ textAlign: "center", fontSize: 11, color: B.sand, padding: "5px 0", fontWeight: 600 }}>{d}</div>
+        ))}
+      </div>
+
+      {/* Calendar grid */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 3 }}>
+        {dias.map((dia, i) => {
+          if (!dia) return <div key={`e-${i}`} />;
+          const fecha = `${year}-${String(month + 1).padStart(2, "0")}-${String(dia).padStart(2, "0")}`;
+          const evs   = porDia[fecha] || [];
+          const isHoy = fecha === hoy;
+          const isPast = fecha < hoy;
+          const isSelected = selectedDay === fecha;
+          return (
+            <div key={dia}
+              onClick={() => setSelectedDay(isSelected ? null : fecha)}
+              style={{
+                background: isHoy ? B.sky + "18" : isSelected ? B.sand + "15" : B.navyMid,
+                borderRadius: 8, padding: isMobile ? "6px 4px" : "8px 6px",
+                minHeight: isMobile ? 64 : 90, cursor: "pointer",
+                border: isHoy ? `2px solid ${B.sky}` : isSelected ? `2px solid ${B.sand}` : `1px solid ${B.navyLight}`,
+                opacity: isPast ? 0.55 : 1,
+                transition: "border 0.12s",
+                display: "flex", flexDirection: "column", gap: 2,
+              }}>
+              {/* Day number */}
+              <span style={{ fontSize: isMobile ? 12 : 14, fontWeight: isHoy ? 700 : 400, color: isHoy ? B.sky : B.white, lineHeight: 1 }}>
+                {dia}
+                {evs.length > 0 && isMobile && (
+                  <span style={{ marginLeft: 4, fontSize: 9, background: B.sand + "33", color: B.sand, borderRadius: 8, padding: "1px 5px" }}>{evs.length}</span>
+                )}
+              </span>
+              {/* Event chips — desktop */}
+              {!isMobile && evs.slice(0, maxPerCell).map(ev => (
+                <div key={ev.id}
+                  style={{
+                    fontSize: 9, padding: "2px 5px", borderRadius: 4,
+                    background: (STAGE_COLOR[ev.stage] || B.sand) + "33",
+                    color: STAGE_COLOR[ev.stage] || B.sand,
+                    whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+                    borderLeft: `2px solid ${STAGE_COLOR[ev.stage] || B.sand}`,
+                    lineHeight: 1.4,
+                  }}>
+                  {CAT_ICON[ev.categoria]} {ev.nombre}
+                </div>
+              ))}
+              {!isMobile && evs.length > maxPerCell && (
+                <div style={{ fontSize: 9, color: "rgba(255,255,255,0.4)", paddingLeft: 5 }}>+{evs.length - maxPerCell} más</div>
+              )}
+              {/* Mobile: colored dots */}
+              {isMobile && evs.length > 0 && (
+                <div style={{ display: "flex", gap: 2, flexWrap: "wrap", marginTop: 2 }}>
+                  {evs.slice(0, 4).map(ev => (
+                    <span key={ev.id} style={{ width: 6, height: 6, borderRadius: 3, background: STAGE_COLOR[ev.stage] || B.sand, flexShrink: 0 }} />
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Day detail panel */}
+      {selectedDay && (
+        <div style={{ marginTop: 16, background: B.navyMid, borderRadius: 14, padding: isMobile ? 14 : 20, border: `1px solid ${B.sand}33` }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+            <div>
+              <div style={{ fontSize: 16, fontWeight: 700 }}>
+                {new Date(selectedDay + "T12:00:00").toLocaleDateString("es-CO", { weekday: "long", day: "numeric", month: "long" })}
+              </div>
+              <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>
+                {eventosDelDia.length === 0 ? "Sin eventos" : `${eventosDelDia.length} evento${eventosDelDia.length !== 1 ? "s" : ""}`}
+              </div>
+            </div>
+            <button onClick={() => setSelectedDay(null)}
+              style={{ background: "none", border: "none", color: "rgba(255,255,255,0.3)", fontSize: 18, cursor: "pointer" }}>✕</button>
+          </div>
+
+          {eventosDelDia.length === 0 ? (
+            <div style={{ textAlign: "center", padding: "20px 0", color: "rgba(255,255,255,0.25)", fontSize: 13 }}>
+              No hay eventos este día
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {eventosDelDia.map(ev => {
+                const sc = STAGE_COLOR[ev.stage] || B.sand;
+                return (
+                  <div key={ev.id} onClick={() => onEdit(ev)}
+                    style={{
+                      background: B.navy, borderRadius: 10, padding: "14px 16px",
+                      cursor: "pointer", borderLeft: `3px solid ${sc}`,
+                      display: "flex", alignItems: "center", gap: 14,
+                      transition: "opacity 0.12s",
+                    }}
+                    onMouseEnter={e => e.currentTarget.style.opacity = "0.8"}
+                    onMouseLeave={e => e.currentTarget.style.opacity = "1"}>
+                    <span style={{ fontSize: 24 }}>{CAT_ICON[ev.categoria] || "🎉"}</span>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontWeight: 700, fontSize: 14, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{ev.nombre}</div>
+                      <div style={{ fontSize: 12, color: "rgba(255,255,255,0.45)", marginTop: 2 }}>
+                        {ev.tipo} · {ev.pax} pax
+                        {ev.valor > 0 && <span style={{ color: B.sand, marginLeft: 8 }}>{COP(ev.valor)}</span>}
+                      </div>
+                    </div>
+                    <div style={{ flexShrink: 0, textAlign: "right" }}>
+                      <span style={{ fontSize: 11, padding: "3px 9px", borderRadius: 20, background: sc + "22", color: sc, border: `1px solid ${sc}44`, fontWeight: 700 }}>
+                        {STAGE_ICON[ev.stage]} {ev.stage}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Main ─────────────────────────────────────────────────────────────────────
 export default function Eventos() {
+  const isMobile = useMobile();
   const [todos,     setTodos]     = useState([]);
   const [salidas,   setSalidas]   = useState([]);
   const [aliados,   setAliados]   = useState([]);
@@ -960,11 +1166,13 @@ export default function Eventos() {
 
   useEffect(() => { fetchTodos(); }, [fetchTodos]);
 
+  const isCalendario = tab === "calendario";
   const items   = todos.filter(e => e.categoria === tab);
   const isGrupo = tab === "grupo";
   const TABS    = [
-    { key: "evento", label: "🎉 Eventos" },
-    { key: "grupo",  label: "👥 Grupos de Pasadías" },
+    { key: "evento",     label: "🎉 Eventos" },
+    { key: "grupo",      label: "👥 Grupos" },
+    { key: "calendario", label: "📅 Calendario" },
   ];
 
   return (
@@ -975,10 +1183,12 @@ export default function Eventos() {
           <h2 style={{ fontSize: 22, fontWeight: 600 }}>Eventos</h2>
           {supabase && !loading && <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 10, background: B.success + "22", color: B.success }}>LIVE</span>}
         </div>
-        <button onClick={() => setModal("new")}
-          style={{ background: B.sand, color: B.navy, border: "none", borderRadius: 8, padding: "10px 20px", fontWeight: 700, cursor: "pointer" }}>
-          + {isGrupo ? "Nuevo Grupo" : "Nuevo Evento"}
-        </button>
+        {!isCalendario && (
+          <button onClick={() => setModal("new")}
+            style={{ background: B.sand, color: B.navy, border: "none", borderRadius: 8, padding: "10px 20px", fontWeight: 700, cursor: "pointer" }}>
+            + {isGrupo ? "Nuevo Grupo" : "Nuevo Evento"}
+          </button>
+        )}
       </div>
 
       {/* Tabs */}
@@ -994,21 +1204,26 @@ export default function Eventos() {
       </div>
 
       {/* KPIs */}
-      <div style={{ display: "flex", gap: 12, marginBottom: 24 }}>
-        {[
-          { label: "Pipeline Total", val: COP(items.reduce((s, e) => s + e.valor, 0)), color: B.sand },
-          { label: "Confirmados",    val: items.filter(e => e.stage === "Confirmado").length, color: B.success },
-          { label: "Por Cotizar",    val: items.filter(e => e.stage === "Consulta").length, color: B.warning },
-          { label: "Pax Total",      val: items.reduce((s, e) => s + e.pax, 0), color: B.sky },
-        ].map(s => (
-          <div key={s.label} style={{ background: B.navyMid, borderRadius: 12, padding: "16px 20px", flex: 1, borderLeft: `4px solid ${s.color}` }}>
-            <div style={{ fontSize: 12, color: B.sand, textTransform: "uppercase", letterSpacing: 1 }}>{s.label}</div>
-            <div style={{ fontSize: 24, fontWeight: 700, fontFamily: "'Barlow Condensed', sans-serif" }}>{s.val}</div>
-          </div>
-        ))}
-      </div>
+      {!isCalendario && (
+        <div style={{ display: "flex", gap: 12, marginBottom: 24, flexWrap: "wrap" }}>
+          {[
+            { label: "Pipeline Total", val: COP(items.reduce((s, e) => s + e.valor, 0)), color: B.sand },
+            { label: "Confirmados",    val: items.filter(e => e.stage === "Confirmado").length, color: B.success },
+            { label: "Por Cotizar",    val: items.filter(e => e.stage === "Consulta").length, color: B.warning },
+            { label: "Pax Total",      val: items.reduce((s, e) => s + e.pax, 0), color: B.sky },
+          ].map(s => (
+            <div key={s.label} style={{ background: B.navyMid, borderRadius: 12, padding: "14px 18px", flex: 1, minWidth: 130, borderLeft: `4px solid ${s.color}` }}>
+              <div style={{ fontSize: 11, color: B.sand, textTransform: "uppercase", letterSpacing: 1 }}>{s.label}</div>
+              <div style={{ fontSize: 22, fontWeight: 700, fontFamily: "'Barlow Condensed', sans-serif" }}>{s.val}</div>
+            </div>
+          ))}
+        </div>
+      )}
 
-      <KanbanBoard items={items} isGrupo={isGrupo} aliados={aliados} onEdit={ev => setModal(ev)} onBeo={setBeo} onLink={setLinkEvt} onCotizar={setCotizacion} onReservas={setReservasEvt} />
+      {isCalendario
+        ? <CalendarioEventos todos={todos} onEdit={ev => setModal(ev)} isMobile={isMobile} />
+        : <KanbanBoard items={items} isGrupo={isGrupo} aliados={aliados} onEdit={ev => setModal(ev)} onBeo={setBeo} onLink={setLinkEvt} onCotizar={setCotizacion} onReservas={setReservasEvt} />
+      }
 
       {beo          && <BEOPreview evento={beo} onClose={() => setBeo(null)} />}
       {linkEvt      && <GrupoLink evento={linkEvt} onClose={() => setLinkEvt(null)} />}
