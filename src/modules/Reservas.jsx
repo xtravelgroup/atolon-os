@@ -816,7 +816,7 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
 
 // ── modal ─────────────────────────────────────────────────────────────────────
 
-function ReservaModal({ onClose, onSave, isMobile, salidaList = [], aliadoList = [], vendedoresList = VENDEDORES, pasadiaList = PASADIAS, paxMap = {}, fechaDefault, getSalidasVisibles }) {
+function ReservaModal({ onClose, onSave, isMobile, salidaList = [], aliadoList = [], vendedoresList = VENDEDORES, pasadiaList = PASADIAS, conveniosMap = {}, paxMap = {}, fechaDefault, getSalidasVisibles }) {
   const initFecha = fechaDefault || todayStr();
   const [form, setForm]       = useState({ ...EMPTY_FORM, fecha: initFecha, salida_id: "" });
   const [errors, setErrors]   = useState({});
@@ -845,7 +845,12 @@ function ReservaModal({ onClose, onSave, isMobile, salidaList = [], aliadoList =
   const calcPrecio = (tipo, aliado_id, mode) => {
     const p = pasadiaList.find(p => p.tipo.toLowerCase() === tipo?.toLowerCase());
     if (!p) return 0;
-    if (aliado_id && mode === "neto" && p.precio_neto_agencia > 0) return p.precio_neto_agencia;
+    if (aliado_id && mode === "neto") {
+      // Per-aliado negotiated rate takes priority over global neto
+      const tarifaAliado = conveniosMap[aliado_id]?.[tipo?.toLowerCase()];
+      if (tarifaAliado > 0) return tarifaAliado;
+      if (p.precio_neto_agencia > 0) return p.precio_neto_agencia;
+    }
     return p.precio;
   };
 
@@ -880,7 +885,8 @@ function ReservaModal({ onClose, onSave, isMobile, salidaList = [], aliadoList =
   const tieneCXC = aliado && (aliado.cupo_credito || 0) > 0;
   const pasadiaActual = pasadiaList.find(p => p.tipo.toLowerCase() === form.tipo?.toLowerCase());
   const precioFull = pasadiaActual?.precio || 0;
-  const precioNeto = pasadiaActual?.precio_neto_agencia || 0;
+  const precioNeto = (form.aliado_id && conveniosMap[form.aliado_id]?.[form.tipo?.toLowerCase()])
+    || pasadiaActual?.precio_neto_agencia || 0;
   const formasPagoDisp = form.forma_pago === "Enviar Link de Pago"
     ? FORMAS_PAGO
     : FORMAS_PAGO.filter(f => f !== "CXC" || tieneCXC);
@@ -1672,6 +1678,7 @@ export default function Reservas() {
   const [reservasFuturas, setReservasFuturas] = useState([]);
   const [salidas,        setSalidas]        = useState([]);
   const [aliados,        setAliados]        = useState([]);
+  const [conveniosMap,   setConveniosMap]   = useState({}); // { aliado_id: { tipo_pasadia: tarifa_neta } }
   const [vendedores,     setVendedores]     = useState(VENDEDORES);
   const [pasadias,       setPasadias]       = useState(PASADIAS);
   const [cierres,        setCierres]        = useState([]);
@@ -1704,7 +1711,7 @@ export default function Reservas() {
     const todayStart = `${today}T00:00:00.000Z`;
     const tomorrowStart = `${tomorrow}T00:00:00.000Z`;
 
-    const [resHoy, resManana, salR, aliR, cierreR, embR, ovrR, empR, pasR, cobR, cobR2] = await Promise.all([
+    const [resHoy, resManana, salR, aliR, cierreR, embR, ovrR, empR, pasR, cobR, cobR2, convR] = await Promise.all([
       supabase.from("reservas").select("*").eq("fecha", today).order("salida_id"),
       supabase.from("reservas").select("*").eq("fecha", tomorrow).order("salida_id"),
       supabase.from("salidas").select("*").order("orden"),
@@ -1718,6 +1725,7 @@ export default function Reservas() {
       supabase.from("reservas").select("abono").eq("fecha_pago", today).neq("estado", "cancelado"),
       // Pagos sin fecha_pago pero creados hoy con abono > 0 (web/Wompi automáticos)
       supabase.from("reservas").select("abono").is("fecha_pago", null).gte("created_at", todayStart).lt("created_at", tomorrowStart).gt("abono", 0).neq("estado", "cancelado"),
+      supabase.from("b2b_convenios").select("aliado_id, tipo_pasadia, tarifa_neta").eq("activo", true),
     ]);
     if (resHoy.data)    setReservasHoy(resHoy.data.map(mapRow));
     if (resManana.data) setReservasManana(resManana.data.map(mapRow));
@@ -1727,6 +1735,14 @@ export default function Reservas() {
     setCobradoHoy(totalCobrado);
     if (salR.data)      setSalidas(salR.data);
     if (aliR.data)      setAliados(aliR.data);
+    if (convR.data) {
+      const cmap = {};
+      convR.data.forEach(c => {
+        if (!cmap[c.aliado_id]) cmap[c.aliado_id] = {};
+        cmap[c.aliado_id][c.tipo_pasadia.toLowerCase()] = c.tarifa_neta;
+      });
+      setConveniosMap(cmap);
+    }
     if (cierreR.data)   setCierres(cierreR.data);
     if (embR.data)      setEmbarcaciones(embR.data);
     if (ovrR.data) {
@@ -2239,6 +2255,7 @@ export default function Reservas() {
           aliadoList={aliados}
           vendedoresList={vendedores}
           pasadiaList={pasadias}
+          conveniosMap={conveniosMap}
           paxMap={paxMap}
           getSalidasVisibles={fecha => getSalidasAbiertas(fecha, undefined, true)}
           fechaDefault={tabDia === "manana" ? tomorrow : tabDia === "fecha" && fechaFiltro ? fechaFiltro : today}
