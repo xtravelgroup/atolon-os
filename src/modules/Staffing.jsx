@@ -6,11 +6,14 @@ import { useMobile } from "../lib/useMobile";
 // ── Pure staffing calculation ────────────────────────────────────────────────
 function calcStaff(totalPax, vipPax, excPax, ovrMap = {}) {
   const pax = Math.max(totalPax, 20); // apertura mínima
-  const eff_vip = Math.max(vipPax, 1);
+  // Con 0 reservas → staffing de apertura mínima con 1 de cada zona
+  const isApertura = totalPax === 0;
 
   const raw = {
-    mesPlaya:   pax <= 80 ? Math.min(3, Math.ceil(eff_vip / 20)) : 4,
-    mesPool:    excPax <= 10 ? 1 : excPax <= 30 ? 2 : 3,
+    // Playa: 0 si no hay VIP reales (excepto apertura mínima)
+    mesPlaya:   isApertura ? 1 : vipPax === 0 ? 0 : (pax <= 80 ? Math.min(3, Math.ceil(vipPax / 20)) : 4),
+    // Pool: 0 si no hay Exclusive reales (excepto apertura mínima)
+    mesPool:    isApertura ? 1 : excPax === 0 ? 0 : (excPax <= 10 ? 1 : excPax <= 30 ? 2 : 3),
     mesRest:    pax <= 80 ? 1 : 4,
     runnersBeb: pax <= 60 ? 1 : pax <= 80 ? 2 : 3,
     runnersCom: pax <= 20 ? 0 : pax <= 80 ? 1 : 2,
