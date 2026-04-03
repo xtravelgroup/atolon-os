@@ -38,7 +38,7 @@ function paxPorSalida(reservas, salidas) {
 const EMPTY_FORM = {
   nombre: "", contacto: "", telefono: "", fecha: "", tipo: PASADIAS[0]?.tipo || "", pax_a: 1, pax_n: 0,
   salida_id: "", canal: "WhatsApp", precio: PASADIAS[0]?.precio || 0,
-  abono: 0, forma_pago: "Transferencia", aliado_id: "", vendedor: "Sin asignar", notas: "",
+  abono: 0, forma_pago: "Transferencia", fecha_pago: "", aliado_id: "", vendedor: "Sin asignar", notas: "",
 };
 
 // ── sub-components ────────────────────────────────────────────────────────────
@@ -1154,6 +1154,12 @@ function ReservaModal({ onClose, onSave, isMobile, salidaList = [], aliadoList =
                 <input type="number" min={0} style={IS(errors.abono)} value={form.abono} onChange={e => set("abono", Number(e.target.value))} />
               </div>
             )}
+            {form.forma_pago !== "Enviar Link de Pago" && form.abono > 0 && (
+              <div style={FS}>
+                <label style={LS}>Fecha de pago</label>
+                <input type="date" style={IS()} value={form.fecha_pago} onChange={e => set("fecha_pago", e.target.value)} />
+              </div>
+            )}
           </div>
           {form.forma_pago === "Enviar Link de Pago" && (
             <div style={{ marginTop: 10, fontSize: 13, color: B.warning, background: B.warning + "11", border: `1px solid ${B.warning}44`, borderRadius: 8, padding: "10px 14px" }}>
@@ -1861,6 +1867,7 @@ export default function Reservas() {
       aliado_id:       form.aliado_id || null,
       vendedor:        form.vendedor !== "Sin asignar" ? form.vendedor : null,
       notas:           form.notas || "",
+      fecha_pago:      form.fecha_pago || null,
     };
     await supabase.from("reservas").insert(row);
     logAccion({ modulo: "reservas", accion: "crear_reserva", tabla: "reservas", registroId: row.id,
