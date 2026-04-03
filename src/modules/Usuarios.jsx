@@ -27,11 +27,13 @@ const MODULOS = [
   { key: "vip",           label: "Society",        icon: "✦" },
   // Finanzas
   { key: "financiero",    label: "Financiero",     icon: "💰" },
+  { key: "cierre_caja",   label: "Cierre de Caja", icon: "🧾" },
   { key: "presupuesto",   label: "Presupuesto",    icon: "📊" },
   { key: "activos",       label: "Activos",        icon: "🏗" },
   { key: "requisiciones", label: "Requisiciones",  icon: "🛒" },
   { key: "contratos",     label: "Contratos",      icon: "📄" },
   // Sistema
+  { key: "historial",     label: "Historial",      icon: "📋" },
   { key: "configuracion", label: "Configuración",  icon: "⚙" },
   { key: "usuarios",      label: "Usuarios",       icon: "👥" },
 ];
