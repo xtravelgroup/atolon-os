@@ -1601,9 +1601,10 @@ function TabCalendario({ salidas, cierres, embarcaciones }) {
 
 export default function Reservas() {
   const isMobile = useMobile();
-  const [reservasHoy,    setReservasHoy]    = useState([]);
-  const [reservasManana, setReservasManana] = useState([]);
-  const [reservasFecha,  setReservasFecha]  = useState([]);
+  const [reservasHoy,     setReservasHoy]     = useState([]);
+  const [reservasManana,  setReservasManana]  = useState([]);
+  const [reservasFecha,   setReservasFecha]   = useState([]);
+  const [reservasFuturas, setReservasFuturas] = useState([]);
   const [salidas,        setSalidas]        = useState([]);
   const [aliados,        setAliados]        = useState([]);
   const [vendedores,     setVendedores]     = useState(VENDEDORES);
@@ -1677,15 +1678,26 @@ export default function Reservas() {
 
   useEffect(() => { fetchReservas(); }, [fetchReservas]);
 
-  // Fetch reservas for a custom date
+  // Fetch reservas para el tab "otras"
   useEffect(() => {
-    if (tabDia !== "fecha" || !fechaFiltro || !supabase) return;
-    supabase.from("reservas").select("*").eq("fecha", fechaFiltro).order("salida_id")
-      .then(({ data }) => setReservasFecha((data || []).map(mapRow)));
-  }, [tabDia, fechaFiltro]);
+    if (tabDia !== "fecha" || !supabase) return;
+    if (fechaFiltro) {
+      // Fecha específica seleccionada
+      supabase.from("reservas").select("*").eq("fecha", fechaFiltro).order("salida_id")
+        .then(({ data }) => setReservasFecha((data || []).map(mapRow)));
+    } else {
+      // Sin filtro → todas las futuras (hoy en adelante), sin canceladas
+      supabase.from("reservas").select("*").gte("fecha", today).neq("estado", "cancelado").order("fecha").order("salida_id")
+        .then(({ data }) => setReservasFuturas((data || []).map(mapRow)));
+    }
+  }, [tabDia, fechaFiltro, today]);
 
   // Active dataset based on tab
-  const reservas = tabDia === "hoy" ? reservasHoy : tabDia === "manana" ? reservasManana : reservasFecha;
+  const reservas = tabDia === "hoy"
+    ? reservasHoy
+    : tabDia === "manana"
+      ? reservasManana
+      : (fechaFiltro ? reservasFecha : reservasFuturas);
   const paxMap = paxPorSalida(reservas, salidas);
 
   // Determine which salidas are open for a given date (respects cierres + overrides)
@@ -1901,17 +1913,33 @@ export default function Reservas() {
             <span style={{ fontSize: 11, opacity: 0.6 }}>{t.fecha}</span>
           </button>
         ))}
-        {/* Otra fecha */}
-        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          <button onClick={() => { setTabDia("fecha"); setSearch(""); setFilter("todos"); }} style={{
+        {/* Otras / Futuras */}
+        <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+          <button onClick={() => { setTabDia("fecha"); setFechaFiltro(""); setSearch(""); setFilter("todos"); }} style={{
+            display: "flex", alignItems: "center", gap: 8,
             background: tabDia === "fecha" ? B.sand + "22" : B.navyMid,
             border: `1px solid ${tabDia === "fecha" ? B.sand : B.navyLight}`,
             borderRadius: 10, padding: "10px 16px", cursor: "pointer",
             color: tabDia === "fecha" ? B.sand : "rgba(255,255,255,0.4)", fontWeight: 700, fontSize: 14,
-          }}>📅 Otra fecha</button>
+            transition: "all 0.15s",
+          }}>
+            <span>📅 Otras</span>
+            {tabDia === "fecha" && !fechaFiltro && reservasFuturas.length > 0 && (
+              <span style={{ background: B.sand, color: B.navy, borderRadius: 20, padding: "1px 9px", fontSize: 12, fontWeight: 800 }}>
+                {reservasFuturas.filter(r => r.estado !== "cancelado").reduce((s,r) => s + r.pax, 0)} pax
+              </span>
+            )}
+          </button>
           {tabDia === "fecha" && (
-            <input type="date" value={fechaFiltro} onChange={e => setFechaFiltro(e.target.value)}
-              style={{ background: "#0D1B3E", border: `1px solid ${B.sand}`, borderRadius: 8, color: B.white, padding: "8px 10px", fontSize: 13, outline: "none" }} />
+            <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+              <input type="date" value={fechaFiltro} onChange={e => setFechaFiltro(e.target.value)}
+                style={{ background: "#0D1B3E", border: `1px solid ${B.sand}`, borderRadius: 8, color: B.white, padding: "8px 10px", fontSize: 13, outline: "none" }} />
+              {fechaFiltro && (
+                <button onClick={() => setFechaFiltro("")}
+                  style={{ background: "none", border: "none", color: "rgba(255,255,255,0.3)", fontSize: 18, cursor: "pointer", lineHeight: 1, padding: "0 4px" }}
+                  title="Ver todas las futuras">✕</button>
+              )}
+            </div>
           )}
         </div>
       </div>
@@ -2017,6 +2045,11 @@ export default function Reservas() {
                     </div>
                     {/* Row 2: details */}
                     <div style={{ display: "flex", gap: 8, flexWrap: "wrap", fontSize: 12 }}>
+                      {tabDia === "fecha" && !fechaFiltro && r.fecha && (
+                        <span style={{ background: B.sky + "22", borderRadius: 6, padding: "2px 8px", color: B.sky, fontWeight: 700 }}>
+                          {new Date(r.fecha + "T12:00:00").toLocaleDateString("es-CO", { weekday: "short", day: "numeric", month: "short" })}
+                        </span>
+                      )}
                       <span style={{ background: B.navyLight, borderRadius: 6, padding: "2px 8px", color: B.sand }}>{r.pax} pax</span>
                       <span style={{ background: B.navyLight, borderRadius: 6, padding: "2px 8px", color: "rgba(255,255,255,0.6)" }}>{r.tipo}</span>
                       <span style={{ background: B.navyLight, borderRadius: 6, padding: "2px 8px", color: B.sky }}>{salida ? `${salida.hora} · ${salida.nombre}` : r.salida || "—"}</span>
