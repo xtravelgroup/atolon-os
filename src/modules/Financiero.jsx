@@ -408,7 +408,17 @@ export default function Financiero() {
               <Row label="INGRESOS" val={ing} bold color={B.success} delta={ingC ? (ing - ingC) / (ingC || 1) : null} />
               {cierresDePeriodo(periodoActual).length === 0
                 ? <div style={{ padding: "8px 20px 8px 36px", fontSize: 12, color: "rgba(255,255,255,0.3)" }}>Sin cierres de caja registrados</div>
-                : <Row label={`Cierres de Caja (${cierresDePeriodo(periodoActual).length})`} val={ing} sub />
+                : (() => {
+                    const AREA_LABEL = { ayb: "Alimentos y Bebidas", pasadias: "Pasadías", after_island: "After Island", otros: "Otros" };
+                    const byArea = {};
+                    cierresDePeriodo(periodoActual).forEach(c => {
+                      const k = c.area || "otros";
+                      byArea[k] = (byArea[k] || 0) + (c.total_ventas || c.total_general || 0);
+                    });
+                    return Object.entries(byArea).map(([area, val]) => (
+                      <Row key={area} label={AREA_LABEL[area] || area} val={val} sub />
+                    ));
+                  })()
               }
 
               {/* Gastos */}
