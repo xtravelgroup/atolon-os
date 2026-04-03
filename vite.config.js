@@ -18,7 +18,7 @@ export default defineConfig({
         display: 'standalone',
         orientation: 'portrait',
         scope: '/',
-        start_url: '/login',
+        start_url: 'https://www.atolon.co/login',
         icons: [
           {
             src: '/pwa-icon-192.png',
