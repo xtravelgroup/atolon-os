@@ -1176,6 +1176,15 @@ function TabCalendario({ salidas, cierres, embarcaciones }) {
   const getCierreForDate = (fecha) => cierres.find(c => c.activo && c.fecha === fecha);
   const salidasActivas = salidas.filter(s => s.activo);
 
+  // Cascade auto-apertura: each salida (sorted by hora) opens when the previous reaches 75%
+  const autoAperturaCheck = (s, resDia) => {
+    const sorted = [...salidasActivas].sort((a, b) => a.hora.localeCompare(b.hora));
+    const idx = sorted.findIndex(x => x.id === s.id);
+    if (idx <= 0) return true; // primera salida: siempre visible
+    const prev = sorted[idx - 1];
+    return (resDia[prev.id] || 0) / (prev.capacidad_total || 1) >= 0.75;
+  };
+
   const getSalidasVisibles = (fecha) => {
     const cierre = getCierreForDate(fecha);
     const resDia = reservasPorDia[fecha] || {};
@@ -1188,8 +1197,7 @@ function TabCalendario({ salidas, cierres, embarcaciones }) {
         if ((cierre.salidas || []).includes(s.id)) return false;
       }
       if (!s.auto_apertura) return true;
-      const fijas = salidasActivas.filter(f => !f.auto_apertura);
-      return fijas.every(f => (resDia[f.id] || 0) / (f.capacidad_total || 1) >= 0.9);
+      return autoAperturaCheck(s, resDia);
     });
   };
 
@@ -1203,8 +1211,7 @@ function TabCalendario({ salidas, cierres, embarcaciones }) {
       if ((cierre.salidas || []).includes(s.id)) return false;
     }
     if (!s.auto_apertura) return true;
-    const fijas = salidasActivas.filter(f => !f.auto_apertura);
-    return fijas.every(f => (resDia[f.id] || 0) / (f.capacidad_total || 1) >= 0.9);
+    return autoAperturaCheck(s, resDia);
   };
 
   return (
