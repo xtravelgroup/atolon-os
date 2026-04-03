@@ -1131,7 +1131,7 @@ export default function Eventos() {
   const [aliados,   setAliados]   = useState([]);
   const [vendedores,setVendedores]= useState([]);
   const [loading,   setLoading]   = useState(true);
-  const [tab,        setTab]        = useState("evento");
+  const [tab,        setTab]        = useState("todos");
   const [beo,        setBeo]        = useState(null);
   const [modal,      setModal]      = useState(null);
   const [linkEvt,     setLinkEvt]    = useState(null);
@@ -1167,9 +1167,10 @@ export default function Eventos() {
   useEffect(() => { fetchTodos(); }, [fetchTodos]);
 
   const isCalendario = tab === "calendario";
-  const items   = todos.filter(e => e.categoria === tab);
+  const items   = tab === "todos" ? todos : todos.filter(e => e.categoria === tab);
   const isGrupo = tab === "grupo";
   const TABS    = [
+    { key: "todos",      label: "📌 Todos" },
     { key: "evento",     label: "🎉 Eventos" },
     { key: "grupo",      label: "👥 Grupos" },
     { key: "calendario", label: "📅 Calendario" },
@@ -1186,7 +1187,7 @@ export default function Eventos() {
         {!isCalendario && (
           <button onClick={() => setModal("new")}
             style={{ background: B.sand, color: B.navy, border: "none", borderRadius: 8, padding: "10px 20px", fontWeight: 700, cursor: "pointer" }}>
-            + {isGrupo ? "Nuevo Grupo" : "Nuevo Evento"}
+            + {tab === "grupo" ? "Nuevo Grupo" : "Nuevo Evento"}
           </button>
         )}
       </div>
