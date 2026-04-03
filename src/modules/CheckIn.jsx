@@ -715,10 +715,15 @@ export default function CheckIn() {
                   {/* Zarpe button per assigned embarcación (base + extra del calendario) */}
                   {(() => {
                     const override = overrides.find(o => o.salida_id === salida.id);
-                    const extraEmbs = (override?.extra_embarcaciones || []).map(e => ({ id: e.id, nombre: e.nombre, _extra: true }));
+                    // Extra: buscar ficha completa en embarcaciones para traer datos de capitán
+                    const extraEmbs = (override?.extra_embarcaciones || []).map(e => {
+                      const full = embarcaciones.find(eb => eb.id === e.id);
+                      return full ? { ...full, _extra: true } : { id: e.id, nombre: e.nombre, _extra: true };
+                    });
+                    // Base: pasar objeto completo con capitán y cédulas
                     const baseEmbs = (salida.embarcaciones || []).map(embId => {
                       const emb = embarcaciones.find(e => e.id === embId);
-                      return emb ? { id: emb.id, nombre: emb.nombre } : null;
+                      return emb ? { ...emb } : null;
                     }).filter(Boolean);
                     // Combinar sin duplicados
                     const allEmbs = [...baseEmbs, ...extraEmbs.filter(e => !baseEmbs.some(b => b.id === e.id))];
