@@ -209,9 +209,12 @@ export default function Staffing() {
   const usaProyeccion = proyHoy > totalPaxReal && proyHoy > 0;
 
   // When projection is the basis, project VIP/Exclusive at the 80/20 mix
-  // so meseros de playa y pool también se calculan correctamente
-  const effectiveVipPax = usaProyeccion ? Math.round(totalPax * 0.8) : vipPax;
-  const effectiveExcPax = usaProyeccion ? totalPax - effectiveVipPax   : excPax;
+  // BUT always use whichever is higher: real category pax OR projected split
+  // so that if real VIP (57) > projected VIP split (48), meseros de playa usan el real
+  const projVipSplit = usaProyeccion ? Math.round(totalPax * 0.8) : vipPax;
+  const projExcSplit = usaProyeccion ? totalPax - projVipSplit       : excPax;
+  const effectiveVipPax = Math.max(vipPax, projVipSplit);
+  const effectiveExcPax = Math.max(excPax, projExcSplit);
 
   const ovrMap = {};
   overrides.forEach(o => { ovrMap[o.role] = o.quantity_override; });
@@ -376,9 +379,12 @@ export default function Staffing() {
             <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
               <span style={{ fontSize: 20, flexShrink: 0 }}>📊</span>
               <div>
-                <div style={{ fontWeight: 700, color: B.sky, fontSize: 13, marginBottom: 2 }}>Proyección activa — {proyHoy} pax</div>
+                <div style={{ fontWeight: 700, color: B.sky, fontSize: 13, marginBottom: 2 }}>Proyección activa — {proyHoy} pax total</div>
                 <div style={{ fontSize: 12, color: "rgba(255,255,255,0.55)" }}>
-                  Reservas confirmadas: <strong style={{ color: B.white }}>{totalPaxReal}</strong> · Staffing calculado sobre el proyectado ({proyHoy}) por ser mayor.
+                  Confirmados: <strong style={{ color: B.white }}>{totalPaxReal}</strong> ({vipPax} VIP · {excPax} Exclusive) · Staffing usa el mayor por categoría.
+                  {(vipPax > projVipSplit || excPax > projExcSplit) && (
+                    <span style={{ color: B.sand, marginLeft: 6 }}>⚡ Real supera split proyectado — ajustado.</span>
+                  )}
                   {proyecciones[selDate]?.notas && <span style={{ color: B.sand }}> · {proyecciones[selDate].notas}</span>}
                 </div>
               </div>
@@ -386,6 +392,41 @@ export default function Staffing() {
             <button onClick={() => openProyModal(selDate)} style={{ background: "transparent", border: `1px solid ${B.sky}55`, borderRadius: 8, color: B.sky, padding: "5px 12px", fontSize: 12, cursor: "pointer", fontWeight: 600, flexShrink: 0 }}>Editar</button>
           </div>
         )}
+
+        {/* Real superó proyección total */}
+        {!usaProyeccion && proyHoy > 0 && totalPaxReal > proyHoy && (
+          <div style={{ background: B.success + "18", border: `1px solid ${B.success}55`, borderRadius: 10, padding: "12px 16px", display: "flex", gap: 12, alignItems: "flex-start" }}>
+            <span style={{ fontSize: 20, flexShrink: 0 }}>📈</span>
+            <div>
+              <div style={{ fontWeight: 700, color: B.success, fontSize: 13, marginBottom: 2 }}>Números reales superaron proyección — staffing ajustado</div>
+              <div style={{ fontSize: 12, color: "rgba(255,255,255,0.55)" }}>
+                Real: <strong style={{ color: B.white }}>{totalPaxReal} pax</strong> ({vipPax} VIP · {excPax} Exclusive) vs proyectado: {proyHoy}. Staffing recalculado sobre los reales.
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Overrides manuales por debajo del cálculo real */}
+        {(() => {
+          const rolesConflicto = ROLES.filter(r => ovrMap[r.key] !== undefined && ovrMap[r.key] < staff.raw[r.key]);
+          if (rolesConflicto.length === 0) return null;
+          return (
+            <div style={{ background: B.warning + "18", border: `1px solid ${B.warning}55`, borderRadius: 10, padding: "12px 16px", display: "flex", gap: 12, alignItems: "flex-start" }}>
+              <span style={{ fontSize: 20, flexShrink: 0 }}>⚠️</span>
+              <div>
+                <div style={{ fontWeight: 700, color: B.warning, fontSize: 13, marginBottom: 4 }}>Ajustes manuales por debajo del cálculo actual</div>
+                <div style={{ fontSize: 12, color: "rgba(255,255,255,0.65)", lineHeight: 1.8 }}>
+                  {rolesConflicto.map(r => (
+                    <span key={r.key} style={{ marginRight: 12 }}>
+                      {r.icon} {r.label}: <strong style={{ color: B.warning }}>{ovrMap[r.key]}</strong> asignado · fórmula sugiere <strong style={{ color: B.white }}>{staff.raw[r.key]}</strong>
+                      <button onClick={() => deleteOverride(r.key)} style={{ marginLeft: 6, background: "none", border: `1px solid ${B.warning}55`, borderRadius: 4, color: B.warning, fontSize: 10, padding: "1px 6px", cursor: "pointer" }}>Restablecer</button>
+                    </span>
+                  ))}
+                </div>
+              </div>
+            </div>
+          );
+        })()}
 
         {/* Alerts */}
         {staff.hayMovimiento && (
