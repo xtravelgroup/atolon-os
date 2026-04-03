@@ -843,7 +843,7 @@ function ReservaModal({ onClose, onSave, isMobile, salidaList = [], aliadoList =
   }, [form.fecha, salidaList]);
 
   const calcPrecio = (tipo, aliado_id, mode) => {
-    const p = pasadiaList.find(p => p.tipo === tipo);
+    const p = pasadiaList.find(p => p.tipo.toLowerCase() === tipo?.toLowerCase());
     if (!p) return 0;
     if (aliado_id && mode === "neto" && p.precio_neto_agencia > 0) return p.precio_neto_agencia;
     return p.precio;
@@ -878,7 +878,7 @@ function ReservaModal({ onClose, onSave, isMobile, salidaList = [], aliadoList =
 
   const aliado = aliadoList.find(a => a.id === form.aliado_id);
   const tieneCXC = aliado && (aliado.cupo_credito || 0) > 0;
-  const pasadiaActual = pasadiaList.find(p => p.tipo === form.tipo);
+  const pasadiaActual = pasadiaList.find(p => p.tipo.toLowerCase() === form.tipo?.toLowerCase());
   const precioFull = pasadiaActual?.precio || 0;
   const precioNeto = pasadiaActual?.precio_neto_agencia || 0;
   const formasPagoDisp = form.forma_pago === "Enviar Link de Pago"
