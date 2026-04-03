@@ -133,6 +133,10 @@ export default function Staffing() {
   const [overrides, setOverrides]         = useState([]);
   const [weekData, setWeekData]           = useState([]); // [{ date, totalPax, vipPax, excPax }]
   const [loading, setLoading]             = useState(true);
+  const [proyecciones, setProyecciones]   = useState({}); // { date: pax_proyectado }
+  const [proyModal, setProyModal]         = useState(null); // { date }
+  const [proyInput, setProyInput]         = useState(0);
+  const [proyNota, setProyNota]           = useState("");
   const [ovrModal, setOvrModal]           = useState(null); // { role, valleVal, picoVal }
   const [ovrQty, setOvrQty]               = useState(0);
   const [ovrReason, setOvrReason]         = useState("");
@@ -146,7 +150,7 @@ export default function Staffing() {
     const ws = weekStart(date);
     const we = addDays(ws, 6);
 
-    const [resR, salR, ovrR, weekR] = await Promise.all([
+    const [resR, salR, ovrR, weekR, proyR] = await Promise.all([
       supabase.from("reservas")
         .select("id, salida_id, salida, tipo, pax, pax_a, pax_n, estado")
         .eq("fecha", date)
@@ -157,11 +161,17 @@ export default function Staffing() {
         .select("fecha, tipo, pax, estado")
         .gte("fecha", ws).lte("fecha", we)
         .in("estado", ["confirmado", "pendiente"]),
+      supabase.from("staffing_proyecciones").select("*").gte("date", ws).lte("date", we),
     ]);
 
     setReservas(resR.data || []);
     setSalidas(salR.data || []);
     setOverrides(ovrR.data || []);
+
+    // Build proyecciones map
+    const proyMap = {};
+    (proyR.data || []).forEach(p => { proyMap[p.date] = p; });
+    setProyecciones(proyMap);
 
     // Build weekly aggregation
     const byDate = {};
@@ -184,11 +194,16 @@ export default function Staffing() {
   useEffect(() => { fetchData(selDate); }, [selDate, fetchData]);
 
   // Derived values
-  const totalPax = reservas.reduce((s, r) => s + (r.pax || 0), 0);
-  const vipPax   = reservas.filter(r => ["VIP Pass", "Atolon Experience"].includes(r.tipo))
-                            .reduce((s, r) => s + (r.pax || 0), 0);
-  const excPax   = reservas.filter(r => r.tipo === "Exclusive Pass")
-                            .reduce((s, r) => s + (r.pax || 0), 0);
+  const totalPaxReal = reservas.reduce((s, r) => s + (r.pax || 0), 0);
+  const vipPax       = reservas.filter(r => ["VIP Pass", "Atolon Experience"].includes(r.tipo))
+                                .reduce((s, r) => s + (r.pax || 0), 0);
+  const excPax       = reservas.filter(r => r.tipo === "Exclusive Pass")
+                                .reduce((s, r) => s + (r.pax || 0), 0);
+
+  // Projection for selected date — use the higher of real vs projected
+  const proyHoy     = proyecciones[selDate]?.pax_proyectado || 0;
+  const totalPax    = Math.max(totalPaxReal, proyHoy); // staffing uses the higher value
+  const usaProyeccion = proyHoy > totalPaxReal && proyHoy > 0;
 
   const ovrMap = {};
   overrides.forEach(o => { ovrMap[o.role] = o.quantity_override; });
@@ -233,6 +248,34 @@ export default function Staffing() {
     if (!supabase) return;
     await supabase.from("staffing_overrides").delete()
       .eq("id", `OVR-${selDate}-${role}`);
+    fetchData(selDate);
+  };
+
+  const openProyModal = (date) => {
+    const existing = proyecciones[date];
+    setProyInput(existing?.pax_proyectado || 0);
+    setProyNota(existing?.notas || "");
+    setProyModal({ date });
+  };
+
+  const saveProyeccion = async () => {
+    if (!supabase || !proyModal) return;
+    setSaving(true);
+    const pax = Number(proyInput);
+    if (pax === 0) {
+      // delete projection if setting to 0
+      await supabase.from("staffing_proyecciones").delete().eq("id", `PROY-${proyModal.date}`);
+    } else {
+      await supabase.from("staffing_proyecciones").upsert({
+        id:              `PROY-${proyModal.date}`,
+        date:            proyModal.date,
+        pax_proyectado:  pax,
+        notas:           proyNota.trim() || null,
+        updated_at:      new Date().toISOString(),
+      }, { onConflict: "id" });
+    }
+    setSaving(false);
+    setProyModal(null);
     fetchData(selDate);
   };
 
@@ -316,6 +359,23 @@ export default function Staffing() {
     return (
       <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
 
+        {/* Proyección activa */}
+        {usaProyeccion && (
+          <div style={{ background: B.sky + "18", border: `1px solid ${B.sky}55`, borderRadius: 10, padding: "12px 16px", display: "flex", gap: 12, alignItems: "center", justifyContent: "space-between" }}>
+            <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
+              <span style={{ fontSize: 20, flexShrink: 0 }}>📊</span>
+              <div>
+                <div style={{ fontWeight: 700, color: B.sky, fontSize: 13, marginBottom: 2 }}>Proyección activa — {proyHoy} pax</div>
+                <div style={{ fontSize: 12, color: "rgba(255,255,255,0.55)" }}>
+                  Reservas confirmadas: <strong style={{ color: B.white }}>{totalPaxReal}</strong> · Staffing calculado sobre el proyectado ({proyHoy}) por ser mayor.
+                  {proyecciones[selDate]?.notas && <span style={{ color: B.sand }}> · {proyecciones[selDate].notas}</span>}
+                </div>
+              </div>
+            </div>
+            <button onClick={() => openProyModal(selDate)} style={{ background: "transparent", border: `1px solid ${B.sky}55`, borderRadius: 8, color: B.sky, padding: "5px 12px", fontSize: 12, cursor: "pointer", fontWeight: 600, flexShrink: 0 }}>Editar</button>
+          </div>
+        )}
+
         {/* Alerts */}
         {staff.hayMovimiento && (
           <div style={{ background: B.warning + "18", border: `1px solid ${B.warning}55`, borderRadius: 10, padding: "12px 16px", display: "flex", gap: 12, alignItems: "flex-start" }}>
@@ -348,7 +408,7 @@ export default function Staffing() {
         {/* KPI cards */}
         <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(4, 1fr)", gap: 12 }}>
           {[
-            { label: "Pax Total",        value: totalPax || 0,          sub: totalPax ? `${vipPax} VIP · ${excPax} Exclusive` : "Sin reservas",  color: nivel.color },
+            { label: "Pax Total",        value: totalPax || 0,          sub: usaProyeccion ? `${totalPaxReal} confirmados · ${proyHoy} proyectados` : totalPax ? `${vipPax} VIP · ${excPax} Exclusive` : "Sin reservas",  color: usaProyeccion ? B.sky : nivel.color },
             { label: "Staff Valle",      value: staff.totalValle,        sub: "8am–12pm y 3–6pm",                                                 color: B.sky },
             { label: "Staff Pico",       value: staff.totalPico,         sub: "12–3pm (almuerzo)",                                                color: B.danger },
             { label: "Ratio Pax/Staff",  value: `1:${Math.round((totalPax || 20) / staff.totalPico)}`, sub: "en pico", color: B.sand },
@@ -568,39 +628,69 @@ export default function Staffing() {
   function TabSemana() {
     return (
       <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-        <div style={{ fontSize: 12, color: "rgba(255,255,255,0.45)" }}>Semana del {fmtDay(weekData[0]?.date)} al {fmtDay(weekData[6]?.date)}</div>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div style={{ fontSize: 12, color: "rgba(255,255,255,0.45)" }}>Semana del {fmtDay(weekData[0]?.date)} al {fmtDay(weekData[6]?.date)}</div>
+          <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)" }}>Toca un día para ver el detalle · 📊 para proyectar</div>
+        </div>
         <div style={{ display: "grid", gridTemplateColumns: isMobile ? "repeat(2, 1fr)" : "repeat(7, 1fr)", gap: 10 }}>
           {weekData.map(d => {
-            const s  = calcStaff(d.totalPax, d.vipPax, d.excPax);
-            const nv = getOcupNivel(d.totalPax || 20);
-            const isSel = d.date === selDate;
-            const isToday = d.date === today;
+            const proyD    = proyecciones[d.date]?.pax_proyectado || 0;
+            const efectivo = Math.max(d.totalPax, proyD);
+            const s        = calcStaff(efectivo, d.vipPax, d.excPax);
+            const nv       = getOcupNivel(efectivo || 20);
+            const isSel    = d.date === selDate;
+            const isToday  = d.date === today;
+            const tieneProyeccion = proyD > 0;
             return (
-              <div
-                key={d.date}
-                onClick={() => { setSelDate(d.date); setView("dashboard"); }}
-                style={{
-                  background: isSel ? B.sky + "22" : B.navyMid,
-                  border: `2px solid ${isSel ? B.sky : isToday ? B.sand + "66" : B.navyLight}`,
-                  borderRadius: 12, padding: "14px 12px", cursor: "pointer",
-                  textAlign: "center", transition: "all 0.15s",
-                }}
-              >
-                <div style={{ fontSize: 11, color: isToday ? B.sand : "rgba(255,255,255,0.5)", fontWeight: isToday ? 700 : 400, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 2 }}>
-                  {fmtDayShort(d.date)}
+              <div key={d.date} style={{ display: "flex", flexDirection: "column", gap: 0 }}>
+                <div
+                  onClick={() => { setSelDate(d.date); setView("dashboard"); }}
+                  style={{
+                    background: isSel ? B.sky + "22" : B.navyMid,
+                    border: `2px solid ${isSel ? B.sky : isToday ? B.sand + "66" : B.navyLight}`,
+                    borderRadius: tieneProyeccion ? "12px 12px 0 0" : 12,
+                    padding: "14px 12px", cursor: "pointer",
+                    textAlign: "center", transition: "all 0.15s",
+                  }}
+                >
+                  <div style={{ fontSize: 11, color: isToday ? B.sand : "rgba(255,255,255,0.5)", fontWeight: isToday ? 700 : 400, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 2 }}>
+                    {fmtDayShort(d.date)}
+                  </div>
+                  <div style={{ fontSize: 22, fontWeight: 800, fontFamily: "'Barlow Condensed', sans-serif", color: isSel ? B.sky : B.white, marginBottom: 8 }}>
+                    {fmtDateNum(d.date)}
+                  </div>
+                  <div style={{ background: nv.bg, border: `1px solid ${nv.color}44`, color: nv.color, borderRadius: 6, padding: "2px 6px", fontSize: 10, fontWeight: 700, marginBottom: 8 }}>
+                    {nv.label.toUpperCase()}
+                  </div>
+                  {/* Pax: real vs proyectado */}
+                  <div style={{ fontSize: 13, fontWeight: 700, color: proyD > d.totalPax ? B.sky : nv.color, fontFamily: "'Barlow Condensed', sans-serif" }}>
+                    {efectivo} pax
+                  </div>
+                  {tieneProyeccion && (
+                    <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>
+                      {d.totalPax} real · <span style={{ color: B.sky }}>{proyD} proy</span>
+                    </div>
+                  )}
+                  <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginTop: 4 }}>
+                    Valle {s.totalValle} · Pico {s.totalPico}
+                  </div>
                 </div>
-                <div style={{ fontSize: 22, fontWeight: 800, fontFamily: "'Barlow Condensed', sans-serif", color: isSel ? B.sky : B.white, marginBottom: 8 }}>
-                  {fmtDateNum(d.date)}
-                </div>
-                <div style={{ background: nv.bg, border: `1px solid ${nv.color}44`, color: nv.color, borderRadius: 6, padding: "2px 6px", fontSize: 10, fontWeight: 700, marginBottom: 8 }}>
-                  {nv.label.toUpperCase()}
-                </div>
-                <div style={{ fontSize: 13, fontWeight: 700, color: nv.color, fontFamily: "'Barlow Condensed', sans-serif" }}>
-                  {d.totalPax} pax
-                </div>
-                <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginTop: 4 }}>
-                  Valle {s.totalValle} · Pico {s.totalPico}
-                </div>
+                {/* Proyección button */}
+                <button
+                  onClick={e => { e.stopPropagation(); openProyModal(d.date); }}
+                  style={{
+                    background: tieneProyeccion ? B.sky + "22" : B.navyLight,
+                    border: `1px solid ${tieneProyeccion ? B.sky + "55" : B.navyLight}`,
+                    borderTop: "none",
+                    borderRadius: "0 0 10px 10px",
+                    color: tieneProyeccion ? B.sky : "rgba(255,255,255,0.4)",
+                    padding: "6px 4px", fontSize: 11, cursor: "pointer", fontWeight: 600,
+                    width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 4,
+                  }}
+                >
+                  <span>📊</span>
+                  <span>{tieneProyeccion ? proyD + " proy" : "Proyectar"}</span>
+                </button>
               </div>
             );
           })}
@@ -613,31 +703,45 @@ export default function Staffing() {
             <table style={{ width: "100%", borderCollapse: "collapse" }}>
               <thead>
                 <tr style={{ background: B.navy }}>
-                  {["Día", "Pax", "Nivel", "Valle", "Pico", "Turnos"].map(h => (
+                  {["Día", "Real", "Proyectado", "Efectivo", "Nivel", "Valle", "Pico"].map(h => (
                     <th key={h} style={{ padding: "8px 14px", textAlign: "left", fontSize: 10, color: B.sand, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600, whiteSpace: "nowrap" }}>{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
                 {weekData.map(d => {
-                  const s  = calcStaff(d.totalPax, d.vipPax, d.excPax);
-                  const nv = getOcupNivel(d.totalPax || 20);
+                  const proyD    = proyecciones[d.date]?.pax_proyectado || 0;
+                  const efectivo = Math.max(d.totalPax, proyD);
+                  const s  = calcStaff(efectivo, d.vipPax, d.excPax);
+                  const nv = getOcupNivel(efectivo || 20);
                   const isSel = d.date === selDate;
+                  const tieneProyeccion = proyD > 0;
                   return (
                     <tr key={d.date} onClick={() => { setSelDate(d.date); setView("dashboard"); }}
                       style={{ background: isSel ? B.sky + "11" : "transparent", cursor: "pointer", borderBottom: `1px solid ${B.navyLight}` }}>
                       <td style={{ padding: "10px 14px", fontSize: 13, fontWeight: d.date === today ? 700 : 400, color: d.date === today ? B.sand : B.white }}>
                         {fmtDay(d.date)}{d.date === today ? " (hoy)" : ""}
                       </td>
-                      <td style={{ padding: "10px 14px", fontSize: 14, fontWeight: 700, fontFamily: "'Barlow Condensed', sans-serif", color: nv.color }}>{d.totalPax}</td>
+                      <td style={{ padding: "10px 14px", fontSize: 13, color: "rgba(255,255,255,0.6)" }}>{d.totalPax}</td>
+                      <td style={{ padding: "10px 14px" }}>
+                        {tieneProyeccion ? (
+                          <button onClick={e => { e.stopPropagation(); openProyModal(d.date); }}
+                            style={{ background: B.sky + "22", border: `1px solid ${B.sky}55`, borderRadius: 6, color: B.sky, padding: "3px 10px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+                            {proyD} pax
+                          </button>
+                        ) : (
+                          <button onClick={e => { e.stopPropagation(); openProyModal(d.date); }}
+                            style={{ background: "transparent", border: `1px solid ${B.navyLight}`, borderRadius: 6, color: "rgba(255,255,255,0.35)", padding: "3px 10px", fontSize: 11, cursor: "pointer" }}>
+                            + Agregar
+                          </button>
+                        )}
+                      </td>
+                      <td style={{ padding: "10px 14px", fontSize: 14, fontWeight: 800, fontFamily: "'Barlow Condensed', sans-serif", color: proyD > d.totalPax ? B.sky : nv.color }}>{efectivo}</td>
                       <td style={{ padding: "10px 14px" }}>
                         <span style={{ background: nv.bg, color: nv.color, border: `1px solid ${nv.color}44`, borderRadius: 6, padding: "2px 8px", fontSize: 11, fontWeight: 700 }}>{nv.label}</span>
                       </td>
                       <td style={{ padding: "10px 14px", fontSize: 14, fontWeight: 700, color: B.sky, fontFamily: "'Barlow Condensed', sans-serif" }}>{s.totalValle}</td>
                       <td style={{ padding: "10px 14px", fontSize: 14, fontWeight: 700, color: B.danger, fontFamily: "'Barlow Condensed', sans-serif" }}>{s.totalPico}</td>
-                      <td style={{ padding: "10px 14px", fontSize: 12, color: "rgba(255,255,255,0.5)" }}>
-                        {d.totalPax <= 40 ? "1–2" : d.totalPax <= 80 ? "2" : "3"} turno(s)
-                      </td>
                     </tr>
                   );
                 })}
@@ -789,6 +893,69 @@ export default function Staffing() {
           {view === "semana"    && <TabSemana />}
           {view === "ajustes"   && <TabAjustes />}
         </>
+      )}
+
+      {/* Proyección modal */}
+      {proyModal && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 1200, background: "rgba(0,0,0,0.8)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}
+          onClick={e => e.target === e.currentTarget && setProyModal(null)}>
+          <div style={{ background: B.navyMid, borderRadius: 16, padding: 28, width: 360, border: `1px solid ${B.sky}44` }}>
+            <h3 style={{ fontSize: 17, fontWeight: 700, marginBottom: 4, color: B.sky, display: "flex", gap: 8, alignItems: "center" }}>
+              📊 Proyección de Pax
+            </h3>
+            <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginBottom: 20 }}>
+              {fmtDay(proyModal.date)} · Reservas confirmadas: <strong style={{ color: B.white }}>{weekData.find(d => d.date === proyModal.date)?.totalPax || 0}</strong>
+              <div style={{ marginTop: 4, color: "rgba(255,255,255,0.35)", fontSize: 11 }}>
+                El staffing usará el valor más alto entre lo proyectado y lo real.
+              </div>
+            </div>
+
+            <div style={{ marginBottom: 16 }}>
+              <label style={LS}>Pax proyectados</label>
+              <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                <button onClick={() => setProyInput(q => Math.max(0, Number(q) - 5))}
+                  style={{ background: B.navyLight, border: "none", borderRadius: 8, color: B.white, width: 40, height: 40, fontSize: 16, cursor: "pointer", fontWeight: 700 }}>−5</button>
+                <button onClick={() => setProyInput(q => Math.max(0, Number(q) - 1))}
+                  style={{ background: B.navyLight, border: "none", borderRadius: 8, color: B.white, width: 36, height: 40, fontSize: 18, cursor: "pointer", fontWeight: 700 }}>−</button>
+                <input type="number" min={0} max={120} value={proyInput} onChange={e => setProyInput(Number(e.target.value))}
+                  style={{ ...IS, width: 70, textAlign: "center", padding: "8px", fontSize: 20, fontWeight: 800 }} />
+                <button onClick={() => setProyInput(q => Math.min(120, Number(q) + 1))}
+                  style={{ background: B.navyLight, border: "none", borderRadius: 8, color: B.white, width: 36, height: 40, fontSize: 18, cursor: "pointer", fontWeight: 700 }}>+</button>
+                <button onClick={() => setProyInput(q => Math.min(120, Number(q) + 5))}
+                  style={{ background: B.navyLight, border: "none", borderRadius: 8, color: B.white, width: 40, height: 40, fontSize: 16, cursor: "pointer", fontWeight: 700 }}>+5</button>
+              </div>
+              {/* Quick select */}
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 10 }}>
+                {[20, 40, 60, 80, 100, 120].map(v => (
+                  <button key={v} onClick={() => setProyInput(v)}
+                    style={{ background: proyInput === v ? B.sky + "33" : B.navyLight, border: `1px solid ${proyInput === v ? B.sky : B.navyLight}`, borderRadius: 6, color: proyInput === v ? B.sky : "rgba(255,255,255,0.5)", padding: "5px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+                    {v}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div style={{ marginBottom: 20 }}>
+              <label style={LS}>Nota (opcional)</label>
+              <input value={proyNota} onChange={e => setProyNota(e.target.value)}
+                placeholder="Ej: Evento privado, grupo B2B, temporada alta..."
+                style={IS} />
+            </div>
+
+            <div style={{ display: "flex", gap: 10 }}>
+              <button onClick={() => setProyModal(null)} style={{ flex: 1, padding: "11px", borderRadius: 8, background: B.navyLight, border: "none", color: B.white, fontSize: 13, cursor: "pointer" }}>Cancelar</button>
+              {proyecciones[proyModal.date] && (
+                <button onClick={async () => { setProyInput(0); await saveProyeccion(); }} disabled={saving}
+                  style={{ padding: "11px 16px", borderRadius: 8, background: B.danger + "22", border: `1px solid ${B.danger}44`, color: B.danger, fontSize: 13, cursor: "pointer" }}>
+                  Borrar
+                </button>
+              )}
+              <button onClick={saveProyeccion} disabled={saving} style={{ flex: 1, padding: "11px", borderRadius: 8, background: B.sky, border: "none", color: B.navy, fontSize: 13, fontWeight: 700, cursor: "pointer", opacity: saving ? 0.6 : 1 }}>
+                {saving ? "Guardando..." : "💾 Guardar"}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Override modal */}
