@@ -968,21 +968,15 @@ export default function BookingPopup() {
           />
         </div>
 
-        {/* T&C Acceptance */}
-        <div
-          onClick={() => setTermsAccepted(v => !v)}
-          style={{ marginBottom: 20, padding: "14px 16px", borderRadius: 10, background: termsAccepted ? "#EEF2FF" : "#F8F9FF", border: `1.5px solid ${termsAccepted ? "#1B4FD8" : "#E2E8F0"}`, transition: "all 0.2s", cursor: "pointer", textAlign: "center" }}>
-          <span style={{ fontSize: 13, color: termsAccepted ? "#1B4FD8" : "#475569", fontWeight: termsAccepted ? 600 : 400 }}>
-            {isEN ? "I accept the terms and conditions" : "Acepto los términos y condiciones"}
+        {/* T&C */}
+        <div style={{ marginBottom: 20, textAlign: "center" }}>
+          <span style={{ fontSize: 12, color: "#94A3B8" }}>
+            {isEN ? "By continuing, I accept the terms and conditions." : "Al continuar, acepto los términos y condiciones."}
           </span>
-          {!termsAccepted && errors.terms && (
-            <div style={{ fontSize: 11, color: "#DC2626", marginTop: 4 }}>{errors.terms}</div>
-          )}
         </div>
 
         <button onClick={async () => {
           if (!validateForm()) return;
-          if (!termsAccepted) { setErrors(e => ({ ...e, terms: isEN ? "You must accept the terms to continue" : "Debes aceptar los términos para continuar" })); return; }
           // Crear lead en Comercial con stage "Nuevo"
           if (supabase) {
             const lid = `LEAD-WEB-${Date.now()}`;
@@ -1008,7 +1002,7 @@ export default function BookingPopup() {
           }
           setStep(3);
         }}
-          style={{ width: "100%", padding: "15px 0", borderRadius: 10, border: "none", background: termsAccepted ? C.primary : "#94A3B8", color: "white", fontSize: 15, fontWeight: 700, cursor: termsAccepted ? "pointer" : "not-allowed", letterSpacing: "0.03em", marginBottom: 10, transition: "background 0.2s", opacity: termsAccepted ? 1 : 0.7 }}>
+          style={{ width: "100%", padding: "15px 0", borderRadius: 10, border: "none", background: C.primary, color: "white", fontSize: 15, fontWeight: 700, cursor: "pointer", letterSpacing: "0.03em", marginBottom: 10 }}>
           {isEN ? "Continue →" : "Continuar →"}
         </button>
         <div style={{ textAlign: "center", fontSize: 11, color: C.textLight }}>
