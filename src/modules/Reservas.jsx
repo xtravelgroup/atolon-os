@@ -658,7 +658,7 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
             <div>
               <label style={{ fontSize: 11, color: B.sand, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", display: "block", marginBottom: 8 }}>Forma de pago</label>
               <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                {FORMAS_PAGO.filter(f => f !== "Enviar Link de Pago" && f !== "CXC").map(fp => (
+                {FORMAS_PAGO.filter(f => f !== "Enviar Link de Pago" && (f !== "CXC" || tieneCXC)).map(fp => (
                   <button key={fp} onClick={() => setPagoForma(fp)} style={{
                     padding: "5px 12px", borderRadius: 20, fontSize: 12, fontWeight: 600, cursor: "pointer",
                     border: `1px solid ${pagoForma === fp ? B.sky : B.navyLight}`,
