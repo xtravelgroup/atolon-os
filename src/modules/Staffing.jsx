@@ -201,14 +201,19 @@ export default function Staffing() {
                                 .reduce((s, r) => s + (r.pax || 0), 0);
 
   // Projection for selected date — use the higher of real vs projected
-  const proyHoy     = proyecciones[selDate]?.pax_proyectado || 0;
-  const totalPax    = Math.max(totalPaxReal, proyHoy); // staffing uses the higher value
+  const proyHoy       = proyecciones[selDate]?.pax_proyectado || 0;
+  const totalPax      = Math.max(totalPaxReal, proyHoy);
   const usaProyeccion = proyHoy > totalPaxReal && proyHoy > 0;
+
+  // When projection is the basis, project VIP/Exclusive at the 80/20 mix
+  // so meseros de playa y pool también se calculan correctamente
+  const effectiveVipPax = usaProyeccion ? Math.round(totalPax * 0.8) : vipPax;
+  const effectiveExcPax = usaProyeccion ? totalPax - effectiveVipPax   : excPax;
 
   const ovrMap = {};
   overrides.forEach(o => { ovrMap[o.role] = o.quantity_override; });
 
-  const staff = calcStaff(totalPax, vipPax, excPax, ovrMap);
+  const staff = calcStaff(totalPax, effectiveVipPax, effectiveExcPax, ovrMap);
   const nivel = getOcupNivel(totalPax || 20);
 
   // Active turnos (salidas with confirmed pax today)
@@ -636,7 +641,10 @@ export default function Staffing() {
           {weekData.map(d => {
             const proyD    = proyecciones[d.date]?.pax_proyectado || 0;
             const efectivo = Math.max(d.totalPax, proyD);
-            const s        = calcStaff(efectivo, d.vipPax, d.excPax);
+            const usaProy  = proyD > d.totalPax && proyD > 0;
+            const effVip   = usaProy ? Math.round(efectivo * 0.8) : d.vipPax;
+            const effExc   = usaProy ? efectivo - effVip : d.excPax;
+            const s        = calcStaff(efectivo, effVip, effExc);
             const nv       = getOcupNivel(efectivo || 20);
             const isSel    = d.date === selDate;
             const isToday  = d.date === today;
@@ -712,7 +720,10 @@ export default function Staffing() {
                 {weekData.map(d => {
                   const proyD    = proyecciones[d.date]?.pax_proyectado || 0;
                   const efectivo = Math.max(d.totalPax, proyD);
-                  const s  = calcStaff(efectivo, d.vipPax, d.excPax);
+                  const usaProy  = proyD > d.totalPax && proyD > 0;
+                  const effVip   = usaProy ? Math.round(efectivo * 0.8) : d.vipPax;
+                  const effExc   = usaProy ? efectivo - effVip : d.excPax;
+                  const s  = calcStaff(efectivo, effVip, effExc);
                   const nv = getOcupNivel(efectivo || 20);
                   const isSel = d.date === selDate;
                   const tieneProyeccion = proyD > 0;
