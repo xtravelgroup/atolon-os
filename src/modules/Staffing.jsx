@@ -270,19 +270,22 @@ export default function Staffing() {
     if (!supabase || !proyModal) return;
     setSaving(true);
     const pax = Number(proyInput);
+    let err = null;
     if (pax === 0) {
-      // delete projection if setting to 0
-      await supabase.from("staffing_proyecciones").delete().eq("id", `PROY-${proyModal.date}`);
+      const { error } = await supabase.from("staffing_proyecciones").delete().eq("id", `PROY-${proyModal.date}`);
+      err = error;
     } else {
-      await supabase.from("staffing_proyecciones").upsert({
+      const { error } = await supabase.from("staffing_proyecciones").upsert({
         id:              `PROY-${proyModal.date}`,
         date:            proyModal.date,
         pax_proyectado:  pax,
         notas:           proyNota.trim() || null,
         updated_at:      new Date().toISOString(),
       }, { onConflict: "id" });
+      err = error;
     }
     setSaving(false);
+    if (err) { alert("Error guardando proyección: " + err.message); return; }
     setProyModal(null);
     fetchData(selDate);
   };
