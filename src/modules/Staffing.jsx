@@ -364,7 +364,7 @@ export default function Staffing() {
 
   // ── Tab: Dashboard ────────────────────────────────────────────────────────
   function TabDashboard() {
-    const vipPct = totalPax > 0 ? Math.round((vipPax / totalPax) * 100) : 80;
+    const vipPct = totalPax > 0 ? Math.round((effectiveVipPax / totalPax) * 100) : 80;
     const excPct = 100 - vipPct;
 
     return (
@@ -437,7 +437,7 @@ export default function Staffing() {
           <div style={{ background: B.navyMid, borderRadius: 12, padding: "16px 20px" }}>
             <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
               <span style={{ fontSize: 12, color: B.sand, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.06em" }}>Mix VIP / Exclusive</span>
-              <span style={{ fontSize: 12, color: "rgba(255,255,255,0.5)" }}>{vipPax} VIP · {excPax} Exclusive</span>
+              <span style={{ fontSize: 12, color: "rgba(255,255,255,0.5)" }}>{effectiveVipPax} VIP · {effectiveExcPax} Exclusive{usaProyeccion ? " (80/20 proyectado)" : ""}</span>
             </div>
             <div style={{ display: "flex", height: 10, borderRadius: 6, overflow: "hidden", gap: 2 }}>
               <div style={{ width: vipPct + "%", background: B.sky, borderRadius: "6px 0 0 6px", transition: "width 0.4s" }} />
