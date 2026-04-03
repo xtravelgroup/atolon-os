@@ -158,10 +158,15 @@ export default function CierreCaja() {
   const fileRef   = useRef(null);
   const cameraRef = useRef(null);
 
-  // Logged-in user
+  // Logged-in user + lista de usuarios
   const [userNombre, setUserNombre] = useState("");
+  const [usuariosList, setUsuariosList] = useState([]);
   useEffect(() => {
     if (!supabase) return;
+    // Load all active users for cajero dropdown
+    supabase.from("usuarios").select("nombre").eq("activo", true).order("nombre")
+      .then(({ data }) => { if (data) setUsuariosList(data.map(u => u.nombre)); });
+    // Pre-select logged-in user
     supabase.auth.getSession().then(async ({ data: { session } }) => {
       if (!session?.user?.email) return;
       const { data } = await supabase.from("usuarios").select("nombre")
@@ -182,6 +187,12 @@ export default function CierreCaja() {
   // Métodos: { datafono: { venta: "", propina: "" }, ... }
   const initMetodos = () => Object.fromEntries(METODOS.map(m => [m.key, { venta: "", propina: "" }]));
   const [metodos, setMetodos] = useState(initMetodos());
+
+  // Otros: lista dinámica con descripción
+  const [otrosList, setOtrosList] = useState([]);
+  const addOtro = () => setOtrosList(p => [...p, { id: Date.now().toString(), desc: "", venta: "", propina: "" }]);
+  const removeOtro = (id) => setOtrosList(p => p.filter(o => o.id !== id));
+  const setOtro = (id, field, val) => setOtrosList(p => p.map(o => o.id === id ? { ...o, [field]: val } : o));
 
   // INC 8%
   const [incBase,     setIncBase]     = useState("");
@@ -210,8 +221,11 @@ export default function CierreCaja() {
     })
   );
 
-  const totalVentas   = METODOS.reduce((s, m) => s + computed[m.key].venta, 0);
-  const totalPropinas = METODOS.reduce((s, m) => s + computed[m.key].propina, 0);
+  const otrosVentaTotal  = otrosList.reduce((s, o) => s + parseCOP(o.venta), 0);
+  const otrosPropTotal   = otrosList.reduce((s, o) => s + parseCOP(o.propina), 0);
+
+  const totalVentas   = METODOS.filter(m => m.key !== "otros").reduce((s, m) => s + computed[m.key].venta, 0) + otrosVentaTotal;
+  const totalPropinas = METODOS.filter(m => m.key !== "otros").reduce((s, m) => s + computed[m.key].propina, 0) + otrosPropTotal;
   const totalGeneral  = totalVentas + totalPropinas;
 
   const efectivoEsperado = computed.efectivo.total;
@@ -309,8 +323,16 @@ export default function CierreCaja() {
     const email = session?.data?.session?.user?.email || "sistema";
 
     const metodosData = Object.fromEntries(
-      METODOS.map(m => [m.key, { venta: computed[m.key].venta, propina: computed[m.key].propina, total: computed[m.key].total }])
+      METODOS.map(m => {
+        if (m.key === "otros") {
+          return [m.key, { venta: otrosVentaTotal, propina: otrosPropTotal, total: otrosVentaTotal + otrosPropTotal }];
+        }
+        return [m.key, { venta: computed[m.key].venta, propina: computed[m.key].propina, total: computed[m.key].total }];
+      })
     );
+    if (otrosList.length > 0) {
+      metodosData.otros_items = otrosList.map(o => ({ desc: o.desc, venta: parseCOP(o.venta), propina: parseCOP(o.propina) }));
+    }
 
     const id = `CC-${Date.now()}`;
     const record = {
@@ -348,8 +370,8 @@ export default function CierreCaja() {
 
   const reset = () => {
     setSaved(false); setSavedId(null); setError(null);
-    setCajero(""); setNumCaja(""); setNumComp(""); setFile(null); setFileUrl("");
-    setMetodos(initMetodos()); setIncBase(""); setIncImpuesto("");
+    setCajero(userNombre || ""); setNumCaja(""); setNumComp(""); setFile(null); setFileUrl("");
+    setMetodos(initMetodos()); setOtrosList([]); setIncBase(""); setIncImpuesto("");
     setEfectivoContado(""); setNotas("");
   };
 
@@ -407,8 +429,10 @@ export default function CierreCaja() {
             <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr 1fr 1fr", gap: 14 }}>
               <div>
                 <label style={LS}>Cajero</label>
-                <input value={cajero} onChange={e => setCajero(e.target.value)}
-                  placeholder="Nombre del cajero" style={{ ...IS, background: userNombre ? B.navyLight : B.navy }} />
+                <select value={cajero} onChange={e => setCajero(e.target.value)} style={IS}>
+                  <option value="">— Seleccionar —</option>
+                  {usuariosList.map(n => <option key={n} value={n}>{n}</option>)}
+                </select>
               </div>
               <div>
                 <label style={LS}>Caja</label>
@@ -509,7 +533,7 @@ export default function CierreCaja() {
               </div>
             )}
 
-            {METODOS.map(m => {
+            {METODOS.filter(m => m.key !== "otros").map(m => {
               const isEfectivo = m.key === "efectivo";
               const tot = computed[m.key].total;
               return (
@@ -549,6 +573,53 @@ export default function CierreCaja() {
                 </div>
               );
             })}
+
+            {/* ── Otros métodos (dinámico) ── */}
+            {otrosList.map((o) => {
+              const oTot = parseCOP(o.venta) + parseCOP(o.propina);
+              return (
+                <div key={o.id} style={{
+                  borderRadius: 10, marginBottom: 6,
+                  background: "rgba(255,255,255,0.02)",
+                  border: "1px solid rgba(255,255,255,0.04)",
+                  padding: "10px 12px",
+                }}>
+                  {/* Descripción + eliminar */}
+                  <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
+                    <span style={{ fontSize: 15 }}>➕</span>
+                    <input placeholder="Descripción (ej: Nequi, Bono, Cupon…)" value={o.desc}
+                      onChange={e => setOtro(o.id, "desc", e.target.value)}
+                      style={{ ...IS, flex: 1, fontSize: 13 }} />
+                    <button onClick={() => removeOtro(o.id)}
+                      style={{ background: "none", border: "none", color: "rgba(255,255,255,0.35)", fontSize: 18, cursor: "pointer", padding: "0 4px", lineHeight: 1 }}>
+                      ✕
+                    </button>
+                  </div>
+                  {/* Venta / Propina / Total */}
+                  <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "1fr 1fr 120px", gap: 10, alignItems: "center" }}>
+                    <input type="number" min="0" placeholder="Venta" value={o.venta}
+                      onChange={e => setOtro(o.id, "venta", e.target.value)}
+                      style={{ ...IS, fontSize: 13, textAlign: "right" }} />
+                    <input type="number" min="0" placeholder="Propina" value={o.propina}
+                      onChange={e => setOtro(o.id, "propina", e.target.value)}
+                      style={{ ...IS, fontSize: 13, textAlign: "right", background: "rgba(200,185,154,0.06)", borderColor: "rgba(200,185,154,0.1)" }} />
+                    {!isMobile && (
+                      <div style={{ textAlign: "right", fontSize: 14, fontWeight: 700, color: oTot > 0 ? "#fff" : "rgba(255,255,255,0.2)" }}>
+                        {oTot > 0 ? COP(oTot) : "—"}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+            <button onClick={addOtro} style={{
+              width: "100%", background: "none",
+              border: "1px dashed rgba(255,255,255,0.12)", borderRadius: 8,
+              padding: "9px 14px", color: "rgba(255,255,255,0.4)", fontSize: 12,
+              cursor: "pointer", marginBottom: 10, textAlign: "left",
+            }}>
+              ➕ Agregar otro método de pago
+            </button>
 
             {/* Totals row */}
             <div style={{
