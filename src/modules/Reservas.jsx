@@ -1957,7 +1957,8 @@ export default function Reservas() {
         </div>
       </div>
 
-      {/* ── summary kpis ── */}
+      {/* ── summary kpis — ocultar en "Otras" sin fecha específica ── */}
+      {!(tabDia === "fecha" && !fechaFiltro) && (
       <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(3, 1fr)", gap: isMobile ? 8 : 14, marginBottom: isMobile ? 16 : 24 }}>
         {[
           { label: "Total Pax",  value: totalPax,         unit: "personas",           color: B.sky     },
@@ -1973,9 +1974,10 @@ export default function Reservas() {
           </div>
         ))}
       </div>
+      )}
 
-      {/* ── departure board ── */}
-      {!isMobile && salidas.length > 0 && (
+      {/* ── departure board — ocultar en "Otras" sin fecha específica ── */}
+      {!isMobile && salidas.length > 0 && !(tabDia === "fecha" && !fechaFiltro) && (
         <div style={{ marginBottom: 28 }}>
           <h2 style={{ fontFamily: "'Barlow Condensed', sans-serif", fontSize: 20, fontWeight: 700, color: B.sand, margin: "0 0 14px", letterSpacing: 0.5 }}>
             Tablero de Salidas
