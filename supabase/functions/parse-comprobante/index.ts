@@ -50,6 +50,8 @@ Retorna SOLO un JSON con este formato exacto, sin texto adicional:
     "transferencia": { "venta": 0, "propina": 0 },
     "otros":         { "venta": 0, "propina": 0 }
   },
+  "inc_base": 0,
+  "inc_impuesto": 0,
   "ok": true
 }
 
@@ -57,17 +59,20 @@ Instrucciones de extracción:
 - cajero: "Responsable de caja" en el comprobante
 - numero_comprobante: "Comprobante No."
 - fecha: fecha inicial del comprobante en formato YYYY-MM-DD
-- metodos.datafono.venta: monto "Venta" de Datafono en la sección "Detalle Ventas" (sin propina)
-- metodos.datafono.propina: monto "Propina" de Datafono
-- metodos.efectivo.venta: monto "Venta" de Efectivo
-- metodos.efectivo.propina: monto "Propina" de Efectivo
-- metodos.link_pago: "Link de Pago" o "Wompi"
-- metodos.resort_credit: "Resort Credit"
-- metodos.transferencia: "Transferencia"
-- metodos.otros: cualquier otro método no listado (suma si hay varios)
-- Todos los montos deben ser enteros en pesos colombianos (sin puntos ni comas, sin símbolo $)
-- Si un campo no se encuentra, usa "" para texto y 0 para números
-- Si no puedes leer el comprobante, retorna { "ok": false, "error": "descripcion" }`,
+- metodos: usa la sección "Detalle Ventas" del comprobante
+  - datafono.venta: columna "Venta" de Datafono (sin propina)
+  - datafono.propina: columna "Propina" de Datafono
+  - efectivo.venta: columna "Venta" de Efectivo
+  - efectivo.propina: columna "Propina" de Efectivo
+  - link_pago: "Link de Pago" o "Wompi"
+  - resort_credit: "Resort Credit"
+  - transferencia: "Transferencia"
+  - otros: cualquier otro método no listado (suma si hay varios)
+- inc_base: sección "Impuestos" → columna "Base" del INC (8%)
+- inc_impuesto: sección "Impuestos" → columna "Imp" del INC (8%)
+- Todos los montos son enteros en pesos colombianos (sin puntos ni comas, sin símbolo $)
+- Si un campo no se encuentra usa "" para texto y 0 para números
+- Si no puedes leer el comprobante retorna { "ok": false, "error": "descripcion" }`,
             },
           ],
         }],

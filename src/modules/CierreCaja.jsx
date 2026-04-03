@@ -171,6 +171,10 @@ export default function CierreCaja() {
   const initMetodos = () => Object.fromEntries(METODOS.map(m => [m.key, { venta: "", propina: "" }]));
   const [metodos, setMetodos] = useState(initMetodos());
 
+  // INC 8%
+  const [incBase,     setIncBase]     = useState("");
+  const [incImpuesto, setIncImpuesto] = useState("");
+
   // Efectivo cuadre
   const [efectivoContado, setEfectivoContado] = useState("");
 
@@ -254,6 +258,8 @@ export default function CierreCaja() {
         if (fnData.cajero)              setCajero(fnData.cajero);
         if (fnData.numero_comprobante)  setNumComp(fnData.numero_comprobante);
         if (fnData.fecha)               setFecha(fnData.fecha);
+        if (fnData.inc_base)            setIncBase(String(fnData.inc_base));
+        if (fnData.inc_impuesto)        setIncImpuesto(String(fnData.inc_impuesto));
 
         if (fnData.metodos) {
           setMetodos(prev => {
@@ -308,6 +314,8 @@ export default function CierreCaja() {
       total_ventas: totalVentas,
       total_propinas: totalPropinas,
       total_general: totalGeneral,
+      inc_base: parseCOP(incBase) || null,
+      inc_impuesto: parseCOP(incImpuesto) || null,
       efectivo_esperado: efectivoEsperado,
       efectivo_contado: efectivoContadoNum,
       diferencia,
@@ -329,7 +337,8 @@ export default function CierreCaja() {
   const reset = () => {
     setSaved(false); setSavedId(null); setError(null);
     setCajero(""); setNumCaja(""); setNumComp(""); setFile(null); setFileUrl("");
-    setMetodos(initMetodos()); setEfectivoContado(""); setNotas("");
+    setMetodos(initMetodos()); setIncBase(""); setIncImpuesto("");
+    setEfectivoContado(""); setNotas("");
   };
 
   // ────────────────────────────────────────────────────────────────────────────
@@ -538,7 +547,63 @@ export default function CierreCaja() {
             </div>
           </div>
 
-          {/* ── 4. Cuadre de efectivo ── */}
+          {/* ── 4. INC 8% + Resumen ── */}
+          <div style={{ background: B.navyMid, borderRadius: 14, padding: "18px 20px", marginBottom: 20, border: "1px solid rgba(255,255,255,0.07)" }}>
+            <div style={{ fontSize: 12, color: B.sand, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 16 }}>Impuestos y resumen</div>
+
+            {/* INC 8% */}
+            <div style={{ marginBottom: 18 }}>
+              <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 10 }}>INC (8%)</div>
+              <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "1fr 1fr 1fr", gap: 10, alignItems: "end" }}>
+                <div>
+                  <label style={LS}>Base gravable</label>
+                  <input type="number" min="0" placeholder="0" value={incBase}
+                    onChange={e => {
+                      setIncBase(e.target.value);
+                      const base = parseInt(e.target.value, 10) || 0;
+                      setIncImpuesto(base ? String(Math.round(base * 0.08)) : "");
+                    }}
+                    style={{ ...IS, textAlign: "right" }} />
+                </div>
+                <div>
+                  <label style={LS}>INC (8%)</label>
+                  <input type="number" min="0" placeholder="0" value={incImpuesto}
+                    onChange={e => setIncImpuesto(e.target.value)}
+                    style={{ ...IS, textAlign: "right", color: "#fbbf24" }} />
+                </div>
+                <div style={{ padding: "10px 0" }}>
+                  <div style={{ fontSize: 10, color: "rgba(255,255,255,0.3)", marginBottom: 4 }}>Auto-calculado</div>
+                  <div style={{ fontSize: 11, color: "rgba(255,255,255,0.3)" }}>Base × 8% = Imp. — editable si difiere</div>
+                </div>
+              </div>
+            </div>
+
+            {/* Resumen tipo comprobante */}
+            <div style={{ borderTop: "1px solid rgba(255,255,255,0.07)", paddingTop: 16 }}>
+              <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 12 }}>Resumen</div>
+              {[
+                { label: "Total Ventas (sin propina)",       value: totalVentas,               color: B.sky },
+                { label: "Propinas",                         value: totalPropinas,              color: B.sand },
+                { label: "INC (8%)",                         value: parseCOP(incImpuesto),      color: "#fbbf24", skip: !incImpuesto },
+                { label: "Total General (Debe tener)",       value: totalGeneral,               color: "#fff", bold: true, sep: true },
+                { label: "Total Efectivo",                   value: computed.efectivo.total,    color: "#fbbf24" },
+              ].filter(r => !r.skip).map(r => (
+                <div key={r.label} style={{
+                  display: "flex", justifyContent: "space-between", alignItems: "center",
+                  padding: "7px 0",
+                  borderTop: r.sep ? "1px solid rgba(255,255,255,0.08)" : "none",
+                  marginTop: r.sep ? 4 : 0,
+                }}>
+                  <span style={{ fontSize: 13, color: "rgba(255,255,255,0.5)" }}>{r.label}</span>
+                  <span style={{ fontSize: r.bold ? 16 : 13, fontWeight: r.bold ? 800 : 600, color: r.color }}>
+                    {COP(r.value)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* ── 5. Cuadre de efectivo ── */}
           {efectivoEsperado > 0 && (
             <div style={{ background: "rgba(251,191,36,0.07)", borderRadius: 14, padding: "18px 20px", marginBottom: 20, border: "1px solid rgba(251,191,36,0.15)" }}>
               <div style={{ fontSize: 12, color: "#fbbf24", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 14 }}>💵 Cuadre de Efectivo</div>
