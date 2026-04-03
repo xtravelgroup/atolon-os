@@ -166,12 +166,35 @@ export default function Financiero() {
   const deltaRes  = pctDelta(reservasA, reservasC);
   const deltaTick = pctDelta(ticketA, ticketC);
 
-  // ── P&L helpers ───────────────────────────────────────────────────────────
-  const cierresDeMes = (mes) => cierres.filter(c => c.fecha?.startsWith(mes));
-  const reqsDeMes    = (mes) => reqsList.filter(r => r.fecha?.startsWith(mes));
+  // ── Cierre / A&B helpers ──────────────────────────────────────────────────
+  const cierresDeMes    = (mes) => cierres.filter(c => c.fecha?.startsWith(mes));
+  const cierresAyBDeMes = (mes) => cierresDeMes(mes).filter(c => c.area === "ayb");
 
   const totalCierres = (mes) =>
     cierresDeMes(mes).reduce((s, c) => s + (c.total_ventas || c.total_general || 0), 0);
+
+  const totalAyB = (mes) =>
+    cierresAyBDeMes(mes).reduce((s, c) => s + (c.total_ventas || c.total_general || 0), 0);
+
+  // Aggregate A&B by método from the metodos jsonb column
+  const aybPorMetodo = (mes) => {
+    const groups = {};
+    cierresAyBDeMes(mes).forEach(c => {
+      const metodos = c.metodos || {};
+      Object.entries(metodos).forEach(([key, val]) => {
+        const v = typeof val === "object" ? (val.venta || 0) : (val || 0);
+        if (v > 0) {
+          const label = { datafono: "Datáfono", efectivo: "Efectivo", link_pago: "Link de Pago",
+            resort_credit: "Resort Credit", transferencia: "Transferencia", otros: "Otros" }[key] || key;
+          groups[label] = (groups[label] || 0) + v;
+        }
+      });
+    });
+    return Object.entries(groups).map(([cat, val]) => ({ cat, val })).sort((a, b) => b.val - a.val);
+  };
+
+  // ── P&L helpers ───────────────────────────────────────────────────────────
+  const reqsDeMes    = (mes) => reqsList.filter(r => r.fecha?.startsWith(mes));
 
   const totalGastos  = (mes) =>
     reqsDeMes(mes).reduce((s, r) => s + (r.total || 0), 0);
@@ -370,9 +393,10 @@ export default function Financiero() {
         {[
           {
             label: "Ingresos Totales",
-            val: COP(totalA),
+            val: COP(totalA + totalAyB(mesActual)),
             delta: deltaIng,
             color: B.success,
+            sub: totalAyB(mesActual) > 0 ? `Reservas ${COP(totalA)} · A&B ${COP(totalAyB(mesActual))}` : null,
           },
           {
             label: "Reservas",
@@ -407,6 +431,9 @@ export default function Financiero() {
               <div style={{ fontSize: 11, marginTop: 4, color: k.delta.val >= 0 ? B.success : B.danger }}>
                 {k.delta.label} vs {fmtMes(mesComparar)}
               </div>
+            )}
+            {k.sub && (
+              <div style={{ fontSize: 10, marginTop: 4, color: "rgba(255,255,255,0.35)" }}>{k.sub}</div>
             )}
           </div>
         ))}
@@ -521,6 +548,49 @@ export default function Financiero() {
           })}
         </div>
       </div>
+
+      {/* ── Ingresos A&B ── */}
+      {(() => {
+        const aybTotal = totalAyB(mesActual);
+        const aybMets  = aybPorMetodo(mesActual);
+        const aybc     = cierresAyBDeMes(mesActual);
+        return (
+          <div style={{ background: B.navyMid, borderRadius: 12, overflow: "hidden", marginTop: 16 }}>
+            <div style={{ padding: "14px 20px", borderBottom: `1px solid ${B.navyLight}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <h3 style={{ fontSize: 15, color: "#f4a261", margin: 0 }}>🍽️ Ingresos A&B</h3>
+              <div style={{ textAlign: "right" }}>
+                <div style={{ fontWeight: 700, fontSize: 14 }}>{COP(aybTotal)}</div>
+                <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)" }}>{aybc.length} cierre{aybc.length !== 1 ? "s" : ""} de caja</div>
+              </div>
+            </div>
+            {aybMets.length === 0 ? (
+              <div style={{ padding: "24px 20px", textAlign: "center", color: "rgba(255,255,255,0.25)", fontSize: 13 }}>
+                Sin cierres de A&B en {fmtMes(mesActual)}
+              </div>
+            ) : (
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 0 }}>
+                {aybMets.map((r, i) => {
+                  const pct = aybTotal > 0 ? (r.val / aybTotal) * 100 : 0;
+                  return (
+                    <div key={r.cat} style={{
+                      padding: "12px 20px",
+                      borderRight: `1px solid ${B.navyLight}`,
+                      borderBottom: `1px solid ${B.navyLight}`,
+                    }}>
+                      <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginBottom: 4 }}>{r.cat}</div>
+                      <div style={{ fontSize: 14, fontWeight: 700 }}>{COP(r.val)}</div>
+                      <div style={{ height: 3, background: B.navy, borderRadius: 2, marginTop: 6, overflow: "hidden" }}>
+                        <div style={{ width: `${pct}%`, height: "100%", background: "#f4a261", borderRadius: 2 }} />
+                      </div>
+                      <div style={{ fontSize: 10, color: "rgba(255,255,255,0.3)", marginTop: 3 }}>{pct.toFixed(1)}%</div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        );
+      })()}
 
       {/* ── Evolución mensual (últimos 6 meses) ── */}
       {meses.length > 1 && (
