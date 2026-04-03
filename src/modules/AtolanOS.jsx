@@ -344,7 +344,7 @@ export default function AtolanOS({ activeModule = "dashboard", onNavigate, modul
         onMouseLeave={e => { if (!active) e.currentTarget.style.background = "transparent"; }}
       >
         <span style={{ fontSize: indent ? 13 : 15, width: 18, textAlign: "center", flexShrink: 0, opacity: active ? 1 : 0.7 }}>{item.icon}</span>
-        {!collapsed && <span style={{ fontSize: indent ? 13 : 14, whiteSpace: "nowrap", fontWeight: active ? 600 : 400 }}>{item.label}</span>}
+        {(!collapsed || isMobile) && <span style={{ fontSize: indent ? 13 : 14, whiteSpace: "nowrap", fontWeight: active ? 600 : 400 }}>{item.label}</span>}
       </div>
     );
   };
