@@ -16,6 +16,31 @@ function pctDelta(curr, prev) {
   return { val: d, label: d >= 0 ? `+${(d * 100).toFixed(1)}%` : `${(d * 100).toFixed(1)}%` };
 }
 
+// Week helpers
+function getMondayOf(dateStr) {
+  const d = new Date(dateStr + "T12:00:00");
+  const day = d.getDay();
+  d.setDate(d.getDate() - (day === 0 ? 6 : day - 1));
+  return d.toISOString().slice(0, 10);
+}
+function getSundayOf(mondayStr) {
+  const d = new Date(mondayStr + "T12:00:00");
+  d.setDate(d.getDate() + 6);
+  return d.toISOString().slice(0, 10);
+}
+function fmtSemana(mondayStr) {
+  if (!mondayStr) return "—";
+  const from = new Date(mondayStr + "T12:00:00");
+  const to   = new Date(mondayStr + "T12:00:00");
+  to.setDate(to.getDate() + 6);
+  const fmt = (d) => d.toLocaleDateString("es-CO", { day: "numeric", month: "short" });
+  return `${fmt(from)} – ${fmt(to)}`;
+}
+function fmtDia(dateStr) {
+  if (!dateStr) return "—";
+  return new Date(dateStr + "T12:00:00").toLocaleDateString("es-CO", { weekday: "short", day: "numeric", month: "short", year: "numeric" });
+}
+
 const SEL = {
   padding: "8px 14px", borderRadius: 8,
   background: B.navyMid, border: `1px solid ${B.navyLight}`,
@@ -28,13 +53,23 @@ export default function Financiero() {
   const [reqsList,      setReqsList]      = useState([]);
   const [loading,       setLoading]       = useState(true);
   const [tab,           setTab]           = useState("ingresos");
+  const [granularity,   setGranularity]   = useState("mes"); // "dia" | "semana" | "mes"
 
-  // Current Colombia month as default
+  // Current Colombia date/month as default
   const nowCO = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Bogota" }));
-  const defaultMes = `${nowCO.getFullYear()}-${String(nowCO.getMonth() + 1).padStart(2, "0")}`;
+  const todayCO   = nowCO.toISOString().slice(0, 10);
+  const defaultMes  = `${nowCO.getFullYear()}-${String(nowCO.getMonth() + 1).padStart(2, "0")}`;
+  const defaultLunes = getMondayOf(todayCO);
 
-  const [mesActual,   setMesActual]   = useState(defaultMes);
-  const [mesComparar, setMesComparar] = useState("");
+  const [periodoActual,   setPeriodoActual]   = useState(defaultMes);
+  const [periodoComparar, setPeriodoComparar] = useState("");
+
+  // Change default period when granularity changes
+  useEffect(() => {
+    if (granularity === "mes")    { setPeriodoActual(defaultMes);   setPeriodoComparar(""); }
+    if (granularity === "semana") { setPeriodoActual(defaultLunes);  setPeriodoComparar(""); }
+    if (granularity === "dia")    { setPeriodoActual(todayCO);       setPeriodoComparar(""); }
+  }, [granularity]);
 
   // Load last 13 months of data
   useEffect(() => {
@@ -63,33 +98,70 @@ export default function Financiero() {
     });
   }, []);
 
-  // Available months derived from data (+ current month always present)
+  // ── Period range ───────────────────────────────────────────────────────────
+  const periodoRange = (key) => {
+    if (!key) return null;
+    if (granularity === "dia")    return { from: key, to: key };
+    if (granularity === "semana") return { from: key, to: getSundayOf(key) };
+    // mes
+    const [y, m] = key.split("-");
+    const last = new Date(parseInt(y), parseInt(m), 0).getDate();
+    return { from: `${key}-01`, to: `${key}-${String(last).padStart(2, "0")}` };
+  };
+
+  const inRange = (fecha, range) => !!range && !!fecha && fecha >= range.from && fecha <= range.to;
+
+  const fmtPeriodo = (key) => {
+    if (!key) return "—";
+    if (granularity === "dia")    return fmtDia(key);
+    if (granularity === "semana") return fmtSemana(key);
+    return fmtMes(key);
+  };
+
+  // ── Available periods ──────────────────────────────────────────────────────
   const meses = useMemo(() => {
-    const set = new Set((reservas || []).map(r => r.fecha?.slice(0, 7)).filter(Boolean));
+    const set = new Set([...(reservas || []), ...(cierres || [])].map(r => r.fecha?.slice(0, 7)).filter(Boolean));
     set.add(defaultMes);
     return Array.from(set).sort().reverse();
-  }, [reservas]);
+  }, [reservas, cierres]);
 
-  // Set default comparison to previous month once data loads
+  const semanas = useMemo(() => {
+    const set = new Set();
+    [...(reservas || []), ...(cierres || [])].forEach(r => { if (r.fecha) set.add(getMondayOf(r.fecha)); });
+    set.add(defaultLunes);
+    return Array.from(set).sort().reverse();
+  }, [reservas, cierres]);
+
+  const dias = useMemo(() => {
+    const set = new Set();
+    [...(reservas || []), ...(cierres || [])].forEach(r => { if (r.fecha) set.add(r.fecha); });
+    set.add(todayCO);
+    return Array.from(set).sort().reverse();
+  }, [reservas, cierres]);
+
+  const periodos = granularity === "mes" ? meses : granularity === "semana" ? semanas : dias;
+
+  // Set default comparison once data loads
   useEffect(() => {
-    if (meses.length > 1 && !mesComparar) {
-      const idx = meses.indexOf(mesActual);
-      setMesComparar(meses[idx + 1] || meses[1]);
+    if (periodos.length > 1 && !periodoComparar) {
+      const idx = periodos.indexOf(periodoActual);
+      setPeriodoComparar(periodos[idx + 1] || periodos[1] || "");
     }
-  }, [meses]);
+  }, [periodos]);
 
-  // ── Per-month helpers ──────────────────────────────────────────────────────
-  const resDeMes = (mes) => reservas.filter(r => r.fecha?.startsWith(mes));
+  // ── Per-period helpers ─────────────────────────────────────────────────────
+  const resDePeriodo = (key) => {
+    const r = periodoRange(key);
+    return reservas.filter(x => inRange(x.fecha, r));
+  };
 
-  const ingresosPorTipo = (mes) => {
+  const ingresosPorTipo = (key) => {
     const groups = {};
-    resDeMes(mes).forEach(r => {
+    resDePeriodo(key).forEach(r => {
       const cat = r.tipo || "Otros";
       groups[cat] = (groups[cat] || 0) + (r.total || 0);
     });
-    return Object.entries(groups)
-      .map(([cat, val]) => ({ cat, val }))
-      .sort((a, b) => b.val - a.val);
+    return Object.entries(groups).map(([cat, val]) => ({ cat, val })).sort((a, b) => b.val - a.val);
   };
 
   const normCanal = (c) => {
@@ -103,15 +175,13 @@ export default function Financiero() {
     return c.trim();
   };
 
-  const ingresosPorCanal = (mes) => {
+  const ingresosPorCanal = (key) => {
     const groups = {};
-    resDeMes(mes).forEach(r => {
+    resDePeriodo(key).forEach(r => {
       const c = normCanal(r.canal);
       groups[c] = (groups[c] || 0) + (r.total || 0);
     });
-    return Object.entries(groups)
-      .map(([cat, val]) => ({ cat, val }))
-      .sort((a, b) => b.val - a.val);
+    return Object.entries(groups).map(([cat, val]) => ({ cat, val })).sort((a, b) => b.val - a.val);
   };
 
   const normForma = (f) => {
@@ -127,32 +197,30 @@ export default function Financiero() {
     return f.trim();
   };
 
-  const ingresosPorPago = (mes) => {
+  const ingresosPorPago = (key) => {
     const groups = {};
-    resDeMes(mes).forEach(r => {
+    resDePeriodo(key).forEach(r => {
       const p = normForma(r.forma_pago);
       groups[p] = (groups[p] || 0) + (r.total || 0);
     });
-    return Object.entries(groups)
-      .map(([cat, val]) => ({ cat, val }))
-      .sort((a, b) => b.val - a.val);
+    return Object.entries(groups).map(([cat, val]) => ({ cat, val })).sort((a, b) => b.val - a.val);
   };
 
   // ── Derived numbers ────────────────────────────────────────────────────────
-  const resA = resDeMes(mesActual);
-  const resC = resDeMes(mesComparar);
-  const tiposA = ingresosPorTipo(mesActual);
-  const tiposC = ingresosPorTipo(mesComparar);
-  const canalesA = ingresosPorCanal(mesActual);
-  const pagosA   = ingresosPorPago(mesActual);
+  const resA    = resDePeriodo(periodoActual);
+  const resC    = resDePeriodo(periodoComparar);
+  const tiposA  = ingresosPorTipo(periodoActual);
+  const tiposC  = ingresosPorTipo(periodoComparar);
+  const canalesA = ingresosPorCanal(periodoActual);
+  const pagosA   = ingresosPorPago(periodoActual);
 
-  const totalA     = tiposA.reduce((s, r) => s + r.val, 0);
-  const totalC     = tiposC.reduce((s, r) => s + r.val, 0);
-  const reservasA  = resA.length;
-  const reservasC  = resC.length;
-  const paxA       = resA.reduce((s, r) => s + (r.pax || 0), 0);
-  const ticketA    = reservasA > 0 ? totalA / reservasA : 0;
-  const ticketC    = reservasC > 0 ? totalC / reservasC : 0;
+  const totalA    = tiposA.reduce((s, r) => s + r.val, 0);
+  const totalC    = tiposC.reduce((s, r) => s + r.val, 0);
+  const reservasA = resA.length;
+  const reservasC = resC.length;
+  const paxA      = resA.reduce((s, r) => s + (r.pax || 0), 0);
+  const ticketA   = reservasA > 0 ? totalA / reservasA : 0;
+  const ticketC   = reservasC > 0 ? totalC / reservasC : 0;
 
   if (loading) {
     return (
@@ -167,25 +235,24 @@ export default function Financiero() {
   const deltaTick = pctDelta(ticketA, ticketC);
 
   // ── Cierre / A&B helpers ──────────────────────────────────────────────────
-  const cierresDeMes    = (mes) => cierres.filter(c => c.fecha?.startsWith(mes));
-  const cierresAyBDeMes = (mes) => cierresDeMes(mes).filter(c => c.area === "ayb");
+  const cierresDePeriodo    = (key) => { const r = periodoRange(key); return cierres.filter(c => inRange(c.fecha, r)); };
+  const cierresAyBDePeriodo = (key) => cierresDePeriodo(key).filter(c => c.area === "ayb");
 
-  const totalCierres = (mes) =>
-    cierresDeMes(mes).reduce((s, c) => s + (c.total_ventas || c.total_general || 0), 0);
+  const totalCierres = (key) =>
+    cierresDePeriodo(key).reduce((s, c) => s + (c.total_ventas || c.total_general || 0), 0);
 
-  const totalAyB = (mes) =>
-    cierresAyBDeMes(mes).reduce((s, c) => s + (c.total_ventas || c.total_general || 0), 0);
+  const totalAyB = (key) =>
+    cierresAyBDePeriodo(key).reduce((s, c) => s + (c.total_ventas || c.total_general || 0), 0);
 
-  // Aggregate A&B by método from the metodos jsonb column
-  const aybPorMetodo = (mes) => {
+  const aybPorMetodo = (key) => {
     const groups = {};
-    cierresAyBDeMes(mes).forEach(c => {
+    cierresAyBDePeriodo(key).forEach(c => {
       const metodos = c.metodos || {};
-      Object.entries(metodos).forEach(([key, val]) => {
+      Object.entries(metodos).forEach(([k, val]) => {
         const v = typeof val === "object" ? (val.venta || 0) : (val || 0);
         if (v > 0) {
           const label = { datafono: "Datáfono", efectivo: "Efectivo", link_pago: "Link de Pago",
-            resort_credit: "Resort Credit", transferencia: "Transferencia", otros: "Otros" }[key] || key;
+            resort_credit: "Resort Credit", transferencia: "Transferencia", otros: "Otros" }[k] || k;
           groups[label] = (groups[label] || 0) + v;
         }
       });
@@ -194,14 +261,14 @@ export default function Financiero() {
   };
 
   // ── P&L helpers ───────────────────────────────────────────────────────────
-  const reqsDeMes    = (mes) => reqsList.filter(r => r.fecha?.startsWith(mes));
+  const reqsDePeriodo = (key) => { const r = periodoRange(key); return reqsList.filter(x => inRange(x.fecha, r)); };
 
-  const totalGastos  = (mes) =>
-    reqsDeMes(mes).reduce((s, r) => s + (r.total || 0), 0);
+  const totalGastos = (key) =>
+    reqsDePeriodo(key).reduce((s, r) => s + (r.total || 0), 0);
 
-  const gastosPorCategoria = (mes) => {
+  const gastosPorCategoria = (key) => {
     const groups = {};
-    reqsDeMes(mes).forEach(r => {
+    reqsDePeriodo(key).forEach(r => {
       const cat = r.categoria || "Otros";
       groups[cat] = (groups[cat] || 0) + (r.total || 0);
     });
@@ -211,23 +278,50 @@ export default function Financiero() {
   return (
     <div>
       {/* ── Header ── */}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 20, flexWrap: "wrap", gap: 12 }}>
-        <div>
-          <h2 style={{ fontSize: 22, fontWeight: 600, margin: 0 }}>Financiero</h2>
-          <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginTop: 4 }}>
-            Ingresos y costos operativos · Colombia
+      <div style={{ marginBottom: 20 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 12, marginBottom: 14 }}>
+          <div>
+            <h2 style={{ fontSize: 22, fontWeight: 600, margin: 0 }}>Financiero</h2>
+            <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginTop: 4 }}>
+              Ingresos y costos operativos · Colombia
+            </div>
+          </div>
+          {/* Granularity toggle */}
+          <div style={{ display: "flex", background: B.navyMid, borderRadius: 8, padding: 3, gap: 2 }}>
+            {[{ key: "dia", label: "Día" }, { key: "semana", label: "Semana" }, { key: "mes", label: "Mes" }].map(g => (
+              <button key={g.key} onClick={() => setGranularity(g.key)} style={{
+                padding: "6px 14px", borderRadius: 6, border: "none", cursor: "pointer",
+                fontWeight: 600, fontSize: 12,
+                background: granularity === g.key ? B.sky : "transparent",
+                color: granularity === g.key ? B.navy : "rgba(255,255,255,0.5)",
+                transition: "all 0.15s",
+              }}>{g.label}</button>
+            ))}
           </div>
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <select value={mesActual} onChange={e => setMesActual(e.target.value)} style={SEL}>
-            {meses.map(m => <option key={m} value={m}>{fmtMes(m)}</option>)}
-          </select>
+        {/* Period selector */}
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          {granularity === "dia" ? (
+            <input type="date" value={periodoActual} max={todayCO}
+              onChange={e => setPeriodoActual(e.target.value)}
+              style={{ ...SEL, colorScheme: "dark" }} />
+          ) : (
+            <select value={periodoActual} onChange={e => setPeriodoActual(e.target.value)} style={SEL}>
+              {periodos.map(p => <option key={p} value={p}>{fmtPeriodo(p)}</option>)}
+            </select>
+          )}
           {tab === "ingresos" && <>
             <span style={{ color: "rgba(255,255,255,0.3)", fontSize: 13 }}>vs</span>
-            <select value={mesComparar} onChange={e => setMesComparar(e.target.value)} style={SEL}>
-              <option value="">Sin comparar</option>
-              {meses.filter(m => m !== mesActual).map(m => <option key={m} value={m}>{fmtMes(m)}</option>)}
-            </select>
+            {granularity === "dia" ? (
+              <input type="date" value={periodoComparar} max={todayCO}
+                onChange={e => setPeriodoComparar(e.target.value)}
+                style={{ ...SEL, colorScheme: "dark" }} />
+            ) : (
+              <select value={periodoComparar} onChange={e => setPeriodoComparar(e.target.value)} style={SEL}>
+                <option value="">Sin comparar</option>
+                {periodos.filter(p => p !== periodoActual).map(p => <option key={p} value={p}>{fmtPeriodo(p)}</option>)}
+              </select>
+            )}
           </>}
         </div>
       </div>
@@ -252,13 +346,13 @@ export default function Financiero() {
 
       {/* ── P & L Tab ── */}
       {tab === "pl" && (() => {
-        const ing   = totalCierres(mesActual);
-        const gas   = totalGastos(mesActual);
+        const ing   = totalCierres(periodoActual);
+        const gas   = totalGastos(periodoActual);
         const util  = ing - gas;
         const margen = ing > 0 ? (util / ing) * 100 : 0;
-        const cats  = gastosPorCategoria(mesActual);
-        const ingC  = totalCierres(mesComparar || "");
-        const gasC  = totalGastos(mesComparar || "");
+        const cats  = gastosPorCategoria(periodoActual);
+        const ingC  = totalCierres(periodoComparar || "");
+        const gasC  = totalGastos(periodoComparar || "");
         const utilC = ingC - gasC;
 
         const Row = ({ label, val, color, bold, sub, delta }) => (
@@ -275,9 +369,9 @@ export default function Financiero() {
               <div style={{ fontSize: sub ? 12 : 14, fontWeight: bold ? 700 : 500, color: color || B.white }}>
                 {COP(val)}
               </div>
-              {delta != null && mesComparar && (
+              {delta != null && periodoComparar && (
                 <div style={{ fontSize: 10, color: delta >= 0 ? B.success : B.danger }}>
-                  {delta >= 0 ? "+" : ""}{(delta * 100).toFixed(1)}% vs {fmtMes(mesComparar)}
+                  {delta >= 0 ? "+" : ""}{(delta * 100).toFixed(1)}% vs {fmtPeriodo(periodoComparar)}
                 </div>
               )}
             </div>
@@ -297,7 +391,7 @@ export default function Financiero() {
                 <div key={k.label} style={{ background: B.navyMid, borderRadius: 12, padding: "16px 20px", borderLeft: `4px solid ${k.color}` }}>
                   <div style={{ fontSize: 11, color: B.sand, textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>{k.label}</div>
                   <div style={{ fontSize: 22, fontWeight: 700, fontFamily: "'Barlow Condensed', sans-serif", color: k.color }}>{k.val}</div>
-                  {k.delta && mesComparar && (
+                  {k.delta && periodoComparar && (
                     <div style={{ fontSize: 11, marginTop: 4, color: k.delta.val >= 0 ? B.success : B.danger }}>{k.delta.label}</div>
                   )}
                 </div>
@@ -307,14 +401,14 @@ export default function Financiero() {
             {/* Estado de Resultados */}
             <div style={{ background: B.navyMid, borderRadius: 12, overflow: "hidden" }}>
               <div style={{ padding: "14px 20px", borderBottom: `1px solid ${B.navyLight}` }}>
-                <h3 style={{ fontSize: 15, margin: 0, color: B.sand }}>Estado de Resultados — {fmtMes(mesActual)}</h3>
+                <h3 style={{ fontSize: 15, margin: 0, color: B.sand }}>Estado de Resultados — {fmtPeriodo(periodoActual)}</h3>
               </div>
 
               {/* Ingresos */}
               <Row label="INGRESOS" val={ing} bold color={B.success} delta={ingC ? (ing - ingC) / (ingC || 1) : null} />
-              {cierresDeMes(mesActual).length === 0
+              {cierresDePeriodo(periodoActual).length === 0
                 ? <div style={{ padding: "8px 20px 8px 36px", fontSize: 12, color: "rgba(255,255,255,0.3)" }}>Sin cierres de caja registrados</div>
-                : <Row label={`Cierres de Caja (${cierresDeMes(mesActual).length})`} val={ing} sub />
+                : <Row label={`Cierres de Caja (${cierresDePeriodo(periodoActual).length})`} val={ing} sub />
               }
 
               {/* Gastos */}
@@ -355,9 +449,9 @@ export default function Financiero() {
                     const maxVal = Math.max(...meses.slice(0, 6).map(m => totalCierres(m)), 1);
                     const hI = Math.max((i / maxVal) * 80, i > 0 ? 3 : 0);
                     const hG = Math.max((g / maxVal) * 80, g > 0 ? 3 : 0);
-                    const isSel = mes === mesActual;
+                    const isSel = mes === periodoActual;
                     return (
-                      <div key={mes} onClick={() => setMesActual(mes)}
+                      <div key={mes} onClick={() => setPeriodoActual(mes)}
                         style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 4, cursor: "pointer" }}>
                         <div style={{ fontSize: 9, color: u >= 0 ? B.success : B.danger, fontWeight: 700 }}>{COP(u)}</div>
                         <div style={{ width: "100%", display: "flex", gap: 2, alignItems: "flex-end", height: 80 }}>
@@ -393,10 +487,10 @@ export default function Financiero() {
         {[
           {
             label: "Ingresos Totales",
-            val: COP(totalA + totalAyB(mesActual)),
+            val: COP(totalA + totalAyB(periodoActual)),
             delta: deltaIng,
             color: B.success,
-            sub: totalAyB(mesActual) > 0 ? `Reservas ${COP(totalA)} · A&B ${COP(totalAyB(mesActual))}` : null,
+            sub: totalAyB(periodoActual) > 0 ? `Reservas ${COP(totalA)} · A&B ${COP(totalAyB(periodoActual))}` : null,
           },
           {
             label: "Reservas",
@@ -427,9 +521,9 @@ export default function Financiero() {
             <div style={{ fontSize: 22, fontWeight: 700, fontFamily: "'Barlow Condensed', sans-serif" }}>
               {k.val}
             </div>
-            {k.delta && mesComparar && (
+            {k.delta && periodoComparar && (
               <div style={{ fontSize: 11, marginTop: 4, color: k.delta.val >= 0 ? B.success : B.danger }}>
-                {k.delta.label} vs {fmtMes(mesComparar)}
+                {k.delta.label} vs {fmtPeriodo(periodoComparar)}
               </div>
             )}
             {k.sub && (
@@ -448,7 +542,7 @@ export default function Financiero() {
           </div>
           {tiposA.length === 0 ? (
             <div style={{ padding: "32px 20px", textAlign: "center", color: "rgba(255,255,255,0.25)", fontSize: 13 }}>
-              Sin ventas en {fmtMes(mesActual)}
+              Sin ventas en {fmtPeriodo(periodoActual)}
             </div>
           ) : tiposA.map((r, i) => {
             const prev = tiposC.find(c => c.cat === r.cat)?.val || 0;
@@ -463,7 +557,7 @@ export default function Financiero() {
                   <span style={{ fontSize: 13 }}>{r.cat}</span>
                   <div style={{ textAlign: "right" }}>
                     <div style={{ fontSize: 13, fontWeight: 700 }}>{COP(r.val)}</div>
-                    {d && mesComparar && (
+                    {d && periodoComparar && (
                       <div style={{ fontSize: 10, color: d.val >= 0 ? B.success : B.danger }}>{d.label}</div>
                     )}
                   </div>
@@ -484,7 +578,7 @@ export default function Financiero() {
           </div>
           {canalesA.length === 0 ? (
             <div style={{ padding: "32px 20px", textAlign: "center", color: "rgba(255,255,255,0.25)", fontSize: 13 }}>
-              Sin ventas en {fmtMes(mesActual)}
+              Sin ventas en {fmtPeriodo(periodoActual)}
             </div>
           ) : canalesA.map((r, i) => {
             const pctOfTotal = totalA > 0 ? (r.val / totalA) * 100 : 0;
@@ -520,7 +614,7 @@ export default function Financiero() {
           </div>
           {pagosA.length === 0 ? (
             <div style={{ padding: "32px 20px", textAlign: "center", color: "rgba(255,255,255,0.25)", fontSize: 13 }}>
-              Sin ventas en {fmtMes(mesActual)}
+              Sin ventas en {fmtPeriodo(periodoActual)}
             </div>
           ) : pagosA.map((r, i) => {
             const pctOfTotal = totalA > 0 ? (r.val / totalA) * 100 : 0;
@@ -551,9 +645,9 @@ export default function Financiero() {
 
       {/* ── Ingresos A&B ── */}
       {(() => {
-        const aybTotal = totalAyB(mesActual);
-        const aybMets  = aybPorMetodo(mesActual);
-        const aybc     = cierresAyBDeMes(mesActual);
+        const aybTotal = totalAyB(periodoActual);
+        const aybMets  = aybPorMetodo(periodoActual);
+        const aybc     = cierresAyBDePeriodo(periodoActual);
         return (
           <div style={{ background: B.navyMid, borderRadius: 12, overflow: "hidden", marginTop: 16 }}>
             <div style={{ padding: "14px 20px", borderBottom: `1px solid ${B.navyLight}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -565,7 +659,7 @@ export default function Financiero() {
             </div>
             {aybMets.length === 0 ? (
               <div style={{ padding: "24px 20px", textAlign: "center", color: "rgba(255,255,255,0.25)", fontSize: 13 }}>
-                Sin cierres de A&B en {fmtMes(mesActual)}
+                Sin cierres de A&B en {fmtPeriodo(periodoActual)}
               </div>
             ) : (
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 0 }}>
@@ -598,12 +692,12 @@ export default function Financiero() {
           <h3 style={{ fontSize: 15, color: B.sand, margin: "0 0 16px" }}>Evolución Mensual</h3>
           <div style={{ display: "flex", gap: 8, alignItems: "flex-end", height: 100 }}>
             {meses.slice(0, 6).reverse().map(mes => {
-              const total = resDeMes(mes).reduce((s, r) => s + (r.total || 0), 0);
-              const maxT  = Math.max(...meses.slice(0, 6).map(m => resDeMes(m).reduce((s, r) => s + (r.total || 0), 0)), 1);
+              const total = resDePeriodo(mes).reduce((s, r) => s + (r.total || 0), 0);
+              const maxT  = Math.max(...meses.slice(0, 6).map(m => resDePeriodo(m).reduce((s, r) => s + (r.total || 0), 0)), 1);
               const h = Math.max((total / maxT) * 80, total > 0 ? 4 : 0);
-              const isSelected = mes === mesActual;
+              const isSelected = mes === periodoActual;
               return (
-                <div key={mes} onClick={() => setMesActual(mes)}
+                <div key={mes} onClick={() => setPeriodoActual(mes)}
                   style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 6, cursor: "pointer" }}>
                   <div style={{ fontSize: 10, color: isSelected ? B.sky : "rgba(255,255,255,0.4)", fontWeight: isSelected ? 700 : 400 }}>
                     {COP(total)}
