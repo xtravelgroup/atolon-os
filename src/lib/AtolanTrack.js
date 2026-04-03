@@ -171,7 +171,7 @@ class AtolanTrackSDK {
     if (datos.email) {
       const emailHash = await sha256(datos.email);
       await supabase.from("track_embudos").update({
-        email_abandono: datos.email,
+        email_abandono: emailHash,  // store hash, not plaintext
       }).eq("id", this.embudo);
       // Stitch usuario
       await this._stitch(datos.email, emailHash);
@@ -194,7 +194,7 @@ class AtolanTrackSDK {
     if (!this.inicializado) await this.init();
     const id = nanoid();
 
-    await supabase.from("track_ingresos").insert({
+    await supabase.from("track_ingresos").upsert({
       id,
       sesion_id: this.sesionId,
       usuario_id: this.usuarioId,
@@ -203,7 +203,7 @@ class AtolanTrackSDK {
       canal: this.canal,
       utms: this.utms,
       created_at: new Date().toISOString(),
-    });
+    }, { onConflict: "reserva_id", ignoreDuplicates: true });
 
     // Marcar sesión como convertida
     await supabase.from("track_sesiones").update({
@@ -224,42 +224,38 @@ class AtolanTrackSDK {
   }
 
   async _registrarAtribuciones(ingresoId, monto) {
-    const modelos = [
-      { modelo: "last_touch", peso: 1.0 },
-      { modelo: "first_touch", peso: 1.0 },
-      { modelo: "linear", peso: 1.0 },
-      { modelo: "time_decay", peso: 1.0 },
-    ];
-    const rows = modelos.map(m => ({
+    // Only last_touch is accurate with single-session data.
+    // Multi-touch models (linear, time_decay, first_touch) require
+    // cross-session history — implement when track_usuarios has sufficient data.
+    await supabase.from("track_atribuciones").insert({
       ingreso_id: ingresoId,
-      modelo: m.modelo,
+      modelo: "last_touch",
       canal: this.canal,
-      valor: monto * m.peso,
-      peso: m.peso,
-    }));
-    await supabase.from("track_atribuciones").insert(rows);
+      valor: monto,
+      peso: 1.0,
+    });
   }
 
   // ── User Stitching ───────────────────────────────────────────────────────
 
   async _stitch(email, emailHash) {
     if (!emailHash) return;
-    // Actualizar o crear track_usuario con email_hash
     const { data } = await supabase.from("track_usuarios")
       .select("id").eq("email_hash", emailHash).single();
     if (!data) {
+      // New email — create or merge into existing usuario record
       await supabase.from("track_usuarios").upsert({
         id: this.usuarioId,
         email_hash: emailHash,
         primer_canal: this.canal,
         primer_utms: this.utms,
         ultimo_visto: new Date().toISOString(),
-      }, { onConflict: "id" });
+      }, { onConflict: "email_hash" });  // upsert by email_hash, not id
     } else {
+      // Known email — update last seen and adopt their canonical id
       await supabase.from("track_usuarios").update({
         ultimo_visto: new Date().toISOString(),
       }).eq("id", data.id);
-      // Actualizar userId local para futuras sesiones
       localStorage.setItem(USER_KEY, data.id);
       this.usuarioId = data.id;
     }
@@ -269,19 +265,31 @@ class AtolanTrackSDK {
 
   _flush() {
     const duracion = Math.round((Date.now() - (this._startTime || Date.now())) / 1000);
-    const payload = JSON.stringify({
-      id: this.sesionId,
-      duracion_seg: duracion,
-      salida_url: window.location.href,
-      updated_at: new Date().toISOString(),
-    });
-    // Use sendBeacon for guaranteed delivery on page exit
-    if (navigator.sendBeacon) {
-      // We'll use a Supabase edge function endpoint if available
-      // Fallback: just update directly (may not complete on exit)
+    const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+    const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+
+    // Use fetch with keepalive:true — this works on page exit unlike regular async calls,
+    // and supports custom headers (unlike sendBeacon which can't send apikey headers).
+    if (supabaseUrl && supabaseKey) {
+      const url = `${supabaseUrl}/rest/v1/track_sesiones?id=eq.${this.sesionId}`;
+      fetch(url, {
+        method: "PATCH",
+        keepalive: true,
+        headers: {
+          "apikey": supabaseKey,
+          "Authorization": `Bearer ${supabaseKey}`,
+          "Content-Type": "application/json",
+          "Prefer": "return=minimal",
+        },
+        body: JSON.stringify({
+          duracion_seg: duracion,
+          salida_url: window.location.href,
+        }),
+      }).catch(() => {});
     }
-    // Best-effort update
-    supabase.from("track_sesiones").update({
+
+    // Best-effort fallback via supabase client
+    supabase?.from("track_sesiones").update({
       duracion_seg: duracion,
       salida_url: window.location.href,
     }).eq("id", this.sesionId).then(() => {});

@@ -15,6 +15,7 @@ export default function Analitica() {
   const [embudos, setEmbudos] = useState([]);
   const [canales, setCanales] = useState([]);
   const [topEventos, setTopEventos] = useState([]);
+  const [atribuciones, setAtribuciones] = useState([]);
   const [loading, setLoading] = useState(true);
 
   const periodos = [
@@ -31,11 +32,12 @@ export default function Analitica() {
     const dias = parseInt(periodo);
     const desde = new Date(Date.now() - dias * 86400000).toISOString();
 
-    const [sesRes, embRes, ingRes, evRes] = await Promise.all([
+    const [sesRes, embRes, ingRes, evRes, atribRes] = await Promise.all([
       supabase.from("track_sesiones").select("*").gte("created_at", desde),
       supabase.from("track_embudos").select("*").gte("created_at", desde),
       supabase.from("track_ingresos").select("*").gte("created_at", desde),
       supabase.from("track_eventos").select("tipo, categoria").gte("ts", desde),
+      supabase.from("track_atribuciones").select("canal, valor").gte("created_at", desde),
     ]);
 
     const sesList = sesRes.data || [];
@@ -85,6 +87,19 @@ export default function Analitica() {
     });
     const evArr = Object.entries(evMap).map(([tipo, count]) => ({ tipo, count })).sort((a,b) => b.count - a.count).slice(0, 10);
     setTopEventos(evArr);
+
+    // Atribución por canal
+    const atribList = atribRes.data || [];
+    const atribMap = {};
+    atribList.forEach(a => {
+      const c = a.canal || "directo";
+      if (!atribMap[c]) atribMap[c] = 0;
+      atribMap[c] += a.valor || 0;
+    });
+    const atribArr = Object.entries(atribMap)
+      .map(([canal, valor]) => ({ canal, valor }))
+      .sort((a, b) => b.valor - a.valor);
+    setAtribuciones(atribArr);
 
     setSesiones(sesList.slice(-50).reverse());
     setLoading(false);
@@ -191,6 +206,21 @@ export default function Analitica() {
           {topEventos.length === 0 && <div style={{ color: B.muted, fontSize: 13 }}>Sin eventos registrados aún</div>}
         </div>
       </div>
+
+      {/* Atribución por Canal */}
+      {atribuciones.length > 0 && (
+        <div style={{ background: B.navyMid, borderRadius: 14, padding: 24, border: "1px solid rgba(255,255,255,0.07)", marginTop: 20 }}>
+          <h3 style={{ margin: "0 0 20px", fontSize: 15, fontWeight: 700, color: "#fff" }}>🎯 Atribución por Canal (Last Touch)</h3>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 12 }}>
+            {atribuciones.map(a => (
+              <div key={a.canal} style={{ background: B.navyLight, borderRadius: 10, padding: "12px 16px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span style={{ fontSize: 12, color: B.text }}>{a.canal}</span>
+                <span style={{ fontSize: 14, fontWeight: 700, color: B.success }}>{fmt(a.valor)}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div style={{ marginTop: 16, fontSize: 11, color: B.muted, textAlign: "center" }}>
         AtolonTrack v1.0 · Datos actualizados en tiempo real desde Supabase
