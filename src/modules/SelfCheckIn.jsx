@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { supabase } from "../lib/supabase";
+import { wompiCheckoutUrl } from "../lib/wompi";
 
 const NACS = [
   // Prioritarias
@@ -54,7 +55,10 @@ const LS = {
   marginBottom: 5, textTransform: "uppercase", letterSpacing: "0.06em",
 };
 
+const PRECIO_EXCLUSIVE = 270000; // COP por persona
+
 const UPGRADES = [
+  { key: "exclusive",   emoji: "⭐", label: "Exclusive",      sub: "Upgrade",    desc: "Acceso a zona Exclusive con servicio premium, open bar y áreas privadas.", pago: true },
   { key: "piscina",    emoji: "🏊", label: "Área Piscina",   sub: "VIP PASS",   desc: "Acceso exclusivo al área de piscina con servicio personalizado." },
   { key: "botellas",  emoji: "🍾", label: "Botellas",        sub: "Promo",      desc: "Paquete de botellas con mezclas a bordo y en destino." },
   { key: "masajes",   emoji: "💆", label: "Masajes",         sub: "Relajación", desc: "Masajes profesionales disponibles durante el recorrido." },
@@ -270,52 +274,170 @@ function PostCheckin({ reserva, salida, paxCount, rid }) {
   );
 
   /* ── UPGRADE — detalle del item ── */
-  if (vista === "upgrade_item" && upgradeItem) return (
-    <Wrap>
-      <button onClick={() => { setVista("upgrade"); setUpgradeDone(false); }}
-        style={{ background: "none", border: "none", color: "rgba(255,255,255,0.4)", fontSize: 14, cursor: "pointer", marginBottom: 16, padding: 0, display: "flex", alignItems: "center", gap: 6 }}>
-        ‹ Volver
-      </button>
+  if (vista === "upgrade_item" && upgradeItem) {
+    const esExclusive  = upgradeItem.key === "exclusive";
+    const totalPago    = PRECIO_EXCLUSIVE * paxCount;
+    const COP          = n => new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 }).format(n);
 
-      <div style={{ textAlign: "center", marginBottom: 28 }}>
-        <div style={{ fontSize: 56, marginBottom: 10 }}>{upgradeItem.emoji}</div>
-        <div style={{ fontSize: 24, fontWeight: 800, color: "#fff", marginBottom: 4 }}>{upgradeItem.label}</div>
-        <div style={{ display: "inline-block", background: B.navyMid, borderRadius: 20, padding: "3px 14px", fontSize: 12, color: B.sand, marginBottom: 12 }}>
-          {upgradeItem.sub}
-        </div>
-        <div style={{ fontSize: 14, color: "rgba(255,255,255,0.5)", lineHeight: 1.7, maxWidth: 320, margin: "0 auto" }}>
-          {upgradeItem.desc}
-        </div>
-      </div>
+    const pagarConTarjeta = async (tipo) => {
+      setUpgradeSending(true);
+      // Guardar solicitud primero
+      const prev = reserva.extras_solicitados || [];
+      const next = [...prev, { tipo: "exclusive", label: "Exclusive", metodo_pago: tipo, total: totalPago, solicitado_at: new Date().toISOString() }];
+      await supabase.from("reservas").update({ extras_solicitados: next }).eq("id", rid);
+      // Generar URL de pago Wompi
+      const ref = `UPG-EXC-${rid}-${Date.now()}`;
+      const email = reserva.email || reserva.contacto || "";
+      const redirectUrl = `${window.location.origin}/checkin-pax?rid=${rid}&upg=ok`;
+      const url = await wompiCheckoutUrl({ referencia: ref, totalCOP: totalPago, email, redirectUrl });
+      setUpgradeSending(false);
+      window.location.href = url; // redirect a Wompi
+    };
 
-      {upgradeDone ? (
-        <div style={{ background: B.success + "22", border: `1px solid ${B.success}44`, borderRadius: 14, padding: "24px 20px", textAlign: "center" }}>
-          <div style={{ fontSize: 40, marginBottom: 8 }}>✅</div>
-          <div style={{ fontSize: 18, fontWeight: 800, color: B.success, marginBottom: 6 }}>¡Solicitud enviada!</div>
-          <div style={{ fontSize: 13, color: "rgba(255,255,255,0.5)", lineHeight: 1.6 }}>
-            El staff te buscará en el muelle para coordinar tu {upgradeItem.label.toLowerCase()}.
-          </div>
-          <button onClick={() => setVista("upgrade")}
-            style={{ marginTop: 18, padding: "11px 28px", borderRadius: 10, background: B.navyLight, color: "#fff", border: "none", fontSize: 13, cursor: "pointer" }}>
-            Ver más opciones
-          </button>
-        </div>
-      ) : (
-        <button
-          onClick={() => sendUpgrade(upgradeItem)}
-          disabled={upgradeSending}
-          style={{
-            width: "100%", padding: "16px", borderRadius: 12,
-            background: upgradeSending ? B.navyLight : B.sand,
-            color: upgradeSending ? "rgba(255,255,255,0.3)" : B.navy,
-            border: "none", fontWeight: 800, fontSize: 16,
-            cursor: upgradeSending ? "default" : "pointer",
-          }}>
-          {upgradeSending ? "Enviando..." : `Solicitar ${upgradeItem.label} →`}
+    const pagarEnAtolon = async () => {
+      setUpgradeSending(true);
+      const prev = reserva.extras_solicitados || [];
+      const next = [...prev, { tipo: "exclusive", label: "Exclusive", metodo_pago: "presencial", total: totalPago, solicitado_at: new Date().toISOString() }];
+      await supabase.from("reservas").update({ extras_solicitados: next }).eq("id", rid);
+      setUpgradeSending(false);
+      setUpgradeDone(true);
+    };
+
+    return (
+      <Wrap>
+        <button onClick={() => { setVista("upgrade"); setUpgradeDone(false); }}
+          style={{ background: "none", border: "none", color: "rgba(255,255,255,0.4)", fontSize: 14, cursor: "pointer", marginBottom: 16, padding: 0, display: "flex", alignItems: "center", gap: 6 }}>
+          ‹ Volver
         </button>
-      )}
-    </Wrap>
-  );
+
+        <div style={{ textAlign: "center", marginBottom: 24 }}>
+          <div style={{ fontSize: 52, marginBottom: 10 }}>{upgradeItem.emoji}</div>
+          <div style={{ fontSize: 24, fontWeight: 800, color: "#fff", marginBottom: 4 }}>{upgradeItem.label}</div>
+          <div style={{ display: "inline-block", background: B.navyMid, borderRadius: 20, padding: "3px 14px", fontSize: 12, color: B.sand, marginBottom: 12 }}>
+            {upgradeItem.sub}
+          </div>
+          <div style={{ fontSize: 14, color: "rgba(255,255,255,0.5)", lineHeight: 1.7, maxWidth: 320, margin: "0 auto" }}>
+            {upgradeItem.desc}
+          </div>
+        </div>
+
+        {upgradeDone ? (
+          /* ── Confirmación ── */
+          <div style={{ background: B.success + "22", border: `1px solid ${B.success}44`, borderRadius: 16, padding: "28px 20px", textAlign: "center" }}>
+            <div style={{ fontSize: 48, marginBottom: 10 }}>✅</div>
+            <div style={{ fontSize: 20, fontWeight: 800, color: B.success, marginBottom: 6 }}>¡Solicitud registrada!</div>
+            <div style={{ fontSize: 13, color: "rgba(255,255,255,0.5)", lineHeight: 1.7 }}>
+              {esExclusive
+                ? "El staff te buscará en el muelle para coordinar el pago y confirmar tu upgrade Exclusive."
+                : `El staff te buscará para coordinar tu ${upgradeItem.label.toLowerCase()}.`}
+            </div>
+            <button onClick={() => setVista("upgrade")}
+              style={{ marginTop: 20, padding: "11px 28px", borderRadius: 10, background: B.navyLight, color: "#fff", border: "none", fontSize: 13, cursor: "pointer" }}>
+              Ver más opciones
+            </button>
+          </div>
+        ) : esExclusive ? (
+          /* ── Pago Exclusive ── */
+          <>
+            {/* Resumen de precio */}
+            <div style={{ background: B.navyMid, borderRadius: 14, padding: "18px 20px", marginBottom: 20 }}>
+              <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 12 }}>Resumen</div>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                <span style={{ fontSize: 14, color: "rgba(255,255,255,0.6)" }}>
+                  {paxCount} persona{paxCount !== 1 ? "s" : ""} × {COP(PRECIO_EXCLUSIVE)}
+                </span>
+                <span style={{ fontSize: 14, color: "rgba(255,255,255,0.6)" }}>{COP(totalPago)}</span>
+              </div>
+              <div style={{ borderTop: `1px solid ${B.navyLight}`, paddingTop: 10, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span style={{ fontSize: 15, fontWeight: 700, color: "#fff" }}>Total a pagar</span>
+                <span style={{ fontSize: 20, fontWeight: 900, color: B.sand }}>{COP(totalPago)}</span>
+              </div>
+            </div>
+
+            {/* Opciones de pago */}
+            <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 12 }}>
+              Elige cómo pagar
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {/* Tarjeta Nacional */}
+              <button
+                onClick={() => pagarConTarjeta("nacional")}
+                disabled={upgradeSending}
+                style={{
+                  display: "flex", alignItems: "center", gap: 14,
+                  background: B.navyMid, borderRadius: 14, padding: "16px 18px",
+                  border: `1px solid ${B.sky}44`, cursor: upgradeSending ? "default" : "pointer",
+                  width: "100%", textAlign: "left", opacity: upgradeSending ? 0.6 : 1,
+                }}>
+                <div style={{ fontSize: 28 }}>🏦</div>
+                <div>
+                  <div style={{ fontSize: 15, fontWeight: 700, color: "#fff" }}>Tarjeta Nacional</div>
+                  <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)" }}>Débito o crédito colombiana — PSE disponible</div>
+                </div>
+                <div style={{ marginLeft: "auto", color: B.sky, fontSize: 18 }}>›</div>
+              </button>
+
+              {/* Tarjeta Internacional */}
+              <button
+                onClick={() => pagarConTarjeta("internacional")}
+                disabled={upgradeSending}
+                style={{
+                  display: "flex", alignItems: "center", gap: 14,
+                  background: B.navyMid, borderRadius: 14, padding: "16px 18px",
+                  border: `1px solid ${B.sky}44`, cursor: upgradeSending ? "default" : "pointer",
+                  width: "100%", textAlign: "left", opacity: upgradeSending ? 0.6 : 1,
+                }}>
+                <div style={{ fontSize: 28 }}>🌍</div>
+                <div>
+                  <div style={{ fontSize: 15, fontWeight: 700, color: "#fff" }}>Tarjeta Internacional</div>
+                  <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)" }}>Visa, Mastercard, Amex internacional</div>
+                </div>
+                <div style={{ marginLeft: "auto", color: B.sky, fontSize: 18 }}>›</div>
+              </button>
+
+              {/* Pagar en Atolon */}
+              <button
+                onClick={pagarEnAtolon}
+                disabled={upgradeSending}
+                style={{
+                  display: "flex", alignItems: "center", gap: 14,
+                  background: B.navyMid, borderRadius: 14, padding: "16px 18px",
+                  border: `1px solid ${B.sand}33`, cursor: upgradeSending ? "default" : "pointer",
+                  width: "100%", textAlign: "left", opacity: upgradeSending ? 0.6 : 1,
+                }}>
+                <div style={{ fontSize: 28 }}>🏝️</div>
+                <div>
+                  <div style={{ fontSize: 15, fontWeight: 700, color: "#fff" }}>Pagar en Atolon</div>
+                  <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)" }}>El staff te buscará para coordinar el pago en efectivo o dataphone</div>
+                </div>
+                <div style={{ marginLeft: "auto", color: "rgba(255,255,255,0.2)", fontSize: 18 }}>›</div>
+              </button>
+            </div>
+
+            {upgradeSending && (
+              <div style={{ marginTop: 14, textAlign: "center", fontSize: 13, color: "rgba(255,255,255,0.4)" }}>
+                Preparando pago...
+              </div>
+            )}
+          </>
+        ) : (
+          /* ── Otros upgrades: solo solicitar ── */
+          <button
+            onClick={() => sendUpgrade(upgradeItem)}
+            disabled={upgradeSending}
+            style={{
+              width: "100%", padding: "16px", borderRadius: 12,
+              background: upgradeSending ? B.navyLight : B.sand,
+              color: upgradeSending ? "rgba(255,255,255,0.3)" : B.navy,
+              border: "none", fontWeight: 800, fontSize: 16,
+              cursor: upgradeSending ? "default" : "pointer",
+            }}>
+            {upgradeSending ? "Enviando..." : `Solicitar ${upgradeItem.label} →`}
+          </button>
+        )}
+      </Wrap>
+    );
+  }
 
   return null;
 }
@@ -400,9 +522,10 @@ export default function SelfCheckIn() {
     </div>
   );
 
-  /* ── Post check-in (gracias + menú) ── */
-  if (done) return (
-    <PostCheckin reserva={reserva} salida={salida} paxCount={pax.length} rid={rid} />
+  /* ── Post check-in (gracias + menú) — también si regresa de Wompi con ?upg=ok ── */
+  const upgOk = new URLSearchParams(window.location.search).get("upg") === "ok";
+  if (done || (upgOk && reserva)) return (
+    <PostCheckin reserva={reserva} salida={salida} paxCount={pax.length || reserva?.pax || 1} rid={rid} />
   );
 
   /* ── Formulario ── */
