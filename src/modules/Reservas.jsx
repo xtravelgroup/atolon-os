@@ -878,6 +878,9 @@ function ReservaModal({ onClose, onSave, isMobile, salidaList = [], aliadoList =
 
   const aliado = aliadoList.find(a => a.id === form.aliado_id);
   const tieneCXC = aliado && (aliado.cupo_credito || 0) > 0;
+  const pasadiaActual = pasadiaList.find(p => p.tipo === form.tipo);
+  const precioFull = pasadiaActual?.precio || 0;
+  const precioNeto = pasadiaActual?.precio_neto_agencia || 0;
   const formasPagoDisp = form.forma_pago === "Enviar Link de Pago"
     ? FORMAS_PAGO
     : FORMAS_PAGO.filter(f => f !== "CXC" || tieneCXC);
@@ -1013,40 +1016,38 @@ function ReservaModal({ onClose, onSave, isMobile, salidaList = [], aliadoList =
           </div>
           <div style={FS}>
             <label style={LS}>Precio por pax (COP)</label>
-            {/* Agencia seleccionada: toggle neto/full */}
-            {form.aliado_id && (() => {
-              const p = pasadiaList.find(p => p.tipo === form.tipo);
-              const precioFull = p?.precio || form.precio;
-              const precioNeto = p?.precio_neto_agencia || 0;
-              return (
-                <div>
-                  <div style={{ display: "flex", gap: 4, marginBottom: 8 }}>
-                    {[["full", `Público ${COP(precioFull)}`], ["neto", `Neto${precioNeto > 0 ? ` ${COP(precioNeto)}` : ""}`]].map(([mode, label]) => (
-                      <button key={mode} onClick={() => handlePrecioMode(mode)} type="button"
-                        style={{ flex: 1, padding: "8px", borderRadius: 8, border: "none", cursor: "pointer", fontSize: 12, fontWeight: 700,
-                          background: precioMode === mode ? (mode === "neto" ? B.warning : B.sky) : B.navyLight,
-                          color: precioMode === mode ? B.navy : "rgba(255,255,255,0.5)" }}>
-                        {label}
-                      </button>
-                    ))}
-                  </div>
-                  {/* En modo neto sin precio configurado: input editable */}
-                  {precioMode === "neto" && precioNeto === 0
-                    ? <input type="number" min={0} style={IS()} value={form.precio}
-                        onChange={e => setForm(f => ({ ...f, precio: Number(e.target.value) }))}
-                        placeholder="Ingresa precio neto" />
-                    : <div style={{ ...IS(), background: B.navyLight, color: B.sand, fontWeight: 700, cursor: "default", userSelect: "none" }}>
-                        {COP(form.precio)}
-                        <span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginLeft: 8, fontWeight: 400 }}>({precioMode === "neto" ? "precio neto agencia" : "precio público"})</span>
-                      </div>
-                  }
+            {/* Agencia seleccionada: toggle neto/público */}
+            {form.aliado_id ? (
+              <div>
+                <div style={{ display: "flex", gap: 4, marginBottom: 8 }}>
+                  <button type="button" onClick={() => handlePrecioMode("full")}
+                    style={{ flex: 1, padding: "8px", borderRadius: 8, border: "none", cursor: "pointer", fontSize: 12, fontWeight: 700,
+                      background: precioMode === "full" ? B.sky : B.navyLight,
+                      color: precioMode === "full" ? B.navy : "rgba(255,255,255,0.5)" }}>
+                    Público {precioFull > 0 ? COP(precioFull) : ""}
+                  </button>
+                  <button type="button" onClick={() => handlePrecioMode("neto")}
+                    style={{ flex: 1, padding: "8px", borderRadius: 8, border: "none", cursor: "pointer", fontSize: 12, fontWeight: 700,
+                      background: precioMode === "neto" ? B.warning : B.navyLight,
+                      color: precioMode === "neto" ? B.navy : "rgba(255,255,255,0.5)" }}>
+                    Neto {precioNeto > 0 ? COP(precioNeto) : ""}
+                  </button>
                 </div>
-              );
-            })()}
-            {/* Sin agencia: precio bloqueado */}
-            {!form.aliado_id && (
+                {precioMode === "neto" && precioNeto === 0
+                  ? <input type="number" min={0} style={IS()} value={form.precio}
+                      onChange={e => setForm(f => ({ ...f, precio: Number(e.target.value) }))}
+                      placeholder="Ingresa precio neto" />
+                  : <div style={{ ...IS(), background: B.navyLight, color: B.sand, fontWeight: 700, cursor: "default", userSelect: "none" }}>
+                      {form.precio > 0 ? COP(form.precio) : "—"}
+                      <span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginLeft: 8, fontWeight: 400 }}>
+                        ({precioMode === "neto" ? "precio neto agencia" : "precio público"})
+                      </span>
+                    </div>
+                }
+              </div>
+            ) : (
               <div style={{ ...IS(), background: B.navyLight, color: B.sand, fontWeight: 700, cursor: "default", userSelect: "none" }}>
-                {COP(form.precio)}
+                {form.precio > 0 ? COP(form.precio) : "—"}
                 <span style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", marginLeft: 8, fontWeight: 400 }}>precio oficial</span>
               </div>
             )}
