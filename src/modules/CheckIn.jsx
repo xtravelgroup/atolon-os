@@ -397,7 +397,7 @@ export default function CheckIn() {
       supabase.from("reservas").select("*").eq("fecha", fecha).neq("estado", "cancelado").order("nombre"),
       supabase.from("salida_despachos").select("*").eq("fecha", fecha),
       supabase.from("embarcaciones").select("*").order("nombre"),
-      supabase.from("salidas_override").select("*").gte("fecha", fecha).lt("fecha", fecha + "T23:59:59"),
+      supabase.from("salidas_override").select("*").eq("fecha", fecha),
     ]);
     const res = resR.data || [];
     // Solo salidas con pasajeros ese día
