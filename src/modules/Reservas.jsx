@@ -883,7 +883,10 @@ function ReservaModal({ onClose, onSave, isMobile, salidaList = [], aliadoList =
   const validate = () => {
     const e = {};
     if (!form.nombre.trim()) e.nombre = "Requerido";
-    if (!form.telefono.trim() || !/^[\d\s+\-()\\.]{7,}$/.test(form.telefono)) e.telefono = "Teléfono requerido";
+    // Teléfono opcional para reservas B2B (la agencia puede no tener el dato del cliente)
+    if (form.canal !== "B2B") {
+      if (!form.telefono.trim() || !/^[\d\s+\-()\\.]{7,}$/.test(form.telefono)) e.telefono = "Teléfono requerido";
+    }
     if (!form.fecha)         e.fecha = "Requerido";
     if (!form.salida_id)     e.salida_id = "Requerido";
     if ((Number(form.pax_a) + Number(form.pax_n)) < 1) e.pax_a = "Min 1 pax";
