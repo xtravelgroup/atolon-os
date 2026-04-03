@@ -7,17 +7,31 @@ const LS   = { fontSize: 11, color: B.sand, display: "block", marginBottom: 5, t
 const ISsm = { ...IS, padding: "8px 10px", fontSize: 12 };
 
 const MODULOS = [
+  // Comercial
   { key: "pasadias",      label: "Pasadías",      icon: "🏖" },
   { key: "reservas",      label: "Reservas",       icon: "⚓" },
-  { key: "floorplan",     label: "Floor Plan",     icon: "🗺" },
-  { key: "comercial",     label: "Comercial",      icon: "★" },
+  { key: "clientes",      label: "Clientes",       icon: "👤" },
   { key: "b2b",           label: "B2B",            icon: "🏢" },
   { key: "eventos",       label: "Eventos",        icon: "🎉" },
-  { key: "contratos",     label: "Contratos",      icon: "📄" },
+  { key: "upsells",       label: "Upsells",        icon: "⬆" },
+  { key: "comercial",     label: "Comercial",      icon: "★" },
+  // Operaciones
+  { key: "checkin",       label: "Check-in",       icon: "✅" },
+  { key: "muelle",        label: "Llegadas",       icon: "⚓" },
+  { key: "staffing",      label: "Staffing",       icon: "👥" },
+  { key: "floorplan",     label: "Floor Plan",     icon: "🗺" },
+  { key: "menus",         label: "Menús",          icon: "🍽️" },
+  // Marketing
+  { key: "analitica",     label: "Analítica",      icon: "📊" },
+  { key: "contenido",     label: "Contenido",      icon: "📢" },
+  { key: "vip",           label: "Society",        icon: "✦" },
+  // Finanzas
   { key: "financiero",    label: "Financiero",     icon: "💰" },
   { key: "presupuesto",   label: "Presupuesto",    icon: "📊" },
   { key: "activos",       label: "Activos",        icon: "🏗" },
   { key: "requisiciones", label: "Requisiciones",  icon: "🛒" },
+  { key: "contratos",     label: "Contratos",      icon: "📄" },
+  // Sistema
   { key: "configuracion", label: "Configuración",  icon: "⚙" },
   { key: "usuarios",      label: "Usuarios",       icon: "👥" },
 ];
