@@ -1701,7 +1701,7 @@ export default function Reservas() {
   const paxMap = paxPorSalida(reservas, salidas);
 
   // Determine which salidas are open for a given date (respects cierres + overrides + 30-min cutoff)
-  const getSalidasAbiertas = (fecha, paxMapOverride) => {
+  const getSalidasAbiertas = (fecha, paxMapOverride, ignorarCutoff = false) => {
     const cierre = cierres.find(c => c.activo && c.fecha === fecha);
     const dayOvr = overridesMap[fecha] || {};
     const pm = paxMapOverride || paxMap; // pax counts for cascade check
@@ -1709,15 +1709,15 @@ export default function Reservas() {
     const sorted = [...activas].sort((a, b) => a.hora.localeCompare(b.hora));
     // Para hoy: calcular minutos actuales en hora Colombia (UTC-5)
     const esHoy = fecha === today;
-    const ahoraMin = esHoy ? (() => {
+    const ahoraMin = (esHoy && !ignorarCutoff) ? (() => {
       const now = new Date();
       const bog = new Date(now.toLocaleString("en-US", { timeZone: "America/Bogota" }));
       return bog.getHours() * 60 + bog.getMinutes();
     })() : null;
     return sorted.filter((s, idx) => {
       if (!s.activo) return false;
-      // Corte de 30 min: si es hoy y la salida es en menos de 30 min (o ya pasó), cerrar
-      if (esHoy && s.hora) {
+      // Corte de 30 min: si es hoy y la salida ya salió (solo en tablero, no en booking manual)
+      if (ahoraMin !== null && s.hora) {
         const [hh, mm] = s.hora.split(":").map(Number);
         const salidaMin = hh * 60 + mm;
         if (ahoraMin >= salidaMin - 30) return false;
@@ -2171,7 +2171,7 @@ export default function Reservas() {
           vendedoresList={vendedores}
           pasadiaList={pasadias}
           paxMap={paxMap}
-          getSalidasVisibles={getSalidasAbiertas}
+          getSalidasVisibles={fecha => getSalidasAbiertas(fecha, undefined, true)}
           fechaDefault={tabDia === "manana" ? tomorrow : tabDia === "fecha" && fechaFiltro ? fechaFiltro : today}
         />
       )}
