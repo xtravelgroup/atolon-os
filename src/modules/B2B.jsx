@@ -2251,7 +2251,7 @@ function FichaAliado({ aliado, onBack, onRefresh }) {
               ) : (
                 <div style={{ fontSize: 13, lineHeight: 2.4 }}>
                   {[["RUT", aliado.rut], ["RNT", aliado.rnt], ["Contacto", aliado.contacto], ["Telefono", aliado.tel], ["Email", aliado.email],
-                    ["Crédito", aliado.credito_monto ? `$${Number(aliado.credito_monto).toLocaleString("es-CO")}` : "—"],
+                    ["Cupo CXC", aliado.cupo_credito > 0 ? `$${Number(aliado.cupo_credito).toLocaleString("es-CO")}` : (aliado.credito_monto > 0 ? `$${Number(aliado.credito_monto).toLocaleString("es-CO")}` : "—")],
                     ["Días crédito", aliado.credito_dias ? `${aliado.credito_dias} días` : "—"]].map(([l, v]) => (
                     <div key={l}><span style={{ color: "rgba(255,255,255,0.4)", minWidth: 90, display: "inline-block" }}>{l}:</span> <strong>{v || "\u2014"}</strong></div>
                   ))}
@@ -3040,7 +3040,7 @@ function AliadosList() {
       supabase.from("aliados_b2b").select("*").order("nombre"),
       supabase.from("usuarios").select("id, nombre, rol_id, avatar_color").eq("activo", true).order("nombre"),
     ]);
-    if (!error && data) setAliados(data.map(a => ({ id: a.id, tipo: a.tipo, nombre: a.nombre, contacto: a.contacto || "", tel: a.tel || "", email: a.email || "", pax_mes: a.pax_mes || 0, comision: a.comision || 0, revenue: a.revenue || 0, estado: a.estado, rut: a.rut || "", rnt: a.rnt || "", rut_url: a.rut_url || "", rnt_url: a.rnt_url || "", cert_bancaria_url: a.cert_bancaria_url || "", cert_bancaria_pendiente_url: a.cert_bancaria_pendiente_url || "", cert_bancaria_solicitud_fecha: a.cert_bancaria_solicitud_fecha || null, cert_bancaria_solicitud_nota: a.cert_bancaria_solicitud_nota || "", vendedor_id: a.vendedor_id || null })));
+    if (!error && data) setAliados(data.map(a => ({ id: a.id, tipo: a.tipo, nombre: a.nombre, contacto: a.contacto || "", tel: a.tel || "", email: a.email || "", pax_mes: a.pax_mes || 0, comision: a.comision || 0, revenue: a.revenue || 0, estado: a.estado, rut: a.rut || "", rnt: a.rnt || "", rut_url: a.rut_url || "", rnt_url: a.rnt_url || "", cert_bancaria_url: a.cert_bancaria_url || "", cert_bancaria_pendiente_url: a.cert_bancaria_pendiente_url || "", cert_bancaria_solicitud_fecha: a.cert_bancaria_solicitud_fecha || null, cert_bancaria_solicitud_nota: a.cert_bancaria_solicitud_nota || "", vendedor_id: a.vendedor_id || null, cupo_credito: a.cupo_credito || 0, credito_monto: a.credito_monto || 0, credito_dias: a.credito_dias || 0, codigo_fijo: a.codigo_fijo || "" })));
     setVendedores(usrs || []);
     setLoading(false);
   }, []);
