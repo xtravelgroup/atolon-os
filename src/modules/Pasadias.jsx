@@ -616,7 +616,7 @@ function TabSalidas({ salidas, embarcaciones, cierres, onRefreshSalidas, onRefre
                       );
                     })}
                   </div>
-                  {s.auto_apertura && <div style={{ fontSize: 11, color: B.warning, marginTop: 4 }}>Auto-apertura al {s.auto_umbral || 90}% de ocupacion</div>}
+                  {s.auto_apertura && <div style={{ fontSize: 11, color: B.warning, marginTop: 4 }}>Auto-apertura al {s.auto_umbral || 75}% de ocupacion</div>}
                 </div>
                 <div style={{ textAlign: "right" }}>
                   <div style={{ fontSize: 22, fontWeight: 700, fontFamily: "'Barlow Condensed', sans-serif" }}>{s.capacidad_total} <span style={{ fontSize: 12, fontWeight: 400, color: "rgba(255,255,255,0.4)" }}>pax</span></div>
@@ -675,7 +675,7 @@ function TabSalidas({ salidas, embarcaciones, cierres, onRefreshSalidas, onRefre
               </div>
             </div>
             <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, marginBottom: 16, cursor: "pointer" }}>
-              <input type="checkbox" checked={salidaForm.auto_apertura || false} onChange={e => setSalidaForm(f => ({ ...f, auto_apertura: e.target.checked }))} /> Auto-apertura cuando salidas previas llegan al 90%
+              <input type="checkbox" checked={salidaForm.auto_apertura || false} onChange={e => setSalidaForm(f => ({ ...f, auto_apertura: e.target.checked }))} /> Auto-apertura cuando salidas previas llegan al 75%
             </label>
             <div style={{ display: "flex", gap: 10 }}>
               <button onClick={() => setEditingSalida(null)} style={{ flex: 1, padding: 10, borderRadius: 8, border: `1px solid ${B.navyLight}`, background: "none", color: B.sand, fontSize: 13, cursor: "pointer" }}>Cancelar</button>

@@ -312,9 +312,9 @@ export default function BookingPopup() {
           if (nowMins >= (h * 60 + m) - 45) { result[s.id] = -1; return; }
         }
         if (s.auto_apertura) {
-          // Auto-open only if fixed salidas are 90%+ full
+          // Auto-open only if fixed salidas are 75%+ full
           const fixedSals = salidas.filter(f => !f.auto_apertura);
-          const allFull = fixedSals.every(f => (paxBySalida[f.id] || 0) / (f.capacidad_total || 1) >= 0.9);
+          const allFull = fixedSals.every(f => (paxBySalida[f.id] || 0) / (f.capacidad_total || 1) >= 0.75);
           if (!allFull) { result[s.id] = -1; return; }
         }
         result[s.id] = Math.max(0, (s.capacidad_total || 30) - (paxBySalida[s.id] || 0));

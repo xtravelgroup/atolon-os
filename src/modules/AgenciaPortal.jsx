@@ -380,9 +380,9 @@ function NuevaReserva({ agencia, user, onCreated, vistaPrecios = "ambos" }) {
             if (esHorariosAbiertos) return true; // Atolon Experience: todos los horarios
             if (!s.auto_apertura) return true; // Salidas fijas siempre
             if (tPax >= 10) return true; // 10+ pax abre auto_apertura
-            // Default: check if fijas >=90%
+            // Default: check if fijas >=75%
             const fijas = salidas.filter(f => !f.auto_apertura);
-            return fijas.every(f => (disponibilidad[f.id] || 0) / (f.capacidad_total || 1) >= 0.9);
+            return fijas.every(f => (disponibilidad[f.id] || 0) / (f.capacidad_total || 1) >= 0.75);
           });
         })() : [];
 
