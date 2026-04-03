@@ -1,575 +1,591 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { B, COP, todayStr } from "../brand";
 import { supabase } from "../lib/supabase";
 import { useMobile } from "../lib/useMobile";
 import { logAccion } from "../lib/logAccion";
 
-// ── Normalize payment method names ─────────────────────────────────────────
-const normForma = (f) => {
-  if (!f) return "Pendiente";
-  const s = f.trim().toLowerCase();
-  if (s === "efectivo") return "Efectivo";
-  if (s === "transferencia") return "Transferencia";
-  if (s === "wompi") return "Wompi";
-  if (s === "sky" || s === "sky bookings") return "SKY";
-  if (s === "cxc") return "CXC";
-  if (s === "link_pago" || s === "link de pago" || s === "enviar link de pago") return "Link de Pago";
-  return f.trim();
+const IS = {
+  width: "100%", padding: "9px 12px", borderRadius: 8,
+  background: B.navy, border: `1px solid rgba(255,255,255,0.1)`,
+  color: "#fff", fontSize: 13, outline: "none",
+  boxSizing: "border-box", fontFamily: "inherit",
 };
+const LS = { fontSize: 11, color: "rgba(255,255,255,0.5)", display: "block", marginBottom: 5, textTransform: "uppercase", letterSpacing: "0.06em" };
 
-// ── Shared styles ───────────────────────────────────────────────────────────
-const card = {
-  background: B.navyMid,
-  borderRadius: 12,
-  padding: "16px 20px",
-  border: `1px solid ${B.navyLight}`,
-};
+const AREAS = [
+  { key: "ayb",         label: "A&B",          icon: "🍽️",  desc: "Alimentos y Bebidas" },
+  { key: "pasadias",    label: "Pasadías",      icon: "🏖️",  desc: "Taquilla / Muelle" },
+  { key: "after_island",label: "After Island",  icon: "🌙",  desc: "Nocturno" },
+  { key: "otros",       label: "Otros",         icon: "📦",  desc: "Otro punto de venta" },
+];
 
-const sectionHeader = {
-  fontSize: 14,
-  fontWeight: 700,
-  color: B.sand,
-  marginBottom: 12,
-  textTransform: "uppercase",
-  letterSpacing: "0.06em",
-};
+const METODOS = [
+  { key: "datafono",      label: "Datáfono",      icon: "💳" },
+  { key: "efectivo",      label: "Efectivo",       icon: "💵" },
+  { key: "link_pago",     label: "Link de Pago",   icon: "🔗" },
+  { key: "resort_credit", label: "Resort Credit",  icon: "🏨" },
+  { key: "transferencia", label: "Transferencia",  icon: "🏦" },
+  { key: "otros",         label: "Otros",          icon: "➕" },
+];
 
-const inputStyle = {
-  background: B.navy,
-  border: `1px solid ${B.navyLight}`,
-  color: "#fff",
-  borderRadius: 8,
-  padding: "9px 12px",
-  fontSize: 14,
-  outline: "none",
-  width: "100%",
-  boxSizing: "border-box",
-};
-
-const efectivoHighlight = {
-  background: "#E8A02015",
-  border: "1px solid #E8A02033",
-};
-
-const FORMAS_ORDER = ["Efectivo", "Transferencia", "Wompi", "SKY", "CXC", "Link de Pago", "Pendiente"];
-
+function parseCOP(v) { return parseInt(String(v).replace(/[^0-9-]/g, ""), 10) || 0; }
 function fmtFecha(d) {
   if (!d) return "—";
   const p = d.split("-");
-  return p.length === 3 ? `${p[2]}-${p[1]}-${p[0]}` : d;
+  return p.length === 3 ? `${p[2]}/${p[1]}/${p[0]}` : d;
 }
 
-// ── KPI Card ────────────────────────────────────────────────────────────────
-function KpiCard({ label, value, accent }) {
+// ─── Historial de Cierres ─────────────────────────────────────────────────────
+function HistorialCierres({ refresh }) {
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [expanded, setExpanded] = useState(null);
+
+  const load = useCallback(async () => {
+    if (!supabase) return;
+    setLoading(true);
+    const { data } = await supabase.from("cierres_caja").select("*")
+      .order("created_at", { ascending: false }).limit(50);
+    setRows(data || []);
+    setLoading(false);
+  }, []);
+
+  useEffect(() => { load(); }, [load, refresh]);
+
+  if (loading) return <div style={{ fontSize: 13, color: "rgba(255,255,255,0.3)", padding: "20px 0" }}>Cargando historial…</div>;
+  if (rows.length === 0) return <div style={{ fontSize: 13, color: "rgba(255,255,255,0.3)", padding: "20px 0" }}>Sin cierres registrados.</div>;
+
+  const AREA_LABEL = Object.fromEntries(AREAS.map(a => [a.key, a.label]));
+  const AREA_ICON  = Object.fromEntries(AREAS.map(a => [a.key, a.icon]));
+
   return (
-    <div style={{ ...card, flex: 1, minWidth: 120 }}>
-      <div style={{ fontSize: 11, color: B.sand, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 }}>
-        {label}
-      </div>
-      <div style={{ fontSize: 22, fontWeight: 700, color: accent || "#fff" }}>{value}</div>
+    <div style={{ overflowX: "auto" }}>
+      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+        <thead>
+          <tr style={{ borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
+            {["Fecha", "Área", "Cajero", "Caja", "No. Comp.", "Total Vtas.", "Propinas", "Total", "Efect. Dif.", ""].map(h => (
+              <th key={h} style={{ padding: "7px 10px", textAlign: "left", color: "rgba(255,255,255,0.4)", fontWeight: 600, fontSize: 10, textTransform: "uppercase", letterSpacing: "0.05em", whiteSpace: "nowrap" }}>{h}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((c) => {
+            const dif = c.diferencia || 0;
+            const difColor = dif === 0 ? "#4ade80" : dif < 0 ? "#f87171" : "#fbbf24";
+            const isExp = expanded === c.id;
+            const metodos = c.metodos || {};
+            return (
+              <>
+                <tr key={c.id} style={{ borderBottom: "1px solid rgba(255,255,255,0.04)", cursor: "pointer" }}
+                  onClick={() => setExpanded(isExp ? null : c.id)}>
+                  <td style={{ padding: "9px 10px", whiteSpace: "nowrap", color: "rgba(255,255,255,0.7)" }}>{fmtFecha(c.fecha)}</td>
+                  <td style={{ padding: "9px 10px", whiteSpace: "nowrap" }}>
+                    {AREA_ICON[c.area] || "📦"} <span style={{ color: "rgba(255,255,255,0.6)", fontSize: 11 }}>{AREA_LABEL[c.area] || c.area || "—"}</span>
+                  </td>
+                  <td style={{ padding: "9px 10px", fontWeight: 600 }}>{c.cajero_nombre || "—"}</td>
+                  <td style={{ padding: "9px 10px", color: "rgba(255,255,255,0.4)", fontSize: 11 }}>{c.numero_caja || "—"}</td>
+                  <td style={{ padding: "9px 10px", color: "rgba(255,255,255,0.4)", fontSize: 11 }}>{c.numero_comprobante || "—"}</td>
+                  <td style={{ padding: "9px 10px", color: B.sky, fontWeight: 600 }}>{COP(c.total_ventas || 0)}</td>
+                  <td style={{ padding: "9px 10px", color: B.sand }}>{COP(c.total_propinas || 0)}</td>
+                  <td style={{ padding: "9px 10px", fontWeight: 700 }}>{COP(c.total_general || 0)}</td>
+                  <td style={{ padding: "9px 10px", fontWeight: 700, color: difColor }}>
+                    {dif >= 0 ? "+" : ""}{COP(dif)}
+                  </td>
+                  <td style={{ padding: "9px 10px", color: "rgba(255,255,255,0.3)", fontSize: 11 }}>{isExp ? "▲" : "▼"}</td>
+                </tr>
+                {isExp && (
+                  <tr key={`${c.id}-exp`} style={{ background: "rgba(255,255,255,0.02)" }}>
+                    <td colSpan={10} style={{ padding: "14px 18px" }}>
+                      <div style={{ display: "flex", gap: 24, flexWrap: "wrap" }}>
+                        {/* Métodos */}
+                        <div style={{ flex: 2, minWidth: 280 }}>
+                          <div style={{ fontSize: 10, color: B.sand, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 }}>Detalle por método</div>
+                          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
+                            <thead>
+                              <tr style={{ borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
+                                <th style={{ padding: "4px 8px", textAlign: "left", color: "rgba(255,255,255,0.35)", fontWeight: 600 }}>Método</th>
+                                <th style={{ padding: "4px 8px", textAlign: "right", color: "rgba(255,255,255,0.35)", fontWeight: 600 }}>Venta</th>
+                                <th style={{ padding: "4px 8px", textAlign: "right", color: "rgba(255,255,255,0.35)", fontWeight: 600 }}>Propina</th>
+                                <th style={{ padding: "4px 8px", textAlign: "right", color: "rgba(255,255,255,0.35)", fontWeight: 600 }}>Total</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {Object.entries(metodos).filter(([, v]) => (v.venta || v.propina)).map(([k, v]) => (
+                                <tr key={k} style={{ borderBottom: "1px solid rgba(255,255,255,0.03)" }}>
+                                  <td style={{ padding: "5px 8px", color: "rgba(255,255,255,0.6)" }}>
+                                    {METODOS.find(m => m.key === k)?.label || k}
+                                  </td>
+                                  <td style={{ padding: "5px 8px", textAlign: "right" }}>{COP(v.venta || 0)}</td>
+                                  <td style={{ padding: "5px 8px", textAlign: "right", color: B.sand }}>{COP(v.propina || 0)}</td>
+                                  <td style={{ padding: "5px 8px", textAlign: "right", fontWeight: 700 }}>{COP((v.venta || 0) + (v.propina || 0))}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                        {/* Meta */}
+                        <div style={{ flex: 1, minWidth: 180, fontSize: 12 }}>
+                          <div style={{ fontSize: 10, color: B.sand, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 }}>Info del cierre</div>
+                          <div style={{ display: "flex", flexDirection: "column", gap: 4, color: "rgba(255,255,255,0.5)" }}>
+                            <div><span style={{ color: "rgba(255,255,255,0.3)" }}>Usuario: </span>{c.usuario_email}</div>
+                            <div><span style={{ color: "rgba(255,255,255,0.3)" }}>Efect. esperado: </span>{COP(c.efectivo_esperado || 0)}</div>
+                            <div><span style={{ color: "rgba(255,255,255,0.3)" }}>Efect. contado: </span>{COP(c.efectivo_contado || 0)}</div>
+                            {c.notas && <div><span style={{ color: "rgba(255,255,255,0.3)" }}>Notas: </span>{c.notas}</div>}
+                            {c.comprobante_url && (
+                              <a href={c.comprobante_url} target="_blank" rel="noopener noreferrer"
+                                style={{ color: B.sky, textDecoration: "none", marginTop: 4 }}>
+                                📎 Ver comprobante
+                              </a>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    </td>
+                  </tr>
+                )}
+              </>
+            );
+          })}
+        </tbody>
+      </table>
     </div>
   );
 }
 
-// ── Badge ───────────────────────────────────────────────────────────────────
-function Badge({ text, color }) {
-  return (
-    <span style={{
-      fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 10,
-      background: (color || B.success) + "22", color: color || B.success,
-      textTransform: "uppercase", letterSpacing: "0.05em",
-    }}>
-      {text}
-    </span>
-  );
-}
-
-// ── Main Component ──────────────────────────────────────────────────────────
+// ─── Main ─────────────────────────────────────────────────────────────────────
 export default function CierreCaja() {
-  const mobile = useMobile();
+  const { isMobile } = useMobile();
+  const fileRef = useRef(null);
 
-  // Date selector
-  const [fecha, setFecha] = useState(todayStr());
-  const [fechaInput, setFechaInput] = useState(todayStr());
+  // Form state
+  const [area, setArea]         = useState("ayb");
+  const [fecha, setFecha]       = useState(todayStr());
+  const [cajero, setCajero]     = useState("");
+  const [numCaja, setNumCaja]   = useState("");
+  const [numComp, setNumComp]   = useState("");
+  const [file, setFile]         = useState(null);           // File object
+  const [fileUrl, setFileUrl]   = useState("");             // after upload
 
-  // Reservas data
-  const [reservas, setReservas] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [loaded, setLoaded] = useState(false);
+  // Métodos: { datafono: { venta: "", propina: "" }, ... }
+  const initMetodos = () => Object.fromEntries(METODOS.map(m => [m.key, { venta: "", propina: "" }]));
+  const [metodos, setMetodos] = useState(initMetodos());
 
   // Efectivo cuadre
   const [efectivoContado, setEfectivoContado] = useState("");
 
-  // UI state
-  const [showDetalle, setShowDetalle] = useState(false);
-  const [notas, setNotas] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
-  const [savedId, setSavedId] = useState(null);
-  const [error, setError] = useState(null);
+  const [notas, setNotas]       = useState("");
+  const [saving, setSaving]     = useState(false);
+  const [uploadingFile, setUploadingFile] = useState(false);
+  const [saved, setSaved]       = useState(false);
+  const [savedId, setSavedId]   = useState(null);
+  const [error, setError]       = useState(null);
+  const [historialKey, setHistorialKey] = useState(0);
 
-  // Historial
-  const [historial, setHistorial] = useState([]);
-  const [historialLoading, setHistorialLoading] = useState(false);
-  const [expandedRow, setExpandedRow] = useState(null);
+  const setM = (key, field, val) =>
+    setMetodos(p => ({ ...p, [key]: { ...p[key], [field]: val } }));
 
-  // ── Load reservas for selected date ──────────────────────────────────────
-  const cargarReservas = useCallback(async (f) => {
-    setLoading(true);
-    setLoaded(false);
-    setError(null);
-    setSaved(false);
-    setSavedId(null);
-    setEfectivoContado("");
-    setNotas("");
-    setShowDetalle(false);
+  // ── Computed ────────────────────────────────────────────────────────────────
+  const computed = Object.fromEntries(
+    METODOS.map(m => {
+      const v = parseCOP(metodos[m.key].venta);
+      const p = parseCOP(metodos[m.key].propina);
+      return [m.key, { venta: v, propina: p, total: v + p }];
+    })
+  );
 
-    if (!supabase) {
-      setLoading(false);
-      setError("Supabase no disponible.");
-      return;
-    }
+  const totalVentas   = METODOS.reduce((s, m) => s + computed[m.key].venta, 0);
+  const totalPropinas = METODOS.reduce((s, m) => s + computed[m.key].propina, 0);
+  const totalGeneral  = totalVentas + totalPropinas;
 
-    const { data, error: err } = await supabase
-      .from("reservas")
-      .select("id, nombre, tipo, canal, forma_pago, pax, estado, total, fecha")
-      .eq("fecha", f)
-      .neq("estado", "cancelado");
-
-    if (err) {
-      setError("Error cargando reservas: " + err.message);
-      setLoading(false);
-      return;
-    }
-
-    setReservas(data || []);
-    setLoading(false);
-    setLoaded(true);
-  }, []);
-
-  // ── Load historial ────────────────────────────────────────────────────────
-  const cargarHistorial = useCallback(async () => {
-    if (!supabase) return;
-    setHistorialLoading(true);
-    const { data } = await supabase
-      .from("cierres_caja")
-      .select("*")
-      .order("created_at", { ascending: false })
-      .limit(30);
-    setHistorial(data || []);
-    setHistorialLoading(false);
-  }, []);
-
-  useEffect(() => { cargarHistorial(); }, [cargarHistorial]);
-
-  // ── Computed values ───────────────────────────────────────────────────────
-  const totalGeneral = reservas.reduce((s, r) => s + (r.total || 0), 0);
-  const totalPax = reservas.reduce((s, r) => s + (r.pax || 0), 0);
-  const totalReservas = reservas.length;
-
-  // Group by normalized forma_pago
-  const porForma = reservas.reduce((acc, r) => {
-    const forma = normForma(r.forma_pago);
-    if (!acc[forma]) acc[forma] = { count: 0, total: 0 };
-    acc[forma].count += 1;
-    acc[forma].total += r.total || 0;
-    return acc;
-  }, {});
-
-  // Ordered rows (known forms first, then any others)
-  const formaRows = [
-    ...FORMAS_ORDER.filter(f => porForma[f]),
-    ...Object.keys(porForma).filter(f => !FORMAS_ORDER.includes(f)),
-  ].map(f => ({ forma: f, ...porForma[f] }));
-
-  const efectivoEsperado = porForma["Efectivo"]?.total || 0;
-  const efectivoContadoNum = parseInt(efectivoContado.replace(/[^0-9-]/g, ""), 10) || 0;
+  const efectivoEsperado = computed.efectivo.total;
+  const efectivoContadoNum = parseCOP(efectivoContado);
   const diferencia = efectivoContadoNum - efectivoEsperado;
-  const diferenciaColor = diferencia === 0 ? B.success : diferencia < 0 ? B.danger : B.warning;
+  const difColor = diferencia === 0 ? "#4ade80" : diferencia < 0 ? "#f87171" : "#fbbf24";
 
-  // ── Cerrar Caja ───────────────────────────────────────────────────────────
-  const cerrarCaja = async () => {
-    if (!supabase) { setError("Supabase no disponible."); return; }
+  // ── Upload + AI parse ────────────────────────────────────────────────────────
+  const [parseStatus, setParseStatus] = useState(null); // null | "parsing" | "ok" | "fail"
+  const [parseMsg, setParseMsg]       = useState("");
+
+  const handleFile = async (f) => {
+    if (!f) return;
+    setFile(f);
+    setParseStatus(null);
+    setParseMsg("");
+    if (!supabase) return;
+
+    setUploadingFile(true);
+
+    // 1. Upload to Storage
+    const path = `cierres/${Date.now()}-${f.name.replace(/\s+/g, "_")}`;
+    const { error: upErr } = await supabase.storage.from("cierres-docs").upload(path, f, { upsert: true });
+    if (!upErr) {
+      const { data: { publicUrl } } = supabase.storage.from("cierres-docs").getPublicUrl(path);
+      setFileUrl(publicUrl);
+    }
+    setUploadingFile(false);
+
+    // 2. AI parse (only for images, not PDFs — Claude Vision needs image)
+    const isPdf = f.type === "application/pdf" || f.name.toLowerCase().endsWith(".pdf");
+    if (isPdf) {
+      setParseStatus("fail");
+      setParseMsg("PDF cargado. Ingresa los datos manualmente.");
+      return;
+    }
+
+    setParseStatus("parsing");
+    try {
+      const reader = new FileReader();
+      reader.onload = async (e) => {
+        const base64 = e.target.result.split(",")[1];
+        const mediaType = f.type || "image/jpeg";
+
+        const { data: fnData, error: fnErr } = await supabase.functions.invoke("parse-comprobante", {
+          body: { imageBase64: base64, mediaType },
+        });
+
+        if (fnErr || !fnData?.ok) {
+          setParseStatus("fail");
+          setParseMsg("No se pudo leer automáticamente. Ingresa los datos manualmente.");
+          return;
+        }
+
+        // Auto-fill form
+        if (fnData.cajero)              setCajero(fnData.cajero);
+        if (fnData.numero_comprobante)  setNumComp(fnData.numero_comprobante);
+        if (fnData.fecha)               setFecha(fnData.fecha);
+
+        if (fnData.metodos) {
+          setMetodos(prev => {
+            const next = { ...prev };
+            for (const k of Object.keys(fnData.metodos)) {
+              if (next[k]) {
+                next[k] = {
+                  venta:   String(fnData.metodos[k].venta   || ""),
+                  propina: String(fnData.metodos[k].propina || ""),
+                };
+              }
+            }
+            return next;
+          });
+        }
+
+        setParseStatus("ok");
+        setParseMsg("✅ Datos cargados automáticamente. Revisa y corrige si es necesario.");
+      };
+      reader.readAsDataURL(f);
+    } catch {
+      setParseStatus("fail");
+      setParseMsg("Error al analizar la imagen. Ingresa los datos manualmente.");
+    }
+  };
+
+  // ── Guardar Cierre ───────────────────────────────────────────────────────────
+  const guardar = async () => {
+    if (!supabase) return;
+    if (!cajero.trim()) { setError("Ingresa el nombre del cajero."); return; }
     setSaving(true);
     setError(null);
 
     const session = await supabase.auth.getSession();
-    const email = session?.data?.session?.user?.email || "desconocido";
+    const email = session?.data?.session?.user?.email || "sistema";
 
-    const totalesPorForma = {};
-    formaRows.forEach(row => { totalesPorForma[row.forma] = row.total; });
+    const metodosData = Object.fromEntries(
+      METODOS.map(m => [m.key, { venta: computed[m.key].venta, propina: computed[m.key].propina, total: computed[m.key].total }])
+    );
 
     const id = `CC-${Date.now()}`;
     const record = {
       id,
       fecha,
+      area,
+      cajero_nombre: cajero.trim(),
+      numero_caja: numCaja.trim() || null,
+      numero_comprobante: numComp.trim() || null,
+      comprobante_url: fileUrl || null,
       usuario_email: email,
+      metodos: metodosData,
+      total_ventas: totalVentas,
+      total_propinas: totalPropinas,
+      total_general: totalGeneral,
       efectivo_esperado: efectivoEsperado,
       efectivo_contado: efectivoContadoNum,
       diferencia,
-      totales_por_forma: totalesPorForma,
-      reservas_count: totalReservas,
-      total_general: totalGeneral,
-      estado: "cerrado",
       notas: notas.trim() || null,
+      estado: "cerrado",
     };
 
-    const { error: insertErr } = await supabase.from("cierres_caja").insert(record);
+    const { error: err } = await supabase.from("cierres_caja").insert(record);
+    if (err) { setError("Error guardando: " + err.message); setSaving(false); return; }
 
-    if (insertErr) {
-      setError("Error guardando cierre: " + insertErr.message);
-      setSaving(false);
-      return;
-    }
-
-    await logAccion({
-      modulo: "cierre_caja",
-      accion: "cierre_caja",
-      tabla: "cierres_caja",
-      registroId: id,
-      datosDespues: record,
-    });
+    await logAccion({ modulo: "cierre_caja", accion: "cierre_caja", tabla: "cierres_caja", registroId: id, datosDespues: record });
 
     setSaved(true);
     setSavedId(id);
     setSaving(false);
-    cargarHistorial();
+    setHistorialKey(k => k + 1);
   };
 
-  // ── Render ────────────────────────────────────────────────────────────────
+  const reset = () => {
+    setSaved(false); setSavedId(null); setError(null);
+    setCajero(""); setNumCaja(""); setNumComp(""); setFile(null); setFileUrl("");
+    setMetodos(initMetodos()); setEfectivoContado(""); setNotas("");
+  };
+
+  // ────────────────────────────────────────────────────────────────────────────
   return (
-    <div style={{ color: "#fff", fontFamily: "inherit", maxWidth: 900, margin: "0 auto", paddingBottom: 60 }}>
+    <div style={{ color: "#fff", fontFamily: "inherit", maxWidth: 860, margin: "0 auto", paddingBottom: 60 }}>
 
       {/* Header */}
-      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 28 }}>
-        <h2 style={{ fontSize: 22, fontWeight: 700, margin: 0 }}>Cierre de Caja</h2>
-        {supabase && <Badge text="LIVE" color={B.success} />}
+      <div style={{ marginBottom: 24 }}>
+        <h2 style={{ margin: 0, fontSize: 22, fontWeight: 800 }}>💵 Cierre de Caja</h2>
+        <div style={{ fontSize: 12, color: "rgba(255,255,255,0.35)", marginTop: 4 }}>Registro de ingresos por punto de venta</div>
       </div>
 
-      {/* ── 1. Date Selector ── */}
-      <div style={{ ...card, marginBottom: 20, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-        <div style={sectionHeader}>Fecha</div>
-        <input
-          type="date"
-          value={fechaInput}
-          onChange={e => setFechaInput(e.target.value)}
-          style={{ ...inputStyle, width: "auto", flex: "0 0 auto" }}
-        />
-        <button
-          onClick={() => { setFecha(fechaInput); cargarReservas(fechaInput); }}
-          disabled={loading}
-          style={{
-            background: B.sand, color: B.navy, border: "none", borderRadius: 8,
-            padding: "9px 20px", fontWeight: 700, cursor: loading ? "not-allowed" : "pointer",
-            fontSize: 14, opacity: loading ? 0.6 : 1,
-          }}
-        >
-          {loading ? "Cargando…" : "Cargar"}
-        </button>
-        {loaded && !loading && (
-          <span style={{ fontSize: 13, color: B.sand, marginLeft: 4 }}>
-            {fmtFecha(fecha)} — {totalReservas} reservas cargadas
-          </span>
-        )}
-      </div>
-
-      {error && (
-        <div style={{ ...card, background: B.danger + "22", border: `1px solid ${B.danger}44`, color: B.danger, marginBottom: 20, fontSize: 13 }}>
-          {error}
+      {saved ? (
+        /* ── Éxito ── */
+        <div style={{ background: "#4ade8018", border: "1px solid #4ade8033", borderRadius: 16, padding: "28px 24px", textAlign: "center" }}>
+          <div style={{ fontSize: 40, marginBottom: 10 }}>✅</div>
+          <div style={{ fontSize: 18, fontWeight: 800, color: "#4ade80", marginBottom: 6 }}>Cierre guardado exitosamente</div>
+          <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginBottom: 4 }}>ID: {savedId}</div>
+          <div style={{ fontSize: 14, color: "rgba(255,255,255,0.6)", margin: "12px 0" }}>
+            Total ventas <strong style={{ color: B.sky }}>{COP(totalVentas)}</strong>
+            {" · "}Propinas <strong style={{ color: B.sand }}>{COP(totalPropinas)}</strong>
+            {" · "}Total <strong style={{ color: "#fff" }}>{COP(totalGeneral)}</strong>
+          </div>
+          <button onClick={reset}
+            style={{ marginTop: 8, background: B.sand, color: B.navy, border: "none", borderRadius: 10, padding: "12px 28px", fontWeight: 700, fontSize: 14, cursor: "pointer" }}>
+            + Nuevo Cierre
+          </button>
         </div>
-      )}
-
-      {loaded && (
+      ) : (
         <>
-          {/* ── 2. Resumen de Ingresos ── */}
-          <div style={{ ...card, marginBottom: 20 }}>
-            <div style={sectionHeader}>Resumen de Ingresos</div>
-
-            {/* KPI Cards */}
-            <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 20 }}>
-              <KpiCard label="Total Ingresos" value={COP(totalGeneral)} accent={B.sky} />
-              <KpiCard label="Reservas" value={totalReservas} />
-              <KpiCard label="Pax" value={totalPax} />
+          {/* ── 1. Área ── */}
+          <div style={{ marginBottom: 20 }}>
+            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 10 }}>Área / Punto de venta</div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {AREAS.map(a => (
+                <button key={a.key} onClick={() => setArea(a.key)}
+                  style={{
+                    padding: "10px 18px", borderRadius: 10, border: `1px solid ${area === a.key ? B.sky : "rgba(255,255,255,0.1)"}`,
+                    background: area === a.key ? B.sky + "22" : "transparent",
+                    color: area === a.key ? B.sky : "rgba(255,255,255,0.5)",
+                    fontWeight: area === a.key ? 700 : 500, cursor: "pointer", fontSize: 13,
+                    display: "flex", alignItems: "center", gap: 6,
+                  }}>
+                  <span>{a.icon}</span> {a.label}
+                  {!isMobile && <span style={{ fontSize: 10, opacity: 0.6 }}>— {a.desc}</span>}
+                </button>
+              ))}
             </div>
-
-            {/* Grouped table */}
-            {formaRows.length === 0 ? (
-              <div style={{ fontSize: 13, color: B.sand, opacity: 0.7 }}>No hay reservas para esta fecha.</div>
-            ) : (
-              <div style={{ overflowX: "auto" }}>
-                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-                  <thead>
-                    <tr style={{ borderBottom: `1px solid ${B.navyLight}` }}>
-                      <th style={{ textAlign: "left", padding: "8px 10px", color: B.sand, fontWeight: 600, fontSize: 11, textTransform: "uppercase" }}>Forma de Pago</th>
-                      <th style={{ textAlign: "right", padding: "8px 10px", color: B.sand, fontWeight: 600, fontSize: 11, textTransform: "uppercase" }}>Reservas</th>
-                      <th style={{ textAlign: "right", padding: "8px 10px", color: B.sand, fontWeight: 600, fontSize: 11, textTransform: "uppercase" }}>Total COP</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {formaRows.map(row => {
-                      const isEfectivo = row.forma === "Efectivo";
-                      return (
-                        <tr
-                          key={row.forma}
-                          style={{
-                            borderBottom: `1px solid ${B.navyLight}44`,
-                            ...(isEfectivo ? efectivoHighlight : {}),
-                          }}
-                        >
-                          <td style={{ padding: "10px 10px", fontWeight: isEfectivo ? 700 : 400 }}>
-                            {row.forma}
-                            {isEfectivo && (
-                              <span style={{ marginLeft: 8, fontSize: 10, color: B.warning, fontWeight: 600, textTransform: "uppercase" }}>
-                                Cuadrar
-                              </span>
-                            )}
-                          </td>
-                          <td style={{ textAlign: "right", padding: "10px 10px", color: "#ccc" }}>{row.count}</td>
-                          <td style={{ textAlign: "right", padding: "10px 10px", fontWeight: isEfectivo ? 700 : 400, color: isEfectivo ? B.warning : "#fff" }}>
-                            {COP(row.total)}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                    <tr style={{ borderTop: `2px solid ${B.navyLight}` }}>
-                      <td style={{ padding: "10px 10px", fontWeight: 700, color: B.sand }}>Total</td>
-                      <td style={{ textAlign: "right", padding: "10px 10px", fontWeight: 700 }}>{totalReservas}</td>
-                      <td style={{ textAlign: "right", padding: "10px 10px", fontWeight: 700, color: B.sky }}>{COP(totalGeneral)}</td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-            )}
           </div>
 
-          {/* ── 3. Cuadre de Efectivo ── */}
-          <div style={{ ...card, marginBottom: 20 }}>
-            <div style={sectionHeader}>Cuadre de Efectivo</div>
-
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16, padding: "10px 14px", borderRadius: 8, ...efectivoHighlight }}>
-              <span style={{ fontSize: 13, color: "#ccc" }}>Efectivo esperado en caja:</span>
-              <span style={{ fontSize: 18, fontWeight: 700, color: B.warning }}>{COP(efectivoEsperado)}</span>
+          {/* ── 2. Datos del comprobante ── */}
+          <div style={{ background: B.navyMid, borderRadius: 14, padding: "18px 20px", marginBottom: 20, border: "1px solid rgba(255,255,255,0.07)" }}>
+            <div style={{ fontSize: 12, color: B.sand, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 16 }}>Datos del comprobante</div>
+            <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr 1fr 1fr", gap: 14 }}>
+              <div>
+                <label style={LS}>Cajero *</label>
+                <input value={cajero} onChange={e => setCajero(e.target.value)} placeholder="Nombre del cajero" style={IS} />
+              </div>
+              <div>
+                <label style={LS}>Caja #</label>
+                <input value={numCaja} onChange={e => setNumCaja(e.target.value)} placeholder="Ej: Caja 1" style={IS} />
+              </div>
+              <div>
+                <label style={LS}>No. Comprobante</label>
+                <input value={numComp} onChange={e => setNumComp(e.target.value)} placeholder="Ej: 1353" style={IS} />
+              </div>
+              <div>
+                <label style={LS}>Fecha</label>
+                <input type="date" value={fecha} onChange={e => setFecha(e.target.value)} style={IS} />
+              </div>
             </div>
 
-            <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-end" }}>
-              <div style={{ flex: 1, minWidth: 200 }}>
-                <label style={{ fontSize: 12, color: B.sand, display: "block", marginBottom: 6, fontWeight: 600 }}>
-                  Efectivo contado (COP)
-                </label>
-                <input
-                  type="number"
-                  value={efectivoContado}
-                  onChange={e => setEfectivoContado(e.target.value)}
-                  placeholder="0"
-                  style={inputStyle}
-                  min="0"
-                />
+            {/* Upload */}
+            <div style={{ marginTop: 14 }}>
+              <label style={LS}>Comprobante PDF / Imagen</label>
+              <div
+                onClick={() => fileRef.current?.click()}
+                style={{
+                  border: `1px dashed ${fileUrl ? "#4ade80" : "rgba(255,255,255,0.15)"}`,
+                  borderRadius: 10, padding: "14px 18px", cursor: "pointer",
+                  background: fileUrl ? "#4ade8010" : "transparent",
+                  display: "flex", alignItems: "center", gap: 12,
+                }}>
+                <span style={{ fontSize: 22 }}>{uploadingFile ? "⏳" : fileUrl ? "✅" : "📎"}</span>
+                <div>
+                  <div style={{ fontSize: 13, color: fileUrl ? "#4ade80" : "rgba(255,255,255,0.5)" }}>
+                    {uploadingFile ? "Subiendo…" : fileUrl ? "Comprobante cargado" : file ? file.name : "Adjuntar comprobante"}
+                  </div>
+                  {!fileUrl && !uploadingFile && (
+                    <div style={{ fontSize: 11, color: "rgba(255,255,255,0.25)", marginTop: 2 }}>PDF, JPG o PNG</div>
+                  )}
+                  {fileUrl && (
+                    <a href={fileUrl} target="_blank" rel="noopener noreferrer"
+                      onClick={e => e.stopPropagation()}
+                      style={{ fontSize: 11, color: B.sky, textDecoration: "none", marginTop: 2, display: "block" }}>
+                      Ver archivo ↗
+                    </a>
+                  )}
+                </div>
+                {fileUrl && (
+                  <button onClick={e => { e.stopPropagation(); setFile(null); setFileUrl(""); }}
+                    style={{ marginLeft: "auto", background: "none", border: "none", color: "rgba(255,255,255,0.3)", fontSize: 18, cursor: "pointer" }}>✕</button>
+                )}
               </div>
-
-              {efectivoContado !== "" && (
-                <div style={{ padding: "9px 16px", borderRadius: 8, background: diferenciaColor + "18", border: `1px solid ${diferenciaColor}44`, minWidth: 160 }}>
-                  <div style={{ fontSize: 11, color: "#aaa", marginBottom: 2, textTransform: "uppercase", fontWeight: 600 }}>Diferencia</div>
-                  <div style={{ fontSize: 18, fontWeight: 700, color: diferenciaColor }}>
-                    {diferencia >= 0 ? "+" : ""}{COP(diferencia)}
-                  </div>
-                  <div style={{ fontSize: 11, color: "#aaa", marginTop: 2 }}>
-                    {diferencia === 0 ? "Cuadrado exacto" : diferencia > 0 ? "Sobrante" : "Faltante"}
-                  </div>
+              <input ref={fileRef} type="file" accept=".pdf,image/*" style={{ display: "none" }}
+                onChange={e => handleFile(e.target.files[0])} />
+              {/* Parse status */}
+              {parseStatus === "parsing" && (
+                <div style={{ marginTop: 8, padding: "8px 12px", borderRadius: 8, background: B.sky + "15", border: `1px solid ${B.sky}33`, fontSize: 12, color: B.sky, display: "flex", alignItems: "center", gap: 8 }}>
+                  <span style={{ animation: "spin 1s linear infinite", display: "inline-block" }}>⏳</span>
+                  Analizando comprobante con IA…
+                </div>
+              )}
+              {parseStatus === "ok" && (
+                <div style={{ marginTop: 8, padding: "8px 12px", borderRadius: 8, background: "#4ade8015", border: "1px solid #4ade8033", fontSize: 12, color: "#4ade80" }}>
+                  {parseMsg}
+                </div>
+              )}
+              {parseStatus === "fail" && (
+                <div style={{ marginTop: 8, padding: "8px 12px", borderRadius: 8, background: "rgba(251,191,36,0.1)", border: "1px solid rgba(251,191,36,0.2)", fontSize: 12, color: "#fbbf24" }}>
+                  {parseMsg}
                 </div>
               )}
             </div>
           </div>
 
-          {/* ── 4. Detalle de Reservas (collapsible) ── */}
-          <div style={{ ...card, marginBottom: 20 }}>
-            <div
-              onClick={() => setShowDetalle(v => !v)}
-              style={{ display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer" }}
-            >
-              <div style={{ ...sectionHeader, marginBottom: 0 }}>Detalle de Reservas ({totalReservas})</div>
-              <span style={{ color: B.sand, fontSize: 18, userSelect: "none" }}>{showDetalle ? "▲" : "▼"}</span>
-            </div>
+          {/* ── 3. Métodos de pago ── */}
+          <div style={{ background: B.navyMid, borderRadius: 14, padding: "18px 20px", marginBottom: 20, border: "1px solid rgba(255,255,255,0.07)" }}>
+            <div style={{ fontSize: 12, color: B.sand, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 16 }}>Métodos de pago</div>
 
-            {showDetalle && (
-              <div style={{ overflowX: "auto", marginTop: 16 }}>
-                {reservas.length === 0 ? (
-                  <div style={{ fontSize: 13, color: B.sand, opacity: 0.7 }}>Sin reservas.</div>
-                ) : (
-                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-                    <thead>
-                      <tr style={{ borderBottom: `1px solid ${B.navyLight}` }}>
-                        {["Nombre", "Tipo", "Pax", "Forma de Pago", "Total"].map(h => (
-                          <th key={h} style={{ textAlign: h === "Total" || h === "Pax" ? "right" : "left", padding: "7px 10px", color: B.sand, fontWeight: 600, fontSize: 11, textTransform: "uppercase" }}>
-                            {h}
-                          </th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {reservas.map(r => (
-                        <tr key={r.id} style={{ borderBottom: `1px solid ${B.navyLight}33` }}>
-                          <td style={{ padding: "8px 10px" }}>{r.nombre || "—"}</td>
-                          <td style={{ padding: "8px 10px", color: "#ccc" }}>{r.tipo || "—"}</td>
-                          <td style={{ padding: "8px 10px", textAlign: "right", color: "#ccc" }}>{r.pax || 0}</td>
-                          <td style={{ padding: "8px 10px" }}>
-                            <span style={{
-                              fontSize: 11, padding: "2px 8px", borderRadius: 10,
-                              background: normForma(r.forma_pago) === "Efectivo" ? B.warning + "22" : B.navyLight + "66",
-                              color: normForma(r.forma_pago) === "Efectivo" ? B.warning : "#ccc",
-                              fontWeight: 600,
-                            }}>
-                              {normForma(r.forma_pago)}
-                            </span>
-                          </td>
-                          <td style={{ padding: "8px 10px", textAlign: "right", fontWeight: 600 }}>{COP(r.total)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                )}
+            {/* Column headers */}
+            {!isMobile && (
+              <div style={{ display: "grid", gridTemplateColumns: "160px 1fr 1fr 120px", gap: 10, marginBottom: 8, padding: "0 4px" }}>
+                <div style={{ fontSize: 10, color: "rgba(255,255,255,0.3)", textTransform: "uppercase", letterSpacing: "0.06em" }}>Método</div>
+                <div style={{ fontSize: 10, color: "rgba(255,255,255,0.3)", textTransform: "uppercase", letterSpacing: "0.06em" }}>Ventas (sin propina)</div>
+                <div style={{ fontSize: 10, color: "rgba(255,255,255,0.3)", textTransform: "uppercase", letterSpacing: "0.06em" }}>Propinas</div>
+                <div style={{ fontSize: 10, color: "rgba(255,255,255,0.3)", textTransform: "uppercase", letterSpacing: "0.06em", textAlign: "right" }}>Total</div>
               </div>
             )}
+
+            {METODOS.map(m => {
+              const isEfectivo = m.key === "efectivo";
+              const tot = computed[m.key].total;
+              return (
+                <div key={m.key} style={{
+                  display: "grid",
+                  gridTemplateColumns: isMobile ? "1fr 1fr" : "160px 1fr 1fr 120px",
+                  gap: 10, alignItems: "center",
+                  padding: "10px 12px", borderRadius: 10, marginBottom: 6,
+                  background: isEfectivo ? "rgba(251,191,36,0.08)" : "rgba(255,255,255,0.02)",
+                  border: `1px solid ${isEfectivo ? "rgba(251,191,36,0.2)" : "rgba(255,255,255,0.04)"}`,
+                }}>
+                  {/* Label */}
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, gridColumn: isMobile ? "1 / -1" : undefined }}>
+                    <span style={{ fontSize: 16 }}>{m.icon}</span>
+                    <span style={{ fontSize: 13, fontWeight: isEfectivo ? 700 : 500, color: isEfectivo ? "#fbbf24" : "rgba(255,255,255,0.8)" }}>
+                      {m.label}
+                    </span>
+                  </div>
+                  {/* Venta */}
+                  <input
+                    type="number" min="0" placeholder="0"
+                    value={metodos[m.key].venta}
+                    onChange={e => setM(m.key, "venta", e.target.value)}
+                    style={{ ...IS, fontSize: 13, textAlign: "right" }}
+                  />
+                  {/* Propina */}
+                  <input
+                    type="number" min="0" placeholder="0"
+                    value={metodos[m.key].propina}
+                    onChange={e => setM(m.key, "propina", e.target.value)}
+                    style={{ ...IS, fontSize: 13, textAlign: "right", background: "rgba(200,185,154,0.06)", borderColor: "rgba(200,185,154,0.1)" }}
+                  />
+                  {/* Total */}
+                  <div style={{ textAlign: "right", fontSize: 14, fontWeight: 700, color: tot > 0 ? (isEfectivo ? "#fbbf24" : "#fff") : "rgba(255,255,255,0.2)" }}>
+                    {tot > 0 ? COP(tot) : "—"}
+                  </div>
+                </div>
+              );
+            })}
+
+            {/* Totals row */}
+            <div style={{
+              display: "grid",
+              gridTemplateColumns: isMobile ? "1fr 1fr" : "160px 1fr 1fr 120px",
+              gap: 10, alignItems: "center",
+              padding: "12px 12px", borderRadius: 10, marginTop: 8,
+              background: "rgba(142,202,230,0.08)", border: `1px solid ${B.sky}33`,
+            }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: B.sky, gridColumn: isMobile ? "1 / -1" : undefined }}>TOTAL</div>
+              <div style={{ textAlign: "right", fontSize: 14, fontWeight: 800, color: B.sky }}>{COP(totalVentas)}</div>
+              <div style={{ textAlign: "right", fontSize: 14, fontWeight: 800, color: B.sand }}>{COP(totalPropinas)}</div>
+              <div style={{ textAlign: "right", fontSize: 16, fontWeight: 800, color: "#fff" }}>{COP(totalGeneral)}</div>
+            </div>
           </div>
+
+          {/* ── 4. Cuadre de efectivo ── */}
+          {efectivoEsperado > 0 && (
+            <div style={{ background: "rgba(251,191,36,0.07)", borderRadius: 14, padding: "18px 20px", marginBottom: 20, border: "1px solid rgba(251,191,36,0.15)" }}>
+              <div style={{ fontSize: 12, color: "#fbbf24", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 14 }}>💵 Cuadre de Efectivo</div>
+              <div style={{ display: "flex", gap: 16, alignItems: "flex-end", flexWrap: "wrap" }}>
+                <div style={{ flex: 1, minWidth: 160 }}>
+                  <label style={{ ...LS, color: "#fbbf2480" }}>Efectivo en sistema</label>
+                  <div style={{ fontSize: 20, fontWeight: 800, color: "#fbbf24" }}>{COP(efectivoEsperado)}</div>
+                </div>
+                <div style={{ flex: 1, minWidth: 160 }}>
+                  <label style={{ ...LS, color: "#fbbf2480" }}>Efectivo contado</label>
+                  <input type="number" min="0" placeholder="0" value={efectivoContado}
+                    onChange={e => setEfectivoContado(e.target.value)}
+                    style={{ ...IS, fontSize: 15, fontWeight: 700, textAlign: "right" }} />
+                </div>
+                {efectivoContado !== "" && (
+                  <div style={{ padding: "10px 18px", borderRadius: 10, background: difColor + "18", border: `1px solid ${difColor}33`, minWidth: 140, textAlign: "center" }}>
+                    <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", marginBottom: 4 }}>Diferencia</div>
+                    <div style={{ fontSize: 18, fontWeight: 800, color: difColor }}>{diferencia >= 0 ? "+" : ""}{COP(diferencia)}</div>
+                    <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>
+                      {diferencia === 0 ? "Cuadrado ✓" : diferencia > 0 ? "Sobrante" : "Faltante"}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
 
           {/* ── 5. Notas ── */}
-          <div style={{ ...card, marginBottom: 20 }}>
-            <div style={sectionHeader}>Notas del Cierre</div>
-            <textarea
-              value={notas}
-              onChange={e => setNotas(e.target.value)}
-              placeholder="Observaciones, inconsistencias, novedades del día…"
-              rows={3}
-              style={{ ...inputStyle, resize: "vertical", lineHeight: 1.5 }}
-            />
+          <div style={{ marginBottom: 20 }}>
+            <label style={LS}>Notas / Observaciones</label>
+            <textarea value={notas} onChange={e => setNotas(e.target.value)}
+              placeholder="Inconsistencias, novedades del día, gastos de caja…"
+              rows={2} style={{ ...IS, resize: "vertical", lineHeight: 1.5 }} />
           </div>
 
-          {/* ── 6. Cerrar Caja Button / Success ── */}
-          {saved ? (
-            <div style={{ ...card, background: B.success + "18", border: `1px solid ${B.success}44`, marginBottom: 20, display: "flex", flexDirection: "column", gap: 6 }}>
-              <div style={{ fontSize: 16, fontWeight: 700, color: B.success }}>Caja cerrada exitosamente</div>
-              <div style={{ fontSize: 12, color: "#aaa" }}>ID: {savedId}</div>
-              <div style={{ fontSize: 13, color: "#ccc", marginTop: 4 }}>
-                Total registrado: <strong>{COP(totalGeneral)}</strong> · Efectivo: <strong>{COP(efectivoEsperado)}</strong> · Diferencia: <strong style={{ color: diferenciaColor }}>{diferencia >= 0 ? "+" : ""}{COP(diferencia)}</strong>
-              </div>
-              <button
-                onClick={() => { setSaved(false); setSavedId(null); setLoaded(false); setReservas([]); setFechaInput(todayStr()); }}
-                style={{ marginTop: 8, background: "transparent", border: `1px solid ${B.navyLight}`, color: B.sand, borderRadius: 8, padding: "8px 18px", cursor: "pointer", fontSize: 13, width: "fit-content" }}
-              >
-                Nuevo Cierre
-              </button>
+          {error && (
+            <div style={{ background: "#f8717122", border: "1px solid #f8717144", borderRadius: 10, padding: "10px 14px", marginBottom: 16, fontSize: 13, color: "#f87171" }}>
+              {error}
             </div>
-          ) : (
-            <button
-              onClick={cerrarCaja}
-              disabled={saving || efectivoContado === ""}
-              style={{
-                width: "100%",
-                padding: "14px",
-                borderRadius: 10,
-                border: "none",
-                background: (saving || efectivoContado === "") ? B.navyLight : B.sand,
-                color: (saving || efectivoContado === "") ? "#888" : B.navy,
-                fontSize: 15,
-                fontWeight: 700,
-                cursor: (saving || efectivoContado === "") ? "not-allowed" : "pointer",
-                marginBottom: 20,
-                transition: "background 0.2s",
-              }}
-            >
-              {saving ? "Guardando…" : "Cerrar Caja"}
-            </button>
           )}
+
+          {/* ── Guardar ── */}
+          <button onClick={guardar} disabled={saving || !cajero.trim() || uploadingFile}
+            style={{
+              width: "100%", padding: "15px", borderRadius: 12, border: "none",
+              background: (saving || !cajero.trim() || uploadingFile) ? "rgba(255,255,255,0.06)" : B.sand,
+              color: (saving || !cajero.trim() || uploadingFile) ? "rgba(255,255,255,0.25)" : B.navy,
+              fontSize: 15, fontWeight: 800, cursor: "pointer", marginBottom: 36,
+            }}>
+            {saving ? "Guardando…" : uploadingFile ? "Subiendo archivo…" : "Guardar Cierre de Caja"}
+          </button>
         </>
       )}
 
-      {/* ── 7. Historial de Cierres ── */}
-      <div style={{ ...card, marginTop: loaded ? 0 : 8 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-          <div style={sectionHeader}>Historial de Cierres</div>
-          <button
-            onClick={cargarHistorial}
-            disabled={historialLoading}
-            style={{ background: "transparent", border: `1px solid ${B.navyLight}`, color: B.sand, borderRadius: 8, padding: "5px 12px", fontSize: 12, cursor: "pointer" }}
-          >
-            {historialLoading ? "…" : "Actualizar"}
-          </button>
-        </div>
-
-        {historialLoading ? (
-          <div style={{ fontSize: 13, color: "#aaa" }}>Cargando historial…</div>
-        ) : historial.length === 0 ? (
-          <div style={{ fontSize: 13, color: "#aaa" }}>No hay cierres registrados.</div>
-        ) : (
-          <div style={{ overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-              <thead>
-                <tr style={{ borderBottom: `1px solid ${B.navyLight}` }}>
-                  {["Fecha", "Usuario", "Total", "Efectivo", "Diferencia", "Estado", "Notas"].map(h => (
-                    <th key={h} style={{ textAlign: "left", padding: "7px 10px", color: B.sand, fontWeight: 600, fontSize: 11, textTransform: "uppercase", whiteSpace: "nowrap" }}>
-                      {h}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {historial.map(c => {
-                  const dif = c.diferencia || 0;
-                  const difColor = dif === 0 ? B.success : dif < 0 ? B.danger : B.warning;
-                  const isExpanded = expandedRow === c.id;
-                  return (
-                    <>
-                      <tr
-                        key={c.id}
-                        onClick={() => setExpandedRow(isExpanded ? null : c.id)}
-                        style={{ borderBottom: `1px solid ${B.navyLight}33`, cursor: "pointer", transition: "background 0.15s" }}
-                        onMouseEnter={e => e.currentTarget.style.background = B.navyLight + "44"}
-                        onMouseLeave={e => e.currentTarget.style.background = "transparent"}
-                      >
-                        <td style={{ padding: "9px 10px", fontWeight: 600, whiteSpace: "nowrap" }}>{fmtFecha(c.fecha)}</td>
-                        <td style={{ padding: "9px 10px", color: "#aaa", fontSize: 12, maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.usuario_email || "—"}</td>
-                        <td style={{ padding: "9px 10px", fontWeight: 600, color: B.sky }}>{COP(c.total_general)}</td>
-                        <td style={{ padding: "9px 10px", color: B.warning }}>{COP(c.efectivo_esperado)}</td>
-                        <td style={{ padding: "9px 10px", fontWeight: 700, color: difColor }}>
-                          {dif >= 0 ? "+" : ""}{COP(dif)}
-                        </td>
-                        <td style={{ padding: "9px 10px" }}>
-                          <Badge text={c.estado || "cerrado"} color={B.success} />
-                        </td>
-                        <td style={{ padding: "9px 10px", color: "#aaa", fontSize: 12, maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                          {c.notas || "—"}
-                        </td>
-                      </tr>
-                      {isExpanded && c.totales_por_forma && (
-                        <tr key={`${c.id}-exp`} style={{ background: B.navy + "88" }}>
-                          <td colSpan={7} style={{ padding: "12px 20px" }}>
-                            <div style={{ fontSize: 12, color: B.sand, fontWeight: 700, marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.05em" }}>
-                              Totales por Forma de Pago
-                            </div>
-                            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-                              {Object.entries(c.totales_por_forma).map(([forma, total]) => (
-                                <div key={forma} style={{ background: B.navyMid, border: `1px solid ${B.navyLight}`, borderRadius: 8, padding: "6px 12px", fontSize: 12 }}>
-                                  <span style={{ color: "#aaa", marginRight: 6 }}>{forma}:</span>
-                                  <span style={{ fontWeight: 700, color: forma === "Efectivo" ? B.warning : "#fff" }}>{COP(total)}</span>
-                                </div>
-                              ))}
-                            </div>
-                            {c.notas && (
-                              <div style={{ marginTop: 10, fontSize: 12, color: "#aaa" }}>
-                                <span style={{ color: B.sand, fontWeight: 600 }}>Notas: </span>{c.notas}
-                              </div>
-                            )}
-                            <div style={{ marginTop: 8, fontSize: 11, color: "#666" }}>ID: {c.id} · {c.reservas_count} reservas</div>
-                          </td>
-                        </tr>
-                      )}
-                    </>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
+      {/* ── Historial ── */}
+      <div style={{ background: B.navyMid, borderRadius: 14, padding: "18px 20px", border: "1px solid rgba(255,255,255,0.07)" }}>
+        <div style={{ fontSize: 12, color: B.sand, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 16 }}>Historial de Cierres</div>
+        <HistorialCierres refresh={historialKey} />
       </div>
+
     </div>
   );
 }

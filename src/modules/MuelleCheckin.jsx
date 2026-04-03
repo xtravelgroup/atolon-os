@@ -631,8 +631,177 @@ function LlegadaCard({ llegada, onEstadoChange, onDelete }) {
 }
 
 // ─── MAIN MODULE ──────────────────────────────────────────────────────────────
+// ─── Bitácora ─────────────────────────────────────────────────────────────────
+const TIPO_LABEL = { lancha_atolon: "Lancha Atolon", after_island: "After Island", restaurante: "Restaurante" };
+const TIPO_ICON  = { lancha_atolon: "⛵", after_island: "🌙", restaurante: "🍽️" };
+
+function BitacoraLlegadas({ isMobile }) {
+  const hoy = todayStr();
+  const hace7 = new Date(Date.now() - 6 * 86400000).toISOString().slice(0, 10);
+
+  const [desde, setDesde]   = useState(hace7);
+  const [hasta, setHasta]   = useState(hoy);
+  const [tipo,  setTipo]    = useState("todos");
+  const [busca, setBusca]   = useState("");
+  const [rows,  setRows]    = useState([]);
+  const [loading, setLoading] = useState(false);
+
+  const fetchBitacora = useCallback(async () => {
+    if (!supabase) return;
+    setLoading(true);
+    let q = supabase.from("muelle_llegadas").select("*")
+      .gte("fecha", desde).lte("fecha", hasta)
+      .order("fecha", { ascending: false }).order("created_at", { ascending: false })
+      .limit(500);
+    if (tipo !== "todos") q = q.eq("tipo", tipo);
+    const { data } = await q;
+    setRows(data || []);
+    setLoading(false);
+  }, [desde, hasta, tipo]);
+
+  useEffect(() => { fetchBitacora(); }, [fetchBitacora]);
+
+  const filtradas = busca.trim()
+    ? rows.filter(r =>
+        (r.embarcacion_nombre || "").toLowerCase().includes(busca.toLowerCase()) ||
+        (r.matricula || "").toLowerCase().includes(busca.toLowerCase()) ||
+        (r.notas || "").toLowerCase().includes(busca.toLowerCase())
+      )
+    : rows;
+
+  const totalPax    = filtradas.reduce((t, r) => t + (r.pax_total || 0), 0);
+  const totalCobrado = filtradas.reduce((t, r) => t + (r.total_cobrado || 0), 0);
+
+  const ISsm = { ...IS, padding: "8px 12px", fontSize: 12 };
+
+  return (
+    <div>
+      {/* Filtros */}
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 18, alignItems: "flex-end" }}>
+        <div>
+          <label style={{ ...LS, fontSize: 10 }}>Desde</label>
+          <input type="date" value={desde} onChange={e => setDesde(e.target.value)} style={ISsm} />
+        </div>
+        <div>
+          <label style={{ ...LS, fontSize: 10 }}>Hasta</label>
+          <input type="date" value={hasta} onChange={e => setHasta(e.target.value)} style={ISsm} />
+        </div>
+        <div>
+          <label style={{ ...LS, fontSize: 10 }}>Tipo</label>
+          <select value={tipo} onChange={e => setTipo(e.target.value)} style={ISsm}>
+            <option value="todos">Todos</option>
+            <option value="lancha_atolon">⛵ Lanchas Atolon</option>
+            <option value="after_island">🌙 After Island</option>
+            <option value="restaurante">🍽️ Restaurante</option>
+          </select>
+        </div>
+        <div style={{ flex: 1, minWidth: 160 }}>
+          <label style={{ ...LS, fontSize: 10 }}>Buscar</label>
+          <input value={busca} onChange={e => setBusca(e.target.value)} placeholder="Embarcación, matrícula, notas..." style={ISsm} />
+        </div>
+      </div>
+
+      {/* KPIs resumen */}
+      <div style={{ display: "grid", gridTemplateColumns: `repeat(${isMobile ? 2 : 4}, 1fr)`, gap: 10, marginBottom: 18 }}>
+        {[
+          { label: "Registros",   value: filtradas.length, color: B.sky },
+          { label: "Total pax",   value: totalPax,         color: B.sand },
+          { label: "Cobrado",     value: COP(totalCobrado),color: "#4ade80" },
+          { label: "Días",        value: [...new Set(filtradas.map(r => r.fecha))].length, color: "rgba(255,255,255,0.5)" },
+        ].map(({ label, value, color }) => (
+          <div key={label} style={{ background: B.navyMid, borderRadius: 10, padding: "12px 14px", border: "1px solid rgba(255,255,255,0.06)" }}>
+            <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 }}>{label}</div>
+            <div style={{ fontSize: 18, fontWeight: 800, color }}>{value}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Tabla */}
+      {loading ? (
+        <div style={{ textAlign: "center", padding: "40px 0", color: "rgba(255,255,255,0.3)", fontSize: 13 }}>Cargando...</div>
+      ) : filtradas.length === 0 ? (
+        <div style={{ textAlign: "center", padding: "40px 0", color: "rgba(255,255,255,0.2)", fontSize: 13 }}>Sin registros para este período</div>
+      ) : isMobile ? (
+        /* Mobile: cards */
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {filtradas.map(r => {
+            const ec = ESTADO_COLOR[r.estado] || ESTADO_COLOR.esperada;
+            return (
+              <div key={r.id} style={{ background: B.navyMid, borderRadius: 12, padding: "12px 14px", border: "1px solid rgba(255,255,255,0.06)" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 6 }}>
+                  <div>
+                    <span style={{ fontWeight: 700, fontSize: 13 }}>{TIPO_ICON[r.tipo]} {r.embarcacion_nombre || "—"}</span>
+                    {r.matricula && <span style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", marginLeft: 6 }}>{r.matricula}</span>}
+                  </div>
+                  <span style={{ fontSize: 10, background: ec.bg, color: ec.color, padding: "3px 8px", borderRadius: 20, fontWeight: 600 }}>{ec.label}</span>
+                </div>
+                <div style={{ display: "flex", gap: 16, fontSize: 11, color: "rgba(255,255,255,0.45)", flexWrap: "wrap" }}>
+                  <span>📅 {r.fecha}</span>
+                  {r.hora_llegada && <span>⚓ {r.hora_llegada?.slice(0,5)}</span>}
+                  {r.hora_salida  && <span>⛵ {r.hora_salida?.slice(0,5)}</span>}
+                  <span>👥 {r.pax_total || 0} pax</span>
+                  {(r.total_cobrado || 0) > 0 && <span style={{ color: "#4ade80", fontWeight: 600 }}>{COP(r.total_cobrado)}</span>}
+                  {r.forma_pago && <span>{r.forma_pago}</span>}
+                </div>
+                {r.notas && <div style={{ fontSize: 11, color: "rgba(255,255,255,0.3)", marginTop: 5, fontStyle: "italic" }}>{r.notas}</div>}
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        /* Desktop: tabla */
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+            <thead>
+              <tr style={{ borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
+                {["Fecha", "Tipo", "Embarcación", "Matr.", "Llegó", "Salió", "Pax", "Estado", "Cobrado", "Forma pago", "Notas"].map(h => (
+                  <th key={h} style={{ padding: "8px 10px", textAlign: "left", color: "rgba(255,255,255,0.4)", fontWeight: 600, fontSize: 10, textTransform: "uppercase", letterSpacing: "0.05em", whiteSpace: "nowrap" }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {filtradas.map((r, i) => {
+                const ec = ESTADO_COLOR[r.estado] || ESTADO_COLOR.esperada;
+                return (
+                  <tr key={r.id} style={{ borderBottom: "1px solid rgba(255,255,255,0.04)", background: i % 2 === 0 ? "transparent" : "rgba(255,255,255,0.015)" }}>
+                    <td style={{ padding: "9px 10px", color: "rgba(255,255,255,0.6)", whiteSpace: "nowrap" }}>{r.fecha}</td>
+                    <td style={{ padding: "9px 10px", whiteSpace: "nowrap" }}>{TIPO_ICON[r.tipo]} <span style={{ color: "rgba(255,255,255,0.5)", fontSize: 11 }}>{TIPO_LABEL[r.tipo] || r.tipo}</span></td>
+                    <td style={{ padding: "9px 10px", fontWeight: 600 }}>{r.embarcacion_nombre || "—"}</td>
+                    <td style={{ padding: "9px 10px", color: "rgba(255,255,255,0.35)", fontSize: 11 }}>{r.matricula || "—"}</td>
+                    <td style={{ padding: "9px 10px", color: "rgba(255,255,255,0.5)", whiteSpace: "nowrap" }}>{r.hora_llegada ? r.hora_llegada.slice(0,5) : "—"}</td>
+                    <td style={{ padding: "9px 10px", color: "rgba(255,255,255,0.5)", whiteSpace: "nowrap" }}>{r.hora_salida  ? r.hora_salida.slice(0,5)  : "—"}</td>
+                    <td style={{ padding: "9px 10px", textAlign: "center" }}>{r.pax_total || 0}</td>
+                    <td style={{ padding: "9px 10px" }}>
+                      <span style={{ fontSize: 10, background: ec.bg, color: ec.color, padding: "3px 8px", borderRadius: 20, fontWeight: 600, whiteSpace: "nowrap" }}>{ec.label}</span>
+                    </td>
+                    <td style={{ padding: "9px 10px", fontWeight: 700, color: (r.total_cobrado || 0) > 0 ? "#4ade80" : "rgba(255,255,255,0.2)" }}>
+                      {(r.total_cobrado || 0) > 0 ? COP(r.total_cobrado) : "—"}
+                    </td>
+                    <td style={{ padding: "9px 10px", color: "rgba(255,255,255,0.4)", fontSize: 11 }}>{r.forma_pago || "—"}</td>
+                    <td style={{ padding: "9px 10px", color: "rgba(255,255,255,0.3)", fontSize: 11, maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.notas || "—"}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+            <tfoot>
+              <tr style={{ borderTop: "2px solid rgba(255,255,255,0.1)" }}>
+                <td colSpan={6} style={{ padding: "10px", fontSize: 11, color: "rgba(255,255,255,0.35)", fontWeight: 600 }}>TOTAL ({filtradas.length} registros)</td>
+                <td style={{ padding: "10px", fontWeight: 800, color: B.sky }}>{totalPax}</td>
+                <td />
+                <td style={{ padding: "10px", fontWeight: 800, color: "#4ade80" }}>{COP(totalCobrado)}</td>
+                <td colSpan={2} />
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function MuelleCheckin() {
   const { isMobile } = useMobile();
+  const [tab,   setTab]     = useState("hoy");
   const [fecha, setFecha]   = useState(todayStr());
   const [llegadas, setLlegadas] = useState([]);
   const [modal, setModal]   = useState(null);
@@ -667,14 +836,34 @@ export default function MuelleCheckin() {
     <div style={{ padding: isMobile ? "16px 12px" : "24px", fontFamily: "'Inter','Segoe UI',sans-serif", color: "#e2e8f0", minHeight: "100vh" }}>
 
       {/* Header */}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20, flexWrap: "wrap", gap: 12 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16, flexWrap: "wrap", gap: 12 }}>
         <div>
           <h2 style={{ margin: 0, fontSize: isMobile ? 20 : 24, fontWeight: 800, color: "#fff" }}>⚓ Llegadas a Isla</h2>
           <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginTop: 4 }}>Control de embarcaciones · Isla Tierra Bomba</div>
         </div>
-        <input type="date" value={fecha} onChange={e => setFecha(e.target.value)}
-          style={{ ...IS, width: "auto", fontSize: 14, padding: "8px 14px" }} />
+        {tab === "hoy" && (
+          <input type="date" value={fecha} onChange={e => setFecha(e.target.value)}
+            style={{ ...IS, width: "auto", fontSize: 14, padding: "8px 14px" }} />
+        )}
       </div>
+
+      {/* Tabs */}
+      <div style={{ display: "flex", gap: 6, marginBottom: 22, borderBottom: "1px solid rgba(255,255,255,0.08)", paddingBottom: 0 }}>
+        {[{ key: "hoy", label: "📋 Control del día" }, { key: "bitacora", label: "📖 Bitácora" }].map(t => (
+          <button key={t.key} onClick={() => setTab(t.key)}
+            style={{ padding: "9px 18px", borderRadius: "8px 8px 0 0", border: "none", cursor: "pointer", fontSize: 13, fontWeight: tab === t.key ? 700 : 500,
+              background: tab === t.key ? B.navyMid : "transparent",
+              color: tab === t.key ? "#fff" : "rgba(255,255,255,0.4)",
+              borderBottom: tab === t.key ? `2px solid ${B.sky}` : "2px solid transparent",
+              marginBottom: -1,
+            }}>
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {tab === "bitacora" && <BitacoraLlegadas isMobile={isMobile} />}
+      {tab === "hoy" && (<>
 
       {/* KPIs */}
       <div style={{ display: "grid", gridTemplateColumns: `repeat(${isMobile ? 2 : 4}, 1fr)`, gap: 10, marginBottom: 20 }}>
@@ -749,6 +938,7 @@ export default function MuelleCheckin() {
           onSaved={() => { setModal(null); fetchLlegadas(); }}
         />
       )}
+      </>)}
     </div>
   );
 }
