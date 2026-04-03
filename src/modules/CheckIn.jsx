@@ -380,6 +380,7 @@ export default function CheckIn() {
   const [reservas,       setReservas]       = useState([]);
   const [despachos,      setDespachos]      = useState([]);
   const [embarcaciones,  setEmbarcaciones]  = useState([]);
+  const [overrides,      setOverrides]      = useState([]);
   const [tabSalida,      setTabSalida]      = useState(null);
   const [scanning,       setScanning]       = useState(false);
   const [scanMsg,        setScanMsg]        = useState(null); // { ok, text }
@@ -391,11 +392,12 @@ export default function CheckIn() {
   const load = useCallback(async () => {
     if (!supabase) { setLoading(false); return; }
     setLoading(true);
-    const [salR, resR, desR, embR] = await Promise.all([
+    const [salR, resR, desR, embR, ovrR] = await Promise.all([
       supabase.from("salidas").select("*").eq("activo", true).order("orden"),
       supabase.from("reservas").select("*").eq("fecha", fecha).neq("estado", "cancelado").order("nombre"),
       supabase.from("salida_despachos").select("*").eq("fecha", fecha),
       supabase.from("embarcaciones").select("*").order("nombre"),
+      supabase.from("salidas_override").select("*").eq("fecha", fecha),
     ]);
     const res = resR.data || [];
     // Solo salidas con pasajeros ese día
@@ -404,6 +406,7 @@ export default function CheckIn() {
     setReservas(res);
     setDespachos(desR.data || []);
     setEmbarcaciones(embR.data || []);
+    setOverrides(ovrR.data || []);
     if (salsConPax.length > 0 && !tabSalida) setTabSalida(salsConPax[0].id);
     setLoading(false);
   }, [fecha]);
@@ -575,17 +578,23 @@ export default function CheckIn() {
                     style={{ padding: "8px 12px", borderRadius: 8, background: despacho?.colaboradores?.length > 0 ? B.sky + "22" : B.navyLight, color: despacho?.colaboradores?.length > 0 ? B.sky : "rgba(255,255,255,0.6)", border: `1px solid ${despacho?.colaboradores?.length > 0 ? B.sky + "55" : "transparent"}`, fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
                     👥 {despacho?.colaboradores?.length > 0 ? `${despacho.colaboradores.length}` : "Colabs"}
                   </button>
-                  {/* Zarpe button per assigned embarcación */}
-                  {(salida.embarcaciones || []).map(embId => {
-                    const emb = embarcaciones.find(e => e.id === embId);
-                    if (!emb) return null;
-                    return (
-                      <button key={embId} onClick={() => generarZarpe(salida, resDesal, fecha, despacho, emb)}
-                        style={{ padding: "8px 12px", borderRadius: 8, background: B.navyLight, color: B.white, border: "none", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
+                  {/* Zarpe button per assigned embarcación (base + extra del calendario) */}
+                  {(() => {
+                    const override = overrides.find(o => o.salida_id === salida.id);
+                    const extraEmbs = (override?.extra_embarcaciones || []).map(e => ({ id: e.id, nombre: e.nombre, _extra: true }));
+                    const baseEmbs = (salida.embarcaciones || []).map(embId => {
+                      const emb = embarcaciones.find(e => e.id === embId);
+                      return emb ? { id: emb.id, nombre: emb.nombre } : null;
+                    }).filter(Boolean);
+                    // Combinar sin duplicados
+                    const allEmbs = [...baseEmbs, ...extraEmbs.filter(e => !baseEmbs.some(b => b.id === e.id))];
+                    return allEmbs.map(emb => (
+                      <button key={emb.id} onClick={() => generarZarpe(salida, resDesal, fecha, despacho, emb)}
+                        style={{ padding: "8px 12px", borderRadius: 8, background: emb._extra ? B.sky + "22" : B.navyLight, color: emb._extra ? B.sky : B.white, border: emb._extra ? `1px solid ${B.sky}44` : "none", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
                         📄 {emb.nombre}
                       </button>
-                    );
-                  })}
+                    ));
+                  })()}
                 </div>
               </div>
               <button onClick={() => despachar(salida)}
