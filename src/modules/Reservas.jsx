@@ -1650,18 +1650,25 @@ export default function Reservas() {
   const paxMap = paxPorSalida(reservas, salidas);
 
   // Determine which salidas are open for a given date (respects cierres + overrides)
-  const getSalidasAbiertas = (fecha) => {
+  const getSalidasAbiertas = (fecha, paxMapOverride) => {
     const cierre = cierres.find(c => c.activo && c.fecha === fecha);
     const dayOvr = overridesMap[fecha] || {};
-    return salidas.filter(s => {
+    const pm = paxMapOverride || paxMap; // pax counts for cascade check
+    const activas = salidas.filter(s => s.activo);
+    const sorted = [...activas].sort((a, b) => a.hora.localeCompare(b.hora));
+    return sorted.filter((s, idx) => {
       if (!s.activo) return false;
       const ovr = dayOvr[s.id];
-      if (ovr) return ovr.accion === "abrir"; // override wins
+      if (ovr) return ovr.accion === "abrir"; // override always wins
       if (cierre) {
         if (cierre.tipo === "total") return false;
         if ((cierre.salidas || []).includes(s.id)) return false;
       }
-      return true; // active, no cierre, no override → open
+      if (!s.auto_apertura) return true; // fixed salida: always open
+      // cascade: open only if previous salida is ≥75% full
+      if (idx === 0) return true;
+      const prev = sorted[idx - 1];
+      return (pm[prev.id] || 0) / (prev.capacidad_total || 1) >= 0.75;
     });
   };
 
