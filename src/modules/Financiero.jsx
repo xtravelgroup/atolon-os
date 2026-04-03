@@ -331,6 +331,7 @@ export default function Financiero() {
         {[
           { key: "ingresos", label: "📊 Ingresos" },
           { key: "pl",       label: "📈 P & L" },
+          { key: "flujo",    label: "💧 Flujo de Caja" },
         ].map(t => (
           <button key={t.key} onClick={() => setTab(t.key)} style={{
             flex: 1, padding: "8px 0", borderRadius: 8, border: "none", cursor: "pointer",
@@ -737,6 +738,120 @@ export default function Financiero() {
         Solo ingresos de reservas confirmadas · Los gastos se registran en módulo de Requisiciones
       </div>
       </>}
+
+      {/* ── Flujo de Caja Tab ── */}
+      {tab === "flujo" && (() => {
+        // For flujo de caja always show by month, iterate each day
+        const [flujoMes, setFlujoMes] = [periodoActual, setPeriodoActual];
+        const [y, m] = flujoMes.slice(0, 7).split("-").map(Number);
+        const daysInMonth = new Date(y, m, 0).getDate();
+
+        // Build day-by-day data
+        const days = Array.from({ length: daysInMonth }, (_, i) => {
+          const d = String(i + 1).padStart(2, "0");
+          const fecha = `${y}-${String(m).padStart(2, "0")}-${d}`;
+          const resTotal   = reservas.filter(r => r.fecha === fecha).reduce((s, r) => s + (r.total || 0), 0);
+          const cierreTotal = cierres.filter(c => c.fecha === fecha).reduce((s, c) => s + (c.total_ventas || c.total_general || 0), 0);
+          const total = resTotal + cierreTotal;
+          return { fecha, d: i + 1, resTotal, cierreTotal, total };
+        });
+
+        const maxDay = Math.max(...days.map(d => d.total), 1);
+        const totalMes = days.reduce((s, d) => s + d.total, 0);
+        const diasConVentas = days.filter(d => d.total > 0).length;
+        const promDia = diasConVentas > 0 ? totalMes / diasConVentas : 0;
+        const mejorDia = days.reduce((best, d) => d.total > best.total ? d : best, days[0]);
+
+        return (
+          <div>
+            {/* KPIs */}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 20 }}>
+              {[
+                { label: "Total del Mes",     val: COP(totalMes),   color: B.success },
+                { label: "Días con ingresos", val: String(diasConVentas), color: B.sky },
+                { label: "Promedio por día",  val: COP(promDia),    color: B.sand },
+                { label: "Mejor día",         val: mejorDia.total > 0 ? fmtDia(mejorDia.fecha).split(",")[0] : "—", color: B.warning },
+              ].map(k => (
+                <div key={k.label} style={{ background: B.navyMid, borderRadius: 12, padding: "16px 20px", borderLeft: `4px solid ${k.color}` }}>
+                  <div style={{ fontSize: 11, color: B.sand, textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>{k.label}</div>
+                  <div style={{ fontSize: 22, fontWeight: 700, fontFamily: "'Barlow Condensed', sans-serif", color: k.color }}>{k.val}</div>
+                </div>
+              ))}
+            </div>
+
+            {/* Gráfico de barras diarias */}
+            <div style={{ background: B.navyMid, borderRadius: 12, padding: 20, marginBottom: 16 }}>
+              <h3 style={{ fontSize: 15, color: B.sand, margin: "0 0 16px" }}>Ingresos diarios — {fmtMes(flujoMes.slice(0, 7))}</h3>
+              <div style={{ display: "flex", gap: 3, alignItems: "flex-end", height: 120 }}>
+                {days.map(day => {
+                  const h = Math.max((day.total / maxDay) * 100, day.total > 0 ? 4 : 0);
+                  const isToday = day.fecha === todayCO;
+                  const hasData = day.total > 0;
+                  return (
+                    <div key={day.d} title={`${day.fecha}: ${COP(day.total)}`}
+                      style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 3, cursor: "default" }}>
+                      <div style={{ width: "100%", height: h, borderRadius: "3px 3px 0 0",
+                        background: isToday ? B.sky : hasData ? B.success : B.navyLight,
+                        transition: "height 0.2s",
+                      }} />
+                      <div style={{ fontSize: 9, color: isToday ? B.sky : "rgba(255,255,255,0.3)" }}>
+                        {day.d}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              <div style={{ display: "flex", gap: 16, marginTop: 10, justifyContent: "flex-end" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 10, color: "rgba(255,255,255,0.4)" }}>
+                  <div style={{ width: 8, height: 8, borderRadius: 2, background: B.success }} /> Con ingresos
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 10, color: "rgba(255,255,255,0.4)" }}>
+                  <div style={{ width: 8, height: 8, borderRadius: 2, background: B.sky }} /> Hoy
+                </div>
+              </div>
+            </div>
+
+            {/* Tabla detallada */}
+            <div style={{ background: B.navyMid, borderRadius: 12, overflow: "hidden" }}>
+              <div style={{ padding: "14px 20px", borderBottom: `1px solid ${B.navyLight}`, display: "flex", justifyContent: "space-between" }}>
+                <span style={{ fontSize: 14, fontWeight: 600 }}>Detalle por día</span>
+                <span style={{ fontSize: 13, color: "rgba(255,255,255,0.4)" }}>{diasConVentas} días activos</span>
+              </div>
+              {days.filter(d => d.total > 0).map((day, i, arr) => {
+                const pct = totalMes > 0 ? (day.total / totalMes) * 100 : 0;
+                return (
+                  <div key={day.fecha} style={{
+                    padding: "11px 20px",
+                    borderBottom: i < arr.length - 1 ? `1px solid ${B.navyLight}` : "none",
+                  }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 5 }}>
+                      <div>
+                        <span style={{ fontSize: 13, fontWeight: 600 }}>{fmtDia(day.fecha)}</span>
+                        <div style={{ display: "flex", gap: 12, marginTop: 3 }}>
+                          {day.resTotal > 0   && <span style={{ fontSize: 11, color: B.success }}>Pasadías {COP(day.resTotal)}</span>}
+                          {day.cierreTotal > 0 && <span style={{ fontSize: 11, color: "#f4a261" }}>A&B {COP(day.cierreTotal)}</span>}
+                        </div>
+                      </div>
+                      <div style={{ textAlign: "right" }}>
+                        <div style={{ fontSize: 14, fontWeight: 700 }}>{COP(day.total)}</div>
+                        <div style={{ fontSize: 10, color: "rgba(255,255,255,0.35)" }}>{pct.toFixed(1)}%</div>
+                      </div>
+                    </div>
+                    <div style={{ height: 3, background: B.navy, borderRadius: 2 }}>
+                      <div style={{ width: `${pct}%`, height: "100%", background: B.success, borderRadius: 2 }} />
+                    </div>
+                  </div>
+                );
+              })}
+              {days.filter(d => d.total > 0).length === 0 && (
+                <div style={{ padding: "32px 20px", textAlign: "center", color: "rgba(255,255,255,0.25)", fontSize: 13 }}>
+                  Sin ingresos registrados en {fmtMes(flujoMes.slice(0, 7))}
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }
