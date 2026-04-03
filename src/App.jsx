@@ -195,6 +195,7 @@ import VIPAdmin from "./modules/VIPAdmin";
 import Clientes from "./modules/Clientes";
 import VIPPortal from "./modules/VIPPortal";
 import Staffing from "./modules/Staffing";
+import SelfCheckIn from "./modules/SelfCheckIn";
 
 const MODULE_MAP = {
   pasadias: <Pasadias />,
@@ -274,6 +275,7 @@ export default function App() {
   if (route === "reset-password") return <><ResetPassword /><WhatsAppFloat phone={waPhone} /></>;
   if (route === "zarpe-info")     return <><ZarpeInfo /><WhatsAppFloat phone={waPhone} /></>;
   if (route === "society")        return <VIPPortal />;
+  if (route === "checkin-pax")    return <SelfCheckIn />;
 
   // Loading auth state
   if (session === undefined) return null;

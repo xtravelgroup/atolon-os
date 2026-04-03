@@ -386,6 +386,7 @@ export default function CheckIn() {
   const [scanMsg,        setScanMsg]        = useState(null); // { ok, text }
   const [editPax,        setEditPax]        = useState(null); // reserva to edit pasajeros
   const [editColabs,     setEditColabs]     = useState(false);
+  const [qrReserva,      setQrReserva]      = useState(null); // reserva to show QR for
   const [search,         setSearch]         = useState("");
   const [loading,        setLoading]        = useState(true);
 
@@ -492,6 +493,50 @@ export default function CheckIn() {
     <>
       {scanning && <QRScanner onScan={handleScan} onClose={() => setScanning(false)} />}
       {editPax  && <PasajerosModal reserva={editPax} autoCheckin={!!editPax._autoCheckin} onClose={() => setEditPax(null)} onSaved={load} />}
+
+      {/* QR Check-in propio */}
+      {qrReserva && (() => {
+        const selfUrl = `${window.location.origin}/checkin-pax?rid=${qrReserva.id}`;
+        const qrImg   = `https://api.qrserver.com/v1/create-qr-code/?size=240x240&color=0D1B3E&bgcolor=FFFFFF&data=${encodeURIComponent(selfUrl)}`;
+        return (
+          <div
+            style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.88)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 9998, padding: 16 }}
+            onClick={e => e.target === e.currentTarget && setQrReserva(null)}>
+            <div style={{ background: B.navyMid, borderRadius: 22, padding: "30px 28px", width: "100%", maxWidth: 360, textAlign: "center", boxShadow: "0 24px 64px rgba(0,0,0,0.6)" }}>
+              {/* Title */}
+              <div style={{ fontSize: 18, fontWeight: 800, color: B.white, marginBottom: 4 }}>Check-in del pasajero</div>
+              <div style={{ fontSize: 13, color: "rgba(255,255,255,0.4)", marginBottom: 22, lineHeight: 1.5 }}>
+                {qrReserva.nombre} · {qrReserva.pax} pax<br />
+                <span style={{ fontSize: 11 }}>Muéstrale este QR para que llene sus datos</span>
+              </div>
+
+              {/* QR code */}
+              <div style={{ background: "#fff", borderRadius: 18, padding: 14, display: "inline-block", marginBottom: 18 }}>
+                <img src={qrImg} alt="QR check-in" width={220} height={220} style={{ display: "block", borderRadius: 6 }} />
+              </div>
+
+              {/* URL hint */}
+              <div style={{ fontSize: 11, color: "rgba(255,255,255,0.2)", marginBottom: 22, wordBreak: "break-all" }}>
+                {selfUrl}
+              </div>
+
+              {/* Actions */}
+              <div style={{ display: "flex", gap: 10 }}>
+                <button
+                  onClick={() => setQrReserva(null)}
+                  style={{ flex: 1, padding: "12px", borderRadius: 10, background: "none", border: `1px solid ${B.navyLight}`, color: "rgba(255,255,255,0.4)", fontSize: 13, cursor: "pointer" }}>
+                  Cerrar
+                </button>
+                <button
+                  onClick={() => { setEditPax(qrReserva); setQrReserva(null); }}
+                  style={{ flex: 1.5, padding: "12px", borderRadius: 10, background: B.sand, color: B.navy, border: "none", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
+                  📋 Llenar aquí
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
       {editColabs && salida && (
         <ColaboradoresModal
           salidaId={salida.id}
@@ -724,9 +769,9 @@ export default function CheckIn() {
                         })()}
                       </div>
 
-                      {/* Pasajeros / Zarpe button */}
-                      <button onClick={() => setEditPax(res)}
-                        title="Datos para zarpe"
+                      {/* Pasajeros / Zarpe button — abre QR para que el cliente llene */}
+                      <button onClick={() => setQrReserva(res)}
+                        title="Check-in pasajero"
                         style={{
                           padding: isMobile ? "10px 12px" : "8px 12px",
                           borderRadius: 8, border: `1px solid ${tienePax ? B.success + "44" : B.navyLight}`,
