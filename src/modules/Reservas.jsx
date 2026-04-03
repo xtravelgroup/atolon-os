@@ -821,6 +821,7 @@ function ReservaModal({ onClose, onSave, isMobile, salidaList = [], aliadoList =
   const [form, setForm]       = useState({ ...EMPTY_FORM, fecha: initFecha, salida_id: "" });
   const [errors, setErrors]   = useState({});
   const [linkPago, setLinkPago] = useState("");
+  const [precioMode, setPrecioMode] = useState("full"); // "full" | "neto"
   const [paxMapFecha,    setPaxMapFecha]    = useState(paxMap); // pax by salida for selected date
   const [overridesFecha, setOverridesFecha] = useState({});    // salidas_override map for selected date
 
@@ -841,17 +842,25 @@ function ReservaModal({ onClose, onSave, isMobile, salidaList = [], aliadoList =
     });
   }, [form.fecha, salidaList]);
 
+  const calcPrecio = (tipo, aliado_id, mode) => {
+    const p = pasadiaList.find(p => p.tipo === tipo);
+    if (!p) return 0;
+    if (aliado_id && mode === "neto" && p.precio_neto_agencia > 0) return p.precio_neto_agencia;
+    return p.precio;
+  };
+
   const set = (k, v) => {
     setForm(f => {
       const next = { ...f, [k]: v };
       if (k === "tipo") {
-        const p = pasadiaList.find(p => p.tipo === v);
-        if (p) next.precio = p.precio;
+        next.precio = calcPrecio(v, f.aliado_id, precioMode);
       }
       if (k === "aliado_id") {
         // if aliado selected, default to CXC if they have credit; else reset
         const aliado = aliadoList.find(a => a.id === v);
         if (!aliado || !aliado.cupo_credito) next.forma_pago = "Transferencia";
+        // Recalculate price with current mode
+        next.precio = calcPrecio(f.tipo, v, precioMode);
       }
       // CXC = crédito, no hay abono en efectivo
       if (k === "forma_pago" && v === "CXC") {
@@ -860,6 +869,11 @@ function ReservaModal({ onClose, onSave, isMobile, salidaList = [], aliadoList =
       return next;
     });
     setErrors(e => ({ ...e, [k]: undefined }));
+  };
+
+  const handlePrecioMode = (mode) => {
+    setPrecioMode(mode);
+    setForm(f => ({ ...f, precio: calcPrecio(f.tipo, f.aliado_id, mode) }));
   };
 
   const aliado = aliadoList.find(a => a.id === form.aliado_id);
@@ -999,7 +1013,38 @@ function ReservaModal({ onClose, onSave, isMobile, salidaList = [], aliadoList =
           </div>
           <div style={FS}>
             <label style={LS}>Precio por pax (COP)</label>
-            <input type="number" min={0} style={IS(errors.precio)} value={form.precio} onChange={e => set("precio", Number(e.target.value))} />
+            {/* Agencia seleccionada: toggle neto/full */}
+            {form.aliado_id && (() => {
+              const p = pasadiaList.find(p => p.tipo === form.tipo);
+              const tieneNeto = p?.precio_neto_agencia > 0;
+              return (
+                <div>
+                  {tieneNeto && (
+                    <div style={{ display: "flex", gap: 4, marginBottom: 8 }}>
+                      {[["full", `Full ${COP(p.precio)}`], ["neto", `Neto ${COP(p.precio_neto_agencia)}`]].map(([mode, label]) => (
+                        <button key={mode} onClick={() => handlePrecioMode(mode)} type="button"
+                          style={{ flex: 1, padding: "8px", borderRadius: 8, border: "none", cursor: "pointer", fontSize: 12, fontWeight: 700,
+                            background: precioMode === mode ? (mode === "neto" ? B.warning : B.sky) : B.navyLight,
+                            color: precioMode === mode ? B.navy : "rgba(255,255,255,0.5)" }}>
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  <div style={{ ...IS(), background: B.navyLight, color: B.sand, fontWeight: 700, cursor: "default", userSelect: "none" }}>
+                    {COP(form.precio)}
+                    {tieneNeto && <span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginLeft: 8, fontWeight: 400 }}>({precioMode === "neto" ? "precio neto agencia" : "precio full"})</span>}
+                  </div>
+                </div>
+              );
+            })()}
+            {/* Sin agencia: precio bloqueado */}
+            {!form.aliado_id && (
+              <div style={{ ...IS(), background: B.navyLight, color: B.sand, fontWeight: 700, cursor: "default", userSelect: "none" }}>
+                {COP(form.precio)}
+                <span style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", marginLeft: 8, fontWeight: 400 }}>precio oficial</span>
+              </div>
+            )}
           </div>
           <div style={FS}>
             <label style={LS}>Adultos</label>
@@ -1662,7 +1707,7 @@ export default function Reservas() {
       supabase.from("embarcaciones").select("*").order("nombre"),
       supabase.from("salidas_override").select("*").in("fecha", [today, tomorrow]),
       supabase.from("usuarios").select("id, nombre, rol_id").in("rol_id", ["ventas", "gerente_ventas"]).order("nombre"),
-      supabase.from("pasadias").select("id, nombre, precio").eq("activo", true).order("orden"),
+      supabase.from("pasadias").select("id, nombre, precio, precio_neto_agencia, precio_nino, precio_neto_nino").eq("activo", true).order("orden"),
       // Pagos con fecha_pago = hoy (registrados manualmente)
       supabase.from("reservas").select("abono").eq("fecha_pago", today).neq("estado", "cancelado"),
       // Pagos sin fecha_pago pero creados hoy con abono > 0 (web/Wompi automáticos)
@@ -1671,7 +1716,7 @@ export default function Reservas() {
     if (resHoy.data)    setReservasHoy(resHoy.data.map(mapRow));
     if (resManana.data) setReservasManana(resManana.data.map(mapRow));
     if (empR.data && empR.data.length > 0) setVendedores(["Sin asignar", ...(empR.data.map(e => e.nombre))]);
-    if (pasR.data && pasR.data.length > 0) setPasadias(pasR.data.map(p => ({ tipo: p.nombre, precio: p.precio })));
+    if (pasR.data && pasR.data.length > 0) setPasadias(pasR.data.map(p => ({ tipo: p.nombre, precio: p.precio, precio_neto_agencia: p.precio_neto_agencia || 0, precio_nino: p.precio_nino || 0, precio_neto_nino: p.precio_neto_nino || 0 })));
     const totalCobrado = [(cobR.data || []), (cobR2.data || [])].flat().reduce((s, r) => s + (r.abono || 0), 0);
     setCobradoHoy(totalCobrado);
     if (salR.data)      setSalidas(salR.data);
