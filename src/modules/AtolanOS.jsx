@@ -316,8 +316,6 @@ export default function AtolanOS({ activeModule = "dashboard", onNavigate, modul
 
   // Which group is the active module in?
   const activeGroup = NAV_GROUPS.find(g => g.items.some(i => i.key === activeModule))?.key || null;
-  // Open groups state — auto-open the group containing the active module
-  const [openGroups, setOpenGroups] = useState(() => activeGroup ? { [activeGroup]: true } : {});
 
   const w = collapsed ? 64 : 224;
 
@@ -326,15 +324,6 @@ export default function AtolanOS({ activeModule = "dashboard", onNavigate, modul
     onNavigate?.(realKey);
     if (isMobile) setSidebarOpen(false);
   };
-
-  const toggleGroup = (key) => {
-    setOpenGroups(p => ({ ...p, [key]: !p[key] }));
-  };
-
-  // Auto-expand group when active module changes
-  useEffect(() => {
-    if (activeGroup) setOpenGroups(p => ({ ...p, [activeGroup]: true }));
-  }, [activeGroup]);
 
   const NavItem = ({ item, indent = false }) => {
     const active = activeModule === (MODULE_KEY_MAP[item.key] || item.key);
@@ -404,35 +393,22 @@ export default function AtolanOS({ activeModule = "dashboard", onNavigate, modul
             const isOpen = openGroups[group.key];
             const hasActive = group.items.some(i => activeModule === (MODULE_KEY_MAP[i.key] || i.key));
             return (
-              <div key={group.key} style={{ marginBottom: 2 }}>
-                {/* Group header */}
-                <div onClick={() => !collapsed && toggleGroup(group.key)}
-                  style={{
-                    display: "flex", alignItems: "center", gap: 10,
-                    padding: "8px 12px", borderRadius: 7, cursor: "pointer",
-                    background: hasActive ? `${group.color}18` : "transparent",
-                    color: hasActive ? group.color : "rgba(255,255,255,0.45)",
-                    transition: "background 0.12s",
-                    userSelect: "none",
-                  }}
-                  onMouseEnter={e => e.currentTarget.style.background = hasActive ? `${group.color}22` : "rgba(255,255,255,0.04)"}
-                  onMouseLeave={e => e.currentTarget.style.background = hasActive ? `${group.color}18` : "transparent"}
-                >
-                  <span style={{ fontSize: 14, width: 18, textAlign: "center", flexShrink: 0 }}>{group.icon}</span>
-                  {!collapsed && (
-                    <>
-                      <span style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", flex: 1 }}>{group.label}</span>
-                      <span style={{ fontSize: 10, opacity: 0.5, transition: "transform 0.2s", display: "inline-block", transform: isOpen ? "rotate(90deg)" : "rotate(0deg)" }}>▶</span>
-                    </>
-                  )}
-                </div>
-
-                {/* Group items */}
-                {(isOpen || collapsed) && (
-                  <div style={{ marginTop: 1 }}>
-                    {group.items.map(item => <NavItem key={item.key} item={item} indent={!collapsed} />)}
+              <div key={group.key} style={{ marginBottom: 4 }}>
+                {/* Group label */}
+                {!collapsed && (
+                  <div style={{
+                    display: "flex", alignItems: "center", gap: 8,
+                    padding: "6px 12px 4px",
+                    color: hasActive ? group.color : "rgba(255,255,255,0.3)",
+                  }}>
+                    <span style={{ fontSize: 12 }}>{group.icon}</span>
+                    <span style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em" }}>{group.label}</span>
                   </div>
                 )}
+                {/* Group items — always visible */}
+                <div>
+                  {group.items.map(item => <NavItem key={item.key} item={item} indent={!collapsed} />)}
+                </div>
               </div>
             );
           })}
