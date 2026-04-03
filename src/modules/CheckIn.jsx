@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { B, todayStr } from "../brand";
+import { B, todayStr, COP } from "../brand";
 import { supabase } from "../lib/supabase";
 import { useMobile } from "../lib/useMobile";
 import jsQR from "jsqr";
@@ -608,6 +608,7 @@ export default function CheckIn() {
       {/* ── Confirmación de Check-in ── */}
       {confirmCheckin && (() => {
         const faltaZarpe = !paxCompleto(confirmCheckin);
+        const saldo = confirmCheckin.saldo || 0;
         return (
           <div
             style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.82)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 9997, padding: 16 }}
@@ -620,6 +621,21 @@ export default function CheckIn() {
                 {confirmCheckin.nombre}
                 <span style={{ marginLeft: 8, color: B.sand, fontWeight: 700 }}>{confirmCheckin.pax} pax</span>
               </div>
+
+              {/* Alerta saldo pendiente */}
+              {saldo > 0 && (
+                <div style={{ background: "#E8402018", border: "1px solid #E8402066", borderRadius: 12, padding: "12px 14px", marginBottom: 14 }}>
+                  <div style={{ fontSize: 13, color: "#FF6B6B", fontWeight: 700, marginBottom: 2 }}>
+                    💳 Saldo pendiente de cobro
+                  </div>
+                  <div style={{ fontSize: 22, fontWeight: 900, color: "#FF6B6B", letterSpacing: "-0.5px" }}>
+                    {COP(saldo)}
+                  </div>
+                  <div style={{ fontSize: 11, color: "rgba(255,100,100,0.6)", marginTop: 3 }}>
+                    Total: {COP(confirmCheckin.total)} · Abono: {COP(confirmCheckin.abono || 0)}
+                  </div>
+                </div>
+              )}
 
               {/* Alerta zarpe si faltan datos */}
               {faltaZarpe && (
