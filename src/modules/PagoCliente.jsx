@@ -232,12 +232,14 @@ export default function PagoCliente() {
   const pagarWompi = async () => {
     if (!reserva) return;
     setProcesando("wompi");
+    // redirectUrl: página actual sin query params — Wompi agrega ?id=TX_ID al regresar
+    const redirectUrl = window.location.href.split("?")[0];
     const url = await wompiCheckoutUrl({
       referencia: reserva.id,
       totalCOP: reserva.total,
       email: reserva.contacto?.includes("@") ? reserva.contacto : "",
+      redirectUrl,
     });
-    // Redirigir en la misma ventana — sin redirect-url para evitar 403 en localhost
     window.location.href = url;
   };
 

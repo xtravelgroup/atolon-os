@@ -1629,12 +1629,12 @@ export default function Reservas() {
     if (!supabase) { setLoading(false); return; }
     setLoading(true);
 
-    // Auto-cancelar reservas pendiente_pago con más de 30 minutos (fallback si el cron falla)
-    const expireThreshold = new Date(Date.now() - 30 * 60 * 1000).toISOString();
+    // Auto-cancelar reservas pendiente_pago cuyo link ya expiró
     await supabase.from("reservas")
       .update({ estado: "cancelado" })
       .eq("estado", "pendiente_pago")
-      .lt("created_at", expireThreshold);
+      .lt("link_expira_at", new Date().toISOString())
+      .not("link_expira_at", "is", null);
 
     const todayStart = `${today}T00:00:00.000Z`;
     const tomorrowStart = `${tomorrow}T00:00:00.000Z`;
@@ -1773,11 +1773,13 @@ export default function Reservas() {
       total,
       abono,
       saldo:      total - abono,
-      estado:     isLink ? "pendiente_pago" : (abono >= total ? "confirmado" : "pendiente"),
-      forma_pago: isLink ? "link_pago" : form.forma_pago,
-      aliado_id:  form.aliado_id || null,
-      vendedor:   form.vendedor !== "Sin asignar" ? form.vendedor : null,
-      notas:      form.notas || "",
+      estado:          isLink ? "pendiente_pago" : (abono >= total ? "confirmado" : "pendiente"),
+      forma_pago:      isLink ? "link_pago" : form.forma_pago,
+      // Link de pago: expira en 48 horas
+      link_expira_at:  isLink ? new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString() : null,
+      aliado_id:       form.aliado_id || null,
+      vendedor:        form.vendedor !== "Sin asignar" ? form.vendedor : null,
+      notas:           form.notas || "",
     };
     await supabase.from("reservas").insert(row);
     fetchReservas();
