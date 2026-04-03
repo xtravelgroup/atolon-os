@@ -52,16 +52,24 @@ const LS = { fontSize: 11, color: "rgba(255,255,255,0.4)", display: "block", mar
 
 export default function SelfCheckIn() {
   const rid = new URLSearchParams(window.location.search).get("rid");
-  const [reserva, setReserva] = useState(null);
-  const [pax, setPax]         = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving]   = useState(false);
-  const [done, setDone]       = useState(false);
-  const [error, setError]     = useState("");
+  const [reserva,  setReserva]  = useState(null);
+  const [pax,      setPax]      = useState([]);
+  const [telefono, setTelefono] = useState("");
+  const [email,    setEmail]    = useState("");
+  const [loading,  setLoading]  = useState(true);
+  const [saving,   setSaving]   = useState(false);
+  const [done,     setDone]     = useState(false);
+  const [error,    setError]    = useState("");
+
+  // ¿Necesitamos pedir teléfono / email?
+  const faltaTel   = !reserva?.telefono?.trim();
+  const faltaEmail = !reserva?.email?.trim() && !(reserva?.contacto?.trim().includes("@"));
+  const pedirContacto = faltaTel || faltaEmail;
 
   useEffect(() => {
     if (!rid) { setLoading(false); return; }
-    supabase.from("reservas").select("id,nombre,pax,pax_a,pax_n,pasajeros,fecha,salida_id")
+    supabase.from("reservas")
+      .select("id,nombre,pax,pax_a,pax_n,pasajeros,fecha,salida_id,telefono,email,contacto")
       .eq("id", rid).single()
       .then(({ data, error: e }) => {
         if (e || !data) { setError("not_found"); setLoading(false); return; }
@@ -82,10 +90,22 @@ export default function SelfCheckIn() {
   const set = (i, k, v) => setPax(p => p.map((x, j) => j === i ? { ...x, [k]: v } : x));
 
   const save = async () => {
+    // Validar pasajeros
     const missing = pax.some(p => !p.nombre?.trim() || !p.identificacion?.trim());
     if (missing) { setError("Por favor completa el nombre e identificación de todos los pasajeros."); return; }
+    // Validar contacto si se pidió
+    if (pedirContacto) {
+      if (faltaTel && !telefono.trim()) { setError("Por favor ingresa tu número de teléfono."); return; }
+      if (faltaEmail && !email.trim())  { setError("Por favor ingresa tu correo electrónico."); return; }
+    }
     setSaving(true); setError("");
-    const { error: e } = await supabase.from("reservas").update({ pasajeros: pax }).eq("id", rid);
+
+    // Construir update
+    const upd = { pasajeros: pax };
+    if (faltaTel  && telefono.trim()) upd.telefono = telefono.trim();
+    if (faltaEmail && email.trim())   { upd.email = email.trim(); upd.contacto = email.trim(); }
+
+    const { error: e } = await supabase.from("reservas").update(upd).eq("id", rid);
     if (e) { setError("Error al guardar. Intenta de nuevo."); setSaving(false); return; }
     setSaving(false);
     setDone(true);
@@ -190,6 +210,48 @@ export default function SelfCheckIn() {
             </div>
           ))}
         </div>
+
+        {/* Datos de contacto — solo si faltan */}
+        {pedirContacto && (
+          <div style={{ background: B.navyMid, borderRadius: 16, padding: "20px 18px", marginTop: 16 }}>
+            <div style={{ fontSize: 12, color: B.sky, fontWeight: 700, marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.08em" }}>
+              📞 Datos de contacto
+            </div>
+            <div style={{ fontSize: 13, color: "rgba(255,255,255,0.4)", marginBottom: 16, lineHeight: 1.5 }}>
+              Necesitamos estos datos para enviarte información de tu reserva.
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              {faltaTel && (
+                <div>
+                  <label style={LS}>Teléfono / WhatsApp</label>
+                  <input
+                    value={telefono}
+                    onChange={e => setTelefono(e.target.value)}
+                    style={IS}
+                    placeholder="+57 300 000 0000"
+                    inputMode="tel"
+                    type="tel"
+                    autoComplete="tel"
+                  />
+                </div>
+              )}
+              {faltaEmail && (
+                <div>
+                  <label style={LS}>Correo electrónico</label>
+                  <input
+                    value={email}
+                    onChange={e => setEmail(e.target.value)}
+                    style={IS}
+                    placeholder="tucorreo@ejemplo.com"
+                    inputMode="email"
+                    type="email"
+                    autoComplete="email"
+                  />
+                </div>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Error */}
         {error && error !== "not_found" && (
