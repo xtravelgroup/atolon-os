@@ -78,10 +78,21 @@ export default function Financiero() {
       .sort((a, b) => b.val - a.val);
   };
 
+  const normCanal = (c) => {
+    if (!c) return "Directo";
+    const s = c.trim().toLowerCase();
+    if (s === "web" || s === "web booking") return "Web";
+    if (s === "whatsapp")                   return "WhatsApp";
+    if (s === "b2b")                        return "B2B";
+    if (s === "telefono" || s === "teléfono") return "Teléfono";
+    if (s === "walk-in" || s === "walk in" || s === "presencial") return "Walk-in";
+    return c.trim();
+  };
+
   const ingresosPorCanal = (mes) => {
     const groups = {};
     resDeMes(mes).forEach(r => {
-      const c = r.canal || "Directo";
+      const c = normCanal(r.canal);
       groups[c] = (groups[c] || 0) + (r.total || 0);
     });
     return Object.entries(groups)
