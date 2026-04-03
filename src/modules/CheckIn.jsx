@@ -11,8 +11,37 @@ const NACS = [
   // Prioritarias
   "Colombiana", "Americana", "Mexicana", "Ecuatoriana", "Peruana",
   "Española", "Chilena", "Brasileña", "Argentina", "Francesa", "Alemana",
-  // Resto alfabético
-  "Canadiense", "Inglesa", "Italiana", "Venezolana", "Otra",
+  // Resto mundo — orden alfabético
+  "Afgana", "Albanesa", "Alemana", "Andorrana", "Angoleña", "Antiguense",
+  "Argelina", "Armenia", "Australiana", "Austriaca", "Azerbaiyana",
+  "Bahameña", "Bangladesí", "Barbadense", "Bareiní", "Belga", "Beliceña",
+  "Beninesa", "Bielorrusa", "Birmana", "Boliviana", "Bosnia", "Botsuanesa",
+  "Británica", "Bruneana", "Búlgara", "Burkinesa", "Burundesa",
+  "Butanesa", "Caboverdiana", "Camboyana", "Camerunesa", "Canadiense",
+  "Catarí", "Chadiana", "Checa", "China", "Chipriota", "Congoleña",
+  "Costarricense", "Croata", "Cubana", "Danesa", "Dominicana",
+  "Egipcia", "Salvadoreña", "Emiratense", "Eritrea", "Eslovaca",
+  "Eslovena", "Etíope", "Fiyiana", "Filipina", "Finlandesa",
+  "Gabonesa", "Gambiana", "Georgiana", "Ghanesa", "Gibraltareña",
+  "Griega", "Guatemalteca", "Guineana", "Guyanesa", "Haitiana",
+  "Hondureña", "Húngara", "India", "Indonesia", "Iraní", "Iraquí",
+  "Irlandesa", "Islandesa", "Israelí", "Italiana", "Jamaicana",
+  "Japonesa", "Jordana", "Kazaja", "Keniana", "Kirguisa", "Kuwaití",
+  "Laosiana", "Letona", "Libanesa", "Liberiana", "Libia", "Liechtensteinesa",
+  "Lituana", "Luxemburguesa", "Macedonia", "Malgache", "Malasia",
+  "Malaui", "Maldiva", "Maliense", "Maltesa", "Mauritana", "Mauriciana",
+  "Moldava", "Monegasca", "Mongola", "Montenegrina", "Mozambiqueña",
+  "Namibia", "Nepalesa", "Nicaragüense", "Nigeriana", "Nigerina",
+  "Noruega", "Neozelandesa", "Omaní", "Pakistaní", "Palestina",
+  "Panameña", "Paraguaya", "Polaca", "Portuguesa", "Puertorriqueña",
+  "Británica", "Rumana", "Rusa", "Ruandesa", "Samoana", "Saudi",
+  "Senegalesa", "Serbia", "Singapurense", "Siria", "Somalí",
+  "Sri Lankesa", "Suafricana", "Sudanesa", "Sueca", "Suiza",
+  "Surinamesa", "Tailandesa", "Tanzana", "Tayika", "Togolesa",
+  "Tongana", "Trinitense", "Tunecina", "Turca", "Turkmenistana",
+  "Ucraniana", "Ugandesa", "Uruguaya", "Uzbeka", "Vaticana",
+  "Venezolana", "Vietnamita", "Yemení", "Zambiana", "Zimbabuense",
+  "Otra",
 ];
 
 // helper: is passenger data complete for zarpe?
@@ -393,6 +422,8 @@ export default function CheckIn() {
   const [editPax,        setEditPax]        = useState(null); // reserva to edit pasajeros
   const [editColabs,     setEditColabs]     = useState(false);
   const [qrReserva,      setQrReserva]      = useState(null); // reserva to show QR for
+  const [confirmCheckin, setConfirmCheckin] = useState(null); // reserva pendiente de confirmar
+  const [ciSaving,       setCiSaving]       = useState(false);
   const [search,         setSearch]         = useState("");
   const [loading,        setLoading]        = useState(true);
 
@@ -420,22 +451,25 @@ export default function CheckIn() {
 
   useEffect(() => { load(); }, [load]);
 
-  // ── Check-in toggle (prompts zarpe data if missing)
-  const toggleCheckin = async (res) => {
-    if (res.checkin_at) {
-      // Un-check: direct
-      await supabase.from("reservas").update({ checkin_at: null }).eq("id", res.id);
-      setReservas(prev => prev.map(r => r.id === res.id ? { ...r, checkin_at: null } : r));
-      return;
-    }
-    if (!paxCompleto(res)) {
-      // Missing zarpe info — open modal with autoCheckin flag
-      setEditPax({ ...res, _autoCheckin: true });
-      return;
-    }
+  // ── Check-in: muestra confirmación, nunca bloquea por falta de zarpe
+  const doCheckin = async (res) => {
+    setCiSaving(true);
     const val = new Date().toISOString();
     await supabase.from("reservas").update({ checkin_at: val }).eq("id", res.id);
     setReservas(prev => prev.map(r => r.id === res.id ? { ...r, checkin_at: val } : r));
+    setCiSaving(false);
+    setConfirmCheckin(null);
+  };
+
+  const doUnCheckin = async (res) => {
+    await supabase.from("reservas").update({ checkin_at: null }).eq("id", res.id);
+    setReservas(prev => prev.map(r => r.id === res.id ? { ...r, checkin_at: null } : r));
+  };
+
+  // Mantener toggleCheckin para el escáner QR (que ya confirmó por escaneo)
+  const toggleCheckin = async (res) => {
+    if (res.checkin_at) { await doUnCheckin(res); return; }
+    await doCheckin(res);
   };
 
   // ── QR scan result
@@ -499,6 +533,55 @@ export default function CheckIn() {
     <>
       {scanning && <QRScanner onScan={handleScan} onClose={() => setScanning(false)} />}
       {editPax  && <PasajerosModal reserva={editPax} autoCheckin={!!editPax._autoCheckin} onClose={() => setEditPax(null)} onSaved={load} />}
+
+      {/* ── Confirmación de Check-in ── */}
+      {confirmCheckin && (() => {
+        const faltaZarpe = !paxCompleto(confirmCheckin);
+        return (
+          <div
+            style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.82)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 9997, padding: 16 }}
+            onClick={e => e.target === e.currentTarget && setConfirmCheckin(null)}>
+            <div style={{ background: B.navyMid, borderRadius: 20, padding: "28px 24px", width: "100%", maxWidth: 360, boxShadow: "0 24px 64px rgba(0,0,0,0.6)" }}>
+
+              {/* Header */}
+              <div style={{ fontSize: 20, fontWeight: 800, color: B.white, marginBottom: 4 }}>¿Está en el muelle?</div>
+              <div style={{ fontSize: 14, color: "rgba(255,255,255,0.45)", marginBottom: 20 }}>
+                {confirmCheckin.nombre}
+                <span style={{ marginLeft: 8, color: B.sand, fontWeight: 700 }}>{confirmCheckin.pax} pax</span>
+              </div>
+
+              {/* Alerta zarpe si faltan datos */}
+              {faltaZarpe && (
+                <div style={{ background: "#E8A02018", border: "1px solid #E8A02044", borderRadius: 12, padding: "12px 14px", marginBottom: 18 }}>
+                  <div style={{ fontSize: 13, color: "#E8A020", marginBottom: 10 }}>
+                    ⚠️ Faltan datos de zarpe (nombre e ID de pasajeros).
+                  </div>
+                  <button
+                    onClick={() => { setQrReserva(confirmCheckin); setConfirmCheckin(null); }}
+                    style={{ fontSize: 12, padding: "6px 14px", borderRadius: 8, background: "#E8A02022", border: "1px solid #E8A02055", color: "#E8A020", cursor: "pointer", fontWeight: 600 }}>
+                    📋 Completar datos ahora
+                  </button>
+                </div>
+              )}
+
+              {/* Acciones */}
+              <div style={{ display: "flex", gap: 10 }}>
+                <button
+                  onClick={() => setConfirmCheckin(null)}
+                  style={{ flex: 1, padding: "13px", borderRadius: 10, background: "none", border: `1px solid ${B.navyLight}`, color: "rgba(255,255,255,0.4)", fontSize: 14, cursor: "pointer" }}>
+                  Cancelar
+                </button>
+                <button
+                  onClick={() => doCheckin(confirmCheckin)}
+                  disabled={ciSaving}
+                  style={{ flex: 2, padding: "13px", borderRadius: 10, background: B.success, color: B.navy, border: "none", fontWeight: 800, fontSize: 14, cursor: ciSaving ? "default" : "pointer" }}>
+                  {ciSaving ? "..." : "✓ Sí, hacer check-in"}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* QR Check-in propio */}
       {qrReserva && (() => {
@@ -777,10 +860,10 @@ export default function CheckIn() {
 
                       {/* Right-side actions: check-in + zarpe QR */}
                       <div style={{ display: "flex", flexDirection: "column", gap: 6, flexShrink: 0 }}>
-                        {/* Check-in directo */}
+                        {/* Check-in con confirmación */}
                         <button
-                          onClick={() => toggleCheckin(res)}
-                          title={checked ? "Deshacer check-in" : "Hacer check-in"}
+                          onClick={() => checked ? doUnCheckin(res) : setConfirmCheckin(res)}
+                          title={checked ? "Deshacer check-in" : "Confirmar llegada"}
                           style={{
                             padding: isMobile ? "9px 12px" : "7px 12px",
                             borderRadius: 8,
