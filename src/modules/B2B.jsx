@@ -171,7 +171,7 @@ const STATUS_CFG = {
 const ESTADOS = ["confirmado", "pendiente", "pendiente_pago", "pendiente_comprobante", "cancelado"];
 const FORMAS_PAGO = ["wompi", "transferencia", "transferencia_hold", "transferencia_comprobante", "cliente_paga", "efectivo", "otro"];
 
-function HistorialReservasB2B({ aliadoId }) {
+function HistorialReservasB2B({ aliadoId, comisionPct = 0 }) {
   const [reservas, setReservas]   = useState([]);
   const [salidas, setSalidas]     = useState([]);
   const [loading, setLoading]     = useState(true);
@@ -388,12 +388,13 @@ function HistorialReservasB2B({ aliadoId }) {
   const totalPax = activas.reduce((s, r) => s + (r.pax || 0), 0);
   const pendientes = reservas.filter(r => ["pendiente_pago","pendiente_comprobante","pendiente"].includes(r.estado)).length;
 
-  // Comisión = precio_publico - precio_neto (independiente de lo que se cobró)
+  // Comisión = precio_publico - precio_neto; si no hay desglose usa % del aliado
   const getComision = (r) => {
     const pub = r.precio_publico || 0;
     const neto = r.precio_neto || 0;
-    if (!pub || !neto || pub <= neto) return 0;
-    return (pub - neto) * (r.pax || 1);
+    if (pub > 0 && neto > 0 && pub > neto) return (pub - neto) * (r.pax || 1);
+    if (comisionPct > 0 && r.total > 0) return Math.round(r.total * comisionPct / 100);
+    return 0;
   };
   const totalComision = activas.reduce((s, r) => s + getComision(r), 0);
 
@@ -624,20 +625,21 @@ function HistorialReservasB2B({ aliadoId }) {
                 <span style={{ fontWeight: 700 }}>{COP(editForm.total)}</span>
               </div>
               {/* Desglose comisión */}
-              {sel.precio_neto > 0 && (sel.precio_publico || sel.precio_u) > sel.precio_neto && (() => {
+              {(() => {
+                const comisionMonto = getComision(sel);
+                if (!comisionMonto) return null;
                 const paxT = (sel.pax_a || 0) + (sel.pax_n || 0) || sel.pax || 1;
-                const neto = sel.precio_neto * paxT;
-                const pub = (sel.precio_publico || sel.precio_u || 0);
-                const comision = (pub - sel.precio_neto) * paxT;
+                const usandoPct = !(sel.precio_publico > 0 && sel.precio_neto > 0);
+                const neto = usandoPct ? (sel.total - comisionMonto) : sel.precio_neto * paxT;
                 return (
                   <div style={{ borderTop: `1px dashed ${B.navyLight}`, marginTop: 6, paddingTop: 6 }}>
                     <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4, fontSize: 12 }}>
-                      <span style={{ color: "rgba(255,255,255,0.35)" }}>Precio neto agencia</span>
+                      <span style={{ color: "rgba(255,255,255,0.35)" }}>Precio neto agencia{usandoPct ? ` (${100 - comisionPct}%)` : ""}</span>
                       <span style={{ color: "rgba(255,255,255,0.5)" }}>{COP(neto)}</span>
                     </div>
                     <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6, fontSize: 12 }}>
-                      <span style={{ color: "#a78bfa" }}>💜 Comisión Atolon</span>
-                      <span style={{ color: "#a78bfa", fontWeight: 700 }}>{COP(comision)}</span>
+                      <span style={{ color: "#a78bfa" }}>💜 Comisión Atolon{usandoPct ? ` (${comisionPct}%)` : ""}</span>
+                      <span style={{ color: "#a78bfa", fontWeight: 700 }}>{COP(comisionMonto)}</span>
                     </div>
                   </div>
                 );
@@ -2743,7 +2745,7 @@ function FichaAliado({ aliado, onBack, onRefresh }) {
         </div>
       )}
 
-      {tab === "historial"  && <HistorialReservasB2B aliadoId={aliado.id} />}
+      {tab === "historial"  && <HistorialReservasB2B aliadoId={aliado.id} comisionPct={aliado.comision || 0} />}
       {tab === "eventos"    && <EventosGruposB2B aliadoId={aliado.id} />}
       {tab === "visitas"    && <VisitasAgencia aliadoId={aliado.id} aliado={aliado} />}
       {tab === "incentivos" && <IncentivosAgencia aliadoId={aliado.id} />}
