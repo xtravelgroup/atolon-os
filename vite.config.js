@@ -35,6 +35,8 @@ export default defineConfig({
         ],
       },
       workbox: {
+        skipWaiting: true,
+        clientsClaim: true,
         // Cachear assets estáticos
         globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}'],
         // No cachear llamadas a Supabase ni Wompi — siempre van a la red
