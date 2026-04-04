@@ -76,35 +76,38 @@ function ConveniosSection({ aliadoId, comisionBase }) {
 
   const fetchConvenios = useCallback(async () => {
     if (!supabase) return;
-    // Fetch pasadias reales para tarifas publicas
-    const { data: pasData } = await supabase.from("pasadias").select("id, nombre, precio, precio_neto_agencia").eq("activo", true).order("orden");
+    const { data: pasData } = await supabase.from("pasadias")
+      .select("id, nombre, precio, precio_nino, precio_neto_agencia, precio_neto_nino")
+      .eq("activo", true).order("orden");
     setPasadiasDB(pasData || []);
 
     const { data } = await supabase.from("b2b_convenios").select("*").eq("aliado_id", aliadoId).order("tipo_pasadia");
+    const syncFromPas = (rows) => rows.map(c => {
+      const pas = (pasData || []).find(p => p.nombre === c.tipo_pasadia);
+      return {
+        ...c,
+        tarifa_publica: pas?.precio || c.tarifa_publica,
+        tarifa_publica_nino: pas?.precio_nino || c.tarifa_publica_nino || 0,
+      };
+    });
+
     if (data && data.length > 0) {
-      // Sync tarifas publicas from pasadias table
-      const updated = data.map(c => {
-        const pas = (pasData || []).find(p => p.nombre === c.tipo_pasadia);
-        return { ...c, tarifa_publica: pas?.precio || c.tarifa_publica };
-      });
-      setConvenios(updated);
+      setConvenios(syncFromPas(data));
     } else if (data && data.length === 0 && pasData && pasData.length > 0) {
-      // Auto-seed from real pasadias
       const seeds = pasData.map(p => ({
         id: `CONV-${aliadoId}-${p.nombre.replace(/\s/g, "")}`,
         aliado_id: aliadoId,
         tipo_pasadia: p.nombre,
         tarifa_publica: p.precio,
         tarifa_neta: p.precio_neto_agencia || Math.round(p.precio * (1 - (comisionBase || 12) / 100)),
+        tarifa_publica_nino: p.precio_nino || 0,
+        tarifa_neta_nino: p.precio_neto_nino || 0,
         comision_pct: comisionBase || 12,
         activo: true,
       }));
       await supabase.from("b2b_convenios").insert(seeds);
       const { data: fresh } = await supabase.from("b2b_convenios").select("*").eq("aliado_id", aliadoId).order("tipo_pasadia");
-      setConvenios((fresh || []).map(c => {
-        const pas = pasData.find(p => p.nombre === c.tipo_pasadia);
-        return { ...c, tarifa_publica: pas?.precio || c.tarifa_publica };
-      }));
+      setConvenios(syncFromPas(fresh || []));
     }
     setLoaded(true);
   }, [aliadoId, comisionBase]);
@@ -114,9 +117,8 @@ function ConveniosSection({ aliadoId, comisionBase }) {
   const updateConvenio = async (id, field, value) => {
     if (!supabase) return;
     const numVal = Number(value) || 0;
-    const updates = { [field]: numVal };
-    await supabase.from("b2b_convenios").update(updates).eq("id", id);
-    setConvenios(p => p.map(c => c.id === id ? { ...c, ...updates } : c));
+    await supabase.from("b2b_convenios").update({ [field]: numVal }).eq("id", id);
+    setConvenios(p => p.map(c => c.id === id ? { ...c, [field]: numVal } : c));
   };
 
   const toggleActivo = async (id) => {
@@ -127,13 +129,16 @@ function ConveniosSection({ aliadoId, comisionBase }) {
 
   if (!loaded) return <div style={{ color: "rgba(255,255,255,0.3)", padding: 20, fontSize: 13 }}>Cargando convenios...</div>;
 
+  // Solo mostrar filas con precio de niño (VIP PASS, After Island, etc.)
+  const tieneNino = (c) => (c.tarifa_publica_nino || 0) > 0;
+
   return (
     <div>
       <table style={{ width: "100%", borderCollapse: "collapse" }}>
         <thead>
           <tr>
-            {["Pasadia", "Tarifa Publica", "Tarifa Neta Agencia", "Activo"].map(h => (
-              <th key={h} style={{ padding: "10px 12px", textAlign: h === "Pasadia" ? "left" : "center", fontSize: 10, color: B.sand, textTransform: "uppercase", letterSpacing: "0.06em", borderBottom: `1px solid ${B.navyLight}` }}>{h}</th>
+            {["Pasadía", "Público Adulto", "Neto Adulto", "Público Niño", "Neto Niño", "Activo"].map(h => (
+              <th key={h} style={{ padding: "10px 12px", textAlign: h === "Pasadía" ? "left" : "center", fontSize: 10, color: B.sand, textTransform: "uppercase", letterSpacing: "0.06em", borderBottom: `1px solid ${B.navyLight}` }}>{h}</th>
             ))}
           </tr>
         </thead>
@@ -141,10 +146,19 @@ function ConveniosSection({ aliadoId, comisionBase }) {
           {convenios.map(c => (
             <tr key={c.id} style={{ borderBottom: `1px solid ${B.navyLight}`, opacity: c.activo ? 1 : 0.4 }}>
               <td style={{ padding: "12px", fontSize: 14, fontWeight: 600 }}>{c.tipo_pasadia}</td>
-              <td style={{ padding: "12px", textAlign: "center", fontSize: 14, color: "rgba(255,255,255,0.5)" }}>{COP(c.tarifa_publica)}</td>
+              <td style={{ padding: "12px", textAlign: "center", fontSize: 13, color: "rgba(255,255,255,0.4)" }}>{COP(c.tarifa_publica)}</td>
               <td style={{ padding: "12px", textAlign: "center" }}>
                 <input type="number" value={c.tarifa_neta} onChange={e => updateConvenio(c.id, "tarifa_neta", e.target.value)}
-                  style={{ ...ISsm, width: 140, textAlign: "right", color: B.sand, fontWeight: 700 }} />
+                  style={{ ...ISsm, width: 130, textAlign: "right", color: B.sand, fontWeight: 700 }} />
+              </td>
+              <td style={{ padding: "12px", textAlign: "center", fontSize: 13, color: "rgba(255,255,255,0.4)" }}>
+                {tieneNino(c) ? COP(c.tarifa_publica_nino) : <span style={{ color: "rgba(255,255,255,0.2)" }}>—</span>}
+              </td>
+              <td style={{ padding: "12px", textAlign: "center" }}>
+                {tieneNino(c)
+                  ? <input type="number" value={c.tarifa_neta_nino || ""} onChange={e => updateConvenio(c.id, "tarifa_neta_nino", e.target.value)}
+                      style={{ ...ISsm, width: 130, textAlign: "right", color: B.sky, fontWeight: 700 }} placeholder="0" />
+                  : <span style={{ color: "rgba(255,255,255,0.2)" }}>—</span>}
               </td>
               <td style={{ padding: "12px", textAlign: "center" }}>
                 <button onClick={() => toggleActivo(c.id)} style={{ background: c.activo ? B.success + "22" : B.navyLight, color: c.activo ? B.success : "rgba(255,255,255,0.4)", border: "none", borderRadius: 12, padding: "3px 10px", fontSize: 11, cursor: "pointer" }}>{c.activo ? "Si" : "No"}</button>
@@ -153,7 +167,7 @@ function ConveniosSection({ aliadoId, comisionBase }) {
           ))}
         </tbody>
       </table>
-      <div style={{ fontSize: 11, color: "rgba(255,255,255,0.3)", marginTop: 8 }}>Las tarifas publicas vienen del modulo Pasadias. Solo la tarifa neta es editable por aliado.</div>
+      <div style={{ fontSize: 11, color: "rgba(255,255,255,0.3)", marginTop: 8 }}>Tarifas públicas vienen del módulo Pasadías. Las netas son editables por aliado.</div>
     </div>
   );
 }
