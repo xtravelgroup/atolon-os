@@ -472,15 +472,15 @@ function HistorialReservasB2B({ aliadoId }) {
             <div>
               <label style={LS}>Estado</label>
               {(sel.estado === "confirmado" || editForm.estado === "confirmado") ? (
-                <div>
-                  <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", borderRadius: 10, background: "#4CAF7D22", border: "1px solid #4CAF7D44" }}>
-                    <span style={{ fontSize: 16 }}>✅</span>
-                    <div style={{ flex: 1 }}>
-                      <div style={{ fontSize: 13, fontWeight: 700, color: "#4CAF7D" }}>Reserva Confirmada</div>
-                      <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", marginTop: 2 }}>El estado no puede cambiarse manualmente — usa cambio de fecha o cancelación</div>
-                    </div>
-                    <span style={{ fontSize: 20 }}>🔒</span>
-                  </div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button onClick={() => document.getElementById(`fecha-field-${sel.id}`)?.scrollIntoView({ behavior: "smooth", block: "center" })}
+                    style={{ flex: 1, padding: "9px 12px", borderRadius: 8, border: `1px solid ${B.sky}55`, background: B.sky + "15", color: B.sky, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+                    🗓 Cambiar fecha
+                  </button>
+                  <button onClick={handleCancel}
+                    style={{ flex: 1, padding: "9px 12px", borderRadius: 8, border: `1px solid ${B.danger}55`, background: "none", color: B.danger, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+                    🚫 Cancelar reserva
+                  </button>
                 </div>
               ) : (
                 <div>
@@ -552,7 +552,7 @@ function HistorialReservasB2B({ aliadoId }) {
             </div>
 
             {/* Fecha + disponibilidad */}
-            <div>
+            <div id={`fecha-field-${sel.id}`}>
               <label style={LS}>Fecha</label>
               <input type="date" value={editForm.fecha}
                 onChange={e => { ef("fecha", e.target.value); ef("salida_id", ""); checkDisponibilidad(e.target.value); }}
@@ -718,7 +718,7 @@ function HistorialReservasB2B({ aliadoId }) {
 
             {/* Botones */}
             <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
-              {sel.estado !== "cancelado" && (
+              {sel.estado !== "cancelado" && sel.estado !== "confirmado" && editForm.estado !== "confirmado" && (
                 <button onClick={handleCancel}
                   style={{ padding: "10px", borderRadius: 8, border: `1px solid ${B.danger + "55"}`, background: "none", color: B.danger, fontSize: 12, cursor: "pointer" }}>
                   Cancelar
