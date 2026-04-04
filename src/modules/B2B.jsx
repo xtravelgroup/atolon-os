@@ -385,6 +385,13 @@ function HistorialReservasB2B({ aliadoId }) {
   const totalPax = activas.reduce((s, r) => s + (r.pax || 0), 0);
   const pendientes = reservas.filter(r => ["pendiente_pago","pendiente_comprobante","pendiente"].includes(r.estado)).length;
 
+  // Comisión = diferencia entre precio público y precio neto de agencia
+  const getComision = (r) => {
+    if (!r.precio_neto || !r.precio_u || r.precio_u <= r.precio_neto) return 0;
+    return (r.precio_u - r.precio_neto) * (r.pax || 1);
+  };
+  const totalComision = activas.reduce((s, r) => s + getComision(r), 0);
+
   const sel = reservas.find(r => r.id === selected);
 
   const ef = (k, v) => setEditForm(f => ({ ...f, [k]: v }));
@@ -398,6 +405,7 @@ function HistorialReservasB2B({ aliadoId }) {
           { label: "Pax Total", val: totalPax, color: B.sand },
           { label: "Revenue Neto", val: COP(totalRev), color: B.success },
           { label: "Pendientes", val: pendientes, color: B.warning },
+          ...(totalComision > 0 ? [{ label: "Comisión Total", val: COP(totalComision), color: "#a78bfa" }] : []),
         ].map(s => (
           <div key={s.label} style={{ background: B.navyMid, borderRadius: 12, padding: "12px 16px", flex: 1, borderLeft: `3px solid ${s.color}` }}>
             <div style={{ fontSize: 10, color: B.sand, textTransform: "uppercase", letterSpacing: "0.06em" }}>{s.label}</div>
@@ -414,7 +422,7 @@ function HistorialReservasB2B({ aliadoId }) {
           {!loading && reservas.length > 0 && (
             <table style={{ width: "100%", borderCollapse: "collapse" }}>
               <thead><tr>
-                {["Fecha","Huesped","Tipo","Pax","Total","Estado",""].map(h => (
+                {["Fecha","Huesped","Tipo","Pax","Total","Comisión","Estado",""].map(h => (
                   <th key={h} style={{ padding: "10px 14px", textAlign: "left", fontSize: 10, color: B.sand, textTransform: "uppercase", letterSpacing: "0.06em", borderBottom: `1px solid ${B.navyLight}` }}>{h}</th>
                 ))}
               </tr></thead>
@@ -430,6 +438,11 @@ function HistorialReservasB2B({ aliadoId }) {
                       <td style={{ padding: "10px 14px", fontSize: 12 }}>{r.tipo}</td>
                       <td style={{ padding: "10px 14px", fontSize: 13, textAlign: "center" }}>{r.pax}</td>
                       <td style={{ padding: "10px 14px", fontSize: 13, color: B.sand, fontWeight: 600 }}>{COP(r.total)}</td>
+                      <td style={{ padding: "10px 14px", fontSize: 12 }}>
+                        {getComision(r) > 0
+                          ? <span style={{ color: "#a78bfa", fontWeight: 600 }}>{COP(getComision(r))}</span>
+                          : <span style={{ color: "rgba(255,255,255,0.2)" }}>—</span>}
+                      </td>
                       <td style={{ padding: "10px 14px" }}>
                         <span style={{ fontSize: 10, padding: "3px 9px", borderRadius: 10, background: sc.color + "22", color: sc.color, whiteSpace: "nowrap" }}>{sc.label}</span>
                       </td>
@@ -602,9 +615,27 @@ function HistorialReservasB2B({ aliadoId }) {
             {/* Resumen de pago */}
             <div style={{ background: B.navy, borderRadius: 10, padding: "12px 16px", fontSize: 13 }}>
               <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
-                <span style={{ color: "rgba(255,255,255,0.4)" }}>Total</span>
+                <span style={{ color: "rgba(255,255,255,0.4)" }}>Total cobrado</span>
                 <span style={{ fontWeight: 700 }}>{COP(editForm.total)}</span>
               </div>
+              {/* Desglose comisión */}
+              {sel.precio_neto > 0 && sel.precio_u > sel.precio_neto && (() => {
+                const paxT = (sel.pax_a || 0) + (sel.pax_n || 0) || sel.pax || 1;
+                const neto = sel.precio_neto * paxT;
+                const comision = (sel.precio_u - sel.precio_neto) * paxT;
+                return (
+                  <div style={{ borderTop: `1px dashed ${B.navyLight}`, marginTop: 6, paddingTop: 6 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4, fontSize: 12 }}>
+                      <span style={{ color: "rgba(255,255,255,0.35)" }}>Precio neto agencia</span>
+                      <span style={{ color: "rgba(255,255,255,0.5)" }}>{COP(neto)}</span>
+                    </div>
+                    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6, fontSize: 12 }}>
+                      <span style={{ color: "#a78bfa" }}>💜 Comisión Atolon</span>
+                      <span style={{ color: "#a78bfa", fontWeight: 700 }}>{COP(comision)}</span>
+                    </div>
+                  </div>
+                );
+              })()}
               <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
                 <span style={{ color: "rgba(255,255,255,0.4)" }}>Abonado</span>
                 <span style={{ color: B.success, fontWeight: 600 }}>{COP(editForm.abono || 0)}</span>
@@ -715,6 +746,7 @@ function HistorialReservasB2B({ aliadoId }) {
                   { val: "transferencia", icon: "🏦", label: "Transferencia" },
                   { val: "wompi", icon: "💜", label: "Wompi" },
                   { val: "efectivo", icon: "💵", label: "Efectivo" },
+                  { val: "descuento_agencia", icon: "🏷️", label: "Descuento Agencia" },
                   { val: "otro", icon: "📋", label: "Otro" },
                 ].map(m => (
                   <div key={m.val} onClick={() => setPagoForm(f => ({ ...f, metodo: m.val }))}
@@ -727,8 +759,15 @@ function HistorialReservasB2B({ aliadoId }) {
             </div>
 
             {/* Monto */}
+            {/* Info: Descuento Agencia */}
+            {pagoForm.metodo === "descuento_agencia" && (
+              <div style={{ marginBottom: 14, padding: "10px 14px", background: "rgba(167,139,250,0.12)", border: "1px solid rgba(167,139,250,0.3)", borderRadius: 10, fontSize: 12, color: "#c4b5fd" }}>
+                🏷️ <strong>Descuento de la agencia</strong> — No es un pago recibido. La agencia asume este valor como descuento al cliente. Se reducirá del saldo pendiente.
+              </div>
+            )}
+
             <div style={{ marginBottom: 14 }}>
-              <label style={LS}>Monto recibido</label>
+              <label style={LS}>{pagoForm.metodo === "descuento_agencia" ? "Valor del descuento" : "Monto recibido"}</label>
               <input type="number" value={pagoForm.monto} onChange={e => setPagoForm(f => ({ ...f, monto: +e.target.value }))} style={IS} />
             </div>
 
@@ -805,15 +844,19 @@ function HistorialReservasB2B({ aliadoId }) {
               <button onClick={() => setShowPagoModal(false)} style={{ flex: 1, padding: "12px", background: "none", border: `1px solid ${B.navyLight}`, borderRadius: 8, color: "rgba(255,255,255,0.4)", fontSize: 13, cursor: "pointer" }}>Cancelar</button>
               <button disabled={!pagoForm.monto || uploadingPago || (pagoForm.metodo === "transferencia" && !pagoForm._comprob)} onClick={async () => {
                 if (!supabase || !pagoForm.monto) return;
+                const esDescuento = pagoForm.metodo === "descuento_agencia";
                 const nuevoAbono = (editForm.abono || 0) + pagoForm.monto;
                 const nuevoSaldo = (editForm.total || 0) - nuevoAbono;
                 const nuevoEstado = nuevoSaldo <= 0 ? "confirmado" : editForm.estado;
                 await supabase.from("reservas").update({
                   abono: nuevoAbono, saldo: nuevoSaldo, estado: nuevoEstado,
-                  forma_pago: pagoForm.metodo, updated_at: new Date().toISOString(),
+                  forma_pago: esDescuento ? (sel.forma_pago || "descuento_agencia") : pagoForm.metodo,
+                  updated_at: new Date().toISOString(),
                 }).eq("id", sel.id);
                 const refWompi = pagoForm._wompiRef ? ` · Ref. Wompi: ${pagoForm._wompiRef}` : "";
-                const desc = `Pago registrado: ${COP(pagoForm.monto)} vía ${pagoForm.metodo}${refWompi}${pagoForm.nota ? " — " + pagoForm.nota : ""}${nuevoSaldo <= 0 ? " · Reserva confirmada ✓" : ` · Saldo restante: ${COP(nuevoSaldo)}`}`;
+                const desc = esDescuento
+                  ? `Descuento agencia aplicado: ${COP(pagoForm.monto)}${pagoForm.nota ? " — " + pagoForm.nota : ""}${nuevoSaldo <= 0 ? " · Reserva confirmada ✓" : ` · Saldo restante: ${COP(nuevoSaldo)}`}`
+                  : `Pago registrado: ${COP(pagoForm.monto)} vía ${pagoForm.metodo}${refWompi}${pagoForm.nota ? " — " + pagoForm.nota : ""}${nuevoSaldo <= 0 ? " · Reserva confirmada ✓" : ` · Saldo restante: ${COP(nuevoSaldo)}`}`;
                 await logHistorial(sel.id, "pago_registrado", desc, { abono: editForm.abono, estado: editForm.estado }, { abono: nuevoAbono, estado: nuevoEstado }, pagoForm.usuario || "admin");
                 // Asignar puntos solo si el vendedor no es admin
                 if (nuevoEstado === "confirmado" && sel.vendedor_b2b_id) {
@@ -836,8 +879,8 @@ function HistorialReservasB2B({ aliadoId }) {
                 setShowPagoModal(false);
                 fetchR(); fetchHistorial(sel.id);
               }}
-                style={{ flex: 2, padding: "12px", background: B.success, color: B.white, border: "none", borderRadius: 8, fontWeight: 700, fontSize: 14, cursor: "pointer" }}>
-                Confirmar pago
+                style={{ flex: 2, padding: "12px", background: pagoForm.metodo === "descuento_agencia" ? "#7c3aed" : B.success, color: B.white, border: "none", borderRadius: 8, fontWeight: 700, fontSize: 14, cursor: "pointer" }}>
+                {pagoForm.metodo === "descuento_agencia" ? "🏷️ Aplicar Descuento" : "Confirmar pago"}
               </button>
             </div>
           </div>
