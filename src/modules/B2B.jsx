@@ -388,10 +388,12 @@ function HistorialReservasB2B({ aliadoId }) {
   const totalPax = activas.reduce((s, r) => s + (r.pax || 0), 0);
   const pendientes = reservas.filter(r => ["pendiente_pago","pendiente_comprobante","pendiente"].includes(r.estado)).length;
 
-  // Comisión = diferencia entre precio público y precio neto de agencia
+  // Comisión = precio_publico - precio_neto (independiente de lo que se cobró)
   const getComision = (r) => {
-    if (!r.precio_neto || !r.precio_u || r.precio_u <= r.precio_neto) return 0;
-    return (r.precio_u - r.precio_neto) * (r.pax || 1);
+    const pub = r.precio_publico || 0;
+    const neto = r.precio_neto || 0;
+    if (!pub || !neto || pub <= neto) return 0;
+    return (pub - neto) * (r.pax || 1);
   };
   const totalComision = activas.reduce((s, r) => s + getComision(r), 0);
 
@@ -622,10 +624,11 @@ function HistorialReservasB2B({ aliadoId }) {
                 <span style={{ fontWeight: 700 }}>{COP(editForm.total)}</span>
               </div>
               {/* Desglose comisión */}
-              {sel.precio_neto > 0 && sel.precio_u > sel.precio_neto && (() => {
+              {sel.precio_neto > 0 && (sel.precio_publico || sel.precio_u) > sel.precio_neto && (() => {
                 const paxT = (sel.pax_a || 0) + (sel.pax_n || 0) || sel.pax || 1;
                 const neto = sel.precio_neto * paxT;
-                const comision = (sel.precio_u - sel.precio_neto) * paxT;
+                const pub = (sel.precio_publico || sel.precio_u || 0);
+                const comision = (pub - sel.precio_neto) * paxT;
                 return (
                   <div style={{ borderTop: `1px dashed ${B.navyLight}`, marginTop: 6, paddingTop: 6 }}>
                     <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4, fontSize: 12 }}>
