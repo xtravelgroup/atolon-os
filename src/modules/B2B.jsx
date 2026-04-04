@@ -209,14 +209,21 @@ function HistorialReservasB2B({ aliadoId, comisionPct = 0 }) {
     setHistorial(data || []);
   }, []);
 
+  const [pasadiasMap, setPasadiasMap] = useState({}); // { tipo_lower: precio_publico }
+
   const fetchR = useCallback(async () => {
     if (!supabase) return;
-    const [resR, salR] = await Promise.all([
+    const [resR, salR, pasR] = await Promise.all([
       supabase.from("reservas").select("*").eq("aliado_id", aliadoId).order("fecha", { ascending: false }).limit(100),
       supabase.from("salidas").select("id,hora,nombre").eq("activo", true).order("orden"),
+      supabase.from("pasadias").select("nombre,precio").eq("activo", true),
     ]);
     setReservas(resR.data || []);
     setSalidas(salR.data || []);
+    // Build map tipo → precio público
+    const pm = {};
+    (pasR.data || []).forEach(p => { pm[p.nombre.toLowerCase()] = p.precio; });
+    setPasadiasMap(pm);
     setLoading(false);
   }, [aliadoId]);
 
@@ -388,11 +395,17 @@ function HistorialReservasB2B({ aliadoId, comisionPct = 0 }) {
   const totalPax = activas.reduce((s, r) => s + (r.pax || 0), 0);
   const pendientes = reservas.filter(r => ["pendiente_pago","pendiente_comprobante","pendiente"].includes(r.estado)).length;
 
-  // Comisión = precio_publico - precio_neto; si no hay desglose usa % del aliado
+  // Comisión = precio público pasadía - precio_u de la reserva
   const getComision = (r) => {
+    // 1. Precios desglosados en la reserva (AgenciaPortal)
     const pub = r.precio_publico || 0;
     const neto = r.precio_neto || 0;
     if (pub > 0 && neto > 0 && pub > neto) return (pub - neto) * (r.pax || 1);
+    // 2. Comparar precio_u con precio público de la pasadía
+    const precioPublicoPasadia = pasadiasMap[(r.tipo || "").toLowerCase()] || 0;
+    if (precioPublicoPasadia > 0 && r.precio_u > 0 && precioPublicoPasadia > r.precio_u)
+      return (precioPublicoPasadia - r.precio_u) * (r.pax || 1);
+    // 3. Fallback: % del aliado sobre el total
     if (comisionPct > 0 && r.total > 0) return Math.round(r.total * comisionPct / 100);
     return 0;
   };
@@ -628,17 +641,22 @@ function HistorialReservasB2B({ aliadoId, comisionPct = 0 }) {
               {(() => {
                 const comisionMonto = getComision(sel);
                 if (!comisionMonto) return null;
-                const paxT = (sel.pax_a || 0) + (sel.pax_n || 0) || sel.pax || 1;
-                const usandoPct = !(sel.precio_publico > 0 && sel.precio_neto > 0);
-                const neto = usandoPct ? (sel.total - comisionMonto) : sel.precio_neto * paxT;
+                const precioPublicoPasadia = pasadiasMap[(sel.tipo || "").toLowerCase()] || sel.precio_publico || 0;
+                const netoAgencia = sel.precio_u || 0;
                 return (
                   <div style={{ borderTop: `1px dashed ${B.navyLight}`, marginTop: 6, paddingTop: 6 }}>
+                    {precioPublicoPasadia > 0 && (
+                      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4, fontSize: 12 }}>
+                        <span style={{ color: "rgba(255,255,255,0.35)" }}>Precio público × {sel.pax} pax</span>
+                        <span style={{ color: "rgba(255,255,255,0.5)" }}>{COP(precioPublicoPasadia * (sel.pax || 1))}</span>
+                      </div>
+                    )}
                     <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4, fontSize: 12 }}>
-                      <span style={{ color: "rgba(255,255,255,0.35)" }}>Precio neto agencia{usandoPct ? ` (${100 - comisionPct}%)` : ""}</span>
-                      <span style={{ color: "rgba(255,255,255,0.5)" }}>{COP(neto)}</span>
+                      <span style={{ color: "rgba(255,255,255,0.35)" }}>Neto agencia × {sel.pax} pax</span>
+                      <span style={{ color: "rgba(255,255,255,0.5)" }}>{COP(netoAgencia * (sel.pax || 1))}</span>
                     </div>
                     <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6, fontSize: 12 }}>
-                      <span style={{ color: "#a78bfa" }}>💜 Comisión Atolon{usandoPct ? ` (${comisionPct}%)` : ""}</span>
+                      <span style={{ color: "#a78bfa" }}>💜 Comisión Atolon</span>
                       <span style={{ color: "#a78bfa", fontWeight: 700 }}>{COP(comisionMonto)}</span>
                     </div>
                   </div>
