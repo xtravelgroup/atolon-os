@@ -44,7 +44,7 @@ function fmtFecha(d) {
 }
 
 // ─── Historial de Cierres ─────────────────────────────────────────────────────
-function HistorialCierres({ refresh }) {
+function HistorialCierres({ refresh, area }) {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(false);
   const [expanded, setExpanded] = useState(null);
@@ -52,11 +52,12 @@ function HistorialCierres({ refresh }) {
   const load = useCallback(async () => {
     if (!supabase) return;
     setLoading(true);
-    const { data } = await supabase.from("cierres_caja").select("*")
-      .order("created_at", { ascending: false }).limit(50);
+    let q = supabase.from("cierres_caja").select("*").order("created_at", { ascending: false }).limit(50);
+    if (area) q = q.eq("area", area);
+    const { data } = await q;
     setRows(data || []);
     setLoading(false);
-  }, []);
+  }, [area]);
 
   useEffect(() => { load(); }, [load, refresh]);
 
@@ -476,18 +477,34 @@ export default function CierreCaja() {
             </div>
           </div>
 
-          {/* ── 2. Datos del comprobante ── */}
-          <div style={{ background: B.navyMid, borderRadius: 14, padding: "18px 20px", marginBottom: 20, border: "1px solid rgba(255,255,255,0.07)" }}>
-            <div style={{ fontSize: 12, color: B.sand, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 16 }}>Datos del comprobante</div>
-            <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : (area === "pasadias" ? "1fr 1fr" : "1fr 1fr 1fr 1fr"), gap: 14 }}>
-              <div>
-                <label style={LS}>Cajero</label>
-                <select value={cajero} onChange={e => setCajero(e.target.value)} style={IS}>
-                  <option value="">— Seleccionar —</option>
-                  {usuariosList.map(n => <option key={n} value={n}>{n}</option>)}
-                </select>
+          {/* ── 2. Cajero + Fecha (pasadías) / Datos del comprobante (otros) ── */}
+          {area === "pasadias" ? (
+            <div style={{ background: B.navyMid, borderRadius: 14, padding: "18px 20px", marginBottom: 20, border: "1px solid rgba(255,255,255,0.07)" }}>
+              <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 14 }}>
+                <div>
+                  <label style={LS}>Cajero</label>
+                  <select value={cajero} onChange={e => setCajero(e.target.value)} style={IS}>
+                    <option value="">— Seleccionar —</option>
+                    {usuariosList.map(n => <option key={n} value={n}>{n}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label style={LS}>Fecha</label>
+                  <input type="date" value={fecha} onChange={e => setFecha(e.target.value)} style={IS} />
+                </div>
               </div>
-              {area !== "pasadias" && (
+            </div>
+          ) : (
+            <div style={{ background: B.navyMid, borderRadius: 14, padding: "18px 20px", marginBottom: 20, border: "1px solid rgba(255,255,255,0.07)" }}>
+              <div style={{ fontSize: 12, color: B.sand, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 16 }}>Datos del comprobante</div>
+              <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr 1fr 1fr", gap: 14 }}>
+                <div>
+                  <label style={LS}>Cajero</label>
+                  <select value={cajero} onChange={e => setCajero(e.target.value)} style={IS}>
+                    <option value="">— Seleccionar —</option>
+                    {usuariosList.map(n => <option key={n} value={n}>{n}</option>)}
+                  </select>
+                </div>
                 <div>
                   <label style={LS}>Caja</label>
                   <select value={numCaja} onChange={e => setNumCaja(e.target.value)} style={IS}>
@@ -497,86 +514,76 @@ export default function CierreCaja() {
                     ))}
                   </select>
                 </div>
-              )}
-              {area !== "pasadias" && (
                 <div>
                   <label style={LS}>No. Comprobante</label>
                   <input value={numComp} onChange={e => setNumComp(e.target.value)} placeholder="Ej: 1353" style={IS} />
                 </div>
-              )}
-              <div>
-                <label style={LS}>Fecha</label>
-                <input type="date" value={fecha} onChange={e => setFecha(e.target.value)} style={IS} />
+                <div>
+                  <label style={LS}>Fecha</label>
+                  <input type="date" value={fecha} onChange={e => setFecha(e.target.value)} style={IS} />
+                </div>
+              </div>
+
+              {/* Upload */}
+              <div style={{ marginTop: 14 }}>
+                <label style={LS}>Comprobante</label>
+                {fileUrl ? (
+                  <div style={{ border: "1px solid #4ade8044", borderRadius: 10, padding: "12px 16px", background: "#4ade8010", display: "flex", alignItems: "center", gap: 12 }}>
+                    <span style={{ fontSize: 22 }}>✅</span>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: 13, color: "#4ade80", fontWeight: 600 }}>Comprobante cargado</div>
+                      <a href={fileUrl} target="_blank" rel="noopener noreferrer"
+                        style={{ fontSize: 11, color: B.sky, textDecoration: "none", marginTop: 2, display: "block" }}>
+                        Ver archivo ↗
+                      </a>
+                    </div>
+                    <button onClick={() => { setFile(null); setFileUrl(""); setParseStatus(null); setParseMsg(""); }}
+                      style={{ background: "none", border: "none", color: "rgba(255,255,255,0.3)", fontSize: 18, cursor: "pointer" }}>✕</button>
+                  </div>
+                ) : uploadingFile ? (
+                  <div style={{ border: "1px solid rgba(255,255,255,0.1)", borderRadius: 10, padding: "14px 18px", display: "flex", alignItems: "center", gap: 12 }}>
+                    <span style={{ fontSize: 22 }}>⏳</span>
+                    <div style={{ fontSize: 13, color: "rgba(255,255,255,0.5)" }}>Subiendo y analizando…</div>
+                  </div>
+                ) : (
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                    <button onClick={() => cameraRef.current?.click()}
+                      style={{ padding: "14px 12px", borderRadius: 10, border: "1px dashed rgba(142,202,230,0.35)", background: "rgba(142,202,230,0.06)", cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
+                      <span style={{ fontSize: 26 }}>📷</span>
+                      <span style={{ fontSize: 12, fontWeight: 700, color: B.sky }}>Tomar foto</span>
+                      <span style={{ fontSize: 10, color: "rgba(255,255,255,0.25)" }}>Cámara → IA auto-completa</span>
+                    </button>
+                    <button onClick={() => fileRef.current?.click()}
+                      style={{ padding: "14px 12px", borderRadius: 10, border: "1px dashed rgba(255,255,255,0.12)", background: "transparent", cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
+                      <span style={{ fontSize: 26 }}>📎</span>
+                      <span style={{ fontSize: 12, fontWeight: 700, color: "rgba(255,255,255,0.5)" }}>Adjuntar archivo</span>
+                      <span style={{ fontSize: 10, color: "rgba(255,255,255,0.25)" }}>PDF, JPG o PNG</span>
+                    </button>
+                  </div>
+                )}
+                <input ref={cameraRef} type="file" accept="image/*" capture="environment" style={{ display: "none" }}
+                  onChange={e => handleFile(e.target.files[0])} />
+                <input ref={fileRef} type="file" accept=".pdf,image/*" style={{ display: "none" }}
+                  onChange={e => handleFile(e.target.files[0])} />
+                {parseStatus === "parsing" && (
+                  <div style={{ marginTop: 8, padding: "8px 12px", borderRadius: 8, background: B.sky + "15", border: `1px solid ${B.sky}33`, fontSize: 12, color: B.sky, display: "flex", alignItems: "center", gap: 8 }}>
+                    <span style={{ animation: "spin 1s linear infinite", display: "inline-block" }}>⏳</span>
+                    Analizando comprobante con IA…
+                  </div>
+                )}
+                {parseStatus === "ok" && (
+                  <div style={{ marginTop: 8, padding: "8px 12px", borderRadius: 8, background: "#4ade8015", border: "1px solid #4ade8033", fontSize: 12, color: "#4ade80" }}>
+                    {parseMsg}
+                  </div>
+                )}
+                {parseStatus === "fail" && (
+                  <div style={{ marginTop: 8, padding: "8px 12px", borderRadius: 8, background: "rgba(251,191,36,0.1)", border: "1px solid rgba(251,191,36,0.2)", fontSize: 12, color: "#fbbf24" }}>
+                    {parseMsg}
+                  </div>
+                )}
               </div>
             </div>
-
-            {/* Upload — oculto para pasadías */}
-            {area !== "pasadias" && (
-            <div style={{ marginTop: 14 }}>
-              <label style={LS}>Comprobante</label>
-
-              {/* Si ya hay archivo cargado */}
-              {fileUrl ? (
-                <div style={{ border: "1px solid #4ade8044", borderRadius: 10, padding: "12px 16px", background: "#4ade8010", display: "flex", alignItems: "center", gap: 12 }}>
-                  <span style={{ fontSize: 22 }}>✅</span>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: 13, color: "#4ade80", fontWeight: 600 }}>Comprobante cargado</div>
-                    <a href={fileUrl} target="_blank" rel="noopener noreferrer"
-                      style={{ fontSize: 11, color: B.sky, textDecoration: "none", marginTop: 2, display: "block" }}>
-                      Ver archivo ↗
-                    </a>
-                  </div>
-                  <button onClick={() => { setFile(null); setFileUrl(""); setParseStatus(null); setParseMsg(""); }}
-                    style={{ background: "none", border: "none", color: "rgba(255,255,255,0.3)", fontSize: 18, cursor: "pointer" }}>✕</button>
-                </div>
-              ) : uploadingFile ? (
-                <div style={{ border: "1px solid rgba(255,255,255,0.1)", borderRadius: 10, padding: "14px 18px", display: "flex", alignItems: "center", gap: 12 }}>
-                  <span style={{ fontSize: 22 }}>⏳</span>
-                  <div style={{ fontSize: 13, color: "rgba(255,255,255,0.5)" }}>Subiendo y analizando…</div>
-                </div>
-              ) : (
-                /* Botones: Tomar foto + Adjuntar archivo */
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                  <button onClick={() => cameraRef.current?.click()}
-                    style={{ padding: "14px 12px", borderRadius: 10, border: "1px dashed rgba(142,202,230,0.35)", background: "rgba(142,202,230,0.06)", cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
-                    <span style={{ fontSize: 26 }}>📷</span>
-                    <span style={{ fontSize: 12, fontWeight: 700, color: B.sky }}>Tomar foto</span>
-                    <span style={{ fontSize: 10, color: "rgba(255,255,255,0.25)" }}>Cámara → IA auto-completa</span>
-                  </button>
-                  <button onClick={() => fileRef.current?.click()}
-                    style={{ padding: "14px 12px", borderRadius: 10, border: "1px dashed rgba(255,255,255,0.12)", background: "transparent", cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
-                    <span style={{ fontSize: 26 }}>📎</span>
-                    <span style={{ fontSize: 12, fontWeight: 700, color: "rgba(255,255,255,0.5)" }}>Adjuntar archivo</span>
-                    <span style={{ fontSize: 10, color: "rgba(255,255,255,0.25)" }}>PDF, JPG o PNG</span>
-                  </button>
-                </div>
-              )}
-
-              {/* Inputs ocultos */}
-              <input ref={cameraRef} type="file" accept="image/*" capture="environment" style={{ display: "none" }}
-                onChange={e => handleFile(e.target.files[0])} />
-              <input ref={fileRef} type="file" accept=".pdf,image/*" style={{ display: "none" }}
-                onChange={e => handleFile(e.target.files[0])} />
-              {/* Parse status */}
-              {parseStatus === "parsing" && (
-                <div style={{ marginTop: 8, padding: "8px 12px", borderRadius: 8, background: B.sky + "15", border: `1px solid ${B.sky}33`, fontSize: 12, color: B.sky, display: "flex", alignItems: "center", gap: 8 }}>
-                  <span style={{ animation: "spin 1s linear infinite", display: "inline-block" }}>⏳</span>
-                  Analizando comprobante con IA…
-                </div>
-              )}
-              {parseStatus === "ok" && (
-                <div style={{ marginTop: 8, padding: "8px 12px", borderRadius: 8, background: "#4ade8015", border: "1px solid #4ade8033", fontSize: 12, color: "#4ade80" }}>
-                  {parseMsg}
-                </div>
-              )}
-              {parseStatus === "fail" && (
-                <div style={{ marginTop: 8, padding: "8px 12px", borderRadius: 8, background: "rgba(251,191,36,0.1)", border: "1px solid rgba(251,191,36,0.2)", fontSize: 12, color: "#fbbf24" }}>
-                  {parseMsg}
-                </div>
-              )}
-            </div>
-            )}
-          </div>
+          )}
 
           {/* ── 3. Panel Ventas del Sistema (solo Pasadías) ── */}
           {area === "pasadias" && cajero && fecha && (
@@ -764,8 +771,8 @@ export default function CierreCaja() {
             </div>
           </div>
 
-          {/* ── 4. INC 8% + Resumen ── */}
-          <div style={{ background: B.navyMid, borderRadius: 14, padding: "18px 20px", marginBottom: 20, border: "1px solid rgba(255,255,255,0.07)" }}>
+          {/* ── 4. INC 8% + Resumen (no aplica para Pasadías) ── */}
+          {area !== "pasadias" && <div style={{ background: B.navyMid, borderRadius: 14, padding: "18px 20px", marginBottom: 20, border: "1px solid rgba(255,255,255,0.07)" }}>
             <div style={{ fontSize: 12, color: B.sand, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 16 }}>Impuestos y resumen</div>
 
             {/* INC 8% */}
@@ -818,7 +825,7 @@ export default function CierreCaja() {
                 </div>
               ))}
             </div>
-          </div>
+          </div>}
 
           {/* ── 5. Cuadre de efectivo ── */}
           {efectivoEsperado > 0 && (
@@ -878,7 +885,7 @@ export default function CierreCaja() {
       {/* ── Historial ── */}
       <div style={{ background: B.navyMid, borderRadius: 14, padding: "18px 20px", border: "1px solid rgba(255,255,255,0.07)" }}>
         <div style={{ fontSize: 12, color: B.sand, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 16 }}>Historial de Cierres</div>
-        <HistorialCierres refresh={historialKey} />
+        <HistorialCierres refresh={historialKey} area={area} />
       </div>
 
     </div>
