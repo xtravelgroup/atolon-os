@@ -288,11 +288,14 @@ function HistorialReservasB2B({ aliadoId }) {
     if (sel.nombre !== editForm.nombre) changes.push(`Nombre: ${sel.nombre} → ${editForm.nombre}`);
     if (sel.notas !== editForm.notas) changes.push("Notas actualizadas");
 
+    // Proteger estado confirmado: nunca puede bajar a otro estado por guardado manual
+    const estadoFinal = sel.estado === "confirmado" ? "confirmado" : editForm.estado;
+
     await supabase.from("reservas").update({
       nombre: editForm.nombre, contacto: editForm.contacto, fecha: editForm.fecha,
       tipo: editForm.tipo, salida_id: editForm.salida_id || null,
       pax_a: editForm.pax_a, pax_n: editForm.pax_n, pax,
-      estado: editForm.estado,
+      estado: estadoFinal,
       abono: editForm.abono, saldo, total: editForm.total,
       notas: editForm.notas, updated_at: new Date().toISOString(),
     }).eq("id", selected);
@@ -468,7 +471,7 @@ function HistorialReservasB2B({ aliadoId }) {
             {/* Estado */}
             <div>
               <label style={LS}>Estado</label>
-              {sel.estado === "confirmado" ? (
+              {(sel.estado === "confirmado" || editForm.estado === "confirmado") ? (
                 <div>
                   <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", borderRadius: 10, background: "#4CAF7D22", border: "1px solid #4CAF7D44" }}>
                     <span style={{ fontSize: 16 }}>✅</span>
