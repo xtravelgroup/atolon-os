@@ -409,13 +409,14 @@ function HistorialReservasB2B({ aliadoId, comisionPct = 0 }) {
   const totalPax = activas.reduce((s, r) => s + (r.pax || 0), 0);
   const pendientes = reservas.filter(r => ["pendiente_pago","pendiente_comprobante","pendiente"].includes(r.estado)).length;
 
-  // Comisión = precio_u − precio_neto_agencia (lo que Atolon gana sobre el neto base)
+  // Comisión = (precio_u − precio_neto) × pax − descuento_agencia
   const getComision = (r) => {
     const pasadia = pasadiasMap[(r.tipo || "").toLowerCase()];
     const netoBase = r.precio_neto || pasadia?.neto || 0;
     const cobrado  = r.precio_u || 0;
-    if (netoBase > 0 && cobrado > 0) return (cobrado - netoBase) * (r.pax || 1);
-    if (comisionPct > 0 && r.total > 0) return Math.round(r.total * comisionPct / 100);
+    const descuento = r.descuento_agencia || 0;
+    if (netoBase > 0 && cobrado > 0) return Math.max(0, (cobrado - netoBase) * (r.pax || 1) - descuento);
+    if (comisionPct > 0 && r.total > 0) return Math.max(0, Math.round(r.total * comisionPct / 100) - descuento);
     return 0;
   };
   const totalComision = activas.reduce((s, r) => s + getComision(r), 0);
@@ -648,11 +649,13 @@ function HistorialReservasB2B({ aliadoId, comisionPct = 0 }) {
               </div>
               {/* Desglose comisión */}
               {(() => {
-                const comisionMonto = getComision(sel);
-                if (!comisionMonto) return null;
                 const pasadia = pasadiasMap[(sel.tipo || "").toLowerCase()];
                 const netoBase = sel.precio_neto || pasadia?.neto || 0;
                 const cobrado  = sel.precio_u || 0;
+                const bruto = netoBase > 0 && cobrado > 0 ? (cobrado - netoBase) * (sel.pax || 1) : 0;
+                const descuento = sel.descuento_agencia || 0;
+                const comisionMonto = getComision(sel);
+                if (!bruto && !comisionMonto) return null;
                 return (
                   <div style={{ borderTop: `1px dashed ${B.navyLight}`, marginTop: 6, paddingTop: 6 }}>
                     <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4, fontSize: 12 }}>
@@ -663,8 +666,14 @@ function HistorialReservasB2B({ aliadoId, comisionPct = 0 }) {
                       <span style={{ color: "rgba(255,255,255,0.35)" }}>Cobrado × {sel.pax} pax</span>
                       <span style={{ color: "rgba(255,255,255,0.5)" }}>{COP(cobrado * (sel.pax || 1))}</span>
                     </div>
-                    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6, fontSize: 12 }}>
-                      <span style={{ color: "#a78bfa" }}>💜 Comisión Atolon</span>
+                    {descuento > 0 && (
+                      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4, fontSize: 12 }}>
+                        <span style={{ color: B.warning }}>🏷️ Descuento agencia</span>
+                        <span style={{ color: B.warning }}>− {COP(descuento)}</span>
+                      </div>
+                    )}
+                    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6, fontSize: 12, borderTop: `1px solid rgba(167,139,250,0.2)`, paddingTop: 6 }}>
+                      <span style={{ color: "#a78bfa", fontWeight: 700 }}>💜 Comisión Atolon</span>
                       <span style={{ color: "#a78bfa", fontWeight: 700 }}>{COP(comisionMonto)}</span>
                     </div>
                   </div>
@@ -729,7 +738,7 @@ function HistorialReservasB2B({ aliadoId, comisionPct = 0 }) {
                 : (
                   <div style={{ display: "flex", flexDirection: "column", gap: 0, maxHeight: 200, overflowY: "auto" }}>
                     {historial.map((h, i) => {
-                      const iconMap = { creado: "🟢", modificacion: "✏️", comprobante_subido: "📎", pago_registrado: "💳", cancelacion: "🔴", reembolso_solicitado: "💸", nota: "📝" };
+                      const iconMap = { creado: "🟢", modificacion: "✏️", comprobante_subido: "📎", pago_registrado: "💳", cancelacion: "🔴", reembolso_solicitado: "💸", nota: "📝", descuento_agencia: "🏷️" };
                       return (
                         <div key={h.id} style={{ display: "flex", gap: 10, padding: "8px 0", borderBottom: i < historial.length - 1 ? `1px solid ${B.navyLight}` : "none" }}>
                           <div style={{ fontSize: 14, flexShrink: 0, marginTop: 1 }}>{iconMap[h.accion] || "•"}</div>
@@ -882,16 +891,18 @@ function HistorialReservasB2B({ aliadoId, comisionPct = 0 }) {
                 const nuevoAbono = (editForm.abono || 0) + pagoForm.monto;
                 const nuevoSaldo = (editForm.total || 0) - nuevoAbono;
                 const nuevoEstado = nuevoSaldo <= 0 ? "confirmado" : editForm.estado;
+                const nuevoDescuento = esDescuento ? ((sel.descuento_agencia || 0) + pagoForm.monto) : (sel.descuento_agencia || 0);
                 await supabase.from("reservas").update({
                   abono: nuevoAbono, saldo: nuevoSaldo, estado: nuevoEstado,
                   forma_pago: esDescuento ? (sel.forma_pago || "descuento_agencia") : pagoForm.metodo,
+                  ...(esDescuento ? { descuento_agencia: nuevoDescuento } : {}),
                   updated_at: new Date().toISOString(),
                 }).eq("id", sel.id);
                 const refWompi = pagoForm._wompiRef ? ` · Ref. Wompi: ${pagoForm._wompiRef}` : "";
                 const desc = esDescuento
-                  ? `Descuento agencia aplicado: ${COP(pagoForm.monto)}${pagoForm.nota ? " — " + pagoForm.nota : ""}${nuevoSaldo <= 0 ? " · Reserva confirmada ✓" : ` · Saldo restante: ${COP(nuevoSaldo)}`}`
+                  ? `🏷️ Descuento agencia: ${COP(pagoForm.monto)}${pagoForm.nota ? " — " + pagoForm.nota : ""} · Comisión neta ajustada${nuevoSaldo <= 0 ? " · Reserva confirmada ✓" : ` · Saldo restante: ${COP(nuevoSaldo)}`}`
                   : `Pago registrado: ${COP(pagoForm.monto)} vía ${pagoForm.metodo}${refWompi}${pagoForm.nota ? " — " + pagoForm.nota : ""}${nuevoSaldo <= 0 ? " · Reserva confirmada ✓" : ` · Saldo restante: ${COP(nuevoSaldo)}`}`;
-                await logHistorial(sel.id, "pago_registrado", desc, { abono: editForm.abono, estado: editForm.estado }, { abono: nuevoAbono, estado: nuevoEstado }, pagoForm.usuario || "admin");
+                await logHistorial(sel.id, esDescuento ? "descuento_agencia" : "pago_registrado", desc, { abono: editForm.abono, estado: editForm.estado, descuento_agencia: sel.descuento_agencia || 0 }, { abono: nuevoAbono, estado: nuevoEstado, descuento_agencia: nuevoDescuento }, pagoForm.usuario || "admin");
                 // Asignar puntos solo si el vendedor no es admin
                 if (nuevoEstado === "confirmado" && sel.vendedor_b2b_id) {
                   supabase.from("b2b_usuarios").select("rol").eq("id", sel.vendedor_b2b_id).single()
@@ -909,7 +920,7 @@ function HistorialReservasB2B({ aliadoId, comisionPct = 0 }) {
                       }
                     }).catch(() => {});
                 }
-                setEditForm(f => ({ ...f, abono: nuevoAbono, estado: nuevoEstado }));
+                setEditForm(f => ({ ...f, abono: nuevoAbono, estado: nuevoEstado, descuento_agencia: nuevoDescuento }));
                 setShowPagoModal(false);
                 fetchR(); fetchHistorial(sel.id);
               }}
