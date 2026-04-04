@@ -216,13 +216,13 @@ function HistorialReservasB2B({ aliadoId, comisionPct = 0 }) {
     const [resR, salR, pasR] = await Promise.all([
       supabase.from("reservas").select("*").eq("aliado_id", aliadoId).order("fecha", { ascending: false }).limit(100),
       supabase.from("salidas").select("id,hora,nombre").eq("activo", true).order("orden"),
-      supabase.from("pasadias").select("nombre,precio").eq("activo", true),
+      supabase.from("pasadias").select("nombre,precio,precio_neto_agencia").eq("activo", true),
     ]);
     setReservas(resR.data || []);
     setSalidas(salR.data || []);
-    // Build map tipo → precio público
+    // Build map tipo → { precio, neto }
     const pm = {};
-    (pasR.data || []).forEach(p => { pm[p.nombre.toLowerCase()] = p.precio; });
+    (pasR.data || []).forEach(p => { pm[p.nombre.toLowerCase()] = { precio: p.precio, neto: p.precio_neto_agencia || 0 }; });
     setPasadiasMap(pm);
     setLoading(false);
   }, [aliadoId]);
@@ -395,17 +395,12 @@ function HistorialReservasB2B({ aliadoId, comisionPct = 0 }) {
   const totalPax = activas.reduce((s, r) => s + (r.pax || 0), 0);
   const pendientes = reservas.filter(r => ["pendiente_pago","pendiente_comprobante","pendiente"].includes(r.estado)).length;
 
-  // Comisión = precio público pasadía - precio_u de la reserva
+  // Comisión = precio_u − precio_neto_agencia (lo que Atolon gana sobre el neto base)
   const getComision = (r) => {
-    // 1. Precios desglosados en la reserva (AgenciaPortal)
-    const pub = r.precio_publico || 0;
-    const neto = r.precio_neto || 0;
-    if (pub > 0 && neto > 0 && pub > neto) return (pub - neto) * (r.pax || 1);
-    // 2. Comparar precio_u con precio público de la pasadía
-    const precioPublicoPasadia = pasadiasMap[(r.tipo || "").toLowerCase()] || 0;
-    if (precioPublicoPasadia > 0 && r.precio_u > 0 && precioPublicoPasadia > r.precio_u)
-      return (precioPublicoPasadia - r.precio_u) * (r.pax || 1);
-    // 3. Fallback: % del aliado sobre el total
+    const pasadia = pasadiasMap[(r.tipo || "").toLowerCase()];
+    const netoBase = r.precio_neto || pasadia?.neto || 0;
+    const cobrado  = r.precio_u || 0;
+    if (netoBase > 0 && cobrado > 0) return (cobrado - netoBase) * (r.pax || 1);
     if (comisionPct > 0 && r.total > 0) return Math.round(r.total * comisionPct / 100);
     return 0;
   };
@@ -641,19 +636,18 @@ function HistorialReservasB2B({ aliadoId, comisionPct = 0 }) {
               {(() => {
                 const comisionMonto = getComision(sel);
                 if (!comisionMonto) return null;
-                const precioPublicoPasadia = pasadiasMap[(sel.tipo || "").toLowerCase()] || sel.precio_publico || 0;
-                const netoAgencia = sel.precio_u || 0;
+                const pasadia = pasadiasMap[(sel.tipo || "").toLowerCase()];
+                const netoBase = sel.precio_neto || pasadia?.neto || 0;
+                const cobrado  = sel.precio_u || 0;
                 return (
                   <div style={{ borderTop: `1px dashed ${B.navyLight}`, marginTop: 6, paddingTop: 6 }}>
-                    {precioPublicoPasadia > 0 && (
-                      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4, fontSize: 12 }}>
-                        <span style={{ color: "rgba(255,255,255,0.35)" }}>Precio público × {sel.pax} pax</span>
-                        <span style={{ color: "rgba(255,255,255,0.5)" }}>{COP(precioPublicoPasadia * (sel.pax || 1))}</span>
-                      </div>
-                    )}
                     <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4, fontSize: 12 }}>
-                      <span style={{ color: "rgba(255,255,255,0.35)" }}>Neto agencia × {sel.pax} pax</span>
-                      <span style={{ color: "rgba(255,255,255,0.5)" }}>{COP(netoAgencia * (sel.pax || 1))}</span>
+                      <span style={{ color: "rgba(255,255,255,0.35)" }}>Neto base × {sel.pax} pax</span>
+                      <span style={{ color: "rgba(255,255,255,0.5)" }}>{COP(netoBase * (sel.pax || 1))}</span>
+                    </div>
+                    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4, fontSize: 12 }}>
+                      <span style={{ color: "rgba(255,255,255,0.35)" }}>Cobrado × {sel.pax} pax</span>
+                      <span style={{ color: "rgba(255,255,255,0.5)" }}>{COP(cobrado * (sel.pax || 1))}</span>
                     </div>
                     <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6, fontSize: 12 }}>
                       <span style={{ color: "#a78bfa" }}>💜 Comisión Atolon</span>
