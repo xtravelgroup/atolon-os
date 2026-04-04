@@ -1,0 +1,4 @@
+ALTER TABLE leads ADD COLUMN IF NOT EXISTS pax int DEFAULT 0;
+ALTER TABLE leads ADD COLUMN IF NOT EXISTS fecha_visita date;
+ALTER TABLE leads ADD COLUMN IF NOT EXISTS hora_visita text;
+ALTER TABLE leads ADD COLUMN IF NOT EXISTS tipo_pasadia text;

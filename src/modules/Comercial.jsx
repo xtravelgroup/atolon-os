@@ -1,5 +1,8 @@
 import { useState, useEffect, useCallback } from "react";
-import { B, COP } from "../brand";
+import { B, COP, PASADIAS } from "../brand";
+
+const TIPOS_PASADIA = ["— Sin especificar —", ...PASADIAS.map(p => p.tipo)];
+const HORAS = ["08:30", "10:00", "11:30", "13:00"];
 import { supabase } from "../lib/supabase";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -127,6 +130,26 @@ function LeadCard({ lead, onSelect }) {
         <span style={badge(lead.canal)}>{lead.canal}</span>
       </div>
 
+      {/* Detalles de visita */}
+      {(lead.tipoPasadia || lead.fechaVisita || lead.pax > 0) && (
+        <div style={{ background: "rgba(255,255,255,0.05)", borderRadius: 8, padding: "7px 10px", marginBottom: 8, display: "flex", flexWrap: "wrap", gap: 6 }}>
+          {lead.tipoPasadia && (
+            <span style={{ fontSize: 11, color: "#fff", fontWeight: 600 }}>🏖️ {lead.tipoPasadia}</span>
+          )}
+          {lead.pax > 0 && (
+            <span style={{ fontSize: 11, color: "rgba(255,255,255,0.6)" }}>· 👥 {lead.pax} pax</span>
+          )}
+          {lead.fechaVisita && (
+            <span style={{ fontSize: 11, color: "rgba(255,255,255,0.6)" }}>
+              · 📅 {new Date(lead.fechaVisita + "T12:00:00").toLocaleDateString("es-CO", { day: "numeric", month: "short" })}
+            </span>
+          )}
+          {lead.horaVisita && (
+            <span style={{ fontSize: 11, color: "rgba(255,255,255,0.6)" }}>· 🕐 {lead.horaVisita}</span>
+          )}
+        </div>
+      )}
+
       <div style={{ fontSize: 15, fontWeight: 700, color: ETAPA_COLORS[lead.etapa]?.accent || B.sky, marginBottom: 6 }}>
         {COP(lead.valorEstimado)}
       </div>
@@ -239,7 +262,7 @@ function VendorTable({ stats }) {
 }
 
 function Modal({ open, onClose, onSubmit }) {
-  const empty = { nombre: "", contacto: "", tel: "", email: "", canal: "Web", valorEstimado: "", vendedor: VENDEDORES[0] };
+  const empty = { nombre: "", contacto: "", tel: "", email: "", canal: "Web", valorEstimado: "", vendedor: VENDEDORES[0], pax: "", fecha_visita: "", hora_visita: "", tipo_pasadia: "" };
   const [form, setForm] = useState(empty);
   if (!open) return null;
 
@@ -287,6 +310,10 @@ function Modal({ open, onClose, onSubmit }) {
       valor_est: Number(form.valorEstimado) || 0,
       stage: "Nuevo",
       fecha_creacion: new Date().toLocaleDateString("en-CA"),
+      pax: Number(form.pax) || null,
+      fecha_visita: form.fecha_visita || null,
+      hora_visita: form.hora_visita || null,
+      tipo_pasadia: form.tipo_pasadia && form.tipo_pasadia !== "— Sin especificar —" ? form.tipo_pasadia : null,
     });
     setForm(empty);
     onClose();
@@ -313,6 +340,10 @@ function Modal({ open, onClose, onSubmit }) {
           {field("Email", "email", "email")}
           {field("Canal", "canal", "text", CANALES)}
           {field("Vendedor", "vendedor", "text", VENDEDORES)}
+          {field("Tipo de Pasadía", "tipo_pasadia", "text", TIPOS_PASADIA)}
+          {field("Personas (pax)", "pax", "number")}
+          {field("Fecha visita", "fecha_visita", "date")}
+          {field("Hora salida", "hora_visita", "text", ["— Sin hora —", ...HORAS])}
           <div style={{ gridColumn: "1 / -1" }}>{field("Valor Estimado (COP)", "valorEstimado", "number")}</div>
         </div>
 
@@ -475,6 +506,10 @@ export default function Comercial() {
         etiquetas: r.etiquetas,
         perdidoRazon: r.perdido_razon,
         fechaPago: r.fecha_pago || null,
+        pax: r.pax || 0,
+        fechaVisita: r.fecha_visita || null,
+        horaVisita: r.hora_visita || null,
+        tipoPasadia: r.tipo_pasadia || null,
       })));
     }
     setLoading(false);
