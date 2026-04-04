@@ -455,27 +455,41 @@ function HistorialReservasB2B({ aliadoId }) {
             {/* Estado */}
             <div>
               <label style={LS}>Estado</label>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                {ESTADOS.map(e => {
-                  const sc = STATUS_CFG[e] || { color: B.navyLight };
-                  const isConfirmar = e === "confirmado";
-                  return (
-                    <button key={e} onClick={() => {
-                      if (isConfirmar && editForm.estado !== "confirmado") {
-                        // Abrir modal de pago para confirmar
-                        setPagoForm({ metodo: "transferencia", monto: (editForm.total || 0) - (editForm.abono || 0), nota: "", usuario: "", _wompiRef: "" });
-                        setShowPagoModal(true);
-                      } else {
-                        ef("estado", e);
-                      }
-                    }}
-                      style={{ padding: "5px 12px", borderRadius: 8, border: `2px solid ${editForm.estado === e ? sc.color : B.navyLight}`, background: editForm.estado === e ? sc.color + "22" : "transparent", color: editForm.estado === e ? sc.color : "rgba(255,255,255,0.4)", fontSize: 11, cursor: "pointer", fontWeight: editForm.estado === e ? 700 : 400 }}>
-                      {STATUS_CFG[e]?.label || e}{isConfirmar && editForm.estado !== "confirmado" ? " →" : ""}
-                    </button>
-                  );
-                })}
-              </div>
-              {editForm.estado !== "confirmado" && <div style={{ fontSize: 10, color: "rgba(255,255,255,0.25)", marginTop: 5 }}>Para confirmar usa "Confirmar →" — se pedirá el método de pago</div>}
+              {sel.estado === "confirmado" ? (
+                <div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", borderRadius: 10, background: "#4CAF7D22", border: "1px solid #4CAF7D44" }}>
+                    <span style={{ fontSize: 16 }}>✅</span>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: "#4CAF7D" }}>Reserva Confirmada</div>
+                      <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", marginTop: 2 }}>El estado no puede cambiarse manualmente — usa cambio de fecha o cancelación</div>
+                    </div>
+                    <span style={{ fontSize: 20 }}>🔒</span>
+                  </div>
+                </div>
+              ) : (
+                <div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                    {ESTADOS.filter(e => e !== "cancelado").map(e => {
+                      const sc = STATUS_CFG[e] || { color: B.navyLight };
+                      const isConfirmar = e === "confirmado";
+                      return (
+                        <button key={e} onClick={() => {
+                          if (isConfirmar) {
+                            setPagoForm({ metodo: "transferencia", monto: (editForm.total || 0) - (editForm.abono || 0), nota: "", usuario: "", _wompiRef: "" });
+                            setShowPagoModal(true);
+                          } else {
+                            ef("estado", e);
+                          }
+                        }}
+                          style={{ padding: "5px 12px", borderRadius: 8, border: `2px solid ${editForm.estado === e ? sc.color : B.navyLight}`, background: editForm.estado === e ? sc.color + "22" : "transparent", color: editForm.estado === e ? sc.color : "rgba(255,255,255,0.4)", fontSize: 11, cursor: "pointer", fontWeight: editForm.estado === e ? 700 : 400 }}>
+                          {STATUS_CFG[e]?.label || e}{isConfirmar ? " →" : ""}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <div style={{ fontSize: 10, color: "rgba(255,255,255,0.25)", marginTop: 5 }}>Para confirmar usa "Confirmar →" — se pedirá el método de pago</div>
+                </div>
+              )}
             </div>
 
             {/* Datos básicos */}
