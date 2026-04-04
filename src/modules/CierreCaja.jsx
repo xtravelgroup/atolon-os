@@ -479,7 +479,7 @@ export default function CierreCaja() {
           {/* ── 2. Datos del comprobante ── */}
           <div style={{ background: B.navyMid, borderRadius: 14, padding: "18px 20px", marginBottom: 20, border: "1px solid rgba(255,255,255,0.07)" }}>
             <div style={{ fontSize: 12, color: B.sand, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 16 }}>Datos del comprobante</div>
-            <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr 1fr 1fr", gap: 14 }}>
+            <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : (area === "pasadias" ? "1fr 1fr" : "1fr 1fr 1fr 1fr"), gap: 14 }}>
               <div>
                 <label style={LS}>Cajero</label>
                 <select value={cajero} onChange={e => setCajero(e.target.value)} style={IS}>
@@ -487,26 +487,31 @@ export default function CierreCaja() {
                   {usuariosList.map(n => <option key={n} value={n}>{n}</option>)}
                 </select>
               </div>
-              <div>
-                <label style={LS}>Caja</label>
-                <select value={numCaja} onChange={e => setNumCaja(e.target.value)} style={IS}>
-                  <option value="">— Seleccionar —</option>
-                  {["Bar", "Bar Playa", "Room Service", "Eventos"].map(c => (
-                    <option key={c} value={c}>{c}</option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label style={LS}>No. Comprobante</label>
-                <input value={numComp} onChange={e => setNumComp(e.target.value)} placeholder="Ej: 1353" style={IS} />
-              </div>
+              {area !== "pasadias" && (
+                <div>
+                  <label style={LS}>Caja</label>
+                  <select value={numCaja} onChange={e => setNumCaja(e.target.value)} style={IS}>
+                    <option value="">— Seleccionar —</option>
+                    {["Bar", "Bar Playa", "Room Service", "Eventos"].map(c => (
+                      <option key={c} value={c}>{c}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+              {area !== "pasadias" && (
+                <div>
+                  <label style={LS}>No. Comprobante</label>
+                  <input value={numComp} onChange={e => setNumComp(e.target.value)} placeholder="Ej: 1353" style={IS} />
+                </div>
+              )}
               <div>
                 <label style={LS}>Fecha</label>
                 <input type="date" value={fecha} onChange={e => setFecha(e.target.value)} style={IS} />
               </div>
             </div>
 
-            {/* Upload */}
+            {/* Upload — oculto para pasadías */}
+            {area !== "pasadias" && (
             <div style={{ marginTop: 14 }}>
               <label style={LS}>Comprobante</label>
 
@@ -570,6 +575,7 @@ export default function CierreCaja() {
                 </div>
               )}
             </div>
+            )}
           </div>
 
           {/* ── 3. Panel Ventas del Sistema (solo Pasadías) ── */}

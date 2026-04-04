@@ -239,7 +239,7 @@ export default function Financiero() {
   const cierresAyBDePeriodo = (key) => cierresDePeriodo(key).filter(c => c.area === "ayb");
 
   const totalCierres = (key) =>
-    cierresDePeriodo(key).reduce((s, c) => s + (c.total_ventas || c.total_general || 0), 0);
+    cierresDePeriodo(key).filter(c => c.area !== "pasadias").reduce((s, c) => s + (c.total_ventas || c.total_general || 0), 0);
 
   const totalAyB = (key) =>
     cierresAyBDePeriodo(key).reduce((s, c) => s + (c.total_ventas || c.total_general || 0), 0);
