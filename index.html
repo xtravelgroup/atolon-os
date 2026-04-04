@@ -48,6 +48,15 @@
   <body>
     <div id="root"></div>
     <script>
+      // Desinstalar service worker antiguo (PWA desactivada durante desarrollo)
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.getRegistrations().then(function(regs) {
+          regs.forEach(function(r) { r.unregister(); });
+        });
+        caches.keys().then(function(names) {
+          names.forEach(function(name) { caches.delete(name); });
+        });
+      }
       // Abrir picker al hacer click en cualquier parte del input de fecha
       document.addEventListener("click", function(e) {
         if (e.target.type === "date") {
