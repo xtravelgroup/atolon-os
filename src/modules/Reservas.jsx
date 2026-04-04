@@ -901,7 +901,7 @@ function ReservaModal({ onClose, onSave, isMobile, salidaList = [], aliadoList =
       const prev = sorted[idx - 1];
       const prevCap = (prev.capacidad_total || 1) + (overridesFecha[prev.id]?.extra_embarcaciones || []).reduce((sum, e) => sum + (e.capacidad || 0), 0);
       const pct = (paxMapFecha[prev.id] || 0) / prevCap;
-      return pct >= 0.75;
+      return pct >= (prev.auto_umbral || 75) / 100;
     });
   })();
 
@@ -1398,13 +1398,13 @@ function TabCalendario({ salidas, cierres, embarcaciones }) {
   const getCierreForDate = (fecha) => cierres.find(c => c.activo && c.fecha === fecha);
   const salidasActivas = salidas.filter(s => s.activo);
 
-  // Cascade auto-apertura: each salida (sorted by hora) opens when the previous reaches 75%
+  // Cascade auto-apertura: each salida opens when the previous reaches its auto_umbral %
   const autoAperturaCheck = (s, resDia) => {
     const sorted = [...salidasActivas].sort((a, b) => a.hora.localeCompare(b.hora));
     const idx = sorted.findIndex(x => x.id === s.id);
     if (idx <= 0) return true; // primera salida: siempre visible
     const prev = sorted[idx - 1];
-    return (resDia[prev.id] || 0) / (prev.capacidad_total || 1) >= 0.75;
+    return (resDia[prev.id] || 0) / (prev.capacidad_total || 1) >= (prev.auto_umbral || 75) / 100;
   };
 
   const getSalidasVisibles = (fecha) => {
@@ -1816,10 +1816,10 @@ export default function Reservas() {
         if ((cierre.salidas || []).includes(s.id)) return false;
       }
       if (!s.auto_apertura) return true; // fixed salida: always open
-      // cascade: open only if previous salida is ≥75% full
+      // cascade: open only if previous salida is ≥ auto_umbral% full
       if (idx === 0) return true;
       const prev = sorted[idx - 1];
-      return (pm[prev.id] || 0) / (prev.capacidad_total || 1) >= 0.75;
+      return (pm[prev.id] || 0) / (prev.capacidad_total || 1) >= (prev.auto_umbral || 75) / 100;
     });
   };
 
