@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { B, COP, todayStr } from "../brand";
 import { supabase } from "../lib/supabase";
 import { useMobile } from "../lib/useMobile";
@@ -13,11 +13,19 @@ const IS = {
 const LS = { fontSize: 11, color: "rgba(255,255,255,0.5)", display: "block", marginBottom: 5, textTransform: "uppercase", letterSpacing: "0.06em" };
 
 const AREAS = [
-  { key: "ayb",         label: "A&B",          icon: "🍽️",  desc: "Alimentos y Bebidas" },
-  { key: "pasadias",    label: "Pasadías",      icon: "🏖️",  desc: "Taquilla / Muelle" },
-  { key: "after_island",label: "After Island",  icon: "🌙",  desc: "Nocturno" },
-  { key: "otros",       label: "Otros",         icon: "📦",  desc: "Otro punto de venta" },
+  { key: "ayb",      label: "A&B",      icon: "🍽️", desc: "Alimentos y Bebidas" },
+  { key: "pasadias", label: "Pasadías", icon: "🏖️", desc: "VIP · Exclusive · After Island · Todos los tipos" },
+  { key: "otros",    label: "Otros",    icon: "📦", desc: "Otro punto de venta" },
 ];
+
+// Mapeo forma_pago de reservas → método de cierre de caja (Pasadías: solo Datáfono y Efectivo)
+const FORMA_TO_METODO = {
+  "Efectivo":  "efectivo",
+  "Datáfono":  "datafono",
+};
+
+// Métodos visibles por área
+const METODOS_PASADIAS = ["datafono", "efectivo"];
 
 const METODOS = [
   { key: "datafono",      label: "Datáfono",      icon: "💳" },
@@ -208,6 +216,51 @@ export default function CierreCaja() {
   const [savedId, setSavedId]   = useState(null);
   const [error, setError]       = useState(null);
   const [historialKey, setHistorialKey] = useState(0);
+
+  // ── Reservas del día (solo para área Pasadías) ───────────────────────────────
+  const [reservasDia,     setReservasDia]     = useState([]);
+  const [loadingReservas, setLoadingReservas] = useState(false);
+
+  useEffect(() => {
+    if (!supabase || area !== "pasadias" || !fecha || !cajero) {
+      setReservasDia([]); return;
+    }
+    setLoadingReservas(true);
+    supabase.from("reservas")
+      .select("id, nombre, tipo, forma_pago, abono, pax, precio_u, total, estado")
+      .eq("fecha", fecha)
+      .eq("vendedor", cajero)
+      .neq("forma_pago", "link_pago")
+      .neq("estado", "cancelado")
+      .order("created_at")
+      .then(({ data }) => {
+        const rows = data || [];
+        setReservasDia(rows);
+        // Auto-llenar métodos desde las reservas (excluye CXC)
+        const newM = initMetodos();
+        rows.forEach(r => {
+          const mk = FORMA_TO_METODO[r.forma_pago];
+          if (!mk) return;
+          const cur = parseCOP(newM[mk].venta) || 0;
+          newM[mk].venta = String(cur + (r.abono || 0));
+        });
+        setMetodos(newM);
+        setLoadingReservas(false);
+      });
+  }, [area, fecha, cajero]); // eslint-disable-line
+
+  // Totales de reservas por método para mostrar en el panel
+  const resumenReservas = useMemo(() => {
+    const map = {};
+    let totalCXC = 0;
+    reservasDia.forEach(r => {
+      if (r.forma_pago === "CXC") { totalCXC += r.abono || 0; return; }
+      const mk = FORMA_TO_METODO[r.forma_pago] || "otros";
+      if (!map[mk]) map[mk] = 0;
+      map[mk] += r.abono || 0;
+    });
+    return { porMetodo: map, totalCXC };
+  }, [reservasDia]);
 
   const setM = (key, field, val) =>
     setMetodos(p => ({ ...p, [key]: { ...p[key], [field]: val } }));
@@ -519,9 +572,76 @@ export default function CierreCaja() {
             </div>
           </div>
 
-          {/* ── 3. Métodos de pago ── */}
+          {/* ── 3. Panel Ventas del Sistema (solo Pasadías) ── */}
+          {area === "pasadias" && cajero && fecha && (
+            <div style={{ background: B.navyMid, borderRadius: 14, padding: "18px 20px", marginBottom: 20, border: "1px solid rgba(56,189,248,0.2)" }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+                <div style={{ fontSize: 12, color: B.sky, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em" }}>
+                  🧾 Ventas del sistema — {cajero} · {fmtFecha(fecha)}
+                </div>
+                {loadingReservas && <span style={{ fontSize: 11, color: "rgba(255,255,255,0.3)" }}>Cargando…</span>}
+                {!loadingReservas && <span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)" }}>{reservasDia.length} reserva{reservasDia.length !== 1 ? "s" : ""}</span>}
+              </div>
+
+              {!loadingReservas && reservasDia.length === 0 && (
+                <div style={{ fontSize: 13, color: "rgba(255,255,255,0.3)", padding: "8px 0" }}>Sin reservas registradas para este cajero en esta fecha.</div>
+              )}
+
+              {reservasDia.length > 0 && (
+                <>
+                  {/* Lista de reservas */}
+                  <div style={{ marginBottom: 14 }}>
+                    {reservasDia.map(r => (
+                      <div key={r.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "7px 0", borderBottom: "1px solid rgba(255,255,255,0.05)", fontSize: 13 }}>
+                        <div>
+                          <span style={{ color: "#fff", fontWeight: 600 }}>{r.nombre}</span>
+                          <span style={{ color: "rgba(255,255,255,0.4)", marginLeft: 8, fontSize: 11 }}>{r.tipo} · {r.pax} pax</span>
+                        </div>
+                        <div style={{ textAlign: "right" }}>
+                          <span style={{ color: B.sand, fontWeight: 700, marginRight: 10 }}>{COP(r.abono)}</span>
+                          <span style={{ fontSize: 11, color: r.forma_pago === "CXC" ? B.sky : "rgba(255,255,255,0.4)", background: "rgba(255,255,255,0.06)", padding: "2px 8px", borderRadius: 10 }}>
+                            {r.forma_pago === "CXC" ? "Cuenta B2B" : r.forma_pago}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Resumen por método */}
+                  <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                    {Object.entries(resumenReservas.porMetodo).map(([mk, total]) => {
+                      const m = METODOS.find(x => x.key === mk);
+                      return (
+                        <div key={mk} style={{ background: B.navyLight, borderRadius: 8, padding: "8px 14px", fontSize: 12 }}>
+                          <span style={{ color: "rgba(255,255,255,0.5)" }}>{m?.icon} {m?.label}: </span>
+                          <strong style={{ color: "#fff" }}>{COP(total)}</strong>
+                        </div>
+                      );
+                    })}
+                    {resumenReservas.totalCXC > 0 && (
+                      <div style={{ background: B.navyLight, borderRadius: 8, padding: "8px 14px", fontSize: 12 }}>
+                        <span style={{ color: "rgba(255,255,255,0.5)" }}>🏢 Cuenta B2B: </span>
+                        <strong style={{ color: B.sky }}>{COP(resumenReservas.totalCXC)}</strong>
+                      </div>
+                    )}
+                    <div style={{ background: "#4ade8015", border: "1px solid #4ade8033", borderRadius: 8, padding: "8px 14px", fontSize: 12 }}>
+                      <span style={{ color: "rgba(255,255,255,0.5)" }}>Total cobrado: </span>
+                      <strong style={{ color: "#4ade80" }}>{COP(Object.values(resumenReservas.porMetodo).reduce((s, v) => s + v, 0))}</strong>
+                    </div>
+                  </div>
+                  <div style={{ marginTop: 10, fontSize: 11, color: "rgba(255,255,255,0.3)" }}>
+                    Los montos de Datáfono y Efectivo fueron pre-llenados automáticamente. Ajusta si hay diferencias.
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+
+          {/* ── 4. Métodos de pago ── */}
           <div style={{ background: B.navyMid, borderRadius: 14, padding: "18px 20px", marginBottom: 20, border: "1px solid rgba(255,255,255,0.07)" }}>
-            <div style={{ fontSize: 12, color: B.sand, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 16 }}>Métodos de pago</div>
+            <div style={{ fontSize: 12, color: B.sand, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 16 }}>
+              {area === "pasadias" ? "Verificar montos" : "Métodos de pago"}
+            </div>
 
             {/* Column headers */}
             {!isMobile && (
@@ -533,7 +653,7 @@ export default function CierreCaja() {
               </div>
             )}
 
-            {METODOS.filter(m => m.key !== "otros").map(m => {
+            {METODOS.filter(m => m.key !== "otros" && (area !== "pasadias" || METODOS_PASADIAS.includes(m.key))).map(m => {
               const isEfectivo = m.key === "efectivo";
               const tot = computed[m.key].total;
               return (
@@ -574,8 +694,8 @@ export default function CierreCaja() {
               );
             })}
 
-            {/* ── Otros métodos (dinámico) ── */}
-            {otrosList.map((o) => {
+            {/* ── Otros métodos (dinámico) — solo A&B y Otros ── */}
+            {area !== "pasadias" && otrosList.map((o) => {
               const oTot = parseCOP(o.venta) + parseCOP(o.propina);
               return (
                 <div key={o.id} style={{
@@ -612,14 +732,16 @@ export default function CierreCaja() {
                 </div>
               );
             })}
-            <button onClick={addOtro} style={{
-              width: "100%", background: "none",
-              border: "1px dashed rgba(255,255,255,0.12)", borderRadius: 8,
-              padding: "9px 14px", color: "rgba(255,255,255,0.4)", fontSize: 12,
-              cursor: "pointer", marginBottom: 10, textAlign: "left",
-            }}>
-              ➕ Agregar otro método de pago
-            </button>
+            {area !== "pasadias" && (
+              <button onClick={addOtro} style={{
+                width: "100%", background: "none",
+                border: "1px dashed rgba(255,255,255,0.12)", borderRadius: 8,
+                padding: "9px 14px", color: "rgba(255,255,255,0.4)", fontSize: 12,
+                cursor: "pointer", marginBottom: 10, textAlign: "left",
+              }}>
+                ➕ Agregar otro método de pago
+              </button>
+            )}
 
             {/* Totals row */}
             <div style={{
