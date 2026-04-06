@@ -279,7 +279,8 @@ const IS = {
   boxSizing: "border-box", fontFamily: "inherit",
 };
 
-function DeptConfigSection({ depto, vendedores, draft, onChange, isMobile }) {
+function DeptConfigSection({ depto, vendedores: allVendedores, draft, onChange, isMobile }) {
+  const vendedores = allVendedores.filter(v => v.dept_ventas === depto.key);
   const draftKey = (entity) => `${depto.key}::${entity}`;
   const getVal = (entity, field) => draft[deptKey(entity)]?.[field] ?? "";
   const deptKey = (entity) => `${depto.key}::${entity}`;
@@ -435,7 +436,7 @@ export default function Metas() {
       { data: reservas },
       { data: eventos },
     ] = await Promise.all([
-      supabase.from("usuarios").select("nombre").eq("activo", true).eq("es_vendedor", true).order("nombre"),
+      supabase.from("usuarios").select("nombre, dept_ventas").eq("activo", true).eq("es_vendedor", true).order("nombre"),
       supabase.from("metas").select("*").eq("periodo", periodo),
       supabase.from("reservas")
         .select("ep, pax_a, pax_n, total")
@@ -520,7 +521,10 @@ export default function Metas() {
 
   // Rankings per dept
   const rankings = useMemo(() => {
-    const pasRanking = vendedores.map(v => {
+    const pasVendedores = vendedores.filter(v => v.dept_ventas === "pasadias");
+    const gruVendedores = vendedores.filter(v => v.dept_ventas === "grupos");
+
+    const pasRanking = pasVendedores.map(v => {
       const rData = reservasData.find(r => r.ep === v.nombre) || { pasadias: 0, ingresos: 0 };
       const mRow  = metasDB.find(m => m.departamento === "pasadias" && m.tipo === "vendedor" && m.vendedor_nombre === v.nombre);
       return {
@@ -530,7 +534,7 @@ export default function Metas() {
       };
     }).sort((a, b) => b.real.metric - a.real.metric || b.real.ingresos - a.real.ingresos);
 
-    const gruRanking = vendedores.map(v => {
+    const gruRanking = gruVendedores.map(v => {
       const eData = eventosData.find(e => e.vendedor === v.nombre) || { grupos: 0, ingresos: 0 };
       const mRow  = metasDB.find(m => m.departamento === "grupos" && m.tipo === "vendedor" && m.vendedor_nombre === v.nombre);
       return {
@@ -572,8 +576,8 @@ export default function Metas() {
         updated_at:      new Date().toISOString(),
       });
 
-      // Vendor rows
-      for (const v of vendedores) {
+      // Vendor rows — only for vendedores belonging to this dept
+      for (const v of vendedores.filter(v => v.dept_ventas === depto.key)) {
         const existingV = metasDB.find(m => m.departamento === depto.key && m.tipo === "vendedor" && m.vendedor_nombre === v.nombre);
         const vd = draft[`${depto.key}::${v.nombre}`] || {};
         upserts.push({
