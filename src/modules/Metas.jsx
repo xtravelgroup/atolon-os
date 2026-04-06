@@ -67,7 +67,7 @@ function fmtM(v) {
 
 const DEPTOS = [
   { key: "pasadias", label: "Venta Pasadías",        icon: "🏖️", metricLabel: "Pasadías" },
-  { key: "grupos",   label: "Grupos & Eventos",       icon: "🎉", metricLabel: "Grupos Cerrados" },
+  { key: "grupos",   label: "Grupos & Eventos",       icon: "🎉", metricLabel: "Pasadías Grupos" },
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -449,8 +449,9 @@ export default function Metas() {
     ] = await Promise.all([
       supabase.from("usuarios").select("nombre, dept_ventas").eq("activo", true).eq("es_vendedor", true).order("nombre"),
       supabase.from("metas").select("*").eq("periodo", periodo),
+      // Pasadías individuales (excluye canal GRUPO)
       supabase.from("reservas")
-        .select("ep, pax_a, pax_n, total")
+        .select("ep, pax_a, pax_n, total, canal")
         .gte("fecha", start)
         .lte("fecha", end)
         .neq("estado", "Cancelada"),
@@ -464,23 +465,38 @@ export default function Metas() {
     setVendedores(usrs || []);
     setMetasDB(metas || []);
 
-    // Aggregate reservas by ep
-    const resMap = {};
+    // Aggregate reservas: split individual vs grupo
+    const resMap = {};   // pasadías individuales
+    const gruResMap = {}; // pasadías de grupo (canal ILIKE 'grupo')
     for (const r of (reservas || [])) {
+      const isGrupo = (r.canal || "").toLowerCase() === "grupo";
       const k = r.ep || "Sin asignar";
-      if (!resMap[k]) resMap[k] = { ep: k, pasadias: 0, ingresos: 0 };
-      resMap[k].pasadias += (r.pax_a || 0) + (r.pax_n || 0);
-      resMap[k].ingresos += (r.total || 0);
+      if (isGrupo) {
+        if (!gruResMap[k]) gruResMap[k] = { ep: k, pasadias: 0, ingresos: 0 };
+        gruResMap[k].pasadias += (r.pax_a || 0) + (r.pax_n || 0);
+        gruResMap[k].ingresos += (r.total || 0);
+      } else {
+        if (!resMap[k]) resMap[k] = { ep: k, pasadias: 0, ingresos: 0 };
+        resMap[k].pasadias += (r.pax_a || 0) + (r.pax_n || 0);
+        resMap[k].ingresos += (r.total || 0);
+      }
     }
     setReservasData(Object.values(resMap));
 
-    // Aggregate eventos by vendedor
+    // Aggregate eventos + grupo reservas into eventosData
     const evMap = {};
     for (const e of (eventos || [])) {
       const k = e.vendedor || "Sin asignar";
       if (!evMap[k]) evMap[k] = { vendedor: k, grupos: 0, ingresos: 0 };
       evMap[k].grupos += 1;
       evMap[k].ingresos += (e.valor || 0);
+    }
+    // Add grupo reservas pax/ingresos into eventosData
+    for (const r of Object.values(gruResMap)) {
+      const k = r.ep;
+      if (!evMap[k]) evMap[k] = { vendedor: k, grupos: 0, ingresos: 0 };
+      evMap[k].grupos += r.pasadias; // count pasadías de grupos as metric
+      evMap[k].ingresos += r.ingresos;
     }
     setEventosData(Object.values(evMap));
 
