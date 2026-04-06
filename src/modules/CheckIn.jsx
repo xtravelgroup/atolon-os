@@ -515,7 +515,8 @@ export default function CheckIn() {
   const doCheckin = async (res) => {
     setCiSaving(true);
     const val = new Date().toISOString();
-    await supabase.from("reservas").update({ checkin_at: val, estado: "check_in" }).eq("id", res.id);
+    const { error } = await supabase.from("reservas").update({ checkin_at: val, estado: "check_in" }).eq("id", res.id);
+    if (error) { alert(`Error al guardar check-in: ${error.message}`); setCiSaving(false); return; }
     logAccion({ modulo: "checkin", accion: "check_in", tabla: "reservas", registroId: res.id,
       datosAntes: { checkin_at: null, estado: res.estado },
       datosDespues: { checkin_at: val, estado: "check_in" },
@@ -523,6 +524,29 @@ export default function CheckIn() {
     setReservas(prev => prev.map(r => r.id === res.id ? { ...r, checkin_at: val, estado: "check_in" } : r));
     setCiSaving(false);
     setConfirmCheckin(null);
+  };
+
+  const doNoShow = async (res) => {
+    setCiSaving(true);
+    const { error } = await supabase.from("reservas").update({ estado: "no_show", checkin_at: null }).eq("id", res.id);
+    if (error) { alert(`Error al guardar no-show: ${error.message}`); setCiSaving(false); return; }
+    logAccion({ modulo: "checkin", accion: "no_show", tabla: "reservas", registroId: res.id,
+      datosAntes: { estado: res.estado },
+      datosDespues: { estado: "no_show" },
+      notas: `${res.nombre} · ${res.pax} pax`,
+    });
+    setReservas(prev => prev.map(r => r.id === res.id ? { ...r, estado: "no_show", checkin_at: null } : r));
+    setCiSaving(false);
+  };
+
+  const doUnNoShow = async (res) => {
+    await supabase.from("reservas").update({ estado: "confirmado" }).eq("id", res.id);
+    logAccion({ modulo: "checkin", accion: "revertir_no_show", tabla: "reservas", registroId: res.id,
+      datosAntes: { estado: "no_show" },
+      datosDespues: { estado: "confirmado" },
+      notas: `${res.nombre} · ${res.pax} pax`,
+    });
+    setReservas(prev => prev.map(r => r.id === res.id ? { ...r, estado: "confirmado" } : r));
   };
 
   const doUnCheckin = async (res) => {
@@ -921,15 +945,16 @@ export default function CheckIn() {
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 {resFiltradas.map(res => {
                   const checked  = !!res.checkin_at;
+                  const isNS     = res.estado === "no_show";
                   const tienePax = paxCompleto(res);
-                  // Estado visual: verde completo = check-in + zarpe OK; ámbar = check-in sin zarpe; gris = sin check-in
+                  // Estado visual: verde completo = check-in + zarpe OK; ámbar = check-in sin zarpe; rojo = no-show; gris = sin check-in
                   const listo    = checked && tienePax;
                   const parcial  = checked && !tienePax;
-                  const cardBg     = listo ? B.success + "22" : parcial ? "#E8A02012" : B.navyMid;
-                  const cardBorder = listo ? B.success + "77" : parcial ? "#E8A02044" : B.navyLight;
-                  const nameColor  = listo ? B.success    : parcial ? "#E8A020" : B.white;
-                  const circBg     = listo ? B.success    : parcial ? "#E8A02033" : B.navyLight;
-                  const circColor  = listo ? B.navy       : parcial ? "#E8A020"  : "rgba(255,255,255,0.3)";
+                  const cardBg     = isNS ? B.danger + "18"  : listo ? B.success + "22" : parcial ? "#E8A02012" : B.navyMid;
+                  const cardBorder = isNS ? B.danger + "66"  : listo ? B.success + "77" : parcial ? "#E8A02044" : B.navyLight;
+                  const nameColor  = isNS ? B.danger         : listo ? B.success        : parcial ? "#E8A020"   : B.white;
+                  const circBg     = isNS ? B.danger + "33"  : listo ? B.success        : parcial ? "#E8A02033" : B.navyLight;
+                  const circColor  = isNS ? B.danger         : listo ? B.navy           : parcial ? "#E8A020"   : "rgba(255,255,255,0.3)";
                   return (
                     <div key={res.id} style={{
                       background: cardBg,
@@ -947,9 +972,9 @@ export default function CheckIn() {
                           fontSize: checked ? (isMobile ? 26 : 22) : (isMobile ? 22 : 18),
                           display: "flex", alignItems: "center", justifyContent: "center",
                           fontWeight: 800, transition: "all 0.2s",
-                          border: parcial ? "2px solid #E8A02055" : "none",
+                          border: isNS ? `2px solid ${B.danger}55` : parcial ? "2px solid #E8A02055" : "none",
                         }}>
-                        {listo ? "✓" : parcial ? "✓" : "○"}
+                        {isNS ? "✗" : listo ? "✓" : parcial ? "✓" : "○"}
                       </div>
 
                       {/* Info */}
@@ -1012,24 +1037,46 @@ export default function CheckIn() {
                         })()}
                       </div>
 
-                      {/* Right-side actions: check-in + zarpe QR */}
+                      {/* Right-side actions: check-in + NS + zarpe QR */}
                       <div style={{ display: "flex", flexDirection: "column", gap: 6, flexShrink: 0 }}>
                         {/* Check-in con confirmación */}
                         <button
                           onClick={() => checked ? doUnCheckin(res) : setConfirmCheckin(res)}
+                          disabled={isNS}
                           title={checked ? "Deshacer check-in" : "Confirmar llegada"}
                           style={{
                             padding: isMobile ? "9px 12px" : "7px 12px",
                             borderRadius: 8,
                             border: `1px solid ${checked ? B.success + "55" : B.navyLight}`,
                             background: checked ? B.success + "22" : B.navyLight,
-                            color: checked ? B.success : "rgba(255,255,255,0.5)",
+                            color: checked ? B.success : isNS ? "rgba(255,255,255,0.2)" : "rgba(255,255,255,0.5)",
                             fontSize: isMobile ? 15 : 11, fontWeight: 700,
-                            cursor: "pointer", whiteSpace: "nowrap",
+                            cursor: isNS ? "default" : "pointer", whiteSpace: "nowrap",
+                            opacity: isNS ? 0.4 : 1,
                           }}>
                           {checked
                             ? (isMobile ? "✓" : "✓ CI")
                             : (isMobile ? "○" : "○ CI")}
+                        </button>
+
+                        {/* No-Show */}
+                        <button
+                          onClick={() => isNS ? doUnNoShow(res) : doNoShow(res)}
+                          disabled={checked}
+                          title={isNS ? "Revertir No-Show" : "Marcar como No-Show"}
+                          style={{
+                            padding: isMobile ? "9px 12px" : "7px 12px",
+                            borderRadius: 8,
+                            border: `1px solid ${isNS ? B.danger + "77" : B.danger + "33"}`,
+                            background: isNS ? B.danger + "33" : "transparent",
+                            color: isNS ? B.danger : checked ? "rgba(255,255,255,0.15)" : B.danger + "99",
+                            fontSize: isMobile ? 13 : 11, fontWeight: 700,
+                            cursor: checked ? "default" : "pointer", whiteSpace: "nowrap",
+                            opacity: checked ? 0.3 : 1,
+                          }}>
+                          {isNS
+                            ? (isMobile ? "↩ NS" : "↩ NS")
+                            : (isMobile ? "NS" : "NS")}
                         </button>
 
                         {/* Zarpe QR */}
@@ -1055,13 +1102,19 @@ export default function CheckIn() {
             )}
 
             {/* Summary footer */}
-            {resDesal.length > 0 && (
-              <div style={{ marginTop: 20, background: B.navyMid, borderRadius: 10, padding: "14px 20px", display: "flex", gap: 24, flexWrap: "wrap" }}>
-                <div><span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", display: "block" }}>CHECK-IN</span><span style={{ fontSize: 20, fontWeight: 700, color: B.success }}>{checkedIn}</span><span style={{ color: "rgba(255,255,255,0.3)" }}>/{totalPax}</span></div>
-                <div><span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", display: "block" }}>PENDIENTES</span><span style={{ fontSize: 20, fontWeight: 700, color: totalPax - checkedIn > 0 ? B.warning : B.success }}>{totalPax - checkedIn}</span></div>
-                <div><span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", display: "block" }}>ZARPE COMPLETO</span><span style={{ fontSize: 20, fontWeight: 700, color: tieneZarpe ? B.success : B.warning }}>{tieneZarpe ? "Sí" : "Pendiente"}</span></div>
-              </div>
-            )}
+            {resDesal.length > 0 && (() => {
+              const noShows = resDesal.filter(r => r.estado === "no_show").reduce((s, r) => s + (r.pax || 0), 0);
+              return (
+                <div style={{ marginTop: 20, background: B.navyMid, borderRadius: 10, padding: "14px 20px", display: "flex", gap: 24, flexWrap: "wrap" }}>
+                  <div><span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", display: "block" }}>CHECK-IN</span><span style={{ fontSize: 20, fontWeight: 700, color: B.success }}>{checkedIn}</span><span style={{ color: "rgba(255,255,255,0.3)" }}>/{totalPax}</span></div>
+                  <div><span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", display: "block" }}>PENDIENTES</span><span style={{ fontSize: 20, fontWeight: 700, color: totalPax - checkedIn - noShows > 0 ? B.warning : B.success }}>{totalPax - checkedIn - noShows}</span></div>
+                  {noShows > 0 && (
+                    <div><span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", display: "block" }}>NO-SHOW</span><span style={{ fontSize: 20, fontWeight: 700, color: B.danger }}>{noShows}</span></div>
+                  )}
+                  <div><span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", display: "block" }}>ZARPE COMPLETO</span><span style={{ fontSize: 20, fontWeight: 700, color: tieneZarpe ? B.success : B.warning }}>{tieneZarpe ? "Sí" : "Pendiente"}</span></div>
+                </div>
+              );
+            })()}
           </>
         )}
       </div>
