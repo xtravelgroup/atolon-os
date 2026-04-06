@@ -416,6 +416,17 @@ export default function Metas() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving]   = useState(false);
   const [savedOk, setSavedOk] = useState(false);
+  const [canConfig, setCanConfig] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      if (!supabase) return;
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+      const { data } = await supabase.from("usuarios").select("rol_id").eq("email", user.email).maybeSingle();
+      if (data && ["super_admin", "gerente_general"].includes(data.rol_id)) setCanConfig(true);
+    })();
+  }, []);
 
   const [vendedores, setVendedores] = useState([]);
   const [metasDB, setMetasDB]       = useState([]);
@@ -609,7 +620,7 @@ export default function Metas() {
   const TABS = [
     { key: "resumen",    label: "Resumen"      },
     { key: "vendedores", label: "Por Vendedor" },
-    { key: "config",     label: "Configurar"   },
+    ...(canConfig ? [{ key: "config", label: "⚙ Configurar" }] : []),
   ];
 
   const isCurrentMonth = periodo === currentPeriodo();
