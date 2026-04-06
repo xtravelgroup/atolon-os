@@ -39,21 +39,43 @@ function ModalNuevaLlegada({ tipo, fecha, reserva, onClose, onSaved }) {
     if (!esLancha || !supabase) return;
     Promise.all([
       supabase.from("salidas").select("*").eq("activo", true).order("hora"),
-      supabase.from("reservas").select("pax, pax_a, pax_n, salida_id, estado")
-        .eq("fecha", fecha).neq("estado", "cancelado"),
+      supabase.from("reservas")
+        .select("pax, pax_a, pax_n, salida_id, estado, checkin_at, embarcacion_asignada")
+        .eq("fecha", fecha).neq("estado", "cancelado").neq("estado", "no_show"),
       supabase.from("embarcaciones").select("*").order("nombre"),
       supabase.from("salidas_override").select("*").eq("fecha", fecha),
     ]).then(([{ data: sals }, { data: res }, { data: embs }, { data: ovrs }]) => {
-      const reservaMap = {};
+      // allResMap: TODAS las reservas confirmadas por salida (para mostrar salida aunque no haya c/i)
+      const allResMap = {};
       (res || []).forEach(r => {
+        if (!allResMap[r.salida_id]) allResMap[r.salida_id] = true;
+      });
+
+      // Solo contar pasajeros que hicieron check-in (checkin_at o estado check_in)
+      const checkedIn = (res || []).filter(r => r.checkin_at || r.estado === "check_in");
+
+      // reservaMap: pax check-in por salida (para cabecera)
+      const reservaMap = {};
+      checkedIn.forEach(r => {
         if (!reservaMap[r.salida_id]) reservaMap[r.salida_id] = { pax_a: 0, pax_n: 0 };
         reservaMap[r.salida_id].pax_a += Number(r.pax_a || r.pax || 1);
         reservaMap[r.salida_id].pax_n += Number(r.pax_n || 0);
       });
+
+      // lanchaMap: pax check-in por salida + embarcación asignada
+      const lanchaMap = {};
+      checkedIn.forEach(r => {
+        const emb = r.embarcacion_asignada || "__sin_asignar__";
+        if (!lanchaMap[r.salida_id]) lanchaMap[r.salida_id] = {};
+        if (!lanchaMap[r.salida_id][emb]) lanchaMap[r.salida_id][emb] = { pax_a: 0, pax_n: 0 };
+        lanchaMap[r.salida_id][emb].pax_a += Number(r.pax_a || r.pax || 1);
+        lanchaMap[r.salida_id][emb].pax_n += Number(r.pax_n || 0);
+      });
+
       setEmbarcaciones(embs || []);
-      // Solo salidas con pasajeros ese día, enriquecidas con sus lanchas
+      // Mostrar salidas con cualquier reserva ese día (no solo las que tienen c/i)
       setSalidas((sals || [])
-        .filter(s => !!reservaMap[s.id])
+        .filter(s => !!allResMap[s.id])
         .map(s => {
           const ovr = (ovrs || []).find(o => o.salida_id === s.id);
           const baseEmbs = (s.embarcaciones || [])
@@ -64,9 +86,10 @@ function ModalNuevaLlegada({ tipo, fecha, reserva, onClose, onSaved }) {
             .filter(e => !baseEmbs.some(b => b.id === e.id));
           return {
             ...s,
-            _pax_a: reservaMap[s.id]?.pax_a || 0,
-            _pax_n: reservaMap[s.id]?.pax_n || 0,
-            _lanchas: [...baseEmbs, ...extraEmbs], // todas las lanchas de esa salida
+            _pax_a:     reservaMap[s.id]?.pax_a || 0,
+            _pax_n:     reservaMap[s.id]?.pax_n || 0,
+            _lanchas:   [...baseEmbs, ...extraEmbs],
+            _lanchaMap: lanchaMap[s.id] || {},
           };
         }));
     });
@@ -74,12 +97,14 @@ function ModalNuevaLlegada({ tipo, fecha, reserva, onClose, onSaved }) {
 
   const seleccionarLancha = (sal, lancha) => {
     setSalidaInfo({ ...sal, _lanchaSeleccionada: lancha.nombre });
+    // Usar pax de esa embarcación específica (solo check-in)
+    const paxLancha = sal._lanchaMap?.[lancha.nombre] || { pax_a: 0, pax_n: 0 };
     setF(p => ({
       ...p,
       embarcacion_nombre: lancha.nombre,
       matricula: lancha.matricula || p.matricula,
-      pax_a: sal._pax_a || 1,
-      pax_n: sal._pax_n || 0,
+      pax_a: paxLancha.pax_a || 0,
+      pax_n: paxLancha.pax_n || 0,
     }));
     setPaso(1);
   };
@@ -210,11 +235,15 @@ function ModalNuevaLlegada({ tipo, fecha, reserva, onClose, onSaved }) {
                       <div style={{ fontSize: 12, color: "rgba(255,255,255,0.25)", padding: "10px 14px" }}>
                         Sin embarcaciones asignadas
                       </div>
-                    ) : sal._lanchas.map(lancha => (
+                    ) : sal._lanchas.map(lancha => {
+                      const pl = sal._lanchaMap?.[lancha.nombre] || { pax_a: 0, pax_n: 0 };
+                      const plTotal = pl.pax_a + pl.pax_n;
+                      return (
                       <button key={lancha.id} onClick={() => seleccionarLancha(sal, lancha)}
                         style={{
                           padding: "13px 16px", borderRadius: 12,
-                          border: `2px solid ${B.sky}44`, background: B.navy,
+                          border: `2px solid ${plTotal > 0 ? B.sky + "88" : B.navyLight}`,
+                          background: plTotal > 0 ? B.navy : B.navyMid + "80",
                           color: "#fff", cursor: "pointer", textAlign: "left",
                           display: "flex", alignItems: "center", gap: 12,
                         }}>
@@ -227,9 +256,15 @@ function ModalNuevaLlegada({ tipo, fecha, reserva, onClose, onSaved }) {
                             {lancha.capitan && <span>Cap: {lancha.capitan}</span>}
                           </div>
                         </div>
-                        <span style={{ fontSize: 12, color: B.sky, fontWeight: 600 }}>Seleccionar →</span>
+                        <div style={{ textAlign: "right" }}>
+                          <div style={{ fontSize: 18, fontWeight: 800, color: plTotal > 0 ? B.sky : "rgba(255,255,255,0.25)", lineHeight: 1 }}>
+                            {plTotal}
+                          </div>
+                          <div style={{ fontSize: 10, color: "rgba(255,255,255,0.35)", marginTop: 2 }}>pax c/i</div>
+                        </div>
                       </button>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
               ))}
@@ -310,17 +345,6 @@ function ModalNuevaLlegada({ tipo, fecha, reserva, onClose, onSaved }) {
           </div>
         </div>
 
-        {/* Resumen precio After (solo informativo) */}
-        {esAfter && paxTotal > 0 && (
-          <div style={{ background: B.sand + "18", border: `1px solid ${B.sand}33`, borderRadius: 10, padding: "12px 16px", margin: "16px 0" }}>
-            <div style={{ fontSize: 11, color: B.sand, marginBottom: 4, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em" }}>💰 Cobro pendiente al registrar</div>
-            <div style={{ display: "flex", gap: 16, fontSize: 12, flexWrap: "wrap" }}>
-              {Number(f.pax_a) > 0 && <span>{f.pax_a}A × {COP(PRECIO_AFTER_A)} = <strong>{COP(Number(f.pax_a) * PRECIO_AFTER_A)}</strong></span>}
-              {Number(f.pax_n) > 0 && <span>{f.pax_n}N × {COP(PRECIO_AFTER_N)} = <strong>{COP(Number(f.pax_n) * PRECIO_AFTER_N)}</strong></span>}
-            </div>
-            <div style={{ fontSize: 16, fontWeight: 800, color: B.sand, marginTop: 4 }}>Total: {COP(montoAfter)}</div>
-          </div>
-        )}
 
         {errorMsg && (
           <div style={{ background: "#ff000022", border: "1px solid #ff000055", borderRadius: 8, padding: "10px 14px", marginTop: 12, fontSize: 12, color: "#ff6b6b" }}>
@@ -638,7 +662,7 @@ const TIPO_LABEL = { lancha_atolon: "Lancha Atolon", after_island: "After Island
 const TIPO_ICON  = { lancha_atolon: "⛵", after_island: "🌙", restaurante: "🍽️" };
 
 // Fila con edición inline de notas
-function BitacoraFila({ r, onUpdated, isMobile }) {
+function BitacoraFila({ r, onUpdated, onDelete, isMobile }) {
   const [editando, setEditando] = useState(false);
   const [notas,    setNotas]    = useState(r.notas || "");
   const [saving,   setSaving]   = useState(false);
@@ -679,6 +703,11 @@ function BitacoraFila({ r, onUpdated, isMobile }) {
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
           {recien && <span style={{ fontSize: 9, color: B.sky, fontWeight: 700, textTransform: "uppercase" }}>✎ editado</span>}
           <span style={{ fontSize: 10, background: ec.bg, color: ec.color, padding: "3px 8px", borderRadius: 20, fontWeight: 600 }}>{ec.label}</span>
+          {onDelete && (
+            <button onClick={() => { if (window.confirm("¿Eliminar este registro?")) onDelete(r.id); }}
+              title="Eliminar"
+              style={{ background: "none", border: "none", cursor: "pointer", color: B.danger, fontSize: 14, padding: "0 2px", lineHeight: 1, opacity: 0.7 }}>×</button>
+          )}
         </div>
       </div>
       <div style={{ display: "flex", gap: 14, fontSize: 11, color: "rgba(255,255,255,0.45)", flexWrap: "wrap", marginBottom: 8 }}>
@@ -723,6 +752,14 @@ function BitacoraFila({ r, onUpdated, isMobile }) {
       <td style={{ padding: "9px 10px" }}>
         <span style={{ fontSize: 10, background: ec.bg, color: ec.color, padding: "3px 8px", borderRadius: 20, fontWeight: 600, whiteSpace: "nowrap" }}>{ec.label}</span>
       </td>
+      {/* Borrar */}
+      <td style={{ padding: "6px 8px", textAlign: "center" }}>
+        {onDelete && (
+          <button onClick={() => { if (window.confirm("¿Eliminar este registro?")) onDelete(r.id); }}
+            title="Eliminar"
+            style={{ background: "none", border: "none", cursor: "pointer", color: B.danger, fontSize: 16, padding: "0 4px", opacity: 0.7 }}>×</button>
+        )}
+      </td>
       {/* Notas editables inline */}
       <td style={{ padding: "6px 8px", minWidth: 200 }}>
         {editando ? (
@@ -761,6 +798,26 @@ function BitacoraLlegadas({ isMobile }) {
   const [busca,   setBusca]   = useState("");
   const [rows,    setRows]    = useState([]);
   const [loading, setLoading] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
+
+  useEffect(() => {
+    const checkAdmin = async () => {
+      if (!supabase) return;
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+      const { data } = await supabase.from("usuarios").select("modulos, rol_id").eq("email", user.email).maybeSingle();
+      if (!data) return;
+      const mods = data.modulos;
+      if (!mods || mods.length === 0 || mods.length >= 20) { setIsAdmin(true); return; }
+      if (data.rol_id) {
+        try {
+          const { data: rol } = await supabase.from("roles").select("permisos").eq("id", data.rol_id).maybeSingle();
+          if (rol?.permisos?.["*"]) setIsAdmin(true);
+        } catch (_) {}
+      }
+    };
+    checkAdmin();
+  }, []);
 
   const fetchBitacora = useCallback(async () => {
     if (!supabase) return;
@@ -769,7 +826,10 @@ function BitacoraLlegadas({ isMobile }) {
       .gte("fecha", desde).lte("fecha", hasta)
       .order("fecha", { ascending: false }).order("created_at", { ascending: false })
       .limit(500);
-    if (tipo !== "todos") q = q.eq("tipo", tipo);
+    if (tipo !== "todos") {
+      if (tipo === "after_island") q = q.in("tipo", ["after_island", "restaurante"]);
+      else q = q.eq("tipo", tipo);
+    }
     const { data } = await q;
     setRows(data || []);
     setLoading(false);
@@ -780,6 +840,13 @@ function BitacoraLlegadas({ isMobile }) {
   // Actualiza nota localmente sin refetch
   const handleUpdated = (id, nuevaNota) =>
     setRows(prev => prev.map(r => r.id === id ? { ...r, notas: nuevaNota } : r));
+
+  // Elimina registro
+  const handleDelete = async (id) => {
+    if (!supabase) return;
+    await supabase.from("muelle_llegadas").delete().eq("id", id);
+    setRows(prev => prev.filter(r => r.id !== id));
+  };
 
   const filtradas = busca.trim()
     ? rows.filter(r =>
@@ -809,8 +876,7 @@ function BitacoraLlegadas({ isMobile }) {
           <select value={tipo} onChange={e => setTipo(e.target.value)} style={ISsm}>
             <option value="todos">Todos</option>
             <option value="lancha_atolon">⛵ Lanchas Atolon</option>
-            <option value="after_island">🌙 After Island</option>
-            <option value="restaurante">🍽️ Restaurante</option>
+            <option value="after_island">🌙 After Island / Restaurante</option>
           </select>
         </div>
         <div style={{ flex: 1, minWidth: 160 }}>
@@ -840,26 +906,26 @@ function BitacoraLlegadas({ isMobile }) {
         <div style={{ textAlign: "center", padding: "40px 0", color: "rgba(255,255,255,0.2)", fontSize: 13 }}>Sin registros para este período</div>
       ) : isMobile ? (
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          {filtradas.map(r => <BitacoraFila key={r.id} r={r} onUpdated={handleUpdated} isMobile />)}
+          {filtradas.map(r => <BitacoraFila key={r.id} r={r} onUpdated={handleUpdated} onDelete={isAdmin ? handleDelete : undefined} isMobile />)}
         </div>
       ) : (
         <div style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
             <thead>
               <tr style={{ borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
-                {["Fecha", "Tipo", "Embarcación", "Matr.", "Llegó", "Salió", "Pax", "Estado", "Notas"].map(h => (
+                {["Fecha", "Tipo", "Embarcación", "Matr.", "Llegó", "Salió", "Pax", "Estado", "", "Notas"].map(h => (
                   <th key={h} style={{ padding: "8px 10px", textAlign: "left", color: "rgba(255,255,255,0.4)", fontWeight: 600, fontSize: 10, textTransform: "uppercase", letterSpacing: "0.05em", whiteSpace: "nowrap" }}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {filtradas.map(r => <BitacoraFila key={r.id} r={r} onUpdated={handleUpdated} isMobile={false} />)}
+              {filtradas.map(r => <BitacoraFila key={r.id} r={r} onUpdated={handleUpdated} onDelete={isAdmin ? handleDelete : undefined} isMobile={false} />)}
             </tbody>
             <tfoot>
               <tr style={{ borderTop: "2px solid rgba(255,255,255,0.1)" }}>
                 <td colSpan={6} style={{ padding: "10px", fontSize: 11, color: "rgba(255,255,255,0.35)", fontWeight: 600 }}>TOTAL ({filtradas.length} registros)</td>
                 <td style={{ padding: "10px", fontWeight: 800, color: B.sky }}>{totalPax}</td>
-                <td colSpan={2} />
+                <td colSpan={3} />
               </tr>
             </tfoot>
           </table>
@@ -889,12 +955,11 @@ export default function MuelleCheckin() {
   const salieron     = llegadas.filter(l => l.estado === "salió").reduce((t, l) => t + (l.pax_total || 0), 0);
   const totalCobrado = llegadas.reduce((t, l) => t + (l.total_cobrado || 0), 0);
 
-  const porTipo = (tipo) => llegadas.filter(l => l.tipo === tipo);
+  const porTipo = (tipos) => llegadas.filter(l => (Array.isArray(tipos) ? tipos : [tipos]).includes(l.tipo));
 
   const SECCIONES = [
-    { tipo: "lancha_atolon", icon: "⛵", label: "Lanchas Atolon",  color: B.sky,     btnBg: B.sky,     btnColor: B.navy },
-    { tipo: "after_island",  icon: "🌙", label: "After Island",    color: B.sand,    btnBg: B.sand,    btnColor: B.navy },
-    { tipo: "restaurante",   icon: "🍽️", label: "Restaurante",    color: B.success, btnBg: B.success, btnColor: "#fff"  },
+    { tipo: "lancha_atolon",              tipos: ["lancha_atolon"],              icon: "⛵", label: "Lanchas Atolon",          color: B.sky,  btnBg: B.sky,  btnColor: B.navy },
+    { tipo: "after_island",               tipos: ["after_island","restaurante"], icon: "🌙", label: "After Island / Restaurante", color: B.sand, btnBg: B.sand, btnColor: B.navy },
   ];
 
   const delLlegada = async (id) => {
@@ -936,12 +1001,11 @@ export default function MuelleCheckin() {
       {tab === "hoy" && (<>
 
       {/* KPIs */}
-      <div style={{ display: "grid", gridTemplateColumns: `repeat(${isMobile ? 2 : 4}, 1fr)`, gap: 10, marginBottom: 20 }}>
+      <div style={{ display: "grid", gridTemplateColumns: `repeat(${isMobile ? 2 : 3}, 1fr)`, gap: 10, marginBottom: 20 }}>
         {[
-          { label: "Total llegados", value: totalPax,        color: B.sky },
-          { label: "En isla ahora",  value: enIsla,          color: B.success },
-          { label: "Ya se fueron",   value: salieron,        color: "rgba(255,255,255,0.4)" },
-          { label: "Cobrado",        value: COP(totalCobrado), color: B.sand },
+          { label: "Total llegados", value: totalPax,  color: B.sky },
+          { label: "En isla ahora",  value: enIsla,    color: B.success },
+          { label: "Ya se fueron",   value: salieron,  color: "rgba(255,255,255,0.4)" },
         ].map(({ label, value, color }) => (
           <div key={label} style={{ background: B.navyMid, borderRadius: 12, padding: "14px 16px", border: "1px solid rgba(255,255,255,0.07)" }}>
             <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 5 }}>{label}</div>
@@ -961,8 +1025,8 @@ export default function MuelleCheckin() {
       </div>
 
       {/* Lista unificada por sección */}
-      {SECCIONES.map(({ tipo, icon, label, color }) => {
-        const lista = porTipo(tipo);
+      {SECCIONES.map(({ tipo, tipos, icon, label, color }) => {
+        const lista = porTipo(tipos);
         return (
           <div key={tipo} style={{ marginBottom: 28 }}>
             {/* Cabecera de sección */}
