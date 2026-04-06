@@ -435,7 +435,7 @@ export default function Metas() {
       { data: reservas },
       { data: eventos },
     ] = await Promise.all([
-      supabase.from("usuarios").select("nombre").eq("activo", true).order("nombre"),
+      supabase.from("usuarios").select("nombre").eq("activo", true).eq("es_vendedor", true).order("nombre"),
       supabase.from("metas").select("*").eq("periodo", periodo),
       supabase.from("reservas")
         .select("ep, pax_a, pax_n, total")
