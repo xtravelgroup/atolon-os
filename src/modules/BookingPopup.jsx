@@ -145,8 +145,17 @@ export default function BookingPopup() {
   const recoveryTokenQ = params.get("r") || "";  // Recovery link token
   // Auto-detect device language if ?lang= not explicitly set
   const deviceLang = navigator.language?.slice(0, 2).toLowerCase() || "es";
-  const langQ   = (params.get("lang") || (deviceLang === "en" ? "en" : "es")).toLowerCase();
+  const initLang = (params.get("lang") || (deviceLang === "en" ? "en" : "es")).toLowerCase();
+  const [langQ, setLangQ] = useState(initLang);
   const isEN    = langQ === "en";
+
+  const switchLang = (l) => {
+    setLangQ(l);
+    // Actualizar URL sin recargar la página
+    const sp = new URLSearchParams(window.location.search);
+    sp.set("lang", l);
+    window.history.replaceState(null, "", "?" + sp.toString());
+  };
 
   const matchedProduct = PRODUCTS.find(p => p.slug === tipoQ || p.tipo === tipoQ) || null;
 
@@ -1450,10 +1459,10 @@ export default function BookingPopup() {
           </a>
           <div style={{ position: "absolute", top: "50%", right: 0, transform: "translateY(-50%)", display: "flex", gap: 4 }}>
             {["es","en"].map(l => (
-              <a key={l} href={grupoQ ? `?grupo=${grupoQ}&lang=${l}` : `?tipo=${product?.slug || tipoQ}&lang=${l}`}
-                style={{ fontSize: 11, fontWeight: 700, padding: "3px 9px", borderRadius: 6, background: langQ === l ? C.primary : "white", color: langQ === l ? "white" : C.textMid, border: `1px solid ${langQ === l ? C.primary : C.border}`, cursor: "pointer", textDecoration: "none" }}>
+              <button key={l} onClick={() => switchLang(l)}
+                style={{ fontSize: 11, fontWeight: 700, padding: "3px 9px", borderRadius: 6, background: langQ === l ? C.primary : "white", color: langQ === l ? "white" : C.textMid, border: `1px solid ${langQ === l ? C.primary : C.border}`, cursor: "pointer" }}>
                 {l.toUpperCase()}
-              </a>
+              </button>
             ))}
           </div>
         </div>
