@@ -2200,6 +2200,8 @@ export default function Eventos() {
       hora_ini: e.hora_ini || "", hora_fin: e.hora_fin || "", vencimiento: e.vencimiento || "",
       buy_out: e.buy_out || false,
       modalidad_pago: e.modalidad_pago || "individual",
+      pasadias_org:   e.pasadias_org   || [],
+      precio_tipo:    e.precio_tipo    || "publico",
     })));
     if (salR.data) setSalidas(salR.data);
     if (aliR.data) setAliados(aliR.data);
