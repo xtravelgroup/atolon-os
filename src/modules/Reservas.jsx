@@ -1202,18 +1202,12 @@ function ReservaModal({ onClose, onSave, isMobile, salidaList = [], aliadoList =
           {Number(form.pax_n) > 0 && tieneNino && (
             <div style={{ ...FS, gridColumn: "1 / -1" }}>
               <label style={LS}>Precio por niño</label>
-              {precioMode === "neto" && form.aliado_id ? (
-                <input type="number" min={0} style={{ ...IS(), color: B.sky, fontWeight: 700 }}
-                  value={form.precio_nino}
-                  onChange={e => setForm(f => ({ ...f, precio_nino: Number(e.target.value) }))} />
-              ) : (
-                <div style={{ ...IS(), background: B.navyLight, color: B.sky, fontWeight: 700, cursor: "default", userSelect: "none" }}>
-                  {form.precio_nino > 0 ? COP(form.precio_nino) : COP(precioNinoFull)}
-                  <span style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", marginLeft: 8, fontWeight: 400 }}>
-                    ({precioMode === "neto" ? "tarifa neta niño" : "precio público niño"})
-                  </span>
-                </div>
-              )}
+              <div style={{ ...IS(), background: B.navyLight, color: B.sky, fontWeight: 700, cursor: "default", userSelect: "none" }}>
+                {COP(form.precio_nino > 0 ? form.precio_nino : precioNinoFull)}
+                <span style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", marginLeft: 8, fontWeight: 400 }}>
+                  ({precioMode === "neto" ? "tarifa neta niño" : "precio público niño"})
+                </span>
+              </div>
             </div>
           )}
         </div>
