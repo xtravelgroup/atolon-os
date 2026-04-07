@@ -505,8 +505,9 @@ export function EventoModal({ evento, categoria, salidas, aliados, vendedores, o
     const reservasEnFecha = await checkReservasEnFecha(form.fecha);
     setCheckingDate(false);
 
-    // Si hay reservas en la fecha destino → pedir aprobación GG
-    if (reservasEnFecha.length > 0) {
+    // Solo pedir aprobación GG si hay reservas Y el evento es buy-out (bloqueará la fecha)
+    // Grupos no buy-out coexisten con reservas individuales sin conflicto
+    if (reservasEnFecha.length > 0 && form.buy_out) {
       const { data: gerentes } = await supabase
         .from("usuarios")
         .select("id, nombre")
