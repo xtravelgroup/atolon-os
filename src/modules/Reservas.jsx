@@ -123,6 +123,8 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
   const [newFecha, setNewFecha]               = useState(r0.fecha  || "");
   const [creditDestB2B, setCreditDestB2B]     = useState(false); // true = crédito va al aliado B2B
   const [retractoMode, setRetractoMode]       = useState("retracto"); // "retracto" | "credito" when in retracto period
+  const [sendingEmail, setSendingEmail]       = useState(false);
+  const [emailSent, setEmailSent]             = useState(false);
   const [form, setForm]     = useState({
     nombre:    r0.nombre    || "",
     contacto:  r0.contacto  || "",
@@ -147,6 +149,49 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
   // Use stored saldo from DB; only recompute when user edits total or abono
   const saldo = editing ? (form.total - form.abono) : (r0.saldo ?? form.total - form.abono);
   const salida = salidaList.find(s => s.id === form.salida_id);
+
+  // ── Disponibilidad por salida para la fecha seleccionada ─────────────────
+  const [paxPorSalidaFecha, setPaxPorSalidaFecha] = useState({});
+  const [overridesFecha,    setOverridesFecha]    = useState({});
+  const [loadingDisp,       setLoadingDisp]       = useState(false);
+
+  useEffect(() => {
+    if (!editing || !form.fecha || !supabase) return;
+    setLoadingDisp(true);
+    Promise.all([
+      supabase.from("reservas").select("salida_id, pax, estado, id")
+        .eq("fecha", form.fecha).neq("estado", "cancelado").neq("id", r0.id),
+      supabase.from("salidas_override").select("*").eq("fecha", form.fecha),
+      supabase.from("cierres").select("tipo, salidas, activo").eq("fecha", form.fecha).eq("activo", true),
+    ]).then(([resR, ovrR, cieR]) => {
+      const pmap = {};
+      salidaList.forEach(s => (pmap[s.id] = 0));
+      (resR.data || []).forEach(r => { pmap[r.salida_id] = (pmap[r.salida_id] || 0) + (r.pax || 0); });
+      setPaxPorSalidaFecha(pmap);
+      const omap = {};
+      (ovrR.data || []).forEach(o => { omap[o.salida_id] = o; });
+      setOverridesFecha(omap);
+      setLoadingDisp(false);
+    });
+  }, [editing, form.fecha, salidaList, r0.id]);
+
+  // Salidas disponibles para la fecha en edición
+  const salidasParaFecha = salidaList.filter(s => {
+    if (!s.activo) return false;
+    const ovr = overridesFecha[s.id];
+    if (ovr?.accion === "cerrar") return false;
+    const cap = s.capacidad_total || 30;
+    const pax = paxPorSalidaFecha[s.id] || 0;
+    if (ovr?.accion === "abrir") return true;
+    return pax < cap;
+  });
+
+  const dispLabel = (s) => {
+    const cap = s.capacidad_total || 30;
+    const pax = paxPorSalidaFecha[s.id] || 0;
+    const disp = Math.max(0, cap - pax);
+    return `${s.hora} — ${s.nombre} (${disp} disponibles)`;
+  };
   const aliado = aliadoList.find(a => a.id === form.aliado_id);
   const tieneCXC = aliado && (aliado.cupo_credito || 0) > 0;
 
@@ -161,6 +206,20 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
     setSaving(true);
     const pax = Number(form.pax_a) + Number(form.pax_n);
     const emailUpd = form.contacto.trim().includes("@") ? form.contacto.trim() : (r0.email || null);
+
+    // ── Detectar qué cambió para el log ──────────────────────────────────
+    const salidaAntes  = salidaList.find(s => s.id === (r0.salida || ""));
+    const salidaDespues = salidaList.find(s => s.id === form.salida_id);
+    const cambios = [];
+    if (r0.fecha     !== form.fecha)      cambios.push(`Fecha: ${r0.fecha} → ${form.fecha}`);
+    if ((r0.salida || "") !== form.salida_id) cambios.push(`Horario: ${salidaAntes?.hora || r0.salida || "—"} → ${salidaDespues?.hora || form.salida_id || "—"}`);
+    if (r0.estado    !== form.estado)     cambios.push(`Estado: ${r0.estado} → ${form.estado}`);
+    if (r0.tipo      !== form.tipo)       cambios.push(`Paquete: ${r0.tipo} → ${form.tipo}`);
+    if ((r0.pax_a ?? r0.pax ?? 1) !== Number(form.pax_a) || (r0.pax_n ?? 0) !== Number(form.pax_n))
+      cambios.push(`Pax: ${r0.pax_a ?? r0.pax ?? 1}A ${r0.pax_n ?? 0}N → ${form.pax_a}A ${form.pax_n}N`);
+    if ((r0.total || 0) !== Number(form.total)) cambios.push(`Total: $${(r0.total||0).toLocaleString()} → $${Number(form.total).toLocaleString()}`);
+    if ((r0.abono || 0) !== Number(form.abono)) cambios.push(`Abono: $${(r0.abono||0).toLocaleString()} → $${Number(form.abono).toLocaleString()}`);
+
     await supabase.from("reservas").update({
       nombre:    form.nombre.trim(),
       contacto:  form.contacto.trim(),
@@ -183,10 +242,48 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
       vendedor:   form.vendedor !== "Sin asignar" ? form.vendedor : null,
       aliado_id:  form.aliado_id || null,
     }).eq("id", r0.id);
+
+    // Log de auditoría
+    if (cambios.length > 0) {
+      logAccion({
+        modulo:       "reservas",
+        accion:       "editar_reserva",
+        tabla:        "reservas",
+        registroId:   r0.id,
+        datosAntes:   { fecha: r0.fecha, salida: r0.salida, estado: r0.estado, tipo: r0.tipo, pax: r0.pax, total: r0.total, abono: r0.abono },
+        datosDespues: { fecha: form.fecha, salida_id: form.salida_id, estado: form.estado, tipo: form.tipo, pax, total: form.total, abono: form.abono },
+        notas:        cambios.join(" | "),
+      });
+    }
+
     if (form.estado === "confirmado") await upsertCliente({ ...r0, ...form, pax: Number(form.pax_a) + Number(form.pax_n) });
     setSaving(false);
     setEdit(false);
     onUpdated();
+  };
+
+  const handleResendEmail = async () => {
+    if (sendingEmail) return;
+    setSendingEmail(true);
+    try {
+      const { data: fresh } = supabase
+        ? await supabase.from("reservas").select("*").eq("id", r0.id).single()
+        : { data: r0 };
+      const resp = await fetch(
+        "https://ncdyttgxuicyruathkxd.supabase.co/functions/v1/send-confirmation",
+        { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(fresh || r0) }
+      );
+      const json = await resp.json();
+      if (json.ok || json.id) {
+        setEmailSent(true);
+        setTimeout(() => setEmailSent(false), 3000);
+      } else {
+        alert("Error al reenviar: " + (json.error || JSON.stringify(json)));
+      }
+    } catch (e) {
+      alert("Error: " + e.message);
+    }
+    setSendingEmail(false);
   };
 
   const handlePago = async () => {
@@ -403,6 +500,10 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
                 <span style={{ fontSize: 12, padding: "4px 14px", borderRadius: 20, background: B.success + "33", border: `1px solid ${B.success}`, color: B.success, fontWeight: 700 }}>✓ Confirmado</span>
                 {!dentro24h && <button onClick={() => { setNewFecha(r0.fecha || ""); setShowDateModal(true); }} style={{ background: "transparent", border: `1px solid ${B.sky}`, borderRadius: 20, color: B.sky, padding: "4px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>📅 Cambiar Fecha</button>}
                 <button onClick={() => { setCancelNombre(r0.nombre || ""); setShowCancelModal(true); }} style={{ background: "transparent", border: `1px solid ${B.danger}`, borderRadius: 20, color: B.danger, padding: "4px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>❌ Cancelar Reserva</button>
+                <button onClick={handleResendEmail} disabled={sendingEmail} style={{ background: emailSent ? B.success + "22" : "transparent", border: `1px solid ${emailSent ? B.success : B.sand + "88"}`, borderRadius: 20, color: emailSent ? B.success : B.sand, padding: "4px 14px", fontSize: 12, fontWeight: 700, cursor: sendingEmail ? "default" : "pointer", opacity: sendingEmail ? 0.6 : 1 }}>
+                  {sendingEmail ? "Enviando..." : emailSent ? "✓ Enviado" : "📧 Reenviar correo"}
+                </button>
+                <a href={`/zarpe-info?id=${r0.id}`} target="_blank" rel="noreferrer" style={{ background: "transparent", border: `1px solid ${B.sky + "66"}`, borderRadius: 20, color: B.sky, padding: "4px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer", textDecoration: "none" }}>🎫 Certificado</a>
               </>
             ) : (
               ESTADO_BTNS.map(b => (
@@ -486,11 +587,19 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
                     <div style={{ fontSize: 14 }}>{r0.fecha || "—"}</div>}
                 </div>
                 <div>
-                  <label style={LS}>Horario de salida</label>
+                  <label style={LS}>Horario de salida {loadingDisp && <span style={{ color: B.sky, fontWeight: 400 }}>· verificando...</span>}</label>
                   {editing ? (
                     <select style={IS} value={form.salida_id} onChange={e => set("salida_id", e.target.value)}>
                       <option value="">Sin asignar</option>
-                      {salidaList.map(s => <option key={s.id} value={s.id}>{s.hora} — {s.nombre}</option>)}
+                      {(salidasParaFecha.length > 0 ? salidasParaFecha : salidaList).map(s => (
+                        <option key={s.id} value={s.id}>{dispLabel(s)}</option>
+                      ))}
+                      {/* Si la salida actual no está en la lista disponible, mostrarla igual */}
+                      {form.salida_id && !salidasParaFecha.find(s => s.id === form.salida_id) && salidaList.find(s => s.id === form.salida_id) && (
+                        <option value={form.salida_id} disabled>
+                          ⚠️ {salidaList.find(s => s.id === form.salida_id)?.hora} — Sin disponibilidad
+                        </option>
+                      )}
                     </select>
                   ) : <div style={{ fontSize: 14 }}>{salida ? `${salida.hora} — ${salida.nombre}` : r0.salida || "—"}</div>}
                 </div>
@@ -891,12 +1000,16 @@ function ReservaModal({ onClose, onSave, isMobile, salidaList = [], aliadoList =
     ? FORMAS_PAGO
     : FORMAS_PAGO.filter(f => f !== "CXC" || tieneCXC);
 
-  // Salidas visible for selected date — respects cierres/overrides + cascade 75% auto-apertura
-  const salidasBase = (getSalidasVisibles && form.fecha) ? getSalidasVisibles(form.fecha) : salidaList;
+  // Salidas visible for selected date — uses locally fetched overridesFecha so that
+  // manual "abrir" overrides work for any date (not just today/tomorrow loaded in parent)
   const salidasFecha = (() => {
-    const sorted = [...salidasBase].sort((a, b) => a.hora.localeCompare(b.hora));
+    const activas = salidaList.filter(s => s.activo);
+    const sorted = [...activas].sort((a, b) => a.hora.localeCompare(b.hora));
     return sorted.filter((s, idx) => {
-      if (!s.auto_apertura) return true;
+      const ovr = overridesFecha[s.id];
+      if (ovr?.accion === "abrir") return true;   // manual calendar override: force open
+      if (ovr?.accion === "cerrar") return false;  // manual calendar override: force close
+      if (!s.auto_apertura) return true;           // fixed salida: always open
       if (idx === 0) return true;
       const prev = sorted[idx - 1];
       const prevCap = (prev.capacidad_total || 1) + (overridesFecha[prev.id]?.extra_embarcaciones || []).reduce((sum, e) => sum + (e.capacidad || 0), 0);
@@ -1837,6 +1950,15 @@ export default function Reservas() {
 
   const addReserva = async (form) => {
     if (!supabase) return null;
+
+    // Bloquear reservas en fechas con cierre activo (validación en el momento de guardar)
+    const fechaRes = form.fecha || (tabDia === "manana" ? tomorrow : today);
+    const cierre = cierres.find(c => c.activo && c.fecha === fechaRes);
+    if (cierre?.tipo === "total") {
+      alert(`❌ La fecha ${fechaRes} está cerrada (${cierre.motivo || "Buy-Out / Cierre total"}). No se puede crear la reserva.`);
+      return null;
+    }
+
     const pax   = Number(form.pax_a) + Number(form.pax_n);
     const total = pax * Number(form.precio);
     const isLink = form._isLink;
