@@ -421,13 +421,21 @@ export function EventoModal({ evento, categoria, salidas, aliados, vendedores, o
   const tiposOpt = isGrupo ? TIPOS_GRUPO : TIPOS_EVT;
 
   const [form, setForm]       = useState(isEdit
-    ? { ...evento, pax: String(evento.pax || ""), valor: String(evento.valor || ""), aliado_id: evento.aliado_id || "", vendedor: evento.vendedor || "", salidas_grupo: evento.salidas_grupo || [], buy_out: evento.buy_out || false, modalidad_pago: evento.modalidad_pago || "individual", pasadias_org: evento.pasadias_org || [] }
-    : { nombre: "", tipo: tiposOpt[0], fecha: "", pax: "", valor: "", aliado_id: "", vendedor: "", salidas_grupo: [], contacto: "", tel: "", email: "", empresa: "", nit: "", cargo: "", direccion: "", montaje: "", hora_ini: "", hora_fin: "", vencimiento: "", stage: "Consulta", notas: "", categoria, buy_out: false, modalidad_pago: "individual", pasadias_org: [] });
-  const [saving,      setSaving]      = useState(false);
-  const [horaInput,   setHoraInput]   = useState("");
-  const [aliadoSearch,setAliadoSearch]= useState("");
-  const [aliadoOpen,  setAliadoOpen]  = useState(false);
+    ? { ...evento, pax: String(evento.pax || ""), valor: String(evento.valor || ""), aliado_id: evento.aliado_id || "", vendedor: evento.vendedor || "", salidas_grupo: evento.salidas_grupo || [], buy_out: evento.buy_out || false, modalidad_pago: evento.modalidad_pago || "individual", pasadias_org: evento.pasadias_org || [], precio_tipo: evento.precio_tipo || "publico" }
+    : { nombre: "", tipo: tiposOpt[0], fecha: "", pax: "", valor: "", aliado_id: "", vendedor: "", salidas_grupo: [], contacto: "", tel: "", email: "", empresa: "", nit: "", cargo: "", direccion: "", montaje: "", hora_ini: "", hora_fin: "", vencimiento: "", stage: "Consulta", notas: "", categoria, buy_out: false, modalidad_pago: "individual", pasadias_org: [], precio_tipo: "publico" });
+  const [saving,        setSaving]        = useState(false);
+  const [horaInput,     setHoraInput]     = useState("");
+  const [aliadoSearch,  setAliadoSearch]  = useState("");
+  const [aliadoOpen,    setAliadoOpen]    = useState(false);
+  const [pasadiasPrecios, setPasadiasPrecios] = useState([]);
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+
+  // Cargar precios de pasadías cuando es modo organizador
+  useEffect(() => {
+    if (!isGrupo) return;
+    supabase.from("pasadias").select("id, nombre, precio, precio_neto_agencia").order("nombre")
+      .then(({ data }) => setPasadiasPrecios((data || []).filter(p => p.precio > 0)));
+  }, [isGrupo]);
 
   const aliadoSeleccionado = aliados.find(a => a.id === form.aliado_id);
   const aliadosFiltrados   = aliados.filter(a =>
@@ -522,12 +530,26 @@ export function EventoModal({ evento, categoria, salidas, aliados, vendedores, o
   const doSave = async (aprobadoPor = null, motivoOverride = null) => {
     setSaving(true);
     setSaveError("");
+
+    // Calcular valor total para modo organizador
+    const calcValorOrg = () => {
+      return (form.pasadias_org || []).reduce((s, p) => {
+        const pr = pasadiasPrecios.find(x => x.nombre === p.tipo);
+        if (!pr) return s;
+        const precio = form.precio_tipo === "neto" ? (pr.precio_neto_agencia || pr.precio) : pr.precio;
+        return s + precio * (Number(p.personas) || 0);
+      }, 0);
+    };
+    const valorFinal = isGrupo && form.modalidad_pago === "organizador"
+      ? calcValorOrg()
+      : Number(form.valor) || 0;
+
     const payload = {
       nombre:       form.nombre.trim(),
       tipo:         form.tipo,
       fecha:        form.fecha,
       pax:          Number(form.pax) || 0,
-      valor:        Number(form.valor) || 0,
+      valor:        valorFinal,
       salidas_grupo: form.salidas_grupo,
       contacto:     form.contacto,
       tel:          form.tel,
@@ -548,6 +570,7 @@ export function EventoModal({ evento, categoria, salidas, aliados, vendedores, o
       buy_out:        form.buy_out || false,
       modalidad_pago: form.modalidad_pago || "individual",
       pasadias_org:   form.pasadias_org || [],
+      precio_tipo:    form.precio_tipo || "publico",
     };
     let savedId = evento?.id;
     let dbError = null;
@@ -992,6 +1015,75 @@ export function EventoModal({ evento, categoria, salidas, aliados, vendedores, o
               </div>
             </div>
           )}
+
+          {/* Precio — solo organizador */}
+          {isGrupo && form.modalidad_pago === "organizador" && (() => {
+            const getPrecio = (tipo) => {
+              const p = pasadiasPrecios.find(p => p.nombre === tipo);
+              if (!p) return null;
+              return form.precio_tipo === "neto" ? (p.precio_neto_agencia || p.precio) : p.precio;
+            };
+            const lineas = form.pasadias_org.map(p => ({
+              tipo: p.tipo,
+              personas: Number(p.personas) || 0,
+              precio: getPrecio(p.tipo),
+            }));
+            const total = lineas.reduce((s, l) => s + (l.precio || 0) * l.personas, 0);
+            const sinPrecios = lineas.some(l => l.personas > 0 && l.precio === null);
+            return (
+              <div style={{ borderTop: `1px solid ${B.navyLight}`, paddingTop: 16 }}>
+                <label style={LS}>Monto a pagar</label>
+
+                {/* Selector precio público / neto */}
+                <div style={{ display: "flex", gap: 10, marginBottom: 14 }}>
+                  {[
+                    { value: "publico", label: "💰 Precio público", desc: "Tarifa venta al cliente final" },
+                    { value: "neto",    label: "🏢 Precio neto",    desc: "Tarifa agencia / comisionista" },
+                  ].map(opt => (
+                    <div key={opt.value} onClick={() => set("precio_tipo", opt.value)}
+                      style={{ flex: 1, padding: "10px 14px", borderRadius: 10, cursor: "pointer", userSelect: "none",
+                        background: form.precio_tipo === opt.value ? B.success + "22" : B.navyLight,
+                        border: `2px solid ${form.precio_tipo === opt.value ? B.success : "transparent"}`,
+                        transition: "all 0.15s" }}>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: form.precio_tipo === opt.value ? B.success : B.white, marginBottom: 2 }}>{opt.label}</div>
+                      <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", lineHeight: 1.4 }}>{opt.desc}</div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Desglose por tipo */}
+                {lineas.filter(l => l.personas > 0).length > 0 && (
+                  <div style={{ background: B.navy, borderRadius: 10, padding: "12px 14px", marginBottom: 12 }}>
+                    {lineas.filter(l => l.personas > 0).map((l, i) => (
+                      <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center",
+                        padding: "6px 0", borderBottom: i < lineas.filter(x=>x.personas>0).length - 1 ? `1px solid ${B.navyLight}44` : "none",
+                        fontSize: 13 }}>
+                        <span style={{ color: "rgba(255,255,255,0.6)" }}>
+                          {l.tipo} × {l.personas} pax
+                        </span>
+                        <span style={{ fontWeight: 700, color: l.precio !== null ? B.white : B.warning }}>
+                          {l.precio !== null ? COP(l.precio * l.personas) : "—"}
+                        </span>
+                      </div>
+                    ))}
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center",
+                      paddingTop: 10, marginTop: 4, borderTop: `1px solid ${B.navyLight}` }}>
+                      <span style={{ fontSize: 12, fontWeight: 700, color: B.sand, textTransform: "uppercase", letterSpacing: "0.06em" }}>Total</span>
+                      <span style={{ fontSize: 20, fontWeight: 900, color: total > 0 ? B.success : "rgba(255,255,255,0.3)" }}>
+                        {total > 0 ? COP(total) : "—"}
+                      </span>
+                    </div>
+                  </div>
+                )}
+
+                {sinPrecios && (
+                  <div style={{ padding: "8px 12px", borderRadius: 8, background: B.warning + "22", border: `1px solid ${B.warning}55`, fontSize: 12, color: B.warning }}>
+                    ⚠ Algunos tipos de pasadía no tienen precio configurado en el sistema.
+                  </div>
+                )}
+              </div>
+            );
+          })()}
 
           {/* Buy-Out */}
           <div onClick={() => set("buy_out", !form.buy_out)}
