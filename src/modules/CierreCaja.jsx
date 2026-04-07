@@ -164,8 +164,8 @@ function HistorialCierres({ refresh, area }) {
 // ─── Main ─────────────────────────────────────────────────────────────────────
 export default function CierreCaja() {
   const isMobile = useMobile();
-  const fileRef   = useRef(null);
-  const cameraRef = useRef(null);
+  const fileRef    = useRef(null);
+  const cameraRef  = useRef(null);
 
   // Logged-in user + lista de usuarios
   const [userNombre, setUserNombre] = useState("");
@@ -190,8 +190,7 @@ export default function CierreCaja() {
   const [cajero, setCajero]     = useState("");
   const [numCaja, setNumCaja]   = useState("");
   const [numComp, setNumComp]   = useState("");
-  const [file, setFile]         = useState(null);           // File object
-  const [fileUrl, setFileUrl]   = useState("");             // after upload
+  const [photos, setPhotos]     = useState([]);              // [{id, file, url, uploading}]
 
   // Métodos: { datafono: { venta: "", propina: "" }, ... }
   const initMetodos = () => Object.fromEntries(METODOS.map(m => [m.key, { venta: "", propina: "" }]));
@@ -212,7 +211,6 @@ export default function CierreCaja() {
 
   const [notas, setNotas]       = useState("");
   const [saving, setSaving]     = useState(false);
-  const [uploadingFile, setUploadingFile] = useState(false);
   const [saved, setSaved]       = useState(false);
   const [savedId, setSavedId]   = useState(null);
   const [error, setError]       = useState(null);
@@ -287,83 +285,105 @@ export default function CierreCaja() {
   const diferencia = efectivoContadoNum - efectivoEsperado;
   const difColor = diferencia === 0 ? "#4ade80" : diferencia < 0 ? "#f87171" : "#fbbf24";
 
-  // ── Upload + AI parse ────────────────────────────────────────────────────────
+  // ── Upload + AI parse (multi-foto) ──────────────────────────────────────────
   const [parseStatus, setParseStatus] = useState(null); // null | "parsing" | "ok" | "fail"
   const [parseMsg, setParseMsg]       = useState("");
 
-  const handleFile = async (f) => {
-    if (!f) return;
-    setFile(f);
-    setParseStatus(null);
-    setParseMsg("");
-    if (!supabase) return;
+  const MAX_PHOTOS = 3;
 
-    setUploadingFile(true);
+  const addPhoto = async (f) => {
+    if (!f || photos.length >= MAX_PHOTOS) return;
+    const id = `ph-${Date.now()}`;
+    setPhotos(prev => [...prev, { id, file: f, url: "", uploading: true }]);
+    setParseStatus(null); setParseMsg("");
 
-    // 1. Upload to Storage
-    const path = `cierres/${Date.now()}-${f.name.replace(/\s+/g, "_")}`;
-    const { error: upErr } = await supabase.storage.from("cierres-docs").upload(path, f, { upsert: true });
-    if (!upErr) {
-      const { data: { publicUrl } } = supabase.storage.from("cierres-docs").getPublicUrl(path);
-      setFileUrl(publicUrl);
+    // Upload to Storage
+    if (supabase) {
+      const path = `cierres/${Date.now()}-${f.name.replace(/\s+/g, "_")}`;
+      const { error: upErr } = await supabase.storage.from("cierres-docs").upload(path, f, { upsert: true });
+      if (!upErr) {
+        const { data: { publicUrl } } = supabase.storage.from("cierres-docs").getPublicUrl(path);
+        setPhotos(prev => prev.map(p => p.id === id ? { ...p, url: publicUrl, uploading: false } : p));
+      } else {
+        setPhotos(prev => prev.map(p => p.id === id ? { ...p, uploading: false } : p));
+      }
     }
-    setUploadingFile(false);
+  };
 
-    // 2. AI parse (only for images, not PDFs — Claude Vision needs image)
-    const isPdf = f.type === "application/pdf" || f.name.toLowerCase().endsWith(".pdf");
-    if (isPdf) {
-      setParseStatus("fail");
-      setParseMsg("PDF cargado. Ingresa los datos manualmente.");
-      return;
-    }
+  const removePhoto = (id) => {
+    setPhotos(prev => prev.filter(p => p.id !== id));
+    setParseStatus(null); setParseMsg("");
+  };
 
-    setParseStatus("parsing");
-    try {
-      const reader = new FileReader();
-      reader.onload = async (e) => {
-        const base64 = e.target.result.split(",")[1];
-        const mediaType = f.type || "image/jpeg";
+  // Leer imagen como base64
+  const toBase64 = (file) => new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onload = e => res(e.target.result.split(",")[1]);
+    r.onerror = rej;
+    r.readAsDataURL(file);
+  });
 
+  // Analizar todas las fotos con IA y combinar resultados
+  const analizarFotos = async () => {
+    const imagePhotos = photos.filter(p => p.file && p.file.type !== "application/pdf" && !p.file.name.toLowerCase().endsWith(".pdf"));
+    if (!imagePhotos.length || !supabase) return;
+    setParseStatus("parsing"); setParseMsg("");
+
+    // Acumuladores para combinar resultados de múltiples imágenes
+    let combined = { cajero: "", numero_comprobante: "", fecha: "", inc_base: 0, inc_impuesto: 0, metodos: {} };
+    let anyOk = false;
+
+    for (const ph of imagePhotos) {
+      try {
+        const base64   = await toBase64(ph.file);
+        const mediaType = ph.file.type || "image/jpeg";
         const { data: fnData, error: fnErr } = await supabase.functions.invoke("parse-comprobante", {
           body: { imageBase64: base64, mediaType },
         });
-
-        if (fnErr || !fnData?.ok) {
-          setParseStatus("fail");
-          setParseMsg("No se pudo leer automáticamente. Ingresa los datos manualmente.");
-          return;
-        }
-
-        // Auto-fill form
-        if (fnData.cajero)              setCajero(fnData.cajero);
-        if (fnData.numero_comprobante)  setNumComp(fnData.numero_comprobante);
-        if (fnData.fecha)               setFecha(fnData.fecha);
-        if (fnData.inc_base)            setIncBase(String(fnData.inc_base));
-        if (fnData.inc_impuesto)        setIncImpuesto(String(fnData.inc_impuesto));
-
+        if (fnErr || !fnData?.ok) continue;
+        anyOk = true;
+        // Texto: usar primer valor encontrado
+        if (!combined.cajero               && fnData.cajero)              combined.cajero               = fnData.cajero;
+        if (!combined.numero_comprobante   && fnData.numero_comprobante)  combined.numero_comprobante   = fnData.numero_comprobante;
+        if (!combined.fecha                && fnData.fecha)               combined.fecha                = fnData.fecha;
+        // Números: acumular (el recibo puede estar partido en varias fotos)
+        if (fnData.inc_base)     combined.inc_base     += Number(fnData.inc_base)     || 0;
+        if (fnData.inc_impuesto) combined.inc_impuesto += Number(fnData.inc_impuesto) || 0;
         if (fnData.metodos) {
-          setMetodos(prev => {
-            const next = { ...prev };
-            for (const k of Object.keys(fnData.metodos)) {
-              if (next[k]) {
-                next[k] = {
-                  venta:   String(fnData.metodos[k].venta   || ""),
-                  propina: String(fnData.metodos[k].propina || ""),
-                };
-              }
-            }
-            return next;
-          });
+          for (const [k, v] of Object.entries(fnData.metodos)) {
+            if (!combined.metodos[k]) combined.metodos[k] = { venta: 0, propina: 0 };
+            combined.metodos[k].venta   += Number(v.venta)   || 0;
+            combined.metodos[k].propina += Number(v.propina) || 0;
+          }
         }
-
-        setParseStatus("ok");
-        setParseMsg("✅ Datos cargados automáticamente. Revisa y corrige si es necesario.");
-      };
-      reader.readAsDataURL(f);
-    } catch {
-      setParseStatus("fail");
-      setParseMsg("Error al analizar la imagen. Ingresa los datos manualmente.");
+      } catch { /* continuar con siguiente foto */ }
     }
+
+    if (!anyOk) {
+      setParseStatus("fail");
+      setParseMsg("No se pudo leer automáticamente. Ingresa los datos manualmente.");
+      return;
+    }
+
+    // Auto-fill form con datos combinados
+    if (combined.cajero)             setCajero(combined.cajero);
+    if (combined.numero_comprobante) setNumComp(combined.numero_comprobante);
+    if (combined.fecha)              setFecha(combined.fecha);
+    if (combined.inc_base)           setIncBase(String(combined.inc_base));
+    if (combined.inc_impuesto)       setIncImpuesto(String(combined.inc_impuesto));
+    if (Object.keys(combined.metodos).length > 0) {
+      setMetodos(prev => {
+        const next = { ...prev };
+        for (const [k, v] of Object.entries(combined.metodos)) {
+          if (next[k]) next[k] = { venta: String(v.venta || ""), propina: String(v.propina || "") };
+        }
+        return next;
+      });
+    }
+
+    const nFotos = imagePhotos.length;
+    setParseStatus("ok");
+    setParseMsg(`✅ ${nFotos} foto${nFotos > 1 ? "s" : ""} analizadas. Revisa y corrige si es necesario.`);
   };
 
   // ── Guardar Cierre ───────────────────────────────────────────────────────────
@@ -396,7 +416,8 @@ export default function CierreCaja() {
       cajero_nombre: cajero.trim(),
       numero_caja: numCaja.trim() || null,
       numero_comprobante: numComp.trim() || null,
-      comprobante_url: fileUrl || null,
+      comprobante_url: photos.find(p => p.url)?.url || null,
+      comprobante_urls: photos.filter(p => p.url).map(p => p.url),
       usuario_email: email,
       metodos: metodosData,
       total_ventas: totalVentas,
@@ -424,7 +445,7 @@ export default function CierreCaja() {
 
   const reset = () => {
     setSaved(false); setSavedId(null); setError(null);
-    setCajero(userNombre || ""); setNumCaja(""); setNumComp(""); setFile(null); setFileUrl("");
+    setCajero(userNombre || ""); setNumCaja(""); setNumComp(""); setPhotos([]);
     setMetodos(initMetodos()); setOtrosList([]); setIncBase(""); setIncImpuesto("");
     setEfectivoContado(""); setNotas("");
   };
@@ -526,32 +547,58 @@ export default function CierreCaja() {
 
               {/* Upload */}
               <div style={{ marginTop: 14 }}>
-                <label style={LS}>Comprobante</label>
-                {fileUrl ? (
-                  <div style={{ border: "1px solid #4ade8044", borderRadius: 10, padding: "12px 16px", background: "#4ade8010", display: "flex", alignItems: "center", gap: 12 }}>
-                    <span style={{ fontSize: 22 }}>✅</span>
-                    <div style={{ flex: 1 }}>
-                      <div style={{ fontSize: 13, color: "#4ade80", fontWeight: 600 }}>Comprobante cargado</div>
-                      <a href={fileUrl} target="_blank" rel="noopener noreferrer"
-                        style={{ fontSize: 11, color: B.sky, textDecoration: "none", marginTop: 2, display: "block" }}>
-                        Ver archivo ↗
-                      </a>
-                    </div>
-                    <button onClick={() => { setFile(null); setFileUrl(""); setParseStatus(null); setParseMsg(""); }}
-                      style={{ background: "none", border: "none", color: "rgba(255,255,255,0.3)", fontSize: 18, cursor: "pointer" }}>✕</button>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+                  <label style={LS}>Fotos del comprobante ({photos.length}/{MAX_PHOTOS})</label>
+                  {photos.length > 0 && photos.every(p => !p.uploading) && parseStatus !== "parsing" && (
+                    <button onClick={analizarFotos}
+                      style={{ fontSize: 11, padding: "4px 10px", borderRadius: 6, border: "none", background: B.sky + "22", color: B.sky, cursor: "pointer", fontWeight: 700 }}>
+                      🤖 Analizar con IA
+                    </button>
+                  )}
+                </div>
+
+                {/* Miniaturas de fotos subidas */}
+                {photos.length > 0 && (
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
+                    {photos.map((ph, i) => (
+                      <div key={ph.id} style={{ position: "relative", width: 72, height: 72 }}>
+                        {ph.uploading ? (
+                          <div style={{ width: 72, height: 72, borderRadius: 8, background: B.navy, border: "1px solid rgba(255,255,255,0.1)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20 }}>⏳</div>
+                        ) : ph.url ? (
+                          <a href={ph.url} target="_blank" rel="noopener noreferrer">
+                            <img src={ph.url} alt={`foto ${i+1}`} style={{ width: 72, height: 72, objectFit: "cover", borderRadius: 8, border: `2px solid ${B.sky}55` }} />
+                          </a>
+                        ) : (
+                          <div style={{ width: 72, height: 72, borderRadius: 8, background: B.navy, border: "1px dashed rgba(255,255,255,0.2)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20 }}>📷</div>
+                        )}
+                        <button onClick={() => removePhoto(ph.id)}
+                          style={{ position: "absolute", top: -6, right: -6, width: 18, height: 18, borderRadius: "50%", border: "none", background: "#f87171", color: "#fff", fontSize: 10, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700 }}>
+                          ✕
+                        </button>
+                        <div style={{ position: "absolute", bottom: 2, left: 2, fontSize: 9, background: "rgba(0,0,0,0.6)", color: "#fff", borderRadius: 3, padding: "1px 4px" }}>
+                          {i+1}/{photos.length}
+                        </div>
+                      </div>
+                    ))}
+                    {/* Slot para agregar más */}
+                    {photos.length < MAX_PHOTOS && (
+                      <button onClick={() => cameraRef.current?.click()}
+                        style={{ width: 72, height: 72, borderRadius: 8, border: "1px dashed rgba(142,202,230,0.4)", background: "rgba(142,202,230,0.05)", cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 3 }}>
+                        <span style={{ fontSize: 22 }}>📷</span>
+                        <span style={{ fontSize: 9, color: B.sky }}>+ Foto</span>
+                      </button>
+                    )}
                   </div>
-                ) : uploadingFile ? (
-                  <div style={{ border: "1px solid rgba(255,255,255,0.1)", borderRadius: 10, padding: "14px 18px", display: "flex", alignItems: "center", gap: 12 }}>
-                    <span style={{ fontSize: 22 }}>⏳</span>
-                    <div style={{ fontSize: 13, color: "rgba(255,255,255,0.5)" }}>Subiendo y analizando…</div>
-                  </div>
-                ) : (
+                )}
+
+                {/* Botones iniciales cuando no hay fotos */}
+                {photos.length === 0 && (
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
                     <button onClick={() => cameraRef.current?.click()}
                       style={{ padding: "14px 12px", borderRadius: 10, border: "1px dashed rgba(142,202,230,0.35)", background: "rgba(142,202,230,0.06)", cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
                       <span style={{ fontSize: 26 }}>📷</span>
                       <span style={{ fontSize: 12, fontWeight: 700, color: B.sky }}>Tomar foto</span>
-                      <span style={{ fontSize: 10, color: "rgba(255,255,255,0.25)" }}>Cámara → IA auto-completa</span>
+                      <span style={{ fontSize: 10, color: "rgba(255,255,255,0.25)", textAlign: "center" }}>Hasta 3 fotos · IA auto-completa</span>
                     </button>
                     <button onClick={() => fileRef.current?.click()}
                       style={{ padding: "14px 12px", borderRadius: 10, border: "1px dashed rgba(255,255,255,0.12)", background: "transparent", cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
@@ -561,14 +608,16 @@ export default function CierreCaja() {
                     </button>
                   </div>
                 )}
+
                 <input ref={cameraRef} type="file" accept="image/*" capture="environment" style={{ display: "none" }}
-                  onChange={e => handleFile(e.target.files[0])} />
+                  onChange={e => { if (e.target.files[0]) { addPhoto(e.target.files[0]); e.target.value = ""; } }} />
                 <input ref={fileRef} type="file" accept=".pdf,image/*" style={{ display: "none" }}
-                  onChange={e => handleFile(e.target.files[0])} />
+                  onChange={e => { if (e.target.files[0]) { addPhoto(e.target.files[0]); e.target.value = ""; } }} />
+
                 {parseStatus === "parsing" && (
                   <div style={{ marginTop: 8, padding: "8px 12px", borderRadius: 8, background: B.sky + "15", border: `1px solid ${B.sky}33`, fontSize: 12, color: B.sky, display: "flex", alignItems: "center", gap: 8 }}>
                     <span style={{ animation: "spin 1s linear infinite", display: "inline-block" }}>⏳</span>
-                    Analizando comprobante con IA…
+                    Analizando fotos con IA…
                   </div>
                 )}
                 {parseStatus === "ok" && (
@@ -906,14 +955,14 @@ export default function CierreCaja() {
           )}
 
           {/* ── Guardar ── */}
-          <button onClick={guardar} disabled={saving || !cajero.trim() || uploadingFile}
+          <button onClick={guardar} disabled={saving || !cajero.trim() || photos.some(p => p.uploading)}
             style={{
               width: "100%", padding: "15px", borderRadius: 12, border: "none",
-              background: (saving || !cajero.trim() || uploadingFile) ? "rgba(255,255,255,0.06)" : B.sand,
-              color: (saving || !cajero.trim() || uploadingFile) ? "rgba(255,255,255,0.25)" : B.navy,
+              background: (saving || !cajero.trim() || photos.some(p => p.uploading)) ? "rgba(255,255,255,0.06)" : B.sand,
+              color: (saving || !cajero.trim() || photos.some(p => p.uploading)) ? "rgba(255,255,255,0.25)" : B.navy,
               fontSize: 15, fontWeight: 800, cursor: "pointer", marginBottom: 36,
             }}>
-            {saving ? "Guardando…" : uploadingFile ? "Subiendo archivo…" : "Guardar Cierre de Caja"}
+            {saving ? "Guardando…" : photos.some(p => p.uploading) ? "Subiendo fotos…" : "Guardar Cierre de Caja"}
           </button>
         </>
       )}
