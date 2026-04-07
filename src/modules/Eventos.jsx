@@ -534,7 +534,7 @@ export function EventoModal({ evento, categoria, salidas, aliados, vendedores, o
     // Calcular valor total para modo organizador
     const calcValorOrg = () => {
       return (form.pasadias_org || []).reduce((s, p) => {
-        const pr = pasadiasPrecios.find(x => x.nombre === p.tipo);
+        const pr = pasadiasPrecios.find(x => x.nombre.toLowerCase() === p.tipo.toLowerCase());
         if (!pr) return s;
         const precio = form.precio_tipo === "neto" ? (pr.precio_neto_agencia || pr.precio) : pr.precio;
         return s + precio * (Number(p.personas) || 0);
@@ -1019,7 +1019,7 @@ export function EventoModal({ evento, categoria, salidas, aliados, vendedores, o
           {/* Precio — solo organizador */}
           {isGrupo && form.modalidad_pago === "organizador" && (() => {
             const getPrecio = (tipo) => {
-              const p = pasadiasPrecios.find(p => p.nombre === tipo);
+              const p = pasadiasPrecios.find(p => p.nombre.toLowerCase() === tipo.toLowerCase());
               if (!p) return null;
               return form.precio_tipo === "neto" ? (p.precio_neto_agencia || p.precio) : p.precio;
             };
