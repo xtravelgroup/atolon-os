@@ -411,7 +411,7 @@ export default function BookingPopup() {
         .neq("estado", "cancelado").gte("fecha", from).lte("fecha", toFix),
       supabase.from("cierres").select("fecha, tipo").eq("activo", true)
         .gte("fecha", from).lte("fecha", toFix),
-      supabase.from("salidas").select("id, hora, nombre, capacidad_total, auto_apertura, orden, descripcion").eq("activo", true).order("orden"),
+      supabase.from("salidas").select("id, hora, nombre, capacidad_total, auto_apertura, orden").eq("activo", true).order("orden"),
     ]).then(([resR, cierreR, salR]) => {
       const sals = salR.data || [];
       setSalidas(sals);
