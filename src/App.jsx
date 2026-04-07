@@ -215,6 +215,7 @@ import Activos from "./modules/Activos";
 import Requisiciones from "./modules/Requisiciones";
 import EmpleadoPortal from "./modules/EmpleadoPortal";
 import AgenciaPortal from "./modules/AgenciaPortal";
+import LasAmericasPortal from "./modules/LasAmericasPortal";
 import BookingWidget from "./modules/BookingWidget";
 import BookingPopup from "./modules/BookingPopup";
 import PagoCliente from "./modules/PagoCliente";
@@ -273,7 +274,7 @@ const MODULE_MAP = {
 };
 
 // Public routes — no auth required
-const PUBLIC_ROUTES = ["empleados", "agencia", "booking", "pago", "reset-password", "zarpe-info", "login", ""];
+const PUBLIC_ROUTES = ["empleados", "agencia", "booking", "pago", "reset-password", "zarpe-info", "login", "las-americas", ""];
 
 function getRoute() {
   return window.location.pathname.replace(/^\//, "") || "";
@@ -345,6 +346,7 @@ export default function App() {
   if (route.startsWith("pago"))   return <><PagoCliente /><WhatsAppFloat phone={waPhone} /></>;
   if (route === "reset-password") return <><ResetPassword /><WhatsAppFloat phone={waPhone} /></>;
   if (route === "zarpe-info")     return <><ZarpeInfo /><WhatsAppFloat phone={waPhone} /></>;
+  if (route === "las-americas")   return <LasAmericasPortal />;
   if (route === "society")        return <VIPPortal />;
   if (route === "checkin-pax")    return <SelfCheckIn />;
 
