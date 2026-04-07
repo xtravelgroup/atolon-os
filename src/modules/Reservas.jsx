@@ -37,7 +37,7 @@ function paxPorSalida(reservas, salidas) {
 
 const EMPTY_FORM = {
   nombre: "", contacto: "", telefono: "", fecha: "", tipo: PASADIAS[0]?.tipo || "", pax_a: 1, pax_n: 0,
-  salida_id: "", canal: "WhatsApp", precio: PASADIAS[0]?.precio || 0,
+  salida_id: "", canal: "WhatsApp", precio: PASADIAS[0]?.precio || 0, precio_nino: 0,
   abono: 0, forma_pago: "Transferencia", fecha_pago: "", aliado_id: "", vendedor: "Sin asignar", notas: "",
 };
 
@@ -955,7 +955,6 @@ function ReservaModal({ onClose, onSave, isMobile, salidaList = [], aliadoList =
     const p = pasadiaList.find(p => p.tipo.toLowerCase() === tipo?.toLowerCase());
     if (!p) return 0;
     if (aliado_id && mode === "neto") {
-      // Per-aliado negotiated rate takes priority over global neto
       const tarifaAliado = conveniosMap[aliado_id]?.[tipo?.toLowerCase()];
       if (tarifaAliado > 0) return tarifaAliado;
       if (p.precio_neto_agencia > 0) return p.precio_neto_agencia;
@@ -963,18 +962,29 @@ function ReservaModal({ onClose, onSave, isMobile, salidaList = [], aliadoList =
     return p.precio;
   };
 
+  const calcPrecioNino = (tipo, aliado_id, mode) => {
+    const p = pasadiaList.find(p => p.tipo.toLowerCase() === tipo?.toLowerCase());
+    if (!p) return 0;
+    if (aliado_id && mode === "neto") {
+      const tarifaAliadoNino = conveniosMap[aliado_id]?.[tipo?.toLowerCase() + "__nino"];
+      if (tarifaAliadoNino > 0) return tarifaAliadoNino;
+      if (p.precio_neto_nino > 0) return p.precio_neto_nino;
+    }
+    return p.precio_nino || 0;
+  };
+
   const set = (k, v) => {
     setForm(f => {
       const next = { ...f, [k]: v };
       if (k === "tipo") {
-        next.precio = calcPrecio(v, f.aliado_id, precioMode);
+        next.precio      = calcPrecio(v, f.aliado_id, precioMode);
+        next.precio_nino = calcPrecioNino(v, f.aliado_id, precioMode);
       }
       if (k === "aliado_id") {
-        // if aliado selected, default to CXC if they have credit; else reset
         const aliado = aliadoList.find(a => a.id === v);
         if (!aliado || !aliado.cupo_credito) next.forma_pago = "Transferencia";
-        // Recalculate price with current mode
-        next.precio = calcPrecio(f.tipo, v, precioMode);
+        next.precio      = calcPrecio(f.tipo, v, precioMode);
+        next.precio_nino = calcPrecioNino(f.tipo, v, precioMode);
       }
       // CXC = crédito, no hay abono en efectivo
       if (k === "forma_pago" && v === "CXC") {
@@ -987,15 +997,23 @@ function ReservaModal({ onClose, onSave, isMobile, salidaList = [], aliadoList =
 
   const handlePrecioMode = (mode) => {
     setPrecioMode(mode);
-    setForm(f => ({ ...f, precio: calcPrecio(f.tipo, f.aliado_id, mode) }));
+    setForm(f => ({
+      ...f,
+      precio:      calcPrecio(f.tipo, f.aliado_id, mode),
+      precio_nino: calcPrecioNino(f.tipo, f.aliado_id, mode),
+    }));
   };
 
   const aliado = aliadoList.find(a => a.id === form.aliado_id);
   const tieneCXC = aliado && (aliado.cupo_credito || 0) > 0;
   const pasadiaActual = pasadiaList.find(p => p.tipo.toLowerCase() === form.tipo?.toLowerCase());
-  const precioFull = pasadiaActual?.precio || 0;
-  const precioNeto = (form.aliado_id && conveniosMap[form.aliado_id]?.[form.tipo?.toLowerCase()])
+  const precioFull     = pasadiaActual?.precio || 0;
+  const precioNeto     = (form.aliado_id && conveniosMap[form.aliado_id]?.[form.tipo?.toLowerCase()])
     || pasadiaActual?.precio_neto_agencia || 0;
+  const precioNinoFull = pasadiaActual?.precio_nino || 0;
+  const precioNinoNeto = (form.aliado_id && conveniosMap[form.aliado_id]?.[form.tipo?.toLowerCase() + "__nino"])
+    || pasadiaActual?.precio_neto_nino || 0;
+  const tieneNino = precioNinoFull > 0; // esta pasadía tiene tarifa de niño
   const formasPagoDisp = form.forma_pago === "Enviar Link de Pago"
     ? FORMAS_PAGO
     : FORMAS_PAGO.filter(f => f !== "CXC" || tieneCXC);
@@ -1180,6 +1198,24 @@ function ReservaModal({ onClose, onSave, isMobile, salidaList = [], aliadoList =
             <label style={LS}>Niños (0–12)</label>
             <input type="number" min={0} style={IS()} value={form.pax_n} onChange={e => set("pax_n", Number(e.target.value))} />
           </div>
+          {/* Precio niño: solo visible cuando hay niños y la pasadía tiene tarifa de niño */}
+          {Number(form.pax_n) > 0 && tieneNino && (
+            <div style={{ ...FS, gridColumn: "1 / -1" }}>
+              <label style={LS}>Precio por niño</label>
+              {precioMode === "neto" && form.aliado_id ? (
+                <input type="number" min={0} style={{ ...IS(), color: B.sky, fontWeight: 700 }}
+                  value={form.precio_nino}
+                  onChange={e => setForm(f => ({ ...f, precio_nino: Number(e.target.value) }))} />
+              ) : (
+                <div style={{ ...IS(), background: B.navyLight, color: B.sky, fontWeight: 700, cursor: "default", userSelect: "none" }}>
+                  {form.precio_nino > 0 ? COP(form.precio_nino) : COP(precioNinoFull)}
+                  <span style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", marginLeft: 8, fontWeight: 400 }}>
+                    ({precioMode === "neto" ? "tarifa neta niño" : "precio público niño"})
+                  </span>
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Salida selector con disponibilidad */}
@@ -1294,23 +1330,31 @@ function ReservaModal({ onClose, onSave, isMobile, salidaList = [], aliadoList =
 
         {/* Preview totales */}
         {form.tipo && (
-          <div style={{ background: "#0D1B3E", borderRadius: 10, padding: "12px 16px", display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
-            {(() => {
-              const pax = Number(form.pax_a) + Number(form.pax_n);
-              const total = pax * Number(form.precio);
-              const abono = form.forma_pago === "Enviar Link de Pago" ? 0 : Number(form.abono);
-              const saldo = total - abono;
-              return [
-                { label: "Total",  value: COP(total), color: B.white   },
-                { label: "Abono",  value: COP(abono), color: B.success },
-                { label: "Saldo",  value: COP(Math.max(0, saldo)), color: saldo > 0 ? B.warning : B.success },
-              ].map(p => (
-                <div key={p.label}>
-                  <div style={{ fontSize: 11, color: B.sand, textTransform: "uppercase", letterSpacing: "0.05em" }}>{p.label}</div>
-                  <div style={{ fontSize: 18, fontWeight: 800, color: p.color, fontFamily: "'Barlow Condensed', sans-serif" }}>{p.value}</div>
-                </div>
-              ));
-            })()}
+          <div style={{ background: "#0D1B3E", borderRadius: 10, padding: "12px 16px" }}>
+            {/* Desglose por adultos/niños cuando hay niños con tarifa diferente */}
+            {Number(form.pax_n) > 0 && (form.precio_nino || 0) > 0 && (
+              <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginBottom: 8, display: "flex", gap: 16, flexWrap: "wrap" }}>
+                {Number(form.pax_a) > 0 && <span>{form.pax_a} adulto{form.pax_a !== 1 ? "s" : ""} × {COP(form.precio)}</span>}
+                <span>{form.pax_n} niño{form.pax_n !== 1 ? "s" : ""} × {COP(form.precio_nino)}</span>
+              </div>
+            )}
+            <div style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
+              {(() => {
+                const total = Number(form.pax_a) * Number(form.precio) + Number(form.pax_n) * Number(form.precio_nino || form.precio);
+                const abono = form.forma_pago === "Enviar Link de Pago" ? 0 : Number(form.abono);
+                const saldo = total - abono;
+                return [
+                  { label: "Total",  value: COP(total), color: B.white   },
+                  { label: "Abono",  value: COP(abono), color: B.success },
+                  { label: "Saldo",  value: COP(Math.max(0, saldo)), color: saldo > 0 ? B.warning : B.success },
+                ].map(p => (
+                  <div key={p.label}>
+                    <div style={{ fontSize: 11, color: B.sand, textTransform: "uppercase", letterSpacing: "0.05em" }}>{p.label}</div>
+                    <div style={{ fontSize: 18, fontWeight: 800, color: p.color, fontFamily: "'Barlow Condensed', sans-serif" }}>{p.value}</div>
+                  </div>
+                ));
+              })()}
+            </div>
           </div>
         )}
 
@@ -1844,7 +1888,7 @@ export default function Reservas() {
       supabase.from("reservas").select("abono").eq("fecha_pago", today).neq("estado", "cancelado"),
       // Pagos sin fecha_pago pero creados hoy con abono > 0 (web/Wompi automáticos)
       supabase.from("reservas").select("abono").is("fecha_pago", null).gte("created_at", todayStart).lt("created_at", tomorrowStart).gt("abono", 0).neq("estado", "cancelado"),
-      supabase.from("b2b_convenios").select("aliado_id, tipo_pasadia, tarifa_neta").eq("activo", true),
+      supabase.from("b2b_convenios").select("aliado_id, tipo_pasadia, tarifa_neta, tarifa_neta_nino").eq("activo", true),
     ]);
     if (resHoy.data)    setReservasHoy(resHoy.data.map(mapRow));
     if (resManana.data) setReservasManana(resManana.data.map(mapRow));
@@ -1859,6 +1903,7 @@ export default function Reservas() {
       convR.data.forEach(c => {
         if (!cmap[c.aliado_id]) cmap[c.aliado_id] = {};
         cmap[c.aliado_id][c.tipo_pasadia.toLowerCase()] = c.tarifa_neta;
+        if (c.tarifa_neta_nino > 0) cmap[c.aliado_id][c.tipo_pasadia.toLowerCase() + "__nino"] = c.tarifa_neta_nino;
       });
       setConveniosMap(cmap);
     }
@@ -1960,7 +2005,8 @@ export default function Reservas() {
     }
 
     const pax   = Number(form.pax_a) + Number(form.pax_n);
-    const total = pax * Number(form.precio);
+    const total = Number(form.pax_a) * Number(form.precio)
+                + Number(form.pax_n) * Number(form.precio_nino > 0 ? form.precio_nino : form.precio);
     const isLink = form._isLink;
     const abono  = isLink ? 0 : (form.forma_pago === "CXC" ? 0 : (Number(form.abono) || 0));
     const reservaId = `R-${Date.now()}`;
