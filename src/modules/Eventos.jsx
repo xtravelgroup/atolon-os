@@ -65,9 +65,9 @@ function GrupoLink({ evento, onClose }) {
     setShowRes(true);
     if (reservas !== null) return;
     setLoadingR(true);
-    let q = supabase.from("reservas").select("*").eq("canal", "GRUPO").eq("fecha", evento.fecha);
-    if (evento.aliado_id) q = q.eq("aliado_id", evento.aliado_id);
-    const { data } = await q.order("created_at", { ascending: false });
+    const { data } = await supabase.from("reservas").select("*")
+      .eq("grupo_id", evento.id)
+      .order("created_at", { ascending: false });
     setReservas(data || []);
     setLoadingR(false);
   };
@@ -160,8 +160,8 @@ export function EventoModal({ evento, categoria, salidas, aliados, vendedores, o
   const tiposOpt = isGrupo ? TIPOS_GRUPO : TIPOS_EVT;
 
   const [form, setForm]       = useState(isEdit
-    ? { ...evento, pax: String(evento.pax || ""), valor: String(evento.valor || ""), aliado_id: evento.aliado_id || "", vendedor: evento.vendedor || "", salidas_grupo: evento.salidas_grupo || [] }
-    : { nombre: "", tipo: tiposOpt[0], fecha: "", pax: "", valor: "", aliado_id: "", vendedor: "", salidas_grupo: [], contacto: "", tel: "", email: "", empresa: "", nit: "", cargo: "", direccion: "", montaje: "", hora_ini: "", hora_fin: "", vencimiento: "", stage: "Consulta", notas: "", categoria });
+    ? { ...evento, pax: String(evento.pax || ""), valor: String(evento.valor || ""), aliado_id: evento.aliado_id || "", vendedor: evento.vendedor || "", salidas_grupo: evento.salidas_grupo || [], buy_out: evento.buy_out || false }
+    : { nombre: "", tipo: tiposOpt[0], fecha: "", pax: "", valor: "", aliado_id: "", vendedor: "", salidas_grupo: [], contacto: "", tel: "", email: "", empresa: "", nit: "", cargo: "", direccion: "", montaje: "", hora_ini: "", hora_fin: "", vencimiento: "", stage: "Consulta", notas: "", categoria, buy_out: false });
   const [saving,      setSaving]      = useState(false);
   const [horaInput,   setHoraInput]   = useState("");
   const [aliadoSearch,setAliadoSearch]= useState("");
@@ -199,9 +199,54 @@ export function EventoModal({ evento, categoria, salidas, aliados, vendedores, o
 
   const removeSalida = (hora) => setForm(f => ({ ...f, salidas_grupo: f.salidas_grupo.filter(x => x.hora !== hora) }));
 
+  const [saveError,      setSaveError]      = useState("");
+  const [overrideModal,  setOverrideModal]  = useState(null); // { reservas: [], gerentes: [] }
+  const [overrideGG,     setOverrideGG]     = useState("");
+  const [overrideMotivo, setOverrideMotivo] = useState("");
+  const [checkingDate,   setCheckingDate]   = useState(false);
+
+  // Verifica si la fecha destino tiene reservas — retorna lista
+  const checkReservasEnFecha = async (fecha) => {
+    if (!fecha || !supabase) return [];
+    const { data } = await supabase
+      .from("reservas")
+      .select("id, nombre, pax, tipo, estado")
+      .eq("fecha", fecha)
+      .in("estado", ["confirmado", "pendiente", "pendiente_pago", "pendiente_comprobante"]);
+    return data || [];
+  };
+
+  const confirmarOverride = async () => {
+    if (!overrideGG) return;
+    setOverrideModal(null);
+    await doSave(overrideGG, overrideMotivo);
+    setOverrideGG(""); setOverrideMotivo("");
+  };
+
   const save = async () => {
     if (!supabase || !form.nombre.trim() || !form.fecha) return;
+    setCheckingDate(true);
+    const reservasEnFecha = await checkReservasEnFecha(form.fecha);
+    setCheckingDate(false);
+
+    // Si hay reservas en la fecha destino → pedir aprobación GG
+    if (reservasEnFecha.length > 0) {
+      const { data: gerentes } = await supabase
+        .from("usuarios")
+        .select("id, nombre")
+        .in("rol_id", ["gerente_general", "super_admin", "director"])
+        .eq("activo", true)
+        .order("nombre");
+      setOverrideModal({ reservas: reservasEnFecha, gerentes: gerentes || [] });
+      return;
+    }
+
+    await doSave();
+  };
+
+  const doSave = async (aprobadoPor = null, motivoOverride = null) => {
     setSaving(true);
+    setSaveError("");
     const payload = {
       nombre:       form.nombre.trim(),
       tipo:         form.tipo,
@@ -222,16 +267,70 @@ export function EventoModal({ evento, categoria, salidas, aliados, vendedores, o
       vencimiento:  form.vencimiento || "",
       stage:        form.stage,
       notas:        form.notas,
-      categoria:    form.categoria || categoria,
+      categoria:    (["evento","grupo"].includes(form.categoria) ? form.categoria : null) || (["evento","grupo"].includes(categoria) ? categoria : "evento"),
       aliado_id:    form.aliado_id || null,
       vendedor:     form.vendedor || "",
+      buy_out:      form.buy_out || false,
     };
     let savedId = evento?.id;
+    let dbError = null;
     if (isEdit) {
-      await supabase.from("eventos").update(payload).eq("id", evento.id);
+      const { error } = await supabase.from("eventos").update(payload).eq("id", evento.id);
+      dbError = error;
     } else {
       savedId = `EVT-${Date.now()}`;
-      await supabase.from("eventos").insert({ id: savedId, ...payload });
+      const { error } = await supabase.from("eventos").insert({ id: savedId, ...payload });
+      dbError = error;
+    }
+    if (dbError) {
+      setSaveError(dbError.message || "Error al guardar. Intenta de nuevo.");
+      setSaving(false);
+      return;
+    }
+    // Loguear override de GG si aplica
+    if (aprobadoPor) {
+      try {
+        await supabase.from("eventos_overrides").insert({
+          id: `OVR-${Date.now()}`,
+          evento_id: savedId,
+          fecha: form.fecha,
+          aprobado_por: aprobadoPor,
+          motivo: motivoOverride || "",
+          created_at: new Date().toISOString(),
+        });
+      } catch { /* tabla opcional */ }
+    }
+    // Si es Buy-Out y se está confirmando, cerrar la fecha para pasadías
+    const wasConfirmado = isEdit && evento?.stage === "Confirmado";
+    const fechaCambio   = isEdit && evento?.fecha !== form.fecha;
+
+    if (form.buy_out && form.stage === "Confirmado") {
+      if (!wasConfirmado && form.fecha) {
+        // Primera vez que se confirma → crear cierre
+        await supabase.from("cierres").insert({
+          id: `CIE-${Date.now()}`,
+          fecha: form.fecha,
+          tipo: "total",
+          motivo: `Buy-Out: ${form.nombre.trim()}`,
+          activo: true,
+          creado_por: "Eventos",
+        });
+      } else if (wasConfirmado && fechaCambio && evento?.fecha) {
+        // Ya estaba confirmado y cambió la fecha → mover el cierre
+        await supabase.from("cierres")
+          .delete()
+          .eq("creado_por", "Eventos")
+          .eq("fecha", evento.fecha)
+          .ilike("motivo", `%${evento.nombre}%`);
+        await supabase.from("cierres").insert({
+          id: `CIE-${Date.now()}`,
+          fecha: form.fecha,
+          tipo: "total",
+          motivo: `Buy-Out: ${form.nombre.trim()}`,
+          activo: true,
+          creado_por: "Eventos",
+        });
+      }
     }
     setSaving(false);
     await onSaved();
@@ -240,6 +339,67 @@ export function EventoModal({ evento, categoria, salidas, aliados, vendedores, o
   };
 
   return (
+    <>
+    {/* ── Override GG Modal ─────────────────────────────────────────────── */}
+    {overrideModal && (
+      <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.85)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1100 }}>
+        <div style={{ background: B.navyMid, borderRadius: 16, padding: 32, width: 500, boxShadow: "0 20px 60px rgba(0,0,0,0.7)", border: `2px solid ${B.danger}44` }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 20 }}>
+            <span style={{ fontSize: 28 }}>⚠️</span>
+            <div>
+              <div style={{ fontSize: 17, fontWeight: 700, color: B.danger }}>Requiere Aprobación</div>
+              <div style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", marginTop: 2 }}>La fecha seleccionada tiene reservas activas</div>
+            </div>
+          </div>
+
+          {/* Lista de reservas afectadas */}
+          <div style={{ background: B.navy, borderRadius: 10, padding: 14, marginBottom: 20, maxHeight: 180, overflowY: "auto" }}>
+            <div style={{ fontSize: 11, color: B.sand, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 10 }}>
+              {overrideModal.reservas.length} reserva{overrideModal.reservas.length !== 1 ? "s" : ""} en {form.fecha}
+            </div>
+            {overrideModal.reservas.map(r => (
+              <div key={r.id} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: `1px solid ${B.navyLight}22`, fontSize: 13 }}>
+                <span style={{ fontWeight: 600 }}>{r.nombre}</span>
+                <span style={{ color: "rgba(255,255,255,0.45)" }}>{r.pax} pax · {r.tipo} · <span style={{ color: B.sand }}>{r.estado}</span></span>
+              </div>
+            ))}
+          </div>
+
+          {/* Seleccionar GG */}
+          <div style={{ marginBottom: 14 }}>
+            <label style={{ ...{ fontSize: 11, color: B.sand, display: "block", marginBottom: 5, textTransform: "uppercase", letterSpacing: "0.06em" } }}>Aprobado por (Gerente General)</label>
+            <select value={overrideGG} onChange={e => setOverrideGG(e.target.value)}
+              style={{ width: "100%", padding: "9px 12px", borderRadius: 8, background: B.navy, border: `1px solid ${overrideGG ? B.success : B.danger}`, color: B.white, fontSize: 13, outline: "none" }}>
+              <option value="">— Seleccionar Gerente —</option>
+              {overrideModal.gerentes.length > 0
+                ? overrideModal.gerentes.map(g => <option key={g.id} value={g.nombre}>{g.nombre}</option>)
+                : <option value="Gerente General">Gerente General</option>
+              }
+            </select>
+          </div>
+
+          {/* Motivo */}
+          <div style={{ marginBottom: 20 }}>
+            <label style={{ fontSize: 11, color: B.sand, display: "block", marginBottom: 5, textTransform: "uppercase", letterSpacing: "0.06em" }}>Motivo del override</label>
+            <input value={overrideMotivo} onChange={e => setOverrideMotivo(e.target.value)}
+              placeholder="Ej: Cliente VIP, reagendamiento urgente..."
+              style={{ width: "100%", padding: "9px 12px", borderRadius: 8, background: B.navy, border: `1px solid ${B.navyLight}`, color: B.white, fontSize: 13, outline: "none", boxSizing: "border-box" }} />
+          </div>
+
+          <div style={{ display: "flex", gap: 10 }}>
+            <button onClick={() => { setOverrideModal(null); setOverrideGG(""); setOverrideMotivo(""); }}
+              style={{ flex: 1, padding: "11px", borderRadius: 8, border: `1px solid ${B.navyLight}`, background: "none", color: "rgba(255,255,255,0.6)", fontSize: 13, cursor: "pointer" }}>
+              Cancelar
+            </button>
+            <button onClick={confirmarOverride} disabled={!overrideGG || saving}
+              style={{ flex: 2, padding: "11px", borderRadius: 8, border: "none", background: !overrideGG ? B.navyLight : B.danger, color: !overrideGG ? "rgba(255,255,255,0.3)" : "#fff", fontSize: 13, fontWeight: 700, cursor: !overrideGG ? "default" : "pointer" }}>
+              {saving ? "Guardando..." : "✓ Confirmar Override"}
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
+
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 999 }}
       onClick={e => e.target === e.currentTarget && onClose()}>
       <div style={{ background: B.navyMid, borderRadius: 16, padding: 32, width: 560, maxHeight: "90vh", overflowY: "auto", boxShadow: "0 20px 60px rgba(0,0,0,0.5)" }}>
@@ -457,6 +617,27 @@ export function EventoModal({ evento, categoria, salidas, aliados, vendedores, o
             </select>
           </div>
 
+          {/* Buy-Out */}
+          <div
+            onClick={() => set("buy_out", !form.buy_out)}
+            style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", borderRadius: 10, cursor: "pointer",
+              background: form.buy_out ? "rgba(255,180,0,0.12)" : B.navyLight,
+              border: `1px solid ${form.buy_out ? "#FFB400" : "transparent"}`,
+              transition: "all 0.2s" }}
+          >
+            <div style={{ width: 20, height: 20, borderRadius: 5, border: `2px solid ${form.buy_out ? "#FFB400" : "rgba(255,255,255,0.25)"}`,
+              background: form.buy_out ? "#FFB400" : "transparent", display: "flex", alignItems: "center", justifyContent: "center",
+              flexShrink: 0, transition: "all 0.2s" }}>
+              {form.buy_out && <span style={{ color: B.navy, fontSize: 13, fontWeight: 900, lineHeight: 1 }}>✓</span>}
+            </div>
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: form.buy_out ? "#FFB400" : B.white }}>Buy-Out</div>
+              <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>
+                Al confirmar, cierra automáticamente la fecha para venta de pasadías
+              </div>
+            </div>
+          </div>
+
           <div>
             <label style={LS}>Notas</label>
             <textarea value={form.notas} onChange={e => set("notas", e.target.value)} rows={2}
@@ -464,31 +645,118 @@ export function EventoModal({ evento, categoria, salidas, aliados, vendedores, o
           </div>
         </div>
 
-        <div style={{ display: "flex", gap: 10, marginTop: 24 }}>
+        {saveError && (
+          <div style={{ marginTop: 16, padding: "10px 14px", background: "rgba(220,53,69,0.15)", border: "1px solid rgba(220,53,69,0.4)", borderRadius: 8, fontSize: 12, color: "#ff6b7a" }}>
+            ⚠️ {saveError}
+          </div>
+        )}
+
+        <div style={{ display: "flex", gap: 10, marginTop: 16 }}>
           <button onClick={onClose} style={{ flex: 1, padding: "11px", background: "none", border: `1px solid ${B.navyLight}`, borderRadius: 8, color: "rgba(255,255,255,0.4)", fontSize: 13, cursor: "pointer" }}>Cancelar</button>
-          <button onClick={save} disabled={saving || !form.nombre.trim() || !form.fecha}
-            style={{ flex: 2, padding: "11px", background: saving ? B.navyLight : B.sand, color: B.navy, border: "none", borderRadius: 8, fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
-            {saving ? "Guardando..." : isGrupo && !isEdit ? "Crear y generar link →" : isEdit ? "Guardar cambios" : "Crear Evento"}
+          <button onClick={save} disabled={saving || checkingDate || !form.nombre.trim() || !form.fecha}
+            style={{ flex: 2, padding: "11px", background: (saving || checkingDate) ? B.navyLight : B.sand, color: B.navy, border: "none", borderRadius: 8, fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
+            {checkingDate ? "Verificando..." : saving ? "Guardando..." : isGrupo && !isEdit ? "Crear y generar link →" : isEdit ? "Guardar cambios" : "Crear Evento"}
           </button>
         </div>
       </div>
     </div>
+    </>
   );
 }
 
 // ─── Modal reservas de grupo ──────────────────────────────────────────────────
 export function ReservasGrupoModal({ evento, onClose }) {
-  const [reservas, setReservas] = useState(null);
+  const [reservas,    setReservas]    = useState(null);
+  const [selected,    setSelected]    = useState(null); // reserva detalle
+  const [sending,     setSending]     = useState(false);
+  const [sendMsg,     setSendMsg]     = useState("");
 
-  useEffect(() => {
+  const load = () => {
     if (!supabase) return;
-    let q = supabase.from("reservas").select("*").eq("canal", "GRUPO").eq("fecha", evento.fecha);
-    if (evento.aliado_id) q = q.eq("aliado_id", evento.aliado_id);
-    q.order("created_at", { ascending: false }).then(({ data }) => setReservas(data || []));
-  }, [evento]);
+    supabase.from("reservas").select("*")
+      .eq("grupo_id", evento.id)
+      .order("created_at", { ascending: false })
+      .then(({ data }) => setReservas(data || []));
+  };
+  useEffect(load, [evento]);
 
   const totalPax = (reservas || []).reduce((s, r) => s + (r.pax || 0), 0);
   const totalCOP = (reservas || []).reduce((s, r) => s + (r.total || 0), 0);
+
+  const estadoColor = (e) => e === "confirmado" ? B.success : e === "cancelado" ? B.danger : B.warning;
+
+  const reenviarEmail = async (r) => {
+    setSending(true); setSendMsg("");
+    try {
+      const res = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/send-confirmation`,
+        { method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}` }, body: JSON.stringify(r) }
+      );
+      setSendMsg(res.ok ? "✅ Correo reenviado" : "⚠️ Error al reenviar");
+    } catch { setSendMsg("⚠️ Error de conexión"); }
+    setSending(false);
+    setTimeout(() => setSendMsg(""), 3000);
+  };
+
+  // ── Detalle de una reserva ──────────────────────────────────────────────────
+  if (selected) {
+    const r = selected;
+    const confirmUrl = `${window.location.origin}/zarpe-info?id=${r.id}`;
+    return (
+      <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.75)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 }}
+        onClick={e => e.target === e.currentTarget && setSelected(null)}>
+        <div style={{ background: B.navyMid, borderRadius: 16, padding: 28, width: 500, maxHeight: "88vh", overflowY: "auto", boxShadow: "0 20px 60px rgba(0,0,0,0.5)" }}>
+          {/* Header */}
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 20 }}>
+            <div>
+              <button onClick={() => setSelected(null)} style={{ background: "none", border: "none", color: B.sky, fontSize: 12, cursor: "pointer", padding: 0, marginBottom: 6 }}>← Volver al grupo</button>
+              <h3 style={{ fontSize: 17, fontWeight: 700 }}>{r.nombre}</h3>
+              <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>{r.id}</div>
+            </div>
+            <span style={{ fontSize: 11, padding: "4px 10px", borderRadius: 10, background: estadoColor(r.estado) + "22", color: estadoColor(r.estado), fontWeight: 700 }}>{r.estado}</span>
+          </div>
+
+          {/* Info */}
+          <div style={{ background: B.navy, borderRadius: 10, padding: 16, marginBottom: 16 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, fontSize: 13 }}>
+              {[
+                ["📅 Fecha",    fmtFecha(r.fecha)],
+                ["🎟 Tipo",     r.tipo],
+                ["👥 Personas", `${r.pax} pax`],
+                ["💵 Total",    COP(r.total)],
+                ["📧 Email",    r.email || r.contacto || "—"],
+                ["📱 Teléfono", r.telefono || "—"],
+                ["💳 Forma pago", r.forma_pago || "—"],
+                ["⛵ Salida",   r.salida_id || "—"],
+              ].map(([label, val]) => (
+                <div key={label}>
+                  <div style={{ fontSize: 10, color: "rgba(255,255,255,0.35)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 2 }}>{label}</div>
+                  <div style={{ fontWeight: 600, wordBreak: "break-all" }}>{val}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Acciones */}
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            {/* Ver certificado */}
+            <a href={confirmUrl} target="_blank" rel="noreferrer"
+              style={{ display: "block", padding: "11px", borderRadius: 8, background: B.sand + "22", border: `1px solid ${B.sand}44`, color: B.sand, fontSize: 13, fontWeight: 700, textAlign: "center", textDecoration: "none" }}>
+              🎫 Ver certificado / confirmación
+            </a>
+            {/* Reenviar correo */}
+            {(r.email || r.contacto) && (
+              <button onClick={() => reenviarEmail(r)} disabled={sending}
+                style={{ padding: "11px", borderRadius: 8, border: `1px solid ${B.sky}44`, background: B.sky + "22", color: B.sky, fontSize: 13, fontWeight: 700, cursor: sending ? "default" : "pointer", opacity: sending ? 0.6 : 1 }}>
+                {sending ? "Enviando..." : `📧 Reenviar confirmación a ${r.email || r.contacto}`}
+              </button>
+            )}
+            {sendMsg && <div style={{ textAlign: "center", fontSize: 13, color: sendMsg.startsWith("✅") ? B.success : B.warning }}>{sendMsg}</div>}
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 999 }}
@@ -517,21 +785,24 @@ export function ReservasGrupoModal({ evento, onClose }) {
               <span style={{ fontSize: 13, color: "rgba(255,255,255,0.5)" }}>🎟 <strong style={{ color: B.white }}>{reservas.length} reservas</strong></span>
             </div>
             {reservas.map(r => (
-              <div key={r.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 0", borderBottom: `1px solid ${B.navyLight}` }}>
+              <div key={r.id} onClick={() => setSelected(r)}
+                style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 12px", borderBottom: `1px solid ${B.navyLight}`, cursor: "pointer", borderRadius: 8, margin: "2px 0" }}
+                onMouseEnter={e => e.currentTarget.style.background = B.navy}
+                onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
                 <div style={{ flex: 1 }}>
                   <div style={{ fontWeight: 600, fontSize: 14 }}>{r.nombre}</div>
                   <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>
                     {r.id} · {r.tipo} · {r.pax} {r.pax === 1 ? "persona" : "personas"}
                   </div>
                 </div>
-                <div style={{ textAlign: "right", flexShrink: 0 }}>
+                <div style={{ textAlign: "right", flexShrink: 0, display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
                   <div style={{ fontWeight: 700, color: B.sand, fontSize: 14 }}>{COP(r.total)}</div>
                   <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 10,
-                    background: r.estado === "confirmado" ? B.success + "22" : r.estado === "cancelado" ? B.danger + "22" : B.warning + "22",
-                    color:      r.estado === "confirmado" ? B.success : r.estado === "cancelado" ? B.danger : B.warning }}>
+                    background: estadoColor(r.estado) + "22", color: estadoColor(r.estado) }}>
                     {r.estado}
                   </span>
                 </div>
+                <div style={{ color: "rgba(255,255,255,0.2)", fontSize: 16 }}>›</div>
               </div>
             ))}
           </>
@@ -567,19 +838,19 @@ function KanbanBoard({ items, isGrupo, onEdit, onBeo, onLink, onCotizar, onReser
                 {ev.aliado_id && <div style={{ fontSize: 11, color: B.sky, marginBottom: 4 }}>🤝 {aliados.find(a => a.id === ev.aliado_id)?.nombre || ev.aliado_id}</div>}
                 {ev.vendedor && <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginBottom: 4 }}>👤 {ev.vendedor}</div>}
                 <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                  {!isGrupo && (
+                  {ev.categoria !== "grupo" && (
                     <button onClick={e => { e.stopPropagation(); onBeo(ev); }}
                       style={{ fontSize: 11, padding: "4px 10px", borderRadius: 6, background: B.navyLight, color: B.white, border: "none", cursor: "pointer" }}>Ver BEO</button>
                   )}
-                  {!isGrupo && (
+                  {ev.categoria !== "grupo" && (
                     <button onClick={e => { e.stopPropagation(); onCotizar(ev); }}
                       style={{ fontSize: 11, padding: "4px 10px", borderRadius: 6, background: B.sand + "33", color: B.sand, border: `1px solid ${B.sand}44`, cursor: "pointer", fontWeight: 600 }}>📋 Cotizar</button>
                   )}
-                  {isGrupo && (
+                  {ev.categoria === "grupo" && (
                     <button onClick={e => { e.stopPropagation(); onLink(ev); }}
                       style={{ fontSize: 11, padding: "4px 10px", borderRadius: 6, background: B.sky + "33", color: B.sky, border: `1px solid ${B.sky}44`, cursor: "pointer" }}>🔗 Ver link</button>
                   )}
-                  {isGrupo && (
+                  {ev.categoria === "grupo" && (
                     <button onClick={e => { e.stopPropagation(); onReservas(ev); }}
                       style={{ fontSize: 11, padding: "4px 10px", borderRadius: 6, background: B.sand + "22", color: B.sand, border: `1px solid ${B.sand}44`, cursor: "pointer" }}>👥 Reservas</button>
                   )}
@@ -609,12 +880,12 @@ function calcLine(l) {
 
 const MENU_TIPOS = ["Menú de Banquetes", "Menú Restaurant", "Custom Menu"];
 
-function SectionTable({ title, color, rows, setRows, showNoches = false, showMenuType = false }) {
-  const [menuPicker, setMenuPicker] = useState(false);
+function SectionTable({ title, color, rows, setRows, showNoches = false, showMenuType = false, catalogItems = null }) {
+  const [picker, setPicker] = useState(false);
 
-  const addRow = (menu_tipo = "") => {
-    setRows(r => [...r, { ...EMPTY_LINE, menu_tipo }]);
-    setMenuPicker(false);
+  const addRow = (overrides = {}) => {
+    setRows(r => [...r, { ...EMPTY_LINE, ...overrides }]);
+    setPicker(false);
   };
   const upd = (i, k, v) => setRows(r => r.map((x, j) => j === i ? { ...x, [k]: v } : x));
   const del = (i) => setRows(r => r.filter((_, j) => j !== i));
@@ -623,6 +894,8 @@ function SectionTable({ title, color, rows, setRows, showNoches = false, showMen
     const { sub, tax, total } = calcLine(l);
     return { sub: acc.sub + sub, tax: acc.tax + tax, total: acc.total + total };
   }, { sub: 0, tax: 0, total: 0 });
+
+  const hasPicker = showMenuType || catalogItems !== null;
 
   const th = { padding: "8px 10px", fontSize: 11, fontWeight: 700, color: B.white, textTransform: "uppercase", letterSpacing: "0.05em", background: color, textAlign: "left" };
   const td = { padding: "6px 8px", fontSize: 12, borderBottom: `1px solid ${B.navyLight}` };
@@ -635,22 +908,46 @@ function SectionTable({ title, color, rows, setRows, showNoches = false, showMen
     <div style={{ marginBottom: 24, position: "relative" }}>
       <div style={{ background: color, padding: "10px 14px", borderRadius: "8px 8px 0 0", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <span style={{ fontWeight: 700, color: B.white, fontSize: 14 }}>{title}</span>
-        <button onClick={() => showMenuType ? setMenuPicker(p => !p) : addRow()}
+        <button onClick={() => hasPicker ? setPicker(p => !p) : addRow()}
           style={{ background: "rgba(255,255,255,0.2)", border: "none", color: B.white, borderRadius: 6, padding: "4px 12px", fontSize: 12, cursor: "pointer", fontWeight: 600 }}>+ Agregar</button>
       </div>
 
-      {/* Menu type picker */}
-      {menuPicker && (
-        <div style={{ background: B.navyMid, border: `1px solid ${B.navyLight}`, borderRadius: 10, padding: 16, marginBottom: 0, position: "absolute", right: 0, top: 42, zIndex: 10, boxShadow: "0 8px 24px #0006", minWidth: 280 }}>
-          <div style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", marginBottom: 10 }}>Selecciona el tipo de menú:</div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {MENU_TIPOS.map(t => (
-              <button key={t} onClick={() => addRow(t)}
-                style={{ padding: "10px 16px", borderRadius: 8, background: B.navy, border: `1px solid ${B.navyLight}`, color: B.white, fontSize: 13, cursor: "pointer", textAlign: "left", fontWeight: 600 }}>
-                {t}
+      {/* Picker dropdown */}
+      {picker && (
+        <div style={{ background: B.navyMid, border: `1px solid ${B.navyLight}`, borderRadius: 10, padding: 16, marginBottom: 0, position: "absolute", right: 0, top: 42, zIndex: 10, boxShadow: "0 8px 24px #0006", minWidth: 300, maxHeight: 320, overflowY: "auto" }}>
+          {/* Catalog items (espacios from menu_items) */}
+          {catalogItems !== null && (
+            <>
+              {catalogItems.length > 0 && (
+                <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 }}>Espacios disponibles</div>
+              )}
+              {catalogItems.map(item => (
+                <button key={item.id} onClick={() => addRow({ concepto: item.nombre, valor_unit: item.precio, iva: item.tiene_iva === false ? 0 : 19 })}
+                  style={{ width: "100%", padding: "10px 14px", borderRadius: 8, background: B.navy, border: `1px solid ${B.navyLight}`, color: B.white, fontSize: 13, cursor: "pointer", textAlign: "left", marginBottom: 6, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <span style={{ fontWeight: 600 }}>{item.nombre}</span>
+                  {item.precio > 0 && <span style={{ fontSize: 11, color: B.sand }}>{COP(item.precio)}</span>}
+                </button>
+              ))}
+              <button onClick={() => addRow()}
+                style={{ width: "100%", padding: "10px 14px", borderRadius: 8, background: "rgba(255,255,255,0.06)", border: `1px dashed ${B.navyLight}`, color: "rgba(255,255,255,0.5)", fontSize: 13, cursor: "pointer", textAlign: "left", marginTop: 4 }}>
+                ✏️ Otro (descripción manual)
               </button>
-            ))}
-          </div>
+            </>
+          )}
+          {/* Menu type picker (alimentos) */}
+          {showMenuType && (
+            <>
+              <div style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", marginBottom: 10 }}>Selecciona el tipo de menú:</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {MENU_TIPOS.map(t => (
+                  <button key={t} onClick={() => addRow({ menu_tipo: t })}
+                    style={{ padding: "10px 16px", borderRadius: 8, background: B.navy, border: `1px solid ${B.navyLight}`, color: B.white, fontSize: 13, cursor: "pointer", textAlign: "left", fontWeight: 600 }}>
+                    {t}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
         </div>
       )}
 
@@ -662,7 +959,7 @@ function SectionTable({ title, color, rows, setRows, showNoches = false, showMen
             <th style={{ ...th, background: color + "cc", width: "8%", textAlign: "center" }}>Cant.</th>
             {showNoches && <th style={{ ...th, background: color + "cc", width: "8%", textAlign: "center" }}>Noches</th>}
             <th style={{ ...th, background: color + "cc", width: "15%", textAlign: "right" }}>Valor Unit.</th>
-            <th style={{ ...th, background: color + "cc", width: "8%", textAlign: "center" }}>IVA %</th>
+            <th style={{ ...th, background: color + "cc", width: "8%", textAlign: "center" }}>IVA</th>
             <th style={{ ...th, background: color + "cc", width: "12%", textAlign: "right" }}>Subtotal</th>
             <th style={{ ...th, background: color + "cc", width: "12%", textAlign: "right" }}>Total</th>
             <th style={{ ...th, background: color + "cc", width: "4%" }}></th>
@@ -686,7 +983,14 @@ function SectionTable({ title, color, rows, setRows, showNoches = false, showMen
                 <td style={{ ...td, textAlign: "center" }}>{inp(l.cantidad, e => upd(i, "cantidad", Number(e.target.value)), "number", "60px")}</td>
                 {showNoches && <td style={{ ...td, textAlign: "center" }}>{inp(l.noches, e => upd(i, "noches", Number(e.target.value)), "number", "60px")}</td>}
                 <td style={{ ...td, textAlign: "right" }}>{inp(l.valor_unit, e => upd(i, "valor_unit", Number(e.target.value)), "number", "100px")}</td>
-                <td style={{ ...td, textAlign: "center" }}>{inp(l.iva, e => upd(i, "iva", Number(e.target.value)), "number", "50px")}</td>
+                <td style={{ ...td, textAlign: "center" }}>
+                  <button onClick={() => upd(i, "iva", l.iva > 0 ? 0 : 19)}
+                    style={{ padding: "3px 8px", borderRadius: 5, border: "none", cursor: "pointer", fontSize: 11, fontWeight: 700,
+                      background: l.iva > 0 ? "rgba(46,125,82,0.3)" : "rgba(255,255,255,0.08)",
+                      color: l.iva > 0 ? "#4caf50" : "rgba(255,255,255,0.35)" }}>
+                    {l.iva > 0 ? `${l.iva}%` : "No"}
+                  </button>
+                </td>
                 <td style={{ ...td, textAlign: "right", color: B.sand }}>{COP(sub)}</td>
                 <td style={{ ...td, textAlign: "right", fontWeight: 700 }}>{COP(total)}</td>
                 <td style={{ ...td, textAlign: "center" }}>
@@ -716,10 +1020,22 @@ function SectionTable({ title, color, rows, setRows, showNoches = false, showMen
 
 function CotizacionModal({ evento, aliados, onClose, onSaved }) {
   const saved  = evento.cotizacion_data || {};
-  const [espacios,  setEspacios]  = useState(saved.espacios  || []);
-  const [alimentos, setAlimentos] = useState(saved.alimentos || []);
-  const [servicios, setServicios] = useState(saved.servicios || []);
-  const [saving, setSaving] = useState(false);
+  const [espacios,      setEspacios]      = useState(saved.espacios      || []);
+  const [alojamientos,  setAlojamientos]  = useState(saved.alojamientos  || []);
+  const [alimentos,     setAlimentos]     = useState(saved.alimentos     || []);
+  const [servicios,     setServicios]     = useState(saved.servicios     || []);
+  const [notas,         setNotas]         = useState(saved.notas         || "");
+  const [saving,        setSaving]        = useState(false);
+  const [espaciosCat,   setEspaciosCat]   = useState([]);
+  const [serviciosCat,  setServiciosCat]  = useState([]);
+
+  useEffect(() => {
+    if (!supabase) return;
+    supabase.from("menu_items").select("id,nombre,precio,tiene_iva").eq("menu_tipo", "espacios_renta").eq("activo", true).order("orden").order("nombre")
+      .then(({ data }) => setEspaciosCat(data || []));
+    supabase.from("menu_items").select("id,nombre,precio,tiene_iva").eq("menu_tipo", "otros_servicios").eq("activo", true).order("orden").order("nombre")
+      .then(({ data }) => setServiciosCat(data || []));
+  }, []);
 
   // Header data comes directly from the evento record
   const header = {
@@ -741,16 +1057,17 @@ function CotizacionModal({ evento, aliados, onClose, onSaved }) {
     return { sub: acc.sub + sub, tax: acc.tax + tax, total: acc.total + total };
   }, { sub: 0, tax: 0, total: 0 });
 
-  const totEsp = sumSection(espacios);
-  const totAli = sumSection(alimentos);
-  const totSer = sumSection(servicios);
-  const grandTotal = totEsp.total + totAli.total + totSer.total;
+  const totEsp  = sumSection(espacios);
+  const totAloj = sumSection(alojamientos);
+  const totAli  = sumSection(alimentos);
+  const totSer  = sumSection(servicios);
+  const grandTotal = totEsp.total + totAloj.total + totAli.total + totSer.total;
 
   const aliado = aliados.find(a => a.id === evento.aliado_id);
 
   async function guardar(marcarCotizado = false) {
     setSaving(true);
-    const data = { espacios, alimentos, servicios };
+    const data = { espacios, alojamientos, alimentos, servicios, notas };
     const upd  = { cotizacion_data: data };
     if (marcarCotizado) upd.stage = "Cotizado";
     await supabase.from("eventos").update(upd).eq("id", evento.id);
@@ -802,7 +1119,7 @@ function CotizacionModal({ evento, aliados, onClose, onSaved }) {
         </div>
 
         {/* Sections */}
-        {[["ESPACIOS", "#1E3566", espacios, true], ["ALIMENTOS Y BEBIDAS", "#2E7D52", alimentos, false], ["OTROS SERVICIOS", "#7B4F12", servicios, false]].map(([title, color, rows, noches]) => rows.length > 0 && (
+        {[["ESPACIOS", "#1E3566", espacios, false], ["ALOJAMIENTOS", "#0D47A1", alojamientos, true], ["ALIMENTOS Y BEBIDAS", "#2E7D52", alimentos, false], ["OTROS SERVICIOS", "#7B4F12", servicios, false]].map(([title, color, rows, noches]) => rows.length > 0 && (
           <div key={title} style={{ marginBottom: 20 }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
               <thead>
@@ -838,7 +1155,7 @@ function CotizacionModal({ evento, aliados, onClose, onSaved }) {
 
         {/* Totals */}
         <div style={{ marginLeft: "auto", width: 320, borderTop: "2px solid #1E3566", paddingTop: 12, fontSize: 13 }}>
-          {[["Total Espacios", totEsp.total], ["Total Alimentos & Bebidas", totAli.total], ["Total Otros Servicios", totSer.total]].map(([k, v]) => v > 0 && (
+          {[["Total Espacios", totEsp.total], ["Total Alojamientos", totAloj.total], ["Total Alimentos & Bebidas", totAli.total], ["Total Otros Servicios", totSer.total]].map(([k, v]) => v > 0 && (
             <div key={k} style={{ display: "flex", justifyContent: "space-between", padding: "3px 0", color: "#444" }}>
               <span>{k}</span><span>{COP(v)}</span>
             </div>
@@ -848,7 +1165,13 @@ function CotizacionModal({ evento, aliados, onClose, onSaved }) {
           </div>
         </div>
 
-        <div style={{ marginTop: 32, fontSize: 10, color: "#aaa", textAlign: "center" }}>
+        {notas && (
+          <div style={{ marginTop: 24, padding: "12px 16px", background: "#f5f5f5", borderLeft: "3px solid #1E3566", borderRadius: 4 }}>
+            <div style={{ fontSize: 10, fontWeight: 700, color: "#1E3566", textTransform: "uppercase", marginBottom: 6 }}>Notas y Condiciones</div>
+            <div style={{ fontSize: 11, color: "#444", lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{notas}</div>
+          </div>
+        )}
+        <div style={{ marginTop: 24, fontSize: 10, color: "#aaa", textAlign: "center" }}>
           Esta cotización es válida hasta {header.vencimiento || "—"}. Los precios están en COP e incluyen IVA donde aplica.
         </div>
       </div>
@@ -882,13 +1205,26 @@ function CotizacionModal({ evento, aliados, onClose, onSaved }) {
           </div>
 
           {/* Sections */}
-          <SectionTable title="Espacios / Alojamiento" color="#1E3566" rows={espacios} setRows={setEspacios} showNoches />
-          <SectionTable title="Alimentos y Bebidas"    color="#2E7D52" rows={alimentos} setRows={setAlimentos} showMenuType />
-          <SectionTable title="Otros Servicios"        color="#7B4F12" rows={servicios} setRows={setServicios} />
+          <SectionTable title="Espacios"            color="#1E3566" rows={espacios}     setRows={setEspacios}     catalogItems={espaciosCat} />
+          <SectionTable title="Alojamientos"        color="#0D47A1" rows={alojamientos} setRows={setAlojamientos} showNoches />
+          <SectionTable title="Alimentos y Bebidas" color="#2E7D52" rows={alimentos}    setRows={setAlimentos}    showMenuType />
+          <SectionTable title="Otros Servicios"     color="#7B4F12" rows={servicios}    setRows={setServicios}    catalogItems={serviciosCat} />
+
+          {/* Notas de la cotización */}
+          <div style={{ background: B.navyMid, borderRadius: 10, padding: 16, marginBottom: 16 }}>
+            <div style={{ fontSize: 11, color: B.sand, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8, fontWeight: 700 }}>Notas / Condiciones de la cotización</div>
+            <textarea
+              value={notas}
+              onChange={e => setNotas(e.target.value)}
+              rows={3}
+              placeholder="Condiciones de pago, política de cancelación, observaciones especiales..."
+              style={{ width: "100%", padding: "10px 12px", background: B.navy, border: `1px solid ${B.navyLight}`, borderRadius: 8, color: B.white, fontSize: 13, outline: "none", resize: "vertical", boxSizing: "border-box" }}
+            />
+          </div>
 
           {/* Grand total */}
           <div style={{ background: B.navyMid, borderRadius: 10, padding: "14px 20px", marginBottom: 20, display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 32 }}>
-            {[["Espacios", totEsp.total], ["Alimentos", totAli.total], ["Servicios", totSer.total]].map(([k, v]) => v > 0 && (
+            {[["Espacios", totEsp.total], ["Alojamientos", totAloj.total], ["Alimentos", totAli.total], ["Servicios", totSer.total]].map(([k, v]) => v > 0 && (
               <div key={k} style={{ textAlign: "right" }}>
                 <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", textTransform: "uppercase" }}>{k}</div>
                 <div style={{ fontSize: 14, fontWeight: 600 }}>{COP(v)}</div>
@@ -1157,6 +1493,7 @@ export default function Eventos() {
       empresa: e.empresa || "", nit: e.nit || "", cargo: e.cargo || "",
       direccion: e.direccion || "", montaje: e.montaje || "",
       hora_ini: e.hora_ini || "", hora_fin: e.hora_fin || "", vencimiento: e.vencimiento || "",
+      buy_out: e.buy_out || false,
     })));
     if (salR.data) setSalidas(salR.data);
     if (aliR.data) setAliados(aliR.data);
@@ -1233,7 +1570,7 @@ export default function Eventos() {
       {modal   && (
         <EventoModal
           evento={modal === "new" ? null : modal}
-          categoria={modal === "new" ? tab : modal.categoria}
+          categoria={modal === "new" ? (tab === "grupo" ? "grupo" : "evento") : modal.categoria}
           salidas={salidas}
           aliados={aliados}
           vendedores={vendedores}
