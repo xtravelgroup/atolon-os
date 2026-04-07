@@ -46,8 +46,8 @@
       input[type="date"]::-webkit-datetime-edit-fields-wrapper { color: #fff; }
       /* Ocultar flechas spinner en inputs numéricos — toda la app */
       input[type="number"]::-webkit-outer-spin-button,
-      input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
-      input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
+      input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none !important; appearance: none !important; margin: 0 !important; display: none !important; }
+      input[type="number"] { -moz-appearance: textfield !important; }
       @keyframes spin { to { transform: rotate(360deg); } }
       /* Android/iOS: use dvh where supported, fallback to --vh JS variable */
       .atolon-app { height: 100dvh; height: calc(var(--vh, 1dvh) * 100); }
