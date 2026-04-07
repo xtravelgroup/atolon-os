@@ -6,7 +6,8 @@ import { wompiCheckoutUrl } from "../lib/wompi";
 
 const STAGES       = ["Consulta", "Cotizado", "Confirmado", "Realizado"];
 const TIPOS_EVT    = ["Matrimonio", "Cumpleaños", "Corporativo", "Despedida de Solteros", "Aniversario", "Grado", "Otro"];
-const TIPOS_GRUPO  = ["VIP Pass", "Exclusive Pass", "Atolon Experience", "After Island"];
+const TIPOS_GRUPO  = ["VIP Pass", "Exclusive Pass", "Atolon Experience", "After Island", "STAFF", "Impuesto Muelle"];
+const PRECIO_MUELLE = 18000; // precio fijo Impuesto Muelle
 const SLUG_MAP     = { "VIP Pass": "vip-pass", "Exclusive Pass": "exclusive-pass", "Atolon Experience": "atolon-experience", "After Island": "after-island" };
 
 const IS = { width: "100%", padding: "9px 12px", borderRadius: 8, background: B.navy, border: `1px solid ${B.navyLight}`, color: B.white, fontSize: 13, outline: "none", boxSizing: "border-box" };
@@ -423,19 +424,45 @@ export function EventoModal({ evento, categoria, salidas, aliados, vendedores, o
   const [form, setForm]       = useState(isEdit
     ? { ...evento, pax: String(evento.pax || ""), valor: String(evento.valor || ""), aliado_id: evento.aliado_id || "", vendedor: evento.vendedor || "", salidas_grupo: evento.salidas_grupo || [], buy_out: evento.buy_out || false, modalidad_pago: evento.modalidad_pago || "individual", pasadias_org: evento.pasadias_org || [], precio_tipo: evento.precio_tipo || "publico" }
     : { nombre: "", tipo: tiposOpt[0], fecha: "", pax: "", valor: "", aliado_id: "", vendedor: "", salidas_grupo: [], contacto: "", tel: "", email: "", empresa: "", nit: "", cargo: "", direccion: "", montaje: "", hora_ini: "", hora_fin: "", vencimiento: "", stage: "Consulta", notas: "", categoria, buy_out: false, modalidad_pago: "individual", pasadias_org: [], precio_tipo: "publico" });
-  const [saving,        setSaving]        = useState(false);
-  const [horaInput,     setHoraInput]     = useState("");
-  const [aliadoSearch,  setAliadoSearch]  = useState("");
-  const [aliadoOpen,    setAliadoOpen]    = useState(false);
+  const [saving,          setSaving]          = useState(false);
+  const [horaInput,       setHoraInput]       = useState("");
+  const [aliadoSearch,    setAliadoSearch]    = useState("");
+  const [aliadoOpen,      setAliadoOpen]      = useState(false);
   const [pasadiasPrecios, setPasadiasPrecios] = useState([]);
+  // Pago organizador
+  const [metodoPago,      setMetodoPago]      = useState("");
+  const [cuentasPago,     setCuentasPago]     = useState(null);
+  const [procesandoPago,  setProcesandoPago]  = useState(false);
+  const [wompiLinkOrg,    setWompiLinkOrg]    = useState("");
+  const [copiedOrg,       setCopiedOrg]       = useState(false);
+  const [errPago,         setErrPago]         = useState("");
+  const [reservasPrevias, setReservasPrevias] = useState(null);
+  const [pagoProcesado,   setPagoProcesado]   = useState(null);
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
-  // Cargar precios de pasadías cuando es modo organizador
+  // Cargar precios de pasadías cuando es grupo
   useEffect(() => {
     if (!isGrupo) return;
     supabase.from("pasadias").select("id, nombre, precio, precio_neto_agencia").order("nombre")
       .then(({ data }) => setPasadiasPrecios((data || []).filter(p => p.precio > 0)));
   }, [isGrupo]);
+
+  // Cargar reservas previas al editar grupo organizador
+  useEffect(() => {
+    if (!isEdit || !isGrupo || form.modalidad_pago !== "organizador" || !supabase) return;
+    supabase.from("reservas")
+      .select("id, total, pax, estado, created_at, notas, forma_pago")
+      .eq("grupo_id", evento.id).eq("canal", "GRUPO-ORG")
+      .order("created_at", { ascending: false })
+      .then(({ data }) => setReservasPrevias(data || []));
+  }, [isEdit, form.modalidad_pago]);
+
+  // Cargar cuentas bancarias al seleccionar transferencia
+  useEffect(() => {
+    if (metodoPago !== "transferencia" || cuentasPago !== null || !supabase) return;
+    supabase.from("configuracion").select("cuentas_bancarias").eq("id", "atolon").single()
+      .then(({ data }) => setCuentasPago(data?.cuentas_bancarias || []));
+  }, [metodoPago]);
 
   const aliadoSeleccionado = aliados.find(a => a.id === form.aliado_id);
   const aliadosFiltrados   = aliados.filter(a =>
@@ -480,6 +507,71 @@ export function EventoModal({ evento, categoria, salidas, aliados, vendedores, o
   const setPasadiaOrg = (id, k, v) => setForm(f => ({
     ...f, pasadias_org: f.pasadias_org.map(p => p.id === id ? { ...p, [k]: v } : p)
   }));
+
+  // Precio unitario por tipo de pasadía
+  const getPrecioTipo = (p) => {
+    if (p.tipo === "Impuesto Muelle") return PRECIO_MUELLE;
+    if (p.tipo === "STAFF") return Number(p.precio_manual) || 0;
+    const match = pasadiasPrecios.find(x => x.nombre.toLowerCase() === p.tipo.toLowerCase());
+    if (!match) return null;
+    return form.precio_tipo === "neto" ? (match.precio_neto_agencia || match.precio) : match.precio;
+  };
+
+  // Total nuevo basado en pasadias_org
+  const nuevoTotal = (isGrupo && form.modalidad_pago === "organizador")
+    ? (form.pasadias_org || []).reduce((s, p) => {
+        const precio = getPrecioTipo(p);
+        return s + (precio || 0) * (Number(p.personas) || 0);
+      }, 0)
+    : 0;
+
+  // Total pagado historial (no cancelados)
+  const totalPagado = (reservasPrevias || [])
+    .filter(r => r.estado !== "cancelado")
+    .reduce((s, r) => s + (r.total || 0), 0);
+
+  // Saldo: + = pendiente, - = a favor
+  const saldoPago = nuevoTotal - totalPagado;
+
+  // Procesar pago organizador (puede recibir grupoId para nuevos grupos)
+  const procesarPago = async (grupoId) => {
+    if (!metodoPago || procesandoPago) return;
+    setProcesandoPago(true);
+    setErrPago("");
+    const montoOp = (reservasPrevias !== null && reservasPrevias.length > 0) ? saldoPago : nuevoTotal;
+    if (montoOp <= 0) { setErrPago(montoOp < 0 ? `Saldo a favor de ${COP(Math.abs(montoOp))} — no hay cobro pendiente.` : "El monto debe ser mayor a 0."); setProcesandoPago(false); return; }
+    const rid = `GRP-ORG-${Date.now()}`;
+    const fechaISO = (form.fecha || "").split("T")[0];
+    const estado   = metodoPago === "transferencia" ? "pendiente_comprobante" : "pendiente_pago";
+    const esAjuste = reservasPrevias !== null && reservasPrevias.length > 0;
+    const notas    = esAjuste
+      ? `Ajuste — ${form.nombre} — Total nuevo: ${COP(nuevoTotal)} — Ya pagado: ${COP(totalPagado)} — Pendiente: ${COP(montoOp)}`
+      : `Pago grupal — ${form.nombre} — ${form.precio_tipo === "neto" ? "precio neto B2B" : "precio público"}`;
+    const totalPax = (form.pasadias_org || []).reduce((s, p) => s + (Number(p.personas) || 0), 0);
+    const { error } = await supabase.from("reservas").insert({
+      id: rid, fecha: fechaISO,
+      tipo: (form.pasadias_org?.[0]?.tipo) || form.tipo || "Grupo",
+      pax: totalPax, nombre: form.contacto || form.nombre,
+      email: form.email || "", telefono: form.tel || "",
+      total: montoOp, grupo_id: grupoId,
+      aliado_id: form.aliado_id || null,
+      canal: "GRUPO-ORG", forma_pago: metodoPago, estado, notas,
+    });
+    if (error) { setErrPago(error.message); setProcesandoPago(false); return; }
+    setPagoProcesado({ id: rid, total: montoOp });
+    // Refrescar historial
+    const { data: nuevasRes } = await supabase.from("reservas")
+      .select("id, total, pax, estado, created_at, notas, forma_pago")
+      .eq("grupo_id", grupoId).eq("canal", "GRUPO-ORG")
+      .order("created_at", { ascending: false });
+    setReservasPrevias(nuevasRes || []);
+    if (metodoPago === "wompi" || metodoPago === "link_pago") {
+      const link = await wompiCheckoutUrl({ referencia: rid, totalCOP: montoOp, redirectUrl: `${window.location.origin}/` });
+      setWompiLinkOrg(link);
+      if (metodoPago === "wompi") window.open(link, "_blank");
+    }
+    setProcesandoPago(false);
+  };
 
   const [saveError,      setSaveError]      = useState("");
   const [overrideModal,  setOverrideModal]  = useState(null); // { reservas: [], gerentes: [] }
@@ -531,17 +623,8 @@ export function EventoModal({ evento, categoria, salidas, aliados, vendedores, o
     setSaving(true);
     setSaveError("");
 
-    // Calcular valor total para modo organizador
-    const calcValorOrg = () => {
-      return (form.pasadias_org || []).reduce((s, p) => {
-        const pr = pasadiasPrecios.find(x => x.nombre.toLowerCase() === p.tipo.toLowerCase());
-        if (!pr) return s;
-        const precio = form.precio_tipo === "neto" ? (pr.precio_neto_agencia || pr.precio) : pr.precio;
-        return s + precio * (Number(p.personas) || 0);
-      }, 0);
-    };
     const valorFinal = isGrupo && form.modalidad_pago === "organizador"
-      ? calcValorOrg()
+      ? nuevoTotal
       : Number(form.valor) || 0;
 
     const payload = {
@@ -634,8 +717,14 @@ export function EventoModal({ evento, categoria, salidas, aliados, vendedores, o
     }
     setSaving(false);
     await onSaved();
+    // Para nuevo grupo organizador con método de pago: no cerrar, procesar pago
+    if (!isEdit && isGrupo && form.modalidad_pago === "organizador" && metodoPago && nuevoTotal > 0) {
+      setReservasPrevias([]); // marca como "ya cargadas" (vacío = nuevo)
+      await procesarPago(savedId);
+      return; // el modal queda abierto mostrando el resultado
+    }
     onClose();
-    if (isGrupo && !isEdit) onShowLink({ ...payload, id: savedId });
+    if (isGrupo && !isEdit && form.modalidad_pago !== "organizador") onShowLink({ ...payload, id: savedId });
   };
 
   return (
@@ -865,17 +954,31 @@ export function EventoModal({ evento, categoria, salidas, aliados, vendedores, o
                   )}
                 </div>
                 <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 10 }}>
-                  {form.pasadias_org.map(p => (
-                    <div key={p.id} style={{ display: "grid", gridTemplateColumns: "1fr 110px 32px", gap: 8, alignItems: "center" }}>
-                      <select value={p.tipo} onChange={e => setPasadiaOrg(p.id, "tipo", e.target.value)} style={IS}>
-                        {TIPOS_GRUPO.map(t => <option key={t} value={t}>{t}</option>)}
-                      </select>
-                      <input type="number" value={p.personas} onChange={e => setPasadiaOrg(p.id, "personas", e.target.value)}
-                        placeholder="# pax" style={{ ...IS, textAlign: "center" }} />
-                      <button type="button" onClick={() => removePasadiaOrg(p.id)}
-                        style={{ height: 38, borderRadius: 8, border: "none", background: B.danger + "33", color: B.danger, fontSize: 15, cursor: "pointer" }}>✕</button>
-                    </div>
-                  ))}
+                  {form.pasadias_org.map(p => {
+                    const isStaff  = p.tipo === "STAFF";
+                    const isMuelle = p.tipo === "Impuesto Muelle";
+                    const showExtra = isStaff || isMuelle;
+                    return (
+                      <div key={p.id} style={{ display: "grid", gridTemplateColumns: showExtra ? "1fr 90px 120px 32px" : "1fr 110px 32px", gap: 8, alignItems: "center" }}>
+                        <select value={p.tipo} onChange={e => setPasadiaOrg(p.id, "tipo", e.target.value)} style={IS}>
+                          {TIPOS_GRUPO.map(t => <option key={t} value={t}>{t}</option>)}
+                        </select>
+                        <input type="number" value={p.personas} onChange={e => setPasadiaOrg(p.id, "personas", e.target.value)}
+                          placeholder="# pax" style={{ ...IS, textAlign: "center" }} />
+                        {isStaff && (
+                          <input type="number" value={p.precio_manual || ""} onChange={e => setPasadiaOrg(p.id, "precio_manual", e.target.value)}
+                            placeholder="Precio c/u" style={{ ...IS, fontSize: 12 }} />
+                        )}
+                        {isMuelle && (
+                          <div style={{ ...IS, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, color: B.sand, cursor: "default" }}>
+                            {COP(PRECIO_MUELLE)} c/u
+                          </div>
+                        )}
+                        <button type="button" onClick={() => removePasadiaOrg(p.id)}
+                          style={{ height: 38, borderRadius: 8, border: "none", background: B.danger + "33", color: B.danger, fontSize: 15, cursor: "pointer" }}>✕</button>
+                      </div>
+                    );
+                  })}
                 </div>
                 <button type="button" onClick={addPasadiaOrg}
                   style={{ width: "100%", padding: "9px", borderRadius: 8, border: `1px dashed ${B.navyLight}`, background: "none", color: B.sand, fontSize: 13, cursor: "pointer", fontWeight: 600 }}>
@@ -1018,18 +1121,11 @@ export function EventoModal({ evento, categoria, salidas, aliados, vendedores, o
 
           {/* Precio — solo organizador */}
           {isGrupo && form.modalidad_pago === "organizador" && (() => {
-            const getPrecio = (tipo) => {
-              const p = pasadiasPrecios.find(p => p.nombre.toLowerCase() === tipo.toLowerCase());
-              if (!p) return null;
-              return form.precio_tipo === "neto" ? (p.precio_neto_agencia || p.precio) : p.precio;
-            };
             const lineas = form.pasadias_org.map(p => ({
-              tipo: p.tipo,
-              personas: Number(p.personas) || 0,
-              precio: getPrecio(p.tipo),
+              tipo: p.tipo, personas: Number(p.personas) || 0, precio: getPrecioTipo(p),
             }));
-            const total = lineas.reduce((s, l) => s + (l.precio || 0) * l.personas, 0);
-            const sinPrecios = lineas.some(l => l.personas > 0 && l.precio === null);
+            const total = nuevoTotal;
+            const sinPrecios = lineas.some(l => l.personas > 0 && l.tipo !== "Impuesto Muelle" && l.tipo !== "STAFF" && l.precio === null);
             return (
               <div style={{ borderTop: `1px solid ${B.navyLight}`, paddingTop: 16 }}>
                 <label style={LS}>Monto a pagar</label>
@@ -1081,6 +1177,145 @@ export function EventoModal({ evento, categoria, salidas, aliados, vendedores, o
                     ⚠ Algunos tipos de pasadía no tienen precio configurado en el sistema.
                   </div>
                 )}
+
+                {/* ── Sección de Pago ── */}
+                <div style={{ borderTop: `1px solid ${B.navyLight}`, paddingTop: 14, marginTop: 4 }}>
+                  <div style={{ fontSize: 11, color: B.sand, textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 12, fontWeight: 700 }}>Pago</div>
+
+                  {/* Saldo si hay historial previo */}
+                  {reservasPrevias !== null && reservasPrevias.length > 0 && (
+                    <div style={{ background: B.navy, borderRadius: 10, padding: "12px 14px", marginBottom: 12 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 6 }}>
+                        <span style={{ color: "rgba(255,255,255,0.5)" }}>Ya pagado</span>
+                        <span style={{ fontWeight: 700, color: B.success }}>{COP(totalPagado)}</span>
+                      </div>
+                      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 8 }}>
+                        <span style={{ color: "rgba(255,255,255,0.5)" }}>Total nuevo</span>
+                        <span style={{ fontWeight: 700 }}>{COP(nuevoTotal)}</span>
+                      </div>
+                      <div style={{ display: "flex", justifyContent: "space-between", borderTop: `1px solid ${B.navyLight}`, paddingTop: 8 }}>
+                        <span style={{ fontSize: 13, fontWeight: 700 }}>Saldo</span>
+                        <span style={{ fontSize: 16, fontWeight: 900, color: saldoPago > 0 ? B.danger : saldoPago < 0 ? B.success : "rgba(255,255,255,0.4)" }}>
+                          {saldoPago > 0 ? `⚠ ${COP(saldoPago)} pendiente` : saldoPago < 0 ? `✓ ${COP(Math.abs(saldoPago))} a favor` : "✓ Sin saldo"}
+                        </span>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Historial de transacciones */}
+                  {reservasPrevias !== null && reservasPrevias.length > 0 && (
+                    <div style={{ marginBottom: 12 }}>
+                      <div style={{ fontSize: 10, color: "rgba(255,255,255,0.3)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 }}>Historial de pagos</div>
+                      {reservasPrevias.map(r => (
+                        <div key={r.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 0", borderBottom: `1px solid ${B.navyLight}22`, fontSize: 12 }}>
+                          <div>
+                            <span style={{ color: "rgba(255,255,255,0.6)", marginRight: 8 }}>
+                              {r.forma_pago === "wompi" ? "💳" : r.forma_pago === "transferencia" ? "🏦" : "📲"}
+                              {" "}{new Date(r.created_at).toLocaleDateString("es-CO", { day: "2-digit", month: "short" })}
+                            </span>
+                            <span style={{ fontSize: 10, padding: "2px 6px", borderRadius: 6,
+                              background: r.estado === "confirmado" ? B.success + "33" : r.estado === "cancelado" ? B.danger + "33" : B.warning + "33",
+                              color: r.estado === "confirmado" ? B.success : r.estado === "cancelado" ? B.danger : B.warning }}>
+                              {r.estado}
+                            </span>
+                          </div>
+                          <span style={{ fontWeight: 700, color: B.sand }}>{COP(r.total)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Resultado post-pago */}
+                  {pagoProcesado ? (
+                    <div style={{ textAlign: "center", padding: "16px 0" }}>
+                      <div style={{ fontSize: 32, marginBottom: 8 }}>✅</div>
+                      <div style={{ fontSize: 14, fontWeight: 700, color: B.success, marginBottom: 4 }}>Pago registrado</div>
+                      <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", fontFamily: "monospace", marginBottom: 12 }}>{pagoProcesado.id}</div>
+                      {wompiLinkOrg && (
+                        <>
+                          <div style={{ background: B.navy, borderRadius: 9, padding: "10px 12px", marginBottom: 8, wordBreak: "break-all", fontSize: 11, color: B.sky, fontFamily: "monospace" }}>{wompiLinkOrg}</div>
+                          <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+                            <button onClick={() => { navigator.clipboard.writeText(wompiLinkOrg); setCopiedOrg(true); setTimeout(() => setCopiedOrg(false), 2000); }}
+                              style={{ flex: 2, padding: "10px", background: copiedOrg ? B.success : B.sky, color: B.navy, border: "none", borderRadius: 8, fontWeight: 700, fontSize: 12, cursor: "pointer" }}>
+                              {copiedOrg ? "✓ Copiado!" : "📋 Copiar link Wompi"}
+                            </button>
+                            <button onClick={() => window.open(wompiLinkOrg, "_blank")}
+                              style={{ flex: 1, padding: "10px", background: "#5B4CF522", color: "#a78bfa", border: `1px solid #5B4CF544`, borderRadius: 8, fontSize: 12, cursor: "pointer" }}>Abrir →</button>
+                          </div>
+                        </>
+                      )}
+                      <button onClick={() => { setPagoProcesado(null); setWompiLinkOrg(""); setMetodoPago(""); }}
+                        style={{ width: "100%", padding: "9px", background: "none", border: `1px solid ${B.navyLight}`, borderRadius: 8, color: "rgba(255,255,255,0.4)", fontSize: 12, cursor: "pointer" }}>
+                        + Registrar otro pago
+                      </button>
+                    </div>
+                  ) : (
+                    <>
+                      {/* Selector método de pago */}
+                      {(saldoPago > 0 || reservasPrevias === null || reservasPrevias.length === 0) && nuevoTotal > 0 && (
+                        <>
+                          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 12 }}>
+                            {[
+                              { id: "wompi",         icon: <div style={{ width: 30, height: 30, borderRadius: 7, background: "#5B4CF5", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 6px", fontSize: 13, fontWeight: 900, color: "#fff" }}>W</div>, label: "Wompi", sub: "Pagar ahora" },
+                              { id: "transferencia", icon: <div style={{ fontSize: 22, marginBottom: 4, textAlign: "center" }}>🏦</div>, label: "Transferencia", sub: "PSE / Banco" },
+                              { id: "link_pago",     icon: <div style={{ fontSize: 22, marginBottom: 4, textAlign: "center" }}>📲</div>, label: "Link de pago", sub: "Enviar al cliente" },
+                            ].map(m => (
+                              <div key={m.id} onClick={() => setMetodoPago(m.id)}
+                                style={{ background: metodoPago === m.id ? B.sky + "22" : B.navy, borderRadius: 10, padding: "12px 6px", textAlign: "center", cursor: "pointer",
+                                  border: `2px solid ${metodoPago === m.id ? B.sky : B.navyLight}`, transition: "all 0.15s" }}>
+                                {m.icon}
+                                <div style={{ fontSize: 11, fontWeight: 700, color: metodoPago === m.id ? B.sky : B.white }}>{m.label}</div>
+                                <div style={{ fontSize: 10, color: "rgba(255,255,255,0.35)" }}>{m.sub}</div>
+                              </div>
+                            ))}
+                          </div>
+
+                          {/* Datos bancarios si transferencia */}
+                          {metodoPago === "transferencia" && (
+                            <div style={{ background: B.navy, borderRadius: 10, padding: "12px 14px", marginBottom: 10 }}>
+                              <div style={{ fontSize: 10, color: B.sand, textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>Datos bancarios</div>
+                              {cuentasPago === null ? <div style={{ fontSize: 12, color: "rgba(255,255,255,0.3)" }}>Cargando...</div>
+                                : cuentasPago.length === 0 ? <div style={{ fontSize: 12, color: B.warning }}>⚠️ Configura cuentas en Configuración → Cuentas Bancarias</div>
+                                : cuentasPago.map((c, i) => (
+                                  <div key={i} style={{ fontSize: 12, lineHeight: 2 }}>
+                                    {[["Banco", c.banco], ["Tipo", c.tipo], ["Número", c.numero], ["Titular", c.titular]].filter(([, v]) => v).map(([k, v]) => (
+                                      <div key={k} style={{ display: "flex", justifyContent: "space-between" }}>
+                                        <span style={{ color: "rgba(255,255,255,0.4)" }}>{k}</span>
+                                        <span style={{ fontWeight: k === "Número" ? 700 : 400, color: k === "Número" ? B.sky : B.white }}>{v}</span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                ))
+                              }
+                            </div>
+                          )}
+
+                          {errPago && <div style={{ padding: "8px 12px", background: "rgba(220,53,69,0.15)", border: `1px solid rgba(220,53,69,0.4)`, borderRadius: 8, fontSize: 12, color: "#ff6b7a", marginBottom: 10 }}>⚠️ {errPago}</div>}
+
+                          <button onClick={() => procesarPago(isEdit ? evento.id : null)} disabled={!metodoPago || procesandoPago}
+                            style={{ width: "100%", padding: "13px", borderRadius: 10, border: "none", fontWeight: 700, fontSize: 13, cursor: metodoPago && !procesandoPago ? "pointer" : "default",
+                              background: !metodoPago || procesandoPago ? B.navyLight : metodoPago === "wompi" ? "#5B4CF5" : metodoPago === "link_pago" ? B.success : B.sky,
+                              color: !metodoPago || procesandoPago ? "rgba(255,255,255,0.3)" : metodoPago === "link_pago" ? B.navy : "#fff" }}>
+                            {procesandoPago ? "Procesando..." : (() => {
+                              const monto = (reservasPrevias !== null && reservasPrevias.length > 0) ? saldoPago : nuevoTotal;
+                              if (metodoPago === "wompi") return `💳 Cobrar ${COP(monto)} con Wompi`;
+                              if (metodoPago === "transferencia") return `🏦 Registrar transferencia de ${COP(monto)}`;
+                              if (metodoPago === "link_pago") return `📲 Generar link de ${COP(monto)}`;
+                              return `Selecciona método — ${COP(monto)}`;
+                            })()}
+                          </button>
+                        </>
+                      )}
+
+                      {/* Saldo a favor — sin cobro */}
+                      {reservasPrevias !== null && reservasPrevias.length > 0 && saldoPago <= 0 && (
+                        <div style={{ padding: "10px 14px", borderRadius: 8, background: B.success + "22", border: `1px solid ${B.success}44`, fontSize: 13, color: B.success, textAlign: "center" }}>
+                          {saldoPago === 0 ? "✓ Pago completo — sin saldo pendiente" : `✓ Saldo a favor del cliente: ${COP(Math.abs(saldoPago))}`}
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
               </div>
             );
           })()}
@@ -1309,10 +1544,6 @@ function KanbanBoard({ items, isGrupo, onEdit, onBeo, onLink, onCotizar, onReser
                   {ev.categoria !== "grupo" && (
                     <button onClick={e => { e.stopPropagation(); onCotizar(ev); }}
                       style={{ fontSize: 11, padding: "4px 10px", borderRadius: 6, background: B.sand + "33", color: B.sand, border: `1px solid ${B.sand}44`, cursor: "pointer", fontWeight: 600 }}>📋 Cotizar</button>
-                  )}
-                  {ev.categoria === "grupo" && ev.modalidad_pago === "organizador" && (
-                    <button onClick={e => { e.stopPropagation(); onLink(ev); }}
-                      style={{ fontSize: 11, padding: "4px 10px", borderRadius: 6, background: "#5B4CF533", color: "#a78bfa", border: `1px solid #5B4CF544`, cursor: "pointer", fontWeight: 600 }}>💳 Pago grupal</button>
                   )}
                   {ev.categoria === "grupo" && ev.modalidad_pago !== "organizador" && (
                     <button onClick={e => { e.stopPropagation(); onLink(ev); }}
