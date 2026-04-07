@@ -1034,11 +1034,11 @@ function calcLine(l) {
 
 const MENU_TIPOS = ["Menú de Banquetes", "Menú Restaurant", "Custom Menu"];
 
-function SectionTable({ title, color, rows, setRows, showNoches = false, showMenuType = false, catalogItems = null }) {
+function SectionTable({ title, color, rows, setRows, showNoches = false, showMenuType = false, catalogItems = null, defaultIva = 19 }) {
   const [picker, setPicker] = useState(false);
 
   const addRow = (overrides = {}) => {
-    setRows(r => [...r, { ...EMPTY_LINE, ...overrides }]);
+    setRows(r => [...r, { ...EMPTY_LINE, iva: defaultIva, ...overrides }]);
     setPicker(false);
   };
   const upd = (i, k, v) => setRows(r => r.map((x, j) => j === i ? { ...x, [k]: v } : x));
@@ -1113,7 +1113,7 @@ function SectionTable({ title, color, rows, setRows, showNoches = false, showMen
             <th style={{ ...th, background: color + "cc", width: "8%", textAlign: "center" }}>Cant.</th>
             {showNoches && <th style={{ ...th, background: color + "cc", width: "8%", textAlign: "center" }}>Noches</th>}
             <th style={{ ...th, background: color + "cc", width: "15%", textAlign: "right" }}>Valor Unit.</th>
-            <th style={{ ...th, background: color + "cc", width: "8%", textAlign: "center" }}>IVA</th>
+            <th style={{ ...th, background: color + "cc", width: "8%", textAlign: "center" }}>{defaultIva === 8 ? "ICO" : "IVA"}</th>
             <th style={{ ...th, background: color + "cc", width: "12%", textAlign: "right" }}>Subtotal</th>
             <th style={{ ...th, background: color + "cc", width: "12%", textAlign: "right" }}>Total</th>
             <th style={{ ...th, background: color + "cc", width: "4%" }}></th>
@@ -1138,7 +1138,7 @@ function SectionTable({ title, color, rows, setRows, showNoches = false, showMen
                 {showNoches && <td style={{ ...td, textAlign: "center" }}>{inp(l.noches, e => upd(i, "noches", Number(e.target.value)), "number", "60px")}</td>}
                 <td style={{ ...td, textAlign: "right" }}>{inp(l.valor_unit, e => upd(i, "valor_unit", Number(e.target.value)), "number", "100px")}</td>
                 <td style={{ ...td, textAlign: "center" }}>
-                  <button onClick={() => upd(i, "iva", l.iva > 0 ? 0 : 19)}
+                  <button onClick={() => upd(i, "iva", l.iva > 0 ? 0 : defaultIva)}
                     style={{ padding: "3px 8px", borderRadius: 5, border: "none", cursor: "pointer", fontSize: 11, fontWeight: 700,
                       background: l.iva > 0 ? "rgba(46,125,82,0.3)" : "rgba(255,255,255,0.08)",
                       color: l.iva > 0 ? "#4caf50" : "rgba(255,255,255,0.35)" }}>
@@ -1273,7 +1273,7 @@ function CotizacionModal({ evento, aliados, onClose, onSaved }) {
         </div>
 
         {/* Sections */}
-        {[["ESPACIOS", "#1E3566", espacios, false], ["ALOJAMIENTOS", "#0D47A1", alojamientos, true], ["ALIMENTOS Y BEBIDAS", "#2E7D52", alimentos, false], ["OTROS SERVICIOS", "#7B4F12", servicios, false]].map(([title, color, rows, noches]) => rows.length > 0 && (
+        {[["ESPACIOS", "#1E3566", espacios, false, "IVA"], ["ALOJAMIENTOS", "#0D47A1", alojamientos, true, "IVA"], ["ALIMENTOS Y BEBIDAS", "#2E7D52", alimentos, false, "ICO"], ["OTROS SERVICIOS", "#7B4F12", servicios, false, "IVA"]].map(([title, color, rows, noches, ivaLabel]) => rows.length > 0 && (
           <div key={title} style={{ marginBottom: 20 }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
               <thead>
@@ -1283,7 +1283,7 @@ function CotizacionModal({ evento, aliados, onClose, onSaved }) {
                   {noches && <th style={{ padding: "6px 8px", textAlign: "center", width: "8%" }}>NOCHES</th>}
                   <th style={{ padding: "6px 8px", textAlign: "right", width: "15%" }}>VALOR UNIT.</th>
                   <th style={{ padding: "6px 8px", textAlign: "right", width: "12%" }}>SUBTOTAL</th>
-                  <th style={{ padding: "6px 8px", textAlign: "center", width: "8%" }}>IVA</th>
+                  <th style={{ padding: "6px 8px", textAlign: "center", width: "8%" }}>{ivaLabel}</th>
                   <th style={{ padding: "6px 8px", textAlign: "right", width: "14%" }}>TOTAL</th>
                 </tr>
               </thead>
@@ -1361,7 +1361,7 @@ function CotizacionModal({ evento, aliados, onClose, onSaved }) {
           {/* Sections */}
           <SectionTable title="Espacios"            color="#1E3566" rows={espacios}     setRows={setEspacios}     catalogItems={espaciosCat} />
           <SectionTable title="Alojamientos"        color="#0D47A1" rows={alojamientos} setRows={setAlojamientos} showNoches />
-          <SectionTable title="Alimentos y Bebidas" color="#2E7D52" rows={alimentos}    setRows={setAlimentos}    showMenuType />
+          <SectionTable title="Alimentos y Bebidas" color="#2E7D52" rows={alimentos}    setRows={setAlimentos}    showMenuType defaultIva={8} />
           <SectionTable title="Otros Servicios"     color="#7B4F12" rows={servicios}    setRows={setServicios}    catalogItems={serviciosCat} />
 
           {/* Notas de la cotización */}
