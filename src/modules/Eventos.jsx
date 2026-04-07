@@ -421,8 +421,8 @@ export function EventoModal({ evento, categoria, salidas, aliados, vendedores, o
   const tiposOpt = isGrupo ? TIPOS_GRUPO : TIPOS_EVT;
 
   const [form, setForm]       = useState(isEdit
-    ? { ...evento, pax: String(evento.pax || ""), valor: String(evento.valor || ""), aliado_id: evento.aliado_id || "", vendedor: evento.vendedor || "", salidas_grupo: evento.salidas_grupo || [], buy_out: evento.buy_out || false, modalidad_pago: evento.modalidad_pago || "individual" }
-    : { nombre: "", tipo: tiposOpt[0], fecha: "", pax: "", valor: "", aliado_id: "", vendedor: "", salidas_grupo: [], contacto: "", tel: "", email: "", empresa: "", nit: "", cargo: "", direccion: "", montaje: "", hora_ini: "", hora_fin: "", vencimiento: "", stage: "Consulta", notas: "", categoria, buy_out: false, modalidad_pago: "individual" });
+    ? { ...evento, pax: String(evento.pax || ""), valor: String(evento.valor || ""), aliado_id: evento.aliado_id || "", vendedor: evento.vendedor || "", salidas_grupo: evento.salidas_grupo || [], buy_out: evento.buy_out || false, modalidad_pago: evento.modalidad_pago || "individual", pasadias_org: evento.pasadias_org || [] }
+    : { nombre: "", tipo: tiposOpt[0], fecha: "", pax: "", valor: "", aliado_id: "", vendedor: "", salidas_grupo: [], contacto: "", tel: "", email: "", empresa: "", nit: "", cargo: "", direccion: "", montaje: "", hora_ini: "", hora_fin: "", vencimiento: "", stage: "Consulta", notas: "", categoria, buy_out: false, modalidad_pago: "individual", pasadias_org: [] });
   const [saving,      setSaving]      = useState(false);
   const [horaInput,   setHoraInput]   = useState("");
   const [aliadoSearch,setAliadoSearch]= useState("");
@@ -441,7 +441,7 @@ export function EventoModal({ evento, categoria, salidas, aliados, vendedores, o
       const exists = f.salidas_grupo.some(x => x.id === s.id);
       return { ...f, salidas_grupo: exists
         ? f.salidas_grupo.filter(x => x.id !== s.id)
-        : [...f.salidas_grupo, { id: s.id, hora: s.hora }]
+        : [...f.salidas_grupo, { id: s.id, hora: s.hora, personas: "" }]
       };
     });
   };
@@ -454,11 +454,24 @@ export function EventoModal({ evento, categoria, salidas, aliados, vendedores, o
     const match = h.match(/^(\d{1,2}):?(\d{2})?$/);
     const hora = match ? `${match[1].padStart(2,"0")}:${match[2] || "00"}` : h;
     if (form.salidas_grupo.some(x => x.hora === hora)) { setHoraInput(""); return; }
-    setForm(f => ({ ...f, salidas_grupo: [...f.salidas_grupo, { id: `custom-${hora}`, hora, custom: true }] }));
+    setForm(f => ({ ...f, salidas_grupo: [...f.salidas_grupo, { id: `custom-${hora}`, hora, custom: true, personas: "" }] }));
     setHoraInput("");
   };
 
   const removeSalida = (hora) => setForm(f => ({ ...f, salidas_grupo: f.salidas_grupo.filter(x => x.hora !== hora) }));
+
+  const setSalidaPersonas = (hora, personas) => setForm(f => ({
+    ...f, salidas_grupo: f.salidas_grupo.map(x => x.hora === hora ? { ...x, personas } : x)
+  }));
+
+  // Pasadías múltiples (organizador)
+  const addPasadiaOrg = () => setForm(f => ({
+    ...f, pasadias_org: [...f.pasadias_org, { id: `p-${Date.now()}`, tipo: TIPOS_GRUPO[0], personas: "" }]
+  }));
+  const removePasadiaOrg = (id) => setForm(f => ({ ...f, pasadias_org: f.pasadias_org.filter(p => p.id !== id) }));
+  const setPasadiaOrg = (id, k, v) => setForm(f => ({
+    ...f, pasadias_org: f.pasadias_org.map(p => p.id === id ? { ...p, [k]: v } : p)
+  }));
 
   const [saveError,      setSaveError]      = useState("");
   const [overrideModal,  setOverrideModal]  = useState(null); // { reservas: [], gerentes: [] }
@@ -534,6 +547,7 @@ export function EventoModal({ evento, categoria, salidas, aliados, vendedores, o
       vendedor:       form.vendedor || "",
       buy_out:        form.buy_out || false,
       modalidad_pago: form.modalidad_pago || "individual",
+      pasadias_org:   form.pasadias_org || [],
     };
     let savedId = evento?.id;
     let dbError = null;
@@ -782,21 +796,29 @@ export function EventoModal({ evento, categoria, salidas, aliados, vendedores, o
             </div>
           </div>
 
-          {/* 8. Tipo + Fecha/Pax */}
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+          {/* 8. Tipo + Fecha */}
+          {/* Para organizador: solo fecha (el tipo va en cada pasadía) */}
+          {isGrupo && form.modalidad_pago === "organizador" ? (
             <div>
-              <label style={LS}>{isGrupo ? "Tipo de pasadía" : "Tipo de evento"}</label>
-              <select value={form.tipo} onChange={e => set("tipo", e.target.value)} style={IS}>
-                {tiposOpt.map(t => <option key={t} value={t}>{t}</option>)}
-              </select>
-            </div>
-            <div>
-              <label style={LS}>Fecha</label>
+              <label style={LS}>Fecha del evento</label>
               <input type="date" value={form.fecha} onChange={e => set("fecha", e.target.value)} style={IS} />
             </div>
-          </div>
+          ) : (
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+              <div>
+                <label style={LS}>{isGrupo ? "Tipo de pasadía" : "Tipo de evento"}</label>
+                <select value={form.tipo} onChange={e => set("tipo", e.target.value)} style={IS}>
+                  {tiposOpt.map(t => <option key={t} value={t}>{t}</option>)}
+                </select>
+              </div>
+              <div>
+                <label style={LS}>Fecha</label>
+                <input type="date" value={form.fecha} onChange={e => set("fecha", e.target.value)} style={IS} />
+              </div>
+            </div>
+          )}
 
-          {/* Cupos — solo si modalidad individual */}
+          {/* Cupos máximos — solo individual */}
           {isGrupo && form.modalidad_pago !== "organizador" && (
             <div>
               <label style={LS}>Cupos máximos (0 = ilimitado)</label>
@@ -804,13 +826,46 @@ export function EventoModal({ evento, categoria, salidas, aliados, vendedores, o
             </div>
           )}
 
-          {/* Cupos totales — si organizador */}
-          {isGrupo && form.modalidad_pago === "organizador" && (
-            <div>
-              <label style={LS}>Total de pasadías (cupos confirmados)</label>
-              <input type="number" value={form.pax} onChange={e => set("pax", e.target.value)} style={IS} placeholder="Ej: 55" />
-            </div>
-          )}
+          {/* Pasadías múltiples — solo organizador */}
+          {isGrupo && form.modalidad_pago === "organizador" && (() => {
+            const totalPax = form.pasadias_org.reduce((s, p) => s + (Number(p.personas) || 0), 0);
+            const totalSal = form.salidas_grupo.reduce((s, x) => s + (Number(x.personas) || 0), 0);
+            const mismatch = form.pasadias_org.length > 0 && form.salidas_grupo.length > 0 && totalPax > 0 && totalSal > 0 && totalPax !== totalSal;
+            return (
+              <div>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+                  <label style={LS}>Pasadías del grupo</label>
+                  {totalPax > 0 && (
+                    <span style={{ fontSize: 12, color: mismatch ? B.danger : B.success, fontWeight: 700 }}>
+                      {mismatch ? `⚠ ${totalPax} personas` : `✓ ${totalPax} personas`}
+                    </span>
+                  )}
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 10 }}>
+                  {form.pasadias_org.map(p => (
+                    <div key={p.id} style={{ display: "grid", gridTemplateColumns: "1fr 110px 32px", gap: 8, alignItems: "center" }}>
+                      <select value={p.tipo} onChange={e => setPasadiaOrg(p.id, "tipo", e.target.value)} style={IS}>
+                        {TIPOS_GRUPO.map(t => <option key={t} value={t}>{t}</option>)}
+                      </select>
+                      <input type="number" value={p.personas} onChange={e => setPasadiaOrg(p.id, "personas", e.target.value)}
+                        placeholder="# pax" style={{ ...IS, textAlign: "center" }} />
+                      <button type="button" onClick={() => removePasadiaOrg(p.id)}
+                        style={{ height: 38, borderRadius: 8, border: "none", background: B.danger + "33", color: B.danger, fontSize: 15, cursor: "pointer" }}>✕</button>
+                    </div>
+                  ))}
+                </div>
+                <button type="button" onClick={addPasadiaOrg}
+                  style={{ width: "100%", padding: "9px", borderRadius: 8, border: `1px dashed ${B.navyLight}`, background: "none", color: B.sand, fontSize: 13, cursor: "pointer", fontWeight: 600 }}>
+                  + Agregar pasadía
+                </button>
+                {mismatch && (
+                  <div style={{ marginTop: 8, padding: "8px 12px", borderRadius: 8, background: B.danger + "22", border: `1px solid ${B.danger}55`, fontSize: 12, color: B.danger }}>
+                    ⚠ Pasadías: {totalPax} personas — Salidas: {totalSal} personas. Los totales no coinciden.
+                  </div>
+                )}
+              </div>
+            );
+          })()}
 
           {/* Valor estimado — solo eventos */}
           {!isGrupo && (
@@ -824,6 +879,7 @@ export function EventoModal({ evento, categoria, salidas, aliados, vendedores, o
           {isGrupo && (
             <div>
               <label style={LS}>Horarios de salida</label>
+              {/* Chips de salidas disponibles */}
               <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
                 {salidas.map(s => {
                   const sel = form.salidas_grupo.some(x => x.id === s.id);
@@ -836,7 +892,8 @@ export function EventoModal({ evento, categoria, salidas, aliados, vendedores, o
                   );
                 })}
               </div>
-              <div style={{ display: "flex", gap: 8 }}>
+              {/* Hora manual */}
+              <div style={{ display: "flex", gap: 8, marginBottom: form.salidas_grupo.length > 0 ? 12 : 0 }}>
                 <input value={horaInput} onChange={e => setHoraInput(e.target.value)}
                   onKeyDown={e => e.key === "Enter" && addCustomHora()}
                   placeholder="Agregar hora manual: 14:00" style={{ ...IS, flex: 1 }} />
@@ -845,15 +902,46 @@ export function EventoModal({ evento, categoria, salidas, aliados, vendedores, o
                   + Agregar
                 </button>
               </div>
+              {/* Salidas seleccionadas */}
               {form.salidas_grupo.length > 0 && (
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 10 }}>
-                  {[...form.salidas_grupo].sort((a,b) => a.hora.localeCompare(b.hora)).map(s => (
-                    <div key={s.hora} style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 10px 4px 12px", borderRadius: 20, background: s.custom ? B.warning + "33" : B.sky + "33", border: `1px solid ${s.custom ? B.warning : B.sky}55`, fontSize: 12, fontWeight: 600, color: s.custom ? B.warning : B.sky }}>
-                      ⛵ {s.hora}{s.custom ? " (manual)" : ""}
-                      <button onClick={() => removeSalida(s.hora)} style={{ background: "none", border: "none", color: "inherit", cursor: "pointer", fontSize: 13, lineHeight: 1, padding: 0 }}>✕</button>
-                    </div>
-                  ))}
-                </div>
+                form.modalidad_pago === "organizador" ? (
+                  /* Organizador: cada salida con campo de personas */
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    {[...form.salidas_grupo].sort((a,b) => a.hora.localeCompare(b.hora)).map(s => (
+                      <div key={s.hora} style={{ display: "grid", gridTemplateColumns: "auto 1fr 32px", gap: 8, alignItems: "center",
+                        padding: "8px 12px", borderRadius: 10, background: s.custom ? B.warning + "11" : B.sky + "11",
+                        border: `1px solid ${s.custom ? B.warning : B.sky}44` }}>
+                        <div style={{ fontSize: 13, fontWeight: 700, color: s.custom ? B.warning : B.sky, whiteSpace: "nowrap" }}>
+                          ⛵ Salida {s.hora}{s.custom ? " (manual)" : ""}
+                        </div>
+                        <input type="number" value={s.personas || ""} onChange={e => setSalidaPersonas(s.hora, e.target.value)}
+                          placeholder="# personas en esta salida"
+                          style={{ ...IS, fontSize: 12, padding: "6px 10px" }} />
+                        <button type="button" onClick={() => removeSalida(s.hora)}
+                          style={{ height: 34, borderRadius: 8, border: "none", background: B.danger + "33", color: B.danger, fontSize: 14, cursor: "pointer" }}>✕</button>
+                      </div>
+                    ))}
+                    {/* Total salidas */}
+                    {(() => {
+                      const tot = form.salidas_grupo.reduce((s, x) => s + (Number(x.personas) || 0), 0);
+                      return tot > 0 ? (
+                        <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", textAlign: "right" }}>
+                          Total en salidas: <strong style={{ color: B.sky }}>{tot} personas</strong>
+                        </div>
+                      ) : null;
+                    })()}
+                  </div>
+                ) : (
+                  /* Individual: chips simples */
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                    {[...form.salidas_grupo].sort((a,b) => a.hora.localeCompare(b.hora)).map(s => (
+                      <div key={s.hora} style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 10px 4px 12px", borderRadius: 20, background: s.custom ? B.warning + "33" : B.sky + "33", border: `1px solid ${s.custom ? B.warning : B.sky}55`, fontSize: 12, fontWeight: 600, color: s.custom ? B.warning : B.sky }}>
+                        ⛵ {s.hora}{s.custom ? " (manual)" : ""}
+                        <button type="button" onClick={() => removeSalida(s.hora)} style={{ background: "none", border: "none", color: "inherit", cursor: "pointer", fontSize: 13, lineHeight: 1, padding: 0 }}>✕</button>
+                      </div>
+                    ))}
+                  </div>
+                )
               )}
             </div>
           )}
