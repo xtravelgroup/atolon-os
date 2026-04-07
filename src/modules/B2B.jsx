@@ -85,21 +85,49 @@ function ConveniosSection({ aliadoId, comisionBase }) {
     setPasadiasDB(pasData || []);
 
     const { data } = await supabase.from("b2b_convenios").select("*").eq("aliado_id", aliadoId).order("tipo_pasadia");
+
+    // Case-insensitive sync: match convenio to pasadía by nombre (ignoring case)
     const syncFromPas = (rows) => rows.map(c => {
-      const pas = (pasData || []).find(p => p.nombre === c.tipo_pasadia);
+      const pas = (pasData || []).find(p => p.nombre.toLowerCase() === c.tipo_pasadia.toLowerCase());
       return {
         ...c,
-        tarifa_publica:      pas?.precio            || c.tarifa_publica,
-        tarifa_publica_nino: pas?.precio_nino        || c.tarifa_publica_nino || 0,
+        tarifa_publica:      pas?.precio       || c.tarifa_publica,
+        tarifa_publica_nino: pas?.precio_nino  || c.tarifa_publica_nino || 0,
       };
     });
 
     let rows = data || [];
 
-    if (rows.length === 0 && pasData && pasData.length > 0) {
+    // ── Deduplicar: si hay dos registros para el mismo pasadía (case-insensitive),
+    //    conservar el que coincide exactamente con el nombre actual del pasadía,
+    //    o el que tiene activo=true; borrar el/los duplicados.
+    if (rows.length > 0 && pasData?.length > 0) {
+      const grupos = {};
+      rows.forEach(c => {
+        const key = c.tipo_pasadia.toLowerCase();
+        if (!grupos[key]) grupos[key] = [];
+        grupos[key].push(c);
+      });
+      const idsAEliminar = [];
+      Object.values(grupos).forEach(grupo => {
+        if (grupo.length < 2) return;
+        // Preferir el que coincide exactamente con el nombre actual del pasadía en BD
+        const pas = (pasData || []).find(p => p.nombre.toLowerCase() === grupo[0].tipo_pasadia.toLowerCase());
+        const nombreActual = pas?.nombre || grupo[0].tipo_pasadia;
+        const exacto = grupo.find(c => c.tipo_pasadia === nombreActual);
+        const keeper = exacto || grupo.find(c => c.activo) || grupo[0];
+        grupo.forEach(c => { if (c.id !== keeper.id) idsAEliminar.push(c.id); });
+      });
+      if (idsAEliminar.length > 0) {
+        await supabase.from("b2b_convenios").delete().in("id", idsAEliminar);
+        rows = rows.filter(c => !idsAEliminar.includes(c.id));
+      }
+    }
+
+    if (rows.length === 0 && pasData?.length > 0) {
       // Primera vez: seed ALL active pasadías
       const seeds = pasData.map(p => ({
-        id: `CONV-${aliadoId}-${p.nombre.replace(/\s/g, "")}`,
+        id: `CONV-${aliadoId}-${p.nombre.toLowerCase().replace(/\s/g, "")}`,
         aliado_id: aliadoId,
         tipo_pasadia: p.nombre,
         tarifa_publica: p.precio,
@@ -114,13 +142,14 @@ function ConveniosSection({ aliadoId, comisionBase }) {
       rows = fresh || [];
     } else {
       // Ya hay convenios — auto-agregar pasadías nuevas con visible_agencias_todas que falten
-      const nombresExistentes = new Set(rows.map(c => c.tipo_pasadia));
+      // Comparación case-insensitive para evitar duplicados por cambio de capitalización
+      const nombresExistentes = new Set(rows.map(c => c.tipo_pasadia.toLowerCase()));
       const nuevasTodas = (pasData || []).filter(p =>
-        p.visible_agencias_todas === true && !nombresExistentes.has(p.nombre)
+        p.visible_agencias_todas === true && !nombresExistentes.has(p.nombre.toLowerCase())
       );
       if (nuevasTodas.length > 0) {
         const seeds = nuevasTodas.map(p => ({
-          id: `CONV-${aliadoId}-${p.nombre.replace(/\s/g, "")}`,
+          id: `CONV-${aliadoId}-${p.nombre.toLowerCase().replace(/\s/g, "")}`,
           aliado_id: aliadoId,
           tipo_pasadia: p.nombre,
           tarifa_publica: p.precio,
