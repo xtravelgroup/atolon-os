@@ -77,8 +77,8 @@ function GrupoLink({ evento, onClose }) {
   // Cargar pasadías si es modo organizador
   useEffect(() => {
     if (evento.modalidad_pago !== "organizador" || pasadias.length > 0) return;
-    supabase.from("pasadias").select("id, nombre, precio, precio_neto_agencia").eq("visible", true).order("nombre")
-      .then(({ data }) => setPasadias(data || []));
+    supabase.from("pasadias").select("id, nombre, precio, precio_neto_agencia").order("nombre")
+      .then(({ data }) => setPasadias((data || []).filter(p => p.precio > 0)));
   }, []);
 
   // Cargar cuentas bancarias cuando seleccionan transferencia
@@ -1132,11 +1132,15 @@ function KanbanBoard({ items, isGrupo, onEdit, onBeo, onLink, onCotizar, onReser
                     <button onClick={e => { e.stopPropagation(); onCotizar(ev); }}
                       style={{ fontSize: 11, padding: "4px 10px", borderRadius: 6, background: B.sand + "33", color: B.sand, border: `1px solid ${B.sand}44`, cursor: "pointer", fontWeight: 600 }}>📋 Cotizar</button>
                   )}
-                  {ev.categoria === "grupo" && (
+                  {ev.categoria === "grupo" && ev.modalidad_pago === "organizador" && (
+                    <button onClick={e => { e.stopPropagation(); onLink(ev); }}
+                      style={{ fontSize: 11, padding: "4px 10px", borderRadius: 6, background: "#5B4CF533", color: "#a78bfa", border: `1px solid #5B4CF544`, cursor: "pointer", fontWeight: 600 }}>💳 Pago grupal</button>
+                  )}
+                  {ev.categoria === "grupo" && ev.modalidad_pago !== "organizador" && (
                     <button onClick={e => { e.stopPropagation(); onLink(ev); }}
                       style={{ fontSize: 11, padding: "4px 10px", borderRadius: 6, background: B.sky + "33", color: B.sky, border: `1px solid ${B.sky}44`, cursor: "pointer" }}>🔗 Ver link</button>
                   )}
-                  {ev.categoria === "grupo" && (
+                  {ev.categoria === "grupo" && ev.modalidad_pago !== "organizador" && (
                     <button onClick={e => { e.stopPropagation(); onReservas(ev); }}
                       style={{ fontSize: 11, padding: "4px 10px", borderRadius: 6, background: B.sand + "22", color: B.sand, border: `1px solid ${B.sand}44`, cursor: "pointer" }}>👥 Reservas</button>
                   )}
