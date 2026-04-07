@@ -54,33 +54,35 @@ function BEOPreview({ evento, onClose }) {
 
 // ─── Link del grupo ───────────────────────────────────────────────────────────
 function GrupoLink({ evento, onClose }) {
-  const [tab,         setTab]         = useState(evento.modalidad_pago || "individual");
-  const [copied,      setCopied]      = useState(false);
-  const [showRes,     setShowRes]     = useState(false);
-  const [reservas,    setReservas]    = useState(null);
-  const [loadingR,    setLoadingR]    = useState(false);
+  const [tab,          setTab]          = useState(evento.modalidad_pago || "individual");
+  const [copied,       setCopied]       = useState(false);
+  const [showRes,      setShowRes]      = useState(false);
+  const [reservas,     setReservas]     = useState(null);
+  const [loadingR,     setLoadingR]     = useState(false);
   // Organizador mode
-  const [pasadias,    setPasadias]    = useState([]);
-  const [pasadiaId,   setPasadiaId]   = useState("");
-  const [paxOrg,      setPaxOrg]      = useState(String(evento.pax || ""));
-  const [tipoPrecio,  setTipoPrecio]  = useState("publico"); // "publico" | "neto"
-  const [metodoPago,  setMetodoPago]  = useState("");        // "" | "wompi" | "transferencia" | "link_pago"
-  const [cuentas,     setCuentas]     = useState(null);
-  const [wompiLink,   setWompiLink]   = useState("");
-  const [generando,   setGenerando]   = useState(false);
-  const [copiedPago,  setCopiedPago]  = useState(false);
+  const [pasadias,     setPasadias]     = useState([]);
+  const [pasadiaId,    setPasadiaId]    = useState("");
+  const [paxOrg,       setPaxOrg]       = useState(String(evento.pax || ""));
+  const [tipoPrecio,   setTipoPrecio]   = useState("publico");
+  const [metodoPago,   setMetodoPago]   = useState("");
+  const [cuentas,      setCuentas]      = useState(null);
+  const [procesando,   setProcesando]   = useState(false);
+  const [reservaId,    setReservaId]    = useState("");   // ID de la reserva creada
+  const [wompiLink,    setWompiLink]    = useState("");
+  const [copiedPago,   setCopiedPago]   = useState(false);
+  const [errPago,      setErrPago]      = useState("");
 
   const url = `${window.location.origin}/booking?grupo=${evento.id}`;
   const copy = () => { navigator.clipboard.writeText(url); setCopied(true); setTimeout(() => setCopied(false), 2000); };
 
-  // Load pasadías when switching to organizador tab
+  // Cargar pasadías al entrar al tab organizador
   useEffect(() => {
     if (tab !== "organizador" || pasadias.length > 0) return;
     supabase.from("pasadias").select("id, nombre, precio, precio_neto_agencia").eq("visible", true).order("nombre")
       .then(({ data }) => setPasadias(data || []));
   }, [tab]);
 
-  // Load bank accounts when transferencia selected
+  // Cargar cuentas bancarias cuando seleccionan transferencia
   useEffect(() => {
     if (metodoPago !== "transferencia" || cuentas !== null) return;
     supabase.from("configuracion").select("cuentas_bancarias").eq("id", "atolon").single()
@@ -93,8 +95,7 @@ function GrupoLink({ evento, onClose }) {
     if (reservas !== null) return;
     setLoadingR(true);
     const { data } = await supabase.from("reservas").select("*")
-      .eq("grupo_id", evento.id)
-      .order("created_at", { ascending: false });
+      .eq("grupo_id", evento.id).order("created_at", { ascending: false });
     setReservas(data || []);
     setLoadingR(false);
   };
@@ -104,25 +105,50 @@ function GrupoLink({ evento, onClose }) {
   const pasadiaActual = pasadias.find(p => p.id === pasadiaId);
   const tieneAliado   = !!evento.aliado_id;
   const precioUnit    = (tieneAliado && tipoPrecio === "neto" && pasadiaActual?.precio_neto_agencia)
-    ? pasadiaActual.precio_neto_agencia
-    : (pasadiaActual?.precio || 0);
+    ? pasadiaActual.precio_neto_agencia : (pasadiaActual?.precio || 0);
   const totalOrgCOP   = precioUnit * Number(paxOrg || 0);
-  const canGenerar    = !!pasadiaActual && Number(paxOrg) >= 1;
+  const canProcesar   = !!pasadiaActual && Number(paxOrg) >= 1 && !!metodoPago;
 
-  const resetPago = () => { setWompiLink(""); };
+  // Crear reserva y procesar pago
+  const procesarPago = async () => {
+    if (!canProcesar || procesando) return;
+    setProcesando(true);
+    setErrPago("");
+    const rid = `GRP-ORG-${Date.now()}`;
+    const fechaISO = (evento.fecha || "").split("T")[0];
+    const estado   = metodoPago === "transferencia" ? "pendiente_comprobante" : "pendiente_pago";
 
-  const generarWompi = async () => {
-    if (!canGenerar) return;
-    setGenerando(true);
-    const link = await wompiCheckoutUrl({
-      referencia: `GRP-${evento.id}-${Date.now()}`,
-      totalCOP: totalOrgCOP,
-      redirectUrl: `${window.location.origin}/`,
+    const { error } = await supabase.from("reservas").insert({
+      id:              rid,
+      fecha:           fechaISO,
+      tipo:            evento.tipo,
+      pax:             Number(paxOrg),
+      nombre:          evento.contacto || evento.nombre,
+      email:           evento.email    || "",
+      telefono:        evento.tel      || "",
+      total:           totalOrgCOP,
+      precio_neto:     precioUnit,
+      precio_publico:  pasadiaActual.precio,
+      grupo_id:        evento.id,
+      aliado_id:       evento.aliado_id || null,
+      canal:           "GRUPO-ORG",
+      forma_pago:      metodoPago,
+      estado,
+      notas:           `Pago grupal — ${evento.nombre} — ${tipoPrecio === "neto" ? "precio neto B2B" : "precio público"}`,
     });
-    setWompiLink(link);
-    setGenerando(false);
+
+    if (error) { setErrPago(error.message || "Error al crear la reserva"); setProcesando(false); return; }
+    setReservaId(rid);
+
+    if (metodoPago === "wompi" || metodoPago === "link_pago") {
+      const link = await wompiCheckoutUrl({ referencia: rid, totalCOP: totalOrgCOP, redirectUrl: `${window.location.origin}/` });
+      setWompiLink(link);
+      if (metodoPago === "wompi") window.open(link, "_blank");
+    }
+    setProcesando(false);
   };
 
+  const resetOrg = () => { setReservaId(""); setWompiLink(""); setMetodoPago(""); setErrPago(""); };
   const copyPago = () => { navigator.clipboard.writeText(wompiLink); setCopiedPago(true); setTimeout(() => setCopiedPago(false), 2000); };
 
   return (
@@ -179,111 +205,57 @@ function GrupoLink({ evento, onClose }) {
         {/* ── TAB: Organizador ── */}
         {tab === "organizador" && (
           <>
-            <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", textAlign: "center", marginBottom: 16 }}>
-              El organizador paga todos los cupos de una vez.
-            </div>
-
-            {/* Pasadía + Cantidad en grid */}
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 12 }}>
+            {/* ── ESTADO: Reserva ya procesada ── */}
+            {reservaId ? (
               <div>
-                <label style={LS}>Pasadía</label>
-                <select value={pasadiaId} onChange={e => { setPasadiaId(e.target.value); setWompiLink(""); setMetodoPago(""); }}
-                  style={{ ...IS }}>
-                  <option value="">— Selecciona —</option>
-                  {pasadias.map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}
-                </select>
-              </div>
-              <div>
-                <label style={LS}>Total de pasadías</label>
-                <input type="number" min="1" value={paxOrg}
-                  onChange={e => { setPaxOrg(e.target.value); setWompiLink(""); setMetodoPago(""); }}
-                  style={{ ...IS }} placeholder="Cantidad exacta" />
-              </div>
-            </div>
+                <div style={{ textAlign: "center", marginBottom: 20 }}>
+                  <div style={{ fontSize: 40, marginBottom: 8 }}>✅</div>
+                  <div style={{ fontSize: 16, fontWeight: 700, color: B.success, marginBottom: 4 }}>Reserva registrada</div>
+                  <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", fontFamily: "monospace" }}>{reservaId}</div>
+                </div>
 
-            {/* Toggle neto / público — solo si hay aliado B2B */}
-            {tieneAliado && pasadiaActual && (
-              <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
-                {[
-                  { value: "publico", label: "💰 Precio público",  precio: pasadiaActual.precio },
-                  { value: "neto",    label: "🤝 Precio neto B2B", precio: pasadiaActual.precio_neto_agencia },
-                ].map(opt => (
-                  <div key={opt.value} onClick={() => { setTipoPrecio(opt.value); setWompiLink(""); setMetodoPago(""); }}
-                    style={{ flex: 1, padding: "10px 12px", borderRadius: 9, cursor: "pointer",
-                      background: tipoPrecio === opt.value ? B.sky + "22" : B.navyLight,
-                      border: `2px solid ${tipoPrecio === opt.value ? B.sky : "transparent"}`,
-                      transition: "all 0.15s" }}>
-                    <div style={{ fontSize: 11, fontWeight: 700, color: tipoPrecio === opt.value ? B.sky : "rgba(255,255,255,0.6)", marginBottom: 2 }}>{opt.label}</div>
-                    <div style={{ fontSize: 15, fontWeight: 800, color: tipoPrecio === opt.value ? B.sky : B.white }}>{opt.precio ? COP(opt.precio) : "—"}</div>
+                {/* Resumen */}
+                <div style={{ background: B.navy, borderRadius: 10, padding: "14px 18px", marginBottom: 16, fontSize: 13, lineHeight: 2 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between" }}>
+                    <span style={{ color: "rgba(255,255,255,0.4)" }}>Pasadía</span>
+                    <span style={{ fontWeight: 600 }}>{pasadiaActual?.nombre}</span>
                   </div>
-                ))}
-              </div>
-            )}
-
-            {/* Total card */}
-            {canGenerar && (
-              <div style={{ background: B.navy, borderRadius: 10, padding: "14px 18px", marginBottom: 16, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <div>
-                  <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>Total a cobrar</div>
-                  <div style={{ fontSize: 26, fontWeight: 800, color: B.sand }}>{COP(totalOrgCOP)}</div>
-                </div>
-                <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", textAlign: "right" }}>
-                  <div>{COP(precioUnit)} × {paxOrg} pasadías</div>
-                  {tieneAliado && <div style={{ marginTop: 2, color: tipoPrecio === "neto" ? B.sky : "rgba(255,255,255,0.3)" }}>{tipoPrecio === "neto" ? "Precio neto B2B" : "Precio público"}</div>}
-                </div>
-              </div>
-            )}
-
-            {/* Métodos de pago */}
-            {canGenerar && (
-              <>
-                <div style={{ fontSize: 11, color: B.sand, textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 10 }}>Método de pago</div>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginBottom: 14 }}>
-                  {[
-                    { id: "wompi",         icon: <div style={{ width: 36, height: 36, borderRadius: 8, background: "#5B4CF5", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 8px", fontSize: 15, fontWeight: 900, color: "#fff" }}>W</div>, label: "Wompi",        sub: "Checkout online" },
-                    { id: "transferencia", icon: <div style={{ fontSize: 26, marginBottom: 6, textAlign: "center" }}>🏦</div>,                                                                                                                                                                          label: "Transferencia", sub: "PSE / Bancolombia" },
-                    { id: "link_pago",     icon: <div style={{ fontSize: 26, marginBottom: 6, textAlign: "center" }}>📲</div>,                                                                                                                                                                          label: "Link de pago",  sub: "Enviar al cliente" },
-                  ].map(m => (
-                    <div key={m.id} onClick={() => { setMetodoPago(m.id); setWompiLink(""); }}
-                      style={{ background: metodoPago === m.id ? B.sky + "22" : B.navy, borderRadius: 12, padding: "14px 10px", textAlign: "center", cursor: "pointer",
-                        border: `2px solid ${metodoPago === m.id ? B.sky : B.navyLight}`, transition: "all 0.15s" }}>
-                      {m.icon}
-                      <div style={{ fontSize: 12, fontWeight: 700, color: metodoPago === m.id ? B.sky : B.white, marginBottom: 2 }}>{m.label}</div>
-                      <div style={{ fontSize: 10, color: "rgba(255,255,255,0.35)" }}>{m.sub}</div>
-                    </div>
-                  ))}
+                  <div style={{ display: "flex", justifyContent: "space-between" }}>
+                    <span style={{ color: "rgba(255,255,255,0.4)" }}>Pasadías</span>
+                    <span style={{ fontWeight: 600 }}>{paxOrg}</span>
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between" }}>
+                    <span style={{ color: "rgba(255,255,255,0.4)" }}>Precio unitario</span>
+                    <span>{COP(precioUnit)}{tieneAliado && tipoPrecio === "neto" ? " (neto)" : ""}</span>
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between", borderTop: `1px solid ${B.navyLight}`, paddingTop: 8, marginTop: 4 }}>
+                    <span style={{ color: B.sand, fontWeight: 700 }}>Total</span>
+                    <span style={{ color: B.sand, fontWeight: 800, fontSize: 16 }}>{COP(totalOrgCOP)}</span>
+                  </div>
                 </div>
 
-                {/* Wompi */}
-                {metodoPago === "wompi" && (wompiLink ? (
+                {/* Wompi link si aplica */}
+                {wompiLink && (
                   <>
-                    <div style={{ background: B.navy, borderRadius: 9, padding: "11px 13px", marginBottom: 8, wordBreak: "break-all", fontSize: 11, color: B.sky, fontFamily: "monospace" }}>{wompiLink}</div>
-                    <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+                    <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginBottom: 6 }}>
+                      {metodoPago === "wompi" ? "Checkout abierto — también puedes compartir este link:" : "Link de pago para enviar al organizador:"}
+                    </div>
+                    <div style={{ background: B.navy, borderRadius: 9, padding: "10px 12px", marginBottom: 8, wordBreak: "break-all", fontSize: 11, color: B.sky, fontFamily: "monospace" }}>{wompiLink}</div>
+                    <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
                       <button onClick={copyPago} style={{ flex: 2, padding: "11px", background: copiedPago ? B.success : B.sky, color: B.navy, border: "none", borderRadius: 8, fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
                         {copiedPago ? "✓ Copiado!" : "📋 Copiar link"}
                       </button>
-                      <button onClick={() => window.open(wompiLink, "_blank")} style={{ flex: 1, padding: "11px", background: "#5B4CF522", color: "#a78bfa", border: `1px solid #5B4CF544`, borderRadius: 8, fontWeight: 700, fontSize: 13, cursor: "pointer" }}>Abrir →</button>
-                      <button onClick={resetPago} style={{ padding: "11px 12px", background: "rgba(255,255,255,0.05)", color: "rgba(255,255,255,0.3)", border: "none", borderRadius: 8, cursor: "pointer" }}>↺</button>
+                      <button onClick={() => window.open(wompiLink, "_blank")} style={{ flex: 1, padding: "11px", background: "#5B4CF522", color: "#a78bfa", border: `1px solid #5B4CF544`, borderRadius: 8, fontSize: 13, cursor: "pointer" }}>Abrir →</button>
                     </div>
                   </>
-                ) : (
-                  <button onClick={generarWompi} disabled={generando}
-                    style={{ width: "100%", padding: "13px", borderRadius: 10, border: "none", fontWeight: 700, fontSize: 14, cursor: "pointer", marginBottom: 12,
-                      background: generando ? B.navyLight : "#5B4CF5", color: "#fff" }}>
-                    {generando ? "Generando..." : "💳 Generar link Wompi"}
-                  </button>
-                ))}
+                )}
 
-                {/* Transferencia */}
-                {metodoPago === "transferencia" && (
-                  <div style={{ background: B.navy, borderRadius: 10, padding: "16px 18px", marginBottom: 12 }}>
-                    <div style={{ fontSize: 11, color: B.sand, textTransform: "uppercase", letterSpacing: 1, marginBottom: 12 }}>Datos para la transferencia</div>
-                    {cuentas === null ? (
-                      <div style={{ color: "rgba(255,255,255,0.3)", fontSize: 12 }}>Cargando...</div>
-                    ) : cuentas.length === 0 ? (
-                      <div style={{ color: B.warning, fontSize: 12 }}>⚠️ Configura cuentas bancarias en Configuración → Cuentas Bancarias</div>
-                    ) : cuentas.map((c, i) => (
-                      <div key={i} style={{ fontSize: 13, lineHeight: 2.2, borderBottom: i < cuentas.length - 1 ? `1px solid ${B.navyLight}` : "none", paddingBottom: i < cuentas.length - 1 ? 10 : 0, marginBottom: i < cuentas.length - 1 ? 10 : 0 }}>
+                {/* Datos bancarios si es transferencia */}
+                {metodoPago === "transferencia" && cuentas && cuentas.length > 0 && (
+                  <div style={{ background: B.navy, borderRadius: 10, padding: "14px 16px", marginBottom: 14 }}>
+                    <div style={{ fontSize: 11, color: B.sand, textTransform: "uppercase", letterSpacing: 1, marginBottom: 10 }}>Datos para transferencia</div>
+                    {cuentas.map((c, i) => (
+                      <div key={i} style={{ fontSize: 12, lineHeight: 2.1 }}>
                         {[["Banco", c.banco], ["Tipo", c.tipo], ["Número", c.numero], ["Titular", c.titular], ["NIT", c.nit]].filter(([, v]) => v).map(([k, v]) => (
                           <div key={k} style={{ display: "flex", justifyContent: "space-between" }}>
                             <span style={{ color: "rgba(255,255,255,0.4)" }}>{k}</span>
@@ -292,37 +264,120 @@ function GrupoLink({ evento, onClose }) {
                         ))}
                       </div>
                     ))}
-                    <div style={{ marginTop: 14, padding: "10px 14px", background: B.sand + "11", borderRadius: 8, border: `1px solid ${B.sand}33`, fontSize: 13, color: B.sand, textAlign: "center", fontWeight: 700 }}>
-                      Monto: {COP(totalOrgCOP)}
+                  </div>
+                )}
+
+                <button onClick={resetOrg} style={{ width: "100%", padding: "10px", background: "none", border: `1px solid ${B.navyLight}`, borderRadius: 8, color: "rgba(255,255,255,0.4)", fontSize: 12, cursor: "pointer" }}>
+                  ↺ Nueva transacción
+                </button>
+              </div>
+            ) : (
+              <>
+                <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", textAlign: "center", marginBottom: 16 }}>
+                  El organizador paga todos los cupos de una vez.
+                </div>
+
+                {/* Pasadía + Cantidad */}
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 12 }}>
+                  <div>
+                    <label style={LS}>Pasadía</label>
+                    <select value={pasadiaId} onChange={e => { setPasadiaId(e.target.value); setMetodoPago(""); }} style={{ ...IS }}>
+                      <option value="">— Selecciona —</option>
+                      {pasadias.map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label style={LS}>Total de pasadías</label>
+                    <input type="number" min="1" value={paxOrg}
+                      onChange={e => { setPaxOrg(e.target.value); setMetodoPago(""); }}
+                      style={{ ...IS }} placeholder="Cantidad exacta" />
+                  </div>
+                </div>
+
+                {/* Toggle neto / público — solo si hay aliado B2B */}
+                {tieneAliado && pasadiaActual && (
+                  <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+                    {[
+                      { value: "publico", label: "💰 Precio público",  precio: pasadiaActual.precio },
+                      { value: "neto",    label: "🤝 Precio neto B2B", precio: pasadiaActual.precio_neto_agencia },
+                    ].map(opt => (
+                      <div key={opt.value} onClick={() => { setTipoPrecio(opt.value); setMetodoPago(""); }}
+                        style={{ flex: 1, padding: "10px 12px", borderRadius: 9, cursor: "pointer",
+                          background: tipoPrecio === opt.value ? B.sky + "22" : B.navyLight,
+                          border: `2px solid ${tipoPrecio === opt.value ? B.sky : "transparent"}`, transition: "all 0.15s" }}>
+                        <div style={{ fontSize: 11, fontWeight: 700, color: tipoPrecio === opt.value ? B.sky : "rgba(255,255,255,0.6)", marginBottom: 2 }}>{opt.label}</div>
+                        <div style={{ fontSize: 15, fontWeight: 800, color: tipoPrecio === opt.value ? B.sky : B.white }}>{opt.precio ? COP(opt.precio) : "—"}</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Total */}
+                {pasadiaActual && Number(paxOrg) >= 1 && (
+                  <div style={{ background: B.navy, borderRadius: 10, padding: "14px 18px", marginBottom: 16, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <div>
+                      <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>Total a cobrar</div>
+                      <div style={{ fontSize: 26, fontWeight: 800, color: B.sand }}>{COP(totalOrgCOP)}</div>
+                    </div>
+                    <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", textAlign: "right" }}>
+                      <div>{COP(precioUnit)} × {paxOrg} pasadías</div>
+                      {tieneAliado && <div style={{ marginTop: 2, color: tipoPrecio === "neto" ? B.sky : "rgba(255,255,255,0.3)" }}>{tipoPrecio === "neto" ? "Precio neto B2B" : "Precio público"}</div>}
                     </div>
                   </div>
                 )}
 
-                {/* Link de pago */}
-                {metodoPago === "link_pago" && (wompiLink ? (
+                {/* Métodos de pago */}
+                {pasadiaActual && Number(paxOrg) >= 1 && (
                   <>
-                    <div style={{ background: B.navy, borderRadius: 9, padding: "11px 13px", marginBottom: 8, wordBreak: "break-all", fontSize: 11, color: B.sky, fontFamily: "monospace" }}>{wompiLink}</div>
-                    <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
-                      <button onClick={copyPago} style={{ flex: 2, padding: "11px", background: copiedPago ? B.success : B.success + "33", color: copiedPago ? B.navy : B.success, border: `1px solid ${B.success}44`, borderRadius: 8, fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
-                        {copiedPago ? "✓ Copiado!" : "📲 Copiar link para cliente"}
-                      </button>
-                      <button onClick={resetPago} style={{ padding: "11px 12px", background: "rgba(255,255,255,0.05)", color: "rgba(255,255,255,0.3)", border: "none", borderRadius: 8, cursor: "pointer" }}>↺</button>
+                    <div style={{ fontSize: 11, color: B.sand, textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 10 }}>Método de pago</div>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginBottom: 14 }}>
+                      {[
+                        { id: "wompi",         icon: <div style={{ width: 34, height: 34, borderRadius: 8, background: "#5B4CF5", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 8px", fontSize: 14, fontWeight: 900, color: "#fff" }}>W</div>, label: "Wompi",        sub: "Pagar ahora" },
+                        { id: "transferencia", icon: <div style={{ fontSize: 24, marginBottom: 6, textAlign: "center" }}>🏦</div>, label: "Transferencia", sub: "PSE / Banco" },
+                        { id: "link_pago",     icon: <div style={{ fontSize: 24, marginBottom: 6, textAlign: "center" }}>📲</div>, label: "Link de pago",  sub: "Enviar al cliente" },
+                      ].map(m => (
+                        <div key={m.id} onClick={() => setMetodoPago(m.id)}
+                          style={{ background: metodoPago === m.id ? B.sky + "22" : B.navy, borderRadius: 12, padding: "14px 8px", textAlign: "center", cursor: "pointer",
+                            border: `2px solid ${metodoPago === m.id ? B.sky : B.navyLight}`, transition: "all 0.15s" }}>
+                          {m.icon}
+                          <div style={{ fontSize: 12, fontWeight: 700, color: metodoPago === m.id ? B.sky : B.white, marginBottom: 2 }}>{m.label}</div>
+                          <div style={{ fontSize: 10, color: "rgba(255,255,255,0.35)" }}>{m.sub}</div>
+                        </div>
+                      ))}
                     </div>
+
+                    {/* Preview transferencia antes de procesar */}
+                    {metodoPago === "transferencia" && (
+                      <div style={{ background: B.navy, borderRadius: 10, padding: "14px 16px", marginBottom: 12 }}>
+                        <div style={{ fontSize: 11, color: B.sand, textTransform: "uppercase", letterSpacing: 1, marginBottom: 10 }}>Datos bancarios</div>
+                        {cuentas === null ? <div style={{ fontSize: 12, color: "rgba(255,255,255,0.3)" }}>Cargando...</div>
+                          : cuentas.length === 0 ? <div style={{ fontSize: 12, color: B.warning }}>⚠️ Configura cuentas en Configuración → Cuentas Bancarias</div>
+                          : cuentas.map((c, i) => (
+                            <div key={i} style={{ fontSize: 12, lineHeight: 2.1 }}>
+                              {[["Banco", c.banco], ["Tipo", c.tipo], ["Número", c.numero], ["Titular", c.titular], ["NIT", c.nit]].filter(([, v]) => v).map(([k, v]) => (
+                                <div key={k} style={{ display: "flex", justifyContent: "space-between" }}>
+                                  <span style={{ color: "rgba(255,255,255,0.4)" }}>{k}</span>
+                                  <span style={{ fontWeight: k === "Número" ? 700 : 400, color: k === "Número" ? B.sky : B.white }}>{v}</span>
+                                </div>
+                              ))}
+                            </div>
+                          ))
+                        }
+                      </div>
+                    )}
+
+                    {errPago && <div style={{ padding: "8px 12px", background: "rgba(220,53,69,0.15)", border: `1px solid rgba(220,53,69,0.4)`, borderRadius: 8, fontSize: 12, color: "#ff6b7a", marginBottom: 10 }}>⚠️ {errPago}</div>}
+
+                    <button onClick={procesarPago} disabled={!canProcesar || procesando}
+                      style={{ width: "100%", padding: "14px", borderRadius: 10, border: "none", fontWeight: 700, fontSize: 14, cursor: canProcesar && !procesando ? "pointer" : "default", marginBottom: 12,
+                        background: !canProcesar || procesando ? B.navyLight : (metodoPago === "wompi" ? "#5B4CF5" : metodoPago === "link_pago" ? B.success : B.sky),
+                        color: !canProcesar || procesando ? "rgba(255,255,255,0.3)" : (metodoPago === "link_pago" ? B.navy : "#fff") }}>
+                      {procesando ? "Procesando..." : metodoPago === "wompi" ? "💳 Cobrar con Wompi" : metodoPago === "transferencia" ? "🏦 Registrar y mostrar datos" : metodoPago === "link_pago" ? "📲 Generar link de pago" : "Selecciona un método de pago"}
+                    </button>
                   </>
-                ) : (
-                  <button onClick={generarWompi} disabled={generando}
-                    style={{ width: "100%", padding: "13px", borderRadius: 10, border: "none", fontWeight: 700, fontSize: 14, cursor: "pointer", marginBottom: 12,
-                      background: generando ? B.navyLight : B.success, color: B.navy }}>
-                    {generando ? "Generando..." : "📲 Generar link de pago para cliente"}
-                  </button>
-                ))}
+                )}
               </>
             )}
-
-            {/* Reservas en modo organizador */}
-            <button onClick={toggleReservas} style={{ width: "100%", padding: "11px", background: showRes ? B.sand + "33" : B.navyLight, color: showRes ? B.sand : B.white, border: `1px solid ${showRes ? B.sand + "55" : "transparent"}`, borderRadius: 8, fontWeight: 700, fontSize: 13, cursor: "pointer", marginBottom: 12 }}>
-              📋 Ver reservas del grupo{reservas ? ` (${reservas.length})` : ""}
-            </button>
           </>
         )}
 
