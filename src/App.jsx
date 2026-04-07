@@ -1,6 +1,41 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, Component } from "react";
 import { supabase } from "./lib/supabase";
+import { B } from "./brand";
 import AtolanOS from "./modules/AtolanOS";
+import AtolanTrack from "./lib/AtolanTrack";
+
+// ── Error Boundary — muestra el error en pantalla en vez de pantalla azul ───
+class ErrorBoundary extends Component {
+  constructor(props) { super(props); this.state = { error: null }; }
+  static getDerivedStateFromError(e) { return { error: e }; }
+  render() {
+    if (this.state.error) {
+      const msg = this.state.error?.message || String(this.state.error);
+      const stack = this.state.error?.stack || "";
+      return (
+        <div style={{
+          position: "fixed", inset: 0, background: "#0D1B3E",
+          display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+          padding: 24, fontFamily: "monospace", color: "#fff",
+        }}>
+          <div style={{ fontSize: 36, marginBottom: 12 }}>⚠️</div>
+          <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 8, color: "#F87171" }}>Error de render</div>
+          <div style={{ fontSize: 13, color: "#fca5a5", marginBottom: 16, textAlign: "center", maxWidth: 500 }}>{msg}</div>
+          <div style={{
+            fontSize: 10, color: "rgba(255,255,255,0.4)", whiteSpace: "pre-wrap",
+            maxWidth: 500, maxHeight: 200, overflowY: "auto", background: "#152650",
+            padding: 12, borderRadius: 8,
+          }}>{stack}</div>
+          <button onClick={() => window.location.reload()} style={{
+            marginTop: 20, padding: "10px 24px", borderRadius: 8, border: "none",
+            background: "#8ECAE6", color: "#0D1B3E", fontWeight: 700, cursor: "pointer",
+          }}>Recargar</button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 // ── Force Change Password ───────────────────────────────────────────────────
 function ForceChangePassword({ userEmail, onDone }) {
@@ -137,6 +172,7 @@ function WhatsAppFloat({ phone }) {
       rel="noopener noreferrer"
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
+      onClick={() => AtolanTrack.whatsappClick("float_button")}
       style={{
         position: "fixed", bottom: 24, right: 24, zIndex: 9999,
         display: "flex", alignItems: "center", gap: 10,
@@ -191,6 +227,7 @@ import CheckIn from "./modules/CheckIn";
 import ZarpeInfo from "./modules/ZarpeInfo";
 import Analitica from "./modules/Analitica";
 import MuelleCheckin from "./modules/MuelleCheckin";
+import MuelleSalidas from "./modules/MuelleSalidas";
 import VIPAdmin from "./modules/VIPAdmin";
 import Clientes from "./modules/Clientes";
 import VIPPortal from "./modules/VIPPortal";
@@ -198,6 +235,10 @@ import Staffing from "./modules/Staffing";
 import SelfCheckIn from "./modules/SelfCheckIn";
 import Historial from "./modules/Historial";
 import CierreCaja from "./modules/CierreCaja";
+import Actividades from "./modules/Actividades";
+import Mantenimiento from "./modules/Mantenimiento";
+import CarritoAbandonado from "./modules/CarritoAbandonado";
+import Metas from "./modules/Metas";
 
 const MODULE_MAP = {
   pasadias: <Pasadias />,
@@ -216,6 +257,7 @@ const MODULE_MAP = {
   staffing:  <Staffing />,
   checkin:   <CheckIn />,
   muelle:    <MuelleCheckin />,
+  salidas_isla: <MuelleSalidas />,
   menus:     <Menus />,
   configuracion: <Configuracion />,
   usuarios: <Usuarios />,
@@ -224,6 +266,10 @@ const MODULE_MAP = {
   clientes: <Clientes />,
   historial: <Historial />,
   cierre_caja: <CierreCaja />,
+  mantenimiento: <Mantenimiento />,
+  actividades:  <Actividades />,
+  carrito_abandonado: <CarritoAbandonado />,
+  metas: <Metas />,
 };
 
 // Public routes — no auth required
@@ -241,8 +287,20 @@ export default function App() {
   const [mustChange, setMustChange]     = useState(false); // force password change
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => setSession(data.session));
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_e, s) => setSession(s));
+    // Timeout de seguridad: si getSession no responde en 4s, asumir no autenticado
+    const fallback = setTimeout(() => setSession(prev => prev === undefined ? null : prev), 4000);
+    supabase.auth.getSession()
+      .then(({ data }) => { clearTimeout(fallback); setSession(data?.session ?? null); })
+      .catch(() => { clearTimeout(fallback); setSession(null); });
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, s) => {
+      clearTimeout(fallback);
+      // En móvil, TOKEN_REFRESHED puede emitir null brevemente — solo blanquear en SIGNED_OUT real
+      if (event === "SIGNED_OUT") {
+        setSession(null);
+      } else if (s) {
+        setSession(s);
+      }
+    });
     return () => subscription.unsubscribe();
   }, []);
 
@@ -268,6 +326,15 @@ export default function App() {
 
   const navigate = (mod) => setActiveModule(mod);
 
+  // AtolanTrack: page_view on public route load
+  useEffect(() => {
+    const publicTrackRoutes = ["booking", "pago", ""];
+    const isTrackable = publicTrackRoutes.some(r => route === r || route.startsWith(r + "/") || route.startsWith("pago"));
+    if (isTrackable) {
+      AtolanTrack.init().then(() => AtolanTrack.pageView("/" + route));
+    }
+  }, [route]);
+
   // Public routes — show WhatsApp button
   const isPublic = ["empleados", "agencia", "booking", "", "reset-password", "zarpe-info"].includes(route) || route.startsWith("pago") || route.startsWith("booking/");
 
@@ -281,8 +348,8 @@ export default function App() {
   if (route === "society")        return <VIPPortal />;
   if (route === "checkin-pax")    return <SelfCheckIn />;
 
-  // Loading auth state
-  if (session === undefined) return null;
+  // Loading auth state — mostrar Login de inmediato (evita pantalla azul en Android)
+  if (session === undefined) return <><Login /><WhatsAppFloat phone={waPhone} /></>;
 
   // /login: show login form if not authenticated, else fall through to OS
   if (route === "login" && !session) return <><Login /><WhatsAppFloat phone={waPhone} /></>;
@@ -295,11 +362,13 @@ export default function App() {
 
   // Logged in — show OS (internal, no WhatsApp button)
   return (
-    <AtolanOS
-      activeModule={activeModule}
-      onNavigate={navigate}
-      moduleContent={MODULE_MAP[activeModule] || null}
-      userEmail={session.user?.email}
-    />
+    <ErrorBoundary>
+      <AtolanOS
+        activeModule={activeModule}
+        onNavigate={navigate}
+        moduleContent={MODULE_MAP[activeModule] || null}
+        userEmail={session.user?.email}
+      />
+    </ErrorBoundary>
   );
 }

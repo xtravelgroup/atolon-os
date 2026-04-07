@@ -26,8 +26,10 @@ const NAV_GROUPS = [
       { key: "clientes", label: "Clientes",  icon: "👤" },
       { key: "b2b",      label: "B2B",       icon: "☯" },
       { key: "eventos",  label: "Eventos",   icon: "♫" },
-      { key: "upsells",   label: "Upsells",   icon: "⬆" },
-      { key: "comercial", label: "Comercial", icon: "★" },
+      { key: "upsells",      label: "Upsells",      icon: "⬆" },
+      { key: "actividades",  label: "Actividades",  icon: "🎯" },
+      { key: "comercial",    label: "Comercial",    icon: "★" },
+      { key: "metas",        label: "Metas",        icon: "🎯" },
     ],
   },
   {
@@ -38,6 +40,7 @@ const NAV_GROUPS = [
     items: [
       { key: "checkin",     label: "Check-in",    icon: "✅" },
       { key: "muelle",      label: "Llegadas",    icon: "⚓" },
+      { key: "salidas_isla", label: "Salidas",     icon: "⛵" },
       { key: "cierre_caja", label: "Cierre Caja", icon: "💵" },
     ],
   },
@@ -47,9 +50,10 @@ const NAV_GROUPS = [
     icon: "📢",
     color: "#ec4899",
     items: [
-      { key: "analitica", label: "Analítica", icon: "📊" },
-      { key: "contenido", label: "Contenido", icon: "📢" },
-      { key: "vip",       label: "Society",   icon: "✦" },
+      { key: "analitica",          label: "Analítica",  icon: "📊" },
+      { key: "contenido",          label: "Contenido",  icon: "📢" },
+      { key: "vip",                label: "Society",    icon: "✦"  },
+      { key: "carrito_abandonado", label: "Carritos",   icon: "🛒" },
     ],
   },
   {
@@ -58,10 +62,11 @@ const NAV_GROUPS = [
     icon: "💰",
     color: "#f5c842",
     items: [
-      { key: "financiero",    label: "Financiero",    icon: "≡" },
-      { key: "presupuesto",   label: "Presupuesto",   icon: "○" },
-      { key: "activos",       label: "Activos",       icon: "⚒" },
-      { key: "requisiciones", label: "Requisiciones", icon: "✆" },
+      { key: "financiero",     label: "Financiero",     icon: "≡" },
+      { key: "presupuesto",    label: "Presupuesto",    icon: "○" },
+      { key: "activos",        label: "Activos",        icon: "⚒" },
+      { key: "requisiciones",  label: "Requisiciones",  icon: "✆" },
+      { key: "mantenimiento",  label: "Mantenimiento",  icon: "🔧" },
     ],
   },
 ];
@@ -71,7 +76,7 @@ const NAV_BOTTOM = [
   { key: "staffing",      label: "Staffing",      icon: "👥" },
   { key: "floorplan",     label: "Floor Plan",     icon: "▦" },
   { key: "contratos",     label: "Contratos",      icon: "✉" },
-  { key: "menus",         label: "Menús",          icon: "🍽️" },
+  { key: "menus",         label: "Productos",      icon: "🍽️" },
   { key: "historial",     label: "Historial",      icon: "📋" },
   { key: "configuracion", label: "Configuración",  icon: "⚙" },
   { key: "usuarios",      label: "Usuarios",       icon: "👥" },
@@ -315,9 +320,46 @@ export default function AtolanOS({ activeModule = "dashboard", onNavigate, modul
   const isMobile = useMobile();
   const [collapsed, setCollapsed] = useState(() => typeof window !== "undefined" && window.innerWidth < 768);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [userModulos, setUserModulos] = useState(null); // null = loading
+  const [userName, setUserName] = useState("");
+
+  // Load current user's modulos + role from DB
+  useEffect(() => {
+    if (!userEmail || !supabase) { setUserModulos(null); return; }
+    supabase.from("usuarios").select("modulos, rol_id, nombre, avatar_color").eq("email", userEmail).maybeSingle()
+      .then(async ({ data }) => {
+        if (data?.nombre) setUserName(data.nombre);
+        const mods = data?.modulos;
+        // If no modulos or empty → show all
+        if (!Array.isArray(mods) || mods.length === 0) { setUserModulos(null); return; }
+        // Heuristic: 20+ modules = effectively admin (full access)
+        if (mods.length >= 20) { setUserModulos(null); return; }
+        // Try roles table to confirm admin
+        if (data?.rol_id) {
+          try {
+            const { data: rol } = await supabase.from("roles").select("permisos").eq("id", data.rol_id).maybeSingle();
+            if (rol?.permisos?.["*"]) { setUserModulos(null); return; }
+          } catch (_) {}
+        }
+        setUserModulos(mods);
+      })
+      .catch(() => setUserModulos(null));
+  }, [userEmail]);
+
+  const canSee = useCallback((key) => {
+    if (!userModulos || userModulos.length === 0) return true;
+    return userModulos.includes(key);
+  }, [userModulos]);
+
+  // Filtered nav structure
+  const visibleNavGroups = NAV_GROUPS.map(g => ({
+    ...g, items: g.items.filter(i => canSee(i.key)),
+  })).filter(g => g.items.length > 0);
+
+  const visibleNavBottom = NAV_BOTTOM.filter(i => canSee(i.key));
 
   // Which group is the active module in?
-  const activeGroup = NAV_GROUPS.find(g => g.items.some(i => i.key === activeModule))?.key || null;
+  const activeGroup = visibleNavGroups.find(g => g.items.some(i => i.key === activeModule))?.key || null;
 
   const w = collapsed ? 64 : 224;
 
@@ -350,7 +392,7 @@ export default function AtolanOS({ activeModule = "dashboard", onNavigate, modul
   };
 
   return (
-    <div style={{ display: "flex", height: "100vh", overflow: "hidden" }}>
+    <div style={{ display: "flex", position: "fixed", top: 0, left: 0, right: 0, bottom: 0, overflow: "hidden" }}>
       {/* Mobile overlay */}
       {isMobile && sidebarOpen && (
         <div onClick={() => setSidebarOpen(false)} style={{
@@ -364,7 +406,7 @@ export default function AtolanOS({ activeModule = "dashboard", onNavigate, modul
         background: B.navyMid, transition: "transform 0.2s, width 0.2s", flexShrink: 0,
         display: "flex", flexDirection: "column", overflow: "hidden",
         ...(isMobile ? {
-          position: "fixed", top: 0, left: 0, height: "100vh", zIndex: 100,
+          position: "fixed", top: 0, left: 0, height: "100dvh", zIndex: 100,
           transform: sidebarOpen ? "translateX(0)" : "translateX(-100%)",
         } : {}),
       }}>
@@ -390,8 +432,8 @@ export default function AtolanOS({ activeModule = "dashboard", onNavigate, modul
           {/* Divider */}
           <div style={{ height: 1, background: `${B.navyLight}88`, margin: "8px 4px" }} />
 
-          {/* Groups */}
-          {NAV_GROUPS.map(group => {
+          {/* Groups — filtered by user permissions */}
+          {visibleNavGroups.map(group => {
             const hasActive = group.items.some(i => activeModule === (MODULE_KEY_MAP[i.key] || i.key));
             return (
               <div key={group.key} style={{ marginBottom: 4 }}>
@@ -406,7 +448,6 @@ export default function AtolanOS({ activeModule = "dashboard", onNavigate, modul
                     <span style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em" }}>{group.label}</span>
                   </div>
                 )}
-                {/* Group items — always visible */}
                 <div>
                   {group.items.map(item => <NavItem key={item.key} item={item} indent={!collapsed} />)}
                 </div>
@@ -417,8 +458,8 @@ export default function AtolanOS({ activeModule = "dashboard", onNavigate, modul
           {/* Divider */}
           <div style={{ height: 1, background: `${B.navyLight}88`, margin: "8px 4px" }} />
 
-          {/* Bottom items */}
-          {NAV_BOTTOM.map(n => <NavItem key={n.key} item={n} />)}
+          {/* Bottom items — filtered by user permissions */}
+          {visibleNavBottom.map(n => <NavItem key={n.key} item={n} />)}
         </div>
 
         {/* Footer */}
@@ -474,13 +515,26 @@ export default function AtolanOS({ activeModule = "dashboard", onNavigate, modul
               width: 32, height: 32, borderRadius: 16, background: B.navyLight,
               display: "flex", alignItems: "center", justifyContent: "center",
               fontSize: 11, fontWeight: 700, cursor: "pointer", color: "rgba(255,255,255,0.6)",
-            }}>JD</div>
+            }}>{
+              userName
+                ? userName.split(" ").map(w => w[0]).join("").slice(0, 2).toUpperCase()
+                : userEmail ? userEmail.slice(0, 2).toUpperCase() : "?"
+            }</div>
           </div>
         </div>
 
         {/* Content area */}
         <div style={{ flex: 1, overflowY: "auto", padding: isMobile ? "16px 12px" : 28 }}>
-          {moduleContent || <Dashboard />}
+          {/* Block access to modules not in user's permissions */}
+          {moduleContent && activeModule !== "dashboard" && !canSee(activeModule) ? (
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "60%", gap: 12 }}>
+              <div style={{ fontSize: 48 }}>🔒</div>
+              <div style={{ fontSize: 18, fontWeight: 700 }}>Acceso restringido</div>
+              <div style={{ fontSize: 13, color: "rgba(255,255,255,0.45)" }}>No tienes permiso para acceder a este módulo.</div>
+            </div>
+          ) : (
+            moduleContent || <Dashboard />
+          )}
         </div>
       </div>
 

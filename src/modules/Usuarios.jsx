@@ -13,11 +13,14 @@ const MODULOS = [
   { key: "clientes",      label: "Clientes",       icon: "👤" },
   { key: "b2b",           label: "B2B",            icon: "🏢" },
   { key: "eventos",       label: "Eventos",        icon: "🎉" },
-  { key: "upsells",       label: "Upsells",        icon: "⬆" },
-  { key: "comercial",     label: "Comercial",      icon: "★" },
+  { key: "upsells",           label: "Upsells",           icon: "⬆" },
+  { key: "actividades",       label: "Actividades",       icon: "🎯" },
+  { key: "comercial",         label: "Comercial",         icon: "★" },
+  { key: "metas",             label: "Metas",             icon: "🎯" },
   // Operaciones
   { key: "checkin",       label: "Check-in",       icon: "✅" },
   { key: "muelle",        label: "Llegadas",       icon: "⚓" },
+  { key: "salidas_isla",  label: "Salidas",        icon: "⛵" },
   { key: "staffing",      label: "Staffing",       icon: "👥" },
   { key: "floorplan",     label: "Floor Plan",     icon: "🗺" },
   { key: "menus",         label: "Menús",          icon: "🍽️" },
@@ -30,8 +33,11 @@ const MODULOS = [
   { key: "cierre_caja",   label: "Cierre de Caja", icon: "🧾" },
   { key: "presupuesto",   label: "Presupuesto",    icon: "📊" },
   { key: "activos",       label: "Activos",        icon: "🏗" },
-  { key: "requisiciones", label: "Requisiciones",  icon: "🛒" },
-  { key: "contratos",     label: "Contratos",      icon: "📄" },
+  { key: "requisiciones",     label: "Requisiciones",     icon: "🛒" },
+  { key: "mantenimiento",     label: "Mantenimiento",     icon: "🔧" },
+  { key: "contratos",         label: "Contratos",         icon: "📄" },
+  // Marketing
+  { key: "carrito_abandonado", label: "Carritos Abandon.", icon: "🛒" },
   // Sistema
   { key: "historial",     label: "Historial",      icon: "📋" },
   { key: "configuracion", label: "Configuración",  icon: "⚙" },
@@ -79,18 +85,15 @@ function RolBadge({ rol, roles }) {
 // ════════════════════════════════════════════════════════
 function UsuarioModal({ usuario, roles, onClose, onSaved }) {
   const isEdit = !!usuario;
-  const defaultMods = () => {
-    if (isEdit) return usuario.modulos || [];
-    const rol = roles.find(r => r.id === "operador");
-    return rol ? Object.keys(rol.permisos || {}) : [];
-  };
-
   const [f, setF] = useState({
     nombre:       usuario?.nombre       || "",
     email:        usuario?.email        || "",
     telefono:     usuario?.telefono     || "",
     rol_id:       usuario?.rol_id       || "operador",
-    modulos:      defaultMods(),
+    modulos:      isEdit ? (usuario.modulos || []) : (() => {
+      const rol = roles.find(r => r.id === "operador");
+      return rol ? Object.keys(rol.permisos || {}) : [];
+    })(),
     pin:          "",
     notas:        usuario?.notas        || "",
     activo:       usuario?.activo       ?? true,
@@ -99,22 +102,30 @@ function UsuarioModal({ usuario, roles, onClose, onSaved }) {
   const [saving, setSaving] = useState(false);
   const upd = (k, v) => setF(p => ({ ...p, [k]: v }));
 
+  // Cuando los roles cargan, detectar si el usuario es admin y limpiar modulos
+  useEffect(() => {
+    if (!isEdit || !roles.length) return;
+    const rol = roles.find(r => r.id === f.rol_id);
+    if (rol?.permisos?.["*"]) setF(p => ({ ...p, modulos: null }));
+  }, [roles]); // eslint-disable-line
+
   const onRolChange = (rolId) => {
     upd("rol_id", rolId);
     const rol = roles.find(r => r.id === rolId);
     if (rol) {
-      const mods = rol.permisos?.["*"] ? MODULOS.map(m => m.key) : Object.keys(rol.permisos || {});
+      const mods = rol.permisos?.["*"] ? null : Object.keys(rol.permisos || {});
       upd("modulos", mods);
     }
   };
 
   const toggleMod = (key) => {
-    setF(p => ({
-      ...p,
-      modulos: p.modulos.includes(key)
-        ? p.modulos.filter(k => k !== key)
-        : [...p.modulos, key],
-    }));
+    setF(p => {
+      const cur = p.modulos || [];
+      return {
+        ...p,
+        modulos: cur.includes(key) ? cur.filter(k => k !== key) : [...cur, key],
+      };
+    });
   };
 
   const guardar = async () => {
