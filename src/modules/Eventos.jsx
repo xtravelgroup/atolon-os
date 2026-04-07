@@ -677,6 +677,29 @@ export function EventoModal({ evento, categoria, salidas, aliados, vendedores, o
               placeholder={isGrupo ? "Ej: Grupo Empresas XYZ" : "Ej: Matrimonio García & Pérez"} />
           </div>
 
+          {/* Modalidad de pago — solo grupos, va primero */}
+          {isGrupo && (
+            <div>
+              <label style={LS}>Modalidad de pago del grupo</label>
+              <div style={{ display: "flex", gap: 10 }}>
+                {[
+                  { value: "individual",  icon: "👥", label: "Cada invitado reserva",    desc: "Cada persona entra al link y paga su propio cupo" },
+                  { value: "organizador", icon: "💳", label: "El organizador paga todo", desc: "Un solo pago Wompi para todos los cupos" },
+                ].map(opt => (
+                  <div key={opt.value} onClick={() => set("modalidad_pago", opt.value)}
+                    style={{ flex: 1, padding: "12px 14px", borderRadius: 10, cursor: "pointer", userSelect: "none",
+                      background: form.modalidad_pago === opt.value ? B.sky + "22" : B.navyLight,
+                      border: `2px solid ${form.modalidad_pago === opt.value ? B.sky : "transparent"}`,
+                      transition: "all 0.15s" }}>
+                    <div style={{ fontSize: 20, marginBottom: 6 }}>{opt.icon}</div>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: form.modalidad_pago === opt.value ? B.sky : B.white, marginBottom: 3 }}>{opt.label}</div>
+                    <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", lineHeight: 1.4 }}>{opt.desc}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
             <div>
               <label style={LS}>{isGrupo ? "Tipo de pasadía" : "Tipo de evento"}</label>
@@ -748,28 +771,6 @@ export function EventoModal({ evento, categoria, salidas, aliados, vendedores, o
             </div>
           )}
 
-          {/* Modalidad de pago — solo grupos */}
-          {isGrupo && (
-            <div>
-              <label style={LS}>Modalidad de pago del grupo</label>
-              <div style={{ display: "flex", gap: 10 }}>
-                {[
-                  { value: "individual",  icon: "👥", label: "Cada invitado reserva",    desc: "Cada persona entra al link y paga su propio cupo" },
-                  { value: "organizador", icon: "💳", label: "El organizador paga todo", desc: "Un solo link de pago Wompi para todos los cupos" },
-                ].map(opt => (
-                  <div key={opt.value} onClick={() => set("modalidad_pago", opt.value)}
-                    style={{ flex: 1, padding: "12px 14px", borderRadius: 10, cursor: "pointer", userSelect: "none",
-                      background: form.modalidad_pago === opt.value ? B.sky + "22" : B.navyLight,
-                      border: `2px solid ${form.modalidad_pago === opt.value ? B.sky : "transparent"}`,
-                      transition: "all 0.15s" }}>
-                    <div style={{ fontSize: 20, marginBottom: 6 }}>{opt.icon}</div>
-                    <div style={{ fontSize: 12, fontWeight: 700, color: form.modalidad_pago === opt.value ? B.sky : B.white, marginBottom: 3 }}>{opt.label}</div>
-                    <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", lineHeight: 1.4 }}>{opt.desc}</div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
 
           {!isGrupo && (
             <div>
