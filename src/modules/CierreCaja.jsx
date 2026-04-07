@@ -163,7 +163,7 @@ function HistorialCierres({ refresh, area }) {
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
 export default function CierreCaja() {
-  const { isMobile } = useMobile();
+  const isMobile = useMobile();
   const fileRef   = useRef(null);
   const cameraRef = useRef(null);
 
@@ -671,38 +671,55 @@ export default function CierreCaja() {
               const tot = computed[m.key].total;
               return (
                 <div key={m.key} style={{
-                  display: "grid",
-                  gridTemplateColumns: isMobile ? "1fr 1fr" : "160px 1fr 1fr 120px",
-                  gap: 10, alignItems: "center",
                   padding: "10px 12px", borderRadius: 10, marginBottom: 6,
                   background: isEfectivo ? "rgba(251,191,36,0.08)" : "rgba(255,255,255,0.02)",
                   border: `1px solid ${isEfectivo ? "rgba(251,191,36,0.2)" : "rgba(255,255,255,0.04)"}`,
                 }}>
-                  {/* Label */}
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, gridColumn: isMobile ? "1 / -1" : undefined }}>
-                    <span style={{ fontSize: 16 }}>{m.icon}</span>
-                    <span style={{ fontSize: 13, fontWeight: isEfectivo ? 700 : 500, color: isEfectivo ? "#fbbf24" : "rgba(255,255,255,0.8)" }}>
-                      {m.label}
-                    </span>
-                  </div>
-                  {/* Venta */}
-                  <input
-                    type="number" min="0" placeholder="0"
-                    value={metodos[m.key].venta}
-                    onChange={e => setM(m.key, "venta", e.target.value)}
-                    style={{ ...IS, fontSize: 13, textAlign: "right" }}
-                  />
-                  {/* Propina */}
-                  <input
-                    type="number" min="0" placeholder="0"
-                    value={metodos[m.key].propina}
-                    onChange={e => setM(m.key, "propina", e.target.value)}
-                    style={{ ...IS, fontSize: 13, textAlign: "right", background: "rgba(200,185,154,0.06)", borderColor: "rgba(200,185,154,0.1)" }}
-                  />
-                  {/* Total */}
-                  <div style={{ textAlign: "right", fontSize: 14, fontWeight: 700, color: tot > 0 ? (isEfectivo ? "#fbbf24" : "#fff") : "rgba(255,255,255,0.2)" }}>
-                    {tot > 0 ? COP(tot) : "—"}
-                  </div>
+                  {isMobile ? (
+                    // ── MÓVIL: label arriba, inputs abajo con etiqueta ──
+                    <>
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          <span style={{ fontSize: 16 }}>{m.icon}</span>
+                          <span style={{ fontSize: 13, fontWeight: isEfectivo ? 700 : 500, color: isEfectivo ? "#fbbf24" : "rgba(255,255,255,0.8)" }}>{m.label}</span>
+                        </div>
+                        <div style={{ fontSize: 14, fontWeight: 700, color: tot > 0 ? (isEfectivo ? "#fbbf24" : "#fff") : "rgba(255,255,255,0.2)" }}>
+                          {tot > 0 ? COP(tot) : "—"}
+                        </div>
+                      </div>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                        <div>
+                          <div style={{ fontSize: 10, color: "rgba(255,255,255,0.35)", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.05em" }}>Ventas</div>
+                          <input type="number" min="0" placeholder="0" value={metodos[m.key].venta}
+                            onChange={e => setM(m.key, "venta", e.target.value)}
+                            style={{ ...IS, fontSize: 13, textAlign: "right" }} />
+                        </div>
+                        <div>
+                          <div style={{ fontSize: 10, color: "rgba(200,185,154,0.5)", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.05em" }}>Propinas</div>
+                          <input type="number" min="0" placeholder="0" value={metodos[m.key].propina}
+                            onChange={e => setM(m.key, "propina", e.target.value)}
+                            style={{ ...IS, fontSize: 13, textAlign: "right", background: "rgba(200,185,154,0.06)", borderColor: "rgba(200,185,154,0.1)" }} />
+                        </div>
+                      </div>
+                    </>
+                  ) : (
+                    // ── DESKTOP: grid horizontal ──
+                    <div style={{ display: "grid", gridTemplateColumns: "160px 1fr 1fr 120px", gap: 10, alignItems: "center" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <span style={{ fontSize: 16 }}>{m.icon}</span>
+                        <span style={{ fontSize: 13, fontWeight: isEfectivo ? 700 : 500, color: isEfectivo ? "#fbbf24" : "rgba(255,255,255,0.8)" }}>{m.label}</span>
+                      </div>
+                      <input type="number" min="0" placeholder="0" value={metodos[m.key].venta}
+                        onChange={e => setM(m.key, "venta", e.target.value)}
+                        style={{ ...IS, fontSize: 13, textAlign: "right" }} />
+                      <input type="number" min="0" placeholder="0" value={metodos[m.key].propina}
+                        onChange={e => setM(m.key, "propina", e.target.value)}
+                        style={{ ...IS, fontSize: 13, textAlign: "right", background: "rgba(200,185,154,0.06)", borderColor: "rgba(200,185,154,0.1)" }} />
+                      <div style={{ textAlign: "right", fontSize: 14, fontWeight: 700, color: tot > 0 ? (isEfectivo ? "#fbbf24" : "#fff") : "rgba(255,255,255,0.2)" }}>
+                        {tot > 0 ? COP(tot) : "—"}
+                      </div>
+                    </div>
+                  )}
                 </div>
               );
             })}
@@ -757,18 +774,37 @@ export default function CierreCaja() {
             )}
 
             {/* Totals row */}
-            <div style={{
-              display: "grid",
-              gridTemplateColumns: isMobile ? "1fr 1fr" : "160px 1fr 1fr 120px",
-              gap: 10, alignItems: "center",
-              padding: "12px 12px", borderRadius: 10, marginTop: 8,
-              background: "rgba(142,202,230,0.08)", border: `1px solid ${B.sky}33`,
-            }}>
-              <div style={{ fontSize: 12, fontWeight: 700, color: B.sky, gridColumn: isMobile ? "1 / -1" : undefined }}>TOTAL</div>
-              <div style={{ textAlign: "right", fontSize: 14, fontWeight: 800, color: B.sky }}>{COP(totalVentas)}</div>
-              <div style={{ textAlign: "right", fontSize: 14, fontWeight: 800, color: B.sand }}>{COP(totalPropinas)}</div>
-              <div style={{ textAlign: "right", fontSize: 16, fontWeight: 800, color: "#fff" }}>{COP(totalGeneral)}</div>
-            </div>
+            {isMobile ? (
+              <div style={{ padding: "12px", borderRadius: 10, marginTop: 8, background: "rgba(142,202,230,0.08)", border: `1px solid ${B.sky}33` }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: B.sky, marginBottom: 10, textTransform: "uppercase", letterSpacing: "0.06em" }}>TOTAL</div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, textAlign: "center" }}>
+                  <div>
+                    <div style={{ fontSize: 9, color: "rgba(255,255,255,0.35)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 3 }}>Ventas</div>
+                    <div style={{ fontSize: 13, fontWeight: 800, color: B.sky }}>{COP(totalVentas)}</div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 9, color: "rgba(200,185,154,0.5)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 3 }}>Propinas</div>
+                    <div style={{ fontSize: 13, fontWeight: 800, color: B.sand }}>{COP(totalPropinas)}</div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 9, color: "rgba(255,255,255,0.35)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 3 }}>Total</div>
+                    <div style={{ fontSize: 14, fontWeight: 800, color: "#fff" }}>{COP(totalGeneral)}</div>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div style={{
+                display: "grid", gridTemplateColumns: "160px 1fr 1fr 120px",
+                gap: 10, alignItems: "center",
+                padding: "12px 12px", borderRadius: 10, marginTop: 8,
+                background: "rgba(142,202,230,0.08)", border: `1px solid ${B.sky}33`,
+              }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: B.sky }}>TOTAL</div>
+                <div style={{ textAlign: "right", fontSize: 14, fontWeight: 800, color: B.sky }}>{COP(totalVentas)}</div>
+                <div style={{ textAlign: "right", fontSize: 14, fontWeight: 800, color: B.sand }}>{COP(totalPropinas)}</div>
+                <div style={{ textAlign: "right", fontSize: 16, fontWeight: 800, color: "#fff" }}>{COP(totalGeneral)}</div>
+              </div>
+            )}
           </div>
 
           {/* ── 4. INC 8% + Resumen (no aplica para Pasadías) ── */}
