@@ -7,6 +7,7 @@ import { COP } from "../brand";
 import { supabase } from "../lib/supabase";
 import { wompiCheckoutUrl } from "../lib/wompi";
 import AtolanTrack from "../lib/AtolanTrack";
+import { gtmViewItem, gtmBeginCheckout, gtmAddPaymentInfo, gtmAbandon } from "../lib/gtm";
 
 // ── Palette (light theme) ───────────────────────────────────────────────────
 const C = {
@@ -128,6 +129,12 @@ function fmtDate(iso, lang) {
   return `${parseInt(d)} ${months[parseInt(mo) - 1]} ${y}`;
 }
 
+// ── Abandoned Cart helpers ───────────────────────────────────────────────────
+function acNanoid(n = 16) {
+  const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
+  return Array.from({ length: n }, () => chars[Math.floor(Math.random() * chars.length)]).join("");
+}
+
 // ── Main component ───────────────────────────────────────────────────────────
 export default function BookingPopup() {
   const params  = new URLSearchParams(window.location.search);
@@ -135,7 +142,10 @@ export default function BookingPopup() {
   const pathSlug = window.location.pathname.replace(/^\/booking\/?/, "").split("?")[0] || "";
   const tipoQ   = params.get("tipo") || pathSlug || "";
   const grupoQ  = params.get("grupo") || "";   // grupo mode: EVT-xxx
-  const langQ   = (params.get("lang") || "es").toLowerCase();
+  const recoveryTokenQ = params.get("r") || "";  // Recovery link token
+  // Auto-detect device language if ?lang= not explicitly set
+  const deviceLang = navigator.language?.slice(0, 2).toLowerCase() || "es";
+  const langQ   = (params.get("lang") || (deviceLang === "en" ? "en" : "es")).toLowerCase();
   const isEN    = langQ === "en";
 
   const matchedProduct = PRODUCTS.find(p => p.slug === tipoQ || p.tipo === tipoQ) || null;
@@ -151,6 +161,9 @@ export default function BookingPopup() {
   const [paxI,       setPaxI]      = useState(0);  // infants 0-2
   const [step,       setStep]      = useState(matchedProduct ? 1 : 0); // 0=select, 1=booking, 2=info, 3=done
   const [form,      setForm]      = useState({ nombre: "", email: "", telefono: "", notas: "" });
+
+  // ── Abandoned Cart state ─────────────────────────────────────────────────
+  const acCartIdRef  = useRef(null);  // ID del cart en ac_carts
   const [errors,    setErrors]    = useState({});
   const [termsAccepted, setTermsAccepted] = useState(false);
   const [saving,    setSaving]    = useState(false);
@@ -175,13 +188,73 @@ export default function BookingPopup() {
   // AtolanTrack: init on mount, mark funnel step 1
   useEffect(() => {
     AtolanTrack.init().then(() => {
-      AtolanTrack.evento("booking_widget_visto", {}, "booking");
-      AtolanTrack.embudo_paso(1, {});
+      AtolanTrack.evento("booking_widget_visto", { lang: langQ }, "booking");
+      AtolanTrack.embudo_paso(1, { lang: langQ });
+      AtolanTrack.setCurrentStep(1);
+      if (langQ !== "es") AtolanTrack.setLang(langQ);
     });
+  }, []);
+
+  // ── Recovery link: pre-fill cart from token ──────────────────────────────
+  useEffect(() => {
+    if (!recoveryTokenQ || !supabase) return;
+    supabase.from("ac_carts")
+      .select("*")
+      .eq("recovery_token", recoveryTokenQ)
+      .maybeSingle()
+      .then(({ data: cart }) => {
+        if (!cart) return;
+        if (cart.recovery_expires_at && new Date(cart.recovery_expires_at) < new Date()) return;
+        // Guardar cart ID para actualizaciones
+        acCartIdRef.current = cart.id;
+        // Pre-llenar datos del usuario
+        if (cart.nombre || cart.email || cart.telefono) {
+          setForm(f => ({
+            ...f,
+            nombre:   cart.nombre   || f.nombre,
+            email:    cart.email    || f.email,
+            telefono: cart.telefono || f.telefono,
+          }));
+        }
+        // Pre-seleccionar producto
+        if (cart.tipo_pase) {
+          const prod = PRODUCTS.find(p => p.slug === cart.tipo_pase || p.tipo === cart.producto);
+          if (prod) {
+            setProduct(prod);
+            setPaxA(Math.max(cart.pax_adultos || prod.minA, prod.minA));
+            setPaxN(cart.pax_ninos || 0);
+          }
+        }
+        // Pre-seleccionar fecha
+        if (cart.fecha_visita) {
+          const fechaStr = cart.fecha_visita.substring(0, 10);
+          if (fechaStr >= new Date().toLocaleDateString("en-CA")) {
+            setSelDate(fechaStr);
+            const [y, m] = fechaStr.split("-");
+            setCalYear(Number(y));
+            setCalMonth(Number(m) - 1);
+          }
+        }
+        // Saltar al paso de info si tenemos producto y fecha
+        if (cart.tipo_pase && cart.fecha_visita) setStep(2);
+        else if (cart.tipo_pase) setStep(1);
+      });
+  }, [recoveryTokenQ]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Track funnel abandonment on unmount (user navigates away)
+  useEffect(() => {
+    return () => {
+      if (AtolanTrack.currentStep > 0 && AtolanTrack.currentStep < 6) {
+        gtmAbandon(AtolanTrack.currentStep, AtolanTrack._abandonmentPayload?.monto_potencial);
+      }
+      AtolanTrack.embudo_abandono(AtolanTrack.currentStep);
+    };
   }, []);
 
   // AtolanTrack: paso 4 debounced on email input
   const _emailDebounceRef = useRef(null);
+  const _prevPaxRef = useRef({ a: 1, n: 0 });
+  const _acDebounceRef = useRef(null);
   useEffect(() => {
     if (!form.email) return;
     clearTimeout(_emailDebounceRef.current);
@@ -190,6 +263,88 @@ export default function BookingPopup() {
     }, 800);
     return () => clearTimeout(_emailDebounceRef.current);
   }, [form.email]);
+
+  // ── Abandoned Cart: crear/actualizar registro cuando se captura el email ──
+  useEffect(() => {
+    const emailOk = form.email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email);
+    if (!emailOk || !supabase) return;
+    clearTimeout(_acDebounceRef.current);
+    _acDebounceRef.current = setTimeout(async () => {
+      try {
+        const now   = new Date().toISOString();
+        const sesId = AtolanTrack._sesionId ?? null;
+        // Detectar device type
+        const isMob = /Mobile|Android|iPhone|iPad/i.test(navigator.userAgent);
+        const deviceType = isMob ? "mobile" : "desktop";
+        // UTMs desde sessionStorage / AtolanTrack
+        const utms  = AtolanTrack._utms ?? {};
+        const landing = sessionStorage.getItem("ac_landing") || window.location.origin + "/booking";
+
+        if (!acCartIdRef.current) {
+          // Primero: verificar si hay un cart reciente con el mismo email
+          const { data: existingCart } = await supabase
+            .from("ac_carts")
+            .select("id, estado")
+            .eq("email", form.email.toLowerCase().trim())
+            .not("estado", "in", "(recovered,unsubscribed,expired,stopped)")
+            .order("created_at", { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
+          if (existingCart) {
+            acCartIdRef.current = existingCart.id;
+          } else {
+            acCartIdRef.current = `AC-${Date.now()}-${acNanoid(8)}`;
+          }
+        }
+
+        const cartData = {
+          id:                   acCartIdRef.current,
+          sesion_id:            sesId,
+          email:                form.email.toLowerCase().trim(),
+          nombre:               form.nombre?.trim() || null,
+          telefono:             form.telefono?.trim() || null,
+          producto:             product?.tipo || null,
+          tipo_pase:            product?.slug || null,
+          pasadia_id:           product?.pasadiaId || null,
+          fecha_visita:         selDate || null,
+          pax_adultos:          paxA,
+          pax_ninos:            paxN,
+          pax_total:            paxA + paxN + paxI,
+          valor_total:          (product?.precio || 0) * paxA + (product?.precioNino || 0) * paxN,
+          moneda:               "COP",
+          idioma:               langQ,
+          device_type:          deviceType,
+          utm_source:           utms.utm_source || null,
+          utm_medium:           utms.utm_medium || null,
+          utm_campaign:         utms.utm_campaign || null,
+          utm_content:          utms.utm_content || null,
+          utm_term:             utms.utm_term || null,
+          landing_page:         landing,
+          checkout_url:         window.location.href,
+          estado:               "checkout_started",
+          checkout_started_at:  now,
+          updated_at:           now,
+        };
+
+        await supabase.from("ac_carts").upsert(cartData, { onConflict: "id" });
+      } catch (err) {
+        console.warn("[AC] Cart upsert error:", err?.message);
+      }
+    }, 1200);
+    return () => clearTimeout(_acDebounceRef.current);
+  }, [form.email, form.nombre, form.telefono, product?.slug, selDate, paxA, paxN]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Track pax changes
+  useEffect(() => {
+    const prev = _prevPaxRef.current;
+    if (prev.a !== paxA || prev.n !== paxN) {
+      if (prev.a !== 1 || prev.n !== 0) { // skip initial render
+        AtolanTrack.evento("pax_cambio", { adults: paxA, children: paxN, total: paxA + paxN + paxI }, "booking");
+      }
+      _prevPaxRef.current = { a: paxA, n: paxN };
+    }
+  }, [paxA, paxN]);
 
   // Load group event when ?grupo= param present
   useEffect(() => {
@@ -218,28 +373,30 @@ export default function BookingPopup() {
   // Load photos, includes, and live prices from DB for selected product
   useEffect(() => {
     if (!supabase || !product) return;
-    supabase.from("pasadias")
-      .select("foto_principal_url, fotos_adicionales, precio, precio_neto_agencia, precio_nino, precio_neto_nino, nino_nota")
-      .eq("id", product.pasadiaId).single()
-      .then(({ data }) => {
-        if (data) {
-          setFotoPrincipal(data.foto_principal_url || "");
-          setFotosExtra(data.fotos_adicionales || []);
-          setFotoActiva(0);
-          // Override hardcoded prices with live DB values
-          setProduct(prev => ({
-            ...prev,
-            precio:         data.precio         ?? prev.precio,
-            precioNeto:     data.precio_neto_agencia ?? prev.precioNeto,
-            precioNino:     data.precio_nino     ?? prev.precioNino,
-            precioNetoNino: data.precio_neto_nino ?? prev.precioNetoNino,
-            ninoNota:       data.nino_nota       ?? prev.ninoNota,
-            noNinos:        (data.precio_nino === 0 || data.precio_nino === null) ? true : prev.noNinos,
-          }));
-        }
-      });
-    supabase.from("pasadia_incluye").select("descripcion, descripcion_en").eq("pasadia_id", product.pasadiaId).order("orden")
-      .then(({ data }) => setIncluye(data || []));
+    // Run both fetches in parallel
+    Promise.all([
+      supabase.from("pasadias")
+        .select("foto_principal_url, fotos_adicionales, precio, precio_neto_agencia, precio_nino, precio_neto_nino, nino_nota")
+        .eq("id", product.pasadiaId).single(),
+      supabase.from("pasadia_incluye").select("descripcion, descripcion_en").eq("pasadia_id", product.pasadiaId).order("orden"),
+    ]).then(([{ data }, { data: incData }]) => {
+      if (data) {
+        setFotoPrincipal(data.foto_principal_url || "");
+        setFotosExtra(data.fotos_adicionales || []);
+        setFotoActiva(0);
+        // Override hardcoded prices with live DB values
+        setProduct(prev => ({
+          ...prev,
+          precio:         data.precio         ?? prev.precio,
+          precioNeto:     data.precio_neto_agencia ?? prev.precioNeto,
+          precioNino:     data.precio_nino     ?? prev.precioNino,
+          precioNetoNino: data.precio_neto_nino ?? prev.precioNetoNino,
+          ninoNota:       data.nino_nota       ?? prev.ninoNota,
+          noNinos:        (data.precio_nino === 0 || data.precio_nino === null) ? true : prev.noNinos,
+        }));
+      }
+      setIncluye(incData || []);
+    });
   }, [product?.pasadiaId]); // only re-run when product ID changes, not on every price update
 
   // Load month-level availability + salidas catalog
@@ -254,7 +411,7 @@ export default function BookingPopup() {
         .neq("estado", "cancelado").gte("fecha", from).lte("fecha", toFix),
       supabase.from("cierres").select("fecha, tipo").eq("activo", true)
         .gte("fecha", from).lte("fecha", toFix),
-      supabase.from("salidas").select("*").eq("activo", true).order("orden"),
+      supabase.from("salidas").select("id, hora, nombre, capacidad_total, auto_apertura, orden, descripcion").eq("activo", true).order("orden"),
     ]).then(([resR, cierreR, salR]) => {
       const sals = salR.data || [];
       setSalidas(sals);
@@ -333,7 +490,10 @@ export default function BookingPopup() {
 
   // AtolanTrack: paso 5 when reaching payment step
   useEffect(() => {
-    if (step === 3) AtolanTrack.embudo_paso(5, {});
+    if (step === 3) {
+      AtolanTrack.embudo_paso(5, { producto: product?.tipo, package_type: product?.tipo, pax: paxTotal, pax_adultos: paxA, pax_ninos: paxN, fecha: selDate, valor: total, monto: total });
+      AtolanTrack.setCurrentStep(5);
+    }
   }, [step]);
 
   // Load upsells when reaching step 3 — skip entirely for group bookings
@@ -341,7 +501,7 @@ export default function BookingPopup() {
     if (step !== 3 || !supabase || !product) return;
     if (grupoEvt) { setUpsells([]); setLoadingUps(false); return; } // no upsells for groups
     setLoadingUps(true);
-    supabase.from("upsells").select("*").eq("activo", true).order("orden").then(({ data }) => {
+    supabase.from("upsells").select("id, nombre, descripcion, precio, imagen_url, por_persona, aplica_a, condicion_no_ninos, orden").eq("activo", true).order("orden").then(({ data }) => {
       const filtered = (data || []).filter(u => {
         if (u.aplica_a?.length > 0 && !u.aplica_a.includes(product.slug)) return false;
         if (u.condicion_no_ninos && paxN > 0) return false;
@@ -360,7 +520,9 @@ export default function BookingPopup() {
     setSelDate("");
     setSelSalida(null);
     setStep(1);
-    AtolanTrack.embudo_paso(3, { paquete: p.tipo });
+    gtmViewItem(p);
+    AtolanTrack.evento("product_view", { producto: p.tipo, precio: p.precio, pax: p.minA }, "booking");
+    AtolanTrack.embudo_paso(3, { producto: p.tipo, package_type: p.tipo, pax: p.minA });
   }
 
   // When switching to noNinos product, clear children counts
@@ -368,19 +530,28 @@ export default function BookingPopup() {
     if (product?.noNinos) { setPaxN(0); setPaxI(0); }
   }, [product]);
 
-  function handleSelectDate(iso) {
+  async function handleSelectDate(iso) {
+    // Double-check cierre directly in DB (handles stale cache)
+    if (supabase) {
+      const { data: cierreCheck } = await supabase.from("cierres")
+        .select("tipo").eq("fecha", iso).eq("activo", true).limit(1).maybeSingle();
+      if (cierreCheck) return; // date is closed (total or partial) — block silently
+    }
     setSelDate(iso);
     setSelSalida(null);
-    AtolanTrack.embudo_paso(2, {});
+    AtolanTrack.evento("availability_search", { fecha: iso, producto: product?.tipo, pax: paxA + paxN }, "booking");
+    AtolanTrack.embudo_paso(2, { fecha: iso, producto: product?.tipo, package_type: product?.tipo });
   }
 
   function prevMonth() {
     if (calMonth === 0) { setCalYear(y => y - 1); setCalMonth(11); }
     else setCalMonth(m => m - 1);
+    AtolanTrack.evento("calendario_navegar", { direccion: "prev" }, "booking");
   }
   function nextMonth() {
     if (calMonth === 11) { setCalYear(y => y + 1); setCalMonth(0); }
     else setCalMonth(m => m + 1);
+    AtolanTrack.evento("calendario_navegar", { direccion: "next" }, "booking");
   }
 
   function isDateDisabled(iso) {
@@ -398,10 +569,22 @@ export default function BookingPopup() {
     if (!form.telefono.trim() || !/^[\d\s+\-()\\.]{7,}$/.test(form.telefono))
       e.telefono = isEN ? "Valid phone required" : "Teléfono inválido";
     setErrors(e);
+    if (Object.keys(e).length > 0) {
+      AtolanTrack.evento("form_error", { fields: Object.keys(e), paso: step }, "booking");
+    }
     return Object.keys(e).length === 0;
   }
 
   async function handleReservar(method = "wompi") {
+    // Final guard: verify date is not closed before creating reservation
+    if (supabase && selDate) {
+      const { data: cierreCheck } = await supabase.from("cierres")
+        .select("tipo").eq("fecha", selDate).eq("activo", true).limit(1).maybeSingle();
+      if (cierreCheck?.tipo === "total") {
+        setSaving(false);
+        return;
+      }
+    }
     setSaving(true);
     const reservaId  = `WEB-${Date.now()}`;
     const linkExpira = new Date(Date.now() + 30 * 60 * 1000).toISOString();
@@ -437,11 +620,14 @@ export default function BookingPopup() {
         if (stripeData.url) {
           payUrl = stripeData.url;
         } else {
-          alert(stripeData.error || "No se pudo iniciar el pago con Stripe. Intenta con tarjeta nacional.");
+          const msg = stripeData.error || "No se pudo iniciar el pago con Stripe. Intenta con tarjeta nacional.";
+          AtolanTrack.paymentError("stripe", "session_create_failed", msg, grandTotal);
+          alert(msg);
           setSaving(false);
           return;
         }
-      } catch {
+      } catch (err) {
+        AtolanTrack.paymentError("stripe", "network_error", err?.message || "connection_error", grandTotal);
         alert("Error de conexión con Stripe. Intenta con tarjeta nacional.");
         setSaving(false);
         return;
@@ -456,6 +642,7 @@ export default function BookingPopup() {
         tipo:           product.tipo,
         canal:          grupoEvt ? "GRUPO" : "WEB",
         aliado_id:      grupoEvt?.aliado_id || null,
+        grupo_id:       grupoEvt?.id || null,
         nombre:         form.nombre,
         email:          form.email,
         telefono:       form.telefono || null,
@@ -482,8 +669,38 @@ export default function BookingPopup() {
         lead_id:        leadId || null,
       });
     }
-    // AtolanTrack: conversion event
-    await AtolanTrack.conversion(reservaId, grandTotal);
+    // Track payment attempt (enriched)
+    AtolanTrack.evento("payment_attempt", {
+      metodo:        method,
+      monto:         grandTotal,
+      producto:      product?.tipo,
+      pax_adultos:   paxA,
+      pax_ninos:     paxN,
+      pax_total:     paxTotal,
+      fecha_visita:  selDate,
+      salida:        selSalida?.hora || null,
+      upsells:       selUpsells.map(u => u.nombre),
+    }, "conversion");
+
+    // AtolanTrack: full conversion with commercial data
+    await AtolanTrack.conversion(reservaId, grandTotal, {
+      metodo_pago:  method,
+      package_type: product?.tipo,
+      adultos:      paxA,
+      ninos:        paxN,
+      fecha:        selDate,
+      salida:       selSalida?.hora || null,
+      monto_bruto:  grandTotal,
+    });
+
+    // Abandoned Cart: vincular cart_id con reserva_id para recuperación
+    if (acCartIdRef.current && supabase) {
+      supabase.from("ac_carts").update({
+        reserva_id:  reservaId,
+        valor_total: grandTotal,
+        updated_at:  new Date().toISOString(),
+      }).eq("id", acCartIdRef.current).then(() => {}).catch(() => {});
+    }
 
     setSaving(false);
     window.location.href = payUrl;
@@ -725,8 +942,8 @@ export default function BookingPopup() {
           )}
         </div>
 
-        {/* Salidas — group mode: show group's salidas as picker */}
-        {grupoLock && grupoEvt?.salidas_grupo?.length > 0 && (
+        {/* Salidas — group mode: solo buy-out groups necesitan seleccionar salida */}
+        {grupoLock && grupoEvt?.buy_out && grupoEvt?.salidas_grupo?.length > 0 && (
           <div style={{ marginBottom: 24 }}>
             <h3 style={{ fontSize: 15, fontWeight: 700, color: C.text, marginBottom: 12 }}>
               {isEN ? "Select departure time" : "Selecciona tu horario de salida"}
@@ -880,7 +1097,7 @@ export default function BookingPopup() {
           return (
             <>
               <button
-                onClick={() => { if (ready) setStep(2); }}
+                onClick={() => { if (ready) { gtmBeginCheckout(product, paxTotal, total); setStep(2); AtolanTrack.evento("begin_checkout", { producto: product?.tipo, fecha: selDate, pax: paxTotal, valor: total }, "booking"); AtolanTrack.setCurrentStep(2); } }}
                 disabled={!ready}
                 style={{
                   width: "100%", padding: "15px 0", borderRadius: 10, border: "none",
@@ -977,6 +1194,7 @@ export default function BookingPopup() {
 
         <button onClick={async () => {
           if (!validateForm()) return;
+          AtolanTrack.evento("guest_info_completed", { producto: product?.tipo, pax: paxTotal, fecha: selDate }, "booking");
           // Crear lead en Comercial con stage "Nuevo"
           if (supabase) {
             const lid = `LEAD-WEB-${Date.now()}`;
@@ -1168,7 +1386,7 @@ export default function BookingPopup() {
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             {/* Wompi — show if integrity key configured */}
             {import.meta.env.VITE_WOMPI_INTEGRITY_KEY && (
-              <button onClick={() => handleReservar("wompi")} disabled={saving}
+              <button onClick={() => { gtmAddPaymentInfo("wompi", grandTotal); AtolanTrack.evento("payment_method_selected", { metodo: "wompi", monto: grandTotal }, "conversion"); handleReservar("wompi"); }} disabled={saving}
                 style={{ display: "flex", alignItems: "center", gap: 14, width: "100%", padding: "14px 18px", borderRadius: 10, border: `1.5px solid ${C.border}`, background: C.bg, cursor: saving ? "wait" : "pointer", textAlign: "left", transition: "all 0.15s" }}
                 onMouseEnter={e => { e.currentTarget.style.borderColor = "#5B4CF5"; e.currentTarget.style.background = "#F5F3FF"; }}
                 onMouseLeave={e => { e.currentTarget.style.borderColor = C.border; e.currentTarget.style.background = C.bg; }}>
@@ -1182,7 +1400,7 @@ export default function BookingPopup() {
             )}
 
             {/* Stripe — tarjeta internacional */}
-            <button onClick={() => handleReservar("stripe")} disabled={saving}
+            <button onClick={() => { gtmAddPaymentInfo("stripe", grandTotal); AtolanTrack.evento("payment_method_selected", { metodo: "stripe", monto: grandTotal }, "conversion"); handleReservar("stripe"); }} disabled={saving}
               style={{ display: "flex", alignItems: "center", gap: 14, width: "100%", padding: "14px 18px", borderRadius: 10, border: `1.5px solid ${C.border}`, background: C.bg, cursor: saving ? "wait" : "pointer", textAlign: "left", transition: "all 0.15s" }}
               onMouseEnter={e => { e.currentTarget.style.borderColor = "#635BFF"; e.currentTarget.style.background = "#F5F3FF"; }}
               onMouseLeave={e => { e.currentTarget.style.borderColor = C.border; e.currentTarget.style.background = C.bg; }}>

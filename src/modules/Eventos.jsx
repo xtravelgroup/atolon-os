@@ -178,12 +178,12 @@ function GrupoLink({ evento, onClose }) {
               </select>
             </div>
 
-            {/* Número de personas */}
+            {/* Total de pasadías */}
             <div style={{ marginBottom: 16 }}>
-              <label style={LS}>Número de personas</label>
+              <label style={LS}>Total de pasadías</label>
               <input type="number" min="1" value={paxOrg}
                 onChange={e => { setPaxOrg(e.target.value); setWompiLink(""); }}
-                style={{ ...IS }} placeholder="Ej: 20" />
+                style={{ ...IS }} placeholder="Número exacto de pasadías" />
             </div>
 
             {/* Total preview */}
@@ -194,7 +194,7 @@ function GrupoLink({ evento, onClose }) {
                   <div style={{ fontSize: 24, fontWeight: 800, color: B.sand }}>{COP(totalOrgCOP)}</div>
                 </div>
                 <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", textAlign: "right" }}>
-                  <div>{COP(pasadiaActual.precio)} × {paxOrg} personas</div>
+                  <div>{COP(pasadiaActual.precio)} × {paxOrg} pasadías</div>
                   <div style={{ marginTop: 2, fontFamily: "monospace", fontSize: 10 }}>ref: GRP-{evento.id}</div>
                 </div>
               </div>
