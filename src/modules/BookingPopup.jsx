@@ -767,6 +767,23 @@ export default function BookingPopup() {
 
     const allPhotos = [fotoPrincipal, ...fotosExtra].filter(Boolean);
 
+    // Modo organizador: solo mostrar mensaje de bloqueo
+    if (grupoEvt?.modalidad_pago === "organizador") {
+      return (
+        <div style={{ textAlign: "center", padding: "48px 20px" }}>
+          <div style={{ fontSize: 52, marginBottom: 16 }}>💳</div>
+          <div style={{ fontSize: 20, fontWeight: 700, color: C.text, marginBottom: 10 }}>
+            {isEN ? "Group payment handled by organizer" : "Pago centralizado por el organizador"}
+          </div>
+          <div style={{ fontSize: 14, color: C.textMid, lineHeight: 1.7, maxWidth: 340, margin: "0 auto" }}>
+            {isEN
+              ? "The organizer of this group has already handled payment for all spots. Individual booking is not available."
+              : "El organizador de este grupo ya gestionó el pago de todos los cupos. Las reservas individuales no están disponibles."}
+          </div>
+        </div>
+      );
+    }
+
     return (
       <div>
         {/* Photo gallery */}
@@ -816,6 +833,7 @@ export default function BookingPopup() {
             </div>
           </div>
         )}
+
 
         {/* Product header */}
         <div style={{ marginBottom: 16 }}>

@@ -54,7 +54,6 @@ function BEOPreview({ evento, onClose }) {
 
 // ─── Link del grupo ───────────────────────────────────────────────────────────
 function GrupoLink({ evento, onClose }) {
-  const [tab,          setTab]          = useState(evento.modalidad_pago || "individual");
   const [copied,       setCopied]       = useState(false);
   const [showRes,      setShowRes]      = useState(false);
   const [reservas,     setReservas]     = useState(null);
@@ -75,12 +74,12 @@ function GrupoLink({ evento, onClose }) {
   const url = `${window.location.origin}/booking?grupo=${evento.id}`;
   const copy = () => { navigator.clipboard.writeText(url); setCopied(true); setTimeout(() => setCopied(false), 2000); };
 
-  // Cargar pasadías al entrar al tab organizador
+  // Cargar pasadías si es modo organizador
   useEffect(() => {
-    if (tab !== "organizador" || pasadias.length > 0) return;
+    if (evento.modalidad_pago !== "organizador" || pasadias.length > 0) return;
     supabase.from("pasadias").select("id, nombre, precio, precio_neto_agencia").eq("visible", true).order("nombre")
       .then(({ data }) => setPasadias(data || []));
-  }, [tab]);
+  }, []);
 
   // Cargar cuentas bancarias cuando seleccionan transferencia
   useEffect(() => {
@@ -158,29 +157,15 @@ function GrupoLink({ evento, onClose }) {
 
         {/* Header */}
         <div style={{ textAlign: "center", marginBottom: 20 }}>
-          <div style={{ fontSize: 36, marginBottom: 8 }}>🔗</div>
-          <h3 style={{ fontSize: 18, fontWeight: 700, marginBottom: 4 }}>Link del grupo</h3>
+          <div style={{ fontSize: 36, marginBottom: 8 }}>{evento.modalidad_pago === "organizador" ? "💳" : "🔗"}</div>
+          <h3 style={{ fontSize: 18, fontWeight: 700, marginBottom: 4 }}>
+            {evento.modalidad_pago === "organizador" ? "Pago grupal único" : "Link del grupo"}
+          </h3>
           <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)" }}>{evento.nombre} · {fmtFecha(evento.fecha)}</div>
         </div>
 
-        {/* Tabs: Individual vs Organizador */}
-        <div style={{ display: "flex", gap: 6, marginBottom: 20, background: B.navy, borderRadius: 10, padding: 4 }}>
-          {[
-            { id: "individual",  icon: "👥", label: "Cada invitado paga" },
-            { id: "organizador", icon: "💳", label: "Pago grupal único" },
-          ].map(t => (
-            <button key={t.id} onClick={() => setTab(t.id)}
-              style={{ flex: 1, padding: "9px 10px", borderRadius: 8, border: "none", fontSize: 12, fontWeight: 700, cursor: "pointer",
-                background: tab === t.id ? B.navyMid : "transparent",
-                color: tab === t.id ? B.white : "rgba(255,255,255,0.4)",
-                boxShadow: tab === t.id ? "0 2px 8px rgba(0,0,0,0.3)" : "none", transition: "all 0.15s" }}>
-              {t.icon} {t.label}
-            </button>
-          ))}
-        </div>
-
-        {/* ── TAB: Individual ── */}
-        {tab === "individual" && (
+        {/* ── MODO: Individual ── */}
+        {evento.modalidad_pago !== "organizador" && (
           <>
             <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", textAlign: "center", marginBottom: 14 }}>
               Comparte este link. Cada persona entra y paga su pasadía de forma independiente.
@@ -202,8 +187,8 @@ function GrupoLink({ evento, onClose }) {
           </>
         )}
 
-        {/* ── TAB: Organizador ── */}
-        {tab === "organizador" && (
+        {/* ── MODO: Organizador ── */}
+        {evento.modalidad_pago === "organizador" && (
           <>
             {/* ── ESTADO: Reserva ya procesada ── */}
             {reservaId ? (
