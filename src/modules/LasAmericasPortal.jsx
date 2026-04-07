@@ -106,7 +106,7 @@ function HeroSection() {
 
   const INCLUDES = [
     { icon: "🚐", text: "Transporte desde el Hotel Las Américas" },
-    { icon: "🚤", text: "Traslado en lancha hacia las Islas del Rosario" },
+    { icon: "🚤", text: "Traslado en lancha a la isla" },
     { icon: "🏝️", text: "Acceso exclusivo a Atolón Beach Club" },
     { icon: "🏖️", text: "Uso de camas de playa y zonas lounge" },
     { icon: "🍽️", text: "Experiencia gastronómica frente al mar" },
