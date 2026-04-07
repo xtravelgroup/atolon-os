@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { B, COP, fmtFecha, todayStr } from "../brand";
 import { supabase } from "../lib/supabase";
 import { useMobile } from "../lib/useMobile";
+import { wompiCheckoutUrl } from "../lib/wompi";
 
 const STAGES       = ["Consulta", "Cotizado", "Confirmado", "Realizado"];
 const TIPOS_EVT    = ["Matrimonio", "Cumpleaños", "Corporativo", "Despedida de Solteros", "Aniversario", "Grado", "Otro"];
@@ -53,12 +54,28 @@ function BEOPreview({ evento, onClose }) {
 
 // ─── Link del grupo ───────────────────────────────────────────────────────────
 function GrupoLink({ evento, onClose }) {
-  const [copied,   setCopied]   = useState(false);
-  const [showRes,  setShowRes]  = useState(false);
-  const [reservas, setReservas] = useState(null);
-  const [loadingR, setLoadingR] = useState(false);
+  const [tab,        setTab]        = useState(evento.modalidad_pago || "individual");
+  const [copied,     setCopied]     = useState(false);
+  const [showRes,    setShowRes]    = useState(false);
+  const [reservas,   setReservas]   = useState(null);
+  const [loadingR,   setLoadingR]   = useState(false);
+  // Organizador mode
+  const [pasadias,   setPasadias]   = useState([]);
+  const [pasadiaId,  setPasadiaId]  = useState("");
+  const [paxOrg,     setPaxOrg]     = useState(String(evento.pax || ""));
+  const [wompiLink,  setWompiLink]  = useState("");
+  const [generando,  setGenerando]  = useState(false);
+  const [copiedPago, setCopiedPago] = useState(false);
+
   const url = `${window.location.origin}/booking?grupo=${evento.id}`;
   const copy = () => { navigator.clipboard.writeText(url); setCopied(true); setTimeout(() => setCopied(false), 2000); };
+
+  // Load pasadías when switching to organizador tab
+  useEffect(() => {
+    if (tab !== "organizador" || pasadias.length > 0) return;
+    supabase.from("pasadias").select("id, nombre, precio").eq("visible", true).order("nombre")
+      .then(({ data }) => setPasadias(data || []));
+  }, [tab]);
 
   const toggleReservas = async () => {
     if (showRes) { setShowRes(false); return; }
@@ -72,39 +89,153 @@ function GrupoLink({ evento, onClose }) {
     setLoadingR(false);
   };
 
-  const totalPax  = (reservas || []).reduce((s, r) => s + (r.pax || 0), 0);
-  const totalCOP  = (reservas || []).reduce((s, r) => s + (r.total || 0), 0);
+  const totalPax     = (reservas || []).reduce((s, r) => s + (r.pax || 0), 0);
+  const totalCOP     = (reservas || []).reduce((s, r) => s + (r.total || 0), 0);
+  const pasadiaActual = pasadias.find(p => p.id === pasadiaId);
+  const totalOrgCOP  = pasadiaActual ? pasadiaActual.precio * Number(paxOrg || 0) : 0;
+
+  const generarPago = async () => {
+    if (!pasadiaActual || !paxOrg || Number(paxOrg) < 1) return;
+    setGenerando(true);
+    const link = await wompiCheckoutUrl({
+      referencia: `GRP-${evento.id}`,
+      totalCOP: totalOrgCOP,
+      redirectUrl: `${window.location.origin}/`,
+    });
+    setWompiLink(link);
+    setGenerando(false);
+  };
+
+  const copyPago = () => { navigator.clipboard.writeText(wompiLink); setCopiedPago(true); setTimeout(() => setCopiedPago(false), 2000); };
 
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 999 }}
       onClick={e => e.target === e.currentTarget && onClose()}>
       <div style={{ background: B.navyMid, borderRadius: 16, padding: 32, width: 560, maxHeight: "90vh", overflowY: "auto", boxShadow: "0 20px 60px rgba(0,0,0,0.5)" }}>
-        <div style={{ textAlign: "center", marginBottom: 24 }}>
-          <div style={{ fontSize: 40, marginBottom: 8 }}>🔗</div>
-          <h3 style={{ fontSize: 18, fontWeight: 700 }}>Link de compra del grupo</h3>
-          <div style={{ fontSize: 13, color: "rgba(255,255,255,0.4)", marginTop: 6 }}>
-            Comparte este link con los participantes del grupo.<br />
-            Cada uno entra y paga su pasadía de forma independiente.
-          </div>
+
+        {/* Header */}
+        <div style={{ textAlign: "center", marginBottom: 20 }}>
+          <div style={{ fontSize: 36, marginBottom: 8 }}>🔗</div>
+          <h3 style={{ fontSize: 18, fontWeight: 700, marginBottom: 4 }}>Link del grupo</h3>
+          <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)" }}>{evento.nombre} · {fmtFecha(evento.fecha)}</div>
         </div>
 
-        <div style={{ background: B.navy, borderRadius: 10, padding: "14px 16px", marginBottom: 8, wordBreak: "break-all", fontSize: 13, color: B.sky, fontFamily: "monospace" }}>
-          {url}
+        {/* Tabs: Individual vs Organizador */}
+        <div style={{ display: "flex", gap: 6, marginBottom: 20, background: B.navy, borderRadius: 10, padding: 4 }}>
+          {[
+            { id: "individual",  icon: "👥", label: "Cada invitado paga" },
+            { id: "organizador", icon: "💳", label: "Pago grupal único" },
+          ].map(t => (
+            <button key={t.id} onClick={() => setTab(t.id)}
+              style={{ flex: 1, padding: "9px 10px", borderRadius: 8, border: "none", fontSize: 12, fontWeight: 700, cursor: "pointer",
+                background: tab === t.id ? B.navyMid : "transparent",
+                color: tab === t.id ? B.white : "rgba(255,255,255,0.4)",
+                boxShadow: tab === t.id ? "0 2px 8px rgba(0,0,0,0.3)" : "none", transition: "all 0.15s" }}>
+              {t.icon} {t.label}
+            </button>
+          ))}
         </div>
 
-        <div style={{ display: "flex", gap: 10, marginBottom: 12 }}>
-          <button onClick={copy} style={{ flex: 1, padding: "11px", background: copied ? B.success : B.sky, color: B.navy, border: "none", borderRadius: 8, fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
-            {copied ? "✓ Copiado!" : "📋 Copiar link"}
-          </button>
-          <button onClick={() => window.open(url, "_blank")} style={{ flex: 1, padding: "11px", background: B.navyLight, color: B.white, border: "none", borderRadius: 8, fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
-            👁 Ver página
-          </button>
-          <button onClick={toggleReservas} style={{ flex: 1, padding: "11px", background: showRes ? B.sand + "33" : B.navyLight, color: showRes ? B.sand : B.white, border: `1px solid ${showRes ? B.sand + "55" : "transparent"}`, borderRadius: 8, fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
-            📋 Reservas{reservas ? ` (${reservas.length})` : ""}
-          </button>
-        </div>
+        {/* ── TAB: Individual ── */}
+        {tab === "individual" && (
+          <>
+            <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", textAlign: "center", marginBottom: 14 }}>
+              Comparte este link. Cada persona entra y paga su pasadía de forma independiente.
+            </div>
+            <div style={{ background: B.navy, borderRadius: 10, padding: "14px 16px", marginBottom: 10, wordBreak: "break-all", fontSize: 13, color: B.sky, fontFamily: "monospace" }}>
+              {url}
+            </div>
+            <div style={{ display: "flex", gap: 10, marginBottom: 12 }}>
+              <button onClick={copy} style={{ flex: 1, padding: "11px", background: copied ? B.success : B.sky, color: B.navy, border: "none", borderRadius: 8, fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
+                {copied ? "✓ Copiado!" : "📋 Copiar link"}
+              </button>
+              <button onClick={() => window.open(url, "_blank")} style={{ flex: 1, padding: "11px", background: B.navyLight, color: B.white, border: "none", borderRadius: 8, fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
+                👁 Ver página
+              </button>
+              <button onClick={toggleReservas} style={{ flex: 1, padding: "11px", background: showRes ? B.sand + "33" : B.navyLight, color: showRes ? B.sand : B.white, border: `1px solid ${showRes ? B.sand + "55" : "transparent"}`, borderRadius: 8, fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
+                📋 Reservas{reservas ? ` (${reservas.length})` : ""}
+              </button>
+            </div>
+          </>
+        )}
 
-        {/* ── Lista de reservas ── */}
+        {/* ── TAB: Organizador ── */}
+        {tab === "organizador" && (
+          <>
+            <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", textAlign: "center", marginBottom: 16 }}>
+              Genera un link de pago único. El organizador paga todos los cupos de una vez vía Wompi.
+            </div>
+
+            {/* Pasadía selector */}
+            <div style={{ marginBottom: 12 }}>
+              <label style={LS}>Pasadía</label>
+              <select value={pasadiaId} onChange={e => { setPasadiaId(e.target.value); setWompiLink(""); }}
+                style={{ ...IS }}>
+                <option value="">— Selecciona la pasadía —</option>
+                {pasadias.map(p => (
+                  <option key={p.id} value={p.id}>{p.nombre} — {COP(p.precio)} / persona</option>
+                ))}
+              </select>
+            </div>
+
+            {/* Número de personas */}
+            <div style={{ marginBottom: 16 }}>
+              <label style={LS}>Número de personas</label>
+              <input type="number" min="1" value={paxOrg}
+                onChange={e => { setPaxOrg(e.target.value); setWompiLink(""); }}
+                style={{ ...IS }} placeholder="Ej: 20" />
+            </div>
+
+            {/* Total preview */}
+            {pasadiaActual && Number(paxOrg) > 0 && (
+              <div style={{ background: B.navy, borderRadius: 10, padding: "14px 18px", marginBottom: 16, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div>
+                  <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>Total a cobrar</div>
+                  <div style={{ fontSize: 24, fontWeight: 800, color: B.sand }}>{COP(totalOrgCOP)}</div>
+                </div>
+                <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", textAlign: "right" }}>
+                  <div>{COP(pasadiaActual.precio)} × {paxOrg} personas</div>
+                  <div style={{ marginTop: 2, fontFamily: "monospace", fontSize: 10 }}>ref: GRP-{evento.id}</div>
+                </div>
+              </div>
+            )}
+
+            {/* Generar / mostrar link */}
+            {!wompiLink ? (
+              <button onClick={generarPago}
+                disabled={!pasadiaActual || !paxOrg || generando || Number(paxOrg) < 1}
+                style={{ width: "100%", padding: "13px", borderRadius: 10, border: "none", fontWeight: 700, fontSize: 14, cursor: (!pasadiaActual || !paxOrg) ? "default" : "pointer", marginBottom: 12,
+                  background: (!pasadiaActual || !paxOrg || Number(paxOrg) < 1) ? B.navyLight : B.sand,
+                  color: (!pasadiaActual || !paxOrg || Number(paxOrg) < 1) ? "rgba(255,255,255,0.3)" : B.navy }}>
+                {generando ? "Generando..." : "💳 Generar link de pago Wompi"}
+              </button>
+            ) : (
+              <>
+                <div style={{ background: B.navy, borderRadius: 10, padding: "12px 14px", marginBottom: 8, wordBreak: "break-all", fontSize: 12, color: B.sky, fontFamily: "monospace" }}>
+                  {wompiLink}
+                </div>
+                <div style={{ display: "flex", gap: 10, marginBottom: 12 }}>
+                  <button onClick={copyPago} style={{ flex: 2, padding: "11px", background: copiedPago ? B.success : B.sky, color: B.navy, border: "none", borderRadius: 8, fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
+                    {copiedPago ? "✓ Copiado!" : "📋 Copiar link de pago"}
+                  </button>
+                  <button onClick={() => window.open(wompiLink, "_blank")} style={{ flex: 1, padding: "11px", background: B.navyLight, color: B.white, border: "none", borderRadius: 8, fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
+                    🔗 Abrir
+                  </button>
+                  <button onClick={() => { setWompiLink(""); }} style={{ padding: "11px 14px", background: "rgba(255,255,255,0.06)", color: "rgba(255,255,255,0.4)", border: "none", borderRadius: 8, fontSize: 13, cursor: "pointer" }}>
+                    ↺
+                  </button>
+                </div>
+              </>
+            )}
+
+            {/* Reservas en modo organizador */}
+            <button onClick={toggleReservas} style={{ width: "100%", padding: "11px", background: showRes ? B.sand + "33" : B.navyLight, color: showRes ? B.sand : B.white, border: `1px solid ${showRes ? B.sand + "55" : "transparent"}`, borderRadius: 8, fontWeight: 700, fontSize: 13, cursor: "pointer", marginBottom: 12 }}>
+              📋 Ver reservas del grupo{reservas ? ` (${reservas.length})` : ""}
+            </button>
+          </>
+        )}
+
+        {/* ── Lista de reservas (compartida) ── */}
         {showRes && (
           <div style={{ background: B.navy, borderRadius: 10, padding: 16, marginBottom: 12 }}>
             {loadingR ? (
@@ -113,12 +244,10 @@ function GrupoLink({ evento, onClose }) {
               <div style={{ textAlign: "center", color: "rgba(255,255,255,0.3)", fontSize: 13, padding: "16px 0" }}>Aún no hay reservas en este grupo</div>
             ) : (
               <>
-                {/* Totales */}
                 <div style={{ display: "flex", gap: 16, marginBottom: 12, padding: "8px 12px", background: B.navyMid, borderRadius: 8 }}>
                   <span style={{ fontSize: 12, color: "rgba(255,255,255,0.5)" }}>Total personas: <strong style={{ color: B.white }}>{totalPax}</strong></span>
                   <span style={{ fontSize: 12, color: "rgba(255,255,255,0.5)" }}>Total recaudado: <strong style={{ color: B.success }}>{COP(totalCOP)}</strong></span>
                 </div>
-                {/* Filas */}
                 {reservas.map(r => (
                   <div key={r.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0", borderBottom: `1px solid ${B.navyLight}`, fontSize: 13 }}>
                     <div style={{ flex: 1 }}>
@@ -138,7 +267,8 @@ function GrupoLink({ evento, onClose }) {
           </div>
         )}
 
-        <div style={{ background: B.navy, borderRadius: 10, padding: "14px 16px", fontSize: 13, lineHeight: 1.8, color: "rgba(255,255,255,0.5)" }}>
+        {/* Info card */}
+        <div style={{ background: B.navy, borderRadius: 10, padding: "14px 16px", fontSize: 13, lineHeight: 1.8, color: "rgba(255,255,255,0.5)", marginBottom: 12 }}>
           <div>📅 <strong style={{ color: B.white }}>{fmtFecha(evento.fecha)}</strong></div>
           <div>🌴 <strong style={{ color: B.white }}>{evento.tipo}</strong></div>
           {(evento.salidas_grupo || []).length > 0 && (
@@ -147,7 +277,7 @@ function GrupoLink({ evento, onClose }) {
           <div>👥 Cupos: <strong style={{ color: B.white }}>{evento.pax || "ilimitado"}</strong></div>
         </div>
 
-        <button onClick={onClose} style={{ width: "100%", marginTop: 16, padding: "11px", background: "none", border: `1px solid ${B.navyLight}`, borderRadius: 8, color: "rgba(255,255,255,0.4)", fontSize: 13, cursor: "pointer" }}>Cerrar</button>
+        <button onClick={onClose} style={{ width: "100%", padding: "11px", background: "none", border: `1px solid ${B.navyLight}`, borderRadius: 8, color: "rgba(255,255,255,0.4)", fontSize: 13, cursor: "pointer" }}>Cerrar</button>
       </div>
     </div>
   );
@@ -160,8 +290,8 @@ export function EventoModal({ evento, categoria, salidas, aliados, vendedores, o
   const tiposOpt = isGrupo ? TIPOS_GRUPO : TIPOS_EVT;
 
   const [form, setForm]       = useState(isEdit
-    ? { ...evento, pax: String(evento.pax || ""), valor: String(evento.valor || ""), aliado_id: evento.aliado_id || "", vendedor: evento.vendedor || "", salidas_grupo: evento.salidas_grupo || [], buy_out: evento.buy_out || false }
-    : { nombre: "", tipo: tiposOpt[0], fecha: "", pax: "", valor: "", aliado_id: "", vendedor: "", salidas_grupo: [], contacto: "", tel: "", email: "", empresa: "", nit: "", cargo: "", direccion: "", montaje: "", hora_ini: "", hora_fin: "", vencimiento: "", stage: "Consulta", notas: "", categoria, buy_out: false });
+    ? { ...evento, pax: String(evento.pax || ""), valor: String(evento.valor || ""), aliado_id: evento.aliado_id || "", vendedor: evento.vendedor || "", salidas_grupo: evento.salidas_grupo || [], buy_out: evento.buy_out || false, modalidad_pago: evento.modalidad_pago || "individual" }
+    : { nombre: "", tipo: tiposOpt[0], fecha: "", pax: "", valor: "", aliado_id: "", vendedor: "", salidas_grupo: [], contacto: "", tel: "", email: "", empresa: "", nit: "", cargo: "", direccion: "", montaje: "", hora_ini: "", hora_fin: "", vencimiento: "", stage: "Consulta", notas: "", categoria, buy_out: false, modalidad_pago: "individual" });
   const [saving,      setSaving]      = useState(false);
   const [horaInput,   setHoraInput]   = useState("");
   const [aliadoSearch,setAliadoSearch]= useState("");
@@ -268,9 +398,10 @@ export function EventoModal({ evento, categoria, salidas, aliados, vendedores, o
       stage:        form.stage,
       notas:        form.notas,
       categoria:    (["evento","grupo"].includes(form.categoria) ? form.categoria : null) || (["evento","grupo"].includes(categoria) ? categoria : "evento"),
-      aliado_id:    form.aliado_id || null,
-      vendedor:     form.vendedor || "",
-      buy_out:      form.buy_out || false,
+      aliado_id:      form.aliado_id || null,
+      vendedor:       form.vendedor || "",
+      buy_out:        form.buy_out || false,
+      modalidad_pago: form.modalidad_pago || "individual",
     };
     let savedId = evento?.id;
     let dbError = null;
@@ -482,6 +613,29 @@ export function EventoModal({ evento, categoria, salidas, aliados, vendedores, o
                   ))}
                 </div>
               )}
+            </div>
+          )}
+
+          {/* Modalidad de pago — solo grupos */}
+          {isGrupo && (
+            <div>
+              <label style={LS}>Modalidad de pago del grupo</label>
+              <div style={{ display: "flex", gap: 10 }}>
+                {[
+                  { value: "individual",  icon: "👥", label: "Cada invitado reserva",    desc: "Cada persona entra al link y paga su propio cupo" },
+                  { value: "organizador", icon: "💳", label: "El organizador paga todo", desc: "Un solo link de pago Wompi para todos los cupos" },
+                ].map(opt => (
+                  <div key={opt.value} onClick={() => set("modalidad_pago", opt.value)}
+                    style={{ flex: 1, padding: "12px 14px", borderRadius: 10, cursor: "pointer", userSelect: "none",
+                      background: form.modalidad_pago === opt.value ? B.sky + "22" : B.navyLight,
+                      border: `2px solid ${form.modalidad_pago === opt.value ? B.sky : "transparent"}`,
+                      transition: "all 0.15s" }}>
+                    <div style={{ fontSize: 20, marginBottom: 6 }}>{opt.icon}</div>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: form.modalidad_pago === opt.value ? B.sky : B.white, marginBottom: 3 }}>{opt.label}</div>
+                    <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", lineHeight: 1.4 }}>{opt.desc}</div>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
 
