@@ -14,15 +14,41 @@ function TabPasadias({ pasadias, onRefresh }) {
   const [showNew, setShowNew] = useState(false);
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState({});
-  const [newForm, setNewForm] = useState({ nombre: "", precio: "", precio_neto_agencia: "", precio_nino: "", precio_neto_nino: "", nino_nota: "", min_pax: 1, descripcion: "", web_publica: true });
+  const [newForm, setNewForm] = useState({ nombre: "", precio: "", precio_neto_agencia: "", precio_nino: "", precio_neto_nino: "", nino_nota: "", min_pax: 1, descripcion: "", web_publica: true, visible_agencias_todas: false, visible_agencias_seleccionadas: false, sin_embarcacion: false });
   const [items, setItems] = useState([]);
   const [newItem, setNewItem] = useState("");
   const [newItemEn, setNewItemEn] = useState("");
   const [uploadingMain, setUploadingMain] = useState(false);
   const [uploadingExtra, setUploadingExtra] = useState(false);
+  const [agencias, setAgencias] = useState([]);
+  const [agenciasVis, setAgenciasVis] = useState({}); // aliado_id -> boolean
 
   const IS = { width: "100%", padding: "9px 12px", borderRadius: 8, background: B.navy, border: `1px solid ${B.navyLight}`, color: B.white, fontSize: 13, outline: "none", boxSizing: "border-box" };
   const LS = { fontSize: 11, color: B.sand, display: "block", marginBottom: 5, textTransform: "uppercase", letterSpacing: "0.06em" };
+
+  const loadAgenciasVis = async (pasadiaId) => {
+    if (!supabase) return;
+    const [{ data: ags }, { data: vis }] = await Promise.all([
+      supabase.from("aliados_b2b").select("id, nombre").eq("activo", true).order("nombre"),
+      supabase.from("pasadias_agencias_visibles").select("aliado_id, visible").eq("pasadia_id", pasadiaId),
+    ]);
+    setAgencias(ags || []);
+    const map = {};
+    (vis || []).forEach(v => { map[v.aliado_id] = v.visible; });
+    setAgenciasVis(map);
+  };
+
+  const toggleAgenciaVis = async (aliadoId, currentVal) => {
+    if (!supabase || !selected) return;
+    const newVal = !currentVal;
+    setAgenciasVis(m => ({ ...m, [aliadoId]: newVal }));
+    await supabase.from("pasadias_agencias_visibles").upsert({
+      id: `PAV-${selected.id}-${aliadoId}`,
+      pasadia_id: selected.id,
+      aliado_id: aliadoId,
+      visible: newVal,
+    }, { onConflict: "pasadia_id,aliado_id" });
+  };
 
   const openDetail = async (p) => {
     setSelected(p);
@@ -31,10 +57,19 @@ function TabPasadias({ pasadias, onRefresh }) {
     if (supabase) {
       const { data } = await supabase.from("pasadia_incluye").select("*").eq("pasadia_id", p.id).order("orden");
       setItems(data || []);
+      if (p.visible_agencias_seleccionadas) {
+        await loadAgenciasVis(p.id);
+      }
     }
   };
 
-  const startEdit = () => { setEditing(true); setForm({ ...selected }); };
+  const startEdit = async () => {
+    setEditing(true);
+    setForm({ ...selected });
+    if (selected.visible_agencias_seleccionadas && agencias.length === 0) {
+      await loadAgenciasVis(selected.id);
+    }
+  };
 
   const saveEdit = async () => {
     if (!supabase) return;
@@ -48,6 +83,9 @@ function TabPasadias({ pasadias, onRefresh }) {
       descripcion: form.descripcion,
       min_pax: Number(form.min_pax) || 1,
       web_publica: form.web_publica,
+      visible_agencias_todas: form.visible_agencias_todas || false,
+      visible_agencias_seleccionadas: form.visible_agencias_seleccionadas || false,
+      sin_embarcacion: form.sin_embarcacion || false,
       activo: form.activo,
     }).eq("id", form.id);
     onRefresh(); setEditing(false);
@@ -172,12 +210,52 @@ function TabPasadias({ pasadias, onRefresh }) {
                   <div><label style={LS}>Nota Niño</label><input value={form.nino_nota || ""} onChange={e => setForm(f => ({ ...f, nino_nota: e.target.value }))} placeholder="Ej: +$50k consumibles" style={IS} /></div>
                 </div>
                 <div><label style={LS}>Descripcion</label><textarea value={form.descripcion || ""} onChange={e => setForm(f => ({ ...f, descripcion: e.target.value }))} rows={3} style={{ ...IS, resize: "vertical" }} /></div>
-                <div style={{ display: "flex", gap: 16 }}>
-                  <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, cursor: "pointer" }}>
-                    <input type="checkbox" checked={form.web_publica} onChange={e => setForm(f => ({ ...f, web_publica: e.target.checked }))} /> Visible en Web
+                <div style={{ background: B.navy, borderRadius: 10, padding: "14px 16px", display: "flex", flexDirection: "column", gap: 10 }}>
+                  <div style={{ fontSize: 11, color: B.sand, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>Visibilidad</div>
+                  <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, cursor: "pointer" }}>
+                    <input type="checkbox" checked={!!form.web_publica} onChange={e => setForm(f => ({ ...f, web_publica: e.target.checked }))} />
+                    <span>🌐 Visible en Web</span>
                   </label>
-                  <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, cursor: "pointer" }}>
-                    <input type="checkbox" checked={form.activo} onChange={e => setForm(f => ({ ...f, activo: e.target.checked }))} /> Activo
+                  <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, cursor: "pointer" }}>
+                    <input type="checkbox" checked={!!form.visible_agencias_todas} onChange={e => {
+                      const v = e.target.checked;
+                      setForm(f => ({ ...f, visible_agencias_todas: v, visible_agencias_seleccionadas: v ? false : f.visible_agencias_seleccionadas }));
+                      if (v && agencias.length === 0) loadAgenciasVis(selected.id);
+                    }} />
+                    <span>🏢 Visible en todas las agencias</span>
+                  </label>
+                  <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, cursor: "pointer" }}>
+                    <input type="checkbox" checked={!!form.visible_agencias_seleccionadas} onChange={e => {
+                      const v = e.target.checked;
+                      setForm(f => ({ ...f, visible_agencias_seleccionadas: v, visible_agencias_todas: v ? false : f.visible_agencias_todas }));
+                      if (v) loadAgenciasVis(selected.id);
+                    }} />
+                    <span>🎯 Visible en agencias seleccionadas</span>
+                  </label>
+                  <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, cursor: "pointer", marginTop: 6, borderTop: "1px solid rgba(255,255,255,0.07)", paddingTop: 10 }}>
+                    <input type="checkbox" checked={!!form.sin_embarcacion} onChange={e => setForm(f => ({ ...f, sin_embarcacion: e.target.checked }))} />
+                    <span>🚫⛵ Sin transporte (no requiere hora de salida)</span>
+                  </label>
+                  {(form.visible_agencias_seleccionadas) && agencias.length > 0 && (
+                    <div style={{ marginTop: 8, background: B.navyMid, borderRadius: 8, padding: 12 }}>
+                      <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginBottom: 8 }}>Activar/desactivar por agencia (se guarda al instante):</div>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
+                        {agencias.map(ag => {
+                          const vis = agenciasVis[ag.id] || false;
+                          return (
+                            <button key={ag.id} onClick={() => toggleAgenciaVis(ag.id, vis)}
+                              style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderRadius: 8, border: `1px solid ${vis ? B.success + "66" : B.navyLight}`, background: vis ? B.success + "15" : B.navy, cursor: "pointer", fontSize: 12, color: vis ? B.success : "rgba(255,255,255,0.5)", textAlign: "left" }}>
+                              <span style={{ fontSize: 14 }}>{vis ? "✅" : "⬜"}</span>
+                              <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{ag.nombre}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                  <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, cursor: "pointer", paddingTop: 4, borderTop: `1px solid ${B.navyLight}`, marginTop: 2 }}>
+                    <input type="checkbox" checked={!!form.activo} onChange={e => setForm(f => ({ ...f, activo: e.target.checked }))} />
+                    <span>✅ Activo</span>
                   </label>
                 </div>
                 <div style={{ display: "flex", gap: 8 }}>
@@ -203,7 +281,29 @@ function TabPasadias({ pasadias, onRefresh }) {
                 {selected.nino_nota && <div style={{ marginTop: 10, fontSize: 12, color: B.sky, background: B.sky + "11", border: `1px solid ${B.sky}22`, borderRadius: 8, padding: "8px 12px" }}>ℹ️ Nota niños: {selected.nino_nota}</div>}
                 <div style={{ marginTop: 12, fontSize: 13, lineHeight: 2 }}>
                   <div><span style={{ color: "rgba(255,255,255,0.4)" }}>Min. Pax:</span> <strong>{selected.min_pax}</strong></div>
-                  <div><span style={{ color: "rgba(255,255,255,0.4)" }}>Web Publica:</span> <strong>{selected.web_publica ? "Sí" : "No (Solo B2B)"}</strong></div>
+                  <div>
+                    <span style={{ color: "rgba(255,255,255,0.4)" }}>Visibilidad: </span>
+                    {selected.web_publica && <span style={{ marginRight: 6, fontSize: 11, padding: "2px 8px", borderRadius: 10, background: B.sky + "22", color: B.sky }}>🌐 Web</span>}
+                    {selected.visible_agencias_todas && <span style={{ marginRight: 6, fontSize: 11, padding: "2px 8px", borderRadius: 10, background: B.success + "22", color: B.success }}>🏢 Todas las agencias</span>}
+                    {selected.visible_agencias_seleccionadas && <span style={{ marginRight: 6, fontSize: 11, padding: "2px 8px", borderRadius: 10, background: B.warning + "22", color: B.warning }}>🎯 Agencias seleccionadas</span>}
+                    {!selected.web_publica && !selected.visible_agencias_todas && !selected.visible_agencias_seleccionadas && <span style={{ fontSize: 11, color: "rgba(255,255,255,0.3)" }}>Oculto</span>}
+                    {selected.sin_embarcacion && <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 10, background: B.danger + "22", color: B.danger }}>🚫⛵ Sin transporte</span>}
+                  </div>
+                  {selected.visible_agencias_seleccionadas && agencias.length > 0 && (
+                    <div style={{ marginTop: 10, background: B.navy, borderRadius: 8, padding: "10px 12px" }}>
+                      <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginBottom: 8 }}>Agencias habilitadas:</div>
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                        {agencias.map(ag => {
+                          const vis = agenciasVis[ag.id] || false;
+                          return (
+                            <span key={ag.id} style={{ fontSize: 11, padding: "3px 10px", borderRadius: 10, background: vis ? B.success + "22" : B.navyLight, color: vis ? B.success : "rgba(255,255,255,0.3)" }}>
+                              {vis ? "✅" : "⬜"} {ag.nombre}
+                            </span>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
                   <div><span style={{ color: "rgba(255,255,255,0.4)" }}>Estado:</span> <strong style={{ color: selected.activo ? B.success : B.danger }}>{selected.activo ? "Activo" : "Inactivo"}</strong></div>
                   {selected.descripcion && <div style={{ marginTop: 8, color: "rgba(255,255,255,0.5)", lineHeight: 1.6 }}>{selected.descripcion}</div>}
                 </div>
@@ -301,10 +401,13 @@ function TabPasadias({ pasadias, onRefresh }) {
       precio_neto_nino: Number(newForm.precio_neto_nino) || 0,
       nino_nota: newForm.nino_nota || null,
       min_pax: Number(newForm.min_pax) || 1, descripcion: newForm.descripcion,
-      web_publica: newForm.web_publica, activo: true, orden: maxOrden + 1,
+      web_publica: newForm.web_publica,
+      visible_agencias_todas: newForm.visible_agencias_todas || false,
+      visible_agencias_seleccionadas: newForm.visible_agencias_seleccionadas || false,
+      activo: true, orden: maxOrden + 1,
     });
     onRefresh(); setShowNew(false); setSaving(false);
-    setNewForm({ nombre: "", precio: "", precio_neto_agencia: "", precio_nino: "", precio_neto_nino: "", nino_nota: "", min_pax: 1, descripcion: "", web_publica: true });
+    setNewForm({ nombre: "", precio: "", precio_neto_agencia: "", precio_nino: "", precio_neto_nino: "", nino_nota: "", min_pax: 1, descripcion: "", web_publica: true, visible_agencias_todas: false, visible_agencias_seleccionadas: false });
   };
 
   // GRID VIEW
@@ -326,9 +429,12 @@ function TabPasadias({ pasadias, onRefresh }) {
                   {p.precio_neto_agencia > 0 && <div style={{ fontSize: 12, color: B.warning }}>Neto agencia: {COP(p.precio_neto_agencia)}</div>}
                   {p.precio_nino > 0 && <div style={{ fontSize: 12, color: B.sky }}>Niño: {COP(p.precio_nino)}{p.precio_neto_nino > 0 ? ` · neto ${COP(p.precio_neto_nino)}` : ""}</div>}
                 </div>
-                <div style={{ display: "flex", gap: 6 }}>
+                <div style={{ display: "flex", gap: 4, flexWrap: "wrap", justifyContent: "flex-end", maxWidth: 120 }}>
                   {p.web_publica && <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 10, background: B.sky + "22", color: B.sky }}>WEB</span>}
-                  {!p.web_publica && <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 10, background: B.navyLight, color: "rgba(255,255,255,0.4)" }}>B2B</span>}
+                  {p.visible_agencias_todas && <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 10, background: B.success + "22", color: B.success }}>AGENCIAS</span>}
+                  {p.visible_agencias_seleccionadas && <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 10, background: B.warning + "22", color: B.warning }}>SELECC</span>}
+                  {!p.web_publica && !p.visible_agencias_todas && !p.visible_agencias_seleccionadas && <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 10, background: B.navyLight, color: "rgba(255,255,255,0.4)" }}>OCULTO</span>}
+                  {p.sin_embarcacion && <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 10, background: B.danger + "22", color: B.danger }}>🚫⛵</span>}
                 </div>
               </div>
               <div style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", lineHeight: 1.6 }}>{p.descripcion}</div>
@@ -338,6 +444,7 @@ function TabPasadias({ pasadias, onRefresh }) {
             </div>
             <div style={{ padding: "12px 24px", display: "flex", gap: 8, borderTop: `1px solid ${B.navyLight}` }}>
               <span style={{ flex: 1, fontSize: 12, color: "rgba(255,255,255,0.3)" }}>Click para ver detalle y editar incluye</span>
+              <button onClick={ev => { ev.stopPropagation(); toggleField(p.id, "sin_embarcacion", p.sin_embarcacion); }} style={{ padding: "6px 12px", borderRadius: 6, background: p.sin_embarcacion ? B.danger + "33" : "rgba(255,255,255,0.06)", color: p.sin_embarcacion ? B.danger : "rgba(255,255,255,0.4)", border: "none", fontSize: 11, cursor: "pointer" }} title="Sin transporte (no requiere hora de salida)">{p.sin_embarcacion ? "🚫⛵ Sin transporte" : "⛵ Con transporte"}</button>
               <button onClick={ev => { ev.stopPropagation(); toggleField(p.id, "activo", p.activo); }} style={{ padding: "6px 12px", borderRadius: 6, background: p.activo ? B.danger + "22" : B.success + "22", color: p.activo ? B.danger : B.success, border: "none", fontSize: 11, cursor: "pointer" }}>{p.activo ? "Desactivar" : "Activar"}</button>
             </div>
           </div>
@@ -359,9 +466,25 @@ function TabPasadias({ pasadias, onRefresh }) {
                 <div><label style={LS}>Nota Niño</label><input value={newForm.nino_nota} onChange={e => setNewForm(f => ({ ...f, nino_nota: e.target.value }))} placeholder="+$50k consumibles..." style={IS} /></div>
               </div>
               <div><label style={LS}>Descripcion</label><textarea value={newForm.descripcion} onChange={e => setNewForm(f => ({ ...f, descripcion: e.target.value }))} rows={3} placeholder="Que incluye este pasadia..." style={{ ...IS, resize: "vertical" }} /></div>
-              <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, cursor: "pointer" }}>
-                <input type="checkbox" checked={newForm.web_publica} onChange={e => setNewForm(f => ({ ...f, web_publica: e.target.checked }))} /> Visible en Web Publica
-              </label>
+              <div style={{ background: B.navy, borderRadius: 10, padding: "12px 16px", display: "flex", flexDirection: "column", gap: 8 }}>
+                <div style={{ fontSize: 11, color: B.sand, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 2 }}>Visibilidad</div>
+                <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, cursor: "pointer" }}>
+                  <input type="checkbox" checked={newForm.web_publica} onChange={e => setNewForm(f => ({ ...f, web_publica: e.target.checked }))} />
+                  🌐 Visible en Web
+                </label>
+                <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, cursor: "pointer" }}>
+                  <input type="checkbox" checked={newForm.visible_agencias_todas} onChange={e => setNewForm(f => ({ ...f, visible_agencias_todas: e.target.checked, visible_agencias_seleccionadas: e.target.checked ? false : f.visible_agencias_seleccionadas }))} />
+                  🏢 Visible en todas las agencias
+                </label>
+                <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, cursor: "pointer" }}>
+                  <input type="checkbox" checked={newForm.visible_agencias_seleccionadas} onChange={e => setNewForm(f => ({ ...f, visible_agencias_seleccionadas: e.target.checked, visible_agencias_todas: e.target.checked ? false : f.visible_agencias_todas }))} />
+                  🎯 Visible en agencias seleccionadas
+                </label>
+                <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, cursor: "pointer", marginTop: 6, borderTop: "1px solid rgba(255,255,255,0.07)", paddingTop: 10 }}>
+                  <input type="checkbox" checked={newForm.sin_embarcacion} onChange={e => setNewForm(f => ({ ...f, sin_embarcacion: e.target.checked }))} />
+                  <span>🚫⛵ Sin transporte (no requiere hora de salida)</span>
+                </label>
+              </div>
             </div>
             <div style={{ display: "flex", gap: 10, marginTop: 16 }}>
               <button onClick={() => setShowNew(false)} style={{ flex: 1, padding: 10, borderRadius: 8, border: `1px solid ${B.navyLight}`, background: "none", color: B.sand, fontSize: 13, cursor: "pointer" }}>Cancelar</button>

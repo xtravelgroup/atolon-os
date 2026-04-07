@@ -1007,6 +1007,7 @@ function ReservaModal({ onClose, onSave, isMobile, salidaList = [], aliadoList =
   const aliado = aliadoList.find(a => a.id === form.aliado_id);
   const tieneCXC = aliado && (aliado.cupo_credito || 0) > 0;
   const pasadiaActual = pasadiaList.find(p => p.tipo.toLowerCase() === form.tipo?.toLowerCase());
+  const sinTransporte = pasadiaActual?.sin_embarcacion === true;
   const precioFull     = pasadiaActual?.precio || 0;
   const precioNeto     = (form.aliado_id && conveniosMap[form.aliado_id]?.[form.tipo?.toLowerCase()])
     || pasadiaActual?.precio_neto_agencia || 0;
@@ -1056,7 +1057,7 @@ function ReservaModal({ onClose, onSave, isMobile, salidaList = [], aliadoList =
       if (!form.telefono.trim() || !/^[\d\s+\-()\\.]{7,}$/.test(form.telefono)) e.telefono = "Teléfono requerido";
     }
     if (!form.fecha)         e.fecha = "Requerido";
-    if (!form.salida_id)     e.salida_id = "Requerido";
+    if (!form.salida_id && !sinTransporte) e.salida_id = "Requerido";
     if ((Number(form.pax_a) + Number(form.pax_n)) < 1) e.pax_a = "Min 1 pax";
     if (form.precio < 0)     e.precio = "Inválido";
     if (form.abono < 0)      e.abono  = "Inválido";
@@ -1212,8 +1213,8 @@ function ReservaModal({ onClose, onSave, isMobile, salidaList = [], aliadoList =
           )}
         </div>
 
-        {/* Salida selector con disponibilidad */}
-        <div style={FS}>
+        {/* Salida selector con disponibilidad — oculto si pasadía es sin transporte */}
+        {!sinTransporte && <div style={FS}>
           <label style={LS}>Horario de salida *</label>
           {salidasFecha.length === 0 ? (
             <div style={{ fontSize: 13, color: B.warning }}>No hay salidas abiertas para esta fecha</div>
@@ -1251,7 +1252,7 @@ function ReservaModal({ onClose, onSave, isMobile, salidaList = [], aliadoList =
             </div>
           )}
           {errors.salida_id && <span style={{ fontSize: 11, color: B.danger }}>{errors.salida_id}</span>}
-        </div>
+        </div>}
 
         <div style={{ borderTop: `1px solid ${B.navyLight}` }} />
 
@@ -1877,7 +1878,7 @@ export default function Reservas() {
       supabase.from("embarcaciones").select("*").order("nombre"),
       supabase.from("salidas_override").select("*").in("fecha", [today, tomorrow]),
       supabase.from("usuarios").select("id, nombre, rol_id").in("rol_id", ["ventas", "gerente_ventas"]).order("nombre"),
-      supabase.from("pasadias").select("id, nombre, precio, precio_neto_agencia, precio_nino, precio_neto_nino").eq("activo", true).order("orden"),
+      supabase.from("pasadias").select("id, nombre, precio, precio_neto_agencia, precio_nino, precio_neto_nino, sin_embarcacion").eq("activo", true).order("orden"),
       // Pagos con fecha_pago = hoy (registrados manualmente)
       supabase.from("reservas").select("abono").eq("fecha_pago", today).neq("estado", "cancelado"),
       // Pagos sin fecha_pago pero creados hoy con abono > 0 (web/Wompi automáticos)
@@ -1887,7 +1888,7 @@ export default function Reservas() {
     if (resHoy.data)    setReservasHoy(resHoy.data.map(mapRow));
     if (resManana.data) setReservasManana(resManana.data.map(mapRow));
     if (empR.data && empR.data.length > 0) setVendedores(["Sin asignar", ...(empR.data.map(e => e.nombre))]);
-    if (pasR.data && pasR.data.length > 0) setPasadias(pasR.data.map(p => ({ tipo: p.nombre, precio: p.precio, precio_neto_agencia: p.precio_neto_agencia || 0, precio_nino: p.precio_nino || 0, precio_neto_nino: p.precio_neto_nino || 0 })));
+    if (pasR.data && pasR.data.length > 0) setPasadias(pasR.data.map(p => ({ tipo: p.nombre, precio: p.precio, precio_neto_agencia: p.precio_neto_agencia || 0, precio_nino: p.precio_nino || 0, precio_neto_nino: p.precio_neto_nino || 0, sin_embarcacion: p.sin_embarcacion || false })));
     const totalCobrado = [(cobR.data || []), (cobR2.data || [])].flat().reduce((s, r) => s + (r.abono || 0), 0);
     setCobradoHoy(totalCobrado);
     if (salR.data)      setSalidas(salR.data);
