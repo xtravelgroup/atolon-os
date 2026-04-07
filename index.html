@@ -22,8 +22,10 @@
     <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;500;600;700&family=Lato:wght@300;400;700&display=swap" rel="stylesheet" />
     <style>
       *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-      html, body { overflow-x: hidden; max-width: 100%; }
-      body { font-family: 'Lato', sans-serif; background: #0D1B3E; color: #fff; -webkit-font-smoothing: antialiased; }
+      /* Android/iOS fix: 100% height chain so AtolanOS can use height:100% instead of 100vh */
+      html { height: 100%; overflow-x: hidden; max-width: 100%; }
+      body { height: 100%; overflow-x: hidden; max-width: 100%; font-family: 'Lato', sans-serif; background: #0D1B3E; color: #fff; -webkit-font-smoothing: antialiased; }
+      #root { height: 100%; }
       h1, h2, h3, h4, h5, h6 { font-family: 'Barlow Condensed', sans-serif; }
       ::-webkit-scrollbar { width: 6px; }
       ::-webkit-scrollbar-track { background: #0D1B3E; }
@@ -42,7 +44,13 @@
       /* Ensure placeholder text is visible */
       input[type="date"]::-webkit-datetime-edit { color: #fff; }
       input[type="date"]::-webkit-datetime-edit-fields-wrapper { color: #fff; }
+      /* Ocultar flechas spinner en inputs numéricos — toda la app */
+      input[type="number"]::-webkit-outer-spin-button,
+      input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+      input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
       @keyframes spin { to { transform: rotate(360deg); } }
+      /* Android/iOS: use dvh where supported, fallback to --vh JS variable */
+      .atolon-app { height: 100dvh; height: calc(var(--vh, 1dvh) * 100); }
     </style>
   </head>
   <body>
@@ -57,6 +65,22 @@
           names.forEach(function(name) { caches.delete(name); });
         });
       }
+
+      // Android/iOS viewport height fix — sets --vh CSS variable to true visual viewport height.
+      // Needed because 100vh on Android Chrome includes the address bar height.
+      // dvh units handle this natively on Chrome 108+, this polyfill covers older devices.
+      (function() {
+        function setVH() {
+          var vh = (window.visualViewport ? window.visualViewport.height : window.innerHeight) * 0.01;
+          document.documentElement.style.setProperty('--vh', vh + 'px');
+        }
+        setVH();
+        window.addEventListener('resize', setVH);
+        if (window.visualViewport) {
+          window.visualViewport.addEventListener('resize', setVH);
+        }
+      })();
+
       // Abrir picker al hacer click en cualquier parte del input de fecha
       document.addEventListener("click", function(e) {
         if (e.target.type === "date") {
