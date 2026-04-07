@@ -342,11 +342,11 @@ export default function App() {
   // Always-public routes (no auth needed ever)
   if (route === "empleados")      return <><EmpleadoPortal /><WhatsAppFloat phone={waPhone} /></>;
   if (route === "agencia" || route === "") return <><AgenciaPortal /><WhatsAppFloat phone={waPhone} /></>;
+  if (route === "booking/lasamericas" || route === "las-americas") return <LasAmericasPortal />;
   if (route === "booking" || route.startsWith("booking/")) return <><BookingPopup /><WhatsAppFloat phone={waPhone} /></>;
   if (route.startsWith("pago"))   return <><PagoCliente /><WhatsAppFloat phone={waPhone} /></>;
   if (route === "reset-password") return <><ResetPassword /><WhatsAppFloat phone={waPhone} /></>;
   if (route === "zarpe-info")     return <><ZarpeInfo /><WhatsAppFloat phone={waPhone} /></>;
-  if (route === "las-americas")   return <LasAmericasPortal />;
   if (route === "society")        return <VIPPortal />;
   if (route === "checkin-pax")    return <SelfCheckIn />;
 
