@@ -70,14 +70,17 @@ function ContactosList({ contactos, onAdd, onDelete, showAddForm, setShowAddForm
 // CONVENIOS SECTION
 // ═══════════════════════════════════════════════
 function ConveniosSection({ aliadoId, comisionBase }) {
-  const [convenios, setConvenios] = useState([]);
-  const [pasadiasDB, setPasadiasDB] = useState([]);
-  const [loaded, setLoaded] = useState(false);
+  const [convenios,   setConvenios]   = useState([]);
+  const [pasadiasDB,  setPasadiasDB]  = useState([]); // todas las activas con flags de visibilidad
+  const [loaded,      setLoaded]      = useState(false);
+  const [showAgregar, setShowAgregar] = useState(false); // modal "+ Agregar pasadía"
+  const [agregando,   setAgregando]   = useState(false);
 
   const fetchConvenios = useCallback(async () => {
     if (!supabase) return;
+    // Fetch ALL active pasadias with visibility flags
     const { data: pasData } = await supabase.from("pasadias")
-      .select("id, nombre, precio, precio_nino, precio_neto_agencia, precio_neto_nino")
+      .select("id, nombre, precio, precio_nino, precio_neto_agencia, precio_neto_nino, visible_agencias_todas, visible_agencias_seleccionadas")
       .eq("activo", true).order("orden");
     setPasadiasDB(pasData || []);
 
@@ -86,14 +89,15 @@ function ConveniosSection({ aliadoId, comisionBase }) {
       const pas = (pasData || []).find(p => p.nombre === c.tipo_pasadia);
       return {
         ...c,
-        tarifa_publica: pas?.precio || c.tarifa_publica,
-        tarifa_publica_nino: pas?.precio_nino || c.tarifa_publica_nino || 0,
+        tarifa_publica:      pas?.precio            || c.tarifa_publica,
+        tarifa_publica_nino: pas?.precio_nino        || c.tarifa_publica_nino || 0,
       };
     });
 
-    if (data && data.length > 0) {
-      setConvenios(syncFromPas(data));
-    } else if (data && data.length === 0 && pasData && pasData.length > 0) {
+    let rows = data || [];
+
+    if (rows.length === 0 && pasData && pasData.length > 0) {
+      // Primera vez: seed ALL active pasadías
       const seeds = pasData.map(p => ({
         id: `CONV-${aliadoId}-${p.nombre.replace(/\s/g, "")}`,
         aliado_id: aliadoId,
@@ -107,8 +111,32 @@ function ConveniosSection({ aliadoId, comisionBase }) {
       }));
       await supabase.from("b2b_convenios").insert(seeds);
       const { data: fresh } = await supabase.from("b2b_convenios").select("*").eq("aliado_id", aliadoId).order("tipo_pasadia");
-      setConvenios(syncFromPas(fresh || []));
+      rows = fresh || [];
+    } else {
+      // Ya hay convenios — auto-agregar pasadías nuevas con visible_agencias_todas que falten
+      const nombresExistentes = new Set(rows.map(c => c.tipo_pasadia));
+      const nuevasTodas = (pasData || []).filter(p =>
+        p.visible_agencias_todas === true && !nombresExistentes.has(p.nombre)
+      );
+      if (nuevasTodas.length > 0) {
+        const seeds = nuevasTodas.map(p => ({
+          id: `CONV-${aliadoId}-${p.nombre.replace(/\s/g, "")}`,
+          aliado_id: aliadoId,
+          tipo_pasadia: p.nombre,
+          tarifa_publica: p.precio,
+          tarifa_neta: p.precio_neto_agencia || Math.round(p.precio * (1 - (comisionBase || 12) / 100)),
+          tarifa_publica_nino: p.precio_nino || 0,
+          tarifa_neta_nino: p.precio_neto_nino || 0,
+          comision_pct: comisionBase || 12,
+          activo: true,
+        }));
+        await supabase.from("b2b_convenios").upsert(seeds, { onConflict: "id" });
+        const { data: fresh } = await supabase.from("b2b_convenios").select("*").eq("aliado_id", aliadoId).order("tipo_pasadia");
+        rows = fresh || [];
+      }
     }
+
+    setConvenios(syncFromPas(rows));
     setLoaded(true);
   }, [aliadoId, comisionBase]);
 
@@ -127,9 +155,34 @@ function ConveniosSection({ aliadoId, comisionBase }) {
     setConvenios(p => p.map(c => c.id === id ? { ...c, activo: !c.activo } : c));
   };
 
+  // Agregar pasadía de "visible en agencias seleccionadas" que no esté aún en convenios
+  const pasadiasParaAgregar = pasadiasDB.filter(p =>
+    p.visible_agencias_seleccionadas === true &&
+    !convenios.some(c => c.tipo_pasadia === p.nombre)
+  );
+
+  const handleAgregarPasadia = async (pas) => {
+    if (!supabase || agregando) return;
+    setAgregando(true);
+    const seed = {
+      id: `CONV-${aliadoId}-${pas.nombre.replace(/\s/g, "")}`,
+      aliado_id: aliadoId,
+      tipo_pasadia: pas.nombre,
+      tarifa_publica: pas.precio,
+      tarifa_neta: pas.precio_neto_agencia || Math.round(pas.precio * (1 - (comisionBase || 12) / 100)),
+      tarifa_publica_nino: pas.precio_nino || 0,
+      tarifa_neta_nino: pas.precio_neto_nino || 0,
+      comision_pct: comisionBase || 12,
+      activo: true,
+    };
+    await supabase.from("b2b_convenios").upsert(seed, { onConflict: "id" });
+    setAgregando(false);
+    setShowAgregar(false);
+    fetchConvenios();
+  };
+
   if (!loaded) return <div style={{ color: "rgba(255,255,255,0.3)", padding: 20, fontSize: 13 }}>Cargando convenios...</div>;
 
-  // Solo mostrar filas con precio de niño (VIP PASS, After Island, etc.)
   const tieneNino = (c) => (c.tarifa_publica_nino || 0) > 0;
 
   return (
@@ -167,7 +220,62 @@ function ConveniosSection({ aliadoId, comisionBase }) {
           ))}
         </tbody>
       </table>
-      <div style={{ fontSize: 11, color: "rgba(255,255,255,0.3)", marginTop: 8 }}>Tarifas públicas vienen del módulo Pasadías. Las netas son editables por aliado.</div>
+
+      {/* Footer: hint + botón agregar pasadía seleccionada */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 12, flexWrap: "wrap", gap: 10 }}>
+        <div style={{ fontSize: 11, color: "rgba(255,255,255,0.3)" }}>
+          Tarifas públicas vienen del módulo Pasadías. Las netas son editables por aliado.
+          {pasadiasParaAgregar.length > 0 && (
+            <span style={{ color: B.sky, marginLeft: 8 }}>
+              · {pasadiasParaAgregar.length} pasadía{pasadiasParaAgregar.length !== 1 ? "s" : ""} disponible{pasadiasParaAgregar.length !== 1 ? "s" : ""} para agregar
+            </span>
+          )}
+        </div>
+        {pasadiasParaAgregar.length > 0 && (
+          <button onClick={() => setShowAgregar(true)}
+            style={{ padding: "8px 16px", borderRadius: 8, border: `1px solid ${B.sky}44`, background: B.sky + "18", color: B.sky, fontSize: 12, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>
+            + Agregar pasadía
+          </button>
+        )}
+      </div>
+
+      {/* Modal: lista de pasadías de "agencias seleccionadas" */}
+      {showAgregar && (
+        <div style={{ position: "fixed", inset: 0, background: "#000B", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
+          onClick={e => e.target === e.currentTarget && setShowAgregar(false)}>
+          <div style={{ background: B.navyMid, borderRadius: 16, padding: 28, width: 480, maxWidth: "100%", maxHeight: "80vh", overflowY: "auto" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+              <div>
+                <div style={{ fontSize: 17, fontWeight: 800 }}>🎯 Agregar pasadía</div>
+                <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginTop: 3 }}>Pasadías disponibles para agencias seleccionadas</div>
+              </div>
+              <button onClick={() => setShowAgregar(false)} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.3)", fontSize: 20, cursor: "pointer" }}>✕</button>
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {pasadiasParaAgregar.map(pas => (
+                <div key={pas.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, background: "rgba(255,255,255,0.04)", borderRadius: 10, padding: "12px 16px", border: "1px solid rgba(255,255,255,0.07)" }}>
+                  <div>
+                    <div style={{ fontWeight: 700, fontSize: 14 }}>{pas.nombre}</div>
+                    <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>
+                      Público: {COP(pas.precio)}
+                      {pas.precio_neto_agencia > 0 && <span style={{ marginLeft: 10, color: B.sand }}>Neto: {COP(pas.precio_neto_agencia)}</span>}
+                    </div>
+                  </div>
+                  <button onClick={() => handleAgregarPasadia(pas)} disabled={agregando}
+                    style={{ padding: "7px 16px", borderRadius: 8, border: "none", background: B.sky, color: B.navy, fontWeight: 700, fontSize: 12, cursor: agregando ? "not-allowed" : "pointer", whiteSpace: "nowrap", opacity: agregando ? 0.6 : 1 }}>
+                    {agregando ? "..." : "+ Agregar"}
+                  </button>
+                </div>
+              ))}
+              {pasadiasParaAgregar.length === 0 && (
+                <div style={{ textAlign: "center", padding: 20, color: "rgba(255,255,255,0.3)", fontSize: 13 }}>
+                  Todas las pasadías disponibles ya están agregadas
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -206,6 +314,8 @@ function HistorialReservasB2B({ aliadoId, comisionPct = 0 }) {
   const [showPagoModal, setShowPagoModal] = useState(false);
   const [pagoForm, setPagoForm]       = useState({ metodo: "transferencia", monto: 0, nota: "", usuario: "" });
   const [uploadingPago, setUploadingPago] = useState(false);
+  const [sendingEmail, setSendingEmail]   = useState(false);
+  const [emailSent, setEmailSent]         = useState(false);
 
   // ── Log helper ─────────────────────────────────────────────────────────
   const logHistorial = useCallback(async (reservaId, accion, descripcion, valAntes = null, valDespues = null, usuario = "admin") => {
@@ -222,6 +332,39 @@ function HistorialReservasB2B({ aliadoId, comisionPct = 0 }) {
     const { data } = await supabase.from("reservas_historial").select("*").eq("reserva_id", reservaId).order("created_at", { ascending: false });
     setHistorial(data || []);
   }, []);
+
+  // ── Reenviar email de confirmación ────────────────────────────────────
+  const handleResendEmail = useCallback(async () => {
+    if (!selected || sendingEmail) return;
+    setSendingEmail(true);
+    try {
+      const { data: reservaFresh } = supabase
+        ? await supabase.from("reservas").select("*").eq("id", selected).single()
+        : { data: null };
+      const payload = reservaFresh;
+      if (!payload) { alert("No se pudo obtener la reserva"); setSendingEmail(false); return; }
+      const resp = await fetch(
+        "https://ncdyttgxuicyruathkxd.supabase.co/functions/v1/send-confirmation",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        }
+      );
+      const json = await resp.json();
+      if (json.ok || json.id) {
+        setEmailSent(true);
+        setTimeout(() => setEmailSent(false), 3000);
+        await logHistorial(selected, "nota", `📧 Email de confirmación reenviado a ${payload.contacto || payload.email || "—"}`);
+        fetchHistorial(selected);
+      } else {
+        alert("Error al reenviar: " + (json.error || JSON.stringify(json)));
+      }
+    } catch (e) {
+      alert("Error: " + e.message);
+    }
+    setSendingEmail(false);
+  }, [selected, sendingEmail, logHistorial, fetchHistorial]);
 
   const [pasadiasMap, setPasadiasMap] = useState({}); // { tipo_lower: precio_publico }
 
@@ -755,6 +898,25 @@ function HistorialReservasB2B({ aliadoId, comisionPct = 0 }) {
                   </div>
                 )}
             </div>
+
+            {/* Acciones rápidas — email + certificado (solo confirmado) */}
+            {sel.estado === "confirmado" && (
+              <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
+                <button
+                  onClick={handleResendEmail}
+                  disabled={sendingEmail}
+                  style={{ flex: 1, padding: "10px", borderRadius: 8, border: `1px solid ${emailSent ? B.success + "88" : B.sky + "55"}`, background: emailSent ? B.success + "15" : B.sky + "12", color: emailSent ? B.success : B.sky, fontSize: 12, fontWeight: 700, cursor: sendingEmail ? "default" : "pointer", opacity: sendingEmail ? 0.6 : 1 }}>
+                  {sendingEmail ? "Enviando..." : emailSent ? "✓ Enviado" : "📧 Reenviar correo"}
+                </button>
+                <a
+                  href={`/zarpe-info?id=${sel.id}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  style={{ flex: 1, padding: "10px", borderRadius: 8, border: `1px solid ${B.sand + "55"}`, background: B.sand + "12", color: B.sand, fontSize: 12, fontWeight: 700, cursor: "pointer", textDecoration: "none", textAlign: "center" }}>
+                  🎫 Ver certificado
+                </a>
+              </div>
+            )}
 
             {/* Botones */}
             <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
