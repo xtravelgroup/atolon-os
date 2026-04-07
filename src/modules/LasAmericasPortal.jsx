@@ -73,50 +73,226 @@ function Spinner() {
   );
 }
 
-// ── Header ────────────────────────────────────────────────────────────────────
-function Header() {
+// ── Sticky top bar ────────────────────────────────────────────────────────────
+function TopBar() {
   const [logoErr, setLogoErr] = useState(false);
   return (
     <div style={{
-      background: `linear-gradient(135deg, ${DARK} 0%, ${DARK_MID} 100%)`,
-      borderBottom: `2px solid ${ORO}`,
-      padding: "28px 24px 24px",
-      textAlign: "center",
+      background: DARK,
+      borderBottom: `1px solid ${ORO}44`,
+      padding: "14px 24px",
+      display: "flex", alignItems: "center", justifyContent: "space-between",
+      position: "sticky", top: 0, zIndex: 100,
     }}>
-      {/* Hotel logo */}
-      <div style={{ marginBottom: 12 }}>
-        {!logoErr ? (
-          <img
-            src={HOTEL_LOGO}
-            alt={HOTEL_NOMBRE}
-            onError={() => setLogoErr(true)}
-            style={{ height: 72, objectFit: "contain", display: "inline-block" }}
-          />
-        ) : (
-          <div style={{ fontSize: 26, fontWeight: 900, color: WARM_WHITE, fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: 1 }}>
-            {HOTEL_NOMBRE.toUpperCase()}
-          </div>
-        )}
-      </div>
+      {!logoErr ? (
+        <img src={HOTEL_LOGO} alt={HOTEL_NOMBRE} onError={() => setLogoErr(true)}
+          style={{ height: 40, objectFit: "contain" }} />
+      ) : (
+        <div style={{ fontSize: 18, fontWeight: 900, color: WARM_WHITE, fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: 1 }}>
+          {HOTEL_NOMBRE.toUpperCase()}
+        </div>
+      )}
+      <img src="/atolon-logo-white.png" alt="Atolon Beach Club"
+        style={{ height: 28, objectFit: "contain", opacity: 0.6 }} />
+    </div>
+  );
+}
 
-      {/* Subtitle */}
+// ── Hero / Marketing Section ──────────────────────────────────────────────────
+function HeroSection() {
+  const scrollToBooking = () => {
+    document.getElementById("booking-section")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
+  const INCLUDES = [
+    { icon: "🚐", text: "Transporte desde el Hotel Las Américas" },
+    { icon: "🚤", text: "Traslado en lancha hacia las Islas del Rosario" },
+    { icon: "🏝️", text: "Acceso exclusivo a Atolón Beach Club" },
+    { icon: "🏖️", text: "Uso de camas de playa y zonas lounge" },
+    { icon: "🍽️", text: "Experiencia gastronómica frente al mar" },
+    { icon: "🍹", text: "Bebidas y servicio en tu espacio" },
+  ];
+
+  const FEATURES = [
+    { icon: "🌊", title: "Espacios privados y tranquilos", desc: "Alejados del ruido, cerca del paraíso." },
+    { icon: "🎶", title: "Música, servicio y atención de alto nivel", desc: "Cada detalle cuidado para ti." },
+    { icon: "☀️", title: "Relax y diversión en equilibrio", desc: "El Caribe que siempre soñaste." },
+  ];
+
+  return (
+    <div>
+      {/* Hero */}
       <div style={{
-        fontSize: 15,
-        color: ORO_LIGHT,
-        fontFamily: "'Barlow Condensed', sans-serif",
-        letterSpacing: "0.08em",
-        textTransform: "uppercase",
-        marginBottom: 16,
+        background: `linear-gradient(160deg, #061020 0%, ${DARK_MID} 50%, #0a1a10 100%)`,
+        padding: "56px 24px 48px",
+        textAlign: "center",
+        position: "relative",
+        overflow: "hidden",
       }}>
-        Reserva tu Pasadía en Atolon Beach Club
+        {/* Background palm decoration */}
+        <div style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, opacity: 0.04, fontSize: 200, display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none", userSelect: "none" }}>
+          🌴
+        </div>
+
+        <div style={{ position: "relative", zIndex: 1, maxWidth: 680, margin: "0 auto" }}>
+          <div style={{ fontSize: 13, color: ORO_LIGHT, letterSpacing: "0.2em", textTransform: "uppercase", marginBottom: 20, fontWeight: 600 }}>
+            🌴 Sal de la rutina… sin complicarte
+          </div>
+
+          <h1 style={{
+            fontFamily: "'Barlow Condensed', sans-serif",
+            fontSize: "clamp(32px, 6vw, 58px)",
+            fontWeight: 900,
+            color: WARM_WHITE,
+            lineHeight: 1.08,
+            margin: "0 0 18px",
+            letterSpacing: "-0.01em",
+          }}>
+            Vive un Day Pass en<br />
+            <span style={{ color: ORO_LIGHT }}>Atolon Beach Club</span>
+          </h1>
+
+          <div style={{
+            fontSize: 17, color: "rgba(245,242,236,0.75)", lineHeight: 1.65,
+            marginBottom: 32, maxWidth: 520, margin: "0 auto 36px",
+          }}>
+            Tu estadía en Cartagena merece un día inolvidable en el mar.
+            <br />
+            <span style={{ color: "rgba(245,242,236,0.5)", fontSize: 15 }}>
+              Desde el Hotel Las Américas, nosotros nos encargamos de todo.
+            </span>
+          </div>
+
+          <button
+            onClick={scrollToBooking}
+            style={{
+              background: `linear-gradient(135deg, ${ORO}, ${ORO_LIGHT})`,
+              color: "#0A0500",
+              border: "none",
+              borderRadius: 50,
+              padding: "16px 44px",
+              fontSize: 17,
+              fontWeight: 800,
+              cursor: "pointer",
+              fontFamily: "'Barlow Condensed', sans-serif",
+              letterSpacing: "0.06em",
+              textTransform: "uppercase",
+              boxShadow: `0 8px 32px ${ORO}55`,
+              transition: "transform 0.15s, box-shadow 0.15s",
+            }}
+            onMouseEnter={e => { e.currentTarget.style.transform = "translateY(-2px)"; e.currentTarget.style.boxShadow = `0 12px 40px ${ORO}77`; }}
+            onMouseLeave={e => { e.currentTarget.style.transform = ""; e.currentTarget.style.boxShadow = `0 8px 32px ${ORO}55`; }}
+          >
+            📲 Reserva tu experiencia
+          </button>
+        </div>
       </div>
 
-      {/* Atolon logo */}
-      <img
-        src="/atolon-logo-white.png"
-        alt="Atolon Beach Club"
-        style={{ height: 32, objectFit: "contain", opacity: 0.7 }}
-      />
+      {/* Includes section */}
+      <div style={{ background: DARK_MID, padding: "48px 24px" }}>
+        <div style={{ maxWidth: 800, margin: "0 auto" }}>
+          <div style={{ textAlign: "center", marginBottom: 36 }}>
+            <div style={{ fontSize: 13, color: ORO, letterSpacing: "0.15em", textTransform: "uppercase", fontWeight: 700, marginBottom: 10 }}>
+              🚤 Nosotros nos encargamos de todo
+            </div>
+            <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontSize: "clamp(24px, 4vw, 34px)", fontWeight: 800, color: WARM_WHITE, lineHeight: 1.2 }}>
+              Solo relájate. Este plan incluye:
+            </div>
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(230px, 1fr))", gap: 14 }}>
+            {INCLUDES.map(({ icon, text }) => (
+              <div key={text} style={{
+                background: DARK_CARD,
+                borderRadius: 12,
+                padding: "16px 18px",
+                display: "flex", alignItems: "center", gap: 14,
+                border: `1px solid ${ORO}22`,
+              }}>
+                <span style={{ fontSize: 26, flexShrink: 0 }}>{icon}</span>
+                <span style={{ fontSize: 14, color: "rgba(245,242,236,0.85)", lineHeight: 1.4, fontWeight: 500 }}>{text}</span>
+              </div>
+            ))}
+          </div>
+
+          <div style={{ textAlign: "center", marginTop: 20, fontSize: 14, color: "rgba(245,242,236,0.5)", fontStyle: "italic" }}>
+            Un plan completo, cómodo y perfectamente organizado.
+          </div>
+        </div>
+      </div>
+
+      {/* Features section */}
+      <div style={{ background: DARK, padding: "48px 24px" }}>
+        <div style={{ maxWidth: 800, margin: "0 auto" }}>
+          <div style={{ textAlign: "center", marginBottom: 36 }}>
+            <div style={{ fontSize: 13, color: ORO, letterSpacing: "0.15em", textTransform: "uppercase", fontWeight: 700, marginBottom: 10 }}>
+              ☀️ Un día que lo cambia todo
+            </div>
+            <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontSize: "clamp(22px, 4vw, 32px)", fontWeight: 800, color: WARM_WHITE, lineHeight: 1.2, marginBottom: 12 }}>
+              Aguas cristalinas, arena blanca y un ambiente<br />diseñado para desconectar
+            </div>
+            <div style={{ fontSize: 14, color: "rgba(245,242,236,0.5)", maxWidth: 460, margin: "0 auto" }}>
+              Ideal para parejas, amigos o familias que quieren vivir el Caribe de verdad.
+            </div>
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 16 }}>
+            {FEATURES.map(({ icon, title, desc }) => (
+              <div key={title} style={{
+                background: DARK_CARD,
+                borderRadius: 16,
+                padding: "28px 22px",
+                textAlign: "center",
+                border: `1px solid ${ORO}1A`,
+              }}>
+                <div style={{ fontSize: 36, marginBottom: 14 }}>{icon}</div>
+                <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontSize: 19, fontWeight: 700, color: WARM_WHITE, marginBottom: 8 }}>{title}</div>
+                <div style={{ fontSize: 13, color: "rgba(245,242,236,0.5)", lineHeight: 1.5 }}>{desc}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Bottom CTA banner */}
+      <div style={{
+        background: `linear-gradient(135deg, #0a1503 0%, #1a2a06 50%, ${DARK_MID} 100%)`,
+        padding: "48px 24px",
+        textAlign: "center",
+        borderTop: `1px solid ${ORO}33`,
+        borderBottom: `1px solid ${ORO}33`,
+      }}>
+        <div style={{ maxWidth: 560, margin: "0 auto" }}>
+          <div style={{ fontSize: 13, color: ORO, letterSpacing: "0.15em", textTransform: "uppercase", fontWeight: 700, marginBottom: 12 }}>
+            ✨ Haz que tu viaje valga aún más la pena
+          </div>
+          <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontSize: "clamp(24px, 5vw, 40px)", fontWeight: 900, color: WARM_WHITE, lineHeight: 1.15, marginBottom: 12 }}>
+            Estás a un paso de uno de los mejores<br />beach clubs de la región.
+          </div>
+          <div style={{ fontSize: 16, color: "rgba(245,242,236,0.6)", marginBottom: 32 }}>
+            Nosotros te llevamos. 🚤
+          </div>
+          <button
+            onClick={scrollToBooking}
+            style={{
+              background: `linear-gradient(135deg, ${ORO}, ${ORO_LIGHT})`,
+              color: "#0A0500",
+              border: "none",
+              borderRadius: 50,
+              padding: "18px 52px",
+              fontSize: 18,
+              fontWeight: 900,
+              cursor: "pointer",
+              fontFamily: "'Barlow Condensed', sans-serif",
+              letterSpacing: "0.08em",
+              textTransform: "uppercase",
+              boxShadow: `0 8px 32px ${ORO}55`,
+            }}
+          >
+            👉 Separa tu cupo para Atolón Beach Club
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -460,7 +636,7 @@ export default function LasAmericasPortal() {
   if (loading) {
     return (
       <div style={{ minHeight: "100vh", background: DARK, display: "flex", flexDirection: "column" }}>
-        <Header />
+        <TopBar />
         <Spinner />
       </div>
     );
@@ -470,7 +646,7 @@ export default function LasAmericasPortal() {
   if (error || !aliado) {
     return (
       <div style={{ minHeight: "100vh", background: DARK, display: "flex", flexDirection: "column" }}>
-        <Header />
+        <TopBar />
         <div style={{
           flex: 1, display: "flex", flexDirection: "column",
           alignItems: "center", justifyContent: "center", padding: "40px 24px", textAlign: "center",
@@ -503,7 +679,7 @@ export default function LasAmericasPortal() {
     const isPago = confirmed.estado === "pendiente_pago";
     return (
       <div style={{ minHeight: "100vh", background: DARK, display: "flex", flexDirection: "column" }}>
-        <Header />
+        <TopBar />
         <div style={{
           flex: 1, display: "flex", flexDirection: "column",
           alignItems: "center", justifyContent: "center", padding: "40px 24px", textAlign: "center",
@@ -592,10 +768,26 @@ export default function LasAmericasPortal() {
         input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.7); }
       `}</style>
 
-      <Header />
-      <StepBar step={step} />
+      <TopBar />
+      <HeroSection />
 
-      <div style={{ maxWidth: 900, margin: "0 auto", padding: "0 16px 60px" }}>
+      {/* ── Booking section ─────────────────────────────────────────────────── */}
+      <div id="booking-section" style={{ background: DARK_MID, borderTop: `3px solid ${ORO}`, padding: "36px 0 0" }}>
+        <div style={{ textAlign: "center", marginBottom: 4 }}>
+          <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontSize: "clamp(26px, 5vw, 38px)", fontWeight: 900, color: WARM_WHITE }}>
+            📲 Reserva tu experiencia
+          </div>
+          <div style={{ fontSize: 14, color: ORO_LIGHT, marginTop: 6, marginBottom: 4 }}>
+            Elige tu pasadía, fecha y datos — confirmamos en segundos.
+          </div>
+        </div>
+      </div>
+
+      <div style={{ background: DARK_MID }}>
+      <StepBar step={step} />
+      </div>
+
+      <div style={{ background: DARK_MID, maxWidth: 900, margin: "0 auto", padding: "0 16px 60px" }}>
 
         {/* ── STEP 1: Elige tu Pasadía ─────────────────────────────────────── */}
         <section id="step1">
@@ -893,7 +1085,8 @@ export default function LasAmericasPortal() {
       {/* Footer */}
       <div style={{
         textAlign: "center", padding: "20px 16px",
-        borderTop: `1px solid rgba(255,255,255,0.06)`,
+        background: DARK,
+        borderTop: `1px solid ${ORO}22`,
         fontSize: 12, color: "rgba(255,255,255,0.2)", letterSpacing: "0.05em",
       }}>
         Atolon Beach Club · Tierra Bomba, Cartagena
