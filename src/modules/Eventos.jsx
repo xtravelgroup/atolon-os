@@ -1648,6 +1648,7 @@ export default function Eventos() {
       direccion: e.direccion || "", montaje: e.montaje || "",
       hora_ini: e.hora_ini || "", hora_fin: e.hora_fin || "", vencimiento: e.vencimiento || "",
       buy_out: e.buy_out || false,
+      modalidad_pago: e.modalidad_pago || "individual",
     })));
     if (salR.data) setSalidas(salR.data);
     if (aliR.data) setAliados(aliR.data);
