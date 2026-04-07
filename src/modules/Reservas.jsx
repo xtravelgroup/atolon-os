@@ -933,14 +933,16 @@ function ReservaModal({ onClose, onSave, isMobile, salidaList = [], aliadoList =
   const [precioMode, setPrecioMode] = useState("full"); // "full" | "neto"
   const [paxMapFecha,    setPaxMapFecha]    = useState(paxMap); // pax by salida for selected date
   const [overridesFecha, setOverridesFecha] = useState({});    // salidas_override map for selected date
+  const [cierreFecha,    setCierreFecha]    = useState(null);  // cierre activo para la fecha seleccionada
 
-  // Fetch real pax counts + overrides for the selected date
+  // Fetch real pax counts + overrides + cierres for the selected date
   useEffect(() => {
     if (!supabase || !form.fecha) return;
     Promise.all([
       supabase.from("reservas").select("salida_id, pax, estado").eq("fecha", form.fecha).neq("estado", "cancelado"),
       supabase.from("salidas_override").select("*").eq("fecha", form.fecha),
-    ]).then(([resR, ovrR]) => {
+      supabase.from("cierres").select("tipo, salidas, activo, motivo").eq("fecha", form.fecha).eq("activo", true).limit(1),
+    ]).then(([resR, ovrR, cieR]) => {
       const map = {};
       salidaList.forEach(s => (map[s.id] = 0));
       (resR.data || []).forEach(r => { map[r.salida_id] = (map[r.salida_id] || 0) + (r.pax || 0); });
@@ -948,6 +950,7 @@ function ReservaModal({ onClose, onSave, isMobile, salidaList = [], aliadoList =
       const omap = {};
       (ovrR.data || []).forEach(o => { omap[o.salida_id] = o; });
       setOverridesFecha(omap);
+      setCierreFecha((cieR.data && cieR.data.length > 0) ? cieR.data[0] : null);
     });
   }, [form.fecha, salidaList]);
 
@@ -1019,15 +1022,18 @@ function ReservaModal({ onClose, onSave, isMobile, salidaList = [], aliadoList =
     ? FORMAS_PAGO
     : FORMAS_PAGO.filter(f => f !== "CXC" || tieneCXC);
 
-  // Salidas visible for selected date — uses locally fetched overridesFecha so that
-  // manual "abrir" overrides work for any date (not just today/tomorrow loaded in parent)
+  // Salidas visible for selected date — uses locally fetched overridesFecha + cierreFecha
   const salidasFecha = (() => {
+    // Si hay cierre total: ninguna salida disponible
+    if (cierreFecha?.tipo === "total") return [];
     const activas = salidaList.filter(s => s.activo);
     const sorted = [...activas].sort((a, b) => a.hora.localeCompare(b.hora));
     return sorted.filter((s, idx) => {
       const ovr = overridesFecha[s.id];
       if (ovr?.accion === "abrir") return true;   // manual calendar override: force open
       if (ovr?.accion === "cerrar") return false;  // manual calendar override: force close
+      // Cierre parcial: bloquea las salidas específicas
+      if (cierreFecha && (cierreFecha.salidas || []).includes(s.id)) return false;
       if (!s.auto_apertura) return true;           // fixed salida: always open
       if (idx === 0) return true;
       const prev = sorted[idx - 1];
@@ -1057,6 +1063,7 @@ function ReservaModal({ onClose, onSave, isMobile, salidaList = [], aliadoList =
       if (!form.telefono.trim() || !/^[\d\s+\-()\\.]{7,}$/.test(form.telefono)) e.telefono = "Teléfono requerido";
     }
     if (!form.fecha)         e.fecha = "Requerido";
+    if (cierreFecha?.tipo === "total") e.fecha = "Fecha cerrada — no se pueden crear reservas";
     if (!form.salida_id && !sinTransporte) e.salida_id = "Requerido";
     if ((Number(form.pax_a) + Number(form.pax_n)) < 1) e.pax_a = "Min 1 pax";
     if (form.precio < 0)     e.precio = "Inválido";
@@ -1212,6 +1219,19 @@ function ReservaModal({ onClose, onSave, isMobile, salidaList = [], aliadoList =
             </div>
           )}
         </div>
+
+        {/* Banner de cierre — fecha bloqueada */}
+        {cierreFecha && (
+          <div style={{ background: "#D6454522", border: `1px solid #D64545`, borderRadius: 10, padding: "12px 16px", display: "flex", alignItems: "center", gap: 10 }}>
+            <span style={{ fontSize: 20 }}>🔒</span>
+            <div>
+              <div style={{ fontWeight: 700, color: "#F87171", fontSize: 13 }}>
+                {cierreFecha.tipo === "total" ? "Fecha cerrada — sin disponibilidad" : "Cierre parcial en esta fecha"}
+              </div>
+              {cierreFecha.motivo && <div style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", marginTop: 2 }}>{cierreFecha.motivo}</div>}
+            </div>
+          </div>
+        )}
 
         {/* Salida selector con disponibilidad — oculto si pasadía es sin transporte */}
         {!sinTransporte && <div style={FS}>
