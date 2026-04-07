@@ -451,10 +451,10 @@ export default function Metas() {
       supabase.from("metas").select("*").eq("periodo", periodo),
       // Pasadías individuales (excluye canal GRUPO)
       supabase.from("reservas")
-        .select("ep, pax_a, pax_n, total, canal")
+        .select("vendedor, pax_a, pax_n, total, canal")
         .gte("fecha", start)
         .lte("fecha", end)
-        .neq("estado", "Cancelada"),
+        .neq("estado", "cancelado"),
       supabase.from("eventos")
         .select("vendedor, pax, valor")
         .gte("fecha", start)
@@ -470,13 +470,13 @@ export default function Metas() {
     const gruResMap = {}; // pasadías de grupo (canal ILIKE 'grupo')
     for (const r of (reservas || [])) {
       const isGrupo = (r.canal || "").toLowerCase() === "grupo";
-      const k = r.ep || "Sin asignar";
+      const k = r.vendedor || "Sin asignar";
       if (isGrupo) {
-        if (!gruResMap[k]) gruResMap[k] = { ep: k, pasadias: 0, ingresos: 0 };
+        if (!gruResMap[k]) gruResMap[k] = { vendedor: k, pasadias: 0, ingresos: 0 };
         gruResMap[k].pasadias += (r.pax_a || 0) + (r.pax_n || 0);
         gruResMap[k].ingresos += (r.total || 0);
       } else {
-        if (!resMap[k]) resMap[k] = { ep: k, pasadias: 0, ingresos: 0 };
+        if (!resMap[k]) resMap[k] = { vendedor: k, pasadias: 0, ingresos: 0 };
         resMap[k].pasadias += (r.pax_a || 0) + (r.pax_n || 0);
         resMap[k].ingresos += (r.total || 0);
       }
@@ -493,7 +493,7 @@ export default function Metas() {
     }
     // Add grupo reservas pax/ingresos into eventosData
     for (const r of Object.values(gruResMap)) {
-      const k = r.ep;
+      const k = r.vendedor;
       if (!evMap[k]) evMap[k] = { vendedor: k, grupos: 0, ingresos: 0 };
       evMap[k].grupos += r.pasadias; // count pasadías de grupos as metric
       evMap[k].ingresos += r.ingresos;
@@ -552,7 +552,7 @@ export default function Metas() {
     const gruVendedores = vendedores.filter(v => v.dept_ventas === "grupos");
 
     const pasRanking = pasVendedores.map(v => {
-      const rData = reservasData.find(r => r.ep === v.nombre) || { pasadias: 0, ingresos: 0 };
+      const rData = reservasData.find(r => r.vendedor === v.nombre) || { pasadias: 0, ingresos: 0 };
       const mRow  = metasDB.find(m => m.departamento === "pasadias" && m.tipo === "vendedor" && m.vendedor_nombre === v.nombre);
       return {
         nombre: v.nombre,
