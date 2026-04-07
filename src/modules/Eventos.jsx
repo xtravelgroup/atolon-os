@@ -671,13 +671,15 @@ export function EventoModal({ evento, categoria, salidas, aliados, vendedores, o
         </h3>
 
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+
+          {/* 1. Nombre */}
           <div>
             <label style={LS}>{isGrupo ? "Nombre del grupo / empresa" : "Nombre del evento"}</label>
             <input value={form.nombre} onChange={e => set("nombre", e.target.value)} style={IS}
               placeholder={isGrupo ? "Ej: Grupo Empresas XYZ" : "Ej: Matrimonio García & Pérez"} />
           </div>
 
-          {/* Modalidad de pago — solo grupos, va primero */}
+          {/* 2. Modalidad de pago — solo grupos */}
           {isGrupo && (
             <div>
               <label style={LS}>Modalidad de pago del grupo</label>
@@ -700,153 +702,9 @@ export function EventoModal({ evento, categoria, salidas, aliados, vendedores, o
             </div>
           )}
 
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-            <div>
-              <label style={LS}>{isGrupo ? "Tipo de pasadía" : "Tipo de evento"}</label>
-              <select value={form.tipo} onChange={e => set("tipo", e.target.value)} style={IS}>
-                {tiposOpt.map(t => <option key={t} value={t}>{t}</option>)}
-              </select>
-            </div>
-            <div>
-              <label style={LS}>Stage</label>
-              <select value={form.stage} onChange={e => set("stage", e.target.value)} style={IS}>
-                {STAGES.map(s => <option key={s} value={s}>{s}</option>)}
-              </select>
-            </div>
-          </div>
-
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-            <div>
-              <label style={LS}>Fecha</label>
-              <input type="date" value={form.fecha} onChange={e => set("fecha", e.target.value)} style={IS} />
-            </div>
-            <div>
-              <label style={LS}>Cupos máximos (0 = ilimitado)</label>
-              <input type="number" value={form.pax} onChange={e => set("pax", e.target.value)} style={IS} placeholder="0" />
-            </div>
-          </div>
-
-          {/* Salidas — solo para grupos */}
-          {isGrupo && (
-            <div>
-              <label style={LS}>Horarios de salida</label>
-              {/* Existing salidas checkboxes */}
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
-                {salidas.map(s => {
-                  const sel = form.salidas_grupo.some(x => x.id === s.id);
-                  return (
-                    <button key={s.id} type="button" onClick={() => toggleSalida(s)}
-                      style={{ padding: "6px 14px", borderRadius: 8, border: "none", fontSize: 13, fontWeight: 600, cursor: "pointer",
-                        background: sel ? B.sky : B.navyLight, color: sel ? B.navy : "rgba(255,255,255,0.5)" }}>
-                      {sel ? "✓ " : ""}Salida {s.hora}
-                    </button>
-                  );
-                })}
-              </div>
-              {/* Custom hora input */}
-              <div style={{ display: "flex", gap: 8 }}>
-                <input
-                  value={horaInput}
-                  onChange={e => setHoraInput(e.target.value)}
-                  onKeyDown={e => e.key === "Enter" && addCustomHora()}
-                  placeholder="Agregar hora manual: 14:00"
-                  style={{ ...IS, flex: 1 }}
-                />
-                <button type="button" onClick={addCustomHora}
-                  style={{ padding: "9px 16px", borderRadius: 8, background: B.sand, color: B.navy, border: "none", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
-                  + Agregar
-                </button>
-              </div>
-              {/* Selected salidas chips */}
-              {form.salidas_grupo.length > 0 && (
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 10 }}>
-                  {[...form.salidas_grupo].sort((a,b) => a.hora.localeCompare(b.hora)).map(s => (
-                    <div key={s.hora} style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 10px 4px 12px", borderRadius: 20, background: s.custom ? B.warning + "33" : B.sky + "33", border: `1px solid ${s.custom ? B.warning : B.sky}55`, fontSize: 12, fontWeight: 600, color: s.custom ? B.warning : B.sky }}>
-                      ⛵ {s.hora}{s.custom ? " (manual)" : ""}
-                      <button onClick={() => removeSalida(s.hora)} style={{ background: "none", border: "none", color: "inherit", cursor: "pointer", fontSize: 13, lineHeight: 1, padding: 0 }}>✕</button>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-
-
-          {!isGrupo && (
-            <div>
-              <label style={LS}>Valor estimado</label>
-              <input type="number" value={form.valor} onChange={e => set("valor", e.target.value)} style={IS} placeholder="0" />
-            </div>
-          )}
-
-          <div>
-            <label style={LS}>Nombre del contacto / organizador</label>
-            <input value={form.contacto} onChange={e => set("contacto", e.target.value)} style={IS} placeholder="Nombre del cliente o responsable" />
-          </div>
-
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-            <div>
-              <label style={LS}>Teléfono / WhatsApp</label>
-              <input value={form.tel} onChange={e => set("tel", e.target.value)} style={IS} placeholder="+57 300 000 0000" />
-            </div>
-            <div>
-              <label style={LS}>Email</label>
-              <input type="email" value={form.email} onChange={e => set("email", e.target.value)} style={IS} placeholder="correo@ejemplo.com" />
-            </div>
-          </div>
-
-          {/* Datos de cotización — solo para eventos */}
-          {!isGrupo && (
-            <>
-              <div style={{ borderTop: `1px solid ${B.navyLight}`, paddingTop: 16, marginTop: 4 }}>
-                <div style={{ fontSize: 11, color: B.sand, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 12, fontWeight: 700 }}>Datos para cotización</div>
-                <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                    <div>
-                      <label style={LS}>Empresa / Cliente</label>
-                      <input value={form.empresa} onChange={e => set("empresa", e.target.value)} style={IS} placeholder="Nombre de la empresa o cliente" />
-                    </div>
-                    <div>
-                      <label style={LS}>NIT / Identificación</label>
-                      <input value={form.nit} onChange={e => set("nit", e.target.value)} style={IS} placeholder="900123456-7" />
-                    </div>
-                  </div>
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                    <div>
-                      <label style={LS}>Cargo del contacto</label>
-                      <input value={form.cargo} onChange={e => set("cargo", e.target.value)} style={IS} placeholder="Gerente, Organizador..." />
-                    </div>
-                    <div>
-                      <label style={LS}>Dirección</label>
-                      <input value={form.direccion} onChange={e => set("direccion", e.target.value)} style={IS} placeholder="Dirección del cliente" />
-                    </div>
-                  </div>
-                  <div>
-                    <label style={LS}>Tipo de Montaje</label>
-                    <input value={form.montaje} onChange={e => set("montaje", e.target.value)} style={IS} placeholder="Coctel, Cena, Auditorio..." />
-                  </div>
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
-                    <div>
-                      <label style={LS}>Hora Inicio</label>
-                      <input value={form.hora_ini} onChange={e => set("hora_ini", e.target.value)} style={IS} placeholder="10:00" />
-                    </div>
-                    <div>
-                      <label style={LS}>Hora Final</label>
-                      <input value={form.hora_fin} onChange={e => set("hora_fin", e.target.value)} style={IS} placeholder="18:00" />
-                    </div>
-                    <div>
-                      <label style={LS}>Vencimiento cotización</label>
-                      <input type="date" value={form.vencimiento} onChange={e => set("vencimiento", e.target.value)} style={IS} />
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </>
-          )}
-
-          {/* Aliado B2B — searchable */}
+          {/* 3. Agencia B2B — searchable */}
           <div style={{ position: "relative" }}>
-            <label style={LS}>Aliado B2B (agencia / hotel / comisionista)</label>
+            <label style={LS}>{isGrupo ? "Agencia / Aliado B2B" : "Aliado B2B (agencia / hotel / comisionista)"}</label>
             <div
               onClick={() => { setAliadoOpen(o => !o); setAliadoSearch(""); }}
               style={{ ...IS, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "space-between", userSelect: "none" }}
@@ -862,27 +720,21 @@ export function EventoModal({ evento, categoria, salidas, aliados, vendedores, o
                 background: B.navyMid, border: `1px solid ${B.navyLight}`, borderRadius: 10,
                 boxShadow: "0 8px 24px #0006", marginTop: 4, overflow: "hidden",
               }}>
-                <input
-                  autoFocus
-                  value={aliadoSearch}
-                  onChange={e => setAliadoSearch(e.target.value)}
+                <input autoFocus value={aliadoSearch} onChange={e => setAliadoSearch(e.target.value)}
                   placeholder="Buscar agencia, hotel, comisionista..."
-                  style={{ width: "100%", padding: "10px 14px", background: B.navy, border: "none", borderBottom: `1px solid ${B.navyLight}`, color: B.white, fontSize: 13, outline: "none", boxSizing: "border-box" }}
-                />
+                  style={{ width: "100%", padding: "10px 14px", background: B.navy, border: "none", borderBottom: `1px solid ${B.navyLight}`, color: B.white, fontSize: 13, outline: "none", boxSizing: "border-box" }} />
                 <div style={{ maxHeight: 220, overflowY: "auto" }}>
-                  <div
-                    onClick={() => { set("aliado_id", ""); setAliadoOpen(false); }}
+                  <div onClick={() => { set("aliado_id", ""); setAliadoOpen(false); }}
                     style={{ padding: "10px 14px", cursor: "pointer", fontSize: 13, color: "rgba(255,255,255,0.4)", borderBottom: `1px solid ${B.navyLight}22` }}
                     onMouseEnter={e => e.currentTarget.style.background = B.navyLight}
-                    onMouseLeave={e => e.currentTarget.style.background = "transparent"}
-                  >Sin aliado (directo)</div>
+                    onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                    Sin aliado (directo)
+                  </div>
                   {aliadosFiltrados.map(a => (
-                    <div key={a.id}
-                      onClick={() => { set("aliado_id", a.id); setAliadoOpen(false); }}
+                    <div key={a.id} onClick={() => { set("aliado_id", a.id); setAliadoOpen(false); }}
                       style={{ padding: "10px 14px", cursor: "pointer", fontSize: 13, borderBottom: `1px solid ${B.navyLight}22` }}
                       onMouseEnter={e => e.currentTarget.style.background = B.navyLight}
-                      onMouseLeave={e => e.currentTarget.style.background = "transparent"}
-                    >
+                      onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
                       <span style={{ color: B.white, fontWeight: 600 }}>{a.nombre}</span>
                       <span style={{ color: "rgba(255,255,255,0.4)", marginLeft: 8, fontSize: 11 }}>{a.tipo}</span>
                     </div>
@@ -895,23 +747,169 @@ export function EventoModal({ evento, categoria, salidas, aliados, vendedores, o
             )}
           </div>
 
-          {/* Vendedor */}
+          {/* 4. Nombre del contacto */}
           <div>
-            <label style={LS}>Vendedor responsable</label>
-            <select value={form.vendedor} onChange={e => set("vendedor", e.target.value)} style={IS}>
-              <option value="">Sin asignar</option>
-              {vendedores.map(v => <option key={v.id} value={v.nombre}>{v.nombre}</option>)}
-            </select>
+            <label style={LS}>Nombre del contacto / organizador</label>
+            <input value={form.contacto} onChange={e => set("contacto", e.target.value)} style={IS} placeholder="Nombre del cliente o responsable" />
           </div>
 
+          {/* 5. Email + Teléfono */}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            <div>
+              <label style={LS}>Email</label>
+              <input type="email" value={form.email} onChange={e => set("email", e.target.value)} style={IS} placeholder="correo@ejemplo.com" />
+            </div>
+            <div>
+              <label style={LS}>Teléfono / WhatsApp</label>
+              <input value={form.tel} onChange={e => set("tel", e.target.value)} style={IS} placeholder="+57 300 000 0000" />
+            </div>
+          </div>
+
+          {/* 6. Vendedor + 7. Stage */}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            <div>
+              <label style={LS}>Vendedor responsable</label>
+              <select value={form.vendedor} onChange={e => set("vendedor", e.target.value)} style={IS}>
+                <option value="">Sin asignar</option>
+                {vendedores.map(v => <option key={v.id} value={v.nombre}>{v.nombre}</option>)}
+              </select>
+            </div>
+            <div>
+              <label style={LS}>Stage</label>
+              <select value={form.stage} onChange={e => set("stage", e.target.value)} style={IS}>
+                {STAGES.map(s => <option key={s} value={s}>{s}</option>)}
+              </select>
+            </div>
+          </div>
+
+          {/* 8. Tipo + Fecha/Pax */}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            <div>
+              <label style={LS}>{isGrupo ? "Tipo de pasadía" : "Tipo de evento"}</label>
+              <select value={form.tipo} onChange={e => set("tipo", e.target.value)} style={IS}>
+                {tiposOpt.map(t => <option key={t} value={t}>{t}</option>)}
+              </select>
+            </div>
+            <div>
+              <label style={LS}>Fecha</label>
+              <input type="date" value={form.fecha} onChange={e => set("fecha", e.target.value)} style={IS} />
+            </div>
+          </div>
+
+          {/* Cupos — solo si modalidad individual */}
+          {isGrupo && form.modalidad_pago !== "organizador" && (
+            <div>
+              <label style={LS}>Cupos máximos (0 = ilimitado)</label>
+              <input type="number" value={form.pax} onChange={e => set("pax", e.target.value)} style={IS} placeholder="0" />
+            </div>
+          )}
+
+          {/* Cupos totales — si organizador */}
+          {isGrupo && form.modalidad_pago === "organizador" && (
+            <div>
+              <label style={LS}>Total de pasadías (cupos confirmados)</label>
+              <input type="number" value={form.pax} onChange={e => set("pax", e.target.value)} style={IS} placeholder="Ej: 55" />
+            </div>
+          )}
+
+          {/* Valor estimado — solo eventos */}
+          {!isGrupo && (
+            <div>
+              <label style={LS}>Valor estimado</label>
+              <input type="number" value={form.valor} onChange={e => set("valor", e.target.value)} style={IS} placeholder="0" />
+            </div>
+          )}
+
+          {/* Horarios de salida — solo grupos */}
+          {isGrupo && (
+            <div>
+              <label style={LS}>Horarios de salida</label>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
+                {salidas.map(s => {
+                  const sel = form.salidas_grupo.some(x => x.id === s.id);
+                  return (
+                    <button key={s.id} type="button" onClick={() => toggleSalida(s)}
+                      style={{ padding: "6px 14px", borderRadius: 8, border: "none", fontSize: 13, fontWeight: 600, cursor: "pointer",
+                        background: sel ? B.sky : B.navyLight, color: sel ? B.navy : "rgba(255,255,255,0.5)" }}>
+                      {sel ? "✓ " : ""}Salida {s.hora}
+                    </button>
+                  );
+                })}
+              </div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <input value={horaInput} onChange={e => setHoraInput(e.target.value)}
+                  onKeyDown={e => e.key === "Enter" && addCustomHora()}
+                  placeholder="Agregar hora manual: 14:00" style={{ ...IS, flex: 1 }} />
+                <button type="button" onClick={addCustomHora}
+                  style={{ padding: "9px 16px", borderRadius: 8, background: B.sand, color: B.navy, border: "none", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
+                  + Agregar
+                </button>
+              </div>
+              {form.salidas_grupo.length > 0 && (
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 10 }}>
+                  {[...form.salidas_grupo].sort((a,b) => a.hora.localeCompare(b.hora)).map(s => (
+                    <div key={s.hora} style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 10px 4px 12px", borderRadius: 20, background: s.custom ? B.warning + "33" : B.sky + "33", border: `1px solid ${s.custom ? B.warning : B.sky}55`, fontSize: 12, fontWeight: 600, color: s.custom ? B.warning : B.sky }}>
+                      ⛵ {s.hora}{s.custom ? " (manual)" : ""}
+                      <button onClick={() => removeSalida(s.hora)} style={{ background: "none", border: "none", color: "inherit", cursor: "pointer", fontSize: 13, lineHeight: 1, padding: 0 }}>✕</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Datos de cotización — solo eventos */}
+          {!isGrupo && (
+            <div style={{ borderTop: `1px solid ${B.navyLight}`, paddingTop: 16, marginTop: 4 }}>
+              <div style={{ fontSize: 11, color: B.sand, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 12, fontWeight: 700 }}>Datos para cotización</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                  <div>
+                    <label style={LS}>Empresa / Cliente</label>
+                    <input value={form.empresa} onChange={e => set("empresa", e.target.value)} style={IS} placeholder="Nombre de la empresa o cliente" />
+                  </div>
+                  <div>
+                    <label style={LS}>NIT / Identificación</label>
+                    <input value={form.nit} onChange={e => set("nit", e.target.value)} style={IS} placeholder="900123456-7" />
+                  </div>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                  <div>
+                    <label style={LS}>Cargo del contacto</label>
+                    <input value={form.cargo} onChange={e => set("cargo", e.target.value)} style={IS} placeholder="Gerente, Organizador..." />
+                  </div>
+                  <div>
+                    <label style={LS}>Dirección</label>
+                    <input value={form.direccion} onChange={e => set("direccion", e.target.value)} style={IS} placeholder="Dirección del cliente" />
+                  </div>
+                </div>
+                <div>
+                  <label style={LS}>Tipo de Montaje</label>
+                  <input value={form.montaje} onChange={e => set("montaje", e.target.value)} style={IS} placeholder="Coctel, Cena, Auditorio..." />
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
+                  <div>
+                    <label style={LS}>Hora Inicio</label>
+                    <input value={form.hora_ini} onChange={e => set("hora_ini", e.target.value)} style={IS} placeholder="10:00" />
+                  </div>
+                  <div>
+                    <label style={LS}>Hora Final</label>
+                    <input value={form.hora_fin} onChange={e => set("hora_fin", e.target.value)} style={IS} placeholder="18:00" />
+                  </div>
+                  <div>
+                    <label style={LS}>Vencimiento cotización</label>
+                    <input type="date" value={form.vencimiento} onChange={e => set("vencimiento", e.target.value)} style={IS} />
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Buy-Out */}
-          <div
-            onClick={() => set("buy_out", !form.buy_out)}
+          <div onClick={() => set("buy_out", !form.buy_out)}
             style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", borderRadius: 10, cursor: "pointer",
               background: form.buy_out ? "rgba(255,180,0,0.12)" : B.navyLight,
-              border: `1px solid ${form.buy_out ? "#FFB400" : "transparent"}`,
-              transition: "all 0.2s" }}
-          >
+              border: `1px solid ${form.buy_out ? "#FFB400" : "transparent"}`, transition: "all 0.2s" }}>
             <div style={{ width: 20, height: 20, borderRadius: 5, border: `2px solid ${form.buy_out ? "#FFB400" : "rgba(255,255,255,0.25)"}`,
               background: form.buy_out ? "#FFB400" : "transparent", display: "flex", alignItems: "center", justifyContent: "center",
               flexShrink: 0, transition: "all 0.2s" }}>
@@ -919,12 +917,11 @@ export function EventoModal({ evento, categoria, salidas, aliados, vendedores, o
             </div>
             <div>
               <div style={{ fontSize: 13, fontWeight: 700, color: form.buy_out ? "#FFB400" : B.white }}>Buy-Out</div>
-              <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>
-                Al confirmar, cierra automáticamente la fecha para venta de pasadías
-              </div>
+              <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>Al confirmar, cierra automáticamente la fecha para venta de pasadías</div>
             </div>
           </div>
 
+          {/* Notas */}
           <div>
             <label style={LS}>Notas</label>
             <textarea value={form.notas} onChange={e => set("notas", e.target.value)} rows={2}
