@@ -547,7 +547,10 @@ export function EventoModal({ evento, categoria, salidas, aliados, vendedores, o
     const notas    = esAjuste
       ? `Ajuste — ${form.nombre} — Total nuevo: ${COP(nuevoTotal)} — Ya pagado: ${COP(totalPagado)} — Pendiente: ${COP(montoOp)}`
       : `Pago grupal — ${form.nombre} — ${form.precio_tipo === "neto" ? "precio neto B2B" : "precio público"}`;
-    const totalPax = (form.pasadias_org || []).reduce((s, p) => s + (Number(p.personas) || 0), 0);
+    // Impuesto Muelle no cuenta como pax (es un cobro, no una persona)
+    const totalPax = (form.pasadias_org || [])
+      .filter(p => p.tipo !== "Impuesto Muelle")
+      .reduce((s, p) => s + (Number(p.personas) || 0), 0);
     const { error } = await supabase.from("reservas").insert({
       id: rid, fecha: fechaISO,
       tipo: (form.pasadias_org?.[0]?.tipo) || form.tipo || "Grupo",
@@ -940,9 +943,12 @@ export function EventoModal({ evento, categoria, salidas, aliados, vendedores, o
 
           {/* Pasadías múltiples — solo organizador */}
           {isGrupo && form.modalidad_pago === "organizador" && (() => {
-            const totalPax = form.pasadias_org.reduce((s, p) => s + (Number(p.personas) || 0), 0);
+            // Impuesto Muelle no es pasajero → excluir del conteo de pax
+            const totalPax = form.pasadias_org
+              .filter(p => p.tipo !== "Impuesto Muelle")
+              .reduce((s, p) => s + (Number(p.personas) || 0), 0);
             const totalSal = form.salidas_grupo.reduce((s, x) => s + (Number(x.personas) || 0), 0);
-            const mismatch = form.pasadias_org.length > 0 && form.salidas_grupo.length > 0 && totalPax > 0 && totalSal > 0 && totalPax !== totalSal;
+            const mismatch = form.pasadias_org.filter(p => p.tipo !== "Impuesto Muelle").length > 0 && form.salidas_grupo.length > 0 && totalPax > 0 && totalSal > 0 && totalPax !== totalSal;
             return (
               <div>
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
@@ -964,7 +970,7 @@ export function EventoModal({ evento, categoria, salidas, aliados, vendedores, o
                           {TIPOS_GRUPO.map(t => <option key={t} value={t}>{t}</option>)}
                         </select>
                         <input type="number" value={p.personas} onChange={e => setPasadiaOrg(p.id, "personas", e.target.value)}
-                          placeholder="# pax" style={{ ...IS, textAlign: "center" }} />
+                          placeholder={p.tipo === "Impuesto Muelle" ? "# cobros" : "# pax"} style={{ ...IS, textAlign: "center" }} />
                         {isStaff && (
                           <input type="number" value={p.precio_manual || ""} onChange={e => setPasadiaOrg(p.id, "precio_manual", e.target.value)}
                             placeholder="Precio c/u" style={{ ...IS, fontSize: 12 }} />
