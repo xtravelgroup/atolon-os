@@ -85,13 +85,110 @@ function ProgressBar({ real, meta, height = 7 }) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Drill-down modal
+// ─────────────────────────────────────────────────────────────────────────────
+
+const COP_FMT = (v) => new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", minimumFractionDigits: 0 }).format(v || 0);
+
+function exportCSV(title, items, cols) {
+  const header = cols.map(c => c.label).join(",");
+  const rows = items.map(row =>
+    cols.map(c => {
+      const val = c.render ? c.render(row) : (row[c.key] ?? "");
+      const str = String(val).replace(/"/g, '""');
+      return str.includes(",") || str.includes('"') || str.includes("\n") ? `"${str}"` : str;
+    }).join(",")
+  );
+  const csv = [header, ...rows].join("\n");
+  const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = `${title.replace(/[^\w\s]/g, "").trim()}.csv`; a.click();
+  URL.revokeObjectURL(url);
+}
+
+function DrillDownModal({ title, items, cols, onClose }) {
+  const btnStyle = {
+    padding: "6px 14px", borderRadius: 8, border: `1px solid ${B.navyLight}`,
+    background: "rgba(255,255,255,0.06)", color: "rgba(255,255,255,0.7)",
+    fontSize: 12, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap",
+  };
+
+  const handlePrint = () => {
+    const header = cols.map(c => `<th style="text-align:${c.right?"right":"left"};padding:6px 10px;border-bottom:1px solid #ccc;font-size:11px;text-transform:uppercase">${c.label}</th>`).join("");
+    const bodyRows = items.map(row => {
+      const cells = cols.map(c => {
+        const val = c.render ? c.render(row) : (row[c.key] ?? "—");
+        return `<td style="padding:6px 10px;font-size:13px;text-align:${c.right?"right":"left"};border-bottom:1px solid #eee">${val}</td>`;
+      }).join("");
+      return `<tr>${cells}</tr>`;
+    }).join("");
+    const html = `<html><head><title>${title}</title><style>body{font-family:sans-serif;padding:20px}table{width:100%;border-collapse:collapse}@media print{body{padding:0}}</style></head><body><h2 style="margin-bottom:12px">${title}</h2><p style="color:#666;font-size:12px;margin-bottom:16px">${items.length} registro${items.length!==1?"s":""}</p><table><thead><tr>${header}</tr></thead><tbody>${bodyRows}</tbody></table></body></html>`;
+    const win = window.open("", "_blank");
+    win.document.write(html);
+    win.document.close();
+    win.print();
+  };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 999, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}
+      onClick={onClose}>
+      <div style={{ background: B.navyMid, borderRadius: 16, width: "100%", maxWidth: 760, maxHeight: "85vh", display: "flex", flexDirection: "column", boxShadow: "0 24px 64px #0008" }}
+        onClick={e => e.stopPropagation()}>
+        {/* Header */}
+        <div style={{ padding: "20px 24px", borderBottom: `1px solid ${B.navyLight}`, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+          <div style={{ fontFamily: "'Barlow Condensed',sans-serif", fontSize: 20, fontWeight: 700 }}>{title}</div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ fontSize: 13, color: "rgba(255,255,255,0.4)" }}>{items.length} registro{items.length !== 1 ? "s" : ""}</span>
+            <button onClick={handlePrint} style={btnStyle} title="Imprimir">🖨 Imprimir</button>
+            <button onClick={() => exportCSV(title, items, cols)} style={btnStyle} title="Exportar a Excel/CSV">📊 Excel</button>
+            <button onClick={onClose} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.5)", fontSize: 20, cursor: "pointer", lineHeight: 1 }}>✕</button>
+          </div>
+        </div>
+        {/* Table */}
+        <div style={{ overflowY: "auto", padding: "0 24px 20px" }}>
+          {items.length === 0 ? (
+            <div style={{ textAlign: "center", padding: 40, color: "rgba(255,255,255,0.3)", fontSize: 13 }}>Sin registros</div>
+          ) : (
+            <table style={{ width: "100%", borderCollapse: "collapse", marginTop: 12 }}>
+              <thead>
+                <tr>
+                  {cols.map(c => (
+                    <th key={c.key} style={{ textAlign: c.right ? "right" : "left", padding: "8px 10px", fontSize: 11, color: B.sand, textTransform: "uppercase", letterSpacing: "0.07em", borderBottom: `1px solid ${B.navyLight}`, fontWeight: 600 }}>
+                      {c.label}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {items.map((row, i) => (
+                  <tr key={i} style={{ borderBottom: `1px solid ${B.navyLight}44` }}>
+                    {cols.map(c => (
+                      <td key={c.key} style={{ padding: "10px 10px", fontSize: 13, textAlign: c.right ? "right" : "left", color: c.color ? c.color(row) : B.white }}>
+                        {c.render ? c.render(row) : row[c.key] ?? "—"}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Tab: Resumen
 // ─────────────────────────────────────────────────────────────────────────────
 
-function DeptKpiCard({ depto, real, meta }) {
+function DeptKpiCard({ depto, real, meta, onDrillMetric, onDrillIngresos }) {
   const pMetric  = pct(real.metric, meta.metric);
   const pIngresos = pct(real.ingresos, meta.ingresos);
   const cardColor = pctColor(pMetric ?? pIngresos);
+
+  const clickStyle = { cursor: "pointer", borderRadius: 8, padding: "10px 12px", margin: "-10px -12px", transition: "background 0.15s" };
 
   return (
     <div style={{
@@ -111,17 +208,27 @@ function DeptKpiCard({ depto, real, meta }) {
             <span style={{ fontSize: 11, color: "rgba(255,255,255,0.35)" }}>meta: {meta.metric}</span>
           )}
         </div>
-        <div style={{ fontSize: 34, fontFamily: "'Barlow Condensed',sans-serif", fontWeight: 700, color: pctColor(pMetric), marginBottom: 6 }}>
-          {real.metric}
+        <div
+          onClick={onDrillMetric}
+          title="Ver detalle"
+          style={{ ...clickStyle, display: "inline-block" }}
+          onMouseEnter={e => e.currentTarget.style.background = "rgba(255,255,255,0.06)"}
+          onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+          <div style={{ fontSize: 34, fontFamily: "'Barlow Condensed',sans-serif", fontWeight: 700, color: pctColor(pMetric), lineHeight: 1 }}>
+            {real.metric}
+            <span style={{ fontSize: 13, color: "rgba(255,255,255,0.3)", marginLeft: 6, fontFamily: "inherit", fontWeight: 400 }}>↗</span>
+          </div>
         </div>
-        {meta.metric > 0 ? (
-          <>
-            <ProgressBar real={real.metric} meta={meta.metric} />
-            <div style={{ fontSize: 11, color: pctColor(pMetric), marginTop: 4, fontWeight: 700 }}>{pMetric}%</div>
-          </>
-        ) : (
-          <div style={{ fontSize: 11, color: "rgba(255,255,255,0.25)", fontStyle: "italic" }}>Sin meta configurada</div>
-        )}
+        <div style={{ marginTop: 8 }}>
+          {meta.metric > 0 ? (
+            <>
+              <ProgressBar real={real.metric} meta={meta.metric} />
+              <div style={{ fontSize: 11, color: pctColor(pMetric), marginTop: 4, fontWeight: 700 }}>{pMetric}%</div>
+            </>
+          ) : (
+            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.25)", fontStyle: "italic" }}>Sin meta configurada</div>
+          )}
+        </div>
       </div>
 
       {/* Ingresos */}
@@ -132,34 +239,90 @@ function DeptKpiCard({ depto, real, meta }) {
             <span style={{ fontSize: 11, color: "rgba(255,255,255,0.35)" }}>meta: {fmtM(meta.ingresos)}</span>
           )}
         </div>
-        <div style={{ fontSize: 26, fontFamily: "'Barlow Condensed',sans-serif", fontWeight: 700, color: pctColor(pIngresos), marginBottom: 6 }}>
-          {fmtM(real.ingresos)}
+        <div
+          onClick={onDrillIngresos}
+          title="Ver detalle"
+          style={{ ...clickStyle, display: "inline-block" }}
+          onMouseEnter={e => e.currentTarget.style.background = "rgba(255,255,255,0.06)"}
+          onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+          <div style={{ fontSize: 26, fontFamily: "'Barlow Condensed',sans-serif", fontWeight: 700, color: pctColor(pIngresos), lineHeight: 1 }}>
+            {fmtM(real.ingresos)}
+            <span style={{ fontSize: 13, color: "rgba(255,255,255,0.3)", marginLeft: 6, fontFamily: "inherit", fontWeight: 400 }}>↗</span>
+          </div>
         </div>
-        {meta.ingresos > 0 ? (
-          <>
-            <ProgressBar real={real.ingresos} meta={meta.ingresos} />
-            <div style={{ fontSize: 11, color: pctColor(pIngresos), marginTop: 4, fontWeight: 700 }}>{pIngresos}%</div>
-          </>
-        ) : (
-          <div style={{ fontSize: 11, color: "rgba(255,255,255,0.25)", fontStyle: "italic" }}>Sin meta configurada</div>
-        )}
+        <div style={{ marginTop: 8 }}>
+          {meta.ingresos > 0 ? (
+            <>
+              <ProgressBar real={real.ingresos} meta={meta.ingresos} />
+              <div style={{ fontSize: 11, color: pctColor(pIngresos), marginTop: 4, fontWeight: 700 }}>{pIngresos}%</div>
+            </>
+          ) : (
+            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.25)", fontStyle: "italic" }}>Sin meta configurada</div>
+          )}
+        </div>
       </div>
     </div>
   );
 }
 
-function TabResumen({ reals, metas, isMobile }) {
+function TabResumen({ reals, metas, rawReservas, rawEventos, isMobile }) {
+  const [drill, setDrill] = useState(null); // { title, items, cols }
+
+  const RES_COLS = [
+    { key: "nombre",   label: "Nombre" },
+    { key: "fecha",    label: "Fecha" },
+    { key: "tipo",     label: "Tipo" },
+    { key: "vendedor", label: "Vendedor", render: r => r.vendedor || "Sin asignar" },
+    { key: "pax",      label: "Pax", right: true, render: r => (r.pax_a || 0) + (r.pax_n || 0) },
+    { key: "total",    label: "Total", right: true, render: r => COP_FMT(r.total), color: () => B.success },
+  ];
+
+  const EVT_COLS = [
+    { key: "nombre",   label: "Nombre / Grupo" },
+    { key: "fecha",    label: "Fecha" },
+    { key: "vendedor", label: "Vendedor", render: r => r.vendedor || "Sin asignar" },
+    { key: "pax",      label: "Pax", right: true },
+    { key: "valor",    label: "Valor", right: true, render: r => COP_FMT(r.valor), color: () => B.success },
+  ];
+
+  const pasadiasRows = rawReservas.filter(r => (r.canal || "").toLowerCase() !== "grupo");
+  const grupoRows    = rawEventos;
+
   return (
-    <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
-      {DEPTOS.map(d => (
-        <DeptKpiCard
-          key={d.key}
-          depto={d}
-          real={reals[d.key] || { metric: 0, ingresos: 0 }}
-          meta={metas[d.key] || { metric: 0, ingresos: 0 }}
+    <>
+      <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+        {DEPTOS.map(d => (
+          <DeptKpiCard
+            key={d.key}
+            depto={d}
+            real={reals[d.key] || { metric: 0, ingresos: 0 }}
+            meta={metas[d.key] || { metric: 0, ingresos: 0 }}
+            onDrillMetric={() => {
+              const rows = d.key === "pasadias" ? pasadiasRows : grupoRows;
+              const cols = d.key === "pasadias" ? RES_COLS : EVT_COLS;
+              const sorted = d.key === "pasadias"
+                ? [...rows].sort((a, b) => ((b.pax_a||0)+(b.pax_n||0)) - ((a.pax_a||0)+(a.pax_n||0)))
+                : [...rows].sort((a, b) => (b.pax || 0) - (a.pax || 0));
+              setDrill({ title: `${d.icon} ${d.metricLabel} — detalle`, items: sorted, cols });
+            }}
+            onDrillIngresos={() => {
+              const rows = d.key === "pasadias" ? pasadiasRows : grupoRows;
+              const cols = d.key === "pasadias" ? RES_COLS : EVT_COLS;
+              const sorted = [...rows].sort((a, b) => (b.total || b.valor || 0) - (a.total || a.valor || 0));
+              setDrill({ title: `${d.icon} Ingresos ${d.label} — detalle`, items: sorted, cols });
+            }}
+          />
+        ))}
+      </div>
+      {drill && (
+        <DrillDownModal
+          title={drill.title}
+          items={drill.items}
+          cols={drill.cols}
+          onClose={() => setDrill(null)}
         />
-      ))}
-    </div>
+      )}
+    </>
   );
 }
 
@@ -430,8 +593,10 @@ export default function Metas() {
 
   const [vendedores, setVendedores] = useState([]);
   const [metasDB, setMetasDB]       = useState([]);
-  const [reservasData, setReservasData] = useState([]);  // [{ep, pasadias, ingresos}]
-  const [eventosData, setEventosData]   = useState([]);  // [{vendedor, grupos, ingresos}]
+  const [reservasData, setReservasData] = useState([]);  // aggregated by vendedor
+  const [eventosData, setEventosData]   = useState([]);  // aggregated by vendedor
+  const [rawReservas, setRawReservas]   = useState([]);  // individual records
+  const [rawEventos,  setRawEventos]    = useState([]);  // individual records
   const [draft, setDraft] = useState({});
 
   // ── Load ─────────────────────────────────────────────────────────────────────
@@ -449,14 +614,14 @@ export default function Metas() {
     ] = await Promise.all([
       supabase.from("usuarios").select("nombre, dept_ventas").eq("activo", true).eq("es_vendedor", true).order("nombre"),
       supabase.from("metas").select("*").eq("periodo", periodo),
-      // Pasadías individuales (excluye canal GRUPO)
+      // Pasadías individuales
       supabase.from("reservas")
-        .select("vendedor, pax_a, pax_n, total, canal")
+        .select("id, nombre, fecha, tipo, vendedor, pax_a, pax_n, total, canal")
         .gte("fecha", start)
         .lte("fecha", end)
         .neq("estado", "cancelado"),
       supabase.from("eventos")
-        .select("vendedor, pax, valor")
+        .select("id, nombre, fecha, vendedor, pax, valor, pasadias_org")
         .gte("fecha", start)
         .lte("fecha", end)
         .eq("stage", "Confirmado"),
@@ -464,6 +629,8 @@ export default function Metas() {
 
     setVendedores(usrs || []);
     setMetasDB(metas || []);
+    setRawReservas(reservas || []);
+    setRawEventos(eventos || []);
 
     // Aggregate reservas: split individual vs grupo
     const resMap = {};   // pasadías individuales
@@ -483,13 +650,18 @@ export default function Metas() {
     }
     setReservasData(Object.values(resMap));
 
+    const PRECIO_MUELLE = 18000;
     // Aggregate eventos + grupo reservas into eventosData
     const evMap = {};
     for (const e of (eventos || [])) {
       const k = e.vendedor || "Sin asignar";
       if (!evMap[k]) evMap[k] = { vendedor: k, grupos: 0, ingresos: 0 };
       evMap[k].grupos += 1;
-      evMap[k].ingresos += (e.valor || 0);
+      // Subtract Impuesto Muelle from ingresos — it's a tax, not a sale
+      const muelleTotal = (e.pasadias_org || [])
+        .filter(p => p.tipo === "Impuesto Muelle")
+        .reduce((s, p) => s + (Number(p.personas) || 0) * PRECIO_MUELLE, 0);
+      evMap[k].ingresos += Math.max(0, (e.valor || 0) - muelleTotal);
     }
     // Add grupo reservas pax/ingresos into eventosData
     for (const r of Object.values(gruResMap)) {
@@ -695,7 +867,7 @@ export default function Metas() {
       {loading ? (
         <div style={{ textAlign: "center", padding: 80, color: "rgba(255,255,255,0.35)", fontSize: 13 }}>Cargando...</div>
       ) : tab === "resumen" ? (
-        <TabResumen reals={reals} metas={metasSummary} isMobile={isMobile} />
+        <TabResumen reals={reals} metas={metasSummary} rawReservas={rawReservas} rawEventos={rawEventos} isMobile={isMobile} />
       ) : tab === "vendedores" ? (
         <TabVendedores rankings={rankings} />
       ) : (
