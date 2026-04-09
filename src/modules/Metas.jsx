@@ -614,12 +614,13 @@ export default function Metas() {
     ] = await Promise.all([
       supabase.from("usuarios").select("nombre, dept_ventas").eq("activo", true).eq("es_vendedor", true).order("nombre"),
       supabase.from("metas").select("*").eq("periodo", periodo),
-      // Pasadías individuales
+      // Pasadías individuales (excluye A CONSUMO: pago en sitio, no genera ingreso medible)
       supabase.from("reservas")
         .select("id, nombre, fecha, tipo, vendedor, pax_a, pax_n, total, canal")
         .gte("fecha", start)
         .lte("fecha", end)
-        .neq("estado", "cancelado"),
+        .neq("estado", "cancelado")
+        .neq("tipo", "A CONSUMO"),
       supabase.from("eventos")
         .select("id, nombre, fecha, vendedor, pax, valor, pasadias_org")
         .gte("fecha", start)
