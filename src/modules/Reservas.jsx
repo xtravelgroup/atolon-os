@@ -2550,8 +2550,8 @@ export default function Reservas() {
       {/* ── Day tabs ── */}
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: isMobile ? 16 : 20, alignItems: "center" }}>
         {[
-          { key: "hoy",    label: "Hoy",    fecha: today,    count: reservasHoy.filter(r => r.estado !== "cancelado").reduce((s,r) => s + r.pax, 0) },
-          { key: "manana", label: "Mañana", fecha: tomorrow, count: reservasManana.filter(r => r.estado !== "cancelado").reduce((s,r) => s + r.pax, 0) },
+          { key: "hoy",    label: "Hoy",    fecha: today,    count: reservasHoy.filter(r => r.estado !== "cancelado").reduce((s,r) => s + r.pax, 0) + gruposHoy.reduce((s,g) => s + grupoPaxTotal(g), 0) },
+          { key: "manana", label: "Mañana", fecha: tomorrow, count: reservasManana.filter(r => r.estado !== "cancelado").reduce((s,r) => s + r.pax, 0) + gruposManana.reduce((s,g) => s + grupoPaxTotal(g), 0) },
         ].map(t => (
           <button key={t.key} onClick={() => { setTabDia(t.key); setSearch(""); setFilter("todos"); }} style={{
             display: "flex", alignItems: "center", gap: 8,
