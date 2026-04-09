@@ -30,6 +30,7 @@ const NAV_GROUPS = [
       { key: "actividades",  label: "Actividades",  icon: "🎯" },
       { key: "comercial",    label: "Comercial",    icon: "★" },
       { key: "metas",        label: "Metas",        icon: "🎯" },
+      { key: "comisiones",   label: "Comisiones",   icon: "💜" },
     ],
   },
   {
@@ -122,16 +123,19 @@ function Dashboard() {
       const inicioHoy = hoy + "T00:00:00-05:00";
       const finHoy    = hoy + "T23:59:59-05:00";
 
-      const [ventasHoyR, paxHoyR, paxMananaR, leadsHoyR, evtR, reqR, cobR, cobR2] = await Promise.all([
+      // grupoPaxTotal: excluye Impuesto Muelle y STAFF de la suma de pax visible
+      const grupoPax = (g) => (g.pasadias_org || []).filter(p => p.tipo !== "Impuesto Muelle" && p.tipo !== "STAFF").reduce((s, p) => s + (Number(p.personas) || 0), 0) || (g.pax || 0);
+
+      const [ventasHoyR, paxHoyR, paxMananaR, leadsHoyR, evtR, reqR, cobR, cobR2, grpHoyR, grpMananaR] = await Promise.all([
         // Pasadías vendidos hoy: filtrar por cuándo se CREÓ la reserva
         supabase.from("reservas").select("total")
           .eq("estado", "confirmado")
           .gte("created_at", inicioHoy)
           .lte("created_at", finHoy),
-        // Pax hoy: pasajeros cuyo viaje es HOY (solo confirmados)
-        supabase.from("reservas").select("pax").eq("fecha", hoy).eq("estado", "confirmado"),
-        // Pax mañana: pasajeros cuyo viaje es MAÑANA (solo confirmados)
-        supabase.from("reservas").select("pax").eq("fecha", mananaStr).eq("estado", "confirmado"),
+        // Pax hoy: confirmados + check_in + pipeline comercial
+        supabase.from("reservas").select("pax").eq("fecha", hoy).in("estado", ["confirmado", "check_in", "pendiente", "pendiente_pago", "pendiente_comprobante"]),
+        // Pax mañana: confirmados + check_in + pipeline comercial
+        supabase.from("reservas").select("pax").eq("fecha", mananaStr).in("estado", ["confirmado", "check_in", "pendiente", "pendiente_pago", "pendiente_comprobante"]),
         // Leads creados hoy aún activos
         supabase.from("leads").select("id")
           .not("stage", "in", '("Cerrado Ganado","Perdido")')
@@ -143,7 +147,14 @@ function Dashboard() {
         supabase.from("reservas").select("abono").eq("fecha_pago", hoy).neq("estado", "cancelado"),
         // Cobrado hoy: abono sin fecha_pago pero creado hoy (web/Wompi automático)
         supabase.from("reservas").select("abono").is("fecha_pago", null).gte("created_at", inicioHoy).lte("created_at", finHoy).gt("abono", 0).neq("estado", "cancelado"),
+        // Grupos hoy y mañana
+        supabase.from("eventos").select("id, pax, fecha, pasadias_org, categoria, aliado_id").eq("fecha", hoy).neq("stage", "Realizado"),
+        supabase.from("eventos").select("id, pax, fecha, pasadias_org, categoria, aliado_id").eq("fecha", mananaStr).neq("stage", "Realizado"),
       ]);
+
+      const isGrupo = (e) => e.categoria === "grupo" || (!e.categoria && e.aliado_id);
+      const paxGruposHoy    = (grpHoyR.data    || []).filter(isGrupo).reduce((s, g) => s + grupoPax(g), 0);
+      const paxGruposManana = (grpMananaR.data  || []).filter(isGrupo).reduce((s, g) => s + grupoPax(g), 0);
 
       const ventasHoy = ventasHoyR.data || [];
       const cobradoHoy = [...(cobR.data || []), ...(cobR2.data || [])].reduce((s, r) => s + (r.abono || 0), 0);
@@ -151,8 +162,8 @@ function Dashboard() {
         pasadiasVendidos: ventasHoy.length,
         revenue: cobradoHoy,
         leadsHoy: (leadsHoyR.data || []).length,
-        paxHoy: (paxHoyR.data || []).reduce((s, r) => s + (r.pax || 0), 0),
-        paxManana: (paxMananaR.data || []).reduce((s, r) => s + (r.pax || 0), 0),
+        paxHoy:    (paxHoyR.data    || []).reduce((s, r) => s + (r.pax || 0), 0) + paxGruposHoy,
+        paxManana: (paxMananaR.data  || []).reduce((s, r) => s + (r.pax || 0), 0) + paxGruposManana,
         eventos: (evtR.data || []).length,
         reqPendientes: (reqR.data || []).length,
       });
@@ -165,28 +176,7 @@ function Dashboard() {
 
   return (
     <div>
-      {/* Fila 1: Ventas de hoy */}
-      <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginBottom: 16 }}>
-        <KpiCard
-          label="Pasadías Vendidos Hoy"
-          value={loading ? "..." : String(kpis.pasadiasVendidos ?? 0)}
-          sub="reservas confirmadas hoy"
-          color={B.sky}
-        />
-        <KpiCard
-          label="Revenue Hoy"
-          value={loading ? "..." : COP(kpis.revenue || 0)}
-          sub="cobrado hoy (fecha de pago)"
-          color={B.success}
-        />
-        <KpiCard
-          label="Leads Activos Hoy"
-          value={loading ? "..." : String(kpis.leadsHoy ?? 0)}
-          sub="leads nuevos activos hoy"
-          color={B.pink}
-        />
-      </div>
-      {/* Fila 2: Pax */}
+      {/* Fila: Pax */}
       <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginBottom: 32 }}>
         <KpiCard
           label="Pax Hoy"
@@ -228,14 +218,9 @@ function Dashboard() {
           ))}
         </div>
         <div style={{ background: B.navyMid, borderRadius: 12, padding: 24 }}>
-          <h3 style={{ color: B.sand, marginBottom: 16, fontSize: 18 }}>Resumen Rápido</h3>
-          <div style={{ fontSize: 13, lineHeight: 2.4, color: "rgba(255,255,255,0.7)" }}>
-            <div>Requisiciones pendientes: <strong style={{ color: B.warning }}>{kpis.reqPendientes ?? 0}</strong></div>
-            <div>Eventos activos: <strong style={{ color: B.sand }}>{kpis.eventos ?? 0}</strong></div>
-            <div>Revenue hoy: <strong style={{ color: B.success }}>{loading ? "..." : COP(kpis.revenue || 0)}</strong></div>
-            <div style={{ marginTop: 16, fontSize: 12, color: "rgba(255,255,255,0.3)" }}>
-              Datos en tiempo real desde Supabase · Zona horaria Colombia
-            </div>
+          <h3 style={{ color: B.sand, marginBottom: 16, fontSize: 18 }}>Info del Sistema</h3>
+          <div style={{ fontSize: 12, color: "rgba(255,255,255,0.3)", marginTop: 8 }}>
+            Datos en tiempo real desde Supabase · Zona horaria Colombia
           </div>
         </div>
       </div>

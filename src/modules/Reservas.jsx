@@ -13,7 +13,7 @@ const fmtHora = (ts) => {
 
 const CANALES   = ["Web", "WhatsApp", "B2B", "Teléfono", "Walk-in"];
 const VENDEDORES = ["Sin asignar"]; // fallback; real list loaded from usuarios (ventas + gerente_ventas)
-const FORMAS_PAGO = ["Transferencia", "Efectivo", "Wompi", "SKY", "CXC", "Enviar Link de Pago"];
+const FORMAS_PAGO = ["Transferencia", "Efectivo", "Datafono", "Wompi", "SKY", "CXC", "Enviar Link de Pago"];
 
 const ESTADO_STYLE = {
   confirmado:            { bg: B.success + "22", color: B.success, label: "Confirmado"   },
@@ -143,6 +143,8 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
     fecha_pago: r0.fecha_pago ? (r0.fecha_pago + "").slice(0, 10) : "",
     vendedor:   r0.vendedor  || "Sin asignar",
     aliado_id:  r0.aliado_id || "",
+    nombre_embarcacion: r0.nombre_embarcacion || "",
+    hora_llegada: r0.hora_llegada || "",
   });
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
@@ -226,7 +228,7 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
       email:     emailUpd,
       telefono:  form.telefono.trim() || null,
       fecha:     form.fecha,
-      salida_id: form.salida_id,
+      salida_id: form.salida_id || null,
       tipo:      form.tipo,
       canal:     form.canal,
       pax_a:     Number(form.pax_a),
@@ -241,6 +243,8 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
       fecha_pago: form.fecha_pago || null,
       vendedor:   form.vendedor !== "Sin asignar" ? form.vendedor : null,
       aliado_id:  form.aliado_id || null,
+      nombre_embarcacion: form.nombre_embarcacion || null,
+      hora_llegada: form.hora_llegada || null,
     }).eq("id", r0.id);
 
     // Log de auditoría
@@ -741,6 +745,8 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
                 r0.canal && { icon: "📡", label: "Canal de venta",    value: r0.canal, color: B.white },
                 r0.vendedor && { icon: "🧑‍💼", label: "Vendedor",         value: r0.vendedor, color: B.sand },
                 (aliado || r0.agencia) && { icon: "🏢", label: "Agencia B2B", value: aliado?.nombre || r0.agencia, color: B.sky },
+                r0.nombre_embarcacion && { icon: "⛵", label: "Embarcación",        value: r0.nombre_embarcacion, color: B.sky },
+                r0.hora_llegada && { icon: "🕐", label: "Hora est. llegada", value: r0.hora_llegada, color: B.sky },
                 r0.ci && { icon: "✅", label: "Check-in realizado",  value: fmtDT(r0.ci), color: B.success },
                 r0.co && { icon: "🏁", label: "Check-out",            value: fmtDT(r0.co), color: B.sand },
                 r0.ep && { icon: "🌅", label: "Llegada temprana",     value: "Activado",   color: B.warning },
@@ -1233,6 +1239,25 @@ function ReservaModal({ onClose, onSave, isMobile, salidaList = [], aliadoList =
           </div>
         )}
 
+        {/* Embarcación propia — solo para pasadías sin transporte (After Island, etc.) */}
+        {sinTransporte && (
+          <div style={{ background: "#0D1B3E44", border: `1px solid ${B.navyLight}`, borderRadius: 10, padding: "14px 16px" }}>
+            <div style={{ fontSize: 11, color: B.sand, textTransform: "uppercase", letterSpacing: "0.07em", fontWeight: 700, marginBottom: 12 }}>
+              ⛵ Embarcación del cliente
+            </div>
+            <div style={G2}>
+              <div style={FS}>
+                <label style={LS}>Nombre de la embarcación</label>
+                <input style={IS()} type="text" placeholder="Ej: El Delfín" value={form.nombre_embarcacion || ""} onChange={e => set("nombre_embarcacion", e.target.value)} />
+              </div>
+              <div style={FS}>
+                <label style={LS}>Hora estimada de llegada</label>
+                <input style={IS()} type="time" value={form.hora_llegada || ""} onChange={e => set("hora_llegada", e.target.value)} />
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Salida selector con disponibilidad — oculto si pasadía es sin transporte */}
         {!sinTransporte && <div style={FS}>
           <label style={LS}>Horario de salida *</label>
@@ -1437,12 +1462,17 @@ function TabCalendario({ salidas, cierres, embarcaciones }) {
   const hoy = todayStr();
   const [mesOffset, setMesOffset] = useState(0);
   const [reservasPorDia, setReservasPorDia] = useState({});
+  const [gruposPorDia,   setGruposPorDia]   = useState({});
+  const [sinTransportePorDia, setSinTransportePorDia] = useState({});
   const [overrides, setOverrides] = useState({});
   const [selectedDay, setSelectedDay] = useState(null);
   const [selectedSalida, setSelectedSalida] = useState(null);
   const [resDetalle, setResDetalle] = useState([]);
   const [loadingRes, setLoadingRes] = useState(false);
   const [selectedReserva, setSelectedReserva] = useState(null);
+  const [embForm, setEmbForm] = useState({ nombre_embarcacion: "", hora_llegada: "" });
+  const [savingEmb, setSavingEmb] = useState(false);
+  const [grupoEmbDropdown, setGrupoEmbDropdown] = useState(null); // "grupoId-sgKey"
 
   const now = new Date();
   const mesDate = new Date(now.getFullYear(), now.getMonth() + mesOffset, 1);
@@ -1465,6 +1495,35 @@ function TabCalendario({ salidas, cierres, embarcaciones }) {
           map[r.fecha][r.salida_id] += r.pax || 0;
         });
         setReservasPorDia(map);
+      });
+    // Fetch grupos for the month — pax counts toward salida capacity
+    supabase.from("eventos")
+      .select("id, nombre, tipo, pax, fecha, salidas_grupo, modalidad_pago, pasadias_org, stage")
+      .eq("categoria", "grupo")
+      .gte("fecha", desde).lte("fecha", hasta)
+      .then(({ data }) => {
+        const byDay = {};
+        (data || []).forEach(g => {
+          const f = g.fecha;
+          if (!f) return;
+          if (!byDay[f]) byDay[f] = [];
+          byDay[f].push(g);
+        });
+        setGruposPorDia(byDay);
+      });
+    // Fetch reservas sin transporte (salida_id null) for the month
+    supabase.from("reservas")
+      .select("id, nombre, tipo, pax, pax_a, pax_n, total, abono, estado, forma_pago, canal, email, telefono, created_at, fecha, notas")
+      .is("salida_id", null)
+      .gte("fecha", desde).lte("fecha", hasta)
+      .neq("estado", "cancelado")
+      .then(({ data }) => {
+        const byDay = {};
+        (data || []).forEach(r => {
+          if (!byDay[r.fecha]) byDay[r.fecha] = [];
+          byDay[r.fecha].push(r);
+        });
+        setSinTransportePorDia(byDay);
       });
     supabase.from("salidas_override").select("*").gte("fecha", desde).lte("fecha", hasta)
       .then(({ data }) => {
@@ -1540,6 +1599,39 @@ function TabCalendario({ salidas, cierres, embarcaciones }) {
       });
     }
     fetchMonthData();
+  };
+
+  const addEmbarcacionGrupo = async (grupo, sgKey, embId) => {
+    if (!supabase) return;
+    const emb = embarcaciones.find(e => e.id === embId);
+    if (!emb) return;
+    const newSalidas = (grupo.salidas_grupo || []).map(sg => {
+      const key = sg.custom ? sg.hora : sg.id;
+      if (key !== sgKey) return sg;
+      const existing = sg.embarcaciones || [];
+      if (existing.some(e => e.id === embId)) return sg;
+      return { ...sg, embarcaciones: [...existing, { id: emb.id, nombre: emb.nombre, capacidad: emb.capacidad }] };
+    });
+    await supabase.from("eventos").update({ salidas_grupo: newSalidas }).eq("id", grupo.id);
+    setGruposPorDia(prev => {
+      const dayGroups = (prev[selectedDay] || []).map(g => g.id === grupo.id ? { ...g, salidas_grupo: newSalidas } : g);
+      return { ...prev, [selectedDay]: dayGroups };
+    });
+    setGrupoEmbDropdown(null);
+  };
+
+  const removeEmbarcacionGrupo = async (grupo, sgKey, embId) => {
+    if (!supabase) return;
+    const newSalidas = (grupo.salidas_grupo || []).map(sg => {
+      const key = sg.custom ? sg.hora : sg.id;
+      if (key !== sgKey) return sg;
+      return { ...sg, embarcaciones: (sg.embarcaciones || []).filter(e => e.id !== embId) };
+    });
+    await supabase.from("eventos").update({ salidas_grupo: newSalidas }).eq("id", grupo.id);
+    setGruposPorDia(prev => {
+      const dayGroups = (prev[selectedDay] || []).map(g => g.id === grupo.id ? { ...g, salidas_grupo: newSalidas } : g);
+      return { ...prev, [selectedDay]: dayGroups };
+    });
   };
 
   const loadReservasSalida = async (salidaId) => {
@@ -1645,25 +1737,69 @@ function TabCalendario({ salidas, cierres, embarcaciones }) {
                 <span style={{ fontSize: 14, fontWeight: isHoy ? 700 : 400, color: isHoy ? B.sky : B.white }}>{dia}</span>
                 {cierre && <span style={{ fontSize: 8, padding: "1px 5px", borderRadius: 8, background: B.danger, color: B.white }}>CERRADO</span>}
               </div>
-              {getSalidasVisibles(fecha).map(s => {
-                const paxVendidos = resDia[s.id] || 0;
-                const ovr = (overrides[fecha] || {})[s.id];
-                const extraCap = (ovr?.extra_embarcaciones || []).reduce((sum, e) => sum + (e.capacidad || 0), 0);
-                const cap = (s.capacidad_total || 1) + extraCap;
-                const pct = cap > 0 ? paxVendidos / cap : 0;
-                const barColor = pct >= 1 ? B.danger : pct >= 0.7 ? B.warning : B.success;
+              {(() => {
+                const grupos = gruposPorDia[fecha] || [];
+                // Pax from grupos per salida_id
+                const grupoPax = {};
+                // Custom grupo salidas (hora not matching any salida)
+                const salidaHoras = new Set(salidas.map(s => s.hora));
+                const customSalidas = []; // { hora, pax, nombres }
+                grupos.forEach(g => {
+                  (g.salidas_grupo || []).forEach(sg => {
+                    const pax = Number(sg.personas) || 0;
+                    if (!sg.custom && sg.id && !sg.id.startsWith("custom-") && salidas.some(s => s.id === sg.id)) {
+                      grupoPax[sg.id] = (grupoPax[sg.id] || 0) + pax;
+                    } else {
+                      // Custom hora — show as extra departure
+                      const ex = customSalidas.find(c => c.hora === sg.hora);
+                      if (ex) { ex.pax += pax; ex.nombres.push(g.nombre); }
+                      else customSalidas.push({ hora: sg.hora, pax, nombres: [g.nombre] });
+                    }
+                  });
+                });
                 return (
-                  <div key={s.id} style={{ marginBottom: 3 }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 9, color: "rgba(255,255,255,0.5)" }}>
-                      <span>{s.hora}</span>
-                      <span style={{ fontWeight: 600, color: paxVendidos > 0 ? B.white : "rgba(255,255,255,0.25)" }}>{paxVendidos}/{cap}</span>
-                    </div>
-                    <div style={{ height: 3, background: B.navy, borderRadius: 2, overflow: "hidden" }}>
-                      <div style={{ width: `${Math.min(pct * 100, 100)}%`, height: "100%", background: barColor, borderRadius: 2 }} />
-                    </div>
-                  </div>
+                  <>
+                    {getSalidasVisibles(fecha).map(s => {
+                      const paxRes   = resDia[s.id] || 0;
+                      const paxGrupo = grupoPax[s.id] || 0;
+                      const paxVendidos = paxRes + paxGrupo;
+                      const ovr = (overrides[fecha] || {})[s.id];
+                      const extraCap = (ovr?.extra_embarcaciones || []).reduce((sum, e) => sum + (e.capacidad || 0), 0);
+                      const cap = (s.capacidad_total || 1) + extraCap;
+                      const pct = cap > 0 ? paxVendidos / cap : 0;
+                      const barColor = pct >= 1 ? B.danger : pct >= 0.7 ? B.warning : B.success;
+                      return (
+                        <div key={s.id} style={{ marginBottom: 3 }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 9, color: "rgba(255,255,255,0.5)" }}>
+                            <span>{s.hora}</span>
+                            <span style={{ fontWeight: 600, color: paxVendidos > 0 ? B.white : "rgba(255,255,255,0.25)" }}>
+                              {paxVendidos}/{cap}{paxGrupo > 0 && <span style={{ color: B.sand }}>👥</span>}
+                            </span>
+                          </div>
+                          <div style={{ height: 3, background: B.navy, borderRadius: 2, overflow: "hidden" }}>
+                            <div style={{ width: `${Math.min(pct * 100, 100)}%`, height: "100%", background: barColor, borderRadius: 2 }} />
+                          </div>
+                        </div>
+                      );
+                    })}
+                    {/* Extra custom grupo departures */}
+                    {customSalidas.map(cs => (
+                      <div key={cs.hora} style={{ marginBottom: 3 }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 9, color: B.sand }}>
+                          <span>⛵ {cs.hora}</span>
+                          <span style={{ fontWeight: 600 }}>👥 {cs.pax}</span>
+                        </div>
+                        <div style={{ height: 3, background: B.sand + "33", borderRadius: 2 }} />
+                      </div>
+                    ))}
+                  </>
                 );
-              })}
+              })()}
+              {(sinTransportePorDia[fecha] || []).length > 0 && (
+                <div style={{ fontSize: 9, color: B.sky, marginTop: 2, fontWeight: 600 }}>
+                  🚶 {(sinTransportePorDia[fecha] || []).reduce((s, r) => s + (r.pax || 0), 0)} pax sin transp
+                </div>
+              )}
               {cierre && <div style={{ fontSize: 9, color: B.danger, marginTop: 2 }}>{cierre.motivo}</div>}
             </div>
           );
@@ -1671,16 +1807,35 @@ function TabCalendario({ salidas, cierres, embarcaciones }) {
       </div>
       {selectedDay && (
         <div style={{ background: B.navyMid, borderRadius: 12, padding: 24, marginTop: 16 }}>
-          <h4 style={{ fontSize: 16, fontWeight: 700, marginBottom: 16 }}>
-            {new Date(selectedDay + "T12:00:00").toLocaleDateString("es-CO", { weekday: "long", day: "numeric", month: "long" })}
-            {getCierreForDate(selectedDay) && <span style={{ fontSize: 12, padding: "3px 10px", borderRadius: 12, background: B.danger, color: B.white, marginLeft: 12 }}>CERRADO — {getCierreForDate(selectedDay).motivo}</span>}
+          <h4 style={{ fontSize: 16, fontWeight: 700, marginBottom: 16, display: "flex", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
+            <span>{new Date(selectedDay + "T12:00:00").toLocaleDateString("es-CO", { weekday: "long", day: "numeric", month: "long" })}</span>
+            {getCierreForDate(selectedDay) && <span style={{ fontSize: 12, padding: "3px 10px", borderRadius: 12, background: B.danger, color: B.white }}>CERRADO — {getCierreForDate(selectedDay).motivo}</span>}
+            {(() => {
+              const paxRes = Object.values(reservasPorDia[selectedDay] || {}).reduce((s, v) => s + v, 0);
+              const paxSinT = (sinTransportePorDia[selectedDay] || []).reduce((s, r) => s + (r.pax || 0), 0);
+              const paxGrupos = (gruposPorDia[selectedDay] || []).reduce((sum, g) => {
+                const p = (g.pasadias_org || []).filter(p => p.tipo !== "Impuesto Muelle" && p.tipo !== "STAFF").reduce((s, p) => s + (Number(p.personas) || 0), 0) || g.pax || 0;
+                return sum + p;
+              }, 0);
+              const total = paxRes + paxSinT + paxGrupos;
+              return total > 0 ? (
+                <span style={{ fontSize: 13, fontWeight: 600, padding: "3px 12px", borderRadius: 12, background: B.navyLight, color: B.sand }}>
+                  {total} pax totales
+                </span>
+              ) : null;
+            })()}
           </h4>
           <div style={{ display: "grid", gridTemplateColumns: `repeat(${salidasActivas.length}, 1fr)`, gap: 12 }}>
             {salidasActivas.map(s => {
               const visibles = getSalidasVisibles(selectedDay);
               const isOpen = visibles.some(v => v.id === s.id);
               const hasOverride = (overrides[selectedDay] || {})[s.id];
-              const pax = (reservasPorDia[selectedDay] || {})[s.id] || 0;
+              const paxRes = (reservasPorDia[selectedDay] || {})[s.id] || 0;
+              const paxGrupoD = (gruposPorDia[selectedDay] || []).reduce((sum, g) => {
+                const sg = (g.salidas_grupo || []).find(x => x.id === s.id && !x.custom);
+                return sum + (sg ? Number(sg.personas) || 0 : 0);
+              }, 0);
+              const pax = paxRes + paxGrupoD;
               const cap = s.capacidad_total || 0;
               const botes = (s.embarcaciones || []).map(eid => embarcaciones.find(e => e.id === eid)).filter(Boolean);
               const override = (overrides[selectedDay] || {})[s.id];
@@ -1798,6 +1953,143 @@ function TabCalendario({ salidas, cierres, embarcaciones }) {
             </div>
           )}
 
+          {/* ── Grupos del día ── */}
+          {(gruposPorDia[selectedDay] || []).length > 0 && (
+            <div style={{ background: B.navy, borderRadius: 12, padding: 16, marginTop: 12 }}>
+              <div style={{ fontSize: 11, color: B.sand, textTransform: "uppercase", letterSpacing: "0.07em", fontWeight: 700, marginBottom: 10 }}>
+                👥 Grupos del día — {(gruposPorDia[selectedDay] || []).reduce((sum, g) => {
+                  const p = (g.pasadias_org || []).filter(p => p.tipo !== "Impuesto Muelle" && p.tipo !== "STAFF").reduce((s, p) => s + (Number(p.personas) || 0), 0) || g.pax || 0;
+                  return sum + p;
+                }, 0)} pax
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                {(gruposPorDia[selectedDay] || []).map(g => {
+                  const salidaIds = new Set(salidas.map(s => s.id));
+                  const allSGs = (g.salidas_grupo || []);
+                  const totalPaxGrupo = (g.pasadias_org || [])
+                    .filter(p => p.tipo !== "Impuesto Muelle")
+                    .reduce((s, p) => s + (Number(p.personas) || 0), 0) || g.pax || 0;
+                  return (
+                    <div key={g.id} style={{ background: "rgba(200,185,154,0.08)", borderRadius: 10, padding: "12px 14px", border: "1px solid rgba(200,185,154,0.2)" }}>
+                      {/* Header */}
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                        <div style={{ fontWeight: 700, fontSize: 13 }}>{g.nombre}</div>
+                        <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                          {g.modalidad_pago === "organizador" && (
+                            <span style={{ fontSize: 10, padding: "2px 7px", borderRadius: 8, background: B.sand + "22", color: B.sand }}>💳 Org</span>
+                          )}
+                          {g.tipo && <span style={{ fontSize: 10, color: "rgba(255,255,255,0.4)" }}>🌴 {g.tipo}</span>}
+                          <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 8, background: B.sand + "33", color: B.sand, fontWeight: 700 }}>
+                            👥 {totalPaxGrupo} pax
+                          </span>
+                        </div>
+                      </div>
+                      {/* Salidas con embarcaciones */}
+                      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                        {allSGs.map(sg => {
+                          const isCustom = sg.custom || !salidaIds.has(sg.id || "");
+                          const sgKey = isCustom ? sg.hora : sg.id;
+                          const sal = !isCustom ? salidas.find(s => s.id === sg.id) : null;
+                          const hora = sal?.hora || sg.hora || "—";
+                          const paxSg = Number(sg.personas) || 0;
+                          const embsSg = sg.embarcaciones || [];
+                          const capSg = embsSg.reduce((s, e) => s + (e.capacidad || 0), 0);
+                          const pctSg = capSg > 0 ? Math.min(1, paxSg / capSg) : 0;
+                          const barCol = pctSg >= 1 ? B.danger : pctSg >= 0.7 ? B.warning : B.success;
+                          const dropKey = `${g.id}-${sgKey}`;
+                          const showDrop = grupoEmbDropdown === dropKey;
+                          // Available boats: not already assigned to this sg
+                          const assignedIds = new Set(embsSg.map(e => e.id));
+                          const disponibles = embarcaciones.filter(e => e.estado === "activo" && !assignedIds.has(e.id));
+                          return (
+                            <div key={sgKey} style={{ background: "rgba(0,0,0,0.2)", borderRadius: 8, padding: "10px 12px" }}>
+                              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+                                <span style={{ fontSize: 12, fontWeight: 600, color: isCustom ? B.warning : B.sky }}>
+                                  ⛵ {hora}{isCustom ? " (especial)" : ""}
+                                </span>
+                                <span style={{ fontSize: 11, color: "rgba(255,255,255,0.5)" }}>
+                                  {paxSg} pax · cap {capSg || "—"}
+                                </span>
+                              </div>
+                              {/* Capacity bar */}
+                              {capSg > 0 && (
+                                <div style={{ height: 4, borderRadius: 4, background: "rgba(255,255,255,0.1)", marginBottom: 8, overflow: "hidden" }}>
+                                  <div style={{ height: "100%", width: `${pctSg * 100}%`, background: barCol, borderRadius: 4, transition: "width 0.3s" }} />
+                                </div>
+                              )}
+                              {/* Boat chips */}
+                              <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
+                                {embsSg.map(emb => (
+                                  <div key={emb.id} style={{ display: "flex", alignItems: "center", gap: 4, background: "rgba(200,185,154,0.15)", border: "1px solid rgba(200,185,154,0.3)", borderRadius: 20, padding: "3px 10px 3px 8px", fontSize: 11 }}>
+                                    <span>🚤</span>
+                                    <span style={{ color: B.sand, fontWeight: 600 }}>{emb.nombre}</span>
+                                    <span style={{ color: "rgba(255,255,255,0.4)", fontSize: 10 }}>+{emb.capacidad}</span>
+                                    <button onClick={() => removeEmbarcacionGrupo(g, sgKey, emb.id)}
+                                      style={{ background: "none", border: "none", color: "rgba(255,255,255,0.35)", cursor: "pointer", fontSize: 13, padding: 0, lineHeight: 1, marginLeft: 2 }}>✕</button>
+                                  </div>
+                                ))}
+                                {/* Add boat button */}
+                                {disponibles.length > 0 && (
+                                  <div style={{ position: "relative" }}>
+                                    <button onClick={() => setGrupoEmbDropdown(showDrop ? null : dropKey)}
+                                      style={{ background: "rgba(255,255,255,0.06)", border: "1px dashed rgba(255,255,255,0.2)", borderRadius: 20, padding: "3px 10px", fontSize: 11, color: "rgba(255,255,255,0.5)", cursor: "pointer" }}>
+                                      + Embarcación
+                                    </button>
+                                    {showDrop && (
+                                      <div style={{ position: "absolute", top: "calc(100% + 4px)", left: 0, background: B.navyMid, border: `1px solid ${B.sand}44`, borderRadius: 8, zIndex: 100, minWidth: 160, boxShadow: "0 4px 16px rgba(0,0,0,0.4)" }}>
+                                        {disponibles.map(emb => (
+                                          <div key={emb.id} onClick={() => addEmbarcacionGrupo(g, sgKey, emb.id)}
+                                            style={{ padding: "8px 12px", fontSize: 12, cursor: "pointer", color: B.white, borderBottom: `1px solid rgba(255,255,255,0.06)` }}
+                                            onMouseEnter={e => e.currentTarget.style.background = "rgba(200,185,154,0.12)"}
+                                            onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                                            🚤 {emb.nombre} <span style={{ color: "rgba(255,255,255,0.4)", fontSize: 11 }}>(cap {emb.capacidad})</span>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* ── Sin Transporte del día ── */}
+          {(sinTransportePorDia[selectedDay] || []).length > 0 && (
+            <div style={{ background: B.navy, borderRadius: 12, padding: 16, marginTop: 12 }}>
+              <div style={{ fontSize: 11, color: B.sky, textTransform: "uppercase", letterSpacing: "0.07em", fontWeight: 700, marginBottom: 10 }}>
+                🚶 Sin Transporte — {(sinTransportePorDia[selectedDay] || []).reduce((s, r) => s + (r.pax || 0), 0)} pax
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                {(sinTransportePorDia[selectedDay] || []).map(r => {
+                  const est = ESTADO_CAL[r.estado] || { bg: B.navyLight, color: B.white, label: r.estado };
+                  const isSelR = selectedReserva?.id === r.id;
+                  return (
+                    <div key={r.id} onClick={() => { if (isSelR) { setSelectedReserva(null); } else { setSelectedReserva(r); setEmbForm({ nombre_embarcacion: r.nombre_embarcacion || "", hora_llegada: r.hora_llegada || "" }); } }}
+                      style={{ background: isSelR ? B.navyLight : "rgba(100,180,255,0.06)", borderRadius: 8, padding: "12px 14px", cursor: "pointer", border: `1px solid ${isSelR ? B.sky : "rgba(100,180,255,0.15)"}`, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, transition: "border 0.15s" }}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontWeight: 600, fontSize: 13, color: B.white, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{r.nombre}</div>
+                        <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>{r.tipo} · {r.pax} pax · {r.forma_pago || "—"} · ⏱ {fmtHora(r.created_at)}</div>
+                      </div>
+                      <div style={{ display: "flex", gap: 8, alignItems: "center", flexShrink: 0 }}>
+                        <span style={{ fontWeight: 700, fontSize: 13, color: B.white }}>{COP(r.total || 0)}</span>
+                        <span style={{ fontSize: 11, padding: "3px 10px", borderRadius: 10, background: est.bg, color: est.color, fontWeight: 600 }}>{est.label}</span>
+                        <span style={{ fontSize: 12, color: "rgba(255,255,255,0.3)" }}>{isSelR ? "▲" : "▼"}</span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
           {/* ── Detalle de la reserva seleccionada ── */}
           {selectedReserva && (
             <div style={{ background: B.navy, borderRadius: 12, padding: 20, marginTop: 12, border: `1px solid ${B.sand}55` }}>
@@ -1818,8 +2110,8 @@ function TabCalendario({ salidas, cierres, embarcaciones }) {
                   ["Tipo pasadía", selectedReserva.tipo || "—"],
                   ["Fecha salida",  fmtFecha(selectedReserva.fecha)],
                   ["Hora reserva",  fmtHora(selectedReserva.created_at)],
-                  ["Pax adultos",   selectedReserva.pax_adultos ?? selectedReserva.pax ?? "—"],
-                  ["Pax niños",     selectedReserva.pax_ninos ?? "—"],
+                  ["Pax adultos",   selectedReserva.pax_a ?? selectedReserva.pax ?? "—"],
+                  ["Pax niños",     selectedReserva.pax_n ?? "—"],
                   ["Total",         COP(selectedReserva.total || 0)],
                   ["Abono",         COP(selectedReserva.abono || 0)],
                   ["Saldo",         COP((selectedReserva.total || 0) - (selectedReserva.abono || 0))],
@@ -1840,6 +2132,60 @@ function TabCalendario({ salidas, cierres, embarcaciones }) {
                   <div style={{ fontSize: 13, color: B.white }}>{selectedReserva.notas}</div>
                 </div>
               )}
+
+              {/* ── Embarcación (solo sin transporte) ── */}
+              {!selectedReserva.salida_id && (
+                <div style={{ background: B.navyMid, borderRadius: 10, padding: "14px 16px", marginTop: 10, border: `1px solid ${B.sky}33` }}>
+                  <div style={{ fontSize: 11, color: B.sky, textTransform: "uppercase", letterSpacing: "0.07em", fontWeight: 700, marginBottom: 12 }}>
+                    ⛵ Embarcación del cliente
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 10 }}>
+                    <div>
+                      <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 }}>Nombre embarcación</div>
+                      <input
+                        value={embForm.nombre_embarcacion}
+                        onChange={e => setEmbForm(f => ({ ...f, nombre_embarcacion: e.target.value }))}
+                        placeholder="Ej: El Delfín"
+                        style={{ width: "100%", background: "#0D1B3E", border: `1px solid ${B.navyLight}`, borderRadius: 8, color: B.white, padding: "8px 10px", fontSize: 13, outline: "none", boxSizing: "border-box", fontFamily: "inherit" }}
+                      />
+                    </div>
+                    <div>
+                      <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 }}>Hora est. llegada</div>
+                      <input
+                        type="time"
+                        value={embForm.hora_llegada}
+                        onChange={e => setEmbForm(f => ({ ...f, hora_llegada: e.target.value }))}
+                        style={{ width: "100%", background: "#0D1B3E", border: `1px solid ${B.navyLight}`, borderRadius: 8, color: B.white, padding: "8px 10px", fontSize: 13, outline: "none", boxSizing: "border-box", fontFamily: "inherit" }}
+                      />
+                    </div>
+                  </div>
+                  <button
+                    disabled={savingEmb}
+                    onClick={async () => {
+                      if (!supabase) return;
+                      setSavingEmb(true);
+                      await supabase.from("reservas").update({
+                        nombre_embarcacion: embForm.nombre_embarcacion || null,
+                        hora_llegada: embForm.hora_llegada || null,
+                      }).eq("id", selectedReserva.id);
+                      // Update local state
+                      setSinTransportePorDia(prev => {
+                        const day = selectedReserva.fecha;
+                        const updated = (prev[day] || []).map(r =>
+                          r.id === selectedReserva.id
+                            ? { ...r, nombre_embarcacion: embForm.nombre_embarcacion || null, hora_llegada: embForm.hora_llegada || null }
+                            : r
+                        );
+                        return { ...prev, [day]: updated };
+                      });
+                      setSelectedReserva(r => r ? { ...r, nombre_embarcacion: embForm.nombre_embarcacion || null, hora_llegada: embForm.hora_llegada || null } : r);
+                      setSavingEmb(false);
+                    }}
+                    style={{ padding: "8px 20px", borderRadius: 8, border: "none", background: savingEmb ? B.navyLight : B.sky, color: B.navy, fontWeight: 700, cursor: savingEmb ? "default" : "pointer", fontSize: 13 }}>
+                    {savingEmb ? "Guardando..." : "💾 Guardar"}
+                  </button>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -1854,6 +2200,9 @@ export default function Reservas() {
   const [reservasManana,  setReservasManana]  = useState([]);
   const [reservasFecha,   setReservasFecha]   = useState([]);
   const [reservasFuturas, setReservasFuturas] = useState([]);
+  const [gruposHoy,       setGruposHoy]       = useState([]);
+  const [gruposManana,    setGruposManana]     = useState([]);
+  const [gruposFecha,     setGruposFecha]     = useState([]);
   const [salidas,        setSalidas]        = useState([]);
   const [aliados,        setAliados]        = useState([]);
   const [conveniosMap,   setConveniosMap]   = useState({}); // { aliado_id: { tipo_pasadia: tarifa_neta } }
@@ -1889,7 +2238,9 @@ export default function Reservas() {
     const todayStart = `${today}T00:00:00.000Z`;
     const tomorrowStart = `${tomorrow}T00:00:00.000Z`;
 
-    const [resHoy, resManana, salR, aliR, cierreR, embR, ovrR, empR, pasR, cobR, cobR2, convR] = await Promise.all([
+    const GRUPO_FIELDS = "id, nombre, tipo, pax, fecha, pasadias_org, stage, modalidad_pago, aliado_id, categoria";
+    const isGrupo = (e) => e.categoria === "grupo" || (!e.categoria && e.aliado_id);
+    const [resHoy, resManana, salR, aliR, cierreR, embR, ovrR, empR, pasR, cobR, cobR2, convR, grpHoyR, grpMananaR] = await Promise.all([
       supabase.from("reservas").select("*").eq("fecha", today).order("salida_id"),
       supabase.from("reservas").select("*").eq("fecha", tomorrow).order("salida_id"),
       supabase.from("salidas").select("*").order("orden"),
@@ -1904,9 +2255,14 @@ export default function Reservas() {
       // Pagos sin fecha_pago pero creados hoy con abono > 0 (web/Wompi automáticos)
       supabase.from("reservas").select("abono").is("fecha_pago", null).gte("created_at", todayStart).lt("created_at", tomorrowStart).gt("abono", 0).neq("estado", "cancelado"),
       supabase.from("b2b_convenios").select("aliado_id, tipo_pasadia, tarifa_neta, tarifa_neta_nino").eq("activo", true),
+      // Grupos hoy y mañana — incluidos en Promise.all para evitar flash de pax incorrecto
+      supabase.from("eventos").select(GRUPO_FIELDS).eq("fecha", today).neq("stage", "Realizado"),
+      supabase.from("eventos").select(GRUPO_FIELDS).eq("fecha", tomorrow).neq("stage", "Realizado"),
     ]);
     if (resHoy.data)    setReservasHoy(resHoy.data.map(mapRow));
     if (resManana.data) setReservasManana(resManana.data.map(mapRow));
+    setGruposHoy((grpHoyR.data || []).filter(isGrupo));
+    setGruposManana((grpMananaR.data || []).filter(isGrupo));
     if (empR.data && empR.data.length > 0) setVendedores(["Sin asignar", ...(empR.data.map(e => e.nombre))]);
     if (pasR.data && pasR.data.length > 0) setPasadias(pasR.data.map(p => ({ tipo: p.nombre, precio: p.precio, precio_neto_agencia: p.precio_neto_agencia || 0, precio_nino: p.precio_nino || 0, precio_neto_nino: p.precio_neto_nino || 0, sin_embarcacion: p.sin_embarcacion || false })));
     const totalCobrado = [(cobR.data || []), (cobR2.data || [])].flat().reduce((s, r) => s + (r.abono || 0), 0);
@@ -1945,7 +2301,12 @@ export default function Reservas() {
       // Fecha específica seleccionada
       supabase.from("reservas").select("*").eq("fecha", fechaFiltro).order("salida_id")
         .then(({ data }) => setReservasFecha((data || []).map(mapRow)));
+      // Grupos para esa fecha
+      supabase.from("eventos").select("id, nombre, tipo, pax, fecha, pasadias_org, stage, modalidad_pago, aliado_id, categoria")
+        .eq("fecha", fechaFiltro).neq("stage", "Realizado")
+        .then(({ data }) => setGruposFecha((data || []).filter(e => e.categoria === "grupo" || (!e.categoria && e.aliado_id))));
     } else {
+      setGruposFecha([]);
       // Sin filtro → todas las futuras (hoy en adelante), sin canceladas
       supabase.from("reservas").select("*").gte("fecha", today).neq("estado", "cancelado").order("fecha").order("salida_id")
         .then(({ data }) => setReservasFuturas((data || []).map(mapRow)));
@@ -1958,6 +2319,9 @@ export default function Reservas() {
     : tabDia === "manana"
       ? reservasManana
       : (fechaFiltro ? reservasFecha : reservasFuturas);
+  const grupos = tabDia === "hoy" ? gruposHoy : tabDia === "manana" ? gruposManana : (fechaFiltro ? gruposFecha : []);
+  // Pax real del grupo: excluye Impuesto Muelle y STAFF del conteo de pasajeros
+  const grupoPaxTotal = (g) => (g.pasadias_org || []).filter(p => p.tipo !== "Impuesto Muelle" && p.tipo !== "STAFF").reduce((s, p) => s + (Number(p.personas) || 0), 0) || g.pax || 0;
   const paxMap = paxPorSalida(reservas, salidas);
 
   // Determine which salidas are open for a given date (respects cierres + overrides + 30-min cutoff)
@@ -2004,7 +2368,8 @@ export default function Reservas() {
     return matchSearch && matchEstado;
   });
 
-  const totalPax   = reservas.filter(r => r.estado !== "cancelado").reduce((s, r) => s + r.pax, 0);
+  const totalPax   = reservas.filter(r => r.estado !== "cancelado").reduce((s, r) => s + r.pax, 0)
+                   + grupos.reduce((s, g) => s + grupoPaxTotal(g), 0);
   const totalAbono = reservas.filter(r => r.estado !== "cancelado").reduce((s, r) => s + r.abono, 0);
   const totalVenta = reservas.filter(r => r.estado !== "cancelado").reduce((s, r) => s + r.total, 0);
 
@@ -2029,7 +2394,7 @@ export default function Reservas() {
     const row = {
       id:         reservaId,
       fecha:      form.fecha || (tabDia === "manana" ? tomorrow : today),
-      salida_id:  form.salida_id,
+      salida_id:  form.salida_id || null,
       tipo:       form.tipo,
       canal:      form.canal,
       nombre:     form.nombre.trim(),
@@ -2051,6 +2416,8 @@ export default function Reservas() {
       vendedor:        form.vendedor !== "Sin asignar" ? form.vendedor : null,
       notas:           form.notas || "",
       fecha_pago:      form.fecha_pago || null,
+      nombre_embarcacion: form.nombre_embarcacion || null,
+      hora_llegada:    form.hora_llegada || null,
     };
     await supabase.from("reservas").insert(row);
     logAccion({ modulo: "reservas", accion: "crear_reserva", tabla: "reservas", registroId: row.id,
@@ -2435,6 +2802,47 @@ export default function Reservas() {
         )}
       </div>
 
+      {/* ── Grupos del día ── */}
+      {grupos.length > 0 && (
+        <div style={{ background: B.navyMid, borderRadius: 12, padding: 20, marginTop: 16, border: `1px solid rgba(200,185,154,0.2)` }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+            <div style={{ fontSize: 15, fontWeight: 700, color: B.sand }}>
+              👥 Grupos del día
+              <span style={{ fontSize: 12, fontWeight: 500, color: "rgba(255,255,255,0.4)", marginLeft: 8 }}>
+                {grupos.length} grupo{grupos.length !== 1 ? "s" : ""} · {grupos.reduce((s, g) => s + grupoPaxTotal(g), 0)} pax
+              </span>
+            </div>
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {grupos.map(g => {
+              const pax = grupoPaxTotal(g);
+              const tipos = [...new Set((g.pasadias_org || []).filter(p => p.tipo !== "Impuesto Muelle").map(p => p.tipo))].join(", ");
+              return (
+                <div key={g.id} style={{ background: "rgba(200,185,154,0.07)", borderRadius: 10, padding: "12px 16px", border: "1px solid rgba(200,185,154,0.15)", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontWeight: 700, fontSize: 14, color: B.white }}>{g.nombre}</div>
+                    <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>
+                      {tipos || g.tipo || "—"} · {g.modalidad_pago === "organizador" ? "💳 Pago organizador" : "Pago individual"}
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 12, flexShrink: 0 }}>
+                    <div style={{ textAlign: "right" }}>
+                      <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Pax</div>
+                      <div style={{ fontSize: 20, fontWeight: 700, color: B.sand, fontFamily: "'Barlow Condensed', sans-serif" }}>{pax}</div>
+                    </div>
+                    <span style={{ fontSize: 11, padding: "3px 10px", borderRadius: 10, fontWeight: 600,
+                      background: g.stage === "Confirmado" ? B.success + "22" : g.stage === "Cotizado" ? B.warning + "22" : B.navyLight,
+                      color: g.stage === "Confirmado" ? B.success : g.stage === "Cotizado" ? B.warning : "rgba(255,255,255,0.4)" }}>
+                      {g.stage || "—"}
+                    </span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {/* ── modals ── */}
       {showModal && (
         <ReservaModal
@@ -2463,7 +2871,7 @@ export default function Reservas() {
           pasadiaList={pasadias}
         />
       )}
-      </> /* end tab === "reservas" */}
+      </>}
     </div>
   );
 }
