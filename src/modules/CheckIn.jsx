@@ -134,6 +134,99 @@ function QRScanner({ onScan, onClose }) {
   );
 }
 
+// ─── Build slots from pasadias_org (same logic as ZarpeGrupo) ────────────────
+function buildGrupoSlots(pasadiasOrg) {
+  const slots = [];
+  (pasadiasOrg || []).forEach(p => {
+    if (p.tipo === "Impuesto Muelle") return;
+    const n = Number(p.personas) || 0;
+    for (let i = 0; i < n; i++) {
+      slots.push({ slot_id: `${p.id}-${i}`, tipo: p.tipo, idx: i + 1 });
+    }
+  });
+  return slots;
+}
+
+// ─── Slot Editor para grupos (edita un slot de zarpe_data) ───────────────────
+const AKEY_CONST = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5jZHl0dGd4dWljeXJ1YXRoa3hkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ4OTY4NDksImV4cCI6MjA5MDQ3Mjg0OX0.ppK_J1BUI8lrEZ-iQWNb0imO_ZwOGbF3MDyv7nct6bs";
+
+function SlotEditorModal({ grupo, slot, onClose, onSaved, embarcaciones = [] }) {
+  const [f, setF] = useState({
+    nombre:         slot.nombre         || "",
+    identificacion: slot.identificacion || "",
+    nacionalidad:   slot.nacionalidad   || "Colombiana",
+    embarcacion:    slot.embarcacion    || "",
+  });
+  const [saving, setSaving] = useState(false);
+  const s = (k, v) => setF(p => ({ ...p, [k]: v }));
+
+  const save = async (hacerCheckin = false) => {
+    setSaving(true);
+    const now = new Date().toISOString();
+    const newZarpe = (grupo.zarpe_data || []).map(z =>
+      z.slot_id === slot.slot_id
+        ? { ...z, ...f, checkin_at: hacerCheckin ? now : z.checkin_at }
+        : z
+    );
+    await fetch(`https://ncdyttgxuicyruathkxd.supabase.co/rest/v1/eventos?id=eq.${grupo.id}`,
+      { method: "PATCH", headers: { apikey: AKEY_CONST, Authorization: `Bearer ${AKEY_CONST}`, "Content-Type": "application/json", Prefer: "return=minimal" },
+        body: JSON.stringify({ zarpe_data: newZarpe }) });
+    setSaving(false);
+    onSaved(newZarpe);
+    onClose();
+  };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.82)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 9999, padding: 16 }}
+      onClick={e => e.target === e.currentTarget && onClose()}>
+      <div style={{ background: B.navyMid, borderRadius: 18, padding: "26px 24px", width: "100%", maxWidth: 400, boxShadow: "0 24px 64px rgba(0,0,0,0.6)" }}>
+        <h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>Datos del pasajero</h3>
+        <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginBottom: 20 }}>{slot.tipo}</div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          <div>
+            <label style={LS}>Nombre completo</label>
+            <input value={f.nombre} onChange={e => s("nombre", e.target.value)} style={IS} placeholder="Nombre y apellido" autoFocus />
+          </div>
+          <div>
+            <label style={LS}>No. Identificación</label>
+            <input value={f.identificacion} onChange={e => s("identificacion", e.target.value)} style={IS} placeholder="CC / Pasaporte" />
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+            <div>
+              <label style={LS}>Nacionalidad</label>
+              <select value={f.nacionalidad} onChange={e => s("nacionalidad", e.target.value)} style={IS}>
+                {NACS.map(n => <option key={n} value={n}>{n}</option>)}
+              </select>
+            </div>
+            {embarcaciones.length > 0 && (
+              <div>
+                <label style={LS}>Embarcación</label>
+                <select value={f.embarcacion} onChange={e => s("embarcacion", e.target.value)} style={IS}>
+                  <option value="">Sin asignar</option>
+                  {embarcaciones.filter(e => e.estado === "activo").map(e => (
+                    <option key={e.id} value={e.nombre}>{e.nombre}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: 10, marginTop: 20 }}>
+          <button onClick={onClose} style={{ flex: 1, padding: "11px", background: "none", border: `1px solid ${B.navyLight}`, borderRadius: 8, color: "rgba(255,255,255,0.4)", fontSize: 13, cursor: "pointer" }}>Cancelar</button>
+          <button onClick={() => save(false)} disabled={saving || !f.nombre}
+            style={{ flex: 1, padding: "11px", background: B.navyLight, color: B.white, border: "none", borderRadius: 8, fontWeight: 600, fontSize: 13, cursor: "pointer" }}>
+            {saving ? "..." : "Guardar"}
+          </button>
+          <button onClick={() => save(true)} disabled={saving || !f.nombre}
+            style={{ flex: 1.5, padding: "11px", background: B.success, color: B.white, border: "none", borderRadius: 8, fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
+            {saving ? "..." : "Guardar y ✓ CI"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Pasajeros Editor (for zarpe) ────────────────────────────────────────────
 function PasajerosModal({ reserva, onClose, onSaved, autoCheckin = false }) {
   const total = (reserva.pax_a || 0) + (reserva.pax_n || 0) || reserva.pax || 1;
@@ -403,8 +496,25 @@ function generarZarpe(salida, reservas, fecha, despacho, emb) {
     <div class="footer">Atolon Beach Club — ${new Date().toLocaleString("es-CO")}</div>
   </body></html>`;
 
+  const fileName = `Zarpe-${emb?.nombre || "General"}-${salida.nombre}-${fecha}.html`;
+
+  // Inject toolbar with View (print) and Download buttons
+  const toolbar = `
+    <div style="position:fixed;top:0;left:0;right:0;background:#1E3566;padding:10px 20px;display:flex;gap:12px;align-items:center;z-index:9999;box-shadow:0 2px 8px rgba(0,0,0,0.3);no-print">
+      <span style="color:#fff;font-weight:700;font-size:14px;flex:1;">📄 Zarpe — ${emb?.nombre || ""} · ${salida.nombre} ${salida.hora} · ${fecha}</span>
+      <button onclick="window.print()" style="padding:8px 20px;background:#C8B596;color:#0D1B3E;border:none;border-radius:8px;font-weight:800;font-size:13px;cursor:pointer;">🖨 Imprimir / Ver PDF</button>
+      <button onclick="(function(){var a=document.createElement('a');a.href='data:text/html;charset=utf-8,'+encodeURIComponent(document.documentElement.outerHTML);a.download='${fileName}';a.click();})()" style="padding:8px 20px;background:rgba(255,255,255,0.15);color:#fff;border:1px solid rgba(255,255,255,0.3);border-radius:8px;font-weight:700;font-size:13px;cursor:pointer;">⬇ Descargar</button>
+      <button onclick="window.close()" style="padding:8px 14px;background:none;color:rgba(255,255,255,0.4);border:1px solid rgba(255,255,255,0.2);border-radius:8px;font-size:13px;cursor:pointer;">✕ Cerrar</button>
+    </div>
+    <div style="height:52px"></div>`;
+
+  const htmlWithToolbar = html.replace("<body>", `<body>${toolbar}`).replace(
+    "@media print { @page { margin: 1cm; } }",
+    "@media print { @page { margin: 1cm; } .no-print,[onclick*='close'],[onclick*='download'],[onclick*='print'] { display:none!important; } div[style*='position:fixed'] { display:none!important; } div[style*='height:52px'] { display:none!important; } }"
+  );
+
   const win = window.open("", "_blank");
-  win.document.write(html);
+  win.document.write(htmlWithToolbar);
   win.document.close();
 }
 
@@ -482,46 +592,96 @@ export default function CheckIn() {
   const [editColabs,     setEditColabs]     = useState(false);
   const [qrReserva,      setQrReserva]      = useState(null);
   const [confirmCheckin, setConfirmCheckin] = useState(null);
+  const [ciPax,          setCiPax]          = useState(null); // pax override for check-in
   const [ciSaving,       setCiSaving]       = useState(false);
   const [despacharModal, setDespacharModal] = useState(null); // { salida, allEmbs }
   const [search,         setSearch]         = useState("");
   const [loading,        setLoading]        = useState(true);
+  const [grupos,         setGrupos]         = useState([]);
+  const [tabGrupo,       setTabGrupo]       = useState(null);
+  const [editSlot,       setEditSlot]       = useState(null); // { grupo, slot }
+  const [qrGrupo,        setQrGrupo]        = useState(null); // { grupo, slot? }
 
   const load = useCallback(async () => {
     if (!supabase) { setLoading(false); return; }
     setLoading(true);
-    const [salR, resR, desR, embR, ovrR] = await Promise.all([
+    const SURL = "https://ncdyttgxuicyruathkxd.supabase.co";
+    const AKEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5jZHl0dGd4dWljeXJ1YXRoa3hkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ4OTY4NDksImV4cCI6MjA5MDQ3Mjg0OX0.ppK_J1BUI8lrEZ-iQWNb0imO_ZwOGbF3MDyv7nct6bs";
+    const [salR, resR, desR, embR, ovrR, grpR] = await Promise.all([
       supabase.from("salidas").select("*").eq("activo", true).order("orden"),
       supabase.from("reservas").select("*").eq("fecha", fecha).neq("estado", "cancelado").order("nombre"),
       supabase.from("salida_despachos").select("*").eq("fecha", fecha),
       supabase.from("embarcaciones").select("*").order("nombre"),
       supabase.from("salidas_override").select("*").eq("fecha", fecha),
+      fetch(`${SURL}/rest/v1/eventos?fecha=eq.${fecha}&categoria=eq.grupo&select=id,nombre,pasadias_org,salidas_grupo,zarpe_data`,
+        { headers: { apikey: AKEY, Authorization: `Bearer ${AKEY}` } }).then(r => r.json()).catch(() => []),
     ]);
     const res = resR.data || [];
-    // Solo salidas con pasajeros ese día
     const salsConPax = (salR.data || []).filter(s => res.some(r => r.salida_id === s.id));
     setSalidas(salsConPax);
     setReservas(res);
     setDespachos(desR.data || []);
     setEmbarcaciones(embR.data || []);
     setOverrides(ovrR.data || []);
+    setGrupos(Array.isArray(grpR) ? grpR : []);
     if (salsConPax.length > 0 && !tabSalida) setTabSalida(salsConPax[0].id);
     setLoading(false);
   }, [fecha]);
 
   useEffect(() => { load(); }, [load]);
 
+  const AKEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5jZHl0dGd4dWljeXJ1YXRoa3hkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ4OTY4NDksImV4cCI6MjA5MDQ3Mjg0OX0.ppK_J1BUI8lrEZ-iQWNb0imO_ZwOGbF3MDyv7nct6bs";
+
+  const checkinPaxGrupo = async (grupo, slotId) => {
+    const now = new Date().toISOString();
+    const newZarpe = (grupo.zarpe_data || []).map(z =>
+      z.slot_id === slotId ? { ...z, checkin_at: z.checkin_at ? null : now } : z
+    );
+    await fetch(`https://ncdyttgxuicyruathkxd.supabase.co/rest/v1/eventos?id=eq.${grupo.id}`,
+      { method: "PATCH", headers: { apikey: AKEY, Authorization: `Bearer ${AKEY}`, "Content-Type": "application/json", Prefer: "return=minimal" }, body: JSON.stringify({ zarpe_data: newZarpe }) });
+    setGrupos(prev => prev.map(g => g.id === grupo.id ? { ...g, zarpe_data: newZarpe } : g));
+  };
+
+  const checkinTodosGrupo = async (grupo) => {
+    const now = new Date().toISOString();
+    const newZarpe = (grupo.zarpe_data || []).map(z =>
+      z.nombre && !z.checkin_at && !z.no_show ? { ...z, checkin_at: now } : z
+    );
+    await fetch(`https://ncdyttgxuicyruathkxd.supabase.co/rest/v1/eventos?id=eq.${grupo.id}`,
+      { method: "PATCH", headers: { apikey: AKEY, Authorization: `Bearer ${AKEY}`, "Content-Type": "application/json", Prefer: "return=minimal" }, body: JSON.stringify({ zarpe_data: newZarpe }) });
+    setGrupos(prev => prev.map(g => g.id === grupo.id ? { ...g, zarpe_data: newZarpe } : g));
+  };
+
+  const noShowPaxGrupo = async (grupo, slotId) => {
+    // Build full slot list, merge with zarpe_data, toggle no_show on the target slot
+    const allSlots = buildGrupoSlots(grupo.pasadias_org);
+    const zarpeBySlot = Object.fromEntries((grupo.zarpe_data || []).map(z => [z.slot_id, z]));
+    const newZarpe = allSlots.map(s => {
+      const existing = zarpeBySlot[s.slot_id] || s;
+      if (s.slot_id === slotId) {
+        return { ...existing, no_show: !existing.no_show, checkin_at: null };
+      }
+      return existing;
+    });
+    await fetch(`https://ncdyttgxuicyruathkxd.supabase.co/rest/v1/eventos?id=eq.${grupo.id}`,
+      { method: "PATCH", headers: { apikey: AKEY, Authorization: `Bearer ${AKEY}`, "Content-Type": "application/json", Prefer: "return=minimal" }, body: JSON.stringify({ zarpe_data: newZarpe }) });
+    setGrupos(prev => prev.map(g => g.id === grupo.id ? { ...g, zarpe_data: newZarpe } : g));
+  };
+
   // ── Check-in: muestra confirmación, nunca bloquea por falta de zarpe
-  const doCheckin = async (res) => {
+  const doCheckin = async (res, paxOverride) => {
     setCiSaving(true);
     const val = new Date().toISOString();
-    const { error } = await supabase.from("reservas").update({ checkin_at: val, estado: "check_in" }).eq("id", res.id);
+    const paxFinal = paxOverride ?? res.pax;
+    const updates = { checkin_at: val, estado: "check_in" };
+    if (paxFinal !== res.pax) updates.pax_checkin = paxFinal; // save actual pax that showed up
+    const { error } = await supabase.from("reservas").update(updates).eq("id", res.id);
     if (error) { alert(`Error al guardar check-in: ${error.message}`); setCiSaving(false); return; }
     logAccion({ modulo: "checkin", accion: "check_in", tabla: "reservas", registroId: res.id,
       datosAntes: { checkin_at: null, estado: res.estado },
-      datosDespues: { checkin_at: val, estado: "check_in" },
-      notas: `${res.nombre} · ${res.pax} pax` });
-    setReservas(prev => prev.map(r => r.id === res.id ? { ...r, checkin_at: val, estado: "check_in" } : r));
+      datosDespues: { checkin_at: val, estado: "check_in", pax_checkin: paxFinal },
+      notas: `${res.nombre} · ${paxFinal}/${res.pax} pax` });
+    setReservas(prev => prev.map(r => r.id === res.id ? { ...r, checkin_at: val, estado: "check_in", pax_checkin: paxFinal } : r));
     setCiSaving(false);
     setConfirmCheckin(null);
   };
@@ -639,6 +799,57 @@ export default function CheckIn() {
       {scanning && <QRScanner onScan={handleScan} onClose={() => setScanning(false)} />}
       {editPax  && <PasajerosModal reserva={editPax} autoCheckin={!!editPax._autoCheckin} onClose={() => setEditPax(null)} onSaved={load} />}
 
+      {/* ── Editor de slot de grupo ── */}
+      {editSlot && (
+        <SlotEditorModal
+          grupo={editSlot.grupo}
+          slot={editSlot.slot}
+          embarcaciones={embarcaciones}
+          onClose={() => setEditSlot(null)}
+          onSaved={(newZarpe) => {
+            setGrupos(prev => prev.map(g => g.id === editSlot.grupo.id ? { ...g, zarpe_data: newZarpe } : g));
+          }}
+        />
+      )}
+
+      {/* ── QR zarpe grupo ── */}
+      {qrGrupo && (() => {
+        const { grupo, slot } = qrGrupo;
+        const baseUrl = `${window.location.origin}/zarpe-grupo?ev=${grupo.id}`;
+        // Si hay un invitado con tok que contiene este slot_id, usar ese tok
+        const invitado = slot ? (grupo.invitados_zarpe || []).find(inv => (inv.slot_ids || []).includes(slot.slot_id)) : null;
+        const url = invitado ? `${baseUrl}&tok=${invitado.tok}` : baseUrl;
+        const qrImg = `https://api.qrserver.com/v1/create-qr-code/?size=240x240&color=0D1B3E&bgcolor=FFFFFF&data=${encodeURIComponent(url)}`;
+        return (
+          <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.88)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 9998, padding: 16 }}
+            onClick={e => e.target === e.currentTarget && setQrGrupo(null)}>
+            <div style={{ background: B.navyMid, borderRadius: 22, padding: "28px 24px", width: "100%", maxWidth: 380, textAlign: "center", boxShadow: "0 24px 64px rgba(0,0,0,0.6)" }}>
+              <div style={{ fontSize: 20, fontWeight: 800, color: B.white, marginBottom: 4 }}>Check-in del pasajero</div>
+              <div style={{ fontSize: 14, color: "rgba(255,255,255,0.6)", marginBottom: 4 }}>
+                {slot ? `${slot.tipo} · Pasajero ${slot.idx}` : grupo.nombre}
+              </div>
+              <div style={{ fontSize: 12, color: "rgba(255,255,255,0.35)", marginBottom: 20 }}>Muéstrale este QR para que llene sus datos</div>
+              <div style={{ background: "#fff", borderRadius: 18, padding: 16, display: "inline-block", marginBottom: 14 }}>
+                <img src={qrImg} alt="QR zarpe grupo" width={220} height={220} style={{ display: "block", borderRadius: 6 }} />
+              </div>
+              <div style={{ fontSize: 11, color: "rgba(255,255,255,0.2)", marginBottom: 20, wordBreak: "break-all" }}>{url}</div>
+              <div style={{ display: "flex", gap: 10 }}>
+                <button onClick={() => setQrGrupo(null)}
+                  style={{ flex: 1, padding: "12px", borderRadius: 10, background: "none", border: `1px solid ${B.navyLight}`, color: "rgba(255,255,255,0.4)", fontSize: 13, cursor: "pointer" }}>
+                  Cerrar
+                </button>
+                {slot && (
+                  <button onClick={() => { setEditSlot({ grupo, slot }); setQrGrupo(null); }}
+                    style={{ flex: 1.5, padding: "12px", borderRadius: 10, background: B.sand, color: B.navy, border: "none", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
+                    📋 Llenar aquí
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* ── Confirmación de Check-in ── */}
       {confirmCheckin && (() => {
         const faltaZarpe = !paxCompleto(confirmCheckin);
@@ -651,9 +862,23 @@ export default function CheckIn() {
 
               {/* Header */}
               <div style={{ fontSize: 20, fontWeight: 800, color: B.white, marginBottom: 4 }}>¿Está en el muelle?</div>
-              <div style={{ fontSize: 14, color: "rgba(255,255,255,0.45)", marginBottom: 20 }}>
-                {confirmCheckin.nombre}
-                <span style={{ marginLeft: 8, color: B.sand, fontWeight: 700 }}>{confirmCheckin.pax} pax</span>
+              <div style={{ fontSize: 14, color: "rgba(255,255,255,0.55)", marginBottom: 16 }}>{confirmCheckin.nombre}</div>
+
+              {/* Pax editor */}
+              <div style={{ background: B.navy, borderRadius: 12, padding: "12px 16px", marginBottom: 16, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <div>
+                  <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginBottom: 2 }}>PERSONAS QUE LLEGAN</div>
+                  <div style={{ fontSize: 11, color: "rgba(255,255,255,0.25)" }}>Reserva: {confirmCheckin.pax} pax</div>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                  <button onClick={() => setCiPax(p => Math.max(1, (p ?? confirmCheckin.pax) - 1))}
+                    style={{ width: 34, height: 34, borderRadius: 8, border: `1px solid ${B.navyLight}`, background: B.navyMid, color: B.white, fontSize: 20, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1 }}>−</button>
+                  <span style={{ fontSize: 26, fontWeight: 800, color: (ciPax ?? confirmCheckin.pax) < confirmCheckin.pax ? B.warning : B.sand, minWidth: 32, textAlign: "center" }}>
+                    {ciPax ?? confirmCheckin.pax}
+                  </span>
+                  <button onClick={() => setCiPax(p => Math.min(confirmCheckin.pax, (p ?? confirmCheckin.pax) + 1))}
+                    style={{ width: 34, height: 34, borderRadius: 8, border: `1px solid ${B.navyLight}`, background: B.navyMid, color: B.white, fontSize: 20, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1 }}>+</button>
+                </div>
               </div>
 
               {/* Alerta saldo pendiente — no aplica para CXC */}
@@ -693,10 +918,10 @@ export default function CheckIn() {
                   Cancelar
                 </button>
                 <button
-                  onClick={() => doCheckin(confirmCheckin)}
+                  onClick={() => doCheckin(confirmCheckin, ciPax)}
                   disabled={ciSaving}
                   style={{ flex: 2, padding: "13px", borderRadius: 10, background: B.success, color: B.navy, border: "none", fontWeight: 800, fontSize: 14, cursor: ciSaving ? "default" : "pointer" }}>
-                  {ciSaving ? "..." : "✓ Sí, hacer check-in"}
+                  {ciSaving ? "..." : `✓ Check-in · ${ciPax ?? confirmCheckin.pax} pax`}
                 </button>
               </div>
             </div>
@@ -813,26 +1038,22 @@ export default function CheckIn() {
               📷 {isMobile ? "QR" : "Escanear QR"}
             </button>
           </div>
-          <input type="date" value={fecha} onChange={e => { setFecha(e.target.value); setTabSalida(null); }}
-            style={{ ...IS, width: isMobile ? "100%" : "auto", fontSize: 14 }} />
+          <div style={{ ...IS, width: isMobile ? "100%" : "auto", fontSize: 14, display: "flex", alignItems: "center", gap: 6, color: "rgba(255,255,255,0.6)", userSelect: "none" }}>
+            📅 {new Date(fecha + "T12:00:00").toLocaleDateString("es-CO", { weekday: "long", day: "numeric", month: "long" })}
+          </div>
         </div>
 
-        {/* Salida tabs */}
-        <div style={{ display: "flex", gap: 6, marginBottom: 16, overflowX: isMobile ? "auto" : "visible", paddingBottom: isMobile ? 4 : 0 }}>
+        {/* Salida tabs + Grupo tabs */}
+        <div style={{ display: "flex", gap: 6, marginBottom: 16, overflowX: "auto", paddingBottom: 4 }}>
           {salidas.map(s => {
             const resS   = reservas.filter(r => r.salida_id === s.id);
             const chkS   = resS.filter(r => r.checkin_at).reduce((a, r) => a + (r.pax || 0), 0);
             const totS   = resS.reduce((a, r) => a + (r.pax || 0), 0);
             const despS  = despachos.find(d => d.salida_id === s.id);
-            const isActive = tabSalida === s.id;
+            const isActive = tabSalida === s.id && !tabGrupo;
             return (
-              <button key={s.id} onClick={() => setTabSalida(s.id)}
-                style={{
-                  padding: isMobile ? "10px 16px" : "10px 18px",
-                  borderRadius: 10, border: `2px solid ${isActive ? B.sky : B.navyLight}`,
-                  background: isActive ? B.sky + "22" : B.navyMid, color: isActive ? B.sky : "rgba(255,255,255,0.6)",
-                  cursor: "pointer", textAlign: "left", flexShrink: 0,
-                }}>
+              <button key={s.id} onClick={() => { setTabSalida(s.id); setTabGrupo(null); }}
+                style={{ padding: isMobile ? "10px 16px" : "10px 18px", borderRadius: 10, border: `2px solid ${isActive ? B.sky : B.navyLight}`, background: isActive ? B.sky + "22" : B.navyMid, color: isActive ? B.sky : "rgba(255,255,255,0.6)", cursor: "pointer", textAlign: "left", flexShrink: 0 }}>
                 <div style={{ fontSize: isMobile ? 18 : 16, fontWeight: 800, fontFamily: "'Barlow Condensed', sans-serif" }}>{s.hora}</div>
                 <div style={{ fontSize: 11, color: chkS === totS && totS > 0 ? B.success : "rgba(255,255,255,0.4)", whiteSpace: "nowrap" }}>
                   {chkS}/{totS} {despS ? "✈" : "pax"}
@@ -840,10 +1061,122 @@ export default function CheckIn() {
               </button>
             );
           })}
+          {grupos.map(g => {
+            const zarpe = g.zarpe_data || [];
+            const totalPaxG = (g.pasadias_org || []).filter(p => p.tipo !== "Impuesto Muelle").reduce((s, p) => s + (Number(p.personas) || 0), 0);
+            const chkG = zarpe.filter(z => z.checkin_at).length;
+            const horas = (g.salidas_grupo || []).map(sg => sg.hora).filter(Boolean).sort();
+            const isActive = tabGrupo === g.id;
+            return (
+              <button key={g.id} onClick={() => { setTabGrupo(isActive ? null : g.id); setTabSalida(null); }}
+                style={{ padding: isMobile ? "10px 16px" : "10px 18px", borderRadius: 10, border: `2px solid ${isActive ? B.sand : B.sand + "44"}`, background: isActive ? B.sand + "22" : B.navyMid, color: isActive ? B.sand : B.sand + "99", cursor: "pointer", textAlign: "left", flexShrink: 0 }}>
+                <div style={{ fontSize: 11, fontWeight: 800, fontFamily: "'Barlow Condensed', sans-serif" }}>👥 {horas[0] || "—"}</div>
+                <div style={{ fontSize: 10, color: chkG === totalPaxG && totalPaxG > 0 ? B.success : B.sand + "88", whiteSpace: "nowrap", maxWidth: 80, overflow: "hidden", textOverflow: "ellipsis" }}>
+                  {chkG}/{totalPaxG} · {g.nombre}
+                </div>
+              </button>
+            );
+          })}
         </div>
 
-        {!salida ? (
-          <div style={{ textAlign: "center", padding: "40px 0", color: "rgba(255,255,255,0.3)" }}>Sin salidas activas</div>
+        {/* ── Vista grupo seleccionado ── */}
+        {tabGrupo && (() => {
+          const g = grupos.find(x => x.id === tabGrupo);
+          if (!g) return null;
+          // Build full slot list from pasadias_org, merge with zarpe_data
+          const allGrupoSlots = buildGrupoSlots(g.pasadias_org);
+          const zarpeBySlot = Object.fromEntries((g.zarpe_data || []).map(z => [z.slot_id, z]));
+          const mergedSlots = allGrupoSlots.map(s => ({ ...s, ...(zarpeBySlot[s.slot_id] || {}) }));
+          const totalPaxG = mergedSlots.length;
+          const conNombre  = mergedSlots.filter(z => z.nombre);
+          const checkedInG = mergedSlots.filter(z => z.checkin_at);
+          const noShowsG   = mergedSlots.filter(z => z.no_show);
+          const horas = (g.salidas_grupo || []).map(sg => sg.hora).filter(Boolean).sort();
+          return (
+            <div>
+              <div style={{ background: B.navyMid, borderRadius: 12, padding: "14px 20px", marginBottom: 12, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div>
+                  <div style={{ fontSize: 18, fontWeight: 700 }}>{g.nombre}</div>
+                  <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>
+                    👥 {checkedInG.length}/{totalPaxG} abordaron · {horas.map(h => `⛵ ${h}`).join(" ")}
+                  </div>
+                </div>
+                {conNombre.length > checkedInG.length && (
+                  <button onClick={() => checkinTodosGrupo(g)}
+                    style={{ padding: "8px 16px", borderRadius: 8, border: "none", background: B.sand, color: B.navy, fontWeight: 700, fontSize: 12, cursor: "pointer" }}>
+                    ✓ Todos
+                  </button>
+                )}
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                {mergedSlots.map(z => {
+                  const hecho   = !!z.checkin_at;
+                  const isNS    = !!z.no_show;
+                  const tieneDatos = !!z.nombre;
+                  const horaCI  = z.checkin_at ? new Date(z.checkin_at).toTimeString().slice(0, 5) : null;
+                  const bgColor = hecho ? B.success + "18" : isNS ? B.danger + "18" : B.navyMid;
+                  const border  = hecho ? B.success + "55" : isNS ? B.danger + "55" : B.navyLight;
+                  return (
+                    <div key={z.slot_id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", borderRadius: 10, background: bgColor, border: `1px solid ${border}` }}>
+                      {/* Checkbox CI */}
+                      <div onClick={() => !isNS && tieneDatos && checkinPaxGrupo(g, z.slot_id)}
+                        style={{ width: 28, height: 28, borderRadius: 7, flexShrink: 0, border: `2px solid ${hecho ? B.success : isNS ? B.danger : "rgba(255,255,255,0.2)"}`, background: hecho ? B.success : isNS ? B.danger + "44" : "transparent", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, color: hecho ? B.navy : B.danger, fontWeight: 900, cursor: (!isNS && tieneDatos) ? "pointer" : "default" }}>
+                        {hecho ? "✓" : isNS ? "✕" : ""}
+                      </div>
+                      {/* Info */}
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        {tieneDatos ? (
+                          <>
+                            <div style={{ fontWeight: 600, fontSize: 14, color: hecho ? B.success : isNS ? B.danger : B.white, textDecoration: isNS ? "line-through" : "none" }}>{z.nombre}</div>
+                            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", marginTop: 1 }}>
+                              {z.tipo}{z.identificacion ? ` · ${z.identificacion}` : ""}{isNS ? " · NO SHOW" : ""}
+                            </div>
+                          </>
+                        ) : (
+                          <div style={{ fontSize: 12, color: isNS ? B.danger + "88" : "rgba(255,255,255,0.3)", fontStyle: "italic" }}>
+                            {z.tipo} #{z.idx} — {isNS ? "No show" : "sin datos"}
+                          </div>
+                        )}
+                      </div>
+                      {/* Hora CI */}
+                      {horaCI && <span style={{ fontSize: 11, color: B.success, fontWeight: 600, flexShrink: 0 }}>{horaCI}</span>}
+                      {/* Acciones */}
+                      {!hecho && (
+                        <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+                          {!isNS && (
+                            <>
+                              <button onClick={() => setQrGrupo({ grupo: g, slot: z })}
+                                style={{ padding: "5px 10px", borderRadius: 7, border: `1px solid ${B.sand}44`, background: "transparent", color: B.sand, fontSize: 11, fontWeight: 600, cursor: "pointer" }}>
+                                📋 QR
+                              </button>
+                              <button onClick={() => setEditSlot({ grupo: g, slot: z })}
+                                style={{ padding: "5px 10px", borderRadius: 7, border: `1px solid rgba(255,255,255,0.15)`, background: "transparent", color: "rgba(255,255,255,0.6)", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>
+                                ✏️ Llenar
+                              </button>
+                            </>
+                          )}
+                          <button onClick={() => noShowPaxGrupo(g, z.slot_id)}
+                            style={{ padding: "5px 10px", borderRadius: 7, border: `1px solid ${isNS ? B.sand + "55" : B.danger + "55"}`, background: isNS ? "transparent" : B.danger + "22", color: isNS ? "rgba(255,255,255,0.4)" : B.danger, fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
+                            {isNS ? "↩ Deshacer" : "NS"}
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+              <div style={{ marginTop: 16, background: B.navyMid, borderRadius: 10, padding: "14px 20px", display: "flex", gap: 24 }}>
+                <div><span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", display: "block" }}>CHECK-IN</span><span style={{ fontSize: 20, fontWeight: 700, color: B.success }}>{checkedInG.length}</span><span style={{ color: "rgba(255,255,255,0.3)" }}>/{totalPaxG}</span></div>
+                <div><span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", display: "block" }}>PENDIENTES</span><span style={{ fontSize: 20, fontWeight: 700, color: totalPaxG - checkedInG.length - noShowsG.length > 0 ? B.warning : B.success }}>{totalPaxG - checkedInG.length - noShowsG.length}</span></div>
+                {noShowsG.length > 0 && <div><span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", display: "block" }}>NO SHOW</span><span style={{ fontSize: 20, fontWeight: 700, color: B.danger }}>{noShowsG.length}</span></div>}
+                <div><span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", display: "block" }}>ZARPE</span><span style={{ fontSize: 20, fontWeight: 700, color: conNombre.length === totalPaxG ? B.success : B.warning }}>{conNombre.length}/{totalPaxG}</span></div>
+              </div>
+            </div>
+          );
+        })()}
+
+        {!tabGrupo && (!salida ? (
+          <div style={{ textAlign: "center", padding: "40px 0", color: "rgba(255,255,255,0.3)" }}>{grupos.length > 0 ? "Selecciona una salida o grupo" : "Sin salidas activas"}</div>
         ) : (
           <>
             {/* Salida header */}
@@ -883,9 +1216,22 @@ export default function CheckIn() {
                       return emb ? { ...emb } : null;
                     }).filter(Boolean);
                     // Combinar sin duplicados
-                    const allEmbs = [...baseEmbs, ...extraEmbs.filter(e => !baseEmbs.some(b => b.id === e.id))];
+                    const allEmbsBase = [...baseEmbs, ...extraEmbs.filter(e => !baseEmbs.some(b => b.id === e.id))];
+                    // Blue Apple siempre aparece en todas las salidas
+                    const blueApple = embarcaciones.find(e => e.id === "EMB-BLUEAPPLE");
+                    const allEmbs = blueApple && !allEmbsBase.some(e => e.id === "EMB-BLUEAPPLE")
+                      ? [...allEmbsBase, { ...blueApple }]
+                      : allEmbsBase;
                     return allEmbs.map(emb => (
-                      <button key={emb.id} onClick={() => generarZarpe(salida, resDesal, fecha, despachosDesal.find(d => d.embarcacion_nombre === emb.nombre) || null, emb)}
+                      <button key={emb.id} onClick={() => {
+                        const embDesp = despachosDesal.find(d => d.embarcacion_nombre === emb.nombre);
+                        const colabsDesp = despachosDesal.find(d => d.colaboradores?.length > 0);
+                        // Merge: use emb-specific despacho but always include collaborators from any despacho
+                        const despFinal = embDesp
+                          ? { ...embDesp, colaboradores: embDesp.colaboradores?.length > 0 ? embDesp.colaboradores : (colabsDesp?.colaboradores || []) }
+                          : (colabsDesp || null);
+                        generarZarpe(salida, resDesal, fecha, despFinal, emb);
+                      }}
                         style={{ padding: "8px 12px", borderRadius: 8, background: emb._extra ? B.sky + "22" : B.navyLight, color: emb._extra ? B.sky : B.white, border: emb._extra ? `1px solid ${B.sky}44` : "none", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
                         📄 {emb.nombre}
                       </button>
@@ -904,7 +1250,12 @@ export default function CheckIn() {
                   const emb = embarcaciones.find(e => e.id === eid);
                   return emb ? { ...emb } : null;
                 }).filter(Boolean);
-                const allEmbs2 = [...baseE2, ...extraE2.filter(e => !baseE2.some(b => b.id === e.id))];
+                const allEmbs2Base = [...baseE2, ...extraE2.filter(e => !baseE2.some(b => b.id === e.id))];
+                // Blue Apple siempre aparece en todas las salidas
+                const blueApple2 = embarcaciones.find(e => e.id === "EMB-BLUEAPPLE");
+                const allEmbs2 = blueApple2 && !allEmbs2Base.some(e => e.id === "EMB-BLUEAPPLE")
+                  ? [...allEmbs2Base, { ...blueApple2 }]
+                  : allEmbs2Base;
                 const todasDespachadas = allEmbs2.length > 0 && allEmbs2.every(e => despachosDesal.some(d => d.embarcacion_nombre === e.nombre));
                 return (
                   <button
@@ -1004,15 +1355,18 @@ export default function CheckIn() {
                           )}
                         </div>
                         {res.contacto && <div style={{ fontSize: 11, color: "rgba(255,255,255,0.3)", marginTop: 2 }}>{res.contacto}</div>}
-                        {/* Embarcación selector — base + extras del calendario */}
+                        {/* Embarcación selector — asignadas a la salida + Blue Apple */}
                         {(() => {
                           const override = overrides.find(o => o.salida_id === salida.id);
                           const baseEmbs = (salida.embarcaciones || [])
                             .map(eid => embarcaciones.find(e => e.id === eid))
                             .filter(Boolean);
                           const extraEmbs = (override?.extra_embarcaciones || [])
+                            .map(e => embarcaciones.find(eb => eb.id === e.id) || e)
                             .filter(e => !baseEmbs.some(b => b.id === e.id));
-                          const todasEmbs = [...baseEmbs, ...extraEmbs];
+                          const blueApple = embarcaciones.find(e => e.id === "EMB-BLUEAPPLE");
+                          const compartidas = blueApple && !baseEmbs.some(b => b.id === "EMB-BLUEAPPLE") && !extraEmbs.some(b => b.id === "EMB-BLUEAPPLE") ? [blueApple] : [];
+                          const todasEmbs = [...baseEmbs, ...extraEmbs, ...compartidas];
                           if (todasEmbs.length === 0) return null;
                           return (
                             <div style={{ marginTop: 6 }}>
@@ -1041,7 +1395,7 @@ export default function CheckIn() {
                       <div style={{ display: "flex", flexDirection: "column", gap: 6, flexShrink: 0 }}>
                         {/* Check-in con confirmación */}
                         <button
-                          onClick={() => checked ? doUnCheckin(res) : setConfirmCheckin(res)}
+                          onClick={() => checked ? doUnCheckin(res) : (setConfirmCheckin(res), setCiPax(res.pax || 1))}
                           disabled={isNS}
                           title={checked ? "Deshacer check-in" : "Confirmar llegada"}
                           style={{
@@ -1116,7 +1470,7 @@ export default function CheckIn() {
               );
             })()}
           </>
-        )}
+        ))}
       </div>
     </>
   );
