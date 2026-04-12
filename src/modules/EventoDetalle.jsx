@@ -777,7 +777,7 @@ const CATS_SERV = ["Menú Restaurante","Menú Bebidas","Menú Banquetes","Espaci
 const CATS_TO_TIPO = {
   "Menú Restaurante":      "restaurant",
   "Menú Bebidas":          "bebidas",
-  "Menú Banquetes":        "restaurant",
+  "Menú Banquetes":        "banquetes",
   "Espacios Renta":        "espacios_renta",
   "Transportación Acuática": "trans_acuatica",
   "Transportación Terrestre": "transportacion",
