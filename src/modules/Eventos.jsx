@@ -3,16 +3,17 @@ import { B, COP, fmtFecha, todayStr } from "../brand";
 import { supabase } from "../lib/supabase";
 import { useMobile } from "../lib/useMobile";
 import { wompiCheckoutUrl } from "../lib/wompi";
+import EventoDetalle from "./EventoDetalle";
 
-const STAGES       = ["Consulta", "Cotizado", "Confirmado", "Realizado"];
+const STAGES       = ["Consulta", "Cotizado", "Confirmado", "Realizado", "Perdido"];
 const TIPOS_EVT    = ["Matrimonio", "Cumpleaños", "Corporativo", "Despedida de Solteros", "Aniversario", "Grado", "Otro"];
-const TIPOS_GRUPO  = ["VIP Pass", "Exclusive Pass", "Atolon Experience", "After Island", "STAFF", "Impuesto Muelle"];
+const TIPOS_GRUPO  = ["VIP Pass", "VIP PASS (Bebida + Impuesto de Muelle)", "Exclusive Pass", "Atolon Experience", "After Island", "STAFF", "Impuesto Muelle"];
 const PRECIO_MUELLE = 18000; // precio fijo Impuesto Muelle
-const SLUG_MAP     = { "VIP Pass": "vip-pass", "Exclusive Pass": "exclusive-pass", "Atolon Experience": "atolon-experience", "After Island": "after-island" };
+const SLUG_MAP     = { "VIP Pass": "vip-pass", "VIP PASS (Bebida + Impuesto de Muelle)": "vip-pass-grupo", "Exclusive Pass": "exclusive-pass", "Atolon Experience": "atolon-experience", "After Island": "after-island" };
 
 const IS = { width: "100%", padding: "9px 12px", borderRadius: 8, background: B.navy, border: `1px solid ${B.navyLight}`, color: B.white, fontSize: 13, outline: "none", boxSizing: "border-box" };
 const LS = { fontSize: 11, color: B.sand, display: "block", marginBottom: 5, textTransform: "uppercase", letterSpacing: "0.06em" };
-const stageColor = (s) => ({ Consulta: B.warning, Cotizado: B.sky, Confirmado: B.success, Realizado: "rgba(255,255,255,0.3)" }[s] || B.sand);
+const stageColor = (s) => ({ Consulta: B.warning, Cotizado: B.sky, Confirmado: B.success, Realizado: "rgba(255,255,255,0.3)", Perdido: B.danger }[s] || B.sand);
 
 // ─── BEO Preview ─────────────────────────────────────────────────────────────
 function BEOPreview({ evento, onClose }) {
@@ -401,7 +402,11 @@ function GrupoLink({ evento, onClose }) {
 
         {/* Info card */}
         <div style={{ background: B.navy, borderRadius: 10, padding: "14px 16px", fontSize: 13, lineHeight: 1.8, color: "rgba(255,255,255,0.5)", marginBottom: 12 }}>
-          <div>📅 <strong style={{ color: B.white }}>{fmtFecha(evento.fecha)}</strong></div>
+          <div>📅 <strong style={{ color: B.white }}>
+            {evento.fecha_fin && evento.fecha_fin !== evento.fecha
+              ? `${fmtFecha(evento.fecha)} → ${fmtFecha(evento.fecha_fin)}`
+              : fmtFecha(evento.fecha)}
+          </strong></div>
           <div>🌴 <strong style={{ color: B.white }}>{evento.tipo}</strong></div>
           {(evento.salidas_grupo || []).length > 0 && (
             <div>⛵ <strong style={{ color: B.white }}>{[...(evento.salidas_grupo)].sort((a,b)=>a.hora.localeCompare(b.hora)).map(s => s.hora).join(" · ")}</strong></div>
@@ -415,6 +420,19 @@ function GrupoLink({ evento, onClose }) {
   );
 }
 
+// ─── Build zarpe slots from pasadias_org (excluye Impuesto Muelle) ───────────
+function buildZarpeSlots(pasadiasOrg) {
+  const slots = [];
+  (pasadiasOrg || []).forEach(p => {
+    if (p.tipo === "Impuesto Muelle") return;
+    const n = Number(p.personas) || 0;
+    for (let i = 0; i < n; i++) {
+      slots.push({ slot_id: `${p.id}-${i}`, tipo: p.tipo, idx: i + 1 });
+    }
+  });
+  return slots;
+}
+
 // ─── Modal crear/editar ───────────────────────────────────────────────────────
 export function EventoModal({ evento, categoria, salidas, aliados, vendedores, onClose, onSaved, onShowLink }) {
   const isEdit   = !!evento?.id;
@@ -422,8 +440,8 @@ export function EventoModal({ evento, categoria, salidas, aliados, vendedores, o
   const tiposOpt = isGrupo ? TIPOS_GRUPO : TIPOS_EVT;
 
   const [form, setForm]       = useState(isEdit
-    ? { ...evento, pax: String(evento.pax || ""), valor: String(evento.valor || ""), aliado_id: evento.aliado_id || "", vendedor: evento.vendedor || "", salidas_grupo: evento.salidas_grupo || [], buy_out: evento.buy_out || false, modalidad_pago: evento.modalidad_pago || "individual", pasadias_org: evento.pasadias_org || [], precio_tipo: evento.precio_tipo || "publico" }
-    : { nombre: "", tipo: tiposOpt[0], fecha: "", pax: "", valor: "", aliado_id: "", vendedor: "", salidas_grupo: [], contacto: "", tel: "", email: "", empresa: "", nit: "", cargo: "", direccion: "", montaje: "", hora_ini: "", hora_fin: "", vencimiento: "", stage: "Consulta", notas: "", categoria, buy_out: false, modalidad_pago: "individual", pasadias_org: [], precio_tipo: "publico" });
+    ? { ...evento, pax: String(evento.pax || ""), valor: String(evento.valor || ""), aliado_id: evento.aliado_id || "", vendedor: evento.vendedor || "", salidas_grupo: evento.salidas_grupo || [], buy_out: evento.buy_out || false, modalidad_pago: evento.modalidad_pago || "individual", pasadias_org: evento.pasadias_org || [], precio_tipo: evento.precio_tipo || "publico", fecha_fin: evento.fecha_fin || "", buy_out_fechas: evento.buy_out_fechas || [] }
+    : { nombre: "", tipo: tiposOpt[0], fecha: "", fecha_fin: "", pax: "", valor: "", aliado_id: "", vendedor: "", salidas_grupo: [], contacto: "", tel: "", email: "", empresa: "", nit: "", cargo: "", direccion: "", montaje: "", hora_ini: "", hora_fin: "", vencimiento: "", stage: "Consulta", notas: "", categoria, buy_out: false, buy_out_fechas: [], modalidad_pago: "individual", pasadias_org: [], precio_tipo: "publico" });
   const [saving,          setSaving]          = useState(false);
   const [horaInput,       setHoraInput]       = useState("");
   const [aliadoSearch,    setAliadoSearch]    = useState("");
@@ -438,6 +456,15 @@ export function EventoModal({ evento, categoria, salidas, aliados, vendedores, o
   const [errPago,         setErrPago]         = useState("");
   const [reservasPrevias, setReservasPrevias] = useState(null);
   const [pagoProcesado,   setPagoProcesado]   = useState(null);
+  const [montoPago,       setMontoPago]       = useState("");
+  const [fechaPago,       setFechaPago]       = useState(todayStr);
+  // Zarpe grupal
+  const [zarpeData,       setZarpeData]       = useState(evento?.zarpe_data       || []);
+  const [invitadosZarpe,  setInvitadosZarpe]  = useState(evento?.invitados_zarpe  || []);
+  const [zarpeLabel,      setZarpeLabel]      = useState("");
+  const [zarpeSlots,      setZarpeSlots]      = useState("1");
+  const [zarpeCreating,   setZarpeCreating]   = useState(false);
+  const [copiedZarpe,     setCopiedZarpe]     = useState("");
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
   // Cargar precios de pasadías cuando es grupo
@@ -456,6 +483,18 @@ export function EventoModal({ evento, categoria, salidas, aliados, vendedores, o
       .order("created_at", { ascending: false })
       .then(({ data }) => setReservasPrevias(data || []));
   }, [isEdit, form.modalidad_pago]);
+
+  // Cargar zarpe data al editar grupo organizador
+  useEffect(() => {
+    if (!isEdit || !isGrupo || form.modalidad_pago !== "organizador" || !supabase) return;
+    supabase.from("eventos").select("zarpe_data, invitados_zarpe").eq("id", evento.id).single()
+      .then(({ data }) => {
+        if (data) {
+          setZarpeData(data.zarpe_data || []);
+          setInvitadosZarpe(data.invitados_zarpe || []);
+        }
+      });
+  }, [isEdit, isGrupo, form.modalidad_pago]);
 
   // Cargar cuentas bancarias al seleccionar transferencia
   useEffect(() => {
@@ -538,15 +577,30 @@ export function EventoModal({ evento, categoria, salidas, aliados, vendedores, o
     if (!metodoPago || procesandoPago) return;
     setProcesandoPago(true);
     setErrPago("");
-    const montoOp = (reservasPrevias !== null && reservasPrevias.length > 0) ? saldoPago : nuevoTotal;
-    if (montoOp <= 0) { setErrPago(montoOp < 0 ? `Saldo a favor de ${COP(Math.abs(montoOp))} — no hay cobro pendiente.` : "El monto debe ser mayor a 0."); setProcesandoPago(false); return; }
+    const montoDefault = (reservasPrevias !== null && reservasPrevias.length > 0) ? saldoPago : nuevoTotal;
+    const montoOp  = Number(montoPago) > 0 ? Number(montoPago) : montoDefault;
+    if (montoOp <= 0) { setErrPago(montoDefault < 0 ? `Saldo a favor de ${COP(Math.abs(montoDefault))} — no hay cobro pendiente.` : "El monto debe ser mayor a 0."); setProcesandoPago(false); return; }
+
+    // ── Link de pago: solo genera URL, NO crea registro en historial ──────────
+    if (metodoPago === "link_pago") {
+      const tempRef = `GRP-ORG-${Date.now()}`;
+      const link = await wompiCheckoutUrl({ referencia: tempRef, totalCOP: montoOp, redirectUrl: `${window.location.origin}/` });
+      setWompiLinkOrg(link);
+      setPagoProcesado({ id: null, total: montoOp, soloLink: true });
+      setMontoPago("");
+      setProcesandoPago(false);
+      return;
+    }
+
+    // ── Wompi / Transferencia: crea registro en historial ────────────────────
     const rid = `GRP-ORG-${Date.now()}`;
     const fechaISO = (form.fecha || "").split("T")[0];
     const estado   = metodoPago === "transferencia" ? "pendiente_comprobante" : "pendiente_pago";
     const esAjuste = reservasPrevias !== null && reservasPrevias.length > 0;
+    const fechaTag = `Fecha pago: ${fechaPago || todayStr}`;
     const notas    = esAjuste
-      ? `Ajuste — ${form.nombre} — Total nuevo: ${COP(nuevoTotal)} — Ya pagado: ${COP(totalPagado)} — Pendiente: ${COP(montoOp)}`
-      : `Pago grupal — ${form.nombre} — ${form.precio_tipo === "neto" ? "precio neto B2B" : "precio público"}`;
+      ? `${fechaTag} | Ajuste — ${form.nombre} — Total nuevo: ${COP(nuevoTotal)} — Ya pagado: ${COP(totalPagado)} — Pendiente: ${COP(montoOp)}`
+      : `${fechaTag} | Pago grupal — ${form.nombre} — ${form.precio_tipo === "neto" ? "precio neto B2B" : "precio público"}`;
     // Impuesto Muelle no cuenta como pax (es un cobro, no una persona)
     const totalPax = (form.pasadias_org || [])
       .filter(p => p.tipo !== "Impuesto Muelle")
@@ -559,19 +613,22 @@ export function EventoModal({ evento, categoria, salidas, aliados, vendedores, o
       total: montoOp, grupo_id: grupoId,
       aliado_id: form.aliado_id || null,
       canal: "GRUPO-ORG", forma_pago: metodoPago, estado, notas,
+      salida_id: null,
     });
     if (error) { setErrPago(error.message); setProcesandoPago(false); return; }
     setPagoProcesado({ id: rid, total: montoOp });
+    setMontoPago("");
+    setFechaPago(todayStr);
     // Refrescar historial
     const { data: nuevasRes } = await supabase.from("reservas")
       .select("id, total, pax, estado, created_at, notas, forma_pago")
       .eq("grupo_id", grupoId).eq("canal", "GRUPO-ORG")
       .order("created_at", { ascending: false });
     setReservasPrevias(nuevasRes || []);
-    if (metodoPago === "wompi" || metodoPago === "link_pago") {
+    if (metodoPago === "wompi") {
       const link = await wompiCheckoutUrl({ referencia: rid, totalCOP: montoOp, redirectUrl: `${window.location.origin}/` });
       setWompiLinkOrg(link);
-      if (metodoPago === "wompi") window.open(link, "_blank");
+      window.open(link, "_blank");
     }
     setProcesandoPago(false);
   };
@@ -603,10 +660,19 @@ export function EventoModal({ evento, categoria, salidas, aliados, vendedores, o
   const save = async () => {
     if (!supabase || !form.nombre.trim() || !form.fecha) return;
     setCheckingDate(true);
-    const reservasEnFecha = await checkReservasEnFecha(form.fecha);
+
+    // Para buy-out multi-día, revisar todas las fechas marcadas para buy-out
+    let reservasEnFecha = [];
+    if (form.buy_out) {
+      const fechasARevisar = (form.buy_out_fechas && form.buy_out_fechas.length > 0)
+        ? form.buy_out_fechas
+        : [form.fecha];
+      const results = await Promise.all(fechasARevisar.map(f => checkReservasEnFecha(f)));
+      reservasEnFecha = results.flat();
+    }
     setCheckingDate(false);
 
-    // Solo pedir aprobación GG si hay reservas Y el evento es buy-out (bloqueará la fecha)
+    // Solo pedir aprobación GG si hay reservas Y el evento es buy-out (bloqueará la(s) fecha(s))
     // Grupos no buy-out coexisten con reservas individuales sin conflicto
     if (reservasEnFecha.length > 0 && form.buy_out) {
       const { data: gerentes } = await supabase
@@ -654,6 +720,8 @@ export function EventoModal({ evento, categoria, salidas, aliados, vendedores, o
       aliado_id:      form.aliado_id || null,
       vendedor:       form.vendedor || "",
       buy_out:        form.buy_out || false,
+      buy_out_fechas: form.buy_out_fechas || [],
+      fecha_fin:      form.fecha_fin || null,
       modalidad_pago: form.modalidad_pago || "individual",
       pasadias_org:   form.pasadias_org || [],
       precio_tipo:    form.precio_tipo || "publico",
@@ -691,31 +759,41 @@ export function EventoModal({ evento, categoria, salidas, aliados, vendedores, o
     const fechaCambio   = isEdit && evento?.fecha !== form.fecha;
 
     if (form.buy_out && form.stage === "Confirmado") {
-      if (!wasConfirmado && form.fecha) {
-        // Primera vez que se confirma → crear cierre
-        await supabase.from("cierres").insert({
-          id: `CIE-${Date.now()}`,
-          fecha: form.fecha,
-          tipo: "total",
-          motivo: `Buy-Out: ${form.nombre.trim()}`,
-          activo: true,
-          creado_por: "Eventos",
-        });
-      } else if (wasConfirmado && fechaCambio && evento?.fecha) {
-        // Ya estaba confirmado y cambió la fecha → mover el cierre
+      // Determinar qué fechas aplican buy-out
+      // Si hay buy_out_fechas seleccionadas → usar esas; si no (evento 1 día) → solo form.fecha
+      const buyOutFechasEfectivas = (form.buy_out_fechas && form.buy_out_fechas.length > 0)
+        ? form.buy_out_fechas
+        : (form.fecha ? [form.fecha] : []);
+
+      if (!wasConfirmado && buyOutFechasEfectivas.length > 0) {
+        // Primera vez que se confirma → crear cierres para cada fecha buy-out
+        for (let i = 0; i < buyOutFechasEfectivas.length; i++) {
+          await supabase.from("cierres").insert({
+            id: `CIE-${Date.now()}-${i}`,
+            fecha: buyOutFechasEfectivas[i],
+            tipo: "total",
+            motivo: `Buy-Out: ${form.nombre.trim()}`,
+            activo: true,
+            creado_por: "Eventos",
+          });
+        }
+      } else if (wasConfirmado) {
+        // Ya estaba confirmado → borrar cierres anteriores de este evento y recrear con nuevas fechas
+        const nombreAnterior = evento?.nombre || form.nombre.trim();
         await supabase.from("cierres")
           .delete()
           .eq("creado_por", "Eventos")
-          .eq("fecha", evento.fecha)
-          .ilike("motivo", `%${evento.nombre}%`);
-        await supabase.from("cierres").insert({
-          id: `CIE-${Date.now()}`,
-          fecha: form.fecha,
-          tipo: "total",
-          motivo: `Buy-Out: ${form.nombre.trim()}`,
-          activo: true,
-          creado_por: "Eventos",
-        });
+          .ilike("motivo", `%${nombreAnterior}%`);
+        for (let i = 0; i < buyOutFechasEfectivas.length; i++) {
+          await supabase.from("cierres").insert({
+            id: `CIE-${Date.now()}-${i}`,
+            fecha: buyOutFechasEfectivas[i],
+            tipo: "total",
+            motivo: `Buy-Out: ${form.nombre.trim()}`,
+            activo: true,
+            creado_por: "Eventos",
+          });
+        }
       }
     }
     setSaving(false);
@@ -911,15 +989,21 @@ export function EventoModal({ evento, categoria, salidas, aliados, vendedores, o
             </div>
           </div>
 
-          {/* 8. Tipo + Fecha */}
-          {/* Para organizador: solo fecha (el tipo va en cada pasadía) */}
+          {/* 8. Tipo + Fecha inicio + Fecha fin */}
+          {/* Para organizador: solo fechas (el tipo va en cada pasadía) */}
           {isGrupo && form.modalidad_pago === "organizador" ? (
-            <div>
-              <label style={LS}>Fecha del evento</label>
-              <input type="date" value={form.fecha} onChange={e => set("fecha", e.target.value)} style={IS} />
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+              <div>
+                <label style={LS}>Fecha inicio</label>
+                <input type="date" value={form.fecha} onChange={e => set("fecha", e.target.value)} style={IS} />
+              </div>
+              <div>
+                <label style={LS}>Fecha fin <span style={{ fontWeight: 400, opacity: 0.5 }}>(opcional)</span></label>
+                <input type="date" value={form.fecha_fin} onChange={e => set("fecha_fin", e.target.value)} style={IS} min={form.fecha} />
+              </div>
             </div>
           ) : (
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
               <div>
                 <label style={LS}>{isGrupo ? "Tipo de pasadía" : "Tipo de evento"}</label>
                 <select value={form.tipo} onChange={e => set("tipo", e.target.value)} style={IS}>
@@ -927,8 +1011,12 @@ export function EventoModal({ evento, categoria, salidas, aliados, vendedores, o
                 </select>
               </div>
               <div>
-                <label style={LS}>Fecha</label>
+                <label style={LS}>Fecha inicio</label>
                 <input type="date" value={form.fecha} onChange={e => set("fecha", e.target.value)} style={IS} />
+              </div>
+              <div>
+                <label style={LS}>Fecha fin <span style={{ fontWeight: 400, opacity: 0.5 }}>(opcional)</span></label>
+                <input type="date" value={form.fecha_fin} onChange={e => set("fecha_fin", e.target.value)} style={IS} min={form.fecha} />
               </div>
             </div>
           )}
@@ -999,13 +1087,6 @@ export function EventoModal({ evento, categoria, salidas, aliados, vendedores, o
             );
           })()}
 
-          {/* Valor estimado — solo eventos */}
-          {!isGrupo && (
-            <div>
-              <label style={LS}>Valor estimado</label>
-              <input type="number" value={form.valor} onChange={e => set("valor", e.target.value)} style={IS} placeholder="0" />
-            </div>
-          )}
 
           {/* Horarios de salida — solo grupos */}
           {isGrupo && (
@@ -1212,12 +1293,17 @@ export function EventoModal({ evento, categoria, salidas, aliados, vendedores, o
                   {reservasPrevias !== null && reservasPrevias.length > 0 && (
                     <div style={{ marginBottom: 12 }}>
                       <div style={{ fontSize: 10, color: "rgba(255,255,255,0.3)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 }}>Historial de pagos</div>
-                      {reservasPrevias.map(r => (
+                      {reservasPrevias.map(r => {
+                        const fechaM = (r.notas || "").match(/Fecha pago: (\d{4}-\d{2}-\d{2})/);
+                        const fechaDisp = fechaM
+                          ? new Date(fechaM[1] + "T12:00:00").toLocaleDateString("es-CO", { day: "2-digit", month: "short" })
+                          : new Date(r.created_at).toLocaleDateString("es-CO", { day: "2-digit", month: "short" });
+                        return (
                         <div key={r.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 0", borderBottom: `1px solid ${B.navyLight}22`, fontSize: 12 }}>
                           <div>
                             <span style={{ color: "rgba(255,255,255,0.6)", marginRight: 8 }}>
                               {r.forma_pago === "wompi" ? "💳" : r.forma_pago === "transferencia" ? "🏦" : "📲"}
-                              {" "}{new Date(r.created_at).toLocaleDateString("es-CO", { day: "2-digit", month: "short" })}
+                              {" "}{fechaDisp}
                             </span>
                             <span style={{ fontSize: 10, padding: "2px 6px", borderRadius: 6,
                               background: r.estado === "confirmado" ? B.success + "33" : r.estado === "cancelado" ? B.danger + "33" : B.warning + "33",
@@ -1227,23 +1313,38 @@ export function EventoModal({ evento, categoria, salidas, aliados, vendedores, o
                           </div>
                           <span style={{ fontWeight: 700, color: B.sand }}>{COP(r.total)}</span>
                         </div>
-                      ))}
+                      );
+                      })}
                     </div>
                   )}
 
                   {/* Resultado post-pago */}
                   {pagoProcesado ? (
                     <div style={{ textAlign: "center", padding: "16px 0" }}>
-                      <div style={{ fontSize: 32, marginBottom: 8 }}>✅</div>
-                      <div style={{ fontSize: 14, fontWeight: 700, color: B.success, marginBottom: 4 }}>Pago registrado</div>
-                      <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", fontFamily: "monospace", marginBottom: 12 }}>{pagoProcesado.id}</div>
+                      {pagoProcesado.soloLink ? (
+                        /* ── Solo link de pago — sin registro en historial ── */
+                        <>
+                          <div style={{ fontSize: 32, marginBottom: 8 }}>📲</div>
+                          <div style={{ fontSize: 14, fontWeight: 700, color: B.sky, marginBottom: 4 }}>Link de pago generado</div>
+                          <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginBottom: 12 }}>
+                            El pago se registrará en el historial cuando el cliente complete la transacción
+                          </div>
+                        </>
+                      ) : (
+                        /* ── Pago registrado (Wompi / Transferencia) ── */
+                        <>
+                          <div style={{ fontSize: 32, marginBottom: 8 }}>✅</div>
+                          <div style={{ fontSize: 14, fontWeight: 700, color: B.success, marginBottom: 4 }}>Pago registrado</div>
+                          <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", fontFamily: "monospace", marginBottom: 12 }}>{pagoProcesado.id}</div>
+                        </>
+                      )}
                       {wompiLinkOrg && (
                         <>
                           <div style={{ background: B.navy, borderRadius: 9, padding: "10px 12px", marginBottom: 8, wordBreak: "break-all", fontSize: 11, color: B.sky, fontFamily: "monospace" }}>{wompiLinkOrg}</div>
                           <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
                             <button onClick={() => { navigator.clipboard.writeText(wompiLinkOrg); setCopiedOrg(true); setTimeout(() => setCopiedOrg(false), 2000); }}
                               style={{ flex: 2, padding: "10px", background: copiedOrg ? B.success : B.sky, color: B.navy, border: "none", borderRadius: 8, fontWeight: 700, fontSize: 12, cursor: "pointer" }}>
-                              {copiedOrg ? "✓ Copiado!" : "📋 Copiar link Wompi"}
+                              {copiedOrg ? "✓ Copiado!" : "📋 Copiar link de pago"}
                             </button>
                             <button onClick={() => window.open(wompiLinkOrg, "_blank")}
                               style={{ flex: 1, padding: "10px", background: "#5B4CF522", color: "#a78bfa", border: `1px solid #5B4CF544`, borderRadius: 8, fontSize: 12, cursor: "pointer" }}>Abrir →</button>
@@ -1252,7 +1353,7 @@ export function EventoModal({ evento, categoria, salidas, aliados, vendedores, o
                       )}
                       <button onClick={() => { setPagoProcesado(null); setWompiLinkOrg(""); setMetodoPago(""); }}
                         style={{ width: "100%", padding: "9px", background: "none", border: `1px solid ${B.navyLight}`, borderRadius: 8, color: "rgba(255,255,255,0.4)", fontSize: 12, cursor: "pointer" }}>
-                        + Registrar otro pago
+                        {pagoProcesado.soloLink ? "Generar otro link" : "+ Registrar otro pago"}
                       </button>
                     </div>
                   ) : (
@@ -1275,6 +1376,24 @@ export function EventoModal({ evento, categoria, salidas, aliados, vendedores, o
                               </div>
                             ))}
                           </div>
+
+                          {/* Fecha de pago + Monto ajustable */}
+                          {metodoPago && metodoPago !== "link_pago" && (() => {
+                            const montoDefault = (reservasPrevias !== null && reservasPrevias.length > 0) ? saldoPago : nuevoTotal;
+                            return (
+                              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 12 }}>
+                                <div>
+                                  <label style={{ fontSize: 10, color: B.sand, textTransform: "uppercase", letterSpacing: "0.06em", display: "block", marginBottom: 4 }}>Fecha de pago</label>
+                                  <input type="date" value={fechaPago} onChange={e => setFechaPago(e.target.value)} style={{ ...IS, fontSize: 12 }} />
+                                </div>
+                                <div>
+                                  <label style={{ fontSize: 10, color: B.sand, textTransform: "uppercase", letterSpacing: "0.06em", display: "block", marginBottom: 4 }}>Monto a cobrar</label>
+                                  <input type="number" value={montoPago} onChange={e => setMontoPago(e.target.value)}
+                                    placeholder={String(montoDefault)} style={{ ...IS, fontSize: 12 }} />
+                                </div>
+                              </div>
+                            );
+                          })()}
 
                           {/* Datos bancarios si transferencia */}
                           {metodoPago === "transferencia" && (
@@ -1303,11 +1422,12 @@ export function EventoModal({ evento, categoria, salidas, aliados, vendedores, o
                               background: !metodoPago || procesandoPago ? B.navyLight : metodoPago === "wompi" ? "#5B4CF5" : metodoPago === "link_pago" ? B.success : B.sky,
                               color: !metodoPago || procesandoPago ? "rgba(255,255,255,0.3)" : metodoPago === "link_pago" ? B.navy : "#fff" }}>
                             {procesandoPago ? "Procesando..." : (() => {
-                              const monto = (reservasPrevias !== null && reservasPrevias.length > 0) ? saldoPago : nuevoTotal;
-                              if (metodoPago === "wompi") return `💳 Cobrar ${COP(monto)} con Wompi`;
-                              if (metodoPago === "transferencia") return `🏦 Registrar transferencia de ${COP(monto)}`;
-                              if (metodoPago === "link_pago") return `📲 Generar link de ${COP(monto)}`;
-                              return `Selecciona método — ${COP(monto)}`;
+                              const montoDefault = (reservasPrevias !== null && reservasPrevias.length > 0) ? saldoPago : nuevoTotal;
+                              const montoBtn = Number(montoPago) > 0 ? Number(montoPago) : montoDefault;
+                              if (metodoPago === "wompi") return `💳 Cobrar ${COP(montoBtn)} con Wompi`;
+                              if (metodoPago === "transferencia") return `🏦 Registrar transferencia de ${COP(montoBtn)}`;
+                              if (metodoPago === "link_pago") return `📲 Generar link de ${COP(montoBtn)}`;
+                              return `Selecciona método — ${COP(montoBtn)}`;
                             })()}
                           </button>
                         </>
@@ -1338,9 +1458,62 @@ export function EventoModal({ evento, categoria, salidas, aliados, vendedores, o
             </div>
             <div>
               <div style={{ fontSize: 13, fontWeight: 700, color: form.buy_out ? "#FFB400" : B.white }}>Buy-Out</div>
-              <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>Al confirmar, cierra automáticamente la fecha para venta de pasadías</div>
+              <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>Al confirmar, cierra la(s) fecha(s) seleccionada(s) para venta de pasadías</div>
             </div>
           </div>
+
+          {/* Buy-Out fechas — selector de días cuando el evento es multi-día */}
+          {form.buy_out && form.fecha && (() => {
+            // Generar lista de fechas entre fecha y fecha_fin
+            const dias = [];
+            const start = new Date(form.fecha + "T12:00:00");
+            const end = form.fecha_fin ? new Date(form.fecha_fin + "T12:00:00") : start;
+            for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+              dias.push(d.toISOString().slice(0, 10));
+            }
+            if (dias.length <= 1) {
+              // Evento de 1 día: buy-out aplica automáticamente a esa fecha, no hay que elegir
+              return null;
+            }
+            // Multi-día: mostrar checkboxes para seleccionar qué días aplica buy-out
+            const toggleFecha = (fecha) => {
+              const cur = form.buy_out_fechas || [];
+              const next = cur.includes(fecha) ? cur.filter(f => f !== fecha) : [...cur, fecha];
+              set("buy_out_fechas", next);
+            };
+            const allSelected = dias.every(d => (form.buy_out_fechas || []).includes(d));
+            const toggleAll = () => set("buy_out_fechas", allSelected ? [] : [...dias]);
+            return (
+              <div style={{ background: "rgba(255,180,0,0.07)", border: "1px solid rgba(255,180,0,0.25)", borderRadius: 10, padding: "12px 16px" }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: "#FFB400" }}>Días con Buy-Out (cierre de pasadías)</div>
+                  <button type="button" onClick={toggleAll}
+                    style={{ fontSize: 11, background: "none", border: "1px solid rgba(255,180,0,0.4)", borderRadius: 6, color: "#FFB400", padding: "3px 10px", cursor: "pointer" }}>
+                    {allSelected ? "Quitar todos" : "Todos"}
+                  </button>
+                </div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                  {dias.map(dia => {
+                    const checked = (form.buy_out_fechas || []).includes(dia);
+                    const label = new Date(dia + "T12:00:00").toLocaleDateString("es-CO", { weekday: "short", day: "numeric", month: "short" });
+                    return (
+                      <div key={dia} onClick={() => toggleFecha(dia)}
+                        style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 12px", borderRadius: 8, cursor: "pointer",
+                          background: checked ? "rgba(255,180,0,0.2)" : B.navyLight,
+                          border: `1px solid ${checked ? "#FFB400" : "transparent"}`, transition: "all 0.15s" }}>
+                        <div style={{ width: 14, height: 14, borderRadius: 3, border: `2px solid ${checked ? "#FFB400" : "rgba(255,255,255,0.3)"}`,
+                          background: checked ? "#FFB400" : "transparent", flexShrink: 0 }} />
+                        <span style={{ fontSize: 12, color: checked ? "#FFB400" : "rgba(255,255,255,0.6)", fontWeight: checked ? 700 : 400 }}>{label}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+                {(form.buy_out_fechas || []).length === 0 && (
+                  <div style={{ fontSize: 11, color: "rgba(255,180,0,0.5)", marginTop: 8 }}>Selecciona al menos un día para aplicar buy-out</div>
+                )}
+              </div>
+            );
+          })()}
 
           {/* Notas */}
           <div>
@@ -1348,6 +1521,155 @@ export function EventoModal({ evento, categoria, salidas, aliados, vendedores, o
             <textarea value={form.notas} onChange={e => set("notas", e.target.value)} rows={2}
               style={{ ...IS, resize: "vertical" }} placeholder="Requerimientos especiales, observaciones..." />
           </div>
+
+          {/* ── Zarpe Grupal — solo organizador editando grupo existente ── */}
+          {isGrupo && isEdit && form.modalidad_pago === "organizador" && (() => {
+            const allSlots  = buildZarpeSlots(form.pasadias_org);
+            const totalPax  = allSlots.length;
+            const completados = allSlots.filter(s => zarpeData.some(z => z.slot_id === s.slot_id && z.nombre?.trim())).length;
+            const zarpeUrl  = `${window.location.origin}/zarpe-grupo?ev=${evento.id}`;
+
+            // Assigned slot_ids across all invitados
+            const assignedIds = (invitadosZarpe || []).flatMap(inv => inv.slot_ids || []);
+            const disponibles = allSlots.filter(s => !assignedIds.includes(s.slot_id)).length;
+
+            const crearInvitacion = async () => {
+              const n = Number(zarpeSlots);
+              if (!zarpeLabel.trim() || n < 1 || n > disponibles) return;
+              setZarpeCreating(true);
+              const tok = Math.random().toString(36).substring(2, 10);
+              const unassigned = allSlots.filter(s => !assignedIds.includes(s.slot_id)).slice(0, n);
+              const newInv = { id: `INV-${Date.now()}`, label: zarpeLabel.trim(), slot_ids: unassigned.map(s => s.slot_id), tok };
+              const updated = [...(invitadosZarpe || []), newInv];
+              await supabase.from("eventos").update({ invitados_zarpe: updated }).eq("id", evento.id);
+              setInvitadosZarpe(updated);
+              setZarpeLabel("");
+              setZarpeSlots("1");
+              setZarpeCreating(false);
+            };
+
+            const eliminarInvitacion = async (id) => {
+              const updated = (invitadosZarpe || []).filter(i => i.id !== id);
+              await supabase.from("eventos").update({ invitados_zarpe: updated }).eq("id", evento.id);
+              setInvitadosZarpe(updated);
+            };
+
+            const copyLink = (url) => {
+              navigator.clipboard.writeText(url);
+              setCopiedZarpe(url);
+              setTimeout(() => setCopiedZarpe(""), 2000);
+            };
+
+            return (
+              <div style={{ borderTop: `1px solid ${B.navyLight}`, paddingTop: 16 }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+                  <div style={{ fontSize: 11, color: B.sand, textTransform: "uppercase", letterSpacing: "0.07em", fontWeight: 700 }}>
+                    🛳 Zarpe del grupo
+                  </div>
+                  <span style={{ fontSize: 12, color: completados === totalPax && totalPax > 0 ? B.success : "rgba(255,255,255,0.4)", fontWeight: 600 }}>
+                    {completados}/{totalPax} completados
+                  </span>
+                </div>
+
+                {/* Barra de progreso */}
+                {totalPax > 0 && (
+                  <div style={{ height: 6, borderRadius: 3, background: B.navyLight, marginBottom: 14, overflow: "hidden" }}>
+                    <div style={{ height: "100%", borderRadius: 3, background: completados === totalPax ? B.success : B.sky, width: `${(completados / totalPax) * 100}%`, transition: "width 0.4s" }} />
+                  </div>
+                )}
+
+                {/* Botón llenar todo / ver */}
+                <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+                  <button type="button" onClick={() => window.open(zarpeUrl, "_blank")}
+                    style={{ flex: 2, padding: "10px", borderRadius: 9, border: "none",
+                      background: B.sky + "22", color: B.sky, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+                    📋 {completados === 0 ? "Llenar zarpe del grupo" : "Ver / editar zarpe"}
+                  </button>
+                  <button type="button" onClick={() => copyLink(zarpeUrl)}
+                    style={{ flex: 1, padding: "10px", borderRadius: 9, border: `1px solid ${B.navyLight}`,
+                      background: copiedZarpe === zarpeUrl ? B.success + "22" : "none",
+                      color: copiedZarpe === zarpeUrl ? B.success : "rgba(255,255,255,0.5)",
+                      fontSize: 12, cursor: "pointer" }}>
+                    {copiedZarpe === zarpeUrl ? "✓ Copiado" : "🔗 Copiar"}
+                  </button>
+                </div>
+
+                {/* Lista invitaciones existentes */}
+                {(invitadosZarpe || []).length > 0 && (
+                  <div style={{ marginBottom: 12 }}>
+                    <div style={{ fontSize: 10, color: "rgba(255,255,255,0.3)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 }}>
+                      Invitaciones enviadas
+                    </div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                      {(invitadosZarpe || []).map(inv => {
+                        const invUrl = `${window.location.origin}/zarpe-grupo?ev=${evento.id}&tok=${inv.tok}`;
+                        const filled = (inv.slot_ids || []).filter(sid => zarpeData.some(z => z.slot_id === sid && z.nombre?.trim())).length;
+                        return (
+                          <div key={inv.id} style={{ background: B.navy, borderRadius: 10, padding: "10px 12px",
+                            display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}>
+                            <div style={{ flex: 1 }}>
+                              <div style={{ fontWeight: 700, color: B.white }}>{inv.label}</div>
+                              <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", marginTop: 1 }}>
+                                {filled}/{inv.slot_ids?.length || 0} pasajeros · {(inv.slot_ids || []).length > 0 ? (zarpeData.find(z => z.slot_id === inv.slot_ids[0])?.tipo || "—") : "—"}
+                              </div>
+                            </div>
+                            <button type="button" onClick={() => copyLink(invUrl)}
+                              style={{ padding: "5px 10px", borderRadius: 7, border: `1px solid ${B.navyLight}`,
+                                background: copiedZarpe === invUrl ? B.success + "22" : "transparent",
+                                color: copiedZarpe === invUrl ? B.success : "rgba(255,255,255,0.5)",
+                                fontSize: 11, cursor: "pointer" }}>
+                              {copiedZarpe === invUrl ? "✓" : "🔗"}
+                            </button>
+                            <button type="button" onClick={() => window.open(invUrl, "_blank")}
+                              style={{ padding: "5px 10px", borderRadius: 7, border: `1px solid ${B.navyLight}`,
+                                background: "transparent", color: B.sky, fontSize: 11, cursor: "pointer" }}>
+                              →
+                            </button>
+                            <button type="button" onClick={() => eliminarInvitacion(inv.id)}
+                              style={{ padding: "5px 10px", borderRadius: 7, border: "none",
+                                background: B.danger + "22", color: B.danger, fontSize: 11, cursor: "pointer" }}>
+                              ✕
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* Crear nueva invitación */}
+                {disponibles > 0 && (
+                  <div style={{ background: B.navy, borderRadius: 10, padding: 12 }}>
+                    <div style={{ fontSize: 10, color: B.sand, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 }}>
+                      + Crear invitación ({disponibles} cupos disponibles)
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 80px 90px", gap: 8 }}>
+                      <input value={zarpeLabel} onChange={e => setZarpeLabel(e.target.value)}
+                        placeholder="Nombre / grupo (ej: Familia García)"
+                        style={{ ...IS, fontSize: 12, padding: "7px 10px" }} />
+                      <input type="number" value={zarpeSlots} min="1" max={String(disponibles)}
+                        onChange={e => setZarpeSlots(e.target.value)}
+                        placeholder="# pax" style={{ ...IS, fontSize: 12, padding: "7px 10px", textAlign: "center" }} />
+                      <button type="button" onClick={crearInvitacion}
+                        disabled={zarpeCreating || !zarpeLabel.trim() || Number(zarpeSlots) < 1 || Number(zarpeSlots) > disponibles}
+                        style={{ padding: "7px", borderRadius: 8, border: "none",
+                          background: zarpeLabel.trim() && Number(zarpeSlots) >= 1 && Number(zarpeSlots) <= disponibles ? B.success : B.navyLight,
+                          color: zarpeLabel.trim() ? B.navy : "rgba(255,255,255,0.3)",
+                          fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
+                        {zarpeCreating ? "..." : "Crear →"}
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {totalPax === 0 && (
+                  <div style={{ fontSize: 12, color: "rgba(255,255,255,0.3)", textAlign: "center", padding: "8px 0" }}>
+                    Agrega pasadías al grupo para habilitar el zarpe
+                  </div>
+                )}
+              </div>
+            );
+          })()}
         </div>
 
         {saveError && (
@@ -1518,7 +1840,7 @@ export function ReservasGrupoModal({ evento, onClose }) {
 }
 
 // ─── Kanban board ─────────────────────────────────────────────────────────────
-function KanbanBoard({ items, isGrupo, onEdit, onBeo, onLink, onCotizar, onReservas, aliados }) {
+function KanbanBoard({ items, isGrupo, onEdit, onBeo, onLink, onCotizar, onReservas, onExtras, aliados }) {
   return (
     <div style={{ display: "grid", gridTemplateColumns: `repeat(${STAGES.length}, 1fr)`, gap: 16 }}>
       {STAGES.map(stage => (
@@ -1534,11 +1856,10 @@ function KanbanBoard({ items, isGrupo, onEdit, onBeo, onLink, onCotizar, onReser
                 onMouseLeave={e => e.currentTarget.style.opacity = "1"}>
                 <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 4 }}>{ev.nombre}</div>
                 <div style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", marginBottom: 6 }}>
-                  {ev.tipo} · {fmtFecha(ev.fecha)}
+                  {ev.tipo} · {ev.fecha_fin && ev.fecha_fin !== ev.fecha ? `${fmtFecha(ev.fecha)} → ${fmtFecha(ev.fecha_fin)}` : fmtFecha(ev.fecha)}
                   {(ev.salidas_grupo || []).length > 0 && ` · ⛵ ${[...ev.salidas_grupo].sort((a,b)=>a.hora.localeCompare(b.hora)).map(s=>s.hora).join(", ")}`}
                   {` · ${ev.pax || "∞"} pax`}
                 </div>
-                <div style={{ fontSize: 15, fontWeight: 700, color: B.sand, marginBottom: 6 }}>{ev.valor ? COP(ev.valor) : ""}</div>
                 {ev.contacto && <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)" }}>{ev.contacto}</div>}
                 {ev.aliado_id && <div style={{ fontSize: 11, color: B.sky, marginBottom: 4 }}>🤝 {aliados.find(a => a.id === ev.aliado_id)?.nombre || ev.aliado_id}</div>}
                 {ev.vendedor && <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginBottom: 4 }}>👤 {ev.vendedor}</div>}
@@ -1773,7 +2094,7 @@ function CotizacionModal({ evento, aliados, onClose, onSaved }) {
   async function guardar(marcarCotizado = false) {
     setSaving(true);
     const data = { espacios, alojamientos, alimentos, servicios, notas };
-    const upd  = { cotizacion_data: data };
+    const upd  = { cotizacion_data: data, valor: grandTotal };
     if (marcarCotizado) upd.stage = "Cotizado";
     await supabase.from("eventos").update(upd).eq("id", evento.id);
     setSaving(false);
@@ -1960,14 +2281,175 @@ function CotizacionModal({ evento, aliados, onClose, onSaved }) {
   );
 }
 
+// ─── Cobros Extra Grupo ────────────────────────────────────────────────────────
+function GrupoExtrasModal({ evento, onClose, onSaved }) {
+  const saved       = evento.extras_data || {};
+  const [transporte,  setTransporte]  = useState(saved.transporte  || []);
+  const [alimentos,   setAlimentos]   = useState(saved.alimentos   || []);
+  const [servicios,   setServicios]   = useState(saved.servicios   || []);
+  const [notas,       setNotas]       = useState(saved.notas       || "");
+  const [saving,      setSaving]      = useState(false);
+
+  const sumSection = (rows) => rows.reduce((acc, l) => {
+    const { sub, tax, total } = calcLine(l);
+    return { sub: acc.sub + sub, tax: acc.tax + tax, total: acc.total + total };
+  }, { sub: 0, tax: 0, total: 0 });
+
+  const totTrans  = sumSection(transporte);
+  const totAli    = sumSection(alimentos);
+  const totSer    = sumSection(servicios);
+  const grandTotal = totTrans.total + totAli.total + totSer.total;
+
+  async function guardar() {
+    setSaving(true);
+    const data = { transporte, alimentos, servicios, notas };
+    await supabase.from("eventos").update({ extras_data: data, valor_extras: grandTotal }).eq("id", evento.id);
+    setSaving(false);
+    onSaved();
+    onClose();
+  }
+
+  function imprimir() {
+    guardar();
+    setTimeout(() => window.print(), 400);
+  }
+
+  return (
+    <>
+      <style>{`
+        @media print {
+          body > * { display: none !important; }
+          #grupo-extras-print { display: block !important; position: fixed; inset: 0; background: white; z-index: 99999; padding: 32px; color: #000; }
+          #grupo-extras-print table { page-break-inside: avoid; }
+        }
+        #grupo-extras-print { display: none; }
+      `}</style>
+
+      {/* Printable */}
+      <div id="grupo-extras-print">
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 24, borderBottom: "3px solid #1E3566", paddingBottom: 16 }}>
+          <div>
+            <div style={{ fontSize: 28, fontWeight: 900, color: "#1E3566" }}>ATOLON</div>
+            <div style={{ fontSize: 12, color: "#666" }}>Beach Club · Cartagena, Colombia</div>
+          </div>
+          <div style={{ textAlign: "right" }}>
+            <div style={{ fontSize: 20, fontWeight: 700, color: "#1E3566" }}>COBROS ADICIONALES</div>
+            <div style={{ fontSize: 13, color: "#444", marginTop: 4 }}>{evento.nombre} — {evento.tipo}</div>
+            <div style={{ fontSize: 12, color: "#666" }}>Fecha: {evento.fecha ? new Date(evento.fecha + "T12:00:00").toLocaleDateString("es-CO", { weekday: "long", day: "numeric", month: "long", year: "numeric" }) : ""}</div>
+            <div style={{ fontSize: 12, color: "#666" }}>{evento.pax} pax</div>
+          </div>
+        </div>
+
+        {[["TRANSPORTE", "#1E3566", transporte], ["ALIMENTOS Y BEBIDAS", "#2E7D52", alimentos], ["SERVICIOS ADICIONALES", "#7B4F12", servicios]].map(([title, color, rows]) => rows.length > 0 && (
+          <div key={title} style={{ marginBottom: 20 }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
+              <thead>
+                <tr style={{ background: color, color: "white" }}>
+                  <th style={{ padding: "6px 8px", textAlign: "left", width: "45%" }}>{title}</th>
+                  <th style={{ padding: "6px 8px", textAlign: "center", width: "8%" }}>CANT.</th>
+                  <th style={{ padding: "6px 8px", textAlign: "right", width: "15%" }}>VALOR UNIT.</th>
+                  <th style={{ padding: "6px 8px", textAlign: "right", width: "12%" }}>SUBTOTAL</th>
+                  <th style={{ padding: "6px 8px", textAlign: "center", width: "8%" }}>IVA</th>
+                  <th style={{ padding: "6px 8px", textAlign: "right", width: "12%" }}>TOTAL</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((l, i) => {
+                  const { sub, total } = calcLine(l);
+                  return (
+                    <tr key={i} style={{ background: i % 2 === 0 ? "#f9f9f9" : "white" }}>
+                      <td style={{ padding: "5px 8px" }}>{l.concepto}</td>
+                      <td style={{ padding: "5px 8px", textAlign: "center" }}>{l.cantidad}</td>
+                      <td style={{ padding: "5px 8px", textAlign: "right" }}>{COP(l.valor_unit)}</td>
+                      <td style={{ padding: "5px 8px", textAlign: "right" }}>{COP(sub)}</td>
+                      <td style={{ padding: "5px 8px", textAlign: "center" }}>{l.iva}%</td>
+                      <td style={{ padding: "5px 8px", textAlign: "right", fontWeight: 600 }}>{COP(total)}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        ))}
+
+        <div style={{ marginLeft: "auto", width: 280, borderTop: "2px solid #1E3566", paddingTop: 12, fontSize: 13 }}>
+          {[["Transporte", totTrans.total], ["Alimentos & Bebidas", totAli.total], ["Servicios Adicionales", totSer.total]].map(([k, v]) => v > 0 && (
+            <div key={k} style={{ display: "flex", justifyContent: "space-between", padding: "3px 0", color: "#444" }}>
+              <span>{k}</span><span>{COP(v)}</span>
+            </div>
+          ))}
+          <div style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", fontWeight: 900, fontSize: 16, color: "#1E3566", borderTop: "1px solid #1E3566", marginTop: 6 }}>
+            <span>TOTAL COBROS</span><span>{COP(grandTotal)}</span>
+          </div>
+        </div>
+        {notas && <div style={{ marginTop: 16, padding: "10px 14px", background: "#f5f5f5", borderLeft: "3px solid #1E3566", fontSize: 11, color: "#444", whiteSpace: "pre-wrap" }}>{notas}</div>}
+      </div>
+
+      {/* Modal UI */}
+      <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.75)", zIndex: 999, display: "flex", alignItems: "flex-start", justifyContent: "center", overflowY: "auto", padding: "20px 0" }}>
+        <div style={{ background: B.navy, borderRadius: 16, width: "90vw", maxWidth: 860, padding: 28, margin: "auto" }}>
+          {/* Header */}
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+            <div>
+              <div style={{ fontSize: 18, fontWeight: 700 }}>💰 Cobros Adicionales — {evento.nombre}</div>
+              <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)" }}>
+                {evento.tipo} · {evento.fecha ? new Date(evento.fecha + "T12:00:00").toLocaleDateString("es-CO", { day: "numeric", month: "long", year: "numeric" }) : ""} · {evento.pax} pax
+              </div>
+            </div>
+            <button onClick={onClose} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.5)", fontSize: 22, cursor: "pointer" }}>✕</button>
+          </div>
+
+          {/* Sections */}
+          <SectionTable title="Transporte"            color="#1E3566" rows={transporte} setRows={setTransporte} />
+          <SectionTable title="Alimentos y Bebidas"   color="#2E7D52" rows={alimentos}  setRows={setAlimentos}  showMenuType defaultIva={8} />
+          <SectionTable title="Servicios Adicionales" color="#7B4F12" rows={servicios}  setRows={setServicios} />
+
+          {/* Notas */}
+          <div style={{ background: B.navyMid, borderRadius: 10, padding: 16, marginBottom: 16 }}>
+            <div style={{ fontSize: 11, color: B.sand, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8, fontWeight: 700 }}>Notas</div>
+            <textarea value={notas} onChange={e => setNotas(e.target.value)} rows={2}
+              placeholder="Observaciones, condiciones, acuerdos especiales..."
+              style={{ width: "100%", padding: "10px 12px", background: B.navy, border: `1px solid ${B.navyLight}`, borderRadius: 8, color: B.white, fontSize: 13, outline: "none", resize: "vertical", boxSizing: "border-box" }} />
+          </div>
+
+          {/* Grand total */}
+          <div style={{ background: B.navyMid, borderRadius: 10, padding: "14px 20px", marginBottom: 20, display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 32 }}>
+            {[["Transporte", totTrans.total], ["Alimentos", totAli.total], ["Servicios", totSer.total]].map(([k, v]) => v > 0 && (
+              <div key={k} style={{ textAlign: "right" }}>
+                <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", textTransform: "uppercase" }}>{k}</div>
+                <div style={{ fontSize: 14, fontWeight: 600 }}>{COP(v)}</div>
+              </div>
+            ))}
+            <div style={{ textAlign: "right", borderLeft: `2px solid ${B.sand}`, paddingLeft: 24 }}>
+              <div style={{ fontSize: 11, color: B.sand, textTransform: "uppercase" }}>Total Cobros</div>
+              <div style={{ fontSize: 22, fontWeight: 800, color: B.sand }}>{COP(grandTotal)}</div>
+            </div>
+          </div>
+
+          {/* Actions */}
+          <div style={{ display: "flex", gap: 10 }}>
+            <button onClick={onClose} style={{ padding: "11px 20px", background: "none", border: `1px solid ${B.navyLight}`, borderRadius: 8, color: "rgba(255,255,255,0.4)", fontSize: 13, cursor: "pointer" }}>Cancelar</button>
+            <button onClick={imprimir} style={{ padding: "11px 20px", background: B.sky + "33", color: B.sky, border: `1px solid ${B.sky}44`, borderRadius: 8, fontSize: 13, cursor: "pointer", fontWeight: 600 }}>🖨 Imprimir / PDF</button>
+            <button onClick={guardar} disabled={saving}
+              style={{ flex: 1, padding: "11px", background: B.sand, color: B.navy, border: "none", borderRadius: 8, fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
+              {saving ? "Guardando..." : "💾 Guardar Cobros"}
+            </button>
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
+
 // ─── Calendario de Eventos ────────────────────────────────────────────────────
 const STAGE_COLOR = {
   Consulta:  B.warning,
   Cotizado:  B.sky,
   Confirmado: B.success,
   Realizado: "rgba(255,255,255,0.3)",
+  Perdido:   B.danger,
 };
-const STAGE_ICON = { Consulta: "💬", Cotizado: "📋", Confirmado: "✅", Realizado: "✓" };
+const STAGE_ICON = { Consulta: "💬", Cotizado: "📋", Confirmado: "✅", Realizado: "✓", Perdido: "❌" };
 const CAT_ICON   = { evento: "🎉", grupo: "👥" };
 
 function CalendarioEventos({ todos, onEdit, isMobile }) {
@@ -1987,17 +2469,37 @@ function CalendarioEventos({ todos, onEdit, isMobile }) {
   // Build day map from todos filtered by visible month
   const desde = `${year}-${String(month + 1).padStart(2, "0")}-01`;
   const hasta = `${year}-${String(month + 1).padStart(2, "0")}-${String(diasEnMes).padStart(2, "0")}`;
+
+  // Para eventos (no grupos): puede haber fecha_fin → incluir si el rango overlapa con el mes visible
   const filtered = todos.filter(e => {
     if (!e.fecha) return false;
-    if (e.fecha < desde || e.fecha > hasta) return false;
+    const fin = (e.categoria === "evento" && e.fecha_fin && e.fecha_fin > e.fecha) ? e.fecha_fin : e.fecha;
+    if (fin < desde || e.fecha > hasta) return false; // sin overlap con el mes
     if (filtro !== "todos" && e.categoria !== filtro) return false;
     return true;
   });
 
+  // porDia: para eventos multi-día, agregar entrada en cada día del rango
   const porDia = {};
   filtered.forEach(e => {
-    if (!porDia[e.fecha]) porDia[e.fecha] = [];
-    porDia[e.fecha].push(e);
+    const fin = (e.categoria === "evento" && e.fecha_fin && e.fecha_fin > e.fecha) ? e.fecha_fin : e.fecha;
+    const startD = e.fecha > desde ? e.fecha : desde; // no salir del mes visible
+    const endD   = fin   < hasta  ? fin   : hasta;
+
+    let cur = new Date(startD + "T12:00:00");
+    const endDate = new Date(endD + "T12:00:00");
+    while (cur <= endDate) {
+      const dStr = cur.toISOString().slice(0, 10);
+      if (!porDia[dStr]) porDia[dStr] = [];
+      porDia[dStr].push({
+        ...e,
+        _isCont:  dStr !== e.fecha,           // día de continuación (no es el inicio)
+        _isEnd:   dStr === fin && dStr !== e.fecha, // último día (multi-día)
+        _isStart: dStr === e.fecha,
+        _fin:     fin,
+      });
+      cur.setDate(cur.getDate() + 1);
+    }
   });
 
   const dias = [];
@@ -2077,19 +2579,26 @@ function CalendarioEventos({ todos, onEdit, isMobile }) {
                 )}
               </span>
               {/* Event chips — desktop */}
-              {!isMobile && evs.slice(0, maxPerCell).map(ev => (
-                <div key={ev.id}
-                  style={{
-                    fontSize: 9, padding: "2px 5px", borderRadius: 4,
-                    background: (STAGE_COLOR[ev.stage] || B.sand) + "33",
-                    color: STAGE_COLOR[ev.stage] || B.sand,
-                    whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
-                    borderLeft: `2px solid ${STAGE_COLOR[ev.stage] || B.sand}`,
-                    lineHeight: 1.4,
-                  }}>
-                  {CAT_ICON[ev.categoria]} {ev.nombre}
-                </div>
-              ))}
+              {!isMobile && evs.slice(0, maxPerCell).map(ev => {
+                const color = STAGE_COLOR[ev.stage] || B.sand;
+                return (
+                  <div key={ev.id + ev._isCont}
+                    style={{
+                      fontSize: 9,
+                      padding: ev._isCont ? "2px 4px" : "2px 5px",
+                      borderRadius: ev._isCont ? (ev._isEnd ? "0 4px 4px 0" : "0") : (ev._fin !== ev.fecha ? "4px 0 0 4px" : 4),
+                      background: color + (ev._isCont ? "22" : "33"),
+                      color: ev._isCont ? color + "bb" : color,
+                      whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+                      borderLeft: ev._isCont ? `1px dashed ${color}55` : `2px solid ${color}`,
+                      borderRight: (!ev._isCont && ev._fin !== ev.fecha) ? "none" : undefined,
+                      lineHeight: 1.4,
+                      fontStyle: ev._isCont ? "italic" : "normal",
+                    }}>
+                    {ev._isCont ? `  ${ev.nombre}` : `${CAT_ICON[ev.categoria]} ${ev.nombre}`}
+                  </div>
+                );
+              })}
               {!isMobile && evs.length > maxPerCell && (
                 <div style={{ fontSize: 9, color: "rgba(255,255,255,0.4)", paddingLeft: 5 }}>+{evs.length - maxPerCell} más</div>
               )}
@@ -2097,7 +2606,7 @@ function CalendarioEventos({ todos, onEdit, isMobile }) {
               {isMobile && evs.length > 0 && (
                 <div style={{ display: "flex", gap: 2, flexWrap: "wrap", marginTop: 2 }}>
                   {evs.slice(0, 4).map(ev => (
-                    <span key={ev.id} style={{ width: 6, height: 6, borderRadius: 3, background: STAGE_COLOR[ev.stage] || B.sand, flexShrink: 0 }} />
+                    <span key={ev.id + ev._isCont} style={{ width: 6, height: 6, borderRadius: ev._isCont ? 1 : 3, background: STAGE_COLOR[ev.stage] || B.sand, flexShrink: 0, opacity: ev._isCont ? 0.5 : 1 }} />
                   ))}
                 </div>
               )}
@@ -2128,10 +2637,23 @@ function CalendarioEventos({ todos, onEdit, isMobile }) {
             </div>
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              {eventosDelDia.map(ev => {
+              {/* Dedup: mostrar cada evento solo una vez en el panel de detalle */}
+              {[...new Map(eventosDelDia.map(ev => [ev.id, ev])).values()].map(ev => {
                 const sc = STAGE_COLOR[ev.stage] || B.sand;
+                // Calcular día N de M para eventos multi-día
+                let diaLabel = null;
+                if (ev._fin && ev._fin !== ev.fecha) {
+                  const start = new Date(ev.fecha + "T12:00:00");
+                  const end   = new Date(ev._fin  + "T12:00:00");
+                  const sel   = new Date(selectedDay + "T12:00:00");
+                  const nDias = Math.round((end - start) / 86400000) + 1;
+                  const diaN  = Math.round((sel  - start) / 86400000) + 1;
+                  diaLabel = `Día ${diaN} de ${nDias}`;
+                }
+                // Pasar el evento original sin props internas al editor
+                const { _isCont, _isEnd, _isStart, _fin, ...evOriginal } = ev;
                 return (
-                  <div key={ev.id} onClick={() => onEdit(ev)}
+                  <div key={ev.id} onClick={() => onEdit(evOriginal)}
                     style={{
                       background: B.navy, borderRadius: 10, padding: "14px 16px",
                       cursor: "pointer", borderLeft: `3px solid ${sc}`,
@@ -2145,7 +2667,7 @@ function CalendarioEventos({ todos, onEdit, isMobile }) {
                       <div style={{ fontWeight: 700, fontSize: 14, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{ev.nombre}</div>
                       <div style={{ fontSize: 12, color: "rgba(255,255,255,0.45)", marginTop: 2 }}>
                         {ev.tipo} · {ev.pax} pax
-                        {ev.valor > 0 && <span style={{ color: B.sand, marginLeft: 8 }}>{COP(ev.valor)}</span>}
+                        {diaLabel && <span style={{ marginLeft: 8, color: B.sand, fontWeight: 600 }}>{diaLabel}</span>}
                       </div>
                     </div>
                     <div style={{ flexShrink: 0, textAlign: "right" }}>
@@ -2175,33 +2697,64 @@ export default function Eventos() {
   const [tab,        setTab]        = useState("todos");
   const [beo,        setBeo]        = useState(null);
   const [modal,      setModal]      = useState(null);
+  const [detalleEvento, setDetalleEvento] = useState(null);
   const [linkEvt,     setLinkEvt]    = useState(null);
   const [reservasEvt, setReservasEvt] = useState(null);
   const [cotizacion,  setCotizacion] = useState(null);
+  const [extrasGrupo, setExtrasGrupo] = useState(null);
 
   const fetchTodos = useCallback(async () => {
     if (!supabase) { setLoading(false); return; }
     setLoading(true);
+    const hoy = todayStr();
     const [evtR, salR, aliR, vendR] = await Promise.all([
       supabase.from("eventos").select("*").order("fecha", { ascending: true }),
       supabase.from("salidas").select("id, hora, nombre").eq("activo", true).order("orden"),
       supabase.from("aliados_b2b").select("id, nombre, tipo").order("nombre"),
       supabase.from("usuarios").select("id, nombre").in("rol_id", ["ventas", "gerente_ventas"]).eq("activo", true).order("nombre"),
     ]);
+
+    // Auto-pasar Confirmado → Realizado cuando la fecha del evento ya pasó
+    if (evtR.data) {
+      const vencidos = evtR.data.filter(e => {
+        if (e.stage !== "Confirmado") return false;
+        const fechaFin = (e.fecha_fin && e.fecha_fin > e.fecha) ? e.fecha_fin : e.fecha;
+        return fechaFin < hoy;
+      });
+      if (vencidos.length > 0) {
+        await supabase.from("eventos")
+          .update({ stage: "Realizado" })
+          .in("id", vencidos.map(e => e.id));
+        vencidos.forEach(e => { e.stage = "Realizado"; });
+      }
+    }
+
     if (evtR.data) setTodos(evtR.data.map(e => ({
       id: e.id, nombre: e.nombre, tipo: e.tipo, fecha: e.fecha,
       pax: e.pax || 0, valor: e.valor || 0, stage: e.stage,
       contacto: e.contacto || "", tel: e.tel || "", email: e.email || "",
       notas: e.notas || "", categoria: e.categoria || "evento",
       salidas_grupo: e.salidas_grupo || [], aliado_id: e.aliado_id || "",
-      vendedor: e.vendedor || "", cotizacion_data: e.cotizacion_data || {},
+      vendedor: e.vendedor || "", cotizacion_data: e.cotizacion_data || {}, extras_data: e.extras_data || {},
       empresa: e.empresa || "", nit: e.nit || "", cargo: e.cargo || "",
       direccion: e.direccion || "", montaje: e.montaje || "",
       hora_ini: e.hora_ini || "", hora_fin: e.hora_fin || "", vencimiento: e.vencimiento || "",
       buy_out: e.buy_out || false,
       modalidad_pago: e.modalidad_pago || "individual",
-      pasadias_org:   e.pasadias_org   || [],
-      precio_tipo:    e.precio_tipo    || "publico",
+      pasadias_org:     e.pasadias_org     || [],
+      precio_tipo:      e.precio_tipo      || "publico",
+      zarpe_data:       e.zarpe_data       || [],
+      invitados_zarpe:  e.invitados_zarpe  || [],
+      // Event Planner fields
+      timeline_items:            e.timeline_items            || [],
+      contactos_rapidos:         e.contactos_rapidos         || [],
+      transporte_detalle:        e.transporte_detalle        || [],
+      incidentes:                e.incidentes                || [],
+      restricciones_dieteticas:  e.restricciones_dieteticas  || [],
+      servicios_contratados:     e.servicios_contratados     || [],
+      notas_operativas:          e.notas_operativas          || "",
+      responsable_evento:        e.responsable_evento        || "",
+      fecha_fin:                 e.fecha_fin                 || "",
     })));
     if (salR.data) setSalidas(salR.data);
     if (aliR.data) setAliados(aliR.data);
@@ -2210,6 +2763,25 @@ export default function Eventos() {
   }, []);
 
   useEffect(() => { fetchTodos(); }, [fetchTodos]);
+
+  // ── Pantalla detalle del evento (reemplaza la lista) ────────────────────────
+  if (detalleEvento) {
+    return (
+      <EventoDetalle
+        evento={detalleEvento}
+        onBack={() => setDetalleEvento(null)}
+        onEdit={() => { setModal(detalleEvento); }}
+        onSaved={() => {
+          fetchTodos();
+          // Refresh the detalleEvento with fresh data
+          if (supabase) {
+            supabase.from("eventos").select("*").eq("id", detalleEvento.id).single()
+              .then(({ data }) => { if (data) setDetalleEvento(prev => ({ ...prev, ...data })); });
+          }
+        }}
+      />
+    );
+  }
 
   const isCalendario = tab === "calendario";
   const items   = tab === "todos" ? todos : todos.filter(e => e.categoria === tab);
@@ -2267,13 +2839,14 @@ export default function Eventos() {
       )}
 
       {isCalendario
-        ? <CalendarioEventos todos={todos} onEdit={ev => setModal(ev)} isMobile={isMobile} />
-        : <KanbanBoard items={items} isGrupo={isGrupo} aliados={aliados} onEdit={ev => setModal(ev)} onBeo={setBeo} onLink={setLinkEvt} onCotizar={setCotizacion} onReservas={setReservasEvt} />
+        ? <CalendarioEventos todos={todos} onEdit={ev => setDetalleEvento(ev)} isMobile={isMobile} />
+        : <KanbanBoard items={items} isGrupo={isGrupo} aliados={aliados} onEdit={ev => setDetalleEvento(ev)} onBeo={setBeo} onLink={setLinkEvt} onCotizar={setCotizacion} onReservas={setReservasEvt} onExtras={setExtrasGrupo} />
       }
 
       {beo          && <BEOPreview evento={beo} onClose={() => setBeo(null)} />}
       {linkEvt      && <GrupoLink evento={linkEvt} onClose={() => setLinkEvt(null)} />}
       {reservasEvt  && <ReservasGrupoModal evento={reservasEvt} onClose={() => setReservasEvt(null)} />}
+      {extrasGrupo && <GrupoExtrasModal evento={extrasGrupo} onClose={() => setExtrasGrupo(null)} onSaved={fetchTodos} />}
       {cotizacion && <CotizacionModal evento={cotizacion} aliados={aliados} onClose={() => setCotizacion(null)} onSaved={fetchTodos} />}
       {modal   && (
         <EventoModal
@@ -2283,7 +2856,7 @@ export default function Eventos() {
           aliados={aliados}
           vendedores={vendedores}
           onClose={() => setModal(null)}
-          onSaved={fetchTodos}
+          onSaved={() => { fetchTodos(); }}
           onShowLink={setLinkEvt}
         />
       )}
