@@ -1050,6 +1050,113 @@ function TabServicios({ items, onChange, pasadiasOrg = [], categoria, precioTipo
   );
 }
 
+// ─── PAGOS ────────────────────────────────────────────────────────────────────
+const FORMAS_PAGO_GRUPO = ["Transferencia", "Efectivo", "Datafono", "Wompi", "SKY", "CXC"];
+const EMPTY_PAGO = { id: "", monto: "", forma_pago: "Transferencia", fecha: "", notas: "", registrado_por: "" };
+
+function TabPagos({ pagos = [], onChange, totalGrupo = 0 }) {
+  const [showForm, setShowForm] = useState(false);
+  const [form, setForm]         = useState(EMPTY_PAGO);
+  const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+
+  const totalPagado  = pagos.reduce((s, p) => s + (Number(p.monto) || 0), 0);
+  const saldo        = totalGrupo - totalPagado;
+
+  const guardar = () => {
+    if (!form.monto || !form.forma_pago) return;
+    const pago = { ...form, id: form.id || `PAG-${Date.now()}`, monto: Number(form.monto), fecha: form.fecha || new Date().toISOString().slice(0,10) };
+    onChange([...pagos, pago]);
+    setForm(EMPTY_PAGO);
+    setShowForm(false);
+  };
+  const eliminar = (id) => { if (window.confirm("¿Eliminar este pago?")) onChange(pagos.filter(p => p.id !== id)); };
+
+  const FP_COLOR = { Transferencia: B.sky, Efectivo: B.success, Datafono: "#a78bfa", Wompi: B.sand, SKY: "#f97316", CXC: B.warning };
+
+  return (
+    <div>
+      {/* Resumen */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginBottom: 24 }}>
+        {[
+          { label: "Total Grupo", val: totalGrupo, color: "rgba(255,255,255,0.6)" },
+          { label: "Total Pagado", val: totalPagado, color: B.success },
+          { label: "Saldo Pendiente", val: saldo, color: saldo > 0 ? B.danger : B.success },
+        ].map(k => (
+          <div key={k.label} style={{ background: B.navy, borderRadius: 10, padding: "14px 16px", borderLeft: `3px solid ${k.color}` }}>
+            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginBottom: 5, textTransform: "uppercase", letterSpacing: "0.05em" }}>{k.label}</div>
+            <div style={{ fontSize: 20, fontWeight: 900, color: k.color, fontFamily: "'Barlow Condensed', sans-serif" }}>{COP(k.val)}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Lista de pagos */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 16 }}>
+        {pagos.length === 0 && !showForm && (
+          <div style={{ textAlign: "center", padding: "30px 0", color: "rgba(255,255,255,0.2)", fontSize: 13 }}>Sin pagos registrados</div>
+        )}
+        {pagos.map(p => {
+          const col = FP_COLOR[p.forma_pago] || "rgba(255,255,255,0.4)";
+          return (
+            <div key={p.id} style={{ background: B.navy, borderRadius: 10, padding: "12px 16px", display: "flex", alignItems: "center", gap: 14 }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 3 }}>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: col, border: `1px solid ${col}44`, borderRadius: 20, padding: "2px 10px" }}>{p.forma_pago}</span>
+                  <span style={{ fontSize: 11, color: "rgba(255,255,255,0.35)" }}>{p.fecha}</span>
+                </div>
+                {p.notas && <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", fontStyle: "italic" }}>{p.notas}</div>}
+                {p.registrado_por && <div style={{ fontSize: 11, color: "rgba(255,255,255,0.25)" }}>👤 {p.registrado_por}</div>}
+              </div>
+              <div style={{ fontSize: 18, fontWeight: 800, color: B.success, fontFamily: "'Barlow Condensed', sans-serif", flexShrink: 0 }}>{COP(p.monto)}</div>
+              <button onClick={() => eliminar(p.id)} style={{ ...BTN(B.danger + "22"), padding: "3px 8px", fontSize: 11, color: B.danger, flexShrink: 0 }}>✕</button>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Formulario nuevo pago */}
+      {showForm ? (
+        <div style={{ background: B.navy, borderRadius: 12, padding: 20, border: `1px solid ${B.navyLight}` }}>
+          <div style={{ fontWeight: 800, marginBottom: 16, fontSize: 14 }}>Registrar Pago</div>
+
+          <div style={{ marginBottom: 14 }}>
+            <label style={LS}>Forma de pago</label>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+              {FORMAS_PAGO_GRUPO.map(fp => {
+                const col = FP_COLOR[fp] || B.sky;
+                const sel = form.forma_pago === fp;
+                return (
+                  <button key={fp} type="button" onClick={() => set("forma_pago", fp)}
+                    style={{ padding: "7px 14px", borderRadius: 20, border: `1px solid ${sel ? col : "rgba(255,255,255,0.12)"}`,
+                      background: sel ? col + "22" : "transparent", color: sel ? col : "rgba(255,255,255,0.5)",
+                      fontSize: 13, fontWeight: sel ? 700 : 400, cursor: "pointer" }}>
+                    {fp}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            <div><label style={LS}>Monto</label><Inp type="number" value={form.monto} onChange={v => set("monto", v)} placeholder="0" /></div>
+            <div><label style={LS}>Fecha</label><Inp type="date" value={form.fecha} onChange={v => set("fecha", v)} /></div>
+            <div><label style={LS}>Notas</label><Inp value={form.notas} onChange={v => set("notas", v)} placeholder="Referencia, banco..." /></div>
+            <div><label style={LS}>Registrado por</label><Inp value={form.registrado_por} onChange={v => set("registrado_por", v)} /></div>
+          </div>
+
+          <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 16 }}>
+            <button onClick={() => { setShowForm(false); setForm(EMPTY_PAGO); }} style={{ ...BTN(B.navyLight), border: `1px solid ${B.navyLight}` }}>Cancelar</button>
+            <button onClick={guardar} style={BTN(B.success)}>✓ Guardar Pago</button>
+          </div>
+        </div>
+      ) : (
+        <div style={{ display: "flex", justifyContent: "flex-end" }}>
+          <button onClick={() => setShowForm(true)} style={BTN(B.success)}>+ Registrar Pago</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── COMPONENTE PRINCIPAL ─────────────────────────────────────────────────────
 export default function EventoDetalle({ evento: inicial, onBack, onEdit, onSaved }) {
   const isMobile = useMobile();
@@ -1095,9 +1202,11 @@ export default function EventoDetalle({ evento: inicial, onBack, onEdit, onSaved
   const stageColors = { Consulta: B.warning, Cotizado: B.sky, Confirmado: B.success, Realizado: "rgba(255,255,255,0.3)" };
   const stageColor = stageColors[evento.stage] || B.sand;
 
+  const esGrupo = evento.categoria === "grupo";
   const TABS = [
     { key: "rundown",   label: isMobile ? "📋" : "📋 Rundown" },
     { key: "servicios", label: isMobile ? "🛎" : "🛎 Servicios" },
+    ...(esGrupo ? [{ key: "pagos", label: isMobile ? "💳" : "💳 Pagos" }] : []),
     { key: "transporte",label: isMobile ? "⛵" : "⛵ Transporte" },
     { key: "contactos", label: isMobile ? "👤" : "👤 Contactos" },
     { key: "dietas",    label: isMobile ? "🍽️" : "🍽️ Dietas" },
@@ -1189,6 +1298,18 @@ export default function EventoDetalle({ evento: inicial, onBack, onEdit, onSaved
       {/* Tab content */}
       {tab === "rundown"   && <TabTimeline   items={evento.timeline_items||[]}           onChange={v => updateLocal("timeline_items", v)} />}
       {tab === "servicios" && <TabServicios  items={evento.servicios_contratados||[]}     onChange={v => updateLocal("servicios_contratados", v)} pasadiasOrg={evento.pasadias_org||[]} categoria={evento.categoria} precioTipo={evento.precio_tipo||"publico"} pasadiasMap={pasadiasMap} />}
+      {tab === "pagos"     && (() => {
+        const resolverPrecio = (p) => {
+          if (Number(p.precio_manual) > 0) return Number(p.precio_manual);
+          const match = pasadiasMap[(p.tipo || "").toLowerCase()];
+          return match ? (match.precio || 0) : 0;
+        };
+        const totalCompras   = (evento.pasadias_org||[]).reduce((s, p) => s + resolverPrecio(p) * (Number(p.personas)||0), 0);
+        const totalServicios = (evento.servicios_contratados||[]).reduce((s, x) => s + (Number(x.valor)||0), 0);
+        const base           = evento.valor > 0 ? evento.valor : totalCompras;
+        const totalGrupo     = base + (Number(evento.valor_extras)||0) + totalServicios;
+        return <TabPagos pagos={evento.pagos||[]} onChange={v => updateLocal("pagos", v)} totalGrupo={totalGrupo} />;
+      })()}
       {tab === "transporte"&& <TabTransporte items={evento.transporte_detalle||[]}        onChange={v => updateLocal("transporte_detalle", v)} />}
       {tab === "contactos" && <TabContactos  items={evento.contactos_rapidos||[]}         onChange={v => updateLocal("contactos_rapidos", v)} />}
       {tab === "dietas"    && <TabDietas     items={evento.restricciones_dieteticas||[]}  paxTotal={evento.pax||0} onChange={v => updateLocal("restricciones_dieteticas", v)} />}
