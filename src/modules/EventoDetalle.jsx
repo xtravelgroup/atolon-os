@@ -773,15 +773,16 @@ function ModoStaff({ evento, timeline, contactos, transporte, incidentes }) {
 }
 
 // ─── SERVICIOS CONTRATADOS ────────────────────────────────────────────────────
-const CATS_SERV = ["Menú Restaurante","Menú Bebidas","Menú Banquetes","Espacios Renta","Transportación Acuática","Transportación Terrestre","Otros Servicios"];
+const CATS_SERV = ["Menú Restaurante","Menú Bebidas","Menú Banquetes","Espacios Renta","Hospedaje","Transportación Acuática","Transportación Terrestre","Otros Servicios"];
 const CATS_TO_TIPO = {
-  "Menú Restaurante":      "restaurant",
-  "Menú Bebidas":          "bebidas",
-  "Menú Banquetes":        "banquetes",
-  "Espacios Renta":        "espacios_renta",
-  "Transportación Acuática": "trans_acuatica",
-  "Transportación Terrestre": "transportacion",
-  "Otros Servicios":       "otros_servicios",
+  "Menú Restaurante":       "restaurant",
+  "Menú Bebidas":           "bebidas",
+  "Menú Banquetes":         "banquetes",
+  "Espacios Renta":         "espacios_renta",
+  "Hospedaje":              "hospedaje",
+  "Transportación Acuática":"trans_acuatica",
+  "Transportación Terrestre":"transportacion",
+  "Otros Servicios":        "otros_servicios",
 };
 const EMPTY_SERV = { id: "", categoria: "Menú Restaurante", proveedor: "", descripcion: "", valor: "", estado: "cotizando", notas: "", cantidad: 1 };
 
