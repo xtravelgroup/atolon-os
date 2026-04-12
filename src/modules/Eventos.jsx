@@ -1904,9 +1904,9 @@ function calcLine(l) {
   return { sub, tax, total: sub + tax };
 }
 
-const MENU_TIPOS = ["Menú de Banquetes", "Menú Restaurant", "Custom Menu"];
+const MENU_TIPOS = ["Menú de Banquetes", "Menú Restaurant", "Custom Menu", "Menú Bebidas"];
 
-function SectionTable({ title, color, rows, setRows, showNoches = false, showMenuType = false, catalogItems = null, defaultIva = 19 }) {
+function SectionTable({ title, color, rows, setRows, showNoches = false, showMenuType = false, catalogItems = null, bebidasItems = null, defaultIva = 19 }) {
   const [picker, setPicker] = useState(false);
 
   const addRow = (overrides = {}) => {
@@ -1921,7 +1921,7 @@ function SectionTable({ title, color, rows, setRows, showNoches = false, showMen
     return { sub: acc.sub + sub, tax: acc.tax + tax, total: acc.total + total };
   }, { sub: 0, tax: 0, total: 0 });
 
-  const hasPicker = showMenuType || catalogItems !== null;
+  const hasPicker = showMenuType || catalogItems !== null || bebidasItems !== null;
 
   const th = { padding: "8px 10px", fontSize: 11, fontWeight: 700, color: B.white, textTransform: "uppercase", letterSpacing: "0.05em", background: color, textAlign: "left" };
   const td = { padding: "6px 8px", fontSize: 12, borderBottom: `1px solid ${B.navyLight}` };
@@ -1963,8 +1963,8 @@ function SectionTable({ title, color, rows, setRows, showNoches = false, showMen
           {/* Menu type picker (alimentos) */}
           {showMenuType && (
             <>
-              <div style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", marginBottom: 10 }}>Selecciona el tipo de menú:</div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 }}>Tipo de menú</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: bebidasItems ? 16 : 0 }}>
                 {MENU_TIPOS.map(t => (
                   <button key={t} onClick={() => addRow({ menu_tipo: t })}
                     style={{ padding: "10px 16px", borderRadius: 8, background: B.navy, border: `1px solid ${B.navyLight}`, color: B.white, fontSize: 13, cursor: "pointer", textAlign: "left", fontWeight: 600 }}>
@@ -1974,6 +1974,27 @@ function SectionTable({ title, color, rows, setRows, showNoches = false, showMen
               </div>
             </>
           )}
+          {/* Bebidas catalog */}
+          {bebidasItems !== null && bebidasItems.length > 0 && (() => {
+            const bycat = bebidasItems.reduce((acc, it) => { if (!acc[it.categoria]) acc[it.categoria] = []; acc[it.categoria].push(it); return acc; }, {});
+            return (
+              <>
+                <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 }}>Menú Bebidas</div>
+                {Object.entries(bycat).map(([cat, its]) => (
+                  <div key={cat} style={{ marginBottom: 10 }}>
+                    <div style={{ fontSize: 10, color: B.sky, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 4, paddingLeft: 4 }}>{cat}</div>
+                    {its.map(it => (
+                      <button key={it.id} onClick={() => addRow({ concepto: it.nombre, valor_unit: it.precio, iva: it.tiene_iva === false ? 0 : defaultIva })}
+                        style={{ width: "100%", padding: "8px 12px", borderRadius: 8, background: B.navy, border: `1px solid ${B.navyLight}`, color: B.white, fontSize: 12, cursor: "pointer", textAlign: "left", marginBottom: 4, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                        <span>{it.nombre}</span>
+                        {it.precio > 0 && <span style={{ fontSize: 11, color: B.sand, flexShrink: 0, marginLeft: 8 }}>{COP(it.precio)}</span>}
+                      </button>
+                    ))}
+                  </div>
+                ))}
+              </>
+            );
+          })()}
         </div>
       )}
 
@@ -2055,15 +2076,15 @@ function CotizacionModal({ evento, aliados, onClose, onSaved }) {
   const [espaciosCat,   setEspaciosCat]   = useState([]);
   const [serviciosCat,  setServiciosCat]  = useState([]);
   const [hospedajeCat,  setHospedajeCat]  = useState([]);
+  const [bebidasCat,    setBebidasCat]    = useState([]);
 
   useEffect(() => {
     if (!supabase) return;
-    supabase.from("menu_items").select("id,nombre,precio,tiene_iva").eq("menu_tipo", "espacios_renta").eq("activo", true).order("orden").order("nombre")
-      .then(({ data }) => setEspaciosCat(data || []));
-    supabase.from("menu_items").select("id,nombre,precio,tiene_iva").eq("menu_tipo", "otros_servicios").eq("activo", true).order("orden").order("nombre")
-      .then(({ data }) => setServiciosCat(data || []));
-    supabase.from("menu_items").select("id,nombre,precio,tiene_iva").eq("menu_tipo", "hospedaje").eq("activo", true).order("orden").order("nombre")
-      .then(({ data }) => setHospedajeCat(data || []));
+    const q = (tipo, set) => supabase.from("menu_items").select("id,nombre,precio,tiene_iva,categoria").eq("menu_tipo", tipo).eq("activo", true).order("categoria").order("orden").order("nombre").then(({ data }) => set(data || []));
+    q("espacios_renta",  setEspaciosCat);
+    q("otros_servicios", setServiciosCat);
+    q("hospedaje",       setHospedajeCat);
+    q("bebidas",         setBebidasCat);
   }, []);
 
   // Header data comes directly from the evento record
@@ -2236,7 +2257,7 @@ function CotizacionModal({ evento, aliados, onClose, onSaved }) {
           {/* Sections */}
           <SectionTable title="Espacios"            color="#1E3566" rows={espacios}   setRows={setEspacios}   catalogItems={espaciosCat} />
           <SectionTable title="Hospedaje"           color="#0f766e" rows={hospedaje}  setRows={setHospedaje}  showNoches catalogItems={hospedajeCat} />
-          <SectionTable title="Alimentos y Bebidas" color="#2E7D52" rows={alimentos}  setRows={setAlimentos}  showMenuType defaultIva={8} />
+          <SectionTable title="Alimentos y Bebidas" color="#2E7D52" rows={alimentos}  setRows={setAlimentos}  showMenuType bebidasItems={bebidasCat} defaultIva={8} />
           <SectionTable title="Otros Servicios"     color="#7B4F12" rows={servicios}  setRows={setServicios}  catalogItems={serviciosCat} />
 
           {/* Notas de la cotización */}
