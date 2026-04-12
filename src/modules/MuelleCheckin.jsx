@@ -25,12 +25,14 @@ const PRECIO_AFTER_N = 120000;
 
 // ─── Modal Registro Llegada ───────────────────────────────────────────────────
 function ModalNuevaLlegada({ tipo, fecha, reserva, onClose, onSaved }) {
-  const esAfter  = tipo === "after_island";
-  const esRest   = tipo === "restaurante";
   const esLancha = tipo === "lancha_atolon";
+  // Para "otras embarcaciones", el usuario selecciona la categoría en el formulario
+  const [tipoSeleccionado, setTipoSeleccionado] = useState(tipo);
+  const esAfter  = tipoSeleccionado === "after_island";
+  const esRest   = tipoSeleccionado === "restaurante";
 
-  // Paso 0 solo para lanchas: seleccionar salida o manual
-  const [paso, setPaso]       = useState(esLancha ? 0 : 1);
+  // Paso 0 solo para lanchas sin preset: seleccionar salida o manual
+  const [paso, setPaso]       = useState(esLancha && !reserva ? 0 : 1);
   const [salidas,       setSalidas]       = useState([]); // salidas con pax ese día, enriquecidas con lanchas
   const [embarcaciones, setEmbarcaciones] = useState([]); // tabla completa de embarcaciones
   const [salidaInfo,    setSalidaInfo]    = useState(null);
@@ -115,7 +117,7 @@ function ModalNuevaLlegada({ tipo, fecha, reserva, onClose, onSaved }) {
     pax_a: reserva ? (reserva.pax_a || reserva.pax || 1) : 1,
     pax_n: reserva ? (reserva.pax_n || 0) : 0,
     hora_llegada: hoyHora(),
-    notas: "",
+    notas: reserva?._notas_preset || "",
   });
 
   const [fotoFile, setFotoFile]       = useState(null);
@@ -164,7 +166,7 @@ function ModalNuevaLlegada({ tipo, fecha, reserva, onClose, onSaved }) {
     }
 
     const payload = {
-      id, fecha, tipo,
+      id, fecha, tipo: tipoSeleccionado,
       embarcacion_nombre: f.embarcacion_nombre || null,
       matricula:          f.matricula || null,
       pax_a:     Number(f.pax_a) || 0,
@@ -270,6 +272,36 @@ function ModalNuevaLlegada({ tipo, fecha, reserva, onClose, onSaved }) {
               ))}
             </div>
 
+            {/* Embarcaciones no asignadas a ninguna salida (ej: compartidas) */}
+            {(() => {
+              const yaUsadas = new Set(salidas.flatMap(s => s._lanchas.map(l => l.id)));
+              const libres = embarcaciones.filter(e => e.estado === "activo" && !yaUsadas.has(e.id));
+              if (libres.length === 0) return null;
+              return (
+                <div style={{ marginBottom: 16 }}>
+                  <div style={{ fontSize: 11, color: B.sand, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 8 }}>
+                    Embarcaciones disponibles
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    {libres.map(lancha => (
+                      <button key={lancha.id} onClick={() => seleccionarLancha({ _lanchaMap: {} }, lancha)}
+                        style={{ padding: "13px 16px", borderRadius: 12, border: `2px solid ${B.sand}44`, background: B.navyMid + "80", color: "#fff", cursor: "pointer", textAlign: "left", display: "flex", alignItems: "center", gap: 12 }}>
+                        <span style={{ fontSize: 24 }}>⛵</span>
+                        <div style={{ flex: 1 }}>
+                          <div style={{ fontWeight: 700, fontSize: 15 }}>{lancha.nombre}</div>
+                          <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>
+                            {lancha.tipo && <span>{lancha.tipo}</span>}
+                            {lancha.capitan && <span> · Cap: {lancha.capitan}</span>}
+                          </div>
+                        </div>
+                        <span style={{ fontSize: 11, color: B.sand, padding: "2px 8px", borderRadius: 8, background: B.sand + "22" }}>compartida</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
+
             <button onClick={() => { setF(p => ({ ...p, embarcacion_nombre: "" })); setPaso(1); }}
               style={{ width: "100%", padding: "12px", borderRadius: 10, border: `1px solid rgba(255,255,255,0.15)`, background: "none", color: "rgba(255,255,255,0.5)", fontSize: 13, cursor: "pointer" }}>
               ✏️ Agregar manualmente
@@ -296,6 +328,24 @@ function ModalNuevaLlegada({ tipo, fecha, reserva, onClose, onSaved }) {
           )}
 
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 16px" }}>
+          {/* Selector de categoría — solo para "otras embarcaciones" */}
+          {!esLancha && (
+            <div style={{ gridColumn: "1 / -1", marginBottom: 14 }}>
+              <label style={LS}>Categoría</label>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                {OTROS_TIPOS.map(t => (
+                  <button key={t.value} type="button" onClick={() => setTipoSeleccionado(t.value)}
+                    style={{ padding: "8px 14px", borderRadius: 10, border: `2px solid ${tipoSeleccionado === t.value ? B.sand : "transparent"}`,
+                      background: tipoSeleccionado === t.value ? B.sand + "22" : B.navyLight,
+                      color: tipoSeleccionado === t.value ? B.sand : "rgba(255,255,255,0.6)",
+                      fontSize: 13, fontWeight: tipoSeleccionado === t.value ? 700 : 400, cursor: "pointer", transition: "all 0.15s" }}>
+                    {t.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
           <div style={{ gridColumn: "1 / -1", marginBottom: 14 }}>
             <label style={LS}>Nombre / ID embarcación</label>
             <input value={f.embarcacion_nombre} onChange={e => s("embarcacion_nombre", e.target.value)}
@@ -592,13 +642,14 @@ function LlegadaCard({ llegada, onEstadoChange, onDelete }) {
     const upd = { estado: sig };
     if (sig === "llegó") upd.hora_llegada = hoyHora();
     if (sig === "salió") upd.hora_salida  = hoyHora();
-    await supabase.from("muelle_llegadas").update(upd).eq("id", llegada.id);
+    const { error } = await supabase.from("muelle_llegadas").update(upd).eq("id", llegada.id);
     setSaving(false);
+    if (error) { alert(`Error al actualizar estado: ${error.message}`); return; }
     onEstadoChange();
   };
 
   const esAfterSinCobro = llegada.tipo === "after_island" && !(llegada.total_cobrado > 0);
-  const tipoIcon = llegada.tipo === "after_island" ? "🌙" : llegada.tipo === "restaurante" ? "🍽️" : "⛵";
+  const tipoIcon = TIPO_ICON[llegada.tipo] || "📋";
 
   return (
     <>
@@ -622,7 +673,7 @@ function LlegadaCard({ llegada, onEstadoChange, onDelete }) {
               <span style={{ fontWeight: 700, fontSize: 15 }}>{llegada.embarcacion_nombre || "Embarcación"}</span>
               {llegada.matricula && <span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)" }}>{llegada.matricula}</span>}
               <span style={{ fontSize: 11, padding: "2px 10px", borderRadius: 8, background: est.bg, color: est.color, fontWeight: 600 }}>{est.label}</span>
-              {esAfterSinCobro && <span style={{ fontSize: 11, padding: "2px 10px", borderRadius: 8, background: B.sand + "22", color: B.sand, fontWeight: 600 }}>💰 Sin cobro</span>}
+              {esAfterSinCobro && <span style={{ fontSize: 11, padding: "2px 10px", borderRadius: 8, background: B.sand + "22", color: B.sand, fontWeight: 600 }}>📋 Sin registrar</span>}
             </div>
             <div style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", marginTop: 3, display: "flex", gap: 12, flexWrap: "wrap" }}>
               <span>👥 {llegada.pax_total} pax{llegada.pax_n > 0 ? ` (${llegada.pax_a}A + ${llegada.pax_n}N)` : ""}</span>
@@ -636,7 +687,7 @@ function LlegadaCard({ llegada, onEstadoChange, onDelete }) {
             {esAfterSinCobro && (
               <button onClick={() => setShowCobro(true)}
                 style={{ padding: "7px 14px", borderRadius: 8, border: "none", background: B.sand, color: B.navy, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
-                💰 Cobrar
+                📋 Registrar
               </button>
             )}
             {FLUJO[llegada.estado] && (
@@ -658,8 +709,17 @@ function LlegadaCard({ llegada, onEstadoChange, onDelete }) {
 
 // ─── MAIN MODULE ──────────────────────────────────────────────────────────────
 // ─── Bitácora ─────────────────────────────────────────────────────────────────
-const TIPO_LABEL = { lancha_atolon: "Lancha Atolon", after_island: "After Island", restaurante: "Restaurante" };
-const TIPO_ICON  = { lancha_atolon: "⛵", after_island: "🌙", restaurante: "🍽️" };
+const TIPO_LABEL = { lancha_atolon: "Lancha Atolon", after_island: "After Island", restaurante: "Restaurante", huespedes: "Huéspedes", inspeccion: "Inspección", empleados: "Empleados", otros: "Otros" };
+const TIPO_ICON  = { lancha_atolon: "⛵", after_island: "🌙", restaurante: "🍽️", huespedes: "🏨", inspeccion: "🔍", empleados: "👷", otros: "📋" };
+
+const OTROS_TIPOS = [
+  { value: "after_island", label: "🌙 After Island" },
+  { value: "restaurante",  label: "🍽️ Restaurante" },
+  { value: "huespedes",    label: "🏨 Huéspedes" },
+  { value: "inspeccion",   label: "🔍 Inspección" },
+  { value: "empleados",    label: "👷 Empleados" },
+  { value: "otros",        label: "📋 Otros" },
+];
 
 // Fila con edición inline de notas
 function BitacoraFila({ r, onUpdated, onDelete, isMobile }) {
@@ -827,7 +887,7 @@ function BitacoraLlegadas({ isMobile }) {
       .order("fecha", { ascending: false }).order("created_at", { ascending: false })
       .limit(500);
     if (tipo !== "todos") {
-      if (tipo === "after_island") q = q.in("tipo", ["after_island", "restaurante"]);
+      if (tipo === "after_island") q = q.in("tipo", ["after_island", "restaurante", "huespedes", "inspeccion", "empleados", "otros"]);
       else q = q.eq("tipo", tipo);
     }
     const { data } = await q;
@@ -935,12 +995,114 @@ function BitacoraLlegadas({ isMobile }) {
   );
 }
 
+function GruposCheckin({ grupos, grupoAbierto, setGrupoAbierto, checkinPax, checkinTodos, fecha }) {
+  return (
+    <div style={{ marginBottom: 28 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+        <span style={{ fontSize: 16 }}>👥</span>
+        <span style={{ fontWeight: 700, fontSize: 14, color: B.sand }}>Check-in Grupos</span>
+        <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 8, background: "rgba(200,185,154,0.15)", color: B.sand }}>{fecha} · {grupos.length} grupo{grupos.length !== 1 ? "s" : ""}</span>
+        <div style={{ flex: 1, height: 1, background: "rgba(255,255,255,0.07)" }} />
+      </div>
+      {grupos.length === 0 ? (
+        <div style={{ fontSize: 12, color: "rgba(255,255,255,0.2)", fontStyle: "italic", padding: "6px 0" }}>
+          Sin grupos para esta fecha
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {grupos.map(g => {
+            const totalPaxG = (g.pasadias_org || [])
+              .filter(p => p.tipo !== "Impuesto Muelle")
+              .reduce((s, p) => s + (Number(p.personas) || 0), 0);
+            const zarpe = g.zarpe_data || [];
+            const conNombre = zarpe.filter(z => z.nombre);
+            const checkedIn = zarpe.filter(z => z.checkin_at);
+            const pct = totalPaxG > 0 ? checkedIn.length / totalPaxG : 0;
+            const barCol = pct >= 1 ? B.success : pct > 0 ? B.warning : "rgba(255,255,255,0.15)";
+            const isOpen = grupoAbierto === g.id;
+            const horas = (g.salidas_grupo || []).map(sg => sg.hora).filter(Boolean).sort();
+            return (
+              <div key={g.id} style={{ background: "rgba(200,185,154,0.07)", borderRadius: 12, border: `1px solid ${pct >= 1 ? B.success + "55" : "rgba(200,185,154,0.2)"}`, overflow: "hidden" }}>
+                <div onClick={() => setGrupoAbierto(isOpen ? null : g.id)}
+                  style={{ padding: "14px 16px", cursor: "pointer", display: "flex", alignItems: "center", gap: 12 }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontWeight: 700, fontSize: 14, color: B.white, marginBottom: 6 }}>{g.nombre}</div>
+                    <div style={{ height: 6, borderRadius: 6, background: "rgba(255,255,255,0.08)", overflow: "hidden", marginBottom: 5 }}>
+                      <div style={{ height: "100%", width: `${pct * 100}%`, background: barCol, borderRadius: 6, transition: "width 0.3s" }} />
+                    </div>
+                    <div style={{ display: "flex", gap: 12, fontSize: 11, color: "rgba(255,255,255,0.45)", flexWrap: "wrap" }}>
+                      <span style={{ color: pct >= 1 ? B.success : B.white, fontWeight: 700 }}>{checkedIn.length}/{totalPaxG} abordaron</span>
+                      <span>{conNombre.length}/{totalPaxG} zarpe listo</span>
+                      {horas.map(h => <span key={h} style={{ color: B.sky }}>⛵ {h}</span>)}
+                    </div>
+                  </div>
+                  <span style={{ fontSize: 18, color: "rgba(255,255,255,0.3)", flexShrink: 0 }}>{isOpen ? "▲" : "▼"}</span>
+                </div>
+                {isOpen && (
+                  <div style={{ borderTop: "1px solid rgba(255,255,255,0.07)", padding: "12px 16px" }}>
+                    {conNombre.length > checkedIn.length && (
+                      <button onClick={() => checkinTodos(g)}
+                        style={{ width: "100%", padding: "10px", borderRadius: 8, border: "none", background: B.sand, color: B.navy, fontWeight: 700, fontSize: 13, cursor: "pointer", marginBottom: 14 }}>
+                        ✓ Check-in todos ({conNombre.length - checkedIn.length} pendientes)
+                      </button>
+                    )}
+                    {pct >= 1 && (
+                      <div style={{ textAlign: "center", padding: "6px 0 12px", fontSize: 13, color: B.success, fontWeight: 700 }}>✅ Todos a bordo</div>
+                    )}
+                    {zarpe.length === 0 ? (
+                      <div style={{ textAlign: "center", padding: "14px 0", fontSize: 12, color: "rgba(255,255,255,0.25)", fontStyle: "italic" }}>
+                        Zarpe no completado — sin lista de pasajeros
+                      </div>
+                    ) : (
+                      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                        {zarpe.map(z => {
+                          const hecho = !!z.checkin_at;
+                          const horaCI = z.checkin_at ? new Date(z.checkin_at).toTimeString().slice(0, 5) : null;
+                          return (
+                            <div key={z.slot_id} onClick={() => z.nombre && checkinPax(g, z.slot_id)}
+                              style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 12px", borderRadius: 8, background: hecho ? B.success + "18" : "rgba(255,255,255,0.04)", border: `1px solid ${hecho ? B.success + "44" : "rgba(255,255,255,0.07)"}`, cursor: z.nombre ? "pointer" : "default", transition: "background 0.15s" }}>
+                              <div style={{ width: 24, height: 24, borderRadius: 6, flexShrink: 0, border: `2px solid ${hecho ? B.success : "rgba(255,255,255,0.2)"}`, background: hecho ? B.success : "transparent", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, color: B.navy, fontWeight: 900 }}>
+                                {hecho ? "✓" : ""}
+                              </div>
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                {z.nombre ? (
+                                  <>
+                                    <div style={{ fontWeight: 600, fontSize: 13, color: hecho ? B.success : B.white }}>{z.nombre}</div>
+                                    <div style={{ fontSize: 10, color: "rgba(255,255,255,0.35)", marginTop: 1 }}>
+                                      {z.tipo}{z.identificacion ? ` · ${z.identificacion}` : ""}{z.nacionalidad ? ` · ${z.nacionalidad}` : ""}
+                                    </div>
+                                  </>
+                                ) : (
+                                  <div style={{ fontSize: 12, color: "rgba(255,255,255,0.2)", fontStyle: "italic" }}>
+                                    {z.tipo || "Pasajero"} — sin datos de zarpe
+                                  </div>
+                                )}
+                              </div>
+                              {horaCI && <span style={{ fontSize: 10, color: B.success, flexShrink: 0 }}>{horaCI}</span>}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function MuelleCheckin() {
   const { isMobile } = useMobile();
   const [tab,   setTab]     = useState("hoy");
   const [fecha, setFecha]   = useState(todayStr());
   const [llegadas, setLlegadas] = useState([]);
   const [modal, setModal]   = useState(null);
+  const [grupos, setGrupos] = useState([]);
+  const [grupoAbierto, setGrupoAbierto] = useState(null);
 
   const fetchLlegadas = useCallback(async () => {
     if (!supabase) return;
@@ -948,7 +1110,50 @@ export default function MuelleCheckin() {
     setLlegadas(data || []);
   }, [fecha]);
 
+  const fetchGrupos = useCallback(async () => {
+    try {
+      const SURL = "https://ncdyttgxuicyruathkxd.supabase.co";
+      const AKEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5jZHl0dGd4dWljeXJ1YXRoa3hkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ4OTY4NDksImV4cCI6MjA5MDQ3Mjg0OX0.ppK_J1BUI8lrEZ-iQWNb0imO_ZwOGbF3MDyv7nct6bs";
+      const res = await fetch(
+        `${SURL}/rest/v1/eventos?fecha=eq.${fecha}&categoria=eq.grupo&select=id,nombre,fecha,pasadias_org,salidas_grupo,zarpe_data`,
+        { headers: { apikey: AKEY, Authorization: `Bearer ${AKEY}` } }
+      );
+      const data = await res.json();
+      setGrupos(Array.isArray(data) ? data : []);
+    } catch (e) {
+      console.error("fetchGrupos error:", e);
+      setGrupos([]);
+    }
+  }, [fecha]);
+
+  const SURL = "https://ncdyttgxuicyruathkxd.supabase.co";
+  const AKEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5jZHl0dGd4dWljeXJ1YXRoa3hkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ4OTY4NDksImV4cCI6MjA5MDQ3Mjg0OX0.ppK_J1BUI8lrEZ-iQWNb0imO_ZwOGbF3MDyv7nct6bs";
+
+  const patchEvento = (id, body) => fetch(
+    `${SURL}/rest/v1/eventos?id=eq.${id}`,
+    { method: "PATCH", headers: { apikey: AKEY, Authorization: `Bearer ${AKEY}`, "Content-Type": "application/json", Prefer: "return=minimal" }, body: JSON.stringify(body) }
+  );
+
+  const checkinPax = async (grupo, slotId) => {
+    const now = new Date().toISOString();
+    const newZarpe = (grupo.zarpe_data || []).map(z =>
+      z.slot_id === slotId ? { ...z, checkin_at: z.checkin_at ? null : now } : z
+    );
+    await patchEvento(grupo.id, { zarpe_data: newZarpe });
+    setGrupos(prev => prev.map(g => g.id === grupo.id ? { ...g, zarpe_data: newZarpe } : g));
+  };
+
+  const checkinTodos = async (grupo) => {
+    const now = new Date().toISOString();
+    const newZarpe = (grupo.zarpe_data || []).map(z =>
+      z.nombre && !z.checkin_at ? { ...z, checkin_at: now } : z
+    );
+    await patchEvento(grupo.id, { zarpe_data: newZarpe });
+    setGrupos(prev => prev.map(g => g.id === grupo.id ? { ...g, zarpe_data: newZarpe } : g));
+  };
+
   useEffect(() => { fetchLlegadas(); }, [fetchLlegadas]);
+  useEffect(() => { fetchGrupos(); }, [fetchGrupos]);
 
   const totalPax     = llegadas.reduce((t, l) => t + (l.pax_total || 0), 0);
   const enIsla       = llegadas.filter(l => l.estado === "en_isla" || l.estado === "llegó").reduce((t, l) => t + (l.pax_total || 0), 0);
@@ -959,7 +1164,7 @@ export default function MuelleCheckin() {
 
   const SECCIONES = [
     { tipo: "lancha_atolon",              tipos: ["lancha_atolon"],              icon: "⛵", label: "Lanchas Atolon",          color: B.sky,  btnBg: B.sky,  btnColor: B.navy },
-    { tipo: "after_island",               tipos: ["after_island","restaurante"], icon: "🌙", label: "After Island / Restaurante", color: B.sand, btnBg: B.sand, btnColor: B.navy },
+    { tipo: "after_island",               tipos: ["after_island","restaurante","huespedes","inspeccion","empleados","otros"], icon: "🌙", label: "After Island / Restaurante", color: B.sand, btnBg: B.sand, btnColor: B.navy },
   ];
 
   const delLlegada = async (id) => {
@@ -1014,6 +1219,9 @@ export default function MuelleCheckin() {
         ))}
       </div>
 
+      {/* ── Check-in Grupos ── */}
+      <GruposCheckin grupos={grupos} grupoAbierto={grupoAbierto} setGrupoAbierto={setGrupoAbierto} checkinPax={checkinPax} checkinTodos={checkinTodos} fecha={fecha} />
+
       {/* Botones de registro */}
       <div style={{ display: "flex", gap: 10, marginBottom: 22, flexWrap: "wrap" }}>
         {SECCIONES.map(({ tipo, icon, label, btnBg, btnColor }) => (
@@ -1056,7 +1264,7 @@ export default function MuelleCheckin() {
       })}
 
       {/* Estado vacío global */}
-      {llegadas.length === 0 && (
+      {llegadas.length === 0 && grupos.length === 0 && (
         <div style={{ textAlign: "center", padding: "40px 0", color: "rgba(255,255,255,0.2)", fontSize: 14 }}>
           No hay llegadas registradas para este día
         </div>
