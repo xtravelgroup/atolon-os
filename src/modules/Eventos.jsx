@@ -1906,8 +1906,9 @@ function calcLine(l) {
 
 const MENU_TIPOS = ["Menú de Banquetes", "Menú Restaurant", "Custom Menu", "Menú Bebidas"];
 
-function SectionTable({ title, color, rows, setRows, showNoches = false, showMenuType = false, catalogItems = null, bebidasItems = null, defaultIva = 19 }) {
-  const [picker, setPicker] = useState(false);
+function SectionTable({ title, color, rows, setRows, showNoches = false, showMenuType = false, catalogItems = null, bebidasItems = null, menuCatalogs = null, defaultIva = 19 }) {
+  const [picker,      setPicker]      = useState(false);
+  const [activeCat,   setActiveCat]   = useState(null); // null | { label, items }
 
   const addRow = (overrides = {}) => {
     setRows(r => [...r, { ...EMPTY_LINE, iva: defaultIva, ...overrides }]);
@@ -1921,7 +1922,7 @@ function SectionTable({ title, color, rows, setRows, showNoches = false, showMen
     return { sub: acc.sub + sub, tax: acc.tax + tax, total: acc.total + total };
   }, { sub: 0, tax: 0, total: 0 });
 
-  const hasPicker = showMenuType || catalogItems !== null || bebidasItems !== null;
+  const hasPicker = showMenuType || catalogItems !== null || bebidasItems !== null || menuCatalogs !== null;
 
   const th = { padding: "8px 10px", fontSize: 11, fontWeight: 700, color: B.white, textTransform: "uppercase", letterSpacing: "0.05em", background: color, textAlign: "left" };
   const td = { padding: "6px 8px", fontSize: 12, borderBottom: `1px solid ${B.navyLight}` };
@@ -1960,20 +1961,46 @@ function SectionTable({ title, color, rows, setRows, showNoches = false, showMen
               </button>
             </>
           )}
-          {/* Menu type picker (alimentos) */}
-          {showMenuType && (
+          {/* Multi-catalog menu picker (banquetes, restaurant, etc.) */}
+          {menuCatalogs && !activeCat && (
             <>
-              <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 }}>Tipo de menú</div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: bebidasItems ? 16 : 0 }}>
-                {MENU_TIPOS.map(t => (
-                  <button key={t} onClick={() => addRow({ menu_tipo: t })}
-                    style={{ padding: "10px 16px", borderRadius: 8, background: B.navy, border: `1px solid ${B.navyLight}`, color: B.white, fontSize: 13, cursor: "pointer", textAlign: "left", fontWeight: 600 }}>
-                    {t}
+              <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 }}>Seleccionar menú</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                {menuCatalogs.map(mc => (
+                  <button key={mc.label} onClick={() => setActiveCat(mc)}
+                    style={{ padding: "10px 16px", borderRadius: 8, background: B.navy, border: `1px solid ${B.navyLight}`, color: B.white, fontSize: 13, cursor: "pointer", textAlign: "left", fontWeight: 600, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <span>{mc.label}</span>
+                    <span style={{ fontSize: 11, color: "rgba(255,255,255,0.35)" }}>{mc.items.length} ítems ›</span>
                   </button>
                 ))}
+                <button onClick={() => addRow()}
+                  style={{ width: "100%", padding: "9px 14px", borderRadius: 8, background: "rgba(255,255,255,0.04)", border: `1px dashed ${B.navyLight}`, color: "rgba(255,255,255,0.45)", fontSize: 13, cursor: "pointer", textAlign: "left", marginTop: 2 }}>
+                  ✏️ Custom / descripción manual
+                </button>
               </div>
             </>
           )}
+          {/* Sub-picker: items of selected menu */}
+          {menuCatalogs && activeCat && (() => {
+            const bycat = activeCat.items.reduce((acc, it) => { if (!acc[it.categoria]) acc[it.categoria] = []; acc[it.categoria].push(it); return acc; }, {});
+            return (
+              <>
+                <button onClick={() => setActiveCat(null)} style={{ background: "none", border: "none", color: B.sky, fontSize: 12, cursor: "pointer", marginBottom: 10, padding: 0, fontWeight: 600 }}>← {activeCat.label}</button>
+                {Object.entries(bycat).map(([cat, its]) => (
+                  <div key={cat} style={{ marginBottom: 10 }}>
+                    <div style={{ fontSize: 10, color: B.sky, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 4, paddingLeft: 2 }}>{cat}</div>
+                    {its.map(it => (
+                      <button key={it.id} onClick={() => { addRow({ concepto: it.nombre, valor_unit: it.precio, iva: it.tiene_iva === false ? 0 : defaultIva, menu_tipo: activeCat.label }); setActiveCat(null); }}
+                        style={{ width: "100%", padding: "8px 12px", borderRadius: 8, background: B.navy, border: `1px solid ${B.navyLight}`, color: B.white, fontSize: 12, cursor: "pointer", textAlign: "left", marginBottom: 4, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                        <span>{it.nombre}</span>
+                        {it.precio > 0 && <span style={{ fontSize: 11, color: B.sand, flexShrink: 0, marginLeft: 8 }}>{COP(it.precio)}</span>}
+                      </button>
+                    ))}
+                  </div>
+                ))}
+              </>
+            );
+          })()}
           {/* Bebidas catalog */}
           {bebidasItems !== null && bebidasItems.length > 0 && (() => {
             const bycat = bebidasItems.reduce((acc, it) => { if (!acc[it.categoria]) acc[it.categoria] = []; acc[it.categoria].push(it); return acc; }, {});
@@ -2077,6 +2104,8 @@ function CotizacionModal({ evento, aliados, onClose, onSaved }) {
   const [serviciosCat,  setServiciosCat]  = useState([]);
   const [hospedajeCat,  setHospedajeCat]  = useState([]);
   const [bebidasCat,    setBebidasCat]    = useState([]);
+  const [banquetesCat,  setBanquetesCat]  = useState([]);
+  const [restaurantCat, setRestaurantCat] = useState([]);
 
   useEffect(() => {
     if (!supabase) return;
@@ -2085,6 +2114,8 @@ function CotizacionModal({ evento, aliados, onClose, onSaved }) {
     q("otros_servicios", setServiciosCat);
     q("hospedaje",       setHospedajeCat);
     q("bebidas",         setBebidasCat);
+    q("banquetes",       setBanquetesCat);
+    q("restaurant",      setRestaurantCat);
   }, []);
 
   // Header data comes directly from the evento record
@@ -2257,7 +2288,13 @@ function CotizacionModal({ evento, aliados, onClose, onSaved }) {
           {/* Sections */}
           <SectionTable title="Espacios"            color="#1E3566" rows={espacios}   setRows={setEspacios}   catalogItems={espaciosCat} />
           <SectionTable title="Hospedaje"           color="#0f766e" rows={hospedaje}  setRows={setHospedaje}  showNoches catalogItems={hospedajeCat} />
-          <SectionTable title="Alimentos y Bebidas" color="#2E7D52" rows={alimentos}  setRows={setAlimentos}  showMenuType bebidasItems={bebidasCat} defaultIva={8} />
+          <SectionTable title="Alimentos y Bebidas" color="#2E7D52" rows={alimentos}  setRows={setAlimentos}  defaultIva={8}
+            menuCatalogs={[
+              { label: "Menú Restaurant",   items: restaurantCat },
+              { label: "Menú de Banquetes", items: banquetesCat  },
+              { label: "Menú Bebidas",      items: bebidasCat    },
+            ]}
+          />
           <SectionTable title="Otros Servicios"     color="#7B4F12" rows={servicios}  setRows={setServicios}  catalogItems={serviciosCat} />
 
           {/* Notas de la cotización */}
