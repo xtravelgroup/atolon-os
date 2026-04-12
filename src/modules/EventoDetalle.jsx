@@ -774,12 +774,23 @@ function ModoStaff({ evento, timeline, contactos, transporte, incidentes }) {
 
 // ─── SERVICIOS CONTRATADOS ────────────────────────────────────────────────────
 const CATS_SERV = ["Menú Restaurante","Menú Bebidas","Menú Banquetes","Espacios Renta","Transportación Acuática","Transportación Terrestre","Otros Servicios"];
-const EMPTY_SERV = { id: "", categoria: "Menú Restaurante", proveedor: "", descripcion: "", valor: "", estado: "cotizando", notas: "" };
+const CATS_TO_TIPO = {
+  "Menú Restaurante":      "restaurant",
+  "Menú Bebidas":          "bebidas",
+  "Menú Banquetes":        "restaurant",
+  "Espacios Renta":        "espacios_renta",
+  "Transportación Acuática": "trans_acuatica",
+  "Transportación Terrestre": "transportacion",
+  "Otros Servicios":       "otros_servicios",
+};
+const EMPTY_SERV = { id: "", categoria: "Menú Restaurante", proveedor: "", descripcion: "", valor: "", estado: "cotizando", notas: "", cantidad: 1 };
 
 function TabServicios({ items, onChange, pasadiasOrg = [], categoria, precioTipo = "publico", pasadiasMap = {} }) {
   const [showForm, setShowForm] = useState(false);
   const [editId, setEditId]     = useState(null);
   const [form, setForm]         = useState(EMPTY_SERV);
+  const [menuItems, setMenuItems]   = useState([]);
+  const [loadingMenu, setLoadingMenu] = useState(false);
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
   // Resolver precio: precio_manual → lookup en tabla pasadias
@@ -791,6 +802,28 @@ function TabServicios({ items, onChange, pasadiasOrg = [], categoria, precioTipo
   };
 
   const comprasCliente = categoria === "grupo" ? (pasadiasOrg || []) : [];
+
+  // Cargar productos de menu_items cuando cambia la categoría del formulario
+  useEffect(() => {
+    if (!showForm || !supabase) return;
+    const tipo = CATS_TO_TIPO[form.categoria];
+    if (!tipo) { setMenuItems([]); return; }
+    setLoadingMenu(true);
+    supabase.from("menu_items").select("id,nombre,descripcion,precio,categoria,tiene_iva")
+      .eq("menu_tipo", tipo).eq("activo", true).order("categoria").order("orden")
+      .then(({ data }) => { setMenuItems(data || []); setLoadingMenu(false); });
+  }, [form.categoria, showForm]);
+
+  // Agrupar items por subcategoría
+  const menuPorCategoria = menuItems.reduce((acc, it) => {
+    if (!acc[it.categoria]) acc[it.categoria] = [];
+    acc[it.categoria].push(it);
+    return acc;
+  }, {});
+
+  const seleccionarProducto = (it) => {
+    setForm(f => ({ ...f, descripcion: it.nombre, valor: it.precio || "", notas: it.descripcion || f.notas }));
+  };
 
   const ESTADOS_S = [
     { key: "cotizando",  label: "Cotizando",   color: "rgba(255,255,255,0.4)" },
@@ -804,7 +837,9 @@ function TabServicios({ items, onChange, pasadiasOrg = [], categoria, precioTipo
   const openEdit = (item) => { setForm({ ...EMPTY_SERV, ...item }); setEditId(item.id); setShowForm(true); };
   const save = () => {
     if (!form.categoria) return;
-    const item = { ...form, id: form.id || uid(), valor: Number(form.valor) || 0 };
+    const cant  = Number(form.cantidad) || 1;
+    const unit  = Number(form.valor) || 0;
+    const item  = { ...form, id: form.id || uid(), cantidad: cant, valor_unit: unit, valor: unit * cant };
     if (editId) onChange(items.map(x => x.id === editId ? item : x));
     else onChange([...items, item]);
     setShowForm(false);
@@ -896,7 +931,10 @@ function TabServicios({ items, onChange, pasadiasOrg = [], categoria, precioTipo
               {item.notas && <div style={{ fontSize: 11, color: "rgba(255,255,255,0.3)", marginTop: 4, fontStyle: "italic" }}>"{item.notas}"</div>}
             </div>
             <div style={{ textAlign: "right" }}>
-              {item.valor > 0 && <div style={{ fontSize: 16, fontWeight: 800, color: B.sand, fontFamily: "'Barlow Condensed', sans-serif" }}>{COP(item.valor)}</div>}
+              {item.valor > 0 && <>
+                {item.cantidad > 1 && <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)" }}>{item.cantidad} × {COP(item.valor_unit)}</div>}
+                <div style={{ fontSize: 16, fontWeight: 800, color: B.sand, fontFamily: "'Barlow Condensed', sans-serif" }}>{COP(item.valor)}</div>
+              </>}
               <select value={item.estado||"cotizando"} onChange={e => setEstado(item.id, e.target.value)}
                 style={{ background: "transparent", border: `1px solid ${estColor(item.estado)}44`, color: estColor(item.estado),
                   borderRadius: 8, padding: "3px 8px", fontSize: 11, outline: "none", cursor: "pointer", appearance: "none", marginTop: 6 }}>
@@ -914,21 +952,74 @@ function TabServicios({ items, onChange, pasadiasOrg = [], categoria, precioTipo
       {showForm && (
         <div style={{ background: B.navy, borderRadius: 12, padding: 20, marginTop: 16, border: `1px solid ${B.navyLight}` }}>
           <div style={{ fontWeight: 800, marginBottom: 16, fontSize: 14 }}>{editId ? "Editar servicio" : "Nuevo servicio"}</div>
+
+          {/* Categoría */}
+          <div style={{ marginBottom: 14 }}>
+            <label style={LS}>Categoría</label>
+            <Sel value={form.categoria} onChange={v => { set("categoria", v); setForm(f => ({ ...f, categoria: v, descripcion: "", valor: "" })); }}>
+              {CATS_SERV.map(c => <option key={c} value={c}>{c}</option>)}
+            </Sel>
+          </div>
+
+          {/* Selector de productos del módulo */}
+          <div style={{ marginBottom: 16 }}>
+            <label style={LS}>Seleccionar producto</label>
+            {loadingMenu ? (
+              <div style={{ fontSize: 12, color: "rgba(255,255,255,0.3)", padding: "10px 0" }}>Cargando productos…</div>
+            ) : menuItems.length === 0 ? (
+              <div style={{ fontSize: 12, color: "rgba(255,255,255,0.25)", padding: "10px 0" }}>Sin productos para esta categoría</div>
+            ) : (
+              <div style={{ maxHeight: 260, overflowY: "auto", display: "flex", flexDirection: "column", gap: 4, paddingRight: 4 }}>
+                {Object.entries(menuPorCategoria).map(([cat, its]) => (
+                  <div key={cat}>
+                    <div style={{ fontSize: 10, color: B.sky, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em", padding: "8px 4px 4px" }}>{cat}</div>
+                    {its.map(it => {
+                      const seleccionado = form.descripcion === it.nombre;
+                      return (
+                        <button key={it.id} type="button" onClick={() => seleccionarProducto(it)}
+                          style={{ width: "100%", textAlign: "left", padding: "9px 12px", borderRadius: 8, marginBottom: 3,
+                            border: `1px solid ${seleccionado ? B.sky : "rgba(255,255,255,0.08)"}`,
+                            background: seleccionado ? B.sky + "18" : B.navyLight,
+                            color: "#fff", cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+                          <span style={{ fontSize: 13, fontWeight: seleccionado ? 700 : 400 }}>{it.nombre}</span>
+                          <span style={{ fontSize: 13, fontWeight: 700, color: seleccionado ? B.sky : B.sand, flexShrink: 0 }}>
+                            {COP(it.precio)}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Campos del servicio */}
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-            <div><label style={LS}>Categoría</label>
-              <Sel value={form.categoria} onChange={v => set("categoria", v)}>
-                {CATS_SERV.map(c => <option key={c} value={c}>{c}</option>)}
-              </Sel>
+            <div style={{ gridColumn: "span 2" }}>
+              <label style={LS}>Descripción / Nombre</label>
+              <Inp value={form.descripcion} onChange={v => set("descripcion", v)} placeholder="Nombre del servicio o producto" />
             </div>
-            <div><label style={LS}>Proveedor</label><Inp value={form.proveedor} onChange={v => set("proveedor", v)} placeholder="Nombre del proveedor" /></div>
-            <div style={{ gridColumn: "span 2" }}><label style={LS}>Descripción del servicio</label><Inp value={form.descripcion} onChange={v => set("descripcion", v)} /></div>
-            <div><label style={LS}>Valor</label><Inp type="number" value={form.valor} onChange={v => set("valor", v)} /></div>
+            <div>
+              <label style={LS}>Cantidad</label>
+              <Inp type="number" value={form.cantidad ?? 1} onChange={v => set("cantidad", v)} />
+            </div>
+            <div>
+              <label style={LS}>Precio unitario</label>
+              <Inp type="number" value={form.valor} onChange={v => set("valor", v)} />
+            </div>
+            {(Number(form.valor) > 0 && Number(form.cantidad) > 1) && (
+              <div style={{ gridColumn: "span 2", background: B.navyMid, borderRadius: 8, padding: "8px 14px", display: "flex", justifyContent: "space-between" }}>
+                <span style={{ fontSize: 12, color: "rgba(255,255,255,0.4)" }}>Subtotal ({form.cantidad} × {COP(form.valor)})</span>
+                <span style={{ fontSize: 14, fontWeight: 800, color: B.sand }}>{COP(Number(form.valor) * Number(form.cantidad))}</span>
+              </div>
+            )}
             <div><label style={LS}>Estado</label>
               <Sel value={form.estado} onChange={v => set("estado", v)}>
                 {ESTADOS_S.map(e => <option key={e.key} value={e.key}>{e.label}</option>)}
               </Sel>
             </div>
-            <div style={{ gridColumn: "span 2" }}><label style={LS}>Notas</label><Inp value={form.notas} onChange={v => set("notas", v)} /></div>
+            <div><label style={LS}>Notas</label><Inp value={form.notas} onChange={v => set("notas", v)} /></div>
           </div>
           <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 16 }}>
             <button onClick={() => setShowForm(false)} style={{ ...BTN(B.navyLight), border: `1px solid ${B.navyLight}` }}>Cancelar</button>
