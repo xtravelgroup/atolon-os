@@ -2253,7 +2253,7 @@ function CotizacionModal({ evento, aliados, onClose, onSaved }) {
 
           {/* Grand total */}
           <div style={{ background: B.navyMid, borderRadius: 10, padding: "14px 20px", marginBottom: 20, display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 32 }}>
-            {[["Espacios", totEsp.total], ["Alojamientos", totAloj.total], ["Alimentos", totAli.total], ["Servicios", totSer.total]].map(([k, v]) => v > 0 && (
+            {[["Espacios", totEsp.total], ["Hospedaje", totHosp.total], ["Alimentos", totAli.total], ["Servicios", totSer.total]].map(([k, v]) => v > 0 && (
               <div key={k} style={{ textAlign: "right" }}>
                 <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", textTransform: "uppercase" }}>{k}</div>
                 <div style={{ fontSize: 14, fontWeight: 600 }}>{COP(v)}</div>
