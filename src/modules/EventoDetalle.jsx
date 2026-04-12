@@ -990,6 +990,17 @@ function TabServicios({ items, onChange, pasadiasOrg = [], categoria, precioTipo
                     })}
                   </div>
                 ))}
+                {/* Opción manual al final de cada lista */}
+                <div>
+                  <div style={{ fontSize: 10, color: "rgba(255,255,255,0.3)", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em", padding: "8px 4px 4px" }}>Otros</div>
+                  <button type="button" onClick={() => setForm(f => ({ ...f, descripcion: "", valor: "" }))}
+                    style={{ width: "100%", textAlign: "left", padding: "9px 12px", borderRadius: 8,
+                      border: `1px solid ${!menuItems.some(it => it.nombre === form.descripcion) && form.descripcion ? B.warning : "rgba(255,255,255,0.08)"}`,
+                      background: !menuItems.some(it => it.nombre === form.descripcion) && form.descripcion ? B.warning + "18" : B.navyLight,
+                      color: "rgba(255,255,255,0.6)", cursor: "pointer", fontSize: 13, fontStyle: "italic" }}>
+                    ✏️ Ingresar descripción manual…
+                  </button>
+                </div>
               </div>
             )}
           </div>
