@@ -776,13 +776,20 @@ function ModoStaff({ evento, timeline, contactos, transporte, incidentes }) {
 const CATS_SERV = ["Decoración","Fotografía / Video","DJ / Música","Catering / Menú","Iluminación","Sonido","Transporte","Flores","Entretenimiento","Seguridad","Bar / Bebidas","Otro"];
 const EMPTY_SERV = { id: "", categoria: "Decoración", proveedor: "", descripcion: "", valor: "", estado: "cotizando", notas: "" };
 
-function TabServicios({ items, onChange, pasadiasOrg = [], categoria }) {
+function TabServicios({ items, onChange, pasadiasOrg = [], categoria, precioTipo = "publico", pasadiasMap = {} }) {
   const [showForm, setShowForm] = useState(false);
   const [editId, setEditId]     = useState(null);
   const [form, setForm]         = useState(EMPTY_SERV);
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
-  // Para grupos: mostrar lo que el cliente compró (pasadias_org), excluyendo STAFF gratis
+  // Resolver precio: precio_manual → lookup en tabla pasadias
+  const resolverPrecio = (p) => {
+    if (Number(p.precio_manual) > 0) return Number(p.precio_manual);
+    const match = pasadiasMap[(p.tipo || "").toLowerCase()];
+    if (match) return precioTipo === "neto" ? (match.precio_neto_agencia || 0) : (match.precio || 0);
+    return 0;
+  };
+
   const comprasCliente = categoria === "grupo" ? (pasadiasOrg || []) : [];
 
   const ESTADOS_S = [
@@ -819,29 +826,32 @@ function TabServicios({ items, onChange, pasadiasOrg = [], categoria }) {
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
             {comprasCliente.map((p, i) => {
               const personas = Number(p.personas) || 0;
-              const precio   = Number(p.precio_manual) || 0;
-              const total    = precio * personas;
+              const precio   = resolverPrecio(p);
+              const subtotal = precio * personas;
               return (
                 <div key={p.id || i} style={{ background: B.navy, borderRadius: 10, padding: "12px 16px", display: "flex", alignItems: "center", gap: 12 }}>
                   <div style={{ flex: 1 }}>
                     <span style={{ fontWeight: 700, fontSize: 14 }}>{p.tipo}</span>
-                    {precio > 0 && (
-                      <span style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginLeft: 10 }}>
-                        {COP(precio)} c/u
-                      </span>
-                    )}
                   </div>
-                  <div style={{ fontSize: 13, color: "rgba(255,255,255,0.55)", fontWeight: 600, minWidth: 60, textAlign: "right" }}>
-                    × {personas} pax
+                  <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", textAlign: "right", minWidth: 90 }}>
+                    {precio > 0 ? COP(precio) : "—"} × {personas}
                   </div>
-                  {total > 0 && (
-                    <div style={{ fontSize: 15, fontWeight: 800, color: B.sand, fontFamily: "'Barlow Condensed', sans-serif", minWidth: 100, textAlign: "right" }}>
-                      {COP(total)}
-                    </div>
-                  )}
+                  <div style={{ fontSize: 15, fontWeight: 800, color: subtotal > 0 ? B.sand : "rgba(255,255,255,0.3)", fontFamily: "'Barlow Condensed', sans-serif", minWidth: 110, textAlign: "right" }}>
+                    {subtotal > 0 ? COP(subtotal) : "$0"}
+                  </div>
                 </div>
               );
             })}
+            {/* Total general */}
+            {comprasCliente.length > 0 && (() => {
+              const gran = comprasCliente.reduce((s, p) => s + resolverPrecio(p) * (Number(p.personas) || 0), 0);
+              return gran > 0 ? (
+                <div style={{ display: "flex", justifyContent: "flex-end", paddingTop: 6, borderTop: "1px solid rgba(255,255,255,0.08)", marginTop: 4 }}>
+                  <span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginRight: 12, alignSelf: "center" }}>TOTAL</span>
+                  <span style={{ fontSize: 18, fontWeight: 900, color: B.sand, fontFamily: "'Barlow Condensed', sans-serif" }}>{COP(gran)}</span>
+                </div>
+              ) : null;
+            })()}
           </div>
           <div style={{ height: 1, background: "rgba(255,255,255,0.07)", margin: "20px 0" }} />
         </div>
@@ -937,6 +947,7 @@ export default function EventoDetalle({ evento: inicial, onBack, onEdit, onSaved
   const [evento, setEvento] = useState(inicial);
   const [saving, setSaving] = useState(false);
   const [modoStaff, setModoStaff] = useState(false);
+  const [pasadiasMap, setPasadiasMap] = useState({});
   const saveTimer = useRef(null);
 
   // Reload fresh data on mount
@@ -945,6 +956,17 @@ export default function EventoDetalle({ evento: inicial, onBack, onEdit, onSaved
     supabase.from("eventos").select("*").eq("id", inicial.id).single()
       .then(({ data }) => { if (data) setEvento(prev => ({ ...prev, ...data })); });
   }, [inicial?.id]);
+
+  // Cargar precios de pasadías para lookup en tab Servicios
+  useEffect(() => {
+    if (!supabase) return;
+    supabase.from("pasadias").select("nombre, precio, precio_neto_agencia")
+      .then(({ data }) => {
+        const map = {};
+        (data || []).forEach(p => { map[p.nombre.toLowerCase()] = p; });
+        setPasadiasMap(map);
+      });
+  }, []);
 
   const saveField = useCallback(async (field, value) => {
     if (!supabase || !evento?.id) return;
@@ -1056,7 +1078,7 @@ export default function EventoDetalle({ evento: inicial, onBack, onEdit, onSaved
 
       {/* Tab content */}
       {tab === "rundown"   && <TabTimeline   items={evento.timeline_items||[]}           onChange={v => updateLocal("timeline_items", v)} />}
-      {tab === "servicios" && <TabServicios  items={evento.servicios_contratados||[]}     onChange={v => updateLocal("servicios_contratados", v)} pasadiasOrg={evento.pasadias_org||[]} categoria={evento.categoria} />}
+      {tab === "servicios" && <TabServicios  items={evento.servicios_contratados||[]}     onChange={v => updateLocal("servicios_contratados", v)} pasadiasOrg={evento.pasadias_org||[]} categoria={evento.categoria} precioTipo={evento.precio_tipo||"publico"} pasadiasMap={pasadiasMap} />}
       {tab === "transporte"&& <TabTransporte items={evento.transporte_detalle||[]}        onChange={v => updateLocal("transporte_detalle", v)} />}
       {tab === "contactos" && <TabContactos  items={evento.contactos_rapidos||[]}         onChange={v => updateLocal("contactos_rapidos", v)} />}
       {tab === "dietas"    && <TabDietas     items={evento.restricciones_dieteticas||[]}  paxTotal={evento.pax||0} onChange={v => updateLocal("restricciones_dieteticas", v)} />}
