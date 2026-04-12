@@ -892,21 +892,6 @@ function TabServicios({ items, onChange, pasadiasOrg = [], categoria, precioTipo
         </div>
       )}
 
-      {items.length > 0 && (
-        <div style={{ display: "flex", gap: 12, marginBottom: 16, flexWrap: "wrap" }}>
-          {[
-            { label: "Total servicios", val: COP(total), color: B.sand },
-            { label: "Confirmados/Pagados", val: COP(confirmados), color: B.success },
-            { label: "Por confirmar", val: COP(total - confirmados), color: B.warning },
-          ].map(k => (
-            <div key={k.label} style={{ background: B.navy, borderRadius: 10, padding: "12px 16px", flex: 1, minWidth: 140, borderLeft: `3px solid ${k.color}` }}>
-              <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginBottom: 4 }}>{k.label}</div>
-              <div style={{ fontSize: 18, fontWeight: 800, color: k.color, fontFamily: "'Barlow Condensed', sans-serif" }}>{k.val}</div>
-            </div>
-          ))}
-        </div>
-      )}
-
       <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 16 }}>
         <button onClick={openNew} style={BTN(B.success)}>+ Agregar servicio</button>
       </div>
@@ -948,6 +933,29 @@ function TabServicios({ items, onChange, pasadiasOrg = [], categoria, precioTipo
           </div>
         ))}
       </div>
+
+      {/* ── Totales ── */}
+      {(() => {
+        const totalServicios = items.reduce((s, x) => s + (Number(x.valor) || 0), 0);
+        const totalCompras   = comprasCliente.reduce((s, p) => s + resolverPrecio(p) * (Number(p.personas) || 0), 0);
+        const totalGrupo     = totalServicios + totalCompras;
+        return (
+          <div style={{ marginTop: 24, borderTop: "1px solid rgba(255,255,255,0.08)", paddingTop: 16, display: "flex", flexDirection: "column", gap: 10 }}>
+            {totalServicios > 0 && (
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 16px", background: B.navy, borderRadius: 10 }}>
+                <span style={{ fontSize: 13, color: "rgba(255,255,255,0.5)", fontWeight: 600 }}>Total Servicios</span>
+                <span style={{ fontSize: 17, fontWeight: 800, color: B.sand, fontFamily: "'Barlow Condensed', sans-serif" }}>{COP(totalServicios)}</span>
+              </div>
+            )}
+            {totalGrupo > 0 && (
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 16px", background: B.navyMid, borderRadius: 10, border: `1px solid ${B.sky}33` }}>
+                <span style={{ fontSize: 14, color: "#fff", fontWeight: 700 }}>Total Grupo</span>
+                <span style={{ fontSize: 20, fontWeight: 900, color: B.sky, fontFamily: "'Barlow Condensed', sans-serif" }}>{COP(totalGrupo)}</span>
+              </div>
+            )}
+          </div>
+        );
+      })()}
 
       {showForm && (
         <div style={{ background: B.navy, borderRadius: 12, padding: 20, marginTop: 16, border: `1px solid ${B.navyLight}` }}>
