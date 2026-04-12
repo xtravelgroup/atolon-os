@@ -2047,13 +2047,14 @@ function SectionTable({ title, color, rows, setRows, showNoches = false, showMen
 function CotizacionModal({ evento, aliados, onClose, onSaved }) {
   const saved  = evento.cotizacion_data || {};
   const [espacios,      setEspacios]      = useState(saved.espacios      || []);
-  const [alojamientos,  setAlojamientos]  = useState(saved.alojamientos  || []);
+  const [hospedaje,     setHospedaje]     = useState(saved.hospedaje || saved.alojamientos || []);
   const [alimentos,     setAlimentos]     = useState(saved.alimentos     || []);
   const [servicios,     setServicios]     = useState(saved.servicios     || []);
   const [notas,         setNotas]         = useState(saved.notas         || "");
   const [saving,        setSaving]        = useState(false);
   const [espaciosCat,   setEspaciosCat]   = useState([]);
   const [serviciosCat,  setServiciosCat]  = useState([]);
+  const [hospedajeCat,  setHospedajeCat]  = useState([]);
 
   useEffect(() => {
     if (!supabase) return;
@@ -2061,6 +2062,8 @@ function CotizacionModal({ evento, aliados, onClose, onSaved }) {
       .then(({ data }) => setEspaciosCat(data || []));
     supabase.from("menu_items").select("id,nombre,precio,tiene_iva").eq("menu_tipo", "otros_servicios").eq("activo", true).order("orden").order("nombre")
       .then(({ data }) => setServiciosCat(data || []));
+    supabase.from("menu_items").select("id,nombre,precio,tiene_iva").eq("menu_tipo", "hospedaje").eq("activo", true).order("orden").order("nombre")
+      .then(({ data }) => setHospedajeCat(data || []));
   }, []);
 
   // Header data comes directly from the evento record
@@ -2084,16 +2087,16 @@ function CotizacionModal({ evento, aliados, onClose, onSaved }) {
   }, { sub: 0, tax: 0, total: 0 });
 
   const totEsp  = sumSection(espacios);
-  const totAloj = sumSection(alojamientos);
+  const totHosp = sumSection(hospedaje);
   const totAli  = sumSection(alimentos);
   const totSer  = sumSection(servicios);
-  const grandTotal = totEsp.total + totAloj.total + totAli.total + totSer.total;
+  const grandTotal = totEsp.total + totHosp.total + totAli.total + totSer.total;
 
   const aliado = aliados.find(a => a.id === evento.aliado_id);
 
   async function guardar(marcarCotizado = false) {
     setSaving(true);
-    const data = { espacios, alojamientos, alimentos, servicios, notas };
+    const data = { espacios, hospedaje, alimentos, servicios, notas };
     const upd  = { cotizacion_data: data, valor: grandTotal };
     if (marcarCotizado) upd.stage = "Cotizado";
     await supabase.from("eventos").update(upd).eq("id", evento.id);
@@ -2145,7 +2148,7 @@ function CotizacionModal({ evento, aliados, onClose, onSaved }) {
         </div>
 
         {/* Sections */}
-        {[["ESPACIOS", "#1E3566", espacios, false, "IVA"], ["ALOJAMIENTOS", "#0D47A1", alojamientos, true, "IVA"], ["ALIMENTOS Y BEBIDAS", "#2E7D52", alimentos, false, "ICO"], ["OTROS SERVICIOS", "#7B4F12", servicios, false, "IVA"]].map(([title, color, rows, noches, ivaLabel]) => rows.length > 0 && (
+        {[["ESPACIOS", "#1E3566", espacios, false, "IVA"], ["HOSPEDAJE", "#0f766e", hospedaje, true, "IVA"], ["ALIMENTOS Y BEBIDAS", "#2E7D52", alimentos, false, "ICO"], ["OTROS SERVICIOS", "#7B4F12", servicios, false, "IVA"]].map(([title, color, rows, noches, ivaLabel]) => rows.length > 0 && (
           <div key={title} style={{ marginBottom: 20 }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
               <thead>
@@ -2181,7 +2184,7 @@ function CotizacionModal({ evento, aliados, onClose, onSaved }) {
 
         {/* Totals */}
         <div style={{ marginLeft: "auto", width: 320, borderTop: "2px solid #1E3566", paddingTop: 12, fontSize: 13 }}>
-          {[["Total Espacios", totEsp.total], ["Total Alojamientos", totAloj.total], ["Total Alimentos & Bebidas", totAli.total], ["Total Otros Servicios", totSer.total]].map(([k, v]) => v > 0 && (
+          {[["Total Espacios", totEsp.total], ["Total Hospedaje", totHosp.total], ["Total Alimentos & Bebidas", totAli.total], ["Total Otros Servicios", totSer.total]].map(([k, v]) => v > 0 && (
             <div key={k} style={{ display: "flex", justifyContent: "space-between", padding: "3px 0", color: "#444" }}>
               <span>{k}</span><span>{COP(v)}</span>
             </div>
@@ -2231,10 +2234,10 @@ function CotizacionModal({ evento, aliados, onClose, onSaved }) {
           </div>
 
           {/* Sections */}
-          <SectionTable title="Espacios"            color="#1E3566" rows={espacios}     setRows={setEspacios}     catalogItems={espaciosCat} />
-          <SectionTable title="Alojamientos"        color="#0D47A1" rows={alojamientos} setRows={setAlojamientos} showNoches />
-          <SectionTable title="Alimentos y Bebidas" color="#2E7D52" rows={alimentos}    setRows={setAlimentos}    showMenuType defaultIva={8} />
-          <SectionTable title="Otros Servicios"     color="#7B4F12" rows={servicios}    setRows={setServicios}    catalogItems={serviciosCat} />
+          <SectionTable title="Espacios"            color="#1E3566" rows={espacios}   setRows={setEspacios}   catalogItems={espaciosCat} />
+          <SectionTable title="Hospedaje"           color="#0f766e" rows={hospedaje}  setRows={setHospedaje}  showNoches catalogItems={hospedajeCat} />
+          <SectionTable title="Alimentos y Bebidas" color="#2E7D52" rows={alimentos}  setRows={setAlimentos}  showMenuType defaultIva={8} />
+          <SectionTable title="Otros Servicios"     color="#7B4F12" rows={servicios}  setRows={setServicios}  catalogItems={serviciosCat} />
 
           {/* Notas de la cotización */}
           <div style={{ background: B.navyMid, borderRadius: 10, padding: 16, marginBottom: 16 }}>
