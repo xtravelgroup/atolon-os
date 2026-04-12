@@ -773,8 +773,8 @@ function ModoStaff({ evento, timeline, contactos, transporte, incidentes }) {
 }
 
 // ─── SERVICIOS CONTRATADOS ────────────────────────────────────────────────────
-const CATS_SERV = ["Decoración","Fotografía / Video","DJ / Música","Catering / Menú","Iluminación","Sonido","Transporte","Flores","Entretenimiento","Seguridad","Bar / Bebidas","Otro"];
-const EMPTY_SERV = { id: "", categoria: "Decoración", proveedor: "", descripcion: "", valor: "", estado: "cotizando", notas: "" };
+const CATS_SERV = ["Menú Restaurante","Menú Bebidas","Menú Banquetes","Espacios Renta","Transportación Acuática","Transportación Terrestre","Otros Servicios"];
+const EMPTY_SERV = { id: "", categoria: "Menú Restaurante", proveedor: "", descripcion: "", valor: "", estado: "cotizando", notas: "" };
 
 function TabServicios({ items, onChange, pasadiasOrg = [], categoria, precioTipo = "publico", pasadiasMap = {} }) {
   const [showForm, setShowForm] = useState(false);
