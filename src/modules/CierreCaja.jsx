@@ -44,10 +44,102 @@ function fmtFecha(d) {
 }
 
 // ─── Historial de Cierres ─────────────────────────────────────────────────────
-function HistorialCierres({ refresh, area }) {
+function HistorialCierres({ refresh, area, userRol }) {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(false);
   const [expanded, setExpanded] = useState(null);
+  const [editCierre, setEditCierre] = useState(null); // cierre being edited
+  const [editForm, setEditForm] = useState({});
+  const [editSaving, setEditSaving] = useState(false);
+  const canEdit = userRol === "super_admin";
+  const canSeeLoggro = /admin|gerente|contab/i.test(String(userRol || ""));
+
+  // Cache de consultas Loggro por fecha { "YYYY-MM-DD": { loading, data, error } }
+  const [loggroByDate, setLoggroByDate] = useState({});
+
+  // Mapea paymentMethodValue de Loggro → key interno de cierre
+  const LOGGRO_METODO_MAP = {
+    "Datafono": "datafono", "Datáfono": "datafono", "Tarjeta": "datafono",
+    "Efectivo": "efectivo", "Cash": "efectivo",
+    "Link de Pago": "link_pago", "Link": "link_pago",
+    "Transferencia": "transferencia", "Resort Credit": "resort_credit",
+  };
+
+  const fetchLoggroCierre = async (fecha) => {
+    if (!fecha || loggroByDate[fecha]) return;
+    setLoggroByDate(prev => ({ ...prev, [fecha]: { loading: true } }));
+    try {
+      const res = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/loggro-sync/cierre-caja?fecha=${fecha}`,
+        {
+          headers: {
+            apikey: import.meta.env.VITE_SUPABASE_ANON_KEY,
+            Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+          },
+        }
+      );
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || "Error consultando Loggro");
+      setLoggroByDate(prev => ({ ...prev, [fecha]: { loading: false, data } }));
+    } catch (e) {
+      setLoggroByDate(prev => ({ ...prev, [fecha]: { loading: false, error: e.message } }));
+    }
+  };
+
+  const startEdit = (c) => {
+    setEditCierre(c);
+    setEditForm({
+      fecha: c.fecha || "",
+      cajero_nombre: c.cajero_nombre || "",
+      numero_caja: c.numero_caja || "",
+      numero_comprobante: c.numero_comprobante || "",
+      notas: c.notas || "",
+      efectivo_contado: c.efectivo_contado || 0,
+      metodos: JSON.parse(JSON.stringify(c.metodos || {})),
+    });
+  };
+
+  const saveEdit = async () => {
+    if (!supabase || !editCierre) return;
+    setEditSaving(true);
+    // Recalculate totals from edited metodos
+    let totalVentas = 0, totalPropinas = 0;
+    Object.values(editForm.metodos || {}).forEach(v => {
+      if (typeof v === "object" && v !== null) {
+        totalVentas   += Number(v.venta) || 0;
+        totalPropinas += Number(v.propina) || 0;
+      }
+    });
+    const totalGeneral = totalVentas + totalPropinas;
+    const efectivoData = editForm.metodos?.efectivo || {};
+    const efectivoEsperado = (Number(efectivoData.venta) || 0) + (Number(efectivoData.propina) || 0);
+    const efectivoContado  = Number(editForm.efectivo_contado) || 0;
+    const diferencia = efectivoContado - efectivoEsperado;
+
+    const payload = {
+      fecha: editForm.fecha,
+      cajero_nombre: editForm.cajero_nombre,
+      numero_caja: editForm.numero_caja || null,
+      numero_comprobante: editForm.numero_comprobante || null,
+      notas: editForm.notas || null,
+      metodos: editForm.metodos,
+      total_ventas: totalVentas,
+      total_propinas: totalPropinas,
+      total_general: totalGeneral,
+      efectivo_esperado: efectivoEsperado,
+      efectivo_contado: efectivoContado,
+      diferencia,
+      updated_at: new Date().toISOString(),
+    };
+    const { error } = await supabase.from("cierres_caja").update(payload).eq("id", editCierre.id);
+    setEditSaving(false);
+    if (error) return alert("Error actualizando cierre: " + error.message);
+    await logAccion({ modulo: "cierre_caja", accion: "editar_cierre", tabla: "cierres_caja", registroId: editCierre.id,
+      datosAntes: { total_ventas: editCierre.total_ventas, total_propinas: editCierre.total_propinas },
+      datosDespues: payload, notas: "Editado por super_admin" });
+    setEditCierre(null);
+    load();
+  };
 
   const load = useCallback(async () => {
     if (!supabase) return;
@@ -86,7 +178,11 @@ function HistorialCierres({ refresh, area }) {
             return (
               <>
                 <tr key={c.id} style={{ borderBottom: "1px solid rgba(255,255,255,0.04)", cursor: "pointer" }}
-                  onClick={() => setExpanded(isExp ? null : c.id)}>
+                  onClick={() => {
+                    const newExp = isExp ? null : c.id;
+                    setExpanded(newExp);
+                    if (newExp && canSeeLoggro && c.area === "ayb" && c.fecha) fetchLoggroCierre(c.fecha);
+                  }}>
                   <td style={{ padding: "9px 10px", whiteSpace: "nowrap", color: "rgba(255,255,255,0.7)" }}>{fmtFecha(c.fecha)}</td>
                   <td style={{ padding: "9px 10px", whiteSpace: "nowrap" }}>
                     {AREA_ICON[c.area] || "📦"} <span style={{ color: "rgba(255,255,255,0.6)", fontSize: 11 }}>{AREA_LABEL[c.area] || c.area || "—"}</span>
@@ -146,9 +242,155 @@ function HistorialCierres({ refresh, area }) {
                                 📎 Ver comprobante
                               </a>
                             )}
+                            {canEdit && (
+                              <button onClick={(e) => { e.stopPropagation(); startEdit(c); }}
+                                style={{ marginTop: 10, background: B.sky + "22", border: `1px solid ${B.sky}`, borderRadius: 8, color: B.sky, padding: "6px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+                                ✏️ Editar cierre
+                              </button>
+                            )}
                           </div>
                         </div>
                       </div>
+
+                      {/* ── Comparativo vs Loggro (solo super_admin / contabilidad / gerente_general, área A&B) ── */}
+                      {canSeeLoggro && c.area === "ayb" && (() => {
+                        const lg = loggroByDate[c.fecha];
+                        if (!lg) return null;
+                        if (lg.loading) return (
+                          <div style={{ marginTop: 16, fontSize: 11, color: "rgba(255,255,255,0.4)" }}>⏳ Cargando data de Loggro…</div>
+                        );
+                        if (lg.error) return (
+                          <div style={{ marginTop: 16, background: "#f8717115", border: "1px solid #f8717133", borderRadius: 8, padding: "8px 12px", fontSize: 11, color: "#fca5a5" }}>
+                            Error Loggro: {lg.error}
+                          </div>
+                        );
+                        const data = lg.data;
+
+                        // Agrupar por key interno
+                        const lgPorKey = {}; const sinMapear = [];
+                        for (const [nombre, info] of Object.entries(data.por_metodo || {})) {
+                          const key = LOGGRO_METODO_MAP[nombre];
+                          const v = Number(info.ventas) || 0, p = Number(info.propinas) || 0;
+                          if (key) {
+                            if (!lgPorKey[key]) lgPorKey[key] = { venta: 0, propina: 0 };
+                            lgPorKey[key].venta += v;
+                            lgPorKey[key].propina += p;
+                          } else {
+                            sinMapear.push({ nombre, venta: v, propina: p });
+                          }
+                        }
+
+                        const caj = c.metodos || {};
+                        const rowsCmp = METODOS.filter(m => m.key !== "otros").map(m => {
+                          const caV = Number(caj[m.key]?.venta) || 0;
+                          const caP = Number(caj[m.key]?.propina) || 0;
+                          const lgV = Number(lgPorKey[m.key]?.venta) || 0;
+                          const lgP = Number(lgPorKey[m.key]?.propina) || 0;
+                          return { key: m.key, label: m.label, icon: m.icon, caV, caP, lgV, lgP };
+                        }).filter(r => r.caV || r.caP || r.lgV || r.lgP);
+
+                        const lgTotalV = Number(data.resumen?.total_ventas) || 0;
+                        const lgTotalP = Number(data.resumen?.total_propinas) || 0;
+                        const caTotalV = Number(c.total_ventas) || 0;
+                        const caTotalP = Number(c.total_propinas) || 0;
+                        const difV = caTotalV - lgTotalV;
+                        const difP = caTotalP - lgTotalP;
+                        const clr = (d) => d === 0 ? "#4ade80" : Math.abs(d) < 5000 ? "#fbbf24" : "#f87171";
+                        const fmtDif = (d) => (d >= 0 ? "+" : "") + COP(d);
+
+                        return (
+                          <div style={{ marginTop: 18, borderTop: "1px dashed rgba(142,202,230,0.2)", paddingTop: 14 }}>
+                            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
+                              <div style={{ fontSize: 10, color: B.sky, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 700 }}>
+                                📊 Comparativo: Cajero vs Loggro
+                              </div>
+                              <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)" }}>{(data.facturas || []).length} facturas en Loggro</div>
+                            </div>
+
+                            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
+                              <thead>
+                                <tr style={{ borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
+                                  <th style={{ padding: "4px 8px", textAlign: "left", color: "rgba(255,255,255,0.35)", fontWeight: 600 }}>Método</th>
+                                  <th colSpan={2} style={{ padding: "4px 8px", textAlign: "center", color: "rgba(255,255,255,0.45)", fontWeight: 700, borderLeft: "1px solid rgba(255,255,255,0.05)" }}>Cajero</th>
+                                  <th colSpan={2} style={{ padding: "4px 8px", textAlign: "center", color: B.sky, fontWeight: 700, borderLeft: "1px solid rgba(255,255,255,0.05)" }}>Loggro</th>
+                                  <th colSpan={2} style={{ padding: "4px 8px", textAlign: "center", color: B.sand, fontWeight: 700, borderLeft: "1px solid rgba(255,255,255,0.05)" }}>Diferencia</th>
+                                </tr>
+                                <tr style={{ borderBottom: "1px solid rgba(255,255,255,0.06)", fontSize: 9, color: "rgba(255,255,255,0.3)" }}>
+                                  <th></th>
+                                  <th style={{ padding: "2px 8px", textAlign: "right", borderLeft: "1px solid rgba(255,255,255,0.05)" }}>Venta</th>
+                                  <th style={{ padding: "2px 8px", textAlign: "right" }}>Prop.</th>
+                                  <th style={{ padding: "2px 8px", textAlign: "right", borderLeft: "1px solid rgba(255,255,255,0.05)" }}>Venta</th>
+                                  <th style={{ padding: "2px 8px", textAlign: "right" }}>Prop.</th>
+                                  <th style={{ padding: "2px 8px", textAlign: "right", borderLeft: "1px solid rgba(255,255,255,0.05)" }}>Venta</th>
+                                  <th style={{ padding: "2px 8px", textAlign: "right" }}>Prop.</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {rowsCmp.map(r => {
+                                  const dV = r.caV - r.lgV, dP = r.caP - r.lgP;
+                                  return (
+                                    <tr key={r.key} style={{ borderBottom: "1px solid rgba(255,255,255,0.03)" }}>
+                                      <td style={{ padding: "5px 8px", color: "rgba(255,255,255,0.65)" }}>{r.icon} {r.label}</td>
+                                      <td style={{ padding: "5px 8px", textAlign: "right", borderLeft: "1px solid rgba(255,255,255,0.05)" }}>{COP(r.caV)}</td>
+                                      <td style={{ padding: "5px 8px", textAlign: "right", color: "rgba(255,255,255,0.55)" }}>{COP(r.caP)}</td>
+                                      <td style={{ padding: "5px 8px", textAlign: "right", color: B.sky, borderLeft: "1px solid rgba(255,255,255,0.05)" }}>{COP(r.lgV)}</td>
+                                      <td style={{ padding: "5px 8px", textAlign: "right", color: B.sky + "aa" }}>{COP(r.lgP)}</td>
+                                      <td style={{ padding: "5px 8px", textAlign: "right", color: clr(dV), fontWeight: 700, borderLeft: "1px solid rgba(255,255,255,0.05)" }}>{dV !== 0 ? fmtDif(dV) : "—"}</td>
+                                      <td style={{ padding: "5px 8px", textAlign: "right", color: clr(dP), fontWeight: 700 }}>{dP !== 0 ? fmtDif(dP) : "—"}</td>
+                                    </tr>
+                                  );
+                                })}
+                                <tr style={{ borderTop: "2px solid rgba(255,255,255,0.1)", fontWeight: 800 }}>
+                                  <td style={{ padding: "6px 8px", color: "#fff" }}>TOTAL</td>
+                                  <td style={{ padding: "6px 8px", textAlign: "right", borderLeft: "1px solid rgba(255,255,255,0.05)" }}>{COP(caTotalV)}</td>
+                                  <td style={{ padding: "6px 8px", textAlign: "right" }}>{COP(caTotalP)}</td>
+                                  <td style={{ padding: "6px 8px", textAlign: "right", color: B.sky, borderLeft: "1px solid rgba(255,255,255,0.05)" }}>{COP(lgTotalV)}</td>
+                                  <td style={{ padding: "6px 8px", textAlign: "right", color: B.sky }}>{COP(lgTotalP)}</td>
+                                  <td style={{ padding: "6px 8px", textAlign: "right", color: clr(difV), borderLeft: "1px solid rgba(255,255,255,0.05)" }}>{fmtDif(difV)}</td>
+                                  <td style={{ padding: "6px 8px", textAlign: "right", color: clr(difP) }}>{fmtDif(difP)}</td>
+                                </tr>
+                              </tbody>
+                            </table>
+
+                            {sinMapear.length > 0 && (
+                              <div style={{ marginTop: 8, fontSize: 10, color: "rgba(251,191,36,0.7)" }}>
+                                ⚠️ Métodos de Loggro sin mapear: {sinMapear.map(s => `${s.nombre} (${COP(s.venta)})`).join(" · ")}
+                              </div>
+                            )}
+
+                            {/* Facturas del día */}
+                            {(data.facturas || []).length > 0 && (
+                              <details style={{ marginTop: 10 }}>
+                                <summary style={{ cursor: "pointer", fontSize: 11, color: "rgba(255,255,255,0.55)", fontWeight: 600 }}>
+                                  Ver {data.facturas.length} facturas del día en Loggro
+                                </summary>
+                                <div style={{ marginTop: 8, maxHeight: 280, overflowY: "auto", fontSize: 10 }}>
+                                  {[...data.facturas].sort((a, b) => (a.hora || "").localeCompare(b.hora || "")).map(f => (
+                                    <div key={f.id} style={{
+                                      display: "grid", gridTemplateColumns: "70px 1fr 110px 110px 90px",
+                                      gap: 8, padding: "4px 4px",
+                                      borderBottom: "1px solid rgba(255,255,255,0.04)",
+                                      background: f.closeToMidnight ? "rgba(251,191,36,0.08)" : "transparent",
+                                    }}>
+                                      <span style={{ color: f.closeToMidnight ? "#fbbf24" : "rgba(255,255,255,0.5)", fontWeight: f.closeToMidnight ? 700 : 400 }}>
+                                        {f.closeToMidnight ? "⚠️ " : ""}{f.hora}
+                                      </span>
+                                      <span style={{ color: "rgba(255,255,255,0.8)" }}>#{f.numero}{f.cliente && ` · ${f.cliente}`}</span>
+                                      <span style={{ color: "rgba(255,255,255,0.4)" }}>{f.cajero || "—"}</span>
+                                      <span style={{ color: "rgba(255,255,255,0.4)" }}>{f.metodo || "—"}</span>
+                                      <span style={{ color: "#fff", fontWeight: 700, textAlign: "right" }}>{COP((f.total || 0) + (f.tip || 0))}</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              </details>
+                            )}
+
+                            <div style={{ marginTop: 8, fontSize: 10, color: "rgba(255,255,255,0.3)", fontStyle: "italic" }}>
+                              P/L y reportes de A&B usan los datos de Loggro (facturación oficial).
+                            </div>
+                          </div>
+                        );
+                      })()}
                     </td>
                   </tr>
                 )}
@@ -157,6 +399,71 @@ function HistorialCierres({ refresh, area }) {
           })}
         </tbody>
       </table>
+
+      {/* ── Modal Editar Cierre (super_admin) ── */}
+      {editCierre && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 1200, background: "rgba(0,0,0,0.8)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20, overflowY: "auto" }}
+          onClick={e => e.target === e.currentTarget && setEditCierre(null)}>
+          <div style={{ background: B.navyMid, borderRadius: 16, padding: 28, width: "100%", maxWidth: 560, maxHeight: "90vh", overflowY: "auto", border: `1px solid ${B.navyLight}` }}>
+            <h3 style={{ fontSize: 17, fontWeight: 700, marginBottom: 20, color: B.white }}>✏️ Editar Cierre — {fmtFecha(editCierre.fecha)}</h3>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+              <div><label style={LS}>Fecha</label><input type="date" value={editForm.fecha} onChange={e => setEditForm(f => ({ ...f, fecha: e.target.value }))} style={IS} /></div>
+              <div><label style={LS}>Cajero</label><input value={editForm.cajero_nombre} onChange={e => setEditForm(f => ({ ...f, cajero_nombre: e.target.value }))} style={IS} /></div>
+              <div><label style={LS}>No. Caja</label><input value={editForm.numero_caja||""} onChange={e => setEditForm(f => ({ ...f, numero_caja: e.target.value }))} style={IS} /></div>
+              <div><label style={LS}>No. Comprobante</label><input value={editForm.numero_comprobante||""} onChange={e => setEditForm(f => ({ ...f, numero_comprobante: e.target.value }))} style={IS} /></div>
+            </div>
+
+            {/* Métodos editable */}
+            <div style={{ marginTop: 16 }}>
+              <label style={LS}>Detalle por método de pago</label>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, marginTop: 8 }}>
+                <thead>
+                  <tr style={{ borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
+                    <th style={{ padding: "6px 8px", textAlign: "left", color: "rgba(255,255,255,0.4)", fontSize: 10 }}>Método</th>
+                    <th style={{ padding: "6px 8px", textAlign: "right", color: "rgba(255,255,255,0.4)", fontSize: 10 }}>Venta</th>
+                    <th style={{ padding: "6px 8px", textAlign: "right", color: "rgba(255,255,255,0.4)", fontSize: 10 }}>Propina</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {METODOS.map(m => {
+                    const val = editForm.metodos?.[m.key] || {};
+                    return (
+                      <tr key={m.key} style={{ borderBottom: "1px solid rgba(255,255,255,0.04)" }}>
+                        <td style={{ padding: "6px 8px", color: "rgba(255,255,255,0.6)" }}>{m.icon} {m.label}</td>
+                        <td style={{ padding: "4px 4px" }}>
+                          <input type="number" value={val.venta || ""} onChange={e => {
+                            const v = Number(e.target.value) || 0;
+                            setEditForm(f => ({ ...f, metodos: { ...f.metodos, [m.key]: { ...f.metodos?.[m.key], venta: v } } }));
+                          }} style={{ ...IS, textAlign: "right", padding: "6px 8px", fontSize: 12 }} />
+                        </td>
+                        <td style={{ padding: "4px 4px" }}>
+                          <input type="number" value={val.propina || ""} onChange={e => {
+                            const v = Number(e.target.value) || 0;
+                            setEditForm(f => ({ ...f, metodos: { ...f.metodos, [m.key]: { ...f.metodos?.[m.key], propina: v } } }));
+                          }} style={{ ...IS, textAlign: "right", padding: "6px 8px", fontSize: 12 }} />
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 12, marginTop: 16 }}>
+              <div><label style={LS}>Efectivo contado</label><input type="number" value={editForm.efectivo_contado} onChange={e => setEditForm(f => ({ ...f, efectivo_contado: Number(e.target.value) || 0 }))} style={IS} /></div>
+              <div><label style={LS}>Notas</label><textarea value={editForm.notas||""} onChange={e => setEditForm(f => ({ ...f, notas: e.target.value }))} rows={2} style={{ ...IS, resize: "vertical" }} /></div>
+            </div>
+
+            <div style={{ display: "flex", gap: 10, marginTop: 22 }}>
+              <button onClick={() => setEditCierre(null)} style={{ flex: 1, background: "none", border: `1px solid ${B.navyLight}`, borderRadius: 8, color: B.sand, padding: "10px", fontSize: 14, cursor: "pointer", fontWeight: 600 }}>Cancelar</button>
+              <button onClick={saveEdit} disabled={editSaving}
+                style={{ flex: 2, background: B.success, border: "none", borderRadius: 8, color: B.navy, padding: "10px", fontSize: 14, cursor: "pointer", fontWeight: 700, opacity: editSaving ? 0.5 : 1 }}>
+                {editSaving ? "Guardando…" : "Guardar cambios"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -169,18 +476,20 @@ export default function CierreCaja() {
 
   // Logged-in user + lista de usuarios
   const [userNombre, setUserNombre] = useState("");
+  const [userRol, setUserRol]       = useState("");
   const [usuariosList, setUsuariosList] = useState([]);
   useEffect(() => {
     if (!supabase) return;
     // Load all active users for cajero dropdown
     supabase.from("usuarios").select("nombre").eq("activo", true).order("nombre")
       .then(({ data }) => { if (data) setUsuariosList(data.map(u => u.nombre)); });
-    // Pre-select logged-in user
+    // Pre-select logged-in user + detect role
     supabase.auth.getSession().then(async ({ data: { session } }) => {
       if (!session?.user?.email) return;
-      const { data } = await supabase.from("usuarios").select("nombre")
+      const { data } = await supabase.from("usuarios").select("nombre, rol_id")
         .eq("email", session.user.email.toLowerCase()).single();
       if (data?.nombre) { setUserNombre(data.nombre); setCajero(data.nombre); }
+      if (data?.rol_id) setUserRol(data.rol_id);
     });
   }, []);
 
@@ -969,8 +1278,11 @@ export default function CierreCaja() {
 
       {/* ── Historial ── */}
       <div style={{ background: B.navyMid, borderRadius: 14, padding: "18px 20px", border: "1px solid rgba(255,255,255,0.07)" }}>
-        <div style={{ fontSize: 12, color: B.sand, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 16 }}>Historial de Cierres</div>
-        <HistorialCierres refresh={historialKey} area={area} />
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
+          <div style={{ fontSize: 12, color: B.sand, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em" }}>Historial de Cierres</div>
+          <div style={{ fontSize: 10, color: "rgba(255,255,255,0.3)" }}>Rol detectado: <span style={{ color: B.sky }}>{userRol || "(cargando…)"}</span></div>
+        </div>
+        <HistorialCierres refresh={historialKey} area={area} userRol={userRol} />
       </div>
 
     </div>

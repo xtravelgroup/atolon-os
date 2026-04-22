@@ -37,6 +37,29 @@ const fmtDT = (d) => {
 
 // ── Commission calc — same logic as B2B.jsx ──────────────────────────────────
 function calcComision(r, pasadiasMap) {
+  // For grupo entries, calculate per pasadía line
+  if (r._esGrupo && r._pasadias_org) {
+    let total = 0;
+    (r._pasadias_org || []).filter(p => p.tipo !== "Impuesto Muelle" && p.tipo !== "STAFF").forEach(p => {
+      const key = (p.tipo || "").toLowerCase();
+      const pas = pasadiasMap[key] || {};
+      const cobradoA = pas.precio || 0;
+      const netoA    = pas.neto   || 0;
+      const cobradoN = pas.precio_nino || 0;
+      const netoN    = pas.neto_nino   || 0;
+      const adultos  = Number(p.adultos) || 0;
+      const ninos    = Number(p.ninos)   || 0;
+      const personas = Number(p.personas) || 0;
+      if (adultos > 0 || ninos > 0) {
+        total += (cobradoA - netoA) * adultos;
+        if (cobradoN > 0 && netoN > 0) total += (cobradoN - netoN) * ninos;
+      } else {
+        total += (cobradoA - netoA) * personas;
+      }
+    });
+    return Math.max(0, total);
+  }
+
   const key      = (r.tipo || "").toLowerCase();
   const pasadia  = pasadiasMap[key] || {};
   const cobradoA = r.precio_u    || pasadia.precio      || 0;
@@ -152,17 +175,50 @@ export default function Comisiones() {
       const { data: comRows } = await supabase.from("comisiones_semanas").select("reservas_ids");
       const usedIds = new Set((comRows || []).flatMap(c => c.reservas_ids || []));
 
-      // Reservas B2B de la semana seleccionada
-      const { data: reservas } = await supabase.from("reservas")
-        .select("id, nombre, fecha, tipo, pax_a, pax_n, pax, total, precio_u, precio_neto, descuento_agencia, aliado_id, estado")
-        .gte("fecha", inicio).lte("fecha", fin)
-        .not("aliado_id", "is", null)
-        .in("estado", ["confirmado", "check_in"]);
+      // Reservas B2B de la semana seleccionada — solo pagadas (saldo = 0)
+      const [{ data: reservas }, { data: gruposB2B }] = await Promise.all([
+        supabase.from("reservas")
+          .select("id, nombre, fecha, tipo, pax_a, pax_n, pax, total, precio_u, precio_neto, descuento_agencia, aliado_id, estado, saldo")
+          .gte("fecha", inicio).lte("fecha", fin)
+          .not("aliado_id", "is", null)
+          .in("estado", ["confirmado", "check_in"])
+          .lte("saldo", 0),
+        // Grupos B2B (Confirmado/Realizado con aliado)
+        supabase.from("eventos")
+          .select("id, nombre, fecha, aliado_id, pasadias_org, precio_tipo, categoria, stage")
+          .gte("fecha", inicio).lte("fecha", fin)
+          .not("aliado_id", "is", null)
+          .eq("categoria", "grupo")
+          .in("stage", ["Confirmado", "Realizado"]),
+      ]);
 
-      if (!reservas) { setPendientes([]); setLoading(false); return; }
+      // Convert grupos to virtual reserva entries for commission calculation
+      const grupoReservas = (gruposB2B || []).map(g => {
+        const org = (g.pasadias_org || []).filter(p => p.tipo !== "Impuesto Muelle" && p.tipo !== "STAFF");
+        const paxTotal = org.reduce((s, p) => s + (Number(p.personas) || 0), 0);
+        return {
+          id: g.id,
+          nombre: g.nombre,
+          fecha: g.fecha,
+          tipo: org[0]?.tipo || "Grupo",
+          aliado_id: g.aliado_id,
+          pax_a: org.reduce((s, p) => s + (Number(p.adultos) || Number(p.personas) || 0), 0),
+          pax_n: org.reduce((s, p) => s + (Number(p.ninos) || 0), 0),
+          pax: paxTotal,
+          total: 0,
+          estado: g.stage === "Realizado" ? "check_in" : "confirmado",
+          saldo: 0,
+          _esGrupo: true,
+          _pasadias_org: g.pasadias_org,
+          _precio_tipo: g.precio_tipo,
+        };
+      });
+
+      const allReservas = [...(reservas || []), ...grupoReservas];
+      if (!allReservas.length) { setPendientes([]); setLoading(false); return; }
 
       // Excluir ya aprobadas
-      const nuevas = reservas.filter(r => !usedIds.has(r.id));
+      const nuevas = allReservas.filter(r => !usedIds.has(r.id));
       if (!nuevas.length) { setPendientes([]); setLoading(false); return; }
 
       const aliadoIds = [...new Set(nuevas.map(r => r.aliado_id))];
@@ -228,7 +284,7 @@ export default function Comisiones() {
         byAliado[r.aliado_id].paxTotal += (r.pax_a || r.pax || 0) + (r.pax_n || 0);
       });
 
-      setPendientes(Object.values(byAliado).sort((a, b) => b.monto - a.monto));
+      setPendientes(Object.values(byAliado).filter(a => a.monto > 0).sort((a, b) => b.monto - a.monto));
     } catch (e) {
       console.error("Comisiones loadPendientes:", e);
     }
@@ -415,15 +471,29 @@ export default function Comisiones() {
                           {!isMobile && <><span>Titular</span><span>Fecha</span><span>Tipo</span><span style={{textAlign:"right"}}>Pax</span><span style={{textAlign:"right"}}>Comisión</span></>}
                         </div>
                         <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                          {ag.reservas.map(r => (
-                            <div key={r.id} style={{
-                              display: isMobile ? "block" : "grid",
-                              gridTemplateColumns: "1fr 80px 100px 80px 100px",
-                              gap: "0 8px", padding: "7px 4px",
-                              borderBottom: `1px solid rgba(255,255,255,0.04)`,
-                              fontSize: 13,
-                            }}>
-                              <span style={{ color: B.white, fontWeight: 600 }}>{r.nombre}</span>
+                          {ag.reservas.map(r => {
+                            const openReserva = (e) => {
+                              e.stopPropagation();
+                              if (r._esGrupo) {
+                                // Abrir el grupo en Eventos — por simplicidad dirigir a Reservas si no hay handler de eventos
+                                return;
+                              }
+                              window.dispatchEvent(new CustomEvent("atolon-navigate", { detail: { modulo: "reservas", reservaId: r.id } }));
+                            };
+                            return (
+                            <div key={r.id} onClick={openReserva}
+                              style={{
+                                display: isMobile ? "block" : "grid",
+                                gridTemplateColumns: "1fr 80px 100px 80px 100px",
+                                gap: "0 8px", padding: "7px 4px",
+                                borderBottom: `1px solid rgba(255,255,255,0.04)`,
+                                fontSize: 13,
+                                cursor: r._esGrupo ? "default" : "pointer",
+                                transition: "background 0.15s",
+                              }}
+                              onMouseEnter={e => { if (!r._esGrupo) e.currentTarget.style.background = "rgba(255,255,255,0.04)"; }}
+                              onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
+                              <span style={{ color: B.white, fontWeight: 600 }}>{r.nombre}{r._esGrupo && " (grupo)"}</span>
                               <span style={{ color: "rgba(255,255,255,0.45)" }}>{fmtFecha(r.fecha)}</span>
                               <span style={{ color: "rgba(255,255,255,0.45)", fontSize: 12 }}>{r.tipo}</span>
                               <span style={{ color: "rgba(255,255,255,0.45)", textAlign: isMobile ? "left" : "right" }}>
@@ -431,7 +501,8 @@ export default function Comisiones() {
                               </span>
                               <span style={{ color: "#a78bfa", fontWeight: 700, textAlign: isMobile ? "left" : "right" }}>{COP(r.comision)}</span>
                             </div>
-                          ))}
+                            );
+                          })}
                         </div>
                         <div style={{ display: "flex", justifyContent: "flex-end", paddingTop: 8, marginTop: 4,
                           borderTop: `1px solid rgba(255,255,255,0.08)` }}>
