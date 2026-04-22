@@ -11,9 +11,21 @@ const fmtHora = (ts) => {
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
-const CANALES   = ["Web", "WhatsApp", "B2B", "Teléfono", "Walk-in"];
+const CANALES   = ["Web", "WhatsApp", "Email", "B2B", "Teléfono", "Walk-in", "Friends & Family"];
 const VENDEDORES = ["Sin asignar"]; // fallback; real list loaded from usuarios (ventas + gerente_ventas)
-const FORMAS_PAGO = ["Transferencia", "Efectivo", "Datafono", "Wompi", "SKY", "CXC", "Enviar Link de Pago"];
+const FORMAS_PAGO = ["Transferencia", "Efectivo", "Datafono", "Wompi", "SKY", "CXC", "Cortesía", "Ajuste Retención", "Enviar Link de Pago"];
+
+// Solo estos usuarios pueden usar el método de pago "Cortesía"
+const CORTESIA_AUTHORIZED_EMAILS = [
+  "eric@atoloncartagena.com",
+  "direccion@atoloncartagena.com",    // Emma — Gerente General
+  "vsimancas@atoloncartagena.com",    // Violeta — Directora Comercial
+];
+// Variable a nivel módulo que los sub-componentes pueden leer (se setea en el componente padre al cargar)
+let __currentUserEmail = "";
+const canUseCortesia = () =>
+  !!__currentUserEmail && CORTESIA_AUTHORIZED_EMAILS.includes(__currentUserEmail.toLowerCase());
+const filterCortesia = (arr) => canUseCortesia() ? arr : arr.filter(f => f !== "Cortesía");
 
 const ESTADO_STYLE = {
   confirmado:            { bg: B.success + "22", color: B.success, label: "Confirmado"   },
@@ -24,13 +36,20 @@ const ESTADO_STYLE = {
   cancelado:             { bg: B.danger  + "22", color: B.danger,  label: "Cancelado"   },
 };
 
-// pax already booked per salida from reservas data (uses DB salida ids)
-function paxPorSalida(reservas, salidas) {
+// pax already booked per salida from reservas + grupos que comparten lancha con pasadías
+function paxPorSalida(reservas, salidas, grupos = []) {
   const map = {};
   salidas.forEach(s => (map[s.id] = 0));
   reservas.forEach(r => {
     if (r.estado !== "cancelado" && map[r.salida] !== undefined)
       map[r.salida] += (r.pax || 0);
+  });
+  // Sumar pax de grupos que comparten lancha con esta salida
+  grupos.forEach(g => {
+    if (g.comparte_lancha_pasadias && g.salida_compartida_id && map[g.salida_compartida_id] !== undefined) {
+      const paxGrupo = (g.pasadias_org || []).filter(p => p.tipo !== "Impuesto Muelle" && p.tipo !== "STAFF").reduce((s, p) => s + (Number(p.personas) || 0), 0) || g.pax || 0;
+      map[g.salida_compartida_id] += paxGrupo;
+    }
   });
   return map;
 }
@@ -38,7 +57,7 @@ function paxPorSalida(reservas, salidas) {
 const EMPTY_FORM = {
   nombre: "", contacto: "", telefono: "", fecha: "", tipo: PASADIAS[0]?.tipo || "", pax_a: 1, pax_n: 0,
   salida_id: "", canal: "WhatsApp", precio: PASADIAS[0]?.precio || 0, precio_nino: 0,
-  abono: 0, forma_pago: "Transferencia", fecha_pago: "", aliado_id: "", vendedor: "Sin asignar", notas: "",
+  abono: 0, forma_pago: "Sin definir", fecha_pago: "", aliado_id: "", vendedor: "Sin asignar", notas: "",
 };
 
 // ── sub-components ────────────────────────────────────────────────────────────
@@ -109,8 +128,23 @@ function DepartureCard({ salida, paxCount, extraCap = 0 }) {
 
 // ── ReservaDetalle ────────────────────────────────────────────────────────────
 
-function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList = [], aliadoList = [], vendedoresList = VENDEDORES, pasadiaList = PASADIAS }) {
+function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList = [], aliadoList = [], vendedoresList = VENDEDORES, pasadiaList = PASADIAS, conveniosMap = {} }) {
   const [tab, setTab]           = useState("detalles");
+  const [histLogs,  setHistLogs]  = useState([]);
+  const [histLoading, setHistLoading] = useState(false);
+  const [notaMod, setNotaMod]   = useState(""); // nota de razón al guardar cambios
+
+  // Fetch historial de acciones cuando el tab está activo
+  useEffect(() => {
+    if (tab !== "historial" || !supabase || !r0.id) return;
+    setHistLoading(true);
+    supabase.from("historial_acciones")
+      .select("*")
+      .eq("registro_id", r0.id)
+      .order("created_at", { ascending: false })
+      .then(({ data }) => { setHistLogs(data || []); setHistLoading(false); });
+  }, [tab, r0.id]);
+
   const [editing, setEdit]      = useState(false);
   const [saving, setSaving]     = useState(false);
   const [showCancelModal, setShowCancelModal] = useState(false);
@@ -119,6 +153,8 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
   const [pagoMonto, setPagoMonto]             = useState(0);
   const [pagoForma, setPagoForma]             = useState("Transferencia");
   const [pagoFecha, setPagoFecha]             = useState(todayStr());
+  const [showEditPagosModal, setShowEditPagosModal] = useState(false);
+  const [pagosEdit, setPagosEdit]             = useState([]);
   const [cancelNombre, setCancelNombre]       = useState(r0.nombre || "");
   const [newFecha, setNewFecha]               = useState(r0.fecha  || "");
   const [creditDestB2B, setCreditDestB2B]     = useState(false); // true = crédito va al aliado B2B
@@ -140,14 +176,68 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
     estado:    r0.estado    || "pendiente",
     notas:     r0.notas     || "",
     forma_pago: r0.forma_pago || "Transferencia",
-    fecha_pago: r0.fecha_pago ? (r0.fecha_pago + "").slice(0, 10) : "",
+    fecha_pago: r0.fecha_pago ? (r0.fecha_pago + "").slice(0, 10) : todayStr(),
     vendedor:   r0.vendedor  || "Sin asignar",
     aliado_id:  r0.aliado_id || "",
     nombre_embarcacion: r0.nombre_embarcacion || "",
     hora_llegada: r0.hora_llegada || "",
   });
 
-  const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+  // ── Modo de precio (Público vs Neto) al editar ─────────────────────────────
+  // Detecta el modo inicial: si el precio_u coincide con el neto del convenio/catálogo, inicia en "neto"
+  const detectModo = () => {
+    const pas = pasadiaList.find(p => p.tipo.toLowerCase() === (r0.tipo || "").toLowerCase());
+    if (!pas) return "full";
+    const netoConv = r0.aliado_id && conveniosMap[r0.aliado_id]?.[(r0.tipo || "").toLowerCase()];
+    const neto = netoConv || pas.precio_neto_agencia || 0;
+    if (neto > 0 && r0.precio_u && Number(r0.precio_u) === Number(neto)) return "neto";
+    return "full";
+  };
+  const [precioMode, setPrecioMode] = useState(detectModo);
+
+  const calcPrecioUnit = (tipo, aliado_id, mode) => {
+    const pas = pasadiaList.find(p => p.tipo.toLowerCase() === (tipo || "").toLowerCase());
+    if (!pas) return 0;
+    if (mode === "neto") {
+      const tarifaAliado = aliado_id && conveniosMap[aliado_id]?.[(tipo || "").toLowerCase()];
+      if (tarifaAliado > 0) return tarifaAliado;
+      if (pas.precio_neto_agencia > 0) return pas.precio_neto_agencia;
+    }
+    return pas.precio || 0;
+  };
+  const calcPrecioNinoUnit = (tipo, aliado_id, mode) => {
+    const pas = pasadiaList.find(p => p.tipo.toLowerCase() === (tipo || "").toLowerCase());
+    if (!pas) return 0;
+    if (mode === "neto") {
+      const tarifaNino = aliado_id && conveniosMap[aliado_id]?.[(tipo || "").toLowerCase() + "__nino"];
+      if (tarifaNino > 0) return tarifaNino;
+      if (pas.precio_neto_nino > 0) return pas.precio_neto_nino;
+    }
+    return pas.precio_nino || 0;
+  };
+
+  const recalcTotal = (nf, mode) => {
+    const precioA = calcPrecioUnit(nf.tipo, nf.aliado_id, mode);
+    const precioN = calcPrecioNinoUnit(nf.tipo, nf.aliado_id, mode);
+    const adultos = Number(nf.pax_a) || 0;
+    const ninos   = Number(nf.pax_n) || 0;
+    return precioA * adultos + precioN * ninos;
+  };
+
+  const set = (k, v) => {
+    setForm(f => {
+      const nf = { ...f, [k]: v };
+      if (k === "tipo" || k === "pax_a" || k === "pax_n" || k === "aliado_id") {
+        nf.total = recalcTotal(nf, precioMode);
+      }
+      return nf;
+    });
+  };
+
+  const handlePrecioMode = (mode) => {
+    setPrecioMode(mode);
+    setForm(f => ({ ...f, total: recalcTotal(f, mode) }));
+  };
   // Use stored saldo from DB; only recompute when user edits total or abono
   const saldo = editing ? (form.total - form.abono) : (r0.saldo ?? form.total - form.abono);
   const salida = salidaList.find(s => s.id === form.salida_id);
@@ -165,10 +255,19 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
         .eq("fecha", form.fecha).neq("estado", "cancelado").neq("id", r0.id),
       supabase.from("salidas_override").select("*").eq("fecha", form.fecha),
       supabase.from("cierres").select("tipo, salidas, activo").eq("fecha", form.fecha).eq("activo", true),
-    ]).then(([resR, ovrR, cieR]) => {
+      // Grupos que comparten lancha con pasadías en esta fecha
+      supabase.from("eventos").select("pax, pasadias_org, comparte_lancha_pasadias, salida_compartida_id")
+        .eq("fecha", form.fecha).eq("comparte_lancha_pasadias", true).neq("stage", "Realizado"),
+    ]).then(([resR, ovrR, cieR, grpR]) => {
       const pmap = {};
       salidaList.forEach(s => (pmap[s.id] = 0));
       (resR.data || []).forEach(r => { pmap[r.salida_id] = (pmap[r.salida_id] || 0) + (r.pax || 0); });
+      // Sumar pax de grupos que comparten lancha
+      (grpR.data || []).forEach(g => {
+        if (!g.salida_compartida_id || pmap[g.salida_compartida_id] === undefined) return;
+        const paxG = (g.pasadias_org || []).filter(p => p.tipo !== "Impuesto Muelle" && p.tipo !== "STAFF").reduce((s, p) => s + (Number(p.personas) || 0), 0) || g.pax || 0;
+        pmap[g.salida_compartida_id] += paxG;
+      });
       setPaxPorSalidaFecha(pmap);
       const omap = {};
       (ovrR.data || []).forEach(o => { omap[o.salida_id] = o; });
@@ -203,6 +302,12 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
     : Infinity;
   const dentro24h = r0.estado === "confirmado" && horasHastaServicio < 24 && horasHastaServicio > -48;
 
+  // Detectar si se está reduciendo el pax (activa aviso de política)
+  const paxAOrig = r0.pax_a ?? r0.pax ?? 1;
+  const paxNOrig = r0.pax_n ?? 0;
+  const reducePax = r0.estado === "confirmado" &&
+    (Number(form.pax_a) < paxAOrig || Number(form.pax_n) < paxNOrig);
+
   const handleSave = async () => {
     if (!supabase) return;
     setSaving(true);
@@ -222,6 +327,14 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
     if ((r0.total || 0) !== Number(form.total)) cambios.push(`Total: $${(r0.total||0).toLocaleString()} → $${Number(form.total).toLocaleString()}`);
     if ((r0.abono || 0) !== Number(form.abono)) cambios.push(`Abono: $${(r0.abono||0).toLocaleString()} → $${Number(form.abono).toLocaleString()}`);
 
+    // Precios según el modo actual (público/neto)
+    const precioUnit     = calcPrecioUnit(form.tipo, form.aliado_id, precioMode);
+    const precioNinoUnit = calcPrecioNinoUnit(form.tipo, form.aliado_id, precioMode);
+    // Neto de referencia (siempre el neto agencia, para cálculo de comisión)
+    const pasRef  = pasadiaList.find(p => p.tipo.toLowerCase() === (form.tipo || "").toLowerCase());
+    const netoRef = (form.aliado_id && conveniosMap[form.aliado_id]?.[(form.tipo || "").toLowerCase()])
+                  || pasRef?.precio_neto_agencia || 0;
+
     await supabase.from("reservas").update({
       nombre:    form.nombre.trim(),
       contacto:  form.contacto.trim(),
@@ -234,6 +347,10 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
       pax_a:     Number(form.pax_a),
       pax_n:     Number(form.pax_n),
       pax,
+      precio_u:      precioUnit,
+      precio_nino:   precioNinoUnit,
+      precio_neto:   precioMode === "neto" ? precioUnit : netoRef,
+      precio_publico: pasRef?.precio || 0,
       abono:     Number(form.abono),
       total:     Number(form.total),
       saldo:     Number(form.total) - Number(form.abono),
@@ -256,10 +373,11 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
         registroId:   r0.id,
         datosAntes:   { fecha: r0.fecha, salida: r0.salida, estado: r0.estado, tipo: r0.tipo, pax: r0.pax, total: r0.total, abono: r0.abono },
         datosDespues: { fecha: form.fecha, salida_id: form.salida_id, estado: form.estado, tipo: form.tipo, pax, total: form.total, abono: form.abono },
-        notas:        cambios.join(" | "),
+        notas:        [cambios.join(" | "), notaMod].filter(Boolean).join(" — "),
       });
     }
 
+    setNotaMod("");
     if (form.estado === "confirmado") await upsertCliente({ ...r0, ...form, pax: Number(form.pax_a) + Number(form.pax_n) });
     setSaving(false);
     setEdit(false);
@@ -291,23 +409,71 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
   };
 
   const handlePago = async () => {
-    if (!supabase || pagoMonto <= 0) return;
+    const esCortesia = pagoForma === "Cortesía";
+    // Si es cortesía y no hay monto, usar el saldo actual (valor total de la reserva)
+    const monto = esCortesia
+      ? (Number(pagoMonto) || (r0.saldo || r0.total || 0))
+      : Number(pagoMonto);
+    if (!supabase) return;
+    if (!esCortesia && (!monto || monto <= 0)) return alert("Monto debe ser mayor a 0");
     setSaving(true);
-    const nuevoAbono = (r0.abono || 0) + Number(pagoMonto);
-    const nuevoSaldo = (r0.total || 0) - nuevoAbono;
+    // Cortesía = 100% descuento, NO es dinero recibido. No se suma al abono.
+    const nuevoAbono = esCortesia ? (r0.abono || 0) : (r0.abono || 0) + monto;
+    // Saldo: si es cortesía total, cubre el saldo restante (queda en 0).
+    const nuevoSaldo = esCortesia
+      ? Math.max(0, (r0.total || 0) - (r0.abono || 0) - monto)  // cortesía cubre monto sin ser abono
+      : (r0.total || 0) - nuevoAbono;
     const nuevoEstado = nuevoSaldo <= 0 ? "confirmado" : r0.estado;
-    await supabase.from("reservas").update({
-      abono:      nuevoAbono,
-      saldo:      Math.max(0, nuevoSaldo),
-      estado:     nuevoEstado,
+    // Append to payment history
+    const pagoEntry = {
+      id: `P-${Date.now()}`,
+      monto,
       forma_pago: pagoForma,
-      fecha_pago: pagoFecha,
-    }).eq("id", r0.id);
+      es_cortesia: esCortesia,
+      fecha: pagoFecha,
+      timestamp: new Date().toISOString(),
+      registrado_por: await (async () => {
+        try {
+          const { data: { session } } = await supabase.auth.getSession();
+          if (!session?.user?.email) return null;
+          const { data } = await supabase.from("usuarios").select("nombre").eq("email", session.user.email.toLowerCase()).single();
+          return data?.nombre || session.user.email;
+        } catch (_) { return null; }
+      })(),
+    };
+    const pagosPrev = r0.pagos || [];
+    const pagosNext = [...pagosPrev, pagoEntry];
+    const nuevoDescuentoCortesia = esCortesia
+      ? (Number(r0.descuento_cortesia) || 0) + monto
+      : (Number(r0.descuento_cortesia) || 0);
+    // Si es cortesía, marcar canal + notas siguiendo el formato de cortesías de grupo
+    const nuevoCanal = esCortesia ? "Cortesía" : r0.canal;
+    const notaBase = (r0.notas || "").replace(/^Cortesía — ?/i, "").trim();
+    const nuevaNota = esCortesia
+      ? `Cortesía${notaBase ? " — " + notaBase : ""}`
+      : r0.notas;
+    const updatePayload = {
+      abono:              esCortesia ? 0 : nuevoAbono,
+      // Si es cortesía, no hay precio (total = 0). descuento_cortesia guarda el valor para auditoría.
+      total:              esCortesia ? 0 : (r0.total || 0),
+      precio_u:           esCortesia ? 0 : (r0.precio_u || 0),
+      saldo:              esCortesia ? 0 : Math.max(0, nuevoSaldo),
+      estado:             esCortesia ? "confirmado" : nuevoEstado,
+      forma_pago:         pagoForma,
+      fecha_pago:         pagoFecha,
+      pagos:              pagosNext,
+      descuento_cortesia: nuevoDescuentoCortesia,
+      canal:              nuevoCanal,
+      notas:              nuevaNota,
+      updated_at: new Date().toISOString(),
+    };
+    const { error } = await supabase.from("reservas").update(updatePayload).eq("id", r0.id);
+    setSaving(false);
+    if (error) return alert("Error registrando pago: " + error.message);
     logAccion({ modulo: "reservas", accion: "registrar_pago", tabla: "reservas", registroId: r0.id,
       datosAntes: { abono: r0.abono, saldo: r0.saldo, estado: r0.estado },
       datosDespues: { abono: nuevoAbono, saldo: Math.max(0, nuevoSaldo), estado: nuevoEstado, forma_pago: pagoForma },
-      notas: `Pago ${COP(pagoMonto)} vía ${pagoForma}` });
-    setSaving(false);
+      notas: `Pago ${COP(monto)} vía ${pagoForma}` });
     setShowPagoModal(false);
     onUpdated();
   };
@@ -422,6 +588,33 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
     onUpdated();
   };
 
+  // Regenerar link de pago: reactiva una reserva cancelada/expirada devolviéndola a pendiente_pago
+  // con una nueva vigencia. El URL del link es estable (/pago?reserva=<id>).
+  const [linkRegenerado, setLinkRegenerado] = useState(null);
+  const [regenMinutos, setRegenMinutos] = useState(60);
+  const [showRegenModal, setShowRegenModal] = useState(false);
+  const handleRegenerarLink = async () => {
+    if (!supabase || saving) return;
+    setSaving(true);
+    const nuevaExpira = new Date(Date.now() + Number(regenMinutos) * 60 * 1000).toISOString();
+    const { error } = await supabase.from("reservas").update({
+      estado: "pendiente_pago",
+      link_expira_at: nuevaExpira,
+      forma_pago: "link_pago",
+      notas: (r0.notas ? r0.notas + "\n" : "") + `Link regenerado el ${new Date().toLocaleString("es-CO")} — expira en ${regenMinutos} min`,
+    }).eq("id", r0.id);
+    setSaving(false);
+    if (error) { alert("Error: " + error.message); return; }
+    logAccion({ modulo: "reservas", accion: "regenerar_link_pago", tabla: "reservas", registroId: r0.id,
+      datosAntes: { estado: r0.estado }, datosDespues: { estado: "pendiente_pago", link_expira_at: nuevaExpira },
+      notas: `Link regenerado · vigencia ${regenMinutos} min` });
+    const url = `${window.location.origin}/pago?reserva=${r0.id}`;
+    setLinkRegenerado(url);
+    setShowRegenModal(false);
+    set("estado", "pendiente_pago");
+    onUpdated();
+  };
+
   const handleCambioFecha = async () => {
     if (!supabase || !newFecha) return;
     setSaving(true);
@@ -507,18 +700,38 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
                 <button onClick={handleResendEmail} disabled={sendingEmail} style={{ background: emailSent ? B.success + "22" : "transparent", border: `1px solid ${emailSent ? B.success : B.sand + "88"}`, borderRadius: 20, color: emailSent ? B.success : B.sand, padding: "4px 14px", fontSize: 12, fontWeight: 700, cursor: sendingEmail ? "default" : "pointer", opacity: sendingEmail ? 0.6 : 1 }}>
                   {sendingEmail ? "Enviando..." : emailSent ? "✓ Enviado" : "📧 Reenviar correo"}
                 </button>
+                {/* Nuevo link de pago — si aún hay saldo pendiente */}
+                {Number(r0.saldo) > 0 && (
+                  <button onClick={() => setShowRegenModal(true)} style={{
+                    background: B.sand + "22", border: `1px solid ${B.sand}`, borderRadius: 20,
+                    color: B.sand, padding: "4px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer",
+                  }}>
+                    🔗 Nuevo link de pago
+                  </button>
+                )}
                 <a href={`/zarpe-info?id=${r0.id}`} target="_blank" rel="noreferrer" style={{ background: "transparent", border: `1px solid ${B.sky + "66"}`, borderRadius: 20, color: B.sky, padding: "4px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer", textDecoration: "none" }}>🎫 Certificado</a>
               </>
             ) : (
-              ESTADO_BTNS.map(b => (
-                <button key={b.key} onClick={() => handleEstado(b.key)} style={{
-                  background: form.estado === b.key ? b.color + "33" : "transparent",
-                  border: `1px solid ${form.estado === b.key ? b.color : B.navyLight}`,
-                  borderRadius: 20,
-                  color: form.estado === b.key ? b.color : "rgba(255,255,255,0.4)",
-                  padding: "4px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer",
-                }}>{b.label}</button>
-              ))
+              <>
+                {ESTADO_BTNS.map(b => (
+                  <button key={b.key} onClick={() => handleEstado(b.key)} style={{
+                    background: form.estado === b.key ? b.color + "33" : "transparent",
+                    border: `1px solid ${form.estado === b.key ? b.color : B.navyLight}`,
+                    borderRadius: 20,
+                    color: form.estado === b.key ? b.color : "rgba(255,255,255,0.4)",
+                    padding: "4px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer",
+                  }}>{b.label}</button>
+                ))}
+                {/* Regenerar link de pago — disponible mientras haya saldo pendiente */}
+                {(Number(r0.saldo) > 0 || (Number(r0.abono) || 0) < (Number(r0.total) || 0)) && (
+                  <button onClick={() => setShowRegenModal(true)} style={{
+                    background: B.sand + "22", border: `1px solid ${B.sand}`, borderRadius: 20,
+                    color: B.sand, padding: "4px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer",
+                  }}>
+                    🔗 Nuevo link de pago
+                  </button>
+                )}
+              </>
             )}
           </div>
 
@@ -571,41 +784,93 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
                   <label style={LS}>Tipo de pase</label>
                   {editing ? (
                     <select style={IS} value={form.tipo} onChange={e => set("tipo", e.target.value)}>
-                      {pasadiaList.map(p => <option key={p.tipo} value={p.tipo}>{p.tipo}</option>)}
+                      {pasadiaList.filter(p => p.tipo !== "Impuesto Muelle").map(p => <option key={p.tipo} value={p.tipo}>{p.tipo}</option>)}
                     </select>
                   ) : <div style={{ fontSize: 14 }}>{r0.tipo || "—"}</div>}
                 </div>
                 <div>
                   <label style={LS}>Pax adultos</label>
-                  {editing ? <input type="number" min={0} style={IS} value={form.pax_a} onChange={e => set("pax_a", Number(e.target.value))} /> :
-                    <div style={{ fontSize: 14 }}>{r0.pax_a ?? r0.pax ?? "—"}</div>}
+                  {editing
+                    ? <input type="number" min={0} style={IS} value={form.pax_a} onChange={e => set("pax_a", Number(e.target.value))} />
+                    : <div style={{ fontSize: 14 }}>{r0.pax_a ?? r0.pax ?? "—"}</div>}
                 </div>
                 <div>
-                  <label style={LS}>Pax niños (0–12)</label>
-                  {editing ? <input type="number" min={0} style={IS} value={form.pax_n} onChange={e => set("pax_n", Number(e.target.value))} /> :
-                    <div style={{ fontSize: 14 }}>{r0.pax_n ?? 0}</div>}
+                  <label style={LS}>Pax niños (0–11)</label>
+                  {editing
+                    ? <input type="number" min={0} style={IS} value={form.pax_n}
+                        onChange={e => {
+                          const n = Number(e.target.value);
+                          set("pax_n", n);
+                          const edades = Array.isArray(form.edades_ninos) ? form.edades_ninos : [];
+                          const ajustadas = edades.slice(0, n);
+                          while (ajustadas.length < n) ajustadas.push("");
+                          set("edades_ninos", ajustadas);
+                        }} />
+                    : <div style={{ fontSize: 14 }}>{r0.pax_n ?? 0}</div>}
                 </div>
+                {editing && Number(form.pax_n) > 0 && (
+                  <div style={{ gridColumn: "1 / -1" }}>
+                    <label style={LS}>Edad de cada niño <span style={{ color: "rgba(255,255,255,0.4)", fontWeight: 400 }}>(+11 se cobra como adulto)</span></label>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(70px, 1fr))", gap: 6 }}>
+                      {Array.from({ length: Number(form.pax_n) }).map((_, i) => {
+                        const edades = Array.isArray(form.edades_ninos) ? form.edades_ninos : [];
+                        return (
+                          <input key={i} type="number" min="0" max="17"
+                            value={edades[i] ?? ""}
+                            onChange={e => {
+                              const v = e.target.value;
+                              const newArr = [...edades];
+                              while (newArr.length < Number(form.pax_n)) newArr.push("");
+                              newArr[i] = v;
+                              set("edades_ninos", newArr);
+                              if (Number(v) > 11) {
+                                alert(`Un niño de ${v} años se cobra como adulto — se movió a adultos.`);
+                                set("pax_a", Number(form.pax_a) + 1);
+                                set("pax_n", Math.max(0, Number(form.pax_n) - 1));
+                                set("edades_ninos", newArr.filter((_, idx) => idx !== i));
+                              }
+                            }}
+                            placeholder="Edad"
+                            style={{ ...IS, padding: "6px 8px", fontSize: 13, textAlign: "center" }} />
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
                 <div>
                   <label style={LS}>Fecha</label>
                   {editing ? <input type="date" style={IS} value={form.fecha} onChange={e => set("fecha", e.target.value)} /> :
                     <div style={{ fontSize: 14 }}>{r0.fecha || "—"}</div>}
                 </div>
+                {!/after\s*island/i.test(form.tipo || r0.tipo || "") && (
+                  <div>
+                    <label style={LS}>Horario de salida {loadingDisp && <span style={{ color: B.sky, fontWeight: 400 }}>· verificando...</span>}</label>
+                    {editing ? (
+                      <select style={IS} value={form.salida_id} onChange={e => set("salida_id", e.target.value)}>
+                        <option value="">Sin asignar</option>
+                        {(salidasParaFecha.length > 0 ? salidasParaFecha : salidaList).map(s => (
+                          <option key={s.id} value={s.id}>{dispLabel(s)}</option>
+                        ))}
+                        {form.salida_id && !salidasParaFecha.find(s => s.id === form.salida_id) && salidaList.find(s => s.id === form.salida_id) && (
+                          <option value={form.salida_id} disabled>
+                            ⚠️ {salidaList.find(s => s.id === form.salida_id)?.hora} — Sin disponibilidad
+                          </option>
+                        )}
+                      </select>
+                    ) : <div style={{ fontSize: 14 }}>{salida ? `${salida.hora} — ${salida.nombre}` : r0.salida || "—"}</div>}
+                  </div>
+                )}
                 <div>
-                  <label style={LS}>Horario de salida {loadingDisp && <span style={{ color: B.sky, fontWeight: 400 }}>· verificando...</span>}</label>
-                  {editing ? (
-                    <select style={IS} value={form.salida_id} onChange={e => set("salida_id", e.target.value)}>
-                      <option value="">Sin asignar</option>
-                      {(salidasParaFecha.length > 0 ? salidasParaFecha : salidaList).map(s => (
-                        <option key={s.id} value={s.id}>{dispLabel(s)}</option>
-                      ))}
-                      {/* Si la salida actual no está en la lista disponible, mostrarla igual */}
-                      {form.salida_id && !salidasParaFecha.find(s => s.id === form.salida_id) && salidaList.find(s => s.id === form.salida_id) && (
-                        <option value={form.salida_id} disabled>
-                          ⚠️ {salidaList.find(s => s.id === form.salida_id)?.hora} — Sin disponibilidad
-                        </option>
-                      )}
-                    </select>
-                  ) : <div style={{ fontSize: 14 }}>{salida ? `${salida.hora} — ${salida.nombre}` : r0.salida || "—"}</div>}
+                  <label style={LS}>Embarcación del cliente</label>
+                  {editing
+                    ? <input style={IS} type="text" placeholder="Ej: El Delfín" value={form.nombre_embarcacion || ""} onChange={e => set("nombre_embarcacion", e.target.value)} />
+                    : <div style={{ fontSize: 14 }}>{r0.nombre_embarcacion || "—"}</div>}
+                </div>
+                <div>
+                  <label style={LS}>Hora estimada de llegada</label>
+                  {editing
+                    ? <input style={IS} type="time" value={form.hora_llegada || ""} onChange={e => set("hora_llegada", e.target.value)} />
+                    : <div style={{ fontSize: 14 }}>{r0.hora_llegada || "—"}</div>}
                 </div>
                 <div>
                   <label style={LS}>Vendedor</label>
@@ -628,6 +893,38 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
                     </div>
                   )}
                 </div>
+
+                {/* Toggle Precio Público ↔ Neto (solo al editar, si hay aliado o F&F) */}
+                {editing && (form.aliado_id || form.canal === "Friends & Family") && (
+                  <div style={{ gridColumn: "1 / -1" }}>
+                    <label style={LS}>Tarifa</label>
+                    <div style={{ display: "flex", gap: 6 }}>
+                      <button type="button" onClick={() => handlePrecioMode("full")}
+                        style={{
+                          flex: 1, padding: "8px 12px", borderRadius: 8,
+                          border: `1px solid ${precioMode === "full" ? B.sky : B.navyLight}`,
+                          background: precioMode === "full" ? B.sky : B.navyLight,
+                          color: precioMode === "full" ? B.navy : "rgba(255,255,255,0.5)",
+                          fontSize: 12, fontWeight: 700, cursor: "pointer",
+                        }}>
+                        Precio Público
+                      </button>
+                      <button type="button" onClick={() => handlePrecioMode("neto")}
+                        style={{
+                          flex: 1, padding: "8px 12px", borderRadius: 8,
+                          border: `1px solid ${precioMode === "neto" ? B.warning : B.navyLight}`,
+                          background: precioMode === "neto" ? B.warning : B.navyLight,
+                          color: precioMode === "neto" ? B.navy : "rgba(255,255,255,0.5)",
+                          fontSize: 12, fontWeight: 700, cursor: "pointer",
+                        }}>
+                        Precio Neto
+                      </button>
+                    </div>
+                    <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", marginTop: 6 }}>
+                      {precioMode === "neto" ? "Tarifa neta agencia (se cobra al aliado)" : "Tarifa pública (cliente final)"}
+                    </div>
+                  </div>
+                )}
                 <div style={{ gridColumn: "1 / -1" }}>
                   <label style={LS}>Notas</label>
                   {editing ? <textarea rows={3} style={{ ...IS, resize: "vertical" }} value={form.notas} onChange={e => set("notas", e.target.value)} placeholder="Observaciones especiales…" /> :
@@ -666,7 +963,7 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
                     <div style={{ gridColumn: "1 / -1" }}>
                       <label style={LS}>Forma de pago</label>
                       <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                        {FORMAS_PAGO.filter(f => f !== "CXC" || tieneCXC).map(fp => (
+                        {filterCortesia(FORMAS_PAGO).filter(f => f !== "CXC" || tieneCXC).map(fp => (
                           <button key={fp} onClick={() => set("forma_pago", fp)} style={{
                             padding: "5px 12px", borderRadius: 20,
                             border: `1px solid ${form.forma_pago === fp ? B.sky : B.navyLight}`,
@@ -695,12 +992,103 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
                     💳 Registrar Pago
                   </button>
                 )}
+
+                {/* ── Historial de pagos ── */}
+                {!editing && (() => {
+                  // Build list: use r0.pagos if exists, otherwise derive one entry from current abono
+                  let pagosList = [...(r0.pagos || [])];
+                  if (pagosList.length === 0 && (r0.abono || 0) > 0) {
+                    pagosList = [{
+                      id: "legacy",
+                      monto: r0.abono,
+                      forma_pago: r0.forma_pago || "—",
+                      fecha: r0.fecha_pago || r0.fecha,
+                      timestamp: r0.updated_at || r0.created_at,
+                      registrado_por: null,
+                      _legacy: true,
+                    }];
+                  }
+                  if (pagosList.length === 0) return null;
+                  const totalPagado = pagosList.reduce((s, p) => s + (Number(p.monto) || 0), 0);
+                  return (
+                    <div style={{ marginTop: 16, borderTop: `1px solid ${B.navyLight}`, paddingTop: 14 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                        <div style={{ fontSize: 11, color: B.sand, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em" }}>
+                          💰 Historial de pagos ({pagosList.length})
+                        </div>
+                        <button onClick={() => {
+                          // Initialize edit list: clone existing or create one from legacy
+                          const initial = (r0.pagos && r0.pagos.length > 0)
+                            ? [...r0.pagos]
+                            : [{ id: `P-${Date.now()}`, monto: r0.abono || 0, forma_pago: r0.forma_pago || "Transferencia", fecha: r0.fecha_pago || r0.fecha || todayStr(), timestamp: new Date().toISOString() }];
+                          setPagosEdit(initial);
+                          setShowEditPagosModal(true);
+                        }}
+                          style={{ background: "none", border: `1px solid ${B.navyLight}`, borderRadius: 6, color: B.sky, padding: "4px 10px", fontSize: 11, cursor: "pointer", fontWeight: 600 }}>
+                          ✏ Editar
+                        </button>
+                      </div>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                        {[...pagosList].sort((a, b) => (b.timestamp || "").localeCompare(a.timestamp || "")).map((p, i) => (
+                          <div key={p.id || p.timestamp || i} style={{ background: B.navy, borderRadius: 8, padding: "10px 14px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, border: p._legacy ? `1px dashed ${B.navyLight}` : "none" }}>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                                <div style={{ fontSize: 15, fontWeight: 800, color: B.success }}>{COP(p.monto)}</div>
+                                {p._legacy && <span style={{ fontSize: 9, padding: "1px 6px", borderRadius: 4, background: "rgba(255,255,255,0.05)", color: "rgba(255,255,255,0.35)", fontWeight: 600 }}>Histórico</span>}
+                              </div>
+                              <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginTop: 3 }}>
+                                📅 {p.fecha ? new Date(p.fecha + "T12:00:00").toLocaleDateString("es-CO", { day: "numeric", month: "short", year: "numeric" }) : "—"}
+                                {p.registrado_por && ` · 👤 ${p.registrado_por}`}
+                              </div>
+                            </div>
+                            <span style={{ fontSize: 12, padding: "5px 12px", borderRadius: 20, background: B.sky + "22", color: B.sky, fontWeight: 700, whiteSpace: "nowrap" }}>
+                              💳 {p.forma_pago || "—"}
+                            </span>
+                          </div>
+                        ))}
+                        {/* Total pagado */}
+                        <div style={{ display: "flex", justifyContent: "space-between", paddingTop: 8, marginTop: 4, borderTop: `1px solid ${B.navyLight}` }}>
+                          <span style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", fontWeight: 700 }}>Total pagado</span>
+                          <span style={{ fontSize: 15, fontWeight: 900, color: B.success, fontFamily: "'Barlow Condensed', sans-serif" }}>{COP(totalPagado)}</span>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
+
+              {/* Nota de modificación */}
+              {editing && (
+                <div>
+                  <label style={{ fontSize: 11, color: B.sand, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", display: "block", marginBottom: 6 }}>
+                    📝 Nota de modificación <span style={{ fontSize: 10, color: "rgba(255,255,255,0.3)", fontWeight: 400, textTransform: "none" }}>(opcional — queda en el historial)</span>
+                  </label>
+                  <textarea rows={2} value={notaMod} onChange={e => setNotaMod(e.target.value)}
+                    placeholder="Ej: cliente solicitó reducir personas por cancelación de último momento…"
+                    style={{ ...IS, resize: "vertical", width: "100%", boxSizing: "border-box" }} />
+                </div>
+              )}
+
+              {/* Aviso si se está reduciendo pax — aplica política de cancelación parcial */}
+              {reducePax && (
+                <div style={{ background: "#f8717115", border: "1px solid #f8717144", borderRadius: 10, padding: "12px 16px", fontSize: 12, color: "#f87171", lineHeight: 1.7 }}>
+                  <strong>⚠️ Reducción de personas:</strong> estás bajando de {paxAOrig}A {paxNOrig}N a {form.pax_a}A {form.pax_n}N.<br />
+                  Esto puede implicar cargos según la <strong>política de cancelación parcial</strong> vigente.<br />
+                  Asegúrate de ajustar el total y registrar una nota explicando el motivo.
+                </div>
+              )}
+
+              {/* Política general al editar confirmadas */}
+              {editing && r0.estado === "confirmado" && !reducePax && (
+                <div style={{ background: "#fbbf2410", border: "1px solid #fbbf2433", borderRadius: 10, padding: "10px 14px", fontSize: 11, color: "#fbbf2499", lineHeight: 1.6 }}>
+                  📋 Puedes aumentar personas (sujeto a disponibilidad), cambiar fecha o salida. Para cancelar usa el botón "Cancelar reserva".
+                </div>
+              )}
 
               {/* Save / Cancel */}
               {editing && (
                 <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", paddingTop: 4 }}>
-                  <button onClick={() => { setEdit(false); setForm({ nombre: r0.nombre||"", contacto: r0.contacto||"", telefono: r0.telefono||"", fecha: r0.fecha||"", salida_id: r0.salida||"", tipo: r0.tipo||"", canal: r0.canal||"", pax_a: r0.pax_a??r0.pax??1, pax_n: r0.pax_n??0, abono: r0.abono||0, total: r0.total||0, estado: r0.estado||"pendiente", notas: r0.notas||"" }); }} style={{ background: "none", border: `1px solid ${B.navyLight}`, borderRadius: 8, color: B.sand, padding: "9px 20px", fontSize: 14, cursor: "pointer", fontWeight: 600 }}>
+                  <button onClick={() => { setEdit(false); setNotaMod(""); setForm({ nombre: r0.nombre||"", contacto: r0.contacto||"", telefono: r0.telefono||"", fecha: r0.fecha||"", salida_id: r0.salida||"", tipo: r0.tipo||"", canal: r0.canal||"", pax_a: r0.pax_a??r0.pax??1, pax_n: r0.pax_n??0, abono: r0.abono||0, total: r0.total||0, estado: r0.estado||"pendiente", notas: r0.notas||"" }); }} style={{ background: "none", border: `1px solid ${B.navyLight}`, borderRadius: 8, color: B.sand, padding: "9px 20px", fontSize: 14, cursor: "pointer", fontWeight: 600 }}>
                     Cancelar
                   </button>
                   <button onClick={handleSave} disabled={saving} style={{ background: B.sky, border: "none", borderRadius: 8, color: B.navy, padding: "9px 24px", fontSize: 14, cursor: "pointer", fontWeight: 700, opacity: saving ? 0.6 : 1 }}>
@@ -736,74 +1124,327 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
           )}
 
           {/* ── Tab: Historial ── */}
-          {tab === "historial" && (
-            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-              {[
-                { icon: "🗓", label: "Reserva creada",    value: fmtDT(r0.created_at), color: B.sky    },
-                { icon: "✏️", label: "Última modificación", value: fmtDT(r0.updated_at), color: B.sand   },
-                r0.forma_pago && { icon: "💳", label: "Método de pago", value: r0.forma_pago, color: B.white },
-                r0.canal && { icon: "📡", label: "Canal de venta",    value: r0.canal, color: B.white },
-                r0.vendedor && { icon: "🧑‍💼", label: "Vendedor",         value: r0.vendedor, color: B.sand },
-                (aliado || r0.agencia) && { icon: "🏢", label: "Agencia B2B", value: aliado?.nombre || r0.agencia, color: B.sky },
-                r0.nombre_embarcacion && { icon: "⛵", label: "Embarcación",        value: r0.nombre_embarcacion, color: B.sky },
-                r0.hora_llegada && { icon: "🕐", label: "Hora est. llegada", value: r0.hora_llegada, color: B.sky },
-                r0.ci && { icon: "✅", label: "Check-in realizado",  value: fmtDT(r0.ci), color: B.success },
-                r0.co && { icon: "🏁", label: "Check-out",            value: fmtDT(r0.co), color: B.sand },
-                r0.ep && { icon: "🌅", label: "Llegada temprana",     value: "Activado",   color: B.warning },
-                r0.extension && { icon: "🌙", label: "Extensión",         value: `${r0.extension} día(s) · Regreso ${r0.ext_regreso || "—"}`, color: B.sand },
-              ].filter(Boolean).map((item, i) => (
-                <div key={i} style={{ background: "#0D1B3E", borderRadius: 10, padding: "14px 16px", display: "flex", alignItems: "center", gap: 14 }}>
-                  <span style={{ fontSize: 20, flexShrink: 0 }}>{item.icon}</span>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: 11, color: B.sand, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 2 }}>{item.label}</div>
-                    <div style={{ fontSize: 14, fontWeight: 600, color: item.color }}>{item.value}</div>
-                  </div>
+          {tab === "historial" && (() => {
+            const ACCION_META = {
+              crear_reserva:    { icon: "🗓️", label: "Reserva creada",      color: B.sky     },
+              editar_reserva:   { icon: "✏️",  label: "Modificación",         color: B.sand    },
+              registrar_pago:   { icon: "💳",  label: "Pago registrado",      color: B.success },
+              cancelar_reserva: { icon: "❌",  label: "Cancelación",          color: "#f87171" },
+              cambiar_estado:   { icon: "🔄",  label: "Cambio de estado",     color: "#fbbf24" },
+              cambiar_fecha:    { icon: "📅",  label: "Cambio de fecha",      color: "#a78bfa" },
+              check_in:         { icon: "✅",  label: "Check-in",             color: B.success },
+              check_out:        { icon: "🏁",  label: "Check-out",            color: B.sand    },
+              reembolso:        { icon: "💸",  label: "Reembolso / crédito",  color: "#f87171" },
+            };
+
+            // Helper para mostrar diff entre antes/después
+            const renderDiff = (antes, despues) => {
+              if (!antes && !despues) return null;
+              const keys = [...new Set([...Object.keys(antes || {}), ...Object.keys(despues || {})])];
+              const cambios = keys.filter(k => {
+                const a = JSON.stringify(antes?.[k]);
+                const b = JSON.stringify(despues?.[k]);
+                return a !== b && !["updated_at", "created_at"].includes(k);
+              });
+              if (cambios.length === 0) return null;
+              return (
+                <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 4 }}>
+                  {cambios.slice(0, 6).map(k => (
+                    <div key={k} style={{ fontSize: 11, color: "rgba(255,255,255,0.45)", display: "flex", gap: 6, alignItems: "baseline", flexWrap: "wrap" }}>
+                      <span style={{ color: "rgba(255,255,255,0.25)", textTransform: "uppercase", letterSpacing: "0.04em", minWidth: 70 }}>{k}:</span>
+                      {antes?.[k] != null && <span style={{ color: "#f87171", textDecoration: "line-through" }}>{String(antes[k])}</span>}
+                      {antes?.[k] != null && despues?.[k] != null && <span style={{ color: "rgba(255,255,255,0.3)" }}>→</span>}
+                      {despues?.[k] != null && <span style={{ color: B.success }}>{String(despues[k])}</span>}
+                    </div>
+                  ))}
                 </div>
-              ))}
-            </div>
-          )}
+              );
+            };
+
+            return (
+              <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
+                {/* Info fija de la reserva */}
+                <div style={{ background: "#0D1B3E", borderRadius: 10, padding: "12px 16px", marginBottom: 16, display: "flex", flexWrap: "wrap", gap: 18, fontSize: 12, color: "rgba(255,255,255,0.4)" }}>
+                  {r0.canal     && <span>📡 Canal: <strong style={{ color: B.white }}>{r0.canal}</strong></span>}
+                  {r0.vendedor  && <span>🧑‍💼 Vendedor: <strong style={{ color: B.sand }}>{r0.vendedor}</strong></span>}
+                  {(aliado || r0.agencia) && <span>🏢 Agencia: <strong style={{ color: B.sky }}>{aliado?.nombre || r0.agencia}</strong></span>}
+                  {r0.ci        && <span>✅ Check-in: <strong style={{ color: B.success }}>{fmtDT(r0.ci)}</strong></span>}
+                  {r0.co        && <span>🏁 Check-out: <strong style={{ color: B.sand }}>{fmtDT(r0.co)}</strong></span>}
+                </div>
+
+                {/* Timeline de acciones */}
+                {histLoading ? (
+                  <div style={{ textAlign: "center", padding: "24px 0", color: "rgba(255,255,255,0.3)", fontSize: 13 }}>Cargando historial…</div>
+                ) : histLogs.length === 0 ? (
+                  <div style={{ textAlign: "center", padding: "24px 0", color: "rgba(255,255,255,0.25)", fontSize: 13 }}>
+                    Sin eventos registrados en el historial.
+                  </div>
+                ) : (
+                  <div style={{ position: "relative", paddingLeft: 28 }}>
+                    {/* Línea vertical */}
+                    <div style={{ position: "absolute", left: 10, top: 0, bottom: 0, width: 2, background: B.navyLight, borderRadius: 1 }} />
+
+                    {histLogs.map((log, i) => {
+                      const meta = ACCION_META[log.accion] || { icon: "📋", label: log.accion, color: B.white };
+                      const ts   = log.created_at ? new Date(log.created_at).toLocaleString("es-CO", { timeZone: "America/Bogota", day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "—";
+                      return (
+                        <div key={log.id} style={{ position: "relative", marginBottom: i < histLogs.length - 1 ? 14 : 0 }}>
+                          {/* Dot */}
+                          <div style={{ position: "absolute", left: -22, top: 14, width: 12, height: 12, borderRadius: 6, background: meta.color, border: `2px solid ${B.navy}`, zIndex: 1 }} />
+
+                          <div style={{ background: "#0D1B3E", borderRadius: 10, padding: "12px 16px" }}>
+                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10, flexWrap: "wrap" }}>
+                              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                                <span style={{ fontSize: 16 }}>{meta.icon}</span>
+                                <span style={{ fontSize: 13, fontWeight: 700, color: meta.color }}>{meta.label}</span>
+                              </div>
+                              <span style={{ fontSize: 11, color: "rgba(255,255,255,0.3)" }}>{ts}</span>
+                            </div>
+                            {log.usuario_email && (
+                              <div style={{ fontSize: 11, color: "rgba(255,255,255,0.3)", marginTop: 4 }}>
+                                👤 {log.usuario_email}
+                              </div>
+                            )}
+                            {log.notas && (
+                              <div style={{ fontSize: 12, color: "rgba(255,255,255,0.55)", marginTop: 6, fontStyle: "italic" }}>
+                                {log.notas}
+                              </div>
+                            )}
+                            {renderDiff(log.datos_antes, log.datos_despues)}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            );
+          })()}
         </div>
       </div>
     </div>
+
+    {/* ── Modal: Editar historial de pagos ── */}
+    {showEditPagosModal && (
+      <div style={{ position: "fixed", inset: 0, zIndex: 1200, background: "rgba(0,0,0,0.8)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16, overflowY: "auto" }}
+        onClick={e => e.target === e.currentTarget && setShowEditPagosModal(false)}>
+        <div style={{ background: B.navyMid, borderRadius: 16, padding: 24, width: "100%", maxWidth: 560, maxHeight: "90vh", overflowY: "auto", border: `1px solid ${B.navyLight}` }}>
+          <h3 style={{ fontSize: 17, fontWeight: 700, marginBottom: 4, color: B.white }}>💰 Editar historial de pagos</h3>
+          <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginBottom: 18 }}>
+            Reserva {r0.id} · Total: {COP(r0.total)}
+          </div>
+
+          <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 16 }}>
+            {pagosEdit.map((p, idx) => (
+              <div key={p.id || idx} style={{ background: B.navy, borderRadius: 10, padding: "12px 14px", display: "grid", gridTemplateColumns: "1fr 1fr 110px auto", gap: 8, alignItems: "end" }}>
+                <div>
+                  <label style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", display: "block", marginBottom: 4 }}>Monto</label>
+                  <input type="number" value={p.monto} onChange={e => {
+                    const v = Number(e.target.value) || 0;
+                    setPagosEdit(pagosEdit.map((x, i) => i === idx ? { ...x, monto: v } : x));
+                  }} style={{ ...IS, padding: "8px 10px", fontSize: 13 }} />
+                </div>
+                <div>
+                  <label style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", display: "block", marginBottom: 4 }}>Fecha</label>
+                  <input type="date" value={p.fecha || ""} onChange={e => {
+                    setPagosEdit(pagosEdit.map((x, i) => i === idx ? { ...x, fecha: e.target.value } : x));
+                  }} style={{ ...IS, padding: "8px 10px", fontSize: 12 }} />
+                </div>
+                <div>
+                  <label style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", display: "block", marginBottom: 4 }}>Método</label>
+                  <select value={p.forma_pago || "Transferencia"} onChange={e => {
+                    setPagosEdit(pagosEdit.map((x, i) => i === idx ? { ...x, forma_pago: e.target.value } : x));
+                  }} style={{ ...IS, padding: "8px 10px", fontSize: 12 }}>
+                    {filterCortesia(FORMAS_PAGO).filter(f => f !== "Enviar Link de Pago").map(f => <option key={f} value={f}>{f}</option>)}
+                  </select>
+                </div>
+                <button onClick={() => setPagosEdit(pagosEdit.filter((_, i) => i !== idx))}
+                  style={{ background: B.danger + "22", border: `1px solid ${B.danger}44`, borderRadius: 6, color: B.danger, padding: "8px 10px", fontSize: 12, cursor: "pointer", fontWeight: 700, height: 38 }}>✕</button>
+              </div>
+            ))}
+          </div>
+
+          <button onClick={() => {
+            setPagosEdit([...pagosEdit, { id: `P-${Date.now()}`, monto: 0, forma_pago: "Transferencia", fecha: todayStr(), timestamp: new Date().toISOString() }]);
+          }}
+            style={{ width: "100%", padding: "10px", background: "none", border: `1px dashed ${B.navyLight}`, borderRadius: 8, color: B.sand, fontSize: 13, cursor: "pointer", fontWeight: 600, marginBottom: 16 }}>
+            + Agregar pago
+          </button>
+
+          {/* Resumen */}
+          {(() => {
+            const suma = pagosEdit.reduce((s, p) => s + (Number(p.monto) || 0), 0);
+            const dif = suma - (r0.total || 0);
+            return (
+              <div style={{ background: B.navy, borderRadius: 10, padding: "12px 16px", marginBottom: 16, fontSize: 13 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+                  <span style={{ color: "rgba(255,255,255,0.4)" }}>Total reserva:</span>
+                  <span style={{ fontWeight: 700 }}>{COP(r0.total)}</span>
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+                  <span style={{ color: "rgba(255,255,255,0.4)" }}>Suma de pagos:</span>
+                  <span style={{ color: B.success, fontWeight: 700 }}>{COP(suma)}</span>
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", paddingTop: 6, borderTop: `1px solid ${B.navyLight}` }}>
+                  <span style={{ color: "rgba(255,255,255,0.4)" }}>Saldo pendiente:</span>
+                  <span style={{ fontWeight: 800, color: dif < 0 ? B.warning : dif > 0 ? B.danger : B.success }}>
+                    {COP(Math.max(0, -dif))}
+                    {dif > 0 && ` (sobrepago ${COP(dif)})`}
+                  </span>
+                </div>
+              </div>
+            );
+          })()}
+
+          <div style={{ display: "flex", gap: 10 }}>
+            <button onClick={() => setShowEditPagosModal(false)}
+              style={{ flex: 1, padding: "11px", background: "none", border: `1px solid ${B.navyLight}`, borderRadius: 8, color: B.sand, fontSize: 13, cursor: "pointer", fontWeight: 600 }}>
+              Cancelar
+            </button>
+            <button onClick={async () => {
+              const suma = pagosEdit.reduce((s, p) => s + (Number(p.monto) || 0), 0);
+              const nuevoSaldo = Math.max(0, (r0.total || 0) - suma);
+              const nuevoEstado = nuevoSaldo <= 0 ? "confirmado" : r0.estado === "confirmado" ? "pendiente" : r0.estado;
+              setSaving(true);
+              const { error } = await supabase.from("reservas").update({
+                pagos: pagosEdit,
+                abono: suma,
+                saldo: nuevoSaldo,
+                estado: nuevoEstado,
+                forma_pago: pagosEdit[pagosEdit.length - 1]?.forma_pago || r0.forma_pago,
+                fecha_pago: pagosEdit[pagosEdit.length - 1]?.fecha || r0.fecha_pago,
+                updated_at: new Date().toISOString(),
+              }).eq("id", r0.id);
+              setSaving(false);
+              if (error) return alert("Error: " + error.message);
+              logAccion({ modulo: "reservas", accion: "editar_pagos", tabla: "reservas", registroId: r0.id,
+                datosDespues: { pagos: pagosEdit, abono: suma }, notas: `Editó historial — ${pagosEdit.length} pagos, total ${COP(suma)}` });
+              setShowEditPagosModal(false);
+              onUpdated();
+            }} disabled={saving}
+              style={{ flex: 2, padding: "11px", background: B.success, border: "none", borderRadius: 8, color: B.navy, fontSize: 14, cursor: "pointer", fontWeight: 700, opacity: saving ? 0.5 : 1 }}>
+              {saving ? "Guardando..." : "Guardar cambios"}
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
 
     {/* ── Modal: Registrar Pago ── */}
     {showPagoModal && (
       <div style={{ position: "fixed", inset: 0, zIndex: 1200, background: "rgba(0,0,0,0.8)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}
         onClick={e => e.target === e.currentTarget && setShowPagoModal(false)}>
         <div style={{ background: B.navyMid, borderRadius: 16, padding: 28, width: 360, border: `1px solid ${B.navyLight}` }}>
-          <h3 style={{ fontSize: 17, fontWeight: 700, marginBottom: 20, color: B.white }}>💳 Registrar Pago</h3>
+          <h3 style={{ fontSize: 17, fontWeight: 700, marginBottom: 20, color: B.white }}>
+            {pagoForma === "Cortesía" ? "🎁 Aplicar Cortesía" : "💳 Registrar Pago"}
+          </h3>
           <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-            <div>
-              <label style={{ fontSize: 11, color: B.sand, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", display: "block", marginBottom: 4 }}>Monto (COP)</label>
-              <input type="number" min={0} max={saldo} value={pagoMonto} onChange={e => setPagoMonto(Number(e.target.value))}
-                style={{ background: "#0D1B3E", border: `1px solid ${B.navyLight}`, borderRadius: 8, color: B.white, padding: "9px 12px", fontSize: 14, width: "100%", boxSizing: "border-box", outline: "none" }} />
-              <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginTop: 4 }}>Saldo actual: {COP(saldo)}</div>
-            </div>
-            <div>
-              <label style={{ fontSize: 11, color: B.sand, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", display: "block", marginBottom: 4 }}>Fecha de pago *</label>
-              <input type="date" value={pagoFecha} onChange={e => setPagoFecha(e.target.value)}
-                style={{ background: "#0D1B3E", border: `1px solid ${B.navyLight}`, borderRadius: 8, color: B.white, padding: "9px 12px", fontSize: 14, width: "100%", boxSizing: "border-box", outline: "none" }} />
-            </div>
+            {/* Forma de pago siempre primero */}
             <div>
               <label style={{ fontSize: 11, color: B.sand, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", display: "block", marginBottom: 8 }}>Forma de pago</label>
               <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                {FORMAS_PAGO.filter(f => f !== "Enviar Link de Pago" && (f !== "CXC" || tieneCXC)).map(fp => (
-                  <button key={fp} onClick={() => setPagoForma(fp)} style={{
+                {filterCortesia(FORMAS_PAGO).filter(f => f !== "Enviar Link de Pago" && (f !== "CXC" || tieneCXC)).map(fp => (
+                  <button key={fp} onClick={() => {
+                    setPagoForma(fp);
+                    // Si cambian a cortesía, pre-llenar monto con el saldo actual
+                    if (fp === "Cortesía") { setPagoMonto(saldo); setPagoFecha(todayStr()); }
+                  }} style={{
                     padding: "5px 12px", borderRadius: 20, fontSize: 12, fontWeight: 600, cursor: "pointer",
-                    border: `1px solid ${pagoForma === fp ? B.sky : B.navyLight}`,
-                    background: pagoForma === fp ? B.sky + "22" : "transparent",
-                    color: pagoForma === fp ? B.sky : "rgba(255,255,255,0.5)",
+                    border: `1px solid ${pagoForma === fp ? (fp === "Cortesía" ? B.warning : B.sky) : B.navyLight}`,
+                    background: pagoForma === fp ? (fp === "Cortesía" ? B.warning + "22" : B.sky + "22") : "transparent",
+                    color: pagoForma === fp ? (fp === "Cortesía" ? B.warning : B.sky) : "rgba(255,255,255,0.5)",
                   }}>{fp}</button>
                 ))}
               </div>
             </div>
+
+            {/* Monto y Fecha — sólo si NO es cortesía */}
+            {pagoForma !== "Cortesía" && <>
+              <div>
+                <label style={{ fontSize: 11, color: B.sand, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", display: "block", marginBottom: 4 }}>Monto (COP)</label>
+                <input type="number" min={0} max={saldo} value={pagoMonto} onChange={e => setPagoMonto(Number(e.target.value))}
+                  style={{ background: "#0D1B3E", border: `1px solid ${B.navyLight}`, borderRadius: 8, color: B.white, padding: "9px 12px", fontSize: 14, width: "100%", boxSizing: "border-box", outline: "none" }} />
+                <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginTop: 4 }}>Saldo actual: {COP(saldo)}</div>
+              </div>
+              <div>
+                <label style={{ fontSize: 11, color: B.sand, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", display: "block", marginBottom: 4 }}>Fecha de pago *</label>
+                <input type="date" value={pagoFecha} onChange={e => setPagoFecha(e.target.value)}
+                  style={{ background: "#0D1B3E", border: `1px solid ${B.navyLight}`, borderRadius: 8, color: B.white, padding: "9px 12px", fontSize: 14, width: "100%", boxSizing: "border-box", outline: "none" }} />
+              </div>
+            </>}
+
+            {/* Aviso cuando es cortesía */}
+            {pagoForma === "Cortesía" && (
+              <div style={{ padding: "12px 14px", background: B.warning + "15", border: `1px solid ${B.warning}55`, borderRadius: 8, fontSize: 12, color: B.warning, lineHeight: 1.5 }}>
+                🎁 Al aplicar cortesía, la reserva quedará con <strong>total $0</strong> y sin saldo. Se registrará el valor original ({COP(saldo > 0 ? saldo : 0)}) como descuento en el reporte de cortesías.
+              </div>
+            )}
           </div>
           <div style={{ display: "flex", gap: 10, marginTop: 22 }}>
             <button onClick={() => setShowPagoModal(false)} style={{ flex: 1, background: "none", border: `1px solid ${B.navyLight}`, borderRadius: 8, color: B.sand, padding: "10px", fontSize: 14, cursor: "pointer", fontWeight: 600 }}>Cancelar</button>
-            <button onClick={handlePago} disabled={saving || pagoMonto <= 0 || !pagoFecha}
-              style={{ flex: 2, background: B.success, border: "none", borderRadius: 8, color: B.navy, padding: "10px", fontSize: 14, cursor: "pointer", fontWeight: 700, opacity: (saving || pagoMonto <= 0 || !pagoFecha) ? 0.5 : 1 }}>
-              {saving ? "Guardando…" : `Registrar ${COP(pagoMonto)}`}
+            <button onClick={handlePago}
+              disabled={saving || (pagoForma !== "Cortesía" && (pagoMonto <= 0 || !pagoFecha))}
+              style={{
+                flex: 2,
+                background: pagoForma === "Cortesía" ? B.warning : B.success,
+                border: "none", borderRadius: 8, color: B.navy, padding: "10px", fontSize: 14, cursor: "pointer", fontWeight: 700,
+                opacity: (saving || (pagoForma !== "Cortesía" && (pagoMonto <= 0 || !pagoFecha))) ? 0.5 : 1
+              }}>
+              {saving ? "Guardando…" : pagoForma === "Cortesía" ? "🎁 Aplicar Cortesía" : `Registrar ${COP(pagoMonto)}`}
             </button>
+          </div>
+        </div>
+      </div>
+    )}
+
+    {/* ── Modal: Regenerar link de pago ── */}
+    {showRegenModal && (
+      <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 1100, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}
+        onClick={e => e.target === e.currentTarget && setShowRegenModal(false)}>
+        <div style={{ background: B.navyMid, border: `1px solid ${B.navyLight}`, borderRadius: 14, width: "100%", maxWidth: 440, padding: 28 }}>
+          <h3 style={{ fontSize: 17, fontWeight: 700, marginBottom: 14, color: B.white }}>🔗 Nuevo link de pago</h3>
+          <div style={{ fontSize: 12, color: "rgba(255,255,255,0.6)", marginBottom: 18, lineHeight: 1.6 }}>
+            La reserva <strong>{r0.id}</strong> volverá a <strong>pendiente de pago</strong> con un nuevo link. El URL es el mismo de siempre y se copia al confirmar.
+          </div>
+          <label style={LS}>Vigencia del link</label>
+          <select value={regenMinutos} onChange={e => setRegenMinutos(Number(e.target.value))} style={{ ...IS, marginBottom: 18 }}>
+            <option value={15}>15 minutos</option>
+            <option value={30}>30 minutos</option>
+            <option value={60}>1 hora</option>
+            <option value={180}>3 horas</option>
+            <option value={360}>6 horas</option>
+            <option value={720}>12 horas</option>
+            <option value={1440}>24 horas</option>
+          </select>
+          <div style={{ display: "flex", gap: 10 }}>
+            <button onClick={() => setShowRegenModal(false)} style={{ flex: 1, padding: "11px", background: "transparent", border: `1px solid ${B.navyLight}`, borderRadius: 8, color: "rgba(255,255,255,0.5)", cursor: "pointer", fontSize: 13 }}>Cancelar</button>
+            <button onClick={handleRegenerarLink} disabled={saving} style={{ flex: 1, padding: "11px", background: B.sand, border: "none", borderRadius: 8, color: B.navy, fontWeight: 700, cursor: saving ? "wait" : "pointer", fontSize: 13, opacity: saving ? 0.6 : 1 }}>
+              {saving ? "Regenerando..." : "🔗 Generar link"}
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
+
+    {/* ── Modal: Link generado (mostrar URL para copiar) ── */}
+    {linkRegenerado && (
+      <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 1100, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}
+        onClick={e => e.target === e.currentTarget && setLinkRegenerado(null)}>
+        <div style={{ background: B.navyMid, border: `1px solid ${B.navyLight}`, borderRadius: 14, width: "100%", maxWidth: 480, padding: 28, textAlign: "center" }}>
+          <div style={{ fontSize: 40, marginBottom: 12 }}>🔗</div>
+          <div style={{ fontSize: 18, fontWeight: 700, color: B.white, marginBottom: 8 }}>Nuevo link generado</div>
+          <div style={{ fontSize: 12, color: B.sand, marginBottom: 18 }}>
+            Copia y envíaselo al cliente. La reserva vuelve a estar activa en estado "Pend. Pago".
+          </div>
+          <div style={{ background: "#0D1B3E", borderRadius: 10, padding: "14px 16px", marginBottom: 16, wordBreak: "break-all", fontSize: 12, color: B.sky, fontFamily: "monospace" }}>
+            {linkRegenerado}
+          </div>
+          <div style={{ display: "flex", gap: 10 }}>
+            <button onClick={() => { navigator.clipboard?.writeText(linkRegenerado); }} style={{ flex: 1, padding: "11px", background: B.navyLight, border: "none", borderRadius: 8, color: B.white, fontWeight: 700, cursor: "pointer" }}>📋 Copiar</button>
+            <a href={`https://wa.me/?text=${encodeURIComponent(`Hola 👋 Aquí está tu nuevo link de pago para Atolón Beach Club:\n\n${linkRegenerado}`)}`} target="_blank" rel="noreferrer" style={{ flex: 1, padding: "11px", background: "#25D366", border: "none", borderRadius: 8, color: "#fff", fontWeight: 700, cursor: "pointer", textDecoration: "none", display: "flex", alignItems: "center", justifyContent: "center", gap: 6, fontSize: 13 }}>
+              WhatsApp
+            </a>
+            <button onClick={() => setLinkRegenerado(null)} style={{ flex: 1, padding: "11px", background: B.sky, border: "none", borderRadius: 8, color: B.navy, fontWeight: 700, cursor: "pointer" }}>✓ Listo</button>
           </div>
         </div>
       </div>
@@ -948,10 +1589,17 @@ function ReservaModal({ onClose, onSave, isMobile, salidaList = [], aliadoList =
       supabase.from("reservas").select("salida_id, pax, estado").eq("fecha", form.fecha).neq("estado", "cancelado"),
       supabase.from("salidas_override").select("*").eq("fecha", form.fecha),
       supabase.from("cierres").select("tipo, salidas, activo, motivo").eq("fecha", form.fecha).eq("activo", true).limit(1),
-    ]).then(([resR, ovrR, cieR]) => {
+      supabase.from("eventos").select("pax, pasadias_org, comparte_lancha_pasadias, salida_compartida_id")
+        .eq("fecha", form.fecha).eq("comparte_lancha_pasadias", true).neq("stage", "Realizado"),
+    ]).then(([resR, ovrR, cieR, grpR]) => {
       const map = {};
       salidaList.forEach(s => (map[s.id] = 0));
       (resR.data || []).forEach(r => { map[r.salida_id] = (map[r.salida_id] || 0) + (r.pax || 0); });
+      (grpR.data || []).forEach(g => {
+        if (!g.salida_compartida_id || map[g.salida_compartida_id] === undefined) return;
+        const paxG = (g.pasadias_org || []).filter(p => p.tipo !== "Impuesto Muelle" && p.tipo !== "STAFF").reduce((s, p) => s + (Number(p.personas) || 0), 0) || g.pax || 0;
+        map[g.salida_compartida_id] += paxG;
+      });
       setPaxMapFecha(map);
       const omap = {};
       (ovrR.data || []).forEach(o => { omap[o.salida_id] = o; });
@@ -963,9 +1611,12 @@ function ReservaModal({ onClose, onSave, isMobile, salidaList = [], aliadoList =
   const calcPrecio = (tipo, aliado_id, mode) => {
     const p = pasadiaList.find(p => p.tipo.toLowerCase() === tipo?.toLowerCase());
     if (!p) return 0;
-    if (aliado_id && mode === "neto") {
-      const tarifaAliado = conveniosMap[aliado_id]?.[tipo?.toLowerCase()];
-      if (tarifaAliado > 0) return tarifaAliado;
+    if (mode === "neto") {
+      if (aliado_id) {
+        const tarifaAliado = conveniosMap[aliado_id]?.[tipo?.toLowerCase()];
+        if (tarifaAliado > 0) return tarifaAliado;
+      }
+      // Friends & Family o B2B sin convenio específico → precio neto agencia del catálogo
       if (p.precio_neto_agencia > 0) return p.precio_neto_agencia;
     }
     return p.precio;
@@ -974,9 +1625,11 @@ function ReservaModal({ onClose, onSave, isMobile, salidaList = [], aliadoList =
   const calcPrecioNino = (tipo, aliado_id, mode) => {
     const p = pasadiaList.find(p => p.tipo.toLowerCase() === tipo?.toLowerCase());
     if (!p) return 0;
-    if (aliado_id && mode === "neto") {
-      const tarifaAliadoNino = conveniosMap[aliado_id]?.[tipo?.toLowerCase() + "__nino"];
-      if (tarifaAliadoNino > 0) return tarifaAliadoNino;
+    if (mode === "neto") {
+      if (aliado_id) {
+        const tarifaAliadoNino = conveniosMap[aliado_id]?.[tipo?.toLowerCase() + "__nino"];
+        if (tarifaAliadoNino > 0) return tarifaAliadoNino;
+      }
       if (p.precio_neto_nino > 0) return p.precio_neto_nino;
     }
     return p.precio_nino || 0;
@@ -994,6 +1647,11 @@ function ReservaModal({ onClose, onSave, isMobile, salidaList = [], aliadoList =
         if (!aliado || !aliado.cupo_credito) next.forma_pago = "Transferencia";
         next.precio      = calcPrecio(f.tipo, v, precioMode);
         next.precio_nino = calcPrecioNino(f.tipo, v, precioMode);
+      }
+      if (k === "canal") {
+        // Si sale o entra a Friends & Family, resetear precios al modo actual
+        next.precio      = calcPrecio(f.tipo, f.aliado_id, precioMode);
+        next.precio_nino = calcPrecioNino(f.tipo, f.aliado_id, precioMode);
       }
       // CXC = crédito, no hay abono en efectivo
       if (k === "forma_pago" && v === "CXC") {
@@ -1025,8 +1683,8 @@ function ReservaModal({ onClose, onSave, isMobile, salidaList = [], aliadoList =
     || pasadiaActual?.precio_neto_nino || 0;
   const tieneNino = precioNinoFull > 0; // esta pasadía tiene tarifa de niño
   const formasPagoDisp = form.forma_pago === "Enviar Link de Pago"
-    ? FORMAS_PAGO
-    : FORMAS_PAGO.filter(f => f !== "CXC" || tieneCXC);
+    ? ["Sin definir", ...filterCortesia(FORMAS_PAGO)]
+    : ["Sin definir", ...filterCortesia(FORMAS_PAGO).filter(f => f !== "CXC" || tieneCXC)];
 
   // Salidas visible for selected date — uses locally fetched overridesFecha + cierreFecha
   const salidasFecha = (() => {
@@ -1081,7 +1739,18 @@ function ReservaModal({ onClose, onSave, isMobile, salidaList = [], aliadoList =
     const e = validate();
     if (Object.keys(e).length) { setErrors(e); return; }
     const isLink = form.forma_pago === "Enviar Link de Pago";
-    const reservaId = await onSave({ ...form, _isLink: isLink });
+    const isCortesia = form.forma_pago === "Cortesía";
+    // Si es cortesía: total=0, abono=0, canal=Cortesía, notas prefijadas, guardar valor original en descuento_cortesia
+    const payload = isCortesia ? {
+      ...form,
+      _isCortesia: true,
+      canal: "Cortesía",
+      notas: (form.notas || "").trim().startsWith("Cortesía")
+        ? form.notas
+        : `Cortesía${form.notas ? " — " + form.notas.trim() : ""}`,
+      fecha_pago: todayStr(),
+    } : { ...form, _isLink: isLink };
+    const reservaId = await onSave(payload);
     if (isLink && reservaId) {
       setLinkPago(`${window.location.origin}/pago?reserva=${reservaId}`);
     } else {
@@ -1162,20 +1831,20 @@ function ReservaModal({ onClose, onSave, isMobile, salidaList = [], aliadoList =
           <div style={FS}>
             <label style={LS}>Tipo de pase</label>
             <select style={IS()} value={form.tipo} onChange={e => set("tipo", e.target.value)}>
-              {pasadiaList.map(p => <option key={p.tipo} value={p.tipo}>{p.tipo}</option>)}
+              {pasadiaList.filter(p => p.tipo !== "Impuesto Muelle").map(p => <option key={p.tipo} value={p.tipo}>{p.tipo}</option>)}
             </select>
           </div>
           <div style={FS}>
             <label style={LS}>Precio por pax (COP)</label>
-            {/* Agencia seleccionada: toggle neto/público */}
-            {form.aliado_id ? (
+            {/* Toggle neto/público: Agencia B2B o canal Friends & Family */}
+            {(form.aliado_id || form.canal === "Friends & Family") ? (
               <div>
                 <div style={{ display: "flex", gap: 4, marginBottom: 8 }}>
                   <button type="button" onClick={() => handlePrecioMode("full")}
                     style={{ flex: 1, padding: "8px", borderRadius: 8, border: "none", cursor: "pointer", fontSize: 12, fontWeight: 700,
                       background: precioMode === "full" ? B.sky : B.navyLight,
                       color: precioMode === "full" ? B.navy : "rgba(255,255,255,0.5)" }}>
-                    Público {precioFull > 0 ? COP(precioFull) : ""}
+                    {form.canal === "Friends & Family" && !form.aliado_id ? "Full" : "Público"} {precioFull > 0 ? COP(precioFull) : ""}
                   </button>
                   <button type="button" onClick={() => handlePrecioMode("neto")}
                     style={{ flex: 1, padding: "8px", borderRadius: 8, border: "none", cursor: "pointer", fontSize: 12, fontWeight: 700,
@@ -1209,9 +1878,48 @@ function ReservaModal({ onClose, onSave, isMobile, salidaList = [], aliadoList =
             {errors.pax_a && <span style={{ fontSize: 11, color: B.danger }}>{errors.pax_a}</span>}
           </div>
           <div style={FS}>
-            <label style={LS}>Niños (0–12)</label>
-            <input type="number" min={0} style={IS()} value={form.pax_n} onChange={e => set("pax_n", Number(e.target.value))} />
+            <label style={LS}>Niños (0–11)</label>
+            <input type="number" min={0} style={IS()} value={form.pax_n}
+              onChange={e => {
+                const n = Number(e.target.value);
+                set("pax_n", n);
+                const edades = Array.isArray(form.edades_ninos) ? form.edades_ninos : [];
+                const ajustadas = edades.slice(0, n);
+                while (ajustadas.length < n) ajustadas.push("");
+                set("edades_ninos", ajustadas);
+              }} />
           </div>
+          {Number(form.pax_n) > 0 && (
+            <div style={{ ...FS, gridColumn: "1 / -1" }}>
+              <label style={LS}>Edad de cada niño <span style={{ color: "rgba(255,255,255,0.4)", fontWeight: 400 }}>(+11 se cobra como adulto)</span></label>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(80px, 1fr))", gap: 6 }}>
+                {Array.from({ length: Number(form.pax_n) }).map((_, i) => {
+                  const edades = Array.isArray(form.edades_ninos) ? form.edades_ninos : [];
+                  return (
+                    <div key={i}>
+                      <div style={{ fontSize: 10, color: "rgba(255,255,255,0.45)", marginBottom: 3 }}>Niño {i + 1}</div>
+                      <input type="number" min="0" max="17"
+                        value={edades[i] ?? ""}
+                        onChange={e => {
+                          const v = e.target.value;
+                          const newArr = [...edades];
+                          while (newArr.length < Number(form.pax_n)) newArr.push("");
+                          newArr[i] = v;
+                          set("edades_ninos", newArr);
+                          if (Number(v) > 11) {
+                            alert(`Un niño de ${v} años se cobra como adulto — se movió a adultos automáticamente.`);
+                            set("pax_a", Number(form.pax_a) + 1);
+                            set("pax_n", Math.max(0, Number(form.pax_n) - 1));
+                            set("edades_ninos", newArr.filter((_, idx) => idx !== i));
+                          }
+                        }}
+                        placeholder="Edad" style={{ ...IS(), padding: "6px 8px", fontSize: 13, textAlign: "center" }} />
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
           {/* Precio niño: solo visible cuando hay niños y la pasadía tiene tarifa de niño */}
           {Number(form.pax_n) > 0 && tieneNino && (
             <div style={{ ...FS, gridColumn: "1 / -1" }}>
@@ -1328,28 +2036,48 @@ function ReservaModal({ onClose, onSave, isMobile, salidaList = [], aliadoList =
               <label style={LS}>Forma de pago</label>
               <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
                 {formasPagoDisp.map(fp => (
-                  <button key={fp} onClick={() => set("forma_pago", fp)} style={{
-                    padding: "6px 12px", borderRadius: 20, border: `1px solid ${form.forma_pago === fp ? B.sky : B.navyLight}`,
-                    background: form.forma_pago === fp ? B.sky + "22" : "transparent",
-                    color: form.forma_pago === fp ? B.sky : "rgba(255,255,255,0.5)",
+                  <button key={fp} onClick={() => {
+                    setForm(f => {
+                      const next = { ...f, forma_pago: fp };
+                      // Al elegir Cortesía: guardar el canal previo y cambiar a "Cortesía"
+                      if (fp === "Cortesía") {
+                        if (f.canal !== "Cortesía") next._canal_prev = f.canal;
+                        next.canal = "Cortesía";
+                      }
+                      // Si cambian desde Cortesía a otra forma: restaurar canal original
+                      else if (f.forma_pago === "Cortesía" && f.canal === "Cortesía") {
+                        next.canal = f._canal_prev || "Web";
+                        next._canal_prev = null;
+                      }
+                      return next;
+                    });
+                  }} style={{
+                    padding: "6px 12px", borderRadius: 20, border: `1px solid ${form.forma_pago === fp ? (fp === "Cortesía" ? B.warning : B.sky) : B.navyLight}`,
+                    background: form.forma_pago === fp ? (fp === "Cortesía" ? B.warning + "22" : B.sky + "22") : "transparent",
+                    color: form.forma_pago === fp ? (fp === "Cortesía" ? B.warning : B.sky) : "rgba(255,255,255,0.5)",
                     fontSize: 12, fontWeight: 600, cursor: "pointer",
                   }}>{fp}</button>
                 ))}
               </div>
             </div>
-            {form.forma_pago !== "Enviar Link de Pago" && (
+            {form.forma_pago !== "Enviar Link de Pago" && form.forma_pago !== "Sin definir" && form.forma_pago !== "Cortesía" && (
               <div style={FS}>
                 <label style={LS}>Monto abono (COP)</label>
                 <input type="number" min={0} style={IS(errors.abono)} value={form.abono} onChange={e => set("abono", Number(e.target.value))} />
               </div>
             )}
-            {form.forma_pago !== "Enviar Link de Pago" && form.abono > 0 && (
+            {form.forma_pago !== "Enviar Link de Pago" && form.forma_pago !== "Sin definir" && form.forma_pago !== "Cortesía" && (
               <div style={FS}>
                 <label style={LS}>Fecha de pago</label>
                 <input type="date" style={IS()} value={form.fecha_pago} onChange={e => set("fecha_pago", e.target.value)} />
               </div>
             )}
           </div>
+          {form.forma_pago === "Sin definir" && (
+            <div style={{ marginTop: 10, fontSize: 13, color: B.sand, background: B.sand + "11", border: `1px solid ${B.sand}44`, borderRadius: 8, padding: "10px 14px" }}>
+              ℹ Sin método de pago asignado. La reserva quedará con saldo pendiente y podrás registrar el pago más adelante.
+            </div>
+          )}
           {form.forma_pago === "Enviar Link de Pago" && (
             <div style={{ marginTop: 10, fontSize: 13, color: B.warning, background: B.warning + "11", border: `1px solid ${B.warning}44`, borderRadius: 8, padding: "10px 14px" }}>
               ⚠️ Se generará un link de pago para enviar al cliente. La reserva quedará en estado pendiente hasta que pague.
@@ -1358,6 +2086,11 @@ function ReservaModal({ onClose, onSave, isMobile, salidaList = [], aliadoList =
           {form.forma_pago === "CXC" && aliado && (
             <div style={{ marginTop: 10, fontSize: 13, color: B.sky, background: B.sky + "11", border: `1px solid ${B.sky}44`, borderRadius: 8, padding: "10px 14px" }}>
               💳 Cargo a cuenta corriente de <strong>{aliado.nombre}</strong> · Cupo disponible: <strong>{COP(aliado.cupo_credito)}</strong>
+            </div>
+          )}
+          {form.forma_pago === "Cortesía" && (
+            <div style={{ marginTop: 10, fontSize: 13, color: B.warning, background: B.warning + "11", border: `1px solid ${B.warning}44`, borderRadius: 8, padding: "10px 14px" }}>
+              🎁 La reserva quedará como <strong>cortesía</strong> — total $0, sin saldo. El valor original se registra como descuento en el reporte de cortesías.
             </div>
           )}
         </div>
@@ -1448,8 +2181,10 @@ function mapRow(r) {
     notas:       r.notas,
     forma_pago:  r.forma_pago,
     fecha_pago:  r.fecha_pago ? (r.fecha_pago + "").slice(0, 10) : null,
+    pagos:       r.pagos || [],
     lead_id:     r.lead_id,
     pasajeros:   r.pasajeros,
+    grupo_id:    r.grupo_id,
     created_at:  r.created_at,
     updated_at:  r.updated_at,
   };
@@ -1486,31 +2221,39 @@ function TabCalendario({ salidas, cierres, embarcaciones }) {
     if (!supabase) return;
     const desde = `${year}-${String(month + 1).padStart(2, "0")}-01`;
     const hasta = `${year}-${String(month + 1).padStart(2, "0")}-${String(diasEnMes).padStart(2, "0")}`;
-    supabase.from("reservas").select("fecha, salida_id, pax").gte("fecha", desde).lte("fecha", hasta).neq("estado", "cancelado")
-      .then(({ data }) => {
-        const map = {};
-        (data || []).forEach(r => {
-          if (!map[r.fecha]) map[r.fecha] = {};
-          if (!map[r.fecha][r.salida_id]) map[r.fecha][r.salida_id] = 0;
-          map[r.fecha][r.salida_id] += r.pax || 0;
-        });
-        setReservasPorDia(map);
+    // Fetch grupos + reservas juntos para poder sumar los grupos que comparten lancha
+    Promise.all([
+      supabase.from("reservas").select("fecha, salida_id, pax").gte("fecha", desde).lte("fecha", hasta).neq("estado", "cancelado"),
+      supabase.from("eventos")
+        .select("id, nombre, tipo, pax, fecha, salidas_grupo, modalidad_pago, pasadias_org, stage, comparte_lancha_pasadias, salida_compartida_id, categoria")
+        .gte("fecha", desde).lte("fecha", hasta),
+    ]).then(([resR, evR]) => {
+      const map = {};
+      (resR.data || []).forEach(r => {
+        if (!map[r.fecha]) map[r.fecha] = {};
+        if (!map[r.fecha][r.salida_id]) map[r.fecha][r.salida_id] = 0;
+        map[r.fecha][r.salida_id] += r.pax || 0;
       });
-    // Fetch grupos for the month — pax counts toward salida capacity
-    supabase.from("eventos")
-      .select("id, nombre, tipo, pax, fecha, salidas_grupo, modalidad_pago, pasadias_org, stage")
-      .eq("categoria", "grupo")
-      .gte("fecha", desde).lte("fecha", hasta)
-      .then(({ data }) => {
-        const byDay = {};
-        (data || []).forEach(g => {
-          const f = g.fecha;
-          if (!f) return;
-          if (!byDay[f]) byDay[f] = [];
-          byDay[f].push(g);
-        });
-        setGruposPorDia(byDay);
+      // Sumar pax de grupos que comparten lancha con una salida específica
+      (evR.data || []).forEach(g => {
+        if (!g.comparte_lancha_pasadias || !g.salida_compartida_id || !g.fecha) return;
+        if (g.stage === "Realizado") return;
+        const paxG = (g.pasadias_org || []).filter(p => p.tipo !== "Impuesto Muelle" && p.tipo !== "STAFF").reduce((s, p) => s + (Number(p.personas) || 0), 0) || g.pax || 0;
+        if (!map[g.fecha]) map[g.fecha] = {};
+        if (!map[g.fecha][g.salida_compartida_id]) map[g.fecha][g.salida_compartida_id] = 0;
+        map[g.fecha][g.salida_compartida_id] += paxG;
       });
+      setReservasPorDia(map);
+
+      // Grupos por día (solo categoría "grupo" para la vista de grupos)
+      const byDay = {};
+      (evR.data || []).filter(g => g.categoria === "grupo").forEach(g => {
+        if (!g.fecha) return;
+        if (!byDay[g.fecha]) byDay[g.fecha] = [];
+        byDay[g.fecha].push(g);
+      });
+      setGruposPorDia(byDay);
+    });
     // Fetch reservas sin transporte (salida_id null) for the month
     supabase.from("reservas")
       .select("id, nombre, tipo, pax, pax_a, pax_n, total, abono, estado, forma_pago, canal, email, telefono, created_at, fecha, notas")
@@ -1745,6 +2488,8 @@ function TabCalendario({ salidas, cierres, embarcaciones }) {
                 const salidaHoras = new Set(salidas.map(s => s.hora));
                 const customSalidas = []; // { hora, pax, nombres }
                 grupos.forEach(g => {
+                  // Si el grupo comparte lancha con pasadías, su pax ya está en resDia; no sumarlo también aquí
+                  if (g.comparte_lancha_pasadias) return;
                   (g.salidas_grupo || []).forEach(sg => {
                     const pax = Number(sg.personas) || 0;
                     if (!sg.custom && sg.id && !sg.id.startsWith("custom-") && salidas.some(s => s.id === sg.id)) {
@@ -1831,7 +2576,9 @@ function TabCalendario({ salidas, cierres, embarcaciones }) {
               const isOpen = visibles.some(v => v.id === s.id);
               const hasOverride = (overrides[selectedDay] || {})[s.id];
               const paxRes = (reservasPorDia[selectedDay] || {})[s.id] || 0;
+              // Grupos con salidas_grupo propias (SIN comparte_lancha_pasadias — si no, ya está en paxRes)
               const paxGrupoD = (gruposPorDia[selectedDay] || []).reduce((sum, g) => {
+                if (g.comparte_lancha_pasadias && g.salida_compartida_id === s.id) return sum; // ya contado en paxRes
                 const sg = (g.salidas_grupo || []).find(x => x.id === s.id && !x.custom);
                 return sum + (sg ? Number(sg.personas) || 0 : 0);
               }, 0);
@@ -2196,6 +2943,14 @@ function TabCalendario({ salidas, cierres, embarcaciones }) {
 
 export default function Reservas() {
   const isMobile = useMobile();
+  const [, setUserEmail] = useState("");
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      const em = session?.user?.email?.toLowerCase() || "";
+      __currentUserEmail = em;
+      setUserEmail(em); // fuerza rerender de subcomponentes
+    });
+  }, []);
   const [reservasHoy,     setReservasHoy]     = useState([]);
   const [reservasManana,  setReservasManana]  = useState([]);
   const [reservasFecha,   setReservasFecha]   = useState([]);
@@ -2203,6 +2958,9 @@ export default function Reservas() {
   const [gruposHoy,       setGruposHoy]       = useState([]);
   const [gruposManana,    setGruposManana]     = useState([]);
   const [gruposFecha,     setGruposFecha]     = useState([]);
+  const [llegadasHoyAll,  setLlegadasHoyAll]   = useState([]);
+  const [llegadasManAll,  setLlegadasManAll]   = useState([]);
+  const [llegadasFechaAll, setLlegadasFechaAll] = useState([]);
   const [salidas,        setSalidas]        = useState([]);
   const [aliados,        setAliados]        = useState([]);
   const [conveniosMap,   setConveniosMap]   = useState({}); // { aliado_id: { tipo_pasadia: tarifa_neta } }
@@ -2238,9 +2996,9 @@ export default function Reservas() {
     const todayStart = `${today}T00:00:00.000Z`;
     const tomorrowStart = `${tomorrow}T00:00:00.000Z`;
 
-    const GRUPO_FIELDS = "id, nombre, tipo, pax, fecha, pasadias_org, stage, modalidad_pago, aliado_id, categoria";
+    const GRUPO_FIELDS = "id, nombre, tipo, pax, fecha, pasadias_org, stage, modalidad_pago, aliado_id, categoria, comparte_lancha_pasadias, salida_compartida_id";
     const isGrupo = (e) => e.categoria === "grupo" || (!e.categoria && e.aliado_id);
-    const [resHoy, resManana, salR, aliR, cierreR, embR, ovrR, empR, pasR, cobR, cobR2, convR, grpHoyR, grpMananaR] = await Promise.all([
+    const [resHoy, resManana, salR, aliR, cierreR, embR, ovrR, empR, pasR, cobR, cobR2, convR, grpHoyR, grpMananaR, llegHoyR, llegMananaR] = await Promise.all([
       supabase.from("reservas").select("*").eq("fecha", today).order("salida_id"),
       supabase.from("reservas").select("*").eq("fecha", tomorrow).order("salida_id"),
       supabase.from("salidas").select("*").order("orden"),
@@ -2258,9 +3016,38 @@ export default function Reservas() {
       // Grupos hoy y mañana — incluidos en Promise.all para evitar flash de pax incorrecto
       supabase.from("eventos").select(GRUPO_FIELDS).eq("fecha", today).neq("stage", "Realizado"),
       supabase.from("eventos").select(GRUPO_FIELDS).eq("fecha", tomorrow).neq("stage", "Realizado"),
+      supabase.from("muelle_llegadas").select("id, fecha, embarcacion_nombre, pax_total, pax_a, pax_n, total_cobrado, metodo_pago, tipo, hora_llegada, estado, matricula, reserva_id").eq("fecha", today).neq("tipo", "lancha_atolon").order("hora_llegada"),
+      supabase.from("muelle_llegadas").select("id, fecha, embarcacion_nombre, pax_total, pax_a, pax_n, total_cobrado, metodo_pago, tipo, hora_llegada, estado, matricula, reserva_id").eq("fecha", tomorrow).neq("tipo", "lancha_atolon").order("hora_llegada"),
     ]);
-    if (resHoy.data)    setReservasHoy(resHoy.data.map(mapRow));
-    if (resManana.data) setReservasManana(resManana.data.map(mapRow));
+    // Map llegadas to virtual reserva rows with "Sin Reserva" tag
+    const mapLlegada = (l) => ({
+      id: l.id,
+      nombre: l.embarcacion_nombre || "Embarcación privada",
+      tipo: l.tipo === "after_island" ? "After Island" : l.tipo === "restaurante" ? "Restaurante" : "Walk-in",
+      fecha: l.fecha,
+      pax: l.pax_total || 0,
+      pax_a: l.pax_a || l.pax_total || 0,
+      pax_n: l.pax_n || 0,
+      total: l.total_cobrado || 0,
+      abono: l.total_cobrado || 0,
+      saldo: 0,
+      estado: "check_in",
+      canal: "Walk-in",
+      forma_pago: l.metodo_pago === "efectivo" ? "Efectivo" : l.metodo_pago === "transferencia" ? "Transferencia" : l.metodo_pago === "datafono" ? "Datáfono" : "Efectivo",
+      notas: `Embarcación: ${l.embarcacion_nombre || "—"}`,
+      _sinReserva: true,
+      _embarcacion: l.embarcacion_nombre,
+      nombre_embarcacion: l.embarcacion_nombre,
+    });
+    // Store all llegadas for the section
+    setLlegadasHoyAll(llegHoyR.data || []);
+    setLlegadasManAll(llegMananaR.data || []);
+    // Inyectar solo llegadas CON cobro Y que NO estén vinculadas a una reserva existente
+    // (las vinculadas ya se muestran como la reserva normal — evitar duplicado)
+    const llegadasConCobro    = (llegHoyR.data    || []).filter(l => l.total_cobrado > 0 && !l.reserva_id).map(mapLlegada);
+    const llegadasConCobroMan = (llegMananaR.data || []).filter(l => l.total_cobrado > 0 && !l.reserva_id).map(mapLlegada);
+    if (resHoy.data)    setReservasHoy([...resHoy.data.map(mapRow), ...llegadasConCobro]);
+    if (resManana.data) setReservasManana([...resManana.data.map(mapRow), ...llegadasConCobroMan]);
     setGruposHoy((grpHoyR.data || []).filter(isGrupo));
     setGruposManana((grpMananaR.data || []).filter(isGrupo));
     if (empR.data && empR.data.length > 0) setVendedores(["Sin asignar", ...(empR.data.map(e => e.nombre))]);
@@ -2294,6 +3081,17 @@ export default function Reservas() {
 
   useEffect(() => { fetchReservas(); }, [fetchReservas]);
 
+  // Check if another module requested to open a specific reserva
+  const [cameFromNavigate, setCameFromNavigate] = useState(false);
+  useEffect(() => {
+    const pendingId = window.__openReservaId;
+    if (!pendingId || !supabase) return;
+    window.__openReservaId = null;
+    setCameFromNavigate(!!window.__previousModule);
+    supabase.from("reservas").select("*").eq("id", pendingId).single()
+      .then(({ data }) => { if (data) setDetalle(mapRow(data)); });
+  }, []);
+
   // Fetch reservas para el tab "otras"
   useEffect(() => {
     if (tabDia !== "fecha" || !supabase) return;
@@ -2302,11 +3100,26 @@ export default function Reservas() {
       supabase.from("reservas").select("*").eq("fecha", fechaFiltro).order("salida_id")
         .then(({ data }) => setReservasFecha((data || []).map(mapRow)));
       // Grupos para esa fecha
-      supabase.from("eventos").select("id, nombre, tipo, pax, fecha, pasadias_org, stage, modalidad_pago, aliado_id, categoria")
+      supabase.from("eventos").select("id, nombre, tipo, pax, fecha, pasadias_org, stage, modalidad_pago, aliado_id, categoria, comparte_lancha_pasadias, salida_compartida_id")
         .eq("fecha", fechaFiltro).neq("stage", "Realizado")
         .then(({ data }) => setGruposFecha((data || []).filter(e => e.categoria === "grupo" || (!e.categoria && e.aliado_id))));
+      // Llegadas (embarcaciones) para esa fecha
+      supabase.from("muelle_llegadas").select("id, fecha, embarcacion_nombre, pax_total, pax_a, pax_n, total_cobrado, metodo_pago, tipo, hora_llegada, estado, matricula, reserva_id")
+        .eq("fecha", fechaFiltro).neq("tipo", "lancha_atolon").order("hora_llegada")
+        .then(({ data }) => setLlegadasFechaAll(data || []));
+      // Overrides de salidas para esa fecha (para cierres/aperturas manuales)
+      supabase.from("salidas_override").select("*").eq("fecha", fechaFiltro)
+        .then(({ data }) => {
+          const map = {};
+          (data || []).forEach(o => {
+            if (!map[o.fecha]) map[o.fecha] = {};
+            map[o.fecha][o.salida_id] = o;
+          });
+          setOverridesMap(prev => ({ ...prev, ...map }));
+        });
     } else {
       setGruposFecha([]);
+      setLlegadasFechaAll([]);
       // Sin filtro → todas las futuras (hoy en adelante), sin canceladas
       supabase.from("reservas").select("*").gte("fecha", today).neq("estado", "cancelado").order("fecha").order("salida_id")
         .then(({ data }) => setReservasFuturas((data || []).map(mapRow)));
@@ -2320,9 +3133,34 @@ export default function Reservas() {
       ? reservasManana
       : (fechaFiltro ? reservasFecha : reservasFuturas);
   const grupos = tabDia === "hoy" ? gruposHoy : tabDia === "manana" ? gruposManana : (fechaFiltro ? gruposFecha : []);
+  // Solo embarcaciones que traen pasadías (pax_a + pax_n > 0). Huéspedes/staff-only no se muestran.
+  const llegadasDiaAll = tabDia === "hoy" ? llegadasHoyAll : tabDia === "manana" ? llegadasManAll : (fechaFiltro ? llegadasFechaAll : []);
+  const llegadasDia = llegadasDiaAll.filter(l => (Number(l.pax_a) || 0) + (Number(l.pax_n) || 0) > 0);
   // Pax real del grupo: excluye Impuesto Muelle y STAFF del conteo de pasajeros
-  const grupoPaxTotal = (g) => (g.pasadias_org || []).filter(p => p.tipo !== "Impuesto Muelle" && p.tipo !== "STAFF").reduce((s, p) => s + (Number(p.personas) || 0), 0) || g.pax || 0;
-  const paxMap = paxPorSalida(reservas, salidas);
+  // Calcula pax del grupo combinando pasadias_org + reservas vinculadas.
+  // IMPORTANTE: usa la lista de reservas del día del grupo (no la del tab activo),
+  // para que el conteo sea consistente entre el botón del día y el KPI dentro.
+  const grupoPaxTotal = (g, reservasDelDia = null) => {
+    // 1) Pax de pasadías organizadas (incluye cortesías)
+    const paxOrg = (g.pasadias_org || [])
+      .filter(p => p.tipo !== "Impuesto Muelle" && p.tipo !== "STAFF")
+      .reduce((s, p) => s + (Number(p.personas) || 0), 0);
+    // 2) Pax de reservas vinculadas (grupo_id === g.id) que no están canceladas
+    const cortesiaResIds = new Set((g.pasadias_org || []).filter(p => p.cortesia && p.reserva_id).map(p => p.reserva_id));
+    // Elegir la lista correcta: si se pasó explícita, usarla; si no, decidir por la fecha del grupo
+    let pool = reservasDelDia;
+    if (!pool) {
+      if      (g.fecha === today)    pool = reservasHoy;
+      else if (g.fecha === tomorrow) pool = reservasManana;
+      else                           pool = reservas;
+    }
+    const paxReservas = pool
+      .filter(r => r.grupo_id === g.id && r.estado !== "cancelado" && !cortesiaResIds.has(r.id))
+      .reduce((s, r) => s + (r.pax || 0), 0);
+    const total = paxOrg + paxReservas;
+    return total > 0 ? total : (g.pax || 0);
+  };
+  const paxMap = paxPorSalida(reservas, salidas, grupos);
 
   // Determine which salidas are open for a given date (respects cierres + overrides + 30-min cutoff)
   const getSalidasAbiertas = (fecha, paxMapOverride, ignorarCutoff = false) => {
@@ -2368,10 +3206,15 @@ export default function Reservas() {
     return matchSearch && matchEstado;
   });
 
-  const totalPax   = reservas.filter(r => r.estado !== "cancelado").reduce((s, r) => s + r.pax, 0)
-                   + grupos.reduce((s, g) => s + grupoPaxTotal(g), 0);
-  const totalAbono = reservas.filter(r => r.estado !== "cancelado").reduce((s, r) => s + r.abono, 0);
-  const totalVenta = reservas.filter(r => r.estado !== "cancelado").reduce((s, r) => s + r.total, 0);
+  const llegPax   = llegadasDia.reduce((s, l) => s + (l.pax_total || 0), 0);
+  // Solo sumar al monto de llegadas las que NO están vinculadas a una reserva (para evitar doble conteo)
+  const llegMonto = llegadasDia.filter(l => !l.reserva_id).reduce((s, l) => s + (l.total_cobrado || 0), 0);
+  const totalPax   = reservas.filter(r => r.estado !== "cancelado" && !r.grupo_id).reduce((s, r) => s + r.pax, 0)
+                   + grupos.reduce((s, g) => s + grupoPaxTotal(g), 0)
+                   + llegPax;
+  // Cortesías ya tienen total=0 y abono=0 (descuento_cortesia guarda el valor original para reportes)
+  const totalAbono = reservas.filter(r => r.estado !== "cancelado").reduce((s, r) => s + (r.abono || 0), 0) + llegMonto;
+  const totalVenta = reservas.filter(r => r.estado !== "cancelado").reduce((s, r) => s + (r.total || 0), 0) + llegMonto;
 
   const addReserva = async (form) => {
     if (!supabase) return null;
@@ -2385,10 +3228,14 @@ export default function Reservas() {
     }
 
     const pax   = Number(form.pax_a) + Number(form.pax_n);
-    const total = Number(form.pax_a) * Number(form.precio)
-                + Number(form.pax_n) * Number(form.precio_nino > 0 ? form.precio_nino : form.precio);
+    const totalOriginal = Number(form.pax_a) * Number(form.precio)
+                        + Number(form.pax_n) * Number(form.precio_nino > 0 ? form.precio_nino : form.precio);
     const isLink = form._isLink;
-    const abono  = isLink ? 0 : (form.forma_pago === "CXC" ? 0 : (Number(form.abono) || 0));
+    const isCortesia = form._isCortesia;
+    const sinDefinir = form.forma_pago === "Sin definir";
+    // Cortesía: total=0, abono=0, saldo=0; valor original va a descuento_cortesia
+    const total  = isCortesia ? 0 : totalOriginal;
+    const abono  = (isCortesia || isLink || sinDefinir) ? 0 : (form.forma_pago === "CXC" ? 0 : (Number(form.abono) || 0));
     const reservaId = `R-${Date.now()}`;
     const emailVal = form.contacto?.trim().includes("@") ? form.contacto.trim() : null;
     const row = {
@@ -2404,20 +3251,29 @@ export default function Reservas() {
       pax,
       pax_a:      Number(form.pax_a),
       pax_n:      Number(form.pax_n),
-      precio_u:   Number(form.precio),
+      precio_u:   isCortesia ? 0 : Number(form.precio),
       total,
       abono,
       saldo:      total - abono,
-      estado:          isLink ? "pendiente_pago" : (abono >= total ? "confirmado" : "pendiente"),
-      forma_pago:      isLink ? "link_pago" : form.forma_pago,
-      // Link de pago: expira en 48 horas
-      link_expira_at:  isLink ? new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString() : null,
+      descuento_cortesia: isCortesia ? totalOriginal : 0,
+      estado:          isCortesia ? "confirmado" : (isLink ? "pendiente_pago" : (abono >= total && !sinDefinir ? "confirmado" : "pendiente")),
+      forma_pago:      isCortesia ? "Cortesía" : (isLink ? "link_pago" : (sinDefinir ? null : form.forma_pago)),
+      // Link de pago: expira en 15 minutos (auto-cancela si no se paga)
+      link_expira_at:  isLink ? new Date(Date.now() + 15 * 60 * 1000).toISOString() : null,
       aliado_id:       form.aliado_id || null,
       vendedor:        form.vendedor !== "Sin asignar" ? form.vendedor : null,
-      notas:           form.notas || "",
-      fecha_pago:      form.fecha_pago || null,
+      notas:           (form.notas || "") + (Array.isArray(form.edades_ninos) && form.edades_ninos.filter(e => e !== "").length > 0 ? ` · Edades niños: ${form.edades_ninos.filter(e => e !== "").join(", ")}` : ""),
+      fecha_pago:      isCortesia ? todayStr() : (form.fecha_pago || null),
       nombre_embarcacion: form.nombre_embarcacion || null,
       hora_llegada:    form.hora_llegada || null,
+      pagos:           isCortesia ? [{
+        id: `P-${Date.now()}`,
+        monto: totalOriginal,
+        forma_pago: "Cortesía",
+        es_cortesia: true,
+        fecha: todayStr(),
+        timestamp: new Date().toISOString(),
+      }] : [],
     };
     await supabase.from("reservas").insert(row);
     logAccion({ modulo: "reservas", accion: "crear_reserva", tabla: "reservas", registroId: row.id,
@@ -2550,8 +3406,8 @@ export default function Reservas() {
       {/* ── Day tabs ── */}
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: isMobile ? 16 : 20, alignItems: "center" }}>
         {[
-          { key: "hoy",    label: "Hoy",    fecha: today,    count: reservasHoy.filter(r => r.estado !== "cancelado").reduce((s,r) => s + r.pax, 0) + gruposHoy.reduce((s,g) => s + grupoPaxTotal(g), 0) },
-          { key: "manana", label: "Mañana", fecha: tomorrow, count: reservasManana.filter(r => r.estado !== "cancelado").reduce((s,r) => s + r.pax, 0) + gruposManana.reduce((s,g) => s + grupoPaxTotal(g), 0) },
+          { key: "hoy",    label: "Hoy",    fecha: today,    count: reservasHoy.filter(r => r.estado !== "cancelado" && !r.grupo_id).reduce((s,r) => s + r.pax, 0) + gruposHoy.reduce((s,g) => s + grupoPaxTotal(g, reservasHoy), 0) + llegadasHoyAll.reduce((s,l) => s + (l.pax_total||0), 0) },
+          { key: "manana", label: "Mañana", fecha: tomorrow, count: reservasManana.filter(r => r.estado !== "cancelado" && !r.grupo_id).reduce((s,r) => s + r.pax, 0) + gruposManana.reduce((s,g) => s + grupoPaxTotal(g, reservasManana), 0) + llegadasManAll.reduce((s,l) => s + (l.pax_total||0), 0) },
         ].map(t => (
           <button key={t.key} onClick={() => { setTabDia(t.key); setSearch(""); setFilter("todos"); }} style={{
             display: "flex", alignItems: "center", gap: 8,
@@ -2601,11 +3457,10 @@ export default function Reservas() {
 
       {/* ── summary kpis — ocultar en "Otras" sin fecha específica ── */}
       {!(tabDia === "fecha" && !fechaFiltro) && (
-      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(3, 1fr)", gap: isMobile ? 8 : 14, marginBottom: isMobile ? 16 : 24 }}>
+      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(2, 1fr)", gap: isMobile ? 8 : 14, marginBottom: isMobile ? 16 : 24 }}>
         {[
-          { label: "Total Pax",  value: totalPax,         unit: "personas",           color: B.sky     },
-          { label: "Revenue",    value: COP(totalAbono),  unit: "cobrado del día",    color: B.success },
-          { label: "Venta Total",value: COP(totalVenta),  unit: "total en reservas",  color: B.sand    },
+          { label: "Total Pax",   value: totalPax,        unit: "personas",          color: B.sky  },
+          { label: "Venta Total", value: COP(totalVenta), unit: "total en reservas", color: B.sand },
         ].map(k => (
           <div key={k.label} style={{ ...cardStyle, padding: "16px 20px" }}>
             <div style={{ fontSize: 12, color: B.sand, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.6 }}>{k.label}</div>
@@ -2693,11 +3548,16 @@ export default function Reservas() {
                         </div>
                       </div>
                       <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+                        {r._sinReserva && (
+                          <span style={{ background: "#f97316" + "22", border: "1px solid #f97316", borderRadius: 20, padding: "3px 10px", fontSize: 10, fontWeight: 700, color: "#f97316", whiteSpace: "nowrap" }}>⛵ Sin Reserva</span>
+                        )}
                         <StatusBadge estado={r.estado} />
-                        <button onClick={e => { e.stopPropagation(); toggleEstado(r.id); }} title="Cambiar estado"
-                          style={{ background: B.navyLight, border: "none", borderRadius: 8, color: B.sky, padding: "7px 10px", fontSize: 16, cursor: "pointer" }}>↻</button>
-                        <button onClick={e => { e.stopPropagation(); deleteReserva(r.id); }} title="Eliminar"
-                          style={{ background: B.danger + "22", border: `1px solid ${B.danger}44`, borderRadius: 8, color: B.danger, padding: "7px 10px", fontSize: 14, cursor: "pointer" }}>✕</button>
+                        {!r._sinReserva && <>
+                          <button onClick={e => { e.stopPropagation(); toggleEstado(r.id); }} title="Cambiar estado"
+                            style={{ background: B.navyLight, border: "none", borderRadius: 8, color: B.sky, padding: "7px 10px", fontSize: 16, cursor: "pointer" }}>↻</button>
+                          <button onClick={e => { e.stopPropagation(); deleteReserva(r.id); }} title="Eliminar"
+                            style={{ background: B.danger + "22", border: `1px solid ${B.danger}44`, borderRadius: 8, color: B.danger, padding: "7px 10px", fontSize: 14, cursor: "pointer" }}>✕</button>
+                        </>}
                       </div>
                     </div>
                     {/* Row 2: details */}
@@ -2772,10 +3632,15 @@ export default function Reservas() {
                           <div style={{ fontWeight: 700, color: B.success }}>{COP(r.abono)}</div>
                           {saldo > 0 && <div style={{ fontSize: 11, color: B.warning }}>Saldo: {COP(saldo)}</div>}
                         </td>
-                        <td style={tdStyle}><StatusBadge estado={r.estado} /></td>
+                        <td style={tdStyle}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                            {r._sinReserva && <span style={{ background: "#f97316" + "22", border: "1px solid #f97316", borderRadius: 20, padding: "2px 8px", fontSize: 10, fontWeight: 700, color: "#f97316", whiteSpace: "nowrap" }}>⛵ Sin Reserva</span>}
+                            <StatusBadge estado={r.estado} />
+                          </div>
+                        </td>
                         <td style={tdStyle} onClick={e => e.stopPropagation()}>
                           <div style={{ display: "flex", gap: 6 }}>
-                            <button onClick={() => toggleEstado(r.id)} title="Cambiar estado" style={{ background: B.navyLight, border: "none", borderRadius: 6, color: B.sky, padding: "5px 10px", fontSize: 13, cursor: "pointer", fontWeight: 600 }}>↻</button>
+                            {!r._sinReserva && <button onClick={() => toggleEstado(r.id)} title="Cambiar estado" style={{ background: B.navyLight, border: "none", borderRadius: 6, color: B.sky, padding: "5px 10px", fontSize: 13, cursor: "pointer", fontWeight: 600 }}>↻</button>}
                             <button onClick={() => deleteReserva(r.id)} title="Eliminar" style={{ background: B.danger + "22", border: `1px solid ${B.danger}44`, borderRadius: 6, color: B.danger, padding: "5px 10px", fontSize: 13, cursor: "pointer", fontWeight: 600 }}>✕</button>
                           </div>
                         </td>
@@ -2820,10 +3685,22 @@ export default function Reservas() {
               return (
                 <div key={g.id} style={{ background: "rgba(200,185,154,0.07)", borderRadius: 10, padding: "12px 16px", border: "1px solid rgba(200,185,154,0.15)", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontWeight: 700, fontSize: 14, color: B.white }}>{g.nombre}</div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                      <span style={{ fontWeight: 700, fontSize: 14, color: B.white }}>{g.nombre}</span>
+                      {g.comparte_lancha_pasadias && (
+                        <span title="Pax ya contados en la lancha de pasadías" style={{ fontSize: 9, padding: "2px 8px", borderRadius: 10, background: `${B.sand}22`, color: B.sand, fontWeight: 700 }}>
+                          ⚠ CONTADO EN LANCHA
+                        </span>
+                      )}
+                    </div>
                     <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>
                       {tipos || g.tipo || "—"} · {g.modalidad_pago === "organizador" ? "💳 Pago organizador" : "Pago individual"}
                     </div>
+                    {g.comparte_lancha_pasadias && (
+                      <div style={{ fontSize: 10, color: B.sand, marginTop: 3, fontStyle: "italic" }}>
+                        ℹ️ Estos pax ya están sumados en el cupo de la lancha — no sumar aparte
+                      </div>
+                    )}
                   </div>
                   <div style={{ display: "flex", alignItems: "center", gap: 12, flexShrink: 0 }}>
                     <div style={{ textAlign: "right" }}>
@@ -2840,6 +3717,111 @@ export default function Reservas() {
               );
             })}
           </div>
+        </div>
+      )}
+
+      {/* ── Embarcaciones del día ── */}
+      {llegadasDia.length > 0 && (
+        <div style={{ background: B.navyMid, borderRadius: 12, padding: isMobile ? 14 : 20, marginTop: 16, border: `1px solid rgba(56,189,248,0.15)` }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+            <div style={{ fontSize: 15, fontWeight: 700, color: B.sky }}>
+              ⛵ Embarcaciones del día
+              <span style={{ fontSize: 12, fontWeight: 500, color: "rgba(255,255,255,0.4)", marginLeft: 8 }}>
+                {llegadasDia.length} embarcación{llegadasDia.length !== 1 ? "es" : ""} · {llegadasDia.reduce((s, l) => s + (l.pax_total || 0), 0)} pax
+              </span>
+            </div>
+            {llegadasDia.filter(l => l.total_cobrado > 0 && !l.reserva_id).length > 0 && (
+              <span style={{ fontSize: 13, fontWeight: 700, color: B.success }}>
+                {COP(llegadasDia.filter(l => !l.reserva_id).reduce((s, l) => s + (l.total_cobrado || 0), 0))}
+              </span>
+            )}
+          </div>
+
+          {isMobile ? (
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {llegadasDia.map(l => {
+                const tipoLabel = { after_island: "After Island", restaurante: "Restaurante", a_consumo: "A Consumo", huespedes: "Huésped", inspeccion: "Inspección", otros: "Otro" }[l.tipo] || l.tipo || "—";
+                const tipoIcon  = { after_island: "🌙", restaurante: "🍽️", a_consumo: "🍹", huespedes: "🏨", inspeccion: "🔍", otros: "📋" }[l.tipo] || "⛵";
+                const cobrado = l.total_cobrado || 0;
+                const vinculada = !!l.reserva_id;
+                return (
+                  <div key={l.id} style={{ background: vinculada ? "rgba(200,185,154,0.06)" : "rgba(56,189,248,0.05)", borderRadius: 10, padding: "12px 14px", border: `1px solid ${vinculada ? "rgba(200,185,154,0.2)" : "rgba(56,189,248,0.1)"}` }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 4 }}>
+                      <div>
+                        <div style={{ fontWeight: 700, fontSize: 14, color: B.white }}>{l.embarcacion_nombre || "Embarcación"}</div>
+                        <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>{tipoIcon} {tipoLabel}{l.matricula ? ` · ${l.matricula}` : ""}</div>
+                      </div>
+                      <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 6, fontWeight: 600,
+                        background: vinculada ? B.sand + "22" : (cobrado > 0 ? B.success + "22" : B.sand + "22"),
+                        color: vinculada ? B.sand : (cobrado > 0 ? B.success : B.sand) }}>
+                        {vinculada ? "🔗 Ya en reservas" : (cobrado > 0 ? "Pagado" : "Sin cobro")}
+                      </span>
+                    </div>
+                    <div style={{ display: "flex", gap: 10, fontSize: 12, color: "rgba(255,255,255,0.5)", flexWrap: "wrap" }}>
+                      <span>👥 {l.pax_total || 0} pax</span>
+                      {l.hora_llegada && <span>⚓ {l.hora_llegada.slice(0,5)}</span>}
+                      {cobrado > 0 && !vinculada && <span style={{ color: B.success, fontWeight: 700 }}>{COP(cobrado)}</span>}
+                      {cobrado > 0 && !vinculada && <span style={{ color: "rgba(255,255,255,0.4)" }}>{l.metodo_pago}</span>}
+                    </div>
+                    {vinculada && (
+                      <div style={{ fontSize: 10, color: B.sand, marginTop: 6, fontStyle: "italic" }}>
+                        El cobro ya está contabilizado en la reserva vinculada — no se cuenta doble.
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+              <thead>
+                <tr style={{ borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
+                  {["Nombre", "Tipo", "Pax", "Hora llegada", "Total", "Abono"].map(h => (
+                    <th key={h} style={{ padding: "7px 12px", textAlign: h === "Pax" || h === "Total" || h === "Abono" ? "right" : "left", color: "rgba(255,255,255,0.4)", fontWeight: 600, fontSize: 11, textTransform: "uppercase", letterSpacing: "0.05em" }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {llegadasDia.map(l => {
+                  const tipoLabel = { after_island: "After Island", restaurante: "Restaurante", a_consumo: "A Consumo", huespedes: "Huésped", inspeccion: "Inspección", otros: "Otro" }[l.tipo] || l.tipo || "—";
+                  const cobrado = l.total_cobrado || 0;
+                  const vinculada = !!l.reserva_id;
+                  return (
+                    <tr key={l.id} style={{ borderBottom: "1px solid rgba(255,255,255,0.04)", background: vinculada ? "rgba(200,185,154,0.04)" : "transparent" }}>
+                      <td style={{ padding: "10px 12px" }}>
+                        <div style={{ fontWeight: 600 }}>{l.embarcacion_nombre || "Embarcación"}</div>
+                        {l.matricula && <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)" }}>{l.matricula}</div>}
+                        {vinculada && <div style={{ fontSize: 10, color: B.sand, fontStyle: "italic", marginTop: 2 }}>🔗 Ya contabilizada en reservas</div>}
+                      </td>
+                      <td style={{ padding: "10px 12px" }}>
+                        <span style={{ background: B.navyLight, borderRadius: 6, padding: "2px 8px", fontSize: 12, color: B.sky }}>{tipoLabel}</span>
+                      </td>
+                      <td style={{ padding: "10px 12px", textAlign: "right", fontWeight: 700, color: B.sky }}>{l.pax_total || 0}</td>
+                      <td style={{ padding: "10px 12px", textAlign: "left", color: "rgba(255,255,255,0.6)" }}>{l.hora_llegada ? l.hora_llegada.slice(0,5) : "—"}</td>
+                      <td style={{ padding: "10px 12px", textAlign: "right", fontWeight: 700, color: vinculada ? "rgba(255,255,255,0.25)" : B.white }}>{cobrado > 0 && !vinculada ? COP(cobrado) : "—"}</td>
+                      <td style={{ padding: "10px 12px", textAlign: "right" }}>
+                        {cobrado > 0 && !vinculada
+                          ? <span style={{ color: B.success, fontWeight: 700 }}>{COP(cobrado)}</span>
+                          : vinculada ? <span style={{ color: B.sand, fontSize: 11, fontStyle: "italic" }}>en reserva</span>
+                          : <span style={{ color: "rgba(255,255,255,0.25)" }}>—</span>}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+              {llegadasDia.some(l => l.total_cobrado > 0) && (
+                <tfoot>
+                  <tr style={{ borderTop: "2px solid rgba(56,189,248,0.2)" }}>
+                    <td colSpan={2} style={{ padding: "10px 12px", fontSize: 12, fontWeight: 700, color: "rgba(255,255,255,0.4)", textTransform: "uppercase" }}>Total embarcaciones</td>
+                    <td style={{ padding: "10px 12px", textAlign: "right", fontWeight: 700, color: B.sky }}>{llegadasDia.reduce((s, l) => s + (l.pax_total || 0), 0)}</td>
+                    <td />
+                    <td style={{ padding: "10px 12px", textAlign: "right", fontWeight: 800, color: B.white }}>{COP(llegadasDia.reduce((s, l) => s + (l.total_cobrado || 0), 0))}</td>
+                    <td style={{ padding: "10px 12px", textAlign: "right", fontWeight: 800, color: B.success }}>{COP(llegadasDia.filter(l => l.total_cobrado > 0).reduce((s, l) => s + l.total_cobrado, 0))}</td>
+                  </tr>
+                </tfoot>
+              )}
+            </table>
+          )}
         </div>
       )}
 
@@ -2863,12 +3845,26 @@ export default function Reservas() {
         <ReservaDetalle
           reserva={detalle}
           isMobile={isMobile}
-          onClose={() => setDetalle(null)}
-          onUpdated={() => { fetchReservas(); setDetalle(null); }}
+          onClose={() => {
+            setDetalle(null);
+            if (cameFromNavigate) {
+              setCameFromNavigate(false);
+              window.dispatchEvent(new CustomEvent("atolon-navigate-back"));
+            }
+          }}
+          onUpdated={() => {
+            fetchReservas();
+            setDetalle(null);
+            if (cameFromNavigate) {
+              setCameFromNavigate(false);
+              window.dispatchEvent(new CustomEvent("atolon-navigate-back"));
+            }
+          }}
           salidaList={salidas}
           aliadoList={aliados}
           vendedoresList={vendedores}
           pasadiaList={pasadias}
+          conveniosMap={conveniosMap}
         />
       )}
       </>}
