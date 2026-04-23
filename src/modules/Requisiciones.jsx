@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { B, COP, fmtFecha, todayStr } from "../brand";
 import { supabase } from "../lib/supabase";
+import { getCart, clearCart } from "../lib/requisicionCart";
 
 // ─── Constantes ──────────────────────────────────────────────────────────────
 const ESTADOS = ["Borrador", "Pendiente", "Aprobada", "En Compra", "Recibida Parcial", "Recibida", "Rechazada"];
@@ -71,6 +72,27 @@ export default function Requisiciones() {
   const [newReqArea, setNewReqArea] = useState(null); // "OPEX" when picking area
   const [showRegla, setShowRegla] = useState(null);
   const [showProvNuevo, setShowProvNuevo] = useState(false);
+
+  // Auto-abrir modal si venimos del carrito de Items
+  useEffect(() => {
+    const handler = (e) => {
+      if (e.detail?.action === "nuevaDesdeCarrito" || (e.detail?.modulo === "requisiciones" && e.detail?.action === "nuevaDesdeCarrito")) {
+        const cart = getCart();
+        if (cart.length > 0) {
+          // Detectar el área según la categoría del primer item (Alimentos → Cocina, etc.)
+          setNewReqArea(null);
+          setShowNew("OPEX");
+        }
+      }
+    };
+    window.addEventListener("atolon-navigate", handler);
+    // También al montar — si ya estamos aquí y el carrito tiene cosas
+    const cart = getCart();
+    if (cart.length > 0 && !showNew) {
+      // No abrimos auto al montar para no sorprender; el banner del carrito en Items los trae
+    }
+    return () => window.removeEventListener("atolon-navigate", handler);
+  }, []); // eslint-disable-line
 
   // Cargar usuario actual
   useEffect(() => {
@@ -1249,12 +1271,25 @@ function ItemSearchInput({ value, catalogoItems, onChange }) {
 const AREA_TO_DEPTO = { Alimentos: "Cocina", Bar: "Bar", "Ama de Llaves": "Cocina", Mantenimiento: "Cocina", Comercial: "Cocina", Contabilidad: "Cocina", Flota: "Cocina", Otros: "Cocina" };
 
 function NewReqModal({ tipoInicial, areaInicial, onClose, onSave, proveedores, reglas, currentUser, onProvNuevo }) {
+  // Cargar desde carrito si existe
+  const cartInicial = getCart();
   const [form, setForm] = useState({
     desc: "", tipo: tipoInicial || "OPEX", cat: areaInicial || "Alimentos", area: areaInicial || "Operaciones", prioridad: "Media",
     proveedor_id: "", proveedor_nombre: "", fechaNecesaria: "", justificacion: "",
-    items: [{ id: uid(), item: "", cant: 1, unidad: "Unidades", precioU: 0, subtotal: 0 }],
+    items: cartInicial.length > 0
+      ? cartInicial.map(c => ({
+          id: uid(),
+          item: c.nombre,
+          item_id: c.item_id,
+          cant: c.cant,
+          unidad: c.unidad || "Unidades",
+          precioU: c.precioU || 0,
+          subtotal: (Number(c.cant) || 0) * (Number(c.precioU) || 0),
+        }))
+      : [{ id: uid(), item: "", cant: 1, unidad: "Unidades", precioU: 0, subtotal: 0 }],
     adjuntos: [],
   });
+  const [cargadoDesdeCart] = useState(cartInicial.length > 0);
   const [uploading, setUploading] = useState(false);
   const fileInputRef = useRef(null);
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
@@ -1323,9 +1358,10 @@ function NewReqModal({ tipoInicial, areaInicial, onClose, onSave, proveedores, r
         quien: currentUser.nombre,
         accion: asBorrador ? "Creada" : "Enviada a aprobación",
         fecha: new Date().toLocaleString("es-CO"),
-        comentario: "",
+        comentario: cargadoDesdeCart ? "Ítems agregados desde módulo Items" : "",
       }],
     });
+    if (cargadoDesdeCart) clearCart();
   };
 
   return (
@@ -1338,6 +1374,12 @@ function NewReqModal({ tipoInicial, areaInicial, onClose, onSave, proveedores, r
           </div>
           <button onClick={onClose} style={{ background: "none", border: "none", color: B.sand, fontSize: 20, cursor: "pointer" }}>×</button>
         </div>
+
+        {cargadoDesdeCart && (
+          <div style={{ background: B.success + "18", border: `1px solid ${B.success}55`, borderRadius: 10, padding: "10px 14px", fontSize: 12, color: B.success, marginBottom: 14, display: "flex", alignItems: "center", gap: 10 }}>
+            🛒 <span><strong>{form.items.length} ítem{form.items.length !== 1 ? "s" : ""}</strong> cargado{form.items.length !== 1 ? "s" : ""} desde el módulo Items. Revisa cantidades y precios antes de enviar.</span>
+          </div>
+        )}
 
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "14px 16px", marginBottom: 14 }}>
           <div style={{ gridColumn: "1 / -1" }}>

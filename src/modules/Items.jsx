@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { B, COP, fmtFecha, todayStr } from "../brand";
 import { supabase } from "../lib/supabase";
+import { getCart, addToCart, clearCart, onCartChange } from "../lib/requisicionCart";
 
 // ─── Constantes ──────────────────────────────────────────────────────────────
 const UNIDADES = ["Unidades", "Kg", "Gramos", "Litros", "Galones", "Cajas", "Paquetes", "Bolsas", "Metros", "Rollos", "Pares"];
@@ -56,6 +57,32 @@ export default function Items() {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  // ── Carrito de requisición ──
+  const [cart, setCart] = useState(() => getCart());
+  useEffect(() => {
+    const unsub = onCartChange(setCart);
+    return unsub;
+  }, []);
+
+  const agregarACarrito = (item, precio) => {
+    const cantStr = window.prompt(`¿Cuántos ${item.unidad || "unidades"} de "${item.nombre}"?`, "1");
+    if (cantStr === null) return; // canceló
+    const cant = Number(cantStr);
+    if (!cant || cant <= 0) return alert("Cantidad inválida");
+    addToCart({
+      item_id: item.id,
+      nombre: item.nombre,
+      unidad: item.unidad || "Unidades",
+      categoria: item.categoria,
+      cant,
+      precioU: precio || item.precio_compra || 0,
+    });
+  };
+
+  const irARequisicion = () => {
+    window.dispatchEvent(new CustomEvent("atolon-navigate", { detail: { modulo: "requisiciones", action: "nuevaDesdeCarrito" } }));
+  };
 
   // ── Helpers ───────────────────────────────────────────────────────────────
   const provsForItem = useCallback((itemId) => itemProvs.filter(ip => ip.item_id === itemId), [itemProvs]);
@@ -280,7 +307,7 @@ export default function Items() {
       ) : (
         <div style={{ background: B.navyMid, borderRadius: 14, overflow: "hidden", border: `1px solid ${B.navyLight}` }}>
           {/* Header con sort */}
-          <div style={{ display: "grid", gridTemplateColumns: "2.2fr 1.3fr 0.7fr 0.9fr 0.9fr 0.9fr 1fr", padding: "10px 18px", borderBottom: `2px solid ${B.navyLight}`, gap: 8 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "2.2fr 1.3fr 0.7fr 0.9fr 0.9fr 0.9fr 1fr 40px", padding: "10px 18px", borderBottom: `2px solid ${B.navyLight}`, gap: 8 }}>
             {[
               { key: "nombre", label: "Producto" },
               { key: "categoria", label: "Categoría" },
@@ -289,6 +316,7 @@ export default function Items() {
               { key: "stock", label: "Stock" },
               { key: "precio", label: "P. Proveedor" },
               { key: null, label: "Proveedor" },
+              { key: null, label: "" },
             ].map(col => (
               <div key={col.label}
                 onClick={col.key ? () => { if (sortBy === col.key) setSortDir(d => d === "asc" ? "desc" : "asc"); else { setSortBy(col.key); setSortDir("asc"); } } : undefined}
@@ -313,7 +341,7 @@ export default function Items() {
             return (
               <div key={item.id} onClick={() => setDetail(item)}
                 style={{
-                  display: "grid", gridTemplateColumns: "2.2fr 1.3fr 0.7fr 0.9fr 0.9fr 0.9fr 1fr", padding: "11px 18px", gap: 8,
+                  display: "grid", gridTemplateColumns: "2.2fr 1.3fr 0.7fr 0.9fr 0.9fr 0.9fr 1fr 40px", padding: "11px 18px", gap: 8,
                   borderBottom: idx < filtered.length - 1 ? `1px solid ${B.navyLight}` : "none",
                   cursor: "pointer", transition: "background 0.1s", alignItems: "center",
                 }}
@@ -359,6 +387,18 @@ export default function Items() {
                 <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                   {provs.length === 0 ? "—" : principal?.proveedor_nombre || provs[0]?.proveedor_nombre || `${provs.length} proveedores`}
                 </div>
+                {/* Botón + agregar a requisición */}
+                <button
+                  onClick={(e) => { e.stopPropagation(); agregarACarrito(item, precio); }}
+                  title="Agregar a requisición"
+                  style={{
+                    width: 32, height: 32, borderRadius: 8, border: "none",
+                    background: B.success + "22", color: B.success,
+                    cursor: "pointer", fontSize: 18, fontWeight: 800, lineHeight: 1,
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                  }}>
+                  +
+                </button>
               </div>
             );
           })}
@@ -475,6 +515,35 @@ export default function Items() {
           onDelete={() => deleteItem(detail.id)}
           onClose={() => setDetail(null)}
         />
+      )}
+
+      {/* ── Carrito flotante de requisición ── */}
+      {cart.length > 0 && (
+        <div style={{
+          position: "fixed", bottom: 20, right: 20, zIndex: 1500,
+          background: B.navyMid, border: `2px solid ${B.success}`, borderRadius: 14,
+          boxShadow: "0 8px 30px rgba(0,0,0,0.4)", padding: "14px 18px",
+          display: "flex", alignItems: "center", gap: 14, maxWidth: 420,
+        }}>
+          <div style={{ fontSize: 24 }}>🛒</div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: B.white }}>
+              {cart.length} producto{cart.length !== 1 ? "s" : ""} en requisición
+            </div>
+            <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {cart.slice(0, 3).map(c => `${c.cant}× ${c.nombre}`).join(" · ")}{cart.length > 3 ? ` +${cart.length - 3}` : ""}
+            </div>
+          </div>
+          <button onClick={irARequisicion}
+            style={{ background: B.success, color: B.navy, border: "none", borderRadius: 8, padding: "8px 14px", fontSize: 12, fontWeight: 800, cursor: "pointer", whiteSpace: "nowrap" }}>
+            Ir a requisición →
+          </button>
+          <button onClick={() => { if (confirm("¿Vaciar carrito?")) clearCart(); }}
+            title="Vaciar carrito"
+            style={{ background: "none", color: "rgba(255,255,255,0.4)", border: "none", fontSize: 18, cursor: "pointer", lineHeight: 1 }}>
+            ✕
+          </button>
+        </div>
       )}
     </div>
   );
