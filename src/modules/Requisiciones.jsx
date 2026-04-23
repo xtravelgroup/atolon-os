@@ -194,8 +194,17 @@ export default function Requisiciones() {
   // ── Crear nueva requisición ──────────────────────────────────────────────
   const handleSave = async (newReq) => {
     if (!supabase) return;
-    const monto = Number(newReq.total) || 0;
+    const monto = Math.round(Number(newReq.total) || 0);
     const nivel = monto >= UMBRAL_DIRECCION || (totalSemanal + monto > UMBRAL_SEMANAL) ? "direccion" : "gerente_general";
+
+    // Normalizar ítems: asegurar que cant, precioU, subtotal sean números enteros
+    // (la columna total es INTEGER en Postgres)
+    const itemsNorm = (newReq.items || []).map(it => ({
+      ...it,
+      cant:     Number(it.cant) || 0,
+      precioU:  Math.round(Number(it.precioU) || 0),
+      subtotal: Math.round(Number(it.subtotal) || ((Number(it.cant) || 0) * (Number(it.precioU) || 0))),
+    }));
 
     const row = {
       id: newReq.id,
@@ -213,7 +222,7 @@ export default function Requisiciones() {
       proveedor_nombre: newReq.proveedor_nombre || newReq.proveedor || null,
       proveedor: newReq.proveedor || newReq.proveedor_nombre || null,
       justificacion: newReq.justificacion || null,
-      items: newReq.items,
+      items: itemsNorm,
       total: monto,
       timeline: newReq.timeline,
       adjuntos: newReq.adjuntos || [],

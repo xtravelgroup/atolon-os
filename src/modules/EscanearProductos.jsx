@@ -61,31 +61,37 @@ export default function EscanearProductos() {
   }, [items]);
 
   const guardarCodigo = async (itemId, codigo) => {
+    // CIERRA EL SCANNER INMEDIATAMENTE — no esperar al await
+    setScanFor(null);
+    setFlash({ type: "ok", text: `💾 Guardando código...` });
+
     if (!userEmail) {
       setFlash({ type: "err", text: "❌ Necesitas iniciar sesión para guardar códigos" });
       setTimeout(() => setFlash(null), 4000);
       return;
     }
-    const { data, error } = await supabase.from("items_catalogo")
-      .update({ codigo, updated_at: new Date().toISOString() })
-      .eq("id", itemId)
-      .select("id, codigo");
-    if (error) {
-      setFlash({ type: "err", text: "❌ Error: " + error.message });
-      setTimeout(() => setFlash(null), 4000);
-      return;
-    }
-    // Confirmar que realmente se actualizó (RLS puede devolver sin error pero sin filas)
-    if (!data || data.length === 0) {
-      setFlash({ type: "err", text: "❌ Sin permisos para guardar. Cierra sesión y vuelve a entrar." });
+    try {
+      const { data, error } = await supabase.from("items_catalogo")
+        .update({ codigo, updated_at: new Date().toISOString() })
+        .eq("id", itemId)
+        .select("id, codigo");
+      if (error) {
+        setFlash({ type: "err", text: "❌ Error: " + error.message });
+        setTimeout(() => setFlash(null), 5000);
+        return;
+      }
+      if (!data || data.length === 0) {
+        setFlash({ type: "err", text: "❌ Sin permisos para guardar. Cierra sesión y vuelve a entrar." });
+        setTimeout(() => setFlash(null), 5000);
+        return;
+      }
+      setItems(prev => prev.map(i => i.id === itemId ? { ...i, codigo } : i));
+      setFlash({ type: "ok", text: `✓ Código guardado: ${codigo}` });
+      setTimeout(() => setFlash(null), 2000);
+    } catch (e) {
+      setFlash({ type: "err", text: "❌ Error inesperado: " + e.message });
       setTimeout(() => setFlash(null), 5000);
-      return;
     }
-    // Actualizar localmente sin recargar
-    setItems(prev => prev.map(i => i.id === itemId ? { ...i, codigo } : i));
-    setFlash({ type: "ok", text: `✓ Código guardado` });
-    setTimeout(() => setFlash(null), 1500);
-    setScanFor(null);
   };
 
   return (
