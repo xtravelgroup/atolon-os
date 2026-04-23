@@ -228,7 +228,12 @@ export default function Requisiciones() {
         comentario: `Bajo el umbral de la regla "${regla.nombre}"`,
       }];
     }
-    await supabase.from("requisiciones").insert(row);
+    const { error: insErr } = await supabase.from("requisiciones").insert(row);
+    if (insErr) {
+      console.error("Error insertando requisición:", insErr, row);
+      alert("❌ Error al guardar la requisición:\n\n" + (insErr.message || "Error desconocido") + "\n\n" + (insErr.details || "") + "\n\n" + (insErr.hint || ""));
+      return;
+    }
     setShowNew(false);
     load();
   };
