@@ -882,6 +882,8 @@ function InventarioTab({
   invFilter, setInvFilter, invSortBy, setInvSortBy, invSortDir, setInvSortDir,
 }) {
   const activos = items.filter(i => i.activo !== false);
+  // Estado del modal "Agregar a requisición"
+  const [cartModal, setCartModal] = useState(null); // null | { item, cant }
 
   const filtered = useMemo(() => {
     let list = activos;
@@ -1055,18 +1057,7 @@ function InventarioTab({
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
-                        const cantStr = window.prompt(`¿Cuántos ${i.unidad || "unidades"} de "${i.nombre}" agregar a compra?`, "1");
-                        if (cantStr === null) return;
-                        const cant = Number(cantStr);
-                        if (!cant || cant <= 0) return alert("Cantidad inválida");
-                        addToCart({
-                          item_id: i.id,
-                          nombre: i.nombre,
-                          unidad: i.unidad || "Unidades",
-                          categoria: i.categoria,
-                          cant,
-                          precioU: Number(i.precio_compra) || 0,
-                        });
+                        setCartModal({ item: i, cant: "1" });
                       }}
                       title="Agregar a requisición"
                       style={{
@@ -1089,6 +1080,97 @@ function InventarioTab({
       <div style={{ marginTop: 12, fontSize: 11, color: "rgba(255,255,255,0.3)", textAlign: "center" }}>
         Inventario sincronizado desde Loggro Restobar. Usa "🔄 Sync Loggro" arriba para actualizar.
       </div>
+
+      {/* ── Modal "Agregar a requisición" ── */}
+      {cartModal && (() => {
+        const i = cartModal.item;
+        const cantNum = Number(cartModal.cant) || 0;
+        const precioU = Number(i.precio_compra) || 0;
+        const subtotal = cantNum * precioU;
+        const confirmar = () => {
+          if (!cantNum || cantNum <= 0) return alert("Cantidad inválida");
+          addToCart({
+            item_id: i.id,
+            nombre: i.nombre,
+            unidad: i.unidad || "Unidades",
+            categoria: i.categoria,
+            cant: cantNum,
+            precioU,
+          });
+          setCartModal(null);
+        };
+        return (
+          <div onClick={e => e.target === e.currentTarget && setCartModal(null)}
+            style={{ position: "fixed", inset: 0, zIndex: 1200, background: "#00000088", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+            <div style={{ background: B.navyMid, borderRadius: 16, width: "100%", maxWidth: 440, padding: 28, border: `1px solid ${B.navyLight}` }}>
+              <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontSize: 22, fontWeight: 700, color: B.sand, marginBottom: 4 }}>
+                🛒 Agregar a requisición
+              </div>
+              <div style={{ fontSize: 13, color: "rgba(255,255,255,0.5)", marginBottom: 20 }}>
+                Indica la cantidad a solicitar. Se agregará al carrito de requisición.
+              </div>
+
+              {/* Ítem seleccionado */}
+              <div style={{ background: "#0D1B3E", borderRadius: 12, padding: "14px 18px", marginBottom: 18 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
+                  <span style={{ fontSize: 20 }}>{catIconMap[i.categoria] || "📦"}</span>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 14, fontWeight: 700, color: B.white, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{i.nombre}</div>
+                    <div style={{ fontSize: 11, color: "rgba(255,255,255,0.45)" }}>
+                      {i.categoria || "—"} · Unidad: {i.unidad || "—"} · Stock: {Number(i.stock_actual || 0).toFixed(0)}
+                    </div>
+                  </div>
+                </div>
+                {precioU > 0 && (
+                  <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginTop: 4 }}>
+                    Precio compra: <strong style={{ color: B.sand }}>{COP(precioU)}</strong>
+                  </div>
+                )}
+              </div>
+
+              {/* Cantidad */}
+              <div style={{ marginBottom: 18 }}>
+                <label style={{ fontSize: 11, color: B.sand, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", display: "block", marginBottom: 8 }}>
+                  Cantidad ({i.unidad || "unidades"})
+                </label>
+                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                  <button onClick={() => setCartModal(c => ({ ...c, cant: String(Math.max(1, (Number(c.cant) || 0) - 1)) }))}
+                    style={{ width: 38, height: 38, borderRadius: 8, border: `1px solid ${B.navyLight}`, background: B.navy, color: B.sky, fontSize: 20, fontWeight: 800, cursor: "pointer" }}>−</button>
+                  <input
+                    autoFocus
+                    type="number"
+                    min={0}
+                    step={i.unidad?.toLowerCase().match(/kg|gr|lt|lit|gal/) ? "0.01" : "1"}
+                    value={cartModal.cant}
+                    onChange={e => setCartModal(c => ({ ...c, cant: e.target.value }))}
+                    onKeyDown={e => { if (e.key === "Enter") confirmar(); }}
+                    style={{ flex: 1, textAlign: "center", fontSize: 24, fontWeight: 800, padding: "8px 12px", borderRadius: 8, background: B.navy, border: `1px solid ${B.navyLight}`, color: B.white, outline: "none", fontFamily: "'Barlow Condensed', sans-serif" }}
+                  />
+                  <button onClick={() => setCartModal(c => ({ ...c, cant: String((Number(c.cant) || 0) + 1) }))}
+                    style={{ width: 38, height: 38, borderRadius: 8, border: `1px solid ${B.navyLight}`, background: B.navy, color: B.sky, fontSize: 20, fontWeight: 800, cursor: "pointer" }}>+</button>
+                </div>
+                {subtotal > 0 && (
+                  <div style={{ marginTop: 10, padding: "8px 12px", background: B.success + "15", borderRadius: 8, fontSize: 12, color: "rgba(255,255,255,0.7)", textAlign: "center" }}>
+                    Subtotal estimado: <strong style={{ color: B.success, fontSize: 14 }}>{COP(subtotal)}</strong>
+                  </div>
+                )}
+              </div>
+
+              <div style={{ display: "flex", gap: 10 }}>
+                <button onClick={() => setCartModal(null)}
+                  style={{ flex: 1, padding: "11px", borderRadius: 8, border: `1px solid ${B.navyLight}`, background: "transparent", color: "rgba(255,255,255,0.5)", cursor: "pointer", fontWeight: 600 }}>
+                  Cancelar
+                </button>
+                <button onClick={confirmar}
+                  disabled={!cantNum || cantNum <= 0}
+                  style={{ flex: 2, padding: "11px", borderRadius: 8, border: "none", background: (!cantNum || cantNum <= 0) ? B.navyLight : B.success, color: B.navy, cursor: (!cantNum || cantNum <= 0) ? "default" : "pointer", fontWeight: 700, fontSize: 14 }}>
+                  ✓ Agregar al carrito
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }
