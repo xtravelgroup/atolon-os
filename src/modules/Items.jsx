@@ -1099,7 +1099,8 @@ function InventarioTab({
                   <td style={{ padding: "11px 14px", fontSize: 12, color: "rgba(255,255,255,0.5)" }}>{i.unidad || "—"}</td>
                   <td style={{ padding: "11px 14px", textAlign: "right", fontWeight: 700, fontFamily: "'Barlow Condensed', sans-serif", fontSize: 16, color }}>
                     {stock.toFixed(2)}
-                    {desglose && desglose.length > 0 && (
+                    {/* Desglose solo si hay stock en más de una locación */}
+                    {desglose && desglose.length > 1 && (
                       <div style={{ fontSize: 9, fontFamily: "inherit", fontWeight: 500, color: "rgba(255,255,255,0.4)", marginTop: 2, display: "flex", gap: 6, justifyContent: "flex-end" }}>
                         {desglose.map(d => <span key={d.loc.id}>{d.loc.icono}{d.cant.toFixed(0)}</span>)}
                       </div>
