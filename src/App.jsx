@@ -274,6 +274,7 @@ import ZarpesLog from "./modules/ZarpesLog";
 import Proveedores from "./modules/Proveedores";
 import Items from "./modules/Items";
 import HacerInventario from "./modules/HacerInventario";
+import EscanearProductos from "./modules/EscanearProductos";
 import LoggroAdmin from "./modules/LoggroAdmin";
 import HotelFolios from "./modules/HotelFolios";
 import ApiPortal from "./modules/ApiPortal";
@@ -454,6 +455,7 @@ export default function App() {
   if (route.startsWith("pago"))   return <><PagoCliente /><WhatsAppFloat phone={waPhone} /></>;
   if (route === "reset-password") return <><ResetPassword /><WhatsAppFloat phone={waPhone} /></>;
   if (route === "zarpe-info")     return <><ZarpeInfo /><WhatsAppFloat phone={waPhone} /></>;
+  if (route === "escanear-productos" || route === "escanear") return <EscanearProductos />;
   if (route === "zarpe-grupo")    return <><ZarpeGrupo /><WhatsAppFloat phone={waPhone} /></>;
   if (route === "dia-de-la-madre" || route === "madres") return <DiaDeLaMadre />;
   if (route === "despedidas" || route.startsWith("despedidas/")) return <><Despedidas /><WhatsAppFloat phone={waPhone} /></>;
