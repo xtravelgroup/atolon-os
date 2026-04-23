@@ -335,7 +335,7 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
     const netoRef = (form.aliado_id && conveniosMap[form.aliado_id]?.[(form.tipo || "").toLowerCase()])
                   || pasRef?.precio_neto_agencia || 0;
 
-    await supabase.from("reservas").update({
+    const { error: updErr } = await supabase.from("reservas").update({
       nombre:    form.nombre.trim(),
       contacto:  form.contacto.trim(),
       email:     emailUpd,
@@ -348,7 +348,6 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
       pax_n:     Number(form.pax_n),
       pax,
       precio_u:      precioUnit,
-      precio_nino:   precioNinoUnit,
       precio_neto:   precioMode === "neto" ? precioUnit : netoRef,
       precio_publico: pasRef?.precio || 0,
       abono:     Number(form.abono),
@@ -363,6 +362,12 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
       nombre_embarcacion: form.nombre_embarcacion || null,
       hora_llegada: form.hora_llegada || null,
     }).eq("id", r0.id);
+
+    if (updErr) {
+      alert("Error al guardar: " + updErr.message);
+      setSaving(false);
+      return;
+    }
 
     // Log de auditoría
     if (cambios.length > 0) {
