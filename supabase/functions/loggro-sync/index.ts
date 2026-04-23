@@ -807,6 +807,42 @@ serve(async (req) => {
       return json({ ok: false, error: "Ningún path respondió 200", intentos }, 404);
     }
 
+    // POST /loggro-sync/update-ingredient
+    // Actualiza un ingrediente en Loggro merge-style: trae el original,
+    // cambia los campos indicados y hace upsert con POST /ingredients.
+    // Body: { loggro_id: "...", nombre?: "...", descripcion?: "...", codigo?: "..." }
+    if (req.method === "POST" && path === "/update-ingredient") {
+      const body = await req.json().catch(() => ({}));
+      if (!body.loggro_id) return json({ ok: false, error: "loggro_id requerido" }, 400);
+
+      // 1. Traer el ingrediente actual
+      const get = await loggroRaw("GET", `/ingredients/${body.loggro_id}`);
+      if (!get.ok) {
+        return json({ ok: false, error: `No se pudo leer el ingrediente (${get.status})`, loggro_response: get.body }, 502);
+      }
+      const original = get.body || {};
+
+      // 2. Aplicar cambios solicitados
+      const merged: any = { ...original, modifiedOn: new Date().toISOString() };
+      if (body.nombre !== undefined) merged.name = body.nombre;
+      if (body.descripcion !== undefined) merged.description = body.descripcion;
+      if (body.codigo !== undefined) merged.code = body.codigo;
+      // category puede venir como objeto; Loggro suele aceptar solo su _id
+      if (merged.category && typeof merged.category === "object" && merged.category._id) {
+        merged.category = merged.category._id;
+      }
+
+      // 3. POST con el objeto completo (upsert)
+      const post = await loggroRaw("POST", "/ingredients", merged);
+      if (!post.ok) {
+        return json({
+          ok: false, error: `Loggro rechazó el update (${post.status})`,
+          loggro_response: post.body, payload: merged,
+        }, 502);
+      }
+      return json({ ok: true, loggro_response: post.body });
+    }
+
     // POST /loggro-sync/create-inventory-movement
     // Body (lo que Atolón OS envía):
     //   {

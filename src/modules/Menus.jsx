@@ -543,14 +543,16 @@ function ItemModal({ item, menuTipo, onClose, onSaved, categorias }) {
   };
 
   useEffect(() => {
-    // Cuando se abre el modal, si ya tiene loggro_id, cargar el nombre del producto actual
+    // Cuando se abre el modal, si ya tiene loggro_id, traer el producto DIRECTO por su _id
+    // (antes buscaba por nombre y no matcheaba si Atolón/Loggro tenían nombres distintos)
     if (form.loggro_id) {
-      fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/loggro-sync/products?pagination=true&limit=1&page=0&name=${encodeURIComponent(form.nombre || "")}`, {
+      fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/loggro-sync/raw?path=${encodeURIComponent("/products/" + form.loggro_id)}`, {
         headers: fnHeaders,
       })
         .then(r => r.json()).then(d => {
-          const found = (d.products || []).find(p => (p._id || p.id) === form.loggro_id);
-          if (found) setLoggroCurrent(found.name);
+          // /raw devuelve { status, body: { ..._id, name, ... } } o directo el producto
+          const prod = d?.body || d;
+          if (prod?.name) setLoggroCurrent(prod.name);
         }).catch(() => {});
     }
   }, []);
