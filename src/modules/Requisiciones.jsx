@@ -1801,7 +1801,11 @@ function DetailModal({ req, onClose, onUpdate, onGenerarOC, proveedores, reglas,
         </div>
 
         {/* Proveedor (editable) */}
-        <div style={{ background: B.navy, borderRadius: 10, padding: "12px 16px", marginBottom: 14 }}>
+        <div style={{
+          background: req.estado === "Aprobada" && (req.proveedor_id || req.proveedor_nombre) ? "rgba(34,197,94,0.08)" : B.navy,
+          border: req.estado === "Aprobada" && (req.proveedor_id || req.proveedor_nombre) ? `1px solid ${B.success}55` : "none",
+          borderRadius: 10, padding: "12px 16px", marginBottom: 14,
+        }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
             <span style={{ fontSize: 10, color: B.sand, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 700 }}>Proveedor</span>
             {!editingProv && <button onClick={() => setEditingProv(true)} style={{ background: "none", border: "none", color: B.sky, fontSize: 11, cursor: "pointer" }}>✏️ Cambiar</button>}
@@ -1815,7 +1819,27 @@ function DetailModal({ req, onClose, onUpdate, onGenerarOC, proveedores, reglas,
               <button onClick={guardarProveedor} style={BTN(B.success)}>Guardar</button>
             </div>
           ) : (
-            <div style={{ fontSize: 13, fontWeight: 700 }}>{req.proveedor_nombre || req.proveedor || "Sin asignar"}</div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
+              <div style={{ fontSize: 13, fontWeight: 700 }}>{req.proveedor_nombre || req.proveedor || "Sin asignar"}</div>
+              {req.estado === "Aprobada" && (
+                <button onClick={() => {
+                  if (!req.proveedor_id && !req.proveedor_nombre) {
+                    setEditingProv(true);
+                    return;
+                  }
+                  if (!confirm(`Generar OC para ${req.proveedor_nombre} con los ${(req.items || []).length} ítems?`)) return;
+                  onGenerarOC(req);
+                }}
+                  style={{
+                    background: (req.proveedor_id || req.proveedor_nombre) ? B.success : B.navyLight,
+                    color: (req.proveedor_id || req.proveedor_nombre) ? B.navy : "rgba(255,255,255,0.5)",
+                    border: "none", borderRadius: 8, padding: "9px 18px", fontSize: 13, fontWeight: 800, cursor: "pointer",
+                    whiteSpace: "nowrap",
+                  }}>
+                  🧾 Generar OC →
+                </button>
+              )}
+            </div>
           )}
         </div>
 
@@ -1900,9 +1924,6 @@ function DetailModal({ req, onClose, onUpdate, onGenerarOC, proveedores, reglas,
                 <button onClick={() => advance("Aprobada", "Aprobada", { aprobador_id: currentUser.id, aprobador_nombre: currentUser.nombre, aprobada_at: new Date().toISOString() })} style={BTN(B.success)}>✓ Aprobar</button>
                 <button onClick={() => advance("Rechazada", "Rechazada", { rechazada_motivo: comment })} style={BTN(B.danger)}>✕ Rechazar</button>
               </>
-            )}
-            {req.estado === "Aprobada" && (
-              <button onClick={() => onGenerarOC(req)} style={BTN(B.sand, B.navy)}>🧾 Generar OC</button>
             )}
             {(req.estado === "En Compra" || req.estado === "Recibida Parcial") && (
               <button onClick={() => alert("Ve al tab Recepciones para registrar")} style={BTN(B.sky, B.navy)}>📦 Recepción en tab Recepciones</button>
