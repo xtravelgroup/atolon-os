@@ -1121,12 +1121,14 @@ function InventarioTab({
                   </td>
                   <td style={{ padding: "8px 10px", textAlign: "center", width: 84 }}>
                     <div style={{ display: "flex", gap: 4, justifyContent: "center" }}>
-                      <button
-                        onClick={(e) => { e.stopPropagation(); setTransferModal({ item: i }); }}
-                        title="Transferir entre locaciones"
-                        style={{ width: 32, height: 32, borderRadius: 8, border: "none", background: B.sky + "22", color: B.sky, cursor: "pointer", fontSize: 14, lineHeight: 1 }}>
-                        🔄
-                      </button>
+                      {locFilter !== "todos" && (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); setTransferModal({ item: i }); }}
+                          title="Transferir entre locaciones"
+                          style={{ width: 32, height: 32, borderRadius: 8, border: "none", background: B.sky + "22", color: B.sky, cursor: "pointer", fontSize: 14, lineHeight: 1 }}>
+                          🔄
+                        </button>
+                      )}
                       {locFilter === "todos" && (
                         <button
                           onClick={(e) => { e.stopPropagation(); setCartModal({ item: i, cant: "1" }); }}
