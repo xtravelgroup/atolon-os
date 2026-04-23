@@ -885,6 +885,29 @@ function InventarioTab({
   // Estado del modal "Agregar a requisición"
   const [cartModal, setCartModal] = useState(null); // null | { item, cant }
 
+  // ── Multi-locación ──
+  const [locaciones, setLocaciones] = useState([]);
+  const [stockPorLoc, setStockPorLoc] = useState({}); // { "item_id|loc_id": cantidad }
+  const [locFilter, setLocFilter] = useState("todos"); // "todos" | loc_id
+  const [transferModal, setTransferModal] = useState(null); // null | { item }
+  const [newLocModal, setNewLocModal] = useState(false);
+
+  const loadLocaciones = useCallback(async () => {
+    if (!supabase) return;
+    const [lR, sR] = await Promise.all([
+      supabase.from("items_locaciones").select("*").eq("activa", true).order("orden"),
+      supabase.from("items_stock_locacion").select("item_id, locacion_id, cantidad"),
+    ]);
+    setLocaciones(lR.data || []);
+    const map = {};
+    (sR.data || []).forEach(s => { map[`${s.item_id}|${s.locacion_id}`] = Number(s.cantidad) || 0; });
+    setStockPorLoc(map);
+  }, []);
+  useEffect(() => { loadLocaciones(); }, [loadLocaciones]);
+
+  const stockEnLoc = (item_id, loc_id) => Number(stockPorLoc[`${item_id}|${loc_id}`]) || 0;
+  const stockTotalNuestro = (item_id) => locaciones.reduce((s, l) => s + stockEnLoc(item_id, l.id), 0);
+
   const filtered = useMemo(() => {
     let list = activos;
     if (invCatFilter !== "todos") list = list.filter(i => i.categoria === invCatFilter);
@@ -892,16 +915,18 @@ function InventarioTab({
       const s = invSearch.toLowerCase();
       list = list.filter(i => i.nombre?.toLowerCase().includes(s) || i.codigo?.toLowerCase().includes(s));
     }
-    if (invFilter === "con_stock") list = list.filter(i => Number(i.stock_actual || 0) > 0);
-    else if (invFilter === "bajo_min") list = list.filter(i => Number(i.stock_actual || 0) > 0 && Number(i.stock_minimo || 0) > 0 && Number(i.stock_actual) <= Number(i.stock_minimo));
-    else if (invFilter === "negativo") list = list.filter(i => Number(i.stock_actual || 0) < 0);
+    // Stock según locación seleccionada (Todas = suma de nuestros depósitos)
+    const stockDe = (i) => locFilter === "todos" ? stockTotalNuestro(i.id) : stockEnLoc(i.id, locFilter);
+    if (invFilter === "con_stock") list = list.filter(i => stockDe(i) > 0);
+    else if (invFilter === "bajo_min") list = list.filter(i => stockDe(i) > 0 && Number(i.stock_minimo || 0) > 0 && stockDe(i) <= Number(i.stock_minimo));
+    else if (invFilter === "negativo") list = list.filter(i => stockDe(i) < 0);
 
     list = [...list].sort((a, b) => {
       let va, vb;
       if (invSortBy === "valor") {
-        va = (Number(a.stock_actual) || 0) * (Number(a.precio_compra) || 0);
-        vb = (Number(b.stock_actual) || 0) * (Number(b.precio_compra) || 0);
-      } else if (invSortBy === "stock") { va = Number(a.stock_actual) || 0; vb = Number(b.stock_actual) || 0; }
+        va = stockDe(a) * (Number(a.precio_compra) || 0);
+        vb = stockDe(b) * (Number(b.precio_compra) || 0);
+      } else if (invSortBy === "stock") { va = stockDe(a); vb = stockDe(b); }
       else if (invSortBy === "nombre") { va = (a.nombre || "").toLowerCase(); vb = (b.nombre || "").toLowerCase(); }
       else if (invSortBy === "categoria") { va = (a.categoria || "").toLowerCase(); vb = (b.categoria || "").toLowerCase(); }
       if (va < vb) return invSortDir === "asc" ? -1 : 1;
@@ -965,6 +990,31 @@ function InventarioTab({
         ))}
       </div>
 
+      {/* Selector de locación */}
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 14, alignItems: "center", background: B.navyMid, padding: "10px 14px", borderRadius: 10, border: `1px solid ${B.navyLight}` }}>
+        <span style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", marginRight: 4 }}>📍 Locación:</span>
+        {[{ id: "todos", nombre: "Todas", icono: "🌐" }, ...locaciones].map(loc => {
+          const active = locFilter === loc.id;
+          return (
+            <button key={loc.id} onClick={() => setLocFilter(loc.id)}
+              style={{
+                padding: "7px 14px", borderRadius: 8, border: `1px solid ${active ? B.sky : B.navyLight}`,
+                background: active ? B.sky + "22" : "transparent",
+                color: active ? B.sky : "rgba(255,255,255,0.55)",
+                cursor: "pointer", fontSize: 12, fontWeight: 700,
+              }}>
+              {loc.icono} {loc.nombre}
+              {loc.es_principal && <span style={{ fontSize: 9, marginLeft: 4, color: active ? B.sky : "rgba(255,255,255,0.35)" }}>★ principal</span>}
+              {loc.es_ventas && <span style={{ fontSize: 9, marginLeft: 4, color: active ? B.success : "rgba(74,222,128,0.5)" }}>💰 ventas</span>}
+            </button>
+          );
+        })}
+        <button onClick={() => setNewLocModal(true)}
+          style={{ padding: "7px 12px", borderRadius: 8, border: `1px dashed ${B.sand}`, background: "transparent", color: B.sand, cursor: "pointer", fontSize: 11, fontWeight: 700 }}>
+          + Agregar locación
+        </button>
+      </div>
+
       {/* Filtros */}
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 14, alignItems: "center" }}>
         <input placeholder="🔍 Buscar ítem…" value={invSearch} onChange={e => setInvSearch(e.target.value)}
@@ -1026,10 +1076,16 @@ function InventarioTab({
             {filtered.length === 0 ? (
               <tr><td colSpan={8} style={{ padding: 40, textAlign: "center", color: "rgba(255,255,255,0.3)" }}>Sin ítems que mostrar</td></tr>
             ) : filtered.map(i => {
-              const stock = Number(i.stock_actual) || 0;
+              const stock = locFilter === "todos" ? stockTotalNuestro(i.id) : stockEnLoc(i.id, locFilter);
+              const loggroStock = Number(i.stock_actual) || 0;
+              const diff = locFilter === "todos" ? (stock - loggroStock) : 0;
               const min = Number(i.stock_minimo) || 0;
               const precio = Number(i.precio_compra) || 0;
               const valor = stock * precio;
+              // Desglose por locación cuando se ven "Todas"
+              const desglose = locFilter === "todos"
+                ? locaciones.map(loc => ({ loc, cant: stockEnLoc(i.id, loc.id) })).filter(x => x.cant !== 0)
+                : null;
               const color = stockColor(stock, min);
               const cc = catColorMap[i.categoria] || "#888";
               return (
@@ -1043,6 +1099,16 @@ function InventarioTab({
                   <td style={{ padding: "11px 14px", fontSize: 12, color: "rgba(255,255,255,0.5)" }}>{i.unidad || "—"}</td>
                   <td style={{ padding: "11px 14px", textAlign: "right", fontWeight: 700, fontFamily: "'Barlow Condensed', sans-serif", fontSize: 16, color }}>
                     {stock.toFixed(2)}
+                    {desglose && desglose.length > 0 && (
+                      <div style={{ fontSize: 9, fontFamily: "inherit", fontWeight: 500, color: "rgba(255,255,255,0.4)", marginTop: 2, display: "flex", gap: 6, justifyContent: "flex-end" }}>
+                        {desglose.map(d => <span key={d.loc.id}>{d.loc.icono}{d.cant.toFixed(0)}</span>)}
+                      </div>
+                    )}
+                    {locFilter === "todos" && Math.abs(diff) > 0.01 && (
+                      <div style={{ fontSize: 9, fontFamily: "inherit", fontWeight: 600, color: diff > 0 ? B.warning : B.danger, marginTop: 2 }} title="Diferencia vs Loggro">
+                        Δ Loggro: {diff > 0 ? "+" : ""}{diff.toFixed(1)}
+                      </div>
+                    )}
                   </td>
                   <td style={{ padding: "11px 14px", textAlign: "right", fontSize: 12, color: min > 0 ? "rgba(255,255,255,0.5)" : "rgba(255,255,255,0.2)" }}>
                     {min > 0 ? min.toFixed(0) : "—"}
@@ -1053,18 +1119,21 @@ function InventarioTab({
                   <td style={{ padding: "11px 14px", textAlign: "right", fontWeight: 700, color: valor > 0 ? B.sand : "rgba(255,255,255,0.2)", fontFamily: "'Barlow Condensed', sans-serif", fontSize: 15 }}>
                     {valor > 0 ? COP(valor) : "—"}
                   </td>
-                  <td style={{ padding: "8px 10px", textAlign: "center", width: 48 }}>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setCartModal({ item: i, cant: "1" });
-                      }}
-                      title="Agregar a requisición"
-                      style={{
-                        width: 32, height: 32, borderRadius: 8, border: "none",
-                        background: B.success + "22", color: B.success,
-                        cursor: "pointer", fontSize: 20, fontWeight: 800, lineHeight: 1,
-                      }}>+</button>
+                  <td style={{ padding: "8px 10px", textAlign: "center", width: 84 }}>
+                    <div style={{ display: "flex", gap: 4, justifyContent: "center" }}>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); setTransferModal({ item: i }); }}
+                        title="Transferir entre locaciones"
+                        style={{ width: 32, height: 32, borderRadius: 8, border: "none", background: B.sky + "22", color: B.sky, cursor: "pointer", fontSize: 14, lineHeight: 1 }}>
+                        🔄
+                      </button>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); setCartModal({ item: i, cant: "1" }); }}
+                        title="Agregar a requisición"
+                        style={{ width: 32, height: 32, borderRadius: 8, border: "none", background: B.success + "22", color: B.success, cursor: "pointer", fontSize: 20, fontWeight: 800, lineHeight: 1 }}>
+                        +
+                      </button>
+                    </div>
                   </td>
                 </tr>
               );
@@ -1078,8 +1147,101 @@ function InventarioTab({
       </div>
 
       <div style={{ marginTop: 12, fontSize: 11, color: "rgba(255,255,255,0.3)", textAlign: "center" }}>
-        Inventario sincronizado desde Loggro Restobar. Usa "🔄 Sync Loggro" arriba para actualizar.
+        Inventario sincronizado desde Loggro Restobar · Compras nuevas entran a Almacén · Ventas salen del Bar
       </div>
+
+      {/* ── Modal Transferencia entre locaciones ── */}
+      {transferModal && (() => {
+        const i = transferModal.item;
+        const [fromLoc, setFromLocRaw] = [transferModal.from || locaciones.find(l => l.es_principal)?.id || locaciones[0]?.id, (v) => setTransferModal(m => ({ ...m, from: v }))];
+        const [toLoc, setToLocRaw] = [transferModal.to || locaciones.find(l => l.es_ventas)?.id || locaciones[1]?.id, (v) => setTransferModal(m => ({ ...m, to: v }))];
+        const cant = transferModal.cant || "";
+        const cantNum = Number(cant) || 0;
+        const stockFrom = stockEnLoc(i.id, fromLoc);
+        const stockTo   = stockEnLoc(i.id, toLoc);
+        const excede = cantNum > stockFrom;
+        const confirmar = async () => {
+          if (!cantNum || cantNum <= 0) return alert("Cantidad inválida");
+          if (excede) return alert(`No hay suficiente en ${locaciones.find(l => l.id === fromLoc)?.nombre} (disponible: ${stockFrom})`);
+          if (fromLoc === toLoc) return alert("Selecciona locaciones distintas");
+          // Obtener email usuario
+          const { data: { session } } = await supabase.auth.getSession();
+          const email = session?.user?.email || "sistema";
+          // Upsert stock origen (resta)
+          await supabase.from("items_stock_locacion").upsert({
+            item_id: i.id, locacion_id: fromLoc,
+            cantidad: stockFrom - cantNum, updated_at: new Date().toISOString(),
+          }, { onConflict: "item_id,locacion_id" });
+          // Upsert stock destino (suma)
+          await supabase.from("items_stock_locacion").upsert({
+            item_id: i.id, locacion_id: toLoc,
+            cantidad: stockTo + cantNum, updated_at: new Date().toISOString(),
+          }, { onConflict: "item_id,locacion_id" });
+          // Registrar transferencia
+          await supabase.from("items_transferencias").insert({
+            id: `TR-${Date.now()}`, item_id: i.id,
+            from_locacion_id: fromLoc, to_locacion_id: toLoc,
+            cantidad: cantNum, motivo: transferModal.motivo || null, usuario_email: email,
+          });
+          await loadLocaciones();
+          setTransferModal(null);
+        };
+        return (
+          <div onClick={e => e.target === e.currentTarget && setTransferModal(null)}
+            style={{ position: "fixed", inset: 0, zIndex: 1200, background: "#00000088", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+            <div style={{ background: B.navyMid, borderRadius: 16, width: "100%", maxWidth: 480, padding: 28, border: `1px solid ${B.navyLight}` }}>
+              <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontSize: 22, fontWeight: 700, color: B.sand, marginBottom: 4 }}>🔄 Transferir stock</div>
+              <div style={{ fontSize: 13, color: "rgba(255,255,255,0.5)", marginBottom: 16 }}>
+                {i.nombre} <span style={{ color: "rgba(255,255,255,0.3)" }}>· {i.unidad}</span>
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", gap: 10, alignItems: "center", marginBottom: 14 }}>
+                <div>
+                  <label style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4, display: "block" }}>Desde</label>
+                  <select value={fromLoc} onChange={e => setFromLocRaw(e.target.value)} style={IS}>
+                    {locaciones.map(l => <option key={l.id} value={l.id}>{l.icono} {l.nombre} ({stockEnLoc(i.id, l.id).toFixed(0)})</option>)}
+                  </select>
+                </div>
+                <div style={{ fontSize: 22, color: B.sky, paddingTop: 20 }}>→</div>
+                <div>
+                  <label style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4, display: "block" }}>Hacia</label>
+                  <select value={toLoc} onChange={e => setToLocRaw(e.target.value)} style={IS}>
+                    {locaciones.map(l => <option key={l.id} value={l.id}>{l.icono} {l.nombre} ({stockEnLoc(i.id, l.id).toFixed(0)})</option>)}
+                  </select>
+                </div>
+              </div>
+
+              <div style={{ marginBottom: 14 }}>
+                <label style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4, display: "block" }}>Cantidad a transferir</label>
+                <input type="number" autoFocus value={cant}
+                  onChange={e => setTransferModal(m => ({ ...m, cant: e.target.value }))}
+                  style={{ ...IS, textAlign: "center", fontSize: 20, fontWeight: 800, fontFamily: "'Barlow Condensed', sans-serif" }} />
+                {excede && <div style={{ fontSize: 11, color: B.danger, marginTop: 4 }}>⚠️ No hay suficiente stock en origen ({stockFrom})</div>}
+              </div>
+
+              <div style={{ marginBottom: 18 }}>
+                <label style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4, display: "block" }}>Motivo (opcional)</label>
+                <input value={transferModal.motivo || ""} onChange={e => setTransferModal(m => ({ ...m, motivo: e.target.value }))}
+                  placeholder="Ej: Reposición bar" style={IS} />
+              </div>
+
+              <div style={{ display: "flex", gap: 10 }}>
+                <button onClick={() => setTransferModal(null)}
+                  style={{ flex: 1, padding: "11px", borderRadius: 8, border: `1px solid ${B.navyLight}`, background: "transparent", color: "rgba(255,255,255,0.5)", cursor: "pointer", fontWeight: 600 }}>Cancelar</button>
+                <button onClick={confirmar} disabled={!cantNum || excede || fromLoc === toLoc}
+                  style={{ flex: 2, padding: "11px", borderRadius: 8, border: "none", background: (!cantNum || excede || fromLoc === toLoc) ? B.navyLight : B.sky, color: B.navy, cursor: (!cantNum || excede) ? "default" : "pointer", fontWeight: 700, fontSize: 14 }}>
+                  ✓ Transferir
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ── Modal Nueva Locación ── */}
+      {newLocModal && (
+        <NewLocacionModal onClose={() => setNewLocModal(false)} onSaved={() => { setNewLocModal(false); loadLocaciones(); }} />
+      )}
 
       {/* ── Modal "Agregar a requisición" ── */}
       {cartModal && (() => {
@@ -1191,6 +1353,61 @@ function InventarioTab({
           </div>
         );
       })()}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// MODAL NUEVA LOCACIÓN
+// ═══════════════════════════════════════════════════════════════════════════
+function NewLocacionModal({ onClose, onSaved }) {
+  const [form, setForm] = useState({ nombre: "", descripcion: "", icono: "📦" });
+  const [saving, setSaving] = useState(false);
+  const save = async () => {
+    if (!form.nombre.trim()) return alert("Nombre obligatorio");
+    setSaving(true);
+    const id = `LOC-${form.nombre.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 12)}-${Date.now().toString().slice(-4)}`;
+    const { error } = await supabase.from("items_locaciones").insert({
+      id, nombre: form.nombre.trim(), descripcion: form.descripcion.trim() || null,
+      icono: form.icono || "📦", es_principal: false, es_ventas: false, activa: true, orden: 99,
+    });
+    setSaving(false);
+    if (error) return alert("Error: " + error.message);
+    onSaved();
+  };
+  const ICONOS = ["📦","🍸","🏪","🍽️","🧊","🧴","🧹","🚪","⚓","🏝️","🍷","🥂","🍺","🎉"];
+  return (
+    <div onClick={e => e.target === e.currentTarget && onClose()}
+      style={{ position: "fixed", inset: 0, zIndex: 1200, background: "#00000088", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+      <div style={{ background: B.navyMid, borderRadius: 16, width: "100%", maxWidth: 440, padding: 28, border: `1px solid ${B.navyLight}` }}>
+        <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontSize: 22, fontWeight: 700, color: B.sand, marginBottom: 20 }}>📍 Nueva locación</div>
+        <div style={{ marginBottom: 14 }}>
+          <label style={LS}>Nombre *</label>
+          <input autoFocus value={form.nombre} onChange={e => setForm(f => ({ ...f, nombre: e.target.value }))} placeholder="Ej: Bodega Playa" style={IS} />
+        </div>
+        <div style={{ marginBottom: 14 }}>
+          <label style={LS}>Descripción (opcional)</label>
+          <input value={form.descripcion} onChange={e => setForm(f => ({ ...f, descripcion: e.target.value }))} placeholder="Ubicación, uso..." style={IS} />
+        </div>
+        <div style={{ marginBottom: 22 }}>
+          <label style={LS}>Ícono</label>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            {ICONOS.map(ic => (
+              <button key={ic} onClick={() => setForm(f => ({ ...f, icono: ic }))}
+                style={{ width: 40, height: 40, borderRadius: 8, fontSize: 20, cursor: "pointer",
+                  border: `1px solid ${form.icono === ic ? B.sky : B.navyLight}`,
+                  background: form.icono === ic ? B.sky + "22" : B.navy }}>{ic}</button>
+            ))}
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: 10 }}>
+          <button onClick={onClose} style={{ flex: 1, padding: "11px", borderRadius: 8, border: `1px solid ${B.navyLight}`, background: "transparent", color: "rgba(255,255,255,0.5)", cursor: "pointer", fontWeight: 600 }}>Cancelar</button>
+          <button onClick={save} disabled={saving || !form.nombre.trim()}
+            style={{ flex: 2, padding: "11px", borderRadius: 8, border: "none", background: saving || !form.nombre.trim() ? B.navyLight : B.success, color: B.navy, cursor: "pointer", fontWeight: 700, fontSize: 14 }}>
+            {saving ? "Creando…" : "✓ Crear locación"}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
