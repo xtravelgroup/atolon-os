@@ -11,6 +11,7 @@ import DetailModal from "./contratistas/admin/DetailModal";
 
 // Pipeline: contratistas en proceso (no aprobados aún ni vencidos)
 const PIPELINE_COLUMNS = [
+  { k: "borrador",    label: "Diligenciando", color: "rgba(255,255,255,0.55)", accent: "rgba(255,255,255,0.04)" },
   { k: "radicado",    label: "Radicados",    color: B.sky,     accent: "rgba(142,202,230,0.08)" },
   { k: "en_revision", label: "En revisión",  color: B.warning, accent: "rgba(232,160,32,0.08)"  },
   { k: "devuelto",    label: "Devueltos",    color: "#F97316", accent: "rgba(249,115,22,0.08)"  },
@@ -95,8 +96,8 @@ export default function ContratistasAdmin() {
     setLoading(true);
     const { data, error } = await supabase
       .from("contratistas")
-      .select("id, radicado, tipo, estado, nombre_display, contacto_principal_email, contacto_principal_cel, fecha_inicio, fecha_fin, submitted_at, created_at, num_trabajadores, emp_fecha_pila")
-      .order("submitted_at", { ascending: false, nullsFirst: false });
+      .select("id, radicado, tipo, estado, nombre_display, contacto_principal_email, contacto_principal_cel, fecha_inicio, fecha_fin, submitted_at, created_at, updated_at, num_trabajadores, emp_fecha_pila, nat_nombre, nat_cedula, nat_celular, nat_correo, nat_eps, nat_arl, nat_emerg_nombre, nat_emerg_tel, emp_razon_social, emp_nit, emp_rl_nombre, emp_rl_cedula, emp_rl_correo, emp_arl, emp_sst_nombre, servicio_desc, firma_nombre")
+      .order("updated_at", { ascending: false, nullsFirst: false });
     if (error) console.error(error);
     const list = data || [];
     setRows(list);
