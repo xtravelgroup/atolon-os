@@ -2155,16 +2155,35 @@ function AsignarOCModal({ items, proveedores, ordenes, reqs, currentUser, onClos
     setSaving(true);
     const prov = proveedores.find(p => p.id === provId);
 
-    // Items del payload
-    const ocItems = items.map(it => ({
-      id: it.item_id,
-      item: it.nombre,
-      cant: it.cant,
-      unidad: it.unidad,
-      precioU: Math.round(it.precioU),
-      subtotal: Math.round(it.subtotal),
-      req_id: it.req_id,
-    }));
+    // Consolidar items del mismo producto en una sola línea (suma cantidades)
+    const consolidar = (lista) => {
+      const map = new Map();
+      for (const it of lista) {
+        const nombre = (it.nombre || it.item || "").trim();
+        const unidad = (it.unidad || "").toLowerCase();
+        const key = `${nombre.toLowerCase()}|${unidad}`;
+        const reqIds = it.req_id ? [it.req_id] : (it.req_ids || []);
+        if (map.has(key)) {
+          const ex = map.get(key);
+          ex.cant = Number(ex.cant) + (Number(it.cant) || 0);
+          ex.subtotal = Math.round(ex.cant * Number(ex.precioU));
+          ex.req_ids = [...new Set([...(ex.req_ids || []), ...reqIds])];
+        } else {
+          map.set(key, {
+            id: it.item_id || it.id,
+            item: nombre,
+            cant: Number(it.cant) || 0,
+            unidad: it.unidad,
+            precioU: Math.round(Number(it.precioU) || 0),
+            subtotal: Math.round(Number(it.subtotal) || (Number(it.cant) || 0) * (Number(it.precioU) || 0)),
+            req_ids: reqIds,
+          });
+        }
+      }
+      return Array.from(map.values());
+    };
+
+    const ocItems = consolidar(items);
 
     let ocIdFinal;
     let codigo;
@@ -2190,12 +2209,12 @@ function AsignarOCModal({ items, proveedores, ordenes, reqs, currentUser, onClos
       if (error) { setSaving(false); return alert("Error creando OC: " + error.message); }
       ocIdFinal = data.id;
     } else {
-      // Agregar a OC existente
+      // Agregar a OC existente — consolidar con items ya presentes
       const oc = ordenes.find(o => o.id === ocId);
-      const nuevoItems = [...(oc.items || []), ...ocItems];
-      const subtotal = nuevoItems.reduce((s, it) => s + (Number(it.subtotal) || 0), 0);
+      const merged = consolidar([...(oc.items || []), ...items]);
+      const subtotal = merged.reduce((s, it) => s + (Number(it.subtotal) || 0), 0);
       const { error } = await supabase.from("ordenes_compra").update({
-        items: nuevoItems,
+        items: merged,
         subtotal,
         total: subtotal,
       }).eq("id", ocId);
