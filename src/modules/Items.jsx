@@ -144,6 +144,7 @@ export default function Items() {
       activo: true,
       updated_at: new Date().toISOString(),
     };
+    if (form.loggro_id !== undefined) row.loggro_id = form.loggro_id;
 
     let itemId;
     if (isNew) {
@@ -603,7 +604,12 @@ function ItemModal({ item, proveedoresAll, existingProvs, catNames, onSave, onCl
     categoria: item?.categoria || "Alimentos",
     unidad: item?.unidad || "Unidades",
     foto_url: item?.foto_url || "",
+    loggro_id: item?.loggro_id || null,
+    precio_compra: item?.precio_compra || 0,
   });
+  const [loggroSyncOpen, setLoggroSyncOpen] = useState(false);
+  const [loggroSyncing, setLoggroSyncing] = useState(false);
+  const [loggroMsg, setLoggroMsg] = useState(null);
   const [provs, setProvs] = useState(
     existingProvs.length > 0
       ? existingProvs.map(p => ({ ...p }))
@@ -736,12 +742,90 @@ function ItemModal({ item, proveedoresAll, existingProvs, catNames, onSave, onCl
           )}
         </div>
 
+        {/* ── Enlace con Loggro Restobar ── */}
+        <div style={{ background: "rgba(34,197,94,0.06)", border: "1px solid rgba(34,197,94,0.25)", borderRadius: 10, padding: "12px 14px", marginTop: 16 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: "#22c55e" }}>🔗 Loggro Restobar</div>
+              {form.loggro_id ? (
+                <div style={{ fontSize: 11, color: "rgba(255,255,255,0.55)", marginTop: 3, fontFamily: "monospace" }}>
+                  ✓ Enlazado: <strong>{form.loggro_id.slice(-10)}</strong>
+                </div>
+              ) : (
+                <div style={{ fontSize: 11, color: "rgba(255,255,255,0.45)", marginTop: 3 }}>
+                  No enlazado — Crea el ingrediente en Loggro para sincronizar
+                </div>
+              )}
+              {loggroMsg && (
+                <div style={{ fontSize: 11, color: loggroMsg.type === "ok" ? "#4ade80" : "#fca5a5", marginTop: 4 }}>
+                  {loggroMsg.text}
+                </div>
+              )}
+            </div>
+            {form.loggro_id ? (
+              <div style={{ display: "flex", gap: 6 }}>
+                <button type="button" disabled={loggroSyncing} onClick={async () => {
+                  setLoggroSyncing(true);
+                  setLoggroMsg(null);
+                  try {
+                    const URL = import.meta.env.VITE_SUPABASE_URL;
+                    const KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
+                    const res = await fetch(`${URL}/functions/v1/loggro-sync/update-ingredient`, {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json", apikey: KEY, Authorization: `Bearer ${KEY}` },
+                      body: JSON.stringify({
+                        loggro_id: form.loggro_id,
+                        nombre: form.nombre,
+                        descripcion: form.descripcion,
+                        codigo: form.codigo,
+                      }),
+                    });
+                    const d = await res.json();
+                    setLoggroMsg(d.ok ? { type: "ok", text: "✓ Actualizado en Loggro" } : { type: "err", text: d.error || "Error" });
+                  } catch (e) { setLoggroMsg({ type: "err", text: e.message }); }
+                  setLoggroSyncing(false);
+                }}
+                  style={{ background: "rgba(34,197,94,0.2)", color: "#22c55e", border: "1px solid #22c55e55", borderRadius: 8, padding: "7px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+                  {loggroSyncing ? "⏳" : "🔄 Sincronizar"}
+                </button>
+                <button type="button" onClick={() => { if (confirm("¿Desvincular de Loggro? El producto seguirá existiendo en Loggro, pero no estará enlazado.")) set("loggro_id", null); }}
+                  style={{ background: "none", color: "rgba(255,255,255,0.4)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 8, padding: "7px 10px", fontSize: 11, cursor: "pointer" }}>
+                  🔗✕
+                </button>
+              </div>
+            ) : (
+              <button type="button" onClick={() => {
+                if (!form.nombre.trim()) return alert("Guarda primero el producto con nombre");
+                setLoggroSyncOpen(true);
+              }}
+                style={{ background: "#22c55e", color: "#042818", border: "none", borderRadius: 8, padding: "8px 14px", fontSize: 12, fontWeight: 800, cursor: "pointer", whiteSpace: "nowrap" }}>
+                📤 Enviar a Loggro
+              </button>
+            )}
+          </div>
+        </div>
+
         {/* Actions */}
-        <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 16 }}>
           <button onClick={onClose} style={BTN(B.navyLight, "rgba(255,255,255,0.5)")}>Cancelar</button>
           <button onClick={handleSave} style={BTN(B.sky, B.navy)}>💾 Guardar</button>
         </div>
       </div>
+
+      {/* Modal: seleccionar categoría de Loggro y crear */}
+      {loggroSyncOpen && (
+        <LoggroCategoriaPicker
+          nombre={form.nombre}
+          categoriaAtolon={form.categoria}
+          onClose={() => setLoggroSyncOpen(false)}
+          onCreated={(loggroId) => {
+            set("loggro_id", loggroId);
+            setLoggroSyncOpen(false);
+            setLoggroMsg({ type: "ok", text: "✓ Creado en Loggro. Guarda el producto para vincularlo." });
+          }}
+          form={form}
+        />
+      )}
 
       {/* Scanner para capturar código de barras al input */}
       {scanForCode && <ItemScannerModal onClose={() => setScanForCode(false)} onCode={(c) => { set("codigo", c); setScanForCode(false); }} />}
@@ -2011,6 +2095,123 @@ function BulkBarcodeSearchModal({ items, onClose, onDone }) {
             </button>
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// LOGGRO CATEGORIA PICKER — selector para enviar ítem a Loggro como ingrediente
+// ═══════════════════════════════════════════════════════════════════════════
+function LoggroCategoriaPicker({ nombre, categoriaAtolon, form, onClose, onCreated }) {
+  const [cats, setCats] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [selected, setSelected] = useState(null);
+  const [search, setSearch] = useState("");
+  const [creating, setCreating] = useState(false);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    const URL = import.meta.env.VITE_SUPABASE_URL;
+    const KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
+    fetch(`${URL}/functions/v1/loggro-sync/raw?path=${encodeURIComponent("/categories")}`, {
+      headers: { apikey: KEY, Authorization: `Bearer ${KEY}` },
+    })
+      .then(r => r.json())
+      .then(d => {
+        const arr = Array.isArray(d) ? d : (d?.body || []);
+        setCats(arr.filter(c => !c.deleted && c.isActive !== false).sort((a, b) => (a.name || "").localeCompare(b.name || "")));
+        // Auto-match: si Atolón tiene categoria que coincide con una de Loggro
+        const match = arr.find(c => (c.name || "").toLowerCase() === (categoriaAtolon || "").toLowerCase());
+        if (match) setSelected(match._id);
+        setLoading(false);
+      })
+      .catch(() => setLoading(false));
+  }, [categoriaAtolon]);
+
+  const filtered = useMemo(() => {
+    if (!search) return cats;
+    const s = search.toLowerCase();
+    return cats.filter(c => (c.name || "").toLowerCase().includes(s));
+  }, [cats, search]);
+
+  const crear = async () => {
+    if (!selected) return alert("Elige una categoría de Loggro");
+    setCreating(true);
+    setError(null);
+    try {
+      const URL = import.meta.env.VITE_SUPABASE_URL;
+      const KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
+      const res = await fetch(`${URL}/functions/v1/loggro-sync/create-ingredient`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", apikey: KEY, Authorization: `Bearer ${KEY}` },
+        body: JSON.stringify({
+          nombre,
+          category_id: selected,
+          descripcion: form?.descripcion || "",
+          codigo: form?.codigo || "",
+          costo: Number(form?.precio_compra) || 0,
+        }),
+      });
+      const d = await res.json();
+      if (!d.ok) throw new Error(d.error || "Error Loggro");
+      onCreated(d.loggro_id);
+    } catch (e) {
+      setError(e.message);
+    }
+    setCreating(false);
+  };
+
+  return (
+    <div onClick={e => e.target === e.currentTarget && onClose()}
+      style={{ position: "fixed", inset: 0, zIndex: 2100, background: "rgba(0,0,0,0.8)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+      <div style={{ background: B.navyMid, borderRadius: 16, width: "100%", maxWidth: 480, maxHeight: "85vh", display: "flex", flexDirection: "column", border: `1px solid ${B.navyLight}` }}>
+        <div style={{ padding: "18px 22px", borderBottom: `1px solid ${B.navyLight}` }}>
+          <div style={{ fontSize: 17, fontWeight: 800, color: "#22c55e", marginBottom: 4 }}>📤 Enviar a Loggro</div>
+          <div style={{ fontSize: 12, color: "rgba(255,255,255,0.55)" }}>
+            Crea <strong style={{ color: B.white }}>"{nombre}"</strong> como ingrediente en Loggro Restobar
+          </div>
+          <input value={search} onChange={e => setSearch(e.target.value)}
+            placeholder="🔍 Buscar categoría en Loggro..."
+            style={{ ...IS, marginTop: 12 }} />
+        </div>
+        <div style={{ flex: 1, overflowY: "auto", padding: "8px 14px" }}>
+          {loading ? (
+            <div style={{ padding: 30, textAlign: "center", color: "rgba(255,255,255,0.4)" }}>Cargando categorías…</div>
+          ) : filtered.length === 0 ? (
+            <div style={{ padding: 30, textAlign: "center", color: "rgba(255,255,255,0.4)" }}>Sin resultados</div>
+          ) : (
+            filtered.map(c => (
+              <div key={c._id} onClick={() => setSelected(c._id)}
+                style={{
+                  padding: "10px 12px", marginBottom: 4, borderRadius: 8, cursor: "pointer",
+                  background: selected === c._id ? "#22c55e22" : "transparent",
+                  border: `1px solid ${selected === c._id ? "#22c55e" : "transparent"}`,
+                  display: "flex", alignItems: "center", justifyContent: "space-between",
+                }}>
+                <span style={{ color: selected === c._id ? "#22c55e" : B.white, fontSize: 13, fontWeight: selected === c._id ? 700 : 500 }}>
+                  {c.name}
+                </span>
+                {selected === c._id && <span style={{ color: "#22c55e" }}>✓</span>}
+              </div>
+            ))
+          )}
+        </div>
+        {error && (
+          <div style={{ padding: "10px 22px", fontSize: 12, color: "#fca5a5", background: "#ef444415", borderTop: `1px solid ${B.navyLight}` }}>
+            ⚠ {error}
+          </div>
+        )}
+        <div style={{ padding: "14px 22px", borderTop: `1px solid ${B.navyLight}`, display: "flex", gap: 10 }}>
+          <button onClick={onClose} disabled={creating}
+            style={{ flex: 1, padding: "11px", borderRadius: 8, border: `1px solid ${B.navyLight}`, background: "transparent", color: "rgba(255,255,255,0.5)", cursor: "pointer", fontWeight: 600 }}>
+            Cancelar
+          </button>
+          <button onClick={crear} disabled={creating || !selected}
+            style={{ flex: 2, padding: "11px", borderRadius: 8, border: "none", background: (creating || !selected) ? B.navyLight : "#22c55e", color: "#042818", cursor: (creating || !selected) ? "default" : "pointer", fontWeight: 800, fontSize: 13 }}>
+            {creating ? "Creando en Loggro..." : "✓ Crear en Loggro"}
+          </button>
+        </div>
       </div>
     </div>
   );
