@@ -779,6 +779,34 @@ serve(async (req) => {
       });
     }
 
+    // GET /loggro-sync/providers — listar proveedores de Restobar
+    // Prueba varios paths comunes y devuelve el que funcione.
+    if (req.method === "GET" && path === "/providers") {
+      const paths = ["/providers", "/suppliers", "/proveedores", "/purchaseOrders/providers", "/inventory/providers"];
+      const intentos: any[] = [];
+      let exito: any = null;
+      for (const p of paths) {
+        try {
+          const r = await loggroRaw("GET", p);
+          const entry: any = { path: p, status: r.status };
+          if (r.ok) {
+            const arr = Array.isArray(r.body) ? r.body : (r.body?.data || r.body?.items || r.body?.results || []);
+            entry.count = Array.isArray(arr) ? arr.length : undefined;
+            entry.sample = Array.isArray(arr) ? arr.slice(0, 3) : r.body;
+            if (!exito && Array.isArray(arr)) exito = { path: p, providers: arr };
+          }
+          intentos.push(entry);
+          if (exito) break;
+        } catch (e) {
+          intentos.push({ path: p, status: -1, error: String(e).slice(0, 200) });
+        }
+      }
+      if (exito) {
+        return json({ ok: true, path_encontrado: exito.path, total: exito.providers.length, providers: exito.providers, intentos });
+      }
+      return json({ ok: false, error: "Ningún path respondió 200", intentos }, 404);
+    }
+
     // POST /loggro-sync/create-inventory-movement
     // Body (lo que Atolón OS envía):
     //   {
