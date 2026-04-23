@@ -67,23 +67,14 @@ export default function HacerInventario() {
       list = list.filter(i => i.nombre?.toLowerCase().includes(s) || i.codigo?.toLowerCase().includes(s));
     }
     if (filterModo === "pendientes") list = list.filter(i => conteos[i.id] === undefined || conteos[i.id] === "");
-    else if (filterModo === "con_diferencia") list = list.filter(i => {
-      if (conteos[i.id] === undefined || conteos[i.id] === "") return false;
-      return Number(conteos[i.id]) !== stockEn(i.id);
-    });
+    else if (filterModo === "contados") list = list.filter(i => conteos[i.id] !== undefined && conteos[i.id] !== "");
     return list;
-  }, [items, search, catFilter, filterModo, conteos, stockPorLoc, locId]); // eslint-disable-line
+  }, [items, search, catFilter, filterModo, conteos]);
 
   const stats = useMemo(() => {
-    let contados = 0, diferencias = 0;
-    items.forEach(i => {
-      if (conteos[i.id] !== undefined && conteos[i.id] !== "") {
-        contados++;
-        if (Number(conteos[i.id]) !== stockEn(i.id)) diferencias++;
-      }
-    });
-    return { contados, pendientes: items.length - contados, diferencias };
-  }, [conteos, items, stockPorLoc, locId]); // eslint-disable-line
+    const contados = items.filter(i => conteos[i.id] !== undefined && conteos[i.id] !== "").length;
+    return { contados, pendientes: items.length - contados };
+  }, [conteos, items]);
 
   const locActual = locaciones.find(l => l.id === locId);
 
@@ -216,7 +207,7 @@ export default function HacerInventario() {
           </div>
 
           {/* KPIs */}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10, marginBottom: 16 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10, marginBottom: 16 }}>
             <div style={{ background: B.navyMid, borderRadius: 10, padding: "12px 14px", borderLeft: `4px solid ${B.sky}` }}>
               <div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Total ítems</div>
               <div style={{ fontSize: 22, fontWeight: 900, color: B.white, fontFamily: "'Barlow Condensed', sans-serif" }}>{items.length}</div>
@@ -228,10 +219,6 @@ export default function HacerInventario() {
             <div style={{ background: B.navyMid, borderRadius: 10, padding: "12px 14px", borderLeft: `4px solid ${B.warning}` }}>
               <div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Pendientes</div>
               <div style={{ fontSize: 22, fontWeight: 900, color: B.warning, fontFamily: "'Barlow Condensed', sans-serif" }}>{stats.pendientes}</div>
-            </div>
-            <div style={{ background: B.navyMid, borderRadius: 10, padding: "12px 14px", borderLeft: `4px solid ${B.danger}` }}>
-              <div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Con diferencia</div>
-              <div style={{ fontSize: 22, fontWeight: 900, color: stats.diferencias > 0 ? B.danger : B.success, fontFamily: "'Barlow Condensed', sans-serif" }}>{stats.diferencias}</div>
             </div>
           </div>
 
@@ -247,7 +234,7 @@ export default function HacerInventario() {
               {[
                 { k: "todos", l: "Todos" },
                 { k: "pendientes", l: "Pendientes" },
-                { k: "con_diferencia", l: "Con Δ" },
+                { k: "contados", l: "Contados" },
               ].map(f => (
                 <button key={f.k} onClick={() => setFilterModo(f.k)}
                   style={{ padding: "9px 14px", fontSize: 11, fontWeight: 700, cursor: "pointer", border: "none", background: filterModo === f.k ? B.sky : B.navyMid, color: filterModo === f.k ? B.navy : "rgba(255,255,255,0.6)" }}>
@@ -259,8 +246,8 @@ export default function HacerInventario() {
 
           {/* Tabla de ítems */}
           <div style={{ background: B.navyMid, borderRadius: 12, overflow: "hidden", border: `1px solid ${B.navyLight}`, marginBottom: 16 }}>
-            <div style={{ display: "grid", gridTemplateColumns: "2.5fr 1fr 0.7fr 1fr 1fr 1fr", padding: "10px 16px", borderBottom: `2px solid ${B.navyLight}`, gap: 8 }}>
-              {["Ítem", "Categoría", "Unidad", "Sistema", "Contado", "Δ"].map(h => (
+            <div style={{ display: "grid", gridTemplateColumns: "3fr 1.2fr 0.8fr 1.2fr", padding: "10px 16px", borderBottom: `2px solid ${B.navyLight}`, gap: 8 }}>
+              {["Ítem", "Categoría", "Unidad", "Cantidad contada"].map(h => (
                 <div key={h} style={{ fontSize: 10, fontWeight: 700, color: B.sand, textTransform: "uppercase", letterSpacing: "0.08em" }}>{h}</div>
               ))}
             </div>
@@ -269,16 +256,13 @@ export default function HacerInventario() {
                 No hay ítems que coincidan con el filtro.
               </div>
             ) : filtered.map((i, idx) => {
-              const sistema = stockEn(i.id);
               const contadoStr = conteos[i.id] ?? "";
-              const contado = Number(contadoStr);
-              const diff = contadoStr !== "" ? contado - sistema : null;
-              const diffColor = diff === null ? "rgba(255,255,255,0.2)" : diff === 0 ? B.success : diff > 0 ? B.warning : B.danger;
+              const yaContado = contadoStr !== "";
               return (
                 <div key={i.id} style={{
-                  display: "grid", gridTemplateColumns: "2.5fr 1fr 0.7fr 1fr 1fr 1fr", padding: "9px 16px", gap: 8, alignItems: "center",
+                  display: "grid", gridTemplateColumns: "3fr 1.2fr 0.8fr 1.2fr", padding: "9px 16px", gap: 8, alignItems: "center",
                   borderBottom: idx < filtered.length - 1 ? `1px solid ${B.navyLight}` : "none",
-                  background: contadoStr !== "" ? (diff === 0 ? "rgba(74,222,128,0.04)" : diff !== null ? "rgba(251,191,36,0.04)" : "transparent") : "transparent",
+                  background: yaContado ? "rgba(74,222,128,0.04)" : "transparent",
                 }}>
                   <div>
                     <div style={{ fontSize: 13, fontWeight: 600, color: B.white }}>{i.nombre}</div>
@@ -286,20 +270,14 @@ export default function HacerInventario() {
                   </div>
                   <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)" }}>{i.categoria || "—"}</div>
                   <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)" }}>{i.unidad || "—"}</div>
-                  <div style={{ fontSize: 13, fontWeight: 700, color: "rgba(255,255,255,0.7)", fontFamily: "'Barlow Condensed', sans-serif" }}>
-                    {sistema.toFixed(2)}
-                  </div>
                   <div>
                     <input
                       type="number"
                       value={contadoStr}
                       onChange={e => setConteos(c => ({ ...c, [i.id]: e.target.value }))}
-                      placeholder={sistema.toFixed(0)}
-                      style={{ ...IS, padding: "6px 10px", textAlign: "right", fontSize: 14, fontWeight: 700, fontFamily: "'Barlow Condensed', sans-serif" }}
+                      placeholder="Contar…"
+                      style={{ ...IS, padding: "6px 10px", textAlign: "right", fontSize: 14, fontWeight: 700, fontFamily: "'Barlow Condensed', sans-serif", borderColor: yaContado ? B.success + "55" : B.navyLight }}
                     />
-                  </div>
-                  <div style={{ fontSize: 13, fontWeight: 700, color: diffColor, fontFamily: "'Barlow Condensed', sans-serif", textAlign: "right" }}>
-                    {diff === null ? "—" : (diff >= 0 ? "+" : "") + diff.toFixed(2)}
                   </div>
                 </div>
               );
@@ -314,7 +292,7 @@ export default function HacerInventario() {
               style={{ ...IS, resize: "vertical", marginBottom: 14 }} />
             <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
               <div style={{ flex: 1, fontSize: 12, color: "rgba(255,255,255,0.5)" }}>
-                {stats.contados} de {items.length} contados · {stats.diferencias} con diferencia
+                {stats.contados} de {items.length} contados
               </div>
               <button onClick={guardar} disabled={saving || stats.contados === 0}
                 style={{
