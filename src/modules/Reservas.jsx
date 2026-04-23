@@ -126,6 +126,130 @@ function DepartureCard({ salida, paxCount, extraCap = 0 }) {
   );
 }
 
+// ── Facturación Electrónica (Colombia / DIAN) ────────────────────────────────
+const FE_TIPO_DOC_NATURAL = ["CC", "CE", "Pasaporte", "TI", "RC", "PEP"];
+const FE_TIPO_DOC_JURIDICA = ["NIT"];
+const FE_REGIMENES = [
+  { key: "no_responsable_iva", label: "No responsable de IVA" },
+  { key: "responsable_iva",    label: "Responsable de IVA" },
+  { key: "gran_contribuyente", label: "Gran contribuyente" },
+  { key: "simple",             label: "Régimen simple" },
+];
+
+function FacturaElectronicaForm({ form, set, editing = true }) {
+  const IS_LOCAL = {
+    width: "100%", padding: "9px 12px", borderRadius: 8,
+    background: B.navy, border: `1px solid rgba(255,255,255,0.1)`,
+    color: "#fff", fontSize: 13, outline: "none",
+    boxSizing: "border-box", fontFamily: "inherit",
+  };
+  const LS_LOCAL = { fontSize: 11, color: "rgba(255,255,255,0.5)", display: "block", marginBottom: 5, textTransform: "uppercase", letterSpacing: "0.06em" };
+
+  const esJuridica = form.fe_tipo_persona === "juridica";
+  const tiposDoc = esJuridica ? FE_TIPO_DOC_JURIDICA : FE_TIPO_DOC_NATURAL;
+
+  return (
+    <div style={{ background: "rgba(251,191,36,0.06)", border: "1px solid rgba(251,191,36,0.2)", borderRadius: 12, padding: "16px 18px", marginTop: 12 }}>
+      <div style={{ fontSize: 11, color: "#fbbf24", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 12 }}>
+        📄 Datos para Facturación Electrónica
+      </div>
+      {!editing ? (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 8, fontSize: 12, color: "rgba(255,255,255,0.7)" }}>
+          <div><span style={{ color: "rgba(255,255,255,0.4)" }}>Tipo: </span>{form.fe_tipo_persona === "juridica" ? "Jurídica" : "Natural"}</div>
+          <div><span style={{ color: "rgba(255,255,255,0.4)" }}>{form.fe_tipo_documento}: </span>{form.fe_numero_documento}{form.fe_dv && "-" + form.fe_dv}</div>
+          <div style={{ gridColumn: "1 / -1" }}><span style={{ color: "rgba(255,255,255,0.4)" }}>Razón social: </span>{form.fe_razon_social || `${form.fe_nombres} ${form.fe_apellidos}`.trim()}</div>
+          <div><span style={{ color: "rgba(255,255,255,0.4)" }}>Email: </span>{form.fe_email}</div>
+          <div><span style={{ color: "rgba(255,255,255,0.4)" }}>Tel: </span>{form.fe_telefono}</div>
+          <div style={{ gridColumn: "1 / -1" }}><span style={{ color: "rgba(255,255,255,0.4)" }}>Dirección: </span>{form.fe_direccion}, {form.fe_ciudad}, {form.fe_departamento}, {form.fe_pais}</div>
+          <div><span style={{ color: "rgba(255,255,255,0.4)" }}>Régimen: </span>{FE_REGIMENES.find(r => r.key === form.fe_regimen)?.label || "—"}</div>
+          {form.fe_estado && form.fe_estado !== "pendiente" && (
+            <div><span style={{ color: "rgba(255,255,255,0.4)" }}>Estado factura: </span><strong style={{ color: form.fe_estado === "emitida" ? "#4ade80" : "#f87171" }}>{form.fe_estado}</strong></div>
+          )}
+        </div>
+      ) : (
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+          <div>
+            <label style={LS_LOCAL}>Tipo de persona *</label>
+            <select style={IS_LOCAL} value={form.fe_tipo_persona} onChange={e => {
+              set("fe_tipo_persona", e.target.value);
+              set("fe_tipo_documento", e.target.value === "juridica" ? "NIT" : "CC");
+            }}>
+              <option value="natural">Natural</option>
+              <option value="juridica">Jurídica</option>
+            </select>
+          </div>
+          <div>
+            <label style={LS_LOCAL}>Tipo documento *</label>
+            <select style={IS_LOCAL} value={form.fe_tipo_documento} onChange={e => set("fe_tipo_documento", e.target.value)}>
+              {tiposDoc.map(t => <option key={t} value={t}>{t}</option>)}
+            </select>
+          </div>
+          <div style={{ gridColumn: esJuridica ? "span 1" : "1 / -1" }}>
+            <label style={LS_LOCAL}>Número de documento *</label>
+            <input style={IS_LOCAL} value={form.fe_numero_documento} onChange={e => set("fe_numero_documento", e.target.value)} placeholder="Sin puntos ni guiones" />
+          </div>
+          {esJuridica && (
+            <div>
+              <label style={LS_LOCAL}>DV (dígito verificación) *</label>
+              <input style={IS_LOCAL} value={form.fe_dv} maxLength={1} onChange={e => set("fe_dv", e.target.value.replace(/[^0-9]/g, ""))} placeholder="0-9" />
+            </div>
+          )}
+          {esJuridica ? (
+            <div style={{ gridColumn: "1 / -1" }}>
+              <label style={LS_LOCAL}>Razón social *</label>
+              <input style={IS_LOCAL} value={form.fe_razon_social} onChange={e => set("fe_razon_social", e.target.value)} placeholder="EJ: ATOLÓN BEACH CLUB S.A.S" />
+            </div>
+          ) : (
+            <>
+              <div>
+                <label style={LS_LOCAL}>Nombres *</label>
+                <input style={IS_LOCAL} value={form.fe_nombres} onChange={e => set("fe_nombres", e.target.value)} />
+              </div>
+              <div>
+                <label style={LS_LOCAL}>Apellidos *</label>
+                <input style={IS_LOCAL} value={form.fe_apellidos} onChange={e => set("fe_apellidos", e.target.value)} />
+              </div>
+            </>
+          )}
+          <div>
+            <label style={LS_LOCAL}>Email facturación *</label>
+            <input type="email" style={IS_LOCAL} value={form.fe_email} onChange={e => set("fe_email", e.target.value)} placeholder="correo@ejemplo.com" />
+          </div>
+          <div>
+            <label style={LS_LOCAL}>Teléfono *</label>
+            <input style={IS_LOCAL} value={form.fe_telefono} onChange={e => set("fe_telefono", e.target.value)} placeholder="+57 300 000 0000" />
+          </div>
+          <div style={{ gridColumn: "1 / -1" }}>
+            <label style={LS_LOCAL}>Dirección *</label>
+            <input style={IS_LOCAL} value={form.fe_direccion} onChange={e => set("fe_direccion", e.target.value)} placeholder="Cra 7 #12-34" />
+          </div>
+          <div>
+            <label style={LS_LOCAL}>Ciudad *</label>
+            <input style={IS_LOCAL} value={form.fe_ciudad} onChange={e => set("fe_ciudad", e.target.value)} placeholder="Cartagena" />
+          </div>
+          <div>
+            <label style={LS_LOCAL}>Departamento *</label>
+            <input style={IS_LOCAL} value={form.fe_departamento} onChange={e => set("fe_departamento", e.target.value)} placeholder="Bolívar" />
+          </div>
+          <div>
+            <label style={LS_LOCAL}>País *</label>
+            <input style={IS_LOCAL} value={form.fe_pais} onChange={e => set("fe_pais", e.target.value)} />
+          </div>
+          <div>
+            <label style={LS_LOCAL}>Régimen tributario *</label>
+            <select style={IS_LOCAL} value={form.fe_regimen} onChange={e => set("fe_regimen", e.target.value)}>
+              {FE_REGIMENES.map(r => <option key={r.key} value={r.key}>{r.label}</option>)}
+            </select>
+          </div>
+        </div>
+      )}
+      <div style={{ fontSize: 10, color: "rgba(255,255,255,0.3)", marginTop: 10 }}>
+        La factura se enviará al email indicado. Los campos marcados con * son obligatorios.
+      </div>
+    </div>
+  );
+}
+
 // ── ReservaDetalle ────────────────────────────────────────────────────────────
 
 function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList = [], aliadoList = [], vendedoresList = VENDEDORES, pasadiaList = PASADIAS, conveniosMap = {} }) {
@@ -181,6 +305,22 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
     aliado_id:  r0.aliado_id || "",
     nombre_embarcacion: r0.nombre_embarcacion || "",
     hora_llegada: r0.hora_llegada || "",
+    // Facturación electrónica
+    factura_electronica: r0.factura_electronica || false,
+    fe_tipo_persona:    r0.fe_tipo_persona    || "natural",
+    fe_tipo_documento:  r0.fe_tipo_documento  || "CC",
+    fe_numero_documento: r0.fe_numero_documento || "",
+    fe_dv:              r0.fe_dv              || "",
+    fe_razon_social:    r0.fe_razon_social    || "",
+    fe_nombres:         r0.fe_nombres         || "",
+    fe_apellidos:       r0.fe_apellidos       || "",
+    fe_email:           r0.fe_email           || r0.email || "",
+    fe_telefono:        r0.fe_telefono        || r0.telefono || "",
+    fe_direccion:       r0.fe_direccion       || "",
+    fe_ciudad:          r0.fe_ciudad          || "",
+    fe_departamento:    r0.fe_departamento    || "",
+    fe_pais:            r0.fe_pais            || "Colombia",
+    fe_regimen:         r0.fe_regimen         || "no_responsable_iva",
   });
 
   // ── Modo de precio (Público vs Neto) al editar ─────────────────────────────
@@ -310,6 +450,20 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
 
   const handleSave = async () => {
     if (!supabase) return;
+
+    // Validar datos de facturación electrónica si está marcado
+    if (form.factura_electronica) {
+      const req = ["fe_tipo_persona", "fe_tipo_documento", "fe_numero_documento", "fe_email", "fe_telefono", "fe_direccion", "fe_ciudad", "fe_departamento", "fe_pais", "fe_regimen"];
+      const esJuridica = form.fe_tipo_persona === "juridica";
+      if (esJuridica) req.push("fe_razon_social", "fe_dv");
+      else req.push("fe_nombres", "fe_apellidos");
+      const faltan = req.filter(k => !form[k] || String(form[k]).trim() === "");
+      if (faltan.length > 0) {
+        alert("Faltan datos de facturación electrónica:\n• " + faltan.map(k => k.replace("fe_", "").replace("_", " ")).join("\n• "));
+        return;
+      }
+    }
+
     setSaving(true);
     const pax = Number(form.pax_a) + Number(form.pax_n);
     const emailUpd = form.contacto.trim().includes("@") ? form.contacto.trim() : (r0.email || null);
@@ -361,6 +515,22 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
       aliado_id:  form.aliado_id || null,
       nombre_embarcacion: form.nombre_embarcacion || null,
       hora_llegada: form.hora_llegada || null,
+      // Facturación electrónica
+      factura_electronica:  !!form.factura_electronica,
+      fe_tipo_persona:      form.factura_electronica ? (form.fe_tipo_persona || null) : null,
+      fe_tipo_documento:    form.factura_electronica ? (form.fe_tipo_documento || null) : null,
+      fe_numero_documento:  form.factura_electronica ? (form.fe_numero_documento || null) : null,
+      fe_dv:                form.factura_electronica ? (form.fe_dv || null) : null,
+      fe_razon_social:      form.factura_electronica ? (form.fe_razon_social || null) : null,
+      fe_nombres:           form.factura_electronica ? (form.fe_nombres || null) : null,
+      fe_apellidos:         form.factura_electronica ? (form.fe_apellidos || null) : null,
+      fe_email:             form.factura_electronica ? (form.fe_email || null) : null,
+      fe_telefono:          form.factura_electronica ? (form.fe_telefono || null) : null,
+      fe_direccion:         form.factura_electronica ? (form.fe_direccion || null) : null,
+      fe_ciudad:            form.factura_electronica ? (form.fe_ciudad || null) : null,
+      fe_departamento:      form.factura_electronica ? (form.fe_departamento || null) : null,
+      fe_pais:              form.factura_electronica ? (form.fe_pais || "Colombia") : null,
+      fe_regimen:           form.factura_electronica ? (form.fe_regimen || null) : null,
     }).eq("id", r0.id);
 
     if (updErr) {
@@ -962,6 +1132,31 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
                   <label style={LS}>Notas</label>
                   {editing ? <textarea rows={3} style={{ ...IS, resize: "vertical" }} value={form.notas} onChange={e => set("notas", e.target.value)} placeholder="Observaciones especiales…" /> :
                     <div style={{ fontSize: 13, color: r0.notas ? B.sand : "rgba(255,255,255,0.3)" }}>{r0.notas || "Sin notas"}</div>}
+                </div>
+
+                {/* ── Facturación Electrónica ── */}
+                <div style={{ gridColumn: "1 / -1" }}>
+                  {editing ? (
+                    <label style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer", padding: "10px 14px", background: "rgba(251,191,36,0.06)", border: `1px solid ${form.factura_electronica ? "#fbbf24" : "rgba(255,255,255,0.1)"}`, borderRadius: 10 }}>
+                      <input type="checkbox" checked={!!form.factura_electronica}
+                        onChange={e => set("factura_electronica", e.target.checked)}
+                        style={{ width: 18, height: 18, accentColor: "#fbbf24" }} />
+                      <div>
+                        <div style={{ fontSize: 13, fontWeight: 700, color: form.factura_electronica ? "#fbbf24" : B.white }}>📄 Requiere facturación electrónica</div>
+                        <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>Marca si el cliente necesita factura electrónica con todos los datos fiscales</div>
+                      </div>
+                    </label>
+                  ) : (
+                    r0.factura_electronica && (
+                      <div style={{ padding: "8px 14px", background: "rgba(251,191,36,0.1)", border: "1px solid rgba(251,191,36,0.3)", borderRadius: 8, fontSize: 12, color: "#fbbf24", fontWeight: 700 }}>
+                        📄 Factura electrónica requerida
+                        {r0.fe_estado && r0.fe_estado !== "pendiente" && ` — Estado: ${r0.fe_estado}`}
+                      </div>
+                    )
+                  )}
+                  {form.factura_electronica && (
+                    <FacturaElectronicaForm form={form} set={set} editing={editing} />
+                  )}
                 </div>
               </div>
 
