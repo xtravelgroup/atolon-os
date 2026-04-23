@@ -338,12 +338,20 @@ export default function Proveedores() {
   return (
     <div style={{ padding: "24px 20px", maxWidth: 1100, margin: "0 auto" }}>
       {/* Header */}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 24 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 24, flexWrap: "wrap", gap: 10 }}>
         <div>
           <div style={{ fontSize: 22, fontWeight: 700 }}>📦 Proveedores</div>
-          <div style={{ fontSize: 13, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>{filtered.length} proveedores</div>
+          <div style={{ fontSize: 13, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>
+            {filtered.length} proveedores · {proveedores.filter(p => p.loggro_id).length} vinculados a Loggro
+          </div>
         </div>
-        <button onClick={() => setShowModal(true)} style={{ background: B.sky, color: B.navy, border: "none", borderRadius: 10, padding: "10px 20px", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>+ Nuevo Proveedor</button>
+        <div style={{ display: "flex", gap: 10 }}>
+          <SyncLoggroButton onDone={() => {
+            supabase.from("proveedores").select("*").order("nombre")
+              .then(({ data }) => setProveedores(data || []));
+          }} />
+          <button onClick={() => setShowModal(true)} style={{ background: B.sky, color: B.navy, border: "none", borderRadius: 10, padding: "10px 20px", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>+ Nuevo Proveedor</button>
+        </div>
       </div>
 
       {/* Filtros */}
@@ -394,7 +402,15 @@ export default function Proveedores() {
               onMouseLeave={e => e.currentTarget.style.background = "transparent"}
             >
               <div>
-                <div style={{ fontWeight: 600, fontSize: 14 }}>{p.nombre}</div>
+                <div style={{ fontWeight: 600, fontSize: 14, display: "flex", alignItems: "center", gap: 6 }}>
+                  {p.nombre}
+                  {p.loggro_id && (
+                    <span title={`Vinculado a Loggro: ${p.loggro_id}`}
+                      style={{ fontSize: 9, padding: "1px 6px", borderRadius: 10, background: "#22c55e22", color: "#22c55e", fontWeight: 700 }}>
+                      🔗 Loggro
+                    </span>
+                  )}
+                </div>
                 {p.nit && <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", marginTop: 2 }}>NIT: {p.nit}</div>}
               </div>
               <div style={{ display: "flex", alignItems: "center" }}>
@@ -418,5 +434,152 @@ export default function Proveedores() {
         />
       )}
     </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Sincronización con Loggro Restobar — botón + modal de resultado
+// ═══════════════════════════════════════════════════════════════════════════
+function SyncLoggroButton({ onDone }) {
+  const [running, setRunning] = useState(false);
+  const [result, setResult] = useState(null);
+
+  const run = async () => {
+    if (!supabase) return;
+    setRunning(true);
+    setResult(null);
+    try {
+      // 1. Traer los proveedores actuales de Loggro
+      const URL = import.meta.env.VITE_SUPABASE_URL;
+      const KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
+      const res = await fetch(`${URL}/functions/v1/loggro-sync/providers`, {
+        headers: { apikey: KEY, Authorization: `Bearer ${KEY}` },
+      });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || "Error Loggro");
+      const loggroProvs = data.providers || [];
+
+      // 2. Traer los proveedores de Atolón
+      const { data: atolon } = await supabase.from("proveedores").select("id, nombre, nit, loggro_id");
+      const atolonByNit = new Map();
+      const atolonByLoggro = new Map();
+      const atolonByNombre = new Map();
+      (atolon || []).forEach(p => {
+        if (p.nit) atolonByNit.set(String(p.nit).replace(/\W/g, ""), p);
+        if (p.loggro_id) atolonByLoggro.set(p.loggro_id, p);
+        atolonByNombre.set((p.nombre || "").toLowerCase().trim(), p);
+      });
+
+      const stats = { vinculados: 0, actualizados: 0, creados: 0, sinCambio: 0, errores: [] };
+      const nuevos = [];
+
+      for (const lp of loggroProvs) {
+        const nitNorm = String(lp.document || "").replace(/\W/g, "");
+        // 1. Ya tiene loggro_id en Atolón
+        const yaVinc = atolonByLoggro.get(lp._id);
+        if (yaVinc) { stats.sinCambio++; continue; }
+        // 2. Match por NIT
+        const porNit = nitNorm && atolonByNit.get(nitNorm);
+        if (porNit) {
+          const { error } = await supabase.from("proveedores").update({ loggro_id: lp._id }).eq("id", porNit.id);
+          if (error) stats.errores.push(`${lp.name}: ${error.message}`);
+          else stats.vinculados++;
+          continue;
+        }
+        // 3. Match por nombre (sin NIT propio)
+        const porNombre = atolonByNombre.get((lp.name || "").toLowerCase().trim());
+        if (porNombre && !porNombre.nit) {
+          const { error } = await supabase.from("proveedores").update({
+            loggro_id: lp._id, nit: lp.document || null,
+          }).eq("id", porNombre.id);
+          if (error) stats.errores.push(`${lp.name}: ${error.message}`);
+          else stats.vinculados++;
+          continue;
+        }
+        // 4. No match → crear nuevo
+        const newId = "PROV-" + lp._id.slice(-8);
+        const { error } = await supabase.from("proveedores").insert({
+          id: newId,
+          nombre: lp.name,
+          nit: lp.document || null,
+          razon_social: lp.tradename || null,
+          email: lp.email || null,
+          telefono: lp.phone || null,
+          direccion: lp.address || null,
+          loggro_id: lp._id,
+          activo: true,
+        });
+        if (error) stats.errores.push(`${lp.name}: ${error.message}`);
+        else { stats.creados++; nuevos.push(lp.name); }
+      }
+
+      setResult({ total: loggroProvs.length, ...stats, nuevos });
+      onDone?.();
+    } catch (e) {
+      setResult({ error: e.message });
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  return (
+    <>
+      <button onClick={run} disabled={running}
+        style={{ background: "transparent", color: B.sand, border: `1px solid ${B.sand}`, borderRadius: 10, padding: "10px 16px", fontSize: 13, fontWeight: 700, cursor: running ? "wait" : "pointer", display: "flex", alignItems: "center", gap: 6 }}>
+        {running ? "⏳ Sincronizando…" : "🔄 Sync Loggro"}
+      </button>
+
+      {result && (
+        <div onClick={e => e.target === e.currentTarget && setResult(null)}
+          style={{ position: "fixed", inset: 0, zIndex: 1200, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+          <div style={{ background: B.navyMid, borderRadius: 16, width: "100%", maxWidth: 480, padding: 28, border: `1px solid ${B.navyLight}` }}>
+            <div style={{ fontSize: 18, fontWeight: 800, color: B.sand, marginBottom: 14 }}>🔄 Sincronización con Loggro</div>
+            {result.error ? (
+              <div style={{ background: "#ef444422", border: "1px solid #ef4444", borderRadius: 10, padding: "12px 16px", color: "#fca5a5", fontSize: 13 }}>
+                ❌ {result.error}
+              </div>
+            ) : (
+              <>
+                <div style={{ fontSize: 13, color: "rgba(255,255,255,0.55)", marginBottom: 14 }}>
+                  {result.total} proveedores en Loggro procesados
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 14 }}>
+                  <div style={{ background: "#22c55e15", border: "1px solid #22c55e55", borderRadius: 8, padding: "10px 14px" }}>
+                    <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Vinculados</div>
+                    <div style={{ fontSize: 22, fontWeight: 900, color: "#4ade80", fontFamily: "'Barlow Condensed', sans-serif" }}>{result.vinculados || 0}</div>
+                  </div>
+                  <div style={{ background: "#38bdf815", border: "1px solid #38bdf855", borderRadius: 8, padding: "10px 14px" }}>
+                    <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Creados</div>
+                    <div style={{ fontSize: 22, fontWeight: 900, color: B.sky, fontFamily: "'Barlow Condensed', sans-serif" }}>{result.creados || 0}</div>
+                  </div>
+                  <div style={{ background: "rgba(255,255,255,0.04)", borderRadius: 8, padding: "10px 14px" }}>
+                    <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Sin cambio</div>
+                    <div style={{ fontSize: 22, fontWeight: 900, color: "rgba(255,255,255,0.6)", fontFamily: "'Barlow Condensed', sans-serif" }}>{result.sinCambio || 0}</div>
+                  </div>
+                  <div style={{ background: result.errores?.length ? "#ef444415" : "rgba(255,255,255,0.04)", border: result.errores?.length ? "1px solid #ef444455" : "none", borderRadius: 8, padding: "10px 14px" }}>
+                    <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Errores</div>
+                    <div style={{ fontSize: 22, fontWeight: 900, color: result.errores?.length ? "#f87171" : "rgba(255,255,255,0.6)", fontFamily: "'Barlow Condensed', sans-serif" }}>{result.errores?.length || 0}</div>
+                  </div>
+                </div>
+                {result.nuevos?.length > 0 && (
+                  <div style={{ marginTop: 10, fontSize: 11, color: "rgba(255,255,255,0.5)" }}>
+                    <strong style={{ color: B.sky }}>Nuevos creados:</strong> {result.nuevos.join(", ")}
+                  </div>
+                )}
+                {result.errores?.length > 0 && (
+                  <div style={{ marginTop: 10, fontSize: 11, color: "#fca5a5" }}>
+                    {result.errores.map((e, i) => <div key={i}>⚠️ {e}</div>)}
+                  </div>
+                )}
+              </>
+            )}
+            <button onClick={() => setResult(null)}
+              style={{ marginTop: 18, width: "100%", background: B.sky, color: B.navy, border: "none", borderRadius: 8, padding: "10px", fontWeight: 700, cursor: "pointer" }}>
+              Cerrar
+            </button>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
