@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { B, COP, todayStr } from "../brand";
 import { supabase } from "../lib/supabase";
 
@@ -20,6 +20,9 @@ export default function HacerInventario() {
   const [saved, setSaved] = useState(null);
   const [userEmail, setUserEmail] = useState("");
   const [historial, setHistorial] = useState([]);
+  const [scanOpen, setScanOpen] = useState(false);
+  const [scanMsg, setScanMsg] = useState(null); // { type: "ok"|"err", text }
+  const rowRefs = useRef({}); // item_id → input element
 
   // Cargar locaciones y conteos históricos
   useEffect(() => {
@@ -77,6 +80,38 @@ export default function HacerInventario() {
   }, [conteos, items]);
 
   const locActual = locaciones.find(l => l.id === locId);
+
+  // Al detectar un código: buscar ítem, enfocarlo, y auto-incrementar el contador
+  const handleCodigoEscaneado = useCallback((codigo) => {
+    const c = String(codigo).trim();
+    if (!c) return;
+    const found = items.find(i => (i.codigo || "").trim() === c);
+    if (!found) {
+      setScanMsg({ type: "err", text: `Código "${c}" no está en catálogo` });
+      setTimeout(() => setScanMsg(null), 2500);
+      return;
+    }
+    // Auto-incrementar el conteo del ítem encontrado
+    setConteos(prev => {
+      const actual = Number(prev[found.id]) || 0;
+      return { ...prev, [found.id]: String(actual + 1) };
+    });
+    // Limpiar filtros/búsqueda para que sea visible
+    setSearch("");
+    setCatFilter("todos");
+    setFilterModo("todos");
+    setScanMsg({ type: "ok", text: `✓ ${found.nombre} +1` });
+    setTimeout(() => setScanMsg(null), 1500);
+    // Scroll al ítem y enfocar el input
+    setTimeout(() => {
+      const el = rowRefs.current[found.id];
+      if (el) {
+        el.scrollIntoView({ behavior: "smooth", block: "center" });
+        el.focus();
+        el.select();
+      }
+    }, 150);
+  }, [items]);
 
   // Guardar conteo: crea registro + actualiza items_stock_locacion
   const guardar = async () => {
@@ -224,8 +259,12 @@ export default function HacerInventario() {
 
           {/* Filtros */}
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 14, alignItems: "center" }}>
+            <button onClick={() => setScanOpen(true)}
+              style={{ background: B.sky, color: B.navy, border: "none", borderRadius: 8, padding: "10px 16px", fontSize: 13, fontWeight: 800, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
+              📷 Escanear código
+            </button>
             <input placeholder="🔍 Buscar ítem o código…" value={search} onChange={e => setSearch(e.target.value)}
-              style={{ ...IS, width: 280 }} />
+              style={{ ...IS, width: 260 }} />
             <select value={catFilter} onChange={e => setCatFilter(e.target.value)} style={{ ...IS, width: 200 }}>
               <option value="todos">Todas las categorías</option>
               {categorias.map(c => <option key={c} value={c}>{c}</option>)}
@@ -272,6 +311,7 @@ export default function HacerInventario() {
                   <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)" }}>{i.unidad || "—"}</div>
                   <div>
                     <input
+                      ref={el => { rowRefs.current[i.id] = el; }}
                       type="number"
                       value={contadoStr}
                       onChange={e => setConteos(c => ({ ...c, [i.id]: e.target.value }))}
@@ -307,6 +347,21 @@ export default function HacerInventario() {
         </>
       )}
 
+      {/* ═══ MODAL ESCÁNER DE CÓDIGO DE BARRAS ═══ */}
+      {scanOpen && <ScannerModal onClose={() => setScanOpen(false)} onCode={handleCodigoEscaneado} />}
+
+      {/* Toast mensajes del escáner */}
+      {scanMsg && (
+        <div style={{
+          position: "fixed", bottom: 30, left: "50%", transform: "translateX(-50%)",
+          background: scanMsg.type === "ok" ? B.success : B.danger, color: B.navy,
+          padding: "12px 24px", borderRadius: 12, fontWeight: 800, fontSize: 14,
+          boxShadow: "0 8px 24px rgba(0,0,0,0.3)", zIndex: 2000,
+        }}>
+          {scanMsg.text}
+        </div>
+      )}
+
       {/* ═══ ÉXITO ═══ */}
       {saved && (
         <div style={{ background: "#4ade8018", border: "1px solid #4ade8033", borderRadius: 16, padding: "32px 28px", textAlign: "center" }}>
@@ -325,6 +380,151 @@ export default function HacerInventario() {
           </button>
         </div>
       )}
+    </div>
+  );
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SCANNER MODAL — Escaneo de código de barras usando BarcodeDetector API
+// ═══════════════════════════════════════════════════════════════════════════
+function ScannerModal({ onClose, onCode }) {
+  const videoRef = useRef(null);
+  const canvasRef = useRef(null);
+  const [error, setError] = useState(null);
+  const [manual, setManual] = useState("");
+  const [lastCode, setLastCode] = useState("");
+  const [cooldown, setCooldown] = useState(false);
+  const detectorSupported = typeof window !== "undefined" && "BarcodeDetector" in window;
+
+  useEffect(() => {
+    if (!detectorSupported) {
+      setError("Tu navegador no soporta escaneo nativo. Usa entrada manual o un scanner USB.");
+      return;
+    }
+    let stream = null;
+    let detector = null;
+    let rafId = null;
+    let stopped = false;
+
+    const start = async () => {
+      try {
+        // Formatos típicos en inventario: EAN-13, EAN-8, UPC-A, Code128, QR
+        detector = new window.BarcodeDetector({
+          formats: ["ean_13", "ean_8", "upc_a", "upc_e", "code_128", "code_39", "qr_code", "data_matrix", "itf"],
+        });
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } },
+          audio: false,
+        });
+        if (stopped) { stream.getTracks().forEach(t => t.stop()); return; }
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          await videoRef.current.play();
+        }
+
+        const loop = async () => {
+          if (stopped || !videoRef.current) return;
+          try {
+            const codes = await detector.detect(videoRef.current);
+            if (codes && codes.length > 0) {
+              const code = codes[0].rawValue || codes[0].displayValue;
+              if (code && !cooldown) {
+                setLastCode(code);
+                setCooldown(true);
+                onCode(code);
+                // Beep (tono corto)
+                try {
+                  const ctx = new (window.AudioContext || window.webkitAudioContext)();
+                  const osc = ctx.createOscillator();
+                  osc.frequency.value = 900; osc.connect(ctx.destination);
+                  osc.start(); setTimeout(() => { osc.stop(); ctx.close(); }, 80);
+                } catch(_) {}
+                setTimeout(() => setCooldown(false), 1500);
+              }
+            }
+          } catch (_) { /* ignore frame errors */ }
+          rafId = requestAnimationFrame(loop);
+        };
+        loop();
+      } catch (e) {
+        setError("No se pudo acceder a la cámara: " + e.message);
+      }
+    };
+
+    start();
+
+    return () => {
+      stopped = true;
+      if (rafId) cancelAnimationFrame(rafId);
+      if (stream) stream.getTracks().forEach(t => t.stop());
+    };
+  }, []); // eslint-disable-line
+
+  const submitManual = () => {
+    const c = manual.trim();
+    if (!c) return;
+    onCode(c);
+    setManual("");
+  };
+
+  return (
+    <div style={{
+      position: "fixed", inset: 0, zIndex: 2000, background: "#000",
+      display: "flex", flexDirection: "column",
+    }}>
+      {/* Header */}
+      <div style={{ padding: "14px 18px", background: "rgba(0,0,0,0.85)", color: "#fff", display: "flex", alignItems: "center", gap: 12, borderBottom: "1px solid rgba(255,255,255,0.1)" }}>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 15, fontWeight: 800 }}>📷 Escanear código de barras</div>
+          <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginTop: 2 }}>
+            Apunta al código. Cada scan suma +1 al ítem. Queda abierto para varios seguidos.
+          </div>
+        </div>
+        <button onClick={onClose} style={{ background: "rgba(255,255,255,0.12)", color: "#fff", border: "none", borderRadius: 8, padding: "10px 18px", fontSize: 14, fontWeight: 700, cursor: "pointer" }}>
+          ✕ Cerrar
+        </button>
+      </div>
+
+      {/* Video */}
+      <div style={{ flex: 1, position: "relative", overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "center", background: "#111" }}>
+        {error ? (
+          <div style={{ color: "#fca5a5", textAlign: "center", padding: 40, fontSize: 14 }}>
+            ⚠️ {error}
+          </div>
+        ) : (
+          <>
+            <video ref={videoRef} playsInline muted style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+            {/* Marco guía */}
+            <div style={{
+              position: "absolute", top: "50%", left: "50%", transform: "translate(-50%, -50%)",
+              width: "80%", maxWidth: 500, aspectRatio: "2 / 1",
+              border: `3px solid ${cooldown ? "#4ade80" : "#38bdf8"}`,
+              borderRadius: 16, pointerEvents: "none",
+              boxShadow: "0 0 0 9999px rgba(0,0,0,0.35)",
+              transition: "border-color 0.15s",
+            }} />
+            {lastCode && (
+              <div style={{ position: "absolute", bottom: 30, left: "50%", transform: "translateX(-50%)", background: "rgba(0,0,0,0.75)", color: "#4ade80", padding: "8px 16px", borderRadius: 8, fontSize: 13, fontFamily: "monospace" }}>
+                Último: {lastCode}
+              </div>
+            )}
+          </>
+        )}
+        <canvas ref={canvasRef} style={{ display: "none" }} />
+      </div>
+
+      {/* Entrada manual (fallback) */}
+      <div style={{ padding: "12px 16px", background: "rgba(0,0,0,0.85)", borderTop: "1px solid rgba(255,255,255,0.1)", display: "flex", gap: 8 }}>
+        <input
+          value={manual}
+          onChange={e => setManual(e.target.value)}
+          onKeyDown={e => { if (e.key === "Enter") submitManual(); }}
+          placeholder="…o escribe/pega el código aquí y pulsa Enter"
+          style={{ flex: 1, padding: "10px 14px", borderRadius: 8, background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.15)", color: "#fff", fontSize: 14, outline: "none" }}
+        />
+        <button onClick={submitManual} style={{ background: "#38bdf8", color: "#0D1B3E", border: "none", borderRadius: 8, padding: "0 18px", fontWeight: 800, cursor: "pointer" }}>Agregar</button>
+      </div>
     </div>
   );
 }
