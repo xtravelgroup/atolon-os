@@ -61,11 +61,24 @@ export default function EscanearProductos() {
   }, [items]);
 
   const guardarCodigo = async (itemId, codigo) => {
-    const { error } = await supabase.from("items_catalogo")
-      .update({ codigo, updated_at: new Date().toISOString() }).eq("id", itemId);
+    if (!userEmail) {
+      setFlash({ type: "err", text: "❌ Necesitas iniciar sesión para guardar códigos" });
+      setTimeout(() => setFlash(null), 4000);
+      return;
+    }
+    const { data, error } = await supabase.from("items_catalogo")
+      .update({ codigo, updated_at: new Date().toISOString() })
+      .eq("id", itemId)
+      .select("id, codigo");
     if (error) {
       setFlash({ type: "err", text: "❌ Error: " + error.message });
-      setTimeout(() => setFlash(null), 3000);
+      setTimeout(() => setFlash(null), 4000);
+      return;
+    }
+    // Confirmar que realmente se actualizó (RLS puede devolver sin error pero sin filas)
+    if (!data || data.length === 0) {
+      setFlash({ type: "err", text: "❌ Sin permisos para guardar. Cierra sesión y vuelve a entrar." });
+      setTimeout(() => setFlash(null), 5000);
       return;
     }
     // Actualizar localmente sin recargar
