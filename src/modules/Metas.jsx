@@ -278,11 +278,15 @@ function TabResumen({ reals, metas, rawReservas, rawEventos, isMobile }) {
   ];
 
   const EVT_COLS = [
-    { key: "nombre",   label: "Nombre / Grupo" },
-    { key: "fecha",    label: "Fecha" },
-    { key: "vendedor", label: "Vendedor", render: r => r.vendedor || "Sin asignar" },
-    { key: "pax",      label: "Pax", right: true },
-    { key: "valor",    label: "Valor", right: true, render: r => COP_FMT(r.valor), color: () => B.success },
+    { key: "nombre",    label: "Nombre / Grupo" },
+    { key: "categoria", label: "Tipo", render: r => r.categoria === "grupo" ? "👥 Grupo" : "🎉 Evento" },
+    { key: "fecha",     label: "Fecha" },
+    { key: "vendedor",  label: "Vendedor", render: r => r.vendedor || "Sin asignar" },
+    { key: "pax",       label: "Pax", right: true },
+    { key: "stage",     label: "Stage" },
+    { key: "valor",     label: "Valor cotizado", right: true,
+      render: r => COP_FMT((r.valor || 0) + (r.valor_extras || 0)),
+      color: () => B.success },
   ];
 
   const pasadiasRows = rawReservas.filter(r => (r.canal || "").toLowerCase() !== "grupo");
@@ -622,10 +626,10 @@ export default function Metas() {
         .neq("estado", "cancelado")
         .neq("tipo", "A CONSUMO"),
       supabase.from("eventos")
-        .select("id, nombre, fecha, vendedor, pax, valor, pasadias_org")
+        .select("id, nombre, fecha, vendedor, pax, valor, valor_extras, pasadias_org, categoria")
         .gte("fecha", start)
         .lte("fecha", end)
-        .eq("stage", "Confirmado"),
+        .in("stage", ["Confirmado", "Realizado"]),
     ]);
 
     setVendedores(usrs || []);
@@ -652,26 +656,43 @@ export default function Metas() {
     setReservasData(Object.values(resMap));
 
     const PRECIO_MUELLE = 18000;
-    // Aggregate eventos + grupo reservas into eventosData
+    // Aggregate eventos + grupos into eventosData (por vendedor)
     const evMap = {};
     for (const e of (eventos || [])) {
       const k = e.vendedor || "Sin asignar";
-      if (!evMap[k]) evMap[k] = { vendedor: k, grupos: 0, ingresos: 0 };
-      evMap[k].grupos += 1;
-      // Subtract Impuesto Muelle from ingresos — it's a tax, not a sale
+      if (!evMap[k]) evMap[k] = { vendedor: k, grupos: 0, eventos: 0, ingresos: 0 };
+
+      // Muelle es impuesto, no es ingreso de venta
       const muelleTotal = (e.pasadias_org || [])
         .filter(p => p.tipo === "Impuesto Muelle")
         .reduce((s, p) => s + (Number(p.personas) || 0) * PRECIO_MUELLE, 0);
-      evMap[k].ingresos += Math.max(0, (e.valor || 0) - muelleTotal);
+      const ingresos = Math.max(0, (e.valor || 0) + (e.valor_extras || 0) - muelleTotal);
+
+      if (e.categoria === "grupo") {
+        // Métrico: pax reales del grupo (excl. Impuesto Muelle y STAFF)
+        const grupoPax = (e.pasadias_org || [])
+          .filter(p => p.tipo !== "Impuesto Muelle" && p.tipo !== "STAFF")
+          .reduce((s, p) => s + (Number(p.personas) || 0), 0);
+        evMap[k].grupos += grupoPax || e.pax || 0;
+      } else {
+        // Eventos: métrico = número de eventos
+        evMap[k].eventos += 1;
+      }
+      evMap[k].ingresos += ingresos;
     }
-    // Add grupo reservas pax/ingresos into eventosData
+    // Agregar pasadías de grupos (canal "grupo" en reservas individuales)
     for (const r of Object.values(gruResMap)) {
       const k = r.vendedor;
-      if (!evMap[k]) evMap[k] = { vendedor: k, grupos: 0, ingresos: 0 };
-      evMap[k].grupos += r.pasadias; // count pasadías de grupos as metric
+      if (!evMap[k]) evMap[k] = { vendedor: k, grupos: 0, eventos: 0, ingresos: 0 };
+      evMap[k].grupos  += r.pasadias;
       evMap[k].ingresos += r.ingresos;
     }
-    setEventosData(Object.values(evMap));
+    // grupos = total métrico (pax grupos + eventos)
+    const evList = Object.values(evMap).map(e => ({
+      ...e,
+      grupos: e.grupos + e.eventos,  // total combinado para la meta
+    }));
+    setEventosData(evList);
 
     setLoading(false);
   }, [periodo]);

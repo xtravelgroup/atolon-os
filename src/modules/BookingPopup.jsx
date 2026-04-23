@@ -82,6 +82,24 @@ const PRODUCTS = [
     includes_en:  ["Private yacht transfer", "On-board chef", "Tasting menu", "Full VIP area access", "Personalized experience"],
   },
   {
+    slug:         "vip-pass-grupo",
+    pasadiaId:    "PAS-1775870973208",
+    tipo:         "VIP Pass (Bebida + Impuesto de Muelle)",
+    tipo_en:      "VIP Pass (Beverage & Port Tax Included)",
+    precio:       380000,
+    precioNeto:   380000,
+    precioNino:   270000,
+    precioNetoNino: 270000,
+    noNinos:      false,
+    minA:         1,
+    icon:         "🌴",
+    color:        "#0D1B3E",
+    desc:         "Bebida incluida · Impuesto de Muelle incluido · Acceso al beach club",
+    desc_en:      "Welcome Drink · Port tax included · Beach club access",
+    includes:     ["Bebida de bienvenida", "Impuesto de Muelle", "Acceso al beach club"],
+    includes_en:  ["Welcome Drink", "Port tax", "Beach club access"],
+  },
+  {
     slug:         "after-island",
     pasadiaId:    "PAS-AFT",
     tipo:         "After Island",
@@ -166,7 +184,8 @@ export default function BookingPopup() {
   const [calMonth,   setCalMonth]  = useState(() => { const n = new Date(); return n.getMonth(); });
   const [selDate,    setSelDate]   = useState("");
   const [paxA,       setPaxA]      = useState(matchedProduct ? matchedProduct.minA : 1);
-  const [paxN,       setPaxN]      = useState(0);  // niños hasta 12
+  const [paxN,       setPaxN]      = useState(0);  // niños hasta 11
+  const [edadesNinos, setEdadesNinos] = useState([]); // array de edades por niño
   const [paxI,       setPaxI]      = useState(0);  // infants 0-2
   const [step,       setStep]      = useState(matchedProduct ? 1 : 0); // 0=select, 1=booking, 2=info, 3=done
   const [form,      setForm]      = useState({ nombre: "", email: "", telefono: "", notas: "" });
@@ -319,6 +338,7 @@ export default function BookingPopup() {
           fecha_visita:         selDate || null,
           pax_adultos:          paxA,
           pax_ninos:            paxN,
+          edades_ninos:         edadesNinos.filter(e => e !== ""),
           pax_total:            paxA + paxN + paxI,
           valor_total:          (product?.precio || 0) * paxA + (product?.precioNino || 0) * paxN,
           moneda:               "COP",
@@ -361,7 +381,11 @@ export default function BookingPopup() {
     supabase.from("eventos").select("*").eq("id", grupoQ).single().then(({ data }) => {
       if (!data) return;
       setGrupoEvt(data);
-      const prod = PRODUCTS.find(p => p.tipo === data.tipo);
+      // Case-insensitive match: evento.tipo puede venir con casing diferente (VIP PASS vs VIP Pass)
+      const prod = PRODUCTS.find(p =>
+        p.tipo === data.tipo ||
+        p.tipo.toLowerCase() === (data.tipo || "").toLowerCase()
+      );
       if (prod) {
         setProduct(prod);
         setPaxA(prod.minA);
@@ -420,7 +444,7 @@ export default function BookingPopup() {
         .neq("estado", "cancelado").gte("fecha", from).lte("fecha", toFix),
       supabase.from("cierres").select("fecha, tipo").eq("activo", true)
         .gte("fecha", from).lte("fecha", toFix),
-      supabase.from("salidas").select("id, hora, nombre, capacidad_total, auto_apertura, orden").eq("activo", true).order("orden"),
+      supabase.from("salidas").select("id, hora, hora_regreso, nombre, capacidad_total, auto_apertura, orden").eq("activo", true).order("orden"),
     ]).then(([resR, cierreR, salR]) => {
       const sals = salR.data || [];
       setSalidas(sals);
@@ -508,9 +532,41 @@ export default function BookingPopup() {
   // Load upsells when reaching step 3 — skip entirely for group bookings
   useEffect(() => {
     if (step !== 3 || !supabase || !product) return;
-    if (grupoEvt) { setUpsells([]); setLoadingUps(false); return; } // no upsells for groups
+    if (grupoEvt) {
+      // Si el grupo YA es "VIP Pass (Bebida + Impuesto de Muelle)", no ofrecerlo como upsell
+      if (grupoEvt.tipo === "VIP Pass (Bebida + Impuesto de Muelle)") {
+        setUpsells([]);
+        setLoadingUps(false);
+        return;
+      }
+      // Para otros tipos de grupo, ofrecer VIP PASS como upsell con precio desde DB
+      supabase.from("pasadias")
+        .select("precio, precio_nino")
+        .eq("id", "PAS-1775870973208")
+        .maybeSingle()
+        .then(({ data: vipPas }) => {
+          const VIP_A = vipPas?.precio      || 380000;
+          const VIP_N = vipPas?.precio_nino || 270000;
+          const vipTotal = (paxA * VIP_A) + (paxN * VIP_N);
+          const vipDesc  = paxN > 0
+            ? `Bebida incluida · Impuesto de Muelle incluido · ${paxA} adulto${paxA !== 1 ? "s" : ""} × ${COP(VIP_A)} + ${paxN} niño${paxN !== 1 ? "s" : ""} × ${COP(VIP_N)}`
+            : `Bebida incluida · Impuesto de Muelle incluido`;
+
+          setUpsells([{
+            id:          "vip_pass_grupo",
+            nombre:      "VIP Pass",
+            descripcion: vipDesc,
+            precio:      vipTotal,
+            por_persona: false,
+            emoji:       "🌴",
+            tipo:        "addon",
+          }]);
+          setLoadingUps(false);
+        });
+      return;
+    }
     setLoadingUps(true);
-    supabase.from("upsells").select("id, nombre, descripcion, precio, imagen_url, por_persona, aplica_a, condicion_no_ninos, orden").eq("activo", true).order("orden").then(({ data }) => {
+    supabase.from("upsells").select("id, nombre, descripcion, precio, foto_url, emoji, tipo, upgrade_slug, por_persona, aplica_a, condicion_no_ninos, orden").eq("activo", true).order("orden").then(({ data }) => {
       const filtered = (data || []).filter(u => {
         if (u.aplica_a?.length > 0 && !u.aplica_a.includes(product.slug)) return false;
         if (u.condicion_no_ninos && paxN > 0) return false;
@@ -519,7 +575,7 @@ export default function BookingPopup() {
       setUpsells(filtered);
       setLoadingUps(false);
     });
-  }, [step, product?.slug]);
+  }, [step, product?.slug, paxA, paxN]);
 
   function selectProduct(p) {
     setProduct(p);
@@ -596,7 +652,7 @@ export default function BookingPopup() {
     }
     setSaving(true);
     const reservaId  = `WEB-${Date.now()}`;
-    const linkExpira = new Date(Date.now() + 30 * 60 * 1000).toISOString();
+    const linkExpira = new Date(Date.now() + 15 * 60 * 1000).toISOString();
     const grandTotal = totalA + totalN + selUpsells.reduce((s, u) => s + (u.por_persona ? u.precio * (paxA + paxN) : u.precio), 0);
     let   payUrl     = "";
 
@@ -605,39 +661,33 @@ export default function BookingPopup() {
     if (method === "wompi") {
       payUrl = await wompiCheckoutUrl({ referencia: reservaId, totalCOP: grandTotal, email: form.email, redirectUrl: redirectBase });
     } else if (method === "stripe") {
+      // "stripe" en la UI significa "tarjeta internacional" — ruteamos por el helper
+      // que decide entre Stripe y Zoho Pay según configuracion.merchant_internacional
       try {
-        const stripeRes = await fetch(
-          "https://ncdyttgxuicyruathkxd.supabase.co/functions/v1/create-stripe-session",
-          {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "Authorization": `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
-              "apikey": import.meta.env.VITE_SUPABASE_ANON_KEY,
-            },
-            body: JSON.stringify({
-              reserva_id: reservaId,
-              total_cop:  grandTotal,
-              nombre:     form.nombre,
-              email:      form.email,
-              tipo:       product.tipo,
-              fecha:      selDate,
-            }),
-          }
-        );
-        const stripeData = await stripeRes.json();
-        if (stripeData.url) {
-          payUrl = stripeData.url;
-        } else {
-          const msg = stripeData.error || "No se pudo iniciar el pago con Stripe. Intenta con tarjeta nacional.";
-          AtolanTrack.paymentError("stripe", "session_create_failed", msg, grandTotal);
-          alert(msg);
-          setSaving(false);
-          return;
-        }
+        const { crearSesionPago, getMerchantInternacional } = await import("../lib/internacional");
+        const merchantInfo = await getMerchantInternacional();
+        console.log("[Pago internacional] Merchant activo:", merchantInfo);
+        // Convertir COP a USD (monto que usa Zoho/Stripe)
+        const tasa = 4200; // fallback, el backend lee la tasa real si es necesario
+        const amountUSD = Math.ceil(grandTotal / tasa);
+        console.log("[Pago internacional] Llamando crearSesionPago", { amount: amountUSD, reference: reservaId });
+        const session = await crearSesionPago({
+          amount: amountUSD,
+          currency: "USD",
+          reference: reservaId,
+          description: `${product.tipo} — ${selDate || ""}`,
+          email: form.email,
+          nombre: form.nombre,
+          fecha: selDate,
+          context: "reserva",
+          context_id: reservaId,
+        });
+        console.log("[Pago internacional] Session OK:", session);
+        payUrl = session.url;
       } catch (err) {
-        AtolanTrack.paymentError("stripe", "network_error", err?.message || "connection_error", grandTotal);
-        alert("Error de conexión con Stripe. Intenta con tarjeta nacional.");
+        console.error("[Pago internacional] Error:", err);
+        AtolanTrack.paymentError("internacional", "session_create_failed", err?.message || "", grandTotal);
+        alert(`Error pago internacional:\n${err?.message || err}\n\nIntenta con tarjeta nacional.`);
         setSaving(false);
         return;
       }
@@ -647,7 +697,7 @@ export default function BookingPopup() {
       await supabase.from("reservas").insert({
         id: reservaId,
         fecha:          selDate,
-        salida_id:      selSalida?.id || grupoEvt?.salida_id || null,
+        salida_id:      selSalida?.id || grupoEvt?.salida_id || "S2",
         tipo:           product.tipo,
         canal:          grupoEvt ? "GRUPO" : "WEB",
         aliado_id:      grupoEvt?.aliado_id || null,
@@ -664,13 +714,14 @@ export default function BookingPopup() {
         abono:          0,
         saldo:          grandTotal,
         estado:         "pendiente_pago",
-        forma_pago:     method,
+        forma_pago:     method === "stripe" ? "tarjeta_internacional" : method,
         link_pago:      payUrl,
         link_expira_at: linkExpira,
         notas:          [
           embarcacion ? `Embarcación: ${embarcacion}` : null,
           horaLlegada ? `Llegada estimada: ${horaLlegada}` : null,
           paxI > 0 ? `Infants: ${paxI}` : null,
+          edadesNinos.filter(e => e !== "").length > 0 ? `Edades niños: ${edadesNinos.filter(e => e !== "").join(", ")}` : null,
           selUpsells.length > 0 ? `Extras: ${selUpsells.map(u => u.nombre).join(", ")}` : null,
           form.notas || null,
         ].filter(Boolean).join(" | ") || null,
@@ -745,7 +796,7 @@ export default function BookingPopup() {
           Atolon Beach Club — Isla Tierra Bomba, Cartagena
         </p>
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-          {PRODUCTS.map(p => (
+          {PRODUCTS.filter(p => p.slug !== "vip-pass-grupo").map(p => (
             <div key={p.slug} onClick={() => selectProduct(p)}
               style={{ display: "flex", alignItems: "center", gap: 16, padding: "16px 18px", background: C.bg, border: `1.5px solid ${C.border}`, borderRadius: 12, cursor: "pointer", transition: "all 0.15s" }}
               onMouseEnter={e => { e.currentTarget.style.borderColor = C.accent; e.currentTarget.style.background = C.bgHover; }}
@@ -838,7 +889,10 @@ export default function BookingPopup() {
             <div style={{ fontSize: 15, fontWeight: 700, color: C.text }}>{grupoEvt.nombre}</div>
             <div style={{ fontSize: 12, color: C.textMid, marginTop: 2 }}>
               📅 {fmtDate(grupoEvt.fecha, langQ)}
-              {(grupoEvt.salidas_grupo||[]).length > 0 && <> &nbsp;·&nbsp; ⛵ {[...grupoEvt.salidas_grupo].sort((a,b)=>a.hora.localeCompare(b.hora)).map(s=>s.hora).join(" · ")}</>}
+              {(grupoEvt.salidas_grupo||[]).length > 0 && <> &nbsp;·&nbsp; ⛵ {[...grupoEvt.salidas_grupo].sort((a,b)=>a.hora.localeCompare(b.hora)).map(s => {
+                const sal = salidas.find(x => x.id === s.id);
+                return s.hora + (sal?.hora_regreso ? ` → ${sal.hora_regreso}` : "");
+              }).join(" · ")}</>}
             </div>
           </div>
         )}
@@ -850,7 +904,7 @@ export default function BookingPopup() {
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
               <span style={{ fontSize: 24 }}>{product.icon}</span>
-              <span style={{ fontSize: 22, fontWeight: 800, color: C.text }}>{product.tipo}</span>
+              <span style={{ fontSize: 22, fontWeight: 800, color: C.text }}>{isEN && product.tipo_en ? product.tipo_en : product.tipo}</span>
             </div>
             <div style={{ textAlign: "right", flexShrink: 0 }}>
               <div style={{ fontSize: 20, fontWeight: 800, color: C.accent }}>{COP(product.precio)}</div>
@@ -859,19 +913,26 @@ export default function BookingPopup() {
           </div>
         </div>
 
-        {/* What's included */}
-        {incluye.length > 0 && (
-          <div style={{ marginBottom: 20, padding: "12px 16px", background: C.bgCard, borderRadius: 10, border: `1px solid ${C.border}` }}>
-            <div style={{ fontSize: 11, fontWeight: 700, color: C.textMid, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 }}>{isEN ? "What's included" : "Qué incluye"}</div>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: "6px 16px" }}>
-              {incluye.map((item, i) => (
-                <div key={i} style={{ fontSize: 12, color: C.textMid, display: "flex", alignItems: "center", gap: 5 }}>
-                  <span style={{ color: C.success, fontWeight: 700 }}>✓</span> {isEN && item.descripcion_en ? item.descripcion_en : item.descripcion}
-                </div>
-              ))}
+        {/* What's included — fallback a product.includes si la BD no tiene datos */}
+        {(() => {
+          const items = incluye.length > 0
+            ? incluye.map(it => ({ es: it.descripcion, en: it.descripcion_en || it.descripcion }))
+            : (isEN ? (product.includes_en || product.includes || []) : (product.includes || []))
+                .map(txt => ({ es: txt, en: txt }));
+          if (items.length === 0) return null;
+          return (
+            <div style={{ marginBottom: 20, padding: "12px 16px", background: C.bgCard, borderRadius: 10, border: `1px solid ${C.border}` }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: C.textMid, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 }}>{isEN ? "What's included" : "Qué incluye"}</div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: "6px 16px" }}>
+                {items.map((item, i) => (
+                  <div key={i} style={{ fontSize: 12, color: C.textMid, display: "flex", alignItems: "center", gap: 5 }}>
+                    <span style={{ color: C.success, fontWeight: 700 }}>✓</span> {isEN ? item.en : item.es}
+                  </div>
+                ))}
+              </div>
             </div>
-          </div>
-        )}
+          );
+        })()}
 
         {/* Participants */}
         <div style={{ marginBottom: 24 }}>
@@ -889,11 +950,45 @@ export default function BookingPopup() {
               <>
                 <PaxRow
                   label={isEN ? "Children" : "Niños"}
-                  sub={`${isEN ? "Up to 12 years" : "Hasta 12 años"} · ${COP(product.precioNino)}${product.ninoNota ? " · " + (isEN ? (product.ninoNota_en || product.ninoNota) : product.ninoNota) : ""}`}
+                  sub={`${isEN ? "Up to 11 years" : "Hasta 11 años"} · ${COP(product.precioNino)}${product.ninoNota ? " · " + (isEN ? (product.ninoNota_en || product.ninoNota) : product.ninoNota) : ""}`}
                   val={paxN}
-                  onDec={() => setPaxN(n => Math.max(0, n - 1))}
-                  onInc={() => setPaxN(n => Math.min(30, n + 1))}
+                  onDec={() => { setPaxN(n => Math.max(0, n - 1)); setEdadesNinos(e => e.slice(0, Math.max(0, paxN - 1))); }}
+                  onInc={() => { setPaxN(n => Math.min(30, n + 1)); setEdadesNinos(e => [...e, ""]); }}
                 />
+                {paxN > 0 && (
+                  <div style={{ padding: "10px 14px", background: "rgba(200,185,154,0.06)", borderRadius: 10, border: "1px solid rgba(200,185,154,0.15)" }}>
+                    <div style={{ fontSize: 11, color: "#C8B99A", marginBottom: 8, fontWeight: 600 }}>
+                      {isEN ? "Age of each child" : "Edad de cada niño"} <span style={{ opacity: 0.6 }}>({isEN ? "over 11 pays as adult" : "+11 se cobra como adulto"})</span>
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(80px, 1fr))", gap: 8 }}>
+                      {Array.from({ length: paxN }).map((_, i) => (
+                        <div key={i}>
+                          <div style={{ fontSize: 10, color: "rgba(255,255,255,0.45)", marginBottom: 3 }}>{isEN ? `Child ${i + 1}` : `Niño ${i + 1}`}</div>
+                          <input type="number" min="0" max="17"
+                            value={edadesNinos[i] ?? ""}
+                            onChange={e => {
+                              const v = e.target.value;
+                              const newArr = [...edadesNinos];
+                              while (newArr.length < paxN) newArr.push("");
+                              newArr[i] = v;
+                              setEdadesNinos(newArr);
+                              // Si la edad es > 11, mover a adulto automáticamente
+                              if (Number(v) > 11) {
+                                alert(isEN
+                                  ? `A ${v} year old pays as adult (added to adults)`
+                                  : `Un niño de ${v} años se cobra como adulto (movido a adultos)`);
+                                setPaxA(a => a + 1);
+                                setPaxN(n => Math.max(0, n - 1));
+                                setEdadesNinos(prev => prev.filter((_, idx) => idx !== i));
+                              }
+                            }}
+                            placeholder={isEN ? "Age" : "Edad"}
+                            style={{ width: "100%", padding: "6px 8px", borderRadius: 6, background: "#0D1B3E", border: "1px solid rgba(255,255,255,0.1)", color: "#fff", fontSize: 13, textAlign: "center" }} />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
                 <PaxRow
                   label={isEN ? "Infants" : "Infantes"}
                   sub={isEN ? "Age 0 – 2 (free)" : "Edad 0 – 2 (sin costo)"}
@@ -981,8 +1076,15 @@ export default function BookingPopup() {
                 return (
                   <div key={s.hora} onClick={() => setSelSalida(s)}
                     style={{ padding: "14px 16px", borderRadius: 10, border: `2px solid ${isSel ? C.accent : C.border}`, background: isSel ? C.accentLight : C.bg, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "space-between", transition: "all 0.15s" }}>
-                    <div style={{ fontSize: 14, fontWeight: 700, color: isSel ? C.accent : C.text }}>
-                      ⛵ {isEN ? "Departure" : "Salida"} {s.hora}
+                    <div>
+                      <div style={{ fontSize: 14, fontWeight: 700, color: isSel ? C.accent : C.text }}>
+                        ⛵ {isEN ? "Departure" : "Salida"} {s.hora}
+                      </div>
+                      {(() => { const sal = salidas.find(x => x.id === s.id); return sal?.hora_regreso ? (
+                        <div style={{ fontSize: 12, color: isSel ? C.accent : C.textMid, marginTop: 2 }}>
+                          🔁 {isEN ? "Return" : "Regreso"}: <strong>{sal.hora_regreso}</strong>
+                        </div>
+                      ) : null; })()}
                     </div>
                     {isSel && <div style={{ fontSize: 13, fontWeight: 700, color: C.accent }}>✓ {isEN ? "Selected" : "Seleccionado"}</div>}
                   </div>
@@ -1098,7 +1200,7 @@ export default function BookingPopup() {
         {/* Order summary */}
         <div style={{ background: C.bgCard, borderRadius: 12, padding: "16px 18px", marginBottom: 20, border: `1px solid ${C.border}` }}>
           <h3 style={{ fontSize: 14, fontWeight: 700, color: C.text, marginBottom: 12, borderBottom: `2px solid ${C.accent}`, paddingBottom: 8, display: "inline-block" }}>{isEN ? "Order summary" : "Comprobar el pedido"}</h3>
-          <div style={{ fontSize: 14, fontWeight: 600, color: C.text, marginBottom: 10 }}>{product.tipo}</div>
+          <div style={{ fontSize: 14, fontWeight: 600, color: C.text, marginBottom: 10 }}>{isEN && product.tipo_en ? product.tipo_en : product.tipo}</div>
           {[
             selDate && [isEN ? "Date" : "Fecha", fmtDate(selDate, langQ)],
             selSalida && [isEN ? "Departure" : "Salida", `${isEN ? "Departure" : "Salida"} ${selSalida.hora || selSalida.id}`],
@@ -1286,6 +1388,14 @@ export default function BookingPopup() {
               </div>
               <div style={{ fontSize: 14, fontWeight: 800, color: "#635BFF" }}>{COP(total)}</div>
             </button>
+            <div style={{ marginTop: 8, padding: "8px 12px", background: "#FFF7E6", border: "1px solid #F5C842", borderRadius: 8, fontSize: 11, color: "#92400E", display: "flex", alignItems: "flex-start", gap: 8 }}>
+              <span style={{ fontSize: 14 }}>💳</span>
+              <span>
+                {isEN
+                  ? <>The international card charge will appear on your statement as <strong>X Travel Group</strong>.</>
+                  : <>El cargo con tarjeta internacional aparecerá en tu estado de cuenta a nombre de <strong>X Travel Group</strong>.</>}
+              </span>
+            </div>
           </div>
         </div>
         <div style={{ textAlign: "center", marginTop: 12, fontSize: 11, color: C.textLight }}>
@@ -1438,6 +1548,14 @@ export default function BookingPopup() {
               </div>
               <div style={{ fontSize: 14, fontWeight: 800, color: "#635BFF" }}>{COP(grandTotal)}</div>
             </button>
+            <div style={{ marginTop: 8, padding: "8px 12px", background: "#FFF7E6", border: "1px solid #F5C842", borderRadius: 8, fontSize: 11, color: "#92400E", display: "flex", alignItems: "flex-start", gap: 8 }}>
+              <span style={{ fontSize: 14 }}>💳</span>
+              <span>
+                {isEN
+                  ? <>The international card charge will appear on your statement as <strong>X Travel Group</strong>.</>
+                  : <>El cargo con tarjeta internacional aparecerá en tu estado de cuenta a nombre de <strong>X Travel Group</strong>.</>}
+              </span>
+            </div>
           </div>
         </div>
         <div style={{ textAlign: "center", marginTop: 12, fontSize: 11, color: C.textLight }}>

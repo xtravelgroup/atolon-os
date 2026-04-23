@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { B, COP } from "../brand";
 import { supabase } from "../lib/supabase";
 import { TabCatalogo as ActividadesCatalogo } from "./Actividades";
@@ -526,9 +526,66 @@ function ItemModal({ item, menuTipo, onClose, onSaved, categorias }) {
   const isEdit      = !!item?.id;
   const isEspacio   = menuTipo === "espacios_renta";
   const isServicio  = menuTipo === "otros_servicios";
+  const isBanquete  = menuTipo === "banquetes";
   const [form, setForm] = useState(isEdit
-    ? { ...item, tiene_iva: item.tiene_iva ?? true }
-    : { nombre: "", descripcion: "", precio: "", categoria: categorias[0] || "", activo: true, orden: 0, menu_tipo: menuTipo, tiene_iva: true });
+    ? { ...item, tiene_iva: item.tiene_iva ?? true, opciones: item.opciones || [], seleccion_modo: item.seleccion_modo || "todo", seleccion_cantidad: item.seleccion_cantidad || 0, room_service: item.room_service ?? false, foto_url: item.foto_url || "", destacado: item.destacado ?? false, disponible: item.disponible ?? true, nombre_en: item.nombre_en || "", descripcion_en: item.descripcion_en || "", categoria_en: item.categoria_en || "", loggro_id: item.loggro_id || null, loggro_categoria: item.loggro_categoria || null }
+    : { nombre: "", descripcion: "", precio: "", categoria: categorias[0] || "", activo: true, orden: 0, menu_tipo: menuTipo, tiene_iva: true, opciones: [], seleccion_modo: "todo", seleccion_cantidad: 0, room_service: false, foto_url: "", destacado: false, disponible: true, nombre_en: "", descripcion_en: "", categoria_en: "", loggro_id: null, loggro_categoria: null });
+
+  // Loggro linker
+  const [loggroSearch, setLoggroSearch] = useState("");
+  const [loggroResults, setLoggroResults] = useState([]);
+  const [loggroOpen, setLoggroOpen] = useState(false);
+  const [loggroCurrent, setLoggroCurrent] = useState(null); // nombre actual si está linked
+  // Headers necesarios para llamar Edge Functions de Supabase (anon key)
+  const fnHeaders = {
+    apikey: import.meta.env.VITE_SUPABASE_ANON_KEY,
+    Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+  };
+
+  useEffect(() => {
+    // Cuando se abre el modal, si ya tiene loggro_id, cargar el nombre del producto actual
+    if (form.loggro_id) {
+      fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/loggro-sync/products?pagination=true&limit=1&page=0&name=${encodeURIComponent(form.nombre || "")}`, {
+        headers: fnHeaders,
+      })
+        .then(r => r.json()).then(d => {
+          const found = (d.products || []).find(p => (p._id || p.id) === form.loggro_id);
+          if (found) setLoggroCurrent(found.name);
+        }).catch(() => {});
+    }
+  }, []);
+  useEffect(() => {
+    if (!loggroOpen) return;
+    const q = (loggroSearch || form.nombre || "").trim();
+    if (q.length < 2) { setLoggroResults([]); return; }
+    const t = setTimeout(() => {
+      fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/loggro-sync/products?pagination=true&limit=30&page=0&name=${encodeURIComponent(q)}`, {
+        headers: fnHeaders,
+      })
+        .then(r => r.json()).then(d => setLoggroResults(d.products || [])).catch(() => setLoggroResults([]));
+    }, 300);
+    return () => clearTimeout(t);
+  }, [loggroSearch, loggroOpen, form.nombre]);
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
+  const fileInputRef = useRef(null);
+
+  const subirFoto = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploadingPhoto(true);
+    try {
+      const ext = file.name.split(".").pop()?.toLowerCase() || "jpg";
+      const path = `${menuTipo}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+      const { error } = await supabase.storage.from("menu-items").upload(path, file, { upsert: true, contentType: file.type });
+      if (error) { alert("Error subiendo foto: " + error.message); setUploadingPhoto(false); return; }
+      const { data } = supabase.storage.from("menu-items").getPublicUrl(path);
+      setForm(f => ({ ...f, foto_url: data.publicUrl }));
+    } catch (err) {
+      alert("Error: " + err.message);
+    }
+    setUploadingPhoto(false);
+  };
+  const [newOpcion, setNewOpcion] = useState("");
   const [saving, setSaving] = useState(false);
   const [newCat, setNewCat] = useState("");
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
@@ -545,7 +602,21 @@ function ItemModal({ item, menuTipo, onClose, onSaved, categorias }) {
       orden:       Number(form.orden) || 0,
       menu_tipo:   menuTipo,
       tiene_iva:   form.tiene_iva,
+      room_service: !!form.room_service,
+      foto_url:    form.foto_url || null,
+      destacado:   !!form.destacado,
+      disponible:  form.disponible !== false,
+      nombre_en:      form.nombre_en || null,
+      descripcion_en: form.descripcion_en || null,
+      categoria_en:   form.categoria_en || null,
+      loggro_id:      form.loggro_id || null,
+      loggro_categoria: form.loggro_categoria || null,
     };
+    if (isBanquete) {
+      payload.opciones = form.opciones || [];
+      payload.seleccion_modo = form.seleccion_modo || "todo";
+      payload.seleccion_cantidad = form.seleccion_modo === "seleccion" ? (Number(form.seleccion_cantidad) || 0) : null;
+    }
     if (isEdit) {
       await supabase.from("menu_items").update(payload).eq("id", item.id);
     } else {
@@ -567,6 +638,37 @@ function ItemModal({ item, menuTipo, onClose, onSaved, categorias }) {
         </h3>
 
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          {!isEspacio && !isServicio && (
+            <div>
+              <label style={LS}>Foto del plato</label>
+              <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
+                <div
+                  onClick={() => fileInputRef.current?.click()}
+                  style={{ width: 110, height: 110, borderRadius: 12, background: form.foto_url ? `url(${form.foto_url}) center/cover` : "#0F172A",
+                    border: `2px dashed ${form.foto_url ? "transparent" : "#334155"}`, cursor: "pointer",
+                    display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, position: "relative", overflow: "hidden" }}>
+                  {!form.foto_url && <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", textAlign: "center", lineHeight: 1.3 }}>📷<br/>Subir<br/>foto</div>}
+                  {uploadingPhoto && <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, color: "#fff" }}>Subiendo…</div>}
+                </div>
+                <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 6 }}>
+                  <input ref={fileInputRef} type="file" accept="image/*" onChange={subirFoto} style={{ display: "none" }} />
+                  <button type="button" onClick={() => fileInputRef.current?.click()}
+                    style={{ padding: "8px 12px", borderRadius: 8, background: B.sand, color: B.navy, border: "none", fontWeight: 700, cursor: "pointer", fontSize: 12 }}>
+                    {form.foto_url ? "Cambiar foto" : "Subir foto"}
+                  </button>
+                  {form.foto_url && (
+                    <button type="button" onClick={() => set("foto_url", "")}
+                      style={{ padding: "8px 12px", borderRadius: 8, background: "transparent", color: "#ef4444", border: `1px solid #ef444433`, fontWeight: 700, cursor: "pointer", fontSize: 12 }}>
+                      Quitar foto
+                    </button>
+                  )}
+                  <input value={form.foto_url || ""} onChange={e => set("foto_url", e.target.value)}
+                    style={{ ...IS, fontSize: 11, padding: "6px 10px" }} placeholder="o pega URL..." />
+                </div>
+              </div>
+            </div>
+          )}
+
           <div>
             <label style={LS}>{isEspacio ? "Nombre del espacio" : isServicio ? "Nombre del servicio" : "Nombre del plato / ítem"}</label>
             <input value={form.nombre} onChange={e => set("nombre", e.target.value)} style={IS}
@@ -579,6 +681,26 @@ function ItemModal({ item, menuTipo, onClose, onSaved, categorias }) {
               style={{ ...IS, resize: "vertical" }}
               placeholder={isEspacio ? "Capacidad, equipos incluidos, servicios, características del espacio..." : isServicio ? "Detalles del servicio, incluye, condiciones..." : "Ingredientes, presentación, alérgenos..."} />
           </div>
+
+          {!isEspacio && !isServicio && (
+            <div style={{ padding: "12px 14px", background: `${B.sky}08`, border: `1px solid ${B.sky}33`, borderRadius: 8 }}>
+              <div style={{ fontSize: 10, color: B.sky, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 10 }}>🇬🇧 English translation</div>
+              <div style={{ marginBottom: 10 }}>
+                <label style={LS}>Name (EN)</label>
+                <input value={form.nombre_en || ""} onChange={e => set("nombre_en", e.target.value)} style={IS} placeholder="e.g. Fried Green Plantains" />
+              </div>
+              <div style={{ marginBottom: 10 }}>
+                <label style={LS}>Description (EN)</label>
+                <textarea value={form.descripcion_en || ""} onChange={e => set("descripcion_en", e.target.value)} rows={2}
+                  style={{ ...IS, resize: "vertical" }}
+                  placeholder="Ingredients, presentation, allergens..." />
+              </div>
+              <div>
+                <label style={LS}>Category (EN)</label>
+                <input value={form.categoria_en || ""} onChange={e => set("categoria_en", e.target.value)} style={IS} placeholder="e.g. Starters" />
+              </div>
+            </div>
+          )}
 
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
             <div>
@@ -612,6 +734,171 @@ function ItemModal({ item, menuTipo, onClose, onSaved, categorias }) {
               <label htmlFor="iva-chk" style={{ fontSize: 13, color: "rgba(255,255,255,0.7)", cursor: "pointer" }}>
                 Aplica IVA (19%)
               </label>
+            </div>
+          )}
+
+          {!isEspacio && !isServicio && (
+            <>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", background: "#a78bfa11", border: "1px solid #a78bfa33", borderRadius: 8 }}>
+                <input type="checkbox" checked={!!form.room_service} onChange={e => set("room_service", e.target.checked)} id="rs-chk" />
+                <label htmlFor="rs-chk" style={{ fontSize: 13, color: "#a78bfa", cursor: "pointer", fontWeight: 600 }}>
+                  🛎️ Disponible en Room Service
+                </label>
+              </div>
+
+              {/* ── Enlace con Loggro ── */}
+              <div style={{ padding: "10px 12px", background: "#38bdf811", border: "1px solid #38bdf833", borderRadius: 8 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: loggroOpen ? 8 : 0 }}>
+                  <div style={{ fontSize: 12, color: "#38bdf8", fontWeight: 700 }}>🔗 Enlace con Loggro (POS)</div>
+                  <button type="button" onClick={() => setLoggroOpen(o => !o)} style={{ background: "none", border: "none", color: "#38bdf8", cursor: "pointer", fontSize: 11, fontWeight: 600 }}>
+                    {loggroOpen ? "▲ Cerrar" : "▼ Abrir"}
+                  </button>
+                </div>
+                {!loggroOpen && (
+                  <div style={{ fontSize: 11, color: "rgba(255,255,255,0.6)", marginTop: 4 }}>
+                    {form.loggro_id ? (
+                      <span style={{ color: "#22c55e" }}>✓ Enlazado: {loggroCurrent || form.loggro_id.slice(-10)}</span>
+                    ) : (
+                      <span style={{ color: "#f59e0b" }}>⚠ Sin enlazar</span>
+                    )}
+                  </div>
+                )}
+                {loggroOpen && (
+                  <>
+                    {form.loggro_id && (
+                      <div style={{ fontSize: 11, color: "#22c55e", marginBottom: 8 }}>
+                        Actualmente enlazado a: <strong>{loggroCurrent || form.loggro_id}</strong>
+                        <button type="button" onClick={() => { set("loggro_id", null); set("loggro_categoria", null); setLoggroCurrent(null); }}
+                          style={{ marginLeft: 8, padding: "2px 8px", fontSize: 10, borderRadius: 4, border: "1px solid #ef444455", background: "#ef444422", color: "#ef4444", cursor: "pointer" }}>
+                          Quitar
+                        </button>
+                      </div>
+                    )}
+                    <input
+                      value={loggroSearch}
+                      onChange={e => setLoggroSearch(e.target.value)}
+                      placeholder={`🔍 Buscar en Loggro (ej: ${form.nombre || "nombre..."})`}
+                      style={{ ...IS, padding: "7px 10px", fontSize: 12 }}
+                    />
+                    {loggroResults.length > 0 && (
+                      <div style={{ marginTop: 6, maxHeight: 200, overflowY: "auto", background: B.navy, border: `1px solid ${B.navyLight}`, borderRadius: 6 }}>
+                        {loggroResults.map(p => {
+                          const id = p._id || p.id;
+                          const isCurrent = form.loggro_id === id;
+                          const isBT = /\bBT\b/i.test(p.name);
+                          return (
+                            <div key={id} onClick={() => {
+                              set("loggro_id", id);
+                              set("loggro_categoria", p.category?.name || null);
+                              setLoggroCurrent(p.name);
+                              setLoggroOpen(false);
+                            }}
+                              style={{
+                                padding: "8px 10px", cursor: "pointer", fontSize: 12,
+                                background: isCurrent ? "#22c55e22" : "transparent",
+                                borderBottom: `1px solid ${B.navyLight}`,
+                                display: "flex", justifyContent: "space-between", alignItems: "center", gap: 6,
+                              }}
+                              onMouseEnter={e => { if (!isCurrent) e.currentTarget.style.background = "rgba(255,255,255,0.04)"; }}
+                              onMouseLeave={e => { if (!isCurrent) e.currentTarget.style.background = "transparent"; }}
+                            >
+                              <div style={{ minWidth: 0, flex: 1 }}>
+                                <div style={{ fontWeight: 600, display: "flex", alignItems: "center", gap: 6 }}>
+                                  <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</span>
+                                  {isBT && <span style={{ fontSize: 9, padding: "1px 5px", borderRadius: 3, background: "#C8B99A33", color: "#C8B99A" }}>🍾 BT</span>}
+                                </div>
+                                <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)" }}>{p.category?.name || "Sin categoría"}</div>
+                              </div>
+                              {isCurrent && <span style={{ fontSize: 10, color: "#22c55e", fontWeight: 700 }}>✓</span>}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                    {loggroSearch.length >= 2 && loggroResults.length === 0 && (
+                      <div style={{ marginTop: 6, padding: 8, fontSize: 11, color: "rgba(255,255,255,0.35)", textAlign: "center" }}>Sin resultados</div>
+                    )}
+                  </>
+                )}
+              </div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 8, padding: "10px 12px", background: "#F5C84211", border: "1px solid #F5C84233", borderRadius: 8 }}>
+                  <input type="checkbox" checked={!!form.destacado} onChange={e => set("destacado", e.target.checked)} id="dest-chk" />
+                  <label htmlFor="dest-chk" style={{ fontSize: 12, color: "#F5C842", cursor: "pointer", fontWeight: 600 }}>⭐ Destacado</label>
+                </div>
+                <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 8, padding: "10px 12px", background: form.disponible !== false ? "#22c55e11" : "#ef444411", border: `1px solid ${form.disponible !== false ? "#22c55e33" : "#ef444433"}`, borderRadius: 8 }}>
+                  <input type="checkbox" checked={form.disponible !== false} onChange={e => set("disponible", e.target.checked)} id="disp-chk" />
+                  <label htmlFor="disp-chk" style={{ fontSize: 12, color: form.disponible !== false ? "#22c55e" : "#ef4444", cursor: "pointer", fontWeight: 600 }}>
+                    {form.disponible !== false ? "✓ Disponible" : "✕ Agotado"}
+                  </label>
+                </div>
+              </div>
+            </>
+          )}
+
+          {/* ── Opciones / Sub-items del menú (solo Banquetes) ── */}
+          {isBanquete && (
+            <div style={{ borderTop: `1px solid ${B.navyLight}`, paddingTop: 14 }}>
+              <label style={LS}>¿Qué incluye este menú?</label>
+
+              {/* Modalidad de selección */}
+              <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+                <button type="button" onClick={() => set("seleccion_modo", "todo")}
+                  style={{ flex: 1, padding: "8px 12px", borderRadius: 8,
+                    border: `2px solid ${form.seleccion_modo === "todo" ? B.success : "transparent"}`,
+                    background: form.seleccion_modo === "todo" ? B.success + "22" : B.navyLight,
+                    color: form.seleccion_modo === "todo" ? B.success : "rgba(255,255,255,0.5)",
+                    fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+                  ✓ Incluye todo
+                </button>
+                <button type="button" onClick={() => set("seleccion_modo", "seleccion")}
+                  style={{ flex: 1, padding: "8px 12px", borderRadius: 8,
+                    border: `2px solid ${form.seleccion_modo === "seleccion" ? B.warning : "transparent"}`,
+                    background: form.seleccion_modo === "seleccion" ? B.warning + "22" : B.navyLight,
+                    color: form.seleccion_modo === "seleccion" ? B.warning : "rgba(255,255,255,0.5)",
+                    fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+                  ☑ Selección de X
+                </button>
+              </div>
+
+              {form.seleccion_modo === "seleccion" && (
+                <div style={{ marginBottom: 12 }}>
+                  <label style={LS}>¿Cuántas opciones se pueden seleccionar?</label>
+                  <input type="number" min={1} value={form.seleccion_cantidad || ""}
+                    onChange={e => set("seleccion_cantidad", e.target.value)}
+                    placeholder="Ej: 3 (el cliente elige 3 de las opciones)" style={IS} />
+                </div>
+              )}
+
+              {/* Lista de opciones */}
+              <div style={{ marginBottom: 10 }}>
+                {(form.opciones || []).length === 0 && (
+                  <div style={{ fontSize: 12, color: "rgba(255,255,255,0.3)", textAlign: "center", padding: 8 }}>
+                    Sin opciones. Agrega los platos/productos que incluye este menú.
+                  </div>
+                )}
+                {(form.opciones || []).map((op, idx) => (
+                  <div key={idx} style={{ display: "flex", gap: 6, alignItems: "center", padding: "6px 10px", background: B.navy, borderRadius: 6, marginBottom: 4 }}>
+                    <input value={op} onChange={e => {
+                      const next = [...form.opciones];
+                      next[idx] = e.target.value;
+                      set("opciones", next);
+                    }} style={{ flex: 1, background: "transparent", border: "none", color: "#fff", fontSize: 13, outline: "none" }} />
+                    <button onClick={() => set("opciones", form.opciones.filter((_, i) => i !== idx))}
+                      style={{ background: B.danger + "22", border: `1px solid ${B.danger}44`, borderRadius: 4, color: B.danger, padding: "3px 8px", fontSize: 11, cursor: "pointer", fontWeight: 700 }}>✕</button>
+                  </div>
+                ))}
+              </div>
+
+              {/* Agregar nueva opción */}
+              <div style={{ display: "flex", gap: 6 }}>
+                <input value={newOpcion} onChange={e => setNewOpcion(e.target.value)}
+                  onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); if (newOpcion.trim()) { set("opciones", [...(form.opciones||[]), newOpcion.trim()]); setNewOpcion(""); } } }}
+                  placeholder="Ej: Ceviche de camarón, Arroz con coco..."
+                  style={{ ...IS, flex: 1 }} />
+                <button onClick={() => { if (newOpcion.trim()) { set("opciones", [...(form.opciones||[]), newOpcion.trim()]); setNewOpcion(""); } }}
+                  style={{ padding: "9px 18px", background: B.sand, color: B.navy, border: "none", borderRadius: 8, fontWeight: 700, fontSize: 13, cursor: "pointer", whiteSpace: "nowrap" }}>+ Agregar</button>
+              </div>
             </div>
           )}
 
@@ -756,17 +1043,27 @@ export default function Menus() {
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: 10 }}>
                 {catItems.sort((a, b) => (a.orden - b.orden) || a.nombre.localeCompare(b.nombre)).map(item => (
                   <div key={item.id} style={{
-                    background: B.navyMid, borderRadius: 10, padding: "14px 16px",
+                    background: B.navyMid, borderRadius: 10, padding: "12px 14px",
                     borderLeft: `3px solid ${item.activo ? tipo.color : "rgba(255,255,255,0.1)"}`,
                     opacity: item.activo ? 1 : 0.5,
                   }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10 }}>
+                    <div style={{ display: "flex", gap: 12 }}>
+                      {/* Thumbnail */}
+                      <div style={{ width: 64, height: 64, borderRadius: 8, background: item.foto_url ? `url(${item.foto_url}) center/cover` : B.navyLight, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22, position: "relative" }}>
+                        {!item.foto_url && "🍽"}
+                        {item.destacado && <div style={{ position: "absolute", top: -4, right: -4, background: "#F5C842", color: B.navy, borderRadius: "50%", width: 18, height: 18, fontSize: 11, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800 }}>★</div>}
+                      </div>
+                      {/* Info */}
                       <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 2 }}>{item.nombre}</div>
-                        {item.descripcion && <div style={{ fontSize: 12, color: "rgba(255,255,255,0.45)", lineHeight: 1.4, marginBottom: 6 }}>{item.descripcion}</div>}
+                        <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 2 }}>
+                          <div style={{ fontWeight: 600, fontSize: 14 }}>{item.nombre}</div>
+                          {item.disponible === false && <span style={{ fontSize: 9, padding: "1px 5px", borderRadius: 4, background: "#ef444433", color: "#ef4444", fontWeight: 700, textTransform: "uppercase" }}>Agotado</span>}
+                        </div>
+                        {item.descripcion && <div style={{ fontSize: 11, color: "rgba(255,255,255,0.45)", lineHeight: 1.4, marginBottom: 4, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{item.descripcion}</div>}
                         {item.precio > 0 && <div style={{ fontSize: 13, fontWeight: 700, color: B.sand }}>{COP(item.precio)}</div>}
                       </div>
-                      <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+                      {/* Actions */}
+                      <div style={{ display: "flex", flexDirection: "column", gap: 4, flexShrink: 0 }}>
                         <button onClick={() => toggleActivo(item)}
                           title={item.activo ? "Desactivar" : "Activar"}
                           style={{ padding: "5px 9px", borderRadius: 6, background: item.activo ? B.success + "22" : B.navyLight, color: item.activo ? B.success : "rgba(255,255,255,0.3)", border: "none", cursor: "pointer", fontSize: 12 }}>

@@ -13,7 +13,7 @@ const fmtHora = (ts) => {
 
 const CANALES   = ["Web", "WhatsApp", "Email", "B2B", "Teléfono", "Walk-in", "Friends & Family"];
 const VENDEDORES = ["Sin asignar"]; // fallback; real list loaded from usuarios (ventas + gerente_ventas)
-const FORMAS_PAGO = ["Transferencia", "Efectivo", "Datafono", "Wompi", "SKY", "CXC", "Cortesía", "Ajuste Retención", "Enviar Link de Pago"];
+const FORMAS_PAGO = ["Transferencia", "Efectivo", "Datafono", "Wompi", "SKY", "CXC", "Cortesía", "Ajuste Retención", "Ajuste Agencia", "Enviar Link de Pago"];
 
 // Solo estos usuarios pueden usar el método de pago "Cortesía"
 const CORTESIA_AUTHORIZED_EMAILS = [
@@ -968,7 +968,10 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
                     <div style={{ gridColumn: "1 / -1" }}>
                       <label style={LS}>Forma de pago</label>
                       <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                        {filterCortesia(FORMAS_PAGO).filter(f => f !== "CXC" || tieneCXC).map(fp => (
+                        {filterCortesia(FORMAS_PAGO)
+                          .filter(f => f !== "CXC" || tieneCXC)
+                          .filter(f => f !== "Ajuste Agencia" || (form.aliado_id && precioMode === "full"))
+                          .map(fp => (
                           <button key={fp} onClick={() => set("forma_pago", fp)} style={{
                             padding: "5px 12px", borderRadius: 20,
                             border: `1px solid ${form.forma_pago === fp ? B.sky : B.navyLight}`,
@@ -1348,7 +1351,10 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
             <div>
               <label style={{ fontSize: 11, color: B.sand, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", display: "block", marginBottom: 8 }}>Forma de pago</label>
               <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                {filterCortesia(FORMAS_PAGO).filter(f => f !== "Enviar Link de Pago" && (f !== "CXC" || tieneCXC)).map(fp => (
+                {filterCortesia(FORMAS_PAGO)
+                  .filter(f => f !== "Enviar Link de Pago" && (f !== "CXC" || tieneCXC))
+                  .filter(f => f !== "Ajuste Agencia" || (form.aliado_id && precioMode === "full"))
+                  .map(fp => (
                   <button key={fp} onClick={() => {
                     setPagoForma(fp);
                     // Si cambian a cortesía, pre-llenar monto con el saldo actual
@@ -1687,9 +1693,13 @@ function ReservaModal({ onClose, onSave, isMobile, salidaList = [], aliadoList =
   const precioNinoNeto = (form.aliado_id && conveniosMap[form.aliado_id]?.[form.tipo?.toLowerCase() + "__nino"])
     || pasadiaActual?.precio_neto_nino || 0;
   const tieneNino = precioNinoFull > 0; // esta pasadía tiene tarifa de niño
+  // "Ajuste Agencia" solo cuando hay aliado B2B y se cobra a precio público
+  const ajusteAgenciaDisponible = !!form.aliado_id && precioMode === "full";
   const formasPagoDisp = form.forma_pago === "Enviar Link de Pago"
-    ? ["Sin definir", ...filterCortesia(FORMAS_PAGO)]
-    : ["Sin definir", ...filterCortesia(FORMAS_PAGO).filter(f => f !== "CXC" || tieneCXC)];
+    ? ["Sin definir", ...filterCortesia(FORMAS_PAGO).filter(f => f !== "Ajuste Agencia" || ajusteAgenciaDisponible)]
+    : ["Sin definir", ...filterCortesia(FORMAS_PAGO)
+        .filter(f => f !== "CXC" || tieneCXC)
+        .filter(f => f !== "Ajuste Agencia" || ajusteAgenciaDisponible)];
 
   // Salidas visible for selected date — uses locally fetched overridesFecha + cierreFecha
   const salidasFecha = (() => {

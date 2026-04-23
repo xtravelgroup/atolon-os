@@ -227,6 +227,80 @@ function SlotEditorModal({ grupo, slot, onClose, onSaved, embarcaciones = [] }) 
   );
 }
 
+// ─── Bulk Fill Modal — llenar todos los slots sin datos de un grupo ───────────
+function BulkFillModal({ grupo, slotsSinDatos, embarcaciones, onClose, onSaved }) {
+  const AKEY_BF = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5jZHl0dGd4dWljeXJ1YXRoa3hkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ4OTY4NDksImV4cCI6MjA5MDQ3Mjg0OX0.ppK_J1BUI8lrEZ-iQWNb0imO_ZwOGbF3MDyv7nct6bs";
+  const [rows, setRows]     = useState(slotsSinDatos.map(s => ({ ...s, nombre: "", identificacion: "", nacionalidad: "Colombiana", embarcacion: "" })));
+  const [saving, setSaving] = useState(false);
+
+  const upd = (i, k, v) => setRows(prev => prev.map((r, ri) => ri === i ? { ...r, [k]: v } : r));
+  const filledCount = rows.filter(r => r.nombre.trim()).length;
+
+  const save = async () => {
+    setSaving(true);
+    const now = new Date().toISOString();
+    const zarpeBySlot = Object.fromEntries((grupo.zarpe_data || []).map(z => [z.slot_id, z]));
+    rows.filter(r => r.nombre.trim()).forEach(r => {
+      zarpeBySlot[r.slot_id] = { slot_id: r.slot_id, tipo: r.tipo, idx: r.idx, nombre: r.nombre.trim(), identificacion: r.identificacion.trim(), nacionalidad: r.nacionalidad, embarcacion: r.embarcacion, checkin_at: now };
+    });
+    const newZarpe = Object.values(zarpeBySlot);
+    await fetch(`https://ncdyttgxuicyruathkxd.supabase.co/rest/v1/eventos?id=eq.${grupo.id}`,
+      { method: "PATCH", headers: { apikey: AKEY_BF, Authorization: `Bearer ${AKEY_BF}`, "Content-Type": "application/json", Prefer: "return=minimal" },
+        body: JSON.stringify({ zarpe_data: newZarpe }) });
+    setSaving(false);
+    onSaved(newZarpe);
+    onClose();
+  };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.88)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 9999, padding: 16 }}
+      onClick={e => e.target === e.currentTarget && onClose()}>
+      <div style={{ background: B.navyMid, borderRadius: 18, padding: "24px", width: "100%", maxWidth: 560, maxHeight: "92vh", overflowY: "auto" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 18 }}>
+          <div>
+            <div style={{ fontSize: 17, fontWeight: 800 }}>📋 Lista de pasajeros</div>
+            <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>{slotsSinDatos.length} sin datos · {grupo.nombre}</div>
+          </div>
+          <button onClick={onClose} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.3)", fontSize: 20, cursor: "pointer" }}>✕</button>
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 18 }}>
+          {rows.map((row, i) => (
+            <div key={row.slot_id} style={{ background: B.navy, borderRadius: 12, padding: "12px 14px" }}>
+              <div style={{ fontSize: 10, color: B.sand, fontWeight: 700, textTransform: "uppercase", marginBottom: 8 }}>{row.tipo} #{row.idx}</div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                <div style={{ gridColumn: "1 / -1" }}>
+                  <input value={row.nombre} onChange={e => upd(i, "nombre", e.target.value)}
+                    placeholder="Nombre completo" style={IS} />
+                </div>
+                <input value={row.identificacion} onChange={e => upd(i, "identificacion", e.target.value)}
+                  placeholder="CC / Pasaporte" style={IS} />
+                <select value={row.nacionalidad} onChange={e => upd(i, "nacionalidad", e.target.value)} style={IS}>
+                  {NACS.map(n => <option key={n} value={n}>{n}</option>)}
+                </select>
+                {embarcaciones.filter(e => e.estado === "activo").length > 0 && (
+                  <div style={{ gridColumn: "1 / -1" }}>
+                    <select value={row.embarcacion} onChange={e => upd(i, "embarcacion", e.target.value)} style={IS}>
+                      <option value="">Sin embarcación</option>
+                      {embarcaciones.filter(e => e.estado === "activo").map(e => <option key={e.id} value={e.nombre}>{e.nombre}</option>)}
+                    </select>
+                  </div>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+        <div style={{ display: "flex", gap: 10 }}>
+          <button onClick={onClose} style={{ flex: 1, padding: "12px", background: "none", border: `1px solid ${B.navyLight}`, borderRadius: 10, color: "rgba(255,255,255,0.4)", fontSize: 13, cursor: "pointer" }}>Cancelar</button>
+          <button onClick={save} disabled={saving || filledCount === 0}
+            style={{ flex: 2, padding: "12px", background: (saving || filledCount === 0) ? B.navyLight : B.success, color: (saving || filledCount === 0) ? "rgba(255,255,255,0.4)" : B.white, border: "none", borderRadius: 10, fontWeight: 700, fontSize: 14, cursor: filledCount === 0 ? "default" : "pointer" }}>
+            {saving ? "Guardando..." : `✓ Guardar ${filledCount > 0 ? filledCount + " pasajeros" : ""}`}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Pasajeros Editor (for zarpe) ────────────────────────────────────────────
 function PasajerosModal({ reserva, onClose, onSaved, autoCheckin = false }) {
   const total = (reserva.pax_a || 0) + (reserva.pax_n || 0) || reserva.pax || 1;
@@ -299,15 +373,15 @@ function PasajerosModal({ reserva, onClose, onSaved, autoCheckin = false }) {
 }
 
 // ─── Colaboradores Modal ─────────────────────────────────────────────────────
-function ColaboradoresModal({ salidaId, fecha, despacho, onClose, onSaved }) {
+function ColaboradoresModal({ salidaId, fecha, despacho, embarcaciones = [], onClose, onSaved }) {
   const init = despacho?.colaboradores?.length > 0
     ? despacho.colaboradores
-    : [{ nombre: "", cedula: "", rol: "" }];
+    : [{ nombre: "", cedula: "", rol: "", embarcacion: "" }];
   const [colabs, setColabs] = useState(init);
   const [saving, setSaving] = useState(false);
 
   const set = (i, k, v) => setColabs(p => p.map((x, j) => j === i ? { ...x, [k]: v } : x));
-  const add = () => setColabs(p => [...p, { nombre: "", cedula: "", rol: "" }]);
+  const add = () => setColabs(p => [...p, { nombre: "", cedula: "", rol: "", embarcacion: "" }]);
   const remove = (i) => setColabs(p => p.filter((_, j) => j !== i));
 
   const save = async () => {
@@ -344,9 +418,21 @@ function ColaboradoresModal({ salidaId, fecha, despacho, onClose, onSaved }) {
                     <input value={c.cedula} onChange={e => set(i, "cedula", e.target.value)} style={IS} placeholder="No. identificación" />
                   </div>
                 </div>
-                <div>
-                  <label style={LS}>Rol / Cargo</label>
-                  <input value={c.rol} onChange={e => set(i, "rol", e.target.value)} style={IS} placeholder="Ej: Capitán, Salvavidas, Guía..." />
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                  <div>
+                    <label style={LS}>Rol / Cargo</label>
+                    <input value={c.rol} onChange={e => set(i, "rol", e.target.value)} style={IS} placeholder="Ej: Capitán, Salvavidas..." />
+                  </div>
+                  <div>
+                    <label style={LS}>Embarcación</label>
+                    <select value={c.embarcacion || ""} onChange={e => set(i, "embarcacion", e.target.value)}
+                      style={{ ...IS, cursor: "pointer" }}>
+                      <option value="">— Sin asignar —</option>
+                      {embarcaciones.map(emb => (
+                        <option key={emb.id} value={emb.nombre}>{emb.nombre}</option>
+                      ))}
+                    </select>
+                  </div>
                 </div>
               </div>
               <button onClick={() => remove(i)}
@@ -370,7 +456,7 @@ function ColaboradoresModal({ salidaId, fecha, despacho, onClose, onSaved }) {
 
 // ─── Zarpe PDF (new window) ───────────────────────────────────────────────────
 // Generate zarpe for a SINGLE embarcación
-function generarZarpe(salida, reservas, fecha, despacho, emb) {
+async function generarZarpe(salida, reservas, fecha, despacho, emb) {
   // emb: full embarcacion object — only show passengers assigned to this boat
   const resDeEmb = emb
     ? reservas.filter(r => r.embarcacion_asignada === emb.nombre)
@@ -383,6 +469,35 @@ function generarZarpe(salida, reservas, fecha, despacho, emb) {
       : [{ nombre: r.nombre, identificacion: "—", nacionalidad: "—" }]
   );
   const totalPax = paxList.length;
+
+  // ─── Bitácora: registrar el zarpe generado ─────────────────────────────
+  try {
+    const { data: { session } } = await supabase.auth.getSession();
+    const email = session?.user?.email || null;
+    let nombre = null;
+    if (email) {
+      const { data: u } = await supabase.from("usuarios").select("nombre").eq("email", email.toLowerCase()).maybeSingle();
+      nombre = u?.nombre || email;
+    }
+    await supabase.from("zarpes_log").insert({
+      fecha,
+      salida_id:           salida.id,
+      salida_hora:         salida.hora,
+      salida_nombre:       salida.nombre,
+      embarcacion_id:      emb?.id || null,
+      embarcacion_nombre:  emb?.nombre || null,
+      zarpe_codigo:        despacho?.zarpe_codigo || null,
+      pax_total:           totalPax,
+      colaboradores_count: despacho?.colaboradores?.length || 0,
+      pasajeros:           paxList,
+      colaboradores:       despacho?.colaboradores || [],
+      despacho_id:         despacho?.id || null,
+      generado_por_email:  email,
+      generado_por_nombre: nombre,
+    });
+  } catch (e) {
+    console.warn("No se pudo registrar zarpe en bitácora:", e);
+  }
 
   const bodyRows = paxList.map(p => `<tr>
       <td>${rowNum++}</td>
@@ -601,6 +716,8 @@ export default function CheckIn() {
   const [tabGrupo,       setTabGrupo]       = useState(null);
   const [editSlot,       setEditSlot]       = useState(null); // { grupo, slot }
   const [qrGrupo,        setQrGrupo]        = useState(null); // { grupo, slot? }
+  const [bulkFill,       setBulkFill]       = useState(null); // grupo
+  const [grupoEmbModal,  setGrupoEmbModal]  = useState(null); // grupo
 
   const load = useCallback(async () => {
     if (!supabase) { setLoading(false); return; }
@@ -649,6 +766,32 @@ export default function CheckIn() {
     );
     await fetch(`https://ncdyttgxuicyruathkxd.supabase.co/rest/v1/eventos?id=eq.${grupo.id}`,
       { method: "PATCH", headers: { apikey: AKEY, Authorization: `Bearer ${AKEY}`, "Content-Type": "application/json", Prefer: "return=minimal" }, body: JSON.stringify({ zarpe_data: newZarpe }) });
+    setGrupos(prev => prev.map(g => g.id === grupo.id ? { ...g, zarpe_data: newZarpe } : g));
+  };
+
+  const despacharGrupo = async (grupo, embNombre) => {
+    const existing = despachos.find(d => d.salida_id === grupo.id);
+    if (existing) {
+      if (!window.confirm(`Este grupo ya fue despachado${existing.embarcacion_nombre ? ` en ${existing.embarcacion_nombre}` : ""}. ¿Registrar de nuevo?`)) return;
+      await supabase.from("salida_despachos").delete().eq("id", existing.id);
+    }
+    const id = `DESP-${Date.now()}`;
+    const rec = { id, fecha, salida_id: grupo.id, embarcacion_nombre: embNombre || null, despachado_at: new Date().toISOString() };
+    await supabase.from("salida_despachos").insert(rec);
+    setDespachos(prev => [...prev.filter(d => d.salida_id !== grupo.id), rec]);
+    setGrupoEmbModal(null);
+  };
+
+  const saveSlotEmbarcacion = async (grupo, slotId, embNombre) => {
+    const allSlots  = buildGrupoSlots(grupo.pasadias_org);
+    const zarpeBySlot = Object.fromEntries((grupo.zarpe_data || []).map(z => [z.slot_id, z]));
+    const newZarpe = allSlots.map(s => {
+      const existing = zarpeBySlot[s.slot_id] || s;
+      return s.slot_id === slotId ? { ...existing, embarcacion: embNombre || null } : existing;
+    });
+    await fetch(`https://ncdyttgxuicyruathkxd.supabase.co/rest/v1/eventos?id=eq.${grupo.id}`,
+      { method: "PATCH", headers: { apikey: AKEY, Authorization: `Bearer ${AKEY}`, "Content-Type": "application/json", Prefer: "return=minimal" },
+        body: JSON.stringify({ zarpe_data: newZarpe }) });
     setGrupos(prev => prev.map(g => g.id === grupo.id ? { ...g, zarpe_data: newZarpe } : g));
   };
 
@@ -812,23 +955,44 @@ export default function CheckIn() {
         />
       )}
 
+      {/* ── Bulk Fill Modal ── */}
+      {bulkFill && (() => {
+        const g = bulkFill;
+        const allGrupoSlots = buildGrupoSlots(g.pasadias_org);
+        const zarpeBySlot   = Object.fromEntries((g.zarpe_data || []).map(z => [z.slot_id, z]));
+        const sinDatos      = allGrupoSlots.filter(s => !(zarpeBySlot[s.slot_id]?.nombre) && !(zarpeBySlot[s.slot_id]?.no_show));
+        return (
+          <BulkFillModal
+            grupo={g}
+            slotsSinDatos={sinDatos}
+            embarcaciones={embarcaciones}
+            onClose={() => setBulkFill(null)}
+            onSaved={newZarpe => setGrupos(prev => prev.map(gr => gr.id === g.id ? { ...gr, zarpe_data: newZarpe } : gr))}
+          />
+        );
+      })()}
+
       {/* ── QR zarpe grupo ── */}
       {qrGrupo && (() => {
         const { grupo, slot } = qrGrupo;
         const baseUrl = `${window.location.origin}/zarpe-grupo?ev=${grupo.id}`;
-        // Si hay un invitado con tok que contiene este slot_id, usar ese tok
+        // Sin slot → modo kiosk (un pasajero a la vez)
         const invitado = slot ? (grupo.invitados_zarpe || []).find(inv => (inv.slot_ids || []).includes(slot.slot_id)) : null;
-        const url = invitado ? `${baseUrl}&tok=${invitado.tok}` : baseUrl;
+        const url = !slot ? `${baseUrl}&mode=kiosk` : invitado ? `${baseUrl}&tok=${invitado.tok}` : baseUrl;
         const qrImg = `https://api.qrserver.com/v1/create-qr-code/?size=240x240&color=0D1B3E&bgcolor=FFFFFF&data=${encodeURIComponent(url)}`;
         return (
           <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.88)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 9998, padding: 16 }}
             onClick={e => e.target === e.currentTarget && setQrGrupo(null)}>
             <div style={{ background: B.navyMid, borderRadius: 22, padding: "28px 24px", width: "100%", maxWidth: 380, textAlign: "center", boxShadow: "0 24px 64px rgba(0,0,0,0.6)" }}>
-              <div style={{ fontSize: 20, fontWeight: 800, color: B.white, marginBottom: 4 }}>Check-in del pasajero</div>
+              <div style={{ fontSize: 20, fontWeight: 800, color: B.white, marginBottom: 4 }}>
+                {slot ? "Check-in del pasajero" : "📲 QR Kiosk"}
+              </div>
               <div style={{ fontSize: 14, color: "rgba(255,255,255,0.6)", marginBottom: 4 }}>
                 {slot ? `${slot.tipo} · Pasajero ${slot.idx}` : grupo.nombre}
               </div>
-              <div style={{ fontSize: 12, color: "rgba(255,255,255,0.35)", marginBottom: 20 }}>Muéstrale este QR para que llene sus datos</div>
+              <div style={{ fontSize: 12, color: "rgba(255,255,255,0.35)", marginBottom: 20 }}>
+                {slot ? "Muéstrale este QR para que llene sus datos" : "Cada pasajero escanea, llena sus datos y pasa al siguiente"}
+              </div>
               <div style={{ background: "#fff", borderRadius: 18, padding: 16, display: "inline-block", marginBottom: 14 }}>
                 <img src={qrImg} alt="QR zarpe grupo" width={220} height={220} style={{ display: "block", borderRadius: 6 }} />
               </div>
@@ -972,15 +1136,30 @@ export default function CheckIn() {
           </div>
         );
       })()}
-      {editColabs && salida && (
-        <ColaboradoresModal
-          salidaId={salida.id}
-          fecha={fecha}
-          despacho={despacho}
-          onClose={() => setEditColabs(false)}
-          onSaved={load}
-        />
-      )}
+      {editColabs && salida && (() => {
+        // Construir lista de embarcaciones para esta salida (base + extras via overrides + Blue Apple)
+        const override = overrides.find(o => o.salida_id === salida.id);
+        const extras = (override?.extra_embarcaciones || []).map(e => {
+          const full = embarcaciones.find(eb => eb.id === e.id);
+          return full ? { ...full, _extra: true } : { id: e.id, nombre: e.nombre, _extra: true };
+        });
+        const base = (salida.embarcaciones || []).map(eid => embarcaciones.find(e => e.id === eid)).filter(Boolean);
+        const combined = [...base, ...extras.filter(e => !base.some(b => b.id === e.id))];
+        const blueApple = embarcaciones.find(e => e.id === "EMB-BLUEAPPLE");
+        const allEmbs = blueApple && !combined.some(e => e.id === "EMB-BLUEAPPLE")
+          ? [...combined, { ...blueApple }]
+          : combined;
+        return (
+          <ColaboradoresModal
+            salidaId={salida.id}
+            fecha={fecha}
+            despacho={despacho}
+            embarcaciones={allEmbs}
+            onClose={() => setEditColabs(false)}
+            onSaved={load}
+          />
+        );
+      })()}
 
       {/* ── Modal: seleccionar embarcación para despachar ── */}
       {despacharModal && (
@@ -1063,7 +1242,9 @@ export default function CheckIn() {
           })}
           {grupos.map(g => {
             const zarpe = g.zarpe_data || [];
-            const totalPaxG = (g.pasadias_org || []).filter(p => p.tipo !== "Impuesto Muelle").reduce((s, p) => s + (Number(p.personas) || 0), 0);
+            const totalPaxG = Number(g.pax) > 0
+              ? Number(g.pax)
+              : (g.pasadias_org || []).filter(p => p.tipo !== "Impuesto Muelle").reduce((s, p) => s + (Number(p.personas) || 0), 0);
             const chkG = zarpe.filter(z => z.checkin_at).length;
             const horas = (g.salidas_grupo || []).map(sg => sg.hora).filter(Boolean).sort();
             const isActive = tabGrupo === g.id;
@@ -1083,93 +1264,162 @@ export default function CheckIn() {
         {tabGrupo && (() => {
           const g = grupos.find(x => x.id === tabGrupo);
           if (!g) return null;
-          // Build full slot list from pasadias_org, merge with zarpe_data
           const allGrupoSlots = buildGrupoSlots(g.pasadias_org);
-          const zarpeBySlot = Object.fromEntries((g.zarpe_data || []).map(z => [z.slot_id, z]));
-          const mergedSlots = allGrupoSlots.map(s => ({ ...s, ...(zarpeBySlot[s.slot_id] || {}) }));
-          const totalPaxG = mergedSlots.length;
-          const conNombre  = mergedSlots.filter(z => z.nombre);
-          const checkedInG = mergedSlots.filter(z => z.checkin_at);
-          const noShowsG   = mergedSlots.filter(z => z.no_show);
-          const horas = (g.salidas_grupo || []).map(sg => sg.hora).filter(Boolean).sort();
+          const zarpeBySlot   = Object.fromEntries((g.zarpe_data || []).map(z => [z.slot_id, z]));
+          const mergedSlots   = allGrupoSlots.map(s => ({ ...s, ...(zarpeBySlot[s.slot_id] || {}) }));
+          const totalPaxG     = mergedSlots.length;
+          const conNombre     = mergedSlots.filter(z => z.nombre);
+          const checkedInG    = mergedSlots.filter(z => z.checkin_at);
+          const noShowsG      = mergedSlots.filter(z => z.no_show);
+          const horas         = (g.salidas_grupo || []).map(sg => sg.hora).filter(Boolean).sort();
+          // Split: slots con datos vs completamente vacíos
+          const slotsConDatos  = mergedSlots.filter(z => z.nombre || z.no_show);
+          const slotsSinDatos  = mergedSlots.filter(z => !z.nombre && !z.no_show);
+          const despachoDatos  = despachos.find(d => d.salida_id === g.id);
+          const embsActivas    = embarcaciones.filter(e => e.estado === "activo");
           return (
             <div>
-              <div style={{ background: B.navyMid, borderRadius: 12, padding: "14px 20px", marginBottom: 12, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <div>
-                  <div style={{ fontSize: 18, fontWeight: 700 }}>{g.nombre}</div>
-                  <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>
-                    👥 {checkedInG.length}/{totalPaxG} abordaron · {horas.map(h => `⛵ ${h}`).join(" ")}
+              {/* Header grupo */}
+              <div style={{ background: B.navyMid, borderRadius: 12, padding: "14px 20px", marginBottom: 12 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10, marginBottom: 10 }}>
+                  <div>
+                    <div style={{ fontSize: 18, fontWeight: 700 }}>{g.nombre}</div>
+                    <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>
+                      👥 {checkedInG.length}/{totalPaxG} abordaron
+                      {horas.length > 0 && ` · ${horas.map(h => `⛵ ${h}`).join(" ")}`}
+                      {despachoDatos && <span style={{ color: B.success, marginLeft: 8 }}>✈ Despachado {new Date(despachoDatos.despachado_at).toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit" })}{despachoDatos.embarcacion_nombre ? ` · ${despachoDatos.embarcacion_nombre}` : ""}</span>}
+                    </div>
                   </div>
+                  {conNombre.length > checkedInG.length && (
+                    <button onClick={() => checkinTodosGrupo(g)}
+                      style={{ padding: "8px 14px", borderRadius: 8, border: "none", background: B.sand, color: B.navy, fontWeight: 700, fontSize: 12, cursor: "pointer", flexShrink: 0 }}>
+                      ✓ Todos CI
+                    </button>
+                  )}
                 </div>
-                {conNombre.length > checkedInG.length && (
-                  <button onClick={() => checkinTodosGrupo(g)}
-                    style={{ padding: "8px 16px", borderRadius: 8, border: "none", background: B.sand, color: B.navy, fontWeight: 700, fontSize: 12, cursor: "pointer" }}>
-                    ✓ Todos
-                  </button>
-                )}
+                {/* Despachar — botón independiente */}
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                  {/* Chips de embarcaciones usadas (derivadas de zarpe_data) */}
+                  {(() => {
+                    const usadas = [...new Set((g.zarpe_data || []).map(z => z.embarcacion).filter(Boolean))];
+                    return usadas.map(emb => (
+                      <span key={emb} style={{ fontSize: 11, padding: "4px 10px", borderRadius: 8, background: B.sky + "22", border: `1px solid ${B.sky}44`, color: B.sky, fontWeight: 600 }}>
+                        ⛵ {emb}
+                      </span>
+                    ));
+                  })()}
+                  {!despachoDatos ? (
+                    <button onClick={() => despacharGrupo(g, null)}
+                      style={{ padding: "8px 18px", borderRadius: 8, border: "none", background: B.sky, color: B.navy, fontWeight: 700, fontSize: 12, cursor: "pointer" }}>
+                      ✈ Despachar
+                    </button>
+                  ) : (
+                    <button onClick={() => { if (window.confirm("¿Deshacer despacho del grupo?")) supabase.from("salida_despachos").delete().eq("id", despachoDatos.id).then(() => setDespachos(prev => prev.filter(d => d.id !== despachoDatos.id))); }}
+                      style={{ padding: "8px 14px", borderRadius: 8, border: `1px solid ${B.success}55`, background: B.success + "22", color: B.success, fontWeight: 700, fontSize: 12, cursor: "pointer" }}>
+                      ✈ Despachado — deshacer
+                    </button>
+                  )}
+                </div>
               </div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                {mergedSlots.map(z => {
-                  const hecho   = !!z.checkin_at;
-                  const isNS    = !!z.no_show;
-                  const tieneDatos = !!z.nombre;
-                  const horaCI  = z.checkin_at ? new Date(z.checkin_at).toTimeString().slice(0, 5) : null;
-                  const bgColor = hecho ? B.success + "18" : isNS ? B.danger + "18" : B.navyMid;
-                  const border  = hecho ? B.success + "55" : isNS ? B.danger + "55" : B.navyLight;
-                  return (
-                    <div key={z.slot_id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", borderRadius: 10, background: bgColor, border: `1px solid ${border}` }}>
-                      {/* Checkbox CI */}
-                      <div onClick={() => !isNS && tieneDatos && checkinPaxGrupo(g, z.slot_id)}
-                        style={{ width: 28, height: 28, borderRadius: 7, flexShrink: 0, border: `2px solid ${hecho ? B.success : isNS ? B.danger : "rgba(255,255,255,0.2)"}`, background: hecho ? B.success : isNS ? B.danger + "44" : "transparent", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, color: hecho ? B.navy : B.danger, fontWeight: 900, cursor: (!isNS && tieneDatos) ? "pointer" : "default" }}>
-                        {hecho ? "✓" : isNS ? "✕" : ""}
-                      </div>
-                      {/* Info */}
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        {tieneDatos ? (
-                          <>
-                            <div style={{ fontWeight: 600, fontSize: 14, color: hecho ? B.success : isNS ? B.danger : B.white, textDecoration: isNS ? "line-through" : "none" }}>{z.nombre}</div>
-                            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", marginTop: 1 }}>
-                              {z.tipo}{z.identificacion ? ` · ${z.identificacion}` : ""}{isNS ? " · NO SHOW" : ""}
-                            </div>
-                          </>
-                        ) : (
-                          <div style={{ fontSize: 12, color: isNS ? B.danger + "88" : "rgba(255,255,255,0.3)", fontStyle: "italic" }}>
-                            {z.tipo} #{z.idx} — {isNS ? "No show" : "sin datos"}
+
+              {/* Slots CON datos */}
+              {slotsConDatos.length > 0 && (
+                <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: slotsSinDatos.length > 0 ? 10 : 0 }}>
+                  {slotsConDatos.map(z => {
+                    const hecho      = !!z.checkin_at;
+                    const isNS       = !!z.no_show;
+                    const horaCI     = z.checkin_at ? new Date(z.checkin_at).toTimeString().slice(0, 5) : null;
+                    const bgColor    = hecho ? B.success + "18" : isNS ? B.danger + "18" : B.navyMid;
+                    const border     = hecho ? B.success + "55" : isNS ? B.danger + "55" : B.navyLight;
+                    return (
+                      <div key={z.slot_id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", borderRadius: 10, background: bgColor, border: `1px solid ${border}` }}>
+                        <div onClick={() => !isNS && z.nombre && checkinPaxGrupo(g, z.slot_id)}
+                          style={{ width: 28, height: 28, borderRadius: 7, flexShrink: 0, border: `2px solid ${hecho ? B.success : isNS ? B.danger : "rgba(255,255,255,0.2)"}`, background: hecho ? B.success : isNS ? B.danger + "44" : "transparent", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, color: hecho ? B.navy : B.danger, fontWeight: 900, cursor: (!isNS && z.nombre) ? "pointer" : "default" }}>
+                          {hecho ? "✓" : isNS ? "✕" : ""}
+                        </div>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          {z.nombre ? (
+                            <>
+                              <div style={{ fontWeight: 600, fontSize: 14, color: hecho ? B.success : isNS ? B.danger : B.white, textDecoration: isNS ? "line-through" : "none" }}>{z.nombre}</div>
+                              <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", marginTop: 1 }}>
+                                {z.tipo}{z.identificacion ? ` · ${z.identificacion}` : ""}{isNS ? " · NO SHOW" : ""}
+                              </div>
+                              {/* Embarcación inline — igual que pasadías normales */}
+                              {!isNS && embsActivas.length > 0 && (
+                                <select
+                                  value={z.embarcacion || ""}
+                                  onChange={e => saveSlotEmbarcacion(g, z.slot_id, e.target.value)}
+                                  onClick={e => e.stopPropagation()}
+                                  style={{ marginTop: 5, fontSize: 11, padding: "3px 8px", borderRadius: 6,
+                                    background: z.embarcacion ? B.sky + "22" : B.navy,
+                                    border: `1px solid ${z.embarcacion ? B.sky + "66" : B.navyLight}`,
+                                    color: z.embarcacion ? B.sky : "rgba(255,255,255,0.4)",
+                                    cursor: "pointer", outline: "none" }}>
+                                  <option value="">⛵ Sin embarcación</option>
+                                  {embsActivas.map(e => <option key={e.id} value={e.nombre}>{e.nombre}</option>)}
+                                </select>
+                              )}
+                            </>
+                          ) : (
+                            <div style={{ fontSize: 12, color: B.danger + "88", fontStyle: "italic" }}>{z.tipo} #{z.idx} — No show</div>
+                          )}
+                        </div>
+                        {horaCI && <span style={{ fontSize: 11, color: B.success, fontWeight: 600, flexShrink: 0 }}>{horaCI}</span>}
+                        {!hecho && (
+                          <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+                            {!isNS && (
+                              <>
+                                <button onClick={() => setQrGrupo({ grupo: g, slot: z })}
+                                  style={{ padding: "5px 10px", borderRadius: 7, border: `1px solid ${B.sand}44`, background: "transparent", color: B.sand, fontSize: 11, fontWeight: 600, cursor: "pointer" }}>QR</button>
+                                <button onClick={() => setEditSlot({ grupo: g, slot: z })}
+                                  style={{ padding: "5px 10px", borderRadius: 7, border: `1px solid rgba(255,255,255,0.15)`, background: "transparent", color: "rgba(255,255,255,0.6)", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>✏️</button>
+                              </>
+                            )}
+                            <button onClick={() => noShowPaxGrupo(g, z.slot_id)}
+                              style={{ padding: "5px 10px", borderRadius: 7, border: `1px solid ${isNS ? B.sand + "55" : B.danger + "55"}`, background: isNS ? "transparent" : B.danger + "22", color: isNS ? "rgba(255,255,255,0.4)" : B.danger, fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
+                              {isNS ? "↩" : "NS"}
+                            </button>
                           </div>
                         )}
                       </div>
-                      {/* Hora CI */}
-                      {horaCI && <span style={{ fontSize: 11, color: B.success, fontWeight: 600, flexShrink: 0 }}>{horaCI}</span>}
-                      {/* Acciones */}
-                      {!hecho && (
-                        <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
-                          {!isNS && (
-                            <>
-                              <button onClick={() => setQrGrupo({ grupo: g, slot: z })}
-                                style={{ padding: "5px 10px", borderRadius: 7, border: `1px solid ${B.sand}44`, background: "transparent", color: B.sand, fontSize: 11, fontWeight: 600, cursor: "pointer" }}>
-                                📋 QR
-                              </button>
-                              <button onClick={() => setEditSlot({ grupo: g, slot: z })}
-                                style={{ padding: "5px 10px", borderRadius: 7, border: `1px solid rgba(255,255,255,0.15)`, background: "transparent", color: "rgba(255,255,255,0.6)", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>
-                                ✏️ Llenar
-                              </button>
-                            </>
-                          )}
-                          <button onClick={() => noShowPaxGrupo(g, z.slot_id)}
-                            style={{ padding: "5px 10px", borderRadius: 7, border: `1px solid ${isNS ? B.sand + "55" : B.danger + "55"}`, background: isNS ? "transparent" : B.danger + "22", color: isNS ? "rgba(255,255,255,0.4)" : B.danger, fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
-                            {isNS ? "↩ Deshacer" : "NS"}
-                          </button>
-                        </div>
-                      )}
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* Slots SIN datos — bloque colapsado con QR general + lista */}
+              {slotsSinDatos.length > 0 && (
+                <div style={{ background: B.navy, borderRadius: 12, padding: "14px 16px", border: `1px solid ${B.navyLight}` }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                    <div>
+                      <span style={{ fontWeight: 700, fontSize: 15, color: B.warning }}>{slotsSinDatos.length}</span>
+                      <span style={{ fontSize: 13, color: "rgba(255,255,255,0.5)", marginLeft: 6 }}>pasajeros sin datos de zarpe</span>
                     </div>
-                  );
-                })}
-              </div>
-              <div style={{ marginTop: 16, background: B.navyMid, borderRadius: 10, padding: "14px 20px", display: "flex", gap: 24 }}>
+                  </div>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <button onClick={() => setQrGrupo({ grupo: g, slot: null })}
+                      style={{ flex: 1, padding: "10px", borderRadius: 10, border: `1px solid ${B.sand}55`, background: B.sand + "15", color: B.sand, fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
+                      📲 QR Kiosk
+                    </button>
+                    <button onClick={() => setBulkFill(g)}
+                      style={{ flex: 1, padding: "10px", borderRadius: 10, border: `1px solid ${B.sky}55`, background: B.sky + "15", color: B.sky, fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
+                      📋 Llenar lista
+                    </button>
+                  </div>
+                  <div style={{ fontSize: 11, color: "rgba(255,255,255,0.25)", marginTop: 10, display: "flex", flexWrap: "wrap", gap: 4 }}>
+                    {slotsSinDatos.slice(0, 8).map(z => <span key={z.slot_id}>{z.tipo} #{z.idx}</span>).reduce((acc, el, i) => i === 0 ? [el] : [...acc, <span key={`sep-${i}`} style={{ opacity: 0.4 }}>·</span>, el], [])}
+                    {slotsSinDatos.length > 8 && <span style={{ opacity: 0.4 }}>+{slotsSinDatos.length - 8} más</span>}
+                  </div>
+                </div>
+              )}
+
+              {/* Footer stats */}
+              <div style={{ marginTop: 12, background: B.navyMid, borderRadius: 10, padding: "14px 20px", display: "flex", gap: 20, flexWrap: "wrap" }}>
                 <div><span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", display: "block" }}>CHECK-IN</span><span style={{ fontSize: 20, fontWeight: 700, color: B.success }}>{checkedInG.length}</span><span style={{ color: "rgba(255,255,255,0.3)" }}>/{totalPaxG}</span></div>
                 <div><span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", display: "block" }}>PENDIENTES</span><span style={{ fontSize: 20, fontWeight: 700, color: totalPaxG - checkedInG.length - noShowsG.length > 0 ? B.warning : B.success }}>{totalPaxG - checkedInG.length - noShowsG.length}</span></div>
                 {noShowsG.length > 0 && <div><span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", display: "block" }}>NO SHOW</span><span style={{ fontSize: 20, fontWeight: 700, color: B.danger }}>{noShowsG.length}</span></div>}
                 <div><span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", display: "block" }}>ZARPE</span><span style={{ fontSize: 20, fontWeight: 700, color: conNombre.length === totalPaxG ? B.success : B.warning }}>{conNombre.length}/{totalPaxG}</span></div>
+                {despachoDatos && <div><span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", display: "block" }}>DESPACHO</span><span style={{ fontSize: 14, fontWeight: 700, color: B.success }}>✈ {new Date(despachoDatos.despachado_at).toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit" })}</span></div>}
               </div>
             </div>
           );
@@ -1225,11 +1475,40 @@ export default function CheckIn() {
                     return allEmbs.map(emb => (
                       <button key={emb.id} onClick={() => {
                         const embDesp = despachosDesal.find(d => d.embarcacion_nombre === emb.nombre);
-                        const colabsDesp = despachosDesal.find(d => d.colaboradores?.length > 0);
-                        // Merge: use emb-specific despacho but always include collaborators from any despacho
+                        // Unir colaboradores de todos los despachos del día/salida
+                        const allColabsMap = new Map();
+                        despachosDesal.forEach(d => (d.colaboradores || []).forEach(c => {
+                          const key = (c.cedula || "") + "|" + (c.nombre || "").toLowerCase().trim();
+                          if (!allColabsMap.has(key)) allColabsMap.set(key, c);
+                        }));
+                        const todosColabs = Array.from(allColabsMap.values());
+
+                        // Filtrar por embarcación asignada:
+                        // - colabs con embarcacion === emb.nombre → van en este zarpe
+                        // - colabs sin embarcacion asignada (vacío) → también (fallback, van en cualquiera)
+                        let allColabs = todosColabs.filter(c => !c.embarcacion || c.embarcacion === emb.nombre);
+
+                        // Capacidad: pasajeros ocupan primero, colaboradores ocupan lo que sobra.
+                        const capacidad = Number(emb.capacidad) || 0;
+                        const pasajerosDeEmb = resDesal.filter(r => r.embarcacion_asignada === emb.nombre);
+                        const paxCount = pasajerosDeEmb.reduce((s, r) => s + (r.pasajeros?.length || r.pax || 1), 0);
+                        const cuposLibres = Math.max(0, capacidad - paxCount);
+
+                        if (capacidad > 0 && allColabs.length > cuposLibres) {
+                          const excedentes = allColabs.length - cuposLibres;
+                          const ok = confirm(
+                            `⚠️ ${emb.nombre} tiene capacidad ${capacidad}, ya hay ${paxCount} pasajeros.\n\n` +
+                            `Solo caben ${cuposLibres} colaboradores más, pero hay ${allColabs.length} registrados para este bote.\n\n` +
+                            `Se incluirán solo los primeros ${cuposLibres} colaboradores en el zarpe (${excedentes} quedan fuera).\n\n` +
+                            `¿Continuar?`
+                          );
+                          if (!ok) return;
+                          allColabs = allColabs.slice(0, cuposLibres);
+                        }
+
                         const despFinal = embDesp
-                          ? { ...embDesp, colaboradores: embDesp.colaboradores?.length > 0 ? embDesp.colaboradores : (colabsDesp?.colaboradores || []) }
-                          : (colabsDesp || null);
+                          ? { ...embDesp, colaboradores: allColabs }
+                          : { colaboradores: allColabs, zarpe_codigo: null };
                         generarZarpe(salida, resDesal, fecha, despFinal, emb);
                       }}
                         style={{ padding: "8px 12px", borderRadius: 8, background: emb._extra ? B.sky + "22" : B.navyLight, color: emb._extra ? B.sky : B.white, border: emb._extra ? `1px solid ${B.sky}44` : "none", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>

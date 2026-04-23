@@ -443,7 +443,7 @@ export default function LasAmericasPortal() {
   const [overrides, setOverrides]   = useState({});
   const [form, setForm] = useState({
     fecha: "", salida_id: "", nombre: "", contacto: "", email: "", notas: "",
-    pax_a: 2, pax_n: 0,
+    pax_a: 2, pax_n: 0, edades_ninos: [],
   });
   const [saving, setSaving]         = useState(false);
   const [confirmed, setConfirmed]   = useState(null); // { id, estado }
@@ -567,7 +567,7 @@ export default function LasAmericasPortal() {
       abono: 0,
       saldo: totalCOP,
       estado,
-      notas: form.notas || null,
+      notas: (form.notas || "") + (Array.isArray(form.edades_ninos) && form.edades_ninos.filter(e => e !== "").length > 0 ? ` · Edades niños: ${form.edades_ninos.filter(e => e !== "").join(", ")}` : ""),
       aliado_id: aliado.id,
       qr_code: `HOTEL-LAS-AMERICAS-${Date.now()}`,
     });
@@ -621,7 +621,7 @@ export default function LasAmericasPortal() {
     setStep(1);
     setSelectedTipo(null);
     setConfirmed(null);
-    setForm({ fecha: "", salida_id: "", nombre: "", contacto: "", email: "", notas: "", pax_a: 2, pax_n: 0 });
+    setForm({ fecha: "", salida_id: "", nombre: "", contacto: "", email: "", notas: "", pax_a: 2, pax_n: 0, edades_ninos: [] });
     setSalidas([]);
     setDisponibilidad({});
     setOverrides({});
@@ -869,10 +869,42 @@ export default function LasAmericasPortal() {
               {/* Children */}
               <div>
                 <label style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", display: "block", marginBottom: 12, textTransform: "uppercase", letterSpacing: "0.08em" }}>
-                  Niños (0–12 años)
+                  Niños (0–11 años)
                 </label>
-                <Stepper value={form.pax_n} min={0} onChange={v => setForm(f => ({ ...f, pax_n: v }))} />
+                <Stepper value={form.pax_n} min={0} onChange={v => setForm(f => {
+                  const arr = [...(f.edades_ninos || [])];
+                  while (arr.length < v) arr.push("");
+                  return { ...f, pax_n: v, edades_ninos: arr.slice(0, v) };
+                })} />
               </div>
+              {/* Edades de cada niño */}
+              {form.pax_n > 0 && (
+                <div style={{ gridColumn: "1 / -1", padding: "12px 14px", background: "rgba(200,185,154,0.06)", borderRadius: 10, border: "1px solid rgba(200,185,154,0.15)" }}>
+                  <div style={{ fontSize: 11, color: "#C8B99A", marginBottom: 8, fontWeight: 600, letterSpacing: "0.04em" }}>
+                    Edad de cada niño <span style={{ opacity: 0.6, fontWeight: 400 }}>(+11 se cobra como adulto)</span>
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(80px, 1fr))", gap: 8 }}>
+                    {Array.from({ length: form.pax_n }).map((_, i) => (
+                      <input key={i} type="number" min="0" max="17"
+                        value={(form.edades_ninos || [])[i] ?? ""}
+                        onChange={e => {
+                          const v = e.target.value;
+                          const arr = [...(form.edades_ninos || [])];
+                          while (arr.length < form.pax_n) arr.push("");
+                          arr[i] = v;
+                          if (Number(v) > 11) {
+                            alert(`Un niño de ${v} años se cobra como adulto — se movió a adultos.`);
+                            setForm(f => ({ ...f, pax_a: (f.pax_a || 1) + 1, pax_n: Math.max(0, (f.pax_n || 0) - 1), edades_ninos: arr.filter((_, idx) => idx !== i) }));
+                          } else {
+                            setForm(f => ({ ...f, edades_ninos: arr }));
+                          }
+                        }}
+                        placeholder="Edad"
+                        style={{ width: "100%", padding: "8px 10px", borderRadius: 8, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.1)", color: "#fff", fontSize: 14, textAlign: "center" }} />
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {/* Salida picker — only when pasadía needs transport and date selected */}
               {needsSalida && form.fecha && (

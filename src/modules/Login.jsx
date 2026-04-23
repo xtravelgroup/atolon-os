@@ -39,7 +39,7 @@ export default function Login() {
 
   return (
     <div style={{
-      minHeight: "100vh", background: B.navy,
+      minHeight: "100dvh", background: B.navy,
       display: "flex", alignItems: "center", justifyContent: "center",
       fontFamily: "'Inter', 'Segoe UI', sans-serif",
     }}>

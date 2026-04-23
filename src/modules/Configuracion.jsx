@@ -25,6 +25,12 @@ export default function Configuracion() {
   const [savingMuelle,   setSavingMuelle]   = useState(false);
   const [savedMuelle,    setSavedMuelle]    = useState(false);
 
+  // Email diario de resultados — lista de destinatarios
+  const [emailResultados, setEmailResultados] = useState([]);
+  const [newEmail, setNewEmail]               = useState("");
+  const [savingEmails, setSavingEmails]       = useState(false);
+  const [savedEmails, setSavedEmails]         = useState(false);
+
   // Cuentas bancarias
   const [cuentas, setCuentas] = useState([]);
   const [showAddCuenta, setShowAddCuenta] = useState(false);
@@ -33,10 +39,14 @@ export default function Configuracion() {
   // Integraciones
   const [wompiForm,    setWompiForm]    = useState({ pub_key: "", integrity_key: "" });
   const [stripeForm,   setStripeForm]   = useState({ pub_key: "", secret_key: "", tasa_usd: "4200" });
-  const [savingInt,    setSavingInt]    = useState(null);   // "wompi" | "stripe" | null
+  const [zohoForm,     setZohoForm]     = useState({ client_id: "", client_secret: "", account_id: "", currency: "USD", merchant_name: "X Travel Group" });
+  const [merchantInt,  setMerchantInt]  = useState("stripe"); // stripe | zoho_pay
+  const [savingInt,    setSavingInt]    = useState(null);   // "wompi" | "stripe" | "zoho_pay" | "merchant" | null
   const [showWompi,    setShowWompi]    = useState(false);
   const [showStripe,   setShowStripe]   = useState(false);
+  const [showZoho,     setShowZoho]     = useState(false);
   const [showStripeSecret, setShowStripeSecret] = useState(false);
+  const [showZohoSecret,   setShowZohoSecret]   = useState(false);
   const [showWompiInt,     setShowWompiInt]     = useState(false);
   const [copied,           setCopied]           = useState({});
 
@@ -61,9 +71,18 @@ export default function Configuracion() {
         setConfig(data);
         setNegocio({ nombre_empresa: data.nombre_empresa || "", nit: data.nit || "", telefono: data.telefono || "", whatsapp: data.whatsapp || "", email: data.email || "", direccion: data.direccion || "", ciudad: data.ciudad || "", website: data.website || "" });
         setTelMuelle(data.tel_muelle || "");
+        setEmailResultados(data.email_resultados || []);
         setCuentas(data.cuentas_bancarias || []);
         setWompiForm({ pub_key: data.wompi_pub_key || "", integrity_key: data.wompi_integrity_key || "" });
         setStripeForm({ pub_key: data.stripe_pub_key || "", secret_key: data.stripe_secret_key || "", tasa_usd: String(data.tasa_usd || "4200") });
+        setZohoForm({
+          client_id: data.zoho_pay_client_id || "",
+          client_secret: data.zoho_pay_client_secret || "",
+          account_id: data.zoho_pay_account_id || "",
+          currency: data.zoho_pay_currency || "USD",
+          merchant_name: data.zoho_pay_merchant_name || "X Travel Group",
+        });
+        setMerchantInt(data.merchant_internacional || "stripe");
       }
     } catch (e) {
       console.error("fetchConfig error:", e);
@@ -153,6 +172,52 @@ export default function Configuracion() {
     setSavingInt("stripe");
     await supabase.from("configuracion").update({ stripe_pub_key: null, stripe_secret_key: null, updated_at: new Date().toISOString() }).eq("id", "atolon");
     setStripeForm({ pub_key: "", secret_key: "" });
+    await fetchConfig();
+    setSavingInt(null);
+  };
+
+  const saveZoho = async () => {
+    if (!supabase || savingInt) return;
+    setSavingInt("zoho_pay");
+    await supabase.from("configuracion").update({
+      zoho_pay_client_id:     zohoForm.client_id.trim(),
+      zoho_pay_client_secret: zohoForm.client_secret.trim(),
+      zoho_pay_account_id:    zohoForm.account_id.trim(),
+      zoho_pay_currency:      (zohoForm.currency || "USD").trim().toUpperCase(),
+      zoho_pay_merchant_name: (zohoForm.merchant_name || "X Travel Group").trim(),
+      updated_at: new Date().toISOString(),
+    }).eq("id", "atolon");
+    await fetchConfig();
+    setSavingInt(null); setShowZoho(false);
+  };
+
+  const disconnectZoho = async () => {
+    if (!supabase || !window.confirm("¿Desconectar Zoho Pay? Los pagos a través de Zoho dejarán de funcionar.")) return;
+    setSavingInt("zoho_pay");
+    await supabase.from("configuracion").update({
+      zoho_pay_client_id: null,
+      zoho_pay_client_secret: null,
+      zoho_pay_account_id: null,
+      updated_at: new Date().toISOString(),
+    }).eq("id", "atolon");
+    setZohoForm({ client_id: "", client_secret: "", account_id: "", currency: "USD" });
+    // Si Zoho estaba como merchant activo, volver a Stripe
+    if (merchantInt === "zoho_pay") {
+      await supabase.from("configuracion").update({ merchant_internacional: "stripe" }).eq("id", "atolon");
+      setMerchantInt("stripe");
+    }
+    await fetchConfig();
+    setSavingInt(null);
+  };
+
+  const saveMerchantInt = async (nuevo) => {
+    if (!supabase) return;
+    setSavingInt("merchant");
+    await supabase.from("configuracion").update({
+      merchant_internacional: nuevo,
+      updated_at: new Date().toISOString(),
+    }).eq("id", "atolon");
+    setMerchantInt(nuevo);
     await fetchConfig();
     setSavingInt(null);
   };
@@ -256,6 +321,70 @@ export default function Configuracion() {
             </button>
           </div>
         </div>
+
+        {/* ── Email diario de resultados ── */}
+        <div style={{ background: B.navyMid, borderRadius: 12, padding: 28, marginTop: 16 }}>
+          <h3 style={{ fontSize: 15, color: B.sand, marginBottom: 6 }}>📧 Email Diario de Resultados</h3>
+          <p style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginBottom: 18 }}>
+            Se envía automáticamente todos los días a las 11:00am con Ayer, Semana y Mes.
+          </p>
+
+          {/* Lista de emails */}
+          {emailResultados.length > 0 && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 14 }}>
+              {emailResultados.map((em, i) => (
+                <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, background: B.navy, borderRadius: 8, padding: "8px 12px" }}>
+                  <span style={{ flex: 1, fontSize: 13 }}>{em}</span>
+                  <button onClick={() => {
+                    const next = emailResultados.filter((_, j) => j !== i);
+                    setEmailResultados(next);
+                    setSavedEmails(false);
+                  }} style={{ background: "none", border: "none", color: B.danger, cursor: "pointer", fontSize: 14, padding: "2px 6px" }}>✕</button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Agregar email */}
+          <div style={{ display: "flex", gap: 8 }}>
+            <input
+              value={newEmail}
+              onChange={e => setNewEmail(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === "Enter" && newEmail.includes("@")) {
+                  setEmailResultados(prev => [...prev, newEmail.trim()]);
+                  setNewEmail("");
+                  setSavedEmails(false);
+                }
+              }}
+              placeholder="correo@ejemplo.com"
+              style={{ ...IS, flex: 1 }}
+            />
+            <button onClick={() => {
+              if (!newEmail.includes("@")) return;
+              setEmailResultados(prev => [...prev, newEmail.trim()]);
+              setNewEmail("");
+              setSavedEmails(false);
+            }} style={{ padding: "10px 18px", background: B.navyLight, border: "none", borderRadius: 8, color: B.sky, fontWeight: 700, fontSize: 13, cursor: "pointer", whiteSpace: "nowrap" }}>
+              + Agregar
+            </button>
+          </div>
+
+          {/* Guardar */}
+          <div style={{ marginTop: 14, display: "flex", justifyContent: "flex-end" }}>
+            <button onClick={async () => {
+              if (!supabase) return;
+              setSavingEmails(true);
+              await supabase.from("configuracion").update({ email_resultados: emailResultados }).eq("id", "atolon");
+              setSavingEmails(false);
+              setSavedEmails(true);
+              setTimeout(() => setSavedEmails(false), 2000);
+            }} disabled={savingEmails}
+              style={{ padding: "10px 24px", background: savedEmails ? B.success : B.sky, color: B.navy, border: "none", borderRadius: 8, fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
+              {savingEmails ? "Guardando..." : savedEmails ? "✓ Guardado" : "Guardar destinatarios"}
+            </button>
+          </div>
+        </div>
         </>
       )}
 
@@ -350,10 +479,44 @@ export default function Configuracion() {
       {tab === "integraciones" && (() => {
         const wompiConectado = !!(config?.wompi_pub_key);
         const stripeConectado = !!(config?.stripe_pub_key);
+        const zohoConectado = !!(config?.zoho_pay_client_id);
         const mask = (s) => s ? s.slice(0, 8) + "••••••••••••" + s.slice(-4) : "";
 
         return (
           <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+
+            {/* ── SELECTOR MERCHANT INTERNACIONAL ─────────────────── */}
+            <div style={{ background: B.navyMid, borderRadius: 12, padding: 18, border: `1px solid ${B.sand}44` }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+                <div style={{ fontSize: 11, color: B.sand, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.08em" }}>🌐 Pagos internacionales — Merchant activo</div>
+              </div>
+              <div style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", marginBottom: 12 }}>
+                Solo un merchant puede procesar pagos internacionales a la vez. Elige cuál está activo:
+              </div>
+              <div style={{ display: "flex", gap: 10 }}>
+                {[
+                  { key: "stripe",   label: "Stripe",   color: "#635BFF", conectado: stripeConectado },
+                  { key: "zoho_pay", label: "Zoho Pay", color: "#E42527", conectado: zohoConectado },
+                ].map(opt => {
+                  const activo = merchantInt === opt.key;
+                  const disabled = !opt.conectado;
+                  return (
+                    <button key={opt.key} onClick={() => !disabled && saveMerchantInt(opt.key)} disabled={disabled || savingInt === "merchant"}
+                      style={{ flex: 1, padding: "14px 18px", borderRadius: 10,
+                        border: `2px solid ${activo ? opt.color : B.navyLight}`,
+                        background: activo ? `${opt.color}22` : disabled ? B.navy : B.navyLight,
+                        color: activo ? opt.color : disabled ? "rgba(255,255,255,0.2)" : "rgba(255,255,255,0.55)",
+                        cursor: disabled ? "not-allowed" : "pointer",
+                        fontSize: 14, fontWeight: 700,
+                        display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+                      {activo && "✓"} {opt.label}
+                      {disabled && <span style={{ fontSize: 10, color: "rgba(255,255,255,0.3)", fontWeight: 400 }}>(sin conectar)</span>}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
 
             {/* ── WOMPI ────────────────────────────────────────────── */}
             <div style={{ background: B.navyMid, borderRadius: 12, padding: 22, border: `1px solid ${wompiConectado ? "#5B4CF5" + "44" : B.navyLight}` }}>
@@ -430,7 +593,10 @@ export default function Configuracion() {
               <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
                 <div style={{ width: 42, height: 42, borderRadius: 10, background: "#635BFF", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 900, fontSize: 18, color: "#fff", flexShrink: 0 }}>S</div>
                 <div style={{ flex: 1 }}>
-                  <div style={{ fontWeight: 700, fontSize: 15 }}>Stripe</div>
+                  <div style={{ fontWeight: 700, fontSize: 15, display: "flex", alignItems: "center", gap: 8 }}>
+                    Stripe
+                    {merchantInt === "stripe" && stripeConectado && <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 10, background: B.sand + "22", color: B.sand, fontWeight: 700 }}>ACTIVO</span>}
+                  </div>
                   <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)" }}>Pagos internacionales · Visa · Mastercard · Amex</div>
                 </div>
                 <span style={{ fontSize: 11, padding: "3px 12px", borderRadius: 10, background: stripeConectado ? B.success + "22" : B.navyLight, color: stripeConectado ? B.success : "rgba(255,255,255,0.4)", flexShrink: 0 }}>
@@ -516,6 +682,123 @@ export default function Configuracion() {
                     <button onClick={saveStripe} disabled={savingInt === "stripe" || !stripeForm.pub_key.trim() || !stripeForm.secret_key.trim()}
                       style={{ flex: 2, padding: "10px", background: savingInt === "stripe" ? B.navyLight : "#635BFF", color: "#fff", border: "none", borderRadius: 8, fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
                       {savingInt === "stripe" ? "Guardando..." : stripeConectado ? "Actualizar llaves" : "Conectar Stripe"}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* ── ZOHO PAY ─────────────────────────────────────────── */}
+            <div style={{ background: B.navyMid, borderRadius: 12, padding: 22, border: `1px solid ${zohoConectado ? "#E4252744" : B.navyLight}` }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+                <div style={{ width: 42, height: 42, borderRadius: 10, background: "#E42527", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 900, fontSize: 18, color: "#fff", flexShrink: 0 }}>Z</div>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontWeight: 700, fontSize: 15, display: "flex", alignItems: "center", gap: 8 }}>
+                    Zoho Pay
+                    {merchantInt === "zoho_pay" && zohoConectado && <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 10, background: B.sand + "22", color: B.sand, fontWeight: 700 }}>ACTIVO</span>}
+                  </div>
+                  <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)" }}>Pagos internacionales · Visa · Mastercard · Amex · Multi-moneda</div>
+                </div>
+                <span style={{ fontSize: 11, padding: "3px 12px", borderRadius: 10, background: zohoConectado ? B.success + "22" : B.navyLight, color: zohoConectado ? B.success : "rgba(255,255,255,0.4)", flexShrink: 0 }}>
+                  {zohoConectado ? "✓ Conectado" : "Sin configurar"}
+                </span>
+                {zohoConectado
+                  ? <button onClick={disconnectZoho} disabled={savingInt === "zoho_pay"} style={{ background: B.danger + "22", color: B.danger, border: "none", borderRadius: 8, padding: "7px 14px", fontSize: 12, fontWeight: 600, cursor: "pointer", flexShrink: 0 }}>Desconectar</button>
+                  : <button onClick={() => setShowZoho(v => !v)} style={{ background: "#E42527", color: "#fff", border: "none", borderRadius: 8, padding: "7px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer", flexShrink: 0 }}>Conectar</button>
+                }
+                {zohoConectado && <button onClick={() => setShowZoho(v => !v)} style={{ background: B.navyLight, color: B.sand, border: "none", borderRadius: 8, padding: "7px 14px", fontSize: 12, cursor: "pointer", flexShrink: 0 }}>Editar</button>}
+              </div>
+
+              {/* Aviso de nombre del cargo */}
+              {zohoConectado && (
+                <div style={{ marginTop: 14, padding: "12px 14px", background: `${B.warning}11`, border: `1px solid ${B.warning}44`, borderRadius: 8, display: "flex", alignItems: "center", gap: 10 }}>
+                  <div style={{ fontSize: 18 }}>💳</div>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 11, color: B.warning, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 2 }}>Nombre del cargo en el extracto del cliente</div>
+                    <div style={{ fontSize: 13, color: "#fff", fontWeight: 700 }}>{config.zoho_pay_merchant_name || "X Travel Group"}</div>
+                    <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>Los pagos aparecerán en el estado de cuenta del huésped con este nombre. Se muestra también en la pantalla de pago.</div>
+                  </div>
+                </div>
+              )}
+
+              {/* Llaves actuales */}
+              {zohoConectado && !showZoho && (
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginTop: 14 }}>
+                  <div>
+                    <label style={LS}>Client ID</label>
+                    <div style={{ padding: "10px 14px", background: B.navy, borderRadius: 8, fontSize: 12, color: "#fecaca", fontFamily: "monospace" }}>{mask(config.zoho_pay_client_id)}</div>
+                  </div>
+                  <div>
+                    <label style={LS}>Client Secret</label>
+                    <div style={{ padding: "10px 14px", background: B.navy, borderRadius: 8, fontSize: 12, color: B.success, fontFamily: "monospace" }}>••••••••••••••••••••</div>
+                  </div>
+                  <div>
+                    <label style={LS}>Account ID · Moneda</label>
+                    <div style={{ padding: "10px 14px", background: B.navy, borderRadius: 8, fontSize: 12, color: B.sand }}>
+                      {config.zoho_pay_account_id || "—"} · {config.zoho_pay_currency || "USD"}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Formulario conectar/editar */}
+              {showZoho && (
+                <div style={{ marginTop: 20, padding: 20, background: B.navy, borderRadius: 10, border: `1px solid #E4252744` }}>
+                  <div style={{ fontSize: 13, color: "rgba(255,255,255,0.5)", marginBottom: 16, lineHeight: 1.6 }}>
+                    Obtén tus credenciales en <strong style={{ color: "#fecaca" }}>api-console.zoho.com</strong> → crea una app Self-Client o Server-Based y activa <code style={{ background: B.navyLight, padding: "1px 5px", borderRadius: 4 }}>ZohoPay.fullaccess</code>.
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                    <div>
+                      <label style={LS}>Client ID</label>
+                      <input value={zohoForm.client_id} onChange={e => setZohoForm(f => ({ ...f, client_id: e.target.value }))}
+                        placeholder="1000.XXXXXXXXXXXXXXXXXXXXXXXX"
+                        style={{ ...IS, fontFamily: "monospace", fontSize: 12 }} />
+                    </div>
+                    <div>
+                      <label style={LS}>Client Secret</label>
+                      <div style={{ position: "relative" }}>
+                        <input type={showZohoSecret ? "text" : "password"} value={zohoForm.client_secret} onChange={e => setZohoForm(f => ({ ...f, client_secret: e.target.value }))}
+                          placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+                          style={{ ...IS, fontFamily: "monospace", fontSize: 12, paddingRight: 80 }} />
+                        <button onClick={() => setShowZohoSecret(v => !v)} style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", color: "rgba(255,255,255,0.4)", fontSize: 12, cursor: "pointer" }}>{showZohoSecret ? "Ocultar" : "Ver"}</button>
+                      </div>
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 12 }}>
+                      <div>
+                        <label style={LS}>Account ID <span style={{ color: "rgba(255,255,255,0.3)" }}>(Merchant ID)</span></label>
+                        <input value={zohoForm.account_id} onChange={e => setZohoForm(f => ({ ...f, account_id: e.target.value }))}
+                          placeholder="Ej: 60012345678"
+                          style={{ ...IS, fontFamily: "monospace", fontSize: 12 }} />
+                      </div>
+                      <div>
+                        <label style={LS}>Moneda base</label>
+                        <select value={zohoForm.currency} onChange={e => setZohoForm(f => ({ ...f, currency: e.target.value }))}
+                          style={{ ...IS, cursor: "pointer" }}>
+                          <option value="USD">USD</option>
+                          <option value="EUR">EUR</option>
+                          <option value="GBP">GBP</option>
+                          <option value="COP">COP</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div>
+                      <label style={LS}>Nombre del cargo (extracto del cliente)</label>
+                      <input value={zohoForm.merchant_name} onChange={e => setZohoForm(f => ({ ...f, merchant_name: e.target.value }))}
+                        placeholder="X Travel Group"
+                        style={{ ...IS, fontSize: 13 }} />
+                      <div style={{ fontSize: 11, color: "rgba(255,255,255,0.3)", marginTop: 4 }}>
+                        Así aparecerá el cargo en el estado de cuenta del huésped. Se mostrará como aviso en las pantallas de pago.
+                      </div>
+                    </div>
+                    <div style={{ padding: "10px 14px", background: B.warning + "11", borderRadius: 8, border: `1px solid ${B.warning}22`, fontSize: 12, color: B.warning }}>
+                      ⚠️ Las credenciales se guardan en la base de datos. El Client Secret tiene acceso total a tu cuenta Zoho Pay.
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", gap: 10, marginTop: 16 }}>
+                    <button onClick={() => setShowZoho(false)} style={{ flex: 1, padding: "10px", background: "none", border: `1px solid ${B.navyLight}`, borderRadius: 8, color: "rgba(255,255,255,0.4)", fontSize: 13, cursor: "pointer" }}>Cancelar</button>
+                    <button onClick={saveZoho} disabled={savingInt === "zoho_pay" || !zohoForm.client_id.trim() || !zohoForm.client_secret.trim()}
+                      style={{ flex: 2, padding: "10px", background: savingInt === "zoho_pay" ? B.navyLight : "#E42527", color: "#fff", border: "none", borderRadius: 8, fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
+                      {savingInt === "zoho_pay" ? "Guardando..." : zohoConectado ? "Actualizar credenciales" : "Conectar Zoho Pay"}
                     </button>
                   </div>
                 </div>

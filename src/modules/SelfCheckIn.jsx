@@ -292,15 +292,6 @@ function PostCheckin({ reserva, salida, paxCount, rid, lang, setLang }) {
           <div style={{ marginLeft: "auto", color: "rgba(255,255,255,0.2)", fontSize: 18 }}>›</div>
         </button>
 
-        <button onClick={() => setVista("upgrade")}
-          style={{ display: "flex", alignItems: "center", gap: 16, background: B.navyMid, borderRadius: 16, padding: "18px 20px", border: `1px solid ${B.sand}33`, cursor: "pointer", textAlign: "left", width: "100%" }}>
-          <div style={{ fontSize: 32, flexShrink: 0 }}>⬆️</div>
-          <div>
-            <div style={{ fontSize: 16, fontWeight: 700, color: "#fff", marginBottom: 2 }}>{t.upgrade}</div>
-            <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", lineHeight: 1.4 }}>{t.upgradeSub}</div>
-          </div>
-          <div style={{ marginLeft: "auto", color: "rgba(255,255,255,0.2)", fontSize: 18 }}>›</div>
-        </button>
       </div>
 
       <div style={{ textAlign: "center", marginTop: 28, fontSize: 11, color: "rgba(255,255,255,0.18)" }}>{t.footer}</div>

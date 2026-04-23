@@ -2,86 +2,21 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { useMobile } from "../lib/useMobile";
 import { B, COP, todayDisplay, todayStr } from "../brand";
 import { supabase } from "../lib/supabase";
+import { GRUPOS_NAV, BOTTOM_NAV } from "../lib/modulosCatalogo";
 
 async function logout() {
   await supabase.auth.signOut();
   window.location.reload();
 }
 
-// Módulos sueltos (siempre visibles, fuera de grupos)
+// Dashboard siempre visible, fuera de grupos
 const NAV_TOP = [
   { key: "dashboard", label: "Dashboard", icon: "⌂" },
 ];
 
-// Grupos colapsables
-const NAV_GROUPS = [
-  {
-    key: "comercial",
-    label: "Comercial",
-    icon: "⭐",
-    color: "#38bdf8",
-    items: [
-      { key: "pasadias", label: "Pasadías",  icon: "☀" },
-      { key: "reservas", label: "Reservas",  icon: "⚓" },
-      { key: "clientes", label: "Clientes",  icon: "👤" },
-      { key: "b2b",      label: "B2B",       icon: "☯" },
-      { key: "eventos",  label: "Eventos",   icon: "♫" },
-      { key: "upsells",      label: "Upsells",      icon: "⬆" },
-      { key: "actividades",  label: "Actividades",  icon: "🎯" },
-      { key: "comercial",    label: "Comercial",    icon: "★" },
-      { key: "metas",        label: "Metas",        icon: "🎯" },
-      { key: "comisiones",   label: "Comisiones",   icon: "💜" },
-    ],
-  },
-  {
-    key: "operaciones",
-    label: "Operaciones",
-    icon: "🔧",
-    color: "#22c55e",
-    items: [
-      { key: "checkin",     label: "Check-in",    icon: "✅" },
-      { key: "muelle",      label: "Llegadas",    icon: "⚓" },
-      { key: "salidas_isla", label: "Salidas",     icon: "⛵" },
-      { key: "cierre_caja", label: "Cierre Caja", icon: "💵" },
-    ],
-  },
-  {
-    key: "marketing",
-    label: "Marketing",
-    icon: "📢",
-    color: "#ec4899",
-    items: [
-      { key: "analitica",          label: "Analítica",  icon: "📊" },
-      { key: "contenido",          label: "Contenido",  icon: "📢" },
-      { key: "vip",                label: "Society",    icon: "✦"  },
-      { key: "carrito_abandonado", label: "Carritos",   icon: "🛒" },
-    ],
-  },
-  {
-    key: "finanzas",
-    label: "Finanzas",
-    icon: "💰",
-    color: "#f5c842",
-    items: [
-      { key: "financiero",     label: "Financiero",     icon: "≡" },
-      { key: "presupuesto",    label: "Presupuesto",    icon: "○" },
-      { key: "activos",        label: "Activos",        icon: "⚒" },
-      { key: "requisiciones",  label: "Requisiciones",  icon: "✆" },
-      { key: "mantenimiento",  label: "Mantenimiento",  icon: "🔧" },
-    ],
-  },
-];
-
-// Bottom (sistema + módulos sin grupo aún)
-const NAV_BOTTOM = [
-  { key: "staffing",      label: "Staffing",      icon: "👥" },
-  { key: "floorplan",     label: "Floor Plan",     icon: "▦" },
-  { key: "contratos",     label: "Contratos",      icon: "✉" },
-  { key: "menus",         label: "Productos",      icon: "🍽️" },
-  { key: "historial",     label: "Historial",      icon: "📋" },
-  { key: "configuracion", label: "Configuración",  icon: "⚙" },
-  { key: "usuarios",      label: "Usuarios",       icon: "👥" },
-];
+// Grupos y bottom vienen del catálogo central — agregar módulos en modulosCatalogo.js
+const NAV_GROUPS = GRUPOS_NAV;
+const NAV_BOTTOM = BOTTOM_NAV;
 
 // Flat lookup for topbar title
 const ALL_ITEMS = [
@@ -126,7 +61,7 @@ function Dashboard() {
       // grupoPaxTotal: excluye Impuesto Muelle y STAFF de la suma de pax visible
       const grupoPax = (g) => (g.pasadias_org || []).filter(p => p.tipo !== "Impuesto Muelle" && p.tipo !== "STAFF").reduce((s, p) => s + (Number(p.personas) || 0), 0) || (g.pax || 0);
 
-      const [ventasHoyR, paxHoyR, paxMananaR, leadsHoyR, evtR, reqR, cobR, cobR2, grpHoyR, grpMananaR] = await Promise.all([
+      const [ventasHoyR, paxHoyR, paxMananaR, leadsHoyR, evtR, reqR, cobR, cobR2, grpHoyR, grpMananaR, llegHoyR, llegMananaR] = await Promise.all([
         // Pasadías vendidos hoy: filtrar por cuándo se CREÓ la reserva
         supabase.from("reservas").select("total")
           .eq("estado", "confirmado")
@@ -138,7 +73,7 @@ function Dashboard() {
         supabase.from("reservas").select("pax").eq("fecha", mananaStr).in("estado", ["confirmado", "check_in", "pendiente", "pendiente_pago", "pendiente_comprobante"]),
         // Leads creados hoy aún activos
         supabase.from("leads").select("id")
-          .not("stage", "in", '("Cerrado Ganado","Perdido")')
+          .not("stage", "in", '("Cerrado Ganado","Perdido","Duplicado")')
           .gte("created_at", inicioHoy)
           .lte("created_at", finHoy),
         supabase.from("eventos").select("id").in("stage", ["Consulta", "Cotizado", "Confirmado"]),
@@ -150,11 +85,16 @@ function Dashboard() {
         // Grupos hoy y mañana
         supabase.from("eventos").select("id, pax, fecha, pasadias_org, categoria, aliado_id").eq("fecha", hoy).neq("stage", "Realizado"),
         supabase.from("eventos").select("id, pax, fecha, pasadias_org, categoria, aliado_id").eq("fecha", mananaStr).neq("stage", "Realizado"),
+        // Llegadas muelle (After Island, Restaurante, Walk-in) — excluye lancha_atolon
+        supabase.from("muelle_llegadas").select("pax_total").eq("fecha", hoy).neq("tipo", "lancha_atolon"),
+        supabase.from("muelle_llegadas").select("pax_total").eq("fecha", mananaStr).neq("tipo", "lancha_atolon"),
       ]);
 
       const isGrupo = (e) => e.categoria === "grupo" || (!e.categoria && e.aliado_id);
       const paxGruposHoy    = (grpHoyR.data    || []).filter(isGrupo).reduce((s, g) => s + grupoPax(g), 0);
       const paxGruposManana = (grpMananaR.data  || []).filter(isGrupo).reduce((s, g) => s + grupoPax(g), 0);
+      const paxLlegHoy      = (llegHoyR.data    || []).reduce((s, l) => s + (l.pax_total || 0), 0);
+      const paxLlegManana   = (llegMananaR.data || []).reduce((s, l) => s + (l.pax_total || 0), 0);
 
       const ventasHoy = ventasHoyR.data || [];
       const cobradoHoy = [...(cobR.data || []), ...(cobR2.data || [])].reduce((s, r) => s + (r.abono || 0), 0);
@@ -162,8 +102,8 @@ function Dashboard() {
         pasadiasVendidos: ventasHoy.length,
         revenue: cobradoHoy,
         leadsHoy: (leadsHoyR.data || []).length,
-        paxHoy:    (paxHoyR.data    || []).reduce((s, r) => s + (r.pax || 0), 0) + paxGruposHoy,
-        paxManana: (paxMananaR.data  || []).reduce((s, r) => s + (r.pax || 0), 0) + paxGruposManana,
+        paxHoy:    (paxHoyR.data    || []).reduce((s, r) => s + (r.pax || 0), 0) + paxGruposHoy + paxLlegHoy,
+        paxManana: (paxMananaR.data  || []).reduce((s, r) => s + (r.pax || 0), 0) + paxGruposManana + paxLlegManana,
         eventos: (evtR.data || []).length,
         reqPendientes: (reqR.data || []).length,
       });
@@ -304,9 +244,56 @@ function MayaChat() {
 export default function AtolanOS({ activeModule = "dashboard", onNavigate, moduleContent, userEmail }) {
   const isMobile = useMobile();
   const [collapsed, setCollapsed] = useState(() => typeof window !== "undefined" && window.innerWidth < 768);
+  const [showChangePassword, setShowChangePassword] = useState(false);
+  const [newPass1, setNewPass1] = useState("");
+  const [newPass2, setNewPass2] = useState("");
+  const [changingPass, setChangingPass] = useState(false);
+  const [passError, setPassError] = useState("");
+  const [passSuccess, setPassSuccess] = useState(false);
+
+  const handleChangePassword = async () => {
+    setPassError("");
+    if (newPass1.length < 6) return setPassError("La contraseña debe tener al menos 6 caracteres");
+    if (newPass1 !== newPass2) return setPassError("Las contraseñas no coinciden");
+    setChangingPass(true);
+    const { error } = await supabase.auth.updateUser({ password: newPass1 });
+    setChangingPass(false);
+    if (error) return setPassError(error.message);
+    setPassSuccess(true);
+    setNewPass1(""); setNewPass2("");
+    setTimeout(() => { setShowChangePassword(false); setPassSuccess(false); }, 1500);
+  };
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [userModulos, setUserModulos] = useState(null); // null = loading
   const [userName, setUserName] = useState("");
+  const [theme, setTheme] = useState(() => typeof window !== "undefined" ? (localStorage.getItem("atolon_theme") || "dark") : "dark");
+  const isLight = theme === "light";
+  useEffect(() => { try { localStorage.setItem("atolon_theme", theme); } catch {} }, [theme]);
+
+  // Paleta de shell según tema
+  const T = isLight ? {
+    sidebarBg:     "#F5F2EA",   // arena muy claro
+    sidebarBorder: "#D8CFBA",
+    topbarBg:      "#FFFFFF",
+    topbarBorder:  "#E0E0E0",
+    textMain:      "#000000",   // negro sólido para máximo contraste
+    textMid:       "rgba(0,0,0,0.85)",
+    textLight:     "rgba(0,0,0,0.55)",
+    activeBg:      "rgba(13,27,62,0.12)",
+    hoverBg:       "rgba(13,27,62,0.05)",
+    logoSrc:       "/atolon-logo.png",
+  } : {
+    sidebarBg:     B.navyMid,
+    sidebarBorder: B.navyLight,
+    topbarBg:      B.navy,
+    topbarBorder:  B.navyLight,
+    textMain:      B.white,
+    textMid:       "rgba(255,255,255,0.55)",
+    textLight:     "rgba(255,255,255,0.25)",
+    activeBg:      "rgba(255,255,255,0.1)",
+    hoverBg:       "rgba(255,255,255,0.05)",
+    logoSrc:       "/atolon-logo-white.png",
+  };
 
   // Load current user's modulos + role from DB
   useEffect(() => {
@@ -362,12 +349,12 @@ export default function AtolanOS({ activeModule = "dashboard", onNavigate, modul
           display: "flex", alignItems: "center", gap: 10,
           padding: indent ? "7px 10px 7px 20px" : "9px 12px",
           borderRadius: 7, cursor: "pointer", marginBottom: 1,
-          background: active ? `rgba(255,255,255,0.1)` : "transparent",
-          color: active ? B.white : "rgba(255,255,255,0.55)",
+          background: active ? T.activeBg : "transparent",
+          color: active ? T.textMain : T.textMid,
           transition: "background 0.12s, color 0.12s",
           borderLeft: active && indent ? `2px solid ${B.sky}` : indent ? "2px solid transparent" : "none",
         }}
-        onMouseEnter={e => { if (!active) e.currentTarget.style.background = "rgba(255,255,255,0.05)"; }}
+        onMouseEnter={e => { if (!active) e.currentTarget.style.background = T.hoverBg; }}
         onMouseLeave={e => { if (!active) e.currentTarget.style.background = "transparent"; }}
       >
         <span style={{ fontSize: indent ? 13 : 15, width: 18, textAlign: "center", flexShrink: 0, opacity: active ? 1 : 0.7 }}>{item.icon}</span>
@@ -378,6 +365,90 @@ export default function AtolanOS({ activeModule = "dashboard", onNavigate, modul
 
   return (
     <div style={{ display: "flex", position: "fixed", top: 0, left: 0, right: 0, bottom: 0, overflow: "hidden" }}>
+      {/* Light mode: overrides de los colores de tema oscuro más comunes usados en los módulos.
+         Cada override apunta a tanto hex como rgb() porque React puede normalizar. */}
+      <style>{`
+        .atolon-light-content { color: #0D1B3E; }
+
+        /* Backgrounds dark → light */
+        .atolon-light-content [style*="#0D1B3E"][style*="background"],
+        .atolon-light-content [style*="rgb(13, 27, 62)"][style*="background"],
+        .atolon-light-content [style*="rgb(13,27,62)"][style*="background"] {
+          background-color: #F5F2EA !important;
+          background: #F5F2EA !important;
+        }
+        .atolon-light-content [style*="#152650"][style*="background"],
+        .atolon-light-content [style*="rgb(21, 38, 80)"][style*="background"],
+        .atolon-light-content [style*="rgb(21,38,80)"][style*="background"] {
+          background-color: #FFFFFF !important;
+          background: #FFFFFF !important;
+          box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+        }
+        .atolon-light-content [style*="#1E3566"][style*="background"],
+        .atolon-light-content [style*="rgb(30, 53, 102)"][style*="background"],
+        .atolon-light-content [style*="rgb(30,53,102)"][style*="background"] {
+          background-color: #EDE7D6 !important;
+          background: #EDE7D6 !important;
+        }
+
+        /* Borders dark → soft */
+        .atolon-light-content [style*="#1E3566"][style*="border"],
+        .atolon-light-content [style*="rgb(30, 53, 102)"][style*="border"] {
+          border-color: #D8CFBA !important;
+        }
+
+        /* Text white → navy */
+        .atolon-light-content [style*="color: #fff"],
+        .atolon-light-content [style*="color:#fff"],
+        .atolon-light-content [style*="color: #FFF"],
+        .atolon-light-content [style*="color:#FFF"],
+        .atolon-light-content [style*="color: #ffffff"],
+        .atolon-light-content [style*="color:#ffffff"],
+        .atolon-light-content [style*="color: #FFFFFF"],
+        .atolon-light-content [style*="color:#FFFFFF"],
+        .atolon-light-content [style*="color: rgb(255, 255, 255)"],
+        .atolon-light-content [style*="color:rgb(255, 255, 255)"] {
+          color: #0D1B3E !important;
+        }
+
+        /* Text white alpha → navy alpha */
+        .atolon-light-content [style*="color: rgba(255, 255, 255, 0.9)"],
+        .atolon-light-content [style*="color: rgba(255,255,255,0.9)"] { color: rgba(13,27,62,0.9) !important; }
+        .atolon-light-content [style*="color: rgba(255, 255, 255, 0.8)"],
+        .atolon-light-content [style*="color: rgba(255,255,255,0.8)"] { color: rgba(13,27,62,0.85) !important; }
+        .atolon-light-content [style*="color: rgba(255, 255, 255, 0.7)"],
+        .atolon-light-content [style*="color: rgba(255,255,255,0.7)"] { color: rgba(13,27,62,0.75) !important; }
+        .atolon-light-content [style*="color: rgba(255, 255, 255, 0.6)"],
+        .atolon-light-content [style*="color: rgba(255,255,255,0.6)"] { color: rgba(13,27,62,0.65) !important; }
+        .atolon-light-content [style*="color: rgba(255, 255, 255, 0.5)"],
+        .atolon-light-content [style*="color: rgba(255,255,255,0.5)"] { color: rgba(13,27,62,0.55) !important; }
+        .atolon-light-content [style*="color: rgba(255, 255, 255, 0.4)"],
+        .atolon-light-content [style*="color: rgba(255,255,255,0.4)"] { color: rgba(13,27,62,0.45) !important; }
+        .atolon-light-content [style*="color: rgba(255, 255, 255, 0.35)"],
+        .atolon-light-content [style*="color: rgba(255,255,255,0.35)"] { color: rgba(13,27,62,0.4) !important; }
+        .atolon-light-content [style*="color: rgba(255, 255, 255, 0.3)"],
+        .atolon-light-content [style*="color: rgba(255,255,255,0.3)"] { color: rgba(13,27,62,0.35) !important; }
+        .atolon-light-content [style*="color: rgba(255, 255, 255, 0.25)"],
+        .atolon-light-content [style*="color: rgba(255,255,255,0.25)"] { color: rgba(13,27,62,0.3) !important; }
+
+        /* Inputs: fondo navy → blanco */
+        .atolon-light-content input,
+        .atolon-light-content textarea,
+        .atolon-light-content select {
+          background-color: #FFFFFF !important;
+          color: #0D1B3E !important;
+          border-color: #D8CFBA !important;
+        }
+        .atolon-light-content input::placeholder,
+        .atolon-light-content textarea::placeholder {
+          color: rgba(13,27,62,0.4) !important;
+        }
+
+        /* Tablas: filas hover */
+        .atolon-light-content tr:hover {
+          background-color: #F5F2EA !important;
+        }
+      `}</style>
       {/* Mobile overlay */}
       {isMobile && sidebarOpen && (
         <div onClick={() => setSidebarOpen(false)} style={{
@@ -388,7 +459,7 @@ export default function AtolanOS({ activeModule = "dashboard", onNavigate, modul
       {/* Sidebar */}
       <div style={{
         width: isMobile ? 240 : w,
-        background: B.navyMid, transition: "transform 0.2s, width 0.2s", flexShrink: 0,
+        background: T.sidebarBg, transition: "transform 0.2s, width 0.2s, background 0.2s", flexShrink: 0,
         display: "flex", flexDirection: "column", overflow: "hidden",
         ...(isMobile ? {
           position: "fixed", top: 0, left: 0, height: "100dvh", zIndex: 100,
@@ -398,13 +469,13 @@ export default function AtolanOS({ activeModule = "dashboard", onNavigate, modul
         {/* Logo */}
         <div style={{
           padding: (collapsed && !isMobile) ? "20px 8px" : "20px 16px",
-          borderBottom: `1px solid ${B.navyLight}`,
+          borderBottom: `1px solid ${T.sidebarBorder}`,
           display: "flex", justifyContent: "center", alignItems: "center",
           cursor: isMobile ? "default" : "pointer",
         }} onClick={() => !isMobile && setCollapsed(c => !c)}>
           {(collapsed && !isMobile)
             ? <img src="/favicon-blue.png" alt="Atolon" style={{ width: 40, height: 40, objectFit: "contain" }} />
-            : <img src="/atolon-logo-white.png" alt="Atolon Beach Club" style={{ height: 60, objectFit: "contain" }} />
+            : <img src={T.logoSrc} alt="Atolon Beach Club" style={{ height: 60, objectFit: "contain" }} onError={(e) => { e.currentTarget.src = "/atolon-logo-white.png"; }} />
           }
         </div>
 
@@ -415,7 +486,7 @@ export default function AtolanOS({ activeModule = "dashboard", onNavigate, modul
           {NAV_TOP.map(n => <NavItem key={n.key} item={n} />)}
 
           {/* Divider */}
-          <div style={{ height: 1, background: `${B.navyLight}88`, margin: "8px 4px" }} />
+          <div style={{ height: 1, background: isLight ? T.sidebarBorder : `${B.navyLight}88`, margin: "8px 4px" }} />
 
           {/* Groups — filtered by user permissions */}
           {visibleNavGroups.map(group => {
@@ -427,7 +498,7 @@ export default function AtolanOS({ activeModule = "dashboard", onNavigate, modul
                   <div style={{
                     display: "flex", alignItems: "center", gap: 8,
                     padding: "6px 12px 4px",
-                    color: hasActive ? group.color : "rgba(255,255,255,0.3)",
+                    color: hasActive ? group.color : T.textLight,
                   }}>
                     <span style={{ fontSize: 12 }}>{group.icon}</span>
                     <span style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em" }}>{group.label}</span>
@@ -441,27 +512,39 @@ export default function AtolanOS({ activeModule = "dashboard", onNavigate, modul
           })}
 
           {/* Divider */}
-          <div style={{ height: 1, background: `${B.navyLight}88`, margin: "8px 4px" }} />
+          <div style={{ height: 1, background: isLight ? T.sidebarBorder : `${B.navyLight}88`, margin: "8px 4px" }} />
 
           {/* Bottom items — filtered by user permissions */}
           {visibleNavBottom.map(n => <NavItem key={n.key} item={n} />)}
         </div>
 
         {/* Footer */}
-        <div style={{ padding: "10px 8px", borderTop: `1px solid ${B.navyLight}` }}>
+        <div style={{ padding: "10px 8px", borderTop: `1px solid ${T.sidebarBorder}` }}>
           {!collapsed && userEmail && (
-            <div style={{ fontSize: 10, color: "rgba(255,255,255,0.25)", padding: "0 8px 6px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            <div style={{ fontSize: 10, color: T.textLight, padding: "0 8px 6px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
               {userEmail}
             </div>
           )}
+          <div onClick={() => setShowChangePassword(true)}
+            style={{
+              display: "flex", alignItems: "center", gap: 10,
+              padding: "9px 12px", borderRadius: 7, cursor: "pointer",
+              color: T.textLight, transition: "background 0.12s",
+            }}
+            onMouseEnter={e => { e.currentTarget.style.background = B.sky + "18"; e.currentTarget.style.color = B.sky; }}
+            onMouseLeave={e => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = T.textLight; }}
+          >
+            <span style={{ fontSize: 15, width: 18, textAlign: "center", flexShrink: 0 }}>🔑</span>
+            {!collapsed && <span style={{ fontSize: 13, whiteSpace: "nowrap" }}>Cambiar contraseña</span>}
+          </div>
           <div onClick={logout}
             style={{
               display: "flex", alignItems: "center", gap: 10,
               padding: "9px 12px", borderRadius: 7, cursor: "pointer",
-              color: "rgba(255,255,255,0.35)", transition: "background 0.12s",
+              color: T.textLight, transition: "background 0.12s",
             }}
             onMouseEnter={e => { e.currentTarget.style.background = "#D6454518"; e.currentTarget.style.color = "#F87171"; }}
-            onMouseLeave={e => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "rgba(255,255,255,0.35)"; }}
+            onMouseLeave={e => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = T.textLight; }}
           >
             <span style={{ fontSize: 15, width: 18, textAlign: "center", flexShrink: 0 }}>⎋</span>
             {!collapsed && <span style={{ fontSize: 13, whiteSpace: "nowrap" }}>Cerrar sesión</span>}
@@ -475,31 +558,46 @@ export default function AtolanOS({ activeModule = "dashboard", onNavigate, modul
         <div style={{
           height: 54, padding: isMobile ? "0 16px" : "0 28px",
           display: "flex", alignItems: "center", justifyContent: "space-between",
-          borderBottom: `1px solid ${B.navyLight}`, flexShrink: 0, background: B.navy,
+          borderBottom: `1px solid ${T.topbarBorder}`, flexShrink: 0, background: T.topbarBg,
+          transition: "background 0.2s",
         }}>
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
             {isMobile && (
               <button onClick={() => setSidebarOpen(true)} style={{
-                background: "none", border: "none", color: B.white, fontSize: 22,
+                background: "none", border: "none", color: T.textMain, fontSize: 22,
                 cursor: "pointer", padding: "4px 6px", lineHeight: 1,
               }}>☰</button>
             )}
             {/* Breadcrumb: Grupo > Módulo */}
             {activeGroup && !isMobile && (
-              <span style={{ fontSize: 12, color: "rgba(255,255,255,0.3)", fontWeight: 500 }}>
+              <span style={{ fontSize: 12, color: T.textLight, fontWeight: 500 }}>
                 {NAV_GROUPS.find(g => g.key === activeGroup)?.label} ›
               </span>
             )}
-            <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontSize: isMobile ? 17 : 20, fontWeight: 700 }}>
+            <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontSize: isMobile ? 17 : 20, fontWeight: 700, color: T.textMain }}>
               {ALL_ITEMS.find(n => (MODULE_KEY_MAP[n.key] || n.key) === activeModule)?.label || "Dashboard"}
             </span>
-            {!isMobile && <span style={{ fontSize: 12, color: "rgba(255,255,255,0.3)" }}>{todayDisplay()}</span>}
+            {!isMobile && <span style={{ fontSize: 12, color: T.textLight }}>{todayDisplay()}</span>}
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            {/* Toggle tema */}
+            <button
+              onClick={() => setTheme(isLight ? "dark" : "light")}
+              title={isLight ? "Cambiar a modo oscuro" : "Cambiar a modo claro"}
+              style={{
+                width: 32, height: 32, borderRadius: 16,
+                background: isLight ? "#F5C842" + "22" : B.navyLight,
+                border: "none", cursor: "pointer", fontSize: 15, display: "flex",
+                alignItems: "center", justifyContent: "center",
+              }}>
+              {isLight ? "🌙" : "☀️"}
+            </button>
             <div style={{
-              width: 32, height: 32, borderRadius: 16, background: B.navyLight,
+              width: 32, height: 32, borderRadius: 16,
+              background: isLight ? "#0D1B3E" : B.navyLight,
               display: "flex", alignItems: "center", justifyContent: "center",
-              fontSize: 11, fontWeight: 700, cursor: "pointer", color: "rgba(255,255,255,0.6)",
+              fontSize: 11, fontWeight: 700, cursor: "pointer",
+              color: isLight ? "#fff" : "rgba(255,255,255,0.6)",
             }}>{
               userName
                 ? userName.split(" ").map(w => w[0]).join("").slice(0, 2).toUpperCase()
@@ -509,7 +607,12 @@ export default function AtolanOS({ activeModule = "dashboard", onNavigate, modul
         </div>
 
         {/* Content area */}
-        <div style={{ flex: 1, overflowY: "auto", padding: isMobile ? "16px 12px" : 28 }}>
+        <div
+          className={isLight ? "atolon-light-content" : ""}
+          style={{
+            flex: 1, overflowY: "auto", padding: isMobile ? "16px 12px" : 28,
+            background: isLight ? "#FAF8F2" : "transparent",
+          }}>
           {/* Block access to modules not in user's permissions */}
           {moduleContent && activeModule !== "dashboard" && !canSee(activeModule) ? (
             <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "60%", gap: 12 }}>
@@ -524,6 +627,59 @@ export default function AtolanOS({ activeModule = "dashboard", onNavigate, modul
       </div>
 
       <MayaChat />
+
+      {/* ── Modal: Cambiar contraseña ── */}
+      {showChangePassword && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 1500, background: "rgba(0,0,0,0.8)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}
+          onClick={e => e.target === e.currentTarget && setShowChangePassword(false)}>
+          <div style={{ background: B.navyMid, borderRadius: 16, padding: 28, width: 400, maxWidth: "100%", border: `1px solid ${B.navyLight}` }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+              <h3 style={{ fontSize: 17, fontWeight: 700, margin: 0, color: "#fff" }}>🔑 Cambiar contraseña</h3>
+              <button onClick={() => setShowChangePassword(false)} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.4)", fontSize: 18, cursor: "pointer" }}>✕</button>
+            </div>
+            <div style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", marginBottom: 18 }}>
+              {userEmail}
+            </div>
+            {passSuccess ? (
+              <div style={{ textAlign: "center", padding: 20 }}>
+                <div style={{ fontSize: 40, marginBottom: 8 }}>✅</div>
+                <div style={{ fontSize: 15, fontWeight: 700, color: B.success }}>Contraseña actualizada</div>
+              </div>
+            ) : (
+              <>
+                <div style={{ marginBottom: 14 }}>
+                  <label style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: "0.06em", display: "block", marginBottom: 6 }}>Nueva contraseña</label>
+                  <input type="password" value={newPass1} onChange={e => { setNewPass1(e.target.value); setPassError(""); }}
+                    placeholder="Mínimo 6 caracteres" autoFocus
+                    style={{ width: "100%", padding: "11px 14px", borderRadius: 8, border: `1px solid ${B.navyLight}`, background: B.navy, color: "#fff", fontSize: 14, outline: "none", boxSizing: "border-box" }} />
+                </div>
+                <div style={{ marginBottom: 14 }}>
+                  <label style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: "0.06em", display: "block", marginBottom: 6 }}>Confirmar contraseña</label>
+                  <input type="password" value={newPass2} onChange={e => { setNewPass2(e.target.value); setPassError(""); }}
+                    onKeyDown={e => e.key === "Enter" && handleChangePassword()}
+                    placeholder="Repetir contraseña"
+                    style={{ width: "100%", padding: "11px 14px", borderRadius: 8, border: `1px solid ${B.navyLight}`, background: B.navy, color: "#fff", fontSize: 14, outline: "none", boxSizing: "border-box" }} />
+                </div>
+                {passError && (
+                  <div style={{ fontSize: 12, color: "#F87171", marginBottom: 14, padding: "8px 12px", background: "#D6454522", borderRadius: 6 }}>
+                    {passError}
+                  </div>
+                )}
+                <div style={{ display: "flex", gap: 10 }}>
+                  <button onClick={() => setShowChangePassword(false)}
+                    style={{ flex: 1, padding: "11px", background: "none", border: `1px solid ${B.navyLight}`, borderRadius: 8, color: "rgba(255,255,255,0.5)", fontSize: 13, cursor: "pointer", fontWeight: 600 }}>
+                    Cancelar
+                  </button>
+                  <button onClick={handleChangePassword} disabled={changingPass}
+                    style={{ flex: 2, padding: "11px", background: B.sky, border: "none", borderRadius: 8, color: B.navy, fontSize: 14, cursor: "pointer", fontWeight: 700, opacity: changingPass ? 0.5 : 1 }}>
+                    {changingPass ? "Actualizando..." : "Cambiar contraseña"}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

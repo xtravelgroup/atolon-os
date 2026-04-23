@@ -32,12 +32,36 @@ export default function Clientes() {
     setLoading(true);
     setSelected(null);
     const q = query.trim();
-    const { data } = await supabase.from("clientes")
-      .select("*")
-      .or(`email.ilike.%${q}%,nombre.ilike.%${q}%,telefono.ilike.%${q}%`)
-      .order("total_gastado", { ascending: false })
-      .limit(30);
-    setResults(data || []);
+    // Search reservas directly — clientes table is not fully populated
+    const { data } = await supabase.from("reservas")
+      .select("nombre, email, contacto, telefono, total, estado, fecha, canal, aliado_id")
+      .or(`nombre.ilike.%${q}%,email.ilike.%${q}%,contacto.ilike.%${q}%,telefono.ilike.%${q}%`)
+      .neq("estado", "cancelado")
+      .order("fecha", { ascending: false })
+      .limit(200);
+
+    // Group by email (or nombre if no email) to build client profiles
+    const map = {};
+    (data || []).forEach(r => {
+      const key = (r.email || r.contacto || r.nombre || "").toLowerCase().trim();
+      if (!key) return;
+      if (!map[key]) {
+        map[key] = {
+          id: key,
+          nombre: r.nombre,
+          email: r.email || r.contacto || "",
+          telefono: r.telefono || r.contacto || "",
+          total_gastado: 0,
+          total_reservas: 0,
+          canal_origen: r.canal,
+        };
+      }
+      if (r.estado === "confirmado") map[key].total_gastado += r.total || 0;
+      map[key].total_reservas += 1;
+    });
+
+    const clientes = Object.values(map).sort((a, b) => b.total_gastado - a.total_gastado).slice(0, 30);
+    setResults(clientes);
     setSearched(true);
     setLoading(false);
   }, [query]);
@@ -46,14 +70,19 @@ export default function Clientes() {
     if (!supabase) return;
     setSelected(cliente);
     setLoadingPerfil(true);
-    // Buscar reservas por email (nuevo campo) O por contacto (campo legado que guardaba el email)
+    const email = cliente.email || "";
+    const nombre = cliente.nombre || "";
+    // Build OR filter: email fields + nombre fallback
+    let orFilter = `nombre.ilike.${nombre}`;
+    if (email) orFilter += `,email.ilike.${email},contacto.ilike.${email}`;
     const [resR, crdR] = await Promise.all([
       supabase.from("reservas").select("*")
-        .or(`email.eq.${cliente.email},contacto.eq.${cliente.email}`)
+        .or(orFilter)
         .order("fecha", { ascending: false }),
-      supabase.from("creditos").select("*")
-        .eq("cliente_email", cliente.email)
-        .order("created_at", { ascending: false }),
+      email ? supabase.from("creditos").select("*")
+        .eq("cliente_email", email)
+        .order("created_at", { ascending: false })
+        : Promise.resolve({ data: [] }),
     ]);
     setReservas(resR.data || []);
     setCreditos(crdR.data || []);
@@ -206,8 +235,12 @@ export default function Clientes() {
                   <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                     {reservas.map(r => {
                       const est = ESTADO_STYLE[r.estado] || { bg: B.navyLight, color: B.white, label: r.estado };
+                      const openReserva = () => window.dispatchEvent(new CustomEvent("atolon-navigate", { detail: { modulo: "reservas", reservaId: r.id } }));
                       return (
-                        <div key={r.id} style={{ background: B.navy, borderRadius: 8, padding: "12px 14px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+                        <div key={r.id} onClick={openReserva}
+                          style={{ background: B.navy, borderRadius: 8, padding: "12px 14px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, cursor: "pointer", transition: "background 0.15s" }}
+                          onMouseEnter={e => e.currentTarget.style.background = B.navyLight}
+                          onMouseLeave={e => e.currentTarget.style.background = B.navy}>
                           <div style={{ flex: 1, minWidth: 0 }}>
                             <div style={{ fontSize: 13, fontWeight: 600, color: B.white }}>{fmtFecha(r.fecha)} · {r.tipo || "—"}</div>
                             <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>

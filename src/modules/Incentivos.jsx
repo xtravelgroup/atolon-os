@@ -568,7 +568,7 @@ function TabAgencias() {
 }
 
 // ════════════════════════════════════════════════════════
-// TAB VENDEDORES (ranking + config AtoCoins)
+// TAB VENDEDORES (ranking + config AtolonLovers)
 // ════════════════════════════════════════════════════════
 function RankingList({ vends, vendedores, coinName, config, showHist, onClickRow, onAjuste, historialVen, modality }) {
   const MEDAL = ["🥇","🥈","🥉"];
@@ -683,7 +683,7 @@ function TabVendedores() {
     setSavingCfg(true);
     await supabase.from("b2b_puntos_config").upsert({
       id: "default", activo: cfgForm.activo ?? true,
-      nombre_puntos: cfgForm.nombre_puntos || "AtoCoins",
+      nombre_puntos: cfgForm.nombre_puntos || "AtolonLovers",
       cop_por_punto:             Number(cfgForm.cop_por_punto) || 0,
       puntos_por_reserva:        Number(cfgForm.puntos_por_reserva) || 0,
       puntos_por_pax:            Number(cfgForm.puntos_por_pax) || 0,
@@ -724,7 +724,7 @@ function TabVendedores() {
     setAjusteForm({ puntos: "", motivo: "", tipo: "credito" }); fetchAll();
   };
 
-  const coinName  = config?.nombre_puntos || "AtoCoins";
+  const coinName  = config?.nombre_puntos || "AtolonLovers";
   const vendFilt  = vendedores.filter(v => filtroAlias === "__todas__" || v.aliado_id === filtroAlias);
   const vendPrem  = vendFilt.filter(v => v.aliado_modalidad !== "cop");
   const vendCOP   = vendFilt.filter(v => v.aliado_modalidad === "cop");
@@ -794,7 +794,7 @@ function TabVendedores() {
         {/* Panel derecho: config + modalidad por agencia */}
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
 
-          {/* Config AtoCoins */}
+          {/* Config AtolonLovers */}
           <div style={{ background: B.navyMid, borderRadius: 12, padding: 18 }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
               <div style={{ fontSize: 13, fontWeight: 700, color: B.sand }}>⚙ Reglas {coinName}</div>
@@ -897,7 +897,7 @@ export default function Incentivos() {
   const [tab, setTab] = useState("agencias");
   const TABS = [
     { key: "agencias",   label: "🏢 Agencias",   desc: "Programas de acumulación y metas para agencias" },
-    { key: "vendedores", label: "👤 Vendedores",  desc: "Ranking AtoCoins y configuración de puntos" },
+    { key: "vendedores", label: "👤 Vendedores",  desc: "Ranking AtolonLovers y configuración de puntos" },
   ];
   return (
     <div>

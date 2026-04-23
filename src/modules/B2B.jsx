@@ -125,8 +125,8 @@ function ConveniosSection({ aliadoId, comisionBase }) {
     }
 
     if (rows.length === 0 && pasData?.length > 0) {
-      // Primera vez: seed ALL active pasadías
-      const seeds = pasData.map(p => ({
+      // Primera vez: seed solo pasadías con "Visible en todas las agencias"
+      const seeds = pasData.filter(p => p.visible_agencias_todas === true).map(p => ({
         id: `CONV-${aliadoId}-${p.nombre.toLowerCase().replace(/\s/g, "")}`,
         aliado_id: aliadoId,
         tipo_pasadia: p.nombre,
@@ -341,7 +341,8 @@ function HistorialReservasB2B({ aliadoId, comisionPct = 0 }) {
   // Historial y pago
   const [historial, setHistorial]     = useState([]);
   const [showPagoModal, setShowPagoModal] = useState(false);
-  const [pagoForm, setPagoForm]       = useState({ metodo: "transferencia", monto: 0, nota: "", usuario: "" });
+  const todayISO = () => new Date().toLocaleDateString("en-CA", { timeZone: "America/Bogota" });
+  const [pagoForm, setPagoForm]       = useState({ metodo: "transferencia", monto: 0, nota: "", usuario: "", fecha: todayISO() });
   const [uploadingPago, setUploadingPago] = useState(false);
   const [sendingEmail, setSendingEmail]   = useState(false);
   const [emailSent, setEmailSent]         = useState(false);
@@ -395,20 +396,45 @@ function HistorialReservasB2B({ aliadoId, comisionPct = 0 }) {
     setSendingEmail(false);
   }, [selected, sendingEmail, logHistorial, fetchHistorial]);
 
-  const [pasadiasMap, setPasadiasMap] = useState({}); // { tipo_lower: precio_publico }
+  const [pasadiasMap, setPasadiasMap] = useState({}); // { tipo_lower: { precio, neto, precio_nino, neto_nino } }
 
   const fetchR = useCallback(async () => {
     if (!supabase) return;
-    const [resR, salR, pasR] = await Promise.all([
+    const [resR, salR, pasR, convR] = await Promise.all([
       supabase.from("reservas").select("*").eq("aliado_id", aliadoId).order("fecha", { ascending: false }).limit(100),
       supabase.from("salidas").select("id,hora,nombre").eq("activo", true).order("orden"),
-      supabase.from("pasadias").select("nombre,precio,precio_neto_agencia").eq("activo", true),
+      supabase.from("pasadias").select("nombre,precio,precio_neto_agencia,precio_nino,precio_neto_nino").eq("activo", true),
+      supabase.from("b2b_convenios").select("tipo_pasadia,tarifa_publica,tarifa_neta,tarifa_publica_nino,tarifa_neta_nino").eq("aliado_id", aliadoId),
     ]);
     setReservas(resR.data || []);
     setSalidas(salR.data || []);
-    // Build map tipo → { precio, neto }
+    // Build map tipo → { precio, neto, precio_nino, neto_nino } — convenio takes priority over pasadia defaults
+    const convMap = {};
+    (convR.data || []).forEach(c => { convMap[c.tipo_pasadia.toLowerCase()] = c; });
     const pm = {};
-    (pasR.data || []).forEach(p => { pm[p.nombre.toLowerCase()] = { precio: p.precio, neto: p.precio_neto_agencia || 0 }; });
+    // Build from pasadias, convenio takes priority
+    (pasR.data || []).forEach(p => {
+      const k = p.nombre.toLowerCase();
+      const conv = convMap[k];
+      pm[k] = {
+        precio:      conv?.tarifa_publica      ?? p.precio              ?? 0,
+        neto:        conv?.tarifa_neta         ?? p.precio_neto_agencia ?? 0,
+        precio_nino: conv?.tarifa_publica_nino ?? p.precio_nino         ?? 0,
+        neto_nino:   conv?.tarifa_neta_nino    ?? p.precio_neto_nino    ?? 0,
+      };
+    });
+    // Also add convenios that don't have a matching pasadia (e.g. tipo not in pasadias table)
+    (convR.data || []).forEach(c => {
+      const k = c.tipo_pasadia.toLowerCase();
+      if (!pm[k]) {
+        pm[k] = {
+          precio:      c.tarifa_publica      ?? 0,
+          neto:        c.tarifa_neta         ?? 0,
+          precio_nino: c.tarifa_publica_nino ?? 0,
+          neto_nino:   c.tarifa_neta_nino    ?? 0,
+        };
+      }
+    });
     setPasadiasMap(pm);
     setLoading(false);
   }, [aliadoId]);
@@ -451,12 +477,20 @@ function HistorialReservasB2B({ aliadoId, comisionPct = 0 }) {
 
   const openEdit = (r) => {
     setSelected(r.id);
+    const conv = pasadiasMap[(r.tipo || "").toLowerCase()];
+    const publica = conv?.precio || 0;
+    const neta    = conv?.neto   || 0;
+    const precioU = r.precio_u || (r.pax_a ? Math.round(r.total / r.pax_a) : 0);
+    // Detect tipo_tarifa: if stored price is closer to neta → "neta", default "publica"
+    const tipo_tarifa = (r.forma_pago === "CXC") ? "neta"
+      : (neta > 0 && publica > 0 && Math.abs(precioU - neta) < Math.abs(precioU - publica)) ? "neta"
+      : "publica";
     setEditForm({
       nombre: r.nombre || "", contacto: r.contacto || "", fecha: r.fecha || "",
       tipo: r.tipo || "", salida_id: r.salida_id || "", pax_a: r.pax_a || 1,
       pax_n: r.pax_n || 0, estado: r.estado || "pendiente",
       forma_pago: r.forma_pago || "", abono: r.abono || 0, total: r.total || 0,
-      notas: r.notas || "",
+      notas: r.notas || "", tipo_tarifa,
     });
     setSavedOk(false);
     setHistorial([]);
@@ -484,14 +518,23 @@ function HistorialReservasB2B({ aliadoId, comisionPct = 0 }) {
     // Proteger estado confirmado: nunca puede bajar a otro estado por guardado manual
     const estadoFinal = sel.estado === "confirmado" ? "confirmado" : editForm.estado;
 
-    await supabase.from("reservas").update({
+    if (sel.tipo_tarifa !== editForm.tipo_tarifa) changes.push(`Tarifa: ${sel.tipo_tarifa || "publica"} → ${editForm.tipo_tarifa}`);
+    // precio_u: unit price based on tipo_tarifa
+    const convS = pasadiasMap[(editForm.tipo || "").toLowerCase()];
+    const precioUFinal = editForm.tipo_tarifa === "neta"
+      ? (convS?.neto || 0)
+      : (sel.precio_u || convS?.precio || 0);
+
+    const { error: saveErr } = await supabase.from("reservas").update({
       nombre: editForm.nombre, contacto: editForm.contacto, fecha: editForm.fecha,
       tipo: editForm.tipo, salida_id: editForm.salida_id || null,
       pax_a: editForm.pax_a, pax_n: editForm.pax_n, pax,
       estado: estadoFinal,
       abono: editForm.abono, saldo, total: editForm.total,
+      precio_u: precioUFinal || undefined,
       notas: editForm.notas, updated_at: new Date().toISOString(),
     }).eq("id", selected);
+    if (saveErr) { alert("Error al guardar: " + saveErr.message); setSaving(false); return; }
 
     if (changes.length > 0) {
       await logHistorial(selected, "modificacion", changes.join(" · "),
@@ -581,13 +624,21 @@ function HistorialReservasB2B({ aliadoId, comisionPct = 0 }) {
   const totalPax = activas.reduce((s, r) => s + (r.pax || 0), 0);
   const pendientes = reservas.filter(r => ["pendiente_pago","pendiente_comprobante","pendiente"].includes(r.estado)).length;
 
-  // Comisión = (precio_u − precio_neto) × pax − descuento_agencia
+  // Comisión = margen adultos + margen niños − descuento_agencia
   const getComision = (r) => {
-    const pasadia = pasadiasMap[(r.tipo || "").toLowerCase()];
-    const netoBase = r.precio_neto || pasadia?.neto || 0;
-    const cobrado  = r.precio_u || 0;
+    const pasadia   = pasadiasMap[(r.tipo || "").toLowerCase()];
+    const cobradoA  = r.precio_u    || pasadia?.precio      || 0;
+    const netoA     = r.precio_neto || pasadia?.neto        || 0;
+    const cobradoN  = r.precio_nino || pasadia?.precio_nino || 0;
+    const netoN     =                  pasadia?.neto_nino   || 0;
+    const paxA      = r.pax_a || r.pax || 1;
+    const paxN      = r.pax_n || 0;
     const descuento = r.descuento_agencia || 0;
-    if (netoBase > 0 && cobrado > 0) return Math.max(0, (cobrado - netoBase) * (r.pax || 1) - descuento);
+    if (netoA > 0 && cobradoA > 0) {
+      const margenA = (cobradoA - netoA) * paxA;
+      const margenN = cobradoN > 0 && netoN > 0 ? (cobradoN - netoN) * paxN : 0;
+      return Math.max(0, margenA + margenN - descuento);
+    }
     if (comisionPct > 0 && r.total > 0) return Math.max(0, Math.round(r.total * comisionPct / 100) - descuento);
     return 0;
   };
@@ -596,6 +647,35 @@ function HistorialReservasB2B({ aliadoId, comisionPct = 0 }) {
   const sel = reservas.find(r => r.id === selected);
 
   const ef = (k, v) => setEditForm(f => ({ ...f, [k]: v }));
+
+  const [normalizando, setNormalizando] = useState(false);
+  const normalizarNetoConfirmado = async () => {
+    if (!supabase) return;
+    const pendientesR = reservas.filter(r => r.estado !== "cancelado");
+    if (pendientesR.length === 0) return;
+    if (!window.confirm(`¿Confirmar ${pendientesR.length} reservas con precio neto y estado Confirmado?`)) return;
+    setNormalizando(true);
+    for (const r of pendientesR) {
+      const conv = pasadiasMap[(r.tipo || "").toLowerCase()];
+      const netoA = conv?.neto || 0;
+      const netoN = conv?.neto_nino || 0;
+      const paxA  = r.pax_a || r.pax || 1;
+      const paxN  = r.pax_n || 0;
+      const nuevoTotal = netoA > 0 ? paxA * netoA + paxN * netoN : r.total;
+      const abonoActual = r.abono || 0;
+      const nuevoSaldo  = Math.max(0, nuevoTotal - abonoActual);
+      await supabase.from("reservas").update({
+        total: nuevoTotal, abono: abonoActual, saldo: nuevoSaldo,
+        estado: "confirmado", forma_pago: "CXC",
+        precio_u: netoA || undefined,
+        updated_at: new Date().toISOString(),
+      }).eq("id", r.id);
+      await logHistorial(r.id, "normalizacion_neto", `Normalizado a precio neto CXC: ${COP(nuevoTotal)} · Confirmado · Saldo pendiente: ${COP(nuevoSaldo)}`);
+    }
+    setNormalizando(false);
+    setSelected(null); setEditForm(null);
+    fetchR();
+  };
 
   return (
     <div>
@@ -621,6 +701,16 @@ function HistorialReservasB2B({ aliadoId, comisionPct = 0 }) {
           {loading && <div style={{ padding: 20, textAlign: "center", color: "rgba(255,255,255,0.3)" }}>Cargando...</div>}
           {!loading && reservas.length === 0 && <div style={{ padding: 32, textAlign: "center", color: "rgba(255,255,255,0.3)", fontSize: 13 }}>No hay reservas de este aliado</div>}
           {!loading && reservas.length > 0 && (
+            <>
+            {/* Acción masiva */}
+            {reservas.filter(r => r.estado !== "cancelado" && (r.estado !== "confirmado" || !Object.values(pasadiasMap).some(p => p.neto > 0))).length > 0 || reservas.some(r => r.estado === "pendiente") ? (
+              <div style={{ padding: "10px 14px", borderBottom: `1px solid ${B.navyLight}`, display: "flex", justifyContent: "flex-end" }}>
+                <button onClick={normalizarNetoConfirmado} disabled={normalizando}
+                  style={{ padding: "7px 16px", borderRadius: 8, border: `1px solid #a78bfa66`, background: "#7c3aed22", color: "#a78bfa", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
+                  {normalizando ? "⏳ Aplicando..." : "📒 Confirmar todas · Precio Neto (CXC)"}
+                </button>
+              </div>
+            ) : null}
             <table style={{ width: "100%", borderCollapse: "collapse" }}>
               <thead><tr>
                 {["Fecha","Huesped","Tipo","Pax","Total","Comisión","Estado",""].map(h => (
@@ -653,6 +743,7 @@ function HistorialReservasB2B({ aliadoId, comisionPct = 0 }) {
                 })}
               </tbody>
             </table>
+            </>
           )}
         </div>
 
@@ -689,7 +780,7 @@ function HistorialReservasB2B({ aliadoId, comisionPct = 0 }) {
                       return (
                         <button key={e} onClick={() => {
                           if (isConfirmar) {
-                            setPagoForm({ metodo: "transferencia", monto: (editForm.total || 0) - (editForm.abono || 0), nota: "", usuario: "", _wompiRef: "" });
+                            setPagoForm({ metodo: "transferencia", monto: (editForm.total || 0) - (editForm.abono || 0), nota: "", usuario: "", _wompiRef: "", fecha: todayISO() });
                             setShowPagoModal(true);
                           } else {
                             ef("estado", e);
@@ -706,6 +797,59 @@ function HistorialReservasB2B({ aliadoId, comisionPct = 0 }) {
               )}
             </div>
 
+            {/* ── Tipo tarifa (solo editable si no ha pagado) ── */}
+            {(() => {
+              const conv = pasadiasMap[(sel.tipo || "").toLowerCase()];
+              const tieneNeto = (conv?.neto || 0) > 0;
+              if (!tieneNeto) return null;
+              const esCXC = editForm.forma_pago === "CXC" || sel.forma_pago === "CXC";
+              const puedeEditar = (editForm.abono || 0) === 0 && !esCXC;
+              const esPublica = editForm.tipo_tarifa !== "neta";
+              const cambiarTarifa = (tipo) => {
+                const paxA = editForm.pax_a || 1;
+                const paxN = editForm.pax_n || 0;
+                const precioA = tipo === "neta" ? conv.neto : (conv?.precio || 0);
+                const precioN = tipo === "neta" ? (conv.neto_nino || 0) : (conv?.precio_nino || 0);
+                setEditForm(f => ({ ...f, tipo_tarifa: tipo, total: paxA * precioA + paxN * precioN }));
+              };
+              return (
+                <div>
+                  <label style={LS}>Tipo de tarifa</label>
+                  {esCXC ? (
+                    <div style={{ padding: "8px 12px", borderRadius: 8, background: "#7c3aed22", border: "1px solid #7c3aed44", fontSize: 12, color: "#a78bfa", display: "flex", alignItems: "center", gap: 8 }}>
+                      💳 CXC — siempre <strong>Precio Neto</strong>
+                    </div>
+                  ) : (
+                    <div style={{ display: "flex", gap: 8 }}>
+                      {[
+                        { val: "publica", label: "Venta al público", icon: "🏷️", color: B.sand },
+                        { val: "neta",    label: "Precio neto",      icon: "🤝", color: "#a78bfa" },
+                      ].map(op => (
+                        <button key={op.val} disabled={!puedeEditar} onClick={() => cambiarTarifa(op.val)}
+                          style={{
+                            flex: 1, padding: "9px 10px", borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: puedeEditar ? "pointer" : "default",
+                            border: `2px solid ${editForm.tipo_tarifa === op.val ? op.color : B.navyLight}`,
+                            background: editForm.tipo_tarifa === op.val ? op.color + "22" : "transparent",
+                            color: editForm.tipo_tarifa === op.val ? op.color : "rgba(255,255,255,0.35)",
+                            opacity: puedeEditar ? 1 : 0.6,
+                          }}>
+                          {op.icon} {op.label}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  {!puedeEditar && !esCXC && (editForm.abono || 0) > 0 && (
+                    <div style={{ fontSize: 11, color: "rgba(255,255,255,0.3)", marginTop: 4 }}>No se puede cambiar la tarifa después de registrar un pago</div>
+                  )}
+                  {editForm.tipo_tarifa === "neta" && !esCXC && (
+                    <div style={{ fontSize: 11, color: "#a78bfa", marginTop: 4 }}>
+                      Precio neto: {COP(conv.neto)}/adulto{conv.neto_nino > 0 ? ` · ${COP(conv.neto_nino)}/niño` : ""}
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+
             {/* Datos básicos */}
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
               <div style={{ gridColumn: "1/-1" }}>
@@ -721,8 +865,11 @@ function HistorialReservasB2B({ aliadoId, comisionPct = 0 }) {
                 <input type="number" min={1} value={editForm.pax_a} onChange={e => {
                   const paxA = +e.target.value;
                   const paxN = editForm.pax_n || 0;
-                  const precioU = sel.precio_u || sel.precio_neto || 0;
-                  setEditForm(f => ({ ...f, pax_a: paxA, total: (paxA + paxN) * precioU }));
+                  const conv = pasadiasMap[(sel.tipo || "").toLowerCase()];
+                  const esNeto = editForm.tipo_tarifa === "neta";
+                  const precioA = esNeto ? (conv?.neto || 0) : (sel.precio_u || conv?.precio || 0);
+                  const precioN = esNeto ? (conv?.neto_nino || 0) : (sel.precio_nino ?? conv?.precio_nino ?? 0);
+                  setEditForm(f => ({ ...f, pax_a: paxA, total: paxA * precioA + paxN * precioN }));
                 }} style={IS} />
               </div>
               <div>
@@ -730,20 +877,27 @@ function HistorialReservasB2B({ aliadoId, comisionPct = 0 }) {
                 <input type="number" min={0} value={editForm.pax_n} onChange={e => {
                   const paxN = +e.target.value;
                   const paxA = editForm.pax_a || 1;
-                  const precioU = sel.precio_u || sel.precio_neto || 0;
-                  setEditForm(f => ({ ...f, pax_n: paxN, total: (paxA + paxN) * precioU }));
+                  const conv = pasadiasMap[(sel.tipo || "").toLowerCase()];
+                  const esNeto = editForm.tipo_tarifa === "neta";
+                  const precioA = esNeto ? (conv?.neto || 0) : (sel.precio_u || conv?.precio || 0);
+                  const precioN = esNeto ? (conv?.neto_nino || 0) : (sel.precio_nino ?? conv?.precio_nino ?? 0);
+                  setEditForm(f => ({ ...f, pax_n: paxN, total: paxA * precioA + paxN * precioN }));
                 }} style={IS} />
               </div>
-              {/* Alerta cargo por personas adicionales */}
+              {/* Info precios y total calculado */}
               {(() => {
-                const paxOriginal = sel.pax || 0;
-                const paxNuevo = (editForm.pax_a || 1) + (editForm.pax_n || 0);
-                const paxExtra = paxNuevo - paxOriginal;
-                const precioU = sel.precio_u || sel.precio_neto || 0;
-                if (paxExtra <= 0) return null;
+                const conv = pasadiasMap[(sel.tipo || "").toLowerCase()];
+                const esNeto = editForm.tipo_tarifa === "neta";
+                const precioA = esNeto ? (conv?.neto || 0) : (sel.precio_u || conv?.precio || 0);
+                const precioN = esNeto ? (conv?.neto_nino || 0) : (sel.precio_nino ?? conv?.precio_nino ?? 0);
+                const paxA = editForm.pax_a || 1;
+                const paxN = editForm.pax_n || 0;
+                const nuevoTotal = paxA * precioA + paxN * precioN;
                 return (
-                  <div style={{ gridColumn: "1/-1", padding: "10px 14px", borderRadius: 8, background: B.warning + "22", border: `1px solid ${B.warning + "44"}`, fontSize: 12, color: B.warning }}>
-                    ⚠️ +{paxExtra} persona{paxExtra > 1 ? "s" : ""} adicional — nuevo total: <strong>{COP((editForm.pax_a + editForm.pax_n) * precioU)}</strong> (se actualiza automáticamente)
+                  <div style={{ gridColumn: "1/-1", padding: "10px 14px", borderRadius: 8, background: B.navyLight, border: `1px solid ${B.navyLight}`, fontSize: 12, color: "rgba(255,255,255,0.5)" }}>
+                    {paxA} adulto{paxA !== 1 ? "s" : ""} × {COP(precioA)}
+                    {paxN > 0 ? ` + ${paxN} niño${paxN !== 1 ? "s" : ""} × ${COP(precioN)}` : ""}
+                    {" = "}<strong style={{ color: B.sand }}>{COP(nuevoTotal)}</strong>
                   </div>
                 );
               })()}
@@ -762,11 +916,15 @@ function HistorialReservasB2B({ aliadoId, comisionPct = 0 }) {
             {editForm.fecha && (() => {
               const paxT = (editForm.pax_a || 1) + (editForm.pax_n || 0);
               const diaCompleto = cierresDia.some(c => c.tipo === "total");
-              if (diaCompleto) return (
-                <div style={{ padding: "10px 14px", borderRadius: 8, background: B.danger + "22", color: B.danger, fontSize: 12 }}>
-                  ✕ Día cerrado — {cierresDia[0]?.motivo || "Sin servicio este día"}
-                </div>
-              );
+              if (diaCompleto) {
+                const motivo = cierresDia[0]?.motivo || "";
+                const isBuyOut = /buy.?out/i.test(motivo);
+                return (
+                  <div style={{ padding: "10px 14px", borderRadius: 8, background: B.danger + "22", color: B.danger, fontSize: 12 }}>
+                    ✕ {isBuyOut || !motivo ? "Fecha no disponible" : `Día cerrado — ${motivo}`}
+                  </div>
+                );
+              }
               const disponibles = getSalidasDisponibles(paxT);
               if (checkingDisp) return <div style={{ fontSize: 12, color: "rgba(255,255,255,0.3)", textAlign: "center", padding: 8 }}>Verificando disponibilidad...</div>;
               if (disponibles.length === 0) return <div style={{ fontSize: 12, color: B.danger, padding: 8 }}>No hay horarios disponibles para esta fecha</div>;
@@ -871,7 +1029,7 @@ function HistorialReservasB2B({ aliadoId, comisionPct = 0 }) {
 
             {/* Acción de pago */}
             {(editForm.total - (editForm.abono || 0)) > 0 && (
-              <button onClick={() => { setPagoForm({ metodo: "transferencia", monto: (editForm.total - (editForm.abono || 0)), nota: "", usuario: "" }); setShowPagoModal(true); }}
+              <button onClick={() => { setPagoForm({ metodo: "transferencia", monto: (editForm.total - (editForm.abono || 0)), nota: "", usuario: "", fecha: todayISO() }); setShowPagoModal(true); }}
                 style={{ width: "100%", padding: "11px", borderRadius: 8, border: `2px solid ${B.success + "55"}`, background: B.success + "15", color: B.success, fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
                 💳 Registrar pago
               </button>
@@ -980,19 +1138,43 @@ function HistorialReservasB2B({ aliadoId, comisionPct = 0 }) {
                   { val: "transferencia", icon: "🏦", label: "Transferencia" },
                   { val: "wompi", icon: "💜", label: "Wompi" },
                   { val: "efectivo", icon: "💵", label: "Efectivo" },
+                  { val: "CXC", icon: "📒", label: "Cuenta Corriente" },
                   { val: "descuento_agencia", icon: "🏷️", label: "Descuento Agencia" },
                   { val: "otro", icon: "📋", label: "Otro" },
-                ].map(m => (
-                  <div key={m.val} onClick={() => setPagoForm(f => ({ ...f, metodo: m.val }))}
-                    style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 12px", borderRadius: 10, border: `2px solid ${pagoForm.metodo === m.val ? B.sky : B.navyLight}`, background: pagoForm.metodo === m.val ? B.sky + "15" : B.navy, cursor: "pointer" }}>
+                ].map(m => {
+                  const isCXC = m.val === "CXC";
+                  const isActive = pagoForm.metodo === m.val;
+                  const aColor = isCXC ? "#a78bfa" : B.sky;
+                  return (
+                  <div key={m.val} onClick={() => {
+                    setPagoForm(f => ({ ...f, metodo: m.val }));
+                    if (isCXC && (editForm?.abono || 0) === 0) {
+                      const conv = pasadiasMap[(sel?.tipo || "").toLowerCase()];
+                      if (conv?.neto > 0) {
+                        const paxA = editForm.pax_a || 1;
+                        const paxN = editForm.pax_n || 0;
+                        const nuevoTotal = paxA * conv.neto + paxN * (conv.neto_nino || 0);
+                        setEditForm(f => ({ ...f, tipo_tarifa: "neta", total: nuevoTotal }));
+                        setPagoForm(f => ({ ...f, metodo: m.val, monto: nuevoTotal }));
+                      }
+                    }
+                  }}
+                    style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 12px", borderRadius: 10, border: `2px solid ${isActive ? aColor : B.navyLight}`, background: isActive ? aColor + "22" : B.navy, cursor: "pointer" }}>
                     <span style={{ fontSize: 18 }}>{m.icon}</span>
-                    <span style={{ fontSize: 13, fontWeight: pagoForm.metodo === m.val ? 700 : 400, color: pagoForm.metodo === m.val ? B.sky : B.white }}>{m.label}</span>
+                    <span style={{ fontSize: 13, fontWeight: isActive ? 700 : 400, color: isActive ? aColor : B.white }}>{m.label}</span>
                   </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
 
             {/* Monto */}
+            {/* Info: CXC */}
+            {pagoForm.metodo === "CXC" && (
+              <div style={{ marginBottom: 14, padding: "10px 14px", background: "rgba(124,58,237,0.12)", border: "1px solid rgba(167,139,250,0.3)", borderRadius: 10, fontSize: 12, color: "#a78bfa" }}>
+                📒 <strong>Cuenta Corriente</strong> — Se carga al crédito del aliado. Tarifa aplicada: <strong>Precio Neto</strong>.
+              </div>
+            )}
             {/* Info: Descuento Agencia */}
             {pagoForm.metodo === "descuento_agencia" && (
               <div style={{ marginBottom: 14, padding: "10px 14px", background: "rgba(167,139,250,0.12)", border: "1px solid rgba(167,139,250,0.3)", borderRadius: 10, fontSize: 12, color: "#c4b5fd" }}>
@@ -1004,6 +1186,13 @@ function HistorialReservasB2B({ aliadoId, comisionPct = 0 }) {
               <label style={LS}>{pagoForm.metodo === "descuento_agencia" ? "Valor del descuento" : "Monto recibido"}</label>
               <input type="number" value={pagoForm.monto} onChange={e => setPagoForm(f => ({ ...f, monto: +e.target.value }))} style={IS} />
             </div>
+
+            {pagoForm.metodo !== "descuento_agencia" && (
+              <div style={{ marginBottom: 14 }}>
+                <label style={LS}>Fecha de pago</label>
+                <input type="date" value={pagoForm.fecha || ""} onChange={e => setPagoForm(f => ({ ...f, fecha: e.target.value }))} style={IS} />
+              </div>
+            )}
 
             {/* TRANSFERENCIA: subir comprobante (obligatorio) */}
             {pagoForm.metodo === "transferencia" && (
@@ -1079,13 +1268,16 @@ function HistorialReservasB2B({ aliadoId, comisionPct = 0 }) {
               <button disabled={!pagoForm.monto || uploadingPago || (pagoForm.metodo === "transferencia" && !pagoForm._comprob)} onClick={async () => {
                 if (!supabase || !pagoForm.monto) return;
                 const esDescuento = pagoForm.metodo === "descuento_agencia";
-                const nuevoAbono = (editForm.abono || 0) + pagoForm.monto;
+                const esCXC = pagoForm.metodo === "CXC";
+                // CXC: confirma la reserva pero NO registra abono — el saldo queda abierto en cuenta corriente
+                const nuevoAbono = esCXC ? (editForm.abono || 0) : (editForm.abono || 0) + pagoForm.monto;
                 const nuevoSaldo = (editForm.total || 0) - nuevoAbono;
-                const nuevoEstado = nuevoSaldo <= 0 ? "confirmado" : editForm.estado;
+                const nuevoEstado = esCXC ? "confirmado" : (nuevoSaldo <= 0 ? "confirmado" : editForm.estado);
                 const nuevoDescuento = esDescuento ? ((sel.descuento_agencia || 0) + pagoForm.monto) : (sel.descuento_agencia || 0);
                 await supabase.from("reservas").update({
                   abono: nuevoAbono, saldo: nuevoSaldo, estado: nuevoEstado,
                   forma_pago: esDescuento ? (sel.forma_pago || "descuento_agencia") : pagoForm.metodo,
+                  ...(!esDescuento && !esCXC && pagoForm.fecha ? { fecha_pago: pagoForm.fecha } : {}),
                   ...(esDescuento ? { descuento_agencia: nuevoDescuento } : {}),
                   updated_at: new Date().toISOString(),
                 }).eq("id", sel.id);
@@ -1429,11 +1621,12 @@ function EventosGruposB2B({ aliadoId }) {
   );
 }
 
-const TIPOS_VISITA   = ["presencial", "virtual", "telefonica", "feria/evento"];
+const TIPOS_VISITA   = ["presencial", "virtual", "telefonica", "feria/evento", "inspección"];
 const ESTADOS_VISITA = ["programada", "realizada", "cancelada", "reprogramada"];
 const ESTADO_VISITA_COLOR = { programada: B.sky, realizada: B.success, cancelada: B.danger, reprogramada: B.warning };
+const TIPO_VISITA_ICON = { presencial: "🤝", virtual: "💻", telefonica: "📞", "feria/evento": "🎪", "inspección": "🔍" };
 
-const EMPTY_VISITA = { fecha: "", hora: "", tipo: "presencial", objetivo: "", resultado: "", proxima_accion: "", fecha_proxima: "", realizada_por: "", notas: "", estado: "programada" };
+const EMPTY_VISITA = { fecha: "", hora: "", tipo: "presencial", objetivo: "", resultado: "", proxima_accion: "", fecha_proxima: "", realizada_por: "", notas: "", estado: "programada", num_personas: 1, coordinador: "" };
 
 function VisitasAgencia({ aliadoId, aliado }) {
   const [visitas, setVisitas]     = useState([]);
@@ -1461,7 +1654,7 @@ function VisitasAgencia({ aliadoId, aliado }) {
 
   const openEdit = (v) => {
     setEditVisita(v);
-    setForm({ fecha: v.fecha, hora: v.hora || "", tipo: v.tipo, objetivo: v.objetivo || "", resultado: v.resultado || "", proxima_accion: v.proxima_accion || "", fecha_proxima: v.fecha_proxima || "", realizada_por: v.realizada_por || "", notas: v.notas || "", estado: v.estado });
+    setForm({ fecha: v.fecha, hora: v.hora || "", tipo: v.tipo, objetivo: v.objetivo || "", resultado: v.resultado || "", proxima_accion: v.proxima_accion || "", fecha_proxima: v.fecha_proxima || "", realizada_por: v.realizada_por || "", notas: v.notas || "", estado: v.estado, num_personas: v.num_personas || 1, coordinador: v.coordinador || "" });
     setShowForm(true);
   };
 
@@ -1471,7 +1664,42 @@ function VisitasAgencia({ aliadoId, aliado }) {
     if (editVisita) {
       await supabase.from("b2b_visitas").update({ ...form }).eq("id", editVisita.id);
     } else {
-      await supabase.from("b2b_visitas").insert({ id: `VIS-${Date.now()}`, aliado_id: aliadoId, ...form });
+      const visitaId = `VIS-${Date.now()}`;
+      let reservaId = null;
+
+      // Si es visita de inspección → crear reserva en el log
+      if (form.tipo === "inspección") {
+        reservaId = `INS-${Date.now()}`;
+        const pax = parseInt(form.num_personas) || 1;
+        await supabase.from("reservas").insert({
+          id: reservaId,
+          aliado_id: aliadoId,
+          tipo: "Visita Inspección",
+          fecha: form.fecha,
+          estado: "confirmado",
+          total: 0,
+          abono: 0,
+          forma_pago: "cortesía",
+          pax,
+          notas: `Visita de inspección B2B — ${aliado.nombre}${form.coordinador ? ` · Coordinador: ${form.coordinador}` : ""}${form.objetivo ? ` · Objetivo: ${form.objetivo}` : ""}`,
+          created_at: new Date().toISOString(),
+        });
+        // Log en historial
+        await supabase.from("reservas_historial").insert({
+          id: `H-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
+          reserva_id: reservaId,
+          accion: "inspeccion_agendada",
+          descripcion: `🔍 Visita de inspección agendada — ${aliado.nombre} · ${pax} persona(s) · ${form.fecha}${form.hora ? " " + form.hora : ""}`,
+          usuario: form.realizada_por || "sistema",
+        });
+      }
+
+      await supabase.from("b2b_visitas").insert({
+        id: visitaId,
+        aliado_id: aliadoId,
+        ...form,
+        reserva_id: reservaId,
+      });
     }
     setSaving(false); setShowForm(false); fetchV();
   };
@@ -1529,7 +1757,7 @@ function VisitasAgencia({ aliadoId, aliado }) {
                 style={{ padding: "14px 20px", display: "flex", alignItems: "center", gap: 14, cursor: "pointer", background: isOpen ? B.navyLight + "44" : "transparent" }}>
                 {/* Icono tipo */}
                 <div style={{ width: 40, height: 40, borderRadius: 10, background: color + "22", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, flexShrink: 0 }}>
-                  {{ presencial: "🤝", virtual: "💻", telefonica: "📞", "feria/evento": "🎪" }[v.tipo] || "📅"}
+                  {TIPO_VISITA_ICON[v.tipo] || "📅"}
                 </div>
 
                 {/* Info */}
@@ -1559,6 +1787,11 @@ function VisitasAgencia({ aliadoId, aliado }) {
               {isOpen && (
                 <div style={{ padding: "0 20px 20px", background: B.navy + "66" }}>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "4px 24px", fontSize: 13, lineHeight: 2.4, marginBottom: 14 }}>
+                    {v.tipo === "inspección" && (
+                      <div style={{ gridColumn: "1/-1", padding: "6px 12px", background: "#3B82F611", border: "1px solid #3B82F622", borderRadius: 8, fontSize: 12, color: "#93C5FD", marginBottom: 4 }}>
+                        🔍 Inspección{v.num_personas > 1 ? ` · ${v.num_personas} personas` : ""}{v.coordinador ? ` · Coordinador: ${v.coordinador}` : ""}{v.reserva_id ? ` · Reserva: ${v.reserva_id}` : ""}
+                      </div>
+                    )}
                     {v.objetivo && <div style={{ gridColumn: "1/-1" }}><span style={{ color: "rgba(255,255,255,0.4)" }}>Objetivo: </span>{v.objetivo}</div>}
                     {v.resultado && <div style={{ gridColumn: "1/-1" }}><span style={{ color: "rgba(255,255,255,0.4)" }}>Resultado: </span>{v.resultado}</div>}
                     {v.proxima_accion && (
@@ -1575,7 +1808,21 @@ function VisitasAgencia({ aliadoId, aliado }) {
                   <div style={{ display: "flex", gap: 8 }}>
                     <button onClick={() => openEdit(v)} style={{ padding: "8px 16px", background: B.navyLight, color: B.white, border: "none", borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: "pointer" }}>✎ Editar</button>
                     {v.estado === "programada" && (
-                      <button onClick={async () => { await supabase.from("b2b_visitas").update({ estado: "realizada" }).eq("id", v.id); fetchV(); }}
+                      <button onClick={async () => {
+                        await supabase.from("b2b_visitas").update({ estado: "realizada" }).eq("id", v.id);
+                        // Si era visita de inspección con reserva vinculada → actualizar reserva
+                        if (v.tipo === "inspección" && v.reserva_id) {
+                          await supabase.from("reservas").update({ estado: "check_in" }).eq("id", v.reserva_id);
+                          await supabase.from("reservas_historial").insert({
+                            id: `H-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
+                            reserva_id: v.reserva_id,
+                            accion: "inspeccion_realizada",
+                            descripcion: `✅ Visita de inspección realizada — ${aliado.nombre} · ${new Date(v.fecha + "T12:00:00").toLocaleDateString("es-CO", { day: "numeric", month: "short", year: "numeric" })}`,
+                            usuario: "sistema",
+                          });
+                        }
+                        fetchV();
+                      }}
                         style={{ padding: "8px 16px", background: B.success + "22", color: B.success, border: `1px solid ${B.success + "44"}`, borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: "pointer" }}>✓ Marcar realizada</button>
                     )}
                     <button onClick={() => handleDelete(v.id)} style={{ padding: "8px 14px", background: "none", color: B.danger, border: `1px solid ${B.danger + "44"}`, borderRadius: 8, fontSize: 12, cursor: "pointer" }}>Eliminar</button>
@@ -1593,9 +1840,11 @@ function VisitasAgencia({ aliadoId, aliado }) {
           onClick={e => e.target === e.currentTarget && setShowForm(false)}>
           <div style={{ background: B.navyMid, borderRadius: 20, padding: 32, width: 540, maxHeight: "90vh", overflowY: "auto", boxShadow: "0 20px 60px rgba(0,0,0,0.6)" }}>
             <h3 style={{ fontFamily: "'Barlow Condensed', sans-serif", fontSize: 22, marginBottom: 4 }}>
-              {editVisita ? "✎ Editar visita" : "📅 Nueva visita"} — {aliado.nombre}
+              {editVisita ? "✎ Editar visita" : (form.tipo === "inspección" ? "🔍 Nueva inspección" : "📅 Nueva visita")} — {aliado.nombre}
             </h3>
-            <p style={{ fontSize: 12, color: "rgba(255,255,255,0.35)", marginBottom: 24 }}>Registro de visita comercial</p>
+            <p style={{ fontSize: 12, color: "rgba(255,255,255,0.35)", marginBottom: 24 }}>
+              {form.tipo === "inspección" ? "La inspección quedará registrada en el log de reservas" : "Registro de visita comercial"}
+            </p>
 
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
               {/* Fecha + Hora */}
@@ -1628,10 +1877,27 @@ function VisitasAgencia({ aliadoId, aliado }) {
                 <input value={form.realizada_por} onChange={e => sf("realizada_por", e.target.value)} placeholder="Nombre del ejecutivo de cuenta" style={IS} />
               </div>
 
+              {/* Campos extra para inspección */}
+              {form.tipo === "inspección" && (
+                <>
+                  <div>
+                    <label style={LS}>Nº de personas</label>
+                    <input type="number" min={1} value={form.num_personas} onChange={e => sf("num_personas", e.target.value)} style={IS} />
+                  </div>
+                  <div>
+                    <label style={LS}>Coordinador / Contacto</label>
+                    <input value={form.coordinador} onChange={e => sf("coordinador", e.target.value)} placeholder="Quien coordina la inspección" style={IS} />
+                  </div>
+                  <div style={{ gridColumn: "1/-1", padding: "10px 14px", background: "#3B82F615", border: "1px solid #3B82F633", borderRadius: 10, fontSize: 12, color: "#93C5FD" }}>
+                    🔍 Esta visita quedará registrada automáticamente en el <strong>log de reservas</strong> con tipo "Visita Inspección" y total $0 (cortesía).
+                  </div>
+                </>
+              )}
+
               {/* Objetivo */}
               <div style={{ gridColumn: "1/-1" }}>
-                <label style={LS}>Objetivo de la visita</label>
-                <textarea value={form.objetivo} onChange={e => sf("objetivo", e.target.value)} placeholder="¿Qué se quiere lograr con esta visita?" rows={2} style={{ ...IS, resize: "vertical" }} />
+                <label style={LS}>{form.tipo === "inspección" ? "Objetivo de la inspección" : "Objetivo de la visita"}</label>
+                <textarea value={form.objetivo} onChange={e => sf("objetivo", e.target.value)} placeholder={form.tipo === "inspección" ? "¿Qué áreas o servicios se van a inspeccionar?" : "¿Qué se quiere lograr con esta visita?"} rows={2} style={{ ...IS, resize: "vertical" }} />
               </div>
 
               {/* Resultado (solo si ya se realizó) */}
@@ -1917,7 +2183,7 @@ function PuntosAgencia({ aliado }) {
     await supabase.from("b2b_puntos_config").upsert({
       id: "default",
       activo: cfgForm.activo ?? true,
-      nombre_puntos: cfgForm.nombre_puntos || "AtoCoins",
+      nombre_puntos: cfgForm.nombre_puntos || "AtolonLovers",
       puntos_por_reserva: Number(cfgForm.puntos_por_reserva) || 0,
       puntos_por_pax: Number(cfgForm.puntos_por_pax) || 0,
       puntos_por_millon: Number(cfgForm.puntos_por_millon) || 0,
@@ -1931,7 +2197,7 @@ function PuntosAgencia({ aliado }) {
   };
 
   const MEDAL = ["🥇","🥈","🥉"];
-  const coinName = config?.nombre_puntos || "AtoCoins";
+  const coinName = config?.nombre_puntos || "AtolonLovers";
 
   if (loading) return <div style={{ padding: 32, textAlign: "center", color: "rgba(255,255,255,0.3)" }}>Cargando puntos...</div>;
 
@@ -2356,7 +2622,7 @@ function FichaAliado({ aliado, onBack, onRefresh }) {
 
   useEffect(() => {
     if (supabase) {
-      supabase.from("usuarios").select("id, nombre, rol_id, avatar_color").eq("activo", true).order("nombre")
+      supabase.from("usuarios").select("id, nombre, rol_id, avatar_color").in("rol_id", ["ventas", "gerente_ventas"]).eq("activo", true).order("nombre")
         .then(({ data }) => setVendedores(data || []));
       fetchRntHistorial();
       fetchB2bUsers();
@@ -2480,7 +2746,7 @@ function FichaAliado({ aliado, onBack, onRefresh }) {
     fetchLocaciones();
   };
 
-  const tipoBg = aliado.tipo === "Hotel" ? B.sky : aliado.tipo === "Agencia" ? B.sand : aliado.tipo === "Freelance" ? B.success : aliado.tipo === "Event Planner" ? B.pink : B.pink;
+  const tipoBg = aliado.tipo === "Hotel" ? B.sky : aliado.tipo === "Agencia" ? B.sand : aliado.tipo === "Freelance" ? B.success : aliado.tipo === "Event Planner" ? B.pink : aliado.tipo === "Empresa" ? B.warning : B.pink;
 
   return (
     <div>
@@ -2495,7 +2761,7 @@ function FichaAliado({ aliado, onBack, onRefresh }) {
 
       {/* Tabs */}
       <div style={{ display: "flex", gap: 4, marginBottom: 20 }}>
-        {[["general", "Ficha General"], ["convenios", "Convenios & Tarifas"], ["historial", "Historial Reservas"], ["eventos", "🎪 Eventos/Grupos"], ["visitas", "Visitas"], ["incentivos", "🎯 Incentivos"], ["puntos", "🏆 AtoCoins"], ...(aliado.cupo_credito > 0 ? [["credito", "💳 Crédito"]] : [])].map(([k, l]) => (
+        {[["general", "Ficha General"], ["convenios", "Convenios & Tarifas"], ["historial", "Historial Reservas"], ["eventos", "🎪 Eventos/Grupos"], ["visitas", "Visitas"], ["incentivos", "🎯 Incentivos"], ["puntos", "🏆 AtolonLovers"], ...(aliado.cupo_credito > 0 ? [["credito", "💳 Crédito"]] : [])].map(([k, l]) => (
           <button key={k} onClick={() => setTab(k)} style={{
             padding: "9px 20px", borderRadius: 8, border: "none", cursor: "pointer", fontSize: 13, fontWeight: 600,
             background: tab === k ? B.sky : B.navyMid, color: tab === k ? B.navy : B.sand,
@@ -2512,7 +2778,7 @@ function FichaAliado({ aliado, onBack, onRefresh }) {
               {editing ? (
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 12px" }}>
                   {[
-                    ["nombre", "Nombre"], ["tipo", "Tipo", ["Hotel", "Agencia", "Freelance", "Event Planner"]],
+                    ["nombre", "Nombre"], ["tipo", "Tipo", ["Hotel", "Agencia", "Empresa", "Freelance", "Event Planner"]],
                     ["rut", "RUT"], ["rnt", "RNT"], ["contacto", "Contacto"],
                     ["tel", "Telefono"], ["email", "Email"],
                     ["estado", "Estado", ["activo", "inactivo"]],
@@ -3298,7 +3564,7 @@ function NuevoAliadoModal({ onClose, onSave }) {
         <h3 style={{ marginBottom: 20, fontSize: 17, fontWeight: 700 }}>Nuevo Aliado B2B</h3>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 16px" }}>
           <div style={{ gridColumn: "1 / -1", marginBottom: 14 }}><label style={LS}>Nombre del Aliado</label><input value={f.nombre} onChange={e => s("nombre", e.target.value)} placeholder="Nombre de la empresa" style={IS} /></div>
-          <div style={{ marginBottom: 14 }}><label style={LS}>Tipo</label><select value={f.tipo} onChange={e => s("tipo", e.target.value)} style={IS}><option value="Hotel">Hotel</option><option value="Agencia">Agencia</option><option value="Freelance">Freelance</option><option value="Event Planner">Event Planner</option></select></div>
+          <div style={{ marginBottom: 14 }}><label style={LS}>Tipo</label><select value={f.tipo} onChange={e => s("tipo", e.target.value)} style={IS}><option value="Hotel">Hotel</option><option value="Agencia">Agencia</option><option value="Empresa">Empresa</option><option value="Freelance">Freelance</option><option value="Event Planner">Event Planner</option></select></div>
           <div style={{ marginBottom: 14 }}><label style={LS}>Contacto</label><input value={f.contacto} onChange={e => s("contacto", e.target.value)} placeholder="Nombre del contacto" style={IS} /></div>
           <div style={{ marginBottom: 14 }}><label style={LS}>Telefono</label><input value={f.tel} onChange={e => s("tel", e.target.value)} placeholder="+57 ..." style={IS} /></div>
           <div style={{ marginBottom: 14 }}><label style={LS}>Email</label><input value={f.email} onChange={e => s("email", e.target.value)} placeholder="email@aliado.com" style={IS} /></div>
@@ -3331,7 +3597,7 @@ function AliadosList() {
     setLoading(true);
     const [{ data, error }, { data: usrs }] = await Promise.all([
       supabase.from("aliados_b2b").select("*").order("nombre"),
-      supabase.from("usuarios").select("id, nombre, rol_id, avatar_color").eq("activo", true).order("nombre"),
+      supabase.from("usuarios").select("id, nombre, rol_id, avatar_color").in("rol_id", ["ventas", "gerente_ventas"]).eq("activo", true).order("nombre"),
     ]);
     if (!error && data) setAliados(data.map(a => ({ id: a.id, tipo: a.tipo, nombre: a.nombre, contacto: a.contacto || "", tel: a.tel || "", email: a.email || "", pax_mes: a.pax_mes || 0, comision: a.comision || 0, revenue: a.revenue || 0, estado: a.estado, rut: a.rut || "", rnt: a.rnt || "", rut_url: a.rut_url || "", rnt_url: a.rnt_url || "", cert_bancaria_url: a.cert_bancaria_url || "", cert_bancaria_pendiente_url: a.cert_bancaria_pendiente_url || "", cert_bancaria_solicitud_fecha: a.cert_bancaria_solicitud_fecha || null, cert_bancaria_solicitud_nota: a.cert_bancaria_solicitud_nota || "", vendedor_id: a.vendedor_id || null, cupo_credito: a.cupo_credito || 0, credito_monto: a.credito_monto || 0, credito_dias: a.credito_dias || 0, codigo_fijo: a.codigo_fijo || "" })));
     setVendedores(usrs || []);
@@ -3396,6 +3662,7 @@ function AliadosList() {
           { val: "todos", label: "Todos" },
           { val: "hotel", label: "Hoteles" },
           { val: "agencia", label: "Agencias" },
+          { val: "empresa", label: "Empresas" },
           { val: "freelance", label: "Freelance" },
           { val: "event planner", label: "Event Planners" },
         ].map(f => (
@@ -3431,7 +3698,7 @@ function AliadosList() {
                     )}
                   </div>
                 </td>
-                <td style={{ padding: "14px 16px" }}><span style={{ fontSize: 11, padding: "3px 10px", borderRadius: 20, background: a.tipo === "Hotel" ? B.sky + "33" : a.tipo === "Agencia" ? B.sand + "33" : a.tipo === "Freelance" ? B.success + "33" : B.pink + "33", color: a.tipo === "Hotel" ? B.sky : a.tipo === "Agencia" ? B.sand : a.tipo === "Freelance" ? B.success : B.pink }}>{a.tipo}</span></td>
+                <td style={{ padding: "14px 16px" }}><span style={{ fontSize: 11, padding: "3px 10px", borderRadius: 20, background: a.tipo === "Hotel" ? B.sky + "33" : a.tipo === "Agencia" ? B.sand + "33" : a.tipo === "Freelance" ? B.success + "33" : a.tipo === "Empresa" ? B.warning + "33" : B.pink + "33", color: a.tipo === "Hotel" ? B.sky : a.tipo === "Agencia" ? B.sand : a.tipo === "Freelance" ? B.success : a.tipo === "Empresa" ? B.warning : B.pink }}>{a.tipo}</span></td>
                 <td style={{ padding: "14px 16px", fontSize: 13, color: "rgba(255,255,255,0.6)" }}>{a.rut || "\u2014"}</td>
                 <td style={{ padding: "14px 16px", fontSize: 13, color: "rgba(255,255,255,0.6)" }}>{a.rnt || "\u2014"}</td>
                 <td style={{ padding: "14px 16px", fontSize: 13 }}><div>{a.contacto}</div><div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)" }}>{a.email}</div></td>

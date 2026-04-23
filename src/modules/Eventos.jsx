@@ -7,13 +7,23 @@ import EventoDetalle from "./EventoDetalle";
 
 const STAGES       = ["Consulta", "Cotizado", "Confirmado", "Realizado", "Perdido"];
 const TIPOS_EVT    = ["Matrimonio", "Cumpleaños", "Corporativo", "Despedida de Solteros", "Aniversario", "Grado", "Otro"];
-const TIPOS_GRUPO  = ["VIP Pass", "VIP PASS (Bebida + Impuesto de Muelle)", "Exclusive Pass", "Atolon Experience", "After Island", "STAFF", "Impuesto Muelle"];
+const TIPOS_GRUPO  = ["VIP Pass", "VIP Pass (Bebida + Impuesto de Muelle)", "Exclusive Pass", "Atolon Experience", "After Island", "STAFF", "Impuesto Muelle"];
 const PRECIO_MUELLE = 18000; // precio fijo Impuesto Muelle
-const SLUG_MAP     = { "VIP Pass": "vip-pass", "VIP PASS (Bebida + Impuesto de Muelle)": "vip-pass-grupo", "Exclusive Pass": "exclusive-pass", "Atolon Experience": "atolon-experience", "After Island": "after-island" };
+const SLUG_MAP     = { "VIP Pass": "vip-pass", "VIP Pass (Bebida + Impuesto de Muelle)": "vip-pass-grupo", "Exclusive Pass": "exclusive-pass", "Atolon Experience": "atolon-experience", "After Island": "after-island" };
 
 const IS = { width: "100%", padding: "9px 12px", borderRadius: 8, background: B.navy, border: `1px solid ${B.navyLight}`, color: B.white, fontSize: 13, outline: "none", boxSizing: "border-box" };
 const LS = { fontSize: 11, color: B.sand, display: "block", marginBottom: 5, textTransform: "uppercase", letterSpacing: "0.06em" };
 const stageColor = (s) => ({ Consulta: B.warning, Cotizado: B.sky, Confirmado: B.success, Realizado: "rgba(255,255,255,0.3)", Perdido: B.danger }[s] || B.sand);
+
+// Calcula pax de evento/grupo: si ev.pax está seteado y > 0 lo usa,
+// sino suma personas de pasadias_org (excluyendo Impuesto Muelle y STAFF).
+function computePax(ev) {
+  const paxOrg = (ev?.pasadias_org || [])
+    .filter(p => p.tipo !== "Impuesto Muelle" && p.tipo !== "STAFF")
+    .reduce((s, p) => s + (Number(p.personas) || 0), 0);
+  const n = Number(ev?.pax) || 0;
+  return n > 0 ? n : paxOrg;
+}
 
 // ─── BEO Preview ─────────────────────────────────────────────────────────────
 function BEOPreview({ evento, onClose }) {
@@ -60,6 +70,14 @@ function GrupoLink({ evento, onClose }) {
   const [showRes,      setShowRes]      = useState(false);
   const [reservas,     setReservas]     = useState(null);
   const [loadingR,     setLoadingR]     = useState(false);
+  const [salidasDB,    setSalidasDB]    = useState([]);
+
+  // Load salidas for hora_regreso
+  useEffect(() => {
+    if (!supabase) return;
+    supabase.from("salidas").select("id, hora, hora_regreso").eq("activo", true).order("orden")
+      .then(({ data }) => setSalidasDB(data || []));
+  }, []);
   // Organizador mode
   const [pasadias,     setPasadias]     = useState([]);
   const [pasadiaId,    setPasadiaId]    = useState("");
@@ -163,7 +181,17 @@ function GrupoLink({ evento, onClose }) {
           <h3 style={{ fontSize: 18, fontWeight: 700, marginBottom: 4 }}>
             {evento.modalidad_pago === "organizador" ? "Pago grupal único" : "Link del grupo"}
           </h3>
-          <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)" }}>{evento.nombre} · {fmtFecha(evento.fecha)}</div>
+          <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)" }}>
+            {evento.nombre} · {fmtFecha(evento.fecha)}
+            {(evento.salidas_grupo||[]).length > 0 && (
+              <div style={{ marginTop: 4 }}>
+                {[...evento.salidas_grupo].sort((a,b)=>a.hora.localeCompare(b.hora)).map(s => {
+                  const sal = salidasDB.find(x => x.id === s.id);
+                  return <span key={s.hora} style={{ marginRight: 12 }}>⛵ Salida {s.hora}{sal?.hora_regreso ? ` → Regreso ${sal.hora_regreso}` : ""}</span>;
+                })}
+              </div>
+            )}
+          </div>
         </div>
 
         {/* ── MODO: Individual ── */}
@@ -441,7 +469,7 @@ export function EventoModal({ evento, categoria, salidas, aliados, vendedores, o
 
   const [form, setForm]       = useState(isEdit
     ? { ...evento, pax: String(evento.pax || ""), valor: String(evento.valor || ""), aliado_id: evento.aliado_id || "", vendedor: evento.vendedor || "", salidas_grupo: evento.salidas_grupo || [], buy_out: evento.buy_out || false, modalidad_pago: evento.modalidad_pago || "individual", pasadias_org: evento.pasadias_org || [], precio_tipo: evento.precio_tipo || "publico", fecha_fin: evento.fecha_fin || "", buy_out_fechas: evento.buy_out_fechas || [] }
-    : { nombre: "", tipo: tiposOpt[0], fecha: "", fecha_fin: "", pax: "", valor: "", aliado_id: "", vendedor: "", salidas_grupo: [], contacto: "", tel: "", email: "", empresa: "", nit: "", cargo: "", direccion: "", montaje: "", hora_ini: "", hora_fin: "", vencimiento: "", stage: "Consulta", notas: "", categoria, buy_out: false, buy_out_fechas: [], modalidad_pago: "individual", pasadias_org: [], precio_tipo: "publico" });
+    : { nombre: "", tipo: tiposOpt[0], fecha: "", fecha_fin: "", pax: "", valor: "", aliado_id: "", vendedor: "", salidas_grupo: [], contacto: "", tel: "", email: "", empresa: "", nit: "", cargo: "", direccion: "", nacionalidad: "", montaje: "", hora_ini: "", hora_fin: "", vencimiento: "", stage: "Consulta", notas: "", categoria, buy_out: false, buy_out_fechas: [], modalidad_pago: "individual", pasadias_org: [], precio_tipo: "publico" });
   const [saving,          setSaving]          = useState(false);
   const [horaInput,       setHoraInput]       = useState("");
   const [aliadoSearch,    setAliadoSearch]    = useState("");
@@ -470,7 +498,7 @@ export function EventoModal({ evento, categoria, salidas, aliados, vendedores, o
   // Cargar precios de pasadías cuando es grupo
   useEffect(() => {
     if (!isGrupo) return;
-    supabase.from("pasadias").select("id, nombre, precio, precio_neto_agencia").order("nombre")
+    supabase.from("pasadias").select("id, nombre, precio, precio_neto_agencia, precio_nino, precio_neto_nino").order("nombre")
       .then(({ data }) => setPasadiasPrecios((data || []).filter(p => p.precio > 0)));
   }, [isGrupo]);
 
@@ -543,11 +571,25 @@ export function EventoModal({ evento, categoria, salidas, aliados, vendedores, o
     ...f, pasadias_org: [...f.pasadias_org, { id: `p-${Date.now()}`, tipo: TIPOS_GRUPO[0], personas: "" }]
   }));
   const removePasadiaOrg = (id) => setForm(f => ({ ...f, pasadias_org: f.pasadias_org.filter(p => p.id !== id) }));
+  // Tipos que tienen precio niño diferente → pedir adultos + niños
+  const TIPOS_CON_NINOS = ["VIP Pass", "VIP Pass (Bebida + Impuesto de Muelle)", "After Island", "TRANSPORTE + CAMA DE PLAYA (Zona Playa)"];
   const setPasadiaOrg = (id, k, v) => setForm(f => ({
-    ...f, pasadias_org: f.pasadias_org.map(p => p.id === id ? { ...p, [k]: v } : p)
+    ...f, pasadias_org: f.pasadias_org.map(p => {
+      if (p.id !== id) return p;
+      const updated = { ...p, [k]: v };
+      // Auto-calc personas from adultos + ninos when applicable
+      if (TIPOS_CON_NINOS.includes(updated.tipo) && (k === "adultos" || k === "ninos")) {
+        updated.personas = String((Number(updated.adultos) || 0) + (Number(updated.ninos) || 0));
+      }
+      // When switching to a tipo with ninos, keep personas in sync
+      if (k === "tipo" && TIPOS_CON_NINOS.includes(v)) {
+        updated.personas = String((Number(updated.adultos) || 0) + (Number(updated.ninos) || 0));
+      }
+      return updated;
+    })
   }));
 
-  // Precio unitario por tipo de pasadía
+  // Precio unitario por tipo de pasadía (adulto)
   const getPrecioTipo = (p) => {
     if (p.tipo === "Impuesto Muelle") return PRECIO_MUELLE;
     if (p.tipo === "STAFF") return Number(p.precio_manual) || 0;
@@ -555,12 +597,23 @@ export function EventoModal({ evento, categoria, salidas, aliados, vendedores, o
     if (!match) return null;
     return form.precio_tipo === "neto" ? (match.precio_neto_agencia || match.precio) : match.precio;
   };
+  // Precio unitario niño
+  const getPrecioNino = (p) => {
+    const match = pasadiasPrecios.find(x => x.nombre.toLowerCase() === p.tipo.toLowerCase());
+    if (!match) return 0;
+    return form.precio_tipo === "neto" ? (match.precio_neto_nino || 0) : (match.precio_nino || 0);
+  };
 
-  // Total nuevo basado en pasadias_org
+  // Total nuevo basado en pasadias_org — con desglose adultos/niños
   const nuevoTotal = (isGrupo && form.modalidad_pago === "organizador")
     ? (form.pasadias_org || []).reduce((s, p) => {
-        const precio = getPrecioTipo(p);
-        return s + (precio || 0) * (Number(p.personas) || 0);
+        const precio     = getPrecioTipo(p) || 0;
+        const adultos    = Number(p.adultos) || 0;
+        const ninos      = Number(p.ninos)   || 0;
+        if (adultos > 0 || ninos > 0) {
+          return s + precio * adultos + getPrecioNino(p) * ninos;
+        }
+        return s + precio * (Number(p.personas) || 0);
       }, 0)
     : 0;
 
@@ -710,6 +763,7 @@ export function EventoModal({ evento, categoria, salidas, aliados, vendedores, o
       nit:          form.nit || "",
       cargo:        form.cargo || "",
       direccion:    form.direccion || "",
+      nacionalidad: form.nacionalidad || "",
       montaje:      form.montaje || "",
       hora_ini:     form.hora_ini || "",
       hora_fin:     form.hora_fin || "",
@@ -954,10 +1008,16 @@ export function EventoModal({ evento, categoria, salidas, aliados, vendedores, o
             )}
           </div>
 
-          {/* 4. Nombre del contacto */}
-          <div>
-            <label style={LS}>Nombre del contacto / organizador</label>
-            <input value={form.contacto} onChange={e => set("contacto", e.target.value)} style={IS} placeholder="Nombre del cliente o responsable" />
+          {/* 4. Nombre del contacto + Nacionalidad */}
+          <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 12 }}>
+            <div>
+              <label style={LS}>Nombre del contacto / organizador</label>
+              <input value={form.contacto} onChange={e => set("contacto", e.target.value)} style={IS} placeholder="Nombre del cliente o responsable" />
+            </div>
+            <div>
+              <label style={LS}>Nacionalidad</label>
+              <input value={form.nacionalidad} onChange={e => set("nacionalidad", e.target.value)} style={IS} placeholder="Ej: Colombiana" />
+            </div>
           </div>
 
           {/* 5. Email + Teléfono */}
@@ -1021,10 +1081,16 @@ export function EventoModal({ evento, categoria, salidas, aliados, vendedores, o
             </div>
           )}
 
-          {/* Cupos máximos — solo individual */}
+          {/* Pax / Cupos */}
           {isGrupo && form.modalidad_pago !== "organizador" && (
             <div>
               <label style={LS}>Cupos máximos (0 = ilimitado)</label>
+              <input type="number" value={form.pax} onChange={e => set("pax", e.target.value)} style={IS} placeholder="0" />
+            </div>
+          )}
+          {!isGrupo && (
+            <div>
+              <label style={LS}>Número de personas (pax)</label>
               <input type="number" value={form.pax} onChange={e => set("pax", e.target.value)} style={IS} placeholder="0" />
             </div>
           )}
@@ -1052,24 +1118,58 @@ export function EventoModal({ evento, categoria, salidas, aliados, vendedores, o
                     const isStaff  = p.tipo === "STAFF";
                     const isMuelle = p.tipo === "Impuesto Muelle";
                     const showExtra = isStaff || isMuelle;
+                    const conNinos = TIPOS_CON_NINOS.includes(p.tipo);
                     return (
-                      <div key={p.id} style={{ display: "grid", gridTemplateColumns: showExtra ? "1fr 90px 120px 32px" : "1fr 110px 32px", gap: 8, alignItems: "center" }}>
-                        <select value={p.tipo} onChange={e => setPasadiaOrg(p.id, "tipo", e.target.value)} style={IS}>
-                          {TIPOS_GRUPO.map(t => <option key={t} value={t}>{t}</option>)}
-                        </select>
-                        <input type="number" value={p.personas} onChange={e => setPasadiaOrg(p.id, "personas", e.target.value)}
-                          placeholder={p.tipo === "Impuesto Muelle" ? "# cobros" : "# pax"} style={{ ...IS, textAlign: "center" }} />
-                        {isStaff && (
-                          <input type="number" value={p.precio_manual || ""} onChange={e => setPasadiaOrg(p.id, "precio_manual", e.target.value)}
-                            placeholder="Precio c/u" style={{ ...IS, fontSize: 12 }} />
-                        )}
-                        {isMuelle && (
-                          <div style={{ ...IS, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, color: B.sand, cursor: "default" }}>
-                            {COP(PRECIO_MUELLE)} c/u
+                      <div key={p.id} style={{ background: B.navy + "44", borderRadius: 10, padding: "10px 12px" }}>
+                        <div style={{ display: "grid", gridTemplateColumns: showExtra ? "1fr 90px 120px 32px" : conNinos ? "1fr 32px" : "1fr 110px 32px", gap: 8, alignItems: "center" }}>
+                          <select value={p.tipo} onChange={e => setPasadiaOrg(p.id, "tipo", e.target.value)} style={IS}>
+                            {TIPOS_GRUPO.map(t => <option key={t} value={t}>{t}</option>)}
+                          </select>
+                          {!conNinos && !showExtra && (
+                            <input type="number" value={p.personas} onChange={e => setPasadiaOrg(p.id, "personas", e.target.value)}
+                              placeholder="# pax" style={{ ...IS, textAlign: "center" }} />
+                          )}
+                          {!conNinos && isStaff && (
+                            <>
+                              <input type="number" value={p.personas} onChange={e => setPasadiaOrg(p.id, "personas", e.target.value)}
+                                placeholder="# pax" style={{ ...IS, textAlign: "center" }} />
+                              <input type="number" value={p.precio_manual || ""} onChange={e => setPasadiaOrg(p.id, "precio_manual", e.target.value)}
+                                placeholder="Precio c/u" style={{ ...IS, fontSize: 12 }} />
+                            </>
+                          )}
+                          {!conNinos && isMuelle && (
+                            <>
+                              <input type="number" value={p.personas} onChange={e => setPasadiaOrg(p.id, "personas", e.target.value)}
+                                placeholder="# cobros" style={{ ...IS, textAlign: "center" }} />
+                              <div style={{ ...IS, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, color: B.sand, cursor: "default" }}>
+                                {COP(PRECIO_MUELLE)} c/u
+                              </div>
+                            </>
+                          )}
+                          <button type="button" onClick={() => removePasadiaOrg(p.id)}
+                            style={{ height: 38, borderRadius: 8, border: "none", background: B.danger + "33", color: B.danger, fontSize: 15, cursor: "pointer" }}>✕</button>
+                        </div>
+                        {/* Adultos + Niños para tipos con precio diferenciado */}
+                        {conNinos && (
+                          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 100px", gap: 8, marginTop: 8 }}>
+                            <div>
+                              <label style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", display: "block", marginBottom: 3 }}>Adultos</label>
+                              <input type="number" value={p.adultos || ""} onChange={e => setPasadiaOrg(p.id, "adultos", e.target.value)}
+                                placeholder="0" style={{ ...IS, textAlign: "center" }} />
+                            </div>
+                            <div>
+                              <label style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", display: "block", marginBottom: 3 }}>Niños</label>
+                              <input type="number" value={p.ninos || ""} onChange={e => setPasadiaOrg(p.id, "ninos", e.target.value)}
+                                placeholder="0" style={{ ...IS, textAlign: "center" }} />
+                            </div>
+                            <div>
+                              <label style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", display: "block", marginBottom: 3 }}>Total pax</label>
+                              <div style={{ ...IS, textAlign: "center", background: "transparent", border: "1px solid rgba(255,255,255,0.06)", color: B.sky, fontWeight: 700 }}>
+                                {(Number(p.adultos) || 0) + (Number(p.ninos) || 0)}
+                              </div>
+                            </div>
                           </div>
                         )}
-                        <button type="button" onClick={() => removePasadiaOrg(p.id)}
-                          style={{ height: 38, borderRadius: 8, border: "none", background: B.danger + "33", color: B.danger, fontSize: 15, cursor: "pointer" }}>✕</button>
                       </div>
                     );
                   })}
@@ -1858,7 +1958,7 @@ function KanbanBoard({ items, isGrupo, onEdit, onBeo, onLink, onCotizar, onReser
                 <div style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", marginBottom: 6 }}>
                   {ev.tipo} · {ev.fecha_fin && ev.fecha_fin !== ev.fecha ? `${fmtFecha(ev.fecha)} → ${fmtFecha(ev.fecha_fin)}` : fmtFecha(ev.fecha)}
                   {(ev.salidas_grupo || []).length > 0 && ` · ⛵ ${[...ev.salidas_grupo].sort((a,b)=>a.hora.localeCompare(b.hora)).map(s=>s.hora).join(", ")}`}
-                  {` · ${ev.pax || "∞"} pax`}
+                  {` · ${computePax(ev)} pax`}
                 </div>
                 {ev.contacto && <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)" }}>{ev.contacto}</div>}
                 {ev.aliado_id && <div style={{ fontSize: 11, color: B.sky, marginBottom: 4 }}>🤝 {aliados.find(a => a.id === ev.aliado_id)?.nombre || ev.aliado_id}</div>}
@@ -2159,102 +2259,344 @@ function CotizacionModal({ evento, aliados, onClose, onSaved }) {
 
   function imprimir() {
     guardar();
-    setTimeout(() => window.print(), 400);
+    setTimeout(() => window.print(), 600);
   }
+
+  const fmtFechaLarga = (d) => {
+    if (!d) return "";
+    try {
+      const dt = new Date(d);
+      return dt.toLocaleDateString("es-CO", { day: "2-digit", month: "long", year: "numeric" });
+    } catch { return d; }
+  };
 
   return (
     <>
       {/* Print styles */}
       <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;500;700;900&family=Cormorant+Garamond:ital,wght@0,400;0,500;1,400;1,500&family=Barlow:wght@300;400;500;600;700&display=swap');
+
+        @page { size: letter; margin: 18mm 16mm; }
+
         @media print {
-          body > * { display: none !important; }
-          #cotizacion-print { display: block !important; position: fixed; inset: 0; background: white; z-index: 99999; padding: 32px; color: #000; }
-          #cotizacion-print table { page-break-inside: avoid; }
+          html, body { margin: 0 !important; padding: 0 !important; background: #FAF6EE !important; }
+          body * { visibility: hidden !important; }
+          #cotizacion-print, #cotizacion-print * { visibility: visible !important; }
+          #cotizacion-print { display: block !important; position: absolute !important; left: 0 !important; top: 0 !important; right: 0 !important; width: 100% !important; background: #FAF6EE !important; color: #0D1B3E !important; font-family: 'Barlow', sans-serif; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+          .cot-page { page-break-after: always; min-height: 95vh; }
+          .cot-page:last-child { page-break-after: auto; }
+          .cot-title { font-family: 'Playfair Display', serif; }
+          .cot-story, .cot-italic { font-family: 'Cormorant Garamond', serif; font-style: italic; }
+          table { page-break-inside: avoid; }
+          tr { page-break-inside: avoid; }
         }
         #cotizacion-print { display: none; }
+        #cotizacion-print .story, #cotizacion-print .cot-story, #cotizacion-print .cot-italic { font-family: 'Cormorant Garamond', 'Georgia', serif; font-style: italic; color: rgba(30, 53, 102, 0.9); }
+        #cotizacion-print .cot-title { font-family: 'Playfair Display', serif; color: #0D1B3E; }
+        #cotizacion-print .cot-eyebrow { font-size: 10px; letter-spacing: 0.22em; text-transform: uppercase; color: #C8B99A; font-weight: 600; }
+        #cotizacion-print .cot-hairline { height: 1px; background: #C8B99A; border: 0; }
       `}</style>
 
       {/* Printable area */}
-      <div id="cotizacion-print">
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 24, borderBottom: "3px solid #1E3566", paddingBottom: 16 }}>
+      <div id="cotizacion-print" style={{ background: "#FAF6EE", color: "#0D1B3E", fontFamily: "'Barlow', sans-serif" }}>
+
+        {/* ========== PAGE 1 — COVER ========== */}
+        <section className="cot-page" style={{ background: "#FAF6EE", display: "flex", flexDirection: "column", justifyContent: "space-between", minHeight: "95vh", padding: "20px 10px", textAlign: "center" }}>
           <div>
-            <div style={{ fontSize: 28, fontWeight: 900, color: "#1E3566" }}>ATOLON</div>
-            <div style={{ fontSize: 12, color: "#666" }}>Beach Club · Cartagena, Colombia</div>
+            <hr className="cot-hairline" style={{ width: 220, margin: "0 auto 40px", border: 0, height: 1, background: "#C8B99A" }} />
           </div>
-          <div style={{ textAlign: "right" }}>
-            <div style={{ fontSize: 20, fontWeight: 700, color: "#1E3566" }}>COTIZACIÓN</div>
-            <div style={{ fontSize: 12, color: "#666" }}>{evento.id}</div>
-            <div style={{ fontSize: 12, color: "#666" }}>Fecha: {new Date().toLocaleDateString("es-CO")}</div>
-            {header.vencimiento && <div style={{ fontSize: 12, color: "#666" }}>Vence: {header.vencimiento}</div>}
-          </div>
-        </div>
 
-        {/* Event info grid */}
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "4px 24px", marginBottom: 20, fontSize: 12 }}>
-          {[["EVENTO", evento.tipo], ["FECHA EVENTO", evento.fecha ? new Date(evento.fecha).toLocaleDateString("es-CO") : ""], ["EMPRESA / CLIENTE", header.empresa], ["NIT", header.nit], ["CONTACTO", header.contacto], ["CARGO", header.cargo], ["TELÉFONO", header.telefono], ["EMAIL", header.email], ["DIRECCIÓN", header.direccion], ["ALIADO B2B", aliado?.nombre || ""], ["TIPO DE MONTAJE", header.montaje], ["NÚM. PAX", evento.pax], ["HORA INICIO", header.hora_ini], ["HORA FINAL", header.hora_fin]].map(([k, v]) => v ? (
-            <div key={k} style={{ borderBottom: "1px solid #eee", padding: "4px 0", display: "flex", gap: 8 }}>
-              <span style={{ fontWeight: 700, color: "#1E3566", minWidth: 140 }}>{k}:</span>
-              <span>{v}</span>
+          <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center" }}>
+            <div className="cot-title" style={{ fontSize: 72, fontWeight: 700, letterSpacing: "0.15em", color: "#0D1B3E", lineHeight: 1 }}>ATOLÓN</div>
+            <div style={{ fontSize: 11, letterSpacing: "0.28em", color: "#0D1B3E", marginTop: 18, textTransform: "uppercase", fontWeight: 500 }}>Beach Club · Cartagena de Indias</div>
+
+            <div style={{ margin: "56px 0 48px", width: 80, height: 1, background: "#C8B99A" }} />
+
+            <div className="cot-story" style={{ fontSize: 20, color: "#1E3566", maxWidth: 460, lineHeight: 1.4 }}>
+              Una historia a orillas del Caribe, escrita para ustedes.
             </div>
-          ) : null)}
-        </div>
 
-        {/* Sections */}
-        {[["ESPACIOS", "#1E3566", espacios, false, "IVA"], ["HOSPEDAJE", "#0f766e", hospedaje, true, "IVA"], ["ALIMENTOS Y BEBIDAS", "#2E7D52", alimentos, false, "ICO"], ["OTROS SERVICIOS", "#7B4F12", servicios, false, "IVA"]].map(([title, color, rows, noches, ivaLabel]) => rows.length > 0 && (
-          <div key={title} style={{ marginBottom: 20 }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
-              <thead>
-                <tr style={{ background: color, color: "white" }}>
-                  <th style={{ padding: "6px 8px", textAlign: "left", width: "35%" }}>{title}</th>
-                  <th style={{ padding: "6px 8px", textAlign: "center", width: "8%" }}>CANT.</th>
-                  {noches && <th style={{ padding: "6px 8px", textAlign: "center", width: "8%" }}>NOCHES</th>}
-                  <th style={{ padding: "6px 8px", textAlign: "right", width: "15%" }}>VALOR UNIT.</th>
-                  <th style={{ padding: "6px 8px", textAlign: "right", width: "12%" }}>SUBTOTAL</th>
-                  <th style={{ padding: "6px 8px", textAlign: "center", width: "8%" }}>{ivaLabel}</th>
-                  <th style={{ padding: "6px 8px", textAlign: "right", width: "14%" }}>TOTAL</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((l, i) => {
-                  const { sub, tax, total } = calcLine(l);
-                  return (
-                    <tr key={i} style={{ background: i % 2 === 0 ? "#f9f9f9" : "white" }}>
-                      <td style={{ padding: "5px 8px" }}>{l.concepto}</td>
-                      <td style={{ padding: "5px 8px", textAlign: "center" }}>{l.cantidad}</td>
-                      {noches && <td style={{ padding: "5px 8px", textAlign: "center" }}>{l.noches}</td>}
-                      <td style={{ padding: "5px 8px", textAlign: "right" }}>{COP(l.valor_unit)}</td>
-                      <td style={{ padding: "5px 8px", textAlign: "right" }}>{COP(sub)}</td>
-                      <td style={{ padding: "5px 8px", textAlign: "center" }}>{l.iva}%</td>
-                      <td style={{ padding: "5px 8px", textAlign: "right", fontWeight: 600 }}>{COP(total)}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+            <div style={{ margin: "56px 0 0" }}>
+              <div className="cot-italic" style={{ fontSize: 14, color: "#1E3566" }}>Propuesta para</div>
+              <div className="cot-title" style={{ fontSize: 36, fontWeight: 700, color: "#0D1B3E", marginTop: 6, lineHeight: 1.15 }}>
+                {header.empresa || evento.nombre || "—"}
+              </div>
+              {evento.tipo && <div className="cot-title" style={{ fontSize: 18, fontWeight: 400, color: "#1E3566", marginTop: 8, letterSpacing: "0.05em" }}>{evento.tipo}</div>}
+              {evento.fecha && <div className="cot-italic" style={{ fontSize: 15, color: "#1E3566", marginTop: 14 }}>{fmtFechaLarga(evento.fecha)}</div>}
+            </div>
           </div>
-        ))}
 
-        {/* Totals */}
-        <div style={{ marginLeft: "auto", width: 320, borderTop: "2px solid #1E3566", paddingTop: 12, fontSize: 13 }}>
-          {[["Total Espacios", totEsp.total], ["Total Hospedaje", totHosp.total], ["Total Alimentos & Bebidas", totAli.total], ["Total Otros Servicios", totSer.total]].map(([k, v]) => v > 0 && (
-            <div key={k} style={{ display: "flex", justifyContent: "space-between", padding: "3px 0", color: "#444" }}>
-              <span>{k}</span><span>{COP(v)}</span>
+          <div>
+            <hr className="cot-hairline" style={{ width: 220, margin: "0 auto 16px", border: 0, height: 1, background: "#C8B99A" }} />
+            <div style={{ fontSize: 10, letterSpacing: "0.18em", color: "#1E3566", textTransform: "uppercase" }}>
+              Cotización {evento.id} &nbsp;·&nbsp; Emitida {new Date().toLocaleDateString("es-CO", { day: "2-digit", month: "long", year: "numeric" })} &nbsp;·&nbsp; {evento.vendedor || "Atolón Eventos"}
+            </div>
+          </div>
+        </section>
+
+        {/* ========== PAGE 2 — UNA INVITACIÓN A ATOLÓN ========== */}
+        <section className="cot-page" style={{ background: "#FAF6EE", padding: "40px 40px", minHeight: "95vh", display: "flex", flexDirection: "column", justifyContent: "center" }}>
+          <div style={{ maxWidth: 480, margin: "0 auto", textAlign: "center" }}>
+            <div className="cot-eyebrow" style={{ marginBottom: 18 }}>Cartagena de Indias · Isla Tierra Bomba</div>
+            <div className="cot-title" style={{ fontSize: 42, fontWeight: 700, color: "#0D1B3E", lineHeight: 1.1, marginBottom: 10 }}>
+              Una invitación a Atolón
+            </div>
+            <div className="cot-italic" style={{ fontSize: 18, color: "#1E3566", marginBottom: 30 }}>
+              Un refugio en el Caribe
+            </div>
+            <div style={{ width: 60, height: 1, background: "#C8B99A", margin: "0 auto 30px" }} />
+
+            <div style={{ fontSize: 12, lineHeight: 1.8, color: "#1E3566", textAlign: "left", fontFamily: "'Barlow', sans-serif" }}>
+              <p style={{ margin: "0 0 14px" }}>Soñamos alguna vez con un rincón del Caribe donde el tiempo avanzara al compás de las olas. A quince minutos de Cartagena, donde la arena blanca se rinde al azul y cada atardecer tiene el pulso de algo que apenas comienza.</p>
+              <p style={{ margin: "0 0 14px" }}>Así nació Atolón: más que un club de playa, un refugio hecho para celebraciones íntimas, reencuentros que importan y esos momentos que la memoria escoge guardar.</p>
+              <p style={{ margin: 0 }}>Hoy los invitamos a escribir, junto a nosotros, su propio capítulo a orillas del mar.</p>
+            </div>
+
+            <div className="cot-italic" style={{ fontSize: 16, color: "#1E3566", textAlign: "right", marginTop: 30 }}>
+              — El equipo de Atolón
+            </div>
+          </div>
+        </section>
+
+        {/* ========== PAGE 3 — LOS ESPACIOS ========== */}
+        <section className="cot-page" style={{ background: "#FAF6EE", padding: "30px 20px", minHeight: "95vh" }}>
+          <div style={{ textAlign: "center", marginBottom: 24 }}>
+            <div className="cot-eyebrow" style={{ marginBottom: 14 }}>Nuestra isla</div>
+            <div className="cot-title" style={{ fontSize: 36, fontWeight: 700, color: "#0D1B3E", marginBottom: 10 }}>Los espacios</div>
+            <div className="cot-italic" style={{ fontSize: 16, color: "#1E3566", maxWidth: 440, margin: "0 auto" }}>
+              Seis escenarios, una isla. Cada espacio cuenta una historia distinta.
+            </div>
+            <div style={{ width: 60, height: 1, background: "#C8B99A", margin: "20px auto 0" }} />
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, maxWidth: 640, margin: "0 auto" }}>
+            {[
+              ["Beach Club principal", "Hasta 200 pax", "Donde el día se vive descalzo."],
+              ["Restaurante", "Hasta 80 pax sentados", "Donde el mar se convierte en sobremesa."],
+              ["Piscina y deck", "Cocktail hasta 150 pax", "Donde el atardecer abraza el brindis."],
+              ["Salón privado Nairo", "Reuniones hasta 30 pax", "Donde las ideas encuentran calma."],
+              ["Muelle y zona sunset", "Ceremonias hasta 60 pax", "Donde el 'sí, acepto' tiene horizonte."],
+              ["Habitaciones boutique", "8 suites", "Donde la noche caribeña se queda."],
+            ].map(([name, cap, line]) => (
+              <div key={name} style={{ background: "#FFFDF7", borderLeft: "3px solid #C8B99A", padding: "14px 16px", borderTop: "1px solid #E5DFD0", borderRight: "1px solid #E5DFD0", borderBottom: "1px solid #E5DFD0" }}>
+                <div className="cot-title" style={{ fontSize: 16, fontWeight: 700, color: "#0D1B3E", marginBottom: 6 }}>{name}</div>
+                <div style={{ fontSize: 10, letterSpacing: "0.18em", textTransform: "uppercase", color: "#C8B99A", fontWeight: 600, marginBottom: 8 }}>{cap}</div>
+                <div className="cot-italic" style={{ fontSize: 13, color: "#1E3566", lineHeight: 1.4 }}>{line}</div>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        {/* ========== PAGE 4 — SU EVENTO ========== */}
+        <section className="cot-page" style={{ background: "#FAF6EE", padding: "30px 20px", minHeight: "95vh" }}>
+          <div style={{ textAlign: "center", marginBottom: 22 }}>
+            <div className="cot-eyebrow" style={{ marginBottom: 14 }}>Los detalles</div>
+            <div className="cot-title" style={{ fontSize: 36, fontWeight: 700, color: "#0D1B3E", marginBottom: 16 }}>Su evento</div>
+            <div style={{ width: 60, height: 1, background: "#C8B99A", margin: "0 auto 22px" }} />
+            <div className="cot-italic" style={{ fontSize: 17, color: "#1E3566", maxWidth: 520, margin: "0 auto", lineHeight: 1.5 }}>
+              "Cada evento en Atolón comienza mucho antes del primer invitado. Empieza en una conversación como esta."
+            </div>
+          </div>
+
+          <div style={{ maxWidth: 620, margin: "28px auto 0", display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 32px" }}>
+            {[
+              ["Evento", evento.tipo],
+              ["Fecha", evento.fecha ? fmtFechaLarga(evento.fecha) : ""],
+              ["Horario", (header.hora_ini || header.hora_fin) ? `${header.hora_ini || "—"} a ${header.hora_fin || "—"}` : ""],
+              ["Invitados", evento.pax ? `${evento.pax} pax` : ""],
+              ["Montaje", header.montaje],
+              ["Cliente", header.empresa],
+              ["NIT", header.nit],
+              ["Dirección", header.direccion],
+              ["Contacto", [header.contacto, header.cargo].filter(Boolean).join(" · ")],
+              ["Teléfono / Email", [header.telefono, header.email].filter(Boolean).join(" · ")],
+              ["Aliado B2B", aliado?.nombre || ""],
+            ].map(([k, v]) => v ? (
+              <div key={k} style={{ padding: "10px 0", borderBottom: "1px solid #E5DFD0", display: "flex", flexDirection: "column", gap: 3 }}>
+                <span style={{ fontSize: 9, letterSpacing: "0.22em", textTransform: "uppercase", color: "#C8B99A", fontWeight: 600 }}>{k}</span>
+                <span style={{ fontSize: 13, color: "#0D1B3E", fontFamily: "'Barlow', sans-serif", fontWeight: 500 }}>{v}</span>
+              </div>
+            ) : null)}
+          </div>
+        </section>
+
+        {/* ========== PAGE 5 — LA PROPUESTA ========== */}
+        <section className="cot-page" style={{ background: "#FAF6EE", padding: "30px 10px", minHeight: "95vh" }}>
+          <div style={{ textAlign: "center", marginBottom: 28 }}>
+            <div className="cot-eyebrow" style={{ marginBottom: 14 }}>Lo que hemos preparado</div>
+            <div className="cot-title" style={{ fontSize: 42, fontWeight: 700, color: "#0D1B3E", marginBottom: 10 }}>La propuesta</div>
+            <div className="cot-italic" style={{ fontSize: 17, color: "#1E3566" }}>
+              Las piezas que dan forma a su celebración.
+            </div>
+            <div style={{ width: 60, height: 1, background: "#C8B99A", margin: "20px auto 0" }} />
+          </div>
+
+          {[
+            ["ESPACIOS",             espacios,  false, "IVA", "El escenario de lo que está por suceder."],
+            ["HOSPEDAJE",            hospedaje, true,  "IVA", "Para quienes quieran quedarse a ver cómo termina la historia."],
+            ["ALIMENTOS Y BEBIDAS",  alimentos, false, "ICO", "Cada plato, un capítulo. Cada copa, una pausa."],
+            ["OTROS SERVICIOS",      servicios, false, "IVA", "Los detalles que convierten un evento en un recuerdo."],
+          ].map(([title, rows, noches, ivaLabel, story]) => rows.length > 0 && (
+            <div key={title} style={{ marginBottom: 24, pageBreakInside: "avoid" }}>
+              <div className="cot-eyebrow" style={{ marginBottom: 6, textAlign: "left" }}>{title}</div>
+              <div className="cot-italic" style={{ fontSize: 14, color: "#1E3566", marginBottom: 12, textAlign: "left" }}>{story}</div>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11, fontFamily: "'Barlow', sans-serif" }}>
+                <thead>
+                  <tr style={{ background: "#C8B99A", color: "#FFFFFF" }}>
+                    <th style={{ padding: "10px 10px", textAlign: "left", width: "38%", letterSpacing: "0.12em", textTransform: "uppercase", fontSize: 10, fontWeight: 600 }}>Concepto</th>
+                    <th style={{ padding: "10px 10px", textAlign: "center", width: "8%", letterSpacing: "0.12em", textTransform: "uppercase", fontSize: 10, fontWeight: 600 }}>Cant.</th>
+                    {noches && <th style={{ padding: "10px 10px", textAlign: "center", width: "8%", letterSpacing: "0.12em", textTransform: "uppercase", fontSize: 10, fontWeight: 600 }}>Noches</th>}
+                    <th style={{ padding: "10px 10px", textAlign: "right", width: "15%", letterSpacing: "0.12em", textTransform: "uppercase", fontSize: 10, fontWeight: 600 }}>Valor Unit.</th>
+                    <th style={{ padding: "10px 10px", textAlign: "right", width: "12%", letterSpacing: "0.12em", textTransform: "uppercase", fontSize: 10, fontWeight: 600 }}>Subtotal</th>
+                    <th style={{ padding: "10px 10px", textAlign: "center", width: "8%", letterSpacing: "0.12em", textTransform: "uppercase", fontSize: 10, fontWeight: 600 }}>{ivaLabel}</th>
+                    <th style={{ padding: "10px 10px", textAlign: "right", width: "14%", letterSpacing: "0.12em", textTransform: "uppercase", fontSize: 10, fontWeight: 600 }}>Total</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((l, i) => {
+                    const { sub, total } = calcLine(l);
+                    return (
+                      <tr key={i} style={{ background: i % 2 === 0 ? "#FAF6EE" : "#FFFDF7", borderBottom: "1px solid #E5DFD0" }}>
+                        <td style={{ padding: "10px 10px", color: "#0D1B3E" }}>{l.concepto}</td>
+                        <td style={{ padding: "10px 10px", textAlign: "center", color: "#1E3566" }}>{l.cantidad}</td>
+                        {noches && <td style={{ padding: "10px 10px", textAlign: "center", color: "#1E3566" }}>{l.noches}</td>}
+                        <td style={{ padding: "10px 10px", textAlign: "right", color: "#1E3566" }}>{COP(l.valor_unit)}</td>
+                        <td style={{ padding: "10px 10px", textAlign: "right", color: "#1E3566" }}>{COP(sub)}</td>
+                        <td style={{ padding: "10px 10px", textAlign: "center", color: "#1E3566" }}>{l.iva}%</td>
+                        <td style={{ padding: "10px 10px", textAlign: "right", fontWeight: 700, color: "#0D1B3E" }}>{COP(total)}</td>
+                      </tr>
+                    );
+                  })}
+                  <tr style={{ background: "#EFE7D3" }}>
+                    <td colSpan={noches ? 6 : 5} style={{ padding: "10px 10px", textAlign: "right", fontSize: 10, letterSpacing: "0.18em", textTransform: "uppercase", color: "#0D1B3E", fontWeight: 600 }}>Subtotal {title.toLowerCase()}</td>
+                    <td style={{ padding: "10px 10px", textAlign: "right", color: "#0D1B3E", fontWeight: 700 }}>
+                      {COP(rows.reduce((a, l) => a + calcLine(l).total, 0))}
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
             </div>
           ))}
-          <div style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", fontWeight: 900, fontSize: 16, color: "#1E3566", borderTop: "1px solid #1E3566", marginTop: 6 }}>
-            <span>TOTAL EVENTO</span><span>{COP(grandTotal)}</span>
-          </div>
-        </div>
+        </section>
 
-        {notas && (
-          <div style={{ marginTop: 24, padding: "12px 16px", background: "#f5f5f5", borderLeft: "3px solid #1E3566", borderRadius: 4 }}>
-            <div style={{ fontSize: 10, fontWeight: 700, color: "#1E3566", textTransform: "uppercase", marginBottom: 6 }}>Notas y Condiciones</div>
-            <div style={{ fontSize: 11, color: "#444", lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{notas}</div>
+        {/* ========== PAGE — RESUMEN DE INVERSIÓN ========== */}
+        <section className="cot-page" style={{ background: "#FAF6EE", padding: "40px 20px", minHeight: "95vh", pageBreakBefore: "always" }}>
+          <div style={{ textAlign: "center", marginBottom: 24 }}>
+            <div className="cot-eyebrow" style={{ marginBottom: 14 }}>El conjunto</div>
+            <div className="cot-title" style={{ fontSize: 36, fontWeight: 700, color: "#0D1B3E", marginBottom: 16 }}>Resumen de inversión</div>
+            <div style={{ width: 60, height: 1, background: "#C8B99A", margin: "0 auto 22px" }} />
+            <div className="cot-italic" style={{ fontSize: 16, color: "#1E3566", maxWidth: 520, margin: "0 auto", lineHeight: 1.5 }}>
+              "Toda gran celebración tiene su arquitectura. Estas son las piezas que la sostienen."
+            </div>
           </div>
-        )}
-        <div style={{ marginTop: 24, fontSize: 10, color: "#aaa", textAlign: "center" }}>
-          Esta cotización es válida hasta {header.vencimiento || "—"}. Los precios están en COP e incluyen IVA donde aplica.
-        </div>
+
+          <div style={{ maxWidth: 520, margin: "30px auto 0" }}>
+            {[["Espacios", totEsp.total], ["Hospedaje", totHosp.total], ["Alimentos y Bebidas", totAli.total], ["Otros Servicios", totSer.total]].map(([k, v]) => v > 0 && (
+              <div key={k} style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", padding: "14px 0", borderBottom: "1px solid #E5DFD0" }}>
+                <span style={{ fontSize: 10, letterSpacing: "0.22em", textTransform: "uppercase", color: "#C8B99A", fontWeight: 600 }}>{k}</span>
+                <span style={{ fontSize: 15, color: "#1E3566", fontFamily: "'Barlow', sans-serif", fontWeight: 500 }}>{COP(v)}</span>
+              </div>
+            ))}
+
+            <div style={{ marginTop: 32, background: "#C8B99A", padding: "22px 28px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <span style={{ fontSize: 11, letterSpacing: "0.25em", textTransform: "uppercase", color: "#FFFFFF", fontWeight: 700 }}>Inversión total</span>
+              <span className="cot-title" style={{ fontSize: 32, fontWeight: 700, color: "#0D1B3E" }}>{COP(grandTotal)}</span>
+            </div>
+
+            <div className="cot-italic" style={{ fontSize: 12, color: "#1E3566", textAlign: "center", marginTop: 18, opacity: 0.8 }}>
+              Valores expresados en pesos colombianos. Incluye IVA donde aplica.
+            </div>
+          </div>
+        </section>
+
+        {/* ========== PAGE — CONDICIONES ========== */}
+        <section className="cot-page" style={{ background: "#FAF6EE", padding: "40px 20px", minHeight: "95vh", pageBreakBefore: "always" }}>
+          <div style={{ textAlign: "center", marginBottom: 24 }}>
+            <div className="cot-eyebrow" style={{ marginBottom: 14 }}>El marco</div>
+            <div className="cot-title" style={{ fontSize: 36, fontWeight: 700, color: "#0D1B3E", marginBottom: 16 }}>Condiciones y siguientes pasos</div>
+            <div style={{ width: 60, height: 1, background: "#C8B99A", margin: "0 auto 22px" }} />
+            <div className="cot-italic" style={{ fontSize: 16, color: "#1E3566", maxWidth: 540, margin: "0 auto", lineHeight: 1.5 }}>
+              Como toda buena historia, la nuestra también necesita un marco. Estas son nuestras condiciones — pensadas para proteger su evento tanto como el nuestro.
+            </div>
+          </div>
+
+          <div style={{ maxWidth: 560, margin: "0 auto" }}>
+            <div style={{ marginTop: 24 }}>
+              <div className="cot-eyebrow" style={{ marginBottom: 12 }}>Condiciones generales</div>
+              {notas ? (
+                <div style={{ fontSize: 12, color: "#1E3566", lineHeight: 1.8, whiteSpace: "pre-wrap", fontFamily: "'Barlow', sans-serif" }}>{notas}</div>
+              ) : (
+                <ul style={{ margin: 0, padding: 0, listStyle: "none", color: "#1E3566", fontSize: 12, lineHeight: 1.8, fontFamily: "'Barlow', sans-serif" }}>
+                  {[
+                    "Anticipo del 50% para reservar la fecha y los espacios.",
+                    "Confirmación final de invitados y menú con al menos 7 días de anticipación.",
+                    "Política de cancelación: el anticipo es no reembolsable dentro de los 30 días previos al evento.",
+                    "Los huéspedes externos al club deben ser registrados previamente para acceso a la isla.",
+                    "Garantía mínima de pax según lo acordado; ajustes al alza aceptados hasta 72 horas antes.",
+                  ].map((t, i) => (
+                    <li key={i} style={{ padding: "8px 0", borderBottom: "1px solid #E5DFD0", display: "flex", gap: 12 }}>
+                      <span style={{ color: "#C8B99A", fontWeight: 700 }}>·</span>
+                      <span>{t}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+
+            <div style={{ marginTop: 30 }}>
+              <div className="cot-eyebrow" style={{ marginBottom: 12 }}>Vigencia</div>
+              <div style={{ fontSize: 13, color: "#1E3566", fontFamily: "'Barlow', sans-serif" }}>
+                {header.vencimiento ? `Esta propuesta es válida hasta el ${fmtFechaLarga(header.vencimiento)}.` : "Esta propuesta es válida por 30 días desde la emisión."}
+              </div>
+            </div>
+
+            <div style={{ marginTop: 30 }}>
+              <div className="cot-eyebrow" style={{ marginBottom: 12 }}>Siguientes pasos</div>
+              <ol style={{ margin: 0, paddingLeft: 0, listStyle: "none", color: "#1E3566", fontSize: 13, lineHeight: 1.8, fontFamily: "'Barlow', sans-serif" }}>
+                {[
+                  "Confirmación de la propuesta",
+                  "Firma del contrato",
+                  "Pago del anticipo",
+                  "Coordinación con nuestro event planner",
+                ].map((t, i) => (
+                  <li key={i} style={{ padding: "8px 0", borderBottom: "1px solid #E5DFD0", display: "flex", gap: 14 }}>
+                    <span className="cot-title" style={{ color: "#C8B99A", fontWeight: 700, minWidth: 22 }}>{String(i + 1).padStart(2, "0")}</span>
+                    <span>{t}</span>
+                  </li>
+                ))}
+              </ol>
+            </div>
+          </div>
+        </section>
+
+        {/* ========== BACK COVER ========== */}
+        <section className="cot-page" style={{ background: "#FAF6EE", padding: "40px 20px", minHeight: "95vh", pageBreakBefore: "always", display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", textAlign: "center" }}>
+          <div className="cot-title" style={{ fontSize: 36, fontWeight: 700, color: "#0D1B3E", maxWidth: 520, lineHeight: 1.2 }}>
+            Gracias por dejarnos ser parte de su historia.
+          </div>
+
+          <div style={{ width: 80, height: 1, background: "#C8B99A", margin: "40px 0" }} />
+
+          <div style={{ fontFamily: "'Barlow', sans-serif", color: "#0D1B3E", lineHeight: 1.9 }}>
+            <div style={{ fontSize: 13, letterSpacing: "0.25em", textTransform: "uppercase", fontWeight: 700, marginBottom: 10 }}>Atolón Beach Club</div>
+            <div style={{ fontSize: 12, color: "#1E3566" }}>Isla Tierra Bomba · Cartagena de Indias · Colombia</div>
+            <div style={{ fontSize: 12, color: "#1E3566" }}>eventos@atolon.co</div>
+            <div style={{ fontSize: 12, color: "#1E3566" }}>www.atolon.co</div>
+          </div>
+
+          <div style={{ marginTop: 60 }}>
+            <div className="cot-italic" style={{ fontSize: 14, color: "#1E3566" }}>
+              Una propuesta creada exclusivamente para {header.empresa || evento.nombre || "ustedes"}.
+            </div>
+          </div>
+
+          <div style={{ marginTop: 60 }}>
+            <div className="cot-italic" style={{ fontSize: 13, color: "#1E3566", opacity: 0.85 }}>
+              Escrito a mano en la isla, con vista al Caribe.
+            </div>
+          </div>
+        </section>
+
       </div>
 
       {/* Modal UI */}
@@ -2264,7 +2606,7 @@ function CotizacionModal({ evento, aliados, onClose, onSaved }) {
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
             <div>
               <div style={{ fontSize: 18, fontWeight: 700 }}>Cotización — {evento.nombre}</div>
-              <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)" }}>{evento.tipo} · {evento.fecha ? new Date(evento.fecha).toLocaleDateString("es-CO") : ""} · {evento.pax} pax</div>
+              <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)" }}>{evento.tipo} · {evento.fecha ? new Date(evento.fecha).toLocaleDateString("es-CO") : ""} · {computePax(evento)} pax</div>
             </div>
             <button onClick={onClose} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.5)", fontSize: 22, cursor: "pointer" }}>✕</button>
           </div>
@@ -2397,7 +2739,7 @@ function GrupoExtrasModal({ evento, onClose, onSaved }) {
             <div style={{ fontSize: 20, fontWeight: 700, color: "#1E3566" }}>COBROS ADICIONALES</div>
             <div style={{ fontSize: 13, color: "#444", marginTop: 4 }}>{evento.nombre} — {evento.tipo}</div>
             <div style={{ fontSize: 12, color: "#666" }}>Fecha: {evento.fecha ? new Date(evento.fecha + "T12:00:00").toLocaleDateString("es-CO", { weekday: "long", day: "numeric", month: "long", year: "numeric" }) : ""}</div>
-            <div style={{ fontSize: 12, color: "#666" }}>{evento.pax} pax</div>
+            <div style={{ fontSize: 12, color: "#666" }}>{computePax(evento)} pax</div>
           </div>
         </div>
 
@@ -2454,7 +2796,7 @@ function GrupoExtrasModal({ evento, onClose, onSaved }) {
             <div>
               <div style={{ fontSize: 18, fontWeight: 700 }}>💰 Cobros Adicionales — {evento.nombre}</div>
               <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)" }}>
-                {evento.tipo} · {evento.fecha ? new Date(evento.fecha + "T12:00:00").toLocaleDateString("es-CO", { day: "numeric", month: "long", year: "numeric" }) : ""} · {evento.pax} pax
+                {evento.tipo} · {evento.fecha ? new Date(evento.fecha + "T12:00:00").toLocaleDateString("es-CO", { day: "numeric", month: "long", year: "numeric" }) : ""} · {computePax(evento)} pax
               </div>
             </div>
             <button onClick={onClose} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.5)", fontSize: 22, cursor: "pointer" }}>✕</button>
@@ -2763,6 +3105,24 @@ export default function Eventos() {
   const [reservasEvt, setReservasEvt] = useState(null);
   const [cotizacion,  setCotizacion] = useState(null);
   const [extrasGrupo, setExtrasGrupo] = useState(null);
+  const [userRol,     setUserRol]     = useState("");
+
+  // Detectar rol del usuario para permisos de edición
+  useEffect(() => {
+    if (!supabase) return;
+    supabase.auth.getSession().then(async ({ data: { session } }) => {
+      if (!session?.user?.email) return;
+      const { data } = await supabase.from("usuarios").select("rol_id").eq("email", session.user.email.toLowerCase()).single();
+      if (data?.rol_id) setUserRol(data.rol_id);
+    });
+  }, []);
+
+  // Roles con permiso de edición en eventos
+  const canEdit = !userRol
+    || userRol === "super_admin"
+    || userRol === "ventas"
+    || userRol === "gerente_ventas"
+    || userRol.startsWith("gerente_general");
 
   const fetchTodos = useCallback(async () => {
     if (!supabase) { setLoading(false); return; }
@@ -2798,7 +3158,7 @@ export default function Eventos() {
       salidas_grupo: e.salidas_grupo || [], aliado_id: e.aliado_id || "",
       vendedor: e.vendedor || "", cotizacion_data: e.cotizacion_data || {}, extras_data: e.extras_data || {},
       empresa: e.empresa || "", nit: e.nit || "", cargo: e.cargo || "",
-      direccion: e.direccion || "", montaje: e.montaje || "",
+      direccion: e.direccion || "", nacionalidad: e.nacionalidad || "", montaje: e.montaje || "",
       hora_ini: e.hora_ini || "", hora_fin: e.hora_fin || "", vencimiento: e.vencimiento || "",
       buy_out: e.buy_out || false,
       modalidad_pago: e.modalidad_pago || "individual",
@@ -2810,6 +3170,12 @@ export default function Eventos() {
       timeline_items:            e.timeline_items            || [],
       contactos_rapidos:         e.contactos_rapidos         || [],
       transporte_detalle:        e.transporte_detalle        || [],
+      transp_terrestre:          e.transp_terrestre          || [],
+      transp_acuatica:           e.transp_acuatica           || [],
+      menus_detalle:             e.menus_detalle             || {},
+      embarcaciones_evento:      e.embarcaciones_evento      || [],
+      historial_cambios:         e.historial_cambios         || [],
+      beo_notas:                 e.beo_notas                 || {},
       incidentes:                e.incidentes                || [],
       restricciones_dieteticas:  e.restricciones_dieteticas  || [],
       servicios_contratados:     e.servicios_contratados     || [],
@@ -2828,19 +3194,41 @@ export default function Eventos() {
   // ── Pantalla detalle del evento (reemplaza la lista) ────────────────────────
   if (detalleEvento) {
     return (
-      <EventoDetalle
-        evento={detalleEvento}
-        onBack={() => setDetalleEvento(null)}
-        onEdit={() => { setModal(detalleEvento); }}
-        onSaved={() => {
-          fetchTodos();
-          // Refresh the detalleEvento with fresh data
-          if (supabase) {
-            supabase.from("eventos").select("*").eq("id", detalleEvento.id).single()
-              .then(({ data }) => { if (data) setDetalleEvento(prev => ({ ...prev, ...data })); });
-          }
-        }}
-      />
+      <div>
+        <EventoDetalle
+          evento={detalleEvento}
+          canEdit={canEdit}
+          onBack={() => setDetalleEvento(null)}
+          onEdit={() => { setModal(detalleEvento); }}
+          onSaved={() => {
+            fetchTodos();
+            // Refresh the detalleEvento with fresh data
+            if (supabase) {
+              supabase.from("eventos").select("*").eq("id", detalleEvento.id).single()
+                .then(({ data }) => { if (data) setDetalleEvento(prev => ({ ...prev, ...data })); });
+            }
+          }}
+        />
+        {modal && (
+          <EventoModal
+            evento={modal === "new" ? null : modal}
+            categoria={modal === "new" ? "evento" : modal.categoria}
+            salidas={salidas}
+            aliados={aliados}
+            vendedores={vendedores}
+            onClose={() => setModal(null)}
+            onSaved={() => {
+              fetchTodos();
+              setModal(null);
+              if (supabase) {
+                supabase.from("eventos").select("*").eq("id", detalleEvento.id).single()
+                  .then(({ data }) => { if (data) setDetalleEvento(prev => ({ ...prev, ...data })); });
+              }
+            }}
+            onShowLink={setLinkEvt}
+          />
+        )}
+      </div>
     );
   }
 
@@ -2862,7 +3250,7 @@ export default function Eventos() {
           <h2 style={{ fontSize: 22, fontWeight: 600 }}>Eventos</h2>
           {supabase && !loading && <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 10, background: B.success + "22", color: B.success }}>LIVE</span>}
         </div>
-        {!isCalendario && (
+        {!isCalendario && canEdit && (
           <button onClick={() => setModal("new")}
             style={{ background: B.sand, color: B.navy, border: "none", borderRadius: 8, padding: "10px 20px", fontWeight: 700, cursor: "pointer" }}>
             + {tab === "grupo" ? "Nuevo Grupo" : "Nuevo Evento"}

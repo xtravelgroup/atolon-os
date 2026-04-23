@@ -1,47 +1,19 @@
 import { useState, useEffect, useCallback } from "react";
 import { B, fmtFecha } from "../brand";
 import { supabase } from "../lib/supabase";
+import { GRUPOS_NAV, BOTTOM_NAV, TODOS_MODULOS } from "../lib/modulosCatalogo";
 
 const IS   = { width: "100%", padding: "10px 14px", borderRadius: 8, background: B.navy, border: `1px solid ${B.navyLight}`, color: "#fff", fontSize: 13, outline: "none", boxSizing: "border-box" };
 const LS   = { fontSize: 11, color: B.sand, display: "block", marginBottom: 5, textTransform: "uppercase", letterSpacing: "0.06em" };
 const ISsm = { ...IS, padding: "8px 10px", fontSize: 12 };
 
-const MODULOS = [
-  // Comercial
-  { key: "pasadias",      label: "Pasadías",      icon: "🏖" },
-  { key: "reservas",      label: "Reservas",       icon: "⚓" },
-  { key: "clientes",      label: "Clientes",       icon: "👤" },
-  { key: "b2b",           label: "B2B",            icon: "🏢" },
-  { key: "eventos",       label: "Eventos",        icon: "🎉" },
-  { key: "upsells",           label: "Upsells",           icon: "⬆" },
-  { key: "actividades",       label: "Actividades",       icon: "🎯" },
-  { key: "comercial",         label: "Comercial",         icon: "★" },
-  { key: "metas",             label: "Metas",             icon: "🎯" },
-  // Operaciones
-  { key: "checkin",       label: "Check-in",       icon: "✅" },
-  { key: "muelle",        label: "Llegadas",       icon: "⚓" },
-  { key: "salidas_isla",  label: "Salidas",        icon: "⛵" },
-  { key: "staffing",      label: "Staffing",       icon: "👥" },
-  { key: "floorplan",     label: "Floor Plan",     icon: "🗺" },
-  { key: "menus",         label: "Menús",          icon: "🍽️" },
-  // Marketing
-  { key: "analitica",     label: "Analítica",      icon: "📊" },
-  { key: "contenido",     label: "Contenido",      icon: "📢" },
-  { key: "vip",           label: "Society",        icon: "✦" },
-  // Finanzas
-  { key: "financiero",    label: "Financiero",     icon: "💰" },
-  { key: "cierre_caja",   label: "Cierre de Caja", icon: "🧾" },
-  { key: "presupuesto",   label: "Presupuesto",    icon: "📊" },
-  { key: "activos",       label: "Activos",        icon: "🏗" },
-  { key: "requisiciones",     label: "Requisiciones",     icon: "🛒" },
-  { key: "mantenimiento",     label: "Mantenimiento",     icon: "🔧" },
-  { key: "contratos",         label: "Contratos",         icon: "📄" },
-  // Marketing
-  { key: "carrito_abandonado", label: "Carritos Abandon.", icon: "🛒" },
-  // Sistema
-  { key: "historial",     label: "Historial",      icon: "📋" },
-  { key: "configuracion", label: "Configuración",  icon: "⚙" },
-  { key: "usuarios",      label: "Usuarios",       icon: "👥" },
+// Catálogo central — definido en src/lib/modulosCatalogo.js
+const MODULOS = TODOS_MODULOS;
+
+// Agrupación para el UI de permisos (por sección del menú)
+const MODULOS_POR_GRUPO = [
+  ...GRUPOS_NAV.map(g => ({ label: g.label, color: g.color, items: g.items })),
+  { label: "Sistema", color: "#94a3b8", items: BOTTOM_NAV },
 ];
 const PERMS = [
   { key: "ver",      label: "Ver" },
@@ -223,18 +195,27 @@ function UsuarioModal({ usuario, roles, onClose, onSaved }) {
               )
             }
           </div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 6 }}>
-            {MODULOS.map(m => {
-              const checked = esTotal || f.modulos.includes(m.key);
-              return (
-                <div key={m.key} onClick={() => !esTotal && toggleMod(m.key)}
-                  style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", borderRadius: 8, background: checked ? B.sky + "18" : B.navy, border: `1px solid ${checked ? B.sky + "44" : B.navyLight}`, cursor: esTotal ? "default" : "pointer", opacity: esTotal ? 0.7 : 1 }}>
-                  <span style={{ fontSize: 14 }}>{m.icon}</span>
-                  <span style={{ fontSize: 12, color: checked ? "#fff" : "rgba(255,255,255,0.45)", fontWeight: checked ? 600 : 400 }}>{m.label}</span>
-                  {checked && !esTotal && <span style={{ marginLeft: "auto", fontSize: 10, color: B.sky }}>✓</span>}
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            {MODULOS_POR_GRUPO.map(grupo => (
+              <div key={grupo.label}>
+                <div style={{ fontSize: 10, fontWeight: 700, color: grupo.color || B.sand, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 6, paddingLeft: 2 }}>
+                  {grupo.label}
                 </div>
-              );
-            })}
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 5 }}>
+                  {grupo.items.map(m => {
+                    const checked = esTotal || f.modulos.includes(m.key);
+                    return (
+                      <div key={m.key} onClick={() => !esTotal && toggleMod(m.key)}
+                        style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 10px", borderRadius: 8, background: checked ? (grupo.color || B.sky) + "18" : B.navy, border: `1px solid ${checked ? (grupo.color || B.sky) + "44" : B.navyLight}`, cursor: esTotal ? "default" : "pointer", opacity: esTotal ? 0.7 : 1 }}>
+                        <span style={{ fontSize: 13 }}>{m.icon}</span>
+                        <span style={{ fontSize: 11, color: checked ? "#fff" : "rgba(255,255,255,0.45)", fontWeight: checked ? 600 : 400 }}>{m.label}</span>
+                        {checked && !esTotal && <span style={{ marginLeft: "auto", fontSize: 10, color: grupo.color || B.sky }}>✓</span>}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
           </div>
         </div>
 

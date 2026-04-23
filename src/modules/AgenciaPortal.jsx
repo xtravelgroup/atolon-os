@@ -56,6 +56,11 @@ function LoginScreen({ onLogin }) {
             {loading ? "Verificando..." : "Ingresar"}
           </button>
         </div>
+        <div style={{ marginTop: 24, borderTop: `1px solid ${B.navyLight}`, paddingTop: 20 }}>
+          <a href="/login" style={{ fontSize: 13, color: "rgba(255,255,255,0.4)", textDecoration: "none" }}>
+            Acceso Colaborador →
+          </a>
+        </div>
       </div>
     </div>
   );
@@ -73,7 +78,7 @@ function NuevaReserva({ agencia, user, onCreated, vistaPrecios = "ambos" }) {
   const [disponibilidad, setDisponibilidad] = useState({});
   const [cierres, setCierres] = useState([]);
   const [overrides, setOverrides] = useState({});
-  const [form, setForm] = useState({ tipo: "", fecha: "", salida_id: "", nombre: "", contacto: "", pax: 1, pax_a: 1, pax_n: 0, notas: "" });
+  const [form, setForm] = useState({ tipo: "", fecha: "", salida_id: "", nombre: "", contacto: "", pax: 1, pax_a: 1, pax_n: 0, edades_ninos: [], notas: "" });
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState("");
   const [showPagoModal, setShowPagoModal] = useState(false);
@@ -129,7 +134,19 @@ function NuevaReserva({ agencia, user, onCreated, vistaPrecios = "ambos" }) {
   useEffect(() => {
     if (!supabase) return;
     supabase.from("b2b_convenios").select("*").eq("aliado_id", agencia.id).eq("activo", true).then(({ data }) => setConvenios(data || []));
-    supabase.from("pasadias").select("*").eq("activo", true).order("orden").then(({ data }) => setPasadiasDB(data || []));
+    // Fetch all active pasadías + this agency's visibility records, then filter
+    Promise.all([
+      supabase.from("pasadias").select("*").eq("activo", true).order("orden"),
+      supabase.from("pasadias_agencias_visibles").select("pasadia_id, visible").eq("aliado_id", agencia.id),
+    ]).then(([{ data: todas }, { data: vis }]) => {
+      const visMap = {};
+      (vis || []).forEach(v => { visMap[v.pasadia_id] = v.visible; });
+      const filtradas = (todas || []).filter(p =>
+        p.visible_agencias_todas === true ||
+        (p.visible_agencias_seleccionadas === true && visMap[p.id] === true)
+      );
+      setPasadiasDB(filtradas);
+    });
     supabase.from("salidas").select("*").eq("activo", true).order("orden").then(({ data }) => setSalidas(data || []));
     supabase.from("configuracion").select("cuentas_bancarias").eq("id", "atolon").single().then(({ data }) => {
       if (data?.cuentas_bancarias?.length) {
@@ -192,6 +209,19 @@ function NuevaReserva({ agencia, user, onCreated, vistaPrecios = "ambos" }) {
   // ── handleSave: crea la reserva en HOLD hasta que el pago se confirme ─────
   const handleSave = async (metodoPago, extras = {}) => {
     if (!supabase || saving || !form.tipo || !form.nombre.trim()) return;
+
+    // Verificar cierre directamente en DB antes de guardar (evita reservas en fechas cerradas)
+    if (form.fecha) {
+      const { data: cierreCheck } = await supabase.from("cierres")
+        .select("tipo, motivo").eq("fecha", form.fecha).eq("activo", true).limit(1).single();
+      if (cierreCheck) {
+        const isBuyOut = /buy.?out/i.test(cierreCheck.motivo || "");
+        const reason = isBuyOut ? "" : (cierreCheck.motivo ? `: ${cierreCheck.motivo}` : "");
+        alert(`❌ La fecha ${form.fecha} no está disponible${reason}.`);
+        return;
+      }
+    }
+
     setSaving(true);
     setShowPagoModal(false);
     setShowTransferModal(false);
@@ -219,11 +249,11 @@ function NuevaReserva({ agencia, user, onCreated, vistaPrecios = "ambos" }) {
     if (esWompi) {
       // Agente abre Wompi ahora — queda en hold hasta webhook/redirect
       estado = "pendiente_pago";
-      linkExpira = new Date(Date.now() + 30 * 60 * 1000).toISOString(); // 30 min
+      linkExpira = new Date(Date.now() + 15 * 60 * 1000).toISOString(); // 15 min
     } else if (esClientePaga) {
       // Cliente tiene 15 min para pagar
       estado = "pendiente_pago";
-      linkExpira = new Date(Date.now() + 30 * 60 * 1000).toISOString();
+      linkExpira = new Date(Date.now() + 15 * 60 * 1000).toISOString();
     } else if (esTransfComp) {
       // Comprobante ya subido → confirmar
       estado = "confirmado";
@@ -410,14 +440,39 @@ function NuevaReserva({ agencia, user, onCreated, vistaPrecios = "ambos" }) {
                   </div>
                 </div>
                 <div>
-                  <label style={LS}>Niños</label>
+                  <label style={LS}>Niños (0-11)</label>
                   <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                    <button onClick={() => setForm(f => ({ ...f, pax_n: Math.max(0, (f.pax_n || 0) - 1) }))} style={{ width: 32, height: 32, borderRadius: 8, background: B.navy, border: `1px solid ${B.navyLight}`, color: B.white, fontSize: 18, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>-</button>
+                    <button onClick={() => setForm(f => ({ ...f, pax_n: Math.max(0, (f.pax_n || 0) - 1), edades_ninos: (f.edades_ninos || []).slice(0, Math.max(0, (f.pax_n || 0) - 1)) }))} style={{ width: 32, height: 32, borderRadius: 8, background: B.navy, border: `1px solid ${B.navyLight}`, color: B.white, fontSize: 18, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>-</button>
                     <span style={{ fontSize: 20, fontWeight: 700, minWidth: 24, textAlign: "center", fontFamily: "'Barlow Condensed', sans-serif" }}>{form.pax_n || 0}</span>
-                    <button onClick={() => setForm(f => ({ ...f, pax_n: (f.pax_n || 0) + 1 }))} style={{ width: 32, height: 32, borderRadius: 8, background: B.navy, border: `1px solid ${B.navyLight}`, color: B.white, fontSize: 18, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>+</button>
+                    <button onClick={() => setForm(f => ({ ...f, pax_n: (f.pax_n || 0) + 1, edades_ninos: [...(f.edades_ninos || []), ""] }))} style={{ width: 32, height: 32, borderRadius: 8, background: B.navy, border: `1px solid ${B.navyLight}`, color: B.white, fontSize: 18, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>+</button>
                   </div>
                 </div>
               </div>
+              {Number(form.pax_n) > 0 && (
+                <div style={{ marginTop: 12, padding: "10px 12px", background: "rgba(200,185,154,0.06)", borderRadius: 8, border: "1px solid rgba(200,185,154,0.15)" }}>
+                  <div style={{ fontSize: 11, color: B.sand, marginBottom: 6, fontWeight: 600 }}>Edad de cada niño <span style={{ opacity: 0.6, fontWeight: 400 }}>(+11 se cobra como adulto)</span></div>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(70px, 1fr))", gap: 6 }}>
+                    {Array.from({ length: Number(form.pax_n) }).map((_, i) => (
+                      <input key={i} type="number" min="0" max="17"
+                        value={(form.edades_ninos || [])[i] ?? ""}
+                        onChange={e => {
+                          const v = e.target.value;
+                          const arr = [...(form.edades_ninos || [])];
+                          while (arr.length < Number(form.pax_n)) arr.push("");
+                          arr[i] = v;
+                          if (Number(v) > 11) {
+                            alert(`Un niño de ${v} años se cobra como adulto — se movió a adultos.`);
+                            setForm(f => ({ ...f, pax_a: (f.pax_a || 1) + 1, pax_n: Math.max(0, (f.pax_n || 0) - 1), edades_ninos: arr.filter((_, idx) => idx !== i) }));
+                          } else {
+                            setForm(f => ({ ...f, edades_ninos: arr }));
+                          }
+                        }}
+                        placeholder="Edad"
+                        style={{ width: "100%", padding: "6px 8px", borderRadius: 6, background: B.navy, border: `1px solid ${B.navyLight}`, color: B.white, fontSize: 13, textAlign: "center" }} />
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           ) : (
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16, marginBottom: 20 }}>
@@ -437,14 +492,39 @@ function NuevaReserva({ agencia, user, onCreated, vistaPrecios = "ambos" }) {
               </div>
             </div>
             <div>
-              <label style={LS}>Ninos</label>
+              <label style={LS}>Niños (0-11)</label>
               <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                <button onClick={() => setForm(f => ({ ...f, pax_n: Math.max(0, (f.pax_n || 0) - 1) }))} style={{ width: 36, height: 36, borderRadius: 8, background: B.navy, border: `1px solid ${B.navyLight}`, color: B.white, fontSize: 18, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>-</button>
+                <button onClick={() => setForm(f => ({ ...f, pax_n: Math.max(0, (f.pax_n || 0) - 1), edades_ninos: (f.edades_ninos || []).slice(0, Math.max(0, (f.pax_n || 0) - 1)) }))} style={{ width: 36, height: 36, borderRadius: 8, background: B.navy, border: `1px solid ${B.navyLight}`, color: B.white, fontSize: 18, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>-</button>
                 <span style={{ fontSize: 22, fontWeight: 700, minWidth: 30, textAlign: "center", fontFamily: "'Barlow Condensed', sans-serif" }}>{form.pax_n || 0}</span>
-                <button onClick={() => setForm(f => ({ ...f, pax_n: (f.pax_n || 0) + 1 }))} style={{ width: 36, height: 36, borderRadius: 8, background: B.navy, border: `1px solid ${B.navyLight}`, color: B.white, fontSize: 18, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>+</button>
+                <button onClick={() => setForm(f => ({ ...f, pax_n: (f.pax_n || 0) + 1, edades_ninos: [...(f.edades_ninos || []), ""] }))} style={{ width: 36, height: 36, borderRadius: 8, background: B.navy, border: `1px solid ${B.navyLight}`, color: B.white, fontSize: 18, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>+</button>
               </div>
             </div>
           </div>
+          )}
+          {Number(form.pax_n) > 0 && (
+            <div style={{ marginBottom: 20, padding: "10px 12px", background: "rgba(200,185,154,0.06)", borderRadius: 8, border: "1px solid rgba(200,185,154,0.15)" }}>
+              <div style={{ fontSize: 11, color: B.sand, marginBottom: 6, fontWeight: 600 }}>Edad de cada niño <span style={{ opacity: 0.6, fontWeight: 400 }}>(+11 se cobra como adulto)</span></div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(80px, 1fr))", gap: 6 }}>
+                {Array.from({ length: Number(form.pax_n) }).map((_, i) => (
+                  <input key={i} type="number" min="0" max="17"
+                    value={(form.edades_ninos || [])[i] ?? ""}
+                    onChange={e => {
+                      const v = e.target.value;
+                      const arr = [...(form.edades_ninos || [])];
+                      while (arr.length < Number(form.pax_n)) arr.push("");
+                      arr[i] = v;
+                      if (Number(v) > 11) {
+                        alert(`Un niño de ${v} años se cobra como adulto — se movió a adultos.`);
+                        setForm(f => ({ ...f, pax_a: (f.pax_a || 1) + 1, pax_n: Math.max(0, (f.pax_n || 0) - 1), edades_ninos: arr.filter((_, idx) => idx !== i) }));
+                      } else {
+                        setForm(f => ({ ...f, edades_ninos: arr }));
+                      }
+                    }}
+                    placeholder="Edad"
+                    style={{ width: "100%", padding: "7px 10px", borderRadius: 8, background: B.navy, border: `1px solid ${B.navyLight}`, color: B.white, fontSize: 14, textAlign: "center" }} />
+                ))}
+              </div>
+            </div>
           )}
 
           {form.fecha && <div style={{ fontSize: 13, color: "rgba(255,255,255,0.5)", marginBottom: 16 }}>Total: <strong style={{ color: B.white }}>{tPax}</strong> personas ({form.pax_a || 1} adultos{(form.pax_n || 0) > 0 ? `, ${form.pax_n} ninos` : ""})</div>}
@@ -479,7 +559,12 @@ function NuevaReserva({ agencia, user, onCreated, vistaPrecios = "ambos" }) {
 
           {form.fecha && cierres.some(c => c.tipo === "total") && (
             <div style={{ padding: "16px 20px", borderRadius: 10, background: B.danger + "22", color: B.danger, textAlign: "center", fontSize: 14, marginBottom: 16 }}>
-              Dia cerrado — {cierres[0]?.motivo || "No hay servicio este dia"}
+              {(() => {
+                const m = cierres[0]?.motivo || "";
+                // Ocultar razón si es cierre por evento (Buy-Out)
+                if (/buy.?out/i.test(m)) return "Fecha no disponible";
+                return m ? `Día cerrado — ${m}` : "Fecha no disponible";
+              })()}
             </div>
           )}
 
@@ -1841,7 +1926,7 @@ function PuntosVendedor({ user, agencia }) {
     load();
   }, [user.id, agencia.id]);
 
-  const coinName    = config?.nombre_puntos || "AtoCoins";
+  const coinName    = config?.nombre_puntos || "AtolonLovers";
   const myRank      = ranking.findIndex(v => v.id === user.id) + 1;
   const MEDAL       = ["🥇","🥈","🥉"];
   const esCOP       = agencia.modalidad_puntos === "cop";
@@ -2121,12 +2206,31 @@ function MediaPortal() {
 // ═══════════════════════════════════════════════
 // GRUPOS PORTAL
 // ═══════════════════════════════════════════════
+
+// Build zarpe slot list from pasadias_org (exclude Impuesto Muelle)
+function buildZarpeSlots(pasadiasOrg) {
+  const slots = [];
+  (pasadiasOrg || []).forEach(p => {
+    if (p.tipo === "Impuesto Muelle") return;
+    const n = Number(p.personas) || 0;
+    for (let i = 0; i < n; i++) slots.push({ slot_id: `${p.id}-${i}`, tipo: p.tipo, idx: i + 1 });
+  });
+  return slots;
+}
+
 function GruposPortal({ agencia }) {
-  const [grupos,   setGrupos]   = useState([]);
-  const [loading,  setLoading]  = useState(true);
-  const [expanded, setExpanded] = useState(null);
-  const [resMap,   setResMap]   = useState({});
-  const [loadingR, setLoadingR] = useState(null);
+  const [grupos,      setGrupos]      = useState([]);
+  const [loading,     setLoading]     = useState(true);
+  const [expanded,    setExpanded]    = useState(null);
+  const [resMap,      setResMap]      = useState({});
+  const [loadingR,    setLoadingR]    = useState(null);
+  // Zarpe per group
+  const [zarpeTab,    setZarpeTab]    = useState(null);   // which group has zarpe panel open
+  const [zarpeMap,    setZarpeMap]    = useState({});     // evtId → { zarpe_data, invitados_zarpe }
+  const [zarpeLabel,  setZarpeLabel]  = useState({});     // evtId → label string
+  const [zarpeSlots,  setZarpeSlots]  = useState({});     // evtId → num string
+  const [zarpeCreating, setZarpeCreating] = useState(null);
+  const [copiedZarpe, setCopiedZarpe] = useState("");
 
   useEffect(() => {
     if (!supabase) { setLoading(false); return; }
@@ -2147,6 +2251,50 @@ function GruposPortal({ agencia }) {
     const { data } = await q.order("created_at", { ascending: false });
     setResMap(m => ({ ...m, [evt.id]: data || [] }));
     setLoadingR(null);
+  };
+
+  const toggleZarpe = async (evt) => {
+    if (zarpeTab === evt.id) { setZarpeTab(null); return; }
+    setZarpeTab(evt.id);
+    if (zarpeMap[evt.id]) return;
+    const { data } = await supabase.from("eventos")
+      .select("zarpe_data, invitados_zarpe")
+      .eq("id", evt.id).single();
+    setZarpeMap(m => ({ ...m, [evt.id]: { zarpe_data: data?.zarpe_data || [], invitados_zarpe: data?.invitados_zarpe || [] } }));
+  };
+
+  const crearInvitacion = async (evt) => {
+    const label = zarpeLabel[evt.id] || "";
+    const n = Number(zarpeSlots[evt.id] || 1);
+    if (!label.trim() || n < 1) return;
+    const zd = zarpeMap[evt.id] || { zarpe_data: [], invitados_zarpe: [] };
+    const allSlots   = buildZarpeSlots(evt.pasadias_org);
+    const assignedIds = (zd.invitados_zarpe || []).flatMap(i => i.slot_ids || []);
+    const available  = allSlots.filter(s => !assignedIds.includes(s.slot_id));
+    if (available.length < n) return;
+    setZarpeCreating(evt.id);
+    const tok = Math.random().toString(36).substring(2, 10);
+    const slotIds = available.slice(0, n).map(s => s.slot_id);
+    const newInv = { id: `INV-${Date.now()}`, label: label.trim(), slot_ids: slotIds, tok };
+    const updated = [...(zd.invitados_zarpe || []), newInv];
+    await supabase.from("eventos").update({ invitados_zarpe: updated }).eq("id", evt.id);
+    setZarpeMap(m => ({ ...m, [evt.id]: { ...zd, invitados_zarpe: updated } }));
+    setZarpeLabel(l => ({ ...l, [evt.id]: "" }));
+    setZarpeSlots(s => ({ ...s, [evt.id]: "1" }));
+    setZarpeCreating(null);
+  };
+
+  const eliminarInvitacion = async (evt, invId) => {
+    const zd = zarpeMap[evt.id] || { zarpe_data: [], invitados_zarpe: [] };
+    const updated = (zd.invitados_zarpe || []).filter(i => i.id !== invId);
+    await supabase.from("eventos").update({ invitados_zarpe: updated }).eq("id", evt.id);
+    setZarpeMap(m => ({ ...m, [evt.id]: { ...zd, invitados_zarpe: updated } }));
+  };
+
+  const copyZarpe = (url) => {
+    navigator.clipboard.writeText(url);
+    setCopiedZarpe(url);
+    setTimeout(() => setCopiedZarpe(""), 2000);
   };
 
   const bookingUrl = (evt) => `${window.location.origin}/booking?grupo=${evt.id}`;
@@ -2175,6 +2323,15 @@ function GruposPortal({ agencia }) {
         const hoy      = todayStr();
         const pasado   = evt.fecha < hoy;
 
+        const isOrg      = evt.modalidad_pago === "organizador";
+        const isZarpeOpen = zarpeTab === evt.id;
+        const zd         = zarpeMap[evt.id];
+        const allSlots   = buildZarpeSlots(evt.pasadias_org);
+        const completados = allSlots.filter(s => (zd?.zarpe_data || []).some(z => z.slot_id === s.slot_id && z.nombre?.trim())).length;
+        const assignedIds = (zd?.invitados_zarpe || []).flatMap(i => i.slot_ids || []);
+        const disponibles = allSlots.filter(s => !assignedIds.includes(s.slot_id)).length;
+        const zarpeUrl   = `${window.location.origin}/zarpe-grupo?ev=${evt.id}`;
+
         return (
           <div key={evt.id} style={{ background: B.navyMid, borderRadius: 14, border: `1px solid ${pasado ? B.navyLight : B.sky + "44"}`, overflow: "hidden" }}>
             {/* Header */}
@@ -2186,6 +2343,7 @@ function GruposPortal({ agencia }) {
                     ? <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 8, background: "rgba(255,255,255,0.1)", color: "rgba(255,255,255,0.3)" }}>Finalizado</span>
                     : <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 8, background: B.success + "22", color: B.success }}>Activo</span>
                   }
+                  {isOrg && <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 8, background: B.sand + "22", color: B.sand }}>Organizador paga</span>}
                 </div>
                 <div style={{ fontSize: 12, color: "rgba(255,255,255,0.5)" }}>
                   📅 {fmtFecha(evt.fecha)} &nbsp;·&nbsp; 🌴 {evt.tipo}
@@ -2194,20 +2352,30 @@ function GruposPortal({ agencia }) {
                 </div>
               </div>
               {/* Botones */}
-              <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
-                <button onClick={() => { navigator.clipboard.writeText(url); }}
-                  style={{ padding: "8px 14px", background: B.sky + "22", color: B.sky, border: `1px solid ${B.sky}44`, borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
-                  📋 Copiar link
-                </button>
-                <button onClick={() => toggleReservas(evt)}
-                  style={{ padding: "8px 14px", background: isOpen ? B.sand + "22" : B.navyLight, color: isOpen ? B.sand : B.white, border: `1px solid ${isOpen ? B.sand + "44" : "transparent"}`, borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
-                  📋 Ver reservas{isOpen && resMap[evt.id] ? ` (${resMap[evt.id].length})` : ""}
-                </button>
+              <div style={{ display: "flex", gap: 8, flexShrink: 0, flexWrap: "wrap", justifyContent: "flex-end" }}>
+                {!isOrg && (
+                  <button onClick={() => { navigator.clipboard.writeText(url); }}
+                    style={{ padding: "8px 14px", background: B.sky + "22", color: B.sky, border: `1px solid ${B.sky}44`, borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+                    📋 Copiar link
+                  </button>
+                )}
+                {!isOrg && (
+                  <button onClick={() => toggleReservas(evt)}
+                    style={{ padding: "8px 14px", background: isOpen ? B.sand + "22" : B.navyLight, color: isOpen ? B.sand : B.white, border: `1px solid ${isOpen ? B.sand + "44" : "transparent"}`, borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+                    📋 Reservas{isOpen && resMap[evt.id] ? ` (${resMap[evt.id].length})` : ""}
+                  </button>
+                )}
+                {isOrg && (
+                  <button onClick={() => toggleZarpe(evt)}
+                    style={{ padding: "8px 14px", background: isZarpeOpen ? "#C8B99A22" : B.navyLight, color: isZarpeOpen ? B.sand : B.white, border: `1px solid ${isZarpeOpen ? B.sand + "44" : "transparent"}`, borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+                    🛳 Zarpe {allSlots.length > 0 ? `(${completados}/${allSlots.length})` : ""}
+                  </button>
+                )}
               </div>
             </div>
 
-            {/* Reservas expandidas */}
-            {isOpen && (
+            {/* Reservas expandidas (modo individual) */}
+            {isOpen && !isOrg && (
               <div style={{ borderTop: `1px solid ${B.navyLight}`, padding: "16px 20px", background: B.navy }}>
                 {loadingR === evt.id ? (
                   <div style={{ textAlign: "center", color: "rgba(255,255,255,0.3)", fontSize: 13, padding: "12px 0" }}>Cargando reservas...</div>
@@ -2233,6 +2401,122 @@ function GruposPortal({ agencia }) {
                         </div>
                       </div>
                     ))}
+                  </>
+                )}
+              </div>
+            )}
+
+            {/* Zarpe panel (modo organizador) */}
+            {isZarpeOpen && isOrg && (
+              <div style={{ borderTop: `1px solid ${B.navyLight}`, padding: "16px 20px", background: B.navy }}>
+                {!zd ? (
+                  <div style={{ textAlign: "center", color: "rgba(255,255,255,0.3)", fontSize: 13, padding: "12px 0" }}>Cargando...</div>
+                ) : (
+                  <>
+                    {/* Progreso */}
+                    <div style={{ marginBottom: 14 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 6 }}>
+                        <span style={{ color: "rgba(255,255,255,0.5)" }}>Pasajeros con datos de zarpe</span>
+                        <span style={{ color: completados === allSlots.length && allSlots.length > 0 ? B.success : B.sand, fontWeight: 700 }}>
+                          {completados}/{allSlots.length}
+                        </span>
+                      </div>
+                      {allSlots.length > 0 && (
+                        <div style={{ height: 5, borderRadius: 3, background: "rgba(255,255,255,0.1)", overflow: "hidden" }}>
+                          <div style={{ height: "100%", borderRadius: 3, background: completados === allSlots.length ? B.success : B.sky, width: `${(completados / allSlots.length) * 100}%`, transition: "width 0.4s" }} />
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Botón llenar todo */}
+                    <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+                      <button onClick={() => window.open(zarpeUrl, "_blank")}
+                        style={{ flex: 2, padding: "9px", borderRadius: 8, border: "none", background: B.sky + "22", color: B.sky, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+                        📋 {completados === 0 ? "Llenar zarpe del grupo" : "Ver / editar zarpe"}
+                      </button>
+                      <button onClick={() => copyZarpe(zarpeUrl)}
+                        style={{ flex: 1, padding: "9px", borderRadius: 8, border: `1px solid rgba(255,255,255,0.12)`,
+                          background: copiedZarpe === zarpeUrl ? B.success + "22" : "transparent",
+                          color: copiedZarpe === zarpeUrl ? B.success : "rgba(255,255,255,0.5)", fontSize: 12, cursor: "pointer" }}>
+                        {copiedZarpe === zarpeUrl ? "✓ Copiado" : "🔗 Copiar"}
+                      </button>
+                    </div>
+
+                    {/* Invitaciones existentes */}
+                    {(zd.invitados_zarpe || []).length > 0 && (
+                      <div style={{ marginBottom: 12 }}>
+                        <div style={{ fontSize: 10, color: "rgba(255,255,255,0.3)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 }}>Invitaciones enviadas</div>
+                        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                          {(zd.invitados_zarpe || []).map(inv => {
+                            const invUrl = `${window.location.origin}/zarpe-grupo?ev=${evt.id}&tok=${inv.tok}`;
+                            const filled = (inv.slot_ids || []).filter(sid => (zd.zarpe_data || []).some(z => z.slot_id === sid && z.nombre?.trim())).length;
+                            return (
+                              <div key={inv.id} style={{ background: "rgba(255,255,255,0.04)", borderRadius: 9, padding: "9px 12px", display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}>
+                                <div style={{ flex: 1 }}>
+                                  <div style={{ fontWeight: 700 }}>{inv.label}</div>
+                                  <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", marginTop: 1 }}>
+                                    {filled}/{inv.slot_ids?.length || 0} completados
+                                  </div>
+                                </div>
+                                <button onClick={() => copyZarpe(invUrl)}
+                                  style={{ padding: "4px 10px", borderRadius: 6, border: `1px solid rgba(255,255,255,0.12)`,
+                                    background: copiedZarpe === invUrl ? B.success + "22" : "transparent",
+                                    color: copiedZarpe === invUrl ? B.success : "rgba(255,255,255,0.5)", fontSize: 11, cursor: "pointer" }}>
+                                  {copiedZarpe === invUrl ? "✓" : "🔗 Copiar"}
+                                </button>
+                                <button onClick={() => window.open(invUrl, "_blank")}
+                                  style={{ padding: "4px 10px", borderRadius: 6, border: `1px solid rgba(255,255,255,0.12)`, background: "transparent", color: B.sky, fontSize: 11, cursor: "pointer" }}>
+                                  →
+                                </button>
+                                <button onClick={() => eliminarInvitacion(evt, inv.id)}
+                                  style={{ padding: "4px 8px", borderRadius: 6, border: "none", background: "rgba(248,113,113,0.15)", color: "#F87171", fontSize: 11, cursor: "pointer" }}>
+                                  ✕
+                                </button>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Crear invitación */}
+                    {disponibles > 0 && (
+                      <div style={{ background: "rgba(255,255,255,0.03)", borderRadius: 9, padding: "10px 12px" }}>
+                        <div style={{ fontSize: 10, color: B.sand, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 }}>
+                          + Crear invitación ({disponibles} cupos disponibles)
+                        </div>
+                        <div style={{ display: "grid", gridTemplateColumns: "1fr 70px 80px", gap: 8 }}>
+                          <input
+                            value={zarpeLabel[evt.id] || ""}
+                            onChange={e => setZarpeLabel(l => ({ ...l, [evt.id]: e.target.value }))}
+                            placeholder="Nombre del invitado / familia"
+                            style={{ width: "100%", padding: "7px 10px", borderRadius: 7, background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)", color: "#fff", fontSize: 12, outline: "none", boxSizing: "border-box" }}
+                          />
+                          <input
+                            type="number" min="1" max={String(disponibles)}
+                            value={zarpeSlots[evt.id] || "1"}
+                            onChange={e => setZarpeSlots(s => ({ ...s, [evt.id]: e.target.value }))}
+                            placeholder="# pax"
+                            style={{ width: "100%", padding: "7px 10px", borderRadius: 7, background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)", color: "#fff", fontSize: 12, outline: "none", boxSizing: "border-box", textAlign: "center" }}
+                          />
+                          <button
+                            onClick={() => crearInvitacion(evt)}
+                            disabled={zarpeCreating === evt.id || !(zarpeLabel[evt.id] || "").trim() || Number(zarpeSlots[evt.id] || 1) < 1}
+                            style={{ padding: "7px", borderRadius: 7, border: "none",
+                              background: (zarpeLabel[evt.id] || "").trim() ? B.success : "rgba(255,255,255,0.1)",
+                              color: (zarpeLabel[evt.id] || "").trim() ? "#0D1B3E" : "rgba(255,255,255,0.3)",
+                              fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
+                            {zarpeCreating === evt.id ? "..." : "Crear →"}
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {allSlots.length === 0 && (
+                      <div style={{ textAlign: "center", color: "rgba(255,255,255,0.3)", fontSize: 12, padding: "8px 0" }}>
+                        Este grupo no tiene pasajeros configurados aún.
+                      </div>
+                    )}
                   </>
                 )}
               </div>

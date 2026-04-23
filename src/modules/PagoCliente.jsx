@@ -2,6 +2,9 @@ import { useState, useEffect, useCallback } from "react";
 import { B, COP } from "../brand";
 import { supabase } from "../lib/supabase";
 import { wompiCheckoutUrl, wompiTransactionStatus } from "../lib/wompi";
+import AvisoCargoInternacional from "../components/AvisoCargoInternacional";
+import AtolanTrack from "../lib/AtolanTrack";
+import { waSendConfirmacion } from "../lib/whatsapp";
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 function getReservaId() {
@@ -43,6 +46,15 @@ function qrUrl(data, size = 200) {
 function PagoOk({ reserva, salida }) {
   const zarpeLink = `https://atolon.co/zarpe-info?id=${reserva.id}`;
   const horaTexto = salida?.hora ? `Salida: ${salida.hora}${salida.hora_regreso ? ` · Regreso: ${salida.hora_regreso}` : ""}` : "";
+
+  // Pre-compute dock arrival time (20 min before departure)
+  let llegadaHora = null;
+  if (salida?.hora) {
+    const parts = salida.hora.split(":");
+    const totalMins = parseInt(parts[0]) * 60 + parseInt(parts[1]) - 20;
+    const norm = ((totalMins % 1440) + 1440) % 1440;
+    llegadaHora = `${String(Math.floor(norm / 60)).padStart(2,"0")}:${String(norm % 60).padStart(2,"0")}`;
+  }
   const waMensaje = encodeURIComponent(
     `✅ ¡Reserva confirmada en Atolon Beach Club!\n\n` +
     `👤 ${reserva.nombre}\n` +
@@ -51,7 +63,8 @@ function PagoOk({ reserva, salida }) {
     `🏝️ ${reserva.tipo} · ${reserva.pax} personas\n\n` +
     `🚢 Embarque: Muelle de La Bodeguita — Puerta 1\n` +
     `⏰ Llegar 20 min antes de la salida\n` +
-    `💵 Impuesto de muelle: $18.000 COP (no incluido)\n\n` +
+    `💵 Impuesto de muelle: $18.000 COP (no incluido)\n` +
+    `🚫 No se permite el ingreso de alimentos ni bebidas a Atolón Beach Club\n\n` +
     `📄 Completa tus datos de zarpe aquí:\n${zarpeLink}`
   );
 
@@ -63,6 +76,20 @@ function PagoOk({ reserva, salida }) {
         <h2 style={{ fontFamily: "'Barlow Condensed', sans-serif", fontSize: 28, marginBottom: 6, color: B.success }}>¡Pago recibido!</h2>
         <p style={{ color: "rgba(255,255,255,0.5)", fontSize: 14 }}>Tu reserva está confirmada</p>
       </div>
+
+      {/* Aviso del nombre del cargo — solo cuando pagó con tarjeta internacional */}
+      {(reserva.forma_pago === "stripe" || reserva.forma_pago === "zoho_pay" || reserva.forma_pago === "Tarjeta Internacional") && (
+        <div style={{ background: `${B.sand}15`, border: `1px solid ${B.sand}44`, borderRadius: 12, padding: "14px 18px", display: "flex", alignItems: "flex-start", gap: 12 }}>
+          <div style={{ fontSize: 22, marginTop: 2 }}>💳</div>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 11, fontWeight: 800, color: B.sand, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 4 }}>Tarjeta aprobada</div>
+            <div style={{ fontSize: 13, color: "rgba(255,255,255,0.85)", lineHeight: 1.5 }}>
+              El cargo en tu estado de cuenta aparecerá a nombre de{" "}
+              <strong style={{ color: B.sand }}>X Travel Group</strong>.
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* QR code */}
       <div style={{ background: B.navyMid, borderRadius: 18, padding: 24, textAlign: "center", border: `1px solid rgba(200,185,154,0.2)` }}>
@@ -83,12 +110,22 @@ function PagoOk({ reserva, salida }) {
       <div style={{ background: B.navyMid, borderRadius: 14, padding: 18, fontSize: 13, lineHeight: 2.2 }}>
         <div style={{ display: "flex", justifyContent: "space-between" }}><span style={{ color: B.sand }}>Nombre</span><span style={{ fontWeight: 600 }}>{reserva.nombre}</span></div>
         <div style={{ display: "flex", justifyContent: "space-between" }}><span style={{ color: B.sand }}>Fecha</span><span style={{ textTransform: "capitalize" }}>{new Date(reserva.fecha + "T12:00:00").toLocaleDateString("es-CO", { weekday: "short", day: "numeric", month: "long" })}</span></div>
+        {llegadaHora && (
+          <div style={{ display: "flex", justifyContent: "space-between" }}>
+            <span style={{ color: B.sand }}>Hora Llegada Muelle</span>
+            <span style={{ fontWeight: 700, color: B.sand }}>{llegadaHora}</span>
+          </div>
+        )}
         {salida?.hora && (
           <div style={{ display: "flex", justifyContent: "space-between" }}>
-            <span style={{ color: B.sand }}>Hora salida</span>
-            <span style={{ fontWeight: 700, color: B.sky }}>
-              {salida.hora}{salida.hora_regreso ? ` → ${salida.hora_regreso}` : ""}
-            </span>
+            <span style={{ color: B.sand }}>Salida</span>
+            <span style={{ fontWeight: 700, color: B.sky }}>{salida.hora}</span>
+          </div>
+        )}
+        {salida?.hora_regreso && (
+          <div style={{ display: "flex", justifyContent: "space-between" }}>
+            <span style={{ color: B.sand }}>Regreso</span>
+            <span style={{ fontWeight: 700, color: B.sky }}>{salida.hora_regreso}</span>
           </div>
         )}
         <div style={{ display: "flex", justifyContent: "space-between" }}><span style={{ color: B.sand }}>Pasadía</span><span>{reserva.tipo}</span></div>
@@ -107,6 +144,7 @@ function PagoOk({ reserva, salida }) {
           <div>⏰ Llegar <strong>20 minutos antes</strong> de la salida</div>
           <div>💵 Impuesto de muelle: <strong style={{ color: B.sand }}>COP 18.000</strong> (no incluido)</div>
           <div>🆔 Traer documento de identidad original</div>
+          <div style={{ color: B.danger, fontWeight: 600 }}>🚫 No se permite el ingreso de alimentos ni bebidas a Atolón Beach Club</div>
         </div>
       </div>
 
@@ -172,6 +210,13 @@ export default function PagoCliente() {
     if (!supabase || !reservaId) { setError("Link inválido"); setLoading(false); return; }
     const { data, error: err } = await supabase.from("reservas").select("*").eq("id", reservaId).single();
     if (err || !data) { setError("Reserva no encontrada"); setLoading(false); return; }
+
+    // Auto-cancel si el link ya expiró y aún está en pendiente_pago
+    if (data.estado === "pendiente_pago" && data.link_expira_at && new Date(data.link_expira_at) < new Date()) {
+      await supabase.from("reservas").update({ estado: "cancelado", notas: (data.notas || "") + " · Auto-cancelado: link expirado sin pago" }).eq("id", reservaId);
+      data.estado = "cancelado";
+    }
+
     setReserva(data);
     // Traer salida para mostrar la hora de salida
     if (data.salida_id) {
@@ -191,10 +236,22 @@ export default function PagoCliente() {
       if (status === "APPROVED") {
         const hoy = new Date().toLocaleDateString("en-CA", { timeZone: "America/Bogota" });
         // Confirmar reserva
-        const { data: resData } = await supabase.from("reservas").select("total, lead_id").eq("id", reservaId).single();
+        const { data: resData } = await supabase.from("reservas").select("total, lead_id, tipo, pax_a, pax_n, fecha").eq("id", reservaId).single();
         await supabase.from("reservas").update({
           estado: "confirmado", forma_pago: "wompi", saldo: 0, abono: resData?.total || 0,
         }).eq("id", reservaId);
+        // Track real conversion (payment confirmed) — server-side for reliability
+        AtolanTrack.init().then(() => {
+          AtolanTrack.conversion(reservaId, resData?.total || 0, {
+            metodo_pago:  "wompi",
+            package_type: resData?.tipo,
+            adultos:      resData?.pax_a,
+            ninos:        resData?.pax_n,
+            fecha:        resData?.fecha,
+            monto_bruto:  resData?.total,
+          });
+          AtolanTrack.serverEvent("conversion_confirmed", { reserva_id: reservaId, monto: resData?.total, metodo: "wompi" }, "conversion");
+        });
         // Cerrar lead en Comercial (URL param o lead_id guardado en la reserva)
         const lid = leadIdParam || resData?.lead_id;
         if (lid) {
@@ -203,7 +260,7 @@ export default function PagoCliente() {
             ultimo_contacto: hoy,
           }).eq("id", lid);
         }
-        // Enviar email de confirmación
+        // Enviar email + WhatsApp de confirmación
         const { data: res } = await supabase.from("reservas").select("*").eq("id", reservaId).single();
         if (res?.contacto?.includes("@")) {
           fetch("https://ncdyttgxuicyruathkxd.supabase.co/functions/v1/send-confirmation", {
@@ -212,6 +269,43 @@ export default function PagoCliente() {
             body: JSON.stringify(res),
           }).catch(() => {}); // fire and forget
         }
+        // WhatsApp confirmación
+        if (res) waSendConfirmacion(res, salida).catch(() => {});
+
+        // Abandoned Cart: marcar como recuperado si existe un cart vinculado
+        if (res?.email || res?.contacto) {
+          const emailBuscar = (res.email || res.contacto || "").toLowerCase().trim();
+          supabase.from("ac_carts").update({
+            estado: "recovered",
+            recovered_at: new Date().toISOString(),
+            reserva_id: reservaId,
+            updated_at: new Date().toISOString(),
+          }).eq("reserva_id", reservaId).then(() => {});
+          // También buscar por email + fecha (por si el cart no tiene reserva_id)
+          if (emailBuscar && resData?.fecha) {
+            supabase.from("ac_carts")
+              .select("id")
+              .eq("email", emailBuscar)
+              .eq("fecha_visita", resData.fecha)
+              .not("estado", "in", "(recovered,expired,unsubscribed)")
+              .limit(1)
+              .maybeSingle()
+              .then(({ data: matchCart }) => {
+                if (matchCart) {
+                  supabase.from("ac_carts").update({
+                    estado: "recovered",
+                    recovered_at: new Date().toISOString(),
+                    reserva_id: reservaId,
+                    updated_at: new Date().toISOString(),
+                  }).eq("id", matchCart.id).then(() => {});
+                  // Cancelar emails pendientes
+                  supabase.from("ac_email_queue").update({ estado: "cancelled" })
+                    .eq("cart_id", matchCart.id).eq("estado", "pending").then(() => {});
+                }
+              });
+          }
+        }
+
         fetchReserva();
       }
     })();
@@ -222,10 +316,22 @@ export default function PagoCliente() {
     if (!stripeOk || !reservaId || !supabase) return;
     (async () => {
       const hoy = new Date().toLocaleDateString("en-CA", { timeZone: "America/Bogota" });
-      const { data: resDataS } = await supabase.from("reservas").select("total, lead_id").eq("id", reservaId).single();
+      const { data: resDataS } = await supabase.from("reservas").select("total, lead_id, tipo, pax_a, pax_n, fecha").eq("id", reservaId).single();
       await supabase.from("reservas").update({
         estado: "confirmado", forma_pago: "stripe", saldo: 0, abono: resDataS?.total || 0,
       }).eq("id", reservaId);
+      // Track real conversion — server-side for reliability
+      AtolanTrack.init().then(() => {
+        AtolanTrack.conversion(reservaId, resDataS?.total || 0, {
+          metodo_pago:  "stripe",
+          package_type: resDataS?.tipo,
+          adultos:      resDataS?.pax_a,
+          ninos:        resDataS?.pax_n,
+          fecha:        resDataS?.fecha,
+          monto_bruto:  resDataS?.total,
+        });
+        AtolanTrack.serverEvent("conversion_confirmed", { reserva_id: reservaId, monto: resDataS?.total, metodo: "stripe" }, "conversion");
+      });
       // Cerrar lead en Comercial
       const lid = leadIdParam || resDataS?.lead_id;
       if (lid) {
@@ -241,6 +347,32 @@ export default function PagoCliente() {
           body: JSON.stringify(res),
         }).catch(() => {});
       }
+      // WhatsApp confirmación
+      if (res) waSendConfirmacion(res, salida).catch(() => {});
+
+      // Abandoned Cart: marcar como recuperado (Stripe)
+      supabase.from("ac_carts").update({
+        estado: "recovered",
+        recovered_at: new Date().toISOString(),
+        reserva_id: reservaId,
+        updated_at: new Date().toISOString(),
+      }).eq("reserva_id", reservaId).then(() => {});
+      if (resDataS?.fecha) {
+        const emailS = (res?.email || res?.contacto || "").toLowerCase().trim();
+        if (emailS) {
+          supabase.from("ac_carts").select("id")
+            .eq("email", emailS).eq("fecha_visita", resDataS.fecha)
+            .not("estado", "in", "(recovered,expired,unsubscribed)")
+            .limit(1).maybeSingle()
+            .then(({ data: mc }) => {
+              if (mc) {
+                supabase.from("ac_carts").update({ estado: "recovered", recovered_at: new Date().toISOString(), reserva_id: reservaId, updated_at: new Date().toISOString() }).eq("id", mc.id).then(() => {});
+                supabase.from("ac_email_queue").update({ estado: "cancelled" }).eq("cart_id", mc.id).eq("estado", "pending").then(() => {});
+              }
+            });
+        }
+      }
+
       fetchReserva();
     })();
   }, [stripeOk, reservaId, fetchReserva]);
@@ -263,34 +395,29 @@ export default function PagoCliente() {
     if (!reserva) return;
     setProcesando("stripe");
     try {
-      const res = await fetch(
-        "https://ncdyttgxuicyruathkxd.supabase.co/functions/v1/create-stripe-session",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
-            "apikey": import.meta.env.VITE_SUPABASE_ANON_KEY,
-          },
-          body: JSON.stringify({
-            reserva_id: reserva.id,
-            total_cop:  reserva.total,
-            nombre:     reserva.nombre,
-            email:      reserva.contacto?.includes("@") ? reserva.contacto : undefined,
-            tipo:       reserva.tipo,
-            fecha:      reserva.fecha,
-          }),
-        }
-      );
-      const data = await res.json();
-      if (data.url) {
-        window.location.href = data.url;
+      const { crearSesionPago } = await import("../lib/internacional");
+      // Convertir COP a USD con tasa fallback 4200
+      const tasa = 4200;
+      const amountUSD = Math.ceil((reserva.total || 0) / tasa);
+      const session = await crearSesionPago({
+        amount: amountUSD,
+        currency: "USD",
+        reference: reserva.id,
+        description: `${reserva.tipo || "Atolón"} — ${reserva.fecha || ""}`,
+        nombre: reserva.nombre,
+        email: reserva.contacto?.includes("@") ? reserva.contacto : undefined,
+        fecha: reserva.fecha,
+        context: "reserva",
+        context_id: reserva.id,
+      });
+      if (session?.url) {
+        window.location.href = session.url;
       } else {
-        alert(data.error || "No se pudo iniciar el pago con Stripe. Intenta de nuevo.");
+        alert("No se pudo iniciar el pago con tarjeta internacional. Intenta de nuevo.");
         setProcesando("");
       }
-    } catch {
-      alert("Error de conexión. Intenta de nuevo.");
+    } catch (e) {
+      alert("Error: " + (e.message || "conexión"));
       setProcesando("");
     }
   };
@@ -376,6 +503,8 @@ export default function PagoCliente() {
           </div>
           {procesando === "stripe" ? <span style={{ fontSize: 12, color: "#635BFF" }}>Redirigiendo...</span> : <span style={{ fontSize: 18, color: "rgba(255,255,255,0.3)" }}>›</span>}
         </button>
+
+        <AvisoCargoInternacional lang="es" />
       </div>
 
       <p style={{ marginTop: 20, fontSize: 11, color: "rgba(255,255,255,0.2)", textAlign: "center" }}>

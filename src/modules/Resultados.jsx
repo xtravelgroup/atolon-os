@@ -2,6 +2,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { supabase } from "../lib/supabase";
 import { B } from "../brand";
+import { useBreakpoint } from "../lib/responsive";
 
 const COP = (v) => new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 }).format(v || 0);
 
@@ -55,10 +56,45 @@ function getPeriodos() {
 const PERIODOS = getPeriodos();
 
 // ─── Tabla de Proyecciones ───────────────────────────────────────────────────
-function TablaProyeccion({ titulo, icono, color, real, proyectado, loading, cantLabel = "Cantidad" }) {
+function TablaProyeccion({ titulo, icono, color, real, proyectado, loading, cantLabel = "Cantidad", isMobile }) {
   const totalMonto   = (real?.monto    || 0) + (proyectado?.monto    || 0);
   const totalCantidad = (real?.cantidad || 0) + (proyectado?.cantidad || 0);
 
+  // Mobile: stacked cards per column
+  if (isMobile) {
+    const items = [
+      { label: "Va del mes", sub: "hasta hoy", color: B.sky, cant: real?.cantidad ?? "—", monto: COP(real?.monto) },
+      { label: "Reservado futuro", sub: "resto del mes", color: "#fbbf24", cant: proyectado?.cantidad ?? "—", monto: COP(proyectado?.monto) },
+      { label: "Proyección total", sub: "fin de mes", color: color, cant: totalCantidad, monto: COP(totalMonto) },
+    ];
+    return (
+      <div style={{ background: B.navyMid, borderRadius: 14, overflow: "hidden", marginBottom: 14 }}>
+        <div style={{ padding: "12px 16px", borderBottom: `1px solid ${B.navyLight}`, display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ fontSize: 18 }}>{icono}</span>
+          <span style={{ fontSize: 15, fontWeight: 800, color: B.white }}>{titulo}</span>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 0 }}>
+          {items.map(it => (
+            <div key={it.label} style={{ padding: "12px 8px", textAlign: "center", borderRight: `1px solid ${B.navyLight}` }}>
+              <div style={{ fontSize: 9, fontWeight: 800, color: it.color, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 2 }}>{it.label}</div>
+              <div style={{ fontSize: 10, color: "rgba(255,255,255,0.25)", marginBottom: 6 }}>{it.sub}</div>
+              {loading ? (
+                <div style={{ height: 20, background: B.navyLight, borderRadius: 4, margin: "0 4px", animation: "pulse 1.5s infinite" }} />
+              ) : (
+                <>
+                  <div style={{ fontSize: 20, fontWeight: 900, color: it.color, fontFamily: "'Barlow Condensed', sans-serif", lineHeight: 1 }}>{it.cant}</div>
+                  <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>{cantLabel.toLowerCase()}</div>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: it.color, fontFamily: "'Barlow Condensed', sans-serif", marginTop: 4 }}>{it.monto}</div>
+                </>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  // Desktop: grid table
   const col = (label, value, sub, highlight) => (
     <div style={{ textAlign: "center", padding: "14px 12px", borderLeft: `1px solid ${B.navyLight}` }}>
       {loading ? (
@@ -74,35 +110,28 @@ function TablaProyeccion({ titulo, icono, color, real, proyectado, loading, cant
 
   return (
     <div style={{ background: B.navyMid, borderRadius: 16, overflow: "hidden", marginBottom: 16 }}>
-      {/* Header */}
       <div style={{ padding: "14px 20px", borderBottom: `1px solid ${B.navyLight}`, display: "flex", alignItems: "center", gap: 10 }}>
         <span style={{ fontSize: 20 }}>{icono}</span>
         <span style={{ fontSize: 16, fontWeight: 800, color: B.white }}>{titulo}</span>
       </div>
-      {/* Grid: label | Real (va del mes) | Futuro reservado | Total proyectado */}
       <div style={{ display: "grid", gridTemplateColumns: "160px 1fr 1fr 1fr" }}>
-        {/* Col headers */}
         <div style={{ padding: "8px 16px", background: B.navy, borderBottom: `1px solid ${B.navyLight}` }} />
         {[
-          { key: "real",  label: "Va del mes",       sub: `hasta hoy`,           color: B.sky },
-          { key: "fut",   label: "Reservado futuro",  sub: "resto del mes",       color: "#fbbf24" },
-          { key: "total", label: "Proyección total",  sub: "fin de mes",          color: color },
+          { key: "real",  label: "Va del mes",       sub: "hasta hoy",     color: B.sky },
+          { key: "fut",   label: "Reservado futuro",  sub: "resto del mes", color: "#fbbf24" },
+          { key: "total", label: "Proyección total",  sub: "fin de mes",    color: color },
         ].map(c => (
           <div key={c.key} style={{ padding: "8px 12px", background: B.navy, borderBottom: `1px solid ${B.navyLight}`, textAlign: "center", borderLeft: `1px solid ${B.navyLight}` }}>
             <div style={{ fontSize: 11, fontWeight: 800, color: c.color, textTransform: "uppercase", letterSpacing: "0.07em" }}>{c.label}</div>
             <div style={{ fontSize: 10, color: "rgba(255,255,255,0.3)", marginTop: 1 }}>{c.sub}</div>
           </div>
         ))}
-
-        {/* Fila cantidad */}
         <div style={{ padding: "12px 16px", borderBottom: `1px solid ${B.navyLight}`, display: "flex", alignItems: "center" }}>
           <span style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em" }}>{cantLabel}</span>
         </div>
         {col(null, real?.cantidad ?? "—", null, B.sky)}
         {col(null, proyectado?.cantidad ?? "—", null, "#fbbf24")}
         {col(null, totalCantidad, null, color)}
-
-        {/* Fila monto */}
         <div style={{ padding: "12px 16px", display: "flex", alignItems: "center" }}>
           <span style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em" }}>Monto</span>
         </div>
@@ -115,18 +144,53 @@ function TablaProyeccion({ titulo, icono, color, real, proyectado, loading, cant
 }
 
 // ─── Tabla de métricas ────────────────────────────────────────────────────────
-function TablaMetricas({ titulo, icono, color, datos, loading, cantLabel = "Cantidad", hideCant = false }) {
+function TablaMetricas({ titulo, icono, color, datos, loading, cantLabel = "Cantidad", hideCant = false, isMobile }) {
+
+  // Mobile: 4-column grid (Ayer | Hoy | Semana | Mes) — fits without scroll
+  if (isMobile) {
+    return (
+      <div style={{ background: B.navyMid, borderRadius: 14, overflow: "hidden", marginBottom: 14 }}>
+        <div style={{ padding: "12px 16px", borderBottom: `1px solid ${B.navyLight}`, display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ fontSize: 18 }}>{icono}</span>
+          <span style={{ fontSize: 15, fontWeight: 800, color: B.white }}>{titulo}</span>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 0 }}>
+          {PERIODOS.map(p => (
+            <div key={p.key} style={{ padding: "10px 6px", textAlign: "center", borderRight: `1px solid ${B.navyLight}` }}>
+              <div style={{ fontSize: 10, fontWeight: 800, color: color, textTransform: "uppercase", letterSpacing: "0.04em" }}>{p.label}</div>
+              <div style={{ fontSize: 9, color: "rgba(255,255,255,0.25)", marginTop: 1, marginBottom: 8 }}>
+                {p.desde === p.hasta ? p.desde.slice(5).replace("-", "/") : `${p.desde.slice(5).replace("-", "/")} - ${p.hasta.slice(5).replace("-", "/")}`}
+              </div>
+              {loading ? (
+                <div style={{ height: 20, background: B.navyLight, borderRadius: 4, margin: "0 4px", animation: "pulse 1.5s infinite" }} />
+              ) : (
+                <>
+                  {!hideCant && (
+                    <div style={{ fontSize: 22, fontWeight: 900, color: B.white, fontFamily: "'Barlow Condensed', sans-serif", lineHeight: 1 }}>
+                      {datos?.[p.key]?.cantidad ?? "—"}
+                    </div>
+                  )}
+                  {!hideCant && <div style={{ fontSize: 9, color: "rgba(255,255,255,0.3)", marginTop: 2, marginBottom: 4 }}>{cantLabel.toLowerCase()}</div>}
+                  <div style={{ fontSize: 12, fontWeight: 700, color: color, fontFamily: "'Barlow Condensed', sans-serif" }}>
+                    {COP(datos?.[p.key]?.monto ?? 0)}
+                  </div>
+                </>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  // Desktop: standard grid table
   return (
     <div style={{ background: B.navyMid, borderRadius: 16, overflow: "hidden", marginBottom: 20 }}>
-      {/* Header */}
       <div style={{ padding: "18px 24px 14px", borderBottom: `1px solid ${B.navyLight}`, display: "flex", alignItems: "center", gap: 10 }}>
         <span style={{ fontSize: 22 }}>{icono}</span>
         <div style={{ fontSize: 17, fontWeight: 800, color: B.white }}>{titulo}</div>
       </div>
-
-      {/* Grid */}
-      <div style={{ display: "grid", gridTemplateColumns: "160px repeat(4, 1fr)", minWidth: 0 }}>
-        {/* Col headers */}
+      <div style={{ display: "grid", gridTemplateColumns: "160px repeat(4, 1fr)" }}>
         <div style={{ padding: "10px 20px", background: B.navy, borderBottom: `1px solid ${B.navyLight}` }} />
         {PERIODOS.map(p => (
           <div key={p.key} style={{ padding: "10px 16px", background: B.navy, borderBottom: `1px solid ${B.navyLight}`, textAlign: "center" }}>
@@ -136,8 +200,6 @@ function TablaMetricas({ titulo, icono, color, datos, loading, cantLabel = "Cant
             </div>
           </div>
         ))}
-
-        {/* Fila: Cantidad (opcional) */}
         {!hideCant && <>
           <div style={{ padding: "16px 20px", borderBottom: `1px solid ${B.navyLight}`, display: "flex", alignItems: "center" }}>
             <span style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em" }}>{cantLabel}</span>
@@ -154,8 +216,6 @@ function TablaMetricas({ titulo, icono, color, datos, loading, cantLabel = "Cant
             </div>
           ))}
         </>}
-
-        {/* Fila: Monto */}
         <div style={{ padding: "16px 20px", display: "flex", alignItems: "center" }}>
           <span style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em" }}>Monto</span>
         </div>
@@ -177,6 +237,8 @@ function TablaMetricas({ titulo, icono, color, datos, loading, cantLabel = "Cant
 
 // ─── Módulo principal ─────────────────────────────────────────────────────────
 export default function Resultados() {
+  const { isMobile, isTablet } = useBreakpoint();
+
   const [tab,        setTab]        = useState("resultados");
   const [loading,    setLoading]    = useState(true);
   const [updatedAt,  setUpdatedAt]  = useState(null);
@@ -192,7 +254,77 @@ export default function Resultados() {
   const [proximos,     setProximos]     = useState([]);
   // Flujo de Caja: registros diarios del mes
   const [flujoDias,    setFlujoDias]    = useState([]);
+  const [diaDetalle,   setDiaDetalle]   = useState(null); // fecha seleccionada para ver detalle
+  const [diaPagos,     setDiaPagos]     = useState([]);   // pagos del día seleccionado
+  const [loadingDia,   setLoadingDia]   = useState(false);
   const [flujoMes,     setFlujoMes]     = useState(null); // {ingresos, egresos, neto}
+
+  const verDia = async (fecha) => {
+    if (!supabase) return;
+    setDiaDetalle(fecha);
+    setLoadingDia(true);
+    // Load all payments for this day
+    const [pagosFecha, pagosCreated, cierresAyb, llegadas] = await Promise.all([
+      // Reservas con fecha_pago = fecha
+      supabase.from("reservas")
+        .select("id, nombre, contacto, tipo, total, abono, forma_pago, fecha_pago, created_at, grupo_id, aliado_id")
+        .eq("fecha_pago", fecha).gt("abono", 0).neq("estado", "cancelado"),
+      // Reservas sin fecha_pago pero created ese día
+      supabase.from("reservas")
+        .select("id, nombre, contacto, tipo, total, abono, forma_pago, fecha_pago, created_at, grupo_id, aliado_id")
+        .is("fecha_pago", null)
+        .gte("created_at", fecha + "T00:00:00-05:00")
+        .lte("created_at", fecha + "T23:59:59-05:00")
+        .gt("abono", 0).neq("estado", "cancelado"),
+      // Cierres de A&B
+      supabase.from("cierres_caja")
+        .select("id, cajero_nombre, total_ventas, total_propinas, metodos, fecha")
+        .eq("fecha", fecha).eq("area", "ayb"),
+      // Llegadas muelle con cobro
+      supabase.from("muelle_llegadas")
+        .select("id, embarcacion_nombre, pax_total, total_cobrado, metodo_pago, tipo, fecha")
+        .eq("fecha", fecha).gt("total_cobrado", 0),
+    ]);
+
+    const items = [];
+    [...(pagosFecha.data || []), ...(pagosCreated.data || [])].forEach(r => {
+      items.push({
+        tipo: r.grupo_id ? "grupo" : "pasadia",
+        id: r.id,
+        nombre: r.nombre || r.contacto || "—",
+        concepto: r.tipo || "Reserva",
+        monto: r.abono || 0,
+        metodo: r.forma_pago || "—",
+        aliado: !!r.aliado_id,
+        reservaId: r.id,
+      });
+    });
+    (cierresAyb.data || []).forEach(c => {
+      items.push({
+        tipo: "ayb",
+        id: c.id,
+        nombre: c.cajero_nombre || "A&B",
+        concepto: "Cierre de caja A&B",
+        monto: (c.total_ventas || 0),
+        metodo: "Multiple",
+      });
+    });
+    (llegadas.data || []).forEach(l => {
+      // After Island y Restaurante se consideran pasadías (pagadas en muelle)
+      const esPasadia = l.tipo === "after_island" || l.tipo === "restaurante";
+      items.push({
+        tipo: esPasadia ? "pasadia" : "llegada",
+        id: l.id,
+        nombre: l.embarcacion_nombre || "Embarcación",
+        concepto: l.tipo === "after_island" ? "After Island" : l.tipo === "restaurante" ? "Restaurante" : l.tipo,
+        monto: l.total_cobrado || 0,
+        metodo: l.metodo_pago || "—",
+      });
+    });
+
+    setDiaPagos(items.sort((a, b) => b.monto - a.monto));
+    setLoadingDia(false);
+  };
 
   const cargar = useCallback(async () => {
     if (!supabase) return;
@@ -231,6 +363,14 @@ export default function Resultados() {
         .eq("categoria", "grupo")
         .then(r => ({ periodo: p.key, cat: "grupos", data: r.data || [] })),
 
+      // Reservas vinculadas a grupos en el período (para sumar al monto de grupos)
+      supabase.from("reservas")
+        .select("grupo_id, total, pax, estado")
+        .gte("fecha", p.desde).lte("fecha", p.hasta <= hoyStr ? p.hasta : hoyStr)
+        .neq("estado", "cancelado")
+        .not("grupo_id", "is", null)
+        .then(r => ({ periodo: p.key, cat: "reservas_grupos", data: r.data || [] })),
+
       // Eventos (categoria = evento)
       supabase.from("eventos")
         .select("id, valor, valor_extras, pax, pasadias_org, categoria, servicios_contratados")
@@ -245,6 +385,15 @@ export default function Resultados() {
         .gte("fecha", p.desde).lte("fecha", p.hasta <= hoyStr ? p.hasta : hoyStr)
         .eq("area", "ayb")
         .then(r => ({ periodo: p.key, cat: "ayb", data: r.data || [] })),
+
+      // Llegadas muelle: embarcaciones privadas (pax siempre suma, monto solo si pagaron)
+      // Excluir las que ya están vinculadas a una reserva (evita doble conteo)
+      supabase.from("muelle_llegadas")
+        .select("id, total_cobrado, pax_total, pax_a, pax_n, fecha, tipo, reserva_id")
+        .gte("fecha", p.desde).lte("fecha", p.hasta <= hoyStr ? p.hasta : hoyStr)
+        .neq("tipo", "lancha_atolon")
+        .is("reserva_id", null)
+        .then(r => ({ periodo: p.key, cat: "llegadas", data: r.data || [] })),
     ]);
 
     const resultados = await Promise.all(queries);
@@ -271,31 +420,45 @@ export default function Resultados() {
       return base + extras + servicios;
     };
 
-    // Helper para contar pasadías en un grupo (excl. Impuesto Muelle y STAFF)
+    // Helper para contar pasadías en un grupo
+    // Prefiere e.pax (calculado por trigger = pasadias_org + reservas vinculadas)
+    // Fallback: suma pasadias_org sin Impuesto Muelle ni STAFF
     const pasadiasGrupo = (rows) =>
-      rows.reduce((s, e) => s + (e.pasadias_org || [])
-        .filter(p => p.tipo !== "Impuesto Muelle" && p.tipo !== "STAFF")
-        .reduce((ss, p) => ss + (Number(p.personas) || 0), 0), 0);
+      rows.reduce((s, e) => {
+        if (Number(e.pax) > 0) return s + Number(e.pax);
+        return s + (e.pasadias_org || [])
+          .filter(p => p.tipo !== "Impuesto Muelle" && p.tipo !== "STAFF")
+          .reduce((ss, p) => ss + (Number(p.personas) || 0), 0);
+      }, 0);
 
-    // Pasadías: directas + B2B
+    // Pasadías: directas + B2B + walk-ins (llegadas muelle con cobro)
     const pasR = {};
     periodos.forEach(p => {
       const dir  = resultados.find(r => r.cat === "pasadias"     && r.periodo === p.key)?.data || [];
       const b2b  = resultados.find(r => r.cat === "pasadias_b2b" && r.periodo === p.key)?.data || [];
+      const lleg = resultados.find(r => r.cat === "llegadas"     && r.periodo === p.key)?.data || [];
       const all  = [...dir, ...b2b];
       pasR[p.key] = {
-        cantidad: all.reduce((s, r) => s + (Number(r.pax) || 0), 0),
-        monto:    all.filter(r => r.estado !== "no_show").reduce((s, r) => s + (r.total || 0), 0),
+        cantidad: all.reduce((s, r) => s + (Number(r.pax) || 0), 0)
+                + lleg.reduce((s, r) => s + (Number(r.pax_total) || 0), 0),
+        monto:    all.filter(r => r.estado !== "no_show").reduce((s, r) => s + (r.total || 0), 0)
+                + lleg.reduce((s, r) => s + (Number(r.total_cobrado) || 0), 0),
       };
     });
 
-    // Grupos: cantidad = suma de pasajeros (pasadias_org sin impuesto/staff)
+    // Grupos: cantidad = suma de pasajeros, monto = valor cotizado + reservas vinculadas pagadas
     const grpR = {};
     periodos.forEach(p => {
       const rows = resultados.find(r => r.cat === "grupos" && r.periodo === p.key)?.data || [];
+      const resLinked = resultados.find(r => r.cat === "reservas_grupos" && r.periodo === p.key)?.data || [];
+      const grupoIds = new Set(rows.map(r => r.id));
+      // Reservas vinculadas a estos grupos (que están en el mismo período)
+      const montoReservasVinculadas = resLinked
+        .filter(r => grupoIds.has(r.grupo_id))
+        .reduce((s, r) => s + (Number(r.total) || 0), 0);
       grpR[p.key] = {
         cantidad: pasadiasGrupo(rows),
-        monto:    rows.reduce((s, e) => s + totalCotizacion(e), 0),
+        monto:    rows.reduce((s, e) => s + totalCotizacion(e), 0) + montoReservasVinculadas,
       };
     });
 
@@ -402,12 +565,21 @@ export default function Resultados() {
     };
 
     // Paso 1: obtener IDs de eventos para categorizar grupo_id
-    const [fcEventosIds, fcCierres] = await Promise.all([
+    const [fcEventosIds, fcCierres, fcLlegadas, fcEventosPagos] = await Promise.all([
       supabase.from("eventos").select("id, categoria"),
       supabase.from("cierres_caja")
         .select("fecha, total_ventas")
         .gte("fecha", mesIni()).lte("fecha", hoyStr)
         .eq("area", "ayb"),
+      supabase.from("muelle_llegadas")
+        .select("fecha, total_cobrado")
+        .gte("fecha", mesIni()).lte("fecha", hoyStr)
+        .gt("total_cobrado", 0),
+      // Pagos registrados directamente en eventos (array pagos[])
+      supabase.from("eventos")
+        .select("id, categoria, pagos")
+        .not("pagos", "is", null)
+        .not("stage", "in", '("Perdido","Cancelado")'),
     ]);
     const grupoIdSet  = new Set((fcEventosIds.data || []).filter(e => e.categoria === "grupo").map(e => e.id));
     const eventoIdSet = new Set((fcEventosIds.data || []).filter(e => e.categoria === "evento").map(e => e.id));
@@ -452,6 +624,25 @@ export default function Resultados() {
       diaMap[c.fecha].ayb += c.total_ventas || 0;
     }
 
+    // Llegadas muelle con cobro → sumar a pasadías en flujo de caja
+    for (const l of (fcLlegadas.data || [])) {
+      if (!l.fecha || l.fecha < mesIni() || l.fecha > hoyStr) continue;
+      ensureDia(l.fecha);
+      diaMap[l.fecha].pasadias += l.total_cobrado || 0;
+    }
+
+    // Pagos directos de eventos/grupos (array pagos[] en la tabla eventos)
+    for (const ev of (fcEventosPagos.data || [])) {
+      for (const p of (ev.pagos || [])) {
+        const f = p.fecha;
+        if (!f || f < mesIni() || f > hoyStr) continue;
+        ensureDia(f);
+        const monto = Number(p.monto) || 0;
+        if (ev.categoria === "evento") diaMap[f].eventos += monto;
+        else                           diaMap[f].grupos  += monto;
+      }
+    }
+
     // Ordenar y calcular acumulado
     let acumulado = 0;
     const dias = Object.values(diaMap).sort((a, b) => a.fecha.localeCompare(b.fecha)).map(d => {
@@ -482,11 +673,19 @@ export default function Resultados() {
   };
 
   return (
-    <div style={{ padding: "24px 0", maxWidth: 960, margin: "0 auto" }}>
+    <div style={{ padding: isMobile ? "16px 0" : "24px 0", maxWidth: 960, margin: "0 auto" }}>
       <style>{`@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }`}</style>
 
       {/* Header */}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 20, paddingInline: 4 }}>
+      <div style={{
+        display: "flex",
+        flexDirection: isMobile ? "column" : "row",
+        justifyContent: "space-between",
+        alignItems: isMobile ? "stretch" : "flex-start",
+        marginBottom: 20,
+        paddingInline: 4,
+        gap: isMobile ? 12 : 0,
+      }}>
         <div>
           <div style={{ fontSize: 26, fontWeight: 900, color: B.white, fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: "0.02em" }}>
             📊 Resultados
@@ -495,31 +694,57 @@ export default function Resultados() {
             Dashboard para socios y junta directiva
           </div>
         </div>
-        <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+        <div style={{ display: "flex", gap: 10, alignItems: "center", justifyContent: isMobile ? "space-between" : "flex-end" }}>
           {updatedAt && (
             <span style={{ fontSize: 11, color: "rgba(255,255,255,0.3)" }}>
               Actualizado {updatedAt.toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit" })}
             </span>
           )}
           <button onClick={cargar} disabled={loading}
-            style={{ padding: "8px 16px", borderRadius: 8, border: `1px solid ${B.navyLight}`, background: loading ? B.navyLight : B.navyMid, color: loading ? "rgba(255,255,255,0.3)" : "rgba(255,255,255,0.7)", fontSize: 12, fontWeight: 600, cursor: loading ? "default" : "pointer" }}>
+            style={{
+              padding: "8px 16px",
+              borderRadius: 8,
+              border: `1px solid ${B.navyLight}`,
+              background: loading ? B.navyLight : B.navyMid,
+              color: loading ? "rgba(255,255,255,0.3)" : "rgba(255,255,255,0.7)",
+              fontSize: 12,
+              fontWeight: 600,
+              cursor: loading ? "default" : "pointer",
+              ...(isMobile ? { flex: "1", maxWidth: 160 } : {}),
+            }}>
             {loading ? "Cargando..." : "↻ Actualizar"}
           </button>
         </div>
       </div>
 
       {/* Tabs */}
-      <div style={{ display: "flex", gap: 8, marginBottom: 24, paddingInline: 4 }}>
+      <div style={{
+        display: "flex",
+        gap: 8,
+        marginBottom: 24,
+        paddingInline: 4,
+        flexWrap: isMobile ? "wrap" : "nowrap",
+      }}>
         {[
           { key: "resultados",   label: "📊 Resultados"   },
           { key: "proyecciones", label: "🔮 Proyecciones" },
           { key: "flujo_caja",   label: "💧 Flujo de Caja" },
+          { key: "evt_grp",      label: "📆 Eventos y Grupos" },
         ].map(t => (
           <button key={t.key} onClick={() => setTab(t.key)}
-            style={{ padding: "9px 20px", borderRadius: 10, border: "none", cursor: "pointer", fontWeight: 700, fontSize: 13,
+            style={{
+              padding: isMobile ? "8px 8px" : "9px 20px",
+              borderRadius: 10,
+              border: "none",
+              cursor: "pointer",
+              fontWeight: 700,
+              fontSize: isMobile ? 10 : 13,
+              flex: isMobile ? "1 1 calc(50% - 4px)" : "0 0 auto",
+              textAlign: "center",
               background: tab === t.key ? B.sky : B.navyMid,
               color:      tab === t.key ? B.navy : "rgba(255,255,255,0.5)",
-              transition: "all 0.15s" }}>
+              transition: "all 0.15s",
+            }}>
             {t.label}
           </button>
         ))}
@@ -539,12 +764,23 @@ export default function Resultados() {
         return (
           <div>
             {/* Banner resumen proyección total */}
-            <div style={{ background: B.navyMid, borderRadius: 14, padding: "18px 24px", marginBottom: 20, borderLeft: `4px solid #fbbf24`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <div style={{
+              background: B.navyMid,
+              borderRadius: 14,
+              padding: isMobile ? "14px 16px" : "18px 24px",
+              marginBottom: isMobile ? 14 : 20,
+              borderLeft: `4px solid #fbbf24`,
+              display: "flex",
+              flexDirection: isMobile ? "column" : "row",
+              justifyContent: "space-between",
+              alignItems: isMobile ? "flex-start" : "center",
+              gap: isMobile ? 12 : 0,
+            }}>
               <div>
                 <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.07em" }}>🔮 Proyección total — {mesLabel}</div>
-                <div style={{ fontSize: 34, fontWeight: 900, color: "#fbbf24", fontFamily: "'Barlow Condensed', sans-serif", marginTop: 4 }}>{COP(totalProy.monto)}</div>
+                <div style={{ fontSize: isMobile ? 24 : 34, fontWeight: 900, color: "#fbbf24", fontFamily: "'Barlow Condensed', sans-serif", marginTop: 4 }}>{COP(totalProy.monto)}</div>
               </div>
-              <div style={{ textAlign: "right", fontSize: 12, color: "rgba(255,255,255,0.3)", lineHeight: 1.8 }}>
+              <div style={{ textAlign: isMobile ? "left" : "right", fontSize: 12, color: "rgba(255,255,255,0.3)", lineHeight: 1.8 }}>
                 <div>✅ Real hasta hoy: <strong style={{ color: B.sky }}>{COP((pasadias?.mes?.monto||0)+(grupos?.mes?.monto||0)+(eventos?.mes?.monto||0)+(ayb?.mes?.monto||0))}</strong></div>
                 <div>📅 Reservado futuro: <strong style={{ color: "#fbbf24" }}>{COP((proyPasadias?.monto||0)+(proyGrupos?.monto||0)+(proyEventos?.monto||0))}</strong></div>
                 <div style={{ marginTop: 4, fontSize: 11 }}>Período: {mesIni()} → {finStr}</div>
@@ -554,17 +790,17 @@ export default function Resultados() {
             <TablaProyeccion
               titulo="Pasadías" icono="🏖️" color={B.sky}
               real={pasadias?.mes} proyectado={proyPasadias}
-              loading={loading} cantLabel="Pasajeros"
+              loading={loading} cantLabel="Pasajeros" isMobile={isMobile}
             />
             <TablaProyeccion
               titulo="Grupos" icono="👥" color="#34d399"
               real={grupos?.mes} proyectado={proyGrupos}
-              loading={loading} cantLabel="Pasajeros"
+              loading={loading} cantLabel="Pasajeros" isMobile={isMobile}
             />
             <TablaProyeccion
               titulo="Eventos" icono="🎉" color="#a78bfa"
               real={eventos?.mes} proyectado={proyEventos}
-              loading={loading} cantLabel="Eventos"
+              loading={loading} cantLabel="Eventos" isMobile={isMobile}
             />
             {/* A&B: solo real, no se puede proyectar (cierres_caja son retroactivos) */}
             <div style={{ background: B.navyMid, borderRadius: 16, overflow: "hidden", marginBottom: 16 }}>
@@ -579,79 +815,10 @@ export default function Resultados() {
               </div>
             </div>
 
-            {/* ── Tabla de eventos y grupos próximos ──────────────────────── */}
-            {proximos.length > 0 && (
-              <div style={{ background: B.navyMid, borderRadius: 16, overflow: "hidden", marginTop: 8, marginBottom: 16 }}>
-                <div style={{ padding: "14px 20px", borderBottom: `1px solid ${B.navyLight}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                    <span style={{ fontSize: 20 }}>📆</span>
-                    <span style={{ fontSize: 16, fontWeight: 800, color: B.white }}>Eventos y Grupos — {new Date().toLocaleString("es-CO", { month: "long", year: "numeric", timeZone: "America/Bogota" })}</span>
-                  </div>
-                  <div style={{ fontSize: 18, fontWeight: 900, color: "#fbbf24", fontFamily: "'Barlow Condensed', sans-serif" }}>
-                    {COP(proximos.reduce((s, e) => s + e.monto_cotizado, 0))}
-                  </div>
-                </div>
-                <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                  <thead>
-                    <tr style={{ background: B.navy }}>
-                      {[["Fecha", "120px"], ["Nombre", "auto"], ["Tipo", "90px"], ["Pax", "60px"], ["Stage", "100px"], ["Monto Cotizado", "140px"]].map(([h, w]) => (
-                        <th key={h} style={{ padding: "9px 14px", fontSize: 10, fontWeight: 700, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.06em", textAlign: h === "Monto Cotizado" || h === "Pax" ? "right" : "left", width: w, borderBottom: `1px solid ${B.navyLight}` }}>{h}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {proximos.map((e, i) => {
-                      const esGrupo = e.categoria === "grupo";
-                      const stageColor = e.stage === "Confirmado" ? "#4CAF7D" : e.stage === "Realizado" ? "rgba(255,255,255,0.3)" : e.stage === "Cotizado" ? "#8ECAE6" : "#E8A020";
-                      const fechaLabel = (() => {
-                        const f = new Date(e.fecha + "T12:00:00").toLocaleDateString("es-CO", { weekday: "short", day: "numeric", month: "short" });
-                        if (e.fecha_fin && e.fecha_fin !== e.fecha) {
-                          const ff = new Date(e.fecha_fin + "T12:00:00").toLocaleDateString("es-CO", { day: "numeric", month: "short" });
-                          return `${f} → ${ff}`;
-                        }
-                        return f;
-                      })();
-                      return (
-                        <tr key={e.id} style={{ borderBottom: i < proximos.length - 1 ? `1px solid ${B.navyLight}` : "none", background: i % 2 === 0 ? "transparent" : B.navy + "44" }}>
-                          <td style={{ padding: "11px 14px", fontSize: 12, color: "rgba(255,255,255,0.6)" }}>{fechaLabel}</td>
-                          <td style={{ padding: "11px 14px" }}>
-                            <div style={{ fontSize: 13, fontWeight: 700 }}>{e.nombre}</div>
-                            {e.contacto && <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", marginTop: 1 }}>{e.contacto}</div>}
-                            {e.vendedor  && <div style={{ fontSize: 10, color: "rgba(255,255,255,0.25)" }}>👤 {e.vendedor}</div>}
-                          </td>
-                          <td style={{ padding: "11px 14px", fontSize: 11, color: "rgba(255,255,255,0.5)" }}>
-                            {esGrupo ? "👥" : "🎉"} {e.tipo}
-                          </td>
-                          <td style={{ padding: "11px 14px", fontSize: 13, fontWeight: 700, textAlign: "right" }}>{e.pax || "—"}</td>
-                          <td style={{ padding: "11px 14px" }}>
-                            <span style={{ fontSize: 10, padding: "3px 9px", borderRadius: 8, background: stageColor + "22", color: stageColor, fontWeight: 700 }}>{e.stage}</span>
-                          </td>
-                          <td style={{ padding: "11px 14px", textAlign: "right" }}>
-                            <span style={{ fontSize: 15, fontWeight: 800, color: e.monto_cotizado > 0 ? "#fbbf24" : "rgba(255,255,255,0.2)", fontFamily: "'Barlow Condensed', sans-serif" }}>
-                              {e.monto_cotizado > 0 ? COP(e.monto_cotizado) : "Sin cotizar"}
-                            </span>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                  <tfoot>
-                    <tr style={{ background: B.navy, borderTop: `2px solid ${B.navyLight}` }}>
-                      <td colSpan={5} style={{ padding: "10px 14px", fontSize: 11, color: "rgba(255,255,255,0.4)", fontWeight: 700, textTransform: "uppercase" }}>Total pipeline eventos y grupos</td>
-                      <td style={{ padding: "10px 14px", textAlign: "right", fontSize: 17, fontWeight: 900, color: "#fbbf24", fontFamily: "'Barlow Condensed', sans-serif" }}>
-                        {COP(proximos.reduce((s, e) => s + e.monto_cotizado, 0))}
-                      </td>
-                    </tr>
-                  </tfoot>
-                </table>
-              </div>
-            )}
-
             <div style={{ marginTop: 8, fontSize: 11, color: "rgba(255,255,255,0.2)", lineHeight: 1.8, paddingInline: 4 }}>
               * "Reservado futuro" incluye reservas confirmadas (no canceladas) con fecha entre mañana y fin de mes.<br />
               * La proyección NO incluye nuevas ventas que aún no se han registrado.<br />
-              * A&B no se proyecta — el ingreso solo se registra después del cierre diario.<br />
-              * "Monto cotizado" usa el total de la cotización si está registrada, o el valor del evento.
+              * A&B no se proyecta — el ingreso solo se registra después del cierre diario.
             </div>
           </div>
         );
@@ -664,16 +831,16 @@ export default function Resultados() {
       {totalMes && (
         <>
           {/* Cards por categoría */}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 12 }}>
+          <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(4, 1fr)", gap: 12, marginBottom: 12 }}>
             {[
               { label: "Pasadías (mes)",  valor: pasadias?.mes?.monto,  cant: pasadias?.mes?.cantidad,  color: B.sky,      icon: "🏖️", unit: "pasajeros" },
               { label: "Grupos (mes)",    valor: grupos?.mes?.monto,    cant: grupos?.mes?.cantidad,    color: "#34d399",  icon: "👥", unit: "pasajeros" },
               { label: "Eventos (mes)",   valor: eventos?.mes?.monto,   cant: eventos?.mes?.cantidad,   color: "#a78bfa",  icon: "🎉", unit: "eventos" },
               { label: "A&B (mes)",       valor: ayb?.mes?.monto,       cant: ayb?.mes?.cantidad,       color: B.sand,     icon: "🍽️", unit: "días con cierre" },
             ].map(k => (
-              <div key={k.label} style={{ background: B.navyMid, borderRadius: 14, padding: "18px 20px", borderTop: `3px solid ${k.color}` }}>
+              <div key={k.label} style={{ background: B.navyMid, borderRadius: 14, padding: isMobile ? "14px 16px" : "18px 20px", borderTop: `3px solid ${k.color}` }}>
                 <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 6 }}>{k.icon} {k.label}</div>
-                <div style={{ fontSize: 28, fontWeight: 900, color: k.color, fontFamily: "'Barlow Condensed', sans-serif", lineHeight: 1 }}>
+                <div style={{ fontSize: isMobile ? 22 : 28, fontWeight: 900, color: k.color, fontFamily: "'Barlow Condensed', sans-serif", lineHeight: 1 }}>
                   {COP(k.valor)}
                 </div>
                 <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginTop: 6 }}>{k.cant} {k.unit}</div>
@@ -682,16 +849,27 @@ export default function Resultados() {
           </div>
 
           {/* Banner total del mes */}
-          <div style={{ background: B.navyMid, borderRadius: 14, padding: "18px 28px", marginBottom: 28, borderLeft: `5px solid ${B.sky}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div style={{
+            background: B.navyMid,
+            borderRadius: 14,
+            padding: isMobile ? "14px 16px" : "18px 28px",
+            marginBottom: isMobile ? 20 : 28,
+            borderLeft: `5px solid ${B.sky}`,
+            display: "flex",
+            flexDirection: isMobile ? "column" : "row",
+            justifyContent: "space-between",
+            alignItems: isMobile ? "flex-start" : "center",
+            gap: isMobile ? 12 : 0,
+          }}>
             <div>
               <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 4 }}>
                 💰 Total ingresos del mes
               </div>
-              <div style={{ fontSize: 40, fontWeight: 900, color: B.white, fontFamily: "'Barlow Condensed', sans-serif", lineHeight: 1 }}>
+              <div style={{ fontSize: isMobile ? 28 : 40, fontWeight: 900, color: B.white, fontFamily: "'Barlow Condensed', sans-serif", lineHeight: 1 }}>
                 {COP(totalMes.monto)}
               </div>
             </div>
-            <div style={{ textAlign: "right", fontSize: 12, color: "rgba(255,255,255,0.3)", lineHeight: 2 }}>
+            <div style={{ textAlign: isMobile ? "left" : "right", fontSize: 12, color: "rgba(255,255,255,0.3)", lineHeight: 2 }}>
               <div>🏖️ Pasadías: <strong style={{ color: B.sky }}>{COP(pasadias?.mes?.monto)}</strong></div>
               <div>👥 Grupos: <strong style={{ color: "#34d399" }}>{COP(grupos?.mes?.monto)}</strong></div>
               <div>🎉 Eventos: <strong style={{ color: "#a78bfa" }}>{COP(eventos?.mes?.monto)}</strong></div>
@@ -709,6 +887,7 @@ export default function Resultados() {
         datos={pasadias}
         loading={loading}
         cantLabel="Pasajeros"
+        isMobile={isMobile}
       />
 
       <TablaMetricas
@@ -718,6 +897,7 @@ export default function Resultados() {
         datos={grupos}
         loading={loading}
         cantLabel="Pasajeros"
+        isMobile={isMobile}
       />
 
       <TablaMetricas
@@ -726,6 +906,7 @@ export default function Resultados() {
         color="#a78bfa"
         datos={eventos}
         loading={loading}
+        isMobile={isMobile}
       />
 
       <TablaMetricas
@@ -735,26 +916,48 @@ export default function Resultados() {
         datos={ayb}
         loading={loading}
         hideCant
+        isMobile={isMobile}
       />
 
       {/* Fila total combinada por período */}
       {!loading && pasadias && grupos && eventos && ayb && (
-        <div style={{ background: B.navyMid, borderRadius: 16, overflow: "hidden", marginBottom: 20, borderTop: `3px solid ${B.white}` }}>
-          <div style={{ display: "grid", gridTemplateColumns: "160px repeat(4, 1fr)", minWidth: 0 }}>
-            <div style={{ padding: "16px 20px", display: "flex", alignItems: "center" }}>
-              <span style={{ fontSize: 13, color: B.white, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.05em" }}>💰 Total</span>
+        <div style={{ background: B.navyMid, borderRadius: isMobile ? 14 : 16, overflow: "hidden", marginBottom: 20, borderTop: `3px solid ${B.white}` }}>
+          {isMobile ? (
+            <div>
+              <div style={{ padding: "10px 16px", display: "flex", alignItems: "center" }}>
+                <span style={{ fontSize: 12, color: B.white, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.05em" }}>💰 Total</span>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 0 }}>
+                {PERIODOS.map(p => {
+                  const total = (pasadias?.[p.key]?.monto || 0) + (grupos?.[p.key]?.monto || 0) + (eventos?.[p.key]?.monto || 0) + (ayb?.[p.key]?.monto || 0);
+                  return (
+                    <div key={p.key} style={{ padding: "8px 6px", textAlign: "center", borderRight: `1px solid ${B.navyLight}` }}>
+                      <div style={{ fontSize: 9, fontWeight: 700, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", marginBottom: 4 }}>{p.label}</div>
+                      <div style={{ fontSize: 13, fontWeight: 900, color: B.white, fontFamily: "'Barlow Condensed', sans-serif" }}>
+                        {COP(total)}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
-            {PERIODOS.map(p => {
-              const total = (pasadias?.[p.key]?.monto || 0) + (grupos?.[p.key]?.monto || 0) + (eventos?.[p.key]?.monto || 0) + (ayb?.[p.key]?.monto || 0);
-              return (
-                <div key={p.key} style={{ padding: "16px 16px", textAlign: "center", borderLeft: `1px solid ${B.navyLight}` }}>
-                  <div style={{ fontSize: 17, fontWeight: 900, color: B.white, fontFamily: "'Barlow Condensed', sans-serif" }}>
-                    {COP(total)}
+          ) : (
+            <div style={{ display: "grid", gridTemplateColumns: "160px repeat(4, 1fr)" }}>
+              <div style={{ padding: "16px 20px", display: "flex", alignItems: "center" }}>
+                <span style={{ fontSize: 13, color: B.white, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.05em" }}>💰 Total</span>
+              </div>
+              {PERIODOS.map(p => {
+                const total = (pasadias?.[p.key]?.monto || 0) + (grupos?.[p.key]?.monto || 0) + (eventos?.[p.key]?.monto || 0) + (ayb?.[p.key]?.monto || 0);
+                return (
+                  <div key={p.key} style={{ padding: "16px 16px", textAlign: "center", borderLeft: `1px solid ${B.navyLight}` }}>
+                    <div style={{ fontSize: 17, fontWeight: 900, color: B.white, fontFamily: "'Barlow Condensed', sans-serif" }}>
+                      {COP(total)}
+                    </div>
                   </div>
-                </div>
-              );
-            })}
-          </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
 
@@ -769,6 +972,82 @@ export default function Resultados() {
       </>} {/* fin tab resultados */}
 
       {/* ══ TAB FLUJO DE CAJA ══ */}
+      {/* ══ TAB EVENTOS Y GRUPOS ══ */}
+      {tab === "evt_grp" && (() => {
+        const mesLabel = new Date(mesIni() + "T12:00:00").toLocaleString("es-CO", { month: "long", year: "numeric", timeZone: "America/Bogota" });
+        const gruposList  = proximos.filter(e => e.categoria === "grupo");
+        const eventosList = proximos.filter(e => e.categoria === "evento");
+
+        const renderList = (items, titulo, icono, color) => (
+          <div style={{ background: B.navyMid, borderRadius: isMobile ? 14 : 16, overflow: "hidden", marginBottom: isMobile ? 14 : 20 }}>
+            <div style={{ padding: isMobile ? "12px 16px" : "14px 20px", borderBottom: `1px solid ${B.navyLight}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ fontSize: isMobile ? 18 : 20 }}>{icono}</span>
+                <span style={{ fontSize: isMobile ? 15 : 16, fontWeight: 800, color: B.white }}>{titulo}</span>
+                <span style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", marginLeft: 4 }}>({items.length})</span>
+              </div>
+              <span style={{ fontSize: isMobile ? 14 : 16, fontWeight: 900, color: color, fontFamily: "'Barlow Condensed', sans-serif" }}>
+                {COP(items.reduce((s, e) => s + e.monto_cotizado, 0))}
+              </span>
+            </div>
+            {items.length === 0 ? (
+              <div style={{ padding: "20px 16px", textAlign: "center", fontSize: 12, color: "rgba(255,255,255,0.3)" }}>Sin registros este mes</div>
+            ) : (
+              <div>
+                {items.map((e, i) => {
+                  const stageColor = e.stage === "Confirmado" ? "#4CAF7D" : e.stage === "Realizado" ? "rgba(255,255,255,0.4)" : e.stage === "Cotizado" ? "#8ECAE6" : "#E8A020";
+                  const fechaLabel = (() => {
+                    const f = new Date(e.fecha + "T12:00:00").toLocaleDateString("es-CO", { weekday: "short", day: "numeric", month: "short" });
+                    if (e.fecha_fin && e.fecha_fin !== e.fecha) {
+                      const ff = new Date(e.fecha_fin + "T12:00:00").toLocaleDateString("es-CO", { day: "numeric", month: "short" });
+                      return `${f} → ${ff}`;
+                    }
+                    return f;
+                  })();
+                  return (
+                    <div key={e.id} style={{
+                      padding: isMobile ? "12px 14px" : "12px 20px",
+                      borderBottom: i < items.length - 1 ? `1px solid ${B.navyLight}` : "none",
+                      background: i % 2 === 0 ? "transparent" : B.navy + "44",
+                    }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 4 }}>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: isMobile ? 13 : 14, fontWeight: 700, color: B.white, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{e.nombre}</div>
+                          <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>{fechaLabel} · {e.tipo}</div>
+                        </div>
+                        <span style={{ fontSize: 10, padding: "3px 9px", borderRadius: 8, background: stageColor + "22", color: stageColor, fontWeight: 700, whiteSpace: "nowrap", marginLeft: 8, flexShrink: 0 }}>{e.stage}</span>
+                      </div>
+                      {(e.contacto || e.vendedor) && (
+                        <div style={{ fontSize: 10, color: "rgba(255,255,255,0.3)", marginBottom: 4 }}>
+                          {e.contacto}{e.vendedor && ` · 👤 ${e.vendedor}`}
+                        </div>
+                      )}
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                        <span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)" }}>Pax: <strong style={{ color: B.white }}>{e.pax || (e.pasadias_org || []).filter(p => p.tipo !== "Impuesto Muelle" && p.tipo !== "STAFF").reduce((s, p) => s + (Number(p.personas) || 0), 0) || "—"}</strong></span>
+                        <span style={{ fontSize: isMobile ? 14 : 15, fontWeight: 800, color: e.monto_cotizado > 0 ? color : "rgba(255,255,255,0.2)", fontFamily: "'Barlow Condensed', sans-serif" }}>
+                          {e.monto_cotizado > 0 ? COP(e.monto_cotizado) : "Sin cotizar"}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        );
+
+        return (
+          <div>
+            <div style={{ fontSize: isMobile ? 12 : 13, color: "rgba(255,255,255,0.35)", marginBottom: isMobile ? 12 : 16, paddingInline: 4 }}>
+              {mesLabel} — Consulta, Cotizado, Confirmado y Realizado
+            </div>
+            {renderList(eventosList, "Eventos", "🎉", "#a78bfa")}
+            {renderList(gruposList, "Grupos", "👥", "#34d399")}
+          </div>
+        );
+      })()}
+
+      {/* ══ TAB FLUJO DE CAJA ══ */}
       {tab === "flujo_caja" && (() => {
         const mesLabel = new Date(mesIni() + "T12:00:00").toLocaleString("es-CO", { month: "long", year: "numeric", timeZone: "America/Bogota" });
         const colStyle = (align = "right") => ({ padding: "10px 12px", textAlign: align, borderLeft: `1px solid ${B.navyLight}`, fontSize: 13 });
@@ -778,16 +1057,16 @@ export default function Resultados() {
           <div>
             {/* Resumen del mes */}
             {flujoMes && (
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 24 }}>
+              <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(4, 1fr)", gap: 12, marginBottom: 24 }}>
                 {[
                   { label: "Pasadías", valor: flujoDias.reduce((s, d) => s + d.pasadias, 0), color: B.sky,     icon: "🏖️" },
                   { label: "Grupos",   valor: flujoDias.reduce((s, d) => s + d.grupos,   0), color: "#34d399", icon: "👥" },
                   { label: "Eventos",  valor: flujoDias.reduce((s, d) => s + d.eventos,  0), color: "#a78bfa", icon: "🎉" },
                   { label: "A&B",      valor: flujoDias.reduce((s, d) => s + d.ayb,      0), color: B.sand,    icon: "🍽️" },
                 ].map(k => (
-                  <div key={k.label} style={{ background: B.navyMid, borderRadius: 14, padding: "18px 20px", borderTop: `3px solid ${k.color}` }}>
+                  <div key={k.label} style={{ background: B.navyMid, borderRadius: 14, padding: isMobile ? "14px 16px" : "18px 20px", borderTop: `3px solid ${k.color}` }}>
                     <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 6 }}>{k.icon} {k.label}</div>
-                    <div style={{ fontSize: 26, fontWeight: 900, color: k.color, fontFamily: "'Barlow Condensed', sans-serif", lineHeight: 1 }}>{COP(k.valor)}</div>
+                    <div style={{ fontSize: isMobile ? 20 : 26, fontWeight: 900, color: k.color, fontFamily: "'Barlow Condensed', sans-serif", lineHeight: 1 }}>{COP(k.valor)}</div>
                   </div>
                 ))}
               </div>
@@ -795,12 +1074,23 @@ export default function Resultados() {
 
             {/* Total general */}
             {flujoMes && (
-              <div style={{ background: B.navyMid, borderRadius: 14, padding: "18px 24px", marginBottom: 20, borderLeft: `4px solid ${B.sky}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div style={{
+                background: B.navyMid,
+                borderRadius: 14,
+                padding: "18px 24px",
+                marginBottom: 20,
+                borderLeft: `4px solid ${B.sky}`,
+                display: "flex",
+                flexDirection: isMobile ? "column" : "row",
+                justifyContent: "space-between",
+                alignItems: isMobile ? "flex-start" : "center",
+                gap: isMobile ? 8 : 0,
+              }}>
                 <div>
                   <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.07em" }}>💧 Ingresos del mes — {mesLabel}</div>
-                  <div style={{ fontSize: 36, fontWeight: 900, color: B.sky, fontFamily: "'Barlow Condensed', sans-serif", marginTop: 4 }}>{COP(flujoMes.ingresos)}</div>
+                  <div style={{ fontSize: isMobile ? 26 : 36, fontWeight: 900, color: B.sky, fontFamily: "'Barlow Condensed', sans-serif", marginTop: 4 }}>{COP(flujoMes.ingresos)}</div>
                 </div>
-                <div style={{ textAlign: "right", fontSize: 12, color: "rgba(255,255,255,0.3)" }}>
+                <div style={{ textAlign: isMobile ? "left" : "right", fontSize: 12, color: "rgba(255,255,255,0.3)" }}>
                   {flujoDias.length} días con ingresos registrados
                 </div>
               </div>
@@ -812,48 +1102,97 @@ export default function Resultados() {
             ) : flujoDias.length === 0 ? (
               <div style={{ background: B.navyMid, borderRadius: 16, padding: 24, textAlign: "center", color: "rgba(255,255,255,0.3)", fontSize: 13 }}>Sin ingresos registrados este mes.</div>
             ) : (
-              <div style={{ background: B.navyMid, borderRadius: 16, overflow: "hidden" }}>
-                {/* Header de tabla */}
-                <div style={{ display: "grid", gridTemplateColumns: "110px 1fr 1fr 1fr 1fr 1fr 1fr" }}>
-                  <div style={{ padding: "8px 12px", background: B.navy, borderBottom: `1px solid ${B.navyLight}`, fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.07em", color: "rgba(255,255,255,0.4)" }}>Fecha</div>
-                  <div style={hdrStyle(B.sky)}>Pasadías</div>
-                  <div style={hdrStyle("#34d399")}>Grupos</div>
-                  <div style={hdrStyle("#a78bfa")}>Eventos</div>
-                  <div style={hdrStyle(B.sand)}>A&B</div>
-                  <div style={hdrStyle(B.white)}>Total</div>
-                  <div style={hdrStyle("#fbbf24")}>Acumulado</div>
-                </div>
-
-                {/* Filas */}
-                {flujoDias.map((d, i) => {
-                  const esHoy = d.fecha === hoy();
-                  const rowBg = esHoy ? "rgba(56,189,248,0.07)" : i % 2 === 0 ? "transparent" : "rgba(255,255,255,0.02)";
-                  const fechaLabel = new Date(d.fecha + "T12:00:00").toLocaleDateString("es-CO", { weekday: "short", day: "2-digit", month: "short", timeZone: "America/Bogota" });
-                  return (
-                    <div key={d.fecha} style={{ display: "grid", gridTemplateColumns: "110px 1fr 1fr 1fr 1fr 1fr 1fr", background: rowBg, borderBottom: `1px solid ${B.navyLight}` }}>
-                      <div style={{ padding: "10px 12px", fontSize: 12, color: esHoy ? B.sky : "rgba(255,255,255,0.6)", fontWeight: esHoy ? 700 : 400 }}>
-                        {fechaLabel}{esHoy && <span style={{ marginLeft: 4, fontSize: 9, background: B.sky, color: B.navy, borderRadius: 4, padding: "1px 5px", fontWeight: 800 }}>HOY</span>}
+              <div style={{ background: B.navyMid, borderRadius: isMobile ? 14 : 16, overflow: "hidden" }}>
+                {isMobile ? (
+                  <div>
+                    {flujoDias.map((d, i) => {
+                      const esHoy = d.fecha === hoy();
+                      const rowBg = esHoy ? "rgba(56,189,248,0.07)" : i % 2 === 0 ? "transparent" : "rgba(255,255,255,0.02)";
+                      const fechaLabel = new Date(d.fecha + "T12:00:00").toLocaleDateString("es-CO", { weekday: "short", day: "2-digit", month: "short", timeZone: "America/Bogota" });
+                      const cats = [
+                        { v: d.pasadias, c: B.sky, l: "Pasadías" },
+                        { v: d.grupos,   c: "#34d399", l: "Grupos" },
+                        { v: d.eventos,  c: "#a78bfa", l: "Eventos" },
+                        { v: d.ayb,      c: B.sand,    l: "A&B" },
+                      ].filter(x => x.v > 0);
+                      return (
+                        <div key={d.fecha} onClick={() => verDia(d.fecha)}
+                          style={{ padding: "10px 14px", background: rowBg, borderBottom: `1px solid ${B.navyLight}`, cursor: "pointer" }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: cats.length > 0 ? 6 : 0 }}>
+                            <div style={{ fontSize: 12, color: esHoy ? B.sky : "rgba(255,255,255,0.6)", fontWeight: esHoy ? 700 : 500 }}>
+                              {fechaLabel}{esHoy && <span style={{ marginLeft: 6, fontSize: 9, background: B.sky, color: B.navy, borderRadius: 4, padding: "1px 5px", fontWeight: 800 }}>HOY</span>}
+                            </div>
+                            <div style={{ display: "flex", gap: 10, alignItems: "baseline" }}>
+                              <span style={{ fontSize: 14, fontWeight: 800, color: B.white, fontFamily: "'Barlow Condensed', sans-serif" }}>{COP(d.ingresos)}</span>
+                              <span style={{ fontSize: 11, fontWeight: 700, color: "#fbbf24", fontFamily: "'Barlow Condensed', sans-serif" }}>{COP(d.acumulado)}</span>
+                            </div>
+                          </div>
+                          {cats.length > 0 && (
+                            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                              {cats.map(x => (
+                                <span key={x.l} style={{ fontSize: 10, color: x.c }}>{x.l}: {COP(x.v)}</span>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                    {/* Total row */}
+                    {flujoMes && (
+                      <div style={{ padding: "12px 14px", background: "rgba(56,189,248,0.1)", borderTop: `2px solid ${B.sky}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                        <span style={{ fontSize: 12, fontWeight: 800, color: B.white }}>TOTAL</span>
+                        <span style={{ fontSize: 18, fontWeight: 900, color: B.sky, fontFamily: "'Barlow Condensed', sans-serif" }}>{COP(flujoMes.ingresos)}</span>
                       </div>
-                      <div style={{ ...colStyle(), color: d.pasadias > 0 ? B.sky : "rgba(255,255,255,0.2)" }}>{d.pasadias > 0 ? COP(d.pasadias) : "—"}</div>
-                      <div style={{ ...colStyle(), color: d.grupos > 0 ? "#34d399" : "rgba(255,255,255,0.2)" }}>{d.grupos > 0 ? COP(d.grupos) : "—"}</div>
-                      <div style={{ ...colStyle(), color: d.eventos > 0 ? "#a78bfa" : "rgba(255,255,255,0.2)" }}>{d.eventos > 0 ? COP(d.eventos) : "—"}</div>
-                      <div style={{ ...colStyle(), color: d.ayb > 0 ? B.sand : "rgba(255,255,255,0.2)" }}>{d.ayb > 0 ? COP(d.ayb) : "—"}</div>
-                      <div style={{ ...colStyle(), color: B.white, fontWeight: 700 }}>{COP(d.ingresos)}</div>
-                      <div style={{ ...colStyle(), color: "#fbbf24", fontWeight: 700 }}>{COP(d.acumulado)}</div>
+                    )}
+                  </div>
+                ) : (
+                  <div>
+                    {/* Header de tabla */}
+                    <div style={{ display: "grid", gridTemplateColumns: "110px 1fr 1fr 1fr 1fr 1fr 1fr" }}>
+                      <div style={{ padding: "8px 12px", background: B.navy, borderBottom: `1px solid ${B.navyLight}`, fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.07em", color: "rgba(255,255,255,0.4)" }}>Fecha</div>
+                      <div style={hdrStyle(B.sky)}>Pasadías</div>
+                      <div style={hdrStyle("#34d399")}>Grupos</div>
+                      <div style={hdrStyle("#a78bfa")}>Eventos</div>
+                      <div style={hdrStyle(B.sand)}>A&B</div>
+                      <div style={hdrStyle(B.white)}>Total</div>
+                      <div style={hdrStyle("#fbbf24")}>Acumulado</div>
                     </div>
-                  );
-                })}
 
-                {/* Fila total */}
-                {flujoMes && (
-                  <div style={{ display: "grid", gridTemplateColumns: "110px 1fr 1fr 1fr 1fr 1fr 1fr", background: "rgba(56,189,248,0.1)", borderTop: `2px solid ${B.sky}` }}>
-                    <div style={{ padding: "12px 12px", fontSize: 12, fontWeight: 800, color: B.white }}>TOTAL</div>
-                    <div style={{ ...colStyle(), color: B.sky,     fontWeight: 800 }}>{COP(flujoDias.reduce((s, d) => s + d.pasadias, 0))}</div>
-                    <div style={{ ...colStyle(), color: "#34d399", fontWeight: 800 }}>{COP(flujoDias.reduce((s, d) => s + d.grupos,   0))}</div>
-                    <div style={{ ...colStyle(), color: "#a78bfa", fontWeight: 800 }}>{COP(flujoDias.reduce((s, d) => s + d.eventos,  0))}</div>
-                    <div style={{ ...colStyle(), color: B.sand,    fontWeight: 800 }}>{COP(flujoDias.reduce((s, d) => s + d.ayb,      0))}</div>
-                    <div style={{ ...colStyle(), color: B.white,   fontWeight: 900, fontSize: 15 }}>{COP(flujoMes.ingresos)}</div>
-                    <div style={{ ...colStyle(), color: "#fbbf24", fontWeight: 900, fontSize: 15 }}>{COP(flujoMes.ingresos)}</div>
+                    {/* Filas */}
+                    {flujoDias.map((d, i) => {
+                      const esHoy = d.fecha === hoy();
+                      const rowBg = esHoy ? "rgba(56,189,248,0.07)" : i % 2 === 0 ? "transparent" : "rgba(255,255,255,0.02)";
+                      const fechaLabel = new Date(d.fecha + "T12:00:00").toLocaleDateString("es-CO", { weekday: "short", day: "2-digit", month: "short", timeZone: "America/Bogota" });
+                      return (
+                        <div key={d.fecha} onClick={() => verDia(d.fecha)}
+                          onMouseEnter={e => e.currentTarget.style.filter = "brightness(1.2)"}
+                          onMouseLeave={e => e.currentTarget.style.filter = "none"}
+                          style={{ display: "grid", gridTemplateColumns: "110px 1fr 1fr 1fr 1fr 1fr 1fr", background: rowBg, borderBottom: `1px solid ${B.navyLight}`, cursor: "pointer", transition: "filter 0.15s" }}>
+                          <div style={{ padding: "10px 12px", fontSize: 12, color: esHoy ? B.sky : "rgba(255,255,255,0.6)", fontWeight: esHoy ? 700 : 400 }}>
+                            {fechaLabel}{esHoy && <span style={{ marginLeft: 4, fontSize: 9, background: B.sky, color: B.navy, borderRadius: 4, padding: "1px 5px", fontWeight: 800 }}>HOY</span>}
+                          </div>
+                          <div style={{ ...colStyle(), color: d.pasadias > 0 ? B.sky : "rgba(255,255,255,0.2)" }}>{d.pasadias > 0 ? COP(d.pasadias) : "—"}</div>
+                          <div style={{ ...colStyle(), color: d.grupos > 0 ? "#34d399" : "rgba(255,255,255,0.2)" }}>{d.grupos > 0 ? COP(d.grupos) : "—"}</div>
+                          <div style={{ ...colStyle(), color: d.eventos > 0 ? "#a78bfa" : "rgba(255,255,255,0.2)" }}>{d.eventos > 0 ? COP(d.eventos) : "—"}</div>
+                          <div style={{ ...colStyle(), color: d.ayb > 0 ? B.sand : "rgba(255,255,255,0.2)" }}>{d.ayb > 0 ? COP(d.ayb) : "—"}</div>
+                          <div style={{ ...colStyle(), color: B.white, fontWeight: 700 }}>{COP(d.ingresos)}</div>
+                          <div style={{ ...colStyle(), color: "#fbbf24", fontWeight: 700 }}>{COP(d.acumulado)}</div>
+                        </div>
+                      );
+                    })}
+
+                    {/* Fila total */}
+                    {flujoMes && (
+                      <div style={{ display: "grid", gridTemplateColumns: "110px 1fr 1fr 1fr 1fr 1fr 1fr", background: "rgba(56,189,248,0.1)", borderTop: `2px solid ${B.sky}` }}>
+                        <div style={{ padding: "12px 12px", fontSize: 12, fontWeight: 800, color: B.white }}>TOTAL</div>
+                        <div style={{ ...colStyle(), color: B.sky,     fontWeight: 800 }}>{COP(flujoDias.reduce((s, d) => s + d.pasadias, 0))}</div>
+                        <div style={{ ...colStyle(), color: "#34d399", fontWeight: 800 }}>{COP(flujoDias.reduce((s, d) => s + d.grupos,   0))}</div>
+                        <div style={{ ...colStyle(), color: "#a78bfa", fontWeight: 800 }}>{COP(flujoDias.reduce((s, d) => s + d.eventos,  0))}</div>
+                        <div style={{ ...colStyle(), color: B.sand,    fontWeight: 800 }}>{COP(flujoDias.reduce((s, d) => s + d.ayb,      0))}</div>
+                        <div style={{ ...colStyle(), color: B.white,   fontWeight: 900, fontSize: 15 }}>{COP(flujoMes.ingresos)}</div>
+                        <div style={{ ...colStyle(), color: "#fbbf24", fontWeight: 900, fontSize: 15 }}>{COP(flujoMes.ingresos)}</div>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -870,6 +1209,96 @@ export default function Resultados() {
         );
       })()}
 
+      {/* ── Modal: Detalle de pagos del día ── */}
+      {diaDetalle && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 1200, background: "rgba(0,0,0,0.75)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16, overflowY: "auto" }}
+          onClick={e => { if (e.target === e.currentTarget) { setDiaDetalle(null); setDiaPagos([]); } }}>
+          <div style={{ background: B.navyMid, borderRadius: 16, padding: isMobile ? 20 : 28, width: "100%", maxWidth: 720, maxHeight: "90vh", overflowY: "auto", border: `1px solid ${B.navyLight}` }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 20 }}>
+              <div>
+                <div style={{ fontSize: 20, fontWeight: 900, fontFamily: "'Barlow Condensed', sans-serif" }}>
+                  💧 Pagos del día
+                </div>
+                <div style={{ fontSize: 13, color: "rgba(255,255,255,0.5)", marginTop: 4 }}>
+                  {new Date(diaDetalle + "T12:00:00").toLocaleDateString("es-CO", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}
+                </div>
+              </div>
+              <button onClick={() => { setDiaDetalle(null); setDiaPagos([]); }}
+                style={{ background: "none", border: `1px solid ${B.navyLight}`, borderRadius: 8, color: "rgba(255,255,255,0.5)", padding: "6px 14px", fontSize: 12, cursor: "pointer" }}>
+                ✕ Cerrar
+              </button>
+            </div>
+
+            {loadingDia ? (
+              <div style={{ padding: 40, textAlign: "center", color: "rgba(255,255,255,0.4)" }}>Cargando...</div>
+            ) : diaPagos.length === 0 ? (
+              <div style={{ padding: 40, textAlign: "center", color: "rgba(255,255,255,0.4)", fontSize: 13 }}>Sin pagos registrados para este día.</div>
+            ) : (
+              <>
+                {/* Summary */}
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 8, marginBottom: 16 }}>
+                  {[
+                    { label: "Pasadías", color: B.sky,      filter: x => x.tipo === "pasadia" },
+                    { label: "Grupos",   color: "#34d399",  filter: x => x.tipo === "grupo" },
+                    { label: "A&B",      color: B.sand,     filter: x => x.tipo === "ayb" },
+                    { label: "Llegadas", color: "#f97316",  filter: x => x.tipo === "llegada" },
+                  ].map(k => {
+                    const items = diaPagos.filter(k.filter);
+                    if (items.length === 0) return null;
+                    return (
+                      <div key={k.label} style={{ background: B.navy, borderRadius: 8, padding: "10px 14px", borderLeft: `3px solid ${k.color}` }}>
+                        <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", textTransform: "uppercase" }}>{k.label}</div>
+                        <div style={{ fontSize: 16, fontWeight: 800, color: k.color, fontFamily: "'Barlow Condensed', sans-serif" }}>{COP(items.reduce((s, x) => s + x.monto, 0))}</div>
+                        <div style={{ fontSize: 10, color: "rgba(255,255,255,0.35)" }}>{items.length} {items.length === 1 ? "pago" : "pagos"}</div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Lista */}
+                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                  {diaPagos.map((p, i) => {
+                    const tipoColor = { pasadia: B.sky, grupo: "#34d399", ayb: B.sand, llegada: "#f97316" }[p.tipo] || "#fff";
+                    const tipoLabel = { pasadia: "Pasadía", grupo: "Grupo", ayb: "A&B", llegada: "Llegada" }[p.tipo] || p.tipo;
+                    const canOpen = p.reservaId && (p.tipo === "pasadia" || p.tipo === "grupo");
+                    const openReserva = () => {
+                      if (!canOpen) return;
+                      window.dispatchEvent(new CustomEvent("atolon-navigate", { detail: { modulo: "reservas", reservaId: p.reservaId } }));
+                    };
+                    return (
+                      <div key={p.id + "-" + i} onClick={openReserva}
+                        style={{ background: B.navy, borderRadius: 8, padding: "10px 14px", borderLeft: `3px solid ${tipoColor}`,
+                          display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10,
+                          cursor: canOpen ? "pointer" : "default", transition: "background 0.15s" }}
+                        onMouseEnter={e => { if (canOpen) e.currentTarget.style.background = B.navyLight; }}
+                        onMouseLeave={e => { if (canOpen) e.currentTarget.style.background = B.navy; }}>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: 13, fontWeight: 700, color: B.white }}>{p.nombre}</div>
+                          <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginTop: 2, display: "flex", gap: 10, flexWrap: "wrap" }}>
+                            <span style={{ color: tipoColor, fontWeight: 700 }}>{tipoLabel}</span>
+                            <span>{p.concepto}</span>
+                            {p.aliado && <span style={{ color: B.sky }}>B2B</span>}
+                          </div>
+                        </div>
+                        <div style={{ textAlign: "right" }}>
+                          <div style={{ fontSize: 15, fontWeight: 800, color: tipoColor, fontFamily: "'Barlow Condensed', sans-serif" }}>{COP(p.monto)}</div>
+                          <div style={{ fontSize: 10, color: "rgba(255,255,255,0.35)", marginTop: 2 }}>{p.metodo}</div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Total */}
+                <div style={{ marginTop: 16, padding: "12px 16px", background: B.navy, borderRadius: 10, borderTop: `2px solid ${B.sky}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: "rgba(255,255,255,0.5)", textTransform: "uppercase" }}>Total del día</span>
+                  <span style={{ fontSize: 22, fontWeight: 900, color: B.sky, fontFamily: "'Barlow Condensed', sans-serif" }}>{COP(diaPagos.reduce((s, p) => s + p.monto, 0))}</span>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

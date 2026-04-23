@@ -51,7 +51,56 @@ export default function Financiero() {
   const [reservas,      setReservas]      = useState([]);
   const [cierres,       setCierres]       = useState([]);
   const [reqsList,      setReqsList]      = useState([]);
+  const [eventosData,   setEventosData]   = useState([]);
+  const [b2bReservas,   setB2bReservas]   = useState([]);
+  const [conveniosData, setConveniosData] = useState([]);
+  const [cxcRows,       setCxcRows]       = useState([]);
+  const [diaDetalle,    setDiaDetalle]    = useState(null);
+  const [diaPagos,      setDiaPagos]      = useState([]);
+  const [loadingDia,    setLoadingDia]    = useState(false);
   const [loading,       setLoading]       = useState(true);
+
+  const verDia = async (fecha) => {
+    if (!supabase) return;
+    setDiaDetalle(fecha);
+    setLoadingDia(true);
+    const [pagosFecha, pagosCreated, cierresAyb, llegadas] = await Promise.all([
+      supabase.from("reservas")
+        .select("id, nombre, contacto, tipo, total, abono, forma_pago, fecha_pago, created_at, grupo_id, aliado_id")
+        .eq("fecha_pago", fecha).gt("abono", 0).neq("estado", "cancelado"),
+      supabase.from("reservas")
+        .select("id, nombre, contacto, tipo, total, abono, forma_pago, fecha_pago, created_at, grupo_id, aliado_id")
+        .is("fecha_pago", null)
+        .gte("created_at", fecha + "T00:00:00-05:00")
+        .lte("created_at", fecha + "T23:59:59-05:00")
+        .gt("abono", 0).neq("estado", "cancelado"),
+      supabase.from("cierres_caja")
+        .select("id, cajero_nombre, total_ventas, total_propinas, metodos, fecha")
+        .eq("fecha", fecha).eq("area", "ayb"),
+      supabase.from("muelle_llegadas")
+        .select("id, embarcacion_nombre, pax_total, total_cobrado, metodo_pago, tipo, fecha")
+        .eq("fecha", fecha).gt("total_cobrado", 0),
+    ]);
+
+    const items = [];
+    [...(pagosFecha.data || []), ...(pagosCreated.data || [])].forEach(r => {
+      items.push({
+        tipo: r.grupo_id ? "grupo" : "pasadia",
+        id: r.id, nombre: r.nombre || r.contacto || "—",
+        concepto: r.tipo || "Reserva", monto: r.abono || 0,
+        metodo: r.forma_pago || "—", aliado: !!r.aliado_id, reservaId: r.id,
+      });
+    });
+    (cierresAyb.data || []).forEach(c => {
+      items.push({ tipo: "ayb", id: c.id, nombre: c.cajero_nombre || "A&B", concepto: "Cierre de caja A&B", monto: c.total_ventas || 0, metodo: "Multiple" });
+    });
+    (llegadas.data || []).forEach(l => {
+      items.push({ tipo: "llegada", id: l.id, nombre: l.embarcacion_nombre || "Embarcación", concepto: l.tipo === "after_island" ? "After Island" : l.tipo, monto: l.total_cobrado || 0, metodo: l.metodo_pago || "—" });
+    });
+
+    setDiaPagos(items.sort((a, b) => b.monto - a.monto));
+    setLoadingDia(false);
+  };
   const [tab,           setTab]           = useState("ingresos");
   const [granularity,   setGranularity]   = useState("mes"); // "dia" | "semana" | "mes"
 
@@ -80,9 +129,10 @@ export default function Financiero() {
 
     Promise.all([
       supabase.from("reservas")
-        .select("fecha, total, tipo, canal, forma_pago, pax, estado")
+        .select("fecha, created_at, total, tipo, canal, forma_pago, pax, estado, grupo_id")
         .gte("fecha", desdeStr)
-        .eq("estado", "confirmado"),
+        .neq("estado", "cancelado")
+        .is("grupo_id", null),       // solo pasadías directas — grupos/eventos vienen de la tabla eventos
       supabase.from("cierres_caja")
         .select("fecha, total_ventas, total_general, area, metodos")
         .gte("fecha", desdeStr),
@@ -90,12 +140,48 @@ export default function Financiero() {
         .select("fecha, total, categoria, area, estado, descripcion")
         .gte("fecha", desdeStr)
         .not("estado", "in", '("rechazado","cancelado")'),
-    ]).then(([resR, cierresR, reqsR]) => {
-      setReservas(resR.data || []);
+      supabase.from("eventos")
+        .select("id, fecha, nombre, tipo, valor, pax, pasadias_org, servicios_contratados, categoria, stage, vendedor, contacto, pagos")
+        .gte("fecha", desdeStr)
+        .not("stage", "in", '("Perdido","Cancelado")')
+        .in("categoria", ["grupo", "evento"]),
+      supabase.from("muelle_llegadas")
+        .select("id, fecha, embarcacion_nombre, pax_total, total_cobrado, metodo_pago, tipo")
+        .gte("fecha", desdeStr)
+        .gt("total_cobrado", 0),
+      // B2B reservas para calcular comisiones
+      supabase.from("reservas")
+        .select("fecha, total, tipo, aliado_id, pax")
+        .gte("fecha", desdeStr)
+        .neq("estado", "cancelado")
+        .not("aliado_id", "is", null)
+        .is("grupo_id", null),
+      supabase.from("b2b_convenios")
+        .select("aliado_id, tipo_pasadia, tarifa_publica, tarifa_neta")
+        .eq("activo", true),
+    ]).then(([resR, cierresR, reqsR, evR, llegR, b2bResR, convR]) => {
+      // Merge llegadas as virtual reserva entries for P&L
+      const llegadasComoReservas = (llegR.data || []).map(l => ({
+        fecha: l.fecha,
+        total: l.total_cobrado,
+        tipo: l.tipo === "after_island" ? "After Island" : "Walk-in",
+        canal: "Walk-in",
+        forma_pago: l.metodo_pago === "efectivo" ? "Efectivo" : l.metodo_pago === "transferencia" ? "Transferencia" : l.metodo_pago === "datafono" ? "Datáfono" : l.metodo_pago || "Efectivo",
+        pax: l.pax_total,
+        estado: "check_in",
+        grupo_id: null,
+        _esLlegada: true,
+        _embarcacion: l.embarcacion_nombre,
+      }));
+      setReservas([...(resR.data || []), ...llegadasComoReservas]);
       setCierres(cierresR.data || []);
       setReqsList(reqsR.data || []);
+      setEventosData(evR.data || []);
+      setB2bReservas(b2bResR.data || []);
+      setConveniosData(convR.data || []);
       setLoading(false);
     });
+
   }, []);
 
   // ── Period range ───────────────────────────────────────────────────────────
@@ -155,10 +241,21 @@ export default function Financiero() {
     return reservas.filter(x => inRange(x.fecha, r));
   };
 
+  const normTipo = (t) => {
+    if (!t) return "Otros";
+    const s = t.trim().toLowerCase();
+    if (s === "vip pass" || s === "vip-pass") return "VIP Pass";
+    if (s === "exclusive pass" || s === "exclusive-pass") return "Exclusive Pass";
+    if (s === "atolon experience" || s === "atolon-experience") return "Atolon Experience";
+    if (s === "after island" || s === "after-island") return "After Island";
+    // Capitalize first letter of each word as fallback
+    return t.trim().replace(/\b\w/g, c => c.toUpperCase());
+  };
+
   const ingresosPorTipo = (key) => {
     const groups = {};
     resDePeriodo(key).forEach(r => {
-      const cat = r.tipo || "Otros";
+      const cat = normTipo(r.tipo);
       groups[cat] = (groups[cat] || 0) + (r.total || 0);
     });
     return Object.entries(groups).map(([cat, val]) => ({ cat, val })).sort((a, b) => b.val - a.val);
@@ -260,11 +357,65 @@ export default function Financiero() {
     return Object.entries(groups).map(([cat, val]) => ({ cat, val })).sort((a, b) => b.val - a.val);
   };
 
+  // ── Eventos / Grupos helpers ───────────────────────────────────────────────
+  const montoEvento = (e) => {
+    if (e.valor > 0) return e.valor;
+    return (e.pasadias_org || [])
+      .filter(p => p.tipo !== "Impuesto Muelle")
+      .reduce((ss, p) => ss + (Number(p.personas) || 0) * (Number(p.precio) || 0), 0);
+  };
+  const eventosDePeriodo = (key) => { const r = periodoRange(key); return eventosData.filter(x => inRange(x.fecha, r)); };
+  const eventosConfirmados = (key) => eventosDePeriodo(key).filter(e => ["Confirmado","Realizado"].includes(e.stage));
+  const totalGrupos = (key) => eventosConfirmados(key).filter(e => e.categoria === "grupo").reduce((s, e) => s + montoEvento(e), 0);
+  const totalEventos = (key) => eventosConfirmados(key).filter(e => e.categoria === "evento").reduce((s, e) => s + montoEvento(e), 0);
+
+  // totalCotizacion para el tab Eventos & Grupos (incluye servicios_contratados)
+  const totalCotizacion = (e) => {
+    const base     = e.valor > 0 ? e.valor : montoEvento(e);
+    const servicios = (e.servicios_contratados || []).reduce((s, x) => s + (Number(x.valor) || 0), 0);
+    return base + servicios;
+  };
+
+  // ── Comisiones B2B ──────────────────────────────────────────────────────────
+  // Build convenio lookup: { aliado_id: { tipo_lower: { publica, neta } } }
+  const convMap = {};
+  conveniosData.forEach(c => {
+    if (!convMap[c.aliado_id]) convMap[c.aliado_id] = {};
+    convMap[c.aliado_id][c.tipo_pasadia.toLowerCase()] = { publica: c.tarifa_publica, neta: c.tarifa_neta };
+  });
+
+  const comisionesDePeriodo = (key) => {
+    const r = periodoRange(key);
+    // Comisiones de reservas B2B individuales
+    let total = b2bReservas.filter(x => inRange(x.fecha, r)).reduce((s, res) => {
+      const conv = convMap[res.aliado_id]?.[res.tipo?.toLowerCase()];
+      if (!conv) return s;
+      return s + (conv.publica - conv.neta) * (res.pax || 0);
+    }, 0);
+    // Comisiones de grupos B2B (desde eventosData)
+    eventosData.filter(e => e.aliado_id && e.categoria === "grupo" && ["Confirmado","Realizado"].includes(e.stage) && inRange(e.fecha, r))
+      .forEach(g => {
+        (g.pasadias_org || []).filter(p => p.tipo !== "Impuesto Muelle" && p.tipo !== "STAFF").forEach(p => {
+          const conv = convMap[g.aliado_id]?.[p.tipo?.toLowerCase()];
+          if (!conv) return;
+          const adultos = Number(p.adultos) || 0;
+          const ninos   = Number(p.ninos)   || 0;
+          const personas = Number(p.personas) || 0;
+          if (adultos > 0 || ninos > 0) {
+            total += (conv.publica - conv.neta) * adultos;
+          } else {
+            total += (conv.publica - conv.neta) * personas;
+          }
+        });
+      });
+    return total;
+  };
+
   // ── P&L helpers ───────────────────────────────────────────────────────────
   const reqsDePeriodo = (key) => { const r = periodoRange(key); return reqsList.filter(x => inRange(x.fecha, r)); };
 
   const totalGastos = (key) =>
-    reqsDePeriodo(key).reduce((s, r) => s + (r.total || 0), 0);
+    reqsDePeriodo(key).reduce((s, r) => s + (r.total || 0), 0) + comisionesDePeriodo(key);
 
   const gastosPorCategoria = (key) => {
     const groups = {};
@@ -347,16 +498,20 @@ export default function Financiero() {
 
       {/* ── P & L Tab ── */}
       {tab === "pl" && (() => {
-        const ingPasadias = totalA;                               // reservas confirmadas
-        const ingCierres  = totalCierres(periodoActual);          // cierres_caja (A&B, etc.)
-        const ing   = ingPasadias + ingCierres;
+        const ingPasadias = totalA;                                        // reservas sin grupo_id
+        const ingGrupos   = totalGrupos(periodoActual);                    // eventos categoria=grupo
+        const ingEventos  = totalEventos(periodoActual);                   // eventos categoria=evento
+        const ingCierres  = totalCierres(periodoActual);                   // cierres_caja (A&B, etc.)
+        const ing   = ingPasadias + ingGrupos + ingEventos + ingCierres;
         const gas   = totalGastos(periodoActual);
         const util  = ing - gas;
         const margen = ing > 0 ? (util / ing) * 100 : 0;
         const cats  = gastosPorCategoria(periodoActual);
         const ingPasadiasC = totalC;
+        const ingGruposC   = totalGrupos(periodoComparar || "");
+        const ingEventosC  = totalEventos(periodoComparar || "");
         const ingCierresC  = totalCierres(periodoComparar || "");
-        const ingC  = ingPasadiasC + ingCierresC;
+        const ingC  = ingPasadiasC + ingGruposC + ingEventosC + ingCierresC;
         const gasC  = totalGastos(periodoComparar || "");
         const utilC = ingC - gasC;
 
@@ -412,6 +567,8 @@ export default function Financiero() {
               {/* Ingresos */}
               <Row label="INGRESOS" val={ing} bold color={B.success} delta={ingC ? (ing - ingC) / (ingC || 1) : null} />
               {ingPasadias > 0 && <Row label="Pasadías" val={ingPasadias} sub />}
+              {ingGrupos   > 0 && <Row label="Grupos"   val={ingGrupos}   sub />}
+              {ingEventos  > 0 && <Row label="Eventos"  val={ingEventos}  sub />}
               {(() => {
                 const AREA_LABEL = { ayb: "Alimentos y Bebidas", pasadias: "Pasadías (Caja)", after_island: "After Island", otros: "Otros" };
                 const byArea = {};
@@ -426,11 +583,12 @@ export default function Financiero() {
                 ));
               })()}
 
-              {/* Gastos */}
+              {/* Costos y Gastos */}
               <div style={{ height: 1, background: B.navyLight, margin: "4px 0" }} />
-              <Row label="GASTOS" val={gas} bold color={B.danger} delta={gasC ? (gas - gasC) / (gasC || 1) : null} />
-              {cats.length === 0
-                ? <div style={{ padding: "8px 20px 8px 36px", fontSize: 12, color: "rgba(255,255,255,0.3)" }}>Sin requisiciones en este mes</div>
+              <Row label="COSTOS Y GASTOS" val={gas} bold color={B.danger} delta={gasC ? (gas - gasC) / (gasC || 1) : null} />
+              {(() => { const com = comisionesDePeriodo(periodoActual); return com > 0 ? <Row label="Comisiones B2B" val={com} sub /> : null; })()}
+              {cats.length === 0 && comisionesDePeriodo(periodoActual) === 0
+                ? <div style={{ padding: "8px 20px 8px 36px", fontSize: 12, color: "rgba(255,255,255,0.3)" }}>Sin gastos en este período</div>
                 : cats.map(c => <Row key={c.cat} label={c.cat} val={c.val} sub />)
               }
 
@@ -750,10 +908,19 @@ export default function Financiero() {
         const days = Array.from({ length: daysInMonth }, (_, i) => {
           const d = String(i + 1).padStart(2, "0");
           const fecha = `${y}-${String(m).padStart(2, "0")}-${d}`;
-          const resTotal   = reservas.filter(r => r.fecha === fecha).reduce((s, r) => s + (r.total || 0), 0);
+          const resTotal   = reservas.filter(r => {
+            const fechaPago = r.created_at
+              ? new Date(r.created_at).toLocaleDateString("en-CA", { timeZone: "America/Bogota" })
+              : r.fecha;
+            return fechaPago === fecha;
+          }).reduce((s, r) => s + (r.total || 0), 0);
           const cierreTotal = cierres.filter(c => c.fecha === fecha).reduce((s, c) => s + (c.total_ventas || c.total_general || 0), 0);
-          const total = resTotal + cierreTotal;
-          return { fecha, d: i + 1, resTotal, cierreTotal, total };
+          // Pagos de eventos/grupos (array pagos[] con {fecha, monto})
+          const eventosTotal = eventosData.reduce((s, e) => {
+            return s + (e.pagos || []).filter(p => p.fecha === fecha).reduce((ss, p) => ss + (Number(p.monto) || 0), 0);
+          }, 0);
+          const total = resTotal + cierreTotal + eventosTotal;
+          return { fecha, d: i + 1, resTotal, cierreTotal, eventosTotal, total };
         });
 
         const maxDay = Math.max(...days.map(d => d.total), 1);
@@ -820,15 +987,20 @@ export default function Financiero() {
               {days.filter(d => d.total > 0).map((day, i, arr) => {
                 const pct = totalMes > 0 ? (day.total / totalMes) * 100 : 0;
                 return (
-                  <div key={day.fecha} style={{
-                    padding: "11px 20px",
-                    borderBottom: i < arr.length - 1 ? `1px solid ${B.navyLight}` : "none",
-                  }}>
+                  <div key={day.fecha} onClick={() => verDia(day.fecha)}
+                    onMouseEnter={e => e.currentTarget.style.background = "rgba(255,255,255,0.03)"}
+                    onMouseLeave={e => e.currentTarget.style.background = "transparent"}
+                    style={{
+                      padding: "11px 20px",
+                      borderBottom: i < arr.length - 1 ? `1px solid ${B.navyLight}` : "none",
+                      cursor: "pointer", transition: "background 0.15s",
+                    }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 5 }}>
                       <div>
                         <span style={{ fontSize: 13, fontWeight: 600 }}>{fmtDia(day.fecha)}</span>
                         <div style={{ display: "flex", gap: 12, marginTop: 3 }}>
                           {day.resTotal > 0   && <span style={{ fontSize: 11, color: B.success }}>Pasadías {COP(day.resTotal)}</span>}
+                          {day.eventosTotal > 0 && <span style={{ fontSize: 11, color: "#34d399" }}>Grupos/Eventos {COP(day.eventosTotal)}</span>}
                           {day.cierreTotal > 0 && <span style={{ fontSize: 11, color: "#f4a261" }}>A&B {COP(day.cierreTotal)}</span>}
                         </div>
                       </div>
@@ -852,6 +1024,315 @@ export default function Financiero() {
           </div>
         );
       })()}
+      {/* ── CXC Tab — moved to its own module ── */}
+      {false && (() => {
+        const totalCxc = cxcRows.reduce((s, r) => s + (r.saldo || 0), 0);
+        // Group by aliado vs directo
+        const b2b = cxcRows.filter(r => r.aliado_id);
+        const directo = cxcRows.filter(r => !r.aliado_id);
+        // Compute aging
+        const aging = (fechaStr) => {
+          if (!fechaStr) return 0;
+          const f = new Date(fechaStr + "T12:00:00");
+          return Math.floor((nowCO - f) / (1000 * 60 * 60 * 24));
+        };
+        const agingColor = (d) => d <= 7 ? B.success : d <= 30 ? B.warning : B.danger;
+
+        const renderRow = (r) => {
+          const dias = aging(r.fecha);
+          return (
+            <tr key={r.id} style={{ borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
+              <td style={{ padding: "10px 12px", fontSize: 12, color: B.sky, fontFamily: "monospace" }}>{r.id}</td>
+              <td style={{ padding: "10px 12px", fontSize: 13 }}>
+                <div style={{ fontWeight: 700 }}>{r.nombre || "—"}</div>
+                {r.contacto && <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)" }}>{r.contacto}</div>}
+              </td>
+              <td style={{ padding: "10px 12px", fontSize: 12, color: "rgba(255,255,255,0.6)" }}>{r.fecha}</td>
+              <td style={{ padding: "10px 12px", fontSize: 12 }}>
+                <span style={{ background: B.navyLight, borderRadius: 6, padding: "2px 8px", color: B.sand }}>{r.tipo}</span>
+              </td>
+              <td style={{ padding: "10px 12px", textAlign: "right", fontSize: 12, color: "rgba(255,255,255,0.6)" }}>{COP(r.total)}</td>
+              <td style={{ padding: "10px 12px", textAlign: "right", fontSize: 12, color: B.success }}>{COP(r.abono)}</td>
+              <td style={{ padding: "10px 12px", textAlign: "right", fontSize: 13, fontWeight: 800, color: B.warning }}>{COP(r.saldo)}</td>
+              <td style={{ padding: "10px 12px", textAlign: "center", fontSize: 11 }}>
+                <span style={{ background: agingColor(dias) + "22", color: agingColor(dias), borderRadius: 6, padding: "2px 8px", fontWeight: 700 }}>{dias}d</span>
+              </td>
+              <td style={{ padding: "10px 12px", fontSize: 11, color: "rgba(255,255,255,0.4)" }}>{r.forma_pago || "—"}</td>
+            </tr>
+          );
+        };
+
+        const tableHead = (
+          <thead>
+            <tr style={{ borderBottom: `1px solid ${B.navyLight}`, background: B.navy }}>
+              {["ID", "Cliente", "Fecha", "Tipo", "Total", "Abono", "Saldo", "Días", "Forma"].map(h => (
+                <th key={h} style={{ padding: "10px 12px", fontSize: 10, fontWeight: 700, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.05em", textAlign: ["Total","Abono","Saldo"].includes(h) ? "right" : ["Días"].includes(h) ? "center" : "left", whiteSpace: "nowrap" }}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+        );
+
+        return (
+          <div>
+            {/* Resumen KPIs */}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 12, marginBottom: 20 }}>
+              <div style={{ background: B.navyMid, borderRadius: 12, padding: "16px 20px", borderLeft: `4px solid ${B.warning}` }}>
+                <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.06em" }}>Total CXC</div>
+                <div style={{ fontSize: 26, fontWeight: 900, color: B.warning, fontFamily: "'Barlow Condensed', sans-serif", marginTop: 4 }}>{COP(totalCxc)}</div>
+                <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)" }}>{cxcRows.length} {cxcRows.length === 1 ? "transacción" : "transacciones"}</div>
+              </div>
+              <div style={{ background: B.navyMid, borderRadius: 12, padding: "16px 20px", borderLeft: `4px solid ${B.sky}` }}>
+                <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.06em" }}>B2B / Agencias</div>
+                <div style={{ fontSize: 22, fontWeight: 900, color: B.sky, fontFamily: "'Barlow Condensed', sans-serif", marginTop: 4 }}>{COP(b2b.reduce((s, r) => s + (r.saldo || 0), 0))}</div>
+                <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)" }}>{b2b.length} reservas</div>
+              </div>
+              <div style={{ background: B.navyMid, borderRadius: 12, padding: "16px 20px", borderLeft: `4px solid ${B.sand}` }}>
+                <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.06em" }}>Directo / Walk-in</div>
+                <div style={{ fontSize: 22, fontWeight: 900, color: B.sand, fontFamily: "'Barlow Condensed', sans-serif", marginTop: 4 }}>{COP(directo.reduce((s, r) => s + (r.saldo || 0), 0))}</div>
+                <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)" }}>{directo.length} reservas</div>
+              </div>
+            </div>
+
+            {/* Tabla CXC */}
+            {cxcRows.length === 0 ? (
+              <div style={{ background: B.navyMid, borderRadius: 12, padding: 40, textAlign: "center" }}>
+                <div style={{ fontSize: 36, marginBottom: 12 }}>✅</div>
+                <div style={{ fontSize: 15, fontWeight: 700, color: B.white, marginBottom: 4 }}>Sin saldos pendientes</div>
+                <div style={{ fontSize: 13, color: "rgba(255,255,255,0.4)" }}>Todas las reservas están al día.</div>
+              </div>
+            ) : (
+              <div style={{ background: B.navyMid, borderRadius: 12, overflow: "hidden" }}>
+                <div style={{ overflowX: "auto" }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                    {tableHead}
+                    <tbody>
+                      {cxcRows.map(renderRow)}
+                    </tbody>
+                    <tfoot>
+                      <tr style={{ borderTop: `2px solid ${B.warning}`, background: B.navy }}>
+                        <td colSpan={6} style={{ padding: "12px 12px", fontSize: 12, fontWeight: 700, color: "rgba(255,255,255,0.5)", textTransform: "uppercase" }}>Total CXC</td>
+                        <td style={{ padding: "12px 12px", textAlign: "right", fontSize: 16, fontWeight: 900, color: B.warning, fontFamily: "'Barlow Condensed', sans-serif" }}>{COP(totalCxc)}</td>
+                        <td colSpan={2} />
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            <div style={{ marginTop: 12, fontSize: 11, color: "rgba(255,255,255,0.3)", lineHeight: 1.6 }}>
+              * Días = días desde la fecha de la reserva. Verde ≤7d · Amarillo ≤30d · Rojo &gt;30d<br />
+              * Excluye reservas canceladas. Incluye todas las reservas con saldo pendiente sin importar el período.
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* tab eventos removed — now in Resultados */}
+      {false && (() => {
+        const mes = periodoActual.slice(0, 7);
+        const [y, m] = mes.split("-").map(Number);
+        const fmtFechaCorta = (d) => {
+          if (!d) return "—";
+          const dt = new Date(d + "T12:00:00");
+          return dt.toLocaleDateString("es-CO", { weekday: "short", day: "numeric", month: "short" });
+        };
+
+        const lista = eventosData
+          .filter(e => e.fecha && e.fecha.slice(0, 7) === mes)
+          .sort((a, b) => a.fecha.localeCompare(b.fecha));
+
+        const pipelineTotal = lista.reduce((s, e) => s + totalCotizacion(e), 0);
+
+        const STAGE_COLOR = {
+          Consulta:   "rgba(255,255,255,0.3)",
+          Cotizado:   "#f59e0b",
+          Confirmado: "#22c55e",
+          Realizado:  "#38bdf8",
+          Perdido:    "#ef4444",
+          Cancelado:  "#ef4444",
+        };
+
+        const TIPO_ICON = {
+          grupo:  "👥",
+          evento: "🎉",
+        };
+
+        const mesLabel = new Date(y, m - 1, 1).toLocaleDateString("es-CO", { month: "long", year: "numeric" });
+
+        return (
+          <div>
+            {/* Header totalizador */}
+            <div style={{ background: B.navyMid, borderRadius: 12, padding: "16px 20px", marginBottom: 20, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <span style={{ fontSize: 22 }}>📅</span>
+                <div>
+                  <div style={{ fontSize: 15, fontWeight: 700 }}>Eventos y Grupos — {mesLabel}</div>
+                  <div style={{ fontSize: 12, color: "rgba(255,255,255,0.35)", marginTop: 2 }}>{lista.length} eventos en el período</div>
+                </div>
+              </div>
+              <div style={{ fontSize: 26, fontWeight: 900, color: B.sand, fontFamily: "'Barlow Condensed', sans-serif" }}>
+                {COP(pipelineTotal)}
+              </div>
+            </div>
+
+            {lista.length === 0 ? (
+              <div style={{ textAlign: "center", padding: "48px 0", color: "rgba(255,255,255,0.25)", fontSize: 13 }}>
+                Sin eventos ni grupos en {mesLabel}
+              </div>
+            ) : (
+              <div style={{ background: B.navyMid, borderRadius: 12, overflow: "hidden" }}>
+                {/* Encabezados */}
+                <div style={{ display: "grid", gridTemplateColumns: "100px 1fr 130px 60px 120px 150px", gap: 12, padding: "10px 20px", borderBottom: `1px solid ${B.navyLight}44`, fontSize: 11, color: B.sand, textTransform: "uppercase", letterSpacing: "0.08em" }}>
+                  <span>Fecha</span>
+                  <span>Nombre</span>
+                  <span>Tipo</span>
+                  <span>Pax</span>
+                  <span>Stage</span>
+                  <span style={{ textAlign: "right" }}>Monto Cotizado</span>
+                </div>
+
+                {lista.map((e, i) => {
+                  const monto = totalCotizacion(e);
+                  const stageColor = STAGE_COLOR[e.stage] || "rgba(255,255,255,0.3)";
+                  const pax = e.categoria === "grupo"
+                    ? (e.pasadias_org || []).filter(p => p.tipo !== "Impuesto Muelle" && p.tipo !== "STAFF").reduce((s, p) => s + (Number(p.personas) || 0), 0) || e.pax || 0
+                    : e.pax || 0;
+
+                  return (
+                    <div key={e.id || i} style={{ display: "grid", gridTemplateColumns: "100px 1fr 130px 60px 120px 150px", gap: 12, padding: "14px 20px", borderBottom: i < lista.length - 1 ? `1px solid ${B.navyLight}22` : "none", alignItems: "center" }}>
+                      {/* Fecha */}
+                      <div style={{ fontSize: 12, color: "rgba(255,255,255,0.5)" }}>{fmtFechaCorta(e.fecha)}</div>
+
+                      {/* Nombre + contacto + vendedor */}
+                      <div>
+                        <div style={{ fontWeight: 700, fontSize: 14 }}>{e.nombre || "—"}</div>
+                        {e.contacto && <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", marginTop: 2 }}>{e.contacto}</div>}
+                        {e.vendedor && <div style={{ fontSize: 11, color: "rgba(255,255,255,0.25)", marginTop: 1 }}>👤 {e.vendedor}</div>}
+                      </div>
+
+                      {/* Tipo */}
+                      <div style={{ fontSize: 12, color: "rgba(255,255,255,0.6)", display: "flex", alignItems: "center", gap: 6 }}>
+                        <span>{TIPO_ICON[e.categoria] || "📋"}</span>
+                        <span>{e.tipo || (e.categoria === "grupo" ? "Grupo" : "Evento")}</span>
+                      </div>
+
+                      {/* Pax */}
+                      <div style={{ fontSize: 14, fontWeight: 700, color: pax > 0 ? B.white : "rgba(255,255,255,0.2)" }}>
+                        {pax > 0 ? pax : "—"}
+                      </div>
+
+                      {/* Stage */}
+                      <div>
+                        <span style={{ fontSize: 11, padding: "3px 10px", borderRadius: 20, border: `1px solid ${stageColor}55`, color: stageColor, fontWeight: 700 }}>
+                          {e.stage}
+                        </span>
+                      </div>
+
+                      {/* Monto */}
+                      <div style={{ textAlign: "right", fontSize: 16, fontWeight: 800, color: monto > 0 ? B.sand : "rgba(255,255,255,0.2)", fontFamily: "'Barlow Condensed', sans-serif" }}>
+                        {monto > 0 ? COP(monto) : "—"}
+                      </div>
+                    </div>
+                  );
+                })}
+
+                {/* Footer total */}
+                <div style={{ display: "grid", gridTemplateColumns: "100px 1fr 130px 60px 120px 150px", gap: 12, padding: "14px 20px", background: B.navy, borderTop: `1px solid ${B.navyLight}44` }}>
+                  <div style={{ gridColumn: "span 5", fontSize: 12, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.08em", alignSelf: "center" }}>Total Pipeline Eventos y Grupos</div>
+                  <div style={{ textAlign: "right", fontSize: 20, fontWeight: 900, color: B.sand, fontFamily: "'Barlow Condensed', sans-serif" }}>{COP(pipelineTotal)}</div>
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      })()}
+
+      {/* ── Modal: Detalle de pagos del día ── */}
+      {diaDetalle && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 1200, background: "rgba(0,0,0,0.75)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16, overflowY: "auto" }}
+          onClick={e => { if (e.target === e.currentTarget) { setDiaDetalle(null); setDiaPagos([]); } }}>
+          <div style={{ background: B.navyMid, borderRadius: 16, padding: 24, width: "100%", maxWidth: 720, maxHeight: "90vh", overflowY: "auto", border: `1px solid ${B.navyLight}` }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 20 }}>
+              <div>
+                <div style={{ fontSize: 20, fontWeight: 900, fontFamily: "'Barlow Condensed', sans-serif" }}>💧 Pagos del día</div>
+                <div style={{ fontSize: 13, color: "rgba(255,255,255,0.5)", marginTop: 4 }}>
+                  {new Date(diaDetalle + "T12:00:00").toLocaleDateString("es-CO", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}
+                </div>
+              </div>
+              <button onClick={() => { setDiaDetalle(null); setDiaPagos([]); }}
+                style={{ background: "none", border: `1px solid ${B.navyLight}`, borderRadius: 8, color: "rgba(255,255,255,0.5)", padding: "6px 14px", fontSize: 12, cursor: "pointer" }}>
+                ✕ Cerrar
+              </button>
+            </div>
+
+            {loadingDia ? (
+              <div style={{ padding: 40, textAlign: "center", color: "rgba(255,255,255,0.4)" }}>Cargando...</div>
+            ) : diaPagos.length === 0 ? (
+              <div style={{ padding: 40, textAlign: "center", color: "rgba(255,255,255,0.4)", fontSize: 13 }}>Sin pagos registrados para este día.</div>
+            ) : (
+              <>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 8, marginBottom: 16 }}>
+                  {[
+                    { label: "Pasadías", color: B.sky,      filter: x => x.tipo === "pasadia" },
+                    { label: "Grupos",   color: "#34d399",  filter: x => x.tipo === "grupo" },
+                    { label: "A&B",      color: B.sand,     filter: x => x.tipo === "ayb" },
+                    { label: "Llegadas", color: "#f97316",  filter: x => x.tipo === "llegada" },
+                  ].map(k => {
+                    const items = diaPagos.filter(k.filter);
+                    if (items.length === 0) return null;
+                    return (
+                      <div key={k.label} style={{ background: B.navy, borderRadius: 8, padding: "10px 14px", borderLeft: `3px solid ${k.color}` }}>
+                        <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", textTransform: "uppercase" }}>{k.label}</div>
+                        <div style={{ fontSize: 16, fontWeight: 800, color: k.color, fontFamily: "'Barlow Condensed', sans-serif" }}>{COP(items.reduce((s, x) => s + x.monto, 0))}</div>
+                        <div style={{ fontSize: 10, color: "rgba(255,255,255,0.35)" }}>{items.length} {items.length === 1 ? "pago" : "pagos"}</div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                  {diaPagos.map((p, i) => {
+                    const tipoColor = { pasadia: B.sky, grupo: "#34d399", ayb: B.sand, llegada: "#f97316" }[p.tipo] || "#fff";
+                    const tipoLabel = { pasadia: "Pasadía", grupo: "Grupo", ayb: "A&B", llegada: "Llegada" }[p.tipo] || p.tipo;
+                    const canOpen = p.reservaId && (p.tipo === "pasadia" || p.tipo === "grupo");
+                    const openReserva = () => {
+                      if (!canOpen) return;
+                      window.dispatchEvent(new CustomEvent("atolon-navigate", { detail: { modulo: "reservas", reservaId: p.reservaId } }));
+                    };
+                    return (
+                      <div key={p.id + "-" + i} onClick={openReserva}
+                        style={{ background: B.navy, borderRadius: 8, padding: "10px 14px", borderLeft: `3px solid ${tipoColor}`,
+                          display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10,
+                          cursor: canOpen ? "pointer" : "default", transition: "background 0.15s" }}
+                        onMouseEnter={e => { if (canOpen) e.currentTarget.style.background = B.navyLight; }}
+                        onMouseLeave={e => { if (canOpen) e.currentTarget.style.background = B.navy; }}>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: 13, fontWeight: 700, color: B.white }}>{p.nombre}</div>
+                          <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginTop: 2, display: "flex", gap: 10, flexWrap: "wrap" }}>
+                            <span style={{ color: tipoColor, fontWeight: 700 }}>{tipoLabel}</span>
+                            <span>{p.concepto}</span>
+                            {p.aliado && <span style={{ color: B.sky }}>B2B</span>}
+                          </div>
+                        </div>
+                        <div style={{ textAlign: "right" }}>
+                          <div style={{ fontSize: 15, fontWeight: 800, color: tipoColor, fontFamily: "'Barlow Condensed', sans-serif" }}>{COP(p.monto)}</div>
+                          <div style={{ fontSize: 10, color: "rgba(255,255,255,0.35)", marginTop: 2 }}>{p.metodo}</div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <div style={{ marginTop: 16, padding: "12px 16px", background: B.navy, borderRadius: 10, borderTop: `2px solid ${B.sky}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: "rgba(255,255,255,0.5)", textTransform: "uppercase" }}>Total del día</span>
+                  <span style={{ fontSize: 22, fontWeight: 900, color: B.sky, fontFamily: "'Barlow Condensed', sans-serif" }}>{COP(diaPagos.reduce((s, p) => s + p.monto, 0))}</span>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

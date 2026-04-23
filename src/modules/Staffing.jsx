@@ -2,64 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { B, todayStr } from "../brand";
 import { supabase } from "../lib/supabase";
 import { useMobile } from "../lib/useMobile";
-
-// ── Pure staffing calculation ────────────────────────────────────────────────
-function calcStaff(totalPax, vipPax, excPax, ovrMap = {}) {
-  const pax = Math.max(totalPax, 20); // apertura mínima
-  // Con 0 reservas → staffing de apertura mínima con 1 de cada zona
-  const isApertura = totalPax === 0;
-
-  const raw = {
-    // Playa: 0 si no hay VIP reales (excepto apertura mínima)
-    mesPlaya:   isApertura ? 1 : vipPax === 0 ? 0 : (pax <= 80 ? Math.min(3, Math.ceil(vipPax / 20)) : 4),
-    // Pool: 0 si no hay Exclusive reales (excepto apertura mínima)
-    mesPool:    isApertura ? 1 : excPax === 0 ? 0 : (excPax <= 10 ? 1 : excPax <= 30 ? 2 : 3),
-    mesRest:    pax <= 80 ? 1 : 4,
-    runnersBeb: pax <= 60 ? 1 : pax <= 80 ? 2 : 3,
-    runnersCom: pax <= 20 ? 0 : pax <= 80 ? 1 : 2,
-    bussers:    pax <= 20 ? 0 : pax <= 60 ? 1 : 2,
-    bartenders: pax <= 60 ? 1 : 2,
-    supervisor: 1,
-    hostess:    pax <= 20 ? 0 : pax <= 80 ? 1 : 2,
-  };
-
-  // Apply manual overrides on top of calculated values
-  const applied = {};
-  Object.keys(raw).forEach(k => {
-    applied[k] = ovrMap[k] !== undefined ? ovrMap[k] : raw[k];
-  });
-
-  const hayMovimiento = pax <= 80 && totalPax > 0;
-
-  const valle = {
-    mesPlaya:   applied.mesPlaya,
-    mesPool:    applied.mesPool,
-    mesRest:    applied.mesRest,
-    runnersBeb: applied.runnersBeb,
-    runnersCom: 0,
-    bussers:    applied.bussers,
-    bartenders: applied.bartenders,
-    supervisor: applied.supervisor,
-    hostess:    applied.hostess,
-  };
-
-  const pico = {
-    mesPlaya:   hayMovimiento ? Math.max(0, applied.mesPlaya - 1) : applied.mesPlaya,
-    mesPool:    applied.mesPool,
-    mesRest:    hayMovimiento ? applied.mesRest + 1 : applied.mesRest,
-    runnersBeb: applied.runnersBeb,
-    runnersCom: applied.runnersCom,
-    bussers:    applied.bussers,
-    bartenders: applied.bartenders,
-    supervisor: applied.supervisor,
-    hostess:    applied.hostess,
-  };
-
-  const totalValle = Object.values(valle).reduce((s, v) => s + v, 0);
-  const totalPico  = Object.values(pico).reduce((s, v) => s + v, 0);
-
-  return { valle, pico, totalValle, totalPico, hayMovimiento, raw, applied };
-}
+import { calcStaff } from "./staffing/calc";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const ROLES = [

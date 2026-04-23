@@ -7,27 +7,29 @@ import { supabase } from "../lib/supabase";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const VENDEDORES = ["Valentina Ríos", "Camilo Herrera", "Natalia Ospina", "Juan Estrada"];
+const VENDEDORES = []; // No hardcoded vendors — derived from leads data
 
 const CANALES = ["Web", "WhatsApp", "Referido", "B2B", "Instagram", "Telefono"];
 
-const ETAPAS = ["Nuevo", "Contactado", "Cotizado", "Cerrado Ganado", "Perdido"];
+const ETAPAS = ["Nuevo", "Contactado", "Cotizado", "Cerrado Ganado", "Perdido", "Duplicado"];
 
 // ─── Vendor stats derived from leads ─────────────────────────────────────────
 
-function buildVendorStats(leads, list = VENDEDORES) {
-  return list.map(v => {
-    const vLeads = leads.filter(l => l.vendedor === v);
-    const cerrados = vLeads.filter(l => l.etapa === "Cerrado Ganado");
-    const revenue = cerrados.reduce((s, l) => s + l.valorEstimado, 0);
-    return {
-      vendedor: v,
-      leads: vLeads.length,
-      cerrados: cerrados.length,
-      conversion: vLeads.length ? Math.round((cerrados.length / vLeads.length) * 100) : 0,
-      revenue,
-    };
+function buildVendorStats(leads) {
+  // Derive vendors from actual leads — never show phantom vendors with 0 leads
+  const vendorMap = {};
+  leads.forEach(l => {
+    const v = l.vendedor || "Sin asignar";
+    if (!vendorMap[v]) vendorMap[v] = { vendedor: v, leads: 0, cerrados: 0, revenue: 0 };
+    vendorMap[v].leads++;
+    if (l.etapa === "Cerrado Ganado") {
+      vendorMap[v].cerrados++;
+      vendorMap[v].revenue += l.valorEstimado || 0;
+    }
   });
+  return Object.values(vendorMap)
+    .map(v => ({ ...v, conversion: v.leads ? Math.round((v.cerrados / v.leads) * 100) : 0 }))
+    .sort((a, b) => b.leads - a.leads);
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -38,6 +40,7 @@ const ETAPA_COLORS = {
   "Cotizado":       { bg: "#1E3566", accent: "#A78BFA" },
   "Cerrado Ganado": { bg: "#153322", accent: B.success },
   "Perdido":        { bg: "#2A1515", accent: B.danger },
+  "Duplicado":      { bg: "#2B2B2B", accent: "rgba(255,255,255,0.4)" },
 };
 
 const CANAL_BADGE = {
@@ -241,6 +244,9 @@ function VendorTable({ stats }) {
           </tr>
         </thead>
         <tbody>
+          {stats.length === 0 && (
+            <tr><td colSpan={5} style={{ padding: "24px 14px", textAlign: "center", color: "rgba(255,255,255,0.3)", fontSize: 13 }}>Sin leads registrados aún</td></tr>
+          )}
           {stats.map((row, i) => (
             <tr key={row.vendedor} style={{ background: i % 2 === 0 ? B.navyMid : "transparent" }}>
               <td style={{ padding: "10px 14px", color: B.white, fontWeight: 600 }}>{row.vendedor}</td>
@@ -262,7 +268,7 @@ function VendorTable({ stats }) {
 }
 
 function Modal({ open, onClose, onSubmit }) {
-  const empty = { nombre: "", contacto: "", tel: "", email: "", canal: "Web", valorEstimado: "", vendedor: VENDEDORES[0], pax: "", fecha_visita: "", hora_visita: "", tipo_pasadia: "" };
+  const empty = { nombre: "", contacto: "", tel: "", email: "", canal: "Web", valorEstimado: "", vendedor: "", pax: "", fecha_visita: "", hora_visita: "", tipo_pasadia: "" };
   const [form, setForm] = useState(empty);
   if (!open) return null;
 
@@ -365,8 +371,64 @@ function Modal({ open, onClose, onSubmit }) {
 function LeadDetail({ lead, onClose, onUpdateEtapa }) {
   if (!lead) return null;
   const accent = ETAPA_COLORS[lead.etapa]?.accent || B.sky;
-  const [pendingEtapa, setPendingEtapa] = useState(null); // "Cerrado Ganado" pending confirmation
+  const [pendingEtapa, setPendingEtapa] = useState(null);
   const [fechaPago, setFechaPago]       = useState(new Date().toLocaleDateString("en-CA"));
+  const [reservaLinked, setReservaLinked] = useState(null);
+  const [showTerminar, setShowTerminar]   = useState(false);
+  const [terminando, setTerminando]       = useState(false);
+  const [linkGenerado, setLinkGenerado]   = useState(null);
+  const [salidas, setSalidas]             = useState([]);
+  const [showPagoManual, setShowPagoManual] = useState(false);
+  const [formaPagoManual, setFormaPagoManual] = useState("efectivo");
+  const [fechaPagoManual, setFechaPagoManual] = useState(new Date().toLocaleDateString("en-CA"));
+
+  // Parse datos from notas text e.g. "VIP Pass · 2026-04-04 · 4 pax · ..."
+  const parsedFromNotas = (() => {
+    const n = lead.notas || "";
+    const tipoMatch = PASADIAS.find(p => n.includes(p.tipo));
+    const fechaMatch = n.match(/(\d{4}-\d{2}-\d{2})/);
+    const paxMatch   = n.match(/(\d+)\s*pax/i);
+    return {
+      tipo:  tipoMatch?.tipo || null,
+      fecha: fechaMatch?.[1] || null,
+      pax:   paxMatch ? Number(paxMatch[1]) : null,
+    };
+  })();
+
+  const [rForm, setRForm] = useState({
+    nombre:    lead.nombre    || "",
+    email:     lead.email     || lead.contacto || "",
+    telefono:  lead.tel       || "",
+    tipo:      lead.tipoPasadia || parsedFromNotas.tipo  || "VIP Pass",
+    fecha:     lead.fechaVisita || parsedFromNotas.fecha || new Date().toLocaleDateString("en-CA"),
+    salida_id: "",
+    pax:       lead.pax > 0 ? lead.pax : (parsedFromNotas.pax || 2),
+    grupo_id:  "",
+  });
+  const [grupos, setGrupos] = useState([]);
+
+  // Fetch linked reservation — update form with its data when it arrives
+  useEffect(() => {
+    if (!supabase || !lead.id) return;
+    supabase.from("reservas")
+      .select("id,nombre,fecha,tipo,pax,total,estado,salida_id,link_pago,forma_pago,email,contacto,telefono")
+      .eq("lead_id", lead.id).maybeSingle()
+      .then(({ data }) => {
+        if (!data) return;
+        setReservaLinked(data);
+        // Pre-fill form with reservation data (more complete than lead)
+        setRForm(f => ({
+          ...f,
+          nombre:    data.nombre   || f.nombre,
+          email:     data.email    || data.contacto || f.email,
+          telefono:  data.telefono || f.telefono,
+          tipo:      data.tipo     || f.tipo,
+          fecha:     data.fecha    ? data.fecha.slice(0,10) : f.fecha,
+          salida_id: data.salida_id || f.salida_id,
+          pax:       data.pax      || f.pax,
+        }));
+      });
+  }, [lead.id]);
 
   const IS = { background: "#0D1B3E", border: `1px solid ${B.navyLight}`, borderRadius: 8, color: B.white, padding: "8px 12px", fontSize: 14, width: "100%", boxSizing: "border-box", outline: "none" };
 
@@ -382,45 +444,392 @@ function LeadDetail({ lead, onClose, onUpdateEtapa }) {
     onClose();
   };
 
+  const fmtFechaVisita = (f) => f
+    ? new Date(f + "T12:00:00").toLocaleDateString("es-CO", { weekday: "long", day: "numeric", month: "long", year: "numeric" })
+    : null;
+
+  const hasVisitData = lead.tipoPasadia || lead.pax > 0 || lead.fechaVisita || lead.horaVisita;
+
+  // Fetch salidas + grupos
+  useEffect(() => {
+    if (!supabase || !showTerminar) return;
+    supabase.from("salidas").select("id,nombre,hora").eq("activo", true).order("hora")
+      .then(({ data }) => { if (data) setSalidas(data); });
+    supabase.from("eventos").select("id,nombre,fecha,aliado_id").eq("categoria", "grupo")
+      .order("fecha", { ascending: true })
+      .then(({ data }) => { if (data) setGrupos(data); });
+  }, [showTerminar]);
+
+  const rTotal = (PASADIAS.find(p => p.tipo === rForm.tipo)?.precio || 0) * Number(rForm.pax || 0);
+
+  // ── Guardar cambios en reserva existente (o crear nueva) ───────────────────
+  async function upsertReserva() {
+    if (!supabase || !rForm.fecha || !rForm.salida_id || !rForm.nombre) return null;
+    const pasadia = PASADIAS.find(p => p.tipo === rForm.tipo) || PASADIAS[0];
+    const pax = Number(rForm.pax) || 1;
+    const total = pasadia.precio * pax;
+
+    const grupoSeleccionado = grupos.find(g => g.id === rForm.grupo_id) || null;
+
+    if (reservaLinked) {
+      // Update existing
+      await supabase.from("reservas").update({
+        nombre: rForm.nombre, email: rForm.email, contacto: rForm.email,
+        telefono: rForm.telefono, tipo: rForm.tipo,
+        fecha: rForm.fecha, salida_id: rForm.salida_id,
+        pax, pax_a: pax, precio_u: pasadia.precio,
+        total, saldo: total, abono: 0,
+        grupo_id: rForm.grupo_id || null,
+        canal: rForm.grupo_id ? "GRUPO" : (reservaLinked.canal || "WEB"),
+        aliado_id: grupoSeleccionado?.aliado_id || reservaLinked.aliado_id || null,
+        updated_at: new Date().toISOString(),
+      }).eq("id", reservaLinked.id);
+      const updated = { ...reservaLinked, nombre: rForm.nombre, email: rForm.email, telefono: rForm.telefono, tipo: rForm.tipo, fecha: rForm.fecha, salida_id: rForm.salida_id, pax, total, grupo_id: rForm.grupo_id || null };
+      setReservaLinked(updated);
+      return updated;
+    } else {
+      // Insert new
+      const newId = `WEB-${Date.now()}`;
+      const reservaData = {
+        id: newId, fecha: rForm.fecha, salida_id: rForm.salida_id,
+        tipo: rForm.tipo, canal: rForm.grupo_id ? "GRUPO" : "WEB",
+        nombre: rForm.nombre, contacto: rForm.email || "", email: rForm.email || "", telefono: rForm.telefono || "",
+        pax, pax_a: pax, pax_n: 0, precio_u: pasadia.precio,
+        total, abono: 0, saldo: total, estado: "pendiente_pago", forma_pago: "stripe",
+        lead_id: lead.id, qr_code: `ATOLON-${newId}`,
+        grupo_id: rForm.grupo_id || null,
+        aliado_id: grupoSeleccionado?.aliado_id || null,
+        extras_solicitados: [], pasajeros: [],
+        precio_neto: 0, credito_generado: "0", descuento_agencia: 0,
+        created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+      };
+      const { error } = await supabase.from("reservas").insert([reservaData]);
+      if (error) { alert("Error: " + error.message); return null; }
+      setReservaLinked(reservaData);
+      return reservaData;
+    }
+  }
+
+  // ── Generar link de pago internacional (ruteado dinámicamente a Stripe o Zoho Pay) ──
+  async function generarLinkStripe() {
+    if (!rForm.salida_id || !rForm.nombre) return;
+    setTerminando(true);
+    try {
+      const reserva = await upsertReserva();
+      if (!reserva) { setTerminando(false); return; }
+      const { crearSesionPago } = await import("../lib/internacional");
+      // Convertir COP a USD (tasa fallback 4200)
+      const tasa = 4200;
+      const amountUSD = Math.ceil((reserva.total || 0) / tasa);
+      const session = await crearSesionPago({
+        amount: amountUSD,
+        currency: "USD",
+        reference: reserva.id,
+        description: `${rForm.tipo} — ${new Date(rForm.fecha + "T12:00:00").toLocaleDateString("es-CO", { day: "numeric", month: "long" })}`,
+        nombre: rForm.nombre,
+        email: rForm.email || "",
+        fecha: rForm.fecha,
+        context: "reserva",
+        context_id: reserva.id,
+      });
+      if (session?.url) {
+        await supabase.from("reservas").update({ link_pago: session.url }).eq("id", reserva.id);
+        setLinkGenerado(session.url);
+      } else {
+        alert("Error generando link de pago internacional");
+      }
+    } catch (e) { alert("Error: " + e.message); }
+    setTerminando(false);
+  }
+
+  // ── Pago manual ─────────────────────────────────────────────────────────────
+  async function registrarPagoManual() {
+    if (!rForm.salida_id || !rForm.nombre) return;
+    setTerminando(true);
+    try {
+      const reserva = await upsertReserva();
+      if (!reserva) { setTerminando(false); return; }
+      await supabase.from("reservas").update({
+        estado: "confirmado", forma_pago: formaPagoManual,
+        abono: reserva.total, saldo: 0,
+        updated_at: new Date().toISOString(),
+      }).eq("id", reserva.id);
+      await supabase.from("leads").update({
+        stage: "Cerrado Ganado",
+        ultimo_contacto: new Date().toLocaleDateString("en-CA"),
+        fecha_pago: fechaPagoManual,
+      }).eq("id", lead.id);
+      onUpdateEtapa(lead.id, "Cerrado Ganado", fechaPagoManual);
+      onClose();
+    } catch(e) { alert("Error: " + e.message); }
+    setTerminando(false);
+  }
+
   return (
     <div style={{
       position: "fixed", inset: 0, background: "#000A", zIndex: 1000,
       display: "flex", alignItems: "center", justifyContent: "center",
     }} onClick={e => { if (e.target === e.currentTarget) { setPendingEtapa(null); onClose(); } }}>
       <div style={{
-        background: B.navyMid, borderRadius: 16, padding: 28, width: 440, maxWidth: "95vw",
-        boxShadow: "0 20px 60px #0008",
+        background: B.navyMid, borderRadius: 16, padding: 28, width: 480, maxWidth: "95vw",
+        boxShadow: "0 20px 60px #0008", maxHeight: "90vh", overflowY: "auto",
       }}>
+        {/* Header */}
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 18 }}>
           <div>
-            <div style={{ fontSize: 16, fontWeight: 700, color: B.white, marginBottom: 4 }}>{lead.nombre}</div>
-            <span style={badge(lead.canal)}>{lead.canal}</span>
+            <div style={{ fontSize: 17, fontWeight: 700, color: B.white, marginBottom: 6 }}>{lead.nombre}</div>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              <span style={badge(lead.canal)}>{lead.canal}</span>
+              <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 20, background: (ETAPA_COLORS[lead.etapa]?.accent || B.sky) + "22", color: ETAPA_COLORS[lead.etapa]?.accent || B.sky, fontWeight: 600 }}>{lead.etapa}</span>
+            </div>
           </div>
           <button onClick={onClose} style={{ background: "none", border: "none", color: B.sand, fontSize: 20, cursor: "pointer" }}>×</button>
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px 16px", marginBottom: 18 }}>
-          {[
-            ["Contacto", lead.contacto],
-            ["Teléfono", lead.tel],
-            ["Email", lead.email],
-            ["Vendedor", lead.vendedor],
-            ["Valor Estimado", COP(lead.valorEstimado)],
-            ["Días en etapa", lead.diasEtapa],
-            ["Próxima Acción", lead.proximaAccion],
-            ["Etapa actual", lead.etapa],
-            ...(lead.fechaPago ? [["Fecha de pago", lead.fechaPago]] : []),
-          ].map(([k, v]) => (
-            <div key={k}>
-              <div style={{ fontSize: 10, color: B.sand, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 3 }}>{k}</div>
-              <div style={{ fontSize: 13, color: B.white, fontWeight: 500 }}>{v}</div>
+        {/* Datos de la visita — destacado */}
+        {hasVisitData && (
+          <div style={{ background: "#1A2855", border: `1px solid ${B.sky}33`, borderRadius: 12, padding: "14px 18px", marginBottom: 18 }}>
+            <div style={{ fontSize: 11, color: B.sky, textTransform: "uppercase", letterSpacing: "0.08em", fontWeight: 700, marginBottom: 12 }}>📋 Datos de la visita</div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px 16px" }}>
+              {lead.tipoPasadia && (
+                <div style={{ gridColumn: "1 / -1" }}>
+                  <div style={{ fontSize: 10, color: B.sand, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 3 }}>Pasadía</div>
+                  <div style={{ fontSize: 15, fontWeight: 700, color: B.white }}>🏖️ {lead.tipoPasadia}</div>
+                </div>
+              )}
+              {lead.fechaVisita && (
+                <div style={{ gridColumn: "1 / -1" }}>
+                  <div style={{ fontSize: 10, color: B.sand, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 3 }}>Fecha</div>
+                  <div style={{ fontSize: 14, fontWeight: 600, color: B.white, textTransform: "capitalize" }}>📅 {fmtFechaVisita(lead.fechaVisita)}</div>
+                </div>
+              )}
+              {lead.pax > 0 && (
+                <div>
+                  <div style={{ fontSize: 10, color: B.sand, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 3 }}>Personas</div>
+                  <div style={{ fontSize: 22, fontWeight: 800, color: B.sky, fontFamily: "'Barlow Condensed', sans-serif" }}>👥 {lead.pax} pax</div>
+                </div>
+              )}
+              {lead.horaVisita && (
+                <div>
+                  <div style={{ fontSize: 10, color: B.sand, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 3 }}>Hora de salida</div>
+                  <div style={{ fontSize: 22, fontWeight: 800, color: B.sand, fontFamily: "'Barlow Condensed', sans-serif" }}>🕐 {lead.horaVisita}</div>
+                </div>
+              )}
             </div>
-          ))}
+          </div>
+        )}
+
+        {/* ── Terminar Reserva — etapa Nuevo ── */}
+        {lead.etapa === "Nuevo" && (
+          <div style={{ background: "#2A1E00", border: `1px solid ${B.warning}55`, borderRadius: 12, padding: "14px 18px", marginBottom: 18 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+              <div style={{ fontSize: 11, color: B.warning, textTransform: "uppercase", letterSpacing: "0.08em", fontWeight: 700 }}>⚠ Reserva Pendiente de Pago</div>
+              <button onClick={() => { setShowTerminar(v => !v); setLinkGenerado(null); setShowPagoManual(false); }}
+                style={{ padding: "5px 14px", borderRadius: 8, background: showTerminar ? B.navyLight : B.warning, border: "none", color: showTerminar ? B.sand : B.navy, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+                {showTerminar ? "Ocultar" : "Terminar Reserva"}
+              </button>
+            </div>
+
+            {!showTerminar && (
+              <div style={{ fontSize: 12, color: "rgba(255,255,255,0.45)", fontStyle: "italic" }}>
+                {reservaLinked ? `Reserva ${reservaLinked.id} · ${reservaLinked.tipo} · ${COP(reservaLinked.total)}` : "Sin reserva creada — cliente no completó el proceso."}
+              </div>
+            )}
+
+            {showTerminar && (
+              <div>
+                {/* Formulario unificado editable */}
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 14 }}>
+                  <div style={{ gridColumn: "1 / -1" }}>
+                    <label style={{ fontSize: 10, color: B.sand, textTransform: "uppercase", letterSpacing: "0.06em", display:"block", marginBottom:4 }}>Nombre completo</label>
+                    <input value={rForm.nombre} onChange={e => setRForm(f => ({ ...f, nombre: e.target.value }))}
+                      style={{ width:"100%", padding:"8px 10px", borderRadius:8, background:B.navyLight, border:`1px solid ${B.navyLight}`, color:B.white, fontSize:13, outline:"none", boxSizing:"border-box" }} />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 10, color: B.sand, textTransform: "uppercase", letterSpacing: "0.06em", display:"block", marginBottom:4 }}>Email</label>
+                    <input type="email" value={rForm.email} onChange={e => setRForm(f => ({ ...f, email: e.target.value }))}
+                      style={{ width:"100%", padding:"8px 10px", borderRadius:8, background:B.navyLight, border:`1px solid ${B.navyLight}`, color:B.white, fontSize:13, outline:"none", boxSizing:"border-box" }} />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 10, color: B.sand, textTransform: "uppercase", letterSpacing: "0.06em", display:"block", marginBottom:4 }}>Teléfono / WhatsApp</label>
+                    <input type="tel" value={rForm.telefono} onChange={e => setRForm(f => ({ ...f, telefono: e.target.value }))}
+                      style={{ width:"100%", padding:"8px 10px", borderRadius:8, background:B.navyLight, border:`1px solid ${B.navyLight}`, color:B.white, fontSize:13, outline:"none", boxSizing:"border-box" }} />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 10, color: B.sand, textTransform: "uppercase", letterSpacing: "0.06em", display:"block", marginBottom:4 }}>Tipo de Pasadía</label>
+                    <select value={rForm.tipo} onChange={e => setRForm(f => ({ ...f, tipo: e.target.value }))}
+                      style={{ width:"100%", padding:"8px 10px", borderRadius:8, background:B.navyLight, border:`1px solid ${B.navyLight}`, color:B.white, fontSize:12, outline:"none" }}>
+                      {PASADIAS.map(p => <option key={p.tipo} value={p.tipo}>{p.tipo} — {COP(p.precio)}/pax</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 10, color: B.sand, textTransform: "uppercase", letterSpacing: "0.06em", display:"block", marginBottom:4 }}>Personas</label>
+                    <input type="number" min="1" value={rForm.pax} onChange={e => setRForm(f => ({ ...f, pax: e.target.value }))}
+                      style={{ width:"100%", padding:"8px 10px", borderRadius:8, background:B.navyLight, border:`1px solid ${B.navyLight}`, color:B.white, fontSize:13, outline:"none", boxSizing:"border-box" }} />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 10, color: B.sand, textTransform: "uppercase", letterSpacing: "0.06em", display:"block", marginBottom:4 }}>Fecha de visita</label>
+                    <input type="date" value={rForm.fecha} onChange={e => setRForm(f => ({ ...f, fecha: e.target.value }))}
+                      style={{ width:"100%", padding:"8px 10px", borderRadius:8, background:B.navyLight, border:`1px solid ${B.navyLight}`, color:B.white, fontSize:13, outline:"none", boxSizing:"border-box" }} />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 10, color: B.sand, textTransform: "uppercase", letterSpacing: "0.06em", display:"block", marginBottom:4 }}>Salida</label>
+                    <select value={rForm.salida_id} onChange={e => setRForm(f => ({ ...f, salida_id: e.target.value }))}
+                      style={{ width:"100%", padding:"8px 10px", borderRadius:8, background:B.navyLight, border:`1px solid ${B.navyLight}`, color:B.white, fontSize:12, outline:"none" }}>
+                      <option value="">— Seleccionar salida —</option>
+                      {salidas.map(s => <option key={s.id} value={s.id}>{s.hora} — {s.nombre}</option>)}
+                    </select>
+                  </div>
+                  {/* Grupo */}
+                  {grupos.length > 0 && (
+                    <div style={{ gridColumn: "1 / -1" }}>
+                      <label style={{ fontSize: 10, color: "#a78bfa", textTransform: "uppercase", letterSpacing: "0.06em", display:"block", marginBottom:4 }}>👥 Grupo (opcional)</label>
+                      <select
+                        value={rForm.grupo_id}
+                        onChange={e => {
+                          const gid = e.target.value;
+                          const g = grupos.find(x => x.id === gid);
+                          setRForm(f => ({ ...f, grupo_id: gid, fecha: g ? g.fecha : f.fecha }));
+                        }}
+                        style={{ width:"100%", padding:"8px 10px", borderRadius:8, background: rForm.grupo_id ? "#2A1E3E" : B.navyLight, border:`1px solid ${rForm.grupo_id ? "#a78bfa66" : B.navyLight}`, color:B.white, fontSize:12, outline:"none" }}>
+                        <option value="">— Sin grupo —</option>
+                        {grupos.map(g => (
+                          <option key={g.id} value={g.id}>{g.nombre} · {new Date(g.fecha + "T12:00:00").toLocaleDateString("es-CO",{day:"numeric",month:"short",year:"numeric"})}</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+                </div>
+
+                {/* Total calculado */}
+                {rTotal > 0 && (
+                  <div style={{ fontSize: 16, color: B.warning, fontWeight: 800, marginBottom: 14 }}>
+                    Total: {COP(rTotal)}
+                  </div>
+                )}
+
+                {/* Link generado */}
+                {linkGenerado && (
+                  <div style={{ background: "#0D1B3E", borderRadius: 10, padding: "12px 14px", marginBottom: 12 }}>
+                    <div style={{ fontSize: 11, color: B.success, fontWeight: 700, marginBottom: 6 }}>✅ Link de pago generado</div>
+                    <div style={{ fontSize: 11, color: B.sky, wordBreak: "break-all", marginBottom: 10 }}>{linkGenerado}</div>
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <button onClick={() => navigator.clipboard.writeText(linkGenerado)} style={{ flex:1, padding:"7px", borderRadius:8, background:B.sky+"22", border:`1px solid ${B.sky}44`, color:B.sky, fontSize:12, fontWeight:700, cursor:"pointer" }}>📋 Copiar</button>
+                      <a href={`https://wa.me/${rForm.telefono?.replace(/\D/g,"")}?text=${encodeURIComponent("Hola " + rForm.nombre + ", aquí está el link para completar tu reserva en Atolon Beach Club: " + linkGenerado)}`}
+                        target="_blank" rel="noreferrer"
+                        style={{ flex:1, padding:"7px", borderRadius:8, background:"#153322", border:`1px solid ${B.success}44`, color:B.success, fontSize:12, fontWeight:700, cursor:"pointer", textDecoration:"none", textAlign:"center", display:"block" }}>
+                        📲 WhatsApp
+                      </a>
+                    </div>
+                  </div>
+                )}
+
+                {/* Pago manual — campos extra */}
+                {showPagoManual && (
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 12, background:"#0D1B3E", borderRadius:10, padding:"12px 14px" }}>
+                    <div>
+                      <label style={{ fontSize: 10, color: B.sand, textTransform: "uppercase", letterSpacing: "0.06em", display:"block", marginBottom:4 }}>Forma de pago</label>
+                      <select value={formaPagoManual} onChange={e => setFormaPagoManual(e.target.value)} style={{ width:"100%", padding:"8px 10px", borderRadius:8, background:B.navyLight, border:`1px solid ${B.navyLight}`, color:B.white, fontSize:13, outline:"none" }}>
+                        {["efectivo","datafono","transferencia","cxc"].map(f => <option key={f} value={f}>{f}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label style={{ fontSize: 10, color: B.sand, textTransform: "uppercase", letterSpacing: "0.06em", display:"block", marginBottom:4 }}>Fecha de pago</label>
+                      <input type="date" value={fechaPagoManual} onChange={e => setFechaPagoManual(e.target.value)} style={{ width:"100%", padding:"8px 10px", borderRadius:8, background:B.navyLight, border:`1px solid ${B.navyLight}`, color:B.white, fontSize:13, outline:"none", boxSizing:"border-box" }} />
+                    </div>
+                  </div>
+                )}
+
+                {/* Botones de acción */}
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <button onClick={generarLinkStripe} disabled={terminando || !rForm.salida_id || !rForm.nombre}
+                    style={{ flex:1, minWidth:140, padding:"9px", borderRadius:8, background:"#1E3566", border:`1px solid ${B.sky}55`, color:B.sky, fontSize:12, fontWeight:700, cursor:"pointer", opacity:(terminando||!rForm.salida_id||!rForm.nombre)?0.5:1 }}>
+                    {terminando && !showPagoManual ? "Generando..." : "🔗 Generar Link Stripe"}
+                  </button>
+                  {!showPagoManual ? (
+                    <button onClick={() => setShowPagoManual(true)} style={{ flex:1, minWidth:140, padding:"9px", borderRadius:8, background:"#153322", border:`1px solid ${B.success}55`, color:B.success, fontSize:12, fontWeight:700, cursor:"pointer" }}>
+                      ✓ Pago Manual
+                    </button>
+                  ) : (
+                    <button onClick={registrarPagoManual} disabled={terminando || !rForm.salida_id || !rForm.nombre}
+                      style={{ flex:1, minWidth:140, padding:"9px", borderRadius:8, background:B.success, border:"none", color:B.navy, fontSize:12, fontWeight:700, cursor:"pointer", opacity:(terminando||!rForm.salida_id||!rForm.nombre)?0.5:1 }}>
+                      {terminando ? "Guardando..." : "✓ Confirmar Pago"}
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Reserva vinculada — solo cuando Cerrado Ganado */}
+        {lead.etapa === "Cerrado Ganado" && (
+          <div style={{ background: "#153322", border: `1px solid ${B.success}44`, borderRadius: 12, padding: "14px 18px", marginBottom: 18 }}>
+            <div style={{ fontSize: 11, color: B.success, textTransform: "uppercase", letterSpacing: "0.08em", fontWeight: 700, marginBottom: 10 }}>🏆 Reserva vinculada</div>
+            {reservaLinked ? (
+              <div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px 16px", marginBottom: 12 }}>
+                  {[
+                    ["ID Reserva", reservaLinked.id],
+                    ["Estado", reservaLinked.estado],
+                    ["Pasadía", reservaLinked.tipo],
+                    ["Fecha", reservaLinked.fecha ? new Date(reservaLinked.fecha + "T12:00:00").toLocaleDateString("es-CO", { day: "numeric", month: "short", year: "numeric" }) : "—"],
+                    ["Personas", reservaLinked.pax],
+                    ["Total", COP(reservaLinked.total)],
+                  ].map(([k, v]) => (
+                    <div key={k}>
+                      <div style={{ fontSize: 10, color: B.sand, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 2 }}>{k}</div>
+                      <div style={{ fontSize: 13, color: B.white, fontWeight: 600 }}>{v}</div>
+                    </div>
+                  ))}
+                </div>
+                <a
+                  href={`/zarpe-info?id=${reservaLinked.id}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  style={{ display: "inline-block", padding: "7px 16px", borderRadius: 8, background: B.success + "22", color: B.success, fontSize: 12, fontWeight: 700, textDecoration: "none", border: `1px solid ${B.success}44` }}
+                >
+                  🎫 Ver certificado →
+                </a>
+              </div>
+            ) : (
+              <div style={{ fontSize: 12, color: "rgba(255,255,255,0.35)", fontStyle: "italic" }}>No hay reserva vinculada a este lead</div>
+            )}
+          </div>
+        )}
+
+        {/* Datos de contacto */}
+        <div style={{ background: "#0D1B3E", borderRadius: 12, padding: "14px 18px", marginBottom: 18 }}>
+          <div style={{ fontSize: 11, color: B.sand, textTransform: "uppercase", letterSpacing: "0.08em", fontWeight: 700, marginBottom: 12 }}>👤 Contacto</div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px 16px" }}>
+            {[
+              ["Email", lead.contacto],
+              ["Teléfono", lead.tel],
+              ["Vendedor", lead.vendedor],
+              ["Valor Estimado", COP(lead.valorEstimado)],
+              ["Días en pipeline", lead.diasEtapa],
+              ["Próxima acción", lead.proximaAccion !== "—" ? lead.proximaAccion : null],
+              ...(lead.fechaPago ? [["Fecha de pago", lead.fechaPago]] : []),
+            ].filter(([, v]) => v != null && v !== "").map(([k, v]) => (
+              <div key={k}>
+                <div style={{ fontSize: 10, color: B.sand, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 3 }}>{k}</div>
+                <div style={{ fontSize: 13, color: B.white, fontWeight: 500 }}>{v}</div>
+              </div>
+            ))}
+          </div>
         </div>
 
-        {/* Fecha de pago modal inline when moving to Cerrado Ganado */}
+        {/* Notas */}
+        {lead.notas && (
+          <div style={{ background: "#0D1B3E", borderRadius: 12, padding: "14px 18px", marginBottom: 18 }}>
+            <div style={{ fontSize: 11, color: B.sand, textTransform: "uppercase", letterSpacing: "0.08em", fontWeight: 700, marginBottom: 8 }}>📝 Notas</div>
+            <div style={{ fontSize: 13, color: "rgba(255,255,255,0.75)", lineHeight: 1.6 }}>{lead.notas}</div>
+          </div>
+        )}
+
+        {/* Mover etapa / Cerrar Ganado */}
         {pendingEtapa === "Cerrado Ganado" ? (
-          <div style={{ background: B.success + "18", border: `1px solid ${B.success}55`, borderRadius: 10, padding: 16, marginBottom: 4 }}>
+          <div style={{ background: B.success + "18", border: `1px solid ${B.success}55`, borderRadius: 10, padding: 16 }}>
             <div style={{ fontSize: 13, fontWeight: 700, color: B.success, marginBottom: 12 }}>🏆 Cerrar como Ganado</div>
             <div style={{ marginBottom: 12 }}>
               <label style={{ fontSize: 11, color: B.sand, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", display: "block", marginBottom: 4 }}>Fecha de pago *</label>
@@ -436,18 +845,13 @@ function LeadDetail({ lead, onClose, onUpdateEtapa }) {
             <div style={{ fontSize: 11, color: B.sand, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 }}>Mover a etapa</div>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
               {ETAPAS.map(e => (
-                <button
-                  key={e}
-                  onClick={() => handleEtapaClick(e)}
-                  style={{
-                    padding: "6px 12px", borderRadius: 20, fontSize: 11, fontWeight: 600,
-                    cursor: "pointer",
-                    background: e === lead.etapa ? (ETAPA_COLORS[e]?.accent || B.sky) : B.navyLight,
-                    color: e === lead.etapa ? B.navy : B.white,
-                    border: `1px solid ${e === lead.etapa ? (ETAPA_COLORS[e]?.accent || B.sky) : B.navyLight}`,
-                    transition: "all 0.15s",
-                  }}
-                >{e}</button>
+                <button key={e} onClick={() => handleEtapaClick(e)} style={{
+                  padding: "6px 12px", borderRadius: 20, fontSize: 11, fontWeight: 600, cursor: "pointer",
+                  background: e === lead.etapa ? (ETAPA_COLORS[e]?.accent || B.sky) : B.navyLight,
+                  color: e === lead.etapa ? B.navy : B.white,
+                  border: `1px solid ${e === lead.etapa ? (ETAPA_COLORS[e]?.accent || B.sky) : B.navyLight}`,
+                  transition: "all 0.15s",
+                }}>{e}</button>
               ))}
             </div>
           </div>
@@ -522,10 +926,10 @@ export default function Comercial() {
     (filterCanal === "Todos" || l.canal === filterCanal)
   );
 
-  const enProceso = filtered.filter(l => !["Cerrado Ganado", "Perdido"].includes(l.etapa)).length;
+  const enProceso = filtered.filter(l => !["Cerrado Ganado", "Perdido", "Duplicado"].includes(l.etapa)).length;
   const cerradosMes = filtered.filter(l => l.etapa === "Cerrado Ganado").length;
   const revenuePipeline = filtered
-    .filter(l => !["Perdido"].includes(l.etapa))
+    .filter(l => !["Perdido", "Duplicado"].includes(l.etapa))
     .reduce((s, l) => s + l.valorEstimado, 0);
 
   async function addLead(dbRow) {
@@ -542,7 +946,7 @@ export default function Comercial() {
     fetchLeads();
   }
 
-  const vendorStats = buildVendorStats(leads, vendedoresList);
+  const vendorStats = buildVendorStats(leads);
 
   const selectStyle = {
     padding: "7px 12px", borderRadius: 8, background: B.navyLight,
@@ -642,10 +1046,18 @@ export default function Comercial() {
           <div style={{ marginTop: 28 }}>
             <div style={{ fontSize: 15, fontWeight: 700, color: B.white, marginBottom: 14 }}>Leads por Canal</div>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
-              {CANALES.map(canal => {
-                const count = leads.filter(l => l.canal === canal).length;
-                const rev = leads.filter(l => l.canal === canal && l.etapa === "Cerrado Ganado").reduce((s, l) => s + l.valorEstimado, 0);
-                return (
+              {(() => {
+                // Derive channels from actual leads, not hardcoded list
+                const canalMap = {};
+                leads.forEach(l => {
+                  const c = l.canal || "Sin canal";
+                  if (!canalMap[c]) canalMap[c] = { count: 0, rev: 0 };
+                  canalMap[c].count++;
+                  if (l.etapa === "Cerrado Ganado") canalMap[c].rev += l.valorEstimado || 0;
+                });
+                const canalesActivos = Object.entries(canalMap).sort((a, b) => b[1].count - a[1].count);
+                if (canalesActivos.length === 0) return <div style={{ fontSize: 13, color: "rgba(255,255,255,0.3)" }}>Sin leads registrados aún</div>;
+                return canalesActivos.map(([canal, { count, rev }]) => (
                   <div key={canal} style={{
                     background: B.navy, borderRadius: 10, padding: "12px 16px",
                     minWidth: 140, border: `1px solid ${B.navyLight}`,
@@ -655,8 +1067,8 @@ export default function Comercial() {
                     <div style={{ fontSize: 11, color: B.sand, marginTop: 2 }}>leads</div>
                     {rev > 0 && <div style={{ fontSize: 12, color: B.success, marginTop: 4, fontWeight: 600 }}>{COP(rev)} cerrado</div>}
                   </div>
-                );
-              })}
+                ));
+              })()}
             </div>
           </div>
         </div>

@@ -208,14 +208,28 @@ import FloorPlan from "./modules/FloorPlan";
 import Comercial from "./modules/Comercial";
 import B2B from "./modules/B2B";
 import Eventos from "./modules/Eventos";
-import MenuContratos from "./modules/MenuContratos";
 import Financiero from "./modules/Financiero";
+import CXC from "./modules/CXC";
+import { HotelReservas, HotelHuespedes, HotelTarifas } from "./modules/HotelStub";
+import HotelCheckin from "./modules/HotelCheckin";
+import HotelHabitaciones from "./modules/HotelHabitaciones";
+import HotelRoomService from "./modules/HotelRoomService";
+import HotelHousekeeping from "./modules/HotelHousekeeping";
+import GuestPortal from "./modules/GuestPortal";
+import RoomQRLanding from "./modules/RoomQRLanding";
+import StaffView from "./modules/StaffView";
+import CamareraPortal from "./modules/CamareraPortal";
+import HousekeepingInspection from "./modules/HousekeepingInspection";
+import Briefings from "./modules/Briefings";
+import Reportes from "./modules/Reportes";
 import Presupuesto from "./modules/Presupuesto";
+import EstadoResultados from "./modules/EstadoResultados";
 import Activos from "./modules/Activos";
 import Requisiciones from "./modules/Requisiciones";
 import EmpleadoPortal from "./modules/EmpleadoPortal";
 import AgenciaPortal from "./modules/AgenciaPortal";
 import LasAmericasPortal from "./modules/LasAmericasPortal";
+import GranFondoNairo from "./modules/GranFondoNairo";
 import BookingWidget from "./modules/BookingWidget";
 import BookingPopup from "./modules/BookingPopup";
 import PagoCliente from "./modules/PagoCliente";
@@ -226,6 +240,7 @@ import Upsells from "./modules/Upsells";
 import Menus from "./modules/Menus";
 import CheckIn from "./modules/CheckIn";
 import ZarpeInfo from "./modules/ZarpeInfo";
+import ZarpeGrupo from "./modules/ZarpeGrupo";
 import Analitica from "./modules/Analitica";
 import MuelleCheckin from "./modules/MuelleCheckin";
 import MuelleSalidas from "./modules/MuelleSalidas";
@@ -240,6 +255,27 @@ import Actividades from "./modules/Actividades";
 import Mantenimiento from "./modules/Mantenimiento";
 import CarritoAbandonado from "./modules/CarritoAbandonado";
 import Metas from "./modules/Metas";
+import Comisiones from "./modules/Comisiones";
+import Resultados from "./modules/Resultados";
+import ResultadosViewer from "./modules/ResultadosViewer";
+import Lancha from "./modules/Lancha";
+import DiaDeLaMadre from "./modules/DiaDeLaMadre";
+import Despedidas from "./modules/Despedidas";
+import RecursosHumanos from "./modules/RecursosHumanos";
+import Nomina from "./modules/Nomina";
+import NominaPorDia from "./modules/NominaPorDia";
+import Horarios from "./modules/Horarios";
+import ContratistasAdmin from "./modules/ContratistasAdmin";
+import ContratistasPortal from "./modules/ContratistasPortal";
+import ContratistasCurso from "./modules/ContratistasCurso";
+import ContratistasVerificar from "./modules/ContratistasVerificar";
+import ContratistasMuelle from "./modules/ContratistasMuelle";
+import ZarpesLog from "./modules/ZarpesLog";
+import Proveedores from "./modules/Proveedores";
+import Items from "./modules/Items";
+import LoggroAdmin from "./modules/LoggroAdmin";
+import HotelFolios from "./modules/HotelFolios";
+import ApiPortal from "./modules/ApiPortal";
 
 const MODULE_MAP = {
   pasadias: <Pasadias />,
@@ -248,17 +284,23 @@ const MODULE_MAP = {
   comercial: <Comercial />,
   b2b: <B2B />,
   eventos: <Eventos />,
-  contratos: <MenuContratos />,
   financiero: <Financiero />,
+  cxc: <CXC />,
   presupuesto: <Presupuesto />,
+  estado_resultados: <EstadoResultados />,
   activos: <Activos />,
   requisiciones: <Requisiciones />,
+  items: <Items />,
+  loggro: <LoggroAdmin />,
+  hotel_folios: <HotelFolios />,
   contenido: <Contenido />,
   upsells:   <Upsells />,
   staffing:  <Staffing />,
   checkin:   <CheckIn />,
+  zarpes_log: <ZarpesLog />,
   muelle:    <MuelleCheckin />,
   salidas_isla: <MuelleSalidas />,
+  lancha:       <Lancha />,
   menus:     <Menus />,
   configuracion: <Configuracion />,
   usuarios: <Usuarios />,
@@ -271,13 +313,45 @@ const MODULE_MAP = {
   actividades:  <Actividades />,
   carrito_abandonado: <CarritoAbandonado />,
   metas: <Metas />,
+  comisiones: <Comisiones />,
+  resultados: <Resultados />,
+  rrhh: <RecursosHumanos />,
+  nomina: <Nomina />,
+  nomina_dia: <NominaPorDia />,
+  horarios: <Horarios />,
+  contratistas_admin: <ContratistasAdmin />,
+  contratistas_muelle: <ContratistasMuelle />,
+  briefings: <Briefings />,
+  reportes: <Reportes />,
+  proveedores: <Proveedores />,
+  hotel_reservas:     <HotelReservas />,
+  hotel_habitaciones: <HotelHabitaciones />,
+  hotel_huespedes:    <HotelHuespedes />,
+  hotel_checkin:      <HotelCheckin />,
+  hotel_housekeeping: <HotelHousekeeping />,
+  hotel_roomservice:  <HotelRoomService />,
+  hotel_tarifas:      <HotelTarifas />,
+  api_portal:         <ApiPortal />,
 };
 
 // Public routes — no auth required
-const PUBLIC_ROUTES = ["empleados", "agencia", "booking", "pago", "reset-password", "zarpe-info", "login", "las-americas", ""];
+const PUBLIC_ROUTES = ["empleados", "agencia", "booking", "pago", "reset-password", "zarpe-info", "zarpe-grupo", "login", "las-americas", "resultados", "dia-de-la-madre", "madres", ""];
 
 function getRoute() {
   return window.location.pathname.replace(/^\//, "") || "";
+}
+
+// Loading screen shown during auth transitions (prevents Chrome blue flash)
+function LoadingScreen() {
+  return (
+    <div style={{
+      position: "fixed", inset: 0, background: "#0D1B3E",
+      display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 16,
+    }}>
+      <img src="/favicon-blue.png" alt="Atolon" style={{ width: 48, height: 48, opacity: 0.6 }} />
+      <div style={{ width: 32, height: 32, border: "3px solid rgba(255,255,255,0.1)", borderTop: "3px solid #8ECAE6", borderRadius: "50%", animation: "spin 0.8s linear infinite" }} />
+    </div>
+  );
 }
 
 export default function App() {
@@ -286,20 +360,21 @@ export default function App() {
   const [session, setSession]           = useState(undefined); // undefined = loading
   const [waPhone, setWaPhone]           = useState(null);
   const [mustChange, setMustChange]     = useState(false); // force password change
+  const [appReady, setAppReady]         = useState(false); // prevents Chrome blue flash on first login
 
   useEffect(() => {
     // Timeout de seguridad: si getSession no responde en 4s, asumir no autenticado
     const fallback = setTimeout(() => setSession(prev => prev === undefined ? null : prev), 4000);
     supabase.auth.getSession()
-      .then(({ data }) => { clearTimeout(fallback); setSession(data?.session ?? null); })
-      .catch(() => { clearTimeout(fallback); setSession(null); });
+      .then(({ data }) => { clearTimeout(fallback); setSession(data?.session ?? null); setAppReady(true); })
+      .catch(() => { clearTimeout(fallback); setSession(null); setAppReady(true); });
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, s) => {
       clearTimeout(fallback);
       // En móvil, TOKEN_REFRESHED puede emitir null brevemente — solo blanquear en SIGNED_OUT real
       if (event === "SIGNED_OUT") {
-        setSession(null);
+        setSession(null); setAppReady(true);
       } else if (s) {
-        setSession(s);
+        setSession(s); setAppReady(true);
       }
     });
     return () => subscription.unsubscribe();
@@ -327,6 +402,35 @@ export default function App() {
 
   const navigate = (mod) => setActiveModule(mod);
 
+  // Listen for cross-module navigation requests (e.g. CXC → Reservas, Clientes → Reservas)
+  useEffect(() => {
+    const handler = (e) => {
+      const { modulo, reservaId, clienteId } = e.detail || {};
+      if (reservaId) window.__openReservaId = reservaId;
+      if (clienteId) window.__openClienteId = clienteId;
+      if (modulo) {
+        // Remember previous module to return to it
+        window.__previousModule = activeModule;
+        setActiveModule(modulo);
+      }
+    };
+    window.addEventListener("atolon-navigate", handler);
+
+    // Listen for "go back" events
+    const backHandler = () => {
+      if (window.__previousModule) {
+        setActiveModule(window.__previousModule);
+        window.__previousModule = null;
+      }
+    };
+    window.addEventListener("atolon-navigate-back", backHandler);
+
+    return () => {
+      window.removeEventListener("atolon-navigate", handler);
+      window.removeEventListener("atolon-navigate-back", backHandler);
+    };
+  }, [activeModule]);
+
   // AtolanTrack: page_view on public route load
   useEffect(() => {
     const publicTrackRoutes = ["booking", "pago", ""];
@@ -337,21 +441,51 @@ export default function App() {
   }, [route]);
 
   // Public routes — show WhatsApp button
-  const isPublic = ["empleados", "agencia", "booking", "", "reset-password", "zarpe-info"].includes(route) || route.startsWith("pago") || route.startsWith("booking/");
+  const isPublic = ["empleados", "agencia", "booking", "", "reset-password", "zarpe-info", "despedidas", "contratistas"].includes(route) || route.startsWith("pago") || route.startsWith("booking/") || route.startsWith("m/") || route.startsWith("room/") || route.startsWith("despedidas/") || route.startsWith("contratistas/") || route.startsWith("verificar/");
 
   // Always-public routes (no auth needed ever)
   if (route === "empleados")      return <><EmpleadoPortal /><WhatsAppFloat phone={waPhone} /></>;
   if (route === "agencia" || route === "") return <><AgenciaPortal /><WhatsAppFloat phone={waPhone} /></>;
   if (route === "booking/lasamericas" || route === "las-americas") return <LasAmericasPortal />;
+  if (route === "gran-fondo" || route === "nairo") return <GranFondoNairo />;
   if (route === "booking" || route.startsWith("booking/")) return <><BookingPopup /><WhatsAppFloat phone={waPhone} /></>;
   if (route.startsWith("pago"))   return <><PagoCliente /><WhatsAppFloat phone={waPhone} /></>;
   if (route === "reset-password") return <><ResetPassword /><WhatsAppFloat phone={waPhone} /></>;
   if (route === "zarpe-info")     return <><ZarpeInfo /><WhatsAppFloat phone={waPhone} /></>;
+  if (route === "zarpe-grupo")    return <><ZarpeGrupo /><WhatsAppFloat phone={waPhone} /></>;
+  if (route === "dia-de-la-madre" || route === "madres") return <DiaDeLaMadre />;
+  if (route === "despedidas" || route.startsWith("despedidas/")) return <><Despedidas /><WhatsAppFloat phone={waPhone} /></>;
+  if (route === "contratistas" || route === "contratistas/exito") return <ContratistasPortal />;
+  if (route.startsWith("contratistas/curso/")) return <ContratistasCurso token={route.slice("contratistas/curso/".length)} />;
+  if (route.startsWith("verificar/")) return <ContratistasVerificar code={route.slice("verificar/".length)} />;
   if (route === "society")        return <VIPPortal />;
   if (route === "checkin-pax")    return <SelfCheckIn />;
+  if (route.startsWith("m/"))     return <GuestPortal token={route.slice(2)} />;
+  if (route.startsWith("room/"))  return <RoomQRLanding idOrNumero={decodeURIComponent(route.slice(5))} />;
+  if (route.startsWith("staff/")) return <StaffView eventoId={route.slice(6)} />;
+  if (route === "housekeeping/inspeccion") return <HousekeepingInspection />;
+  if (route.startsWith("housekeeping/")) return <CamareraPortal token={route.slice(13)} />;
 
-  // Loading auth state — mostrar Login de inmediato (evita pantalla azul en Android)
-  if (session === undefined) return <><Login /><WhatsAppFloat phone={waPhone} /></>;
+  // Loading auth state — mostrar spinner mientras se verifica sesión (evita pantalla azul en Chrome PC)
+  if (!appReady) return <LoadingScreen />;
+
+  // /resultados: si está autenticado → OS con módulo activo; si no → viewer público con clave
+  if (route === "resultados") {
+    if (session) {
+      // Usuario autenticado: mostrar OS con Resultados activo
+      return (
+        <ErrorBoundary>
+          <AtolanOS
+            activeModule="resultados"
+            onNavigate={navigate}
+            moduleContent={MODULE_MAP["resultados"]}
+            userEmail={session.user?.email}
+          />
+        </ErrorBoundary>
+      );
+    }
+    return <ResultadosViewer />;
+  }
 
   // /login: show login form if not authenticated, else fall through to OS
   if (route === "login" && !session) return <><Login /><WhatsAppFloat phone={waPhone} /></>;
