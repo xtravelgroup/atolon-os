@@ -262,6 +262,8 @@ export default function Requisiciones() {
   };
 
   // ── Crear orden de compra desde una requisición aprobada ─────────────────
+  // Auto-merge: si ya existe una OC con estado "emitida" para el mismo proveedor,
+  // se agregan los ítems a esa OC en lugar de crear una nueva.
   const generarOC = async (req) => {
     if (!supabase) return;
     if (!req.proveedor_id && !req.proveedor_nombre) {
@@ -269,40 +271,89 @@ export default function Requisiciones() {
       return;
     }
     const prov = proveedores.find(p => p.id === req.proveedor_id);
-    const codigo = `OC-${new Date().getFullYear()}-${String(ordenes.length + 1).padStart(4, "0")}`;
-    const subtotal = req.items.reduce((s, it) => s + (Number(it.subtotal) || it.cant * it.precioU || 0), 0);
-    const oc = {
-      codigo,
-      requisicion_id: req.id,
-      proveedor_id: req.proveedor_id || null,
-      proveedor_nombre: prov?.nombre || req.proveedor_nombre || req.proveedor || "—",
-      proveedor_nit: prov?.nit || null,
-      proveedor_email: prov?.email || null,
-      proveedor_telefono: prov?.telefono || null,
-      fecha_emision: todayStr(),
-      fecha_entrega: req.fechaNecesaria || null,
-      items: req.items,
-      subtotal,
-      iva: 0,
-      total: subtotal,
-      estado: "emitida",
-      emitida_por: currentUser.nombre,
-      notas: req.justificacion || "",
+
+    // Consolidar items del mismo producto (suma cantidades)
+    const consolidar = (lista) => {
+      const map = new Map();
+      for (const it of lista) {
+        const nombre = (it.nombre || it.item || "").trim();
+        const unidad = (it.unidad || "").toLowerCase();
+        const key = `${nombre.toLowerCase()}|${unidad}`;
+        const reqIds = it.req_id ? [it.req_id] : (it.req_ids || []);
+        if (map.has(key)) {
+          const ex = map.get(key);
+          ex.cant = Number(ex.cant) + (Number(it.cant) || 0);
+          ex.subtotal = Math.round(ex.cant * Number(ex.precioU));
+          ex.req_ids = [...new Set([...(ex.req_ids || []), ...reqIds])];
+        } else {
+          map.set(key, {
+            id: it.id, item: nombre, cant: Number(it.cant) || 0, unidad: it.unidad,
+            precioU: Math.round(Number(it.precioU) || 0),
+            subtotal: Math.round(Number(it.subtotal) || (Number(it.cant) || 0) * (Number(it.precioU) || 0)),
+            req_ids: reqIds.length ? reqIds : [req.id],
+          });
+        }
+      }
+      return Array.from(map.values());
     };
-    const { data, error } = await supabase.from("ordenes_compra").insert(oc).select().single();
-    if (error) { alert("Error: " + error.message); return; }
-    // Marcar requisición como En Compra
+
+    // ¿Ya existe OC abierta (emitida) para este proveedor?
+    const provId = req.proveedor_id || prov?.id;
+    const provNombre = prov?.nombre || req.proveedor_nombre || req.proveedor;
+    const ocExistente = ordenes.find(o =>
+      o.estado === "emitida" &&
+      ((provId && o.proveedor_id === provId) ||
+       (!provId && (o.proveedor_nombre || "").trim().toLowerCase() === (provNombre || "").trim().toLowerCase()))
+    );
+
+    let codigo, ocData;
+    if (ocExistente) {
+      // ── Auto-merge con la OC existente ──
+      const nuevosItems = (req.items || []).map(it => ({ ...it, req_id: req.id }));
+      const merged = consolidar([...(ocExistente.items || []), ...nuevosItems]);
+      const subtotal = merged.reduce((s, it) => s + (Number(it.subtotal) || 0), 0);
+      const { data, error } = await supabase.from("ordenes_compra").update({
+        items: merged, subtotal, total: subtotal,
+      }).eq("id", ocExistente.id).select().single();
+      if (error) { alert("Error: " + error.message); return; }
+      codigo = ocExistente.codigo;
+      ocData = data;
+    } else {
+      // ── Nueva OC ──
+      codigo = `OC-${new Date().getFullYear()}-${String(ordenes.length + 1).padStart(4, "0")}`;
+      const items = consolidar((req.items || []).map(it => ({ ...it, req_id: req.id })));
+      const subtotal = items.reduce((s, it) => s + (Number(it.subtotal) || 0), 0);
+      const { data, error } = await supabase.from("ordenes_compra").insert({
+        codigo, requisicion_id: req.id,
+        proveedor_id: provId || null, proveedor_nombre: provNombre || "—",
+        proveedor_nit: prov?.nit || null,
+        proveedor_email: prov?.email || null,
+        proveedor_telefono: prov?.telefono || null,
+        fecha_emision: todayStr(), fecha_entrega: req.fechaNecesaria || null,
+        items, subtotal, iva: 0, total: subtotal,
+        estado: "emitida", emitida_por: currentUser.nombre,
+        notas: req.justificacion || "",
+      }).select().single();
+      if (error) { alert("Error: " + error.message); return; }
+      ocData = data;
+    }
+
+    // Marcar ítems de la requisición con oc_id y estado
+    const itemsMarcados = (req.items || []).map(it => ({ ...it, oc_id: ocData.id, oc_codigo: codigo }));
     await supabase.from("requisiciones").update({
       estado: "En Compra",
+      items: itemsMarcados,
       timeline: [...(req.timeline || []), {
         quien: currentUser.nombre,
-        accion: "OC generada",
+        accion: ocExistente ? "Ítems agregados a OC" : "OC generada",
         fecha: new Date().toLocaleString("es-CO"),
-        comentario: `Orden de compra ${codigo}`,
+        comentario: ocExistente
+          ? `Unida a OC abierta ${codigo} (${provNombre})`
+          : `Orden de compra ${codigo}`,
       }],
     }).eq("id", req.id);
     load();
-    return data;
+    return ocData;
   };
 
   // ── Render ───────────────────────────────────────────────────────────────
@@ -1930,34 +1981,76 @@ function DetailModal({ req, onClose, onUpdate, onGenerarOC, proveedores, reglas,
                 {provsAsignados.length > 0 && (
                   <button disabled={splitting}
                     onClick={async () => {
-                      if (!confirm(`Generar ${provsAsignados.length} OC${provsAsignados.length !== 1 ? "s" : ""} (una por proveedor)?`)) return;
+                      if (!confirm(`Generar/actualizar ${provsAsignados.length} OC${provsAsignados.length !== 1 ? "s" : ""}? (Se hace auto-merge si el proveedor tiene OC abierta)`)) return;
                       setSplitting(true);
+
+                      const consolidar = (lista) => {
+                        const map = new Map();
+                        for (const it of lista) {
+                          const nombre = (it.nombre || it.item || "").trim();
+                          const unidad = (it.unidad || "").toLowerCase();
+                          const key = `${nombre.toLowerCase()}|${unidad}`;
+                          const reqIds = it.req_id ? [it.req_id] : (it.req_ids || []);
+                          if (map.has(key)) {
+                            const ex = map.get(key);
+                            ex.cant += Number(it.cant) || 0;
+                            ex.subtotal = Math.round(ex.cant * Number(ex.precioU));
+                            ex.req_ids = [...new Set([...(ex.req_ids || []), ...reqIds])];
+                          } else {
+                            map.set(key, {
+                              id: it.id, item: nombre, cant: Number(it.cant) || 0, unidad: it.unidad,
+                              precioU: Math.round(Number(it.precioU) || 0),
+                              subtotal: Math.round(Number(it.subtotal) || (Number(it.cant) || 0) * (Number(it.precioU) || 0)),
+                              req_ids: reqIds.length ? reqIds : [req.id],
+                            });
+                          }
+                        }
+                        return Array.from(map.values());
+                      };
+
+                      // Cargar ordenes actuales para chequear OCs abiertas
+                      const { data: ocsActuales } = await supabase.from("ordenes_compra").select("*").eq("estado", "emitida");
+                      const { count: totalOcs } = await supabase.from("ordenes_compra").select("*", { count: "exact", head: true });
+
                       const ocsGeneradas = [];
+                      let newCount = 0;
                       for (const pid of provsAsignados) {
                         const prov = proveedores.find(p => p.id === pid);
                         const g = grupos[pid];
-                        // Cargar ordenes para calcular código siguiente
-                        const { count } = await supabase.from("ordenes_compra").select("*", { count: "exact", head: true });
-                        const codigo = `OC-${new Date().getFullYear()}-${String((count || 0) + 1 + ocsGeneradas.length).padStart(4, "0")}`;
-                        const items = g.items.map(x => ({
+                        const nuevos = g.items.map(x => ({
                           id: x.id, item: x.item, cant: Number(x.cant) || 0, unidad: x.unidad,
                           precioU: Math.round(Number(x.precioU) || 0),
                           subtotal: Math.round(Number(x.subtotal) || (Number(x.cant) || 0) * (Number(x.precioU) || 0)),
-                          req_ids: [req.id],
+                          req_id: req.id,
                         }));
-                        const subtotal = items.reduce((s, it) => s + it.subtotal, 0);
-                        const { error } = await supabase.from("ordenes_compra").insert({
-                          codigo, requisicion_id: req.id,
-                          proveedor_id: prov.id, proveedor_nombre: prov.nombre,
-                          proveedor_nit: prov.nit || null, proveedor_email: prov.email || null, proveedor_telefono: prov.telefono || null,
-                          fecha_emision: todayStr(), items, subtotal, iva: 0, total: subtotal,
-                          estado: "emitida", emitida_por: currentUser.nombre,
-                          notas: `División de ${req.id} · ${items.length} ítems`,
-                        });
-                        if (error) { setSplitting(false); return alert("Error: " + error.message); }
-                        ocsGeneradas.push({ codigo, idxs: g.items.map(x => x._idx) });
+                        // ¿Existe OC emitida para este proveedor?
+                        const existente = (ocsActuales || []).find(o => o.proveedor_id === pid);
+                        if (existente) {
+                          const merged = consolidar([...(existente.items || []), ...nuevos]);
+                          const subtotal = merged.reduce((s, it) => s + (Number(it.subtotal) || 0), 0);
+                          const { error } = await supabase.from("ordenes_compra").update({
+                            items: merged, subtotal, total: subtotal,
+                          }).eq("id", existente.id);
+                          if (error) { setSplitting(false); return alert("Error: " + error.message); }
+                          ocsGeneradas.push({ codigo: existente.codigo, idxs: g.items.map(x => x._idx), merge: true });
+                        } else {
+                          newCount++;
+                          const codigo = `OC-${new Date().getFullYear()}-${String((totalOcs || 0) + newCount).padStart(4, "0")}`;
+                          const items = consolidar(nuevos);
+                          const subtotal = items.reduce((s, it) => s + it.subtotal, 0);
+                          const { error } = await supabase.from("ordenes_compra").insert({
+                            codigo, requisicion_id: req.id,
+                            proveedor_id: prov.id, proveedor_nombre: prov.nombre,
+                            proveedor_nit: prov.nit || null, proveedor_email: prov.email || null, proveedor_telefono: prov.telefono || null,
+                            fecha_emision: todayStr(), items, subtotal, iva: 0, total: subtotal,
+                            estado: "emitida", emitida_por: currentUser.nombre,
+                            notas: `División de ${req.id} · ${items.length} ítems`,
+                          });
+                          if (error) { setSplitting(false); return alert("Error: " + error.message); }
+                          ocsGeneradas.push({ codigo, idxs: g.items.map(x => x._idx), merge: false });
+                        }
                       }
-                      // Marcar items con oc_id en la requisición
+                      // Marcar items con oc_codigo en la requisición
                       const idxToOc = {};
                       ocsGeneradas.forEach(oc => oc.idxs.forEach(idx => { idxToOc[idx] = oc.codigo; }));
                       const itemsNuevos = req.items.map((it, idx) =>
@@ -2318,26 +2411,39 @@ function AsignarOCModal({ items, proveedores, ordenes, reqs, currentUser, onClos
     let ocIdFinal;
     let codigo;
     if (modo === "nueva") {
-      codigo = `OC-${new Date().getFullYear()}-${String(ordenes.length + 1).padStart(4, "0")}`;
-      const subtotal = ocItems.reduce((s, it) => s + it.subtotal, 0);
-      const { data, error } = await supabase.from("ordenes_compra").insert({
-        codigo,
-        proveedor_id: prov.id,
-        proveedor_nombre: prov.nombre,
-        proveedor_nit: prov.nit || null,
-        proveedor_email: prov.email || null,
-        proveedor_telefono: prov.telefono || null,
-        fecha_emision: todayStr(),
-        items: ocItems,
-        subtotal,
-        iva: 0,
-        total: subtotal,
-        estado: "emitida",
-        emitida_por: currentUser.nombre,
-        notas: `Consolidado desde ${[...new Set(items.map(i => i.req_id))].join(", ")}`,
-      }).select().single();
-      if (error) { setSaving(false); return alert("Error creando OC: " + error.message); }
-      ocIdFinal = data.id;
+      // Auto-merge: si ya hay OC emitida para este proveedor, agregar a esa
+      const ocAbierta = ordenes.find(o => o.estado === "emitida" && o.proveedor_id === prov.id);
+      if (ocAbierta) {
+        const merged = consolidar([...(ocAbierta.items || []), ...items]);
+        const subtotal = merged.reduce((s, it) => s + (Number(it.subtotal) || 0), 0);
+        const { error } = await supabase.from("ordenes_compra").update({
+          items: merged, subtotal, total: subtotal,
+        }).eq("id", ocAbierta.id);
+        if (error) { setSaving(false); return alert("Error: " + error.message); }
+        ocIdFinal = ocAbierta.id;
+        codigo = ocAbierta.codigo;
+      } else {
+        codigo = `OC-${new Date().getFullYear()}-${String(ordenes.length + 1).padStart(4, "0")}`;
+        const subtotal = ocItems.reduce((s, it) => s + it.subtotal, 0);
+        const { data, error } = await supabase.from("ordenes_compra").insert({
+          codigo,
+          proveedor_id: prov.id,
+          proveedor_nombre: prov.nombre,
+          proveedor_nit: prov.nit || null,
+          proveedor_email: prov.email || null,
+          proveedor_telefono: prov.telefono || null,
+          fecha_emision: todayStr(),
+          items: ocItems,
+          subtotal,
+          iva: 0,
+          total: subtotal,
+          estado: "emitida",
+          emitida_por: currentUser.nombre,
+          notas: `Consolidado desde ${[...new Set(items.map(i => i.req_id))].join(", ")}`,
+        }).select().single();
+        if (error) { setSaving(false); return alert("Error creando OC: " + error.message); }
+        ocIdFinal = data.id;
+      }
     } else {
       // Agregar a OC existente — consolidar con items ya presentes
       const oc = ordenes.find(o => o.id === ocId);
