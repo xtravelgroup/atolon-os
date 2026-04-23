@@ -307,7 +307,7 @@ export default function Items() {
       ) : (
         <div style={{ background: B.navyMid, borderRadius: 14, overflow: "hidden", border: `1px solid ${B.navyLight}` }}>
           {/* Header con sort */}
-          <div style={{ display: "grid", gridTemplateColumns: "2.2fr 1.3fr 0.7fr 0.9fr 0.9fr 0.9fr 1fr 40px", padding: "10px 18px", borderBottom: `2px solid ${B.navyLight}`, gap: 8 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "2.2fr 1.3fr 0.7fr 0.9fr 0.9fr 0.9fr 1fr", padding: "10px 18px", borderBottom: `2px solid ${B.navyLight}`, gap: 8 }}>
             {[
               { key: "nombre", label: "Producto" },
               { key: "categoria", label: "Categoría" },
@@ -316,7 +316,6 @@ export default function Items() {
               { key: "stock", label: "Stock" },
               { key: "precio", label: "P. Proveedor" },
               { key: null, label: "Proveedor" },
-              { key: null, label: "" },
             ].map(col => (
               <div key={col.label}
                 onClick={col.key ? () => { if (sortBy === col.key) setSortDir(d => d === "asc" ? "desc" : "asc"); else { setSortBy(col.key); setSortDir("asc"); } } : undefined}
@@ -341,7 +340,7 @@ export default function Items() {
             return (
               <div key={item.id} onClick={() => setDetail(item)}
                 style={{
-                  display: "grid", gridTemplateColumns: "2.2fr 1.3fr 0.7fr 0.9fr 0.9fr 0.9fr 1fr 40px", padding: "11px 18px", gap: 8,
+                  display: "grid", gridTemplateColumns: "2.2fr 1.3fr 0.7fr 0.9fr 0.9fr 0.9fr 1fr", padding: "11px 18px", gap: 8,
                   borderBottom: idx < filtered.length - 1 ? `1px solid ${B.navyLight}` : "none",
                   cursor: "pointer", transition: "background 0.1s", alignItems: "center",
                 }}
@@ -387,18 +386,6 @@ export default function Items() {
                 <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                   {provs.length === 0 ? "—" : principal?.proveedor_nombre || provs[0]?.proveedor_nombre || `${provs.length} proveedores`}
                 </div>
-                {/* Botón + agregar a requisición */}
-                <button
-                  onClick={(e) => { e.stopPropagation(); agregarACarrito(item, precio); }}
-                  title="Agregar a requisición"
-                  style={{
-                    width: 32, height: 32, borderRadius: 8, border: "none",
-                    background: B.success + "22", color: B.success,
-                    cursor: "pointer", fontSize: 18, fontWeight: 800, lineHeight: 1,
-                    display: "flex", alignItems: "center", justifyContent: "center",
-                  }}>
-                  +
-                </button>
               </div>
             );
           })}
@@ -1019,6 +1006,7 @@ function InventarioTab({
                 { k: null, label: "Mín", right: true },
                 { k: null, label: "Precio compra", right: true },
                 { k: "valor", label: "Valor total", right: true },
+                { k: null, label: "", right: false },
               ].map(h => (
                 <th key={h.label}
                   onClick={h.k ? () => toggleSort(h.k) : undefined}
@@ -1034,7 +1022,7 @@ function InventarioTab({
           </thead>
           <tbody>
             {filtered.length === 0 ? (
-              <tr><td colSpan={7} style={{ padding: 40, textAlign: "center", color: "rgba(255,255,255,0.3)" }}>Sin ítems que mostrar</td></tr>
+              <tr><td colSpan={8} style={{ padding: 40, textAlign: "center", color: "rgba(255,255,255,0.3)" }}>Sin ítems que mostrar</td></tr>
             ) : filtered.map(i => {
               const stock = Number(i.stock_actual) || 0;
               const min = Number(i.stock_minimo) || 0;
@@ -1062,6 +1050,30 @@ function InventarioTab({
                   </td>
                   <td style={{ padding: "11px 14px", textAlign: "right", fontWeight: 700, color: valor > 0 ? B.sand : "rgba(255,255,255,0.2)", fontFamily: "'Barlow Condensed', sans-serif", fontSize: 15 }}>
                     {valor > 0 ? COP(valor) : "—"}
+                  </td>
+                  <td style={{ padding: "8px 10px", textAlign: "center", width: 48 }}>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        const cantStr = window.prompt(`¿Cuántos ${i.unidad || "unidades"} de "${i.nombre}" agregar a compra?`, "1");
+                        if (cantStr === null) return;
+                        const cant = Number(cantStr);
+                        if (!cant || cant <= 0) return alert("Cantidad inválida");
+                        addToCart({
+                          item_id: i.id,
+                          nombre: i.nombre,
+                          unidad: i.unidad || "Unidades",
+                          categoria: i.categoria,
+                          cant,
+                          precioU: Number(i.precio_compra) || 0,
+                        });
+                      }}
+                      title="Agregar a requisición"
+                      style={{
+                        width: 32, height: 32, borderRadius: 8, border: "none",
+                        background: B.success + "22", color: B.success,
+                        cursor: "pointer", fontSize: 20, fontWeight: 800, lineHeight: 1,
+                      }}>+</button>
                   </td>
                 </tr>
               );
