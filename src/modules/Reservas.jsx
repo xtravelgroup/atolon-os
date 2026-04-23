@@ -3736,26 +3736,18 @@ export default function Reservas() {
                 <td style="font-weight:600">${escape(r.nombre)}</td>
                 <td>${escape(r.tipo)}</td>
                 <td style="text-align:center">${r.pax_a || r.pax || 0}A${r.pax_n ? ` ${r.pax_n}N` : ""}</td>
-                <td>${escape(estadoLabel(r.estado))}</td>
-                <td>${escape(r.forma_pago || "—")}</td>
-                <td>${escape(r.canal || "—")}</td>
-                <td>${escape(r.vendedor || "—")}</td>
+                <td style="color:${r.notas_club ? "#7C3AED" : "#9CA3AF"};font-style:${r.notas_club ? "normal" : "italic"};font-size:11px;">${r.notas_club ? escape(r.notas_club) : "—"}</td>
               </tr>
-              ${r.notas ? `<tr class="nota-row"><td colspan="7" style="font-style:italic;color:#6B7280;font-size:10px;padding:2px 8px 4px 12px;">📝 ${escape(r.notas)}</td></tr>` : ""}
-              ${r.notas_club ? `<tr class="nota-row"><td colspan="7" style="font-style:italic;color:#7C3AED;font-size:10px;padding:2px 8px 8px 12px;border-bottom:1px solid #eee;background:rgba(167,139,250,0.05);">🏝 Club: ${escape(r.notas_club)}</td></tr>` : (r.notas ? `<tr class="nota-row"><td colspan="7" style="padding:0;border-bottom:1px solid #eee;"></td></tr>` : "")}
             `).join("");
             return `
               <div class="section">
                 <div class="section-title">${escape(salKey)} <span class="count">${rows.length} reservas · ${paxSal} pax</span></div>
                 <table>
                   <thead><tr>
-                    <th style="width:24%">Nombre</th>
-                    <th style="width:14%">Tipo</th>
-                    <th style="width:8%;text-align:center">Pax</th>
-                    <th style="width:12%">Estado</th>
-                    <th style="width:14%">Forma Pago</th>
-                    <th style="width:12%">Canal</th>
-                    <th style="width:16%">Vendedor</th>
+                    <th style="width:30%">Nombre</th>
+                    <th style="width:18%">Tipo</th>
+                    <th style="width:10%;text-align:center">Pax</th>
+                    <th style="width:42%">Notas Club</th>
                   </tr></thead>
                   <tbody>${rowsHTML}</tbody>
                 </table>
