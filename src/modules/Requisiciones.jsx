@@ -182,10 +182,12 @@ export default function Requisiciones() {
   const requierenAprobacion = reqs.filter(r => {
     if (r.estado !== "Pendiente") return false;
     const nivel = r.nivel_aprobacion || nivelAprobacion(r);
+    // Super admin ve todas las pendientes (acceso total)
+    if (currentUser.rol === "super_admin") return true;
     // Gerente general ve todas las pendientes
     if (currentUser.rol === "gerente_general_op" || currentUser.rol === "gerente_general_admin") return true;
     // Dirección ve solo las que requieren dirección
-    if (currentUser.rol === "super_admin" || currentUser.rol === "direccion") return nivel === "direccion";
+    if (currentUser.rol === "direccion") return nivel === "direccion";
     return false;
   });
 
