@@ -975,9 +975,21 @@ export default function Menus() {
     <div>
       {/* Header */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
           <h2 style={{ fontSize: 22, fontWeight: 600 }}>Productos</h2>
           {supabase && !loading && <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 10, background: B.success + "22", color: B.success }}>LIVE</span>}
+          {!loading && (() => {
+            const enlazados = tabItems.filter(i => i.loggro_id).length;
+            const total = tabItems.length;
+            if (total === 0) return null;
+            const pct = Math.round((enlazados / total) * 100);
+            return (
+              <span style={{ fontSize: 11, padding: "3px 10px", borderRadius: 10, background: "#22c55e11", color: "#22c55e", fontWeight: 700, border: "1px solid #22c55e44" }}
+                title={`${enlazados} de ${total} productos vinculados a Loggro POS`}>
+                🔗 {enlazados}/{total} en Loggro ({pct}%)
+              </span>
+            );
+          })()}
         </div>
         {!["actividades","transportacion","trans_acuatica"].includes(tab) && (
           <div style={{ display: "flex", gap: 10 }}>
@@ -1057,12 +1069,22 @@ export default function Menus() {
                       </div>
                       {/* Info */}
                       <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 2 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 2, flexWrap: "wrap" }}>
                           <div style={{ fontWeight: 600, fontSize: 14 }}>{item.nombre}</div>
                           {item.disponible === false && <span style={{ fontSize: 9, padding: "1px 5px", borderRadius: 4, background: "#ef444433", color: "#ef4444", fontWeight: 700, textTransform: "uppercase" }}>Agotado</span>}
+                          {item.loggro_id ? (
+                            <span title={`Loggro: ${item.loggro_id}`} style={{ fontSize: 9, padding: "1px 6px", borderRadius: 4, background: "#22c55e22", color: "#22c55e", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em" }}>
+                              🔗 Loggro
+                            </span>
+                          ) : (
+                            <span title="Sin enlace a Loggro" style={{ fontSize: 9, padding: "1px 6px", borderRadius: 4, background: "rgba(255,255,255,0.05)", color: "rgba(255,255,255,0.35)", fontWeight: 700, textTransform: "uppercase" }}>
+                              sin enlace
+                            </span>
+                          )}
                         </div>
                         {item.descripcion && <div style={{ fontSize: 11, color: "rgba(255,255,255,0.45)", lineHeight: 1.4, marginBottom: 4, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{item.descripcion}</div>}
                         {item.precio > 0 && <div style={{ fontSize: 13, fontWeight: 700, color: B.sand }}>{COP(item.precio)}</div>}
+                        {item.loggro_id && <LoggroLinkLabel loggroId={item.loggro_id} />}
                       </div>
                       {/* Actions */}
                       <div style={{ display: "flex", flexDirection: "column", gap: 4, flexShrink: 0 }}>
@@ -1096,6 +1118,53 @@ export default function Menus() {
           onSaved={fetch}
         />
       )}</>}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// LoggroLinkLabel — muestra el nombre del producto en Loggro por su _id.
+// Cachea resultados en memoria para evitar múltiples fetches del mismo _id.
+// ═══════════════════════════════════════════════════════════════════════════
+const _loggroNameCache = new Map();
+const _loggroNamePending = new Map();
+
+function LoggroLinkLabel({ loggroId }) {
+  const [name, setName] = useState(() => _loggroNameCache.get(loggroId) || null);
+
+  useEffect(() => {
+    if (!loggroId) return;
+    if (_loggroNameCache.has(loggroId)) { setName(_loggroNameCache.get(loggroId)); return; }
+
+    // Coalesce simultaneous requests for the same id
+    let promise = _loggroNamePending.get(loggroId);
+    if (!promise) {
+      promise = fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/loggro-sync/raw?path=${encodeURIComponent("/products/" + loggroId)}`, {
+        headers: {
+          apikey: import.meta.env.VITE_SUPABASE_ANON_KEY,
+          Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+        },
+      })
+        .then(r => r.json())
+        .then(d => {
+          const prod = d?.body || d;
+          const n = prod?.name || null;
+          _loggroNameCache.set(loggroId, n);
+          _loggroNamePending.delete(loggroId);
+          return n;
+        })
+        .catch(() => { _loggroNamePending.delete(loggroId); return null; });
+      _loggroNamePending.set(loggroId, promise);
+    }
+    let cancel = false;
+    promise.then(n => { if (!cancel) setName(n); });
+    return () => { cancel = true; };
+  }, [loggroId]);
+
+  return (
+    <div style={{ fontSize: 10, color: "#22c55ecc", marginTop: 3, display: "flex", alignItems: "center", gap: 4 }}>
+      <span>→</span>
+      <span style={{ fontWeight: 600 }}>{name || "cargando..."}</span>
     </div>
   );
 }
