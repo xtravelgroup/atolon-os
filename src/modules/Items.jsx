@@ -559,6 +559,7 @@ function ItemModal({ item, proveedoresAll, existingProvs, catNames, onSave, onCl
       : []
   );
   const [scanForCode, setScanForCode] = useState(false);
+  const [offOpen, setOffOpen] = useState(false);
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
   const addProv = () => setProvs(ps => [...ps, { proveedor_id: "", proveedor_nombre: "", precio: 0, es_principal: false, notas: "" }]);
@@ -605,15 +606,20 @@ function ItemModal({ item, proveedoresAll, existingProvs, catNames, onSave, onCl
           <div>
             <label style={LS}>Código de barras / SKU</label>
             <div style={{ display: "flex", gap: 6 }}>
-              <input value={form.codigo} onChange={e => set("codigo", e.target.value)} placeholder="Escanea o escribe el código" style={{ ...IS, flex: 1 }} />
+              <input value={form.codigo} onChange={e => set("codigo", e.target.value)} placeholder="Escanea, busca o escribe el código" style={{ ...IS, flex: 1 }} />
               <button type="button" onClick={() => setScanForCode(true)}
                 title="Escanear código de barras con la cámara"
                 style={{ background: B.sky, color: B.navy, border: "none", borderRadius: 8, padding: "0 12px", fontSize: 16, cursor: "pointer", fontWeight: 700 }}>
                 📷
               </button>
+              <button type="button" onClick={() => setOffOpen(true)}
+                title="Buscar código en Open Food Facts"
+                style={{ background: "#4ade80", color: B.navy, border: "none", borderRadius: 8, padding: "0 12px", fontSize: 16, cursor: "pointer", fontWeight: 700 }}>
+                🔍
+              </button>
             </div>
             <div style={{ fontSize: 10, color: "rgba(255,255,255,0.35)", marginTop: 4 }}>
-              Necesario para escaneo en Hacer Inventario
+              📷 escanear · 🔍 buscar en Open Food Facts (global)
             </div>
           </div>
           <div>
@@ -688,6 +694,131 @@ function ItemModal({ item, proveedoresAll, existingProvs, catNames, onSave, onCl
 
       {/* Scanner para capturar código de barras al input */}
       {scanForCode && <ItemScannerModal onClose={() => setScanForCode(false)} onCode={(c) => { set("codigo", c); setScanForCode(false); }} />}
+
+      {/* Buscador online de código (Open Food Facts / Éxito / Jumbo / Carulla) */}
+      {offOpen && <BarcodeSearchModal initialQuery={form.nombre} onClose={() => setOffOpen(false)} onPick={(c) => { set("codigo", c); setOffOpen(false); }} />}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// BARCODE SEARCH MODAL — busca código por nombre en OFF / Éxito / Jumbo / Carulla
+// ═══════════════════════════════════════════════════════════════════════════
+function BarcodeSearchModal({ initialQuery, onClose, onPick }) {
+  const [query, setQuery] = useState(initialQuery || "");
+  const [loading, setLoading] = useState(false);
+  const [results, setResults] = useState([]);
+  const [porFuente, setPorFuente] = useState(null);
+  const [error, setError] = useState(null);
+
+  const buscar = async () => {
+    if (query.trim().length < 2) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const URL = import.meta.env.VITE_SUPABASE_URL;
+      const KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
+      const res = await fetch(`${URL}/functions/v1/barcode-search?q=${encodeURIComponent(query)}&limit=12`, {
+        headers: { apikey: KEY, Authorization: `Bearer ${KEY}` },
+      });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || "Error");
+      setResults(data.results || []);
+      setPorFuente(data.por_fuente);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Auto-search al abrir si hay nombre
+  useEffect(() => { if (initialQuery) buscar(); }, []); // eslint-disable-line
+
+  const SOURCE_COLORS = {
+    "Éxito":   "#ffd400",
+    "Carulla": "#e63946",
+    "Jumbo":   "#00a651",
+    "Open Food Facts": "#4ade80",
+  };
+
+  return (
+    <div onClick={e => e.target === e.currentTarget && onClose()}
+      style={{ position: "fixed", inset: 0, zIndex: 2100, background: "rgba(0,0,0,0.8)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+      <div style={{ background: B.navyMid, borderRadius: 16, width: "100%", maxWidth: 620, maxHeight: "90vh", display: "flex", flexDirection: "column", border: `1px solid ${B.navyLight}` }}>
+        <div style={{ padding: "18px 22px", borderBottom: `1px solid ${B.navyLight}` }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+            <div style={{ fontSize: 17, fontWeight: 800, color: B.sand }}>🔍 Buscar código de barras online</div>
+            <button onClick={onClose} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.5)", fontSize: 22, cursor: "pointer" }}>×</button>
+          </div>
+          <div style={{ display: "flex", gap: 6 }}>
+            <input value={query} onChange={e => setQuery(e.target.value)}
+              onKeyDown={e => { if (e.key === "Enter") buscar(); }}
+              autoFocus
+              placeholder="Ej: ron medellin 750 ml"
+              style={{ ...IS, flex: 1 }} />
+            <button onClick={buscar} disabled={loading}
+              style={{ background: B.sky, color: B.navy, border: "none", borderRadius: 8, padding: "0 20px", fontWeight: 800, cursor: loading ? "wait" : "pointer" }}>
+              {loading ? "⏳" : "Buscar"}
+            </button>
+          </div>
+          {porFuente && !loading && (
+            <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", marginTop: 8 }}>
+              Fuentes: Éxito {porFuente.Éxito} · Carulla {porFuente.Carulla} · Jumbo {porFuente.Jumbo} · OFF {porFuente["Open Food Facts"]}
+            </div>
+          )}
+        </div>
+
+        <div style={{ overflowY: "auto", flex: 1, padding: "14px 22px" }}>
+          {error && (
+            <div style={{ background: "#ef444422", border: "1px solid #ef4444", borderRadius: 8, padding: "10px 14px", color: "#fca5a5", fontSize: 13 }}>
+              ❌ {error}
+            </div>
+          )}
+          {!loading && !error && results.length === 0 && (
+            <div style={{ textAlign: "center", padding: 40, color: "rgba(255,255,255,0.3)", fontSize: 13 }}>
+              {query ? "Sin resultados. Intenta con menos palabras o una marca distinta." : "Escribe un nombre y presiona Buscar."}
+            </div>
+          )}
+          {loading && <div style={{ textAlign: "center", padding: 40, color: "rgba(255,255,255,0.4)" }}>Buscando…</div>}
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {results.map((r, i) => (
+              <div key={`${r.source}-${r.barcode}-${i}`}
+                onClick={() => onPick(r.barcode)}
+                style={{
+                  display: "flex", gap: 12, padding: "10px 12px", background: B.navy, borderRadius: 10, cursor: "pointer",
+                  border: `1px solid ${B.navyLight}`, alignItems: "center",
+                }}
+                onMouseEnter={e => { e.currentTarget.style.borderColor = B.sky; e.currentTarget.style.background = B.sky + "11"; }}
+                onMouseLeave={e => { e.currentTarget.style.borderColor = B.navyLight; e.currentTarget.style.background = B.navy; }}
+              >
+                {r.image ? (
+                  <img src={r.image} alt="" style={{ width: 56, height: 56, objectFit: "contain", borderRadius: 6, background: "#fff" }} onError={e => { e.currentTarget.style.display = "none"; }} />
+                ) : (
+                  <div style={{ width: 56, height: 56, background: B.navyLight, borderRadius: 6, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22 }}>📦</div>
+                )}
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: B.white, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{r.name}</div>
+                  <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginTop: 2 }}>
+                    {r.brand && <span>{r.brand}</span>}
+                    {r.size && <span> · {r.size}</span>}
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 3 }}>
+                    <span style={{ fontSize: 10, padding: "2px 7px", borderRadius: 10, background: (SOURCE_COLORS[r.source] || B.sky) + "33", color: SOURCE_COLORS[r.source] || B.sky, fontWeight: 800 }}>
+                      {r.source}
+                    </span>
+                    <span style={{ fontFamily: "monospace", fontSize: 11, color: B.sand, fontWeight: 700 }}>{r.barcode}</span>
+                  </div>
+                </div>
+                <button onClick={(e) => { e.stopPropagation(); onPick(r.barcode); }}
+                  style={{ background: B.success, color: B.navy, border: "none", borderRadius: 8, padding: "7px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+                  ✓ Usar
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
