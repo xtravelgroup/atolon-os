@@ -448,7 +448,19 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
         } catch (_) { return null; }
       })(),
     };
-    const pagosPrev = r0.pagos || [];
+    let pagosPrev = r0.pagos || [];
+    // Si no hay historial pero ya había abono, sembrar un entry inicial para no perder ese pago
+    if (pagosPrev.length === 0 && (r0.abono || 0) > 0) {
+      pagosPrev = [{
+        id: `P-inicial-${r0.id}`,
+        monto: r0.abono,
+        forma_pago: r0.forma_pago || "Transferencia",
+        es_cortesia: false,
+        fecha: r0.fecha_pago || r0.created_at?.slice(0, 10) || todayStr(),
+        timestamp: r0.created_at || new Date().toISOString(),
+        registrado_por: "sistema (pago inicial)",
+      }];
+    }
     // Ajuste Agencia es un descuento, no aparece en la lista de pagos
     const pagosNext = esAjusteAgencia ? pagosPrev : [...pagosPrev, pagoEntry];
     const nuevoDescuentoCortesia = esCortesia
