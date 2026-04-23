@@ -1309,7 +1309,12 @@ export function EventoModal({ evento, categoria, salidas, aliados, vendedores, o
           {/* Precio — solo organizador */}
           {isGrupo && form.modalidad_pago === "organizador" && (() => {
             const lineas = form.pasadias_org.map(p => ({
-              tipo: p.tipo, personas: Number(p.personas) || 0, precio: getPrecioTipo(p),
+              tipo: p.tipo,
+              personas: Number(p.personas) || 0,
+              adultos:  Number(p.adultos)  || 0,
+              ninos:    Number(p.ninos)    || 0,
+              precio:   getPrecioTipo(p),
+              precioNino: getPrecioNino(p),
             }));
             const total = nuevoTotal;
             const sinPrecios = lineas.some(l => l.personas > 0 && l.tipo !== "Impuesto Muelle" && l.tipo !== "STAFF" && l.precio === null);
@@ -1335,20 +1340,44 @@ export function EventoModal({ evento, categoria, salidas, aliados, vendedores, o
                 </div>
 
                 {/* Desglose por tipo */}
-                {lineas.filter(l => l.personas > 0).length > 0 && (
+                {lineas.filter(l => (l.personas + l.adultos + l.ninos) > 0).length > 0 && (
                   <div style={{ background: B.navy, borderRadius: 10, padding: "12px 14px", marginBottom: 12 }}>
-                    {lineas.filter(l => l.personas > 0).map((l, i) => (
-                      <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center",
-                        padding: "6px 0", borderBottom: i < lineas.filter(x=>x.personas>0).length - 1 ? `1px solid ${B.navyLight}44` : "none",
-                        fontSize: 13 }}>
-                        <span style={{ color: "rgba(255,255,255,0.6)" }}>
-                          {l.tipo} × {l.personas} pax
-                        </span>
-                        <span style={{ fontWeight: 700, color: l.precio !== null ? B.white : B.warning }}>
-                          {l.precio !== null ? COP(l.precio * l.personas) : "—"}
-                        </span>
-                      </div>
-                    ))}
+                    {lineas.filter(l => (l.personas + l.adultos + l.ninos) > 0).map((l, i) => {
+                      const tieneSplit = (l.adultos > 0 || l.ninos > 0);
+                      const sub = tieneSplit
+                        ? (l.precio || 0) * l.adultos + (l.precioNino || 0) * l.ninos
+                        : (l.precio || 0) * l.personas;
+                      return (
+                        <div key={i} style={{ padding: "6px 0", borderBottom: i < lineas.filter(x => (x.personas + x.adultos + x.ninos) > 0).length - 1 ? `1px solid ${B.navyLight}44` : "none", fontSize: 13 }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                            <span style={{ color: "rgba(255,255,255,0.6)" }}>{l.tipo}</span>
+                            <span style={{ fontWeight: 700, color: l.precio !== null ? B.white : B.warning }}>
+                              {l.precio !== null ? COP(sub) : "—"}
+                            </span>
+                          </div>
+                          {tieneSplit ? (
+                            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", marginTop: 4, display: "flex", flexDirection: "column", gap: 2 }}>
+                              {l.adultos > 0 && (
+                                <div style={{ display: "flex", justifyContent: "space-between" }}>
+                                  <span>{l.adultos} adulto{l.adultos !== 1 ? "s" : ""} × {COP(l.precio || 0)}</span>
+                                  <span>{COP((l.precio || 0) * l.adultos)}</span>
+                                </div>
+                              )}
+                              {l.ninos > 0 && (
+                                <div style={{ display: "flex", justifyContent: "space-between" }}>
+                                  <span>{l.ninos} niño{l.ninos !== 1 ? "s" : ""} × {COP(l.precioNino || 0)}</span>
+                                  <span>{COP((l.precioNino || 0) * l.ninos)}</span>
+                                </div>
+                              )}
+                            </div>
+                          ) : (
+                            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", marginTop: 2 }}>
+                              {l.personas} pax × {COP(l.precio || 0)}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center",
                       paddingTop: 10, marginTop: 4, borderTop: `1px solid ${B.navyLight}` }}>
                       <span style={{ fontSize: 12, fontWeight: 700, color: B.sand, textTransform: "uppercase", letterSpacing: "0.06em" }}>Total</span>
