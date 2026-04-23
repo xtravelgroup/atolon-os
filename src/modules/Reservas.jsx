@@ -3686,6 +3686,168 @@ export default function Reservas() {
 
       {tab === "reservas" && <>
 
+      {/* ── Generador de PDF para Hoy / Mañana ── */}
+      {(tabDia === "hoy" || tabDia === "manana") && (() => {
+        const generarPDFDia = async () => {
+          const { jsPDF } = await import("jspdf");
+          const pdf = new jsPDF({ unit: "mm", format: "a4", orientation: "portrait" });
+          const W = 210, M = 12;
+          let y = M;
+
+          const fechaStr = tabDia === "hoy" ? today : tomorrow;
+          const labelDia = tabDia === "hoy" ? "HOY" : "MAÑANA";
+
+          // Header
+          pdf.setFillColor(10, 26, 60); pdf.rect(0, 0, W, 28, "F");
+          pdf.setTextColor(255, 255, 255);
+          pdf.setFont("helvetica", "bold"); pdf.setFontSize(18);
+          pdf.text("Reservas — " + labelDia, M, 14);
+          pdf.setFont("helvetica", "normal"); pdf.setFontSize(10);
+          pdf.text(new Date(fechaStr + "T12:00:00").toLocaleDateString("es-CO", { weekday: "long", day: "numeric", month: "long", year: "numeric" }), M, 21);
+          pdf.setFontSize(8);
+          pdf.text("Generado: " + new Date().toLocaleString("es-CO"), W - M, 21, { align: "right" });
+          y = 36;
+
+          // Totales resumen
+          const activas = reservas.filter(r => r.estado !== "cancelado");
+          const paxRes = activas.reduce((s, r) => s + (r.pax || 0), 0);
+          const paxGrupos = grupos.reduce((s, g) => s + grupoPaxTotal(g, reservas), 0);
+          const paxLlegadas = llegadasDiaAll.reduce((s, l) => s + (l.pax_total || 0), 0);
+          const totalPax = paxRes + paxGrupos + paxLlegadas;
+
+          pdf.setFontSize(10); pdf.setFont("helvetica", "bold");
+          pdf.setTextColor(30, 40, 60);
+          pdf.text(`${activas.length} reservas  ·  ${grupos.length} grupos  ·  ${llegadasDiaAll.length} llegadas  ·  Total: ${totalPax} pax`, M, y);
+          y += 8;
+
+          // Salidas agrupadas
+          const porSalida = {};
+          activas.forEach(r => {
+            const sal = salidas.find(s => s.id === r.salida_id);
+            const key = sal ? `${sal.hora} — ${sal.nombre}` : (r.tipo?.toLowerCase().includes("after") ? "After Island" : "Sin salida");
+            if (!porSalida[key]) porSalida[key] = [];
+            porSalida[key].push(r);
+          });
+          const salidasOrdenadas = Object.keys(porSalida).sort();
+
+          // Tabla por cada grupo de salida
+          for (const salKey of salidasOrdenadas) {
+            const rows = porSalida[salKey];
+            // Section header
+            if (y > 270) { pdf.addPage(); y = M; }
+            pdf.setFillColor(200, 185, 154);
+            pdf.rect(M, y, W - 2 * M, 7, "F");
+            pdf.setTextColor(26, 39, 64); pdf.setFont("helvetica", "bold"); pdf.setFontSize(10);
+            const paxSal = rows.reduce((s, r) => s + (r.pax || 0), 0);
+            pdf.text(`${salKey}  (${rows.length} reservas, ${paxSal} pax)`, M + 2, y + 5);
+            y += 9;
+
+            // Column headers
+            pdf.setFillColor(240, 240, 240);
+            pdf.rect(M, y, W - 2 * M, 6, "F");
+            pdf.setTextColor(50, 50, 50); pdf.setFontSize(8); pdf.setFont("helvetica", "bold");
+            pdf.text("Nombre",   M + 1,  y + 4);
+            pdf.text("Tipo",     M + 60, y + 4);
+            pdf.text("Pax",      M + 92, y + 4);
+            pdf.text("Estado",   M + 105, y + 4);
+            pdf.text("Pago",     M + 128, y + 4);
+            pdf.text("Canal",    M + 150, y + 4);
+            pdf.text("Vendedor", M + 168, y + 4);
+            y += 6;
+
+            pdf.setFont("helvetica", "normal"); pdf.setFontSize(8);
+            rows.forEach((r, idx) => {
+              const notas = (r.notas || "").trim();
+              const rowH = notas ? 5.5 + 4.5 : 5.5; // espacio extra si hay notas (por lineas envueltas)
+              if (y + rowH > 285) { pdf.addPage(); y = M; }
+              if (idx % 2 === 0) { pdf.setFillColor(250, 250, 250); pdf.rect(M, y, W - 2*M, rowH, "F"); }
+              pdf.setTextColor(30, 30, 30); pdf.setFontSize(8); pdf.setFont("helvetica", "normal");
+              const nombre = (r.nombre || "").slice(0, 32);
+              const tipo   = (r.tipo   || "").slice(0, 16);
+              const pax    = `${r.pax_a || r.pax || 0}A${r.pax_n ? " " + r.pax_n + "N" : ""}`;
+              const estado = r.estado === "check_in" ? "Check-in" : r.estado === "confirmado" ? "Conf." : r.estado === "pendiente_pago" ? "Pend.Pago" : r.estado || "—";
+              const pago   = (r.forma_pago || "—").slice(0, 12);
+              const canal  = (r.canal || "—").slice(0, 10);
+              const vend   = (r.vendedor || "—").slice(0, 12);
+              pdf.text(nombre, M + 1,   y + 4);
+              pdf.text(tipo,   M + 60,  y + 4);
+              pdf.text(pax,    M + 92,  y + 4);
+              pdf.text(estado, M + 105, y + 4);
+              pdf.text(pago,   M + 128, y + 4);
+              pdf.text(canal,  M + 150, y + 4);
+              pdf.text(vend,   M + 168, y + 4);
+              // Notas debajo (italic, gris)
+              if (notas) {
+                pdf.setFontSize(7); pdf.setFont("helvetica", "italic"); pdf.setTextColor(110, 110, 110);
+                const notasLines = pdf.splitTextToSize("📝 " + notas, W - 2 * M - 4);
+                let notaY = y + 8;
+                for (const ln of notasLines.slice(0, 2)) { // máx 2 líneas
+                  pdf.text(ln, M + 3, notaY);
+                  notaY += 3;
+                }
+              }
+              y += rowH;
+            });
+            y += 3;
+          }
+
+          // Grupos
+          if (grupos.length > 0) {
+            if (y > 270) { pdf.addPage(); y = M; }
+            pdf.setFillColor(167, 139, 250);
+            pdf.rect(M, y, W - 2 * M, 7, "F");
+            pdf.setTextColor(255, 255, 255); pdf.setFont("helvetica", "bold"); pdf.setFontSize(10);
+            pdf.text(`GRUPOS  (${grupos.length})`, M + 2, y + 5);
+            y += 9;
+            pdf.setFont("helvetica", "normal"); pdf.setFontSize(9);
+            grupos.forEach(g => {
+              if (y > 280) { pdf.addPage(); y = M; }
+              pdf.setTextColor(30, 30, 30);
+              const pax = grupoPaxTotal(g, reservas);
+              pdf.text(`• ${g.nombre}  —  ${pax} pax  —  ${g.stage || ""}`, M + 2, y + 4);
+              y += 6;
+            });
+            y += 3;
+          }
+
+          // Llegadas (embarcaciones)
+          if (llegadasDiaAll.length > 0) {
+            if (y > 270) { pdf.addPage(); y = M; }
+            pdf.setFillColor(74, 222, 128);
+            pdf.rect(M, y, W - 2 * M, 7, "F");
+            pdf.setTextColor(26, 39, 64); pdf.setFont("helvetica", "bold"); pdf.setFontSize(10);
+            pdf.text(`LLEGADAS / EMBARCACIONES  (${llegadasDiaAll.length})`, M + 2, y + 5);
+            y += 9;
+            pdf.setFont("helvetica", "normal"); pdf.setFontSize(9);
+            llegadasDiaAll.forEach(l => {
+              if (y > 280) { pdf.addPage(); y = M; }
+              pdf.setTextColor(30, 30, 30);
+              pdf.text(`• ${l.nombre_embarcacion || l.nombre || "—"}  —  ${l.pax_total || 0} pax  —  ${l.hora_llegada || "—"}`, M + 2, y + 4);
+              y += 6;
+            });
+          }
+
+          // Footer en cada página
+          const pageCount = pdf.getNumberOfPages();
+          for (let p = 1; p <= pageCount; p++) {
+            pdf.setPage(p);
+            pdf.setFontSize(7); pdf.setTextColor(150, 150, 150);
+            pdf.text(`Atolón Beach Club  ·  Página ${p} / ${pageCount}`, W / 2, 292, { align: "center" });
+          }
+
+          pdf.save(`reservas-${fechaStr}-${tabDia}.pdf`);
+        };
+
+        return (
+          <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 10 }}>
+            <button onClick={generarPDFDia}
+              style={{ background: B.sand, color: B.navy, border: "none", borderRadius: 8, padding: "8px 16px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
+              📄 Descargar PDF de {tabDia === "hoy" ? "hoy" : "mañana"}
+            </button>
+          </div>
+        );
+      })()}
+
       {/* ── Day tabs ── */}
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: isMobile ? 16 : 20, alignItems: "center" }}>
         {[
