@@ -843,6 +843,47 @@ serve(async (req) => {
       return json({ ok: true, loggro_response: post.body });
     }
 
+    // POST /loggro-sync/create-ingredient
+    // Crea un ingrediente nuevo en Loggro Restobar.
+    // Body: { nombre, category_id, descripcion?, codigo?, unit?, cost? }
+    if (req.method === "POST" && path === "/create-ingredient") {
+      const body = await req.json().catch(() => ({}));
+      if (!body.nombre) return json({ ok: false, error: "nombre requerido" }, 400);
+      if (!body.category_id) return json({ ok: false, error: "category_id requerido" }, 400);
+
+      const now = new Date().toISOString();
+      const payload: any = {
+        name: body.nombre,
+        category: body.category_id,
+        description: body.descripcion || body.nombre,
+        code: body.codigo || "",
+        price: Number(body.precio) || 0,
+        cost: Number(body.costo) || 0,
+        isActive: true,
+        variablePrice: { isVariablePrice: false },
+        config: { openModalNotes: false },
+        deletedInfo: { isDeleted: false },
+        createdOn: now,
+        modifiedOn: now,
+      };
+      if (body.unit) payload.unit = body.unit;
+
+      const r = await loggroRaw("POST", "/ingredients", payload);
+      if (!r.ok) {
+        return json({
+          ok: false,
+          error: `Loggro rechazó el insert (${r.status})`,
+          loggro_response: r.body,
+          payload,
+        }, 502);
+      }
+      return json({
+        ok: true,
+        loggro_id: r.body?._id || null,
+        loggro_response: r.body,
+      });
+    }
+
     // POST /loggro-sync/create-inventory-movement
     // Body (lo que Atolón OS envía):
     //   {
