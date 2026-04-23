@@ -3,6 +3,7 @@ import { useState, useEffect, useCallback } from "react";
 import { supabase } from "../lib/supabase";
 import { B } from "../brand";
 import { useBreakpoint } from "../lib/responsive";
+import { getAyBRango, getTotalAyB, getAyBPorDia } from "../lib/loggroAyB";
 
 const COP = (v) => new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 }).format(v || 0);
 
@@ -264,7 +265,7 @@ export default function Resultados() {
     setDiaDetalle(fecha);
     setLoadingDia(true);
     // Load all payments for this day
-    const [pagosFecha, pagosCreated, cierresAyb, llegadas] = await Promise.all([
+    const [pagosFecha, pagosCreated, aybLoggro, llegadas] = await Promise.all([
       // Reservas con fecha_pago = fecha
       supabase.from("reservas")
         .select("id, nombre, contacto, tipo, total, abono, forma_pago, fecha_pago, created_at, grupo_id, aliado_id")
@@ -276,10 +277,8 @@ export default function Resultados() {
         .gte("created_at", fecha + "T00:00:00-05:00")
         .lte("created_at", fecha + "T23:59:59-05:00")
         .gt("abono", 0).neq("estado", "cancelado"),
-      // Cierres de A&B
-      supabase.from("cierres_caja")
-        .select("id, cajero_nombre, total_ventas, total_propinas, metodos, fecha")
-        .eq("fecha", fecha).eq("area", "ayb"),
+      // A&B: ventas oficiales desde Loggro Restobar (reemplaza cierres_caja area='ayb')
+      getAyBRango(fecha, fecha),
       // Llegadas muelle con cobro
       supabase.from("muelle_llegadas")
         .select("id, embarcacion_nombre, pax_total, total_cobrado, metodo_pago, tipo, fecha")
@@ -299,16 +298,18 @@ export default function Resultados() {
         reservaId: r.id,
       });
     });
-    (cierresAyb.data || []).forEach(c => {
+    // A&B desde Loggro (por día)
+    const aybDiaVentas = Number(aybLoggro?.por_dia?.[fecha]?.ventas) || 0;
+    if (aybDiaVentas > 0) {
       items.push({
         tipo: "ayb",
-        id: c.id,
-        nombre: c.cajero_nombre || "A&B",
-        concepto: "Cierre de caja A&B",
-        monto: (c.total_ventas || 0),
+        id: `ayb-${fecha}`,
+        nombre: "A&B (Loggro Restobar)",
+        concepto: "Ventas A&B del día",
+        monto: aybDiaVentas,
         metodo: "Multiple",
       });
-    });
+    }
     (llegadas.data || []).forEach(l => {
       // After Island y Restaurante se consideran pasadías (pagadas en muelle)
       const esPasadia = l.tipo === "after_island" || l.tipo === "restaurante";
@@ -379,12 +380,9 @@ export default function Resultados() {
         .eq("categoria", "evento")
         .then(r => ({ periodo: p.key, cat: "eventos", data: r.data || [] })),
 
-      // A&B: cierres_caja del área ayb
-      supabase.from("cierres_caja")
-        .select("id, total_ventas, fecha")
-        .gte("fecha", p.desde).lte("fecha", p.hasta <= hoyStr ? p.hasta : hoyStr)
-        .eq("area", "ayb")
-        .then(r => ({ periodo: p.key, cat: "ayb", data: r.data || [] })),
+      // A&B: ventas oficiales desde Loggro Restobar (fuente: /loggro-sync/cierre-caja-rango)
+      getAyBRango(p.desde, p.hasta <= hoyStr ? p.hasta : hoyStr)
+        .then(d => ({ periodo: p.key, cat: "ayb", data: d })),
 
       // Llegadas muelle: embarcaciones privadas (pax siempre suma, monto solo si pagaron)
       // Excluir las que ya están vinculadas a una reserva (evita doble conteo)
@@ -472,13 +470,17 @@ export default function Resultados() {
       };
     });
 
-    // A&B: viene de cierres_caja (1 cierre por día), cantidad = días con cierre, monto = sum total_ventas
+    // A&B: viene de Loggro Restobar vía /loggro-sync/cierre-caja-rango
+    //   monto    = resumen.total_ventas del rango
+    //   cantidad = días con ventas > 0 (análogo a "días con cierre")
     const aybR = {};
     periodos.forEach(p => {
-      const rows = resultados.find(r => r.cat === "ayb" && r.periodo === p.key)?.data || [];
+      const loggro = resultados.find(r => r.cat === "ayb" && r.periodo === p.key)?.data || {};
+      const porDia = loggro?.por_dia || {};
+      const diasConVentas = Object.values(porDia).filter(d => Number(d?.ventas) > 0).length;
       aybR[p.key] = {
-        cantidad: rows.length,
-        monto:    rows.reduce((s, r) => s + (r.total_ventas || 0), 0),
+        cantidad: diasConVentas,
+        monto:    Number(loggro?.resumen?.total_ventas) || 0,
       };
     });
 
@@ -565,12 +567,10 @@ export default function Resultados() {
     };
 
     // Paso 1: obtener IDs de eventos para categorizar grupo_id
-    const [fcEventosIds, fcCierres, fcLlegadas, fcEventosPagos] = await Promise.all([
+    // A&B diario → Loggro Restobar (fuente oficial, no cierres_caja)
+    const [fcEventosIds, fcAybLoggro, fcLlegadas, fcEventosPagos] = await Promise.all([
       supabase.from("eventos").select("id, categoria"),
-      supabase.from("cierres_caja")
-        .select("fecha, total_ventas")
-        .gte("fecha", mesIni()).lte("fecha", hoyStr)
-        .eq("area", "ayb"),
+      getAyBPorDia(mesIni(), hoyStr),
       supabase.from("muelle_llegadas")
         .select("fecha, total_cobrado")
         .gte("fecha", mesIni()).lte("fecha", hoyStr)
@@ -618,10 +618,11 @@ export default function Resultados() {
     for (const r of (fcPorFecha.data   || [])) agregarPago(r, r.fecha_pago);
     for (const r of (fcPorCreated.data || [])) agregarPago(r, fechaColDe(r.created_at));
 
-    for (const c of (fcCierres.data || [])) {
-      if (!c.fecha || c.fecha < mesIni() || c.fecha > hoyStr) continue;
-      ensureDia(c.fecha);
-      diaMap[c.fecha].ayb += c.total_ventas || 0;
+    // A&B diario desde Loggro → { "YYYY-MM-DD": ventas }
+    for (const [fecha, ventas] of Object.entries(fcAybLoggro || {})) {
+      if (!fecha || fecha < mesIni() || fecha > hoyStr) continue;
+      ensureDia(fecha);
+      diaMap[fecha].ayb += Number(ventas) || 0;
     }
 
     // Llegadas muelle con cobro → sumar a pasadías en flujo de caja
@@ -804,10 +805,11 @@ export default function Resultados() {
             />
             {/* A&B: solo real, no se puede proyectar (cierres_caja son retroactivos) */}
             <div style={{ background: B.navyMid, borderRadius: 16, overflow: "hidden", marginBottom: 16 }}>
-              <div style={{ padding: "14px 20px", borderBottom: `1px solid ${B.navyLight}`, display: "flex", alignItems: "center", gap: 10 }}>
+              <div style={{ padding: "14px 20px", borderBottom: `1px solid ${B.navyLight}`, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
                 <span style={{ fontSize: 20 }}>🍽️</span>
                 <span style={{ fontSize: 16, fontWeight: 800, color: B.white }}>Ingresos A&B</span>
-                <span style={{ fontSize: 11, color: "rgba(255,255,255,0.3)", marginLeft: 6 }}>· No proyectable (depende de cierres de caja)</span>
+                <span style={{ fontSize: 11, color: "rgba(255,255,255,0.3)", marginLeft: 6 }}>· No proyectable (fuente: Loggro Restobar)</span>
+                <span style={{ fontSize: 10, color: "rgba(255,255,255,0.35)", marginLeft: "auto" }}>📊 Fuente: Loggro Restobar</span>
               </div>
               <div style={{ padding: "16px 20px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <span style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Real del mes</span>
@@ -918,6 +920,9 @@ export default function Resultados() {
         hideCant
         isMobile={isMobile}
       />
+      <div style={{ marginTop: -14, marginBottom: 18, paddingInline: 16, fontSize: 10, color: "rgba(255,255,255,0.35)", textAlign: "right" }}>
+        📊 Fuente: Loggro Restobar
+      </div>
 
       {/* Fila total combinada por período */}
       {!loading && pasadias && grupos && eventos && ayb && (
@@ -966,7 +971,7 @@ export default function Resultados() {
         * Pasadías incluye reservas directas y B2B. Excluye cancelados (no-show incluido en cantidad).<br />
         * Grupos: cantidad = pasajeros (excl. Impuesto Muelle/STAFF). Monto desde valor o pasadias_org.<br />
         * Eventos: cantidad = número de eventos confirmados/realizados.<br />
-        * A&B: viene de Cierre de Caja (área A&B). Cantidad = días con cierre registrado. Semana = lunes a hoy.
+        * A&B: viene de Loggro Restobar (fuente oficial). Cantidad = días con ventas registradas. Semana = lunes a hoy.
       </div>
 
       </>} {/* fin tab resultados */}
@@ -1202,7 +1207,7 @@ export default function Resultados() {
               * Fecha = día en que se recibió el pago (fecha_pago si fue manual, o fecha de creación para pagos web/Wompi).<br />
               * Monto = abono registrado ese día (no el total de la reserva).<br />
               * Pasadías: reservas sin grupo. Grupos/Eventos: pagos de reservas vinculadas a ese tipo de evento.<br />
-              * A&B: viene del cierre de caja diario (usa fecha del cierre).<br />
+              * A&B: viene de Loggro Restobar (ventas oficiales por día).<br />
               * Acumulado: suma corrida de ingresos cobrados en el mes hasta ese día.
             </div>
           </div>

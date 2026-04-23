@@ -685,6 +685,100 @@ serve(async (req) => {
       });
     }
 
+    // GET /loggro-sync/cierre-caja-rango?from=YYYY-MM-DD&to=YYYY-MM-DD
+    // Retorna totales por día y resumen global para un rango. Usado por P/L,
+    // Financiero y Resultados para consumir la data oficial de Loggro Restobar.
+    if (req.method === "GET" && path === "/cierre-caja-rango") {
+      const from = url.searchParams.get("from");
+      const to   = url.searchParams.get("to");
+      if (!from || !to) return json({ error: "params from y to requeridos (YYYY-MM-DD)" }, 400);
+
+      // Bajar un rango de páginas lo suficientemente grande. Loggro no filtra
+      // por fecha, así que pagineamos y filtramos.
+      const pageSize = 100;
+      const PAGE_RANGE_SIZE = 40; // ~4000 facturas ≈ 3-4 meses
+      const pagePromises = [];
+      for (let p = 70; p < 70 + PAGE_RANGE_SIZE; p++) {
+        pagePromises.push(
+          loggroGet(`/invoices?pagination=true&limit=${pageSize}&page=${p}`)
+            .then(d => ({ page: p, arr: d?.data || (Array.isArray(d) ? d : []) }))
+            .catch(() => ({ page: p, arr: [] }))
+        );
+      }
+      const results = await Promise.all(pagePromises);
+      const allInvoices: any[] = [];
+      const seen = new Set<string>();
+      results.forEach(r => r.arr.forEach((inv: any) => {
+        if (inv?._id && !seen.has(inv._id)) { seen.add(inv._id); allInvoices.push(inv); }
+      }));
+
+      const COTZ_OFFSET_MS = -5 * 3600 * 1000;
+      // Bucket por día: { ventas, propinas, tickets, anuladas, por_metodo: {} }
+      interface DayBucket { ventas: number; propinas: number; tickets: number; anuladas: number; por_metodo: Record<string, number>; }
+      const porDia: Record<string, DayBucket> = {};
+
+      for (const inv of allInvoices) {
+        const ts = inv?.createdOn;
+        if (!ts) continue;
+        const utc = new Date(ts).getTime();
+        const co = new Date(utc + COTZ_OFFSET_MS);
+        const coDay = co.toISOString().slice(0, 10);
+        if (coDay < from || coDay > to) continue;
+
+        const deleted = inv?.deletedInfo?.isDeleted || false;
+        const total = Number(inv?.total) || 0;
+        const tip = Number(inv?.tip) || 0;
+        const pmv = inv?.paid?.paymentMethodValue || [];
+
+        if (!porDia[coDay]) porDia[coDay] = { ventas: 0, propinas: 0, tickets: 0, anuladas: 0, por_metodo: {} };
+        const d = porDia[coDay];
+        if (deleted) { d.anuladas += total; continue; }
+        d.ventas += total;
+        d.propinas += tip;
+        d.tickets++;
+
+        if (pmv.length > 0) {
+          for (const pay of pmv) {
+            const pm = (pay?.paymentMethod || "Desconocido").trim();
+            const val = Number(pay?.value) || 0;
+            d.por_metodo[pm] = (d.por_metodo[pm] || 0) + val;
+          }
+        } else {
+          const pm = (inv?.paymentMethod || "Desconocido").trim();
+          d.por_metodo[pm] = (d.por_metodo[pm] || 0) + total;
+        }
+      }
+
+      // Resumen global del rango
+      let totalVentas = 0, totalPropinas = 0, totalTickets = 0, totalAnuladas = 0;
+      const porMetodoGlobal: Record<string, number> = {};
+      for (const d of Object.values(porDia)) {
+        totalVentas   += d.ventas;
+        totalPropinas += d.propinas;
+        totalTickets  += d.tickets;
+        totalAnuladas += d.anuladas;
+        for (const [pm, v] of Object.entries(d.por_metodo)) {
+          porMetodoGlobal[pm] = (porMetodoGlobal[pm] || 0) + v;
+        }
+      }
+
+      return json({
+        ok: true,
+        from, to,
+        timezone: "America/Bogota",
+        paginas_consultadas: PAGE_RANGE_SIZE,
+        resumen: {
+          total_ventas: totalVentas,
+          total_propinas: totalPropinas,
+          total_general: totalVentas + totalPropinas,
+          tickets: totalTickets,
+          anuladas: totalAnuladas,
+        },
+        por_metodo: porMetodoGlobal,
+        por_dia: porDia,
+      });
+    }
+
     return json({ error: "Ruta no encontrada", path }, 404);
   } catch (err) {
     console.error("loggro-sync error:", err);

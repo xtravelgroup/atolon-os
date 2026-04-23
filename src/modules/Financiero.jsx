@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { B, COP } from "../brand";
 import { supabase } from "../lib/supabase";
+import { getAyBRango, getAyBPorDia } from "../lib/loggroAyB";
 
 // Format "2026-03" → "marzo 2026"
 function fmtMes(mesStr) {
@@ -50,6 +51,13 @@ const SEL = {
 export default function Financiero() {
   const [reservas,      setReservas]      = useState([]);
   const [cierres,       setCierres]       = useState([]);
+  // A&B oficial: viene de Loggro Restobar (/loggro-sync/cierre-caja-rango)
+  //   aybLoggroPorDia: { "YYYY-MM-DD": ventas }
+  //   aybLoggroPorMetodo: { "2026-04": { Datafono: n, Efectivo: m, ... } } — por mes
+  //   aybLoggroTicketsPorMes: { "2026-04": tickets }
+  const [aybLoggroPorDia,       setAybLoggroPorDia]       = useState({});
+  const [aybLoggroPorMesMetodo, setAybLoggroPorMesMetodo] = useState({});
+  const [aybLoggroTicketsPorMes, setAybLoggroTicketsPorMes] = useState({});
   const [reqsList,      setReqsList]      = useState([]);
   const [eventosData,   setEventosData]   = useState([]);
   const [b2bReservas,   setB2bReservas]   = useState([]);
@@ -64,7 +72,7 @@ export default function Financiero() {
     if (!supabase) return;
     setDiaDetalle(fecha);
     setLoadingDia(true);
-    const [pagosFecha, pagosCreated, cierresAyb, llegadas] = await Promise.all([
+    const [pagosFecha, pagosCreated, aybLoggro, llegadas] = await Promise.all([
       supabase.from("reservas")
         .select("id, nombre, contacto, tipo, total, abono, forma_pago, fecha_pago, created_at, grupo_id, aliado_id")
         .eq("fecha_pago", fecha).gt("abono", 0).neq("estado", "cancelado"),
@@ -74,9 +82,8 @@ export default function Financiero() {
         .gte("created_at", fecha + "T00:00:00-05:00")
         .lte("created_at", fecha + "T23:59:59-05:00")
         .gt("abono", 0).neq("estado", "cancelado"),
-      supabase.from("cierres_caja")
-        .select("id, cajero_nombre, total_ventas, total_propinas, metodos, fecha")
-        .eq("fecha", fecha).eq("area", "ayb"),
+      // A&B desde Loggro Restobar (reemplaza cierres_caja area='ayb')
+      getAyBRango(fecha, fecha),
       supabase.from("muelle_llegadas")
         .select("id, embarcacion_nombre, pax_total, total_cobrado, metodo_pago, tipo, fecha")
         .eq("fecha", fecha).gt("total_cobrado", 0),
@@ -91,9 +98,10 @@ export default function Financiero() {
         metodo: r.forma_pago || "—", aliado: !!r.aliado_id, reservaId: r.id,
       });
     });
-    (cierresAyb.data || []).forEach(c => {
-      items.push({ tipo: "ayb", id: c.id, nombre: c.cajero_nombre || "A&B", concepto: "Cierre de caja A&B", monto: c.total_ventas || 0, metodo: "Multiple" });
-    });
+    const aybDiaVentas = Number(aybLoggro?.por_dia?.[fecha]?.ventas) || 0;
+    if (aybDiaVentas > 0) {
+      items.push({ tipo: "ayb", id: `ayb-${fecha}`, nombre: "A&B (Loggro Restobar)", concepto: "Ventas A&B del día", monto: aybDiaVentas, metodo: "Multiple" });
+    }
     (llegadas.data || []).forEach(l => {
       items.push({ tipo: "llegada", id: l.id, nombre: l.embarcacion_nombre || "Embarcación", concepto: l.tipo === "after_island" ? "After Island" : l.tipo, monto: l.total_cobrado || 0, metodo: l.metodo_pago || "—" });
     });
@@ -159,7 +167,29 @@ export default function Financiero() {
       supabase.from("b2b_convenios")
         .select("aliado_id, tipo_pasadia, tarifa_publica, tarifa_neta")
         .eq("activo", true),
-    ]).then(([resR, cierresR, reqsR, evR, llegR, b2bResR, convR]) => {
+    ]).then(async ([resR, cierresR, reqsR, evR, llegR, b2bResR, convR]) => {
+      // A&B oficial desde Loggro Restobar (rango = últimos 13 meses → hoy)
+      // Se guarda por-día, y por-mes (por_metodo) para consumo en helpers.
+      try {
+        const loggro = await getAyBRango(desdeStr, todayCO);
+        const porDia = {};
+        const porMesMetodo = {};
+        const ticketsPorMes = {};
+        for (const [fecha, d] of Object.entries(loggro?.por_dia || {})) {
+          porDia[fecha] = Number(d?.ventas) || 0;
+          const mes = fecha.slice(0, 7);
+          ticketsPorMes[mes] = (ticketsPorMes[mes] || 0) + (Number(d?.tickets) || 0);
+          const pm = porMesMetodo[mes] || (porMesMetodo[mes] = {});
+          for (const [met, val] of Object.entries(d?.por_metodo || {})) {
+            pm[met] = (pm[met] || 0) + (Number(val) || 0);
+          }
+        }
+        setAybLoggroPorDia(porDia);
+        setAybLoggroPorMesMetodo(porMesMetodo);
+        setAybLoggroTicketsPorMes(ticketsPorMes);
+      } catch (e) {
+        console.warn("[Financiero] no se pudo cargar Loggro A&B:", e?.message);
+      }
       // Merge llegadas as virtual reserva entries for P&L
       const llegadasComoReservas = (llegR.data || []).map(l => ({
         fecha: l.fecha,
@@ -332,28 +362,70 @@ export default function Financiero() {
   const deltaTick = pctDelta(ticketA, ticketC);
 
   // ── Cierre / A&B helpers ──────────────────────────────────────────────────
-  const cierresDePeriodo    = (key) => { const r = periodoRange(key); return cierres.filter(c => inRange(c.fecha, r)); };
-  const cierresAyBDePeriodo = (key) => cierresDePeriodo(key).filter(c => c.area === "ayb");
+  // cierres_caja se mantiene para Pasadías y otras áreas. A&B ya NO se lee de
+  // cierres_caja: viene de Loggro Restobar vía /loggro-sync/cierre-caja-rango.
+  const cierresDePeriodo       = (key) => { const r = periodoRange(key); return cierres.filter(c => inRange(c.fecha, r)); };
+  const cierresNoAyBDePeriodo  = (key) => cierresDePeriodo(key).filter(c => c.area !== "ayb");
 
+  // Total de cierres_caja (áreas distintas a pasadías Y distintas a A&B)
+  //   — A&B se agrega aparte desde Loggro; pasadías ya se cuenta en reservas.
   const totalCierres = (key) =>
-    cierresDePeriodo(key).filter(c => c.area !== "pasadias").reduce((s, c) => s + (c.total_ventas || c.total_general || 0), 0);
+    cierresNoAyBDePeriodo(key)
+      .filter(c => c.area !== "pasadias")
+      .reduce((s, c) => s + (c.total_ventas || c.total_general || 0), 0);
 
-  const totalAyB = (key) =>
-    cierresAyBDePeriodo(key).reduce((s, c) => s + (c.total_ventas || c.total_general || 0), 0);
+  // A&B oficial desde Loggro Restobar — suma por fecha dentro del rango del período
+  const totalAyB = (key) => {
+    const r = periodoRange(key);
+    if (!r) return 0;
+    let sum = 0;
+    for (const [fecha, v] of Object.entries(aybLoggroPorDia)) {
+      if (inRange(fecha, r)) sum += Number(v) || 0;
+    }
+    return sum;
+  };
 
+  // Días con ventas A&B en el período (reemplaza "cantidad de cierres")
+  const diasAyBConVentas = (key) => {
+    const r = periodoRange(key);
+    if (!r) return 0;
+    let n = 0;
+    for (const [fecha, v] of Object.entries(aybLoggroPorDia)) {
+      if (inRange(fecha, r) && (Number(v) || 0) > 0) n++;
+    }
+    return n;
+  };
+
+  // A&B por método de pago desde Loggro (agrega meses que caen dentro del rango)
+  //   NOTA: Loggro solo entrega granularidad mensual por método en nuestra caché;
+  //   para día/semana se usa el rango de meses que toca el período.
   const aybPorMetodo = (key) => {
+    const r = periodoRange(key);
+    if (!r) return [];
+    const mesesEnRango = new Set();
+    // Inclusive: recorre cada mes entre r.from y r.to
+    const from = new Date(r.from + "T12:00:00");
+    const to   = new Date(r.to   + "T12:00:00");
+    const cursor = new Date(from.getFullYear(), from.getMonth(), 1);
+    while (cursor <= to) {
+      mesesEnRango.add(`${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, "0")}`);
+      cursor.setMonth(cursor.getMonth() + 1);
+    }
     const groups = {};
-    cierresAyBDePeriodo(key).forEach(c => {
-      const metodos = c.metodos || {};
-      Object.entries(metodos).forEach(([k, val]) => {
-        const v = typeof val === "object" ? (val.venta || 0) : (val || 0);
-        if (v > 0) {
-          const label = { datafono: "Datáfono", efectivo: "Efectivo", link_pago: "Link de Pago",
-            resort_credit: "Resort Credit", transferencia: "Transferencia", otros: "Otros" }[k] || k;
-          groups[label] = (groups[label] || 0) + v;
-        }
-      });
-    });
+    for (const mes of mesesEnRango) {
+      const met = aybLoggroPorMesMetodo[mes] || {};
+      for (const [k, v] of Object.entries(met)) {
+        const label = k; // Loggro ya devuelve labels humanos (Datafono, Efectivo, etc.)
+        groups[label] = (groups[label] || 0) + (Number(v) || 0);
+      }
+    }
+    // Escalar al total real del período si granularity !== mes (aproximación simple)
+    const sumGroups = Object.values(groups).reduce((s, v) => s + v, 0);
+    const totalPeriodo = totalAyB(key);
+    if (sumGroups > 0 && totalPeriodo > 0 && Math.abs(sumGroups - totalPeriodo) / sumGroups > 0.01) {
+      const factor = totalPeriodo / sumGroups;
+      for (const k of Object.keys(groups)) groups[k] = groups[k] * factor;
+    }
     return Object.entries(groups).map(([cat, val]) => ({ cat, val })).sort((a, b) => b.val - a.val);
   };
 
@@ -501,8 +573,9 @@ export default function Financiero() {
         const ingPasadias = totalA;                                        // reservas sin grupo_id
         const ingGrupos   = totalGrupos(periodoActual);                    // eventos categoria=grupo
         const ingEventos  = totalEventos(periodoActual);                   // eventos categoria=evento
-        const ingCierres  = totalCierres(periodoActual);                   // cierres_caja (A&B, etc.)
-        const ing   = ingPasadias + ingGrupos + ingEventos + ingCierres;
+        const ingCierres  = totalCierres(periodoActual);                   // cierres_caja (no ayb, no pasadias)
+        const ingAyB      = totalAyB(periodoActual);                       // A&B desde Loggro Restobar
+        const ing   = ingPasadias + ingGrupos + ingEventos + ingCierres + ingAyB;
         const gas   = totalGastos(periodoActual);
         const util  = ing - gas;
         const margen = ing > 0 ? (util / ing) * 100 : 0;
@@ -511,7 +584,8 @@ export default function Financiero() {
         const ingGruposC   = totalGrupos(periodoComparar || "");
         const ingEventosC  = totalEventos(periodoComparar || "");
         const ingCierresC  = totalCierres(periodoComparar || "");
-        const ingC  = ingPasadiasC + ingGruposC + ingEventosC + ingCierresC;
+        const ingAyBC      = totalAyB(periodoComparar || "");
+        const ingC  = ingPasadiasC + ingGruposC + ingEventosC + ingCierresC + ingAyBC;
         const gasC  = totalGastos(periodoComparar || "");
         const utilC = ingC - gasC;
 
@@ -570,16 +644,20 @@ export default function Financiero() {
               {ingGrupos   > 0 && <Row label="Grupos"   val={ingGrupos}   sub />}
               {ingEventos  > 0 && <Row label="Eventos"  val={ingEventos}  sub />}
               {(() => {
-                const AREA_LABEL = { ayb: "Alimentos y Bebidas", pasadias: "Pasadías (Caja)", after_island: "After Island", otros: "Otros" };
+                const AREA_LABEL = { pasadias: "Pasadías (Caja)", after_island: "After Island", otros: "Otros" };
                 const byArea = {};
-                cierresDePeriodo(periodoActual).forEach(c => {
+                // A&B ya NO se lee de cierres_caja — se inyecta desde Loggro.
+                cierresNoAyBDePeriodo(periodoActual).forEach(c => {
                   const k = c.area || "otros";
                   byArea[k] = (byArea[k] || 0) + (c.total_ventas || c.total_general || 0);
                 });
-                const entries = Object.entries(byArea);
-                if (entries.length === 0) return null;
-                return entries.map(([area, val]) => (
-                  <Row key={area} label={AREA_LABEL[area] || area} val={val} sub />
+                const ayb = totalAyB(periodoActual);
+                const rows = [];
+                if (ayb > 0) rows.push(["ayb", ayb, "Alimentos y Bebidas (Loggro)"]);
+                Object.entries(byArea).forEach(([area, val]) => rows.push([area, val, AREA_LABEL[area] || area]));
+                if (rows.length === 0) return null;
+                return rows.map(([area, val, label]) => (
+                  <Row key={area} label={label} val={val} sub />
                 ));
               })()}
 
@@ -616,10 +694,10 @@ export default function Financiero() {
                 <h3 style={{ fontSize: 15, color: B.sand, margin: "0 0 16px" }}>Evolución Mensual P&L</h3>
                 <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
                   {meses.slice(0, 6).reverse().map(mes => {
-                    const i = totalCierres(mes);
+                    const i = totalCierres(mes) + totalAyB(mes);
                     const g = totalGastos(mes);
                     const u = i - g;
-                    const maxVal = Math.max(...meses.slice(0, 6).map(m => totalCierres(m)), 1);
+                    const maxVal = Math.max(...meses.slice(0, 6).map(m => totalCierres(m) + totalAyB(m)), 1);
                     const hI = Math.max((i / maxVal) * 80, i > 0 ? 3 : 0);
                     const hG = Math.max((g / maxVal) * 80, g > 0 ? 3 : 0);
                     const isSel = mes === periodoActual;
@@ -820,19 +898,22 @@ export default function Financiero() {
       {(() => {
         const aybTotal = totalAyB(periodoActual);
         const aybMets  = aybPorMetodo(periodoActual);
-        const aybc     = cierresAyBDePeriodo(periodoActual);
+        const aybDias  = diasAyBConVentas(periodoActual);
         return (
           <div style={{ background: B.navyMid, borderRadius: 12, overflow: "hidden", marginTop: 16 }}>
-            <div style={{ padding: "14px 20px", borderBottom: `1px solid ${B.navyLight}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <h3 style={{ fontSize: 15, color: "#f4a261", margin: 0 }}>🍽️ Ingresos A&B</h3>
+            <div style={{ padding: "14px 20px", borderBottom: `1px solid ${B.navyLight}`, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <h3 style={{ fontSize: 15, color: "#f4a261", margin: 0 }}>🍽️ Ingresos A&B</h3>
+                <span style={{ fontSize: 10, color: "rgba(255,255,255,0.35)" }}>📊 Fuente: Loggro Restobar</span>
+              </div>
               <div style={{ textAlign: "right" }}>
                 <div style={{ fontWeight: 700, fontSize: 14 }}>{COP(aybTotal)}</div>
-                <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)" }}>{aybc.length} cierre{aybc.length !== 1 ? "s" : ""} de caja</div>
+                <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)" }}>{aybDias} día{aybDias !== 1 ? "s" : ""} con ventas</div>
               </div>
             </div>
             {aybMets.length === 0 ? (
               <div style={{ padding: "24px 20px", textAlign: "center", color: "rgba(255,255,255,0.25)", fontSize: 13 }}>
-                Sin cierres de A&B en {fmtPeriodo(periodoActual)}
+                Sin ventas de A&B en {fmtPeriodo(periodoActual)}
               </div>
             ) : (
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 0 }}>
@@ -914,7 +995,9 @@ export default function Financiero() {
               : r.fecha;
             return fechaPago === fecha;
           }).reduce((s, r) => s + (r.total || 0), 0);
-          const cierreTotal = cierres.filter(c => c.fecha === fecha).reduce((s, c) => s + (c.total_ventas || c.total_general || 0), 0);
+          // cierres_caja sin A&B (A&B viene de Loggro) + ventas A&B del día desde Loggro
+          const cierreTotal = cierres.filter(c => c.fecha === fecha && c.area !== "ayb").reduce((s, c) => s + (c.total_ventas || c.total_general || 0), 0)
+                            + (Number(aybLoggroPorDia[fecha]) || 0);
           // Pagos de eventos/grupos (array pagos[] con {fecha, monto})
           const eventosTotal = eventosData.reduce((s, e) => {
             return s + (e.pagos || []).filter(p => p.fecha === fecha).reduce((ss, p) => ss + (Number(p.monto) || 0), 0);

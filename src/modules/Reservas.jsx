@@ -311,6 +311,7 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
     aliado_id:  r0.aliado_id || "",
     nombre_embarcacion: r0.nombre_embarcacion || "",
     hora_llegada: r0.hora_llegada || "",
+    notas_club: r0.notas_club || "",
     // Facturación electrónica
     factura_electronica: r0.factura_electronica || false,
     fe_tipo_persona:    r0.fe_tipo_persona    || "natural",
@@ -521,6 +522,7 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
       aliado_id:  form.aliado_id || null,
       nombre_embarcacion: form.nombre_embarcacion || null,
       hora_llegada: form.hora_llegada || null,
+      notas_club: form.notas_club?.trim() || null,
       // Facturación electrónica
       factura_electronica:  !!form.factura_electronica,
       fe_tipo_persona:      form.factura_electronica ? (form.fe_tipo_persona || null) : null,
@@ -1138,6 +1140,20 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
                   <label style={LS}>Notas</label>
                   {editing ? <textarea rows={3} style={{ ...IS, resize: "vertical" }} value={form.notas} onChange={e => set("notas", e.target.value)} placeholder="Observaciones especiales…" /> :
                     <div style={{ fontSize: 13, color: r0.notas ? B.sand : "rgba(255,255,255,0.3)" }}>{r0.notas || "Sin notas"}</div>}
+                </div>
+
+                {/* Notas Club (internas — para el equipo de servicio) */}
+                <div style={{ gridColumn: "1 / -1" }}>
+                  <label style={{ ...LS, color: "#a78bfa" }}>🏝 Notas Club <span style={{ color: "rgba(255,255,255,0.35)", textTransform: "none", fontSize: 10, fontWeight: 400, letterSpacing: 0 }}>(internas — para el equipo de servicio)</span></label>
+                  {editing ? (
+                    <textarea rows={2} style={{ ...IS, resize: "vertical", borderColor: "rgba(167,139,250,0.3)", background: "rgba(167,139,250,0.05)" }}
+                      value={form.notas_club} onChange={e => set("notas_club", e.target.value)}
+                      placeholder="Preferencias de servicio, alergias especiales, detalles operativos…" />
+                  ) : (
+                    <div style={{ fontSize: 13, color: r0.notas_club ? "#c4b5fd" : "rgba(255,255,255,0.3)", background: r0.notas_club ? "rgba(167,139,250,0.08)" : "transparent", padding: r0.notas_club ? "8px 12px" : 0, borderRadius: 8, border: r0.notas_club ? "1px solid rgba(167,139,250,0.2)" : "none" }}>
+                      {r0.notas_club || "Sin notas de club"}
+                    </div>
+                  )}
                 </div>
 
                 {/* ── Facturación Electrónica ── */}
@@ -3725,7 +3741,8 @@ export default function Reservas() {
                 <td>${escape(r.canal || "—")}</td>
                 <td>${escape(r.vendedor || "—")}</td>
               </tr>
-              ${r.notas ? `<tr class="nota-row"><td colspan="7" style="font-style:italic;color:#6B7280;font-size:10px;padding:2px 8px 8px 12px;border-bottom:1px solid #eee;">📝 ${escape(r.notas)}</td></tr>` : ""}
+              ${r.notas ? `<tr class="nota-row"><td colspan="7" style="font-style:italic;color:#6B7280;font-size:10px;padding:2px 8px 4px 12px;">📝 ${escape(r.notas)}</td></tr>` : ""}
+              ${r.notas_club ? `<tr class="nota-row"><td colspan="7" style="font-style:italic;color:#7C3AED;font-size:10px;padding:2px 8px 8px 12px;border-bottom:1px solid #eee;background:rgba(167,139,250,0.05);">🏝 Club: ${escape(r.notas_club)}</td></tr>` : (r.notas ? `<tr class="nota-row"><td colspan="7" style="padding:0;border-bottom:1px solid #eee;"></td></tr>` : "")}
             `).join("");
             return `
               <div class="section">
