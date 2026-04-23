@@ -1,0 +1,352 @@
+import { useState, useEffect, useMemo, useCallback } from "react";
+import { B, COP, todayStr } from "../brand";
+import { supabase } from "../lib/supabase";
+
+const IS = { width: "100%", padding: "10px 14px", borderRadius: 8, background: B.navy, border: `1px solid ${B.navyLight}`, color: B.white, fontSize: 13, outline: "none", boxSizing: "border-box" };
+const LS = { fontSize: 11, color: B.sand, display: "block", marginBottom: 5, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 700 };
+
+export default function HacerInventario() {
+  const [step, setStep] = useState(1); // 1 = seleccionar locación, 2 = contar
+  const [locaciones, setLocaciones] = useState([]);
+  const [locId, setLocId] = useState("");
+  const [items, setItems] = useState([]);
+  const [stockPorLoc, setStockPorLoc] = useState({});
+  const [conteos, setConteos] = useState({}); // { item_id: cantidad_contada }
+  const [search, setSearch] = useState("");
+  const [catFilter, setCatFilter] = useState("todos");
+  const [filterModo, setFilterModo] = useState("todos"); // "todos" | "pendientes" | "con_diferencia"
+  const [notas, setNotas] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(null);
+  const [userEmail, setUserEmail] = useState("");
+  const [historial, setHistorial] = useState([]);
+
+  // Cargar locaciones y conteos históricos
+  useEffect(() => {
+    if (!supabase) return;
+    supabase.from("items_locaciones").select("*").eq("activa", true).order("orden")
+      .then(({ data }) => setLocaciones(data || []));
+    supabase.auth.getSession().then(({ data }) => setUserEmail(data?.session?.user?.email || ""));
+    supabase.from("items_conteos").select("id, locacion_id, fecha, usuario_email, total_items, diferencias, notas, created_at")
+      .order("created_at", { ascending: false }).limit(20)
+      .then(({ data }) => setHistorial(data || []));
+  }, []);
+
+  // Cargar items + stock cuando eligen locación
+  const cargar = useCallback(async () => {
+    if (!supabase) return;
+    const [iR, sR] = await Promise.all([
+      supabase.from("items_catalogo").select("id, nombre, codigo, categoria, unidad").eq("activo", true).order("nombre"),
+      supabase.from("items_stock_locacion").select("item_id, locacion_id, cantidad"),
+    ]);
+    setItems(iR.data || []);
+    const map = {};
+    (sR.data || []).forEach(s => { map[`${s.item_id}|${s.locacion_id}`] = Number(s.cantidad) || 0; });
+    setStockPorLoc(map);
+    setConteos({});
+  }, []);
+
+  const stockEn = (item_id) => Number(stockPorLoc[`${item_id}|${locId}`]) || 0;
+
+  const comenzarConteo = (id) => {
+    setLocId(id);
+    cargar().then(() => setStep(2));
+  };
+
+  // Categorías con items
+  const categorias = useMemo(() => {
+    const set = new Set(items.map(i => i.categoria).filter(Boolean));
+    return Array.from(set).sort();
+  }, [items]);
+
+  const filtered = useMemo(() => {
+    let list = items;
+    if (catFilter !== "todos") list = list.filter(i => i.categoria === catFilter);
+    if (search) {
+      const s = search.toLowerCase();
+      list = list.filter(i => i.nombre?.toLowerCase().includes(s) || i.codigo?.toLowerCase().includes(s));
+    }
+    if (filterModo === "pendientes") list = list.filter(i => conteos[i.id] === undefined || conteos[i.id] === "");
+    else if (filterModo === "con_diferencia") list = list.filter(i => {
+      if (conteos[i.id] === undefined || conteos[i.id] === "") return false;
+      return Number(conteos[i.id]) !== stockEn(i.id);
+    });
+    return list;
+  }, [items, search, catFilter, filterModo, conteos, stockPorLoc, locId]); // eslint-disable-line
+
+  const stats = useMemo(() => {
+    let contados = 0, diferencias = 0;
+    items.forEach(i => {
+      if (conteos[i.id] !== undefined && conteos[i.id] !== "") {
+        contados++;
+        if (Number(conteos[i.id]) !== stockEn(i.id)) diferencias++;
+      }
+    });
+    return { contados, pendientes: items.length - contados, diferencias };
+  }, [conteos, items, stockPorLoc, locId]); // eslint-disable-line
+
+  const locActual = locaciones.find(l => l.id === locId);
+
+  // Guardar conteo: crea registro + actualiza items_stock_locacion
+  const guardar = async () => {
+    if (!supabase) return;
+    const itemsConteados = items
+      .filter(i => conteos[i.id] !== undefined && conteos[i.id] !== "")
+      .map(i => ({
+        item_id: i.id,
+        nombre: i.nombre,
+        unidad: i.unidad,
+        sistema: stockEn(i.id),
+        contado: Number(conteos[i.id]),
+        diferencia: Number(conteos[i.id]) - stockEn(i.id),
+      }));
+    if (itemsConteados.length === 0) return alert("No has contado ningún ítem");
+    if (!confirm(`Guardar conteo de ${itemsConteados.length} ítems en ${locActual?.nombre}? Esto ajustará el stock al valor contado.`)) return;
+
+    setSaving(true);
+    const id = `CNT-${Date.now()}`;
+    const diffs = itemsConteados.filter(i => i.diferencia !== 0).length;
+
+    // Insertar registro del conteo
+    const { error } = await supabase.from("items_conteos").insert({
+      id, locacion_id: locId, fecha: todayStr(),
+      usuario_email: userEmail || "sistema",
+      notas: notas.trim() || null,
+      items: itemsConteados,
+      total_items: itemsConteados.length,
+      diferencias: diffs,
+    });
+    if (error) { setSaving(false); return alert("Error guardando conteo: " + error.message); }
+
+    // Actualizar stock por locación
+    await Promise.all(itemsConteados.map(it =>
+      supabase.from("items_stock_locacion").upsert({
+        item_id: it.item_id, locacion_id: locId,
+        cantidad: it.contado, updated_at: new Date().toISOString(),
+      }, { onConflict: "item_id,locacion_id" })
+    ));
+
+    setSaving(false);
+    setSaved({ id, total: itemsConteados.length, diferencias: diffs });
+  };
+
+  const reset = () => {
+    setStep(1); setLocId(""); setConteos({}); setSearch(""); setCatFilter("todos");
+    setFilterModo("todos"); setNotas(""); setSaved(null);
+    // Recargar historial
+    supabase.from("items_conteos").select("id, locacion_id, fecha, usuario_email, total_items, diferencias, notas, created_at")
+      .order("created_at", { ascending: false }).limit(20)
+      .then(({ data }) => setHistorial(data || []));
+  };
+
+  // ─── RENDER ────────────────────────────────────────────────────────────────
+  return (
+    <div style={{ color: "#fff", fontFamily: "inherit", maxWidth: 980, margin: "0 auto", paddingBottom: 60 }}>
+      <div style={{ marginBottom: 24 }}>
+        <h2 style={{ margin: 0, fontSize: 22, fontWeight: 800 }}>📋 Hacer Inventario</h2>
+        <div style={{ fontSize: 12, color: "rgba(255,255,255,0.35)", marginTop: 4 }}>
+          Conteo físico de stock por locación. Ajusta las cantidades al valor real.
+        </div>
+      </div>
+
+      {/* ═══ STEP 1: seleccionar locación ═══ */}
+      {step === 1 && !saved && (
+        <>
+          <div style={{ fontSize: 11, color: B.sand, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 700, marginBottom: 12 }}>
+            Selecciona la locación a contar
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12, marginBottom: 30 }}>
+            {locaciones.map(loc => (
+              <button key={loc.id} onClick={() => comenzarConteo(loc.id)}
+                style={{
+                  background: B.navyMid, border: `1px solid ${B.navyLight}`, borderRadius: 14,
+                  padding: "24px 20px", textAlign: "left", cursor: "pointer", color: "#fff",
+                  transition: "all 0.15s",
+                }}
+                onMouseEnter={e => { e.currentTarget.style.borderColor = B.sky; e.currentTarget.style.background = B.sky + "10"; }}
+                onMouseLeave={e => { e.currentTarget.style.borderColor = B.navyLight; e.currentTarget.style.background = B.navyMid; }}
+              >
+                <div style={{ fontSize: 36, marginBottom: 8 }}>{loc.icono}</div>
+                <div style={{ fontSize: 17, fontWeight: 800, color: B.white }}>{loc.nombre}</div>
+                {loc.descripcion && <div style={{ fontSize: 11, color: "rgba(255,255,255,0.45)", marginTop: 3 }}>{loc.descripcion}</div>}
+                <div style={{ display: "flex", gap: 6, marginTop: 10 }}>
+                  {loc.es_principal && <span style={{ fontSize: 9, padding: "2px 8px", background: B.sand + "22", color: B.sand, borderRadius: 10, fontWeight: 700 }}>★ principal</span>}
+                  {loc.es_ventas && <span style={{ fontSize: 9, padding: "2px 8px", background: B.success + "22", color: B.success, borderRadius: 10, fontWeight: 700 }}>💰 ventas</span>}
+                </div>
+              </button>
+            ))}
+          </div>
+
+          {/* Historial de conteos */}
+          {historial.length > 0 && (
+            <div style={{ background: B.navyMid, borderRadius: 12, padding: "18px 20px", border: `1px solid ${B.navyLight}` }}>
+              <div style={{ fontSize: 12, color: B.sand, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 12 }}>Historial de conteos</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                {historial.map(c => {
+                  const loc = locaciones.find(l => l.id === c.locacion_id);
+                  return (
+                    <div key={c.id} style={{ display: "grid", gridTemplateColumns: "110px 1fr auto auto", gap: 12, alignItems: "center", padding: "8px 12px", background: B.navy, borderRadius: 8, fontSize: 12 }}>
+                      <span style={{ color: "rgba(255,255,255,0.55)" }}>{new Date(c.created_at).toLocaleDateString("es-CO", { day: "2-digit", month: "short" })} {new Date(c.created_at).toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit" })}</span>
+                      <span>{loc?.icono} <strong>{loc?.nombre || c.locacion_id}</strong> · <span style={{ color: "rgba(255,255,255,0.4)" }}>{c.usuario_email}</span></span>
+                      <span style={{ color: "rgba(255,255,255,0.6)" }}>{c.total_items} ítems</span>
+                      <span style={{ color: c.diferencias > 0 ? B.warning : B.success, fontWeight: 700 }}>{c.diferencias > 0 ? `${c.diferencias} Δ` : "✓"}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </>
+      )}
+
+      {/* ═══ STEP 2: contar ═══ */}
+      {step === 2 && !saved && (
+        <>
+          {/* Header locación */}
+          <div style={{ background: B.navyMid, border: `1px solid ${B.navyLight}`, borderRadius: 14, padding: "16px 20px", marginBottom: 16, display: "flex", alignItems: "center", gap: 14 }}>
+            <div style={{ fontSize: 32 }}>{locActual?.icono}</div>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.06em" }}>Contando en</div>
+              <div style={{ fontSize: 18, fontWeight: 800, color: B.white }}>{locActual?.nombre}</div>
+            </div>
+            <button onClick={() => { if (Object.keys(conteos).length > 0 && !confirm("Perderás los conteos sin guardar. ¿Continuar?")) return; setStep(1); setConteos({}); }}
+              style={{ background: "none", border: `1px solid ${B.navyLight}`, color: "rgba(255,255,255,0.5)", borderRadius: 8, padding: "8px 14px", fontSize: 12, cursor: "pointer" }}>
+              ← Cambiar locación
+            </button>
+          </div>
+
+          {/* KPIs */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10, marginBottom: 16 }}>
+            <div style={{ background: B.navyMid, borderRadius: 10, padding: "12px 14px", borderLeft: `4px solid ${B.sky}` }}>
+              <div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Total ítems</div>
+              <div style={{ fontSize: 22, fontWeight: 900, color: B.white, fontFamily: "'Barlow Condensed', sans-serif" }}>{items.length}</div>
+            </div>
+            <div style={{ background: B.navyMid, borderRadius: 10, padding: "12px 14px", borderLeft: `4px solid ${B.success}` }}>
+              <div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Contados</div>
+              <div style={{ fontSize: 22, fontWeight: 900, color: B.success, fontFamily: "'Barlow Condensed', sans-serif" }}>{stats.contados}</div>
+            </div>
+            <div style={{ background: B.navyMid, borderRadius: 10, padding: "12px 14px", borderLeft: `4px solid ${B.warning}` }}>
+              <div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Pendientes</div>
+              <div style={{ fontSize: 22, fontWeight: 900, color: B.warning, fontFamily: "'Barlow Condensed', sans-serif" }}>{stats.pendientes}</div>
+            </div>
+            <div style={{ background: B.navyMid, borderRadius: 10, padding: "12px 14px", borderLeft: `4px solid ${B.danger}` }}>
+              <div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Con diferencia</div>
+              <div style={{ fontSize: 22, fontWeight: 900, color: stats.diferencias > 0 ? B.danger : B.success, fontFamily: "'Barlow Condensed', sans-serif" }}>{stats.diferencias}</div>
+            </div>
+          </div>
+
+          {/* Filtros */}
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 14, alignItems: "center" }}>
+            <input placeholder="🔍 Buscar ítem o código…" value={search} onChange={e => setSearch(e.target.value)}
+              style={{ ...IS, width: 280 }} />
+            <select value={catFilter} onChange={e => setCatFilter(e.target.value)} style={{ ...IS, width: 200 }}>
+              <option value="todos">Todas las categorías</option>
+              {categorias.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+            <div style={{ display: "flex", gap: 0, border: `1px solid ${B.navyLight}`, borderRadius: 8, overflow: "hidden" }}>
+              {[
+                { k: "todos", l: "Todos" },
+                { k: "pendientes", l: "Pendientes" },
+                { k: "con_diferencia", l: "Con Δ" },
+              ].map(f => (
+                <button key={f.k} onClick={() => setFilterModo(f.k)}
+                  style={{ padding: "9px 14px", fontSize: 11, fontWeight: 700, cursor: "pointer", border: "none", background: filterModo === f.k ? B.sky : B.navyMid, color: filterModo === f.k ? B.navy : "rgba(255,255,255,0.6)" }}>
+                  {f.l}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Tabla de ítems */}
+          <div style={{ background: B.navyMid, borderRadius: 12, overflow: "hidden", border: `1px solid ${B.navyLight}`, marginBottom: 16 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "2.5fr 1fr 0.7fr 1fr 1fr 1fr", padding: "10px 16px", borderBottom: `2px solid ${B.navyLight}`, gap: 8 }}>
+              {["Ítem", "Categoría", "Unidad", "Sistema", "Contado", "Δ"].map(h => (
+                <div key={h} style={{ fontSize: 10, fontWeight: 700, color: B.sand, textTransform: "uppercase", letterSpacing: "0.08em" }}>{h}</div>
+              ))}
+            </div>
+            {filtered.length === 0 ? (
+              <div style={{ padding: 40, textAlign: "center", color: "rgba(255,255,255,0.3)", fontSize: 13 }}>
+                No hay ítems que coincidan con el filtro.
+              </div>
+            ) : filtered.map((i, idx) => {
+              const sistema = stockEn(i.id);
+              const contadoStr = conteos[i.id] ?? "";
+              const contado = Number(contadoStr);
+              const diff = contadoStr !== "" ? contado - sistema : null;
+              const diffColor = diff === null ? "rgba(255,255,255,0.2)" : diff === 0 ? B.success : diff > 0 ? B.warning : B.danger;
+              return (
+                <div key={i.id} style={{
+                  display: "grid", gridTemplateColumns: "2.5fr 1fr 0.7fr 1fr 1fr 1fr", padding: "9px 16px", gap: 8, alignItems: "center",
+                  borderBottom: idx < filtered.length - 1 ? `1px solid ${B.navyLight}` : "none",
+                  background: contadoStr !== "" ? (diff === 0 ? "rgba(74,222,128,0.04)" : diff !== null ? "rgba(251,191,36,0.04)" : "transparent") : "transparent",
+                }}>
+                  <div>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: B.white }}>{i.nombre}</div>
+                    {i.codigo && <div style={{ fontSize: 10, color: "rgba(255,255,255,0.3)" }}>{i.codigo}</div>}
+                  </div>
+                  <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)" }}>{i.categoria || "—"}</div>
+                  <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)" }}>{i.unidad || "—"}</div>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: "rgba(255,255,255,0.7)", fontFamily: "'Barlow Condensed', sans-serif" }}>
+                    {sistema.toFixed(2)}
+                  </div>
+                  <div>
+                    <input
+                      type="number"
+                      value={contadoStr}
+                      onChange={e => setConteos(c => ({ ...c, [i.id]: e.target.value }))}
+                      placeholder={sistema.toFixed(0)}
+                      style={{ ...IS, padding: "6px 10px", textAlign: "right", fontSize: 14, fontWeight: 700, fontFamily: "'Barlow Condensed', sans-serif" }}
+                    />
+                  </div>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: diffColor, fontFamily: "'Barlow Condensed', sans-serif", textAlign: "right" }}>
+                    {diff === null ? "—" : (diff >= 0 ? "+" : "") + diff.toFixed(2)}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Notas + Guardar */}
+          <div style={{ background: B.navyMid, border: `1px solid ${B.navyLight}`, borderRadius: 12, padding: "16px 20px" }}>
+            <label style={LS}>Notas del conteo (opcional)</label>
+            <textarea rows={2} value={notas} onChange={e => setNotas(e.target.value)}
+              placeholder="Observaciones, merma, productos en mal estado…"
+              style={{ ...IS, resize: "vertical", marginBottom: 14 }} />
+            <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+              <div style={{ flex: 1, fontSize: 12, color: "rgba(255,255,255,0.5)" }}>
+                {stats.contados} de {items.length} contados · {stats.diferencias} con diferencia
+              </div>
+              <button onClick={guardar} disabled={saving || stats.contados === 0}
+                style={{
+                  background: saving || stats.contados === 0 ? B.navyLight : B.success,
+                  color: B.navy, border: "none", borderRadius: 10, padding: "12px 28px",
+                  fontSize: 14, fontWeight: 800, cursor: saving || stats.contados === 0 ? "not-allowed" : "pointer",
+                }}>
+                {saving ? "Guardando…" : `💾 Guardar conteo (${stats.contados})`}
+              </button>
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* ═══ ÉXITO ═══ */}
+      {saved && (
+        <div style={{ background: "#4ade8018", border: "1px solid #4ade8033", borderRadius: 16, padding: "32px 28px", textAlign: "center" }}>
+          <div style={{ fontSize: 48, marginBottom: 12 }}>✅</div>
+          <div style={{ fontSize: 20, fontWeight: 800, color: B.success, marginBottom: 6 }}>Conteo guardado</div>
+          <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginBottom: 4 }}>ID: {saved.id}</div>
+          <div style={{ fontSize: 14, color: "rgba(255,255,255,0.7)", margin: "14px 0" }}>
+            {saved.total} ítems contados · <strong style={{ color: saved.diferencias > 0 ? B.warning : B.success }}>{saved.diferencias}</strong> con diferencia
+          </div>
+          <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginBottom: 20 }}>
+            El stock de <strong style={{ color: B.white }}>{locActual?.nombre}</strong> fue actualizado al valor contado.
+          </div>
+          <button onClick={reset}
+            style={{ background: B.sand, color: B.navy, border: "none", borderRadius: 10, padding: "12px 28px", fontWeight: 700, fontSize: 14, cursor: "pointer" }}>
+            + Nuevo Conteo
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}

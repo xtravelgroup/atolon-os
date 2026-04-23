@@ -273,6 +273,7 @@ import ContratistasMuelle from "./modules/ContratistasMuelle";
 import ZarpesLog from "./modules/ZarpesLog";
 import Proveedores from "./modules/Proveedores";
 import Items from "./modules/Items";
+import HacerInventario from "./modules/HacerInventario";
 import LoggroAdmin from "./modules/LoggroAdmin";
 import HotelFolios from "./modules/HotelFolios";
 import ApiPortal from "./modules/ApiPortal";
@@ -291,6 +292,7 @@ const MODULE_MAP = {
   activos: <Activos />,
   requisiciones: <Requisiciones />,
   items: <Items />,
+  hacer_inventario: <HacerInventario />,
   loggro: <LoggroAdmin />,
   hotel_folios: <HotelFolios />,
   contenido: <Contenido />,
