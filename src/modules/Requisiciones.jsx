@@ -332,6 +332,7 @@ export default function Requisiciones() {
         {[
           ["solicitudes",  `📋 Solicitudes (${reqs.length})`],
           ["aprobaciones", `✅ Aprobaciones (${requierenAprobacion.length})`],
+          ["mesa",         `🛒 Mesa de Compras`],
           ["ordenes",      `🧾 Órdenes de compra (${ordenes.length})`],
           ["recepciones",  `📦 Recepciones`],
           ["reglas",       `⚙ Reglas`],
@@ -352,6 +353,8 @@ export default function Requisiciones() {
         <TabSolicitudes reqs={reqs} reglas={reglas} onOpen={setDetail} />
       ) : tab === "aprobaciones" ? (
         <TabAprobaciones reqs={requierenAprobacion} reglas={reglas} onOpen={setDetail} currentUser={currentUser} reload={load} />
+      ) : tab === "mesa" ? (
+        <TabMesaCompras reqs={reqs} ordenes={ordenes} proveedores={proveedores} currentUser={currentUser} reload={load} onNuevoProv={() => setShowProvNuevo(true)} />
       ) : tab === "ordenes" ? (
         <TabOrdenes ordenes={ordenes} reload={load} />
       ) : tab === "recepciones" ? (
@@ -1944,6 +1947,402 @@ function ProveedorRapidoModal({ onClose, reload }) {
         <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 18 }}>
           <button onClick={onClose} style={BTN(B.navyLight)}>Cancelar</button>
           <button onClick={guardar} style={BTN(B.success)}>Crear</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// TAB MESA DE COMPRAS
+// Agrupa ítems de múltiples requisiciones aprobadas y permite asignarlos
+// a diferentes proveedores, generando una OC por proveedor.
+// ═══════════════════════════════════════════════════════════════════════════
+function TabMesaCompras({ reqs, ordenes, proveedores, currentUser, reload, onNuevoProv }) {
+  // Recoger todos los ítems de requisiciones aprobadas / en compra que aún no están en ninguna OC
+  // Cada ítem ya asignado tiene `oc_id` dentro del objeto del ítem (jsonb).
+  const itemsPendientes = useMemo(() => {
+    const arr = [];
+    reqs.forEach(r => {
+      if (!["Aprobada", "En Compra", "Recibida Parcial"].includes(r.estado)) return;
+      (r.items || []).forEach((it, idx) => {
+        if (it.oc_id) return; // ya asignado
+        arr.push({
+          req_id: r.id, req_desc: r.descripcion, req_area: r.area, req_prioridad: r.prioridad,
+          req_fecha_necesaria: r.fecha_necesaria, req_solicitante: r.solicitante,
+          req_proveedor_id: r.proveedor_id, req_proveedor_nombre: r.proveedor_nombre || r.proveedor,
+          item_idx: idx,
+          item_id: it.id || `${r.id}-${idx}`,
+          nombre: it.item || it.nombre,
+          cant: Number(it.cant) || 0,
+          unidad: it.unidad,
+          precioU: Number(it.precioU) || 0,
+          subtotal: Number(it.subtotal) || (Number(it.cant) || 0) * (Number(it.precioU) || 0),
+        });
+      });
+    });
+    return arr;
+  }, [reqs]);
+
+  const [seleccion, setSeleccion] = useState({});   // { "req_id|item_idx": true }
+  const [filterArea, setFilterArea] = useState("todos");
+  const [search, setSearch] = useState("");
+  const [asignarModal, setAsignarModal] = useState(false);
+
+  const toggle = (it) => {
+    const k = `${it.req_id}|${it.item_idx}`;
+    setSeleccion(s => ({ ...s, [k]: !s[k] }));
+  };
+  const isSel = (it) => !!seleccion[`${it.req_id}|${it.item_idx}`];
+
+  const areas = [...new Set(itemsPendientes.map(i => i.req_area).filter(Boolean))].sort();
+
+  const filtered = itemsPendientes.filter(it => {
+    if (filterArea !== "todos" && it.req_area !== filterArea) return false;
+    if (search) {
+      const s = search.toLowerCase();
+      if (!(it.nombre || "").toLowerCase().includes(s) && !(it.req_desc || "").toLowerCase().includes(s)) return false;
+    }
+    return true;
+  });
+
+  const seleccionadosItems = itemsPendientes.filter(isSel);
+  const seleccionadosTotal = seleccionadosItems.reduce((s, i) => s + i.subtotal, 0);
+
+  const selectAll = () => {
+    const next = { ...seleccion };
+    filtered.forEach(it => { next[`${it.req_id}|${it.item_idx}`] = true; });
+    setSeleccion(next);
+  };
+  const clearSel = () => setSeleccion({});
+
+  // Agrupar por requisición para mostrar
+  const porReq = {};
+  filtered.forEach(it => {
+    if (!porReq[it.req_id]) porReq[it.req_id] = { id: it.req_id, desc: it.req_desc, area: it.req_area, items: [] };
+    porReq[it.req_id].items.push(it);
+  });
+
+  if (itemsPendientes.length === 0) {
+    return (
+      <div style={{ textAlign: "center", padding: 60, color: "rgba(255,255,255,0.3)" }}>
+        <div style={{ fontSize: 48, marginBottom: 12 }}>🛒</div>
+        <div style={{ fontSize: 14, fontWeight: 600 }}>Sin ítems pendientes</div>
+        <div style={{ fontSize: 11, marginTop: 6 }}>
+          Los ítems de requisiciones aprobadas aparecen aquí para asignar a proveedores.
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <>
+      {/* KPIs */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10, marginBottom: 18 }}>
+        <div style={{ background: B.navyMid, borderRadius: 10, padding: "12px 16px", borderLeft: `4px solid ${B.sky}` }}>
+          <div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Ítems pendientes</div>
+          <div style={{ fontSize: 24, fontWeight: 900, color: B.white, fontFamily: "'Barlow Condensed', sans-serif" }}>{itemsPendientes.length}</div>
+        </div>
+        <div style={{ background: B.navyMid, borderRadius: 10, padding: "12px 16px", borderLeft: `4px solid ${B.sand}` }}>
+          <div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Requisiciones</div>
+          <div style={{ fontSize: 24, fontWeight: 900, color: B.sand, fontFamily: "'Barlow Condensed', sans-serif" }}>
+            {Object.keys(porReq).length}
+          </div>
+        </div>
+        <div style={{ background: B.navyMid, borderRadius: 10, padding: "12px 16px", borderLeft: `4px solid ${B.success}` }}>
+          <div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Seleccionados</div>
+          <div style={{ fontSize: 24, fontWeight: 900, color: B.success, fontFamily: "'Barlow Condensed', sans-serif" }}>
+            {seleccionadosItems.length}
+            {seleccionadosTotal > 0 && <span style={{ fontSize: 13, color: "rgba(255,255,255,0.55)", fontWeight: 500 }}> · {COP(seleccionadosTotal)}</span>}
+          </div>
+        </div>
+      </div>
+
+      {/* Filtros */}
+      <div style={{ display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap", alignItems: "center" }}>
+        <input placeholder="🔍 Buscar ítem o requisición..." value={search} onChange={e => setSearch(e.target.value)}
+          style={{ ...IS, width: 260 }} />
+        <select value={filterArea} onChange={e => setFilterArea(e.target.value)} style={{ ...IS, width: 180 }}>
+          <option value="todos">Todas las áreas</option>
+          {areas.map(a => <option key={a} value={a}>{a}</option>)}
+        </select>
+        <div style={{ flex: 1 }} />
+        <button onClick={selectAll} style={{ padding: "8px 14px", borderRadius: 8, border: `1px solid ${B.navyLight}`, background: "transparent", color: B.sky, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+          Seleccionar visibles
+        </button>
+        {seleccionadosItems.length > 0 && (
+          <>
+            <button onClick={clearSel} style={{ padding: "8px 14px", borderRadius: 8, border: `1px solid ${B.navyLight}`, background: "transparent", color: "rgba(255,255,255,0.5)", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+              Limpiar
+            </button>
+            <button onClick={() => setAsignarModal(true)} style={{ padding: "9px 18px", borderRadius: 8, border: "none", background: B.success, color: B.navy, fontSize: 13, fontWeight: 800, cursor: "pointer" }}>
+              📦 Asignar a proveedor ({seleccionadosItems.length})
+            </button>
+          </>
+        )}
+      </div>
+
+      {/* Lista agrupada por requisición */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        {Object.values(porReq).map(req => (
+          <div key={req.id} style={{ background: B.navyMid, borderRadius: 12, border: `1px solid ${B.navyLight}`, overflow: "hidden" }}>
+            <div style={{ padding: "10px 16px", background: B.navy, display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: `1px solid ${B.navyLight}` }}>
+              <div>
+                <span style={{ fontSize: 12, color: B.sand, fontWeight: 700, fontFamily: "monospace" }}>{req.id}</span>
+                <span style={{ fontSize: 13, color: B.white, marginLeft: 10, fontWeight: 600 }}>{req.desc}</span>
+                <span style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", marginLeft: 10, padding: "2px 8px", background: "rgba(255,255,255,0.05)", borderRadius: 10 }}>{req.area}</span>
+              </div>
+              <span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)" }}>{req.items.length} ítem{req.items.length !== 1 ? "s" : ""}</span>
+            </div>
+            <div>
+              {req.items.map(it => (
+                <div key={`${it.req_id}|${it.item_idx}`} onClick={() => toggle(it)}
+                  style={{
+                    display: "grid", gridTemplateColumns: "auto 2fr 80px 100px 120px", gap: 10, alignItems: "center",
+                    padding: "10px 16px", borderBottom: `1px solid ${B.navyLight}33`, cursor: "pointer",
+                    background: isSel(it) ? B.success + "15" : "transparent",
+                  }}>
+                  <input type="checkbox" checked={isSel(it)} onChange={() => {}} style={{ width: 16, height: 16, accentColor: B.success }} />
+                  <div style={{ fontSize: 13, color: B.white }}>{it.nombre}</div>
+                  <div style={{ fontSize: 12, color: "rgba(255,255,255,0.55)", textAlign: "center" }}>{it.cant} {it.unidad || ""}</div>
+                  <div style={{ fontSize: 12, color: "rgba(255,255,255,0.55)", textAlign: "right" }}>{COP(it.precioU)}</div>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: B.sand, textAlign: "right" }}>{COP(it.subtotal)}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {asignarModal && (
+        <AsignarOCModal
+          items={seleccionadosItems}
+          proveedores={proveedores}
+          ordenes={ordenes}
+          reqs={reqs}
+          currentUser={currentUser}
+          onClose={() => setAsignarModal(false)}
+          onNuevoProv={onNuevoProv}
+          onDone={() => { setAsignarModal(false); setSeleccion({}); reload(); }}
+        />
+      )}
+    </>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// AsignarOCModal — crea nueva OC o agrega ítems a una OC abierta existente
+// ═══════════════════════════════════════════════════════════════════════════
+function AsignarOCModal({ items, proveedores, ordenes, reqs, currentUser, onClose, onNuevoProv, onDone }) {
+  const [modo, setModo] = useState("nueva"); // "nueva" | "existente"
+  const [provId, setProvId] = useState("");
+  const [ocId, setOcId] = useState("");
+  const [search, setSearch] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const ocsAbiertas = ordenes.filter(o => ["emitida", "enviada", "confirmada", "ordenada"].includes(o.estado));
+
+  const provsFiltrados = proveedores.filter(p => p.activo !== false)
+    .filter(p => !search || (p.nombre || "").toLowerCase().includes(search.toLowerCase()) || (p.nit || "").includes(search))
+    .sort((a, b) => (a.nombre || "").localeCompare(b.nombre || ""));
+
+  const totalItems = items.reduce((s, i) => s + i.subtotal, 0);
+
+  const confirmar = async () => {
+    if (modo === "nueva" && !provId) return alert("Selecciona proveedor");
+    if (modo === "existente" && !ocId) return alert("Selecciona OC existente");
+
+    setSaving(true);
+    const prov = proveedores.find(p => p.id === provId);
+
+    // Items del payload
+    const ocItems = items.map(it => ({
+      id: it.item_id,
+      item: it.nombre,
+      cant: it.cant,
+      unidad: it.unidad,
+      precioU: Math.round(it.precioU),
+      subtotal: Math.round(it.subtotal),
+      req_id: it.req_id,
+    }));
+
+    let ocIdFinal;
+    let codigo;
+    if (modo === "nueva") {
+      codigo = `OC-${new Date().getFullYear()}-${String(ordenes.length + 1).padStart(4, "0")}`;
+      const subtotal = ocItems.reduce((s, it) => s + it.subtotal, 0);
+      const { data, error } = await supabase.from("ordenes_compra").insert({
+        codigo,
+        proveedor_id: prov.id,
+        proveedor_nombre: prov.nombre,
+        proveedor_nit: prov.nit || null,
+        proveedor_email: prov.email || null,
+        proveedor_telefono: prov.telefono || null,
+        fecha_emision: todayStr(),
+        items: ocItems,
+        subtotal,
+        iva: 0,
+        total: subtotal,
+        estado: "emitida",
+        emitida_por: currentUser.nombre,
+        notas: `Consolidado desde ${[...new Set(items.map(i => i.req_id))].join(", ")}`,
+      }).select().single();
+      if (error) { setSaving(false); return alert("Error creando OC: " + error.message); }
+      ocIdFinal = data.id;
+    } else {
+      // Agregar a OC existente
+      const oc = ordenes.find(o => o.id === ocId);
+      const nuevoItems = [...(oc.items || []), ...ocItems];
+      const subtotal = nuevoItems.reduce((s, it) => s + (Number(it.subtotal) || 0), 0);
+      const { error } = await supabase.from("ordenes_compra").update({
+        items: nuevoItems,
+        subtotal,
+        total: subtotal,
+      }).eq("id", ocId);
+      if (error) { setSaving(false); return alert("Error actualizando OC: " + error.message); }
+      ocIdFinal = ocId;
+      codigo = oc.codigo;
+    }
+
+    // Marcar items en las requisiciones con oc_id
+    const reqsAfectadas = [...new Set(items.map(i => i.req_id))];
+    for (const rid of reqsAfectadas) {
+      const req = reqs.find(r => r.id === rid);
+      if (!req) continue;
+      const idxs = items.filter(i => i.req_id === rid).map(i => i.item_idx);
+      const nuevosItems = (req.items || []).map((it, idx) => idxs.includes(idx) ? { ...it, oc_id: ocIdFinal, oc_codigo: codigo } : it);
+      // Si todos los items ya tienen oc_id, la req pasa a "En Compra"
+      const todosAsignados = nuevosItems.every(it => it.oc_id);
+      await supabase.from("requisiciones").update({
+        items: nuevosItems,
+        estado: todosAsignados ? "En Compra" : req.estado,
+        timeline: [...(req.timeline || []), {
+          quien: currentUser.nombre,
+          accion: `${idxs.length} ítem${idxs.length !== 1 ? "s" : ""} asignado${idxs.length !== 1 ? "s" : ""} a OC`,
+          fecha: new Date().toLocaleString("es-CO"),
+          comentario: codigo,
+        }],
+      }).eq("id", rid);
+    }
+
+    setSaving(false);
+    onDone();
+  };
+
+  return (
+    <div onClick={e => e.target === e.currentTarget && onClose()}
+      style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.75)", zIndex: 1100, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+      <div style={{ background: B.navyMid, borderRadius: 16, width: "100%", maxWidth: 560, maxHeight: "90vh", display: "flex", flexDirection: "column", border: `1px solid ${B.navyLight}` }}>
+        <div style={{ padding: "18px 22px", borderBottom: `1px solid ${B.navyLight}` }}>
+          <div style={{ fontSize: 17, fontWeight: 800, color: B.sand }}>📦 Asignar {items.length} ítem{items.length !== 1 ? "s" : ""} a proveedor</div>
+          <div style={{ fontSize: 11, color: "rgba(255,255,255,0.45)", marginTop: 3 }}>
+            Total {COP(totalItems)} · desde {[...new Set(items.map(i => i.req_id))].length} requisiciones
+          </div>
+        </div>
+
+        {/* Toggle modo */}
+        <div style={{ padding: "14px 22px 10px", display: "flex", gap: 8 }}>
+          <button onClick={() => setModo("nueva")}
+            style={{
+              flex: 1, padding: "10px 14px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: 700,
+              border: `1px solid ${modo === "nueva" ? B.sky : B.navyLight}`,
+              background: modo === "nueva" ? B.sky + "22" : "transparent",
+              color: modo === "nueva" ? B.sky : "rgba(255,255,255,0.5)",
+            }}>
+            🆕 Nueva OC
+          </button>
+          <button onClick={() => setModo("existente")} disabled={ocsAbiertas.length === 0}
+            style={{
+              flex: 1, padding: "10px 14px", borderRadius: 8, cursor: ocsAbiertas.length === 0 ? "not-allowed" : "pointer", fontSize: 12, fontWeight: 700,
+              border: `1px solid ${modo === "existente" ? B.sand : B.navyLight}`,
+              background: modo === "existente" ? B.sand + "22" : "transparent",
+              color: modo === "existente" ? B.sand : "rgba(255,255,255,0.5)",
+              opacity: ocsAbiertas.length === 0 ? 0.4 : 1,
+            }}>
+            ➕ Agregar a OC existente ({ocsAbiertas.length})
+          </button>
+        </div>
+
+        <div style={{ flex: 1, overflowY: "auto", padding: "10px 22px" }}>
+          {modo === "nueva" ? (
+            <>
+              <input value={search} onChange={e => setSearch(e.target.value)}
+                placeholder="🔍 Buscar proveedor..." autoFocus
+                style={{ ...IS, marginBottom: 10 }} />
+              {provsFiltrados.map(p => (
+                <div key={p.id} onClick={() => setProvId(p.id)}
+                  style={{
+                    padding: "10px 12px", marginBottom: 4, borderRadius: 8, cursor: "pointer",
+                    background: provId === p.id ? B.sky + "22" : "transparent",
+                    border: `1px solid ${provId === p.id ? B.sky : "transparent"}`,
+                  }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <div>
+                      <div style={{ color: provId === p.id ? B.sky : B.white, fontWeight: 700, fontSize: 13 }}>
+                        {p.nombre}
+                        {p.loggro_id && <span style={{ fontSize: 9, marginLeft: 6, padding: "1px 5px", background: "#22c55e22", color: "#22c55e", borderRadius: 4, fontWeight: 700 }}>🔗 Loggro</span>}
+                      </div>
+                      {p.nit && <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>NIT: {p.nit}</div>}
+                    </div>
+                    {provId === p.id && <span style={{ color: B.sky, fontSize: 16 }}>✓</span>}
+                  </div>
+                </div>
+              ))}
+              {provsFiltrados.length === 0 && (
+                <div style={{ textAlign: "center", padding: 20, color: "rgba(255,255,255,0.4)", fontSize: 12 }}>
+                  Sin resultados
+                </div>
+              )}
+            </>
+          ) : (
+            <>
+              <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginBottom: 10 }}>
+                Selecciona una OC abierta para agregar los ítems seleccionados:
+              </div>
+              {ocsAbiertas.map(o => (
+                <div key={o.id} onClick={() => setOcId(o.id)}
+                  style={{
+                    padding: "12px 14px", marginBottom: 6, borderRadius: 10, cursor: "pointer",
+                    background: ocId === o.id ? B.sand + "22" : B.navy,
+                    border: `1px solid ${ocId === o.id ? B.sand : B.navyLight}`,
+                  }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <div>
+                      <div style={{ fontSize: 13, fontWeight: 800, color: ocId === o.id ? B.sand : B.white, fontFamily: "monospace" }}>
+                        🧾 {o.codigo}
+                      </div>
+                      <div style={{ fontSize: 11, color: "rgba(255,255,255,0.55)", marginTop: 3 }}>
+                        {o.proveedor_nombre} · {(o.items || []).length} ítems · {o.estado}
+                      </div>
+                    </div>
+                    <div style={{ textAlign: "right" }}>
+                      <div style={{ fontSize: 13, fontWeight: 800, color: B.sand }}>{COP(o.total || 0)}</div>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </>
+          )}
+        </div>
+
+        <div style={{ padding: "14px 22px", borderTop: `1px solid ${B.navyLight}`, display: "flex", gap: 8 }}>
+          {modo === "nueva" && (
+            <button onClick={onNuevoProv} disabled={saving}
+              style={{ padding: "10px 14px", borderRadius: 8, border: `1px dashed ${B.sand}`, background: "transparent", color: B.sand, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+              + Nuevo prov
+            </button>
+          )}
+          <button onClick={onClose} disabled={saving}
+            style={{ padding: "10px 14px", borderRadius: 8, border: `1px solid ${B.navyLight}`, background: "transparent", color: "rgba(255,255,255,0.5)", fontWeight: 600, cursor: "pointer" }}>
+            Cancelar
+          </button>
+          <button onClick={confirmar} disabled={saving || (modo === "nueva" ? !provId : !ocId)}
+            style={{ flex: 1, padding: "11px", borderRadius: 8, border: "none",
+              background: (saving || (modo === "nueva" ? !provId : !ocId)) ? B.navyLight : B.success,
+              color: (saving || (modo === "nueva" ? !provId : !ocId)) ? "rgba(255,255,255,0.4)" : B.navy,
+              fontWeight: 800, fontSize: 13, cursor: (saving || (modo === "nueva" ? !provId : !ocId)) ? "default" : "pointer" }}>
+            {saving ? "Guardando..." : modo === "nueva" ? "✓ Crear OC" : "✓ Agregar a OC"}
+          </button>
         </div>
       </div>
     </div>
