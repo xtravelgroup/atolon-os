@@ -72,6 +72,7 @@ export default function Requisiciones() {
   const [newReqArea, setNewReqArea] = useState(null); // "OPEX" when picking area
   const [showRegla, setShowRegla] = useState(null);
   const [showProvNuevo, setShowProvNuevo] = useState(false);
+  const [asignarProvOC, setAsignarProvOC] = useState(null); // { req } — req que necesita proveedor antes de generar OC
 
   // Auto-abrir modal si venimos del carrito de Items
   useEffect(() => {
@@ -264,7 +265,7 @@ export default function Requisiciones() {
   const generarOC = async (req) => {
     if (!supabase) return;
     if (!req.proveedor_id && !req.proveedor_nombre) {
-      alert("Asigna un proveedor a la requisición primero (editando desde el detalle)");
+      setAsignarProvOC({ req });
       return;
     }
     const prov = proveedores.find(p => p.id === req.proveedor_id);
@@ -431,6 +432,109 @@ export default function Requisiciones() {
       {detail && <DetailModal req={detail} onClose={() => setDetail(null)} onUpdate={handleUpdate} onGenerarOC={generarOC} proveedores={proveedores} reglas={reglas} currentUser={currentUser} reload={load} />}
       {showRegla !== null && <ReglaModal regla={showRegla} onClose={() => setShowRegla(null)} reload={load} />}
       {showProvNuevo && <ProveedorRapidoModal onClose={() => setShowProvNuevo(false)} reload={load} />}
+
+      {/* Asignar proveedor antes de generar OC */}
+      {asignarProvOC && (
+        <AsignarProveedorModal
+          req={asignarProvOC.req}
+          proveedores={proveedores}
+          onClose={() => setAsignarProvOC(null)}
+          onSaved={async (provInfo) => {
+            // Actualizar la req con el proveedor y volver a lanzar generarOC
+            await supabase.from("requisiciones").update({
+              proveedor_id: provInfo.id,
+              proveedor_nombre: provInfo.nombre,
+              proveedor: provInfo.nombre,
+            }).eq("id", asignarProvOC.req.id);
+            const reqActualizada = { ...asignarProvOC.req, proveedor_id: provInfo.id, proveedor_nombre: provInfo.nombre, proveedor: provInfo.nombre };
+            setAsignarProvOC(null);
+            await generarOC(reqActualizada);
+          }}
+          onNuevoProv={() => { setAsignarProvOC(null); setShowProvNuevo(true); }}
+        />
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// AsignarProveedorModal — asigna proveedor a una requisición y continúa con OC
+// ═══════════════════════════════════════════════════════════════════════════
+function AsignarProveedorModal({ req, proveedores, onClose, onSaved, onNuevoProv }) {
+  const [provId, setProvId] = useState("");
+  const [search, setSearch] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const filtered = proveedores
+    .filter(p => p.activo !== false)
+    .filter(p => !search || p.nombre.toLowerCase().includes(search.toLowerCase()) || (p.nit || "").includes(search))
+    .sort((a, b) => (a.nombre || "").localeCompare(b.nombre || ""));
+
+  const confirmar = async () => {
+    const prov = proveedores.find(p => p.id === provId);
+    if (!prov) return alert("Selecciona un proveedor");
+    setSaving(true);
+    await onSaved({ id: prov.id, nombre: prov.nombre });
+  };
+
+  return (
+    <div onClick={e => e.target === e.currentTarget && onClose()}
+      style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 1100, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+      <div style={{ background: B.navyMid, borderRadius: 16, width: "100%", maxWidth: 480, maxHeight: "85vh", display: "flex", flexDirection: "column", border: `1px solid ${B.navyLight}` }}>
+        <div style={{ padding: "18px 22px", borderBottom: `1px solid ${B.navyLight}` }}>
+          <div style={{ fontSize: 17, fontWeight: 800, color: B.sand, marginBottom: 4 }}>🏢 Asigna un proveedor</div>
+          <div style={{ fontSize: 12, color: "rgba(255,255,255,0.5)" }}>
+            Para generar la OC de <strong style={{ color: B.white }}>{req.descripcion || req.id}</strong> necesitas elegir proveedor.
+          </div>
+          <input value={search} onChange={e => setSearch(e.target.value)}
+            placeholder="🔍 Buscar proveedor por nombre o NIT..." autoFocus
+            style={{ ...IS, marginTop: 12 }} />
+        </div>
+
+        <div style={{ flex: 1, overflowY: "auto", padding: "8px 14px" }}>
+          {filtered.length === 0 ? (
+            <div style={{ textAlign: "center", padding: 30, color: "rgba(255,255,255,0.4)", fontSize: 13 }}>
+              Sin resultados. Crea uno nuevo ↓
+            </div>
+          ) : filtered.map(p => (
+            <div key={p.id} onClick={() => setProvId(p.id)}
+              style={{
+                padding: "10px 12px", marginBottom: 4, borderRadius: 8, cursor: "pointer",
+                background: provId === p.id ? B.sky + "22" : "transparent",
+                border: `1px solid ${provId === p.id ? B.sky : "transparent"}`,
+              }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div>
+                  <div style={{ color: provId === p.id ? B.sky : B.white, fontWeight: 700, fontSize: 13 }}>
+                    {p.nombre}
+                    {p.loggro_id && <span style={{ fontSize: 9, marginLeft: 6, padding: "1px 5px", background: "#22c55e22", color: "#22c55e", borderRadius: 4, fontWeight: 700 }}>🔗 Loggro</span>}
+                  </div>
+                  {p.nit && <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>NIT: {p.nit}</div>}
+                </div>
+                {provId === p.id && <span style={{ color: B.sky, fontSize: 16 }}>✓</span>}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div style={{ padding: "14px 22px", borderTop: `1px solid ${B.navyLight}`, display: "flex", gap: 8 }}>
+          <button onClick={onNuevoProv} disabled={saving}
+            style={{ padding: "10px 14px", borderRadius: 8, border: `1px dashed ${B.sand}`, background: "transparent", color: B.sand, fontSize: 12, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>
+            + Nuevo proveedor
+          </button>
+          <button onClick={onClose} disabled={saving}
+            style={{ padding: "10px 14px", borderRadius: 8, border: `1px solid ${B.navyLight}`, background: "transparent", color: "rgba(255,255,255,0.5)", fontWeight: 600, cursor: "pointer" }}>
+            Cancelar
+          </button>
+          <button onClick={confirmar} disabled={saving || !provId}
+            style={{ flex: 1, padding: "10px", borderRadius: 8, border: "none",
+              background: (saving || !provId) ? B.navyLight : B.sky,
+              color: (saving || !provId) ? "rgba(255,255,255,0.4)" : B.navy,
+              fontWeight: 800, fontSize: 13, cursor: (saving || !provId) ? "default" : "pointer" }}>
+            {saving ? "Generando OC..." : "✓ Asignar y generar OC"}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
