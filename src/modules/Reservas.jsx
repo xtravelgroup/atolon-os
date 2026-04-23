@@ -449,7 +449,8 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
       })(),
     };
     const pagosPrev = r0.pagos || [];
-    const pagosNext = [...pagosPrev, pagoEntry];
+    // Ajuste Agencia es un descuento, no aparece en la lista de pagos
+    const pagosNext = esAjusteAgencia ? pagosPrev : [...pagosPrev, pagoEntry];
     const nuevoDescuentoCortesia = esCortesia
       ? (Number(r0.descuento_cortesia) || 0) + monto
       : (Number(r0.descuento_cortesia) || 0);
