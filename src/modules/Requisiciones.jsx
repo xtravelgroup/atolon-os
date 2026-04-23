@@ -338,7 +338,7 @@ export default function Requisiciones() {
       ) : tab === "ordenes" ? (
         <TabOrdenes ordenes={ordenes} reload={load} />
       ) : tab === "recepciones" ? (
-        <TabRecepciones reqs={reqs.filter(r => r.estado === "En Compra" || r.estado === "Recibida Parcial")} ordenes={ordenes} reload={load} currentUser={currentUser} />
+        <TabRecepciones ordenes={ordenes.filter(o => !["cancelada", "recibida"].includes(o.estado))} reqs={reqs} reload={load} currentUser={currentUser} />
       ) : tab === "reglas" ? (
         <TabReglas reglas={reglas} onEdit={setShowRegla} reload={load} />
       ) : (
@@ -850,60 +850,79 @@ function OCDetalleModal({ oc, onClose, reload }) {
 // ═══════════════════════════════════════════════════════════════════════════
 // TAB RECEPCIONES — Recibir items parcial o totalmente
 // ═══════════════════════════════════════════════════════════════════════════
-function TabRecepciones({ reqs, ordenes, reload, currentUser }) {
-  const [openReq, setOpenReq] = useState(null);
+function TabRecepciones({ ordenes, reqs, reload, currentUser }) {
+  const [openOC, setOpenOC] = useState(null);
 
-  if (reqs.length === 0) {
+  // Badges por estado de OC
+  const OC_BADGE = {
+    emitida:            { bg: "#1E3566", color: B.sky,     label: "Emitida" },
+    enviada:            { bg: "#1E3566", color: B.sky,     label: "Enviada al proveedor" },
+    confirmada:         { bg: "#153322", color: B.success, label: "Confirmada" },
+    ordenada:           { bg: "#153322", color: B.success, label: "Ordenada" },
+    pagada:             { bg: "#2A220A", color: B.warning, label: "Pagada" },
+    recibida_parcial:   { bg: "#1E3F2A", color: "#a3e635", label: "Recibida parcial" },
+    recibida:           { bg: "#153322", color: "#6DD4A0", label: "Recibida" },
+  };
+
+  if (ordenes.length === 0) {
     return <div style={{ textAlign: "center", padding: 60, color: "rgba(255,255,255,0.3)" }}>
       <div style={{ fontSize: 48, marginBottom: 12 }}>📦</div>
-      <div>Sin recepciones pendientes</div>
+      <div>Sin órdenes pendientes de recepción</div>
+      <div style={{ fontSize: 11, marginTop: 6, opacity: 0.7 }}>Las recepciones se hacen contra una Orden de Compra.</div>
     </div>;
   }
 
   return (
     <>
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-        {reqs.map(r => {
-          const totalLineas = r.items.length;
-          const recibidos = r.recibidos || [];
+        {ordenes.map(oc => {
+          const totalLineas = (oc.items || []).length;
+          const recibidos = oc.recibidos || [];
           const completas = recibidos.filter(rx => {
-            const item = r.items.find(it => it.id === rx.item_id || r.items.indexOf(it) === rx.idx);
-            return item && rx.cant_recibida >= item.cant;
+            const item = (oc.items || []).find((it, i) => it.id === rx.item_id || i === rx.idx);
+            return item && (Number(rx.cant_recibida) || 0) >= Number(item.cant);
           }).length;
+          const badge = OC_BADGE[oc.estado] || { bg: B.navyLight, color: "rgba(255,255,255,0.5)", label: oc.estado };
           return (
-            <div key={r.id} onClick={() => setOpenReq(r)}
-              style={{ background: B.navy, borderRadius: 12, padding: "14px 18px", border: `1px solid ${B.navyLight}`, borderLeft: `4px solid ${B.sky}`, cursor: "pointer" }}>
+            <div key={oc.id} onClick={() => setOpenOC(oc)}
+              style={{ background: B.navy, borderRadius: 12, padding: "14px 18px", border: `1px solid ${B.navyLight}`, borderLeft: `4px solid ${B.sand}`, cursor: "pointer" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
                 <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: 14, fontWeight: 800 }}>{r.desc}</div>
+                  <div style={{ fontSize: 14, fontWeight: 800, display: "flex", alignItems: "center", gap: 8 }}>
+                    🧾 {oc.codigo}
+                    {oc.requisicion_id && <span style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", fontWeight: 500 }}>· Req {oc.requisicion_id}</span>}
+                  </div>
                   <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginTop: 3 }}>
-                    {r.id} · {r.proveedor_nombre || r.proveedor || "Sin proveedor"} · {r.area}
+                    {oc.proveedor_nombre || "Sin proveedor"} · Emitida {oc.fecha_emision}
                   </div>
                   <div style={{ fontSize: 11, color: B.sky, marginTop: 4 }}>
                     📦 {completas}/{totalLineas} líneas recibidas completas
                   </div>
                 </div>
                 <div style={{ textAlign: "right" }}>
-                  <div style={{ fontSize: 16, fontWeight: 800, color: B.sand, fontFamily: "'Barlow Condensed', sans-serif" }}>{COP(r.total)}</div>
-                  <Badge text={r.estado} bg={ESTADO_COLOR[r.estado].bg} color={ESTADO_COLOR[r.estado].accent} />
+                  <div style={{ fontSize: 16, fontWeight: 800, color: B.sand, fontFamily: "'Barlow Condensed', sans-serif" }}>{COP(oc.total || 0)}</div>
+                  <span style={{ background: badge.bg, color: badge.color, padding: "3px 10px", borderRadius: 20, fontSize: 11, fontWeight: 700, whiteSpace: "nowrap" }}>{badge.label}</span>
                 </div>
               </div>
             </div>
           );
         })}
       </div>
-      {openReq && <RecepcionModal req={openReq} onClose={() => setOpenReq(null)} reload={reload} currentUser={currentUser} />}
+      {openOC && <RecepcionOCModal oc={openOC} reqs={reqs} onClose={() => setOpenOC(null)} reload={reload} currentUser={currentUser} />}
     </>
   );
 }
 
-function RecepcionModal({ req, onClose, reload, currentUser }) {
+function RecepcionOCModal({ oc, reqs, onClose, reload, currentUser }) {
   const [recibidos, setRecibidos] = useState(() => {
     const map = {};
-    (req.recibidos || []).forEach(r => { map[r.item_id] = r.cant_recibida; });
-    return req.items.map(it => ({ ...it, cant_recibida: map[it.id] || 0 }));
+    (oc.recibidos || []).forEach(r => { map[r.item_id] = r.cant_recibida; });
+    return (oc.items || []).map(it => ({ ...it, cant_recibida: map[it.id] || 0 }));
   });
-  const [notas, setNotas] = useState(req.notas_recibo || "");
+  const [notas, setNotas] = useState(oc.notas_recibo || "");
+  const [numFactura, setNumFactura] = useState(oc.factura_numero || "");
+  const [fechaFactura, setFechaFactura] = useState(oc.factura_fecha || todayStr());
+  const [registrarEnLoggro, setRegistrarEnLoggro] = useState(false);
   const [saving, setSaving] = useState(false);
 
   const setRecibido = (idx, val) => {
@@ -913,26 +932,89 @@ function RecepcionModal({ req, onClose, reload, currentUser }) {
 
   const guardar = async () => {
     setSaving(true);
-    const totalEsperado = req.items.reduce((s, it) => s + Number(it.cant), 0);
+    const totalEsperado = (oc.items || []).reduce((s, it) => s + Number(it.cant), 0);
     const totalRecibido = recibidos.reduce((s, r) => s + Number(r.cant_recibida || 0), 0);
     const todoRecibido = recibidos.every(r => r.cant_recibida >= r.cant);
     const algoRecibido = totalRecibido > 0;
 
-    let nuevoEstado = req.estado;
-    if (todoRecibido) nuevoEstado = "Recibida";
-    else if (algoRecibido) nuevoEstado = "Recibida Parcial";
+    let nuevoEstado = oc.estado;
+    if (todoRecibido) nuevoEstado = "recibida";
+    else if (algoRecibido) nuevoEstado = "recibida_parcial";
 
-    await supabase.from("requisiciones").update({
+    // 1. Actualizar la OC
+    await supabase.from("ordenes_compra").update({
       estado: nuevoEstado,
       recibidos: recibidos.map(r => ({ item_id: r.id, cant_recibida: r.cant_recibida })),
       notas_recibo: notas,
-      timeline: [...(req.timeline || []), {
-        quien: currentUser.nombre,
-        accion: todoRecibido ? "Recibida completa" : "Recibida parcial",
-        fecha: new Date().toLocaleString("es-CO"),
-        comentario: `${totalRecibido}/${totalEsperado} unidades${notas ? ` — ${notas}` : ""}`,
-      }],
-    }).eq("id", req.id);
+      factura_numero: numFactura.trim() || null,
+      factura_fecha: fechaFactura || null,
+      fecha_recepcion: new Date().toISOString(),
+      recibida_por: currentUser.nombre,
+    }).eq("id", oc.id);
+
+    // 2. Si la OC viene de una requisición, propagar estado
+    if (oc.requisicion_id) {
+      const req = reqs.find(r => r.id === oc.requisicion_id);
+      if (req) {
+        await supabase.from("requisiciones").update({
+          estado: todoRecibido ? "Recibida" : "Recibida Parcial",
+          recibidos: recibidos.map(r => ({ item_id: r.id, cant_recibida: r.cant_recibida })),
+          timeline: [...(req.timeline || []), {
+            quien: currentUser.nombre,
+            accion: todoRecibido ? "Recibida completa (desde OC)" : "Recibida parcial (desde OC)",
+            fecha: new Date().toLocaleString("es-CO"),
+            comentario: `OC ${oc.codigo} · ${totalRecibido}/${totalEsperado} unidades${notas ? ` — ${notas}` : ""}`,
+          }],
+        }).eq("id", req.id);
+      }
+    }
+
+    // 3. Si piden registrar en Loggro, hacer el POST al endpoint
+    if (registrarEnLoggro && algoRecibido) {
+      try {
+        const URL = import.meta.env.VITE_SUPABASE_URL;
+        const KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
+        const ingredientsPayload = recibidos
+          .filter(r => (Number(r.cant_recibida) || 0) > 0 && r.loggro_id)
+          .map(r => ({
+            ingredient_id: r.loggro_id,
+            quantity: Number(r.cant_recibida),
+            cost: Number(r.precioU) || 0,
+          }));
+        const sinLoggroId = recibidos.filter(r => (Number(r.cant_recibida) || 0) > 0 && !r.loggro_id);
+        if (ingredientsPayload.length === 0) {
+          alert("Ningún ítem recibido tiene loggro_id mapeado. No se puede registrar en Loggro.\n\nVincula los productos en el módulo Inventario → Productos → '🔗 Sync Loggro'.");
+        } else {
+          const res = await fetch(`${URL}/functions/v1/loggro-sync/create-inventory-movement`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", apikey: KEY, Authorization: `Bearer ${KEY}` },
+            body: JSON.stringify({
+              type: 1,
+              isSubtracted: false,
+              provider_id: oc.proveedor_loggro_id || null,
+              note: `OC ${oc.codigo}${oc.requisicion_id ? ` · Req ${oc.requisicion_id}` : ""}${notas ? " · " + notas : ""}`,
+              invoice: numFactura ? { number: numFactura, date: fechaFactura } : undefined,
+              ingredients: ingredientsPayload,
+            }),
+          });
+          const data = await res.json();
+          if (!data.ok) {
+            alert("⚠️ Recepción guardada, pero falló el registro en Loggro:\n" + (data.error || JSON.stringify(data).slice(0, 200)));
+          } else {
+            // Guardar el movement_id en la OC
+            await supabase.from("ordenes_compra").update({
+              loggro_movement_id: data.movement_id,
+            }).eq("id", oc.id);
+            if (sinLoggroId.length > 0) {
+              alert(`✓ Registrado en Loggro (movement ${data.movement_id}).\n\n⚠️ ${sinLoggroId.length} ítems sin loggro_id NO se registraron: ${sinLoggroId.map(r => r.item).join(", ")}`);
+            }
+          }
+        }
+      } catch (e) {
+        alert("⚠️ Recepción guardada, pero error llamando a Loggro: " + e.message);
+      }
+    }
+
     setSaving(false);
     onClose();
     reload();
@@ -943,11 +1025,26 @@ function RecepcionModal({ req, onClose, reload, currentUser }) {
       <div onClick={e => e.stopPropagation()} style={{ background: B.navyMid, borderRadius: 16, padding: 28, width: 720, maxWidth: "95vw", maxHeight: "90vh", overflowY: "auto", border: `1px solid ${B.navyLight}` }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 18 }}>
           <div>
-            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.1em" }}>Recepción de mercancía</div>
-            <div style={{ fontSize: 18, fontWeight: 800, marginTop: 4 }}>{req.desc}</div>
-            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)" }}>{req.id} · {req.proveedor_nombre || req.proveedor}</div>
+            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.1em" }}>Recepción de Orden de Compra</div>
+            <div style={{ fontSize: 18, fontWeight: 800, marginTop: 4 }}>🧾 {oc.codigo}</div>
+            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)" }}>
+              {oc.proveedor_nombre || "Sin proveedor"}
+              {oc.requisicion_id && ` · Req ${oc.requisicion_id}`}
+            </div>
           </div>
           <button onClick={onClose} style={{ background: "none", border: "none", color: B.sand, fontSize: 20, cursor: "pointer" }}>×</button>
+        </div>
+
+        {/* Datos de factura del proveedor */}
+        <div style={{ background: B.navy, borderRadius: 10, padding: 14, marginBottom: 14, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+          <div>
+            <label style={LS}>Nº factura proveedor</label>
+            <input value={numFactura} onChange={e => setNumFactura(e.target.value)} placeholder="Ej: F-12345" style={IS} />
+          </div>
+          <div>
+            <label style={LS}>Fecha factura</label>
+            <input type="date" value={fechaFactura} onChange={e => setFechaFactura(e.target.value)} style={IS} />
+          </div>
         </div>
 
         <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12 }}>
@@ -1004,6 +1101,16 @@ function RecepcionModal({ req, onClose, reload, currentUser }) {
             placeholder="Faltantes, daños, observaciones del proveedor…"
             style={{ ...IS, resize: "vertical", fontFamily: "inherit" }} />
         </div>
+
+        {/* Toggle registro en Loggro */}
+        <label style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer", padding: "10px 14px", background: "rgba(56,189,248,0.06)", border: `1px solid ${registrarEnLoggro ? B.sky : "rgba(255,255,255,0.1)"}`, borderRadius: 10, marginBottom: 16 }}>
+          <input type="checkbox" checked={registrarEnLoggro} onChange={e => setRegistrarEnLoggro(e.target.checked)}
+            style={{ width: 18, height: 18, accentColor: B.sky }} />
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 700, color: registrarEnLoggro ? B.sky : B.white }}>🔗 Registrar movimiento de compra en Loggro</div>
+            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>Crea un movimiento de inventario (type=1) con los ítems recibidos, cantidades y costos.</div>
+          </div>
+        </label>
 
         <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
           <button onClick={onClose} style={BTN(B.navyLight)}>Cancelar</button>

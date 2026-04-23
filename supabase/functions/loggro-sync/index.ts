@@ -779,6 +779,64 @@ serve(async (req) => {
       });
     }
 
+    // POST /loggro-sync/create-inventory-movement
+    // Body (lo que Atolón OS envía):
+    //   {
+    //     type: 1,                     // tipo de movimiento (1 = compra, 11 = ajuste, etc.)
+    //     isSubtracted: false,         // true = saca inventario, false = ingresa
+    //     isProduction: false,
+    //     isMoveTo: false,
+    //     provider_id: "...",          // ID del proveedor en Loggro (opcional)
+    //     note: "Requisición REQ-123456",
+    //     ingredients: [               // ítems a registrar
+    //       { ingredient_id: "...", quantity: 5, cost: 8000 },   // ingredient_id = _id en Loggro
+    //       ...
+    //     ],
+    //     invoice: { number: "F-001", date: "2026-04-22" },  // opcional
+    //     location_id_to: "..."        // opcional si isMoveTo
+    //   }
+    if (req.method === "POST" && path === "/create-inventory-movement") {
+      const body = await req.json().catch(() => ({}));
+
+      // Armar payload exacto de Loggro
+      const now = new Date().toISOString();
+      const movementPayload: any = {
+        date: body.date || now,
+        type: Number(body.type) || 1,            // 1 = compra/ingreso
+        isSubtracted: !!body.isSubtracted,
+        isProduction: !!body.isProduction,
+        isMoveTo: !!body.isMoveTo,
+        deleted: false,
+        note: body.note || "",
+        ingredients: (body.ingredients || []).map((it: any) => ({
+          ingredient: it.ingredient_id || it.ingredient,
+          quantity:   Number(it.quantity) || 0,
+          cost:       Number(it.cost) || 0,
+        })),
+        createdOn: now,
+        modifiedOn: now,
+      };
+      if (body.provider_id) movementPayload.provider = body.provider_id;
+      if (body.invoice) movementPayload.invoice = body.invoice;
+      if (body.location_id_to) movementPayload.locationStockTo = body.location_id_to;
+
+      const result = await loggroRaw("POST", "/inventory", movementPayload);
+      if (!result.ok) {
+        return json({
+          ok: false,
+          error: `Loggro respondió ${result.status}`,
+          loggro_response: result.body,
+          payload_enviado: movementPayload,
+        }, 502);
+      }
+
+      return json({
+        ok: true,
+        movement_id: result.body?._id || result.body?.id || null,
+        loggro_response: result.body,
+      });
+    }
+
     return json({ error: "Ruta no encontrada", path }, 404);
   } catch (err) {
     console.error("loggro-sync error:", err);
