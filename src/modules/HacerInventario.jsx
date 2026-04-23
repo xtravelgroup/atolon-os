@@ -22,6 +22,7 @@ export default function HacerInventario() {
   const [historial, setHistorial] = useState([]);
   const [scanOpen, setScanOpen] = useState(false);
   const [scanMsg, setScanMsg] = useState(null); // { type: "ok"|"err", text }
+  const [cantidadModal, setCantidadModal] = useState(null); // { item, cant } — al escanear
   const rowRefs = useRef({}); // item_id → input element
 
   // Cargar locaciones y conteos históricos
@@ -88,7 +89,7 @@ export default function HacerInventario() {
 
   const locActual = locaciones.find(l => l.id === locId);
 
-  // Al detectar un código: buscar ítem, enfocarlo, y auto-incrementar el contador
+  // Al detectar un código: cerrar scanner y abrir modal de cantidad
   const handleCodigoEscaneado = useCallback((codigo) => {
     const c = String(codigo).trim();
     if (!c) return;
@@ -98,24 +99,18 @@ export default function HacerInventario() {
       setTimeout(() => setScanMsg(null), 2500);
       return;
     }
-    // Auto-incrementar el conteo del ítem encontrado
-    setConteos(prev => {
-      const actual = Number(prev[found.id]) || 0;
-      return { ...prev, [found.id]: String(actual + 1) };
-    });
-    // Limpiar filtros/búsqueda para que sea visible
+    // Cerrar scanner y abrir pop-up de cantidad
+    setScanOpen(false);
+    setCantidadModal({ item: found, cant: "" });
+    // Limpiar filtros/búsqueda para que sea visible al cerrar
     setSearch("");
     setCatFilter("todos");
     setFilterModo("todos");
-    setScanMsg({ type: "ok", text: `✓ ${found.nombre} +1` });
-    setTimeout(() => setScanMsg(null), 1500);
-    // Scroll al ítem y enfocar el input
+    // Scroll al ítem y enfocar el input (por si acaso)
     setTimeout(() => {
       const el = rowRefs.current[found.id];
       if (el) {
         el.scrollIntoView({ behavior: "smooth", block: "center" });
-        el.focus();
-        el.select();
       }
     }, 150);
   }, [items]);
@@ -210,20 +205,44 @@ export default function HacerInventario() {
             ))}
           </div>
 
-          {/* Historial de conteos */}
+          {/* Historial de conteos — clickable para continuar */}
           {historial.length > 0 && (
             <div style={{ background: B.navyMid, borderRadius: 12, padding: "18px 20px", border: `1px solid ${B.navyLight}` }}>
-              <div style={{ fontSize: 12, color: B.sand, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 12 }}>Historial de conteos</div>
+              <div style={{ fontSize: 12, color: B.sand, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>Historial de conteos</div>
+              <div style={{ fontSize: 10, color: "rgba(255,255,255,0.35)", marginBottom: 12 }}>Click en un conteo para retomarlo o revisarlo.</div>
               <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                 {historial.map(c => {
                   const loc = locaciones.find(l => l.id === c.locacion_id);
+                  const continuar = async () => {
+                    // Cargar items + stock y pre-populá conteos con lo ya guardado
+                    if (!supabase) return;
+                    setLocId(c.locacion_id);
+                    const [iR, sR] = await Promise.all([
+                      supabase.from("items_catalogo").select("id, nombre, codigo, categoria, unidad").eq("activo", true).order("nombre"),
+                      supabase.from("items_stock_locacion").select("item_id, locacion_id, cantidad"),
+                    ]);
+                    setItems(iR.data || []);
+                    const map = {};
+                    (sR.data || []).forEach(s => { map[`${s.item_id}|${s.locacion_id}`] = Number(s.cantidad) || 0; });
+                    setStockPorLoc(map);
+                    // Pre-popular conteos con lo que ya estaba guardado
+                    const pre = {};
+                    (c.items || []).forEach(it => { pre[it.item_id] = String(it.contado); });
+                    setConteos(pre);
+                    setNotas(c.notas || "");
+                    setStep(2);
+                  };
                   return (
-                    <div key={c.id} style={{ display: "grid", gridTemplateColumns: "110px 1fr auto auto", gap: 12, alignItems: "center", padding: "8px 12px", background: B.navy, borderRadius: 8, fontSize: 12 }}>
+                    <button key={c.id} onClick={continuar}
+                      style={{ display: "grid", gridTemplateColumns: "110px 1fr auto auto auto", gap: 12, alignItems: "center", padding: "10px 14px", background: B.navy, borderRadius: 8, fontSize: 12, border: `1px solid ${B.navyLight}`, cursor: "pointer", color: B.white, textAlign: "left", transition: "all 0.15s" }}
+                      onMouseEnter={e => { e.currentTarget.style.borderColor = B.sky; e.currentTarget.style.background = B.sky + "10"; }}
+                      onMouseLeave={e => { e.currentTarget.style.borderColor = B.navyLight; e.currentTarget.style.background = B.navy; }}>
                       <span style={{ color: "rgba(255,255,255,0.55)" }}>{new Date(c.created_at).toLocaleDateString("es-CO", { day: "2-digit", month: "short" })} {new Date(c.created_at).toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit" })}</span>
                       <span>{loc?.icono} <strong>{loc?.nombre || c.locacion_id}</strong> · <span style={{ color: "rgba(255,255,255,0.4)" }}>{c.usuario_email}</span></span>
                       <span style={{ color: "rgba(255,255,255,0.6)" }}>{c.total_items} ítems</span>
                       <span style={{ color: c.diferencias > 0 ? B.warning : B.success, fontWeight: 700 }}>{c.diferencias > 0 ? `${c.diferencias} Δ` : "✓"}</span>
-                    </div>
+                      <span style={{ color: B.sky, fontSize: 11, fontWeight: 700 }}>▶ Continuar</span>
+                    </button>
                   );
                 })}
               </div>
@@ -362,6 +381,63 @@ export default function HacerInventario() {
 
       {/* ═══ MODAL ESCÁNER DE CÓDIGO DE BARRAS ═══ */}
       {scanOpen && <ScannerModal onClose={() => setScanOpen(false)} onCode={handleCodigoEscaneado} />}
+
+      {/* ═══ POP-UP CANTIDAD al escanear ═══ */}
+      {cantidadModal && (() => {
+        const i = cantidadModal.item;
+        const cantNum = Number(cantidadModal.cant) || 0;
+        const acumulado = Number(conteos[i.id] || 0);
+        const confirmar = () => {
+          if (!cantNum || cantNum <= 0) return alert("Cantidad inválida");
+          // Sumar a lo que ya había contado (por si scan el mismo producto 2 veces)
+          setConteos(prev => ({ ...prev, [i.id]: String(acumulado + cantNum) }));
+          setCantidadModal(null);
+          setScanMsg({ type: "ok", text: `✓ ${i.nombre}: +${cantNum}` });
+          setTimeout(() => setScanMsg(null), 1500);
+          // Re-abrir scanner para seguir escaneando
+          setTimeout(() => setScanOpen(true), 300);
+        };
+        return (
+          <div onClick={e => e.target === e.currentTarget && setCantidadModal(null)}
+            style={{ position: "fixed", inset: 0, zIndex: 2200, background: "rgba(0,0,0,0.85)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+            <div style={{ background: B.navyMid, borderRadius: 16, width: "100%", maxWidth: 420, padding: 28, border: `2px solid ${B.success}` }}>
+              <div style={{ fontSize: 11, color: B.sand, textTransform: "uppercase", letterSpacing: "0.08em", fontWeight: 700, marginBottom: 6 }}>📷 Escaneado</div>
+              <div style={{ fontSize: 20, fontWeight: 800, color: B.white, marginBottom: 4 }}>{i.nombre}</div>
+              <div style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", marginBottom: 16 }}>
+                {i.categoria} · Unidad: {i.unidad || "—"}
+                {acumulado > 0 && <span style={{ color: B.success, fontWeight: 700, marginLeft: 8 }}>(ya contado: {acumulado})</span>}
+              </div>
+              <label style={{ fontSize: 11, color: B.sand, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", display: "block", marginBottom: 8 }}>
+                ¿Cuántos {i.unidad || "unidades"}?
+              </label>
+              <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
+                <button onClick={() => setCantidadModal(c => ({ ...c, cant: String(Math.max(0, (Number(c.cant) || 0) - 1)) }))}
+                  style={{ width: 42, height: 42, borderRadius: 8, border: `1px solid ${B.navyLight}`, background: B.navy, color: B.sky, fontSize: 22, fontWeight: 800, cursor: "pointer" }}>−</button>
+                <input
+                  autoFocus type="number" min={0}
+                  step={i.unidad?.toLowerCase().match(/kg|gr|lt|lit|gal/) ? "0.01" : "1"}
+                  value={cantidadModal.cant}
+                  onChange={e => setCantidadModal(c => ({ ...c, cant: e.target.value }))}
+                  onKeyDown={e => { if (e.key === "Enter") confirmar(); }}
+                  style={{ flex: 1, padding: "10px 14px", borderRadius: 8, background: B.navy, border: `1px solid ${B.navyLight}`, color: B.white, fontSize: 32, fontWeight: 800, textAlign: "center", fontFamily: "'Barlow Condensed', sans-serif", outline: "none" }}
+                  placeholder="0" />
+                <button onClick={() => setCantidadModal(c => ({ ...c, cant: String((Number(c.cant) || 0) + 1) }))}
+                  style={{ width: 42, height: 42, borderRadius: 8, border: `1px solid ${B.navyLight}`, background: B.navy, color: B.sky, fontSize: 22, fontWeight: 800, cursor: "pointer" }}>+</button>
+              </div>
+              <div style={{ display: "flex", gap: 10 }}>
+                <button onClick={() => { setCantidadModal(null); setTimeout(() => setScanOpen(true), 100); }}
+                  style={{ flex: 1, padding: "12px", borderRadius: 8, border: `1px solid ${B.navyLight}`, background: "transparent", color: "rgba(255,255,255,0.5)", fontWeight: 600, cursor: "pointer" }}>
+                  Cancelar
+                </button>
+                <button onClick={confirmar} disabled={!cantNum}
+                  style={{ flex: 2, padding: "12px", borderRadius: 8, border: "none", background: !cantNum ? B.navyLight : B.success, color: B.navy, fontWeight: 800, fontSize: 14, cursor: !cantNum ? "default" : "pointer" }}>
+                  ✓ Agregar
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Toast mensajes del escáner */}
       {scanMsg && (
