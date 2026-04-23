@@ -415,6 +415,7 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
 
   const handlePago = async () => {
     const esCortesia = pagoForma === "Cortesía";
+    const esAjusteAgencia = pagoForma === "Ajuste Agencia";
     // Si es cortesía y no hay monto, usar el saldo actual (valor total de la reserva)
     const monto = esCortesia
       ? (Number(pagoMonto) || (r0.saldo || r0.total || 0))
@@ -422,11 +423,12 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
     if (!supabase) return;
     if (!esCortesia && (!monto || monto <= 0)) return alert("Monto debe ser mayor a 0");
     setSaving(true);
-    // Cortesía = 100% descuento, NO es dinero recibido. No se suma al abono.
-    const nuevoAbono = esCortesia ? (r0.abono || 0) : (r0.abono || 0) + monto;
-    // Saldo: si es cortesía total, cubre el saldo restante (queda en 0).
-    const nuevoSaldo = esCortesia
-      ? Math.max(0, (r0.total || 0) - (r0.abono || 0) - monto)  // cortesía cubre monto sin ser abono
+    // Cortesía y Ajuste Agencia = descuentos, NO son dinero recibido. No se suman al abono.
+    const esDescuento = esCortesia || esAjusteAgencia;
+    const nuevoAbono = esDescuento ? (r0.abono || 0) : (r0.abono || 0) + monto;
+    // Saldo: descuento reduce el saldo pendiente sin ser abono.
+    const nuevoSaldo = esDescuento
+      ? Math.max(0, (r0.total || 0) - (r0.abono || 0) - monto)
       : (r0.total || 0) - nuevoAbono;
     const nuevoEstado = nuevoSaldo <= 0 ? "confirmado" : r0.estado;
     // Append to payment history
@@ -451,6 +453,18 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
     const nuevoDescuentoCortesia = esCortesia
       ? (Number(r0.descuento_cortesia) || 0) + monto
       : (Number(r0.descuento_cortesia) || 0);
+    const nuevoDescuentoAgencia = esAjusteAgencia
+      ? (Number(r0.descuento_agencia) || 0) + monto
+      : (Number(r0.descuento_agencia) || 0);
+    // Para Ajuste Agencia: reducir el total (la agencia absorbe el descuento en su comisión).
+    const nuevoTotal = esCortesia
+      ? 0
+      : esAjusteAgencia
+        ? Math.max(0, (r0.total || 0) - monto)
+        : (r0.total || 0);
+    const saldoFinalAjuste = esAjusteAgencia
+      ? Math.max(0, nuevoTotal - (r0.abono || 0))
+      : null;
     // Si es cortesía, marcar canal + notas siguiendo el formato de cortesías de grupo
     const nuevoCanal = esCortesia ? "Cortesía" : r0.canal;
     const notaBase = (r0.notas || "").replace(/^Cortesía — ?/i, "").trim();
@@ -459,15 +473,16 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
       : r0.notas;
     const updatePayload = {
       abono:              esCortesia ? 0 : nuevoAbono,
-      // Si es cortesía, no hay precio (total = 0). descuento_cortesia guarda el valor para auditoría.
-      total:              esCortesia ? 0 : (r0.total || 0),
+      // Cortesía: total=0. Ajuste Agencia: reduce total por el monto del ajuste.
+      total:              esCortesia ? 0 : nuevoTotal,
       precio_u:           esCortesia ? 0 : (r0.precio_u || 0),
-      saldo:              esCortesia ? 0 : Math.max(0, nuevoSaldo),
+      saldo:              esCortesia ? 0 : (esAjusteAgencia ? saldoFinalAjuste : Math.max(0, nuevoSaldo)),
       estado:             esCortesia ? "confirmado" : nuevoEstado,
       forma_pago:         pagoForma,
       fecha_pago:         pagoFecha,
       pagos:              pagosNext,
       descuento_cortesia: nuevoDescuentoCortesia,
+      descuento_agencia:  nuevoDescuentoAgencia,
       canal:              nuevoCanal,
       notas:              nuevaNota,
       updated_at: new Date().toISOString(),
@@ -1344,7 +1359,7 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
         onClick={e => e.target === e.currentTarget && setShowPagoModal(false)}>
         <div style={{ background: B.navyMid, borderRadius: 16, padding: 28, width: 360, border: `1px solid ${B.navyLight}` }}>
           <h3 style={{ fontSize: 17, fontWeight: 700, marginBottom: 20, color: B.white }}>
-            {pagoForma === "Cortesía" ? "🎁 Aplicar Cortesía" : "💳 Registrar Pago"}
+            {pagoForma === "Cortesía" ? "🎁 Aplicar Cortesía" : pagoForma === "Ajuste Agencia" ? "🏷️ Aplicar Ajuste Agencia" : "💳 Registrar Pago"}
           </h3>
           <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
             {/* Forma de pago siempre primero */}
@@ -1390,6 +1405,13 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
                 🎁 Al aplicar cortesía, la reserva quedará con <strong>total $0</strong> y sin saldo. Se registrará el valor original ({COP(saldo > 0 ? saldo : 0)}) como descuento en el reporte de cortesías.
               </div>
             )}
+
+            {/* Aviso cuando es Ajuste Agencia */}
+            {pagoForma === "Ajuste Agencia" && (
+              <div style={{ padding: "12px 14px", background: "#8b5cf615", border: `1px solid #8b5cf655`, borderRadius: 8, fontSize: 12, color: "#c4b5fd", lineHeight: 1.5 }}>
+                🏷️ Descuento otorgado por la agencia. Reduce el <strong>total de la reserva</strong> y se <strong>descuenta de la comisión</strong> que se le paga a la agencia. No es dinero recibido.
+              </div>
+            )}
           </div>
           <div style={{ display: "flex", gap: 10, marginTop: 22 }}>
             <button onClick={() => setShowPagoModal(false)} style={{ flex: 1, background: "none", border: `1px solid ${B.navyLight}`, borderRadius: 8, color: B.sand, padding: "10px", fontSize: 14, cursor: "pointer", fontWeight: 600 }}>Cancelar</button>
@@ -1401,7 +1423,7 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
                 border: "none", borderRadius: 8, color: B.navy, padding: "10px", fontSize: 14, cursor: "pointer", fontWeight: 700,
                 opacity: (saving || (pagoForma !== "Cortesía" && (pagoMonto <= 0 || !pagoFecha))) ? 0.5 : 1
               }}>
-              {saving ? "Guardando…" : pagoForma === "Cortesía" ? "🎁 Aplicar Cortesía" : `Registrar ${COP(pagoMonto)}`}
+              {saving ? "Guardando…" : pagoForma === "Cortesía" ? "🎁 Aplicar Cortesía" : pagoForma === "Ajuste Agencia" ? `🏷️ Aplicar ajuste ${COP(pagoMonto)}` : `Registrar ${COP(pagoMonto)}`}
             </button>
           </div>
         </div>
