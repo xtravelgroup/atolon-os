@@ -34,6 +34,7 @@ export default function Items() {
   const [showCatModal, setShowCatModal] = useState(null); // null | "new" | cat object
   const [sortBy, setSortBy] = useState("nombre"); // "nombre" | "categoria" | "unidad" | "precio"
   const [sortDir, setSortDir] = useState("asc");
+  const [showBulkSearch, setShowBulkSearch] = useState(false);
 
   // Build lookup maps from dynamic categorias
   const catNames = useMemo(() => categorias.filter(c => c.activo !== false).map(c => c.nombre), [categorias]);
@@ -213,6 +214,9 @@ export default function Items() {
                 } catch (err) { alert("Error: " + err.message); }
               }} style={{ ...BTN(B.navyLight), color: B.sky, border: `1px solid ${B.sky}44` }}>
                 🔄 Sync Loggro
+              </button>
+              <button onClick={() => setShowBulkSearch(true)} style={{ ...BTN(B.navyLight), color: "#4ade80", border: `1px solid #4ade8044` }}>
+                🔍 Buscar códigos
               </button>
               <button onClick={() => setShowModal("new")} style={BTN(B.sky, B.navy)}>+ Nuevo Producto</button>
             </>
@@ -505,6 +509,15 @@ export default function Items() {
           onEdit={() => { setShowModal(detail); setDetail(null); }}
           onDelete={() => deleteItem(detail.id)}
           onClose={() => setDetail(null)}
+        />
+      )}
+
+      {/* Bulk search de códigos */}
+      {showBulkSearch && (
+        <BulkBarcodeSearchModal
+          items={items.filter(i => i.activo !== false && !i.codigo)}
+          onClose={() => setShowBulkSearch(false)}
+          onDone={() => { setShowBulkSearch(false); load(); }}
         />
       )}
 
@@ -1788,6 +1801,179 @@ function ConteosTab() {
           })}
         </div>
       )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// BULK BARCODE SEARCH — cola de revisión para vincular múltiples a la vez
+// ═══════════════════════════════════════════════════════════════════════════
+function BulkBarcodeSearchModal({ items, onClose, onDone }) {
+  const [idx, setIdx] = useState(0);
+  const [cache, setCache] = useState({}); // item_id → { loading, results, error }
+  const [asignados, setAsignados] = useState({}); // item_id → barcode
+  const [saltados, setSaltados] = useState({});   // item_id → true
+
+  const current = items[idx];
+  const state = current ? cache[current.id] : null;
+
+  // Auto-buscar cuando se avanza a un ítem
+  useEffect(() => {
+    if (!current || cache[current.id]) return;
+    let cancel = false;
+    (async () => {
+      setCache(c => ({ ...c, [current.id]: { loading: true } }));
+      try {
+        const URL = import.meta.env.VITE_SUPABASE_URL;
+        const KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
+        const res = await fetch(`${URL}/functions/v1/barcode-search?q=${encodeURIComponent(current.nombre)}&limit=8`, {
+          headers: { apikey: KEY, Authorization: `Bearer ${KEY}` },
+        });
+        const data = await res.json();
+        if (cancel) return;
+        setCache(c => ({ ...c, [current.id]: { loading: false, results: data.results || [] } }));
+      } catch (e) {
+        if (!cancel) setCache(c => ({ ...c, [current.id]: { loading: false, error: e.message, results: [] } }));
+      }
+    })();
+    return () => { cancel = true; };
+  }, [idx]); // eslint-disable-line
+
+  const asignar = async (barcode) => {
+    if (!current) return;
+    setAsignados(a => ({ ...a, [current.id]: barcode }));
+    await supabase.from("items_catalogo").update({ codigo: barcode, updated_at: new Date().toISOString() }).eq("id", current.id);
+    setIdx(i => i + 1);
+  };
+
+  const saltar = () => {
+    if (!current) return;
+    setSaltados(s => ({ ...s, [current.id]: true }));
+    setIdx(i => i + 1);
+  };
+
+  const totalAsignados = Object.keys(asignados).length;
+  const totalSaltados  = Object.keys(saltados).length;
+  const terminado = idx >= items.length || items.length === 0;
+
+  const SRC_COLORS = { "Éxito": "#ffd400", "Carulla": "#e63946", "Jumbo": "#00a651", "Open Food Facts": "#4ade80" };
+
+  return (
+    <div onClick={e => e.target === e.currentTarget && onClose()}
+      style={{ position: "fixed", inset: 0, zIndex: 2100, background: "rgba(0,0,0,0.8)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+      <div style={{ background: B.navyMid, borderRadius: 16, width: "100%", maxWidth: 640, maxHeight: "92vh", display: "flex", flexDirection: "column", border: `1px solid ${B.navyLight}` }}>
+        {/* Header */}
+        <div style={{ padding: "18px 22px", borderBottom: `1px solid ${B.navyLight}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div>
+            <div style={{ fontSize: 17, fontWeight: 800, color: B.sand }}>🔍 Buscar códigos en bulk</div>
+            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.45)", marginTop: 3 }}>
+              {items.length} productos sin código · {totalAsignados} vinculados · {totalSaltados} saltados
+            </div>
+          </div>
+          <button onClick={() => { if (totalAsignados > 0) onDone(); else onClose(); }}
+            style={{ background: "none", border: "none", color: "rgba(255,255,255,0.5)", fontSize: 22, cursor: "pointer" }}>×</button>
+        </div>
+
+        {/* Progress */}
+        {items.length > 0 && (
+          <div style={{ height: 4, background: B.navy }}>
+            <div style={{ width: `${(idx / items.length) * 100}%`, height: "100%", background: B.sky, transition: "width 0.3s" }} />
+          </div>
+        )}
+
+        {/* Body */}
+        <div style={{ flex: 1, overflowY: "auto", padding: "18px 22px" }}>
+          {items.length === 0 ? (
+            <div style={{ textAlign: "center", padding: 40, color: "rgba(255,255,255,0.4)" }}>
+              <div style={{ fontSize: 42, marginBottom: 10 }}>✅</div>
+              <div style={{ fontSize: 15, fontWeight: 700, color: B.white }}>Todos los productos tienen código</div>
+              <div style={{ fontSize: 11, marginTop: 4 }}>No hay nada que buscar.</div>
+            </div>
+          ) : terminado ? (
+            <div style={{ textAlign: "center", padding: 40 }}>
+              <div style={{ fontSize: 42, marginBottom: 10 }}>🎉</div>
+              <div style={{ fontSize: 16, fontWeight: 800, color: B.success }}>Proceso completado</div>
+              <div style={{ fontSize: 13, color: "rgba(255,255,255,0.6)", marginTop: 10 }}>
+                <strong style={{ color: B.success }}>{totalAsignados}</strong> códigos asignados · {" "}
+                <strong style={{ color: "rgba(255,255,255,0.7)" }}>{totalSaltados}</strong> saltados
+              </div>
+              <button onClick={onDone}
+                style={{ marginTop: 20, background: B.sky, color: B.navy, border: "none", borderRadius: 8, padding: "10px 24px", fontWeight: 700, cursor: "pointer" }}>
+                Cerrar
+              </button>
+            </div>
+          ) : (
+            <>
+              {/* Producto actual */}
+              <div style={{ background: B.navy, borderRadius: 10, padding: "14px 16px", marginBottom: 14 }}>
+                <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 }}>
+                  Producto {idx + 1} / {items.length}
+                </div>
+                <div style={{ fontSize: 17, fontWeight: 800, color: B.white }}>{current.nombre}</div>
+                <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginTop: 4 }}>
+                  {current.categoria} · {current.unidad}
+                </div>
+              </div>
+
+              {/* Candidatos */}
+              {state?.loading && <div style={{ textAlign: "center", padding: 30, color: "rgba(255,255,255,0.5)" }}>🔍 Buscando…</div>}
+              {state?.error && <div style={{ color: "#fca5a5", fontSize: 12, padding: 10 }}>⚠️ {state.error}</div>}
+              {state?.results && state.results.length === 0 && (
+                <div style={{ textAlign: "center", padding: 30, color: "rgba(255,255,255,0.4)", fontSize: 13 }}>
+                  Sin resultados online. Saltar o asigna manualmente desde el producto.
+                </div>
+              )}
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {(state?.results || []).map((r, i) => (
+                  <div key={`${r.source}-${r.barcode}-${i}`}
+                    onClick={() => asignar(r.barcode)}
+                    style={{
+                      display: "flex", gap: 12, padding: "10px 12px", background: B.navy, borderRadius: 10, cursor: "pointer",
+                      border: `1px solid ${B.navyLight}`, alignItems: "center",
+                    }}
+                    onMouseEnter={e => { e.currentTarget.style.borderColor = B.sky; }}
+                    onMouseLeave={e => { e.currentTarget.style.borderColor = B.navyLight; }}
+                  >
+                    {r.image ? (
+                      <img src={r.image} alt="" style={{ width: 50, height: 50, objectFit: "contain", borderRadius: 6, background: "#fff" }} onError={e => { e.currentTarget.style.display = "none"; }} />
+                    ) : (
+                      <div style={{ width: 50, height: 50, background: B.navyLight, borderRadius: 6, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20 }}>📦</div>
+                    )}
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: B.white, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{r.name}</div>
+                      <div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", marginTop: 2 }}>
+                        {r.brand && <span>{r.brand}</span>}{r.size && <span> · {r.size}</span>}
+                      </div>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 3 }}>
+                        <span style={{ fontSize: 9, padding: "1px 6px", borderRadius: 10, background: (SRC_COLORS[r.source] || B.sky) + "33", color: SRC_COLORS[r.source] || B.sky, fontWeight: 800 }}>{r.source}</span>
+                        <span style={{ fontFamily: "monospace", fontSize: 10, color: B.sand, fontWeight: 700 }}>{r.barcode}</span>
+                      </div>
+                    </div>
+                    <button onClick={e => { e.stopPropagation(); asignar(r.barcode); }}
+                      style={{ background: B.success, color: B.navy, border: "none", borderRadius: 8, padding: "6px 12px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
+                      ✓ Usar
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+
+        {/* Footer controls */}
+        {!terminado && items.length > 0 && (
+          <div style={{ padding: "14px 22px", borderTop: `1px solid ${B.navyLight}`, display: "flex", gap: 10, justifyContent: "space-between" }}>
+            <button onClick={() => setIdx(i => Math.max(0, i - 1))} disabled={idx === 0}
+              style={{ background: "transparent", border: `1px solid ${B.navyLight}`, color: idx === 0 ? "rgba(255,255,255,0.3)" : "rgba(255,255,255,0.6)", borderRadius: 8, padding: "8px 14px", fontSize: 12, cursor: idx === 0 ? "default" : "pointer" }}>
+              ← Anterior
+            </button>
+            <button onClick={saltar}
+              style={{ background: "rgba(255,255,255,0.06)", border: `1px solid ${B.navyLight}`, color: B.sand, borderRadius: 8, padding: "8px 16px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+              Saltar sin código →
+            </button>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
