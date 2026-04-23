@@ -37,6 +37,10 @@ const fmtDT = (d) => {
 
 // ── Commission calc — same logic as B2B.jsx ──────────────────────────────────
 function calcComision(r, pasadiasMap) {
+  // Cortesías no generan comisión (total = 0)
+  if (r.canal === "Cortesía" || r.forma_pago === "Cortesía") return 0;
+  if (!r._esGrupo && (Number(r.total) || 0) === 0) return 0;
+
   // For grupo entries, calculate per pasadía line
   if (r._esGrupo && r._pasadias_org) {
     let total = 0;
