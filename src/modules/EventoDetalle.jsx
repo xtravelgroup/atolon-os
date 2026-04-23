@@ -6,6 +6,7 @@ import { B, COP, fmtFecha, todayStr } from "../brand";
 import { useMobile } from "../lib/useMobile";
 import GrupoCotizacionModal from "./grupos/GrupoCotizacionModal";
 import InstructivoContratistasPDF from "./eventos/InstructivoContratistasPDF";
+import FacturaElectronicaForm, { FacturaElectronicaToggle, FE_EMPTY, feValidate, fePayload } from "../lib/FacturaElectronicaForm.jsx";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 const IS  = { background: "#1E3566", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 8, padding: "9px 12px", color: "#fff", fontSize: 13, width: "100%", outline: "none", boxSizing: "border-box" };
@@ -2573,11 +2574,13 @@ function CortesiaButton({ pasadiasMap, onAdd }) {
   const [nombre, setNombre] = useState("");
   const [telefono, setTelefono] = useState("");
   const [email, setEmail] = useState("");
+  const [feForm, setFeForm] = useState({ ...FE_EMPTY });
+  const setFE = (k, v) => setFeForm(f => ({ ...f, [k]: v }));
   const tipos = Object.keys(pasadiasMap).map(k => pasadiasMap[k]?.nombre || k).filter(n => n !== "Impuesto Muelle");
   const FS = { width: "100%", padding: "9px 12px", borderRadius: 8, background: B.navyLight, border: `1px solid ${B.navyLight}`, color: B.white, fontSize: 13, outline: "none", boxSizing: "border-box" };
   const LBL = { display: "block", fontSize: 11, color: B.sand, marginBottom: 5, textTransform: "uppercase", letterSpacing: "0.06em" };
 
-  const reset = () => { setTipo(""); setCant(1); setNombre(""); setTelefono(""); setEmail(""); };
+  const reset = () => { setTipo(""); setCant(1); setNombre(""); setTelefono(""); setEmail(""); setFeForm({ ...FE_EMPTY }); };
 
   if (!open) {
     return (
@@ -2629,12 +2632,20 @@ function CortesiaButton({ pasadiasMap, onAdd }) {
           </div>
         </div>
 
+        {/* Facturación electrónica */}
+        <div style={{ marginBottom: 14 }}>
+          <FacturaElectronicaToggle checked={feForm.factura_electronica} onChange={v => setFE("factura_electronica", v)} theme="dark" />
+          {feForm.factura_electronica && <FacturaElectronicaForm form={feForm} set={setFE} editing={true} theme="dark" />}
+        </div>
+
         <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
           <button onClick={() => { setOpen(false); reset(); }} style={{ padding: "8px 14px", borderRadius: 8, border: "none", background: B.navyLight, color: "rgba(255,255,255,0.5)", cursor: "pointer", fontWeight: 700, fontSize: 12 }}>Cancelar</button>
           <button onClick={() => {
             if (!tipo) return alert("Selecciona un tipo de pasadía");
             if (!nombre.trim()) return alert("Nombre es obligatorio");
-            onAdd(tipo, cant, { nombre: nombre.trim(), telefono, email });
+            const feFaltan = feValidate(feForm);
+            if (feFaltan.length > 0) return alert("Faltan datos de facturación electrónica: " + feFaltan.map(k => k.replace("fe_","")).join(", "));
+            onAdd(tipo, cant, { nombre: nombre.trim(), telefono, email, fe: fePayload(feForm) });
             setOpen(false); reset();
           }} style={{ padding: "8px 14px", borderRadius: 8, border: "none", background: B.success, color: B.navy, cursor: "pointer", fontWeight: 700, fontSize: 12 }}>🎁 Agregar cortesía</button>
         </div>
@@ -2778,6 +2789,7 @@ function TabServicios({ items, onChange, pasadiasOrg = [], onChangePasadias, cat
                     qr_code: qr,
                     grupo_id: eventoId || null,
                     notas: `Cortesía — ${eventoNombre || "Grupo"}`,
+                    ...(datos.fe || {}),
                   });
                 }
                 // 2) Agregar a pasadias_org

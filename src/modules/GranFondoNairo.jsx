@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { supabase } from "../lib/supabase";
 import { wompiCheckoutUrl } from "../lib/wompi";
+import FacturaElectronicaForm, { FacturaElectronicaToggle, FE_EMPTY, feValidate, fePayload } from "../lib/FacturaElectronicaForm.jsx";
 
 // ── Brand ────────────────────────────────────────────────────────────────────
 const AMARILLO  = "#FFD100";
@@ -276,7 +277,8 @@ export default function GranFondoNairo() {
   const [selectedPlan, setSelectedPlan]   = useState(null);
   const [paxA, setPaxA]                   = useState(2);
   const [paxN, setPaxN]                   = useState(0);
-  const [form, setForm]  = useState({ nombre: "", contacto: "", email: "", notas: "" });
+  const [form, setForm]  = useState({ nombre: "", contacto: "", email: "", notas: "", ...FE_EMPTY });
+  const setFE = (k, v) => setForm(f => ({ ...f, [k]: v }));
   const [saving, setSaving]   = useState(false);   // false | "nacional" | "internacional"
   const [confirmed, setConfirmed] = useState(null);
   const [error, setError]     = useState("");
@@ -301,6 +303,11 @@ export default function GranFondoNairo() {
 
   const handlePagar = async (tipo) => {
     if (!form.nombre.trim() || !form.contacto.trim()) { setError("Por favor completa tu nombre y teléfono."); return; }
+    const feFaltan = feValidate(form);
+    if (feFaltan.length > 0) {
+      setError("Faltan datos de facturación electrónica: " + feFaltan.map(k => k.replace("fe_","")).join(", "));
+      return;
+    }
     setError("");
     setSaving(tipo);
     const reservaId = `NAIRO-${Date.now()}`;
@@ -322,6 +329,7 @@ export default function GranFondoNairo() {
         estado: "pendiente_pago",
         notas: (form.notas ? form.notas + " | " : "") + `Pago: Tarjeta ${tipo}`,
         salida_id: null,
+        ...fePayload(form),
       });
       if (insErr) { setError("Error al guardar. Intenta de nuevo."); setSaving(false); return; }
     }
@@ -367,7 +375,7 @@ export default function GranFondoNairo() {
 
   const handleReset = () => {
     setStep(1); setSelectedFecha(null); setSelectedPlan(null); setConfirmed(null); setError("");
-    setPaxA(2); setPaxN(0); setForm({ nombre: "", contacto: "", email: "", notas: "" });
+    setPaxA(2); setPaxN(0); setForm({ nombre: "", contacto: "", email: "", notas: "", ...FE_EMPTY });
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
@@ -541,6 +549,10 @@ export default function GranFondoNairo() {
                   <div>
                     <label style={{ fontSize: 11, color: "rgba(255,255,255,0.45)", display: "block", marginBottom: 7, textTransform: "uppercase", letterSpacing: "0.08em" }}>Notas (opcional)</label>
                     <textarea value={form.notas} onChange={e => setForm(f => ({ ...f, notas: e.target.value }))} placeholder="Alergias, necesidades especiales, etc." rows={3} style={{ ...IS, resize: "vertical" }} />
+                  </div>
+                  <div>
+                    <FacturaElectronicaToggle checked={form.factura_electronica} onChange={v => setFE("factura_electronica", v)} theme="dark" />
+                    {form.factura_electronica && <FacturaElectronicaForm form={form} set={setFE} editing={true} theme="dark" />}
                   </div>
                 </div>
 

@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { supabase } from "../lib/supabase";
 import { wompiCheckoutUrl } from "../lib/wompi";
+import FacturaElectronicaForm, { FacturaElectronicaToggle, FE_EMPTY, feValidate, fePayload } from "../lib/FacturaElectronicaForm.jsx";
 
 // ── Paleta ────────────────────────────────────────────────────────────────────
 const ROSA      = "#F472B6";
@@ -251,7 +252,8 @@ function ConfirmScreen({ id, paxA, paxN, total, onReset }) {
 export default function DiaDeLaMadre() {
   const [paxA,  setPaxA]  = useState(2);
   const [paxN,  setPaxN]  = useState(0);
-  const [form,  setForm]  = useState({ nombre: "", contacto: "", email: "", notas: "" });
+  const [form,  setForm]  = useState({ nombre: "", contacto: "", email: "", notas: "", ...FE_EMPTY });
+  const setFE = (k, v) => setForm(f => ({ ...f, [k]: v }));
   const [saving, setSaving] = useState(false);
   const [confirmed, setConfirmed] = useState(null);
   const [error, setError] = useState("");
@@ -278,6 +280,11 @@ export default function DiaDeLaMadre() {
       setError("Debes seleccionar al menos 1 persona.");
       return;
     }
+    const feFaltan = feValidate(form);
+    if (feFaltan.length > 0) {
+      setError("Faltan datos de facturación electrónica: " + feFaltan.map(k => k.replace("fe_","")).join(", "));
+      return;
+    }
     setError("");
     setSaving(true);
     const reservaId = `MADRE-${Date.now()}`;
@@ -299,6 +306,7 @@ export default function DiaDeLaMadre() {
         estado:   "pendiente_pago",
         notas:    form.notas.trim() || null,
         salida_id: null,
+        ...fePayload(form),
       });
       if (insErr) { setError("Error al guardar. Intenta de nuevo."); setSaving(false); return; }
     }
@@ -315,7 +323,7 @@ export default function DiaDeLaMadre() {
 
   const handleReset = () => {
     setPaxA(2); setPaxN(0); setConfirmed(null); setError("");
-    setForm({ nombre: "", contacto: "", email: "", notas: "" });
+    setForm({ nombre: "", contacto: "", email: "", notas: "", ...FE_EMPTY });
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
@@ -409,6 +417,10 @@ export default function DiaDeLaMadre() {
               <div>
                 <label style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", display: "block", marginBottom: 7, textTransform: "uppercase", letterSpacing: "0.08em" }}>Notas (opcional)</label>
                 <textarea value={form.notas} onChange={e => setForm(f => ({ ...f, notas: e.target.value }))} placeholder="Alergias, solicitudes especiales, nombre de la cumpleañera..." rows={3} style={{ ...IS, resize: "vertical" }} />
+              </div>
+              <div>
+                <FacturaElectronicaToggle checked={form.factura_electronica} onChange={v => setFE("factura_electronica", v)} theme="dark" />
+                {form.factura_electronica && <FacturaElectronicaForm form={form} set={setFE} editing={true} theme="dark" />}
               </div>
             </div>
 

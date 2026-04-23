@@ -4,6 +4,7 @@ import { supabase } from "../lib/supabase";
 import { useMobile } from "../lib/useMobile";
 import { wompiCheckoutUrl } from "../lib/wompi";
 import EventoDetalle from "./EventoDetalle";
+import FacturaElectronicaForm, { FacturaElectronicaToggle, FE_EMPTY, feValidate, fePayload } from "../lib/FacturaElectronicaForm.jsx";
 
 const STAGES       = ["Consulta", "Cotizado", "Confirmado", "Realizado", "Perdido"];
 const TIPOS_EVT    = ["Matrimonio", "Cumpleaños", "Corporativo", "Despedida de Solteros", "Aniversario", "Grado", "Otro"];
@@ -82,6 +83,8 @@ function GrupoLink({ evento, onClose }) {
   const [pasadias,     setPasadias]     = useState([]);
   const [pasadiaId,    setPasadiaId]    = useState("");
   const [paxOrg,       setPaxOrg]       = useState(String(evento.pax || ""));
+  const [feForm,       setFeForm]       = useState({ ...FE_EMPTY });
+  const setFE = (k, v) => setFeForm(f => ({ ...f, [k]: v }));
   const [tipoPrecio,   setTipoPrecio]   = useState("publico");
   const [metodoPago,   setMetodoPago]   = useState("");
   const [cuentas,      setCuentas]      = useState(null);
@@ -131,6 +134,11 @@ function GrupoLink({ evento, onClose }) {
   // Crear reserva y procesar pago
   const procesarPago = async () => {
     if (!canProcesar || procesando) return;
+    const feFaltan = feValidate(feForm);
+    if (feFaltan.length > 0) {
+      setErrPago("Faltan datos de facturación electrónica: " + feFaltan.map(k => k.replace("fe_","")).join(", "));
+      return;
+    }
     setProcesando(true);
     setErrPago("");
     const rid = `GRP-ORG-${Date.now()}`;
@@ -154,6 +162,7 @@ function GrupoLink({ evento, onClose }) {
       forma_pago:      metodoPago,
       estado,
       notas:           `Pago grupal — ${evento.nombre} — ${tipoPrecio === "neto" ? "precio neto B2B" : "precio público"}`,
+      ...fePayload(feForm),
     });
 
     if (error) { setErrPago(error.message || "Error al crear la reserva"); setProcesando(false); return; }
@@ -383,6 +392,11 @@ function GrupoLink({ evento, onClose }) {
 
                     {errPago && <div style={{ padding: "8px 12px", background: "rgba(220,53,69,0.15)", border: `1px solid rgba(220,53,69,0.4)`, borderRadius: 8, fontSize: 12, color: "#ff6b7a", marginBottom: 10 }}>⚠️ {errPago}</div>}
 
+                    <div style={{ marginBottom: 12 }}>
+                      <FacturaElectronicaToggle checked={feForm.factura_electronica} onChange={v => setFE("factura_electronica", v)} theme="dark" />
+                      {feForm.factura_electronica && <FacturaElectronicaForm form={feForm} set={setFE} editing={true} theme="dark" />}
+                    </div>
+
                     <button onClick={procesarPago} disabled={!canProcesar || procesando}
                       style={{ width: "100%", padding: "14px", borderRadius: 10, border: "none", fontWeight: 700, fontSize: 14, cursor: canProcesar && !procesando ? "pointer" : "default", marginBottom: 12,
                         background: !canProcesar || procesando ? B.navyLight : (metodoPago === "wompi" ? "#5B4CF5" : metodoPago === "link_pago" ? B.success : B.sky),
@@ -468,8 +482,9 @@ export function EventoModal({ evento, categoria, salidas, aliados, vendedores, o
   const tiposOpt = isGrupo ? TIPOS_GRUPO : TIPOS_EVT;
 
   const [form, setForm]       = useState(isEdit
-    ? { ...evento, pax: String(evento.pax || ""), valor: String(evento.valor || ""), aliado_id: evento.aliado_id || "", vendedor: evento.vendedor || "", salidas_grupo: evento.salidas_grupo || [], buy_out: evento.buy_out || false, modalidad_pago: evento.modalidad_pago || "individual", pasadias_org: evento.pasadias_org || [], precio_tipo: evento.precio_tipo || "publico", fecha_fin: evento.fecha_fin || "", buy_out_fechas: evento.buy_out_fechas || [] }
-    : { nombre: "", tipo: tiposOpt[0], fecha: "", fecha_fin: "", pax: "", valor: "", aliado_id: "", vendedor: "", salidas_grupo: [], contacto: "", tel: "", email: "", empresa: "", nit: "", cargo: "", direccion: "", nacionalidad: "", montaje: "", hora_ini: "", hora_fin: "", vencimiento: "", stage: "Consulta", notas: "", categoria, buy_out: false, buy_out_fechas: [], modalidad_pago: "individual", pasadias_org: [], precio_tipo: "publico" });
+    ? { ...FE_EMPTY, ...evento, pax: String(evento.pax || ""), valor: String(evento.valor || ""), aliado_id: evento.aliado_id || "", vendedor: evento.vendedor || "", salidas_grupo: evento.salidas_grupo || [], buy_out: evento.buy_out || false, modalidad_pago: evento.modalidad_pago || "individual", pasadias_org: evento.pasadias_org || [], precio_tipo: evento.precio_tipo || "publico", fecha_fin: evento.fecha_fin || "", buy_out_fechas: evento.buy_out_fechas || [] }
+    : { nombre: "", tipo: tiposOpt[0], fecha: "", fecha_fin: "", pax: "", valor: "", aliado_id: "", vendedor: "", salidas_grupo: [], contacto: "", tel: "", email: "", empresa: "", nit: "", cargo: "", direccion: "", nacionalidad: "", montaje: "", hora_ini: "", hora_fin: "", vencimiento: "", stage: "Consulta", notas: "", categoria, buy_out: false, buy_out_fechas: [], modalidad_pago: "individual", pasadias_org: [], precio_tipo: "publico", ...FE_EMPTY });
+  const setFE = (k, v) => setForm(f => ({ ...f, [k]: v }));
   const [saving,          setSaving]          = useState(false);
   const [horaInput,       setHoraInput]       = useState("");
   const [aliadoSearch,    setAliadoSearch]    = useState("");
@@ -628,6 +643,11 @@ export function EventoModal({ evento, categoria, salidas, aliados, vendedores, o
   // Procesar pago organizador (puede recibir grupoId para nuevos grupos)
   const procesarPago = async (grupoId) => {
     if (!metodoPago || procesandoPago) return;
+    const feFaltan = feValidate(form);
+    if (feFaltan.length > 0) {
+      setErrPago("Faltan datos de facturación electrónica: " + feFaltan.map(k => k.replace("fe_","")).join(", "));
+      return;
+    }
     setProcesandoPago(true);
     setErrPago("");
     const montoDefault = (reservasPrevias !== null && reservasPrevias.length > 0) ? saldoPago : nuevoTotal;
@@ -667,6 +687,7 @@ export function EventoModal({ evento, categoria, salidas, aliados, vendedores, o
       aliado_id: form.aliado_id || null,
       canal: "GRUPO-ORG", forma_pago: metodoPago, estado, notas,
       salida_id: null,
+      ...fePayload(form),
     });
     if (error) { setErrPago(error.message); setProcesandoPago(false); return; }
     setPagoProcesado({ id: rid, total: montoOp });
@@ -1545,6 +1566,11 @@ export function EventoModal({ evento, categoria, salidas, aliados, vendedores, o
                           )}
 
                           {errPago && <div style={{ padding: "8px 12px", background: "rgba(220,53,69,0.15)", border: `1px solid rgba(220,53,69,0.4)`, borderRadius: 8, fontSize: 12, color: "#ff6b7a", marginBottom: 10 }}>⚠️ {errPago}</div>}
+
+                          <div style={{ marginBottom: 12 }}>
+                            <FacturaElectronicaToggle checked={form.factura_electronica} onChange={v => setFE("factura_electronica", v)} theme="dark" />
+                            {form.factura_electronica && <FacturaElectronicaForm form={form} set={setFE} editing={true} theme="dark" />}
+                          </div>
 
                           <button onClick={() => procesarPago(isEdit ? evento.id : null)} disabled={!metodoPago || procesandoPago}
                             style={{ width: "100%", padding: "13px", borderRadius: 10, border: "none", fontWeight: 700, fontSize: 13, cursor: metodoPago && !procesandoPago ? "pointer" : "default",

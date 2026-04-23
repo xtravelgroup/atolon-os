@@ -4,6 +4,7 @@ import { B, COP, PASADIAS } from "../brand";
 const TIPOS_PASADIA = ["— Sin especificar —", ...PASADIAS.map(p => p.tipo)];
 const HORAS = ["08:30", "10:00", "11:30", "13:00"];
 import { supabase } from "../lib/supabase";
+import FacturaElectronicaForm, { FacturaElectronicaToggle, FE_EMPTY, feValidate, fePayload } from "../lib/FacturaElectronicaForm.jsx";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -404,7 +405,9 @@ function LeadDetail({ lead, onClose, onUpdateEtapa }) {
     salida_id: "",
     pax:       lead.pax > 0 ? lead.pax : (parsedFromNotas.pax || 2),
     grupo_id:  "",
+    ...FE_EMPTY,
   });
+  const setFE = (k, v) => setRForm(f => ({ ...f, [k]: v }));
   const [grupos, setGrupos] = useState([]);
 
   // Fetch linked reservation — update form with its data when it arrives
@@ -465,6 +468,11 @@ function LeadDetail({ lead, onClose, onUpdateEtapa }) {
   // ── Guardar cambios en reserva existente (o crear nueva) ───────────────────
   async function upsertReserva() {
     if (!supabase || !rForm.fecha || !rForm.salida_id || !rForm.nombre) return null;
+    const feFaltan = feValidate(rForm);
+    if (feFaltan.length > 0) {
+      alert("Faltan datos de facturación electrónica: " + feFaltan.map(k => k.replace("fe_","")).join(", "));
+      return null;
+    }
     const pasadia = PASADIAS.find(p => p.tipo === rForm.tipo) || PASADIAS[0];
     const pax = Number(rForm.pax) || 1;
     const total = pasadia.precio * pax;
@@ -483,6 +491,7 @@ function LeadDetail({ lead, onClose, onUpdateEtapa }) {
         canal: rForm.grupo_id ? "GRUPO" : (reservaLinked.canal || "WEB"),
         aliado_id: grupoSeleccionado?.aliado_id || reservaLinked.aliado_id || null,
         updated_at: new Date().toISOString(),
+        ...fePayload(rForm),
       }).eq("id", reservaLinked.id);
       const updated = { ...reservaLinked, nombre: rForm.nombre, email: rForm.email, telefono: rForm.telefono, tipo: rForm.tipo, fecha: rForm.fecha, salida_id: rForm.salida_id, pax, total, grupo_id: rForm.grupo_id || null };
       setReservaLinked(updated);
@@ -502,6 +511,7 @@ function LeadDetail({ lead, onClose, onUpdateEtapa }) {
         extras_solicitados: [], pasajeros: [],
         precio_neto: 0, credito_generado: "0", descuento_agencia: 0,
         created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+        ...fePayload(rForm),
       };
       const { error } = await supabase.from("reservas").insert([reservaData]);
       if (error) { alert("Error: " + error.message); return null; }
@@ -699,6 +709,12 @@ function LeadDetail({ lead, onClose, onUpdateEtapa }) {
                       </select>
                     </div>
                   )}
+                </div>
+
+                {/* Facturación electrónica */}
+                <div style={{ marginBottom: 12 }}>
+                  <FacturaElectronicaToggle checked={rForm.factura_electronica} onChange={v => setFE("factura_electronica", v)} theme="dark" />
+                  {rForm.factura_electronica && <FacturaElectronicaForm form={rForm} set={setFE} editing={true} theme="dark" />}
                 </div>
 
                 {/* Total calculado */}

@@ -3686,163 +3686,179 @@ export default function Reservas() {
 
       {tab === "reservas" && <>
 
-      {/* ── Generador de PDF para Hoy / Mañana ── */}
+      {/* ── Generador de documento para Hoy / Mañana (HTML, tipo zarpe) ── */}
       {(tabDia === "hoy" || tabDia === "manana") && (() => {
-        const generarPDFDia = async () => {
-          const { jsPDF } = await import("jspdf");
-          const pdf = new jsPDF({ unit: "mm", format: "a4", orientation: "portrait" });
-          const W = 210, M = 12;
-          let y = M;
-
+        const generarDocDia = () => {
           const fechaStr = tabDia === "hoy" ? today : tomorrow;
           const labelDia = tabDia === "hoy" ? "HOY" : "MAÑANA";
+          const fechaFormateada = new Date(fechaStr + "T12:00:00").toLocaleDateString("es-CO", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
 
-          // Header
-          pdf.setFillColor(10, 26, 60); pdf.rect(0, 0, W, 28, "F");
-          pdf.setTextColor(255, 255, 255);
-          pdf.setFont("helvetica", "bold"); pdf.setFontSize(18);
-          pdf.text("Reservas — " + labelDia, M, 14);
-          pdf.setFont("helvetica", "normal"); pdf.setFontSize(10);
-          pdf.text(new Date(fechaStr + "T12:00:00").toLocaleDateString("es-CO", { weekday: "long", day: "numeric", month: "long", year: "numeric" }), M, 21);
-          pdf.setFontSize(8);
-          pdf.text("Generado: " + new Date().toLocaleString("es-CO"), W - M, 21, { align: "right" });
-          y = 36;
-
-          // Totales resumen
           const activas = reservas.filter(r => r.estado !== "cancelado");
           const paxRes = activas.reduce((s, r) => s + (r.pax || 0), 0);
           const paxGrupos = grupos.reduce((s, g) => s + grupoPaxTotal(g, reservas), 0);
           const paxLlegadas = llegadasDiaAll.reduce((s, l) => s + (l.pax_total || 0), 0);
           const totalPax = paxRes + paxGrupos + paxLlegadas;
 
-          pdf.setFontSize(10); pdf.setFont("helvetica", "bold");
-          pdf.setTextColor(30, 40, 60);
-          pdf.text(`${activas.length} reservas  ·  ${grupos.length} grupos  ·  ${llegadasDiaAll.length} llegadas  ·  Total: ${totalPax} pax`, M, y);
-          y += 8;
-
-          // Salidas agrupadas
+          // Agrupar por salida
           const porSalida = {};
           activas.forEach(r => {
             const sal = salidas.find(s => s.id === r.salida_id);
-            const key = sal ? `${sal.hora} — ${sal.nombre}` : (r.tipo?.toLowerCase().includes("after") ? "After Island" : "Sin salida");
+            const key = sal ? `${sal.hora} — ${sal.nombre}` : (r.tipo?.toLowerCase().includes("after") ? "After Island" : "Sin salida asignada");
             if (!porSalida[key]) porSalida[key] = [];
             porSalida[key].push(r);
           });
           const salidasOrdenadas = Object.keys(porSalida).sort();
 
-          // Tabla por cada grupo de salida
-          for (const salKey of salidasOrdenadas) {
+          const escape = (s) => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+          const estadoLabel = (e) => e === "check_in" ? "Check-in" : e === "confirmado" ? "Confirmado" : e === "pendiente_pago" ? "Pendiente pago" : e || "—";
+
+          const salidasHTML = salidasOrdenadas.map(salKey => {
             const rows = porSalida[salKey];
-            // Section header
-            if (y > 270) { pdf.addPage(); y = M; }
-            pdf.setFillColor(200, 185, 154);
-            pdf.rect(M, y, W - 2 * M, 7, "F");
-            pdf.setTextColor(26, 39, 64); pdf.setFont("helvetica", "bold"); pdf.setFontSize(10);
             const paxSal = rows.reduce((s, r) => s + (r.pax || 0), 0);
-            pdf.text(`${salKey}  (${rows.length} reservas, ${paxSal} pax)`, M + 2, y + 5);
-            y += 9;
+            const rowsHTML = rows.map(r => `
+              <tr>
+                <td style="font-weight:600">${escape(r.nombre)}</td>
+                <td>${escape(r.tipo)}</td>
+                <td style="text-align:center">${r.pax_a || r.pax || 0}A${r.pax_n ? ` ${r.pax_n}N` : ""}</td>
+                <td>${escape(estadoLabel(r.estado))}</td>
+                <td>${escape(r.forma_pago || "—")}</td>
+                <td>${escape(r.canal || "—")}</td>
+                <td>${escape(r.vendedor || "—")}</td>
+              </tr>
+              ${r.notas ? `<tr class="nota-row"><td colspan="7" style="font-style:italic;color:#6B7280;font-size:10px;padding:2px 8px 8px 12px;border-bottom:1px solid #eee;">📝 ${escape(r.notas)}</td></tr>` : ""}
+            `).join("");
+            return `
+              <div class="section">
+                <div class="section-title">${escape(salKey)} <span class="count">${rows.length} reservas · ${paxSal} pax</span></div>
+                <table>
+                  <thead><tr>
+                    <th style="width:24%">Nombre</th>
+                    <th style="width:14%">Tipo</th>
+                    <th style="width:8%;text-align:center">Pax</th>
+                    <th style="width:12%">Estado</th>
+                    <th style="width:14%">Forma Pago</th>
+                    <th style="width:12%">Canal</th>
+                    <th style="width:16%">Vendedor</th>
+                  </tr></thead>
+                  <tbody>${rowsHTML}</tbody>
+                </table>
+              </div>
+            `;
+          }).join("");
 
-            // Column headers
-            pdf.setFillColor(240, 240, 240);
-            pdf.rect(M, y, W - 2 * M, 6, "F");
-            pdf.setTextColor(50, 50, 50); pdf.setFontSize(8); pdf.setFont("helvetica", "bold");
-            pdf.text("Nombre",   M + 1,  y + 4);
-            pdf.text("Tipo",     M + 60, y + 4);
-            pdf.text("Pax",      M + 92, y + 4);
-            pdf.text("Estado",   M + 105, y + 4);
-            pdf.text("Pago",     M + 128, y + 4);
-            pdf.text("Canal",    M + 150, y + 4);
-            pdf.text("Vendedor", M + 168, y + 4);
-            y += 6;
+          const gruposHTML = grupos.length > 0 ? `
+            <div class="section">
+              <div class="section-title grupos">GRUPOS <span class="count">${grupos.length}</span></div>
+              <table>
+                <thead><tr>
+                  <th style="width:50%">Nombre</th>
+                  <th style="width:15%;text-align:center">Pax</th>
+                  <th style="width:20%">Stage</th>
+                  <th style="width:15%">Fecha</th>
+                </tr></thead>
+                <tbody>
+                  ${grupos.map(g => `<tr>
+                    <td style="font-weight:600">${escape(g.nombre)}</td>
+                    <td style="text-align:center">${grupoPaxTotal(g, reservas)}</td>
+                    <td>${escape(g.stage || "—")}</td>
+                    <td>${escape(g.fecha || "—")}</td>
+                  </tr>`).join("")}
+                </tbody>
+              </table>
+            </div>
+          ` : "";
 
-            pdf.setFont("helvetica", "normal"); pdf.setFontSize(8);
-            rows.forEach((r, idx) => {
-              const notas = (r.notas || "").trim();
-              const rowH = notas ? 5.5 + 4.5 : 5.5; // espacio extra si hay notas (por lineas envueltas)
-              if (y + rowH > 285) { pdf.addPage(); y = M; }
-              if (idx % 2 === 0) { pdf.setFillColor(250, 250, 250); pdf.rect(M, y, W - 2*M, rowH, "F"); }
-              pdf.setTextColor(30, 30, 30); pdf.setFontSize(8); pdf.setFont("helvetica", "normal");
-              const nombre = (r.nombre || "").slice(0, 32);
-              const tipo   = (r.tipo   || "").slice(0, 16);
-              const pax    = `${r.pax_a || r.pax || 0}A${r.pax_n ? " " + r.pax_n + "N" : ""}`;
-              const estado = r.estado === "check_in" ? "Check-in" : r.estado === "confirmado" ? "Conf." : r.estado === "pendiente_pago" ? "Pend.Pago" : r.estado || "—";
-              const pago   = (r.forma_pago || "—").slice(0, 12);
-              const canal  = (r.canal || "—").slice(0, 10);
-              const vend   = (r.vendedor || "—").slice(0, 12);
-              pdf.text(nombre, M + 1,   y + 4);
-              pdf.text(tipo,   M + 60,  y + 4);
-              pdf.text(pax,    M + 92,  y + 4);
-              pdf.text(estado, M + 105, y + 4);
-              pdf.text(pago,   M + 128, y + 4);
-              pdf.text(canal,  M + 150, y + 4);
-              pdf.text(vend,   M + 168, y + 4);
-              // Notas debajo (italic, gris)
-              if (notas) {
-                pdf.setFontSize(7); pdf.setFont("helvetica", "italic"); pdf.setTextColor(110, 110, 110);
-                const notasLines = pdf.splitTextToSize("📝 " + notas, W - 2 * M - 4);
-                let notaY = y + 8;
-                for (const ln of notasLines.slice(0, 2)) { // máx 2 líneas
-                  pdf.text(ln, M + 3, notaY);
-                  notaY += 3;
-                }
-              }
-              y += rowH;
-            });
-            y += 3;
-          }
+          const llegadasHTML = llegadasDiaAll.length > 0 ? `
+            <div class="section">
+              <div class="section-title llegadas">LLEGADAS / EMBARCACIONES <span class="count">${llegadasDiaAll.length}</span></div>
+              <table>
+                <thead><tr>
+                  <th style="width:40%">Embarcación / Nombre</th>
+                  <th style="width:15%;text-align:center">Pax</th>
+                  <th style="width:15%">Hora llegada</th>
+                  <th style="width:30%">Notas</th>
+                </tr></thead>
+                <tbody>
+                  ${llegadasDiaAll.map(l => `<tr>
+                    <td style="font-weight:600">${escape(l.nombre_embarcacion || l.nombre || "—")}</td>
+                    <td style="text-align:center">${l.pax_total || 0}</td>
+                    <td>${escape(l.hora_llegada || "—")}</td>
+                    <td style="font-size:10px;color:#6B7280">${escape(l.notas || "")}</td>
+                  </tr>`).join("")}
+                </tbody>
+              </table>
+            </div>
+          ` : "";
 
-          // Grupos
-          if (grupos.length > 0) {
-            if (y > 270) { pdf.addPage(); y = M; }
-            pdf.setFillColor(167, 139, 250);
-            pdf.rect(M, y, W - 2 * M, 7, "F");
-            pdf.setTextColor(255, 255, 255); pdf.setFont("helvetica", "bold"); pdf.setFontSize(10);
-            pdf.text(`GRUPOS  (${grupos.length})`, M + 2, y + 5);
-            y += 9;
-            pdf.setFont("helvetica", "normal"); pdf.setFontSize(9);
-            grupos.forEach(g => {
-              if (y > 280) { pdf.addPage(); y = M; }
-              pdf.setTextColor(30, 30, 30);
-              const pax = grupoPaxTotal(g, reservas);
-              pdf.text(`• ${g.nombre}  —  ${pax} pax  —  ${g.stage || ""}`, M + 2, y + 4);
-              y += 6;
-            });
-            y += 3;
-          }
+          const html = `<!DOCTYPE html><html lang="es"><head>
+            <meta charset="utf-8" />
+            <title>Reservas ${labelDia} · ${fechaStr}</title>
+            <style>
+              * { box-sizing: border-box; }
+              body { font-family: -apple-system, "Segoe UI", Roboto, sans-serif; color: #1F2937; margin: 0; padding: 20px 28px; background: #fff; }
+              h1 { font-size: 22px; margin: 0; color: #0D1B3E; letter-spacing: 0.5px; }
+              .header { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #1E3566; padding-bottom: 14px; margin-bottom: 18px; }
+              .resumen { background: #F3F4F6; border-radius: 8px; padding: 12px 16px; font-size: 13px; color: #374151; margin-bottom: 20px; display: flex; gap: 30px; flex-wrap: wrap; }
+              .resumen strong { color: #0D1B3E; font-size: 16px; }
+              .section { margin-bottom: 22px; page-break-inside: avoid; }
+              .section-title { background: #C8B596; color: #0D1B3E; padding: 8px 12px; font-weight: 800; font-size: 12px; text-transform: uppercase; letter-spacing: 1px; border-radius: 4px 4px 0 0; display: flex; justify-content: space-between; align-items: center; }
+              .section-title.grupos { background: #A78BFA; color: #fff; }
+              .section-title.llegadas { background: #4ADE80; color: #0D1B3E; }
+              .count { font-weight: 600; font-size: 11px; opacity: 0.85; }
+              table { width: 100%; border-collapse: collapse; }
+              th { background: #1E3566; color: white; padding: 7px 8px; text-align: left; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; }
+              td { padding: 7px 8px; font-size: 11px; border-bottom: 1px solid #eee; }
+              tbody tr:not(.nota-row):nth-child(even) { background: #FAFAFA; }
+              .footer { margin-top: 20px; font-size: 10px; color: #9CA3AF; text-align: center; padding-top: 14px; border-top: 1px solid #E5E7EB; }
+              @media print { @page { margin: 1cm; } .no-print { display: none !important; } div[style*="position:fixed"] { display: none !important; } .spacer { display: none !important; } }
+            </style>
+          </head><body>
+            <div class="header">
+              <div>
+                <h1>RESERVAS — ${labelDia}</h1>
+                <div style="color:#666;margin-top:4px;text-transform:capitalize">${fechaFormateada}</div>
+              </div>
+              <div style="text-align:right;font-size:10px;color:#9CA3AF">
+                Atolón Beach Club<br/>
+                Generado: ${new Date().toLocaleString("es-CO")}
+              </div>
+            </div>
 
-          // Llegadas (embarcaciones)
-          if (llegadasDiaAll.length > 0) {
-            if (y > 270) { pdf.addPage(); y = M; }
-            pdf.setFillColor(74, 222, 128);
-            pdf.rect(M, y, W - 2 * M, 7, "F");
-            pdf.setTextColor(26, 39, 64); pdf.setFont("helvetica", "bold"); pdf.setFontSize(10);
-            pdf.text(`LLEGADAS / EMBARCACIONES  (${llegadasDiaAll.length})`, M + 2, y + 5);
-            y += 9;
-            pdf.setFont("helvetica", "normal"); pdf.setFontSize(9);
-            llegadasDiaAll.forEach(l => {
-              if (y > 280) { pdf.addPage(); y = M; }
-              pdf.setTextColor(30, 30, 30);
-              pdf.text(`• ${l.nombre_embarcacion || l.nombre || "—"}  —  ${l.pax_total || 0} pax  —  ${l.hora_llegada || "—"}`, M + 2, y + 4);
-              y += 6;
-            });
-          }
+            <div class="resumen">
+              <div><strong>${activas.length}</strong> reservas</div>
+              <div><strong>${grupos.length}</strong> grupos</div>
+              <div><strong>${llegadasDiaAll.length}</strong> llegadas</div>
+              <div style="margin-left:auto"><strong>${totalPax}</strong> pax totales</div>
+            </div>
 
-          // Footer en cada página
-          const pageCount = pdf.getNumberOfPages();
-          for (let p = 1; p <= pageCount; p++) {
-            pdf.setPage(p);
-            pdf.setFontSize(7); pdf.setTextColor(150, 150, 150);
-            pdf.text(`Atolón Beach Club  ·  Página ${p} / ${pageCount}`, W / 2, 292, { align: "center" });
-          }
+            ${salidasHTML || '<div style="padding:20px;text-align:center;color:#9CA3AF">Sin reservas individuales para este día.</div>'}
+            ${gruposHTML}
+            ${llegadasHTML}
 
-          pdf.save(`reservas-${fechaStr}-${tabDia}.pdf`);
+            <div class="footer">Atolón Beach Club — Documento interno · ${new Date().toLocaleString("es-CO")}</div>
+          </body></html>`;
+
+          const fileName = `Reservas-${tabDia === "hoy" ? "Hoy" : "Manana"}-${fechaStr}.html`;
+          const toolbar = `
+            <div class="no-print" style="position:fixed;top:0;left:0;right:0;background:#1E3566;padding:10px 20px;display:flex;gap:12px;align-items:center;z-index:9999;box-shadow:0 2px 8px rgba(0,0,0,0.3);">
+              <span style="color:#fff;font-weight:700;font-size:14px;flex:1;">📄 Reservas ${labelDia} · ${fechaStr}</span>
+              <button onclick="window.print()" style="padding:8px 20px;background:#C8B596;color:#0D1B3E;border:none;border-radius:8px;font-weight:800;font-size:13px;cursor:pointer;">🖨 Imprimir / Ver PDF</button>
+              <button onclick="(function(){var a=document.createElement('a');a.href='data:text/html;charset=utf-8,'+encodeURIComponent(document.documentElement.outerHTML);a.download='${fileName}';a.click();})()" style="padding:8px 20px;background:rgba(255,255,255,0.15);color:#fff;border:1px solid rgba(255,255,255,0.3);border-radius:8px;font-weight:700;font-size:13px;cursor:pointer;">⬇ Descargar</button>
+              <button onclick="window.close()" style="padding:8px 14px;background:none;color:rgba(255,255,255,0.4);border:1px solid rgba(255,255,255,0.2);border-radius:8px;font-size:13px;cursor:pointer;">✕ Cerrar</button>
+            </div>
+            <div class="spacer" style="height:52px"></div>`;
+
+          const htmlWithToolbar = html.replace("<body>", `<body>${toolbar}`);
+          const win = window.open("", "_blank");
+          win.document.write(htmlWithToolbar);
+          win.document.close();
         };
 
         return (
           <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 10 }}>
-            <button onClick={generarPDFDia}
+            <button onClick={generarDocDia}
               style={{ background: B.sand, color: B.navy, border: "none", borderRadius: 8, padding: "8px 16px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
-              📄 Descargar PDF de {tabDia === "hoy" ? "hoy" : "mañana"}
+              📄 Documento de {tabDia === "hoy" ? "hoy" : "mañana"}
             </button>
           </div>
         );

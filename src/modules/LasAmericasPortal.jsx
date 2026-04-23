@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { supabase } from "../lib/supabase";
 import { wompiCheckoutUrl } from "../lib/wompi";
+import FacturaElectronicaForm, { FacturaElectronicaToggle, FE_EMPTY, feValidate, fePayload } from "../lib/FacturaElectronicaForm.jsx";
 
 // ── Branding constants (easy to update) ─────────────────────────────────────
 const HOTEL_NOMBRE = "Hotel Las Americas";
@@ -444,7 +445,9 @@ export default function LasAmericasPortal() {
   const [form, setForm] = useState({
     fecha: "", salida_id: "", nombre: "", contacto: "", email: "", notas: "",
     pax_a: 2, pax_n: 0, edades_ninos: [],
+    ...FE_EMPTY,
   });
+  const setFE = (k, v) => setForm(f => ({ ...f, [k]: v }));
   const [saving, setSaving]         = useState(false);
   const [confirmed, setConfirmed]   = useState(null); // { id, estado }
 
@@ -549,6 +552,11 @@ export default function LasAmericasPortal() {
   // ── Create reservation ─────────────────────────────────────────────────────
   const createReserva = async (estado) => {
     if (!aliado || saving) return null;
+    const feFaltan = feValidate(form);
+    if (feFaltan.length > 0) {
+      alert("Faltan datos de facturación electrónica: " + feFaltan.map(k => k.replace("fe_","")).join(", "));
+      return null;
+    }
     setSaving(true);
     const reservaId = `LAS-AMERICAS-${Date.now()}`;
     const { error: insErr } = await supabase.from("reservas").insert({
@@ -570,6 +578,7 @@ export default function LasAmericasPortal() {
       notas: (form.notas || "") + (Array.isArray(form.edades_ninos) && form.edades_ninos.filter(e => e !== "").length > 0 ? ` · Edades niños: ${form.edades_ninos.filter(e => e !== "").join(", ")}` : ""),
       aliado_id: aliado.id,
       qr_code: `HOTEL-LAS-AMERICAS-${Date.now()}`,
+      ...fePayload(form),
     });
     setSaving(false);
     if (insErr) { alert("Error al crear la reserva. Por favor intenta de nuevo."); return null; }
@@ -621,7 +630,7 @@ export default function LasAmericasPortal() {
     setStep(1);
     setSelectedTipo(null);
     setConfirmed(null);
-    setForm({ fecha: "", salida_id: "", nombre: "", contacto: "", email: "", notas: "", pax_a: 2, pax_n: 0, edades_ninos: [] });
+    setForm({ fecha: "", salida_id: "", nombre: "", contacto: "", email: "", notas: "", pax_a: 2, pax_n: 0, edades_ninos: [], ...FE_EMPTY });
     setSalidas([]);
     setDisponibilidad({});
     setOverrides({});
@@ -1037,6 +1046,10 @@ export default function LasAmericasPortal() {
                     rows={3}
                     style={{ ...IS, resize: "vertical", lineHeight: 1.5 }}
                   />
+                </div>
+                <div>
+                  <FacturaElectronicaToggle checked={form.factura_electronica} onChange={v => setFE("factura_electronica", v)} theme="dark" />
+                  {form.factura_electronica && <FacturaElectronicaForm form={form} set={setFE} editing={true} theme="dark" />}
                 </div>
               </div>
 
