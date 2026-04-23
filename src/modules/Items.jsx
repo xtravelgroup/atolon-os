@@ -25,7 +25,7 @@ export default function Items() {
   const [catFilter, setCatFilter] = useState("todos");
   const [showModal, setShowModal] = useState(null); // null | "new" | item object
   const [detail, setDetail] = useState(null);
-  const [tab, setTab] = useState("inventario"); // "inventario" | "catalogo" | "categorias"
+  const [tab, setTab] = useState("inventario"); // "inventario" | "catalogo" | "categorias" | "conteos"
   const [invSearch, setInvSearch] = useState("");
   const [invCatFilter, setInvCatFilter] = useState("todos");
   const [invFilter, setInvFilter] = useState("todos"); // "todos" | "con_stock" | "bajo_min" | "negativo"
@@ -248,6 +248,7 @@ export default function Items() {
           { key: "inventario", label: "📦 Inventario" },
           { key: "catalogo", label: "🛒 Productos" },
           { key: "categorias", label: "🏷️ Categorías" },
+          { key: "conteos", label: "📋 Historial Conteos" },
         ].map(t => (
           <button key={t.key} onClick={() => setTab(t.key)} style={{
             padding: "8px 18px", borderRadius: 8, border: `1px solid ${tab === t.key ? B.sky : B.navyLight}`,
@@ -453,6 +454,9 @@ export default function Items() {
           )}
         </div>
       )}
+
+      {/* ══ TAB HISTORIAL DE CONTEOS ══ */}
+      {tab === "conteos" && <ConteosTab />}
 
       {/* Categoría Modal */}
       {showCatModal && (
@@ -1413,6 +1417,154 @@ function NewLocacionModal({ onClose, onSaved }) {
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// TAB HISTORIAL DE CONTEOS
+// ═══════════════════════════════════════════════════════════════════════════
+function ConteosTab() {
+  const [conteos, setConteos] = useState([]);
+  const [locaciones, setLocaciones] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [expanded, setExpanded] = useState(null);
+  const [filterLoc, setFilterLoc] = useState("todas");
+  const [filterSoloDiff, setFilterSoloDiff] = useState(false);
+
+  useEffect(() => {
+    if (!supabase) return;
+    Promise.all([
+      supabase.from("items_conteos").select("*").order("created_at", { ascending: false }).limit(100),
+      supabase.from("items_locaciones").select("*"),
+    ]).then(([cR, lR]) => {
+      setConteos(cR.data || []);
+      setLocaciones(lR.data || []);
+      setLoading(false);
+    });
+  }, []);
+
+  const filtered = conteos.filter(c => {
+    if (filterLoc !== "todas" && c.locacion_id !== filterLoc) return false;
+    if (filterSoloDiff && (c.diferencias || 0) === 0) return false;
+    return true;
+  });
+
+  const fmtDT = (ts) => new Date(ts).toLocaleString("es-CO", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
+
+  return (
+    <div>
+      {/* Filtros */}
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 16, alignItems: "center" }}>
+        <select value={filterLoc} onChange={e => setFilterLoc(e.target.value)} style={{ ...IS, width: 220 }}>
+          <option value="todas">📍 Todas las locaciones</option>
+          {locaciones.map(l => <option key={l.id} value={l.id}>{l.icono} {l.nombre}</option>)}
+        </select>
+        <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "rgba(255,255,255,0.6)", cursor: "pointer" }}>
+          <input type="checkbox" checked={filterSoloDiff} onChange={e => setFilterSoloDiff(e.target.checked)}
+            style={{ width: 16, height: 16 }} />
+          Solo conteos con diferencias
+        </label>
+        <div style={{ marginLeft: "auto", fontSize: 12, color: "rgba(255,255,255,0.4)" }}>
+          {filtered.length} conteo{filtered.length !== 1 ? "s" : ""}
+        </div>
+      </div>
+
+      {loading ? (
+        <div style={{ padding: 60, textAlign: "center", color: "rgba(255,255,255,0.3)" }}>Cargando…</div>
+      ) : filtered.length === 0 ? (
+        <div style={{ padding: 80, textAlign: "center", color: "rgba(255,255,255,0.25)", fontSize: 14, background: B.navyMid, borderRadius: 12, border: `1px solid ${B.navyLight}` }}>
+          📋 Sin conteos registrados. Ve a <strong>Operaciones → Hacer Inventario</strong> para empezar.
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {filtered.map(c => {
+            const loc = locaciones.find(l => l.id === c.locacion_id);
+            const isExp = expanded === c.id;
+            const items = c.items || [];
+            const sumDiffPos = items.filter(i => (i.diferencia || 0) > 0).reduce((s, i) => s + i.diferencia, 0);
+            const sumDiffNeg = items.filter(i => (i.diferencia || 0) < 0).reduce((s, i) => s + i.diferencia, 0);
+
+            return (
+              <div key={c.id} style={{ background: B.navyMid, borderRadius: 12, border: `1px solid ${(c.diferencias || 0) > 0 ? B.warning + "55" : B.navyLight}`, overflow: "hidden" }}>
+                {/* Header de conteo (clickable) */}
+                <div onClick={() => setExpanded(isExp ? null : c.id)}
+                  style={{ padding: "14px 18px", cursor: "pointer", display: "grid", gridTemplateColumns: "1.2fr 1fr 1fr 1fr 1fr 30px", gap: 14, alignItems: "center" }}>
+                  <div>
+                    <div style={{ fontSize: 14, fontWeight: 700, color: B.white }}>{loc?.icono} {loc?.nombre || c.locacion_id}</div>
+                    <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>{fmtDT(c.created_at)}</div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Por</div>
+                    <div style={{ fontSize: 12, color: "rgba(255,255,255,0.7)" }}>{c.usuario_email || "—"}</div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Ítems</div>
+                    <div style={{ fontSize: 16, fontWeight: 800, color: B.white, fontFamily: "'Barlow Condensed', sans-serif" }}>{c.total_items || 0}</div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Diferencias</div>
+                    <div style={{ fontSize: 16, fontWeight: 800, color: (c.diferencias || 0) > 0 ? B.warning : B.success, fontFamily: "'Barlow Condensed', sans-serif" }}>
+                      {c.diferencias || 0}
+                    </div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Ajuste neto</div>
+                    <div style={{ fontSize: 13, fontWeight: 700, fontFamily: "'Barlow Condensed', sans-serif" }}>
+                      {sumDiffPos > 0 && <span style={{ color: B.success }}>+{sumDiffPos.toFixed(0)} </span>}
+                      {sumDiffNeg < 0 && <span style={{ color: B.danger }}>{sumDiffNeg.toFixed(0)}</span>}
+                      {sumDiffPos === 0 && sumDiffNeg === 0 && <span style={{ color: "rgba(255,255,255,0.3)" }}>—</span>}
+                    </div>
+                  </div>
+                  <div style={{ fontSize: 14, color: "rgba(255,255,255,0.4)", textAlign: "center" }}>
+                    {isExp ? "▲" : "▼"}
+                  </div>
+                </div>
+
+                {/* Expandido: comparativo sistema vs contado */}
+                {isExp && (
+                  <div style={{ background: B.navy, borderTop: `1px solid ${B.navyLight}`, padding: "14px 18px" }}>
+                    {c.notas && (
+                      <div style={{ fontSize: 12, color: B.sand, fontStyle: "italic", marginBottom: 12, padding: "8px 12px", background: "rgba(200,185,154,0.08)", borderRadius: 6 }}>
+                        📝 {c.notas}
+                      </div>
+                    )}
+                    <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 0.8fr 0.8fr 0.8fr", gap: 8, padding: "6px 12px", borderBottom: `2px solid ${B.navyLight}`, fontSize: 10, fontWeight: 700, color: B.sand, textTransform: "uppercase", letterSpacing: "0.08em" }}>
+                      <div>Ítem</div>
+                      <div style={{ textAlign: "right" }}>Unidad</div>
+                      <div style={{ textAlign: "right" }}>Sistema</div>
+                      <div style={{ textAlign: "right" }}>Contado</div>
+                      <div style={{ textAlign: "right" }}>Δ</div>
+                    </div>
+                    <div style={{ maxHeight: 400, overflowY: "auto" }}>
+                      {items.sort((a, b) => Math.abs(b.diferencia || 0) - Math.abs(a.diferencia || 0)).map((it, idx) => {
+                        const diff = Number(it.diferencia) || 0;
+                        const color = diff === 0 ? "rgba(255,255,255,0.3)" : diff > 0 ? B.success : B.danger;
+                        return (
+                          <div key={idx} style={{
+                            display: "grid", gridTemplateColumns: "2fr 1fr 0.8fr 0.8fr 0.8fr", gap: 8,
+                            padding: "7px 12px", fontSize: 12,
+                            borderBottom: idx < items.length - 1 ? `1px solid ${B.navyLight}44` : "none",
+                            background: diff !== 0 ? "rgba(251,191,36,0.03)" : "transparent",
+                          }}>
+                            <div style={{ color: B.white, fontWeight: diff !== 0 ? 600 : 400 }}>{it.nombre}</div>
+                            <div style={{ textAlign: "right", color: "rgba(255,255,255,0.4)", fontSize: 11 }}>{it.unidad || "—"}</div>
+                            <div style={{ textAlign: "right", color: "rgba(255,255,255,0.55)", fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700 }}>{Number(it.sistema || 0).toFixed(2)}</div>
+                            <div style={{ textAlign: "right", color: B.white, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 800 }}>{Number(it.contado || 0).toFixed(2)}</div>
+                            <div style={{ textAlign: "right", color, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 800 }}>
+                              {diff === 0 ? "—" : (diff > 0 ? "+" : "") + diff.toFixed(2)}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

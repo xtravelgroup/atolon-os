@@ -63,6 +63,11 @@ export default function HacerInventario() {
   }, [items]);
 
   const filtered = useMemo(() => {
+    const hayBusqueda = !!search || catFilter !== "todos";
+    // Sin búsqueda: solo mostrar los ya contados o los seleccionados por scan
+    if (!hayBusqueda) {
+      return items.filter(i => conteos[i.id] !== undefined && conteos[i.id] !== "");
+    }
     let list = items;
     if (catFilter !== "todos") list = list.filter(i => i.categoria === catFilter);
     if (search) {
@@ -73,6 +78,8 @@ export default function HacerInventario() {
     else if (filterModo === "contados") list = list.filter(i => conteos[i.id] !== undefined && conteos[i.id] !== "");
     return list;
   }, [items, search, catFilter, filterModo, conteos]);
+
+  const sinBusqueda = !search && catFilter === "todos";
 
   const stats = useMemo(() => {
     const contados = items.filter(i => conteos[i.id] !== undefined && conteos[i.id] !== "").length;
@@ -291,8 +298,14 @@ export default function HacerInventario() {
               ))}
             </div>
             {filtered.length === 0 ? (
-              <div style={{ padding: 40, textAlign: "center", color: "rgba(255,255,255,0.3)", fontSize: 13 }}>
-                No hay ítems que coincidan con el filtro.
+              <div style={{ padding: 40, textAlign: "center", color: "rgba(255,255,255,0.3)", fontSize: 13, lineHeight: 1.7 }}>
+                {sinBusqueda ? (
+                  <>
+                    <div style={{ fontSize: 36, marginBottom: 10 }}>📷</div>
+                    <div style={{ fontSize: 14, color: "rgba(255,255,255,0.55)", fontWeight: 600, marginBottom: 6 }}>Escanea un código o busca un ítem para empezar</div>
+                    <div style={{ fontSize: 11 }}>La lista completa no se muestra — aparecen solo los ítems que contás.</div>
+                  </>
+                ) : "No hay ítems que coincidan con el filtro."}
               </div>
             ) : filtered.map((i, idx) => {
               const contadoStr = conteos[i.id] ?? "";
