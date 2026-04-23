@@ -1744,6 +1744,10 @@ function DetailModal({ req, onClose, onUpdate, onGenerarOC, proveedores, reglas,
   const [comment, setComment] = useState("");
   const [editingProv, setEditingProv] = useState(false);
   const [provSel, setProvSel] = useState(req.proveedor_id || "");
+  // Split por proveedor: { item_idx: proveedor_id }
+  const [itemProvs, setItemProvs] = useState({});
+  const [splitMode, setSplitMode] = useState(false);
+  const [splitting, setSplitting] = useState(false);
   const ec = ESTADO_COLOR[req.estado] || ESTADO_COLOR.Borrador;
   const regla = reglas.find(r => r.id === req.regla_aprobacion_id);
   const puedeAprobar = req.estado === "Pendiente" && (currentUser.rol === "super_admin" || (regla && regla.rol_aprobador === currentUser.rol));
@@ -1852,30 +1856,135 @@ function DetailModal({ req, onClose, onUpdate, onGenerarOC, proveedores, reglas,
 
         {/* Items */}
         <div style={{ background: B.navy, borderRadius: 8, overflow: "hidden", marginBottom: 14 }}>
-          <div style={{ padding: "10px 14px", borderBottom: `1px solid ${B.navyLight}`, display: "flex", justifyContent: "space-between" }}>
+          <div style={{ padding: "10px 14px", borderBottom: `1px solid ${B.navyLight}`, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
             <span style={{ fontSize: 11, color: B.sand, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 700 }}>Items</span>
+            {req.estado === "Aprobada" && (
+              <button onClick={() => { setSplitMode(!splitMode); setItemProvs({}); }}
+                style={{ background: splitMode ? B.warning + "22" : B.navyLight, border: `1px solid ${splitMode ? B.warning : B.navyLight}`, color: splitMode ? B.warning : B.sky, borderRadius: 6, padding: "5px 12px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
+                {splitMode ? "✕ Cerrar split" : "🔀 Dividir por proveedor"}
+              </button>
+            )}
             <span style={{ fontSize: 14, fontWeight: 700 }}>Total: <span style={{ color: B.sand }}>{COP(req.total)}</span></span>
           </div>
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
             <thead>
               <tr>
-                {["Item", "Cant.", "Unidad", "P. Unit.", "Subtotal"].map(h => (
-                  <th key={h} style={{ padding: "8px 12px", textAlign: h === "Item" ? "left" : "right", fontSize: 9, color: B.sand, textTransform: "uppercase", borderBottom: `1px solid ${B.navyLight}` }}>{h}</th>
+                {(splitMode ? ["Item", "Cant.", "Unidad", "P. Unit.", "Subtotal", "Proveedor"] : ["Item", "Cant.", "Unidad", "P. Unit.", "Subtotal"]).map(h => (
+                  <th key={h} style={{ padding: "8px 12px", textAlign: h === "Item" || h === "Proveedor" ? "left" : "right", fontSize: 9, color: B.sand, textTransform: "uppercase", borderBottom: `1px solid ${B.navyLight}` }}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {req.items.map((it, i) => (
-                <tr key={i} style={{ borderBottom: `1px solid ${B.navyLight}` }}>
+                <tr key={i} style={{ borderBottom: `1px solid ${B.navyLight}`, background: splitMode && itemProvs[i] ? "rgba(34,197,94,0.06)" : "transparent" }}>
                   <td style={{ padding: "10px 12px", fontSize: 12 }}>{it.item}</td>
                   <td style={{ padding: "10px 12px", fontSize: 12, textAlign: "right" }}>{it.cant}</td>
                   <td style={{ padding: "10px 12px", fontSize: 11, textAlign: "right", color: "rgba(255,255,255,0.5)" }}>{it.unidad}</td>
                   <td style={{ padding: "10px 12px", fontSize: 12, textAlign: "right" }}>{COP(it.precioU)}</td>
                   <td style={{ padding: "10px 12px", fontSize: 12, textAlign: "right", fontWeight: 700, color: B.sand }}>{COP(it.subtotal || it.cant * it.precioU || 0)}</td>
+                  {splitMode && (
+                    <td style={{ padding: "6px 8px" }}>
+                      <select value={itemProvs[i] || ""} onChange={e => setItemProvs(p => ({ ...p, [i]: e.target.value }))}
+                        style={{ ...IS, padding: "6px 10px", fontSize: 11, width: "100%" }}>
+                        <option value="">— sin asignar —</option>
+                        {proveedores.filter(p => p.activo !== false).sort((a, b) => (a.nombre || "").localeCompare(b.nombre || "")).map(p => (
+                          <option key={p.id} value={p.id}>{p.nombre}</option>
+                        ))}
+                      </select>
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>
           </table>
+          {/* Resumen + botón generar OCs divididas */}
+          {splitMode && (() => {
+            const grupos = {};
+            req.items.forEach((it, idx) => {
+              const pid = itemProvs[idx];
+              if (!pid) return;
+              if (!grupos[pid]) grupos[pid] = { items: [], total: 0 };
+              grupos[pid].items.push({ ...it, _idx: idx });
+              grupos[pid].total += Number(it.subtotal) || (Number(it.cant) || 0) * (Number(it.precioU) || 0);
+            });
+            const provsAsignados = Object.keys(grupos);
+            const asignadosCount = req.items.filter((_, i) => itemProvs[i]).length;
+            return (
+              <div style={{ padding: "12px 14px", background: B.navy, borderTop: `1px solid ${B.navyLight}` }}>
+                <div style={{ fontSize: 11, color: "rgba(255,255,255,0.55)", marginBottom: 8 }}>
+                  {asignadosCount}/{req.items.length} ítems asignados · {provsAsignados.length} proveedor{provsAsignados.length !== 1 ? "es" : ""}
+                </div>
+                {provsAsignados.map(pid => {
+                  const prov = proveedores.find(p => p.id === pid);
+                  const g = grupos[pid];
+                  return (
+                    <div key={pid} style={{ display: "flex", justifyContent: "space-between", fontSize: 12, padding: "4px 0" }}>
+                      <span>
+                        <strong style={{ color: B.sky }}>{prov?.nombre || pid}</strong>
+                        <span style={{ color: "rgba(255,255,255,0.4)", marginLeft: 8 }}>{g.items.length} ítem{g.items.length !== 1 ? "s" : ""}</span>
+                      </span>
+                      <strong style={{ color: B.sand }}>{COP(g.total)}</strong>
+                    </div>
+                  );
+                })}
+                {provsAsignados.length > 0 && (
+                  <button disabled={splitting}
+                    onClick={async () => {
+                      if (!confirm(`Generar ${provsAsignados.length} OC${provsAsignados.length !== 1 ? "s" : ""} (una por proveedor)?`)) return;
+                      setSplitting(true);
+                      const ocsGeneradas = [];
+                      for (const pid of provsAsignados) {
+                        const prov = proveedores.find(p => p.id === pid);
+                        const g = grupos[pid];
+                        // Cargar ordenes para calcular código siguiente
+                        const { count } = await supabase.from("ordenes_compra").select("*", { count: "exact", head: true });
+                        const codigo = `OC-${new Date().getFullYear()}-${String((count || 0) + 1 + ocsGeneradas.length).padStart(4, "0")}`;
+                        const items = g.items.map(x => ({
+                          id: x.id, item: x.item, cant: Number(x.cant) || 0, unidad: x.unidad,
+                          precioU: Math.round(Number(x.precioU) || 0),
+                          subtotal: Math.round(Number(x.subtotal) || (Number(x.cant) || 0) * (Number(x.precioU) || 0)),
+                          req_ids: [req.id],
+                        }));
+                        const subtotal = items.reduce((s, it) => s + it.subtotal, 0);
+                        const { error } = await supabase.from("ordenes_compra").insert({
+                          codigo, requisicion_id: req.id,
+                          proveedor_id: prov.id, proveedor_nombre: prov.nombre,
+                          proveedor_nit: prov.nit || null, proveedor_email: prov.email || null, proveedor_telefono: prov.telefono || null,
+                          fecha_emision: todayStr(), items, subtotal, iva: 0, total: subtotal,
+                          estado: "emitida", emitida_por: currentUser.nombre,
+                          notas: `División de ${req.id} · ${items.length} ítems`,
+                        });
+                        if (error) { setSplitting(false); return alert("Error: " + error.message); }
+                        ocsGeneradas.push({ codigo, idxs: g.items.map(x => x._idx) });
+                      }
+                      // Marcar items con oc_id en la requisición
+                      const idxToOc = {};
+                      ocsGeneradas.forEach(oc => oc.idxs.forEach(idx => { idxToOc[idx] = oc.codigo; }));
+                      const itemsNuevos = req.items.map((it, idx) =>
+                        idxToOc[idx] ? { ...it, oc_id: idxToOc[idx], oc_codigo: idxToOc[idx] } : it
+                      );
+                      const todosAsignados = itemsNuevos.every(it => it.oc_id);
+                      await supabase.from("requisiciones").update({
+                        items: itemsNuevos,
+                        estado: todosAsignados ? "En Compra" : req.estado,
+                        timeline: [...(req.timeline || []), {
+                          quien: currentUser.nombre,
+                          accion: `Dividida en ${ocsGeneradas.length} OC${ocsGeneradas.length !== 1 ? "s" : ""}`,
+                          fecha: new Date().toLocaleString("es-CO"),
+                          comentario: ocsGeneradas.map(o => o.codigo).join(", "),
+                        }],
+                      }).eq("id", req.id);
+                      setSplitting(false);
+                      onClose();
+                      reload();
+                    }}
+                    style={{ marginTop: 10, width: "100%", background: B.success, color: B.navy, border: "none", borderRadius: 8, padding: "11px", fontWeight: 800, fontSize: 13, cursor: splitting ? "wait" : "pointer" }}>
+                    {splitting ? "Generando OCs..." : `🧾 Generar ${provsAsignados.length} OC${provsAsignados.length !== 1 ? "s" : ""}`}
+                  </button>
+                )}
+              </div>
+            );
+          })()}
         </div>
 
         {/* Adjuntos */}
