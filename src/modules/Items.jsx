@@ -25,7 +25,7 @@ export default function Items() {
   const [catFilter, setCatFilter] = useState("todos");
   const [showModal, setShowModal] = useState(null); // null | "new" | item object
   const [detail, setDetail] = useState(null);
-  const [tab, setTab] = useState("catalogo"); // "catalogo" | "inventario" | "categorias"
+  const [tab, setTab] = useState("inventario"); // "inventario" | "catalogo" | "categorias"
   const [invSearch, setInvSearch] = useState("");
   const [invCatFilter, setInvCatFilter] = useState("todos");
   const [invFilter, setInvFilter] = useState("todos"); // "todos" | "con_stock" | "bajo_min" | "negativo"
@@ -245,8 +245,8 @@ export default function Items() {
       {/* Tabs */}
       <div style={{ display: "flex", gap: 6, marginBottom: 20, flexWrap: "wrap" }}>
         {[
-          { key: "catalogo", label: "🛒 Productos" },
           { key: "inventario", label: "📦 Inventario" },
+          { key: "catalogo", label: "🛒 Productos" },
           { key: "categorias", label: "🏷️ Categorías" },
         ].map(t => (
           <button key={t.key} onClick={() => setTab(t.key)} style={{
