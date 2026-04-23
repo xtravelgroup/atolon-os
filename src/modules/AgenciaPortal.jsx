@@ -4,6 +4,7 @@ import { B, COP, todayStr, fmtFecha } from "../brand";
 import { supabase } from "../lib/supabase";
 import { wompiCheckoutUrl, WOMPI_INTEGRITY_KEY } from "../lib/wompi";
 import { asignarPuntosReserva, getSaldoPuntos, getRankingAgencia, getPuntosConfig } from "../lib/puntos";
+import FacturaElectronicaForm, { FacturaElectronicaToggle, FE_EMPTY, feValidate, fePayload } from "../lib/FacturaElectronicaForm.jsx";
 
 const IS = { width: "100%", padding: "10px 14px", borderRadius: 8, background: B.navy, border: `1px solid ${B.navyLight}`, color: B.white, fontSize: 13, outline: "none", boxSizing: "border-box" };
 const LS = { fontSize: 11, color: B.sand, display: "block", marginBottom: 5, textTransform: "uppercase", letterSpacing: "0.06em" };
@@ -78,7 +79,8 @@ function NuevaReserva({ agencia, user, onCreated, vistaPrecios = "ambos" }) {
   const [disponibilidad, setDisponibilidad] = useState({});
   const [cierres, setCierres] = useState([]);
   const [overrides, setOverrides] = useState({});
-  const [form, setForm] = useState({ tipo: "", fecha: "", salida_id: "", nombre: "", contacto: "", pax: 1, pax_a: 1, pax_n: 0, edades_ninos: [], notas: "" });
+  const [form, setForm] = useState({ tipo: "", fecha: "", salida_id: "", nombre: "", contacto: "", pax: 1, pax_a: 1, pax_n: 0, edades_ninos: [], notas: "", ...FE_EMPTY });
+  const setFE = (k, v) => setForm(f => ({ ...f, [k]: v }));
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState("");
   const [showPagoModal, setShowPagoModal] = useState(false);
@@ -294,6 +296,14 @@ function NuevaReserva({ agencia, user, onCreated, vistaPrecios = "ambos" }) {
       }
     }
 
+    // Validar FE si está marcado
+    const feFaltan = feValidate(form);
+    if (feFaltan.length > 0) {
+      setMsg("Faltan datos de facturación electrónica: " + feFaltan.map(k => k.replace("fe_","")).join(", "));
+      setSaving(false);
+      return;
+    }
+
     const { error } = await supabase.from("reservas").insert({
       id: reservaId, fecha: form.fecha, salida_id: form.salida_id || null, tipo: form.tipo,
       canal: "B2B", nombre: form.nombre, contacto: form.contacto,
@@ -307,6 +317,7 @@ function NuevaReserva({ agencia, user, onCreated, vistaPrecios = "ambos" }) {
       comprobante_url: comprob,
       aliado_id: agencia.id, vendedor_b2b_id: user.id,
       qr_code: `ATOLON-${agencia.id}-${Date.now()}`,
+      ...fePayload(form),
     });
 
     if (error) { setMsg("Error al guardar la reserva"); setSaving(false); return; }
@@ -662,6 +673,10 @@ function NuevaReserva({ agencia, user, onCreated, vistaPrecios = "ambos" }) {
             <div style={{ gridColumn: "1 / -1", marginBottom: 14 }}>
               <label style={LS}>Notas</label>
               <input value={form.notas} onChange={e => setForm(f => ({ ...f, notas: e.target.value }))} placeholder="Observaciones..." style={IS} />
+            </div>
+            <div style={{ gridColumn: "1 / -1", marginBottom: 14 }}>
+              <FacturaElectronicaToggle checked={form.factura_electronica} onChange={v => setFE("factura_electronica", v)} />
+              {form.factura_electronica && <FacturaElectronicaForm form={form} set={setFE} editing={true} />}
             </div>
           </div>
 

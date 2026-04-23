@@ -8,6 +8,7 @@ import { supabase } from "../lib/supabase";
 import { wompiCheckoutUrl } from "../lib/wompi";
 import AtolanTrack from "../lib/AtolanTrack";
 import { gtmViewItem, gtmBeginCheckout, gtmAddPaymentInfo, gtmAbandon } from "../lib/gtm";
+import FacturaElectronicaForm, { FacturaElectronicaToggle, FE_EMPTY, feValidate, fePayload } from "../lib/FacturaElectronicaForm.jsx";
 
 // ── Palette (light theme) ───────────────────────────────────────────────────
 const C = {
@@ -188,7 +189,8 @@ export default function BookingPopup() {
   const [edadesNinos, setEdadesNinos] = useState([]); // array de edades por niño
   const [paxI,       setPaxI]      = useState(0);  // infants 0-2
   const [step,       setStep]      = useState(matchedProduct ? 1 : 0); // 0=select, 1=booking, 2=info, 3=done
-  const [form,      setForm]      = useState({ nombre: "", email: "", telefono: "", notas: "" });
+  const [form,      setForm]      = useState({ nombre: "", email: "", telefono: "", notas: "", ...FE_EMPTY });
+  const setFE = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
   // ── Abandoned Cart state ─────────────────────────────────────────────────
   const acCartIdRef  = useRef(null);  // ID del cart en ac_carts
@@ -727,6 +729,7 @@ export default function BookingPopup() {
         ].filter(Boolean).join(" | ") || null,
         qr_code:        `ATOLON-WEB-${Date.now()}`,
         lead_id:        leadId || null,
+        ...fePayload(form),
       });
     }
     // Track payment attempt (enriched)
@@ -1312,6 +1315,12 @@ export default function BookingPopup() {
             rows={2}
             style={{ width: "100%", padding: "11px 14px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 14, color: C.text, background: C.bg, outline: "none", resize: "none", boxSizing: "border-box", fontFamily: "inherit" }}
           />
+        </div>
+
+        {/* Facturación electrónica */}
+        <div style={{ marginBottom: 20 }}>
+          <FacturaElectronicaToggle checked={form.factura_electronica} onChange={v => setFE("factura_electronica", v)} theme="light" />
+          {form.factura_electronica && <FacturaElectronicaForm form={form} set={setFE} editing={true} theme="light" />}
         </div>
 
         {/* T&C */}
