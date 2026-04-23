@@ -58,6 +58,12 @@ const EMPTY_FORM = {
   nombre: "", contacto: "", telefono: "", fecha: "", tipo: PASADIAS[0]?.tipo || "", pax_a: 1, pax_n: 0,
   salida_id: "", canal: "WhatsApp", precio: PASADIAS[0]?.precio || 0, precio_nino: 0,
   abono: 0, forma_pago: "Sin definir", fecha_pago: "", aliado_id: "", vendedor: "Sin asignar", notas: "",
+  // Facturación electrónica
+  factura_electronica: false,
+  fe_tipo_persona: "natural", fe_tipo_documento: "CC", fe_numero_documento: "", fe_dv: "",
+  fe_razon_social: "", fe_nombres: "", fe_apellidos: "",
+  fe_email: "", fe_telefono: "", fe_direccion: "", fe_ciudad: "", fe_departamento: "",
+  fe_pais: "Colombia", fe_regimen: "no_responsable_iva",
 };
 
 // ── sub-components ────────────────────────────────────────────────────────────
@@ -2346,6 +2352,22 @@ function ReservaModal({ onClose, onSave, isMobile, salidaList = [], aliadoList =
           <textarea rows={2} style={{ ...IS(), resize: "vertical" }} value={form.notas} onChange={e => set("notas", e.target.value)} placeholder="Observaciones, peticiones especiales…" />
         </div>
 
+        {/* Facturación electrónica */}
+        <div style={FS}>
+          <label style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer", padding: "10px 14px", background: "rgba(251,191,36,0.06)", border: `1px solid ${form.factura_electronica ? "#fbbf24" : "rgba(255,255,255,0.1)"}`, borderRadius: 10 }}>
+            <input type="checkbox" checked={!!form.factura_electronica}
+              onChange={e => set("factura_electronica", e.target.checked)}
+              style={{ width: 18, height: 18, accentColor: "#fbbf24" }} />
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: form.factura_electronica ? "#fbbf24" : B.white }}>📄 Requiere facturación electrónica</div>
+              <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>Marca si el cliente necesita factura electrónica DIAN</div>
+            </div>
+          </label>
+          {form.factura_electronica && (
+            <FacturaElectronicaForm form={form} set={set} editing={true} />
+          )}
+        </div>
+
         {/* Preview totales */}
         {form.tipo && (
           <div style={{ background: "#0D1B3E", borderRadius: 10, padding: "12px 16px" }}>
@@ -3511,6 +3533,22 @@ export default function Reservas() {
       fecha_pago:      isCortesia ? todayStr() : (form.fecha_pago || null),
       nombre_embarcacion: form.nombre_embarcacion || null,
       hora_llegada:    form.hora_llegada || null,
+      // Facturación electrónica
+      factura_electronica: !!form.factura_electronica,
+      fe_tipo_persona:     form.factura_electronica ? form.fe_tipo_persona : null,
+      fe_tipo_documento:   form.factura_electronica ? form.fe_tipo_documento : null,
+      fe_numero_documento: form.factura_electronica ? form.fe_numero_documento : null,
+      fe_dv:               form.factura_electronica ? (form.fe_dv || null) : null,
+      fe_razon_social:     form.factura_electronica ? (form.fe_razon_social || null) : null,
+      fe_nombres:          form.factura_electronica ? (form.fe_nombres || null) : null,
+      fe_apellidos:        form.factura_electronica ? (form.fe_apellidos || null) : null,
+      fe_email:            form.factura_electronica ? form.fe_email : null,
+      fe_telefono:         form.factura_electronica ? form.fe_telefono : null,
+      fe_direccion:        form.factura_electronica ? form.fe_direccion : null,
+      fe_ciudad:           form.factura_electronica ? form.fe_ciudad : null,
+      fe_departamento:     form.factura_electronica ? form.fe_departamento : null,
+      fe_pais:             form.factura_electronica ? form.fe_pais : null,
+      fe_regimen:          form.factura_electronica ? form.fe_regimen : null,
       pagos:           isCortesia ? [{
         id: `P-${Date.now()}`,
         monto: totalOriginal,
