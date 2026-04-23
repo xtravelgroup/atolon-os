@@ -84,8 +84,65 @@ function calcComision(r, pasadiasMap) {
 
 // ── Modal de confirmación ─────────────────────────────────────────────────────
 function ConfirmModal({ data, onConfirm, onCancel, saving }) {
+  const [docs, setDocs] = useState({
+    cuenta_cobro: { file: null, url: "", uploading: false },
+    rut:          { file: null, url: "", uploading: false },
+    cert:         { file: null, url: "", uploading: false },
+  });
+  // Reset docs cada vez que se abre el modal con otra comisión
+  useEffect(() => {
+    if (data) setDocs({
+      cuenta_cobro: { file: null, url: "", uploading: false },
+      rut:          { file: null, url: "", uploading: false },
+      cert:         { file: null, url: "", uploading: false },
+    });
+  }, [data?.aliado_id]);
+
+  const uploadDoc = async (key, file) => {
+    if (!file || !supabase) return;
+    setDocs(d => ({ ...d, [key]: { file, url: "", uploading: true } }));
+    const path = `comisiones/${data.aliado_id}/${Date.now()}-${key}-${file.name.replace(/\s+/g, "_")}`;
+    const { error } = await supabase.storage.from("b2b-docs").upload(path, file, { upsert: true, contentType: file.type });
+    if (error) {
+      alert("Error subiendo archivo: " + error.message);
+      setDocs(d => ({ ...d, [key]: { file: null, url: "", uploading: false } }));
+      return;
+    }
+    const { data: { publicUrl } } = supabase.storage.from("b2b-docs").getPublicUrl(path);
+    setDocs(d => ({ ...d, [key]: { file, url: publicUrl, uploading: false } }));
+  };
+
   if (!data) return null;
   const { nombre, monto, reservas } = data;
+
+  const puedeAprobar = !!docs.cuenta_cobro.url && !Object.values(docs).some(d => d.uploading);
+
+  const DocInput = ({ dkey, label, required, accept = "application/pdf,image/*" }) => {
+    const d = docs[dkey];
+    return (
+      <div style={{ background: "rgba(255,255,255,0.03)", borderRadius: 10, padding: "10px 14px", border: `1px dashed ${d.url ? "#4ade80" : required ? "#f87171" : B.navyLight}` }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+          <div>
+            <div style={{ fontSize: 12, fontWeight: 700, color: B.white }}>
+              {label} {required && <span style={{ color: "#f87171" }}>*</span>}
+              {!required && <span style={{ color: "rgba(255,255,255,0.4)", fontWeight: 400, fontSize: 11 }}> (opcional)</span>}
+            </div>
+            {d.file && <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginTop: 2 }}>{d.file.name}</div>}
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            {d.uploading && <span style={{ fontSize: 11, color: B.sky }}>⏳</span>}
+            {d.url && !d.uploading && <span style={{ fontSize: 14, color: "#4ade80" }}>✓</span>}
+            <label style={{ background: d.url ? B.navyLight : B.sky + "33", color: d.url ? "rgba(255,255,255,0.6)" : B.sky, padding: "6px 12px", borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
+              {d.url ? "Cambiar" : "Subir"}
+              <input type="file" accept={accept} style={{ display: "none" }}
+                onChange={e => { if (e.target.files?.[0]) uploadDoc(dkey, e.target.files[0]); }} />
+            </label>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div style={{ position: "fixed", inset: 0, zIndex: 1200, background: "#00000088",
       display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
@@ -134,17 +191,34 @@ function ConfirmModal({ data, onConfirm, onCancel, saving }) {
           ))}
         </div>
 
+        {/* ── Documentos de soporte ── */}
+        <div style={{ fontSize: 11, color: B.sand, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 700, marginBottom: 8 }}>
+          Documentos de soporte
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 20 }}>
+          <DocInput dkey="cuenta_cobro" label="Cuenta de Cobro" required />
+          <DocInput dkey="rut" label="RUT" />
+          <DocInput dkey="cert" label="Certificación Bancaria" />
+        </div>
+
         <div style={{ display: "flex", gap: 10 }}>
           <button onClick={onCancel} disabled={saving}
             style={{ flex: 1, padding: "11px", borderRadius: 8, border: `1px solid ${B.navyLight}`,
               background: "transparent", color: "rgba(255,255,255,0.5)", cursor: "pointer", fontWeight: 600 }}>
             Cancelar
           </button>
-          <button onClick={onConfirm} disabled={saving}
+          <button onClick={() => onConfirm({
+              cuenta_cobro_url:  docs.cuenta_cobro.url,
+              rut_url:           docs.rut.url || null,
+              cert_bancaria_url: docs.cert.url || null,
+            })} disabled={saving || !puedeAprobar}
+            title={!puedeAprobar ? "Debes subir la Cuenta de Cobro" : ""}
             style={{ flex: 2, padding: "11px", borderRadius: 8, border: "none",
-              background: saving ? B.navyLight : "#7c3aed", color: B.white,
-              cursor: saving ? "default" : "pointer", fontWeight: 700, fontSize: 14 }}>
-            {saving ? "Aprobando..." : `✓ Aprobar ${COP(monto)}`}
+              background: (saving || !puedeAprobar) ? B.navyLight : "#7c3aed",
+              color: B.white,
+              cursor: (saving || !puedeAprobar) ? "not-allowed" : "pointer",
+              fontWeight: 700, fontSize: 14, opacity: !puedeAprobar ? 0.6 : 1 }}>
+            {saving ? "Aprobando..." : !puedeAprobar ? "Sube la Cuenta de Cobro" : `✓ Aprobar ${COP(monto)}`}
           </button>
         </div>
       </div>
@@ -308,7 +382,7 @@ export default function Comisiones() {
   useEffect(() => { loadAprobadas(); }, [loadAprobadas]);
 
   // ── Aprobar ───────────────────────────────────────────────────────────────
-  const aprobar = async () => {
+  const aprobar = async (docs = {}) => {
     if (!confirmData || !supabase) return;
     setSaving(true);
     const { aliado_id, nombre, monto, reservas } = confirmData;
@@ -324,6 +398,9 @@ export default function Comisiones() {
       estado:          "aprobado",
       aprobado_por:    userEmail || "—",
       aprobado_at:     new Date().toISOString(),
+      cuenta_cobro_url:  docs.cuenta_cobro_url  || null,
+      rut_url:           docs.rut_url           || null,
+      cert_bancaria_url: docs.cert_bancaria_url || null,
     });
     setSaving(false);
     if (!error) {
