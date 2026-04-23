@@ -164,6 +164,51 @@ serve(async (req) => {
       return json({ ok: r.ok, status: r.status, data: r.data });
     }
 
+    // ═══ Proveedores / Terceros ─ listar ═════════════════════════════════════
+    // Loggro Pymes no tiene un endpoint único documentado — probamos los paths
+    // comunes hasta encontrar uno que responda 200.
+    if (req.method === "GET" && path === "/proveedores") {
+      const intentos: { path: string; base: string; status: number; count?: number; sample?: any }[] = [];
+      const paths = ["/proveedores", "/providers", "/suppliers", "/terceros", "/terceros?tipo=proveedor", "/contactos?tipo=proveedor", "/contactos"];
+      let exito: any = null;
+      for (const base of LOGGRO_BASES) {
+        for (const p of paths) {
+          try {
+            const r = await pymes(p, { method: "GET" }, base);
+            const entry: any = { path: p, base, status: r.status };
+            if (r.ok) {
+              const arr = Array.isArray(r.data) ? r.data : (r.data?.data || r.data?.items || r.data?.results || []);
+              entry.count = Array.isArray(arr) ? arr.length : undefined;
+              entry.sample = Array.isArray(arr) ? arr.slice(0, 2) : r.data;
+              if (!exito && Array.isArray(arr) && arr.length > 0) {
+                exito = { path: p, base, proveedores: arr };
+              }
+            }
+            intentos.push(entry);
+            if (exito) break;
+          } catch (e) {
+            intentos.push({ path: p, base, status: -1, sample: String(e) });
+          }
+        }
+        if (exito) break;
+      }
+      if (exito) {
+        return json({
+          ok: true,
+          encontrado_en: { path: exito.path, base: exito.base },
+          total: exito.proveedores.length,
+          proveedores: exito.proveedores,
+          intentos,
+        });
+      }
+      return json({
+        ok: false,
+        error: "No se encontró endpoint de proveedores en Loggro Pymes",
+        hint: "Contacta a soporte Loggro y pide el path exacto. Agrégalo a la lista 'paths' en la función.",
+        intentos,
+      }, 404);
+    }
+
     return json({ error: "Ruta no encontrada", path }, 404);
   } catch (err) {
     console.error("loggro-pymes-sync error:", err);
