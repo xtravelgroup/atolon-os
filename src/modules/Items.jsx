@@ -1127,12 +1127,14 @@ function InventarioTab({
                         style={{ width: 32, height: 32, borderRadius: 8, border: "none", background: B.sky + "22", color: B.sky, cursor: "pointer", fontSize: 14, lineHeight: 1 }}>
                         🔄
                       </button>
-                      <button
-                        onClick={(e) => { e.stopPropagation(); setCartModal({ item: i, cant: "1" }); }}
-                        title="Agregar a requisición"
-                        style={{ width: 32, height: 32, borderRadius: 8, border: "none", background: B.success + "22", color: B.success, cursor: "pointer", fontSize: 20, fontWeight: 800, lineHeight: 1 }}>
-                        +
-                      </button>
+                      {locFilter === "todos" && (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); setCartModal({ item: i, cant: "1" }); }}
+                          title="Agregar a requisición"
+                          style={{ width: 32, height: 32, borderRadius: 8, border: "none", background: B.success + "22", color: B.success, cursor: "pointer", fontSize: 20, fontWeight: 800, lineHeight: 1 }}>
+                          +
+                        </button>
+                      )}
                     </div>
                   </td>
                 </tr>
