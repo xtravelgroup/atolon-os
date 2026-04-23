@@ -32,16 +32,24 @@ export default function EscanearProductos() {
   const [userEmail, setUserEmail] = useState("");
   const [flash, setFlash] = useState(null); // { type, text }
 
+  const FN_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/scan-productos`;
+  const FN_HEADERS = {
+    apikey: import.meta.env.VITE_SUPABASE_ANON_KEY,
+    Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+    "Content-Type": "application/json",
+  };
+
   const load = () => {
-    if (!supabase) return;
     setLoading(true);
-    supabase.from("items_catalogo").select("id, nombre, codigo, categoria, unidad")
-      .eq("activo", true).order("nombre")
-      .then(({ data }) => { setItems(data || []); setLoading(false); });
+    fetch(`${FN_URL}/items`, { headers: FN_HEADERS })
+      .then(r => r.json())
+      .then(d => { setItems(d.items || []); setLoading(false); })
+      .catch(() => setLoading(false));
   };
   useEffect(() => {
     load();
-    supabase?.auth.getSession().then(({ data }) => setUserEmail(data?.session?.user?.email || ""));
+    // Intenta tomar email de sesión si existe, sin bloquear
+    supabase?.auth.getSession().then(({ data }) => setUserEmail(data?.session?.user?.email || "anónimo")).catch(() => setUserEmail("anónimo"));
   }, []);
 
   const filtered = useMemo(() => {
@@ -61,35 +69,25 @@ export default function EscanearProductos() {
   }, [items]);
 
   const guardarCodigo = async (itemId, codigo) => {
-    // CIERRA EL SCANNER INMEDIATAMENTE — no esperar al await
     setScanFor(null);
-    setFlash({ type: "ok", text: `💾 Guardando código...` });
-
-    if (!userEmail) {
-      setFlash({ type: "err", text: "❌ Necesitas iniciar sesión para guardar códigos" });
-      setTimeout(() => setFlash(null), 4000);
-      return;
-    }
+    setFlash({ type: "ok", text: `💾 Guardando...` });
     try {
-      const { data, error } = await supabase.from("items_catalogo")
-        .update({ codigo, updated_at: new Date().toISOString() })
-        .eq("id", itemId)
-        .select("id, codigo");
-      if (error) {
-        setFlash({ type: "err", text: "❌ Error: " + error.message });
-        setTimeout(() => setFlash(null), 5000);
-        return;
-      }
-      if (!data || data.length === 0) {
-        setFlash({ type: "err", text: "❌ Sin permisos para guardar. Cierra sesión y vuelve a entrar." });
+      const res = await fetch(`${FN_URL}/save-code`, {
+        method: "POST",
+        headers: FN_HEADERS,
+        body: JSON.stringify({ item_id: itemId, codigo }),
+      });
+      const d = await res.json();
+      if (!d.ok) {
+        setFlash({ type: "err", text: "❌ " + (d.error || "Error") });
         setTimeout(() => setFlash(null), 5000);
         return;
       }
       setItems(prev => prev.map(i => i.id === itemId ? { ...i, codigo } : i));
-      setFlash({ type: "ok", text: `✓ Código guardado: ${codigo}` });
+      setFlash({ type: "ok", text: `✓ Guardado: ${codigo}` });
       setTimeout(() => setFlash(null), 2000);
     } catch (e) {
-      setFlash({ type: "err", text: "❌ Error inesperado: " + e.message });
+      setFlash({ type: "err", text: "❌ " + e.message });
       setTimeout(() => setFlash(null), 5000);
     }
   };
