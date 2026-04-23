@@ -1149,8 +1149,28 @@ function InventarioTab({
                   <button onClick={() => setCartModal(c => ({ ...c, cant: String((Number(c.cant) || 0) + 1) }))}
                     style={{ width: 38, height: 38, borderRadius: 8, border: `1px solid ${B.navyLight}`, background: B.navy, color: B.sky, fontSize: 20, fontWeight: 800, cursor: "pointer" }}>+</button>
                 </div>
+                {/* Stock actual → después de compra */}
+                <div style={{ marginTop: 10, padding: "10px 12px", background: "rgba(56,189,248,0.1)", border: "1px solid rgba(56,189,248,0.25)", borderRadius: 8, fontSize: 12 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+                    <div style={{ color: "rgba(255,255,255,0.55)" }}>
+                      Stock actual: <strong style={{ color: B.white }}>{Number(i.stock_actual || 0).toFixed(2)} {i.unidad}</strong>
+                    </div>
+                    <div style={{ color: B.sky, fontWeight: 700 }}>→</div>
+                    <div style={{ color: "rgba(255,255,255,0.55)" }}>
+                      Después: <strong style={{ color: B.sky, fontSize: 14 }}>{(Number(i.stock_actual || 0) + cantNum).toFixed(2)} {i.unidad}</strong>
+                    </div>
+                  </div>
+                  {Number(i.stock_minimo || 0) > 0 && (
+                    <div style={{ marginTop: 6, paddingTop: 6, borderTop: "1px solid rgba(255,255,255,0.06)", fontSize: 10, color: "rgba(255,255,255,0.4)", textAlign: "center" }}>
+                      Mínimo configurado: {Number(i.stock_minimo).toFixed(0)} {i.unidad}
+                      {(Number(i.stock_actual || 0) + cantNum) < Number(i.stock_minimo) && (
+                        <span style={{ color: B.warning, marginLeft: 6 }}>⚠ aún bajo mínimo</span>
+                      )}
+                    </div>
+                  )}
+                </div>
                 {subtotal > 0 && (
-                  <div style={{ marginTop: 10, padding: "8px 12px", background: B.success + "15", borderRadius: 8, fontSize: 12, color: "rgba(255,255,255,0.7)", textAlign: "center" }}>
+                  <div style={{ marginTop: 8, padding: "8px 12px", background: B.success + "15", borderRadius: 8, fontSize: 12, color: "rgba(255,255,255,0.7)", textAlign: "center" }}>
                     Subtotal estimado: <strong style={{ color: B.success, fontSize: 14 }}>{COP(subtotal)}</strong>
                   </div>
                 )}
