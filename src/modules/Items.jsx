@@ -35,6 +35,7 @@ export default function Items() {
   const [sortBy, setSortBy] = useState("nombre"); // "nombre" | "categoria" | "unidad" | "precio"
   const [sortDir, setSortDir] = useState("asc");
   const [showBulkSearch, setShowBulkSearch] = useState(false);
+  const [showQR, setShowQR] = useState(false);
 
   // Build lookup maps from dynamic categorias
   const catNames = useMemo(() => categorias.filter(c => c.activo !== false).map(c => c.nombre), [categorias]);
@@ -217,6 +218,9 @@ export default function Items() {
               </button>
               <button onClick={() => setShowBulkSearch(true)} style={{ ...BTN(B.navyLight), color: "#4ade80", border: `1px solid #4ade8044` }}>
                 🔍 Buscar códigos
+              </button>
+              <button onClick={() => setShowQR(true)} style={{ ...BTN(B.navyLight), color: B.sand, border: `1px solid ${B.sand}44` }}>
+                📱 QR Escaneo
               </button>
               <button onClick={() => setShowModal("new")} style={BTN(B.sky, B.navy)}>+ Nuevo Producto</button>
             </>
@@ -511,6 +515,40 @@ export default function Items() {
           onClose={() => setDetail(null)}
         />
       )}
+
+      {/* QR de la app de escaneo */}
+      {showQR && (() => {
+        const appUrl = `${window.location.origin}/escanear-productos`;
+        const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=360x360&margin=16&data=${encodeURIComponent(appUrl)}`;
+        return (
+          <div onClick={e => e.target === e.currentTarget && setShowQR(false)}
+            style={{ position: "fixed", inset: 0, zIndex: 1200, background: "rgba(0,0,0,0.8)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+            <div style={{ background: B.white, borderRadius: 20, padding: 32, maxWidth: 420, textAlign: "center", boxShadow: "0 10px 40px rgba(0,0,0,0.4)" }}>
+              <div style={{ fontSize: 14, fontWeight: 700, color: B.navy, letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 4 }}>App de Escaneo</div>
+              <div style={{ fontSize: 22, fontWeight: 900, color: B.navy, marginBottom: 18 }}>📱 Vincular códigos de barras</div>
+              <img src={qrUrl} alt="QR" style={{ width: 260, height: 260, borderRadius: 12, border: `2px solid ${B.navy}11` }} />
+              <div style={{ fontSize: 12, color: "rgba(13,27,62,0.6)", marginTop: 14, lineHeight: 1.5 }}>
+                Escanea este QR con el celular para abrir la app de escaneo.<br/>
+                <span style={{ fontFamily: "monospace", fontSize: 11 }}>{appUrl}</span>
+              </div>
+              <div style={{ display: "flex", gap: 8, marginTop: 20 }}>
+                <button onClick={() => { navigator.clipboard.writeText(appUrl); alert("URL copiada al portapapeles"); }}
+                  style={{ flex: 1, background: B.navyLight, color: B.white, border: "none", borderRadius: 10, padding: "12px", fontWeight: 700, cursor: "pointer", fontSize: 13 }}>
+                  📋 Copiar link
+                </button>
+                <a href={qrUrl} download="qr-escaneo-atolon.png" target="_blank" rel="noopener"
+                  style={{ flex: 1, background: B.sky, color: B.navy, border: "none", borderRadius: 10, padding: "12px", fontWeight: 700, cursor: "pointer", fontSize: 13, textDecoration: "none", textAlign: "center", display: "block" }}>
+                  ⬇ Descargar QR
+                </a>
+              </div>
+              <button onClick={() => setShowQR(false)}
+                style={{ marginTop: 10, background: "none", border: "none", color: "rgba(13,27,62,0.5)", fontSize: 13, cursor: "pointer", padding: "6px" }}>
+                Cerrar
+              </button>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Bulk search de códigos */}
       {showBulkSearch && (
