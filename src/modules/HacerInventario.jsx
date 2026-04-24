@@ -23,6 +23,7 @@ export default function HacerInventario() {
   const [scanOpen, setScanOpen] = useState(false);
   const [scanMsg, setScanMsg] = useState(null); // { type: "ok"|"err", text }
   const [cantidadModal, setCantidadModal] = useState(null); // { item, cant } — al escanear
+  const [continuandoId, setContinuandoId] = useState(null); // id del conteo que estás continuando
   const rowRefs = useRef({}); // item_id → input element
 
   // Cargar locaciones y conteos históricos
@@ -132,19 +133,39 @@ export default function HacerInventario() {
     if (!confirm(`Guardar conteo de ${itemsConteados.length} ítems en ${locActual?.nombre}? Esto ajustará el stock al valor contado.`)) return;
 
     setSaving(true);
-    const id = `CNT-${Date.now()}`;
     const diffs = itemsConteados.filter(i => i.diferencia !== 0).length;
+    let id;
 
-    // Insertar registro del conteo
-    const { error } = await supabase.from("items_conteos").insert({
-      id, locacion_id: locId, fecha: todayStr(),
-      usuario_email: userEmail || "sistema",
-      notas: notas.trim() || null,
-      items: itemsConteados,
-      total_items: itemsConteados.length,
-      diferencias: diffs,
-    });
-    if (error) { setSaving(false); return alert("Error guardando conteo: " + error.message); }
+    if (continuandoId) {
+      // UPDATE: mergear con los ítems previos del conteo (último valor gana por item_id)
+      const { data: prevData } = await supabase.from("items_conteos").select("items").eq("id", continuandoId).single();
+      const prevItems = prevData?.items || [];
+      const map = new Map();
+      prevItems.forEach(it => map.set(it.item_id, it));
+      itemsConteados.forEach(it => map.set(it.item_id, it));
+      const merged = Array.from(map.values());
+      const mergedDiffs = merged.filter(i => Number(i.diferencia) !== 0).length;
+      const { error } = await supabase.from("items_conteos").update({
+        items: merged,
+        total_items: merged.length,
+        diferencias: mergedDiffs,
+        notas: notas.trim() || null,
+        usuario_email: userEmail || "sistema",
+      }).eq("id", continuandoId);
+      if (error) { setSaving(false); return alert("Error actualizando conteo: " + error.message); }
+      id = continuandoId;
+    } else {
+      id = `CNT-${Date.now()}`;
+      const { error } = await supabase.from("items_conteos").insert({
+        id, locacion_id: locId, fecha: todayStr(),
+        usuario_email: userEmail || "sistema",
+        notas: notas.trim() || null,
+        items: itemsConteados,
+        total_items: itemsConteados.length,
+        diferencias: diffs,
+      });
+      if (error) { setSaving(false); return alert("Error guardando conteo: " + error.message); }
+    }
 
     // Actualizar stock por locación
     await Promise.all(itemsConteados.map(it =>
@@ -160,7 +181,7 @@ export default function HacerInventario() {
 
   const reset = () => {
     setStep(1); setLocId(""); setConteos({}); setSearch(""); setCatFilter("todos");
-    setFilterModo("todos"); setNotas(""); setSaved(null);
+    setFilterModo("todos"); setNotas(""); setSaved(null); setContinuandoId(null);
     // Recargar historial
     supabase.from("items_conteos").select("id, locacion_id, fecha, usuario_email, total_items, diferencias, notas, created_at")
       .order("created_at", { ascending: false }).limit(20)
@@ -214,9 +235,9 @@ export default function HacerInventario() {
                 {historial.map(c => {
                   const loc = locaciones.find(l => l.id === c.locacion_id);
                   const continuar = async () => {
-                    // Cargar items + stock y pre-populá conteos con lo ya guardado
                     if (!supabase) return;
                     setLocId(c.locacion_id);
+                    setContinuandoId(c.id);
                     const [iR, sR] = await Promise.all([
                       supabase.from("items_catalogo").select("id, nombre, codigo, categoria, unidad").eq("activo", true).order("nombre"),
                       supabase.from("items_stock_locacion").select("item_id, locacion_id, cantidad"),
@@ -225,7 +246,6 @@ export default function HacerInventario() {
                     const map = {};
                     (sR.data || []).forEach(s => { map[`${s.item_id}|${s.locacion_id}`] = Number(s.cantidad) || 0; });
                     setStockPorLoc(map);
-                    // Pre-popular conteos con lo que ya estaba guardado
                     const pre = {};
                     (c.items || []).forEach(it => { pre[it.item_id] = String(it.contado); });
                     setConteos(pre);
