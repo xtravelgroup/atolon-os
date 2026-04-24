@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { B, todayStr } from "../brand";
 import { supabase } from "../lib/supabase";
 import { useMobile } from "../lib/useMobile";
@@ -24,9 +24,19 @@ const PRECIO_AFTER_A = 170000;
 const PRECIO_AFTER_N = 120000;
 
 // ─── Modal Registro Llegada ───────────────────────────────────────────────────
-function ModalNuevaLlegada({ tipo, fecha, reserva, onClose, onSaved }) {
+function ModalNuevaLlegada({ tipo, fecha, reserva, llegadasDelDia = [], onClose, onSaved }) {
   const esLancha = tipo === "lancha_atolon";
+  const esLanchasAtolon = tipo === "lanchas_atolon";
   const esWalkin = tipo === "walkin";
+
+  // Chequeo para avisar que Naturalle ya se registró vía pasadías hoy
+  const naturalleEnPasadias = useMemo(() =>
+    llegadasDelDia.some(l =>
+      l.tipo === "lancha_atolon" &&
+      (l.embarcacion_nombre || "").toLowerCase().includes("naturalle")
+    ),
+    [llegadasDelDia]
+  );
   // Para "otras embarcaciones", el usuario selecciona la categoría en el formulario
   const [tipoSeleccionado, setTipoSeleccionado] = useState(tipo);
   const esAfter  = tipoSeleccionado === "after_island";
@@ -361,9 +371,24 @@ function ModalNuevaLlegada({ tipo, fecha, reserva, onClose, onSaved }) {
 
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 16px" }}>
           <div style={{ gridColumn: "1 / -1", marginBottom: 14 }}>
-            <label style={LS}>Nombre / ID embarcación</label>
-            <input value={f.embarcacion_nombre} onChange={e => s("embarcacion_nombre", e.target.value)}
-              placeholder={esLancha ? "Ej: Atolon I" : "Ej: Patricia, sin nombre..."} style={IS} />
+            <label style={LS}>{esLanchasAtolon ? "Lancha" : "Nombre / ID embarcación"}</label>
+            {esLanchasAtolon ? (
+              <>
+                <select value={f.embarcacion_nombre} onChange={e => s("embarcacion_nombre", e.target.value)} style={IS}>
+                  <option value="">— Selecciona lancha —</option>
+                  <option value="Castillete">⛵ Castillete</option>
+                  <option value="Naturalle">⛵ Naturalle</option>
+                </select>
+                {f.embarcacion_nombre === "Naturalle" && naturalleEnPasadias && (
+                  <div style={{ marginTop: 8, padding: "10px 12px", background: "#f59e0b22", border: "1px solid #f59e0b66", borderRadius: 8, fontSize: 12, color: "#fbbf24" }}>
+                    ⚠️ Naturalle ya fue registrada hoy vía <b>Pasadías</b>. Si este mismo viaje trajo pasadías, NO lo registres aquí — ya está contado. Usa esta sección solo para viajes adicionales (tripulación, provisiones, vacío, etc).
+                  </div>
+                )}
+              </>
+            ) : (
+              <input value={f.embarcacion_nombre} onChange={e => s("embarcacion_nombre", e.target.value)}
+                placeholder={esLancha ? "Ej: Atolon I" : "Ej: Patricia, sin nombre..."} style={IS} />
+            )}
           </div>
           {!esLancha && (
             <div style={{ gridColumn: "1 / -1", marginBottom: 14 }}>
@@ -1531,6 +1556,7 @@ export default function MuelleCheckin() {
           tipo={modal.tipo}
           fecha={fecha}
           reserva={modal.reserva}
+          llegadasDelDia={llegadas}
           onClose={() => setModal(null)}
           onSaved={() => { setModal(null); fetchLlegadas(); }}
         />
