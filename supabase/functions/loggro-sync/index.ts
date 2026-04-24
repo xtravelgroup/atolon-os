@@ -843,6 +843,39 @@ serve(async (req) => {
       return json({ ok: true, loggro_response: post.body });
     }
 
+    // GET /loggro-sync/ingredients-stock
+    // Devuelve un mapa { loggro_id: { name, stock } } con el stock real-time
+    // de todos los ingredientes en Loggro Restobar.
+    if (req.method === "GET" && path === "/ingredients-stock") {
+      const pageSize = 100;
+      const pagePromises = [];
+      for (let p = 0; p < 20; p++) {
+        pagePromises.push(
+          loggroGet(`/ingredients?pagination=true&limit=${pageSize}&page=${p}&onlyIngredient=true`)
+            .then(d => d?.data || (Array.isArray(d) ? d : []))
+            .catch(() => [])
+        );
+      }
+      const pages = await Promise.all(pagePromises);
+      const all: any[] = [];
+      const seen = new Set<string>();
+      pages.forEach(arr => arr.forEach((ing: any) => {
+        if (ing?._id && !seen.has(ing._id)) {
+          seen.add(ing._id);
+          all.push(ing);
+        }
+      }));
+      const map: Record<string, { name: string; stock: number; unit?: string }> = {};
+      for (const ing of all) {
+        map[ing._id] = {
+          name: ing.name,
+          stock: Number(ing.stock) || 0,
+          unit: ing.unit || undefined,
+        };
+      }
+      return json({ ok: true, total: all.length, stock: map });
+    }
+
     // POST /loggro-sync/create-ingredient
     // Crea un ingrediente nuevo en Loggro Restobar.
     // Body: { nombre, category_id, descripcion?, codigo?, unit?, cost? }

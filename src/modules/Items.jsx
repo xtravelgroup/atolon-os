@@ -1785,6 +1785,9 @@ function NewLocacionModal({ onClose, onSaved }) {
 function ConteosTab() {
   const [conteos, setConteos] = useState([]);
   const [locaciones, setLocaciones] = useState([]);
+  const [catalogo, setCatalogo] = useState([]); // items_catalogo con loggro_id
+  const [loggroStocks, setLoggroStocks] = useState({}); // { loggro_id: stock real-time }
+  const [loggroLoading, setLoggroLoading] = useState(false);
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState(null);
   const [filterLoc, setFilterLoc] = useState("todas");
@@ -1795,12 +1798,47 @@ function ConteosTab() {
     Promise.all([
       supabase.from("items_conteos").select("*").order("created_at", { ascending: false }).limit(100),
       supabase.from("items_locaciones").select("*"),
-    ]).then(([cR, lR]) => {
+      supabase.from("items_catalogo").select("id, nombre, loggro_id, stock_actual"),
+    ]).then(([cR, lR, itR]) => {
       setConteos(cR.data || []);
       setLocaciones(lR.data || []);
+      setCatalogo(itR.data || []);
       setLoading(false);
     });
   }, []);
+
+  // Traer stocks reales de Loggro Restobar (no-bloqueante, al montar)
+  const refreshLoggro = async () => {
+    setLoggroLoading(true);
+    try {
+      const URL = import.meta.env.VITE_SUPABASE_URL;
+      const KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
+      const res = await fetch(`${URL}/functions/v1/loggro-sync/ingredients-stock`, {
+        headers: { apikey: KEY, Authorization: `Bearer ${KEY}` },
+      });
+      const d = await res.json();
+      if (d.ok) setLoggroStocks(d.stock || {});
+    } catch (_) {}
+    setLoggroLoading(false);
+  };
+  useEffect(() => { refreshLoggro(); }, []); // eslint-disable-line
+
+  // Map item_id (Atolón) → stock real de Loggro Restobar vía loggro_id
+  const sistemaMap = useMemo(() => {
+    const m = {};
+    catalogo.forEach(i => {
+      if (i.loggro_id && loggroStocks[i.loggro_id]) {
+        m[i.id] = Number(loggroStocks[i.loggro_id].stock) || 0;
+      }
+    });
+    return m;
+  }, [catalogo, loggroStocks]);
+
+  // Format con máximo 1 decimal (y sin trailing si es entero)
+  const fmt1 = (n) => {
+    const v = Number(n) || 0;
+    return (Math.round(v * 10) / 10).toLocaleString("es-CO", { maximumFractionDigits: 1 });
+  };
 
   const filtered = conteos.filter(c => {
     if (filterLoc !== "todas" && c.locacion_id !== filterLoc) return false;
@@ -1837,14 +1875,17 @@ function ConteosTab() {
 
   return (
     <div>
-      {/* ═══ RESUMEN POR DÍA (para comparar con Loggro) ═══ */}
+      {/* ═══ RESUMEN POR DÍA (para comparar con Loggro Restobar) ═══ */}
       {porDia.length > 0 && (
         <div style={{ background: B.navyMid, border: `1px solid ${B.navyLight}`, borderRadius: 12, padding: "14px 18px", marginBottom: 16 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
             <div style={{ fontSize: 13, fontWeight: 800, color: B.sand }}>
               📊 Resumen por día <span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", fontWeight: 400 }}>(consolidado de todas las locaciones)</span>
             </div>
-            <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", fontStyle: "italic" }}>Para comparar con Loggro (que no separa por depósito)</div>
+            <button onClick={refreshLoggro} disabled={loggroLoading}
+              style={{ background: loggroLoading ? B.navyLight : "rgba(34,197,94,0.15)", color: loggroLoading ? "rgba(255,255,255,0.4)" : "#22c55e", border: `1px solid ${loggroLoading ? B.navyLight : "#22c55e55"}`, borderRadius: 6, padding: "5px 12px", fontSize: 11, fontWeight: 700, cursor: loggroLoading ? "wait" : "pointer" }}>
+              {loggroLoading ? "⏳ Cargando..." : `🔄 Refresh Loggro (${Object.keys(loggroStocks).length})`}
+            </button>
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
             {porDia.slice(0, 15).map(d => {
@@ -1876,28 +1917,43 @@ function ConteosTab() {
                   {/* Detalle: tabla de productos sumados */}
                   {expanded && (
                     <div style={{ padding: "8px 14px 14px", borderTop: `1px solid ${B.navyLight}` }}>
-                      <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 0.8fr", gap: 8, padding: "6px 8px", fontSize: 10, color: B.sand, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 700, borderBottom: `1px solid ${B.navyLight}` }}>
+                      <div style={{ display: "grid", gridTemplateColumns: "2fr 1.2fr 0.9fr 0.9fr 0.9fr", gap: 8, padding: "6px 8px", fontSize: 10, color: B.sand, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 700, borderBottom: `1px solid ${B.navyLight}` }}>
                         <div>Producto</div>
                         <div style={{ textAlign: "right" }}>Desglose</div>
-                        <div style={{ textAlign: "right" }}>Total (Loggro)</div>
+                        <div style={{ textAlign: "right" }}>Total contado</div>
+                        <div style={{ textAlign: "right" }} title="Stock actual en Loggro Restobar">Cant. sistema</div>
+                        <div style={{ textAlign: "right" }}>Diferencia</div>
                       </div>
                       <div style={{ maxHeight: 400, overflowY: "auto" }}>
                         {Object.entries(d.items)
                           .sort(([, a], [, b]) => b.suma - a.suma)
-                          .map(([id, it]) => (
-                            <div key={id} style={{ display: "grid", gridTemplateColumns: "2fr 1fr 0.8fr", gap: 8, padding: "6px 8px", fontSize: 11, borderBottom: `1px solid ${B.navyLight}44`, alignItems: "center" }}>
-                              <div style={{ color: B.white }}>{it.nombre} <span style={{ color: "rgba(255,255,255,0.35)", fontSize: 10 }}>· {it.unidad}</span></div>
-                              <div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", textAlign: "right" }}>
-                                {Object.entries(it.por_loc).map(([lid, cant]) => {
-                                  const l = locaciones.find(l => l.id === lid);
-                                  return `${l?.icono || ""}${cant}`;
-                                }).join(" + ")}
+                          .map(([id, it]) => {
+                            const sistema = sistemaMap[id];
+                            const sistemaNum = Number(sistema) || 0;
+                            const hasSistema = sistemaMap[id] !== undefined;
+                            const diff = hasSistema ? (it.suma - sistemaNum) : null;
+                            const diffColor = diff === null ? "rgba(255,255,255,0.2)" : Math.abs(diff) < 0.05 ? B.success : diff > 0 ? B.warning : B.danger;
+                            return (
+                              <div key={id} style={{ display: "grid", gridTemplateColumns: "2fr 1.2fr 0.9fr 0.9fr 0.9fr", gap: 8, padding: "6px 8px", fontSize: 11, borderBottom: `1px solid ${B.navyLight}44`, alignItems: "center" }}>
+                                <div style={{ color: B.white }}>{it.nombre} <span style={{ color: "rgba(255,255,255,0.35)", fontSize: 10 }}>· {it.unidad}</span></div>
+                                <div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", textAlign: "right" }}>
+                                  {Object.entries(it.por_loc).map(([lid, cant]) => {
+                                    const l = locaciones.find(l => l.id === lid);
+                                    return `${l?.icono || ""}${fmt1(cant)}`;
+                                  }).join(" + ")}
+                                </div>
+                                <div style={{ fontSize: 13, fontWeight: 800, color: B.white, textAlign: "right", fontFamily: "'Barlow Condensed', sans-serif" }}>
+                                  {fmt1(it.suma)}
+                                </div>
+                                <div style={{ fontSize: 13, fontWeight: 700, color: hasSistema ? "rgba(255,255,255,0.7)" : "rgba(255,255,255,0.25)", textAlign: "right", fontFamily: "'Barlow Condensed', sans-serif" }}>
+                                  {hasSistema ? fmt1(sistemaNum) : "—"}
+                                </div>
+                                <div style={{ fontSize: 13, fontWeight: 800, color: diffColor, textAlign: "right", fontFamily: "'Barlow Condensed', sans-serif" }}>
+                                  {diff === null ? "—" : (diff > 0 ? "+" : "") + fmt1(diff)}
+                                </div>
                               </div>
-                              <div style={{ fontSize: 13, fontWeight: 800, color: B.success, textAlign: "right", fontFamily: "'Barlow Condensed', sans-serif" }}>
-                                {Number(it.suma).toLocaleString("es-CO", { maximumFractionDigits: 2 })}
-                              </div>
-                            </div>
-                          ))}
+                            );
+                          })}
                       </div>
                     </div>
                   )}
