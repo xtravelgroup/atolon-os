@@ -3715,10 +3715,17 @@ export default function Reservas() {
           const paxLlegadas = llegadasDiaAll.reduce((s, l) => s + (l.pax_total || 0), 0);
           const totalPax = paxRes + paxGrupos + paxLlegadas;
 
-          // Agrupar por salida
+          // Agrupar por salida (considerando grupos: si la reserva pertenece
+          // a un grupo, heredar la salida del grupo desde salidas_grupo[0].id)
           const porSalida = {};
           activas.forEach(r => {
-            const sal = salidas.find(s => s.id === r.salida_id);
+            let salidaId = r.salida_id;
+            if (!salidaId && r.grupo_id) {
+              const grp = grupos.find(g => g.id === r.grupo_id);
+              const sg = grp?.salidas_grupo?.[0];
+              if (sg?.id) salidaId = sg.id;
+            }
+            const sal = salidas.find(s => s.id === salidaId);
             const key = sal ? `${sal.hora} — ${sal.nombre}` : (r.tipo?.toLowerCase().includes("after") ? "After Island" : "Sin salida asignada");
             if (!porSalida[key]) porSalida[key] = [];
             porSalida[key].push(r);
