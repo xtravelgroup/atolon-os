@@ -1,455 +1,751 @@
-// Lancha.jsx — Reservas de cupos en lancha para hoteles/B2B
-// Rutas: IDA / VUELTA / IDA+VUELTA · por salida · con control de capacidad
-import { useState, useEffect, useCallback } from "react";
+// Lancha.jsx — Bitácora operativa por embarcación
+// Tabs por lancha (Castillete, Naturalle, …) con:
+//   · Resumen (KPIs: gasto mes, galones mes, próximo servicio, horas motor)
+//   · Combustible (cargas)
+//   · Mantenimiento / Reparaciones
+//   · Incidentes
+//   · Viajes (viene de muelle_zarpes_flota)
+//   · Configuración de la lancha
+
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { supabase } from "../lib/supabase";
 import { B } from "../brand";
 
-const todayStr = () => {
-  const bogota = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Bogota" }));
-  return `${bogota.getFullYear()}-${String(bogota.getMonth()+1).padStart(2,"0")}-${String(bogota.getDate()).padStart(2,"0")}`;
-};
+const BTN = (bg, color = "#fff") => ({ padding: "8px 14px", borderRadius: 8, border: "none", background: bg, color, cursor: "pointer", fontWeight: 700, fontSize: 12 });
+const IS = { width: "100%", padding: "9px 12px", borderRadius: 8, background: B.navyLight, border: `1px solid ${B.navyLight}`, color: "#fff", fontSize: 13, outline: "none", boxSizing: "border-box" };
+const LS = { fontSize: 11, color: "rgba(255,255,255,0.5)", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", display: "block", marginBottom: 4 };
 
-const fmtFecha = (f) =>
-  f ? new Date(f + "T12:00:00").toLocaleDateString("es-CO", { weekday: "long", day: "numeric", month: "long", timeZone: "America/Bogota" }) : "";
+const TIPOS = [
+  { k: "combustible",    l: "⛽ Combustible",      c: B.warning },
+  { k: "mantenimiento",  l: "🔧 Mantenimiento",    c: B.sky },
+  { k: "reparacion",     l: "🛠️ Reparación",       c: "#ec4899" },
+  { k: "inspeccion",     l: "🔍 Inspección",       c: B.sand },
+  { k: "limpieza",       l: "🧼 Limpieza",         c: "#34d399" },
+  { k: "incidente",      l: "⚠️ Incidente",        c: B.danger },
+  { k: "viaje",          l: "⛵ Viaje",            c: "#a78bfa" },
+  { k: "otro",           l: "📋 Otro",             c: "rgba(255,255,255,0.4)" },
+];
 
-const DIR = {
-  ida:        { label: "Solo Ida",     icon: "→", color: B.sky      },
-  vuelta:     { label: "Solo Vuelta",  icon: "←", color: "#34d399"  },
-  ida_vuelta: { label: "Ida y Vuelta", icon: "↔", color: B.sand     },
-};
+const SEVERIDADES = [
+  { k: "leve",     l: "Leve",     c: B.success },
+  { k: "moderada", l: "Moderada", c: B.warning },
+  { k: "grave",    l: "Grave",    c: "#f97316" },
+  { k: "critica",  l: "Crítica",  c: B.danger },
+];
 
-const EMPTY_FORM = {
-  aliado_id: "", nombre: "", contacto: "",
-  pax_a: 1, pax_n: 0,
-  direccion: "ida_vuelta",
-  salida_ida_id: "", salida_vuelta_id: "",
-  notas: "", estado: "confirmado",
-};
+const todayStr = () => new Date().toISOString().slice(0, 10);
+const thisMonth = () => todayStr().slice(0, 7);
+const fmtCOP = (n) => "$" + Math.round(Number(n) || 0).toLocaleString("es-CO");
+const fmtFecha = (d) => d ? new Date(d + "T12:00:00").toLocaleDateString("es-CO", { day: "numeric", month: "short", year: "numeric" }) : "—";
+const fmtFechaCorta = (d) => d ? new Date(d + "T12:00:00").toLocaleDateString("es-CO", { day: "numeric", month: "short" }) : "—";
+const fmtHora = (h) => h ? h.slice(0, 5) : "";
+const uid = () => "BIT-" + Date.now().toString(36).toUpperCase() + Math.random().toString(36).slice(2, 5).toUpperCase();
 
-// ─── Barra de ocupación ──────────────────────────────────────────────────────
-function BaraCapacidad({ ocupado, total, color = B.sky }) {
-  const pct = total > 0 ? Math.min(100, Math.round(ocupado / total * 100)) : 0;
-  const libre = Math.max(0, total - ocupado);
-  const warn  = pct >= 90;
-  return (
-    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-      <div style={{ flex: 1, height: 6, background: B.navyLight, borderRadius: 3, overflow: "hidden" }}>
-        <div style={{ width: `${pct}%`, height: "100%", background: warn ? "#f87171" : color, borderRadius: 3, transition: "width 0.3s" }} />
-      </div>
-      <span style={{ fontSize: 11, color: warn ? "#f87171" : "rgba(255,255,255,0.5)", whiteSpace: "nowrap", minWidth: 70, textAlign: "right" }}>
-        {libre} libre{libre !== 1 ? "s" : ""} / {total}
-      </span>
-    </div>
-  );
-}
-
-// ─── Modal / form ────────────────────────────────────────────────────────────
-function FormReserva({ form, setForm, salidas, aliados, onSave, onCancel, saving, editId }) {
-  const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
-  const paxTotal = (Number(form.pax_a) || 0) + (Number(form.pax_n) || 0);
-
-  return (
-    <div style={{
-      position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 9000,
-      display: "flex", alignItems: "center", justifyContent: "center", padding: 16,
-    }} onClick={e => e.target === e.currentTarget && onCancel()}>
-      <div style={{
-        background: B.navyMid, borderRadius: 18, padding: 28, width: "100%", maxWidth: 520,
-        maxHeight: "90vh", overflowY: "auto", border: `1px solid ${B.navyLight}`,
-      }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 22 }}>
-          <div style={{ fontSize: 18, fontWeight: 800, color: B.white }}>
-            {editId ? "✏️ Editar reserva" : "⛵ Nueva reserva de lancha"}
-          </div>
-          <button onClick={onCancel} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.4)", fontSize: 20, cursor: "pointer" }}>✕</button>
-        </div>
-
-        {/* Hotel */}
-        <label style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.06em" }}>Hotel / Aliado *</label>
-        <select value={form.aliado_id} onChange={e => set("aliado_id", e.target.value)}
-          style={{ width: "100%", marginTop: 4, marginBottom: 14, padding: "10px 12px", borderRadius: 8, background: B.navy, border: `1px solid ${B.navyLight}`, color: B.white, fontSize: 13, boxSizing: "border-box" }}>
-          <option value="">— Seleccionar hotel —</option>
-          {aliados.map(a => <option key={a.id} value={a.id}>{a.nombre}</option>)}
-        </select>
-
-        {/* Nombre */}
-        <label style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.06em" }}>Nombre del huésped *</label>
-        <input value={form.nombre} onChange={e => set("nombre", e.target.value)} placeholder="Nombre completo"
-          style={{ width: "100%", marginTop: 4, marginBottom: 14, padding: "10px 12px", borderRadius: 8, background: B.navy, border: `1px solid ${B.navyLight}`, color: B.white, fontSize: 13, boxSizing: "border-box" }} />
-
-        {/* Contacto */}
-        <label style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.06em" }}>Teléfono / contacto</label>
-        <input value={form.contacto} onChange={e => set("contacto", e.target.value)} placeholder="+57 300..."
-          style={{ width: "100%", marginTop: 4, marginBottom: 14, padding: "10px 12px", borderRadius: 8, background: B.navy, border: `1px solid ${B.navyLight}`, color: B.white, fontSize: 13, boxSizing: "border-box" }} />
-
-        {/* Pax */}
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 14 }}>
-          {[["pax_a", "Adultos"], ["pax_n", "Niños"]].map(([k, lbl]) => (
-            <div key={k}>
-              <label style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.06em" }}>{lbl}</label>
-              <input type="number" min={k === "pax_a" ? 0 : 0} value={form[k]} onChange={e => set(k, e.target.value)}
-                style={{ width: "100%", marginTop: 4, padding: "10px 12px", borderRadius: 8, background: B.navy, border: `1px solid ${B.navyLight}`, color: B.white, fontSize: 14, fontWeight: 700, boxSizing: "border-box" }} />
-            </div>
-          ))}
-        </div>
-
-        {/* Dirección */}
-        <label style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.06em" }}>Dirección *</label>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginTop: 6, marginBottom: 16 }}>
-          {Object.entries(DIR).map(([k, d]) => (
-            <button key={k} type="button" onClick={() => set("direccion", k)}
-              style={{
-                padding: "10px 8px", borderRadius: 10, border: `2px solid ${form.direccion === k ? d.color : B.navyLight}`,
-                background: form.direccion === k ? d.color + "22" : B.navy,
-                color: form.direccion === k ? d.color : "rgba(255,255,255,0.45)",
-                fontWeight: 700, fontSize: 12, cursor: "pointer", textAlign: "center",
-              }}>
-              <div style={{ fontSize: 18, marginBottom: 2 }}>{d.icon}</div>
-              {d.label}
-            </button>
-          ))}
-        </div>
-
-        {/* Salida IDA */}
-        {(form.direccion === "ida" || form.direccion === "ida_vuelta") && (
-          <>
-            <label style={{ fontSize: 11, color: B.sky, textTransform: "uppercase", letterSpacing: "0.06em" }}>→ Salida IDA *</label>
-            <select value={form.salida_ida_id} onChange={e => set("salida_ida_id", e.target.value)}
-              style={{ width: "100%", marginTop: 4, marginBottom: 14, padding: "10px 12px", borderRadius: 8, background: B.navy, border: `1px solid ${B.sky}44`, color: B.white, fontSize: 13, boxSizing: "border-box" }}>
-              <option value="">— Seleccionar salida —</option>
-              {salidas.map(s => <option key={s.id} value={s.id}>{s.hora}{s.nombre ? ` · ${s.nombre}` : ""}</option>)}
-            </select>
-          </>
-        )}
-
-        {/* Salida VUELTA */}
-        {(form.direccion === "vuelta" || form.direccion === "ida_vuelta") && (
-          <>
-            <label style={{ fontSize: 11, color: "#34d399", textTransform: "uppercase", letterSpacing: "0.06em" }}>← Salida VUELTA *</label>
-            <select value={form.salida_vuelta_id} onChange={e => set("salida_vuelta_id", e.target.value)}
-              style={{ width: "100%", marginTop: 4, marginBottom: 14, padding: "10px 12px", borderRadius: 8, background: B.navy, border: `1px solid #34d39944`, color: B.white, fontSize: 13, boxSizing: "border-box" }}>
-              <option value="">— Seleccionar salida —</option>
-              {salidas.map(s => <option key={s.id} value={s.id}>{s.hora_regreso || s.hora}{s.nombre ? ` · ${s.nombre}` : ""}</option>)}
-            </select>
-          </>
-        )}
-
-        {/* Notas */}
-        <label style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.06em" }}>Notas</label>
-        <textarea value={form.notas} onChange={e => set("notas", e.target.value)} rows={2} placeholder="Habitación, observaciones..."
-          style={{ width: "100%", marginTop: 4, marginBottom: 20, padding: "10px 12px", borderRadius: 8, background: B.navy, border: `1px solid ${B.navyLight}`, color: B.white, fontSize: 13, resize: "vertical", boxSizing: "border-box" }} />
-
-        {/* Resumen pax */}
-        {paxTotal > 0 && (
-          <div style={{ background: B.navy, borderRadius: 8, padding: "10px 14px", marginBottom: 16, fontSize: 13, color: "rgba(255,255,255,0.6)", display: "flex", gap: 16 }}>
-            <span>👥 {paxTotal} pax total</span>
-            <span style={{ color: DIR[form.direccion]?.color }}>{DIR[form.direccion]?.icon} {DIR[form.direccion]?.label}</span>
-          </div>
-        )}
-
-        {/* Acciones */}
-        <div style={{ display: "flex", gap: 10 }}>
-          <button onClick={onCancel} disabled={saving}
-            style={{ flex: 1, padding: "12px", borderRadius: 10, border: `1px solid ${B.navyLight}`, background: "transparent", color: "rgba(255,255,255,0.5)", fontSize: 14, cursor: "pointer" }}>
-            Cancelar
-          </button>
-          <button onClick={onSave} disabled={saving || !form.nombre || !form.aliado_id}
-            style={{ flex: 2, padding: "12px", borderRadius: 10, border: "none", background: saving ? B.navyLight : B.sky, color: B.navy, fontSize: 14, fontWeight: 800, cursor: saving ? "default" : "pointer" }}>
-            {saving ? "Guardando..." : editId ? "💾 Guardar cambios" : "✅ Reservar cupos"}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ─── Módulo principal ─────────────────────────────────────────────────────────
 export default function Lancha() {
-  const [fecha,    setFecha]    = useState(todayStr());
-  const [salidas,  setSalidas]  = useState([]);
-  const [aliados,  setAliados]  = useState([]);
-  const [reservas, setReservas] = useState([]);
-  const [loading,  setLoading]  = useState(true);
-  const [capPas,   setCapPas]   = useState({}); // pax de pasadías por salida_id
-  const [showForm, setShowForm] = useState(false);
-  const [editId,   setEditId]   = useState(null);
-  const [form,     setForm]     = useState({ ...EMPTY_FORM });
-  const [saving,   setSaving]   = useState(false);
-  const [cancelId, setCancelId] = useState(null);
+  const [lanchas, setLanchas] = useState([]);
+  const [bitacora, setBitacora] = useState([]);
+  const [zarpes, setZarpes] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [activeLancha, setActiveLancha] = useState(null);
+  const [tab, setTab] = useState("resumen");
+  const [modal, setModal] = useState(null); // { tipo, edit? }
+  const [configModal, setConfigModal] = useState(false);
 
-  // Cargar estáticos una vez
-  useEffect(() => {
-    Promise.all([
-      supabase.from("salidas").select("*").eq("activo", true).order("orden"),
-      supabase.from("aliados_b2b").select("id, nombre").eq("estado", "activo").order("nombre"),
-    ]).then(([sal, ali]) => {
-      setSalidas(sal.data || []);
-      setAliados(ali.data || []);
-    });
-  }, []);
-
-  // Cargar reservas del día
-  const cargar = useCallback(async () => {
+  const load = useCallback(async () => {
     setLoading(true);
-    const [resL, resPas] = await Promise.all([
-      supabase.from("reservas_lancha").select("*, aliados_b2b(nombre)")
-        .eq("fecha", fecha).neq("estado", "cancelado").order("created_at"),
-      supabase.from("reservas").select("salida_id, pax")
-        .eq("fecha", fecha).neq("estado", "cancelado"),
+    const [lR, bR, zR] = await Promise.all([
+      supabase.from("lanchas").select("*").eq("activo", true).order("nombre"),
+      supabase.from("lancha_bitacora").select("*").order("fecha", { ascending: false }).order("hora", { ascending: false }).limit(500),
+      supabase.from("muelle_zarpes_flota").select("*").order("fecha", { ascending: false }).limit(200),
     ]);
-    setReservas(resL.data || []);
-    // Mapa capacidad pasadías por salida
-    const cp = {};
-    for (const r of (resPas.data || [])) {
-      if (!r.salida_id) continue;
-      cp[r.salida_id] = (cp[r.salida_id] || 0) + (r.pax || 0);
-    }
-    setCapPas(cp);
+    const lanchasArr = lR.data || [];
+    setLanchas(lanchasArr);
+    setBitacora(bR.data || []);
+    setZarpes(zR.data || []);
+    if (!activeLancha && lanchasArr.length) setActiveLancha(lanchasArr[0].id);
     setLoading(false);
-  }, [fecha]);
+  }, [activeLancha]);
+  useEffect(() => { load(); }, []); // eslint-disable-line
 
-  useEffect(() => { cargar(); }, [cargar]);
+  const lancha = lanchas.find(l => l.id === activeLancha);
+  const bitacoraLancha = useMemo(() => bitacora.filter(b => b.lancha_id === activeLancha), [bitacora, activeLancha]);
+  const zarpesLancha = useMemo(() => zarpes.filter(z => lancha && z.embarcacion === lancha.nombre), [zarpes, lancha]);
 
-  // Capacidad lancha por salida
-  const capLancha = {};
-  for (const r of reservas) {
-    const p = (Number(r.pax_a) || 0) + (Number(r.pax_n) || 0);
-    if (r.salida_ida_id)    capLancha[r.salida_ida_id]    = (capLancha[r.salida_ida_id]    || 0) + p;
-    if (r.salida_vuelta_id) capLancha[r.salida_vuelta_id] = (capLancha[r.salida_vuelta_id] || 0) + p;
+  // KPIs del mes
+  const kpis = useMemo(() => {
+    const mes = thisMonth();
+    const delMes = bitacoraLancha.filter(b => (b.fecha || "").startsWith(mes));
+    const combustibleMes = delMes.filter(b => b.tipo === "combustible");
+    const galonesMes = combustibleMes.reduce((s, b) => s + Number(b.galones || 0), 0);
+    const gastoCombustibleMes = combustibleMes.reduce((s, b) => s + Number(b.costo_total || 0), 0);
+    const gastoMantMes = delMes.filter(b => ["mantenimiento", "reparacion"].includes(b.tipo)).reduce((s, b) => s + Number(b.costo_total || 0), 0);
+    const ultimoHoras = bitacoraLancha.find(b => b.kilometraje_h != null)?.kilometraje_h || 0;
+    const proxServ = bitacoraLancha.find(b => b.proximo_servicio_h || b.proximo_servicio_fecha);
+    const viajesMes = zarpesLancha.filter(z => (z.fecha || "").startsWith(mes)).length;
+    const incidentesAbiertos = bitacoraLancha.filter(b => b.tipo === "incidente" && !b.resuelto).length;
+    return { galonesMes, gastoCombustibleMes, gastoMantMes, ultimoHoras, proxServ, viajesMes, incidentesAbiertos };
+  }, [bitacoraLancha, zarpesLancha]);
+
+  async function saveEvento(data) {
+    const payload = {
+      lancha_id: activeLancha,
+      lancha_nombre: lancha?.nombre,
+      fecha: data.fecha || todayStr(),
+      hora: data.hora || null,
+      tipo: data.tipo,
+      subtipo: data.subtipo || null,
+      descripcion: data.descripcion || null,
+      galones: data.galones ? Number(data.galones) : null,
+      precio_galon: data.precio_galon ? Number(data.precio_galon) : null,
+      costo_total: data.costo_total ? Number(data.costo_total) : null,
+      kilometraje_h: data.kilometraje_h ? Number(data.kilometraje_h) : null,
+      proveedor: data.proveedor || null,
+      taller: data.taller || null,
+      proximo_servicio_h: data.proximo_servicio_h ? Number(data.proximo_servicio_h) : null,
+      proximo_servicio_fecha: data.proximo_servicio_fecha || null,
+      severidad: data.severidad || null,
+      resuelto: !!data.resuelto,
+      foto_url: data.foto_url || null,
+      factura_url: data.factura_url || null,
+      capitan: data.capitan || null,
+      notas: data.notas || null,
+      updated_at: new Date().toISOString(),
+    };
+    if (data.id) {
+      const r = await supabase.from("lancha_bitacora").update(payload).eq("id", data.id);
+      if (r.error) return r.error;
+    } else {
+      const r = await supabase.from("lancha_bitacora").insert({ id: uid(), ...payload });
+      if (r.error) return r.error;
+    }
+    setModal(null);
+    load();
   }
 
-  const openNew = () => {
-    setEditId(null);
-    setForm({ ...EMPTY_FORM });
-    setShowForm(true);
-  };
+  async function borrarEvento(id) {
+    if (!confirm("¿Eliminar este registro?")) return;
+    await supabase.from("lancha_bitacora").delete().eq("id", id);
+    load();
+  }
 
-  const openEdit = (r) => {
-    setEditId(r.id);
-    setForm({
-      aliado_id: r.aliado_id || "", nombre: r.nombre, contacto: r.contacto || "",
-      pax_a: r.pax_a, pax_n: r.pax_n,
-      direccion: r.direccion,
-      salida_ida_id: r.salida_ida_id || "", salida_vuelta_id: r.salida_vuelta_id || "",
-      notas: r.notas || "", estado: r.estado,
-    });
-    setShowForm(true);
-  };
+  async function toggleResuelto(item) {
+    await supabase.from("lancha_bitacora").update({ resuelto: !item.resuelto, updated_at: new Date().toISOString() }).eq("id", item.id);
+    load();
+  }
 
-  const guardar = async () => {
-    if (!form.nombre || !form.aliado_id) return;
-    setSaving(true);
-    const payload = {
-      fecha,
-      aliado_id:       form.aliado_id || null,
-      nombre:          form.nombre.trim(),
-      contacto:        form.contacto || null,
-      pax_a:           Number(form.pax_a) || 0,
-      pax_n:           Number(form.pax_n) || 0,
-      direccion:       form.direccion,
-      salida_ida_id:    (form.direccion === "vuelta" ? null : form.salida_ida_id)    || null,
-      salida_vuelta_id: (form.direccion === "ida"    ? null : form.salida_vuelta_id) || null,
-      notas:           form.notas || null,
-      estado:          form.estado,
-    };
+  if (loading) {
+    return <div style={{ padding: 40, textAlign: "center", color: "rgba(255,255,255,0.4)" }}>Cargando…</div>;
+  }
 
-    if (editId) {
-      await supabase.from("reservas_lancha").update({ ...payload, updated_at: new Date().toISOString() }).eq("id", editId);
-    } else {
-      await supabase.from("reservas_lancha").insert({ id: `LAC-${Date.now()}`, ...payload });
-    }
-    setSaving(false);
-    setShowForm(false);
-    cargar();
-  };
-
-  const cancelarReserva = async (id) => {
-    await supabase.from("reservas_lancha").update({ estado: "cancelado" }).eq("id", id);
-    setCancelId(null);
-    cargar();
-  };
-
-  // Totales del día
-  const totPax      = reservas.reduce((s, r) => s + (Number(r.pax_a) || 0) + (Number(r.pax_n) || 0), 0);
-  const totIda      = reservas.filter(r => r.direccion !== "vuelta").reduce((s, r) => s + (Number(r.pax_a) || 0) + (Number(r.pax_n) || 0), 0);
-  const totVuelta   = reservas.filter(r => r.direccion !== "ida").reduce((s, r) => s + (Number(r.pax_a) || 0) + (Number(r.pax_n) || 0), 0);
-  const totHoteles  = new Set(reservas.map(r => r.aliado_id)).size;
-
-  const IS = { padding: "8px 12px", borderRadius: 8, background: B.navy, border: `1px solid ${B.navyLight}`, color: B.white, fontSize: 13 };
+  if (!lancha) {
+    return (
+      <div style={{ padding: 40, textAlign: "center" }}>
+        <div style={{ fontSize: 48 }}>🚤</div>
+        <div style={{ fontSize: 16, color: "#fff", marginBottom: 12 }}>Sin lanchas activas</div>
+        <div style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", marginBottom: 20 }}>
+          Crea una lancha para llevar su bitácora.
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div style={{ padding: "24px 0", maxWidth: 960, margin: "0 auto" }}>
+    <div style={{ padding: 20, fontFamily: "'Inter', 'Segoe UI', sans-serif", color: "#fff", minHeight: "100vh", background: B.navy }}>
       {/* Header */}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 20, flexWrap: "wrap", gap: 12 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16, flexWrap: "wrap", gap: 10 }}>
         <div>
-          <div style={{ fontSize: 26, fontWeight: 900, color: B.white, fontFamily: "'Barlow Condensed', sans-serif" }}>⛵ Reservas de Lancha</div>
-          <div style={{ fontSize: 13, color: "rgba(255,255,255,0.4)", marginTop: 4 }}>Cupos IDA · VUELTA · IDA+VUELTA para hoteles</div>
-        </div>
-        <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-          <input type="date" value={fecha} onChange={e => setFecha(e.target.value)} style={{ ...IS, fontWeight: 600 }} />
-          <button onClick={cargar} disabled={loading}
-            style={{ padding: "8px 14px", borderRadius: 8, border: `1px solid ${B.navyLight}`, background: B.navyMid, color: "rgba(255,255,255,0.6)", fontSize: 13, cursor: "pointer" }}>
-            ↻
-          </button>
-          <button onClick={openNew}
-            style={{ padding: "10px 20px", borderRadius: 10, border: "none", background: B.sky, color: B.navy, fontSize: 13, fontWeight: 800, cursor: "pointer" }}>
-            + Nueva reserva
-          </button>
+          <div style={{ fontSize: 22, fontWeight: 800 }}>🚤 Bitácora de Lanchas</div>
+          <div style={{ fontSize: 12, color: "rgba(255,255,255,0.55)" }}>Combustible, mantenimiento, viajes e incidentes por embarcación.</div>
         </div>
       </div>
 
-      {/* Fecha label */}
-      <div style={{ fontSize: 14, color: "rgba(255,255,255,0.4)", marginBottom: 16, paddingInline: 2, textTransform: "capitalize" }}>
-        {fmtFecha(fecha)}
+      {/* Tabs por lancha */}
+      <div style={{ display: "flex", gap: 8, marginBottom: 20, flexWrap: "wrap" }}>
+        {lanchas.map(l => (
+          <button key={l.id} onClick={() => setActiveLancha(l.id)}
+            style={{
+              padding: "12px 20px", borderRadius: 12, border: "none", cursor: "pointer",
+              background: activeLancha === l.id ? B.sky : B.navyMid,
+              color: activeLancha === l.id ? B.navy : "#fff",
+              fontWeight: 700, fontSize: 14, display: "flex", alignItems: "center", gap: 8,
+            }}>
+            <span style={{ fontSize: 18 }}>⛵</span>
+            {l.nombre}
+          </button>
+        ))}
+        <button onClick={() => setConfigModal(true)}
+          style={{ padding: "12px 14px", borderRadius: 12, border: "none", cursor: "pointer", background: B.navyLight, color: "rgba(255,255,255,0.6)", fontSize: 12 }}>
+          ⚙ Config
+        </button>
       </div>
 
-      {/* Resumen KPIs */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 24 }}>
+      {/* Info header de la lancha */}
+      <div style={{ background: B.navyMid, borderRadius: 12, padding: 16, marginBottom: 16, display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap" }}>
+        {lancha.foto_url ? (
+          <img src={lancha.foto_url} alt={lancha.nombre} style={{ width: 80, height: 80, objectFit: "cover", borderRadius: 10 }} />
+        ) : (
+          <div style={{ width: 80, height: 80, borderRadius: 10, background: B.navyLight, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 32 }}>⛵</div>
+        )}
+        <div style={{ flex: 1, minWidth: 200 }}>
+          <div style={{ fontSize: 20, fontWeight: 800 }}>{lancha.nombre}</div>
+          <div style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", marginTop: 4, display: "flex", gap: 14, flexWrap: "wrap" }}>
+            {lancha.matricula && <span>📋 {lancha.matricula}</span>}
+            {lancha.capacidad_pax && <span>👥 {lancha.capacidad_pax} pax</span>}
+            {lancha.capacidad_tanque_gal && <span>⛽ {lancha.capacidad_tanque_gal} gal</span>}
+            {lancha.motor && <span>⚙ {lancha.motor}</span>}
+            {lancha.capitan_default && <span>👨‍✈️ {lancha.capitan_default}</span>}
+          </div>
+        </div>
+      </div>
+
+      {/* KPIs del mes */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(140px,1fr))", gap: 10, marginBottom: 16 }}>
         {[
-          { label: "Pax IDA",        val: totIda,     color: B.sky,      icon: "→" },
-          { label: "Pax VUELTA",     val: totVuelta,  color: "#34d399",  icon: "←" },
-          { label: "Total pax",      val: totPax,     color: B.white,    icon: "👥" },
-          { label: "Hoteles",        val: totHoteles, color: B.sand,     icon: "🏨" },
-        ].map(k => (
-          <div key={k.label} style={{ background: B.navyMid, borderRadius: 12, padding: "16px 18px", borderTop: `3px solid ${k.color}` }}>
-            <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 6 }}>{k.icon} {k.label}</div>
-            <div style={{ fontSize: 32, fontWeight: 900, color: k.color, fontFamily: "'Barlow Condensed', sans-serif", lineHeight: 1 }}>{k.val}</div>
+          { l: "Galones (mes)",       v: `${kpis.galonesMes.toFixed(1)} gal`, c: B.warning },
+          { l: "Combustible (mes)",   v: fmtCOP(kpis.gastoCombustibleMes),    c: B.warning },
+          { l: "Mant./Rep. (mes)",    v: fmtCOP(kpis.gastoMantMes),           c: B.sky },
+          { l: "Viajes (mes)",        v: kpis.viajesMes,                      c: "#a78bfa" },
+          { l: "Horas motor",         v: kpis.ultimoHoras.toFixed(0) + " h",  c: B.sand },
+          { l: "Incidentes abiertos", v: kpis.incidentesAbiertos,             c: kpis.incidentesAbiertos > 0 ? B.danger : B.success },
+        ].map((k, i) => (
+          <div key={i} style={{ background: B.navyMid, padding: 12, borderRadius: 10, borderLeft: `3px solid ${k.c}` }}>
+            <div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: "0.05em" }}>{k.l}</div>
+            <div style={{ fontSize: 18, fontWeight: 800, color: k.c, marginTop: 2 }}>{k.v}</div>
           </div>
         ))}
       </div>
 
-      {/* Capacidad por salida */}
-      <div style={{ background: B.navyMid, borderRadius: 16, padding: "18px 22px", marginBottom: 24 }}>
-        <div style={{ fontSize: 13, fontWeight: 700, color: "rgba(255,255,255,0.6)", marginBottom: 14, textTransform: "uppercase", letterSpacing: "0.06em" }}>
-          ⚓ Ocupación por salida
-        </div>
-        {salidas.length === 0 ? (
-          <div style={{ color: "rgba(255,255,255,0.3)", fontSize: 13 }}>No hay salidas configuradas.</div>
-        ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-            {salidas.map(s => {
-              const pasPax    = capPas[s.id] || 0;
-              const lanPax    = capLancha[s.id] || 0;
-              const ocupado   = pasPax + lanPax;
-              const total     = s.capacidad_total || 0;
-              return (
-                <div key={s.id} style={{ background: B.navy, borderRadius: 10, padding: "12px 16px" }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-                    <div>
-                      <span style={{ fontWeight: 700, fontSize: 14, color: B.white }}>{s.hora}</span>
-                      {s.hora_regreso && <span style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginLeft: 6 }}>→ regreso {s.hora_regreso}</span>}
-                      {s.nombre && <span style={{ fontSize: 12, color: "rgba(255,255,255,0.35)", marginLeft: 8 }}>· {s.nombre}</span>}
-                    </div>
-                    <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", display: "flex", gap: 14 }}>
-                      <span>🏖️ Pasadías: <strong style={{ color: B.sky }}>{pasPax}</strong></span>
-                      <span>⛵ Lancha: <strong style={{ color: B.sand }}>{lanPax}</strong></span>
-                    </div>
-                  </div>
-                  <BaraCapacidad ocupado={ocupado} total={total} />
-                </div>
-              );
-            })}
-          </div>
-        )}
+      {/* Tabs internos */}
+      <div style={{ display: "flex", gap: 6, marginBottom: 14, flexWrap: "wrap" }}>
+        {[
+          { k: "resumen",       l: "📊 Resumen" },
+          { k: "combustible",   l: "⛽ Combustible" },
+          { k: "mantenimiento", l: "🔧 Mantenimiento" },
+          { k: "incidentes",    l: "⚠️ Incidentes" },
+          { k: "viajes",        l: `⛵ Viajes (${zarpesLancha.length})` },
+          { k: "todos",         l: "📋 Todo" },
+        ].map(t => (
+          <button key={t.k} onClick={() => setTab(t.k)}
+            style={BTN(tab === t.k ? B.sky : B.navyMid, tab === t.k ? B.navy : "#fff")}>
+            {t.l}
+          </button>
+        ))}
       </div>
 
-      {/* Reservas del día */}
-      <div style={{ background: B.navyMid, borderRadius: 16, overflow: "hidden" }}>
-        <div style={{ padding: "16px 22px", borderBottom: `1px solid ${B.navyLight}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <div style={{ fontSize: 13, fontWeight: 700, color: "rgba(255,255,255,0.6)", textTransform: "uppercase", letterSpacing: "0.06em" }}>
-            📋 Reservas del día ({reservas.length})
-          </div>
+      {/* Botón agregar */}
+      {tab !== "viajes" && tab !== "resumen" && (
+        <div style={{ marginBottom: 14 }}>
+          <button onClick={() => setModal({ tipo: defaultTipoForTab(tab) })}
+            style={BTN(B.success)}>
+            + Nuevo registro
+          </button>
         </div>
+      )}
 
-        {loading ? (
-          <div style={{ padding: 30, textAlign: "center", color: "rgba(255,255,255,0.3)", fontSize: 13 }}>Cargando...</div>
-        ) : reservas.length === 0 ? (
-          <div style={{ padding: 30, textAlign: "center", color: "rgba(255,255,255,0.25)", fontSize: 13 }}>
-            Sin reservas de lancha para este día.<br />
-            <span style={{ fontSize: 11, marginTop: 6, display: "block" }}>Usa "+ Nueva reserva" para agregar.</span>
-          </div>
-        ) : (
-          <div>
-            {reservas.map((r, i) => {
-              const d      = DIR[r.direccion] || DIR.ida_vuelta;
-              const pax    = (Number(r.pax_a) || 0) + (Number(r.pax_n) || 0);
-              const salIda = salidas.find(s => s.id === r.salida_ida_id);
-              const salVue = salidas.find(s => s.id === r.salida_vuelta_id);
-              const hotel  = r.aliados_b2b?.nombre || aliados.find(a => a.id === r.aliado_id)?.nombre || r.aliado_id;
-              return (
-                <div key={r.id} style={{
-                  display: "grid", gridTemplateColumns: "auto 1fr auto",
-                  gap: 14, padding: "14px 22px", alignItems: "center",
-                  borderBottom: i < reservas.length - 1 ? `1px solid ${B.navyLight}` : "none",
-                  background: i % 2 === 0 ? "transparent" : "rgba(255,255,255,0.015)",
-                }}>
-                  {/* Dirección badge */}
-                  <div style={{ textAlign: "center", minWidth: 54 }}>
-                    <div style={{ fontSize: 20, color: d.color }}>{d.icon}</div>
-                    <div style={{ fontSize: 9, color: d.color, fontWeight: 700, textTransform: "uppercase" }}>
-                      {r.direccion === "ida_vuelta" ? "I+V" : r.direccion === "ida" ? "IDA" : "VTA"}
-                    </div>
-                  </div>
-
-                  {/* Info */}
-                  <div>
-                    <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-                      <span style={{ fontWeight: 700, fontSize: 14, color: B.white }}>{r.nombre}</span>
-                      <span style={{ fontSize: 11, background: B.sand + "22", color: B.sand, borderRadius: 6, padding: "2px 8px", fontWeight: 600 }}>
-                        🏨 {hotel}
-                      </span>
-                      <span style={{ fontSize: 12, color: "rgba(255,255,255,0.45)" }}>
-                        👥 {pax} pax{r.pax_a > 0 && r.pax_n > 0 ? ` (${r.pax_a}A + ${r.pax_n}N)` : ""}
-                      </span>
-                    </div>
-                    <div style={{ marginTop: 4, fontSize: 12, color: "rgba(255,255,255,0.35)", display: "flex", gap: 12, flexWrap: "wrap" }}>
-                      {salIda  && <span style={{ color: B.sky + "cc" }}>→ Ida: {salIda.hora}</span>}
-                      {salVue  && <span style={{ color: "#34d39999" }}>← Vuelta: {salVue.hora_regreso || salVue.hora}</span>}
-                      {r.contacto && <span>📞 {r.contacto}</span>}
-                      {r.notas && <span>💬 {r.notas}</span>}
-                    </div>
-                  </div>
-
-                  {/* Acciones */}
-                  <div style={{ display: "flex", gap: 8 }}>
-                    <button onClick={() => openEdit(r)}
-                      style={{ padding: "6px 12px", borderRadius: 8, border: `1px solid ${B.navyLight}`, background: "transparent", color: "rgba(255,255,255,0.5)", fontSize: 12, cursor: "pointer" }}>
-                      ✏️
-                    </button>
-                    {cancelId === r.id ? (
-                      <div style={{ display: "flex", gap: 6 }}>
-                        <button onClick={() => cancelarReserva(r.id)}
-                          style={{ padding: "6px 10px", borderRadius: 8, border: "none", background: "#f87171", color: "#fff", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
-                          Confirmar
-                        </button>
-                        <button onClick={() => setCancelId(null)}
-                          style={{ padding: "6px 10px", borderRadius: 8, border: `1px solid ${B.navyLight}`, background: "transparent", color: "rgba(255,255,255,0.4)", fontSize: 11, cursor: "pointer" }}>
-                          No
-                        </button>
-                      </div>
-                    ) : (
-                      <button onClick={() => setCancelId(r.id)}
-                        style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid #f8717133", background: "transparent", color: "#f87171", fontSize: 12, cursor: "pointer" }}>
-                        ✕
-                      </button>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
-
-      {/* Modal form */}
-      {showForm && (
-        <FormReserva
-          form={form} setForm={setForm}
-          salidas={salidas} aliados={aliados}
-          onSave={guardar} onCancel={() => setShowForm(false)}
-          saving={saving} editId={editId}
+      {tab === "resumen" && (
+        <ResumenTab bitacora={bitacoraLancha} zarpes={zarpesLancha} lancha={lancha} />
+      )}
+      {tab === "combustible" && (
+        <ListaEventos
+          items={bitacoraLancha.filter(b => b.tipo === "combustible")}
+          onEdit={(e) => setModal({ tipo: "combustible", edit: e })}
+          onDelete={borrarEvento}
         />
       )}
+      {tab === "mantenimiento" && (
+        <ListaEventos
+          items={bitacoraLancha.filter(b => ["mantenimiento", "reparacion", "inspeccion", "limpieza"].includes(b.tipo))}
+          onEdit={(e) => setModal({ tipo: e.tipo, edit: e })}
+          onDelete={borrarEvento}
+        />
+      )}
+      {tab === "incidentes" && (
+        <ListaEventos
+          items={bitacoraLancha.filter(b => b.tipo === "incidente")}
+          onEdit={(e) => setModal({ tipo: "incidente", edit: e })}
+          onDelete={borrarEvento}
+          onToggleResuelto={toggleResuelto}
+        />
+      )}
+      {tab === "viajes" && (
+        <ListaViajes viajes={zarpesLancha} />
+      )}
+      {tab === "todos" && (
+        <ListaEventos
+          items={bitacoraLancha}
+          onEdit={(e) => setModal({ tipo: e.tipo, edit: e })}
+          onDelete={borrarEvento}
+          onToggleResuelto={toggleResuelto}
+        />
+      )}
+
+      {modal && (
+        <EventoModal
+          tipo={modal.tipo}
+          edit={modal.edit}
+          onClose={() => setModal(null)}
+          onSave={saveEvento}
+          capitanDefault={lancha.capitan_default}
+        />
+      )}
+      {configModal && (
+        <ConfigLanchaModal
+          lancha={lancha}
+          onClose={() => setConfigModal(false)}
+          onSaved={() => { setConfigModal(false); load(); }}
+        />
+      )}
+    </div>
+  );
+}
+
+function defaultTipoForTab(tab) {
+  if (tab === "combustible") return "combustible";
+  if (tab === "mantenimiento") return "mantenimiento";
+  if (tab === "incidentes") return "incidente";
+  return "combustible";
+}
+
+// ─── Resumen tab ───────────────────────────────────────────────────────────
+function ResumenTab({ bitacora, zarpes, lancha }) {
+  // 6 meses de gasto
+  const meses = [];
+  for (let i = 5; i >= 0; i--) {
+    const d = new Date(); d.setMonth(d.getMonth() - i);
+    meses.push(d.toISOString().slice(0, 7));
+  }
+  const gastosMes = meses.map(m => {
+    const items = bitacora.filter(b => (b.fecha || "").startsWith(m));
+    return {
+      mes: m,
+      comb: items.filter(b => b.tipo === "combustible").reduce((s, b) => s + Number(b.costo_total || 0), 0),
+      mant: items.filter(b => ["mantenimiento", "reparacion"].includes(b.tipo)).reduce((s, b) => s + Number(b.costo_total || 0), 0),
+    };
+  });
+  const maxGasto = Math.max(1, ...gastosMes.map(g => g.comb + g.mant));
+
+  const recientes = bitacora.slice(0, 5);
+  const proximoServicio = bitacora.find(b => b.proximo_servicio_fecha || b.proximo_servicio_h);
+
+  return (
+    <div>
+      <div style={{ background: B.navyMid, borderRadius: 12, padding: 16, marginBottom: 16 }}>
+        <div style={{ fontWeight: 700, marginBottom: 12, fontSize: 13 }}>Gasto últimos 6 meses</div>
+        <div style={{ display: "flex", alignItems: "flex-end", gap: 8, height: 160 }}>
+          {gastosMes.map(g => {
+            const altoComb = maxGasto ? (g.comb / maxGasto) * 120 : 0;
+            const altoMant = maxGasto ? (g.mant / maxGasto) * 120 : 0;
+            return (
+              <div key={g.mes} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
+                <div style={{ display: "flex", flexDirection: "column-reverse", width: "100%", maxWidth: 40, height: 130, alignItems: "stretch" }}>
+                  <div style={{ background: B.warning, height: altoComb, minHeight: g.comb > 0 ? 3 : 0 }} title={"Combustible: " + fmtCOP(g.comb)} />
+                  <div style={{ background: B.sky, height: altoMant, minHeight: g.mant > 0 ? 3 : 0 }} title={"Mant.: " + fmtCOP(g.mant)} />
+                </div>
+                <div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)" }}>{g.mes.slice(5)}</div>
+                <div style={{ fontSize: 10, fontWeight: 700 }}>{fmtCOP(g.comb + g.mant)}</div>
+              </div>
+            );
+          })}
+        </div>
+        <div style={{ display: "flex", gap: 14, marginTop: 10, fontSize: 11, color: "rgba(255,255,255,0.6)" }}>
+          <span>▪ <span style={{ color: B.warning }}>Combustible</span></span>
+          <span>▪ <span style={{ color: B.sky }}>Mantenimiento</span></span>
+        </div>
+      </div>
+
+      {proximoServicio && (
+        <div style={{ background: B.sky + "15", border: `1px solid ${B.sky}40`, borderRadius: 10, padding: 14, marginBottom: 16, fontSize: 13 }}>
+          <div style={{ fontSize: 11, color: B.sky, fontWeight: 700, textTransform: "uppercase", marginBottom: 4 }}>🔔 Próximo servicio</div>
+          <div>
+            {proximoServicio.proximo_servicio_fecha && `Fecha: ${fmtFecha(proximoServicio.proximo_servicio_fecha)}`}
+            {proximoServicio.proximo_servicio_fecha && proximoServicio.proximo_servicio_h && " · "}
+            {proximoServicio.proximo_servicio_h && `${proximoServicio.proximo_servicio_h} h motor`}
+          </div>
+        </div>
+      )}
+
+      <div style={{ fontWeight: 700, marginBottom: 10, fontSize: 13 }}>Últimos registros</div>
+      {recientes.length === 0 ? (
+        <div style={{ padding: 20, background: B.navyMid, borderRadius: 10, textAlign: "center", fontSize: 12, color: "rgba(255,255,255,0.3)" }}>
+          Sin registros todavía.
+        </div>
+      ) : (
+        <div style={{ background: B.navyMid, borderRadius: 10, overflow: "hidden" }}>
+          {recientes.map(r => <EventoRow key={r.id} item={r} compact />)}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Lista de eventos ──────────────────────────────────────────────────────
+function ListaEventos({ items, onEdit, onDelete, onToggleResuelto }) {
+  if (!items.length) {
+    return (
+      <div style={{ padding: 30, background: B.navyMid, borderRadius: 10, textAlign: "center", fontSize: 13, color: "rgba(255,255,255,0.3)" }}>
+        Sin registros.
+      </div>
+    );
+  }
+  return (
+    <div style={{ background: B.navyMid, borderRadius: 10, overflow: "hidden" }}>
+      {items.map(r => <EventoRow key={r.id} item={r} onEdit={onEdit} onDelete={onDelete} onToggleResuelto={onToggleResuelto} />)}
+    </div>
+  );
+}
+
+function EventoRow({ item, onEdit, onDelete, onToggleResuelto, compact }) {
+  const tipo = TIPOS.find(t => t.k === item.tipo) || TIPOS[TIPOS.length - 1];
+  const sev = item.severidad ? SEVERIDADES.find(s => s.k === item.severidad) : null;
+  return (
+    <div style={{ padding: compact ? "9px 14px" : "12px 14px", borderBottom: "1px solid rgba(255,255,255,0.04)", display: "flex", alignItems: "flex-start", gap: 12, fontSize: 13 }}>
+      <div style={{ minWidth: 80, fontSize: 11, color: "rgba(255,255,255,0.5)" }}>
+        <div style={{ fontWeight: 700 }}>{fmtFechaCorta(item.fecha)}</div>
+        {item.hora && <div>{fmtHora(item.hora)}</div>}
+      </div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 4, background: tipo.c + "33", color: tipo.c, fontWeight: 700 }}>
+            {tipo.l}
+          </span>
+          {sev && (
+            <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 4, background: sev.c + "33", color: sev.c, fontWeight: 700 }}>
+              {sev.l}
+            </span>
+          )}
+          {item.subtipo && <span style={{ fontSize: 11, color: "rgba(255,255,255,0.5)" }}>{item.subtipo}</span>}
+          {item.tipo === "incidente" && (
+            <span style={{ fontSize: 10, padding: "2px 6px", borderRadius: 4, background: item.resuelto ? B.success + "33" : B.danger + "33", color: item.resuelto ? B.success : B.danger, fontWeight: 700, cursor: onToggleResuelto ? "pointer" : "default" }}
+              onClick={() => onToggleResuelto && onToggleResuelto(item)}>
+              {item.resuelto ? "✓ Resuelto" : "⏳ Abierto"}
+            </span>
+          )}
+        </div>
+        {item.descripcion && <div style={{ marginTop: 4, fontSize: 12 }}>{item.descripcion}</div>}
+        <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginTop: 4, display: "flex", gap: 10, flexWrap: "wrap" }}>
+          {item.galones && <span>⛽ {Number(item.galones).toFixed(1)} gal</span>}
+          {item.precio_galon && <span>· ${Math.round(item.precio_galon).toLocaleString("es-CO")}/gal</span>}
+          {item.costo_total && <span>· <strong style={{ color: B.success }}>{fmtCOP(item.costo_total)}</strong></span>}
+          {item.kilometraje_h && <span>· ⏱ {item.kilometraje_h}h</span>}
+          {item.proveedor && <span>· {item.proveedor}</span>}
+          {item.capitan && <span>· 👨‍✈️ {item.capitan}</span>}
+        </div>
+        {item.notas && <div style={{ fontSize: 11, color: "rgba(255,255,255,0.45)", marginTop: 4, fontStyle: "italic" }}>{item.notas}</div>}
+        {(item.foto_url || item.factura_url) && (
+          <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
+            {item.foto_url && <a href={item.foto_url} target="_blank" rel="noreferrer" style={{ fontSize: 11, color: B.sky, textDecoration: "none" }}>📷 Foto</a>}
+            {item.factura_url && <a href={item.factura_url} target="_blank" rel="noreferrer" style={{ fontSize: 11, color: B.sky, textDecoration: "none" }}>🧾 Factura</a>}
+          </div>
+        )}
+      </div>
+      {!compact && onEdit && (
+        <div style={{ display: "flex", gap: 6 }}>
+          <button onClick={() => onEdit(item)} style={{ background: "transparent", border: "none", color: "rgba(255,255,255,0.4)", fontSize: 14, cursor: "pointer" }}>✏️</button>
+          <button onClick={() => onDelete(item.id)} style={{ background: "transparent", border: "none", color: "rgba(255,255,255,0.3)", fontSize: 14, cursor: "pointer" }}>✕</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Lista de viajes (desde muelle_zarpes_flota) ───────────────────────────
+function ListaViajes({ viajes }) {
+  if (!viajes.length) {
+    return (
+      <div style={{ padding: 30, background: B.navyMid, borderRadius: 10, textAlign: "center", fontSize: 13, color: "rgba(255,255,255,0.3)" }}>
+        Sin viajes registrados.
+        <div style={{ fontSize: 11, marginTop: 6 }}>Los viajes se registran desde el módulo Salidas.</div>
+      </div>
+    );
+  }
+  return (
+    <div style={{ background: B.navyMid, borderRadius: 10, overflow: "hidden" }}>
+      {viajes.map(v => (
+        <div key={v.id} style={{ padding: "10px 14px", borderBottom: "1px solid rgba(255,255,255,0.04)", display: "flex", alignItems: "center", gap: 10, fontSize: 13 }}>
+          <div style={{ minWidth: 80, fontSize: 11, color: "rgba(255,255,255,0.5)" }}>
+            <div style={{ fontWeight: 700 }}>{fmtFechaCorta(v.fecha)}</div>
+            <div>{fmtHora(v.hora_zarpe)}</div>
+          </div>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontWeight: 700 }}>→ {v.destino || "Cartagena"}</div>
+            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)" }}>
+              {v.motivo}{(v.pax_a + v.pax_n) > 0 ? ` · 👥 ${v.pax_a}A${v.pax_n ? ` + ${v.pax_n}N` : ""}` : ""}
+              {v.notas ? ` · ${v.notas}` : ""}
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ─── Modal nuevo/editar evento ─────────────────────────────────────────────
+function EventoModal({ tipo: tipoInicial, edit, onClose, onSave, capitanDefault }) {
+  const [f, setF] = useState({
+    id: edit?.id || null,
+    tipo: edit?.tipo || tipoInicial,
+    subtipo: edit?.subtipo || "",
+    fecha: edit?.fecha || todayStr(),
+    hora: edit?.hora?.slice(0, 5) || new Date().toTimeString().slice(0, 5),
+    descripcion: edit?.descripcion || "",
+    galones: edit?.galones || "",
+    precio_galon: edit?.precio_galon || "",
+    costo_total: edit?.costo_total || "",
+    kilometraje_h: edit?.kilometraje_h || "",
+    proveedor: edit?.proveedor || "",
+    taller: edit?.taller || "",
+    proximo_servicio_h: edit?.proximo_servicio_h || "",
+    proximo_servicio_fecha: edit?.proximo_servicio_fecha || "",
+    severidad: edit?.severidad || "leve",
+    resuelto: !!edit?.resuelto,
+    capitan: edit?.capitan || capitanDefault || "",
+    notas: edit?.notas || "",
+    foto_url: edit?.foto_url || "",
+    factura_url: edit?.factura_url || "",
+  });
+  const [saving, setSaving] = useState(false);
+  const [uploading, setUploading] = useState("");
+  const [err, setErr] = useState("");
+  const set = (k, v) => setF(p => ({ ...p, [k]: v }));
+
+  // Auto-calcular costo_total si hay galones + precio_galon y costo está vacío
+  useEffect(() => {
+    if (f.tipo === "combustible" && f.galones && f.precio_galon && !edit) {
+      const calc = Number(f.galones) * Number(f.precio_galon);
+      if (calc && !f.costo_total) set("costo_total", Math.round(calc));
+    }
+  }, [f.galones, f.precio_galon]); // eslint-disable-line
+
+  async function handleFile(e, campo) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploading(campo); setErr("");
+    try {
+      const safe = file.name.replace(/[^\w.\-]/g, "_");
+      const path = `${Date.now()}_${safe}`;
+      const { error } = await supabase.storage.from("lanchas").upload(path, file, { upsert: true });
+      if (error) throw error;
+      const { data: pub } = supabase.storage.from("lanchas").getPublicUrl(path);
+      set(campo, pub.publicUrl);
+    } catch (e) { setErr(e.message); }
+    finally { setUploading(""); }
+  }
+
+  async function handleSave() {
+    setSaving(true); setErr("");
+    const error = await onSave(f);
+    setSaving(false);
+    if (error) setErr(error.message || "Error al guardar");
+  }
+
+  const esCombustible = f.tipo === "combustible";
+  const esMantenimiento = ["mantenimiento", "reparacion", "inspeccion", "limpieza"].includes(f.tipo);
+  const esIncidente = f.tipo === "incidente";
+
+  return (
+    <Overlay onClose={onClose}>
+      <div style={{ fontSize: 18, fontWeight: 800, marginBottom: 16 }}>
+        {edit ? "Editar registro" : "Nuevo registro"}
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+        <div style={{ gridColumn: "1 / -1" }}>
+          <label style={LS}>Tipo</label>
+          <select value={f.tipo} onChange={e => set("tipo", e.target.value)} style={IS}>
+            {TIPOS.filter(t => t.k !== "viaje").map(t => <option key={t.k} value={t.k}>{t.l}</option>)}
+          </select>
+        </div>
+        <div><label style={LS}>Fecha</label><input type="date" value={f.fecha} onChange={e => set("fecha", e.target.value)} style={IS} /></div>
+        <div><label style={LS}>Hora</label><input type="time" value={f.hora} onChange={e => set("hora", e.target.value)} style={IS} /></div>
+
+        {/* Combustible */}
+        {esCombustible && (
+          <>
+            <div><label style={LS}>Galones</label><input type="number" step="0.1" value={f.galones} onChange={e => set("galones", e.target.value)} style={IS} /></div>
+            <div><label style={LS}>Precio / galón</label><input type="number" value={f.precio_galon} onChange={e => set("precio_galon", e.target.value)} style={IS} /></div>
+            <div><label style={LS}>Costo total</label><input type="number" value={f.costo_total} onChange={e => set("costo_total", e.target.value)} style={IS} /></div>
+            <div><label style={LS}>Horas motor (opcional)</label><input type="number" step="0.1" value={f.kilometraje_h} onChange={e => set("kilometraje_h", e.target.value)} style={IS} /></div>
+            <div style={{ gridColumn: "1 / -1" }}>
+              <label style={LS}>Estación / proveedor</label>
+              <input value={f.proveedor} onChange={e => set("proveedor", e.target.value)} placeholder="Ej: Terpel, Mobil, particular…" style={IS} />
+            </div>
+          </>
+        )}
+
+        {/* Mantenimiento */}
+        {esMantenimiento && (
+          <>
+            <div><label style={LS}>Subtipo</label>
+              <select value={f.subtipo} onChange={e => set("subtipo", e.target.value)} style={IS}>
+                <option value="">—</option>
+                <option value="cambio_aceite">Cambio de aceite</option>
+                <option value="filtros">Filtros</option>
+                <option value="motor">Motor</option>
+                <option value="helice">Hélice</option>
+                <option value="bateria">Batería</option>
+                <option value="electronico">Sistema eléctrico</option>
+                <option value="casco">Casco / pintura</option>
+                <option value="tanque">Tanque</option>
+                <option value="otro">Otro</option>
+              </select>
+            </div>
+            <div><label style={LS}>Costo total</label><input type="number" value={f.costo_total} onChange={e => set("costo_total", e.target.value)} style={IS} /></div>
+            <div><label style={LS}>Taller / proveedor</label><input value={f.taller || f.proveedor} onChange={e => { set("taller", e.target.value); set("proveedor", e.target.value); }} style={IS} /></div>
+            <div><label style={LS}>Horas motor</label><input type="number" value={f.kilometraje_h} onChange={e => set("kilometraje_h", e.target.value)} style={IS} /></div>
+            <div><label style={LS}>Próximo servicio (horas)</label><input type="number" value={f.proximo_servicio_h} onChange={e => set("proximo_servicio_h", e.target.value)} style={IS} /></div>
+            <div><label style={LS}>Próximo servicio (fecha)</label><input type="date" value={f.proximo_servicio_fecha} onChange={e => set("proximo_servicio_fecha", e.target.value)} style={IS} /></div>
+          </>
+        )}
+
+        {/* Incidente */}
+        {esIncidente && (
+          <>
+            <div><label style={LS}>Severidad</label>
+              <select value={f.severidad} onChange={e => set("severidad", e.target.value)} style={IS}>
+                {SEVERIDADES.map(s => <option key={s.k} value={s.k}>{s.l}</option>)}
+              </select>
+            </div>
+            <div style={{ display: "flex", alignItems: "center" }}>
+              <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, cursor: "pointer", marginTop: 20 }}>
+                <input type="checkbox" checked={f.resuelto} onChange={e => set("resuelto", e.target.checked)} />
+                Marcar como resuelto
+              </label>
+            </div>
+          </>
+        )}
+
+        <div style={{ gridColumn: "1 / -1" }}>
+          <label style={LS}>Descripción</label>
+          <textarea value={f.descripcion} onChange={e => set("descripcion", e.target.value)} style={{ ...IS, minHeight: 70, resize: "vertical" }} />
+        </div>
+        <div><label style={LS}>Capitán</label><input value={f.capitan} onChange={e => set("capitan", e.target.value)} style={IS} /></div>
+        <div><label style={LS}>Notas</label><input value={f.notas} onChange={e => set("notas", e.target.value)} style={IS} /></div>
+
+        {/* Archivos */}
+        <div>
+          <label style={LS}>Foto</label>
+          {f.foto_url ? (
+            <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+              <a href={f.foto_url} target="_blank" rel="noreferrer" style={{ color: B.sky, fontSize: 11 }}>Ver foto</a>
+              <button onClick={() => set("foto_url", "")} style={{ ...BTN(B.danger), padding: "3px 8px", fontSize: 10 }}>Quitar</button>
+            </div>
+          ) : (
+            <input type="file" accept="image/*" onChange={e => handleFile(e, "foto_url")} disabled={uploading === "foto_url"} style={{ color: "#fff", fontSize: 11 }} />
+          )}
+        </div>
+        <div>
+          <label style={LS}>Factura</label>
+          {f.factura_url ? (
+            <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+              <a href={f.factura_url} target="_blank" rel="noreferrer" style={{ color: B.sky, fontSize: 11 }}>Ver factura</a>
+              <button onClick={() => set("factura_url", "")} style={{ ...BTN(B.danger), padding: "3px 8px", fontSize: 10 }}>Quitar</button>
+            </div>
+          ) : (
+            <input type="file" accept="image/*,application/pdf" onChange={e => handleFile(e, "factura_url")} disabled={uploading === "factura_url"} style={{ color: "#fff", fontSize: 11 }} />
+          )}
+        </div>
+      </div>
+
+      {err && <div style={{ marginTop: 12, padding: 10, background: "rgba(239,68,68,0.15)", color: B.danger, borderRadius: 8, fontSize: 12 }}>{err}</div>}
+
+      <div style={{ display: "flex", gap: 10, marginTop: 18, justifyContent: "flex-end" }}>
+        <button onClick={onClose} style={BTN(B.navyLight)}>Cancelar</button>
+        <button onClick={handleSave} disabled={saving || uploading} style={BTN(B.success)}>
+          {saving ? "Guardando…" : (edit ? "Guardar cambios" : "Registrar")}
+        </button>
+      </div>
+    </Overlay>
+  );
+}
+
+// ─── Modal configuración de lancha ─────────────────────────────────────────
+function ConfigLanchaModal({ lancha, onClose, onSaved }) {
+  const [f, setF] = useState({
+    matricula: lancha.matricula || "",
+    capacidad_pax: lancha.capacidad_pax || "",
+    capacidad_tanque_gal: lancha.capacidad_tanque_gal || "",
+    motor: lancha.motor || "",
+    modelo: lancha.modelo || "",
+    ano: lancha.ano || "",
+    capitan_default: lancha.capitan_default || "",
+    foto_url: lancha.foto_url || "",
+    notas: lancha.notas || "",
+  });
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState("");
+  const set = (k, v) => setF(p => ({ ...p, [k]: v }));
+
+  async function handleFoto(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const path = `lancha_${lancha.id}_${Date.now()}_${file.name.replace(/[^\w.]/g, "_")}`;
+    const { error } = await supabase.storage.from("lanchas").upload(path, file, { upsert: true });
+    if (error) { setErr(error.message); return; }
+    const { data: pub } = supabase.storage.from("lanchas").getPublicUrl(path);
+    set("foto_url", pub.publicUrl);
+  }
+
+  async function save() {
+    setSaving(true); setErr("");
+    const payload = {
+      ...f,
+      capacidad_pax: f.capacidad_pax ? Number(f.capacidad_pax) : null,
+      capacidad_tanque_gal: f.capacidad_tanque_gal ? Number(f.capacidad_tanque_gal) : null,
+      ano: f.ano ? Number(f.ano) : null,
+      updated_at: new Date().toISOString(),
+    };
+    const r = await supabase.from("lanchas").update(payload).eq("id", lancha.id);
+    setSaving(false);
+    if (r.error) { setErr(r.error.message); return; }
+    onSaved();
+  }
+
+  return (
+    <Overlay onClose={onClose}>
+      <div style={{ fontSize: 18, fontWeight: 800, marginBottom: 16 }}>⚙ Configuración — {lancha.nombre}</div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+        <div><label style={LS}>Matrícula</label><input value={f.matricula} onChange={e => set("matricula", e.target.value)} style={IS} /></div>
+        <div><label style={LS}>Capacidad (pax)</label><input type="number" value={f.capacidad_pax} onChange={e => set("capacidad_pax", e.target.value)} style={IS} /></div>
+        <div><label style={LS}>Tanque (gal)</label><input type="number" value={f.capacidad_tanque_gal} onChange={e => set("capacidad_tanque_gal", e.target.value)} style={IS} /></div>
+        <div><label style={LS}>Año</label><input type="number" value={f.ano} onChange={e => set("ano", e.target.value)} style={IS} /></div>
+        <div><label style={LS}>Motor</label><input value={f.motor} onChange={e => set("motor", e.target.value)} placeholder="Ej: Yamaha 200HP" style={IS} /></div>
+        <div><label style={LS}>Modelo</label><input value={f.modelo} onChange={e => set("modelo", e.target.value)} style={IS} /></div>
+        <div style={{ gridColumn: "1 / -1" }}><label style={LS}>Capitán principal</label><input value={f.capitan_default} onChange={e => set("capitan_default", e.target.value)} style={IS} /></div>
+        <div style={{ gridColumn: "1 / -1" }}>
+          <label style={LS}>Foto</label>
+          {f.foto_url && <img src={f.foto_url} alt="" style={{ width: 120, height: 90, objectFit: "cover", borderRadius: 8, marginBottom: 6, display: "block" }} />}
+          <input type="file" accept="image/*" onChange={handleFoto} style={{ color: "#fff", fontSize: 11 }} />
+        </div>
+        <div style={{ gridColumn: "1 / -1" }}>
+          <label style={LS}>Notas</label>
+          <textarea value={f.notas} onChange={e => set("notas", e.target.value)} style={{ ...IS, minHeight: 60, resize: "vertical" }} />
+        </div>
+      </div>
+
+      {err && <div style={{ marginTop: 12, padding: 10, background: "rgba(239,68,68,0.15)", color: B.danger, borderRadius: 8, fontSize: 12 }}>{err}</div>}
+
+      <div style={{ display: "flex", gap: 10, marginTop: 16, justifyContent: "flex-end" }}>
+        <button onClick={onClose} style={BTN(B.navyLight)}>Cancelar</button>
+        <button onClick={save} disabled={saving} style={BTN(B.sky, B.navy)}>
+          {saving ? "Guardando…" : "Guardar"}
+        </button>
+      </div>
+    </Overlay>
+  );
+}
+
+function Overlay({ children, onClose }) {
+  return (
+    <div onClick={onClose} style={{
+      position: "fixed", inset: 0, background: "rgba(0,0,0,0.65)", zIndex: 1000,
+      display: "flex", alignItems: "flex-start", justifyContent: "center", padding: 20, overflowY: "auto",
+    }}>
+      <div onClick={e => e.stopPropagation()} style={{
+        background: B.navyMid, borderRadius: 14, padding: 22, width: "100%", maxWidth: 720,
+        marginTop: 40, boxShadow: "0 20px 60px rgba(0,0,0,0.5)",
+      }}>
+        {children}
+      </div>
     </div>
   );
 }
