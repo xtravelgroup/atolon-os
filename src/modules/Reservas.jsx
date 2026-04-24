@@ -3736,10 +3736,35 @@ export default function Reservas() {
           const escape = (s) => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
           const estadoLabel = (e) => e === "check_in" ? "Check-in" : e === "confirmado" ? "Confirmado" : e === "pendiente_pago" ? "Pendiente pago" : e || "—";
 
-          const salidasHTML = salidasOrdenadas.map(salKey => {
-            const rows = porSalida[salKey];
+          // Agrupar los grupos por su salida_id (del primer slot de salidas_grupo)
+          const gruposPorSalida = {};
+          const gruposSinSalida = [];
+          grupos.forEach(g => {
+            const sgId = g.salidas_grupo?.[0]?.id;
+            const sal = salidas.find(s => s.id === sgId);
+            if (sal) {
+              const key = `${sal.hora} — ${sal.nombre}`;
+              if (!gruposPorSalida[key]) gruposPorSalida[key] = [];
+              gruposPorSalida[key].push(g);
+              // Asegurar que la key existe en porSalida aunque no tenga reservas individuales
+              if (!porSalida[key]) porSalida[key] = [];
+            } else {
+              gruposSinSalida.push(g);
+            }
+          });
+          // Re-ordenar por si agregamos salidas que no estaban
+          const salidasFinales = [...new Set([...salidasOrdenadas, ...Object.keys(gruposPorSalida)])].sort();
+
+          const salidasHTML = salidasFinales.map(salKey => {
+            const rows = porSalida[salKey] || [];
+            const gs = gruposPorSalida[salKey] || [];
             const paxSal = rows.reduce((s, r) => s + (r.pax || 0), 0);
-            const rowsHTML = rows.map(r => `
+            const paxGrp = gs.reduce((s, g) => s + grupoPaxTotal(g, reservas), 0);
+            const totalPax = paxSal + paxGrp;
+            const totalRows = rows.length + gs.length;
+
+            // Primero las reservas individuales
+            const rowsIndiv = rows.map(r => `
               <tr>
                 <td style="font-weight:600">${escape(r.nombre)}</td>
                 <td>${escape(r.tipo)}</td>
@@ -3747,9 +3772,23 @@ export default function Reservas() {
                 <td style="color:${r.notas_club ? "#7C3AED" : "#9CA3AF"};font-style:${r.notas_club ? "normal" : "italic"};font-size:11px;">${r.notas_club ? escape(r.notas_club) : "—"}</td>
               </tr>
             `).join("");
+
+            // Después los grupos con color morado
+            const rowsGrupos = gs.map(g => {
+              const pax = grupoPaxTotal(g, reservas);
+              return `
+              <tr style="background:rgba(167,139,250,0.10);">
+                <td style="font-weight:700;color:#6D28D9;">👥 ${escape(g.nombre)}</td>
+                <td style="color:#6D28D9;font-weight:600;">GRUPO</td>
+                <td style="text-align:center;color:#6D28D9;font-weight:700;">${pax}</td>
+                <td style="color:#6D28D9;font-size:11px;">${escape(g.stage || "")}</td>
+              </tr>
+            `;
+            }).join("");
+
             return `
               <div class="section">
-                <div class="section-title">${escape(salKey)} <span class="count">${rows.length} reservas · ${paxSal} pax</span></div>
+                <div class="section-title">${escape(salKey)} <span class="count">${totalRows} items · ${totalPax} pax</span></div>
                 <table>
                   <thead><tr>
                     <th style="width:30%">Nombre</th>
@@ -3757,28 +3796,27 @@ export default function Reservas() {
                     <th style="width:10%;text-align:center">Pax</th>
                     <th style="width:42%">Notas Club</th>
                   </tr></thead>
-                  <tbody>${rowsHTML}</tbody>
+                  <tbody>${rowsIndiv}${rowsGrupos}</tbody>
                 </table>
               </div>
             `;
           }).join("");
 
-          const gruposHTML = grupos.length > 0 ? `
+          // Grupos que no pudieron asignarse a una salida (raro)
+          const gruposHTML = gruposSinSalida.length > 0 ? `
             <div class="section">
-              <div class="section-title grupos">GRUPOS <span class="count">${grupos.length}</span></div>
+              <div class="section-title grupos">GRUPOS SIN SALIDA ASIGNADA <span class="count">${gruposSinSalida.length}</span></div>
               <table>
                 <thead><tr>
-                  <th style="width:50%">Nombre</th>
-                  <th style="width:15%;text-align:center">Pax</th>
+                  <th style="width:60%">Nombre</th>
+                  <th style="width:20%;text-align:center">Pax</th>
                   <th style="width:20%">Stage</th>
-                  <th style="width:15%">Fecha</th>
                 </tr></thead>
                 <tbody>
-                  ${grupos.map(g => `<tr>
+                  ${gruposSinSalida.map(g => `<tr>
                     <td style="font-weight:600">${escape(g.nombre)}</td>
                     <td style="text-align:center">${grupoPaxTotal(g, reservas)}</td>
                     <td>${escape(g.stage || "—")}</td>
-                    <td>${escape(g.fecha || "—")}</td>
                   </tr>`).join("")}
                 </tbody>
               </table>
