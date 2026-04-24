@@ -46,13 +46,14 @@ export default function HotelRoomService() {
   const [huesped, setHuesped] = useState("");
   const [notas, setNotas] = useState("");
   const [filtroCat, setFiltroCat] = useState("");
+  const [filtroTipo, setFiltroTipo] = useState(""); // "" | "restaurant" | "bebidas"
   const [tab, setTab] = useState("nuevo"); // nuevo | pedidos | menu
 
   const load = async () => {
     setLoading(true);
     const [{ data: hData }, { data: iData }, { data: pData }] = await Promise.all([
       supabase.from("hotel_habitaciones").select("*").eq("estado", "activa").order("numero"),
-      supabase.from("menu_items").select("id, nombre, descripcion, precio, categoria, menu_tipo").eq("menu_tipo", "restaurant").eq("activo", true).order("categoria").order("orden"),
+      supabase.from("menu_items").select("id, nombre, descripcion, precio, categoria, menu_tipo").in("menu_tipo", ["restaurant", "bebidas"]).eq("activo", true).order("categoria").order("orden"),
       supabase.from("hotel_room_service_pedidos").select("*").order("created_at", { ascending: false }).limit(100),
     ]);
     setHabs(hData || []);
@@ -102,17 +103,23 @@ export default function HotelRoomService() {
     return () => { supabase.removeChannel(channel); };
   }, []);
 
+  // Items filtrados por tipo (comida/bebidas) y luego categoría
+  const itemsPorTipo = useMemo(() => filtroTipo ? items.filter(i => i.menu_tipo === filtroTipo) : items, [items, filtroTipo]);
+
   const itemsFiltrados = useMemo(() => {
-    const base = filtroCat ? items.filter(i => i.categoria === filtroCat) : items;
+    const base = filtroCat ? itemsPorTipo.filter(i => i.categoria === filtroCat) : itemsPorTipo;
     return [...base].sort((a, b) => {
       const ra = catRank(a.categoria), rb = catRank(b.categoria);
       if (ra !== rb) return ra - rb;
       if ((a.categoria || "") !== (b.categoria || "")) return (a.categoria || "").localeCompare(b.categoria || "");
       return (a.orden || 0) - (b.orden || 0) || (a.nombre || "").localeCompare(b.nombre || "");
     });
-  }, [items, filtroCat]);
+  }, [itemsPorTipo, filtroCat]);
 
-  const cats = useMemo(() => sortCats(Array.from(new Set(items.map(i => i.categoria).filter(Boolean)))), [items]);
+  const cats = useMemo(() => sortCats(Array.from(new Set(itemsPorTipo.map(i => i.categoria).filter(Boolean)))), [itemsPorTipo]);
+
+  const nComida  = items.filter(i => i.menu_tipo === "restaurant").length;
+  const nBebidas = items.filter(i => i.menu_tipo === "bebidas").length;
 
   const addAlCarrito = (it) => {
     setCarrito(prev => {
@@ -308,13 +315,39 @@ export default function HotelRoomService() {
               )}
             </div>
 
-            {/* Filtro categorías */}
+            {/* Tabs Comida / Bebidas */}
+            <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+              {[
+                { k: "",            l: "Todos",   icon: "", n: items.length },
+                { k: "restaurant",  l: "Comida",  icon: "🍽️", n: nComida },
+                { k: "bebidas",     l: "Bebidas", icon: "🥂", n: nBebidas },
+              ].map(t => {
+                const active = filtroTipo === t.k;
+                return (
+                  <button key={t.k || "all"} onClick={() => { setFiltroTipo(t.k); setFiltroCat(""); }}
+                    style={{
+                      flex: 1, padding: "11px 14px", borderRadius: 10,
+                      border: `1.5px solid ${active ? B.hotel : B.navyLight}`,
+                      background: active ? `${B.hotel}22` : "transparent",
+                      color: active ? B.hotel : "rgba(255,255,255,0.7)",
+                      cursor: "pointer", fontSize: 14, fontWeight: 700,
+                      display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+                    }}>
+                    {t.icon && <span style={{ fontSize: 18 }}>{t.icon}</span>}
+                    <span>{t.l}</span>
+                    <span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", fontWeight: 500 }}>({t.n})</span>
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Filtro subcategorías */}
             <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 12 }}>
               <button onClick={() => setFiltroCat("")}
                 style={{ padding: "6px 12px", borderRadius: 20, border: `1px solid ${filtroCat === "" ? B.hotel : B.navyLight}`,
                   background: filtroCat === "" ? `${B.hotel}22` : "transparent", color: filtroCat === "" ? B.hotel : "rgba(255,255,255,0.5)",
                   cursor: "pointer", fontSize: 11, fontWeight: 700 }}>
-                Todos ({items.length})
+                Todas ({itemsPorTipo.length})
               </button>
               {cats.map(c => (
                 <button key={c} onClick={() => setFiltroCat(c)}
