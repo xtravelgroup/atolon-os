@@ -75,7 +75,7 @@ Reglas:
       },
       body: JSON.stringify({
         model: "claude-3-5-haiku-20241022",
-        max_tokens: 2048,
+        max_tokens: 4096,
         messages: [{ role: "user", content: prompt }],
       }),
     });
@@ -83,12 +83,55 @@ Reglas:
     const data = await res.json();
     const text = data.content?.[0]?.text ?? "";
 
-    const match = text.match(/\{[\s\S]*\}/);
-    if (!match) {
-      return new Response(JSON.stringify({ ok: false, error: "Respuesta no parseable", raw: text }), { status: 422, headers: corsHeaders });
+    // Intentar parsear JSON de varias formas:
+    // 1. Si viene dentro de ```json ... ```, extraer
+    // 2. Si es JSON directo
+    // 3. Match del primer { y último } balanceados
+    let jsonStr = "";
+    const blockMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+    if (blockMatch) {
+      jsonStr = blockMatch[1].trim();
+    } else {
+      const firstBrace = text.indexOf("{");
+      const lastBrace = text.lastIndexOf("}");
+      if (firstBrace >= 0 && lastBrace > firstBrace) {
+        jsonStr = text.slice(firstBrace, lastBrace + 1);
+      }
     }
 
-    const result = JSON.parse(match[0]);
+    if (!jsonStr) {
+      return new Response(JSON.stringify({
+        ok: false,
+        error: "Respuesta sin JSON detectable",
+        raw: text.slice(0, 500),
+        stop_reason: data.stop_reason,
+      }), { status: 422, headers: corsHeaders });
+    }
+
+    let result;
+    try {
+      result = JSON.parse(jsonStr);
+    } catch (parseErr) {
+      // Si la respuesta fue truncada (max_tokens), intentar arreglar cerrando brackets
+      let fixed = jsonStr.replace(/,\s*$/, "");
+      // Contar llaves/corchetes abiertos
+      const opens = (fixed.match(/\{/g) || []).length;
+      const closes = (fixed.match(/\}/g) || []).length;
+      const opensArr = (fixed.match(/\[/g) || []).length;
+      const closesArr = (fixed.match(/\]/g) || []).length;
+      for (let i = 0; i < opensArr - closesArr; i++) fixed += "]";
+      for (let i = 0; i < opens - closes; i++) fixed += "}";
+      try {
+        result = JSON.parse(fixed);
+      } catch {
+        return new Response(JSON.stringify({
+          ok: false,
+          error: "JSON malformado: " + parseErr.message,
+          raw: text.slice(0, 500),
+          stop_reason: data.stop_reason,
+        }), { status: 422, headers: corsHeaders });
+      }
+    }
     return new Response(JSON.stringify({ ok: true, ...result }), {
       headers: { ...corsHeaders, "content-type": "application/json" }
     });
