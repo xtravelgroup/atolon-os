@@ -170,12 +170,14 @@ export default function MuelleSalidas() {
   const [salidas,  setSalidas]  = useState([]);
   const [reservas, setReservas] = useState([]);
   const [zarpos,   setZarpos]   = useState({}); // { salida_id: hora_real }
+  const [zarpesFlota, setZarpesFlota] = useState([]); // zarpes de Castillete/Naturalle
   const [loading,  setLoading]  = useState(false);
+  const [modalZarpe, setModalZarpe] = useState(null); // { embarcacion }
 
   const fetchData = useCallback(async () => {
     if (!supabase) return;
     setLoading(true);
-    const [{ data: sals }, { data: res }, { data: zrps }] = await Promise.all([
+    const [{ data: sals }, { data: res }, { data: zrps }, { data: zfl }] = await Promise.all([
       supabase.from("salidas").select("id, nombre, hora, hora_regreso, activo").eq("activo", true).order("hora"),
       supabase.from("reservas")
         .select("id, nombre, salida_id, pax, pax_a, pax_n, estado, canal, aliado_id, checkin_at, embarcacion_asignada")
@@ -183,6 +185,7 @@ export default function MuelleSalidas() {
         .neq("estado", "cancelado")
         .order("nombre"),
       supabase.from("muelle_salidas").select("salida_id, hora_real, estado").eq("fecha", fecha).eq("estado", "zarpo"),
+      supabase.from("muelle_zarpes_flota").select("*").eq("fecha", fecha).order("hora_zarpe"),
     ]);
     setSalidas(sals || []);
     setReservas(res || []);
@@ -190,10 +193,38 @@ export default function MuelleSalidas() {
     const zm = {};
     (zrps || []).forEach(z => { zm[z.salida_id] = z.hora_real || true; });
     setZarpos(zm);
+    setZarpesFlota(zfl || []);
     setLoading(false);
   }, [fecha]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
+
+  const guardarZarpeFlota = async (data) => {
+    if (!supabase) return;
+    const id = `ZF-${Date.now().toString(36).toUpperCase()}`;
+    const { error } = await supabase.from("muelle_zarpes_flota").insert({
+      id,
+      fecha,
+      embarcacion: data.embarcacion,
+      hora_zarpe: data.hora_zarpe || new Date().toTimeString().slice(0, 8),
+      motivo: data.motivo,
+      pax_a: Number(data.pax_a) || 0,
+      pax_n: Number(data.pax_n) || 0,
+      notas: data.notas || null,
+    });
+    if (!error) {
+      setModalZarpe(null);
+      fetchData();
+    }
+    return error;
+  };
+
+  const borrarZarpeFlota = async (id) => {
+    if (!supabase) return;
+    if (!confirm("¿Eliminar este zarpe?")) return;
+    await supabase.from("muelle_zarpes_flota").delete().eq("id", id);
+    fetchData();
+  };
 
   const marcarZarpo = async (salidaId) => {
     if (!supabase) return;
@@ -278,6 +309,54 @@ export default function MuelleSalidas() {
             />
           ))}
 
+          {/* ═══ Zarpes de flota (Castillete / Naturalle) ═══ */}
+          <div style={{ marginTop: 30, marginBottom: 20 }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12, flexWrap: "wrap", gap: 10 }}>
+              <div>
+                <div style={{ fontSize: 15, fontWeight: 700, color: "#fff", display: "flex", alignItems: "center", gap: 8 }}>
+                  ⛵ Zarpes de flota a Cartagena
+                </div>
+                <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>
+                  Cada vez que Castillete o Naturalle salen de la isla. Pasajeros, tripulación, vacío, provisiones…
+                </div>
+              </div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button onClick={() => setModalZarpe({ embarcacion: "Castillete" })}
+                  style={{ padding: "9px 14px", borderRadius: 10, border: "none", background: B.navyMid, color: "#fff", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>
+                  + Castillete
+                </button>
+                <button onClick={() => setModalZarpe({ embarcacion: "Naturalle" })}
+                  style={{ padding: "9px 14px", borderRadius: 10, border: "none", background: B.navyMid, color: "#fff", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>
+                  + Naturalle
+                </button>
+              </div>
+            </div>
+            {zarpesFlota.length === 0 ? (
+              <div style={{ padding: 20, background: B.navyMid, borderRadius: 10, textAlign: "center", fontSize: 12, color: "rgba(255,255,255,0.3)" }}>
+                Sin zarpes registrados hoy.
+              </div>
+            ) : (
+              <div style={{ background: B.navyMid, borderRadius: 10, overflow: "hidden" }}>
+                {zarpesFlota.map(z => (
+                  <div key={z.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", borderBottom: "1px solid rgba(255,255,255,0.04)", fontSize: 13 }}>
+                    <span style={{ fontSize: 18 }}>⛵</span>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontWeight: 700 }}>{z.embarcacion}</div>
+                      <div style={{ fontSize: 11, color: "rgba(255,255,255,0.45)", display: "flex", gap: 8, flexWrap: "wrap", marginTop: 2 }}>
+                        <span>🕐 {fmtHora(z.hora_zarpe)}</span>
+                        <span>· {z.motivo}</span>
+                        {(z.pax_a + z.pax_n) > 0 && <span>· 👥 {z.pax_a}A{z.pax_n ? ` + ${z.pax_n}N` : ""}</span>}
+                        {z.notas && <span>· {z.notas}</span>}
+                      </div>
+                    </div>
+                    <button onClick={() => borrarZarpeFlota(z.id)}
+                      style={{ background: "transparent", border: "none", color: "rgba(255,255,255,0.3)", fontSize: 14, cursor: "pointer" }}>✕</button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
           {/* Salidas sin reservas (colapsadas) */}
           {salidasVacias.length > 0 && salidasConRes.length > 0 && (
             <div style={{ marginTop: 8 }}>
@@ -293,6 +372,90 @@ export default function MuelleSalidas() {
           )}
         </>
       )}
+
+      {modalZarpe && (
+        <ModalZarpeFlota
+          embarcacion={modalZarpe.embarcacion}
+          onClose={() => setModalZarpe(null)}
+          onSave={guardarZarpeFlota}
+        />
+      )}
+    </div>
+  );
+}
+
+function ModalZarpeFlota({ embarcacion, onClose, onSave }) {
+  const [f, setF] = useState({
+    embarcacion,
+    hora_zarpe: new Date().toTimeString().slice(0, 5),
+    motivo: "pasajeros",
+    pax_a: 0,
+    pax_n: 0,
+    notas: "",
+  });
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState("");
+  const set = (k, v) => setF(p => ({ ...p, [k]: v }));
+
+  async function handleSave() {
+    setSaving(true); setErr("");
+    const error = await onSave(f);
+    setSaving(false);
+    if (error) setErr(error.message || "Error");
+  }
+
+  return (
+    <div onClick={e => e.target === e.currentTarget && onClose()}
+      style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.65)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+      <div style={{ background: B.navyMid, borderRadius: 16, padding: 24, width: 440, maxWidth: "100%" }}>
+        <div style={{ fontSize: 18, fontWeight: 800, marginBottom: 4 }}>⛵ {embarcacion} zarpa a Cartagena</div>
+        <div style={{ fontSize: 11, color: "rgba(255,255,255,0.45)", marginBottom: 16 }}>Registra el viaje a Cartagena.</div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+          <div>
+            <label style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", fontWeight: 600, textTransform: "uppercase", display: "block", marginBottom: 4 }}>Hora zarpe</label>
+            <input type="time" value={f.hora_zarpe} onChange={e => set("hora_zarpe", e.target.value)} style={IS} />
+          </div>
+          <div>
+            <label style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", fontWeight: 600, textTransform: "uppercase", display: "block", marginBottom: 4 }}>Motivo</label>
+            <select value={f.motivo} onChange={e => set("motivo", e.target.value)} style={IS}>
+              <option value="pasajeros">Pasajeros</option>
+              <option value="tripulacion">Tripulación</option>
+              <option value="provisiones">Provisiones</option>
+              <option value="vacio">Vacío</option>
+              <option value="mantenimiento">Mantenimiento</option>
+              <option value="otro">Otro</option>
+            </select>
+          </div>
+          {f.motivo === "pasajeros" && (
+            <>
+              <div>
+                <label style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", fontWeight: 600, textTransform: "uppercase", display: "block", marginBottom: 4 }}>Adultos</label>
+                <input type="number" min="0" value={f.pax_a} onChange={e => set("pax_a", e.target.value)} style={IS} />
+              </div>
+              <div>
+                <label style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", fontWeight: 600, textTransform: "uppercase", display: "block", marginBottom: 4 }}>Niños</label>
+                <input type="number" min="0" value={f.pax_n} onChange={e => set("pax_n", e.target.value)} style={IS} />
+              </div>
+            </>
+          )}
+          <div style={{ gridColumn: "1 / -1" }}>
+            <label style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", fontWeight: 600, textTransform: "uppercase", display: "block", marginBottom: 4 }}>Notas</label>
+            <input value={f.notas} onChange={e => set("notas", e.target.value)} placeholder="Observaciones..." style={IS} />
+          </div>
+        </div>
+
+        {err && <div style={{ marginTop: 12, padding: 10, background: "rgba(239,68,68,0.15)", color: "#ef4444", borderRadius: 8, fontSize: 12 }}>{err}</div>}
+
+        <div style={{ display: "flex", gap: 10, marginTop: 18 }}>
+          <button onClick={onClose} style={{ flex: 1, padding: 11, borderRadius: 10, border: `1px solid ${B.navyLight}`, background: "transparent", color: "rgba(255,255,255,0.5)", cursor: "pointer" }}>
+            Cancelar
+          </button>
+          <button onClick={handleSave} disabled={saving} style={{ flex: 2, padding: 11, borderRadius: 10, border: "none", background: B.success, color: "#fff", fontWeight: 700, cursor: "pointer" }}>
+            {saving ? "Guardando..." : "✓ Registrar zarpe"}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
