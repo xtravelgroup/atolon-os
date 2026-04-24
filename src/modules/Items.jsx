@@ -1810,8 +1810,104 @@ function ConteosTab() {
 
   const fmtDT = (ts) => new Date(ts).toLocaleString("es-CO", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
 
+  // ── Resumen por día: Σ(items contados × locación) consolidado por item_id ──
+  // Para comparar con Loggro (que no separa por depósito). Agrupa todos los
+  // conteos del mismo día y suma el "contado" de cada ítem entre locaciones.
+  const porDia = useMemo(() => {
+    const map = {}; // "YYYY-MM-DD" → { fecha, locs: {loc_id}, items: {item_id: { nombre, unidad, suma_contado, por_loc: {loc_id: cant} }} }
+    conteos.forEach(c => {
+      const fecha = (c.fecha || c.created_at?.slice(0, 10));
+      if (!fecha) return;
+      if (!map[fecha]) map[fecha] = { fecha, locs: new Set(), items: {} };
+      map[fecha].locs.add(c.locacion_id);
+      (c.items || []).forEach(it => {
+        const key = it.item_id;
+        if (!map[fecha].items[key]) {
+          map[fecha].items[key] = { nombre: it.nombre, unidad: it.unidad, suma: 0, por_loc: {} };
+        }
+        const cant = Number(it.contado) || 0;
+        map[fecha].items[key].suma += cant;
+        map[fecha].items[key].por_loc[c.locacion_id] = (map[fecha].items[key].por_loc[c.locacion_id] || 0) + cant;
+      });
+    });
+    return Object.values(map).sort((a, b) => b.fecha.localeCompare(a.fecha));
+  }, [conteos]);
+
+  const [verResumen, setVerResumen] = useState(null); // fecha del día a expandir
+
   return (
     <div>
+      {/* ═══ RESUMEN POR DÍA (para comparar con Loggro) ═══ */}
+      {porDia.length > 0 && (
+        <div style={{ background: B.navyMid, border: `1px solid ${B.navyLight}`, borderRadius: 12, padding: "14px 18px", marginBottom: 16 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+            <div style={{ fontSize: 13, fontWeight: 800, color: B.sand }}>
+              📊 Resumen por día <span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", fontWeight: 400 }}>(consolidado de todas las locaciones)</span>
+            </div>
+            <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", fontStyle: "italic" }}>Para comparar con Loggro (que no separa por depósito)</div>
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            {porDia.slice(0, 15).map(d => {
+              const locsNombres = Array.from(d.locs).map(lid => locaciones.find(l => l.id === lid)?.nombre || lid);
+              const totalItems = Object.keys(d.items).length;
+              const totalUnidades = Object.values(d.items).reduce((s, i) => s + i.suma, 0);
+              const expanded = verResumen === d.fecha;
+              return (
+                <div key={d.fecha} style={{ background: B.navy, borderRadius: 8, border: `1px solid ${B.navyLight}` }}>
+                  <div onClick={() => setVerResumen(expanded ? null : d.fecha)}
+                    style={{ display: "grid", gridTemplateColumns: "100px 1.5fr 1fr 1fr 30px", gap: 10, padding: "10px 14px", alignItems: "center", cursor: "pointer" }}>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: B.sky, fontFamily: "monospace" }}>
+                      {new Date(d.fecha + "T12:00:00").toLocaleDateString("es-CO", { day: "2-digit", month: "short", year: "2-digit" })}
+                    </div>
+                    <div style={{ fontSize: 12, color: "rgba(255,255,255,0.6)" }}>
+                      {locsNombres.map(n => locaciones.find(l => l.nombre === n)?.icono || "📦").join(" ")} {locsNombres.join(" + ")}
+                    </div>
+                    <div style={{ fontSize: 12 }}>
+                      <span style={{ color: "rgba(255,255,255,0.45)" }}>{totalItems}</span>
+                      <span style={{ color: "rgba(255,255,255,0.3)" }}> ítems distintos</span>
+                    </div>
+                    <div style={{ fontSize: 14, fontWeight: 800, color: B.success, fontFamily: "'Barlow Condensed', sans-serif", textAlign: "right" }}>
+                      {totalUnidades.toLocaleString("es-CO", { maximumFractionDigits: 2 })}
+                      <span style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", fontWeight: 500, marginLeft: 4 }}>uds totales</span>
+                    </div>
+                    <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", textAlign: "center" }}>{expanded ? "▲" : "▼"}</div>
+                  </div>
+
+                  {/* Detalle: tabla de productos sumados */}
+                  {expanded && (
+                    <div style={{ padding: "8px 14px 14px", borderTop: `1px solid ${B.navyLight}` }}>
+                      <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 0.8fr", gap: 8, padding: "6px 8px", fontSize: 10, color: B.sand, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 700, borderBottom: `1px solid ${B.navyLight}` }}>
+                        <div>Producto</div>
+                        <div style={{ textAlign: "right" }}>Desglose</div>
+                        <div style={{ textAlign: "right" }}>Total (Loggro)</div>
+                      </div>
+                      <div style={{ maxHeight: 400, overflowY: "auto" }}>
+                        {Object.entries(d.items)
+                          .sort(([, a], [, b]) => b.suma - a.suma)
+                          .map(([id, it]) => (
+                            <div key={id} style={{ display: "grid", gridTemplateColumns: "2fr 1fr 0.8fr", gap: 8, padding: "6px 8px", fontSize: 11, borderBottom: `1px solid ${B.navyLight}44`, alignItems: "center" }}>
+                              <div style={{ color: B.white }}>{it.nombre} <span style={{ color: "rgba(255,255,255,0.35)", fontSize: 10 }}>· {it.unidad}</span></div>
+                              <div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", textAlign: "right" }}>
+                                {Object.entries(it.por_loc).map(([lid, cant]) => {
+                                  const l = locaciones.find(l => l.id === lid);
+                                  return `${l?.icono || ""}${cant}`;
+                                }).join(" + ")}
+                              </div>
+                              <div style={{ fontSize: 13, fontWeight: 800, color: B.success, textAlign: "right", fontFamily: "'Barlow Condensed', sans-serif" }}>
+                                {Number(it.suma).toLocaleString("es-CO", { maximumFractionDigits: 2 })}
+                              </div>
+                            </div>
+                          ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {/* Filtros */}
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 16, alignItems: "center" }}>
         <select value={filterLoc} onChange={e => setFilterLoc(e.target.value)} style={{ ...IS, width: 220 }}>
