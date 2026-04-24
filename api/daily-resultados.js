@@ -163,12 +163,20 @@ export default async function handler(req, res) {
       </td>`;
     }).join("");
 
+    // Nota de corrección opcional (parámetro ?nota=... en la URL)
+    const notaCorreccion = typeof req.query?.nota === "string" ? req.query.nota : "";
+    const notaHTML = notaCorreccion ? `
+      <div style="background:#F59E0B22;border:1px solid #F59E0B88;border-radius:10px;padding:12px 16px;margin-bottom:18px;color:#F59E0B;font-size:13px;line-height:1.5;">
+        ⚠️ <strong>Corrección:</strong> ${notaCorreccion}
+      </div>` : "";
+
     const html = `
     <div style="background:#0D1B3E;padding:32px 20px;font-family:'Segoe UI',Arial,sans-serif;color:#fff;max-width:640px;margin:0 auto;">
       <div style="text-align:center;margin-bottom:28px;">
         <div style="font-size:24px;font-weight:800;font-family:'Barlow Condensed',sans-serif;letter-spacing:0.04em;">📊 Resultados Diarios</div>
         <div style="font-size:13px;color:rgba(255,255,255,0.4);margin-top:6px;">Atolon Beach Club · ${fechaDisplay}</div>
       </div>
+      ${notaHTML}
 
       <table style="width:100%;border-collapse:collapse;background:#152650;border-radius:12px;overflow:hidden;">
         <thead>
@@ -224,7 +232,7 @@ export default async function handler(req, res) {
       body: JSON.stringify({
         from: "Atolon Beach Club <reservas@atolon.co>",
         to: emails,
-        subject: `📊 Resultados ${fechaDisplay} — Atolon Beach Club`,
+        subject: `${notaCorreccion ? "🔄 CORRECCIÓN · " : ""}📊 Resultados ${fechaDisplay} — Atolon Beach Club`,
         html,
       }),
     });
