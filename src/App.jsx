@@ -222,6 +222,7 @@ import StaffView from "./modules/StaffView";
 import CamareraPortal from "./modules/CamareraPortal";
 import HousekeepingInspection from "./modules/HousekeepingInspection";
 import Briefings from "./modules/Briefings";
+import RHManuales from "./modules/RHManuales";
 import Reportes from "./modules/Reportes";
 import Presupuesto from "./modules/Presupuesto";
 import EstadoResultados from "./modules/EstadoResultados";
@@ -326,6 +327,7 @@ const MODULE_MAP = {
   contratistas_admin: <ContratistasAdmin />,
   contratistas_muelle: <ContratistasMuelle />,
   briefings: <Briefings />,
+  manuales: <RHManuales />,
   reportes: <Reportes />,
   proveedores: <Proveedores />,
   hotel_reservas:     <HotelReservas />,
