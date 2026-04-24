@@ -214,6 +214,7 @@ import { HotelReservas, HotelHuespedes, HotelTarifas } from "./modules/HotelStub
 import HotelCheckin from "./modules/HotelCheckin";
 import HotelHabitaciones from "./modules/HotelHabitaciones";
 import HotelRoomService from "./modules/HotelRoomService";
+import HotelMinibar from "./modules/HotelMinibar";
 import HotelHousekeeping from "./modules/HotelHousekeeping";
 import GuestPortal from "./modules/GuestPortal";
 import RoomQRLanding from "./modules/RoomQRLanding";
@@ -333,6 +334,7 @@ const MODULE_MAP = {
   hotel_checkin:      <HotelCheckin />,
   hotel_housekeeping: <HotelHousekeeping />,
   hotel_roomservice:  <HotelRoomService />,
+  hotel_minibar:      <HotelMinibar />,
   hotel_tarifas:      <HotelTarifas />,
   api_portal:         <ApiPortal />,
 };
