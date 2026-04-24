@@ -1088,7 +1088,7 @@ function BitacoraLlegadas({ isMobile }) {
           <label style={{ ...LS, fontSize: 10 }}>Tipo</label>
           <select value={tipo} onChange={e => setTipo(e.target.value)} style={ISsm}>
             <option value="todos">Todos</option>
-            <option value="lancha_atolon">⛵ Lanchas Atolon</option>
+            <option value="lancha_atolon">☀️ Pasadías</option>
             <option value="after_island">🌙 After Island / Restaurante</option>
           </select>
         </div>
@@ -1334,7 +1334,7 @@ export default function MuelleCheckin() {
   const porTipo = (tipos) => llegadas.filter(l => (Array.isArray(tipos) ? tipos : [tipos]).includes(l.tipo));
 
   const SECCIONES = [
-    { tipo: "lancha_atolon",              tipos: ["lancha_atolon"],              icon: "⛵", label: "Lanchas Atolon",          color: B.sky,  btnBg: B.sky,  btnColor: B.navy },
+    { tipo: "lancha_atolon",              tipos: ["lancha_atolon"],              icon: "☀️", label: "Pasadías",                 color: B.sky,  btnBg: B.sky,  btnColor: B.navy },
     { tipo: "after_island",               tipos: ["after_island","restaurante","a_consumo"], icon: "🌙", label: "After Island / Restaurante", color: B.sand, btnBg: B.sand, btnColor: B.navy },
     { tipo: "otras",                      tipos: ["otras","huespedes","inspeccion","empleados","otros"], icon: "🚢", label: "Otras Embarcaciones",     color: "#f97316", btnBg: "#f97316", btnColor: "#fff" },
     { tipo: "walkin",                     tipos: ["walkin"],                     icon: "🚶", label: "Walk-in Caminando",       color: "#34d399", btnBg: "#34d399", btnColor: B.navy },
