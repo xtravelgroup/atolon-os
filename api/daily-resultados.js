@@ -55,9 +55,15 @@ export default async function handler(req, res) {
     if (!sbUrl || !sbKey) throw new Error("Missing Supabase env vars");
     if (!resendKey) throw new Error("Missing RESEND_API_KEY");
 
-    // 1. Get email recipients
-    const config = await sbQuery(sbUrl, sbKey, "configuracion", "id=eq.atolon&select=email_resultados");
-    const emails = config?.[0]?.email_resultados || [];
+    // 1. Get email recipients (permite override con ?to=email para tests)
+    let emails;
+    const toOverride = req.query?.to;
+    if (toOverride) {
+      emails = Array.isArray(toOverride) ? toOverride : String(toOverride).split(",").map(s => s.trim()).filter(Boolean);
+    } else {
+      const config = await sbQuery(sbUrl, sbKey, "configuracion", "id=eq.atolon&select=email_resultados");
+      emails = config?.[0]?.email_resultados || [];
+    }
     if (emails.length === 0) {
       console.log("[daily-resultados] No recipients configured, skipping");
       return res.status(200).json({ ok: true, skipped: true, reason: "No recipients" });
