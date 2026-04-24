@@ -871,8 +871,8 @@ function LlegadaCard({ llegada, onEstadoChange, onDelete, canDelete }) {
 
 // ─── MAIN MODULE ──────────────────────────────────────────────────────────────
 // ─── Bitácora ─────────────────────────────────────────────────────────────────
-const TIPO_LABEL = { lancha_atolon: "Lancha Atolon", after_island: "After Island", restaurante: "Restaurante", a_consumo: "A Consumo", huespedes: "Huéspedes", inspeccion: "Inspección", empleados: "Empleados", otros: "Otros", walkin: "Walk-in", otras: "Otra embarcación" };
-const TIPO_ICON  = { lancha_atolon: "⛵", after_island: "🌙", restaurante: "🍽️", a_consumo: "🍹", huespedes: "🏨", inspeccion: "🔍", empleados: "👷", otros: "📋", walkin: "🚶", otras: "🚢" };
+const TIPO_LABEL = { lancha_atolon: "Pasadías", lanchas_atolon: "Lancha Atolon", after_island: "After Island", restaurante: "Restaurante", a_consumo: "A Consumo", huespedes: "Huéspedes", inspeccion: "Inspección", empleados: "Empleados", otros: "Otros", walkin: "Walk-in", otras: "Otra embarcación" };
+const TIPO_ICON  = { lancha_atolon: "☀️", lanchas_atolon: "⛵", after_island: "🌙", restaurante: "🍽️", a_consumo: "🍹", huespedes: "🏨", inspeccion: "🔍", empleados: "👷", otros: "📋", walkin: "🚶", otras: "🚢" };
 
 const OTROS_TIPOS = [
   { value: "after_island", label: "🌙 After Island" },
@@ -1090,6 +1090,7 @@ function BitacoraLlegadas({ isMobile }) {
             <option value="todos">Todos</option>
             <option value="lancha_atolon">☀️ Pasadías</option>
             <option value="after_island">🌙 After Island / Restaurante</option>
+            <option value="lanchas_atolon">⛵ Lanchas Atolon</option>
           </select>
         </div>
         <div style={{ flex: 1, minWidth: 160 }}>
@@ -1339,6 +1340,7 @@ export default function MuelleCheckin() {
     { tipo: "otras",                      tipos: ["otras","huespedes","inspeccion","empleados","otros"], icon: "🚢", label: "Otras Embarcaciones",     color: "#f97316", btnBg: "#f97316", btnColor: "#fff" },
     { tipo: "walkin",                     tipos: ["walkin"],                     icon: "🚶", label: "Walk-in Caminando",       color: "#34d399", btnBg: "#34d399", btnColor: B.navy },
     { tipo: "contratistas",               tipos: [],                             icon: "🦺", label: "Contratistas",            color: "#a78bfa", btnBg: "#a78bfa", btnColor: "#fff", _esContratistas: true },
+    { tipo: "lanchas_atolon",             tipos: ["lanchas_atolon"],             icon: "⛵", label: "Lanchas Atolon",          color: B.sky,  btnBg: B.navyMid, btnColor: "#fff" },
   ];
 
   const delLlegada = async (id) => {
