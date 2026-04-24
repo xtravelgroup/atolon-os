@@ -480,7 +480,16 @@ export default function AtolanOS({ activeModule = "dashboard", onNavigate, modul
         </div>
 
         {/* Nav */}
-        <div style={{ flex: 1, overflowY: "auto", padding: "10px 8px" }}>
+        <div style={{
+          flex: 1,
+          overflowY: "auto",
+          overflowX: "hidden",
+          padding: "10px 8px",
+          WebkitOverflowScrolling: "touch",
+          overscrollBehavior: "contain",
+          touchAction: "pan-y",
+          minHeight: 0,
+        }}>
 
           {/* Top items (Dashboard) */}
           {NAV_TOP.map(n => <NavItem key={n.key} item={n} />)}
