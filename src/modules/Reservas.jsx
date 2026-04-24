@@ -3279,7 +3279,7 @@ export default function Reservas() {
     const todayStart = `${today}T00:00:00.000Z`;
     const tomorrowStart = `${tomorrow}T00:00:00.000Z`;
 
-    const GRUPO_FIELDS = "id, nombre, tipo, pax, fecha, pasadias_org, stage, modalidad_pago, aliado_id, categoria, comparte_lancha_pasadias, salida_compartida_id";
+    const GRUPO_FIELDS = "id, nombre, tipo, pax, fecha, pasadias_org, salidas_grupo, stage, modalidad_pago, aliado_id, categoria, comparte_lancha_pasadias, salida_compartida_id";
     const isGrupo = (e) => e.categoria === "grupo" || (!e.categoria && e.aliado_id);
     const [resHoy, resManana, salR, aliR, cierreR, embR, ovrR, empR, pasR, cobR, cobR2, convR, grpHoyR, grpMananaR, llegHoyR, llegMananaR] = await Promise.all([
       supabase.from("reservas").select("*").eq("fecha", today).order("salida_id"),
