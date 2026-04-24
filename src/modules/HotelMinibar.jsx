@@ -23,7 +23,7 @@ export default function HotelMinibar() {
     if (!supabase) return;
     setLoading(true);
     const [hR, iR, sR, vR] = await Promise.all([
-      supabase.from("hotel_habitaciones").select("id, numero, tipo, piso").order("numero"),
+      supabase.from("hotel_habitaciones").select("id, numero, categoria, estado").order("numero"),
       supabase.from("items_catalogo").select("id, nombre, unidad, categoria, foto_url").eq("activo", true).order("nombre"),
       supabase.from("minibar_stock_habitacion").select("*"),
       supabase.from("minibar_ventas").select("*").order("created_at", { ascending: false }).limit(200),
@@ -118,14 +118,21 @@ function TabConsumo({ habitaciones, stockByHab, userEmail, onDone }) {
     if (!habId || consumos.length === 0) return alert("No hay consumos para registrar");
     setSaving(true);
 
-    // Traer info de la reserva activa (si hay) para asociar al folio
-    const { data: reservaActiva } = await supabase.from("hotel_reservas")
-      .select("id, huesped_nombre, folio_id")
+    // Buscar la estancia activa (check-in en curso) en esta habitación
+    const { data: estancias } = await supabase.from("hotel_estancias")
+      .select("id, huesped_nombre, reserva_id")
       .eq("habitacion_id", habId)
-      .eq("estado", "check_in")
+      .in("estado", ["check_in", "activa", "en_casa"])
+      .order("created_at", { ascending: false })
       .limit(1);
-    const reserva = reservaActiva?.[0];
+    const estancia = estancias?.[0];
 
+    if (!estancia) {
+      setSaving(false);
+      return alert("⚠️ Esta habitación no tiene huésped con check-in activo. No se puede cargar al folio.");
+    }
+
+    // 1. Registrar las ventas en minibar_ventas (audit)
     const rows = consumos.map(c => ({
       id: `MB-${Date.now()}-${c.item_id.slice(-4)}`,
       habitacion_id: habId,
@@ -135,18 +142,31 @@ function TabConsumo({ habitaciones, stockByHab, userEmail, onDone }) {
       precio_unit: Number(c.precio_venta) || 0,
       subtotal: c.subtotal,
       fecha: todayStr(),
-      huesped_nombre: reserva?.huesped_nombre || null,
-      reservation_id: reserva?.id || null,
-      folio_id: reserva?.folio_id || null,
-      cobrado: false,
+      huesped_nombre: estancia.huesped_nombre || null,
+      reservation_id: estancia.reserva_id || null,
+      folio_id: estancia.id,
+      cobrado: true, // se marca como cobrado porque ya queda cargado al folio
       registrado_por: userEmail || "sistema",
       notas: notas.trim() || null,
     }));
-
     const { error } = await supabase.from("minibar_ventas").insert(rows);
     if (error) { setSaving(false); return alert("Error: " + error.message); }
 
-    setSaved({ total: totalVenta, count: consumos.length, reserva: reserva?.huesped_nombre || null });
+    // 2. Cargar al folio (hotel_room_charges) — una línea consolidada
+    const desc = `Mini Bar · ${consumos.map(c => `${c.consumido}× ${c.nombre}`).join(", ")}`;
+    const { error: chErr } = await supabase.from("hotel_room_charges").insert({
+      estancia_id: estancia.id,
+      origen: "minibar",
+      origen_ref: rows[0].id,
+      descripcion: desc.slice(0, 300),
+      monto: totalVenta,
+    });
+    if (chErr) {
+      // Si falla el cargo al folio, avisa pero no rollback (la venta ya queda registrada)
+      alert("⚠️ Ventas guardadas, pero falló el cargo al folio: " + chErr.message);
+    }
+
+    setSaved({ total: totalVenta, count: consumos.length, reserva: estancia.huesped_nombre || null, folio: !chErr });
     setSaving(false);
   };
 
@@ -165,7 +185,11 @@ function TabConsumo({ habitaciones, stockByHab, userEmail, onDone }) {
         </div>
         {saved.reserva && (
           <div style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", marginBottom: 16 }}>
-            Cargado al folio de <strong style={{ color: B.white }}>{saved.reserva}</strong>
+            {saved.folio ? (
+              <>✅ Cargado al folio de <strong style={{ color: B.white }}>{saved.reserva}</strong></>
+            ) : (
+              <>⚠️ Registrado pero falló el cargo al folio de {saved.reserva}</>
+            )}
           </div>
         )}
         <button onClick={reset} style={{ background: B.sand, color: B.navy, border: "none", borderRadius: 10, padding: "11px 24px", fontWeight: 700, cursor: "pointer" }}>
@@ -184,7 +208,7 @@ function TabConsumo({ habitaciones, stockByHab, userEmail, onDone }) {
           <option value="">— Seleccionar habitación —</option>
           {habitaciones.map(h => (
             <option key={h.id} value={h.id}>
-              {h.numero} {h.tipo ? `· ${h.tipo}` : ""} {h.piso ? `· Piso ${h.piso}` : ""}
+              {h.numero} {h.categoria ? `· ${h.categoria}` : ""} {h.estado ? `· ${h.estado}` : ""}
               {(stockByHab[h.id] || []).length === 0 ? "  (sin config)" : ""}
             </option>
           ))}
