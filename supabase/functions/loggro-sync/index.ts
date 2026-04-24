@@ -843,37 +843,42 @@ serve(async (req) => {
       return json({ ok: true, loggro_response: post.body });
     }
 
-    // GET /loggro-sync/ingredients-stock
-    // Devuelve un mapa { loggro_id: { name, stock } } con el stock real-time
-    // de todos los ingredientes en Loggro Restobar.
-    if (req.method === "GET" && path === "/ingredients-stock") {
-      const pageSize = 100;
-      const pagePromises = [];
-      for (let p = 0; p < 20; p++) {
-        pagePromises.push(
-          loggroGet(`/ingredients?pagination=true&limit=${pageSize}&page=${p}&onlyIngredient=true`)
-            .then(d => d?.data || (Array.isArray(d) ? d : []))
-            .catch(() => [])
-        );
+    // POST /loggro-sync/ingredients-stock
+    // Body: { loggro_ids: ["...","..."] }
+    // Devuelve { loggro_id: { name, stock } } con stock REAL extraído del
+    // detalle individual (locationsStock[].stock).
+    // El listado paginado no trae locationsStock como array, solo el detalle
+    // individual, así que hacemos fetch en paralelo por ID.
+    if ((req.method === "GET" || req.method === "POST") && path === "/ingredients-stock") {
+      let ids: string[] = [];
+      if (req.method === "POST") {
+        const body = await req.json().catch(() => ({}));
+        ids = Array.isArray(body.loggro_ids) ? body.loggro_ids.filter(Boolean) : [];
       }
-      const pages = await Promise.all(pagePromises);
-      const all: any[] = [];
-      const seen = new Set<string>();
-      pages.forEach(arr => arr.forEach((ing: any) => {
-        if (ing?._id && !seen.has(ing._id)) {
-          seen.add(ing._id);
-          all.push(ing);
-        }
-      }));
+      if (ids.length === 0) {
+        return json({ ok: false, error: "Envía loggro_ids[] por POST body (ej: {'loggro_ids':['...']})" }, 400);
+      }
+
+      // Paralelo con límite de concurrencia
+      const CONCURRENCY = 20;
       const map: Record<string, { name: string; stock: number; unit?: string }> = {};
-      for (const ing of all) {
-        map[ing._id] = {
-          name: ing.name,
-          stock: Number(ing.stock) || 0,
-          unit: ing.unit || undefined,
-        };
+      let idx = 0;
+      async function worker() {
+        while (idx < ids.length) {
+          const myIdx = idx++;
+          const id = ids[myIdx];
+          try {
+            const d: any = await loggroGet(`/ingredients/${id}`);
+            let totalStock = 0;
+            if (Array.isArray(d?.locationsStock) && d.locationsStock.length > 0) {
+              totalStock = d.locationsStock.reduce((s: number, ls: any) => s + (Number(ls.stock) || 0), 0);
+            }
+            map[id] = { name: d?.name || "", stock: totalStock, unit: d?.unit || undefined };
+          } catch (_) { /* skip */ }
+        }
       }
-      return json({ ok: true, total: all.length, stock: map });
+      await Promise.all(Array.from({ length: Math.min(CONCURRENCY, ids.length) }, () => worker()));
+      return json({ ok: true, total: ids.length, stock: map });
     }
 
     // POST /loggro-sync/create-ingredient

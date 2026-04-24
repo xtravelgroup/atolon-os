@@ -1807,21 +1807,25 @@ function ConteosTab() {
     });
   }, []);
 
-  // Traer stocks reales de Loggro Restobar (no-bloqueante, al montar)
+  // Traer stocks reales de Loggro Restobar (por ítems vinculados, paralelo)
   const refreshLoggro = async () => {
+    const ids = catalogo.map(i => i.loggro_id).filter(Boolean);
+    if (ids.length === 0) return;
     setLoggroLoading(true);
     try {
       const URL = import.meta.env.VITE_SUPABASE_URL;
       const KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
       const res = await fetch(`${URL}/functions/v1/loggro-sync/ingredients-stock`, {
-        headers: { apikey: KEY, Authorization: `Bearer ${KEY}` },
+        method: "POST",
+        headers: { "Content-Type": "application/json", apikey: KEY, Authorization: `Bearer ${KEY}` },
+        body: JSON.stringify({ loggro_ids: ids }),
       });
       const d = await res.json();
       if (d.ok) setLoggroStocks(d.stock || {});
     } catch (_) {}
     setLoggroLoading(false);
   };
-  useEffect(() => { refreshLoggro(); }, []); // eslint-disable-line
+  useEffect(() => { if (catalogo.length > 0) refreshLoggro(); }, [catalogo]); // eslint-disable-line
 
   // Map item_id (Atolón) → stock real de Loggro Restobar vía loggro_id
   const sistemaMap = useMemo(() => {
