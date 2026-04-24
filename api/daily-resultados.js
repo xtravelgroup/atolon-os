@@ -80,7 +80,7 @@ export default async function handler(req, res) {
     for (const p of periodos) {
       const rangeFilter = `fecha=gte.${p.desde}&fecha=lte.${p.hasta}`;
 
-      const [pasDir, pasB2B, grupos, eventos, ayb, llegadas] = await Promise.all([
+      const [pasDir, pasB2B, grupos, eventos, aybLoggro, llegadas] = await Promise.all([
         // Pasadías directas
         sbQuery(sbUrl, sbKey, "reservas", `select=id,total,pax,estado&${rangeFilter}&estado=neq.cancelado&aliado_id=is.null&grupo_id=is.null`),
         // Pasadías B2B
@@ -89,8 +89,10 @@ export default async function handler(req, res) {
         sbQuery(sbUrl, sbKey, "eventos", `select=id,valor,valor_extras,pax,pasadias_org,servicios_contratados,categoria&${rangeFilter}&stage=in.(Confirmado,Realizado)&categoria=eq.grupo`),
         // Eventos
         sbQuery(sbUrl, sbKey, "eventos", `select=id,valor,valor_extras,pax,pasadias_org,servicios_contratados,categoria&${rangeFilter}&stage=in.(Confirmado,Realizado)&categoria=eq.evento`),
-        // A&B
-        sbQuery(sbUrl, sbKey, "cierres_caja", `select=id,total_ventas,fecha&${rangeFilter}&area=eq.ayb`),
+        // A&B — desde Loggro Restobar (fuente oficial de facturación)
+        fetch(`${sbUrl}/functions/v1/loggro-sync/cierre-caja-rango?from=${p.desde}&to=${p.hasta}`, {
+          headers: { apikey: sbKey, Authorization: `Bearer ${sbKey}` }
+        }).then(r => r.json()).catch(() => ({ ok: false })),
         // Llegadas muelle
         sbQuery(sbUrl, sbKey, "muelle_llegadas", `select=id,total_cobrado,pax_total,tipo&${rangeFilter}&tipo=neq.lancha_atolon`),
       ]);
@@ -126,7 +128,7 @@ export default async function handler(req, res) {
           monto: eventos.reduce((s, e) => s + totalCotizacion(e), 0),
         },
         ayb: {
-          monto: ayb.reduce((s, c) => s + (c.total_ventas || 0), 0),
+          monto: Number(aybLoggro?.resumen?.total_ventas) || 0,
         },
       };
     }
