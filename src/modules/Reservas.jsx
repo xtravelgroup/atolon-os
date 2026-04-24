@@ -3719,7 +3719,8 @@ export default function Reservas() {
           // a un grupo, heredar la salida del grupo desde salidas_grupo[0].id)
           const porSalida = {};
           activas.forEach(r => {
-            let salidaId = r.salida_id;
+            // mapRow renombra salida_id → salida, pero otras fuentes aún usan salida_id
+            let salidaId = r.salida || r.salida_id;
             if (!salidaId && r.grupo_id) {
               const grp = grupos.find(g => g.id === r.grupo_id);
               const sg = grp?.salidas_grupo?.[0];
