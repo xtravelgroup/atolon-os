@@ -68,11 +68,13 @@ export default function RentabilidadFlota() {
     const ingresos = rMes.reduce((s, r) => s + Number(r.total || 0), 0);
     const cobrado  = rMes.reduce((s, r) => s + Number(r.abono || 0), 0);
 
-    const costoComb   = bMes.filter(b => b.tipo === "combustible").reduce((s, b) => s + Number(b.costo_total || 0), 0);
-    const galones     = bMes.filter(b => b.tipo === "combustible").reduce((s, b) => s + Number(b.galones || 0), 0);
-    const costoMant   = bMes.filter(b => ["mantenimiento", "reparacion"].includes(b.tipo)).reduce((s, b) => s + Number(b.costo_total || 0), 0);
-    const costoViajes = zMes.reduce((s, z) => s + Number(z.costo_operativo || 0), 0);
-    const costosTotales = costoComb + costoMant + costoViajes;
+    const costoComb     = bMes.filter(b => b.tipo === "combustible").reduce((s, b) => s + Number(b.costo_total || 0), 0);
+    const galones       = bMes.filter(b => b.tipo === "combustible").reduce((s, b) => s + Number(b.galones || 0), 0);
+    const costoMant     = bMes.filter(b => ["mantenimiento", "reparacion", "inspeccion", "limpieza"].includes(b.tipo)).reduce((s, b) => s + Number(b.costo_total || 0), 0);
+    const costoMarina   = bMes.filter(b => b.tipo === "marina").reduce((s, b) => s + Number(b.costo_total || 0), 0);
+    const costoCapitanes = bMes.filter(b => b.tipo === "capitanes").reduce((s, b) => s + Number(b.costo_total || 0), 0);
+    const costoViajes   = zMes.reduce((s, z) => s + Number(z.costo_operativo || 0), 0);
+    const costosTotales = costoComb + costoMant + costoMarina + costoCapitanes + costoViajes;
     const margen = ingresos - costosTotales;
     const margenPct = ingresos > 0 ? (margen / ingresos) * 100 : NaN;
 
@@ -87,14 +89,15 @@ export default function RentabilidadFlota() {
       const zL = zMes.filter(z => z.embarcacion === l.nombre);
       const lComb = bL.filter(b => b.tipo === "combustible").reduce((s, b) => s + Number(b.costo_total || 0), 0);
       const lGal  = bL.filter(b => b.tipo === "combustible").reduce((s, b) => s + Number(b.galones || 0), 0);
-      const lMant = bL.filter(b => ["mantenimiento", "reparacion"].includes(b.tipo)).reduce((s, b) => s + Number(b.costo_total || 0), 0);
+      const lMant = bL.filter(b => ["mantenimiento", "reparacion", "inspeccion", "limpieza"].includes(b.tipo)).reduce((s, b) => s + Number(b.costo_total || 0), 0);
+      const lOper = bL.filter(b => ["marina", "capitanes"].includes(b.tipo)).reduce((s, b) => s + Number(b.costo_total || 0), 0);
       const lViaj = zL.reduce((s, z) => s + Number(z.costo_operativo || 0), 0);
       const lPax  = zL.reduce((s, z) => s + Number(z.pax_a || 0) + Number(z.pax_n || 0), 0);
       const lZarp = zL.length;
-      const totalLancha = lComb + lMant + lViaj;
+      const totalLancha = lComb + lMant + lOper + lViaj;
       return {
         id: l.id, nombre: l.nombre, capacidad: l.capacidad_pax || 0,
-        comb: lComb, gal: lGal, mant: lMant, viajes: lViaj,
+        comb: lComb, gal: lGal, mant: lMant, oper: lOper, viajes: lViaj,
         zarpes: lZarp, pax: lPax, total: totalLancha,
         costoPorPax: lPax > 0 ? lViaj / lPax : 0,
         costoPorZarpe: lZarp > 0 ? lViaj / lZarp : 0,
@@ -103,7 +106,7 @@ export default function RentabilidadFlota() {
     });
 
     return {
-      ingresos, cobrado, costoComb, galones, costoMant, costoViajes, costosTotales,
+      ingresos, cobrado, costoComb, galones, costoMant, costoMarina, costoCapitanes, costoViajes, costosTotales,
       margen, margenPct, pax, numZarpes, costoPorPax, costoPorZarpe, porEmb,
     };
   }, [mes, reservas, bitacora, zarpes, lanchas]);
@@ -120,8 +123,8 @@ export default function RentabilidadFlota() {
       const b = bitacora.filter(x => (x.fecha || "").startsWith(ym));
       const z = zarpes.filter(x => (x.fecha || "").startsWith(ym));
       const ingresos = r.reduce((s, x) => s + Number(x.total || 0), 0);
-      const costos = b.filter(x => x.tipo === "combustible").reduce((s, x) => s + Number(x.costo_total || 0), 0)
-                   + b.filter(x => ["mantenimiento", "reparacion"].includes(x.tipo)).reduce((s, x) => s + Number(x.costo_total || 0), 0)
+      const costos = b.filter(x => ["combustible", "mantenimiento", "reparacion", "inspeccion", "limpieza", "marina", "capitanes"].includes(x.tipo))
+                      .reduce((s, x) => s + Number(x.costo_total || 0), 0)
                    + z.reduce((s, x) => s + Number(x.costo_operativo || 0), 0);
       return { mes: ym, ingresos, costos, margen: ingresos - costos };
     });
@@ -165,6 +168,8 @@ export default function RentabilidadFlota() {
         <KpiCard label="Ingresos del mes"      valor={fmtCOP(data.ingresos)}    color={B.success} sub={`Cobrado: ${fmtCOP(data.cobrado)}`} />
         <KpiCard label="Combustible"           valor={fmtCOP(data.costoComb)}   color={B.warning} sub={`${data.galones.toFixed(1)} gal`} />
         <KpiCard label="Mantenimiento"         valor={fmtCOP(data.costoMant)}   color={B.sky} />
+        <KpiCard label="Marina / parqueo"      valor={fmtCOP(data.costoMarina)} color="#22d3ee" />
+        <KpiCard label="Capitanes"             valor={fmtCOP(data.costoCapitanes)} color="#fb923c" />
         <KpiCard label="Viajes operativos"     valor={fmtCOP(data.costoViajes)} color="#a78bfa" sub={`${data.numZarpes} zarpes`} />
         <KpiCard label="Costos totales"        valor={fmtCOP(data.costosTotales)} color={B.danger} />
         <KpiCard label="Margen bruto"          valor={fmtCOP(data.margen)}      color={data.margen >= 0 ? B.success : B.danger}
@@ -223,7 +228,7 @@ export default function RentabilidadFlota() {
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
               <thead>
                 <tr style={{ background: B.navyLight }}>
-                  {["Embarcación", "Zarpes", "Pasajeros", "Ocup. prom.", "Combustible", "Mant./Rep.", "Viajes", "Total costos", "$/pax", "$/zarpe"].map(h => (
+                  {["Embarcación", "Zarpes", "Pasajeros", "Ocup. prom.", "Combustible", "Mant./Rep.", "Operativos", "Viajes", "Total costos", "$/pax", "$/zarpe"].map(h => (
                     <th key={h} style={{ padding: "10px 12px", textAlign: h === "Embarcación" ? "left" : "right", fontWeight: 700, color: "rgba(255,255,255,0.6)", fontSize: 11, textTransform: "uppercase", letterSpacing: "0.04em" }}>{h}</th>
                   ))}
                 </tr>
@@ -239,6 +244,7 @@ export default function RentabilidadFlota() {
                     </td>
                     <td style={{ padding: "12px", textAlign: "right", color: B.warning }}>{fmtCOP(e.comb)}</td>
                     <td style={{ padding: "12px", textAlign: "right", color: B.sky }}>{fmtCOP(e.mant)}</td>
+                    <td style={{ padding: "12px", textAlign: "right", color: "#22d3ee" }}>{fmtCOP(e.oper)}</td>
                     <td style={{ padding: "12px", textAlign: "right", color: "#a78bfa" }}>{fmtCOP(e.viajes)}</td>
                     <td style={{ padding: "12px", textAlign: "right", fontWeight: 700, color: B.danger }}>{fmtCOP(e.total)}</td>
                     <td style={{ padding: "12px", textAlign: "right", color: "rgba(255,255,255,0.7)" }}>{e.pax > 0 ? fmtCOP(e.costoPorPax) : "—"}</td>
@@ -280,6 +286,7 @@ function EmbCard({ e }) {
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, fontSize: 12 }}>
         <Row k="⛽ Combustible" v={fmtCOP(e.comb)} c={B.warning} />
         <Row k="🔧 Mant./Rep." v={fmtCOP(e.mant)} c={B.sky} />
+        <Row k="🅿️ Operativos" v={fmtCOP(e.oper)} c="#22d3ee" />
         <Row k="⛵ Viajes"     v={fmtCOP(e.viajes)} c="#a78bfa" />
         <Row k="📊 Ocupación"  v={e.capacidad ? fmtPct(e.ocupacionProm) : "—"} c="rgba(255,255,255,0.7)" />
         <Row k="$ por pax"     v={e.pax > 0 ? fmtCOP(e.costoPorPax) : "—"} c="rgba(255,255,255,0.7)" />

@@ -21,10 +21,15 @@ const TIPOS = [
   { k: "reparacion",     l: "🛠️ Reparación",       c: "#ec4899" },
   { k: "inspeccion",     l: "🔍 Inspección",       c: B.sand },
   { k: "limpieza",       l: "🧼 Limpieza",         c: "#34d399" },
+  { k: "marina",         l: "🅿️ Marina/Parqueo",   c: "#22d3ee" },
+  { k: "capitanes",      l: "👨‍✈️ Capitanes",       c: "#fb923c" },
   { k: "incidente",      l: "⚠️ Incidente",        c: B.danger },
   { k: "viaje",          l: "⛵ Viaje",            c: "#a78bfa" },
   { k: "otro",           l: "📋 Otro",             c: "rgba(255,255,255,0.4)" },
 ];
+
+const TIPOS_MANTENIMIENTO = ["mantenimiento", "reparacion", "inspeccion", "limpieza"];
+const TIPOS_OPERATIVOS    = ["marina", "capitanes"];
 
 const SEVERIDADES = [
   { k: "leve",     l: "Leve",     c: B.success },
@@ -78,14 +83,17 @@ export default function Lancha() {
     const combustibleMes = delMes.filter(b => b.tipo === "combustible");
     const galonesMes = combustibleMes.reduce((s, b) => s + Number(b.galones || 0), 0);
     const gastoCombustibleMes = combustibleMes.reduce((s, b) => s + Number(b.costo_total || 0), 0);
-    const gastoMantMes = delMes.filter(b => ["mantenimiento", "reparacion"].includes(b.tipo)).reduce((s, b) => s + Number(b.costo_total || 0), 0);
+    const gastoMantMes = delMes.filter(b => TIPOS_MANTENIMIENTO.includes(b.tipo)).reduce((s, b) => s + Number(b.costo_total || 0), 0);
+    const gastoOperativosMes = delMes.filter(b => TIPOS_OPERATIVOS.includes(b.tipo)).reduce((s, b) => s + Number(b.costo_total || 0), 0);
+    const gastoMarinaMes    = delMes.filter(b => b.tipo === "marina").reduce((s, b) => s + Number(b.costo_total || 0), 0);
+    const gastoCapitanesMes = delMes.filter(b => b.tipo === "capitanes").reduce((s, b) => s + Number(b.costo_total || 0), 0);
     const ultimoHoras = bitacoraLancha.find(b => b.kilometraje_h != null)?.kilometraje_h || 0;
     const proxServ = bitacoraLancha.find(b => b.proximo_servicio_h || b.proximo_servicio_fecha);
     const zarpesMes = zarpesLancha.filter(z => (z.fecha || "").startsWith(mes));
     const viajesMes = zarpesMes.length;
     const gastoViajesMes = zarpesMes.reduce((s, z) => s + Number(z.costo_operativo || 0), 0);
     const incidentesAbiertos = bitacoraLancha.filter(b => b.tipo === "incidente" && !b.resuelto).length;
-    return { galonesMes, gastoCombustibleMes, gastoMantMes, ultimoHoras, proxServ, viajesMes, gastoViajesMes, incidentesAbiertos };
+    return { galonesMes, gastoCombustibleMes, gastoMantMes, gastoOperativosMes, gastoMarinaMes, gastoCapitanesMes, ultimoHoras, proxServ, viajesMes, gastoViajesMes, incidentesAbiertos };
   }, [bitacoraLancha, zarpesLancha]);
 
   async function saveEvento(data) {
@@ -206,6 +214,8 @@ export default function Lancha() {
           { l: "Galones (mes)",       v: `${kpis.galonesMes.toFixed(1)} gal`, c: B.warning },
           { l: "Combustible (mes)",   v: fmtCOP(kpis.gastoCombustibleMes),    c: B.warning },
           { l: "Mant./Rep. (mes)",    v: fmtCOP(kpis.gastoMantMes),           c: B.sky },
+          { l: "Marina (mes)",        v: fmtCOP(kpis.gastoMarinaMes),         c: "#22d3ee" },
+          { l: "Capitanes (mes)",     v: fmtCOP(kpis.gastoCapitanesMes),      c: "#fb923c" },
           { l: "Viajes (mes)",        v: `${kpis.viajesMes} · ${fmtCOP(kpis.gastoViajesMes)}`, c: "#a78bfa" },
           { l: "Horas motor",         v: kpis.ultimoHoras.toFixed(0) + " h",  c: B.sand },
           { l: "Incidentes abiertos", v: kpis.incidentesAbiertos,             c: kpis.incidentesAbiertos > 0 ? B.danger : B.success },
@@ -223,6 +233,7 @@ export default function Lancha() {
           { k: "resumen",       l: "📊 Resumen" },
           { k: "combustible",   l: "⛽ Combustible" },
           { k: "mantenimiento", l: "🔧 Mantenimiento" },
+          { k: "operativos",    l: "🅿️ Operativos" },
           { k: "incidentes",    l: "⚠️ Incidentes" },
           { k: "viajes",        l: `⛵ Viajes (${zarpesLancha.length})` },
           { k: "todos",         l: "📋 Todo" },
@@ -256,7 +267,14 @@ export default function Lancha() {
       )}
       {tab === "mantenimiento" && (
         <ListaEventos
-          items={bitacoraLancha.filter(b => ["mantenimiento", "reparacion", "inspeccion", "limpieza"].includes(b.tipo))}
+          items={bitacoraLancha.filter(b => TIPOS_MANTENIMIENTO.includes(b.tipo))}
+          onEdit={(e) => setModal({ tipo: e.tipo, edit: e })}
+          onDelete={borrarEvento}
+        />
+      )}
+      {tab === "operativos" && (
+        <ListaEventos
+          items={bitacoraLancha.filter(b => TIPOS_OPERATIVOS.includes(b.tipo))}
           onEdit={(e) => setModal({ tipo: e.tipo, edit: e })}
           onDelete={borrarEvento}
         />
@@ -304,6 +322,7 @@ export default function Lancha() {
 function defaultTipoForTab(tab) {
   if (tab === "combustible") return "combustible";
   if (tab === "mantenimiento") return "mantenimiento";
+  if (tab === "operativos") return "marina";
   if (tab === "incidentes") return "incidente";
   return "combustible";
 }
@@ -322,11 +341,12 @@ function ResumenTab({ bitacora, zarpes, lancha }) {
     return {
       mes: m,
       comb: items.filter(b => b.tipo === "combustible").reduce((s, b) => s + Number(b.costo_total || 0), 0),
-      mant: items.filter(b => ["mantenimiento", "reparacion"].includes(b.tipo)).reduce((s, b) => s + Number(b.costo_total || 0), 0),
+      mant: items.filter(b => TIPOS_MANTENIMIENTO.includes(b.tipo)).reduce((s, b) => s + Number(b.costo_total || 0), 0),
+      oper: items.filter(b => TIPOS_OPERATIVOS.includes(b.tipo)).reduce((s, b) => s + Number(b.costo_total || 0), 0),
       viajes: zarpesM.reduce((s, z) => s + Number(z.costo_operativo || 0), 0),
     };
   });
-  const maxGasto = Math.max(1, ...gastosMes.map(g => g.comb + g.mant + g.viajes));
+  const maxGasto = Math.max(1, ...gastosMes.map(g => g.comb + g.mant + g.oper + g.viajes));
 
   const recientes = bitacora.slice(0, 5);
   const proximoServicio = bitacora.find(b => b.proximo_servicio_fecha || b.proximo_servicio_h);
@@ -339,23 +359,26 @@ function ResumenTab({ bitacora, zarpes, lancha }) {
           {gastosMes.map(g => {
             const altoComb   = maxGasto ? (g.comb   / maxGasto) * 120 : 0;
             const altoMant   = maxGasto ? (g.mant   / maxGasto) * 120 : 0;
+            const altoOper   = maxGasto ? (g.oper   / maxGasto) * 120 : 0;
             const altoViajes = maxGasto ? (g.viajes / maxGasto) * 120 : 0;
             return (
               <div key={g.mes} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
                 <div style={{ display: "flex", flexDirection: "column-reverse", width: "100%", maxWidth: 40, height: 130, alignItems: "stretch" }}>
                   <div style={{ background: B.warning,  height: altoComb,   minHeight: g.comb   > 0 ? 3 : 0 }} title={"Combustible: " + fmtCOP(g.comb)} />
                   <div style={{ background: B.sky,      height: altoMant,   minHeight: g.mant   > 0 ? 3 : 0 }} title={"Mant.: " + fmtCOP(g.mant)} />
+                  <div style={{ background: "#22d3ee",  height: altoOper,   minHeight: g.oper   > 0 ? 3 : 0 }} title={"Operativos: " + fmtCOP(g.oper)} />
                   <div style={{ background: "#a78bfa",  height: altoViajes, minHeight: g.viajes > 0 ? 3 : 0 }} title={"Viajes: " + fmtCOP(g.viajes)} />
                 </div>
                 <div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)" }}>{g.mes.slice(5)}</div>
-                <div style={{ fontSize: 10, fontWeight: 700 }}>{fmtCOP(g.comb + g.mant + g.viajes)}</div>
+                <div style={{ fontSize: 10, fontWeight: 700 }}>{fmtCOP(g.comb + g.mant + g.oper + g.viajes)}</div>
               </div>
             );
           })}
         </div>
-        <div style={{ display: "flex", gap: 14, marginTop: 10, fontSize: 11, color: "rgba(255,255,255,0.6)" }}>
+        <div style={{ display: "flex", gap: 14, marginTop: 10, fontSize: 11, color: "rgba(255,255,255,0.6)", flexWrap: "wrap" }}>
           <span>▪ <span style={{ color: B.warning }}>Combustible</span></span>
           <span>▪ <span style={{ color: B.sky }}>Mantenimiento</span></span>
+          <span>▪ <span style={{ color: "#22d3ee" }}>Operativos</span></span>
           <span>▪ <span style={{ color: "#a78bfa" }}>Viajes</span></span>
         </div>
       </div>
@@ -561,6 +584,7 @@ function EventoModal({ tipo: tipoInicial, edit, onClose, onSave, capitanDefault 
 
   const esCombustible = f.tipo === "combustible";
   const esMantenimiento = ["mantenimiento", "reparacion", "inspeccion", "limpieza"].includes(f.tipo);
+  const esOperativo = ["marina", "capitanes"].includes(f.tipo);
   const esIncidente = f.tipo === "incidente";
 
   return (
@@ -615,6 +639,21 @@ function EventoModal({ tipo: tipoInicial, edit, onClose, onSave, capitanDefault 
             <div><label style={LS}>Horas motor</label><input type="number" value={f.kilometraje_h} onChange={e => set("kilometraje_h", e.target.value)} style={IS} /></div>
             <div><label style={LS}>Próximo servicio (horas)</label><input type="number" value={f.proximo_servicio_h} onChange={e => set("proximo_servicio_h", e.target.value)} style={IS} /></div>
             <div><label style={LS}>Próximo servicio (fecha)</label><input type="date" value={f.proximo_servicio_fecha} onChange={e => set("proximo_servicio_fecha", e.target.value)} style={IS} /></div>
+          </>
+        )}
+
+        {/* Operativo (marina/parqueo · capitanes) */}
+        {esOperativo && (
+          <>
+            <div>
+              <label style={LS}>{f.tipo === "marina" ? "Periodo / concepto" : "Concepto / nómina"}</label>
+              <input value={f.subtipo} onChange={e => set("subtipo", e.target.value)} placeholder={f.tipo === "marina" ? "Ej: Mes abril 2026" : "Ej: Quincena · capitán"} style={IS} />
+            </div>
+            <div><label style={LS}>Costo total</label><input type="number" value={f.costo_total} onChange={e => set("costo_total", e.target.value)} style={IS} /></div>
+            <div style={{ gridColumn: "1 / -1" }}>
+              <label style={LS}>{f.tipo === "marina" ? "Marina / proveedor" : "Capitán beneficiario"}</label>
+              <input value={f.proveedor} onChange={e => set("proveedor", e.target.value)} placeholder={f.tipo === "marina" ? "Ej: Marina Santa Cruz" : "Ej: Cap. Pérez"} style={IS} />
+            </div>
           </>
         )}
 
