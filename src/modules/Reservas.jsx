@@ -582,6 +582,13 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
       if (json.ok || json.id) {
         setEmailSent(true);
         setTimeout(() => setEmailSent(false), 3000);
+        logAccion({
+          modulo: "reservas",
+          accion: "reenviar_correo",
+          tabla: "reservas",
+          registroId: r0.id,
+          notas: `📧 Email de confirmación reenviado a ${(fresh || r0).email || (fresh || r0).contacto || "—"}`,
+        });
       } else {
         alert("Error al reenviar: " + (json.error || JSON.stringify(json)));
       }
@@ -1388,6 +1395,7 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
               check_in:         { icon: "✅",  label: "Check-in",             color: B.success },
               check_out:        { icon: "🏁",  label: "Check-out",            color: B.sand    },
               reembolso:        { icon: "💸",  label: "Reembolso / crédito",  color: "#f87171" },
+              reenviar_correo:  { icon: "📧",  label: "Correo reenviado",     color: B.sky     },
             };
 
             // Helper para mostrar diff entre antes/después

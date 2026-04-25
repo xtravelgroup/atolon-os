@@ -146,8 +146,12 @@ export default async function handler(req, res) {
     return res.status(500).json({ ok: false, reason: "db_error_patch" });
   }
 
-  // ── Log en historial ─────────────────────────────────────────────────────
-  await fetch(`${sbUrl}/rest/v1/reservas_historial`, {
+  // ── Log Wompi-específico en historial_acciones ──────────────────────────
+  // El cambio de estado/abono ya lo captura el trigger trg_reservas_audit_update.
+  // Aquí registramos info propia del webhook que el trigger no tiene: tx_id,
+  // medio de pago real (PSE/tarjeta) y referencia.
+  const medio = tx.payment_method_type || tx.payment_method?.type || "wompi";
+  const histRes = await fetch(`${sbUrl}/rest/v1/historial_acciones`, {
     method: "POST",
     headers: {
       apikey: sbKey,
@@ -156,15 +160,20 @@ export default async function handler(req, res) {
       Prefer: "return=minimal",
     },
     body: JSON.stringify({
-      id: `H-WOMPI-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-      reserva_id: reference,
-      accion: "pago_registrado",
-      descripcion: `✅ Pago Wompi confirmado automáticamente · Transacción ${txId} · ${new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 }).format(totalCOP)} · Wompi webhook`,
-      valor_anterior: { estado: reserva.estado },
-      valor_nuevo: { estado: "confirmado", forma_pago: "wompi", tx_id: txId },
-      usuario: "wompi_webhook",
+      id: `LOG-WOMPI-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      usuario_email: "wompi@webhook",
+      modulo: "reservas",
+      accion: "registrar_pago",
+      tabla: "reservas",
+      registro_id: reference,
+      datos_antes: { estado: reserva.estado, abono: reserva.abono || 0 },
+      datos_despues: { estado: "confirmado", forma_pago: "wompi", tx_id: txId, medio },
+      notas: `✅ Pago Wompi aprobado · ${medio.toUpperCase()} · TX ${txId} · ${new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 }).format(totalCOP)}`,
     }),
-  }).catch(() => {});
+  });
+  if (!histRes.ok) {
+    console.error("[wompi-webhook] Error escribiendo historial:", await histRes.text());
+  }
 
   // ── Enviar email de confirmación ─────────────────────────────────────────
   if (reserva.contacto?.includes("@") || reserva.email?.includes("@")) {
