@@ -58,6 +58,9 @@ export default function Lancha() {
 
   const load = useCallback(async () => {
     setLoading(true);
+    // Idempotente: asegura que el mes actual tenga su cargo de marina si está
+    // configurada como recurrente (no inserta nada si ya existe)
+    supabase.rpc("generar_marina_mes").then(() => {});
     const [lR, bR, zR] = await Promise.all([
       supabase.from("lanchas").select("*").eq("activo", true).order("nombre"),
       supabase.from("lancha_bitacora").select("*").order("fecha", { ascending: false }).order("hora", { ascending: false }).limit(500),
@@ -730,6 +733,9 @@ function ConfigLanchaModal({ lancha, onClose, onSaved }) {
     capitan_default: lancha.capitan_default || "",
     costo_viaje_sencillo: lancha.costo_viaje_sencillo || "",
     tarifa_alquiler_ida_vuelta: lancha.tarifa_alquiler_ida_vuelta || "",
+    marina_costo_mensual: lancha.marina_costo_mensual || "",
+    marina_proveedor: lancha.marina_proveedor || "",
+    marina_activa: !!lancha.marina_activa,
     foto_url: lancha.foto_url || "",
     notas: lancha.notas || "",
   });
@@ -756,11 +762,18 @@ function ConfigLanchaModal({ lancha, onClose, onSaved }) {
       ano: f.ano ? Number(f.ano) : null,
       costo_viaje_sencillo: f.costo_viaje_sencillo ? Number(f.costo_viaje_sencillo) : 0,
       tarifa_alquiler_ida_vuelta: f.tarifa_alquiler_ida_vuelta ? Number(f.tarifa_alquiler_ida_vuelta) : 0,
+      marina_costo_mensual: f.marina_costo_mensual ? Number(f.marina_costo_mensual) : 0,
+      marina_proveedor: f.marina_proveedor || null,
+      marina_activa: !!f.marina_activa,
       updated_at: new Date().toISOString(),
     };
     const r = await supabase.from("lanchas").update(payload).eq("id", lancha.id);
+    if (r.error) { setSaving(false); setErr(r.error.message); return; }
+    // Si activó marina, asegurar que el mes actual quede registrado
+    if (payload.marina_activa && payload.marina_costo_mensual > 0) {
+      await supabase.rpc("generar_marina_mes");
+    }
     setSaving(false);
-    if (r.error) { setErr(r.error.message); return; }
     onSaved();
   }
 
@@ -789,6 +802,27 @@ function ConfigLanchaModal({ lancha, onClose, onSaved }) {
         <div>
           <label style={LS}>Tarifa alquiler ida+vuelta (COP)</label>
           <input type="number" value={f.tarifa_alquiler_ida_vuelta} onChange={e => set("tarifa_alquiler_ida_vuelta", e.target.value)} placeholder="400000" style={IS} />
+        </div>
+
+        <div style={{ gridColumn: "1 / -1", marginTop: 6, paddingTop: 14, borderTop: "1px solid rgba(255,255,255,0.08)" }}>
+          <div style={{ fontSize: 11, color: "#22d3ee", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em" }}>🅿️ Marina / parqueo recurrente</div>
+          <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>
+            Si está activa, se inserta automáticamente un cargo el día 1 de cada mes en la bitácora.
+          </div>
+        </div>
+        <div>
+          <label style={LS}>Costo mensual (COP)</label>
+          <input type="number" value={f.marina_costo_mensual} onChange={e => set("marina_costo_mensual", e.target.value)} placeholder="0" style={IS} />
+        </div>
+        <div>
+          <label style={LS}>Marina / proveedor</label>
+          <input value={f.marina_proveedor} onChange={e => set("marina_proveedor", e.target.value)} placeholder="Ej: Marina Santa Cruz" style={IS} />
+        </div>
+        <div style={{ gridColumn: "1 / -1", display: "flex", alignItems: "center", gap: 8 }}>
+          <input id="marina_activa" type="checkbox" checked={f.marina_activa} onChange={e => set("marina_activa", e.target.checked)} />
+          <label htmlFor="marina_activa" style={{ fontSize: 13, cursor: "pointer" }}>
+            Activar cargo recurrente {f.marina_costo_mensual > 0 && <span style={{ color: "rgba(255,255,255,0.5)" }}>(${Math.round(f.marina_costo_mensual).toLocaleString("es-CO")}/mes)</span>}
+          </label>
         </div>
         <div style={{ gridColumn: "1 / -1" }}>
           <label style={LS}>Foto</label>
