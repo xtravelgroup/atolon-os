@@ -171,13 +171,14 @@ export default function MuelleSalidas() {
   const [reservas, setReservas] = useState([]);
   const [zarpos,   setZarpos]   = useState({}); // { salida_id: hora_real }
   const [zarpesFlota, setZarpesFlota] = useState([]); // zarpes de Castillete/Naturalle
+  const [lanchas, setLanchas] = useState([]); // para lookup de costo_viaje_sencillo
   const [loading,  setLoading]  = useState(false);
   const [modalZarpe, setModalZarpe] = useState(null); // { embarcacion }
 
   const fetchData = useCallback(async () => {
     if (!supabase) return;
     setLoading(true);
-    const [{ data: sals }, { data: res }, { data: zrps }, { data: zfl }] = await Promise.all([
+    const [{ data: sals }, { data: res }, { data: zrps }, { data: zfl }, { data: lch }] = await Promise.all([
       supabase.from("salidas").select("id, nombre, hora, hora_regreso, activo").eq("activo", true).order("hora"),
       supabase.from("reservas")
         .select("id, nombre, salida_id, pax, pax_a, pax_n, estado, canal, aliado_id, checkin_at, embarcacion_asignada")
@@ -186,6 +187,7 @@ export default function MuelleSalidas() {
         .order("nombre"),
       supabase.from("muelle_salidas").select("salida_id, hora_real, estado").eq("fecha", fecha).eq("estado", "zarpo"),
       supabase.from("muelle_zarpes_flota").select("*").eq("fecha", fecha).order("hora_zarpe"),
+      supabase.from("lanchas").select("nombre, costo_viaje_sencillo").eq("activo", true),
     ]);
     setSalidas(sals || []);
     setReservas(res || []);
@@ -194,6 +196,7 @@ export default function MuelleSalidas() {
     (zrps || []).forEach(z => { zm[z.salida_id] = z.hora_real || true; });
     setZarpos(zm);
     setZarpesFlota(zfl || []);
+    setLanchas(lch || []);
     setLoading(false);
   }, [fecha]);
 
@@ -202,6 +205,11 @@ export default function MuelleSalidas() {
   const guardarZarpeFlota = async (data) => {
     if (!supabase) return;
     const id = `ZF-${Date.now().toString(36).toUpperCase()}`;
+    const lancha = lanchas.find(l => l.nombre === data.embarcacion);
+    const costoAuto = Number(lancha?.costo_viaje_sencillo) || 0;
+    const costoOperativo = data.costo_operativo != null && data.costo_operativo !== ""
+      ? Number(data.costo_operativo)
+      : costoAuto;
     const { error } = await supabase.from("muelle_zarpes_flota").insert({
       id,
       fecha,
@@ -210,6 +218,7 @@ export default function MuelleSalidas() {
       motivo: data.motivo,
       pax_a: Number(data.pax_a) || 0,
       pax_n: Number(data.pax_n) || 0,
+      costo_operativo: costoOperativo,
       notas: data.notas || null,
     });
     if (!error) {
@@ -349,10 +358,25 @@ export default function MuelleSalidas() {
                         {z.notas && <span>· {z.notas}</span>}
                       </div>
                     </div>
+                    {Number(z.costo_operativo) > 0 && (
+                      <div style={{ fontSize: 12, color: B.warning, fontWeight: 700, whiteSpace: "nowrap" }}>
+                        ${Math.round(z.costo_operativo).toLocaleString("es-CO")}
+                      </div>
+                    )}
                     <button onClick={() => borrarZarpeFlota(z.id)}
                       style={{ background: "transparent", border: "none", color: "rgba(255,255,255,0.3)", fontSize: 14, cursor: "pointer" }}>✕</button>
                   </div>
                 ))}
+                {zarpesFlota.reduce((s, z) => s + Number(z.costo_operativo || 0), 0) > 0 && (
+                  <div style={{ padding: "10px 14px", background: B.navy, fontSize: 12, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <span style={{ color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: "0.05em", fontSize: 10 }}>
+                      Costo operativo del día
+                    </span>
+                    <strong style={{ color: B.warning, fontSize: 14 }}>
+                      ${zarpesFlota.reduce((s, z) => s + Number(z.costo_operativo || 0), 0).toLocaleString("es-CO")}
+                    </strong>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -376,6 +400,7 @@ export default function MuelleSalidas() {
       {modalZarpe && (
         <ModalZarpeFlota
           embarcacion={modalZarpe.embarcacion}
+          costoDefault={Number(lanchas.find(l => l.nombre === modalZarpe.embarcacion)?.costo_viaje_sencillo) || 0}
           onClose={() => setModalZarpe(null)}
           onSave={guardarZarpeFlota}
         />
@@ -384,13 +409,14 @@ export default function MuelleSalidas() {
   );
 }
 
-function ModalZarpeFlota({ embarcacion, onClose, onSave }) {
+function ModalZarpeFlota({ embarcacion, costoDefault = 0, onClose, onSave }) {
   const [f, setF] = useState({
     embarcacion,
     hora_zarpe: new Date().toTimeString().slice(0, 5),
     motivo: "pasajeros",
     pax_a: 0,
     pax_n: 0,
+    costo_operativo: costoDefault,
     notas: "",
   });
   const [saving, setSaving] = useState(false);
@@ -439,6 +465,13 @@ function ModalZarpeFlota({ embarcacion, onClose, onSave }) {
               </div>
             </>
           )}
+          <div style={{ gridColumn: "1 / -1" }}>
+            <label style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", fontWeight: 600, textTransform: "uppercase", display: "block", marginBottom: 4 }}>
+              Costo operativo (1 viaje sencillo)
+              {costoDefault > 0 && <span style={{ textTransform: "none", color: "rgba(255,255,255,0.35)", marginLeft: 6 }}>· sugerido ${Math.round(costoDefault).toLocaleString("es-CO")}</span>}
+            </label>
+            <input type="number" value={f.costo_operativo} onChange={e => set("costo_operativo", e.target.value)} placeholder="0" style={IS} />
+          </div>
           <div style={{ gridColumn: "1 / -1" }}>
             <label style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", fontWeight: 600, textTransform: "uppercase", display: "block", marginBottom: 4 }}>Notas</label>
             <input value={f.notas} onChange={e => set("notas", e.target.value)} placeholder="Observaciones..." style={IS} />

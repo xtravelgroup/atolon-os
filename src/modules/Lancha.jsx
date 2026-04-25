@@ -81,9 +81,11 @@ export default function Lancha() {
     const gastoMantMes = delMes.filter(b => ["mantenimiento", "reparacion"].includes(b.tipo)).reduce((s, b) => s + Number(b.costo_total || 0), 0);
     const ultimoHoras = bitacoraLancha.find(b => b.kilometraje_h != null)?.kilometraje_h || 0;
     const proxServ = bitacoraLancha.find(b => b.proximo_servicio_h || b.proximo_servicio_fecha);
-    const viajesMes = zarpesLancha.filter(z => (z.fecha || "").startsWith(mes)).length;
+    const zarpesMes = zarpesLancha.filter(z => (z.fecha || "").startsWith(mes));
+    const viajesMes = zarpesMes.length;
+    const gastoViajesMes = zarpesMes.reduce((s, z) => s + Number(z.costo_operativo || 0), 0);
     const incidentesAbiertos = bitacoraLancha.filter(b => b.tipo === "incidente" && !b.resuelto).length;
-    return { galonesMes, gastoCombustibleMes, gastoMantMes, ultimoHoras, proxServ, viajesMes, incidentesAbiertos };
+    return { galonesMes, gastoCombustibleMes, gastoMantMes, ultimoHoras, proxServ, viajesMes, gastoViajesMes, incidentesAbiertos };
   }, [bitacoraLancha, zarpesLancha]);
 
   async function saveEvento(data) {
@@ -204,7 +206,7 @@ export default function Lancha() {
           { l: "Galones (mes)",       v: `${kpis.galonesMes.toFixed(1)} gal`, c: B.warning },
           { l: "Combustible (mes)",   v: fmtCOP(kpis.gastoCombustibleMes),    c: B.warning },
           { l: "Mant./Rep. (mes)",    v: fmtCOP(kpis.gastoMantMes),           c: B.sky },
-          { l: "Viajes (mes)",        v: kpis.viajesMes,                      c: "#a78bfa" },
+          { l: "Viajes (mes)",        v: `${kpis.viajesMes} · ${fmtCOP(kpis.gastoViajesMes)}`, c: "#a78bfa" },
           { l: "Horas motor",         v: kpis.ultimoHoras.toFixed(0) + " h",  c: B.sand },
           { l: "Incidentes abiertos", v: kpis.incidentesAbiertos,             c: kpis.incidentesAbiertos > 0 ? B.danger : B.success },
         ].map((k, i) => (
@@ -316,13 +318,15 @@ function ResumenTab({ bitacora, zarpes, lancha }) {
   }
   const gastosMes = meses.map(m => {
     const items = bitacora.filter(b => (b.fecha || "").startsWith(m));
+    const zarpesM = zarpes.filter(z => (z.fecha || "").startsWith(m));
     return {
       mes: m,
       comb: items.filter(b => b.tipo === "combustible").reduce((s, b) => s + Number(b.costo_total || 0), 0),
       mant: items.filter(b => ["mantenimiento", "reparacion"].includes(b.tipo)).reduce((s, b) => s + Number(b.costo_total || 0), 0),
+      viajes: zarpesM.reduce((s, z) => s + Number(z.costo_operativo || 0), 0),
     };
   });
-  const maxGasto = Math.max(1, ...gastosMes.map(g => g.comb + g.mant));
+  const maxGasto = Math.max(1, ...gastosMes.map(g => g.comb + g.mant + g.viajes));
 
   const recientes = bitacora.slice(0, 5);
   const proximoServicio = bitacora.find(b => b.proximo_servicio_fecha || b.proximo_servicio_h);
@@ -333,16 +337,18 @@ function ResumenTab({ bitacora, zarpes, lancha }) {
         <div style={{ fontWeight: 700, marginBottom: 12, fontSize: 13 }}>Gasto últimos 6 meses</div>
         <div style={{ display: "flex", alignItems: "flex-end", gap: 8, height: 160 }}>
           {gastosMes.map(g => {
-            const altoComb = maxGasto ? (g.comb / maxGasto) * 120 : 0;
-            const altoMant = maxGasto ? (g.mant / maxGasto) * 120 : 0;
+            const altoComb   = maxGasto ? (g.comb   / maxGasto) * 120 : 0;
+            const altoMant   = maxGasto ? (g.mant   / maxGasto) * 120 : 0;
+            const altoViajes = maxGasto ? (g.viajes / maxGasto) * 120 : 0;
             return (
               <div key={g.mes} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
                 <div style={{ display: "flex", flexDirection: "column-reverse", width: "100%", maxWidth: 40, height: 130, alignItems: "stretch" }}>
-                  <div style={{ background: B.warning, height: altoComb, minHeight: g.comb > 0 ? 3 : 0 }} title={"Combustible: " + fmtCOP(g.comb)} />
-                  <div style={{ background: B.sky, height: altoMant, minHeight: g.mant > 0 ? 3 : 0 }} title={"Mant.: " + fmtCOP(g.mant)} />
+                  <div style={{ background: B.warning,  height: altoComb,   minHeight: g.comb   > 0 ? 3 : 0 }} title={"Combustible: " + fmtCOP(g.comb)} />
+                  <div style={{ background: B.sky,      height: altoMant,   minHeight: g.mant   > 0 ? 3 : 0 }} title={"Mant.: " + fmtCOP(g.mant)} />
+                  <div style={{ background: "#a78bfa",  height: altoViajes, minHeight: g.viajes > 0 ? 3 : 0 }} title={"Viajes: " + fmtCOP(g.viajes)} />
                 </div>
                 <div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)" }}>{g.mes.slice(5)}</div>
-                <div style={{ fontSize: 10, fontWeight: 700 }}>{fmtCOP(g.comb + g.mant)}</div>
+                <div style={{ fontSize: 10, fontWeight: 700 }}>{fmtCOP(g.comb + g.mant + g.viajes)}</div>
               </div>
             );
           })}
@@ -350,6 +356,7 @@ function ResumenTab({ bitacora, zarpes, lancha }) {
         <div style={{ display: "flex", gap: 14, marginTop: 10, fontSize: 11, color: "rgba(255,255,255,0.6)" }}>
           <span>▪ <span style={{ color: B.warning }}>Combustible</span></span>
           <span>▪ <span style={{ color: B.sky }}>Mantenimiento</span></span>
+          <span>▪ <span style={{ color: "#a78bfa" }}>Viajes</span></span>
         </div>
       </div>
 
@@ -458,6 +465,7 @@ function ListaViajes({ viajes }) {
       </div>
     );
   }
+  const totalCosto = viajes.reduce((s, v) => s + Number(v.costo_operativo || 0), 0);
   return (
     <div style={{ background: B.navyMid, borderRadius: 10, overflow: "hidden" }}>
       {viajes.map(v => (
@@ -473,8 +481,21 @@ function ListaViajes({ viajes }) {
               {v.notas ? ` · ${v.notas}` : ""}
             </div>
           </div>
+          {Number(v.costo_operativo) > 0 && (
+            <div style={{ fontSize: 12, color: "#a78bfa", fontWeight: 700, whiteSpace: "nowrap" }}>
+              {fmtCOP(v.costo_operativo)}
+            </div>
+          )}
         </div>
       ))}
+      {totalCosto > 0 && (
+        <div style={{ padding: "10px 14px", background: B.navy, display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 12 }}>
+          <span style={{ color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: "0.05em", fontSize: 10 }}>
+            Total costo viajes · {viajes.length} zarpes
+          </span>
+          <strong style={{ color: "#a78bfa", fontSize: 14 }}>{fmtCOP(totalCosto)}</strong>
+        </div>
+      )}
     </div>
   );
 }
@@ -668,6 +689,8 @@ function ConfigLanchaModal({ lancha, onClose, onSaved }) {
     modelo: lancha.modelo || "",
     ano: lancha.ano || "",
     capitan_default: lancha.capitan_default || "",
+    costo_viaje_sencillo: lancha.costo_viaje_sencillo || "",
+    tarifa_alquiler_ida_vuelta: lancha.tarifa_alquiler_ida_vuelta || "",
     foto_url: lancha.foto_url || "",
     notas: lancha.notas || "",
   });
@@ -692,6 +715,8 @@ function ConfigLanchaModal({ lancha, onClose, onSaved }) {
       capacidad_pax: f.capacidad_pax ? Number(f.capacidad_pax) : null,
       capacidad_tanque_gal: f.capacidad_tanque_gal ? Number(f.capacidad_tanque_gal) : null,
       ano: f.ano ? Number(f.ano) : null,
+      costo_viaje_sencillo: f.costo_viaje_sencillo ? Number(f.costo_viaje_sencillo) : 0,
+      tarifa_alquiler_ida_vuelta: f.tarifa_alquiler_ida_vuelta ? Number(f.tarifa_alquiler_ida_vuelta) : 0,
       updated_at: new Date().toISOString(),
     };
     const r = await supabase.from("lanchas").update(payload).eq("id", lancha.id);
@@ -711,6 +736,21 @@ function ConfigLanchaModal({ lancha, onClose, onSaved }) {
         <div><label style={LS}>Motor</label><input value={f.motor} onChange={e => set("motor", e.target.value)} placeholder="Ej: Yamaha 200HP" style={IS} /></div>
         <div><label style={LS}>Modelo</label><input value={f.modelo} onChange={e => set("modelo", e.target.value)} style={IS} /></div>
         <div style={{ gridColumn: "1 / -1" }}><label style={LS}>Capitán principal</label><input value={f.capitan_default} onChange={e => set("capitan_default", e.target.value)} style={IS} /></div>
+
+        <div style={{ gridColumn: "1 / -1", marginTop: 6, paddingTop: 14, borderTop: "1px solid rgba(255,255,255,0.08)" }}>
+          <div style={{ fontSize: 11, color: B.sand, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em" }}>Costos operativos</div>
+          <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>
+            Un ida+vuelta = 2 viajes sencillos. Castillete: $400k ida+vuelta = $200k sencillo · Naturalle: $1.1M ida+vuelta x 2 = $275k sencillo.
+          </div>
+        </div>
+        <div>
+          <label style={LS}>Costo 1 viaje sencillo (COP)</label>
+          <input type="number" value={f.costo_viaje_sencillo} onChange={e => set("costo_viaje_sencillo", e.target.value)} placeholder="200000" style={IS} />
+        </div>
+        <div>
+          <label style={LS}>Tarifa alquiler ida+vuelta (COP)</label>
+          <input type="number" value={f.tarifa_alquiler_ida_vuelta} onChange={e => set("tarifa_alquiler_ida_vuelta", e.target.value)} placeholder="400000" style={IS} />
+        </div>
         <div style={{ gridColumn: "1 / -1" }}>
           <label style={LS}>Foto</label>
           {f.foto_url && <img src={f.foto_url} alt="" style={{ width: 120, height: 90, objectFit: "cover", borderRadius: 8, marginBottom: 6, display: "block" }} />}
