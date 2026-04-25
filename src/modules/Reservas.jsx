@@ -23,9 +23,20 @@ const CORTESIA_AUTHORIZED_EMAILS = [
 ];
 // Variable a nivel módulo que los sub-componentes pueden leer (se setea en el componente padre al cargar)
 let __currentUserEmail = "";
+let __currentUserRolId = "";
 const canUseCortesia = () =>
   !!__currentUserEmail && CORTESIA_AUTHORIZED_EMAILS.includes(__currentUserEmail.toLowerCase());
 const filterCortesia = (arr) => canUseCortesia() ? arr : arr.filter(f => f !== "Cortesía");
+
+// Roles autorizados para aplicar Descuento general: Gerente Ventas, Gerente General, Dirección
+const DESCUENTO_AUTHORIZED_ROLES = [
+  "super_admin",
+  "admin",
+  "gerente_ventas",
+  "gerente_general_1775236379654",
+];
+const canApplyDescuento = () =>
+  !!__currentUserRolId && DESCUENTO_AUTHORIZED_ROLES.includes(__currentUserRolId);
 
 const ESTADO_STYLE = {
   confirmado:            { bg: B.success + "22", color: B.success, label: "Confirmado"   },
@@ -280,6 +291,10 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
   const [showCancelModal, setShowCancelModal] = useState(false);
   const [showDateModal, setShowDateModal]     = useState(false);
   const [showPagoModal, setShowPagoModal]     = useState(false);
+  const [showDescuentoModal, setShowDescuentoModal] = useState(false);
+  const [descMonto, setDescMonto]             = useState("");
+  const [descNota, setDescNota]               = useState("");
+  const [savingDesc, setSavingDesc]           = useState(false);
   const [pagoMonto, setPagoMonto]             = useState(0);
   const [pagoForma, setPagoForma]             = useState("Transferencia");
   const [pagoFecha, setPagoFecha]             = useState(todayStr());
@@ -693,6 +708,53 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
       datosDespues: { abono: nuevoAbono, saldo: Math.max(0, nuevoSaldo), estado: nuevoEstado, forma_pago: pagoForma },
       notas: `Pago ${COP(monto)} vía ${pagoForma}` });
     setShowPagoModal(false);
+    onUpdated();
+  };
+
+  const handleDescuento = async () => {
+    if (!supabase) return;
+    if (!canApplyDescuento()) {
+      alert("No tienes permisos para aplicar descuentos. Solicita a Gerencia o Dirección.");
+      return;
+    }
+    const monto = Number(descMonto) || 0;
+    const nota = (descNota || "").trim();
+    if (monto <= 0) return alert("El monto debe ser mayor a 0");
+    if (nota.length < 10) return alert("La nota es obligatoria (mínimo 10 caracteres explicando la razón)");
+    const totalActual = Number(r0.total) || 0;
+    if (monto > totalActual) return alert(`El descuento (${COP(monto)}) no puede ser mayor al total (${COP(totalActual)})`);
+
+    setSavingDesc(true);
+    const nuevoTotal = Math.max(0, totalActual - monto);
+    const nuevoSaldo = Math.max(0, nuevoTotal - (r0.abono || 0));
+    const nuevoDescuentoGeneral = (Number(r0.descuento_general) || 0) + monto;
+    const stamp = new Date().toLocaleString("es-CO", { timeZone: "America/Bogota" });
+    const notaLog = `[Descuento ${COP(monto)} · ${stamp} · ${__currentUserEmail}] ${nota}`;
+    const nuevaNota = r0.notas ? `${r0.notas}\n${notaLog}` : notaLog;
+
+    const { error } = await supabase.from("reservas").update({
+      total:             nuevoTotal,
+      saldo:             nuevoSaldo,
+      descuento_general: nuevoDescuentoGeneral,
+      notas:             nuevaNota,
+      updated_at:        new Date().toISOString(),
+    }).eq("id", r0.id);
+    setSavingDesc(false);
+    if (error) return alert("Error aplicando descuento: " + error.message);
+
+    logAccion({
+      modulo: "reservas",
+      accion: "descuento_aplicado",
+      tabla: "reservas",
+      registroId: r0.id,
+      datosAntes:   { total: totalActual, saldo: r0.saldo, descuento_general: r0.descuento_general || 0 },
+      datosDespues: { total: nuevoTotal,  saldo: nuevoSaldo, descuento_general: nuevoDescuentoGeneral },
+      notas: `🏷️ Descuento ${COP(monto)} — ${nota}`,
+    });
+
+    setDescMonto("");
+    setDescNota("");
+    setShowDescuentoModal(false);
     onUpdated();
   };
 
@@ -1247,10 +1309,24 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
                   </div>
                 )}
                 {!editing && saldo > 0 && (
-                  <button onClick={() => { setPagoMonto(saldo); setPagoFecha(todayStr()); setPagoForma(r0.forma_pago || "Transferencia"); setShowPagoModal(true); }}
-                    style={{ marginTop: 14, background: B.success + "22", border: `1px solid ${B.success}`, borderRadius: 8, color: B.success, padding: "9px 18px", fontSize: 13, fontWeight: 700, cursor: "pointer", width: "100%" }}>
-                    💳 Registrar Pago
-                  </button>
+                  <div style={{ marginTop: 14, display: "flex", gap: 10, flexWrap: "wrap" }}>
+                    <button onClick={() => { setPagoMonto(saldo); setPagoFecha(todayStr()); setPagoForma(r0.forma_pago || "Transferencia"); setShowPagoModal(true); }}
+                      style={{ flex: 1, minWidth: 180, background: B.success + "22", border: `1px solid ${B.success}`, borderRadius: 8, color: B.success, padding: "9px 18px", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
+                      💳 Registrar Pago
+                    </button>
+                    {canApplyDescuento() && (
+                      <button onClick={() => { setDescMonto(""); setDescNota(""); setShowDescuentoModal(true); }}
+                        style={{ flex: 1, minWidth: 180, background: "#a78bfa22", border: `1px solid #a78bfa`, borderRadius: 8, color: "#a78bfa", padding: "9px 18px", fontSize: 13, fontWeight: 700, cursor: "pointer" }}
+                        title="Aplicar descuento al total — solo Gerencia y Dirección">
+                        🏷️ Aplicar Descuento
+                      </button>
+                    )}
+                  </div>
+                )}
+                {Number(r0.descuento_general) > 0 && (
+                  <div style={{ marginTop: 8, fontSize: 12, color: "#a78bfa", display: "flex", alignItems: "center", gap: 6 }}>
+                    🏷️ Descuento general aplicado: <strong>{COP(r0.descuento_general)}</strong>
+                  </div>
                 )}
 
                 {/* ── Historial de pagos ── */}
@@ -1394,8 +1470,9 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
               cambiar_fecha:    { icon: "📅",  label: "Cambio de fecha",      color: "#a78bfa" },
               check_in:         { icon: "✅",  label: "Check-in",             color: B.success },
               check_out:        { icon: "🏁",  label: "Check-out",            color: B.sand    },
-              reembolso:        { icon: "💸",  label: "Reembolso / crédito",  color: "#f87171" },
-              reenviar_correo:  { icon: "📧",  label: "Correo reenviado",     color: B.sky     },
+              reembolso:         { icon: "💸",  label: "Reembolso / crédito",  color: "#f87171" },
+              reenviar_correo:   { icon: "📧",  label: "Correo reenviado",     color: B.sky     },
+              descuento_aplicado:{ icon: "🏷️",  label: "Descuento aplicado",   color: "#a78bfa" },
             };
 
             // Helper para mostrar diff entre antes/después
@@ -1739,6 +1816,68 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
             <button onClick={handleCambioFecha} disabled={saving || !newFecha || newFecha === r0.fecha}
               style={{ flex: 1, padding: "10px", borderRadius: 8, background: B.sky, border: "none", color: B.navy, fontSize: 13, fontWeight: 700, cursor: "pointer", opacity: (!newFecha || newFecha === r0.fecha) ? 0.5 : 1 }}>
               {saving ? "Guardando..." : "Confirmar Cambio"}
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
+
+    {/* ── Modal: Aplicar Descuento (gerencia/dirección) ── */}
+    {showDescuentoModal && (
+      <div style={{ position: "fixed", inset: 0, zIndex: 1200, background: "rgba(0,0,0,0.85)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}
+        onClick={e => e.target === e.currentTarget && setShowDescuentoModal(false)}>
+        <div style={{ background: B.navyMid, borderRadius: 16, padding: 28, width: 460, maxWidth: "100%", border: `1px solid #a78bfa44` }}>
+          <h3 style={{ fontSize: 17, fontWeight: 700, marginBottom: 4, color: "#a78bfa" }}>🏷️ Aplicar Descuento</h3>
+          <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginBottom: 18 }}>{r0.id} · {r0.nombre}</div>
+
+          <div style={{ background: "#0D1B3E", borderRadius: 10, padding: "12px 14px", marginBottom: 16, display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, fontSize: 12 }}>
+            <div>
+              <div style={{ color: "rgba(255,255,255,0.4)", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.05em" }}>Total actual</div>
+              <div style={{ color: B.white, fontWeight: 700, fontSize: 14, marginTop: 2 }}>{COP(r0.total)}</div>
+            </div>
+            <div>
+              <div style={{ color: "rgba(255,255,255,0.4)", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.05em" }}>Descuento</div>
+              <div style={{ color: "#a78bfa", fontWeight: 700, fontSize: 14, marginTop: 2 }}>− {COP(Number(descMonto) || 0)}</div>
+            </div>
+            <div>
+              <div style={{ color: "rgba(255,255,255,0.4)", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.05em" }}>Total final</div>
+              <div style={{ color: B.success, fontWeight: 700, fontSize: 14, marginTop: 2 }}>{COP(Math.max(0, (Number(r0.total) || 0) - (Number(descMonto) || 0)))}</div>
+            </div>
+          </div>
+
+          <div style={{ marginBottom: 14 }}>
+            <label style={LS}>Monto del descuento (COP)</label>
+            <input type="number" min={0} step={1000} value={descMonto}
+              onChange={e => setDescMonto(e.target.value)}
+              placeholder="Ej: 50000"
+              style={IS}
+              autoFocus />
+          </div>
+
+          <div style={{ marginBottom: 18 }}>
+            <label style={LS}>Razón del descuento <span style={{ color: B.danger }}>*</span></label>
+            <textarea value={descNota}
+              onChange={e => setDescNota(e.target.value)}
+              placeholder="Explica por qué se aplica este descuento (mínimo 10 caracteres)..."
+              style={{ ...IS, minHeight: 90, resize: "vertical", fontFamily: "inherit" }} />
+            <div style={{ fontSize: 11, color: descNota.trim().length >= 10 ? B.success : "rgba(255,255,255,0.4)", marginTop: 4 }}>
+              {descNota.trim().length}/10 caracteres mínimos
+            </div>
+          </div>
+
+          <div style={{ background: "#a78bfa11", borderRadius: 8, padding: 10, marginBottom: 16, fontSize: 11, color: "rgba(255,255,255,0.55)" }}>
+            ℹ️ Este descuento reduce el <strong>total</strong> de la reserva. Queda registrado con tu usuario y la nota en el historial. Se puede ver en reportes y auditoría.
+          </div>
+
+          <div style={{ display: "flex", gap: 10 }}>
+            <button onClick={() => setShowDescuentoModal(false)}
+              style={{ flex: 1, background: "transparent", border: `1px solid ${B.navyLight}`, borderRadius: 8, color: "rgba(255,255,255,0.6)", padding: 11, fontSize: 13, cursor: "pointer", fontWeight: 600 }}>
+              Cancelar
+            </button>
+            <button onClick={handleDescuento}
+              disabled={savingDesc || !(Number(descMonto) > 0) || descNota.trim().length < 10}
+              style={{ flex: 2, background: "#a78bfa", border: "none", borderRadius: 8, color: B.navy, padding: 11, fontSize: 13, cursor: "pointer", fontWeight: 700, opacity: (savingDesc || !(Number(descMonto) > 0) || descNota.trim().length < 10) ? 0.5 : 1 }}>
+              {savingDesc ? "Aplicando…" : "🏷️ Aplicar Descuento"}
             </button>
           </div>
         </div>
@@ -3236,9 +3375,14 @@ export default function Reservas() {
   const isMobile = useMobile();
   const [, setUserEmail] = useState("");
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    supabase.auth.getSession().then(async ({ data: { session } }) => {
       const em = session?.user?.email?.toLowerCase() || "";
       __currentUserEmail = em;
+      // Cargar rol del usuario para checks de permisos (descuento, etc.)
+      if (em) {
+        const { data: u } = await supabase.from("usuarios").select("rol_id").eq("email", em).maybeSingle();
+        __currentUserRolId = u?.rol_id || "";
+      }
       setUserEmail(em); // fuerza rerender de subcomponentes
     });
   }, []);
