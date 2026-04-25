@@ -52,6 +52,7 @@ export default function Lancha() {
   const [bitacora, setBitacora] = useState([]);
   const [zarpes, setZarpes] = useState([]);
   const [capitanes, setCapitanes] = useState([]);
+  const [empleados, setEmpleados] = useState([]); // de rh_empleados (para vincular nómina)
   const [loading, setLoading] = useState(true);
   const [activeLancha, setActiveLancha] = useState(null);
   const [tab, setTab] = useState("resumen");
@@ -64,17 +65,19 @@ export default function Lancha() {
     // Idempotente: asegura cargos recurrentes del mes actual (marina + capitanes terceros)
     supabase.rpc("generar_marina_mes").then(() => {});
     supabase.rpc("generar_capitanes_mes").then(() => {});
-    const [lR, bR, zR, cR] = await Promise.all([
+    const [lR, bR, zR, cR, eR] = await Promise.all([
       supabase.from("lanchas").select("*").eq("activo", true).order("nombre"),
       supabase.from("lancha_bitacora").select("*").order("fecha", { ascending: false }).order("hora", { ascending: false }).limit(500),
       supabase.from("muelle_zarpes_flota").select("*").order("fecha", { ascending: false }).limit(200),
       supabase.from("capitanes_flota").select("*").eq("activo", true).order("nombre"),
+      supabase.from("rh_empleados").select("id, nombres, apellidos, cedula, telefono, email, cargo, salario_base, activo").eq("activo", true).order("nombres"),
     ]);
     const lanchasArr = lR.data || [];
     setLanchas(lanchasArr);
     setBitacora(bR.data || []);
     setZarpes(zR.data || []);
     setCapitanes(cR.data || []);
+    setEmpleados(eR.data || []);
     if (!activeLancha && lanchasArr.length) setActiveLancha(lanchasArr[0].id);
     setLoading(false);
   }, [activeLancha]);
@@ -345,6 +348,8 @@ export default function Lancha() {
         <CapitanModal
           edit={capitanModal.edit}
           lancha={lancha}
+          empleados={empleados}
+          capitanesAsignados={capitanes}
           onClose={() => setCapitanModal(null)}
           onSaved={() => { setCapitanModal(null); load(); }}
         />
@@ -941,9 +946,10 @@ function ListaCapitanes({ capitanes, onAdd, onEdit, onDelete }) {
 }
 
 // ─── Modal capitán (nómina/tercero) ─────────────────────────────────────────
-function CapitanModal({ edit, lancha, onClose, onSaved }) {
+function CapitanModal({ edit, lancha, empleados = [], capitanesAsignados = [], onClose, onSaved }) {
   const [f, setF] = useState({
     id: edit?.id || null,
+    empleado_id: edit?.empleado_id || "",
     nombre: edit?.nombre || "",
     documento: edit?.documento || "",
     telefono: edit?.telefono || "",
@@ -957,11 +963,55 @@ function CapitanModal({ edit, lancha, onClose, onSaved }) {
   });
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState("");
+  const [empSearch, setEmpSearch] = useState("");
   const set = (k, v) => setF(p => ({ ...p, [k]: v }));
+
+  // IDs de empleados ya asignados (para no ofrecerlos en el dropdown salvo el editado)
+  const empleadosUsados = new Set(
+    capitanesAsignados.filter(c => c.empleado_id && c.id !== edit?.id).map(c => c.empleado_id)
+  );
+
+  // Filtrar empleados por cargo "capitán" o búsqueda libre
+  const empleadosFiltrados = empleados
+    .filter(e => !empleadosUsados.has(e.id))
+    .filter(e => {
+      if (!empSearch.trim()) return true;
+      const q = empSearch.toLowerCase();
+      const nombre = `${e.nombres || ""} ${e.apellidos || ""}`.toLowerCase();
+      return nombre.includes(q) || (e.cedula || "").includes(empSearch) || (e.cargo || "").toLowerCase().includes(q);
+    });
+
+  function seleccionarEmpleado(emp) {
+    if (!emp) {
+      setF(p => ({ ...p, empleado_id: "", nombre: "", documento: "", telefono: "", email: "", salario_mensual: "" }));
+      return;
+    }
+    setF(p => ({
+      ...p,
+      empleado_id: emp.id,
+      nombre: `${emp.nombres || ""} ${emp.apellidos || ""}`.trim(),
+      documento: emp.cedula || "",
+      telefono: emp.telefono || "",
+      email: emp.email || "",
+      salario_mensual: emp.salario_base || "",
+    }));
+  }
+
+  // Si cambia a tercero, limpiar empleado_id
+  function cambiarTipo(t) {
+    set("tipo", t);
+    if (t === "tercero") set("empleado_id", "");
+  }
 
   async function save() {
     setSaving(true); setErr("");
+    if (f.tipo === "nomina" && !f.empleado_id) {
+      setSaving(false);
+      setErr("Selecciona un empleado de la nómina");
+      return;
+    }
     const payload = {
+      empleado_id: f.tipo === "nomina" ? f.empleado_id : null,
       nombre: f.nombre,
       documento: f.documento || null,
       telefono: f.telefono || null,
@@ -983,7 +1033,6 @@ function CapitanModal({ edit, lancha, onClose, onSaved }) {
       r = await supabase.from("capitanes_flota").insert({ id: "CAP-" + Date.now().toString(36).toUpperCase(), ...payload });
     }
     if (r.error) { setSaving(false); setErr(r.error.message); return; }
-    // Si quedó tercero recurrente, generar el cargo del mes actual ya
     if (payload.tipo === "tercero" && payload.recurrente && payload.salario_mensual > 0) {
       await supabase.rpc("generar_capitanes_mes");
     }
@@ -991,32 +1040,95 @@ function CapitanModal({ edit, lancha, onClose, onSaved }) {
     onSaved();
   }
 
+  const empSeleccionado = empleados.find(e => e.id === f.empleado_id);
+
   return (
     <Overlay onClose={onClose}>
       <div style={{ fontSize: 18, fontWeight: 800, marginBottom: 4 }}>{edit ? "Editar capitán" : "Nuevo capitán"} — {lancha.nombre}</div>
-      <div style={{ fontSize: 11, color: "rgba(255,255,255,0.45)", marginBottom: 14 }}>Mixto: nómina propia o tercero (con/sin recurrencia).</div>
+      <div style={{ fontSize: 11, color: "rgba(255,255,255,0.45)", marginBottom: 14 }}>Mixto: nómina propia (vinculado a RRHH) o tercero (con/sin recurrencia).</div>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
         <div style={{ gridColumn: "1 / -1" }}>
           <label style={LS}>Tipo</label>
           <div style={{ display: "flex", gap: 8 }}>
-            <button onClick={() => set("tipo", "nomina")}
+            <button onClick={() => cambiarTipo("nomina")}
               style={{ flex: 1, padding: 10, borderRadius: 8, border: "none", cursor: "pointer", background: f.tipo === "nomina" ? "#fb923c" : B.navyLight, color: f.tipo === "nomina" ? B.navy : "#fff", fontWeight: 700, fontSize: 12 }}>
               Nómina propia
             </button>
-            <button onClick={() => set("tipo", "tercero")}
+            <button onClick={() => cambiarTipo("tercero")}
               style={{ flex: 1, padding: 10, borderRadius: 8, border: "none", cursor: "pointer", background: f.tipo === "tercero" ? "#a78bfa" : B.navyLight, color: f.tipo === "tercero" ? B.navy : "#fff", fontWeight: 700, fontSize: 12 }}>
               Tercero / freelance
             </button>
           </div>
         </div>
 
-        <div><label style={LS}>Nombre completo</label><input value={f.nombre} onChange={e => set("nombre", e.target.value)} style={IS} /></div>
-        <div><label style={LS}>Documento</label><input value={f.documento} onChange={e => set("documento", e.target.value)} style={IS} /></div>
-        <div><label style={LS}>Teléfono</label><input value={f.telefono} onChange={e => set("telefono", e.target.value)} style={IS} /></div>
-        <div><label style={LS}>Email</label><input value={f.email} onChange={e => set("email", e.target.value)} style={IS} /></div>
+        {/* Nómina: selector de empleado */}
+        {f.tipo === "nomina" && (
+          <div style={{ gridColumn: "1 / -1" }}>
+            <label style={LS}>Empleado de la nómina</label>
+            {empSeleccionado ? (
+              <div style={{ background: B.navy, borderRadius: 8, padding: 12, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+                <div>
+                  <div style={{ fontSize: 14, fontWeight: 700 }}>👤 {empSeleccionado.nombres} {empSeleccionado.apellidos}</div>
+                  <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginTop: 2, display: "flex", gap: 10, flexWrap: "wrap" }}>
+                    {empSeleccionado.cargo && <span>💼 {empSeleccionado.cargo}</span>}
+                    {empSeleccionado.cedula && <span>· CC {empSeleccionado.cedula}</span>}
+                    {empSeleccionado.salario_base > 0 && <span>· 💵 {fmtCOP(empSeleccionado.salario_base)}/mes</span>}
+                  </div>
+                </div>
+                <button onClick={() => seleccionarEmpleado(null)}
+                  style={{ padding: "6px 12px", borderRadius: 6, border: `1px solid ${B.navyLight}`, background: "transparent", color: "rgba(255,255,255,0.7)", fontSize: 11, cursor: "pointer" }}>
+                  Cambiar
+                </button>
+              </div>
+            ) : (
+              <>
+                <input value={empSearch} onChange={e => setEmpSearch(e.target.value)} placeholder="Buscar por nombre, cédula o cargo…" style={IS} />
+                <div style={{ marginTop: 8, maxHeight: 220, overflowY: "auto", background: B.navy, borderRadius: 8 }}>
+                  {empleadosFiltrados.length === 0 ? (
+                    <div style={{ padding: 14, fontSize: 12, color: "rgba(255,255,255,0.4)", textAlign: "center" }}>
+                      {empleados.length === 0 ? "No hay empleados activos en RRHH" :
+                       empleadosUsados.size === empleados.length ? "Todos los empleados ya están asignados" :
+                       "Sin coincidencias"}
+                    </div>
+                  ) : empleadosFiltrados.map(e => (
+                    <div key={e.id} onClick={() => seleccionarEmpleado(e)}
+                      style={{ padding: "10px 12px", borderBottom: "1px solid rgba(255,255,255,0.05)", cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}
+                      onMouseEnter={ev => ev.currentTarget.style.background = "rgba(255,255,255,0.04)"}
+                      onMouseLeave={ev => ev.currentTarget.style.background = "transparent"}>
+                      <div>
+                        <div style={{ fontSize: 13, fontWeight: 700 }}>{e.nombres} {e.apellidos}</div>
+                        <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)" }}>
+                          {e.cargo || "—"}{e.cedula ? ` · CC ${e.cedula}` : ""}
+                        </div>
+                      </div>
+                      {e.salario_base > 0 && (
+                        <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", whiteSpace: "nowrap" }}>{fmtCOP(e.salario_base)}/mes</div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+            <div style={{ marginTop: 8, padding: 10, background: B.navy, borderRadius: 8, fontSize: 11, color: "rgba(255,255,255,0.5)" }}>
+              ℹ️ Empleados de nómina NO se insertan en bitácora (su sueldo se paga vía RRHH).
+              El salario aquí es referencia para el cálculo de costos de flota.
+            </div>
+          </div>
+        )}
+
+        {/* Tercero: campos libres */}
+        {f.tipo === "tercero" && (
+          <>
+            <div><label style={LS}>Nombre completo</label><input value={f.nombre} onChange={e => set("nombre", e.target.value)} style={IS} /></div>
+            <div><label style={LS}>Documento</label><input value={f.documento} onChange={e => set("documento", e.target.value)} style={IS} /></div>
+            <div><label style={LS}>Teléfono</label><input value={f.telefono} onChange={e => set("telefono", e.target.value)} style={IS} /></div>
+            <div><label style={LS}>Email</label><input value={f.email} onChange={e => set("email", e.target.value)} style={IS} /></div>
+          </>
+        )}
+
         <div>
-          <label style={LS}>{f.tipo === "nomina" ? "Salario mensual (referencia)" : "Tarifa mensual (COP)"}</label>
+          <label style={LS}>{f.tipo === "nomina" ? "Salario mensual" : "Tarifa mensual (COP)"}</label>
           <input type="number" value={f.salario_mensual} onChange={e => set("salario_mensual", e.target.value)} style={IS} />
         </div>
         <div><label style={LS}>Fecha inicio</label><input type="date" value={f.fecha_inicio} onChange={e => set("fecha_inicio", e.target.value)} style={IS} /></div>
@@ -1030,12 +1142,6 @@ function CapitanModal({ edit, lancha, onClose, onSaved }) {
             </label>
           </div>
         )}
-        {f.tipo === "nomina" && (
-          <div style={{ gridColumn: "1 / -1", padding: 10, background: B.navy, borderRadius: 8, fontSize: 11, color: "rgba(255,255,255,0.5)" }}>
-            ℹ️ Empleados de nómina NO se insertan en bitácora (su sueldo se paga vía RRHH).
-            El salario aquí es referencia para dashboard de Rentabilidad Flota.
-          </div>
-        )}
 
         <div style={{ gridColumn: "1 / -1" }}>
           <label style={LS}>Notas</label>
@@ -1047,7 +1153,7 @@ function CapitanModal({ edit, lancha, onClose, onSaved }) {
 
       <div style={{ display: "flex", gap: 10, marginTop: 18, justifyContent: "flex-end" }}>
         <button onClick={onClose} style={BTN(B.navyLight)}>Cancelar</button>
-        <button disabled={!f.nombre || saving} onClick={save} style={BTN(B.success)}>
+        <button disabled={!f.nombre || (f.tipo === "nomina" && !f.empleado_id) || saving} onClick={save} style={BTN(B.success)}>
           {saving ? "Guardando…" : "Guardar"}
         </button>
       </div>
