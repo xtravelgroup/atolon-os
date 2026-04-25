@@ -711,13 +711,20 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
     onUpdated();
   };
 
+  // Parser robusto: acepta "144000", "144.000", "144,000", "144 000", "$144.000"
+  const parseMontoCOP = (raw) => {
+    if (raw == null) return 0;
+    const cleaned = String(raw).replace(/[^\d]/g, ""); // quita TODO excepto dígitos
+    return cleaned ? Number(cleaned) : 0;
+  };
+
   const handleDescuento = async () => {
     if (!supabase) return;
     if (!canApplyDescuento()) {
       alert("No tienes permisos para aplicar descuentos. Solicita a Gerencia o Dirección.");
       return;
     }
-    const monto = Number(descMonto) || 0;
+    const monto = parseMontoCOP(descMonto);
     const nota = (descNota || "").trim();
     if (monto <= 0) return alert("El monto debe ser mayor a 0");
     if (nota.length < 10) return alert("La nota es obligatoria (mínimo 10 caracteres explicando la razón)");
@@ -1837,21 +1844,25 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
             </div>
             <div>
               <div style={{ color: "rgba(255,255,255,0.4)", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.05em" }}>Descuento</div>
-              <div style={{ color: "#a78bfa", fontWeight: 700, fontSize: 14, marginTop: 2 }}>− {COP(Number(descMonto) || 0)}</div>
+              <div style={{ color: "#a78bfa", fontWeight: 700, fontSize: 14, marginTop: 2 }}>− {COP(parseMontoCOP(descMonto))}</div>
             </div>
             <div>
               <div style={{ color: "rgba(255,255,255,0.4)", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.05em" }}>Total final</div>
-              <div style={{ color: B.success, fontWeight: 700, fontSize: 14, marginTop: 2 }}>{COP(Math.max(0, (Number(r0.total) || 0) - (Number(descMonto) || 0)))}</div>
+              <div style={{ color: B.success, fontWeight: 700, fontSize: 14, marginTop: 2 }}>{COP(Math.max(0, (Number(r0.total) || 0) - parseMontoCOP(descMonto)))}</div>
             </div>
           </div>
 
           <div style={{ marginBottom: 14 }}>
             <label style={LS}>Monto del descuento (COP)</label>
-            <input type="number" min={0} step={1000} value={descMonto}
-              onChange={e => setDescMonto(e.target.value)}
-              placeholder="Ej: 50000"
+            <input type="text" inputMode="numeric"
+              value={descMonto ? parseMontoCOP(descMonto).toLocaleString("es-CO") : ""}
+              onChange={e => setDescMonto(e.target.value.replace(/[^\d]/g, ""))}
+              placeholder="Ej: 144.000"
               style={IS}
               autoFocus />
+            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginTop: 4 }}>
+              Acepta formato con o sin separadores (144000, 144.000, 144,000 → todos = $144.000)
+            </div>
           </div>
 
           <div style={{ marginBottom: 18 }}>
@@ -1875,8 +1886,8 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
               Cancelar
             </button>
             <button onClick={handleDescuento}
-              disabled={savingDesc || !(Number(descMonto) > 0) || descNota.trim().length < 10}
-              style={{ flex: 2, background: "#a78bfa", border: "none", borderRadius: 8, color: B.navy, padding: 11, fontSize: 13, cursor: "pointer", fontWeight: 700, opacity: (savingDesc || !(Number(descMonto) > 0) || descNota.trim().length < 10) ? 0.5 : 1 }}>
+              disabled={savingDesc || !(parseMontoCOP(descMonto) > 0) || descNota.trim().length < 10}
+              style={{ flex: 2, background: "#a78bfa", border: "none", borderRadius: 8, color: B.navy, padding: 11, fontSize: 13, cursor: "pointer", fontWeight: 700, opacity: (savingDesc || !(parseMontoCOP(descMonto) > 0) || descNota.trim().length < 10) ? 0.5 : 1 }}>
               {savingDesc ? "Aplicando…" : "🏷️ Aplicar Descuento"}
             </button>
           </div>

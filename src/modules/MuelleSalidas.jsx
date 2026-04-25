@@ -358,25 +358,10 @@ export default function MuelleSalidas() {
                         {z.notas && <span>· {z.notas}</span>}
                       </div>
                     </div>
-                    {Number(z.costo_operativo) > 0 && (
-                      <div style={{ fontSize: 12, color: B.warning, fontWeight: 700, whiteSpace: "nowrap" }}>
-                        ${Math.round(z.costo_operativo).toLocaleString("es-CO")}
-                      </div>
-                    )}
                     <button onClick={() => borrarZarpeFlota(z.id)}
                       style={{ background: "transparent", border: "none", color: "rgba(255,255,255,0.3)", fontSize: 14, cursor: "pointer" }}>✕</button>
                   </div>
                 ))}
-                {zarpesFlota.reduce((s, z) => s + Number(z.costo_operativo || 0), 0) > 0 && (
-                  <div style={{ padding: "10px 14px", background: B.navy, fontSize: 12, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                    <span style={{ color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: "0.05em", fontSize: 10 }}>
-                      Costo operativo del día
-                    </span>
-                    <strong style={{ color: B.warning, fontSize: 14 }}>
-                      ${zarpesFlota.reduce((s, z) => s + Number(z.costo_operativo || 0), 0).toLocaleString("es-CO")}
-                    </strong>
-                  </div>
-                )}
               </div>
             )}
           </div>
@@ -465,13 +450,6 @@ function ModalZarpeFlota({ embarcacion, costoDefault = 0, onClose, onSave }) {
               </div>
             </>
           )}
-          <div style={{ gridColumn: "1 / -1" }}>
-            <label style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", fontWeight: 600, textTransform: "uppercase", display: "block", marginBottom: 4 }}>
-              Costo operativo (1 viaje sencillo)
-              {costoDefault > 0 && <span style={{ textTransform: "none", color: "rgba(255,255,255,0.35)", marginLeft: 6 }}>· sugerido ${Math.round(costoDefault).toLocaleString("es-CO")}</span>}
-            </label>
-            <input type="number" value={f.costo_operativo} onChange={e => set("costo_operativo", e.target.value)} placeholder="0" style={IS} />
-          </div>
           <div style={{ gridColumn: "1 / -1" }}>
             <label style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", fontWeight: 600, textTransform: "uppercase", display: "block", marginBottom: 4 }}>Notas</label>
             <input value={f.notas} onChange={e => set("notas", e.target.value)} placeholder="Observaciones..." style={IS} />
