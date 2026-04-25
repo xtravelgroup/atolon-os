@@ -93,6 +93,7 @@ export const GRUPOS_NAV = [
       { key: "resultados",    label: "Resultados",    icon: "📊" },
       { key: "financiero",    label: "Financiero",    icon: "≡"  },
       { key: "estado_resultados", label: "P&L",       icon: "📈" },
+      { key: "costeo_productos", label: "Costeo Productos", icon: "📊" },
       { key: "reportes",      label: "Reportes",      icon: "📑" },
       { key: "cxc",           label: "CXC",           icon: "💳" },
       { key: "presupuesto",   label: "Presupuesto",   icon: "○"  },
