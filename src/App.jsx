@@ -263,7 +263,6 @@ import Comisiones from "./modules/Comisiones";
 import Resultados from "./modules/Resultados";
 import ResultadosViewer from "./modules/ResultadosViewer";
 import Lancha from "./modules/Lancha";
-import RentabilidadFlota from "./modules/RentabilidadFlota";
 import CosteoProductos from "./modules/CosteoProductos";
 import DiaDeLaMadre from "./modules/DiaDeLaMadre";
 import Despedidas from "./modules/Despedidas";
@@ -310,7 +309,6 @@ const MODULE_MAP = {
   muelle:    <MuelleCheckin />,
   salidas_isla: <MuelleSalidas />,
   lancha:       <Lancha />,
-  rentabilidad_flota: <RentabilidadFlota />,
   costeo_productos:   <CosteoProductos />,
   menus:     <Menus />,
   configuracion: <Configuracion />,

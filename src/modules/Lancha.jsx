@@ -10,6 +10,7 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
 import { supabase } from "../lib/supabase";
 import { B } from "../brand";
+import CostosFlotaTab from "../components/CostosFlotaTab";
 
 const BTN = (bg, color = "#fff") => ({ padding: "8px 14px", borderRadius: 8, border: "none", background: bg, color, cursor: "pointer", fontWeight: 700, fontSize: 12 });
 const IS = { width: "100%", padding: "9px 12px", borderRadius: 8, background: B.navyLight, border: `1px solid ${B.navyLight}`, color: "#fff", fontSize: 13, outline: "none", boxSizing: "border-box" };
@@ -50,26 +51,30 @@ export default function Lancha() {
   const [lanchas, setLanchas] = useState([]);
   const [bitacora, setBitacora] = useState([]);
   const [zarpes, setZarpes] = useState([]);
+  const [capitanes, setCapitanes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [activeLancha, setActiveLancha] = useState(null);
   const [tab, setTab] = useState("resumen");
   const [modal, setModal] = useState(null); // { tipo, edit? }
   const [configModal, setConfigModal] = useState(false);
+  const [capitanModal, setCapitanModal] = useState(null); // { edit? }
 
   const load = useCallback(async () => {
     setLoading(true);
-    // Idempotente: asegura que el mes actual tenga su cargo de marina si está
-    // configurada como recurrente (no inserta nada si ya existe)
+    // Idempotente: asegura cargos recurrentes del mes actual (marina + capitanes terceros)
     supabase.rpc("generar_marina_mes").then(() => {});
-    const [lR, bR, zR] = await Promise.all([
+    supabase.rpc("generar_capitanes_mes").then(() => {});
+    const [lR, bR, zR, cR] = await Promise.all([
       supabase.from("lanchas").select("*").eq("activo", true).order("nombre"),
       supabase.from("lancha_bitacora").select("*").order("fecha", { ascending: false }).order("hora", { ascending: false }).limit(500),
       supabase.from("muelle_zarpes_flota").select("*").order("fecha", { ascending: false }).limit(200),
+      supabase.from("capitanes_flota").select("*").eq("activo", true).order("nombre"),
     ]);
     const lanchasArr = lR.data || [];
     setLanchas(lanchasArr);
     setBitacora(bR.data || []);
     setZarpes(zR.data || []);
+    setCapitanes(cR.data || []);
     if (!activeLancha && lanchasArr.length) setActiveLancha(lanchasArr[0].id);
     setLoading(false);
   }, [activeLancha]);
@@ -78,6 +83,7 @@ export default function Lancha() {
   const lancha = lanchas.find(l => l.id === activeLancha);
   const bitacoraLancha = useMemo(() => bitacora.filter(b => b.lancha_id === activeLancha), [bitacora, activeLancha]);
   const zarpesLancha = useMemo(() => zarpes.filter(z => lancha && z.embarcacion === lancha.nombre), [zarpes, lancha]);
+  const capitanesLancha = useMemo(() => capitanes.filter(c => c.lancha_id === activeLancha), [capitanes, activeLancha]);
 
   // KPIs del mes
   const kpis = useMemo(() => {
@@ -234,9 +240,11 @@ export default function Lancha() {
       <div style={{ display: "flex", gap: 6, marginBottom: 14, flexWrap: "wrap" }}>
         {[
           { k: "resumen",       l: "📊 Resumen" },
+          { k: "costos",        l: "💸 Costos" },
           { k: "combustible",   l: "⛽ Combustible" },
           { k: "mantenimiento", l: "🔧 Mantenimiento" },
           { k: "operativos",    l: "🅿️ Operativos" },
+          { k: "capitanes",     l: `👨‍✈️ Capitanes (${capitanesLancha.length})` },
           { k: "incidentes",    l: "⚠️ Incidentes" },
           { k: "viajes",        l: `⛵ Viajes (${zarpesLancha.length})` },
           { k: "todos",         l: "📋 Todo" },
@@ -249,7 +257,7 @@ export default function Lancha() {
       </div>
 
       {/* Botón agregar */}
-      {tab !== "viajes" && tab !== "resumen" && (
+      {tab !== "viajes" && tab !== "resumen" && tab !== "capitanes" && tab !== "costos" && (
         <div style={{ marginBottom: 14 }}>
           <button onClick={() => setModal({ tipo: defaultTipoForTab(tab) })}
             style={BTN(B.success)}>
@@ -260,6 +268,9 @@ export default function Lancha() {
 
       {tab === "resumen" && (
         <ResumenTab bitacora={bitacoraLancha} zarpes={zarpesLancha} lancha={lancha} />
+      )}
+      {tab === "costos" && (
+        <CostosFlotaTab />
       )}
       {tab === "combustible" && (
         <ListaEventos
@@ -280,6 +291,18 @@ export default function Lancha() {
           items={bitacoraLancha.filter(b => TIPOS_OPERATIVOS.includes(b.tipo))}
           onEdit={(e) => setModal({ tipo: e.tipo, edit: e })}
           onDelete={borrarEvento}
+        />
+      )}
+      {tab === "capitanes" && (
+        <ListaCapitanes
+          capitanes={capitanesLancha}
+          onAdd={() => setCapitanModal({})}
+          onEdit={(c) => setCapitanModal({ edit: c })}
+          onDelete={async (id) => {
+            if (!confirm("¿Eliminar capitán? (Los pagos ya registrados quedan en bitácora)")) return;
+            await supabase.from("capitanes_flota").update({ activo: false }).eq("id", id);
+            load();
+          }}
         />
       )}
       {tab === "incidentes" && (
@@ -316,6 +339,14 @@ export default function Lancha() {
           lancha={lancha}
           onClose={() => setConfigModal(false)}
           onSaved={() => { setConfigModal(false); load(); }}
+        />
+      )}
+      {capitanModal && (
+        <CapitanModal
+          edit={capitanModal.edit}
+          lancha={lancha}
+          onClose={() => setCapitanModal(null)}
+          onSaved={() => { setCapitanModal(null); load(); }}
         />
       )}
     </div>
@@ -840,6 +871,183 @@ function ConfigLanchaModal({ lancha, onClose, onSaved }) {
       <div style={{ display: "flex", gap: 10, marginTop: 16, justifyContent: "flex-end" }}>
         <button onClick={onClose} style={BTN(B.navyLight)}>Cancelar</button>
         <button onClick={save} disabled={saving} style={BTN(B.sky, B.navy)}>
+          {saving ? "Guardando…" : "Guardar"}
+        </button>
+      </div>
+    </Overlay>
+  );
+}
+
+// ─── Lista capitanes (por lancha) ───────────────────────────────────────────
+function ListaCapitanes({ capitanes, onAdd, onEdit, onDelete }) {
+  const totalNomina  = capitanes.filter(c => c.tipo === "nomina").reduce((s, c) => s + Number(c.salario_mensual || 0), 0);
+  const totalTercero = capitanes.filter(c => c.tipo === "tercero" && c.recurrente).reduce((s, c) => s + Number(c.salario_mensual || 0), 0);
+  return (
+    <div>
+      <div style={{ marginBottom: 14, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+        <div style={{ display: "flex", gap: 14, fontSize: 12, color: "rgba(255,255,255,0.6)", flexWrap: "wrap" }}>
+          {totalNomina  > 0 && <span>Nómina/mes: <strong style={{ color: "#fb923c" }}>{fmtCOP(totalNomina)}</strong></span>}
+          {totalTercero > 0 && <span>Terceros recurrentes/mes: <strong style={{ color: "#fb923c" }}>{fmtCOP(totalTercero)}</strong></span>}
+        </div>
+        <button onClick={onAdd} style={{ padding: "9px 14px", borderRadius: 8, border: "none", background: B.success, color: "#fff", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>
+          + Nuevo capitán
+        </button>
+      </div>
+      {!capitanes.length ? (
+        <div style={{ padding: 30, background: B.navyMid, borderRadius: 10, textAlign: "center", fontSize: 13, color: "rgba(255,255,255,0.3)" }}>
+          Sin capitanes asignados a esta embarcación.
+          <div style={{ fontSize: 11, marginTop: 6 }}>Agregá nómina propia o terceros freelance.</div>
+        </div>
+      ) : (
+        <div style={{ background: B.navyMid, borderRadius: 10, overflow: "hidden" }}>
+          {capitanes.map(c => (
+            <div key={c.id} style={{ padding: "12px 14px", borderBottom: "1px solid rgba(255,255,255,0.04)", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+              <div style={{ fontSize: 18 }}>👨‍✈️</div>
+              <div style={{ flex: 1, minWidth: 140 }}>
+                <div style={{ fontSize: 13, fontWeight: 700 }}>{c.nombre}</div>
+                <div style={{ fontSize: 11, color: "rgba(255,255,255,0.45)", marginTop: 2, display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <span style={{ padding: "1px 6px", borderRadius: 4, background: c.tipo === "nomina" ? "#fb923c33" : "#a78bfa33", color: c.tipo === "nomina" ? "#fb923c" : "#a78bfa", fontWeight: 700, textTransform: "uppercase", fontSize: 9 }}>
+                    {c.tipo === "nomina" ? "NÓMINA" : "TERCERO"}
+                  </span>
+                  {c.tipo === "tercero" && c.recurrente && (
+                    <span style={{ padding: "1px 6px", borderRadius: 4, background: B.success + "33", color: B.success, fontWeight: 700, fontSize: 9, textTransform: "uppercase" }}>
+                      RECURRENTE
+                    </span>
+                  )}
+                  {c.documento && <span>· CC {c.documento}</span>}
+                  {c.telefono  && <span>· 📞 {c.telefono}</span>}
+                </div>
+              </div>
+              {Number(c.salario_mensual) > 0 && (
+                <div style={{ fontSize: 13, fontWeight: 700, color: "#fb923c", whiteSpace: "nowrap" }}>
+                  {fmtCOP(c.salario_mensual)}<span style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", marginLeft: 4 }}>/mes</span>
+                </div>
+              )}
+              <div style={{ display: "flex", gap: 4 }}>
+                <button onClick={() => onEdit(c)} style={{ background: "transparent", border: "none", color: "rgba(255,255,255,0.5)", fontSize: 14, cursor: "pointer" }}>✏️</button>
+                <button onClick={() => onDelete(c.id)} style={{ background: "transparent", border: "none", color: "rgba(255,255,255,0.3)", fontSize: 14, cursor: "pointer" }}>✕</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      <div style={{ marginTop: 12, padding: 12, background: B.navy, borderRadius: 8, fontSize: 11, color: "rgba(255,255,255,0.45)", lineHeight: 1.5 }}>
+        ℹ️ <strong>Nómina</strong> = empleado de Atolón (su sueldo se paga vía RRHH/Nómina; aquí solo es referencia, no se duplica en bitácora).
+        <strong style={{ marginLeft: 6 }}>Tercero recurrente</strong> = freelance con tarifa fija mensual (se inserta automático en bitácora cada inicio de mes).
+        Pagos puntuales → registrá manualmente en tab Operativos.
+      </div>
+    </div>
+  );
+}
+
+// ─── Modal capitán (nómina/tercero) ─────────────────────────────────────────
+function CapitanModal({ edit, lancha, onClose, onSaved }) {
+  const [f, setF] = useState({
+    id: edit?.id || null,
+    nombre: edit?.nombre || "",
+    documento: edit?.documento || "",
+    telefono: edit?.telefono || "",
+    email: edit?.email || "",
+    tipo: edit?.tipo || "tercero",
+    salario_mensual: edit?.salario_mensual || "",
+    recurrente: edit?.recurrente !== false,
+    fecha_inicio: edit?.fecha_inicio || todayStr(),
+    fecha_fin: edit?.fecha_fin || "",
+    notas: edit?.notas || "",
+  });
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState("");
+  const set = (k, v) => setF(p => ({ ...p, [k]: v }));
+
+  async function save() {
+    setSaving(true); setErr("");
+    const payload = {
+      nombre: f.nombre,
+      documento: f.documento || null,
+      telefono: f.telefono || null,
+      email: f.email || null,
+      tipo: f.tipo,
+      lancha_id: lancha.id,
+      salario_mensual: f.salario_mensual ? Number(f.salario_mensual) : 0,
+      recurrente: f.tipo === "tercero" ? !!f.recurrente : false,
+      fecha_inicio: f.fecha_inicio || null,
+      fecha_fin: f.fecha_fin || null,
+      notas: f.notas || null,
+      activo: true,
+      updated_at: new Date().toISOString(),
+    };
+    let r;
+    if (f.id) {
+      r = await supabase.from("capitanes_flota").update(payload).eq("id", f.id);
+    } else {
+      r = await supabase.from("capitanes_flota").insert({ id: "CAP-" + Date.now().toString(36).toUpperCase(), ...payload });
+    }
+    if (r.error) { setSaving(false); setErr(r.error.message); return; }
+    // Si quedó tercero recurrente, generar el cargo del mes actual ya
+    if (payload.tipo === "tercero" && payload.recurrente && payload.salario_mensual > 0) {
+      await supabase.rpc("generar_capitanes_mes");
+    }
+    setSaving(false);
+    onSaved();
+  }
+
+  return (
+    <Overlay onClose={onClose}>
+      <div style={{ fontSize: 18, fontWeight: 800, marginBottom: 4 }}>{edit ? "Editar capitán" : "Nuevo capitán"} — {lancha.nombre}</div>
+      <div style={{ fontSize: 11, color: "rgba(255,255,255,0.45)", marginBottom: 14 }}>Mixto: nómina propia o tercero (con/sin recurrencia).</div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+        <div style={{ gridColumn: "1 / -1" }}>
+          <label style={LS}>Tipo</label>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button onClick={() => set("tipo", "nomina")}
+              style={{ flex: 1, padding: 10, borderRadius: 8, border: "none", cursor: "pointer", background: f.tipo === "nomina" ? "#fb923c" : B.navyLight, color: f.tipo === "nomina" ? B.navy : "#fff", fontWeight: 700, fontSize: 12 }}>
+              Nómina propia
+            </button>
+            <button onClick={() => set("tipo", "tercero")}
+              style={{ flex: 1, padding: 10, borderRadius: 8, border: "none", cursor: "pointer", background: f.tipo === "tercero" ? "#a78bfa" : B.navyLight, color: f.tipo === "tercero" ? B.navy : "#fff", fontWeight: 700, fontSize: 12 }}>
+              Tercero / freelance
+            </button>
+          </div>
+        </div>
+
+        <div><label style={LS}>Nombre completo</label><input value={f.nombre} onChange={e => set("nombre", e.target.value)} style={IS} /></div>
+        <div><label style={LS}>Documento</label><input value={f.documento} onChange={e => set("documento", e.target.value)} style={IS} /></div>
+        <div><label style={LS}>Teléfono</label><input value={f.telefono} onChange={e => set("telefono", e.target.value)} style={IS} /></div>
+        <div><label style={LS}>Email</label><input value={f.email} onChange={e => set("email", e.target.value)} style={IS} /></div>
+        <div>
+          <label style={LS}>{f.tipo === "nomina" ? "Salario mensual (referencia)" : "Tarifa mensual (COP)"}</label>
+          <input type="number" value={f.salario_mensual} onChange={e => set("salario_mensual", e.target.value)} style={IS} />
+        </div>
+        <div><label style={LS}>Fecha inicio</label><input type="date" value={f.fecha_inicio} onChange={e => set("fecha_inicio", e.target.value)} style={IS} /></div>
+        <div><label style={LS}>Fecha fin (opcional)</label><input type="date" value={f.fecha_fin} onChange={e => set("fecha_fin", e.target.value)} style={IS} /></div>
+
+        {f.tipo === "tercero" && (
+          <div style={{ gridColumn: "1 / -1", display: "flex", alignItems: "center", gap: 8, padding: 10, background: B.navy, borderRadius: 8 }}>
+            <input id="cap_rec" type="checkbox" checked={f.recurrente} onChange={e => set("recurrente", e.target.checked)} />
+            <label htmlFor="cap_rec" style={{ fontSize: 13, cursor: "pointer" }}>
+              Cargo recurrente — insertar automáticamente cada inicio de mes en bitácora
+            </label>
+          </div>
+        )}
+        {f.tipo === "nomina" && (
+          <div style={{ gridColumn: "1 / -1", padding: 10, background: B.navy, borderRadius: 8, fontSize: 11, color: "rgba(255,255,255,0.5)" }}>
+            ℹ️ Empleados de nómina NO se insertan en bitácora (su sueldo se paga vía RRHH).
+            El salario aquí es referencia para dashboard de Rentabilidad Flota.
+          </div>
+        )}
+
+        <div style={{ gridColumn: "1 / -1" }}>
+          <label style={LS}>Notas</label>
+          <textarea value={f.notas} onChange={e => set("notas", e.target.value)} style={{ ...IS, minHeight: 60, resize: "vertical" }} />
+        </div>
+      </div>
+
+      {err && <div style={{ marginTop: 12, padding: 10, background: "rgba(239,68,68,0.15)", color: B.danger, borderRadius: 8, fontSize: 12 }}>{err}</div>}
+
+      <div style={{ display: "flex", gap: 10, marginTop: 18, justifyContent: "flex-end" }}>
+        <button onClick={onClose} style={BTN(B.navyLight)}>Cancelar</button>
+        <button disabled={!f.nombre || saving} onClick={save} style={BTN(B.success)}>
           {saving ? "Guardando…" : "Guardar"}
         </button>
       </div>

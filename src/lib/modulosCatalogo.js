@@ -34,7 +34,6 @@ export const GRUPOS_NAV = [
       { key: "muelle",       label: "Llegadas",   icon: "⚓" },
       { key: "salidas_isla", label: "Salidas",    icon: "⛵" },
       { key: "lancha",       label: "Lancha",     icon: "🚤" },
-      { key: "rentabilidad_flota", label: "Rentab. Flota", icon: "💰" },
       { key: "cierre_caja",  label: "Cierre Caja", icon: "💵" },
       { key: "contratistas_muelle", label: "Muelle Contratistas", icon: "🦺" },
       { key: "hacer_inventario", label: "Hacer Inventario", icon: "📋" },
