@@ -2396,6 +2396,7 @@ function InventarioGeneralTab({ items, categorias, catIconMap, catColorMap }) {
   const [diffFilter, setDiffFilter] = useState("todos");
   const [syncing, setSyncing] = useState(false);
   const [syncMsg, setSyncMsg] = useState(null);
+  const [ajusteModal, setAjusteModal] = useState(null); // { fila } | null
 
   const load = useCallback(async () => {
     if (!supabase) return;
@@ -2527,14 +2528,14 @@ function InventarioGeneralTab({ items, categorias, catIconMap, catColorMap }) {
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, minWidth: 720 }}>
           <thead>
             <tr style={{ background: B.navyLight }}>
-              {["Producto", "Categoría", "Unidad", "Atolón (Σ)", "Loggro", "Diferencia", "Estado"].map((h, i) => (
-                <th key={h} style={{ padding: "11px 14px", textAlign: i < 3 ? "left" : "right", fontWeight: 700, color: "rgba(255,255,255,0.6)", fontSize: 11, textTransform: "uppercase", letterSpacing: "0.04em" }}>{h}</th>
+              {["Producto", "Categoría", "Unidad", "Atolón (Σ)", "Loggro", "Diferencia", "Estado", ""].map((h, i) => (
+                <th key={h + i} style={{ padding: "11px 14px", textAlign: i < 3 ? "left" : "right", fontWeight: 700, color: "rgba(255,255,255,0.6)", fontSize: 11, textTransform: "uppercase", letterSpacing: "0.04em" }}>{h}</th>
               ))}
             </tr>
           </thead>
           <tbody>
             {filasFiltradas.length === 0 ? (
-              <tr><td colSpan={7} style={{ padding: 30, textAlign: "center", color: "rgba(255,255,255,0.3)", fontSize: 13 }}>Sin productos que coincidan con los filtros.</td></tr>
+              <tr><td colSpan={8} style={{ padding: 30, textAlign: "center", color: "rgba(255,255,255,0.3)", fontSize: 13 }}>Sin productos que coincidan con los filtros.</td></tr>
             ) : filasFiltradas.map(f => {
               const cat = categorias.find(c => c.id === f.item.categoria);
               return (
@@ -2568,6 +2569,14 @@ function InventarioGeneralTab({ items, categorias, catIconMap, catColorMap }) {
                       <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 4, background: B.danger + "22", color: B.danger, fontWeight: 700 }}>⚠ Diferencia</span>
                     )}
                   </td>
+                  <td style={{ padding: "11px 14px", textAlign: "right" }}>
+                    {f.diff !== null && f.diff !== 0 && (
+                      <button onClick={() => setAjusteModal({ fila: f })}
+                        style={{ padding: "5px 10px", borderRadius: 6, border: `1px solid ${B.warning}`, background: B.warning + "22", color: B.warning, fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
+                        🔧 Ajustar
+                      </button>
+                    )}
+                  </td>
                 </tr>
               );
             })}
@@ -2575,9 +2584,210 @@ function InventarioGeneralTab({ items, categorias, catIconMap, catColorMap }) {
         </table>
       </div>
 
+      {ajusteModal && (
+        <AjusteStockModal
+          fila={ajusteModal.fila}
+          locaciones={locaciones}
+          stockPorLoc={stockPorLoc}
+          onClose={() => setAjusteModal(null)}
+          onSaved={() => { setAjusteModal(null); load(); }}
+        />
+      )}
+
       <div style={{ marginTop: 14, padding: 12, background: B.navy, borderRadius: 8, fontSize: 11, color: "rgba(255,255,255,0.45)", lineHeight: 1.5 }}>
-        ℹ️ <strong>Modo informativo</strong>: las diferencias se muestran pero no se ajustan automáticamente. Para corregir un faltante,
-        revisa los conteos físicos por bodega o sincroniza con Loggro. Próximamente: ajuste manual con justificación.
+        ℹ️ Click en <strong>🔧 Ajustar</strong> en cualquier fila con diferencia para corregir. Cada ajuste queda registrado en
+        <code style={{ background: "rgba(255,255,255,0.1)", padding: "1px 5px", borderRadius: 3, marginLeft: 4 }}>items_ajustes</code>
+        con usuario, fecha, motivo y stock antes/después.
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// MODAL AJUSTE DE STOCK (Loggro ↔ Atolón)
+// ═══════════════════════════════════════════════════════════════════════════
+function AjusteStockModal({ fila, locaciones, stockPorLoc, onClose, onSaved }) {
+  // Recepción primero para defaults sensatos
+  const recepcion = locaciones.filter(l => l.es_recepcion);
+  const defaultLoc = recepcion[0]?.id || locaciones[0]?.id || "";
+  const [direccion, setDireccion] = useState("loggro_a_atolon"); // loggro_a_atolon | atolon_a_loggro
+  const [locId, setLocId] = useState(defaultLoc);
+  const [motivo, setMotivo] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState("");
+
+  const f = fila;
+  const stockEnLoc = (loc_id) => Number(stockPorLoc[`${f.item.id}|${loc_id}`]) || 0;
+
+  async function aplicar() {
+    if (motivo.trim().length < 10) { setErr("Justificación obligatoria (mínimo 10 caracteres)"); return; }
+    setSaving(true); setErr("");
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const userEmail = session?.user?.email || "sistema";
+      const ajusteId = `AJ-${Date.now().toString(36).toUpperCase()}`;
+
+      if (direccion === "loggro_a_atolon") {
+        // Aceptar Loggro como verdad → modificar stock en bodega elegida para que la suma cuadre
+        if (!locId) throw new Error("Selecciona una bodega para aplicar el ajuste");
+        const stockActualLoc = stockEnLoc(locId);
+        // diff = atolon - loggro. Si diff > 0 (sobra en Atolón) → restar a la bodega.
+        // Si diff < 0 (falta en Atolón) → sumar a la bodega.
+        const ajuste = -f.diff; // signo opuesto a la diferencia
+        const nuevoStockLoc = Math.max(0, stockActualLoc + ajuste);
+
+        const { error: e1 } = await supabase.from("items_stock_locacion").upsert({
+          item_id: f.item.id, locacion_id: locId, cantidad: nuevoStockLoc,
+          updated_at: new Date().toISOString(),
+        }, { onConflict: "item_id,locacion_id" });
+        if (e1) throw e1;
+
+        await supabase.from("items_ajustes").insert({
+          id: ajusteId, item_id: f.item.id, locacion_id: locId,
+          tipo: "loggro_a_atolon",
+          cantidad_antes: stockActualLoc, cantidad_despues: nuevoStockLoc,
+          diferencia: ajuste, motivo: motivo.trim(), usuario_email: userEmail,
+        });
+      } else {
+        // Forzar Atolón como verdad → llamar a Loggro para actualizar (si tiene loggro_id)
+        if (!f.item.loggro_id) throw new Error("Producto no enlazado a Loggro");
+        try {
+          const res = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/loggro-sync/update-stock`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}` },
+            body: JSON.stringify({ loggro_id: f.item.loggro_id, stock: f.atolon }),
+          });
+          const data = await res.json().catch(() => ({}));
+          await supabase.from("items_ajustes").insert({
+            id: ajusteId, item_id: f.item.id, locacion_id: null,
+            tipo: "atolon_a_loggro",
+            cantidad_antes: f.loggro || 0, cantidad_despues: f.atolon,
+            diferencia: f.diff, motivo: motivo.trim(), usuario_email: userEmail,
+            loggro_response: data,
+          });
+          if (!res.ok) {
+            // Edge function puede no existir aún. Registramos el intento, dejamos
+            // mensaje claro y NO interrumpimos al usuario.
+            setErr(`Registro local OK. Sync a Loggro pendiente: ${data?.error || res.statusText}. Edge function 'loggro-sync/update-stock' no implementada todavía.`);
+            setSaving(false);
+            return;
+          }
+          // Si el endpoint existe y respondió OK, reflejamos en items_catalogo
+          await supabase.from("items_catalogo").update({ stock_actual: f.atolon }).eq("id", f.item.id);
+        } catch (apiErr) {
+          // Sin endpoint disponible: log local, dejamos pendiente
+          await supabase.from("items_ajustes").insert({
+            id: ajusteId, item_id: f.item.id, locacion_id: null,
+            tipo: "atolon_a_loggro",
+            cantidad_antes: f.loggro || 0, cantidad_despues: f.atolon,
+            diferencia: f.diff, motivo: motivo.trim() + " [PENDIENTE SYNC LOGGRO]",
+            usuario_email: userEmail,
+          });
+          setErr(`Registrado localmente. Sync manual a Loggro pendiente (endpoint no disponible).`);
+          setSaving(false);
+          return;
+        }
+      }
+      setSaving(false);
+      onSaved();
+    } catch (e) {
+      setErr(e.message || String(e));
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div onClick={ev => ev.target === ev.currentTarget && onClose()}
+      style={{ position: "fixed", inset: 0, zIndex: 1200, background: "rgba(0,0,0,0.85)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+      <div style={{ background: B.navyMid, borderRadius: 16, padding: 24, width: 540, maxWidth: "100%", border: `1px solid ${B.warning}44` }}>
+        <h3 style={{ fontSize: 17, fontWeight: 700, marginBottom: 4, color: B.warning }}>🔧 Ajustar Stock</h3>
+        <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginBottom: 18 }}>
+          {f.item.nombre} {f.item.codigo && `· ${f.item.codigo}`}
+        </div>
+
+        {/* Comparación actual */}
+        <div style={{ background: B.navy, borderRadius: 10, padding: 12, marginBottom: 16, display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, fontSize: 12 }}>
+          <div>
+            <div style={{ color: "rgba(255,255,255,0.4)", fontSize: 10, textTransform: "uppercase" }}>Atolón (Σ)</div>
+            <div style={{ color: B.success, fontWeight: 800, fontSize: 16, marginTop: 2 }}>{f.atolon.toLocaleString("es-CO")}</div>
+          </div>
+          <div>
+            <div style={{ color: "rgba(255,255,255,0.4)", fontSize: 10, textTransform: "uppercase" }}>Loggro</div>
+            <div style={{ color: "#22c55e", fontWeight: 800, fontSize: 16, marginTop: 2 }}>{(f.loggro || 0).toLocaleString("es-CO")}</div>
+          </div>
+          <div>
+            <div style={{ color: "rgba(255,255,255,0.4)", fontSize: 10, textTransform: "uppercase" }}>Diferencia</div>
+            <div style={{ color: B.danger, fontWeight: 800, fontSize: 16, marginTop: 2 }}>{f.diff > 0 ? "+" : ""}{f.diff}</div>
+          </div>
+        </div>
+
+        {/* Dirección del ajuste */}
+        <div style={{ marginBottom: 14 }}>
+          <div style={{ fontSize: 11, color: B.sand, fontWeight: 700, textTransform: "uppercase", marginBottom: 8 }}>¿Cuál es la verdad?</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            <label style={{ display: "flex", gap: 10, padding: 12, background: direccion === "loggro_a_atolon" ? B.sky + "22" : B.navy, border: `1px solid ${direccion === "loggro_a_atolon" ? B.sky : B.navyLight}`, borderRadius: 8, cursor: "pointer" }}>
+              <input type="radio" checked={direccion === "loggro_a_atolon"} onChange={() => setDireccion("loggro_a_atolon")} />
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 700 }}>📥 Aceptar Loggro como verdad</div>
+                <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginTop: 2 }}>
+                  Ajusta el stock de Atolón ({f.diff > 0 ? "resta" : "suma"} {Math.abs(f.diff)}) en una bodega para que coincida con Loggro.
+                </div>
+              </div>
+            </label>
+            <label style={{ display: "flex", gap: 10, padding: 12, background: direccion === "atolon_a_loggro" ? B.warning + "22" : B.navy, border: `1px solid ${direccion === "atolon_a_loggro" ? B.warning : B.navyLight}`, borderRadius: 8, cursor: "pointer" }}>
+              <input type="radio" checked={direccion === "atolon_a_loggro"} onChange={() => setDireccion("atolon_a_loggro")} />
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 700 }}>📤 Forzar Atolón como verdad</div>
+                <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginTop: 2 }}>
+                  Envía a Loggro el stock de Atolón ({f.atolon}). El registro queda pendiente si el endpoint no está disponible.
+                </div>
+              </div>
+            </label>
+          </div>
+        </div>
+
+        {/* Selector de bodega (solo si loggro_a_atolon) */}
+        {direccion === "loggro_a_atolon" && (
+          <div style={{ marginBottom: 14 }}>
+            <label style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", fontWeight: 600, textTransform: "uppercase", display: "block", marginBottom: 4 }}>
+              Bodega donde aplicar el ajuste
+            </label>
+            <select value={locId} onChange={e => setLocId(e.target.value)}
+              style={{ width: "100%", padding: "10px 12px", borderRadius: 8, background: B.navy, border: `1px solid ${B.navyLight}`, color: "#fff", fontSize: 13 }}>
+              {locaciones.map(l => (
+                <option key={l.id} value={l.id}>
+                  {l.icono || "📦"} {l.nombre} (actual: {stockEnLoc(l.id)})
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+
+        {/* Justificación */}
+        <div style={{ marginBottom: 16 }}>
+          <label style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", fontWeight: 600, textTransform: "uppercase", display: "block", marginBottom: 4 }}>
+            Justificación <span style={{ color: B.danger }}>*</span>
+          </label>
+          <textarea value={motivo} onChange={e => setMotivo(e.target.value)}
+            placeholder="Ej: Conteo físico encontró 3 unidades menos. Confirmado por gerente bar."
+            style={{ width: "100%", padding: "10px 12px", borderRadius: 8, background: B.navy, border: `1px solid ${B.navyLight}`, color: "#fff", fontSize: 13, minHeight: 80, resize: "vertical", fontFamily: "inherit", boxSizing: "border-box" }} />
+          <div style={{ fontSize: 11, color: motivo.trim().length >= 10 ? B.success : "rgba(255,255,255,0.4)", marginTop: 4 }}>
+            {motivo.trim().length}/10 caracteres mínimos
+          </div>
+        </div>
+
+        {err && <div style={{ marginBottom: 12, padding: 10, background: "rgba(239,68,68,0.15)", color: "#fca5a5", borderRadius: 8, fontSize: 12 }}>{err}</div>}
+
+        <div style={{ display: "flex", gap: 10 }}>
+          <button onClick={onClose} disabled={saving}
+            style={{ flex: 1, padding: 11, borderRadius: 8, border: `1px solid ${B.navyLight}`, background: "transparent", color: "rgba(255,255,255,0.6)", cursor: "pointer", fontSize: 13, fontWeight: 600 }}>
+            Cancelar
+          </button>
+          <button onClick={aplicar} disabled={saving || motivo.trim().length < 10}
+            style={{ flex: 2, padding: 11, borderRadius: 8, border: "none", background: B.warning, color: B.navy, cursor: "pointer", fontSize: 13, fontWeight: 700, opacity: (saving || motivo.trim().length < 10) ? 0.5 : 1 }}>
+            {saving ? "Aplicando…" : "🔧 Aplicar Ajuste"}
+          </button>
+        </div>
       </div>
     </div>
   );
