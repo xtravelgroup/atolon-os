@@ -44,7 +44,7 @@ function fmtFecha(d) {
 }
 
 // ─── Historial de Cierres ─────────────────────────────────────────────────────
-function HistorialCierres({ refresh, area, userRol }) {
+function HistorialCierres({ refresh, area, userRol, userPermisos = [] }) {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(false);
   const [expanded, setExpanded] = useState(null);
@@ -52,7 +52,10 @@ function HistorialCierres({ refresh, area, userRol }) {
   const [editForm, setEditForm] = useState({});
   const [editSaving, setEditSaving] = useState(false);
   const canEdit = userRol === "super_admin";
-  const canSeeLoggro = /admin|gerente|contab/i.test(String(userRol || ""));
+  // Loggro visible para: admin/gerente/contabilidad por rol, O usuarios con
+  // permiso explícito 'ver_loggro_caja' (otorgado individualmente)
+  const canSeeLoggro = /admin|gerente|contab/i.test(String(userRol || ""))
+    || (Array.isArray(userPermisos) && userPermisos.includes("ver_loggro_caja"));
 
   // Cache de consultas Loggro por fecha { "YYYY-MM-DD": { loading, data, error } }
   const [loggroByDate, setLoggroByDate] = useState({});
@@ -477,19 +480,21 @@ export default function CierreCaja() {
   // Logged-in user + lista de usuarios
   const [userNombre, setUserNombre] = useState("");
   const [userRol, setUserRol]       = useState("");
+  const [userPermisos, setUserPermisos] = useState([]);
   const [usuariosList, setUsuariosList] = useState([]);
   useEffect(() => {
     if (!supabase) return;
     // Load all active users for cajero dropdown
     supabase.from("usuarios").select("nombre").eq("activo", true).order("nombre")
       .then(({ data }) => { if (data) setUsuariosList(data.map(u => u.nombre)); });
-    // Pre-select logged-in user + detect role
+    // Pre-select logged-in user + detect role + permisos extra
     supabase.auth.getSession().then(async ({ data: { session } }) => {
       if (!session?.user?.email) return;
-      const { data } = await supabase.from("usuarios").select("nombre, rol_id")
+      const { data } = await supabase.from("usuarios").select("nombre, rol_id, permisos_extra")
         .eq("email", session.user.email.toLowerCase()).single();
       if (data?.nombre) { setUserNombre(data.nombre); setCajero(data.nombre); }
       if (data?.rol_id) setUserRol(data.rol_id);
+      if (Array.isArray(data?.permisos_extra)) setUserPermisos(data.permisos_extra);
     });
   }, []);
 
@@ -1282,7 +1287,7 @@ export default function CierreCaja() {
           <div style={{ fontSize: 12, color: B.sand, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em" }}>Historial de Cierres</div>
           <div style={{ fontSize: 10, color: "rgba(255,255,255,0.3)" }}>Rol detectado: <span style={{ color: B.sky }}>{userRol || "(cargando…)"}</span></div>
         </div>
-        <HistorialCierres refresh={historialKey} area={area} userRol={userRol} />
+        <HistorialCierres refresh={historialKey} area={area} userRol={userRol} userPermisos={userPermisos} />
       </div>
 
     </div>
