@@ -1568,92 +1568,11 @@ function InventarioTab({
       </div>
 
       {/* ── Modal Transferencia entre locaciones ── */}
-      {transferModal && (() => {
-        const i = transferModal.item;
-        const [fromLoc, setFromLocRaw] = [transferModal.from || locaciones.find(l => l.es_principal)?.id || locaciones[0]?.id, (v) => setTransferModal(m => ({ ...m, from: v }))];
-        const [toLoc, setToLocRaw] = [transferModal.to || locaciones.find(l => l.es_ventas)?.id || locaciones[1]?.id, (v) => setTransferModal(m => ({ ...m, to: v }))];
-        const cant = transferModal.cant || "";
-        const cantNum = Number(cant) || 0;
-        const stockFrom = stockEnLoc(i.id, fromLoc);
-        const stockTo   = stockEnLoc(i.id, toLoc);
-        const excede = cantNum > stockFrom;
-        const confirmar = async () => {
-          if (!cantNum || cantNum <= 0) return alert("Cantidad inválida");
-          if (excede) return alert(`No hay suficiente en ${locaciones.find(l => l.id === fromLoc)?.nombre} (disponible: ${stockFrom})`);
-          if (fromLoc === toLoc) return alert("Selecciona locaciones distintas");
-          // Obtener email usuario
-          const { data: { session } } = await supabase.auth.getSession();
-          const email = session?.user?.email || "sistema";
-          // Upsert stock origen (resta)
-          await supabase.from("items_stock_locacion").upsert({
-            item_id: i.id, locacion_id: fromLoc,
-            cantidad: stockFrom - cantNum, updated_at: new Date().toISOString(),
-          }, { onConflict: "item_id,locacion_id" });
-          // Upsert stock destino (suma)
-          await supabase.from("items_stock_locacion").upsert({
-            item_id: i.id, locacion_id: toLoc,
-            cantidad: stockTo + cantNum, updated_at: new Date().toISOString(),
-          }, { onConflict: "item_id,locacion_id" });
-          // Registrar transferencia
-          await supabase.from("items_transferencias").insert({
-            id: `TR-${Date.now()}`, item_id: i.id,
-            from_locacion_id: fromLoc, to_locacion_id: toLoc,
-            cantidad: cantNum, motivo: transferModal.motivo || null, usuario_email: email,
-          });
-          await loadLocaciones();
-          setTransferModal(null);
-        };
-        return (
-          <div onClick={e => e.target === e.currentTarget && setTransferModal(null)}
-            style={{ position: "fixed", inset: 0, zIndex: 1200, background: "#00000088", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
-            <div style={{ background: B.navyMid, borderRadius: 16, width: "100%", maxWidth: 480, padding: 28, border: `1px solid ${B.navyLight}` }}>
-              <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontSize: 22, fontWeight: 700, color: B.sand, marginBottom: 4 }}>🔄 Transferir stock</div>
-              <div style={{ fontSize: 13, color: "rgba(255,255,255,0.5)", marginBottom: 16 }}>
-                {i.nombre} <span style={{ color: "rgba(255,255,255,0.3)" }}>· {i.unidad}</span>
-              </div>
-
-              <div style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", gap: 10, alignItems: "center", marginBottom: 14 }}>
-                <div>
-                  <label style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4, display: "block" }}>Desde</label>
-                  <select value={fromLoc} onChange={e => setFromLocRaw(e.target.value)} style={IS}>
-                    {locaciones.map(l => <option key={l.id} value={l.id}>{l.icono} {l.nombre} ({stockEnLoc(i.id, l.id).toFixed(0)})</option>)}
-                  </select>
-                </div>
-                <div style={{ fontSize: 22, color: B.sky, paddingTop: 20 }}>→</div>
-                <div>
-                  <label style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4, display: "block" }}>Hacia</label>
-                  <select value={toLoc} onChange={e => setToLocRaw(e.target.value)} style={IS}>
-                    {locaciones.map(l => <option key={l.id} value={l.id}>{l.icono} {l.nombre} ({stockEnLoc(i.id, l.id).toFixed(0)})</option>)}
-                  </select>
-                </div>
-              </div>
-
-              <div style={{ marginBottom: 14 }}>
-                <label style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4, display: "block" }}>Cantidad a transferir</label>
-                <input type="number" autoFocus value={cant}
-                  onChange={e => setTransferModal(m => ({ ...m, cant: e.target.value }))}
-                  style={{ ...IS, textAlign: "center", fontSize: 20, fontWeight: 800, fontFamily: "'Barlow Condensed', sans-serif" }} />
-                {excede && <div style={{ fontSize: 11, color: B.danger, marginTop: 4 }}>⚠️ No hay suficiente stock en origen ({stockFrom})</div>}
-              </div>
-
-              <div style={{ marginBottom: 18 }}>
-                <label style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4, display: "block" }}>Motivo (opcional)</label>
-                <input value={transferModal.motivo || ""} onChange={e => setTransferModal(m => ({ ...m, motivo: e.target.value }))}
-                  placeholder="Ej: Reposición bar" style={IS} />
-              </div>
-
-              <div style={{ display: "flex", gap: 10 }}>
-                <button onClick={() => setTransferModal(null)}
-                  style={{ flex: 1, padding: "11px", borderRadius: 8, border: `1px solid ${B.navyLight}`, background: "transparent", color: "rgba(255,255,255,0.5)", cursor: "pointer", fontWeight: 600 }}>Cancelar</button>
-                <button onClick={confirmar} disabled={!cantNum || excede || fromLoc === toLoc}
-                  style={{ flex: 2, padding: "11px", borderRadius: 8, border: "none", background: (!cantNum || excede || fromLoc === toLoc) ? B.navyLight : B.sky, color: B.navy, cursor: (!cantNum || excede) ? "default" : "pointer", fontWeight: 700, fontSize: 14 }}>
-                  ✓ Transferir
-                </button>
-              </div>
-            </div>
-          </div>
-        );
-      })()}
+      {transferModal && (
+        <TransferenciaModal item={transferModal.item} locaciones={locaciones}
+          stockEnLoc={stockEnLoc} onClose={() => setTransferModal(null)}
+          onSaved={async () => { await loadLocaciones(); setTransferModal(null); }} />
+      )}
 
       {/* ── Modal Nueva Locación ── */}
       {newLocModal && (
@@ -2416,6 +2335,257 @@ function LoggroCategoriaPicker({ nombre, categoriaAtolon, form, onClose, onCreat
           <button onClick={crear} disabled={creating || !selected}
             style={{ flex: 2, padding: "11px", borderRadius: 8, border: "none", background: (creating || !selected) ? B.navyLight : "#22c55e", color: "#042818", cursor: (creating || !selected) ? "default" : "pointer", fontWeight: 800, fontSize: 13 }}>
             {creating ? "Creando en Loggro..." : "✓ Crear en Loggro"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// MODAL DE TRANSFERENCIA: simple (1 destino) + distribución masiva (varios)
+// ═══════════════════════════════════════════════════════════════════════════
+function TransferenciaModal({ item, locaciones, stockEnLoc, onClose, onSaved }) {
+  // Agrupar locaciones por categoría para dropdowns más limpios
+  const grupos = {
+    "📦 Recepción / Almacenes": locaciones.filter(l => l.es_recepcion),
+    "🍸 Puntos de venta": locaciones.filter(l => l.es_ventas),
+    "🛏️ Mini Bars (habitaciones)": locaciones.filter(l => l.id.startsWith("LOC-MINIBAR-")),
+    "🏢 Otras bodegas": locaciones.filter(l => !l.es_recepcion && !l.es_ventas && !l.id.startsWith("LOC-MINIBAR-")),
+  };
+  const renderOption = (l) => `${l.icono || "📦"} ${l.nombre} (${stockEnLoc(item.id, l.id).toFixed(0)})`;
+
+  const [modo, setModo] = useState("simple"); // "simple" | "masivo"
+  const [fromLoc, setFromLoc] = useState(locaciones.find(l => l.es_recepcion)?.id || locaciones[0]?.id);
+  const [toLoc, setToLoc] = useState(locaciones.find(l => l.es_ventas)?.id || "");
+  const [cant, setCant] = useState("");
+  const [motivo, setMotivo] = useState("");
+
+  // Para modo masivo: filtro de destinos + cantidades por destino
+  const [filtroMasivo, setFiltroMasivo] = useState("minibars"); // minibars | otros | todos
+  const [cantPorDestino, setCantPorDestino] = useState({});
+  const [cantUniforme, setCantUniforme] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState("");
+
+  const stockFrom = stockEnLoc(item.id, fromLoc);
+
+  const destinosMasivo = locaciones.filter(l => {
+    if (l.id === fromLoc) return false;
+    if (filtroMasivo === "minibars") return l.id.startsWith("LOC-MINIBAR-");
+    if (filtroMasivo === "otros") return !l.id.startsWith("LOC-MINIBAR-") && !l.es_recepcion;
+    return l.id !== fromLoc;
+  });
+
+  const totalMasivo = Object.entries(cantPorDestino).reduce((s, [, v]) => s + (Number(v) || 0), 0);
+  const excedeMasivo = totalMasivo > stockFrom;
+
+  function aplicarCantUniforme() {
+    if (!cantUniforme) return;
+    const next = {};
+    destinosMasivo.forEach(l => { next[l.id] = cantUniforme; });
+    setCantPorDestino(next);
+  }
+
+  async function transferirSimple() {
+    setErr("");
+    const cantNum = Number(cant) || 0;
+    if (!cantNum || cantNum <= 0) { setErr("Cantidad inválida"); return; }
+    if (cantNum > stockFrom) { setErr(`No hay suficiente en ${locaciones.find(l => l.id === fromLoc)?.nombre} (disponible: ${stockFrom})`); return; }
+    if (fromLoc === toLoc) { setErr("Selecciona locaciones distintas"); return; }
+    setSaving(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const email = session?.user?.email || "sistema";
+      const stockTo = stockEnLoc(item.id, toLoc);
+      await supabase.from("items_stock_locacion").upsert({
+        item_id: item.id, locacion_id: fromLoc,
+        cantidad: stockFrom - cantNum, updated_at: new Date().toISOString(),
+      }, { onConflict: "item_id,locacion_id" });
+      await supabase.from("items_stock_locacion").upsert({
+        item_id: item.id, locacion_id: toLoc,
+        cantidad: stockTo + cantNum, updated_at: new Date().toISOString(),
+      }, { onConflict: "item_id,locacion_id" });
+      await supabase.from("items_transferencias").insert({
+        id: `TR-${Date.now()}`, item_id: item.id,
+        from_locacion_id: fromLoc, to_locacion_id: toLoc,
+        cantidad: cantNum, motivo: motivo || null, usuario_email: email,
+      });
+      onSaved();
+    } catch (e) { setErr(e.message); }
+    setSaving(false);
+  }
+
+  async function transferirMasivo() {
+    setErr("");
+    const movs = Object.entries(cantPorDestino)
+      .map(([loc, c]) => ({ loc, cant: Number(c) || 0 }))
+      .filter(m => m.cant > 0);
+    if (movs.length === 0) { setErr("Sin cantidades > 0"); return; }
+    const total = movs.reduce((s, m) => s + m.cant, 0);
+    if (total > stockFrom) { setErr(`Total ${total} excede stock disponible (${stockFrom})`); return; }
+    setSaving(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const email = session?.user?.email || "sistema";
+      // Restar todo de origen en una sola operación
+      await supabase.from("items_stock_locacion").upsert({
+        item_id: item.id, locacion_id: fromLoc,
+        cantidad: stockFrom - total, updated_at: new Date().toISOString(),
+      }, { onConflict: "item_id,locacion_id" });
+      // Sumar a cada destino + registrar 1 transferencia por destino
+      for (const m of movs) {
+        const stockTo = stockEnLoc(item.id, m.loc);
+        await supabase.from("items_stock_locacion").upsert({
+          item_id: item.id, locacion_id: m.loc,
+          cantidad: stockTo + m.cant, updated_at: new Date().toISOString(),
+        }, { onConflict: "item_id,locacion_id" });
+        await supabase.from("items_transferencias").insert({
+          id: `TR-${Date.now()}-${m.loc.slice(-6)}`,
+          item_id: item.id, from_locacion_id: fromLoc, to_locacion_id: m.loc,
+          cantidad: m.cant, motivo: motivo || `Distribución masiva (${movs.length} destinos)`,
+          usuario_email: email,
+        });
+      }
+      onSaved();
+    } catch (e) { setErr(e.message); }
+    setSaving(false);
+  }
+
+  return (
+    <div onClick={e => e.target === e.currentTarget && onClose()}
+      style={{ position: "fixed", inset: 0, zIndex: 1200, background: "#00000088", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+      <div style={{ background: B.navyMid, borderRadius: 16, width: "100%", maxWidth: modo === "masivo" ? 720 : 500, maxHeight: "90vh", overflowY: "auto", padding: 28, border: `1px solid ${B.navyLight}` }}>
+        <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontSize: 22, fontWeight: 700, color: B.sand, marginBottom: 4 }}>🔄 Transferir stock</div>
+        <div style={{ fontSize: 13, color: "rgba(255,255,255,0.5)", marginBottom: 14 }}>
+          {item.nombre} <span style={{ color: "rgba(255,255,255,0.3)" }}>· {item.unidad}</span>
+        </div>
+
+        {/* Selector de modo */}
+        <div style={{ display: "flex", gap: 6, marginBottom: 14 }}>
+          {[
+            { k: "simple", l: "📤 Una bodega" },
+            { k: "masivo", l: "🔀 Distribución masiva" },
+          ].map(t => (
+            <button key={t.k} onClick={() => setModo(t.k)}
+              style={{ flex: 1, padding: 9, borderRadius: 8, border: `1px solid ${modo === t.k ? B.sky : B.navyLight}`,
+                background: modo === t.k ? B.sky + "22" : B.navy,
+                color: modo === t.k ? B.sky : "rgba(255,255,255,0.5)",
+                fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+              {t.l}
+            </button>
+          ))}
+        </div>
+
+        {/* Origen — común a ambos modos */}
+        <div style={{ marginBottom: 12 }}>
+          <label style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4, display: "block" }}>Desde</label>
+          <select value={fromLoc} onChange={e => setFromLoc(e.target.value)} style={IS}>
+            {Object.entries(grupos).map(([gName, locs]) => locs.length > 0 && (
+              <optgroup key={gName} label={gName}>
+                {locs.map(l => <option key={l.id} value={l.id}>{renderOption(l)}</option>)}
+              </optgroup>
+            ))}
+          </select>
+          <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginTop: 4 }}>
+            Stock disponible: <strong style={{ color: B.success }}>{stockFrom.toFixed(0)} {item.unidad}</strong>
+          </div>
+        </div>
+
+        {/* Modo SIMPLE */}
+        {modo === "simple" && (
+          <>
+            <div style={{ marginBottom: 12 }}>
+              <label style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4, display: "block" }}>Hacia</label>
+              <select value={toLoc} onChange={e => setToLoc(e.target.value)} style={IS}>
+                <option value="">— elegir destino —</option>
+                {Object.entries(grupos).map(([gName, locs]) => locs.length > 0 && (
+                  <optgroup key={gName} label={gName}>
+                    {locs.filter(l => l.id !== fromLoc).map(l => <option key={l.id} value={l.id}>{renderOption(l)}</option>)}
+                  </optgroup>
+                ))}
+              </select>
+            </div>
+            <div style={{ marginBottom: 12 }}>
+              <label style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4, display: "block" }}>Cantidad</label>
+              <input type="number" autoFocus value={cant} onChange={e => setCant(e.target.value)}
+                style={{ ...IS, textAlign: "center", fontSize: 20, fontWeight: 800, fontFamily: "'Barlow Condensed', sans-serif" }} />
+            </div>
+          </>
+        )}
+
+        {/* Modo MASIVO */}
+        {modo === "masivo" && (
+          <>
+            {/* Filtro destinos */}
+            <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
+              {[
+                { k: "minibars", l: "🛏️ Mini bars" },
+                { k: "otros",    l: "🏢 Otros" },
+                { k: "todos",    l: "Todos" },
+              ].map(t => (
+                <button key={t.k} onClick={() => setFiltroMasivo(t.k)}
+                  style={{ padding: "5px 12px", borderRadius: 6, border: `1px solid ${filtroMasivo === t.k ? B.sky : B.navyLight}`,
+                    background: filtroMasivo === t.k ? B.sky + "22" : B.navy,
+                    color: filtroMasivo === t.k ? B.sky : "rgba(255,255,255,0.5)",
+                    fontSize: 11, fontWeight: 700, cursor: "pointer" }}>{t.l}</button>
+              ))}
+              <div style={{ flex: 1 }} />
+              <input type="number" placeholder="Cant. uniforme" value={cantUniforme}
+                onChange={e => setCantUniforme(e.target.value)}
+                style={{ ...IS, padding: "5px 10px", fontSize: 11, width: 110, textAlign: "right" }} />
+              <button onClick={aplicarCantUniforme} disabled={!cantUniforme}
+                style={{ padding: "5px 12px", borderRadius: 6, border: "none", background: B.warning, color: B.navy, fontSize: 11, fontWeight: 700, cursor: cantUniforme ? "pointer" : "default", opacity: cantUniforme ? 1 : 0.5 }}>
+                Aplicar a todos
+              </button>
+            </div>
+
+            {/* Lista de destinos */}
+            <div style={{ background: B.navy, borderRadius: 8, maxHeight: 320, overflowY: "auto" }}>
+              {destinosMasivo.length === 0 ? (
+                <div style={{ padding: 20, textAlign: "center", fontSize: 12, color: "rgba(255,255,255,0.4)" }}>Sin destinos en esta categoría.</div>
+              ) : destinosMasivo.map(l => {
+                const stock = stockEnLoc(item.id, l.id);
+                const c = cantPorDestino[l.id] || "";
+                return (
+                  <div key={l.id} style={{ display: "grid", gridTemplateColumns: "1fr 80px 80px", gap: 8, padding: "8px 12px", borderBottom: "1px solid rgba(255,255,255,0.04)", alignItems: "center", fontSize: 12 }}>
+                    <span>{l.icono || "📦"} {l.nombre}</span>
+                    <span style={{ textAlign: "right", color: "rgba(255,255,255,0.5)", fontSize: 11 }}>actual: {stock.toFixed(0)}</span>
+                    <input type="number" value={c} placeholder="0"
+                      onChange={e => setCantPorDestino(prev => ({ ...prev, [l.id]: e.target.value }))}
+                      style={{ ...IS, padding: "5px 8px", fontSize: 12, textAlign: "right" }} />
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Total */}
+            <div style={{ marginTop: 10, padding: 10, background: excedeMasivo ? B.danger + "22" : B.navy, borderRadius: 6, display: "flex", justifyContent: "space-between", fontSize: 12 }}>
+              <span style={{ color: "rgba(255,255,255,0.6)" }}>
+                Total a distribuir: <strong style={{ color: excedeMasivo ? B.danger : B.success }}>{totalMasivo.toFixed(0)}</strong>
+                {" / "}{stockFrom.toFixed(0)} disponibles
+              </span>
+              {excedeMasivo && <span style={{ color: B.danger, fontWeight: 700 }}>⚠️ Excede</span>}
+            </div>
+          </>
+        )}
+
+        {/* Motivo común */}
+        <div style={{ marginTop: 14, marginBottom: 14 }}>
+          <label style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4, display: "block" }}>Motivo (opcional)</label>
+          <input value={motivo} onChange={e => setMotivo(e.target.value)} placeholder="Ej: Reposición Mini Bars" style={IS} />
+        </div>
+
+        {err && <div style={{ marginBottom: 10, padding: 10, background: B.danger + "22", color: B.danger, borderRadius: 6, fontSize: 12 }}>{err}</div>}
+
+        <div style={{ display: "flex", gap: 10 }}>
+          <button onClick={onClose}
+            style={{ flex: 1, padding: 11, borderRadius: 8, border: `1px solid ${B.navyLight}`, background: "transparent", color: "rgba(255,255,255,0.5)", cursor: "pointer", fontWeight: 600 }}>
+            Cancelar
+          </button>
+          <button onClick={modo === "simple" ? transferirSimple : transferirMasivo} disabled={saving}
+            style={{ flex: 2, padding: 11, borderRadius: 8, border: "none", background: B.sky, color: B.navy, cursor: saving ? "default" : "pointer", fontWeight: 700, fontSize: 14, opacity: saving ? 0.6 : 1 }}>
+            {saving ? "Transfiriendo…" : modo === "simple" ? "✓ Transferir" : `✓ Distribuir a ${Object.values(cantPorDestino).filter(v => Number(v) > 0).length} destino${Object.values(cantPorDestino).filter(v => Number(v) > 0).length !== 1 ? "s" : ""}`}
           </button>
         </div>
       </div>
