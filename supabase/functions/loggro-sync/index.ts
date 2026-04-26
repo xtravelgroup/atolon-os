@@ -29,6 +29,8 @@ const CORS = {
 
 // ── Token cache in memory ───────────────────────────────────────────────
 let cachedToken: string | null = null;
+let cachedBusinessId: string | null = null;
+let cachedUserId: string | null = null;
 let tokenExpires = 0;
 
 async function getLoggroToken(): Promise<string> {
@@ -44,9 +46,24 @@ async function getLoggroToken(): Promise<string> {
   if (!data.tokenCurrent) throw new Error("Login Loggro fallido: " + JSON.stringify(data).slice(0, 300));
 
   cachedToken = data.tokenCurrent;
+  // Extraer business y user del response — necesarios para crear movimientos
+  // de inventario en /inventory. La estructura puede variar:
+  //   data.user._id / data.user.business
+  //   data.business / data.userId
+  //   data._id (user) / data.businessId
+  cachedUserId =
+    data.user?._id || data.user?.id || data.userId || data._id || data.id || null;
+  cachedBusinessId =
+    data.user?.business || data.user?.businessId || data.business?._id ||
+    data.business?.id || data.business || data.businessId || null;
   // JWT típicamente dura 2h; asumimos 90 min de gracia
   tokenExpires = now + 90 * 60_000;
   return cachedToken;
+}
+
+async function getLoggroIdentity(): Promise<{ businessId: string | null; userId: string | null }> {
+  await getLoggroToken();
+  return { businessId: cachedBusinessId, userId: cachedUserId };
 }
 
 async function loggroGet(path: string): Promise<any> {
@@ -938,12 +955,32 @@ serve(async (req) => {
     //     invoice: { number: "F-001", date: "2026-04-22" },  // opcional
     //     location_id_to: "..."        // opcional si isMoveTo
     //   }
+    // Debug: prueba GET en varios paths candidatos para ver cuáles existen
+    if (req.method === "GET" && path === "/debug-paths") {
+      const candidates = [
+        "/inventory", "/inventories", "/inventoryMovements", "/inventory-movements",
+        "/inventory/movements", "/inventory/movement", "/inventoryMovement",
+        "/movements", "/v1/inventory", "/api/inventory", "/api/v1/inventory",
+      ];
+      const results: any = {};
+      for (const p of candidates) {
+        const r = await loggroRaw("GET", p);
+        results[p] = { status: r.status, ok: r.ok, sample: typeof r.body === "object" ? Object.keys(r.body || {}).slice(0, 5) : String(r.body).slice(0, 100) };
+      }
+      return json({ ok: true, results });
+    }
+
     if (req.method === "POST" && path === "/create-inventory-movement") {
       const body = await req.json().catch(() => ({}));
+
+      // Loggro requiere business + user en el body de /inventory
+      const { businessId, userId } = await getLoggroIdentity();
 
       // Armar payload exacto de Loggro
       const now = new Date().toISOString();
       const movementPayload: any = {
+        business: businessId,
+        user: userId,
         date: body.date || now,
         type: Number(body.type) || 1,            // 1 = compra/ingreso
         isSubtracted: !!body.isSubtracted,
@@ -963,7 +1000,10 @@ serve(async (req) => {
       if (body.invoice) movementPayload.invoice = body.invoice;
       if (body.location_id_to) movementPayload.locationStockTo = body.location_id_to;
 
-      const result = await loggroRaw("POST", "/inventory", movementPayload);
+      // Path real de Loggro: /inventories (en plural). La doc dice /inventory
+      // pero la API responde 404 con esa. Override permite debugging.
+      const targetPath = body.path_override || "/inventories";
+      const result = await loggroRaw("POST", targetPath, movementPayload);
       if (!result.ok) {
         return json({
           ok: false,
