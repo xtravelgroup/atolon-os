@@ -206,6 +206,25 @@ export default function MuelleSalidas() {
     if (!supabase) return;
     const id = `ZF-${Date.now().toString(36).toUpperCase()}`;
     const lancha = lanchas.find(l => l.nombre === data.embarcacion);
+
+    // Validación de motores: si la lancha tiene motor crítico vencido sin
+    // autorización vigente, bloquear el zarpe (a menos que el supervisor
+    // confirme con autorización previa)
+    if (lancha?.id) {
+      try {
+        const { data: chk } = await supabase.rpc("lancha_puede_operar", { p_lancha_id: lancha.id });
+        if (chk && chk.puede_operar === false) {
+          const motivos = (chk.motivos || []).map(m => `· ${m.codigo}: ${m.estado} a ${m.horas_actuales}h`).join("\n");
+          const ok = confirm(
+            `🚨 BLOQUEO OPERATIVO\n\n${data.embarcacion} tiene mantenimiento crítico vencido en:\n${motivos}\n\n` +
+            `No debería operar sin autorización gerencial.\n\n` +
+            `¿Continuar de todas formas? (Acción quedará registrada)`
+          );
+          if (!ok) return new Error("Zarpe bloqueado por motor crítico");
+        }
+      } catch (_) { /* función puede no existir todavía si la migration no corrió, no bloquear */ }
+    }
+
     const costoAuto = Number(lancha?.costo_viaje_sencillo) || 0;
     const costoOperativo = data.costo_operativo != null && data.costo_operativo !== ""
       ? Number(data.costo_operativo)

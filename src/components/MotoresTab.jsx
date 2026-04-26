@@ -109,16 +109,43 @@ const CHECKLIST_BY_TIPO = {
   correctivo: [],
 };
 
+// Permisos por rol — usado para mostrar/ocultar acciones
+function rolPermisos(rolId) {
+  const r = String(rolId || "");
+  return {
+    // Cualquier rol puede registrar uso diario y checklist (incluso capitán)
+    puede_uso: true,
+    puede_checklist: true,
+    // Crear OT: supervisor, gerente, admin, super_admin
+    puede_crear_ot: /admin|gerente|super|supervisor/i.test(r),
+    // Cerrar OT (finalizar): técnico, gerente, admin
+    puede_cerrar_ot: /admin|gerente|super|tecnico/i.test(r),
+    // Editar motor: gerente, admin
+    puede_editar_motor: /admin|gerente|super/i.test(r),
+    // Autorizar operación crítica: solo gerente o admin
+    puede_autorizar: /admin|gerente|super/i.test(r),
+  };
+}
+
 export default function MotoresTab({ activeLancha, lanchas }) {
   const { isMobile } = useMobile();
   const [motores, setMotores] = useState([]);
   const [usos, setUsos] = useState([]);
   const [mants, setMants] = useState([]);
+  const [userRol, setUserRol] = useState("");
   const [loading, setLoading] = useState(true);
   const [modal, setModal] = useState(null); // { tipo, motor?, edit? }
 
+  const perms = rolPermisos(userRol);
+
   const load = useCallback(async () => {
     setLoading(true);
+    const session = await supabase.auth.getSession();
+    const email = session?.data?.session?.user?.email?.toLowerCase();
+    if (email) {
+      const { data: u } = await supabase.from("usuarios").select("rol_id").eq("email", email).maybeSingle();
+      setUserRol(u?.rol_id || "");
+    }
     const [mR, uR, ntR] = await Promise.all([
       supabase.from("lancha_motores").select("*").eq("activo", true).order("codigo"),
       supabase.from("motor_uso_diario").select("*").order("fecha", { ascending: false }).limit(200),
@@ -163,10 +190,12 @@ export default function MotoresTab({ activeLancha, lanchas }) {
             Control de horas, intervalos y órdenes de mantenimiento por motor.
           </div>
         </div>
-        <button onClick={() => setModal({ tipo: "motor", edit: null })}
-          style={{ padding: "8px 14px", borderRadius: 8, border: "none", background: B.success, color: "#fff", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>
-          + Nuevo motor
-        </button>
+        {perms.puede_editar_motor && (
+          <button onClick={() => setModal({ tipo: "motor", edit: null })}
+            style={{ padding: "8px 14px", borderRadius: 8, border: "none", background: B.success, color: "#fff", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>
+            + Nuevo motor
+          </button>
+        )}
       </div>
 
       {/* KPIs */}
@@ -188,7 +217,7 @@ export default function MotoresTab({ activeLancha, lanchas }) {
           </div>
         )}
         {motoresLancha.map(m => (
-          <MotorCard key={m.id} motor={m}
+          <MotorCard key={m.id} motor={m} perms={perms}
             usos={usos.filter(u => u.motor_id === m.id)}
             mants={mants.filter(x => x.motor_id === m.id)}
             onUso={() => setModal({ tipo: "uso", motor: m })}
@@ -226,7 +255,7 @@ export default function MotoresTab({ activeLancha, lanchas }) {
 }
 
 // ─── Card por motor con info y acciones ───────────────────────────────────
-function MotorCard({ motor, usos, mants, onUso, onChecklist, onMant, onEdit, onAutorizar }) {
+function MotorCard({ motor, perms = {}, usos, mants, onUso, onChecklist, onMant, onEdit, onAutorizar }) {
   const meta = ESTADO_META[motor.estado] || ESTADO_META.operativo;
   const horasActuales = Number(motor.horas_actuales) || 0;
   // Calcular próximos mantenimientos
@@ -259,10 +288,12 @@ function MotorCard({ motor, usos, mants, onUso, onChecklist, onMant, onEdit, onA
             {motor.marca} · {motor.modelo}{motor.numero_serie ? ` · S/N ${motor.numero_serie}` : ""}
           </div>
         </div>
-        <button onClick={onEdit}
-          style={{ background: "transparent", border: `1px solid ${B.navyLight}`, borderRadius: 6, color: "rgba(255,255,255,0.6)", padding: "5px 10px", fontSize: 11, cursor: "pointer" }}>
-          ✏️ Editar
-        </button>
+        {perms.puede_editar_motor && (
+          <button onClick={onEdit}
+            style={{ background: "transparent", border: `1px solid ${B.navyLight}`, borderRadius: 6, color: "rgba(255,255,255,0.6)", padding: "5px 10px", fontSize: 11, cursor: "pointer" }}>
+            ✏️ Editar
+          </button>
+        )}
       </div>
 
       {/* Stats */}
@@ -294,18 +325,20 @@ function MotorCard({ motor, usos, mants, onUso, onChecklist, onMant, onEdit, onA
 
       {motor.estado === "vencido_critico" && (
         <div style={{ background: B.danger + "22", border: `1px solid ${B.danger}55`, borderRadius: 6, padding: "8px 12px", marginBottom: 10, fontSize: 11, color: B.danger }}>
-          🚨 Mantenimiento crítico vencido. No debe operar sin <button onClick={onAutorizar}
-            style={{ background: B.danger, border: "none", color: "#fff", padding: "3px 10px", borderRadius: 4, fontSize: 11, fontWeight: 700, cursor: "pointer", marginLeft: 4 }}>
-            🔓 Autorización gerencial
-          </button>
+          🚨 Mantenimiento crítico vencido. No debe operar sin {perms.puede_autorizar ? (
+            <button onClick={onAutorizar}
+              style={{ background: B.danger, border: "none", color: "#fff", padding: "3px 10px", borderRadius: 4, fontSize: 11, fontWeight: 700, cursor: "pointer", marginLeft: 4 }}>
+              🔓 Autorización gerencial
+            </button>
+          ) : <strong>autorización gerencial</strong>}
         </div>
       )}
 
       {/* Acciones */}
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-        <button onClick={onUso} style={btnAction(B.sky)}>⏱ Registrar uso</button>
-        <button onClick={onChecklist} style={btnAction(B.success)}>✅ Checklist diario</button>
-        <button onClick={onMant} style={btnAction(B.warning)}>🔧 Orden de mantenimiento</button>
+        {perms.puede_uso && <button onClick={onUso} style={btnAction(B.sky)}>⏱ Registrar uso</button>}
+        {perms.puede_checklist && <button onClick={onChecklist} style={btnAction(B.success)}>✅ Checklist diario</button>}
+        {perms.puede_crear_ot && <button onClick={onMant} style={btnAction(B.warning)}>🔧 Orden de mantenimiento</button>}
       </div>
     </div>
   );
@@ -422,9 +455,25 @@ function UsoDiarioModal({ motor, onClose, onSaved }) {
     observaciones: "",
     justificacion: "",
   });
+  const [fotosUrls, setFotosUrls] = useState([]);
+  const [uploading, setUploading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState("");
   const set = (k, v) => setF(p => ({ ...p, [k]: v }));
+
+  async function addFoto(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploading(true);
+    try {
+      const path = `${motor.id}/uso-diario/${Date.now()}_${file.name.replace(/[^\w.\-]/g, "_")}`;
+      const { error } = await supabase.storage.from("motores").upload(path, file, { upsert: true });
+      if (error) throw error;
+      const { data: pub } = supabase.storage.from("motores").getPublicUrl(path);
+      setFotosUrls(p => [...p, pub.publicUrl]);
+    } catch (er) { alert("Error: " + er.message); }
+    setUploading(false);
+  }
 
   const horasTrab = Math.max(0, Number(f.horometro_fin) - Number(f.horometro_inicio));
   const requiereJustificacion = horasTrab > 12 || horasTrab < 0; // anormal
@@ -444,6 +493,7 @@ function UsoDiarioModal({ motor, onClose, onSaved }) {
       capitan_nombre: f.capitan_nombre || null,
       observaciones: f.observaciones || null,
       justificacion: f.justificacion || null,
+      fotos_urls: fotosUrls,
     });
     if (r.error) { setErr(r.error.message); setSaving(false); return; }
     setSaving(false);
@@ -470,6 +520,19 @@ function UsoDiarioModal({ motor, onClose, onSaved }) {
             <textarea value={f.justificacion} onChange={e => set("justificacion", e.target.value)} style={{ ...IS, minHeight: 60, resize: "vertical", borderColor: B.warning }} />
           </Field>
         )}
+        <Field label="Fotos opcionales" full>
+          <input type="file" accept="image/*" capture="environment" onChange={addFoto} disabled={uploading}
+            style={{ fontSize: 11, color: "#fff" }} />
+          {fotosUrls.length > 0 && (
+            <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginTop: 6 }}>
+              {fotosUrls.map((u, i) => (
+                <a key={i} href={u} target="_blank" rel="noreferrer">
+                  <img src={u} alt="" style={{ width: 50, height: 50, objectFit: "cover", borderRadius: 4 }} />
+                </a>
+              ))}
+            </div>
+          )}
+        </Field>
       </Grid>
       <Actions onCancel={onClose} onSave={save} saving={saving} err={err} />
     </Overlay>
@@ -553,9 +616,58 @@ function MantenimientoModal({ motor, onClose, onSaved }) {
   });
   const [checklist, setChecklist] = useState({});
   const [repuestos, setRepuestos] = useState([]);
+  const [catalogo, setCatalogo] = useState([]);
+  const [bodegas, setBodegas] = useState([]);
+  const [bodegaDefault, setBodegaDefault] = useState("LOC-MANTENIMIENTO");
+  const [fotosUrls, setFotosUrls] = useState([]);
+  const [facturaUrl, setFacturaUrl] = useState("");
+  const [uploading, setUploading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState("");
   const set = (k, v) => setF(p => ({ ...p, [k]: v }));
+
+  // Cargar catálogo de items + bodegas para repuestos
+  useEffect(() => {
+    Promise.all([
+      supabase.from("items_catalogo").select("id, nombre, unidad, precio_compra, categoria").eq("activo", true).order("nombre"),
+      supabase.from("items_locaciones").select("id, nombre, icono").eq("activa", true).order("orden"),
+    ]).then(([cR, lR]) => {
+      setCatalogo(cR.data || []);
+      setBodegas(lR.data || []);
+      // Default: Mantenimiento si existe, sino Almacén Bar
+      const mant = (lR.data || []).find(b => b.id === "LOC-MANTENIMIENTO");
+      const bar = (lR.data || []).find(b => b.id === "LOC-ALMACEN-BAR");
+      setBodegaDefault(mant?.id || bar?.id || (lR.data || [])[0]?.id || "");
+    });
+  }, []);
+
+  async function uploadFile(file, prefix) {
+    setUploading(true);
+    try {
+      const safe = file.name.replace(/[^\w.\-]/g, "_");
+      const path = `${motor.id}/${prefix}/${Date.now()}_${safe}`;
+      const { error } = await supabase.storage.from("motores").upload(path, file, { upsert: true });
+      if (error) throw error;
+      const { data: pub } = supabase.storage.from("motores").getPublicUrl(path);
+      return pub.publicUrl;
+    } finally {
+      setUploading(false);
+    }
+  }
+  async function addFoto(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const url = await uploadFile(file, "ot-fotos");
+      setFotosUrls(prev => [...prev, url]);
+    } catch (err) { alert("Error subiendo: " + err.message); }
+  }
+  async function uploadFactura(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try { setFacturaUrl(await uploadFile(file, "ot-facturas")); }
+    catch (err) { alert("Error subiendo: " + err.message); }
+  }
 
   // Reset checklist al cambiar tipo
   useEffect(() => {
@@ -563,8 +675,23 @@ function MantenimientoModal({ motor, onClose, onSaved }) {
     setChecklist(Object.fromEntries(items.map(it => [it, { ok: false, nota: "" }])));
   }, [f.tipo]);
 
-  const addRepuesto = () => setRepuestos(r => [...r, { id: uid("RP"), nombre: "", cantidad: 1, costo_unit: 0, proveedor: "" }]);
-  const setRep = (i, k, v) => setRepuestos(r => r.map((x, j) => j === i ? { ...x, [k]: v, costo_total: k === "cantidad" || k === "costo_unit" ? Math.round((Number(k === "cantidad" ? v : x.cantidad) || 0) * (Number(k === "costo_unit" ? v : x.costo_unit) || 0)) : x.costo_total } : x));
+  const addRepuesto = () => setRepuestos(r => [...r, {
+    id: uid("RP"),
+    item_id: null,
+    nombre: "",
+    cantidad: 1,
+    costo_unit: 0,
+    proveedor: "",
+    locacion_id: bodegaDefault,
+    descontado: false,
+  }]);
+  const setRep = (i, k, v) => setRepuestos(r => r.map((x, j) => j === i ? { ...x, [k]: v } : x));
+  const pickRepuestoItem = (i, item) => setRepuestos(r => r.map((x, j) => j === i ? {
+    ...x,
+    item_id: item?.id || null,
+    nombre: item?.nombre || "",
+    costo_unit: x.costo_unit || Number(item?.precio_compra) || 0,
+  } : x));
   const delRep = (i) => setRepuestos(r => r.filter((_, j) => j !== i));
   const costoRep = repuestos.reduce((s, x) => s + ((Number(x.cantidad) || 0) * (Number(x.costo_unit) || 0)), 0);
   const costoTotal = costoRep + (Number(f.costo_mano_obra) || 0);
@@ -572,6 +699,17 @@ function MantenimientoModal({ motor, onClose, onSaved }) {
   async function save() {
     setSaving(true); setErr("");
     const numero = `OT-${new Date().getFullYear()}-${Date.now().toString(36).toUpperCase().slice(-5)}`;
+    const repsPayload = repuestos.map(x => ({
+      id: x.id,
+      item_id: x.item_id || null,
+      nombre: x.nombre,
+      cantidad: Number(x.cantidad) || 0,
+      costo_unit: Number(x.costo_unit) || 0,
+      costo_total: (Number(x.cantidad) || 0) * (Number(x.costo_unit) || 0),
+      proveedor: x.proveedor || null,
+      locacion_id: x.locacion_id || null,
+      descontado: false, // el trigger lo marcará en true cuando finalice la OT
+    }));
     const r = await supabase.from("motor_mantenimientos").insert({
       id: uid("MNT"),
       numero,
@@ -586,16 +724,13 @@ function MantenimientoModal({ motor, onClose, onSaved }) {
       responsable: f.responsable || null,
       tecnico_nombre: f.tecnico_nombre || null,
       checklist,
-      repuestos: repuestos.map(x => ({
-        nombre: x.nombre, cantidad: Number(x.cantidad) || 0,
-        costo_unit: Number(x.costo_unit) || 0,
-        costo_total: (Number(x.cantidad) || 0) * (Number(x.costo_unit) || 0),
-        proveedor: x.proveedor || null,
-      })),
+      repuestos: repsPayload,
       costo_repuestos: costoRep,
       costo_mano_obra: Number(f.costo_mano_obra) || 0,
       factura_numero: f.factura_numero || null,
       factura_proveedor: f.factura_proveedor || null,
+      factura_url: facturaUrl || null,
+      fotos_urls: fotosUrls,
       observaciones: f.observaciones || null,
       notas_cierre: f.estado === "finalizada" ? (f.notas_cierre || null) : null,
     });
@@ -659,21 +794,84 @@ function MantenimientoModal({ motor, onClose, onSaved }) {
           <button onClick={addRepuesto} style={{ padding: "4px 10px", borderRadius: 4, border: `1px solid ${B.sky}`, background: B.sky + "22", color: B.sky, fontSize: 11, fontWeight: 700, cursor: "pointer" }}>+ Repuesto</button>
         </div>
         {repuestos.length === 0 ? (
-          <div style={{ padding: 12, background: B.navy, borderRadius: 6, fontSize: 11, color: "rgba(255,255,255,0.4)", textAlign: "center" }}>Sin repuestos.</div>
+          <div style={{ padding: 12, background: B.navy, borderRadius: 6, fontSize: 11, color: "rgba(255,255,255,0.4)", textAlign: "center" }}>
+            Sin repuestos. Si los agregas y vinculas al catálogo, al cerrar la OT se descuentan automáticamente del inventario.
+          </div>
         ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-            {repuestos.map((rep, i) => (
-              <div key={rep.id} style={{ display: "grid", gridTemplateColumns: "2fr 0.7fr 1fr 1fr 1fr 30px", gap: 4, padding: 4, background: B.navy, borderRadius: 6 }}>
-                <input value={rep.nombre} onChange={e => setRep(i, "nombre", e.target.value)} placeholder="Nombre" style={{ ...IS, padding: "5px 8px", fontSize: 11 }} />
-                <input type="number" value={rep.cantidad} onChange={e => setRep(i, "cantidad", e.target.value)} style={{ ...IS, padding: "5px 8px", fontSize: 11, textAlign: "right" }} />
-                <input type="number" value={rep.costo_unit} onChange={e => setRep(i, "costo_unit", e.target.value)} placeholder="$/u" style={{ ...IS, padding: "5px 8px", fontSize: 11, textAlign: "right" }} />
-                <span style={{ fontSize: 11, padding: "5px 8px", textAlign: "right", color: B.sand, fontWeight: 700 }}>{fmtCOP((Number(rep.cantidad) || 0) * (Number(rep.costo_unit) || 0))}</span>
-                <input value={rep.proveedor} onChange={e => setRep(i, "proveedor", e.target.value)} placeholder="Proveedor" style={{ ...IS, padding: "5px 8px", fontSize: 11 }} />
-                <button onClick={() => delRep(i)} style={{ background: "transparent", border: "none", color: B.danger, fontSize: 14, cursor: "pointer" }}>✕</button>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "2.2fr 1fr 0.6fr 1fr 1fr 28px", gap: 4, fontSize: 9, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", padding: "0 6px" }}>
+              <span>Repuesto (catálogo)</span><span>Bodega</span><span>Cant</span><span>$ Unit</span><span>Subtotal · Proveedor</span><span></span>
+            </div>
+            {repuestos.map((rep, i) => {
+              const subtotal = (Number(rep.cantidad) || 0) * (Number(rep.costo_unit) || 0);
+              return (
+                <div key={rep.id} style={{ display: "grid", gridTemplateColumns: "2.2fr 1fr 0.6fr 1fr 1fr 28px", gap: 4, padding: 6, background: B.navy, borderRadius: 6, alignItems: "center" }}>
+                  {/* Item del catálogo (autocomplete simple via select) */}
+                  <select value={rep.item_id || ""}
+                    onChange={e => {
+                      const sel = catalogo.find(x => x.id === e.target.value);
+                      pickRepuestoItem(i, sel || null);
+                    }}
+                    style={{ ...IS, padding: "5px 6px", fontSize: 11 }}>
+                    <option value="">— libre / sin catálogo —</option>
+                    {catalogo.map(it => <option key={it.id} value={it.id}>{it.nombre}{it.unidad ? ` (${it.unidad})` : ""}</option>)}
+                  </select>
+                  {!rep.item_id && (
+                    <input value={rep.nombre} onChange={e => setRep(i, "nombre", e.target.value)} placeholder="Nombre libre" style={{ ...IS, padding: "5px 6px", fontSize: 11, gridColumn: "1" }} />
+                  )}
+                  <select value={rep.locacion_id || ""}
+                    onChange={e => setRep(i, "locacion_id", e.target.value)}
+                    style={{ ...IS, padding: "5px 6px", fontSize: 11 }}>
+                    {bodegas.map(b => <option key={b.id} value={b.id}>{b.icono || "📦"} {b.nombre}</option>)}
+                  </select>
+                  <input type="number" value={rep.cantidad} onChange={e => setRep(i, "cantidad", e.target.value)} style={{ ...IS, padding: "5px 6px", fontSize: 11, textAlign: "right" }} />
+                  <input type="number" value={rep.costo_unit} onChange={e => setRep(i, "costo_unit", e.target.value)} placeholder="$/u" style={{ ...IS, padding: "5px 6px", fontSize: 11, textAlign: "right" }} />
+                  <div style={{ fontSize: 10, padding: "2px 0" }}>
+                    <div style={{ color: B.sand, fontWeight: 700, textAlign: "right" }}>{fmtCOP(subtotal)}</div>
+                    <input value={rep.proveedor} onChange={e => setRep(i, "proveedor", e.target.value)} placeholder="Proveedor"
+                      style={{ ...IS, padding: "3px 5px", fontSize: 10, marginTop: 2 }} />
+                  </div>
+                  <button onClick={() => delRep(i)} style={{ background: "transparent", border: "none", color: B.danger, fontSize: 14, cursor: "pointer" }}>✕</button>
+                </div>
+              );
+            })}
+            {f.estado !== "finalizada" && repuestos.some(r => r.item_id) && (
+              <div style={{ fontSize: 10, color: B.sky, padding: "4px 6px" }}>
+                ℹ️ {repuestos.filter(r => r.item_id).length} repuesto{repuestos.filter(r => r.item_id).length !== 1 ? "s" : ""} vinculado{repuestos.filter(r => r.item_id).length !== 1 ? "s" : ""} al catálogo · al cerrar la OT se descontarán del inventario.
               </div>
-            ))}
+            )}
           </div>
         )}
+      </div>
+
+      {/* Adjuntos: fotos + factura */}
+      <div style={{ marginTop: 14, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+        <div>
+          <div style={{ fontSize: 11, color: B.sand, fontWeight: 700, textTransform: "uppercase", marginBottom: 6 }}>Fotos ({fotosUrls.length})</div>
+          <input type="file" accept="image/*" capture="environment" onChange={addFoto} disabled={uploading}
+            style={{ fontSize: 10, color: "#fff", marginBottom: 6 }} />
+          {fotosUrls.length > 0 && (
+            <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+              {fotosUrls.map((u, i) => (
+                <a key={i} href={u} target="_blank" rel="noreferrer" style={{ position: "relative" }}>
+                  <img src={u} alt="" style={{ width: 50, height: 50, objectFit: "cover", borderRadius: 4 }} />
+                </a>
+              ))}
+            </div>
+          )}
+        </div>
+        <div>
+          <div style={{ fontSize: 11, color: B.sand, fontWeight: 700, textTransform: "uppercase", marginBottom: 6 }}>Factura / soporte</div>
+          {facturaUrl ? (
+            <div style={{ display: "flex", gap: 6, alignItems: "center", fontSize: 11 }}>
+              <a href={facturaUrl} target="_blank" rel="noreferrer" style={{ color: B.sky }}>📎 Ver factura</a>
+              <button onClick={() => setFacturaUrl("")} style={{ background: "transparent", border: "none", color: B.danger, fontSize: 12, cursor: "pointer" }}>✕</button>
+            </div>
+          ) : (
+            <input type="file" accept="image/*,application/pdf" onChange={uploadFactura} disabled={uploading}
+              style={{ fontSize: 10, color: "#fff" }} />
+          )}
+        </div>
       </div>
 
       <Grid>
