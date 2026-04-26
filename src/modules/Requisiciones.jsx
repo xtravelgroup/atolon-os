@@ -149,6 +149,16 @@ export default function Requisiciones() {
     return () => { supabase.removeChannel(ch); };
   }, [load]);
 
+  // Sincronizar el `detail` abierto con los datos frescos de `reqs` después
+  // de cada reload. Sin esto, asignar proveedor desde el modal mantenía la
+  // versión vieja del objeto y mostraba "Sin asignar" hasta cerrar/reabrir.
+  useEffect(() => {
+    if (!detail) return;
+    const fresh = reqs.find(r => r.id === detail.id);
+    if (fresh && fresh !== detail) setDetail(fresh);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reqs]);
+
   // KPIs
   const pendientes = reqs.filter(r => r.estado === "Pendiente").length;
   const aprobadas = reqs.filter(r => r.estado === "Aprobada").length;
