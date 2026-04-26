@@ -11,6 +11,7 @@ import { useState, useEffect, useMemo, useCallback } from "react";
 import { supabase } from "../lib/supabase";
 import { B } from "../brand";
 import CostosFlotaTab from "../components/CostosFlotaTab";
+import MotoresTab from "../components/MotoresTab";
 
 const BTN = (bg, color = "#fff") => ({ padding: "8px 14px", borderRadius: 8, border: "none", background: bg, color, cursor: "pointer", fontWeight: 700, fontSize: 12 });
 const IS = { width: "100%", padding: "9px 12px", borderRadius: 8, background: B.navyLight, border: `1px solid ${B.navyLight}`, color: "#fff", fontSize: 13, outline: "none", boxSizing: "border-box" };
@@ -244,6 +245,7 @@ export default function Lancha() {
         {[
           { k: "resumen",       l: "📊 Resumen" },
           { k: "costos",        l: "💸 Costos" },
+          { k: "motores",       l: "🛠️ Motores" },
           { k: "combustible",   l: "⛽ Combustible" },
           { k: "mantenimiento", l: "🔧 Mantenimiento" },
           { k: "operativos",    l: "🅿️ Operativos" },
@@ -260,7 +262,7 @@ export default function Lancha() {
       </div>
 
       {/* Botón agregar */}
-      {tab !== "viajes" && tab !== "resumen" && tab !== "capitanes" && tab !== "costos" && (
+      {tab !== "viajes" && tab !== "resumen" && tab !== "capitanes" && tab !== "costos" && tab !== "motores" && (
         <div style={{ marginBottom: 14 }}>
           <button onClick={() => setModal({ tipo: defaultTipoForTab(tab) })}
             style={BTN(B.success)}>
@@ -274,6 +276,9 @@ export default function Lancha() {
       )}
       {tab === "costos" && (
         <CostosFlotaTab />
+      )}
+      {tab === "motores" && (
+        <MotoresTab activeLancha={activeLancha} lanchas={lanchas} />
       )}
       {tab === "combustible" && (
         <ListaEventos
