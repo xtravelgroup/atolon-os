@@ -298,6 +298,10 @@ export default function Requisiciones() {
         } else {
           map.set(key, {
             id: it.id, item: nombre, cant: Number(it.cant) || 0, unidad: it.unidad,
+            // Preservar referencias al catálogo para que la recepción pueda
+            // sumar al stock local sin tener que cruzar con la requisición
+            item_id: it.item_id || it.item_catalogo_id || null,
+            loggro_id: it.loggro_id || null,
             precioU: Math.round(Number(it.precioU) || 0),
             subtotal: Math.round(Number(it.subtotal) || (Number(it.cant) || 0) * (Number(it.precioU) || 0)),
             req_ids: reqIds.length ? reqIds : [req.id],
@@ -1098,6 +1102,10 @@ function TabRecepciones({ ordenes, reqs, reload, currentUser }) {
 }
 
 function RecepcionOCModal({ oc, reqs, onClose, reload, currentUser }) {
+  // Cargar bodegas de recepción + mapeo item_id desde requisición (fallback
+  // para OCs viejas que no traen item_id en sus items)
+  const [locaciones, setLocaciones] = useState([]);
+  const [bodegaDestino, setBodegaDestino] = useState("LOC-ALMACEN-BAR");
   const [recibidos, setRecibidos] = useState(() => {
     const map = {};
     (oc.recibidos || []).forEach(r => { map[r.item_id] = r.cant_recibida; });
@@ -1108,6 +1116,33 @@ function RecepcionOCModal({ oc, reqs, onClose, reload, currentUser }) {
   const [fechaFactura, setFechaFactura] = useState(oc.factura_fecha || todayStr());
   const [registrarEnLoggro, setRegistrarEnLoggro] = useState(false);
   const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (!supabase) return;
+    supabase.from("items_locaciones").select("id, nombre, icono, es_recepcion, activa")
+      .eq("activa", true).order("orden")
+      .then(({ data }) => {
+        const locs = data || [];
+        setLocaciones(locs);
+        const recepcion = locs.find(l => l.es_recepcion);
+        if (recepcion) setBodegaDestino(recepcion.id);
+      });
+
+    // Si los items de la OC no tienen item_id (OCs viejas), enriquecer
+    // cruzando con la req asociada
+    const sinItemId = (oc.items || []).filter(it => !it.item_id);
+    if (sinItemId.length > 0 && oc.requisicion_id) {
+      supabase.from("requisiciones").select("items").eq("id", oc.requisicion_id).maybeSingle()
+        .then(({ data }) => {
+          const reqItems = data?.items || [];
+          setRecibidos(prev => prev.map(r => {
+            if (r.item_id) return r;
+            const match = reqItems.find(ri => ri.id === r.id);
+            return match ? { ...r, item_id: match.item_id, loggro_id: match.loggro_id } : r;
+          }));
+        });
+    }
+  }, [oc.id, oc.requisicion_id]);
 
   const setRecibido = (idx, val) => {
     setRecibidos(prev => prev.map((r, i) => i === idx ? { ...r, cant_recibida: Math.max(0, Math.min(r.cant, Number(val) || 0)) } : r));
@@ -1152,6 +1187,48 @@ function RecepcionOCModal({ oc, reqs, onClose, reload, currentUser }) {
         }).eq("id", req.id);
       }
     }
+
+    // 2b. Sumar stock al inventario local en la bodega de recepción.
+    //     SIEMPRE se hace (independiente del checkbox de Loggro), porque la
+    //     mercancía físicamente llegó y debe quedar trazable en bodega.
+    const movimientos = recibidos
+      .filter(r => Number(r.cant_recibida) > 0 && r.item_id)
+      .map(r => ({ item_id: r.item_id, cant: Number(r.cant_recibida), nombre: r.item }));
+
+    if (movimientos.length > 0) {
+      // Leer stock actual de las bodegas afectadas para hacer suma idempotente
+      const itemIds = movimientos.map(m => m.item_id);
+      const { data: stockActual } = await supabase.from("items_stock_locacion")
+        .select("item_id, cantidad")
+        .eq("locacion_id", bodegaDestino)
+        .in("item_id", itemIds);
+      const stockMap = Object.fromEntries((stockActual || []).map(s => [s.item_id, Number(s.cantidad) || 0]));
+
+      const upserts = movimientos.map(m => ({
+        item_id: m.item_id,
+        locacion_id: bodegaDestino,
+        cantidad: (stockMap[m.item_id] || 0) + m.cant,
+        updated_at: new Date().toISOString(),
+      }));
+      await supabase.from("items_stock_locacion").upsert(upserts, { onConflict: "item_id,locacion_id" });
+
+      // Auditoría: 1 fila por item en items_ajustes
+      const ajustes = movimientos.map(m => ({
+        id: `AJ-${oc.codigo}-${m.item_id}`,
+        item_id: m.item_id,
+        locacion_id: bodegaDestino,
+        tipo: "manual",
+        cantidad_antes: stockMap[m.item_id] || 0,
+        cantidad_despues: (stockMap[m.item_id] || 0) + m.cant,
+        diferencia: m.cant,
+        motivo: `Recepción ${oc.codigo}${oc.requisicion_id ? ` (Req ${oc.requisicion_id})` : ""}${numFactura ? ` · Factura ${numFactura}` : ""}`,
+        usuario_email: (currentUser.email || currentUser.nombre || ""),
+      }));
+      // upsert por id determinístico para que reintentos no dupliquen
+      await supabase.from("items_ajustes").upsert(ajustes, { onConflict: "id" });
+    }
+
+    const sinItemIdAdvertencia = recibidos.filter(r => Number(r.cant_recibida) > 0 && !r.item_id);
 
     // 3. Si piden registrar en Loggro, hacer el POST al endpoint
     if (registrarEnLoggro && algoRecibido) {
@@ -1199,6 +1276,10 @@ function RecepcionOCModal({ oc, reqs, onClose, reload, currentUser }) {
       }
     }
 
+    if (sinItemIdAdvertencia.length > 0) {
+      alert(`⚠️ ${sinItemIdAdvertencia.length} ítem${sinItemIdAdvertencia.length !== 1 ? "s" : ""} no se pudo${sinItemIdAdvertencia.length !== 1 ? "n" : ""} sumar al stock local porque no tiene${sinItemIdAdvertencia.length !== 1 ? "n" : ""} vinculación al catálogo:\n\n${sinItemIdAdvertencia.map(r => `· ${r.item}`).join("\n")}\n\nAjustá el stock manualmente desde Items → Inventario General.`);
+    }
+
     setSaving(false);
     onClose();
     reload();
@@ -1219,8 +1300,8 @@ function RecepcionOCModal({ oc, reqs, onClose, reload, currentUser }) {
           <button onClick={onClose} style={{ background: "none", border: "none", color: B.sand, fontSize: 20, cursor: "pointer" }}>×</button>
         </div>
 
-        {/* Datos de factura del proveedor */}
-        <div style={{ background: B.navy, borderRadius: 10, padding: 14, marginBottom: 14, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+        {/* Datos de factura del proveedor + bodega destino */}
+        <div style={{ background: B.navy, borderRadius: 10, padding: 14, marginBottom: 14, display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
           <div>
             <label style={LS}>Nº factura proveedor</label>
             <input value={numFactura} onChange={e => setNumFactura(e.target.value)} placeholder="Ej: F-12345" style={IS} />
@@ -1228,6 +1309,16 @@ function RecepcionOCModal({ oc, reqs, onClose, reload, currentUser }) {
           <div>
             <label style={LS}>Fecha factura</label>
             <input type="date" value={fechaFactura} onChange={e => setFechaFactura(e.target.value)} style={IS} />
+          </div>
+          <div>
+            <label style={LS}>Bodega destino</label>
+            <select value={bodegaDestino} onChange={e => setBodegaDestino(e.target.value)} style={IS}>
+              {locaciones.map(l => (
+                <option key={l.id} value={l.id}>
+                  {l.icono || "📦"} {l.nombre}{l.es_recepcion ? " ⭐" : ""}
+                </option>
+              ))}
+            </select>
           </div>
         </div>
 
