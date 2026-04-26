@@ -229,6 +229,9 @@ export default function MotoresTab({ activeLancha, lanchas }) {
         ))}
       </div>
 
+      {/* ─── Bitácora + Dashboard ─────────────────────────────────────── */}
+      <BitacoraDashboard motores={motores} usos={usos} mants={mants} activeLancha={activeLancha} />
+
       {/* Modales */}
       {modal?.tipo === "motor" && (
         <MotorModal edit={modal.edit} lanchas={lanchas} activeLancha={activeLancha}
@@ -961,6 +964,290 @@ const Actions = ({ onCancel, onSave, saving, disabled, err, saveLabel = "Guardar
     </div>
   </>
 );
+
+// ═══════════════════════════════════════════════════════════════════════════
+// BITÁCORA + DASHBOARD (historial, ranking, exportar)
+// ═══════════════════════════════════════════════════════════════════════════
+function BitacoraDashboard({ motores, usos, mants, activeLancha }) {
+  const [filtro, setFiltro] = useState("todos"); // todos | activeLancha
+  const [vista, setVista] = useState("usos"); // usos | mants | dashboard
+
+  const motoresVisibles = filtro === "esta_lancha" && activeLancha
+    ? motores.filter(m => m.lancha_id === activeLancha)
+    : motores;
+  const motorIds = motoresVisibles.map(m => m.id);
+  const usosFiltrados = usos.filter(u => motorIds.includes(u.motor_id));
+  const mantsFiltrados = mants.filter(m => motorIds.includes(m.motor_id));
+
+  // Ranking: motor con más horas, motor con más costo
+  const rankingHoras = [...motoresVisibles].sort((a, b) => Number(b.horas_actuales || 0) - Number(a.horas_actuales || 0)).slice(0, 5);
+  const costosPorMotor = motoresVisibles.map(m => ({
+    motor: m,
+    costo: mantsFiltrados.filter(x => x.motor_id === m.id).reduce((s, x) => s + Number(x.costo_total || 0), 0),
+    ots: mantsFiltrados.filter(x => x.motor_id === m.id).length,
+  })).sort((a, b) => b.costo - a.costo);
+
+  // Horas mes (últimos 6 meses) por motor
+  const meses = [];
+  for (let i = 5; i >= 0; i--) {
+    const d = new Date(); d.setMonth(d.getMonth() - i);
+    meses.push(d.toISOString().slice(0, 7));
+  }
+  const horasPorMes = meses.map(ym => {
+    const total = usosFiltrados
+      .filter(u => (u.fecha || "").startsWith(ym))
+      .reduce((s, u) => s + Number(u.horas_trabajadas || 0), 0);
+    return { mes: ym, horas: total };
+  });
+  const maxHoras = Math.max(1, ...horasPorMes.map(h => h.horas));
+
+  // Próximos mantenimientos (top 10 por urgencia)
+  const proximosList = motoresVisibles.flatMap(m => {
+    const intervalos = [
+      { tipo: "50h",   ult: m.horas_ult_mant_50,   cada: 50   },
+      { tipo: "100h",  ult: m.horas_ult_mant_100,  cada: 100  },
+      { tipo: "300h",  ult: m.horas_ult_mant_300,  cada: 300  },
+      { tipo: "500h",  ult: m.horas_ult_mant_500,  cada: 500  },
+      { tipo: "1000h", ult: m.horas_ult_mant_1000, cada: 1000 },
+    ];
+    return intervalos.map(it => ({
+      motor: m,
+      tipo: it.tipo,
+      proxHoras: (Number(it.ult) || 0) + it.cada,
+      delta: ((Number(it.ult) || 0) + it.cada) - Number(m.horas_actuales || 0),
+    }));
+  }).sort((a, b) => a.delta - b.delta).slice(0, 10);
+
+  // Exportar CSV
+  function exportarCSV(tipo) {
+    let rows = [];
+    let header = [];
+    if (tipo === "usos") {
+      header = ["Fecha", "Lancha", "Motor", "Capitán", "Horómetro inicio", "Horómetro fin", "Horas trabajadas", "Ruta", "Observaciones"];
+      rows = usosFiltrados.map(u => {
+        const m = motoresVisibles.find(x => x.id === u.motor_id) || {};
+        return [u.fecha, m.lancha_id, m.codigo, u.capitan_nombre || "", u.horometro_inicio, u.horometro_fin, u.horas_trabajadas, u.ruta || "", (u.observaciones || "").replace(/[\n,;]/g, " ")];
+      });
+    } else if (tipo === "mants") {
+      header = ["Número", "Fecha apertura", "Fecha cierre", "Lancha", "Motor", "Tipo", "Estado", "Técnico", "Horas mot.", "Costo total", "Factura", "Observaciones"];
+      rows = mantsFiltrados.map(x => {
+        const m = motoresVisibles.find(mt => mt.id === x.motor_id) || {};
+        return [x.numero, x.fecha_apertura, x.fecha_cierre || "", m.lancha_id, m.codigo, x.tipo, x.estado, x.tecnico_nombre || "", x.horas_motor_apertura, x.costo_total, x.factura_numero || "", (x.observaciones || "").replace(/[\n,;]/g, " ")];
+      });
+    }
+    const csv = [header, ...rows].map(r => r.map(v => `"${String(v ?? "").replace(/"/g, '""')}"`).join(",")).join("\n");
+    const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = `motores-${tipo}-${todayStr()}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function imprimirPDF() {
+    window.print();
+  }
+
+  return (
+    <div style={{ marginTop: 22, paddingTop: 18, borderTop: `1px solid ${B.navyLight}` }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10, marginBottom: 12 }}>
+        <div>
+          <div style={{ fontSize: 14, fontWeight: 700 }}>📊 Bitácora & Dashboard</div>
+          <div style={{ fontSize: 11, color: "rgba(255,255,255,0.45)" }}>Historial completo, ranking y reportes exportables.</div>
+        </div>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+          <select value={filtro} onChange={e => setFiltro(e.target.value)} style={{ ...IS, padding: "6px 10px", fontSize: 11, width: "auto" }}>
+            <option value="todos">Toda la flota</option>
+            <option value="esta_lancha">Solo esta lancha</option>
+          </select>
+          <button onClick={() => exportarCSV("usos")} style={btnExport(B.sky)}>📥 CSV Usos</button>
+          <button onClick={() => exportarCSV("mants")} style={btnExport(B.warning)}>📥 CSV OTs</button>
+          <button onClick={imprimirPDF} style={btnExport(B.success)}>🖨️ Imprimir</button>
+        </div>
+      </div>
+
+      {/* Sub-tabs */}
+      <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
+        {[
+          { k: "dashboard", l: "📊 Dashboard" },
+          { k: "usos", l: `⏱ Usos (${usosFiltrados.length})` },
+          { k: "mants", l: `🔧 OTs (${mantsFiltrados.length})` },
+        ].map(t => (
+          <button key={t.k} onClick={() => setVista(t.k)}
+            style={{ padding: "6px 14px", borderRadius: 6, border: `1px solid ${vista === t.k ? B.sky : B.navyLight}`, background: vista === t.k ? B.sky + "22" : B.navyMid, color: vista === t.k ? B.sky : "rgba(255,255,255,0.5)", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
+            {t.l}
+          </button>
+        ))}
+      </div>
+
+      {vista === "dashboard" && (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 12 }}>
+          {/* Horas por mes (gráfico simple) */}
+          <div style={{ background: B.navyMid, borderRadius: 10, padding: 14 }}>
+            <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 10 }}>Horas trabajadas — últimos 6 meses</div>
+            <div style={{ display: "flex", alignItems: "flex-end", gap: 6, height: 130 }}>
+              {horasPorMes.map(h => {
+                const alto = (h.horas / maxHoras) * 100;
+                return (
+                  <div key={h.mes} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
+                    <div style={{ width: "100%", maxWidth: 28, height: 100, display: "flex", alignItems: "flex-end" }}>
+                      <div style={{ width: "100%", background: B.sky, height: alto, minHeight: h.horas > 0 ? 2 : 0, borderRadius: "3px 3px 0 0" }} title={`${h.horas.toFixed(1)}h`} />
+                    </div>
+                    <div style={{ fontSize: 9, color: "rgba(255,255,255,0.5)" }}>{h.mes.slice(5)}</div>
+                    <div style={{ fontSize: 10, fontWeight: 700, color: B.sand }}>{h.horas.toFixed(0)}</div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Ranking horas */}
+          <div style={{ background: B.navyMid, borderRadius: 10, padding: 14 }}>
+            <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 10 }}>🏆 Ranking horas motor</div>
+            {rankingHoras.length === 0 ? (
+              <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)" }}>Sin datos.</div>
+            ) : rankingHoras.map((m, i) => (
+              <div key={m.id} style={{ display: "flex", justifyContent: "space-between", padding: "5px 0", fontSize: 12, borderBottom: i < rankingHoras.length - 1 ? "1px solid rgba(255,255,255,0.04)" : "none" }}>
+                <span>{i + 1}. {m.codigo}</span>
+                <strong style={{ color: B.sky }}>{Number(m.horas_actuales || 0).toFixed(1)}h</strong>
+              </div>
+            ))}
+          </div>
+
+          {/* Ranking costos */}
+          <div style={{ background: B.navyMid, borderRadius: 10, padding: 14 }}>
+            <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 10 }}>💰 Costo de mantenimiento</div>
+            {costosPorMotor.length === 0 ? (
+              <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)" }}>Sin OTs.</div>
+            ) : costosPorMotor.map((x, i) => (
+              <div key={x.motor.id} style={{ display: "flex", justifyContent: "space-between", padding: "5px 0", fontSize: 12, borderBottom: i < costosPorMotor.length - 1 ? "1px solid rgba(255,255,255,0.04)" : "none" }}>
+                <span>{x.motor.codigo} <span style={{ fontSize: 10, color: "rgba(255,255,255,0.4)" }}>({x.ots} OTs)</span></span>
+                <strong style={{ color: B.warning }}>{fmtCOP(x.costo)}</strong>
+              </div>
+            ))}
+          </div>
+
+          {/* Próximos mantenimientos */}
+          <div style={{ background: B.navyMid, borderRadius: 10, padding: 14, gridColumn: "1 / -1" }}>
+            <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 10 }}>⚠️ Próximos mantenimientos (más urgentes)</div>
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", fontSize: 11, borderCollapse: "collapse" }}>
+                <thead>
+                  <tr style={{ background: B.navy }}>
+                    {["Motor", "Tipo", "Horas actuales", "Próx. en", "Delta", "Estado"].map(h => (
+                      <th key={h} style={{ padding: "6px 10px", textAlign: "left", color: B.sand, fontSize: 9, textTransform: "uppercase" }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {proximosList.map((p, i) => {
+                    const color = p.delta < -10 ? B.danger : p.delta < 0 ? "#f97316" : p.delta <= 10 ? B.warning : B.success;
+                    return (
+                      <tr key={i} style={{ borderTop: "1px solid rgba(255,255,255,0.04)" }}>
+                        <td style={{ padding: "5px 10px" }}>{p.motor.codigo}</td>
+                        <td style={{ padding: "5px 10px" }}>{p.tipo}</td>
+                        <td style={{ padding: "5px 10px" }}>{Number(p.motor.horas_actuales || 0).toFixed(1)}h</td>
+                        <td style={{ padding: "5px 10px" }}>{p.proxHoras.toFixed(0)}h</td>
+                        <td style={{ padding: "5px 10px", color, fontWeight: 700 }}>{p.delta > 0 ? `${p.delta.toFixed(0)}h` : `+${Math.abs(p.delta).toFixed(0)}h vencido`}</td>
+                        <td style={{ padding: "5px 10px" }}>
+                          <span style={{ padding: "2px 6px", borderRadius: 3, background: color + "33", color, fontSize: 9, fontWeight: 700 }}>
+                            {p.delta < -10 ? "CRÍTICO" : p.delta < 0 ? "VENCIDO" : p.delta <= 10 ? "PRÓXIMO" : "OK"}
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {vista === "usos" && (
+        <div style={{ background: B.navyMid, borderRadius: 10, overflow: "hidden" }}>
+          {usosFiltrados.length === 0 ? (
+            <div style={{ padding: 20, textAlign: "center", fontSize: 12, color: "rgba(255,255,255,0.4)" }}>Sin registros de uso.</div>
+          ) : (
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", fontSize: 11, borderCollapse: "collapse" }}>
+                <thead>
+                  <tr style={{ background: B.navy }}>
+                    {["Fecha", "Motor", "Capitán", "Inicio", "Fin", "Horas", "Ruta"].map(h => (
+                      <th key={h} style={{ padding: "8px 10px", textAlign: "left", color: B.sand, fontSize: 9, textTransform: "uppercase" }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {usosFiltrados.slice(0, 50).map(u => {
+                    const m = motoresVisibles.find(x => x.id === u.motor_id) || {};
+                    return (
+                      <tr key={u.id} style={{ borderTop: "1px solid rgba(255,255,255,0.04)" }}>
+                        <td style={{ padding: "6px 10px" }}>{u.fecha}</td>
+                        <td style={{ padding: "6px 10px", fontWeight: 700 }}>{m.codigo || "—"}</td>
+                        <td style={{ padding: "6px 10px" }}>{u.capitan_nombre || "—"}</td>
+                        <td style={{ padding: "6px 10px", textAlign: "right" }}>{Number(u.horometro_inicio || 0).toFixed(1)}</td>
+                        <td style={{ padding: "6px 10px", textAlign: "right" }}>{Number(u.horometro_fin || 0).toFixed(1)}</td>
+                        <td style={{ padding: "6px 10px", textAlign: "right", fontWeight: 700, color: B.sky }}>{Number(u.horas_trabajadas || 0).toFixed(1)}h</td>
+                        <td style={{ padding: "6px 10px", color: "rgba(255,255,255,0.6)" }}>{u.ruta || "—"}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {vista === "mants" && (
+        <div style={{ background: B.navyMid, borderRadius: 10, overflow: "hidden" }}>
+          {mantsFiltrados.length === 0 ? (
+            <div style={{ padding: 20, textAlign: "center", fontSize: 12, color: "rgba(255,255,255,0.4)" }}>Sin órdenes de mantenimiento.</div>
+          ) : (
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", fontSize: 11, borderCollapse: "collapse" }}>
+                <thead>
+                  <tr style={{ background: B.navy }}>
+                    {["Número", "Fecha", "Motor", "Tipo", "Estado", "Técnico", "Costo", "Factura"].map(h => (
+                      <th key={h} style={{ padding: "8px 10px", textAlign: "left", color: B.sand, fontSize: 9, textTransform: "uppercase" }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {mantsFiltrados.slice(0, 50).map(x => {
+                    const m = motoresVisibles.find(mt => mt.id === x.motor_id) || {};
+                    const estadoColor = x.estado === "finalizada" ? B.success : x.estado === "cancelada" ? B.danger : B.warning;
+                    return (
+                      <tr key={x.id} style={{ borderTop: "1px solid rgba(255,255,255,0.04)" }}>
+                        <td style={{ padding: "6px 10px", fontWeight: 700 }}>{x.numero}</td>
+                        <td style={{ padding: "6px 10px" }}>{x.fecha_apertura}</td>
+                        <td style={{ padding: "6px 10px" }}>{m.codigo || "—"}</td>
+                        <td style={{ padding: "6px 10px" }}>{x.tipo}</td>
+                        <td style={{ padding: "6px 10px" }}>
+                          <span style={{ padding: "2px 6px", borderRadius: 3, background: estadoColor + "22", color: estadoColor, fontSize: 9, fontWeight: 700 }}>
+                            {x.estado}
+                          </span>
+                        </td>
+                        <td style={{ padding: "6px 10px" }}>{x.tecnico_nombre || "—"}</td>
+                        <td style={{ padding: "6px 10px", textAlign: "right", fontWeight: 700, color: B.warning }}>{fmtCOP(x.costo_total)}</td>
+                        <td style={{ padding: "6px 10px" }}>{x.factura_numero || "—"}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+const btnExport = (color) => ({
+  padding: "6px 12px", borderRadius: 6, border: `1px solid ${color}`,
+  background: color + "22", color, fontSize: 11, fontWeight: 700, cursor: "pointer",
+});
 
 function Overlay({ children, onClose, maxWidth = 600 }) {
   return (
