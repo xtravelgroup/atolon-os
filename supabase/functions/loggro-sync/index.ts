@@ -955,62 +955,6 @@ serve(async (req) => {
     //     invoice: { number: "F-001", date: "2026-04-22" },  // opcional
     //     location_id_to: "..."        // opcional si isMoveTo
     //   }
-    // Debug: estadísticas + ejemplo de un movimiento con costo
-    if (req.method === "GET" && path === "/debug-inventory-shape") {
-      const id = url.searchParams.get("id");
-      if (id) {
-        const r = await loggroRaw("GET", `/inventories/${id}`);
-        return json({ ok: r.ok, status: r.status, body: r.body });
-      }
-      const r = await loggroRaw("GET", "/inventories");
-      const items = Array.isArray(r.body) ? r.body : (r.body?.data || []);
-      const tipoCount: any = {};
-      items.forEach((m: any) => { tipoCount[m.type] = (tipoCount[m.type] || 0) + 1; });
-      // Buscar uno que tenga costo en ingredients o invoice.total
-      const conCosto = items.find((m: any) => {
-        const ings = m.ingredients || [];
-        return ings.some((i: any) => Number(i.cost) > 0 || Number(i.price) > 0 || Number(i.unitCost) > 0 || Number(i.amount) > 0);
-      });
-      const sampleIng = conCosto?.ingredients?.[0] || items[0]?.ingredients?.[0] || null;
-      const sampleIngKeys = sampleIng ? Object.keys(sampleIng) : [];
-      const idBuscar = url.searchParams.get("find") || "69ee5c353d711a38fd15b6b3";
-      const found = items.find((m: any) => m._id === idBuscar) || null;
-      return json({
-        ok: r.ok, status: r.status, total: items.length,
-        tipoCount,
-        sampleIngKeys,
-        miMovimiento: found ? {
-          _id: found._id,
-          type: found.type,
-          date: found.date,
-          provider_name: found.provider?.name,
-          invoice: found.invoice,
-          total: found.total,
-          ingredients_count: found.ingredients?.length,
-          ingredients_sample: (found.ingredients || []).slice(0, 3).map((i: any) => ({
-            ingredient_name: i.ingredient?.name,
-            quantity: i.quantity,
-            price: i.price,
-          })),
-        } : null,
-      });
-    }
-
-    // Debug: prueba GET en varios paths candidatos para ver cuáles existen
-    if (req.method === "GET" && path === "/debug-paths") {
-      const candidates = [
-        "/inventory", "/inventories", "/inventoryMovements", "/inventory-movements",
-        "/inventory/movements", "/inventory/movement", "/inventoryMovement",
-        "/movements", "/v1/inventory", "/api/inventory", "/api/v1/inventory",
-      ];
-      const results: any = {};
-      for (const p of candidates) {
-        const r = await loggroRaw("GET", p);
-        results[p] = { status: r.status, ok: r.ok, sample: typeof r.body === "object" ? Object.keys(r.body || {}).slice(0, 5) : String(r.body).slice(0, 100) };
-      }
-      return json({ ok: true, results });
-    }
-
     // Eliminar/anular un movimiento de inventario en Loggro (DELETE o
     // marcar deleted=true vía PATCH si DELETE no aplica).
     if (req.method === "POST" && path === "/delete-inventory-movement") {
@@ -1058,10 +1002,9 @@ serve(async (req) => {
       if (body.invoice) movementPayload.invoice = body.invoice;
       if (body.location_id_to) movementPayload.locationStockTo = body.location_id_to;
 
-      // Path real de Loggro: /inventories (en plural). La doc dice /inventory
-      // pero la API responde 404 con esa. Override permite debugging.
-      const targetPath = body.path_override || "/inventories";
-      const result = await loggroRaw("POST", targetPath, movementPayload);
+      // Path real de Loggro: /inventories (en plural). La doc oficial dice
+      // /inventory pero la API responde 404 con esa.
+      const result = await loggroRaw("POST", "/inventories", movementPayload);
       if (!result.ok) {
         return json({
           ok: false,

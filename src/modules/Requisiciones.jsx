@@ -1900,20 +1900,46 @@ function DetailModal({ req, onClose, onUpdate, onGenerarOC, proveedores, reglas,
   const [itemProvs, setItemProvs] = useState({});
   const [splitMode, setSplitMode] = useState(false);
   const [splitting, setSplitting] = useState(false);
-  // Editar precios cotizados
+  // Editar precios + items (agregar/eliminar)
   const [editPrecios, setEditPrecios] = useState(false);
   const [savingPrecios, setSavingPrecios] = useState(false);
-  const [preciosEdit, setPreciosEdit] = useState(() => req.items.map(it => ({
+  const cloneItem = (it) => ({
+    id: it.id || uid(),
+    item_id: it.item_id || it.item_catalogo_id || null,
+    item: it.item || it.nombre || "",
+    nombre: it.item || it.nombre || "",
+    unidad: it.unidad || "Unidades",
     cant: Number(it.cant) || 0,
     precioU: Number(it.precioU) || 0,
-  })));
+    loggro_id: it.loggro_id || null,
+  });
+  const [itemsEdit, setItemsEdit] = useState(() => req.items.map(cloneItem));
   // Resync cuando cambia la req (después de guardar)
   useEffect(() => {
-    setPreciosEdit(req.items.map(it => ({
-      cant: Number(it.cant) || 0,
-      precioU: Number(it.precioU) || 0,
-    })));
+    setItemsEdit(req.items.map(cloneItem));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [req.id, req.items]);
+  // Catálogo para autocompletar al agregar items nuevos
+  const [catalogoEdit, setCatalogoEdit] = useState([]);
+  useEffect(() => {
+    if (!editPrecios || catalogoEdit.length > 0) return;
+    supabase.from("items_catalogo").select("id, nombre, unidad, loggro_id, precio_compra")
+      .eq("activo", true).order("nombre")
+      .then(({ data }) => setCatalogoEdit(data || []));
+  }, [editPrecios, catalogoEdit.length]);
+
+  const addItemRow = () => setItemsEdit(arr => [...arr, cloneItem({ id: uid() })]);
+  const removeItemRow = (i) => setItemsEdit(arr => arr.filter((_, j) => j !== i));
+  const setItemField = (i, k, v) => setItemsEdit(arr => arr.map((p, j) => j === i ? { ...p, [k]: v } : p));
+  const pickCatalogItem = (i, catItem) => setItemsEdit(arr => arr.map((p, j) => j === i ? {
+    ...p,
+    item: catItem.nombre,
+    nombre: catItem.nombre,
+    unidad: catItem.unidad || p.unidad,
+    item_id: catItem.id,
+    loggro_id: catItem.loggro_id || null,
+    precioU: p.precioU || Number(catItem.precio_compra) || 0,
+  } : p));
   const ec = ESTADO_COLOR[req.estado] || ESTADO_COLOR.Borrador;
   const regla = reglas.find(r => r.id === req.regla_aprobacion_id);
   const puedeAprobar = req.estado === "Pendiente" && (currentUser.rol === "super_admin" || (regla && regla.rol_aprobador === currentUser.rol));
@@ -1937,30 +1963,49 @@ function DetailModal({ req, onClose, onUpdate, onGenerarOC, proveedores, reglas,
     reload();
   };
 
-  // Resumen del nuevo total mientras se editan precios
-  const subtotalEditado = preciosEdit.reduce((s, p) => s + (Number(p.cant) || 0) * (Number(p.precioU) || 0), 0);
+  // Resumen del nuevo total + cambios detectados
+  const subtotalEditado = itemsEdit.reduce((s, p) => s + (Number(p.cant) || 0) * (Number(p.precioU) || 0), 0);
   const totalAnterior = Number(req.total) || 0;
-  const cambios = preciosEdit.reduce((n, p, i) => {
-    const original = Number(req.items[i]?.precioU) || 0;
-    return n + ((Number(p.precioU) || 0) !== original ? 1 : 0);
+  const itemsAgregados = Math.max(0, itemsEdit.length - req.items.length);
+  const itemsEliminados = req.items.filter(orig => !itemsEdit.some(e => e.id === orig.id)).length;
+  // "Cambios" = precio modificado, item agregado, item eliminado
+  const cambiosPrecio = itemsEdit.reduce((n, p) => {
+    const original = req.items.find(o => o.id === p.id);
+    if (!original) return n; // item nuevo, no cuenta como cambio de precio
+    return n + ((Number(p.precioU) || 0) !== (Number(original.precioU) || 0) || (Number(p.cant) || 0) !== (Number(original.cant) || 0) ? 1 : 0);
   }, 0);
+  const totalCambios = cambiosPrecio + itemsAgregados + itemsEliminados;
 
   const guardarPrecios = async () => {
     setSavingPrecios(true);
     try {
-      const nuevosItems = req.items.map((it, i) => {
-        const cant = Number(preciosEdit[i]?.cant) || Number(it.cant) || 0;
-        const precioU = Number(preciosEdit[i]?.precioU) || 0;
-        return { ...it, cant, precioU, subtotal: Math.round(cant * precioU) };
-      });
+      // Construir items finales con subtotal calculado
+      const nuevosItems = itemsEdit
+        .filter(it => (it.item || it.nombre)?.trim()) // descartar filas vacías
+        .map(it => {
+          const cant = Number(it.cant) || 0;
+          const precioU = Number(it.precioU) || 0;
+          return {
+            id: it.id, item: it.item || it.nombre,
+            item_id: it.item_id || null,
+            loggro_id: it.loggro_id || null,
+            unidad: it.unidad,
+            cant, precioU,
+            subtotal: Math.round(cant * precioU),
+          };
+        });
       const nuevoTotal = nuevosItems.reduce((s, it) => s + (Number(it.subtotal) || 0), 0);
 
       // Timeline event
+      const detalleCambios = [];
+      if (cambiosPrecio > 0) detalleCambios.push(`${cambiosPrecio} precio${cambiosPrecio !== 1 ? "s" : ""} editado${cambiosPrecio !== 1 ? "s" : ""}`);
+      if (itemsAgregados > 0) detalleCambios.push(`${itemsAgregados} item${itemsAgregados !== 1 ? "s" : ""} agregado${itemsAgregados !== 1 ? "s" : ""}`);
+      if (itemsEliminados > 0) detalleCambios.push(`${itemsEliminados} item${itemsEliminados !== 1 ? "s" : ""} eliminado${itemsEliminados !== 1 ? "s" : ""}`);
       const evento = {
         quien: currentUser?.nombre || "—",
-        accion: "actualizar_precios",
+        accion: "actualizar_items",
         fecha: new Date().toLocaleString("es-CO"),
-        comentario: `${cambios} precio${cambios !== 1 ? "s" : ""} actualizado${cambios !== 1 ? "s" : ""}. Total: ${COP(totalAnterior)} → ${COP(nuevoTotal)}`,
+        comentario: `${detalleCambios.join(" · ") || "Items actualizados"}. Total: ${COP(totalAnterior)} → ${COP(nuevoTotal)}`,
       };
 
       const { error } = await supabase.from("requisiciones").update({
@@ -2096,13 +2141,13 @@ function DetailModal({ req, onClose, onUpdate, onGenerarOC, proveedores, reglas,
             )}
             <span style={{ fontSize: 14, fontWeight: 700 }}>Total: <span style={{ color: B.sand }}>{COP(req.total)}</span></span>
           </div>
-          {/* Botón: Editar precios cotizados */}
+          {/* Botón: Editar items (precios + agregar/eliminar) */}
           {!splitMode && (
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 14px", borderBottom: `1px solid ${B.navyLight}` }}>
               <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)" }}>
-                {editPrecios && cambios > 0 && (
+                {editPrecios && totalCambios > 0 && (
                   <span>
-                    🔧 <strong style={{ color: B.warning }}>{cambios}</strong> precio{cambios !== 1 ? "s" : ""} cambiado{cambios !== 1 ? "s" : ""} ·
+                    🔧 <strong style={{ color: B.warning }}>{totalCambios}</strong> cambio{totalCambios !== 1 ? "s" : ""} ·
                     Total: {COP(totalAnterior)} → <strong style={{ color: B.success }}>{COP(subtotalEditado)}</strong>
                   </span>
                 )}
@@ -2110,19 +2155,23 @@ function DetailModal({ req, onClose, onUpdate, onGenerarOC, proveedores, reglas,
               <div style={{ display: "flex", gap: 6 }}>
                 {editPrecios ? (
                   <>
-                    <button onClick={() => { setEditPrecios(false); setPreciosEdit(req.items.map(it => ({ cant: Number(it.cant) || 0, precioU: Number(it.precioU) || 0 }))); }}
+                    <button onClick={addItemRow}
+                      style={{ padding: "6px 12px", borderRadius: 6, border: `1px solid ${B.sky}`, background: B.sky + "22", color: B.sky, fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
+                      + Agregar item
+                    </button>
+                    <button onClick={() => { setEditPrecios(false); setItemsEdit(req.items.map(cloneItem)); }}
                       style={{ padding: "6px 12px", borderRadius: 6, border: `1px solid ${B.navyLight}`, background: "transparent", color: "rgba(255,255,255,0.6)", fontSize: 11, cursor: "pointer" }}>
                       Cancelar
                     </button>
-                    <button onClick={guardarPrecios} disabled={savingPrecios || cambios === 0}
-                      style={{ padding: "6px 12px", borderRadius: 6, border: "none", background: B.success, color: B.navy, fontSize: 11, fontWeight: 700, cursor: (savingPrecios || cambios === 0) ? "default" : "pointer", opacity: (savingPrecios || cambios === 0) ? 0.5 : 1 }}>
-                      {savingPrecios ? "Guardando…" : "💾 Guardar precios"}
+                    <button onClick={guardarPrecios} disabled={savingPrecios || totalCambios === 0}
+                      style={{ padding: "6px 12px", borderRadius: 6, border: "none", background: B.success, color: B.navy, fontSize: 11, fontWeight: 700, cursor: (savingPrecios || totalCambios === 0) ? "default" : "pointer", opacity: (savingPrecios || totalCambios === 0) ? 0.5 : 1 }}>
+                      {savingPrecios ? "Guardando…" : "💾 Guardar"}
                     </button>
                   </>
                 ) : (
                   <button onClick={() => setEditPrecios(true)}
                     style={{ padding: "6px 12px", borderRadius: 6, border: `1px solid ${B.warning}`, background: B.warning + "22", color: B.warning, fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
-                    ✏️ Editar precios cotizados
+                    ✏️ Editar items
                   </button>
                 )}
               </div>
@@ -2132,45 +2181,91 @@ function DetailModal({ req, onClose, onUpdate, onGenerarOC, proveedores, reglas,
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
             <thead>
               <tr>
-                {(splitMode ? ["Item", "Cant.", "Unidad", "P. Unit.", "Subtotal", "Proveedor"] : ["Item", "Cant.", "Unidad", "P. Unit.", "Subtotal"]).map(h => (
-                  <th key={h} style={{ padding: "8px 12px", textAlign: h === "Item" || h === "Proveedor" ? "left" : "right", fontSize: 9, color: B.sand, textTransform: "uppercase", borderBottom: `1px solid ${B.navyLight}` }}>{h}</th>
+                {(splitMode
+                  ? ["Item", "Cant.", "Unidad", "P. Unit.", "Subtotal", "Proveedor"]
+                  : editPrecios
+                    ? ["Item", "Cant.", "Unidad", "P. Unit.", "Subtotal", ""]
+                    : ["Item", "Cant.", "Unidad", "P. Unit.", "Subtotal"]
+                ).map((h, idx) => (
+                  <th key={h + idx} style={{ padding: "8px 12px", textAlign: h === "Item" || h === "Proveedor" ? "left" : "right", fontSize: 9, color: B.sand, textTransform: "uppercase", borderBottom: `1px solid ${B.navyLight}` }}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {req.items.map((it, i) => {
-                const editCant   = Number(preciosEdit[i]?.cant) || 0;
-                const editPrecio = Number(preciosEdit[i]?.precioU) || 0;
-                const subtotalLocal = editPrecios ? Math.round(editCant * editPrecio) : (Number(it.subtotal) || (Number(it.cant) || 0) * (Number(it.precioU) || 0));
-                const cambioEnFila = editPrecios && editPrecio !== (Number(it.precioU) || 0);
+              {(editPrecios ? itemsEdit : req.items).map((it, i) => {
+                if (editPrecios) {
+                  const editCant   = Number(it.cant) || 0;
+                  const editPrecio = Number(it.precioU) || 0;
+                  const subtotalLocal = Math.round(editCant * editPrecio);
+                  const original = req.items.find(o => o.id === it.id);
+                  const esNuevo = !original;
+                  const cambioEnFila = !esNuevo && (editPrecio !== Number(original.precioU || 0) || editCant !== Number(original.cant || 0));
+                  return (
+                    <tr key={it.id || i} style={{
+                      borderBottom: `1px solid ${B.navyLight}`,
+                      background: esNuevo ? "rgba(56,189,248,0.10)" : cambioEnFila ? "rgba(245,158,11,0.10)" : "transparent",
+                    }}>
+                      <td style={{ padding: "6px 12px", fontSize: 12, position: "relative" }}>
+                        {esNuevo ? (
+                          <ItemSearchInput value={it.item} catalogoItems={catalogoEdit}
+                            onChange={(val, sel) => {
+                              setItemField(i, "item", val);
+                              setItemField(i, "nombre", val);
+                              if (sel) pickCatalogItem(i, sel);
+                            }} />
+                        ) : (
+                          <>
+                            {it.item}
+                            {Number(it.precioU) === 0 && (
+                              <span style={{ marginLeft: 6, fontSize: 9, padding: "1px 5px", borderRadius: 3, background: B.warning + "33", color: B.warning, fontWeight: 700 }}>SIN PRECIO</span>
+                            )}
+                          </>
+                        )}
+                        {esNuevo && (
+                          <span style={{ marginLeft: 6, fontSize: 9, padding: "1px 5px", borderRadius: 3, background: B.sky + "33", color: B.sky, fontWeight: 700 }}>NUEVO</span>
+                        )}
+                      </td>
+                      <td style={{ padding: "6px 12px", fontSize: 12, textAlign: "right" }}>
+                        <input type="number" value={editCant} min={0}
+                          onChange={e => setItemField(i, "cant", e.target.value)}
+                          style={{ width: 70, padding: "4px 6px", borderRadius: 4, background: B.navy, border: `1px solid ${B.navyLight}`, color: "#fff", fontSize: 12, textAlign: "right" }} />
+                      </td>
+                      <td style={{ padding: "6px 12px", fontSize: 11, textAlign: "right" }}>
+                        <input value={it.unidad || ""} onChange={e => setItemField(i, "unidad", e.target.value)}
+                          style={{ width: 80, padding: "4px 6px", borderRadius: 4, background: B.navy, border: `1px solid ${B.navyLight}`, color: "rgba(255,255,255,0.7)", fontSize: 11, textAlign: "right" }} />
+                      </td>
+                      <td style={{ padding: "6px 12px", fontSize: 12, textAlign: "right" }}>
+                        <input type="number" value={editPrecio} min={0} step={1}
+                          onChange={e => setItemField(i, "precioU", e.target.value)}
+                          placeholder="0"
+                          style={{ width: 110, padding: "4px 6px", borderRadius: 4, background: B.navy, border: `1px solid ${cambioEnFila || esNuevo ? B.warning : B.navyLight}`, color: cambioEnFila || esNuevo ? B.warning : "#fff", fontSize: 12, textAlign: "right", fontWeight: cambioEnFila || esNuevo ? 700 : 400 }} />
+                      </td>
+                      <td style={{ padding: "6px 12px", fontSize: 12, textAlign: "right", fontWeight: 700, color: cambioEnFila || esNuevo ? B.success : B.sand }}>{COP(subtotalLocal)}</td>
+                      <td style={{ padding: "6px 12px", textAlign: "center" }}>
+                        <button onClick={() => removeItemRow(i)}
+                          title="Eliminar item"
+                          style={{ background: "transparent", border: "none", color: B.danger, fontSize: 16, cursor: "pointer", padding: 4 }}>✕</button>
+                      </td>
+                    </tr>
+                  );
+                }
+                // Vista normal (no edit)
+                const subtotalLocal = Number(it.subtotal) || (Number(it.cant) || 0) * (Number(it.precioU) || 0);
                 return (
                   <tr key={i} style={{
                     borderBottom: `1px solid ${B.navyLight}`,
-                    background: cambioEnFila ? "rgba(245,158,11,0.10)" : (splitMode && itemProvs[i] ? "rgba(34,197,94,0.06)" : "transparent"),
+                    background: splitMode && itemProvs[i] ? "rgba(34,197,94,0.06)" : "transparent",
                   }}>
                     <td style={{ padding: "10px 12px", fontSize: 12 }}>
                       {it.item}
-                      {Number(it.precioU) === 0 && !editPrecios && (
+                      {Number(it.precioU) === 0 && (
                         <span style={{ marginLeft: 6, fontSize: 9, padding: "1px 5px", borderRadius: 3, background: B.warning + "33", color: B.warning, fontWeight: 700 }}>SIN PRECIO</span>
                       )}
                     </td>
-                    <td style={{ padding: "10px 12px", fontSize: 12, textAlign: "right" }}>
-                      {editPrecios ? (
-                        <input type="number" value={editCant} min={0}
-                          onChange={e => setPreciosEdit(arr => arr.map((p, j) => j === i ? { ...p, cant: e.target.value } : p))}
-                          style={{ width: 70, padding: "4px 6px", borderRadius: 4, background: B.navy, border: `1px solid ${B.navyLight}`, color: "#fff", fontSize: 12, textAlign: "right" }} />
-                      ) : it.cant}
-                    </td>
+                    <td style={{ padding: "10px 12px", fontSize: 12, textAlign: "right" }}>{it.cant}</td>
                     <td style={{ padding: "10px 12px", fontSize: 11, textAlign: "right", color: "rgba(255,255,255,0.5)" }}>{it.unidad}</td>
-                    <td style={{ padding: "10px 12px", fontSize: 12, textAlign: "right" }}>
-                      {editPrecios ? (
-                        <input type="number" value={editPrecio} min={0} step={1}
-                          onChange={e => setPreciosEdit(arr => arr.map((p, j) => j === i ? { ...p, precioU: e.target.value } : p))}
-                          placeholder="0"
-                          style={{ width: 110, padding: "4px 6px", borderRadius: 4, background: B.navy, border: `1px solid ${cambioEnFila ? B.warning : B.navyLight}`, color: cambioEnFila ? B.warning : "#fff", fontSize: 12, textAlign: "right", fontWeight: cambioEnFila ? 700 : 400 }} />
-                      ) : COP(it.precioU)}
-                    </td>
-                    <td style={{ padding: "10px 12px", fontSize: 12, textAlign: "right", fontWeight: 700, color: cambioEnFila ? B.success : B.sand }}>{COP(subtotalLocal)}</td>
+                    <td style={{ padding: "10px 12px", fontSize: 12, textAlign: "right" }}>{COP(it.precioU)}</td>
+                    <td style={{ padding: "10px 12px", fontSize: 12, textAlign: "right", fontWeight: 700, color: B.sand }}>{COP(subtotalLocal)}</td>
                     {splitMode && (
                       <td style={{ padding: "6px 8px" }}>
                         <select value={itemProvs[i] || ""} onChange={e => setItemProvs(p => ({ ...p, [i]: e.target.value }))}
@@ -2185,6 +2280,9 @@ function DetailModal({ req, onClose, onUpdate, onGenerarOC, proveedores, reglas,
                   </tr>
                 );
               })}
+              {editPrecios && itemsEdit.length === 0 && (
+                <tr><td colSpan={6} style={{ padding: 20, textAlign: "center", fontSize: 12, color: "rgba(255,255,255,0.4)" }}>Sin items. Click "+ Agregar item" para empezar.</td></tr>
+              )}
             </tbody>
           </table>
           {/* Resumen + botón generar OCs divididas */}
