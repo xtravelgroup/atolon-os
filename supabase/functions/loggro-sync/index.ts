@@ -955,6 +955,47 @@ serve(async (req) => {
     //     invoice: { number: "F-001", date: "2026-04-22" },  // opcional
     //     location_id_to: "..."        // opcional si isMoveTo
     //   }
+    // Debug: estadísticas + ejemplo de un movimiento con costo
+    if (req.method === "GET" && path === "/debug-inventory-shape") {
+      const id = url.searchParams.get("id");
+      if (id) {
+        const r = await loggroRaw("GET", `/inventories/${id}`);
+        return json({ ok: r.ok, status: r.status, body: r.body });
+      }
+      const r = await loggroRaw("GET", "/inventories");
+      const items = Array.isArray(r.body) ? r.body : (r.body?.data || []);
+      const tipoCount: any = {};
+      items.forEach((m: any) => { tipoCount[m.type] = (tipoCount[m.type] || 0) + 1; });
+      // Buscar uno que tenga costo en ingredients o invoice.total
+      const conCosto = items.find((m: any) => {
+        const ings = m.ingredients || [];
+        return ings.some((i: any) => Number(i.cost) > 0 || Number(i.price) > 0 || Number(i.unitCost) > 0 || Number(i.amount) > 0);
+      });
+      const sampleIng = conCosto?.ingredients?.[0] || items[0]?.ingredients?.[0] || null;
+      const sampleIngKeys = sampleIng ? Object.keys(sampleIng) : [];
+      const idBuscar = url.searchParams.get("find") || "69ee5c353d711a38fd15b6b3";
+      const found = items.find((m: any) => m._id === idBuscar) || null;
+      return json({
+        ok: r.ok, status: r.status, total: items.length,
+        tipoCount,
+        sampleIngKeys,
+        miMovimiento: found ? {
+          _id: found._id,
+          type: found.type,
+          date: found.date,
+          provider_name: found.provider?.name,
+          invoice: found.invoice,
+          total: found.total,
+          ingredients_count: found.ingredients?.length,
+          ingredients_sample: (found.ingredients || []).slice(0, 3).map((i: any) => ({
+            ingredient_name: i.ingredient?.name,
+            quantity: i.quantity,
+            price: i.price,
+          })),
+        } : null,
+      });
+    }
+
     // Debug: prueba GET en varios paths candidatos para ver cuáles existen
     if (req.method === "GET" && path === "/debug-paths") {
       const candidates = [
@@ -968,6 +1009,21 @@ serve(async (req) => {
         results[p] = { status: r.status, ok: r.ok, sample: typeof r.body === "object" ? Object.keys(r.body || {}).slice(0, 5) : String(r.body).slice(0, 100) };
       }
       return json({ ok: true, results });
+    }
+
+    // Eliminar/anular un movimiento de inventario en Loggro (DELETE o
+    // marcar deleted=true vía PATCH si DELETE no aplica).
+    if (req.method === "POST" && path === "/delete-inventory-movement") {
+      const body = await req.json().catch(() => ({}));
+      const id = body.movement_id;
+      if (!id) return json({ ok: false, error: "movement_id requerido" }, 400);
+      // Probar DELETE primero
+      let r = await loggroRaw("DELETE", `/inventories/${id}`);
+      if (!r.ok) {
+        // Fallback: PATCH deleted=true
+        r = await loggroRaw("PATCH", `/inventories/${id}`, { deleted: true });
+      }
+      return json({ ok: r.ok, status: r.status, body: r.body });
     }
 
     if (req.method === "POST" && path === "/create-inventory-movement") {
@@ -991,7 +1047,9 @@ serve(async (req) => {
         ingredients: (body.ingredients || []).map((it: any) => ({
           ingredient: it.ingredient_id || it.ingredient,
           quantity:   Number(it.quantity) || 0,
-          cost:       Number(it.cost) || 0,
+          // Loggro usa 'price' para el costo unitario, no 'cost'.
+          // Aceptamos ambos en el body por compatibilidad.
+          price:      Number(it.price ?? it.cost) || 0,
         })),
         createdOn: now,
         modifiedOn: now,
