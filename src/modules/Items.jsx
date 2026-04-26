@@ -254,10 +254,11 @@ export default function Items() {
       {/* Tabs */}
       <div style={{ display: "flex", gap: 6, marginBottom: 20, flexWrap: "wrap" }}>
         {[
-          { key: "inventario", label: "📦 Inventario" },
-          { key: "catalogo", label: "🛒 Productos" },
+          { key: "general",    label: "🌐 Inventario General" },
+          { key: "inventario", label: "📦 Por Bodega" },
+          { key: "catalogo",   label: "🛒 Productos" },
           { key: "categorias", label: "🏷️ Categorías" },
-          { key: "conteos", label: "📋 Historial Conteos" },
+          { key: "conteos",    label: "📋 Historial Conteos" },
         ].map(t => (
           <button key={t.key} onClick={() => setTab(t.key)} style={{
             padding: "8px 18px", borderRadius: 8, border: `1px solid ${tab === t.key ? B.sky : B.navyLight}`,
@@ -409,7 +410,17 @@ export default function Items() {
 
       </>}
 
-      {/* ══ TAB INVENTARIO ══ */}
+      {/* ══ TAB INVENTARIO GENERAL (consolidado + comparación Loggro) ══ */}
+      {tab === "general" && (
+        <InventarioGeneralTab
+          items={items}
+          categorias={categorias}
+          catIconMap={catIconMap}
+          catColorMap={catColorMap}
+        />
+      )}
+
+      {/* ══ TAB INVENTARIO POR BODEGA ══ */}
       {tab === "inventario" && (
         <InventarioTab
           items={items}
@@ -2368,6 +2379,205 @@ function LoggroCategoriaPicker({ nombre, categoriaAtolon, form, onClose, onCreat
             {creating ? "Creando en Loggro..." : "✓ Crear en Loggro"}
           </button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// INVENTARIO GENERAL TAB
+// Vista consolidada (suma de todas las bodegas) con comparación contra Loggro
+// ═══════════════════════════════════════════════════════════════════════════
+function InventarioGeneralTab({ items, categorias, catIconMap, catColorMap }) {
+  const [locaciones, setLocaciones] = useState([]);
+  const [stockPorLoc, setStockPorLoc] = useState({});
+  const [search, setSearch] = useState("");
+  const [catFilter, setCatFilter] = useState("todas");
+  const [diffFilter, setDiffFilter] = useState("todos");
+  const [syncing, setSyncing] = useState(false);
+  const [syncMsg, setSyncMsg] = useState(null);
+
+  const load = useCallback(async () => {
+    if (!supabase) return;
+    const [lR, sR] = await Promise.all([
+      supabase.from("items_locaciones").select("*").eq("activa", true).order("orden"),
+      supabase.from("items_stock_locacion").select("item_id, locacion_id, cantidad"),
+    ]);
+    setLocaciones(lR.data || []);
+    const map = {};
+    (sR.data || []).forEach(s => { map[`${s.item_id}|${s.locacion_id}`] = Number(s.cantidad) || 0; });
+    setStockPorLoc(map);
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  const stockAtolon = useCallback(
+    (item_id) => locaciones.reduce((s, l) => s + (Number(stockPorLoc[`${item_id}|${l.id}`]) || 0), 0),
+    [locaciones, stockPorLoc]
+  );
+
+  const filas = useMemo(() => {
+    const activos = items.filter(i => i.activo !== false);
+    return activos.map(i => {
+      const atolon = stockAtolon(i.id);
+      const loggro = i.loggro_id ? Number(i.stock_actual) || 0 : null;
+      const diff = loggro != null ? atolon - loggro : null;
+      return { item: i, atolon, loggro, diff };
+    });
+  }, [items, stockAtolon]);
+
+  const filasFiltradas = useMemo(() => {
+    return filas.filter(f => {
+      const q = search.trim().toLowerCase();
+      if (q && !((f.item.nombre || "").toLowerCase().includes(q) || (f.item.codigo || "").toLowerCase().includes(q))) return false;
+      if (catFilter !== "todas" && f.item.categoria !== catFilter) return false;
+      if (diffFilter === "con_diff" && (f.diff === null || f.diff === 0)) return false;
+      if (diffFilter === "sin_diff" && f.diff !== 0) return false;
+      if (diffFilter === "solo_loggro" && !f.item.loggro_id) return false;
+      if (diffFilter === "solo_atolon" && f.item.loggro_id) return false;
+      return true;
+    });
+  }, [filas, search, catFilter, diffFilter]);
+
+  const totalAtolon = filasFiltradas.reduce((s, f) => s + f.atolon, 0);
+  const totalLoggro = filasFiltradas.reduce((s, f) => s + (f.loggro || 0), 0);
+  const conDiff = filasFiltradas.filter(f => f.diff !== null && f.diff !== 0).length;
+  const sinLoggro = filasFiltradas.filter(f => !f.item.loggro_id).length;
+
+  async function syncLoggro() {
+    if (!confirm("Sincronizar stock actual desde Loggro?\n\nEsto traerá el stock más reciente de Loggro para todos los productos enlazados.")) return;
+    setSyncing(true); setSyncMsg(null);
+    try {
+      const res = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/loggro-sync/sync-ingredients`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}` },
+        body: JSON.stringify({ updateExisting: true }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Error en sync");
+      setSyncMsg({ type: "ok", text: `✓ ${data.synced || 0} ítems actualizados desde Loggro` });
+      setTimeout(() => window.location.reload(), 1000);
+    } catch (e) {
+      setSyncMsg({ type: "err", text: `Error: ${e.message}` });
+    } finally {
+      setSyncing(false);
+    }
+  }
+
+  return (
+    <div>
+      {/* KPIs */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 12, marginBottom: 16 }}>
+        {[
+          { label: "Productos", value: filasFiltradas.length, color: B.sky },
+          { label: "Stock Atolón (Σ bodegas)", value: totalAtolon.toLocaleString("es-CO"), color: B.success },
+          { label: "Stock Loggro", value: totalLoggro.toLocaleString("es-CO"), color: "#22c55e" },
+          { label: "Con diferencia", value: conDiff, color: conDiff > 0 ? B.danger : B.success },
+          { label: "Sin enlazar Loggro", value: sinLoggro, color: sinLoggro > 0 ? B.warning : "rgba(255,255,255,0.4)" },
+        ].map(k => (
+          <div key={k.label} style={{ background: B.navyMid, borderRadius: 12, padding: "12px 16px", borderLeft: `4px solid ${k.color}` }}>
+            <div style={{ fontSize: 10, color: B.sand, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>{k.label}</div>
+            <div style={{ fontSize: 22, fontWeight: 700, fontFamily: "'Barlow Condensed', sans-serif", color: k.color }}>{k.value}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Banner explicación + sync */}
+      <div style={{ background: B.navyMid, border: `1px solid ${B.sky}33`, borderRadius: 10, padding: 12, marginBottom: 14, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+        <div style={{ fontSize: 12, color: "rgba(255,255,255,0.6)", flex: 1, minWidth: 240 }}>
+          ℹ️ <strong>Stock Atolón</strong> = suma de stock en {locaciones.length} bodegas ({locaciones.map(l => l.nombre).join(", ")}).
+          <br />Se compara contra el stock que reporta Loggro. Las diferencias quedan resaltadas en rojo.
+        </div>
+        <button onClick={syncLoggro} disabled={syncing}
+          style={{ padding: "10px 16px", borderRadius: 8, border: "none", background: "#22c55e", color: B.navy, fontWeight: 700, fontSize: 12, cursor: syncing ? "default" : "pointer", opacity: syncing ? 0.6 : 1 }}>
+          {syncing ? "⟳ Sincronizando…" : "🔄 Sync Loggro"}
+        </button>
+      </div>
+      {syncMsg && (
+        <div style={{ marginBottom: 12, padding: 10, borderRadius: 8, fontSize: 12,
+          background: syncMsg.type === "ok" ? "#22c55e22" : "#ef444422",
+          color: syncMsg.type === "ok" ? "#4ade80" : "#fca5a5" }}>
+          {syncMsg.text}
+        </div>
+      )}
+
+      {/* Filtros */}
+      <div style={{ display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
+        <input value={search} onChange={e => setSearch(e.target.value)}
+          placeholder="🔎 Buscar por nombre o código…"
+          style={{ flex: 2, minWidth: 200, padding: "9px 12px", borderRadius: 8, background: B.navyMid, border: `1px solid ${B.navyLight}`, color: "#fff", fontSize: 13, outline: "none" }} />
+        <select value={catFilter} onChange={e => setCatFilter(e.target.value)}
+          style={{ padding: "9px 12px", borderRadius: 8, background: B.navyMid, border: `1px solid ${B.navyLight}`, color: "#fff", fontSize: 13, minWidth: 140 }}>
+          <option value="todas">Todas las categorías</option>
+          {categorias.filter(c => c.activo !== false).map(c => (
+            <option key={c.id} value={c.id}>{c.icono || "📁"} {c.nombre}</option>
+          ))}
+        </select>
+        <select value={diffFilter} onChange={e => setDiffFilter(e.target.value)}
+          style={{ padding: "9px 12px", borderRadius: 8, background: B.navyMid, border: `1px solid ${B.navyLight}`, color: "#fff", fontSize: 13, minWidth: 180 }}>
+          <option value="todos">Todos los productos</option>
+          <option value="con_diff">⚠ Con diferencia</option>
+          <option value="sin_diff">✓ Sin diferencia (cuadrado)</option>
+          <option value="solo_loggro">🔗 Enlazados a Loggro</option>
+          <option value="solo_atolon">📦 Sin enlazar Loggro</option>
+        </select>
+      </div>
+
+      {/* Tabla */}
+      <div style={{ overflowX: "auto", background: B.navyMid, borderRadius: 12 }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, minWidth: 720 }}>
+          <thead>
+            <tr style={{ background: B.navyLight }}>
+              {["Producto", "Categoría", "Unidad", "Atolón (Σ)", "Loggro", "Diferencia", "Estado"].map((h, i) => (
+                <th key={h} style={{ padding: "11px 14px", textAlign: i < 3 ? "left" : "right", fontWeight: 700, color: "rgba(255,255,255,0.6)", fontSize: 11, textTransform: "uppercase", letterSpacing: "0.04em" }}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {filasFiltradas.length === 0 ? (
+              <tr><td colSpan={7} style={{ padding: 30, textAlign: "center", color: "rgba(255,255,255,0.3)", fontSize: 13 }}>Sin productos que coincidan con los filtros.</td></tr>
+            ) : filasFiltradas.map(f => {
+              const cat = categorias.find(c => c.id === f.item.categoria);
+              return (
+                <tr key={f.item.id} style={{ borderTop: "1px solid rgba(255,255,255,0.04)" }}>
+                  <td style={{ padding: "11px 14px" }}>
+                    <div style={{ fontWeight: 700, color: "#fff" }}>{f.item.nombre}</div>
+                    {f.item.codigo && <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>{f.item.codigo}</div>}
+                  </td>
+                  <td style={{ padding: "11px 14px" }}>
+                    {cat ? (
+                      <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 4, background: (cat.color || B.sky) + "22", color: cat.color || B.sky, fontWeight: 600 }}>
+                        {cat.icono || "📁"} {cat.nombre}
+                      </span>
+                    ) : <span style={{ color: "rgba(255,255,255,0.3)" }}>—</span>}
+                  </td>
+                  <td style={{ padding: "11px 14px", color: "rgba(255,255,255,0.5)", fontSize: 12 }}>{f.item.unidad || "—"}</td>
+                  <td style={{ padding: "11px 14px", textAlign: "right", fontWeight: 700, color: B.success }}>{f.atolon.toLocaleString("es-CO")}</td>
+                  <td style={{ padding: "11px 14px", textAlign: "right", fontWeight: 700, color: f.loggro != null ? "#22c55e" : "rgba(255,255,255,0.3)" }}>
+                    {f.loggro != null ? f.loggro.toLocaleString("es-CO") : "—"}
+                  </td>
+                  <td style={{ padding: "11px 14px", textAlign: "right", fontWeight: 800,
+                    color: f.diff === null ? "rgba(255,255,255,0.3)" : f.diff === 0 ? B.success : B.danger }}>
+                    {f.diff === null ? "—" : (f.diff > 0 ? "+" : "") + f.diff.toLocaleString("es-CO")}
+                  </td>
+                  <td style={{ padding: "11px 14px", textAlign: "right" }}>
+                    {f.diff === null ? (
+                      <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 4, background: "rgba(255,255,255,0.05)", color: "rgba(255,255,255,0.4)" }}>Sin Loggro</span>
+                    ) : f.diff === 0 ? (
+                      <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 4, background: B.success + "22", color: B.success, fontWeight: 700 }}>✓ Cuadra</span>
+                    ) : (
+                      <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 4, background: B.danger + "22", color: B.danger, fontWeight: 700 }}>⚠ Diferencia</span>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      <div style={{ marginTop: 14, padding: 12, background: B.navy, borderRadius: 8, fontSize: 11, color: "rgba(255,255,255,0.45)", lineHeight: 1.5 }}>
+        ℹ️ <strong>Modo informativo</strong>: las diferencias se muestran pero no se ajustan automáticamente. Para corregir un faltante,
+        revisa los conteos físicos por bodega o sincroniza con Loggro. Próximamente: ajuste manual con justificación.
       </div>
     </div>
   );
