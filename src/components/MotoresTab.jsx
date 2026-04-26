@@ -6,6 +6,8 @@ import { useState, useEffect, useMemo, useCallback } from "react";
 import { supabase } from "../lib/supabase";
 import { B } from "../brand";
 import { useMobile } from "../lib/useMobile";
+import SignaturePad from "./SignaturePad";
+import { generarPDFOT } from "../lib/motorPDF";
 
 const fmtCOP = (n) => "$" + Math.round(Number(n) || 0).toLocaleString("es-CO");
 const fmtFecha = (d) => d ? new Date(d + "T12:00:00").toLocaleDateString("es-CO", { day: "numeric", month: "short", year: "numeric" }) : "—";
@@ -459,6 +461,7 @@ function UsoDiarioModal({ motor, onClose, onSaved }) {
     justificacion: "",
   });
   const [fotosUrls, setFotosUrls] = useState([]);
+  const [firmaUrl, setFirmaUrl] = useState("");
   const [uploading, setUploading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState("");
@@ -497,6 +500,7 @@ function UsoDiarioModal({ motor, onClose, onSaved }) {
       observaciones: f.observaciones || null,
       justificacion: f.justificacion || null,
       fotos_urls: fotosUrls,
+      firma_url: firmaUrl || null,
     });
     if (r.error) { setErr(r.error.message); setSaving(false); return; }
     setSaving(false);
@@ -536,6 +540,9 @@ function UsoDiarioModal({ motor, onClose, onSaved }) {
             </div>
           )}
         </Field>
+        <div style={{ gridColumn: "1 / -1" }}>
+          <SignaturePad value={firmaUrl} onChange={setFirmaUrl} path={`${motor.id}/firmas-uso`} label="Firma del capitán" />
+        </div>
       </Grid>
       <Actions onCancel={onClose} onSave={save} saving={saving} err={err} />
     </Overlay>
@@ -549,6 +556,7 @@ function ChecklistDiarioModal({ motor, onClose, onSaved }) {
   const [items, setItems] = useState(() => Object.fromEntries(CHECKLIST_DIARIO.map(k => [k, { ok: false, nota: "" }])));
   const [obs, setObs] = useState("");
   const [capitan, setCapitan] = useState("");
+  const [firmaUrl, setFirmaUrl] = useState("");
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState("");
 
@@ -561,7 +569,7 @@ function ChecklistDiarioModal({ motor, onClose, onSaved }) {
       motor_id: motor.id,
       fecha: todayStr(),
       capitan_nombre: capitan || null,
-      items,
+      items: { ...items, _firma_url: firmaUrl || null },
       observaciones: obs || null,
       completado: todosOk,
     });
@@ -589,6 +597,9 @@ function ChecklistDiarioModal({ motor, onClose, onSaved }) {
       <Field label="Observaciones generales" full>
         <textarea value={obs} onChange={e => setObs(e.target.value)} style={{ ...IS, minHeight: 70, resize: "vertical" }} />
       </Field>
+      <div style={{ marginTop: 12 }}>
+        <SignaturePad value={firmaUrl} onChange={setFirmaUrl} path={`${motor.id}/firmas-checklist`} label="Firma del capitán" />
+      </div>
       <div style={{ fontSize: 11, color: todosOk ? B.success : B.warning, padding: "8px 0" }}>
         {todosOk ? "✓ Checklist completo" : `Faltan ${Object.values(items).filter(i => !i.ok).length} items`}
       </div>
@@ -624,6 +635,8 @@ function MantenimientoModal({ motor, onClose, onSaved }) {
   const [bodegaDefault, setBodegaDefault] = useState("LOC-MANTENIMIENTO");
   const [fotosUrls, setFotosUrls] = useState([]);
   const [facturaUrl, setFacturaUrl] = useState("");
+  const [firmaTecnicoUrl, setFirmaTecnicoUrl] = useState("");
+  const [firmaSupUrl, setFirmaSupUrl] = useState("");
   const [uploading, setUploading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState("");
@@ -734,6 +747,8 @@ function MantenimientoModal({ motor, onClose, onSaved }) {
       factura_proveedor: f.factura_proveedor || null,
       factura_url: facturaUrl || null,
       fotos_urls: fotosUrls,
+      firma_tecnico_url: firmaTecnicoUrl || null,
+      firma_supervisor_url: firmaSupUrl || null,
       observaciones: f.observaciones || null,
       notas_cierre: f.estado === "finalizada" ? (f.notas_cierre || null) : null,
     });
@@ -891,6 +906,14 @@ function MantenimientoModal({ motor, onClose, onSaved }) {
           <Field label="Notas de cierre" full><textarea value={f.notas_cierre} onChange={e => set("notas_cierre", e.target.value)} style={{ ...IS, minHeight: 50, resize: "vertical" }} /></Field>
         )}
       </Grid>
+
+      {/* Firmas */}
+      {f.estado === "finalizada" && (
+        <div style={{ marginTop: 14, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+          <SignaturePad value={firmaTecnicoUrl} onChange={setFirmaTecnicoUrl} path={`${motor.id}/firmas-tecnico`} label="Firma del técnico" />
+          <SignaturePad value={firmaSupUrl} onChange={setFirmaSupUrl} path={`${motor.id}/firmas-supervisor`} label="Firma del supervisor" />
+        </div>
+      )}
       <Actions onCancel={onClose} onSave={save} saving={saving} err={err} />
     </Overlay>
   );
@@ -903,12 +926,14 @@ function AutorizacionModal({ motor, onClose, onSaved }) {
   const [motivo, setMotivo] = useState("");
   const [gerente, setGerente] = useState("");
   const [vigencia, setVigencia] = useState(10);
+  const [firmaUrl, setFirmaUrl] = useState("");
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState("");
 
   async function save() {
     if (motivo.trim().length < 15) { setErr("Motivo obligatorio (mínimo 15 caracteres)"); return; }
     if (!gerente.trim()) { setErr("Nombre del gerente obligatorio"); return; }
+    if (!firmaUrl) { setErr("Firma del gerente obligatoria"); return; }
     setSaving(true); setErr("");
     const r = await supabase.from("motor_autorizaciones").insert({
       id: uid("AUT"),
@@ -917,6 +942,7 @@ function AutorizacionModal({ motor, onClose, onSaved }) {
       motivo,
       gerente_nombre: gerente,
       vigencia_horas: Number(vigencia) || 10,
+      firma_url: firmaUrl,
     });
     if (r.error) { setErr(r.error.message); setSaving(false); return; }
     setSaving(false);
@@ -938,6 +964,9 @@ function AutorizacionModal({ motor, onClose, onSaved }) {
         </div>
       </Field>
       <Field label="Vigencia (horas adicionales)" full><input type="number" value={vigencia} onChange={e => setVigencia(e.target.value)} style={IS} /></Field>
+      <div style={{ marginTop: 14 }}>
+        <SignaturePad value={firmaUrl} onChange={setFirmaUrl} path={`${motor.id}/firmas-gerente`} label="Firma del gerente (obligatoria)" />
+      </div>
       <Actions onCancel={onClose} onSave={save} saving={saving} err={err} saveLabel="🔓 Autorizar operación" saveColor={B.danger} />
     </Overlay>
   );
@@ -1209,7 +1238,7 @@ function BitacoraDashboard({ motores, usos, mants, activeLancha }) {
               <table style={{ width: "100%", fontSize: 11, borderCollapse: "collapse" }}>
                 <thead>
                   <tr style={{ background: B.navy }}>
-                    {["Número", "Fecha", "Motor", "Tipo", "Estado", "Técnico", "Costo", "Factura"].map(h => (
+                    {["Número", "Fecha", "Motor", "Tipo", "Estado", "Técnico", "Costo", "Factura", ""].map(h => (
                       <th key={h} style={{ padding: "8px 10px", textAlign: "left", color: B.sand, fontSize: 9, textTransform: "uppercase" }}>{h}</th>
                     ))}
                   </tr>
@@ -1232,6 +1261,13 @@ function BitacoraDashboard({ motores, usos, mants, activeLancha }) {
                         <td style={{ padding: "6px 10px" }}>{x.tecnico_nombre || "—"}</td>
                         <td style={{ padding: "6px 10px", textAlign: "right", fontWeight: 700, color: B.warning }}>{fmtCOP(x.costo_total)}</td>
                         <td style={{ padding: "6px 10px" }}>{x.factura_numero || "—"}</td>
+                        <td style={{ padding: "6px 10px" }}>
+                          <button onClick={() => generarPDFOT({ ot: x, motor: m, lancha: { id: m.lancha_id, nombre: m.lancha_id } })}
+                            title="Descargar PDF"
+                            style={{ background: B.sky + "22", border: `1px solid ${B.sky}`, color: B.sky, fontSize: 10, fontWeight: 700, padding: "3px 8px", borderRadius: 4, cursor: "pointer" }}>
+                            📄 PDF
+                          </button>
+                        </td>
                       </tr>
                     );
                   })}
