@@ -18,6 +18,7 @@ export default function CostosFlotaTab() {
   const [mes, setMes] = useState(thisMonth());
   const [bitacora, setBitacora]     = useState([]);
   const [zarpes, setZarpes]         = useState([]);
+  const [llegadas, setLlegadas]     = useState([]); // llegadas a Atolón = medio viaje
   const [lanchas, setLanchas]       = useState([]);
   const [capitanes, setCapitanes]   = useState([]); // nómina (referencia)
   const [loading, setLoading]       = useState(true);
@@ -27,7 +28,7 @@ export default function CostosFlotaTab() {
     setLoading(true);
     const seisAtras = new Date(); seisAtras.setMonth(seisAtras.getMonth() - 5);
     const desde = seisAtras.toISOString().slice(0, 10);
-    const [{ data: lch }, { data: bit }, { data: zfl }, { data: caps }] = await Promise.all([
+    const [{ data: lch }, { data: bit }, { data: zfl }, { data: lleg }, { data: caps }] = await Promise.all([
       supabase.from("lanchas").select("*").eq("activo", true).order("nombre"),
       supabase.from("lancha_bitacora")
         .select("lancha_id, lancha_nombre, fecha, tipo, costo_total, galones, proveedor")
@@ -35,11 +36,17 @@ export default function CostosFlotaTab() {
       supabase.from("muelle_zarpes_flota")
         .select("fecha, embarcacion, motivo, pax_a, pax_n, costo_operativo")
         .gte("fecha", desde).limit(2000),
+      supabase.from("muelle_llegadas")
+        .select("fecha, embarcacion_nombre, tipo, pax_a, pax_n, costo_operativo")
+        .gte("fecha", desde)
+        .in("tipo", ["lancha_atolon", "lanchas_atolon"])
+        .limit(2000),
       supabase.from("capitanes_flota").select("*").eq("activo", true),
     ]);
     setLanchas(lch || []);
     setBitacora(bit || []);
     setZarpes(zfl || []);
+    setLlegadas(lleg || []);
     setCapitanes(caps || []);
     setLoading(false);
   }, []);
@@ -50,6 +57,7 @@ export default function CostosFlotaTab() {
     const filterMes = (arr, key = "fecha") => arr.filter(r => (r[key] || "").startsWith(mes));
     const bMes = filterMes(bitacora);
     const zMes = filterMes(zarpes);
+    const lMes = filterMes(llegadas);
 
     const costoComb        = bMes.filter(b => b.tipo === "combustible").reduce((s, b) => s + Number(b.costo_total || 0), 0);
     const galones          = bMes.filter(b => b.tipo === "combustible").reduce((s, b) => s + Number(b.galones || 0), 0);
@@ -59,41 +67,60 @@ export default function CostosFlotaTab() {
     // Capitanes nómina: NO están en bitácora, leídos de capitanes_flota como referencia
     const costoCapNomina   = capitanes.filter(c => c.tipo === "nomina").reduce((s, c) => s + Number(c.salario_mensual || 0), 0);
     const costoCapitanes   = costoCapTerceros + costoCapNomina;
-    const costoViajes      = zMes.reduce((s, z) => s + Number(z.costo_operativo || 0), 0);
+    // Costo de viajes: cada salida + cada llegada = 1 medio viaje
+    const costoSalidas     = zMes.reduce((s, z) => s + Number(z.costo_operativo || 0), 0);
+    const costoLlegadas    = lMes.reduce((s, l) => s + Number(l.costo_operativo || 0), 0);
+    const costoViajes      = costoSalidas + costoLlegadas;
     const costosTotales    = costoComb + costoMant + costoMarina + costoCapitanes + costoViajes;
 
-    const pax = zMes.reduce((s, z) => s + Number(z.pax_a || 0) + Number(z.pax_n || 0), 0);
-    const numZarpes = zMes.length;
-    const costoPorPax   = pax > 0 ? costosTotales / pax : 0;
-    const costoPorZarpe = numZarpes > 0 ? costosTotales / numZarpes : 0;
+    const paxSalida   = zMes.reduce((s, z) => s + Number(z.pax_a || 0) + Number(z.pax_n || 0), 0);
+    const paxLlegada  = lMes.reduce((s, l) => s + Number(l.pax_a || 0) + Number(l.pax_n || 0), 0);
+    const pax = paxSalida + paxLlegada;
+    const numSalidas    = zMes.length;
+    const numLlegadas   = lMes.length;
+    const numMediosViajes = numSalidas + numLlegadas;
+    const numViajesCompletos = Math.floor(numMediosViajes / 2);
+    const costoPorPax       = pax > 0 ? costosTotales / pax : 0;
+    const costoPorMedioViaje = numMediosViajes > 0 ? costoViajes / numMediosViajes : 0;
 
     // Por embarcación
     const porEmb = lanchas.map(l => {
       const bL = bMes.filter(b => b.lancha_id === l.id);
       const zL = zMes.filter(z => z.embarcacion === l.nombre);
+      const llL = lMes.filter(x => (x.embarcacion_nombre || "").toLowerCase() === l.nombre.toLowerCase());
       const cN = capitanes.filter(c => c.lancha_id === l.id && c.tipo === "nomina")
                   .reduce((s, c) => s + Number(c.salario_mensual || 0), 0);
       const lComb = bL.filter(b => b.tipo === "combustible").reduce((s, b) => s + Number(b.costo_total || 0), 0);
       const lMant = bL.filter(b => ["mantenimiento", "reparacion", "inspeccion", "limpieza"].includes(b.tipo)).reduce((s, b) => s + Number(b.costo_total || 0), 0);
       const lMar  = bL.filter(b => b.tipo === "marina").reduce((s, b) => s + Number(b.costo_total || 0), 0);
       const lCap  = bL.filter(b => b.tipo === "capitanes").reduce((s, b) => s + Number(b.costo_total || 0), 0) + cN;
-      const lViaj = zL.reduce((s, z) => s + Number(z.costo_operativo || 0), 0);
-      const lPax  = zL.reduce((s, z) => s + Number(z.pax_a || 0) + Number(z.pax_n || 0), 0);
-      const lZarp = zL.length;
+      const lSal = zL.reduce((s, z) => s + Number(z.costo_operativo || 0), 0);
+      const lLleg = llL.reduce((s, x) => s + Number(x.costo_operativo || 0), 0);
+      const lViaj = lSal + lLleg;
+      const lPax  = zL.reduce((s, z) => s + Number(z.pax_a || 0) + Number(z.pax_n || 0), 0)
+                  + llL.reduce((s, x) => s + Number(x.pax_a || 0) + Number(x.pax_n || 0), 0);
+      const lSalidas   = zL.length;
+      const lLlegadasN = llL.length;
+      const lMediosViajes = lSalidas + lLlegadasN;
+      const lViajesCompletos = Math.floor(lMediosViajes / 2);
       const totalLancha = lComb + lMant + lMar + lCap + lViaj;
       return {
         id: l.id, nombre: l.nombre, capacidad: l.capacidad_pax || 0,
         comb: lComb, mant: lMant, marina: lMar, capitanes: lCap, viajes: lViaj,
-        zarpes: lZarp, pax: lPax, total: totalLancha,
+        salidas: lSalidas, llegadas: lLlegadasN, mediosViajes: lMediosViajes,
+        viajesCompletos: lViajesCompletos,
+        pax: lPax, total: totalLancha,
         costoPorPax: lPax > 0 ? totalLancha / lPax : 0,
-        costoPorZarpe: lZarp > 0 ? totalLancha / lZarp : 0,
-        ocupacionProm: l.capacidad_pax && lZarp > 0 ? (lPax / (lZarp * l.capacidad_pax)) * 100 : 0,
+        costoPorMedioViaje: lMediosViajes > 0 ? lViaj / lMediosViajes : 0,
+        ocupacionProm: l.capacidad_pax && lMediosViajes > 0 ? (lPax / (lMediosViajes * l.capacidad_pax)) * 100 : 0,
       };
     });
 
-    return { costoComb, galones, costoMant, costoMarina, costoCapitanes, costoCapNomina, costoCapTerceros, costoViajes, costosTotales,
-             pax, numZarpes, costoPorPax, costoPorZarpe, porEmb };
-  }, [mes, bitacora, zarpes, lanchas, capitanes]);
+    return { costoComb, galones, costoMant, costoMarina, costoCapitanes, costoCapNomina, costoCapTerceros,
+             costoSalidas, costoLlegadas, costoViajes, costosTotales,
+             pax, numSalidas, numLlegadas, numMediosViajes, numViajesCompletos,
+             costoPorPax, costoPorMedioViaje, porEmb };
+  }, [mes, bitacora, zarpes, llegadas, lanchas, capitanes]);
 
   // ── Gráfico 6 meses (solo costos apilados) ────────────────────────────────
   const meses6 = useMemo(() => {
@@ -106,14 +133,16 @@ export default function CostosFlotaTab() {
     return arr.map(ym => {
       const b = bitacora.filter(x => (x.fecha || "").startsWith(ym));
       const z = zarpes.filter(x => (x.fecha || "").startsWith(ym));
+      const ll = llegadas.filter(x => (x.fecha || "").startsWith(ym));
       const comb   = b.filter(x => x.tipo === "combustible").reduce((s, x) => s + Number(x.costo_total || 0), 0);
       const mant   = b.filter(x => ["mantenimiento", "reparacion", "inspeccion", "limpieza"].includes(x.tipo)).reduce((s, x) => s + Number(x.costo_total || 0), 0);
       const marina = b.filter(x => x.tipo === "marina").reduce((s, x) => s + Number(x.costo_total || 0), 0);
       const cap    = b.filter(x => x.tipo === "capitanes").reduce((s, x) => s + Number(x.costo_total || 0), 0) + capNomMensual;
-      const viajes = z.reduce((s, x) => s + Number(x.costo_operativo || 0), 0);
+      const viajes = z.reduce((s, x) => s + Number(x.costo_operativo || 0), 0)
+                   + ll.reduce((s, x) => s + Number(x.costo_operativo || 0), 0);
       return { mes: ym, comb, mant, marina, cap, viajes, total: comb + mant + marina + cap + viajes };
     });
-  }, [bitacora, zarpes, capitanes]);
+  }, [bitacora, zarpes, llegadas, capitanes]);
 
   const maxMes = Math.max(1, ...meses6.map(m => m.total));
 
@@ -148,15 +177,16 @@ export default function CostosFlotaTab() {
         <Kpi label="Marina/parqueo"  valor={fmtCOP(data.costoMarina)} color="#22d3ee" />
         <Kpi label="Capitanes"       valor={fmtCOP(data.costoCapitanes)} color="#fb923c"
              sub={`${fmtCOP(data.costoCapNomina)} nómina + ${fmtCOP(data.costoCapTerceros)} terc.`} />
-        <Kpi label="Viajes flota"    valor={fmtCOP(data.costoViajes)} color="#a78bfa" sub={`${data.numZarpes} zarpes`} />
+        <Kpi label="Viajes flota"    valor={fmtCOP(data.costoViajes)} color="#a78bfa"
+             sub={`${data.numMediosViajes} medios = ${data.numViajesCompletos} ida+vuelta`} />
         <Kpi label="Costo total mes" valor={fmtCOP(data.costosTotales)} color={B.danger} grande />
       </div>
 
       {/* KPIs unitarios */}
       <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${isMobile ? 130 : 200}px, 1fr))`, gap: 10, marginBottom: 18 }}>
-        <Kpi label="Pasajeros transportados" valor={data.pax}                    color="#a78bfa" small />
-        <Kpi label="Costo por pasajero"      valor={fmtCOP(data.costoPorPax)}    color="#a78bfa" small />
-        <Kpi label="Costo por zarpe"         valor={fmtCOP(data.costoPorZarpe)}  color="#a78bfa" small />
+        <Kpi label="Pasajeros transportados" valor={data.pax}                          color="#a78bfa" small sub={`${data.numLlegadas} llegadas + ${data.numSalidas} salidas`} />
+        <Kpi label="Costo por pasajero"      valor={fmtCOP(data.costoPorPax)}          color="#a78bfa" small />
+        <Kpi label="Costo por medio viaje"   valor={fmtCOP(data.costoPorMedioViaje)}   color="#a78bfa" small />
       </div>
 
       {/* Gráfico 6 meses (costos apilados) */}
@@ -201,7 +231,7 @@ export default function CostosFlotaTab() {
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
               <thead>
                 <tr style={{ background: B.navyLight }}>
-                  {["Embarcación", "Zarpes", "Pasajeros", "Ocup. prom.", "Combustible", "Mant./Rep.", "Marina", "Capitanes", "Viajes", "TOTAL", "$/pax", "$/zarpe"].map(h => (
+                  {["Embarcación", "Llegadas", "Salidas", "Ida+Vuelta", "Pasajeros", "Ocup. prom.", "Combustible", "Mant./Rep.", "Marina", "Capitanes", "Viajes", "TOTAL", "$/pax", "$/medio"].map(h => (
                     <th key={h} style={{ padding: "10px 10px", textAlign: h === "Embarcación" ? "left" : "right", fontWeight: 700, color: "rgba(255,255,255,0.6)", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.04em" }}>{h}</th>
                   ))}
                 </tr>
@@ -210,7 +240,9 @@ export default function CostosFlotaTab() {
                 {data.porEmb.map(e => (
                   <tr key={e.id} style={{ borderTop: "1px solid rgba(255,255,255,0.05)" }}>
                     <td style={{ padding: "10px", fontWeight: 700 }}>⛵ {e.nombre}</td>
-                    <td style={{ padding: "10px", textAlign: "right" }}>{e.zarpes}</td>
+                    <td style={{ padding: "10px", textAlign: "right" }}>{e.llegadas}</td>
+                    <td style={{ padding: "10px", textAlign: "right" }}>{e.salidas}</td>
+                    <td style={{ padding: "10px", textAlign: "right", color: e.viajesCompletos > 0 ? B.success : "rgba(255,255,255,0.4)" }}>{e.viajesCompletos}</td>
                     <td style={{ padding: "10px", textAlign: "right" }}>{e.pax}</td>
                     <td style={{ padding: "10px", textAlign: "right", color: e.ocupacionProm >= 70 ? B.success : e.ocupacionProm >= 40 ? B.warning : "rgba(255,255,255,0.5)" }}>
                       {e.capacidad ? fmtPct(e.ocupacionProm) : "—"}
@@ -222,7 +254,7 @@ export default function CostosFlotaTab() {
                     <td style={{ padding: "10px", textAlign: "right", color: "#a78bfa" }}>{fmtCOP(e.viajes)}</td>
                     <td style={{ padding: "10px", textAlign: "right", fontWeight: 700, color: B.danger }}>{fmtCOP(e.total)}</td>
                     <td style={{ padding: "10px", textAlign: "right", color: "rgba(255,255,255,0.7)" }}>{e.pax > 0 ? fmtCOP(e.costoPorPax) : "—"}</td>
-                    <td style={{ padding: "10px", textAlign: "right", color: "rgba(255,255,255,0.7)" }}>{e.zarpes > 0 ? fmtCOP(e.costoPorZarpe) : "—"}</td>
+                    <td style={{ padding: "10px", textAlign: "right", color: "rgba(255,255,255,0.7)" }}>{e.mediosViajes > 0 ? fmtCOP(e.costoPorMedioViaje) : "—"}</td>
                   </tr>
                 ))}
               </tbody>
@@ -254,7 +286,7 @@ function EmbCard({ e }) {
     <div style={{ background: B.navy, borderRadius: 10, padding: 14 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
         <div style={{ fontSize: 14, fontWeight: 800 }}>⛵ {e.nombre}</div>
-        <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)" }}>{e.zarpes} zarpes · {e.pax} pax</div>
+        <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)" }}>{e.llegadas}🛬 + {e.salidas}🛫 = {e.viajesCompletos} ida+vuelta · {e.pax} pax</div>
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, fontSize: 12 }}>
         <Row k="⛽ Combustible" v={fmtCOP(e.comb)} c={B.warning} />

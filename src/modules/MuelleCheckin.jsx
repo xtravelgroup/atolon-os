@@ -207,9 +207,24 @@ function ModalNuevaLlegada({ tipo, fecha, reserva, llegadasDelDia = [], onClose,
       } catch (_) { /* ignorar */ }
     }
 
+    const embarcacionNombre = f.embarcacion_nombre || (esWalkin ? "Walk-in" : null);
+    // Costo operativo automático para flota propia (Castillete/Naturalle):
+    // cada llegada = 1 medio viaje, costo definido en lanchas.costo_viaje_sencillo
+    let costoOperativo = 0;
+    if (embarcacionNombre && (tipoSeleccionado === "lancha_atolon" || tipoSeleccionado === "lanchas_atolon")) {
+      try {
+        const { data: lch } = await supabase.from("lanchas")
+          .select("costo_viaje_sencillo")
+          .ilike("nombre", embarcacionNombre.trim())
+          .eq("activo", true)
+          .maybeSingle();
+        costoOperativo = Number(lch?.costo_viaje_sencillo) || 0;
+      } catch (_) { /* sin lancha registrada → costo 0 */ }
+    }
+
     const payload = {
       id, fecha, tipo: tipoSeleccionado,
-      embarcacion_nombre: f.embarcacion_nombre || (esWalkin ? "Walk-in" : null),
+      embarcacion_nombre: embarcacionNombre,
       matricula:          esWalkin ? null : (f.matricula || null),
       pax_a:     Number(f.pax_a) || 0,
       pax_n:     Number(f.pax_n) || 0,
@@ -218,6 +233,7 @@ function ModalNuevaLlegada({ tipo, fecha, reserva, llegadasDelDia = [], onClose,
       hora_llegada: f.hora_llegada || null,
       estado: "llegó",
       notas: notasExtras.join(" ") + (notasExtras.length ? " " : "") + (f.notas || ""),
+      costo_operativo: costoOperativo,
     };
     // Solo incluir foto_url si está disponible (columna puede no existir aún)
     if (foto_url) payload.foto_url = foto_url;

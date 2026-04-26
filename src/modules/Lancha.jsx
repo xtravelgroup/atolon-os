@@ -828,12 +828,13 @@ function ConfigLanchaModal({ lancha, onClose, onSaved }) {
         <div style={{ gridColumn: "1 / -1", marginTop: 6, paddingTop: 14, borderTop: "1px solid rgba(255,255,255,0.08)" }}>
           <div style={{ fontSize: 11, color: B.sand, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em" }}>Costos operativos</div>
           <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>
-            Un ida+vuelta = 2 viajes sencillos. Castillete: $400k ida+vuelta = $200k sencillo · Naturalle: $1.1M ida+vuelta x 2 = $275k sencillo.
+            Cada llegada o salida en Atolón = 1 medio viaje. 2 medios viajes = 1 ida+vuelta completa.
+            Castillete: $100k/medio · $400k ida+vuelta · Naturalle: $137.500/medio · $275k ida+vuelta.
           </div>
         </div>
         <div>
-          <label style={LS}>Costo 1 viaje sencillo (COP)</label>
-          <input type="number" value={f.costo_viaje_sencillo} onChange={e => set("costo_viaje_sencillo", e.target.value)} placeholder="200000" style={IS} />
+          <label style={LS}>Costo 1 medio viaje (COP)</label>
+          <input type="number" value={f.costo_viaje_sencillo} onChange={e => set("costo_viaje_sencillo", e.target.value)} placeholder="100000" style={IS} />
         </div>
         <div>
           <label style={LS}>Tarifa alquiler ida+vuelta (COP)</label>
