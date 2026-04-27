@@ -11,6 +11,22 @@ import { supabase } from "../lib/supabase";
 const IS = { width: "100%", padding: "10px 14px", borderRadius: 8, background: B.navy, border: `1px solid ${B.navyLight}`, color: B.white, fontSize: 13, outline: "none", boxSizing: "border-box" };
 const LS = { fontSize: 11, color: B.sand, display: "block", marginBottom: 5, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 700 };
 
+// IDs de todos los minibares específicos por habitación
+const MINIBARS_HABITACION = [
+  "LOC-MINIBAR-1A","LOC-MINIBAR-1B","LOC-MINIBAR-2A","LOC-MINIBAR-2B",
+  "LOC-MINIBAR-3A","LOC-MINIBAR-3B","LOC-MINIBAR-4A","LOC-MINIBAR-4B",
+  "LOC-MINIBAR-5A","LOC-MINIBAR-5B","LOC-MINIBAR-6A","LOC-MINIBAR-6B",
+  "LOC-MINIBAR-401","LOC-MINIBAR-402","LOC-MINIBAR-403","LOC-MINIBAR-404","LOC-MINIBAR-405",
+];
+
+// Reglas de destino permitido por origen.
+// Si el origen no está en este map, se permite cualquier destino.
+const DESTINOS_PERMITIDOS = {
+  "LOC-ALMACEN-BAR":  ["LOC-BAR", "LOC-MINIBAR"],
+  "LOC-BAR":          ["LOC-ALMACEN-BAR", "LOC-MINIBAR", ...MINIBARS_HABITACION],
+  "LOC-MINIBAR":      ["LOC-ALMACEN-BAR", ...MINIBARS_HABITACION],
+};
+
 export default function Transferencias() {
   const [step, setStep] = useState(1);  // 1 = elegir bodegas | 2 = seleccionar items | 3 = confirmar
   const [locaciones, setLocaciones] = useState([]);
@@ -187,8 +203,19 @@ export default function Transferencias() {
                 <label style={LS}>🎯 Destino (a qué bodega llegan)</label>
                 <select value={destinoId} onChange={e => setDestinoId(e.target.value)} style={IS}>
                   <option value="">— Seleccionar —</option>
-                  {locaciones.filter(l => l.id !== origenId).map(l => <option key={l.id} value={l.id}>{l.icono || ""} {l.nombre}</option>)}
+                  {(() => {
+                    const permitidos = DESTINOS_PERMITIDOS[origenId];
+                    const opciones = permitidos
+                      ? locaciones.filter(l => permitidos.includes(l.id))
+                      : locaciones.filter(l => l.id !== origenId);
+                    return opciones.map(l => <option key={l.id} value={l.id}>{l.icono || ""} {l.nombre}</option>);
+                  })()}
                 </select>
+                {DESTINOS_PERMITIDOS[origenId] && (
+                  <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", marginTop: 4 }}>
+                    Solo se permite transferir a: {DESTINOS_PERMITIDOS[origenId].map(id => locaciones.find(l => l.id === id)?.nombre).filter(Boolean).join(", ")}
+                  </div>
+                )}
               </div>
             </div>
 
