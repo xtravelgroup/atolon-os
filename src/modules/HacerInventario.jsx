@@ -87,13 +87,15 @@ export default function HacerInventario() {
     return Array.from(set).sort();
   }, [items]);
 
+  // Items que pertenecen a la bodega activa (tienen fila en items_stock_locacion para locId)
+  const itemsBodega = useMemo(() => {
+    if (!locId) return [];
+    return items.filter(i => stockPorLoc[`${i.id}|${locId}`] !== undefined);
+  }, [items, stockPorLoc, locId]);
+
   const filtered = useMemo(() => {
-    const hayBusqueda = !!search || catFilter !== "todos";
-    // Sin búsqueda: solo mostrar los ya contados o los seleccionados por scan
-    if (!hayBusqueda) {
-      return items.filter(i => conteos[i.id] !== undefined && conteos[i.id] !== "");
-    }
-    let list = items;
+    // Por defecto trabajamos con los items asignados a esta bodega
+    let list = itemsBodega.length > 0 ? itemsBodega : items;
     if (catFilter !== "todos") list = list.filter(i => i.categoria === catFilter);
     if (search) {
       const s = search.toLowerCase();
@@ -102,7 +104,7 @@ export default function HacerInventario() {
     if (filterModo === "pendientes") list = list.filter(i => conteos[i.id] === undefined || conteos[i.id] === "");
     else if (filterModo === "contados") list = list.filter(i => conteos[i.id] !== undefined && conteos[i.id] !== "");
     return list;
-  }, [items, search, catFilter, filterModo, conteos]);
+  }, [items, itemsBodega, search, catFilter, filterModo, conteos]);
 
   const sinBusqueda = !search && catFilter === "todos";
 
