@@ -86,7 +86,7 @@ export default async function handler(req, res) {
     for (const p of periodos) {
       const rangeFilter = `fecha=gte.${p.desde}&fecha=lte.${p.hasta}`;
 
-      const [pasDir, pasB2B, grupos, eventos, aybLoggro, llegadas] = await Promise.all([
+      const [pasDir, pasB2B, grupos, eventos, aybLoggro, llegadas, otrosVentas] = await Promise.all([
         // Pasadías directas
         sbQuery(sbUrl, sbKey, "reservas", `select=id,total,pax,estado&${rangeFilter}&estado=neq.cancelado&aliado_id=is.null&grupo_id=is.null`),
         // Pasadías B2B
@@ -101,6 +101,8 @@ export default async function handler(req, res) {
         }).then(r => r.json()).catch(() => ({ ok: false })),
         // Llegadas muelle
         sbQuery(sbUrl, sbKey, "muelle_llegadas", `select=id,total_cobrado,pax_total,tipo&${rangeFilter}&tipo=neq.lancha_atolon`),
+        // Otros ingresos: actividades, masajes, transporte, spa
+        sbQuery(sbUrl, sbKey, "actividades_ventas", `select=id,total,fecha,estado&${rangeFilter}&estado=neq.cancelada&total=gt.0`),
       ]);
 
       // Helpers
@@ -136,6 +138,10 @@ export default async function handler(req, res) {
         ayb: {
           monto: Number(aybLoggro?.resumen?.total_ventas) || 0,
         },
+        otros: {
+          cantidad: otrosVentas.length,
+          monto: otrosVentas.reduce((s, x) => s + (Number(x.total) || 0), 0),
+        },
       };
     }
 
@@ -144,6 +150,7 @@ export default async function handler(req, res) {
       weekday: "long", day: "numeric", month: "long", year: "numeric",
     });
 
+    const COLORES_CAT = { ayb: "#C8B99A", otros: "#fb923c" };
     const row = (icon, label, cantKey, montoKey) => {
       const cells = periodos.map(p => {
         const d = data[p.key];
@@ -152,7 +159,7 @@ export default async function handler(req, res) {
         const monto = COP(cat.monto);
         return `<td style="padding:12px 14px;text-align:center;border-left:1px solid #1E3566;font-size:14px;">
           ${cant !== "" ? `<div style="font-size:18px;font-weight:800;color:#fff;font-family:'Barlow Condensed',sans-serif;">${cant}</div>` : ""}
-          <div style="font-size:13px;color:${montoKey === "ayb" ? "#C8B99A" : "#8ECAE6"};font-weight:700;">${monto}</div>
+          <div style="font-size:13px;color:${COLORES_CAT[montoKey] || "#8ECAE6"};font-weight:700;">${monto}</div>
         </td>`;
       }).join("");
       return `<tr style="border-bottom:1px solid #1E3566;">
@@ -163,7 +170,7 @@ export default async function handler(req, res) {
 
     const totalRow = periodos.map(p => {
       const d = data[p.key];
-      const total = (d.pasadias?.monto || 0) + (d.grupos?.monto || 0) + (d.eventos?.monto || 0) + (d.ayb?.monto || 0);
+      const total = (d.pasadias?.monto || 0) + (d.grupos?.monto || 0) + (d.eventos?.monto || 0) + (d.ayb?.monto || 0) + (d.otros?.monto || 0);
       return `<td style="padding:14px 14px;text-align:center;border-left:1px solid #1E3566;font-size:16px;font-weight:900;color:#fff;font-family:'Barlow Condensed',sans-serif;">
         ${COP(total)}
       </td>`;
@@ -203,6 +210,7 @@ export default async function handler(req, res) {
           ${row("👥", "Grupos", "cantidad", "grupos")}
           ${row("🎉", "Eventos", "cantidad", "eventos")}
           ${row("🍽️", "A&B", "", "ayb")}
+          ${row("✨", "Otros Ingresos", "cantidad", "otros")}
           <tr style="background:#0D1B3E;border-top:2px solid #8ECAE6;">
             <td style="padding:14px 16px;font-size:14px;font-weight:800;color:#fff;">💰 TOTAL</td>
             ${totalRow}
