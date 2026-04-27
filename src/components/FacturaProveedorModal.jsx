@@ -313,8 +313,10 @@ export default function FacturaProveedorModal({ oc, onClose, reload, currentUser
         };
       });
 
-      // 1b. Items de la factura que NO estaban en la OC original — los agregamos
-      const itemsNuevosOC = data.items.filter(f => f.es_nuevo_oc && f.codigo_barras).map(f => {
+      // 1b. Items de la factura que NO estaban en la OC original — los agregamos.
+      //    Aceptamos items con codigo_barras (auto-creados en catálogo) o
+      //    manuales sin codigo (bonificaciones con nombre libre).
+      const itemsNuevosOC = data.items.filter(f => f.es_nuevo_oc && (f.codigo_barras || (f.nombre && f.nombre.trim()))).map(f => {
         const unPorPack      = Math.max(1, Number(f.unidades_por_paquete) || 1);
         const cantPaquete    = Number(f.cantidad_paquete) || Number(f.cantidad) || 0;
         const cantIndividual = cantPaquete * unPorPack;
@@ -583,8 +585,29 @@ export default function FacturaProveedorModal({ oc, onClose, reload, currentUser
 
             {/* Tabla items */}
             <div style={{ background: B.navy, borderRadius: 10, overflow: "hidden", marginBottom: 14 }}>
-              <div style={{ padding: "10px 14px", borderBottom: `1px solid ${B.navyLight}`, fontSize: 11, color: B.sand, fontWeight: 700, textTransform: "uppercase" }}>
-                Precios reales por item ({data.items.length})
+              <div style={{ padding: "10px 14px", borderBottom: `1px solid ${B.navyLight}`, fontSize: 11, color: B.sand, fontWeight: 700, textTransform: "uppercase", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span>Precios reales por item ({data.items.length})</span>
+                <button onClick={() => {
+                  setData(d => ({
+                    ...d,
+                    items: [...d.items, {
+                      oc_idx: null, ai_idx: null,
+                      codigo_barras: null, referencia_proveedor: null,
+                      nombre: "", cantidad_paquete: 1, unidades_por_paquete: 1,
+                      unidad_compra: "UND", unidad_individual: "UND",
+                      precio_base_pack: 0, iva_pct: 0, iva_valor_pack: 0,
+                      ico_valor_pack: 0, icl_valor_pack: 0, adv_valor_pack: 0,
+                      precio_costo_pack: 0, precio_final_pack: 0, subtotal_renglon: 0,
+                      cantidad: 1, unidad: "UND", precio_costo_unit: 0,
+                      precio_unitario: 0, precio_anterior: 0, iva: 0,
+                      es_bonificacion: true, requiere_revision: false,
+                      es_nuevo_oc: true, item_id: null,
+                    }],
+                  }));
+                }} style={{ padding: "4px 10px", fontSize: 10, fontWeight: 700, borderRadius: 6, border: `1px solid ${B.success}`, background: B.success + "22", color: B.success, cursor: "pointer", textTransform: "none" }}>
+                  + 🎁 Agregar bonificación
+                </button>
+              </div>
               </div>
               <table style={{ width: "100%", fontSize: 12, borderCollapse: "collapse" }}>
                 <thead>
@@ -613,12 +636,28 @@ export default function FacturaProveedorModal({ oc, onClose, reload, currentUser
                     return (
                       <tr key={i} style={{ borderTop: `1px solid ${B.navyLight}`, background: bg }}>
                         <td style={{ padding: "8px 8px" }}>
-                          <div>
-                            {it.nombre}
-                            {it.es_bonificacion && <span style={{ marginLeft: 6, fontSize: 9, padding: "1px 6px", background: B.success, color: B.navy, borderRadius: 8, fontWeight: 800 }}>🎁 BONIF</span>}
-                            {it.requiere_revision && <span style={{ marginLeft: 6, fontSize: 9, padding: "1px 6px", background: B.warning, color: B.navy, borderRadius: 8, fontWeight: 800 }}>⚠ COMBO</span>}
-                            {it.no_facturado && <span style={{ marginLeft: 6, fontSize: 9, padding: "1px 6px", background: B.danger + "33", color: B.danger, borderRadius: 8, fontWeight: 700 }}>NO FACT</span>}
-                            {it.es_nuevo_oc && !it.es_bonificacion && <span style={{ marginLeft: 6, fontSize: 9, padding: "1px 6px", background: B.sky + "33", color: B.sky, borderRadius: 8, fontWeight: 700 }}>NUEVO</span>}
+                          <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                            <button onClick={() => setItemField(i, "es_bonificacion", !it.es_bonificacion)}
+                              title={it.es_bonificacion ? "Desmarcar como bonificación" : "Marcar como bonificación (regalo)"}
+                              style={{
+                                fontSize: 12, padding: "2px 6px", borderRadius: 5,
+                                border: `1px solid ${it.es_bonificacion ? B.success : "rgba(255,255,255,0.2)"}`,
+                                background: it.es_bonificacion ? B.success + "33" : "transparent",
+                                cursor: "pointer", lineHeight: 1,
+                              }}>
+                              🎁
+                            </button>
+                            {it.es_nuevo_oc && !it.codigo_barras ? (
+                              <input value={it.nombre || ""} onChange={e => setItemField(i, "nombre", e.target.value)}
+                                placeholder="Nombre del item…"
+                                style={{ ...IS, padding: "4px 8px", fontSize: 12, minWidth: 200, flex: 1 }} />
+                            ) : (
+                              <span>{it.nombre}</span>
+                            )}
+                            {it.es_bonificacion && <span style={{ fontSize: 9, padding: "1px 6px", background: B.success, color: B.navy, borderRadius: 8, fontWeight: 800 }}>BONIF</span>}
+                            {it.requiere_revision && <span style={{ fontSize: 9, padding: "1px 6px", background: B.warning, color: B.navy, borderRadius: 8, fontWeight: 800 }}>⚠ COMBO</span>}
+                            {it.no_facturado && <span style={{ fontSize: 9, padding: "1px 6px", background: B.danger + "33", color: B.danger, borderRadius: 8, fontWeight: 700 }}>NO FACT</span>}
+                            {it.es_nuevo_oc && !it.es_bonificacion && <span style={{ fontSize: 9, padding: "1px 6px", background: B.sky + "33", color: B.sky, borderRadius: 8, fontWeight: 700 }}>NUEVO</span>}
                           </div>
                           {(it.codigo_barras || it.referencia_proveedor) && (
                             <div style={{ fontSize: 10, color: "rgba(255,255,255,0.35)", marginTop: 2 }}>
