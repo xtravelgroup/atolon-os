@@ -1145,6 +1145,162 @@ serve(async (req) => {
     }
 
     // ════════════════════════════════════════════════════════════════════
+    // POST /loggro-sync/sync-loggro-to-atolon
+    // Sincronización inversa: lee stock actual de Loggro y aplica los
+    // deltas a Atolón OS (descuento por ventas, sumando entradas).
+    //
+    // Lógica de bodega destino:
+    //   · Bebidas/cocteles  → LOC-BAR (Bar operativo)
+    //   · Alimentos/cocina  → LOC-ALMACEN-COCINA (Almacén Restaurant)
+    //   · Otro              → LOC-ALMACEN-COCINA por default
+    //
+    // El delta = stock_loggro - stock_atolon_sum.
+    // Si delta > 0: hubo entrada en Loggro (compra/devolución) → sumar a bodega
+    // Si delta < 0: hubo venta/consumo → descontar de bodega
+    // ════════════════════════════════════════════════════════════════════
+    if (req.method === "POST" && path === "/sync-loggro-to-atolon") {
+      const body = await req.json().catch(() => ({}));
+      const dryRun = !!body.dry_run;
+      const supaUrl = Deno.env.get("SUPABASE_URL");
+      const supaKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+      if (!supaUrl || !supaKey) return json({ ok: false, error: "Supabase env missing" }, 500);
+
+      // 1) Items con loggro_id activos (incluyendo categoría)
+      const catRes = await fetch(`${supaUrl}/rest/v1/items_catalogo?activo=eq.true&loggro_id=not.is.null&select=id,nombre,categoria,loggro_id`, {
+        headers: { apikey: supaKey, Authorization: `Bearer ${supaKey}` },
+      });
+      const cats: any[] = await catRes.json();
+
+      // 2) Stock actual sumado por item en Atolón
+      const stockRes = await fetch(`${supaUrl}/rest/v1/items_stock_locacion?select=item_id,locacion_id,cantidad`, {
+        headers: { apikey: supaKey, Authorization: `Bearer ${supaKey}` },
+      });
+      const stocks: any[] = await stockRes.json();
+      const atolonByItem: Record<string, number> = {};
+      const stockByItemLoc: Record<string, number> = {};
+      stocks.forEach(s => {
+        atolonByItem[s.item_id] = (atolonByItem[s.item_id] || 0) + (Number(s.cantidad) || 0);
+        stockByItemLoc[`${s.item_id}|${s.locacion_id}`] = Number(s.cantidad) || 0;
+      });
+
+      // 3) Stock actual de Loggro
+      const ids = cats.map(c => c.loggro_id).filter(Boolean);
+      const loggroStock: Record<string, number> = {};
+      let idx = 0;
+      async function worker() {
+        while (idx < ids.length) {
+          const myIdx = idx++;
+          const id = ids[myIdx];
+          try {
+            const d: any = await loggroGet(`/ingredients/${id}`);
+            let totalStock = 0;
+            if (Array.isArray(d?.locationsStock)) {
+              totalStock = d.locationsStock.reduce((s: number, ls: any) => s + (Number(ls.stock) || 0), 0);
+            }
+            loggroStock[id] = totalStock;
+          } catch (_) { /* skip */ }
+        }
+      }
+      await Promise.all(Array.from({ length: 10 }, () => worker()));
+
+      // 4) Determinar bodega destino por categoría
+      const bodegaDestino = (cat: string): string => {
+        const c = (cat || "").toUpperCase();
+        // Bebidas → Bar
+        if (c.includes("CERVEZA") || c.includes("LICOR") || c.includes("RON")
+            || c.includes("TEQUILA") || c.includes("VODKA") || c.includes("GIN")
+            || c.includes("WHISKY") || c.includes("VINO") || c.includes("AGUARDIENTE")
+            || c.includes("MEZCAL") || c.includes("COCTEL") || c.includes("SHOT")
+            || c.includes("JUGO") || c.includes("GASEOSA") || c.includes("BEBIDA")
+            || c.includes("PRODUCCION BAR") || c.includes("PRODUCCIÓN BAR")
+            || c.includes("CHAMP") || c.includes("ESPUMOSO") || c.includes("BOTELLA")) {
+          return "LOC-BAR";
+        }
+        // Por default: Almacén Restaurant (antes Almacén Cocina)
+        return "LOC-ALMACEN-COCINA";
+      };
+
+      // 5) Calcular deltas y movimientos a aplicar
+      const movimientos: Array<{
+        item_id: string; nombre: string; categoria: string;
+        atolon: number; loggro: number; delta: number;
+        bodega: string; nuevo_valor: number;
+      }> = [];
+
+      for (const c of cats) {
+        const at = atolonByItem[c.id] || 0;
+        const lg = loggroStock[c.loggro_id];
+        if (lg === undefined) continue;
+        const delta = lg - at;
+        if (Math.abs(delta) < 0.001) continue;
+
+        const bodega = bodegaDestino(c.categoria || "");
+        const stockEnBodega = stockByItemLoc[`${c.id}|${bodega}`] || 0;
+        const nuevoValor = stockEnBodega + delta;
+
+        movimientos.push({
+          item_id: c.id, nombre: c.nombre, categoria: c.categoria || "",
+          atolon: at, loggro: lg, delta,
+          bodega, nuevo_valor: nuevoValor,
+        });
+      }
+
+      if (dryRun) {
+        return json({
+          ok: true, dry_run: true,
+          items_a_actualizar: movimientos.length,
+          delta_total: movimientos.reduce((s, m) => s + m.delta, 0),
+          ejemplos: movimientos.slice(0, 30),
+        });
+      }
+
+      // 6) Aplicar UPSERT en items_stock_locacion
+      let actualizados = 0;
+      for (const m of movimientos) {
+        const updRes = await fetch(`${supaUrl}/rest/v1/items_stock_locacion`, {
+          method: "POST",
+          headers: {
+            apikey: supaKey,
+            Authorization: `Bearer ${supaKey}`,
+            "Content-Type": "application/json",
+            Prefer: "resolution=merge-duplicates,return=minimal",
+          },
+          body: JSON.stringify({
+            item_id: m.item_id,
+            locacion_id: m.bodega,
+            cantidad: m.nuevo_valor,
+            updated_at: new Date().toISOString(),
+          }),
+        });
+        if (updRes.ok) actualizados++;
+      }
+
+      // 7) También actualizar items_catalogo.stock_actual con los valores de Loggro
+      //    (para que la vista "Inventario General" cuadre sin sync extra)
+      for (const c of cats) {
+        const lg = loggroStock[c.loggro_id];
+        if (lg === undefined) continue;
+        await fetch(`${supaUrl}/rest/v1/items_catalogo?id=eq.${c.id}`, {
+          method: "PATCH",
+          headers: {
+            apikey: supaKey, Authorization: `Bearer ${supaKey}`,
+            "Content-Type": "application/json", Prefer: "return=minimal",
+          },
+          body: JSON.stringify({ stock_actual: lg, updated_at: new Date().toISOString() }),
+        });
+      }
+
+      return json({
+        ok: true,
+        items_revisados: cats.length,
+        items_actualizados: actualizados,
+        delta_total: movimientos.reduce((s, m) => s + m.delta, 0),
+        ventas_descontadas:  movimientos.filter(m => m.delta < 0).length,
+        entradas_aplicadas:   movimientos.filter(m => m.delta > 0).length,
+      });
+    }
+
+    // ════════════════════════════════════════════════════════════════════
     // POST /loggro-sync/reconcile-with-atolon
     // Ajusta Loggro para que CADA ítem tenga exactamente la cantidad
     // que reporta Atolón OS (suma de items_stock_locacion). Genera dos
