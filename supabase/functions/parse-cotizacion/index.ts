@@ -91,12 +91,11 @@ Instrucciones:
       headers: {
         "x-api-key": ANTHROPIC_KEY,
         "anthropic-version": "2023-06-01",
-        ...(isPDF ? { "anthropic-beta": "pdfs-2024-09-25" } : {}),
         "content-type": "application/json",
       },
       body: JSON.stringify({
-        model: "claude-3-5-sonnet-20241022",
-        max_tokens: 3000,
+        model: "claude-sonnet-4-5",
+        max_tokens: 6000,
         messages: [{
           role: "user",
           content: [
@@ -117,7 +116,8 @@ Instrucciones:
 
     const data = await res.json();
     if (!res.ok) {
-      return new Response(JSON.stringify({ ok: false, error: "Anthropic error", detail: data }), {
+      const detail = data?.error?.message || JSON.stringify(data).slice(0, 500);
+      return new Response(JSON.stringify({ ok: false, error: `Anthropic API: ${detail}`, status: res.status, raw: data }), {
         status: 500,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });

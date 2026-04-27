@@ -154,11 +154,10 @@ Instrucciones detalladas:
       headers: {
         "x-api-key": ANTHROPIC_KEY,
         "anthropic-version": "2023-06-01",
-        ...(isPDF ? { "anthropic-beta": "pdfs-2024-09-25" } : {}),
         "content-type": "application/json",
       },
       body: JSON.stringify({
-        model: "claude-3-5-sonnet-20241022", // Sonnet para mejor parsing de tablas
+        model: "claude-sonnet-4-5",  // Sonnet 4.5 con soporte PDF GA + mejor parsing
         max_tokens: 8000,
         messages: [{
           role: "user",
@@ -180,7 +179,9 @@ Instrucciones detalladas:
 
     const data = await res.json();
     if (!res.ok) {
-      return new Response(JSON.stringify({ ok: false, error: "Anthropic error", detail: data }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      // Devolver el mensaje real de Anthropic para diagnóstico
+      const detail = data?.error?.message || JSON.stringify(data).slice(0, 500);
+      return new Response(JSON.stringify({ ok: false, error: `Anthropic API: ${detail}`, status: res.status, raw: data }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
     const text = data.content?.[0]?.text || "";
