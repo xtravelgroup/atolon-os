@@ -960,8 +960,9 @@ serve(async (req) => {
         : Array.isArray(ingList?.results) ? ingList.results
         : [];
 
-      const conStock: Array<{ id: string; name: string; stock: number }> = [];
-      // Concurrencia para no saturar
+      // Items con stock distinto de 0 (positivo o negativo)
+      const positivos: Array<{ id: string; name: string; stock: number }> = [];
+      const negativos: Array<{ id: string; name: string; stock: number }> = [];
       const ids = ingredients.map((i: any) => i?._id || i?.id).filter(Boolean);
       let idx = 0;
       async function worker() {
@@ -975,7 +976,9 @@ serve(async (req) => {
               totalStock = d.locationsStock.reduce((s: number, ls: any) => s + (Number(ls.stock) || 0), 0);
             }
             if (totalStock > 0.0001) {
-              conStock.push({ id, name: d?.name || "", stock: totalStock });
+              positivos.push({ id, name: d?.name || "", stock: totalStock });
+            } else if (totalStock < -0.0001) {
+              negativos.push({ id, name: d?.name || "", stock: Math.abs(totalStock) });
             }
           } catch (_) { /* skip */ }
         }
@@ -987,48 +990,63 @@ serve(async (req) => {
           ok: true,
           dry_run: true,
           total_ingredientes: ingredients.length,
-          con_stock_mayor_0: conStock.length,
-          stock_total: conStock.reduce((s, x) => s + x.stock, 0),
-          items: conStock.slice(0, 50),  // muestra
+          con_stock_positivo: positivos.length,
+          con_stock_negativo: negativos.length,
+          stock_total_a_sacar:  positivos.reduce((s, x) => s + x.stock, 0),
+          stock_total_a_reponer: negativos.reduce((s, x) => s + x.stock, 0),
+          ejemplos_positivos: positivos.slice(0, 20),
+          ejemplos_negativos: negativos.slice(0, 20),
         });
       }
 
-      // 2) Crear movimiento de salida (ajuste negativo) para cada uno
-      //    type 11 = ajuste, isSubtracted = true
       const now = new Date().toISOString();
-      const movementPayload: any = {
-        business: businessId,
-        user: userId,
-        date: now,
-        type: 11,                      // ajuste
-        isSubtracted: true,            // saca stock
-        isProduction: false,
-        isMoveTo: false,
-        deleted: false,
-        note: "Reset a 0 — establecer nuevo baseline desde Atolón OS",
-        ingredients: conStock.map(it => ({
-          ingredient: it.id,
-          quantity: it.stock,
-          price: 0,
-        })),
-        createdOn: now,
-        modifiedOn: now,
-      };
+      const movements: Array<{ tipo: string; movement_id: string; items: number }> = [];
 
-      const result = await loggroRaw("POST", "/inventories", movementPayload);
-      if (!result.ok) {
-        return json({
-          ok: false,
-          error: `Loggro respondió ${result.status}`,
-          loggro_response: result.body,
-        }, 502);
+      // 1) Movimiento SALIDA para items con stock positivo
+      if (positivos.length > 0) {
+        const result = await loggroRaw("POST", "/inventories", {
+          business: businessId,
+          user: userId,
+          date: now,
+          type: 11, isSubtracted: true, isProduction: false, isMoveTo: false,
+          deleted: false,
+          note: "Reset a 0 — saca stock positivo (baseline Atolón OS)",
+          ingredients: positivos.map(it => ({ ingredient: it.id, quantity: it.stock, price: 0 })),
+          createdOn: now, modifiedOn: now,
+        });
+        if (!result.ok) {
+          return json({ ok: false, etapa: "salida_positivos", loggro_response: result.body }, 502);
+        }
+        movements.push({ tipo: "salida_positivos", movement_id: result.body?._id || "", items: positivos.length });
+      }
+
+      // 2) Movimiento ENTRADA para items con stock negativo (los lleva a 0)
+      //    Usamos type=1 (compra/ingreso) ya que type=11 con isSubtracted=false
+      //    no funciona como entrada en Loggro (siempre resta).
+      if (negativos.length > 0) {
+        const result = await loggroRaw("POST", "/inventories", {
+          business: businessId,
+          user: userId,
+          date: now,
+          type: 1, isSubtracted: false, isProduction: false, isMoveTo: false,
+          deleted: false,
+          note: "Reset a 0 — repone stock negativo (baseline Atolón OS)",
+          ingredients: negativos.map(it => ({ ingredient: it.id, quantity: it.stock, price: 0 })),
+          createdOn: now, modifiedOn: now,
+        });
+        if (!result.ok) {
+          return json({ ok: false, etapa: "entrada_negativos", loggro_response: result.body, movements }, 502);
+        }
+        movements.push({ tipo: "entrada_negativos", movement_id: result.body?._id || "", items: negativos.length });
       }
 
       return json({
         ok: true,
-        movement_id: result.body?._id || result.body?.id || null,
-        items_reseteados: conStock.length,
-        stock_total_sacado: conStock.reduce((s, x) => s + x.stock, 0),
+        movements,
+        items_positivos_reseteados: positivos.length,
+        items_negativos_repuestos: negativos.length,
+        stock_total_sacado: positivos.reduce((s, x) => s + x.stock, 0),
+        stock_total_repuesto: negativos.reduce((s, x) => s + x.stock, 0),
       });
     }
 
@@ -1088,12 +1106,14 @@ serve(async (req) => {
       }
 
       const now = new Date().toISOString();
+      // type=1 (compra/ingreso) para que sí entre el stock — type=11 con
+      // isSubtracted=false no funciona como entrada en Loggro.
       const movementPayload: any = {
         business: businessId,
         user: userId,
         date: now,
-        type: 11,                      // ajuste
-        isSubtracted: false,           // ingresa stock
+        type: 1,                       // compra/ingreso
+        isSubtracted: false,
         isProduction: false,
         isMoveTo: false,
         deleted: false,
