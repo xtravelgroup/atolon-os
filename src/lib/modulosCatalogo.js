@@ -99,6 +99,7 @@ export const GRUPOS_NAV = [
       { key: "activos",       label: "Activos",       icon: "⚒" },
       { key: "requisiciones", label: "Requisiciones", icon: "✆" },
       { key: "compras",       label: "Compras",       icon: "🛒" },
+      { key: "pagos",         label: "Pagos",         icon: "💰" },
       { key: "items",         label: "Inventario",     icon: "📦" },
       { key: "mantenimiento", label: "Mantenimiento", icon: "🔧" },
       { key: "proveedores",   label: "Proveedores",   icon: "📦" },
