@@ -56,7 +56,7 @@ export default function HacerInventario() {
       }
     })();
 
-    supabase.from("items_conteos").select("id, locacion_id, fecha, usuario_email, total_items, diferencias, notas, created_at")
+    supabase.from("items_conteos").select("id, locacion_id, fecha, usuario_email, total_items, diferencias, notas, tipo_conteo, created_at")
       .order("created_at", { ascending: false }).limit(20)
       .then(({ data }) => setHistorial(data || []));
   }, []);
@@ -308,7 +308,7 @@ export default function HacerInventario() {
     setStep(1); setLocId(""); setConteos({}); setSearch(""); setCatFilter("todos");
     setFilterModo("todos"); setNotas(""); setSaved(null); setContinuandoId(null);
     // Recargar historial
-    supabase.from("items_conteos").select("id, locacion_id, fecha, usuario_email, total_items, diferencias, notas, created_at")
+    supabase.from("items_conteos").select("id, locacion_id, fecha, usuario_email, total_items, diferencias, notas, tipo_conteo, created_at")
       .order("created_at", { ascending: false }).limit(20)
       .then(({ data }) => setHistorial(data || []));
   };
@@ -385,14 +385,21 @@ export default function HacerInventario() {
                   };
                   return (
                     <button key={c.id} onClick={continuar}
-                      style={{ display: "grid", gridTemplateColumns: "110px 1fr auto auto auto", gap: 12, alignItems: "center", padding: "10px 14px", background: B.navy, borderRadius: 8, fontSize: 12, border: `1px solid ${B.navyLight}`, cursor: "pointer", color: B.white, textAlign: "left", transition: "all 0.15s" }}
+                      style={{ display: "grid", gridTemplateColumns: "110px 1fr auto auto auto", gap: 12, alignItems: "center", padding: "10px 14px", background: B.navy, borderRadius: 8, fontSize: 12, border: `1px solid ${c.tipo_conteo === "inicial" ? B.sand + "55" : B.navyLight}`, cursor: "pointer", color: B.white, textAlign: "left", transition: "all 0.15s" }}
                       onMouseEnter={e => { e.currentTarget.style.borderColor = B.sky; e.currentTarget.style.background = B.sky + "10"; }}
-                      onMouseLeave={e => { e.currentTarget.style.borderColor = B.navyLight; e.currentTarget.style.background = B.navy; }}>
+                      onMouseLeave={e => { e.currentTarget.style.borderColor = c.tipo_conteo === "inicial" ? B.sand + "55" : B.navyLight; e.currentTarget.style.background = B.navy; }}>
                       <span style={{ color: "rgba(255,255,255,0.55)" }}>{new Date(c.created_at).toLocaleDateString("es-CO", { day: "2-digit", month: "short" })} {new Date(c.created_at).toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit" })}</span>
-                      <span>{loc?.icono} <strong>{loc?.nombre || c.locacion_id}</strong> · <span style={{ color: "rgba(255,255,255,0.4)" }}>{c.usuario_email}</span></span>
+                      <span>
+                        {loc?.icono} <strong>{loc?.nombre || c.locacion_id}</strong> · <span style={{ color: "rgba(255,255,255,0.4)" }}>{c.usuario_email}</span>
+                        {c.tipo_conteo === "inicial" && (
+                          <span style={{ marginLeft: 8, fontSize: 9, padding: "2px 7px", background: B.sand, color: B.navy, borderRadius: 10, fontWeight: 800, letterSpacing: "0.05em" }}>★ INICIAL</span>
+                        )}
+                      </span>
                       <span style={{ color: "rgba(255,255,255,0.6)" }}>{c.total_items} ítems</span>
-                      <span style={{ color: c.diferencias > 0 ? B.warning : B.success, fontWeight: 700 }}>{c.diferencias > 0 ? `${c.diferencias} Δ` : "✓"}</span>
-                      <span style={{ color: B.sky, fontSize: 11, fontWeight: 700 }}>▶ Continuar</span>
+                      <span style={{ color: c.tipo_conteo === "inicial" ? "rgba(255,255,255,0.4)" : c.diferencias > 0 ? B.warning : B.success, fontWeight: 700 }}>
+                        {c.tipo_conteo === "inicial" ? "—" : c.diferencias > 0 ? `${c.diferencias} Δ` : "✓"}
+                      </span>
+                      <span style={{ color: B.sky, fontSize: 11, fontWeight: 700 }}>▶ {c.tipo_conteo === "inicial" ? "Ver / Editar" : "Continuar"}</span>
                     </button>
                   );
                 })}
