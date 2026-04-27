@@ -1995,7 +1995,14 @@ function DetailModal({ req, onClose, onUpdate, onGenerarOC, proveedores, reglas,
   } : p));
   const ec = ESTADO_COLOR[req.estado] || ESTADO_COLOR.Borrador;
   const regla = reglas.find(r => r.id === req.regla_aprobacion_id);
-  const puedeAprobar = req.estado === "Pendiente" && (currentUser.rol === "super_admin" || (regla && regla.rol_aprobador === currentUser.rol));
+  // Gerente General (Op o Admin) son intercambiables — cualquiera puede aprobar reglas dirigidas a "gerente_general*"
+  const esGerenteGeneral = currentUser.rol === "gerente_general_op" || currentUser.rol === "gerente_general_admin";
+  const reglaPideGerente = regla && (regla.rol_aprobador === "gerente_general_op" || regla.rol_aprobador === "gerente_general_admin" || regla.rol_aprobador === "gerente_general");
+  const puedeAprobar = req.estado === "Pendiente" && (
+    currentUser.rol === "super_admin" ||
+    (regla && regla.rol_aprobador === currentUser.rol) ||
+    (esGerenteGeneral && reglaPideGerente)
+  );
 
   const advance = (nuevoEstado, accion, extras = {}) => {
     onUpdate({
