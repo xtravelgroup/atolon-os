@@ -102,36 +102,57 @@ export default function FacturaProveedorModal({ oc, onClose, reload, currentUser
             const matchOc = (typeof ocIdx === "number" && ocIdx >= 0 && ocIdx < ocItemsCount) ? oc.items[ocIdx] : null;
             if (matchOc) matched.add(ocIdx);
 
-            const precioCostoUnit = Number(aiItem.precio_costo_unit) || 0;
-            const precioBase      = Number(aiItem.precio_base_unit) || precioCostoUnit;
-            const ivaUnit         = Number(aiItem.iva_valor_unit) || 0;
-            const cant            = Number(aiItem.cantidad) || 0;
+            const cantPack    = Number(aiItem.cantidad_paquete ?? aiItem.cantidad) || 0;
+            const unPorPack   = Math.max(1, Number(aiItem.unidades_por_paquete) || 1);
+            const cantTotal   = Number(aiItem.cantidad_individual_total) || (cantPack * unPorPack);
+            const costoPack   = Number(aiItem.precio_costo_pack ?? aiItem.precio_costo_unit) || 0;
+            const costoIndiv  = Number(aiItem.precio_costo_unit_individual) || (costoPack / unPorPack);
+            const basePack    = Number(aiItem.precio_base_pack ?? aiItem.precio_base_unit) || costoPack;
+            const ivaPack     = Number(aiItem.iva_valor_pack ?? aiItem.iva_valor_unit) || 0;
+            const finalPack   = Number(aiItem.precio_final_pack ?? aiItem.precio_final_unit) || (costoPack + ivaPack);
+            const esBonif     = !!aiItem.es_bonificacion || costoPack === 0;
+            const reqRevision = !!aiItem.requiere_revision;
 
             return {
-              oc_idx: matchOc ? ocIdx : null,        // null si no matchea con la OC
+              oc_idx: matchOc ? ocIdx : null,
               ai_idx: aiIdx,
               codigo_barras:        aiItem.codigo_barras || null,
               referencia_proveedor: aiItem.referencia_proveedor || null,
               nombre:               aiItem.nombre || matchOc?.item || matchOc?.nombre || "—",
-              cantidad:             cant,
-              unidad:               aiItem.unidad || matchOc?.unidad || "UND",
-              precio_base_unit:     precioBase,
+              // Empaque y unidad
+              cantidad_paquete:     cantPack,
+              unidad_compra:        aiItem.unidad_compra || matchOc?.unidad || "UND",
+              unidades_por_paquete: unPorPack,
+              unidad_individual:    aiItem.unidad_individual || "UND",
+              cantidad_individual_total: cantTotal,
+              // Impuestos por PAQUETE
               descuento_pct:        Number(aiItem.descuento_pct) || 0,
               iva_pct:              Number(aiItem.iva_pct) || 0,
-              iva_valor_unit:       ivaUnit,
-              ico_valor_unit:       Number(aiItem.ico_valor_unit) || 0,
-              icl_valor_unit:       Number(aiItem.icl_valor_unit) || 0,
-              adv_valor_unit:       Number(aiItem.adv_valor_unit) || 0,
-              precio_costo_unit:    precioCostoUnit,           // base + ICO + ICL + ADV (no deducibles)
-              precio_final_unit:    Number(aiItem.precio_final_unit) || (precioCostoUnit + ivaUnit),
-              subtotal_renglon:     Number(aiItem.subtotal_renglon) || cant * precioCostoUnit,
-              iva_total_renglon:    cant * ivaUnit,
-              // Para compatibilidad con flujo anterior:
-              precio_unitario:      precioCostoUnit,           // lo que va al precio_compra
+              precio_base_pack:     basePack,
+              iva_valor_pack:       ivaPack,
+              ico_valor_pack:       Number(aiItem.ico_valor_pack ?? aiItem.ico_valor_unit) || 0,
+              icl_valor_pack:       Number(aiItem.icl_valor_pack ?? aiItem.icl_valor_unit) || 0,
+              adv_valor_pack:       Number(aiItem.adv_valor_pack ?? aiItem.adv_valor_unit) || 0,
+              precio_costo_pack:    costoPack,            // costo por sixpack/bandeja
+              precio_costo_unit_individual: Math.round(costoIndiv), // costo por cerveza/botella → al catálogo
+              precio_final_pack:    finalPack,
+              subtotal_renglon:     Number(aiItem.subtotal_renglon) || cantPack * finalPack,
+              // Flags
+              es_bonificacion:      esBonif,
+              requiere_revision:    reqRevision,
+              es_nuevo_oc:          !matchOc,
+              // Compat con flujo anterior:
+              cantidad:             cantPack,
+              unidad:               aiItem.unidad_compra || matchOc?.unidad || "UND",
+              precio_costo_unit:    costoPack,
+              precio_unitario:      Math.round(costoIndiv),  // ← lo que va al precio_compra del catálogo
               precio_anterior:      matchOc ? Number(matchOc.precioU) || 0 : 0,
-              iva:                  cant * ivaUnit,
+              iva_valor_unit:       ivaPack,
+              ico_valor_unit:       Number(aiItem.ico_valor_pack ?? aiItem.ico_valor_unit) || 0,
+              icl_valor_unit:       Number(aiItem.icl_valor_pack ?? aiItem.icl_valor_unit) || 0,
+              adv_valor_unit:       Number(aiItem.adv_valor_pack ?? aiItem.adv_valor_unit) || 0,
+              iva:                  cantPack * ivaPack,
               item_id:              matchOc?.item_id || null,
-              es_nuevo_oc:          !matchOc,                   // bandera: este item no estaba en la OC
             };
           });
 
@@ -210,38 +231,69 @@ export default function FacturaProveedorModal({ oc, onClose, reload, currentUser
     setStep("applying");
     setErr("");
     try {
-      // 1. Construir items actualizados de la OC con los precios reales (costo = base + ICO+ICL+ADV)
+      // 1. Construir items actualizados de la OC.
+      //    El INVENTARIO se cuenta en unidades individuales, así que:
+      //    - cant_individual = cantidad_paquete × unidades_por_paquete
+      //    - precioU (costo individual) = precio_costo_pack / unidades_por_paquete
+      //    Las BONIFICACIONES suman al inventario pero NO actualizan precio_compra ni
+      //    afectan el costo (precioU=0 en la OC pero metadata en factura_data).
       const ocItemsOriginal = oc.items || [];
       const itemsActualizados = ocItemsOriginal.map((it, i) => {
         const f = data.items.find(x => x.oc_idx === i && !x.no_facturado);
         if (!f) return it;
-        const precioU = Number(f.precio_costo_unit ?? f.precio_unitario) || Number(it.precioU) || 0;
-        const cant = Number(it.cant) || 0;
+        const unPorPack       = Math.max(1, Number(f.unidades_por_paquete) || 1);
+        const cantPaquete     = Number(f.cantidad_paquete) || Number(it.cant) || 0;
+        const cantIndividual  = cantPaquete * unPorPack;
+        const costoPack       = Number(f.precio_costo_pack) || 0;
+        const precioUIndiv    = f.es_bonificacion ? 0 : Math.round(unPorPack > 0 ? costoPack / unPorPack : 0);
         return {
           ...it,
-          precioU,
-          subtotal: Math.round(cant * precioU),
-          // metadata extra para auditoría
+          // El campo `cant` queda en unidades INDIVIDUALES (lo que va al inventario)
+          cant: cantIndividual,
+          unidad: f.unidad_individual || "UND",
+          precioU: precioUIndiv,
+          subtotal: Math.round(cantIndividual * precioUIndiv),
+          // Empaque (audit + recepción)
+          unidades_por_paquete: unPorPack,
+          unidad_compra:        f.unidad_compra || "UND",
+          cantidad_paquete:     cantPaquete,
+          factura_costo_pack:   costoPack,
+          // Impuestos por paquete (audit)
           factura_codigo_barras: f.codigo_barras || it.codigo_barras || null,
-          factura_iva_unit:      Number(f.iva_valor_unit) || 0,
-          factura_consumo_unit:  (Number(f.ico_valor_unit) || 0) + (Number(f.icl_valor_unit) || 0) + (Number(f.adv_valor_unit) || 0),
+          factura_iva_pack:      Number(f.iva_valor_pack) || 0,
+          factura_consumo_pack:  (Number(f.ico_valor_pack) || 0) + (Number(f.icl_valor_pack) || 0) + (Number(f.adv_valor_pack) || 0),
+          es_bonificacion:       !!f.es_bonificacion,
+          requiere_revision:     !!f.requiere_revision,
         };
       });
 
       // 1b. Items de la factura que NO estaban en la OC original — los agregamos
-      const itemsNuevosOC = data.items.filter(f => f.es_nuevo_oc && f.codigo_barras).map(f => ({
-        item: f.nombre, nombre: f.nombre,
-        cant: Number(f.cantidad) || 0,
-        unidad: f.unidad || "UND",
-        precioU: Number(f.precio_costo_unit) || 0,
-        subtotal: Math.round((Number(f.cantidad) || 0) * (Number(f.precio_costo_unit) || 0)),
-        item_id: null,                        // se asigna abajo si lo creamos en catálogo
-        codigo_barras: f.codigo_barras,
-        referencia_proveedor: f.referencia_proveedor,
-        agregado_post_factura: true,
-        factura_iva_unit:     Number(f.iva_valor_unit) || 0,
-        factura_consumo_unit: (Number(f.ico_valor_unit) || 0) + (Number(f.icl_valor_unit) || 0) + (Number(f.adv_valor_unit) || 0),
-      }));
+      const itemsNuevosOC = data.items.filter(f => f.es_nuevo_oc && f.codigo_barras).map(f => {
+        const unPorPack      = Math.max(1, Number(f.unidades_por_paquete) || 1);
+        const cantPaquete    = Number(f.cantidad_paquete) || Number(f.cantidad) || 0;
+        const cantIndividual = cantPaquete * unPorPack;
+        const costoPack      = Number(f.precio_costo_pack) || 0;
+        const precioUIndiv   = f.es_bonificacion ? 0 : Math.round(unPorPack > 0 ? costoPack / unPorPack : 0);
+        return {
+          item: f.nombre, nombre: f.nombre,
+          cant: cantIndividual,
+          unidad: f.unidad_individual || "UND",
+          precioU: precioUIndiv,
+          subtotal: Math.round(cantIndividual * precioUIndiv),
+          item_id: null,
+          codigo_barras: f.codigo_barras,
+          referencia_proveedor: f.referencia_proveedor,
+          unidades_por_paquete: unPorPack,
+          unidad_compra:        f.unidad_compra || "UND",
+          cantidad_paquete:     cantPaquete,
+          factura_costo_pack:   costoPack,
+          agregado_post_factura: true,
+          factura_iva_pack:     Number(f.iva_valor_pack) || 0,
+          factura_consumo_pack: (Number(f.ico_valor_pack) || 0) + (Number(f.icl_valor_pack) || 0) + (Number(f.adv_valor_pack) || 0),
+          es_bonificacion:      !!f.es_bonificacion,
+          requiere_revision:    !!f.requiere_revision,
+        };
+      });
 
       // 2. Match / crear items en items_catalogo por código de barras
       // Para cada item de la factura que tenga código de barras:
@@ -255,27 +307,36 @@ export default function FacturaProveedorModal({ oc, onClose, reload, currentUser
       for (const f of facturados) {
         const cb = (f.codigo_barras || "").trim();
         if (!cb) continue;
-        const precioCosto = Number(f.precio_costo_unit) || 0;
-        if (precioCosto <= 0) continue;
+        const unPorPack    = Math.max(1, Number(f.unidades_por_paquete) || 1);
+        const costoPack    = Number(f.precio_costo_pack) || 0;
+        const precioUIndiv = unPorPack > 0 ? Math.round(costoPack / unPorPack) : 0;
 
         const { data: existente } = await supabase.from("items_catalogo")
-          .select("id, codigo_barras, precio_compra").eq("codigo_barras", cb).maybeSingle();
+          .select("id, codigo_barras, precio_compra, unidades_por_paquete").eq("codigo_barras", cb).maybeSingle();
 
         if (existente?.id) {
-          await supabase.from("items_catalogo").update({
-            precio_compra: precioCosto,
+          // Bonificación: NO toca precio_compra (mantiene el costo regular)
+          // Compra normal: actualiza precio_compra al costo individual nuevo
+          const updates = {
             referencia_proveedor: f.referencia_proveedor || null,
             proveedor_principal_id: oc.proveedor_id || null,
             updated_at: new Date().toISOString(),
-          }).eq("id", existente.id);
+          };
+          if (!f.es_bonificacion && precioUIndiv > 0) {
+            updates.precio_compra = precioUIndiv;
+            updates.unidades_por_paquete = unPorPack;
+            updates.unidad_compra = f.unidad_compra || null;
+            updates.unidad_individual = f.unidad_individual || existente.unidad_individual || "UND";
+          }
+          await supabase.from("items_catalogo").update(updates).eq("id", existente.id);
           updatesCatalogo.push(existente.id);
-          // Si el item de la factura no tenía item_id pero ahora lo encontramos por barcode, asignarlo
           if (!f.item_id && f.es_nuevo_oc) {
             const idx = itemsNuevosOC.findIndex(x => x.codigo_barras === cb);
             if (idx >= 0) itemsNuevosOC[idx].item_id = existente.id;
           }
         } else {
-          // Crear nuevo en catálogo
+          // Crear nuevo en catálogo (sólo si no es bonificación O si lo es pero sí tiene un costo derivable de otra línea)
+          // Si es bonificación con costo 0 y no existe en catálogo, lo creamos pero con precio_compra=0 marcado para revisión.
           const newId = `ITM_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
           const { error: ec } = await supabase.from("items_catalogo").insert({
             id: newId,
@@ -284,12 +345,15 @@ export default function FacturaProveedorModal({ oc, onClose, reload, currentUser
             referencia_proveedor: f.referencia_proveedor || null,
             proveedor_principal_id: oc.proveedor_id || null,
             nombre: f.nombre,
-            unidad: f.unidad || "UND",
-            precio_compra: precioCosto,
+            unidad: f.unidad_compra || f.unidad || "UND",
+            unidad_compra: f.unidad_compra || null,
+            unidad_individual: f.unidad_individual || "UND",
+            unidades_por_paquete: unPorPack,
+            precio_compra: f.es_bonificacion ? 0 : precioUIndiv,
             activo: true,
           });
           if (!ec) {
-            creadosCatalogo.push({ id: newId, nombre: f.nombre });
+            creadosCatalogo.push({ id: newId, nombre: f.nombre, bonif: !!f.es_bonificacion });
             const idx = itemsNuevosOC.findIndex(x => x.codigo_barras === cb);
             if (idx >= 0) itemsNuevosOC[idx].item_id = newId;
           }
@@ -325,14 +389,24 @@ export default function FacturaProveedorModal({ oc, onClose, reload, currentUser
       const { error: e1 } = await supabase.from("ordenes_compra").update(updateOC).eq("id", oc.id);
       if (e1) throw e1;
 
-      // 5. Para items de la OC original que vienen de catálogo (item_id) pero el AI no extrajo barcode
-      //    aún así actualizamos su precio_compra usando el precio_costo_unit
+      // 5. Para items de la OC original que vienen de catálogo (item_id) pero el AI no extrajo barcode,
+      //    aún así actualizamos su precio_compra con el costo individual.
+      //    Bonificaciones NO actualizan precio_compra (mantienen el costo regular).
       for (const f of facturados) {
-        if (f.item_id && !f.codigo_barras && Number(f.precio_costo_unit) > 0) {
-          await supabase.from("items_catalogo").update({
-            precio_compra: f.precio_costo_unit,
-            updated_at: new Date().toISOString(),
-          }).eq("id", f.item_id);
+        if (f.es_bonificacion) continue;
+        if (f.item_id && !f.codigo_barras) {
+          const unPorPack    = Math.max(1, Number(f.unidades_por_paquete) || 1);
+          const costoPack    = Number(f.precio_costo_pack) || 0;
+          const precioUIndiv = unPorPack > 0 ? Math.round(costoPack / unPorPack) : 0;
+          if (precioUIndiv > 0) {
+            await supabase.from("items_catalogo").update({
+              precio_compra:        precioUIndiv,
+              unidades_por_paquete: unPorPack,
+              unidad_compra:        f.unidad_compra || null,
+              unidad_individual:    f.unidad_individual || "UND",
+              updated_at:           new Date().toISOString(),
+            }).eq("id", f.item_id);
+          }
         }
       }
 
@@ -469,28 +543,36 @@ export default function FacturaProveedorModal({ oc, onClose, reload, currentUser
               <table style={{ width: "100%", fontSize: 12, borderCollapse: "collapse" }}>
                 <thead>
                   <tr style={{ background: B.navyLight }}>
-                    {["Item", "Cant", "Costo unit", "IVA unit", "Δ vs cotiz", "Subtotal"].map((h, i) => (
-                      <th key={h + i} style={{ padding: "8px 10px", textAlign: i < 1 ? "left" : "right", fontSize: 9, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: "0.04em" }}>{h}</th>
+                    {["Item", "Pack", "× Unid", "Inv total", "Costo/pack", "Costo/unid", "Subtotal"].map((h, i) => (
+                      <th key={h + i} style={{ padding: "8px 8px", textAlign: i < 1 ? "left" : "right", fontSize: 9, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: "0.04em" }}>{h}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
                   {data.items.map((it, i) => {
-                    const costoUnit = Number(it.precio_costo_unit ?? it.precio_unitario) || 0;
-                    const sub = (Number(it.cantidad) || 0) * costoUnit;
-                    const delta = costoUnit - (Number(it.precio_anterior) || 0);
-                    const cambio = !it.no_facturado && !it.es_nuevo_oc && (it.precio_anterior > 0) && Math.abs(delta) > 0.01;
-                    const color = delta > 0 ? B.danger : delta < 0 ? B.success : "rgba(255,255,255,0.4)";
-                    const bg = it.no_facturado ? "rgba(220,220,220,0.05)"
-                             : it.es_nuevo_oc ? "rgba(34,197,94,0.08)"
+                    const cantPack    = Number(it.cantidad_paquete ?? it.cantidad) || 0;
+                    const unPorPack   = Math.max(1, Number(it.unidades_por_paquete) || 1);
+                    const costoPack   = Number(it.precio_costo_pack ?? it.precio_costo_unit) || 0;
+                    const costoIndiv  = unPorPack > 0 ? Math.round(costoPack / unPorPack) : 0;
+                    const cantTotal   = cantPack * unPorPack;
+                    const sub         = cantPack * costoPack;
+                    const delta       = costoIndiv - (Number(it.precio_anterior) || 0);
+                    const cambio      = !it.no_facturado && !it.es_nuevo_oc && (it.precio_anterior > 0) && Math.abs(delta) > 0.01;
+                    const deltaColor  = delta > 0 ? B.danger : delta < 0 ? B.success : "rgba(255,255,255,0.4)";
+                    const bg = it.es_bonificacion ? "rgba(34,197,94,0.10)"
+                             : it.requiere_revision ? "rgba(245,158,11,0.10)"
+                             : it.no_facturado ? "rgba(220,220,220,0.05)"
+                             : it.es_nuevo_oc ? "rgba(56,189,248,0.06)"
                              : cambio ? "rgba(245,158,11,0.06)" : "transparent";
                     return (
                       <tr key={i} style={{ borderTop: `1px solid ${B.navyLight}`, background: bg }}>
-                        <td style={{ padding: "8px 10px" }}>
+                        <td style={{ padding: "8px 8px" }}>
                           <div>
                             {it.nombre}
-                            {it.no_facturado && <span style={{ marginLeft: 6, fontSize: 9, padding: "1px 6px", background: B.danger + "33", color: B.danger, borderRadius: 8, fontWeight: 700 }}>NO FACTURADO</span>}
-                            {it.es_nuevo_oc && <span style={{ marginLeft: 6, fontSize: 9, padding: "1px 6px", background: B.success + "33", color: B.success, borderRadius: 8, fontWeight: 700 }}>NUEVO</span>}
+                            {it.es_bonificacion && <span style={{ marginLeft: 6, fontSize: 9, padding: "1px 6px", background: B.success, color: B.navy, borderRadius: 8, fontWeight: 800 }}>🎁 BONIF</span>}
+                            {it.requiere_revision && <span style={{ marginLeft: 6, fontSize: 9, padding: "1px 6px", background: B.warning, color: B.navy, borderRadius: 8, fontWeight: 800 }}>⚠ COMBO</span>}
+                            {it.no_facturado && <span style={{ marginLeft: 6, fontSize: 9, padding: "1px 6px", background: B.danger + "33", color: B.danger, borderRadius: 8, fontWeight: 700 }}>NO FACT</span>}
+                            {it.es_nuevo_oc && !it.es_bonificacion && <span style={{ marginLeft: 6, fontSize: 9, padding: "1px 6px", background: B.sky + "33", color: B.sky, borderRadius: 8, fontWeight: 700 }}>NUEVO</span>}
                           </div>
                           {(it.codigo_barras || it.referencia_proveedor) && (
                             <div style={{ fontSize: 10, color: "rgba(255,255,255,0.35)", marginTop: 2 }}>
@@ -499,43 +581,77 @@ export default function FacturaProveedorModal({ oc, onClose, reload, currentUser
                               {it.referencia_proveedor && <span>Ref {it.referencia_proveedor}</span>}
                             </div>
                           )}
+                          {it.unidad_compra && (
+                            <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>
+                              {it.unidad_compra} · {it.unidad_individual || "UND"}
+                            </div>
+                          )}
                         </td>
-                        <td style={{ padding: "8px 10px", textAlign: "right" }}>
-                          {it.cantidad} {it.unidad ? <span style={{ fontSize: 10, color: "rgba(255,255,255,0.4)" }}>{it.unidad}</span> : null}
+                        {/* Pack: cantidad de paquetes */}
+                        <td style={{ padding: "6px 8px", textAlign: "right" }}>
+                          <input type="number" value={cantPack}
+                            onChange={e => setItemField(i, "cantidad_paquete", Number(e.target.value))}
+                            style={{ ...IS, padding: "4px 6px", fontSize: 11, width: 50, textAlign: "right" }} />
                         </td>
-                        <td style={{ padding: "6px 10px", textAlign: "right" }}>
-                          <input type="number" value={costoUnit}
-                            onChange={e => setItemField(i, "precio_costo_unit", e.target.value)}
-                            style={{ ...IS, padding: "5px 8px", fontSize: 12, width: 110, textAlign: "right",
+                        {/* unidades por paquete (editable) */}
+                        <td style={{ padding: "6px 8px", textAlign: "right" }}>
+                          <input type="number" value={unPorPack} min={1}
+                            onChange={e => setItemField(i, "unidades_por_paquete", Math.max(1, Number(e.target.value)))}
+                            style={{ ...IS, padding: "4px 6px", fontSize: 11, width: 45, textAlign: "right",
+                              borderColor: unPorPack > 1 ? B.sky : B.navyLight,
+                              color: unPorPack > 1 ? B.sky : "#fff" }} />
+                        </td>
+                        {/* Total individual al inventario */}
+                        <td style={{ padding: "8px 8px", textAlign: "right", color: B.sand, fontWeight: 700, fontSize: 12 }}>
+                          {cantTotal}
+                          <div style={{ fontSize: 9, color: "rgba(255,255,255,0.35)" }}>{(it.unidad_individual || "und").toLowerCase()}</div>
+                        </td>
+                        {/* Costo por paquete */}
+                        <td style={{ padding: "6px 8px", textAlign: "right" }}>
+                          <input type="number" value={costoPack}
+                            onChange={e => setItemField(i, "precio_costo_pack", Number(e.target.value))}
+                            disabled={it.es_bonificacion}
+                            style={{ ...IS, padding: "4px 6px", fontSize: 11, width: 90, textAlign: "right",
+                              opacity: it.es_bonificacion ? 0.4 : 1,
                               borderColor: cambio ? B.warning : B.navyLight,
-                              color: cambio ? B.warning : "#fff",
-                              fontWeight: cambio ? 700 : 400 }} />
+                              color: cambio ? B.warning : it.es_bonificacion ? B.success : "#fff" }} />
                         </td>
-                        <td style={{ padding: "8px 10px", textAlign: "right", color: B.sky, fontSize: 11 }}>
-                          {it.iva_valor_unit ? COP(it.iva_valor_unit) : "—"}
-                          {it.iva_pct > 0 && <div style={{ fontSize: 9, color: "rgba(255,255,255,0.35)" }}>{it.iva_pct}%</div>}
+                        {/* Costo por unidad individual (calculado) */}
+                        <td style={{ padding: "8px 8px", textAlign: "right", fontSize: 11 }}>
+                          {it.es_bonificacion ? (
+                            <span style={{ color: B.success, fontWeight: 700 }}>$0 🎁</span>
+                          ) : (
+                            <>
+                              <div style={{ fontWeight: 700, color: B.sand }}>{COP(costoIndiv)}</div>
+                              {cambio && (
+                                <div style={{ fontSize: 9, color: deltaColor, fontWeight: 700 }}>
+                                  {delta > 0 ? "+" : ""}{COP(delta)}
+                                </div>
+                              )}
+                              {it.iva_pct > 0 && <div style={{ fontSize: 9, color: B.sky }}>+{it.iva_pct}% IVA</div>}
+                            </>
+                          )}
                         </td>
-                        <td style={{ padding: "8px 10px", textAlign: "right", color, fontWeight: 700, fontSize: 11 }}>
-                          {cambio ? `${delta > 0 ? "+" : ""}${COP(delta)}` : "—"}
-                          {it.precio_anterior > 0 && cambio && <div style={{ fontSize: 9, color: "rgba(255,255,255,0.35)" }}>cotiz {COP(it.precio_anterior)}</div>}
+                        {/* Subtotal */}
+                        <td style={{ padding: "8px 8px", textAlign: "right", color: it.es_bonificacion ? B.success : B.sand, fontWeight: 700 }}>
+                          {it.es_bonificacion ? "$0" : COP(sub)}
                         </td>
-                        <td style={{ padding: "8px 10px", textAlign: "right", color: B.sand, fontWeight: 700 }}>{COP(sub)}</td>
                       </tr>
                     );
                   })}
                 </tbody>
                 <tfoot>
                   <tr style={{ background: B.navyMid, fontWeight: 700 }}>
-                    <td colSpan={5} style={{ padding: "10px 14px", textAlign: "right", color: "rgba(255,255,255,0.6)" }}>Subtotal costo (sin IVA)</td>
-                    <td style={{ padding: "10px 14px", textAlign: "right", color: B.sky }}>{COP(data.items.reduce((s, x) => s + (Number(x.cantidad) || 0) * (Number(x.precio_costo_unit ?? x.precio_unitario) || 0), 0))}</td>
+                    <td colSpan={6} style={{ padding: "8px 8px", textAlign: "right", color: "rgba(255,255,255,0.6)" }}>Subtotal costo (sin IVA)</td>
+                    <td style={{ padding: "8px 8px", textAlign: "right", color: B.sky }}>{COP(data.items.reduce((s, x) => s + (x.es_bonificacion ? 0 : (Number(x.cantidad_paquete ?? x.cantidad) || 0) * (Number(x.precio_costo_pack ?? x.precio_costo_unit) || 0)), 0))}</td>
                   </tr>
                   <tr style={{ background: B.navyMid }}>
-                    <td colSpan={5} style={{ padding: "6px 14px", textAlign: "right", color: "rgba(255,255,255,0.6)" }}>+ IVA (deducible)</td>
-                    <td style={{ padding: "6px 14px", textAlign: "right", color: "#fbbf24" }}>{COP(data.iva_total || usarIva)}</td>
+                    <td colSpan={6} style={{ padding: "6px 8px", textAlign: "right", color: "rgba(255,255,255,0.6)" }}>+ IVA (deducible)</td>
+                    <td style={{ padding: "6px 8px", textAlign: "right", color: "#fbbf24" }}>{COP(data.iva_total || usarIva)}</td>
                   </tr>
                   <tr style={{ background: B.navy }}>
-                    <td colSpan={5} style={{ padding: "10px 14px", textAlign: "right", color: "#fff", fontSize: 13, fontWeight: 800 }}>TOTAL FACTURA</td>
-                    <td style={{ padding: "10px 14px", textAlign: "right", color: B.success, fontWeight: 800, fontSize: 14 }}>{COP(data.total || (usarSubtotal + usarIva))}</td>
+                    <td colSpan={6} style={{ padding: "10px 8px", textAlign: "right", color: "#fff", fontSize: 13, fontWeight: 800 }}>TOTAL FACTURA</td>
+                    <td style={{ padding: "10px 8px", textAlign: "right", color: B.success, fontWeight: 800, fontSize: 14 }}>{COP(data.total || (usarSubtotal + usarIva))}</td>
                   </tr>
                 </tfoot>
               </table>

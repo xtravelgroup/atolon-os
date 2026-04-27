@@ -33,6 +33,31 @@ CONTEXTO TRIBUTARIO COLOMBIA:
 - precio_costo_unit = precio_base + ico_unit + icl_unit + adv_unit (sin IVA)
 - precio_final_unit = precio_costo_unit + iva_unit
 
+CONTEXTO EMPAQUES (CRÍTICO):
+- En este sistema el inventario se cuenta SIEMPRE en UNIDADES INDIVIDUALES
+- Los proveedores facturan por empaque. Ejemplos:
+  · "CERVEZA CORONA 6PACK 330ML" → unidades_por_paquete = 6 (1 sixpack = 6 cervezas)
+  · "CERVEZA STELLA SIXPACK"     → unidades_por_paquete = 6
+  · "VINO X 12U"                  → unidades_por_paquete = 12
+  · "BANDEJA X 12 UND"            → unidades_por_paquete = 12
+  · "BOTELLA 750ML" (sin pack)    → unidades_por_paquete = 1
+  · "RON ZACAPA 700ML"            → unidades_por_paquete = 1
+- Detecta el factor del NOMBRE del producto. Patrones:
+  · "6PACK", "SIXPACK", "6PK"     → 6
+  · "X 12", "X12U", "X 12 UND"    → 12
+  · "X 24", "X24"                 → 24
+  · Sin patrón claro              → 1 (botella/unidad suelta)
+- "750ML", "330CC", "207ML" son TAMAÑOS, no factor de empaque (mantener factor=1 si no hay pack)
+
+CONTEXTO BONIFICACIONES Y COMBOS:
+- Una BONIFICACIÓN/REGALO/OBSEQUIO es un item con precio $0 o cercano a 0,
+  o cuando el nombre contiene: "bonificacion", "obsequio", "regalo", "gratis",
+  "GTS" (en algunas facturas), "promocion sin costo".
+  → marca es_bonificacion = true
+- Un COMBO es un item donde la descripción mezcla cantidades distintas, ej:
+  "MIL976 OCEAN 207X24 GTS 4PK", "TEQUILA JC ESP 750 X12 GTS 3 JC ESP 375"
+  → marca requiere_revision = true para que el humano lo capture a mano
+
 ${ocItems.length > 0 ? `\nLa Orden de Compra esperaba estos items (úsalos como referencia para match):\n${itemsContexto}\n` : ""}
 
 Retorna SOLO un JSON con este formato exacto:
@@ -59,18 +84,24 @@ Retorna SOLO un JSON con este formato exacto:
       "codigo_barras": "7702004111548",
       "referencia_proveedor": "370080",
       "nombre": "CERVEZA CORONA BOT BNR 6PACK 330ML",
-      "cantidad": 24,
-      "unidad": "UND",
-      "precio_base_unit": 18024,
+      "cantidad_paquete": 24,
+      "unidad_compra": "SIXPACK",
+      "unidades_por_paquete": 6,
+      "unidad_individual": "BOTELLA",
+      "cantidad_individual_total": 144,
+      "precio_base_pack": 18024,
       "descuento_pct": 0,
       "iva_pct": 19,
-      "iva_valor_unit": 1170,
-      "ico_valor_unit": 5400,
-      "icl_valor_unit": 0,
-      "adv_valor_unit": 0,
-      "precio_costo_unit": 23424,
-      "precio_final_unit": 24594,
+      "iva_valor_pack": 1170,
+      "ico_valor_pack": 5400,
+      "icl_valor_pack": 0,
+      "adv_valor_pack": 0,
+      "precio_costo_pack": 23424,
+      "precio_costo_unit_individual": 3904,
+      "precio_final_pack": 24594,
       "subtotal_renglon": 565213,
+      "es_bonificacion": false,
+      "requiere_revision": false,
       "match_oc_idx": 0
     }
   ]
@@ -90,22 +121,28 @@ Instrucciones detalladas:
 - descuentos_total: suma de descuentos aplicados
 - total: total a pagar (lo que dice "TOTAL A PAGAR" o "Total Bruto + Total Imptos")
 - items: array con TODOS los productos facturados (procesa TODAS las páginas)
-  · codigo_barras: el código EAN/barras (suele tener 13 dígitos, empieza por 770... en Colombia)
+  · codigo_barras: el código EAN/barras (13 dígitos, empieza por 770... en Colombia)
   · referencia_proveedor: la "referencia interna" del proveedor (NO el código de barras)
   · nombre: descripción del artículo tal como aparece
-  · cantidad: unidades (UND, columna "UND" o similar)
-  · unidad: "UND", "BOT", "ML", "KG" según corresponda
-  · precio_base_unit: precio base por unidad SIN ningún impuesto ni descuento
-  · descuento_pct: porcentaje de descuento aplicado al renglón (0 si no hay)
-  · iva_pct: % de IVA del renglón (0, 5, 19)
-  · iva_valor_unit: valor del IVA por unidad (deducible)
-  · ico_valor_unit: valor del Impuesto al Consumo por unidad (NO deducible). Si no se desglosa, calcula desde % consumo
-  · icl_valor_unit: valor del Impuesto Consumo Licores por unidad (NO deducible)
-  · adv_valor_unit: valor Ad Valorem por unidad (NO deducible)
-  · precio_costo_unit: COSTO REAL por unidad = precio_base + ico + icl + adv (sin IVA, lo que va al inventario)
-  · precio_final_unit: precio final con todos los impuestos incluidos
-  · subtotal_renglon: cantidad × precio_final_unit (o el "VLR NETO FINAL" del renglón)
-  · match_oc_idx: índice (0-based) en la lista de OC esperados que mejor coincida (por nombre), o null
+  · cantidad_paquete: cuántos PAQUETES facturó el proveedor (la columna UND de la factura)
+  · unidad_compra: "SIXPACK", "BANDEJA X 12", "UND" según el nombre
+  · unidades_por_paquete: factor de conversión detectado (6, 12, 24, 1...)
+  · unidad_individual: "BOTELLA", "LATA", "UNIDAD" — cómo se cuenta el inventario individual
+  · cantidad_individual_total: cantidad_paquete × unidades_por_paquete (lo que entra al inventario)
+  · precio_base_pack: precio base POR PAQUETE sin impuestos ni descuento
+  · descuento_pct: % de descuento aplicado al renglón
+  · iva_pct: % de IVA (0, 5, 19)
+  · iva_valor_pack: IVA POR PAQUETE (deducible)
+  · ico_valor_pack: ICO POR PAQUETE (no deducible)
+  · icl_valor_pack: ICL POR PAQUETE (no deducible)
+  · adv_valor_pack: Ad Valorem POR PAQUETE (no deducible)
+  · precio_costo_pack: costo POR PAQUETE = base + ico + icl + adv (sin IVA)
+  · precio_costo_unit_individual: precio_costo_pack ÷ unidades_por_paquete (lo que va al precio_compra del catálogo)
+  · precio_final_pack: precio final POR PAQUETE con todos los impuestos
+  · subtotal_renglon: cantidad_paquete × precio_final_pack (o "VLR NETO FINAL")
+  · es_bonificacion: true si el item viene gratis/regalo/obsequio (precio 0 o keyword)
+  · requiere_revision: true si es un combo o estructura ambigua que el humano debe revisar
+  · match_oc_idx: índice (0-based) en la lista de OC esperados que mejor coincida, o null
 - Si la factura no se puede leer claramente, retorna { "ok": false, "error": "razón" }
 - Todos los montos como números ENTEROS sin separadores ni signo $ (ej. 18024 no "$18.024")
 - NO inventes datos. Si un campo no aparece en la factura, usa 0 o null
