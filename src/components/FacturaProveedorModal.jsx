@@ -354,13 +354,19 @@ export default function FacturaProveedorModal({ oc, onClose, reload, currentUser
 
       for (const f of facturados) {
         const cb = (f.codigo_barras || "").trim();
-        if (!cb) continue;
+        const nombre = (f.nombre || "").trim();
+        if (!cb && !nombre) continue;
         const unPorPack    = Math.max(1, Number(f.unidades_por_paquete) || 1);
         const costoPack    = Number(f.precio_costo_pack) || 0;
         const precioUIndiv = unPorPack > 0 ? Math.round(costoPack / unPorPack) : 0;
 
-        const { data: existente } = await supabase.from("items_catalogo")
-          .select("id, codigo_barras, precio_compra, unidades_por_paquete").eq("codigo_barras", cb).maybeSingle();
+        // Match inteligente vía RPC: codigo_barras → codigo → nombre similar
+        const { data: matches } = await supabase.rpc("find_item_match", {
+          p_codigo_barras: cb || null,
+          p_codigo:        f.referencia_proveedor || null,
+          p_nombre:        nombre || null,
+        });
+        const existente = (matches && matches[0]) || null;
 
         if (existente?.id) {
           // Bonificación: NO toca precio_compra (mantiene el costo regular)
@@ -376,15 +382,21 @@ export default function FacturaProveedorModal({ oc, onClose, reload, currentUser
             updates.unidad_compra = f.unidad_compra || null;
             updates.unidad_individual = f.unidad_individual || existente.unidad_individual || "UND";
           }
+          // Si el match fue por nombre similar, también guardar el codigo_barras
+          // para que la próxima factura sí matchee directo.
+          if (existente.match_method === "nombre_similar" && cb) {
+            updates.codigo_barras = cb;
+          }
           await supabase.from("items_catalogo").update(updates).eq("id", existente.id);
           updatesCatalogo.push(existente.id);
           if (!f.item_id && f.es_nuevo_oc) {
-            const idx = itemsNuevosOC.findIndex(x => x.codigo_barras === cb);
+            const idx = itemsNuevosOC.findIndex(x => (cb && x.codigo_barras === cb) || x.nombre === f.nombre);
             if (idx >= 0) itemsNuevosOC[idx].item_id = existente.id;
           }
-        } else {
-          // Crear nuevo en catálogo (sólo si no es bonificación O si lo es pero sí tiene un costo derivable de otra línea)
-          // Si es bonificación con costo 0 y no existe en catálogo, lo creamos pero con precio_compra=0 marcado para revisión.
+        } else if (cb) {
+          // Solo crear nuevo si tenemos código de barras (caso item totalmente nuevo
+          // que no existe en catálogo). Si no hay código de barras y no matcheó por
+          // nombre, mejor omitir para evitar pollution.
           const newId = `ITM_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
           const { error: ec } = await supabase.from("items_catalogo").insert({
             id: newId,
@@ -402,7 +414,7 @@ export default function FacturaProveedorModal({ oc, onClose, reload, currentUser
           });
           if (!ec) {
             creadosCatalogo.push({ id: newId, nombre: f.nombre, bonif: !!f.es_bonificacion });
-            const idx = itemsNuevosOC.findIndex(x => x.codigo_barras === cb);
+            const idx = itemsNuevosOC.findIndex(x => (cb && x.codigo_barras === cb) || x.nombre === f.nombre);
             if (idx >= 0) itemsNuevosOC[idx].item_id = newId;
           }
         }

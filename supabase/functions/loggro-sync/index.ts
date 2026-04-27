@@ -1199,7 +1199,8 @@ serve(async (req) => {
           createdOn: now,
           modifiedOn: now,
         };
-        if (it.unidad) payload.unit = it.unidad;
+        // NO incluir 'unit' — Loggro espera un ObjectId no un string,
+        // y al omitirlo usa la unidad por defecto.
 
         const r = await loggroRaw("POST", "/ingredients", payload);
         if (!r.ok) {
