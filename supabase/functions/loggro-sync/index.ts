@@ -939,6 +939,191 @@ serve(async (req) => {
       });
     }
 
+    // ════════════════════════════════════════════════════════════════════
+    // POST /loggro-sync/reset-all-to-zero
+    // Pone TODO el inventario de Loggro en 0 creando movimientos de
+    // ajuste-salida para cada ingrediente con stock > 0. Útil para
+    // establecer un nuevo baseline.
+    // Body opcional: { dry_run: true }  (devuelve los items que tocaría)
+    // ════════════════════════════════════════════════════════════════════
+    if (req.method === "POST" && path === "/reset-all-to-zero") {
+      const body = await req.json().catch(() => ({}));
+      const dryRun = !!body.dry_run;
+
+      const { businessId, userId } = await getLoggroIdentity();
+
+      // 1) Listar todos los ingredientes
+      const ingList: any = await loggroGet("/ingredients?limit=2000");
+      const ingredients: any[] = Array.isArray(ingList) ? ingList
+        : Array.isArray(ingList?.data) ? ingList.data
+        : Array.isArray(ingList?.items) ? ingList.items
+        : Array.isArray(ingList?.results) ? ingList.results
+        : [];
+
+      const conStock: Array<{ id: string; name: string; stock: number }> = [];
+      // Concurrencia para no saturar
+      const ids = ingredients.map((i: any) => i?._id || i?.id).filter(Boolean);
+      let idx = 0;
+      async function worker() {
+        while (idx < ids.length) {
+          const myIdx = idx++;
+          const id = ids[myIdx];
+          try {
+            const d: any = await loggroGet(`/ingredients/${id}`);
+            let totalStock = 0;
+            if (Array.isArray(d?.locationsStock)) {
+              totalStock = d.locationsStock.reduce((s: number, ls: any) => s + (Number(ls.stock) || 0), 0);
+            }
+            if (totalStock > 0.0001) {
+              conStock.push({ id, name: d?.name || "", stock: totalStock });
+            }
+          } catch (_) { /* skip */ }
+        }
+      }
+      await Promise.all(Array.from({ length: 10 }, () => worker()));
+
+      if (dryRun) {
+        return json({
+          ok: true,
+          dry_run: true,
+          total_ingredientes: ingredients.length,
+          con_stock_mayor_0: conStock.length,
+          stock_total: conStock.reduce((s, x) => s + x.stock, 0),
+          items: conStock.slice(0, 50),  // muestra
+        });
+      }
+
+      // 2) Crear movimiento de salida (ajuste negativo) para cada uno
+      //    type 11 = ajuste, isSubtracted = true
+      const now = new Date().toISOString();
+      const movementPayload: any = {
+        business: businessId,
+        user: userId,
+        date: now,
+        type: 11,                      // ajuste
+        isSubtracted: true,            // saca stock
+        isProduction: false,
+        isMoveTo: false,
+        deleted: false,
+        note: "Reset a 0 — establecer nuevo baseline desde Atolón OS",
+        ingredients: conStock.map(it => ({
+          ingredient: it.id,
+          quantity: it.stock,
+          price: 0,
+        })),
+        createdOn: now,
+        modifiedOn: now,
+      };
+
+      const result = await loggroRaw("POST", "/inventories", movementPayload);
+      if (!result.ok) {
+        return json({
+          ok: false,
+          error: `Loggro respondió ${result.status}`,
+          loggro_response: result.body,
+        }, 502);
+      }
+
+      return json({
+        ok: true,
+        movement_id: result.body?._id || result.body?.id || null,
+        items_reseteados: conStock.length,
+        stock_total_sacado: conStock.reduce((s, x) => s + x.stock, 0),
+      });
+    }
+
+    // ════════════════════════════════════════════════════════════════════
+    // POST /loggro-sync/load-baseline
+    // Carga un inventario baseline en Loggro: para cada item del payload,
+    // crea un movimiento de entrada (ajuste positivo) con la cantidad.
+    // Body: {
+    //   conteo_id: "CNT-..."      // opcional, lee items_conteos
+    //   items: [{loggro_id, quantity, name?}, ...]   // o explícito
+    //   note?: string
+    // }
+    // ════════════════════════════════════════════════════════════════════
+    if (req.method === "POST" && path === "/load-baseline") {
+      const body = await req.json().catch(() => ({}));
+      const { businessId, userId } = await getLoggroIdentity();
+
+      let baselineItems: Array<{ loggro_id: string; quantity: number; name?: string }> = [];
+
+      if (body.conteo_id) {
+        // Leer del conteo en BD
+        const supaUrl = Deno.env.get("SUPABASE_URL");
+        const supaKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+        if (!supaUrl || !supaKey) return json({ ok: false, error: "Supabase env missing" }, 500);
+
+        const conteoRes = await fetch(`${supaUrl}/rest/v1/items_conteos?id=eq.${body.conteo_id}&select=items,locacion_id`, {
+          headers: { apikey: supaKey, Authorization: `Bearer ${supaKey}` },
+        });
+        const conteoArr = await conteoRes.json();
+        const conteo = Array.isArray(conteoArr) && conteoArr[0];
+        if (!conteo) return json({ ok: false, error: "conteo_id no encontrado" }, 404);
+
+        // Resolver loggro_id de cada item del conteo (cruzar con items_catalogo)
+        const itemIds = (conteo.items || []).map((it: any) => it.item_id).filter(Boolean);
+        const catRes = await fetch(`${supaUrl}/rest/v1/items_catalogo?id=in.(${itemIds.join(",")})&select=id,nombre,loggro_id`, {
+          headers: { apikey: supaKey, Authorization: `Bearer ${supaKey}` },
+        });
+        const catArr = await catRes.json();
+        const catById: Record<string, any> = {};
+        for (const c of catArr) catById[c.id] = c;
+
+        for (const it of (conteo.items || [])) {
+          const cat = catById[it.item_id];
+          const cant = Number(it.contado) || 0;
+          if (cat?.loggro_id && cant > 0) {
+            baselineItems.push({ loggro_id: cat.loggro_id, quantity: cant, name: cat.nombre });
+          }
+        }
+      } else if (Array.isArray(body.items)) {
+        baselineItems = body.items.filter((x: any) => x.loggro_id && Number(x.quantity) > 0);
+      } else {
+        return json({ ok: false, error: "Falta conteo_id o items" }, 400);
+      }
+
+      if (baselineItems.length === 0) {
+        return json({ ok: false, error: "No hay items para cargar (verifica que tengan loggro_id y cantidad > 0)" });
+      }
+
+      const now = new Date().toISOString();
+      const movementPayload: any = {
+        business: businessId,
+        user: userId,
+        date: now,
+        type: 11,                      // ajuste
+        isSubtracted: false,           // ingresa stock
+        isProduction: false,
+        isMoveTo: false,
+        deleted: false,
+        note: body.note || `Baseline desde Atolón OS — conteo ${body.conteo_id || "manual"}`,
+        ingredients: baselineItems.map(it => ({
+          ingredient: it.loggro_id,
+          quantity: it.quantity,
+          price: 0,
+        })),
+        createdOn: now,
+        modifiedOn: now,
+      };
+
+      const result = await loggroRaw("POST", "/inventories", movementPayload);
+      if (!result.ok) {
+        return json({
+          ok: false,
+          error: `Loggro respondió ${result.status}`,
+          loggro_response: result.body,
+        }, 502);
+      }
+
+      return json({
+        ok: true,
+        movement_id: result.body?._id || result.body?.id || null,
+        items_cargados: baselineItems.length,
+        cantidad_total: baselineItems.reduce((s, x) => s + x.quantity, 0),
+      });
+    }
+
     // POST /loggro-sync/create-inventory-movement
     // Body (lo que Atolón OS envía):
     //   {

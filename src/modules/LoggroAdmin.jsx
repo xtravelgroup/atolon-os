@@ -147,6 +147,7 @@ export default function LoggroAdmin() {
         {[
           { key: "productos", label: "🍴 Productos" },
           { key: "mesas", label: "🪑 Mesas" },
+          { key: "inventario", label: "📦 Inventario" },
         ].map(t => (
           <button key={t.key} onClick={() => setTab(t.key)} style={{
             padding: "8px 18px", borderRadius: 8, border: `1px solid ${tab === t.key ? B.sky : B.navyLight}`,
@@ -155,6 +156,9 @@ export default function LoggroAdmin() {
           }}>{t.label}</button>
         ))}
       </div>
+
+      {/* ══ INVENTARIO — Reset a 0 + Cargar baseline ══ */}
+      {tab === "inventario" && <InventarioBaselineTab callSync={callSync} syncing={syncing} setSyncing={setSyncing} />}
 
       {/* ══ PRODUCTOS ══ */}
       {tab === "productos" && (
@@ -374,6 +378,169 @@ function MatchModal({ item, loggroProducts, onClose, onSave }) {
           <div style={{ flex: 1 }} />
           <button onClick={onClose} style={{ ...BTN(B.navyLight), fontSize: 11 }}>Cerrar</button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════════════════
+// TAB INVENTARIO — Reset Loggro a 0 + Cargar baseline desde conteo
+// ════════════════════════════════════════════════════════════════════
+function InventarioBaselineTab({ callSync, syncing, setSyncing }) {
+  const [conteos, setConteos] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [resetResult, setResetResult] = useState(null);
+  const [loadResult, setLoadResult] = useState(null);
+  const [dryRun, setDryRun] = useState(null);
+
+  useEffect(() => {
+    if (!supabase) return;
+    setLoading(true);
+    supabase.from("items_conteos")
+      .select("id, locacion_id, fecha, usuario_email, total_items, tipo_conteo, created_at")
+      .eq("tipo_conteo", "inicial")
+      .order("created_at", { ascending: false })
+      .then(({ data }) => { setConteos(data || []); setLoading(false); });
+  }, []);
+
+  const previewReset = async () => {
+    setSyncing("/reset-all-to-zero");
+    try {
+      const res = await fetch(`${FN_URL}/reset-all-to-zero`, {
+        method: "POST",
+        headers: { ...FN_HEADERS, "Content-Type": "application/json" },
+        body: JSON.stringify({ dry_run: true }),
+      });
+      const data = await res.json();
+      setDryRun(data);
+    } catch (e) {
+      alert(`Error: ${e.message}`);
+    } finally {
+      setSyncing(null);
+    }
+  };
+
+  const ejecutarReset = async () => {
+    if (!confirm(`⚠️ ESTO PONE TODO EL INVENTARIO DE LOGGRO EN 0.\n\nVa a sacar ${dryRun?.con_stock_mayor_0 || "todos los"} ítems con stock > 0 (total ${dryRun?.stock_total || "?"} unidades).\n\n¿Continuar?`)) return;
+    setSyncing("/reset-all-to-zero");
+    try {
+      const res = await fetch(`${FN_URL}/reset-all-to-zero`, {
+        method: "POST",
+        headers: { ...FN_HEADERS, "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      const data = await res.json();
+      setResetResult(data);
+      if (data.ok) alert(`✓ Reset completado: ${data.items_reseteados} ítems sacados (${data.stock_total_sacado} unidades). Movement ID: ${data.movement_id}`);
+      else alert(`Error: ${data.error}`);
+    } catch (e) {
+      alert(`Error: ${e.message}`);
+    } finally {
+      setSyncing(null);
+    }
+  };
+
+  const cargarBaseline = async (conteoId) => {
+    if (!confirm(`Cargar este conteo como ENTRADA / AJUSTE en Loggro?`)) return;
+    setSyncing("/load-baseline");
+    try {
+      const res = await fetch(`${FN_URL}/load-baseline`, {
+        method: "POST",
+        headers: { ...FN_HEADERS, "Content-Type": "application/json" },
+        body: JSON.stringify({ conteo_id: conteoId, note: `Baseline desde Atolón OS — conteo ${conteoId}` }),
+      });
+      const data = await res.json();
+      setLoadResult({ conteoId, ...data });
+      if (data.ok) alert(`✓ Baseline cargado: ${data.items_cargados} ítems (${data.cantidad_total} unidades). Movement ID: ${data.movement_id}`);
+      else alert(`Error: ${data.error}`);
+    } catch (e) {
+      alert(`Error: ${e.message}`);
+    } finally {
+      setSyncing(null);
+    }
+  };
+
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+      {/* PASO 1: Reset a 0 */}
+      <div style={{ background: B.navyMid, borderRadius: 12, padding: 20, border: `1px solid ${B.danger}33`, borderLeft: `4px solid ${B.danger}` }}>
+        <div style={{ fontSize: 11, color: B.danger, textTransform: "uppercase", fontWeight: 700, letterSpacing: "0.06em" }}>PASO 1</div>
+        <h3 style={{ margin: "6px 0 12px", fontSize: 17 }}>🗑 Resetear todo a 0</h3>
+        <p style={{ fontSize: 12, color: "rgba(255,255,255,0.6)", lineHeight: 1.6 }}>
+          Crea un movimiento de <strong>ajuste-salida</strong> (type 11) en Loggro Restobar que saca todos los ingredientes con stock {">"} 0.
+          Esto es destructivo — confirma 2 veces antes de ejecutar.
+        </p>
+
+        {dryRun && (
+          <div style={{ background: B.navy, borderRadius: 8, padding: 12, marginTop: 12, fontSize: 12 }}>
+            <div style={{ fontSize: 11, color: B.sand, fontWeight: 700, marginBottom: 6 }}>Vista previa</div>
+            <div>Total ingredientes en Loggro: <strong>{dryRun.total_ingredientes}</strong></div>
+            <div>Con stock {">"} 0: <strong style={{ color: B.warning }}>{dryRun.con_stock_mayor_0}</strong></div>
+            <div>Stock total a sacar: <strong style={{ color: B.warning }}>{dryRun.stock_total}</strong></div>
+          </div>
+        )}
+
+        {resetResult && (
+          <div style={{ background: B.success + "11", border: `1px solid ${B.success}55`, borderRadius: 8, padding: 12, marginTop: 12, fontSize: 12 }}>
+            <div style={{ color: B.success, fontWeight: 700 }}>✓ Reset completado</div>
+            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.7)" }}>{resetResult.items_reseteados} ítems · {resetResult.stock_total_sacado} unidades</div>
+          </div>
+        )}
+
+        <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
+          <button onClick={previewReset} disabled={!!syncing}
+            style={{ flex: 1, padding: "10px 14px", borderRadius: 8, border: `1px solid ${B.sky}`, background: B.sky + "22", color: B.sky, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+            {syncing === "/reset-all-to-zero" && !dryRun ? "Cargando..." : "👁 Vista previa"}
+          </button>
+          <button onClick={ejecutarReset} disabled={!!syncing || !dryRun}
+            style={{ flex: 1, padding: "10px 14px", borderRadius: 8, border: "none", background: B.danger, color: "#fff", fontSize: 12, fontWeight: 800, cursor: dryRun ? "pointer" : "not-allowed", opacity: dryRun ? 1 : 0.4 }}>
+            ⚠ Ejecutar reset
+          </button>
+        </div>
+      </div>
+
+      {/* PASO 2: Cargar baseline */}
+      <div style={{ background: B.navyMid, borderRadius: 12, padding: 20, border: `1px solid ${B.success}33`, borderLeft: `4px solid ${B.success}` }}>
+        <div style={{ fontSize: 11, color: B.success, textTransform: "uppercase", fontWeight: 700, letterSpacing: "0.06em" }}>PASO 2</div>
+        <h3 style={{ margin: "6px 0 12px", fontSize: 17 }}>📥 Cargar baseline (entrada / ajuste)</h3>
+        <p style={{ fontSize: 12, color: "rgba(255,255,255,0.6)", lineHeight: 1.6 }}>
+          Crea un movimiento de <strong>ajuste-entrada</strong> (type 11, isSubtracted=false) con las cantidades reales de un conteo marcado como ★ INICIAL.
+          Solo entran items que tengan <code>loggro_id</code> mapeado en el catálogo.
+        </p>
+
+        <div style={{ marginTop: 12 }}>
+          <div style={{ fontSize: 11, color: B.sand, fontWeight: 700, textTransform: "uppercase", marginBottom: 6 }}>Conteos iniciales disponibles</div>
+          {loading ? <div style={{ color: "rgba(255,255,255,0.4)", fontSize: 12 }}>Cargando…</div>
+            : conteos.length === 0 ? (
+              <div style={{ color: "rgba(255,255,255,0.4)", fontSize: 12, padding: 10, fontStyle: "italic" }}>
+                Sin conteos marcados como inicial. Marca uno desde Hacer Inventario.
+              </div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                {conteos.map(c => (
+                  <div key={c.id} style={{ background: B.navy, padding: "10px 12px", borderRadius: 8, display: "flex", justifyContent: "space-between", alignItems: "center", border: `1px solid ${B.sand}33` }}>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: 13, fontWeight: 700 }}>{c.locacion_id} · {c.total_items} ítems</div>
+                      <div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)" }}>{c.usuario_email} · {new Date(c.created_at).toLocaleString("es-CO")}</div>
+                    </div>
+                    <button onClick={() => cargarBaseline(c.id)} disabled={!!syncing}
+                      style={{ padding: "8px 14px", borderRadius: 6, border: "none", background: B.success, color: B.navy, fontSize: 11, fontWeight: 800, cursor: "pointer" }}>
+                      📥 Cargar
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )
+          }
+        </div>
+
+        {loadResult && (
+          <div style={{ background: B.success + "11", border: `1px solid ${B.success}55`, borderRadius: 8, padding: 12, marginTop: 12, fontSize: 12 }}>
+            <div style={{ color: B.success, fontWeight: 700 }}>✓ Baseline cargado</div>
+            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.7)" }}>{loadResult.items_cargados} ítems · {loadResult.cantidad_total} unidades</div>
+            {loadResult.movement_id && <div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", marginTop: 4 }}>Movement ID: {loadResult.movement_id}</div>}
+          </div>
+        )}
       </div>
     </div>
   );
