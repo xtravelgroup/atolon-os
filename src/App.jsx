@@ -230,6 +230,7 @@ import Presupuesto from "./modules/Presupuesto";
 import EstadoResultados from "./modules/EstadoResultados";
 import Activos from "./modules/Activos";
 import Requisiciones from "./modules/Requisiciones";
+import Compras from "./modules/Compras";
 import EmpleadoPortal from "./modules/EmpleadoPortal";
 import AgenciaPortal from "./modules/AgenciaPortal";
 import LasAmericasPortal from "./modules/LasAmericasPortal";
@@ -297,6 +298,7 @@ const MODULE_MAP = {
   estado_resultados: <EstadoResultados />,
   activos: <Activos />,
   requisiciones: <Requisiciones />,
+  compras: <Compras />,
   items: <Items />,
   hacer_inventario: <HacerInventario />,
   loggro: <LoggroAdmin />,

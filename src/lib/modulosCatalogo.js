@@ -98,6 +98,7 @@ export const GRUPOS_NAV = [
       { key: "presupuesto",   label: "Presupuesto",   icon: "○"  },
       { key: "activos",       label: "Activos",       icon: "⚒" },
       { key: "requisiciones", label: "Requisiciones", icon: "✆" },
+      { key: "compras",       label: "Compras",       icon: "🛒" },
       { key: "items",         label: "Inventario",     icon: "📦" },
       { key: "mantenimiento", label: "Mantenimiento", icon: "🔧" },
       { key: "proveedores",   label: "Proveedores",   icon: "📦" },
