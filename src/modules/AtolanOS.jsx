@@ -321,7 +321,7 @@ export default function AtolanOS({ activeModule = "dashboard", onNavigate, modul
   // Módulos restringidos a una lista cerrada de emails (override total).
   // Aunque seas admin, si el módulo está aquí y tu email no, no lo ves.
   const RESTRICTED_MODULES = {
-    compras: ["erickern1@gmail.com"],
+    compras: ["eric@atoloncartagena.com", "erickern1@gmail.com"],
   };
 
   const canSee = useCallback((key) => {
