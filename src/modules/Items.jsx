@@ -2764,17 +2764,11 @@ function InventarioBarTab({ items, categorias }) {
       });
   }, [items, stockPorLoc]);
 
-  // Categorías a excluir aunque estén en grupo bebidas — son insumos de
-  // recetas que no forman parte del inventario "vendible" del bar.
-  const CATS_EXCLUIR = ["Producción BAR"];
-
   const filasFiltradas = useMemo(() => {
     return filas.filter(f => {
       // Solo bebidas — el bar no tiene alimentos ni otros
       const grupo = grupoPorCategoria[f.item.categoria] || "otros";
       if (grupo !== "bebidas") return false;
-      // Excluir categorías de producción (insumos de cocteles)
-      if (CATS_EXCLUIR.includes(f.item.categoria)) return false;
       if (soloConStock && f.total === 0) return false;
       const q = search.trim().toLowerCase();
       if (q && !((f.item.nombre || "").toLowerCase().includes(q) || (f.item.codigo || "").toLowerCase().includes(q))) return false;
@@ -2819,7 +2813,6 @@ function InventarioBarTab({ items, categorias }) {
           {categorias
             .filter(c => c.activo !== false)
             .filter(c => (c.grupo || "otros") === "bebidas")
-            .filter(c => !CATS_EXCLUIR.includes(c.nombre))
             .map(c => (
               <option key={c.id} value={c.nombre}>{c.icono || "📁"} {c.nombre}</option>
             ))}
