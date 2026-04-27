@@ -218,12 +218,17 @@ export default function BookingPopup() {
   // AtolanTrack: init on mount, mark funnel step 1
   useEffect(() => {
     AtolanTrack.init().then(() => {
-      AtolanTrack.evento("booking_widget_visto", { lang: langQ }, "booking");
+      // Asocia el slug del pasadía a la sesión para que el bridge
+      // postMessageBridge pueda incluirlo en cada evento al window padre.
+      if (typeof AtolanTrack.setPasadiaSlug === "function") {
+        AtolanTrack.setPasadiaSlug(product?.slug || null);
+      }
+      AtolanTrack.evento("booking_widget_visto", { lang: langQ, slug: product?.slug }, "booking");
       AtolanTrack.embudo_paso(1, { lang: langQ });
       AtolanTrack.setCurrentStep(1);
       if (langQ !== "es") AtolanTrack.setLang(langQ);
     });
-  }, []);
+  }, [product?.slug]);
 
   // ── Recovery link: pre-fill cart from token ──────────────────────────────
   useEffect(() => {
@@ -307,8 +312,9 @@ export default function BookingPopup() {
         const isMob = /Mobile|Android|iPhone|iPad/i.test(navigator.userAgent);
         const deviceType = isMob ? "mobile" : "desktop";
         // UTMs desde sessionStorage / AtolanTrack
-        const utms  = AtolanTrack._utms ?? {};
-        const landing = sessionStorage.getItem("ac_landing") || window.location.origin + "/booking";
+        const utms     = AtolanTrack._utms     ?? {};
+        const clickIds = AtolanTrack._clickIds ?? {};
+        const landing  = sessionStorage.getItem("ac_landing") || window.location.origin + "/booking";
 
         if (!acCartIdRef.current) {
           // Primero: verificar si hay un cart reciente con el mismo email
@@ -351,6 +357,16 @@ export default function BookingPopup() {
           utm_campaign:         utms.utm_campaign || null,
           utm_content:          utms.utm_content || null,
           utm_term:             utms.utm_term || null,
+          // Click-IDs (atribución plataforma de ads)
+          fbclid:               clickIds.fbclid    || null,
+          gclid:                clickIds.gclid     || null,
+          wbraid:               clickIds.wbraid    || null,
+          gbraid:               clickIds.gbraid    || null,
+          ttclid:               clickIds.ttclid    || null,
+          msclkid:              clickIds.msclkid   || null,
+          li_fat_id:            clickIds.li_fat_id || null,
+          // Contexto técnico (para Meta CAPI / GA4 server-side)
+          user_agent:           navigator.userAgent || null,
           landing_page:         landing,
           checkout_url:         window.location.href,
           estado:               "checkout_started",
