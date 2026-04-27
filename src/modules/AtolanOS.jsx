@@ -318,10 +318,19 @@ export default function AtolanOS({ activeModule = "dashboard", onNavigate, modul
       .catch(() => setUserModulos(null));
   }, [userEmail]);
 
+  // Módulos restringidos a una lista cerrada de emails (override total).
+  // Aunque seas admin, si el módulo está aquí y tu email no, no lo ves.
+  const RESTRICTED_MODULES = {
+    compras: ["erickern1@gmail.com"],
+  };
+
   const canSee = useCallback((key) => {
+    // Restricciones explícitas (whitelist por email) — corren ANTES que el sistema de roles
+    const allowed = RESTRICTED_MODULES[key];
+    if (allowed && !allowed.includes((userEmail || "").toLowerCase())) return false;
     if (!userModulos || userModulos.length === 0) return true;
     return userModulos.includes(key);
-  }, [userModulos]);
+  }, [userModulos, userEmail]);
 
   // Filtered nav structure
   const visibleNavGroups = NAV_GROUPS.map(g => ({

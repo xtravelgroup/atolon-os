@@ -9,6 +9,8 @@ import { supabase } from "../lib/supabase";
 import { useBreakpoint } from "../lib/responsive.js";
 import FacturaProveedorModal from "../components/FacturaProveedorModal";
 import LogisticaOCModal from "../components/LogisticaOCModal";
+import EmailOCModal from "../components/EmailOCModal";
+import CXPPagoModal from "../components/CXPPagoModal";
 
 const TABS = [
   { key: "dashboard", label: "Dashboard", icon: "📊" },
@@ -99,7 +101,7 @@ export default function Compras() {
         : tab === "dashboard" ? <TabDashboard ordenes={ordenes} entregas={entregas} transportes={transportes} zarpes={zarpes} setTab={setTab} />
         : tab === "ordenes"   ? <TabOrdenes ordenes={ordenes} reload={reload} currentUser={currentUser} />
         : tab === "logistica" ? <TabLogistica ordenes={ordenes} entregas={entregas} transportes={transportes} zarpes={zarpes} reload={reload} currentUser={currentUser} />
-        : tab === "cxp"       ? <TabCXP ordenes={ordenes} />
+        : tab === "cxp"       ? <TabCXP ordenes={ordenes} reload={reload} currentUser={currentUser} />
         : tab === "reportes"  ? <TabReportes ordenes={ordenes} />
         : null}
     </div>
@@ -191,6 +193,7 @@ function TabOrdenes({ ordenes, reload, currentUser }) {
   const [busqueda, setBusqueda] = useState("");
   const [openFactura, setOpenFactura] = useState(null);
   const [openLogistica, setOpenLogistica] = useState(null);
+  const [openEmail, setOpenEmail] = useState(null);
 
   const filtradas = useMemo(() => {
     let list = ordenes;
@@ -260,6 +263,11 @@ function TabOrdenes({ ordenes, reload, currentUser }) {
                   <div style={{ textAlign: isMobile ? "left" : "right", display: "flex", flexDirection: "column", gap: 6, alignItems: isMobile ? "flex-start" : "flex-end" }}>
                     <div style={{ fontSize: 16, fontWeight: 800, color: B.sand, fontFamily: "'Barlow Condensed', sans-serif" }}>{COP(oc.total || 0)}</div>
                     <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                      <button onClick={() => setOpenEmail(oc)}
+                        style={btnAccion(B.pink)}
+                        title="Enviar OC al proveedor por correo con PDF">
+                        📧 Email
+                      </button>
                       <button onClick={() => setOpenFactura(oc)}
                         style={btnAccion(oc.factura_aplicada ? B.success : B.warning)}>
                         {oc.factura_aplicada ? "📄✓ Factura" : "📎 Factura"}
@@ -279,6 +287,7 @@ function TabOrdenes({ ordenes, reload, currentUser }) {
 
       {openFactura && <FacturaProveedorModal oc={openFactura} onClose={() => setOpenFactura(null)} reload={reload} currentUser={currentUser} />}
       {openLogistica && <LogisticaOCModal oc={openLogistica} onClose={() => setOpenLogistica(null)} reload={reload} currentUser={currentUser} />}
+      {openEmail && <EmailOCModal oc={openEmail} onClose={() => setOpenEmail(null)} reload={reload} currentUser={currentUser} />}
     </div>
   );
 }
@@ -361,45 +370,131 @@ function TabLogistica({ ordenes, entregas, transportes, zarpes, reload, currentU
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// TAB CXP — Cuentas por Pagar (basado en facturas aplicadas)
+// TAB CXP — Cuentas por Pagar con aging, vencimientos y registro de pagos
 // ═══════════════════════════════════════════════════════════════════════════
-function TabCXP({ ordenes }) {
+function TabCXP({ ordenes, reload, currentUser }) {
+  const [openPago, setOpenPago] = useState(null);
+  const [filtro, setFiltro] = useState("pendientes"); // pendientes | vencidas | proximas | pagadas | todas
+  const today = new Date();
+
   const conFactura = ordenes.filter(o => o.factura_aplicada);
-  const totalFacturado = conFactura.reduce((s, o) => s + Number(o.total || 0), 0);
+
+  // Calcular aging por OC
+  const enriquecidas = conFactura.map(oc => {
+    const total = Number(oc.total || 0);
+    const pagado = Number(oc.monto_pagado || 0);
+    const saldo = total - pagado;
+    const venceEnDias = oc.fecha_vencimiento_pago
+      ? Math.floor((new Date(oc.fecha_vencimiento_pago) - today) / 86400000)
+      : null;
+    const bucket = oc.pagada_completa ? "pagadas"
+      : venceEnDias === null ? "pendientes"
+      : venceEnDias < 0 ? "vencidas"
+      : venceEnDias <= 7 ? "proximas"
+      : "pendientes";
+    return { ...oc, _saldo: saldo, _pagado: pagado, _vence: venceEnDias, _bucket: bucket };
+  });
+
+  // KPIs por bucket
+  const buckets = {
+    vencidas:   enriquecidas.filter(o => o._bucket === "vencidas"),
+    proximas:   enriquecidas.filter(o => o._bucket === "proximas"),
+    pendientes: enriquecidas.filter(o => o._bucket === "pendientes"),
+    pagadas:    enriquecidas.filter(o => o._bucket === "pagadas"),
+  };
+
+  const sum = (list) => list.reduce((s, o) => s + Number(o._saldo || 0), 0);
+  const sumPagado = (list) => list.reduce((s, o) => s + Number(o._pagado || 0), 0);
+
+  // Aging buckets
+  const aging = {
+    al_dia:    enriquecidas.filter(o => o._bucket !== "pagadas" && (o._vence === null || o._vence >= 0)),
+    "1-30":    enriquecidas.filter(o => o._bucket !== "pagadas" && o._vence !== null && o._vence < 0 && o._vence >= -30),
+    "31-60":   enriquecidas.filter(o => o._bucket !== "pagadas" && o._vence !== null && o._vence < -30 && o._vence >= -60),
+    "61-90":   enriquecidas.filter(o => o._bucket !== "pagadas" && o._vence !== null && o._vence < -60 && o._vence >= -90),
+    "+90":     enriquecidas.filter(o => o._bucket !== "pagadas" && o._vence !== null && o._vence < -90),
+  };
+
+  const filtradas = filtro === "todas" ? enriquecidas : (buckets[filtro] || []);
+  const sortFn = (a, b) => {
+    if (a._vence === null && b._vence !== null) return 1;
+    if (b._vence === null && a._vence !== null) return -1;
+    return (a._vence ?? 0) - (b._vence ?? 0);
+  };
+  filtradas.sort(sortFn);
 
   return (
     <div>
-      <div style={{ background: B.navyMid, padding: 14, borderRadius: 10, marginBottom: 14, border: `1px solid ${B.navyLight}` }}>
-        <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", fontWeight: 700 }}>Total facturado pendiente de pago</div>
-        <div style={{ fontSize: 28, fontWeight: 800, color: B.sand, marginTop: 4, fontFamily: "'Barlow Condensed', sans-serif" }}>{COP(totalFacturado)}</div>
-        <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginTop: 2 }}>{conFactura.length} factura{conFactura.length !== 1 ? "s" : ""}</div>
+      {/* KPIs */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 10, marginBottom: 14 }}>
+        <KpiCXP label="Vencidas"      count={buckets.vencidas.length}   total={sum(buckets.vencidas)}   color={B.danger}  onClick={() => setFiltro("vencidas")}   active={filtro === "vencidas"} />
+        <KpiCXP label="Vencen ≤ 7d"   count={buckets.proximas.length}   total={sum(buckets.proximas)}   color={B.warning} onClick={() => setFiltro("proximas")}   active={filtro === "proximas"} />
+        <KpiCXP label="Pendientes"    count={buckets.pendientes.length} total={sum(buckets.pendientes)} color={B.sky}     onClick={() => setFiltro("pendientes")} active={filtro === "pendientes"} />
+        <KpiCXP label="Pagadas (mes)" count={buckets.pagadas.length}    total={sumPagado(buckets.pagadas)} color={B.success} onClick={() => setFiltro("pagadas")} active={filtro === "pagadas"} />
       </div>
 
-      {conFactura.length === 0
+      {/* Aging */}
+      <div style={{ background: B.navyMid, borderRadius: 10, padding: 12, marginBottom: 14, border: `1px solid ${B.navyLight}` }}>
+        <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", fontWeight: 700, marginBottom: 8 }}>Aging (días vencidos)</div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 8 }}>
+          {[
+            ["al_dia", "Al día", B.success],
+            ["1-30",   "1-30",   B.warning],
+            ["31-60",  "31-60",  "#FF8C42"],
+            ["61-90",  "61-90",  B.danger],
+            ["+90",    "+90",    "#8B0000"],
+          ].map(([k, l, c]) => (
+            <div key={k} style={{ background: B.navy, padding: 8, borderRadius: 6, borderTop: `2px solid ${c}` }}>
+              <div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)" }}>{l}</div>
+              <div style={{ fontSize: 14, fontWeight: 800, color: c, fontFamily: "'Barlow Condensed', sans-serif" }}>{aging[k].length}</div>
+              <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)" }}>{COP(sum(aging[k]))}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Lista */}
+      {filtradas.length === 0
         ? <div style={{ textAlign: "center", padding: 60, color: "rgba(255,255,255,0.3)" }}>
-            Sin facturas aplicadas todavía. Adjunta facturas desde la pestaña Órdenes.
+            {filtro === "pagadas" ? "Sin pagos registrados todavía." : "Sin facturas pendientes."}
           </div>
         : (
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            {conFactura.map(oc => {
+            {filtradas.map(oc => {
               const f = oc.factura_data || {};
+              const venceColor =
+                oc._bucket === "vencidas" ? B.danger
+                : oc._bucket === "proximas" ? B.warning
+                : oc._bucket === "pagadas" ? B.success
+                : B.sky;
               return (
                 <div key={oc.id} style={{
                   background: B.navy, borderRadius: 8, padding: "10px 14px",
-                  border: `1px solid ${B.navyLight}`, borderLeft: `4px solid ${B.warning}`,
-                  display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10,
+                  border: `1px solid ${B.navyLight}`, borderLeft: `4px solid ${venceColor}`,
+                  display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap",
                 }}>
-                  <div style={{ flex: 1 }}>
+                  <div style={{ flex: 1, minWidth: 200 }}>
                     <div style={{ fontSize: 13, fontWeight: 800 }}>
                       📄 {f.factura_numero || "—"} · {oc.codigo}
+                      {oc.pagada_completa && <span style={{ marginLeft: 8, fontSize: 10, padding: "2px 8px", background: B.success, color: B.navy, borderRadius: 12, fontWeight: 700 }}>PAGADA</span>}
                     </div>
                     <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginTop: 2 }}>
                       {oc.proveedor_nombre} · NIT {oc.proveedor_nit || "—"} · {fmtFecha(f.factura_fecha || oc.fecha_emision)}
                     </div>
+                    {oc.fecha_vencimiento_pago && (
+                      <div style={{ fontSize: 11, color: venceColor, marginTop: 2, fontWeight: 700 }}>
+                        {oc._vence < 0 ? `⚠ Vencida hace ${Math.abs(oc._vence)}d` : oc._vence === 0 ? "🔔 Vence hoy" : `Vence en ${oc._vence}d`} · {fmtFecha(oc.fecha_vencimiento_pago)}
+                      </div>
+                    )}
                   </div>
                   <div style={{ textAlign: "right" }}>
                     <div style={{ fontSize: 15, fontWeight: 800, color: B.sand, fontFamily: "'Barlow Condensed', sans-serif" }}>{COP(oc.total || 0)}</div>
-                    <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)" }}>IVA {COP(oc.factura_iva || 0)}</div>
+                    {oc._pagado > 0 && <div style={{ fontSize: 10, color: B.success }}>Pagado: {COP(oc._pagado)}</div>}
+                    {oc._saldo > 0 && <div style={{ fontSize: 11, color: B.warning, fontWeight: 700 }}>Saldo: {COP(oc._saldo)}</div>}
+                    <button onClick={() => setOpenPago(oc)}
+                      style={{ ...btnAccion(B.warning), marginTop: 4 }}>
+                      💳 {oc.pagada_completa ? "Ver pagos" : "Registrar pago"}
+                    </button>
                   </div>
                 </div>
               );
@@ -408,9 +503,22 @@ function TabCXP({ ordenes }) {
         )
       }
 
-      <div style={{ marginTop: 20, padding: 12, background: B.navyMid, border: `1px dashed ${B.navyLight}`, borderRadius: 8, fontSize: 11, color: "rgba(255,255,255,0.4)" }}>
-        💡 Próximamente: registro de pagos, vencimientos, conciliación bancaria y aging.
-      </div>
+      {openPago && <CXPPagoModal oc={openPago} onClose={() => setOpenPago(null)} reload={reload} currentUser={currentUser} />}
+    </div>
+  );
+}
+
+function KpiCXP({ label, count, total, color, onClick, active }) {
+  return (
+    <div onClick={onClick} style={{
+      background: active ? color + "22" : B.navyMid,
+      border: `1px solid ${active ? color : B.navyLight}`,
+      borderLeft: `4px solid ${color}`,
+      borderRadius: 10, padding: 12, cursor: "pointer",
+    }}>
+      <div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", fontWeight: 700 }}>{label}</div>
+      <div style={{ fontSize: 22, fontWeight: 800, color, fontFamily: "'Barlow Condensed', sans-serif", marginTop: 2 }}>{count}</div>
+      <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)" }}>{COP(total)}</div>
     </div>
   );
 }

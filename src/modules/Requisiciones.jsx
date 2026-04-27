@@ -4,6 +4,8 @@ import { supabase } from "../lib/supabase";
 import { getCart, clearCart } from "../lib/requisicionCart";
 import FacturaProveedorModal from "../components/FacturaProveedorModal";
 import LogisticaOCModal from "../components/LogisticaOCModal";
+import CotizacionModal from "../components/CotizacionModal";
+import EmailOCModal from "../components/EmailOCModal";
 
 // ─── Constantes ──────────────────────────────────────────────────────────────
 const ESTADOS = ["Borrador", "Pendiente", "Aprobada", "En Compra", "Recibida Parcial", "Recibida", "Rechazada"];
@@ -1044,6 +1046,7 @@ function TabRecepciones({ ordenes, reqs, reload, currentUser }) {
   const [openOC, setOpenOC] = useState(null);
   const [openFactura, setOpenFactura] = useState(null);
   const [openLogistica, setOpenLogistica] = useState(null);
+  const [openEmail, setOpenEmail] = useState(null);
 
   // Badges por estado de OC
   const OC_BADGE = {
@@ -1095,6 +1098,12 @@ function TabRecepciones({ ordenes, reqs, reload, currentUser }) {
                   <div style={{ fontSize: 16, fontWeight: 800, color: B.sand, fontFamily: "'Barlow Condensed', sans-serif" }}>{COP(oc.total || 0)}</div>
                   <span style={{ background: badge.bg, color: badge.color, padding: "3px 10px", borderRadius: 20, fontSize: 11, fontWeight: 700, whiteSpace: "nowrap" }}>{badge.label}</span>
                   <div style={{ marginTop: 6, display: "flex", gap: 6, justifyContent: "flex-end", flexWrap: "wrap" }}>
+                    <button onClick={(e) => { e.stopPropagation(); setOpenEmail(oc); }}
+                      style={{ padding: "4px 10px", fontSize: 11, fontWeight: 700, borderRadius: 6,
+                        border: `1px solid ${B.pink}`, background: B.pink + "22", color: B.pink, cursor: "pointer" }}
+                      title="Enviar OC al proveedor por correo">
+                      📧 Email
+                    </button>
                     <button onClick={(e) => { e.stopPropagation(); setOpenFactura(oc); }}
                       style={{ padding: "4px 10px", fontSize: 11, fontWeight: 700, borderRadius: 6,
                         border: `1px solid ${oc.factura_aplicada ? B.success : B.warning}`,
@@ -1121,6 +1130,7 @@ function TabRecepciones({ ordenes, reqs, reload, currentUser }) {
       {openOC && <RecepcionOCModal oc={openOC} reqs={reqs} onClose={() => setOpenOC(null)} reload={reload} currentUser={currentUser} />}
       {openFactura && <FacturaProveedorModal oc={openFactura} onClose={() => setOpenFactura(null)} reload={reload} currentUser={currentUser} />}
       {openLogistica && <LogisticaOCModal oc={openLogistica} onClose={() => setOpenLogistica(null)} reload={reload} currentUser={currentUser} />}
+      {openEmail && <EmailOCModal oc={openEmail} onClose={() => setOpenEmail(null)} reload={reload} currentUser={currentUser} />}
     </>
   );
 }
@@ -1918,6 +1928,7 @@ function NewReqModal({ tipoInicial, areaInicial, onClose, onSave, proveedores, r
 // ═══════════════════════════════════════════════════════════════════════════
 function DetailModal({ req, onClose, onUpdate, onGenerarOC, proveedores, reglas, currentUser, reload }) {
   const [comment, setComment] = useState("");
+  const [openCotizaciones, setOpenCotizaciones] = useState(false);
   const [editingProv, setEditingProv] = useState(false);
   const [provSel, setProvSel] = useState(req.proveedor_id || "");
   // Split por proveedor: { item_idx: proveedor_id }
@@ -2124,24 +2135,36 @@ function DetailModal({ req, onClose, onUpdate, onGenerarOC, proveedores, reglas,
           ) : (
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
               <div style={{ fontSize: 13, fontWeight: 700 }}>{req.proveedor_nombre || req.proveedor || "Sin asignar"}</div>
-              {req.estado === "Aprobada" && (
-                <button onClick={() => {
-                  if (!req.proveedor_id && !req.proveedor_nombre) {
-                    setEditingProv(true);
-                    return;
-                  }
-                  if (!confirm(`Generar OC para ${req.proveedor_nombre} con los ${(req.items || []).length} ítems?`)) return;
-                  onGenerarOC(req);
-                }}
-                  style={{
-                    background: (req.proveedor_id || req.proveedor_nombre) ? B.success : B.navyLight,
-                    color: (req.proveedor_id || req.proveedor_nombre) ? B.navy : "rgba(255,255,255,0.5)",
-                    border: "none", borderRadius: 8, padding: "9px 18px", fontSize: 13, fontWeight: 800, cursor: "pointer",
-                    whiteSpace: "nowrap",
-                  }}>
-                  🧾 Generar OC →
-                </button>
-              )}
+              <div style={{ display: "flex", gap: 8 }}>
+                {(req.estado === "Aprobada" || req.estado === "Pendiente" || req.estado === "En Compra") && (
+                  <button onClick={() => setOpenCotizaciones(true)}
+                    style={{
+                      background: B.sky + "22", color: B.sky, border: `1px solid ${B.sky}`,
+                      borderRadius: 8, padding: "9px 14px", fontSize: 13, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap",
+                    }}
+                    title="Cargar y comparar cotizaciones de proveedores con AI">
+                    📋 Cotizaciones
+                  </button>
+                )}
+                {req.estado === "Aprobada" && (
+                  <button onClick={() => {
+                    if (!req.proveedor_id && !req.proveedor_nombre) {
+                      setEditingProv(true);
+                      return;
+                    }
+                    if (!confirm(`Generar OC para ${req.proveedor_nombre} con los ${(req.items || []).length} ítems?`)) return;
+                    onGenerarOC(req);
+                  }}
+                    style={{
+                      background: (req.proveedor_id || req.proveedor_nombre) ? B.success : B.navyLight,
+                      color: (req.proveedor_id || req.proveedor_nombre) ? B.navy : "rgba(255,255,255,0.5)",
+                      border: "none", borderRadius: 8, padding: "9px 18px", fontSize: 13, fontWeight: 800, cursor: "pointer",
+                      whiteSpace: "nowrap",
+                    }}>
+                    🧾 Generar OC →
+                  </button>
+                )}
+              </div>
             </div>
           )}
         </div>
@@ -2494,6 +2517,8 @@ function DetailModal({ req, onClose, onUpdate, onGenerarOC, proveedores, reglas,
           </div>
         </div>
       </div>
+
+      {openCotizaciones && <CotizacionModal requisicion={req} onClose={() => setOpenCotizaciones(false)} reload={reload} currentUser={currentUser} />}
     </div>
   );
 }
