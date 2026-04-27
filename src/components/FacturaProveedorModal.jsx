@@ -608,7 +608,6 @@ export default function FacturaProveedorModal({ oc, onClose, reload, currentUser
                   + 🎁 Agregar bonificación
                 </button>
               </div>
-              </div>
               <table style={{ width: "100%", fontSize: 12, borderCollapse: "collapse" }}>
                 <thead>
                   <tr style={{ background: B.navyLight }}>
