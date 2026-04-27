@@ -27,7 +27,8 @@ export default function Activos() {
     ]);
     setActivos((aR.data || []).map(a => ({
       id: a.id, cat: a.cat, nombre: a.nombre, marca: a.marca || "", modelo: a.modelo || "",
-      serie: a.serie || "", valor: a.valor || 0, compra: a.fecha_compra, estado: a.estado || "bueno",
+      serie: a.serie || "", valor: a.valor || 0, cantidad: Number(a.cantidad) || 1,
+      compra: a.fecha_compra, estado: a.estado || "bueno",
       area: a.area || "", ubicacion: a.ubicacion || "", deprec: a.deprec || 0,
       notas: a.notas || "", foto_url: a.foto_url || null, fotos_urls: a.fotos_urls || [],
       mantenimientos: a.mantenimientos || [],
@@ -38,8 +39,9 @@ export default function Activos() {
 
   useEffect(() => { fetchAll(); }, [fetchAll]);
 
-  const totalVal = activos.reduce((s, a) => s + a.valor, 0);
-  const totalDeprec = activos.reduce((s, a) => s + a.deprec, 0);
+  const totalUnits = activos.reduce((s, a) => s + (a.cantidad || 1), 0);
+  const totalVal = activos.reduce((s, a) => s + a.valor * (a.cantidad || 1), 0);
+  const totalDeprec = activos.reduce((s, a) => s + a.deprec * (a.cantidad || 1), 0);
 
   // Items filtrados (por área, categoría, búsqueda)
   const filtered = useMemo(() => {
@@ -93,9 +95,9 @@ export default function Activos() {
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, marginBottom: 24 }}>
         {[
-          { label: "Total Activos", val: activos.length, color: B.sky },
+          { label: "Tipos de Activo", val: activos.length, color: B.sky },
+          { label: "Unidades Totales", val: totalUnits, color: "#a78bfa" },
           { label: "Valor Total", val: COP(totalVal), color: B.sand },
-          { label: "Depreciación Acum.", val: COP(totalDeprec), color: B.danger },
           { label: "Valor Neto", val: COP(totalVal - totalDeprec), color: B.success },
         ].map(s => (
           <div key={s.label} style={{ background: B.navyMid, borderRadius: 12, padding: "16px 20px", borderLeft: `4px solid ${s.color}` }}>
@@ -151,7 +153,7 @@ export default function Activos() {
                   <span style={{ fontSize: 15, fontWeight: 800, color: g.area.color || B.sand }}>{g.area.nombre}</span>
                   <span style={{ fontSize: 11, color: "rgba(255,255,255,0.5)" }}>· {g.items.length} activo{g.items.length !== 1 ? "s" : ""}</span>
                 </div>
-                <span style={{ fontSize: 13, fontWeight: 700, color: B.sand }}>{COP(g.items.reduce((s, x) => s + x.valor, 0))}</span>
+                <span style={{ fontSize: 13, fontWeight: 700, color: B.sand }}>{COP(g.items.reduce((s, x) => s + x.valor * (x.cantidad || 1), 0))}</span>
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 10, padding: 12 }}>
                 {g.items.map(a => <ActivoCard key={a.id} a={a} selected={selected === a.id} onClick={() => setSelected(a.id === selected ? null : a.id)} />)}
@@ -164,7 +166,7 @@ export default function Activos() {
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
             <thead>
               <tr style={{ borderBottom: `1px solid ${B.navyLight}` }}>
-                {["📷", "Nombre", "Categoría", "Área", "Ubicación", "Valor", "Estado"].map(h => (
+                {["📷", "Nombre", "Cant.", "Categoría", "Área", "Ubicación", "Valor Total", "Estado"].map(h => (
                   <th key={h} style={{ padding: "12px", textAlign: "left", fontSize: 11, color: B.sand, textTransform: "uppercase", letterSpacing: 1 }}>{h}</th>
                 ))}
               </tr>
@@ -180,10 +182,11 @@ export default function Activos() {
                     }
                   </td>
                   <td style={{ padding: "12px", fontSize: 13, fontWeight: 600 }}>{a.nombre}</td>
+                  <td style={{ padding: "12px", fontSize: 13, fontWeight: 700, color: (a.cantidad || 1) > 1 ? "#a78bfa" : "rgba(255,255,255,0.7)" }}>×{a.cantidad || 1}</td>
                   <td style={{ padding: "12px", fontSize: 12 }}>{a.cat}</td>
                   <td style={{ padding: "12px", fontSize: 12 }}>{a.area || "—"}</td>
                   <td style={{ padding: "12px", fontSize: 12, color: "rgba(255,255,255,0.7)" }}>{a.ubicacion || "—"}</td>
-                  <td style={{ padding: "12px", fontSize: 13 }}>{COP(a.valor)}</td>
+                  <td style={{ padding: "12px", fontSize: 13 }}>{COP(a.valor * (a.cantidad || 1))}</td>
                   <td style={{ padding: "12px" }}>
                     <span style={{ fontSize: 11, padding: "3px 8px", borderRadius: 12, background: a.estado === "bueno" ? B.success + "22" : a.estado === "regular" ? B.warning + "22" : B.danger + "22", color: a.estado === "bueno" ? B.success : a.estado === "regular" ? B.warning : B.danger }}>{a.estado}</span>
                   </td>
@@ -228,11 +231,19 @@ function ActivoCard({ a, selected, onClick }) {
         <div style={{ width: "100%", height: 120, background: B.navyMid, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 32, color: "rgba(255,255,255,0.2)" }}>📦</div>
       )}
       <div style={{ padding: 10 }}>
-        <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 4 }}>{a.nombre}</div>
+        <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 4, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 6 }}>
+          <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.nombre}</span>
+          {(a.cantidad || 1) > 1 && (
+            <span style={{ fontSize: 11, padding: "2px 7px", borderRadius: 10, background: "#a78bfa22", color: "#a78bfa", fontWeight: 800, whiteSpace: "nowrap" }}>×{a.cantidad}</span>
+          )}
+        </div>
         <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginBottom: 4 }}>{a.cat}{a.marca ? ` · ${a.marca}` : ""}</div>
         {a.ubicacion && <div style={{ fontSize: 11, color: B.sky }}>📍 {a.ubicacion}</div>}
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 6 }}>
-          <span style={{ fontSize: 12, fontWeight: 700, color: B.sand }}>{COP(a.valor)}</span>
+          <span style={{ fontSize: 12, fontWeight: 700, color: B.sand }}>
+            {COP(a.valor * (a.cantidad || 1))}
+            {(a.cantidad || 1) > 1 && <span style={{ fontSize: 9, color: "rgba(255,255,255,0.4)", fontWeight: 500 }}> ({COP(a.valor)} c/u)</span>}
+          </span>
           <span style={{ fontSize: 9, padding: "2px 6px", borderRadius: 8, background: estadoColor + "22", color: estadoColor }}>{a.estado}</span>
         </div>
       </div>
@@ -275,6 +286,16 @@ function DetallePanel({ activo, onClose, onEdit, onDelete }) {
           </div>
 
           <div style={{ fontSize: 13, lineHeight: 1.9 }}>
+            <div style={{ display: "flex", gap: 10, marginBottom: 8 }}>
+              <div style={{ flex: 1, background: B.navy, padding: "8px 10px", borderRadius: 6 }}>
+                <div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", textTransform: "uppercase" }}>Cantidad</div>
+                <div style={{ fontSize: 18, fontWeight: 800, color: (activo.cantidad || 1) > 1 ? "#a78bfa" : "#fff" }}>×{activo.cantidad || 1}</div>
+              </div>
+              <div style={{ flex: 1, background: B.navy, padding: "8px 10px", borderRadius: 6 }}>
+                <div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", textTransform: "uppercase" }}>Valor total</div>
+                <div style={{ fontSize: 16, fontWeight: 800, color: B.sand }}>{COP(activo.valor * (activo.cantidad || 1))}</div>
+              </div>
+            </div>
             {activo.area && <div><span style={{ color: "rgba(255,255,255,0.5)" }}>Área:</span> <strong>{activo.area}</strong></div>}
             {activo.ubicacion && <div><span style={{ color: "rgba(255,255,255,0.5)" }}>📍 Ubicación:</span> <strong style={{ color: B.sky }}>{activo.ubicacion}</strong></div>}
             <div><span style={{ color: "rgba(255,255,255,0.5)" }}>Categoría:</span> {activo.cat}</div>
@@ -282,10 +303,10 @@ function DetallePanel({ activo, onClose, onEdit, onDelete }) {
             {activo.modelo && <div><span style={{ color: "rgba(255,255,255,0.5)" }}>Modelo:</span> {activo.modelo}</div>}
             {activo.serie && <div><span style={{ color: "rgba(255,255,255,0.5)" }}>Serie:</span> {activo.serie}</div>}
             <div><span style={{ color: "rgba(255,255,255,0.5)" }}>Estado:</span> {activo.estado}</div>
-            <div><span style={{ color: "rgba(255,255,255,0.5)" }}>Valor compra:</span> {COP(activo.valor)}</div>
+            <div><span style={{ color: "rgba(255,255,255,0.5)" }}>Valor unitario:</span> {COP(activo.valor)}</div>
             {activo.compra && <div><span style={{ color: "rgba(255,255,255,0.5)" }}>Fecha compra:</span> {fmtFecha(activo.compra)}</div>}
-            <div><span style={{ color: "rgba(255,255,255,0.5)" }}>Depreciación:</span> <span style={{ color: B.danger }}>{COP(activo.deprec)}</span></div>
-            <div><span style={{ color: "rgba(255,255,255,0.5)" }}>Valor neto:</span> <span style={{ color: B.success }}>{COP(activo.valor - activo.deprec)}</span></div>
+            <div><span style={{ color: "rgba(255,255,255,0.5)" }}>Depreciación c/u:</span> <span style={{ color: B.danger }}>{COP(activo.deprec)}</span></div>
+            <div><span style={{ color: "rgba(255,255,255,0.5)" }}>Valor neto:</span> <span style={{ color: B.success }}>{COP((activo.valor - activo.deprec) * (activo.cantidad || 1))}</span></div>
             {activo.notas && <div style={{ marginTop: 10, padding: 10, background: B.navy, borderRadius: 6, fontSize: 12 }}>{activo.notas}</div>}
           </div>
 
@@ -312,6 +333,7 @@ function ActivoFormModal({ activo, areas, onClose, onSaved }) {
     marca: activo?.marca || "",
     modelo: activo?.modelo || "",
     serie: activo?.serie || "",
+    cantidad: activo?.cantidad || 1,
     valor: activo?.valor || 0,
     fecha_compra: activo?.compra || todayStr(),
     estado: activo?.estado || "bueno",
@@ -377,6 +399,7 @@ function ActivoFormModal({ activo, areas, onClose, onSaved }) {
           ...form,
           valor: Number(form.valor) || 0,
           deprec: Number(form.deprec) || 0,
+          cantidad: Math.max(1, Number(form.cantidad) || 1),
           updated_at: new Date().toISOString(),
         }).eq("id", activo.id);
         if (error) throw error;
@@ -387,6 +410,7 @@ function ActivoFormModal({ activo, areas, onClose, onSaved }) {
           ...form,
           valor: Number(form.valor) || 0,
           deprec: Number(form.deprec) || 0,
+          cantidad: Math.max(1, Number(form.cantidad) || 1),
           mantenimientos: [],
         });
         if (error) throw error;
@@ -484,8 +508,16 @@ function ActivoFormModal({ activo, areas, onClose, onSaved }) {
             </select>
           </div>
           <div>
-            <label style={LBL}>Valor compra (COP)</label>
+            <label style={LBL}>Cantidad de unidades</label>
+            <input type="number" min={1} value={form.cantidad} onChange={e => set("cantidad", Math.max(1, Number(e.target.value) || 1))} style={INP} />
+            <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", marginTop: 3 }}>Ej: 50 sillas iguales → cantidad: 50</div>
+          </div>
+          <div>
+            <label style={LBL}>Valor unitario (COP)</label>
             <input type="number" value={form.valor} onChange={e => set("valor", e.target.value)} style={INP} placeholder="$0" />
+            {form.cantidad > 1 && Number(form.valor) > 0 && (
+              <div style={{ fontSize: 10, color: B.sand, marginTop: 3 }}>Total: {COP(Number(form.valor) * Number(form.cantidad))}</div>
+            )}
           </div>
           <div>
             <label style={LBL}>Fecha compra</label>
