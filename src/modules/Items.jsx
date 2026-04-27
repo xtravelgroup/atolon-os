@@ -256,6 +256,7 @@ export default function Items() {
       <div style={{ display: "flex", gap: 6, marginBottom: 20, flexWrap: "wrap" }}>
         {[
           { key: "general",    label: "🌐 Inventario General" },
+          { key: "bar",        label: "🍹 Bar + Almacén Bar" },
           { key: "inventario", label: "📦 Por Bodega" },
           { key: "catalogo",   label: "🛒 Productos" },
           { key: "categorias", label: "🏷️ Categorías" },
@@ -418,6 +419,14 @@ export default function Items() {
           categorias={categorias}
           catIconMap={catIconMap}
           catColorMap={catColorMap}
+        />
+      )}
+
+      {/* ══ TAB BAR + ALMACÉN BAR ══ */}
+      {tab === "bar" && (
+        <InventarioBarTab
+          items={items}
+          categorias={categorias}
         />
       )}
 
@@ -2714,6 +2723,186 @@ function TransferenciaModal({ item, locaciones, stockEnLoc, onClose, onSaved }) 
 // INVENTARIO GENERAL TAB
 // Vista consolidada (suma de todas las bodegas) con comparación contra Loggro
 // ═══════════════════════════════════════════════════════════════════════════
+// ─── Tab Bar + Almacén Bar ────────────────────────────────────────────
+// Suma stock de LOC-BAR + LOC-ALMACEN-BAR por producto, con filtros
+// macro (Alimentos/Bebidas/Otros), categoría y búsqueda.
+function InventarioBarTab({ items, categorias }) {
+  const [stockPorLoc, setStockPorLoc] = useState({});
+  const [search, setSearch] = useState("");
+  const [catFilter, setCatFilter] = useState("todas");
+  const [grupoFilter, setGrupoFilter] = useState("bebidas"); // default bebidas porque es el bar
+  const [soloConStock, setSoloConStock] = useState(true);
+
+  const grupoPorCategoria = useMemo(() => {
+    const m = {};
+    (categorias || []).forEach(c => { m[c.nombre] = c.grupo || "otros"; });
+    return m;
+  }, [categorias]);
+
+  useEffect(() => {
+    if (!supabase) return;
+    supabase.from("items_stock_locacion")
+      .select("item_id, locacion_id, cantidad")
+      .in("locacion_id", ["LOC-BAR", "LOC-ALMACEN-BAR"])
+      .then(({ data }) => {
+        const map = {};
+        (data || []).forEach(s => { map[`${s.item_id}|${s.locacion_id}`] = Number(s.cantidad) || 0; });
+        setStockPorLoc(map);
+      });
+  }, []);
+
+  const filas = useMemo(() => {
+    return items
+      .filter(i => i.activo !== false)
+      .map(i => {
+        const bar     = Number(stockPorLoc[`${i.id}|LOC-BAR`])         || 0;
+        const almacen = Number(stockPorLoc[`${i.id}|LOC-ALMACEN-BAR`]) || 0;
+        const total   = bar + almacen;
+        const loggro  = i.loggro_id ? Number(i.stock_actual) || 0 : null;
+        const diff    = loggro != null ? total - loggro : null;
+        return { item: i, bar, almacen, total, loggro, diff };
+      });
+  }, [items, stockPorLoc]);
+
+  const filasFiltradas = useMemo(() => {
+    return filas.filter(f => {
+      if (soloConStock && f.total === 0) return false;
+      const q = search.trim().toLowerCase();
+      if (q && !((f.item.nombre || "").toLowerCase().includes(q) || (f.item.codigo || "").toLowerCase().includes(q))) return false;
+      if (catFilter !== "todas" && f.item.categoria !== catFilter) return false;
+      if (grupoFilter !== "todos") {
+        const g = grupoPorCategoria[f.item.categoria] || "otros";
+        if (g !== grupoFilter) return false;
+      }
+      return true;
+    }).sort((a, b) => b.total - a.total);
+  }, [filas, search, catFilter, grupoFilter, soloConStock, grupoPorCategoria]);
+
+  const totalBar     = filasFiltradas.reduce((s, f) => s + f.bar, 0);
+  const totalAlmacen = filasFiltradas.reduce((s, f) => s + f.almacen, 0);
+  const totalCombo   = totalBar + totalAlmacen;
+  const totalLoggro  = filasFiltradas.reduce((s, f) => s + (f.loggro || 0), 0);
+  const conDiff      = filasFiltradas.filter(f => f.diff !== null && f.diff !== 0).length;
+
+  return (
+    <div>
+      {/* KPIs */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 12, marginBottom: 16 }}>
+        {[
+          { label: "Productos", value: filasFiltradas.length, color: B.sky },
+          { label: "Stock Bar", value: totalBar.toLocaleString("es-CO"), color: "#38bdf8" },
+          { label: "Stock Almacén Bar", value: totalAlmacen.toLocaleString("es-CO"), color: "#a78bfa" },
+          { label: "Total (Bar + Almacén)", value: totalCombo.toLocaleString("es-CO"), color: B.success },
+          { label: "Stock Loggro", value: totalLoggro.toLocaleString("es-CO"), color: "#22c55e" },
+          { label: "Con diferencia", value: conDiff, color: conDiff > 0 ? B.danger : B.success },
+        ].map(k => (
+          <div key={k.label} style={{ background: B.navyMid, borderRadius: 12, padding: "12px 16px", borderLeft: `4px solid ${k.color}` }}>
+            <div style={{ fontSize: 10, color: B.sand, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>{k.label}</div>
+            <div style={{ fontSize: 22, fontWeight: 700, fontFamily: "'Barlow Condensed', sans-serif", color: k.color }}>{k.value}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Chips grupo macro */}
+      <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
+        {[
+          { k: "todos",     l: "🌐 Todos",     c: B.sky    },
+          { k: "alimentos", l: "🍽️ Alimentos", c: "#f97316" },
+          { k: "bebidas",   l: "🍹 Bebidas",   c: "#38bdf8" },
+          { k: "otros",     l: "📦 Otros",     c: "#94a3b8" },
+        ].map(g => {
+          const active = grupoFilter === g.k;
+          return (
+            <button key={g.k} onClick={() => setGrupoFilter(g.k)}
+              style={{
+                padding: "8px 16px", borderRadius: 22, border: `1px solid ${active ? g.c : B.navyLight}`,
+                background: active ? g.c + "22" : B.navyMid, color: active ? g.c : "rgba(255,255,255,0.55)",
+                cursor: "pointer", fontSize: 13, fontWeight: 700, transition: "all 0.15s",
+              }}>{g.l}</button>
+          );
+        })}
+      </div>
+
+      {/* Filtros */}
+      <div style={{ display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap", alignItems: "center" }}>
+        <input value={search} onChange={e => setSearch(e.target.value)}
+          placeholder="🔎 Buscar producto…"
+          style={{ flex: 2, minWidth: 200, padding: "9px 12px", borderRadius: 8, background: B.navyMid, border: `1px solid ${B.navyLight}`, color: "#fff", fontSize: 13, outline: "none" }} />
+        <select value={catFilter} onChange={e => setCatFilter(e.target.value)}
+          style={{ padding: "9px 12px", borderRadius: 8, background: B.navyMid, border: `1px solid ${B.navyLight}`, color: "#fff", fontSize: 13, minWidth: 140 }}>
+          <option value="todas">Todas las categorías</option>
+          {categorias
+            .filter(c => c.activo !== false)
+            .filter(c => grupoFilter === "todos" || (c.grupo || "otros") === grupoFilter)
+            .map(c => (
+              <option key={c.id} value={c.nombre}>{c.icono || "📁"} {c.nombre}</option>
+            ))}
+        </select>
+        <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", fontSize: 12, color: "rgba(255,255,255,0.7)" }}>
+          <input type="checkbox" checked={soloConStock} onChange={e => setSoloConStock(e.target.checked)} />
+          Solo con stock
+        </label>
+      </div>
+
+      {/* Tabla */}
+      <div style={{ overflowX: "auto", background: B.navyMid, borderRadius: 12 }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, minWidth: 900 }}>
+          <thead>
+            <tr style={{ background: B.navyLight }}>
+              {["Producto", "Categoría", "Unidad", "Bar", "Almacén Bar", "Total", "Loggro", "Diferencia"].map((h, i) => (
+                <th key={h + i} style={{ padding: "11px 14px", textAlign: i < 3 ? "left" : "right", fontWeight: 700, color: "rgba(255,255,255,0.6)", fontSize: 11, textTransform: "uppercase", letterSpacing: "0.04em" }}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {filasFiltradas.length === 0 ? (
+              <tr><td colSpan={8} style={{ padding: 30, textAlign: "center", color: "rgba(255,255,255,0.3)", fontSize: 13 }}>Sin productos en Bar / Almacén Bar.</td></tr>
+            ) : filasFiltradas.map(f => {
+              const cat = categorias.find(c => c.nombre === f.item.categoria);
+              return (
+                <tr key={f.item.id} style={{ borderTop: "1px solid rgba(255,255,255,0.04)" }}>
+                  <td style={{ padding: "11px 14px" }}>
+                    <div style={{ fontWeight: 700, color: "#fff" }}>{f.item.nombre}</div>
+                    {f.item.codigo && <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>{f.item.codigo}</div>}
+                  </td>
+                  <td style={{ padding: "11px 14px" }}>
+                    {cat ? (
+                      <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 4, background: (cat.color || B.sky) + "22", color: cat.color || B.sky, fontWeight: 600 }}>
+                        {cat.icono || "📁"} {cat.nombre}
+                      </span>
+                    ) : <span style={{ color: "rgba(255,255,255,0.3)" }}>{f.item.categoria || "—"}</span>}
+                  </td>
+                  <td style={{ padding: "11px 14px", color: "rgba(255,255,255,0.5)", fontSize: 12 }}>{f.item.unidad || "—"}</td>
+                  <td style={{ padding: "11px 14px", textAlign: "right", fontWeight: 700, color: f.bar > 0 ? "#38bdf8" : f.bar < 0 ? B.danger : "rgba(255,255,255,0.3)" }}>
+                    {f.bar.toLocaleString("es-CO")}
+                  </td>
+                  <td style={{ padding: "11px 14px", textAlign: "right", fontWeight: 700, color: f.almacen > 0 ? "#a78bfa" : f.almacen < 0 ? B.danger : "rgba(255,255,255,0.3)" }}>
+                    {f.almacen.toLocaleString("es-CO")}
+                  </td>
+                  <td style={{ padding: "11px 14px", textAlign: "right", fontWeight: 800, color: f.total > 0 ? B.success : f.total < 0 ? B.danger : "rgba(255,255,255,0.3)", fontSize: 14 }}>
+                    {f.total.toLocaleString("es-CO")}
+                  </td>
+                  <td style={{ padding: "11px 14px", textAlign: "right", fontWeight: 700, color: f.loggro != null ? "#22c55e" : "rgba(255,255,255,0.3)" }}>
+                    {f.loggro != null ? f.loggro.toLocaleString("es-CO") : "—"}
+                  </td>
+                  <td style={{ padding: "11px 14px", textAlign: "right", fontWeight: 800,
+                    color: f.diff === null ? "rgba(255,255,255,0.3)" : f.diff === 0 ? B.success : B.danger }}>
+                    {f.diff === null ? "—" : (f.diff > 0 ? "+" : "") + f.diff.toLocaleString("es-CO")}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      <div style={{ marginTop: 14, padding: 12, background: B.navy, borderRadius: 8, fontSize: 11, color: "rgba(255,255,255,0.45)", lineHeight: 1.5 }}>
+        ℹ️ Suma de stock en <strong>LOC-BAR</strong> + <strong>LOC-ALMACEN-BAR</strong>. Por defecto muestra solo bebidas con stock. Cambia el filtro de grupo para ver otras categorías.
+      </div>
+    </div>
+  );
+}
+
 function InventarioGeneralTab({ items, categorias, catIconMap, catColorMap }) {
   const [locaciones, setLocaciones] = useState([]);
   const [stockPorLoc, setStockPorLoc] = useState({});
