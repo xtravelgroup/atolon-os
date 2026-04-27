@@ -188,15 +188,21 @@ export default function HacerInventario() {
   }, [items, stockPorLoc, locId]);
 
   const filtered = useMemo(() => {
-    // Por defecto trabajamos con los items asignados a esta bodega
-    let list = itemsBodega.length > 0 ? itemsBodega : items;
+    let list;
+    if (filterModo === "contados") {
+      // Para "contados" mostramos TODOS los items con conteo, sin importar la bodega
+      // (un item pudo haberse contado aunque no esté oficialmente en esta bodega)
+      list = items.filter(i => conteos[i.id] !== undefined && conteos[i.id] !== "");
+    } else {
+      // Por defecto trabajamos con los items asignados a esta bodega
+      list = itemsBodega.length > 0 ? itemsBodega : items;
+      if (filterModo === "pendientes") list = list.filter(i => conteos[i.id] === undefined || conteos[i.id] === "");
+    }
     if (catFilter !== "todos") list = list.filter(i => i.categoria === catFilter);
     if (search) {
       const s = search.toLowerCase();
       list = list.filter(i => i.nombre?.toLowerCase().includes(s) || i.codigo?.toLowerCase().includes(s));
     }
-    if (filterModo === "pendientes") list = list.filter(i => conteos[i.id] === undefined || conteos[i.id] === "");
-    else if (filterModo === "contados") list = list.filter(i => conteos[i.id] !== undefined && conteos[i.id] !== "");
     return list;
   }, [items, itemsBodega, search, catFilter, filterModo, conteos]);
 
