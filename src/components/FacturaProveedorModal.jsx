@@ -198,7 +198,13 @@ export default function FacturaProveedorModal({ oc, onClose, reload, currentUser
           }));
           setProgress(`✅ Factura leída — ${itemsRich.length} items extraídos${ocNoMatcheados.length ? ` · ${ocNoMatcheados.length} de la OC no facturados` : ""}`);
         } else {
-          setErr(result.error || "No se pudo leer la factura — ingresa los datos manualmente");
+          // Mostrar el error real con un poco de detalle del raw para diagnóstico
+          const detalle = result.stop_reason === "max_tokens"
+            ? " · Factura muy larga, contacta soporte."
+            : result.raw_first_chars
+              ? ` · Inicio: ${result.raw_first_chars.slice(0, 80)}…`
+              : "";
+          setErr((result.error || "No se pudo leer la factura") + detalle + " — Puedes ingresar los datos manualmente abajo.");
           setData(d => ({ ...d, factura_url: pub.publicUrl }));
         }
       } else {

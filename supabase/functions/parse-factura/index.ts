@@ -158,7 +158,8 @@ Instrucciones detalladas:
       },
       body: JSON.stringify({
         model: "claude-sonnet-4-5",  // Sonnet 4.5 con soporte PDF GA + mejor parsing
-        max_tokens: 8000,
+        max_tokens: 16000,
+        system: "Eres un extractor de facturas. SIEMPRE respondes SOLO con un objeto JSON válido sin markdown, sin texto antes ni después. Si la factura es larga, comprime espacios pero NO trunques los items.",
         messages: [{
           role: "user",
           content: [
@@ -185,16 +186,49 @@ Instrucciones detalladas:
     }
 
     const text = data.content?.[0]?.text || "";
-    // Extraer JSON del response (Claude a veces lo envuelve)
-    const m = text.match(/\{[\s\S]*\}/);
-    let parsed: any = null;
-    if (m) {
-      try { parsed = JSON.parse(m[0]); } catch (e) {
-        return new Response(JSON.stringify({ ok: false, error: "JSON inválido del modelo", raw: text.slice(0, 500) }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
-      }
+    const stopReason = data.stop_reason || "";
+
+    // Extraer JSON del response (Claude a veces lo envuelve en ```json...``` o agrega texto)
+    let cleaned = text.trim();
+    // Quitar bloques de markdown: ```json ... ``` o ``` ... ```
+    cleaned = cleaned.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/i, "").trim();
+    // Si todavía no empieza con {, buscar el primer {
+    if (!cleaned.startsWith("{")) {
+      const i = cleaned.indexOf("{");
+      if (i >= 0) cleaned = cleaned.slice(i);
     }
+    // Cortar después del último } balanceado
+    if (cleaned.startsWith("{")) {
+      let depth = 0, end = -1;
+      for (let i = 0; i < cleaned.length; i++) {
+        const c = cleaned[i];
+        if (c === "{") depth++;
+        else if (c === "}") { depth--; if (depth === 0) { end = i; break; } }
+      }
+      if (end > 0) cleaned = cleaned.slice(0, end + 1);
+    }
+
+    let parsed: any = null;
+    let parseError: string | null = null;
+    try {
+      parsed = JSON.parse(cleaned);
+    } catch (e: any) {
+      parseError = String(e?.message || e);
+    }
+
     if (!parsed) {
-      return new Response(JSON.stringify({ ok: false, error: "No se pudo parsear", raw: text.slice(0, 500) }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      const reason = stopReason === "max_tokens"
+        ? "El modelo se quedó sin tokens (factura muy larga). Sube max_tokens o procesa por páginas."
+        : `JSON inválido del modelo: ${parseError}`;
+      return new Response(JSON.stringify({
+        ok: false,
+        error: reason,
+        stop_reason: stopReason,
+        raw_first_chars:  text.slice(0, 800),
+        raw_last_chars:   text.slice(-400),
+        cleaned_preview:  cleaned.slice(0, 300),
+        usage: data.usage || null,
+      }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
     return new Response(JSON.stringify(parsed), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
