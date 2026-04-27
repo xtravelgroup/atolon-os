@@ -155,92 +155,120 @@ function Header({ session, view, setView }) {
 function ZarpesView({ session, onReservar }) {
   const [fecha, setFecha] = useState(todayStr());
   const [salidas, setSalidas] = useState([]);
-  const [reservasPorSalida, setReservasPorSalida] = useState({});  // { salida_id: pax_total }
-  const [bookingsPorSalida, setBookingsPorSalida] = useState({});  // { salida_id: pax_total partner }
+  const [disponSal, setDisponSal] = useState({});  // { salida_id: cuposDisp | -1 si no disponible }
   const [loading, setLoading] = useState(true);
 
+  // Misma lógica que BookingPopup: salidas_override + cierres + 45-min cutoff + auto-apertura
   const cargar = useCallback(async () => {
     setLoading(true);
-    const [sR, rR, pbR] = await Promise.all([
-      supabase.from("salidas").select("id, hora, hora_regreso, nombre, capacidad_total, embarcaciones").eq("activo", true).order("orden"),
+    const sR = await supabase.from("salidas").select("id, hora, hora_regreso, nombre, capacidad_total, auto_apertura, embarcaciones").eq("activo", true).order("orden");
+    const sals = sR.data || [];
+    setSalidas(sals);
+
+    const [resR, cierreR, ovrR, pbR] = await Promise.all([
       supabase.from("reservas").select("salida_id, pax, pax_a, pax_n, estado").eq("fecha", fecha),
+      supabase.from("cierres").select("tipo, salidas").eq("fecha", fecha).eq("activo", true),
+      supabase.from("salidas_override").select("salida_id, accion").eq("fecha", fecha),
       supabase.from("partner_bookings").select("salida_id, pax_total, estado").eq("fecha", fecha).neq("estado", "cancelada"),
     ]);
-    setSalidas(sR.data || []);
-
-    const reservasMap = {};
-    (rR.data || []).forEach(r => {
+    const paxBySalida = {};
+    (resR.data || []).forEach(r => {
       if (!r.salida_id) return;
-      const cancelada = (r.estado || "").toLowerCase().includes("cancel");
-      if (cancelada) return;
+      if ((r.estado || "").toLowerCase().includes("cancel")) return;
       const pax = Number(r.pax) || (Number(r.pax_a) || 0) + (Number(r.pax_n) || 0);
-      reservasMap[r.salida_id] = (reservasMap[r.salida_id] || 0) + pax;
+      paxBySalida[r.salida_id] = (paxBySalida[r.salida_id] || 0) + pax;
     });
-    setReservasPorSalida(reservasMap);
-
-    const bookingsMap = {};
     (pbR.data || []).forEach(b => {
       if (!b.salida_id) return;
-      bookingsMap[b.salida_id] = (bookingsMap[b.salida_id] || 0) + (Number(b.pax_total) || 0);
+      paxBySalida[b.salida_id] = (paxBySalida[b.salida_id] || 0) + (Number(b.pax_total) || 0);
     });
-    setBookingsPorSalida(bookingsMap);
 
+    const cierre = (cierreR.data || [])[0] || null;
+    const ovrMap = {};
+    (ovrR.data || []).forEach(o => { ovrMap[o.salida_id] = o.accion; });
+
+    const isToday = fecha === todayStr();
+    const nowMins = isToday ? (() => {
+      const t = new Date().toLocaleString("en-US", { timeZone: "America/Bogota", hour: "2-digit", minute: "2-digit", hour12: false });
+      const [h, m] = t.split(":").map(Number);
+      return h * 60 + m;
+    })() : -1;
+
+    const result = {};
+    sals.forEach(s => {
+      // Override manual
+      if (ovrMap[s.id] === "cerrar") { result[s.id] = -1; return; }
+      if (ovrMap[s.id] === "abrir")  { result[s.id] = Math.max(0, (s.capacidad_total || 30) - (paxBySalida[s.id] || 0)); return; }
+      // Cierre del día
+      if (cierre) {
+        if (cierre.tipo === "total") { result[s.id] = -1; return; }
+        if ((cierre.salidas || []).includes(s.id)) { result[s.id] = -1; return; }
+      }
+      // 45-min cutoff: si es hoy, cerrar salidas a menos de 45 min de zarpe
+      if (isToday && s.hora) {
+        const [h, m] = s.hora.split(":").map(Number);
+        if (nowMins >= (h * 60 + m) - 45) { result[s.id] = -1; return; }
+      }
+      // Auto-apertura: solo abre si las fijas están 75%+ llenas
+      if (s.auto_apertura) {
+        const fixedSals = sals.filter(f => !f.auto_apertura);
+        const allFull = fixedSals.every(f => (paxBySalida[f.id] || 0) / (f.capacidad_total || 1) >= 0.75);
+        if (!allFull) { result[s.id] = -1; return; }
+      }
+      result[s.id] = Math.max(0, (s.capacidad_total || 30) - (paxBySalida[s.id] || 0));
+    });
+    setDisponSal(result);
     setLoading(false);
   }, [fecha]);
 
   useEffect(() => { cargar(); }, [cargar]);
 
+  // Solo mostrar las salidas con cupos disponibles (>= 1)
+  const salidasDisponibles = salidas.filter(s => (disponSal[s.id] || 0) >= 1);
+
   return (
     <div>
       <div style={{ marginBottom: 16, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-        <h2 style={{ margin: 0, fontSize: 20 }}>Salidas del día</h2>
-        <input type="date" value={fecha} onChange={e => setFecha(e.target.value)}
+        <h2 style={{ margin: 0, fontSize: 20 }}>Salidas disponibles</h2>
+        <input type="date" value={fecha} onChange={e => setFecha(e.target.value)} min={todayStr()}
           style={{ padding: "8px 12px", borderRadius: 8, background: B.navyMid, border: `1px solid ${B.navyLight}`, color: B.white, fontSize: 13 }} />
       </div>
 
       {loading ? <div style={loadingStyle}>Cargando…</div>
-        : salidas.length === 0 ? (
+        : salidasDisponibles.length === 0 ? (
           <div style={{ textAlign: "center", padding: 40, color: "rgba(255,255,255,0.4)" }}>
             <div style={{ fontSize: 38, marginBottom: 10 }}>⛵</div>
-            <div>Sin salidas activas configuradas</div>
+            <div>Sin salidas disponibles para {fmtFecha(fecha)}</div>
+            <div style={{ fontSize: 12, color: "rgba(255,255,255,0.3)", marginTop: 6 }}>Intenta otro día</div>
           </div>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-            {salidas.map(s => {
-              const cap = Number(s.capacidad_total) || 0;
-              const ocupAtolon  = reservasPorSalida[s.id] || 0;
-              const ocupPartner = bookingsPorSalida[s.id] || 0;
-              const ocupTotal   = ocupAtolon + ocupPartner;
-              const disponibles = Math.max(0, cap - ocupTotal);
-              const lleno = disponibles === 0;
-
+            {salidasDisponibles.map(s => {
+              const cap = Number(s.capacidad_total) || 30;
+              const dispo = disponSal[s.id];
               return (
-                <div key={s.id} style={{ background: B.navyMid, borderRadius: 12, padding: 16, border: `1px solid ${B.navyLight}`, borderLeft: `4px solid ${lleno ? B.danger : PARTNER_COLOR}` }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
-                    <div style={{ flex: 1, minWidth: 200 }}>
-                      <div style={{ fontSize: 16, fontWeight: 800 }}>
-                        ⛵ {s.nombre} · {s.hora}
-                      </div>
-                      <div style={{ fontSize: 12, color: "rgba(255,255,255,0.55)", marginTop: 4 }}>
-                        Salida {s.hora} → Regreso {s.hora_regreso || "—"} · {fmtFecha(fecha)}
-                      </div>
-                      <div style={{ fontSize: 11, color: "rgba(255,255,255,0.45)", marginTop: 4 }}>
-                        Atolón: {ocupAtolon} pax · Partners: {ocupPartner} pax
-                      </div>
+                <div key={s.id} style={{ background: B.navyMid, borderRadius: 12, padding: 18, border: `1px solid ${B.navyLight}`, borderLeft: `4px solid ${PARTNER_COLOR}`, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12 }}>
+                  <div style={{ flex: 1, minWidth: 220 }}>
+                    <div style={{ fontSize: 18, fontWeight: 800 }}>
+                      ⛵ {s.nombre} · {s.hora}
                     </div>
-                    <div style={{ textAlign: "right", minWidth: 140 }}>
-                      <div style={{ fontSize: 26, fontWeight: 800, color: lleno ? B.danger : B.success, fontFamily: "'Barlow Condensed', sans-serif" }}>
-                        {disponibles} / {cap}
-                      </div>
-                      <div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)" }}>cupos disponibles</div>
-                      <button
-                        onClick={() => { localStorage.setItem("ba_salida_id", s.id); localStorage.setItem("ba_fecha", fecha); onReservar(); }}
-                        disabled={lleno}
-                        style={{ marginTop: 8, padding: "8px 16px", borderRadius: 8, border: "none", background: lleno ? B.navyLight : PARTNER_COLOR, color: "#fff", fontSize: 12, fontWeight: 700, cursor: lleno ? "not-allowed" : "pointer", opacity: lleno ? 0.5 : 1 }}>
-                        {lleno ? "Sin cupos" : "+ Tomar cupo"}
-                      </button>
+                    <div style={{ fontSize: 12, color: "rgba(255,255,255,0.6)", marginTop: 5 }}>
+                      Salida {s.hora} → Regreso {s.hora_regreso || "—"}
+                    </div>
+                    <div style={{ fontSize: 12, color: "rgba(255,255,255,0.55)", marginTop: 3 }}>
+                      {fmtFecha(fecha)}
                     </div>
                   </div>
+                  <button
+                    onClick={() => {
+                      localStorage.setItem("ba_salida_id", s.id);
+                      localStorage.setItem("ba_fecha", fecha);
+                      localStorage.setItem("ba_max_pax", String(dispo));
+                      onReservar();
+                    }}
+                    style={{ padding: "12px 22px", borderRadius: 10, border: "none", background: PARTNER_COLOR, color: "#fff", fontSize: 14, fontWeight: 800, cursor: "pointer" }}>
+                    Reservar →
+                  </button>
                 </div>
               );
             })}
@@ -257,6 +285,7 @@ function ZarpesView({ session, onReservar }) {
 function ReservarView({ session, onDone, onCancel }) {
   const salidaId = (typeof window !== "undefined") ? localStorage.getItem("ba_salida_id") : null;
   const fechaSel = (typeof window !== "undefined") ? localStorage.getItem("ba_fecha") || todayStr() : todayStr();
+  const maxPax   = (typeof window !== "undefined") ? Number(localStorage.getItem("ba_max_pax")) || 30 : 30;
   const [salida, setSalida] = useState(null);
   const [pasajeros, setPasajeros] = useState([emptyPax()]);
   const [notas, setNotas] = useState("");
@@ -270,10 +299,20 @@ function ReservarView({ session, onDone, onCancel }) {
   }, [salidaId]);
 
   const updatePax = (i, k, v) => setPasajeros(arr => arr.map((p, j) => j === i ? { ...p, [k]: v } : p));
-  const addPax    = () => setPasajeros(arr => [...arr, emptyPax()]);
+  const addPax    = () => {
+    if (pasajeros.length >= maxPax) {
+      setError(`Solo hay ${maxPax} cupo${maxPax !== 1 ? "s" : ""} disponible${maxPax !== 1 ? "s" : ""} en esta salida.`);
+      return;
+    }
+    setError("");
+    setPasajeros(arr => [...arr, emptyPax()]);
+  };
   const removePax = (i) => setPasajeros(arr => arr.filter((_, j) => j !== i));
 
   const validar = () => {
+    if (pasajeros.length > maxPax) {
+      return `Solo hay ${maxPax} cupo${maxPax !== 1 ? "s" : ""} disponible${maxPax !== 1 ? "s" : ""}. Quita ${pasajeros.length - maxPax} pasajero${(pasajeros.length - maxPax) !== 1 ? "s" : ""}.`;
+    }
     for (const p of pasajeros) {
       if (!p.nombre.trim() || !p.num_doc.trim() || !p.fecha_nac || !p.nacionalidad.trim()) {
         return "Completa nombre, documento, fecha de nacimiento y nacionalidad de cada pasajero.";
