@@ -29,9 +29,32 @@ export default function HacerInventario() {
   // Cargar locaciones y conteos históricos
   useEffect(() => {
     if (!supabase) return;
-    supabase.from("items_locaciones").select("*").eq("activa", true).order("orden")
-      .then(({ data }) => setLocaciones(data || []));
-    supabase.auth.getSession().then(({ data }) => setUserEmail(data?.session?.user?.email || ""));
+    (async () => {
+      const sess = await supabase.auth.getSession();
+      const email = sess?.data?.session?.user?.email || "";
+      setUserEmail(email);
+
+      // Cargar restricción de bodegas del usuario (si existe)
+      let bodegasPermitidas = null;
+      if (email) {
+        const { data: u } = await supabase.from("usuarios")
+          .select("bodegas_permitidas").eq("email", email).maybeSingle();
+        bodegasPermitidas = (u?.bodegas_permitidas?.length) ? u.bodegas_permitidas : null;
+      }
+
+      const { data: locs } = await supabase.from("items_locaciones")
+        .select("*").eq("activa", true).order("orden");
+      const filtradas = bodegasPermitidas
+        ? (locs || []).filter(l => bodegasPermitidas.includes(l.id))
+        : (locs || []);
+      setLocaciones(filtradas);
+
+      // Si solo tiene una bodega, autoseleccionarla y saltar al paso 2
+      if (bodegasPermitidas && filtradas.length === 1) {
+        setLocId(filtradas[0].id);
+      }
+    })();
+
     supabase.from("items_conteos").select("id, locacion_id, fecha, usuario_email, total_items, diferencias, notas, created_at")
       .order("created_at", { ascending: false }).limit(20)
       .then(({ data }) => setHistorial(data || []));
