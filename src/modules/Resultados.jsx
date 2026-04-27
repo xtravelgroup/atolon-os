@@ -247,6 +247,7 @@ export default function Resultados() {
   const [grupos,     setGrupos]     = useState(null);
   const [eventos,    setEventos]    = useState(null);
   const [ayb,        setAyb]        = useState(null);
+  const [otros,      setOtros]      = useState(null);   // actividades, masajes, transporte, spa
   // Proyecciones: reservas futuras del mes (mañana → fin de mes)
   const [proyPasadias, setProyPasadias] = useState(null);
   const [proyGrupos,   setProyGrupos]   = useState(null);
@@ -265,7 +266,7 @@ export default function Resultados() {
     setDiaDetalle(fecha);
     setLoadingDia(true);
     // Load all payments for this day
-    const [pagosFecha, pagosCreated, aybLoggro, llegadas] = await Promise.all([
+    const [pagosFecha, pagosCreated, aybLoggro, llegadas, actividades] = await Promise.all([
       // Reservas con fecha_pago = fecha
       supabase.from("reservas")
         .select("id, nombre, contacto, tipo, total, abono, forma_pago, fecha_pago, created_at, grupo_id, aliado_id")
@@ -283,6 +284,10 @@ export default function Resultados() {
       supabase.from("muelle_llegadas")
         .select("id, embarcacion_nombre, pax_total, total_cobrado, metodo_pago, tipo, fecha")
         .eq("fecha", fecha).gt("total_cobrado", 0),
+      // Otros ingresos: actividades, masajes, transporte, spa (todo desde actividades_ventas)
+      supabase.from("actividades_ventas")
+        .select("id, actividad_nombre, cliente_nombre, total, forma_pago, fecha, estado")
+        .eq("fecha", fecha).gt("total", 0).neq("estado", "cancelada"),
     ]);
 
     const items = [];
@@ -320,6 +325,17 @@ export default function Resultados() {
         concepto: l.tipo === "after_island" ? "After Island" : l.tipo === "restaurante" ? "Restaurante" : l.tipo,
         monto: l.total_cobrado || 0,
         metodo: l.metodo_pago || "—",
+      });
+    });
+    // Otros ingresos: actividades / masajes / transporte / spa
+    (actividades.data || []).forEach(a => {
+      items.push({
+        tipo: "otros",
+        id: a.id,
+        nombre: a.cliente_nombre || "—",
+        concepto: a.actividad_nombre || "Actividad",
+        monto: a.total || 0,
+        metodo: a.forma_pago || "—",
       });
     });
 
@@ -392,6 +408,14 @@ export default function Resultados() {
         .neq("tipo", "lancha_atolon")
         .is("reserva_id", null)
         .then(r => ({ periodo: p.key, cat: "llegadas", data: r.data || [] })),
+
+      // Otros ingresos: actividades, masajes, transporte, spa, etc
+      supabase.from("actividades_ventas")
+        .select("id, total, fecha, estado")
+        .gte("fecha", p.desde).lte("fecha", p.hasta <= hoyStr ? p.hasta : hoyStr)
+        .neq("estado", "cancelada")
+        .gt("total", 0)
+        .then(r => ({ periodo: p.key, cat: "otros", data: r.data || [] })),
     ]);
 
     const resultados = await Promise.all(queries);
@@ -484,10 +508,21 @@ export default function Resultados() {
       };
     });
 
+    // Otros ingresos: actividades, masajes, transporte, spa, etc.
+    const otrosR = {};
+    periodos.forEach(p => {
+      const rows = resultados.find(r => r.cat === "otros" && r.periodo === p.key)?.data || [];
+      otrosR[p.key] = {
+        cantidad: rows.length,
+        monto:    rows.reduce((s, x) => s + (Number(x.total) || 0), 0),
+      };
+    });
+
     setPasadias(pasR);
     setGrupos(grpR);
     setEventos(evR);
     setAyb(aybR);
+    setOtros(otrosR);
 
     // ── Proyecciones: reservas futuras ya confirmadas del mes ─────────────────
     const manana  = fechaColombia(1);
@@ -669,8 +704,8 @@ export default function Resultados() {
 
   // Totales del mes para el resumen ejecutivo
   const totalMes = (loading || !pasadias || !grupos || !eventos || !ayb) ? null : {
-    cantidad: (pasadias.mes?.cantidad || 0) + (grupos.mes?.cantidad || 0) + (eventos.mes?.cantidad || 0) + (ayb.mes?.cantidad || 0),
-    monto:    (pasadias.mes?.monto || 0) + (grupos.mes?.monto || 0) + (eventos.mes?.monto || 0) + (ayb.mes?.monto || 0),
+    cantidad: (pasadias.mes?.cantidad || 0) + (grupos.mes?.cantidad || 0) + (eventos.mes?.cantidad || 0) + (ayb.mes?.cantidad || 0) + (otros?.mes?.cantidad || 0),
+    monto:    (pasadias.mes?.monto || 0) + (grupos.mes?.monto || 0) + (eventos.mes?.monto || 0) + (ayb.mes?.monto || 0) + (otros?.mes?.monto || 0),
   };
 
   return (
@@ -833,12 +868,13 @@ export default function Resultados() {
       {totalMes && (
         <>
           {/* Cards por categoría */}
-          <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(4, 1fr)", gap: 12, marginBottom: 12 }}>
+          <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(5, 1fr)", gap: 12, marginBottom: 12 }}>
             {[
-              { label: "Pasadías (mes)",  valor: pasadias?.mes?.monto,  cant: pasadias?.mes?.cantidad,  color: B.sky,      icon: "🏖️", unit: "pasajeros" },
-              { label: "Grupos (mes)",    valor: grupos?.mes?.monto,    cant: grupos?.mes?.cantidad,    color: "#34d399",  icon: "👥", unit: "pasajeros" },
-              { label: "Eventos (mes)",   valor: eventos?.mes?.monto,   cant: eventos?.mes?.cantidad,   color: "#a78bfa",  icon: "🎉", unit: "eventos" },
-              { label: "A&B (mes)",       valor: ayb?.mes?.monto,       cant: ayb?.mes?.cantidad,       color: B.sand,     icon: "🍽️", unit: "días con cierre" },
+              { label: "Pasadías (mes)",       valor: pasadias?.mes?.monto,  cant: pasadias?.mes?.cantidad,  color: B.sky,      icon: "🏖️", unit: "pasajeros" },
+              { label: "Grupos (mes)",         valor: grupos?.mes?.monto,    cant: grupos?.mes?.cantidad,    color: "#34d399",  icon: "👥", unit: "pasajeros" },
+              { label: "Eventos (mes)",        valor: eventos?.mes?.monto,   cant: eventos?.mes?.cantidad,   color: "#a78bfa",  icon: "🎉", unit: "eventos" },
+              { label: "A&B (mes)",            valor: ayb?.mes?.monto,       cant: ayb?.mes?.cantidad,       color: B.sand,     icon: "🍽️", unit: "días con cierre" },
+              { label: "Otros Ingresos (mes)", valor: otros?.mes?.monto,     cant: otros?.mes?.cantidad,     color: "#fb923c",  icon: "✨", unit: "actividades" },
             ].map(k => (
               <div key={k.label} style={{ background: B.navyMid, borderRadius: 14, padding: isMobile ? "14px 16px" : "18px 20px", borderTop: `3px solid ${k.color}` }}>
                 <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 6 }}>{k.icon} {k.label}</div>
@@ -934,7 +970,7 @@ export default function Resultados() {
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 0 }}>
                 {PERIODOS.map(p => {
-                  const total = (pasadias?.[p.key]?.monto || 0) + (grupos?.[p.key]?.monto || 0) + (eventos?.[p.key]?.monto || 0) + (ayb?.[p.key]?.monto || 0);
+                  const total = (pasadias?.[p.key]?.monto || 0) + (grupos?.[p.key]?.monto || 0) + (eventos?.[p.key]?.monto || 0) + (ayb?.[p.key]?.monto || 0) + (otros?.[p.key]?.monto || 0);
                   return (
                     <div key={p.key} style={{ padding: "8px 6px", textAlign: "center", borderRight: `1px solid ${B.navyLight}` }}>
                       <div style={{ fontSize: 9, fontWeight: 700, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", marginBottom: 4 }}>{p.label}</div>
