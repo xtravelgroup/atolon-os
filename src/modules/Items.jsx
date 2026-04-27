@@ -153,7 +153,8 @@ export default function Items() {
       itemId = data.id;
     } else {
       itemId = form.id;
-      await supabase.from("items_catalogo").update(row).eq("id", itemId);
+      const { error } = await supabase.from("items_catalogo").update(row).eq("id", itemId);
+      if (error) return alert("Error al actualizar el producto: " + error.message);
     }
 
     // Sync proveedores: delete all then re-insert
