@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { B, COP, todayStr } from "../brand";
 import { supabase } from "../lib/supabase";
+import jsPDF from "jspdf";
 
 const IS = { width: "100%", padding: "10px 14px", borderRadius: 8, background: B.navy, border: `1px solid ${B.navyLight}`, color: B.white, fontSize: 13, outline: "none", boxSizing: "border-box" };
 const LS = { fontSize: 11, color: B.sand, display: "block", marginBottom: 5, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 700 };
@@ -75,6 +76,99 @@ export default function HacerInventario() {
   }, []);
 
   const stockEn = (item_id) => Number(stockPorLoc[`${item_id}|${locId}`]) || 0;
+
+  // ── Imprimir conteo actual como PDF ──
+  const imprimirConteo = () => {
+    const loc = locaciones.find(l => l.id === locId);
+    const doc = new jsPDF();
+    const m = 14;
+    let y = 20;
+
+    // Header
+    doc.setFontSize(10).setTextColor(150);
+    doc.text("ATOLON BEACH CLUB & HOTEL", m, y);
+    y += 6;
+    doc.setFontSize(18).setTextColor(0);
+    doc.text(`Conteo de Inventario`, m, y);
+    y += 7;
+    doc.setFontSize(11).setTextColor(60);
+    doc.text(`${loc?.nombre || locId}`, m, y);
+    y += 6;
+    doc.setFontSize(9).setTextColor(120);
+    doc.text(`Fecha: ${new Date().toLocaleString("es-CO")}`, m, y);
+    if (userEmail) { y += 4; doc.text(`Por: ${userEmail}`, m, y); }
+    y += 10;
+
+    // Tabla
+    const filas = items
+      .map(i => ({ ...i, contado: conteos[i.id] }))
+      .filter(i => i.contado !== undefined && i.contado !== "")
+      .sort((a, b) => (a.categoria || "").localeCompare(b.categoria || "") || a.nombre.localeCompare(b.nombre));
+
+    doc.setFillColor(13, 27, 62);
+    doc.rect(m, y, 182, 7, "F");
+    doc.setTextColor(255).setFontSize(9);
+    doc.text("Ítem", m + 2, y + 5);
+    doc.text("Categoría", m + 90, y + 5);
+    doc.text("Unidad", m + 130, y + 5);
+    doc.text("Stock", m + 158, y + 5, { align: "right" });
+    doc.text("Contado", m + 180, y + 5, { align: "right" });
+    y += 9;
+
+    doc.setTextColor(0).setFontSize(8);
+    filas.forEach((it, i) => {
+      if (y > 270) {
+        doc.addPage();
+        y = 20;
+      }
+      const stock = stockEn(it.id);
+      const cont  = Number(it.contado) || 0;
+      const dif   = cont - stock;
+      const tieneDif = Math.abs(dif) > 0.001;
+      doc.text(String(it.nombre || "—").slice(0, 50), m + 2, y);
+      doc.text(String(it.categoria || "—").slice(0, 16), m + 90, y);
+      doc.text(String(it.unidad || "—"), m + 130, y);
+      doc.setTextColor(120);
+      doc.text(String(stock), m + 158, y, { align: "right" });
+      // Contado en color si hay diferencia
+      if (tieneDif) {
+        doc.setTextColor(dif > 0 ? 16 : 200, dif > 0 ? 130 : 60, dif > 0 ? 80 : 60);
+        doc.setFont(undefined, "bold");
+      } else {
+        doc.setTextColor(0);
+        doc.setFont(undefined, "normal");
+      }
+      doc.text(String(cont), m + 180, y, { align: "right" });
+      doc.setTextColor(0).setFont(undefined, "normal");
+      y += 5;
+    });
+
+    // Totales
+    y += 6;
+    if (y > 270) { doc.addPage(); y = 20; }
+    doc.setFillColor(245, 245, 245);
+    doc.rect(m, y, 182, 7, "F");
+    doc.setFontSize(10).setTextColor(0).setFont(undefined, "bold");
+    doc.text(`Total ítems contados: ${filas.length}`, m + 2, y + 5);
+    const dif = filas.filter(f => Math.abs(Number(f.contado) - stockEn(f.id)) > 0.001).length;
+    doc.text(`Con diferencia: ${dif}`, m + 130, y + 5);
+    y += 12;
+
+    // Notas
+    if (notas) {
+      doc.setFontSize(9).setFont(undefined, "normal").setTextColor(60);
+      doc.text("Notas:", m, y); y += 5;
+      doc.setTextColor(0);
+      const lineas = doc.splitTextToSize(notas, 180);
+      doc.text(lineas, m, y);
+    }
+
+    // Footer
+    doc.setFontSize(8).setTextColor(150);
+    doc.text("Atolón Beach Club & Hotel · Cartagena, Colombia", m, 290);
+
+    doc.save(`Conteo-${loc?.nombre?.replace(/\s+/g, "_") || locId}-${todayStr()}.pdf`);
+  };
 
   const comenzarConteo = (id) => {
     setLocId(id);
@@ -275,6 +369,10 @@ export default function HacerInventario() {
                     (c.items || []).forEach(it => { pre[it.item_id] = String(it.contado); });
                     setConteos(pre);
                     setNotas(c.notas || "");
+                    // Al continuar un conteo, mostrar primero los YA CONTADOS
+                    setFilterModo("contados");
+                    setSearch("");
+                    setCatFilter("todos");
                     setStep(2);
                   };
                   return (
@@ -352,7 +450,26 @@ export default function HacerInventario() {
                 </button>
               ))}
             </div>
+            {stats.contados > 0 && (
+              <button onClick={imprimirConteo}
+                style={{ marginLeft: "auto", padding: "9px 14px", borderRadius: 8, border: `1px solid ${B.sand}`, background: B.sand + "22", color: B.sand, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+                🖨 Imprimir
+              </button>
+            )}
           </div>
+
+          {/* Banner si está continuando un conteo */}
+          {continuandoId && filterModo === "contados" && (
+            <div style={{ background: B.success + "11", border: `1px solid ${B.success}33`, borderRadius: 10, padding: "10px 14px", marginBottom: 14, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+              <div style={{ fontSize: 12, color: B.success }}>
+                ✓ Estás viendo los <strong>{stats.contados} ítems ya contados</strong>. Puedes editar las cantidades o agregar más ítems abajo.
+              </div>
+              <button onClick={() => setFilterModo("pendientes")}
+                style={{ padding: "6px 14px", borderRadius: 6, border: `1px solid ${B.sky}`, background: B.sky + "22", color: B.sky, fontSize: 12, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>
+                + Agregar más ítems →
+              </button>
+            </div>
+          )}
 
           {/* Tabla de ítems */}
           <div style={{ background: B.navyMid, borderRadius: 12, overflow: "hidden", border: `1px solid ${B.navyLight}`, marginBottom: 16 }}>
