@@ -401,12 +401,14 @@ export default function Resultados() {
         .then(d => ({ periodo: p.key, cat: "ayb", data: d })),
 
       // Llegadas muelle: embarcaciones privadas (pax siempre suma, monto solo si pagaron)
-      // Excluir las que ya están vinculadas a una reserva (evita doble conteo)
+      // Excluir: las vinculadas a reserva (doble conteo) y las marcadas excluir_kpis
+      // (staff, tripulación, mecánicos, proveedores, cortesía)
       supabase.from("muelle_llegadas")
-        .select("id, total_cobrado, pax_total, pax_a, pax_n, fecha, tipo, reserva_id")
+        .select("id, total_cobrado, pax_total, pax_a, pax_n, fecha, tipo, reserva_id, excluir_kpis")
         .gte("fecha", p.desde).lte("fecha", p.hasta <= hoyStr ? p.hasta : hoyStr)
         .neq("tipo", "lancha_atolon")
         .is("reserva_id", null)
+        .or("excluir_kpis.is.null,excluir_kpis.eq.false")
         .then(r => ({ periodo: p.key, cat: "llegadas", data: r.data || [] })),
 
       // Otros ingresos: actividades, masajes, transporte, spa, etc

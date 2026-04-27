@@ -99,8 +99,8 @@ export default async function handler(req, res) {
         fetch(`${sbUrl}/functions/v1/loggro-sync/cierre-caja-rango?from=${p.desde}&to=${p.hasta}`, {
           headers: { apikey: sbKey, Authorization: `Bearer ${sbKey}` }
         }).then(r => r.json()).catch(() => ({ ok: false })),
-        // Llegadas muelle
-        sbQuery(sbUrl, sbKey, "muelle_llegadas", `select=id,total_cobrado,pax_total,tipo&${rangeFilter}&tipo=neq.lancha_atolon`),
+        // Llegadas muelle (sin las vinculadas a reservas ni las marcadas para excluir KPI)
+        sbQuery(sbUrl, sbKey, "muelle_llegadas", `select=id,total_cobrado,pax_total,tipo,reserva_id,excluir_kpis&${rangeFilter}&tipo=neq.lancha_atolon&reserva_id=is.null&or=(excluir_kpis.is.null,excluir_kpis.eq.false)`),
         // Otros ingresos: actividades, masajes, transporte, spa
         sbQuery(sbUrl, sbKey, "actividades_ventas", `select=id,total,fecha,estado&${rangeFilter}&estado=neq.cancelada&total=gt.0`),
       ]);
