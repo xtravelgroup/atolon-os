@@ -4,6 +4,7 @@ import { supabase } from "../lib/supabase";
 
 const CATS_FORM = ["Embarcacion", "Mobiliario", "Electronico", "Cocina", "Deportes", "Vehiculo"];
 const ESTADOS = ["bueno", "regular", "malo"];
+const PROPIETARIOS = ["Naturalle Hotel", "Interop Colombia"];
 
 export default function Activos() {
   const [activos, setActivos] = useState([]);
@@ -30,6 +31,7 @@ export default function Activos() {
       serie: a.serie || "", valor: a.valor || 0, cantidad: Number(a.cantidad) || 1,
       compra: a.fecha_compra, estado: a.estado || "bueno",
       area: a.area || "", ubicacion: a.ubicacion || "", deprec: a.deprec || 0,
+      propietario: a.propietario || "",
       notas: a.notas || "", foto_url: a.foto_url || null, fotos_urls: a.fotos_urls || [],
       mantenimientos: a.mantenimientos || [],
     })));
@@ -238,6 +240,7 @@ function ActivoCard({ a, selected, onClick }) {
           )}
         </div>
         <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginBottom: 4 }}>{a.cat}{a.marca ? ` · ${a.marca}` : ""}</div>
+        {a.propietario && <div style={{ fontSize: 10, color: B.sand, marginBottom: 2 }}>🏛 {a.propietario}</div>}
         {a.ubicacion && <div style={{ fontSize: 11, color: B.sky }}>📍 {a.ubicacion}</div>}
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 6 }}>
           <span style={{ fontSize: 12, fontWeight: 700, color: B.sand }}>
@@ -296,6 +299,7 @@ function DetallePanel({ activo, onClose, onEdit, onDelete }) {
                 <div style={{ fontSize: 16, fontWeight: 800, color: B.sand }}>{COP(activo.valor * (activo.cantidad || 1))}</div>
               </div>
             </div>
+            {activo.propietario && <div><span style={{ color: "rgba(255,255,255,0.5)" }}>🏛 Propiedad de:</span> <strong style={{ color: B.sand }}>{activo.propietario}</strong></div>}
             {activo.area && <div><span style={{ color: "rgba(255,255,255,0.5)" }}>Área:</span> <strong>{activo.area}</strong></div>}
             {activo.ubicacion && <div><span style={{ color: "rgba(255,255,255,0.5)" }}>📍 Ubicación:</span> <strong style={{ color: B.sky }}>{activo.ubicacion}</strong></div>}
             <div><span style={{ color: "rgba(255,255,255,0.5)" }}>Categoría:</span> {activo.cat}</div>
@@ -339,6 +343,7 @@ function ActivoFormModal({ activo, areas, onClose, onSaved }) {
     estado: activo?.estado || "bueno",
     area: activo?.area || (areas[0]?.nombre || ""),
     ubicacion: activo?.ubicacion || "",
+    propietario: activo?.propietario || PROPIETARIOS[0],
     deprec: activo?.deprec || 0,
     notas: activo?.notas || "",
     foto_url: activo?.foto_url || null,
@@ -488,6 +493,14 @@ function ActivoFormModal({ activo, areas, onClose, onSaved }) {
             <label style={LBL}>📍 Ubicación específica</label>
             <input value={form.ubicacion} onChange={e => set("ubicacion", e.target.value)} style={INP}
               placeholder="Ej: Habitación 5, Cuarto de máquinas, Bar exterior, Bodega norte" />
+          </div>
+          <div style={{ gridColumn: "1 / -1" }}>
+            <label style={LBL}>🏛 Propiedad de</label>
+            <input list="propietarios-list" value={form.propietario} onChange={e => set("propietario", e.target.value)} style={INP}
+              placeholder="Naturalle Hotel / Interop Colombia / otro..." />
+            <datalist id="propietarios-list">
+              {PROPIETARIOS.map(p => <option key={p} value={p} />)}
+            </datalist>
           </div>
           <div>
             <label style={LBL}>Marca</label>

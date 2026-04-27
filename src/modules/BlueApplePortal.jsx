@@ -117,7 +117,7 @@ function LoginScreen() {
 // ════════════════════════════════════════════════════════════════
 function Header({ session, view, setView }) {
   const tabs = [
-    { k: "zarpes",    l: "📅 Zarpes hoy" },
+    { k: "zarpes",    l: "📅 Salidas" },
     { k: "historial", l: "📋 Historial" },
   ];
   return (
@@ -154,82 +154,87 @@ function Header({ session, view, setView }) {
 // ════════════════════════════════════════════════════════════════
 function ZarpesView({ session, onReservar }) {
   const [fecha, setFecha] = useState(todayStr());
-  const [zarpes, setZarpes] = useState([]);
-  const [lanchas, setLanchas] = useState([]);
-  const [bookings, setBookings] = useState([]);  // partner_bookings de todos partners para ese día
+  const [salidas, setSalidas] = useState([]);
+  const [reservasPorSalida, setReservasPorSalida] = useState({});  // { salida_id: pax_total }
+  const [bookingsPorSalida, setBookingsPorSalida] = useState({});  // { salida_id: pax_total partner }
   const [loading, setLoading] = useState(true);
 
   const cargar = useCallback(async () => {
     setLoading(true);
-    const [zR, lR, pbR] = await Promise.all([
-      supabase.from("muelle_zarpes_flota").select("*").eq("fecha", fecha).order("hora_zarpe"),
-      supabase.from("lanchas").select("id, nombre, capacidad_pax_total"),
-      supabase.from("partner_bookings").select("zarpe_id, pax_total, partner_nombre, estado").eq("fecha", fecha).neq("estado", "cancelada"),
+    const [sR, rR, pbR] = await Promise.all([
+      supabase.from("salidas").select("id, hora, hora_regreso, nombre, capacidad_total, embarcaciones").eq("activo", true).order("orden"),
+      supabase.from("reservas").select("salida_id, pax, pax_a, pax_n, estado").eq("fecha", fecha),
+      supabase.from("partner_bookings").select("salida_id, pax_total, estado").eq("fecha", fecha).neq("estado", "cancelada"),
     ]);
-    setZarpes(zR.data || []);
-    setLanchas(lR.data || []);
-    setBookings(pbR.data || []);
+    setSalidas(sR.data || []);
+
+    const reservasMap = {};
+    (rR.data || []).forEach(r => {
+      if (!r.salida_id) return;
+      const cancelada = (r.estado || "").toLowerCase().includes("cancel");
+      if (cancelada) return;
+      const pax = Number(r.pax) || (Number(r.pax_a) || 0) + (Number(r.pax_n) || 0);
+      reservasMap[r.salida_id] = (reservasMap[r.salida_id] || 0) + pax;
+    });
+    setReservasPorSalida(reservasMap);
+
+    const bookingsMap = {};
+    (pbR.data || []).forEach(b => {
+      if (!b.salida_id) return;
+      bookingsMap[b.salida_id] = (bookingsMap[b.salida_id] || 0) + (Number(b.pax_total) || 0);
+    });
+    setBookingsPorSalida(bookingsMap);
+
     setLoading(false);
   }, [fecha]);
 
   useEffect(() => { cargar(); }, [cargar]);
 
-  const lanchaCap = (nombre) => {
-    const l = lanchas.find(x => x.nombre.toLowerCase() === (nombre || "").toLowerCase());
-    return l?.capacidad_pax_total || null;
-  };
-
-  const cuposReservados = (zarpeId) => {
-    return bookings.filter(b => b.zarpe_id === zarpeId).reduce((s, b) => s + Number(b.pax_total || 0), 0);
-  };
-
   return (
     <div>
       <div style={{ marginBottom: 16, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-        <h2 style={{ margin: 0, fontSize: 20 }}>Zarpes programados</h2>
+        <h2 style={{ margin: 0, fontSize: 20 }}>Salidas del día</h2>
         <input type="date" value={fecha} onChange={e => setFecha(e.target.value)}
           style={{ padding: "8px 12px", borderRadius: 8, background: B.navyMid, border: `1px solid ${B.navyLight}`, color: B.white, fontSize: 13 }} />
       </div>
 
       {loading ? <div style={loadingStyle}>Cargando…</div>
-        : zarpes.length === 0 ? (
+        : salidas.length === 0 ? (
           <div style={{ textAlign: "center", padding: 40, color: "rgba(255,255,255,0.4)" }}>
             <div style={{ fontSize: 38, marginBottom: 10 }}>⛵</div>
-            <div>Sin zarpes programados para {fmtFecha(fecha)}</div>
+            <div>Sin salidas activas configuradas</div>
           </div>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-            {zarpes.map(z => {
-              const cap = lanchaCap(z.embarcacion);
-              const ocupados = (Number(z.pax_a) || 0) + (Number(z.pax_n) || 0) + cuposReservados(z.id);
-              const disponibles = cap ? Math.max(0, cap - ocupados) : null;
+            {salidas.map(s => {
+              const cap = Number(s.capacidad_total) || 0;
+              const ocupAtolon  = reservasPorSalida[s.id] || 0;
+              const ocupPartner = bookingsPorSalida[s.id] || 0;
+              const ocupTotal   = ocupAtolon + ocupPartner;
+              const disponibles = Math.max(0, cap - ocupTotal);
               const lleno = disponibles === 0;
 
               return (
-                <div key={z.id} style={{ background: B.navyMid, borderRadius: 12, padding: 16, border: `1px solid ${B.navyLight}`, borderLeft: `4px solid ${lleno ? B.danger : PARTNER_COLOR}` }}>
+                <div key={s.id} style={{ background: B.navyMid, borderRadius: 12, padding: 16, border: `1px solid ${B.navyLight}`, borderLeft: `4px solid ${lleno ? B.danger : PARTNER_COLOR}` }}>
                   <div style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
                     <div style={{ flex: 1, minWidth: 200 }}>
                       <div style={{ fontSize: 16, fontWeight: 800 }}>
-                        {z.embarcacion} · {z.hora_zarpe || "—"}
+                        ⛵ {s.nombre} · {s.hora}
                       </div>
                       <div style={{ fontSize: 12, color: "rgba(255,255,255,0.55)", marginTop: 4 }}>
-                        Destino: {z.destino || "Cartagena"} · {fmtFecha(z.fecha)}
+                        Salida {s.hora} → Regreso {s.hora_regreso || "—"} · {fmtFecha(fecha)}
                       </div>
-                      {z.notas && <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginTop: 4, fontStyle: "italic" }}>{z.notas}</div>}
+                      <div style={{ fontSize: 11, color: "rgba(255,255,255,0.45)", marginTop: 4 }}>
+                        Atolón: {ocupAtolon} pax · Partners: {ocupPartner} pax
+                      </div>
                     </div>
                     <div style={{ textAlign: "right", minWidth: 140 }}>
-                      {cap ? (
-                        <>
-                          <div style={{ fontSize: 22, fontWeight: 800, color: lleno ? B.danger : B.success, fontFamily: "'Barlow Condensed', sans-serif" }}>
-                            {disponibles} / {cap}
-                          </div>
-                          <div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)" }}>cupos disponibles</div>
-                        </>
-                      ) : (
-                        <div style={{ fontSize: 12, color: "rgba(255,255,255,0.5)" }}>Capacidad no definida</div>
-                      )}
+                      <div style={{ fontSize: 26, fontWeight: 800, color: lleno ? B.danger : B.success, fontFamily: "'Barlow Condensed', sans-serif" }}>
+                        {disponibles} / {cap}
+                      </div>
+                      <div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)" }}>cupos disponibles</div>
                       <button
-                        onClick={() => { localStorage.setItem("ba_zarpe_id", z.id); onReservar(); }}
+                        onClick={() => { localStorage.setItem("ba_salida_id", s.id); localStorage.setItem("ba_fecha", fecha); onReservar(); }}
                         disabled={lleno}
                         style={{ marginTop: 8, padding: "8px 16px", borderRadius: 8, border: "none", background: lleno ? B.navyLight : PARTNER_COLOR, color: "#fff", fontSize: 12, fontWeight: 700, cursor: lleno ? "not-allowed" : "pointer", opacity: lleno ? 0.5 : 1 }}>
                         {lleno ? "Sin cupos" : "+ Tomar cupo"}
@@ -250,18 +255,19 @@ function ZarpesView({ session, onReservar }) {
 // VISTA: RESERVAR — Form para registrar pax
 // ════════════════════════════════════════════════════════════════
 function ReservarView({ session, onDone, onCancel }) {
-  const zarpeId = (typeof window !== "undefined") ? localStorage.getItem("ba_zarpe_id") : null;
-  const [zarpe, setZarpe] = useState(null);
+  const salidaId = (typeof window !== "undefined") ? localStorage.getItem("ba_salida_id") : null;
+  const fechaSel = (typeof window !== "undefined") ? localStorage.getItem("ba_fecha") || todayStr() : todayStr();
+  const [salida, setSalida] = useState(null);
   const [pasajeros, setPasajeros] = useState([emptyPax()]);
   const [notas, setNotas] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
   useEffect(() => {
-    if (!zarpeId) return;
-    supabase.from("muelle_zarpes_flota").select("*").eq("id", zarpeId).maybeSingle()
-      .then(({ data }) => setZarpe(data));
-  }, [zarpeId]);
+    if (!salidaId) return;
+    supabase.from("salidas").select("*").eq("id", salidaId).maybeSingle()
+      .then(({ data }) => setSalida(data));
+  }, [salidaId]);
 
   const updatePax = (i, k, v) => setPasajeros(arr => arr.map((p, j) => j === i ? { ...p, [k]: v } : p));
   const addPax    = () => setPasajeros(arr => [...arr, emptyPax()]);
@@ -286,10 +292,10 @@ function ReservarView({ session, onDone, onCancel }) {
         id,
         partner_id:        session.partner.id,
         partner_nombre:    session.partner.nombre,
-        zarpe_id:          zarpeId,
-        fecha:             zarpe?.fecha || todayStr(),
-        hora:              zarpe?.hora_zarpe || null,
-        embarcacion:       zarpe?.embarcacion || null,
+        salida_id:         salidaId,
+        fecha:             fechaSel,
+        hora:              salida?.hora || null,
+        embarcacion:       (salida?.embarcaciones || [])[0] || null,
         destino:           PARTNER_NAME,
         pax_total:         pasajeros.length,
         pasajeros:         pasajeros,
@@ -298,7 +304,8 @@ function ReservarView({ session, onDone, onCancel }) {
         estado:            "confirmada",
       });
       if (e) throw e;
-      localStorage.removeItem("ba_zarpe_id");
+      localStorage.removeItem("ba_salida_id");
+      localStorage.removeItem("ba_fecha");
       onDone();
     } catch (e) {
       setError(e.message || String(e));
@@ -307,11 +314,11 @@ function ReservarView({ session, onDone, onCancel }) {
     }
   };
 
-  if (!zarpeId || !zarpe) {
+  if (!salidaId || !salida) {
     return (
       <div style={{ textAlign: "center", padding: 40 }}>
-        <div style={{ fontSize: 14, color: "rgba(255,255,255,0.5)" }}>No has seleccionado un zarpe.</div>
-        <button onClick={onCancel} style={btnSecondary}>← Ver zarpes</button>
+        <div style={{ fontSize: 14, color: "rgba(255,255,255,0.5)" }}>No has seleccionado una salida.</div>
+        <button onClick={onCancel} style={btnSecondary}>← Ver salidas</button>
       </div>
     );
   }
@@ -319,12 +326,12 @@ function ReservarView({ session, onDone, onCancel }) {
   return (
     <div>
       <div style={{ marginBottom: 16 }}>
-        <button onClick={onCancel} style={{ background: "transparent", border: "none", color: PARTNER_COLOR, fontSize: 13, cursor: "pointer", padding: 0 }}>← Volver a zarpes</button>
+        <button onClick={onCancel} style={{ background: "transparent", border: "none", color: PARTNER_COLOR, fontSize: 13, cursor: "pointer", padding: 0 }}>← Volver a salidas</button>
       </div>
 
       <div style={{ background: B.navyMid, padding: 14, borderRadius: 10, marginBottom: 16, border: `1px solid ${B.navyLight}`, borderLeft: `4px solid ${PARTNER_COLOR}` }}>
-        <div style={{ fontSize: 16, fontWeight: 800 }}>{zarpe.embarcacion} · {zarpe.hora_zarpe}</div>
-        <div style={{ fontSize: 12, color: "rgba(255,255,255,0.55)" }}>{fmtFecha(zarpe.fecha)} · Destino zarpe: {zarpe.destino}</div>
+        <div style={{ fontSize: 16, fontWeight: 800 }}>⛵ {salida.nombre} · {salida.hora}</div>
+        <div style={{ fontSize: 12, color: "rgba(255,255,255,0.55)" }}>{fmtFecha(fechaSel)} · Salida {salida.hora} → Regreso {salida.hora_regreso || "—"}</div>
       </div>
 
       <h3 style={{ margin: "20px 0 12px", fontSize: 15 }}>Pasajeros ({pasajeros.length})</h3>
