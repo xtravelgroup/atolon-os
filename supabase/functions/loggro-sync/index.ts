@@ -1124,6 +1124,118 @@ serve(async (req) => {
       });
     }
 
+    // ════════════════════════════════════════════════════════════════════
+    // POST /loggro-sync/create-orphan-ingredients
+    // Crea en Loggro todos los items de items_catalogo que no tienen
+    // loggro_id. Usa la categoría del catálogo para matchear con
+    // /categories de Loggro. Body opcional: { dry_run: true, only_today: true }
+    // ════════════════════════════════════════════════════════════════════
+    if (req.method === "POST" && path === "/create-orphan-ingredients") {
+      const body = await req.json().catch(() => ({}));
+      const dryRun = !!body.dry_run;
+      const onlyToday = !!body.only_today;
+
+      const supaUrl = Deno.env.get("SUPABASE_URL");
+      const supaKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+      if (!supaUrl || !supaKey) return json({ ok: false, error: "Supabase env missing" }, 500);
+
+      // 1) Listar categorías Loggro para matching
+      const cats: any = await loggroGet("/categories");
+      const catList: any[] = Array.isArray(cats) ? cats
+        : Array.isArray(cats?.data) ? cats.data
+        : Array.isArray(cats?.items) ? cats.items
+        : Array.isArray(cats?.categories) ? cats.categories
+        : [];
+      const catByName: Record<string, any> = {};
+      for (const c of catList) {
+        const k = (c?.name || c?.nombre || "").toUpperCase().trim();
+        if (k) catByName[k] = c;
+      }
+
+      // 2) Listar items_catalogo sin loggro_id (filtrar por hoy si se pidió)
+      let url = `${supaUrl}/rest/v1/items_catalogo?activo=eq.true&loggro_id=is.null&select=id,nombre,codigo,codigo_barras,categoria,unidad,precio_compra,created_at`;
+      if (onlyToday) {
+        const today = new Date().toISOString().slice(0, 10);
+        url += `&created_at=gte.${today}`;
+      }
+      const huerR = await fetch(url, { headers: { apikey: supaKey, Authorization: `Bearer ${supaKey}` } });
+      const huerfanos: any[] = await huerR.json();
+
+      if (huerfanos.length === 0) {
+        return json({ ok: true, total: 0, mensaje: "No hay items sin loggro_id" });
+      }
+
+      const resultados: any[] = [];
+      let creados = 0, omitidos = 0, errores = 0;
+
+      for (const it of huerfanos) {
+        const catKey = (it.categoria || "").toUpperCase().trim();
+        const cat = catByName[catKey];
+        if (!cat) {
+          resultados.push({ id: it.id, nombre: it.nombre, status: "sin_categoria_loggro", categoria: it.categoria });
+          omitidos++;
+          continue;
+        }
+
+        if (dryRun) {
+          resultados.push({ id: it.id, nombre: it.nombre, categoria: it.categoria, loggro_category_id: cat._id || cat.id, status: "would_create" });
+          creados++;
+          continue;
+        }
+
+        // Crear en Loggro
+        const now = new Date().toISOString();
+        const payload: any = {
+          name: it.nombre,
+          category: cat._id || cat.id,
+          description: it.nombre,
+          code: it.codigo || it.codigo_barras || "",
+          price: 0,
+          cost: Number(it.precio_compra) || 0,
+          isActive: true,
+          variablePrice: { isVariablePrice: false },
+          config: { openModalNotes: false },
+          deletedInfo: { isDeleted: false },
+          createdOn: now,
+          modifiedOn: now,
+        };
+        if (it.unidad) payload.unit = it.unidad;
+
+        const r = await loggroRaw("POST", "/ingredients", payload);
+        if (!r.ok) {
+          resultados.push({ id: it.id, nombre: it.nombre, status: "loggro_error", error: r.body });
+          errores++;
+          continue;
+        }
+        const newLoggroId = r.body?._id || r.body?.id;
+        if (!newLoggroId) {
+          resultados.push({ id: it.id, nombre: it.nombre, status: "no_id_returned", body: r.body });
+          errores++;
+          continue;
+        }
+
+        // Guardar loggro_id en items_catalogo
+        await fetch(`${supaUrl}/rest/v1/items_catalogo?id=eq.${it.id}`, {
+          method: "PATCH",
+          headers: { apikey: supaKey, Authorization: `Bearer ${supaKey}`, "Content-Type": "application/json", Prefer: "return=minimal" },
+          body: JSON.stringify({ loggro_id: newLoggroId, updated_at: new Date().toISOString() }),
+        });
+
+        resultados.push({ id: it.id, nombre: it.nombre, loggro_id: newLoggroId, status: "creado" });
+        creados++;
+      }
+
+      return json({
+        ok: true,
+        dry_run: dryRun,
+        total: huerfanos.length,
+        creados,
+        omitidos,
+        errores,
+        resultados,
+      });
+    }
+
     // POST /loggro-sync/create-inventory-movement
     // Body (lo que Atolón OS envía):
     //   {

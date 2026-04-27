@@ -392,6 +392,52 @@ function InventarioBaselineTab({ callSync, syncing, setSyncing }) {
   const [resetResult, setResetResult] = useState(null);
   const [loadResult, setLoadResult] = useState(null);
   const [dryRun, setDryRun] = useState(null);
+  const [orphanResult, setOrphanResult] = useState(null);
+  const [orphanDry, setOrphanDry] = useState(null);
+  const [orphanCount, setOrphanCount] = useState(null);
+
+  // Cargar count de huerfanos al montar
+  useEffect(() => {
+    if (!supabase) return;
+    supabase.from("items_catalogo")
+      .select("id", { count: "exact", head: true })
+      .eq("activo", true).is("loggro_id", null)
+      .then(({ count }) => setOrphanCount(count || 0));
+  }, [orphanResult]);
+
+  const previewOrphans = async () => {
+    setSyncing("/create-orphan-ingredients");
+    try {
+      const res = await fetch(`${FN_URL}/create-orphan-ingredients`, {
+        method: "POST",
+        headers: { ...FN_HEADERS, "Content-Type": "application/json" },
+        body: JSON.stringify({ dry_run: true }),
+      });
+      const data = await res.json();
+      setOrphanDry(data);
+    } catch (e) { alert(`Error: ${e.message}`); }
+    finally { setSyncing(null); }
+  };
+
+  const ejecutarOrphans = async () => {
+    if (!confirm(`Crear ${orphanDry?.creados || "los"} ítems en Loggro Restobar como ingredientes nuevos?\n\nLos que no tengan categoría en Loggro se omitirán (${orphanDry?.omitidos || 0}).`)) return;
+    setSyncing("/create-orphan-ingredients");
+    try {
+      const res = await fetch(`${FN_URL}/create-orphan-ingredients`, {
+        method: "POST",
+        headers: { ...FN_HEADERS, "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      const data = await res.json();
+      setOrphanResult(data);
+      if (data.ok) {
+        alert(`✓ Sincronizado:\n• Creados: ${data.creados}\n• Omitidos: ${data.omitidos}\n• Errores: ${data.errores}`);
+      } else {
+        alert(`Error: ${data.error}`);
+      }
+    } catch (e) { alert(`Error: ${e.message}`); }
+    finally { setSyncing(null); }
+  };
 
   useEffect(() => {
     if (!supabase) return;
@@ -461,6 +507,47 @@ function InventarioBaselineTab({ callSync, syncing, setSyncing }) {
   };
 
   return (
+    <div>
+      {/* Card huerfanos — sincronizar ítems sin loggro_id */}
+      {orphanCount !== null && orphanCount > 0 && (
+        <div style={{ background: B.navyMid, borderRadius: 12, padding: 18, border: `1px solid ${B.warning}55`, borderLeft: `4px solid ${B.warning}`, marginBottom: 16 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 12 }}>
+            <div style={{ flex: 1, minWidth: 280 }}>
+              <div style={{ fontSize: 11, color: B.warning, textTransform: "uppercase", fontWeight: 700, letterSpacing: "0.06em" }}>⚠ Items sin mapeo Loggro</div>
+              <h3 style={{ margin: "6px 0 8px", fontSize: 17 }}>🔗 {orphanCount} ítems huérfanos</h3>
+              <p style={{ fontSize: 12, color: "rgba(255,255,255,0.6)", lineHeight: 1.5, margin: 0 }}>
+                Estos ítems del catálogo no tienen <code>loggro_id</code> — no se cargarán al baseline.
+                Los crea automáticamente en Loggro Restobar matcheando por categoría.
+              </p>
+              {orphanDry && (
+                <div style={{ background: B.navy, borderRadius: 8, padding: 10, marginTop: 10, fontSize: 12 }}>
+                  <div>A crear: <strong style={{ color: B.success }}>{orphanDry.creados}</strong></div>
+                  <div>Sin categoría Loggro (omitidos): <strong style={{ color: B.warning }}>{orphanDry.omitidos}</strong></div>
+                </div>
+              )}
+              {orphanResult && (
+                <div style={{ background: B.success + "11", border: `1px solid ${B.success}55`, borderRadius: 8, padding: 10, marginTop: 10, fontSize: 12 }}>
+                  <div style={{ color: B.success, fontWeight: 700 }}>✓ Sincronización completada</div>
+                  <div style={{ fontSize: 11, color: "rgba(255,255,255,0.7)" }}>
+                    Creados {orphanResult.creados} · Omitidos {orphanResult.omitidos} · Errores {orphanResult.errores}
+                  </div>
+                </div>
+              )}
+            </div>
+            <div style={{ display: "flex", gap: 6 }}>
+              <button onClick={previewOrphans} disabled={!!syncing}
+                style={{ padding: "9px 14px", borderRadius: 8, border: `1px solid ${B.sky}`, background: B.sky + "22", color: B.sky, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+                👁 Preview
+              </button>
+              <button onClick={ejecutarOrphans} disabled={!!syncing || !orphanDry}
+                style={{ padding: "9px 14px", borderRadius: 8, border: "none", background: orphanDry ? B.warning : B.navyLight, color: orphanDry ? B.navy : "rgba(255,255,255,0.4)", fontSize: 12, fontWeight: 800, cursor: orphanDry ? "pointer" : "not-allowed" }}>
+                🔗 Crear en Loggro
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
       {/* PASO 1: Reset a 0 */}
       <div style={{ background: B.navyMid, borderRadius: 12, padding: 20, border: `1px solid ${B.danger}33`, borderLeft: `4px solid ${B.danger}` }}>
@@ -542,6 +629,7 @@ function InventarioBaselineTab({ callSync, syncing, setSyncing }) {
           </div>
         )}
       </div>
+    </div>
     </div>
   );
 }
