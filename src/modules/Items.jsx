@@ -2807,12 +2807,8 @@ function InventarioGeneralTab({ items, categorias, catIconMap, catColorMap }) {
         ))}
       </div>
 
-      {/* Banner explicación + sync */}
-      <div style={{ background: B.navyMid, border: `1px solid ${B.sky}33`, borderRadius: 10, padding: 12, marginBottom: 14, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-        <div style={{ fontSize: 12, color: "rgba(255,255,255,0.6)", flex: 1, minWidth: 240 }}>
-          ℹ️ <strong>Stock Atolón</strong> = suma de stock en {locaciones.length} bodegas ({locaciones.map(l => l.nombre).join(", ")}).
-          <br />Se compara contra el stock que reporta Loggro. Las diferencias quedan resaltadas en rojo.
-        </div>
+      {/* Banner sync */}
+      <div style={{ background: B.navyMid, border: `1px solid ${B.sky}33`, borderRadius: 10, padding: 12, marginBottom: 14, display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 12 }}>
         <button onClick={syncLoggro} disabled={syncing}
           style={{ padding: "10px 16px", borderRadius: 8, border: "none", background: "#22c55e", color: B.navy, fontWeight: 700, fontSize: 12, cursor: syncing ? "default" : "pointer", opacity: syncing ? 0.6 : 1 }}>
           {syncing ? "⟳ Sincronizando…" : "🔄 Sync Loggro"}
