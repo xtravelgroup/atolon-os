@@ -2730,9 +2730,9 @@ function InventarioBarTab({ items, categorias }) {
   const [stockPorLoc, setStockPorLoc] = useState({});
   const [search, setSearch] = useState("");
   const [catFilter, setCatFilter] = useState("todas");
-  const [grupoFilter, setGrupoFilter] = useState("bebidas"); // default bebidas porque es el bar
   const [soloConStock, setSoloConStock] = useState(true);
 
+  // Solo bebidas — el bar no tiene alimentos
   const grupoPorCategoria = useMemo(() => {
     const m = {};
     (categorias || []).forEach(c => { m[c.nombre] = c.grupo || "otros"; });
@@ -2766,17 +2766,16 @@ function InventarioBarTab({ items, categorias }) {
 
   const filasFiltradas = useMemo(() => {
     return filas.filter(f => {
+      // Solo bebidas — el bar no tiene alimentos ni otros
+      const grupo = grupoPorCategoria[f.item.categoria] || "otros";
+      if (grupo !== "bebidas") return false;
       if (soloConStock && f.total === 0) return false;
       const q = search.trim().toLowerCase();
       if (q && !((f.item.nombre || "").toLowerCase().includes(q) || (f.item.codigo || "").toLowerCase().includes(q))) return false;
       if (catFilter !== "todas" && f.item.categoria !== catFilter) return false;
-      if (grupoFilter !== "todos") {
-        const g = grupoPorCategoria[f.item.categoria] || "otros";
-        if (g !== grupoFilter) return false;
-      }
       return true;
     }).sort((a, b) => b.total - a.total);
-  }, [filas, search, catFilter, grupoFilter, soloConStock, grupoPorCategoria]);
+  }, [filas, search, catFilter, soloConStock, grupoPorCategoria]);
 
   const totalBar     = filasFiltradas.reduce((s, f) => s + f.bar, 0);
   const totalAlmacen = filasFiltradas.reduce((s, f) => s + f.almacen, 0);
@@ -2803,27 +2802,7 @@ function InventarioBarTab({ items, categorias }) {
         ))}
       </div>
 
-      {/* Chips grupo macro */}
-      <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
-        {[
-          { k: "todos",     l: "🌐 Todos",     c: B.sky    },
-          { k: "alimentos", l: "🍽️ Alimentos", c: "#f97316" },
-          { k: "bebidas",   l: "🍹 Bebidas",   c: "#38bdf8" },
-          { k: "otros",     l: "📦 Otros",     c: "#94a3b8" },
-        ].map(g => {
-          const active = grupoFilter === g.k;
-          return (
-            <button key={g.k} onClick={() => setGrupoFilter(g.k)}
-              style={{
-                padding: "8px 16px", borderRadius: 22, border: `1px solid ${active ? g.c : B.navyLight}`,
-                background: active ? g.c + "22" : B.navyMid, color: active ? g.c : "rgba(255,255,255,0.55)",
-                cursor: "pointer", fontSize: 13, fontWeight: 700, transition: "all 0.15s",
-              }}>{g.l}</button>
-          );
-        })}
-      </div>
-
-      {/* Filtros */}
+      {/* Filtros (sin chips macro — esto siempre es Bebidas) */}
       <div style={{ display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap", alignItems: "center" }}>
         <input value={search} onChange={e => setSearch(e.target.value)}
           placeholder="🔎 Buscar producto…"
@@ -2833,7 +2812,7 @@ function InventarioBarTab({ items, categorias }) {
           <option value="todas">Todas las categorías</option>
           {categorias
             .filter(c => c.activo !== false)
-            .filter(c => grupoFilter === "todos" || (c.grupo || "otros") === grupoFilter)
+            .filter(c => (c.grupo || "otros") === "bebidas")
             .map(c => (
               <option key={c.id} value={c.nombre}>{c.icono || "📁"} {c.nombre}</option>
             ))}
@@ -2897,7 +2876,7 @@ function InventarioBarTab({ items, categorias }) {
       </div>
 
       <div style={{ marginTop: 14, padding: 12, background: B.navy, borderRadius: 8, fontSize: 11, color: "rgba(255,255,255,0.45)", lineHeight: 1.5 }}>
-        ℹ️ Suma de stock en <strong>LOC-BAR</strong> + <strong>LOC-ALMACEN-BAR</strong>. Por defecto muestra solo bebidas con stock. Cambia el filtro de grupo para ver otras categorías.
+        ℹ️ Suma de stock en <strong>LOC-BAR</strong> + <strong>LOC-ALMACEN-BAR</strong>. Solo muestra productos del grupo Bebidas.
       </div>
     </div>
   );
