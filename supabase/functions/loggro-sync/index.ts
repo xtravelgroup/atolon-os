@@ -994,8 +994,8 @@ serve(async (req) => {
           con_stock_negativo: negativos.length,
           stock_total_a_sacar:  positivos.reduce((s, x) => s + x.stock, 0),
           stock_total_a_reponer: negativos.reduce((s, x) => s + x.stock, 0),
-          ejemplos_positivos: positivos.slice(0, 20),
-          ejemplos_negativos: negativos.slice(0, 20),
+          all_positivos: positivos,
+          all_negativos: negativos,
         });
       }
 
@@ -1141,6 +1141,114 @@ serve(async (req) => {
         movement_id: result.body?._id || result.body?.id || null,
         items_cargados: baselineItems.length,
         cantidad_total: baselineItems.reduce((s, x) => s + x.quantity, 0),
+      });
+    }
+
+    // ════════════════════════════════════════════════════════════════════
+    // POST /loggro-sync/reconcile-with-atolon
+    // Ajusta Loggro para que CADA ítem tenga exactamente la cantidad
+    // que reporta Atolón OS (suma de items_stock_locacion). Genera dos
+    // movimientos: ENTRADA para deltas positivos, SALIDA para negativos.
+    // ════════════════════════════════════════════════════════════════════
+    if (req.method === "POST" && path === "/reconcile-with-atolon") {
+      const body = await req.json().catch(() => ({}));
+      const dryRun = !!body.dry_run;
+      const supaUrl = Deno.env.get("SUPABASE_URL");
+      const supaKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+      if (!supaUrl || !supaKey) return json({ ok: false, error: "Supabase env missing" }, 500);
+
+      const { businessId, userId } = await getLoggroIdentity();
+
+      // 1) Leer items_catalogo + suma de items_stock_locacion
+      const catRes = await fetch(`${supaUrl}/rest/v1/items_catalogo?activo=eq.true&loggro_id=not.is.null&select=id,nombre,loggro_id`, {
+        headers: { apikey: supaKey, Authorization: `Bearer ${supaKey}` },
+      });
+      const cats: any[] = await catRes.json();
+
+      const stockRes = await fetch(`${supaUrl}/rest/v1/items_stock_locacion?select=item_id,cantidad`, {
+        headers: { apikey: supaKey, Authorization: `Bearer ${supaKey}` },
+      });
+      const stocks: any[] = await stockRes.json();
+      const atolonByItem: Record<string, number> = {};
+      stocks.forEach(s => {
+        atolonByItem[s.item_id] = (atolonByItem[s.item_id] || 0) + (Number(s.cantidad) || 0);
+      });
+
+      // 2) Leer stock actual de Loggro por cada loggro_id
+      const ids = cats.map(c => c.loggro_id).filter(Boolean);
+      const loggroByLoggroId: Record<string, number> = {};
+      let idx = 0;
+      async function worker() {
+        while (idx < ids.length) {
+          const myIdx = idx++;
+          const id = ids[myIdx];
+          try {
+            const d: any = await loggroGet(`/ingredients/${id}`);
+            let totalStock = 0;
+            if (Array.isArray(d?.locationsStock)) {
+              totalStock = d.locationsStock.reduce((s: number, ls: any) => s + (Number(ls.stock) || 0), 0);
+            }
+            loggroByLoggroId[id] = totalStock;
+          } catch (_) { /* skip */ }
+        }
+      }
+      await Promise.all(Array.from({ length: 10 }, () => worker()));
+
+      // 3) Calcular deltas
+      const entradas: Array<{ id: string; name: string; quantity: number }> = [];
+      const salidas:  Array<{ id: string; name: string; quantity: number }> = [];
+      for (const c of cats) {
+        const at = atolonByItem[c.id] || 0;
+        const lg = loggroByLoggroId[c.loggro_id] || 0;
+        const diff = at - lg;
+        if (Math.abs(diff) < 0.001) continue;
+        if (diff > 0) entradas.push({ id: c.loggro_id, name: c.nombre, quantity: diff });
+        else          salidas.push({ id: c.loggro_id, name: c.nombre, quantity: Math.abs(diff) });
+      }
+
+      if (dryRun) {
+        return json({
+          ok: true, dry_run: true,
+          total_a_ajustar: entradas.length + salidas.length,
+          entradas: entradas.length, salidas: salidas.length,
+          entrada_total: entradas.reduce((s, x) => s + x.quantity, 0),
+          salida_total:  salidas.reduce((s, x) => s + x.quantity, 0),
+          ejemplos_entradas: entradas.slice(0, 50),
+          ejemplos_salidas:  salidas.slice(0, 50),
+        });
+      }
+
+      const now = new Date().toISOString();
+      const movements: any[] = [];
+
+      if (entradas.length > 0) {
+        const r = await loggroRaw("POST", "/inventories", {
+          business: businessId, user: userId, date: now,
+          type: 1, isSubtracted: false, isProduction: false, isMoveTo: false, deleted: false,
+          note: "Reconciliación Atolón OS — entradas",
+          ingredients: entradas.map(e => ({ ingredient: e.id, quantity: e.quantity, price: 0 })),
+          createdOn: now, modifiedOn: now,
+        });
+        if (!r.ok) return json({ ok: false, etapa: "entradas", loggro_response: r.body }, 502);
+        movements.push({ tipo: "entradas", id: r.body?._id, items: entradas.length });
+      }
+      if (salidas.length > 0) {
+        const r = await loggroRaw("POST", "/inventories", {
+          business: businessId, user: userId, date: now,
+          type: 11, isSubtracted: true, isProduction: false, isMoveTo: false, deleted: false,
+          note: "Reconciliación Atolón OS — salidas",
+          ingredients: salidas.map(e => ({ ingredient: e.id, quantity: e.quantity, price: 0 })),
+          createdOn: now, modifiedOn: now,
+        });
+        if (!r.ok) return json({ ok: false, etapa: "salidas", loggro_response: r.body, movements }, 502);
+        movements.push({ tipo: "salidas", id: r.body?._id, items: salidas.length });
+      }
+
+      return json({
+        ok: true, movements,
+        entradas: entradas.length, salidas: salidas.length,
+        entrada_total: entradas.reduce((s, x) => s + x.quantity, 0),
+        salida_total:  salidas.reduce((s, x) => s + x.quantity, 0),
       });
     }
 
