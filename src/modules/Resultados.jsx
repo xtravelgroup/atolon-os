@@ -960,6 +960,19 @@ export default function Resultados() {
         📊 Fuente: Loggro Restobar
       </div>
 
+      <TablaMetricas
+        titulo="Otros Ingresos"
+        icono="✨"
+        color="#fb923c"
+        datos={otros}
+        loading={loading}
+        cantLabel="Actividades"
+        isMobile={isMobile}
+      />
+      <div style={{ marginTop: -14, marginBottom: 18, paddingInline: 16, fontSize: 10, color: "rgba(255,255,255,0.35)", textAlign: "right" }}>
+        ✨ Actividades, masajes, transporte, spa
+      </div>
+
       {/* Fila total combinada por período */}
       {!loading && pasadias && grupos && eventos && ayb && (
         <div style={{ background: B.navyMid, borderRadius: isMobile ? 14 : 16, overflow: "hidden", marginBottom: 20, borderTop: `3px solid ${B.white}` }}>
