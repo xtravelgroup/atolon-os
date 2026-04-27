@@ -363,18 +363,20 @@ export default function HacerInventario() {
                     if (!supabase) return;
                     setLocId(c.locacion_id);
                     setContinuandoId(c.id);
-                    const [iR, sR] = await Promise.all([
+                    // Hace falta traer los items del conteo (no vienen en la lista del historial)
+                    const [iR, sR, conteoR] = await Promise.all([
                       supabase.from("items_catalogo").select("id, nombre, codigo, categoria, unidad").eq("activo", true).order("nombre"),
                       supabase.from("items_stock_locacion").select("item_id, locacion_id, cantidad"),
+                      supabase.from("items_conteos").select("items, notas").eq("id", c.id).maybeSingle(),
                     ]);
                     setItems(iR.data || []);
                     const map = {};
                     (sR.data || []).forEach(s => { map[`${s.item_id}|${s.locacion_id}`] = Number(s.cantidad) || 0; });
                     setStockPorLoc(map);
                     const pre = {};
-                    (c.items || []).forEach(it => { pre[it.item_id] = String(it.contado); });
+                    (conteoR?.data?.items || []).forEach(it => { pre[it.item_id] = String(it.contado); });
                     setConteos(pre);
-                    setNotas(c.notas || "");
+                    setNotas(conteoR?.data?.notas || "");
                     // Al continuar un conteo, mostrar primero los YA CONTADOS
                     setFilterModo("contados");
                     setSearch("");
