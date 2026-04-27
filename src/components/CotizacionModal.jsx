@@ -48,9 +48,11 @@ export default function CotizacionModal({ requisicion, onClose, currentUser, rel
   const parseDocument = async (b64, mt) => {
     setError("");
     try {
-      const { data, error } = await supabase.functions.invoke("parse-cotizacion", {
-        body: { imageBase64: b64, mediaType: mt, reqItems },
-      });
+      const isPDF = (mt || "").includes("pdf");
+      const body = isPDF
+        ? { pdfBase64: b64, mediaType: "application/pdf", reqItems }
+        : { imageBase64: b64, mediaType: mt, reqItems };
+      const { data, error } = await supabase.functions.invoke("parse-cotizacion", { body });
       if (error) throw error;
       if (!data?.ok) throw new Error(data?.error || "El parser no pudo leer la cotización");
       setParsed(data);

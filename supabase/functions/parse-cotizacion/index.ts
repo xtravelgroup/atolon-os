@@ -15,9 +15,11 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
   try {
-    const { imageBase64, mediaType, reqItems = [] } = await req.json();
-    if (!imageBase64) {
-      return new Response(JSON.stringify({ ok: false, error: "No image provided" }), {
+    const { imageBase64, pdfBase64, mediaType, reqItems = [] } = await req.json();
+    const fileBase64 = imageBase64 || pdfBase64;
+    const isPDF = !!pdfBase64 || (mediaType || "").includes("pdf");
+    if (!fileBase64) {
+      return new Response(JSON.stringify({ ok: false, error: "No file provided" }), {
         status: 400,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
@@ -97,10 +99,15 @@ Instrucciones:
         messages: [{
           role: "user",
           content: [
-            {
-              type: "image",
-              source: { type: "base64", media_type: mediaType || "image/jpeg", data: imageBase64 },
-            },
+            isPDF
+              ? {
+                  type: "document",
+                  source: { type: "base64", media_type: "application/pdf", data: fileBase64 },
+                }
+              : {
+                  type: "image",
+                  source: { type: "base64", media_type: mediaType || "image/jpeg", data: fileBase64 },
+                },
             { type: "text", text: prompt },
           ],
         }],

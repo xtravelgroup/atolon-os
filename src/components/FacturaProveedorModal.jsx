@@ -71,19 +71,21 @@ export default function FacturaProveedorModal({ oc, onClose, reload, currentUser
       const { data: pub } = supabase.storage.from("motores").getPublicUrl(path);
       data.factura_url = pub.publicUrl;
 
-      // Solo parsear con AI si es imagen (PDF requiere pre-conversión, lo dejamos para después)
+      // Parsear con AI tanto imágenes como PDFs (Claude soporta ambos)
       const isImage = f.type.startsWith("image/");
-      if (isImage) {
-        setProgress("Leyendo factura con IA…");
+      const isPDF = f.type === "application/pdf";
+
+      if (isImage || isPDF) {
+        setProgress(isPDF ? "Leyendo PDF con IA…" : "Leyendo factura con IA…");
         const base64 = await fileToBase64(f);
+        const payload = isPDF
+          ? { pdfBase64: base64, mediaType: "application/pdf", ocItems: oc.items || [] }
+          : { imageBase64: base64, mediaType: f.type, ocItems: oc.items || [] };
+
         const res = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/parse-factura`, {
           method: "POST",
           headers: { "Content-Type": "application/json", Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`, apikey: import.meta.env.VITE_SUPABASE_ANON_KEY },
-          body: JSON.stringify({
-            imageBase64: base64,
-            mediaType: f.type,
-            ocItems: oc.items || [],
-          }),
+          body: JSON.stringify(payload),
         });
         const result = await res.json();
         if (result.ok) {
@@ -115,9 +117,9 @@ export default function FacturaProveedorModal({ oc, onClose, reload, currentUser
           setData(d => ({ ...d, factura_url: pub.publicUrl }));
         }
       } else {
-        // PDF u otro: dejamos como adjunto pero el usuario llena manual
+        // Otros tipos (no imagen ni PDF): solo adjunto, manual
         setData(d => ({ ...d, factura_url: pub.publicUrl }));
-        setProgress("📎 PDF adjuntado — ingresa los datos manualmente abajo");
+        setProgress("📎 Archivo adjuntado — ingresa los datos manualmente abajo");
       }
       setStep("review");
     } catch (e) {
