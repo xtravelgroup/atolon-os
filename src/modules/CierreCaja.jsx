@@ -105,10 +105,13 @@ function HistorialCierres({ refresh, area, userRol, userPermisos = [] }) {
   const saveEdit = async () => {
     if (!supabase || !editCierre) return;
     setEditSaving(true);
-    // Recalculate totals from edited metodos
+    // Recalculate totals from edited metodos.
+    // En A&B, resort_credit NO suma a total_ventas (es info adicional).
+    const esAyB = editCierre.area === "ayb";
     let totalVentas = 0, totalPropinas = 0;
-    Object.values(editForm.metodos || {}).forEach(v => {
+    Object.entries(editForm.metodos || {}).forEach(([k, v]) => {
       if (typeof v === "object" && v !== null) {
+        if (esAyB && k === "resort_credit") return;
         totalVentas   += Number(v.venta) || 0;
         totalPropinas += Number(v.propina) || 0;
       }
@@ -292,11 +295,27 @@ function HistorialCierres({ refresh, area, userRol, userPermisos = [] }) {
                           return { key: m.key, label: m.label, icon: m.icon, caV, caP, lgV, lgP };
                         }).filter(r => r.caV || r.caP || r.lgV || r.lgP);
 
-                        const lgTotalV = Number(data.resumen?.total_ventas) || 0;
-                        const lgTotalP = Number(data.resumen?.total_propinas) || 0;
-                        const caTotalV = Number(c.total_ventas) || 0;
-                        const caTotalP = Number(c.total_propinas) || 0;
-                        const difV = caTotalV - lgTotalV;
+                        // Resort Credit en A&B no cuenta como ingreso (es consumo
+                        // cargado a habitación, no efectivo nuevo). Lo separamos
+                        // para que el comparativo cuadre y mostramos como nota.
+                        const lgRC_V = Number(lgPorKey.resort_credit?.venta) || 0;
+                        const lgRC_P = Number(lgPorKey.resort_credit?.propina) || 0;
+                        const caRC_V = Number(caj.resort_credit?.venta) || 0;
+                        const caRC_P = Number(caj.resort_credit?.propina) || 0;
+
+                        const lgTotalV = (Number(data.resumen?.total_ventas) || 0) - lgRC_V;
+                        const lgTotalP = (Number(data.resumen?.total_propinas) || 0) - lgRC_P;
+                        // Para cierres antiguos (creados antes del fix), c.total_ventas
+                        // puede incluir resort_credit. Lo descontamos aquí también.
+                        const caStored = Number(c.total_ventas) || 0;
+                        const caTotalV = caStored - caRC_V; // si ya estaba excluido, caRC_V=0 pero seguro
+                        const caTotalP = (Number(c.total_propinas) || 0) - caRC_P;
+                        // Si el cierre nuevo ya excluyó resort_credit, c.total_ventas no lo incluye:
+                        // detectamos comparando con suma de métodos
+                        const sumMetodosCajero = Object.entries(caj).filter(([k]) => k !== "otros_items").reduce((s, [, v]) => s + (Number(v?.venta) || 0), 0);
+                        const yaExcluido = Math.abs(caStored - (sumMetodosCajero - caRC_V)) < 1;
+                        const caTotalV_final = yaExcluido ? caStored : caTotalV;
+                        const difV = caTotalV_final - lgTotalV;
                         const difP = caTotalP - lgTotalP;
                         const clr = (d) => d === 0 ? "#4ade80" : Math.abs(d) < 5000 ? "#fbbf24" : "#f87171";
                         const fmtDif = (d) => (d >= 0 ? "+" : "") + COP(d);
@@ -305,10 +324,21 @@ function HistorialCierres({ refresh, area, userRol, userPermisos = [] }) {
                           <div style={{ marginTop: 18, borderTop: "1px dashed rgba(142,202,230,0.2)", paddingTop: 14 }}>
                             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
                               <div style={{ fontSize: 10, color: B.sky, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 700 }}>
-                                📊 Comparativo: Cajero vs Loggro
+                                📊 Comparativo: Cajero vs Loggro <span style={{ fontWeight: 400, color: "rgba(255,255,255,0.4)", textTransform: "none" }}>(sin Resort Credit)</span>
                               </div>
                               <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)" }}>{(data.facturas || []).length} facturas en Loggro</div>
                             </div>
+
+                            {(lgRC_V > 0 || caRC_V > 0) && (
+                              <div style={{ background: "#a78bfa11", border: "1px solid #a78bfa44", borderRadius: 8, padding: "8px 12px", marginBottom: 10, fontSize: 11, color: "#a78bfa" }}>
+                                ℹ️ <strong>Adicional vendido con Resort Credit (no cuenta como ingreso):</strong>
+                                {lgRC_V > 0 && <span style={{ marginLeft: 6 }}>Loggro {COP(lgRC_V)}{lgRC_P > 0 && ` (+ propina ${COP(lgRC_P)})`}</span>}
+                                {caRC_V > 0 && <span style={{ marginLeft: 6 }}>· Cajero {COP(caRC_V)}{caRC_P > 0 && ` (+ propina ${COP(caRC_P)})`}</span>}
+                                <div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", marginTop: 2 }}>
+                                  Consumo cargado a la habitación del huésped — se cobra por hospedaje, no por A&B.
+                                </div>
+                              </div>
+                            )}
 
                             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
                               <thead>
@@ -344,8 +374,8 @@ function HistorialCierres({ refresh, area, userRol, userPermisos = [] }) {
                                   );
                                 })}
                                 <tr style={{ borderTop: "2px solid rgba(255,255,255,0.1)", fontWeight: 800 }}>
-                                  <td style={{ padding: "6px 8px", color: "#fff" }}>TOTAL</td>
-                                  <td style={{ padding: "6px 8px", textAlign: "right", borderLeft: "1px solid rgba(255,255,255,0.05)" }}>{COP(caTotalV)}</td>
+                                  <td style={{ padding: "6px 8px", color: "#fff" }}>TOTAL <span style={{ fontSize: 9, fontWeight: 400, color: "rgba(255,255,255,0.4)" }}>(sin Resort Credit)</span></td>
+                                  <td style={{ padding: "6px 8px", textAlign: "right", borderLeft: "1px solid rgba(255,255,255,0.05)" }}>{COP(caTotalV_final)}</td>
                                   <td style={{ padding: "6px 8px", textAlign: "right" }}>{COP(caTotalP)}</td>
                                   <td style={{ padding: "6px 8px", textAlign: "right", color: B.sky, borderLeft: "1px solid rgba(255,255,255,0.05)" }}>{COP(lgTotalV)}</td>
                                   <td style={{ padding: "6px 8px", textAlign: "right", color: B.sky }}>{COP(lgTotalP)}</td>
@@ -590,8 +620,13 @@ export default function CierreCaja() {
   const otrosVentaTotal  = otrosList.reduce((s, o) => s + parseCOP(o.venta), 0);
   const otrosPropTotal   = otrosList.reduce((s, o) => s + parseCOP(o.propina), 0);
 
-  const totalVentas   = METODOS.filter(m => m.key !== "otros").reduce((s, m) => s + computed[m.key].venta, 0) + otrosVentaTotal;
-  const totalPropinas = METODOS.filter(m => m.key !== "otros").reduce((s, m) => s + computed[m.key].propina, 0) + otrosPropTotal;
+  // Resort Credit en A&B: NO cuenta como ingreso real, solo como info adicional
+  // (es un consumo cargado a la habitación del huésped, no efectivo nuevo).
+  const esAyB = area === "ayb";
+  const resortCreditVenta   = computed.resort_credit?.venta || 0;
+  const resortCreditPropina = computed.resort_credit?.propina || 0;
+  const totalVentas   = METODOS.filter(m => m.key !== "otros" && !(esAyB && m.key === "resort_credit")).reduce((s, m) => s + computed[m.key].venta, 0) + otrosVentaTotal;
+  const totalPropinas = METODOS.filter(m => m.key !== "otros" && !(esAyB && m.key === "resort_credit")).reduce((s, m) => s + computed[m.key].propina, 0) + otrosPropTotal;
   const totalGeneral  = totalVentas + totalPropinas;
 
   const efectivoEsperado = computed.efectivo.total;
@@ -1204,8 +1239,16 @@ export default function CierreCaja() {
             {/* Resumen tipo comprobante */}
             <div style={{ borderTop: "1px solid rgba(255,255,255,0.07)", paddingTop: 16 }}>
               <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 12 }}>Resumen</div>
+              {esAyB && (resortCreditVenta > 0 || resortCreditPropina > 0) && (
+                <div style={{ background: "#a78bfa11", border: "1px solid #a78bfa44", borderRadius: 8, padding: "8px 12px", marginBottom: 10, fontSize: 12, color: "#a78bfa" }}>
+                  ℹ️ <strong>Resort Credit (no cuenta como ingreso):</strong> {COP(resortCreditVenta)}{resortCreditPropina > 0 && ` · Propina: ${COP(resortCreditPropina)}`}
+                  <div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", marginTop: 2 }}>
+                    Adicionales vendidos con Resort Credit del huésped — se suman al consumo de habitación, no al cierre de caja.
+                  </div>
+                </div>
+              )}
               {[
-                { label: "Total Ventas (sin propina)",       value: totalVentas,               color: B.sky },
+                { label: "Total Ventas (sin propina)",       value: totalVentas,               color: B.sky, sub: esAyB && resortCreditVenta > 0 ? `(excluye Resort Credit ${COP(resortCreditVenta)})` : null },
                 { label: "Propinas",                         value: totalPropinas,              color: B.sand },
                 { label: "INC (8%)",                         value: parseCOP(incImpuesto),      color: "#fbbf24", skip: !incImpuesto },
                 { label: "Total General (Debe tener)",       value: totalGeneral,               color: "#fff", bold: true, sep: true },
