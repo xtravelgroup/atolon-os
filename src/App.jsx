@@ -281,6 +281,7 @@ import ZarpesLog from "./modules/ZarpesLog";
 import Proveedores from "./modules/Proveedores";
 import Items from "./modules/Items";
 import HacerInventario from "./modules/HacerInventario";
+import Transferencias from "./modules/Transferencias";
 import EscanearProductos from "./modules/EscanearProductos";
 import LoggroAdmin from "./modules/LoggroAdmin";
 import HotelFolios from "./modules/HotelFolios";
@@ -304,6 +305,7 @@ const MODULE_MAP = {
   pagos: <Pagos />,
   items: <Items />,
   hacer_inventario: <HacerInventario />,
+  transferencias: <Transferencias />,
   loggro: <LoggroAdmin />,
   hotel_folios: <HotelFolios />,
   contenido: <Contenido />,
