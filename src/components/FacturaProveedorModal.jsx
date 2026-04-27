@@ -90,28 +90,92 @@ export default function FacturaProveedorModal({ oc, onClose, reload, currentUser
         const result = await res.json();
         if (result.ok) {
           setParsed(result);
-          // Pre-rellenar con datos de AI, pero priorizando match con items de OC
+          // Pre-rellenar con datos de AI. Items de la factura se enriquecen con
+          // los rich fields del parser (código de barras, ICO, IVA, etc).
+          // Para los items que matchean con la OC, los completamos con el oc_idx
+          // y el item_id del catálogo. Los items extra de la factura se agregan
+          // al final como items "nuevos" para revisión.
+          const ocItemsCount = (oc.items || []).length;
+          const matched = new Set();
+          const itemsRich = (result.items || []).map((aiItem, aiIdx) => {
+            const ocIdx = aiItem.match_oc_idx;
+            const matchOc = (typeof ocIdx === "number" && ocIdx >= 0 && ocIdx < ocItemsCount) ? oc.items[ocIdx] : null;
+            if (matchOc) matched.add(ocIdx);
+
+            const precioCostoUnit = Number(aiItem.precio_costo_unit) || 0;
+            const precioBase      = Number(aiItem.precio_base_unit) || precioCostoUnit;
+            const ivaUnit         = Number(aiItem.iva_valor_unit) || 0;
+            const cant            = Number(aiItem.cantidad) || 0;
+
+            return {
+              oc_idx: matchOc ? ocIdx : null,        // null si no matchea con la OC
+              ai_idx: aiIdx,
+              codigo_barras:        aiItem.codigo_barras || null,
+              referencia_proveedor: aiItem.referencia_proveedor || null,
+              nombre:               aiItem.nombre || matchOc?.item || matchOc?.nombre || "—",
+              cantidad:             cant,
+              unidad:               aiItem.unidad || matchOc?.unidad || "UND",
+              precio_base_unit:     precioBase,
+              descuento_pct:        Number(aiItem.descuento_pct) || 0,
+              iva_pct:              Number(aiItem.iva_pct) || 0,
+              iva_valor_unit:       ivaUnit,
+              ico_valor_unit:       Number(aiItem.ico_valor_unit) || 0,
+              icl_valor_unit:       Number(aiItem.icl_valor_unit) || 0,
+              adv_valor_unit:       Number(aiItem.adv_valor_unit) || 0,
+              precio_costo_unit:    precioCostoUnit,           // base + ICO + ICL + ADV (no deducibles)
+              precio_final_unit:    Number(aiItem.precio_final_unit) || (precioCostoUnit + ivaUnit),
+              subtotal_renglon:     Number(aiItem.subtotal_renglon) || cant * precioCostoUnit,
+              iva_total_renglon:    cant * ivaUnit,
+              // Para compatibilidad con flujo anterior:
+              precio_unitario:      precioCostoUnit,           // lo que va al precio_compra
+              precio_anterior:      matchOc ? Number(matchOc.precioU) || 0 : 0,
+              iva:                  cant * ivaUnit,
+              item_id:              matchOc?.item_id || null,
+              es_nuevo_oc:          !matchOc,                   // bandera: este item no estaba en la OC
+            };
+          });
+
+          // Items de la OC que no fueron matcheados (la factura no los trae)
+          const ocNoMatcheados = (oc.items || []).map((it, i) => {
+            if (matched.has(i)) return null;
+            return {
+              oc_idx: i, ai_idx: null,
+              nombre: it.item || it.nombre,
+              cantidad: Number(it.cant) || 0,
+              unidad: it.unidad || "",
+              precio_unitario: Number(it.precioU) || 0,
+              precio_anterior: Number(it.precioU) || 0,
+              precio_costo_unit: Number(it.precioU) || 0,
+              precio_base_unit: Number(it.precioU) || 0,
+              iva: 0, iva_valor_unit: 0,
+              item_id: it.item_id || null,
+              no_facturado: true,
+            };
+          }).filter(Boolean);
+
           setData(d => ({
             ...d,
-            factura_numero: result.factura_numero || d.factura_numero,
-            factura_fecha: result.factura_fecha || d.factura_fecha,
-            subtotal: result.subtotal || 0,
-            iva: result.iva || 0,
-            total: result.total || 0,
-            items: d.items.map(item => {
-              const aiItem = (result.items || []).find(x => x.match_oc_idx === item.oc_idx);
-              if (aiItem) {
-                return {
-                  ...item,
-                  precio_unitario: aiItem.precio_unitario || item.precio_unitario,
-                  iva: aiItem.iva || 0,
-                };
-              }
-              return item;
-            }),
-            factura_url: pub.publicUrl,
+            factura_numero:    result.factura_numero || d.factura_numero,
+            factura_fecha:     result.factura_fecha || d.factura_fecha,
+            fecha_vencimiento: result.fecha_vencimiento || null,
+            forma_pago:        result.forma_pago || null,
+            no_pedido:         result.no_pedido || null,
+            no_remision:       result.no_remision || null,
+            subtotal_base:     Number(result.subtotal_base) || 0,
+            iva_total:         Number(result.iva_total) || 0,
+            consumo_total:     Number(result.consumo_total) || 0,
+            ico_total:         Number(result.ico_total) || 0,
+            icl_total:         Number(result.icl_total) || 0,
+            adv_total:         Number(result.adv_total) || 0,
+            descuentos_total:  Number(result.descuentos_total) || 0,
+            // Compat: campos antiguos
+            subtotal:          Number(result.subtotal_base) || 0,
+            iva:               Number(result.iva_total) || 0,
+            total:             Number(result.total) || 0,
+            items:             [...itemsRich, ...ocNoMatcheados],
+            factura_url:       pub.publicUrl,
           }));
-          setProgress("✅ Factura leída — revisa y ajusta");
+          setProgress(`✅ Factura leída — ${itemsRich.length} items extraídos${ocNoMatcheados.length ? ` · ${ocNoMatcheados.length} de la OC no facturados` : ""}`);
         } else {
           setErr(result.error || "No se pudo leer la factura — ingresa los datos manualmente");
           setData(d => ({ ...d, factura_url: pub.publicUrl }));
@@ -146,46 +210,129 @@ export default function FacturaProveedorModal({ oc, onClose, reload, currentUser
     setStep("applying");
     setErr("");
     try {
-      // 1. Construir items actualizados de la OC con los precios reales
-      const itemsActualizados = (oc.items || []).map((it, i) => {
-        const f = data.items.find(x => x.oc_idx === i);
+      // 1. Construir items actualizados de la OC con los precios reales (costo = base + ICO+ICL+ADV)
+      const ocItemsOriginal = oc.items || [];
+      const itemsActualizados = ocItemsOriginal.map((it, i) => {
+        const f = data.items.find(x => x.oc_idx === i && !x.no_facturado);
         if (!f) return it;
-        const precioU = Number(f.precio_unitario) || Number(it.precioU) || 0;
+        const precioU = Number(f.precio_costo_unit ?? f.precio_unitario) || Number(it.precioU) || 0;
         const cant = Number(it.cant) || 0;
         return {
           ...it,
           precioU,
           subtotal: Math.round(cant * precioU),
+          // metadata extra para auditoría
+          factura_codigo_barras: f.codigo_barras || it.codigo_barras || null,
+          factura_iva_unit:      Number(f.iva_valor_unit) || 0,
+          factura_consumo_unit:  (Number(f.ico_valor_unit) || 0) + (Number(f.icl_valor_unit) || 0) + (Number(f.adv_valor_unit) || 0),
         };
       });
-      const subtotalOC = itemsActualizados.reduce((s, it) => s + (Number(it.subtotal) || 0), 0);
 
-      // 2. Update OC con factura aplicada
-      const { error: e1 } = await supabase.from("ordenes_compra").update({
-        items: itemsActualizados,
+      // 1b. Items de la factura que NO estaban en la OC original — los agregamos
+      const itemsNuevosOC = data.items.filter(f => f.es_nuevo_oc && f.codigo_barras).map(f => ({
+        item: f.nombre, nombre: f.nombre,
+        cant: Number(f.cantidad) || 0,
+        unidad: f.unidad || "UND",
+        precioU: Number(f.precio_costo_unit) || 0,
+        subtotal: Math.round((Number(f.cantidad) || 0) * (Number(f.precio_costo_unit) || 0)),
+        item_id: null,                        // se asigna abajo si lo creamos en catálogo
+        codigo_barras: f.codigo_barras,
+        referencia_proveedor: f.referencia_proveedor,
+        agregado_post_factura: true,
+        factura_iva_unit:     Number(f.iva_valor_unit) || 0,
+        factura_consumo_unit: (Number(f.ico_valor_unit) || 0) + (Number(f.icl_valor_unit) || 0) + (Number(f.adv_valor_unit) || 0),
+      }));
+
+      // 2. Match / crear items en items_catalogo por código de barras
+      // Para cada item de la factura que tenga código de barras:
+      //   a) Buscar en items_catalogo por codigo_barras
+      //   b) Si existe → actualizar precio_compra con precio_costo_unit
+      //   c) Si NO existe → crear nuevo item con los datos de la factura
+      const facturados = data.items.filter(f => !f.no_facturado);
+      const updatesCatalogo = [];
+      const creadosCatalogo = []; // {codigo_barras → nuevo id}
+
+      for (const f of facturados) {
+        const cb = (f.codigo_barras || "").trim();
+        if (!cb) continue;
+        const precioCosto = Number(f.precio_costo_unit) || 0;
+        if (precioCosto <= 0) continue;
+
+        const { data: existente } = await supabase.from("items_catalogo")
+          .select("id, codigo_barras, precio_compra").eq("codigo_barras", cb).maybeSingle();
+
+        if (existente?.id) {
+          await supabase.from("items_catalogo").update({
+            precio_compra: precioCosto,
+            referencia_proveedor: f.referencia_proveedor || null,
+            proveedor_principal_id: oc.proveedor_id || null,
+            updated_at: new Date().toISOString(),
+          }).eq("id", existente.id);
+          updatesCatalogo.push(existente.id);
+          // Si el item de la factura no tenía item_id pero ahora lo encontramos por barcode, asignarlo
+          if (!f.item_id && f.es_nuevo_oc) {
+            const idx = itemsNuevosOC.findIndex(x => x.codigo_barras === cb);
+            if (idx >= 0) itemsNuevosOC[idx].item_id = existente.id;
+          }
+        } else {
+          // Crear nuevo en catálogo
+          const newId = `ITM_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+          const { error: ec } = await supabase.from("items_catalogo").insert({
+            id: newId,
+            codigo: cb,
+            codigo_barras: cb,
+            referencia_proveedor: f.referencia_proveedor || null,
+            proveedor_principal_id: oc.proveedor_id || null,
+            nombre: f.nombre,
+            unidad: f.unidad || "UND",
+            precio_compra: precioCosto,
+            activo: true,
+          });
+          if (!ec) {
+            creadosCatalogo.push({ id: newId, nombre: f.nombre });
+            const idx = itemsNuevosOC.findIndex(x => x.codigo_barras === cb);
+            if (idx >= 0) itemsNuevosOC[idx].item_id = newId;
+          }
+        }
+      }
+
+      // 3. Construir items finales de la OC (matcheados + nuevos)
+      const itemsFinales = [...itemsActualizados, ...itemsNuevosOC];
+      const subtotalOC = itemsFinales.reduce((s, it) => s + (Number(it.subtotal) || 0), 0);
+
+      // 4. Update OC con factura aplicada + vencimiento
+      const updateOC = {
+        items: itemsFinales,
         subtotal: subtotalOC,
-        iva: usarIva,
-        total: usarTotal,
+        iva: data.iva_total || usarIva,
+        total: Number(data.total) || (subtotalOC + (data.iva_total || 0)),
         factura_numero: data.factura_numero,
         factura_fecha: data.factura_fecha,
         factura_url: data.factura_url || null,
-        factura_subtotal: usarSubtotal,
-        factura_iva: usarIva,
+        factura_subtotal: data.subtotal_base || usarSubtotal,
+        factura_iva: data.iva_total || usarIva,
         factura_data: parsed || null,
         factura_aplicada: true,
         factura_aplicada_at: new Date().toISOString(),
         factura_aplicada_por: currentUser?.email || currentUser?.nombre || "sistema",
         updated_at: new Date().toISOString(),
-      }).eq("id", oc.id);
+      };
+      if (data.fecha_vencimiento) {
+        updateOC.fecha_vencimiento_pago = data.fecha_vencimiento;
+        const dc = Math.floor((new Date(data.fecha_vencimiento) - new Date(data.factura_fecha || new Date())) / 86400000);
+        if (dc >= 0) updateOC.dias_credito = dc;
+      }
+      const { error: e1 } = await supabase.from("ordenes_compra").update(updateOC).eq("id", oc.id);
       if (e1) throw e1;
 
-      // 3. Actualizar precio_compra en items_catalogo (para futuras OCs)
-      for (const it of data.items) {
-        if (it.item_id && it.precio_unitario > 0) {
+      // 5. Para items de la OC original que vienen de catálogo (item_id) pero el AI no extrajo barcode
+      //    aún así actualizamos su precio_compra usando el precio_costo_unit
+      for (const f of facturados) {
+        if (f.item_id && !f.codigo_barras && Number(f.precio_costo_unit) > 0) {
           await supabase.from("items_catalogo").update({
-            precio_compra: it.precio_unitario,
+            precio_compra: f.precio_costo_unit,
             updated_at: new Date().toISOString(),
-          }).eq("id", it.item_id);
+          }).eq("id", f.item_id);
         }
       }
 
@@ -278,18 +425,41 @@ export default function FacturaProveedorModal({ oc, onClose, reload, currentUser
                 <input value={data.factura_numero} onChange={e => setField("factura_numero", e.target.value)} style={IS} placeholder="Ej: FE-001" autoFocus />
               </div>
               <div>
-                <label style={LS}>Fecha</label>
+                <label style={LS}>Fecha emisión</label>
                 <input type="date" value={data.factura_fecha} onChange={e => setField("factura_fecha", e.target.value)} style={IS} />
               </div>
               <div>
-                <label style={LS}>IVA (COP)</label>
-                <input type="number" value={data.iva} onChange={e => setField("iva", e.target.value)} style={IS} />
+                <label style={LS}>Vence pago</label>
+                <input type="date" value={data.fecha_vencimiento || ""} onChange={e => setField("fecha_vencimiento", e.target.value)} style={IS} />
               </div>
               <div>
-                <label style={LS}>Total factura</label>
-                <input type="number" value={data.total || totalCalc} onChange={e => setField("total", e.target.value)} style={IS} />
+                <label style={LS}>Forma de pago</label>
+                <input value={data.forma_pago || ""} onChange={e => setField("forma_pago", e.target.value)} style={IS} placeholder="Contado/Crédito" />
               </div>
             </div>
+
+            {/* Resumen de impuestos (si vienen del parser) */}
+            {(data.consumo_total > 0 || data.iva_total > 0) && (
+              <div style={{ background: B.navy, borderRadius: 10, padding: 12, marginBottom: 14, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 10, fontSize: 12 }}>
+                <div>
+                  <div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", fontWeight: 700 }}>Subtotal base</div>
+                  <div style={{ fontSize: 14, fontWeight: 700 }}>{COP(data.subtotal_base || 0)}</div>
+                </div>
+                <div>
+                  <div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", fontWeight: 700 }}>Consumo (no deducible)</div>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: B.warning }}>{COP(data.consumo_total || 0)}</div>
+                  <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)" }}>ICO+ICL+ADV → al costo</div>
+                </div>
+                <div>
+                  <div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", fontWeight: 700 }}>IVA (deducible)</div>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: B.sky }}>{COP(data.iva_total || 0)}</div>
+                </div>
+                <div>
+                  <div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", fontWeight: 700 }}>TOTAL</div>
+                  <div style={{ fontSize: 16, fontWeight: 800, color: B.sand }}>{COP(data.total || 0)}</div>
+                </div>
+              </div>
+            )}
 
             {/* Tabla items */}
             <div style={{ background: B.navy, borderRadius: 10, overflow: "hidden", marginBottom: 14 }}>
@@ -299,33 +469,55 @@ export default function FacturaProveedorModal({ oc, onClose, reload, currentUser
               <table style={{ width: "100%", fontSize: 12, borderCollapse: "collapse" }}>
                 <thead>
                   <tr style={{ background: B.navyLight }}>
-                    {["Item", "Cant", "Unidad", "Cotizado", "Real (factura)", "Δ", "Subtotal"].map((h, i) => (
-                      <th key={h + i} style={{ padding: "8px 10px", textAlign: i < 3 ? "left" : "right", fontSize: 9, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: "0.04em" }}>{h}</th>
+                    {["Item", "Cant", "Costo unit", "IVA unit", "Δ vs cotiz", "Subtotal"].map((h, i) => (
+                      <th key={h + i} style={{ padding: "8px 10px", textAlign: i < 1 ? "left" : "right", fontSize: 9, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: "0.04em" }}>{h}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
                   {data.items.map((it, i) => {
-                    const sub = (Number(it.cantidad) || 0) * (Number(it.precio_unitario) || 0);
-                    const delta = (Number(it.precio_unitario) || 0) - (Number(it.precio_anterior) || 0);
-                    const cambio = Math.abs(delta) > 0.01;
+                    const costoUnit = Number(it.precio_costo_unit ?? it.precio_unitario) || 0;
+                    const sub = (Number(it.cantidad) || 0) * costoUnit;
+                    const delta = costoUnit - (Number(it.precio_anterior) || 0);
+                    const cambio = !it.no_facturado && !it.es_nuevo_oc && (it.precio_anterior > 0) && Math.abs(delta) > 0.01;
                     const color = delta > 0 ? B.danger : delta < 0 ? B.success : "rgba(255,255,255,0.4)";
+                    const bg = it.no_facturado ? "rgba(220,220,220,0.05)"
+                             : it.es_nuevo_oc ? "rgba(34,197,94,0.08)"
+                             : cambio ? "rgba(245,158,11,0.06)" : "transparent";
                     return (
-                      <tr key={i} style={{ borderTop: `1px solid ${B.navyLight}`, background: cambio ? "rgba(245,158,11,0.06)" : "transparent" }}>
-                        <td style={{ padding: "8px 10px" }}>{it.nombre}</td>
-                        <td style={{ padding: "8px 10px", textAlign: "right" }}>{it.cantidad}</td>
-                        <td style={{ padding: "8px 10px", textAlign: "right", color: "rgba(255,255,255,0.5)" }}>{it.unidad}</td>
-                        <td style={{ padding: "8px 10px", textAlign: "right", color: "rgba(255,255,255,0.5)" }}>{COP(it.precio_anterior)}</td>
+                      <tr key={i} style={{ borderTop: `1px solid ${B.navyLight}`, background: bg }}>
+                        <td style={{ padding: "8px 10px" }}>
+                          <div>
+                            {it.nombre}
+                            {it.no_facturado && <span style={{ marginLeft: 6, fontSize: 9, padding: "1px 6px", background: B.danger + "33", color: B.danger, borderRadius: 8, fontWeight: 700 }}>NO FACTURADO</span>}
+                            {it.es_nuevo_oc && <span style={{ marginLeft: 6, fontSize: 9, padding: "1px 6px", background: B.success + "33", color: B.success, borderRadius: 8, fontWeight: 700 }}>NUEVO</span>}
+                          </div>
+                          {(it.codigo_barras || it.referencia_proveedor) && (
+                            <div style={{ fontSize: 10, color: "rgba(255,255,255,0.35)", marginTop: 2 }}>
+                              {it.codigo_barras && <span>📊 {it.codigo_barras}</span>}
+                              {it.codigo_barras && it.referencia_proveedor && " · "}
+                              {it.referencia_proveedor && <span>Ref {it.referencia_proveedor}</span>}
+                            </div>
+                          )}
+                        </td>
+                        <td style={{ padding: "8px 10px", textAlign: "right" }}>
+                          {it.cantidad} {it.unidad ? <span style={{ fontSize: 10, color: "rgba(255,255,255,0.4)" }}>{it.unidad}</span> : null}
+                        </td>
                         <td style={{ padding: "6px 10px", textAlign: "right" }}>
-                          <input type="number" value={it.precio_unitario}
-                            onChange={e => setItemField(i, "precio_unitario", e.target.value)}
-                            style={{ ...IS, padding: "5px 8px", fontSize: 12, width: 100, textAlign: "right",
+                          <input type="number" value={costoUnit}
+                            onChange={e => setItemField(i, "precio_costo_unit", e.target.value)}
+                            style={{ ...IS, padding: "5px 8px", fontSize: 12, width: 110, textAlign: "right",
                               borderColor: cambio ? B.warning : B.navyLight,
                               color: cambio ? B.warning : "#fff",
                               fontWeight: cambio ? 700 : 400 }} />
                         </td>
+                        <td style={{ padding: "8px 10px", textAlign: "right", color: B.sky, fontSize: 11 }}>
+                          {it.iva_valor_unit ? COP(it.iva_valor_unit) : "—"}
+                          {it.iva_pct > 0 && <div style={{ fontSize: 9, color: "rgba(255,255,255,0.35)" }}>{it.iva_pct}%</div>}
+                        </td>
                         <td style={{ padding: "8px 10px", textAlign: "right", color, fontWeight: 700, fontSize: 11 }}>
                           {cambio ? `${delta > 0 ? "+" : ""}${COP(delta)}` : "—"}
+                          {it.precio_anterior > 0 && cambio && <div style={{ fontSize: 9, color: "rgba(255,255,255,0.35)" }}>cotiz {COP(it.precio_anterior)}</div>}
                         </td>
                         <td style={{ padding: "8px 10px", textAlign: "right", color: B.sand, fontWeight: 700 }}>{COP(sub)}</td>
                       </tr>
@@ -334,16 +526,16 @@ export default function FacturaProveedorModal({ oc, onClose, reload, currentUser
                 </tbody>
                 <tfoot>
                   <tr style={{ background: B.navyMid, fontWeight: 700 }}>
-                    <td colSpan={6} style={{ padding: "10px 14px", textAlign: "right", color: "rgba(255,255,255,0.6)" }}>Subtotal calculado</td>
-                    <td style={{ padding: "10px 14px", textAlign: "right", color: B.sky }}>{COP(subtotalCalc)}</td>
+                    <td colSpan={5} style={{ padding: "10px 14px", textAlign: "right", color: "rgba(255,255,255,0.6)" }}>Subtotal costo (sin IVA)</td>
+                    <td style={{ padding: "10px 14px", textAlign: "right", color: B.sky }}>{COP(data.items.reduce((s, x) => s + (Number(x.cantidad) || 0) * (Number(x.precio_costo_unit ?? x.precio_unitario) || 0), 0))}</td>
                   </tr>
                   <tr style={{ background: B.navyMid }}>
-                    <td colSpan={6} style={{ padding: "6px 14px", textAlign: "right", color: "rgba(255,255,255,0.6)" }}>+ IVA</td>
-                    <td style={{ padding: "6px 14px", textAlign: "right", color: "#fbbf24" }}>{COP(usarIva)}</td>
+                    <td colSpan={5} style={{ padding: "6px 14px", textAlign: "right", color: "rgba(255,255,255,0.6)" }}>+ IVA (deducible)</td>
+                    <td style={{ padding: "6px 14px", textAlign: "right", color: "#fbbf24" }}>{COP(data.iva_total || usarIva)}</td>
                   </tr>
                   <tr style={{ background: B.navy }}>
-                    <td colSpan={6} style={{ padding: "10px 14px", textAlign: "right", color: "#fff", fontSize: 13, fontWeight: 800 }}>TOTAL FACTURA</td>
-                    <td style={{ padding: "10px 14px", textAlign: "right", color: B.success, fontWeight: 800, fontSize: 14 }}>{COP(usarSubtotal + usarIva)}</td>
+                    <td colSpan={5} style={{ padding: "10px 14px", textAlign: "right", color: "#fff", fontSize: 13, fontWeight: 800 }}>TOTAL FACTURA</td>
+                    <td style={{ padding: "10px 14px", textAlign: "right", color: B.success, fontWeight: 800, fontSize: 14 }}>{COP(data.total || (usarSubtotal + usarIva))}</td>
                   </tr>
                 </tfoot>
               </table>
