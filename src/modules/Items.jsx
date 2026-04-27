@@ -1322,6 +1322,14 @@ function InventarioTab({
 
   const filtered = useMemo(() => {
     let list = activos;
+
+    // Si se filtra por una bodega específica, mostrar SOLO items que tienen
+    // fila en items_stock_locacion para esa bodega (es decir, items que se
+    // gestionan en ese lugar). Evita mostrar bebidas en Cocina, etc.
+    if (locFilter !== "todos") {
+      list = list.filter(i => stockPorLoc[`${i.id}|${locFilter}`] !== undefined);
+    }
+
     if (invCatFilter !== "todos") list = list.filter(i => i.categoria === invCatFilter);
     if (invSearch) {
       const s = invSearch.toLowerCase();
@@ -1346,7 +1354,7 @@ function InventarioTab({
       return 0;
     });
     return list;
-  }, [activos, invSearch, invCatFilter, invFilter, invSortBy, invSortDir]);
+  }, [activos, invSearch, invCatFilter, invFilter, invSortBy, invSortDir, locFilter, stockPorLoc]);
 
   const toggleSort = (k) => {
     if (invSortBy === k) setInvSortDir(d => d === "asc" ? "desc" : "asc");
@@ -1402,30 +1410,14 @@ function InventarioTab({
         ))}
       </div>
 
-      {/* Selector de locación */}
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 14, alignItems: "center", background: B.navyMid, padding: "10px 14px", borderRadius: 10, border: `1px solid ${B.navyLight}` }}>
-        <span style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", marginRight: 4 }}>📍 Locación:</span>
-        {[{ id: "todos", nombre: "Todas", icono: "🌐" }, ...locaciones].map(loc => {
-          const active = locFilter === loc.id;
-          return (
-            <button key={loc.id} onClick={() => setLocFilter(loc.id)}
-              style={{
-                padding: "7px 14px", borderRadius: 8, border: `1px solid ${active ? B.sky : B.navyLight}`,
-                background: active ? B.sky + "22" : "transparent",
-                color: active ? B.sky : "rgba(255,255,255,0.55)",
-                cursor: "pointer", fontSize: 12, fontWeight: 700,
-              }}>
-              {loc.icono} {loc.nombre}
-              {loc.es_principal && <span style={{ fontSize: 9, marginLeft: 4, color: active ? B.sky : "rgba(255,255,255,0.35)" }}>★ principal</span>}
-              {loc.es_ventas && <span style={{ fontSize: 9, marginLeft: 4, color: active ? B.success : "rgba(74,222,128,0.5)" }}>💰 ventas</span>}
-            </button>
-          );
-        })}
-        <button onClick={() => setNewLocModal(true)}
-          style={{ padding: "7px 12px", borderRadius: 8, border: `1px dashed ${B.sand}`, background: "transparent", color: B.sand, cursor: "pointer", fontSize: 11, fontWeight: 700 }}>
-          + Agregar locación
-        </button>
-      </div>
+      {/* Selector de locación con submenú para Mini Bars */}
+      <LocacionesSelector
+        locaciones={locaciones}
+        locFilter={locFilter}
+        setLocFilter={setLocFilter}
+        onAdd={() => setNewLocModal(true)}
+      />
+
 
       {/* Filtros */}
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 14, alignItems: "center" }}>
@@ -2338,6 +2330,130 @@ function LoggroCategoriaPicker({ nombre, categoriaAtolon, form, onClose, onCreat
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SELECTOR DE LOCACIONES con submenu para Mini Bars individuales
+// Muestra solo las bodegas "principales" como botones; los 25 Mini Bars por
+// habitación quedan agrupados bajo el botón "Mini Bar" con dropdown.
+// ═══════════════════════════════════════════════════════════════════════════
+function LocacionesSelector({ locaciones, locFilter, setLocFilter, onAdd }) {
+  const [openMinibar, setOpenMinibar] = useState(false);
+
+  // Separar mini bars individuales (de habitación) del resto
+  const minibarsHabitacion = locaciones.filter(l => l.id.startsWith("LOC-MINIBAR-"));
+  const principales = locaciones.filter(l => !l.id.startsWith("LOC-MINIBAR-"));
+
+  const minibarHabActivo = minibarsHabitacion.find(l => l.id === locFilter);
+
+  // Cerrar dropdown al click fuera
+  useEffect(() => {
+    if (!openMinibar) return;
+    const close = () => setOpenMinibar(false);
+    setTimeout(() => document.addEventListener("click", close, { once: true }), 0);
+    return () => document.removeEventListener("click", close);
+  }, [openMinibar]);
+
+  return (
+    <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 14, alignItems: "center", background: B.navyMid, padding: "10px 14px", borderRadius: 10, border: `1px solid ${B.navyLight}` }}>
+      <span style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", marginRight: 4 }}>📍 Locación:</span>
+
+      {[{ id: "todos", nombre: "Todas", icono: "🌐" }, ...principales].map(loc => {
+        const active = locFilter === loc.id;
+        const isMinibarParent = loc.id === "LOC-MINIBAR";
+        // Si es el botón "Mini Bar" genérico, marcar activo si hay una habitación seleccionada
+        const activeWithChild = isMinibarParent && minibarHabActivo;
+        return (
+          <div key={loc.id} style={{ position: "relative" }}>
+            <button
+              onClick={(e) => {
+                if (isMinibarParent) {
+                  e.stopPropagation();
+                  setOpenMinibar(o => !o);
+                } else {
+                  setLocFilter(loc.id);
+                }
+              }}
+              style={{
+                padding: "7px 14px", borderRadius: 8,
+                border: `1px solid ${active || activeWithChild ? B.sky : B.navyLight}`,
+                background: active || activeWithChild ? B.sky + "22" : "transparent",
+                color: active || activeWithChild ? B.sky : "rgba(255,255,255,0.55)",
+                cursor: "pointer", fontSize: 12, fontWeight: 700,
+                display: "flex", alignItems: "center", gap: 4,
+              }}>
+              {loc.icono} {loc.nombre}
+              {isMinibarParent && (
+                <>
+                  <span style={{ fontSize: 9, padding: "1px 6px", borderRadius: 4, background: "rgba(255,255,255,0.1)", color: "rgba(255,255,255,0.7)", marginLeft: 4 }}>
+                    {minibarsHabitacion.length}
+                  </span>
+                  <span style={{ fontSize: 9, marginLeft: 2 }}>{openMinibar ? "▲" : "▼"}</span>
+                  {minibarHabActivo && (
+                    <span style={{ fontSize: 9, padding: "1px 6px", borderRadius: 4, background: B.sky + "33", color: B.sky, marginLeft: 4 }}>
+                      {minibarHabActivo.nombre.replace("Mini Bar ", "")}
+                    </span>
+                  )}
+                </>
+              )}
+              {loc.es_principal && !isMinibarParent && <span style={{ fontSize: 9, marginLeft: 4, color: active ? B.sky : "rgba(255,255,255,0.35)" }}>★ principal</span>}
+              {loc.es_ventas && !isMinibarParent && <span style={{ fontSize: 9, marginLeft: 4, color: active ? B.success : "rgba(74,222,128,0.5)" }}>💰 ventas</span>}
+            </button>
+
+            {/* Submenú con las 25 habitaciones */}
+            {isMinibarParent && openMinibar && (
+              <div onClick={e => e.stopPropagation()}
+                style={{
+                  position: "absolute", top: "calc(100% + 4px)", left: 0, zIndex: 100,
+                  background: B.navyMid, border: `1px solid ${B.navyLight}`, borderRadius: 10,
+                  padding: 10, minWidth: 280, maxWidth: 360, maxHeight: 400, overflowY: "auto",
+                  boxShadow: "0 12px 40px rgba(0,0,0,0.5)",
+                }}>
+                <div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8, fontWeight: 700 }}>
+                  Mini Bars por habitación ({minibarsHabitacion.length})
+                </div>
+                <button onClick={() => { setLocFilter(loc.id); setOpenMinibar(false); }}
+                  style={{
+                    width: "100%", textAlign: "left", padding: "7px 10px", borderRadius: 6,
+                    border: locFilter === loc.id ? `1px solid ${B.sky}` : "1px solid transparent",
+                    background: locFilter === loc.id ? B.sky + "22" : "transparent",
+                    color: locFilter === loc.id ? B.sky : "rgba(255,255,255,0.7)",
+                    cursor: "pointer", fontSize: 12, fontWeight: 700, marginBottom: 6,
+                  }}>
+                  🛏️ Mini Bar (general / consolidado)
+                </button>
+                <div style={{ height: 1, background: B.navyLight, margin: "6px 0 8px" }} />
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(110px, 1fr))", gap: 4 }}>
+                  {minibarsHabitacion
+                    .slice()
+                    .sort((a, b) => (a.nombre || "").localeCompare(b.nombre || "", "es", { numeric: true }))
+                    .map(mb => {
+                      const isActive = locFilter === mb.id;
+                      return (
+                        <button key={mb.id} onClick={() => { setLocFilter(mb.id); setOpenMinibar(false); }}
+                          style={{
+                            padding: "6px 8px", borderRadius: 6,
+                            border: isActive ? `1px solid ${B.sky}` : `1px solid ${B.navyLight}`,
+                            background: isActive ? B.sky + "22" : B.navy,
+                            color: isActive ? B.sky : "rgba(255,255,255,0.7)",
+                            cursor: "pointer", fontSize: 11, fontWeight: 700,
+                          }}>
+                          {mb.nombre.replace("Mini Bar ", "🛏️ ")}
+                        </button>
+                      );
+                    })}
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      })}
+      <button onClick={onAdd}
+        style={{ padding: "7px 12px", borderRadius: 8, border: `1px dashed ${B.sand}`, background: "transparent", color: B.sand, cursor: "pointer", fontSize: 11, fontWeight: 700 }}>
+        + Agregar locación
+      </button>
     </div>
   );
 }
