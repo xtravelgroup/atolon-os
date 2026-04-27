@@ -3,6 +3,7 @@ import { B, COP, fmtFecha, todayStr } from "../brand";
 import { supabase } from "../lib/supabase";
 import { getCart, clearCart } from "../lib/requisicionCart";
 import FacturaProveedorModal from "../components/FacturaProveedorModal";
+import LogisticaOCModal from "../components/LogisticaOCModal";
 
 // ─── Constantes ──────────────────────────────────────────────────────────────
 const ESTADOS = ["Borrador", "Pendiente", "Aprobada", "En Compra", "Recibida Parcial", "Recibida", "Rechazada"];
@@ -1042,6 +1043,7 @@ function OCDetalleModal({ oc, onClose, reload }) {
 function TabRecepciones({ ordenes, reqs, reload, currentUser }) {
   const [openOC, setOpenOC] = useState(null);
   const [openFactura, setOpenFactura] = useState(null);
+  const [openLogistica, setOpenLogistica] = useState(null);
 
   // Badges por estado de OC
   const OC_BADGE = {
@@ -1092,7 +1094,7 @@ function TabRecepciones({ ordenes, reqs, reload, currentUser }) {
                 <div style={{ textAlign: "right" }}>
                   <div style={{ fontSize: 16, fontWeight: 800, color: B.sand, fontFamily: "'Barlow Condensed', sans-serif" }}>{COP(oc.total || 0)}</div>
                   <span style={{ background: badge.bg, color: badge.color, padding: "3px 10px", borderRadius: 20, fontSize: 11, fontWeight: 700, whiteSpace: "nowrap" }}>{badge.label}</span>
-                  <div style={{ marginTop: 6 }}>
+                  <div style={{ marginTop: 6, display: "flex", gap: 6, justifyContent: "flex-end", flexWrap: "wrap" }}>
                     <button onClick={(e) => { e.stopPropagation(); setOpenFactura(oc); }}
                       style={{ padding: "4px 10px", fontSize: 11, fontWeight: 700, borderRadius: 6,
                         border: `1px solid ${oc.factura_aplicada ? B.success : B.warning}`,
@@ -1100,6 +1102,14 @@ function TabRecepciones({ ordenes, reqs, reload, currentUser }) {
                         color: oc.factura_aplicada ? B.success : B.warning, cursor: "pointer" }}
                       title={oc.factura_aplicada ? "Factura aplicada" : "Adjuntar factura del proveedor"}>
                       {oc.factura_aplicada ? "📄✓ Factura" : "📎 Adjuntar Factura"}
+                    </button>
+                    <button onClick={(e) => { e.stopPropagation(); setOpenLogistica(oc); }}
+                      style={{ padding: "4px 10px", fontSize: 11, fontWeight: 700, borderRadius: 6,
+                        border: `1px solid ${B.sky}`,
+                        background: B.sky + "22",
+                        color: B.sky, cursor: "pointer" }}
+                      title="Programar entrega en muelle y transporte a Atolón">
+                      🚚 Logística
                     </button>
                   </div>
                 </div>
@@ -1110,6 +1120,7 @@ function TabRecepciones({ ordenes, reqs, reload, currentUser }) {
       </div>
       {openOC && <RecepcionOCModal oc={openOC} reqs={reqs} onClose={() => setOpenOC(null)} reload={reload} currentUser={currentUser} />}
       {openFactura && <FacturaProveedorModal oc={openFactura} onClose={() => setOpenFactura(null)} reload={reload} currentUser={currentUser} />}
+      {openLogistica && <LogisticaOCModal oc={openLogistica} onClose={() => setOpenLogistica(null)} reload={reload} currentUser={currentUser} />}
     </>
   );
 }
