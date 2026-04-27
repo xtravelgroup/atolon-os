@@ -401,7 +401,6 @@ export default function Requisiciones() {
         {[
           ["solicitudes",  `📋 Solicitudes (${reqs.length})`],
           ["aprobaciones", `✅ Aprobaciones (${requierenAprobacion.length})`],
-          ["mesa",         `🛒 Mesa de Compras`],
           ["ordenes",      `🧾 Órdenes de compra (${ordenes.length})`],
           ["recepciones",  `📦 Recepciones`],
           ["reglas",       `⚙ Reglas`],
@@ -422,8 +421,6 @@ export default function Requisiciones() {
         <TabSolicitudes reqs={reqs} reglas={reglas} onOpen={setDetail} />
       ) : tab === "aprobaciones" ? (
         <TabAprobaciones reqs={requierenAprobacion} reglas={reglas} onOpen={setDetail} currentUser={currentUser} reload={load} />
-      ) : tab === "mesa" ? (
-        <TabMesaCompras reqs={reqs} ordenes={ordenes} proveedores={proveedores} currentUser={currentUser} reload={load} onNuevoProv={() => setShowProvNuevo(true)} />
       ) : tab === "ordenes" ? (
         <TabOrdenes ordenes={ordenes} reload={load} />
       ) : tab === "recepciones" ? (
@@ -2567,7 +2564,7 @@ function ProveedorRapidoModal({ onClose, reload }) {
 // Agrupa ítems de múltiples requisiciones aprobadas y permite asignarlos
 // a diferentes proveedores, generando una OC por proveedor.
 // ═══════════════════════════════════════════════════════════════════════════
-function TabMesaCompras({ reqs, ordenes, proveedores, currentUser, reload, onNuevoProv }) {
+export function TabMesaCompras({ reqs, ordenes, proveedores, currentUser, reload, onNuevoProv }) {
   // Recoger todos los ítems de requisiciones aprobadas / en compra que aún no están en ninguna OC
   // Cada ítem ya asignado tiene `oc_id` dentro del objeto del ítem (jsonb).
   const itemsPendientes = useMemo(() => {
@@ -2742,7 +2739,7 @@ function TabMesaCompras({ reqs, ordenes, proveedores, currentUser, reload, onNue
 // ═══════════════════════════════════════════════════════════════════════════
 // AsignarOCModal — crea nueva OC o agrega ítems a una OC abierta existente
 // ═══════════════════════════════════════════════════════════════════════════
-function AsignarOCModal({ items, proveedores, ordenes, reqs, currentUser, onClose, onNuevoProv, onDone }) {
+export function AsignarOCModal({ items, proveedores, ordenes, reqs, currentUser, onClose, onNuevoProv, onDone }) {
   const [modo, setModo] = useState("nueva"); // "nueva" | "existente"
   const [provId, setProvId] = useState("");
   const [ocId, setOcId] = useState("");

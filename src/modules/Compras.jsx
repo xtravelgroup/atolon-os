@@ -11,9 +11,11 @@ import FacturaProveedorModal from "../components/FacturaProveedorModal";
 import LogisticaOCModal from "../components/LogisticaOCModal";
 import EmailOCModal from "../components/EmailOCModal";
 import CXPPagoModal from "../components/CXPPagoModal";
+import { TabMesaCompras } from "./Requisiciones";
 
 const TABS = [
   { key: "dashboard", label: "Dashboard", icon: "📊" },
+  { key: "mesa",      label: "Mesa de Compras", icon: "🛒" },
   { key: "ordenes",   label: "Órdenes",   icon: "🧾" },
   { key: "logistica", label: "Logística", icon: "🚚" },
   { key: "cxp",       label: "Cuentas x Pagar", icon: "💳" },
@@ -40,26 +42,40 @@ export default function Compras() {
   const [entregas, setEntregas] = useState([]);
   const [transportes, setTransportes] = useState([]);
   const [zarpes, setZarpes] = useState([]);
+  const [reqs, setReqs] = useState([]);
+  const [proveedores, setProveedores] = useState([]);
 
   useEffect(() => {
-    supabase.auth.getUser().then(({ data }) => {
+    supabase.auth.getUser().then(async ({ data }) => {
       const u = data?.user;
-      if (u) setCurrentUser({ id: u.id, email: u.email, nombre: u.user_metadata?.nombre || u.email });
+      if (!u) return;
+      // Cargar fila de usuarios para tener id + rol (lo necesita TabMesaCompras)
+      const { data: row } = await supabase.from("usuarios").select("id, nombre, rol_id").eq("email", u.email).maybeSingle();
+      setCurrentUser({
+        id: row?.id || u.id,
+        email: u.email,
+        nombre: row?.nombre || u.user_metadata?.nombre || u.email,
+        rol: row?.rol_id || null,
+      });
     });
   }, []);
 
   const reload = async () => {
     setLoading(true);
-    const [oc, em, ta, zf] = await Promise.all([
+    const [oc, em, ta, zf, rq, pv] = await Promise.all([
       supabase.from("ordenes_compra").select("*").order("created_at", { ascending: false }),
       supabase.from("oc_entregas_muelle").select("*").order("fecha_programada", { ascending: true }),
       supabase.from("oc_transporte_atolon").select("*").order("fecha_zarpe", { ascending: true }),
       supabase.from("muelle_zarpes_flota").select("*").gte("fecha", todayStr()).order("fecha", { ascending: true }).limit(20),
+      supabase.from("requisiciones").select("*").order("fecha", { ascending: false }),
+      supabase.from("proveedores").select("*").order("nombre"),
     ]);
     setOrdenes(oc.data || []);
     setEntregas(em.data || []);
     setTransportes(ta.data || []);
     setZarpes(zf.data || []);
+    setReqs(rq.data || []);
+    setProveedores(pv.data || []);
     setLoading(false);
   };
 
@@ -98,7 +114,8 @@ export default function Compras() {
 
       {loading
         ? <Loading />
-        : tab === "dashboard" ? <TabDashboard ordenes={ordenes} entregas={entregas} transportes={transportes} zarpes={zarpes} setTab={setTab} />
+        : tab === "dashboard" ? <TabDashboard ordenes={ordenes} entregas={entregas} transportes={transportes} zarpes={zarpes} reqs={reqs} setTab={setTab} />
+        : tab === "mesa"      ? <TabMesaCompras reqs={reqs} ordenes={ordenes} proveedores={proveedores} currentUser={currentUser} reload={reload} onNuevoProv={() => alert("Crea proveedores desde el módulo Proveedores")} />
         : tab === "ordenes"   ? <TabOrdenes ordenes={ordenes} reload={reload} currentUser={currentUser} />
         : tab === "logistica" ? <TabLogistica ordenes={ordenes} entregas={entregas} transportes={transportes} zarpes={zarpes} reload={reload} currentUser={currentUser} />
         : tab === "cxp"       ? <TabCXP ordenes={ordenes} reload={reload} currentUser={currentUser} />
@@ -115,7 +132,7 @@ function Loading() {
 // ═══════════════════════════════════════════════════════════════════════════
 // TAB DASHBOARD — KPIs
 // ═══════════════════════════════════════════════════════════════════════════
-function TabDashboard({ ordenes, entregas, transportes, zarpes, setTab }) {
+function TabDashboard({ ordenes, entregas, transportes, zarpes, reqs = [], setTab }) {
   const today = todayStr();
   const month = today.slice(0, 7);
 
@@ -127,8 +144,19 @@ function TabDashboard({ ordenes, entregas, transportes, zarpes, setTab }) {
   const entregasHoy      = entregas.filter(e => e.fecha_programada === today && e.estado !== "cancelada");
   const entregasPendMuel = entregas.filter(e => ["programada", "en_camino", "demorada"].includes(e.estado));
   const enTransito       = transportes.filter(t => ["programado", "zarpado"].includes(t.estado));
+  // Items pendientes en mesa: aprobadas + sin oc_id en items
+  const itemsMesa = (() => {
+    let n = 0;
+    reqs.forEach(r => {
+      if (!["Aprobada", "En Compra", "Recibida Parcial"].includes(r.estado)) return;
+      (r.items || []).forEach(it => { if (!it.oc_id) n++; });
+    });
+    return n;
+  })();
+  const reqsAprobadas = reqs.filter(r => r.estado === "Aprobada").length;
 
   const KPIs = [
+    { label: "Mesa de Compras", value: itemsMesa, sub: `${reqsAprobadas} reqs aprobadas`, color: "#FFA500", tab: "mesa" },
     { label: "OCs abiertas", value: ocAbiertas.length, sub: COP(totalAbierto), color: B.sky, tab: "ordenes" },
     { label: "OCs del mes",  value: ocMes.length, sub: COP(totalMes), color: B.sand, tab: "ordenes" },
     { label: "Sin factura aplicada", value: sinFactura, sub: "abiertas pendientes", color: B.warning, tab: "ordenes" },
@@ -189,7 +217,7 @@ function TabDashboard({ ordenes, entregas, transportes, zarpes, setTab }) {
 // ═══════════════════════════════════════════════════════════════════════════
 function TabOrdenes({ ordenes, reload, currentUser }) {
   const { isMobile } = useBreakpoint();
-  const [filtroEstado, setFiltroEstado] = useState("abiertas");
+  const [filtroEstado, setFiltroEstado] = useState("todas");
   const [busqueda, setBusqueda] = useState("");
   const [openFactura, setOpenFactura] = useState(null);
   const [openLogistica, setOpenLogistica] = useState(null);
