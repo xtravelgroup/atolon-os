@@ -412,10 +412,6 @@ function ReservarView({ session, onDone, onCancel }) {
                   {SEXOS.map(s => <option key={s} value={s}>{s}</option>)}
                 </select>
               </div>
-              <div>
-                <label style={LBL}>Teléfono</label>
-                <input value={p.telefono} onChange={e => updatePax(i, "telefono", e.target.value)} style={INP} />
-              </div>
             </div>
           </div>
         ))}
@@ -520,7 +516,7 @@ function HistorialView({ session }) {
 // ════════════════════════════════════════════════════════════════
 const emptyPax = () => ({
   nombre: "", tipo_doc: "CC", num_doc: "", nacionalidad: "Colombiana",
-  fecha_nac: "", sexo: "M", telefono: "", email: "",
+  fecha_nac: "", sexo: "M",
 });
 
 const shellStyle = {
