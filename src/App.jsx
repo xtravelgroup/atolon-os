@@ -284,6 +284,7 @@ import EscanearProductos from "./modules/EscanearProductos";
 import LoggroAdmin from "./modules/LoggroAdmin";
 import HotelFolios from "./modules/HotelFolios";
 import ApiPortal from "./modules/ApiPortal";
+import BlueApplePortal from "./modules/BlueApplePortal";
 
 const MODULE_MAP = {
   pasadias: <Pasadias />,
@@ -348,7 +349,7 @@ const MODULE_MAP = {
 };
 
 // Public routes — no auth required
-const PUBLIC_ROUTES = ["empleados", "agencia", "booking", "pago", "reset-password", "zarpe-info", "zarpe-grupo", "login", "las-americas", "resultados", "dia-de-la-madre", "madres", ""];
+const PUBLIC_ROUTES = ["empleados", "agencia", "booking", "pago", "reset-password", "zarpe-info", "zarpe-grupo", "login", "las-americas", "resultados", "dia-de-la-madre", "madres", "blueapple", ""];
 
 function getRoute() {
   return window.location.pathname.replace(/^\//, "") || "";
@@ -457,6 +458,7 @@ export default function App() {
   const isPublic = ["empleados", "agencia", "booking", "", "reset-password", "zarpe-info", "despedidas", "contratistas"].includes(route) || route.startsWith("pago") || route.startsWith("booking/") || route.startsWith("m/") || route.startsWith("room/") || route.startsWith("despedidas/") || route.startsWith("contratistas/") || route.startsWith("verificar/");
 
   // Always-public routes (no auth needed ever)
+  if (route === "blueapple" || route.startsWith("blueapple/")) return <BlueApplePortal />;
   if (route === "empleados")      return <><EmpleadoPortal /><WhatsAppFloat phone={waPhone} /></>;
   if (route === "agencia" || route === "") return <><AgenciaPortal /><WhatsAppFloat phone={waPhone} /></>;
   if (route === "booking/lasamericas" || route === "las-americas") return <LasAmericasPortal />;

@@ -11,6 +11,7 @@ import FacturaProveedorModal from "../components/FacturaProveedorModal";
 import LogisticaOCModal from "../components/LogisticaOCModal";
 import EmailOCModal from "../components/EmailOCModal";
 import CXPPagoModal from "../components/CXPPagoModal";
+import CotizacionRespuestaModal from "../components/CotizacionRespuestaModal";
 import { TabMesaCompras } from "./Requisiciones";
 
 const TABS = [
@@ -222,6 +223,7 @@ function TabOrdenes({ ordenes, reload, currentUser }) {
   const [openFactura, setOpenFactura] = useState(null);
   const [openLogistica, setOpenLogistica] = useState(null);
   const [openEmail, setOpenEmail] = useState(null);
+  const [openCotizResp, setOpenCotizResp] = useState(null);
 
   const filtradas = useMemo(() => {
     let list = ordenes;
@@ -296,6 +298,11 @@ function TabOrdenes({ ordenes, reload, currentUser }) {
                         title="Enviar OC al proveedor por correo con PDF">
                         📧 Email
                       </button>
+                      <button onClick={() => setOpenCotizResp(oc)}
+                        style={btnAccion(oc.cotizacion_resp_aprobada ? B.success : oc.cotizacion_resp_data ? B.warning : "#a78bfa")}
+                        title="Cotización-respuesta del proveedor">
+                        {oc.cotizacion_resp_aprobada ? "📋✓ Cotiz" : oc.cotizacion_resp_data ? "📋⏳ Cotiz" : "📋 Cotiz Resp"}
+                      </button>
                       <button onClick={() => setOpenFactura(oc)}
                         style={btnAccion(oc.factura_aplicada ? B.success : B.warning)}>
                         {oc.factura_aplicada ? "📄✓ Factura" : "📎 Factura"}
@@ -316,6 +323,7 @@ function TabOrdenes({ ordenes, reload, currentUser }) {
       {openFactura && <FacturaProveedorModal oc={openFactura} onClose={() => setOpenFactura(null)} reload={reload} currentUser={currentUser} />}
       {openLogistica && <LogisticaOCModal oc={openLogistica} onClose={() => setOpenLogistica(null)} reload={reload} currentUser={currentUser} />}
       {openEmail && <EmailOCModal oc={openEmail} onClose={() => setOpenEmail(null)} reload={reload} currentUser={currentUser} />}
+      {openCotizResp && <CotizacionRespuestaModal oc={openCotizResp} onClose={() => setOpenCotizResp(null)} reload={reload} currentUser={currentUser} />}
     </div>
   );
 }
@@ -401,6 +409,107 @@ function TabLogistica({ ordenes, entregas, transportes, zarpes, reload, currentU
 // TAB CXP — Cuentas por Pagar con aging, vencimientos y registro de pagos
 // ═══════════════════════════════════════════════════════════════════════════
 function TabCXP({ ordenes, reload, currentUser }) {
+  const [subtab, setSubtab] = useState("anticipos");
+  return (
+    <div>
+      <div style={{ display: "flex", gap: 4, marginBottom: 16, borderBottom: `1px solid ${B.navyLight}` }}>
+        {[
+          ["anticipos", `🏦 Anticipos pendientes`],
+          ["facturas",  `💳 Facturas por pagar`],
+        ].map(([k, l]) => (
+          <button key={k} onClick={() => setSubtab(k)}
+            style={{
+              padding: "10px 16px", fontSize: 13, fontWeight: 700,
+              border: "none", background: "transparent",
+              color: subtab === k ? B.sand : "rgba(255,255,255,0.5)",
+              borderBottom: `2px solid ${subtab === k ? B.sand : "transparent"}`,
+              cursor: "pointer", marginBottom: -1,
+            }}>{l}</button>
+        ))}
+      </div>
+      {subtab === "anticipos"
+        ? <SubtabAnticipos ordenes={ordenes} reload={reload} currentUser={currentUser} />
+        : <SubtabFacturas ordenes={ordenes} reload={reload} currentUser={currentUser} />
+      }
+    </div>
+  );
+}
+
+function SubtabAnticipos({ ordenes, reload, currentUser }) {
+  const pendientes = ordenes.filter(o => o.anticipo_requerido && !o.anticipo_pagado);
+  const pagados    = ordenes.filter(o => o.anticipo_requerido && o.anticipo_pagado);
+  const totalPend  = pendientes.reduce((s, o) => s + Number(o.anticipo_monto || 0), 0);
+  const totalPag   = pagados.reduce((s, o) => s + Number(o.anticipo_monto || 0), 0);
+
+  const marcarPagado = async (oc) => {
+    const referencia = prompt(`Referencia del pago del anticipo (Nº de transferencia, cheque, etc.):`);
+    if (referencia === null) return;
+    await supabase.from("ordenes_compra").update({
+      anticipo_pagado: true,
+      anticipo_pagado_at: new Date().toISOString(),
+      anticipo_pagado_por: currentUser?.email || null,
+      anticipo_referencia_pago: referencia || null,
+      estado: "confirmada",
+      updated_at: new Date().toISOString(),
+    }).eq("id", oc.id);
+    reload?.();
+  };
+
+  return (
+    <div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 14 }}>
+        <KpiCXP label="Anticipos pendientes" count={pendientes.length} total={totalPend} color={B.warning} active />
+        <KpiCXP label="Anticipos pagados" count={pagados.length} total={totalPag} color={B.success} />
+      </div>
+
+      {pendientes.length === 0
+        ? <div style={{ textAlign: "center", padding: 50, color: "rgba(255,255,255,0.4)" }}>
+            <div style={{ fontSize: 36 }}>🏦</div>
+            <div style={{ fontSize: 13, marginTop: 8 }}>Sin anticipos pendientes</div>
+            <div style={{ fontSize: 11, marginTop: 4, color: "rgba(255,255,255,0.3)" }}>Las OCs con cotización aprobada y anticipo requerido aparecen aquí.</div>
+          </div>
+        : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            {pendientes.map(oc => (
+              <div key={oc.id} style={{
+                background: B.navy, borderRadius: 8, padding: "12px 14px",
+                border: `1px solid ${B.warning}`, borderLeft: `4px solid ${B.warning}`,
+                display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap",
+              }}>
+                <div style={{ flex: 1, minWidth: 200 }}>
+                  <div style={{ fontSize: 14, fontWeight: 800 }}>
+                    🏦 {oc.codigo} · {oc.proveedor_nombre || "—"}
+                  </div>
+                  <div style={{ fontSize: 11, color: "rgba(255,255,255,0.55)", marginTop: 3 }}>
+                    Total OC: {COP(oc.total || 0)} · Anticipo {oc.anticipo_porcentaje}%
+                    {oc.anticipo_solicitado_at && ` · solicitado ${fmtFecha(oc.anticipo_solicitado_at?.slice(0, 10))}`}
+                  </div>
+                  {oc.cotizacion_resp_url && (
+                    <a href={oc.cotizacion_resp_url} target="_blank" rel="noreferrer"
+                      style={{ display: "inline-block", marginTop: 4, fontSize: 11, color: B.sky, textDecoration: "none" }}>
+                      📎 Ver cotización
+                    </a>
+                  )}
+                </div>
+                <div style={{ textAlign: "right" }}>
+                  <div style={{ fontSize: 18, fontWeight: 800, color: B.warning, fontFamily: "'Barlow Condensed', sans-serif" }}>
+                    {COP(oc.anticipo_monto || 0)}
+                  </div>
+                  <button onClick={() => marcarPagado(oc)}
+                    style={{ marginTop: 6, padding: "6px 14px", borderRadius: 6, border: "none", background: B.success, color: B.navy, fontSize: 12, fontWeight: 800, cursor: "pointer" }}>
+                    💸 Marcar como pagado
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )
+      }
+    </div>
+  );
+}
+
+function SubtabFacturas({ ordenes, reload, currentUser }) {
   const [openPago, setOpenPago] = useState(null);
   const [filtro, setFiltro] = useState("pendientes"); // pendientes | vencidas | proximas | pagadas | todas
   const today = new Date();
