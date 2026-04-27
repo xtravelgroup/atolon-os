@@ -1927,6 +1927,27 @@ function DetailModal({ req, onClose, onUpdate, onGenerarOC, proveedores, reglas,
   const [comment, setComment] = useState("");
   const [openCotizaciones, setOpenCotizaciones] = useState(false);
   const [editingProv, setEditingProv] = useState(false);
+  // Stock total (suma todas las bodegas) por item_id, para mostrar al gerente
+  const [stockPorItem, setStockPorItem] = useState({});
+
+  useEffect(() => {
+    if (!supabase) return;
+    // Cargar suma de stock por item_id de todos los items en esta requisición
+    const itemIds = (req.items || [])
+      .map(it => it.item_id || it.item_catalogo_id)
+      .filter(Boolean);
+    if (itemIds.length === 0) return;
+    supabase.from("items_stock_locacion")
+      .select("item_id, cantidad")
+      .in("item_id", itemIds)
+      .then(({ data }) => {
+        const map = {};
+        (data || []).forEach(s => {
+          map[s.item_id] = (map[s.item_id] || 0) + (Number(s.cantidad) || 0);
+        });
+        setStockPorItem(map);
+      });
+  }, [req.id, req.items]);
   const [provSel, setProvSel] = useState(req.proveedor_id || "");
   // Split por proveedor: { item_idx: proveedor_id }
   const [itemProvs, setItemProvs] = useState({});
@@ -2229,7 +2250,7 @@ function DetailModal({ req, onClose, onUpdate, onGenerarOC, proveedores, reglas,
                   ? ["Item", "Cant.", "Unidad", "P. Unit.", "Subtotal", "Proveedor"]
                   : editPrecios
                     ? ["Item", "Cant.", "Unidad", "P. Unit.", "Subtotal", ""]
-                    : ["Item", "Cant.", "Unidad", "P. Unit.", "Subtotal"]
+                    : ["Item", "Cant.", "En stock", "Unidad", "P. Unit.", "Subtotal"]
                 ).map((h, idx) => (
                   <th key={h + idx} style={{ padding: "8px 12px", textAlign: h === "Item" || h === "Proveedor" ? "left" : "right", fontSize: 9, color: B.sand, textTransform: "uppercase", borderBottom: `1px solid ${B.navyLight}` }}>{h}</th>
                 ))}
@@ -2295,6 +2316,17 @@ function DetailModal({ req, onClose, onUpdate, onGenerarOC, proveedores, reglas,
                 }
                 // Vista normal (no edit)
                 const subtotalLocal = Number(it.subtotal) || (Number(it.cant) || 0) * (Number(it.precioU) || 0);
+                const itemId = it.item_id || it.item_catalogo_id;
+                const stockTotal = itemId ? (stockPorItem[itemId] ?? null) : null;
+                const cant = Number(it.cant) || 0;
+                // Color del stock: si hay menos del solicitado → rojo (necesario pedir)
+                //                  si hay >= solicitado pero menor a 2x → amarillo (justo)
+                //                  si hay mucho stock (≥ 2x) → verde (quizás no urgente)
+                const stockColor =
+                  stockTotal === null ? "rgba(255,255,255,0.3)"
+                  : stockTotal < cant ? B.danger
+                  : stockTotal < cant * 2 ? B.warning
+                  : B.success;
                 return (
                   <tr key={i} style={{
                     borderBottom: `1px solid ${B.navyLight}`,
@@ -2307,6 +2339,14 @@ function DetailModal({ req, onClose, onUpdate, onGenerarOC, proveedores, reglas,
                       )}
                     </td>
                     <td style={{ padding: "10px 12px", fontSize: 12, textAlign: "right" }}>{it.cant}</td>
+                    {!splitMode && !editPrecios && (
+                      <td style={{ padding: "10px 12px", fontSize: 12, textAlign: "right", color: stockColor, fontWeight: 700 }}>
+                        {stockTotal === null
+                          ? <span style={{ fontSize: 10, fontStyle: "italic" }}>—</span>
+                          : Math.round(stockTotal * 100) / 100
+                        }
+                      </td>
+                    )}
                     <td style={{ padding: "10px 12px", fontSize: 11, textAlign: "right", color: "rgba(255,255,255,0.5)" }}>{it.unidad}</td>
                     <td style={{ padding: "10px 12px", fontSize: 12, textAlign: "right" }}>{COP(it.precioU)}</td>
                     <td style={{ padding: "10px 12px", fontSize: 12, textAlign: "right", fontWeight: 700, color: B.sand }}>{COP(subtotalLocal)}</td>
