@@ -458,6 +458,60 @@ export default function FacturaProveedorModal({ oc, onClose, reload, currentUser
         }
       }
 
+      // 6. Insertar / actualizar la relación items_proveedores
+      //    Esto alimenta el panel "Proveedores & Precios" de cada producto.
+      //    Para cada item facturado que tenga item_id (matcheado o creado),
+      //    insertamos una fila con el precio de este proveedor.
+      if (oc.proveedor_id || oc.proveedor_nombre) {
+        for (const f of facturados) {
+          if (f.es_bonificacion) continue;     // bonificaciones no establecen precio
+          // Buscar item_id real (matcheado o recién creado por código de barras)
+          let realItemId = f.item_id;
+          if (!realItemId && f.codigo_barras) {
+            const { data: cat } = await supabase.from("items_catalogo")
+              .select("id").eq("codigo_barras", f.codigo_barras).maybeSingle();
+            realItemId = cat?.id || null;
+          }
+          if (!realItemId) continue;
+          const unPorPack    = Math.max(1, Number(f.unidades_por_paquete) || 1);
+          const costoPack    = Number(f.precio_costo_pack) || 0;
+          const precioUIndiv = unPorPack > 0 ? Math.round(costoPack / unPorPack) : 0;
+          if (precioUIndiv <= 0) continue;
+
+          // ¿Ya existe la relación con este proveedor?
+          const { data: existRel } = await supabase.from("items_proveedores")
+            .select("id, es_principal")
+            .eq("item_id", realItemId)
+            .eq("proveedor_id", oc.proveedor_id || "")
+            .maybeSingle();
+
+          // ¿Hay otros proveedores ya marcados como principales?
+          const { data: hasPrincipal } = await supabase.from("items_proveedores")
+            .select("id").eq("item_id", realItemId).eq("es_principal", true).limit(1).maybeSingle();
+          const debeSerPrincipal = !hasPrincipal || existRel?.es_principal;
+
+          if (existRel?.id) {
+            await supabase.from("items_proveedores").update({
+              proveedor_nombre: oc.proveedor_nombre || existRel.proveedor_nombre,
+              precio:           precioUIndiv,
+              es_principal:     debeSerPrincipal,
+              notas:            `Factura ${data.factura_numero} (${data.factura_fecha})`,
+              updated_at:       new Date().toISOString(),
+            }).eq("id", existRel.id);
+          } else {
+            await supabase.from("items_proveedores").insert({
+              id:               `IPV_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+              item_id:          realItemId,
+              proveedor_id:     oc.proveedor_id || null,
+              proveedor_nombre: oc.proveedor_nombre || null,
+              precio:           precioUIndiv,
+              es_principal:     debeSerPrincipal,
+              notas:            `Factura ${data.factura_numero} (${data.factura_fecha})`,
+            });
+          }
+        }
+      }
+
       // 4. Si la OC viene de una requisición, también actualizar items de la req
       if (oc.requisicion_id) {
         const { data: req } = await supabase.from("requisiciones").select("items, timeline").eq("id", oc.requisicion_id).single();
