@@ -24,10 +24,6 @@
     {
       "path": "/api/daily-resultados",
       "schedule": "0 16 * * *"
-    },
-    {
-      "path": "/api/sync-loggro",
-      "schedule": "*/15 * * * *"
     }
   ]
 }
