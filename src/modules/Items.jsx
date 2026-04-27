@@ -2719,7 +2719,15 @@ function InventarioGeneralTab({ items, categorias, catIconMap, catColorMap }) {
   const [stockPorLoc, setStockPorLoc] = useState({});
   const [search, setSearch] = useState("");
   const [catFilter, setCatFilter] = useState("todas");
+  const [grupoFilter, setGrupoFilter] = useState("todos"); // todos | alimentos | bebidas | otros
   const [diffFilter, setDiffFilter] = useState("todos");
+
+  // Map nombre de categoría → grupo (alimentos/bebidas/otros)
+  const grupoPorCategoria = useMemo(() => {
+    const m = {};
+    (categorias || []).forEach(c => { m[c.nombre] = c.grupo || "otros"; });
+    return m;
+  }, [categorias]);
   const [syncing, setSyncing] = useState(false);
   const [syncMsg, setSyncMsg] = useState(null);
   const [ajusteModal, setAjusteModal] = useState(null); // { fila } | null
@@ -2757,13 +2765,17 @@ function InventarioGeneralTab({ items, categorias, catIconMap, catColorMap }) {
       const q = search.trim().toLowerCase();
       if (q && !((f.item.nombre || "").toLowerCase().includes(q) || (f.item.codigo || "").toLowerCase().includes(q))) return false;
       if (catFilter !== "todas" && f.item.categoria !== catFilter) return false;
+      if (grupoFilter !== "todos") {
+        const grupo = grupoPorCategoria[f.item.categoria] || "otros";
+        if (grupo !== grupoFilter) return false;
+      }
       if (diffFilter === "con_diff" && (f.diff === null || f.diff === 0)) return false;
       if (diffFilter === "sin_diff" && f.diff !== 0) return false;
       if (diffFilter === "solo_loggro" && !f.item.loggro_id) return false;
       if (diffFilter === "solo_atolon" && f.item.loggro_id) return false;
       return true;
     });
-  }, [filas, search, catFilter, diffFilter]);
+  }, [filas, search, catFilter, grupoFilter, diffFilter, grupoPorCategoria]);
 
   const totalAtolon = filasFiltradas.reduce((s, f) => s + f.atolon, 0);
   const totalLoggro = filasFiltradas.reduce((s, f) => s + (f.loggro || 0), 0);
@@ -2823,6 +2835,26 @@ function InventarioGeneralTab({ items, categorias, catIconMap, catColorMap }) {
         </div>
       )}
 
+      {/* Chips de grupo macro: Alimentos / Bebidas / Otros */}
+      <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
+        {[
+          { k: "todos",     l: "🌐 Todos",     c: B.sky    },
+          { k: "alimentos", l: "🍽️ Alimentos", c: "#f97316" },
+          { k: "bebidas",   l: "🍹 Bebidas",   c: "#38bdf8" },
+          { k: "otros",     l: "📦 Otros",     c: "#94a3b8" },
+        ].map(g => {
+          const active = grupoFilter === g.k;
+          return (
+            <button key={g.k} onClick={() => setGrupoFilter(g.k)}
+              style={{
+                padding: "8px 16px", borderRadius: 22, border: `1px solid ${active ? g.c : B.navyLight}`,
+                background: active ? g.c + "22" : B.navyMid, color: active ? g.c : "rgba(255,255,255,0.55)",
+                cursor: "pointer", fontSize: 13, fontWeight: 700, transition: "all 0.15s",
+              }}>{g.l}</button>
+          );
+        })}
+      </div>
+
       {/* Filtros */}
       <div style={{ display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
         <input value={search} onChange={e => setSearch(e.target.value)}
@@ -2831,9 +2863,12 @@ function InventarioGeneralTab({ items, categorias, catIconMap, catColorMap }) {
         <select value={catFilter} onChange={e => setCatFilter(e.target.value)}
           style={{ padding: "9px 12px", borderRadius: 8, background: B.navyMid, border: `1px solid ${B.navyLight}`, color: "#fff", fontSize: 13, minWidth: 140 }}>
           <option value="todas">Todas las categorías</option>
-          {categorias.filter(c => c.activo !== false).map(c => (
-            <option key={c.id} value={c.id}>{c.icono || "📁"} {c.nombre}</option>
-          ))}
+          {categorias
+            .filter(c => c.activo !== false)
+            .filter(c => grupoFilter === "todos" || (c.grupo || "otros") === grupoFilter)
+            .map(c => (
+              <option key={c.id} value={c.nombre}>{c.icono || "📁"} {c.nombre}</option>
+            ))}
         </select>
         <select value={diffFilter} onChange={e => setDiffFilter(e.target.value)}
           style={{ padding: "9px 12px", borderRadius: 8, background: B.navyMid, border: `1px solid ${B.navyLight}`, color: "#fff", fontSize: 13, minWidth: 180 }}>
