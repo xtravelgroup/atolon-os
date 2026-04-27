@@ -25,6 +25,11 @@ const PRIORIDADES = ["Baja", "Media", "Alta", "Urgente"];
 const PRIO_COLOR = { Baja: B.sky, Media: B.sand, Alta: B.warning, Urgente: B.danger };
 const ROLES_APROBADOR = ["auto", "ventas", "operador", "gerente_general_op", "gerente_general_admin", "super_admin", "contabilidad"];
 
+// Gerente General puede tener cualquier rol_id que empiece con "gerente_general"
+// (incluye gerente_general_op, gerente_general_admin, y roles custom como
+// "gerente_general_1775236379654" que se crean desde el módulo de roles)
+const esGerenteGeneralRol = (rol) => typeof rol === "string" && rol.startsWith("gerente_general");
+
 const IS = { width: "100%", padding: "9px 12px", borderRadius: 8, background: B.navyLight, border: `1px solid ${B.navyLight}`, color: B.white, fontSize: 13, outline: "none", boxSizing: "border-box" };
 const LS = { display: "block", fontSize: 11, color: B.sand, marginBottom: 5, textTransform: "uppercase", letterSpacing: "0.06em" };
 const BTN = (bg, color = "#fff") => ({ padding: "8px 14px", borderRadius: 8, border: "none", background: bg, color, cursor: "pointer", fontWeight: 700, fontSize: 12 });
@@ -199,8 +204,8 @@ export default function Requisiciones() {
     const nivel = r.nivel_aprobacion || nivelAprobacion(r);
     // Super admin ve todas las pendientes (acceso total)
     if (currentUser.rol === "super_admin") return true;
-    // Gerente general ve todas las pendientes
-    if (currentUser.rol === "gerente_general_op" || currentUser.rol === "gerente_general_admin") return true;
+    // Gerente general ve todas las pendientes (cualquier rol que empiece con gerente_general)
+    if (esGerenteGeneralRol(currentUser.rol)) return true;
     // Dirección ve solo las que requieren dirección
     if (currentUser.rol === "direccion") return nivel === "direccion";
     return false;
@@ -720,7 +725,7 @@ function TabAprobaciones({ reqs, reglas, onOpen, currentUser, reload }) {
     } else {
       // Verificar si necesita más aprobaciones
       const nivel = r.nivel_aprobacion || "gerente_general";
-      const yaGerenteAprobo = aprobaciones.some(a => a.accion === "aprobada" && (a.rol === "gerente_general_op" || a.rol === "gerente_general_admin"));
+      const yaGerenteAprobo = aprobaciones.some(a => a.accion === "aprobada" && esGerenteGeneralRol(a.rol));
       const yaDireccionAprobo = aprobaciones.some(a => a.accion === "aprobada" && (a.rol === "super_admin" || a.rol === "direccion"));
 
       let nuevoEstado = "Pendiente";
@@ -754,7 +759,7 @@ function TabAprobaciones({ reqs, reglas, onOpen, currentUser, reload }) {
   }
 
   const totalPend = reqs.reduce((s, r) => s + r.total, 0);
-  const esGerente = currentUser.rol === "gerente_general_op" || currentUser.rol === "gerente_general_admin";
+  const esGerente = esGerenteGeneralRol(currentUser.rol);
   const esDireccion = currentUser.rol === "super_admin" || currentUser.rol === "direccion";
 
   return (
@@ -769,7 +774,7 @@ function TabAprobaciones({ reqs, reglas, onOpen, currentUser, reload }) {
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
         {reqs.map(r => {
           const nivel = r.nivel_aprobacion || "gerente_general";
-          const yaGerenteAprobo = (r.aprobaciones || []).some(a => a.accion === "aprobada" && (a.rol === "gerente_general_op" || a.rol === "gerente_general_admin"));
+          const yaGerenteAprobo = (r.aprobaciones || []).some(a => a.accion === "aprobada" && esGerenteGeneralRol(a.rol));
           const reqDireccion = nivel === "direccion";
           const esperaDireccion = reqDireccion && yaGerenteAprobo;
           const borderColor = reqDireccion ? B.warning : B.sky;
@@ -1995,9 +2000,10 @@ function DetailModal({ req, onClose, onUpdate, onGenerarOC, proveedores, reglas,
   } : p));
   const ec = ESTADO_COLOR[req.estado] || ESTADO_COLOR.Borrador;
   const regla = reglas.find(r => r.id === req.regla_aprobacion_id);
-  // Gerente General (Op o Admin) son intercambiables — cualquiera puede aprobar reglas dirigidas a "gerente_general*"
-  const esGerenteGeneral = currentUser.rol === "gerente_general_op" || currentUser.rol === "gerente_general_admin";
-  const reglaPideGerente = regla && (regla.rol_aprobador === "gerente_general_op" || regla.rol_aprobador === "gerente_general_admin" || regla.rol_aprobador === "gerente_general");
+  // Cualquier rol que empiece con "gerente_general" (op, admin, o custom con timestamp)
+  // puede aprobar reglas dirigidas a cualquier variante de gerente_general.
+  const esGerenteGeneral = esGerenteGeneralRol(currentUser.rol);
+  const reglaPideGerente = regla && esGerenteGeneralRol(regla.rol_aprobador);
   const puedeAprobar = req.estado === "Pendiente" && (
     currentUser.rol === "super_admin" ||
     (regla && regla.rol_aprobador === currentUser.rol) ||
