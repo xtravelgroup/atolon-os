@@ -97,20 +97,60 @@ export default function FacturaProveedorModal({ oc, onClose, reload, currentUser
           // al final como items "nuevos" para revisión.
           const ocItemsCount = (oc.items || []).length;
           const matched = new Set();
+          // Helpers: detectar pack del nombre y arreglar errores del AI
+          const detectarPackDelNombre = (nombre) => {
+            if (!nombre) return 1;
+            const n = String(nombre).toUpperCase();
+            // Orden importa: detectar primero los más específicos
+            if (/\bBANDEJA\s*X\s*24\b|\bX\s*24\b|\bX24\b/.test(n)) return 24;
+            if (/\bBANDEJA\s*X\s*12\b|\bX\s*12\s*U?N?D?\b|\bX12\b/.test(n)) return 12;
+            if (/\bSIXPACK\b|\b6\s*PACK\b|\b6PK\b|\bX\s*6\b|\bX6\b/.test(n)) return 6;
+            return 1;
+          };
+
           const itemsRich = (result.items || []).map((aiItem, aiIdx) => {
             const ocIdx = aiItem.match_oc_idx;
             const matchOc = (typeof ocIdx === "number" && ocIdx >= 0 && ocIdx < ocItemsCount) ? oc.items[ocIdx] : null;
             if (matchOc) matched.add(ocIdx);
 
-            const cantPack    = Number(aiItem.cantidad_paquete ?? aiItem.cantidad) || 0;
-            const unPorPack   = Math.max(1, Number(aiItem.unidades_por_paquete) || 1);
-            const cantTotal   = Number(aiItem.cantidad_individual_total) || (cantPack * unPorPack);
-            const costoPack   = Number(aiItem.precio_costo_pack ?? aiItem.precio_costo_unit) || 0;
-            const costoIndiv  = Number(aiItem.precio_costo_unit_individual) || (costoPack / unPorPack);
-            const basePack    = Number(aiItem.precio_base_pack ?? aiItem.precio_base_unit) || costoPack;
+            const nombre = aiItem.nombre || matchOc?.item || matchOc?.nombre || "—";
+            // ── Post-proceso del factor de empaque ──────────────────────
+            // Si el AI dice unidades_por_paquete=1 pero el nombre tiene SIXPACK/X12/etc,
+            // confiamos en la regex y reajustamos cantidad_paquete.
+            let cantPack    = Number(aiItem.cantidad_paquete ?? aiItem.cantidad) || 0;
+            let unPorPack   = Math.max(1, Number(aiItem.unidades_por_paquete) || 1);
+            const totalAI   = Number(aiItem.cantidad_individual_total) || 0;
+            const packReg   = detectarPackDelNombre(nombre);
+
+            if (packReg > 1 && unPorPack === 1) {
+              // AI no detectó el pack pero el nombre lo dice claramente
+              unPorPack = packReg;
+              // Si el AI ya pre-multiplicó (cantPack es divisible por packReg), corregimos
+              if (cantPack > 0 && cantPack % packReg === 0 && totalAI === cantPack) {
+                cantPack = cantPack / packReg;
+              }
+            } else if (packReg > 1 && unPorPack !== packReg && totalAI > 0) {
+              // AI detectó un pack distinto al del nombre → confiar en regex
+              unPorPack = packReg;
+              cantPack  = Math.round(totalAI / packReg);
+            }
+
+            const cantTotal   = cantPack * unPorPack;
+            // ── Precios: si el AI nos dejó $0 pero hay subtotal_renglon, lo derivamos ──
+            const subRen      = Number(aiItem.subtotal_renglon) || 0;
+            let costoPack     = Number(aiItem.precio_costo_pack ?? aiItem.precio_costo_unit) || 0;
             const ivaPack     = Number(aiItem.iva_valor_pack ?? aiItem.iva_valor_unit) || 0;
-            const finalPack   = Number(aiItem.precio_final_pack ?? aiItem.precio_final_unit) || (costoPack + ivaPack);
-            const esBonif     = !!aiItem.es_bonificacion || costoPack === 0;
+            const finalPackAI = Number(aiItem.precio_final_pack ?? aiItem.precio_final_unit) || 0;
+            if (costoPack === 0 && subRen > 0 && cantPack > 0) {
+              // Estimamos costoPack desde el subtotal (asumiendo subRen ≈ cantPack × finalPack)
+              const finalPack = finalPackAI || (subRen / cantPack);
+              // Restamos IVA si lo conocemos para llegar al costo neto
+              costoPack = Math.max(0, Math.round(finalPack - ivaPack));
+            }
+            const costoIndiv  = Number(aiItem.precio_costo_unit_individual) || (unPorPack > 0 ? Math.round(costoPack / unPorPack) : 0);
+            const basePack    = Number(aiItem.precio_base_pack ?? aiItem.precio_base_unit) || costoPack;
+            const finalPack   = finalPackAI || (costoPack + ivaPack);
+            const esBonif     = !!aiItem.es_bonificacion || (costoPack === 0 && subRen === 0 && cantPack > 0);
             const reqRevision = !!aiItem.requiere_revision;
 
             return {

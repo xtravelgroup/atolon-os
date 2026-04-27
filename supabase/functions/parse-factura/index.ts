@@ -33,21 +33,56 @@ CONTEXTO TRIBUTARIO COLOMBIA:
 - precio_costo_unit = precio_base + ico_unit + icl_unit + adv_unit (sin IVA)
 - precio_final_unit = precio_costo_unit + iva_unit
 
-CONTEXTO EMPAQUES (CRÍTICO):
-- En este sistema el inventario se cuenta SIEMPRE en UNIDADES INDIVIDUALES
-- Los proveedores facturan por empaque. Ejemplos:
-  · "CERVEZA CORONA 6PACK 330ML" → unidades_por_paquete = 6 (1 sixpack = 6 cervezas)
-  · "CERVEZA STELLA SIXPACK"     → unidades_por_paquete = 6
-  · "VINO X 12U"                  → unidades_por_paquete = 12
-  · "BANDEJA X 12 UND"            → unidades_por_paquete = 12
-  · "BOTELLA 750ML" (sin pack)    → unidades_por_paquete = 1
-  · "RON ZACAPA 700ML"            → unidades_por_paquete = 1
-- Detecta el factor del NOMBRE del producto. Patrones:
-  · "6PACK", "SIXPACK", "6PK"     → 6
-  · "X 12", "X12U", "X 12 UND"    → 12
-  · "X 24", "X24"                 → 24
-  · Sin patrón claro              → 1 (botella/unidad suelta)
-- "750ML", "330CC", "207ML" son TAMAÑOS, no factor de empaque (mantener factor=1 si no hay pack)
+CONTEXTO EMPAQUES (CRÍTICO — LEE ATENTAMENTE):
+
+REGLA #1: cantidad_paquete = EL NÚMERO TAL CUAL SALE EN LA COLUMNA "UND" DE LA FACTURA.
+NO LO MULTIPLIQUES. Si la factura dice "UND: 8", entonces cantidad_paquete = 8. Punto.
+
+REGLA #2: unidades_por_paquete = factor que detectas del NOMBRE del producto (NO de la columna UND).
+- "6PACK", "SIXPACK", "6PK"     → 6
+- "X 12", "X12", "X 12U", "X 12 UND" → 12
+- "BANDEJA X 12"                → 12
+- "X 24", "X24", "X 6"          → 24, 6
+- Sin keyword de pack en el nombre → 1
+- "750ML", "330CC", "330ML", "207ML", "0.7L" son TAMAÑOS DE ENVASE, NO empaques → factor 1 si no hay pack explícito
+
+REGLA #3: cantidad_individual_total = cantidad_paquete × unidades_por_paquete (multiplica TÚ).
+
+EJEMPLOS REALES (sigue este patrón):
+
+Caso A: "CERVEZA CORONA BOT BNR 6PACK 330ML" — columna UND: 24
+  → cantidad_paquete: 24      ← respeta lo que dice UND
+  → unidades_por_paquete: 6   ← porque dice "6PACK"
+  → cantidad_individual_total: 144
+
+Caso B: "CERVEZA STELLA ARTOIS SIXPACK BNR 300 1N" — columna UND: 8
+  → cantidad_paquete: 8       ← respeta lo que dice UND
+  → unidades_por_paquete: 6   ← porque dice "SIXPACK"
+  → cantidad_individual_total: 48
+
+Caso C: "MIL976 PINK BANDEJA X 12 UND" — columna UND: 2
+  → cantidad_paquete: 2       ← respeta lo que dice UND
+  → unidades_por_paquete: 12  ← porque dice "BANDEJA X 12"
+  → cantidad_individual_total: 24
+
+Caso D: "RESERVA DE DON JULIO BLANCO 0.7L" — columna UND: 12
+  → cantidad_paquete: 12      ← respeta lo que dice UND
+  → unidades_por_paquete: 1   ← "0.7L" es tamaño, no pack
+  → cantidad_individual_total: 12
+
+Caso E: "RON ZACAPA CENTENARIO 23 0.7L" — columna UND: 2
+  → cantidad_paquete: 2
+  → unidades_por_paquete: 1   ← no hay keyword de pack
+  → cantidad_individual_total: 2
+
+ANTI-EJEMPLOS (NUNCA HAGAS ESTO):
+❌ Stella UND:8 SIXPACK → Pack:48, ×Unid:1   (NO multipliques antes de poner en Pack)
+❌ Corona UND:24 6PACK → Pack:144, ×Unid:1   (NO colapses la multiplicación)
+❌ MIL976 UND:2 X 12 UND → Pack:12, ×Unid:1  (NO ignores el factor X12)
+
+REGLA #4 (PRECIOS): NUNCA pongas $0 en precio_costo_pack si la factura tiene precio.
+La columna "P. UNIT ANTES IMPTO" o "P. BASE UNIT" es el precio_base_pack del paquete.
+La suma base + ICO + ICL + ADV es precio_costo_pack.
 
 CONTEXTO BONIFICACIONES Y COMBOS:
 - Una BONIFICACIÓN/REGALO/OBSEQUIO es un item con precio $0 o cercano a 0,
@@ -157,21 +192,75 @@ Instrucciones detalladas:
         "content-type": "application/json",
       },
       body: JSON.stringify({
-        model: "claude-sonnet-4-5",  // Sonnet 4.5 con soporte PDF GA + mejor parsing
+        model: "claude-sonnet-4-5",
         max_tokens: 16000,
-        system: "Eres un extractor de facturas. SIEMPRE respondes SOLO con un objeto JSON válido sin markdown, sin texto antes ni después. Si la factura es larga, comprime espacios pero NO trunques los items.",
+        system: "Eres un extractor de facturas electrónicas colombianas. Lee TODAS las páginas del documento. Llama a la herramienta extraer_factura con los datos. NUNCA pre-multipliques cantidad_paquete por unidades_por_paquete — son campos independientes.",
+        tools: [{
+          name: "extraer_factura",
+          description: "Extrae los datos estructurados de una factura electrónica colombiana DIAN.",
+          input_schema: {
+            type: "object",
+            required: ["factura_numero", "factura_fecha", "proveedor_nombre", "total", "items"],
+            properties: {
+              factura_numero:    { type: "string", description: "Ej: 02FE266813" },
+              factura_fecha:     { type: "string", description: "YYYY-MM-DD" },
+              fecha_vencimiento: { type: "string", description: "YYYY-MM-DD del vencimiento de pago" },
+              forma_pago:        { type: "string" },
+              no_pedido:         { type: "string" },
+              no_remision:       { type: "string" },
+              proveedor_nombre:  { type: "string" },
+              proveedor_nit:     { type: "string" },
+              subtotal_base:     { type: "number" },
+              iva_total:         { type: "number" },
+              consumo_total:     { type: "number", description: "ICO + ICL + ADV (no deducibles)" },
+              descuentos_total:  { type: "number" },
+              total:             { type: "number", description: "TOTAL A PAGAR" },
+              items: {
+                type: "array",
+                items: {
+                  type: "object",
+                  required: ["nombre", "cantidad_paquete", "unidades_por_paquete", "precio_costo_pack"],
+                  properties: {
+                    codigo_barras:        { type: "string" },
+                    referencia_proveedor: { type: "string" },
+                    nombre:               { type: "string" },
+                    cantidad_paquete: {
+                      type: "integer",
+                      description: "EL NÚMERO TAL CUAL en la columna UND/Cant de la factura. NO multiplicar por unidades_por_paquete.",
+                    },
+                    unidad_compra: { type: "string", description: "SIXPACK, BANDEJA X 12, UND" },
+                    unidades_por_paquete: {
+                      type: "integer",
+                      description: "Factor del NOMBRE: SIXPACK/6PACK→6, X 12/X12→12, X 24→24, sin pack→1. NUNCA pongas 1 si el nombre dice SIXPACK.",
+                      minimum: 1,
+                    },
+                    unidad_individual: { type: "string", description: "BOTELLA, LATA, UNIDAD" },
+                    precio_base_pack:  { type: "number", description: "Precio base por PAQUETE sin impuestos" },
+                    descuento_pct:     { type: "number" },
+                    iva_pct:           { type: "number" },
+                    iva_valor_pack:    { type: "number", description: "IVA por PAQUETE (deducible)" },
+                    ico_valor_pack:    { type: "number" },
+                    icl_valor_pack:    { type: "number" },
+                    adv_valor_pack:    { type: "number" },
+                    precio_costo_pack: { type: "number", description: "base + ICO + ICL + ADV (sin IVA) por PAQUETE" },
+                    precio_final_pack: { type: "number", description: "Precio final con todos los impuestos por PAQUETE" },
+                    subtotal_renglon:  { type: "number", description: "VLR NETO FINAL del renglón" },
+                    es_bonificacion:   { type: "boolean", description: "true si el item es regalo/obsequio (precio 0 o keyword GTS, gratis, regalo, obsequio)" },
+                    requiere_revision: { type: "boolean", description: "true para combos ambiguos (ej: 'X12 GTS 3 X 375')" },
+                    match_oc_idx:      { type: "integer", description: "Índice 0-based en la lista de OC esperados, o null" },
+                  },
+                },
+              },
+            },
+          },
+        }],
+        tool_choice: { type: "tool", name: "extraer_factura" },
         messages: [{
           role: "user",
           content: [
             isPDF
-              ? {
-                  type: "document",
-                  source: { type: "base64", media_type: "application/pdf", data: fileBase64 },
-                }
-              : {
-                  type: "image",
-                  source: { type: "base64", media_type: mediaType || "image/jpeg", data: fileBase64 },
-                },
+              ? { type: "document", source: { type: "base64", media_type: "application/pdf", data: fileBase64 } }
+              : { type: "image",    source: { type: "base64", media_type: mediaType || "image/jpeg", data: fileBase64 } },
             { type: "text", text: prompt },
           ],
         }],
@@ -185,52 +274,38 @@ Instrucciones detalladas:
       return new Response(JSON.stringify({ ok: false, error: `Anthropic API: ${detail}`, status: res.status, raw: data }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
-    const text = data.content?.[0]?.text || "";
     const stopReason = data.stop_reason || "";
 
-    // Extraer JSON del response (Claude a veces lo envuelve en ```json...``` o agrega texto)
-    let cleaned = text.trim();
-    // Quitar bloques de markdown: ```json ... ``` o ``` ... ```
-    cleaned = cleaned.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/i, "").trim();
-    // Si todavía no empieza con {, buscar el primer {
-    if (!cleaned.startsWith("{")) {
-      const i = cleaned.indexOf("{");
-      if (i >= 0) cleaned = cleaned.slice(i);
-    }
-    // Cortar después del último } balanceado
-    if (cleaned.startsWith("{")) {
-      let depth = 0, end = -1;
-      for (let i = 0; i < cleaned.length; i++) {
-        const c = cleaned[i];
-        if (c === "{") depth++;
-        else if (c === "}") { depth--; if (depth === 0) { end = i; break; } }
-      }
-      if (end > 0) cleaned = cleaned.slice(0, end + 1);
-    }
+    // Con tool_use, la respuesta viene en content[].input del bloque tool_use
+    const toolUseBlock = (data.content || []).find((c: any) => c.type === "tool_use");
+    let parsed: any = toolUseBlock?.input || null;
 
-    let parsed: any = null;
-    let parseError: string | null = null;
-    try {
-      parsed = JSON.parse(cleaned);
-    } catch (e: any) {
-      parseError = String(e?.message || e);
+    // Fallback: si por alguna razón vino como texto, intentamos parsearlo
+    if (!parsed) {
+      const textBlock = (data.content || []).find((c: any) => c.type === "text");
+      const text = textBlock?.text || "";
+      let cleaned = text.trim().replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/i, "").trim();
+      if (!cleaned.startsWith("{")) {
+        const i = cleaned.indexOf("{");
+        if (i >= 0) cleaned = cleaned.slice(i);
+      }
+      try { parsed = JSON.parse(cleaned); } catch (_e) { /* ignore */ }
     }
 
     if (!parsed) {
       const reason = stopReason === "max_tokens"
-        ? "El modelo se quedó sin tokens (factura muy larga). Sube max_tokens o procesa por páginas."
-        : `JSON inválido del modelo: ${parseError}`;
+        ? "El modelo se quedó sin tokens (factura muy larga). Procesa por páginas."
+        : "El modelo no devolvió tool_use ni JSON parseable.";
       return new Response(JSON.stringify({
         ok: false,
         error: reason,
         stop_reason: stopReason,
-        raw_first_chars:  text.slice(0, 800),
-        raw_last_chars:   text.slice(-400),
-        cleaned_preview:  cleaned.slice(0, 300),
+        raw_content: (data.content || []).slice(0, 3),
         usage: data.usage || null,
       }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
+    parsed.ok = true;
     return new Response(JSON.stringify(parsed), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
   } catch (e) {
     return new Response(JSON.stringify({ ok: false, error: String(e.message || e) }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });

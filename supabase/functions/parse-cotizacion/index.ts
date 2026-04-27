@@ -124,43 +124,35 @@ Instrucciones:
       });
     }
 
-    const text = data.content?.[0]?.text || "";
-    const stopReason = data.stop_reason || "";
+    // Compatibilidad si en el futuro migramos a tool_use
+    const toolUseBlock = (data.content || []).find((c: any) => c.type === "tool_use");
+    let parsed: any = toolUseBlock?.input || null;
 
-    let cleaned = text.trim();
-    cleaned = cleaned.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/i, "").trim();
-    if (!cleaned.startsWith("{")) {
-      const i = cleaned.indexOf("{");
-      if (i >= 0) cleaned = cleaned.slice(i);
-    }
-    if (cleaned.startsWith("{")) {
-      let depth = 0, end = -1;
-      for (let i = 0; i < cleaned.length; i++) {
-        const c = cleaned[i];
-        if (c === "{") depth++;
-        else if (c === "}") { depth--; if (depth === 0) { end = i; break; } }
+    if (!parsed) {
+      const text = data.content?.[0]?.text || "";
+      let cleaned = text.trim().replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/i, "").trim();
+      if (!cleaned.startsWith("{")) {
+        const i = cleaned.indexOf("{");
+        if (i >= 0) cleaned = cleaned.slice(i);
       }
-      if (end > 0) cleaned = cleaned.slice(0, end + 1);
-    }
-
-    let parsed: any = null;
-    let parseError: string | null = null;
-    try {
-      parsed = JSON.parse(cleaned);
-    } catch (e: any) {
-      parseError = String(e?.message || e);
+      if (cleaned.startsWith("{")) {
+        let depth = 0, end = -1;
+        for (let i = 0; i < cleaned.length; i++) {
+          const c = cleaned[i];
+          if (c === "{") depth++;
+          else if (c === "}") { depth--; if (depth === 0) { end = i; break; } }
+        }
+        if (end > 0) cleaned = cleaned.slice(0, end + 1);
+      }
+      try { parsed = JSON.parse(cleaned); } catch (_e) { /* ignore */ }
     }
 
     if (!parsed) {
-      const reason = stopReason === "max_tokens"
-        ? "El modelo se quedó sin tokens (cotización muy larga)."
-        : `JSON inválido del modelo: ${parseError}`;
       return new Response(JSON.stringify({
         ok: false,
-        error: reason,
-        stop_reason: stopReason,
-        raw_first_chars: text.slice(0, 800),
-        raw_last_chars:  text.slice(-400),
+        error: "No se pudo parsear la cotización",
+        stop_reason: data.stop_reason,
+        raw_content: (data.content || []).slice(0, 2),
         usage: data.usage || null,
       }), {
         status: 500,
@@ -168,6 +160,7 @@ Instrucciones:
       });
     }
 
+    parsed.ok = parsed.ok !== false ? true : parsed.ok;
     return new Response(JSON.stringify(parsed), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
