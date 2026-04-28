@@ -65,12 +65,19 @@ export default function InstructivoContratistasPDF({ evento, onClose }) {
       const idoc = iframe.contentDocument;
       idoc.open();
       idoc.write(`<!DOCTYPE html><html><head><meta charset="utf-8">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;500;700;900&family=Cormorant+Garamond:ital,wght@0,400;0,500;1,400;1,500&family=Barlow:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <style>
-  html, body { margin: 0; padding: 0; background: ${CREAM}; color: ${NAVY}; font-family: 'Barlow', sans-serif; -webkit-print-color-adjust: exact; }
+  html, body { margin: 0; padding: 0; background: ${CREAM}; color: ${NAVY};
+    font-family: 'Barlow', system-ui, -apple-system, Helvetica, sans-serif;
+    line-height: 1.5; -webkit-print-color-adjust: exact; -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  * { box-sizing: border-box; }
+  p, li, div, span { line-height: inherit; }
   .cot-page { display: block; width: 816px; background: ${CREAM}; box-sizing: border-box; page-break-after: always; }
-  .cot-title { font-family: 'Playfair Display', serif; color: ${NAVY}; }
-  .cot-italic { font-family: 'Cormorant Garamond', serif; font-style: italic; color: rgba(30,53,102,0.9); }
+  .cot-title { font-family: 'Playfair Display', Georgia, serif; color: ${NAVY}; line-height: 1.15; }
+  .cot-italic { font-family: 'Cormorant Garamond', Georgia, serif; font-style: italic; color: rgba(30,53,102,0.9); line-height: 1.35; }
   .cot-eyebrow { font-size: 10px; letter-spacing: 0.22em; text-transform: uppercase; color: ${SAND}; font-weight: 600; }
   img { max-width: 100%; }
 </style>
@@ -81,8 +88,20 @@ export default function InstructivoContratistasPDF({ evento, onClose }) {
         if (idoc.readyState === "complete") r();
         else iframe.addEventListener("load", r, { once: true });
       });
-      try { await iframe.contentWindow.document.fonts?.ready; } catch {}
-      await new Promise(r => setTimeout(r, 1000));
+      // Esperar fonts.ready Y forzar carga explícita de cada familia
+      try {
+        const fonts = iframe.contentWindow.document.fonts;
+        if (fonts) {
+          await Promise.all([
+            fonts.load("700 36px 'Playfair Display'"),
+            fonts.load("400 14px 'Barlow'"),
+            fonts.load("italic 14px 'Cormorant Garamond'"),
+            fonts.ready,
+          ]);
+        }
+      } catch {}
+      // Buffer adicional para que el rendering de fuentes asiente
+      await new Promise(r => setTimeout(r, 2500));
 
       const [{ default: jsPDF }, html2canvasMod] = await Promise.all([
         import("jspdf"),
