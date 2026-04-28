@@ -776,20 +776,165 @@ serve(async (req) => {
       });
     }
 
+    // GET /loggro-sync/reporte-internos-pedidos?from=...&to=...
+    // Reporte de "Pedidos Internos" (KOT-level) — items con
+    // internal.isInternal=true (consumos del staff/dirección).
+    if (req.method === "GET" && path === "/reporte-internos-pedidos") {
+      const from = url.searchParams.get("from");
+      const to   = url.searchParams.get("to");
+      if (!from || !to) return json({ error: "params from y to requeridos" }, 400);
+
+      const pageSize = 100;
+      const allOrders: any[] = [];
+      const seen = new Set<string>();
+      const MAX_PAGES = 200;
+      let stopReached = false;
+      for (let batchStart = 0; batchStart < MAX_PAGES && !stopReached; batchStart += 20) {
+        const batch = [];
+        for (let p = batchStart; p < batchStart + 20 && p < MAX_PAGES; p++) {
+          batch.push(
+            loggroGet(`/orders?pagination=true&limit=${pageSize}&page=${p}`)
+              .then(d => ({ page: p, arr: d?.data || (Array.isArray(d) ? d : []) }))
+              .catch(() => ({ page: p, arr: [] }))
+          );
+        }
+        const results = await Promise.all(batch);
+        let emptyPagesInBatch = 0;
+        results.forEach(r => {
+          if (r.arr.length === 0) emptyPagesInBatch++;
+          r.arr.forEach((o: any) => {
+            if (o?._id && !seen.has(o._id)) { seen.add(o._id); allOrders.push(o); }
+          });
+        });
+        if (emptyPagesInBatch >= 5) stopReached = true;
+      }
+
+      const COTZ_OFFSET_MS = -5 * 3600 * 1000;
+      const internos: any[] = [];
+      for (const o of allOrders) {
+        if (!o?.internal?.isInternal) continue;
+        const ts = o?.createdOn;
+        if (!ts) continue;
+        const utc = new Date(ts).getTime();
+        const co = new Date(utc + COTZ_OFFSET_MS);
+        const coDay = co.toISOString().slice(0, 10);
+        if (coDay < from || coDay > to) continue;
+
+        const fechaGuardado = o?.modifiedOn || o?.createdOn;
+        const fgUTC = new Date(fechaGuardado).getTime();
+        const fgLocal = new Date(fgUTC + COTZ_OFFSET_MS);
+
+        internos.push({
+          id: o._id,
+          fecha_pedido: co.toISOString().slice(0, 19).replace("T", " "),
+          fecha_guardado: fgLocal.toISOString().slice(0, 19).replace("T", " "),
+          producto: o?.product?.name || "—",
+          cantidad: Number(o?.quantity) || 0,
+          nota: o?.internal?.note || (Array.isArray(o?.notes) && o.notes.length ? o.notes.map((n: any) => n?.note || n?.text || n).join(" ") : "") || "",
+          guardado_por: o?.modifiedBy?.name || "—",
+          pedido_por: o?.seller?.name || "—",
+          total: Number(o?.total) || 0,
+        });
+      }
+
+      internos.sort((a, b) => b.fecha_pedido.localeCompare(a.fecha_pedido));
+
+      return json({
+        ok: true, from, to,
+        orders_revisados: allOrders.length,
+        total_internos: internos.length,
+        internos,
+      });
+    }
+
     // GET /loggro-sync/inspect-order — debug: muestra un order completo
     if (req.method === "GET" && path === "/inspect-order") {
       const onlyComplementary = url.searchParams.get("complementary") === "true";
-      // Buscar uno marcado como complementary
+      const onlyDeleted = url.searchParams.get("deleted") === "true";
       for (let p = 0; p < 50; p++) {
         const data: any = await loggroGet(`/orders?pagination=true&limit=100&page=${p}`);
         const arr = data?.data || (Array.isArray(data) ? data : []);
         if (arr.length === 0) break;
         const found = onlyComplementary
           ? arr.find((o: any) => o?.complementary?.isComplementary === true)
+          : onlyDeleted
+          ? arr.find((o: any) => o?.deletedInfo?.isDeleted === true)
           : arr[0];
         if (found) return json({ ok: true, page_found: p, sample: found });
       }
-      return json({ ok: false, error: "no se encontró order con complementary=true" });
+      return json({ ok: false, error: "no se encontró order que coincida" });
+    }
+
+    // GET /loggro-sync/reporte-cancelaciones-pedidos?from=...&to=...
+    // Reporte de "Pedidos cancelados" (KOT-level) — items individuales
+    // marcados como deletedInfo.isDeleted=true. Loggro filtra deleted por
+    // default así que hay que pedirlos con includeDeleted=true.
+    if (req.method === "GET" && path === "/reporte-cancelaciones-pedidos") {
+      const from = url.searchParams.get("from");
+      const to   = url.searchParams.get("to");
+      if (!from || !to) return json({ error: "params from y to requeridos" }, 400);
+
+      const pageSize = 100;
+      const allOrders: any[] = [];
+      const seen = new Set<string>();
+      const MAX_PAGES = 200;
+      let stopReached = false;
+      for (let batchStart = 0; batchStart < MAX_PAGES && !stopReached; batchStart += 20) {
+        const batch = [];
+        for (let p = batchStart; p < batchStart + 20 && p < MAX_PAGES; p++) {
+          batch.push(
+            loggroGet(`/orders?pagination=true&limit=${pageSize}&page=${p}&includeDeleted=true`)
+              .then(d => ({ page: p, arr: d?.data || (Array.isArray(d) ? d : []) }))
+              .catch(() => ({ page: p, arr: [] }))
+          );
+        }
+        const results = await Promise.all(batch);
+        let emptyPagesInBatch = 0;
+        results.forEach(r => {
+          if (r.arr.length === 0) emptyPagesInBatch++;
+          r.arr.forEach((o: any) => {
+            if (o?._id && !seen.has(o._id)) { seen.add(o._id); allOrders.push(o); }
+          });
+        });
+        if (emptyPagesInBatch >= 5) stopReached = true;
+      }
+
+      const COTZ_OFFSET_MS = -5 * 3600 * 1000;
+      const canceladas: any[] = [];
+      for (const o of allOrders) {
+        if (!o?.deletedInfo?.isDeleted) continue;
+        const ts = o?.createdOn;
+        if (!ts) continue;
+        const utc = new Date(ts).getTime();
+        const co = new Date(utc + COTZ_OFFSET_MS);
+        const coDay = co.toISOString().slice(0, 10);
+        if (coDay < from || coDay > to) continue;
+
+        const fechaCancel = o?.deletedInfo?.deletedOn || o?.deletedInfo?.modifiedOn || o?.modifiedOn || o?.createdOn;
+        const fcUTC = new Date(fechaCancel).getTime();
+        const fcLocal = new Date(fcUTC + COTZ_OFFSET_MS);
+
+        canceladas.push({
+          id: o._id,
+          fecha_pedido: co.toISOString().slice(0, 19).replace("T", " "),
+          fecha_cancelacion: fcLocal.toISOString().slice(0, 19).replace("T", " "),
+          producto: o?.product?.name || "—",
+          cantidad: Number(o?.quantity) || 0,
+          motivo: o?.deletedInfo?.reason || o?.deletedInfo?.note || "",
+          cancelado_por: o?.deletedInfo?.deletedBy?.name || o?.deletedInfo?.user?.name || o?.modifiedBy?.name || "—",
+          pedido_por: o?.seller?.name || "—",
+          total: Number(o?.total) || 0,
+        });
+      }
+
+      canceladas.sort((a, b) => b.fecha_pedido.localeCompare(a.fecha_pedido));
+
+      return json({
+        ok: true, from, to,
+        orders_revisados: allOrders.length,
+        total_cancelaciones: canceladas.length,
+        canceladas,
+      });
     }
 
     // GET /loggro-sync/inspect-invoice — debug: muestra una factura cruda

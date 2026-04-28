@@ -58,25 +58,31 @@ export default function Reportes() {
 
 // ─── REPORTE A&B (Loggro Restobar) ──────────────────────────────────────────
 function ReporteAyB() {
-  const [subTab, setSubTab] = useState("pedidos_cortesia"); // pedidos_cortesia | cortesias | anuladas | descuentos
+  const [subTab, setSubTab] = useState("pedidos_cortesia");
   const [fechaIni, setFechaIni] = useState(firstOfMonth());
   const [fechaFin, setFechaFin] = useState(todayStr());
   const [data, setData] = useState({ cortesias: [], anuladas: [], descuentos: [], resumen: null });
   const [pedidosCortesia, setPedidosCortesia] = useState([]);
+  const [pedidosInternos, setPedidosInternos] = useState([]);
+  const [pedidosCancelados, setPedidosCancelados] = useState([]);
   const [loading, setLoading] = useState(true);
 
   const cargar = useCallback(async () => {
     setLoading(true);
     try {
       const auth = { apikey: import.meta.env.VITE_SUPABASE_ANON_KEY, Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}` };
-      const [r1, r2] = await Promise.all([
-        fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/loggro-sync/reporte-ayb?from=${fechaIni}&to=${fechaFin}`, { headers: auth }),
-        fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/loggro-sync/reporte-cortesias-pedidos?from=${fechaIni}&to=${fechaFin}`, { headers: auth }),
+      const base = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/loggro-sync`;
+      const [r1, r2, r3, r4] = await Promise.all([
+        fetch(`${base}/reporte-ayb?from=${fechaIni}&to=${fechaFin}`, { headers: auth }),
+        fetch(`${base}/reporte-cortesias-pedidos?from=${fechaIni}&to=${fechaFin}`, { headers: auth }),
+        fetch(`${base}/reporte-internos-pedidos?from=${fechaIni}&to=${fechaFin}`, { headers: auth }),
+        fetch(`${base}/reporte-cancelaciones-pedidos?from=${fechaIni}&to=${fechaFin}`, { headers: auth }),
       ]);
-      const j1 = await r1.json();
-      const j2 = await r2.json();
+      const [j1, j2, j3, j4] = await Promise.all([r1.json(), r2.json(), r3.json(), r4.json()]);
       if (j1.ok) setData(j1);
       if (j2.ok) setPedidosCortesia(j2.cortesias || []);
+      if (j3.ok) setPedidosInternos(j3.internos || []);
+      if (j4.ok) setPedidosCancelados(j4.canceladas || []);
     } catch (e) {
       console.error("[ReporteAyB]", e);
     } finally {
@@ -85,13 +91,25 @@ function ReporteAyB() {
   }, [fechaIni, fechaFin]);
   useEffect(() => { cargar(); }, [cargar]);
 
-  const lista = subTab === "pedidos_cortesia" ? pedidosCortesia : (data[subTab] || []);
+  const lista =
+    subTab === "pedidos_cortesia" ? pedidosCortesia :
+    subTab === "pedidos_internos" ? pedidosInternos :
+    subTab === "pedidos_cancelados" ? pedidosCancelados :
+    (data[subTab] || []);
 
   const handleExport = () => {
     if (subTab === "pedidos_cortesia") {
       const rows = [["Fecha pedido", "Fecha cortesía", "Producto", "Cantidad", "Cliente", "Nota", "Cortesía por", "Pedido por"]];
       lista.forEach(r => rows.push([r.fecha_pedido, r.fecha_cortesia, r.producto, r.cantidad, r.cliente, r.nota, r.cortesia_por, r.pedido_por]));
       exportCSV(`ayb_pedidos_cortesia_${fechaIni}_${fechaFin}.csv`, rows);
+    } else if (subTab === "pedidos_internos") {
+      const rows = [["Fecha pedido", "Fecha guardado", "Producto", "Cantidad", "Nota", "Guardado por", "Pedido por"]];
+      lista.forEach(r => rows.push([r.fecha_pedido, r.fecha_guardado, r.producto, r.cantidad, r.nota, r.guardado_por, r.pedido_por]));
+      exportCSV(`ayb_pedidos_internos_${fechaIni}_${fechaFin}.csv`, rows);
+    } else if (subTab === "pedidos_cancelados") {
+      const rows = [["Fecha pedido", "Fecha cancelación", "Producto", "Cantidad", "Motivo", "Cancelado por", "Pedido por"]];
+      lista.forEach(r => rows.push([r.fecha_pedido, r.fecha_cancelacion, r.producto, r.cantidad, r.motivo, r.cancelado_por, r.pedido_por]));
+      exportCSV(`ayb_pedidos_cancelados_${fechaIni}_${fechaFin}.csv`, rows);
     } else if (subTab === "cortesias") {
       const rows = [["Fecha", "Hora", "Factura", "Cliente", "Cajero", "Subtotal", "Descuento", "Total", "Items"]];
       lista.forEach(r => rows.push([r.fecha, r.hora, r.numero, r.cliente, r.usuario, r.subtotal, r.discount, r.total, r.items_count]));
@@ -118,9 +136,11 @@ function ReporteAyB() {
       {/* Sub-tabs */}
       <div style={{ display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap" }}>
         {[
-          { k: "pedidos_cortesia", l: "🎁 Pedidos Cortesía", c: "#a78bfa", count: pedidosCortesia.length, total: null, sub: "Items KOT marcados como cortesía" },
+          { k: "pedidos_cortesia",  l: "🎁 Pedidos Cortesía",  c: "#a78bfa", count: pedidosCortesia.length, total: null },
+          { k: "pedidos_internos",  l: "🏢 Pedidos Internos",  c: "#22d3ee", count: pedidosInternos.length, total: null },
+          { k: "pedidos_cancelados",l: "🚫 Pedidos Cancelados",c: B.danger,  count: pedidosCancelados.length, total: null },
           { k: "cortesias",  l: "🧾 Facturas Cortesía",  c: "#c084fc", count: data.resumen?.cortesias?.count, total: data.resumen?.cortesias?.total },
-          { k: "anuladas",   l: "✕ Anuladas",     c: B.danger,  count: data.resumen?.anuladas?.count,  total: data.resumen?.anuladas?.total },
+          { k: "anuladas",   l: "✕ Facturas Anuladas",     c: B.danger,  count: data.resumen?.anuladas?.count,  total: data.resumen?.anuladas?.total },
           { k: "descuentos", l: "💰 Descuentos",  c: B.warning, count: data.resumen?.descuentos?.count, total: data.resumen?.descuentos?.total_descontado },
         ].map(t => {
           const active = subTab === t.k;
@@ -148,32 +168,44 @@ function ReporteAyB() {
         <div style={{ padding: 40, textAlign: "center", background: B.navyMid, borderRadius: 12, color: "rgba(255,255,255,0.4)" }}>
           Sin {subTab.replace("_", " ")} en este rango.
         </div>
-      ) : subTab === "pedidos_cortesia" ? (
-        <div style={{ background: B.navyMid, borderRadius: 12, overflow: "hidden", overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, minWidth: 1000 }}>
-            <thead>
-              <tr style={{ background: B.navyLight }}>
-                {["Fecha pedido", "Fecha cortesía", "Producto", "Cant", "Cliente", "Nota", "Cortesía por", "Pedido por"].map(h => (
-                  <th key={h} style={{ padding: "10px 12px", textAlign: "left", fontSize: 10, color: "rgba(255,255,255,0.6)", textTransform: "uppercase", letterSpacing: "0.06em" }}>{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {lista.map(r => (
-                <tr key={r.id} style={{ borderTop: "1px solid rgba(255,255,255,0.04)" }}>
-                  <td style={{ padding: "10px 12px", fontFamily: "monospace", fontSize: 11, whiteSpace: "nowrap" }}>{r.fecha_pedido}</td>
-                  <td style={{ padding: "10px 12px", fontFamily: "monospace", fontSize: 11, color: "rgba(255,255,255,0.5)", whiteSpace: "nowrap" }}>{r.fecha_cortesia}</td>
-                  <td style={{ padding: "10px 12px", fontWeight: 700 }}>{r.producto}</td>
-                  <td style={{ padding: "10px 12px", textAlign: "center", fontWeight: 800, color: "#a78bfa" }}>{r.cantidad}</td>
-                  <td style={{ padding: "10px 12px" }}>{r.cliente}</td>
-                  <td style={{ padding: "10px 12px", fontSize: 11, color: "rgba(255,255,255,0.55)", maxWidth: 240 }}>{r.nota || "—"}</td>
-                  <td style={{ padding: "10px 12px", fontWeight: 700, color: B.warning }}>{r.cortesia_por}</td>
-                  <td style={{ padding: "10px 12px", color: "rgba(255,255,255,0.6)" }}>{r.pedido_por}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+      ) : (subTab === "pedidos_cortesia" || subTab === "pedidos_internos" || subTab === "pedidos_cancelados") ? (
+        (() => {
+          const cfg = {
+            pedidos_cortesia:  { col2: "Fecha cortesía",    col2k: "fecha_cortesia",    extra: "Cliente", extrak: "cliente", who: "Cortesía por", whok: "cortesia_por", color: "#a78bfa" },
+            pedidos_internos:  { col2: "Fecha guardado",    col2k: "fecha_guardado",    extra: null,      extrak: null,       who: "Guardado por", whok: "guardado_por", color: "#22d3ee" },
+            pedidos_cancelados:{ col2: "Fecha cancelación", col2k: "fecha_cancelacion", extra: null,      extrak: null,       who: "Cancelado por",whok: "cancelado_por",color: B.danger },
+          }[subTab];
+          const headers = ["Fecha pedido", cfg.col2, "Producto", "Cant"];
+          if (cfg.extra) headers.push(cfg.extra);
+          headers.push("Nota / Motivo", cfg.who, "Pedido por");
+          return (
+            <div style={{ background: B.navyMid, borderRadius: 12, overflow: "hidden", overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, minWidth: 1000 }}>
+                <thead>
+                  <tr style={{ background: B.navyLight }}>
+                    {headers.map(h => (
+                      <th key={h} style={{ padding: "10px 12px", textAlign: "left", fontSize: 10, color: "rgba(255,255,255,0.6)", textTransform: "uppercase", letterSpacing: "0.06em" }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {lista.map(r => (
+                    <tr key={r.id} style={{ borderTop: "1px solid rgba(255,255,255,0.04)" }}>
+                      <td style={{ padding: "10px 12px", fontFamily: "monospace", fontSize: 11, whiteSpace: "nowrap" }}>{r.fecha_pedido}</td>
+                      <td style={{ padding: "10px 12px", fontFamily: "monospace", fontSize: 11, color: "rgba(255,255,255,0.5)", whiteSpace: "nowrap" }}>{r[cfg.col2k]}</td>
+                      <td style={{ padding: "10px 12px", fontWeight: 700 }}>{r.producto}</td>
+                      <td style={{ padding: "10px 12px", textAlign: "center", fontWeight: 800, color: cfg.color }}>{r.cantidad}</td>
+                      {cfg.extrak && <td style={{ padding: "10px 12px" }}>{r[cfg.extrak]}</td>}
+                      <td style={{ padding: "10px 12px", fontSize: 11, color: "rgba(255,255,255,0.55)", maxWidth: 280 }}>{(r.nota || r.motivo) || "—"}</td>
+                      <td style={{ padding: "10px 12px", fontWeight: 700, color: cfg.color }}>{r[cfg.whok]}</td>
+                      <td style={{ padding: "10px 12px", color: "rgba(255,255,255,0.6)" }}>{r.pedido_por}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          );
+        })()
       ) : (
         <div style={{ background: B.navyMid, borderRadius: 12, overflow: "hidden", overflowX: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, minWidth: 850 }}>
@@ -226,9 +258,10 @@ function ReporteAyB() {
 
       <div style={{ marginTop: 16, padding: 12, background: B.navy, borderRadius: 8, fontSize: 11, color: "rgba(255,255,255,0.45)", lineHeight: 1.5 }}>
         ℹ️ Datos directos de Loggro Restobar.{" "}
-        <strong style={{ color: "#a78bfa" }}>Pedidos Cortesía</strong>: items individuales (KOT) marcados como cortesía con nota y autorización.{" "}
-        <strong style={{ color: "#c084fc" }}>Facturas Cortesía</strong>: facturas completas con descuento ≥99% o total $0.{" "}
-        <strong style={{ color: B.danger }}>Anuladas</strong>: facturas anuladas en Loggro.{" "}
+        <strong style={{ color: "#a78bfa" }}>Pedidos Cortesía</strong>: KOTs marcados <code>complementary=true</code>.{" "}
+        <strong style={{ color: "#22d3ee" }}>Pedidos Internos</strong>: KOTs marcados <code>internal=true</code> (consumos staff/dirección).{" "}
+        <strong style={{ color: B.danger }}>Pedidos Cancelados</strong>: KOTs con <code>deletedInfo.isDeleted=true</code> (Loggro filtra deleted por API — pueden no aparecer todos).{" "}
+        <strong style={{ color: "#c084fc" }}>Facturas Cortesía</strong>: facturas completas con descuento ≥99%.{" "}
         <strong style={{ color: B.warning }}>Descuentos</strong>: descuentos parciales aplicados.
       </div>
     </div>
