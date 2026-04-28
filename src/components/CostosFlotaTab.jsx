@@ -54,12 +54,12 @@ export default function CostosFlotaTab() {
 
   // ── Cálculos del mes seleccionado ─────────────────────────────────────────
   // Reglas (consensuadas con dirección):
-  // 1. Solo se cuentan LLEGADAS para el cálculo de costo/pasadía (no zarpes
-  //    porque el pax es el mismo y se contaría doble)
+  // 1. Solo se cuentan LLEGADAS para el cálculo de costo/pasadía
   // 2. Staff se EXCLUYE — solo cuentan pax pagantes (pax_a + pax_n)
-  //    El staff se anota en notas como "[N staff]" pero no en pax_a/n
   // 3. Combustible es costo REAL de bitácora (no estimado por horas)
   // 4. Mantenimiento es costo REAL del periodo
+  // 5. Costo total = combustible + mantenimiento + marina + capitanes
+  //    + reserva motores (NO se incluye "viajes flota" porque era estimación)
   const data = useMemo(() => {
     const filterMes = (arr, key = "fecha") => arr.filter(r => (r[key] || "").startsWith(mes));
     const bMes = filterMes(bitacora);
@@ -73,10 +73,14 @@ export default function CostosFlotaTab() {
     const costoCapTerceros = bMes.filter(b => b.tipo === "capitanes").reduce((s, b) => s + Number(b.costo_total || 0), 0);
     const costoCapNomina   = capitanes.filter(c => c.tipo === "nomina").reduce((s, c) => s + Number(c.salario_mensual || 0), 0);
     const costoCapitanes   = costoCapTerceros + costoCapNomina;
+    // Reserva mensual para reposición de motores (configurable por lancha)
+    const reservaMotores   = lanchas.reduce((s, l) => s + Number(l.motor_reserva_mensual || 0), 0);
+    // Compatibilidad: aún calculamos viajes pero NO se suma al total
     const costoSalidas     = zMes.reduce((s, z) => s + Number(z.costo_operativo || 0), 0);
     const costoLlegadas    = lMes.reduce((s, l) => s + Number(l.costo_operativo || 0), 0);
     const costoViajes      = costoSalidas + costoLlegadas;
-    const costosTotales    = costoComb + costoMant + costoMarina + costoCapitanes + costoViajes;
+    // TOTAL: solo costos REALES + reserva motores
+    const costosTotales    = costoComb + costoMant + costoMarina + costoCapitanes + reservaMotores;
 
     // PAX: solo llegadas, sin staff (staff va en notas, no en pax_a/n)
     const paxLlegada  = lMes.reduce((s, l) => s + Number(l.pax_a || 0) + Number(l.pax_n || 0), 0);
@@ -131,6 +135,7 @@ export default function CostosFlotaTab() {
     });
 
     return { costoComb, galones, costoMant, costoMarina, costoCapitanes, costoCapNomina, costoCapTerceros,
+             reservaMotores,
              costoSalidas, costoLlegadas, costoViajes, costosTotales,
              pax, paxLlegada, paxSalida,
              numSalidas, numLlegadas, numMediosViajes, numViajesCompletos,
@@ -146,19 +151,17 @@ export default function CostosFlotaTab() {
       arr.push(d.toISOString().slice(0, 7));
     }
     const capNomMensual = capitanes.filter(c => c.tipo === "nomina").reduce((s, c) => s + Number(c.salario_mensual || 0), 0);
+    const reservaMot = lanchas.reduce((s, l) => s + Number(l.motor_reserva_mensual || 0), 0);
     return arr.map(ym => {
       const b = bitacora.filter(x => (x.fecha || "").startsWith(ym));
-      const z = zarpes.filter(x => (x.fecha || "").startsWith(ym));
-      const ll = llegadas.filter(x => (x.fecha || "").startsWith(ym));
       const comb   = b.filter(x => x.tipo === "combustible").reduce((s, x) => s + Number(x.costo_total || 0), 0);
       const mant   = b.filter(x => ["mantenimiento", "reparacion", "inspeccion", "limpieza"].includes(x.tipo)).reduce((s, x) => s + Number(x.costo_total || 0), 0);
       const marina = b.filter(x => x.tipo === "marina").reduce((s, x) => s + Number(x.costo_total || 0), 0);
       const cap    = b.filter(x => x.tipo === "capitanes").reduce((s, x) => s + Number(x.costo_total || 0), 0) + capNomMensual;
-      const viajes = z.reduce((s, x) => s + Number(x.costo_operativo || 0), 0)
-                   + ll.reduce((s, x) => s + Number(x.costo_operativo || 0), 0);
-      return { mes: ym, comb, mant, marina, cap, viajes, total: comb + mant + marina + cap + viajes };
+      const reserva = reservaMot; // misma reserva todos los meses (constante)
+      return { mes: ym, comb, mant, marina, cap, reserva, total: comb + mant + marina + cap + reserva };
     });
-  }, [bitacora, zarpes, llegadas, capitanes]);
+  }, [bitacora, lanchas, capitanes]);
 
   const maxMes = Math.max(1, ...meses6.map(m => m.total));
 
@@ -193,9 +196,10 @@ export default function CostosFlotaTab() {
         <Kpi label="Marina/parqueo"  valor={fmtCOP(data.costoMarina)} color="#22d3ee" />
         <Kpi label="Capitanes"       valor={fmtCOP(data.costoCapitanes)} color="#fb923c"
              sub={`${fmtCOP(data.costoCapNomina)} nómina + ${fmtCOP(data.costoCapTerceros)} terc.`} />
-        <Kpi label="Viajes flota"    valor={fmtCOP(data.costoViajes)} color="#a78bfa"
-             sub={`${data.numMediosViajes} medios = ${data.numViajesCompletos} ida+vuelta`} />
-        <Kpi label="Costo total mes" valor={fmtCOP(data.costosTotales)} color={B.danger} grande />
+        <Kpi label="Reserva motores" valor={fmtCOP(data.reservaMotores)} color="#a78bfa"
+             sub="Provisión mensual para reposición" />
+        <Kpi label="Costo total mes" valor={fmtCOP(data.costosTotales)} color={B.danger} grande
+             sub="Comb + Mant + Marina + Capitanes + Reserva" />
       </div>
 
       {/* KPI destacado: Costo por Pasadía (regla: solo llegadas, sin staff) */}
@@ -249,7 +253,7 @@ export default function CostosFlotaTab() {
                   <div style={{ background: B.sky,     height: h("mant"),   minHeight: m.mant   > 0 ? 3 : 0 }} title={`Mant.: ${fmtCOP(m.mant)}`} />
                   <div style={{ background: "#22d3ee", height: h("marina"), minHeight: m.marina > 0 ? 3 : 0 }} title={`Marina: ${fmtCOP(m.marina)}`} />
                   <div style={{ background: "#fb923c", height: h("cap"),    minHeight: m.cap    > 0 ? 3 : 0 }} title={`Capitanes: ${fmtCOP(m.cap)}`} />
-                  <div style={{ background: "#a78bfa", height: h("viajes"), minHeight: m.viajes > 0 ? 3 : 0 }} title={`Viajes: ${fmtCOP(m.viajes)}`} />
+                  <div style={{ background: "#a78bfa", height: h("reserva"), minHeight: m.reserva > 0 ? 3 : 0 }} title={`Reserva motores: ${fmtCOP(m.reserva)}`} />
                 </div>
                 <div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", textTransform: "capitalize" }}>{mesLabel(m.mes)}</div>
                 <div style={{ fontSize: 10, fontWeight: 700 }}>{fmtCOP(m.total)}</div>
@@ -262,7 +266,7 @@ export default function CostosFlotaTab() {
           <span>▪ <span style={{ color: B.sky }}>Mantenimiento</span></span>
           <span>▪ <span style={{ color: "#22d3ee" }}>Marina</span></span>
           <span>▪ <span style={{ color: "#fb923c" }}>Capitanes</span></span>
-          <span>▪ <span style={{ color: "#a78bfa" }}>Viajes</span></span>
+          <span>▪ <span style={{ color: "#a78bfa" }}>Reserva motores</span></span>
         </div>
       </div>
 
