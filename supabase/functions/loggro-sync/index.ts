@@ -710,24 +710,38 @@ serve(async (req) => {
       const to   = url.searchParams.get("to");
       if (!from || !to) return json({ error: "params from y to requeridos (YYYY-MM-DD)" }, 400);
 
-      // Bajar un rango de páginas lo suficientemente grande. Loggro no filtra
-      // por fecha, así que pagineamos y filtramos.
+      // Loggro paginación: page 0 = oldest. A medida que pasa el tiempo,
+      // las facturas más recientes están en las páginas más altas.
+      // Estrategia: paginamos desde la última página hacia atrás y paramos
+      // cuando llegamos a fechas anteriores a "from".
       const pageSize = 100;
-      const PAGE_RANGE_SIZE = 40; // ~4000 facturas ≈ 3-4 meses
-      const pagePromises = [];
-      for (let p = 70; p < 70 + PAGE_RANGE_SIZE; p++) {
-        pagePromises.push(
-          loggroGet(`/invoices?pagination=true&limit=${pageSize}&page=${p}`)
-            .then(d => ({ page: p, arr: d?.data || (Array.isArray(d) ? d : []) }))
-            .catch(() => ({ page: p, arr: [] }))
-        );
-      }
-      const results = await Promise.all(pagePromises);
       const allInvoices: any[] = [];
       const seen = new Set<string>();
-      results.forEach(r => r.arr.forEach((inv: any) => {
-        if (inv?._id && !seen.has(inv._id)) { seen.add(inv._id); allInvoices.push(inv); }
-      }));
+      const MAX_PAGES = 200; // safety limit
+      let stopReached = false;
+      // Hacemos batches de 10 páginas en paralelo, desde la 0 hasta MAX_PAGES,
+      // pero recorriendo desde el final hacia atrás.
+      // Para no asumir un total, empezamos en pages 0..MAX_PAGES y filtramos.
+      for (let batchStart = 0; batchStart < MAX_PAGES && !stopReached; batchStart += 20) {
+        const batch = [];
+        for (let p = batchStart; p < batchStart + 20 && p < MAX_PAGES; p++) {
+          batch.push(
+            loggroGet(`/invoices?pagination=true&limit=${pageSize}&page=${p}`)
+              .then(d => ({ page: p, arr: d?.data || (Array.isArray(d) ? d : []) }))
+              .catch(() => ({ page: p, arr: [] }))
+          );
+        }
+        const results = await Promise.all(batch);
+        let emptyPagesInBatch = 0;
+        results.forEach(r => {
+          if (r.arr.length === 0) emptyPagesInBatch++;
+          r.arr.forEach((inv: any) => {
+            if (inv?._id && !seen.has(inv._id)) { seen.add(inv._id); allInvoices.push(inv); }
+          });
+        });
+        // Si encontramos varias páginas vacías seguidas, no hay más data
+        if (emptyPagesInBatch >= 5) stopReached = true;
+      }
 
       const COTZ_OFFSET_MS = -5 * 3600 * 1000;
       // Bucket por día: { ventas, propinas, tickets, anuladas, por_metodo: {} }
@@ -783,7 +797,8 @@ serve(async (req) => {
         ok: true,
         from, to,
         timezone: "America/Bogota",
-        paginas_consultadas: PAGE_RANGE_SIZE,
+        invoices_revisados: allInvoices.length,
+        stop_reached: stopReached,
         resumen: {
           total_ventas: totalVentas,
           total_propinas: totalPropinas,
@@ -1106,13 +1121,15 @@ serve(async (req) => {
       }
 
       const now = new Date().toISOString();
-      // type=1 (compra/ingreso) para que sí entre el stock — type=11 con
-      // isSubtracted=false no funciona como entrada en Loggro.
+      // type=3 (Entrada Ajuste) por defecto — apropiado para baselines de
+      // inventario. type=1 sería "Compra" (genera asiento contable de
+      // compra). Permite override por body.type.
+      const tipoMovimiento = Number(body.type) || 3;
       const movementPayload: any = {
         business: businessId,
         user: userId,
         date: now,
-        type: 1,                       // compra/ingreso
+        type: tipoMovimiento,
         isSubtracted: false,
         isProduction: false,
         isMoveTo: false,
@@ -1298,6 +1315,54 @@ serve(async (req) => {
         ventas_descontadas:  movimientos.filter(m => m.delta < 0).length,
         entradas_aplicadas:   movimientos.filter(m => m.delta > 0).length,
       });
+    }
+
+    // ════════════════════════════════════════════════════════════════════
+    // GET /loggro-sync/list-recent-movements?limit=20
+    // Read-only — lista los últimos movimientos de inventario para que
+    // podamos inspeccionar el campo `type` y descubrir qué número usa
+    // Loggro para cada tipo de movimiento (Entrada Ajuste, Inventario a
+    // Cero, etc.). No crea ni modifica nada.
+    // ════════════════════════════════════════════════════════════════════
+    if (req.method === "GET" && path === "/list-recent-movements") {
+      const limit = Number(url.searchParams.get("limit")) || 20;
+      // Probar varios paths típicos
+      const candidates = [
+        `/inventories?pagination=true&limit=${limit}&page=0&sort=-createdOn`,
+        `/inventories?limit=${limit}&sort=-createdOn`,
+        `/inventories?limit=${limit}`,
+        `/inventories`,
+      ];
+      for (const p of candidates) {
+        try {
+          const data: any = await loggroGet(p);
+          const list = Array.isArray(data) ? data
+            : Array.isArray(data?.data) ? data.data
+            : Array.isArray(data?.items) ? data.items
+            : Array.isArray(data?.results) ? data.results
+            : null;
+          if (list) {
+            // Devolver solo campos relevantes
+            return json({
+              ok: true,
+              path_used: p,
+              count: list.length,
+              movements: list.slice(0, limit).map((m: any) => ({
+                _id: m._id || m.id,
+                type: m.type,
+                isSubtracted: m.isSubtracted,
+                isProduction: m.isProduction,
+                isMoveTo: m.isMoveTo,
+                date: m.date,
+                createdOn: m.createdOn,
+                note: m.note,
+                ingredients_count: Array.isArray(m.ingredients) ? m.ingredients.length : 0,
+              })),
+            });
+          }
+        } catch (_) { /* try next */ }
+      }
+      return json({ ok: false, error: "No pude listar /inventories en ningún path" }, 502);
     }
 
     // ════════════════════════════════════════════════════════════════════
