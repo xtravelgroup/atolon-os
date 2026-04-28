@@ -172,7 +172,7 @@ export default function HotelCheckin() {
                   )}
                   {e.estado === "in_house" && (
                     <>
-                      <a href={`/m/${e.id}`} target="_blank" rel="noopener noreferrer" style={{ ...BTN(B.navyLight), color: B.sky, border: `1px solid ${B.sky}44`, fontSize: 11, padding: "6px 10px", textDecoration: "none", flex: 1, textAlign: "center" }}>
+                      <a href={`/room/${encodeURIComponent(hab?.numero || hab?.id || e.habitacion_id)}`} target="_blank" rel="noopener noreferrer" style={{ ...BTN(B.navyLight), color: B.sky, border: `1px solid ${B.sky}44`, fontSize: 11, padding: "6px 10px", textDecoration: "none", flex: 1, textAlign: "center" }}>
                         🛎️ Portal
                       </a>
                       <button onClick={() => hacerCheckout(e)} style={{ ...BTN(B.warning), fontSize: 11, padding: "6px 10px", flex: 1 }}>
