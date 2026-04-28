@@ -215,6 +215,32 @@ function ContratistasWizard({ assisted = false, onClose, adminUser }) {
     if (error) throw error;
   };
 
+  // Para personas naturales: el trabajador es la misma persona.
+  // Crea (o actualiza) un único registro en contratistas_trabajadores
+  // con sus propios datos para que tenga curso_token y pueda hacer el curso.
+  const syncWorkerNatural = async (cid) => {
+    await supabase.from("contratistas_trabajadores").delete().eq("contratista_id", cid);
+    const row = {
+      contratista_id: cid,
+      nombre: data.nat_nombre,
+      cedula: data.nat_cedula,
+      cargo: data.nat_oficio || "Persona natural",
+      celular: data.nat_celular,
+      rh: data.nat_rh || null,
+      eps: data.nat_eps || "",
+      afp: data.nat_afp || "",
+      arl: data.nat_arl || "",
+      clase_riesgo: "I",
+      emerg_nombre: data.nat_emerg_nombre || "",
+      emerg_tel: data.nat_emerg_tel || "",
+      curso_completado: !!data.nat_curso_completado,
+      codigo_curso: data.nat_codigo_curso || null,
+      curso_token: genCursoToken(),
+    };
+    const { error } = await supabase.from("contratistas_trabajadores").insert(row);
+    if (error) throw error;
+  };
+
   // -------- Navegación --------
   const next = async () => {
     if (!validateCurrent()) {
@@ -268,6 +294,7 @@ function ContratistasWizard({ assisted = false, onClose, adminUser }) {
       const cid = await ensureDraftRow();
       await updateDraftRow(cid);
       if (tipo === "empresa") await syncWorkers(cid);
+      else if (tipo === "natural") await syncWorkerNatural(cid);
 
       // firma electrónica — IP lo dejamos null (la Edge Function lo capturará en Fase 3)
       const firma = {
