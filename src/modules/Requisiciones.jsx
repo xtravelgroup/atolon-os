@@ -2002,8 +2002,10 @@ function DetailModal({ req, onClose, onUpdate, onGenerarOC, proveedores, reglas,
   const regla = reglas.find(r => r.id === req.regla_aprobacion_id);
   // Cualquier rol que empiece con "gerente_general" (op, admin, o custom con timestamp)
   // puede aprobar reglas dirigidas a cualquier variante de gerente_general.
+  // Si la requisición NO tiene regla asignada, el gerente general aprueba por
+  // default (es el aprobador genérico de cualquier req sin regla específica).
   const esGerenteGeneral = esGerenteGeneralRol(currentUser.rol);
-  const reglaPideGerente = regla && esGerenteGeneralRol(regla.rol_aprobador);
+  const reglaPideGerente = !regla || esGerenteGeneralRol(regla.rol_aprobador);
   const puedeAprobar = req.estado === "Pendiente" && (
     currentUser.rol === "super_admin" ||
     (regla && regla.rol_aprobador === currentUser.rol) ||
