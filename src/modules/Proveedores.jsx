@@ -233,16 +233,52 @@ function FichaProveedor({ proveedor, onBack, onUpdate }) {
 // ── MODAL AGREGAR PROVEEDOR ──────────────────────────────────────
 function ModalAgregar({ onClose, onCreated }) {
   const [f, setF] = useState({ nombre: "", tipo: "", nit: "", telefono: "", email: "", ciudad: "Cartagena", activo: true });
+  const [crearEnLoggro, setCrearEnLoggro] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [statusMsg, setStatusMsg] = useState(null);
   const s = (k, v) => setF(p => ({ ...p, [k]: v }));
 
   const handleSave = async () => {
     if (!f.nombre.trim()) return;
     setSaving(true);
+    setStatusMsg(null);
     const nuevo = { id: uid(), ...f };
     const { data, error } = await supabase.from("proveedores").insert(nuevo).select().single();
+    if (error) { setSaving(false); setStatusMsg({ type: "err", text: "Error: " + error.message }); return; }
+
+    // Si el usuario marcó "También crear en Loggro", llamar al edge function
+    let loggroResult = null;
+    if (crearEnLoggro) {
+      try {
+        setStatusMsg({ type: "info", text: "Creando en Loggro Restobar…" });
+        const URL = import.meta.env.VITE_SUPABASE_URL;
+        const KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
+        const res = await fetch(`${URL}/functions/v1/loggro-sync/create-provider`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", apikey: KEY, Authorization: `Bearer ${KEY}` },
+          body: JSON.stringify({
+            nombre: f.nombre, nit: f.nit, telefono: f.telefono, email: f.email, ciudad: f.ciudad,
+          }),
+        });
+        loggroResult = await res.json();
+        if (loggroResult?.ok && loggroResult.loggro_id) {
+          // Actualizar el registro de Atolón con el loggro_id
+          await supabase.from("proveedores")
+            .update({ loggro_id: loggroResult.loggro_id })
+            .eq("id", data.id);
+          data.loggro_id = loggroResult.loggro_id;
+          setStatusMsg({ type: "ok", text: `✓ Creado en Atolón y Loggro (${loggroResult.loggro_id.slice(-8)})` });
+        } else {
+          setStatusMsg({ type: "warn", text: "Creado en Atolón, pero falló en Loggro: " + (loggroResult?.error || "—") });
+        }
+      } catch (e) {
+        setStatusMsg({ type: "warn", text: "Creado en Atolón, pero falló en Loggro: " + (e.message || e) });
+      }
+    } else {
+      setStatusMsg({ type: "ok", text: "✓ Creado en Atolón" });
+    }
     setSaving(false);
-    if (!error) { onCreated(data); onClose(); }
+    setTimeout(() => { onCreated(data); onClose(); }, loggroResult?.ok || !crearEnLoggro ? 800 : 2500);
   };
 
   return (
@@ -279,11 +315,43 @@ function ModalAgregar({ onClose, onCreated }) {
             <label style={LS}>Ciudad</label>
             <input value={f.ciudad} onChange={e => s("ciudad", e.target.value)} style={IS} />
           </div>
+
+          {/* Toggle: crear también en Loggro */}
+          <label style={{
+            display: "flex", alignItems: "center", gap: 10, padding: "10px 14px",
+            background: crearEnLoggro ? "#22c55e22" : B.navyLight,
+            border: `1px solid ${crearEnLoggro ? "#22c55e55" : B.navyLight}`,
+            borderRadius: 8, cursor: "pointer", fontSize: 12,
+          }}>
+            <input type="checkbox" checked={crearEnLoggro}
+              onChange={e => setCrearEnLoggro(e.target.checked)}
+              style={{ width: 18, height: 18, cursor: "pointer" }} />
+            <div style={{ flex: 1 }}>
+              <div style={{ fontWeight: 700, color: crearEnLoggro ? "#22c55e" : "rgba(255,255,255,0.7)" }}>
+                🔗 También crear en Loggro Restobar
+              </div>
+              <div style={{ fontSize: 10, color: "rgba(255,255,255,0.45)", marginTop: 2 }}>
+                Lo crea automáticamente en Loggro y vincula con loggro_id.
+              </div>
+            </div>
+          </label>
         </div>
+
+        {statusMsg && (
+          <div style={{
+            marginTop: 14, padding: "10px 14px", borderRadius: 8, fontSize: 12,
+            background: statusMsg.type === "ok" ? "#22c55e22" : statusMsg.type === "warn" ? "#f59e0b22" : statusMsg.type === "err" ? "#ef444422" : B.navyLight,
+            color: statusMsg.type === "ok" ? "#22c55e" : statusMsg.type === "warn" ? "#f59e0b" : statusMsg.type === "err" ? "#ef4444" : "rgba(255,255,255,0.6)",
+            border: `1px solid ${statusMsg.type === "ok" ? "#22c55e55" : statusMsg.type === "warn" ? "#f59e0b55" : statusMsg.type === "err" ? "#ef444455" : "transparent"}`,
+          }}>
+            {statusMsg.text}
+          </div>
+        )}
+
         <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 24 }}>
-          <button onClick={onClose} style={{ background: B.navyLight, color: B.white, border: "none", borderRadius: 8, padding: "10px 20px", fontSize: 13, cursor: "pointer" }}>Cancelar</button>
-          <button onClick={handleSave} disabled={saving || !f.nombre.trim()} style={{ background: B.sky, color: B.navy, border: "none", borderRadius: 8, padding: "10px 20px", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
-            {saving ? "Guardando..." : "Crear Proveedor"}
+          <button onClick={onClose} disabled={saving} style={{ background: B.navyLight, color: B.white, border: "none", borderRadius: 8, padding: "10px 20px", fontSize: 13, cursor: saving ? "default" : "pointer", opacity: saving ? 0.5 : 1 }}>Cancelar</button>
+          <button onClick={handleSave} disabled={saving || !f.nombre.trim()} style={{ background: B.sky, color: B.navy, border: "none", borderRadius: 8, padding: "10px 20px", fontSize: 13, fontWeight: 700, cursor: saving ? "default" : "pointer", opacity: saving ? 0.6 : 1 }}>
+            {saving ? "Guardando…" : crearEnLoggro ? "Crear en Atolón + Loggro" : "Crear en Atolón"}
           </button>
         </div>
       </div>

@@ -1190,6 +1190,40 @@ serve(async (req) => {
       });
     }
 
+    // POST /loggro-sync/create-provider — crear proveedor en Loggro
+    // Body: { nombre, nit?, telefono?, email?, ciudad?, direccion? }
+    if (req.method === "POST" && path === "/create-provider") {
+      const body = await req.json().catch(() => ({}));
+      if (!body.nombre) return json({ ok: false, error: "nombre requerido" }, 400);
+      const { businessId, userId } = await getLoggroIdentity();
+
+      const payload: any = {
+        business: businessId,
+        user: userId,
+        name: body.nombre,
+        document: body.nit || null,
+        phone: body.telefono || null,
+        email: body.email || null,
+        city: body.ciudad || null,
+        address: body.direccion || null,
+        isActive: true,
+        createdOn: new Date().toISOString(),
+        modifiedOn: new Date().toISOString(),
+      };
+
+      // Probar paths comunes hasta encontrar uno que funcione
+      const paths = ["/providers", "/suppliers", "/proveedores"];
+      const intentos: any[] = [];
+      for (const p of paths) {
+        const r = await loggroRaw("POST", p, payload);
+        intentos.push({ path: p, status: r.status, body_preview: typeof r.body === "string" ? r.body.slice(0, 200) : r.body });
+        if (r.ok && r.body && (r.body._id || r.body.id)) {
+          return json({ ok: true, path_used: p, loggro_id: r.body._id || r.body.id, provider: r.body, intentos });
+        }
+      }
+      return json({ ok: false, error: "Ningún path POST respondió OK", intentos }, 502);
+    }
+
     // GET /loggro-sync/providers — listar proveedores de Restobar
     // Prueba varios paths comunes y devuelve el que funcione.
     if (req.method === "GET" && path === "/providers") {
