@@ -27,15 +27,16 @@ serve(async (req) => {
     if (!oc?.codigo) return jsonResp({ error: "`oc` con codigo es requerido" }, 400);
 
     // ── HTML del cuerpo ──────────────────────────────────────────────────
+    // Solo se envían CANTIDADES al proveedor — los precios los pone él en
+    // su cotización-respuesta. Esto evita anclar precios viejos y permite
+    // al proveedor cotizar libremente.
     const items = Array.isArray(oc.items) ? oc.items : [];
     const itemsRows = items.map((it: any, i: number) => `
       <tr style="border-bottom:1px solid #e5e7eb;">
         <td style="padding:8px 6px;font-size:12px;color:#374151;">${i + 1}</td>
         <td style="padding:8px 6px;font-size:12px;color:#111827;">${escapeHtml(it.item || it.nombre || "—")}</td>
-        <td style="padding:8px 6px;font-size:12px;color:#374151;text-align:right;">${it.cant || 0}</td>
+        <td style="padding:8px 6px;font-size:13px;color:#111827;text-align:right;font-weight:700;">${it.cant || 0}</td>
         <td style="padding:8px 6px;font-size:12px;color:#374151;">${escapeHtml(it.unidad || "")}</td>
-        <td style="padding:8px 6px;font-size:12px;color:#374151;text-align:right;">${fmtCOP(Number(it.precio_unit || it.precio || 0))}</td>
-        <td style="padding:8px 6px;font-size:12px;color:#111827;text-align:right;font-weight:600;">${fmtCOP(Number(it.subtotal || (it.cant || 0) * (it.precio_unit || it.precio || 0)))}</td>
       </tr>
     `).join("");
 
@@ -66,20 +67,17 @@ serve(async (req) => {
           <tr style="background:#0D1B3E;color:#fff;">
             <th style="padding:10px 6px;font-size:11px;text-align:left;">#</th>
             <th style="padding:10px 6px;font-size:11px;text-align:left;">Ítem</th>
-            <th style="padding:10px 6px;font-size:11px;text-align:right;">Cant</th>
+            <th style="padding:10px 6px;font-size:11px;text-align:right;">Cantidad</th>
             <th style="padding:10px 6px;font-size:11px;text-align:left;">Unidad</th>
-            <th style="padding:10px 6px;font-size:11px;text-align:right;">Precio</th>
-            <th style="padding:10px 6px;font-size:11px;text-align:right;">Subtotal</th>
           </tr>
         </thead>
         <tbody>${itemsRows}</tbody>
       </table>
 
-      <table style="width:100%;margin-top:14px;">
-        <tr><td style="text-align:right;padding:4px 6px;font-size:13px;color:#6b7280;">Subtotal:</td><td style="text-align:right;padding:4px 6px;font-size:13px;width:140px;">${fmtCOP(Number(oc.subtotal || 0))}</td></tr>
-        <tr><td style="text-align:right;padding:4px 6px;font-size:13px;color:#6b7280;">IVA:</td><td style="text-align:right;padding:4px 6px;font-size:13px;">${fmtCOP(Number(oc.iva || 0))}</td></tr>
-        <tr><td style="text-align:right;padding:8px 6px;font-size:15px;font-weight:800;color:#111827;border-top:2px solid #C8B99A;">TOTAL:</td><td style="text-align:right;padding:8px 6px;font-size:18px;font-weight:800;color:#C8B99A;border-top:2px solid #C8B99A;">${fmtCOP(Number(oc.total || 0))}</td></tr>
-      </table>
+      <div style="margin-top:18px;padding:14px 16px;background:#F5F2EA;border-left:4px solid #C8B99A;border-radius:6px;font-size:13px;color:#111827;">
+        <strong>Por favor confirme disponibilidad y envíe cotización con sus precios.</strong>
+        <div style="font-size:12px;color:#6b7280;margin-top:4px;">Una vez recibida la cotización aprobaremos y emitiremos la OC final.</div>
+      </div>
 
       ${oc.notas ? `<div style="margin-top:16px;padding:12px;background:#FEF3C7;border-radius:6px;font-size:12px;"><strong>Notas:</strong> ${escapeHtml(oc.notas)}</div>` : ""}
 
