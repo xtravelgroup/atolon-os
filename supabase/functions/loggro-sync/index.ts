@@ -702,6 +702,133 @@ serve(async (req) => {
       });
     }
 
+    // GET /loggro-sync/inspect-invoice — debug: muestra una factura cruda
+    // con todos sus campos para entender qué propiedades existen
+    // (descuento, cortesía, anulación, etc.)
+    if (req.method === "GET" && path === "/inspect-invoice") {
+      const data: any = await loggroGet(`/invoices?pagination=true&limit=1&page=0`);
+      const arr = data?.data || (Array.isArray(data) ? data : []);
+      return json({ ok: true, sample: arr[0] || null, keys: arr[0] ? Object.keys(arr[0]) : [] });
+    }
+
+    // GET /loggro-sync/reporte-ayb?from=...&to=...
+    // Reporte detallado de facturas de Loggro Restobar con info de
+    // cortesías (descuento 100% o total=0), descuentos parciales y
+    // anulaciones (deletedInfo.isDeleted=true).
+    if (req.method === "GET" && path === "/reporte-ayb") {
+      const from = url.searchParams.get("from");
+      const to   = url.searchParams.get("to");
+      if (!from || !to) return json({ error: "params from y to requeridos" }, 400);
+
+      const pageSize = 100;
+      const allInvoices: any[] = [];
+      const seen = new Set<string>();
+      const MAX_PAGES = 200;
+      let stopReached = false;
+      for (let batchStart = 0; batchStart < MAX_PAGES && !stopReached; batchStart += 20) {
+        const batch = [];
+        for (let p = batchStart; p < batchStart + 20 && p < MAX_PAGES; p++) {
+          batch.push(
+            loggroGet(`/invoices?pagination=true&limit=${pageSize}&page=${p}`)
+              .then(d => ({ page: p, arr: d?.data || (Array.isArray(d) ? d : []) }))
+              .catch(() => ({ page: p, arr: [] }))
+          );
+        }
+        const results = await Promise.all(batch);
+        let emptyPagesInBatch = 0;
+        results.forEach(r => {
+          if (r.arr.length === 0) emptyPagesInBatch++;
+          r.arr.forEach((inv: any) => {
+            if (inv?._id && !seen.has(inv._id)) { seen.add(inv._id); allInvoices.push(inv); }
+          });
+        });
+        if (emptyPagesInBatch >= 5) stopReached = true;
+      }
+
+      const COTZ_OFFSET_MS = -5 * 3600 * 1000;
+      const cortesias: any[] = [];
+      const anuladas: any[] = [];
+      const descuentos: any[] = [];
+
+      for (const inv of allInvoices) {
+        const ts = inv?.createdOn;
+        if (!ts) continue;
+        const utc = new Date(ts).getTime();
+        const co = new Date(utc + COTZ_OFFSET_MS);
+        const coDay = co.toISOString().slice(0, 10);
+        const coTime = co.toISOString().slice(11, 16);
+        if (coDay < from || coDay > to) continue;
+
+        const isDeleted = !!inv?.deletedInfo?.isDeleted;
+        const total = Number(inv?.total) || 0;
+        const totalBruto = Number(inv?.totalBruto) || 0;
+        const subtotal = Number(inv?.subTotal) || 0;
+        const tip = Number(inv?.tip) || 0;
+        const totalDiscount = Number(inv?.totalDiscount) || 0;
+        const discountAdditional = Number(inv?.discountAdditionalTotal) || Number(inv?.discountAdditional) || 0;
+        const discount = totalDiscount + discountAdditional;
+        const discountPct = totalBruto > 0 ? (discount / totalBruto) * 100 : 0;
+        const numero = inv?.number || inv?.numberUnique || inv?._id?.slice(-6);
+        const cliente = (inv?.client?.name && (inv?.client?.lastName ? `${inv.client.name} ${inv.client.lastName}` : inv.client.name)) || inv?.table?.name || "—";
+        const usuario = inv?.cashier?.name || inv?.seller?.name || "—";
+        const motivo = inv?.deletedInfo?.reason || inv?.observations || [inv?.note1, inv?.note2, inv?.note3].filter(Boolean).join(" · ") || "";
+        const items = (inv?.products || []).map((it: any) => ({
+          nombre: it?.name || it?.product?.name || "—",
+          cantidad: Number(it?.quantity) || 0,
+          precio: Number(it?.price) || 0,
+          subtotal: Number(it?.subTotal) || 0,
+          descuento: Number(it?.totalDiscount) || 0,
+        }));
+
+        const base = {
+          id: inv?._id,
+          numero,
+          fecha: coDay,
+          hora: coTime,
+          cliente,
+          usuario,
+          total,
+          subtotal,
+          tip,
+          discount,
+          discountPct,
+          isDeleted,
+          motivo,
+          items_count: items.length,
+          items,
+        };
+
+        // ANULADA
+        if (isDeleted) {
+          anuladas.push(base);
+          continue;
+        }
+        // CORTESÍA: descuento 100% o total = 0 con items
+        const esCortesia = discountPct >= 99.99 || (total === 0 && items.length > 0) || (subtotal > 0 && total === 0);
+        if (esCortesia) {
+          cortesias.push(base);
+        }
+        // DESCUENTO PARCIAL: discount > 0 pero no es cortesía 100%
+        if (discount > 0 && !esCortesia) {
+          descuentos.push(base);
+        }
+      }
+
+      return json({
+        ok: true,
+        from, to,
+        invoices_revisados: allInvoices.length,
+        resumen: {
+          cortesias: { count: cortesias.length, total: cortesias.reduce((s, x) => s + (x.subtotal || 0), 0) },
+          anuladas: { count: anuladas.length, total: anuladas.reduce((s, x) => s + (x.total || 0), 0) },
+          descuentos: { count: descuentos.length, total_descontado: descuentos.reduce((s, x) => s + (x.discount || 0), 0) },
+        },
+        cortesias: cortesias.sort((a, b) => (b.fecha + b.hora).localeCompare(a.fecha + a.hora)),
+        anuladas: anuladas.sort((a, b) => (b.fecha + b.hora).localeCompare(a.fecha + a.hora)),
+        descuentos: descuentos.sort((a, b) => (b.fecha + b.hora).localeCompare(a.fecha + a.hora)),
+      });
+    }
+
     // GET /loggro-sync/cierre-caja-rango?from=YYYY-MM-DD&to=YYYY-MM-DD
     // Retorna totales por día y resumen global para un rango. Usado por P/L,
     // Financiero y Resultados para consumir la data oficial de Loggro Restobar.

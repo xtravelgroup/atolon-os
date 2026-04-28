@@ -13,6 +13,7 @@ const REPORTES = [
   { key: "pagos",        label: "Pagos por método",   icon: "💳", desc: "Desglose de pagos por Efectivo / Datáfono / Transferencia / Wompi / CXC" },
   { key: "ocupacion",    label: "Ocupación diaria",   icon: "📅", desc: "Pax por día · Ocupación vs. capacidad · Tendencia mensual" },
   { key: "cancelaciones",label: "Cancelaciones",      icon: "✕",  desc: "Reservas canceladas · Razón · Reembolsos" },
+  { key: "ayb",          label: "Reportes A&B",       icon: "🍽️", desc: "Cortesías · Anulaciones · Descuentos del Restaurant/Bar (Loggro)" },
 ];
 
 const firstOfMonth = () => {
@@ -50,6 +51,150 @@ export default function Reportes() {
       {tab === "pagos"         && <ReportePagosPorMetodo />}
       {tab === "ocupacion"     && <ReporteOcupacion />}
       {tab === "cancelaciones" && <ReporteCancelaciones />}
+      {tab === "ayb"           && <ReporteAyB />}
+    </div>
+  );
+}
+
+// ─── REPORTE A&B (Loggro Restobar) ──────────────────────────────────────────
+function ReporteAyB() {
+  const [subTab, setSubTab] = useState("cortesias"); // cortesias | anuladas | descuentos
+  const [fechaIni, setFechaIni] = useState(firstOfMonth());
+  const [fechaFin, setFechaFin] = useState(todayStr());
+  const [data, setData] = useState({ cortesias: [], anuladas: [], descuentos: [], resumen: null });
+  const [loading, setLoading] = useState(true);
+
+  const cargar = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/loggro-sync/reporte-ayb?from=${fechaIni}&to=${fechaFin}`,
+        { headers: { apikey: import.meta.env.VITE_SUPABASE_ANON_KEY, Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}` } }
+      );
+      const json = await res.json();
+      if (json.ok) setData(json);
+    } catch (e) {
+      console.error("[ReporteAyB]", e);
+    } finally {
+      setLoading(false);
+    }
+  }, [fechaIni, fechaFin]);
+  useEffect(() => { cargar(); }, [cargar]);
+
+  const lista = data[subTab] || [];
+
+  const handleExport = () => {
+    if (subTab === "cortesias") {
+      const rows = [["Fecha", "Hora", "Factura", "Cliente", "Cajero", "Subtotal", "Descuento", "Total", "Items"]];
+      lista.forEach(r => rows.push([r.fecha, r.hora, r.numero, r.cliente, r.usuario, r.subtotal, r.discount, r.total, r.items_count]));
+      exportCSV(`ayb_cortesias_${fechaIni}_${fechaFin}.csv`, rows);
+    } else if (subTab === "anuladas") {
+      const rows = [["Fecha", "Hora", "Factura", "Cliente", "Cajero", "Total", "Motivo"]];
+      lista.forEach(r => rows.push([r.fecha, r.hora, r.numero, r.cliente, r.usuario, r.total, r.motivo]));
+      exportCSV(`ayb_anuladas_${fechaIni}_${fechaFin}.csv`, rows);
+    } else {
+      const rows = [["Fecha", "Hora", "Factura", "Cliente", "Cajero", "Subtotal", "Descuento", "% Desc", "Total"]];
+      lista.forEach(r => rows.push([r.fecha, r.hora, r.numero, r.cliente, r.usuario, r.subtotal, r.discount, r.discountPct?.toFixed(1), r.total]));
+      exportCSV(`ayb_descuentos_${fechaIni}_${fechaFin}.csv`, rows);
+    }
+  };
+
+  return (
+    <div>
+      <FiltroFechas
+        fechaIni={fechaIni} setFechaIni={setFechaIni}
+        fechaFin={fechaFin} setFechaFin={setFechaFin}
+        onExport={handleExport}
+      />
+
+      {/* Sub-tabs */}
+      <div style={{ display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap" }}>
+        {[
+          { k: "cortesias",  l: "🎁 Cortesías",   c: "#a78bfa", count: data.resumen?.cortesias?.count, total: data.resumen?.cortesias?.total },
+          { k: "anuladas",   l: "✕ Anuladas",     c: B.danger,  count: data.resumen?.anuladas?.count,  total: data.resumen?.anuladas?.total },
+          { k: "descuentos", l: "💰 Descuentos",  c: B.warning, count: data.resumen?.descuentos?.count, total: data.resumen?.descuentos?.total_descontado },
+        ].map(t => {
+          const active = subTab === t.k;
+          return (
+            <button key={t.k} onClick={() => setSubTab(t.k)}
+              style={{
+                padding: "12px 18px", borderRadius: 10,
+                border: `2px solid ${active ? t.c : B.navyLight}`,
+                background: active ? t.c + "22" : B.navyMid,
+                color: active ? t.c : "rgba(255,255,255,0.6)",
+                cursor: "pointer", fontSize: 13, fontWeight: 700, textAlign: "left",
+              }}>
+              <div>{t.l}</div>
+              <div style={{ fontSize: 10, marginTop: 4, opacity: 0.8 }}>
+                {t.count != null ? `${t.count} casos · ${COP(t.total || 0)}` : "—"}
+              </div>
+            </button>
+          );
+        })}
+      </div>
+
+      {loading ? (
+        <div style={{ padding: 40, textAlign: "center", color: "rgba(255,255,255,0.4)" }}>Cargando facturas de Loggro…</div>
+      ) : lista.length === 0 ? (
+        <div style={{ padding: 40, textAlign: "center", background: B.navyMid, borderRadius: 12, color: "rgba(255,255,255,0.4)" }}>
+          Sin {subTab} en este rango.
+        </div>
+      ) : (
+        <div style={{ background: B.navyMid, borderRadius: 12, overflow: "hidden", overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, minWidth: 850 }}>
+            <thead>
+              <tr style={{ background: B.navyLight }}>
+                <th style={{ padding: "10px 12px", textAlign: "left", fontSize: 10, color: "rgba(255,255,255,0.6)", textTransform: "uppercase", letterSpacing: "0.06em" }}>Fecha</th>
+                <th style={{ padding: "10px 12px", textAlign: "left", fontSize: 10, color: "rgba(255,255,255,0.6)", textTransform: "uppercase", letterSpacing: "0.06em" }}>Factura</th>
+                <th style={{ padding: "10px 12px", textAlign: "left", fontSize: 10, color: "rgba(255,255,255,0.6)", textTransform: "uppercase", letterSpacing: "0.06em" }}>Cliente / Mesa</th>
+                <th style={{ padding: "10px 12px", textAlign: "left", fontSize: 10, color: "rgba(255,255,255,0.6)", textTransform: "uppercase", letterSpacing: "0.06em" }}>Cajero</th>
+                <th style={{ padding: "10px 12px", textAlign: "right", fontSize: 10, color: "rgba(255,255,255,0.6)", textTransform: "uppercase", letterSpacing: "0.06em" }}>Subtotal</th>
+                {subTab !== "anuladas" && (
+                  <th style={{ padding: "10px 12px", textAlign: "right", fontSize: 10, color: "rgba(255,255,255,0.6)", textTransform: "uppercase", letterSpacing: "0.06em" }}>Descuento</th>
+                )}
+                <th style={{ padding: "10px 12px", textAlign: "right", fontSize: 10, color: "rgba(255,255,255,0.6)", textTransform: "uppercase", letterSpacing: "0.06em" }}>Total</th>
+                <th style={{ padding: "10px 12px", textAlign: "left", fontSize: 10, color: "rgba(255,255,255,0.6)", textTransform: "uppercase", letterSpacing: "0.06em" }}>{subTab === "anuladas" ? "Motivo" : "Items"}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {lista.map(r => (
+                <tr key={r.id} style={{ borderTop: "1px solid rgba(255,255,255,0.04)" }}>
+                  <td style={{ padding: "10px 12px" }}>
+                    <div style={{ fontWeight: 700 }}>{r.fecha}</div>
+                    <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)" }}>{r.hora}</div>
+                  </td>
+                  <td style={{ padding: "10px 12px", fontFamily: "monospace", fontSize: 11 }}>#{r.numero}</td>
+                  <td style={{ padding: "10px 12px" }}>{r.cliente}</td>
+                  <td style={{ padding: "10px 12px", color: "rgba(255,255,255,0.6)" }}>{r.usuario}</td>
+                  <td style={{ padding: "10px 12px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{COP(r.subtotal)}</td>
+                  {subTab !== "anuladas" && (
+                    <td style={{ padding: "10px 12px", textAlign: "right", fontVariantNumeric: "tabular-nums", color: B.warning, fontWeight: 700 }}>
+                      −{COP(r.discount)}
+                      {r.discountPct > 0 && (
+                        <div style={{ fontSize: 10, opacity: 0.7 }}>({r.discountPct.toFixed(1)}%)</div>
+                      )}
+                    </td>
+                  )}
+                  <td style={{ padding: "10px 12px", textAlign: "right", fontWeight: 800, fontVariantNumeric: "tabular-nums",
+                    color: subTab === "anuladas" ? B.danger : subTab === "cortesias" ? "#a78bfa" : "#fff" }}>
+                    {COP(r.total)}
+                  </td>
+                  <td style={{ padding: "10px 12px", fontSize: 11, color: "rgba(255,255,255,0.5)", maxWidth: 280 }}>
+                    {subTab === "anuladas" ? (r.motivo || "—") : `${r.items_count} ítem${r.items_count !== 1 ? "s" : ""}`}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <div style={{ marginTop: 16, padding: 12, background: B.navy, borderRadius: 8, fontSize: 11, color: "rgba(255,255,255,0.45)", lineHeight: 1.5 }}>
+        ℹ️ Datos directos de Loggro Restobar (todas las facturas del periodo).
+        <strong style={{ color: B.sand }}> Cortesías</strong>: facturas con descuento ≥99% o total $0 con productos.
+        <strong style={{ color: B.danger }}> Anuladas</strong>: facturas con <code>deletedInfo.isDeleted = true</code>.
+        <strong style={{ color: B.warning }}> Descuentos</strong>: descuentos parciales (incluye recargos y ajustes registrados como descuento).
+      </div>
     </div>
   );
 }
