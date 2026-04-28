@@ -137,12 +137,23 @@ function ModalNuevaLlegada({ tipo, fecha, reserva, llegadasDelDia = [], onClose,
     pax_n: reserva ? (reserva.pax_n || 0) : 0,
     hora_llegada: hoyHora(),
     notas: reserva?._notas_preset || "",
+    horas_babor: "",
+    horas_estribor: "",
+    horas_centro: "", // Castillete tiene 1 motor central
   });
 
   const [fotoFile, setFotoFile]       = useState(null);
   const [fotoPreview, setFotoPreview] = useState(null);
+  const [odometroFile, setOdometroFile] = useState(null);
+  const [odometroPreview, setOdometroPreview] = useState(null);
   const [uploadingFoto, setUploadingFoto] = useState(false);
   const [saving, setSaving]           = useState(false);
+
+  // Embarcación propia → mostrar campos de odómetro y horas motor
+  const esLanchaPropia = ["Naturalle", "Natturale", "Castillete"]
+    .some(n => (f.embarcacion_nombre || "").toLowerCase().includes(n.toLowerCase()));
+  const esNaturalle = (f.embarcacion_nombre || "").toLowerCase().includes("nat");
+  const esCastillete = (f.embarcacion_nombre || "").toLowerCase().includes("castillete");
 
   const s = (k, v) => setF(p => ({ ...p, [k]: v }));
 
@@ -222,6 +233,31 @@ function ModalNuevaLlegada({ tipo, fecha, reserva, llegadasDelDia = [], onClose,
       } catch (_) { /* sin lancha registrada → costo 0 */ }
     }
 
+    // Subir foto de odómetro si existe
+    let odometro_foto_url = null;
+    if (odometroFile) {
+      try {
+        const ext = odometroFile.name.split(".").pop();
+        const path = `odom-${id}.${ext}`;
+        const { data: upData, error: upErr } = await supabase.storage
+          .from("muelle-fotos")
+          .upload(path, odometroFile, { upsert: true });
+        if (!upErr && upData) {
+          const { data: urlData } = supabase.storage.from("muelle-fotos").getPublicUrl(path);
+          odometro_foto_url = urlData?.publicUrl || null;
+        }
+      } catch (_) {}
+    }
+
+    // Construir motores_horas si se ingresaron
+    const motoresHoras = {};
+    if (esNaturalle) {
+      if (f.horas_babor) motoresHoras.Babor = Number(f.horas_babor);
+      if (f.horas_estribor) motoresHoras.Estribor = Number(f.horas_estribor);
+    } else if (esCastillete) {
+      if (f.horas_centro) motoresHoras.Centro = Number(f.horas_centro);
+    }
+
     const payload = {
       id, fecha, tipo: tipoSeleccionado,
       embarcacion_nombre: embarcacionNombre,
@@ -237,6 +273,8 @@ function ModalNuevaLlegada({ tipo, fecha, reserva, llegadasDelDia = [], onClose,
     };
     // Solo incluir foto_url si está disponible (columna puede no existir aún)
     if (foto_url) payload.foto_url = foto_url;
+    if (odometro_foto_url) payload.odometro_foto_url = odometro_foto_url;
+    if (Object.keys(motoresHoras).length > 0) payload.motores_horas = motoresHoras;
 
     const { error } = await supabase.from("muelle_llegadas").insert(payload);
     setSaving(false);
@@ -460,6 +498,70 @@ function ModalNuevaLlegada({ tipo, fecha, reserva, llegadasDelDia = [], onClose,
           </div>
         </div>
 
+        {/* Sección odómetro y horas motor — solo Natturale/Castillete (opcional) */}
+        {esLanchaPropia && (
+          <div style={{ background: B.navyMid, border: `1px solid ${B.sand}33`, borderRadius: 10, padding: 14, marginBottom: 12 }}>
+            <div style={{ fontSize: 12, color: B.sand, textTransform: "uppercase", letterSpacing: 1, fontWeight: 700, marginBottom: 10 }}>
+              ⚙️ Odómetro y horas de motor (opcional)
+            </div>
+            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.45)", marginBottom: 12, lineHeight: 1.5 }}>
+              Si puedes, toma una foto del odómetro y registra las horas de cada motor.
+              Esto nos ayuda a llevar el control de mantenimiento.
+            </div>
+
+            {/* Inputs de horas según embarcación */}
+            <div style={{ display: "grid", gridTemplateColumns: esCastillete ? "1fr" : "1fr 1fr", gap: 10, marginBottom: 12 }}>
+              {esNaturalle && (
+                <>
+                  <div>
+                    <label style={LS}>Horas Babor</label>
+                    <input type="number" step="0.1" min="0" value={f.horas_babor}
+                      onChange={e => s("horas_babor", e.target.value)}
+                      placeholder="ej: 1005" style={IS} />
+                  </div>
+                  <div>
+                    <label style={LS}>Horas Estribor</label>
+                    <input type="number" step="0.1" min="0" value={f.horas_estribor}
+                      onChange={e => s("horas_estribor", e.target.value)}
+                      placeholder="ej: 1004" style={IS} />
+                  </div>
+                </>
+              )}
+              {esCastillete && (
+                <div>
+                  <label style={LS}>Horas Motor</label>
+                  <input type="number" step="0.1" min="0" value={f.horas_centro}
+                    onChange={e => s("horas_centro", e.target.value)}
+                    placeholder="ej: 250" style={IS} />
+                </div>
+              )}
+            </div>
+
+            {/* Foto del odómetro */}
+            <label style={LS}>Foto del odómetro</label>
+            {odometroPreview ? (
+              <div style={{ position: "relative" }}>
+                <img src={odometroPreview} alt="odómetro" style={{ width: "100%", maxHeight: 180, objectFit: "cover", borderRadius: 10, border: `1px solid rgba(255,255,255,0.12)` }} />
+                <button onClick={() => { setOdometroFile(null); setOdometroPreview(null); }}
+                  style={{ position: "absolute", top: 6, right: 6, background: "rgba(0,0,0,0.6)", border: "none", color: "#fff", borderRadius: "50%", width: 26, height: 26, cursor: "pointer", fontSize: 13 }}>✕</button>
+              </div>
+            ) : (
+              <label style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, width: "100%", padding: "16px", borderRadius: 10, border: `2px dashed rgba(255,255,255,0.15)`, background: B.navyLight, cursor: "pointer", color: "rgba(255,255,255,0.4)", fontSize: 12, boxSizing: "border-box" }}>
+                <span style={{ fontSize: 22 }}>📸</span>
+                <span>Toca para foto del odómetro</span>
+                <input type="file" accept="image/*" capture="environment" style={{ display: "none" }}
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    setOdometroFile(file);
+                    const reader = new FileReader();
+                    reader.onload = (ev) => setOdometroPreview(ev.target.result);
+                    reader.readAsDataURL(file);
+                  }} />
+              </label>
+            )}
+          </div>
+        )}
 
         {errorMsg && (
           <div style={{ background: "#ff000022", border: "1px solid #ff000055", borderRadius: 8, padding: "10px 14px", marginTop: 12, fontSize: 12, color: "#ff6b6b" }}>
