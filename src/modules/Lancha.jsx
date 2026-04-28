@@ -104,7 +104,9 @@ export default function Lancha() {
     const proxServ = bitacoraLancha.find(b => b.proximo_servicio_h || b.proximo_servicio_fecha);
     const zarpesMes = zarpesLancha.filter(z => (z.fecha || "").startsWith(mes));
     const viajesMes = zarpesMes.length;
-    const gastoViajesMes = zarpesMes.reduce((s, z) => s + Number(z.costo_operativo || 0), 0);
+    // gastoViajesMes ya no se calcula — el costo de operación se deriva del
+    // combustible cargado (gastoCombustibleMes), no de un costo per-zarpe.
+    const gastoViajesMes = 0;
     const incidentesAbiertos = bitacoraLancha.filter(b => b.tipo === "incidente" && !b.resuelto).length;
     return { galonesMes, gastoCombustibleMes, gastoMantMes, gastoOperativosMes, gastoMarinaMes, gastoCapitanesMes, ultimoHoras, proxServ, viajesMes, gastoViajesMes, incidentesAbiertos };
   }, [bitacoraLancha, zarpesLancha]);
@@ -229,7 +231,7 @@ export default function Lancha() {
           { l: "Mant./Rep. (mes)",    v: fmtCOP(kpis.gastoMantMes),           c: B.sky },
           { l: "Marina (mes)",        v: fmtCOP(kpis.gastoMarinaMes),         c: "#22d3ee" },
           { l: "Capitanes (mes)",     v: fmtCOP(kpis.gastoCapitanesMes),      c: "#fb923c" },
-          { l: "Viajes (mes)",        v: `${kpis.viajesMes} · ${fmtCOP(kpis.gastoViajesMes)}`, c: "#a78bfa" },
+          { l: "Viajes (mes)",        v: `${kpis.viajesMes} viaje${kpis.viajesMes !== 1 ? "s" : ""}`, c: "#a78bfa" },
           { l: "Horas motor",         v: kpis.ultimoHoras.toFixed(0) + " h",  c: B.sand },
           { l: "Incidentes abiertos", v: kpis.incidentesAbiertos,             c: kpis.incidentesAbiertos > 0 ? B.danger : B.success },
         ].map((k, i) => (
@@ -381,13 +383,12 @@ function ResumenTab({ bitacora, zarpes, lancha }) {
   }
   const gastosMes = meses.map(m => {
     const items = bitacora.filter(b => (b.fecha || "").startsWith(m));
-    const zarpesM = zarpes.filter(z => (z.fecha || "").startsWith(m));
     return {
       mes: m,
       comb: items.filter(b => b.tipo === "combustible").reduce((s, b) => s + Number(b.costo_total || 0), 0),
       mant: items.filter(b => TIPOS_MANTENIMIENTO.includes(b.tipo)).reduce((s, b) => s + Number(b.costo_total || 0), 0),
       oper: items.filter(b => TIPOS_OPERATIVOS.includes(b.tipo)).reduce((s, b) => s + Number(b.costo_total || 0), 0),
-      viajes: zarpesM.reduce((s, z) => s + Number(z.costo_operativo || 0), 0),
+      viajes: 0, // costo se computa del combustible cargado, no per-zarpe
     };
   });
   const maxGasto = Math.max(1, ...gastosMes.map(g => g.comb + g.mant + g.oper + g.viajes));
@@ -532,7 +533,8 @@ function ListaViajes({ viajes }) {
       </div>
     );
   }
-  const totalCosto = viajes.reduce((s, v) => s + Number(v.costo_operativo || 0), 0);
+  // Los viajes NO tienen costo per-trip — el costo de operación se computa
+  // a partir del combustible cargado (tab Combustible).
   return (
     <div style={{ background: B.navyMid, borderRadius: 10, overflow: "hidden" }}>
       {viajes.map(v => (
@@ -548,21 +550,16 @@ function ListaViajes({ viajes }) {
               {v.notas ? ` · ${v.notas}` : ""}
             </div>
           </div>
-          {Number(v.costo_operativo) > 0 && (
-            <div style={{ fontSize: 12, color: "#a78bfa", fontWeight: 700, whiteSpace: "nowrap" }}>
-              {fmtCOP(v.costo_operativo)}
-            </div>
-          )}
         </div>
       ))}
-      {totalCosto > 0 && (
-        <div style={{ padding: "10px 14px", background: B.navy, display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 12 }}>
-          <span style={{ color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: "0.05em", fontSize: 10 }}>
-            Total costo viajes · {viajes.length} zarpes
-          </span>
-          <strong style={{ color: "#a78bfa", fontSize: 14 }}>{fmtCOP(totalCosto)}</strong>
-        </div>
-      )}
+      <div style={{ padding: "10px 14px", background: B.navy, display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 12 }}>
+        <span style={{ color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: "0.05em", fontSize: 10 }}>
+          Total · {viajes.length} viaje{viajes.length !== 1 ? "s" : ""}
+        </span>
+        <span style={{ color: "rgba(255,255,255,0.4)", fontSize: 10, fontStyle: "italic" }}>
+          Costo se calcula del combustible cargado
+        </span>
+      </div>
     </div>
   );
 }
