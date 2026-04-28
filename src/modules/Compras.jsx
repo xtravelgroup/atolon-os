@@ -224,6 +224,7 @@ function TabOrdenes({ ordenes, reload, currentUser }) {
   const [openLogistica, setOpenLogistica] = useState(null);
   const [openEmail, setOpenEmail] = useState(null);
   const [openCotizResp, setOpenCotizResp] = useState(null);
+  const [openEditar, setOpenEditar] = useState(null);
 
   const filtradas = useMemo(() => {
     let list = ordenes;
@@ -293,6 +294,13 @@ function TabOrdenes({ ordenes, reload, currentUser }) {
                   <div style={{ textAlign: isMobile ? "left" : "right", display: "flex", flexDirection: "column", gap: 6, alignItems: isMobile ? "flex-start" : "flex-end" }}>
                     <div style={{ fontSize: 16, fontWeight: 800, color: B.sand, fontFamily: "'Barlow Condensed', sans-serif" }}>{COP(oc.total || 0)}</div>
                     <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                      {!oc.factura_aplicada && (
+                        <button onClick={() => setOpenEditar(oc)}
+                          style={btnAccion(B.sand)}
+                          title="Editar items, cantidades, proveedor de la OC">
+                          ✏️ Editar
+                        </button>
+                      )}
                       <button onClick={() => setOpenEmail(oc)}
                         style={btnAccion(B.pink)}
                         title="Enviar OC al proveedor por correo con PDF">
@@ -324,6 +332,7 @@ function TabOrdenes({ ordenes, reload, currentUser }) {
       {openLogistica && <LogisticaOCModal oc={openLogistica} onClose={() => setOpenLogistica(null)} reload={reload} currentUser={currentUser} />}
       {openEmail && <EmailOCModal oc={openEmail} onClose={() => setOpenEmail(null)} reload={reload} currentUser={currentUser} />}
       {openCotizResp && <CotizacionRespuestaModal oc={openCotizResp} onClose={() => setOpenCotizResp(null)} reload={reload} currentUser={currentUser} />}
+      {openEditar && <EditarOCModal oc={openEditar} onClose={() => setOpenEditar(null)} reload={reload} currentUser={currentUser} />}
     </div>
   );
 }
@@ -829,4 +838,183 @@ function btnAccion(color) {
     padding: "4px 10px", fontSize: 11, fontWeight: 700, borderRadius: 6,
     border: `1px solid ${color}`, background: color + "22", color, cursor: "pointer",
   };
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// EditarOCModal — Editar items, cantidades, proveedor de una OC
+// Bloqueado si la OC ya tiene factura aplicada (lógica contable congelada)
+// ════════════════════════════════════════════════════════════════════════════
+function EditarOCModal({ oc, onClose, reload, currentUser }) {
+  const { isMobile } = useBreakpoint();
+  const [items, setItems] = useState(() => (oc.items || []).map(it => ({ ...it })));
+  const [proveedores, setProveedores] = useState([]);
+  const [proveedorId, setProveedorId] = useState(oc.proveedor_id || "");
+  const [proveedorNombre, setProveedorNombre] = useState(oc.proveedor_nombre || "");
+  const [notas, setNotas] = useState(oc.notas || "");
+  const [fechaEmision, setFechaEmision] = useState(oc.fecha_emision || "");
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState("");
+
+  useEffect(() => {
+    supabase.from("proveedores").select("id, nombre, nit, email, telefono").order("nombre")
+      .then(({ data }) => setProveedores(data || []));
+  }, []);
+
+  const setItem = (idx, k, v) => setItems(arr => arr.map((it, i) => {
+    if (i !== idx) return it;
+    const next = { ...it, [k]: v };
+    // Recalcular subtotal cuando cambia cant o precio
+    if (k === "cant" || k === "precio_unit" || k === "precio") {
+      const cant = Number(k === "cant" ? v : (next.cant || 0));
+      const pu = Number(k === "precio_unit" ? v : (next.precio_unit || next.precio || 0));
+      next.subtotal = cant * pu;
+    }
+    return next;
+  }));
+
+  const removeItem = (idx) => setItems(arr => arr.filter((_, i) => i !== idx));
+
+  const addItem = () => setItems(arr => [...arr, {
+    item: "", nombre: "", cant: 1, unidad: "und", precio_unit: 0, subtotal: 0,
+  }]);
+
+  const subtotal = items.reduce((s, it) => s + (Number(it.subtotal) || 0), 0);
+
+  const guardar = async () => {
+    setSaving(true); setErr("");
+    try {
+      if (items.length === 0) throw new Error("Debe haber al menos 1 ítem");
+      if (!proveedorNombre.trim()) throw new Error("Debe seleccionar un proveedor");
+
+      const prov = proveedores.find(p => p.id === proveedorId);
+      const updates = {
+        items,
+        subtotal,
+        total: subtotal,
+        proveedor_id: proveedorId || null,
+        proveedor_nombre: proveedorNombre,
+        proveedor_nit: prov?.nit || null,
+        proveedor_email: prov?.email || null,
+        proveedor_telefono: prov?.telefono || null,
+        fecha_emision: fechaEmision || oc.fecha_emision,
+        notas: (notas || "") + `\n[${new Date().toLocaleString("es-CO")}] Editada por ${currentUser?.nombre || "—"}`,
+      };
+      const { error } = await supabase.from("ordenes_compra").update(updates).eq("id", oc.id);
+      if (error) throw error;
+      reload?.();
+      onClose();
+    } catch (e) {
+      setErr(e.message || String(e));
+    } finally { setSaving(false); }
+  };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
+      onClick={e => e.target === e.currentTarget && onClose()}>
+      <div style={{ background: B.navy, borderRadius: 14, width: isMobile ? "100%" : 720, maxWidth: "100%", maxHeight: "92vh", overflow: "auto", border: `1px solid ${B.navyLight}`, color: B.white }}>
+
+        <div style={{ padding: 18, borderBottom: `1px solid ${B.navyLight}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div>
+            <div style={{ fontSize: 17, fontWeight: 800, color: B.sand }}>✏️ Editar OC {oc.codigo}</div>
+            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginTop: 2 }}>
+              Estado: {oc.estado} · {(oc.items || []).length} líneas originales
+            </div>
+          </div>
+          <button onClick={onClose} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.5)", fontSize: 22, cursor: "pointer" }}>×</button>
+        </div>
+
+        <div style={{ padding: 18 }}>
+          {/* Proveedor */}
+          <div style={{ marginBottom: 14 }}>
+            <label style={{ fontSize: 11, color: "rgba(255,255,255,0.6)", textTransform: "uppercase", fontWeight: 700, display: "block", marginBottom: 4 }}>Proveedor</label>
+            <select value={proveedorId}
+              onChange={e => {
+                setProveedorId(e.target.value);
+                const p = proveedores.find(x => x.id === e.target.value);
+                if (p) setProveedorNombre(p.nombre);
+              }}
+              style={{ width: "100%", padding: "9px 12px", borderRadius: 8, background: B.navyMid, border: `1px solid ${B.navyLight}`, color: "#fff", fontSize: 13 }}>
+              <option value="">— Selecciona proveedor —</option>
+              {proveedores.map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}
+            </select>
+          </div>
+
+          {/* Fecha emisión */}
+          <div style={{ marginBottom: 14 }}>
+            <label style={{ fontSize: 11, color: "rgba(255,255,255,0.6)", textTransform: "uppercase", fontWeight: 700, display: "block", marginBottom: 4 }}>Fecha emisión</label>
+            <input type="date" value={(fechaEmision || "").slice(0, 10)} onChange={e => setFechaEmision(e.target.value)}
+              style={{ padding: "9px 12px", borderRadius: 8, background: B.navyMid, border: `1px solid ${B.navyLight}`, color: "#fff", fontSize: 13 }} />
+          </div>
+
+          {/* Items */}
+          <div style={{ marginBottom: 12 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+              <label style={{ fontSize: 11, color: "rgba(255,255,255,0.6)", textTransform: "uppercase", fontWeight: 700 }}>Ítems</label>
+              <button type="button" onClick={addItem}
+                style={{ padding: "5px 10px", borderRadius: 6, border: `1px solid ${B.success}`, background: "transparent", color: B.success, fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
+                + Agregar línea
+              </button>
+            </div>
+
+            <div style={{ background: B.navyMid, borderRadius: 8, padding: 10, maxHeight: 380, overflowY: "auto" }}>
+              {items.length === 0 ? (
+                <div style={{ padding: 20, textAlign: "center", color: "rgba(255,255,255,0.4)", fontSize: 12 }}>Sin ítems. Agrega uno.</div>
+              ) : items.map((it, idx) => (
+                <div key={idx} style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "2.5fr 0.7fr 0.7fr 1fr 1fr 0.4fr", gap: 6, marginBottom: 8, padding: 8, background: B.navy, borderRadius: 6, alignItems: "center" }}>
+                  <input value={it.item || it.nombre || ""}
+                    onChange={e => { setItem(idx, "item", e.target.value); setItem(idx, "nombre", e.target.value); }}
+                    placeholder="Nombre del ítem"
+                    style={{ padding: "7px 10px", borderRadius: 6, background: B.navyMid, border: `1px solid ${B.navyLight}`, color: "#fff", fontSize: 12 }} />
+                  <input type="number" step="0.01" min="0" value={it.cant || 0}
+                    onChange={e => setItem(idx, "cant", e.target.value)}
+                    placeholder="Cant"
+                    style={{ padding: "7px 10px", borderRadius: 6, background: B.navyMid, border: `1px solid ${B.navyLight}`, color: "#fff", fontSize: 12, textAlign: "right" }} />
+                  <input value={it.unidad || ""} onChange={e => setItem(idx, "unidad", e.target.value)}
+                    placeholder="und"
+                    style={{ padding: "7px 10px", borderRadius: 6, background: B.navyMid, border: `1px solid ${B.navyLight}`, color: "#fff", fontSize: 12 }} />
+                  <input type="number" min="0" value={it.precio_unit || it.precio || 0}
+                    onChange={e => setItem(idx, "precio_unit", e.target.value)}
+                    placeholder="Precio"
+                    style={{ padding: "7px 10px", borderRadius: 6, background: B.navyMid, border: `1px solid ${B.navyLight}`, color: "#fff", fontSize: 12, textAlign: "right" }} />
+                  <div style={{ padding: "7px 8px", textAlign: "right", color: B.sand, fontWeight: 700, fontSize: 12, fontFamily: "monospace" }}>
+                    {COP(Number(it.subtotal) || 0)}
+                  </div>
+                  <button type="button" onClick={() => removeItem(idx)}
+                    style={{ padding: "5px 8px", border: `1px solid ${B.danger}`, background: "transparent", color: B.danger, borderRadius: 6, cursor: "pointer", fontSize: 14 }}>
+                    🗑
+                  </button>
+                </div>
+              ))}
+            </div>
+
+            <div style={{ marginTop: 10, padding: "8px 12px", background: B.navyMid, borderRadius: 6, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <span style={{ fontSize: 12, color: "rgba(255,255,255,0.6)", textTransform: "uppercase" }}>Total</span>
+              <span style={{ fontSize: 18, fontWeight: 800, color: B.sand, fontFamily: "monospace" }}>{COP(subtotal)}</span>
+            </div>
+          </div>
+
+          {/* Notas */}
+          <div style={{ marginBottom: 14 }}>
+            <label style={{ fontSize: 11, color: "rgba(255,255,255,0.6)", textTransform: "uppercase", fontWeight: 700, display: "block", marginBottom: 4 }}>Notas</label>
+            <textarea value={notas} onChange={e => setNotas(e.target.value)} rows={3}
+              placeholder="Notas internas..."
+              style={{ width: "100%", padding: "9px 12px", borderRadius: 8, background: B.navyMid, border: `1px solid ${B.navyLight}`, color: "#fff", fontSize: 12, resize: "vertical", fontFamily: "inherit", boxSizing: "border-box" }} />
+          </div>
+
+          {err && <div style={{ marginBottom: 10, padding: 10, background: "rgba(239,68,68,0.15)", color: "#ef4444", borderRadius: 8, fontSize: 12 }}>⚠ {err}</div>}
+
+          <div style={{ display: "flex", gap: 10 }}>
+            <button onClick={onClose} disabled={saving}
+              style={{ flex: 1, padding: 11, borderRadius: 8, border: `1px solid ${B.navyLight}`, background: "transparent", color: "rgba(255,255,255,0.5)", cursor: "pointer", fontSize: 13 }}>
+              Cancelar
+            </button>
+            <button onClick={guardar} disabled={saving}
+              style={{ flex: 2, padding: 11, borderRadius: 8, border: "none", background: saving ? B.navyLight : B.success, color: "#fff", cursor: saving ? "default" : "pointer", fontSize: 13, fontWeight: 700 }}>
+              {saving ? "Guardando..." : "✓ Guardar cambios"}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 }
