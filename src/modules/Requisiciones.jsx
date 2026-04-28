@@ -2627,7 +2627,8 @@ export function TabMesaCompras({ reqs, ordenes, proveedores, currentUser, reload
     reqs.forEach(r => {
       if (!["Aprobada", "En Compra", "Recibida Parcial"].includes(r.estado)) return;
       (r.items || []).forEach((it, idx) => {
-        if (it.oc_id) return; // ya asignado
+        if (it.oc_id) return;        // ya asignado a OC
+        if (it.cancelado) return;    // cancelado por mesa de compras (duplicado / solicitante)
         arr.push({
           req_id: r.id, req_desc: r.descripcion, req_area: r.area, req_prioridad: r.prioridad,
           req_fecha_necesaria: r.fecha_necesaria, req_solicitante: r.solicitante,
@@ -2649,6 +2650,46 @@ export function TabMesaCompras({ reqs, ordenes, proveedores, currentUser, reload
   const [filterArea, setFilterArea] = useState("todos");
   const [search, setSearch] = useState("");
   const [asignarModal, setAsignarModal] = useState(false);
+  const [cancelarModal, setCancelarModal] = useState(false);
+
+  // Cancelar items seleccionados con motivo (duplicado / solicitante / otro)
+  const cancelarItems = async (motivo, motivoTexto) => {
+    const itemsACancelar = seleccionadosItems;
+    const reqsAfectadas = [...new Set(itemsACancelar.map(i => i.req_id))];
+    for (const rid of reqsAfectadas) {
+      const req = reqs.find(r => r.id === rid);
+      if (!req) continue;
+      const idxs = itemsACancelar.filter(i => i.req_id === rid).map(i => i.item_idx);
+      const nuevosItems = (req.items || []).map((it, idx) => idxs.includes(idx) ? {
+        ...it,
+        cancelado: true,
+        cancelado_motivo: motivo,
+        cancelado_motivo_texto: motivoTexto,
+        cancelado_por: currentUser?.nombre || "—",
+        cancelado_at: new Date().toISOString(),
+      } : it);
+      // Si todos los items quedaron cancelados o asignados, mover req a "En Compra" / "Cancelada"
+      const todosResueltos = nuevosItems.every(it => it.oc_id || it.cancelado);
+      const todosCancelados = nuevosItems.every(it => it.cancelado);
+      let nuevoEstado = req.estado;
+      if (todosCancelados) nuevoEstado = "Rechazada";
+      else if (todosResueltos && req.estado === "Aprobada") nuevoEstado = "En Compra";
+
+      await supabase.from("requisiciones").update({
+        items: nuevosItems,
+        estado: nuevoEstado,
+        timeline: [...(req.timeline || []), {
+          quien: currentUser?.nombre || "—",
+          accion: `${idxs.length} ítem${idxs.length !== 1 ? "s" : ""} cancelado${idxs.length !== 1 ? "s" : ""} en Mesa de Compras`,
+          fecha: new Date().toLocaleString("es-CO"),
+          comentario: `${motivo}${motivoTexto ? " — " + motivoTexto : ""}`,
+        }],
+      }).eq("id", rid);
+    }
+    setSeleccion({});
+    setCancelarModal(false);
+    reload();
+  };
 
   const toggle = (it) => {
     const k = `${it.req_id}|${it.item_idx}`;
@@ -2736,6 +2777,9 @@ export function TabMesaCompras({ reqs, ordenes, proveedores, currentUser, reload
             <button onClick={clearSel} style={{ padding: "8px 14px", borderRadius: 8, border: `1px solid ${B.navyLight}`, background: "transparent", color: "rgba(255,255,255,0.5)", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
               Limpiar
             </button>
+            <button onClick={() => setCancelarModal(true)} style={{ padding: "8px 14px", borderRadius: 8, border: `1px solid ${B.danger}`, background: "transparent", color: B.danger, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+              🚫 Cancelar ítems
+            </button>
             <button onClick={() => setAsignarModal(true)} style={{ padding: "9px 18px", borderRadius: 8, border: "none", background: B.success, color: B.navy, fontSize: 13, fontWeight: 800, cursor: "pointer" }}>
               📦 Asignar a proveedor ({seleccionadosItems.length})
             </button>
@@ -2785,6 +2829,14 @@ export function TabMesaCompras({ reqs, ordenes, proveedores, currentUser, reload
           onClose={() => setAsignarModal(false)}
           onNuevoProv={onNuevoProv}
           onDone={() => { setAsignarModal(false); setSeleccion({}); reload(); }}
+        />
+      )}
+
+      {cancelarModal && (
+        <CancelarItemsModal
+          items={seleccionadosItems}
+          onClose={() => setCancelarModal(false)}
+          onConfirm={cancelarItems}
         />
       )}
     </>
@@ -3038,6 +3090,109 @@ export function AsignarOCModal({ items, proveedores, ordenes, reqs, currentUser,
               fontWeight: 800, fontSize: 13, cursor: (saving || (modo === "nueva" ? !provId : !ocId)) ? "default" : "pointer" }}>
             {saving ? "Guardando..." : modo === "nueva" ? "✓ Crear OC" : "✓ Agregar a OC"}
           </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// CancelarItemsModal — Cancelar items en Mesa de Compras con motivo
+// Se usa cuando hay duplicados (ya pedidos en otra req) o el solicitante
+// retiró la solicitud.
+// ════════════════════════════════════════════════════════════════════════════
+function CancelarItemsModal({ items, onClose, onConfirm }) {
+  const [motivo, setMotivo] = useState("duplicado");
+  const [motivoTexto, setMotivoTexto] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const motivos = [
+    { k: "duplicado",    l: "🔁 Duplicado",            d: "Ya está pedido en otra requisición / OC" },
+    { k: "solicitante",  l: "👤 Solicitud del solicitante", d: "El solicitante pidió retirar el ítem" },
+    { k: "no_disponible",l: "❌ Producto no disponible", d: "Proveedor no tiene el producto / agotado" },
+    { k: "stock",        l: "📦 Hay en stock",          d: "Ya hay suficiente en bodega" },
+    { k: "otro",         l: "✏️ Otro motivo",           d: "Especifica abajo" },
+  ];
+
+  const handleConfirm = async () => {
+    if (motivo === "otro" && !motivoTexto.trim()) {
+      alert("Especifica el motivo en el campo de texto.");
+      return;
+    }
+    setSaving(true);
+    await onConfirm(motivo, motivoTexto.trim());
+    setSaving(false);
+  };
+
+  const total = items.reduce((s, i) => s + (Number(i.subtotal) || 0), 0);
+
+  return (
+    <div onClick={e => e.target === e.currentTarget && onClose()}
+      style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+      <div style={{ background: B.navy, borderRadius: 14, width: 540, maxWidth: "100%", maxHeight: "92vh", overflow: "auto", border: `1px solid ${B.danger}55`, color: B.white }}>
+        <div style={{ padding: 18, borderBottom: `1px solid ${B.navyLight}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div>
+            <div style={{ fontSize: 17, fontWeight: 800, color: B.danger }}>🚫 Cancelar ítems</div>
+            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginTop: 2 }}>
+              {items.length} ítem{items.length !== 1 ? "s" : ""} · {COP(total)}
+            </div>
+          </div>
+          <button onClick={onClose} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.5)", fontSize: 22, cursor: "pointer" }}>×</button>
+        </div>
+
+        <div style={{ padding: 18 }}>
+          <div style={{ marginBottom: 16, padding: "12px 14px", background: B.navyMid, borderRadius: 8, fontSize: 12, color: "rgba(255,255,255,0.7)", lineHeight: 1.6 }}>
+            <strong style={{ color: B.danger }}>⚠ Atención:</strong> al cancelar, los ítems quedarán fuera de la Mesa de Compras y no podrán asignarse a ninguna OC. Esta acción se registra en el historial de la requisición.
+          </div>
+
+          <div style={{ fontSize: 11, color: B.sand, textTransform: "uppercase", fontWeight: 700, marginBottom: 8 }}>Motivo de cancelación</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 14 }}>
+            {motivos.map(m => (
+              <label key={m.k} style={{
+                display: "flex", alignItems: "flex-start", gap: 10, padding: "10px 12px",
+                background: motivo === m.k ? B.navyMid : "transparent",
+                border: `1px solid ${motivo === m.k ? B.danger : B.navyLight}`,
+                borderRadius: 8, cursor: "pointer",
+              }}>
+                <input type="radio" checked={motivo === m.k} onChange={() => setMotivo(m.k)}
+                  style={{ marginTop: 3, accentColor: B.danger }} />
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: motivo === m.k ? B.danger : "rgba(255,255,255,0.85)" }}>{m.l}</div>
+                  <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>{m.d}</div>
+                </div>
+              </label>
+            ))}
+          </div>
+
+          <div style={{ marginBottom: 14 }}>
+            <label style={{ fontSize: 11, color: "rgba(255,255,255,0.6)", textTransform: "uppercase", fontWeight: 700, display: "block", marginBottom: 4 }}>
+              Comentario {motivo === "otro" ? "(requerido)" : "(opcional)"}
+            </label>
+            <textarea value={motivoTexto} onChange={e => setMotivoTexto(e.target.value)} rows={2}
+              placeholder={motivo === "otro" ? "Especifica el motivo..." : "Detalles adicionales..."}
+              style={{ width: "100%", padding: "9px 12px", borderRadius: 8, background: B.navyMid, border: `1px solid ${B.navyLight}`, color: "#fff", fontSize: 12, resize: "vertical", fontFamily: "inherit", boxSizing: "border-box" }} />
+          </div>
+
+          {/* Resumen ítems */}
+          <div style={{ marginBottom: 14, padding: "10px 12px", background: B.navyMid, borderRadius: 8, maxHeight: 120, overflowY: "auto", fontSize: 11, color: "rgba(255,255,255,0.6)" }}>
+            {items.map((it, i) => (
+              <div key={i} style={{ display: "flex", justifyContent: "space-between", padding: "3px 0" }}>
+                <span>{it.nombre}</span>
+                <span style={{ color: B.sand }}>{it.cant} {it.unidad || ""}</span>
+              </div>
+            ))}
+          </div>
+
+          <div style={{ display: "flex", gap: 10 }}>
+            <button onClick={onClose} disabled={saving}
+              style={{ flex: 1, padding: 11, borderRadius: 8, border: `1px solid ${B.navyLight}`, background: "transparent", color: "rgba(255,255,255,0.5)", cursor: "pointer", fontSize: 13 }}>
+              Atrás
+            </button>
+            <button onClick={handleConfirm} disabled={saving || (motivo === "otro" && !motivoTexto.trim())}
+              style={{ flex: 2, padding: 11, borderRadius: 8, border: "none", background: saving ? B.navyLight : B.danger, color: "#fff", cursor: saving ? "default" : "pointer", fontSize: 13, fontWeight: 700 }}>
+              {saving ? "Cancelando…" : `Cancelar ${items.length} ítem${items.length !== 1 ? "s" : ""}`}
+            </button>
+          </div>
         </div>
       </div>
     </div>
