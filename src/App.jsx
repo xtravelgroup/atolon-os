@@ -216,6 +216,8 @@ import HotelTarifas from "./modules/HotelTarifas";
 import HotelCheckin from "./modules/HotelCheckin";
 import HotelHabitaciones from "./modules/HotelHabitaciones";
 import HotelRoomService from "./modules/HotelRoomService";
+import PoolService from "./modules/PoolService";
+import PoolServicePortal from "./modules/PoolServicePortal";
 import HotelMinibar from "./modules/HotelMinibar";
 import HotelHousekeeping from "./modules/HotelHousekeeping";
 import GuestPortal from "./modules/GuestPortal";
@@ -347,6 +349,7 @@ const MODULE_MAP = {
   hotel_checkin:      <HotelCheckin />,
   hotel_housekeeping: <HotelHousekeeping />,
   hotel_roomservice:  <HotelRoomService />,
+  pool_service:       <PoolService />,
   hotel_minibar:      <HotelMinibar />,
   hotel_tarifas:      <HotelTarifas />,
   api_portal:         <ApiPortal />,
@@ -482,6 +485,7 @@ export default function App() {
   if (route === "checkin-pax")    return <SelfCheckIn />;
   if (route.startsWith("m/"))     return <GuestPortal token={route.slice(2)} />;
   if (route.startsWith("room/"))  return <RoomQRLanding idOrNumero={decodeURIComponent(route.slice(5))} />;
+  if (route.startsWith("pool/"))  return <PoolServicePortal qr={decodeURIComponent(route.slice(5))} />;
   if (route.startsWith("staff/")) return <StaffView eventoId={route.slice(6)} />;
   if (route === "housekeeping/inspeccion") return <HousekeepingInspection />;
   if (route.startsWith("housekeeping/")) return <CamareraPortal token={route.slice(13)} />;
