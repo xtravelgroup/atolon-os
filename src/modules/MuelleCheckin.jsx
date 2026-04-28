@@ -645,6 +645,34 @@ function ModalCobro({ llegada, onClose, onSaved }) {
         {/* ── PASO 1: Verificar datos ── */}
         {paso === 1 && (
           <>
+            {/* Selector tipo: After Island (cobra) / Restaurante (no cobra) / A Consumo (no cobra) */}
+            <div style={{ marginBottom: 16 }}>
+              <label style={LS}>Tipo de visita</label>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
+                {[
+                  { value: "after_island", label: "🌙 After Island", sub: "Paga", color: B.sand },
+                  { value: "restaurante",  label: "🍽️ Restaurante", sub: "Sin cobro", color: B.success },
+                  { value: "a_consumo",    label: "🛥️ A Consumo",   sub: "Sin cobro", color: B.sky },
+                ].map(opt => {
+                  const active = tipoSel === opt.value;
+                  return (
+                    <button key={opt.value} type="button" onClick={() => setTipoSel(opt.value)}
+                      style={{
+                        padding: "10px 8px", borderRadius: 10,
+                        border: `2px solid ${active ? opt.color : B.navyLight}`,
+                        background: active ? opt.color + "18" : B.navy,
+                        color: active ? opt.color : "rgba(255,255,255,0.6)",
+                        cursor: "pointer", fontSize: 12, fontWeight: 700,
+                        textAlign: "center", lineHeight: 1.3,
+                      }}>
+                      <div>{opt.label}</div>
+                      <div style={{ fontSize: 9, fontWeight: 500, marginTop: 2, opacity: 0.7 }}>{opt.sub}</div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 16px" }}>
               <div style={{ gridColumn: "1 / -1", marginBottom: 14 }}>
                 <label style={LS}>Nombre / ID embarcación</label>
@@ -724,8 +752,11 @@ function ModalCobro({ llegada, onClose, onSaved }) {
                 Cancelar
               </button>
               <button onClick={handleConfirmarDatos} disabled={saving}
-                style={{ flex: 2, padding: "11px", borderRadius: 10, border: "none", background: saving ? B.navyLight : B.sand, color: saving ? "rgba(255,255,255,0.4)" : B.navy, fontSize: 14, fontWeight: 700, cursor: "pointer" }}>
-                {saving ? "Guardando..." : esAfterIsland ? "Confirmar → Cobrar" : "Guardar"}
+                style={{ flex: 2, padding: "11px", borderRadius: 10, border: "none",
+                  background: saving ? B.navyLight : (esAfterIsland ? B.sand : B.success),
+                  color: saving ? "rgba(255,255,255,0.4)" : B.navy,
+                  fontSize: 14, fontWeight: 700, cursor: "pointer" }}>
+                {saving ? "Guardando..." : esAfterIsland ? "Confirmar → Cobrar" : "✓ Confirmar Llegada"}
               </button>
             </div>
           </>
