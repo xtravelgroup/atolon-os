@@ -53,6 +53,13 @@ export default function CostosFlotaTab() {
   useEffect(() => { fetchData(); }, [fetchData]);
 
   // ── Cálculos del mes seleccionado ─────────────────────────────────────────
+  // Reglas (consensuadas con dirección):
+  // 1. Solo se cuentan LLEGADAS para el cálculo de costo/pasadía (no zarpes
+  //    porque el pax es el mismo y se contaría doble)
+  // 2. Staff se EXCLUYE — solo cuentan pax pagantes (pax_a + pax_n)
+  //    El staff se anota en notas como "[N staff]" pero no en pax_a/n
+  // 3. Combustible es costo REAL de bitácora (no estimado por horas)
+  // 4. Mantenimiento es costo REAL del periodo
   const data = useMemo(() => {
     const filterMes = (arr, key = "fecha") => arr.filter(r => (r[key] || "").startsWith(mes));
     const bMes = filterMes(bitacora);
@@ -64,23 +71,30 @@ export default function CostosFlotaTab() {
     const costoMant        = bMes.filter(b => ["mantenimiento", "reparacion", "inspeccion", "limpieza"].includes(b.tipo)).reduce((s, b) => s + Number(b.costo_total || 0), 0);
     const costoMarina      = bMes.filter(b => b.tipo === "marina").reduce((s, b) => s + Number(b.costo_total || 0), 0);
     const costoCapTerceros = bMes.filter(b => b.tipo === "capitanes").reduce((s, b) => s + Number(b.costo_total || 0), 0);
-    // Capitanes nómina: NO están en bitácora, leídos de capitanes_flota como referencia
     const costoCapNomina   = capitanes.filter(c => c.tipo === "nomina").reduce((s, c) => s + Number(c.salario_mensual || 0), 0);
     const costoCapitanes   = costoCapTerceros + costoCapNomina;
-    // Costo de viajes: cada salida + cada llegada = 1 medio viaje
     const costoSalidas     = zMes.reduce((s, z) => s + Number(z.costo_operativo || 0), 0);
     const costoLlegadas    = lMes.reduce((s, l) => s + Number(l.costo_operativo || 0), 0);
     const costoViajes      = costoSalidas + costoLlegadas;
     const costosTotales    = costoComb + costoMant + costoMarina + costoCapitanes + costoViajes;
 
-    const paxSalida   = zMes.reduce((s, z) => s + Number(z.pax_a || 0) + Number(z.pax_n || 0), 0);
+    // PAX: solo llegadas, sin staff (staff va en notas, no en pax_a/n)
     const paxLlegada  = lMes.reduce((s, l) => s + Number(l.pax_a || 0) + Number(l.pax_n || 0), 0);
-    const pax = paxSalida + paxLlegada;
+    const paxSalida   = zMes.reduce((s, z) => s + Number(z.pax_a || 0) + Number(z.pax_n || 0), 0);
+    const pax = paxLlegada; // ← solo llegadas
     const numSalidas    = zMes.length;
     const numLlegadas   = lMes.length;
     const numMediosViajes = numSalidas + numLlegadas;
     const numViajesCompletos = Math.floor(numMediosViajes / 2);
-    const costoPorPax       = pax > 0 ? costosTotales / pax : 0;
+
+    // 💰 KPI principal: costo total / pax que llegaron (sin staff)
+    const costoPorPasadia    = pax > 0 ? costosTotales / pax : 0;
+    // Desglose: costo combustible + mantenimiento por pasadía (los más relevantes)
+    const costoCombMant      = costoComb + costoMant;
+    const costoCombMantPorPax = pax > 0 ? costoCombMant / pax : 0;
+    // Compatibilidad: el cálculo viejo era pax (llegadas + salidas), pero
+    // la dirección lo simplificó a solo llegadas
+    const costoPorPax        = costoPorPasadia;
     const costoPorMedioViaje = numMediosViajes > 0 ? costoViajes / numMediosViajes : 0;
 
     // Por embarcación
@@ -97,8 +111,8 @@ export default function CostosFlotaTab() {
       const lSal = zL.reduce((s, z) => s + Number(z.costo_operativo || 0), 0);
       const lLleg = llL.reduce((s, x) => s + Number(x.costo_operativo || 0), 0);
       const lViaj = lSal + lLleg;
-      const lPax  = zL.reduce((s, z) => s + Number(z.pax_a || 0) + Number(z.pax_n || 0), 0)
-                  + llL.reduce((s, x) => s + Number(x.pax_a || 0) + Number(x.pax_n || 0), 0);
+      // Pax solo de llegadas (sin staff, sin doble-conteo con zarpes)
+      const lPax = llL.reduce((s, x) => s + Number(x.pax_a || 0) + Number(x.pax_n || 0), 0);
       const lSalidas   = zL.length;
       const lLlegadasN = llL.length;
       const lMediosViajes = lSalidas + lLlegadasN;
@@ -112,13 +126,15 @@ export default function CostosFlotaTab() {
         pax: lPax, total: totalLancha,
         costoPorPax: lPax > 0 ? totalLancha / lPax : 0,
         costoPorMedioViaje: lMediosViajes > 0 ? lViaj / lMediosViajes : 0,
-        ocupacionProm: l.capacidad_pax && lMediosViajes > 0 ? (lPax / (lMediosViajes * l.capacidad_pax)) * 100 : 0,
+        ocupacionProm: l.capacidad_pax && lLlegadasN > 0 ? (lPax / (lLlegadasN * l.capacidad_pax)) * 100 : 0,
       };
     });
 
     return { costoComb, galones, costoMant, costoMarina, costoCapitanes, costoCapNomina, costoCapTerceros,
              costoSalidas, costoLlegadas, costoViajes, costosTotales,
-             pax, numSalidas, numLlegadas, numMediosViajes, numViajesCompletos,
+             pax, paxLlegada, paxSalida,
+             numSalidas, numLlegadas, numMediosViajes, numViajesCompletos,
+             costoPorPasadia, costoCombMant, costoCombMantPorPax,
              costoPorPax, costoPorMedioViaje, porEmb };
   }, [mes, bitacora, zarpes, llegadas, lanchas, capitanes]);
 
@@ -182,11 +198,42 @@ export default function CostosFlotaTab() {
         <Kpi label="Costo total mes" valor={fmtCOP(data.costosTotales)} color={B.danger} grande />
       </div>
 
-      {/* KPIs unitarios */}
+      {/* KPI destacado: Costo por Pasadía (regla: solo llegadas, sin staff) */}
+      <div style={{ background: `linear-gradient(135deg, ${B.sand}22 0%, ${B.navy} 100%)`, border: `2px solid ${B.sand}55`, borderRadius: 14, padding: 18, marginBottom: 14 }}>
+        <div style={{ fontSize: 11, color: B.sand, textTransform: "uppercase", letterSpacing: 2, fontWeight: 700, marginBottom: 6 }}>
+          💰 Costo por Pasadía (real)
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${isMobile ? 140 : 200}px, 1fr))`, gap: 14, alignItems: "end" }}>
+          <div>
+            <div style={{ fontSize: 32, fontWeight: 900, color: B.sand, fontFamily: "'Barlow Condensed', sans-serif", lineHeight: 1 }}>
+              {fmtCOP(data.costoPorPasadia)}
+            </div>
+            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.55)", marginTop: 4 }}>
+              Total operativo ÷ {data.pax} pax que llegaron
+            </div>
+          </div>
+          <div>
+            <div style={{ fontSize: 22, fontWeight: 800, color: B.warning, fontFamily: "'Barlow Condensed', sans-serif" }}>
+              {fmtCOP(data.costoCombMantPorPax)}
+            </div>
+            <div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", marginTop: 2 }}>
+              Solo combustible + mantenimiento real
+            </div>
+          </div>
+          <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", lineHeight: 1.6 }}>
+            <div>📊 Solo cuenta <strong style={{ color: B.sand }}>llegadas</strong> (no zarpes)</div>
+            <div>👥 Sin <strong style={{ color: B.sand }}>staff</strong> — solo pax pagantes</div>
+            <div>⛽ Combustible <strong style={{ color: B.sand }}>real</strong> de bitácora</div>
+          </div>
+        </div>
+      </div>
+
+      {/* KPIs unitarios secundarios */}
       <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${isMobile ? 130 : 200}px, 1fr))`, gap: 10, marginBottom: 18 }}>
-        <Kpi label="Pasajeros transportados" valor={data.pax}                          color="#a78bfa" small sub={`${data.numLlegadas} llegadas + ${data.numSalidas} salidas`} />
-        <Kpi label="Costo por pasajero"      valor={fmtCOP(data.costoPorPax)}          color="#a78bfa" small />
-        <Kpi label="Costo por medio viaje"   valor={fmtCOP(data.costoPorMedioViaje)}   color="#a78bfa" small />
+        <Kpi label="Pax llegadas (sin staff)" valor={data.paxLlegada}                color="#a78bfa" small sub={`${data.numLlegadas} llegadas`} />
+        <Kpi label="Pax zarpes (referencia)"  valor={data.paxSalida}                 color="rgba(255,255,255,0.4)" small sub={`${data.numSalidas} zarpes (no se usa)`} />
+        <Kpi label="Combustible / pax"        valor={fmtCOP(data.pax > 0 ? data.costoComb / data.pax : 0)} color={B.warning} small />
+        <Kpi label="Mantenimiento / pax"      valor={fmtCOP(data.pax > 0 ? data.costoMant / data.pax : 0)} color={B.sky} small />
       </div>
 
       {/* Gráfico 6 meses (costos apilados) */}
