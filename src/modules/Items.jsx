@@ -2900,6 +2900,13 @@ function InventarioCocinaTab({ items, categorias }) {
   const [catFilter, setCatFilter] = useState("todas");
   const [soloConStock, setSoloConStock] = useState(true);
 
+  // Solo alimentos — la cocina no maneja bebidas
+  const grupoPorCategoria = useMemo(() => {
+    const m = {};
+    (categorias || []).forEach(c => { m[c.nombre] = c.grupo || "otros"; });
+    return m;
+  }, [categorias]);
+
   useEffect(() => {
     if (!supabase) return;
     supabase.from("items_stock_locacion")
@@ -2925,24 +2932,32 @@ function InventarioCocinaTab({ items, categorias }) {
 
   const filasFiltradas = useMemo(() => {
     return filas.filter(f => {
+      // Solo alimentos — la cocina no maneja bebidas ni otros grupos
+      const grupo = grupoPorCategoria[f.item.categoria] || "otros";
+      if (grupo !== "alimentos") return false;
       if (soloConStock && f.cocina === 0) return false;
       const q = search.trim().toLowerCase();
       if (q && !((f.item.nombre || "").toLowerCase().includes(q) || (f.item.codigo || "").toLowerCase().includes(q))) return false;
       if (catFilter !== "todas" && f.item.categoria !== catFilter) return false;
       return true;
     }).sort((a, b) => b.cocina - a.cocina);
-  }, [filas, search, catFilter, soloConStock]);
+  }, [filas, search, catFilter, soloConStock, grupoPorCategoria]);
 
   const totalCocina = filasFiltradas.reduce((s, f) => s + f.cocina, 0);
   const totalLoggro = filasFiltradas.reduce((s, f) => s + (f.loggro || 0), 0);
   const conDiff     = filasFiltradas.filter(f => f.diff !== null && f.diff !== 0).length;
 
-  // Categorías que existen en Almacén Cocina (para llenar el dropdown)
+  // Categorías que existen en Almacén Cocina (solo grupo "alimentos")
   const catsEnCocina = useMemo(() => {
     const set = new Set();
-    filas.forEach(f => { if (f.cocina !== 0 && f.item.categoria) set.add(f.item.categoria); });
+    filas.forEach(f => {
+      if (f.cocina !== 0 && f.item.categoria) {
+        const g = grupoPorCategoria[f.item.categoria] || "otros";
+        if (g === "alimentos") set.add(f.item.categoria);
+      }
+    });
     return Array.from(set).sort();
-  }, [filas]);
+  }, [filas, grupoPorCategoria]);
 
   return (
     <div>
