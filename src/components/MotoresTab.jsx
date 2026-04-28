@@ -165,9 +165,9 @@ export default function MotoresTab({ activeLancha, lanchas }) {
     [motores, activeLancha]
   );
 
-  // KPIs globales
+  // KPIs filtrados a la lancha activa (si hay una) o globales si no
   const kpis = useMemo(() => {
-    const all = motores;
+    const all = motoresLancha;
     return {
       total: all.length,
       operativos: all.filter(m => m.estado === "operativo").length,
@@ -178,7 +178,7 @@ export default function MotoresTab({ activeLancha, lanchas }) {
       fuera: all.filter(m => m.estado === "fuera_servicio").length,
       horas_total: all.reduce((s, m) => s + Number(m.horas_actuales || 0), 0),
     };
-  }, [motores]);
+  }, [motoresLancha]);
 
   if (loading) return <div style={{ padding: 40, textAlign: "center", color: "rgba(255,255,255,0.4)" }}>Cargando motores…</div>;
 
