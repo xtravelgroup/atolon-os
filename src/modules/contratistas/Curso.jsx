@@ -50,9 +50,12 @@ export default function Curso({ token }) {
         return;
       }
 
+      // Nota: contratistas_trabajadores NO tiene columna `correo`.
+      // Si se selecciona, la query falla silenciosamente y retorna null
+      // (causando "Enlace inválido" aunque el token sea correcto).
       const { data } = await supabase
         .from("contratistas_trabajadores")
-        .select("id, nombre, cedula, correo, curso_completado, curso_score, curso_codigo")
+        .select("id, nombre, cedula, curso_completado, curso_score, curso_codigo")
         .eq("curso_token", token)
         .maybeSingle();
       setTrabajador(data);
