@@ -9,6 +9,7 @@ import { wompiCheckoutUrl } from "../lib/wompi";
 import AtolanTrack from "../lib/AtolanTrack";
 import { gtmViewItem, gtmBeginCheckout, gtmAddPaymentInfo, gtmAbandon } from "../lib/gtm";
 import FacturaElectronicaForm, { FacturaElectronicaToggle, FE_EMPTY, feValidate, fePayload } from "../lib/FacturaElectronicaForm.jsx";
+import ZohoPaymentWidget from "../components/ZohoPaymentWidget.jsx";
 
 // ── Palette (light theme) ───────────────────────────────────────────────────
 const C = {
@@ -198,6 +199,7 @@ export default function BookingPopup() {
   const [termsAccepted, setTermsAccepted] = useState(false);
   const [saving,    setSaving]    = useState(false);
   const [linkPago,  setLinkPago]  = useState("");
+  const [zohoWidget, setZohoWidget] = useState(null); // { session, address, description, onSuccess }
   const [dispon,      setDispon]      = useState({}); // ISO → remaining total
   const [cierres,     setCierres]     = useState([]); // dates closed
   const [salidas,     setSalidas]     = useState([]); // all active salidas
@@ -660,6 +662,7 @@ export default function BookingPopup() {
 
     const redirectBase = `${window.location.origin}/pago?reserva=${reservaId}${leadId ? `&lead=${leadId}` : ""}`;
 
+    let zohoSession = null; // si el merchant es Zoho con widget embebido
     if (method === "wompi") {
       payUrl = await wompiCheckoutUrl({ referencia: reservaId, totalCOP: grandTotal, email: form.email, redirectUrl: redirectBase });
     } else if (method === "stripe") {
@@ -685,7 +688,13 @@ export default function BookingPopup() {
           context_id: reservaId,
         });
         console.log("[Pago internacional] Session OK:", session);
-        payUrl = session.url;
+        if (session.payments_session_id && session.widget?.account_id) {
+          // Nuevo flujo: widget embebido. NO redirigimos — abrimos el widget aquí.
+          zohoSession = session;
+        } else {
+          // Compat: viejo flujo de Payment Links
+          payUrl = session.url;
+        }
       } catch (err) {
         console.error("[Pago internacional] Error:", err);
         AtolanTrack.paymentError("internacional", "session_create_failed", err?.message || "", grandTotal);
@@ -766,6 +775,35 @@ export default function BookingPopup() {
     }
 
     setSaving(false);
+
+    // Si es flujo widget Zoho → abrir el widget en lugar de redirigir
+    if (zohoSession) {
+      setZohoWidget({
+        session: zohoSession,
+        address: { name: form.nombre, email: form.email, phone: form.telefono || "" },
+        description: `${product.tipo} — ${selDate || ""}`,
+        invoiceNumber: reservaId,
+        onSuccess: (paymentData) => {
+          console.log("[Zoho widget] payment success:", paymentData);
+          AtolanTrack.evento("payment_success", { metodo: "zoho_widget", monto: grandTotal, payment_id: paymentData?.payment_id }, "conversion");
+          setZohoWidget(null);
+          // Redirigir a la página de confirmación. El webhook de Zoho confirmará la reserva.
+          window.location.href = `${window.location.origin}/pago/exito?reserva=${reservaId}`;
+        },
+        onError: (err) => {
+          console.error("[Zoho widget] error:", err);
+          AtolanTrack.paymentError("zoho_widget", "payment_failed", err?.message || JSON.stringify(err), grandTotal);
+          setZohoWidget(null);
+          alert("El pago no se pudo procesar. Por favor intenta de nuevo o usa tarjeta nacional.");
+        },
+        onClose: () => {
+          // Usuario cerró el widget sin pagar — la reserva queda como pendiente_pago
+          setZohoWidget(null);
+        },
+      });
+      return;
+    }
+
     window.location.href = payUrl;
   }
 
@@ -1621,6 +1659,20 @@ export default function BookingPopup() {
           </a>
         </div>
       </div>
+
+      {/* Widget de Zoho Payments — se muestra cuando hay sesión activa */}
+      {zohoWidget && (
+        <ZohoPaymentWidget
+          session={zohoWidget.session}
+          address={zohoWidget.address}
+          description={zohoWidget.description}
+          invoiceNumber={zohoWidget.invoiceNumber}
+          business="Atolón Beach Club"
+          onSuccess={zohoWidget.onSuccess}
+          onError={zohoWidget.onError}
+          onClose={zohoWidget.onClose}
+        />
+      )}
     </div>
   );
 }

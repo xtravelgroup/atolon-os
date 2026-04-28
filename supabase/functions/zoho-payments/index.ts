@@ -83,38 +83,47 @@ async function getZohoAuthHeader(creds: ZohoCreds): Promise<string> {
   return "Zoho-oauthtoken " + data.access_token;
 }
 
-// ── Crear Payment Link en Zoho ──────────────────────────────────────────
-async function createZohoPaymentLink(authHeader: string, accountId: string, body: {
+// ── Crear Payment Session en Zoho (para widget embebido) ────────────────
+// Endpoint: POST /api/v1/paymentsessions?account_id=XXX
+// Auth: Zoho-oauthtoken (NO ZPapikey — esa key es para el widget en frontend)
+// Returns: { payments_session: { payments_session_id, ... } }
+async function createZohoPaymentSession(authHeader: string, accountId: string, body: {
   amount: number;
   currency: string;
   description: string;
+  invoice_number?: string;
+  reference?: string;
 }) {
+  const payload: Record<string, unknown> = {
+    amount:      Number(Number(body.amount).toFixed(2)),
+    currency:    body.currency || "USD",
+    description: (body.description || "Atolon").slice(0, 500),
+    expires_in:  3600, // 1 hora para completar el pago
+  };
+  if (body.invoice_number) payload.invoice_number = body.invoice_number;
+  if (body.reference)      payload.reference_number = body.reference;
+
   const res = await fetch(
-    `https://payments.zoho.com/api/v1/paymentlinks?account_id=${accountId}`,
+    `https://payments.zoho.com/api/v1/paymentsessions?account_id=${accountId}`,
     {
       method: "POST",
       headers: {
         "Authorization": authHeader,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        amount:      String(Number(body.amount).toFixed(2)),
-        currency:    body.currency || "USD",
-        description: body.description,
-      }),
+      body: JSON.stringify(payload),
     }
   );
   const data = await res.json();
-  if (!data.payment_links) {
-    // Hint útil para Invalid Scope: el refresh_token fue creado sin permisos
+  if (!data.payments_session?.payments_session_id) {
     let hint = "";
     const msg = JSON.stringify(data);
-    if (/invalid scope/i.test(msg)) {
-      hint = " · El refresh_token actual no tiene permiso para crear payment links. Solución: genera un API Key en https://payments.zoho.com → Settings → API Keys y guárdalo como ZOHO_API_KEY (más simple) o regenera el OAuth con scope: ZohoPay.payments.CREATE,ZohoPay.account.READ";
+    if (/invalid scope|not.*authorized/i.test(msg)) {
+      hint = " · Necesitas un OAuth refresh_token con scope ZohoPay.payments.CREATE,ZohoPay.account.READ. Genera uno en api-console.zoho.com (Self-Client app) y guárdalo como ZOHO_REFRESH_TOKEN secret en Supabase (junto con ZOHO_CLIENT_ID y ZOHO_CLIENT_SECRET).";
     }
-    throw new Error("Error creando payment link: " + msg + hint);
+    throw new Error("Error creando payment session: " + msg + hint);
   }
-  return data.payment_links;
+  return data.payments_session;
 }
 
 const CORS = {
@@ -171,7 +180,9 @@ serve(async (req) => {
   const path = url.pathname.replace(/^\/zoho-payments/, "");
 
   // ══════════════════════════════════════════════════════════════════════
-  // POST /create-session — crea un payment link en Zoho con descripción Atolón
+  // POST /create-session — crea Payment Session para el widget embebido de Zoho.
+  // El frontend usa el `payments_session_id` retornado + la widget API key
+  // para abrir el checkout con `instance.requestPaymentMethod()`.
   // ══════════════════════════════════════════════════════════════════════
   if (req.method === "POST" && path === "/create-session") {
     try {
@@ -183,20 +194,25 @@ serve(async (req) => {
         });
       }
       const creds = await loadZohoCreds();
-      if (!creds.api_key && (!creds.refresh_token || !creds.client_id || !creds.client_secret)) {
+      // Para crear sessions necesitamos OAuth (no la widget api_key — esa solo
+      // sirve para el frontend con `new ZPayments({ otherOptions: {api_key} })`).
+      if (!creds.refresh_token || !creds.client_id || !creds.client_secret) {
         return new Response(JSON.stringify({
-          error: "Zoho no configurado: agrega ZOHO_API_KEY como secret de Supabase (preferido) o configura zoho_pay_api_key en la tabla configuracion. Genera tu API Key en https://payments.zoho.com → Settings → API Keys."
+          error: "Zoho OAuth no configurado. Necesitas ZOHO_CLIENT_ID + ZOHO_CLIENT_SECRET + ZOHO_REFRESH_TOKEN (con scope ZohoPay.payments.CREATE,ZohoPay.account.READ) como secrets en Supabase. Genera el refresh_token en https://api-console.zoho.com → Self-Client app."
         }), {
           status: 500, headers: { ...CORS, "Content-Type": "application/json" },
         });
       }
 
-      const authHeader = await getZohoAuthHeader(creds);
+      // Forzar OAuth (no api_key) para la creación de sessions
+      const authHeader = await getZohoAuthHeader({ ...creds, api_key: "" });
       const finalDescription = description || `Atolon Beach Club${nombre ? " - " + nombre : ""}`;
-      const link = await createZohoPaymentLink(authHeader, creds.account_id, {
+      const session = await createZohoPaymentSession(authHeader, creds.account_id, {
         amount: Number(amount),
         currency: currency || "USD",
         description: finalDescription,
+        invoice_number: reference,
+        reference,
       });
 
       // Guardar sesión en tracking si se proveen contexto
@@ -206,7 +222,7 @@ serve(async (req) => {
           Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
         );
         await SB.from("pagos_zoho_sessions").insert({
-          payment_link_id: link.payment_link_id,
+          payment_link_id: session.payments_session_id, // reusa columna
           reference,
           amount: Number(amount),
           currency: currency || "USD",
@@ -216,11 +232,20 @@ serve(async (req) => {
         }).then(() => {}).catch(() => {});
       }
 
+      // Retornar config completa para el widget — el frontend la usa para
+      // inicializar `new ZPayments({ account_id, domain, otherOptions: { api_key } })`
+      // y luego llamar `instance.requestPaymentMethod({ payments_session_id, ... })`.
       return new Response(JSON.stringify({
-        payment_link_id: link.payment_link_id,
-        payments_session_id: link.payment_link_id,
-        payment_url: link.url,
-        amount: link.amount,
+        payments_session_id: session.payments_session_id,
+        amount:              session.amount,
+        currency:            session.currency,
+        expiry_time:         session.expiry_time,
+        // Config del widget para el frontend
+        widget: {
+          account_id: creds.account_id,
+          api_key:    creds.api_key || "", // widget key (frontend)
+          domain:     "US", // Atolón está en account US
+        },
       }), {
         status: 200,
         headers: { ...CORS, "Content-Type": "application/json" },

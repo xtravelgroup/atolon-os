@@ -61,30 +61,34 @@ export async function avisoCargoMerchant() {
 }
 
 /**
- * Crea una sesión de pago en el merchant activo y retorna la URL de checkout.
+ * Crea una Payment Session en Zoho para usar con el widget embebido.
+ * El frontend toma `payments_session_id` + `widget` y los pasa a `<ZohoPaymentWidget />`.
+ *
  * @param {Object} opts
  * @param {number} opts.amount       — monto en la moneda indicada (números, no cents)
  * @param {string} opts.currency     — "USD" | "EUR" | "COP" | ...
  * @param {string} opts.reference    — referencia única (ej: código de reserva/pedido)
  * @param {string} opts.description  — texto corto mostrado al cliente
  * @param {string} [opts.email]      — email del cliente (opcional)
+ * @param {string} [opts.nombre]     — nombre del cliente (opcional)
  * @param {string} [opts.context]    — 'pedido' | 'reserva' | 'evento' | 'estancia'
  * @param {string} [opts.context_id] — id del recurso para actualizar al pagar
- * @returns {Promise<{ url: string, provider: string, session_id: string }>}
+ * @returns {Promise<{
+ *   payments_session_id: string,
+ *   amount: string,
+ *   currency: string,
+ *   widget: { account_id: string, api_key: string, domain: string },
+ *   provider: string,
+ * }>}
  */
 export async function crearSesionPago(opts) {
-  // Política: siempre Zoho Pay
   return crearSesionZoho(opts);
 }
 
-// Zoho Payments — usa la función propia de Atolón. Antes había un fallback a
-// minivac, pero esa función cambió a la API de Payment Sessions (embebida) que
-// no devuelve URL de checkout, así que rompía el flujo. Ahora si el atolon
-// function falla, devolvemos el error directo para diagnóstico.
 const ATOLON_FN = () => `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/zoho-payments/create-session`;
 
 async function crearSesionZoho(opts) {
-  const payloadAtolon = {
+  const payload = {
     amount: Number(opts.amount),
     currency: opts.currency || "USD",
     reference: opts.reference || `ATOLON-${Date.now()}`,
@@ -95,21 +99,33 @@ async function crearSesionZoho(opts) {
     context_id: opts.context_id || null,
   };
 
-  let res, data;
+  let data;
   try {
-    res = await fetch(ATOLON_FN(), {
+    const res = await fetch(ATOLON_FN(), {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         "Authorization": `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
       },
-      body: JSON.stringify(payloadAtolon),
+      body: JSON.stringify(payload),
     });
     data = await res.json();
   } catch (err) {
     throw new Error("No se pudo conectar a Zoho Pay: " + (err?.message || err));
   }
 
+  // Nuevo flujo: widget embebido (devuelve payments_session_id + config widget)
+  if (data.payments_session_id && data.widget?.account_id) {
+    return {
+      payments_session_id: data.payments_session_id,
+      amount:              data.amount,
+      currency:            data.currency,
+      widget:              data.widget,
+      provider:            "zoho_pay",
+    };
+  }
+
+  // Compat: viejo flujo de Payment Links (en caso de que la cuenta lo soporte)
   if (data.payment_url) {
     return {
       url: data.payment_url,
@@ -118,7 +134,7 @@ async function crearSesionZoho(opts) {
     };
   }
 
-  // Mostrar el error real al cliente (sin fallback que enmascara el problema)
+  // Mostrar el error real al cliente
   const errMsg = data.error || JSON.stringify(data);
   throw new Error("Zoho Pay: " + errMsg);
 }
