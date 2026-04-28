@@ -39,7 +39,7 @@ export default function Configuracion() {
   // Integraciones
   const [wompiForm,    setWompiForm]    = useState({ pub_key: "", integrity_key: "" });
   const [stripeForm,   setStripeForm]   = useState({ pub_key: "", secret_key: "", tasa_usd: "4200" });
-  const [zohoForm,     setZohoForm]     = useState({ client_id: "", client_secret: "", account_id: "", currency: "USD", merchant_name: "X Travel Group" });
+  const [zohoForm,     setZohoForm]     = useState({ api_key: "", client_id: "", client_secret: "", refresh_token: "", account_id: "", currency: "USD", merchant_name: "X Travel Group" });
   const [merchantInt,  setMerchantInt]  = useState("stripe"); // stripe | zoho_pay
   const [savingInt,    setSavingInt]    = useState(null);   // "wompi" | "stripe" | "zoho_pay" | "merchant" | null
   const [showWompi,    setShowWompi]    = useState(false);
@@ -76,8 +76,10 @@ export default function Configuracion() {
         setWompiForm({ pub_key: data.wompi_pub_key || "", integrity_key: data.wompi_integrity_key || "" });
         setStripeForm({ pub_key: data.stripe_pub_key || "", secret_key: data.stripe_secret_key || "", tasa_usd: String(data.tasa_usd || "4200") });
         setZohoForm({
+          api_key: data.zoho_pay_api_key || "",
           client_id: data.zoho_pay_client_id || "",
           client_secret: data.zoho_pay_client_secret || "",
+          refresh_token: data.zoho_pay_refresh_token || "",
           account_id: data.zoho_pay_account_id || "",
           currency: data.zoho_pay_currency || "USD",
           merchant_name: data.zoho_pay_merchant_name || "X Travel Group",
@@ -180,8 +182,10 @@ export default function Configuracion() {
     if (!supabase || savingInt) return;
     setSavingInt("zoho_pay");
     await supabase.from("configuracion").update({
+      zoho_pay_api_key:       zohoForm.api_key.trim() || null,
       zoho_pay_client_id:     zohoForm.client_id.trim(),
       zoho_pay_client_secret: zohoForm.client_secret.trim(),
+      zoho_pay_refresh_token: zohoForm.refresh_token.trim() || null,
       zoho_pay_account_id:    zohoForm.account_id.trim(),
       zoho_pay_currency:      (zohoForm.currency || "USD").trim().toUpperCase(),
       zoho_pay_merchant_name: (zohoForm.merchant_name || "X Travel Group").trim(),
@@ -195,12 +199,14 @@ export default function Configuracion() {
     if (!supabase || !window.confirm("¿Desconectar Zoho Pay? Los pagos a través de Zoho dejarán de funcionar.")) return;
     setSavingInt("zoho_pay");
     await supabase.from("configuracion").update({
+      zoho_pay_api_key: null,
       zoho_pay_client_id: null,
       zoho_pay_client_secret: null,
+      zoho_pay_refresh_token: null,
       zoho_pay_account_id: null,
       updated_at: new Date().toISOString(),
     }).eq("id", "atolon");
-    setZohoForm({ client_id: "", client_secret: "", account_id: "", currency: "USD" });
+    setZohoForm({ api_key: "", client_id: "", client_secret: "", refresh_token: "", account_id: "", currency: "USD", merchant_name: "X Travel Group" });
     // Si Zoho estaba como merchant activo, volver a Stripe
     if (merchantInt === "zoho_pay") {
       await supabase.from("configuracion").update({ merchant_internacional: "stripe" }).eq("id", "atolon");
@@ -479,7 +485,7 @@ export default function Configuracion() {
       {tab === "integraciones" && (() => {
         const wompiConectado = !!(config?.wompi_pub_key);
         const stripeConectado = !!(config?.stripe_pub_key);
-        const zohoConectado = !!(config?.zoho_pay_client_id);
+        const zohoConectado = !!(config?.zoho_pay_api_key || config?.zoho_pay_client_id);
         const mask = (s) => s ? s.slice(0, 8) + "••••••••••••" + s.slice(-4) : "";
 
         return (
@@ -744,8 +750,32 @@ export default function Configuracion() {
               {/* Formulario conectar/editar */}
               {showZoho && (
                 <div style={{ marginTop: 20, padding: 20, background: B.navy, borderRadius: 10, border: `1px solid #E4252744` }}>
+                  {/* ── MÉTODO RECOMENDADO: API KEY ─────────────────── */}
+                  <div style={{ marginBottom: 20, padding: 14, background: B.success + "11", borderRadius: 8, border: `1px solid ${B.success}44` }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+                      <span style={{ fontSize: 11, fontWeight: 800, padding: "2px 8px", borderRadius: 4, background: B.success, color: "#fff" }}>RECOMENDADO</span>
+                      <strong style={{ color: B.success, fontSize: 13 }}>Método 1 · API Key</strong>
+                    </div>
+                    <div style={{ fontSize: 12, color: "rgba(255,255,255,0.6)", marginBottom: 12, lineHeight: 1.5 }}>
+                      Genera tu API Key en <strong style={{ color: "#fff" }}>payments.zoho.com → Settings → API Keys</strong>.
+                      Es el método más simple — no requiere OAuth ni scopes.
+                    </div>
+                    <label style={LS}>Zoho Payments API Key</label>
+                    <div style={{ position: "relative" }}>
+                      <input type={showZohoSecret ? "text" : "password"}
+                        value={zohoForm.api_key} onChange={e => setZohoForm(f => ({ ...f, api_key: e.target.value }))}
+                        placeholder="ZPapikey o token de Zoho Payments"
+                        style={{ ...IS, fontFamily: "monospace", fontSize: 12, paddingRight: 80 }} />
+                      <button onClick={() => setShowZohoSecret(v => !v)} style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", color: "rgba(255,255,255,0.4)", fontSize: 12, cursor: "pointer" }}>{showZohoSecret ? "Ocultar" : "Ver"}</button>
+                    </div>
+                  </div>
+
+                  <div style={{ height: 1, background: B.navyLight, margin: "16px 0" }} />
+
                   <div style={{ fontSize: 13, color: "rgba(255,255,255,0.5)", marginBottom: 16, lineHeight: 1.6 }}>
-                    Obtén tus credenciales en <strong style={{ color: "#fecaca" }}>api-console.zoho.com</strong> → crea una app Self-Client o Server-Based y activa <code style={{ background: B.navyLight, padding: "1px 5px", borderRadius: 4 }}>ZohoPay.fullaccess</code>.
+                    <strong style={{ color: "rgba(255,255,255,0.7)" }}>Método 2 · OAuth</strong> (alternativa).
+                    Requiere generar refresh_token con scope <code style={{ background: B.navyLight, padding: "1px 5px", borderRadius: 4, fontSize: 11 }}>ZohoPay.payments.CREATE</code>.
+                    Si solo usas API Key arriba, puedes dejar estos campos vacíos.
                   </div>
                   <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
                     <div>
@@ -762,6 +792,12 @@ export default function Configuracion() {
                           style={{ ...IS, fontFamily: "monospace", fontSize: 12, paddingRight: 80 }} />
                         <button onClick={() => setShowZohoSecret(v => !v)} style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", color: "rgba(255,255,255,0.4)", fontSize: 12, cursor: "pointer" }}>{showZohoSecret ? "Ocultar" : "Ver"}</button>
                       </div>
+                    </div>
+                    <div>
+                      <label style={LS}>Refresh Token <span style={{ color: "rgba(255,255,255,0.3)" }}>(scope ZohoPay.payments.CREATE)</span></label>
+                      <input value={zohoForm.refresh_token} onChange={e => setZohoForm(f => ({ ...f, refresh_token: e.target.value }))}
+                        placeholder="1000.xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+                        style={{ ...IS, fontFamily: "monospace", fontSize: 12 }} />
                     </div>
                     <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 12 }}>
                       <div>
@@ -796,7 +832,8 @@ export default function Configuracion() {
                   </div>
                   <div style={{ display: "flex", gap: 10, marginTop: 16 }}>
                     <button onClick={() => setShowZoho(false)} style={{ flex: 1, padding: "10px", background: "none", border: `1px solid ${B.navyLight}`, borderRadius: 8, color: "rgba(255,255,255,0.4)", fontSize: 13, cursor: "pointer" }}>Cancelar</button>
-                    <button onClick={saveZoho} disabled={savingInt === "zoho_pay" || !zohoForm.client_id.trim() || !zohoForm.client_secret.trim()}
+                    <button onClick={saveZoho}
+                      disabled={savingInt === "zoho_pay" || (!zohoForm.api_key.trim() && (!zohoForm.client_id.trim() || !zohoForm.client_secret.trim()))}
                       style={{ flex: 2, padding: "10px", background: savingInt === "zoho_pay" ? B.navyLight : "#E42527", color: "#fff", border: "none", borderRadius: 8, fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
                       {savingInt === "zoho_pay" ? "Guardando..." : zohoConectado ? "Actualizar credenciales" : "Conectar Zoho Pay"}
                     </button>

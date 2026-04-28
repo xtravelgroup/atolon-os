@@ -310,7 +310,6 @@ export default function Lancha() {
           { l: "Mant./Rep. (mes)",    v: fmtCOP(kpis.gastoMantMes),           c: B.sky },
           { l: "Marina (mes)",        v: fmtCOP(kpis.gastoMarinaMes),         c: "#22d3ee" },
           { l: "Capitanes (mes)",     v: fmtCOP(kpis.gastoCapitanesMes),      c: "#fb923c" },
-          { l: "Viajes (mes)",        v: `${kpis.viajesMes} · ${fmtCOP(kpis.costoCombustibleViajesMes)}`, c: "#a78bfa" },
           { l: "Horas motor",         v: kpis.ultimoHoras.toFixed(0) + " h",  c: B.sand },
           { l: "Incidentes abiertos", v: kpis.incidentesAbiertos,             c: kpis.incidentesAbiertos > 0 ? B.danger : B.success },
         ].map((k, i) => (
@@ -620,7 +619,6 @@ function ListaViajesComputados({ viajesPorFecha, costoPorViaje }) {
     );
   }
   const totalViajes = viajesPorFecha.reduce((s, v) => s + v.viajes, 0);
-  const totalCosto  = totalViajes * costoPorViaje;
   const totalPerdidos = viajesPorFecha.reduce((s, v) => s + v.pares.filter(p => !p.llegada || !p.zarpe).length, 0);
 
   return (
@@ -631,7 +629,6 @@ function ListaViajesComputados({ viajesPorFecha, costoPorViaje }) {
         Cada viaje = ida y vuelta (Cartagena ↔ Atolón). Se calcula como{" "}
         <code style={{ color: B.sky }}>max(llegadas registradas, zarpes registrados)</code> por día.
         Eventos faltantes se infieren cuando hay 2 llegadas (zarpe perdido) o 2 zarpes seguidos (llegada perdida).
-        Costo combustible estimado = <strong style={{ color: B.sand }}>{fmtCOP(costoPorViaje)}/viaje</strong>.
       </div>
 
       <div style={{ background: B.navyMid, borderRadius: 10, overflow: "hidden" }}>
@@ -647,9 +644,6 @@ function ListaViajesComputados({ viajesPorFecha, costoPorViaje }) {
               </div>
               <div style={{ fontSize: 13, fontWeight: 800, color: "#a78bfa" }}>
                 {d.viajes} viaje{d.viajes !== 1 ? "s" : ""}
-              </div>
-              <div style={{ fontSize: 12, color: B.sand, fontWeight: 700, minWidth: 100, textAlign: "right" }}>
-                {fmtCOP(d.viajes * costoPorViaje)}
               </div>
             </div>
             {/* Pareo cronológico */}
@@ -682,8 +676,8 @@ function ListaViajesComputados({ viajesPorFecha, costoPorViaje }) {
             </div>
           </div>
           <div style={{ textAlign: "right" }}>
-            <div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", textTransform: "uppercase" }}>Costo combustible estimado</div>
-            <div style={{ fontSize: 16, fontWeight: 800, color: B.sand }}>{fmtCOP(totalCosto)}</div>
+            <div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", textTransform: "uppercase" }}>Total viajes</div>
+            <div style={{ fontSize: 16, fontWeight: 800, color: "#a78bfa" }}>{totalViajes}</div>
           </div>
         </div>
       </div>

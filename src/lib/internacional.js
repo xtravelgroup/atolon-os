@@ -77,11 +77,11 @@ export async function crearSesionPago(opts) {
   return crearSesionZoho(opts);
 }
 
-// Zoho Payments — intenta primero atolon (secretos propios con descripción
-// "Atolon Beach Club"), si falla (sin secretos), cae a minivac-crm como fallback.
+// Zoho Payments — usa la función propia de Atolón. Antes había un fallback a
+// minivac, pero esa función cambió a la API de Payment Sessions (embebida) que
+// no devuelve URL de checkout, así que rompía el flujo. Ahora si el atolon
+// function falla, devolvemos el error directo para diagnóstico.
 const ATOLON_FN = () => `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/zoho-payments/create-session`;
-const MINIVAC_FN = "https://gsvnvahrjgswwejnuiyn.supabase.co/functions/v1/zoho-payments/create-session";
-const MINIVAC_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imdzdm52YWhyamdzd3dlam51aXluIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzMwMTUwNDIsImV4cCI6MjA4ODU5MTA0Mn0.xceJjgUnkAu7Jzeo0IY1EmBjRqgyybtPf4odcg1WFeA";
 
 async function crearSesionZoho(opts) {
   const payloadAtolon = {
@@ -95,9 +95,9 @@ async function crearSesionZoho(opts) {
     context_id: opts.context_id || null,
   };
 
-  // 1) Intentar la función de atolon primero
+  let res, data;
   try {
-    const res = await fetch(ATOLON_FN(), {
+    res = await fetch(ATOLON_FN(), {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -105,47 +105,22 @@ async function crearSesionZoho(opts) {
       },
       body: JSON.stringify(payloadAtolon),
     });
-    const data = await res.json();
-    if (data.payment_url) {
-      return { url: data.payment_url, provider: "zoho_pay", session_id: data.payment_link_id || data.payments_session_id || "" };
-    }
-    // Si el error es "Zoho no configurado", caemos al fallback
-    if (data.error && /no configurado|refresh_token|client_id/i.test(data.error)) {
-      console.warn("[Zoho] Atolon function sin secretos, usando fallback minivac");
-    } else {
-      throw new Error(data.error || JSON.stringify(data));
-    }
+    data = await res.json();
   } catch (err) {
-    console.warn("[Zoho] Atolon function falló, intentando fallback minivac:", err?.message);
+    throw new Error("No se pudo conectar a Zoho Pay: " + (err?.message || err));
   }
 
-  // 2) Fallback: función de minivac (misma merchant account)
-  const res = await fetch(MINIVAC_FN, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${MINIVAC_ANON}`,
-    },
-    body: JSON.stringify({
-      amount: Number(opts.amount),
-      currency: opts.currency || "USD",
-      folio: opts.reference || `ATOLON-${Date.now()}`,
-      lead_id: opts.reference || null,
-      nombre: opts.nombre || "",
-      email: opts.email || undefined,
-      description: opts.description || `Atolon Beach Club${opts.nombre ? " - " + opts.nombre : ""}`,
-      source: "atolon",
-    }),
-  });
-  const data = await res.json();
-  if (!data.payment_url) {
-    throw new Error("Error Zoho Pay: " + (data.error || JSON.stringify(data)));
+  if (data.payment_url) {
+    return {
+      url: data.payment_url,
+      provider: "zoho_pay",
+      session_id: data.payment_link_id || data.payments_session_id || "",
+    };
   }
-  return {
-    url: data.payment_url,
-    provider: "zoho_pay",
-    session_id: data.payments_session_id || "",
-  };
+
+  // Mostrar el error real al cliente (sin fallback que enmascara el problema)
+  const errMsg = data.error || JSON.stringify(data);
+  throw new Error("Zoho Pay: " + errMsg);
 }
 
 async function crearSesionStripe(opts) {

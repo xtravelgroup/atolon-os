@@ -348,10 +348,10 @@ export default function MuelleSalidas() {
                   ⛵ Zarpes de flota a Cartagena
                 </div>
                 <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>
-                  Cada vez que Castillete o Naturalle salen de la isla. Pasajeros, tripulación, vacío, provisiones…
+                  Cada vez que Castillete, Naturalle o Blue Apple salen de la isla. Pasajeros, tripulación, vacío, provisiones…
                 </div>
               </div>
-              <div style={{ display: "flex", gap: 8 }}>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                 <button onClick={() => setModalZarpe({ embarcacion: "Castillete" })}
                   style={{ padding: "9px 14px", borderRadius: 10, border: "none", background: B.navyMid, color: "#fff", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>
                   + Castillete
@@ -359,6 +359,17 @@ export default function MuelleSalidas() {
                 <button onClick={() => setModalZarpe({ embarcacion: "Naturalle" })}
                   style={{ padding: "9px 14px", borderRadius: 10, border: "none", background: B.navyMid, color: "#fff", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>
                   + Naturalle
+                </button>
+                <button onClick={() => setModalZarpe({ embarcacion: "Blue Apple" })}
+                  style={{ padding: "9px 14px", borderRadius: 10, border: "none", background: B.navyMid, color: "#fff", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>
+                  + Blue Apple
+                </button>
+                <button onClick={() => {
+                  const nombre = window.prompt("Nombre de la embarcación:");
+                  if (nombre && nombre.trim()) setModalZarpe({ embarcacion: nombre.trim() });
+                }}
+                  style={{ padding: "9px 14px", borderRadius: 10, border: `1px dashed ${B.navyLight}`, background: "transparent", color: "rgba(255,255,255,0.6)", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>
+                  + Otra
                 </button>
               </div>
             </div>
