@@ -44,7 +44,7 @@ serve(async (req) => {
 <body style="font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif;background:#f3f4f6;margin:0;padding:24px;color:#111827;">
   <div style="max-width:680px;margin:0 auto;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,0.08);">
     <div style="background:#0D1B3E;color:#C8B99A;padding:24px;">
-      <div style="font-size:11px;text-transform:uppercase;letter-spacing:2px;opacity:0.7;">Atolón Beach Club & Hotel</div>
+      <div style="font-size:11px;text-transform:uppercase;letter-spacing:2px;opacity:0.7;">Interop Colombia SAS</div>
       <div style="font-size:24px;font-weight:800;margin-top:6px;">Orden de Compra ${escapeHtml(oc.codigo)}</div>
       <div style="font-size:13px;margin-top:4px;opacity:0.85;">Fecha emisión: ${escapeHtml(oc.fecha_emision || "")}</div>
     </div>
@@ -88,7 +88,7 @@ serve(async (req) => {
     </div>
 
     <div style="background:#F5F2EA;color:#6b7280;padding:14px;text-align:center;font-size:11px;">
-      Atolón Beach Club & Hotel · Cartagena, Colombia
+      Interop Colombia SAS · Cartagena, Colombia
     </div>
   </div>
 </body></html>`;

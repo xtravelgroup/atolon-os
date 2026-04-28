@@ -31,7 +31,7 @@ export default function EmailOCModal({ oc, onClose, currentUser, reload }) {
 
     // Header
     doc.setFontSize(10).setTextColor(150);
-    doc.text("ATOLON BEACH CLUB & HOTEL", m, y);
+    doc.text("INTEROP COLOMBIA SAS", m, y);
     y += 6;
     doc.setFontSize(18).setTextColor(0);
     doc.text(`Orden de Compra ${oc.codigo}`, m, y);
@@ -89,7 +89,7 @@ export default function EmailOCModal({ oc, onClose, currentUser, reload }) {
     // Footer
     doc.setFontSize(8).setTextColor(120);
     doc.text("Entrega: Bodeguita (Cartagena). Coordinar con muelle antes de despachar.", m, 285);
-    doc.text("Atolón Beach Club & Hotel · Cartagena, Colombia", m, 290);
+    doc.text("Interop Colombia SAS · Cartagena, Colombia", m, 290);
 
     return doc.output("datauristring").split(",")[1]; // base64 puro sin el prefijo
   };
