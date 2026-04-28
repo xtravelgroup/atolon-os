@@ -11,27 +11,70 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const ZOHO_WEBHOOK_SECRET = Deno.env.get("ZOHO_WEBHOOK_SECRET") || Deno.env.get("ZOHO_SIGNING_KEY") || "";
-const ZOHO_ACCOUNT_ID     = Deno.env.get("ZOHO_ACCOUNT_ID") || "874101637";
-const ZOHO_API_KEY        = Deno.env.get("ZOHO_API_KEY") || "";
-// Fallback OAuth (si no hay API Key)
-const ZOHO_CLIENT_ID      = Deno.env.get("ZOHO_CLIENT_ID") || "";
-const ZOHO_CLIENT_SECRET  = Deno.env.get("ZOHO_CLIENT_SECRET") || "";
-const ZOHO_REFRESH_TOKEN  = Deno.env.get("ZOHO_REFRESH_TOKEN") || "";
+
+// ── Lee credenciales: primero env vars, luego DB (configuracion) ─────────
+// Esto permite que el usuario configure desde la UI sin tener acceso a
+// supabase secrets. Se re-lee en cada request para reflejar cambios.
+type ZohoCreds = {
+  api_key: string;
+  client_id: string;
+  client_secret: string;
+  refresh_token: string;
+  account_id: string;
+};
+
+async function loadZohoCreds(): Promise<ZohoCreds> {
+  // 1) Leer de la tabla `configuracion` PRIMERO — los cambios del UI siempre ganan
+  const dbCreds: Partial<ZohoCreds> = {};
+  try {
+    const SB = createClient(
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+    );
+    const { data } = await SB
+      .from("configuracion")
+      .select("zoho_pay_api_key, zoho_pay_client_id, zoho_pay_client_secret, zoho_pay_refresh_token, zoho_pay_account_id")
+      .eq("id", "atolon")
+      .single();
+    if (data) {
+      dbCreds.api_key       = data.zoho_pay_api_key       || "";
+      dbCreds.client_id     = data.zoho_pay_client_id     || "";
+      dbCreds.client_secret = data.zoho_pay_client_secret || "";
+      dbCreds.refresh_token = data.zoho_pay_refresh_token || "";
+      dbCreds.account_id    = data.zoho_pay_account_id    || "";
+    }
+  } catch (err) {
+    console.warn("loadZohoCreds: no se pudo leer configuracion table:", err);
+  }
+
+  // 2) Env vars como fallback cuando el campo de DB esté vacío
+  return {
+    api_key:       dbCreds.api_key       || Deno.env.get("ZOHO_API_KEY")       || "",
+    client_id:     dbCreds.client_id     || Deno.env.get("ZOHO_CLIENT_ID")     || "",
+    client_secret: dbCreds.client_secret || Deno.env.get("ZOHO_CLIENT_SECRET") || "",
+    refresh_token: dbCreds.refresh_token || Deno.env.get("ZOHO_REFRESH_TOKEN") || "",
+    account_id:    dbCreds.account_id    || Deno.env.get("ZOHO_ACCOUNT_ID")    || "874101637",
+  };
+}
 
 // ── Obtener token (API Key directa o OAuth como fallback) ──────────────
-async function getZohoAuthHeader(): Promise<string> {
-  if (ZOHO_API_KEY) {
+async function getZohoAuthHeader(creds: ZohoCreds): Promise<string> {
+  if (creds.api_key) {
     // Método 1 — API Key directa (preferido)
-    return "ZPapikey " + ZOHO_API_KEY;
+    return "ZPapikey " + creds.api_key;
+  }
+  if (!creds.refresh_token || !creds.client_id || !creds.client_secret) {
+    throw new Error("Zoho no configurado: falta API_KEY o (CLIENT_ID + CLIENT_SECRET + REFRESH_TOKEN). Genera un API Key en https://payments.zoho.com → API Keys y guárdalo como ZOHO_API_KEY (en supabase secrets) o como zoho_pay_api_key en la tabla configuracion.");
   }
   // Método 2 — OAuth refresh token (fallback)
+  // Scope necesario al generar el refresh_token: ZohoPay.payments.CREATE,ZohoPay.account.READ
   const res = await fetch("https://accounts.zoho.com/oauth/v2/token", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
-      refresh_token: ZOHO_REFRESH_TOKEN,
-      client_id:     ZOHO_CLIENT_ID,
-      client_secret: ZOHO_CLIENT_SECRET,
+      refresh_token: creds.refresh_token,
+      client_id:     creds.client_id,
+      client_secret: creds.client_secret,
       grant_type:    "refresh_token",
     }),
   });
@@ -41,13 +84,13 @@ async function getZohoAuthHeader(): Promise<string> {
 }
 
 // ── Crear Payment Link en Zoho ──────────────────────────────────────────
-async function createZohoPaymentLink(authHeader: string, body: {
+async function createZohoPaymentLink(authHeader: string, accountId: string, body: {
   amount: number;
   currency: string;
   description: string;
 }) {
   const res = await fetch(
-    `https://payments.zoho.com/api/v1/paymentlinks?account_id=${ZOHO_ACCOUNT_ID}`,
+    `https://payments.zoho.com/api/v1/paymentlinks?account_id=${accountId}`,
     {
       method: "POST",
       headers: {
@@ -62,7 +105,15 @@ async function createZohoPaymentLink(authHeader: string, body: {
     }
   );
   const data = await res.json();
-  if (!data.payment_links) throw new Error("Error creando payment link: " + JSON.stringify(data));
+  if (!data.payment_links) {
+    // Hint útil para Invalid Scope: el refresh_token fue creado sin permisos
+    let hint = "";
+    const msg = JSON.stringify(data);
+    if (/invalid scope/i.test(msg)) {
+      hint = " · El refresh_token actual no tiene permiso para crear payment links. Solución: genera un API Key en https://payments.zoho.com → Settings → API Keys y guárdalo como ZOHO_API_KEY (más simple) o regenera el OAuth con scope: ZohoPay.payments.CREATE,ZohoPay.account.READ";
+    }
+    throw new Error("Error creando payment link: " + msg + hint);
+  }
   return data.payment_links;
 }
 
@@ -131,15 +182,18 @@ serve(async (req) => {
           status: 400, headers: { ...CORS, "Content-Type": "application/json" },
         });
       }
-      if (!ZOHO_API_KEY && (!ZOHO_REFRESH_TOKEN || !ZOHO_CLIENT_ID || !ZOHO_CLIENT_SECRET)) {
-        return new Response(JSON.stringify({ error: "Zoho no configurado en este proyecto. Faltan secretos." }), {
+      const creds = await loadZohoCreds();
+      if (!creds.api_key && (!creds.refresh_token || !creds.client_id || !creds.client_secret)) {
+        return new Response(JSON.stringify({
+          error: "Zoho no configurado: agrega ZOHO_API_KEY como secret de Supabase (preferido) o configura zoho_pay_api_key en la tabla configuracion. Genera tu API Key en https://payments.zoho.com → Settings → API Keys."
+        }), {
           status: 500, headers: { ...CORS, "Content-Type": "application/json" },
         });
       }
 
-      const authHeader = await getZohoAuthHeader();
+      const authHeader = await getZohoAuthHeader(creds);
       const finalDescription = description || `Atolon Beach Club${nombre ? " - " + nombre : ""}`;
-      const link = await createZohoPaymentLink(authHeader, {
+      const link = await createZohoPaymentLink(authHeader, creds.account_id, {
         amount: Number(amount),
         currency: currency || "USD",
         description: finalDescription,
