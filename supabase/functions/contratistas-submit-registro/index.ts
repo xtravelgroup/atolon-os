@@ -67,8 +67,10 @@ serve(async (req) => {
     await supabase.from("contratistas").update(update).eq("id", contratista_id);
 
     // Asegurar curso_token por trabajador
+    // (Nota: contratistas_trabajadores NO tiene columna `correo` — el email
+    // se toma del contratista padre c.contacto_principal_email)
     const { data: trabajadores } = await supabase.from("contratistas_trabajadores")
-      .select("id, nombre, cedula, correo, curso_token, curso_completado").eq("contratista_id", contratista_id);
+      .select("id, nombre, cedula, curso_token, curso_completado").eq("contratista_id", contratista_id);
     for (const t of trabajadores || []) {
       if (!t.curso_token) {
         const { data: tok } = await supabase.rpc("generate_curso_token");
@@ -78,7 +80,7 @@ serve(async (req) => {
 
     // Refrescar trabajadores con tokens
     const { data: trabajadoresConToken } = await supabase.from("contratistas_trabajadores")
-      .select("id, nombre, cedula, correo, curso_token, curso_completado").eq("contratista_id", contratista_id);
+      .select("id, nombre, cedula, curso_token, curso_completado").eq("contratista_id", contratista_id);
 
     // Email al contratista
     await sendEmail({
@@ -124,15 +126,18 @@ serve(async (req) => {
     });
 
     // Email a cada trabajador con link al curso
+    // El email del trabajador no se almacena por trabajador, se usa el del
+    // contratista padre (contacto_principal_email).
+    const emailDestino = c.contacto_principal_email;
     for (const t of trabajadoresConToken || []) {
-      if (!t.correo || t.curso_completado) continue;
+      if (!emailDestino || t.curso_completado) continue;
       const url = `${PORTAL_BASE}/contratistas/curso/${t.curso_token}`;
       await sendEmail({
-        to: [t.correo],
+        to: [emailDestino],
         kind: "enlace_curso",
         contratista_id,
         trabajador_id: t.id,
-        subject: `Curso de inducción SST · Atolón Beach Club`,
+        subject: `Curso de inducción SST · ${t.nombre} · Atolón Beach Club`,
         html: layoutEmail(`
           <h2 style="margin-top:0;color:#0D1B3E;">Curso de Inducción Obligatorio</h2>
           <p>Hola <strong>${t.nombre}</strong>,</p>
