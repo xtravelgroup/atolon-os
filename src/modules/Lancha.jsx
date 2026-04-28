@@ -52,6 +52,7 @@ export default function Lancha() {
   const [lanchas, setLanchas] = useState([]);
   const [bitacora, setBitacora] = useState([]);
   const [zarpes, setZarpes] = useState([]);
+  const [llegadas, setLlegadas] = useState([]); // muelle_llegadas para computar viajes
   const [capitanes, setCapitanes] = useState([]);
   const [empleados, setEmpleados] = useState([]); // de rh_empleados (para vincular nómina)
   const [loading, setLoading] = useState(true);
@@ -66,10 +67,11 @@ export default function Lancha() {
     // Idempotente: asegura cargos recurrentes del mes actual (marina + capitanes terceros)
     supabase.rpc("generar_marina_mes").then(() => {});
     supabase.rpc("generar_capitanes_mes").then(() => {});
-    const [lR, bR, zR, cR, eR] = await Promise.all([
+    const [lR, bR, zR, llR, cR, eR] = await Promise.all([
       supabase.from("lanchas").select("*").eq("activo", true).order("nombre"),
       supabase.from("lancha_bitacora").select("*").order("fecha", { ascending: false }).order("hora", { ascending: false }).limit(500),
-      supabase.from("muelle_zarpes_flota").select("*").order("fecha", { ascending: false }).limit(200),
+      supabase.from("muelle_zarpes_flota").select("*").order("fecha", { ascending: false }).limit(500),
+      supabase.from("muelle_llegadas").select("id, fecha, hora_llegada, embarcacion_nombre, tipo, pax_a, pax_n").eq("tipo", "lancha_atolon").order("fecha", { ascending: false }).limit(500),
       supabase.from("capitanes_flota").select("*").eq("activo", true).order("nombre"),
       supabase.from("rh_empleados").select("id, nombres, apellidos, cedula, telefono, email, cargo, salario_base, activo").eq("activo", true).order("nombres"),
     ]);
@@ -77,6 +79,7 @@ export default function Lancha() {
     setLanchas(lanchasArr);
     setBitacora(bR.data || []);
     setZarpes(zR.data || []);
+    setLlegadas(llR.data || []);
     setCapitanes(cR.data || []);
     setEmpleados(eR.data || []);
     if (!activeLancha && lanchasArr.length) setActiveLancha(lanchasArr[0].id);
@@ -87,7 +90,81 @@ export default function Lancha() {
   const lancha = lanchas.find(l => l.id === activeLancha);
   const bitacoraLancha = useMemo(() => bitacora.filter(b => b.lancha_id === activeLancha), [bitacora, activeLancha]);
   const zarpesLancha = useMemo(() => zarpes.filter(z => lancha && z.embarcacion === lancha.nombre), [zarpes, lancha]);
+  const llegadasLancha = useMemo(() => {
+    if (!lancha) return [];
+    const nameRe = new RegExp(`^${lancha.nombre.replace(/[^\w]/g, ".?")}$`, "i");
+    return llegadas.filter(l => l.embarcacion_nombre && nameRe.test(l.embarcacion_nombre.trim()));
+  }, [llegadas, lancha]);
   const capitanesLancha = useMemo(() => capitanes.filter(c => c.lancha_id === activeLancha), [capitanes, activeLancha]);
+
+  // ─── Viajes computados por fecha ─────────────────────────────────────
+  // Lógica: cada llegada se parea con el siguiente zarpe del mismo barco.
+  // Si hay 2 llegadas seguidas → zarpe perdido. Si hay 2 zarpes seguidos
+  // → llegada perdida. # viajes = max(llegadas, zarpes) por día.
+  const viajesPorFecha = useMemo(() => {
+    const byDate = {}; // fecha → { llegadas: [{hora}], zarpes: [{hora}] }
+    llegadasLancha.forEach(l => {
+      const f = (l.fecha || "").slice(0, 10);
+      if (!f) return;
+      (byDate[f] ||= { llegadas: [], zarpes: [] }).llegadas.push({
+        hora: (l.hora_llegada || "").slice(0, 5),
+        pax_a: l.pax_a || 0,
+        pax_n: l.pax_n || 0,
+      });
+    });
+    zarpesLancha.forEach(z => {
+      const f = (z.fecha || "").slice(0, 10);
+      if (!f) return;
+      (byDate[f] ||= { llegadas: [], zarpes: [] }).zarpes.push({
+        hora: (z.hora_zarpe || "").slice(0, 5),
+        destino: z.destino,
+        pax_a: z.pax_a || 0,
+        pax_n: z.pax_n || 0,
+      });
+    });
+    // Ordenar y construir pareo por fecha
+    const fechas = Object.keys(byDate).sort().reverse();
+    return fechas.map(fecha => {
+      const d = byDate[fecha];
+      d.llegadas.sort((a, b) => a.hora.localeCompare(b.hora));
+      d.zarpes.sort((a, b) => a.hora.localeCompare(b.hora));
+      // Pareo cronológico
+      const pares = [];
+      let pendienteA = null;
+      const eventos = [
+        ...d.llegadas.map(l => ({ ...l, tipo: "L" })),
+        ...d.zarpes.map(z => ({ ...z, tipo: "Z" })),
+      ].sort((a, b) => a.hora.localeCompare(b.hora));
+      eventos.forEach(ev => {
+        if (ev.tipo === "L") {
+          if (pendienteA) pares.push({ llegada: pendienteA.hora, zarpe: null }); // zarpe perdido
+          pendienteA = ev;
+        } else {
+          if (pendienteA) {
+            pares.push({ llegada: pendienteA.hora, zarpe: ev.hora });
+            pendienteA = null;
+          } else {
+            pares.push({ llegada: null, zarpe: ev.hora }); // llegada perdida
+          }
+        }
+      });
+      if (pendienteA) pares.push({ llegada: pendienteA.hora, zarpe: null });
+      const viajes = Math.max(d.llegadas.length, d.zarpes.length);
+      return {
+        fecha,
+        llegadas: d.llegadas.length,
+        zarpes: d.zarpes.length,
+        viajes,
+        pares,
+      };
+    });
+  }, [llegadasLancha, zarpesLancha]);
+
+  // Costo por viaje (ida y vuelta) = 2 × costo_viaje_sencillo
+  const costoPorViaje = useMemo(() => {
+    if (!lancha) return 0;
+    return Number(lancha.costo_viaje_sencillo || 0) * 2;
+  }, [lancha]);
 
   // KPIs del mes
   const kpis = useMemo(() => {
@@ -102,14 +179,16 @@ export default function Lancha() {
     const gastoCapitanesMes = delMes.filter(b => b.tipo === "capitanes").reduce((s, b) => s + Number(b.costo_total || 0), 0);
     const ultimoHoras = bitacoraLancha.find(b => b.kilometraje_h != null)?.kilometraje_h || 0;
     const proxServ = bitacoraLancha.find(b => b.proximo_servicio_h || b.proximo_servicio_fecha);
-    const zarpesMes = zarpesLancha.filter(z => (z.fecha || "").startsWith(mes));
-    const viajesMes = zarpesMes.length;
-    // gastoViajesMes ya no se calcula — el costo de operación se deriva del
-    // combustible cargado (gastoCombustibleMes), no de un costo per-zarpe.
+    // Viajes del mes con la lógica computada (max llegadas/zarpes)
+    const viajesMes = viajesPorFecha
+      .filter(v => v.fecha.startsWith(mes))
+      .reduce((s, v) => s + v.viajes, 0);
+    // Costo combustible estimado del mes = viajes × costo_por_viaje (ida y vuelta)
+    const costoCombustibleViajesMes = viajesMes * costoPorViaje;
     const gastoViajesMes = 0;
     const incidentesAbiertos = bitacoraLancha.filter(b => b.tipo === "incidente" && !b.resuelto).length;
-    return { galonesMes, gastoCombustibleMes, gastoMantMes, gastoOperativosMes, gastoMarinaMes, gastoCapitanesMes, ultimoHoras, proxServ, viajesMes, gastoViajesMes, incidentesAbiertos };
-  }, [bitacoraLancha, zarpesLancha]);
+    return { galonesMes, gastoCombustibleMes, gastoMantMes, gastoOperativosMes, gastoMarinaMes, gastoCapitanesMes, ultimoHoras, proxServ, viajesMes, costoCombustibleViajesMes, gastoViajesMes, incidentesAbiertos };
+  }, [bitacoraLancha, viajesPorFecha, costoPorViaje]);
 
   async function saveEvento(data) {
     const payload = {
@@ -231,7 +310,7 @@ export default function Lancha() {
           { l: "Mant./Rep. (mes)",    v: fmtCOP(kpis.gastoMantMes),           c: B.sky },
           { l: "Marina (mes)",        v: fmtCOP(kpis.gastoMarinaMes),         c: "#22d3ee" },
           { l: "Capitanes (mes)",     v: fmtCOP(kpis.gastoCapitanesMes),      c: "#fb923c" },
-          { l: "Viajes (mes)",        v: `${kpis.viajesMes} viaje${kpis.viajesMes !== 1 ? "s" : ""}`, c: "#a78bfa" },
+          { l: "Viajes (mes)",        v: `${kpis.viajesMes} · ${fmtCOP(kpis.costoCombustibleViajesMes)}`, c: "#a78bfa" },
           { l: "Horas motor",         v: kpis.ultimoHoras.toFixed(0) + " h",  c: B.sand },
           { l: "Incidentes abiertos", v: kpis.incidentesAbiertos,             c: kpis.incidentesAbiertos > 0 ? B.danger : B.success },
         ].map((k, i) => (
@@ -253,7 +332,7 @@ export default function Lancha() {
           { k: "operativos",    l: "🅿️ Operativos" },
           { k: "capitanes",     l: `👨‍✈️ Capitanes (${capitanesLancha.length})` },
           { k: "incidentes",    l: "⚠️ Incidentes" },
-          { k: "viajes",        l: `⛵ Viajes (${zarpesLancha.length})` },
+          { k: "viajes",        l: `⛵ Viajes (${viajesPorFecha.reduce((s, v) => s + v.viajes, 0)})` },
           { k: "todos",         l: "📋 Todo" },
         ].map(t => (
           <button key={t.k} onClick={() => setTab(t.k)}
@@ -324,7 +403,7 @@ export default function Lancha() {
         />
       )}
       {tab === "viajes" && (
-        <ListaViajes viajes={zarpesLancha} />
+        <ListaViajesComputados viajesPorFecha={viajesPorFecha} costoPorViaje={costoPorViaje} />
       )}
       {tab === "todos" && (
         <ListaEventos
@@ -524,41 +603,89 @@ function EventoRow({ item, onEdit, onDelete, onToggleResuelto, compact }) {
 }
 
 // ─── Lista de viajes (desde muelle_zarpes_flota) ───────────────────────────
-function ListaViajes({ viajes }) {
-  if (!viajes.length) {
+// ─── Lista de Viajes Computados ───────────────────────────────────────
+// Computa viajes a partir de muelle_llegadas + muelle_zarpes_flota usando:
+//   · Cada llegada se parea con el siguiente zarpe del mismo barco
+//   · Si hay 2 llegadas seguidas → zarpe perdido (?? perdido)
+//   · Si hay 2 zarpes seguidos → llegada perdida (?? perdido)
+//   · # viajes = max(llegadas, zarpes)
+//   · Costo combustible (estimado) = viajes × costo_viaje_sencillo × 2
+function ListaViajesComputados({ viajesPorFecha, costoPorViaje }) {
+  if (!viajesPorFecha.length) {
     return (
       <div style={{ padding: 30, background: B.navyMid, borderRadius: 10, textAlign: "center", fontSize: 13, color: "rgba(255,255,255,0.3)" }}>
         Sin viajes registrados.
-        <div style={{ fontSize: 11, marginTop: 6 }}>Los viajes se registran desde el módulo Salidas.</div>
+        <div style={{ fontSize: 11, marginTop: 6 }}>Los viajes se computan a partir de llegadas y zarpes del muelle.</div>
       </div>
     );
   }
-  // Los viajes NO tienen costo per-trip — el costo de operación se computa
-  // a partir del combustible cargado (tab Combustible).
+  const totalViajes = viajesPorFecha.reduce((s, v) => s + v.viajes, 0);
+  const totalCosto  = totalViajes * costoPorViaje;
+  const totalPerdidos = viajesPorFecha.reduce((s, v) => s + v.pares.filter(p => !p.llegada || !p.zarpe).length, 0);
+
   return (
-    <div style={{ background: B.navyMid, borderRadius: 10, overflow: "hidden" }}>
-      {viajes.map(v => (
-        <div key={v.id} style={{ padding: "10px 14px", borderBottom: "1px solid rgba(255,255,255,0.04)", display: "flex", alignItems: "center", gap: 10, fontSize: 13 }}>
-          <div style={{ minWidth: 80, fontSize: 11, color: "rgba(255,255,255,0.5)" }}>
-            <div style={{ fontWeight: 700 }}>{fmtFechaCorta(v.fecha)}</div>
-            <div>{fmtHora(v.hora_zarpe)}</div>
-          </div>
-          <div style={{ flex: 1 }}>
-            <div style={{ fontWeight: 700 }}>→ {v.destino || "Cartagena"}</div>
-            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)" }}>
-              {v.motivo}{(v.pax_a + v.pax_n) > 0 ? ` · 👥 ${v.pax_a}A${v.pax_n ? ` + ${v.pax_n}N` : ""}` : ""}
-              {v.notas ? ` · ${v.notas}` : ""}
+    <div>
+      {/* Banner de regla */}
+      <div style={{ background: B.navy, border: `1px solid ${B.sand}33`, borderRadius: 10, padding: "10px 14px", marginBottom: 12, fontSize: 11, color: "rgba(255,255,255,0.65)", lineHeight: 1.55 }}>
+        <strong style={{ color: B.sand }}>📐 Regla de viajes:</strong>
+        Cada viaje = ida y vuelta (Cartagena ↔ Atolón). Se calcula como{" "}
+        <code style={{ color: B.sky }}>max(llegadas registradas, zarpes registrados)</code> por día.
+        Eventos faltantes se infieren cuando hay 2 llegadas (zarpe perdido) o 2 zarpes seguidos (llegada perdida).
+        Costo combustible estimado = <strong style={{ color: B.sand }}>{fmtCOP(costoPorViaje)}/viaje</strong>.
+      </div>
+
+      <div style={{ background: B.navyMid, borderRadius: 10, overflow: "hidden" }}>
+        {viajesPorFecha.map(d => (
+          <div key={d.fecha} style={{ padding: "12px 14px", borderBottom: "1px solid rgba(255,255,255,0.04)" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
+              <div style={{ minWidth: 100, fontSize: 12, color: "rgba(255,255,255,0.6)", fontWeight: 700 }}>
+                {fmtFechaCorta(d.fecha)}
+              </div>
+              <div style={{ flex: 1, fontSize: 11, color: "rgba(255,255,255,0.45)" }}>
+                <span style={{ color: B.sky }}>{d.llegadas} 🛬</span>{" · "}
+                <span style={{ color: "#a78bfa" }}>{d.zarpes} 🛫</span>
+              </div>
+              <div style={{ fontSize: 13, fontWeight: 800, color: "#a78bfa" }}>
+                {d.viajes} viaje{d.viajes !== 1 ? "s" : ""}
+              </div>
+              <div style={{ fontSize: 12, color: B.sand, fontWeight: 700, minWidth: 100, textAlign: "right" }}>
+                {fmtCOP(d.viajes * costoPorViaje)}
+              </div>
+            </div>
+            {/* Pareo cronológico */}
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, paddingLeft: 110 }}>
+              {d.pares.map((p, i) => {
+                const incompleto = !p.llegada || !p.zarpe;
+                return (
+                  <span key={i} style={{
+                    fontSize: 10, padding: "3px 8px", borderRadius: 4,
+                    background: incompleto ? B.danger + "22" : B.success + "18",
+                    color: incompleto ? B.danger : "rgba(255,255,255,0.6)",
+                    border: incompleto ? `1px dashed ${B.danger}55` : "1px solid transparent",
+                  }}>
+                    {p.llegada || "??"}→{p.zarpe || "??"}
+                  </span>
+                );
+              })}
             </div>
           </div>
+        ))}
+        {/* Footer total */}
+        <div style={{ padding: "12px 14px", background: B.navy, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div>
+            <div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: "0.05em", fontWeight: 700 }}>Total</div>
+            <div style={{ fontSize: 12, color: "rgba(255,255,255,0.7)", marginTop: 2 }}>
+              {totalViajes} viajes en {viajesPorFecha.length} días
+              {totalPerdidos > 0 && (
+                <span style={{ color: B.danger, marginLeft: 8 }}>· ⚠ {totalPerdidos} eventos faltantes</span>
+              )}
+            </div>
+          </div>
+          <div style={{ textAlign: "right" }}>
+            <div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", textTransform: "uppercase" }}>Costo combustible estimado</div>
+            <div style={{ fontSize: 16, fontWeight: 800, color: B.sand }}>{fmtCOP(totalCosto)}</div>
+          </div>
         </div>
-      ))}
-      <div style={{ padding: "10px 14px", background: B.navy, display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 12 }}>
-        <span style={{ color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: "0.05em", fontSize: 10 }}>
-          Total · {viajes.length} viaje{viajes.length !== 1 ? "s" : ""}
-        </span>
-        <span style={{ color: "rgba(255,255,255,0.4)", fontSize: 10, fontStyle: "italic" }}>
-          Costo se calcula del combustible cargado
-        </span>
       </div>
     </div>
   );
