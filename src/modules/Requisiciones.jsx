@@ -2492,10 +2492,10 @@ function DetailModal({ req, onClose, onUpdate, onGenerarOC, proveedores, reglas,
                       const itemsNuevos = req.items.map((it, idx) =>
                         idxToOc[idx] ? { ...it, oc_id: idxToOc[idx], oc_codigo: idxToOc[idx] } : it
                       );
-                      const todosAsignados = itemsNuevos.every(it => it.oc_id);
+                      const algunoAsignado = itemsNuevos.some(it => it.oc_id);
                       await supabase.from("requisiciones").update({
                         items: itemsNuevos,
-                        estado: todosAsignados ? "En Compra" : req.estado,
+                        estado: algunoAsignado && req.estado === "Aprobada" ? "En Compra" : req.estado,
                         timeline: [...(req.timeline || []), {
                           quien: currentUser.nombre,
                           accion: `Dividida en ${ocsGeneradas.length} OC${ocsGeneradas.length !== 1 ? "s" : ""}`,
@@ -2904,14 +2904,16 @@ export function AsignarOCModal({ items, proveedores, ordenes, reqs, currentUser,
       if (!req) continue;
       const idxs = items.filter(i => i.req_id === rid).map(i => i.item_idx);
       const nuevosItems = (req.items || []).map((it, idx) => idxs.includes(idx) ? { ...it, oc_id: ocIdFinal, oc_codigo: codigo } : it);
-      // Si todos los items ya tienen oc_id, la req pasa a "En Compra"
-      const todosAsignados = nuevosItems.every(it => it.oc_id);
+      // En cuanto AL MENOS un item se asigna a OC, la req pasa a "En Compra"
+      // (antes solo cambiaba cuando TODOS los items estaban asignados)
+      const algunoAsignado = nuevosItems.some(it => it.oc_id);
+      const nuevoEstado = algunoAsignado && req.estado === "Aprobada" ? "En Compra" : req.estado;
       await supabase.from("requisiciones").update({
         items: nuevosItems,
-        estado: todosAsignados ? "En Compra" : req.estado,
+        estado: nuevoEstado,
         timeline: [...(req.timeline || []), {
           quien: currentUser.nombre,
-          accion: `${idxs.length} ítem${idxs.length !== 1 ? "s" : ""} asignado${idxs.length !== 1 ? "s" : ""} a OC`,
+          accion: `${idxs.length} ítem${idxs.length !== 1 ? "s" : ""} asignado${idxs.length !== 1 ? "s" : ""} a OC` + (nuevoEstado === "En Compra" && req.estado !== "En Compra" ? " · estado → En Compra" : ""),
           fecha: new Date().toLocaleString("es-CO"),
           comentario: codigo,
         }],
