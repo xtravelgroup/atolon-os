@@ -58,21 +58,25 @@ export default function Reportes() {
 
 // ─── REPORTE A&B (Loggro Restobar) ──────────────────────────────────────────
 function ReporteAyB() {
-  const [subTab, setSubTab] = useState("cortesias"); // cortesias | anuladas | descuentos
+  const [subTab, setSubTab] = useState("pedidos_cortesia"); // pedidos_cortesia | cortesias | anuladas | descuentos
   const [fechaIni, setFechaIni] = useState(firstOfMonth());
   const [fechaFin, setFechaFin] = useState(todayStr());
   const [data, setData] = useState({ cortesias: [], anuladas: [], descuentos: [], resumen: null });
+  const [pedidosCortesia, setPedidosCortesia] = useState([]);
   const [loading, setLoading] = useState(true);
 
   const cargar = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch(
-        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/loggro-sync/reporte-ayb?from=${fechaIni}&to=${fechaFin}`,
-        { headers: { apikey: import.meta.env.VITE_SUPABASE_ANON_KEY, Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}` } }
-      );
-      const json = await res.json();
-      if (json.ok) setData(json);
+      const auth = { apikey: import.meta.env.VITE_SUPABASE_ANON_KEY, Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}` };
+      const [r1, r2] = await Promise.all([
+        fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/loggro-sync/reporte-ayb?from=${fechaIni}&to=${fechaFin}`, { headers: auth }),
+        fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/loggro-sync/reporte-cortesias-pedidos?from=${fechaIni}&to=${fechaFin}`, { headers: auth }),
+      ]);
+      const j1 = await r1.json();
+      const j2 = await r2.json();
+      if (j1.ok) setData(j1);
+      if (j2.ok) setPedidosCortesia(j2.cortesias || []);
     } catch (e) {
       console.error("[ReporteAyB]", e);
     } finally {
@@ -81,10 +85,14 @@ function ReporteAyB() {
   }, [fechaIni, fechaFin]);
   useEffect(() => { cargar(); }, [cargar]);
 
-  const lista = data[subTab] || [];
+  const lista = subTab === "pedidos_cortesia" ? pedidosCortesia : (data[subTab] || []);
 
   const handleExport = () => {
-    if (subTab === "cortesias") {
+    if (subTab === "pedidos_cortesia") {
+      const rows = [["Fecha pedido", "Fecha cortesía", "Producto", "Cantidad", "Cliente", "Nota", "Cortesía por", "Pedido por"]];
+      lista.forEach(r => rows.push([r.fecha_pedido, r.fecha_cortesia, r.producto, r.cantidad, r.cliente, r.nota, r.cortesia_por, r.pedido_por]));
+      exportCSV(`ayb_pedidos_cortesia_${fechaIni}_${fechaFin}.csv`, rows);
+    } else if (subTab === "cortesias") {
       const rows = [["Fecha", "Hora", "Factura", "Cliente", "Cajero", "Subtotal", "Descuento", "Total", "Items"]];
       lista.forEach(r => rows.push([r.fecha, r.hora, r.numero, r.cliente, r.usuario, r.subtotal, r.discount, r.total, r.items_count]));
       exportCSV(`ayb_cortesias_${fechaIni}_${fechaFin}.csv`, rows);
@@ -110,7 +118,8 @@ function ReporteAyB() {
       {/* Sub-tabs */}
       <div style={{ display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap" }}>
         {[
-          { k: "cortesias",  l: "🎁 Cortesías",   c: "#a78bfa", count: data.resumen?.cortesias?.count, total: data.resumen?.cortesias?.total },
+          { k: "pedidos_cortesia", l: "🎁 Pedidos Cortesía", c: "#a78bfa", count: pedidosCortesia.length, total: null, sub: "Items KOT marcados como cortesía" },
+          { k: "cortesias",  l: "🧾 Facturas Cortesía",  c: "#c084fc", count: data.resumen?.cortesias?.count, total: data.resumen?.cortesias?.total },
           { k: "anuladas",   l: "✕ Anuladas",     c: B.danger,  count: data.resumen?.anuladas?.count,  total: data.resumen?.anuladas?.total },
           { k: "descuentos", l: "💰 Descuentos",  c: B.warning, count: data.resumen?.descuentos?.count, total: data.resumen?.descuentos?.total_descontado },
         ].map(t => {
@@ -134,10 +143,36 @@ function ReporteAyB() {
       </div>
 
       {loading ? (
-        <div style={{ padding: 40, textAlign: "center", color: "rgba(255,255,255,0.4)" }}>Cargando facturas de Loggro…</div>
+        <div style={{ padding: 40, textAlign: "center", color: "rgba(255,255,255,0.4)" }}>Cargando datos de Loggro…</div>
       ) : lista.length === 0 ? (
         <div style={{ padding: 40, textAlign: "center", background: B.navyMid, borderRadius: 12, color: "rgba(255,255,255,0.4)" }}>
-          Sin {subTab} en este rango.
+          Sin {subTab.replace("_", " ")} en este rango.
+        </div>
+      ) : subTab === "pedidos_cortesia" ? (
+        <div style={{ background: B.navyMid, borderRadius: 12, overflow: "hidden", overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, minWidth: 1000 }}>
+            <thead>
+              <tr style={{ background: B.navyLight }}>
+                {["Fecha pedido", "Fecha cortesía", "Producto", "Cant", "Cliente", "Nota", "Cortesía por", "Pedido por"].map(h => (
+                  <th key={h} style={{ padding: "10px 12px", textAlign: "left", fontSize: 10, color: "rgba(255,255,255,0.6)", textTransform: "uppercase", letterSpacing: "0.06em" }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {lista.map(r => (
+                <tr key={r.id} style={{ borderTop: "1px solid rgba(255,255,255,0.04)" }}>
+                  <td style={{ padding: "10px 12px", fontFamily: "monospace", fontSize: 11, whiteSpace: "nowrap" }}>{r.fecha_pedido}</td>
+                  <td style={{ padding: "10px 12px", fontFamily: "monospace", fontSize: 11, color: "rgba(255,255,255,0.5)", whiteSpace: "nowrap" }}>{r.fecha_cortesia}</td>
+                  <td style={{ padding: "10px 12px", fontWeight: 700 }}>{r.producto}</td>
+                  <td style={{ padding: "10px 12px", textAlign: "center", fontWeight: 800, color: "#a78bfa" }}>{r.cantidad}</td>
+                  <td style={{ padding: "10px 12px" }}>{r.cliente}</td>
+                  <td style={{ padding: "10px 12px", fontSize: 11, color: "rgba(255,255,255,0.55)", maxWidth: 240 }}>{r.nota || "—"}</td>
+                  <td style={{ padding: "10px 12px", fontWeight: 700, color: B.warning }}>{r.cortesia_por}</td>
+                  <td style={{ padding: "10px 12px", color: "rgba(255,255,255,0.6)" }}>{r.pedido_por}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       ) : (
         <div style={{ background: B.navyMid, borderRadius: 12, overflow: "hidden", overflowX: "auto" }}>
@@ -190,10 +225,11 @@ function ReporteAyB() {
       )}
 
       <div style={{ marginTop: 16, padding: 12, background: B.navy, borderRadius: 8, fontSize: 11, color: "rgba(255,255,255,0.45)", lineHeight: 1.5 }}>
-        ℹ️ Datos directos de Loggro Restobar (todas las facturas del periodo).
-        <strong style={{ color: B.sand }}> Cortesías</strong>: facturas con descuento ≥99% o total $0 con productos.
-        <strong style={{ color: B.danger }}> Anuladas</strong>: facturas con <code>deletedInfo.isDeleted = true</code>.
-        <strong style={{ color: B.warning }}> Descuentos</strong>: descuentos parciales (incluye recargos y ajustes registrados como descuento).
+        ℹ️ Datos directos de Loggro Restobar.{" "}
+        <strong style={{ color: "#a78bfa" }}>Pedidos Cortesía</strong>: items individuales (KOT) marcados como cortesía con nota y autorización.{" "}
+        <strong style={{ color: "#c084fc" }}>Facturas Cortesía</strong>: facturas completas con descuento ≥99% o total $0.{" "}
+        <strong style={{ color: B.danger }}>Anuladas</strong>: facturas anuladas en Loggro.{" "}
+        <strong style={{ color: B.warning }}>Descuentos</strong>: descuentos parciales aplicados.
       </div>
     </div>
   );

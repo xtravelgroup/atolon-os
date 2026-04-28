@@ -702,13 +702,120 @@ serve(async (req) => {
       });
     }
 
+    // GET /loggro-sync/reporte-cortesias-pedidos?from=...&to=...
+    // Reporte de "Pedidos de cortesía" (KOT-level) — equivalente al
+    // reporte que da Loggro Restobar. Lista cada pedido individual
+    // marcado como complementary (cortesía).
+    if (req.method === "GET" && path === "/reporte-cortesias-pedidos") {
+      const from = url.searchParams.get("from");
+      const to   = url.searchParams.get("to");
+      if (!from || !to) return json({ error: "params from y to requeridos" }, 400);
+
+      const pageSize = 100;
+      const allOrders: any[] = [];
+      const seen = new Set<string>();
+      const MAX_PAGES = 200;
+      let stopReached = false;
+      for (let batchStart = 0; batchStart < MAX_PAGES && !stopReached; batchStart += 20) {
+        const batch = [];
+        for (let p = batchStart; p < batchStart + 20 && p < MAX_PAGES; p++) {
+          batch.push(
+            loggroGet(`/orders?pagination=true&limit=${pageSize}&page=${p}`)
+              .then(d => ({ page: p, arr: d?.data || (Array.isArray(d) ? d : []) }))
+              .catch(() => ({ page: p, arr: [] }))
+          );
+        }
+        const results = await Promise.all(batch);
+        let emptyPagesInBatch = 0;
+        results.forEach(r => {
+          if (r.arr.length === 0) emptyPagesInBatch++;
+          r.arr.forEach((o: any) => {
+            if (o?._id && !seen.has(o._id)) { seen.add(o._id); allOrders.push(o); }
+          });
+        });
+        if (emptyPagesInBatch >= 5) stopReached = true;
+      }
+
+      const COTZ_OFFSET_MS = -5 * 3600 * 1000;
+      const cortesias: any[] = [];
+      for (const o of allOrders) {
+        if (!o?.complementary?.isComplementary) continue;
+        const ts = o?.createdOn;
+        if (!ts) continue;
+        const utc = new Date(ts).getTime();
+        const co = new Date(utc + COTZ_OFFSET_MS);
+        const coDay = co.toISOString().slice(0, 10);
+        if (coDay < from || coDay > to) continue;
+
+        const fechaCortesia = o?.complementary?.modifiedOn || o?.modifiedOn || o?.createdOn;
+        const fcUTC = new Date(fechaCortesia).getTime();
+        const fcLocal = new Date(fcUTC + COTZ_OFFSET_MS);
+
+        cortesias.push({
+          id: o._id,
+          fecha_pedido: co.toISOString().slice(0, 19).replace("T", " "),
+          fecha_cortesia: fcLocal.toISOString().slice(0, 19).replace("T", " "),
+          producto: o?.product?.name || "—",
+          cantidad: Number(o?.quantity) || 0,
+          cliente: o?.complementary?.client?.name || o?.table?.name || "General",
+          nota: o?.complementary?.note || "",
+          cortesia_por: o?.modifiedBy?.name || "—",        // quién autorizó la cortesía
+          pedido_por: o?.seller?.name || "—",              // mesero que tomó el pedido
+          total: Number(o?.total) || 0,
+          status: o?.status || "",
+        });
+      }
+
+      cortesias.sort((a, b) => b.fecha_pedido.localeCompare(a.fecha_pedido));
+
+      return json({
+        ok: true, from, to,
+        orders_revisados: allOrders.length,
+        total_cortesias: cortesias.length,
+        cortesias,
+      });
+    }
+
+    // GET /loggro-sync/inspect-order — debug: muestra un order completo
+    if (req.method === "GET" && path === "/inspect-order") {
+      const onlyComplementary = url.searchParams.get("complementary") === "true";
+      // Buscar uno marcado como complementary
+      for (let p = 0; p < 50; p++) {
+        const data: any = await loggroGet(`/orders?pagination=true&limit=100&page=${p}`);
+        const arr = data?.data || (Array.isArray(data) ? data : []);
+        if (arr.length === 0) break;
+        const found = onlyComplementary
+          ? arr.find((o: any) => o?.complementary?.isComplementary === true)
+          : arr[0];
+        if (found) return json({ ok: true, page_found: p, sample: found });
+      }
+      return json({ ok: false, error: "no se encontró order con complementary=true" });
+    }
+
     // GET /loggro-sync/inspect-invoice — debug: muestra una factura cruda
-    // con todos sus campos para entender qué propiedades existen
-    // (descuento, cortesía, anulación, etc.)
     if (req.method === "GET" && path === "/inspect-invoice") {
       const data: any = await loggroGet(`/invoices?pagination=true&limit=1&page=0`);
       const arr = data?.data || (Array.isArray(data) ? data : []);
       return json({ ok: true, sample: arr[0] || null, keys: arr[0] ? Object.keys(arr[0]) : [] });
+    }
+
+    // GET /loggro-sync/probe-loggro?path=... — debug: prueba un endpoint arbitrario
+    if (req.method === "GET" && path === "/probe-loggro") {
+      const probePath = url.searchParams.get("path");
+      if (!probePath) return json({ error: "param path requerido" }, 400);
+      try {
+        const data: any = await loggroGet(probePath);
+        const arr = Array.isArray(data) ? data : data?.data || data?.items || data?.results;
+        return json({
+          ok: true, path: probePath,
+          is_array: Array.isArray(arr),
+          count: Array.isArray(arr) ? arr.length : null,
+          sample: Array.isArray(arr) ? arr[0] : data,
+          keys: Array.isArray(arr) && arr[0] ? Object.keys(arr[0]) : (data ? Object.keys(data).slice(0, 30) : []),
+        });
+      } catch (e: any) {
+        return json({ ok: false, path: probePath, error: e?.message });
+      }
     }
 
     // GET /loggro-sync/reporte-ayb?from=...&to=...
