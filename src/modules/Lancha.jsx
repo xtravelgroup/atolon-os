@@ -89,11 +89,20 @@ export default function Lancha() {
 
   const lancha = lanchas.find(l => l.id === activeLancha);
   const bitacoraLancha = useMemo(() => bitacora.filter(b => b.lancha_id === activeLancha), [bitacora, activeLancha]);
-  const zarpesLancha = useMemo(() => zarpes.filter(z => lancha && z.embarcacion === lancha.nombre), [zarpes, lancha]);
+  // Normaliza nombre: lowercase, sin tildes, colapsa letras repetidas.
+  // Esto permite que "Natturale" y "Naturalle" matcheen como la misma lancha.
+  const normNombre = (s) => (s || "").toLowerCase()
+    .normalize("NFD").replace(/[̀-ͯ]/g, "")
+    .replace(/(.)\1+/g, "$1").trim();
+  const zarpesLancha = useMemo(() => {
+    if (!lancha) return [];
+    const target = normNombre(lancha.nombre);
+    return zarpes.filter(z => z.embarcacion && normNombre(z.embarcacion) === target);
+  }, [zarpes, lancha]);
   const llegadasLancha = useMemo(() => {
     if (!lancha) return [];
-    const nameRe = new RegExp(`^${lancha.nombre.replace(/[^\w]/g, ".?")}$`, "i");
-    return llegadas.filter(l => l.embarcacion_nombre && nameRe.test(l.embarcacion_nombre.trim()));
+    const target = normNombre(lancha.nombre);
+    return llegadas.filter(l => l.embarcacion_nombre && normNombre(l.embarcacion_nombre) === target);
   }, [llegadas, lancha]);
   const capitanesLancha = useMemo(() => capitanes.filter(c => c.lancha_id === activeLancha), [capitanes, activeLancha]);
 
