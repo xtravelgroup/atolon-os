@@ -132,23 +132,92 @@ const FETCHERS = {
   "Suministros":       ({ year, month, ytd }) => pagosOtrosPorCat(year, month, ytd, ["suministros", "papeleria", "limpieza"]),
   "Comunidad":         ({ year, month, ytd }) => pagosOtrosPorCat(year, month, ytd, ["comunidad", "rse"]),
   "Contratistas":      ({ year, month, ytd }) => pagosOtrosPorCat(year, month, ytd, ["contratista", "freelance"]),
-  "Comisiones":        async ({ year, month, ytd }) => {
-    const { from, to } = rango(year, month, ytd);
-    const { data } = await supabase
-      .from("comisiones_semanas")
-      .select("id, aliado_nombre, monto_comision, semana_inicio, semana_fin, estado, ejecutado_at, pago_metodo, pago_referencia")
-      .gte("ejecutado_at", from + "T00:00:00").lte("ejecutado_at", to + "T23:59:59")
-      .order("ejecutado_at", { ascending: false });
-    return {
-      transactions: (data || []).map(c => ({
-        fecha: (c.ejecutado_at || "").slice(0, 10),
-        descripcion: `${c.aliado_nombre} · sem ${c.semana_inicio?.slice(5)}–${c.semana_fin?.slice(5)}${c.pago_referencia ? " · " + c.pago_referencia : ""}`,
-        monto: Number(c.monto_comision || 0), ref: c.id, source: "comisiones_semanas",
-      })),
-      sourcesNote: `Comisiones ejecutadas (pagadas) en el período.`,
-    };
-  },
+  "Comisiones":        async ({ year, month, ytd }) => fetchComisiones(year, month, ytd),
+  "Comisiones B2B":    async ({ year, month, ytd }) => fetchComisiones(year, month, ytd),
+
+  // Aliases para Financiero
+  "Grupos":   async ({ year, month, ytd }) => fetchEventos(year, month, ytd, "grupo"),
+  "Eventos":  async ({ year, month, ytd }) => fetchEventos(year, month, ytd, "evento"),
+  "Alimentos y Bebidas (Loggro)": async (p) => FETCHERS["Alimentos y Bebidas"](p),
+  "Pasadías (Caja)":  async ({ year, month, ytd }) => fetchCierresPorArea(year, month, ytd, "pasadias"),
+  "After Island":     async ({ year, month, ytd }) => fetchCierresPorArea(year, month, ytd, "after_island"),
+  "Otros (Caja)":     async ({ year, month, ytd }) => fetchCierresPorArea(year, month, ytd, "otros"),
 };
+
+async function fetchComisiones(year, month, ytd) {
+  const { from, to } = rango(year, month, ytd);
+  const { data } = await supabase
+    .from("comisiones_semanas")
+    .select("id, aliado_nombre, monto_comision, semana_inicio, semana_fin, estado, ejecutado_at, pago_metodo, pago_referencia")
+    .gte("ejecutado_at", from + "T00:00:00").lte("ejecutado_at", to + "T23:59:59")
+    .order("ejecutado_at", { ascending: false });
+  return {
+    transactions: (data || []).map(c => ({
+      fecha: (c.ejecutado_at || "").slice(0, 10),
+      descripcion: `${c.aliado_nombre} · sem ${c.semana_inicio?.slice(5)}–${c.semana_fin?.slice(5)}${c.pago_referencia ? " · " + c.pago_referencia : ""}`,
+      monto: Number(c.monto_comision || 0), ref: c.id, source: "comisiones_semanas",
+    })),
+    sourcesNote: `Comisiones ejecutadas (pagadas) en el período.`,
+  };
+}
+
+async function fetchEventos(year, month, ytd, categoria) {
+  const { from, to } = rango(year, month, ytd);
+  const { data } = await supabase
+    .from("eventos")
+    .select("id, fecha, nombre, total_evento, abonos_total, estado, categoria, stage, aliado_id")
+    .gte("fecha", from).lte("fecha", to)
+    .eq("categoria", categoria)
+    .order("fecha", { ascending: false });
+  return {
+    transactions: (data || []).map(e => ({
+      fecha: e.fecha,
+      descripcion: `${categoria === "grupo" ? "Grupo" : "Evento"} · ${e.nombre}${e.aliado_id ? " · B2B" : ""}`,
+      monto: Number(e.abonos_total || e.total_evento || 0),
+      ref: e.id, source: "eventos",
+    })),
+    sourcesNote: `Tabla eventos filtrado por categoria='${categoria}'.`,
+  };
+}
+
+async function fetchCierresPorArea(year, month, ytd, area) {
+  const { from, to } = rango(year, month, ytd);
+  const { data } = await supabase
+    .from("cierre_caja_dia")
+    .select("fecha, total_ventas, ventas_netas, ventas_brutas, area, sede")
+    .gte("fecha", from).lte("fecha", to)
+    .eq("area", area)
+    .order("fecha", { ascending: false });
+  return {
+    transactions: (data || []).map(c => ({
+      fecha: c.fecha,
+      descripcion: `Caja · ${area}${c.sede ? " · " + c.sede : ""}`,
+      monto: Number(c.ventas_netas || c.total_ventas || c.ventas_brutas || 0),
+      ref: c.fecha, source: "cierre_caja_dia",
+    })),
+    sourcesNote: `Cierres de caja con area='${area}'.`,
+  };
+}
+
+// Fallback genérico: si la categoría no tiene fetcher mapeado, busca en
+// pagos_otros con matching exacto del campo categoria (case-insensitive).
+async function fetchPagosOtrosGenerico(year, month, ytd, label) {
+  const { from, to } = rango(year, month, ytd);
+  const { data } = await supabase
+    .from("pagos_otros")
+    .select("id, fecha, concepto, categoria, proveedor, monto")
+    .gte("fecha", from).lte("fecha", to)
+    .ilike("categoria", label)
+    .order("fecha", { ascending: false });
+  return {
+    transactions: (data || []).map(p => ({
+      fecha: p.fecha,
+      descripcion: `${p.concepto || "—"}${p.proveedor ? " · " + p.proveedor : ""}`,
+      monto: Number(p.monto || 0), ref: p.id, source: "pagos_otros",
+    })),
+    sourcesNote: `pagos_otros donde categoria ilike "${label}".`,
+  };
+}
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 function rango(year, monthIdx, ytd) {
@@ -253,13 +322,16 @@ export default function PnLDetalleModal({ categoria, tipo, year, month, ytd = fa
       setLoading(true);
       setErr("");
       const fetcher = FETCHERS[categoria];
-      if (!fetcher) {
-        setData({ transactions: [], sourcesNote: "" });
-        setLoading(false);
-        return;
-      }
       try {
-        const result = await fetcher({ year, month, ytd });
+        let result;
+        if (fetcher) {
+          result = await fetcher({ year, month, ytd });
+        } else if (tipo === "gasto" || tipo === "costo") {
+          // Fallback: buscar la categoría en pagos_otros
+          result = await fetchPagosOtrosGenerico(year, month, ytd, categoria);
+        } else {
+          result = { transactions: [], sourcesNote: "" };
+        }
         setData(result);
       } catch (e) {
         console.error("[PnLDetalle] error:", e);
@@ -307,18 +379,18 @@ export default function PnLDetalleModal({ categoria, tipo, year, month, ytd = fa
             </div>
           )}
 
-          {!loading && !err && !FETCHERS[categoria] && (
+          {!loading && !err && !FETCHERS[categoria] && tipo === "ingreso" && data.transactions.length === 0 && (
             <div style={{ padding: 24, background: B.warning + "11", border: `1px solid ${B.warning}44`, borderRadius: 10, color: "rgba(255,255,255,0.8)" }}>
               <div style={{ fontSize: 14, fontWeight: 700, color: B.warning, marginBottom: 6 }}>
                 Sin drill-down configurado para esta categoría
               </div>
               <div style={{ fontSize: 12, lineHeight: 1.6 }}>
-                "{categoria}" no tiene fuente de datos automática mapeada. Los valores actuales se ingresan manualmente desde el módulo Presupuesto. Para habilitar drill-down, dime qué tabla/criterio quieres usar y lo agrego.
+                "{categoria}" no tiene fuente de datos automática mapeada. Los valores actuales se ingresan manualmente. Dime qué tabla/criterio quieres usar y lo agrego.
               </div>
             </div>
           )}
 
-          {!loading && !err && FETCHERS[categoria] && data.transactions.length === 0 && (
+          {!loading && !err && data.transactions.length === 0 && (FETCHERS[categoria] || tipo !== "ingreso") && (
             <div style={{ padding: 24, background: B.navy, borderRadius: 10, textAlign: "center", color: "rgba(255,255,255,0.4)" }}>
               <div style={{ fontSize: 32, marginBottom: 6 }}>📭</div>
               <div style={{ fontSize: 13 }}>No se encontraron transacciones para este período en las fuentes configuradas.</div>
