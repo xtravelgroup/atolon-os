@@ -68,7 +68,9 @@ function paxPorSalida(reservas, salidas, grupos = []) {
 const EMPTY_FORM = {
   nombre: "", contacto: "", telefono: "", fecha: "", tipo: PASADIAS[0]?.tipo || "", pax_a: 1, pax_n: 0,
   salida_id: "", canal: "WhatsApp", precio: PASADIAS[0]?.precio || 0, precio_nino: 0,
-  abono: 0, forma_pago: "Sin definir", fecha_pago: "", aliado_id: "", vendedor: "Sin asignar", notas: "",
+  abono: 0, forma_pago: "Sin definir", fecha_pago: "", aliado_id: "", vendedor: "Sin asignar",
+  notas: "", notas_club: "",
+  nombre_embarcacion: "", hora_llegada: "",
   // Facturación electrónica
   factura_electronica: false,
   fe_tipo_persona: "natural", fe_tipo_documento: "CC", fe_numero_documento: "", fe_dv: "",
@@ -2078,6 +2080,14 @@ function ReservaModal({ onClose, onSave, isMobile, salidaList = [], aliadoList =
       if (k === "forma_pago" && v === "CXC") {
         next.abono = 0;
       }
+      // Auto-prender factura_electronica si el usuario llena cualquier campo FE.
+      // Bug recurrente: usuarios llenan los datos pero olvidan el toggle, y
+      // los datos NO se guardan porque al guardar se hace
+      // factura_electronica ? form.fe_xxx : null
+      const FE_TRIGGER_FIELDS = ["fe_numero_documento", "fe_email", "fe_razon_social", "fe_nombres", "fe_apellidos", "fe_telefono", "fe_direccion"];
+      if (FE_TRIGGER_FIELDS.includes(k) && String(v || "").trim() !== "" && !next.factura_electronica) {
+        next.factura_electronica = true;
+      }
       return next;
     });
     setErrors(e => ({ ...e, [k]: undefined }));
@@ -2524,6 +2534,18 @@ function ReservaModal({ onClose, onSave, isMobile, salidaList = [], aliadoList =
         <div style={FS}>
           <label style={LS}>Notas</label>
           <textarea rows={2} style={{ ...IS(), resize: "vertical" }} value={form.notas} onChange={e => set("notas", e.target.value)} placeholder="Observaciones, peticiones especiales…" />
+        </div>
+
+        {/* Notas Club — internas, equipo de servicio */}
+        <div style={FS}>
+          <label style={{ ...LS, color: "#a78bfa" }}>
+            🏝 Notas Club <span style={{ color: "rgba(255,255,255,0.35)", textTransform: "none", fontSize: 10, fontWeight: 400, letterSpacing: 0 }}>(internas — para el equipo de servicio)</span>
+          </label>
+          <textarea rows={2}
+            style={{ ...IS(), resize: "vertical", borderColor: "rgba(167,139,250,0.3)", background: "rgba(167,139,250,0.05)" }}
+            value={form.notas_club || ""}
+            onChange={e => set("notas_club", e.target.value)}
+            placeholder="Preferencias de servicio, alergias, detalles operativos…" />
         </div>
 
         {/* Facturación electrónica */}
@@ -3709,6 +3731,7 @@ export default function Reservas() {
       aliado_id:       form.aliado_id || null,
       vendedor:        form.vendedor !== "Sin asignar" ? form.vendedor : null,
       notas:           (form.notas || "") + (Array.isArray(form.edades_ninos) && form.edades_ninos.filter(e => e !== "").length > 0 ? ` · Edades niños: ${form.edades_ninos.filter(e => e !== "").join(", ")}` : ""),
+      notas_club:      (form.notas_club || "").trim() || null,
       fecha_pago:      isCortesia ? todayStr() : (form.fecha_pago || null),
       nombre_embarcacion: form.nombre_embarcacion || null,
       hora_llegada:    form.hora_llegada || null,
