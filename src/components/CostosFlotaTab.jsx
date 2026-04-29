@@ -34,10 +34,10 @@ export default function CostosFlotaTab() {
         .select("lancha_id, lancha_nombre, fecha, tipo, costo_total, galones, proveedor")
         .gte("fecha", desde).limit(2000),
       supabase.from("muelle_zarpes_flota")
-        .select("fecha, embarcacion, motivo, pax_a, pax_n, costo_operativo")
+        .select("fecha, hora_zarpe, embarcacion, motivo, pax_a, pax_n, costo_operativo, motores_horas")
         .gte("fecha", desde).limit(2000),
       supabase.from("muelle_llegadas")
-        .select("fecha, embarcacion_nombre, tipo, pax_a, pax_n, costo_operativo")
+        .select("fecha, hora_llegada, embarcacion_nombre, tipo, pax_a, pax_n, costo_operativo, motores_horas")
         .gte("fecha", desde)
         .in("tipo", ["lancha_atolon", "lanchas_atolon"])
         .limit(2000),
@@ -73,8 +73,35 @@ export default function CostosFlotaTab() {
     const costoCapTerceros = bMes.filter(b => b.tipo === "capitanes").reduce((s, b) => s + Number(b.costo_total || 0), 0);
     const costoCapNomina   = capitanes.filter(c => c.tipo === "nomina").reduce((s, c) => s + Number(c.salario_mensual || 0), 0);
     const costoCapitanes   = costoCapTerceros + costoCapNomina;
-    // Reserva mensual para reposición de motores (configurable por lancha)
-    const reservaMotores   = lanchas.reduce((s, l) => s + Number(l.motor_reserva_mensual || 0), 0);
+
+    // ── Reserva motores: horas de uso del mes × $/hora por lancha ─────────
+    // Fuente: motores_horas (jsonb {babor, estribor, centro}) en zarpes_flota
+    // y muelle_llegadas. Se toma el delta entre la primera y última lectura
+    // del mes. Suma babor+estribor+centro = horas de motor (acumula los
+    // motores múltiples — para Yamaha F350 dual son ~2 motores que se
+    // reemplazan independientemente, así que sumar es correcto para reserva).
+    const normN = (s) => (s || "").toLowerCase()
+      .normalize("NFD").replace(/[̀-ͯ]/g, "")
+      .replace(/(.)\1+/g, "$1").trim();
+    const sumH = (h) => Number(h?.babor || 0) + Number(h?.estribor || 0) + Number(h?.centro || 0);
+    const horasUsoPorLancha = {};
+    lanchas.forEach(l => {
+      const target = normN(l.nombre);
+      const reads = [
+        ...zMes.filter(z => z.motores_horas && normN(z.embarcacion) === target)
+              .map(z => ({ fecha: z.fecha, hora: z.hora_zarpe, motores_horas: z.motores_horas })),
+        ...lMes.filter(x => x.motores_horas && normN(x.embarcacion_nombre) === target)
+              .map(x => ({ fecha: x.fecha, hora: x.hora_llegada, motores_horas: x.motores_horas })),
+      ].sort((a, b) => (a.fecha + (a.hora || "")).localeCompare(b.fecha + (b.hora || "")));
+      if (reads.length < 2) {
+        horasUsoPorLancha[l.id] = 0;
+        return;
+      }
+      const first = sumH(reads[0].motores_horas);
+      const last  = sumH(reads[reads.length - 1].motores_horas);
+      horasUsoPorLancha[l.id] = Math.max(0, last - first);
+    });
+    const reservaMotores = lanchas.reduce((s, l) => s + (horasUsoPorLancha[l.id] || 0) * Number(l.motor_reserva_por_hora || 0), 0);
     // Compatibilidad: aún calculamos viajes pero NO se suma al total
     const costoSalidas     = zMes.reduce((s, z) => s + Number(z.costo_operativo || 0), 0);
     const costoLlegadas    = lMes.reduce((s, l) => s + Number(l.costo_operativo || 0), 0);
@@ -121,12 +148,17 @@ export default function CostosFlotaTab() {
       const lLlegadasN = llL.length;
       const lMediosViajes = lSalidas + lLlegadasN;
       const lViajesCompletos = Math.floor(lMediosViajes / 2);
-      const totalLancha = lComb + lMant + lMar + lCap + lViaj;
+      // Reserva motores por lancha = horas usadas × $/hora
+      const lHorasUso = horasUsoPorLancha[l.id] || 0;
+      const lReservaMot = lHorasUso * Number(l.motor_reserva_por_hora || 0);
+      const totalLancha = lComb + lMant + lMar + lCap + lReservaMot;
       return {
         id: l.id, nombre: l.nombre, capacidad: l.capacidad_pax || 0,
         comb: lComb, mant: lMant, marina: lMar, capitanes: lCap, viajes: lViaj,
         salidas: lSalidas, llegadas: lLlegadasN, mediosViajes: lMediosViajes,
         viajesCompletos: lViajesCompletos,
+        horasUso: lHorasUso, reservaMotores: lReservaMot,
+        tarifaHora: Number(l.motor_reserva_por_hora || 0),
         pax: lPax, total: totalLancha,
         costoPorPax: lPax > 0 ? totalLancha / lPax : 0,
         costoPorMedioViaje: lMediosViajes > 0 ? lViaj / lMediosViajes : 0,
@@ -134,8 +166,9 @@ export default function CostosFlotaTab() {
       };
     });
 
+    const horasMotorMes = Object.values(horasUsoPorLancha).reduce((s, h) => s + h, 0);
     return { costoComb, galones, costoMant, costoMarina, costoCapitanes, costoCapNomina, costoCapTerceros,
-             reservaMotores,
+             reservaMotores, horasMotorMes,
              costoSalidas, costoLlegadas, costoViajes, costosTotales,
              pax, paxLlegada, paxSalida,
              numSalidas, numLlegadas, numMediosViajes, numViajesCompletos,
@@ -151,14 +184,27 @@ export default function CostosFlotaTab() {
       arr.push(d.toISOString().slice(0, 7));
     }
     const capNomMensual = capitanes.filter(c => c.tipo === "nomina").reduce((s, c) => s + Number(c.salario_mensual || 0), 0);
-    const reservaMot = lanchas.reduce((s, l) => s + Number(l.motor_reserva_mensual || 0), 0);
+    const normN6 = (s) => (s || "").toLowerCase()
+      .normalize("NFD").replace(/[̀-ͯ]/g, "")
+      .replace(/(.)\1+/g, "$1").trim();
+    const sumH6 = (h) => Number(h?.babor || 0) + Number(h?.estribor || 0) + Number(h?.centro || 0);
     return arr.map(ym => {
       const b = bitacora.filter(x => (x.fecha || "").startsWith(ym));
       const comb   = b.filter(x => x.tipo === "combustible").reduce((s, x) => s + Number(x.costo_total || 0), 0);
       const mant   = b.filter(x => ["mantenimiento", "reparacion", "inspeccion", "limpieza"].includes(x.tipo)).reduce((s, x) => s + Number(x.costo_total || 0), 0);
       const marina = b.filter(x => x.tipo === "marina").reduce((s, x) => s + Number(x.costo_total || 0), 0);
       const cap    = b.filter(x => x.tipo === "capitanes").reduce((s, x) => s + Number(x.costo_total || 0), 0) + capNomMensual;
-      const reserva = reservaMot; // misma reserva todos los meses (constante)
+      // Reserva motores por mes = sum(horas mes × $/hora) por lancha
+      const reserva = lanchas.reduce((sum, l) => {
+        const target = normN6(l.nombre);
+        const reads = [
+          ...zarpes.filter(z => z.motores_horas && (z.fecha || "").startsWith(ym) && normN6(z.embarcacion) === target).map(z => ({ fecha: z.fecha, hora: z.hora_zarpe, mh: z.motores_horas })),
+          ...llegadas.filter(x => x.motores_horas && (x.fecha || "").startsWith(ym) && normN6(x.embarcacion_nombre) === target).map(x => ({ fecha: x.fecha, hora: x.hora_llegada, mh: x.motores_horas })),
+        ].sort((a, b2) => (a.fecha + (a.hora || "")).localeCompare(b2.fecha + (b2.hora || "")));
+        if (reads.length < 2) return sum;
+        const horas = Math.max(0, sumH6(reads[reads.length - 1].mh) - sumH6(reads[0].mh));
+        return sum + horas * Number(l.motor_reserva_por_hora || 0);
+      }, 0);
       return { mes: ym, comb, mant, marina, cap, reserva, total: comb + mant + marina + cap + reserva };
     });
   }, [bitacora, lanchas, capitanes]);
@@ -197,7 +243,7 @@ export default function CostosFlotaTab() {
         <Kpi label="Capitanes"       valor={fmtCOP(data.costoCapitanes)} color="#fb923c"
              sub={`${fmtCOP(data.costoCapNomina)} nómina + ${fmtCOP(data.costoCapTerceros)} terc.`} />
         <Kpi label="Reserva motores" valor={fmtCOP(data.reservaMotores)} color="#a78bfa"
-             sub="Provisión mensual para reposición" />
+             sub={data.horasMotorMes > 0 ? `${data.horasMotorMes.toFixed(1)} h motor × tarifa por lancha` : "Sin lecturas de motor este mes"} />
         <Kpi label="Costo total mes" valor={fmtCOP(data.costosTotales)} color={B.danger} grande
              sub="Comb + Mant + Marina + Capitanes + Reserva" />
       </div>
