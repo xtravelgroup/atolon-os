@@ -14,10 +14,13 @@ import { supabase } from "../lib/supabase";
 
 const COP = (n) => "$" + Math.round(Number(n) || 0).toLocaleString("es-CO");
 
+const todayISO = () => new Date().toISOString().slice(0, 10);
+
 export default function MarcarPagadoModal({ pago, currentUser, onClose, onSaved }) {
   const [referencia, setReferencia] = useState("");
   const [cuentaOrigen, setCuentaOrigen] = useState("");
   const [metodo, setMetodo] = useState("transferencia");
+  const [fechaPago, setFechaPago] = useState(todayISO());
   const [comprobante, setComprobante] = useState(null);
   const [comprobantePreview, setPreview] = useState("");
   const [saving, setSaving] = useState(false);
@@ -54,20 +57,29 @@ export default function MarcarPagadoModal({ pago, currentUser, onClose, onSaved 
     return pub.publicUrl;
   };
 
-  const todayStr = () => new Date().toISOString().slice(0, 10);
+  // Convierte la fecha YYYY-MM-DD elegida a un timestamp ISO completo.
+  // Si es hoy, usamos la hora actual. Si es otro día, usamos 12:00 local
+  // para evitar problemas de timezone que cambien el día al guardar.
+  const fechaPagoToTimestamp = () => {
+    const today = todayISO();
+    if (fechaPago === today) return new Date().toISOString();
+    return new Date(`${fechaPago}T12:00:00`).toISOString();
+  };
 
   const guardar = async () => {
     if (!referencia.trim()) { setErr("La referencia del pago es requerida."); return; }
+    if (!fechaPago)         { setErr("La fecha de pago es requerida."); return; }
     setSaving(true);
     setErr("");
     try {
       const refId = pago.oc?.id || pago.gasto?.id || pago.comision?.id || `PAGO-${Date.now()}`;
       const comprobante_url = comprobante ? await subirComprobante(refId) : null;
+      const pagoTs = fechaPagoToTimestamp();
 
       if (pago.accion === "marcar_anticipo") {
         await supabase.from("ordenes_compra").update({
           anticipo_pagado:           true,
-          anticipo_pagado_at:        new Date().toISOString(),
+          anticipo_pagado_at:        pagoTs,
           anticipo_pagado_por:       currentUser?.email || null,
           anticipo_referencia_pago:  referencia.trim(),
           anticipo_comprobante_url:  comprobante_url,
@@ -81,7 +93,7 @@ export default function MarcarPagadoModal({ pago, currentUser, onClose, onSaved 
           id,
           oc_id:           pago.oc.id,
           oc_codigo:       pago.oc.codigo,
-          fecha_pago:      todayStr(),
+          fecha_pago:      fechaPago,
           monto,
           metodo,
           cuenta_origen:   cuentaOrigen.trim() || null,
@@ -94,13 +106,13 @@ export default function MarcarPagadoModal({ pago, currentUser, onClose, onSaved 
         await supabase.from("ordenes_compra").update({
           monto_pagado:    nuevoTotal,
           pagada_completa: completa,
-          pagada_at:       completa ? new Date().toISOString() : null,
+          pagada_at:       completa ? pagoTs : null,
           estado:          completa ? "pagada" : pago.oc.estado,
         }).eq("id", pago.oc.id);
       } else if (pago.accion === "marcar_gasto") {
         await supabase.from("pagos_otros").update({
           pagado:          true,
-          pagado_at:       new Date().toISOString(),
+          pagado_at:       pagoTs,
           pagado_por:      currentUser?.email || null,
           referencia:      referencia.trim(),
           cuenta_origen:   cuentaOrigen.trim() || null,
@@ -111,7 +123,7 @@ export default function MarcarPagadoModal({ pago, currentUser, onClose, onSaved 
       } else if (pago.accion === "marcar_comision") {
         await supabase.from("comisiones_semanas").update({
           estado:               "ejecutado",
-          ejecutado_at:         new Date().toISOString(),
+          ejecutado_at:         pagoTs,
           ejecutado_por:        currentUser?.email || null,
           pago_referencia:      referencia.trim(),
           pago_metodo:          metodo,
@@ -147,6 +159,16 @@ export default function MarcarPagadoModal({ pago, currentUser, onClose, onSaved 
             <input value={referencia} onChange={e => setReferencia(e.target.value)}
               placeholder="Ej: TRX-238472, cheque #123, ZELLE-XYZ"
               style={IS} />
+          </div>
+
+          <div>
+            <label style={LS}>Fecha del pago *</label>
+            <input type="date" value={fechaPago} onChange={e => setFechaPago(e.target.value)}
+              max={todayISO()}
+              style={IS} />
+            <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", marginTop: 4 }}>
+              {fechaPago === todayISO() ? "Pago de hoy" : `Pago retroactivo — ${new Date(fechaPago + "T12:00:00").toLocaleDateString("es-CO", { day: "2-digit", month: "long", year: "numeric" })}`}
+            </div>
           </div>
 
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
