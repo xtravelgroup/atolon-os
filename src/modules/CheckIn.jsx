@@ -488,22 +488,57 @@ async function generarZarpe(salida, reservas, fecha, despacho, emb) {
       const { data: u } = await supabase.from("usuarios").select("nombre").eq("email", email.toLowerCase()).maybeSingle();
       nombre = u?.nombre || email;
     }
-    await supabase.from("zarpes_log").insert({
+    // Buscar el código de zarpe del despacho de la salida (no del per-emb)
+    // — el código se guarda en salida_despachos por fecha+salida_id, y debe
+    // aparecer en TODOS los zarpes generados para esa salida.
+    let codigoFinal = despacho?.zarpe_codigo || null;
+    let despachoIdFinal = despacho?.id || null;
+    if (!codigoFinal && salida?.id) {
+      const { data: deRow } = await supabase
+        .from("salida_despachos")
+        .select("id, zarpe_codigo")
+        .eq("fecha", fecha)
+        .eq("salida_id", salida.id)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (deRow?.zarpe_codigo) codigoFinal = deRow.zarpe_codigo;
+      if (deRow?.id) despachoIdFinal = deRow.id;
+    }
+
+    // PREVENIR DUPLICADOS: si ya existe un zarpe para misma fecha+salida+
+    // embarcación, hacer UPDATE en vez de INSERT. Antes había hasta 10
+    // duplicados por click repetido del botón "📄 Generar zarpe".
+    const { data: existing } = await supabase
+      .from("zarpes_log")
+      .select("id")
+      .eq("fecha", fecha)
+      .eq("salida_id", salida.id)
+      .eq("embarcacion_nombre", emb?.nombre || "")
+      .maybeSingle();
+
+    const payload = {
       fecha,
       salida_id:           salida.id,
       salida_hora:         salida.hora,
       salida_nombre:       salida.nombre,
       embarcacion_id:      emb?.id || null,
       embarcacion_nombre:  emb?.nombre || null,
-      zarpe_codigo:        despacho?.zarpe_codigo || null,
+      zarpe_codigo:        codigoFinal,
       pax_total:           totalPax,
       colaboradores_count: despacho?.colaboradores?.length || 0,
       pasajeros:           paxList,
       colaboradores:       despacho?.colaboradores || [],
-      despacho_id:         despacho?.id || null,
+      despacho_id:         despachoIdFinal,
       generado_por_email:  email,
       generado_por_nombre: nombre,
-    });
+    };
+
+    if (existing?.id) {
+      await supabase.from("zarpes_log").update(payload).eq("id", existing.id);
+    } else {
+      await supabase.from("zarpes_log").insert(payload);
+    }
   } catch (e) {
     console.warn("No se pudo registrar zarpe en bitácora:", e);
   }
