@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
+import PnLDetalleModal from "../components/PnLDetalleModal.jsx";
 import { B, COP } from "../brand";
 import { supabase } from "../lib/supabase";
 import { getAyBRango, getAyBPorDia } from "../lib/loggroAyB";
@@ -62,6 +63,7 @@ export default function Financiero() {
   const [eventosData,   setEventosData]   = useState([]);
   const [b2bReservas,   setB2bReservas]   = useState([]);
   const [conveniosData, setConveniosData] = useState([]);
+  const [drillDown, setDrillDown] = useState(null); // { categoria, tipo, year, month, ytd }
   const [cxcRows,       setCxcRows]       = useState([]);
   const [diaDetalle,    setDiaDetalle]    = useState(null);
   const [diaPagos,      setDiaPagos]      = useState([]);
@@ -589,28 +591,47 @@ export default function Financiero() {
         const gasC  = totalGastos(periodoComparar || "");
         const utilC = ingC - gasC;
 
-        const Row = ({ label, val, color, bold, sub, delta }) => (
-          <div style={{
-            display: "flex", justifyContent: "space-between", alignItems: "center",
-            padding: sub ? "8px 20px 8px 36px" : "13px 20px",
-            borderBottom: `1px solid ${B.navyLight}`,
-            background: bold ? B.navyLight + "66" : "transparent",
-          }}>
-            <span style={{ fontSize: sub ? 12 : 14, color: sub ? "rgba(255,255,255,0.55)" : B.white, fontWeight: bold ? 700 : 400 }}>
-              {label}
-            </span>
-            <div style={{ textAlign: "right" }}>
-              <div style={{ fontSize: sub ? 12 : 14, fontWeight: bold ? 700 : 500, color: color || B.white }}>
-                {COP(val)}
-              </div>
-              {delta != null && periodoComparar && (
-                <div style={{ fontSize: 10, color: delta >= 0 ? B.success : B.danger }}>
-                  {delta >= 0 ? "+" : ""}{(delta * 100).toFixed(1)}% vs {fmtPeriodo(periodoComparar)}
+        // Helper: derivar year/month/ytd del periodoActual para drill-down
+        const openDrill = (categoria, tipo) => {
+          // periodoActual puede ser "YYYY-MM" (mes) o "YYYY-MM-DD" (día/semana)
+          const parts = (periodoActual || "").split("-");
+          const y = Number(parts[0]) || new Date().getFullYear();
+          const m = (Number(parts[1]) || 1) - 1; // 0-based
+          setDrillDown({ categoria, tipo, year: y, month: m, ytd: false });
+        };
+
+        const Row = ({ label, val, color, bold, sub, delta, onClick }) => {
+          const clickable = !!onClick;
+          return (
+            <div
+              onClick={onClick}
+              style={{
+                display: "flex", justifyContent: "space-between", alignItems: "center",
+                padding: sub ? "8px 20px 8px 36px" : "13px 20px",
+                borderBottom: `1px solid ${B.navyLight}`,
+                background: bold ? B.navyLight + "66" : "transparent",
+                cursor: clickable ? "pointer" : "default",
+                transition: "background 0.15s",
+              }}
+              onMouseEnter={clickable ? e => e.currentTarget.style.background = B.navyLight + "aa" : undefined}
+              onMouseLeave={clickable ? e => e.currentTarget.style.background = bold ? B.navyLight + "66" : "transparent" : undefined}>
+              <span style={{ fontSize: sub ? 12 : 14, color: sub ? "rgba(255,255,255,0.55)" : B.white, fontWeight: bold ? 700 : 400 }}>
+                {label}
+                {clickable && <span style={{ marginLeft: 6, fontSize: 9, color: "rgba(255,255,255,0.3)" }}>🔍</span>}
+              </span>
+              <div style={{ textAlign: "right" }}>
+                <div style={{ fontSize: sub ? 12 : 14, fontWeight: bold ? 700 : 500, color: color || B.white }}>
+                  {COP(val)}
                 </div>
-              )}
+                {delta != null && periodoComparar && (
+                  <div style={{ fontSize: 10, color: delta >= 0 ? B.success : B.danger }}>
+                    {delta >= 0 ? "+" : ""}{(delta * 100).toFixed(1)}% vs {fmtPeriodo(periodoComparar)}
+                  </div>
+                )}
+              </div>
             </div>
-          </div>
-        );
+          );
+        };
 
         return (
           <div>
@@ -640,9 +661,9 @@ export default function Financiero() {
 
               {/* Ingresos */}
               <Row label="INGRESOS" val={ing} bold color={B.success} delta={ingC ? (ing - ingC) / (ingC || 1) : null} />
-              {ingPasadias > 0 && <Row label="Pasadías" val={ingPasadias} sub />}
-              {ingGrupos   > 0 && <Row label="Grupos"   val={ingGrupos}   sub />}
-              {ingEventos  > 0 && <Row label="Eventos"  val={ingEventos}  sub />}
+              {ingPasadias > 0 && <Row label="Pasadías" val={ingPasadias} sub onClick={() => openDrill("Pasadías", "ingreso")} />}
+              {ingGrupos   > 0 && <Row label="Grupos"   val={ingGrupos}   sub onClick={() => openDrill("Grupos", "ingreso")} />}
+              {ingEventos  > 0 && <Row label="Eventos"  val={ingEventos}  sub onClick={() => openDrill("Eventos", "ingreso")} />}
               {(() => {
                 const AREA_LABEL = { pasadias: "Pasadías (Caja)", after_island: "After Island", otros: "Otros" };
                 const byArea = {};
@@ -657,17 +678,17 @@ export default function Financiero() {
                 Object.entries(byArea).forEach(([area, val]) => rows.push([area, val, AREA_LABEL[area] || area]));
                 if (rows.length === 0) return null;
                 return rows.map(([area, val, label]) => (
-                  <Row key={area} label={label} val={val} sub />
+                  <Row key={area} label={label} val={val} sub onClick={() => openDrill(label, "ingreso")} />
                 ));
               })()}
 
               {/* Costos y Gastos */}
               <div style={{ height: 1, background: B.navyLight, margin: "4px 0" }} />
               <Row label="COSTOS Y GASTOS" val={gas} bold color={B.danger} delta={gasC ? (gas - gasC) / (gasC || 1) : null} />
-              {(() => { const com = comisionesDePeriodo(periodoActual); return com > 0 ? <Row label="Comisiones B2B" val={com} sub /> : null; })()}
+              {(() => { const com = comisionesDePeriodo(periodoActual); return com > 0 ? <Row label="Comisiones B2B" val={com} sub onClick={() => openDrill("Comisiones B2B", "gasto")} /> : null; })()}
               {cats.length === 0 && comisionesDePeriodo(periodoActual) === 0
                 ? <div style={{ padding: "8px 20px 8px 36px", fontSize: 12, color: "rgba(255,255,255,0.3)" }}>Sin gastos en este período</div>
-                : cats.map(c => <Row key={c.cat} label={c.cat} val={c.val} sub />)
+                : cats.map(c => <Row key={c.cat} label={c.cat} val={c.val} sub onClick={() => openDrill(c.cat, "gasto")} />)
               }
 
               {/* Utilidad */}
@@ -1415,6 +1436,18 @@ export default function Financiero() {
             )}
           </div>
         </div>
+      )}
+
+      {/* Drill-down de P&L */}
+      {drillDown && (
+        <PnLDetalleModal
+          categoria={drillDown.categoria}
+          tipo={drillDown.tipo}
+          year={drillDown.year}
+          month={drillDown.month}
+          ytd={drillDown.ytd}
+          onClose={() => setDrillDown(null)}
+        />
       )}
     </div>
   );
