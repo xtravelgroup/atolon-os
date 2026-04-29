@@ -321,10 +321,13 @@ export default function Requisiciones() {
     };
 
     // ¿Ya existe OC abierta (emitida) para este proveedor?
+    // IMPORTANTE: solo se mergea con OCs en estado "emitida" Y NO enviadas
+    // todavía al proveedor. Una OC con enviada_at o estado >= "enviada" se
+    // considera cerrada para nuevos items — siempre se crea una OC nueva.
     const provId = req.proveedor_id || prov?.id;
     const provNombre = prov?.nombre || req.proveedor_nombre || req.proveedor;
     const ocExistente = ordenes.find(o =>
-      o.estado === "emitida" &&
+      o.estado === "emitida" && !o.enviada_at &&
       ((provId && o.proveedor_id === provId) ||
        (!provId && (o.proveedor_nombre || "").trim().toLowerCase() === (provNombre || "").trim().toLowerCase()))
     );
@@ -2089,8 +2092,8 @@ function DetailModal({ req, onClose, onUpdate, onGenerarOC, proveedores, reglas,
         .select("id, items, estado")
         .eq("requisicion_id", req.id);
       for (const oc of (ocs || [])) {
-        // Solo tocar OCs que aún no fueron recibidas
-        if (oc.estado === "recibida" || oc.estado === "cerrada") continue;
+        // Solo tocar OCs en borrador/emitida (no enviadas, no recibidas)
+        if (oc.estado === "recibida" || oc.estado === "cerrada" || oc.estado === "enviada" || oc.estado === "confirmada" || oc.enviada_at) continue;
         const ocItems = (oc.items || []).map(ocIt => {
           const match = nuevosItems.find(ni => ni.item_id === ocIt.item_id || ni.id === ocIt.id);
           if (!match) return ocIt;
