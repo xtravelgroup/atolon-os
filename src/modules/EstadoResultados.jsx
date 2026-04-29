@@ -6,6 +6,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { supabase } from "../lib/supabase";
 import { B } from "../brand";
+import PnLDetalleModal from "../components/PnLDetalleModal.jsx";
 
 const MESES       = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
 const MESES_SHORT = ["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
@@ -25,6 +26,7 @@ export default function EstadoResultados() {
   const [month, setMonth] = useState(new Date().getMonth()); // 0-based
   const [cats, setCats] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [drillDown, setDrillDown] = useState(null); // { categoria, tipo, ytd }
 
   useEffect(() => {
     (async () => {
@@ -167,7 +169,9 @@ export default function EstadoResultados() {
             {/* REVENUE */}
             <SectionHeader label="INGRESOS" color={B.success} />
             {ingresos.map(r => (
-              <LineRow key={r.id} row={r} month={month} revenueMes={revenueMes} revenueYTD={revenueYTD} mAt={mAt} ytdUpTo={month} isIncome />
+              <LineRow key={r.id} row={r} month={month} revenueMes={revenueMes} revenueYTD={revenueYTD} mAt={mAt} ytdUpTo={month} isIncome
+                onDrillMonth={() => setDrillDown({ categoria: r.categoria, tipo: "ingreso", ytd: false })}
+                onDrillYTD={() => setDrillDown({ categoria: r.categoria, tipo: "ingreso", ytd: true })} />
             ))}
             <SubtotalRow label="TOTAL INGRESOS" mes={revenueMes} mesBudget={revenueMesBudget} mesHas={revenueMesHas}
               ytd={revenueYTD} ytdBudget={revenueYTDBudget} ytdHas={revenueYTDHas}
@@ -177,7 +181,9 @@ export default function EstadoResultados() {
             {costos.length > 0 && <>
               <SectionHeader label="COSTO DE VENTAS" color={B.pink} />
               {costos.map(r => (
-                <LineRow key={r.id} row={r} month={month} revenueMes={revenueMes} revenueYTD={revenueYTD} mAt={mAt} ytdUpTo={month} />
+                <LineRow key={r.id} row={r} month={month} revenueMes={revenueMes} revenueYTD={revenueYTD} mAt={mAt} ytdUpTo={month}
+                  onDrillMonth={() => setDrillDown({ categoria: r.categoria, tipo: "costo", ytd: false })}
+                  onDrillYTD={() => setDrillDown({ categoria: r.categoria, tipo: "costo", ytd: true })} />
               ))}
               <SubtotalRow label="TOTAL COSTO DE VENTAS" mes={costosMes} mesBudget={costosMesBudget} mesHas={costosMesHas}
                 ytd={costosYTD} ytdBudget={costosYTDBudget} ytdHas={costosYTDHas}
@@ -193,7 +199,9 @@ export default function EstadoResultados() {
             {gastos.length > 0 && <>
               <SectionHeader label="GASTOS OPERATIVOS Y ADMINISTRATIVOS" color={B.warning} />
               {gastos.map(r => (
-                <LineRow key={r.id} row={r} month={month} revenueMes={revenueMes} revenueYTD={revenueYTD} mAt={mAt} ytdUpTo={month} />
+                <LineRow key={r.id} row={r} month={month} revenueMes={revenueMes} revenueYTD={revenueYTD} mAt={mAt} ytdUpTo={month}
+                  onDrillMonth={() => setDrillDown({ categoria: r.categoria, tipo: "gasto", ytd: false })}
+                  onDrillYTD={() => setDrillDown({ categoria: r.categoria, tipo: "gasto", ytd: true })} />
               ))}
               <SubtotalRow label="TOTAL GASTOS" mes={gastosMes} mesBudget={gastosMesBudget} mesHas={gastosMesHas}
                 ytd={gastosYTD} ytdBudget={gastosYTDBudget} ytdHas={gastosYTDHas}
@@ -212,6 +220,17 @@ export default function EstadoResultados() {
       <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", marginTop: 12, textAlign: "right" }}>
         Valores en millones COP · B = miles de millones · Datos: módulo Presupuesto · Generado {new Date().toLocaleDateString("es-CO", { day: "numeric", month: "short", year: "numeric" })}
       </div>
+
+      {drillDown && (
+        <PnLDetalleModal
+          categoria={drillDown.categoria}
+          tipo={drillDown.tipo}
+          year={year}
+          month={month}
+          ytd={drillDown.ytd}
+          onClose={() => setDrillDown(null)}
+        />
+      )}
     </div>
   );
 }
@@ -255,7 +274,7 @@ function SectionHeader({ label, color }) {
   );
 }
 
-function LineRow({ row, month, revenueMes, revenueYTD, mAt, ytdUpTo, isIncome }) {
+function LineRow({ row, month, revenueMes, revenueYTD, mAt, ytdUpTo, isIncome, onDrillMonth, onDrillYTD }) {
   const mesActual = mAt(row, "actual", month);
   const mesBudget = mAt(row, "budget", month) || 0;
   const mesHas = mesActual !== null;
@@ -276,18 +295,38 @@ function LineRow({ row, month, revenueMes, revenueYTD, mAt, ytdUpTo, isIncome })
   const ytdFav = ytdVar === null ? null : (isIncome ? ytdVar >= 0 : ytdVar <= 0);
   const ytdPctRev = ytdHas ? safeDiv(ytdActualSum, revenueYTD) : null;
 
+  const clickable = !!onDrillMonth || !!onDrillYTD;
+  const numClickable = (clickHandler, baseStyle) => ({
+    ...baseStyle,
+    cursor: clickHandler ? "pointer" : "default",
+    transition: "background 0.15s",
+  });
+
   return (
-    <tr style={{ borderBottom: `1px solid ${B.navyLight}40` }}>
-      <td style={{ padding: "9px 16px", fontSize: 13, color: "rgba(255,255,255,0.9)" }}>
+    <tr style={{ borderBottom: `1px solid ${B.navyLight}40` }}
+      onMouseEnter={clickable ? e => e.currentTarget.style.background = B.navy + "60" : undefined}
+      onMouseLeave={clickable ? e => e.currentTarget.style.background = "transparent" : undefined}>
+      <td style={{ padding: "9px 16px", fontSize: 13, color: "rgba(255,255,255,0.9)", cursor: clickable ? "pointer" : "default" }}
+        onClick={() => onDrillMonth?.()}
+        title={clickable ? "Click para ver detalle del mes" : ""}>
         {row.categoria}
+        {clickable && <span style={{ marginLeft: 6, fontSize: 9, color: "rgba(255,255,255,0.3)" }}>🔍</span>}
         {row._isFormula && <span style={{ fontSize: 9, marginLeft: 6, padding: "1px 6px", borderRadius: 8, background: B.warning + "22", color: B.warning, fontWeight: 700 }}>ƒ {row.formula_pct}%</span>}
       </td>
-      <td style={numCell(mesHas ? B.white : "rgba(255,255,255,0.2)")}>{mesHas ? COP_COMPACT(mesAct) : "—"}</td>
+      <td style={numClickable(onDrillMonth, numCell(mesHas ? B.white : "rgba(255,255,255,0.2)"))}
+        onClick={() => mesHas && onDrillMonth?.()}
+        title={mesHas && onDrillMonth ? "Ver transacciones del mes" : ""}>
+        {mesHas ? COP_COMPACT(mesAct) : "—"}
+      </td>
       <td style={numCell("rgba(255,255,255,0.5)")}>{COP_COMPACT(mesBudget)}</td>
       <td style={numCell(mesVar === null ? "rgba(255,255,255,0.2)" : mesFav ? B.success : B.danger)}>{mesVar === null ? "—" : COP_COMPACT(mesVar)}</td>
       <td style={numCell(mesVar === null ? "rgba(255,255,255,0.2)" : mesFav ? B.success : B.danger)}>{mesVar === null ? "—" : PCT(mesVarPct)}</td>
       <td style={numCell("rgba(255,255,255,0.4)")}>{mesPctRev === null ? "—" : PCT(mesPctRev)}</td>
-      <td style={{...numCell(ytdHas ? B.white : "rgba(255,255,255,0.2)"), borderLeft: `2px solid ${B.sand}`}}>{ytdHas ? COP_COMPACT(ytdActualSum) : "—"}</td>
+      <td style={{...numClickable(onDrillYTD, numCell(ytdHas ? B.white : "rgba(255,255,255,0.2)")), borderLeft: `2px solid ${B.sand}`}}
+        onClick={() => ytdHas && onDrillYTD?.()}
+        title={ytdHas && onDrillYTD ? "Ver transacciones YTD" : ""}>
+        {ytdHas ? COP_COMPACT(ytdActualSum) : "—"}
+      </td>
       <td style={numCell("rgba(255,255,255,0.5)")}>{COP_COMPACT(ytdBudgetSum)}</td>
       <td style={numCell(ytdVar === null ? "rgba(255,255,255,0.2)" : ytdFav ? B.success : B.danger)}>{ytdVar === null ? "—" : COP_COMPACT(ytdVar)}</td>
       <td style={numCell("rgba(255,255,255,0.4)")}>{ytdPctRev === null ? "—" : PCT(ytdPctRev)}</td>
