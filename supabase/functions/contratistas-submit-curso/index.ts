@@ -59,8 +59,16 @@ serve(async (req) => {
     if (!token) return new Response(JSON.stringify({ error: "token requerido" }), { status: 400, headers: { ...CORS, "Content-Type": "application/json" } });
 
     const supabase = sb();
-    const { data: t } = await supabase.from("contratistas_trabajadores")
-      .select("id, nombre, cedula, correo, contratista_id, curso_completado").eq("curso_token", token).maybeSingle();
+    // NOTA: la columna `correo` NO existe en contratistas_trabajadores
+    // (solo `celular`). Para enviar el email del certificado al trabajador
+    // necesitamos buscar el correo en la tabla padre `contratistas` después.
+    const { data: t, error: tErr } = await supabase.from("contratistas_trabajadores")
+      .select("id, nombre, cedula, contratista_id, curso_completado")
+      .eq("curso_token", token).maybeSingle();
+    if (tErr) {
+      console.error("[submit-curso] select error:", tErr);
+      return new Response(JSON.stringify({ error: "Error al validar token: " + tErr.message }), { status: 500, headers: { ...CORS, "Content-Type": "application/json" } });
+    }
     if (!t) return new Response(JSON.stringify({ error: "Token inválido" }), { status: 404, headers: { ...CORS, "Content-Type": "application/json" } });
 
     // Puntuar
@@ -89,9 +97,9 @@ serve(async (req) => {
       });
       await supabase.from("contratistas_trabajadores").update({
         curso_completado: true,
-        curso_fecha: new Date().toISOString(),
+        fecha_curso: new Date().toISOString(),  // columna real: fecha_curso (no curso_fecha)
         curso_score: score,
-        curso_codigo: codigo,
+        codigo_curso: codigo,                   // columna real: codigo_curso (no curso_codigo)
       }).eq("id", t.id);
 
       // Bitácora
@@ -102,14 +110,21 @@ serve(async (req) => {
         metadata: { trabajador_id: t.id, codigo, score },
       });
 
-      // Email al trabajador
-      if (t.correo) {
+      // Email al trabajador — buscar email en la empresa contratista (padre)
+      // ya que contratistas_trabajadores no tiene columna correo.
+      let emailDestino: string | null = null;
+      if (t.contratista_id) {
+        const { data: contr } = await supabase.from("contratistas")
+          .select("email, contacto_email").eq("id", t.contratista_id).maybeSingle();
+        emailDestino = contr?.email || contr?.contacto_email || null;
+      }
+      if (emailDestino) {
         const verifyUrl = `${PORTAL_BASE}/verificar/${codigo}`;
         const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?data=${encodeURIComponent(verifyUrl)}&size=200x200`;
         await fetch(SEND_URL, {
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            to: [t.correo],
+            to: [emailDestino],
             kind: "certificado",
             contratista_id: t.contratista_id,
             trabajador_id: t.id,
