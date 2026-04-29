@@ -580,7 +580,7 @@ async function generarZarpe(salida, reservas, fecha, despacho, emb) {
     <div class="meta">
       <div><b>Fecha:</b> ${new Date(fecha + "T12:00:00").toLocaleDateString("es-CO", { weekday:"long", day:"numeric", month:"long", year:"numeric" })}</div>
       <div><b>Hora salida:</b> ${salida.hora} &nbsp;·&nbsp; Regreso ${salida.hora_regreso}</div>
-      <div><b>Total pasajeros:</b> ${totalPax}</div>
+      <div><b>Total pasajeros:</b> ${fullList.length}${(despacho?.colaboradores?.length > 0) ? ` <span style="color:#666;font-size:11px;">(${totalPax} pasadía + ${despacho.colaboradores.length} staff)</span>` : ""}</div>
       <div><b>Salida:</b> Muelle de La Bodeguita</div>
       <div><b>Destino:</b> Boca Chica, Tierra Bomba</div>
       <div><b>Generado:</b> ${new Date().toLocaleString("es-CO")}</div>
