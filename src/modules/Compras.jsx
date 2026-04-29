@@ -34,6 +34,11 @@ const OC_BADGE = {
   cancelada:        { bg: "#2A0A0A", color: B.danger,  label: "Cancelada" },
 };
 
+// Estados editables — una OC se considera editable solo en borrador o emitida.
+// Una vez "enviada" al proveedor (o más allá), se bloquea: no se editan items
+// ni se le agregan items nuevos desde requisiciones — se debe crear una OC nueva.
+const OC_EDITABLE = (oc) => !oc?.enviada_at && (oc?.estado === "emitida" || oc?.estado === "borrador" || !oc?.estado);
+
 export default function Compras() {
   const { isMobile } = useBreakpoint();
   const [tab, setTab] = useState("dashboard");
@@ -244,6 +249,24 @@ function TabOrdenes({ ordenes, reload, currentUser }) {
 
   const totalFiltradas = filtradas.reduce((s, o) => s + Number(o.total || 0), 0);
 
+  // Marcar OC como enviada al proveedor — bloquea edición e impide
+  // que se le agreguen más items desde Requisiciones. Si necesitan más
+  // items, deben crear una OC nueva.
+  const marcarEnviada = async (oc) => {
+    if (!confirm(
+      `¿Confirmar que la OC ${oc.codigo} fue enviada al proveedor?\n\n` +
+      `Una vez marcada, NO se podrán agregar más items a esta orden — ` +
+      `los items nuevos crearán una OC nueva.`
+    )) return;
+    const { error } = await supabase.from("ordenes_compra").update({
+      estado:      "enviada",
+      enviada_at:  new Date().toISOString(),
+      updated_at:  new Date().toISOString(),
+    }).eq("id", oc.id);
+    if (error) return alert("Error: " + error.message);
+    reload?.();
+  };
+
   return (
     <div>
       {/* Filtros */}
@@ -294,7 +317,7 @@ function TabOrdenes({ ordenes, reload, currentUser }) {
                   <div style={{ textAlign: isMobile ? "left" : "right", display: "flex", flexDirection: "column", gap: 6, alignItems: isMobile ? "flex-start" : "flex-end" }}>
                     <div style={{ fontSize: 16, fontWeight: 800, color: B.sand, fontFamily: "'Barlow Condensed', sans-serif" }}>{COP(oc.total || 0)}</div>
                     <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                      {!oc.factura_aplicada && (
+                      {OC_EDITABLE(oc) && !oc.factura_aplicada && (
                         <button onClick={() => setOpenEditar(oc)}
                           style={btnAccion(B.sand)}
                           title="Editar items, cantidades, proveedor de la OC">
@@ -306,6 +329,18 @@ function TabOrdenes({ ordenes, reload, currentUser }) {
                         title="Enviar OC al proveedor por correo con PDF">
                         📧 Email
                       </button>
+                      {OC_EDITABLE(oc) ? (
+                        <button onClick={() => marcarEnviada(oc)}
+                          style={btnAccion(B.sky)}
+                          title="Marcar como enviada al proveedor — bloquea edición y no permite agregar más items">
+                          📤 Enviada a proveedor
+                        </button>
+                      ) : (
+                        <span style={{ ...btnAccion(B.success + "44"), cursor: "default", color: B.success, display: "inline-flex", alignItems: "center", gap: 4 }}
+                          title={`Enviada${oc.enviada_at ? " el " + fmtFecha(oc.enviada_at.slice(0,10)) : ""} — bloqueada para nuevos items`}>
+                          🔒 Enviada
+                        </span>
+                      )}
                       <button onClick={() => setOpenCotizResp(oc)}
                         style={btnAccion(oc.cotizacion_resp_aprobada ? B.success : oc.cotizacion_resp_data ? B.warning : "#a78bfa")}
                         title="Cotización-respuesta del proveedor">
@@ -883,6 +918,11 @@ function EditarOCModal({ oc, onClose, reload, currentUser }) {
   const guardar = async () => {
     setSaving(true); setErr("");
     try {
+      // Defensa en profundidad: si la OC fue enviada al proveedor, no permitir
+      // ediciones aunque alguien acceda al modal. Crear nueva OC en su lugar.
+      if (oc.enviada_at || ["enviada", "confirmada", "recibida_parcial", "recibida", "pagada", "cancelada"].includes(oc.estado)) {
+        throw new Error(`La OC ya fue enviada al proveedor (estado: ${oc.estado}). No se puede editar — crea una OC nueva si necesitas ajustes.`);
+      }
       if (items.length === 0) throw new Error("Debe haber al menos 1 ítem");
       if (!proveedorNombre.trim()) throw new Error("Debe seleccionar un proveedor");
 
