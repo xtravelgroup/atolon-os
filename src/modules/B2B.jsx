@@ -4,6 +4,7 @@ import { supabase } from "../lib/supabase";
 import { asignarPuntosReserva, getRankingAgencia, getPuntosConfig } from "../lib/puntos";
 import Incentivos from "./Incentivos";
 import { EventoModal, ReservasGrupoModal } from "./Eventos";
+import ReporteVisitasB2B from "../components/ReporteVisitasB2B.jsx";
 
 const IS = { width: "100%", padding: "9px 12px", borderRadius: 8, background: B.navy, border: `1px solid ${B.navyLight}`, color: B.white, fontSize: 13, outline: "none", boxSizing: "border-box" };
 const LS = { fontSize: 11, color: B.sand, display: "block", marginBottom: 5, textTransform: "uppercase", letterSpacing: "0.06em" };
@@ -3729,7 +3730,7 @@ export default function B2B() {
     <div>
       {/* Tabs principales */}
       <div style={{ display: "flex", gap: 6, marginBottom: 24, background: B.navyMid, borderRadius: 12, padding: 5 }}>
-        {[["aliados", "🏢 Aliados"], ["incentivos", "🎯 Incentivos"]].map(([k, l]) => (
+        {[["aliados", "🏢 Aliados"], ["incentivos", "🎯 Incentivos"], ["reporte_visitas", "📊 Reporte Visitas"]].map(([k, l]) => (
           <button key={k} onClick={() => setTab(k)} style={{
             flex: 1, padding: "11px 20px", borderRadius: 9, border: "none", cursor: "pointer",
             fontSize: 14, fontWeight: tab === k ? 700 : 500,
@@ -3739,8 +3740,9 @@ export default function B2B() {
           }}>{l}</button>
         ))}
       </div>
-      {tab === "aliados"    && <AliadosList />}
-      {tab === "incentivos" && <Incentivos />}
+      {tab === "aliados"          && <AliadosList />}
+      {tab === "incentivos"       && <Incentivos />}
+      {tab === "reporte_visitas"  && <ReporteVisitasB2B />}
     </div>
   );
 }
