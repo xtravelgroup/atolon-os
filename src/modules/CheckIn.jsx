@@ -469,6 +469,15 @@ async function generarZarpe(salida, reservas, fecha, despacho, emb) {
       : [{ nombre: r.nombre, identificacion: "—", nacionalidad: "—" }]
   );
   const totalPax = paxList.length;
+  // Lista unificada para el zarpe: pasajeros + colaboradores en una sola tabla
+  // (colaboradores marcados con tag STAFF + rol en columna Nacionalidad)
+  const colabRows = (despacho?.colaboradores || []).map(c => ({
+    nombre:         c.nombre || "—",
+    identificacion: c.cedula || "—",
+    nacionalidad:   c.rol ? `STAFF · ${c.rol}` : "STAFF",
+    _isStaff:       true,
+  }));
+  const fullList = [...paxList, ...colabRows];
 
   // ─── Bitácora: registrar el zarpe generado ─────────────────────────────
   try {
@@ -499,11 +508,11 @@ async function generarZarpe(salida, reservas, fecha, despacho, emb) {
     console.warn("No se pudo registrar zarpe en bitácora:", e);
   }
 
-  const bodyRows = paxList.map(p => `<tr>
+  const bodyRows = fullList.map(p => `<tr${p._isStaff ? ' style="background:#FAF6EE;"' : ''}>
       <td>${rowNum++}</td>
-      <td style="font-weight:600">${p.nombre || "—"}</td>
+      <td style="font-weight:600${p._isStaff ? ';color:#0D1B3E' : ''}">${p.nombre || "—"}</td>
       <td>${p.identificacion || "—"}</td>
-      <td>${p.nacionalidad || "—"}</td>
+      <td${p._isStaff ? ' style="font-weight:700;color:#7B5E2E;font-size:11px;letter-spacing:0.5px"' : ''}>${p.nacionalidad || "—"}</td>
     </tr>`).join("");
 
   const boteBlock = emb ? `
@@ -586,27 +595,10 @@ async function generarZarpe(salida, reservas, fecha, despacho, emb) {
       </tr></thead>
       <tbody>${bodyRows}</tbody>
     </table>
-    ${despacho?.colaboradores?.length > 0 ? `
-    <div style="margin-top:20px;">
-      <div style="background:#1E3566;color:white;padding:8px 10px;font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:1px;border-radius:4px 4px 0 0;">
-        👥 Tripulación / Colaboradores — ${despacho.colaboradores.length} persona${despacho.colaboradores.length !== 1 ? "s" : ""}
-      </div>
-      <table style="border-radius:0 0 4px 4px;overflow:hidden;">
-        <thead><tr>
-          <th style="width:5%">#</th>
-          <th style="width:40%">Nombre Completo</th>
-          <th style="width:30%">Cédula</th>
-          <th style="width:25%">Rol / Cargo</th>
-        </tr></thead>
-        <tbody>
-          ${despacho.colaboradores.map((c, i) => `<tr>
-            <td>${i + 1}</td>
-            <td style="font-weight:600">${c.nombre || "—"}</td>
-            <td>${c.cedula || "—"}</td>
-            <td>${c.rol || "—"}</td>
-          </tr>`).join("")}
-        </tbody>
-      </table>
+    ${(despacho?.colaboradores?.length > 0 || totalPax > 0) ? `
+    <div style="margin-top:14px;font-size:11px;color:#444;">
+      Total a bordo: <b>${fullList.length}</b> persona${fullList.length !== 1 ? "s" : ""} —
+      ${totalPax} pasajero${totalPax !== 1 ? "s" : ""}${despacho?.colaboradores?.length > 0 ? ` + ${despacho.colaboradores.length} staff` : ""}
     </div>` : ""}
     <div class="footer">Atolon Beach Club — ${new Date().toLocaleString("es-CO")}</div>
   </body></html>`;
@@ -910,6 +902,41 @@ export default function CheckIn() {
 
   const assignEmbarcacion = async (resId, nombre) => {
     const val = nombre || null;
+    // Validar capacidad: pasajeros ya asignados + nuevos pax + staff <= capacidad
+    if (val) {
+      const emb = embarcaciones.find(e => e.nombre === val);
+      const cap = Number(emb?.capacidad) || 0;
+      if (cap > 0) {
+        // Reservas YA asignadas a este bote (excluyendo la que se está reasignando)
+        const reservaActual = reservas.find(r => r.id === resId);
+        const paxActual = Number(reservaActual?.pax || 0);
+        const paxYaAsignados = reservas
+          .filter(r => r.id !== resId && r.embarcacion_asignada === val && r.salida_id === reservaActual?.salida_id)
+          .reduce((s, r) => s + Number(r.pax || 0), 0);
+        // Staff en despacho de esta salida con embarcacion=val (o sin embarcacion = van a cualquiera)
+        const desp = despachos.filter(d => d.salida_id === reservaActual?.salida_id);
+        const staffMap = new Map();
+        desp.forEach(d => (d.colaboradores || []).forEach(c => {
+          const k = (c.cedula || "") + "|" + (c.nombre || "").toLowerCase().trim();
+          if (!staffMap.has(k) && (!c.embarcacion || c.embarcacion === val)) staffMap.set(k, c);
+        }));
+        const staffCount = staffMap.size;
+        const totalSiAsigno = paxYaAsignados + paxActual + staffCount;
+        if (totalSiAsigno > cap) {
+          alert(
+            `⚠️ Capacidad excedida\n\n` +
+            `${val} tiene capacidad ${cap} personas.\n\n` +
+            `· Pasajeros ya asignados: ${paxYaAsignados}\n` +
+            `· Esta reserva: ${paxActual}\n` +
+            `· Staff/colaboradores: ${staffCount}\n` +
+            `· TOTAL si se asigna: ${totalSiAsigno}\n\n` +
+            `Excede la capacidad por ${totalSiAsigno - cap} persona${totalSiAsigno - cap !== 1 ? "s" : ""}. ` +
+            `Asigna a otra embarcación o reduce la cantidad de pax/staff.`
+          );
+          return;
+        }
+      }
+    }
     await supabase.from("reservas").update({ embarcacion_asignada: val }).eq("id", resId);
     setReservas(prev => prev.map(r => r.id === resId ? { ...r, embarcacion_asignada: val } : r));
   };
