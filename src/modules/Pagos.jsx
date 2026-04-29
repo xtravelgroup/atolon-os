@@ -32,6 +32,7 @@ export default function Pagos() {
   const [otros, setOtros] = useState([]);
   const [nominas, setNominas] = useState([]);
   const [extractos, setExtractos] = useState([]);
+  const [comisiones, setComisiones] = useState([]);
 
   useEffect(() => {
     supabase.auth.getUser().then(async ({ data }) => {
@@ -44,18 +45,20 @@ export default function Pagos() {
 
   const reload = async () => {
     setLoading(true);
-    const [oc, rec, ot, nom, ext] = await Promise.all([
+    const [oc, rec, ot, nom, ext, com] = await Promise.all([
       supabase.from("ordenes_compra").select("*").order("created_at", { ascending: false }),
       supabase.from("pagos_recurrentes").select("*").order("dia_pago"),
       supabase.from("pagos_otros").select("*").order("fecha_vencimiento", { ascending: true, nullsFirst: false }),
       supabase.from("nomina").select("*").order("fecha_pago", { ascending: false }).limit(50).then(r => r).catch(() => ({ data: [] })),
       supabase.from("banco_extractos").select("*").order("fecha_fin", { ascending: false }).limit(20),
+      supabase.from("comisiones_semanas").select("*").order("semana_fin", { ascending: false }).then(r => r).catch(() => ({ data: [] })),
     ]);
     setOrdenes(oc.data || []);
     setRecurrentes(rec.data || []);
     setOtros(ot.data || []);
     setNominas(nom.data || []);
     setExtractos(ext.data || []);
+    setComisiones(com.data || []);
     setLoading(false);
   };
 
@@ -92,8 +95,8 @@ export default function Pagos() {
 
       {loading
         ? <Loading />
-        : tab === "dashboard"    ? <TabDashboard ordenes={ordenes} otros={otros} recurrentes={recurrentes} nominas={nominas} setTab={setTab} />
-        : tab === "porpagar"     ? <TabPorPagar ordenes={ordenes} otros={otros} reload={reload} currentUser={currentUser} />
+        : tab === "dashboard"    ? <TabDashboard ordenes={ordenes} otros={otros} recurrentes={recurrentes} nominas={nominas} comisiones={comisiones} setTab={setTab} />
+        : tab === "porpagar"     ? <TabPorPagar ordenes={ordenes} otros={otros} comisiones={comisiones} reload={reload} currentUser={currentUser} />
         : tab === "recurrentes"  ? <TabRecurrentes recurrentes={recurrentes} reload={reload} currentUser={currentUser} />
         : tab === "gastos"       ? <TabGastos otros={otros} reload={reload} currentUser={currentUser} />
         : tab === "calendario"   ? <TabCalendario ordenes={ordenes} otros={otros} />
@@ -111,7 +114,7 @@ function Loading() {
 // ════════════════════════════════════════════════════════════════════════
 // TAB DASHBOARD
 // ════════════════════════════════════════════════════════════════════════
-function TabDashboard({ ordenes, otros, recurrentes, nominas, setTab }) {
+function TabDashboard({ ordenes, otros, recurrentes, nominas, comisiones = [], setTab }) {
   const today = todayStr();
   const month = today.slice(0, 7);
   const en7Dias = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
@@ -123,12 +126,15 @@ function TabDashboard({ ordenes, otros, recurrentes, nominas, setTab }) {
     .map(o => ({ ...o, _saldo: Number(o.total || 0) - Number(o.monto_pagado || 0) }));
   // Otros gastos pendientes
   const gastosPend = otros.filter(o => !o.pagado);
+  // Comisiones aprobadas (listas para pagar)
+  const comisionesPend = (comisiones || []).filter(c => c.estado === "aprobado");
 
   const totalAnticipos = anticipos.reduce((s, o) => s + Number(o.anticipo_monto || 0), 0);
   const totalFacturas  = facturas.reduce((s, o) => s + (Number(o.total || 0) - Number(o.monto_pagado || 0)), 0);
   const totalGastos    = gastosPend.reduce((s, o) => s + Number(o.monto || 0), 0);
+  const totalComisiones = comisionesPend.reduce((s, c) => s + Number(c.monto_comision || 0), 0);
   const totalRecurrentes = recurrentes.filter(r => r.activo).reduce((s, r) => s + Number(r.monto || 0), 0);
-  const totalPendiente = totalAnticipos + totalFacturas + totalGastos;
+  const totalPendiente = totalAnticipos + totalFacturas + totalGastos + totalComisiones;
 
   // Vencen en 7 días
   const vencen7 = [
@@ -146,10 +152,11 @@ function TabDashboard({ ordenes, otros, recurrentes, nominas, setTab }) {
   const totalVencido = vencidos.reduce((s, o) => s + Number(o._saldo || o.monto || 0), 0);
 
   const KPIs = [
-    { label: "Total por pagar",    value: COP(totalPendiente),  sub: `${anticipos.length + facturas.length + gastosPend.length} pendientes`, color: B.sand,    tab: "porpagar" },
+    { label: "Total por pagar",    value: COP(totalPendiente),  sub: `${anticipos.length + facturas.length + gastosPend.length + comisionesPend.length} pendientes`, color: B.sand,    tab: "porpagar" },
     { label: "Vencidos",            value: COP(totalVencido),    sub: `${vencidos.length} factura${vencidos.length !== 1 ? "s" : ""}`,         color: B.danger,  tab: "porpagar" },
     { label: "Vencen en 7 días",    value: COP(vencen7.reduce((s, x) => s + Number(x.monto || 0), 0)), sub: `${vencen7.length} pagos`,         color: B.warning, tab: "calendario" },
     { label: "Anticipos pendientes",value: COP(totalAnticipos),  sub: `${anticipos.length} OCs`,                                                color: B.sky,     tab: "porpagar" },
+    { label: "Comisiones por pagar",value: COP(totalComisiones), sub: `${comisionesPend.length} aprobada${comisionesPend.length !== 1 ? "s" : ""}`, color: "#22d3ee", tab: "porpagar" },
     { label: "Recurrentes activos", value: COP(totalRecurrentes),sub: `${recurrentes.filter(r => r.activo).length} pagos/mes`,                  color: "#a78bfa", tab: "recurrentes" },
   ];
 
@@ -200,8 +207,8 @@ function TabDashboard({ ordenes, otros, recurrentes, nominas, setTab }) {
 // ════════════════════════════════════════════════════════════════════════
 // TAB POR PAGAR — consolida anticipos + facturas + gastos
 // ════════════════════════════════════════════════════════════════════════
-function TabPorPagar({ ordenes, otros, reload, currentUser }) {
-  const [filtro, setFiltro] = useState("todos"); // todos | anticipos | facturas | gastos | vencidos | proximos
+function TabPorPagar({ ordenes, otros, comisiones = [], reload, currentUser }) {
+  const [filtro, setFiltro] = useState("todos"); // todos | anticipos | facturas | gastos | comisiones | vencidos | proximos
   const [pagoActivo, setPagoActivo] = useState(null);  // pago siendo marcado como pagado
   const [ocVer, setOcVer] = useState(null);            // OC abierta en visor read-only
   const today = todayStr();
@@ -237,15 +244,25 @@ function TabPorPagar({ ordenes, otros, reload, currentUser }) {
       vence: o.fecha_vencimiento,
       gasto: o, accion: "marcar_gasto",
     }));
+    // Comisiones aprobadas (listas para pagar)
+    (comisiones || []).filter(c => c.estado === "aprobado").forEach(c => list.push({
+      tipo: "comision", icon: "🤝", color: "#22d3ee",
+      ref: `Comisión sem. ${c.semana_inicio?.slice(5) || ""} → ${c.semana_fin?.slice(5) || ""}`,
+      proveedor: c.aliado_nombre || "—",
+      monto: Number(c.monto_comision || 0),
+      vence: c.aprobado_at?.slice(0, 10),  // referencia: cuando se aprobó
+      comision: c, accion: "marcar_comision",
+    }));
 
     return list;
-  }, [ordenes, otros]);
+  }, [ordenes, otros, comisiones]);
 
   const filtrados = items.filter(x => {
     if (filtro === "todos") return true;
-    if (filtro === "anticipos") return x.tipo === "anticipo";
-    if (filtro === "facturas")  return x.tipo === "factura";
-    if (filtro === "gastos")    return x.tipo === "gasto";
+    if (filtro === "anticipos")  return x.tipo === "anticipo";
+    if (filtro === "facturas")   return x.tipo === "factura";
+    if (filtro === "gastos")     return x.tipo === "gasto";
+    if (filtro === "comisiones") return x.tipo === "comision";
     if (filtro === "vencidos")  return x.vence && x.vence < today;
     if (filtro === "proximos")  return x.vence && x.vence >= today && x.vence <= en7;
     return true;
@@ -271,6 +288,7 @@ function TabPorPagar({ ordenes, otros, reload, currentUser }) {
           ["anticipos",  `🏦 Anticipos`],
           ["facturas",   `📄 Facturas`],
           ["gastos",     `💸 Gastos`],
+          ["comisiones", `🤝 Comisiones`],
         ].map(([k, l]) => (
           <button key={k} onClick={() => setFiltro(k)}
             style={{
