@@ -5,6 +5,8 @@ import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { B, COP, fmtFecha, todayStr } from "../brand";
 import { supabase } from "../lib/supabase";
 import { useBreakpoint } from "../lib/responsive.js";
+import OCViewerModal from "../components/OCViewerModal.jsx";
+import MarcarPagadoModal from "../components/MarcarPagadoModal.jsx";
 
 const TABS = [
   { key: "dashboard",    label: "Dashboard",       icon: "📊" },
@@ -200,6 +202,8 @@ function TabDashboard({ ordenes, otros, recurrentes, nominas, setTab }) {
 // ════════════════════════════════════════════════════════════════════════
 function TabPorPagar({ ordenes, otros, reload, currentUser }) {
   const [filtro, setFiltro] = useState("todos"); // todos | anticipos | facturas | gastos | vencidos | proximos
+  const [pagoActivo, setPagoActivo] = useState(null);  // pago siendo marcado como pagado
+  const [ocVer, setOcVer] = useState(null);            // OC abierta en visor read-only
   const today = todayStr();
   const en7   = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
 
@@ -254,52 +258,8 @@ function TabPorPagar({ ordenes, otros, reload, currentUser }) {
 
   const total = filtrados.reduce((s, x) => s + Number(x.monto || 0), 0);
 
-  const marcarPagado = async (x) => {
-    const ref = prompt(`Referencia del pago (Nº transferencia, cheque, etc.):`);
-    if (ref === null) return;
-    const cuenta = prompt(`Cuenta origen (banco):`) || null;
-    try {
-      if (x.accion === "marcar_anticipo") {
-        await supabase.from("ordenes_compra").update({
-          anticipo_pagado: true,
-          anticipo_pagado_at: new Date().toISOString(),
-          anticipo_pagado_por: currentUser?.email || null,
-          anticipo_referencia_pago: ref || null,
-          estado: "confirmada",
-          updated_at: new Date().toISOString(),
-        }).eq("id", x.oc.id);
-      } else if (x.accion === "marcar_factura") {
-        const monto = Number(x.monto);
-        const id = `PAGO_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
-        await supabase.from("cxp_pagos").insert({
-          id, oc_id: x.oc.id, oc_codigo: x.oc.codigo,
-          fecha_pago: todayStr(), monto,
-          metodo: "transferencia", cuenta_origen: cuenta,
-          referencia: ref, created_by: currentUser?.email,
-        });
-        const nuevoTotal = Number(x.oc.monto_pagado || 0) + monto;
-        const completa = nuevoTotal >= Number(x.oc.total || 0) - 0.01;
-        await supabase.from("ordenes_compra").update({
-          monto_pagado: nuevoTotal,
-          pagada_completa: completa,
-          pagada_at: completa ? new Date().toISOString() : null,
-          estado: completa ? "pagada" : x.oc.estado,
-        }).eq("id", x.oc.id);
-      } else if (x.accion === "marcar_gasto") {
-        await supabase.from("pagos_otros").update({
-          pagado: true,
-          pagado_at: new Date().toISOString(),
-          pagado_por: currentUser?.email || null,
-          referencia: ref || null,
-          cuenta_origen: cuenta,
-          updated_at: new Date().toISOString(),
-        }).eq("id", x.gasto.id);
-      }
-      reload();
-    } catch (e) {
-      alert(`Error: ${e.message || e}`);
-    }
-  };
+  // Abre el modal de marcar pagado (que incluye upload de comprobante)
+  const marcarPagado = (x) => setPagoActivo(x);
 
   return (
     <div>
@@ -332,12 +292,20 @@ function TabPorPagar({ ordenes, otros, reload, currentUser }) {
             {filtrados.map((x, i) => {
               const dias = x.vence ? Math.floor((new Date(x.vence) - new Date(today)) / 86400000) : null;
               const venceColor = dias === null ? "rgba(255,255,255,0.4)" : dias < 0 ? B.danger : dias <= 7 ? B.warning : B.sky;
+              const tieneOC = !!x.oc;
               return (
-                <div key={i} style={{
-                  background: B.navy, borderRadius: 10, padding: "12px 14px",
-                  border: `1px solid ${B.navyLight}`, borderLeft: `4px solid ${x.color}`,
-                  display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap",
-                }}>
+                <div key={i}
+                  onClick={() => tieneOC && setOcVer(x.oc)}
+                  title={tieneOC ? "Click para ver OC" : ""}
+                  style={{
+                    background: B.navy, borderRadius: 10, padding: "12px 14px",
+                    border: `1px solid ${B.navyLight}`, borderLeft: `4px solid ${x.color}`,
+                    display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap",
+                    cursor: tieneOC ? "pointer" : "default",
+                    transition: "background 0.15s",
+                  }}
+                  onMouseEnter={tieneOC ? e => e.currentTarget.style.background = B.navyMid : undefined}
+                  onMouseLeave={tieneOC ? e => e.currentTarget.style.background = B.navy : undefined}>
                   <div style={{ flex: 1, minWidth: 200 }}>
                     <div style={{ fontSize: 13, fontWeight: 800 }}>
                       <span style={{ marginRight: 6 }}>{x.icon}</span>
@@ -345,6 +313,11 @@ function TabPorPagar({ ordenes, otros, reload, currentUser }) {
                       <span style={{ marginLeft: 8, fontSize: 10, padding: "2px 8px", background: x.color + "22", color: x.color, borderRadius: 12, fontWeight: 700 }}>
                         {x.tipo.toUpperCase()}
                       </span>
+                      {tieneOC && (
+                        <span style={{ marginLeft: 8, fontSize: 10, color: B.sky, opacity: 0.6 }}>
+                          👁 ver OC
+                        </span>
+                      )}
                     </div>
                     <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginTop: 2 }}>
                       {x.ref}
@@ -355,9 +328,9 @@ function TabPorPagar({ ordenes, otros, reload, currentUser }) {
                       )}
                     </div>
                   </div>
-                  <div style={{ textAlign: "right" }}>
+                  <div style={{ textAlign: "right" }} onClick={e => e.stopPropagation()}>
                     <div style={{ fontSize: 16, fontWeight: 800, color: B.sand, fontFamily: "'Barlow Condensed', sans-serif" }}>{COP(x.monto)}</div>
-                    <button onClick={() => marcarPagado(x)}
+                    <button onClick={(e) => { e.stopPropagation(); marcarPagado(x); }}
                       style={{ marginTop: 6, padding: "5px 12px", borderRadius: 6, border: "none", background: B.success, color: B.navy, fontSize: 11, fontWeight: 800, cursor: "pointer" }}>
                       💸 Marcar pagado
                     </button>
@@ -368,6 +341,19 @@ function TabPorPagar({ ordenes, otros, reload, currentUser }) {
           </div>
         )
       }
+
+      {/* Modales */}
+      {ocVer && (
+        <OCViewerModal oc={ocVer} onClose={() => setOcVer(null)} />
+      )}
+      {pagoActivo && (
+        <MarcarPagadoModal
+          pago={pagoActivo}
+          currentUser={currentUser}
+          onClose={() => setPagoActivo(null)}
+          onSaved={() => { setPagoActivo(null); reload(); }}
+        />
+      )}
     </div>
   );
 }
