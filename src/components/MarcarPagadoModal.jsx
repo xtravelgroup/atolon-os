@@ -2,10 +2,11 @@
 // referencia + cuenta origen + upload de comprobante. Lo usa el módulo
 // Pagos cuando el usuario marca un pago como completado.
 //
-// Soporta los 3 flujos:
+// Soporta los 4 flujos:
 //   accion = "marcar_anticipo" → ordenes_compra.anticipo_*
 //   accion = "marcar_factura"  → cxp_pagos + ordenes_compra.monto_pagado
 //   accion = "marcar_gasto"    → pagos_otros.*
+//   accion = "marcar_comision" → comisiones_semanas.*
 
 import { useState } from "react";
 import { B } from "../brand";
@@ -60,7 +61,7 @@ export default function MarcarPagadoModal({ pago, currentUser, onClose, onSaved 
     setSaving(true);
     setErr("");
     try {
-      const refId = pago.oc?.id || pago.gasto?.id || `PAGO-${Date.now()}`;
+      const refId = pago.oc?.id || pago.gasto?.id || pago.comision?.id || `PAGO-${Date.now()}`;
       const comprobante_url = comprobante ? await subirComprobante(refId) : null;
 
       if (pago.accion === "marcar_anticipo") {
@@ -107,6 +108,16 @@ export default function MarcarPagadoModal({ pago, currentUser, onClose, onSaved 
           comprobante_url,
           updated_at:      new Date().toISOString(),
         }).eq("id", pago.gasto.id);
+      } else if (pago.accion === "marcar_comision") {
+        await supabase.from("comisiones_semanas").update({
+          estado:               "ejecutado",
+          ejecutado_at:         new Date().toISOString(),
+          ejecutado_por:        currentUser?.email || null,
+          pago_referencia:      referencia.trim(),
+          pago_metodo:          metodo,
+          pago_cuenta_origen:   cuentaOrigen.trim() || null,
+          pago_comprobante_url: comprobante_url,
+        }).eq("id", pago.comision.id);
       }
       onSaved?.();
     } catch (e) {
