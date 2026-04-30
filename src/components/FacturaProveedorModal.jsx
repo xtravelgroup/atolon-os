@@ -9,36 +9,72 @@ import { B } from "../brand";
 const COP = (n) => "$" + Math.round(Number(n) || 0).toLocaleString("es-CO");
 
 export default function FacturaProveedorModal({ oc, onClose, reload, currentUser }) {
-  const [step, setStep] = useState("upload"); // upload | parsing | review | applying | done
+  // Si la factura ya fue aplicada, abrimos directo en modo "review" con los
+  // datos persistidos para que el usuario los vea/edite sin volver a subirla.
+  const [step, setStep] = useState(oc.factura_aplicada || oc.factura_url ? "review" : "upload"); // upload | parsing | review | applying | done
   const [file, setFile] = useState(null);
-  const [parsed, setParsed] = useState(null);
+  const [parsed, setParsed] = useState(oc.factura_data || null);
   const [data, setData] = useState({
     factura_numero: oc.factura_numero || "",
     factura_fecha: oc.factura_fecha?.slice(0, 10) || new Date().toISOString().slice(0, 10),
-    subtotal: 0,
-    iva: 0,
-    total: 0,
+    fecha_vencimiento: oc.fecha_vencimiento_pago?.slice(0, 10) || "",
+    forma_pago: oc.factura_data?.forma_pago || "",
+    subtotal: Number(oc.factura_subtotal) || 0,
+    subtotal_base: Number(oc.factura_data?.subtotal_base) || Number(oc.factura_subtotal) || 0,
+    iva: Number(oc.factura_iva) || 0,
+    iva_total: Number(oc.factura_data?.iva_total) || Number(oc.factura_iva) || 0,
+    consumo_total: Number(oc.factura_data?.consumo_total) || 0,
+    total: Number(oc.total) || 0,
+    factura_url: oc.factura_url || null,
     items: [],
   });
   const [err, setErr] = useState("");
   const [progress, setProgress] = useState("");
 
   // Pre-cargar items de la OC (items y cantidades) — el usuario sólo edita el precio_unit
+  // Si la factura YA fue aplicada, los items de la OC ya tienen los datos
+  // ricos (unidades_por_paquete, factura_costo_pack, etc) — los preservamos
+  // para que la vista de review se muestre correcta sin volver a subir nada.
   useEffect(() => {
     setData(d => ({
       ...d,
-      items: (oc.items || []).map((it, i) => ({
-        oc_idx: i,
-        nombre: it.item || it.nombre,
-        cantidad: Number(it.cant) || 0,
-        unidad: it.unidad || "",
-        precio_unitario: Number(it.precioU) || 0,
-        precio_anterior: Number(it.precioU) || 0,
-        iva: 0,
-        item_id: it.item_id || null,
-      })),
+      items: (oc.items || []).map((it, i) => {
+        const unPP = Math.max(1, Number(it.unidades_por_paquete) || 1);
+        const cantInd = Number(it.cant) || 0;
+        const cantPack = unPP > 1 ? Math.round(cantInd / unPP) : cantInd;
+        const costoPack = Number(it.factura_costo_pack) || (Number(it.precioU) || 0) * unPP;
+        return {
+          oc_idx: i,
+          ai_idx: null,
+          nombre: it.item || it.nombre,
+          nombre_anterior: it.item || it.nombre,                  // ← detectar rename del proveedor
+          cantidad: cantPack,
+          cantidad_anterior: cantInd,                             // ← detectar cambio de cantidad (compara unidades individuales)
+          unidad: it.unidad || "UND",
+          precio_unitario: Number(it.precioU) || 0,
+          precio_anterior: Number(it.precioU) || 0,
+          // Empaque (preservado de la factura ya aplicada)
+          codigo_barras: it.factura_codigo_barras || it.codigo_barras || null,
+          referencia_proveedor: it.referencia_proveedor || null,
+          cantidad_paquete: cantPack,
+          unidades_por_paquete: unPP,
+          unidad_compra: it.unidad_compra || it.unidad || "UND",
+          unidad_individual: it.unidad || "UND",
+          cantidad_individual_total: cantInd,
+          precio_costo_pack: costoPack,
+          precio_costo_unit: Number(it.precioU) || 0,
+          iva_valor_pack: Number(it.factura_iva_pack) || 0,
+          iva: 0,
+          es_bonificacion: !!it.es_bonificacion,
+          requiere_revision: !!it.requiere_revision,
+          es_nuevo_oc: false,
+          item_id: it.item_id || null,
+          loggro_id: it.loggro_id || null,                        // ← para sync a Loggro
+        };
+      }),
     }));
   }, [oc.id]);
+  const [syncingNombreIdx, setSyncingNombreIdx] = useState(null);
 
   async function fileToBase64(f) {
     return new Promise((resolve, reject) => {
@@ -159,6 +195,11 @@ export default function FacturaProveedorModal({ oc, onClose, reload, currentUser
               codigo_barras:        aiItem.codigo_barras || null,
               referencia_proveedor: aiItem.referencia_proveedor || null,
               nombre:               aiItem.nombre || matchOc?.item || matchOc?.nombre || "—",
+              // Capturamos el nombre/cantidad ORIGINAL de la OC para detectar
+              // si el proveedor cambió algo. Si no hay match, no hay "anterior".
+              nombre_anterior:      matchOc ? (matchOc.item || matchOc.nombre) : null,
+              cantidad_anterior:    matchOc ? (Number(matchOc.cant) || 0) : null,
+              loggro_id:            matchOc?.loggro_id || null,
               // Empaque y unidad
               cantidad_paquete:     cantPack,
               unidad_compra:        aiItem.unidad_compra || matchOc?.unidad || "UND",
@@ -202,7 +243,9 @@ export default function FacturaProveedorModal({ oc, onClose, reload, currentUser
             return {
               oc_idx: i, ai_idx: null,
               nombre: it.item || it.nombre,
+              nombre_anterior: it.item || it.nombre,
               cantidad: Number(it.cant) || 0,
+              cantidad_anterior: Number(it.cant) || 0,
               unidad: it.unidad || "",
               precio_unitario: Number(it.precioU) || 0,
               precio_anterior: Number(it.precioU) || 0,
@@ -210,6 +253,7 @@ export default function FacturaProveedorModal({ oc, onClose, reload, currentUser
               precio_base_unit: Number(it.precioU) || 0,
               iva: 0, iva_valor_unit: 0,
               item_id: it.item_id || null,
+              loggro_id: it.loggro_id || null,
               no_facturado: true,
             };
           }).filter(Boolean);
@@ -271,6 +315,75 @@ export default function FacturaProveedorModal({ oc, onClose, reload, currentUser
   const usarSubtotal = Number(data.subtotal) || subtotalCalc;
   const usarIva      = Number(data.iva)      || ivaCalc;
   const usarTotal    = Number(data.total)    || (usarSubtotal + usarIva);
+
+  // ── Diff detection ──────────────────────────────────────────────────
+  // Detectamos qué cambió contra la OC original. Solo para items que están
+  // matcheados (oc_idx != null) y no son nuevos. Cantidad se compara en
+  // unidades INDIVIDUALES (cantidad_paquete × unidades_por_paquete) porque
+  // la OC original guarda `cant` en unidades individuales.
+  const eqStr = (a, b) => String(a || "").trim().toUpperCase() === String(b || "").trim().toUpperCase();
+  const itemDiffs = data.items.map(it => {
+    if (it.es_nuevo_oc || it.no_facturado || it.oc_idx == null) return { nombreCambio: false, cantidadCambio: false, precioCambio: false };
+    const cantTotal = (Number(it.cantidad_paquete ?? it.cantidad) || 0) * Math.max(1, Number(it.unidades_por_paquete) || 1);
+    const costoIndiv = (() => {
+      const unPP = Math.max(1, Number(it.unidades_por_paquete) || 1);
+      const cp = Number(it.precio_costo_pack ?? it.precio_costo_unit) || 0;
+      return unPP > 0 ? Math.round(cp / unPP) : 0;
+    })();
+    const isBonif = !!it.es_bonificacion;
+    return {
+      nombreCambio:   it.nombre_anterior != null && !eqStr(it.nombre, it.nombre_anterior),
+      cantidadCambio: it.cantidad_anterior != null && Math.abs(cantTotal - (Number(it.cantidad_anterior) || 0)) > 0.0001,
+      // Bonificaciones: precio cambia naturalmente a $0, no es un "cambio del proveedor"
+      precioCambio:   !isBonif && it.precio_anterior > 0 && Math.abs(costoIndiv - (Number(it.precio_anterior) || 0)) > 0.01,
+    };
+  });
+  const totDiffNombres   = itemDiffs.filter(d => d.nombreCambio).length;
+  const totDiffCantidad  = itemDiffs.filter(d => d.cantidadCambio).length;
+  const totDiffPrecio    = itemDiffs.filter(d => d.precioCambio).length;
+  const totalCambios     = totDiffNombres + totDiffCantidad + totDiffPrecio;
+  const itemsNuevosCount   = data.items.filter(x => x.es_nuevo_oc).length;
+  const itemsNoFactCount   = data.items.filter(x => x.no_facturado).length;
+
+  // ── Sync nombre con catálogo + Loggro ──────────────────────────────
+  // Cuando el proveedor renombra un producto en su factura, propagamos el
+  // cambio a items_catalogo y a Loggro (mismo flujo que en Recepciones).
+  async function sincronizarNombre(idx) {
+    const it = data.items[idx];
+    if (!it) return;
+    const nuevo = (it.nombre || "").trim();
+    const previo = (it.nombre_anterior || "").trim();
+    if (!nuevo || eqStr(nuevo, previo)) return;
+    if (!it.item_id && !it.loggro_id) {
+      alert("Este producto no está conectado al catálogo ni a Loggro — no hay nombre que sincronizar.");
+      return;
+    }
+    if (!confirm(`¿Renombrar "${previo}" → "${nuevo}" en Atolón${it.loggro_id ? " + Loggro" : ""}?`)) return;
+    setSyncingNombreIdx(idx);
+    try {
+      if (it.item_id) {
+        const { error } = await supabase.from("items_catalogo")
+          .update({ nombre: nuevo, updated_at: new Date().toISOString() })
+          .eq("id", it.item_id);
+        if (error) throw error;
+      }
+      if (it.loggro_id) {
+        const { error } = await supabase.functions.invoke("loggro-sync/update-ingredient", {
+          body: { loggro_id: it.loggro_id, nombre: nuevo },
+        });
+        if (error) throw error;
+      }
+      setData(d => ({
+        ...d,
+        items: d.items.map((p, j) => j === idx ? { ...p, nombre_anterior: nuevo } : p),
+      }));
+      setProgress(`✅ Nombre sincronizado: "${nuevo}"`);
+    } catch (e) {
+      setErr(`Error al sincronizar nombre: ${e.message || e}`);
+    } finally {
+      setSyncingNombreIdx(null);
+    }
+  }
 
   async function aplicar() {
     if (!data.factura_numero) { setErr("Número de factura obligatorio"); return; }
@@ -605,6 +718,36 @@ export default function FacturaProveedorModal({ oc, onClose, reload, currentUser
           <div style={{ marginTop: 14 }}>
             {progress && <div style={{ marginBottom: 10, padding: 8, background: B.success + "11", color: B.success, borderRadius: 6, fontSize: 12 }}>{progress}</div>}
             {err && <div style={{ marginBottom: 10, padding: 10, background: B.danger + "22", color: "#fca5a5", borderRadius: 6, fontSize: 12 }}>{err}</div>}
+
+            {/* ── Banner de diferencias detectadas ────────────────────── */}
+            {(totalCambios > 0 || itemsNuevosCount > 0 || itemsNoFactCount > 0) && (
+              <div style={{
+                marginBottom: 14, padding: "12px 14px", borderRadius: 10,
+                background: "rgba(245,158,11,0.12)", border: `1px solid ${B.warning}55`,
+                display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap",
+              }}>
+                <span style={{ fontSize: 18 }}>⚠️</span>
+                <div style={{ flex: 1, minWidth: 220 }}>
+                  <div style={{ fontSize: 13, fontWeight: 800, color: B.warning, marginBottom: 2 }}>
+                    {totalCambios > 0
+                      ? `${totalCambios} ${totalCambios === 1 ? "diferencia detectada" : "diferencias detectadas"} vs OC original`
+                      : "Revisa diferencias vs OC original"}
+                  </div>
+                  <div style={{ fontSize: 11, color: "rgba(255,255,255,0.7)", display: "flex", gap: 12, flexWrap: "wrap" }}>
+                    {totDiffNombres   > 0 && <span>📝 {totDiffNombres} {totDiffNombres === 1 ? "nombre" : "nombres"}</span>}
+                    {totDiffCantidad  > 0 && <span>📦 {totDiffCantidad} {totDiffCantidad === 1 ? "cantidad" : "cantidades"}</span>}
+                    {totDiffPrecio    > 0 && <span>💰 {totDiffPrecio} {totDiffPrecio === 1 ? "precio" : "precios"}</span>}
+                    {itemsNuevosCount > 0 && <span style={{ color: B.sky }}>➕ {itemsNuevosCount} item{itemsNuevosCount === 1 ? "" : "s"} nuevo{itemsNuevosCount === 1 ? "" : "s"}</span>}
+                    {itemsNoFactCount > 0 && <span style={{ color: "#fca5a5" }}>⊘ {itemsNoFactCount} no facturado{itemsNoFactCount === 1 ? "" : "s"}</span>}
+                  </div>
+                </div>
+                {totDiffNombres > 0 && (
+                  <div style={{ fontSize: 10, color: "rgba(255,255,255,0.55)", maxWidth: 230, lineHeight: 1.4 }}>
+                    Si el proveedor renombró un producto, usa el botón 🔄 para actualizar Atolón + Loggro.
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Datos de la factura */}
             <div style={{ background: B.navy, borderRadius: 10, padding: 14, marginBottom: 14, display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 10 }}>
