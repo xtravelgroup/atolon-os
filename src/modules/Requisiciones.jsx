@@ -410,7 +410,8 @@ export default function Requisiciones() {
           ["solicitudes",  `📋 Solicitudes (${reqs.length})`],
           ["aprobaciones", `✅ Aprobaciones (${requierenAprobacion.length})`],
           ["ordenes",      `🧾 Órdenes de compra (${ordenes.length})`],
-          ["recepciones",  `📦 Recepciones`],
+          ["recepciones",  `📦 Recepciones (${ordenes.filter(o => !["cancelada", "recibida"].includes(o.estado)).length})`],
+          ["recibidas",    `✅ Recibidas (${ordenes.filter(o => o.estado === "recibida").length})`],
           ["reglas",       `⚙ Reglas`],
           ["reportes",     `📊 Reportes`],
         ].map(([k, l]) => (
@@ -433,6 +434,8 @@ export default function Requisiciones() {
         <TabOrdenes ordenes={ordenes} reload={load} />
       ) : tab === "recepciones" ? (
         <TabRecepciones ordenes={ordenes.filter(o => !["cancelada", "recibida"].includes(o.estado))} reqs={reqs} reload={load} currentUser={currentUser} />
+      ) : tab === "recibidas" ? (
+        <TabRecibidas ordenes={ordenes.filter(o => o.estado === "recibida")} reqs={reqs} reload={load} currentUser={currentUser} />
       ) : tab === "reglas" ? (
         <TabReglas reglas={reglas} onEdit={setShowRegla} reload={load} />
       ) : (
@@ -1158,7 +1161,114 @@ function TabRecepciones({ ordenes, reqs, reload, currentUser }) {
   );
 }
 
-function RecepcionOCModal({ oc, reqs, onClose, reload, currentUser }) {
+// ─── Tab Recibidas ──────────────────────────────────────────────────────
+// Muestra OCs ya recibidas (estado='recibida'). Read-only por defecto:
+// es histórico para consulta. Permite reabrir si fue marcada por error
+// (vuelve a Recepciones) y permite ver/descargar lo recibido.
+function TabRecibidas({ ordenes, reqs, reload, currentUser }) {
+  const [openOC, setOpenOC] = useState(null);
+  const [filtro, setFiltro] = useState("");
+
+  // Ordenadas por fecha de recepción (más recientes primero), fallback emisión
+  const sorted = useMemo(() => {
+    return [...ordenes].sort((a, b) => {
+      const aDate = a.recibida_at || a.updated_at || a.fecha_emision || "";
+      const bDate = b.recibida_at || b.updated_at || b.fecha_emision || "";
+      return bDate.localeCompare(aDate);
+    });
+  }, [ordenes]);
+
+  const filtradas = filtro
+    ? sorted.filter(o => {
+        const q = filtro.toLowerCase();
+        return (o.codigo || "").toLowerCase().includes(q)
+          || (o.proveedor_nombre || "").toLowerCase().includes(q)
+          || (o.requisicion_id || "").toLowerCase().includes(q);
+      })
+    : sorted;
+
+  const totalRecibido = filtradas.reduce((s, o) => s + Number(o.total || 0), 0);
+
+  const reabrir = async (oc) => {
+    if (!window.confirm(`¿Reabrir OC ${oc.codigo}?\n\nVuelve a Recepciones para ajustar cantidades. Útil si se marcó como recibida por error.`)) return;
+    const { error } = await supabase.from("ordenes_compra").update({
+      estado: "recibida_parcial",
+      recibida_at: null,
+      updated_at: new Date().toISOString(),
+    }).eq("id", oc.id);
+    if (error) return alert("Error: " + error.message);
+    reload?.();
+  };
+
+  if (ordenes.length === 0) {
+    return <div style={{ textAlign: "center", padding: 60, color: "rgba(255,255,255,0.3)" }}>
+      <div style={{ fontSize: 48, marginBottom: 12 }}>✅</div>
+      <div>Sin órdenes recibidas todavía</div>
+      <div style={{ fontSize: 11, marginTop: 6, opacity: 0.7 }}>Cuando una OC se marque como recibida en Recepciones, aparecerá aquí.</div>
+    </div>;
+  }
+
+  return (
+    <div>
+      {/* Header con buscador y total */}
+      <div style={{ display: "flex", gap: 10, marginBottom: 14, alignItems: "center", flexWrap: "wrap" }}>
+        <input type="text" placeholder="Buscar código, proveedor, requisición…"
+          value={filtro} onChange={e => setFiltro(e.target.value)}
+          style={{ flex: 1, minWidth: 200, padding: "8px 12px", borderRadius: 8, border: `1px solid ${B.navyLight}`, background: B.navyMid, color: B.white, fontSize: 13 }} />
+        <div style={{ fontSize: 12, color: "rgba(255,255,255,0.6)", marginLeft: "auto" }}>
+          {filtradas.length} OC · Total: <strong style={{ color: B.success }}>{COP(totalRecibido)}</strong>
+        </div>
+      </div>
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {filtradas.map(oc => {
+          const totalLineas = (oc.items || []).length;
+          const recibidos = oc.recibidos || [];
+          return (
+            <div key={oc.id}
+              style={{ background: B.navy, borderRadius: 12, padding: "14px 18px", border: `1px solid ${B.navyLight}`, borderLeft: `4px solid ${B.success}`, cursor: "pointer" }}
+              onClick={() => setOpenOC(oc)}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
+                <div style={{ flex: 1, minWidth: 220 }}>
+                  <div style={{ fontSize: 14, fontWeight: 800, display: "flex", alignItems: "center", gap: 8 }}>
+                    🧾 {oc.codigo}
+                    <span style={{ background: "#153322", color: B.success, padding: "2px 8px", borderRadius: 12, fontSize: 10, fontWeight: 700 }}>
+                      ✓ Recibida
+                    </span>
+                    {oc.requisicion_id && <span style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", fontWeight: 500 }}>· Req {oc.requisicion_id}</span>}
+                    {oc.factura_aplicada && <span style={{ fontSize: 10, color: B.sand }}>· 📄 Facturada</span>}
+                  </div>
+                  <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginTop: 3 }}>
+                    {oc.proveedor_nombre || "Sin proveedor"}
+                    {oc.recibida_at && <> · 📦 Recibida {fmtFecha(oc.recibida_at.slice(0, 10))}</>}
+                    {!oc.recibida_at && oc.fecha_emision && <> · Emitida {oc.fecha_emision}</>}
+                  </div>
+                  <div style={{ fontSize: 11, color: "rgba(255,255,255,0.45)", marginTop: 4 }}>
+                    📦 {totalLineas} línea{totalLineas !== 1 ? "s" : ""}
+                    {recibidos.length > 0 && <> · {recibidos.length} entrada{recibidos.length !== 1 ? "s" : ""} de recepción</>}
+                  </div>
+                </div>
+                <div style={{ textAlign: "right", display: "flex", flexDirection: "column", gap: 8, alignItems: "flex-end" }}>
+                  <div style={{ fontSize: 16, fontWeight: 800, color: B.success, fontFamily: "'Barlow Condensed', sans-serif" }}>{COP(oc.total || 0)}</div>
+                  <button onClick={(e) => { e.stopPropagation(); reabrir(oc); }}
+                    style={{ padding: "4px 10px", fontSize: 11, fontWeight: 700, borderRadius: 6,
+                      border: `1px solid ${B.warning}`, background: B.warning + "22", color: B.warning, cursor: "pointer" }}
+                    title="Reabrir esta OC (vuelve a Recepciones para ajustar)">
+                    ↩ Reabrir
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {openOC && <RecepcionOCModal oc={openOC} reqs={reqs} onClose={() => setOpenOC(null)} reload={reload} currentUser={currentUser} readOnly />}
+    </div>
+  );
+}
+
+function RecepcionOCModal({ oc, reqs, onClose, reload, currentUser, readOnly = false }) {
   // Cargar bodegas de recepción + mapeo item_id desde requisición (fallback
   // para OCs viejas que no traen item_id en sus items)
   const [locaciones, setLocaciones] = useState([]);
