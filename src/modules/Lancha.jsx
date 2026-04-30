@@ -364,7 +364,7 @@ export default function Lancha() {
         <ResumenTab bitacora={bitacoraLancha} zarpes={zarpesLancha} lancha={lancha} />
       )}
       {tab === "costos" && (
-        <CostosFlotaTab />
+        <CostosFlotaTab lanchaId={activeLancha} />
       )}
       {tab === "motores" && (
         <MotoresTab activeLancha={activeLancha} lanchas={lanchas} />
