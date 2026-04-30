@@ -200,22 +200,43 @@ async function fetchCierresPorArea(year, month, ytd, area) {
 }
 
 // Fallback genérico: si la categoría no tiene fetcher mapeado, busca en
-// pagos_otros con matching exacto del campo categoria (case-insensitive).
+// requisiciones (módulo Financiero usa requisiciones para gastos por
+// categoría) Y en pagos_otros (otras fuentes), unificando los resultados.
 async function fetchPagosOtrosGenerico(year, month, ytd, label) {
   const { from, to } = rango(year, month, ytd);
-  const { data } = await supabase
+
+  // 1) Requisiciones (fuente principal de gastos en Financiero P&L)
+  const { data: reqs } = await supabase
+    .from("requisiciones")
+    .select("id, fecha, descripcion, categoria, total, estado")
+    .gte("fecha", from).lte("fecha", to)
+    .ilike("categoria", label)
+    .order("fecha", { ascending: false });
+
+  // 2) Pagos otros (categorías ad-hoc fuera de requisiciones)
+  const { data: pagos } = await supabase
     .from("pagos_otros")
     .select("id, fecha, concepto, categoria, proveedor, monto")
     .gte("fecha", from).lte("fecha", to)
     .ilike("categoria", label)
     .order("fecha", { ascending: false });
-  return {
-    transactions: (data || []).map(p => ({
+
+  const transactions = [
+    ...(reqs || []).map(r => ({
+      fecha: r.fecha,
+      descripcion: `Req ${r.id} · ${r.descripcion || "—"}${r.estado ? " · " + r.estado : ""}`,
+      monto: Number(r.total || 0), ref: r.id, source: "requisiciones",
+    })),
+    ...(pagos || []).map(p => ({
       fecha: p.fecha,
       descripcion: `${p.concepto || "—"}${p.proveedor ? " · " + p.proveedor : ""}`,
       monto: Number(p.monto || 0), ref: p.id, source: "pagos_otros",
     })),
-    sourcesNote: `pagos_otros donde categoria ilike "${label}".`,
+  ].sort((a, b) => (b.fecha || "").localeCompare(a.fecha || ""));
+
+  return {
+    transactions,
+    sourcesNote: `requisiciones + pagos_otros donde categoria ilike "${label}".`,
   };
 }
 

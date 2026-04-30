@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { supabase } from "../lib/supabase";
 import { wompiCheckoutUrl } from "../lib/wompi";
+import { crearSesionPago } from "../lib/internacional";
 import FacturaElectronicaForm, { FacturaElectronicaToggle, FE_EMPTY, feValidate, fePayload } from "../lib/FacturaElectronicaForm.jsx";
 
 // ── Brand ────────────────────────────────────────────────────────────────────
@@ -338,7 +339,6 @@ export default function GranFondoNairo() {
     if (tipo === "Internacional") {
       // Rutea por el helper (Zoho Pay / Stripe según merchant activo)
       try {
-        const { crearSesionPago } = await import("../lib/internacional");
         const tasa = 4200;
         const amountUSD = Math.ceil(totalCOP / tasa);
         const session = await crearSesionPago({

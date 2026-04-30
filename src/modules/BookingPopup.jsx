@@ -10,6 +10,7 @@ import AtolanTrack from "../lib/AtolanTrack";
 import { gtmViewItem, gtmBeginCheckout, gtmAddPaymentInfo, gtmAbandon } from "../lib/gtm";
 import FacturaElectronicaForm, { FacturaElectronicaToggle, FE_EMPTY, feValidate, fePayload } from "../lib/FacturaElectronicaForm.jsx";
 import ZohoPaymentWidget from "../components/ZohoPaymentWidget.jsx";
+import { crearSesionPago, getMerchantInternacional } from "../lib/internacional";
 
 // ── Palette (light theme) ───────────────────────────────────────────────────
 const C = {
@@ -669,7 +670,6 @@ export default function BookingPopup() {
       // "stripe" en la UI significa "tarjeta internacional" — ruteamos por el helper
       // que decide entre Stripe y Zoho Pay según configuracion.merchant_internacional
       try {
-        const { crearSesionPago, getMerchantInternacional } = await import("../lib/internacional");
         const merchantInfo = await getMerchantInternacional();
         console.log("[Pago internacional] Merchant activo:", merchantInfo);
         // Convertir COP a USD (monto que usa Zoho/Stripe)

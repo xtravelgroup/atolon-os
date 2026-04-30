@@ -5,6 +5,7 @@ import { asignarPuntosReserva, getRankingAgencia, getPuntosConfig } from "../lib
 import Incentivos from "./Incentivos";
 import { EventoModal, ReservasGrupoModal } from "./Eventos";
 import ReporteVisitasB2B from "../components/ReporteVisitasB2B.jsx";
+import { wompiCheckoutUrl } from "../lib/wompi";
 
 const IS = { width: "100%", padding: "9px 12px", borderRadius: 8, background: B.navy, border: `1px solid ${B.navyLight}`, color: B.white, fontSize: 13, outline: "none", boxSizing: "border-box" };
 const LS = { fontSize: 11, color: B.sand, display: "block", marginBottom: 5, textTransform: "uppercase", letterSpacing: "0.06em" };
@@ -1231,7 +1232,6 @@ function HistorialReservasB2B({ aliadoId, comisionPct = 0 }) {
                   placeholder="Ej: 123456789 (aparece en el correo de Wompi)" style={{ ...IS, marginBottom: 10 }} />
                 <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", marginBottom: 8 }}>— o —</div>
                 <button onClick={async () => {
-                  const { wompiCheckoutUrl } = await import("../lib/wompi.js");
                   const url = await wompiCheckoutUrl({ referencia: sel.id + "-R2", totalCOP: pagoForm.monto });
                   const linkPago = `${window.location.origin}/pago/${sel.id}`;
                   navigator.clipboard.writeText(linkPago);
