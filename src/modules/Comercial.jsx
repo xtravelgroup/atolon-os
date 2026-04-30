@@ -5,6 +5,7 @@ const TIPOS_PASADIA = ["— Sin especificar —", ...PASADIAS.map(p => p.tipo)];
 const HORAS = ["08:30", "10:00", "11:30", "13:00"];
 import { supabase } from "../lib/supabase";
 import FacturaElectronicaForm, { FacturaElectronicaToggle, FE_EMPTY, feValidate, fePayload } from "../lib/FacturaElectronicaForm.jsx";
+import { crearSesionPago } from "../lib/internacional";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -527,7 +528,6 @@ function LeadDetail({ lead, onClose, onUpdateEtapa }) {
     try {
       const reserva = await upsertReserva();
       if (!reserva) { setTerminando(false); return; }
-      const { crearSesionPago } = await import("../lib/internacional");
       // Convertir COP a USD (tasa fallback 4200)
       const tasa = 4200;
       const amountUSD = Math.ceil((reserva.total || 0) / tasa);

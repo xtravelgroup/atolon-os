@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { B, COP } from "../brand";
 import { supabase } from "../lib/supabase";
 import { wompiCheckoutUrl, wompiTransactionStatus } from "../lib/wompi";
+import { crearSesionPago } from "../lib/internacional";
 import AvisoCargoInternacional from "../components/AvisoCargoInternacional";
 import AtolanTrack from "../lib/AtolanTrack";
 import { waSendConfirmacion } from "../lib/whatsapp";
@@ -395,7 +396,6 @@ export default function PagoCliente() {
     if (!reserva) return;
     setProcesando("stripe");
     try {
-      const { crearSesionPago } = await import("../lib/internacional");
       // Convertir COP a USD con tasa fallback 4200
       const tasa = 4200;
       const amountUSD = Math.ceil((reserva.total || 0) / tasa);

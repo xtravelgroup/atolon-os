@@ -68,12 +68,16 @@ export default function Compras() {
 
   const reload = async () => {
     setLoading(true);
+    // Performance: limitar OCs y entregas a los últimos 90 días para no
+    // descargar todo el histórico cada vez que se entra al módulo.
+    // Cerradas/canceladas más antiguas se pueden buscar via filtros.
+    const noventaDiasAtras = new Date(Date.now() - 90 * 86400 * 1000).toISOString();
     const [oc, em, ta, zf, rq, pv] = await Promise.all([
-      supabase.from("ordenes_compra").select("*").order("created_at", { ascending: false }),
-      supabase.from("oc_entregas_muelle").select("*").order("fecha_programada", { ascending: true }),
-      supabase.from("oc_transporte_atolon").select("*").order("fecha_zarpe", { ascending: true }),
+      supabase.from("ordenes_compra").select("*").gte("created_at", noventaDiasAtras).order("created_at", { ascending: false }).limit(500),
+      supabase.from("oc_entregas_muelle").select("*").gte("fecha_programada", todayStr()).order("fecha_programada", { ascending: true }).limit(200),
+      supabase.from("oc_transporte_atolon").select("*").gte("fecha_zarpe", todayStr()).order("fecha_zarpe", { ascending: true }).limit(200),
       supabase.from("muelle_zarpes_flota").select("*").gte("fecha", todayStr()).order("fecha", { ascending: true }).limit(20),
-      supabase.from("requisiciones").select("*").order("fecha", { ascending: false }),
+      supabase.from("requisiciones").select("*").order("fecha", { ascending: false }).limit(300),
       supabase.from("proveedores").select("*").order("nombre"),
     ]);
     setOrdenes(oc.data || []);
