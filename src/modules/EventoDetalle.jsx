@@ -2751,17 +2751,22 @@ function TabServicios({ items, onChange, pasadiasOrg = [], onChangePasadias, cat
 
   return (
     <div>
+      {/* ── Botón de cotización: disponible para TODAS las categorías ──
+          Antes solo aparecía dentro del bloque `categoria === "grupo"`, lo
+          que dejaba sin cotización a Eventos / Bodas / Despedidas / etc.
+          Ahora se muestra siempre y reutiliza el mismo modal Ritz-style.   */}
+      <div style={{ marginBottom: 14 }}>
+        <button
+          onClick={() => setGrupoCotOpen(true)}
+          style={{ width: "100%", padding: "12px 18px", background: B.sand, color: B.navy, border: "none", borderRadius: 10, fontSize: 14, fontWeight: 700, cursor: "pointer", letterSpacing: "0.04em" }}
+        >
+          📥 Descargar cotización para cliente
+        </button>
+      </div>
+
       {/* ── Resumen de compra del cliente (grupos) ── */}
       {categoria === "grupo" && (
         <div style={{ marginBottom: 24 }}>
-          <div style={{ marginBottom: 14 }}>
-            <button
-              onClick={() => setGrupoCotOpen(true)}
-              style={{ width: "100%", padding: "12px 18px", background: B.sand, color: B.navy, border: "none", borderRadius: 10, fontSize: 14, fontWeight: 700, cursor: "pointer", letterSpacing: "0.04em" }}
-            >
-              📥 Descargar cotización para cliente
-            </button>
-          </div>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
             <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.07em" }}>
               🛒 Pasadías del grupo
