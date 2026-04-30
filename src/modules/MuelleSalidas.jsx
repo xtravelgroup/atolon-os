@@ -226,9 +226,12 @@ export default function MuelleSalidas() {
     }
 
     const costoAuto = Number(lancha?.costo_viaje_sencillo) || 0;
-    const costoOperativo = data.costo_operativo != null && data.costo_operativo !== ""
-      ? Number(data.costo_operativo)
-      : costoAuto;
+    // Si va a Boca Chica → costo 0 SIEMPRE (no es un viaje real).
+    const costoOperativo = data.boca_chica
+      ? 0
+      : (data.costo_operativo != null && data.costo_operativo !== ""
+        ? Number(data.costo_operativo)
+        : costoAuto);
     const insertPayload = {
       id,
       fecha,
@@ -239,6 +242,7 @@ export default function MuelleSalidas() {
       pax_n: Number(data.pax_n) || 0,
       costo_operativo: costoOperativo,
       notas: data.notas || null,
+      boca_chica: !!data.boca_chica,
     };
     if (data.odometro_foto_url) insertPayload.odometro_foto_url = data.odometro_foto_url;
     if (data.motores_horas) insertPayload.motores_horas = data.motores_horas;
@@ -439,7 +443,17 @@ function ModalZarpeFlota({ embarcacion, costoDefault = 0, onClose, onSave }) {
     horas_babor: "",
     horas_estribor: "",
     horas_centro: "",
+    boca_chica: false, // ← cuando va a Boca Chica no cuenta como viaje
   });
+  // Cuando se marca/desmarca Boca Chica: forzar costo 0 si está marcado,
+  // restaurar el costoDefault si se desmarca.
+  useEffect(() => {
+    setF(p => p.boca_chica
+      ? { ...p, costo_operativo: 0 }
+      : (p.costo_operativo === 0 ? { ...p, costo_operativo: costoDefault } : p)
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [f.boca_chica]);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState("");
   const [odometroFile, setOdometroFile] = useState(null);
@@ -526,6 +540,29 @@ function ModalZarpeFlota({ embarcacion, costoDefault = 0, onClose, onSave }) {
           <div style={{ gridColumn: "1 / -1" }}>
             <label style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", fontWeight: 600, textTransform: "uppercase", display: "block", marginBottom: 4 }}>Notas</label>
             <input value={f.notas} onChange={e => set("notas", e.target.value)} placeholder="Observaciones..." style={IS} />
+          </div>
+          {/* Boca Chica: si la lancha va a Boca Chica para parquear cerca del
+              hotel no es un viaje real → costo operativo = 0, no cuenta. */}
+          <div style={{ gridColumn: "1 / -1" }}>
+            <label
+              title="La lancha va a Boca Chica (parqueo cerca del hotel). No cuenta como viaje real, costo operativo = 0."
+              style={{
+                display: "flex", alignItems: "center", gap: 10,
+                padding: "10px 12px", borderRadius: 8,
+                background: f.boca_chica ? "rgba(56,189,248,0.12)" : B.navyLight,
+                border: `1px solid ${f.boca_chica ? B.sky : "rgba(255,255,255,0.08)"}`,
+                cursor: "pointer", fontSize: 13,
+              }}>
+              <input type="checkbox" checked={!!f.boca_chica}
+                onChange={e => set("boca_chica", e.target.checked)}
+                style={{ width: 16, height: 16, cursor: "pointer" }} />
+              <span style={{ flex: 1, color: f.boca_chica ? B.sky : "#fff", fontWeight: f.boca_chica ? 700 : 500 }}>
+                🏝 Va a Boca Chica
+              </span>
+              <span style={{ fontSize: 10, color: "rgba(255,255,255,0.45)", textAlign: "right", lineHeight: 1.3 }}>
+                no cuenta<br/>como viaje
+              </span>
+            </label>
           </div>
         </div>
 

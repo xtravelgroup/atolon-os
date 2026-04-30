@@ -140,6 +140,7 @@ function ModalNuevaLlegada({ tipo, fecha, reserva, llegadasDelDia = [], onClose,
     horas_babor: "",
     horas_estribor: "",
     horas_centro: "", // Castillete tiene 1 motor central
+    boca_chica: false, // ← cuando viene de Boca Chica no cuenta como viaje
   });
 
   const [fotoFile, setFotoFile]       = useState(null);
@@ -221,8 +222,10 @@ function ModalNuevaLlegada({ tipo, fecha, reserva, llegadasDelDia = [], onClose,
     const embarcacionNombre = f.embarcacion_nombre || (esWalkin ? "Walk-in" : null);
     // Costo operativo automático para flota propia (Castillete/Naturalle):
     // cada llegada = 1 medio viaje, costo definido en lanchas.costo_viaje_sencillo
+    // Excepción: si la lancha venía de Boca Chica (estaba parqueada cerca del
+    // hotel, no es un viaje real desde Cartagena) → costo 0 y no cuenta viaje.
     let costoOperativo = 0;
-    if (embarcacionNombre && (tipoSeleccionado === "lancha_atolon" || tipoSeleccionado === "lanchas_atolon")) {
+    if (!f.boca_chica && embarcacionNombre && (tipoSeleccionado === "lancha_atolon" || tipoSeleccionado === "lanchas_atolon")) {
       try {
         const { data: lch } = await supabase.from("lanchas")
           .select("costo_viaje_sencillo")
@@ -270,6 +273,7 @@ function ModalNuevaLlegada({ tipo, fecha, reserva, llegadasDelDia = [], onClose,
       estado: "llegó",
       notas: notasExtras.join(" ") + (notasExtras.length ? " " : "") + (f.notas || ""),
       costo_operativo: costoOperativo,
+      boca_chica: !!f.boca_chica,
     };
     // Solo incluir foto_url si está disponible (columna puede no existir aún)
     if (foto_url) payload.foto_url = foto_url;
@@ -442,6 +446,29 @@ function ModalNuevaLlegada({ tipo, fecha, reserva, llegadasDelDia = [], onClose,
             ) : (
               <input value={f.embarcacion_nombre} onChange={e => s("embarcacion_nombre", e.target.value)}
                 placeholder={esLancha ? "Ej: Atolon I" : "Ej: Patricia, sin nombre..."} style={IS} />
+            )}
+            {/* Boca Chica: la lancha estaba parqueada cerca del hotel, no es un
+                viaje real → no consume costo_operativo ni cuenta como viaje. */}
+            {esLanchasAtolon && (
+              <label
+                title="La lancha venía de Boca Chica (estaba parqueada cerca del hotel). No cuenta como viaje real, costo operativo = 0."
+                style={{
+                  display: "flex", alignItems: "center", gap: 10,
+                  marginTop: 10, padding: "10px 12px", borderRadius: 8,
+                  background: f.boca_chica ? "rgba(56,189,248,0.12)" : B.navyLight,
+                  border: `1px solid ${f.boca_chica ? B.sky : "rgba(255,255,255,0.08)"}`,
+                  cursor: "pointer", fontSize: 13,
+                }}>
+                <input type="checkbox" checked={!!f.boca_chica}
+                  onChange={e => s("boca_chica", e.target.checked)}
+                  style={{ width: 16, height: 16, cursor: "pointer" }} />
+                <span style={{ flex: 1, color: f.boca_chica ? B.sky : "#fff", fontWeight: f.boca_chica ? 700 : 500 }}>
+                  🏝 Llegó de Boca Chica
+                </span>
+                <span style={{ fontSize: 10, color: "rgba(255,255,255,0.45)", textAlign: "right", lineHeight: 1.3 }}>
+                  no cuenta<br/>como viaje
+                </span>
+              </label>
             )}
           </div>
           {!esLancha && (

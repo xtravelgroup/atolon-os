@@ -71,7 +71,7 @@ export default function Lancha() {
       supabase.from("lanchas").select("*").eq("activo", true).order("nombre"),
       supabase.from("lancha_bitacora").select("*").order("fecha", { ascending: false }).order("hora", { ascending: false }).limit(500),
       supabase.from("muelle_zarpes_flota").select("*").order("fecha", { ascending: false }).limit(500),
-      supabase.from("muelle_llegadas").select("id, fecha, hora_llegada, embarcacion_nombre, tipo, pax_a, pax_n").eq("tipo", "lancha_atolon").order("fecha", { ascending: false }).limit(500),
+      supabase.from("muelle_llegadas").select("id, fecha, hora_llegada, embarcacion_nombre, tipo, pax_a, pax_n, boca_chica").eq("tipo", "lancha_atolon").order("fecha", { ascending: false }).limit(500),
       supabase.from("capitanes_flota").select("*").eq("activo", true).order("nombre"),
       supabase.from("rh_empleados").select("id, nombres, apellidos, cedula, telefono, email, cargo, salario_base, activo").eq("activo", true).order("nombres"),
     ]);
@@ -97,12 +97,13 @@ export default function Lancha() {
   const zarpesLancha = useMemo(() => {
     if (!lancha) return [];
     const target = normNombre(lancha.nombre);
-    return zarpes.filter(z => z.embarcacion && normNombre(z.embarcacion) === target);
+    // Boca Chica = parqueo, no es viaje real → se excluye del conteo de viajes
+    return zarpes.filter(z => z.embarcacion && normNombre(z.embarcacion) === target && !z.boca_chica);
   }, [zarpes, lancha]);
   const llegadasLancha = useMemo(() => {
     if (!lancha) return [];
     const target = normNombre(lancha.nombre);
-    return llegadas.filter(l => l.embarcacion_nombre && normNombre(l.embarcacion_nombre) === target);
+    return llegadas.filter(l => l.embarcacion_nombre && normNombre(l.embarcacion_nombre) === target && !l.boca_chica);
   }, [llegadas, lancha]);
   const capitanesLancha = useMemo(() => capitanes.filter(c => c.lancha_id === activeLancha), [capitanes, activeLancha]);
 

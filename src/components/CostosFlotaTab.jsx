@@ -36,10 +36,10 @@ export default function CostosFlotaTab({ lanchaId = null } = {}) {
         .select("lancha_id, lancha_nombre, fecha, tipo, costo_total, galones, proveedor")
         .gte("fecha", desde).limit(2000),
       supabase.from("muelle_zarpes_flota")
-        .select("fecha, hora_zarpe, embarcacion, motivo, pax_a, pax_n, costo_operativo, motores_horas")
+        .select("fecha, hora_zarpe, embarcacion, motivo, pax_a, pax_n, costo_operativo, motores_horas, boca_chica")
         .gte("fecha", desde).limit(2000),
       supabase.from("muelle_llegadas")
-        .select("fecha, hora_llegada, embarcacion_nombre, tipo, pax_a, pax_n, costo_operativo, motores_horas")
+        .select("fecha, hora_llegada, embarcacion_nombre, tipo, pax_a, pax_n, costo_operativo, motores_horas, boca_chica")
         .gte("fecha", desde)
         .in("tipo", ["lancha_atolon", "lanchas_atolon"])
         .limit(2000),
@@ -84,8 +84,13 @@ export default function CostosFlotaTab({ lanchaId = null } = {}) {
   const data = useMemo(() => {
     const filterMes = (arr, key = "fecha") => arr.filter(r => (r[key] || "").startsWith(mes));
     const bMes = filterMes(bitacoraView);
-    const zMes = filterMes(zarpesView);
-    const lMes = filterMes(llegadasView);
+    const zMesAll = filterMes(zarpesView);
+    const lMesAll = filterMes(llegadasView);
+    // Boca Chica = parqueo cerca del hotel, no es un viaje real → se excluye
+    // de los conteos de viajes/medios viajes/costo viajes/pax-por-pasadía.
+    // Se incluye en los reads de horas motor (sí movió motores aunque sea poco).
+    const zMes = zMesAll.filter(z => !z.boca_chica);
+    const lMes = lMesAll.filter(l => !l.boca_chica);
 
     const costoComb        = bMes.filter(b => b.tipo === "combustible").reduce((s, b) => s + Number(b.costo_total || 0), 0);
     const galones          = bMes.filter(b => b.tipo === "combustible").reduce((s, b) => s + Number(b.galones || 0), 0);
@@ -108,10 +113,12 @@ export default function CostosFlotaTab({ lanchaId = null } = {}) {
     const horasUsoPorLancha = {};
     lanchasView.forEach(l => {
       const target = normN(l.nombre);
+      // Para horas-motor usamos TODOS los reads (incluyendo Boca Chica)
+      // — el odómetro acumula sin importar si fue viaje real o parqueo.
       const reads = [
-        ...zMes.filter(z => z.motores_horas && normN(z.embarcacion) === target)
+        ...zMesAll.filter(z => z.motores_horas && normN(z.embarcacion) === target)
               .map(z => ({ fecha: z.fecha, hora: z.hora_zarpe, motores_horas: z.motores_horas })),
-        ...lMes.filter(x => x.motores_horas && normN(x.embarcacion_nombre) === target)
+        ...lMesAll.filter(x => x.motores_horas && normN(x.embarcacion_nombre) === target)
               .map(x => ({ fecha: x.fecha, hora: x.hora_llegada, motores_horas: x.motores_horas })),
       ].sort((a, b) => (a.fecha + (a.hora || "")).localeCompare(b.fecha + (b.hora || "")));
       if (reads.length < 2) {
