@@ -1281,11 +1281,22 @@ function RecepcionOCModal({ oc, reqs, onClose, reload, currentUser, readOnly = f
   const [notas, setNotas] = useState(oc.notas_recibo || "");
   const [numFactura, setNumFactura] = useState(oc.factura_numero || "");
   const [fechaFactura, setFechaFactura] = useState(oc.factura_fecha || todayStr());
+  const [catalogo, setCatalogo] = useState([]); // catálogo completo para auto-link
   // El registro en Loggro es SIEMPRE automático para items con loggro_id.
   // No hay opción de desactivar — eliminamos el checkbox para que no dependa
   // del usuario marcar la opción y olvidar sincronizar.
   const registrarEnLoggro = true;
   const [saving, setSaving] = useState(false);
+
+  // Vincular manual: el usuario elige del catálogo qué producto corresponde
+  // a un ítem de la OC que no se pudo matchear automáticamente.
+  const vincularManual = (idx, catalogId) => {
+    const cat = catalogo.find(c => c.id === catalogId);
+    if (!cat) return;
+    setRecibidos(prev => prev.map((r, i) =>
+      i === idx ? { ...r, item_id: cat.id, loggro_id: cat.loggro_id || r.loggro_id } : r
+    ));
+  };
 
   useEffect(() => {
     if (!supabase) return;
@@ -1298,20 +1309,61 @@ function RecepcionOCModal({ oc, reqs, onClose, reload, currentUser, readOnly = f
         if (recepcion) setBodegaDestino(recepcion.id);
       });
 
-    // Si los items de la OC no tienen item_id (OCs viejas), enriquecer
-    // cruzando con la req asociada
-    const sinItemId = (oc.items || []).filter(it => !it.item_id);
-    if (sinItemId.length > 0 && oc.requisicion_id) {
-      supabase.from("requisiciones").select("items").eq("id", oc.requisicion_id).maybeSingle()
-        .then(({ data }) => {
-          const reqItems = data?.items || [];
-          setRecibidos(prev => prev.map(r => {
-            if (r.item_id) return r;
-            const match = reqItems.find(ri => ri.id === r.id);
-            return match ? { ...r, item_id: match.item_id, loggro_id: match.loggro_id } : r;
-          }));
-        });
-    }
+    // Cargar TODO el catálogo para enriquecer + permitir vincular manualmente
+    // ítems que no se puedan matchear por nombre exacto/parcial.
+    supabase.from("items_catalogo").select("id, nombre, loggro_id, unidad")
+      .order("nombre")
+      .then(({ data }) => setCatalogo(data || []));
+  }, [oc.id, oc.requisicion_id]);
+
+  // Enriquecer recibidos cuando catalogo cargue: 3 niveles de match
+  // 1) Exact match (case-insensitive)
+  // 2) Substring match (catálogo contenido en nombre OC, o viceversa)
+  // 3) Si no hay match, queda sin loggro_id y el usuario podrá vincular manual
+  useEffect(() => {
+    if (catalogo.length === 0) return;
+    const norm = (s) => (s || "").toLowerCase().trim();
+    setRecibidos(prev => prev.map(r => {
+      if (r.item_id && r.loggro_id) return r;
+      const nombreItem = norm(r.nombre || r.item);
+      if (!nombreItem) return r;
+      // 1) Exact match
+      let match = catalogo.find(c => norm(c.nombre) === nombreItem);
+      // 2) Substring: nombre catálogo contenido en nombre OC (e.g. ARRACHERA en ARRACHERA CAB)
+      if (!match) match = catalogo.find(c => {
+        const cn = norm(c.nombre);
+        return cn.length >= 4 && nombreItem.includes(cn);
+      });
+      // 3) Substring inverso: nombre OC contenido en catálogo
+      if (!match) match = catalogo.find(c => {
+        const cn = norm(c.nombre);
+        return nombreItem.length >= 4 && cn.includes(nombreItem);
+      });
+      if (match) {
+        return { ...r, item_id: r.item_id || match.id, loggro_id: r.loggro_id || match.loggro_id };
+      }
+      return r;
+    }));
+  }, [catalogo]);
+
+  // Enriquecer también via la requisición (si existe) — fuente alterna
+  useEffect(() => {
+    if (!oc.requisicion_id) return;
+    const sinId = (oc.items || []).filter(it => !it.item_id || !it.loggro_id);
+    if (sinId.length === 0) return;
+    supabase.from("requisiciones").select("items").eq("id", oc.requisicion_id).maybeSingle()
+      .then(({ data }) => {
+        const reqItems = data?.items || [];
+        if (reqItems.length === 0) return;
+        setRecibidos(prev => prev.map(r => {
+          if (r.item_id && r.loggro_id) return r;
+          const reqMatch = reqItems.find(ri => ri.id === r.id);
+          if (reqMatch && (reqMatch.item_id || reqMatch.loggro_id)) {
+            return { ...r, item_id: r.item_id || reqMatch.item_id, loggro_id: r.loggro_id || reqMatch.loggro_id };
+          }
+          return r;
+        }));
+      });
   }, [oc.id, oc.requisicion_id]);
 
   const setRecibido = (idx, val) => {
@@ -1512,9 +1564,30 @@ function RecepcionOCModal({ oc, reqs, onClose, reload, currentUser, readOnly = f
               {recibidos.map((r, i) => {
                 const pendiente = r.cant - r.cant_recibida;
                 const completo = r.cant_recibida >= r.cant;
+                const sinLoggro = !r.loggro_id;
                 return (
                   <tr key={i} style={{ borderTop: `1px solid ${B.navyLight}` }}>
-                    <td style={{ padding: "10px 12px", fontSize: 12 }}>{r.item}</td>
+                    <td style={{ padding: "10px 12px", fontSize: 12 }}>
+                      <div>{r.item}</div>
+                      {sinLoggro ? (
+                        <div style={{ marginTop: 4, display: "flex", alignItems: "center", gap: 6 }}>
+                          <span style={{ fontSize: 9, color: B.warning, fontWeight: 700, padding: "1px 6px", borderRadius: 4, background: B.warning + "22" }}>
+                            ⚠ Sin Loggro
+                          </span>
+                          <select
+                            value=""
+                            onChange={e => e.target.value && vincularManual(i, e.target.value)}
+                            style={{ fontSize: 10, padding: "2px 4px", borderRadius: 4, background: B.navy, color: B.sky, border: `1px solid ${B.sky}55`, maxWidth: 200 }}>
+                            <option value="">🔗 Vincular a producto…</option>
+                            {catalogo.filter(c => c.loggro_id).map(c => (
+                              <option key={c.id} value={c.id}>{c.nombre} {c.unidad ? `(${c.unidad})` : ""}</option>
+                            ))}
+                          </select>
+                        </div>
+                      ) : (
+                        <div style={{ fontSize: 9, color: B.success, marginTop: 3 }}>🔗 Vinculado a Loggro</div>
+                      )}
+                    </td>
                     <td style={{ padding: "10px 12px", fontSize: 12, textAlign: "center" }}>{r.cant} {r.unidad}</td>
                     <td style={{ padding: "8px 12px", textAlign: "center" }}>
                       <input type="number" value={r.cant_recibida} min="0" max={r.cant}
