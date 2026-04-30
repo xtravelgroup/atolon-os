@@ -1281,10 +1281,10 @@ function RecepcionOCModal({ oc, reqs, onClose, reload, currentUser, readOnly = f
   const [notas, setNotas] = useState(oc.notas_recibo || "");
   const [numFactura, setNumFactura] = useState(oc.factura_numero || "");
   const [fechaFactura, setFechaFactura] = useState(oc.factura_fecha || todayStr());
-  // Por defecto SIEMPRE se registra en Loggro si hay items con loggro_id —
-  // antes era manual via checkbox, ahora es automático para no olvidar.
-  // Si el usuario quiere evitar el registro, lo desmarca.
-  const [registrarEnLoggro, setRegistrarEnLoggro] = useState(true);
+  // El registro en Loggro es SIEMPRE automático para items con loggro_id.
+  // No hay opción de desactivar — eliminamos el checkbox para que no dependa
+  // del usuario marcar la opción y olvidar sincronizar.
+  const registrarEnLoggro = true;
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -1547,28 +1547,24 @@ function RecepcionOCModal({ oc, reqs, onClose, reload, currentUser, readOnly = f
             style={{ ...IS, resize: "vertical", fontFamily: "inherit" }} />
         </div>
 
-        {/* Auto-registro en Loggro — habilitado por default si hay items con loggro_id */}
+        {/* Aviso informativo: el registro en Loggro es automático y no opcional */}
         {(() => {
           const conLoggro = recibidos.filter(r => r.loggro_id).length;
-          const total = recibidos.length;
-          const sinLoggro = total - conLoggro;
+          const sinLoggro = recibidos.length - conLoggro;
           return (
-            <label style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer", padding: "10px 14px", background: registrarEnLoggro ? "rgba(56,189,248,0.10)" : "rgba(56,189,248,0.04)", border: `1px solid ${registrarEnLoggro ? B.sky : "rgba(255,255,255,0.1)"}`, borderRadius: 10, marginBottom: 16 }}>
-              <input type="checkbox" checked={registrarEnLoggro} onChange={e => setRegistrarEnLoggro(e.target.checked)}
-                style={{ width: 18, height: 18, accentColor: B.sky }} />
+            <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", background: "rgba(56,189,248,0.10)", border: `1px solid ${B.sky}55`, borderRadius: 10, marginBottom: 16 }}>
+              <div style={{ fontSize: 18 }}>🔗</div>
               <div style={{ flex: 1 }}>
-                <div style={{ fontSize: 13, fontWeight: 700, color: registrarEnLoggro ? B.sky : B.white, display: "flex", alignItems: "center", gap: 6 }}>
-                  🔗 Registrar movimiento de compra en Loggro
-                  <span style={{ fontSize: 10, padding: "1px 6px", borderRadius: 6, background: B.success + "33", color: B.success, fontWeight: 700 }}>AUTO</span>
+                <div style={{ fontSize: 13, fontWeight: 700, color: B.sky }}>
+                  Movimiento Loggro automático al guardar
                 </div>
                 <div style={{ fontSize: 11, color: "rgba(255,255,255,0.55)", marginTop: 3 }}>
-                  Se registrará automáticamente al guardar la recepción.
-                  {" "}
-                  {conLoggro > 0 && <span style={{ color: B.success }}>✓ {conLoggro} ítem{conLoggro !== 1 ? "s" : ""} con Loggro vinculado</span>}
-                  {sinLoggro > 0 && <span style={{ color: B.warning }}>{conLoggro > 0 ? " · " : ""}⚠ {sinLoggro} sin loggro_id (no se registrarán)</span>}
+                  {conLoggro > 0 && <span style={{ color: B.success }}>✓ {conLoggro} ítem{conLoggro !== 1 ? "s" : ""} con Loggro vinculado se registrarán</span>}
+                  {sinLoggro > 0 && <span style={{ color: B.warning }}>{conLoggro > 0 ? " · " : ""}⚠ {sinLoggro} sin loggro_id quedan solo en Atolón</span>}
+                  {conLoggro === 0 && sinLoggro === 0 && <span style={{ color: "rgba(255,255,255,0.4)" }}>Sin ítems para registrar</span>}
                 </div>
               </div>
-            </label>
+            </div>
           );
         })()}
 
