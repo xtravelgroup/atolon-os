@@ -13,7 +13,9 @@ const mesLabel = (ym) => new Date(ym + "-01T12:00:00").toLocaleDateString("es-CO
 const mesLargo = (ym) => new Date(ym + "-01T12:00:00").toLocaleDateString("es-CO", { month: "long", year: "numeric" });
 const thisMonth = () => new Date().toISOString().slice(0, 7);
 
-export default function CostosFlotaTab() {
+// Si recibe lanchaId, filtra TODOS los datos a esa lancha específica.
+// Si no, muestra agregado de toda la flota (modo legacy).
+export default function CostosFlotaTab({ lanchaId = null } = {}) {
   const { isMobile } = useMobile();
   const [mes, setMes] = useState(thisMonth());
   const [bitacora, setBitacora]     = useState([]);
@@ -52,6 +54,25 @@ export default function CostosFlotaTab() {
   }, []);
   useEffect(() => { fetchData(); }, [fetchData]);
 
+  // Si llega lanchaId, filtrar TODA la data a esa lancha. Esto incluye:
+  // bitacora por lancha_id directo, zarpes/llegadas por nombre normalizado,
+  // capitanes por lancha_id, y lanchas a solo la elegida.
+  const normNombre = (s) => (s || "").toLowerCase()
+    .normalize("NFD").replace(/[̀-ͯ]/g, "")
+    .replace(/(.)\1+/g, "$1").trim();
+  const lanchaActiva = lanchaId ? (lanchas.find(l => l.id === lanchaId) || null) : null;
+  const lanchaActivaNombreNorm = lanchaActiva ? normNombre(lanchaActiva.nombre) : null;
+  // tipo_uso="servicio" significa que la lancha NO transporta pasajeros
+  // (Castillete) — se reportan costos por viaje, no por pax.
+  const esServicio = lanchaActiva?.tipo_uso === "servicio";
+
+  // Vistas filtradas (memoizadas en función del filtro y datos)
+  const lanchasView   = lanchaId ? lanchas.filter(l => l.id === lanchaId)               : lanchas;
+  const bitacoraView  = lanchaId ? bitacora.filter(b => b.lancha_id === lanchaId)        : bitacora;
+  const zarpesView    = lanchaId ? zarpes.filter(z => normNombre(z.embarcacion) === lanchaActivaNombreNorm) : zarpes;
+  const llegadasView  = lanchaId ? llegadas.filter(x => normNombre(x.embarcacion_nombre) === lanchaActivaNombreNorm) : llegadas;
+  const capitanesView = lanchaId ? capitanes.filter(c => c.lancha_id === lanchaId)       : capitanes;
+
   // ── Cálculos del mes seleccionado ─────────────────────────────────────────
   // Reglas (consensuadas con dirección):
   // 1. Solo se cuentan LLEGADAS para el cálculo de costo/pasadía
@@ -62,16 +83,16 @@ export default function CostosFlotaTab() {
   //    + reserva motores (NO se incluye "viajes flota" porque era estimación)
   const data = useMemo(() => {
     const filterMes = (arr, key = "fecha") => arr.filter(r => (r[key] || "").startsWith(mes));
-    const bMes = filterMes(bitacora);
-    const zMes = filterMes(zarpes);
-    const lMes = filterMes(llegadas);
+    const bMes = filterMes(bitacoraView);
+    const zMes = filterMes(zarpesView);
+    const lMes = filterMes(llegadasView);
 
     const costoComb        = bMes.filter(b => b.tipo === "combustible").reduce((s, b) => s + Number(b.costo_total || 0), 0);
     const galones          = bMes.filter(b => b.tipo === "combustible").reduce((s, b) => s + Number(b.galones || 0), 0);
     const costoMant        = bMes.filter(b => ["mantenimiento", "reparacion", "inspeccion", "limpieza"].includes(b.tipo)).reduce((s, b) => s + Number(b.costo_total || 0), 0);
     const costoMarina      = bMes.filter(b => b.tipo === "marina").reduce((s, b) => s + Number(b.costo_total || 0), 0);
     const costoCapTerceros = bMes.filter(b => b.tipo === "capitanes").reduce((s, b) => s + Number(b.costo_total || 0), 0);
-    const costoCapNomina   = capitanes.filter(c => c.tipo === "nomina").reduce((s, c) => s + Number(c.salario_mensual || 0), 0);
+    const costoCapNomina   = capitanesView.filter(c => c.tipo === "nomina").reduce((s, c) => s + Number(c.salario_mensual || 0), 0);
     const costoCapitanes   = costoCapTerceros + costoCapNomina;
 
     // ── Reserva motores: horas de uso del mes × $/hora por lancha ─────────
@@ -85,7 +106,7 @@ export default function CostosFlotaTab() {
       .replace(/(.)\1+/g, "$1").trim();
     const sumH = (h) => Number(h?.babor || 0) + Number(h?.estribor || 0) + Number(h?.centro || 0);
     const horasUsoPorLancha = {};
-    lanchas.forEach(l => {
+    lanchasView.forEach(l => {
       const target = normN(l.nombre);
       const reads = [
         ...zMes.filter(z => z.motores_horas && normN(z.embarcacion) === target)
@@ -101,7 +122,7 @@ export default function CostosFlotaTab() {
       const last  = sumH(reads[reads.length - 1].motores_horas);
       horasUsoPorLancha[l.id] = Math.max(0, last - first);
     });
-    const reservaMotores = lanchas.reduce((s, l) => s + (horasUsoPorLancha[l.id] || 0) * Number(l.motor_reserva_por_hora || 0), 0);
+    const reservaMotores = lanchasView.reduce((s, l) => s + (horasUsoPorLancha[l.id] || 0) * Number(l.motor_reserva_por_hora || 0), 0);
     // Compatibilidad: aún calculamos viajes pero NO se suma al total
     const costoSalidas     = zMes.reduce((s, z) => s + Number(z.costo_operativo || 0), 0);
     const costoLlegadas    = lMes.reduce((s, l) => s + Number(l.costo_operativo || 0), 0);
@@ -129,11 +150,11 @@ export default function CostosFlotaTab() {
     const costoPorMedioViaje = numMediosViajes > 0 ? costoViajes / numMediosViajes : 0;
 
     // Por embarcación
-    const porEmb = lanchas.map(l => {
+    const porEmb = lanchasView.map(l => {
       const bL = bMes.filter(b => b.lancha_id === l.id);
       const zL = zMes.filter(z => z.embarcacion === l.nombre);
       const llL = lMes.filter(x => (x.embarcacion_nombre || "").toLowerCase() === l.nombre.toLowerCase());
-      const cN = capitanes.filter(c => c.lancha_id === l.id && c.tipo === "nomina")
+      const cN = capitanesView.filter(c => c.lancha_id === l.id && c.tipo === "nomina")
                   .reduce((s, c) => s + Number(c.salario_mensual || 0), 0);
       const lComb = bL.filter(b => b.tipo === "combustible").reduce((s, b) => s + Number(b.costo_total || 0), 0);
       const lMant = bL.filter(b => ["mantenimiento", "reparacion", "inspeccion", "limpieza"].includes(b.tipo)).reduce((s, b) => s + Number(b.costo_total || 0), 0);
@@ -174,7 +195,7 @@ export default function CostosFlotaTab() {
              numSalidas, numLlegadas, numMediosViajes, numViajesCompletos,
              costoPorPasadia, costoCombMant, costoCombMantPorPax,
              costoPorPax, costoPorMedioViaje, porEmb };
-  }, [mes, bitacora, zarpes, llegadas, lanchas, capitanes]);
+  }, [mes, bitacoraView, zarpesView, llegadasView, lanchasView, capitanesView]);
 
   // ── Gráfico 6 meses (solo costos apilados) ────────────────────────────────
   const meses6 = useMemo(() => {
@@ -183,23 +204,23 @@ export default function CostosFlotaTab() {
       const d = new Date(); d.setMonth(d.getMonth() - i);
       arr.push(d.toISOString().slice(0, 7));
     }
-    const capNomMensual = capitanes.filter(c => c.tipo === "nomina").reduce((s, c) => s + Number(c.salario_mensual || 0), 0);
+    const capNomMensual = capitanesView.filter(c => c.tipo === "nomina").reduce((s, c) => s + Number(c.salario_mensual || 0), 0);
     const normN6 = (s) => (s || "").toLowerCase()
       .normalize("NFD").replace(/[̀-ͯ]/g, "")
       .replace(/(.)\1+/g, "$1").trim();
     const sumH6 = (h) => Number(h?.babor || 0) + Number(h?.estribor || 0) + Number(h?.centro || 0);
     return arr.map(ym => {
-      const b = bitacora.filter(x => (x.fecha || "").startsWith(ym));
+      const b = bitacoraView.filter(x => (x.fecha || "").startsWith(ym));
       const comb   = b.filter(x => x.tipo === "combustible").reduce((s, x) => s + Number(x.costo_total || 0), 0);
       const mant   = b.filter(x => ["mantenimiento", "reparacion", "inspeccion", "limpieza"].includes(x.tipo)).reduce((s, x) => s + Number(x.costo_total || 0), 0);
       const marina = b.filter(x => x.tipo === "marina").reduce((s, x) => s + Number(x.costo_total || 0), 0);
       const cap    = b.filter(x => x.tipo === "capitanes").reduce((s, x) => s + Number(x.costo_total || 0), 0) + capNomMensual;
       // Reserva motores por mes = sum(horas mes × $/hora) por lancha
-      const reserva = lanchas.reduce((sum, l) => {
+      const reserva = lanchasView.reduce((sum, l) => {
         const target = normN6(l.nombre);
         const reads = [
-          ...zarpes.filter(z => z.motores_horas && (z.fecha || "").startsWith(ym) && normN6(z.embarcacion) === target).map(z => ({ fecha: z.fecha, hora: z.hora_zarpe, mh: z.motores_horas })),
-          ...llegadas.filter(x => x.motores_horas && (x.fecha || "").startsWith(ym) && normN6(x.embarcacion_nombre) === target).map(x => ({ fecha: x.fecha, hora: x.hora_llegada, mh: x.motores_horas })),
+          ...zarpesView.filter(z => z.motores_horas && (z.fecha || "").startsWith(ym) && normN6(z.embarcacion) === target).map(z => ({ fecha: z.fecha, hora: z.hora_zarpe, mh: z.motores_horas })),
+          ...llegadasView.filter(x => x.motores_horas && (x.fecha || "").startsWith(ym) && normN6(x.embarcacion_nombre) === target).map(x => ({ fecha: x.fecha, hora: x.hora_llegada, mh: x.motores_horas })),
         ].sort((a, b2) => (a.fecha + (a.hora || "")).localeCompare(b2.fecha + (b2.hora || "")));
         if (reads.length < 2) return sum;
         const horas = Math.max(0, sumH6(reads[reads.length - 1].mh) - sumH6(reads[0].mh));
@@ -207,7 +228,7 @@ export default function CostosFlotaTab() {
       }, 0);
       return { mes: ym, comb, mant, marina, cap, reserva, total: comb + mant + marina + cap + reserva };
     });
-  }, [bitacora, lanchas, capitanes]);
+  }, [bitacoraView, lanchasView, capitanesView, zarpesView, llegadasView]);
 
   const maxMes = Math.max(1, ...meses6.map(m => m.total));
 
@@ -248,42 +269,85 @@ export default function CostosFlotaTab() {
              sub="Comb + Mant + Marina + Capitanes + Reserva" />
       </div>
 
-      {/* KPI destacado: Costo por Pasadía (regla: solo llegadas, sin staff) */}
-      <div style={{ background: `linear-gradient(135deg, ${B.sand}22 0%, ${B.navy} 100%)`, border: `2px solid ${B.sand}55`, borderRadius: 14, padding: 18, marginBottom: 14 }}>
-        <div style={{ fontSize: 11, color: B.sand, textTransform: "uppercase", letterSpacing: 2, fontWeight: 700, marginBottom: 6 }}>
-          💰 Costo por Pasadía (real)
+      {/* KPI destacado: Costo por Pasadía o por Viaje según tipo_uso */}
+      {esServicio ? (
+        // ── Lancha de SERVICIO (Castillete) — costo por viaje ───────────
+        <div style={{ background: `linear-gradient(135deg, ${B.sky}22 0%, ${B.navy} 100%)`, border: `2px solid ${B.sky}55`, borderRadius: 14, padding: 18, marginBottom: 14 }}>
+          <div style={{ fontSize: 11, color: B.sky, textTransform: "uppercase", letterSpacing: 2, fontWeight: 700, marginBottom: 6 }}>
+            🚤 Costo por Viaje
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${isMobile ? 140 : 200}px, 1fr))`, gap: 14, alignItems: "end" }}>
+            <div>
+              <div style={{ fontSize: 32, fontWeight: 900, color: B.sky, fontFamily: "'Barlow Condensed', sans-serif", lineHeight: 1 }}>
+                {fmtCOP(data.numViajesCompletos > 0 ? data.costosTotales / data.numViajesCompletos : 0)}
+              </div>
+              <div style={{ fontSize: 11, color: "rgba(255,255,255,0.55)", marginTop: 4 }}>
+                Total operativo ÷ {data.numViajesCompletos} viaje{data.numViajesCompletos !== 1 ? "s" : ""} ida+vuelta
+              </div>
+            </div>
+            <div>
+              <div style={{ fontSize: 22, fontWeight: 800, color: B.warning, fontFamily: "'Barlow Condensed', sans-serif" }}>
+                {fmtCOP(data.numViajesCompletos > 0 ? (data.costoComb + data.costoMant) / data.numViajesCompletos : 0)}
+              </div>
+              <div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", marginTop: 2 }}>
+                Solo combustible + mantenimiento por viaje
+              </div>
+            </div>
+            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", lineHeight: 1.6 }}>
+              <div>🚤 Lancha de <strong style={{ color: B.sky }}>servicio</strong> — no transporta pasajeros</div>
+              <div>📊 Costo por <strong style={{ color: B.sky }}>viaje</strong> (ida + vuelta)</div>
+              <div>⛽ Combustible <strong style={{ color: B.sky }}>real</strong> de bitácora</div>
+            </div>
+          </div>
         </div>
-        <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${isMobile ? 140 : 200}px, 1fr))`, gap: 14, alignItems: "end" }}>
-          <div>
-            <div style={{ fontSize: 32, fontWeight: 900, color: B.sand, fontFamily: "'Barlow Condensed', sans-serif", lineHeight: 1 }}>
-              {fmtCOP(data.costoPorPasadia)}
-            </div>
-            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.55)", marginTop: 4 }}>
-              Total operativo ÷ {data.pax} pax que llegaron
-            </div>
+      ) : (
+        // ── Lancha de PASAJEROS (Naturalle) — costo por pasadía ─────────
+        <div style={{ background: `linear-gradient(135deg, ${B.sand}22 0%, ${B.navy} 100%)`, border: `2px solid ${B.sand}55`, borderRadius: 14, padding: 18, marginBottom: 14 }}>
+          <div style={{ fontSize: 11, color: B.sand, textTransform: "uppercase", letterSpacing: 2, fontWeight: 700, marginBottom: 6 }}>
+            💰 Costo por Pasadía (real)
           </div>
-          <div>
-            <div style={{ fontSize: 22, fontWeight: 800, color: B.warning, fontFamily: "'Barlow Condensed', sans-serif" }}>
-              {fmtCOP(data.costoCombMantPorPax)}
+          <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${isMobile ? 140 : 200}px, 1fr))`, gap: 14, alignItems: "end" }}>
+            <div>
+              <div style={{ fontSize: 32, fontWeight: 900, color: B.sand, fontFamily: "'Barlow Condensed', sans-serif", lineHeight: 1 }}>
+                {fmtCOP(data.costoPorPasadia)}
+              </div>
+              <div style={{ fontSize: 11, color: "rgba(255,255,255,0.55)", marginTop: 4 }}>
+                Total operativo ÷ {data.pax} pax que llegaron
+              </div>
             </div>
-            <div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", marginTop: 2 }}>
-              Solo combustible + mantenimiento real
+            <div>
+              <div style={{ fontSize: 22, fontWeight: 800, color: B.warning, fontFamily: "'Barlow Condensed', sans-serif" }}>
+                {fmtCOP(data.costoCombMantPorPax)}
+              </div>
+              <div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", marginTop: 2 }}>
+                Solo combustible + mantenimiento real
+              </div>
             </div>
-          </div>
-          <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", lineHeight: 1.6 }}>
-            <div>📊 Solo cuenta <strong style={{ color: B.sand }}>llegadas</strong> (no zarpes)</div>
-            <div>👥 Sin <strong style={{ color: B.sand }}>staff</strong> — solo pax pagantes</div>
-            <div>⛽ Combustible <strong style={{ color: B.sand }}>real</strong> de bitácora</div>
+            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", lineHeight: 1.6 }}>
+              <div>📊 Solo cuenta <strong style={{ color: B.sand }}>llegadas</strong> (no zarpes)</div>
+              <div>👥 Sin <strong style={{ color: B.sand }}>staff</strong> — solo pax pagantes</div>
+              <div>⛽ Combustible <strong style={{ color: B.sand }}>real</strong> de bitácora</div>
+            </div>
           </div>
         </div>
-      </div>
+      )}
 
       {/* KPIs unitarios secundarios */}
       <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${isMobile ? 130 : 200}px, 1fr))`, gap: 10, marginBottom: 18 }}>
-        <Kpi label="Pax llegadas (sin staff)" valor={data.paxLlegada}                color="#a78bfa" small sub={`${data.numLlegadas} llegadas`} />
-        <Kpi label="Pax zarpes (referencia)"  valor={data.paxSalida}                 color="rgba(255,255,255,0.4)" small sub={`${data.numSalidas} zarpes (no se usa)`} />
-        <Kpi label="Combustible / pax"        valor={fmtCOP(data.pax > 0 ? data.costoComb / data.pax : 0)} color={B.warning} small />
-        <Kpi label="Mantenimiento / pax"      valor={fmtCOP(data.pax > 0 ? data.costoMant / data.pax : 0)} color={B.sky} small />
+        {esServicio ? (
+          <>
+            <Kpi label="Viajes ida+vuelta" valor={data.numViajesCompletos} color={B.sky} small sub={`${data.numLlegadas}🛬 + ${data.numSalidas}🛫`} />
+            <Kpi label="Combustible / viaje" valor={fmtCOP(data.numViajesCompletos > 0 ? data.costoComb / data.numViajesCompletos : 0)} color={B.warning} small />
+            <Kpi label="Mantenimiento / viaje" valor={fmtCOP(data.numViajesCompletos > 0 ? data.costoMant / data.numViajesCompletos : 0)} color="#a78bfa" small />
+          </>
+        ) : (
+          <>
+            <Kpi label="Pax llegadas (sin staff)" valor={data.paxLlegada}                color="#a78bfa" small sub={`${data.numLlegadas} llegadas`} />
+            <Kpi label="Pax zarpes (referencia)"  valor={data.paxSalida}                 color="rgba(255,255,255,0.4)" small sub={`${data.numSalidas} zarpes (no se usa)`} />
+            <Kpi label="Combustible / pax"        valor={fmtCOP(data.pax > 0 ? data.costoComb / data.pax : 0)} color={B.warning} small />
+            <Kpi label="Mantenimiento / pax"      valor={fmtCOP(data.pax > 0 ? data.costoMant / data.pax : 0)} color={B.sky} small />
+          </>
+        )}
       </div>
 
       {/* Gráfico 6 meses (costos apilados) */}
