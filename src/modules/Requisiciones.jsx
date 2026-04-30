@@ -1294,8 +1294,58 @@ function RecepcionOCModal({ oc, reqs, onClose, reload, currentUser, readOnly = f
     const cat = catalogo.find(c => c.id === catalogId);
     if (!cat) return;
     setRecibidos(prev => prev.map((r, i) =>
-      i === idx ? { ...r, item_id: cat.id, loggro_id: cat.loggro_id || r.loggro_id } : r
+      i === idx ? { ...r, item_id: cat.id, loggro_id: cat.loggro_id || r.loggro_id, _catNombre: cat.nombre } : r
     ));
+  };
+
+  // Actualizar el nombre del producto en Atolón (items_catalogo) y en
+  // Loggro (vía edge function update-ingredient). Útil cuando el proveedor
+  // cambia el nombre en la cotización/factura y queremos reflejarlo en
+  // ambos sistemas para mantener consistencia.
+  const [actualizandoNombre, setActualizandoNombre] = useState(null); // idx del item siendo actualizado
+  const actualizarNombreProducto = async (idx) => {
+    const r = recibidos[idx];
+    if (!r.item_id) return alert("Vincula primero el ítem a un producto del catálogo.");
+    const nuevoNombre = (r.nombre || r.item || "").trim();
+    if (!nuevoNombre) return;
+    const cat = catalogo.find(c => c.id === r.item_id);
+    const nombreActual = cat?.nombre || "";
+    if (nombreActual === nuevoNombre) return alert("El nombre ya es igual, no hay nada que actualizar.");
+    if (!window.confirm(
+      `¿Actualizar el nombre del producto en Atolón y Loggro?\n\n` +
+      `Atolón actual: "${nombreActual}"\n` +
+      `Atolón nuevo: "${nuevoNombre}"\n\n` +
+      `Esto cambiará el nombre en items_catalogo y en Loggro (ingredient ${r.loggro_id || "—"}).`
+    )) return;
+    setActualizandoNombre(idx);
+    try {
+      // 1) Actualizar Atolón
+      const { error: atolonErr } = await supabase.from("items_catalogo")
+        .update({ nombre: nuevoNombre, updated_at: new Date().toISOString() })
+        .eq("id", r.item_id);
+      if (atolonErr) throw new Error("Atolón: " + atolonErr.message);
+
+      // 2) Actualizar Loggro (si tiene loggro_id)
+      if (r.loggro_id) {
+        const URL = import.meta.env.VITE_SUPABASE_URL;
+        const KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
+        const res = await fetch(`${URL}/functions/v1/loggro-sync/update-ingredient`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", apikey: KEY, Authorization: `Bearer ${KEY}` },
+          body: JSON.stringify({ loggro_id: r.loggro_id, nombre: nuevoNombre }),
+        });
+        const data = await res.json();
+        if (!data.ok) throw new Error("Loggro: " + (data.error || JSON.stringify(data).slice(0, 200)));
+      }
+
+      // 3) Refrescar catálogo local
+      setCatalogo(prev => prev.map(c => c.id === r.item_id ? { ...c, nombre: nuevoNombre } : c));
+      alert(`✓ Nombre actualizado a "${nuevoNombre}" en Atolón${r.loggro_id ? " y Loggro" : ""}.`);
+    } catch (e) {
+      alert("Error al actualizar: " + e.message);
+    } finally {
+      setActualizandoNombre(null);
+    }
   };
 
   useEffect(() => {
@@ -1565,6 +1615,10 @@ function RecepcionOCModal({ oc, reqs, onClose, reload, currentUser, readOnly = f
                 const pendiente = r.cant - r.cant_recibida;
                 const completo = r.cant_recibida >= r.cant;
                 const sinLoggro = !r.loggro_id;
+                const cat = r.item_id ? catalogo.find(c => c.id === r.item_id) : null;
+                const nombreCatalogo = cat?.nombre || "";
+                const nombreOC = (r.nombre || r.item || "").trim();
+                const nombreDifiere = !!r.item_id && nombreCatalogo && nombreOC && nombreCatalogo !== nombreOC;
                 return (
                   <tr key={i} style={{ borderTop: `1px solid ${B.navyLight}` }}>
                     <td style={{ padding: "10px 12px", fontSize: 12 }}>
@@ -1585,7 +1639,21 @@ function RecepcionOCModal({ oc, reqs, onClose, reload, currentUser, readOnly = f
                           </select>
                         </div>
                       ) : (
-                        <div style={{ fontSize: 9, color: B.success, marginTop: 3 }}>🔗 Vinculado a Loggro</div>
+                        <div style={{ fontSize: 9, color: B.success, marginTop: 3, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                          <span>🔗 Vinculado a Loggro: <strong>{nombreCatalogo}</strong></span>
+                          {nombreDifiere && (
+                            <button onClick={() => actualizarNombreProducto(i)}
+                              disabled={actualizandoNombre === i}
+                              title={`Actualizar nombre en Atolón y Loggro a "${nombreOC}"`}
+                              style={{
+                                fontSize: 9, fontWeight: 700, padding: "2px 8px", borderRadius: 4,
+                                border: `1px solid ${B.warning}`, background: B.warning + "22",
+                                color: B.warning, cursor: actualizandoNombre === i ? "wait" : "pointer",
+                              }}>
+                              {actualizandoNombre === i ? "⏳ Actualizando…" : `📝 Renombrar → "${nombreOC}"`}
+                            </button>
+                          )}
+                        </div>
                       )}
                     </td>
                     <td style={{ padding: "10px 12px", fontSize: 12, textAlign: "center" }}>{r.cant} {r.unidad}</td>
