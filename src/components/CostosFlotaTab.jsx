@@ -380,7 +380,11 @@ export default function CostosFlotaTab({ lanchaId = null } = {}) {
         </div>
       </div>
 
-      {/* Tabla por embarcación */}
+      {/* Tabla por embarcación — solo visible cuando se ve la flota completa.
+          Cuando se filtra por una sola lancha, el hero + KPIs ya tienen
+          toda la info (y la tabla de 1 fila sería redundante + tendría
+          columnas $/pax que no aplican a Castillete que es servicio). */}
+      {!lanchaId && (
       <div style={{ background: B.navyMid, borderRadius: 12, padding: 16 }}>
         <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 14 }}>Costos por embarcación · {mesLargo(mes)}</div>
         {data.porEmb.length === 0 ? (
@@ -428,6 +432,7 @@ export default function CostosFlotaTab({ lanchaId = null } = {}) {
           Los capitanes <strong>nómina</strong> se incluyen como referencia (su pago real va por RRHH/Nómina, no se duplica).
         </div>
       </div>
+      )}
     </div>
   );
 }
