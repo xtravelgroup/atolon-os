@@ -910,19 +910,31 @@ export default function CheckIn() {
   };
 
   // ── Despachar una embarcación específica
+  // Bloqueo: si ya está despachada en este (fecha + salida + embarcación)
+  // NO se permite re-despachar. Se debe corregir en DB si fue error.
   const despachar = async (salida, embNombre) => {
-    // Si ya existe despacho para esa embarcación, confirmar re-despacho
     const existing = despachos.find(d => d.salida_id === salida.id && d.embarcacion_nombre === embNombre);
     if (existing) {
-      if (!window.confirm(`${embNombre} ya fue despachada. ¿Registrar de nuevo?`)) return;
-      await supabase.from("salida_despachos").delete().eq("id", existing.id);
+      alert(`${embNombre} ya fue despachada en ${salida.nombre} ${salida.hora}. No se puede volver a despachar en este horario.`);
+      return;
     }
+    const embObj = embarcaciones.find(e => e.nombre === embNombre);
     const id = `DESP-${Date.now()}`;
-    const rec = { id, fecha, salida_id: salida.id, embarcacion_nombre: embNombre, despachado_at: new Date().toISOString() };
-    await supabase.from("salida_despachos").insert(rec);
+    const rec = {
+      id, fecha,
+      salida_id: salida.id,
+      embarcacion_nombre: embNombre,
+      embarcacion_id: embObj?.id || null,
+      despachado_at: new Date().toISOString(),
+    };
+    const { error } = await supabase.from("salida_despachos").insert(rec);
+    if (error) {
+      alert(`Error al despachar ${embNombre}:\n${error.message}`);
+      return;
+    }
     logAccion({ modulo: "checkin", accion: "despachar_embarcacion", tabla: "salida_despachos", registroId: id,
       datosDespues: rec, notas: `${embNombre} · ${salida.nombre} ${salida.hora}` });
-    setDespachos(prev => [...prev.filter(d => !(d.salida_id === salida.id && d.embarcacion_nombre === embNombre)), rec]);
+    setDespachos(prev => [...prev, rec]);
     setDespacharModal(null);
   };
 
@@ -1580,7 +1592,7 @@ export default function CheckIn() {
                   })()}
                 </div>
               </div>
-              {/* Botón despachar — usa allEmbs ya calculadas arriba */}
+              {/* Botones de despachar — uno por embarcación que tenga pasajeros asignados */}
               {(() => {
                 const override2 = overrides.find(o => o.salida_id === salida.id);
                 const extraE2 = (override2?.extra_embarcaciones || []).map(e => {
@@ -1592,21 +1604,54 @@ export default function CheckIn() {
                   return emb ? { ...emb } : null;
                 }).filter(Boolean);
                 const allEmbs2Base = [...baseE2, ...extraE2.filter(e => !baseE2.some(b => b.id === e.id))];
-                // Blue Apple siempre aparece en todas las salidas
                 const blueApple2 = embarcaciones.find(e => e.id === "EMB-BLUEAPPLE");
                 const allEmbs2 = blueApple2 && !allEmbs2Base.some(e => e.id === "EMB-BLUEAPPLE")
                   ? [...allEmbs2Base, { ...blueApple2 }]
                   : allEmbs2Base;
-                const todasDespachadas = allEmbs2.length > 0 && allEmbs2.every(e => despachosDesal.some(d => d.embarcacion_nombre === e.nombre));
+
+                // Pax asignados por embarcación (solo cuentan reservas con embarcacion_asignada)
+                const paxPorEmb = {};
+                resDesal.forEach(r => {
+                  if (!r.embarcacion_asignada) return;
+                  paxPorEmb[r.embarcacion_asignada] = (paxPorEmb[r.embarcacion_asignada] || 0) + (Number(r.pax) || 0);
+                });
+
+                // Solo mostrar botón para embarcaciones CON pasajeros asignados
+                const embsConPax = allEmbs2.filter(e => (paxPorEmb[e.nombre] || 0) > 0);
+
+                if (embsConPax.length === 0) {
+                  return (
+                    <div style={{ padding: "11px", borderRadius: 8, background: B.navy, color: "rgba(255,255,255,0.4)", fontSize: 12, textAlign: "center", border: `1px dashed ${B.navyLight}` }}>
+                      Asigna pasajeros a una embarcación para poder despachar
+                    </div>
+                  );
+                }
+
                 return (
-                  <button
-                    onClick={() => handleDespachar(salida, allEmbs2)}
-                    style={{ width: "100%", padding: "11px", borderRadius: 8, fontWeight: 700, fontSize: 14, cursor: "pointer",
-                      background: todasDespachadas ? B.success + "33" : B.sand,
-                      color: todasDespachadas ? B.success : B.navy,
-                      border: todasDespachadas ? `1px solid ${B.success}` : "none" }}>
-                    {todasDespachadas ? "✈ Todas despachadas" : despachosDesal.length > 0 ? `✈ Despachar otra (${despachosDesal.length} ya)` : "✈ Despachar embarcación"}
-                  </button>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                    {embsConPax.map(emb => {
+                      const yaDespachada = despachosDesal.some(d => d.embarcacion_nombre === emb.nombre);
+                      const pax = paxPorEmb[emb.nombre] || 0;
+                      return (
+                        <button key={emb.id}
+                          onClick={() => !yaDespachada && despachar(salida, emb.nombre)}
+                          disabled={yaDespachada}
+                          title={yaDespachada ? `${emb.nombre} ya fue despachada en este horario — no se puede volver a despachar` : `Despachar ${emb.nombre} con ${pax} pasajero${pax !== 1 ? "s" : ""}`}
+                          style={{
+                            width: "100%", padding: "10px 14px", borderRadius: 8, fontWeight: 700, fontSize: 13,
+                            cursor: yaDespachada ? "not-allowed" : "pointer",
+                            background: yaDespachada ? B.success + "22" : B.sand,
+                            color: yaDespachada ? B.success : B.navy,
+                            border: yaDespachada ? `1px solid ${B.success}55` : "none",
+                            display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10,
+                            opacity: yaDespachada ? 0.85 : 1,
+                          }}>
+                          <span>{yaDespachada ? "🔒" : "✈"} {yaDespachada ? "Despachada · " : "Despachar "}{emb.nombre}</span>
+                          <span style={{ fontSize: 11, opacity: 0.75 }}>{pax} pax</span>
+                        </button>
+                      );
+                    })}
+                  </div>
                 );
               })()}
             </div>
