@@ -1049,9 +1049,24 @@ function OCDetalleModal({ oc, onClose, reload }) {
 // ═══════════════════════════════════════════════════════════════════════════
 function TabRecepciones({ ordenes, reqs, reload, currentUser }) {
   const [openOC, setOpenOC] = useState(null);
-  const [openFactura, setOpenFactura] = useState(null);
-  const [openLogistica, setOpenLogistica] = useState(null);
-  const [openEmail, setOpenEmail] = useState(null);
+  // Estado: logística por OC. Solo se muestra (read-only) — la edición se
+  // hace desde el módulo Compras → tab Logística. Aquí Recepciones es para
+  // marcar lo que llega, no para gestionar logística ni facturas ni emails.
+  const [logisticaPorOC, setLogisticaPorOC] = useState({}); // { oc_id: { entrega, transporte } }
+
+  useEffect(() => {
+    if (!supabase || ordenes.length === 0) return;
+    const ocIds = ordenes.map(o => o.id);
+    Promise.all([
+      supabase.from("oc_entregas_muelle").select("*").in("oc_id", ocIds),
+      supabase.from("oc_transporte_atolon").select("*").in("oc_id", ocIds),
+    ]).then(([{ data: ent }, { data: tra }]) => {
+      const map = {};
+      (ent || []).forEach(e => { (map[e.oc_id] ||= {}).entrega = e; });
+      (tra || []).forEach(t => { (map[t.oc_id] ||= {}).transporte = t; });
+      setLogisticaPorOC(map);
+    });
+  }, [ordenes]);
 
   // Badges por estado de OC
   const OC_BADGE = {
@@ -1083,11 +1098,13 @@ function TabRecepciones({ ordenes, reqs, reload, currentUser }) {
             return item && (Number(rx.cant_recibida) || 0) >= Number(item.cant);
           }).length;
           const badge = OC_BADGE[oc.estado] || { bg: B.navyLight, color: "rgba(255,255,255,0.5)", label: oc.estado };
+          const log = logisticaPorOC[oc.id] || {};
+          const hasLogistica = !!(log.entrega || log.transporte);
           return (
             <div key={oc.id} onClick={() => setOpenOC(oc)}
               style={{ background: B.navy, borderRadius: 12, padding: "14px 18px", border: `1px solid ${B.navyLight}`, borderLeft: `4px solid ${B.sand}`, cursor: "pointer" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
-                <div style={{ flex: 1 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
+                <div style={{ flex: 1, minWidth: 220 }}>
                   <div style={{ fontSize: 14, fontWeight: 800, display: "flex", alignItems: "center", gap: 8 }}>
                     🧾 {oc.codigo}
                     {oc.requisicion_id && <span style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", fontWeight: 500 }}>· Req {oc.requisicion_id}</span>}
@@ -1102,40 +1119,41 @@ function TabRecepciones({ ordenes, reqs, reload, currentUser }) {
                 <div style={{ textAlign: "right" }}>
                   <div style={{ fontSize: 16, fontWeight: 800, color: B.sand, fontFamily: "'Barlow Condensed', sans-serif" }}>{COP(oc.total || 0)}</div>
                   <span style={{ background: badge.bg, color: badge.color, padding: "3px 10px", borderRadius: 20, fontSize: 11, fontWeight: 700, whiteSpace: "nowrap" }}>{badge.label}</span>
-                  <div style={{ marginTop: 6, display: "flex", gap: 6, justifyContent: "flex-end", flexWrap: "wrap" }}>
-                    <button onClick={(e) => { e.stopPropagation(); setOpenEmail(oc); }}
-                      style={{ padding: "4px 10px", fontSize: 11, fontWeight: 700, borderRadius: 6,
-                        border: `1px solid ${B.pink}`, background: B.pink + "22", color: B.pink, cursor: "pointer" }}
-                      title="Enviar OC al proveedor por correo">
-                      📧 Email
-                    </button>
-                    <button onClick={(e) => { e.stopPropagation(); setOpenFactura(oc); }}
-                      style={{ padding: "4px 10px", fontSize: 11, fontWeight: 700, borderRadius: 6,
-                        border: `1px solid ${oc.factura_aplicada ? B.success : B.warning}`,
-                        background: (oc.factura_aplicada ? B.success : B.warning) + "22",
-                        color: oc.factura_aplicada ? B.success : B.warning, cursor: "pointer" }}
-                      title={oc.factura_aplicada ? "Factura aplicada" : "Adjuntar factura del proveedor"}>
-                      {oc.factura_aplicada ? "📄✓ Factura" : "📎 Adjuntar Factura"}
-                    </button>
-                    <button onClick={(e) => { e.stopPropagation(); setOpenLogistica(oc); }}
-                      style={{ padding: "4px 10px", fontSize: 11, fontWeight: 700, borderRadius: 6,
-                        border: `1px solid ${B.sky}`,
-                        background: B.sky + "22",
-                        color: B.sky, cursor: "pointer" }}
-                      title="Programar entrega en muelle y transporte a Atolón">
-                      🚚 Logística
-                    </button>
-                  </div>
                 </div>
+              </div>
+
+              {/* Logística — solo informativa (read-only). Para editar:
+                  Compras → Logística. Aquí solo marcas lo recibido. */}
+              <div style={{ marginTop: 10, padding: "8px 12px", background: B.navyMid, borderRadius: 8, borderLeft: `3px solid ${hasLogistica ? B.sky : B.navyLight}`, fontSize: 11, color: "rgba(255,255,255,0.7)" }}
+                onClick={(e) => e.stopPropagation()}>
+                {hasLogistica ? (
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 14 }}>
+                    {log.entrega && (
+                      <div>
+                        <span style={{ color: B.sky, fontWeight: 700 }}>🚚 Entrega muelle:</span>{" "}
+                        {log.entrega.fecha_programada || "—"}{log.entrega.hora_programada ? ` · ${log.entrega.hora_programada}` : ""}
+                        {log.entrega.ubicacion ? <span style={{ color: "rgba(255,255,255,0.5)" }}> · {log.entrega.ubicacion}</span> : null}
+                        {log.entrega.estado ? <span style={{ marginLeft: 8, padding: "1px 8px", borderRadius: 10, background: B.navy, color: B.sky, fontSize: 10 }}>{log.entrega.estado}</span> : null}
+                      </div>
+                    )}
+                    {log.transporte && (
+                      <div>
+                        <span style={{ color: "#a78bfa", fontWeight: 700 }}>⛵ Transporte a Atolón:</span>{" "}
+                        {log.transporte.fecha_zarpe || "—"}{log.transporte.hora_zarpe ? ` · ${log.transporte.hora_zarpe}` : ""}
+                        {log.transporte.embarcacion ? <span style={{ color: "rgba(255,255,255,0.5)" }}> · {log.transporte.embarcacion}</span> : null}
+                        {log.transporte.estado ? <span style={{ marginLeft: 8, padding: "1px 8px", borderRadius: 10, background: B.navy, color: "#a78bfa", fontSize: 10 }}>{log.transporte.estado}</span> : null}
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <span style={{ color: "rgba(255,255,255,0.35)" }}>📋 Sin logística programada todavía. Configurar en Compras → Logística.</span>
+                )}
               </div>
             </div>
           );
         })}
       </div>
       {openOC && <RecepcionOCModal oc={openOC} reqs={reqs} onClose={() => setOpenOC(null)} reload={reload} currentUser={currentUser} />}
-      {openFactura && <FacturaProveedorModal oc={openFactura} onClose={() => setOpenFactura(null)} reload={reload} currentUser={currentUser} />}
-      {openLogistica && <LogisticaOCModal oc={openLogistica} onClose={() => setOpenLogistica(null)} reload={reload} currentUser={currentUser} />}
-      {openEmail && <EmailOCModal oc={openEmail} onClose={() => setOpenEmail(null)} reload={reload} currentUser={currentUser} />}
     </>
   );
 }
