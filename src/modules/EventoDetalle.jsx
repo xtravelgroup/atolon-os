@@ -3101,27 +3101,50 @@ function TabServicios({ items, onChange, pasadiasOrg = [], onChangePasadias, cat
 }
 
 // ─── PAGOS ────────────────────────────────────────────────────────────────────
-const FORMAS_PAGO_GRUPO = ["Transferencia", "Efectivo", "Datafono", "Wompi", "SKY", "CXC"];
-const EMPTY_PAGO = { id: "", monto: "", forma_pago: "Transferencia", fecha: "", notas: "", registrado_por: "" };
+const FORMAS_PAGO_GRUPO = ["Transferencia", "Efectivo", "Datafono", "Wompi", "Zelle", "Cheque"];
+const EMPTY_PAGO = { id: "", monto: "", forma_pago: "Transferencia", fecha: "", notas: "", registrado_por: "", comprobante_url: "" };
 
 function TabPagos({ pagos = [], onChange, totalGrupo = 0 }) {
   const [showForm, setShowForm] = useState(false);
   const [form, setForm]         = useState(EMPTY_PAGO);
+  const [uploading, setUploading] = useState(false);
+  const [uploadErr, setUploadErr] = useState("");
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
   const totalPagado  = pagos.reduce((s, p) => s + (Number(p.monto) || 0), 0);
   const saldo        = totalGrupo - totalPagado;
+
+  const handleFile = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 10 * 1024 * 1024) { setUploadErr("Archivo muy grande (máx 10MB)"); return; }
+    setUploading(true);
+    setUploadErr("");
+    try {
+      const ext = file.name.split(".").pop() || "bin";
+      const path = `eventos/PAG-${Date.now()}-${Math.random().toString(36).slice(2, 7)}.${ext}`;
+      const { error: upErr } = await supabase.storage.from("comprobantes").upload(path, file, { cacheControl: "3600", upsert: false });
+      if (upErr) throw upErr;
+      const { data: pub } = supabase.storage.from("comprobantes").getPublicUrl(path);
+      set("comprobante_url", pub.publicUrl);
+    } catch (err) {
+      setUploadErr("Error: " + (err.message || err));
+    } finally {
+      setUploading(false);
+    }
+  };
 
   const guardar = () => {
     if (!form.monto || !form.forma_pago) return;
     const pago = { ...form, id: form.id || `PAG-${Date.now()}`, monto: Number(form.monto), fecha: form.fecha || new Date().toISOString().slice(0,10) };
     onChange([...pagos, pago]);
     setForm(EMPTY_PAGO);
+    setUploadErr("");
     setShowForm(false);
   };
   const eliminar = (id) => { if (window.confirm("¿Eliminar este pago?")) onChange(pagos.filter(p => p.id !== id)); };
 
-  const FP_COLOR = { Transferencia: B.sky, Efectivo: B.success, Datafono: "#a78bfa", Wompi: B.sand, SKY: "#f97316", CXC: B.warning };
+  const FP_COLOR = { Transferencia: B.sky, Efectivo: B.success, Datafono: "#a78bfa", Wompi: B.sand, Zelle: "#10b981", Cheque: "#f59e0b" };
 
   return (
     <div>
@@ -3155,6 +3178,12 @@ function TabPagos({ pagos = [], onChange, totalGrupo = 0 }) {
                 </div>
                 {p.notas && <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", fontStyle: "italic" }}>{p.notas}</div>}
                 {p.registrado_por && <div style={{ fontSize: 11, color: "rgba(255,255,255,0.25)" }}>👤 {p.registrado_por}</div>}
+                {p.comprobante_url && (
+                  <a href={p.comprobante_url} target="_blank" rel="noreferrer"
+                    style={{ fontSize: 11, color: B.sky, textDecoration: "none", display: "inline-flex", alignItems: "center", gap: 4, marginTop: 4 }}>
+                    📎 Ver comprobante
+                  </a>
+                )}
               </div>
               <div style={{ fontSize: 18, fontWeight: 800, color: B.success, fontFamily: "'Barlow Condensed', sans-serif", flexShrink: 0 }}>{COP(p.monto)}</div>
               <button onClick={() => eliminar(p.id)} style={{ ...BTN(B.danger + "22"), padding: "3px 8px", fontSize: 11, color: B.danger, flexShrink: 0 }}>✕</button>
@@ -3193,9 +3222,29 @@ function TabPagos({ pagos = [], onChange, totalGrupo = 0 }) {
             <div><label style={LS}>Registrado por</label><Inp value={form.registrado_por} onChange={v => set("registrado_por", v)} /></div>
           </div>
 
+          {/* Comprobante de pago */}
+          <div style={{ marginTop: 14 }}>
+            <label style={LS}>Comprobante de pago (foto/PDF)</label>
+            <input type="file" accept="image/*,application/pdf" onChange={handleFile} disabled={uploading}
+              style={{ width: "100%", padding: "8px 10px", borderRadius: 8, background: B.navy, border: `1px solid ${B.navyLight}`, color: "#fff", fontSize: 12 }} />
+            {uploading && <div style={{ fontSize: 11, color: B.sky, marginTop: 6 }}>⏳ Subiendo…</div>}
+            {uploadErr && <div style={{ fontSize: 11, color: B.danger, marginTop: 6 }}>⚠ {uploadErr}</div>}
+            {form.comprobante_url && (
+              <div style={{ marginTop: 8, padding: 8, background: B.navy, borderRadius: 8, display: "flex", alignItems: "center", gap: 8 }}>
+                <a href={form.comprobante_url} target="_blank" rel="noreferrer" style={{ flex: 1, fontSize: 12, color: B.sky, textDecoration: "none", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  📎 Comprobante adjunto (click para ver)
+                </a>
+                <button onClick={() => set("comprobante_url", "")}
+                  style={{ ...BTN(B.danger + "22"), padding: "3px 8px", fontSize: 11, color: B.danger }}>✕ Quitar</button>
+              </div>
+            )}
+          </div>
+
           <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 16 }}>
-            <button onClick={() => { setShowForm(false); setForm(EMPTY_PAGO); }} style={{ ...BTN(B.navyLight), border: `1px solid ${B.navyLight}` }}>Cancelar</button>
-            <button onClick={guardar} style={BTN(B.success)}>✓ Guardar Pago</button>
+            <button onClick={() => { setShowForm(false); setForm(EMPTY_PAGO); setUploadErr(""); }} style={{ ...BTN(B.navyLight), border: `1px solid ${B.navyLight}` }}>Cancelar</button>
+            <button onClick={guardar} disabled={uploading} style={BTN(B.success)}>
+              {uploading ? "Subiendo comprobante…" : "✓ Guardar Pago"}
+            </button>
           </div>
         </div>
       ) : (
