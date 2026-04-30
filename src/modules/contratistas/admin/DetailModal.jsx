@@ -1,10 +1,16 @@
 // Modal de detalle de contratista — readonly + acciones de workflow.
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { supabase } from "../../../lib/supabase";
 import { B } from "../../../brand";
 import { UPLOAD_EMPRESA, UPLOAD_NATURAL, DECS_EMPRESA, DECS_NATURAL } from "../constants";
 import BitacoraTimeline from "./BitacoraTimeline";
 import WorkerPanel from "./WorkerPanel";
+
+// Bucket donde viven los PDFs/imágenes de los contratistas. Mismo nombre
+// que usa el portal público (FileUploader.jsx).
+const DOCS_BUCKET = "contratistas-docs";
+const DOC_MAX_BYTES = 10 * 1024 * 1024; // 10 MB
+const DOC_ALLOWED = ["application/pdf", "image/jpeg", "image/png", "image/jpg"];
 
 const CHANGE_STATE_URL = "https://ncdyttgxuicyruathkxd.supabase.co/functions/v1/contratistas-change-state";
 
@@ -357,7 +363,7 @@ export default function DetailModal({ contratistaId, adminUser, onClose, onChang
                   )}
                 </div>
               )}
-              {isEmp && tab === 4 && <DocumentosTab docs={docs} urls={signedUrls} uploadList={uploadList} />}
+              {isEmp && tab === 4 && <DocumentosTab docs={docs} urls={signedUrls} uploadList={uploadList} contratistaId={contratistaId} adminUser={adminUser} onChanged={load} />}
               {isEmp && tab === 5 && <DeclaracionesTab c={c} decList={decList} />}
               {isEmp && tab === 6 && <BitacoraTimeline contratistaId={contratistaId} adminUser={adminUser} />}
 
@@ -406,7 +412,7 @@ export default function DetailModal({ contratistaId, adminUser, onClose, onChang
                   <Row label="Estado ARL" value={c.nat_arl_estado} />
                 </Section>
               )}
-              {!isEmp && tab === 3 && <DocumentosTab docs={docs} urls={signedUrls} uploadList={uploadList} />}
+              {!isEmp && tab === 3 && <DocumentosTab docs={docs} urls={signedUrls} uploadList={uploadList} contratistaId={contratistaId} adminUser={adminUser} onChanged={load} />}
               {!isEmp && tab === 4 && <DeclaracionesTab c={c} decList={decList} />}
               {!isEmp && tab === 5 && <BitacoraTimeline contratistaId={contratistaId} adminUser={adminUser} />}
             </div>
@@ -441,19 +447,114 @@ export default function DetailModal({ contratistaId, adminUser, onClose, onChang
 // Sub-components
 // ────────────────────────────────────────────────────────────────────────────
 
-function DocumentosTab({ docs, urls, uploadList }) {
+// ── Documentos: ahora con UPLOAD desde el panel admin ───────────────────
+// El admin puede subir/reemplazar/eliminar documentos sin tener que pedirle
+// al contratista que entre al portal. Útil cuando el contratista mandó el
+// PDF por email/WhatsApp y el admin lo carga manualmente.
+function DocumentosTab({ docs, urls, uploadList, contratistaId, adminUser, onChanged }) {
+  const [busyId, setBusyId] = useState(null);
+  const [errorMsg, setErrorMsg] = useState("");
+
+  const handleUpload = async (spec, existingDoc, file) => {
+    if (!file) return;
+    setErrorMsg("");
+    if (file.size > DOC_MAX_BYTES) {
+      setErrorMsg(`"${file.name}" pesa ${(file.size / 1024 / 1024).toFixed(1)} MB — máx 10 MB.`);
+      return;
+    }
+    if (!DOC_ALLOWED.includes(file.type)) {
+      setErrorMsg(`"${file.name}" no es PDF / JPG / PNG.`);
+      return;
+    }
+    setBusyId(spec.id);
+    try {
+      const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
+      const path = `${contratistaId}/${spec.id}/${Date.now()}-${safeName}`;
+      const { error: upErr } = await supabase.storage.from(DOCS_BUCKET)
+        .upload(path, file, { upsert: true, contentType: file.type });
+      if (upErr) throw upErr;
+
+      // Si ya existía un doc del mismo tipo, lo borramos del registro
+      // (el archivo viejo en storage queda huérfano, pero no hace daño).
+      if (existingDoc?.id) {
+        try { await supabase.from("contratistas_documentos").delete().eq("id", existingDoc.id); } catch { /* non-fatal */ }
+      }
+
+      const { error: insErr } = await supabase.from("contratistas_documentos").insert({
+        contratista_id: contratistaId,
+        tipo: spec.id,
+        nombre_original: file.name,
+        storage_path: path,
+        mime_type: file.type,
+        size_bytes: file.size,
+        // Si tu tabla tiene un campo de auditoría usamos el email del admin.
+        // Si no existe la columna, Supabase ignora silenciosamente con .insert.
+        subido_por_admin: adminUser?.email || adminUser?.nombre || "admin",
+      });
+      if (insErr) {
+        // Reintento sin la columna `subido_por_admin` por si no está en el schema.
+        if (/column.*subido_por_admin/i.test(insErr.message || "")) {
+          const { error: retryErr } = await supabase.from("contratistas_documentos").insert({
+            contratista_id: contratistaId,
+            tipo: spec.id,
+            nombre_original: file.name,
+            storage_path: path,
+            mime_type: file.type,
+            size_bytes: file.size,
+          });
+          if (retryErr) throw retryErr;
+        } else {
+          throw insErr;
+        }
+      }
+      await onChanged?.();
+    } catch (err) {
+      console.error("[admin upload]", err);
+      setErrorMsg(err.message || String(err));
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const handleDelete = async (spec, existingDoc) => {
+    if (!existingDoc?.id) return;
+    if (!confirm(`¿Eliminar "${spec.name}"? Esta acción no se puede deshacer.`)) return;
+    setBusyId(spec.id);
+    setErrorMsg("");
+    try {
+      // Borrar archivo de storage (best-effort) y registro de DB
+      try { await supabase.storage.from(DOCS_BUCKET).remove([existingDoc.storage_path]); } catch { /* non-fatal */ }
+      const { error } = await supabase.from("contratistas_documentos").delete().eq("id", existingDoc.id);
+      if (error) throw error;
+      await onChanged?.();
+    } catch (err) {
+      console.error("[admin delete doc]", err);
+      setErrorMsg(err.message || String(err));
+    } finally {
+      setBusyId(null);
+    }
+  };
+
   return (
     <div>
-      <div style={{ fontSize: 12, color: "rgba(255,255,255,0.55)", marginBottom: 12 }}>
-        {docs.length} archivos subidos
+      <div style={{ fontSize: 12, color: "rgba(255,255,255,0.55)", marginBottom: 12, display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
+        <span>{docs.length} archivos subidos · admin puede cargar directo</span>
+        <span style={{ fontSize: 10, color: "rgba(255,255,255,0.4)" }}>PDF / JPG / PNG · máx 10 MB</span>
       </div>
+      {errorMsg && (
+        <div style={{ marginBottom: 10, padding: "8px 12px", background: B.danger + "22", border: `1px solid ${B.danger}55`, borderRadius: 6, color: "#fca5a5", fontSize: 12 }}>
+          ⚠ {errorMsg}
+        </div>
+      )}
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
         {uploadList.map(spec => {
           const doc = docs.find(d => d.tipo === spec.id);
           const url = doc ? urls[doc.id] : null;
+          const busy = busyId === spec.id;
           return (
             <div key={spec.id} style={{
               padding: 14, background: B.navyLight, borderRadius: 8,
+              borderLeft: spec.required && !doc ? `3px solid ${B.warning}` : `3px solid transparent`,
               display: "flex", justifyContent: "space-between", alignItems: "center",
               gap: 12, flexWrap: "wrap",
             }}>
@@ -461,33 +562,72 @@ function DocumentosTab({ docs, urls, uploadList }) {
                 <div style={{ fontWeight: 700, color: B.white, fontSize: 13 }}>
                   {spec.name} {spec.required && <span style={{ color: B.danger, fontSize: 11 }}>*</span>}
                 </div>
+                {spec.hint && (
+                  <div style={{ fontSize: 11, color: "rgba(255,255,255,0.45)", marginTop: 3, lineHeight: 1.4 }}>
+                    {spec.hint}
+                  </div>
+                )}
                 {doc && (
-                  <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginTop: 3 }}>
-                    {doc.nombre_original} · {(doc.size_bytes / 1024).toFixed(0)} KB
+                  <div style={{ fontSize: 11, color: B.success, marginTop: 4, fontWeight: 600 }}>
+                    ✓ {doc.nombre_original} · {(doc.size_bytes / 1024).toFixed(0)} KB
                   </div>
                 )}
               </div>
-              {doc ? (
-                url ? (
-                  <a href={url} target="_blank" rel="noreferrer" style={{
-                    padding: "6px 14px", background: B.sky, color: B.navy,
-                    textDecoration: "none", borderRadius: 6, fontSize: 11, fontWeight: 700,
+              <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                {!doc && (
+                  <span style={{
+                    padding: "4px 10px", borderRadius: 12,
+                    background: (spec.required ? B.danger : B.sand) + "22",
+                    color: spec.required ? B.danger : B.sand,
+                    fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1,
                   }}>
-                    Descargar ↓
+                    {spec.required ? "Pendiente" : "Opcional"}
+                  </span>
+                )}
+                {doc && url && (
+                  <a href={url} target="_blank" rel="noreferrer" style={{
+                    padding: "6px 12px", background: "transparent", color: B.sky,
+                    textDecoration: "none", borderRadius: 6, fontSize: 11, fontWeight: 700,
+                    border: `1px solid ${B.sky}66`,
+                  }}>
+                    Ver ↗
                   </a>
-                ) : (
-                  <span style={{ fontSize: 11, color: B.sand }}>Cargando URL…</span>
-                )
-              ) : (
-                <span style={{
-                  padding: "4px 10px", borderRadius: 12,
-                  background: (spec.required ? B.danger : B.sand) + "22",
-                  color: spec.required ? B.danger : B.sand,
-                  fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1,
+                )}
+                <label style={{
+                  padding: "6px 14px",
+                  background: doc ? "transparent" : B.sky,
+                  color: doc ? B.sky : B.navy,
+                  border: doc ? `1px solid ${B.sky}66` : "none",
+                  borderRadius: 6, fontSize: 11, fontWeight: 700,
+                  cursor: busy ? "wait" : "pointer", opacity: busy ? 0.6 : 1,
+                  whiteSpace: "nowrap", textTransform: "uppercase", letterSpacing: 0.5,
                 }}>
-                  {spec.required ? "Pendiente" : "Opcional"}
-                </span>
-              )}
+                  {busy ? "Subiendo…" : doc ? "Reemplazar" : "Subir"}
+                  <input type="file"
+                    accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png"
+                    style={{ display: "none" }}
+                    disabled={busy}
+                    onChange={e => {
+                      const f = e.target.files?.[0];
+                      handleUpload(spec, doc, f);
+                      e.target.value = "";
+                    }} />
+                </label>
+                {doc && (
+                  <button
+                    type="button"
+                    onClick={() => handleDelete(spec, doc)}
+                    disabled={busy}
+                    title={`Eliminar ${spec.name}`}
+                    style={{
+                      padding: "6px 10px", background: "transparent", color: B.danger,
+                      border: `1px solid ${B.danger}55`, borderRadius: 6, fontSize: 11, fontWeight: 700,
+                      cursor: busy ? "wait" : "pointer", opacity: busy ? 0.6 : 1,
+                    }}>
+                    🗑
+                  </button>
+                )}
+              </div>
             </div>
           );
         })}

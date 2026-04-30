@@ -18,14 +18,19 @@ export default function CotizacionRespuestaModal({ oc, onClose, reload, currentU
     return (oc.items || []).map((it, i) => ({
       oc_idx: i,
       nombre: it.item || it.nombre,
+      nombre_anterior: it.item || it.nombre,                // ← para detectar rename del proveedor
       cantidad: it.cant || 0,
+      cantidad_anterior: Number(it.cant) || 0,              // ← para detectar cambio de cantidad
       unidad: it.unidad || "UND",
       precio_unitario: Number(it.precioU) || 0,
       precio_anterior: Number(it.precioU) || 0,
+      item_id: it.item_id || null,                          // ← para sync a catálogo + Loggro
+      loggro_id: it.loggro_id || null,
       tiempo_entrega: "",
       disponibilidad: "inmediata",
     }));
   });
+  const [syncingNombreIdx, setSyncingNombreIdx] = useState(null);
   const [requiereAnticipo, setRequiereAnticipo] = useState(oc.anticipo_requerido || false);
   const [porcentajeAnt, setPorcentajeAnt] = useState(oc.anticipo_porcentaje || 50);
   const [notas, setNotas] = useState(oc.cotizacion_resp_notas || "");
@@ -71,25 +76,35 @@ export default function CotizacionRespuestaModal({ oc, onClose, reload, currentU
       // Mezclar items del AI con los de la OC: priorizar match_req_idx
       const itemsRich = (oc.items || []).map((ocIt, i) => {
         const aiIt = (data.items || []).find(x => x.match_req_idx === i);
+        const nombreOrig = ocIt.item || ocIt.nombre;
+        const cantOrig   = Number(ocIt.cant) || 0;
         if (aiIt) {
           return {
             oc_idx: i,
-            nombre: aiIt.nombre || ocIt.item || ocIt.nombre,
-            cantidad: aiIt.cantidad || ocIt.cant,
-            unidad: aiIt.unidad || ocIt.unidad,
-            precio_unitario: Number(aiIt.precio_unitario) || Number(ocIt.precioU) || 0,
-            precio_anterior: Number(ocIt.precioU) || 0,
-            disponibilidad: aiIt.disponibilidad || "inmediata",
+            nombre:           aiIt.nombre || nombreOrig,
+            nombre_anterior:  nombreOrig,
+            cantidad:         Number(aiIt.cantidad) || cantOrig,
+            cantidad_anterior: cantOrig,
+            unidad:           aiIt.unidad || ocIt.unidad,
+            precio_unitario:  Number(aiIt.precio_unitario) || Number(ocIt.precioU) || 0,
+            precio_anterior:  Number(ocIt.precioU) || 0,
+            item_id:          ocIt.item_id || null,
+            loggro_id:        ocIt.loggro_id || null,
+            disponibilidad:   aiIt.disponibilidad || "inmediata",
           };
         }
         return {
           oc_idx: i,
-          nombre: ocIt.item || ocIt.nombre,
-          cantidad: ocIt.cant,
-          unidad: ocIt.unidad,
-          precio_unitario: Number(ocIt.precioU) || 0,
-          precio_anterior: Number(ocIt.precioU) || 0,
-          disponibilidad: "inmediata",
+          nombre:           nombreOrig,
+          nombre_anterior:  nombreOrig,
+          cantidad:         cantOrig,
+          cantidad_anterior: cantOrig,
+          unidad:           ocIt.unidad,
+          precio_unitario:  Number(ocIt.precioU) || 0,
+          precio_anterior:  Number(ocIt.precioU) || 0,
+          item_id:          ocIt.item_id || null,
+          loggro_id:        ocIt.loggro_id || null,
+          disponibilidad:   "inmediata",
         };
       });
       setItems(itemsRich);
@@ -107,6 +122,60 @@ export default function CotizacionRespuestaModal({ oc, onClose, reload, currentU
   const subtotalOrig   = (oc.items || []).reduce((s, it) => s + (Number(it.cant) || 0) * (Number(it.precioU) || 0), 0);
   const delta          = subtotalNuevo - subtotalOrig;
   const montoAnticipo  = Math.round(subtotalNuevo * (porcentajeAnt / 100));
+
+  // ── Diff detection ──────────────────────────────────────────────────
+  // Detectar todos los cambios del proveedor vs la OC original. El usuario
+  // los ve en una banner arriba + cada fila resalta sus campos cambiados.
+  const eqStr = (a, b) => String(a || "").trim().toUpperCase() === String(b || "").trim().toUpperCase();
+  const itemDiffs = items.map(it => ({
+    nombreCambio: !eqStr(it.nombre, it.nombre_anterior),
+    cantidadCambio: Math.abs((Number(it.cantidad) || 0) - (Number(it.cantidad_anterior) || 0)) > 0.0001,
+    precioCambio: Math.abs((Number(it.precio_unitario) || 0) - (Number(it.precio_anterior) || 0)) > 0.01,
+  }));
+  const totDiffNombres   = itemDiffs.filter(d => d.nombreCambio).length;
+  const totDiffCantidad  = itemDiffs.filter(d => d.cantidadCambio).length;
+  const totDiffPrecio    = itemDiffs.filter(d => d.precioCambio).length;
+  const totalCambios     = totDiffNombres + totDiffCantidad + totDiffPrecio;
+
+  // ── Sync nombre con catálogo + Loggro ──────────────────────────────
+  // Cuando el proveedor renombra un producto, el usuario puede confirmar
+  // que el nuevo nombre se propague a items_catalogo y a Loggro.
+  const sincronizarNombre = async (idx) => {
+    const it = items[idx];
+    if (!it) return;
+    const nuevo = (it.nombre || "").trim();
+    const previo = (it.nombre_anterior || "").trim();
+    if (!nuevo || eqStr(nuevo, previo)) return;
+    if (!it.item_id && !it.loggro_id) {
+      alert("Este producto no está conectado al catálogo ni a Loggro — no hay nombre que sincronizar.");
+      return;
+    }
+    if (!confirm(`¿Renombrar "${previo}" → "${nuevo}" en Atolón${it.loggro_id ? " + Loggro" : ""}?`)) return;
+    setSyncingNombreIdx(idx);
+    try {
+      // 1. Actualizar items_catalogo
+      if (it.item_id) {
+        const { error } = await supabase.from("items_catalogo")
+          .update({ nombre: nuevo, updated_at: new Date().toISOString() })
+          .eq("id", it.item_id);
+        if (error) throw error;
+      }
+      // 2. Actualizar ingrediente en Loggro (mismo endpoint que usa Recepciones)
+      if (it.loggro_id) {
+        const { error } = await supabase.functions.invoke("loggro-sync/update-ingredient", {
+          body: { loggro_id: it.loggro_id, nombre: nuevo },
+        });
+        if (error) throw error;
+      }
+      // 3. Marcar local: nombre_anterior = nombre nuevo (deja de ser un diff)
+      setItems(arr => arr.map((p, j) => j === idx ? { ...p, nombre_anterior: nuevo } : p));
+      setProgress(`✅ Nombre sincronizado: "${nuevo}"`);
+    } catch (e) {
+      setError(`Error al sincronizar nombre: ${e.message || e}`);
+    } finally {
+      setSyncingNombreIdx(null);
+    }
+  };
 
   const aprobar = async () => {
     setStep("approving"); setError("");
@@ -214,6 +283,32 @@ export default function CotizacionRespuestaModal({ oc, onClose, reload, currentU
             {progress && <div style={{ marginBottom: 10, padding: 8, background: B.success + "11", color: B.success, borderRadius: 6, fontSize: 12 }}>{progress}</div>}
             {error && <div style={{ marginBottom: 10, padding: 10, background: B.danger + "22", color: "#fca5a5", borderRadius: 6, fontSize: 12 }}>{error}</div>}
 
+            {/* ── Banner de diferencias detectadas ────────────────────── */}
+            {totalCambios > 0 && (
+              <div style={{
+                marginBottom: 14, padding: "12px 14px", borderRadius: 10,
+                background: "rgba(245,158,11,0.12)", border: `1px solid ${B.warning}55`,
+                display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap",
+              }}>
+                <span style={{ fontSize: 18 }}>⚠️</span>
+                <div style={{ flex: 1, minWidth: 200 }}>
+                  <div style={{ fontSize: 13, fontWeight: 800, color: B.warning, marginBottom: 2 }}>
+                    {totalCambios} {totalCambios === 1 ? "diferencia detectada" : "diferencias detectadas"} vs OC original
+                  </div>
+                  <div style={{ fontSize: 11, color: "rgba(255,255,255,0.7)", display: "flex", gap: 12, flexWrap: "wrap" }}>
+                    {totDiffNombres   > 0 && <span>📝 {totDiffNombres} {totDiffNombres === 1 ? "nombre" : "nombres"}</span>}
+                    {totDiffCantidad  > 0 && <span>📦 {totDiffCantidad} {totDiffCantidad === 1 ? "cantidad" : "cantidades"}</span>}
+                    {totDiffPrecio    > 0 && <span>💰 {totDiffPrecio} {totDiffPrecio === 1 ? "precio" : "precios"}</span>}
+                  </div>
+                </div>
+                {totDiffNombres > 0 && (
+                  <div style={{ fontSize: 10, color: "rgba(255,255,255,0.55)", maxWidth: 220, lineHeight: 1.4 }}>
+                    Si el proveedor renombró un producto, usa el botón 🔄 para actualizar Atolón + Loggro.
+                  </div>
+                )}
+              </div>
+            )}
+
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 14 }}>
               <div>
                 <label style={LBL}>Tiempo de entrega</label>
@@ -238,23 +333,60 @@ export default function CotizacionRespuestaModal({ oc, onClose, reload, currentU
                   {items.map((it, i) => {
                     const sub = (Number(it.cantidad) || 0) * (Number(it.precio_unitario) || 0);
                     const d = (Number(it.precio_unitario) || 0) - (Number(it.precio_anterior) || 0);
-                    const cambio = Math.abs(d) > 0.01;
+                    const diff = itemDiffs[i] || {};
+                    const cambioAlguno = diff.nombreCambio || diff.cantidadCambio || diff.precioCambio;
                     const c = d > 0 ? B.danger : d < 0 ? B.success : "rgba(255,255,255,0.4)";
+                    const cantD = (Number(it.cantidad) || 0) - (Number(it.cantidad_anterior) || 0);
                     return (
-                      <tr key={i} style={{ borderTop: `1px solid ${B.navyLight}`, background: cambio ? "rgba(245,158,11,0.06)" : "transparent" }}>
-                        <td style={{ padding: "8px 10px" }}>{it.nombre}</td>
+                      <tr key={i} style={{ borderTop: `1px solid ${B.navyLight}`, background: cambioAlguno ? "rgba(245,158,11,0.06)" : "transparent" }}>
+                        <td style={{ padding: "8px 10px" }}>
+                          <input value={it.nombre || ""}
+                            onChange={e => setItems(arr => arr.map((p, j) => j === i ? { ...p, nombre: e.target.value } : p))}
+                            style={{ ...INP, padding: "4px 8px", fontSize: 12, minWidth: 180,
+                              borderColor: diff.nombreCambio ? B.warning : B.navyLight,
+                              color: diff.nombreCambio ? B.warning : "#fff" }} />
+                          {diff.nombreCambio && (
+                            <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4, flexWrap: "wrap" }}>
+                              <span style={{ fontSize: 10, color: "rgba(255,255,255,0.45)" }}>
+                                Antes: <s>{it.nombre_anterior}</s>
+                              </span>
+                              {(it.item_id || it.loggro_id) && (
+                                <button
+                                  onClick={() => sincronizarNombre(i)}
+                                  disabled={syncingNombreIdx === i}
+                                  title={`Renombrar en catálogo${it.loggro_id ? " + Loggro" : ""}`}
+                                  style={{
+                                    padding: "2px 8px", fontSize: 10, fontWeight: 700,
+                                    borderRadius: 5, border: `1px solid ${B.sky}`,
+                                    background: B.sky + "22", color: B.sky,
+                                    cursor: syncingNombreIdx === i ? "wait" : "pointer",
+                                    opacity: syncingNombreIdx === i ? 0.6 : 1,
+                                  }}>
+                                  {syncingNombreIdx === i ? "⏳…" : `🔄 Sync${it.loggro_id ? " + Loggro" : ""}`}
+                                </button>
+                              )}
+                            </div>
+                          )}
+                        </td>
                         <td style={{ padding: "6px 10px" }}>
                           <input type="number" value={it.cantidad} onChange={e => setItems(arr => arr.map((p, j) => j === i ? { ...p, cantidad: Number(e.target.value) || 0 } : p))}
-                            style={{ ...INP, padding: "4px 6px", fontSize: 11, width: 60, textAlign: "right" }} />
+                            style={{ ...INP, padding: "4px 6px", fontSize: 11, width: 60, textAlign: "right",
+                              borderColor: diff.cantidadCambio ? B.warning : B.navyLight,
+                              color: diff.cantidadCambio ? B.warning : "#fff" }} />
+                          {diff.cantidadCambio && (
+                            <div style={{ fontSize: 9, color: cantD > 0 ? B.danger : B.success, fontWeight: 700, textAlign: "right", marginTop: 2 }}>
+                              {cantD > 0 ? "+" : ""}{cantD} (antes {it.cantidad_anterior})
+                            </div>
+                          )}
                         </td>
                         <td style={{ padding: "8px 10px", color: "rgba(255,255,255,0.5)" }}>{it.unidad}</td>
                         <td style={{ padding: "8px 10px", textAlign: "right", color: "rgba(255,255,255,0.5)" }}>{COP(it.precio_anterior)}</td>
                         <td style={{ padding: "6px 10px", textAlign: "right" }}>
                           <input type="number" value={it.precio_unitario} onChange={e => setItems(arr => arr.map((p, j) => j === i ? { ...p, precio_unitario: Number(e.target.value) || 0 } : p))}
                             style={{ ...INP, padding: "4px 6px", fontSize: 11, width: 90, textAlign: "right",
-                              borderColor: cambio ? B.warning : B.navyLight, color: cambio ? B.warning : "#fff" }} />
+                              borderColor: diff.precioCambio ? B.warning : B.navyLight, color: diff.precioCambio ? B.warning : "#fff" }} />
                         </td>
-                        <td style={{ padding: "8px 10px", textAlign: "right", color: c, fontWeight: 700 }}>{cambio ? `${d > 0 ? "+" : ""}${COP(d)}` : "—"}</td>
+                        <td style={{ padding: "8px 10px", textAlign: "right", color: c, fontWeight: 700 }}>{diff.precioCambio ? `${d > 0 ? "+" : ""}${COP(d)}` : "—"}</td>
                         <td style={{ padding: "8px 10px", textAlign: "right", color: B.sand, fontWeight: 700 }}>{COP(sub)}</td>
                       </tr>
                     );

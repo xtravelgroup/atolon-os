@@ -320,6 +320,30 @@ function TabOrdenes({ ordenes, reload, currentUser }) {
                   </div>
                   <div style={{ textAlign: isMobile ? "left" : "right", display: "flex", flexDirection: "column", gap: 6, alignItems: isMobile ? "flex-start" : "flex-end" }}>
                     <div style={{ fontSize: 16, fontWeight: 800, color: B.sand, fontFamily: "'Barlow Condensed', sans-serif" }}>{COP(oc.total || 0)}</div>
+                    {/* Acceso directo a archivos adjuntos: cotización / factura.
+                        El usuario puede previsualizar el PDF/imagen sin abrir el modal. */}
+                    {(oc.cotizacion_resp_url || oc.factura_url) && (
+                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", fontSize: 11 }}>
+                        {oc.cotizacion_resp_url && (
+                          <a href={oc.cotizacion_resp_url} target="_blank" rel="noreferrer"
+                            title={`Ver cotización del proveedor${oc.cotizacion_resp_subida_at ? " — subida " + fmtFecha(oc.cotizacion_resp_subida_at.slice(0,10)) : ""}`}
+                            style={{ color: oc.cotizacion_resp_aprobada ? B.success : "#a78bfa", textDecoration: "none", fontWeight: 600,
+                              padding: "2px 8px", borderRadius: 6, border: `1px solid ${(oc.cotizacion_resp_aprobada ? B.success : "#a78bfa") + "55"}`,
+                              background: (oc.cotizacion_resp_aprobada ? B.success : "#a78bfa") + "11" }}>
+                            📎 Cotización
+                          </a>
+                        )}
+                        {oc.factura_url && (
+                          <a href={oc.factura_url} target="_blank" rel="noreferrer"
+                            title={`Ver factura${oc.factura_numero ? " " + oc.factura_numero : ""}${oc.factura_fecha ? " — " + fmtFecha(oc.factura_fecha.slice(0,10)) : ""}`}
+                            style={{ color: oc.factura_aplicada ? B.success : B.warning, textDecoration: "none", fontWeight: 600,
+                              padding: "2px 8px", borderRadius: 6, border: `1px solid ${(oc.factura_aplicada ? B.success : B.warning) + "55"}`,
+                              background: (oc.factura_aplicada ? B.success : B.warning) + "11" }}>
+                            📎 Factura{oc.factura_numero ? " " + oc.factura_numero : ""}
+                          </a>
+                        )}
+                      </div>
+                    )}
                     <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                       {OC_EDITABLE(oc) && !oc.factura_aplicada && (
                         <button onClick={() => setOpenEditar(oc)}
