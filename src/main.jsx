@@ -4,6 +4,52 @@ import "./global.css";
 import App from "./App.jsx";
 import { B } from "./brand";
 
+// ── Recovery automático tras deploy con chunks viejos ─────────────────
+// Cuando Vercel despliega una nueva versión, los nombres de los chunks
+// cambian (Eventos-XXXXXX.js). Si el usuario tiene la página abierta
+// y trata de cargar un módulo lazy, el chunk viejo ya no existe →
+// "Failed to fetch dynamically imported module".
+// Solución: detectar ese error y forzar reload (1 vez por sesión).
+const RELOAD_FLAG = "__atolon_chunk_reload";
+function isChunkLoadError(err) {
+  const msg = String(err?.message || err || "");
+  return /Failed to fetch dynamically imported module|Loading chunk|ChunkLoadError|Importing a module script failed/i.test(msg);
+}
+function recoverFromChunkError(err) {
+  console.warn("[chunk-recover] detected stale chunk error:", err?.message || err);
+  if (sessionStorage.getItem(RELOAD_FLAG)) {
+    // Ya se intentó recargar — no entrar en loop. Mostrar mensaje al usuario.
+    console.error("[chunk-recover] reload already attempted, abandonning");
+    return;
+  }
+  sessionStorage.setItem(RELOAD_FLAG, String(Date.now()));
+  // Limpiar caches del navegador para evitar recibir el HTML cacheado viejo.
+  if (typeof caches !== "undefined") {
+    caches.keys().then(keys => Promise.all(keys.map(k => caches.delete(k)))).finally(() => {
+      window.location.reload();
+    });
+  } else {
+    window.location.reload();
+  }
+}
+window.addEventListener("error", (e) => {
+  if (isChunkLoadError(e?.error || e?.message)) {
+    e.preventDefault();
+    recoverFromChunkError(e.error || e);
+  }
+});
+window.addEventListener("unhandledrejection", (e) => {
+  if (isChunkLoadError(e?.reason)) {
+    e.preventDefault();
+    recoverFromChunkError(e.reason);
+  }
+});
+// Si el reload anterior fue hace más de 30s, limpiar el flag (página cargó
+// bien) — así futuros chunks errors pueden volver a recargar.
+if (sessionStorage.getItem(RELOAD_FLAG)) {
+  setTimeout(() => sessionStorage.removeItem(RELOAD_FLAG), 30000);
+}
+
 // Loading fallback mostrado mientras un chunk lazy se descarga.
 // Match con el estilo del LoadingScreen interno de App.jsx para
 // transición suave durante navegación.
