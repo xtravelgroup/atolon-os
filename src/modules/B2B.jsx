@@ -1669,50 +1669,65 @@ function VisitasAgencia({ aliadoId, aliado }) {
     setShowForm(true);
   };
 
+  const [saveError, setSaveError] = useState("");
   const handleSave = async () => {
-    if (!supabase || saving || !form.fecha) return;
+    if (!supabase || saving) return;
+    setSaveError("");
+    if (!form.fecha) { setSaveError("La fecha es obligatoria."); return; }
+    if (!aliadoId)   { setSaveError("Aliado no identificado — recargá la página."); return; }
     setSaving(true);
-    if (editVisita) {
-      await supabase.from("b2b_visitas").update({ ...form }).eq("id", editVisita.id);
-    } else {
-      const visitaId = `VIS-${Date.now()}`;
-      let reservaId = null;
+    try {
+      if (editVisita) {
+        const { error } = await supabase.from("b2b_visitas").update({ ...form }).eq("id", editVisita.id);
+        if (error) throw error;
+      } else {
+        const visitaId = `VIS-${Date.now()}`;
+        let reservaId = null;
 
-      // Si es visita de inspección → crear reserva en el log
-      if (form.tipo === "inspección") {
-        reservaId = `INS-${Date.now()}`;
-        const pax = parseInt(form.num_personas) || 1;
-        await supabase.from("reservas").insert({
-          id: reservaId,
+        // Si es visita de inspección → crear reserva en el log
+        if (form.tipo === "inspección") {
+          reservaId = `INS-${Date.now()}`;
+          const pax = parseInt(form.num_personas) || 1;
+          const { error: e1 } = await supabase.from("reservas").insert({
+            id: reservaId,
+            aliado_id: aliadoId,
+            tipo: "Visita Inspección",
+            fecha: form.fecha,
+            estado: "confirmado",
+            total: 0,
+            abono: 0,
+            forma_pago: "cortesía",
+            pax,
+            notas: `Visita de inspección B2B — ${aliado.nombre}${form.coordinador ? ` · Coordinador: ${form.coordinador}` : ""}${form.objetivo ? ` · Objetivo: ${form.objetivo}` : ""}`,
+            created_at: new Date().toISOString(),
+          });
+          if (e1) throw e1;
+          // Log en historial (no-fatal si falla)
+          await supabase.from("reservas_historial").insert({
+            id: `H-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
+            reserva_id: reservaId,
+            accion: "inspeccion_agendada",
+            descripcion: `🔍 Visita de inspección agendada — ${aliado.nombre} · ${pax} persona(s) · ${form.fecha}${form.hora ? " " + form.hora : ""}`,
+            usuario: form.realizada_por || "sistema",
+          });
+        }
+
+        const { error: e2 } = await supabase.from("b2b_visitas").insert({
+          id: visitaId,
           aliado_id: aliadoId,
-          tipo: "Visita Inspección",
-          fecha: form.fecha,
-          estado: "confirmado",
-          total: 0,
-          abono: 0,
-          forma_pago: "cortesía",
-          pax,
-          notas: `Visita de inspección B2B — ${aliado.nombre}${form.coordinador ? ` · Coordinador: ${form.coordinador}` : ""}${form.objetivo ? ` · Objetivo: ${form.objetivo}` : ""}`,
-          created_at: new Date().toISOString(),
-        });
-        // Log en historial
-        await supabase.from("reservas_historial").insert({
-          id: `H-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
+          ...form,
           reserva_id: reservaId,
-          accion: "inspeccion_agendada",
-          descripcion: `🔍 Visita de inspección agendada — ${aliado.nombre} · ${pax} persona(s) · ${form.fecha}${form.hora ? " " + form.hora : ""}`,
-          usuario: form.realizada_por || "sistema",
         });
+        if (e2) throw e2;
       }
-
-      await supabase.from("b2b_visitas").insert({
-        id: visitaId,
-        aliado_id: aliadoId,
-        ...form,
-        reserva_id: reservaId,
-      });
+      setShowForm(false);
+      fetchV();
+    } catch (err) {
+      console.error("[b2b_visitas] save error:", err);
+      setSaveError(err.message || String(err));
+    } finally {
+      setSaving(false);
     }
-    setSaving(false); setShowForm(false); fetchV();
   };
 
   const handleDelete = async (id) => {
@@ -1936,6 +1951,11 @@ function VisitasAgencia({ aliadoId, aliado }) {
               </div>
             </div>
 
+            {saveError && (
+              <div style={{ marginTop: 14, padding: "10px 14px", background: B.danger + "22", border: `1px solid ${B.danger}55`, borderRadius: 8, color: "#fca5a5", fontSize: 12 }}>
+                ⚠ {saveError}
+              </div>
+            )}
             <div style={{ display: "flex", gap: 10, marginTop: 24 }}>
               <button onClick={() => setShowForm(false)} style={{ flex: 1, padding: "12px", background: "none", border: `1px solid ${B.navyLight}`, borderRadius: 8, color: "rgba(255,255,255,0.4)", fontSize: 13, cursor: "pointer" }}>Cancelar</button>
               <button onClick={handleSave} disabled={saving || !form.fecha}
