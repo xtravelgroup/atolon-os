@@ -62,18 +62,23 @@ export default function Lancha() {
   const [configModal, setConfigModal] = useState(false);
   const [capitanModal, setCapitanModal] = useState(null); // { edit? }
 
+  const [loadErrors, setLoadErrors] = useState([]);
   const load = useCallback(async () => {
     setLoading(true);
+    setLoadErrors([]);
     // Idempotente: asegura cargos recurrentes del mes actual (marina + capitanes terceros)
     supabase.rpc("generar_marina_mes").then(() => {});
     supabase.rpc("generar_capitanes_mes").then(() => {});
-    // Filtrar bitacora/zarpes/llegadas a últimos 90 días: 500 rows era OK
-    // al inicio pero con 6+ meses de operación se vuelve pesado. Si necesitan
-    // histórico viejo hay reportes específicos en CostosFlotaTab (6 meses).
+    // Filtrar bitacora/zarpes/llegadas a últimos 90 días para no traer
+    // años de histórico al cambiar de módulo.
     const noventaAtras = new Date();
     noventaAtras.setDate(noventaAtras.getDate() - 90);
     const desde = noventaAtras.toISOString().slice(0, 10);
-    const [lR, bR, zR, llR, cR, eR] = await Promise.all([
+    // Ejecutamos cada query con allSettled + capturamos errores específicos.
+    // Antes con Promise.all si UNA query fallaba, todas se descartaban y el
+    // módulo aparecía vacío sin pista de qué pasó. Ahora cada una falla en
+    // aislamiento y el resto de la data se muestra.
+    const [lR, bR, zR, llR, cR, eR] = await Promise.allSettled([
       supabase.from("lanchas").select("*").eq("activo", true).order("nombre"),
       supabase.from("lancha_bitacora").select("*").gte("fecha", desde).order("fecha", { ascending: false }).order("hora", { ascending: false }).limit(500),
       supabase.from("muelle_zarpes_flota").select("*").gte("fecha", desde).order("fecha", { ascending: false }).limit(500),
@@ -81,13 +86,35 @@ export default function Lancha() {
       supabase.from("capitanes_flota").select("*").eq("activo", true).order("nombre"),
       supabase.from("rh_empleados").select("id, nombres, apellidos, cedula, telefono, email, cargo, salario_base, activo").eq("activo", true).order("nombres"),
     ]);
-    const lanchasArr = lR.data || [];
+    // Helper: extrae data o reporta error con label de tabla.
+    const errs = [];
+    const pick = (label, settled) => {
+      if (settled.status === "rejected") {
+        errs.push({ tabla: label, error: settled.reason?.message || String(settled.reason) });
+        console.error(`[Lancha] query ${label} rejected:`, settled.reason);
+        return [];
+      }
+      const { data, error } = settled.value || {};
+      if (error) {
+        errs.push({ tabla: label, error: error.message || String(error) });
+        console.error(`[Lancha] query ${label} error:`, error);
+        return [];
+      }
+      return data || [];
+    };
+    const lanchasArr = pick("lanchas", lR);
+    const bitacoraArr = pick("lancha_bitacora", bR);
+    const zarpesArr = pick("muelle_zarpes_flota", zR);
+    const llegadasArr = pick("muelle_llegadas", llR);
+    const capitanesArr = pick("capitanes_flota", cR);
+    const empleadosArr = pick("rh_empleados", eR);
     setLanchas(lanchasArr);
-    setBitacora(bR.data || []);
-    setZarpes(zR.data || []);
-    setLlegadas(llR.data || []);
-    setCapitanes(cR.data || []);
-    setEmpleados(eR.data || []);
+    setBitacora(bitacoraArr);
+    setZarpes(zarpesArr);
+    setLlegadas(llegadasArr);
+    setCapitanes(capitanesArr);
+    setEmpleados(empleadosArr);
+    setLoadErrors(errs);
     if (!activeLancha && lanchasArr.length) setActiveLancha(lanchasArr[0].id);
     setLoading(false);
   }, [activeLancha]);
@@ -278,6 +305,18 @@ export default function Lancha() {
           <div style={{ fontSize: 12, color: "rgba(255,255,255,0.55)" }}>Combustible, mantenimiento, viajes e incidentes por embarcación.</div>
         </div>
       </div>
+
+      {/* Error banner — mostrar qué query falló para diagnóstico */}
+      {loadErrors.length > 0 && (
+        <div style={{ marginBottom: 14, padding: "12px 14px", background: B.danger + "22", border: `1px solid ${B.danger}55`, borderRadius: 10, color: "#fca5a5", fontSize: 12 }}>
+          <div style={{ fontWeight: 700, marginBottom: 4 }}>⚠ Error cargando datos:</div>
+          {loadErrors.map((e, i) => (
+            <div key={i} style={{ fontFamily: "monospace", marginTop: 2 }}>
+              · <strong>{e.tabla}</strong>: {e.error}
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Tabs por lancha */}
       <div style={{ display: "flex", gap: 8, marginBottom: 20, flexWrap: "wrap" }}>
