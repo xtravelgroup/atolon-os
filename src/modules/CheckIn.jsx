@@ -372,6 +372,138 @@ function PasajerosModal({ reserva, onClose, onSaved, autoCheckin = false }) {
   );
 }
 
+// ─── Embarcación Rentada (contratada en muelle) Modal ───────────────────────
+// Permite al operador del muelle agregar UNA embarcación que se contrató
+// in-situ — el bote queda en `embarcaciones` con propiedad='rentada' y
+// estado='activo' inmediatamente, así aparece en todos los selectores
+// (asignar pasajeros, despachar grupo, etc.) sin recargar la página.
+function EmbarcacionRentadaModal({ onClose, onSaved }) {
+  const [f, setF] = useState({
+    nombre: "",
+    capacidad: "",
+    tipo: "",
+    capitan: "",
+    matricula: "",
+    piloto_celular: "",
+    costo_renta: "",
+    notas: "",
+  });
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState("");
+  const set = (k, v) => setF(p => ({ ...p, [k]: v }));
+
+  const guardar = async () => {
+    setErr("");
+    if (!f.nombre.trim()) { setErr("El nombre de la embarcación es obligatorio."); return; }
+    if (!f.capacidad || Number(f.capacidad) <= 0) { setErr("La capacidad debe ser mayor a 0 (necesaria para asignar pax)."); return; }
+    setSaving(true);
+    try {
+      // ID corto y legible: EMB-RENT-<timestamp36>
+      const id = `EMB-RENT-${Date.now().toString(36).toUpperCase()}`;
+      const payload = {
+        id,
+        nombre: f.nombre.trim(),
+        tipo: f.tipo.trim() || "Rentada",
+        capacidad: Number(f.capacidad),
+        propiedad: "rentada",
+        estado: "activo",
+        capitan: f.capitan.trim() || null,
+        matricula: f.matricula.trim() || null,
+        piloto_celular: f.piloto_celular.trim() || null,
+        costo_renta: f.costo_renta ? Number(f.costo_renta) : null,
+        notas: f.notas.trim() || null,
+      };
+      const { data, error } = await supabase.from("embarcaciones").insert(payload).select().single();
+      if (error) throw error;
+      // Audit log
+      try { logAccion({ modulo: "checkin", accion: "embarcacion_rentada_creada", tabla: "embarcaciones", registroId: id, datos: payload }); } catch { /* no-op */ }
+      onSaved?.(data);
+      onClose();
+    } catch (e) {
+      setErr(e.message || String(e));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.78)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
+      onClick={e => e.target === e.currentTarget && onClose()}>
+      <div style={{ background: B.navyMid, borderRadius: 16, padding: 26, width: 520, maxWidth: "100%", maxHeight: "92vh", overflowY: "auto", boxShadow: "0 24px 64px rgba(0,0,0,0.6)" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
+          <div>
+            <div style={{ fontSize: 18, fontWeight: 800 }}>🛥 Agregar embarcación rentada</div>
+            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginTop: 4 }}>
+              Bote contratado en muelle — disponible al instante para asignar pasajeros
+            </div>
+          </div>
+          <button onClick={onClose} style={{ background: "transparent", border: "none", color: "rgba(255,255,255,0.45)", fontSize: 22, cursor: "pointer" }}>×</button>
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+          <div style={{ gridColumn: "1 / -1" }}>
+            <label style={LS}>Nombre de la embarcación *</label>
+            <input value={f.nombre} onChange={e => set("nombre", e.target.value)}
+              placeholder="Ej: Patricia, Don Pedro..." style={IS} autoFocus />
+          </div>
+          <div>
+            <label style={LS}>Capacidad (pax) *</label>
+            <input type="number" min="1" value={f.capacidad}
+              onChange={e => set("capacidad", e.target.value)} placeholder="Ej: 25" style={IS} />
+          </div>
+          <div>
+            <label style={LS}>Tipo</label>
+            <input value={f.tipo} onChange={e => set("tipo", e.target.value)}
+              placeholder="Lancha rápida, Yate..." style={IS} />
+          </div>
+          <div>
+            <label style={LS}>Capitán / Piloto</label>
+            <input value={f.capitan} onChange={e => set("capitan", e.target.value)}
+              placeholder="Nombre del capitán" style={IS} />
+          </div>
+          <div>
+            <label style={LS}>Celular del capitán</label>
+            <input value={f.piloto_celular} onChange={e => set("piloto_celular", e.target.value)}
+              placeholder="300 1234567" style={IS} />
+          </div>
+          <div>
+            <label style={LS}>Matrícula</label>
+            <input value={f.matricula} onChange={e => set("matricula", e.target.value)}
+              placeholder="CP-XXXXXX-X" style={IS} />
+          </div>
+          <div>
+            <label style={LS}>Costo de renta (COP)</label>
+            <input type="number" min="0" value={f.costo_renta}
+              onChange={e => set("costo_renta", e.target.value)} placeholder="Ej: 800000" style={IS} />
+          </div>
+          <div style={{ gridColumn: "1 / -1" }}>
+            <label style={LS}>Notas</label>
+            <input value={f.notas} onChange={e => set("notas", e.target.value)}
+              placeholder="Observaciones (cliente, hora estimada, etc.)" style={IS} />
+          </div>
+        </div>
+
+        {err && (
+          <div style={{ marginTop: 14, padding: "10px 14px", background: B.danger + "22", border: `1px solid ${B.danger}55`, borderRadius: 8, color: "#fca5a5", fontSize: 12 }}>
+            ⚠ {err}
+          </div>
+        )}
+
+        <div style={{ display: "flex", gap: 10, marginTop: 18 }}>
+          <button onClick={onClose} disabled={saving}
+            style={{ flex: 1, padding: 12, borderRadius: 10, border: `1px solid ${B.navyLight}`, background: "transparent", color: "rgba(255,255,255,0.5)", cursor: "pointer", fontWeight: 600 }}>
+            Cancelar
+          </button>
+          <button onClick={guardar} disabled={saving}
+            style={{ flex: 2, padding: 12, borderRadius: 10, border: "none", background: saving ? B.navyLight : B.success, color: B.navy, cursor: saving ? "wait" : "pointer", fontWeight: 800 }}>
+            {saving ? "Guardando…" : "✓ Agregar y dejar disponible"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Colaboradores Modal ─────────────────────────────────────────────────────
 function ColaboradoresModal({ salidaId, fecha, despacho, embarcaciones = [], onClose, onSaved }) {
   const init = despacho?.colaboradores?.length > 0
@@ -745,6 +877,7 @@ export default function CheckIn() {
   const [qrGrupo,        setQrGrupo]        = useState(null); // { grupo, slot? }
   const [bulkFill,       setBulkFill]       = useState(null); // grupo
   const [grupoEmbModal,  setGrupoEmbModal]  = useState(null); // grupo
+  const [showAddEmb,     setShowAddEmb]     = useState(false);  // modal "agregar embarcación rentada"
 
   const load = useCallback(async () => {
     if (!supabase) { setLoading(false); return; }
@@ -1046,6 +1179,21 @@ export default function CheckIn() {
         );
       })()}
 
+      {/* Modal: agregar embarcación rentada en muelle.
+          Al guardar la insertamos en el state local para que aparezca
+          inmediatamente en todos los selectores sin recargar la página. */}
+      {showAddEmb && (
+        <EmbarcacionRentadaModal
+          onClose={() => setShowAddEmb(false)}
+          onSaved={(emb) => {
+            if (emb) setEmbarcaciones(prev => [...prev, emb].sort((a, b) => (a.nombre || "").localeCompare(b.nombre || "")));
+            setShowAddEmb(false);
+            // Refresh completo en background para sincronizar con DB
+            load();
+          }}
+        />
+      )}
+
       {/* ── QR zarpe grupo ── */}
       {qrGrupo && (() => {
         const { grupo, slot } = qrGrupo;
@@ -1284,12 +1432,19 @@ export default function CheckIn() {
       <div>
         {/* Header */}
         <div style={{ marginBottom: 16 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginBottom: 10 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginBottom: 10, flexWrap: "wrap" }}>
             <h2 style={{ fontSize: isMobile ? 18 : 22, fontWeight: 600, margin: 0 }}>Check-in · Muelle</h2>
-            <button onClick={() => setScanning(true)}
-              style={{ background: B.sky, color: B.navy, border: "none", borderRadius: 10, padding: isMobile ? "10px 14px" : "12px 20px", fontWeight: 700, fontSize: isMobile ? 13 : 14, cursor: "pointer", display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
-              📷 {isMobile ? "QR" : "Escanear QR"}
-            </button>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <button onClick={() => setShowAddEmb(true)}
+                title="Agregar embarcación rentada en muelle (queda disponible al instante)"
+                style={{ background: B.sand, color: B.navy, border: "none", borderRadius: 10, padding: isMobile ? "10px 14px" : "12px 18px", fontWeight: 700, fontSize: isMobile ? 13 : 14, cursor: "pointer", display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
+                🛥 {isMobile ? "+ Embarcación" : "+ Embarcación rentada"}
+              </button>
+              <button onClick={() => setScanning(true)}
+                style={{ background: B.sky, color: B.navy, border: "none", borderRadius: 10, padding: isMobile ? "10px 14px" : "12px 20px", fontWeight: 700, fontSize: isMobile ? 13 : 14, cursor: "pointer", display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
+                📷 {isMobile ? "QR" : "Escanear QR"}
+              </button>
+            </div>
           </div>
           <div style={{ ...IS, width: isMobile ? "100%" : "auto", fontSize: 14, display: "flex", alignItems: "center", gap: 6, color: "rgba(255,255,255,0.6)", userSelect: "none" }}>
             📅 {new Date(fecha + "T12:00:00").toLocaleDateString("es-CO", { weekday: "long", day: "numeric", month: "long" })}
