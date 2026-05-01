@@ -88,16 +88,31 @@ serve(async (req) => {
       } catch (e) { console.warn("link proveedor:", e); }
     }
 
-    await supabase.from("contratistas").update(update).eq("id", contratista_id);
+    // Update + chequear errores: antes el await no leía `error` y los
+    // fallos de schema (col inexistente) pasaban en silencio. El usuario
+    // veía "aprobado" en la UI pero la DB nunca cambiaba.
+    const upd = await supabase.from("contratistas").update(update).eq("id", contratista_id);
+    if (upd.error) {
+      console.error("update contratistas error:", upd.error);
+      return new Response(
+        JSON.stringify({ error: `update DB falló: ${upd.error.message}`, hint: "Probable schema mismatch — revisar columnas." }),
+        { status: 500, headers: { ...CORS, "Content-Type": "application/json" } },
+      );
+    }
 
-    await supabase.from("contratistas_bitacora").insert({
+    // Bitácora: la tabla usa `descripcion` (NO `detalle`) y tiene columnas
+    // dedicadas estado_anterior/estado_nuevo en lugar de solo metadata.
+    const bit = await supabase.from("contratistas_bitacora").insert({
       contratista_id,
       evento: `estado_${nuevo_estado}`,
-      detalle: notas || `Cambio ${estado_anterior} → ${nuevo_estado}`,
+      estado_anterior,
+      estado_nuevo: nuevo_estado,
+      descripcion: notas || `Cambio ${estado_anterior} → ${nuevo_estado}`,
       usuario_id: user.id,
       usuario_nombre: user.email,
-      metadata: { estado_anterior, nuevo_estado, notas: notas || null },
+      metadata: { notas: notas || null },
     });
+    if (bit.error) console.warn("bitacora insert error:", bit.error.message);
 
     // Email al contratista según estado
     const subject = {
