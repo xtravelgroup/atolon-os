@@ -82,7 +82,13 @@ export default function Lancha() {
       supabase.from("lanchas").select("*").eq("activo", true).order("nombre"),
       supabase.from("lancha_bitacora").select("*").gte("fecha", desde).order("fecha", { ascending: false }).order("hora", { ascending: false }).limit(500),
       supabase.from("muelle_zarpes_flota").select("*").gte("fecha", desde).order("fecha", { ascending: false }).limit(500),
-      supabase.from("muelle_llegadas").select("id, fecha, hora_llegada, embarcacion_nombre, tipo, pax_a, pax_n, boca_chica").eq("tipo", "lancha_atolon").gte("fecha", desde).order("fecha", { ascending: false }).limit(500),
+      // Incluir AMBOS tipos lancha_atolon (singular = pasadía) y lanchas_atolon
+      // (plural = staff/provisiones) + columnas de odómetro/foto para que
+      // ResumenTab pueda surfacear las lecturas pendientes.
+      supabase.from("muelle_llegadas")
+        .select("id, fecha, hora_llegada, embarcacion_nombre, tipo, pax_a, pax_n, boca_chica, odometro_foto_url, motores_horas, foto_url, notas")
+        .in("tipo", ["lancha_atolon", "lanchas_atolon"])
+        .gte("fecha", desde).order("fecha", { ascending: false }).limit(500),
       supabase.from("capitanes_flota").select("*").eq("activo", true).order("nombre"),
       supabase.from("rh_empleados").select("id, nombres, apellidos, cedula, telefono, email, cargo, salario_base, activo").eq("activo", true).order("nombres"),
     ]);
@@ -459,7 +465,7 @@ export default function Lancha() {
       )}
 
       {tab === "resumen" && (
-        <ResumenTab bitacora={bitacoraLancha} zarpes={zarpesLancha} lancha={lancha} />
+        <ResumenTab bitacora={bitacoraLancha} zarpes={zarpesLancha} llegadas={llegadas} zarpesAll={zarpes} lancha={lancha} onReload={load} />
       )}
       {tab === "costos" && (
         <CostosFlotaTab lanchaId={activeLancha} />
@@ -559,7 +565,166 @@ function defaultTipoForTab(tab) {
 }
 
 // ─── Resumen tab ───────────────────────────────────────────────────────────
-function ResumenTab({ bitacora, zarpes, lancha }) {
+// ─── Lecturas de odómetro ──────────────────────────────────────────────
+// Muestra las fotos de odómetro y horas registradas desde el muelle
+// (ya sea llegadas o zarpes). Si una lectura tiene foto pero NO horas,
+// permite al manager capturarlas viendo la foto. Modal con zoom + inputs.
+function LecturasOdometro({ lecturas, onReload }) {
+  const [editar, setEditar] = useState(null); // lectura siendo editada
+  const sinHoras = lecturas.filter(l => !l.horas || Object.keys(l.horas).length === 0);
+  const conHoras = lecturas.filter(l => l.horas && Object.keys(l.horas).length > 0);
+
+  const guardarHoras = async (lec, horas) => {
+    // Construir el objeto motores_horas tal como lo escribe el form del muelle
+    const cleaned = {};
+    Object.entries(horas).forEach(([k, v]) => {
+      const n = Number(v);
+      if (!Number.isNaN(n) && n > 0) cleaned[k] = n;
+    });
+    if (Object.keys(cleaned).length === 0) {
+      alert("Ingresá al menos un valor de horas para guardar.");
+      return;
+    }
+    const { error } = await supabase.from(lec.tabla).update({ motores_horas: cleaned }).eq("id", lec.id);
+    if (error) { alert("Error: " + error.message); return; }
+    setEditar(null);
+    onReload?.();
+  };
+
+  return (
+    <div style={{ background: B.navyMid, borderRadius: 12, padding: 16, marginBottom: 16 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8, marginBottom: 12 }}>
+        <div style={{ fontWeight: 700, fontSize: 13 }}>📸 Lecturas de odómetro</div>
+        <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)" }}>
+          {conHoras.length} con horas · {sinHoras.length > 0 && <span style={{ color: B.warning, fontWeight: 700 }}>{sinHoras.length} pendiente{sinHoras.length === 1 ? "" : "s"}</span>}
+        </div>
+      </div>
+
+      {sinHoras.length > 0 && (
+        <div style={{ marginBottom: 12, padding: "10px 12px", background: B.warning + "22", border: `1px solid ${B.warning}55`, borderRadius: 8, fontSize: 12, color: B.warning }}>
+          ⚠ Hay {sinHoras.length} foto{sinHoras.length === 1 ? "" : "s"} de odómetro sin horas registradas. Capturá las horas leyendo cada foto para que entren al cálculo de reserva motores.
+        </div>
+      )}
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10 }}>
+        {lecturas.slice(0, 12).map(l => {
+          const tieneHoras = l.horas && Object.keys(l.horas).length > 0;
+          return (
+            <div key={l.tabla + l.id} style={{
+              background: B.navy, borderRadius: 10, padding: 10,
+              border: `1px solid ${tieneHoras ? B.success + "44" : B.warning + "55"}`,
+            }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, fontSize: 11 }}>
+                <span style={{ fontWeight: 700 }}>{l.tipo} · {l.fecha?.slice(0, 10)}</span>
+                <span style={{ color: "rgba(255,255,255,0.45)" }}>{(l.hora || "").slice(0, 5)}</span>
+              </div>
+              {l.foto ? (
+                <a href={l.foto} target="_blank" rel="noreferrer" style={{ display: "block" }}>
+                  <img src={l.foto} alt="odómetro" style={{ width: "100%", height: 120, objectFit: "cover", borderRadius: 6, border: `1px solid ${B.navyLight}` }} />
+                </a>
+              ) : (
+                <div style={{ height: 120, background: B.navyLight, borderRadius: 6, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, color: "rgba(255,255,255,0.3)" }}>Sin foto</div>
+              )}
+              <div style={{ marginTop: 8, fontSize: 11 }}>
+                {tieneHoras ? (
+                  <div style={{ color: B.success, fontWeight: 700 }}>
+                    {Object.entries(l.horas).map(([k, v]) => `${k}: ${v}h`).join(" · ")}
+                  </div>
+                ) : (
+                  <button onClick={() => setEditar(l)}
+                    style={{ width: "100%", padding: "7px 10px", borderRadius: 6, border: `1px solid ${B.warning}`, background: B.warning + "22", color: B.warning, fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
+                    ✏️ Capturar horas
+                  </button>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {editar && (
+        <CapturarHorasModal lectura={editar} onClose={() => setEditar(null)} onSave={guardarHoras} />
+      )}
+    </div>
+  );
+}
+
+function CapturarHorasModal({ lectura, onClose, onSave }) {
+  const [horas, setHoras] = useState({ Babor: "", Estribor: "", Centro: "" });
+  const [saving, setSaving] = useState(false);
+  return (
+    <div onClick={e => e.target === e.currentTarget && onClose()}
+      style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.85)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+      <div style={{ background: B.navyMid, borderRadius: 14, padding: 22, width: 520, maxWidth: "100%", maxHeight: "92vh", overflowY: "auto" }}>
+        <div style={{ fontWeight: 800, fontSize: 16, marginBottom: 4 }}>📸 Capturar horas de motor</div>
+        <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginBottom: 14 }}>
+          {lectura.tipo} · {lectura.fecha?.slice(0, 10)} {(lectura.hora || "").slice(0, 5)}
+        </div>
+        {lectura.foto && (
+          <img src={lectura.foto} alt="odómetro" style={{ width: "100%", maxHeight: 320, objectFit: "contain", borderRadius: 8, marginBottom: 14, background: "#000" }} />
+        )}
+        <div style={{ fontSize: 11, color: B.sand, marginBottom: 8, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+          Lee las horas de la foto y escribilas:
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginBottom: 14 }}>
+          {["Babor", "Estribor", "Centro"].map(k => (
+            <div key={k}>
+              <label style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", display: "block", marginBottom: 4 }}>{k}</label>
+              <input type="number" step="0.1" min="0" value={horas[k]}
+                onChange={e => setHoras(p => ({ ...p, [k]: e.target.value }))}
+                placeholder="ej: 1005"
+                style={{ width: "100%", padding: "8px 10px", borderRadius: 6, background: B.navy, border: `1px solid ${B.navyLight}`, color: "#fff", fontSize: 13, outline: "none", boxSizing: "border-box" }} />
+            </div>
+          ))}
+        </div>
+        <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", marginBottom: 14, lineHeight: 1.4 }}>
+          Solo llená los motores aplicables a esta embarcación. Naturalle = Babor+Estribor; Castillete = Centro.
+        </div>
+        <div style={{ display: "flex", gap: 10 }}>
+          <button onClick={onClose} disabled={saving}
+            style={{ flex: 1, padding: 11, borderRadius: 8, border: `1px solid ${B.navyLight}`, background: "transparent", color: "rgba(255,255,255,0.5)", cursor: "pointer" }}>
+            Cancelar
+          </button>
+          <button onClick={async () => { setSaving(true); await onSave(lectura, horas); setSaving(false); }}
+            disabled={saving}
+            style={{ flex: 2, padding: 11, borderRadius: 8, border: "none", background: saving ? B.navyLight : B.success, color: "#fff", fontWeight: 700, cursor: saving ? "wait" : "pointer" }}>
+            {saving ? "Guardando…" : "✓ Guardar horas"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ResumenTab({ bitacora, zarpes, llegadas = [], zarpesAll = [], lancha, onReload }) {
+  // ── Lecturas de odómetro: surface fotos/horas registradas en muelle ─
+  // El operador del muelle sube foto + (opcionalmente) horas en el form de
+  // llegada/zarpe. Antes esas lecturas vivían huérfanas — el manager nunca
+  // las veía. Acá las exponemos para que pueda revisarlas y, si solo subió
+  // foto, capturar las horas viendo la imagen.
+  const lecturasOdometro = useMemo(() => {
+    if (!lancha) return [];
+    const norm = (s) => (s || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/(.)\1+/g, "$1").trim();
+    const target = norm(lancha.nombre);
+    const fromLleg = (llegadas || [])
+      .filter(l => norm(l.embarcacion_nombre) === target && (l.odometro_foto_url || l.motores_horas))
+      .map(l => ({
+        tabla: "muelle_llegadas", id: l.id,
+        fecha: l.fecha, hora: l.hora_llegada, tipo: "Llegada",
+        foto: l.odometro_foto_url, horas: l.motores_horas,
+      }));
+    const fromZarp = (zarpesAll || [])
+      .filter(z => norm(z.embarcacion) === target && (z.odometro_foto_url || z.motores_horas))
+      .map(z => ({
+        tabla: "muelle_zarpes_flota", id: z.id,
+        fecha: z.fecha, hora: z.hora_zarpe, tipo: "Zarpe",
+        foto: z.odometro_foto_url, horas: z.motores_horas,
+      }));
+    return [...fromLleg, ...fromZarp].sort((a, b) =>
+      (b.fecha + (b.hora || "")).localeCompare(a.fecha + (a.hora || ""))
+    );
+  }, [llegadas, zarpesAll, lancha]);
+
   // 6 meses de gasto. Usar día 1 + Bogotá: si hoy es abril 30, setMonth(-2)
   // sobre día 30 caía en "Feb 30" → marzo, saltándose febrero. Día 1 + tz
   // Bogotá garantiza que generamos: nov, dic, ene, feb, mar, abr correctamente.
@@ -588,6 +753,11 @@ function ResumenTab({ bitacora, zarpes, lancha }) {
 
   return (
     <div>
+      {/* Lecturas de odómetro registradas en muelle */}
+      {lecturasOdometro.length > 0 && (
+        <LecturasOdometro lecturas={lecturasOdometro} onReload={onReload} />
+      )}
+
       <div style={{ background: B.navyMid, borderRadius: 12, padding: 16, marginBottom: 16 }}>
         <div style={{ fontWeight: 700, marginBottom: 12, fontSize: 13 }}>Gasto últimos 6 meses</div>
         <div style={{ display: "flex", alignItems: "flex-end", gap: 8, height: 160 }}>
