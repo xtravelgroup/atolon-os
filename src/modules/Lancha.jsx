@@ -209,24 +209,30 @@ export default function Lancha() {
     return Number(lancha.costo_viaje_sencillo || 0) * 2;
   }, [lancha]);
 
-  // KPIs del mes
+  // KPIs de los ÚLTIMOS 30 DÍAS (rolling window).
+  // Antes filtraba por "mes calendario actual" (thisMonth). Eso hacía que
+  // cada 1ro del mes los KPIs aparecieran en $0 hasta que cargaran nuevos
+  // datos — daba la impresión de que el módulo estaba roto. Con ventana
+  // móvil de 30 días, los números siempre reflejan operación reciente.
   const kpis = useMemo(() => {
-    const mes = thisMonth();
-    const delMes = bitacoraLancha.filter(b => (b.fecha || "").startsWith(mes));
-    const combustibleMes = delMes.filter(b => b.tipo === "combustible");
+    const cutoff = (() => {
+      const d = new Date(); d.setDate(d.getDate() - 30);
+      return d.toISOString().slice(0, 10);
+    })();
+    const del30 = bitacoraLancha.filter(b => (b.fecha || "") >= cutoff);
+    const combustibleMes = del30.filter(b => b.tipo === "combustible");
     const galonesMes = combustibleMes.reduce((s, b) => s + Number(b.galones || 0), 0);
     const gastoCombustibleMes = combustibleMes.reduce((s, b) => s + Number(b.costo_total || 0), 0);
-    const gastoMantMes = delMes.filter(b => TIPOS_MANTENIMIENTO.includes(b.tipo)).reduce((s, b) => s + Number(b.costo_total || 0), 0);
-    const gastoOperativosMes = delMes.filter(b => TIPOS_OPERATIVOS.includes(b.tipo)).reduce((s, b) => s + Number(b.costo_total || 0), 0);
-    const gastoMarinaMes    = delMes.filter(b => b.tipo === "marina").reduce((s, b) => s + Number(b.costo_total || 0), 0);
-    const gastoCapitanesMes = delMes.filter(b => b.tipo === "capitanes").reduce((s, b) => s + Number(b.costo_total || 0), 0);
+    const gastoMantMes = del30.filter(b => TIPOS_MANTENIMIENTO.includes(b.tipo)).reduce((s, b) => s + Number(b.costo_total || 0), 0);
+    const gastoOperativosMes = del30.filter(b => TIPOS_OPERATIVOS.includes(b.tipo)).reduce((s, b) => s + Number(b.costo_total || 0), 0);
+    const gastoMarinaMes    = del30.filter(b => b.tipo === "marina").reduce((s, b) => s + Number(b.costo_total || 0), 0);
+    const gastoCapitanesMes = del30.filter(b => b.tipo === "capitanes").reduce((s, b) => s + Number(b.costo_total || 0), 0);
     const ultimoHoras = bitacoraLancha.find(b => b.kilometraje_h != null)?.kilometraje_h || 0;
     const proxServ = bitacoraLancha.find(b => b.proximo_servicio_h || b.proximo_servicio_fecha);
-    // Viajes del mes con la lógica computada (max llegadas/zarpes)
+    // Viajes en los últimos 30 días (rolling)
     const viajesMes = viajesPorFecha
-      .filter(v => v.fecha.startsWith(mes))
+      .filter(v => v.fecha >= cutoff)
       .reduce((s, v) => s + v.viajes, 0);
-    // Costo combustible estimado del mes = viajes × costo_por_viaje (ida y vuelta)
     const costoCombustibleViajesMes = viajesMes * costoPorViaje;
     const gastoViajesMes = 0;
     const incidentesAbiertos = bitacoraLancha.filter(b => b.tipo === "incidente" && !b.resuelto).length;
@@ -357,14 +363,14 @@ export default function Lancha() {
         </div>
       </div>
 
-      {/* KPIs del mes */}
+      {/* KPIs últimos 30 días (rolling, no mes calendario) */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(140px,1fr))", gap: 10, marginBottom: 16 }}>
         {[
-          { l: "Galones (mes)",       v: `${kpis.galonesMes.toFixed(1)} gal`, c: B.warning },
-          { l: "Combustible (mes)",   v: fmtCOP(kpis.gastoCombustibleMes),    c: B.warning },
-          { l: "Mant./Rep. (mes)",    v: fmtCOP(kpis.gastoMantMes),           c: B.sky },
-          { l: "Marina (mes)",        v: fmtCOP(kpis.gastoMarinaMes),         c: "#22d3ee" },
-          { l: "Capitanes (mes)",     v: fmtCOP(kpis.gastoCapitanesMes),      c: "#fb923c" },
+          { l: "Galones (30d)",       v: `${kpis.galonesMes.toFixed(1)} gal`, c: B.warning },
+          { l: "Combustible (30d)",   v: fmtCOP(kpis.gastoCombustibleMes),    c: B.warning },
+          { l: "Mant./Rep. (30d)",    v: fmtCOP(kpis.gastoMantMes),           c: B.sky },
+          { l: "Marina (30d)",        v: fmtCOP(kpis.gastoMarinaMes),         c: "#22d3ee" },
+          { l: "Capitanes (30d)",     v: fmtCOP(kpis.gastoCapitanesMes),      c: "#fb923c" },
           { l: "Horas motor",         v: kpis.ultimoHoras.toFixed(0) + " h",  c: B.sand },
           { l: "Incidentes abiertos", v: kpis.incidentesAbiertos,             c: kpis.incidentesAbiertos > 0 ? B.danger : B.success },
         ].map((k, i) => (
