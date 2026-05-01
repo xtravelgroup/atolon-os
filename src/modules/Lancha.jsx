@@ -247,14 +247,47 @@ export default function Lancha() {
     const gastoOperativosMes = delMes.filter(b => TIPOS_OPERATIVOS.includes(b.tipo)).reduce((s, b) => s + Number(b.costo_total || 0), 0);
     const gastoMarinaMes    = delMes.filter(b => b.tipo === "marina").reduce((s, b) => s + Number(b.costo_total || 0), 0);
     const gastoCapitanesMes = delMes.filter(b => b.tipo === "capitanes").reduce((s, b) => s + Number(b.costo_total || 0), 0);
-    const ultimoHoras = bitacoraLancha.find(b => b.kilometraje_h != null)?.kilometraje_h || 0;
+    // ÚLTIMAS HORAS DE MOTOR — fuentes:
+    //   1. lancha_bitacora.kilometraje_h (registro manual de bitácora)
+    //   2. muelle_llegadas.motores_horas (foto + horas del muelle)
+    //   3. muelle_zarpes_flota.motores_horas (zarpe a Cartagena)
+    // Tomamos la lectura MÁS RECIENTE en tiempo (sumando todos los motores
+    // del registro). Antes solo leía de bitacora → quedaba en 0 cuando solo
+    // se registraba desde el muelle. Sumamos case-insensitive (Babor/babor).
+    const sumMotores = (h) => {
+      if (!h || typeof h !== "object") return 0;
+      return Object.values(h).reduce((s, v) => s + (Number(v) || 0), 0);
+    };
+    // Construir todas las lecturas de horas con su timestamp:
+    const lecturasHoras = [
+      ...bitacoraLancha
+        .filter(b => b.kilometraje_h != null)
+        .map(b => ({ ts: (b.fecha || "") + (b.hora || "00:00"), valor: Number(b.kilometraje_h) || 0 })),
+      ...(llegadas || [])
+        .filter(l => {
+          if (!l.motores_horas || !lancha) return false;
+          const target = (lancha.nombre || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/(.)\1+/g, "$1").trim();
+          const got = (l.embarcacion_nombre || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/(.)\1+/g, "$1").trim();
+          return got === target;
+        })
+        .map(l => ({ ts: (l.fecha || "") + (l.hora_llegada || "00:00"), valor: sumMotores(l.motores_horas) })),
+      ...(zarpes || [])
+        .filter(z => {
+          if (!z.motores_horas || !lancha) return false;
+          const target = (lancha.nombre || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/(.)\1+/g, "$1").trim();
+          const got = (z.embarcacion || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/(.)\1+/g, "$1").trim();
+          return got === target;
+        })
+        .map(z => ({ ts: (z.fecha || "") + (z.hora_zarpe || "00:00"), valor: sumMotores(z.motores_horas) })),
+    ].filter(x => x.valor > 0).sort((a, b) => b.ts.localeCompare(a.ts));
+    const ultimoHoras = lecturasHoras[0]?.valor || 0;
     const proxServ = bitacoraLancha.find(b => b.proximo_servicio_h || b.proximo_servicio_fecha);
     const viajesMes = viajesPorFecha.filter(v => v.fecha.startsWith(mes)).reduce((s, v) => s + v.viajes, 0);
     const costoCombustibleViajesMes = viajesMes * costoPorViaje;
     const gastoViajesMes = 0;
     const incidentesAbiertos = bitacoraLancha.filter(b => b.tipo === "incidente" && !b.resuelto).length;
     return { galonesMes, gastoCombustibleMes, gastoMantMes, gastoOperativosMes, gastoMarinaMes, gastoCapitanesMes, ultimoHoras, proxServ, viajesMes, costoCombustibleViajesMes, gastoViajesMes, incidentesAbiertos };
-  }, [bitacoraLancha, viajesPorFecha, costoPorViaje, mesKpi]);
+  }, [bitacoraLancha, viajesPorFecha, costoPorViaje, mesKpi, llegadas, zarpes, lancha]);
 
   // Helpers para navegación de mes ‹ ›
   const idxMesActual = mesesDisponibles.indexOf(mesKpi);
