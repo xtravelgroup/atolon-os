@@ -45,7 +45,11 @@ const CATALOGOS = {
   },
   aliados_b2b: {
     table: "aliados_b2b",
-    select: "id, nombre, tipo, activo, comision_default",
+    // Columnas reales (verificadas): id, tipo, nombre, contacto, tel, email,
+    // comision, estado. Pedir una col inexistente hace fallar la query
+    // entera; como Eventos hace Promise.all con esto, rompía todo el módulo
+    // (todos los KPIs en $0 porque eventos jamás se setean).
+    select: "id, nombre, tipo, comision, estado",
     order: { col: "nombre", asc: true },
   },
   usuarios: {
@@ -128,11 +132,15 @@ export async function getCatalogo(key, opts = {}) {
     })
     .catch(err => {
       inflight.delete(key);
-      // Si hay un valor stale, devolverlo en lugar de lanzar — mejor mostrar
-      // datos viejos que romper el módulo.
+      // Lección aprendida: si un catálogo está mal definido (col inexistente,
+      // RLS bloqueando, etc) y throw, el Promise.all del módulo consumidor se
+      // rompe entero y se ven 0s en todos los KPIs. Mejor degradar a array
+      // vacío + console.error: los componentes verán "sin datos" pero NO se
+      // cae el módulo completo. Si hay valor stale lo devolvemos.
+      console.error(`[catalogoCache] "${key}" fallo:`, err);
       const stale = cache.get(key);
       if (stale) return stale.data;
-      throw err;
+      return [];
     });
   inflight.set(key, promise);
   return promise;
