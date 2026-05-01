@@ -2,7 +2,10 @@
 // Timeline, transporte, contactos, dietas, modo staff, bitácora
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { supabase } from "../lib/supabase";
-import { B, COP, fmtFecha, todayStr } from "../brand";
+import { B, COP as COPbrand, fmtFecha, todayStr } from "../brand";
+// COP por defecto (file-level): el módulo lo usa fuera de TabServicios.
+// TabServicios redefine COP localmente cuando ocultarPrecios=true.
+const COP = COPbrand;
 import { useMobile } from "../lib/useMobile";
 import GrupoCotizacionModal from "./grupos/GrupoCotizacionModal";
 import InstructivoContratistasPDF from "./eventos/InstructivoContratistasPDF";
@@ -2654,7 +2657,12 @@ function CortesiaButton({ pasadiasMap, onAdd }) {
   );
 }
 
-function TabServicios({ items, onChange, pasadiasOrg = [], onChangePasadias, categoria, precioTipo = "publico", pasadiasMap = {}, cotizacionData = null, eventoId, eventoFecha, eventoNombre, evento = null }) {
+function TabServicios({ items, onChange, pasadiasOrg = [], onChangePasadias, categoria, precioTipo = "publico", pasadiasMap = {}, cotizacionData = null, eventoId, eventoFecha, eventoNombre, evento = null, ocultarPrecios = false }) {
+  // Vista operativa (cocina/maitre): ocultar todos los precios.
+  // Shadowing: COP local devuelve "—" en lugar de "$X" cuando aplica,
+  // así no hay que reescribir 15 lugares de UI individualmente.
+  // eslint-disable-next-line no-shadow
+  const COP = ocultarPrecios ? () => "—" : COPbrand;
   const [showForm, setShowForm] = useState(false);
   const [grupoCotOpen, setGrupoCotOpen] = useState(false);
   const [editId, setEditId]     = useState(null);
@@ -2751,18 +2759,17 @@ function TabServicios({ items, onChange, pasadiasOrg = [], onChangePasadias, cat
 
   return (
     <div>
-      {/* ── Botón de cotización: disponible para TODAS las categorías ──
-          Antes solo aparecía dentro del bloque `categoria === "grupo"`, lo
-          que dejaba sin cotización a Eventos / Bodas / Despedidas / etc.
-          Ahora se muestra siempre y reutiliza el mismo modal Ritz-style.   */}
-      <div style={{ marginBottom: 14 }}>
-        <button
-          onClick={() => setGrupoCotOpen(true)}
-          style={{ width: "100%", padding: "12px 18px", background: B.sand, color: B.navy, border: "none", borderRadius: 10, fontSize: 14, fontWeight: 700, cursor: "pointer", letterSpacing: "0.04em" }}
-        >
-          📥 Descargar cotización para cliente
-        </button>
-      </div>
+      {/* Botón de cotización (oculto en vista operativa — sin precios) */}
+      {!ocultarPrecios && (
+        <div style={{ marginBottom: 14 }}>
+          <button
+            onClick={() => setGrupoCotOpen(true)}
+            style={{ width: "100%", padding: "12px 18px", background: B.sand, color: B.navy, border: "none", borderRadius: 10, fontSize: 14, fontWeight: 700, cursor: "pointer", letterSpacing: "0.04em" }}
+          >
+            📥 Descargar cotización para cliente
+          </button>
+        </div>
+      )}
 
       {/* ── Resumen de compra del cliente (grupos) ── */}
       {categoria === "grupo" && (
@@ -3892,14 +3899,25 @@ export default function EventoDetalle({ evento: inicial, canEdit = true, onBack,
   const [pasadiasMap, setPasadiasMap] = useState({});
   const [usuariosList, setUsuariosList] = useState([]);
   const [currentUser, setCurrentUser]   = useState("");
+  const [vistaOperativa, setVistaOperativa] = useState(false);
 
-  // Load current user name for history logging
+  // Load current user name + rol para history logging y vista restringida.
+  // "Vista operativa" = roles operativos (cocina, etc.) que solo necesitan
+  // ver Rundown, Menús, Servicios (sin precios), Asignaciones y Dietas.
+  // Detección: rol_id que empieza por "chef_" o "cocina" → operativo.
   useEffect(() => {
     if (!supabase) return;
     supabase.auth.getSession().then(async ({ data: { session } }) => {
       if (!session?.user?.email) return;
-      const { data } = await supabase.from("usuarios").select("nombre").eq("email", session.user.email.toLowerCase()).single();
+      const { data } = await supabase.from("usuarios")
+        .select("nombre, rol_id, permisos_extra")
+        .eq("email", session.user.email.toLowerCase()).single();
       setCurrentUser(data?.nombre || session.user.email);
+      const rid = (data?.rol_id || "").toLowerCase();
+      const extras = Array.isArray(data?.permisos_extra) ? data.permisos_extra : [];
+      const esOperativo = /^(chef|cocina|maitre|capitan_servicio|operativo)/.test(rid)
+        || extras.includes("eventos_vista_operativa");
+      setVistaOperativa(esOperativo);
     });
   }, []);
   const saveTimer = useRef(null);
@@ -4109,7 +4127,11 @@ export default function EventoDetalle({ evento: inicial, canEdit = true, onBack,
   const stageColor = stageColors[evento.stage] || B.sand;
 
   const esGrupo = evento.categoria === "grupo";
-  const TABS = [
+  // Vista operativa (cocina/maitre): solo lectura + sin pestañas de
+  // pagos / contactos / bitácora / contratistas / transporte / BEO.
+  // En Servicios se ocultan precios.
+  const efectivoCanEdit = canEdit && !vistaOperativa;
+  const TABS_FULL = [
     { key: "rundown",     label: isMobile ? "📋" : "📋 Rundown" },
     { key: "servicios",   label: isMobile ? "🛎" : "🛎 Servicios" },
     { key: "menus",       label: isMobile ? "🍽️" : "🍽️ Menús" },
@@ -4122,6 +4144,16 @@ export default function EventoDetalle({ evento: inicial, canEdit = true, onBack,
     { key: "beo",         label: isMobile ? "📋" : "📋 BEO" },
     { key: "bitacora",    label: isMobile ? "📝" : "📝 Bitácora" },
   ];
+  const TABS_OPERATIVA = TABS_FULL.filter(t =>
+    ["rundown", "servicios", "menus", "asignaciones", "dietas"].includes(t.key)
+  );
+  const TABS = vistaOperativa ? TABS_OPERATIVA : TABS_FULL;
+  // Si el tab actual no está disponible en la vista operativa (ej: usuario
+  // navegó a "pagos" antes), mover a rundown automáticamente.
+  useEffect(() => {
+    if (vistaOperativa && !TABS.some(t => t.key === tab)) setTab("rundown");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [vistaOperativa, tab]);
 
   // Contar alertas
   const incidentesAbiertos = (evento.incidentes||[]).filter(x => !x.resuelto && x.prioridad === "critico").length;
@@ -4234,9 +4266,9 @@ export default function EventoDetalle({ evento: inicial, canEdit = true, onBack,
             cantidad: a.cantidad || 1, valor: (a.cantidad||1) * (a.valor_unit||0) * (1 + (a.iva||0)/100),
           }));
         }
-        return <TabTimeline items={evento.timeline_items||[]} onChange={v => updateLocal("timeline_items", v)} transportes={evento.transporte_detalle||[]} usuarios={usuariosList} serviciosAB={sAB} embarcacionesEvento={evento.embarcaciones_evento||[]} evento={evento} readOnly={!canEdit} />;
+        return <TabTimeline items={evento.timeline_items||[]} onChange={v => updateLocal("timeline_items", v)} transportes={evento.transporte_detalle||[]} usuarios={usuariosList} serviciosAB={sAB} embarcacionesEvento={evento.embarcaciones_evento||[]} evento={evento} readOnly={!efectivoCanEdit} />;
       })()}
-      {tab === "servicios" && <TabServicios  items={evento.servicios_contratados||[]}     onChange={v => updateLocal("servicios_contratados", v)} pasadiasOrg={evento.pasadias_org||[]} onChangePasadias={v => updateLocal("pasadias_org", v)} categoria={evento.categoria} precioTipo={evento.precio_tipo||"publico"} pasadiasMap={pasadiasMap} cotizacionData={evento.cotizacion_data||null} eventoId={evento.id} eventoFecha={evento.fecha} eventoNombre={evento.nombre} evento={evento} />}
+      {tab === "servicios" && <TabServicios  items={evento.servicios_contratados||[]}     onChange={v => updateLocal("servicios_contratados", v)} pasadiasOrg={evento.pasadias_org||[]} onChangePasadias={vistaOperativa ? null : v => updateLocal("pasadias_org", v)} categoria={evento.categoria} precioTipo={evento.precio_tipo||"publico"} pasadiasMap={pasadiasMap} cotizacionData={evento.cotizacion_data||null} eventoId={evento.id} eventoFecha={evento.fecha} eventoNombre={evento.nombre} evento={evento} ocultarPrecios={vistaOperativa} />}
       {tab === "menus"     && <TabMenus     servicios={evento.servicios_contratados||[]} menusDetalle={evento.menus_detalle||{}} onChange={v => updateLocal("menus_detalle", v)} cotizacionData={evento.cotizacion_data||null} timelineItems={evento.timeline_items||[]} />}
       {tab === "asignaciones" && <TabAsignaciones timelineItems={evento.timeline_items||[]} />}
       {tab === "pagos"     && (() => {

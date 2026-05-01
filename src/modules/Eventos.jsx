@@ -3162,14 +3162,24 @@ export default function Eventos() {
   const [cotizacion,  setCotizacion] = useState(null);
   const [extrasGrupo, setExtrasGrupo] = useState(null);
   const [userRol,     setUserRol]     = useState("");
+  const [vistaOperativa, setVistaOperativa] = useState(false);
 
-  // Detectar rol del usuario para permisos de edición
+  // Detectar rol del usuario para permisos de edición.
+  // Vista operativa (cocina/maitre): solo ven eventos confirmados, no editan.
   useEffect(() => {
     if (!supabase) return;
     supabase.auth.getSession().then(async ({ data: { session } }) => {
       if (!session?.user?.email) return;
-      const { data } = await supabase.from("usuarios").select("rol_id").eq("email", session.user.email.toLowerCase()).single();
+      const { data } = await supabase.from("usuarios")
+        .select("rol_id, permisos_extra")
+        .eq("email", session.user.email.toLowerCase()).single();
       if (data?.rol_id) setUserRol(data.rol_id);
+      const rid = (data?.rol_id || "").toLowerCase();
+      const extras = Array.isArray(data?.permisos_extra) ? data.permisos_extra : [];
+      setVistaOperativa(
+        /^(chef|cocina|maitre|capitan_servicio|operativo)/.test(rid)
+        || extras.includes("eventos_vista_operativa")
+      );
     });
   }, []);
 
@@ -3299,7 +3309,12 @@ export default function Eventos() {
   }
 
   const isCalendario = tab === "calendario";
-  const items   = tab === "todos" ? todos : todos.filter(e => e.categoria === tab);
+  // Vista operativa: solo eventos/grupos confirmados (cocina necesita ver
+  // lo que está aprobado para preparar, no consultas/cotizados).
+  const todosVisible = vistaOperativa
+    ? todos.filter(e => e.stage === "Confirmado" || e.stage === "Realizado")
+    : todos;
+  const items   = tab === "todos" ? todosVisible : todosVisible.filter(e => e.categoria === tab);
   const isGrupo = tab === "grupo";
   const TABS    = [
     { key: "todos",      label: "📌 Todos" },
