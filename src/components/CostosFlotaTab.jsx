@@ -54,6 +54,28 @@ export default function CostosFlotaTab({ lanchaId = null } = {}) {
   }, []);
   useEffect(() => { fetchData(); }, [fetchData]);
 
+  // Auto-default del mes: si el mes actual ("2026-05") no tiene datos
+  // (típico al inicio de mes), bajar al mes más reciente con operación.
+  // Antes el usuario veía todo en $0 al abrir el tab el día 1ro.
+  const [defaultedMes, setDefaultedMes] = useState(false);
+  useEffect(() => {
+    if (defaultedMes || loading) return;
+    if (mes !== thisMonth()) return; // usuario ya seleccionó otro mes
+    const hayDatosEnActual =
+      bitacora.some(b => (b.fecha || "").startsWith(mes)) ||
+      zarpes.some(z => (z.fecha || "").startsWith(mes)) ||
+      llegadas.some(l => (l.fecha || "").startsWith(mes));
+    if (hayDatosEnActual) { setDefaultedMes(true); return; }
+    // Recolectar meses con datos y elegir el más reciente
+    const set = new Set();
+    bitacora.forEach(b => b.fecha && set.add(b.fecha.slice(0, 7)));
+    zarpes.forEach(z => z.fecha && set.add(z.fecha.slice(0, 7)));
+    llegadas.forEach(l => l.fecha && set.add(l.fecha.slice(0, 7)));
+    const mesesConDatos = [...set].sort().reverse();
+    if (mesesConDatos.length > 0) setMes(mesesConDatos[0]);
+    setDefaultedMes(true);
+  }, [loading, bitacora, zarpes, llegadas, mes, defaultedMes]);
+
   // Si llega lanchaId, filtrar TODA la data a esa lancha. Esto incluye:
   // bitacora por lancha_id directo, zarpes/llegadas por nombre normalizado,
   // capitanes por lancha_id, y lanchas a solo la elegida.

@@ -209,35 +209,57 @@ export default function Lancha() {
     return Number(lancha.costo_viaje_sencillo || 0) * 2;
   }, [lancha]);
 
-  // KPIs de los ÚLTIMOS 30 DÍAS (rolling window).
-  // Antes filtraba por "mes calendario actual" (thisMonth). Eso hacía que
-  // cada 1ro del mes los KPIs aparecieran en $0 hasta que cargaran nuevos
-  // datos — daba la impresión de que el módulo estaba roto. Con ventana
-  // móvil de 30 días, los números siempre reflejan operación reciente.
+  // KPIs por mes con SELECTOR. Default = mes actual, pero si está vacío
+  // (típico el 1ro de mes antes de cargar operaciones) cae al último mes
+  // con datos. Así nunca aparece todo en $0 sin razón. El usuario puede
+  // navegar a otros meses con flechas ‹ ›.
+  const mesesDisponibles = useMemo(() => {
+    const set = new Set();
+    bitacoraLancha.forEach(b => { if (b.fecha) set.add(b.fecha.slice(0, 7)); });
+    viajesPorFecha.forEach(v => { if (v.fecha) set.add(v.fecha.slice(0, 7)); });
+    set.add(thisMonth()); // siempre incluir el actual aunque esté vacío
+    return [...set].sort().reverse(); // más reciente primero
+  }, [bitacoraLancha, viajesPorFecha]);
+
+  const [mesKpi, setMesKpi] = useState(null);
+  // Auto-seleccionar: mes actual si tiene datos, sino el más reciente con datos.
+  useEffect(() => {
+    if (mesKpi || mesesDisponibles.length === 0) return;
+    const actual = thisMonth();
+    const hayDatosEnActual = bitacoraLancha.some(b => (b.fecha || "").startsWith(actual))
+      || viajesPorFecha.some(v => v.fecha.startsWith(actual));
+    setMesKpi(hayDatosEnActual ? actual : mesesDisponibles[0]);
+  }, [mesesDisponibles, bitacoraLancha, viajesPorFecha, mesKpi]);
+
   const kpis = useMemo(() => {
-    const cutoff = (() => {
-      const d = new Date(); d.setDate(d.getDate() - 30);
-      return d.toISOString().slice(0, 10);
-    })();
-    const del30 = bitacoraLancha.filter(b => (b.fecha || "") >= cutoff);
-    const combustibleMes = del30.filter(b => b.tipo === "combustible");
+    const mes = mesKpi || thisMonth();
+    const delMes = bitacoraLancha.filter(b => (b.fecha || "").startsWith(mes));
+    const combustibleMes = delMes.filter(b => b.tipo === "combustible");
     const galonesMes = combustibleMes.reduce((s, b) => s + Number(b.galones || 0), 0);
     const gastoCombustibleMes = combustibleMes.reduce((s, b) => s + Number(b.costo_total || 0), 0);
-    const gastoMantMes = del30.filter(b => TIPOS_MANTENIMIENTO.includes(b.tipo)).reduce((s, b) => s + Number(b.costo_total || 0), 0);
-    const gastoOperativosMes = del30.filter(b => TIPOS_OPERATIVOS.includes(b.tipo)).reduce((s, b) => s + Number(b.costo_total || 0), 0);
-    const gastoMarinaMes    = del30.filter(b => b.tipo === "marina").reduce((s, b) => s + Number(b.costo_total || 0), 0);
-    const gastoCapitanesMes = del30.filter(b => b.tipo === "capitanes").reduce((s, b) => s + Number(b.costo_total || 0), 0);
+    const gastoMantMes = delMes.filter(b => TIPOS_MANTENIMIENTO.includes(b.tipo)).reduce((s, b) => s + Number(b.costo_total || 0), 0);
+    const gastoOperativosMes = delMes.filter(b => TIPOS_OPERATIVOS.includes(b.tipo)).reduce((s, b) => s + Number(b.costo_total || 0), 0);
+    const gastoMarinaMes    = delMes.filter(b => b.tipo === "marina").reduce((s, b) => s + Number(b.costo_total || 0), 0);
+    const gastoCapitanesMes = delMes.filter(b => b.tipo === "capitanes").reduce((s, b) => s + Number(b.costo_total || 0), 0);
     const ultimoHoras = bitacoraLancha.find(b => b.kilometraje_h != null)?.kilometraje_h || 0;
     const proxServ = bitacoraLancha.find(b => b.proximo_servicio_h || b.proximo_servicio_fecha);
-    // Viajes en los últimos 30 días (rolling)
-    const viajesMes = viajesPorFecha
-      .filter(v => v.fecha >= cutoff)
-      .reduce((s, v) => s + v.viajes, 0);
+    const viajesMes = viajesPorFecha.filter(v => v.fecha.startsWith(mes)).reduce((s, v) => s + v.viajes, 0);
     const costoCombustibleViajesMes = viajesMes * costoPorViaje;
     const gastoViajesMes = 0;
     const incidentesAbiertos = bitacoraLancha.filter(b => b.tipo === "incidente" && !b.resuelto).length;
     return { galonesMes, gastoCombustibleMes, gastoMantMes, gastoOperativosMes, gastoMarinaMes, gastoCapitanesMes, ultimoHoras, proxServ, viajesMes, costoCombustibleViajesMes, gastoViajesMes, incidentesAbiertos };
-  }, [bitacoraLancha, viajesPorFecha, costoPorViaje]);
+  }, [bitacoraLancha, viajesPorFecha, costoPorViaje, mesKpi]);
+
+  // Helpers para navegación de mes ‹ ›
+  const idxMesActual = mesesDisponibles.indexOf(mesKpi);
+  const irMesAnterior = () => { if (idxMesActual < mesesDisponibles.length - 1) setMesKpi(mesesDisponibles[idxMesActual + 1]); };
+  const irMesSiguiente = () => { if (idxMesActual > 0) setMesKpi(mesesDisponibles[idxMesActual - 1]); };
+  const fmtMesLabel = (ym) => {
+    if (!ym) return "";
+    const [y, m] = ym.split("-");
+    const nombres = ["ene","feb","mar","abr","may","jun","jul","ago","sep","oct","nov","dic"];
+    return `${nombres[Number(m) - 1]} ${y}`;
+  };
 
   async function saveEvento(data) {
     const payload = {
@@ -363,14 +385,38 @@ export default function Lancha() {
         </div>
       </div>
 
-      {/* KPIs últimos 30 días (rolling, no mes calendario) */}
+      {/* Selector de mes para KPIs ─ default: actual o último con datos */}
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+        <span style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: "0.05em" }}>KPIs del mes:</span>
+        <button onClick={irMesAnterior}
+          disabled={idxMesActual >= mesesDisponibles.length - 1}
+          style={{ padding: "4px 10px", borderRadius: 6, border: `1px solid ${B.navyLight}`, background: "transparent", color: idxMesActual >= mesesDisponibles.length - 1 ? "rgba(255,255,255,0.2)" : "#fff", cursor: idxMesActual >= mesesDisponibles.length - 1 ? "default" : "pointer", fontSize: 12 }}>
+          ‹
+        </button>
+        <select value={mesKpi || ""} onChange={e => setMesKpi(e.target.value)}
+          style={{ padding: "5px 10px", borderRadius: 6, border: `1px solid ${B.navyLight}`, background: B.navyMid, color: "#fff", fontSize: 12, minWidth: 120 }}>
+          {mesesDisponibles.map(m => <option key={m} value={m}>{fmtMesLabel(m)}</option>)}
+        </select>
+        <button onClick={irMesSiguiente}
+          disabled={idxMesActual <= 0}
+          style={{ padding: "4px 10px", borderRadius: 6, border: `1px solid ${B.navyLight}`, background: "transparent", color: idxMesActual <= 0 ? "rgba(255,255,255,0.2)" : "#fff", cursor: idxMesActual <= 0 ? "default" : "pointer", fontSize: 12 }}>
+          ›
+        </button>
+        {mesKpi && mesKpi !== thisMonth() && (
+          <span style={{ fontSize: 10, color: B.sand, fontStyle: "italic" }}>
+            (mes actual sin datos — mostrando último con operación)
+          </span>
+        )}
+      </div>
+
+      {/* KPIs del mes seleccionado */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(140px,1fr))", gap: 10, marginBottom: 16 }}>
         {[
-          { l: "Galones (30d)",       v: `${kpis.galonesMes.toFixed(1)} gal`, c: B.warning },
-          { l: "Combustible (30d)",   v: fmtCOP(kpis.gastoCombustibleMes),    c: B.warning },
-          { l: "Mant./Rep. (30d)",    v: fmtCOP(kpis.gastoMantMes),           c: B.sky },
-          { l: "Marina (30d)",        v: fmtCOP(kpis.gastoMarinaMes),         c: "#22d3ee" },
-          { l: "Capitanes (30d)",     v: fmtCOP(kpis.gastoCapitanesMes),      c: "#fb923c" },
+          { l: "Galones",             v: `${kpis.galonesMes.toFixed(1)} gal`, c: B.warning },
+          { l: "Combustible",         v: fmtCOP(kpis.gastoCombustibleMes),    c: B.warning },
+          { l: "Mant./Rep.",          v: fmtCOP(kpis.gastoMantMes),           c: B.sky },
+          { l: "Marina",              v: fmtCOP(kpis.gastoMarinaMes),         c: "#22d3ee" },
+          { l: "Capitanes",           v: fmtCOP(kpis.gastoCapitanesMes),      c: "#fb923c" },
           { l: "Horas motor",         v: kpis.ultimoHoras.toFixed(0) + " h",  c: B.sand },
           { l: "Incidentes abiertos", v: kpis.incidentesAbiertos,             c: kpis.incidentesAbiertos > 0 ? B.danger : B.success },
         ].map((k, i) => (
