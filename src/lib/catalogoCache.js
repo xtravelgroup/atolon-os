@@ -14,6 +14,7 @@
 //
 // Definir un catálogo nuevo: agregalo al map CATALOGOS abajo.
 
+import { useState, useEffect, useCallback, useRef } from "react";
 import { supabase } from "./supabase";
 
 const TTL_MS = 5 * 60 * 1000; // 5 minutos
@@ -162,8 +163,6 @@ export function invalidarCatalogo(...keys) {
  * Hook React: devuelve { data, loading, error, refetch }.
  * No depende de React Query — wrapper minimal sobre getCatalogo + useState.
  */
-import { useState, useEffect, useCallback, useRef } from "react";
-
 export function useCatalogo(key) {
   const [data, setData] = useState(() => {
     const hit = cache.get(key);
