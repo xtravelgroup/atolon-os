@@ -927,11 +927,19 @@ export default function CheckIn() {
       ? [...baseEmbs, ...extraEmbs, blueApple]
       : [...baseEmbs, ...extraEmbs];
     const yaIncluidos = new Set(conBA.map(e => e.id));
-    const rentadasActivas = embarcaciones.filter(e =>
-      e.propiedad === "rentada" && e.estado === "activo" && !yaIncluidos.has(e.id)
-    );
-    return [...conBA, ...rentadasActivas];
-  }, [embarcaciones, overrides]);
+    // Rentadas: SOLO las que se contrataron HOY (la `fecha` seleccionada en
+    // Check-in). Si quedan activas en DB pero fueron de un día anterior, no
+    // aparecen — evitamos que el operador las vea día tras día. La identidad
+    // del día se mide en zona Bogotá para no fallar después de las 7pm UTC-5.
+    const rentadasDelDia = embarcaciones.filter(e => {
+      if (e.propiedad !== "rentada" || e.estado !== "activo") return false;
+      if (yaIncluidos.has(e.id)) return false; // ej: Blue Apple ya incluido
+      if (!e.created_at) return false;
+      const diaCreacion = new Date(e.created_at).toLocaleDateString("en-CA", { timeZone: "America/Bogota" });
+      return diaCreacion === fecha;
+    });
+    return [...conBA, ...rentadasDelDia];
+  }, [embarcaciones, overrides, fecha]);
 
   const AKEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5jZHl0dGd4dWljeXJ1YXRoa3hkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ4OTY4NDksImV4cCI6MjA5MDQ3Mjg0OX0.ppK_J1BUI8lrEZ-iQWNb0imO_ZwOGbF3MDyv7nct6bs";
 
