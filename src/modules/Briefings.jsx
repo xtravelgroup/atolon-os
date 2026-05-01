@@ -858,7 +858,7 @@ function BriefingDetalle({ briefing, tareas, tareasAnterior, briefingAnterior, e
               </div>
             )}
           </div>
-          <button onClick={() => { addAgenda(); setTimeout(guardar, 100); }}
+          <button onClick={addAgenda}
             style={{ ...BTN(form.estado === "programado" ? B.hotel : B.navyLight), fontSize: 12, padding: "8px 14px" }}>
             + Punto a discutir
           </button>
