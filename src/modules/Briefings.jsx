@@ -48,6 +48,14 @@ export default function Briefings() {
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState("activos");
   const [openId, setOpenId] = useState(null);
+  // Email del usuario logueado: cada briefing es PRIVADO para su creador.
+  // Lo obtenemos de la sesión Supabase ya que MODULE_MAP no lo pasa por prop.
+  const [userEmail, setUserEmail] = useState(null);
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data }) => {
+      setUserEmail((data?.user?.email || "").toLowerCase());
+    });
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -63,34 +71,48 @@ export default function Briefings() {
   }, []);
   useEffect(() => { load(); }, [load]);
 
-  // KPIs
-  const total = briefings.length;
-  const activos = briefings.filter(b => b.estado === "programado" || b.estado === "en_curso").length;
-  const tareasPend = tareas.filter(t => t.estado === "pendiente" || t.estado === "en_progreso").length;
-  const tareasVencidas = tareas.filter(t => t.fecha_limite && t.fecha_limite < todayStr() && (t.estado === "pendiente" || t.estado === "en_progreso")).length;
+  // Filtro de propiedad: solo el creador ve sus briefings.
+  // Briefings legacy con creado_por vacío quedan visibles para todos
+  // (transición — los nuevos quedan siempre marcados con email).
+  const briefingsMios = useMemo(() => {
+    if (!userEmail) return briefings; // mientras carga sesión no filtramos
+    return briefings.filter(b => {
+      const owner = (b.creado_por || "").toLowerCase().trim();
+      return !owner || owner === userEmail;
+    });
+  }, [briefings, userEmail]);
+  // Tareas también: solo de los briefings que ves.
+  const idsMios = useMemo(() => new Set(briefingsMios.map(b => b.id)), [briefingsMios]);
+  const tareasMias = useMemo(() => tareas.filter(t => !t.briefing_id || idsMios.has(t.briefing_id)), [tareas, idsMios]);
 
-  // Filtros por tab
+  // KPIs (sobre lo que el usuario puede ver — solo SUS briefings)
+  const total = briefingsMios.length;
+  const activos = briefingsMios.filter(b => b.estado === "programado" || b.estado === "en_curso").length;
+  const tareasPend = tareasMias.filter(t => t.estado === "pendiente" || t.estado === "en_progreso").length;
+  const tareasVencidas = tareasMias.filter(t => t.fecha_limite && t.fecha_limite < todayStr() && (t.estado === "pendiente" || t.estado === "en_progreso")).length;
+
+  // Filtros por tab (sobre los briefings del usuario)
   const visibles = useMemo(() => {
-    if (tab === "activos") return briefings.filter(b => b.estado === "programado" || b.estado === "en_curso");
-    if (tab === "historico") return briefings.filter(b => b.estado === "cerrado" || b.estado === "cancelado");
-    return briefings;
-  }, [briefings, tab]);
+    if (tab === "activos") return briefingsMios.filter(b => b.estado === "programado" || b.estado === "en_curso");
+    if (tab === "historico") return briefingsMios.filter(b => b.estado === "cerrado" || b.estado === "cancelado");
+    return briefingsMios;
+  }, [briefingsMios, tab]);
 
   const tareasPorBriefing = useMemo(() => {
     const map = {};
-    tareas.forEach(t => {
+    tareasMias.forEach(t => {
       const k = t.briefing_id || "_sin";
       if (!map[k]) map[k] = [];
       map[k].push(t);
     });
     return map;
-  }, [tareas]);
+  }, [tareasMias]);
 
   // Crear nuevo briefing
   const crearBriefing = async () => {
     const codigo = `BR-${Date.now().toString().slice(-8)}`;
     // Buscar el más reciente cerrado para enlazar como anterior
-    const anterior = briefings.find(b => b.estado === "cerrado");
+    const anterior = briefingsMios.find(b => b.estado === "cerrado");
     const payload = {
       codigo,
       fecha: todayStr(),
@@ -102,6 +124,7 @@ export default function Briefings() {
       notas: "",
       estado: "programado",
       briefing_anterior_id: anterior?.id || null,
+      creado_por: userEmail || "", // ← privacidad: el owner del briefing
     };
     const { data, error } = await supabase.from("briefings").insert(payload).select().single();
     if (error) return alert("Error: " + error.message);
@@ -816,16 +839,42 @@ function BriefingDetalle({ briefing, tareas, tareasAnterior, briefingAnterior, e
         )}
       </div>
 
-      {/* Agenda */}
-      <div style={{ background: B.navy, borderRadius: 12, padding: "16px 18px", marginBottom: 16, border: `1px solid ${B.navyLight}` }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-          <div style={{ fontSize: 11, color: B.sand, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.08em" }}>
-            📌 Agenda ({(form.agenda || []).length})
+      {/* Agenda — para briefings "programado" la mostramos prominente como
+          CTA: el usuario está PREPARANDO los puntos a discutir antes de la
+          reunión. Para "en_curso/cerrado" sigue siendo una sección normal. */}
+      <div style={{
+        background: form.estado === "programado" ? "rgba(167,139,250,0.10)" : B.navy,
+        borderRadius: 12, padding: "16px 18px", marginBottom: 16,
+        border: `1px solid ${form.estado === "programado" ? B.hotel + "55" : B.navyLight}`,
+      }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, flexWrap: "wrap", gap: 8 }}>
+          <div>
+            <div style={{ fontSize: 11, color: form.estado === "programado" ? B.hotel : B.sand, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.08em" }}>
+              📌 {form.estado === "programado" ? "Prepará la agenda" : "Agenda"} ({(form.agenda || []).length})
+            </div>
+            {form.estado === "programado" && (
+              <div style={{ fontSize: 11, color: "rgba(255,255,255,0.55)", marginTop: 3 }}>
+                Listá los puntos a discutir antes de iniciar el briefing. Después podés agregar más durante la reunión.
+              </div>
+            )}
           </div>
-          <button onClick={addAgenda} style={{ ...BTN(B.navyLight), fontSize: 11, padding: "5px 10px" }}>+ Tema</button>
+          <button onClick={() => { addAgenda(); setTimeout(guardar, 100); }}
+            style={{ ...BTN(form.estado === "programado" ? B.hotel : B.navyLight), fontSize: 12, padding: "8px 14px" }}>
+            + Punto a discutir
+          </button>
         </div>
         {(form.agenda || []).length === 0 ? (
-          <div style={{ fontSize: 11, color: "rgba(255,255,255,0.3)", fontStyle: "italic" }}>Sin temas en la agenda</div>
+          <div style={{
+            padding: 14, borderRadius: 8,
+            background: form.estado === "programado" ? "rgba(167,139,250,0.06)" : "transparent",
+            border: form.estado === "programado" ? `1px dashed ${B.hotel}55` : "none",
+            fontSize: 12, color: form.estado === "programado" ? B.hotel : "rgba(255,255,255,0.3)",
+            textAlign: "center", fontStyle: form.estado === "programado" ? "normal" : "italic",
+          }}>
+            {form.estado === "programado"
+              ? "Empezá agregando el primer punto a discutir →"
+              : "Sin temas en la agenda"}
+          </div>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {(form.agenda || []).map((tema, idx) => (
