@@ -11,7 +11,10 @@ const fmtCOP = (n) => "$" + Math.round(Number(n) || 0).toLocaleString("es-CO");
 const fmtPct = (n) => (Number.isFinite(n) ? `${n.toFixed(1)}%` : "—");
 const mesLabel = (ym) => new Date(ym + "-01T12:00:00").toLocaleDateString("es-CO", { month: "short", year: "2-digit" });
 const mesLargo = (ym) => new Date(ym + "-01T12:00:00").toLocaleDateString("es-CO", { month: "long", year: "numeric" });
-const thisMonth = () => new Date().toISOString().slice(0, 7);
+// IMPORTANTE: usar timezone Bogotá. Antes era new Date().toISOString() (UTC),
+// que en horario nocturno Colombia ya marcaba el día siguiente y por eso
+// el módulo aparecía vacío "antes de tiempo" (ej: 30-abr 8pm Colombia = 1-may UTC).
+const thisMonth = () => new Date().toLocaleDateString("en-CA", { timeZone: "America/Bogota" }).slice(0, 7);
 
 // Si recibe lanchaId, filtra TODOS los datos a esa lancha específica.
 // Si no, muestra agregado de toda la flota (modo legacy).
@@ -28,7 +31,11 @@ export default function CostosFlotaTab({ lanchaId = null } = {}) {
   const fetchData = useCallback(async () => {
     if (!supabase) return;
     setLoading(true);
-    const seisAtras = new Date(); seisAtras.setMonth(seisAtras.getMonth() - 5);
+    // 6 meses atrás desde el primer día del mes actual (Bogotá): así no nos
+    // afecta el quirk de setMonth con día 30/31 cayendo en feb/abr/etc.
+    const seisAtras = new Date();
+    seisAtras.setDate(1);
+    seisAtras.setMonth(seisAtras.getMonth() - 5);
     const desde = seisAtras.toISOString().slice(0, 10);
     const [{ data: lch }, { data: bit }, { data: zfl }, { data: lleg }, { data: caps }] = await Promise.all([
       supabase.from("lanchas").select("*").eq("activo", true).order("nombre"),

@@ -560,10 +560,15 @@ function defaultTipoForTab(tab) {
 
 // ─── Resumen tab ───────────────────────────────────────────────────────────
 function ResumenTab({ bitacora, zarpes, lancha }) {
-  // 6 meses de gasto
+  // 6 meses de gasto. Usar día 1 + Bogotá: si hoy es abril 30, setMonth(-2)
+  // sobre día 30 caía en "Feb 30" → marzo, saltándose febrero. Día 1 + tz
+  // Bogotá garantiza que generamos: nov, dic, ene, feb, mar, abr correctamente.
   const meses = [];
+  const baseStr = new Date().toLocaleDateString("en-CA", { timeZone: "America/Bogota" });
   for (let i = 5; i >= 0; i--) {
-    const d = new Date(); d.setMonth(d.getMonth() - i);
+    const d = new Date(baseStr + "T12:00:00");
+    d.setDate(1);
+    d.setMonth(d.getMonth() - i);
     meses.push(d.toISOString().slice(0, 7));
   }
   const gastosMes = meses.map(m => {
