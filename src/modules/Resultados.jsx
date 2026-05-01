@@ -914,6 +914,11 @@ export default function Resultados() {
               <div>👥 Grupos: <strong style={{ color: "#34d399" }}>{COP(grupos?.mes?.monto)}</strong></div>
               <div>🎉 Eventos: <strong style={{ color: "#a78bfa" }}>{COP(eventos?.mes?.monto)}</strong></div>
               <div>🍽️ A&B: <strong style={{ color: B.sand }}>{COP(ayb?.mes?.monto)}</strong></div>
+              {/* "Otros" se suma a totalMes.monto (línea 710), así que también
+                  debe aparecer en este desglose para que la suma cuadre. */}
+              {(otros?.mes?.monto || 0) > 0 && (
+                <div>✨ Otros: <strong style={{ color: "#fb923c" }}>{COP(otros?.mes?.monto)}</strong></div>
+              )}
             </div>
           </div>
         </>
@@ -1003,7 +1008,9 @@ export default function Resultados() {
                 <span style={{ fontSize: 13, color: B.white, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.05em" }}>💰 Total</span>
               </div>
               {PERIODOS.map(p => {
-                const total = (pasadias?.[p.key]?.monto || 0) + (grupos?.[p.key]?.monto || 0) + (eventos?.[p.key]?.monto || 0) + (ayb?.[p.key]?.monto || 0);
+                // Incluir "Otros" para que coincida con totalMes (header) y la
+                // versión mobile. Antes faltaba y daba un total $780K menor.
+                const total = (pasadias?.[p.key]?.monto || 0) + (grupos?.[p.key]?.monto || 0) + (eventos?.[p.key]?.monto || 0) + (ayb?.[p.key]?.monto || 0) + (otros?.[p.key]?.monto || 0);
                 return (
                   <div key={p.key} style={{ padding: "16px 16px", textAlign: "center", borderLeft: `1px solid ${B.navyLight}` }}>
                     <div style={{ fontSize: 17, fontWeight: 900, color: B.white, fontFamily: "'Barlow Condensed', sans-serif" }}>
