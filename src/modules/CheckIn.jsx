@@ -907,6 +907,32 @@ export default function CheckIn() {
 
   useEffect(() => { load(); }, [load]);
 
+  // Helper: embarcaciones disponibles para una salida específica.
+  // Combina: base (whitelist de salida.embarcaciones) + extras del día
+  // (salidas_override.extra_embarcaciones) + Blue Apple (siempre) + TODAS las
+  // RENTADAS ACTIVAS (las que el operador agregó en muelle "+ Embarcación
+  // rentada"). Las rentadas no están en el whitelist de ninguna salida pero
+  // por su naturaleza ad-hoc deben aparecer en cualquier salida del día.
+  const embsParaSalida = useCallback((salida) => {
+    if (!salida) return [];
+    const override = overrides.find(o => o.salida_id === salida.id);
+    const baseEmbs = (salida.embarcaciones || [])
+      .map(eid => embarcaciones.find(e => e.id === eid))
+      .filter(Boolean);
+    const extraEmbs = (override?.extra_embarcaciones || [])
+      .map(e => embarcaciones.find(eb => eb.id === e.id) || e)
+      .filter(e => !baseEmbs.some(b => b.id === e.id));
+    const blueApple = embarcaciones.find(e => e.id === "EMB-BLUEAPPLE");
+    const conBA = blueApple && !baseEmbs.some(b => b.id === "EMB-BLUEAPPLE") && !extraEmbs.some(b => b.id === "EMB-BLUEAPPLE")
+      ? [...baseEmbs, ...extraEmbs, blueApple]
+      : [...baseEmbs, ...extraEmbs];
+    const yaIncluidos = new Set(conBA.map(e => e.id));
+    const rentadasActivas = embarcaciones.filter(e =>
+      e.propiedad === "rentada" && e.estado === "activo" && !yaIncluidos.has(e.id)
+    );
+    return [...conBA, ...rentadasActivas];
+  }, [embarcaciones, overrides]);
+
   const AKEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5jZHl0dGd4dWljeXJ1YXRoa3hkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ4OTY4NDksImV4cCI6MjA5MDQ3Mjg0OX0.ppK_J1BUI8lrEZ-iQWNb0imO_ZwOGbF3MDyv7nct6bs";
 
   const checkinPaxGrupo = async (grupo, slotId) => {
@@ -1359,18 +1385,8 @@ export default function CheckIn() {
         );
       })()}
       {editColabs && salida && (() => {
-        // Construir lista de embarcaciones para esta salida (base + extras via overrides + Blue Apple)
-        const override = overrides.find(o => o.salida_id === salida.id);
-        const extras = (override?.extra_embarcaciones || []).map(e => {
-          const full = embarcaciones.find(eb => eb.id === e.id);
-          return full ? { ...full, _extra: true } : { id: e.id, nombre: e.nombre, _extra: true };
-        });
-        const base = (salida.embarcaciones || []).map(eid => embarcaciones.find(e => e.id === eid)).filter(Boolean);
-        const combined = [...base, ...extras.filter(e => !base.some(b => b.id === e.id))];
-        const blueApple = embarcaciones.find(e => e.id === "EMB-BLUEAPPLE");
-        const allEmbs = blueApple && !combined.some(e => e.id === "EMB-BLUEAPPLE")
-          ? [...combined, { ...blueApple }]
-          : combined;
+        // Lista de embarcaciones para esta salida: base + extras + Blue Apple + rentadas activas
+        const allEmbs = embsParaSalida(salida);
         return (
           <ColaboradoresModal
             salidaId={salida.id}
@@ -1681,26 +1697,9 @@ export default function CheckIn() {
                     style={{ padding: "8px 12px", borderRadius: 8, background: despacho?.colaboradores?.length > 0 ? B.sky + "22" : B.navyLight, color: despacho?.colaboradores?.length > 0 ? B.sky : "rgba(255,255,255,0.6)", border: `1px solid ${despacho?.colaboradores?.length > 0 ? B.sky + "55" : "transparent"}`, fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
                     👥 {despacho?.colaboradores?.length > 0 ? `${despacho.colaboradores.length}` : "Colabs"}
                   </button>
-                  {/* Zarpe button per assigned embarcación (base + extra del calendario) */}
+                  {/* Zarpe button per embarcación (base + extras + Blue Apple + rentadas activas) */}
                   {(() => {
-                    const override = overrides.find(o => o.salida_id === salida.id);
-                    // Extra: buscar ficha completa en embarcaciones para traer datos de capitán
-                    const extraEmbs = (override?.extra_embarcaciones || []).map(e => {
-                      const full = embarcaciones.find(eb => eb.id === e.id);
-                      return full ? { ...full, _extra: true } : { id: e.id, nombre: e.nombre, _extra: true };
-                    });
-                    // Base: pasar objeto completo con capitán y cédulas
-                    const baseEmbs = (salida.embarcaciones || []).map(embId => {
-                      const emb = embarcaciones.find(e => e.id === embId);
-                      return emb ? { ...emb } : null;
-                    }).filter(Boolean);
-                    // Combinar sin duplicados
-                    const allEmbsBase = [...baseEmbs, ...extraEmbs.filter(e => !baseEmbs.some(b => b.id === e.id))];
-                    // Blue Apple siempre aparece en todas las salidas
-                    const blueApple = embarcaciones.find(e => e.id === "EMB-BLUEAPPLE");
-                    const allEmbs = blueApple && !allEmbsBase.some(e => e.id === "EMB-BLUEAPPLE")
-                      ? [...allEmbsBase, { ...blueApple }]
-                      : allEmbsBase;
+                    const allEmbs = embsParaSalida(salida);
                     return allEmbs.map(emb => (
                       <button key={emb.id} onClick={() => {
                         const embDesp = despachosDesal.find(d => d.embarcacion_nombre === emb.nombre);
@@ -1749,20 +1748,7 @@ export default function CheckIn() {
               </div>
               {/* Botones de despachar — uno por embarcación que tenga pasajeros asignados */}
               {(() => {
-                const override2 = overrides.find(o => o.salida_id === salida.id);
-                const extraE2 = (override2?.extra_embarcaciones || []).map(e => {
-                  const full = embarcaciones.find(eb => eb.id === e.id);
-                  return full ? { ...full, _extra: true } : { id: e.id, nombre: e.nombre, _extra: true };
-                });
-                const baseE2 = (salida.embarcaciones || []).map(eid => {
-                  const emb = embarcaciones.find(e => e.id === eid);
-                  return emb ? { ...emb } : null;
-                }).filter(Boolean);
-                const allEmbs2Base = [...baseE2, ...extraE2.filter(e => !baseE2.some(b => b.id === e.id))];
-                const blueApple2 = embarcaciones.find(e => e.id === "EMB-BLUEAPPLE");
-                const allEmbs2 = blueApple2 && !allEmbs2Base.some(e => e.id === "EMB-BLUEAPPLE")
-                  ? [...allEmbs2Base, { ...blueApple2 }]
-                  : allEmbs2Base;
+                const allEmbs2 = embsParaSalida(salida);
 
                 // Pax asignados por embarcación (solo cuentan reservas con embarcacion_asignada)
                 const paxPorEmb = {};
@@ -1896,18 +1882,9 @@ export default function CheckIn() {
                           )}
                         </div>
                         {res.contacto && <div style={{ fontSize: 11, color: "rgba(255,255,255,0.3)", marginTop: 2 }}>{res.contacto}</div>}
-                        {/* Embarcación selector — asignadas a la salida + Blue Apple */}
+                        {/* Embarcación selector — base + extras + Blue Apple + rentadas activas */}
                         {(() => {
-                          const override = overrides.find(o => o.salida_id === salida.id);
-                          const baseEmbs = (salida.embarcaciones || [])
-                            .map(eid => embarcaciones.find(e => e.id === eid))
-                            .filter(Boolean);
-                          const extraEmbs = (override?.extra_embarcaciones || [])
-                            .map(e => embarcaciones.find(eb => eb.id === e.id) || e)
-                            .filter(e => !baseEmbs.some(b => b.id === e.id));
-                          const blueApple = embarcaciones.find(e => e.id === "EMB-BLUEAPPLE");
-                          const compartidas = blueApple && !baseEmbs.some(b => b.id === "EMB-BLUEAPPLE") && !extraEmbs.some(b => b.id === "EMB-BLUEAPPLE") ? [blueApple] : [];
-                          const todasEmbs = [...baseEmbs, ...extraEmbs, ...compartidas];
+                          const todasEmbs = embsParaSalida(salida);
                           if (todasEmbs.length === 0) return null;
                           return (
                             <div style={{ marginTop: 6 }}>
