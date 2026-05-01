@@ -80,6 +80,7 @@ export const GRUPOS_NAV = [
       { key: "horarios",  label: "Horarios",     icon: "📅" },
       { key: "nomina",    label: "Nómina",       icon: "💵" },
       { key: "nomina_dia",label: "Nómina Día",   icon: "📆" },
+      { key: "asistencia_zk", label: "Asistencia ZK", icon: "👆" },
       { key: "contratistas_admin", label: "Contratistas", icon: "🦺" },
       { key: "briefings", label: "Briefings",    icon: "📋" },
       { key: "manuales",  label: "Manuales",     icon: "📚" },
