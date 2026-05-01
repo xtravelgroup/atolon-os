@@ -1996,7 +1996,7 @@ export function ReservasGrupoModal({ evento, onClose }) {
 }
 
 // ─── Kanban board ─────────────────────────────────────────────────────────────
-function KanbanBoard({ items, isGrupo, onEdit, onBeo, onLink, onCotizar, onReservas, onExtras, aliados }) {
+function KanbanBoard({ items, isGrupo, onEdit, onBeo, onLink, onCotizar, onReservas, onExtras, aliados, vistaOperativa = false }) {
   return (
     <div style={{ display: "grid", gridTemplateColumns: `repeat(${STAGES.length}, 1fr)`, gap: 16 }}>
       {STAGES.map(stage => (
@@ -2024,15 +2024,15 @@ function KanbanBoard({ items, isGrupo, onEdit, onBeo, onLink, onCotizar, onReser
                     <button onClick={e => { e.stopPropagation(); onBeo(ev); }}
                       style={{ fontSize: 11, padding: "4px 10px", borderRadius: 6, background: B.navyLight, color: B.white, border: "none", cursor: "pointer" }}>Ver BEO</button>
                   )}
-                  {ev.categoria !== "grupo" && (
+                  {!vistaOperativa && ev.categoria !== "grupo" && (
                     <button onClick={e => { e.stopPropagation(); onCotizar(ev); }}
                       style={{ fontSize: 11, padding: "4px 10px", borderRadius: 6, background: B.sand + "33", color: B.sand, border: `1px solid ${B.sand}44`, cursor: "pointer", fontWeight: 600 }}>📋 Cotizar</button>
                   )}
-                  {ev.categoria === "grupo" && ev.modalidad_pago !== "organizador" && (
+                  {!vistaOperativa && ev.categoria === "grupo" && ev.modalidad_pago !== "organizador" && (
                     <button onClick={e => { e.stopPropagation(); onLink(ev); }}
                       style={{ fontSize: 11, padding: "4px 10px", borderRadius: 6, background: B.sky + "33", color: B.sky, border: `1px solid ${B.sky}44`, cursor: "pointer" }}>🔗 Ver link</button>
                   )}
-                  {ev.categoria === "grupo" && ev.modalidad_pago !== "organizador" && (
+                  {!vistaOperativa && ev.categoria === "grupo" && ev.modalidad_pago !== "organizador" && (
                     <button onClick={e => { e.stopPropagation(); onReservas(ev); }}
                       style={{ fontSize: 11, padding: "4px 10px", borderRadius: 6, background: B.sand + "22", color: B.sand, border: `1px solid ${B.sand}44`, cursor: "pointer" }}>👥 Reservas</button>
                   )}
@@ -3351,8 +3351,8 @@ export default function Eventos() {
         ))}
       </div>
 
-      {/* KPIs */}
-      {!isCalendario && (
+      {/* KPIs — ocultos en vista operativa (no necesitan ver pipeline/$) */}
+      {!isCalendario && !vistaOperativa && (
         <div style={{ display: "flex", gap: 12, marginBottom: 24, flexWrap: "wrap" }}>
           {[
             { label: "Pipeline Total", val: COP(items.reduce((s, e) => s + e.valor, 0)), color: B.sand },
@@ -3370,7 +3370,7 @@ export default function Eventos() {
 
       {isCalendario
         ? <CalendarioEventos todos={todos} onEdit={ev => setDetalleEvento(ev)} isMobile={isMobile} />
-        : <KanbanBoard items={items} isGrupo={isGrupo} aliados={aliados} onEdit={ev => setDetalleEvento(ev)} onBeo={setBeo} onLink={setLinkEvt} onCotizar={setCotizacion} onReservas={setReservasEvt} onExtras={setExtrasGrupo} />
+        : <KanbanBoard items={items} isGrupo={isGrupo} aliados={aliados} onEdit={ev => setDetalleEvento(ev)} onBeo={setBeo} onLink={setLinkEvt} onCotizar={setCotizacion} onReservas={setReservasEvt} onExtras={setExtrasGrupo} vistaOperativa={vistaOperativa} />
       }
 
       {beo          && <BEOPreview evento={beo} onClose={() => setBeo(null)} />}
