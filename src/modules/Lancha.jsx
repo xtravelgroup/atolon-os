@@ -247,40 +247,28 @@ export default function Lancha() {
     const gastoOperativosMes = delMes.filter(b => TIPOS_OPERATIVOS.includes(b.tipo)).reduce((s, b) => s + Number(b.costo_total || 0), 0);
     const gastoMarinaMes    = delMes.filter(b => b.tipo === "marina").reduce((s, b) => s + Number(b.costo_total || 0), 0);
     const gastoCapitanesMes = delMes.filter(b => b.tipo === "capitanes").reduce((s, b) => s + Number(b.costo_total || 0), 0);
-    // ÚLTIMAS HORAS DE MOTOR — fuentes:
-    //   1. lancha_bitacora.kilometraje_h (registro manual de bitácora)
-    //   2. muelle_llegadas.motores_horas (foto + horas del muelle)
-    //   3. muelle_zarpes_flota.motores_horas (zarpe a Cartagena)
-    // Tomamos la lectura MÁS RECIENTE en tiempo (sumando todos los motores
-    // del registro). Antes solo leía de bitacora → quedaba en 0 cuando solo
-    // se registraba desde el muelle. Sumamos case-insensitive (Babor/babor).
-    const sumMotores = (h) => {
-      if (!h || typeof h !== "object") return 0;
-      return Object.values(h).reduce((s, v) => s + (Number(v) || 0), 0);
-    };
-    // Construir todas las lecturas de horas con su timestamp:
+    // ÚLTIMAS HORAS DE MOTOR (por motor, no sumadas)
+    // Fuentes:
+    //   1. lancha_bitacora.kilometraje_h (registro manual: una sola cifra)
+    //   2. muelle_llegadas.motores_horas (jsonb {Babor, Estribor, Centro, ...})
+    //   3. muelle_zarpes_flota.motores_horas (mismo formato)
+    // Tomamos la lectura MÁS RECIENTE y la mostramos desglosada por motor.
+    const norm = (s) => (s || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/(.)\1+/g, "$1").trim();
+    const target = norm(lancha?.nombre);
     const lecturasHoras = [
       ...bitacoraLancha
-        .filter(b => b.kilometraje_h != null)
-        .map(b => ({ ts: (b.fecha || "") + (b.hora || "00:00"), valor: Number(b.kilometraje_h) || 0 })),
+        .filter(b => b.kilometraje_h != null && Number(b.kilometraje_h) > 0)
+        .map(b => ({ ts: (b.fecha || "") + (b.hora || "00:00"), horas: { Total: Number(b.kilometraje_h) || 0 } })),
       ...(llegadas || [])
-        .filter(l => {
-          if (!l.motores_horas || !lancha) return false;
-          const target = (lancha.nombre || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/(.)\1+/g, "$1").trim();
-          const got = (l.embarcacion_nombre || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/(.)\1+/g, "$1").trim();
-          return got === target;
-        })
-        .map(l => ({ ts: (l.fecha || "") + (l.hora_llegada || "00:00"), valor: sumMotores(l.motores_horas) })),
+        .filter(l => l.motores_horas && lancha && norm(l.embarcacion_nombre) === target)
+        .map(l => ({ ts: (l.fecha || "") + (l.hora_llegada || "00:00"), horas: l.motores_horas || {} })),
       ...(zarpes || [])
-        .filter(z => {
-          if (!z.motores_horas || !lancha) return false;
-          const target = (lancha.nombre || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/(.)\1+/g, "$1").trim();
-          const got = (z.embarcacion || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/(.)\1+/g, "$1").trim();
-          return got === target;
-        })
-        .map(z => ({ ts: (z.fecha || "") + (z.hora_zarpe || "00:00"), valor: sumMotores(z.motores_horas) })),
-    ].filter(x => x.valor > 0).sort((a, b) => b.ts.localeCompare(a.ts));
-    const ultimoHoras = lecturasHoras[0]?.valor || 0;
+        .filter(z => z.motores_horas && lancha && norm(z.embarcacion) === target)
+        .map(z => ({ ts: (z.fecha || "") + (z.hora_zarpe || "00:00"), horas: z.motores_horas || {} })),
+    ].filter(x => x.horas && Object.keys(x.horas).length > 0)
+     .sort((a, b) => b.ts.localeCompare(a.ts));
+    // Objeto {motor: horas} de la lectura más reciente, o {} si no hay
+    const ultimoHoras = lecturasHoras[0]?.horas || {};
     const proxServ = bitacoraLancha.find(b => b.proximo_servicio_h || b.proximo_servicio_fecha);
     const viajesMes = viajesPorFecha.filter(v => v.fecha.startsWith(mes)).reduce((s, v) => s + v.viajes, 0);
     const costoCombustibleViajesMes = viajesMes * costoPorViaje;
@@ -456,12 +444,38 @@ export default function Lancha() {
           { l: "Mant./Rep.",          v: fmtCOP(kpis.gastoMantMes),           c: B.sky },
           { l: "Marina",              v: fmtCOP(kpis.gastoMarinaMes),         c: "#22d3ee" },
           { l: "Capitanes",           v: fmtCOP(kpis.gastoCapitanesMes),      c: "#fb923c" },
-          { l: "Horas motor",         v: kpis.ultimoHoras.toFixed(0) + " h",  c: B.sand },
+          // Horas motor: si la lectura tiene varios motores (ej Naturalle:
+          // {Babor, Estribor}), mostrarlos por separado en lugar de sumarlos.
+          (() => {
+            const horas = kpis.ultimoHoras || {};
+            const entries = Object.entries(horas).filter(([, v]) => Number(v) > 0);
+            return { l: "Horas motor", motores: entries, c: B.sand };
+          })(),
           { l: "Incidentes abiertos", v: kpis.incidentesAbiertos,             c: kpis.incidentesAbiertos > 0 ? B.danger : B.success },
         ].map((k, i) => (
           <div key={i} style={{ background: B.navyMid, padding: 12, borderRadius: 10, borderLeft: `3px solid ${k.c}` }}>
             <div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: "0.05em" }}>{k.l}</div>
-            <div style={{ fontSize: 18, fontWeight: 800, color: k.c, marginTop: 2 }}>{k.v}</div>
+            {k.motores ? (
+              k.motores.length === 0 ? (
+                <div style={{ fontSize: 18, fontWeight: 800, color: k.c, marginTop: 2 }}>0 h</div>
+              ) : k.motores.length === 1 && k.motores[0][0] === "Total" ? (
+                // Bitácora manual: solo un valor "Total"
+                <div style={{ fontSize: 18, fontWeight: 800, color: k.c, marginTop: 2 }}>
+                  {Number(k.motores[0][1]).toFixed(0)} h
+                </div>
+              ) : (
+                <div style={{ marginTop: 2, display: "flex", flexDirection: "column", gap: 1 }}>
+                  {k.motores.map(([nombre, valor]) => (
+                    <div key={nombre} style={{ display: "flex", alignItems: "baseline", gap: 6, fontSize: 14, fontWeight: 700, color: k.c }}>
+                      <span style={{ fontSize: 9, color: "rgba(255,255,255,0.55)", textTransform: "uppercase", letterSpacing: "0.04em", minWidth: 52 }}>{nombre}</span>
+                      <span>{Number(valor).toFixed(0)} h</span>
+                    </div>
+                  ))}
+                </div>
+              )
+            ) : (
+              <div style={{ fontSize: 18, fontWeight: 800, color: k.c, marginTop: 2 }}>{k.v}</div>
+            )}
           </div>
         ))}
       </div>
