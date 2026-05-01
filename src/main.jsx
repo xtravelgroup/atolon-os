@@ -81,6 +81,11 @@ function GlobalSuspenseFallback() {
   );
 }
 
+// Pre-cargar catálogos casi-estáticos en background mientras App se monta.
+// Cuando el usuario abra el primer módulo ya están en cache → cambio de
+// módulo más fluido (ahorra ~6 round-trips por navegación).
+import("./lib/catalogoCache.js").then(m => m.prefetchCatalogos()).catch(() => {});
+
 createRoot(document.getElementById("root")).render(
   <StrictMode>
     <Suspense fallback={<GlobalSuspenseFallback />}>

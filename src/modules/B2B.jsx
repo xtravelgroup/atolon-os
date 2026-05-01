@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { B, COP, PASADIAS, fmtFecha } from "../brand";
 import { supabase } from "../lib/supabase";
+import { getCatalogo } from "../lib/catalogoCache";
 import { asignarPuntosReserva, getRankingAgencia, getPuntosConfig } from "../lib/puntos";
 import Incentivos from "./Incentivos";
 import { EventoModal, ReservasGrupoModal } from "./Eventos";
@@ -1496,18 +1497,27 @@ function EventosGruposB2B({ aliadoId }) {
 
   const fetchItems = useCallback(async () => {
     if (!supabase) { setLoading(false); return; }
+    // Limitamos a últimos 12 meses + futuros para que aliados con histórico
+    // largo no carguen 500+ eventos. Si necesitan ver más viejos pueden ir
+    // al módulo Eventos directamente.
+    const unAnoAtras = new Date();
+    unAnoAtras.setFullYear(unAnoAtras.getFullYear() - 1);
+    const desde = unAnoAtras.toISOString().slice(0, 10);
     const { data } = await supabase.from("eventos").select("*")
-      .eq("aliado_id", aliadoId).order("fecha", { ascending: false });
+      .eq("aliado_id", aliadoId)
+      .gte("fecha", desde)
+      .order("fecha", { ascending: false });
     setItems(data || []); setLoading(false);
   }, [aliadoId]);
 
   useEffect(() => {
     fetchItems();
-    if (!supabase) return;
-    // prefetch para EventoModal
-    supabase.from("salidas").select("id, hora, nombre").eq("activo", true).order("orden").then(({ data }) => setSalidas(data || []));
-    supabase.from("aliados_b2b").select("id, nombre, tipo").order("nombre").then(({ data }) => setAliados(data || []));
-    supabase.from("usuarios").select("id, nombre").in("rol_id", ["ventas", "gerente_ventas"]).eq("activo", true).order("nombre").then(({ data }) => setVendedores(data || []));
+    // Estos 3 catálogos vienen del cache (TTL 5min, prefetch en main.jsx).
+    // En el cache hit son síncronos visualmente — la primera carga del día
+    // sí toca DB pero la próxima nav los reutiliza.
+    getCatalogo("salidas").then(setSalidas).catch(() => {});
+    getCatalogo("aliados_b2b").then(setAliados).catch(() => {});
+    getCatalogo("vendedores").then(setVendedores).catch(() => {});
   }, [fetchItems]);
 
   const filtered = items.filter(i => filterCat === "todos" || i.categoria === filterCat);

@@ -1,10 +1,11 @@
 // EmailOCModal — Envía la OC al proveedor por correo con PDF adjunto.
 // Genera el PDF con jsPDF en el cliente y llama al edge function send-oc-proveedor.
+// jsPDF es ~400KB (130KB gzip) — lo cargamos LAZY al momento de generar
+// el PDF, no en el bundle de Compras / Requisiciones.
 import React, { useState, useEffect } from "react";
 import { B, COP, fmtFecha } from "../brand";
 import { supabase } from "../lib/supabase";
 import { useBreakpoint } from "../lib/responsive.js";
-import jsPDF from "jspdf";
 
 export default function EmailOCModal({ oc, onClose, currentUser, reload }) {
   const { isMobile } = useBreakpoint();
@@ -24,7 +25,8 @@ export default function EmailOCModal({ oc, onClose, currentUser, reload }) {
       .then(({ data }) => setHistorial(data || []));
   }, [oc.id]);
 
-  const generarPDF = () => {
+  const generarPDF = async () => {
+    const { default: jsPDF } = await import("jspdf");
     const doc = new jsPDF();
     const m = 14;
     let y = 20;
@@ -99,7 +101,7 @@ export default function EmailOCModal({ oc, onClose, currentUser, reload }) {
     if (!to.trim()) return setError("El destinatario es requerido.");
     setStep("sending");
     try {
-      const pdfBase64 = conPDF ? generarPDF() : null;
+      const pdfBase64 = conPDF ? await generarPDF() : null;
       const toList = to.split(",").map(s => s.trim()).filter(Boolean);
       const ccList = cc.split(",").map(s => s.trim()).filter(Boolean);
 

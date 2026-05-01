@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { B, COP, fmtFecha, todayStr } from "../brand";
 import { supabase } from "../lib/supabase";
+import { getCatalogo } from "../lib/catalogoCache";
 import { useMobile } from "../lib/useMobile";
 import { wompiCheckoutUrl } from "../lib/wompi";
 import EventoDetalle from "./EventoDetalle";
@@ -3183,12 +3184,22 @@ export default function Eventos() {
     if (!supabase) { setLoading(false); return; }
     setLoading(true);
     const hoy = todayStr();
-    const [evtR, salR, aliR, vendR] = await Promise.all([
-      supabase.from("eventos").select("*").order("fecha", { ascending: true }),
-      supabase.from("salidas").select("id, hora, nombre").eq("activo", true).order("orden"),
-      supabase.from("aliados_b2b").select("id, nombre, tipo").order("nombre"),
-      supabase.from("usuarios").select("id, nombre").in("rol_id", ["ventas", "gerente_ventas"]).eq("activo", true).order("nombre"),
+    // Filtrar eventos a últimos 6 meses + futuros: con miles de eventos
+    // históricos traer todo es lento.
+    const seisMesesAtras = new Date();
+    seisMesesAtras.setMonth(seisMesesAtras.getMonth() - 6);
+    const desdeFecha = seisMesesAtras.toISOString().slice(0, 10);
+    // Eventos siempre fresh; salidas/aliados/vendedores vienen del cache
+    // (TTL 5min) — se prefetcheó al cargar la app, así que es ~instantáneo.
+    const [evtR, salidasCat, aliadosCat, vendCat] = await Promise.all([
+      supabase.from("eventos").select("*").gte("fecha", desdeFecha).order("fecha", { ascending: true }),
+      getCatalogo("salidas"),
+      getCatalogo("aliados_b2b"),
+      getCatalogo("vendedores"),
     ]);
+    const salR = { data: salidasCat };
+    const aliR = { data: aliadosCat };
+    const vendR = { data: vendCat };
 
     // Auto-pasar Confirmado → Realizado cuando la fecha del evento ya pasó
     if (evtR.data) {
