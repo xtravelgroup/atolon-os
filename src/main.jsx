@@ -1,8 +1,10 @@
 import { StrictMode, Suspense } from "react";
 import { createRoot } from "react-dom/client";
+import { QueryClientProvider } from "@tanstack/react-query";
 import "./global.css";
 import App from "./App.jsx";
 import { B } from "./brand";
+import { queryClient } from "./lib/queryClient";
 
 // ── Recovery automático tras deploy con chunks viejos ─────────────────
 // Cuando Vercel despliega una nueva versión, los nombres de los chunks
@@ -88,8 +90,10 @@ import("./lib/catalogoCache.js").then(m => m.prefetchCatalogos()).catch(() => {}
 
 createRoot(document.getElementById("root")).render(
   <StrictMode>
-    <Suspense fallback={<GlobalSuspenseFallback />}>
-      <App />
-    </Suspense>
+    <QueryClientProvider client={queryClient}>
+      <Suspense fallback={<GlobalSuspenseFallback />}>
+        <App />
+      </Suspense>
+    </QueryClientProvider>
   </StrictMode>
 );
