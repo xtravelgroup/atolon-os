@@ -1,8 +1,6 @@
 // motorPDF.js — Generación PDF de Orden de Trabajo de motor
-// Usa jsPDF (ya instalado). Layout corporativo Atolón con header,
-// datos del motor, checklist, repuestos, costos y firmas.
-
-import { jsPDF } from "jspdf";
+// Usa jsPDF (lazy: ~400KB / 130KB gzip). Lo importamos dinámicamente al
+// momento de generar el PDF para no bloatear el chunk de Lancha/Motores.
 
 const COP = (n) => "$" + Math.round(Number(n) || 0).toLocaleString("es-CO");
 
@@ -22,6 +20,7 @@ async function urlToBase64(url) {
 }
 
 export async function generarPDFOT({ ot, motor, lancha }) {
+  const { jsPDF } = await import("jspdf");
   const doc = new jsPDF({ unit: "mm", format: "letter" });
   const pageW = doc.internal.pageSize.getWidth();
   const pageH = doc.internal.pageSize.getHeight();

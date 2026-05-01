@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { B, COP, todayStr } from "../brand";
 import { supabase } from "../lib/supabase";
-import jsPDF from "jspdf";
+// jsPDF (~400KB) lazy: solo se carga al imprimir PDF
 
 const IS = { width: "100%", padding: "10px 14px", borderRadius: 8, background: B.navy, border: `1px solid ${B.navyLight}`, color: B.white, fontSize: 13, outline: "none", boxSizing: "border-box" };
 const LS = { fontSize: 11, color: B.sand, display: "block", marginBottom: 5, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 700 };
@@ -77,8 +77,9 @@ export default function HacerInventario() {
 
   const stockEn = (item_id) => Number(stockPorLoc[`${item_id}|${locId}`]) || 0;
 
-  // ── Imprimir conteo actual como PDF ──
-  const imprimirConteo = () => {
+  // ── Imprimir conteo actual como PDF (jsPDF lazy) ──
+  const imprimirConteo = async () => {
+    const { default: jsPDF } = await import("jspdf");
     const loc = locaciones.find(l => l.id === locId);
     const doc = new jsPDF();
     const m = 14;

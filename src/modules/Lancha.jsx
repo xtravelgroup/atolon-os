@@ -67,11 +67,17 @@ export default function Lancha() {
     // Idempotente: asegura cargos recurrentes del mes actual (marina + capitanes terceros)
     supabase.rpc("generar_marina_mes").then(() => {});
     supabase.rpc("generar_capitanes_mes").then(() => {});
+    // Filtrar bitacora/zarpes/llegadas a últimos 90 días: 500 rows era OK
+    // al inicio pero con 6+ meses de operación se vuelve pesado. Si necesitan
+    // histórico viejo hay reportes específicos en CostosFlotaTab (6 meses).
+    const noventaAtras = new Date();
+    noventaAtras.setDate(noventaAtras.getDate() - 90);
+    const desde = noventaAtras.toISOString().slice(0, 10);
     const [lR, bR, zR, llR, cR, eR] = await Promise.all([
       supabase.from("lanchas").select("*").eq("activo", true).order("nombre"),
-      supabase.from("lancha_bitacora").select("*").order("fecha", { ascending: false }).order("hora", { ascending: false }).limit(500),
-      supabase.from("muelle_zarpes_flota").select("*").order("fecha", { ascending: false }).limit(500),
-      supabase.from("muelle_llegadas").select("id, fecha, hora_llegada, embarcacion_nombre, tipo, pax_a, pax_n, boca_chica").eq("tipo", "lancha_atolon").order("fecha", { ascending: false }).limit(500),
+      supabase.from("lancha_bitacora").select("*").gte("fecha", desde).order("fecha", { ascending: false }).order("hora", { ascending: false }).limit(500),
+      supabase.from("muelle_zarpes_flota").select("*").gte("fecha", desde).order("fecha", { ascending: false }).limit(500),
+      supabase.from("muelle_llegadas").select("id, fecha, hora_llegada, embarcacion_nombre, tipo, pax_a, pax_n, boca_chica").eq("tipo", "lancha_atolon").gte("fecha", desde).order("fecha", { ascending: false }).limit(500),
       supabase.from("capitanes_flota").select("*").eq("activo", true).order("nombre"),
       supabase.from("rh_empleados").select("id, nombres, apellidos, cedula, telefono, email, cargo, salario_base, activo").eq("activo", true).order("nombres"),
     ]);
