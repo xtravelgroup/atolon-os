@@ -527,9 +527,10 @@ function ItemModal({ item, menuTipo, onClose, onSaved, categorias }) {
   const isEspacio   = menuTipo === "espacios_renta";
   const isServicio  = menuTipo === "otros_servicios";
   const isBanquete  = menuTipo === "banquetes";
+  const isBebida    = menuTipo === "bebidas";
   const [form, setForm] = useState(isEdit
-    ? { ...item, tiene_iva: item.tiene_iva ?? true, opciones: item.opciones || [], seleccion_modo: item.seleccion_modo || "todo", seleccion_cantidad: item.seleccion_cantidad || 0, room_service: item.room_service ?? false, foto_url: item.foto_url || "", destacado: item.destacado ?? false, disponible: item.disponible ?? true, nombre_en: item.nombre_en || "", descripcion_en: item.descripcion_en || "", categoria_en: item.categoria_en || "", loggro_id: item.loggro_id || null, loggro_categoria: item.loggro_categoria || null }
-    : { nombre: "", descripcion: "", precio: "", categoria: categorias[0] || "", activo: true, orden: 0, menu_tipo: menuTipo, tiene_iva: true, opciones: [], seleccion_modo: "todo", seleccion_cantidad: 0, room_service: false, foto_url: "", destacado: false, disponible: true, nombre_en: "", descripcion_en: "", categoria_en: "", loggro_id: null, loggro_categoria: null });
+    ? { ...item, tiene_iva: item.tiene_iva ?? true, opciones: item.opciones || [], seleccion_modo: item.seleccion_modo || "todo", seleccion_cantidad: item.seleccion_cantidad || 0, room_service: item.room_service ?? false, foto_url: item.foto_url || "", destacado: item.destacado ?? false, disponible: item.disponible ?? true, nombre_en: item.nombre_en || "", descripcion_en: item.descripcion_en || "", categoria_en: item.categoria_en || "", loggro_id: item.loggro_id || null, loggro_categoria: item.loggro_categoria || null, precio_botella: item.precio_botella ?? "" }
+    : { nombre: "", descripcion: "", precio: "", categoria: categorias[0] || "", activo: true, orden: 0, menu_tipo: menuTipo, tiene_iva: true, opciones: [], seleccion_modo: "todo", seleccion_cantidad: 0, room_service: false, foto_url: "", destacado: false, disponible: true, nombre_en: "", descripcion_en: "", categoria_en: "", loggro_id: null, loggro_categoria: null, precio_botella: "" });
 
   // Loggro linker
   const [loggroSearch, setLoggroSearch] = useState("");
@@ -613,6 +614,10 @@ function ItemModal({ item, menuTipo, onClose, onSaved, categorias }) {
       categoria_en:   form.categoria_en || null,
       loggro_id:      form.loggro_id || null,
       loggro_categoria: form.loggro_categoria || null,
+      // precio_botella: solo para bebidas. Vacío/0 = no se vende por botella.
+      precio_botella: isBebida && Number(form.precio_botella) > 0
+        ? Number(form.precio_botella)
+        : null,
     };
     if (isBanquete) {
       payload.opciones = form.opciones || [];
@@ -704,11 +709,17 @@ function ItemModal({ item, menuTipo, onClose, onSaved, categorias }) {
             </div>
           )}
 
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+          <div style={{ display: "grid", gridTemplateColumns: isBebida ? "1fr 1fr 1fr" : "1fr 1fr", gap: 12 }}>
             <div>
-              <label style={LS}>{isEspacio ? "Tarifa (COP)" : "Precio (COP)"}</label>
+              <label style={LS}>{isEspacio ? "Tarifa (COP)" : isBebida ? "Precio copa (COP)" : "Precio (COP)"}</label>
               <input type="number" value={form.precio} onChange={e => set("precio", e.target.value)} style={IS} placeholder="0" />
             </div>
+            {isBebida && (
+              <div>
+                <label style={LS} title="Dejá vacío si no se vende por botella">Precio botella (COP)</label>
+                <input type="number" value={form.precio_botella} onChange={e => set("precio_botella", e.target.value)} style={IS} placeholder="(opcional)" />
+              </div>
+            )}
             <div>
               <label style={LS}>Orden</label>
               <input type="number" value={form.orden} onChange={e => set("orden", e.target.value)} style={IS} placeholder="0" />
@@ -1083,7 +1094,17 @@ export default function Menus() {
                           )}
                         </div>
                         {item.descripcion && <div style={{ fontSize: 11, color: "rgba(255,255,255,0.45)", lineHeight: 1.4, marginBottom: 4, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{item.descripcion}</div>}
-                        {item.precio > 0 && <div style={{ fontSize: 13, fontWeight: 700, color: B.sand }}>{COP(item.precio)}</div>}
+                        {item.precio > 0 && (
+                          <div style={{ fontSize: 13, fontWeight: 700, color: B.sand, display: "flex", gap: 10, flexWrap: "wrap" }}>
+                            <span>{item.precio_botella > 0 ? `🥃 Copa: ${COP(item.precio)}` : COP(item.precio)}</span>
+                            {item.precio_botella > 0 && (
+                              <span style={{ color: "#a78bfa" }}>🍾 Botella: {COP(item.precio_botella)}</span>
+                            )}
+                          </div>
+                        )}
+                        {(!item.precio || item.precio === 0) && item.precio_botella > 0 && (
+                          <div style={{ fontSize: 13, fontWeight: 700, color: "#a78bfa" }}>🍾 Botella: {COP(item.precio_botella)}</div>
+                        )}
                         {item.loggro_id && <LoggroLinkLabel loggroId={item.loggro_id} />}
                       </div>
                       {/* Actions */}
