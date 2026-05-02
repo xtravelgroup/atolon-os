@@ -5,10 +5,65 @@ import AtolanOS from "./modules/AtolanOS";
 import AtolanTrack from "./lib/AtolanTrack";
 
 // ── Error Boundary — muestra el error en pantalla en vez de pantalla azul ───
+//
+// Caso especial: chunk load errors. Cuando Vercel deploya una nueva versión,
+// los nombres de los chunks cambian (Eventos-XXXXXX.js). El usuario que tiene
+// la pestaña abierta apunta al chunk viejo, que ya no existe → "Failed to
+// fetch dynamically imported module". El handler global en main.jsx lo
+// captura, PERO si el error ocurre durante el render del lazy component,
+// React lo intercepta primero acá. Detectamos el patrón y recargamos solos
+// (1 vez por sesión para evitar loops).
+const CHUNK_RELOAD_FLAG = "__atolon_chunk_reload";
+function isChunkLoadError(err) {
+  const msg = String(err?.message || err || "");
+  return /Failed to fetch dynamically imported module|Loading chunk|ChunkLoadError|Importing a module script failed/i.test(msg);
+}
+
 class ErrorBoundary extends Component {
-  constructor(props) { super(props); this.state = { error: null }; }
-  static getDerivedStateFromError(e) { return { error: e }; }
+  constructor(props) { super(props); this.state = { error: null, recovering: false }; }
+  static getDerivedStateFromError(e) {
+    if (isChunkLoadError(e) && !sessionStorage.getItem(CHUNK_RELOAD_FLAG)) {
+      // No mostrar el error rojo — mostrar "Actualizando..." y recargar.
+      return { error: e, recovering: true };
+    }
+    return { error: e, recovering: false };
+  }
+  componentDidCatch(err) {
+    if (this.state.recovering) {
+      sessionStorage.setItem(CHUNK_RELOAD_FLAG, String(Date.now()));
+      // Limpiar caches del navegador antes de recargar (por si el HTML
+      // viejo está cacheado y volveríamos a recibir hashes que ya no existen).
+      const reload = () => window.location.reload();
+      if (typeof caches !== "undefined") {
+        caches.keys().then(keys => Promise.all(keys.map(k => caches.delete(k)))).finally(reload);
+      } else {
+        reload();
+      }
+    }
+  }
   render() {
+    if (this.state.recovering) {
+      // Pantalla mínima durante el reload — ~200-500ms en redes normales.
+      return (
+        <div style={{
+          position: "fixed", inset: 0, background: "#0D1B3E",
+          display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+          color: "#C8B99A", fontFamily: "system-ui, -apple-system, sans-serif",
+        }}>
+          <div style={{
+            width: 40, height: 40, marginBottom: 16,
+            border: "3px solid rgba(200,185,154,0.2)",
+            borderTopColor: "#C8B99A",
+            borderRadius: "50%",
+            animation: "atolon-spin 0.8s linear infinite",
+          }} />
+          <div style={{ fontSize: 12, letterSpacing: "0.2em", textTransform: "uppercase" }}>
+            Actualizando…
+          </div>
+          <style>{`@keyframes atolon-spin { to { transform: rotate(360deg); } }`}</style>
+        </div>
+      );
+    }
     if (this.state.error) {
       const msg = this.state.error?.message || String(this.state.error);
       const stack = this.state.error?.stack || "";
