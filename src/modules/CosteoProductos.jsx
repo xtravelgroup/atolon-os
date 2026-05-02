@@ -1,6 +1,9 @@
 // CosteoProductos.jsx — COGS por producto (pasadía/hotel/evento/upsell)
 // Cada producto tiene componentes con costo adulto/niño. El componente de
-// transporte se calcula automáticamente desde Flota (último mes con datos).
+// transporte se calcula automáticamente desde Flota usando el costo por
+// pasadía del MES ANTERIOR completo (más estable que el corriente que
+// está incompleto). Si el mes anterior no tiene zarpes registrados, hace
+// fallback al rango más amplio donde sí haya data.
 
 import { useState, useEffect, useMemo, useCallback } from "react";
 import { supabase } from "../lib/supabase";
@@ -10,6 +13,24 @@ import { useMobile } from "../lib/useMobile";
 const fmtCOP = (n) => "$" + Math.round(Number(n) || 0).toLocaleString("es-CO");
 const fmtPct = (n) => (Number.isFinite(n) ? `${n.toFixed(1)}%` : "—");
 const uid = (prefix) => `${prefix}-${Date.now().toString(36).toUpperCase()}${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+
+// ── Mes calendario anterior en hora Colombia (UTC-5) ─────────────────────
+// Devuelve { desde, hasta, label } del mes inmediatamente anterior al actual.
+// Ejemplo: si hoy es 2-may-2026 → 2026-04-01 a 2026-04-30, label "Abril 2026".
+function mesAnteriorBogota() {
+  const ahora  = new Date();
+  const bogota = new Date(ahora.toLocaleString("en-US", { timeZone: "America/Bogota" }));
+  // Primer día del mes corriente, luego restar 1 día → último día del mes anterior
+  const ultimoMesAnt = new Date(bogota.getFullYear(), bogota.getMonth(), 0);
+  const primerMesAnt = new Date(ultimoMesAnt.getFullYear(), ultimoMesAnt.getMonth(), 1);
+  const fmt = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  const meses = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
+  return {
+    desde: fmt(primerMesAnt),
+    hasta: fmt(ultimoMesAnt),
+    label: `${meses[primerMesAnt.getMonth()]} ${primerMesAnt.getFullYear()}`,
+  };
+}
 
 const CATEGORIAS = [
   { k: "pasadia", l: "Pasadía",  c: B.sky },
@@ -23,26 +44,47 @@ export default function CosteoProductos() {
   const { isMobile } = useMobile();
   const [productos, setProductos] = useState([]);
   const [componentes, setComponentes] = useState([]);
-  const [transportePax, setTransportePax] = useState(0); // costo $/pax último mes
+  const [transportePax, setTransportePax] = useState(0); // costo $/pax mes anterior
+  const [transporteFuente, setTransporteFuente] = useState({ label: "—", zarpes: 0, fallback: false });
   const [activo, setActivo] = useState(null);
   const [loading, setLoading] = useState(true);
   const [modal, setModal] = useState(null); // { tipo: "producto"|"componente", edit? }
 
   const load = useCallback(async () => {
     setLoading(true);
-    // Costo transporte por pax: tomar último mes con zarpes y calcular
-    const seisAtras = new Date(); seisAtras.setMonth(seisAtras.getMonth() - 1);
-    const desde = seisAtras.toISOString().slice(0, 10);
-    const [{ data: prods }, { data: comps }, { data: zarpes }] = await Promise.all([
+    // Costo transporte por pasadía: usar el MES ANTERIOR calendario completo.
+    // El mes corriente está incompleto y da números inestables; el mes anterior
+    // ya cerró y tiene la foto real del costo operativo por pasadía.
+    const ma = mesAnteriorBogota();
+    const [{ data: prods }, { data: comps }, { data: zarpesMA }] = await Promise.all([
       supabase.from("productos_catalogo").select("*").eq("activo", true).order("nombre"),
       supabase.from("producto_componentes").select("*").order("orden"),
-      supabase.from("muelle_zarpes_flota").select("pax_a, pax_n, costo_operativo").gte("fecha", desde),
+      supabase.from("muelle_zarpes_flota")
+        .select("pax_a, pax_n, costo_operativo, fecha")
+        .gte("fecha", ma.desde).lte("fecha", ma.hasta),
     ]);
     setProductos(prods || []);
     setComponentes(comps || []);
-    const totalPax   = (zarpes || []).reduce((s, z) => s + Number(z.pax_a || 0) + Number(z.pax_n || 0), 0);
-    const totalCosto = (zarpes || []).reduce((s, z) => s + Number(z.costo_operativo || 0), 0);
+
+    let zarpesUsados = zarpesMA || [];
+    let fuente = { label: ma.label, zarpes: zarpesUsados.length, fallback: false };
+
+    // Fallback: si el mes anterior no tiene zarpes, ir hasta 90 días atrás
+    // para no mostrar $0 (caso temporada baja sin operación el mes pasado).
+    if (zarpesUsados.length === 0) {
+      const fb = new Date(); fb.setDate(fb.getDate() - 90);
+      const desdeFb = fb.toISOString().slice(0, 10);
+      const { data: zarpesFb } = await supabase.from("muelle_zarpes_flota")
+        .select("pax_a, pax_n, costo_operativo, fecha")
+        .gte("fecha", desdeFb);
+      zarpesUsados = zarpesFb || [];
+      fuente = { label: "últimos 90 días", zarpes: zarpesUsados.length, fallback: true };
+    }
+
+    const totalPax   = zarpesUsados.reduce((s, z) => s + Number(z.pax_a || 0) + Number(z.pax_n || 0), 0);
+    const totalCosto = zarpesUsados.reduce((s, z) => s + Number(z.costo_operativo || 0), 0);
     setTransportePax(totalPax > 0 ? totalCosto / totalPax : 0);
+    setTransporteFuente(fuente);
     if (!activo && prods?.length) setActivo(prods[0].id);
     setLoading(false);
   }, [activo]);
@@ -144,10 +186,14 @@ export default function CosteoProductos() {
       {/* Banner transporte */}
       <div style={{ background: B.navyMid, border: `1px solid ${B.sky}33`, borderRadius: 10, padding: 12, marginBottom: 16, fontSize: 12, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
         <span style={{ color: "rgba(255,255,255,0.6)" }}>
-          🚤 Costo transporte automático (último mes): <strong style={{ color: B.sky }}>{fmtCOP(transportePax)}</strong> por pasajero
+          🚤 Costo transporte por pasadía ({transporteFuente.label}
+          {transporteFuente.fallback && <span style={{ color: B.warning }}> · fallback</span>}):{" "}
+          <strong style={{ color: B.sky }}>{fmtCOP(transportePax)}</strong> por pasajero
           {transportePax === 0 && <span style={{ color: B.warning, marginLeft: 8 }}>· sin zarpes registrados</span>}
         </span>
-        <span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)" }}>= total costo viajes ÷ pax transportados</span>
+        <span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)" }}>
+          = total costo viajes ÷ pax transportados · {transporteFuente.zarpes} zarpe{transporteFuente.zarpes === 1 ? "" : "s"}
+        </span>
       </div>
 
       {/* Tabs de productos */}
@@ -240,7 +286,7 @@ export default function CosteoProductos() {
                 <div>
                   <div style={{ fontSize: 13, fontWeight: 700 }}>🚤 Transporte (automático)</div>
                   <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>
-                    Calculado del costo operativo de flota / pax transportados último mes
+                    Calculado del costo operativo de flota / pax transportados ({transporteFuente.label})
                   </div>
                 </div>
                 <div style={{ display: "flex", gap: 16, fontSize: 13, fontWeight: 700 }}>
