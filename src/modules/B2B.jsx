@@ -1676,9 +1676,16 @@ function VisitasAgencia({ aliadoId, aliado }) {
     if (!form.fecha) { setSaveError("La fecha es obligatoria."); return; }
     if (!aliadoId)   { setSaveError("Aliado no identificado — recargá la página."); return; }
     setSaving(true);
+    // Sanitizar columnas date: Postgres rechaza "" — convertir a null.
+    // (Antes daba "Invalid input syntax for type date" si no se agendaba
+    // próxima visita.)
+    const cleanForm = {
+      ...form,
+      fecha_proxima: form.fecha_proxima || null,
+    };
     try {
       if (editVisita) {
-        const { error } = await supabase.from("b2b_visitas").update({ ...form }).eq("id", editVisita.id);
+        const { error } = await supabase.from("b2b_visitas").update(cleanForm).eq("id", editVisita.id);
         if (error) throw error;
       } else {
         const visitaId = `VIS-${Date.now()}`;
@@ -1715,7 +1722,7 @@ function VisitasAgencia({ aliadoId, aliado }) {
         const { error: e2 } = await supabase.from("b2b_visitas").insert({
           id: visitaId,
           aliado_id: aliadoId,
-          ...form,
+          ...cleanForm,
           reserva_id: reservaId,
         });
         if (e2) throw e2;
