@@ -85,30 +85,50 @@ serve(async (req) => {
     // Generar código de certificado
     let codigo: string | null = null;
     if (passed) {
-      const { data: code } = await supabase.rpc("generate_cert_code", { p_cedula: t.cedula });
-      codigo = code;
+      // BUGFIX 2026-05-02: la función Postgres `generate_cert_code` está definida
+      // SIN argumentos, pero antes la llamábamos con `{ p_cedula }`. Supabase-js
+      // devolvía error y `data=null`; el código no chequeaba `error`, así que
+      // `codigo` quedaba null y el insert a certificados_curso explotaba en
+      // silencio (codigo es NOT NULL). El trabajador quedaba marcado como
+      // completado pero el certificado nunca se creaba. Resultado: el muelle
+      // rechazaba al trabajador con "Certificado SST nunca emitido".
+      const rpc = await supabase.rpc("generate_cert_code");
+      if (rpc.error || !rpc.data) {
+        console.error("[submit-curso] generate_cert_code error:", rpc.error);
+        return new Response(JSON.stringify({ error: "No se pudo generar código de certificado: " + (rpc.error?.message || "RPC sin data") }), { status: 500, headers: { ...CORS, "Content-Type": "application/json" } });
+      }
+      codigo = rpc.data as string;
+
       const expiresAt = new Date(); expiresAt.setFullYear(expiresAt.getFullYear() + 1);
-      await supabase.from("certificados_curso").insert({
-        trabajador_id: t.id, codigo,
+      const certIns = await supabase.from("certificados_curso").insert({
+        trabajador_id: t.id, contratista_id: t.contratista_id, codigo,
         cedula: t.cedula, nombre: t.nombre,
-        passed: true, score,
+        passed: true, score, total_questions: total,
         answers: ans,
         expires_at: expiresAt.toISOString(),
       });
-      await supabase.from("contratistas_trabajadores").update({
+      if (certIns.error) {
+        console.error("[submit-curso] cert insert error:", certIns.error);
+        return new Response(JSON.stringify({ error: "No se pudo guardar el certificado: " + certIns.error.message }), { status: 500, headers: { ...CORS, "Content-Type": "application/json" } });
+      }
+
+      const trabUpd = await supabase.from("contratistas_trabajadores").update({
         curso_completado: true,
         fecha_curso: new Date().toISOString(),  // columna real: fecha_curso (no curso_fecha)
         curso_score: score,
         codigo_curso: codigo,                   // columna real: codigo_curso (no curso_codigo)
       }).eq("id", t.id);
+      if (trabUpd.error) console.warn("[submit-curso] trab update error:", trabUpd.error.message);
 
-      // Bitácora
-      await supabase.from("contratistas_bitacora").insert({
+      // Bitácora — la tabla usa `descripcion`, no `detalle` (mismo bug que
+      // teníamos en contratistas-change-state).
+      const bitIns = await supabase.from("contratistas_bitacora").insert({
         contratista_id: t.contratista_id,
         evento: "curso_aprobado",
-        detalle: `${t.nombre} aprobó el curso (${score}%)`,
+        descripcion: `${t.nombre} aprobó el curso (${score}%)`,
         metadata: { trabajador_id: t.id, codigo, score },
       });
+      if (bitIns.error) console.warn("[submit-curso] bitacora insert error:", bitIns.error.message);
 
       // Email al trabajador — buscar email en la empresa contratista (padre)
       // ya que contratistas_trabajadores no tiene columna correo.
