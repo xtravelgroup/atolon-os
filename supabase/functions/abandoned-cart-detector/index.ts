@@ -64,28 +64,37 @@ Deno.serve(async (req) => {
   let skipped = 0;
 
   for (const cart of (cartsToAbandon ?? [])) {
-    // Verificar que no hay una reserva confirmada para este email en la misma fecha
-    // (podría haber completado desde otro dispositivo)
+    // Verificar que no hay una reserva confirmada para este cart en la misma
+    // fecha. Antes solo matcheábamos por email; ahora también por teléfono
+    // porque algunos usuarios reservan con email distinto al que dejaron en
+    // el cart pero con el mismo número de WhatsApp.
     if (cart.fecha_visita) {
-      const { data: existingBooking } = await supabase
-        .from("reservas")
-        .select("id, estado")
-        .eq("email", cart.email)
-        .eq("fecha", cart.fecha_visita)
-        .in("estado", ["confirmado", "pagado", "checked_in"])
-        .limit(1)
-        .maybeSingle();
+      const fechaSolo = String(cart.fecha_visita).substring(0, 10);
+      // Construir filtro OR: email O telefono
+      const orParts: string[] = [];
+      if (cart.email)    orParts.push(`email.eq.${cart.email}`);
+      if (cart.telefono) orParts.push(`telefono.eq.${cart.telefono}`);
+      if (orParts.length > 0) {
+        const q = supabase
+          .from("reservas")
+          .select("id, estado")
+          .eq("fecha", fechaSolo)
+          .in("estado", ["confirmado", "pagado", "checked_in"])
+          .or(orParts.join(","))
+          .limit(1);
+        const { data: existingBooking } = await q.maybeSingle();
 
-      if (existingBooking) {
-        // Ya compró — marcar como recovered sin enviar emails
-        await supabase.from("ac_carts").update({
-          estado: "recovered",
-          recovered_at: now.toISOString(),
-          reserva_id: existingBooking.id,
-          updated_at: now.toISOString(),
-        }).eq("id", cart.id);
-        skipped++;
-        continue;
+        if (existingBooking) {
+          // Ya compró — marcar como recovered sin enviar emails
+          await supabase.from("ac_carts").update({
+            estado: "recovered",
+            recovered_at: now.toISOString(),
+            reserva_id: existingBooking.id,
+            updated_at: now.toISOString(),
+          }).eq("id", cart.id);
+          skipped++;
+          continue;
+        }
       }
     }
 
@@ -107,17 +116,16 @@ Deno.serve(async (req) => {
       continue;
     }
 
-    // Verificar que este email no recibió emails en los últimos N días (anti-spam)
+    // Anti-spam: contar emails enviados a este contacto en los últimos N días.
+    // Antes hacíamos 2 queries (lookup carts → count events). Ahora 1 sola
+    // con join via cart_id → ac_carts.email.
     const maxDays = cfg.max_emails_por_contacto_dias ?? 7;
     const spamCutoff = new Date(now.getTime() - maxDays * 24 * 60 * 60 * 1000).toISOString();
     const { count: recentEmails } = await supabase
       .from("ac_email_events")
-      .select("id", { count: "exact" })
+      .select("id, ac_carts!inner(email)", { count: "exact", head: true })
       .eq("tipo", "sent")
-      // buscar por email en ac_carts
-      .in("cart_id",
-        (await supabase.from("ac_carts").select("id").eq("email", cart.email).then(r => r.data?.map(c => c.id) ?? []))
-      )
+      .eq("ac_carts.email", cart.email)
       .gte("created_at", spamCutoff);
 
     if ((recentEmails ?? 0) >= 4) {
@@ -155,8 +163,9 @@ Deno.serve(async (req) => {
     processed++;
   }
 
-  // 3. Expirar carritos con email_4 enviado hace más de 72h
-  const expiryCutoff = new Date(now.getTime() - 72 * 60 * 60 * 1000).toISOString();
+  // 3. Expirar carritos con email_4 enviado hace más de {recoveryExpires}h.
+  // Antes era 72h hardcoded — ahora respeta cfg.recovery_link_expires_horas.
+  const expiryCutoff = new Date(now.getTime() - recoveryExpires * 60 * 60 * 1000).toISOString();
   await supabase.from("ac_carts").update({
     estado: "expired",
     updated_at: now.toISOString(),
