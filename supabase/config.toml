@@ -370,6 +370,20 @@ port = 54327
 # Configure one of the supported backends: `postgres`, `bigquery`.
 backend = "postgres"
 
+# ── Edge Functions públicas (sin JWT) ───────────────────────────────
+# Estas funciones se invocan desde clientes que NO tienen Authorization
+# header (Gmail cargando un pixel <img>, browser siguiendo un link
+# desde un email, etc). Si verify_jwt=true (default), Supabase rechaza
+# con 401 antes de llegar al código → tracking roto. Bug 2026-05-02.
+[functions.ac-open-pixel]
+verify_jwt = false
+[functions.ac-click-track]
+verify_jwt = false
+[functions.ac-recover]
+verify_jwt = false
+[functions.ac-unsubscribe]
+verify_jwt = false
+
 # Experimental features may be deprecated any time
 [experimental]
 # Configures Postgres storage engine to use OrioleDB (S3)
