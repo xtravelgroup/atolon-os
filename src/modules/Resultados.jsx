@@ -3,7 +3,7 @@ import { useState, useEffect, useCallback } from "react";
 import { supabase } from "../lib/supabase";
 import { B } from "../brand";
 import { useBreakpoint } from "../lib/responsive";
-import { getAyBRango, getTotalAyB, getAyBPorDia } from "../lib/loggroAyB";
+import { getAyBRango } from "../lib/loggroAyB";
 
 const COP = (v) => new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 }).format(v || 0);
 
@@ -351,76 +351,71 @@ export default function Resultados() {
     const periodos = getPeriodos();
     const hoyStr   = hoy(); // tope máximo — nunca mostrar fechas futuras
 
-    // Fetch paralelo para los 4 períodos × categorías
-    // lte("fecha", hoyStr) garantiza que nunca entren fechas futuras en semana/mes
-    const queries = periodos.flatMap(p => [
-      // Pasadías directas (sin aliado, sin grupo) — excluye cancelados y reservas de grupo
-      supabase.from("reservas")
-        .select("id, total, pax, estado")
-        .gte("fecha", p.desde).lte("fecha", p.hasta <= hoyStr ? p.hasta : hoyStr)
-        .neq("estado", "cancelado")
-        .is("aliado_id", null)
-        .is("grupo_id", null)
-        .then(r => ({ periodo: p.key, cat: "pasadias", data: r.data || [] })),
+    // Optimización 2026-05: antes corríamos 4 períodos × 8 categorías = 32 queries
+    // (más 4 llamadas a Loggro). Como `ayer ⊆ semana ⊆ mes` (y `hoy` también),
+    // basta con una query por categoría sobre el rango más amplio y filtrar en JS.
+    const desdeAll = periodos.reduce((min, p) => p.desde < min ? p.desde : min, hoyStr);
+    const hastaAll = hoyStr;
 
-      // Pasadías B2B (con aliado, sin grupo) — excluye cancelados y reservas de grupo
+    const [
+      qReservas,    // todas las reservas (filtramos aliado/grupo en JS)
+      qEventos,     // todos los eventos Confirmado/Realizado (grupo+evento)
+      qLlegadas,    // muelle_llegadas (filtramos excluir_kpis/reserva_id en JS)
+      qOtros,       // actividades_ventas
+      aybRangoData, // 1 sola llamada a Loggro
+    ] = await Promise.all([
       supabase.from("reservas")
-        .select("id, total, pax, estado")
-        .gte("fecha", p.desde).lte("fecha", p.hasta <= hoyStr ? p.hasta : hoyStr)
-        .neq("estado", "cancelado")
-        .not("aliado_id", "is", null)
-        .is("grupo_id", null)
-        .then(r => ({ periodo: p.key, cat: "pasadias_b2b", data: r.data || [] })),
-
-      // Grupos (categoria = grupo) — solo Realizado para fechas pasadas, Confirmado+Realizado para hoy
+        .select("id, total, pax, estado, fecha, aliado_id, grupo_id")
+        .gte("fecha", desdeAll).lte("fecha", hastaAll)
+        .neq("estado", "cancelado"),
       supabase.from("eventos")
-        .select("id, valor, valor_extras, pax, pasadias_org, categoria, servicios_contratados")
-        .gte("fecha", p.desde).lte("fecha", p.hasta <= hoyStr ? p.hasta : hoyStr)
+        .select("id, valor, valor_extras, pax, pasadias_org, categoria, servicios_contratados, fecha")
+        .gte("fecha", desdeAll).lte("fecha", hastaAll)
         .in("stage", ["Confirmado", "Realizado"])
-        .eq("categoria", "grupo")
-        .then(r => ({ periodo: p.key, cat: "grupos", data: r.data || [] })),
-
-      // Reservas vinculadas a grupos en el período (para sumar al monto de grupos)
-      supabase.from("reservas")
-        .select("grupo_id, total, pax, estado")
-        .gte("fecha", p.desde).lte("fecha", p.hasta <= hoyStr ? p.hasta : hoyStr)
-        .neq("estado", "cancelado")
-        .not("grupo_id", "is", null)
-        .then(r => ({ periodo: p.key, cat: "reservas_grupos", data: r.data || [] })),
-
-      // Eventos (categoria = evento)
-      supabase.from("eventos")
-        .select("id, valor, valor_extras, pax, pasadias_org, categoria, servicios_contratados")
-        .gte("fecha", p.desde).lte("fecha", p.hasta <= hoyStr ? p.hasta : hoyStr)
-        .in("stage", ["Confirmado", "Realizado"])
-        .eq("categoria", "evento")
-        .then(r => ({ periodo: p.key, cat: "eventos", data: r.data || [] })),
-
-      // A&B: ventas oficiales desde Loggro Restobar (fuente: /loggro-sync/cierre-caja-rango)
-      getAyBRango(p.desde, p.hasta <= hoyStr ? p.hasta : hoyStr)
-        .then(d => ({ periodo: p.key, cat: "ayb", data: d })),
-
-      // Llegadas muelle: embarcaciones privadas (pax siempre suma, monto solo si pagaron)
-      // Excluir: las vinculadas a reserva (doble conteo) y las marcadas excluir_kpis
-      // (staff, tripulación, mecánicos, proveedores, cortesía)
+        .in("categoria", ["grupo", "evento"]),
       supabase.from("muelle_llegadas")
         .select("id, total_cobrado, pax_total, pax_a, pax_n, fecha, tipo, reserva_id, excluir_kpis")
-        .gte("fecha", p.desde).lte("fecha", p.hasta <= hoyStr ? p.hasta : hoyStr)
-        .neq("tipo", "lancha_atolon")
-        .is("reserva_id", null)
-        .or("excluir_kpis.is.null,excluir_kpis.eq.false")
-        .then(r => ({ periodo: p.key, cat: "llegadas", data: r.data || [] })),
-
-      // Otros ingresos: actividades, masajes, transporte, spa, etc
+        .gte("fecha", desdeAll).lte("fecha", hastaAll)
+        .neq("tipo", "lancha_atolon"),
       supabase.from("actividades_ventas")
         .select("id, total, fecha, estado")
-        .gte("fecha", p.desde).lte("fecha", p.hasta <= hoyStr ? p.hasta : hoyStr)
+        .gte("fecha", desdeAll).lte("fecha", hastaAll)
         .neq("estado", "cancelada")
-        .gt("total", 0)
-        .then(r => ({ periodo: p.key, cat: "otros", data: r.data || [] })),
+        .gt("total", 0),
+      getAyBRango(desdeAll, hastaAll),
     ]);
 
-    const resultados = await Promise.all(queries);
+    const reservasAll = qReservas.data || [];
+    const eventosAll  = qEventos.data || [];
+    const llegadasAll = qLlegadas.data || [];
+    const otrosAll    = qOtros.data || [];
+    const porDiaAll   = aybRangoData?.por_dia || {};
+
+    // Llegadas válidas para KPIs: sin reserva vinculada y sin excluir_kpis
+    const llegadasKpi = llegadasAll.filter(l => !l.reserva_id && !l.excluir_kpis);
+
+    // Construir el shape "resultados" que el resto del código espera
+    const inP = (fecha, p) => fecha >= p.desde && fecha <= (p.hasta <= hoyStr ? p.hasta : hoyStr);
+    const resultados = [];
+    periodos.forEach(p => {
+      resultados.push({ periodo: p.key, cat: "pasadias",        data: reservasAll.filter(r => !r.aliado_id && !r.grupo_id && inP(r.fecha, p)) });
+      resultados.push({ periodo: p.key, cat: "pasadias_b2b",    data: reservasAll.filter(r =>  r.aliado_id && !r.grupo_id && inP(r.fecha, p)) });
+      resultados.push({ periodo: p.key, cat: "grupos",          data: eventosAll.filter(e => e.categoria === "grupo"  && inP(e.fecha, p)) });
+      resultados.push({ periodo: p.key, cat: "reservas_grupos", data: reservasAll.filter(r => r.grupo_id && inP(r.fecha, p)) });
+      resultados.push({ periodo: p.key, cat: "eventos",         data: eventosAll.filter(e => e.categoria === "evento" && inP(e.fecha, p)) });
+
+      // A&B del período: filtrar por_dia
+      const aybKeys = Object.keys(porDiaAll).filter(f => inP(f, p));
+      const ventas  = aybKeys.reduce((s, f) => s + (Number(porDiaAll[f]?.ventas) || 0), 0);
+      // Re-shape para que matchee la estructura que getAyBRango devuelve
+      resultados.push({ periodo: p.key, cat: "ayb", data: {
+        resumen: { total_ventas: ventas },
+        por_dia: Object.fromEntries(aybKeys.map(f => [f, porDiaAll[f]])),
+      }});
+
+      resultados.push({ periodo: p.key, cat: "llegadas", data: llegadasKpi.filter(l => inP(l.fecha, p)) });
+      resultados.push({ periodo: p.key, cat: "otros",    data: otrosAll.filter(x => inP(x.fecha, p)) });
+    });
 
     // Helper para calcular monto base de un evento/grupo desde pasadias_org o valor
     const montoEvento = (e) => {
@@ -603,27 +598,30 @@ export default function Resultados() {
       return `${bogota.getFullYear()}-${String(bogota.getMonth()+1).padStart(2,"0")}-${String(bogota.getDate()).padStart(2,"0")}`;
     };
 
-    // Paso 1: obtener IDs de eventos para categorizar grupo_id
-    // A&B diario → Loggro Restobar (fuente oficial, no cierres_caja)
-    const [fcEventosIds, fcAybLoggro, fcLlegadas, fcEventosPagos] = await Promise.all([
-      supabase.from("eventos").select("id, categoria"),
-      getAyBPorDia(mesIni(), hoyStr),
-      supabase.from("muelle_llegadas")
-        .select("fecha, total_cobrado")
-        .gte("fecha", mesIni()).lte("fecha", hoyStr)
-        .gt("total_cobrado", 0),
+    // Paso 1: catálogo grupo_id → categoría. Hacemos esta query con filtro de
+    // fecha (1 año atrás → 1 año adelante) para no traer todo el histórico,
+    // pero suficientemente amplio para capturar pagos cruzados de mes.
+    // A&B diario → reusamos aybRangoData (ya está en cache de Loggro).
+    // fcLlegadas → derivado de llegadasAll (ya lo tenemos).
+    const yearAgo = (() => {
+      const d = new Date(); d.setFullYear(d.getFullYear() - 1);
+      return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+    })();
+    const yearAhead = (() => {
+      const d = new Date(); d.setFullYear(d.getFullYear() + 1);
+      return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+    })();
+
+    const [fcEventosIds, fcEventosPagos, fcPorFecha, fcPorCreated] = await Promise.all([
+      // Mapeo grupo_id → categoria (acotado a ±1 año)
+      supabase.from("eventos").select("id, categoria")
+        .gte("fecha", yearAgo).lte("fecha", yearAhead),
       // Pagos registrados directamente en eventos (array pagos[])
       supabase.from("eventos")
         .select("id, categoria, pagos")
+        .gte("fecha", yearAgo).lte("fecha", yearAhead)
         .not("pagos", "is", null)
         .not("stage", "in", '("Perdido","Cancelado")'),
-    ]);
-    const grupoIdSet  = new Set((fcEventosIds.data || []).filter(e => e.categoria === "grupo").map(e => e.id));
-    const eventoIdSet = new Set((fcEventosIds.data || []).filter(e => e.categoria === "evento").map(e => e.id));
-
-    // Paso 2: pagos con fecha_pago manual en el mes
-    // Paso 3: pagos sin fecha_pago pero creados este mes (web/Wompi automáticos)
-    const [fcPorFecha, fcPorCreated] = await Promise.all([
       supabase.from("reservas")
         .select("fecha_pago, abono, estado, grupo_id")
         .gte("fecha_pago", mesIni()).lte("fecha_pago", hoyStr)
@@ -635,6 +633,17 @@ export default function Resultados() {
         .lte("created_at", hoyStr   + "T23:59:59-05:00")
         .gt("abono", 0).neq("estado", "cancelado"),
     ]);
+    const grupoIdSet  = new Set((fcEventosIds.data || []).filter(e => e.categoria === "grupo").map(e => e.id));
+    const eventoIdSet = new Set((fcEventosIds.data || []).filter(e => e.categoria === "evento").map(e => e.id));
+
+    // Reuso: llegadas con cobro del mes (ya están en llegadasAll, derivamos)
+    const fcLlegadas = { data: llegadasAll.filter(l => l.fecha >= mesIni() && l.fecha <= hoyStr && Number(l.total_cobrado) > 0) };
+    // Reuso: A&B diario (mismo cache key que aybRangoData)
+    const fcAybLoggro = Object.fromEntries(
+      Object.entries(porDiaAll)
+        .filter(([f]) => f >= mesIni() && f <= hoyStr)
+        .map(([f, d]) => [f, Number(d?.ventas) || 0])
+    );
 
     // Construir mapa por fecha
     const diaMap = {};
