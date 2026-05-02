@@ -27,9 +27,13 @@ export async function calcCostoPasadiaMes(mes, opts = {}) {
   const { soloPasadia = true } = opts;
   if (!supabase) return _empty(mes);
 
-  // Fetch lanchas + datos del mes en paralelo
+  // Fetch lanchas + datos del mes en paralelo. Calcular último día REAL del
+  // mes (no usar "31" hardcoded — Postgres rechaza "2026-04-31" como
+  // out_of_range, lo que dejaba data=null y todos los cálculos en 0).
+  const [yearStr, monthStr] = mes.split("-");
+  const lastDay = new Date(Number(yearStr), Number(monthStr), 0).getDate(); // 28/29/30/31
   const desdeMes = `${mes}-01`;
-  const hastaMes = `${mes}-31`; // Postgres acepta como string, mes corto se ignora
+  const hastaMes = `${mes}-${String(lastDay).padStart(2, "0")}`;
   const [
     { data: lanchas },
     { data: bitacora },
