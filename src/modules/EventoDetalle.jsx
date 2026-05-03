@@ -4359,6 +4359,10 @@ function TabOpenBar({ evento, ocultarPrecios = false }) {
   // Carrito de productos antes de guardar (permite agregar varios sin
   // cerrar el modal — al final se guardan todos juntos)
   const [carrito, setCarrito] = useState([]);
+  // Vista por servicio: expandir/colapsar y modo agrupado vs lista plana
+  const [vistaAgrupada, setVistaAgrupada] = useState(true);
+  const [servicioAbierto, setServicioAbierto] = useState({});  // { key: bool }
+  const toggleServicio = (key) => setServicioAbierto(s => ({ ...s, [key]: !s[key] }));
   const COPx = (n) => "$" + Math.round(Number(n) || 0).toLocaleString("es-CO");
   const tipoInfo = (k) => TIPOS_CONSUMO.find(t => t.k === k) || TIPOS_CONSUMO[0];
 
@@ -4475,6 +4479,27 @@ function TabOpenBar({ evento, ocultarPrecios = false }) {
     porCategoria[cat].costo += Number(c.costo_total || 0);
     porCategoria[cat].items.push(c);
   });
+
+  // Agrupar por SERVICIO de la cotización: cada línea de A&B con sus
+  // ingredientes/productos consumidos. Click en un servicio → expande
+  // para ver el detalle. Permite ver costo real por línea cotizada.
+  const porServicio = {};
+  consumoVigente.forEach(c => {
+    const key = c.servicio_id ? `${c.servicio_origen}|${c.servicio_id}` : "_sin_servicio";
+    if (!porServicio[key]) {
+      porServicio[key] = {
+        key,
+        descripcion: c.servicio_descripcion || "Sin servicio asignado",
+        origen: c.servicio_origen || null,
+        registros: 0, qty: 0, costo: 0, items: [],
+      };
+    }
+    porServicio[key].registros++;
+    porServicio[key].qty += Number(c.cantidad || 0);
+    porServicio[key].costo += Number(c.costo_total || 0);
+    porServicio[key].items.push(c);
+  });
+  const serviciosRows = Object.values(porServicio).sort((a, b) => b.costo - a.costo);
 
   // Agregar el item actual al CARRITO (no guarda en BD todavía).
   // Permite ir cargando varios productos antes de hacer el save final.
@@ -4643,7 +4668,120 @@ function TabOpenBar({ evento, ocultarPrecios = false }) {
         <div style={{ background: B.navyMid, borderRadius: 12, padding: 30, textAlign: "center", color: "rgba(255,255,255,0.4)" }}>
           Sin consumo registrado. Tocá "+ Cargar consumo" cuando empieces a usar productos del open bar.
         </div>
+      ) : (<>
+
+      {/* Toggle vista agrupada / lista plana */}
+      <div style={{ display: "flex", gap: 6, marginBottom: 10, justifyContent: "flex-end" }}>
+        <button type="button" onClick={() => setVistaAgrupada(true)}
+          style={{ padding: "6px 12px", borderRadius: 16, border: vistaAgrupada ? `1px solid ${B.sky}` : `1px solid ${B.navyLight}`,
+            background: vistaAgrupada ? B.sky + "22" : "transparent", color: vistaAgrupada ? B.sky : "rgba(255,255,255,0.5)",
+            fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
+          📊 Por servicio
+        </button>
+        <button type="button" onClick={() => setVistaAgrupada(false)}
+          style={{ padding: "6px 12px", borderRadius: 16, border: !vistaAgrupada ? `1px solid ${B.sky}` : `1px solid ${B.navyLight}`,
+            background: !vistaAgrupada ? B.sky + "22" : "transparent", color: !vistaAgrupada ? B.sky : "rgba(255,255,255,0.5)",
+            fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
+          📋 Lista plana
+        </button>
+      </div>
+
+      {vistaAgrupada ? (
+        // ── Vista agrupada por servicio ──────────────────────────────
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {serviciosRows.map(s => {
+            const isOpen = !!servicioAbierto[s.key];
+            // Subgrupo por categoría dentro del servicio
+            const porCat = {};
+            s.items.forEach(c => {
+              const cat = itemsById[c.item_id]?.categoria || "Otros";
+              if (!porCat[cat]) porCat[cat] = { qty: 0, costo: 0, items: [] };
+              porCat[cat].qty += Number(c.cantidad || 0);
+              porCat[cat].costo += Number(c.costo_total || 0);
+              porCat[cat].items.push(c);
+            });
+            return (
+              <div key={s.key} style={{ background: B.navyMid, borderRadius: 12, overflow: "hidden", border: isOpen ? `1px solid ${B.sky}55` : `1px solid transparent` }}>
+                {/* Header del servicio (clickeable) */}
+                <button type="button" onClick={() => toggleServicio(s.key)}
+                  style={{ display: "grid", gridTemplateColumns: "30px 1fr 90px 90px 110px", gap: 10, alignItems: "center",
+                    width: "100%", padding: "12px 16px", background: "transparent", border: "none", color: "#fff", cursor: "pointer", textAlign: "left" }}>
+                  <div style={{ fontSize: 16, color: B.sky }}>{isOpen ? "▼" : "▶"}</div>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontWeight: 700, fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      📋 {s.descripcion}
+                    </div>
+                    <div style={{ fontSize: 10, color: "rgba(255,255,255,0.45)", marginTop: 2 }}>
+                      {s.registros} registro{s.registros === 1 ? "" : "s"} · {s.qty.toLocaleString("es-CO")} unidades · {Object.keys(porCat).length} categoría{Object.keys(porCat).length === 1 ? "" : "s"}
+                    </div>
+                  </div>
+                  <div style={{ textAlign: "right", fontSize: 11, color: "rgba(255,255,255,0.45)" }}>
+                    {s.registros}<br/><span style={{ fontSize: 9 }}>productos</span>
+                  </div>
+                  <div style={{ textAlign: "right", fontSize: 11, color: "rgba(255,255,255,0.45)" }}>
+                    {s.qty.toLocaleString("es-CO")}<br/><span style={{ fontSize: 9 }}>unidades</span>
+                  </div>
+                  <div style={{ textAlign: "right" }}>
+                    {!ocultarPrecios && (
+                      <div style={{ fontSize: 16, fontWeight: 800, color: B.sky, fontFamily: "'Barlow Condensed', sans-serif" }}>{COPx(s.costo)}</div>
+                    )}
+                  </div>
+                </button>
+
+                {/* Detalle expandido */}
+                {isOpen && (
+                  <div style={{ borderTop: `1px solid ${B.navyLight}` }}>
+                    {Object.entries(porCat).sort((a, b) => b[1].costo - a[1].costo).map(([cat, g]) => (
+                      <div key={cat}>
+                        <div style={{ background: B.navy, padding: "6px 18px", fontSize: 10, color: B.sand, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 700, display: "flex", justifyContent: "space-between" }}>
+                          <span>{cat}</span>
+                          <span style={{ color: "rgba(255,255,255,0.5)" }}>
+                            {g.items.length} × {g.qty.toLocaleString("es-CO")} unidades{!ocultarPrecios && ` · ${COPx(g.costo)}`}
+                          </span>
+                        </div>
+                        {g.items.map(c => {
+                          const it = itemsById[c.item_id];
+                          const tInfo = tipoInfo(c.tipo || "openbar");
+                          return (
+                            <div key={c.id} style={{ display: "grid", gridTemplateColumns: "1fr 70px 90px 110px 100px 36px", gap: 10, padding: "8px 18px", borderTop: `1px solid ${B.navyLight}`, fontSize: 12, opacity: c.anulado ? 0.4 : 1, textDecoration: c.anulado ? "line-through" : "none" }}>
+                              <div>
+                                <div style={{ color: "#fff", fontWeight: 600, display: "flex", alignItems: "center", gap: 6 }}>
+                                  <span style={{ fontSize: 10, padding: "1px 6px", borderRadius: 6, background: tInfo.color + "22", color: tInfo.color, fontWeight: 700 }}>{tInfo.icon}</span>
+                                  <span>{it?.nombre || c.item_id}</span>
+                                </div>
+                                <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", marginTop: 1 }}>
+                                  {c.notas ? `${c.notas} · ` : ""}{c.registrado_por && `por ${c.registrado_por.split("@")[0]}`}
+                                  {c.anulado && c.motivo_anulacion && ` · anulado: ${c.motivo_anulacion}`}
+                                </div>
+                              </div>
+                              <div style={{ textAlign: "right", color: "#fff" }}>{Number(c.cantidad).toLocaleString("es-CO")}</div>
+                              <div style={{ color: "rgba(255,255,255,0.55)", fontSize: 11 }}>{locById[c.locacion_id]?.nombre || "—"}</div>
+                              <div style={{ textAlign: "right", color: "rgba(255,255,255,0.55)" }}>{ocultarPrecios ? "" : COPx(c.precio_unitario)}</div>
+                              <div style={{ textAlign: "right", color: B.sky, fontWeight: 700 }}>{ocultarPrecios ? "" : COPx(c.costo_total)}</div>
+                              <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
+                                {!c.anulado && c.loggro_sync_status === "ok" && <span title={`Loggro mov ${c.loggro_movement_id || ""}`} style={{ fontSize: 9, color: "#22c55e" }}>🔗</span>}
+                                {!c.anulado && c.loggro_sync_status === "pendiente" && <span style={{ fontSize: 9, color: B.warning }}>⏳</span>}
+                                {!c.anulado && c.loggro_sync_status === "error" && (
+                                  <button type="button" onClick={() => retrySyncLoggro(c)} title={c.loggro_sync_error}
+                                    style={{ background: "transparent", border: `1px solid ${B.danger}55`, color: B.danger, cursor: "pointer", fontSize: 9, padding: "1px 5px", borderRadius: 4 }}>⚠</button>
+                                )}
+                                {!c.anulado && (
+                                  <button type="button" onClick={() => anular(c)} title="Anular" style={{ background: "transparent", border: "none", color: B.danger, cursor: "pointer", fontSize: 14 }}>✕</button>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
       ) : (
+        // ── Vista plana (lista lineal) ───────────────────────────────
         <div style={{ background: B.navyMid, borderRadius: 12, overflow: "hidden" }}>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 70px 90px 110px 100px 36px", gap: 10, padding: "10px 14px", background: B.navy, fontSize: 10, color: "rgba(255,255,255,0.45)", textTransform: "uppercase", letterSpacing: "0.05em", fontWeight: 700 }}>
             <div>Producto</div>
@@ -4703,6 +4841,7 @@ function TabOpenBar({ evento, ocultarPrecios = false }) {
           })}
         </div>
       )}
+      </>)}
 
       {/* Modal de selección */}
       {showPick && (
