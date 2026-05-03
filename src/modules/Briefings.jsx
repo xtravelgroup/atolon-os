@@ -113,7 +113,7 @@ export default function Briefings() {
   // Los puntos vienen marcados (o no) con en_agenda — sólo los marcados
   // se reflejan en `agenda` (pública). El array completo vive en
   // `puntos_discutir` (privado del creador).
-  const crearBriefingAgendado = async ({ fecha, hora, titulo, tipo, puntos }) => {
+  const crearBriefingAgendado = async ({ fecha, hora, titulo, tipo, puntos, asistentes }) => {
     const codigo = `BR-${Date.now().toString().slice(-8)}`;
     const anterior = briefingsMios.find(b => b.estado === "cerrado");
 
@@ -134,7 +134,7 @@ export default function Briefings() {
       hora: hora || new Date().toTimeString().slice(0, 5),
       titulo: titulo?.trim() || `Briefing ${fecha || todayStr()}`,
       tipo: tipo || "general",
-      asistentes: [],
+      asistentes: asistentes || [],
       agenda: agendaPublica,
       puntos_discutir: puntosLimpios,
       notas: "",
@@ -181,7 +181,7 @@ export default function Briefings() {
           <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)" }}>Reuniones con supervisores y gerentes · Asignación y seguimiento de tareas</div>
         </div>
         <button onClick={() => setShowAgendar(true)} style={BTN(B.hotel)}>📅 Agendar briefing</button>
-        {showAgendar && <AgendarBriefingModal onClose={() => setShowAgendar(false)} onCrear={crearBriefingAgendado} />}
+        {showAgendar && <AgendarBriefingModal empleados={empleados} onClose={() => setShowAgendar(false)} onCrear={crearBriefingAgendado} />}
       </div>
 
       {/* KPIs */}
@@ -1142,23 +1142,48 @@ function NewTaskModal({ briefingId, empleados, onClose, onSaved }) {
 // puntos a discutir. Cada punto tiene un checkbox "agregar a agenda" — solo
 // los marcados se reflejan en `agenda` (que ven todos los participantes).
 // Los demás puntos quedan privados en `puntos_discutir` para el creador.
-function AgendarBriefingModal({ onClose, onCrear }) {
-  const [fecha,  setFecha]  = useState(todayStr());
-  const [hora,   setHora]   = useState(new Date().toTimeString().slice(0, 5));
-  const [titulo, setTitulo] = useState("");
-  const [tipo,   setTipo]   = useState("general");
-  const [puntos, setPuntos] = useState([]);
-  const [saving, setSaving] = useState(false);
+function AgendarBriefingModal({ empleados = [], onClose, onCrear }) {
+  const [fecha,      setFecha]      = useState(todayStr());
+  const [hora,       setHora]       = useState(new Date().toTimeString().slice(0, 5));
+  const [titulo,     setTitulo]     = useState("");
+  const [tipo,       setTipo]       = useState("general");
+  const [puntos,     setPuntos]     = useState([]);
+  const [asistentes, setAsistentes] = useState([]);
+  const [empSearch,  setEmpSearch]  = useState("");
+  const [saving,     setSaving]     = useState(false);
 
   const addPunto = () => setPuntos(p => [...p, { id: uid(), titulo: "", descripcion: "", en_agenda: true }]);
   const updPunto = (id, k, v) => setPuntos(p => p.map(x => x.id === id ? { ...x, [k]: v } : x));
   const rmPunto  = (id) => setPuntos(p => p.filter(x => x.id !== id));
 
+  const addAsistente = (emp) => {
+    if (asistentes.find(a => a.id === emp.id)) return;
+    setAsistentes(a => [...a, {
+      id: emp.id,
+      nombre: `${emp.nombres || ""} ${emp.apellidos || ""}`.trim(),
+      cargo: emp.cargo || "",
+      presente: true,
+    }]);
+    setEmpSearch("");
+  };
+  const removeAsistente = (id) => setAsistentes(a => a.filter(x => x.id !== id));
+
+  // Empleados disponibles para agregar (excluye los ya añadidos), filtrados por búsqueda
+  const asistentesIds = new Set(asistentes.map(a => a.id));
+  const empleadosDisponibles = empleados
+    .filter(e => !asistentesIds.has(e.id))
+    .filter(e => {
+      if (!empSearch.trim()) return true;
+      const q = empSearch.toLowerCase();
+      return `${e.nombres || ""} ${e.apellidos || ""} ${e.cargo || ""}`.toLowerCase().includes(q);
+    })
+    .slice(0, 8);
+
   const submit = async () => {
     if (!fecha) return alert("Elegí una fecha.");
     if (!hora)  return alert("Elegí una hora.");
     setSaving(true);
-    await onCrear({ fecha, hora, titulo, tipo, puntos });
+    await onCrear({ fecha, hora, titulo, tipo, puntos, asistentes });
     setSaving(false);
   };
 
@@ -1194,6 +1219,56 @@ function AgendarBriefingModal({ onClose, onCrear }) {
           <select value={tipo} onChange={e => setTipo(e.target.value)} style={IS}>
             {TIPOS.map(t => <option key={t.key} value={t.key}>{t.label}</option>)}
           </select>
+        </div>
+
+        {/* Asistentes */}
+        <div style={{ background: B.navyMid, borderRadius: 10, padding: 14, marginBottom: 14, border: `1px solid ${B.navyLight}` }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: B.sky, marginBottom: 10 }}>👥 Asistentes ({asistentes.length})</div>
+
+          {asistentes.length > 0 && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 10 }}>
+              {asistentes.map(a => (
+                <div key={a.id} style={{ background: B.navy, borderRadius: 8, padding: "8px 12px", display: "flex", alignItems: "center", gap: 10, border: `1px solid ${B.navyLight}` }}>
+                  <div style={{ width: 28, height: 28, borderRadius: "50%", background: B.hotel, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 11, flexShrink: 0 }}>
+                    {(a.nombre || "?")[0]}
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: "#fff", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.nombre}</div>
+                    {a.cargo && <div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)" }}>{a.cargo}</div>}
+                  </div>
+                  <button onClick={() => removeAsistente(a.id)} title="Quitar"
+                          style={{ background: "transparent", border: "none", color: B.danger, cursor: "pointer", fontSize: 16, padding: "0 6px" }}>×</button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <input value={empSearch} onChange={e => setEmpSearch(e.target.value)}
+                 placeholder={empleados.length === 0 ? "(no hay empleados activos)" : "🔍 Buscar empleado por nombre o cargo…"}
+                 style={{ ...IS, padding: "8px 10px", fontSize: 12 }}
+                 disabled={empleados.length === 0} />
+          {empSearch.trim() && empleadosDisponibles.length > 0 && (
+            <div style={{ marginTop: 6, background: B.navy, borderRadius: 8, border: `1px solid ${B.navyLight}`, maxHeight: 200, overflowY: "auto" }}>
+              {empleadosDisponibles.map(emp => (
+                <button key={emp.id} onClick={() => addAsistente(emp)}
+                        style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "8px 12px", background: "transparent", border: "none", borderBottom: `1px solid ${B.navyLight}`, color: "#fff", cursor: "pointer", textAlign: "left" }}>
+                  <div style={{ width: 26, height: 26, borderRadius: "50%", background: B.hotel + "55", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 10, flexShrink: 0 }}>
+                    {(emp.nombres || "?")[0]}
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 12, fontWeight: 700 }}>{emp.nombres} {emp.apellidos}</div>
+                    {emp.cargo && <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)" }}>{emp.cargo}</div>}
+                  </div>
+                  <span style={{ fontSize: 11, color: B.success, fontWeight: 700 }}>+ Agregar</span>
+                </button>
+              ))}
+            </div>
+          )}
+          {empSearch.trim() && empleadosDisponibles.length === 0 && (
+            <div style={{ marginTop: 6, padding: 10, fontSize: 11, color: "rgba(255,255,255,0.4)", textAlign: "center", fontStyle: "italic" }}>
+              Sin coincidencias
+            </div>
+          )}
         </div>
 
         {/* Puntos a discutir (privados al creador) */}
