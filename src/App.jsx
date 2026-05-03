@@ -304,6 +304,7 @@ const EmpleadoPortal = lazy(() => import("./modules/EmpleadoPortal"));
 const AgenciaPortal = lazy(() => import("./modules/AgenciaPortal"));
 const ReclutamientoPortal = lazy(() => import("./modules/ReclutamientoPortal"));
 const Reclutamiento = lazy(() => import("./modules/Reclutamiento"));
+const Comedor = lazy(() => import("./modules/Comedor"));
 const LasAmericasPortal = lazy(() => import("./modules/LasAmericasPortal"));
 const GranFondoNairo = lazy(() => import("./modules/GranFondoNairo"));
 const BookingWidget = lazy(() => import("./modules/BookingWidget"));
@@ -404,6 +405,7 @@ const MODULE_MAP = {
   resultados: <Resultados />,
   rrhh: <RecursosHumanos />,
   reclutamiento: <Reclutamiento />,
+  comedor: <Comedor />,
   nomina: <Nomina />,
   nomina_dia: <NominaPorDia />,
   asistencia_zk: <AsistenciaZK />,

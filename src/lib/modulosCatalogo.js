@@ -78,6 +78,7 @@ export const GRUPOS_NAV = [
     items: [
       { key: "rrhh",      label: "Rec. Humanos", icon: "👷" },
       { key: "reclutamiento", label: "Reclutamiento", icon: "👔" },
+      { key: "comedor",   label: "Comedor",      icon: "🍴" },
       { key: "horarios",  label: "Horarios",     icon: "📅" },
       { key: "nomina",    label: "Nómina",       icon: "💵" },
       { key: "nomina_dia",label: "Nómina Día",   icon: "📆" },

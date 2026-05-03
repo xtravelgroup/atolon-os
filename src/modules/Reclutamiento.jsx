@@ -144,11 +144,15 @@ export default function Reclutamiento() {
       </div>
 
       {/* Tabs */}
-      <div style={{ display: "flex", gap: 4, marginBottom: 14, borderBottom: `1px solid ${B.navyLight}` }}>
-        {[
-          ["vacantes",    `📋 Vacantes (${vacantes.length})`],
-          ["postulaciones", `📨 Postulaciones (${totalPostulaciones})`],
-        ].map(([k, l]) => (
+      <div style={{ display: "flex", gap: 4, marginBottom: 14, borderBottom: `1px solid ${B.navyLight}`, flexWrap: "wrap" }}>
+        {(() => {
+          const inbox = postulaciones.filter(p => !p.vacante_id).length;
+          return [
+            ["vacantes",      `📋 Vacantes (${vacantes.length})`],
+            ["inbox",         `📥 Inbox${inbox > 0 ? ` (${inbox})` : ""}`],
+            ["postulaciones", `📨 Postulaciones (${totalPostulaciones})`],
+          ];
+        })().map(([k, l]) => (
           <button key={k} type="button" onClick={() => setTab(k)}
             style={{ padding: "10px 16px", border: "none", cursor: "pointer", fontSize: 13, fontWeight: tab === k ? 700 : 400,
               background: "none", color: tab === k ? "#fff" : "rgba(255,255,255,0.4)",
@@ -163,11 +167,15 @@ export default function Reclutamiento() {
           style={{ ...IS, maxWidth: 360 }} />
       </div>
 
-      {tab === "vacantes" ? (
+      {tab === "vacantes" && (
         <ListaVacantes items={vacantesFiltradas} stats={statsPorVacante} departamentos={departamentos}
           onEdit={setEditVacante} onVer={(v) => setVerVacanteId(v.id)} onReload={reload} />
-      ) : (
-        <ListaPostulaciones items={postulaciones} vacantes={vacantes} onOpen={setVerPostulacion} search={search} />
+      )}
+      {tab === "inbox" && (
+        <Inbox items={postulaciones.filter(p => !p.vacante_id)} vacantes={vacantes} onOpen={setVerPostulacion} onReload={reload} search={search} />
+      )}
+      {tab === "postulaciones" && (
+        <ListaPostulaciones items={postulaciones.filter(p => p.vacante_id)} vacantes={vacantes} onOpen={setVerPostulacion} search={search} />
       )}
 
       {editVacante && (
@@ -175,6 +183,89 @@ export default function Reclutamiento() {
           onClose={() => setEditVacante(null)} onSaved={reload} />
       )}
     </div>
+  );
+}
+
+// ─── INBOX (CVs sin vacante asignada) ────────────────────────────────
+// Recibe CVs por email a oportunidades@atolon.co (vía webhook
+// oportunidades-inbox) o desde un form genérico. Aquí se asignan a una
+// vacante específica o se descartan.
+function Inbox({ items, vacantes, onOpen, onReload, search }) {
+  const q = (search || "").toLowerCase().trim();
+  const filtered = items.filter(p => !q || `${p.nombre || ""} ${p.email || ""} ${p.email_subject || ""}`.toLowerCase().includes(q));
+
+  const asignar = async (p, vacanteId) => {
+    if (!vacanteId) return;
+    await supabase.from("rh_postulaciones").update({ vacante_id: vacanteId, updated_at: new Date().toISOString() }).eq("id", p.id);
+    await supabase.from("rh_postulaciones_eventos").insert({
+      postulacion_id: p.id, tipo: "asignada_vacante",
+      descripcion: `Asignada desde inbox a vacante`, metadata: { vacante_id: vacanteId },
+    });
+    onReload();
+  };
+
+  return (
+    <>
+      <div style={{ background: "rgba(34,197,94,0.06)", border: `1px solid #22c55e44`, borderRadius: 10, padding: "12px 16px", marginBottom: 14, fontSize: 12 }}>
+        <div style={{ fontWeight: 700, color: "#22c55e", marginBottom: 4 }}>📥 Inbox de oportunidades</div>
+        <div style={{ color: "rgba(255,255,255,0.6)" }}>
+          CVs que llegan a <code style={{ color: B.sky }}>oportunidades@atolon.co</code> aparecen aquí. Asignalos a una vacante o descartá los que no aplican.
+        </div>
+      </div>
+
+      {filtered.length === 0 ? (
+        <div style={{ textAlign: "center", padding: 60, color: "rgba(255,255,255,0.3)", background: B.navyMid, borderRadius: 12 }}>
+          📭 Sin CVs en el inbox{q ? " para esa búsqueda" : ""}.
+        </div>
+      ) : (
+        <div style={{ background: B.navyMid, borderRadius: 12, overflow: "hidden" }}>
+          {filtered.map((p, i) => (
+            <div key={p.id} style={{ padding: "14px 16px", borderBottom: `1px solid ${B.navyLight}`, background: i % 2 === 0 ? "transparent" : "rgba(255,255,255,0.02)" }}>
+              <div style={{ display: "flex", gap: 12, alignItems: "flex-start", flexWrap: "wrap" }}>
+                <div style={{ width: 40, height: 40, borderRadius: "50%", background: B.sky + "22", color: B.sky, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 14, flexShrink: 0 }}>
+                  {(p.nombre || "?")[0].toUpperCase()}
+                </div>
+                <div style={{ flex: 1, minWidth: 200 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: "#fff" }}>{p.nombre}</div>
+                  <div style={{ fontSize: 11, color: "rgba(255,255,255,0.55)" }}>
+                    {p.email}
+                    {p.fuente === "email" && <span style={{ marginLeft: 6, fontSize: 9, padding: "1px 6px", borderRadius: 6, background: "#a78bfa22", color: "#a78bfa" }}>📧 Email</span>}
+                    {p.fuente === "inbox_general" && <span style={{ marginLeft: 6, fontSize: 9, padding: "1px 6px", borderRadius: 6, background: "#22c55e22", color: "#22c55e" }}>🌐 Form</span>}
+                  </div>
+                  {p.email_subject && (
+                    <div style={{ fontSize: 11, color: "rgba(255,255,255,0.6)", marginTop: 4, fontStyle: "italic" }}>
+                      Asunto: "{p.email_subject}"
+                    </div>
+                  )}
+                  {p.cv_nombre && (
+                    <div style={{ fontSize: 10, color: B.sky, marginTop: 3 }}>📎 {p.cv_nombre}</div>
+                  )}
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 6, alignItems: "flex-end" }}>
+                  <span style={{ fontSize: 10, color: "rgba(255,255,255,0.4)" }}>{fmtFecha(p.created_at)}</span>
+                  <select onChange={e => { if (e.target.value) asignar(p, e.target.value); }} defaultValue=""
+                    style={{ padding: "6px 10px", borderRadius: 6, background: B.navy, border: `1px solid ${B.navyLight}`, color: "#fff", fontSize: 11, cursor: "pointer" }}>
+                    <option value="">Asignar a vacante…</option>
+                    {vacantes.filter(v => v.estado === "abierta").map(v => (
+                      <option key={v.id} value={v.id}>{v.titulo}</option>
+                    ))}
+                  </select>
+                  <div style={{ display: "flex", gap: 4 }}>
+                    <button type="button" onClick={() => onOpen(p)}
+                      style={{ ...BTN(B.navyLight), fontSize: 10, padding: "4px 10px" }}>Ver</button>
+                    <button type="button" onClick={async () => {
+                      if (!confirm("¿Descartar este CV?")) return;
+                      await supabase.from("rh_postulaciones").update({ estado: "descartado" }).eq("id", p.id);
+                      onReload();
+                    }} style={{ ...BTN("transparent", "#ef4444"), border: `1px solid #ef444455`, fontSize: 10, padding: "4px 10px" }}>Descartar</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </>
   );
 }
 
