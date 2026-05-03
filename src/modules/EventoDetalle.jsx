@@ -5463,6 +5463,12 @@ function TabGastosServicios({ evento, ocultarPrecios = false }) {
 // ─── Modal: crear/editar gasto ─────────────────────────────────────
 function GastoServicioModal({ evento, editing, proveedores, servicios, onClose, onSaved }) {
   const isEdit = !!editing;
+  const todayBog = new Date().toLocaleDateString("en-CA", { timeZone: "America/Bogota" });
+  // editing?.fecha puede venir como "2026-05-04T00:00:00+00:00" — el input
+  // type=date solo acepta YYYY-MM-DD, así que rebanamos.
+  const fechaInicial = editing?.fecha
+    ? String(editing.fecha).slice(0, 10)
+    : todayBog;
   const [f, setF] = useState({
     servicio_id:    editing?.servicio_id || "",
     concepto:       editing?.concepto || "",
@@ -5471,7 +5477,7 @@ function GastoServicioModal({ evento, editing, proveedores, servicios, onClose, 
     monto:          editing?.monto || "",
     iva_pct:        editing?.iva_pct ?? 19,
     metodo_pago:    editing?.metodo_pago || "transferencia",
-    fecha:          editing?.fecha || new Date().toLocaleDateString("en-CA", { timeZone: "America/Bogota" }),
+    fecha:          fechaInicial,
     factura_numero: editing?.factura_numero || "",
     notas:          editing?.notas || "",
     estado:         editing?.estado || "pendiente",
@@ -5504,6 +5510,9 @@ function GastoServicioModal({ evento, editing, proveedores, servicios, onClose, 
     const servicio = servicios.find(s => s.id === f.servicio_id);
     const userEmail = (await supabase.auth.getUser()).data?.user?.email || "";
 
+    // Sanitizar campos date/timestamp: Postgres rechaza "" — solo acepta
+    // valor válido o null. Mismo bug que tuvimos en B2B visitas.
+    const fechaClean = (f.fecha && /^\d{4}-\d{2}-\d{2}$/.test(f.fecha)) ? f.fecha : todayBog;
     const payload = {
       evento_id: evento.id,
       servicio_id: f.servicio_id || null,
@@ -5513,7 +5522,7 @@ function GastoServicioModal({ evento, editing, proveedores, servicios, onClose, 
       concepto: f.concepto.trim(),
       monto, iva_pct: Number(f.iva_pct) || 0, iva_monto: ivaMonto, total,
       metodo_pago: f.metodo_pago,
-      fecha: f.fecha,
+      fecha: fechaClean,
       factura_numero: f.factura_numero.trim() || null,
       factura_url,
       notas: f.notas.trim() || null,
@@ -5541,12 +5550,61 @@ function GastoServicioModal({ evento, editing, proveedores, servicios, onClose, 
           <button type="button" onClick={onClose} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.4)", cursor: "pointer", fontSize: 22 }}>×</button>
         </div>
 
-        <div style={{ marginBottom: 10 }}>
-          <label style={LS}>Servicio del evento (opcional)</label>
-          <select value={f.servicio_id} onChange={e => set("servicio_id", e.target.value)} style={IS}>
-            <option value="">— Sin vincular —</option>
-            {servicios.map(s => <option key={s.id} value={s.id}>{s.descripcion || s.categoria}</option>)}
-          </select>
+        {/* Pregunta clara: ¿este gasto va a un servicio del evento? */}
+        <div style={{ background: B.navyMid, borderRadius: 10, padding: 14, marginBottom: 14, border: `1px solid ${B.navyLight}` }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: B.sand, marginBottom: 8 }}>
+            ¿Está relacionado a algún servicio del evento?
+          </div>
+          <div style={{ display: "flex", gap: 8, marginBottom: f.servicio_id || f._asociar === false ? 10 : 0 }}>
+            <button type="button" onClick={() => { set("_asociar", true); if (!f.servicio_id && servicios[0]) set("servicio_id", servicios[0].id); }}
+              style={{ flex: 1, padding: "10px", borderRadius: 8,
+                border: f.servicio_id || f._asociar === true ? `2px solid ${B.success}` : `1px solid ${B.navyLight}`,
+                background: f.servicio_id || f._asociar === true ? B.success + "22" : B.navy,
+                color: f.servicio_id || f._asociar === true ? B.success : "rgba(255,255,255,0.6)", cursor: "pointer", fontSize: 12, fontWeight: 700 }}>
+              ✓ Sí, vincular a servicio
+            </button>
+            <button type="button" onClick={() => { set("_asociar", false); set("servicio_id", ""); }}
+              style={{ flex: 1, padding: "10px", borderRadius: 8,
+                border: f._asociar === false && !f.servicio_id ? `2px solid ${B.warning}` : `1px solid ${B.navyLight}`,
+                background: f._asociar === false && !f.servicio_id ? B.warning + "22" : B.navy,
+                color: f._asociar === false && !f.servicio_id ? B.warning : "rgba(255,255,255,0.6)", cursor: "pointer", fontSize: 12, fontWeight: 700 }}>
+              No, gasto general del evento
+            </button>
+          </div>
+
+          {/* Lista de servicios visible cuando se eligió "Sí" o ya hay servicio_id */}
+          {(f.servicio_id || f._asociar === true) && (
+            <>
+              {servicios.length === 0 ? (
+                <div style={{ padding: 10, fontSize: 11, color: B.warning, textAlign: "center", fontStyle: "italic" }}>
+                  ⚠️ Este evento no tiene servicios contratados. Agregalos en el tab 🛎 Servicios primero.
+                </div>
+              ) : (
+                <div style={{ background: B.navy, borderRadius: 8, maxHeight: 220, overflowY: "auto", border: `1px solid ${B.navyLight}` }}>
+                  {servicios.map(s => {
+                    const sel = f.servicio_id === s.id;
+                    return (
+                      <button key={s.id} type="button" onClick={() => set("servicio_id", s.id)}
+                        style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "9px 12px",
+                          background: sel ? B.success + "22" : "transparent", border: "none",
+                          borderBottom: `1px solid ${B.navyLight}`,
+                          color: sel ? B.success : "#fff", cursor: "pointer", textAlign: "left" }}>
+                        <span style={{ fontSize: 14 }}>{sel ? "●" : "○"}</span>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: 12, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            {s.descripcion || s.categoria || "Servicio"}
+                          </div>
+                          <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)" }}>
+                            {s.categoria || "—"}{s.valor ? ` · Cobrado ${COPx(Number(s.valor))}` : ""}
+                          </div>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </>
+          )}
         </div>
 
         <div style={{ marginBottom: 10 }}>
