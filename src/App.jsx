@@ -302,6 +302,8 @@ const Compras = lazy(() => import("./modules/Compras"));
 const Pagos = lazy(() => import("./modules/Pagos"));
 const EmpleadoPortal = lazy(() => import("./modules/EmpleadoPortal"));
 const AgenciaPortal = lazy(() => import("./modules/AgenciaPortal"));
+const ReclutamientoPortal = lazy(() => import("./modules/ReclutamientoPortal"));
+const Reclutamiento = lazy(() => import("./modules/Reclutamiento"));
 const LasAmericasPortal = lazy(() => import("./modules/LasAmericasPortal"));
 const GranFondoNairo = lazy(() => import("./modules/GranFondoNairo"));
 const BookingWidget = lazy(() => import("./modules/BookingWidget"));
@@ -401,6 +403,7 @@ const MODULE_MAP = {
   comisiones: <Comisiones />,
   resultados: <Resultados />,
   rrhh: <RecursosHumanos />,
+  reclutamiento: <Reclutamiento />,
   nomina: <Nomina />,
   nomina_dia: <NominaPorDia />,
   asistencia_zk: <AsistenciaZK />,
@@ -536,6 +539,7 @@ export default function App() {
   if (route === "blueapple" || route.startsWith("blueapple/")) return <BlueApplePortal />;
   if (route === "empleados")      return <><EmpleadoPortal /><WhatsAppFloat phone={waPhone} /></>;
   if (route === "agencia" || route === "") return <><AgenciaPortal /><WhatsAppFloat phone={waPhone} /></>;
+  if (route === "carreras" || route.startsWith("carreras/")) return <><ReclutamientoPortal /><WhatsAppFloat phone={waPhone} /></>;
   if (route === "booking/lasamericas" || route === "las-americas") return <LasAmericasPortal />;
   if (route === "gran-fondo" || route === "nairo") return <GranFondoNairo />;
   if (route === "booking" || route.startsWith("booking/")) return <><BookingPopup /><WhatsAppFloat phone={waPhone} /></>;
