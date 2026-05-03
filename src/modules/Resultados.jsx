@@ -853,7 +853,7 @@ export default function Resultados() {
             <div style={{ background: B.navyMid, borderRadius: 16, overflow: "hidden", marginBottom: 16 }}>
               <div style={{ padding: "14px 20px", borderBottom: `1px solid ${B.navyLight}`, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
                 <span style={{ fontSize: 20 }}>🍽️</span>
-                <span style={{ fontSize: 16, fontWeight: 800, color: B.white }}>Ingresos A&B</span>
+                <span style={{ fontSize: 16, fontWeight: 800, color: B.white }}>Ventas A&B</span>
                 <span style={{ fontSize: 11, color: "rgba(255,255,255,0.3)", marginLeft: 6 }}>· No proyectable (fuente: Loggro Restobar)</span>
                 <span style={{ fontSize: 10, color: "rgba(255,255,255,0.35)", marginLeft: "auto" }}>📊 Fuente: Loggro Restobar</span>
               </div>
@@ -866,7 +866,7 @@ export default function Resultados() {
             <div style={{ marginTop: 8, fontSize: 11, color: "rgba(255,255,255,0.2)", lineHeight: 1.8, paddingInline: 4 }}>
               * "Reservado futuro" incluye reservas confirmadas (no canceladas) con fecha entre mañana y fin de mes.<br />
               * La proyección NO incluye nuevas ventas que aún no se han registrado.<br />
-              * A&B no se proyecta — el ingreso solo se registra después del cierre diario.
+              * A&B no se proyecta — la venta solo se registra después del cierre diario.
             </div>
           </div>
         );
@@ -885,7 +885,7 @@ export default function Resultados() {
               { label: "Grupos (mes)",         valor: grupos?.mes?.monto,    cant: grupos?.mes?.cantidad,    color: "#34d399",  icon: "👥", unit: "pasajeros" },
               { label: "Eventos (mes)",        valor: eventos?.mes?.monto,   cant: eventos?.mes?.cantidad,   color: "#a78bfa",  icon: "🎉", unit: "eventos" },
               { label: "A&B (mes)",            valor: ayb?.mes?.monto,       cant: ayb?.mes?.cantidad,       color: B.sand,     icon: "🍽️", unit: "días con cierre" },
-              { label: "Otros Ingresos (mes)", valor: otros?.mes?.monto,     cant: otros?.mes?.cantidad,     color: "#fb923c",  icon: "✨", unit: "actividades" },
+              { label: "Otras Ventas (mes)",   valor: otros?.mes?.monto,     cant: otros?.mes?.cantidad,     color: "#fb923c",  icon: "✨", unit: "actividades" },
             ].map(k => (
               <div key={k.label} style={{ background: B.navyMid, borderRadius: 14, padding: isMobile ? "14px 16px" : "18px 20px", borderTop: `3px solid ${k.color}` }}>
                 <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 6 }}>{k.icon} {k.label}</div>
@@ -912,7 +912,7 @@ export default function Resultados() {
           }}>
             <div>
               <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 4 }}>
-                💰 Total ingresos del mes
+                💰 Total ventas del mes
               </div>
               <div style={{ fontSize: isMobile ? 28 : 40, fontWeight: 900, color: B.white, fontFamily: "'Barlow Condensed', sans-serif", lineHeight: 1 }}>
                 {COP(totalMes.monto)}
@@ -964,7 +964,7 @@ export default function Resultados() {
       />
 
       <TablaMetricas
-        titulo="Ingresos A&B"
+        titulo="Ventas A&B"
         icono="🍽️"
         color={B.sand}
         datos={ayb}
@@ -977,7 +977,7 @@ export default function Resultados() {
       </div>
 
       <TablaMetricas
-        titulo="Otros Ingresos"
+        titulo="Otras Ventas"
         icono="✨"
         color="#fb923c"
         datos={otros}
@@ -1159,11 +1159,11 @@ export default function Resultados() {
                 gap: isMobile ? 8 : 0,
               }}>
                 <div>
-                  <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.07em" }}>💧 Ingresos del mes — {mesLabel}</div>
+                  <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.07em" }}>💧 Ventas del mes — {mesLabel}</div>
                   <div style={{ fontSize: isMobile ? 26 : 36, fontWeight: 900, color: B.sky, fontFamily: "'Barlow Condensed', sans-serif", marginTop: 4 }}>{COP(flujoMes.ingresos)}</div>
                 </div>
                 <div style={{ textAlign: isMobile ? "left" : "right", fontSize: 12, color: "rgba(255,255,255,0.3)" }}>
-                  {flujoDias.length} días con ingresos registrados
+                  {flujoDias.length} días con ventas registradas
                 </div>
               </div>
             )}
@@ -1172,7 +1172,7 @@ export default function Resultados() {
             {loading ? (
               <div style={{ background: B.navyMid, borderRadius: 16, padding: 24, textAlign: "center", color: "rgba(255,255,255,0.3)", fontSize: 13 }}>Cargando...</div>
             ) : flujoDias.length === 0 ? (
-              <div style={{ background: B.navyMid, borderRadius: 16, padding: 24, textAlign: "center", color: "rgba(255,255,255,0.3)", fontSize: 13 }}>Sin ingresos registrados este mes.</div>
+              <div style={{ background: B.navyMid, borderRadius: 16, padding: 24, textAlign: "center", color: "rgba(255,255,255,0.3)", fontSize: 13 }}>Sin ventas registradas este mes.</div>
             ) : (
               <div style={{ background: B.navyMid, borderRadius: isMobile ? 14 : 16, overflow: "hidden" }}>
                 {isMobile ? (
@@ -1275,7 +1275,7 @@ export default function Resultados() {
               * Monto = abono registrado ese día (no el total de la reserva).<br />
               * Pasadías: reservas sin grupo. Grupos/Eventos: pagos de reservas vinculadas a ese tipo de evento.<br />
               * A&B: viene de Loggro Restobar (ventas oficiales por día).<br />
-              * Acumulado: suma corrida de ingresos cobrados en el mes hasta ese día.
+              * Acumulado: suma corrida de ventas cobradas en el mes hasta ese día.
             </div>
           </div>
         );
