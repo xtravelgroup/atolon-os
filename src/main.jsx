@@ -11,20 +11,24 @@ import { queryClient } from "./lib/queryClient";
 // cambian (Eventos-XXXXXX.js). Si el usuario tiene la página abierta
 // y trata de cargar un módulo lazy, el chunk viejo ya no existe →
 // "Failed to fetch dynamically imported module".
-// Solución: detectar ese error y forzar reload (1 vez por sesión).
-const RELOAD_FLAG = "__atolon_chunk_reload";
+//
+// Debounce por timestamp: solo bloquea reloads dentro de los últimos 10s
+// (anti-loop). Si pasaron >10s desde el último reload, permite otro —
+// esto cubre el caso de varios deploys seguidos en una sesión larga.
+const RELOAD_TS_KEY = "__atolon_chunk_reload";
+const RELOAD_DEBOUNCE_MS = 10_000;
 function isChunkLoadError(err) {
   const msg = String(err?.message || err || "");
   return /Failed to fetch dynamically imported module|Loading chunk|ChunkLoadError|Importing a module script failed/i.test(msg);
 }
 function recoverFromChunkError(err) {
   console.warn("[chunk-recover] detected stale chunk error:", err?.message || err);
-  if (sessionStorage.getItem(RELOAD_FLAG)) {
-    // Ya se intentó recargar — no entrar en loop. Mostrar mensaje al usuario.
-    console.error("[chunk-recover] reload already attempted, abandonning");
+  const last = Number(sessionStorage.getItem(RELOAD_TS_KEY)) || 0;
+  if (Date.now() - last < RELOAD_DEBOUNCE_MS) {
+    console.error("[chunk-recover] reload too recent, skipping to avoid loop");
     return;
   }
-  sessionStorage.setItem(RELOAD_FLAG, String(Date.now()));
+  sessionStorage.setItem(RELOAD_TS_KEY, String(Date.now()));
   // Limpiar caches del navegador para evitar recibir el HTML cacheado viejo.
   if (typeof caches !== "undefined") {
     caches.keys().then(keys => Promise.all(keys.map(k => caches.delete(k)))).finally(() => {
@@ -46,11 +50,6 @@ window.addEventListener("unhandledrejection", (e) => {
     recoverFromChunkError(e.reason);
   }
 });
-// Si el reload anterior fue hace más de 30s, limpiar el flag (página cargó
-// bien) — así futuros chunks errors pueden volver a recargar.
-if (sessionStorage.getItem(RELOAD_FLAG)) {
-  setTimeout(() => sessionStorage.removeItem(RELOAD_FLAG), 30000);
-}
 
 // Loading fallback mostrado mientras un chunk lazy se descarga.
 // Match con el estilo del LoadingScreen interno de App.jsx para

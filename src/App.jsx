@@ -11,18 +11,25 @@ import AtolanTrack from "./lib/AtolanTrack";
 // la pestaña abierta apunta al chunk viejo, que ya no existe → "Failed to
 // fetch dynamically imported module". El handler global en main.jsx lo
 // captura, PERO si el error ocurre durante el render del lazy component,
-// React lo intercepta primero acá. Detectamos el patrón y recargamos solos
-// (1 vez por sesión para evitar loops).
-const CHUNK_RELOAD_FLAG = "__atolon_chunk_reload";
+// React lo intercepta primero acá. Detectamos el patrón y recargamos solos.
+//
+// Debounce por timestamp en vez de flag binario: permite múltiples reloads
+// en una sesión larga (deploys seguidos) sin entrar en loop.
+const CHUNK_RELOAD_TS_KEY = "__atolon_chunk_reload";
+const CHUNK_RELOAD_DEBOUNCE_MS = 10_000; // mínimo entre reloads
 function isChunkLoadError(err) {
   const msg = String(err?.message || err || "");
   return /Failed to fetch dynamically imported module|Loading chunk|ChunkLoadError|Importing a module script failed/i.test(msg);
+}
+function chunkRecoveryAllowed() {
+  const last = Number(sessionStorage.getItem(CHUNK_RELOAD_TS_KEY)) || 0;
+  return Date.now() - last > CHUNK_RELOAD_DEBOUNCE_MS;
 }
 
 class ErrorBoundary extends Component {
   constructor(props) { super(props); this.state = { error: null, recovering: false }; }
   static getDerivedStateFromError(e) {
-    if (isChunkLoadError(e) && !sessionStorage.getItem(CHUNK_RELOAD_FLAG)) {
+    if (isChunkLoadError(e) && chunkRecoveryAllowed()) {
       // No mostrar el error rojo — mostrar "Actualizando..." y recargar.
       return { error: e, recovering: true };
     }
@@ -30,7 +37,7 @@ class ErrorBoundary extends Component {
   }
   componentDidCatch(err) {
     if (this.state.recovering) {
-      sessionStorage.setItem(CHUNK_RELOAD_FLAG, String(Date.now()));
+      sessionStorage.setItem(CHUNK_RELOAD_TS_KEY, String(Date.now()));
       // Limpiar caches del navegador antes de recargar (por si el HTML
       // viejo está cacheado y volveríamos a recibir hashes que ya no existen).
       const reload = () => window.location.reload();
