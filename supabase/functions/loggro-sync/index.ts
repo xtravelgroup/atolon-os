@@ -1731,6 +1731,104 @@ serve(async (req) => {
     }
 
     // ════════════════════════════════════════════════════════════════════
+    // POST /loggro-sync/consumo-evento-salida
+    // Sincroniza un consumo de evento como "Salida - Otro" en Loggro.
+    // Body: { consumo_id }
+    //
+    // Flujo:
+    //   1. Lee el consumo + item + evento desde la BD
+    //   2. Verifica que el item tenga loggro_id
+    //   3. Crea movimiento en Loggro: type=11, isSubtracted=true (salida)
+    //      con note descriptivo "Consumo evento {nombre} — {tipo}"
+    //   4. Actualiza loggro_sync_status, loggro_movement_id, loggro_sync_at
+    // ════════════════════════════════════════════════════════════════════
+    if (req.method === "POST" && path === "/consumo-evento-salida") {
+      const body = await req.json().catch(() => ({}));
+      const consumoId = body?.consumo_id;
+      if (!consumoId) return json({ ok: false, error: "consumo_id requerido" }, 400);
+
+      const supaUrl = Deno.env.get("SUPABASE_URL");
+      const supaKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+      const sb = (path: string, init: RequestInit = {}) => fetch(`${supaUrl}/rest/v1/${path}`, {
+        ...init,
+        headers: { apikey: supaKey!, Authorization: `Bearer ${supaKey}`, "Content-Type": "application/json", Prefer: "return=representation", ...(init.headers || {}) },
+      }).then(r => r.json());
+
+      // 1. Leer consumo
+      const consumos: any = await sb(`eventos_consumo_openbar?id=eq.${consumoId}&select=*`);
+      const c = Array.isArray(consumos) ? consumos[0] : null;
+      if (!c) return json({ ok: false, error: "Consumo no encontrado" }, 404);
+      if (c.anulado) return json({ ok: false, error: "Consumo anulado, no se sincroniza" }, 400);
+      if (c.loggro_movement_id) return json({ ok: true, skipped: "ya_sincronizado", movement_id: c.loggro_movement_id });
+
+      // 2. Leer item para obtener loggro_id
+      const items: any = await sb(`items_catalogo?id=eq.${encodeURIComponent(c.item_id)}&select=id,nombre,loggro_id`);
+      const item = Array.isArray(items) ? items[0] : null;
+      if (!item) return json({ ok: false, error: "Item no encontrado" }, 404);
+      if (!item.loggro_id) {
+        // Marcar como error (no podemos sincronizar items sin Loggro vinculado)
+        await sb(`eventos_consumo_openbar?id=eq.${consumoId}`, {
+          method: "PATCH",
+          body: JSON.stringify({
+            loggro_sync_status: "error",
+            loggro_sync_error: "Item sin loggro_id (no enlazado a Loggro)",
+            loggro_sync_at: new Date().toISOString(),
+          }),
+        });
+        return json({ ok: false, error: "Item sin loggro_id", item: item.nombre }, 422);
+      }
+
+      // 3. Leer evento para el note
+      const eventos: any = await sb(`eventos?id=eq.${encodeURIComponent(c.evento_id)}&select=id,nombre,fecha`);
+      const evento = Array.isArray(eventos) ? eventos[0] : null;
+      const eventoNombre = evento?.nombre || c.evento_id;
+      const tipoLabel = c.tipo === "openbar" ? "Open Bar" : c.tipo === "cocina_buffet" ? "Buffet" : c.tipo === "cocina_paquete" ? "Paquete" : "Otro";
+      const note = `Consumo evento "${eventoNombre}" — ${tipoLabel}${c.servicio_descripcion ? ` (${c.servicio_descripcion})` : ""}${c.notas ? ` · ${c.notas}` : ""}`;
+
+      // 4. Crear movimiento en Loggro (type=11 + isSubtracted=true = Salida - Otro)
+      const { businessId, userId } = await getLoggroIdentity();
+      const now = new Date().toISOString();
+      const movResult = await loggroRaw("POST", "/inventories", {
+        business: businessId,
+        user: userId,
+        date: now,
+        type: 11,
+        isSubtracted: true,
+        isProduction: false,
+        isMoveTo: false,
+        deleted: false,
+        note,
+        ingredients: [{ ingredient: item.loggro_id, quantity: Number(c.cantidad), price: Number(c.precio_unitario) || 0 }],
+        createdOn: now, modifiedOn: now,
+      });
+
+      if (!movResult.ok) {
+        await sb(`eventos_consumo_openbar?id=eq.${consumoId}`, {
+          method: "PATCH",
+          body: JSON.stringify({
+            loggro_sync_status: "error",
+            loggro_sync_error: JSON.stringify(movResult.body || {}).slice(0, 500),
+            loggro_sync_at: new Date().toISOString(),
+          }),
+        });
+        return json({ ok: false, error: "Loggro rechazó el movimiento", loggro_response: movResult.body }, 502);
+      }
+
+      const movementId = movResult.body?._id || movResult.body?.id || null;
+      await sb(`eventos_consumo_openbar?id=eq.${consumoId}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          loggro_sync_status: "ok",
+          loggro_movement_id: movementId,
+          loggro_sync_error: null,
+          loggro_sync_at: new Date().toISOString(),
+        }),
+      });
+
+      return json({ ok: true, movement_id: movementId, item: item.nombre, cantidad: c.cantidad, note });
+    }
+
+    // ════════════════════════════════════════════════════════════════════
     // GET /loggro-sync/list-recent-movements?limit=20
     // Read-only — lista los últimos movimientos de inventario para que
     // podamos inspeccionar el campo `type` y descubrir qué número usa

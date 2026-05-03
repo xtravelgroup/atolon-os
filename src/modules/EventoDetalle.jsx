@@ -4468,7 +4468,7 @@ function TabOpenBar({ evento, ocultarPrecios = false }) {
     setSaving(true);
     const precio = Number(pickItem.precio_compra) || 0;
     const sv = pickServicio ? servicioByKey[pickServicio] : null;
-    const { error } = await supabase.from("eventos_consumo_openbar").insert({
+    const { data: inserted, error } = await supabase.from("eventos_consumo_openbar").insert({
       evento_id: eventoId,
       item_id: pickItem.id,
       cantidad: qty,
@@ -4482,16 +4482,30 @@ function TabOpenBar({ evento, ocultarPrecios = false }) {
       servicio_descripcion: sv?.descripcion || null,
       notas: notas.trim() || null,
       registrado_por: userEmail,
-    });
+      loggro_sync_status: "pendiente",
+    }).select().single();
     setSaving(false);
     if (error) return alert("Error: " + error.message);
+
+    // Sincronizar con Loggro como "Salida - Otro" (fire-and-forget; si
+    // falla queda con loggro_sync_status='error' para retry desde la UI).
+    if (inserted?.id) {
+      const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+      fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/loggro-sync/consumo-evento-salida`, {
+        method: "POST",
+        headers: { apikey: anonKey, Authorization: `Bearer ${anonKey}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ consumo_id: inserted.id }),
+      }).catch(err => console.warn("[loggro-sync] fallo sync:", err));
+    }
+
     setShowPick(false);
     setPickItem(null);
     setPickServicio("");
     setCantidad("1");
     setNotas("");
     setSearch("");
-    load();
+    // Pequeño delay para que el sync de Loggro alcance a actualizar el status
+    setTimeout(load, 1500);
   };
 
   const anular = async (c) => {
@@ -4503,6 +4517,17 @@ function TabOpenBar({ evento, ocultarPrecios = false }) {
       anulado_at: new Date().toISOString(),
       motivo_anulacion: motivo || "Sin motivo",
     }).eq("id", c.id);
+    load();
+  };
+
+  const retrySyncLoggro = async (c) => {
+    const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+    const r = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/loggro-sync/consumo-evento-salida`, {
+      method: "POST",
+      headers: { apikey: anonKey, Authorization: `Bearer ${anonKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ consumo_id: c.id }),
+    }).then(r => r.json()).catch(e => ({ ok: false, error: e.message }));
+    if (!r.ok) alert("Sync falló: " + (r.error || "ver logs"));
     load();
   };
 
@@ -4601,7 +4626,22 @@ function TabOpenBar({ evento, ocultarPrecios = false }) {
                 <div style={{ color: "rgba(255,255,255,0.55)", fontSize: 11 }}>{loc?.nombre || "—"}</div>
                 <div style={{ textAlign: "right", color: "rgba(255,255,255,0.55)" }}>{ocultarPrecios ? "" : COPx(c.precio_unitario)}</div>
                 <div style={{ textAlign: "right", color: B.sky, fontWeight: 700 }}>{ocultarPrecios ? "" : COPx(c.costo_total)}</div>
-                <div>
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
+                  {/* Indicador de sync con Loggro */}
+                  {!c.anulado && c.loggro_sync_status === "ok" && (
+                    <span title={`Sincronizado · Loggro mov ${c.loggro_movement_id || ""}`}
+                      style={{ fontSize: 9, color: "#22c55e" }}>🔗 Loggro</span>
+                  )}
+                  {!c.anulado && c.loggro_sync_status === "pendiente" && (
+                    <span title="Sincronizando con Loggro…" style={{ fontSize: 9, color: B.warning }}>⏳ sync…</span>
+                  )}
+                  {!c.anulado && c.loggro_sync_status === "error" && (
+                    <button type="button" onClick={() => retrySyncLoggro(c)}
+                      title={c.loggro_sync_error || "Error al sincronizar con Loggro"}
+                      style={{ background: "transparent", border: `1px solid ${B.danger}55`, color: B.danger, cursor: "pointer", fontSize: 9, padding: "2px 6px", borderRadius: 4 }}>
+                      ⚠ retry
+                    </button>
+                  )}
                   {!c.anulado && (
                     <button type="button" onClick={() => anular(c)} title="Anular" style={{ background: "transparent", border: "none", color: B.danger, cursor: "pointer", fontSize: 14 }}>✕</button>
                   )}
