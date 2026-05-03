@@ -5047,12 +5047,22 @@ function TabOpenBar({ evento, ocultarPrecios = false }) {
 function TabPL({ evento }) {
   const [consumo, setConsumo] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [refreshKey, setRefreshKey] = useState(0);
   const COPx = (n) => "$" + Math.round(Number(n) || 0).toLocaleString("es-CO");
 
   useEffect(() => {
-    supabase.from("eventos_consumo_openbar").select("*").eq("evento_id", evento.id).eq("anulado", false)
-      .then(({ data }) => { setConsumo(data || []); setLoading(false); });
-  }, [evento.id]);
+    if (!evento?.id) return;
+    setLoading(true);
+    supabase.from("eventos_consumo_openbar")
+      .select("*")
+      .eq("evento_id", evento.id)
+      .eq("anulado", false)
+      .then(({ data, error }) => {
+        if (error) console.warn("[P/L] error fetching consumo:", error);
+        setConsumo(data || []);
+        setLoading(false);
+      });
+  }, [evento?.id, refreshKey]);
 
   if (loading) return <div style={{ padding: 30, textAlign: "center", color: "rgba(255,255,255,0.4)" }}>Cargando P/L…</div>;
 
@@ -5092,9 +5102,14 @@ function TabPL({ evento }) {
     consumoPorServicio[key].costo += Number(c.costo_total) || 0;
   });
   const ayBLines = [];
-  (cot.alimentos || []).forEach(a => {
+  // IMPORTANTE: los alimentos en cotizacion_data NO tienen campo id propio
+  // (heredan iva/noches/cantidad/concepto/valor_unit). Cuando el modal de
+  // consumo los carga, les asigna `alim-${index}` como id. Acá hay que usar
+  // la MISMA convención para que los keys matcheen con servicio_id del
+  // consumo (`alimento|alim-N`).
+  (cot.alimentos || []).forEach((a, i) => {
     if (!a) return;
-    const key = `alimento|${a.id}`;
+    const key = `alimento|${a.id || `alim-${i}`}`;
     const sub = (Number(a.cantidad) || 1) * (Number(a.noches) || 1) * (Number(a.valor_unit) || 0);
     ayBLines.push({
       key, descripcion: a.concepto || a.descripcion || "Sin nombre", origen: "Cotizado A&B",
