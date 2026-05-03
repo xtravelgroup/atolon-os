@@ -4147,6 +4147,7 @@ export default function EventoDetalle({ evento: inicial, canEdit = true, onBack,
     { key: "servicios",   label: isMobile ? "🛎" : "🛎 Servicios" },
     { key: "menus",       label: isMobile ? "🍽️" : "🍽️ Menús" },
     { key: "openbar",     label: isMobile ? "🍾" : "🍾 Consumo" },
+    { key: "gastos",      label: isMobile ? "🧾" : "🧾 Gastos servicios" },
     { key: "asignaciones",label: isMobile ? "👥" : "👥 Asignaciones" },
     { key: "pagos", label: isMobile ? "💳" : "💳 Pagos" },
     { key: "transporte",  label: isMobile ? "⛵" : "⛵ Transporte" },
@@ -4286,6 +4287,7 @@ export default function EventoDetalle({ evento: inicial, canEdit = true, onBack,
       {tab === "servicios" && <TabServicios  items={evento.servicios_contratados||[]}     onChange={v => updateLocal("servicios_contratados", v)} pasadiasOrg={evento.pasadias_org||[]} onChangePasadias={vistaOperativa ? null : v => updateLocal("pasadias_org", v)} categoria={evento.categoria} precioTipo={evento.precio_tipo||"publico"} pasadiasMap={pasadiasMap} cotizacionData={evento.cotizacion_data||null} eventoId={evento.id} eventoFecha={evento.fecha} eventoNombre={evento.nombre} evento={evento} ocultarPrecios={vistaOperativa} />}
       {tab === "menus"     && <TabMenus     servicios={evento.servicios_contratados||[]} menusDetalle={evento.menus_detalle||{}} onChange={v => updateLocal("menus_detalle", v)} cotizacionData={evento.cotizacion_data||null} timelineItems={evento.timeline_items||[]} />}
       {tab === "openbar"   && <TabOpenBar      evento={evento} ocultarPrecios={vistaOperativa} />}
+      {tab === "gastos"    && <TabGastosServicios evento={evento} ocultarPrecios={vistaOperativa} />}
       {tab === "asignaciones" && <TabAsignaciones timelineItems={evento.timeline_items||[]} />}
       {tab === "pagos"     && (() => {
         const resolverPrecioLocal = (p) => {
@@ -5046,6 +5048,7 @@ function TabOpenBar({ evento, ocultarPrecios = false }) {
 // ─────────────────────────────────────────────────────────────────────
 function TabPL({ evento }) {
   const [consumo, setConsumo] = useState([]);
+  const [gastosTerc, setGastosTerc] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshKey, setRefreshKey] = useState(0);
   const COPx = (n) => "$" + Math.round(Number(n) || 0).toLocaleString("es-CO");
@@ -5053,15 +5056,16 @@ function TabPL({ evento }) {
   useEffect(() => {
     if (!evento?.id) return;
     setLoading(true);
-    supabase.from("eventos_consumo_openbar")
-      .select("*")
-      .eq("evento_id", evento.id)
-      .eq("anulado", false)
-      .then(({ data, error }) => {
-        if (error) console.warn("[P/L] error fetching consumo:", error);
-        setConsumo(data || []);
-        setLoading(false);
-      });
+    Promise.all([
+      supabase.from("eventos_consumo_openbar").select("*").eq("evento_id", evento.id).eq("anulado", false),
+      supabase.from("eventos_servicios_gastos").select("*").eq("evento_id", evento.id).neq("estado", "anulado"),
+    ]).then(([cR, gR]) => {
+      if (cR.error) console.warn("[P/L] error consumo:", cR.error);
+      if (gR.error) console.warn("[P/L] error gastos:", gR.error);
+      setConsumo(cR.data || []);
+      setGastosTerc(gR.data || []);
+      setLoading(false);
+    });
   }, [evento?.id, refreshKey]);
 
   if (loading) return <div style={{ padding: 30, textAlign: "center", color: "rgba(255,255,255,0.4)" }}>Cargando P/L…</div>;
@@ -5091,9 +5095,10 @@ function TabPL({ evento }) {
 
   // ── COSTOS ──────────────────────────────────────────────────────
   const costoConsumo = consumo.reduce((s, c) => s + (Number(c.costo_total) || 0), 0);
+  const costoGastosTerc = gastosTerc.reduce((s, g) => s + (Number(g.total) || 0), 0);
   const costoExtras  = ["transporte", "alimentos", "servicios"].reduce((s, k) =>
     s + calcSum((evento.extras_data || {})[k]), 0);
-  const costoTotal = costoConsumo + costoExtras;
+  const costoTotal = costoConsumo + costoGastosTerc + costoExtras;
   const margen = ingresoTotal - costoTotal;
   const margenPct = ingresoTotal > 0 ? (margen / ingresoTotal) * 100 : 0;
 
@@ -5236,6 +5241,7 @@ function TabPL({ evento }) {
             ["🍾 Open Bar (consumo)", consumo.filter(c => c.tipo === "openbar").reduce((s, c) => s + (Number(c.costo_total) || 0), 0)],
             ["🍽️ Buffet (consumo)",   consumo.filter(c => c.tipo === "cocina_buffet").reduce((s, c) => s + (Number(c.costo_total) || 0), 0)],
             ["🎁 Paquete (consumo)",  consumo.filter(c => c.tipo === "cocina_paquete").reduce((s, c) => s + (Number(c.costo_total) || 0), 0)],
+            ["🧾 Servicios contratados (facturas)", costoGastosTerc],
             ["Extras transporte", calcSum((evento.extras_data || {}).transporte)],
             ["Extras alimentos",  calcSum((evento.extras_data || {}).alimentos)],
             ["Extras otros",      calcSum((evento.extras_data || {}).servicios)],
@@ -5253,6 +5259,393 @@ function TabPL({ evento }) {
 
       <div style={{ marginTop: 14, padding: "10px 14px", background: margen >= 0 ? "rgba(34,197,94,0.08)" : "rgba(239,68,68,0.08)", borderRadius: 10, border: `1px solid ${margen >= 0 ? B.success : B.danger}55`, fontSize: 11, color: "rgba(255,255,255,0.6)" }}>
         💡 El P/L se actualiza automáticamente al registrar consumos en el tab 🍾 Consumo. El costo se captura como snapshot al momento del registro (precio_compra del item) — el P/L histórico no cambia si después suben los precios.
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// TabGastosServicios — Gastos/facturas de servicios contratados (terceros)
+// Cada gasto: proveedor, concepto, monto, IVA, fecha, factura PDF, estado.
+// Se vincula opcionalmente a un servicio del evento (servicios_contratados).
+// ─────────────────────────────────────────────────────────────────────
+function TabGastosServicios({ evento, ocultarPrecios = false }) {
+  const [gastos, setGastos] = useState([]);
+  const [proveedores, setProveedores] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [showAdd, setShowAdd] = useState(false);
+  const [editing, setEditing] = useState(null);  // gasto en edición
+  const COPx = (n) => "$" + Math.round(Number(n) || 0).toLocaleString("es-CO");
+
+  const load = async () => {
+    setLoading(true);
+    const [gR, pR] = await Promise.all([
+      supabase.from("eventos_servicios_gastos").select("*").eq("evento_id", evento.id).order("fecha", { ascending: false }),
+      supabase.from("proveedores").select("id, nombre, nit").order("nombre"),
+    ]);
+    setGastos(gR.data || []);
+    setProveedores(pR.data || []);
+    setLoading(false);
+  };
+  useEffect(() => { load(); }, [evento.id]);
+
+  // Servicios contratados del evento — para vincular gastos
+  const serviciosContratados = (evento.servicios_contratados || []).filter(s => s);
+
+  // Resumen por servicio: cobrado vs gastado
+  const porServicio = {};
+  serviciosContratados.forEach(s => {
+    porServicio[s.id] = {
+      descripcion: s.descripcion || s.categoria || "Servicio",
+      cobrado: Number(s.valor) || 0,
+      gastado: 0,
+      gastosPagados: 0,
+      gastosPendientes: 0,
+    };
+  });
+  gastos.filter(g => g.estado !== "anulado").forEach(g => {
+    if (g.servicio_id && porServicio[g.servicio_id]) {
+      porServicio[g.servicio_id].gastado += Number(g.total) || 0;
+      if (g.estado === "pagado") porServicio[g.servicio_id].gastosPagados   += Number(g.total) || 0;
+      else                       porServicio[g.servicio_id].gastosPendientes += Number(g.total) || 0;
+    }
+  });
+
+  const totalGastos = gastos.filter(g => g.estado !== "anulado").reduce((s, g) => s + (Number(g.total) || 0), 0);
+  const totalPagado = gastos.filter(g => g.estado === "pagado").reduce((s, g) => s + (Number(g.total) || 0), 0);
+  const totalPendiente = gastos.filter(g => g.estado === "pendiente").reduce((s, g) => s + (Number(g.total) || 0), 0);
+
+  const eliminar = async (g) => {
+    if (!confirm(`¿Anular gasto "${g.concepto}" de ${COPx(g.total)}?`)) return;
+    await supabase.from("eventos_servicios_gastos").update({ estado: "anulado", updated_at: new Date().toISOString() }).eq("id", g.id);
+    load();
+  };
+  const marcarPagado = async (g) => {
+    await supabase.from("eventos_servicios_gastos").update({
+      estado: "pagado", pagado_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+    }).eq("id", g.id);
+    load();
+  };
+
+  if (loading) return <div style={{ padding: 30, textAlign: "center", color: "rgba(255,255,255,0.4)" }}>Cargando…</div>;
+
+  return (
+    <div style={{ padding: "14px 6px" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 14, flexWrap: "wrap", gap: 12 }}>
+        <div>
+          <div style={{ fontSize: 16, fontWeight: 800, color: "#fff" }}>🧾 Gastos de servicios contratados</div>
+          <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginTop: 2 }}>
+            {gastos.filter(g => g.estado !== "anulado").length} factura{gastos.length === 1 ? "" : "s"}
+            {!ocultarPrecios && <> · Total: <strong style={{ color: B.sky }}>{COPx(totalGastos)}</strong></>}
+          </div>
+        </div>
+        <button type="button" onClick={() => { setEditing(null); setShowAdd(true); }}
+          style={{ padding: "10px 18px", borderRadius: 10, border: "none", background: B.success, color: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
+          + Nueva factura/gasto
+        </button>
+      </div>
+
+      {/* KPIs */}
+      {!ocultarPrecios && (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10, marginBottom: 16 }}>
+          {[
+            { l: "Total facturado", v: COPx(totalGastos),  c: B.sky },
+            { l: "Pagado",          v: COPx(totalPagado),  c: "#22c55e" },
+            { l: "Pendiente",       v: COPx(totalPendiente), c: "#fbbf24" },
+          ].map(k => (
+            <div key={k.l} style={{ background: B.navyMid, borderRadius: 10, padding: "10px 14px", borderLeft: `3px solid ${k.c}` }}>
+              <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", textTransform: "uppercase" }}>{k.l}</div>
+              <div style={{ fontSize: 18, fontWeight: 800, color: k.c, fontFamily: "'Barlow Condensed', sans-serif", marginTop: 2 }}>{k.v}</div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Resumen por servicio contratado (cobrado vs gastado) */}
+      {!ocultarPrecios && Object.keys(porServicio).length > 0 && (
+        <div style={{ background: B.navyMid, borderRadius: 12, overflow: "hidden", marginBottom: 16 }}>
+          <div style={{ padding: "10px 14px", borderBottom: `1px solid ${B.navyLight}`, fontSize: 12, fontWeight: 700, color: "#fff" }}>
+            📊 Cobrado al cliente vs gastado a terceros
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 110px 110px 110px 70px", gap: 10, padding: "8px 14px", background: B.navy, fontSize: 10, color: "rgba(255,255,255,0.45)", textTransform: "uppercase", letterSpacing: "0.05em", fontWeight: 700 }}>
+            <div>Servicio contratado</div>
+            <div style={{ textAlign: "right" }}>Cobrado</div>
+            <div style={{ textAlign: "right" }}>Gastado</div>
+            <div style={{ textAlign: "right" }}>Margen</div>
+            <div style={{ textAlign: "right" }}>%</div>
+          </div>
+          {Object.entries(porServicio).map(([id, s]) => {
+            const m = s.cobrado - s.gastado;
+            const pct = s.cobrado > 0 ? (m / s.cobrado) * 100 : 0;
+            return (
+              <div key={id} style={{ display: "grid", gridTemplateColumns: "1fr 110px 110px 110px 70px", gap: 10, padding: "8px 14px", borderTop: `1px solid ${B.navyLight}`, fontSize: 11 }}>
+                <div style={{ color: "#fff", fontWeight: 600 }}>{s.descripcion}</div>
+                <div style={{ textAlign: "right", color: B.success }}>{COPx(s.cobrado)}</div>
+                <div style={{ textAlign: "right", color: B.danger }}>{COPx(s.gastado)}</div>
+                <div style={{ textAlign: "right", color: m >= 0 ? B.sky : B.danger, fontWeight: 700 }}>{COPx(m)}</div>
+                <div style={{ textAlign: "right", color: "rgba(255,255,255,0.55)" }}>{s.cobrado > 0 ? pct.toFixed(0) + "%" : "—"}</div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Lista de gastos */}
+      {gastos.length === 0 ? (
+        <div style={{ background: B.navyMid, borderRadius: 12, padding: 30, textAlign: "center", color: "rgba(255,255,255,0.4)" }}>
+          Sin facturas ni gastos registrados todavía. Click "+ Nueva factura/gasto" para empezar.
+        </div>
+      ) : (
+        <div style={{ background: B.navyMid, borderRadius: 12, overflow: "hidden" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 130px 90px 110px 110px 80px", gap: 10, padding: "10px 14px", background: B.navy, fontSize: 10, color: "rgba(255,255,255,0.45)", textTransform: "uppercase", letterSpacing: "0.05em", fontWeight: 700 }}>
+            <div>Concepto · Servicio</div>
+            <div>Proveedor</div>
+            <div>Fecha</div>
+            <div style={{ textAlign: "right" }}>{ocultarPrecios ? "Estado" : "Total"}</div>
+            <div>Estado</div>
+            <div></div>
+          </div>
+          {gastos.map(g => {
+            const sv = serviciosContratados.find(s => s.id === g.servicio_id);
+            const estadoColor = g.estado === "pagado" ? "#22c55e" : g.estado === "anulado" ? "#64748B" : "#fbbf24";
+            return (
+              <div key={g.id} style={{ display: "grid", gridTemplateColumns: "1fr 130px 90px 110px 110px 80px", gap: 10, padding: "10px 14px", borderTop: `1px solid ${B.navyLight}`, fontSize: 12, opacity: g.estado === "anulado" ? 0.4 : 1, textDecoration: g.estado === "anulado" ? "line-through" : "none", alignItems: "center" }}>
+                <div>
+                  <div style={{ color: "#fff", fontWeight: 600 }}>{g.concepto}</div>
+                  <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", marginTop: 1 }}>
+                    {sv ? `📋 ${sv.descripcion || sv.categoria}` : g.servicio_descripcion ? `📋 ${g.servicio_descripcion}` : "—"}
+                    {g.factura_numero ? ` · Fact #${g.factura_numero}` : ""}
+                    {g.metodo_pago && ` · ${g.metodo_pago}`}
+                  </div>
+                </div>
+                <div style={{ fontSize: 11, color: "rgba(255,255,255,0.65)" }}>{g.proveedor_nombre || "—"}</div>
+                <div style={{ fontSize: 11, color: "rgba(255,255,255,0.55)" }}>{g.fecha ? new Date(g.fecha + "T12:00:00").toLocaleDateString("es-CO", { day: "2-digit", month: "short" }) : "—"}</div>
+                <div style={{ textAlign: "right", color: B.sky, fontWeight: 700 }}>{ocultarPrecios ? "" : COPx(g.total)}</div>
+                <div>
+                  <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 8, background: estadoColor + "22", color: estadoColor, fontWeight: 700, textTransform: "uppercase" }}>
+                    {g.estado}
+                  </span>
+                </div>
+                <div style={{ display: "flex", gap: 4, justifyContent: "flex-end" }}>
+                  {g.factura_url && (
+                    <button type="button" onClick={async () => {
+                      const path = g.factura_url.replace(/^.*facturas-servicios\//, "");
+                      const { data } = await supabase.storage.from("facturas-servicios").createSignedUrl(path, 60);
+                      if (data?.signedUrl) window.open(data.signedUrl, "_blank");
+                    }} title="Ver factura" style={{ background: "transparent", border: "none", color: B.sky, cursor: "pointer", fontSize: 14 }}>📎</button>
+                  )}
+                  {g.estado === "pendiente" && (
+                    <button type="button" onClick={() => marcarPagado(g)} title="Marcar pagado" style={{ background: "transparent", border: "none", color: "#22c55e", cursor: "pointer", fontSize: 14 }}>✓</button>
+                  )}
+                  <button type="button" onClick={() => { setEditing(g); setShowAdd(true); }} title="Editar"
+                    style={{ background: "transparent", border: "none", color: B.sky, cursor: "pointer", fontSize: 12 }}>✏️</button>
+                  {g.estado !== "anulado" && (
+                    <button type="button" onClick={() => eliminar(g)} title="Anular"
+                      style={{ background: "transparent", border: "none", color: B.danger, cursor: "pointer", fontSize: 14 }}>✕</button>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {showAdd && (
+        <GastoServicioModal evento={evento} editing={editing} proveedores={proveedores} servicios={serviciosContratados}
+          onClose={() => setShowAdd(false)}
+          onSaved={() => { setShowAdd(false); load(); }}
+        />
+      )}
+    </div>
+  );
+}
+
+// ─── Modal: crear/editar gasto ─────────────────────────────────────
+function GastoServicioModal({ evento, editing, proveedores, servicios, onClose, onSaved }) {
+  const isEdit = !!editing;
+  const [f, setF] = useState({
+    servicio_id:    editing?.servicio_id || "",
+    concepto:       editing?.concepto || "",
+    proveedor_id:   editing?.proveedor_id || "",
+    proveedor_nombre: editing?.proveedor_nombre || "",
+    monto:          editing?.monto || "",
+    iva_pct:        editing?.iva_pct ?? 19,
+    metodo_pago:    editing?.metodo_pago || "transferencia",
+    fecha:          editing?.fecha || new Date().toLocaleDateString("en-CA", { timeZone: "America/Bogota" }),
+    factura_numero: editing?.factura_numero || "",
+    notas:          editing?.notas || "",
+    estado:         editing?.estado || "pendiente",
+  });
+  const [archivo, setArchivo] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const set = (k, v) => setF(s => ({ ...s, [k]: v }));
+  const COPx = (n) => "$" + Math.round(Number(n) || 0).toLocaleString("es-CO");
+
+  const monto = Number(f.monto) || 0;
+  const ivaMonto = monto * (Number(f.iva_pct) || 0) / 100;
+  const total = monto + ivaMonto;
+
+  const guardar = async () => {
+    if (!f.concepto.trim()) return alert("Concepto requerido");
+    if (monto <= 0) return alert("Monto inválido");
+    setSaving(true);
+
+    // Subir factura si hay archivo nuevo
+    let factura_url = editing?.factura_url || null;
+    if (archivo) {
+      const ext = archivo.name.split(".").pop()?.toLowerCase() || "pdf";
+      const path = `${evento.id}/${Date.now()}-${Math.random().toString(36).slice(2, 6)}.${ext}`;
+      const { error: upErr } = await supabase.storage.from("facturas-servicios").upload(path, archivo, { contentType: archivo.type });
+      if (upErr) { alert("No se pudo subir la factura: " + upErr.message); setSaving(false); return; }
+      factura_url = path;
+    }
+
+    const proveedor = proveedores.find(p => p.id === f.proveedor_id);
+    const servicio = servicios.find(s => s.id === f.servicio_id);
+    const userEmail = (await supabase.auth.getUser()).data?.user?.email || "";
+
+    const payload = {
+      evento_id: evento.id,
+      servicio_id: f.servicio_id || null,
+      servicio_descripcion: servicio?.descripcion || servicio?.categoria || null,
+      proveedor_id: f.proveedor_id || null,
+      proveedor_nombre: proveedor?.nombre || f.proveedor_nombre.trim() || null,
+      concepto: f.concepto.trim(),
+      monto, iva_pct: Number(f.iva_pct) || 0, iva_monto: ivaMonto, total,
+      metodo_pago: f.metodo_pago,
+      fecha: f.fecha,
+      factura_numero: f.factura_numero.trim() || null,
+      factura_url,
+      notas: f.notas.trim() || null,
+      estado: f.estado,
+      pagado_at: f.estado === "pagado" ? (editing?.pagado_at || new Date().toISOString()) : null,
+      registrado_por: userEmail,
+      updated_at: new Date().toISOString(),
+    };
+    let error;
+    if (isEdit) ({ error } = await supabase.from("eventos_servicios_gastos").update(payload).eq("id", editing.id));
+    else        ({ error } = await supabase.from("eventos_servicios_gastos").insert(payload));
+    setSaving(false);
+    if (error) return alert("Error: " + error.message);
+    onSaved();
+  };
+
+  const LS = { display: "block", fontSize: 11, color: "rgba(255,255,255,0.5)", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 4 };
+  const IS = { width: "100%", padding: "9px 12px", borderRadius: 8, background: B.navyLight, border: `1px solid ${B.navyLight}`, color: "#fff", fontSize: 13, outline: "none", boxSizing: "border-box" };
+
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 1000, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "30px 16px", overflowY: "auto" }}>
+      <div onClick={e => e.stopPropagation()} style={{ background: B.navy, borderRadius: 16, padding: 22, maxWidth: 580, width: "100%", color: "#fff", border: `1px solid ${B.navyLight}` }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+          <div style={{ fontSize: 18, fontWeight: 800 }}>{isEdit ? "Editar gasto" : "+ Nueva factura/gasto"}</div>
+          <button type="button" onClick={onClose} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.4)", cursor: "pointer", fontSize: 22 }}>×</button>
+        </div>
+
+        <div style={{ marginBottom: 10 }}>
+          <label style={LS}>Servicio del evento (opcional)</label>
+          <select value={f.servicio_id} onChange={e => set("servicio_id", e.target.value)} style={IS}>
+            <option value="">— Sin vincular —</option>
+            {servicios.map(s => <option key={s.id} value={s.id}>{s.descripcion || s.categoria}</option>)}
+          </select>
+        </div>
+
+        <div style={{ marginBottom: 10 }}>
+          <label style={LS}>Concepto *</label>
+          <input value={f.concepto} onChange={e => set("concepto", e.target.value)} style={IS}
+            placeholder="Ej: Anticipo DJ · Factura final decoración" autoFocus />
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 10 }}>
+          <div>
+            <label style={LS}>Proveedor</label>
+            <select value={f.proveedor_id} onChange={e => set("proveedor_id", e.target.value)} style={IS}>
+              <option value="">— Externo / no en lista —</option>
+              {proveedores.map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}
+            </select>
+          </div>
+          {!f.proveedor_id && (
+            <div>
+              <label style={LS}>Nombre del proveedor</label>
+              <input value={f.proveedor_nombre} onChange={e => set("proveedor_nombre", e.target.value)} style={IS} placeholder="Si no está arriba" />
+            </div>
+          )}
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr", gap: 10, marginBottom: 10 }}>
+          <div>
+            <label style={LS}>Monto base (sin IVA)</label>
+            <input type="number" value={f.monto} onChange={e => set("monto", e.target.value)} style={IS} placeholder="0" />
+          </div>
+          <div>
+            <label style={LS}>IVA %</label>
+            <input type="number" value={f.iva_pct} onChange={e => set("iva_pct", e.target.value)} style={IS} />
+          </div>
+          <div>
+            <label style={LS}>Total (auto)</label>
+            <div style={{ ...IS, background: B.navy, color: B.sky, fontWeight: 800, fontFamily: "'Barlow Condensed', sans-serif", fontSize: 16 }}>{COPx(total)}</div>
+          </div>
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginBottom: 10 }}>
+          <div>
+            <label style={LS}>Fecha</label>
+            <input type="date" value={f.fecha} onChange={e => set("fecha", e.target.value)} style={IS} />
+          </div>
+          <div>
+            <label style={LS}>Método pago</label>
+            <select value={f.metodo_pago} onChange={e => set("metodo_pago", e.target.value)} style={IS}>
+              <option value="transferencia">Transferencia</option>
+              <option value="efectivo">Efectivo</option>
+              <option value="tarjeta">Tarjeta</option>
+              <option value="cheque">Cheque</option>
+              <option value="otro">Otro</option>
+            </select>
+          </div>
+          <div>
+            <label style={LS}>Factura #</label>
+            <input value={f.factura_numero} onChange={e => set("factura_numero", e.target.value)} style={IS} placeholder="(opcional)" />
+          </div>
+        </div>
+
+        <div style={{ marginBottom: 10 }}>
+          <label style={LS}>Adjuntar factura (PDF, JPG, PNG)</label>
+          <input type="file" accept=".pdf,.jpg,.jpeg,.png,.webp" onChange={e => setArchivo(e.target.files?.[0] || null)}
+            style={{ ...IS, padding: "8px 10px" }} />
+          {editing?.factura_url && !archivo && (
+            <div style={{ fontSize: 10, color: B.sky, marginTop: 4 }}>📎 Ya hay un archivo adjunto. Si no subís uno nuevo, queda el actual.</div>
+          )}
+        </div>
+
+        <div style={{ marginBottom: 12 }}>
+          <label style={LS}>Notas</label>
+          <textarea value={f.notas} onChange={e => set("notas", e.target.value)} rows={2} style={{ ...IS, resize: "vertical", fontFamily: "inherit" }} />
+        </div>
+
+        <div style={{ marginBottom: 14 }}>
+          <label style={LS}>Estado</label>
+          <div style={{ display: "flex", gap: 8 }}>
+            {[
+              { k: "pendiente", l: "Pendiente",  c: "#fbbf24" },
+              { k: "pagado",    l: "Pagado",     c: "#22c55e" },
+            ].map(e => (
+              <button key={e.k} type="button" onClick={() => set("estado", e.k)}
+                style={{ flex: 1, padding: "9px", borderRadius: 8, border: f.estado === e.k ? `2px solid ${e.c}` : `1px solid ${B.navyLight}`,
+                  background: f.estado === e.k ? e.c + "22" : B.navyMid,
+                  color: f.estado === e.k ? e.c : "rgba(255,255,255,0.6)", cursor: "pointer", fontSize: 12, fontWeight: 700 }}>
+                {e.l}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+          <button type="button" onClick={onClose} disabled={saving}
+            style={{ padding: "10px 16px", borderRadius: 8, border: "none", background: B.navyLight, color: "#fff", cursor: "pointer", fontWeight: 700, fontSize: 13 }}>Cancelar</button>
+          <button type="button" onClick={guardar} disabled={saving}
+            style={{ padding: "10px 18px", borderRadius: 8, border: "none", background: B.success, color: "#fff", cursor: "pointer", fontWeight: 700, fontSize: 13 }}>
+            {saving ? "Guardando…" : isEdit ? "Guardar cambios" : "Registrar gasto"}
+          </button>
+        </div>
       </div>
     </div>
   );
