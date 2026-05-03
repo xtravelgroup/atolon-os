@@ -3500,8 +3500,8 @@ export default function Reservas() {
       // Grupos hoy y mañana — incluidos en Promise.all para evitar flash de pax incorrecto
       supabase.from("eventos").select(GRUPO_FIELDS).eq("fecha", today).neq("stage", "Realizado"),
       supabase.from("eventos").select(GRUPO_FIELDS).eq("fecha", tomorrow).neq("stage", "Realizado"),
-      supabase.from("muelle_llegadas").select("id, fecha, embarcacion_nombre, pax_total, pax_a, pax_n, total_cobrado, metodo_pago, tipo, hora_llegada, estado, matricula, reserva_id").eq("fecha", today).neq("tipo", "lancha_atolon").order("hora_llegada"),
-      supabase.from("muelle_llegadas").select("id, fecha, embarcacion_nombre, pax_total, pax_a, pax_n, total_cobrado, metodo_pago, tipo, hora_llegada, estado, matricula, reserva_id").eq("fecha", tomorrow).neq("tipo", "lancha_atolon").order("hora_llegada"),
+      supabase.from("muelle_llegadas").select("id, fecha, embarcacion_nombre, pax_total, pax_a, pax_n, total_cobrado, metodo_pago, tipo, hora_llegada, estado, matricula, reserva_id, excluir_kpis").eq("fecha", today).neq("tipo", "lancha_atolon").order("hora_llegada"),
+      supabase.from("muelle_llegadas").select("id, fecha, embarcacion_nombre, pax_total, pax_a, pax_n, total_cobrado, metodo_pago, tipo, hora_llegada, estado, matricula, reserva_id, excluir_kpis").eq("fecha", tomorrow).neq("tipo", "lancha_atolon").order("hora_llegada"),
     ]);
     // Map llegadas to virtual reserva rows with "Sin Reserva" tag
     const mapLlegada = (l) => ({
@@ -4122,11 +4122,21 @@ export default function Reservas() {
       })()}
 
       {/* ── Day tabs ── */}
+      {/* Filtro de llegadas para el contador: excluye huéspedes, inspecciones,
+          contratistas/staff (excluir_kpis=true) y llegadas vinculadas a una
+          reserva (doble conteo). Para el conteo del badge "Hoy/Mañana" no
+          queremos sumar gente que no es pasadía pagante. */}}
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: isMobile ? 16 : 20, alignItems: "center" }}>
-        {[
-          { key: "hoy",    label: "Hoy",    fecha: today,    count: reservasHoy.filter(r => r.estado !== "cancelado" && !r.grupo_id).reduce((s,r) => s + r.pax, 0) + gruposHoy.reduce((s,g) => s + grupoPaxTotal(g, reservasHoy), 0) + llegadasHoyAll.reduce((s,l) => s + (l.pax_total||0), 0) },
-          { key: "manana", label: "Mañana", fecha: tomorrow, count: reservasManana.filter(r => r.estado !== "cancelado" && !r.grupo_id).reduce((s,r) => s + r.pax, 0) + gruposManana.reduce((s,g) => s + grupoPaxTotal(g, reservasManana), 0) + llegadasManAll.reduce((s,l) => s + (l.pax_total||0), 0) },
-        ].map(t => (
+        {(() => {
+          const cuentaPasadia = (l) =>
+            !l.excluir_kpis &&
+            !l.reserva_id &&
+            !["huespedes", "inspeccion", "lanchas_atolon"].includes(l.tipo);
+          return [
+          { key: "hoy",    label: "Hoy",    fecha: today,    count: reservasHoy.filter(r => r.estado !== "cancelado" && !r.grupo_id).reduce((s,r) => s + r.pax, 0) + gruposHoy.reduce((s,g) => s + grupoPaxTotal(g, reservasHoy), 0) + llegadasHoyAll.filter(cuentaPasadia).reduce((s,l) => s + (l.pax_total||0), 0) },
+          { key: "manana", label: "Mañana", fecha: tomorrow, count: reservasManana.filter(r => r.estado !== "cancelado" && !r.grupo_id).reduce((s,r) => s + r.pax, 0) + gruposManana.reduce((s,g) => s + grupoPaxTotal(g, reservasManana), 0) + llegadasManAll.filter(cuentaPasadia).reduce((s,l) => s + (l.pax_total||0), 0) },
+          ];
+        })().map(t => (
           <button key={t.key} onClick={() => { setTabDia(t.key); setSearch(""); setFilter("todos"); }} style={{
             display: "flex", alignItems: "center", gap: 8,
             background: tabDia === t.key ? B.sky + "22" : B.navyMid,

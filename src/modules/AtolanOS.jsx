@@ -98,9 +98,25 @@ function Dashboard() {
         // Grupos hoy y mañana
         supabase.from("eventos").select("id, pax, fecha, pasadias_org, categoria, aliado_id").eq("fecha", hoy).neq("stage", "Realizado"),
         supabase.from("eventos").select("id, pax, fecha, pasadias_org, categoria, aliado_id").eq("fecha", mananaStr).neq("stage", "Realizado"),
-        // Llegadas muelle (After Island, Restaurante, Walk-in) — excluye lancha_atolon
-        supabase.from("muelle_llegadas").select("pax_total").eq("fecha", hoy).neq("tipo", "lancha_atolon"),
-        supabase.from("muelle_llegadas").select("pax_total").eq("fecha", mananaStr).neq("tipo", "lancha_atolon"),
+        // Llegadas muelle (After Island, Restaurante, Walk-in) — excluye:
+        //   • lancha_atolon (lancha de staff/operación)
+        //   • lanchas_atolon (idem)
+        //   • huespedes (hotel guests, no son pasadía)
+        //   • inspeccion (B2B inspection tours, no pagan pasadía)
+        //   • llegadas vinculadas a reserva (doble conteo con paxHoyR)
+        //   • llegadas marcadas excluir_kpis (staff, contratistas, cortesía)
+        // Antes solo excluía lancha_atolon, así que llegadas de huéspedes
+        // mal categorizadas como "otras"/"walkin" se sumaban al pax del día.
+        supabase.from("muelle_llegadas").select("pax_total")
+          .eq("fecha", hoy)
+          .not("tipo", "in", '("lancha_atolon","lanchas_atolon","huespedes","inspeccion")')
+          .is("reserva_id", null)
+          .or("excluir_kpis.is.null,excluir_kpis.eq.false"),
+        supabase.from("muelle_llegadas").select("pax_total")
+          .eq("fecha", mananaStr)
+          .not("tipo", "in", '("lancha_atolon","lanchas_atolon","huespedes","inspeccion")')
+          .is("reserva_id", null)
+          .or("excluir_kpis.is.null,excluir_kpis.eq.false"),
       ]);
 
       const isGrupo = (e) => e.categoria === "grupo" || (!e.categoria && e.aliado_id);
