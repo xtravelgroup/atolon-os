@@ -4271,7 +4271,7 @@ export default function EventoDetalle({ evento: inicial, canEdit = true, onBack,
       })()}
       {tab === "servicios" && <TabServicios  items={evento.servicios_contratados||[]}     onChange={v => updateLocal("servicios_contratados", v)} pasadiasOrg={evento.pasadias_org||[]} onChangePasadias={vistaOperativa ? null : v => updateLocal("pasadias_org", v)} categoria={evento.categoria} precioTipo={evento.precio_tipo||"publico"} pasadiasMap={pasadiasMap} cotizacionData={evento.cotizacion_data||null} eventoId={evento.id} eventoFecha={evento.fecha} eventoNombre={evento.nombre} evento={evento} ocultarPrecios={vistaOperativa} />}
       {tab === "menus"     && <TabMenus     servicios={evento.servicios_contratados||[]} menusDetalle={evento.menus_detalle||{}} onChange={v => updateLocal("menus_detalle", v)} cotizacionData={evento.cotizacion_data||null} timelineItems={evento.timeline_items||[]} />}
-      {tab === "openbar"   && <TabOpenBar      eventoId={evento.id} ocultarPrecios={vistaOperativa} />}
+      {tab === "openbar"   && <TabOpenBar      evento={evento} ocultarPrecios={vistaOperativa} />}
       {tab === "asignaciones" && <TabAsignaciones timelineItems={evento.timeline_items||[]} />}
       {tab === "pagos"     && (() => {
         const resolverPrecioLocal = (p) => {
@@ -4324,7 +4324,8 @@ const TIPOS_CONSUMO = [
   { k: "cocina_paquete", l: "Paquete incluido", icon: "🎁", color: "#22c55e", desc: "Productos del paquete contratado" },
 ];
 
-function TabOpenBar({ eventoId, ocultarPrecios = false }) {
+function TabOpenBar({ evento, ocultarPrecios = false }) {
+  const eventoId = evento?.id;
   const [items, setItems] = useState([]);
   const [locaciones, setLocaciones] = useState([]);
   const [consumo, setConsumo] = useState([]);
@@ -4333,7 +4334,8 @@ function TabOpenBar({ eventoId, ocultarPrecios = false }) {
   const [showPick, setShowPick] = useState(false);
   const [search, setSearch] = useState("");
   const [pickItem, setPickItem] = useState(null);
-  const [pickTipo, setPickTipo] = useState("openbar");   // tipo seleccionado al registrar
+  const [pickTipo, setPickTipo] = useState("openbar");
+  const [pickServicio, setPickServicio] = useState("");  // formato: "origen|id"
   const [cantidad, setCantidad] = useState("1");
   const [locacionId, setLocacionId] = useState("LOC-EVENTOS");
   const [notas, setNotas] = useState("");
@@ -4341,6 +4343,61 @@ function TabOpenBar({ eventoId, ocultarPrecios = false }) {
   const [userEmail, setUserEmail] = useState("");
   const COPx = (n) => "$" + Math.round(Number(n) || 0).toLocaleString("es-CO");
   const tipoInfo = (k) => TIPOS_CONSUMO.find(t => t.k === k) || TIPOS_CONSUMO[0];
+
+  // ── Servicios de A&B disponibles para vincular ──────────────────────
+  // Solo extraemos items relacionados con Alimentos & Bebidas:
+  //   • cotizacion_data.alimentos[]                    → "Cotizado A&B"
+  //   • extras_data.alimentos[]                        → "Extra A&B"
+  //   • servicios_contratados[] con categoría A&B      → "Servicio contratado"
+  //     (banquetes, bebidas, restaurant, alimentos, alimentos y bebidas)
+  const serviciosAyB = useMemo(() => {
+    const result = [];
+    const cot = evento?.cotizacion_data || {};
+    const extras = evento?.extras_data || {};
+
+    (cot.alimentos || []).forEach(a => {
+      if (!a) return;
+      result.push({
+        id: a.id || `alim-${result.length}`,
+        origen: "alimento",
+        origenLabel: "Cotizado A&B",
+        origenColor: "#f59e0b",
+        descripcion: a.concepto || a.descripcion || "Sin nombre",
+        cantidad: a.cantidad,
+      });
+    });
+    (extras.alimentos || []).forEach((a, i) => {
+      if (!a) return;
+      result.push({
+        id: a.id || `extra-alim-${i}`,
+        origen: "extra_alimento",
+        origenLabel: "Extra A&B",
+        origenColor: "#fb923c",
+        descripcion: a.concepto || a.descripcion || "Sin nombre",
+        cantidad: a.cantidad,
+      });
+    });
+    const CATS_AYB = /banquete|bebida|restaurant|alimento|comida|menu|cocktail|coctel|food|catering/i;
+    (evento?.servicios_contratados || []).forEach(s => {
+      if (!s) return;
+      const cat = String(s.categoria || "").toLowerCase();
+      const desc = String(s.descripcion || s.nombre || "").toLowerCase();
+      if (CATS_AYB.test(cat) || CATS_AYB.test(desc)) {
+        result.push({
+          id: s.id || `srv-${result.length}`,
+          origen: "contratado",
+          origenLabel: "Servicio contratado",
+          origenColor: "#a78bfa",
+          descripcion: s.descripcion || s.nombre || s.categoria || "Servicio",
+          cantidad: s.cantidad,
+        });
+      }
+    });
+    return result;
+  }, [evento]);
+
+  // Mapa para resolver "origen|id" → servicio
+  const servicioByKey = Object.fromEntries(serviciosAyB.map(s => [`${s.origen}|${s.id}`, s]));
 
   const load = async () => {
     setLoading(true);
@@ -4405,8 +4462,12 @@ function TabOpenBar({ eventoId, ocultarPrecios = false }) {
     if (!pickItem) return;
     const qty = Number(cantidad);
     if (!qty || qty <= 0) return alert("Cantidad inválida");
+    if (serviciosAyB.length > 0 && !pickServicio) {
+      return alert("Seleccioná a qué servicio de A&B aplica este consumo.");
+    }
     setSaving(true);
     const precio = Number(pickItem.precio_compra) || 0;
+    const sv = pickServicio ? servicioByKey[pickServicio] : null;
     const { error } = await supabase.from("eventos_consumo_openbar").insert({
       evento_id: eventoId,
       item_id: pickItem.id,
@@ -4416,6 +4477,9 @@ function TabOpenBar({ eventoId, ocultarPrecios = false }) {
       precio_unitario: precio,
       costo_total: qty * precio,
       tipo: pickTipo,
+      servicio_id: sv?.id || null,
+      servicio_origen: sv?.origen || null,
+      servicio_descripcion: sv?.descripcion || null,
       notas: notas.trim() || null,
       registrado_por: userEmail,
     });
@@ -4423,6 +4487,7 @@ function TabOpenBar({ eventoId, ocultarPrecios = false }) {
     if (error) return alert("Error: " + error.message);
     setShowPick(false);
     setPickItem(null);
+    setPickServicio("");
     setCantidad("1");
     setNotas("");
     setSearch("");
@@ -4523,7 +4588,11 @@ function TabOpenBar({ eventoId, ocultarPrecios = false }) {
                     <span>{it?.nombre || c.item_id}</span>
                   </div>
                   <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", marginTop: 1 }}>
-                    {it?.categoria || "—"}{c.notas ? ` · ${c.notas}` : ""}
+                    {it?.categoria || "—"}
+                    {c.servicio_descripcion && (
+                      <> · <span style={{ color: "#fbbf24" }}>📋 {c.servicio_descripcion}</span></>
+                    )}
+                    {c.notas ? ` · ${c.notas}` : ""}
                     {c.registrado_por && ` · por ${c.registrado_por.split("@")[0]}`}
                     {c.anulado && c.motivo_anulacion && ` · anulado: ${c.motivo_anulacion}`}
                   </div>
@@ -4552,6 +4621,39 @@ function TabOpenBar({ eventoId, ocultarPrecios = false }) {
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
               <div style={{ fontSize: 18, fontWeight: 800 }}>+ Cargar consumo</div>
               <button type="button" onClick={() => setShowPick(false)} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.4)", cursor: "pointer", fontSize: 22 }}>×</button>
+            </div>
+
+            {/* Servicio de A&B al que aplica este consumo */}
+            <div style={{ marginBottom: 12 }}>
+              <label style={{ display: "block", fontSize: 11, color: "rgba(255,255,255,0.5)", fontWeight: 600, textTransform: "uppercase", marginBottom: 6 }}>
+                Servicio A&B del evento *
+              </label>
+              {serviciosAyB.length === 0 ? (
+                <div style={{ padding: "10px 12px", background: "rgba(245,158,11,0.08)", border: `1px solid ${B.warning}55`, borderRadius: 8, fontSize: 11, color: B.warning }}>
+                  ⚠️ No hay servicios de A&B en la cotización. Agregá items de "Alimentos y Bebidas" en la cotización primero.
+                </div>
+              ) : (
+                <select value={pickServicio} onChange={e => setPickServicio(e.target.value)} required
+                  style={{ width: "100%", padding: "10px 12px", borderRadius: 8, background: B.navyLight, border: `1px solid ${B.navyLight}`, color: "#fff", fontSize: 13, outline: "none", boxSizing: "border-box" }}>
+                  <option value="">— Seleccionar servicio —</option>
+                  {Object.entries(serviciosAyB.reduce((acc, s) => {
+                    if (!acc[s.origenLabel]) acc[s.origenLabel] = [];
+                    acc[s.origenLabel].push(s);
+                    return acc;
+                  }, {})).map(([grupo, items]) => (
+                    <optgroup key={grupo} label={grupo}>
+                      {items.map(s => (
+                        <option key={`${s.origen}|${s.id}`} value={`${s.origen}|${s.id}`}>
+                          {s.descripcion}{s.cantidad ? ` (×${s.cantidad})` : ""}
+                        </option>
+                      ))}
+                    </optgroup>
+                  ))}
+                </select>
+              )}
+              <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", marginTop: 4 }}>
+                Permite reportar costo por línea de cotización (ej: cuánto costó "Open Bar Premium").
+              </div>
             </div>
 
             {/* Selector de tipo: en qué categoría va este consumo */}
