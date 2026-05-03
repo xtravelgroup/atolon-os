@@ -2487,12 +2487,21 @@ function CotizacionModal({ evento, aliados, onClose, onSaved }) {
             <div style={{ width: 60, height: 1, background: "#C8B99A", margin: "20px auto 0" }} />
           </div>
 
-          {[
-            ["ESPACIOS",             espacios,  false, "IVA", "El escenario de lo que está por suceder."],
-            ["HOSPEDAJE",            hospedaje, true,  "IVA", "Para quienes quieran quedarse a ver cómo termina la historia."],
-            ["ALIMENTOS Y BEBIDAS",  alimentos, false, "ICO", "Cada plato, un capítulo. Cada copa, una pausa."],
-            ["OTROS SERVICIOS",      servicios, false, "IVA", "Los detalles que convierten un evento en un recuerdo."],
-          ].map(([title, rows, noches, ivaLabel, story]) => rows.length > 0 && (
+          {(() => {
+            // Separar propina del resto de "Otros Servicios" — la propina
+            // es un cargo distinto (no es un servicio cotizable como tal)
+            // y debe aparecer en su propia sección al final.
+            const isPropina = (l) => /propina|tip\b|gratuit/i.test(l?.concepto || l?.descripcion || "");
+            const serviciosNoProp = (servicios || []).filter(l => !isPropina(l));
+            const propinas         = (servicios || []).filter(l =>  isPropina(l));
+            return [
+              ["ESPACIOS",             espacios,        false, "IVA", "El escenario de lo que está por suceder."],
+              ["HOSPEDAJE",            hospedaje,       true,  "IVA", "Para quienes quieran quedarse a ver cómo termina la historia."],
+              ["ALIMENTOS Y BEBIDAS",  alimentos,       false, "ICO", "Cada plato, un capítulo. Cada copa, una pausa."],
+              ["OTROS SERVICIOS",      serviciosNoProp, false, "IVA", "Los detalles que convierten un evento en un recuerdo."],
+              ["PROPINA",              propinas,        false, "IVA", "Reconocimiento al equipo que hace posible la experiencia."],
+            ];
+          })().map(([title, rows, noches, ivaLabel, story]) => rows.length > 0 && (
             <div key={title} style={{ marginBottom: 24, pageBreakInside: "avoid" }}>
               <div className="cot-eyebrow" style={{ marginBottom: 6, textAlign: "left" }}>{title}</div>
               <div className="cot-italic" style={{ fontSize: 14, color: "#1E3566", marginBottom: 12, textAlign: "left" }}>{story}</div>

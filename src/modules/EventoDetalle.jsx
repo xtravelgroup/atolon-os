@@ -5072,16 +5072,21 @@ function TabPL({ evento }) {
     const sub = (Number(l.cantidad) || 1) * (Number(l.noches) || 1) * (Number(l.valor_unit) || 0);
     return s + sub + sub * ((Number(l.iva) || 0) / 100);
   }, 0);
+  // Separar propina de "Otros servicios" — es un cargo distinto.
+  const isPropina = (l) => /propina|tip\b|gratuit/i.test(l?.concepto || l?.descripcion || "");
+  const cotServiciosNoProp = (cot.servicios || []).filter(l => !isPropina(l));
+  const cotPropinas         = (cot.servicios || []).filter(l =>  isPropina(l));
   const ingEspacios   = calcSum(cot.espacios);
   const ingHospedaje  = calcSum(cot.hospedaje || cot.alojamientos);
   const ingAlimentos  = calcSum(cot.alimentos);
-  const ingOtrosCot   = calcSum(cot.servicios);
+  const ingOtrosCot   = calcSum(cotServiciosNoProp);
+  const ingPropina    = calcSum(cotPropinas);
   const ingServicios  = (evento.servicios_contratados || []).reduce((s, x) => s + (Number(x.valor) || 0), 0);
   const valorBase     = Number(evento.valor) || 0;
   const valorExtras   = Number(evento.valor_extras) || 0;
   const ingresoTotal  = Math.max(
     valorBase + valorExtras + ingServicios,
-    ingEspacios + ingHospedaje + ingAlimentos + ingOtrosCot,
+    ingEspacios + ingHospedaje + ingAlimentos + ingOtrosCot + ingPropina,
   );
 
   // ── COSTOS ──────────────────────────────────────────────────────
@@ -5210,6 +5215,7 @@ function TabPL({ evento }) {
             ["Hospedaje",  ingHospedaje],
             ["Alimentos y Bebidas", ingAlimentos],
             ["Otros servicios cotizados", ingOtrosCot],
+            ["💵 Propina", ingPropina],
             ["Servicios contratados", ingServicios],
             ["Valor base evento", valorBase],
             ["Valor extras", valorExtras],
