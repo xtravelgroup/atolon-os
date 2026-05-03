@@ -4125,7 +4125,7 @@ export default function Reservas() {
       {/* Filtro de llegadas para el contador: excluye huéspedes, inspecciones,
           contratistas/staff (excluir_kpis=true) y llegadas vinculadas a una
           reserva (doble conteo). Para el conteo del badge "Hoy/Mañana" no
-          queremos sumar gente que no es pasadía pagante. */}}
+          queremos sumar gente que no es pasadía pagante. */}
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: isMobile ? 16 : 20, alignItems: "center" }}>
         {(() => {
           const cuentaPasadia = (l) =>
