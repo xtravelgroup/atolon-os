@@ -5333,20 +5333,26 @@ function TabGastosServicios({ evento, ocultarPrecios = false }) {
     descripcion: a.concepto || "Servicio extra", cobrado: calcLine(a),
   }));
 
-  // Resumen por servicio: cobrado vs gastado (usando keys compuestas)
+  // Resumen "Cobrado vs Gastado": SOLO items que tengan algún gasto
+  // registrado. Los items cotizados sin gasto NO aparecen — esto es un
+  // resumen de gastos efectivos, no del avance de la cotización.
   const porServicio = {};
-  serviciosEvento.forEach(s => {
-    porServicio[s.key] = {
-      descripcion: s.descripcion, origen: s.origen, origenColor: s.origenColor,
-      cobrado: s.cobrado, gastado: 0, gastosPagados: 0, gastosPendientes: 0,
-    };
-  });
+  const serviciosEventoByKey = Object.fromEntries(serviciosEvento.map(s => [s.key, s]));
   gastos.filter(g => g.estado !== "anulado").forEach(g => {
-    if (g.servicio_id && porServicio[g.servicio_id]) {
-      porServicio[g.servicio_id].gastado += Number(g.total) || 0;
-      if (g.estado === "pagado") porServicio[g.servicio_id].gastosPagados   += Number(g.total) || 0;
-      else                       porServicio[g.servicio_id].gastosPendientes += Number(g.total) || 0;
+    const key = g.servicio_id || "_sin_vincular";
+    if (!porServicio[key]) {
+      const s = serviciosEventoByKey[key];
+      porServicio[key] = {
+        descripcion: s?.descripcion || g.servicio_descripcion || "Sin vincular a servicio",
+        origen:      s?.origen      || (g.servicio_id ? "Servicio archivado" : "Gasto general"),
+        origenColor: s?.origenColor || "rgba(255,255,255,0.4)",
+        cobrado:     s?.cobrado     || 0,
+        gastado: 0, gastosPagados: 0, gastosPendientes: 0,
+      };
     }
+    porServicio[key].gastado += Number(g.total) || 0;
+    if (g.estado === "pagado") porServicio[key].gastosPagados   += Number(g.total) || 0;
+    else                       porServicio[key].gastosPendientes += Number(g.total) || 0;
   });
 
   const totalGastos = gastos.filter(g => g.estado !== "anulado").reduce((s, g) => s + (Number(g.total) || 0), 0);
@@ -5413,7 +5419,6 @@ function TabGastosServicios({ evento, ocultarPrecios = false }) {
             <div style={{ textAlign: "right" }}>%</div>
           </div>
           {Object.entries(porServicio)
-            .filter(([, s]) => s.cobrado > 0 || s.gastado > 0)
             .sort(([, a], [, b]) => b.gastado - a.gastado)
             .map(([id, s]) => {
               const m = s.cobrado - s.gastado;
