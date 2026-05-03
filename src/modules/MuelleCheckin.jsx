@@ -261,6 +261,16 @@ function ModalNuevaLlegada({ tipo, fecha, reserva, llegadasDelDia = [], onClose,
       if (f.horas_centro) motoresHoras.Centro = Number(f.horas_centro);
     }
 
+    // ── Auto excluir_kpis ─────────────────────────────────────────────
+    // Si la llegada es 100% huéspedes/staff (no pasadía pagante) o el
+    // tipo es huespedes/inspeccion, marcar excluir_kpis=true para que
+    // NO sume al contador de pasadías del día. Antes esto se hacía a
+    // mano y quedaban llegadas de huéspedes contando como pasadías.
+    const totalPaxPagante = (Number(f.pax_a) || 0) + (Number(f.pax_n) || 0);
+    const totalNoPagante  = staff + huespedes;
+    const tipoExento = ["huespedes", "inspeccion"].includes(tipoSeleccionado);
+    const excluirKpisAuto = tipoExento || (totalNoPagante > 0 && totalPaxPagante === 0);
+
     const payload = {
       id, fecha, tipo: tipoSeleccionado,
       embarcacion_nombre: embarcacionNombre,
@@ -274,6 +284,7 @@ function ModalNuevaLlegada({ tipo, fecha, reserva, llegadasDelDia = [], onClose,
       notas: notasExtras.join(" ") + (notasExtras.length ? " " : "") + (f.notas || ""),
       costo_operativo: costoOperativo,
       boca_chica: !!f.boca_chica,
+      excluir_kpis: excluirKpisAuto,
     };
     // Solo incluir foto_url si está disponible (columna puede no existir aún)
     if (foto_url) payload.foto_url = foto_url;

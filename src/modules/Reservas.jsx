@@ -3619,7 +3619,16 @@ export default function Reservas() {
   const grupos = tabDia === "hoy" ? gruposHoy : tabDia === "manana" ? gruposManana : (fechaFiltro ? gruposFecha : []);
   // Solo embarcaciones que traen pasadías (pax_a + pax_n > 0). Huéspedes/staff-only no se muestran.
   const llegadasDiaAll = tabDia === "hoy" ? llegadasHoyAll : tabDia === "manana" ? llegadasManAll : (fechaFiltro ? llegadasFechaAll : []);
-  const llegadasDia = llegadasDiaAll.filter(l => (Number(l.pax_a) || 0) + (Number(l.pax_n) || 0) > 0);
+  // Filtro para los KPIs (Total Pax / Venta Total): excluir huéspedes,
+  // inspecciones, staff/contratistas (excluir_kpis=true) y llegadas
+  // vinculadas a reserva (doble conteo). El operador sigue viendo TODAS
+  // las llegadas en la lista — esto solo afecta los números agregados.
+  const llegadasDia = llegadasDiaAll.filter(l =>
+    (Number(l.pax_a) || 0) + (Number(l.pax_n) || 0) > 0 &&
+    !l.excluir_kpis &&
+    !l.reserva_id &&
+    !["huespedes", "inspeccion", "lanchas_atolon"].includes(l.tipo)
+  );
   // Pax real del grupo: excluye Impuesto Muelle y STAFF del conteo de pasajeros
   // Calcula pax del grupo combinando pasadias_org + reservas vinculadas.
   // IMPORTANTE: usa la lista de reservas del día del grupo (no la del tab activo),
