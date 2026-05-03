@@ -48,6 +48,7 @@ export default function Briefings() {
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState("activos");
   const [openId, setOpenId] = useState(null);
+  const [showAgendar, setShowAgendar] = useState(false);
   // Email del usuario logueado: cada briefing es PRIVADO para su creador.
   // Lo obtenemos de la sesión Supabase ya que MODULE_MAP no lo pasa por prop.
   const [userEmail, setUserEmail] = useState(null);
@@ -108,26 +109,42 @@ export default function Briefings() {
     return map;
   }, [tareasMias]);
 
-  // Crear nuevo briefing
-  const crearBriefing = async () => {
+  // Crear briefing agendado (con fecha/hora futuras y puntos a discutir).
+  // Los puntos vienen marcados (o no) con en_agenda — sólo los marcados
+  // se reflejan en `agenda` (pública). El array completo vive en
+  // `puntos_discutir` (privado del creador).
+  const crearBriefingAgendado = async ({ fecha, hora, titulo, tipo, puntos }) => {
     const codigo = `BR-${Date.now().toString().slice(-8)}`;
-    // Buscar el más reciente cerrado para enlazar como anterior
     const anterior = briefingsMios.find(b => b.estado === "cerrado");
+
+    const puntosLimpios = (puntos || []).filter(p => p.titulo?.trim()).map((p, i) => ({
+      id: p.id || uid(),
+      titulo: p.titulo.trim(),
+      descripcion: p.descripcion?.trim() || "",
+      en_agenda: !!p.en_agenda,
+      orden: i + 1,
+    }));
+    const agendaPublica = puntosLimpios.filter(p => p.en_agenda).map((p, i) => ({
+      id: p.id, titulo: p.titulo, descripcion: p.descripcion, orden: i + 1,
+    }));
+
     const payload = {
       codigo,
-      fecha: todayStr(),
-      hora: new Date().toTimeString().slice(0, 5),
-      titulo: `Briefing ${todayStr()}`,
-      tipo: "general",
+      fecha: fecha || todayStr(),
+      hora: hora || new Date().toTimeString().slice(0, 5),
+      titulo: titulo?.trim() || `Briefing ${fecha || todayStr()}`,
+      tipo: tipo || "general",
       asistentes: [],
-      agenda: [],
+      agenda: agendaPublica,
+      puntos_discutir: puntosLimpios,
       notas: "",
       estado: "programado",
       briefing_anterior_id: anterior?.id || null,
-      creado_por: userEmail || "", // ← privacidad: el owner del briefing
+      creado_por: userEmail || "",
     };
     const { data, error } = await supabase.from("briefings").insert(payload).select().single();
-    if (error) return alert("Error: " + error.message);
+    if (error) { alert("Error: " + error.message); return; }
+    setShowAgendar(false);
     setOpenId(data.id);
     load();
   };
@@ -163,7 +180,8 @@ export default function Briefings() {
           <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontSize: 32, fontWeight: 800 }}>📋 Briefings</div>
           <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)" }}>Reuniones con supervisores y gerentes · Asignación y seguimiento de tareas</div>
         </div>
-        <button onClick={crearBriefing} style={BTN(B.hotel)}>+ Nuevo briefing</button>
+        <button onClick={() => setShowAgendar(true)} style={BTN(B.hotel)}>📅 Agendar briefing</button>
+        {showAgendar && <AgendarBriefingModal onClose={() => setShowAgendar(false)} onCrear={crearBriefingAgendado} />}
       </div>
 
       {/* KPIs */}
@@ -621,8 +639,19 @@ function BriefingDetalle({ briefing, tareas, tareasAnterior, briefingAnterior, e
   const [saving, setSaving] = useState(false);
   const [showNewTask, setShowNewTask] = useState(false);
   const [showAddAttendee, setShowAddAttendee] = useState(false);
+  const [userEmail, setUserEmail] = useState(null);
 
   useEffect(() => { setForm({ ...briefing }); }, [briefing.id]);
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data }) => {
+      setUserEmail((data?.user?.email || "").toLowerCase());
+    });
+  }, []);
+
+  // ¿El usuario actual es el creador? Solo el creador ve "Puntos a discutir"
+  // privados y puede marcar cuáles van a la agenda pública.
+  const ownerEmail = (briefing.creado_por || "").toLowerCase().trim();
+  const esCreador = !ownerEmail || (userEmail && ownerEmail === userEmail);
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
@@ -635,6 +664,7 @@ function BriefingDetalle({ briefing, tareas, tareasAnterior, briefingAnterior, e
       tipo: form.tipo,
       asistentes: form.asistentes || [],
       agenda: form.agenda || [],
+      puntos_discutir: form.puntos_discutir || [],
       notas: form.notas || "",
       acuerdos: form.acuerdos || "",
       estado: form.estado,
@@ -669,6 +699,22 @@ function BriefingDetalle({ briefing, tareas, tareasAnterior, briefingAnterior, e
   const addAgenda = () => set("agenda", [...(form.agenda || []), { id: uid(), titulo: "", descripcion: "", orden: (form.agenda || []).length + 1 }]);
   const updateAgenda = (id, k, v) => set("agenda", (form.agenda || []).map(t => t.id === id ? { ...t, [k]: v } : t));
   const removeAgenda = (id) => set("agenda", (form.agenda || []).filter(t => t.id !== id));
+
+  // Puntos a discutir (privados al creador). Cada punto tiene en_agenda:bool.
+  // Marcar/desmarcar el checkbox sincroniza con la agenda pública.
+  const syncAgendaFromPuntos = (puntos) => {
+    // Mantener items de agenda que NO vinieron de puntos (agregados directos)
+    const idsDePuntos = new Set((form.puntos_discutir || []).map(p => p.id));
+    const agendaManual = (form.agenda || []).filter(a => !idsDePuntos.has(a.id));
+    const desdePuntos = puntos.filter(p => p.en_agenda && p.titulo?.trim()).map(p => ({
+      id: p.id, titulo: p.titulo, descripcion: p.descripcion || "", orden: 0,
+    }));
+    const merged = [...desdePuntos, ...agendaManual].map((a, i) => ({ ...a, orden: i + 1 }));
+    setForm(f => ({ ...f, puntos_discutir: puntos, agenda: merged }));
+  };
+  const addPunto    = () => syncAgendaFromPuntos([...(form.puntos_discutir || []), { id: uid(), titulo: "", descripcion: "", en_agenda: true }]);
+  const updatePunto = (id, k, v) => syncAgendaFromPuntos((form.puntos_discutir || []).map(p => p.id === id ? { ...p, [k]: v } : p));
+  const removePunto = (id) => syncAgendaFromPuntos((form.puntos_discutir || []).filter(p => p.id !== id));
 
   const t = TIPOS.find(x => x.key === form.tipo) || TIPOS[0];
   const e = ESTADOS_BR.find(x => x.k === form.estado) || ESTADOS_BR[0];
@@ -838,6 +884,55 @@ function BriefingDetalle({ briefing, tareas, tareasAnterior, briefingAnterior, e
           </div>
         )}
       </div>
+
+      {/* ── Puntos a discutir (privados al creador) ──
+          Solo el solicitante ve esta sección. Cada punto tiene un checkbox
+          "Agenda" — al activarlo el punto se refleja en la agenda pública
+          que ven todos los participantes. Esto permite tener un borrador
+          privado sin compartir todo con el equipo. */}
+      {esCreador && (
+        <div style={{ background: "rgba(245,158,11,0.08)", borderRadius: 12, padding: "16px 18px", marginBottom: 16, border: `1px solid ${B.warning}55` }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, flexWrap: "wrap", gap: 8 }}>
+            <div>
+              <div style={{ fontSize: 11, color: B.warning, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.08em" }}>
+                🔒 Puntos a discutir — privados ({(form.puntos_discutir || []).length})
+              </div>
+              <div style={{ fontSize: 11, color: "rgba(255,255,255,0.55)", marginTop: 3 }}>
+                Solo vos ves esta lista. Marcá ✓ los que querés mostrar en la agenda pública.
+              </div>
+            </div>
+            <button onClick={addPunto} style={{ ...BTN(B.warning), fontSize: 12, padding: "8px 14px" }}>+ Punto privado</button>
+          </div>
+          {(form.puntos_discutir || []).length === 0 ? (
+            <div style={{ padding: 14, borderRadius: 8, background: "rgba(245,158,11,0.04)", border: `1px dashed ${B.warning}55`, fontSize: 12, color: B.warning, textAlign: "center" }}>
+              Sin puntos privados. Agregá el primero ↑
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {(form.puntos_discutir || []).map((p, idx) => (
+                <div key={p.id} style={{ background: B.navyLight, borderRadius: 8, padding: "10px 12px", display: "flex", gap: 10, alignItems: "flex-start" }}>
+                  <label style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4, paddingTop: 2, cursor: "pointer", whiteSpace: "nowrap", fontSize: 9, color: p.en_agenda ? B.success : "rgba(255,255,255,0.4)", fontWeight: 700, minWidth: 56 }}
+                         title={p.en_agenda ? "Visible en la agenda pública" : "Solo lo ves vos"}>
+                    <input type="checkbox" checked={!!p.en_agenda} onChange={ev => { updatePunto(p.id, "en_agenda", ev.target.checked); setTimeout(guardar, 100); }}
+                           style={{ accentColor: B.success, width: 18, height: 18 }} />
+                    {p.en_agenda ? "✓ Agenda" : "Privado"}
+                  </label>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <input value={p.titulo || ""} onChange={ev => updatePunto(p.id, "titulo", ev.target.value)} onBlur={() => guardar()}
+                           placeholder={`Punto ${idx + 1} — título`}
+                           style={{ background: "transparent", border: "none", color: "#fff", fontSize: 13, fontWeight: 700, padding: 0, outline: "none", width: "100%" }} />
+                    <textarea value={p.descripcion || ""} onChange={ev => updatePunto(p.id, "descripcion", ev.target.value)} onBlur={() => guardar()}
+                              placeholder="Detalle (opcional)" rows={2}
+                              style={{ background: "transparent", border: "none", color: "rgba(255,255,255,0.6)", fontSize: 11, padding: "4px 0 0", outline: "none", width: "100%", resize: "vertical", fontFamily: "inherit" }} />
+                  </div>
+                  <button onClick={() => { removePunto(p.id); setTimeout(guardar, 100); }}
+                          style={{ background: "transparent", border: "none", color: B.danger, cursor: "pointer", fontSize: 14 }}>✕</button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Agenda — para briefings "programado" la mostramos prominente como
           CTA: el usuario está PREPARANDO los puntos a discutir antes de la
@@ -1036,6 +1131,114 @@ function NewTaskModal({ briefingId, empleados, onClose, onSaved }) {
         <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 18 }}>
           <button onClick={onClose} style={BTN(B.navyLight)}>Cancelar</button>
           <button onClick={guardar} style={BTN(B.success)}>Crear tarea</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── MODAL: AGENDAR BRIEFING ─────────────────────────────────────────────────
+// El solicitante elige fecha/hora/título/tipo y arma una lista privada de
+// puntos a discutir. Cada punto tiene un checkbox "agregar a agenda" — solo
+// los marcados se reflejan en `agenda` (que ven todos los participantes).
+// Los demás puntos quedan privados en `puntos_discutir` para el creador.
+function AgendarBriefingModal({ onClose, onCrear }) {
+  const [fecha,  setFecha]  = useState(todayStr());
+  const [hora,   setHora]   = useState(new Date().toTimeString().slice(0, 5));
+  const [titulo, setTitulo] = useState("");
+  const [tipo,   setTipo]   = useState("general");
+  const [puntos, setPuntos] = useState([]);
+  const [saving, setSaving] = useState(false);
+
+  const addPunto = () => setPuntos(p => [...p, { id: uid(), titulo: "", descripcion: "", en_agenda: true }]);
+  const updPunto = (id, k, v) => setPuntos(p => p.map(x => x.id === id ? { ...x, [k]: v } : x));
+  const rmPunto  = (id) => setPuntos(p => p.filter(x => x.id !== id));
+
+  const submit = async () => {
+    if (!fecha) return alert("Elegí una fecha.");
+    if (!hora)  return alert("Elegí una hora.");
+    setSaving(true);
+    await onCrear({ fecha, hora, titulo, tipo, puntos });
+    setSaving(false);
+  };
+
+  const enAgenda = puntos.filter(p => p.en_agenda && p.titulo?.trim()).length;
+  const totalP   = puntos.filter(p => p.titulo?.trim()).length;
+
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 1000, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "40px 16px", overflowY: "auto" }}>
+      <div onClick={e => e.stopPropagation()} style={{ background: B.navy, borderRadius: 16, padding: 24, maxWidth: 640, width: "100%", border: `1px solid ${B.navyLight}`, color: "#fff" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18 }}>
+          <div style={{ fontSize: 22, fontWeight: 800, fontFamily: "'Barlow Condensed', sans-serif" }}>📅 Agendar briefing</div>
+          <button onClick={onClose} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.4)", cursor: "pointer", fontSize: 22 }}>×</button>
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 14 }}>
+          <div>
+            <label style={LS}>Fecha *</label>
+            <input type="date" value={fecha} onChange={e => setFecha(e.target.value)} style={IS} />
+          </div>
+          <div>
+            <label style={LS}>Hora *</label>
+            <input type="time" value={hora} onChange={e => setHora(e.target.value)} style={IS} />
+          </div>
+        </div>
+
+        <div style={{ marginBottom: 14 }}>
+          <label style={LS}>Título</label>
+          <input value={titulo} onChange={e => setTitulo(e.target.value)} placeholder={`Briefing ${fecha}`} style={IS} />
+        </div>
+
+        <div style={{ marginBottom: 18 }}>
+          <label style={LS}>Tipo</label>
+          <select value={tipo} onChange={e => setTipo(e.target.value)} style={IS}>
+            {TIPOS.map(t => <option key={t.key} value={t.key}>{t.label}</option>)}
+          </select>
+        </div>
+
+        {/* Puntos a discutir (privados al creador) */}
+        <div style={{ background: B.navyMid, borderRadius: 10, padding: 14, marginBottom: 14, border: `1px solid ${B.navyLight}` }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: B.sand }}>📌 Puntos a discutir</div>
+            <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 8, background: B.warning + "22", color: B.warning, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em" }}>🔒 Privado</span>
+          </div>
+          <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginBottom: 12, lineHeight: 1.5 }}>
+            Tu lista privada de temas. Marcá ✓ los que quieras compartir como agenda pública del briefing — los demás solo los ves vos.
+            {totalP > 0 && <span style={{ color: B.sky, marginLeft: 6 }}>· {enAgenda}/{totalP} en agenda pública</span>}
+          </div>
+
+          {puntos.length === 0 ? (
+            <div style={{ textAlign: "center", padding: "16px 0", fontSize: 12, color: "rgba(255,255,255,0.3)", border: `1px dashed ${B.navyLight}`, borderRadius: 8 }}>
+              Sin puntos aún. Agregá el primero ↓
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {puntos.map((p, i) => (
+                <div key={p.id} style={{ background: B.navy, borderRadius: 8, padding: "10px 12px", border: `1px solid ${B.navyLight}`, display: "flex", gap: 10, alignItems: "flex-start" }}>
+                  <label style={{ display: "flex", alignItems: "center", gap: 6, paddingTop: 8, cursor: "pointer", whiteSpace: "nowrap", fontSize: 11, color: p.en_agenda ? B.success : "rgba(255,255,255,0.4)", fontWeight: 700 }}
+                         title={p.en_agenda ? "Visible en agenda pública" : "Solo lo ves vos"}>
+                    <input type="checkbox" checked={!!p.en_agenda} onChange={e => updPunto(p.id, "en_agenda", e.target.checked)} style={{ accentColor: B.success }} />
+                    {p.en_agenda ? "✓ Agenda" : "Privado"}
+                  </label>
+                  <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 6 }}>
+                    <input value={p.titulo} onChange={e => updPunto(p.id, "titulo", e.target.value)}
+                           placeholder={`Punto ${i + 1} — título`} style={{ ...IS, padding: "7px 10px", fontSize: 12 }} autoFocus={i === puntos.length - 1} />
+                    <input value={p.descripcion} onChange={e => updPunto(p.id, "descripcion", e.target.value)}
+                           placeholder="Detalle (opcional)" style={{ ...IS, padding: "6px 10px", fontSize: 11, background: B.navyLight + "44" }} />
+                  </div>
+                  <button onClick={() => rmPunto(p.id)} title="Quitar"
+                          style={{ background: "none", border: "none", color: B.danger, cursor: "pointer", fontSize: 18, padding: 4 }}>×</button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <button onClick={addPunto} style={{ ...BTN(B.navyLight), marginTop: 10, width: "100%" }}>+ Agregar punto</button>
+        </div>
+
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+          <button onClick={onClose} style={BTN(B.navyLight)} disabled={saving}>Cancelar</button>
+          <button onClick={submit} style={BTN(B.hotel)} disabled={saving}>{saving ? "Creando…" : "Agendar briefing"}</button>
         </div>
       </div>
     </div>
