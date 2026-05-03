@@ -5289,18 +5289,56 @@ function TabGastosServicios({ evento, ocultarPrecios = false }) {
   };
   useEffect(() => { load(); }, [evento.id]);
 
-  // Servicios contratados del evento — para vincular gastos
-  const serviciosContratados = (evento.servicios_contratados || []).filter(s => s);
+  // ── Servicios disponibles del evento — incluye TODO lo cotizado ──
+  // No solo servicios_contratados sino también items de cotizacion_data
+  // (espacios, hospedaje, alimentos, otros servicios) y extras_data.
+  // Cada uno con su key compuesta {origen}|{id} para guardar en el gasto.
+  const cot = evento.cotizacion_data || {};
+  const extras = evento.extras_data || {};
+  const calcLine = (l) => {
+    const sub = (Number(l.cantidad) || 1) * (Number(l.noches) || 1) * (Number(l.valor_unit) || 0);
+    return sub + sub * ((Number(l.iva) || 0) / 100);
+  };
+  const serviciosEvento = [];
+  (cot.espacios || []).forEach((a, i) => a && serviciosEvento.push({
+    key: `espacio|${a.id || `esp-${i}`}`, origen: "Espacios cotizados", origenColor: "#a78bfa",
+    descripcion: a.concepto || a.descripcion || "Espacio", cobrado: calcLine(a),
+  }));
+  (cot.hospedaje || cot.alojamientos || []).forEach((a, i) => a && serviciosEvento.push({
+    key: `hospedaje|${a.id || `hos-${i}`}`, origen: "Hospedaje", origenColor: "#ec4899",
+    descripcion: a.concepto || a.descripcion || "Hospedaje", cobrado: calcLine(a),
+  }));
+  (cot.alimentos || []).forEach((a, i) => a && serviciosEvento.push({
+    key: `alimento|${a.id || `alim-${i}`}`, origen: "Alimentos & Bebidas (cotizado)", origenColor: "#f59e0b",
+    descripcion: a.concepto || a.descripcion || "A&B", cobrado: calcLine(a),
+  }));
+  (cot.servicios || []).forEach((a, i) => a && serviciosEvento.push({
+    key: `otro_cotizado|${a.id || `cot-${i}`}`, origen: "Otros servicios cotizados", origenColor: "#7B4F12",
+    descripcion: a.concepto || a.descripcion || "Servicio", cobrado: calcLine(a),
+  }));
+  (evento.servicios_contratados || []).forEach((s, i) => s && serviciosEvento.push({
+    key: `contratado|${s.id || `srv-${i}`}`, origen: "Servicio contratado", origenColor: "#22c55e",
+    descripcion: s.descripcion || s.categoria || "Servicio", cobrado: Number(s.valor) || 0,
+  }));
+  (extras.transporte || []).forEach((a, i) => a && serviciosEvento.push({
+    key: `extra_transporte|${a.id || `et-${i}`}`, origen: "Extra transporte", origenColor: "#06b6d4",
+    descripcion: a.concepto || "Transporte", cobrado: calcLine(a),
+  }));
+  (extras.alimentos || []).forEach((a, i) => a && serviciosEvento.push({
+    key: `extra_alimento|${a.id || `ea-${i}`}`, origen: "Extra A&B", origenColor: "#fb923c",
+    descripcion: a.concepto || "A&B extra", cobrado: calcLine(a),
+  }));
+  (extras.servicios || []).forEach((a, i) => a && serviciosEvento.push({
+    key: `extra_servicio|${a.id || `es-${i}`}`, origen: "Extra servicio", origenColor: "#94a3b8",
+    descripcion: a.concepto || "Servicio extra", cobrado: calcLine(a),
+  }));
 
-  // Resumen por servicio: cobrado vs gastado
+  // Resumen por servicio: cobrado vs gastado (usando keys compuestas)
   const porServicio = {};
-  serviciosContratados.forEach(s => {
-    porServicio[s.id] = {
-      descripcion: s.descripcion || s.categoria || "Servicio",
-      cobrado: Number(s.valor) || 0,
-      gastado: 0,
-      gastosPagados: 0,
-      gastosPendientes: 0,
+  serviciosEvento.forEach(s => {
+    porServicio[s.key] = {
+      descripcion: s.descripcion, origen: s.origen, origenColor: s.origenColor,
+      cobrado: s.cobrado, gastado: 0, gastosPagados: 0, gastosPendientes: 0,
     };
   });
   gastos.filter(g => g.estado !== "anulado").forEach(g => {
@@ -5374,19 +5412,25 @@ function TabGastosServicios({ evento, ocultarPrecios = false }) {
             <div style={{ textAlign: "right" }}>Margen</div>
             <div style={{ textAlign: "right" }}>%</div>
           </div>
-          {Object.entries(porServicio).map(([id, s]) => {
-            const m = s.cobrado - s.gastado;
-            const pct = s.cobrado > 0 ? (m / s.cobrado) * 100 : 0;
-            return (
-              <div key={id} style={{ display: "grid", gridTemplateColumns: "1fr 110px 110px 110px 70px", gap: 10, padding: "8px 14px", borderTop: `1px solid ${B.navyLight}`, fontSize: 11 }}>
-                <div style={{ color: "#fff", fontWeight: 600 }}>{s.descripcion}</div>
-                <div style={{ textAlign: "right", color: B.success }}>{COPx(s.cobrado)}</div>
-                <div style={{ textAlign: "right", color: B.danger }}>{COPx(s.gastado)}</div>
-                <div style={{ textAlign: "right", color: m >= 0 ? B.sky : B.danger, fontWeight: 700 }}>{COPx(m)}</div>
-                <div style={{ textAlign: "right", color: "rgba(255,255,255,0.55)" }}>{s.cobrado > 0 ? pct.toFixed(0) + "%" : "—"}</div>
-              </div>
-            );
-          })}
+          {Object.entries(porServicio)
+            .filter(([, s]) => s.cobrado > 0 || s.gastado > 0)
+            .sort(([, a], [, b]) => b.gastado - a.gastado)
+            .map(([id, s]) => {
+              const m = s.cobrado - s.gastado;
+              const pct = s.cobrado > 0 ? (m / s.cobrado) * 100 : 0;
+              return (
+                <div key={id} style={{ display: "grid", gridTemplateColumns: "1fr 110px 110px 110px 70px", gap: 10, padding: "8px 14px", borderTop: `1px solid ${B.navyLight}`, fontSize: 11 }}>
+                  <div>
+                    <div style={{ color: "#fff", fontWeight: 600 }}>{s.descripcion}</div>
+                    <div style={{ fontSize: 9, color: s.origenColor, marginTop: 1 }}>{s.origen}</div>
+                  </div>
+                  <div style={{ textAlign: "right", color: B.success }}>{COPx(s.cobrado)}</div>
+                  <div style={{ textAlign: "right", color: B.danger }}>{COPx(s.gastado)}</div>
+                  <div style={{ textAlign: "right", color: m >= 0 ? B.sky : B.danger, fontWeight: 700 }}>{COPx(m)}</div>
+                  <div style={{ textAlign: "right", color: "rgba(255,255,255,0.55)" }}>{s.cobrado > 0 ? pct.toFixed(0) + "%" : "—"}</div>
+                </div>
+              );
+            })}
         </div>
       )}
 
@@ -5406,14 +5450,16 @@ function TabGastosServicios({ evento, ocultarPrecios = false }) {
             <div></div>
           </div>
           {gastos.map(g => {
-            const sv = serviciosContratados.find(s => s.id === g.servicio_id);
+            const sv = serviciosEvento.find(s => s.key === g.servicio_id);
             const estadoColor = g.estado === "pagado" ? "#22c55e" : g.estado === "anulado" ? "#64748B" : "#fbbf24";
             return (
               <div key={g.id} style={{ display: "grid", gridTemplateColumns: "1fr 130px 90px 110px 110px 80px", gap: 10, padding: "10px 14px", borderTop: `1px solid ${B.navyLight}`, fontSize: 12, opacity: g.estado === "anulado" ? 0.4 : 1, textDecoration: g.estado === "anulado" ? "line-through" : "none", alignItems: "center" }}>
                 <div>
                   <div style={{ color: "#fff", fontWeight: 600 }}>{g.concepto}</div>
                   <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", marginTop: 1 }}>
-                    {sv ? `📋 ${sv.descripcion || sv.categoria}` : g.servicio_descripcion ? `📋 ${g.servicio_descripcion}` : "—"}
+                    {sv ? <span style={{ color: sv.origenColor }}>📋 {sv.descripcion}</span>
+                       : g.servicio_descripcion ? <span style={{ color: "#fbbf24" }}>📋 {g.servicio_descripcion}</span>
+                       : "—"}
                     {g.factura_numero ? ` · Fact #${g.factura_numero}` : ""}
                     {g.metodo_pago && ` · ${g.metodo_pago}`}
                   </div>
@@ -5451,7 +5497,7 @@ function TabGastosServicios({ evento, ocultarPrecios = false }) {
       )}
 
       {showAdd && (
-        <GastoServicioModal evento={evento} editing={editing} proveedores={proveedores} servicios={serviciosContratados}
+        <GastoServicioModal evento={evento} editing={editing} proveedores={proveedores} servicios={serviciosEvento}
           onClose={() => setShowAdd(false)}
           onSaved={() => { setShowAdd(false); load(); }}
         />
@@ -5507,7 +5553,8 @@ function GastoServicioModal({ evento, editing, proveedores, servicios, onClose, 
     }
 
     const proveedor = proveedores.find(p => p.id === f.proveedor_id);
-    const servicio = servicios.find(s => s.id === f.servicio_id);
+    // serviciosEvento usa { key, descripcion, origen } — buscamos por key compuesta
+    const servicio = servicios.find(s => s.key === f.servicio_id);
     const userEmail = (await supabase.auth.getUser()).data?.user?.email || "";
 
     // Sanitizar campos date/timestamp: Postgres rechaza "" — solo acepta
@@ -5516,7 +5563,7 @@ function GastoServicioModal({ evento, editing, proveedores, servicios, onClose, 
     const payload = {
       evento_id: evento.id,
       servicio_id: f.servicio_id || null,
-      servicio_descripcion: servicio?.descripcion || servicio?.categoria || null,
+      servicio_descripcion: servicio?.descripcion || null,
       proveedor_id: f.proveedor_id || null,
       proveedor_nombre: proveedor?.nombre || f.proveedor_nombre.trim() || null,
       concepto: f.concepto.trim(),
@@ -5556,12 +5603,12 @@ function GastoServicioModal({ evento, editing, proveedores, servicios, onClose, 
             ¿Está relacionado a algún servicio del evento?
           </div>
           <div style={{ display: "flex", gap: 8, marginBottom: f.servicio_id || f._asociar === false ? 10 : 0 }}>
-            <button type="button" onClick={() => { set("_asociar", true); if (!f.servicio_id && servicios[0]) set("servicio_id", servicios[0].id); }}
+            <button type="button" onClick={() => { set("_asociar", true); if (!f.servicio_id && servicios[0]) set("servicio_id", servicios[0].key); }}
               style={{ flex: 1, padding: "10px", borderRadius: 8,
                 border: f.servicio_id || f._asociar === true ? `2px solid ${B.success}` : `1px solid ${B.navyLight}`,
                 background: f.servicio_id || f._asociar === true ? B.success + "22" : B.navy,
                 color: f.servicio_id || f._asociar === true ? B.success : "rgba(255,255,255,0.6)", cursor: "pointer", fontSize: 12, fontWeight: 700 }}>
-              ✓ Sí, vincular a servicio
+              ✓ Sí, vincular a un item de la cotización
             </button>
             <button type="button" onClick={() => { set("_asociar", false); set("servicio_id", ""); }}
               style={{ flex: 1, padding: "10px", borderRadius: 8,
@@ -5572,35 +5619,46 @@ function GastoServicioModal({ evento, editing, proveedores, servicios, onClose, 
             </button>
           </div>
 
-          {/* Lista de servicios visible cuando se eligió "Sí" o ya hay servicio_id */}
+          {/* Lista de items del evento agrupada por origen */}
           {(f.servicio_id || f._asociar === true) && (
             <>
               {servicios.length === 0 ? (
                 <div style={{ padding: 10, fontSize: 11, color: B.warning, textAlign: "center", fontStyle: "italic" }}>
-                  ⚠️ Este evento no tiene servicios contratados. Agregalos en el tab 🛎 Servicios primero.
+                  ⚠️ Este evento no tiene items en la cotización. Agregalos primero (tab Servicios o vía Cotización).
                 </div>
               ) : (
-                <div style={{ background: B.navy, borderRadius: 8, maxHeight: 220, overflowY: "auto", border: `1px solid ${B.navyLight}` }}>
-                  {servicios.map(s => {
-                    const sel = f.servicio_id === s.id;
-                    return (
-                      <button key={s.id} type="button" onClick={() => set("servicio_id", s.id)}
-                        style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "9px 12px",
-                          background: sel ? B.success + "22" : "transparent", border: "none",
-                          borderBottom: `1px solid ${B.navyLight}`,
-                          color: sel ? B.success : "#fff", cursor: "pointer", textAlign: "left" }}>
-                        <span style={{ fontSize: 14 }}>{sel ? "●" : "○"}</span>
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ fontSize: 12, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                            {s.descripcion || s.categoria || "Servicio"}
-                          </div>
-                          <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)" }}>
-                            {s.categoria || "—"}{s.valor ? ` · Cobrado ${COPx(Number(s.valor))}` : ""}
-                          </div>
-                        </div>
-                      </button>
-                    );
-                  })}
+                <div style={{ background: B.navy, borderRadius: 8, maxHeight: 280, overflowY: "auto", border: `1px solid ${B.navyLight}` }}>
+                  {Object.entries(servicios.reduce((acc, s) => {
+                    if (!acc[s.origen]) acc[s.origen] = { color: s.origenColor, items: [] };
+                    acc[s.origen].items.push(s);
+                    return acc;
+                  }, {})).map(([origen, grupo]) => (
+                    <div key={origen}>
+                      <div style={{ padding: "6px 12px", fontSize: 9, fontWeight: 700, color: grupo.color, textTransform: "uppercase", letterSpacing: "0.06em", background: grupo.color + "11", borderBottom: `1px solid ${B.navyLight}` }}>
+                        {origen}
+                      </div>
+                      {grupo.items.map(s => {
+                        const sel = f.servicio_id === s.key;
+                        return (
+                          <button key={s.key} type="button" onClick={() => set("servicio_id", s.key)}
+                            style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "9px 14px",
+                              background: sel ? B.success + "22" : "transparent", border: "none",
+                              borderBottom: `1px solid ${B.navyLight}`,
+                              color: sel ? B.success : "#fff", cursor: "pointer", textAlign: "left" }}>
+                            <span style={{ fontSize: 14 }}>{sel ? "●" : "○"}</span>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ fontSize: 12, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                {s.descripcion}
+                              </div>
+                              <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)" }}>
+                                Cobrado {COPx(s.cobrado)}
+                              </div>
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ))}
                 </div>
               )}
             </>
