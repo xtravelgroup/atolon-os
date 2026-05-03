@@ -42,9 +42,10 @@ const horasDelTurno = (h) => {
   let diff = (hf * 60 + mf) - (hi * 60 + mi);
   if (diff <= 0) diff += 24 * 60;
   const horas = diff / 60;
-  // Descontar 1h de almuerzo si el turno dura 5h o más
-  const netas = horas >= 5 ? horas - 1 : horas;
-  return Math.max(0, netas);
+  // Política Atolón: SIEMPRE descontar 1h de comida del turno (sin importar
+  // duración). Antes solo se descontaba si el turno era ≥ 5h, lo cual
+  // dejaba turnos cortos sin descuento. Política dirección 2026-05.
+  return Math.max(0, horas - 1);
 };
 
 // ─── Componente principal ───────────────────────────────────────────────────
