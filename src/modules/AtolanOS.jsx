@@ -44,11 +44,24 @@ function KpiCard({ label, value, sub, color }) {
 function Dashboard() {
   const [kpis, setKpis] = useState({});
   const [loading, setLoading] = useState(true);
+  // Bug 2026-05: si la pestaña quedaba abierta cruzando medianoche, el
+  // useEffect con [] no se re-ejecutaba y `hoy` se quedaba congelado en
+  // ayer. Resultado: el dashboard mostraba reservas/pax de ayer como
+  // "Hoy". Solución: state que se actualiza cada minuto al detectar
+  // cambio de día en Bogotá.
+  const [hoyState, setHoyState] = useState(todayStr());
+  useEffect(() => {
+    const id = setInterval(() => {
+      const t = todayStr();
+      if (t !== hoyState) setHoyState(t);
+    }, 60_000);
+    return () => clearInterval(id);
+  }, [hoyState]);
 
   useEffect(() => {
     if (!supabase) { setLoading(false); return; }
     const load = async () => {
-      const hoy = todayStr();
+      const hoy = hoyState;
       // tomorrow in Colombia timezone
       const manana = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Bogota" }));
       manana.setDate(manana.getDate() + 1);
@@ -110,7 +123,7 @@ function Dashboard() {
       setLoading(false);
     };
     load();
-  }, []);
+  }, [hoyState]); // re-correr cuando cambia el día en Bogotá
 
   const v = (k) => loading ? "..." : (typeof kpis[k] === "number" ? kpis[k] : "—");
 

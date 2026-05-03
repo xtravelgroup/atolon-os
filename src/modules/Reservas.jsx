@@ -3447,8 +3447,24 @@ export default function Reservas() {
   const [showModal, setShowModal]   = useState(false);
   const [detalle, setDetalle]       = useState(null);
 
-  const today    = todayStr();
-  const tomorrow = tomorrowStr();
+  // Bug 2026-05: si el usuario dejaba la pestaña abierta cruzando la
+  // medianoche, `today` quedaba congelado en el valor de ayer (no había
+  // re-render para que se recalcule el const). Resultado: aparecían las
+  // reservas de ayer marcadas como "Hoy". Solución: useState + intervalo
+  // que detecta cambio de día en Bogotá cada minuto y dispara re-render.
+  const [today,    setToday]    = useState(todayStr());
+  const [tomorrow, setTomorrow] = useState(tomorrowStr());
+  useEffect(() => {
+    const tick = () => {
+      const t = todayStr();
+      if (t !== today) {
+        setToday(t);
+        setTomorrow(tomorrowStr());
+      }
+    };
+    const id = setInterval(tick, 60_000);
+    return () => clearInterval(id);
+  }, [today]);
 
   const fetchReservas = useCallback(async () => {
     if (!supabase) { setLoading(false); return; }
