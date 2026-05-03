@@ -58,8 +58,14 @@ export default function Briefings() {
     });
   }, []);
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  // showLoading=true solo en la carga inicial. En refetches después de
+  // guardar (silent=true), NO seteamos loading=true — antes hacía que el
+  // padre mostrara "Cargando..." → desmontaba BriefingDetalle → perdía
+  // el state local del form, y el usuario sentía que la pantalla "se
+  // refrescaba y tenía que empezar otra vez".
+  const load = useCallback(async (opts = {}) => {
+    const { silent = false } = opts;
+    if (!silent) setLoading(true);
     const [bR, tR, eR] = await Promise.all([
       supabase.from("briefings").select("*").order("fecha", { ascending: false }).order("hora", { ascending: false }),
       supabase.from("briefing_tareas").select("*").order("created_at", { ascending: false }),
@@ -68,8 +74,10 @@ export default function Briefings() {
     setBriefings(bR.data || []);
     setTareas(tR.data || []);
     setEmpleados(eR.data || []);
-    setLoading(false);
+    if (!silent) setLoading(false);
   }, []);
+  // Re-load silencioso para evitar el unmount-remount de los hijos
+  const reloadSilent = useCallback(() => load({ silent: true }), [load]);
   useEffect(() => { load(); }, [load]);
 
   // Filtro de propiedad: solo el creador ve sus briefings.
@@ -123,9 +131,15 @@ export default function Briefings() {
       descripcion: p.descripcion?.trim() || "",
       en_agenda: !!p.en_agenda,
       orden: i + 1,
+      subpuntos: (p.subpuntos || []).filter(s => s.titulo?.trim()).map(s => ({
+        id: s.id || uid(),
+        titulo: s.titulo.trim(),
+      })),
     }));
     const agendaPublica = puntosLimpios.filter(p => p.en_agenda).map((p, i) => ({
-      id: p.id, titulo: p.titulo, descripcion: p.descripcion, orden: i + 1,
+      id: p.id, titulo: p.titulo, descripcion: p.descripcion,
+      subpuntos: p.subpuntos || [],
+      orden: i + 1,
     }));
 
     const payload = {
@@ -169,7 +183,7 @@ export default function Briefings() {
       briefingAnterior={briefings.find(b => b.id === briefing.briefing_anterior_id)}
       empleados={empleados}
       onClose={() => { setOpenId(null); load(); }}
-      onReload={load}
+      onReload={reloadSilent}
     />;
   }
 
@@ -216,7 +230,7 @@ export default function Briefings() {
       </div>
 
       {tab === "tareas" ? (
-        <TareasGlobales tareas={tareas} briefings={briefings} empleados={empleados} reload={load} />
+        <TareasGlobales tareas={tareas} briefings={briefings} empleados={empleados} reload={reloadSilent} />
       ) : (
         <ListaBriefings items={visibles} tareasPorBriefing={tareasPorBriefing} onOpen={setOpenId} />
       )}
@@ -720,10 +734,18 @@ function BriefingDetalle({ briefing, tareas, tareasAnterior, briefingAnterior, e
     }
     return { puntos_discutir: nuevosPuntos, agenda: nuevaAgenda };
   };
-  const addPunto    = () => syncAgendaFromPuntos([...(form.puntos_discutir || []), { id: uid(), titulo: "", descripcion: "", en_agenda: true }]);
+  const addPunto    = () => syncAgendaFromPuntos([...(form.puntos_discutir || []), { id: uid(), titulo: "", descripcion: "", en_agenda: true, subpuntos: [] }]);
   const updatePunto = (id, k, v, persist = false) => syncAgendaFromPuntos((form.puntos_discutir || []).map(p => p.id === id ? { ...p, [k]: v } : p), persist);
   const removePunto = (id) => syncAgendaFromPuntos((form.puntos_discutir || []).filter(p => p.id !== id), true);
   const togglePuntoEnAgenda = (id, checked) => updatePunto(id, "en_agenda", checked, true);
+
+  // Sub-puntos del punto
+  const addSubpuntoDet = (puntoId) => syncAgendaFromPuntos((form.puntos_discutir || []).map(p => p.id === puntoId
+    ? { ...p, subpuntos: [...(p.subpuntos || []), { id: uid(), titulo: "" }] } : p));
+  const updSubpuntoDet = (puntoId, subId, titulo, persist = false) => syncAgendaFromPuntos((form.puntos_discutir || []).map(p => p.id === puntoId
+    ? { ...p, subpuntos: (p.subpuntos || []).map(s => s.id === subId ? { ...s, titulo } : s) } : p), persist);
+  const rmSubpuntoDet = (puntoId, subId) => syncAgendaFromPuntos((form.puntos_discutir || []).map(p => p.id === puntoId
+    ? { ...p, subpuntos: (p.subpuntos || []).filter(s => s.id !== subId) } : p), true);
 
   const t = TIPOS.find(x => x.key === form.tipo) || TIPOS[0];
   const e = ESTADOS_BR.find(x => x.k === form.estado) || ESTADOS_BR[0];
@@ -910,7 +932,7 @@ function BriefingDetalle({ briefing, tareas, tareasAnterior, briefingAnterior, e
                 Solo vos ves esta lista. Marcá ✓ los que querés mostrar en la agenda pública.
               </div>
             </div>
-            <button onClick={addPunto} style={{ ...BTN(B.warning), fontSize: 12, padding: "8px 14px" }}>+ Punto privado</button>
+            <button type="button" onClick={addPunto} style={{ ...BTN(B.warning), fontSize: 12, padding: "8px 14px" }}>+ Punto privado</button>
           </div>
           {(form.puntos_discutir || []).length === 0 ? (
             <div style={{ padding: 14, borderRadius: 8, background: "rgba(245,158,11,0.04)", border: `1px dashed ${B.warning}55`, fontSize: 12, color: B.warning, textAlign: "center" }}>
@@ -919,23 +941,47 @@ function BriefingDetalle({ briefing, tareas, tareasAnterior, briefingAnterior, e
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               {(form.puntos_discutir || []).map((p, idx) => (
-                <div key={p.id} style={{ background: B.navyLight, borderRadius: 8, padding: "10px 12px", display: "flex", gap: 10, alignItems: "flex-start" }}>
-                  <label style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4, paddingTop: 2, cursor: "pointer", whiteSpace: "nowrap", fontSize: 9, color: p.en_agenda ? B.success : "rgba(255,255,255,0.4)", fontWeight: 700, minWidth: 56 }}
-                         title={p.en_agenda ? "Visible en la agenda pública" : "Solo lo ves vos"}>
-                    <input type="checkbox" checked={!!p.en_agenda} onChange={ev => togglePuntoEnAgenda(p.id, ev.target.checked)}
-                           style={{ accentColor: B.success, width: 18, height: 18 }} />
-                    {p.en_agenda ? "✓ Agenda" : "Privado"}
-                  </label>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <input value={p.titulo || ""} onChange={ev => updatePunto(p.id, "titulo", ev.target.value)} onBlur={() => guardar()}
-                           placeholder={`Punto ${idx + 1} — título`}
-                           style={{ background: "transparent", border: "none", color: "#fff", fontSize: 13, fontWeight: 700, padding: 0, outline: "none", width: "100%" }} />
-                    <textarea value={p.descripcion || ""} onChange={ev => updatePunto(p.id, "descripcion", ev.target.value)} onBlur={() => guardar()}
-                              placeholder="Detalle (opcional)" rows={2}
-                              style={{ background: "transparent", border: "none", color: "rgba(255,255,255,0.6)", fontSize: 11, padding: "4px 0 0", outline: "none", width: "100%", resize: "vertical", fontFamily: "inherit" }} />
+                <div key={p.id} style={{ background: B.navyLight, borderRadius: 8, padding: "10px 12px" }}>
+                  <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+                    <label style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4, paddingTop: 2, cursor: "pointer", whiteSpace: "nowrap", fontSize: 9, color: p.en_agenda ? B.success : "rgba(255,255,255,0.4)", fontWeight: 700, minWidth: 56 }}
+                           title={p.en_agenda ? "Visible en la agenda pública" : "Solo lo ves vos"}>
+                      <input type="checkbox" checked={!!p.en_agenda} onChange={ev => togglePuntoEnAgenda(p.id, ev.target.checked)}
+                             style={{ accentColor: B.success, width: 18, height: 18 }} />
+                      {p.en_agenda ? "✓ Agenda" : "Privado"}
+                    </label>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <input value={p.titulo || ""} onChange={ev => updatePunto(p.id, "titulo", ev.target.value)} onBlur={() => guardar()}
+                             placeholder={`Punto ${idx + 1} — título`}
+                             style={{ background: "transparent", border: "none", color: "#fff", fontSize: 13, fontWeight: 700, padding: 0, outline: "none", width: "100%" }} />
+                      <textarea value={p.descripcion || ""} onChange={ev => updatePunto(p.id, "descripcion", ev.target.value)} onBlur={() => guardar()}
+                                placeholder="Detalle (opcional)" rows={2}
+                                style={{ background: "transparent", border: "none", color: "rgba(255,255,255,0.6)", fontSize: 11, padding: "4px 0 0", outline: "none", width: "100%", resize: "vertical", fontFamily: "inherit" }} />
+                    </div>
+                    <button type="button" onClick={() => removePunto(p.id)}
+                            style={{ background: "transparent", border: "none", color: B.danger, cursor: "pointer", fontSize: 14 }}>✕</button>
                   </div>
-                  <button onClick={() => removePunto(p.id)}
-                          style={{ background: "transparent", border: "none", color: B.danger, cursor: "pointer", fontSize: 14 }}>✕</button>
+
+                  {/* Sub-puntos del punto */}
+                  {(p.subpuntos || []).length > 0 && (
+                    <div style={{ marginTop: 8, marginLeft: 70, display: "flex", flexDirection: "column", gap: 4 }}>
+                      {(p.subpuntos || []).map((s, si) => (
+                        <div key={s.id} style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                          <span style={{ color: "rgba(255,255,255,0.3)", fontSize: 11, minWidth: 14 }}>↳</span>
+                          <input value={s.titulo || ""}
+                                 onChange={ev => updSubpuntoDet(p.id, s.id, ev.target.value)}
+                                 onBlur={() => guardar()}
+                                 placeholder={`Sub-punto ${si + 1}`}
+                                 style={{ ...IS, padding: "5px 9px", fontSize: 11, background: B.navy + "88", flex: 1 }} />
+                          <button type="button" onClick={() => rmSubpuntoDet(p.id, s.id)} title="Quitar"
+                                  style={{ background: "none", border: "none", color: B.danger, cursor: "pointer", fontSize: 14, padding: 2 }}>×</button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <button type="button" onClick={() => addSubpuntoDet(p.id)}
+                          style={{ marginTop: 6, marginLeft: 70, background: "none", border: "none", color: B.sky, cursor: "pointer", fontSize: 11, padding: "4px 0", fontWeight: 600 }}>
+                    + Sub-punto
+                  </button>
                 </div>
               ))}
             </div>
@@ -982,18 +1028,31 @@ function BriefingDetalle({ briefing, tareas, tareasAnterior, briefingAnterior, e
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {(form.agenda || []).map((tema, idx) => (
-              <div key={tema.id} style={{ background: B.navyLight, borderRadius: 8, padding: "10px 12px", display: "flex", gap: 10, alignItems: "flex-start" }}>
-                <div style={{ width: 24, height: 24, borderRadius: "50%", background: B.hotel, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 800, flexShrink: 0 }}>{idx + 1}</div>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <input value={tema.titulo || ""} onChange={ev => updateAgenda(tema.id, "titulo", ev.target.value)} onBlur={() => guardar()}
-                    placeholder="Tema a tratar"
-                    style={{ background: "transparent", border: "none", color: "#fff", fontSize: 13, fontWeight: 700, padding: 0, outline: "none", width: "100%" }} />
-                  <textarea value={tema.descripcion || ""} onChange={ev => updateAgenda(tema.id, "descripcion", ev.target.value)} onBlur={() => guardar()}
-                    placeholder="Notas del tema…" rows={2}
-                    style={{ background: "transparent", border: "none", color: "rgba(255,255,255,0.6)", fontSize: 11, padding: "4px 0 0", outline: "none", width: "100%", resize: "vertical", fontFamily: "inherit" }} />
+              <div key={tema.id} style={{ background: B.navyLight, borderRadius: 8, padding: "10px 12px" }}>
+                <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+                  <div style={{ width: 24, height: 24, borderRadius: "50%", background: B.hotel, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 800, flexShrink: 0 }}>{idx + 1}</div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <input value={tema.titulo || ""} onChange={ev => updateAgenda(tema.id, "titulo", ev.target.value)} onBlur={() => guardar()}
+                      placeholder="Tema a tratar"
+                      style={{ background: "transparent", border: "none", color: "#fff", fontSize: 13, fontWeight: 700, padding: 0, outline: "none", width: "100%" }} />
+                    <textarea value={tema.descripcion || ""} onChange={ev => updateAgenda(tema.id, "descripcion", ev.target.value)} onBlur={() => guardar()}
+                      placeholder="Notas del tema…" rows={2}
+                      style={{ background: "transparent", border: "none", color: "rgba(255,255,255,0.6)", fontSize: 11, padding: "4px 0 0", outline: "none", width: "100%", resize: "vertical", fontFamily: "inherit" }} />
+                  </div>
+                  <button type="button" onClick={() => { removeAgenda(tema.id); setTimeout(guardar, 100); }}
+                    style={{ background: "transparent", border: "none", color: B.danger, cursor: "pointer", fontSize: 14 }}>✕</button>
                 </div>
-                <button onClick={() => { removeAgenda(tema.id); setTimeout(guardar, 100); }}
-                  style={{ background: "transparent", border: "none", color: B.danger, cursor: "pointer", fontSize: 14 }}>✕</button>
+                {/* Sub-puntos heredados del punto privado (read-only en agenda) */}
+                {(tema.subpuntos || []).filter(s => s.titulo?.trim()).length > 0 && (
+                  <div style={{ marginTop: 6, marginLeft: 34, display: "flex", flexDirection: "column", gap: 2 }}>
+                    {(tema.subpuntos || []).filter(s => s.titulo?.trim()).map((s, si) => (
+                      <div key={s.id} style={{ display: "flex", gap: 6, alignItems: "center", fontSize: 11, color: "rgba(255,255,255,0.55)" }}>
+                        <span style={{ color: "rgba(255,255,255,0.3)" }}>↳</span>
+                        <span>{s.titulo}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             ))}
           </div>
@@ -1166,7 +1225,7 @@ function AgendarBriefingModal({ empleados = [], onClose, onCrear }) {
   const rmPunto  = (id) => setPuntos(p => p.filter(x => x.id !== id));
 
   const addAsistente = (emp) => {
-    if (asistentes.find(a => a.id === emp.id)) return;
+    if (!emp || asistentes.find(a => a.id === emp.id)) return;
     setAsistentes(a => [...a, {
       id: emp.id,
       nombre: `${emp.nombres || ""} ${emp.apellidos || ""}`.trim(),
@@ -1176,6 +1235,17 @@ function AgendarBriefingModal({ empleados = [], onClose, onCrear }) {
     setEmpSearch("");
   };
   const removeAsistente = (id) => setAsistentes(a => a.filter(x => x.id !== id));
+
+  // Helpers de subpuntos (cada punto puede tener subpuntos: [{id, titulo}])
+  const addSubpunto = (puntoId) => setPuntos(arr => arr.map(p => p.id === puntoId
+    ? { ...p, subpuntos: [...(p.subpuntos || []), { id: uid(), titulo: "" }] }
+    : p));
+  const updSubpunto = (puntoId, subId, titulo) => setPuntos(arr => arr.map(p => p.id === puntoId
+    ? { ...p, subpuntos: (p.subpuntos || []).map(s => s.id === subId ? { ...s, titulo } : s) }
+    : p));
+  const rmSubpunto = (puntoId, subId) => setPuntos(arr => arr.map(p => p.id === puntoId
+    ? { ...p, subpuntos: (p.subpuntos || []).filter(s => s.id !== subId) }
+    : p));
 
   // Empleados disponibles para agregar (excluye los ya añadidos), filtrados por búsqueda.
   // Si no hay búsqueda mostramos los primeros 30 ordenados; con búsqueda filtramos.
@@ -1205,7 +1275,7 @@ function AgendarBriefingModal({ empleados = [], onClose, onCrear }) {
       <div onClick={e => e.stopPropagation()} style={{ background: B.navy, borderRadius: 16, padding: 24, maxWidth: 640, width: "100%", border: `1px solid ${B.navyLight}`, color: "#fff" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18 }}>
           <div style={{ fontSize: 22, fontWeight: 800, fontFamily: "'Barlow Condensed', sans-serif" }}>📅 Agendar briefing</div>
-          <button onClick={onClose} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.4)", cursor: "pointer", fontSize: 22 }}>×</button>
+          <button type="button" onClick={onClose} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.4)", cursor: "pointer", fontSize: 22 }}>×</button>
         </div>
 
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 14 }}>
@@ -1246,7 +1316,7 @@ function AgendarBriefingModal({ empleados = [], onClose, onCrear }) {
                     <div style={{ fontSize: 12, fontWeight: 700, color: "#fff", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.nombre}</div>
                     {a.cargo && <div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)" }}>{a.cargo}</div>}
                   </div>
-                  <button onClick={() => removeAsistente(a.id)} title="Quitar"
+                  <button type="button" onClick={(ev) => { ev.preventDefault(); ev.stopPropagation(); removeAsistente(a.id); }} title="Quitar"
                           style={{ background: "transparent", border: "none", color: B.danger, cursor: "pointer", fontSize: 16, padding: "0 6px" }}>×</button>
                 </div>
               ))}
@@ -1261,7 +1331,8 @@ function AgendarBriefingModal({ empleados = [], onClose, onCrear }) {
           {empleadosVisibles.length > 0 ? (
             <div style={{ background: B.navy, borderRadius: 8, border: `1px solid ${B.navyLight}`, maxHeight: 220, overflowY: "auto" }}>
               {empleadosVisibles.map(emp => (
-                <button key={emp.id} onClick={() => addAsistente(emp)}
+                <button key={emp.id} type="button"
+                        onClick={(ev) => { ev.preventDefault(); ev.stopPropagation(); addAsistente(emp); }}
                         style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "8px 12px", background: "transparent", border: "none", borderBottom: `1px solid ${B.navyLight}`, color: "#fff", cursor: "pointer", textAlign: "left" }}>
                   <div style={{ width: 26, height: 26, borderRadius: "50%", background: B.hotel + "55", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 10, flexShrink: 0 }}>
                     {(emp.nombres || "?")[0]}
@@ -1306,31 +1377,53 @@ function AgendarBriefingModal({ empleados = [], onClose, onCrear }) {
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               {puntos.map((p, i) => (
-                <div key={p.id} style={{ background: B.navy, borderRadius: 8, padding: "10px 12px", border: `1px solid ${B.navyLight}`, display: "flex", gap: 10, alignItems: "flex-start" }}>
-                  <label style={{ display: "flex", alignItems: "center", gap: 6, paddingTop: 8, cursor: "pointer", whiteSpace: "nowrap", fontSize: 11, color: p.en_agenda ? B.success : "rgba(255,255,255,0.4)", fontWeight: 700 }}
-                         title={p.en_agenda ? "Visible en agenda pública" : "Solo lo ves vos"}>
-                    <input type="checkbox" checked={!!p.en_agenda} onChange={e => updPunto(p.id, "en_agenda", e.target.checked)} style={{ accentColor: B.success }} />
-                    {p.en_agenda ? "✓ Agenda" : "Privado"}
-                  </label>
-                  <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 6 }}>
-                    <input value={p.titulo} onChange={e => updPunto(p.id, "titulo", e.target.value)}
-                           placeholder={`Punto ${i + 1} — título`} style={{ ...IS, padding: "7px 10px", fontSize: 12 }} autoFocus={i === puntos.length - 1} />
-                    <input value={p.descripcion} onChange={e => updPunto(p.id, "descripcion", e.target.value)}
-                           placeholder="Detalle (opcional)" style={{ ...IS, padding: "6px 10px", fontSize: 11, background: B.navyLight + "44" }} />
+                <div key={p.id} style={{ background: B.navy, borderRadius: 8, padding: "10px 12px", border: `1px solid ${B.navyLight}` }}>
+                  <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+                    <label style={{ display: "flex", alignItems: "center", gap: 6, paddingTop: 8, cursor: "pointer", whiteSpace: "nowrap", fontSize: 11, color: p.en_agenda ? B.success : "rgba(255,255,255,0.4)", fontWeight: 700 }}
+                           title={p.en_agenda ? "Visible en agenda pública" : "Solo lo ves vos"}>
+                      <input type="checkbox" checked={!!p.en_agenda} onChange={e => updPunto(p.id, "en_agenda", e.target.checked)} style={{ accentColor: B.success }} />
+                      {p.en_agenda ? "✓ Agenda" : "Privado"}
+                    </label>
+                    <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 6 }}>
+                      <input value={p.titulo} onChange={e => updPunto(p.id, "titulo", e.target.value)}
+                             placeholder={`Punto ${i + 1} — título`} style={{ ...IS, padding: "7px 10px", fontSize: 12 }} autoFocus={i === puntos.length - 1} />
+                      <input value={p.descripcion} onChange={e => updPunto(p.id, "descripcion", e.target.value)}
+                             placeholder="Detalle (opcional)" style={{ ...IS, padding: "6px 10px", fontSize: 11, background: B.navyLight + "44" }} />
+                    </div>
+                    <button type="button" onClick={(ev) => { ev.preventDefault(); ev.stopPropagation(); rmPunto(p.id); }} title="Quitar"
+                            style={{ background: "none", border: "none", color: B.danger, cursor: "pointer", fontSize: 18, padding: 4 }}>×</button>
                   </div>
-                  <button onClick={() => rmPunto(p.id)} title="Quitar"
-                          style={{ background: "none", border: "none", color: B.danger, cursor: "pointer", fontSize: 18, padding: 4 }}>×</button>
+
+                  {/* Sub-puntos del punto */}
+                  {(p.subpuntos || []).length > 0 && (
+                    <div style={{ marginTop: 8, marginLeft: 70, display: "flex", flexDirection: "column", gap: 4 }}>
+                      {(p.subpuntos || []).map((s, si) => (
+                        <div key={s.id} style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                          <span style={{ color: "rgba(255,255,255,0.3)", fontSize: 11, minWidth: 14 }}>↳</span>
+                          <input value={s.titulo} onChange={ev => updSubpunto(p.id, s.id, ev.target.value)}
+                                 placeholder={`Sub-punto ${si + 1}`}
+                                 style={{ ...IS, padding: "5px 9px", fontSize: 11, background: B.navyLight + "33", flex: 1 }} />
+                          <button type="button" onClick={(ev) => { ev.preventDefault(); ev.stopPropagation(); rmSubpunto(p.id, s.id); }} title="Quitar"
+                                  style={{ background: "none", border: "none", color: B.danger, cursor: "pointer", fontSize: 14, padding: 2 }}>×</button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <button type="button" onClick={(ev) => { ev.preventDefault(); ev.stopPropagation(); addSubpunto(p.id); }}
+                          style={{ marginTop: 6, marginLeft: 70, background: "none", border: "none", color: B.sky, cursor: "pointer", fontSize: 11, padding: "4px 0", fontWeight: 600 }}>
+                    + Sub-punto
+                  </button>
                 </div>
               ))}
             </div>
           )}
 
-          <button onClick={addPunto} style={{ ...BTN(B.navyLight), marginTop: 10, width: "100%" }}>+ Agregar punto</button>
+          <button type="button" onClick={(ev) => { ev.preventDefault(); ev.stopPropagation(); addPunto(); }} style={{ ...BTN(B.navyLight), marginTop: 10, width: "100%" }}>+ Agregar punto</button>
         </div>
 
         <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
-          <button onClick={onClose} style={BTN(B.navyLight)} disabled={saving}>Cancelar</button>
-          <button onClick={submit} style={BTN(B.hotel)} disabled={saving}>{saving ? "Creando…" : "Agendar briefing"}</button>
+          <button type="button" onClick={onClose} style={BTN(B.navyLight)} disabled={saving}>Cancelar</button>
+          <button type="button" onClick={submit} style={BTN(B.hotel)} disabled={saving}>{saving ? "Creando…" : "Agendar briefing"}</button>
         </div>
       </div>
     </div>
