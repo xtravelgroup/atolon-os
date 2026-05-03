@@ -701,20 +701,29 @@ function BriefingDetalle({ briefing, tareas, tareasAnterior, briefingAnterior, e
   const removeAgenda = (id) => set("agenda", (form.agenda || []).filter(t => t.id !== id));
 
   // Puntos a discutir (privados al creador). Cada punto tiene en_agenda:bool.
-  // Marcar/desmarcar el checkbox sincroniza con la agenda pública.
-  const syncAgendaFromPuntos = (puntos) => {
-    // Mantener items de agenda que NO vinieron de puntos (agregados directos)
-    const idsDePuntos = new Set((form.puntos_discutir || []).map(p => p.id));
+  // Marcar/desmarcar el checkbox sincroniza con la agenda pública. La función
+  // calcula AMBOS arrays (puntos + agenda) en un solo paso y los guarda
+  // directamente — antes había un bug de closure donde guardar() leía form
+  // antes de que setForm terminara, así que el toggle del checkbox no
+  // persistía el cambio en agenda.
+  const syncAgendaFromPuntos = (nuevosPuntos, persist = false) => {
+    const idsDePuntos = new Set(nuevosPuntos.map(p => p.id));
     const agendaManual = (form.agenda || []).filter(a => !idsDePuntos.has(a.id));
-    const desdePuntos = puntos.filter(p => p.en_agenda && p.titulo?.trim()).map(p => ({
+    const desdePuntos = nuevosPuntos.filter(p => p.en_agenda && p.titulo?.trim()).map(p => ({
       id: p.id, titulo: p.titulo, descripcion: p.descripcion || "", orden: 0,
     }));
-    const merged = [...desdePuntos, ...agendaManual].map((a, i) => ({ ...a, orden: i + 1 }));
-    setForm(f => ({ ...f, puntos_discutir: puntos, agenda: merged }));
+    const nuevaAgenda = [...desdePuntos, ...agendaManual].map((a, i) => ({ ...a, orden: i + 1 }));
+    setForm(f => ({ ...f, puntos_discutir: nuevosPuntos, agenda: nuevaAgenda }));
+    if (persist) {
+      // Guardar inmediatamente con los valores NUEVOS (evita closure stale)
+      guardar({ puntos_discutir: nuevosPuntos, agenda: nuevaAgenda });
+    }
+    return { puntos_discutir: nuevosPuntos, agenda: nuevaAgenda };
   };
   const addPunto    = () => syncAgendaFromPuntos([...(form.puntos_discutir || []), { id: uid(), titulo: "", descripcion: "", en_agenda: true }]);
-  const updatePunto = (id, k, v) => syncAgendaFromPuntos((form.puntos_discutir || []).map(p => p.id === id ? { ...p, [k]: v } : p));
-  const removePunto = (id) => syncAgendaFromPuntos((form.puntos_discutir || []).filter(p => p.id !== id));
+  const updatePunto = (id, k, v, persist = false) => syncAgendaFromPuntos((form.puntos_discutir || []).map(p => p.id === id ? { ...p, [k]: v } : p), persist);
+  const removePunto = (id) => syncAgendaFromPuntos((form.puntos_discutir || []).filter(p => p.id !== id), true);
+  const togglePuntoEnAgenda = (id, checked) => updatePunto(id, "en_agenda", checked, true);
 
   const t = TIPOS.find(x => x.key === form.tipo) || TIPOS[0];
   const e = ESTADOS_BR.find(x => x.k === form.estado) || ESTADOS_BR[0];
@@ -913,7 +922,7 @@ function BriefingDetalle({ briefing, tareas, tareasAnterior, briefingAnterior, e
                 <div key={p.id} style={{ background: B.navyLight, borderRadius: 8, padding: "10px 12px", display: "flex", gap: 10, alignItems: "flex-start" }}>
                   <label style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4, paddingTop: 2, cursor: "pointer", whiteSpace: "nowrap", fontSize: 9, color: p.en_agenda ? B.success : "rgba(255,255,255,0.4)", fontWeight: 700, minWidth: 56 }}
                          title={p.en_agenda ? "Visible en la agenda pública" : "Solo lo ves vos"}>
-                    <input type="checkbox" checked={!!p.en_agenda} onChange={ev => { updatePunto(p.id, "en_agenda", ev.target.checked); setTimeout(guardar, 100); }}
+                    <input type="checkbox" checked={!!p.en_agenda} onChange={ev => togglePuntoEnAgenda(p.id, ev.target.checked)}
                            style={{ accentColor: B.success, width: 18, height: 18 }} />
                     {p.en_agenda ? "✓ Agenda" : "Privado"}
                   </label>
@@ -925,7 +934,7 @@ function BriefingDetalle({ briefing, tareas, tareasAnterior, briefingAnterior, e
                               placeholder="Detalle (opcional)" rows={2}
                               style={{ background: "transparent", border: "none", color: "rgba(255,255,255,0.6)", fontSize: 11, padding: "4px 0 0", outline: "none", width: "100%", resize: "vertical", fontFamily: "inherit" }} />
                   </div>
-                  <button onClick={() => { removePunto(p.id); setTimeout(guardar, 100); }}
+                  <button onClick={() => removePunto(p.id)}
                           style={{ background: "transparent", border: "none", color: B.danger, cursor: "pointer", fontSize: 14 }}>✕</button>
                 </div>
               ))}
@@ -1168,7 +1177,8 @@ function AgendarBriefingModal({ empleados = [], onClose, onCrear }) {
   };
   const removeAsistente = (id) => setAsistentes(a => a.filter(x => x.id !== id));
 
-  // Empleados disponibles para agregar (excluye los ya añadidos), filtrados por búsqueda
+  // Empleados disponibles para agregar (excluye los ya añadidos), filtrados por búsqueda.
+  // Si no hay búsqueda mostramos los primeros 30 ordenados; con búsqueda filtramos.
   const asistentesIds = new Set(asistentes.map(a => a.id));
   const empleadosDisponibles = empleados
     .filter(e => !asistentesIds.has(e.id))
@@ -1176,8 +1186,8 @@ function AgendarBriefingModal({ empleados = [], onClose, onCrear }) {
       if (!empSearch.trim()) return true;
       const q = empSearch.toLowerCase();
       return `${e.nombres || ""} ${e.apellidos || ""} ${e.cargo || ""}`.toLowerCase().includes(q);
-    })
-    .slice(0, 8);
+    });
+  const empleadosVisibles = empleadosDisponibles.slice(0, empSearch.trim() ? 20 : 30);
 
   const submit = async () => {
     if (!fecha) return alert("Elegí una fecha.");
@@ -1245,28 +1255,35 @@ function AgendarBriefingModal({ empleados = [], onClose, onCrear }) {
 
           <input value={empSearch} onChange={e => setEmpSearch(e.target.value)}
                  placeholder={empleados.length === 0 ? "(no hay empleados activos)" : "🔍 Buscar empleado por nombre o cargo…"}
-                 style={{ ...IS, padding: "8px 10px", fontSize: 12 }}
+                 style={{ ...IS, padding: "8px 10px", fontSize: 12, marginBottom: 6 }}
                  disabled={empleados.length === 0} />
-          {empSearch.trim() && empleadosDisponibles.length > 0 && (
-            <div style={{ marginTop: 6, background: B.navy, borderRadius: 8, border: `1px solid ${B.navyLight}`, maxHeight: 200, overflowY: "auto" }}>
-              {empleadosDisponibles.map(emp => (
+          {/* Lista siempre visible (no requiere typing) — scrollea si hay muchos */}
+          {empleadosVisibles.length > 0 ? (
+            <div style={{ background: B.navy, borderRadius: 8, border: `1px solid ${B.navyLight}`, maxHeight: 220, overflowY: "auto" }}>
+              {empleadosVisibles.map(emp => (
                 <button key={emp.id} onClick={() => addAsistente(emp)}
                         style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "8px 12px", background: "transparent", border: "none", borderBottom: `1px solid ${B.navyLight}`, color: "#fff", cursor: "pointer", textAlign: "left" }}>
                   <div style={{ width: 26, height: 26, borderRadius: "50%", background: B.hotel + "55", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 10, flexShrink: 0 }}>
                     {(emp.nombres || "?")[0]}
                   </div>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: 12, fontWeight: 700 }}>{emp.nombres} {emp.apellidos}</div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 12, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{emp.nombres} {emp.apellidos}</div>
                     {emp.cargo && <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)" }}>{emp.cargo}</div>}
                   </div>
-                  <span style={{ fontSize: 11, color: B.success, fontWeight: 700 }}>+ Agregar</span>
+                  <span style={{ fontSize: 11, color: B.success, fontWeight: 700 }}>+</span>
                 </button>
               ))}
+              {empleadosDisponibles.length > empleadosVisibles.length && (
+                <div style={{ padding: 8, fontSize: 10, color: "rgba(255,255,255,0.35)", textAlign: "center", fontStyle: "italic" }}>
+                  + {empleadosDisponibles.length - empleadosVisibles.length} más · escribí para buscar
+                </div>
+              )}
             </div>
-          )}
-          {empSearch.trim() && empleadosDisponibles.length === 0 && (
-            <div style={{ marginTop: 6, padding: 10, fontSize: 11, color: "rgba(255,255,255,0.4)", textAlign: "center", fontStyle: "italic" }}>
-              Sin coincidencias
+          ) : (
+            <div style={{ padding: 12, fontSize: 11, color: "rgba(255,255,255,0.4)", textAlign: "center", fontStyle: "italic", border: `1px dashed ${B.navyLight}`, borderRadius: 8 }}>
+              {empleados.length === 0
+                ? "No hay empleados activos en RRHH"
+                : empSearch.trim() ? "Sin coincidencias" : "Todos los empleados ya están agregados"}
             </div>
           )}
         </div>
