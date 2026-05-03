@@ -61,6 +61,7 @@ export default function Horarios() {
   const [cellMenu, setCellMenu] = useState(null); // {empId, fecha, event}
   const [searchQ, setSearchQ] = useState("");
   const [vista, setVista] = useState("planilla"); // "planilla" | "cobertura"
+  const [semanalEmp, setSemanalEmp] = useState(null); // empleado para editar semana completa
 
   const dias = useMemo(() =>
     Array.from({ length: 7 }, (_, i) => {
@@ -340,8 +341,10 @@ export default function Horarios() {
                                 <div style={{ width: 26, height: 26, borderRadius: 13, background: e.avatar_color || B.sky, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, fontWeight: 800, color: B.navy, flexShrink: 0 }}>
                                   {e.nombres?.charAt(0)}{e.apellidos?.charAt(0)}
                                 </div>
-                                <div style={{ minWidth: 0 }}>
-                                  <div style={{ fontWeight: 600, fontSize: 13, color: B.white, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                                <div style={{ minWidth: 0, flex: 1, cursor: "pointer" }}
+                                     onClick={() => setSemanalEmp(e)}
+                                     title="Editar toda la semana">
+                                  <div style={{ fontWeight: 600, fontSize: 13, color: B.white, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", textDecoration: "underline", textDecorationColor: "rgba(142,202,230,0.3)", textDecorationThickness: "1px", textUnderlineOffset: 3 }}>
                                     {e.nombres} {e.apellidos}
                                   </div>
                                   {e.cargo && <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{e.cargo}</div>}
@@ -427,6 +430,18 @@ export default function Horarios() {
           onAsignar={(pid, extra) => { asignar(cellMenu.empId, cellMenu.fecha, pid, extra); setCellMenu(null); }}
           onBorrar={() => { asignar(cellMenu.empId, cellMenu.fecha, null); setCellMenu(null); }}
           onClose={() => setCellMenu(null)}
+        />
+      )}
+
+      {/* Modal semanal por empleado */}
+      {semanalEmp && (
+        <SemanaEmpleadoModal
+          empleado={semanalEmp}
+          dias={dias}
+          horariosActuales={dias.map(d => horariosMap[`${semanalEmp.id}|${d.iso}`])}
+          plantillas={plantillas}
+          onClose={() => setSemanalEmp(null)}
+          onSaved={() => { setSemanalEmp(null); load(); }}
         />
       )}
     </div>
@@ -548,3 +563,153 @@ function CellMenu({ empId, fecha, current, plantillas, actividades, empleados, p
 // ─── estilos ───────────────────────────────────────────────────────────────
 const thStyle = { padding: "10px 12px", textAlign: "left", fontSize: 10, color: B.sand, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1 };
 const btn = (bg, fg = B.navy) => ({ padding: "7px 13px", borderRadius: 8, border: "none", background: bg, color: fg, fontSize: 12, fontWeight: 700, cursor: "pointer" });
+
+// ─── Modal: Semana completa de un empleado ─────────────────────────────────
+// Click en el nombre del empleado → abre este modal con los 7 días de la
+// semana visible. Por cada día: hora entrada · hora salida · checkbox Libre.
+// Marcar "Libre" deshabilita los inputs y al guardar borra/skip ese día.
+function SemanaEmpleadoModal({ empleado, dias, horariosActuales, plantillas, onClose, onSaved }) {
+  // Estado por día: { hora_ini, hora_fin, libre }
+  const [filas, setFilas] = useState(() =>
+    dias.map((d, i) => {
+      const h = horariosActuales[i];
+      const libre = !!h && (h.tipo === "libre" || h.tipo === "descanso");
+      return {
+        iso: d.iso,
+        existing: h || null,
+        hora_ini: h?.hora_ini ? String(h.hora_ini).slice(0, 5) : "",
+        hora_fin: h?.hora_fin ? String(h.hora_fin).slice(0, 5) : "",
+        libre,
+      };
+    })
+  );
+  const [saving, setSaving] = useState(false);
+  const set = (i, k, v) => setFilas(f => f.map((row, idx) => idx === i ? { ...row, [k]: v } : row));
+
+  const aplicarLunVie = () => {
+    // Si lunes tiene horas, copiarlas a mar-vie
+    const lun = filas[0];
+    if (!lun.hora_ini || !lun.hora_fin || lun.libre) {
+      alert("Llená el lunes primero (hora entrada y salida) para copiar.");
+      return;
+    }
+    setFilas(f => f.map((row, idx) => idx >= 1 && idx <= 4
+      ? { ...row, hora_ini: lun.hora_ini, hora_fin: lun.hora_fin, libre: false }
+      : row));
+  };
+
+  const marcarTodoLibre = () => setFilas(f => f.map(row => ({ ...row, libre: true, hora_ini: "", hora_fin: "" })));
+  const limpiarSemana   = () => setFilas(f => f.map(row => ({ ...row, libre: false, hora_ini: "", hora_fin: "" })));
+
+  const guardar = async () => {
+    setSaving(true);
+    // Buscar plantilla por defecto tipo='turno' (la primera) y tipo='libre' si existe
+    const plTurno = plantillas.find(p => p.tipo === "turno") || plantillas[0];
+    const plLibre = plantillas.find(p => p.tipo === "libre" || p.tipo === "descanso");
+
+    for (const row of filas) {
+      const tieneHoras = row.hora_ini && row.hora_fin;
+      const queremosLibre = row.libre;
+      const queremosTurno = !queremosLibre && tieneHoras;
+      const queremosVacio = !queremosLibre && !tieneHoras;
+
+      if (queremosVacio) {
+        // Si había algo, borrar
+        if (row.existing) await supabase.from("rh_horarios").delete().eq("id", row.existing.id);
+        continue;
+      }
+
+      const payload = {
+        empleado_id: empleado.id,
+        fecha: row.iso,
+        tipo: queremosLibre ? "libre" : "turno",
+        hora_ini: queremosTurno ? row.hora_ini : null,
+        hora_fin: queremosTurno ? row.hora_fin : null,
+        plantilla_id: queremosLibre ? (plLibre?.id || null) : (plTurno?.id || null),
+        updated_at: new Date().toISOString(),
+      };
+      if (row.existing) await supabase.from("rh_horarios").update(payload).eq("id", row.existing.id);
+      else              await supabase.from("rh_horarios").insert(payload);
+    }
+    setSaving(false);
+    onSaved();
+  };
+
+  const NOMBRES = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"];
+
+  return (
+    <div onClick={onClose}
+      style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 1000, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "30px 16px", overflowY: "auto" }}>
+      <div onClick={e => e.stopPropagation()}
+        style={{ background: B.navy, borderRadius: 16, padding: 24, maxWidth: 620, width: "100%", color: "#fff", border: `1px solid ${B.navyLight}` }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 18, gap: 12 }}>
+          <div>
+            <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontSize: 24, fontWeight: 800 }}>
+              📅 Semana de {empleado.nombres} {empleado.apellidos}
+            </div>
+            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginTop: 2 }}>
+              {empleado.cargo || "—"} · Configurá los 7 días de un solo tirón
+            </div>
+          </div>
+          <button type="button" onClick={onClose} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.4)", cursor: "pointer", fontSize: 22 }}>×</button>
+        </div>
+
+        {/* Acciones rápidas */}
+        <div style={{ display: "flex", gap: 6, marginBottom: 14, flexWrap: "wrap" }}>
+          <button type="button" onClick={aplicarLunVie} style={{ ...btn(B.navyLight, "#fff"), fontSize: 11 }}>↳ Copiar lunes a mar-vie</button>
+          <button type="button" onClick={marcarTodoLibre} style={{ ...btn("transparent", "#fbbf24"), fontSize: 11, border: `1px solid ${B.warning}55` }}>Toda la semana libre</button>
+          <button type="button" onClick={limpiarSemana} style={{ ...btn("transparent", "rgba(255,255,255,0.5)"), fontSize: 11, border: "1px solid rgba(255,255,255,0.15)" }}>Limpiar todo</button>
+        </div>
+
+        {/* Días */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          {filas.map((row, i) => {
+            const date = dias[i].date;
+            const fechaLabel = date.toLocaleDateString("es-CO", { day: "2-digit", month: "short" });
+            const esFinde = i >= 5;
+            return (
+              <div key={row.iso}
+                style={{ background: row.libre ? "rgba(245,158,11,0.08)" : esFinde ? "rgba(255,255,255,0.02)" : B.navyMid,
+                  borderRadius: 10, padding: "10px 14px", display: "grid",
+                  gridTemplateColumns: "110px 1fr 1fr 90px",
+                  gap: 12, alignItems: "center",
+                  border: `1px solid ${row.libre ? B.warning + "44" : B.navyLight}` }}>
+                <div>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: row.libre ? B.warning : "#fff" }}>
+                    {NOMBRES[i]}
+                  </div>
+                  <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)" }}>{fechaLabel}</div>
+                </div>
+                <div>
+                  <label style={{ fontSize: 9, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.04em" }}>Entrada</label>
+                  <input type="time" value={row.hora_ini} disabled={row.libre}
+                    onChange={e => set(i, "hora_ini", e.target.value)}
+                    style={{ width: "100%", padding: "7px 10px", borderRadius: 6, background: B.navyLight, border: `1px solid ${B.navyLight}`, color: row.libre ? "rgba(255,255,255,0.3)" : "#fff", fontSize: 13, outline: "none", boxSizing: "border-box" }} />
+                </div>
+                <div>
+                  <label style={{ fontSize: 9, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.04em" }}>Salida</label>
+                  <input type="time" value={row.hora_fin} disabled={row.libre}
+                    onChange={e => set(i, "hora_fin", e.target.value)}
+                    style={{ width: "100%", padding: "7px 10px", borderRadius: 6, background: B.navyLight, border: `1px solid ${B.navyLight}`, color: row.libre ? "rgba(255,255,255,0.3)" : "#fff", fontSize: 13, outline: "none", boxSizing: "border-box" }} />
+                </div>
+                <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", fontSize: 11, color: row.libre ? B.warning : "rgba(255,255,255,0.5)", fontWeight: 700 }}>
+                  <input type="checkbox" checked={row.libre}
+                    onChange={e => set(i, "libre", e.target.checked)}
+                    style={{ accentColor: B.warning, width: 16, height: 16 }} />
+                  {row.libre ? "✓ Libre" : "Libre"}
+                </label>
+              </div>
+            );
+          })}
+        </div>
+
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 18 }}>
+          <button type="button" onClick={onClose} style={{ ...btn(B.navyLight, "#fff"), fontSize: 13 }} disabled={saving}>Cancelar</button>
+          <button type="button" onClick={guardar} style={{ ...btn(B.success, "#fff"), fontSize: 13 }} disabled={saving}>
+            {saving ? "Guardando…" : "Guardar semana"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
