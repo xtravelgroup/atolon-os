@@ -3900,24 +3900,35 @@ export default function EventoDetalle({ evento: inicial, canEdit = true, onBack,
   const [usuariosList, setUsuariosList] = useState([]);
   const [currentUser, setCurrentUser]   = useState("");
   const [vistaOperativa, setVistaOperativa] = useState(false);
+  const [puedeVerPL, setPuedeVerPL] = useState(false);
 
   // Load current user name + rol para history logging y vista restringida.
   // "Vista operativa" = roles operativos (cocina, etc.) que solo necesitan
   // ver Rundown, Menús, Servicios (sin precios), Asignaciones y Dietas.
-  // Detección: rol_id que empieza por "chef_" o "cocina" → operativo.
+  // "Puede ver P/L" = solo super_admin, admin, gerente_general_*, contabilidad
+  // o usuarios con permisos_extra.eventos_pl. Es el resumen financiero
+  // confidencial: cotizado vs costos reales (consumo + flota + extras) =
+  // margen del evento.
   useEffect(() => {
     if (!supabase) return;
     supabase.auth.getSession().then(async ({ data: { session } }) => {
       if (!session?.user?.email) return;
       const { data } = await supabase.from("usuarios")
-        .select("nombre, rol_id, permisos_extra")
+        .select("nombre, rol_id, permisos_extra, email")
         .eq("email", session.user.email.toLowerCase()).single();
       setCurrentUser(data?.nombre || session.user.email);
       const rid = (data?.rol_id || "").toLowerCase();
+      const email = (data?.email || "").toLowerCase();
       const extras = Array.isArray(data?.permisos_extra) ? data.permisos_extra : [];
       const esOperativo = /^(chef|cocina|maitre|capitan_servicio|operativo)/.test(rid)
         || extras.includes("eventos_vista_operativa");
       setVistaOperativa(esOperativo);
+      // P/L: super_admin, admin, gerente_general_*, contabilidad o el dueño Eric
+      const puedePL = ["super_admin", "admin", "contabilidad"].includes(rid)
+        || rid.startsWith("gerente_general")
+        || extras.includes("eventos_pl")
+        || email === "erickern1@gmail.com" || email === "eric@atoloncartagena.com";
+      setPuedeVerPL(puedePL);
     });
   }, []);
   const saveTimer = useRef(null);
@@ -4144,6 +4155,9 @@ export default function EventoDetalle({ evento: inicial, canEdit = true, onBack,
     { key: "dietas",      label: isMobile ? "🍽" : "🍽 Dietas" },
     { key: "beo",         label: isMobile ? "📋" : "📋 BEO" },
     { key: "bitacora",    label: isMobile ? "📝" : "📝 Bitácora" },
+    // Solo visible para super_admin, admin, gerente_general_*, contabilidad
+    // Comparativo cotizado vs costos reales (consumo + flota + extras).
+    ...(puedeVerPL ? [{ key: "pl", label: isMobile ? "💰" : "💰 P/L", restricted: true }] : []),
   ];
   const TABS_OPERATIVA = TABS_FULL.filter(t =>
     ["rundown", "servicios", "menus", "openbar", "asignaciones", "dietas"].includes(t.key)
@@ -4304,6 +4318,7 @@ export default function EventoDetalle({ evento: inicial, canEdit = true, onBack,
       {tab === "dietas"    && <TabDietas     items={evento.restricciones_dieteticas||[]}  paxTotal={evento.pax||0} onChange={v => updateLocal("restricciones_dieteticas", v)} />}
       {tab === "beo"       && <TabBEO        evento={evento} notas={evento.beo_notas||{}} onChange={v => updateLocal("beo_notas", v)} readOnly={!canEdit} />}
       {tab === "bitacora"  && <TabBitacora   items={evento.incidentes||[]}               onChange={v => updateLocal("incidentes", v)} historial={evento.historial_cambios||[]} />}
+      {tab === "pl" && puedeVerPL && <TabPL  evento={evento} />}
     </div>
   );
 }
@@ -4795,6 +4810,204 @@ function TabOpenBar({ evento, ocultarPrecios = false }) {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// TabPL — P/L confidencial del evento
+// Solo visible para super_admin, admin, gerente_general_*, contabilidad
+// y Eric. Muestra cotizado vs costos reales (consumo + extras) = margen.
+// ─────────────────────────────────────────────────────────────────────
+function TabPL({ evento }) {
+  const [consumo, setConsumo] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const COPx = (n) => "$" + Math.round(Number(n) || 0).toLocaleString("es-CO");
+
+  useEffect(() => {
+    supabase.from("eventos_consumo_openbar").select("*").eq("evento_id", evento.id).eq("anulado", false)
+      .then(({ data }) => { setConsumo(data || []); setLoading(false); });
+  }, [evento.id]);
+
+  if (loading) return <div style={{ padding: 30, textAlign: "center", color: "rgba(255,255,255,0.4)" }}>Cargando P/L…</div>;
+
+  // ── INGRESOS ────────────────────────────────────────────────────
+  const cot = evento.cotizacion_data || {};
+  const calcSum = (rows = []) => rows.reduce((s, l) => {
+    const sub = (Number(l.cantidad) || 1) * (Number(l.noches) || 1) * (Number(l.valor_unit) || 0);
+    return s + sub + sub * ((Number(l.iva) || 0) / 100);
+  }, 0);
+  const ingEspacios   = calcSum(cot.espacios);
+  const ingHospedaje  = calcSum(cot.hospedaje || cot.alojamientos);
+  const ingAlimentos  = calcSum(cot.alimentos);
+  const ingOtrosCot   = calcSum(cot.servicios);
+  const ingServicios  = (evento.servicios_contratados || []).reduce((s, x) => s + (Number(x.valor) || 0), 0);
+  const valorBase     = Number(evento.valor) || 0;
+  const valorExtras   = Number(evento.valor_extras) || 0;
+  const ingresoTotal  = Math.max(
+    valorBase + valorExtras + ingServicios,
+    ingEspacios + ingHospedaje + ingAlimentos + ingOtrosCot,
+  );
+
+  // ── COSTOS ──────────────────────────────────────────────────────
+  const costoConsumo = consumo.reduce((s, c) => s + (Number(c.costo_total) || 0), 0);
+  const costoExtras  = ["transporte", "alimentos", "servicios"].reduce((s, k) =>
+    s + calcSum((evento.extras_data || {})[k]), 0);
+  const costoTotal = costoConsumo + costoExtras;
+  const margen = ingresoTotal - costoTotal;
+  const margenPct = ingresoTotal > 0 ? (margen / ingresoTotal) * 100 : 0;
+
+  // ── Desglose por servicio A&B (cobrado vs consumido) ────────────
+  const consumoPorServicio = {};
+  consumo.forEach(c => {
+    const key = c.servicio_id ? `${c.servicio_origen}|${c.servicio_id}` : "_sin";
+    if (!consumoPorServicio[key]) {
+      consumoPorServicio[key] = { descripcion: c.servicio_descripcion || "Sin servicio asignado", costo: 0 };
+    }
+    consumoPorServicio[key].costo += Number(c.costo_total) || 0;
+  });
+  const ayBLines = [];
+  (cot.alimentos || []).forEach(a => {
+    if (!a) return;
+    const key = `alimento|${a.id}`;
+    const sub = (Number(a.cantidad) || 1) * (Number(a.noches) || 1) * (Number(a.valor_unit) || 0);
+    ayBLines.push({
+      key, descripcion: a.concepto || a.descripcion || "Sin nombre", origen: "Cotizado A&B",
+      cobrado: sub + sub * ((Number(a.iva) || 0) / 100), costo: consumoPorServicio[key]?.costo || 0,
+    });
+  });
+  ((evento.extras_data || {}).alimentos || []).forEach((a, i) => {
+    if (!a) return;
+    const key = `extra_alimento|${a.id || `extra-alim-${i}`}`;
+    const sub = (Number(a.cantidad) || 1) * (Number(a.noches) || 1) * (Number(a.valor_unit) || 0);
+    ayBLines.push({
+      key, descripcion: a.concepto || a.descripcion || "Sin nombre", origen: "Extra A&B",
+      cobrado: sub + sub * ((Number(a.iva) || 0) / 100), costo: consumoPorServicio[key]?.costo || 0,
+    });
+  });
+  const CATS_AYB = /banquete|bebida|restaurant|alimento|comida|menu|cocktail|coctel|food|catering/i;
+  (evento.servicios_contratados || []).forEach(s => {
+    if (!s) return;
+    const cat = String(s.categoria || "").toLowerCase();
+    const desc = String(s.descripcion || "").toLowerCase();
+    if (CATS_AYB.test(cat) || CATS_AYB.test(desc)) {
+      const key = `contratado|${s.id}`;
+      ayBLines.push({
+        key, descripcion: s.descripcion || s.categoria, origen: "Servicio contratado",
+        cobrado: Number(s.valor) || 0, costo: consumoPorServicio[key]?.costo || 0,
+      });
+    }
+  });
+  if (consumoPorServicio._sin) {
+    ayBLines.push({ key: "_sin", descripcion: "Sin servicio asignado", origen: "—",
+      cobrado: 0, costo: consumoPorServicio._sin.costo });
+  }
+
+  return (
+    <div style={{ padding: "14px 6px" }}>
+      <div style={{ background: "rgba(245,158,11,0.08)", border: `1px solid ${B.warning}55`, borderRadius: 10, padding: "10px 14px", marginBottom: 16, fontSize: 11, color: B.warning, display: "flex", alignItems: "center", gap: 8 }}>
+        🔒 <strong>Información confidencial.</strong> Solo visible para Gerencia General, Contabilidad y Dirección.
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginBottom: 18 }}>
+        <div style={{ background: B.navyMid, borderRadius: 12, padding: "14px 16px", borderLeft: `4px solid ${B.success}` }}>
+          <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.06em" }}>Ingreso (cotizado)</div>
+          <div style={{ fontSize: 22, fontWeight: 800, color: B.success, fontFamily: "'Barlow Condensed', sans-serif", marginTop: 4 }}>{COPx(ingresoTotal)}</div>
+        </div>
+        <div style={{ background: B.navyMid, borderRadius: 12, padding: "14px 16px", borderLeft: `4px solid ${B.danger}` }}>
+          <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.06em" }}>Costo (real)</div>
+          <div style={{ fontSize: 22, fontWeight: 800, color: B.danger, fontFamily: "'Barlow Condensed', sans-serif", marginTop: 4 }}>{COPx(costoTotal)}</div>
+          <div style={{ fontSize: 10, color: "rgba(255,255,255,0.45)", marginTop: 2 }}>
+            Consumo {COPx(costoConsumo)}{costoExtras > 0 && ` · Extras ${COPx(costoExtras)}`}
+          </div>
+        </div>
+        <div style={{ background: B.navyMid, borderRadius: 12, padding: "14px 16px", borderLeft: `4px solid ${margen >= 0 ? B.sky : B.danger}` }}>
+          <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.06em" }}>Margen bruto</div>
+          <div style={{ fontSize: 22, fontWeight: 800, color: margen >= 0 ? B.sky : B.danger, fontFamily: "'Barlow Condensed', sans-serif", marginTop: 4 }}>{COPx(margen)}</div>
+          <div style={{ fontSize: 11, color: "rgba(255,255,255,0.55)", marginTop: 2 }}>{margenPct.toFixed(1)}%</div>
+        </div>
+      </div>
+
+      <div style={{ background: B.navyMid, borderRadius: 12, overflow: "hidden", marginBottom: 16 }}>
+        <div style={{ padding: "12px 16px", borderBottom: `1px solid ${B.navyLight}` }}>
+          <div style={{ fontSize: 13, fontWeight: 800, color: "#fff" }}>📊 Desglose por servicio A&B</div>
+          <div style={{ fontSize: 10, color: "rgba(255,255,255,0.45)", marginTop: 2 }}>Cobrado al cliente vs costo real (consumo)</div>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 110px 110px 110px 70px", gap: 10, padding: "10px 16px", background: B.navy, fontSize: 10, color: "rgba(255,255,255,0.45)", textTransform: "uppercase", letterSpacing: "0.05em", fontWeight: 700 }}>
+          <div>Servicio</div>
+          <div style={{ textAlign: "right" }}>Cobrado</div>
+          <div style={{ textAlign: "right" }}>Costo</div>
+          <div style={{ textAlign: "right" }}>Margen</div>
+          <div style={{ textAlign: "right" }}>%</div>
+        </div>
+        {ayBLines.length === 0 ? (
+          <div style={{ padding: 20, textAlign: "center", color: "rgba(255,255,255,0.35)", fontSize: 12, fontStyle: "italic" }}>
+            Sin items de A&B en la cotización.
+          </div>
+        ) : ayBLines.map(l => {
+          const m = l.cobrado - l.costo;
+          const pct = l.cobrado > 0 ? (m / l.cobrado) * 100 : 0;
+          return (
+            <div key={l.key} style={{ display: "grid", gridTemplateColumns: "1fr 110px 110px 110px 70px", gap: 10, padding: "10px 16px", borderTop: `1px solid ${B.navyLight}`, fontSize: 12 }}>
+              <div>
+                <div style={{ color: "#fff", fontWeight: 600 }}>{l.descripcion}</div>
+                <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)" }}>{l.origen}</div>
+              </div>
+              <div style={{ textAlign: "right", color: B.success, fontWeight: 600 }}>{COPx(l.cobrado)}</div>
+              <div style={{ textAlign: "right", color: B.danger }}>{COPx(l.costo)}</div>
+              <div style={{ textAlign: "right", color: m >= 0 ? B.sky : B.danger, fontWeight: 700 }}>{COPx(m)}</div>
+              <div style={{ textAlign: "right", color: "rgba(255,255,255,0.6)" }}>{l.cobrado > 0 ? pct.toFixed(0) + "%" : "—"}</div>
+            </div>
+          );
+        })}
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+        <div style={{ background: B.navyMid, borderRadius: 12, padding: "14px 16px" }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: B.success, marginBottom: 10, textTransform: "uppercase", letterSpacing: "0.05em" }}>💰 Ingresos cotizados</div>
+          {[
+            ["Espacios",   ingEspacios],
+            ["Hospedaje",  ingHospedaje],
+            ["Alimentos y Bebidas", ingAlimentos],
+            ["Otros servicios cotizados", ingOtrosCot],
+            ["Servicios contratados", ingServicios],
+            ["Valor base evento", valorBase],
+            ["Valor extras", valorExtras],
+          ].filter(([, v]) => v > 0).map(([k, v]) => (
+            <div key={k} style={{ display: "flex", justifyContent: "space-between", padding: "5px 0", fontSize: 12, borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
+              <span style={{ color: "rgba(255,255,255,0.6)" }}>{k}</span>
+              <span style={{ color: "#fff", fontWeight: 700 }}>{COPx(v)}</span>
+            </div>
+          ))}
+          <div style={{ display: "flex", justifyContent: "space-between", padding: "10px 0 0", marginTop: 6, borderTop: `2px solid ${B.success}`, fontSize: 14, fontWeight: 800 }}>
+            <span>Total</span><span style={{ color: B.success }}>{COPx(ingresoTotal)}</span>
+          </div>
+        </div>
+
+        <div style={{ background: B.navyMid, borderRadius: 12, padding: "14px 16px" }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: B.danger, marginBottom: 10, textTransform: "uppercase", letterSpacing: "0.05em" }}>📦 Costos reales</div>
+          {[
+            ["🍾 Open Bar (consumo)", consumo.filter(c => c.tipo === "openbar").reduce((s, c) => s + (Number(c.costo_total) || 0), 0)],
+            ["🍽️ Buffet (consumo)",   consumo.filter(c => c.tipo === "cocina_buffet").reduce((s, c) => s + (Number(c.costo_total) || 0), 0)],
+            ["🎁 Paquete (consumo)",  consumo.filter(c => c.tipo === "cocina_paquete").reduce((s, c) => s + (Number(c.costo_total) || 0), 0)],
+            ["Extras transporte", calcSum((evento.extras_data || {}).transporte)],
+            ["Extras alimentos",  calcSum((evento.extras_data || {}).alimentos)],
+            ["Extras otros",      calcSum((evento.extras_data || {}).servicios)],
+          ].filter(([, v]) => v > 0).map(([k, v]) => (
+            <div key={k} style={{ display: "flex", justifyContent: "space-between", padding: "5px 0", fontSize: 12, borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
+              <span style={{ color: "rgba(255,255,255,0.6)" }}>{k}</span>
+              <span style={{ color: "#fff", fontWeight: 700 }}>{COPx(v)}</span>
+            </div>
+          ))}
+          <div style={{ display: "flex", justifyContent: "space-between", padding: "10px 0 0", marginTop: 6, borderTop: `2px solid ${B.danger}`, fontSize: 14, fontWeight: 800 }}>
+            <span>Total</span><span style={{ color: B.danger }}>{COPx(costoTotal)}</span>
+          </div>
+        </div>
+      </div>
+
+      <div style={{ marginTop: 14, padding: "10px 14px", background: margen >= 0 ? "rgba(34,197,94,0.08)" : "rgba(239,68,68,0.08)", borderRadius: 10, border: `1px solid ${margen >= 0 ? B.success : B.danger}55`, fontSize: 11, color: "rgba(255,255,255,0.6)" }}>
+        💡 El P/L se actualiza automáticamente al registrar consumos en el tab 🍾 Consumo. El costo se captura como snapshot al momento del registro (precio_compra del item) — el P/L histórico no cambia si después suben los precios.
+      </div>
     </div>
   );
 }
