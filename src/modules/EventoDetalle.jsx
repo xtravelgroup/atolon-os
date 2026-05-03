@@ -4135,6 +4135,7 @@ export default function EventoDetalle({ evento: inicial, canEdit = true, onBack,
     { key: "rundown",     label: isMobile ? "📋" : "📋 Rundown" },
     { key: "servicios",   label: isMobile ? "🛎" : "🛎 Servicios" },
     { key: "menus",       label: isMobile ? "🍽️" : "🍽️ Menús" },
+    { key: "openbar",     label: isMobile ? "🍾" : "🍾 Consumo" },
     { key: "asignaciones",label: isMobile ? "👥" : "👥 Asignaciones" },
     { key: "pagos", label: isMobile ? "💳" : "💳 Pagos" },
     { key: "transporte",  label: isMobile ? "⛵" : "⛵ Transporte" },
@@ -4145,7 +4146,7 @@ export default function EventoDetalle({ evento: inicial, canEdit = true, onBack,
     { key: "bitacora",    label: isMobile ? "📝" : "📝 Bitácora" },
   ];
   const TABS_OPERATIVA = TABS_FULL.filter(t =>
-    ["rundown", "servicios", "menus", "asignaciones", "dietas"].includes(t.key)
+    ["rundown", "servicios", "menus", "openbar", "asignaciones", "dietas"].includes(t.key)
   );
   const TABS = vistaOperativa ? TABS_OPERATIVA : TABS_FULL;
   // Si el tab actual no está disponible en la vista operativa (ej: usuario
@@ -4270,6 +4271,7 @@ export default function EventoDetalle({ evento: inicial, canEdit = true, onBack,
       })()}
       {tab === "servicios" && <TabServicios  items={evento.servicios_contratados||[]}     onChange={v => updateLocal("servicios_contratados", v)} pasadiasOrg={evento.pasadias_org||[]} onChangePasadias={vistaOperativa ? null : v => updateLocal("pasadias_org", v)} categoria={evento.categoria} precioTipo={evento.precio_tipo||"publico"} pasadiasMap={pasadiasMap} cotizacionData={evento.cotizacion_data||null} eventoId={evento.id} eventoFecha={evento.fecha} eventoNombre={evento.nombre} evento={evento} ocultarPrecios={vistaOperativa} />}
       {tab === "menus"     && <TabMenus     servicios={evento.servicios_contratados||[]} menusDetalle={evento.menus_detalle||{}} onChange={v => updateLocal("menus_detalle", v)} cotizacionData={evento.cotizacion_data||null} timelineItems={evento.timeline_items||[]} />}
+      {tab === "openbar"   && <TabOpenBar      eventoId={evento.id} ocultarPrecios={vistaOperativa} />}
       {tab === "asignaciones" && <TabAsignaciones timelineItems={evento.timeline_items||[]} />}
       {tab === "pagos"     && (() => {
         const resolverPrecioLocal = (p) => {
@@ -4302,6 +4304,355 @@ export default function EventoDetalle({ evento: inicial, canEdit = true, onBack,
       {tab === "dietas"    && <TabDietas     items={evento.restricciones_dieteticas||[]}  paxTotal={evento.pax||0} onChange={v => updateLocal("restricciones_dieteticas", v)} />}
       {tab === "beo"       && <TabBEO        evento={evento} notas={evento.beo_notas||{}} onChange={v => updateLocal("beo_notas", v)} readOnly={!canEdit} />}
       {tab === "bitacora"  && <TabBitacora   items={evento.incidentes||[]}               onChange={v => updateLocal("incidentes", v)} historial={evento.historial_cambios||[]} />}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// TabOpenBar — Registro de consumo del evento (3 tipos):
+//   • openbar         — Bebidas del open bar (servicio)
+//   • cocina_buffet   — Productos del buffet (cocina)
+//   • cocina_paquete  — Productos incluidos en el paquete (cocina)
+//
+// Cada registro descuenta del stock (vía trigger DB) y suma al costo
+// total del evento. Snapshot del precio de compra al momento del
+// registro → costo histórico fijo aunque suba el precio después.
+// ─────────────────────────────────────────────────────────────────────
+const TIPOS_CONSUMO = [
+  { k: "openbar",        l: "Open Bar",        icon: "🍾", color: "#a78bfa", desc: "Bebidas servidas en barra" },
+  { k: "cocina_buffet",  l: "Buffet",          icon: "🍽️", color: "#f59e0b", desc: "Productos del buffet" },
+  { k: "cocina_paquete", l: "Paquete incluido", icon: "🎁", color: "#22c55e", desc: "Productos del paquete contratado" },
+];
+
+function TabOpenBar({ eventoId, ocultarPrecios = false }) {
+  const [items, setItems] = useState([]);
+  const [locaciones, setLocaciones] = useState([]);
+  const [consumo, setConsumo] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [filtroTipo, setFiltroTipo] = useState("todos"); // todos | openbar | cocina_buffet | cocina_paquete
+  const [showPick, setShowPick] = useState(false);
+  const [search, setSearch] = useState("");
+  const [pickItem, setPickItem] = useState(null);
+  const [pickTipo, setPickTipo] = useState("openbar");   // tipo seleccionado al registrar
+  const [cantidad, setCantidad] = useState("1");
+  const [locacionId, setLocacionId] = useState("LOC-EVENTOS");
+  const [notas, setNotas] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [userEmail, setUserEmail] = useState("");
+  const COPx = (n) => "$" + Math.round(Number(n) || 0).toLocaleString("es-CO");
+  const tipoInfo = (k) => TIPOS_CONSUMO.find(t => t.k === k) || TIPOS_CONSUMO[0];
+
+  const load = async () => {
+    setLoading(true);
+    const [iR, lR, cR, uR] = await Promise.all([
+      supabase.from("items_catalogo")
+        .select("id, nombre, categoria, unidad, stock_actual, precio_compra, foto_url")
+        .eq("activo", true).order("nombre"),
+      supabase.from("items_locaciones").select("id, nombre").order("nombre"),
+      supabase.from("eventos_consumo_openbar")
+        .select("*").eq("evento_id", eventoId).order("created_at", { ascending: false }),
+      supabase.auth.getUser(),
+    ]);
+    setItems(iR.data || []);
+    setLocaciones(lR.data || []);
+    setConsumo(cR.data || []);
+    setUserEmail(uR.data?.user?.email || "");
+    setLoading(false);
+  };
+  useEffect(() => { load(); }, [eventoId]);
+
+  // Mapa para enriquecer los registros de consumo con info del item
+  const itemsById = Object.fromEntries(items.map(i => [i.id, i]));
+  const locById   = Object.fromEntries(locaciones.map(l => [l.id, l]));
+
+  // Filtro de búsqueda en el picker
+  const itemsFiltrados = items.filter(i => {
+    if (!search.trim()) return true;
+    const q = search.toLowerCase();
+    return `${i.nombre || ""} ${i.categoria || ""}`.toLowerCase().includes(q);
+  }).slice(0, 50);
+
+  // Vigentes filtrados por tipo activo
+  const vigenteTodo = consumo.filter(c => !c.anulado);
+  const consumoVigente = filtroTipo === "todos"
+    ? vigenteTodo
+    : vigenteTodo.filter(c => (c.tipo || "openbar") === filtroTipo);
+
+  // Totales por tipo (siempre sobre vigenteTodo, para badges)
+  const totalesPorTipo = {};
+  vigenteTodo.forEach(c => {
+    const t = c.tipo || "openbar";
+    if (!totalesPorTipo[t]) totalesPorTipo[t] = { qty: 0, costo: 0, count: 0 };
+    totalesPorTipo[t].qty += Number(c.cantidad || 0);
+    totalesPorTipo[t].costo += Number(c.costo_total || 0);
+    totalesPorTipo[t].count++;
+  });
+
+  const totalCosto = consumoVigente.reduce((s, c) => s + Number(c.costo_total || 0), 0);
+  const totalUnidades = consumoVigente.reduce((s, c) => s + Number(c.cantidad || 0), 0);
+
+  // Agrupar por categoría para el resumen (sobre el subset filtrado)
+  const porCategoria = {};
+  consumoVigente.forEach(c => {
+    const cat = itemsById[c.item_id]?.categoria || "Otros";
+    if (!porCategoria[cat]) porCategoria[cat] = { qty: 0, costo: 0, items: [] };
+    porCategoria[cat].qty += Number(c.cantidad || 0);
+    porCategoria[cat].costo += Number(c.costo_total || 0);
+    porCategoria[cat].items.push(c);
+  });
+
+  const registrar = async () => {
+    if (!pickItem) return;
+    const qty = Number(cantidad);
+    if (!qty || qty <= 0) return alert("Cantidad inválida");
+    setSaving(true);
+    const precio = Number(pickItem.precio_compra) || 0;
+    const { error } = await supabase.from("eventos_consumo_openbar").insert({
+      evento_id: eventoId,
+      item_id: pickItem.id,
+      cantidad: qty,
+      unidad: pickItem.unidad || null,
+      locacion_id: locacionId || null,
+      precio_unitario: precio,
+      costo_total: qty * precio,
+      tipo: pickTipo,
+      notas: notas.trim() || null,
+      registrado_por: userEmail,
+    });
+    setSaving(false);
+    if (error) return alert("Error: " + error.message);
+    setShowPick(false);
+    setPickItem(null);
+    setCantidad("1");
+    setNotas("");
+    setSearch("");
+    load();
+  };
+
+  const anular = async (c) => {
+    const motivo = prompt("Motivo de anulación:");
+    if (motivo === null) return;
+    await supabase.from("eventos_consumo_openbar").update({
+      anulado: true,
+      anulado_por: userEmail,
+      anulado_at: new Date().toISOString(),
+      motivo_anulacion: motivo || "Sin motivo",
+    }).eq("id", c.id);
+    load();
+  };
+
+  if (loading) return <div style={{ padding: 30, textAlign: "center", color: "rgba(255,255,255,0.4)" }}>Cargando consumo…</div>;
+
+  return (
+    <div style={{ padding: "14px 6px" }}>
+      {/* Header con total */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, flexWrap: "wrap", gap: 12 }}>
+        <div>
+          <div style={{ fontSize: 16, fontWeight: 800, color: "#fff" }}>🍾 Consumo del evento</div>
+          <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginTop: 2 }}>
+            {consumoVigente.length} registro{consumoVigente.length === 1 ? "" : "s"} · {totalUnidades.toLocaleString("es-CO")} unidad{totalUnidades === 1 ? "" : "es"}
+            {!ocultarPrecios && <> · Costo: <strong style={{ color: B.sky }}>{COPx(totalCosto)}</strong></>}
+          </div>
+        </div>
+        <button type="button" onClick={() => setShowPick(true)}
+          style={{ padding: "10px 18px", borderRadius: 10, border: "none", background: B.success, color: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
+          + Cargar consumo
+        </button>
+      </div>
+
+      {/* Pills de filtrado por tipo */}
+      <div style={{ display: "flex", gap: 6, marginBottom: 14, flexWrap: "wrap" }}>
+        <button type="button" onClick={() => setFiltroTipo("todos")}
+          style={{ padding: "7px 14px", borderRadius: 18, border: filtroTipo === "todos" ? `1px solid ${B.sky}` : `1px solid ${B.navyLight}`,
+            background: filtroTipo === "todos" ? B.sky + "22" : "transparent", color: filtroTipo === "todos" ? B.sky : "rgba(255,255,255,0.5)",
+            fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+          Todos ({vigenteTodo.length})
+        </button>
+        {TIPOS_CONSUMO.map(t => {
+          const tot = totalesPorTipo[t.k] || { count: 0, costo: 0 };
+          const active = filtroTipo === t.k;
+          return (
+            <button key={t.k} type="button" onClick={() => setFiltroTipo(t.k)}
+              style={{ padding: "7px 14px", borderRadius: 18, border: active ? `1px solid ${t.color}` : `1px solid ${B.navyLight}`,
+                background: active ? t.color + "22" : "transparent", color: active ? t.color : "rgba(255,255,255,0.5)",
+                fontSize: 12, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
+              <span>{t.icon} {t.l}</span>
+              <span style={{ fontSize: 10, opacity: 0.8 }}>· {tot.count}{!ocultarPrecios && tot.costo > 0 && ` · ${COPx(tot.costo)}`}</span>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Resumen por categoría */}
+      {Object.keys(porCategoria).length > 0 && !ocultarPrecios && (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 8, marginBottom: 14 }}>
+          {Object.entries(porCategoria).map(([cat, g]) => (
+            <div key={cat} style={{ background: B.navyMid, borderRadius: 10, padding: "10px 12px", borderLeft: `3px solid ${B.sky}` }}>
+              <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.05em" }}>{cat}</div>
+              <div style={{ fontSize: 16, fontWeight: 800, color: "#fff", marginTop: 2 }}>{COPx(g.costo)}</div>
+              <div style={{ fontSize: 10, color: "rgba(255,255,255,0.45)" }}>{g.qty.toLocaleString("es-CO")} unidades</div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Lista de consumos */}
+      {consumo.length === 0 ? (
+        <div style={{ background: B.navyMid, borderRadius: 12, padding: 30, textAlign: "center", color: "rgba(255,255,255,0.4)" }}>
+          Sin consumo registrado. Tocá "+ Cargar consumo" cuando empieces a usar productos del open bar.
+        </div>
+      ) : (
+        <div style={{ background: B.navyMid, borderRadius: 12, overflow: "hidden" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 70px 90px 110px 100px 36px", gap: 10, padding: "10px 14px", background: B.navy, fontSize: 10, color: "rgba(255,255,255,0.45)", textTransform: "uppercase", letterSpacing: "0.05em", fontWeight: 700 }}>
+            <div>Producto</div>
+            <div style={{ textAlign: "right" }}>Cant.</div>
+            <div>Locación</div>
+            <div style={{ textAlign: "right" }}>{ocultarPrecios ? "" : "P. Unit"}</div>
+            <div style={{ textAlign: "right" }}>{ocultarPrecios ? "" : "Total"}</div>
+            <div></div>
+          </div>
+          {(filtroTipo === "todos" ? consumo : consumo.filter(c => (c.tipo || "openbar") === filtroTipo)).map(c => {
+            const it = itemsById[c.item_id];
+            const loc = locById[c.locacion_id];
+            const tInfo = tipoInfo(c.tipo || "openbar");
+            return (
+              <div key={c.id} style={{ display: "grid", gridTemplateColumns: "1fr 70px 90px 110px 100px 36px", gap: 10, padding: "10px 14px", borderTop: `1px solid ${B.navyLight}`, fontSize: 12, opacity: c.anulado ? 0.4 : 1, textDecoration: c.anulado ? "line-through" : "none" }}>
+                <div>
+                  <div style={{ color: "#fff", fontWeight: 600, display: "flex", alignItems: "center", gap: 6 }}>
+                    <span title={tInfo.l} style={{ fontSize: 10, padding: "1px 6px", borderRadius: 6, background: tInfo.color + "22", color: tInfo.color, fontWeight: 700 }}>{tInfo.icon}</span>
+                    <span>{it?.nombre || c.item_id}</span>
+                  </div>
+                  <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", marginTop: 1 }}>
+                    {it?.categoria || "—"}{c.notas ? ` · ${c.notas}` : ""}
+                    {c.registrado_por && ` · por ${c.registrado_por.split("@")[0]}`}
+                    {c.anulado && c.motivo_anulacion && ` · anulado: ${c.motivo_anulacion}`}
+                  </div>
+                </div>
+                <div style={{ textAlign: "right", color: "#fff" }}>{Number(c.cantidad).toLocaleString("es-CO")}</div>
+                <div style={{ color: "rgba(255,255,255,0.55)", fontSize: 11 }}>{loc?.nombre || "—"}</div>
+                <div style={{ textAlign: "right", color: "rgba(255,255,255,0.55)" }}>{ocultarPrecios ? "" : COPx(c.precio_unitario)}</div>
+                <div style={{ textAlign: "right", color: B.sky, fontWeight: 700 }}>{ocultarPrecios ? "" : COPx(c.costo_total)}</div>
+                <div>
+                  {!c.anulado && (
+                    <button type="button" onClick={() => anular(c)} title="Anular" style={{ background: "transparent", border: "none", color: B.danger, cursor: "pointer", fontSize: 14 }}>✕</button>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Modal de selección */}
+      {showPick && (
+        <div onClick={() => setShowPick(false)}
+          style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 1000, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "30px 16px", overflowY: "auto" }}>
+          <div onClick={e => e.stopPropagation()}
+            style={{ background: B.navy, borderRadius: 16, padding: 22, maxWidth: 560, width: "100%", color: "#fff", border: `1px solid ${B.navyLight}` }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+              <div style={{ fontSize: 18, fontWeight: 800 }}>+ Cargar consumo</div>
+              <button type="button" onClick={() => setShowPick(false)} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.4)", cursor: "pointer", fontSize: 22 }}>×</button>
+            </div>
+
+            {/* Selector de tipo: en qué categoría va este consumo */}
+            <div style={{ marginBottom: 12 }}>
+              <label style={{ display: "block", fontSize: 11, color: "rgba(255,255,255,0.5)", fontWeight: 600, textTransform: "uppercase", marginBottom: 6 }}>Tipo de consumo</label>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 6 }}>
+                {TIPOS_CONSUMO.map(t => (
+                  <button key={t.k} type="button" onClick={() => setPickTipo(t.k)}
+                    style={{ padding: "9px 10px", borderRadius: 8, border: pickTipo === t.k ? `2px solid ${t.color}` : `1px solid ${B.navyLight}`,
+                      background: pickTipo === t.k ? t.color + "22" : B.navyMid, color: pickTipo === t.k ? t.color : "rgba(255,255,255,0.6)",
+                      cursor: "pointer", fontSize: 11, fontWeight: 700, textAlign: "center", lineHeight: 1.2 }}>
+                    <div style={{ fontSize: 18, marginBottom: 2 }}>{t.icon}</div>
+                    {t.l}
+                  </button>
+                ))}
+              </div>
+              <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", marginTop: 6, textAlign: "center" }}>{tipoInfo(pickTipo).desc}</div>
+            </div>
+
+            {!pickItem ? (
+              <>
+                <input value={search} onChange={e => setSearch(e.target.value)}
+                  placeholder="🔍 Buscar producto…" autoFocus
+                  style={{ width: "100%", padding: "10px 12px", borderRadius: 8, background: B.navyLight, border: `1px solid ${B.navyLight}`, color: "#fff", fontSize: 13, outline: "none", boxSizing: "border-box", marginBottom: 10 }} />
+                <div style={{ background: B.navyMid, borderRadius: 8, maxHeight: 360, overflowY: "auto" }}>
+                  {itemsFiltrados.length === 0 ? (
+                    <div style={{ padding: 20, textAlign: "center", color: "rgba(255,255,255,0.4)", fontSize: 12 }}>Sin coincidencias</div>
+                  ) : itemsFiltrados.map(i => (
+                    <button key={i.id} type="button" onClick={() => setPickItem(i)}
+                      style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "10px 12px", background: "transparent", border: "none", borderBottom: `1px solid ${B.navyLight}`, color: "#fff", cursor: "pointer", textAlign: "left" }}>
+                      <div style={{ width: 40, height: 40, borderRadius: 6, background: i.foto_url ? `url(${i.foto_url}) center/cover` : B.navyLight, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14 }}>
+                        {!i.foto_url && "📦"}
+                      </div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 13, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{i.nombre}</div>
+                        <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)" }}>
+                          {i.categoria || "—"} · Stock: {Number(i.stock_actual || 0).toLocaleString("es-CO")} {i.unidad || ""}
+                          {!ocultarPrecios && i.precio_compra > 0 && ` · ${COPx(i.precio_compra)}/u`}
+                        </div>
+                      </div>
+                      <span style={{ fontSize: 12, color: B.success, fontWeight: 700 }}>+</span>
+                    </button>
+                  ))}
+                </div>
+              </>
+            ) : (
+              <>
+                <button type="button" onClick={() => setPickItem(null)}
+                  style={{ background: "none", border: "none", color: B.sky, fontSize: 11, cursor: "pointer", marginBottom: 10, padding: 0 }}>← Cambiar producto</button>
+                <div style={{ background: B.navyMid, borderRadius: 10, padding: 14, marginBottom: 12 }}>
+                  <div style={{ fontSize: 14, fontWeight: 700 }}>{pickItem.nombre}</div>
+                  <div style={{ fontSize: 11, color: "rgba(255,255,255,0.45)", marginTop: 2 }}>
+                    {pickItem.categoria || "—"} · Stock actual: {Number(pickItem.stock_actual || 0).toLocaleString("es-CO")} {pickItem.unidad || ""}
+                    {!ocultarPrecios && pickItem.precio_compra > 0 && ` · ${COPx(pickItem.precio_compra)} c/u`}
+                  </div>
+                </div>
+
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr", gap: 10, marginBottom: 10 }}>
+                  <div>
+                    <label style={{ display: "block", fontSize: 11, color: "rgba(255,255,255,0.5)", fontWeight: 600, textTransform: "uppercase", marginBottom: 4 }}>Cantidad</label>
+                    <input type="number" value={cantidad} onChange={e => setCantidad(e.target.value)} step="0.01" min="0.01" autoFocus
+                      style={{ width: "100%", padding: "10px 12px", borderRadius: 8, background: B.navyLight, border: `1px solid ${B.navyLight}`, color: "#fff", fontSize: 14, outline: "none", boxSizing: "border-box" }} />
+                  </div>
+                  <div>
+                    <label style={{ display: "block", fontSize: 11, color: "rgba(255,255,255,0.5)", fontWeight: 600, textTransform: "uppercase", marginBottom: 4 }}>Locación (descuenta de)</label>
+                    <select value={locacionId} onChange={e => setLocacionId(e.target.value)}
+                      style={{ width: "100%", padding: "10px 12px", borderRadius: 8, background: B.navyLight, border: `1px solid ${B.navyLight}`, color: "#fff", fontSize: 13, outline: "none", boxSizing: "border-box" }}>
+                      <option value="">— Sin descontar locación —</option>
+                      {locaciones.map(l => <option key={l.id} value={l.id}>{l.nombre}</option>)}
+                    </select>
+                  </div>
+                </div>
+
+                <div style={{ marginBottom: 12 }}>
+                  <label style={{ display: "block", fontSize: 11, color: "rgba(255,255,255,0.5)", fontWeight: 600, textTransform: "uppercase", marginBottom: 4 }}>Notas (opcional)</label>
+                  <input value={notas} onChange={e => setNotas(e.target.value)} placeholder="Ej: barra principal, reserva VIP…"
+                    style={{ width: "100%", padding: "9px 12px", borderRadius: 8, background: B.navyLight, border: `1px solid ${B.navyLight}`, color: "#fff", fontSize: 12, outline: "none", boxSizing: "border-box" }} />
+                </div>
+
+                {!ocultarPrecios && (
+                  <div style={{ background: B.navy, borderRadius: 8, padding: "10px 14px", marginBottom: 12, display: "flex", justifyContent: "space-between", fontSize: 13 }}>
+                    <span style={{ color: "rgba(255,255,255,0.6)" }}>Costo</span>
+                    <strong style={{ color: B.sky, fontFamily: "'Barlow Condensed', sans-serif", fontSize: 18 }}>
+                      {COPx((Number(cantidad) || 0) * (Number(pickItem.precio_compra) || 0))}
+                    </strong>
+                  </div>
+                )}
+
+                <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+                  <button type="button" onClick={() => setShowPick(false)}
+                    style={{ padding: "9px 16px", borderRadius: 8, border: "none", background: B.navyLight, color: "#fff", cursor: "pointer", fontWeight: 700, fontSize: 13 }} disabled={saving}>Cancelar</button>
+                  <button type="button" onClick={registrar}
+                    style={{ padding: "9px 18px", borderRadius: 8, border: "none", background: B.success, color: "#fff", cursor: "pointer", fontWeight: 700, fontSize: 13 }} disabled={saving}>
+                    {saving ? "Registrando…" : "Registrar consumo"}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
