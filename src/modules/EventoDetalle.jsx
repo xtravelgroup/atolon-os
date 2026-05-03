@@ -5086,10 +5086,12 @@ function TabPL({ evento }) {
   const ingOtrosCot   = calcSum(cotServiciosNoProp);
   const ingPropina    = calcSum(cotPropinas);
   const ingServicios  = (evento.servicios_contratados || []).reduce((s, x) => s + (Number(x.valor) || 0), 0);
-  const valorBase     = Number(evento.valor) || 0;
+  // evento.valor (grandTotal de la cotización) incluye la propina, pero queremos
+  // mostrarla como línea aparte. Al "Valor base evento" le restamos la propina.
+  const valorBase     = Math.max(0, (Number(evento.valor) || 0) - ingPropina);
   const valorExtras   = Number(evento.valor_extras) || 0;
   const ingresoTotal  = Math.max(
-    valorBase + valorExtras + ingServicios,
+    valorBase + valorExtras + ingServicios + ingPropina,
     ingEspacios + ingHospedaje + ingAlimentos + ingOtrosCot + ingPropina,
   );
 
