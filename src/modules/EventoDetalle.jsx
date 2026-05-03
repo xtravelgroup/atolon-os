@@ -4356,6 +4356,9 @@ function TabOpenBar({ evento, ocultarPrecios = false }) {
   const [notas, setNotas] = useState("");
   const [saving, setSaving] = useState(false);
   const [userEmail, setUserEmail] = useState("");
+  // Carrito de productos antes de guardar (permite agregar varios sin
+  // cerrar el modal — al final se guardan todos juntos)
+  const [carrito, setCarrito] = useState([]);
   const COPx = (n) => "$" + Math.round(Number(n) || 0).toLocaleString("es-CO");
   const tipoInfo = (k) => TIPOS_CONSUMO.find(t => t.k === k) || TIPOS_CONSUMO[0];
 
@@ -4473,53 +4476,87 @@ function TabOpenBar({ evento, ocultarPrecios = false }) {
     porCategoria[cat].items.push(c);
   });
 
-  const registrar = async () => {
+  // Agregar el item actual al CARRITO (no guarda en BD todavía).
+  // Permite ir cargando varios productos antes de hacer el save final.
+  const agregarAlCarrito = () => {
     if (!pickItem) return;
     const qty = Number(cantidad);
     if (!qty || qty <= 0) return alert("Cantidad inválida");
     if (serviciosAyB.length > 0 && !pickServicio) {
       return alert("Seleccioná a qué servicio de A&B aplica este consumo.");
     }
-    setSaving(true);
     const precio = Number(pickItem.precio_compra) || 0;
     const sv = pickServicio ? servicioByKey[pickServicio] : null;
-    const { data: inserted, error } = await supabase.from("eventos_consumo_openbar").insert({
-      evento_id: eventoId,
-      item_id: pickItem.id,
+    setCarrito(c => [...c, {
+      _key: `${pickItem.id}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      item: pickItem,
       cantidad: qty,
-      unidad: pickItem.unidad || null,
-      locacion_id: locacionId || null,
       precio_unitario: precio,
       costo_total: qty * precio,
       tipo: pickTipo,
-      servicio_id: sv?.id || null,
-      servicio_origen: sv?.origen || null,
-      servicio_descripcion: sv?.descripcion || null,
+      servicio: sv,
+      locacion_id: locacionId || null,
       notas: notas.trim() || null,
+    }]);
+    // Reset solo del producto actual; mantenemos tipo/servicio/locación
+    // para que el siguiente producto los herede (caso típico).
+    setPickItem(null);
+    setCantidad("1");
+    setNotas("");
+    setSearch("");
+  };
+
+  const removerDelCarrito = (key) => setCarrito(c => c.filter(x => x._key !== key));
+
+  // Guardar TODO el carrito de una vez. Cierra el modal al terminar.
+  const guardarCarrito = async () => {
+    if (carrito.length === 0) {
+      // Si solo hay un item parcial (con producto seleccionado), agregarlo primero
+      if (pickItem) {
+        agregarAlCarrito();
+        // Re-llamar después de actualizar el state — usuario debe re-clickear
+        return;
+      }
+      return alert("No hay productos en el carrito");
+    }
+    setSaving(true);
+    const payload = carrito.map(c => ({
+      evento_id: eventoId,
+      item_id: c.item.id,
+      cantidad: c.cantidad,
+      unidad: c.item.unidad || null,
+      locacion_id: c.locacion_id,
+      precio_unitario: c.precio_unitario,
+      costo_total: c.costo_total,
+      tipo: c.tipo,
+      servicio_id: c.servicio?.id || null,
+      servicio_origen: c.servicio?.origen || null,
+      servicio_descripcion: c.servicio?.descripcion || null,
+      notas: c.notas,
       registrado_por: userEmail,
       loggro_sync_status: "pendiente",
-    }).select().single();
+    }));
+    const { data: inserted, error } = await supabase.from("eventos_consumo_openbar").insert(payload).select();
     setSaving(false);
     if (error) return alert("Error: " + error.message);
 
-    // Sincronizar con Loggro como "Salida - Otro" (fire-and-forget; si
-    // falla queda con loggro_sync_status='error' para retry desde la UI).
-    if (inserted?.id) {
-      const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+    // Disparar sync con Loggro para cada uno (fire-and-forget)
+    const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+    (inserted || []).forEach(row => {
       fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/loggro-sync/consumo-evento-salida`, {
         method: "POST",
         headers: { apikey: anonKey, Authorization: `Bearer ${anonKey}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ consumo_id: inserted.id }),
+        body: JSON.stringify({ consumo_id: row.id }),
       }).catch(err => console.warn("[loggro-sync] fallo sync:", err));
-    }
+    });
 
     setShowPick(false);
+    setCarrito([]);
     setPickItem(null);
     setPickServicio("");
     setCantidad("1");
     setNotas("");
     setSearch("");
-    // Pequeño delay para que el sync de Loggro alcance a actualizar el status
     setTimeout(load, 1500);
   };
 
@@ -4798,15 +4835,64 @@ function TabOpenBar({ evento, ocultarPrecios = false }) {
                 )}
 
                 <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
-                  <button type="button" onClick={() => setShowPick(false)}
-                    style={{ padding: "9px 16px", borderRadius: 8, border: "none", background: B.navyLight, color: "#fff", cursor: "pointer", fontWeight: 700, fontSize: 13 }} disabled={saving}>Cancelar</button>
-                  <button type="button" onClick={registrar}
-                    style={{ padding: "9px 18px", borderRadius: 8, border: "none", background: B.success, color: "#fff", cursor: "pointer", fontWeight: 700, fontSize: 13 }} disabled={saving}>
-                    {saving ? "Registrando…" : "Registrar consumo"}
+                  <button type="button" onClick={() => setPickItem(null)}
+                    style={{ padding: "9px 16px", borderRadius: 8, border: "none", background: B.navyLight, color: "#fff", cursor: "pointer", fontWeight: 700, fontSize: 13 }} disabled={saving}>Cancelar producto</button>
+                  <button type="button" onClick={agregarAlCarrito}
+                    style={{ padding: "9px 18px", borderRadius: 8, border: "none", background: B.sky, color: B.navy, cursor: "pointer", fontWeight: 700, fontSize: 13 }} disabled={saving}>
+                    + Agregar al carrito
                   </button>
                 </div>
               </>
             )}
+
+            {/* ── Carrito de productos por guardar ── */}
+            {carrito.length > 0 && (
+              <div style={{ marginTop: 16, paddingTop: 14, borderTop: `2px solid ${B.sky}55` }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: B.sky, textTransform: "uppercase", letterSpacing: "0.06em" }}>
+                    🛒 Carrito ({carrito.length} producto{carrito.length === 1 ? "" : "s"})
+                  </div>
+                  {!ocultarPrecios && (
+                    <span style={{ fontSize: 14, fontWeight: 800, color: B.sky, fontFamily: "'Barlow Condensed', sans-serif" }}>
+                      Total: {COPx(carrito.reduce((s, x) => s + (x.costo_total || 0), 0))}
+                    </span>
+                  )}
+                </div>
+                <div style={{ background: B.navyMid, borderRadius: 8, maxHeight: 220, overflowY: "auto" }}>
+                  {carrito.map(c => (
+                    <div key={c._key} style={{ padding: "8px 12px", borderBottom: `1px solid ${B.navyLight}`, display: "grid", gridTemplateColumns: "1fr 60px 90px 28px", gap: 8, alignItems: "center", fontSize: 11 }}>
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ fontWeight: 700, color: "#fff", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.item.nombre}</div>
+                        <div style={{ fontSize: 9, color: "rgba(255,255,255,0.4)" }}>
+                          {tipoInfo(c.tipo).icon} {c.servicio?.descripcion || "—"}
+                        </div>
+                      </div>
+                      <div style={{ textAlign: "right", color: "rgba(255,255,255,0.65)" }}>{c.cantidad} {c.item.unidad || ""}</div>
+                      <div style={{ textAlign: "right", color: B.sky, fontWeight: 700 }}>
+                        {ocultarPrecios ? "" : COPx(c.costo_total)}
+                      </div>
+                      <button type="button" onClick={() => removerDelCarrito(c._key)}
+                        style={{ background: "transparent", border: "none", color: B.danger, cursor: "pointer", fontSize: 14 }}>×</button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Botones del modal: cerrar / guardar todo el carrito */}
+            <div style={{ marginTop: 16, paddingTop: 14, borderTop: `1px solid ${B.navyLight}`, display: "flex", justifyContent: "space-between", gap: 8 }}>
+              <button type="button" onClick={() => { if (carrito.length > 0 && !confirm(`¿Descartar ${carrito.length} producto${carrito.length === 1 ? "" : "s"} del carrito?`)) return; setShowPick(false); setCarrito([]); setPickItem(null); setSearch(""); }}
+                style={{ padding: "10px 16px", borderRadius: 8, border: "none", background: B.navyLight, color: "#fff", cursor: "pointer", fontWeight: 700, fontSize: 13 }} disabled={saving}>
+                Cerrar
+              </button>
+              <button type="button" onClick={guardarCarrito} disabled={saving || carrito.length === 0}
+                style={{ padding: "10px 22px", borderRadius: 8, border: "none",
+                  background: carrito.length === 0 ? B.navyLight : B.success,
+                  color: "#fff", cursor: carrito.length === 0 ? "default" : "pointer", fontWeight: 800, fontSize: 13,
+                  opacity: carrito.length === 0 ? 0.5 : 1 }}>
+                {saving ? "Guardando…" : carrito.length === 0 ? "Agregá productos primero" : `✓ Registrar ${carrito.length} consumo${carrito.length === 1 ? "" : "s"}`}
+              </button>
+            </div>
           </div>
         </div>
       )}
