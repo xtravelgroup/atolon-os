@@ -5086,13 +5086,14 @@ function TabPL({ evento }) {
   const ingOtrosCot   = calcSum(cotServiciosNoProp);
   const ingPropina    = calcSum(cotPropinas);
   const ingServicios  = (evento.servicios_contratados || []).reduce((s, x) => s + (Number(x.valor) || 0), 0);
-  // evento.valor (grandTotal de la cotización) incluye la propina, pero queremos
-  // mostrarla como línea aparte. Al "Valor base evento" le restamos la propina.
+  // evento.valor incluye propina. La propina NO es ingreso de Atolón
+  // (se entrega al staff), así que la restamos para tener el valor base
+  // limpio. ingresoTotal tampoco incluye propina.
   const valorBase     = Math.max(0, (Number(evento.valor) || 0) - ingPropina);
   const valorExtras   = Number(evento.valor_extras) || 0;
   const ingresoTotal  = Math.max(
-    valorBase + valorExtras + ingServicios + ingPropina,
-    ingEspacios + ingHospedaje + ingAlimentos + ingOtrosCot + ingPropina,
+    valorBase + valorExtras + ingServicios,
+    ingEspacios + ingHospedaje + ingAlimentos + ingOtrosCot,
   );
 
   // ── COSTOS ──────────────────────────────────────────────────────
@@ -5235,7 +5236,6 @@ function TabPL({ evento }) {
             ["Hospedaje",  ingHospedaje],
             ["Alimentos y Bebidas", ingAlimentos],
             ["Otros servicios cotizados", ingOtrosCot],
-            ["💵 Propina", ingPropina],
             ["Servicios contratados", ingServicios],
             ["Valor base evento", valorBase],
             ["Valor extras", valorExtras],
@@ -5246,8 +5246,14 @@ function TabPL({ evento }) {
             </div>
           ))}
           <div style={{ display: "flex", justifyContent: "space-between", padding: "10px 0 0", marginTop: 6, borderTop: `2px solid ${B.success}`, fontSize: 14, fontWeight: 800 }}>
-            <span>Total</span><span style={{ color: B.success }}>{COPx(ingresoTotal)}</span>
+            <span>Total ingreso</span><span style={{ color: B.success }}>{COPx(ingresoTotal)}</span>
           </div>
+          {ingPropina > 0 && (
+            <div style={{ marginTop: 10, padding: "8px 10px", background: "rgba(245,158,11,0.08)", border: `1px solid ${B.warning}33`, borderRadius: 6, fontSize: 11, color: "rgba(255,255,255,0.6)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <span>💵 Propina cobrada (entregada al staff)</span>
+              <span style={{ color: B.warning, fontWeight: 700 }}>{COPx(ingPropina)}</span>
+            </div>
+          )}
         </div>
 
         <div style={{ background: B.navyMid, borderRadius: 12, padding: "14px 16px" }}>
