@@ -5104,7 +5104,11 @@ function TabPL({ evento }) {
   const margen = ingresoTotal - costoTotal;
   const margenPct = ingresoTotal > 0 ? (margen / ingresoTotal) * 100 : 0;
 
-  // ── Desglose por servicio A&B (cobrado vs consumido) ────────────
+  // ── Desglose por servicio A&B: COSTO real por línea ─────────────
+  // Suma DOS fuentes:
+  //   • consumo de cocina/openbar (eventos_consumo_openbar)
+  //   • gastos a terceros (eventos_servicios_gastos)
+  // Ambos guardan servicio_id con la misma convención (key compuesta).
   const consumoPorServicio = {};
   consumo.forEach(c => {
     const key = c.servicio_id ? `${c.servicio_origen}|${c.servicio_id}` : "_sin";
@@ -5112,6 +5116,15 @@ function TabPL({ evento }) {
       consumoPorServicio[key] = { descripcion: c.servicio_descripcion || "Sin servicio asignado", costo: 0 };
     }
     consumoPorServicio[key].costo += Number(c.costo_total) || 0;
+  });
+  // gastosTerc.servicio_id ya viene como key compuesta "{origen}|{id}"
+  // (se registra así desde el modal de gastos)
+  gastosTerc.forEach(g => {
+    const key = g.servicio_id || "_sin";
+    if (!consumoPorServicio[key]) {
+      consumoPorServicio[key] = { descripcion: g.servicio_descripcion || "Sin servicio asignado", costo: 0 };
+    }
+    consumoPorServicio[key].costo += Number(g.total) || 0;
   });
   const ayBLines = [];
   // IMPORTANTE: los alimentos en cotizacion_data NO tienen campo id propio
