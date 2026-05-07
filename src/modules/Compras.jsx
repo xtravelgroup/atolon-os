@@ -242,6 +242,7 @@ function TabOrdenes({ ordenes, reload, currentUser }) {
   const [openEmail, setOpenEmail] = useState(null);
   const [openCotizResp, setOpenCotizResp] = useState(null);
   const [openEditar, setOpenEditar] = useState(null);
+  const [openUnir,   setOpenUnir]   = useState(null);
 
   const filtradas = useMemo(() => {
     let list = ordenes;
@@ -372,6 +373,13 @@ function TabOrdenes({ ordenes, reload, currentUser }) {
                           ✏️ Editar
                         </button>
                       )}
+                      {OC_EDITABLE(oc) && (
+                        <button onClick={() => setOpenUnir(oc)}
+                          style={btnAccion("#a78bfa")}
+                          title="Unir esta OC con otra del mismo proveedor (consolida items y reqs)">
+                          🔗 Unir
+                        </button>
+                      )}
                       <button onClick={() => setOpenEmail(oc)}
                         style={btnAccion(B.pink)}
                         title="Enviar OC al proveedor por correo con PDF">
@@ -416,6 +424,7 @@ function TabOrdenes({ ordenes, reload, currentUser }) {
       {openEmail && <EmailOCModal oc={openEmail} onClose={() => setOpenEmail(null)} reload={reload} currentUser={currentUser} />}
       {openCotizResp && <CotizacionRespuestaModal oc={openCotizResp} onClose={() => setOpenCotizResp(null)} reload={reload} currentUser={currentUser} />}
       {openEditar && <EditarOCModal oc={openEditar} onClose={() => setOpenEditar(null)} reload={reload} currentUser={currentUser} />}
+      {openUnir && <UnirOCModal oc={openUnir} ordenes={ordenes} onClose={() => setOpenUnir(null)} reload={reload} currentUser={currentUser} />}
     </div>
   );
 }
@@ -940,6 +949,246 @@ function btnAccion(color) {
 // EditarOCModal — Editar items, cantidades, proveedor de una OC
 // Bloqueado si la OC ya tiene factura aplicada (lógica contable congelada)
 // ════════════════════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════════════════════
+// UnirOCModal — Consolidar 2 OCs en 1 (mismo proveedor)
+// Caso: el proveedor factura 2 OCs juntas. Compras une ambas para que el
+// flujo de factura/recepción/pago sea sobre una sola OC consolidada.
+// La OC "fuente" se cancela con referencia a la OC "destino".
+// ════════════════════════════════════════════════════════════════════════════
+function UnirOCModal({ oc, ordenes, onClose, reload, currentUser }) {
+  const { isMobile } = useBreakpoint();
+  const [seleccionada, setSeleccionada] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState("");
+
+  // Solo se puede unir con OCs del MISMO proveedor que NO estén recibidas,
+  // pagadas, canceladas o con factura ya aplicada.
+  const candidatas = useMemo(() => {
+    const sameProv = (a, b) =>
+      (a.proveedor_id && b.proveedor_id && a.proveedor_id === b.proveedor_id) ||
+      ((a.proveedor_nombre || "").trim().toLowerCase() === (b.proveedor_nombre || "").trim().toLowerCase());
+    return ordenes.filter(o =>
+      o.id !== oc.id &&
+      sameProv(o, oc) &&
+      !o.factura_aplicada &&
+      !["recibida", "pagada", "cancelada"].includes(o.estado)
+    );
+  }, [ordenes, oc]);
+
+  const consolidar = (a, b) => {
+    const map = new Map();
+    const all = [...(a || []), ...(b || [])];
+    for (const it of all) {
+      const nombre = (it.item || it.nombre || "").trim().toLowerCase();
+      const unidad = (it.unidad || "").toLowerCase();
+      const precio = Number(it.precio_unit || it.precioU || it.precio || 0);
+      // Si dos items tienen mismo nombre+unidad+precio → suman cantidades
+      const key = `${nombre}|${unidad}|${precio}`;
+      if (map.has(key)) {
+        const ex = map.get(key);
+        ex.cant = (Number(ex.cant) || 0) + (Number(it.cant) || 0);
+        ex.subtotal = ex.cant * precio;
+        ex.req_ids = [...new Set([...(ex.req_ids || []), ...(it.req_ids || (it.req_id ? [it.req_id] : []))])];
+      } else {
+        map.set(key, {
+          ...it,
+          item: it.item || it.nombre,
+          nombre: it.item || it.nombre,
+          cant: Number(it.cant) || 0,
+          unidad: it.unidad,
+          precio_unit: precio,
+          precioU: precio,
+          subtotal: (Number(it.cant) || 0) * precio,
+          req_ids: it.req_ids || (it.req_id ? [it.req_id] : []),
+        });
+      }
+    }
+    return Array.from(map.values());
+  };
+
+  const unir = async () => {
+    if (!seleccionada) return;
+    setSaving(true); setErr("");
+    try {
+      // Items consolidados — la OC actual (oc) es la "destino" (queda)
+      // y `seleccionada` es la "fuente" (se cancela con link a destino)
+      const merged = consolidar(oc.items, seleccionada.items);
+      const subtotal = merged.reduce((s, it) => s + (Number(it.subtotal) || 0), 0);
+      const newReqIds = [...new Set([
+        ...(Array.isArray(oc.requisicion_ids) ? oc.requisicion_ids : (oc.requisicion_id ? [oc.requisicion_id] : [])),
+        ...(Array.isArray(seleccionada.requisicion_ids) ? seleccionada.requisicion_ids : (seleccionada.requisicion_id ? [seleccionada.requisicion_id] : [])),
+      ])];
+
+      const cambioEntry = {
+        evento: "merge_oc",
+        at: new Date().toISOString(),
+        por: currentUser?.email || currentUser?.nombre || "—",
+        merged_from_oc_id: seleccionada.id,
+        merged_from_codigo: seleccionada.codigo,
+        items_antes: oc.items || [],
+        items_despues: merged,
+        delta_total: subtotal - Number(oc.total || 0),
+      };
+      const cambiosNuevos = [
+        ...(Array.isArray(oc.cambios_historial) ? oc.cambios_historial : []),
+        cambioEntry,
+      ];
+
+      // 1. Update destino (oc) con items consolidados
+      const { error: e1 } = await supabase.from("ordenes_compra").update({
+        items: merged,
+        subtotal,
+        total: subtotal,
+        requisicion_ids: newReqIds,
+        cambios_historial: cambiosNuevos,
+        notas: `${oc.notas || ""}\n[${new Date().toLocaleString("es-CO")}] Unida con ${seleccionada.codigo} por ${currentUser?.nombre || "—"}`,
+        updated_at: new Date().toISOString(),
+      }).eq("id", oc.id);
+      if (e1) throw e1;
+
+      // 2. Update fuente (seleccionada) → cancelada con referencia
+      const { error: e2 } = await supabase.from("ordenes_compra").update({
+        estado: "cancelada",
+        notas: `${seleccionada.notas || ""}\n[${new Date().toLocaleString("es-CO")}] Unida con ${oc.codigo} (consolidada). Cancelada por ${currentUser?.nombre || "—"}`,
+        cambios_historial: [
+          ...(Array.isArray(seleccionada.cambios_historial) ? seleccionada.cambios_historial : []),
+          {
+            evento: "merged_into",
+            at: new Date().toISOString(),
+            por: currentUser?.email || currentUser?.nombre || "—",
+            merged_into_oc_id: oc.id,
+            merged_into_codigo: oc.codigo,
+          },
+        ],
+        updated_at: new Date().toISOString(),
+      }).eq("id", seleccionada.id);
+      if (e2) throw e2;
+
+      // 3. Reqs de origen de la fuente: actualizar oc_id/oc_codigo de sus items
+      //    para que apunten a la OC destino (no a la cancelada)
+      const reqIdsFuente = Array.isArray(seleccionada.requisicion_ids) ? seleccionada.requisicion_ids
+                        : (seleccionada.requisicion_id ? [seleccionada.requisicion_id] : []);
+      for (const reqId of reqIdsFuente) {
+        const { data: req } = await supabase.from("requisiciones").select("items, timeline").eq("id", reqId).maybeSingle();
+        if (!req) continue;
+        const newItems = (req.items || []).map(it => {
+          if (it.oc_id === seleccionada.id) {
+            return { ...it, oc_id: oc.id, oc_codigo: oc.codigo };
+          }
+          return it;
+        });
+        await supabase.from("requisiciones").update({
+          items: newItems,
+          timeline: [...(req.timeline || []), {
+            quien: currentUser?.nombre || "—",
+            accion: "OC reasignada por unión",
+            fecha: new Date().toLocaleString("es-CO"),
+            comentario: `${seleccionada.codigo} unida con ${oc.codigo}`,
+          }],
+          updated_at: new Date().toISOString(),
+        }).eq("id", reqId);
+      }
+
+      reload?.();
+      onClose();
+    } catch (e) {
+      setErr(e.message || String(e));
+    } finally { setSaving(false); }
+  };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
+      onClick={e => e.target === e.currentTarget && onClose()}>
+      <div style={{ background: B.navy, borderRadius: 14, width: isMobile ? "100%" : 640, maxWidth: "100%", maxHeight: "92vh", overflow: "auto", border: `1px solid ${B.navyLight}`, color: B.white }}>
+
+        <div style={{ padding: 18, borderBottom: `1px solid ${B.navyLight}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div>
+            <div style={{ fontSize: 17, fontWeight: 800, color: B.sand }}>🔗 Unir OC {oc.codigo}</div>
+            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginTop: 2 }}>
+              {oc.proveedor_nombre} · Selecciona otra OC del mismo proveedor para consolidarla
+            </div>
+          </div>
+          <button onClick={onClose} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.5)", fontSize: 22, cursor: "pointer" }}>×</button>
+        </div>
+
+        <div style={{ padding: 18 }}>
+          <div style={{ marginBottom: 14, padding: "10px 14px", background: `${B.sky}11`, border: `1px solid ${B.sky}55`, borderRadius: 8 }}>
+            <div style={{ fontSize: 12, color: B.sky, lineHeight: 1.5 }}>
+              ℹ️ Esta OC ({oc.codigo}) queda como la <strong>OC consolidada</strong>. La que selecciones se <strong>cancela</strong> con referencia y sus items + requisiciones origen pasan a esta OC.
+              Items con mismo nombre + unidad + precio se suman.
+            </div>
+          </div>
+
+          <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 700, marginBottom: 8 }}>
+            Candidatas ({candidatas.length})
+          </div>
+
+          {candidatas.length === 0 ? (
+            <div style={{ padding: 30, textAlign: "center", color: "rgba(255,255,255,0.4)", background: B.navyMid, borderRadius: 10, fontSize: 13 }}>
+              No hay otras OCs activas del proveedor <strong>{oc.proveedor_nombre}</strong> para unir.
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 320, overflowY: "auto" }}>
+              {candidatas.map(c => {
+                const sel = seleccionada?.id === c.id;
+                const badge = OC_BADGE[c.estado] || { bg: B.navyLight, color: "rgba(255,255,255,0.5)", label: c.estado };
+                return (
+                  <button key={c.id} onClick={() => setSeleccionada(c)}
+                    style={{
+                      padding: "12px 14px", borderRadius: 8,
+                      background: sel ? `${B.sand}22` : B.navyMid,
+                      border: `1px solid ${sel ? B.sand : B.navyLight}`,
+                      color: B.white, cursor: "pointer", textAlign: "left",
+                      display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10,
+                    }}>
+                    <div>
+                      <div style={{ fontSize: 13, fontWeight: 800, display: "flex", gap: 8, alignItems: "center" }}>
+                        🧾 {c.codigo}
+                        <span style={{ background: badge.bg, color: badge.color, padding: "1px 7px", borderRadius: 10, fontSize: 9, fontWeight: 700 }}>{badge.label}</span>
+                      </div>
+                      <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginTop: 3 }}>
+                        {(c.items || []).length} líneas · {fmtFecha(c.fecha_emision)}
+                      </div>
+                    </div>
+                    <div style={{ textAlign: "right" }}>
+                      <div style={{ fontSize: 14, fontWeight: 800, color: B.sand, fontFamily: "'Barlow Condensed', sans-serif" }}>{COP(c.total || 0)}</div>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
+          {seleccionada && (
+            <div style={{ marginTop: 14, padding: "12px 14px", background: B.navyMid, borderRadius: 8, border: `1px solid ${B.sand}33` }}>
+              <div style={{ fontSize: 11, color: B.sand, fontWeight: 700, textTransform: "uppercase", marginBottom: 6 }}>Resumen tras unión</div>
+              <div style={{ fontSize: 12, color: "rgba(255,255,255,0.85)", lineHeight: 1.6 }}>
+                <div>• OC consolidada: <strong style={{ color: B.white }}>{oc.codigo}</strong></div>
+                <div>• OC cancelada: <strong style={{ color: B.danger }}>{seleccionada.codigo}</strong></div>
+                <div>• Items totales: <strong>{(oc.items || []).length} + {(seleccionada.items || []).length}</strong> (consolidados por nombre+unidad+precio)</div>
+                <div>• Total combinado: <strong style={{ color: B.sand, fontFamily: "monospace" }}>{COP(Number(oc.total || 0) + Number(seleccionada.total || 0))}</strong></div>
+              </div>
+            </div>
+          )}
+
+          {err && <div style={{ marginTop: 12, padding: 10, background: "rgba(239,68,68,0.15)", color: "#ef4444", borderRadius: 8, fontSize: 12 }}>⚠ {err}</div>}
+
+          <div style={{ display: "flex", gap: 10, marginTop: 18 }}>
+            <button onClick={onClose} disabled={saving}
+              style={{ flex: 1, padding: 11, borderRadius: 8, border: `1px solid ${B.navyLight}`, background: "transparent", color: "rgba(255,255,255,0.5)", cursor: "pointer", fontSize: 13 }}>
+              Cancelar
+            </button>
+            <button onClick={unir} disabled={saving || !seleccionada}
+              style={{ flex: 2, padding: 11, borderRadius: 8, border: "none", background: seleccionada ? B.sand : B.navyLight, color: seleccionada ? B.navy : "rgba(255,255,255,0.3)", cursor: seleccionada ? "pointer" : "not-allowed", fontSize: 13, fontWeight: 800 }}>
+              {saving ? "Uniendo…" : seleccionada ? `🔗 Unir ${seleccionada.codigo} → ${oc.codigo}` : "Selecciona una OC"}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function EditarOCModal({ oc, onClose, reload, currentUser }) {
   const { isMobile } = useBreakpoint();
   const [items, setItems] = useState(() => (oc.items || []).map(it => ({ ...it })));
