@@ -137,7 +137,6 @@ async function verifyWebhookSignature(payload: string, signature: string): Promi
   if (!signature || !ZOHO_WEBHOOK_SECRET) return false;
   try {
     // Formato Zoho: "t=TIMESTAMP,v=HMAC_HEX" (stripe-style)
-    // HMAC se calcula sobre "t.payload" con el secret
     let tsPart = "";
     let sigPart = signature.toLowerCase();
     const m = signature.match(/t=([^,]+),\s*v=([a-f0-9]+)/i);
@@ -145,27 +144,45 @@ async function verifyWebhookSignature(payload: string, signature: string): Promi
       tsPart = m[1];
       sigPart = m[2].toLowerCase();
     }
-
     const message = tsPart ? `${tsPart}.${payload}` : payload;
-    const key = new TextEncoder().encode(ZOHO_WEBHOOK_SECRET);
     const msgBytes = new TextEncoder().encode(message);
-    const cryptoKey = await crypto.subtle.importKey(
-      "raw", key, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]
-    );
-    const sigBuffer = await crypto.subtle.sign("HMAC", cryptoKey, msgBytes);
-    const computed = Array.from(new Uint8Array(sigBuffer))
-      .map(b => b.toString(16).padStart(2, "0"))
-      .join("");
-    if (computed === sigPart) return true;
+    const msgBytesNoTs = new TextEncoder().encode(payload);
 
-    // Fallback: probar sin timestamp (por si acaso)
-    if (tsPart) {
-      const sigBuffer2 = await crypto.subtle.sign("HMAC", cryptoKey, new TextEncoder().encode(payload));
-      const computed2 = Array.from(new Uint8Array(sigBuffer2))
+    // Probamos varios formatos de secret porque Zoho no documenta claramente
+    // si entrega el signing key como string raw o como hex.
+    const secretRaw = new TextEncoder().encode(ZOHO_WEBHOOK_SECRET);
+    const isHex = /^[0-9a-fA-F]+$/.test(ZOHO_WEBHOOK_SECRET) && ZOHO_WEBHOOK_SECRET.length % 2 === 0;
+    const secretHex = isHex
+      ? new Uint8Array(ZOHO_WEBHOOK_SECRET.match(/.{2}/g)!.map(h => parseInt(h, 16)))
+      : null;
+
+    const candidates: Array<[string, Uint8Array, Uint8Array]> = [
+      ["raw+ts.payload",   secretRaw, msgBytes],
+      ["raw+payload",      secretRaw, msgBytesNoTs],
+    ];
+    if (secretHex) {
+      candidates.push(["hex+ts.payload", secretHex, msgBytes]);
+      candidates.push(["hex+payload",    secretHex, msgBytesNoTs]);
+    }
+
+    for (const [label, key, msg] of candidates) {
+      const cryptoKey = await crypto.subtle.importKey(
+        "raw", key, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]
+      );
+      const sigBuffer = await crypto.subtle.sign("HMAC", cryptoKey, msg);
+      const computed = Array.from(new Uint8Array(sigBuffer))
         .map(b => b.toString(16).padStart(2, "0"))
         .join("");
-      return computed2 === sigPart;
+      if (computed === sigPart) {
+        console.log(`[zoho-webhook] firma válida con formato: ${label}`);
+        return true;
+      }
     }
+    // Si nada matchea, log de debug para identificar el formato correcto
+    const previewSecret = ZOHO_WEBHOOK_SECRET.length > 12
+      ? ZOHO_WEBHOOK_SECRET.slice(0, 6) + "..." + ZOHO_WEBHOOK_SECRET.slice(-4)
+      : "***";
+    console.warn(`[zoho-webhook] firma INVÁLIDA. expected=${sigPart.slice(0, 16)}... ts=${tsPart} secret_preview=${previewSecret} secret_len=${ZOHO_WEBHOOK_SECRET.length} is_hex=${isHex} payload_len=${payload.length}`);
     return false;
   } catch (err) {
     console.error("verifyWebhookSignature error:", err);

@@ -37,7 +37,15 @@ const OC_BADGE = {
 // Estados editables — una OC se considera editable solo en borrador o emitida.
 // Una vez "enviada" al proveedor (o más allá), se bloquea: no se editan items
 // ni se le agregan items nuevos desde requisiciones — se debe crear una OC nueva.
-const OC_EDITABLE = (oc) => !oc?.enviada_at && (oc?.estado === "emitida" || oc?.estado === "borrador" || !oc?.estado);
+// Una OC se puede editar mientras no haya factura aplicada y no esté
+// recibida/pagada/cancelada. Esto incluye OCs ya enviadas al proveedor —
+// porque el proveedor responde con cambios (no tengo X, cantidad Y, precio Z)
+// y Compras debe poder ajustar antes de la recepción/factura.
+const OC_EDITABLE = (oc) => {
+  if (!oc) return false;
+  if (oc.factura_aplicada) return false;
+  return ["borrador","emitida","enviada","confirmada","anticipo_pendiente"].includes(oc.estado || "emitida");
+};
 
 export default function Compras() {
   const { isMobile } = useBreakpoint();
@@ -303,11 +311,21 @@ function TabOrdenes({ ordenes, reload, currentUser }) {
               const badge = OC_BADGE[oc.estado] || { bg: B.navyLight, color: "rgba(255,255,255,0.5)", label: oc.estado };
               const totalLineas = (oc.items || []).length;
               return (
-                <div key={oc.id} style={{
+                <div key={oc.id}
+                  onClick={(e) => {
+                    // No abrir si el click fue en un botón/link/input adentro
+                    if (e.target.closest("button, a, input, select, textarea")) return;
+                    if (OC_EDITABLE(oc)) setOpenEditar(oc);
+                  }}
+                  style={{
                   background: B.navy, borderRadius: 10, padding: "12px 14px",
                   border: `1px solid ${B.navyLight}`, borderLeft: `4px solid ${B.sand}`,
                   display: "flex", flexDirection: isMobile ? "column" : "row", gap: 10, justifyContent: "space-between",
-                }}>
+                  cursor: OC_EDITABLE(oc) ? "pointer" : "default",
+                  transition: "background 0.15s",
+                }}
+                  onMouseEnter={e => { if (OC_EDITABLE(oc)) e.currentTarget.style.background = B.navyMid; }}
+                  onMouseLeave={e => { e.currentTarget.style.background = B.navy; }}>
                   <div style={{ flex: 1 }}>
                     <div style={{ fontSize: 13, fontWeight: 800, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
                       🧾 {oc.codigo}
@@ -345,10 +363,12 @@ function TabOrdenes({ ordenes, reload, currentUser }) {
                       </div>
                     )}
                     <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                      {OC_EDITABLE(oc) && !oc.factura_aplicada && (
+                      {OC_EDITABLE(oc) && (
                         <button onClick={() => setOpenEditar(oc)}
                           style={btnAccion(B.sand)}
-                          title="Editar items, cantidades, proveedor de la OC">
+                          title={oc.enviada_at
+                            ? "Editar OC tras respuesta del proveedor (cantidades, precios, devolver items a mesa)"
+                            : "Editar items, cantidades, proveedor de la OC"}>
                           ✏️ Editar
                         </button>
                       )}
@@ -956,18 +976,87 @@ function EditarOCModal({ oc, onClose, reload, currentUser }) {
 
   const subtotal = items.reduce((s, it) => s + (Number(it.subtotal) || 0), 0);
 
+  // Devolver un item a la mesa de compra (requisición original) para
+  // que Compras lo asigne a otro proveedor. El item se quita de esta OC
+  // y vuelve a las reqs origen con oc_id=null para que se pueda generar
+  // otra OC con un proveedor distinto.
+  const devolverAMesa = async (idx) => {
+    const item = items[idx];
+    if (!item) return;
+    const reqIds = Array.isArray(item.req_ids) ? item.req_ids : (item.req_id ? [item.req_id] : []);
+    const motivo = prompt(
+      `¿Devolver "${item.item || item.nombre}" a la mesa de compra?\n\n` +
+      `Motivo (queda en historial):`,
+      "Proveedor no tiene este item"
+    );
+    if (motivo === null) return;
+
+    // 1) Quitarlo de items local — queda persistido al darle Guardar
+    const newItems = items.filter((_, i) => i !== idx);
+    setItems(newItems);
+
+    // 2) Marcar en cambios_historial al guardar (lo hacemos dentro de guardar)
+    // Para no perder el motivo, lo guardamos en una nota local
+    setNotas(n => `${n || ""}\n[${new Date().toLocaleString("es-CO")}] Devuelto a mesa: "${item.item || item.nombre}" — ${motivo}`);
+
+    // 3) Para cada req_id, limpiar oc_id de ese item y poner req en "Aprobada"
+    //    si ya no le quedan items con oc_id (o sea, todos volvieron a la mesa)
+    for (const reqId of reqIds) {
+      const { data: req } = await supabase.from("requisiciones").select("items, estado, timeline").eq("id", reqId).maybeSingle();
+      if (!req) continue;
+      const itemsReq = (req.items || []).map(it => {
+        // Match por id si lo tiene, sino por nombre+unidad
+        const sameById = it.id && item.id && it.id === item.id;
+        const sameByName = !sameById && (it.item || it.nombre || "").toLowerCase() === (item.item || item.nombre || "").toLowerCase()
+          && (it.unidad || "").toLowerCase() === (item.unidad || "").toLowerCase();
+        if (sameById || sameByName) {
+          const { oc_id, oc_codigo, ...rest } = it;
+          return rest;
+        }
+        return it;
+      });
+      const tieneItemsConOC = itemsReq.some(it => it.oc_id);
+      const nuevoEstadoReq = tieneItemsConOC ? req.estado : "Aprobada";
+      await supabase.from("requisiciones").update({
+        items: itemsReq,
+        estado: nuevoEstadoReq,
+        timeline: [...(req.timeline || []), {
+          quien: currentUser?.nombre || "—",
+          accion: "Item devuelto a mesa",
+          fecha: new Date().toLocaleString("es-CO"),
+          comentario: `OC ${oc.codigo} · "${item.item || item.nombre}" · ${motivo}`,
+        }],
+        updated_at: new Date().toISOString(),
+      }).eq("id", reqId);
+    }
+  };
+
   const guardar = async () => {
     setSaving(true); setErr("");
     try {
-      // Defensa en profundidad: si la OC fue enviada al proveedor, no permitir
-      // ediciones aunque alguien acceda al modal. Crear nueva OC en su lugar.
-      if (oc.enviada_at || ["enviada", "confirmada", "recibida_parcial", "recibida", "pagada", "cancelada"].includes(oc.estado)) {
-        throw new Error(`La OC ya fue enviada al proveedor (estado: ${oc.estado}). No se puede editar — crea una OC nueva si necesitas ajustes.`);
+      // Bloquear si ya hay factura aplicada o si está en estados finales
+      if (oc.factura_aplicada) {
+        throw new Error("La OC tiene factura aplicada — no se puede editar.");
       }
-      if (items.length === 0) throw new Error("Debe haber al menos 1 ítem");
+      if (["recibida", "pagada", "cancelada"].includes(oc.estado)) {
+        throw new Error(`La OC está en estado ${oc.estado} — no se puede editar.`);
+      }
       if (!proveedorNombre.trim()) throw new Error("Debe seleccionar un proveedor");
+      // Si no quedan items, cancelar la OC en vez de bloquear
+      const cancelarOC = items.length === 0;
 
       const prov = proveedores.find(p => p.id === proveedorId);
+      // Snapshot de cambios para auditoría
+      const cambioEntry = {
+        evento: "edit_post_envio",
+        at: new Date().toISOString(),
+        por: currentUser?.email || currentUser?.nombre || "—",
+        items_antes: oc.items || [],
+        items_despues: items,
+        delta_total: subtotal - Number(oc.total || 0),
+      };
+      const cambiosNuevos = [...(Array.isArray(oc.cambios_historial) ? oc.cambios_historial : []), cambioEntry];
+
       const updates = {
         items,
         subtotal,
@@ -979,7 +1068,13 @@ function EditarOCModal({ oc, onClose, reload, currentUser }) {
         proveedor_telefono: prov?.telefono || null,
         fecha_emision: fechaEmision || oc.fecha_emision,
         notas: (notas || "") + `\n[${new Date().toLocaleString("es-CO")}] Editada por ${currentUser?.nombre || "—"}`,
+        cambios_historial: cambiosNuevos,
+        updated_at: new Date().toISOString(),
       };
+      if (cancelarOC) {
+        updates.estado = "cancelada";
+        updates.notas += `\n[${new Date().toLocaleString("es-CO")}] OC cancelada — todos los items devueltos a la mesa de compra.`;
+      }
       const { error } = await supabase.from("ordenes_compra").update(updates).eq("id", oc.id);
       if (error) throw error;
       reload?.();
@@ -999,12 +1094,23 @@ function EditarOCModal({ oc, onClose, reload, currentUser }) {
             <div style={{ fontSize: 17, fontWeight: 800, color: B.sand }}>✏️ Editar OC {oc.codigo}</div>
             <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginTop: 2 }}>
               Estado: {oc.estado} · {(oc.items || []).length} líneas originales
+              {oc.enviada_at && ` · ya enviada al proveedor`}
             </div>
           </div>
           <button onClick={onClose} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.5)", fontSize: 22, cursor: "pointer" }}>×</button>
         </div>
 
         <div style={{ padding: 18 }}>
+          {oc.enviada_at && (
+            <div style={{ marginBottom: 14, padding: "10px 14px", background: `${B.warning}11`, border: `1px solid ${B.warning}55`, borderRadius: 8 }}>
+              <div style={{ fontSize: 12, fontWeight: 800, color: B.warning, marginBottom: 4 }}>
+                ⚠️ Esta OC ya fue enviada al proveedor
+              </div>
+              <div style={{ fontSize: 11, color: "rgba(255,255,255,0.7)", lineHeight: 1.5 }}>
+                Cualquier cambio queda registrado en el historial de la OC. Si el proveedor no tiene un item, usá <strong style={{ color: B.warning }}>↩️ Mesa</strong> para devolverlo a la requisición original — ahí Compras lo puede asignar a otro proveedor. Después del ajuste, recordá <strong>volver a enviar la OC actualizada al proveedor</strong>.
+              </div>
+            </div>
+          )}
           {/* Proveedor */}
           <div style={{ marginBottom: 14 }}>
             <label style={{ fontSize: 11, color: "rgba(255,255,255,0.6)", textTransform: "uppercase", fontWeight: 700, display: "block", marginBottom: 4 }}>Proveedor</label>
@@ -1040,8 +1146,10 @@ function EditarOCModal({ oc, onClose, reload, currentUser }) {
             <div style={{ background: B.navyMid, borderRadius: 8, padding: 10, maxHeight: 380, overflowY: "auto" }}>
               {items.length === 0 ? (
                 <div style={{ padding: 20, textAlign: "center", color: "rgba(255,255,255,0.4)", fontSize: 12 }}>Sin ítems. Agrega uno.</div>
-              ) : items.map((it, idx) => (
-                <div key={idx} style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "2.5fr 0.7fr 0.7fr 1fr 1fr 0.4fr", gap: 6, marginBottom: 8, padding: 8, background: B.navy, borderRadius: 6, alignItems: "center" }}>
+              ) : items.map((it, idx) => {
+                const tieneReq = (Array.isArray(it.req_ids) && it.req_ids.length > 0) || it.req_id;
+                return (
+                <div key={idx} style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "2.3fr 0.7fr 0.7fr 1fr 1fr auto auto", gap: 6, marginBottom: 8, padding: 8, background: B.navy, borderRadius: 6, alignItems: "center" }}>
                   <input value={it.item || it.nombre || ""}
                     onChange={e => { setItem(idx, "item", e.target.value); setItem(idx, "nombre", e.target.value); }}
                     placeholder="Nombre del ítem"
@@ -1060,12 +1168,21 @@ function EditarOCModal({ oc, onClose, reload, currentUser }) {
                   <div style={{ padding: "7px 8px", textAlign: "right", color: B.sand, fontWeight: 700, fontSize: 12, fontFamily: "monospace" }}>
                     {COP(Number(it.subtotal) || 0)}
                   </div>
+                  {tieneReq && (
+                    <button type="button" onClick={() => devolverAMesa(idx)}
+                      title="Devolver este item a la requisición original (mesa de compra) para asignar a otro proveedor"
+                      style={{ padding: "5px 8px", border: `1px solid ${B.warning}`, background: "transparent", color: B.warning, borderRadius: 6, cursor: "pointer", fontSize: 11, fontWeight: 700, whiteSpace: "nowrap" }}>
+                      ↩️ Mesa
+                    </button>
+                  )}
                   <button type="button" onClick={() => removeItem(idx)}
+                    title="Eliminar línea (sin devolver a mesa)"
                     style={{ padding: "5px 8px", border: `1px solid ${B.danger}`, background: "transparent", color: B.danger, borderRadius: 6, cursor: "pointer", fontSize: 14 }}>
                     🗑
                   </button>
                 </div>
-              ))}
+                );
+              })}
             </div>
 
             <div style={{ marginTop: 10, padding: "8px 12px", background: B.navyMid, borderRadius: 6, display: "flex", justifyContent: "space-between", alignItems: "center" }}>

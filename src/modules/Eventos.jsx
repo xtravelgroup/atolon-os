@@ -2065,13 +2065,42 @@ const MENU_TIPOS = ["Menú de Banquetes", "Menú Restaurant", "Custom Menu", "Me
 function SectionTable({ title, color, rows, setRows, showNoches = false, showMenuType = false, catalogItems = null, bebidasItems = null, menuCatalogs = null, defaultIva = 19 }) {
   const [picker,      setPicker]      = useState(false);
   const [activeCat,   setActiveCat]   = useState(null); // null | { label, items }
+  const [taxOpenIdx,  setTaxOpenIdx]  = useState(null); // popover de impuesto abierto en fila X
+  const [dragIdx,     setDragIdx]     = useState(null); // fila siendo arrastrada
+
+  // tipo de impuesto inferido por defecto: si la sección usa defaultIva=8 → ICO,
+  // sino → IVA. Se guarda en cada row como tax_type para poder mezclar.
+  const inferTaxType = (l) => l?.tax_type || (defaultIva === 8 ? "ico" : "iva");
 
   const addRow = (overrides = {}) => {
-    setRows(r => [...r, { ...EMPTY_LINE, iva: defaultIva, ...overrides }]);
+    setRows(r => [...r, { ...EMPTY_LINE, iva: defaultIva, tax_type: defaultIva === 8 ? "ico" : "iva", ...overrides }]);
     setPicker(false);
   };
   const upd = (i, k, v) => setRows(r => r.map((x, j) => j === i ? { ...x, [k]: v } : x));
   const del = (i) => setRows(r => r.filter((_, j) => j !== i));
+
+  // Drag & drop: reordenar rows
+  const onDragStart = (i) => (e) => {
+    setDragIdx(i);
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", String(i));
+  };
+  const onDragOver = (i) => (e) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+  };
+  const onDrop = (i) => (e) => {
+    e.preventDefault();
+    const from = Number(e.dataTransfer.getData("text/plain"));
+    if (Number.isNaN(from) || from === i) { setDragIdx(null); return; }
+    setRows(r => {
+      const arr = [...r];
+      const [moved] = arr.splice(from, 1);
+      arr.splice(i, 0, moved);
+      return arr;
+    });
+    setDragIdx(null);
+  };
 
   const totals = rows.reduce((acc, l) => {
     const { sub, tax, total } = calcLine(l);
@@ -2184,13 +2213,14 @@ function SectionTable({ title, color, rows, setRows, showNoches = false, showMen
       <table style={{ width: "100%", borderCollapse: "collapse", background: B.navyMid }}>
         <thead>
           <tr>
-            <th style={{ ...th, background: color + "cc", width: showMenuType ? "30%" : "35%" }}>Concepto</th>
+            <th style={{ ...th, background: color + "cc", width: 26, padding: "8px 4px" }}></th>
+            <th style={{ ...th, background: color + "cc", width: showMenuType ? "28%" : "33%" }}>Concepto</th>
             {showMenuType && <th style={{ ...th, background: color + "cc", width: "14%" }}>Tipo Menú</th>}
             <th style={{ ...th, background: color + "cc", width: "8%", textAlign: "center" }}>Cant.</th>
             {showNoches && <th style={{ ...th, background: color + "cc", width: "8%", textAlign: "center" }}>Noches</th>}
-            <th style={{ ...th, background: color + "cc", width: "15%", textAlign: "right" }}>Valor Unit.</th>
-            <th style={{ ...th, background: color + "cc", width: "8%", textAlign: "center" }}>{defaultIva === 8 ? "ICO" : "IVA"}</th>
-            <th style={{ ...th, background: color + "cc", width: "12%", textAlign: "right" }}>Subtotal</th>
+            <th style={{ ...th, background: color + "cc", width: "14%", textAlign: "right" }}>Valor Unit.</th>
+            <th style={{ ...th, background: color + "cc", width: "10%", textAlign: "center" }}>Impuesto</th>
+            <th style={{ ...th, background: color + "cc", width: "11%", textAlign: "right" }}>Subtotal</th>
             <th style={{ ...th, background: color + "cc", width: "12%", textAlign: "right" }}>Total</th>
             <th style={{ ...th, background: color + "cc", width: "4%" }}></th>
           </tr>
@@ -2198,8 +2228,27 @@ function SectionTable({ title, color, rows, setRows, showNoches = false, showMen
         <tbody>
           {rows.map((l, i) => {
             const { sub, total } = calcLine(l);
+            const taxType = inferTaxType(l);
+            const taxLabel = !l.iva || l.iva === 0
+              ? "Sin"
+              : `${taxType === "ico" ? "ICO" : "IVA"} ${l.iva}%`;
+            const taxColor = l.iva > 0
+              ? (taxType === "ico" ? "#fb923c" : "#4caf50")
+              : "rgba(255,255,255,0.35)";
+            const isDragOver = dragIdx !== null && dragIdx !== i;
             return (
-              <tr key={i}>
+              <tr key={i}
+                draggable
+                onDragStart={onDragStart(i)}
+                onDragOver={onDragOver(i)}
+                onDrop={onDrop(i)}
+                onDragEnd={() => setDragIdx(null)}
+                style={{
+                  background: dragIdx === i ? "rgba(255,255,255,0.04)" : "transparent",
+                  cursor: dragIdx === i ? "grabbing" : undefined,
+                  opacity: dragIdx === i ? 0.5 : 1,
+                }}>
+                <td style={{ ...td, textAlign: "center", color: "rgba(255,255,255,0.35)", cursor: "grab", userSelect: "none", fontSize: 14, padding: "6px 4px" }} title="Arrastrar para reordenar">⋮⋮</td>
                 <td style={td}>{inp(l.concepto, e => upd(i, "concepto", e.target.value))}</td>
                 {showMenuType && (
                   <td style={td}>
@@ -2213,13 +2262,50 @@ function SectionTable({ title, color, rows, setRows, showNoches = false, showMen
                 <td style={{ ...td, textAlign: "center" }}>{inp(l.cantidad, e => upd(i, "cantidad", Number(e.target.value)), "number", "60px")}</td>
                 {showNoches && <td style={{ ...td, textAlign: "center" }}>{inp(l.noches, e => upd(i, "noches", Number(e.target.value)), "number", "60px")}</td>}
                 <td style={{ ...td, textAlign: "right" }}>{inp(l.valor_unit, e => upd(i, "valor_unit", Number(e.target.value)), "number", "100px")}</td>
-                <td style={{ ...td, textAlign: "center" }}>
-                  <button onClick={() => upd(i, "iva", l.iva > 0 ? 0 : defaultIva)}
+                <td style={{ ...td, textAlign: "center", position: "relative" }}>
+                  <button onClick={() => setTaxOpenIdx(taxOpenIdx === i ? null : i)}
                     style={{ padding: "3px 8px", borderRadius: 5, border: "none", cursor: "pointer", fontSize: 11, fontWeight: 700,
-                      background: l.iva > 0 ? "rgba(46,125,82,0.3)" : "rgba(255,255,255,0.08)",
-                      color: l.iva > 0 ? "#4caf50" : "rgba(255,255,255,0.35)" }}>
-                    {l.iva > 0 ? `${l.iva}%` : "No"}
+                      background: l.iva > 0 ? `${taxColor}33` : "rgba(255,255,255,0.08)",
+                      color: taxColor, whiteSpace: "nowrap" }}>
+                    {taxLabel} ▾
                   </button>
+                  {taxOpenIdx === i && (
+                    <div style={{
+                      position: "absolute", top: "100%", right: 0, zIndex: 20,
+                      background: B.navyMid, border: `1px solid ${B.navyLight}`, borderRadius: 8,
+                      padding: 6, minWidth: 140, boxShadow: "0 4px 16px #0008",
+                      display: "flex", flexDirection: "column", gap: 2,
+                    }}>
+                      {[
+                        { label: "Sin impuesto", iva: 0,  type: null,  color: "rgba(255,255,255,0.5)" },
+                        { label: "IVA 19%",       iva: 19, type: "iva", color: "#4caf50" },
+                        { label: "ICO 8%",        iva: 8,  type: "ico", color: "#fb923c" },
+                      ].map(opt => (
+                        <button key={opt.label}
+                          onClick={() => {
+                            setRows(r => r.map((x, j) => j === i ? { ...x, iva: opt.iva, tax_type: opt.type || x.tax_type } : x));
+                            setTaxOpenIdx(null);
+                          }}
+                          style={{ padding: "6px 10px", textAlign: "left", border: "none", background: "transparent", color: opt.color, cursor: "pointer", fontSize: 12, fontWeight: 600, borderRadius: 5 }}>
+                          {opt.label}
+                        </button>
+                      ))}
+                      <div style={{ borderTop: `1px solid ${B.navyLight}`, paddingTop: 6, marginTop: 2 }}>
+                        <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", marginBottom: 4, paddingLeft: 4 }}>% Custom</div>
+                        <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+                          <select value={taxType} onChange={e => upd(i, "tax_type", e.target.value)}
+                            style={{ background: B.navy, border: `1px solid ${B.navyLight}`, color: B.white, fontSize: 11, padding: "4px 6px", borderRadius: 4 }}>
+                            <option value="iva">IVA</option>
+                            <option value="ico">ICO</option>
+                          </select>
+                          <input type="number" value={l.iva || 0} min="0" max="100"
+                            onChange={e => upd(i, "iva", Number(e.target.value))}
+                            style={{ width: 50, background: B.navy, border: `1px solid ${B.navyLight}`, color: B.white, fontSize: 11, padding: "4px 6px", borderRadius: 4 }} />
+                          <span style={{ fontSize: 11, color: "rgba(255,255,255,0.5)" }}>%</span>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </td>
                 <td style={{ ...td, textAlign: "right", color: B.sand }}>{COP(sub)}</td>
                 <td style={{ ...td, textAlign: "right", fontWeight: 700 }}>{COP(total)}</td>
@@ -2230,13 +2316,13 @@ function SectionTable({ title, color, rows, setRows, showNoches = false, showMen
             );
           })}
           {rows.length === 0 && (
-            <tr><td colSpan={showNoches ? (showMenuType ? 9 : 8) : (showMenuType ? 8 : 7)} style={{ ...td, textAlign: "center", color: "rgba(255,255,255,0.3)", padding: 16 }}>Sin ítems — haz click en "+ Agregar"</td></tr>
+            <tr><td colSpan={showNoches ? (showMenuType ? 10 : 9) : (showMenuType ? 9 : 8)} style={{ ...td, textAlign: "center", color: "rgba(255,255,255,0.3)", padding: 16 }}>Sin ítems — haz click en "+ Agregar"</td></tr>
           )}
         </tbody>
         {rows.length > 0 && (
           <tfoot>
             <tr>
-              <td colSpan={showNoches ? 5 : 4} style={{ padding: "8px 10px", fontSize: 12, color: B.sand, textAlign: "right", fontWeight: 600 }}>TOTAL {title.toUpperCase()}</td>
+              <td colSpan={showNoches ? 6 : 5} style={{ padding: "8px 10px", fontSize: 12, color: B.sand, textAlign: "right", fontWeight: 600 }}>TOTAL {title.toUpperCase()}</td>
               <td style={{ padding: "8px 10px", textAlign: "right", color: B.sand, fontSize: 12 }}>{COP(totals.sub)}</td>
               <td style={{ padding: "8px 10px", textAlign: "right", fontWeight: 700, color: B.white }}>{COP(totals.total)}</td>
               <td></td>
