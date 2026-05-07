@@ -628,7 +628,9 @@ function HistorialReservasB2B({ aliadoId, comisionPct = 0 }) {
   const pendientes = reservas.filter(r => ["pendiente_pago","pendiente_comprobante","pendiente"].includes(r.estado)).length;
 
   // Comisión = margen adultos + margen niños − descuento_agencia
+  // Si aliado.comision === 0 → modelo mayorista, no se le paga comisión
   const getComision = (r) => {
+    if (Number(comisionPct) === 0) return 0;
     const pasadia   = pasadiasMap[(r.tipo || "").toLowerCase()];
     const cobradoA  = r.precio_u    || pasadia?.precio      || 0;
     const netoA     = r.precio_neto || pasadia?.neto        || 0;

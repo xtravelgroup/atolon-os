@@ -4446,6 +4446,24 @@ function TabOpenBar({ evento, ocultarPrecios = false }) {
   const itemsById = Object.fromEntries(items.map(i => [i.id, i]));
   const locById   = Object.fromEntries(locaciones.map(l => [l.id, l]));
 
+  // ── Recalc en vivo: si el catálogo tiene precio_compra > 0, usarlo y
+  //    recalcular costo_total. Esto cubre el caso de consumos registrados
+  //    cuando el catálogo aún estaba en $0 y luego una factura actualizó
+  //    el precio. Si el catálogo está en $0, mantenemos el snapshot (no
+  //    queremos pisar un precio histórico válido con 0).
+  const consumoLive = consumo.map(c => {
+    const cat = itemsById[c.item_id];
+    const precioLive = Number(cat?.precio_compra) || 0;
+    if (precioLive <= 0) return c;
+    const cantidad = Number(c.cantidad) || 0;
+    return {
+      ...c,
+      precio_unitario: precioLive,
+      costo_total: cantidad * precioLive,
+      _precio_snapshot: c.precio_unitario,   // se preserva por si hace falta auditar
+    };
+  });
+
   // Filtro de búsqueda en el picker
   const itemsFiltrados = items.filter(i => {
     if (!search.trim()) return true;
@@ -4454,7 +4472,7 @@ function TabOpenBar({ evento, ocultarPrecios = false }) {
   }).slice(0, 50);
 
   // Vigentes filtrados por tipo activo
-  const vigenteTodo = consumo.filter(c => !c.anulado);
+  const vigenteTodo = consumoLive.filter(c => !c.anulado);
   const consumoVigente = filtroTipo === "todos"
     ? vigenteTodo
     : vigenteTodo.filter(c => (c.tipo || "openbar") === filtroTipo);
@@ -5059,10 +5077,22 @@ function TabPL({ evento }) {
     Promise.all([
       supabase.from("eventos_consumo_openbar").select("*").eq("evento_id", evento.id).eq("anulado", false),
       supabase.from("eventos_servicios_gastos").select("*").eq("evento_id", evento.id).neq("estado", "anulado"),
-    ]).then(([cR, gR]) => {
+      supabase.from("items_catalogo").select("id, precio_compra").eq("activo", true),
+    ]).then(([cR, gR, iR]) => {
       if (cR.error) console.warn("[P/L] error consumo:", cR.error);
       if (gR.error) console.warn("[P/L] error gastos:", gR.error);
-      setConsumo(cR.data || []);
+      // Recalc en vivo: aplicar precio_compra del catálogo a los registros de
+      // consumo. Si el catálogo trae > 0, sobreescribe el snapshot (cubre el
+      // caso típico donde el consumo se registró antes que la factura
+      // actualizara el precio). Si el catálogo está en 0, conserva snapshot.
+      const priceMap = Object.fromEntries((iR.data || []).map(i => [i.id, Number(i.precio_compra) || 0]));
+      const consumoLive = (cR.data || []).map(c => {
+        const live = priceMap[c.item_id] || 0;
+        if (live <= 0) return c;
+        const cant = Number(c.cantidad) || 0;
+        return { ...c, precio_unitario: live, costo_total: cant * live, _precio_snapshot: c.precio_unitario };
+      });
+      setConsumo(consumoLive);
       setGastosTerc(gR.data || []);
       setLoading(false);
     });

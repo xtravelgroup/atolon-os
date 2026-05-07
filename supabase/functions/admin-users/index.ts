@@ -95,6 +95,19 @@ serve(async (req) => {
         console.warn("[admin-users] auth user ya existe, continuando:", cleanEmail);
       }
 
+      // ── Fix tokens NULL → string vacío ──
+      // El schema antiguo de auth.users tiene 4 columnas con DEFAULT NULL,
+      // pero GoTrue requiere "" — sino el siguiente login del usuario tira
+      // "Database error querying schema". Como no tenemos permisos de owner
+      // para cambiar el DEFAULT, parchamos cada usuario nuevo via la RPC
+      // public.fix_auth_user_tokens (SECURITY DEFINER).
+      try {
+        const { error: fixErr } = await SB.rpc("fix_auth_user_tokens", { p_email: cleanEmail });
+        if (fixErr) console.warn("[admin-users] fix_auth_user_tokens fail:", fixErr.message);
+      } catch (e) {
+        console.warn("[admin-users] fix_auth_user_tokens exception:", e instanceof Error ? e.message : e);
+      }
+
       // 2) Insertar en public.usuarios
       const usuarioId = `USR-${Date.now()}`;
       const { error: insErr } = await SB.from("usuarios").insert({

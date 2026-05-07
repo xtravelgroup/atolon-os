@@ -332,14 +332,27 @@ export default function Requisiciones() {
        (!provId && (o.proveedor_nombre || "").trim().toLowerCase() === (provNombre || "").trim().toLowerCase()))
     );
 
+    // Agregar todos los req_ids únicos presentes en el conjunto consolidado.
+    const aggregateReqIds = (items) => {
+      const set = new Set();
+      for (const it of items) {
+        if (it.req_id) set.add(it.req_id);
+        if (Array.isArray(it.req_ids)) it.req_ids.forEach(id => id && set.add(id));
+      }
+      return Array.from(set);
+    };
+
     let codigo, ocData;
     if (ocExistente) {
       // ── Auto-merge con la OC existente ──
       const nuevosItems = (req.items || []).map(it => ({ ...it, req_id: req.id }));
       const merged = consolidar([...(ocExistente.items || []), ...nuevosItems]);
       const subtotal = merged.reduce((s, it) => s + (Number(it.subtotal) || 0), 0);
+      const reqIdsExistentes = Array.isArray(ocExistente.requisicion_ids) ? ocExistente.requisicion_ids : (ocExistente.requisicion_id ? [ocExistente.requisicion_id] : []);
+      const reqIdsAll = Array.from(new Set([...reqIdsExistentes, ...aggregateReqIds(merged), req.id]));
       const { data, error } = await supabase.from("ordenes_compra").update({
         items: merged, subtotal, total: subtotal,
+        requisicion_ids: reqIdsAll,
       }).eq("id", ocExistente.id).select().single();
       if (error) { alert("Error: " + error.message); return; }
       codigo = ocExistente.codigo;
@@ -351,6 +364,7 @@ export default function Requisiciones() {
       const subtotal = items.reduce((s, it) => s + (Number(it.subtotal) || 0), 0);
       const { data, error } = await supabase.from("ordenes_compra").insert({
         codigo, requisicion_id: req.id,
+        requisicion_ids: [req.id],
         proveedor_id: provId || null, proveedor_nombre: provNombre || "—",
         proveedor_nit: prov?.nit || null,
         proveedor_email: prov?.email || null,
@@ -921,7 +935,7 @@ function OCDetalleModal({ oc, onClose, reload }) {
   <div class="header">
     <div>
       <h1>ATOLON BEACH CLUB</h1>
-      <div class="meta">Cartagena de Indias · NIT 901.xxx.xxx</div>
+      <div class="meta">Cartagena de Indias · NIT 901.873.457</div>
     </div>
     <div style="text-align: right;">
       <div style="font-size: 10px; color: #999; text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 4px;">Orden de Compra</div>
@@ -1422,6 +1436,12 @@ function RecepcionOCModal({ oc, reqs, onClose, reload, currentUser, readOnly = f
   const recibirTodo = () => setRecibidos(prev => prev.map(r => ({ ...r, cant_recibida: r.cant })));
 
   const guardar = async () => {
+    // ── Fix #6: bloquear recepción si anticipo requerido y no pagado ──
+    if (oc.anticipo_requerido && !oc.anticipo_pagado) {
+      alert(`⛔ Esta OC requiere anticipo de ${oc.anticipo_porcentaje || "?"}% (${(oc.anticipo_monto || 0).toLocaleString("es-CO")}) y aún NO ha sido pagado.\n\nNo se puede registrar recepción hasta que Contabilidad marque el anticipo como pagado en la pestaña "Anticipos pendientes" del módulo Compras.`);
+      return;
+    }
+
     setSaving(true);
     const totalEsperado = (oc.items || []).reduce((s, it) => s + Number(it.cant), 0);
     const totalRecibido = recibidos.reduce((s, r) => s + Number(r.cant_recibida || 0), 0);
@@ -1443,21 +1463,56 @@ function RecepcionOCModal({ oc, reqs, onClose, reload, currentUser, readOnly = f
       recibida_por: currentUser.nombre,
     }).eq("id", oc.id);
 
-    // 2. Si la OC viene de una requisición, propagar estado
-    if (oc.requisicion_id) {
-      const req = reqs.find(r => r.id === oc.requisicion_id);
-      if (req) {
-        await supabase.from("requisiciones").update({
-          estado: todoRecibido ? "Recibida" : "Recibida Parcial",
-          recibidos: recibidos.map(r => ({ item_id: r.id, cant_recibida: r.cant_recibida })),
-          timeline: [...(req.timeline || []), {
-            quien: currentUser.nombre,
-            accion: todoRecibido ? "Recibida completa (desde OC)" : "Recibida parcial (desde OC)",
-            fecha: new Date().toLocaleString("es-CO"),
-            comentario: `OC ${oc.codigo} · ${totalRecibido}/${totalEsperado} unidades${notas ? ` — ${notas}` : ""}`,
-          }],
-        }).eq("id", req.id);
-      }
+    // 2. Propagar a TODAS las requisiciones de origen (multi-req).
+    //    Cada req se evalúa por sus PROPIOS items: si todos sus items están
+    //    completos → "Recibida"; si algunos → "Recibida Parcial"; si ninguno
+    //    de sus items se recibió en esta entrega → no toca el estado.
+    const reqIdsOrigen = Array.isArray(oc.requisicion_ids) && oc.requisicion_ids.length > 0
+      ? oc.requisicion_ids
+      : (oc.requisicion_id ? [oc.requisicion_id] : []);
+
+    for (const reqId of reqIdsOrigen) {
+      const req = reqs.find(r => r.id === reqId);
+      if (!req) continue;
+
+      // Items de OC que pertenecen a esta req (vía req_id legacy o req_ids merged)
+      const itemsDeEsteReq = (oc.items || []).filter(it =>
+        it.req_id === reqId || (Array.isArray(it.req_ids) && it.req_ids.includes(reqId))
+      );
+      if (itemsDeEsteReq.length === 0) continue;
+
+      // Lookup de cantidades recibidas por id de item (en esta entrega)
+      const recibidoPorId = new Map(recibidos.map(r => [r.id, Number(r.cant_recibida) || 0]));
+      const totalEsperadoReq = itemsDeEsteReq.reduce((s, it) => s + Number(it.cant), 0);
+      const totalRecibidoReq = itemsDeEsteReq.reduce((s, it) => s + (recibidoPorId.get(it.id) || 0), 0);
+
+      // Acumular contra recibidos previos de la req (si ya hubo recepción parcial antes)
+      const previos = Array.isArray(req.recibidos) ? req.recibidos : [];
+      const previosMap = new Map(previos.map(p => [p.item_id, Number(p.cant_recibida) || 0]));
+      const recibidosFinales = itemsDeEsteReq.map(it => ({
+        item_id: it.id,
+        cant_recibida: (previosMap.get(it.id) || 0) + (recibidoPorId.get(it.id) || 0),
+      }));
+
+      // Estado final de la req
+      const todoCompletoReq = recibidosFinales.every((rf, i) => rf.cant_recibida >= Number(itemsDeEsteReq[i].cant));
+      const algoCompletoReq = recibidosFinales.some(rf => rf.cant_recibida > 0);
+      const estadoReq = todoCompletoReq ? "Recibida" : algoCompletoReq ? "Recibida Parcial" : req.estado;
+
+      await supabase.from("requisiciones").update({
+        estado: estadoReq,
+        recibidos: recibidosFinales,
+        timeline: [...(req.timeline || []), {
+          quien: currentUser.nombre,
+          accion: todoCompletoReq
+            ? "Recibida completa (desde OC)"
+            : algoCompletoReq
+              ? "Recibida parcial (desde OC)"
+              : "Sin items en esta entrega",
+          fecha: new Date().toLocaleString("es-CO"),
+          comentario: `OC ${oc.codigo} · ${totalRecibidoReq}/${totalEsperadoReq} unidades de esta req${notas ? ` — ${notas}` : ""}`,
+        }],
+      }).eq("id", req.id);
     }
 
     // 2b. Sumar stock al inventario local en la bodega de recepción.
@@ -1571,6 +1626,23 @@ function RecepcionOCModal({ oc, reqs, onClose, reload, currentUser, readOnly = f
           </div>
           <button onClick={onClose} style={{ background: "none", border: "none", color: B.sand, fontSize: 20, cursor: "pointer" }}>×</button>
         </div>
+
+        {/* ⛔ Aviso de anticipo pendiente — bloquea recepción */}
+        {oc.anticipo_requerido && !oc.anticipo_pagado && (
+          <div style={{
+            background: `${B.danger}22`, border: `2px solid ${B.danger}`, borderRadius: 10,
+            padding: "14px 16px", marginBottom: 14,
+          }}>
+            <div style={{ fontSize: 13, fontWeight: 800, color: B.danger, marginBottom: 4 }}>
+              ⛔ Anticipo pendiente · No se puede recibir
+            </div>
+            <div style={{ fontSize: 12, color: "rgba(255,255,255,0.85)" }}>
+              Esta OC requiere anticipo del <strong>{oc.anticipo_porcentaje || "?"}%</strong> ({(oc.anticipo_monto || 0).toLocaleString("es-CO")}).
+              Contabilidad debe marcar el anticipo como pagado en
+              <strong> Compras → Anticipos pendientes</strong> antes de poder registrar la recepción.
+            </div>
+          </div>
+        )}
 
         {/* Datos de factura del proveedor + bodega destino */}
         <div style={{ background: B.navy, borderRadius: 10, padding: 14, marginBottom: 14, display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
@@ -1711,7 +1783,12 @@ function RecepcionOCModal({ oc, reqs, onClose, reload, currentUser, readOnly = f
 
         <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
           <button onClick={onClose} style={BTN(B.navyLight)}>Cancelar</button>
-          <button onClick={guardar} disabled={saving} style={BTN(B.success)}>{saving ? "Guardando..." : "Guardar recepción"}</button>
+          <button onClick={guardar}
+            disabled={saving || (oc.anticipo_requerido && !oc.anticipo_pagado)}
+            title={oc.anticipo_requerido && !oc.anticipo_pagado ? "Anticipo pendiente — no se puede recibir" : ""}
+            style={{ ...BTN(B.success), opacity: (oc.anticipo_requerido && !oc.anticipo_pagado) ? 0.4 : 1, cursor: (oc.anticipo_requerido && !oc.anticipo_pagado) ? "not-allowed" : "pointer" }}>
+            {saving ? "Guardando..." : "Guardar recepción"}
+          </button>
         </div>
       </div>
     </div>
@@ -1911,17 +1988,51 @@ function ItemSearchInput({ value, catalogoItems, onChange }) {
     return catalogoItems.filter(i => i.nombre.toLowerCase().includes(q)).slice(0, 30);
   }, [activeQuery, catalogoItems, open]);
 
+  // ¿El texto tipeado coincide exacto con algún item del catálogo?
+  // Si NO, ofrecemos guardarlo como item manual (no en sistema).
+  const hayExactMatch = useMemo(() => {
+    if (!popupQuery.trim()) return true;
+    const q = popupQuery.trim().toLowerCase();
+    return catalogoItems.some(i => i.nombre.toLowerCase() === q);
+  }, [popupQuery, catalogoItems]);
+
+  const usarManual = (texto) => {
+    const t = (texto || "").trim();
+    if (!t) return;
+    onChange(t, null);   // null = sin item del catálogo
+    setQuery(t);
+    setPopupQuery("");
+    setOpen(false);
+  };
+
   return (
     <div style={{ position: "relative" }} ref={ref}>
       <input
         value={query}
         onChange={e => { setQuery(e.target.value); onChange(e.target.value, null); }}
         onFocus={() => { if (query.length >= 2) setOpen(true); }}
-        placeholder="Buscar producto..."
-        style={{ ...IS, padding: "6px 8px", fontSize: 11, cursor: "pointer" }}
-        onClick={() => setOpen(true)}
-        readOnly={false}
+        onKeyDown={e => {
+          // Enter en el input inline = aceptar lo tipeado como manual
+          if (e.key === "Enter" && query.trim()) {
+            e.preventDefault();
+            onChange(query.trim(), null);
+          }
+        }}
+        placeholder="Tipeá nombre o click 🔍 para buscar en catálogo"
+        style={{ ...IS, padding: "6px 28px 6px 8px", fontSize: 11 }}
       />
+      {/* Botón pequeño para abrir el catálogo (no hace que cada click abra popup) */}
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        title="Buscar en catálogo"
+        style={{
+          position: "absolute", right: 4, top: "50%", transform: "translateY(-50%)",
+          background: "transparent", border: "none", color: B.sky, fontSize: 13,
+          cursor: "pointer", padding: "2px 4px", lineHeight: 1,
+        }}>
+        🔍
+      </button>
       {open && (
         <div style={{
           position: "fixed", top: 0, left: 0, right: 0, bottom: 0, zIndex: 1100,
@@ -1937,14 +2048,33 @@ function ItemSearchInput({ value, catalogoItems, onChange }) {
               <input
                 value={popupQuery}
                 onChange={e => setPopupQuery(e.target.value)}
-                placeholder="Buscar producto..."
+                onKeyDown={e => { if (e.key === "Enter" && popupQuery.trim()) { e.preventDefault(); usarManual(popupQuery); } }}
+                placeholder="Buscar producto…"
                 autoFocus
                 style={{ ...IS, border: "none", background: "transparent", fontSize: 14, padding: 0, flex: 1 }}
               />
               <button onClick={() => setOpen(false)} style={{ background: "none", border: "none", color: B.sand, fontSize: 18, cursor: "pointer" }}>×</button>
             </div>
             <div style={{ overflowY: "auto", flex: 1 }}>
-              {matches.length === 0 ? (
+              {/* Opción para usar el texto tipeado como item manual */}
+              {popupQuery.trim() && !hayExactMatch && (
+                <div onClick={() => usarManual(popupQuery)}
+                  style={{
+                    padding: "12px 18px", cursor: "pointer",
+                    borderBottom: `1px solid ${B.navyLight}`,
+                    background: `${B.warning}11`,
+                    display: "flex", justifyContent: "space-between", alignItems: "center",
+                  }}
+                  onMouseEnter={e => e.currentTarget.style.background = `${B.warning}22`}
+                  onMouseLeave={e => e.currentTarget.style.background = `${B.warning}11`}
+                >
+                  <span style={{ color: B.warning, fontSize: 13, fontWeight: 700 }}>
+                    ✏️ Usar "<span style={{ color: B.white }}>{popupQuery.trim()}</span>" como item manual
+                  </span>
+                  <span style={{ color: "rgba(255,255,255,0.35)", fontSize: 10 }}>No está en catálogo</span>
+                </div>
+              )}
+              {matches.length === 0 && (!popupQuery.trim() || hayExactMatch) ? (
                 <div style={{ padding: 30, textAlign: "center", color: "rgba(255,255,255,0.25)", fontSize: 13 }}>Sin resultados</div>
               ) : matches.map(m => (
                 <div key={m.id}
@@ -1962,7 +2092,7 @@ function ItemSearchInput({ value, catalogoItems, onChange }) {
               ))}
             </div>
             <div style={{ padding: "10px 18px", borderTop: `1px solid ${B.navyLight}`, fontSize: 11, color: "rgba(255,255,255,0.3)", textAlign: "center" }}>
-              {matches.length} resultado{matches.length !== 1 ? "s" : ""}
+              {matches.length} en catálogo · Tipeá lo que no esté y dale Enter para crear manual
             </div>
           </div>
         </div>
@@ -1998,12 +2128,26 @@ function NewReqModal({ tipoInicial, areaInicial, onClose, onSave, proveedores, r
   const fileInputRef = useRef(null);
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
-  // Cargar catálogo de items filtrado por departamento
+  // Cargar catálogo de items filtrado por departamento.
+  // Reglas:
+  //   • Alimentos → solo items con categoría del depto "Cocina"
+  //   • Bar → solo items con categoría del depto "Bar"
+  //   • Otros departamentos (Mantenimiento, Comercial, etc.) → no aplica catálogo,
+  //     el input se renderiza como texto libre.
+  // Nota: depende de `form.area` (no de areaInicial) — si el usuario cambia
+  // el departamento en el form, el catálogo se refiltra inmediatamente.
   const [catalogoItems, setCatalogoItems] = useState([]);
   const [catalogoCats, setCatalogoCats] = useState([]);
   useEffect(() => {
     if (!supabase) return;
-    const depto = AREA_TO_DEPTO[areaInicial] || "Cocina";
+    const deptoMap = { Alimentos: "Cocina", Bar: "Bar" };
+    const depto = deptoMap[form.area];
+    if (!depto) {
+      // No es A&B — limpiamos el catálogo (el input usará modo libre)
+      setCatalogoCats([]);
+      setCatalogoItems([]);
+      return;
+    }
     Promise.all([
       supabase.from("items_categorias").select("nombre, departamento").eq("activo", true),
       supabase.from("items_catalogo").select("id, nombre, unidad, categoria").eq("activo", true).order("nombre"),
@@ -2013,7 +2157,7 @@ function NewReqModal({ tipoInicial, areaInicial, onClose, onSave, proveedores, r
       const filtered = (itemR.data || []).filter(i => catsDepto.includes(i.categoria));
       setCatalogoItems(filtered);
     });
-  }, [areaInicial]);
+  }, [form.area]);
 
   const updateItem = (i, k, v) => {
     setForm(f => {
@@ -2134,26 +2278,41 @@ function NewReqModal({ tipoInicial, areaInicial, onClose, onSave, proveedores, r
             <div style={{ display: "grid", gridTemplateColumns: "2.5fr 0.7fr 1fr 1fr 1fr 36px", gap: 0, padding: "8px 12px", borderBottom: `1px solid ${B.navyLight}`, background: B.navyLight }}>
               {["Item", "Cant", "Unidad", "P. Unit", "Subtotal", ""].map(h => <span key={h} style={{ fontSize: 9, color: B.sand, textTransform: "uppercase" }}>{h}</span>)}
             </div>
-            {form.items.map((it, i) => (
+            {form.items.map((it, i) => {
+              // Catálogo (productos sincronizados con Loggro) solo aplica para
+              // departamentos de A&B: Alimentos (Cocina) y Bar. Para Mantenimiento,
+              // Comercial, Contabilidad, Flota, Otros, Ama de Llaves → input libre.
+              const usaCatalogo = form.area === "Alimentos" || form.area === "Bar";
+              return (
               <div key={it.id} style={{ display: "grid", gridTemplateColumns: "2.5fr 0.7fr 1fr 1fr 1fr 36px", gap: 4, padding: "6px 12px", borderBottom: `1px solid ${B.navyLight}`, alignItems: "center" }}>
-                <ItemSearchInput
-                  value={it.item}
-                  catalogoItems={catalogoItems}
-                  onChange={(val, selectedItem) => {
-                    updateItem(i, "item", val);
-                    if (selectedItem) {
-                      updateItem(i, "unidad", selectedItem.unidad || "Unidades");
-                      updateItem(i, "item_catalogo_id", selectedItem.id);
-                    }
-                  }}
-                />
+                {usaCatalogo ? (
+                  <ItemSearchInput
+                    value={it.item}
+                    catalogoItems={catalogoItems}
+                    onChange={(val, selectedItem) => {
+                      updateItem(i, "item", val);
+                      if (selectedItem) {
+                        updateItem(i, "unidad", selectedItem.unidad || "Unidades");
+                        updateItem(i, "item_catalogo_id", selectedItem.id);
+                      }
+                    }}
+                  />
+                ) : (
+                  <input
+                    value={it.item || ""}
+                    onChange={e => updateItem(i, "item", e.target.value)}
+                    placeholder="Nombre del item"
+                    style={{ ...IS, padding: "6px 8px", fontSize: 11 }}
+                  />
+                )}
                 <input type="number" value={it.cant} onChange={e => updateItem(i, "cant", Number(e.target.value))} style={{ ...IS, padding: "6px 8px", fontSize: 11, textAlign: "center" }} />
                 <input value={it.unidad} onChange={e => updateItem(i, "unidad", e.target.value)} style={{ ...IS, padding: "6px 8px", fontSize: 11 }} />
                 <input type="number" value={it.precioU} onChange={e => updateItem(i, "precioU", Number(e.target.value))} style={{ ...IS, padding: "6px 8px", fontSize: 11, textAlign: "right" }} />
                 <span style={{ fontSize: 11, color: B.sand, textAlign: "right", fontWeight: 700 }}>{COP(it.subtotal)}</span>
                 {form.items.length > 1 && <button onClick={() => removeItem(i)} style={{ background: "none", border: "none", color: B.danger, cursor: "pointer", fontSize: 14 }}>×</button>}
               </div>
-            ))}
+              );
+            })}
             <div style={{ padding: "10px 14px", borderTop: `2px solid ${B.navyLight}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
               <span style={{ fontSize: 12, color: "rgba(255,255,255,0.5)" }}>Total</span>
               <span style={{ fontSize: 18, fontWeight: 800, color: B.sand, fontFamily: "'Barlow Condensed', sans-serif" }}>{COP(total)}</span>
@@ -2851,6 +3010,28 @@ function DetailModal({ req, onClose, onUpdate, onGenerarOC, proveedores, reglas,
             )}
             {(req.estado === "En Compra" || req.estado === "Recibida Parcial") && (
               <button onClick={() => alert("Ve al tab Recepciones para registrar")} style={BTN(B.sky, B.navy)}>📦 Recepción en tab Recepciones</button>
+            )}
+            {req.estado === "Rechazada" && (
+              <button
+                onClick={async () => {
+                  if (!confirm("¿Reabrir esta requisición y enviarla nuevamente a aprobación? Se conservará el historial de aprobaciones anteriores.")) return;
+                  await supabase.from("requisiciones").update({
+                    estado: "Pendiente",
+                    rechazada_motivo: null,
+                    aprobada_at: null,
+                    timeline: [...(req.timeline || []), {
+                      quien: currentUser.nombre,
+                      accion: "Reabierta",
+                      fecha: new Date().toLocaleString("es-CO"),
+                      comentario: comment ? `Reabierta tras rechazo · ${comment}` : "Reabierta tras rechazo · enviada de nuevo a aprobación",
+                    }],
+                    updated_at: new Date().toISOString(),
+                  }).eq("id", req.id);
+                  reload();
+                }}
+                style={BTN(B.warning)}>
+                🔄 Reabrir / re-enviar a aprobación
+              </button>
             )}
           </div>
         </div>

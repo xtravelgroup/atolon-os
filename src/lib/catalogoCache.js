@@ -84,7 +84,10 @@ const CATALOGOS = {
   },
   items_catalogo: {
     table: "items_catalogo",
-    select: "*",
+    // Antes era select: "*" — fetcheaba todas las columnas incluyendo
+    // jsonb pesados (1.95MB en total). Solo necesitamos lo que consumen
+    // los componentes (picker de productos, búsqueda, recepción).
+    select: "id, nombre, unidad, categoria, precio_compra, codigo_barras, loggro_id, unidades_por_paquete, unidad_compra, unidad_individual, foto_url, stock_actual",
     filter: q => q.eq("activo", true),
     order: { col: "nombre", asc: true },
   },

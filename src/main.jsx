@@ -85,7 +85,30 @@ function GlobalSuspenseFallback() {
 // Pre-cargar catálogos casi-estáticos en background mientras App se monta.
 // Cuando el usuario abra el primer módulo ya están en cache → cambio de
 // módulo más fluido (ahorra ~6 round-trips por navegación).
-import("./lib/catalogoCache.js").then(m => m.prefetchCatalogos()).catch(() => {});
+//
+// IMPORTANTE: solo prefetcheamos en rutas DE STAFF. En rutas públicas
+// (booking, pago, agencia, carreras, etc.) los visitantes NO necesitan
+// los catálogos internos y traerlos sin razón ralentiza el TTFB del
+// landing.
+const isPublicRoute = (() => {
+  const path = window.location.pathname || "/";
+  const route = path.replace(/^\/+/, "").split("/")[0];
+  // Mismas rutas que App.jsx considera "públicas"
+  return ["", "booking", "pago", "agencia", "empleados", "carreras", "blueapple",
+          "las-americas", "gran-fondo", "nairo", "reset-password", "zarpe-info",
+          "zarpe-grupo", "despedidas", "contratistas", "escanear", "escanear-productos",
+          "verificar", "dia-de-la-madre", "madres", "m", "room"
+         ].includes(route);
+})();
+
+if (!isPublicRoute) {
+  // Damos un pequeño delay para no competir con el initial render.
+  setTimeout(() => {
+    import("./lib/catalogoCache.js")
+      .then(m => m.prefetchCatalogos())
+      .catch(() => {});
+  }, 500);
+}
 
 createRoot(document.getElementById("root")).render(
   <StrictMode>

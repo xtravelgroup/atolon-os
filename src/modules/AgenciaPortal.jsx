@@ -1,5 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import QRCode from "qrcode";
+// QRCode se lazy-importa solo cuando se renderiza QRSection (en la sección
+// de "Mi QR" del portal), evitando agregar 130kB al bundle inicial del
+// landing público de agencias.
 import { B, COP, todayStr, fmtFecha } from "../brand";
 import { supabase } from "../lib/supabase";
 import { wompiCheckoutUrl, WOMPI_INTEGRITY_KEY } from "../lib/wompi";
@@ -1201,15 +1203,20 @@ function QRSection({ agencia }) {
   const [qrDataUrl, setQrDataUrl] = useState(null);
 
   useEffect(() => {
-    QRCode.toCanvas(canvasRef.current, qrUrl, {
-      width: 280,
-      margin: 2,
-      color: { dark: "#0B1A2C", light: "#FFFFFF" },
-    }, (err) => {
-      if (!err && canvasRef.current) {
-        setQrDataUrl(canvasRef.current.toDataURL("image/png"));
-      }
+    let cancelled = false;
+    import("qrcode").then(({ default: QRCode }) => {
+      if (cancelled || !canvasRef.current) return;
+      QRCode.toCanvas(canvasRef.current, qrUrl, {
+        width: 280,
+        margin: 2,
+        color: { dark: "#0B1A2C", light: "#FFFFFF" },
+      }, (err) => {
+        if (!err && canvasRef.current) {
+          setQrDataUrl(canvasRef.current.toDataURL("image/png"));
+        }
+      });
     });
+    return () => { cancelled = true; };
   }, [qrUrl]);
 
   const copy = () => {

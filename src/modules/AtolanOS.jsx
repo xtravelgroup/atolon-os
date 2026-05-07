@@ -324,24 +324,34 @@ export default function AtolanOS({ activeModule = "dashboard", onNavigate, modul
     logoSrc:       "/atolon-logo-white.png",
   };
 
-  // Load current user's modulos + role from DB
+  // Load current user's modulos + role from DB.
+  // Reglas de acceso:
+  //   1. Si el ROL tiene permisos["*"] (super_admin / dirección) → ver todo.
+  //   2. Si modulos[] está vacío/null → ver todo (legacy / no configurado).
+  //   3. Cualquier otro caso → respetar EXACTAMENTE la lista de modulos[],
+  //      sin importar cuántos sean (el conteo NO determina admin).
+  //
+  // Antes había una heurística "20+ módulos = admin" que daba acceso total
+  // a cualquier usuario con muchos módulos asignados, anulando la
+  // restricción explícita. Eso rompía a Contabilidad y otros roles con
+  // muchos pero NO-todos los módulos.
   useEffect(() => {
     if (!userEmail || !supabase) { setUserModulos(null); return; }
     supabase.from("usuarios").select("modulos, rol_id, nombre, avatar_color").eq("email", userEmail).maybeSingle()
       .then(async ({ data }) => {
         if (data?.nombre) setUserName(data.nombre);
         const mods = data?.modulos;
-        // If no modulos or empty → show all
-        if (!Array.isArray(mods) || mods.length === 0) { setUserModulos(null); return; }
-        // Heuristic: 20+ modules = effectively admin (full access)
-        if (mods.length >= 20) { setUserModulos(null); return; }
-        // Try roles table to confirm admin
+        // 1) ¿El rol tiene acceso total ("*")?
         if (data?.rol_id) {
           try {
             const { data: rol } = await supabase.from("roles").select("permisos").eq("id", data.rol_id).maybeSingle();
             if (rol?.permisos?.["*"]) { setUserModulos(null); return; }
           } catch (_) {}
         }
+        // 2) Sin modulos definidos → asumimos legacy / configuración
+        //    incompleta y NO restringimos. Para restringir, definir la lista.
+        if (!Array.isArray(mods) || mods.length === 0) { setUserModulos(null); return; }
+        // 3) Respetar exactamente la lista
         setUserModulos(mods);
       })
       .catch(() => setUserModulos(null));

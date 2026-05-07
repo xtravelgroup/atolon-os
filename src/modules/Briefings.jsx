@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from "react";
+import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { supabase } from "../lib/supabase";
 
 const B = {
@@ -669,25 +669,41 @@ function BriefingDetalle({ briefing, tareas, tareasAnterior, briefingAnterior, e
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
-  const guardar = async (extras = {}) => {
-    setSaving(true);
+  // Cola de guardado: serializa todos los `guardar()` para evitar race
+  // conditions cuando el onBlur de un input y el onClick de un botón
+  // disparan saves concurrentes (ej: typear título y click en "Pasar a
+  // Agenda" — el blur podía ganar y pisar el cambio de en_agenda).
+  // Cada save espera al anterior y captura los `extras` al momento de
+  // la llamada, así el último siempre sobreescribe.
+  const saveChainRef = useRef(Promise.resolve());
+
+  const guardar = (extras = {}) => {
+    // Capturamos `form` y `extras` al momento de la LLAMADA (closure
+    // semantics). El payload se construye ahora; luego se ejecuta cuando
+    // le toque el turno en la cola.
+    const f = form;
     const payload = {
-      titulo: form.titulo,
-      fecha: form.fecha,
-      hora: form.hora || null,
-      tipo: form.tipo,
-      asistentes: form.asistentes || [],
-      agenda: form.agenda || [],
-      puntos_discutir: form.puntos_discutir || [],
-      notas: form.notas || "",
-      acuerdos: form.acuerdos || "",
-      estado: form.estado,
+      titulo: f.titulo,
+      fecha: f.fecha,
+      hora: f.hora || null,
+      tipo: f.tipo,
+      asistentes: f.asistentes || [],
+      agenda: f.agenda || [],
+      puntos_discutir: f.puntos_discutir || [],
+      notas: f.notas || "",
+      acuerdos: f.acuerdos || "",
+      estado: f.estado,
       updated_at: new Date().toISOString(),
       ...extras,
     };
-    await supabase.from("briefings").update(payload).eq("id", briefing.id);
-    setSaving(false);
-    onReload();
+    const next = saveChainRef.current.then(async () => {
+      setSaving(true);
+      await supabase.from("briefings").update(payload).eq("id", briefing.id);
+      setSaving(false);
+      onReload();
+    });
+    saveChainRef.current = next.catch(() => {/* swallow to keep chain alive */});
+    return next;
   };
 
   const cerrarBriefing = async () => {
@@ -710,9 +726,28 @@ function BriefingDetalle({ briefing, tareas, tareasAnterior, briefingAnterior, e
   const togglePresente = (id) => set("asistentes", (form.asistentes || []).map(a => a.id === id ? { ...a, presente: !a.presente } : a));
 
   // Agenda
-  const addAgenda = () => set("agenda", [...(form.agenda || []), { id: uid(), titulo: "", descripcion: "", orden: (form.agenda || []).length + 1 }]);
+  const addAgenda = () => set("agenda", [...(form.agenda || []), { id: uid(), titulo: "", descripcion: "", acordado: "", compromisos: "", orden: (form.agenda || []).length + 1 }]);
   const updateAgenda = (id, k, v) => set("agenda", (form.agenda || []).map(t => t.id === id ? { ...t, [k]: v } : t));
   const removeAgenda = (id) => set("agenda", (form.agenda || []).filter(t => t.id !== id));
+
+  // Mover punto privado → agenda pública (sin tener que ir a la sección privada).
+  const promoverAAgenda = (puntoId) => {
+    const p = (form.puntos_discutir || []).find(x => x.id === puntoId);
+    if (!p) return;
+    togglePuntoEnAgenda(puntoId, true);
+  };
+  const sacarDeAgenda = (agendaItemId) => {
+    // Si el item viene de un punto privado, desmarca el checkbox.
+    // Si fue creado directo en agenda (no tiene contraparte privada), lo elimina.
+    const enPrivado = (form.puntos_discutir || []).find(p => p.id === agendaItemId);
+    if (enPrivado) {
+      togglePuntoEnAgenda(agendaItemId, false);
+    } else {
+      const nuevaAgenda = (form.agenda || []).filter(a => a.id !== agendaItemId);
+      setForm(f => ({ ...f, agenda: nuevaAgenda }));
+      guardar({ agenda: nuevaAgenda });
+    }
+  };
 
   // Puntos a discutir (privados al creador). Cada punto tiene en_agenda:bool.
   // Marcar/desmarcar el checkbox sincroniza con la agenda pública. La función
@@ -941,14 +976,12 @@ function BriefingDetalle({ briefing, tareas, tareasAnterior, briefingAnterior, e
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               {(form.puntos_discutir || []).map((p, idx) => (
-                <div key={p.id} style={{ background: B.navyLight, borderRadius: 8, padding: "10px 12px" }}>
+                <div key={p.id} style={{
+                  background: p.en_agenda ? `${B.success}11` : B.navyLight,
+                  borderRadius: 8, padding: "10px 12px",
+                  borderLeft: p.en_agenda ? `3px solid ${B.success}` : "none",
+                }}>
                   <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
-                    <label style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4, paddingTop: 2, cursor: "pointer", whiteSpace: "nowrap", fontSize: 9, color: p.en_agenda ? B.success : "rgba(255,255,255,0.4)", fontWeight: 700, minWidth: 56 }}
-                           title={p.en_agenda ? "Visible en la agenda pública" : "Solo lo ves vos"}>
-                      <input type="checkbox" checked={!!p.en_agenda} onChange={ev => togglePuntoEnAgenda(p.id, ev.target.checked)}
-                             style={{ accentColor: B.success, width: 18, height: 18 }} />
-                      {p.en_agenda ? "✓ Agenda" : "Privado"}
-                    </label>
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <input value={p.titulo || ""} onChange={ev => updatePunto(p.id, "titulo", ev.target.value)} onBlur={() => guardar()}
                              placeholder={`Punto ${idx + 1} — título`}
@@ -956,14 +989,61 @@ function BriefingDetalle({ briefing, tareas, tareasAnterior, briefingAnterior, e
                       <textarea value={p.descripcion || ""} onChange={ev => updatePunto(p.id, "descripcion", ev.target.value)} onBlur={() => guardar()}
                                 placeholder="Detalle (opcional)" rows={2}
                                 style={{ background: "transparent", border: "none", color: "rgba(255,255,255,0.6)", fontSize: 11, padding: "4px 0 0", outline: "none", width: "100%", resize: "vertical", fontFamily: "inherit" }} />
+                      {/* Botón Pasar a Agenda / Quitar de Agenda — claro y prominente */}
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+                        {p.en_agenda ? (
+                          <>
+                            <span style={{
+                              display: "inline-flex", alignItems: "center", gap: 4,
+                              padding: "4px 10px", borderRadius: 12,
+                              background: `${B.success}22`, color: B.success,
+                              fontSize: 11, fontWeight: 700, border: `1px solid ${B.success}66`,
+                            }}>
+                              ✓ En la agenda pública
+                            </span>
+                            <button type="button"
+                              onClick={() => togglePuntoEnAgenda(p.id, false)}
+                              title="Volver a marcar como privado"
+                              style={{
+                                background: "transparent", border: `1px solid ${B.warning}`,
+                                color: B.warning, fontSize: 11, fontWeight: 700,
+                                padding: "4px 10px", borderRadius: 12, cursor: "pointer",
+                              }}>
+                              ↩ Quitar de agenda
+                            </button>
+                          </>
+                        ) : (
+                          <>
+                            <span style={{
+                              display: "inline-flex", alignItems: "center", gap: 4,
+                              padding: "4px 10px", borderRadius: 12,
+                              background: "rgba(255,255,255,0.06)", color: "rgba(255,255,255,0.5)",
+                              fontSize: 11, fontWeight: 700, border: "1px solid rgba(255,255,255,0.15)",
+                            }}>
+                              🔒 Solo lo ves vos
+                            </span>
+                            <button type="button"
+                              onClick={() => togglePuntoEnAgenda(p.id, true)}
+                              title="Pasar este punto a la agenda pública (visible para todos los participantes)"
+                              style={{
+                                background: B.hotel, border: "none",
+                                color: B.white, fontSize: 11, fontWeight: 800,
+                                padding: "5px 12px", borderRadius: 12, cursor: "pointer",
+                              }}>
+                              → Pasar a Agenda
+                            </button>
+                          </>
+                        )}
+                      </div>
                     </div>
                     <button type="button" onClick={() => removePunto(p.id)}
+                            title="Eliminar punto"
                             style={{ background: "transparent", border: "none", color: B.danger, cursor: "pointer", fontSize: 14 }}>✕</button>
                   </div>
 
                   {/* Sub-puntos del punto */}
                   {(p.subpuntos || []).length > 0 && (
-                    <div style={{ marginTop: 8, marginLeft: 70, display: "flex", flexDirection: "column", gap: 4 }}>
+                    <div style={{ marginTop: 8, marginLeft: 14, display: "flex", flexDirection: "column", gap: 4 }}>
                       {(p.subpuntos || []).map((s, si) => (
                         <div key={s.id} style={{ display: "flex", gap: 6, alignItems: "center" }}>
                           <span style={{ color: "rgba(255,255,255,0.3)", fontSize: 11, minWidth: 14 }}>↳</span>
@@ -979,7 +1059,7 @@ function BriefingDetalle({ briefing, tareas, tareasAnterior, briefingAnterior, e
                     </div>
                   )}
                   <button type="button" onClick={() => addSubpuntoDet(p.id)}
-                          style={{ marginTop: 6, marginLeft: 70, background: "none", border: "none", color: B.sky, cursor: "pointer", fontSize: 11, padding: "4px 0", fontWeight: 600 }}>
+                          style={{ marginTop: 6, marginLeft: 14, background: "none", border: "none", color: B.sky, cursor: "pointer", fontSize: 11, padding: "4px 0", fontWeight: 600 }}>
                     + Sub-punto
                   </button>
                 </div>
@@ -1026,34 +1106,20 @@ function BriefingDetalle({ briefing, tareas, tareasAnterior, briefingAnterior, e
               : "Sin temas en la agenda"}
           </div>
         ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             {(form.agenda || []).map((tema, idx) => (
-              <div key={tema.id} style={{ background: B.navyLight, borderRadius: 8, padding: "10px 12px" }}>
-                <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
-                  <div style={{ width: 24, height: 24, borderRadius: "50%", background: B.hotel, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 800, flexShrink: 0 }}>{idx + 1}</div>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <input value={tema.titulo || ""} onChange={ev => updateAgenda(tema.id, "titulo", ev.target.value)} onBlur={() => guardar()}
-                      placeholder="Tema a tratar"
-                      style={{ background: "transparent", border: "none", color: "#fff", fontSize: 13, fontWeight: 700, padding: 0, outline: "none", width: "100%" }} />
-                    <textarea value={tema.descripcion || ""} onChange={ev => updateAgenda(tema.id, "descripcion", ev.target.value)} onBlur={() => guardar()}
-                      placeholder="Notas del tema…" rows={2}
-                      style={{ background: "transparent", border: "none", color: "rgba(255,255,255,0.6)", fontSize: 11, padding: "4px 0 0", outline: "none", width: "100%", resize: "vertical", fontFamily: "inherit" }} />
-                  </div>
-                  <button type="button" onClick={() => { removeAgenda(tema.id); setTimeout(guardar, 100); }}
-                    style={{ background: "transparent", border: "none", color: B.danger, cursor: "pointer", fontSize: 14 }}>✕</button>
-                </div>
-                {/* Sub-puntos heredados del punto privado (read-only en agenda) */}
-                {(tema.subpuntos || []).filter(s => s.titulo?.trim()).length > 0 && (
-                  <div style={{ marginTop: 6, marginLeft: 34, display: "flex", flexDirection: "column", gap: 2 }}>
-                    {(tema.subpuntos || []).filter(s => s.titulo?.trim()).map((s, si) => (
-                      <div key={s.id} style={{ display: "flex", gap: 6, alignItems: "center", fontSize: 11, color: "rgba(255,255,255,0.55)" }}>
-                        <span style={{ color: "rgba(255,255,255,0.3)" }}>↳</span>
-                        <span>{s.titulo}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
+              <AgendaItem
+                key={tema.id}
+                tema={tema}
+                idx={idx}
+                briefingId={briefing.id}
+                empleados={empleados}
+                tareas={tareas.filter(t => t.agenda_item_id === tema.id)}
+                onUpdate={(k, v) => updateAgenda(tema.id, k, v)}
+                onUpdateBlur={() => guardar()}
+                onRemove={() => sacarDeAgenda(tema.id)}
+                onReload={onReload}
+              />
             ))}
           </div>
         )}
@@ -1075,27 +1141,154 @@ function BriefingDetalle({ briefing, tareas, tareasAnterior, briefingAnterior, e
         </div>
       </div>
 
-      {/* Tareas asignadas en este briefing */}
-      <div style={{ background: B.navy, borderRadius: 12, padding: "16px 18px", border: `1px solid ${B.navyLight}` }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-          <div style={{ fontSize: 11, color: B.sand, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.08em" }}>
-            ✅ Tareas asignadas ({tareas.length}) · {tareasComp} completadas · {tareasPend} pendientes
+      {/* Tareas globales del briefing (sin punto específico). Las tareas
+          asignadas a un punto de la agenda viven dentro de cada AgendaItem. */}
+      {(() => {
+        const tareasGlobales = tareas.filter(t => !t.agenda_item_id);
+        const compG = tareasGlobales.filter(x => x.estado === "completada").length;
+        const pendG = tareasGlobales.filter(x => x.estado === "pendiente" || x.estado === "en_progreso").length;
+        return (
+          <div style={{ background: B.navy, borderRadius: 12, padding: "16px 18px", border: `1px solid ${B.navyLight}` }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+              <div>
+                <div style={{ fontSize: 11, color: B.sand, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.08em" }}>
+                  ✅ Tareas generales del briefing ({tareasGlobales.length}) · {compG} completadas · {pendG} pendientes
+                </div>
+                <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>
+                  Tareas que no pertenecen a un punto específico de la agenda.
+                </div>
+              </div>
+              <button onClick={() => setShowNewTask(true)} style={BTN(B.hotel)}>+ Nueva tarea general</button>
+            </div>
+            {tareasGlobales.length === 0 ? (
+              <div style={{ fontSize: 11, color: "rgba(255,255,255,0.3)", fontStyle: "italic", padding: "10px 0" }}>Sin tareas generales</div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {tareasGlobales.map(t => <TareaRow key={t.id} tarea={t} reload={onReload} />)}
+              </div>
+            )}
+            {showNewTask && (
+              <NewTaskModal briefingId={briefing.id} empleados={empleados}
+                onClose={() => setShowNewTask(false)}
+                onSaved={() => { setShowNewTask(false); onReload(); }} />
+            )}
           </div>
-          <button onClick={() => setShowNewTask(true)} style={BTN(B.hotel)}>+ Nueva tarea</button>
+        );
+      })()}
+    </div>
+  );
+}
+
+// ─── AgendaItem ──────────────────────────────────────────────────────────────
+// Cada punto de la agenda es independiente: tiene su propio título, descripción,
+// "Acordado" (lo que se concluyó) y "Compromisos" (commitments tomados), más
+// una lista de tareas asignables a personas específicas con fechas tentativas.
+function AgendaItem({ tema, idx, briefingId, empleados, tareas, onUpdate, onUpdateBlur, onRemove, onReload }) {
+  const [showNewTask, setShowNewTask] = useState(false);
+  const [expanded, setExpanded] = useState(true);
+
+  const tareasComp = tareas.filter(t => t.estado === "completada").length;
+  const tareasPend = tareas.filter(t => t.estado === "pendiente" || t.estado === "en_progreso").length;
+
+  return (
+    <div style={{ background: B.navyLight, borderRadius: 8, padding: "10px 12px" }}>
+      <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+        <div style={{ width: 24, height: 24, borderRadius: "50%", background: B.hotel, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 800, flexShrink: 0 }}>{idx + 1}</div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <input value={tema.titulo || ""} onChange={ev => onUpdate("titulo", ev.target.value)} onBlur={onUpdateBlur}
+            placeholder="Tema a tratar"
+            style={{ background: "transparent", border: "none", color: "#fff", fontSize: 13, fontWeight: 700, padding: 0, outline: "none", width: "100%" }} />
+          <textarea value={tema.descripcion || ""} onChange={ev => onUpdate("descripcion", ev.target.value)} onBlur={onUpdateBlur}
+            placeholder="Notas del tema…" rows={2}
+            style={{ background: "transparent", border: "none", color: "rgba(255,255,255,0.6)", fontSize: 11, padding: "4px 0 0", outline: "none", width: "100%", resize: "vertical", fontFamily: "inherit" }} />
         </div>
-        {tareas.length === 0 ? (
-          <div style={{ fontSize: 11, color: "rgba(255,255,255,0.3)", fontStyle: "italic", padding: "10px 0" }}>Sin tareas asignadas todavía</div>
-        ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {tareas.map(t => <TareaRow key={t.id} tarea={t} reload={onReload} />)}
-          </div>
-        )}
-        {showNewTask && (
-          <NewTaskModal briefingId={briefing.id} empleados={empleados}
-            onClose={() => setShowNewTask(false)}
-            onSaved={() => { setShowNewTask(false); onReload(); }} />
-        )}
+        <button type="button" onClick={() => setExpanded(e => !e)}
+          title={expanded ? "Colapsar detalle" : "Ver detalle"}
+          style={{ background: "transparent", border: "none", color: "rgba(255,255,255,0.5)", cursor: "pointer", fontSize: 12, padding: "2px 6px" }}>
+          {expanded ? "▲" : "▼"}
+        </button>
+        <button type="button" onClick={onRemove} title="Quitar de agenda"
+          style={{ background: "transparent", border: "none", color: B.danger, cursor: "pointer", fontSize: 14 }}>✕</button>
       </div>
+
+      {/* Sub-puntos heredados del punto privado (read-only en agenda) */}
+      {(tema.subpuntos || []).filter(s => s.titulo?.trim()).length > 0 && (
+        <div style={{ marginTop: 6, marginLeft: 34, display: "flex", flexDirection: "column", gap: 2 }}>
+          {(tema.subpuntos || []).filter(s => s.titulo?.trim()).map((s, si) => (
+            <div key={s.id} style={{ display: "flex", gap: 6, alignItems: "center", fontSize: 11, color: "rgba(255,255,255,0.55)" }}>
+              <span style={{ color: "rgba(255,255,255,0.3)" }}>↳</span>
+              <span>{s.titulo}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Resumen colapsado: muestra contadores y un teaser */}
+      {!expanded && (tareas.length > 0 || tema.acordado || tema.compromisos) && (
+        <div style={{ marginTop: 8, marginLeft: 34, display: "flex", flexWrap: "wrap", gap: 10, fontSize: 10, color: "rgba(255,255,255,0.45)" }}>
+          {tareas.length > 0 && <span>✅ {tareas.length} tarea{tareas.length !== 1 ? "s" : ""} ({tareasPend} pend · {tareasComp} comp)</span>}
+          {tema.acordado && <span style={{ color: B.success }}>🤝 Acordado</span>}
+          {tema.compromisos && <span style={{ color: B.warning }}>📌 Compromisos</span>}
+        </div>
+      )}
+
+      {/* Detalle expandido: acordado + compromisos + tareas */}
+      {expanded && (
+        <div style={{ marginTop: 10, marginLeft: 34, display: "flex", flexDirection: "column", gap: 10 }}>
+          {/* Acordado / Compromisos en grid responsivo */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10 }}>
+            <div style={{ background: "rgba(34,197,94,0.06)", border: `1px solid ${B.success}33`, borderRadius: 6, padding: "8px 10px" }}>
+              <div style={{ fontSize: 10, color: B.success, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>
+                🤝 Acordado
+              </div>
+              <textarea value={tema.acordado || ""} onChange={ev => onUpdate("acordado", ev.target.value)} onBlur={onUpdateBlur}
+                placeholder="¿Qué se concluyó/decidió en este punto?" rows={2}
+                style={{ background: "transparent", border: "none", color: "rgba(255,255,255,0.85)", fontSize: 11, padding: 0, outline: "none", width: "100%", resize: "vertical", fontFamily: "inherit" }} />
+            </div>
+            <div style={{ background: "rgba(245,158,11,0.06)", border: `1px solid ${B.warning}33`, borderRadius: 6, padding: "8px 10px" }}>
+              <div style={{ fontSize: 10, color: B.warning, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>
+                📌 Compromisos
+              </div>
+              <textarea value={tema.compromisos || ""} onChange={ev => onUpdate("compromisos", ev.target.value)} onBlur={onUpdateBlur}
+                placeholder="Compromisos tomados en este punto…" rows={2}
+                style={{ background: "transparent", border: "none", color: "rgba(255,255,255,0.85)", fontSize: 11, padding: 0, outline: "none", width: "100%", resize: "vertical", fontFamily: "inherit" }} />
+            </div>
+          </div>
+
+          {/* Tareas del punto */}
+          <div style={{ background: B.navy, borderRadius: 6, padding: "8px 10px", border: `1px solid ${B.navyLight}` }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, gap: 8, flexWrap: "wrap" }}>
+              <div style={{ fontSize: 10, color: B.sky, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.06em" }}>
+                ✅ Tareas del punto ({tareas.length}{tareasPend > 0 ? ` · ${tareasPend} pend` : ""})
+              </div>
+              <button type="button" onClick={() => setShowNewTask(true)}
+                style={{ ...BTN(B.sky), fontSize: 10, padding: "4px 10px" }}>
+                + Asignar tarea
+              </button>
+            </div>
+            {tareas.length === 0 ? (
+              <div style={{ fontSize: 10, color: "rgba(255,255,255,0.3)", fontStyle: "italic", padding: "4px 0" }}>
+                Sin tareas asignadas a este punto.
+              </div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                {tareas.map(t => <TareaRow key={t.id} tarea={t} reload={onReload} />)}
+              </div>
+            )}
+          </div>
+
+          {showNewTask && (
+            <NewTaskModal
+              briefingId={briefingId}
+              agendaItemId={tema.id}
+              agendaItemTitulo={tema.titulo}
+              empleados={empleados}
+              onClose={() => setShowNewTask(false)}
+              onSaved={() => { setShowNewTask(false); onReload(); }}
+            />
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -1142,30 +1335,50 @@ function TareaRow({ tarea, reload }) {
   );
 }
 
-function NewTaskModal({ briefingId, empleados, onClose, onSaved }) {
+function NewTaskModal({ briefingId, agendaItemId = null, agendaItemTitulo = "", empleados, onClose, onSaved }) {
   const [form, setForm] = useState({ titulo: "", descripcion: "", asignado_id: "", fecha_limite: "", prioridad: "normal" });
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
+  const [saving, setSaving] = useState(false);
   const guardar = async () => {
     if (!form.titulo.trim()) return alert("Título obligatorio");
+    if (!briefingId) return alert("Falta briefingId — no se puede guardar la tarea.");
+    if (saving) return;
+    setSaving(true);
     const emp = empleados.find(e => e.id === form.asignado_id);
-    await supabase.from("briefing_tareas").insert({
+    const payload = {
       briefing_id: briefingId,
+      agenda_item_id: agendaItemId || null,
       titulo: form.titulo.trim(),
-      descripcion: form.descripcion.trim(),
+      descripcion: form.descripcion.trim() || null,
       asignado_id: form.asignado_id || null,
-      asignado_nombre: emp ? `${emp.nombres} ${emp.apellidos}`.trim() : "",
+      asignado_nombre: emp ? `${emp.nombres} ${emp.apellidos}`.trim() : null,
       fecha_limite: form.fecha_limite || null,
-      prioridad: form.prioridad,
+      prioridad: form.prioridad || "normal",
       estado: "pendiente",
-    });
+    };
+    const { error } = await supabase.from("briefing_tareas").insert(payload);
+    setSaving(false);
+    if (error) {
+      console.error("[briefing_tareas] insert error:", error, "payload:", payload);
+      alert("❌ No se pudo guardar la tarea:\n\n" + (error.message || "Error desconocido") + (error.hint ? "\n\nHint: " + error.hint : "") + (error.details ? "\n\nDetalle: " + error.details : ""));
+      return;
+    }
     onSaved();
   };
 
   return (
     <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
       <div onClick={e => e.stopPropagation()} style={{ background: B.navyMid, borderRadius: 14, padding: 24, width: 480, maxWidth: "100%", border: `1px solid ${B.navyLight}` }}>
-        <div style={{ fontSize: 17, fontWeight: 800, marginBottom: 16, fontFamily: "'Barlow Condensed', sans-serif" }}>Nueva tarea</div>
+        <div style={{ fontSize: 17, fontWeight: 800, marginBottom: 4, fontFamily: "'Barlow Condensed', sans-serif" }}>
+          {agendaItemId ? "Tarea para este punto" : "Nueva tarea general"}
+        </div>
+        {agendaItemId && agendaItemTitulo && (
+          <div style={{ fontSize: 11, color: B.hotel, marginBottom: 16, padding: "4px 10px", background: `${B.hotel}11`, borderRadius: 6, border: `1px solid ${B.hotel}33`, display: "inline-block" }}>
+            📌 {agendaItemTitulo}
+          </div>
+        )}
+        {!agendaItemId && <div style={{ marginBottom: 16 }} />}
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
           <div>
             <label style={LS}>Título *</label>

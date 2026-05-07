@@ -516,12 +516,25 @@ function SubtabAnticipos({ ordenes, reload, currentUser }) {
   const marcarPagado = async (oc) => {
     const referencia = prompt(`Referencia del pago del anticipo (Nº de transferencia, cheque, etc.):`);
     if (referencia === null) return;
+    // El anticipo cuenta como pago parcial → se acumula en monto_pagado.
+    // Cuando luego se aplique la factura completa, el saldo a pagar se calcula
+    // como total - monto_pagado (que ya incluye el anticipo). Esto evita
+    // doble-pago si Contabilidad olvida que ya se pagó el anticipo.
+    const montoAnticipo = Number(oc.anticipo_monto || 0);
+    const montoPagadoActual = Number(oc.monto_pagado || 0);
+    const nuevoMontoPagado = montoPagadoActual + montoAnticipo;
+    const total = Number(oc.total || 0);
+    const pagadaCompleta = total > 0 && nuevoMontoPagado >= total;
+
     await supabase.from("ordenes_compra").update({
       anticipo_pagado: true,
       anticipo_pagado_at: new Date().toISOString(),
       anticipo_pagado_por: currentUser?.email || null,
       anticipo_referencia_pago: referencia || null,
       estado: "confirmada",
+      monto_pagado: nuevoMontoPagado,
+      pagada_completa: pagadaCompleta,
+      pagada_at: pagadaCompleta ? new Date().toISOString() : oc.pagada_at || null,
       updated_at: new Date().toISOString(),
     }).eq("id", oc.id);
     reload?.();

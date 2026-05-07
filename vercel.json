@@ -1,4 +1,18 @@
 {
+  "redirects": [
+    {
+      "source": "/",
+      "has": [{ "type": "host", "value": "atolon.co" }],
+      "destination": "https://atoloncartagena.com",
+      "permanent": false
+    },
+    {
+      "source": "/",
+      "has": [{ "type": "host", "value": "www.atolon.co" }],
+      "destination": "https://atoloncartagena.com",
+      "permanent": false
+    }
+  ],
   "rewrites": [
     { "source": "/iclock/:op*", "destination": "/api/zk-iclock?_zkop=:op*" },
     { "source": "/(.*)", "destination": "/index.html" }

@@ -1087,42 +1087,88 @@ serve(async (req) => {
     if (req.method === "GET" && path === "/cierre-caja-rango") {
       const from = url.searchParams.get("from");
       const to   = url.searchParams.get("to");
+      const force = url.searchParams.get("force") === "1";
       if (!from || !to) return json({ error: "params from y to requeridos (YYYY-MM-DD)" }, 400);
 
-      // Loggro paginación: page 0 = oldest. A medida que pasa el tiempo,
-      // las facturas más recientes están en las páginas más altas.
-      // Estrategia: paginamos desde la última página hacia atrás y paramos
-      // cuando llegamos a fechas anteriores a "from".
-      const pageSize = 100;
-      const allInvoices: any[] = [];
-      const seen = new Set<string>();
-      const MAX_PAGES = 200; // safety limit
-      let stopReached = false;
-      // Hacemos batches de 10 páginas en paralelo, desde la 0 hasta MAX_PAGES,
-      // pero recorriendo desde el final hacia atrás.
-      // Para no asumir un total, empezamos en pages 0..MAX_PAGES y filtramos.
-      for (let batchStart = 0; batchStart < MAX_PAGES && !stopReached; batchStart += 20) {
-        const batch = [];
-        for (let p = batchStart; p < batchStart + 20 && p < MAX_PAGES; p++) {
-          batch.push(
-            loggroGet(`/invoices?pagination=true&limit=${pageSize}&page=${p}`)
-              .then(d => ({ page: p, arr: d?.data || (Array.isArray(d) ? d : []) }))
-              .catch(() => ({ page: p, arr: [] }))
-          );
+      // ── 1. Lookup cache (5 min TTL) ──────────────────────────────────
+      // Salvo que pidan force=1, devolvemos cache si está fresca. Esto baja
+      // el tiempo de respuesta de 5-20s a ~50ms.
+      const cacheKey = `${from}|${to}`;
+      if (!force) {
+        try {
+          const { data: cached } = await sb()
+            .from("loggro_ayb_cache")
+            .select("payload, expires_at")
+            .eq("cache_key", cacheKey)
+            .gt("expires_at", new Date().toISOString())
+            .maybeSingle();
+          if (cached?.payload) {
+            return json({ ...cached.payload, cache_hit: true });
+          }
+        } catch (e) {
+          console.warn("[loggro-cache] read failed, fetching live:", (e as Error).message);
         }
-        const results = await Promise.all(batch);
-        let emptyPagesInBatch = 0;
-        results.forEach(r => {
-          if (r.arr.length === 0) emptyPagesInBatch++;
-          r.arr.forEach((inv: any) => {
-            if (inv?._id && !seen.has(inv._id)) { seen.add(inv._id); allInvoices.push(inv); }
-          });
-        });
-        // Si encontramos varias páginas vacías seguidas, no hay más data
-        if (emptyPagesInBatch >= 5) stopReached = true;
       }
 
+      // ── 2. Pagina inversa: empezamos por las páginas más altas ───────
+      // Loggro tiene las facturas más recientes en las páginas más altas.
+      // En vez de barrer 200 páginas desde la 0, hacemos un sondeo binario
+      // primero para encontrar la última página con datos, y después
+      // bajamos hasta cuando salimos del rango "from".
+      const pageSize = 100;
       const COTZ_OFFSET_MS = -5 * 3600 * 1000;
+      const dayOf = (ts: string) => {
+        const utc = new Date(ts).getTime();
+        const co = new Date(utc + COTZ_OFFSET_MS);
+        return co.toISOString().slice(0, 10);
+      };
+
+      // Sondeo binario para encontrar última página no vacía (rápido: ~10 calls).
+      let lo = 0, hi = 200, lastNonEmpty = 0;
+      while (lo <= hi) {
+        const mid = Math.floor((lo + hi) / 2);
+        const d = await loggroGet(`/invoices?pagination=true&limit=${pageSize}&page=${mid}`).catch(() => null);
+        const arr = d?.data || (Array.isArray(d) ? d : []) || [];
+        if (arr.length > 0) { lastNonEmpty = mid; lo = mid + 1; }
+        else { hi = mid - 1; }
+      }
+
+      const allInvoices: any[] = [];
+      const seen = new Set<string>();
+      let stopReached = false;
+      let pagesScanned = 0;
+      const MAX_BACKWARD = 30; // safety: nunca más que 30 páginas (3000 facturas)
+
+      // Bajamos en batches de 5 páginas paralelas, desde la última hacia atrás.
+      let curPage = lastNonEmpty;
+      while (curPage >= 0 && !stopReached && pagesScanned < MAX_BACKWARD) {
+        const batchPages: number[] = [];
+        for (let i = 0; i < 5 && curPage >= 0; i++) batchPages.push(curPage--);
+        const batch = batchPages.map(p =>
+          loggroGet(`/invoices?pagination=true&limit=${pageSize}&page=${p}`)
+            .then(d => ({ page: p, arr: d?.data || (Array.isArray(d) ? d : []) }))
+            .catch(() => ({ page: p, arr: [] }))
+        );
+        const results = await Promise.all(batch);
+        pagesScanned += results.length;
+
+        let allOlderThanFrom = true;
+        for (const r of results) {
+          for (const inv of r.arr) {
+            if (!inv?._id || seen.has(inv._id)) continue;
+            seen.add(inv._id);
+            allInvoices.push(inv);
+            const ts = inv?.createdOn;
+            if (ts) {
+              const d = dayOf(ts);
+              if (d >= from) allOlderThanFrom = false;
+            }
+          }
+        }
+        // Si TODAS las facturas del batch son anteriores al "from", paramos
+        if (allOlderThanFrom && allInvoices.length > 0) stopReached = true;
+      }
+
       // Bucket por día: { ventas, propinas, tickets, anuladas, por_metodo: {} }
       interface DayBucket { ventas: number; propinas: number; tickets: number; anuladas: number; por_metodo: Record<string, number>; }
       const porDia: Record<string, DayBucket> = {};
@@ -1172,11 +1218,13 @@ serve(async (req) => {
         }
       }
 
-      return json({
+      const payload = {
         ok: true,
         from, to,
         timezone: "America/Bogota",
         invoices_revisados: allInvoices.length,
+        pages_scanned: pagesScanned,
+        last_non_empty_page: lastNonEmpty,
         stop_reached: stopReached,
         resumen: {
           total_ventas: totalVentas,
@@ -1187,7 +1235,30 @@ serve(async (req) => {
         },
         por_metodo: porMetodoGlobal,
         por_dia: porDia,
-      });
+      };
+
+      // ── 3. Guardar en cache (5 min TTL) ──────────────────────────────
+      // Si la req era para un rango que termina HOY, el TTL es 5 min (datos
+      // cambian). Si termina antes de hoy, TTL es 24h (datos históricos no
+      // cambian). Esto baja muchísimo la carga en Loggro para queries de
+      // meses anteriores.
+      try {
+        const today = new Date(Date.now() - 5 * 3600 * 1000).toISOString().slice(0, 10);
+        const ttlMs = to >= today ? 5 * 60 * 1000 : 24 * 60 * 60 * 1000;
+        const expiresAt = new Date(Date.now() + ttlMs).toISOString();
+        await sb().from("loggro_ayb_cache").upsert({
+          cache_key: cacheKey,
+          from_date: from,
+          to_date: to,
+          payload,
+          cached_at: new Date().toISOString(),
+          expires_at: expiresAt,
+        }, { onConflict: "cache_key" });
+      } catch (e) {
+        console.warn("[loggro-cache] write failed:", (e as Error).message);
+      }
+
+      return json(payload);
     }
 
     // POST /loggro-sync/create-provider — crear proveedor en Loggro

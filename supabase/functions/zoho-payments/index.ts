@@ -98,7 +98,7 @@ async function createZohoPaymentSession(authHeader: string, accountId: string, b
     amount:      Number(Number(body.amount).toFixed(2)),
     currency:    body.currency || "USD",
     description: (body.description || "Atolon").slice(0, 500),
-    expires_in:  3600, // 1 hora para completar el pago
+    // expires_in lo dejamos por default (Zoho rechazaba 3600). Default es 30 min.
   };
   if (body.invoice_number) payload.invoice_number = body.invoice_number;
   if (body.reference)      payload.reference_number = body.reference;
