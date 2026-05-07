@@ -2568,7 +2568,7 @@ const CATS_TO_TIPO = {
   "Transportación Terrestre":"transportacion",
   "Otros Servicios":        "otros_servicios",
 };
-const EMPTY_SERV = { id: "", categoria: "Menú Restaurante", proveedor: "", descripcion: "", valor: "", estado: "cotizando", notas: "", cantidad: 1, fecha: "", hora: "" };
+const EMPTY_SERV = { id: "", categoria: "Menú Restaurante", proveedor: "", descripcion: "", valor: "", estado: "cotizando", notas: "", cantidad: 1, fecha: "", hora: "", iva: 0, tax_type: "iva" };
 
 function CortesiaButton({ pasadiasMap, onAdd }) {
   const [open, setOpen] = useState(false);
@@ -2746,7 +2746,19 @@ function TabServicios({ items, onChange, pasadiasOrg = [], onChangePasadias, cat
     if (!form.categoria) return;
     const cant  = Number(form.cantidad) || 1;
     const unit  = Number(form.valor) || 0;
-    const item  = { ...form, id: form.id || uid(), cantidad: cant, valor_unit: unit, valor: unit * cant };
+    const ivaPct = form.tax_type === "ninguno" ? 0 : (Number(form.iva) || 0);
+    // valor = total con impuesto incluido (consistente con cotizacion_data
+    // donde el P/L lee `valor` directamente sin volver a sumar IVA).
+    const valor = unit * cant * (1 + ivaPct / 100);
+    const item  = {
+      ...form,
+      id: form.id || uid(),
+      cantidad: cant,
+      valor_unit: unit,
+      valor,
+      iva: ivaPct,
+      tax_type: form.tax_type === "ninguno" ? null : (form.tax_type || "iva"),
+    };
     if (editId) onChange(items.map(x => x.id === editId ? item : x));
     else onChange([...items, item]);
     setShowForm(false);
@@ -3083,6 +3095,29 @@ function TabServicios({ items, onChange, pasadiasOrg = [], onChangePasadias, cat
                 <span style={{ fontSize: 14, fontWeight: 800, color: B.sand }}>{COP(Number(form.valor) * Number(form.cantidad))}</span>
               </div>
             )}
+            <div>
+              <label style={LS}>Impuesto</label>
+              <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                <Sel value={form.tax_type || "iva"} onChange={v => set("tax_type", v)}>
+                  <option value="iva">IVA</option>
+                  <option value="ico">ICO</option>
+                  <option value="ninguno">Sin impuesto</option>
+                </Sel>
+                {form.tax_type !== "ninguno" && (
+                  <>
+                    <Inp type="number" value={form.iva ?? 0} onChange={v => set("iva", Number(v) || 0)}
+                      placeholder={form.tax_type === "ico" ? "8" : "19"} />
+                    <span style={{ fontSize: 13, color: "rgba(255,255,255,0.5)", fontWeight: 700 }}>%</span>
+                  </>
+                )}
+              </div>
+              {form.tax_type === "iva" && (!form.iva || form.iva === 0) && (
+                <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", marginTop: 3 }}>Tip: IVA estándar 19%</div>
+              )}
+              {form.tax_type === "ico" && (!form.iva || form.iva === 0) && (
+                <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", marginTop: 3 }}>Tip: ICO licores 8%</div>
+              )}
+            </div>
             <div><label style={LS}>Estado</label>
               <Sel value={form.estado} onChange={v => set("estado", v)}>
                 {ESTADOS_S.map(e => <option key={e.key} value={e.key}>{e.label}</option>)}
@@ -3091,6 +3126,24 @@ function TabServicios({ items, onChange, pasadiasOrg = [], onChangePasadias, cat
             <div><label style={LS}>Fecha</label><Inp type="date" value={form.fecha || ""} onChange={v => set("fecha", v)} /></div>
             <div><label style={LS}>Hora</label><Inp type="time" value={form.hora || ""} onChange={v => set("hora", v)} /></div>
             <div style={{ gridColumn: "span 2" }}><label style={LS}>Notas</label><Inp value={form.notas} onChange={v => set("notas", v)} /></div>
+
+            {/* Resumen final con impuesto incluido */}
+            {Number(form.valor) > 0 && Number(form.iva) > 0 && form.tax_type !== "ninguno" && (
+              <div style={{ gridColumn: "span 2", background: B.navyMid, borderRadius: 8, padding: "10px 14px", display: "flex", flexDirection: "column", gap: 4 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "rgba(255,255,255,0.5)" }}>
+                  <span>Subtotal</span>
+                  <span>{COP(Number(form.valor) * Number(form.cantidad || 1))}</span>
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: form.tax_type === "ico" ? "#fb923c" : "#4caf50" }}>
+                  <span>{(form.tax_type || "iva").toUpperCase()} {form.iva}%</span>
+                  <span>+ {COP(Number(form.valor) * Number(form.cantidad || 1) * (Number(form.iva) / 100))}</span>
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, color: B.sand, fontWeight: 800, borderTop: `1px solid ${B.navyLight}`, paddingTop: 4, marginTop: 2 }}>
+                  <span>Total</span>
+                  <span>{COP(Number(form.valor) * Number(form.cantidad || 1) * (1 + Number(form.iva) / 100))}</span>
+                </div>
+              </div>
+            )}
           </div>
           <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 16 }}>
             <button onClick={() => setShowForm(false)} style={{ ...BTN(B.navyLight), border: `1px solid ${B.navyLight}` }}>Cancelar</button>
