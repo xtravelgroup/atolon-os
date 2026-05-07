@@ -2742,6 +2742,7 @@ function TabServicios({ items, onChange, pasadiasOrg = [], onChangePasadias, cat
 
   const openNew  = () => { setForm(EMPTY_SERV); setEditId(null); setShowForm(true); };
   const openEdit = (item) => { setForm({ ...EMPTY_SERV, ...item }); setEditId(item.id); setShowForm(true); };
+  const [dragIdx, setDragIdx] = useState(null);
   const save = () => {
     if (!form.categoria) return;
     const cant  = Number(form.cantidad) || 1;
@@ -2950,8 +2951,15 @@ function TabServicios({ items, onChange, pasadiasOrg = [], onChangePasadias, cat
         </div>
       )}
 
-      <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 16 }}>
-        <button onClick={openNew} style={BTN(B.success)}>+ Agregar servicio</button>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, gap: 10, flexWrap: "wrap" }}>
+        {items.length > 1 && (
+          <button onClick={() => onChange([...items].sort((a, b) => ((a.fecha||"")+(a.hora||"")).localeCompare((b.fecha||"")+(b.hora||""))))}
+            style={{ ...BTN(B.navyLight), fontSize: 11, padding: "6px 12px" }}
+            title="Reordenar todos los servicios cronológicamente">
+            🕒 Ordenar por fecha
+          </button>
+        )}
+        <button onClick={openNew} style={{ ...BTN(B.success), marginLeft: "auto" }}>+ Agregar servicio</button>
       </div>
 
       {items.length === 0 && (
@@ -2961,9 +2969,36 @@ function TabServicios({ items, onChange, pasadiasOrg = [], onChangePasadias, cat
       )}
 
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-        {[...items].sort((a, b) => ((a.fecha||"")+(a.hora||"")).localeCompare((b.fecha||"")+(b.hora||""))).map(item => (
-          <div key={item.id} style={{ background: B.navy, borderRadius: 12, padding: "14px 18px",
-            display: "flex", alignItems: "center", gap: 16 }}>
+        {items.map((item, idx) => (
+          <div key={item.id}
+            draggable
+            onDragStart={(e) => {
+              setDragIdx(idx);
+              e.dataTransfer.effectAllowed = "move";
+              e.dataTransfer.setData("text/plain", String(idx));
+            }}
+            onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; }}
+            onDrop={(e) => {
+              e.preventDefault();
+              const from = Number(e.dataTransfer.getData("text/plain"));
+              if (Number.isNaN(from) || from === idx) { setDragIdx(null); return; }
+              const arr = [...items];
+              const [moved] = arr.splice(from, 1);
+              arr.splice(idx, 0, moved);
+              onChange(arr);
+              setDragIdx(null);
+            }}
+            onDragEnd={() => setDragIdx(null)}
+            style={{
+              background: B.navy, borderRadius: 12, padding: "14px 18px",
+              display: "flex", alignItems: "center", gap: 12,
+              opacity: dragIdx === idx ? 0.4 : 1,
+              border: dragIdx !== null && dragIdx !== idx ? `1px dashed ${B.sand}33` : "1px solid transparent",
+            }}>
+            <div title="Arrastrar para reordenar"
+              style={{ color: "rgba(255,255,255,0.3)", fontSize: 18, cursor: "grab", userSelect: "none", padding: "0 4px", lineHeight: 1 }}>
+              ⋮⋮
+            </div>
             <div style={{ flex: 1 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
                 <span style={{ fontSize: 12, fontWeight: 700, color: "rgba(255,255,255,0.5)", textTransform: "uppercase" }}>{item.categoria}</span>
@@ -2972,6 +3007,11 @@ function TabServicios({ items, onChange, pasadiasOrg = [], onChangePasadias, cat
                   {item.fecha ? new Date(item.fecha + "T12:00:00").toLocaleDateString("es-CO", { day: "numeric", month: "short" }) : ""}
                   {item.hora ? ` · ${item.hora}` : ""}
                 </span>}
+                {item.iva > 0 && (
+                  <span style={{ fontSize: 10, color: item.tax_type === "ico" ? "#fb923c" : "#4caf50", fontWeight: 700 }}>
+                    {(item.tax_type || "iva").toUpperCase()} {item.iva}%
+                  </span>
+                )}
               </div>
               <div style={{ fontSize: 14, fontWeight: 800, marginBottom: 4 }}>{item.proveedor || item.descripcion}</div>
               {item.descripcion && item.proveedor && <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)" }}>{item.descripcion}</div>}
