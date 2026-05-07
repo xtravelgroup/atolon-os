@@ -232,21 +232,25 @@ serve(async (req) => {
         reference,
       });
 
-      // Guardar sesión en tracking si se proveen contexto
+      // Guardar sesión en tracking — crítico para que el poll-recent y el
+      // webhook puedan matchear el pago con la reserva original.
       if (reference) {
         const SB = createClient(
           Deno.env.get("SUPABASE_URL")!,
           Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
         );
-        await SB.from("pagos_zoho_sessions").insert({
-          payment_link_id: session.payments_session_id, // reusa columna
+        const { error: sessErr } = await SB.from("pagos_zoho_sessions").insert({
+          payment_link_id: session.payments_session_id,
           reference,
           amount: Number(amount),
           currency: currency || "USD",
           context: context || null,
           context_id: context_id || null,
           status: "pendiente",
-        }).then(() => {}).catch(() => {});
+        });
+        if (sessErr) {
+          console.error("[create-session] No se pudo guardar pagos_zoho_sessions:", sessErr.message, "reference:", reference);
+        }
       }
 
       // Retornar config completa para el widget — el frontend la usa para
@@ -446,6 +450,127 @@ serve(async (req) => {
       status: 200,
       headers: { ...CORS, "Content-Type": "application/json" },
     });
+  }
+
+  // ══════════════════════════════════════════════════════════════════════
+  // POST /poll-recent — safety net mientras webhook no llega
+  // Consulta los pagos exitosos de las últimas N horas en Zoho Pay y
+  // marca las reservas como confirmadas si encuentra match por reference.
+  // Llamado por Vercel cron cada 5 min.
+  // ══════════════════════════════════════════════════════════════════════
+  if (req.method === "POST" && path === "/poll-recent") {
+    try {
+      const body = await req.json().catch(() => ({}));
+      const horasAtras = Number(body?.hours) || 2; // default últimas 2h
+
+      const creds = await loadZohoCreds();
+      if (!creds.refresh_token || !creds.client_id || !creds.client_secret) {
+        return new Response(JSON.stringify({ ok: false, error: "OAuth no configurado" }), {
+          status: 500, headers: { ...CORS, "Content-Type": "application/json" },
+        });
+      }
+      const authHeader = await getZohoAuthHeader({ ...creds, api_key: "" });
+
+      const SB = createClient(
+        Deno.env.get("SUPABASE_URL")!,
+        Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+      );
+
+      // Estrategia: en lugar de listar TODOS los pagos (endpoint que no
+      // siempre funciona en Zoho Pay), iteramos sobre las sesiones que
+      // NOSOTROS creamos y están pendientes en pagos_zoho_sessions, y
+      // consultamos el estado de cada una.
+      const desdeStr = new Date(Date.now() - horasAtras * 3600 * 1000).toISOString();
+      const { data: sesionesPend } = await SB.from("pagos_zoho_sessions")
+        .select("payment_link_id, reference, amount, currency, context_id, status, created_at")
+        .gte("created_at", desdeStr)
+        .neq("status", "pagado")
+        .order("created_at", { ascending: false });
+
+      let matched = 0, alreadyOk = 0, noMatch = 0, errCount = 0;
+      const procesados: any[] = [];
+
+      for (const s of (sesionesPend || [])) {
+        try {
+          // GET status de la sesión en Zoho
+          const sRes = await fetch(
+            `https://payments.zoho.com/api/v1/paymentsessions/${s.payment_link_id}?account_id=${creds.account_id}`,
+            { headers: { Authorization: authHeader } }
+          );
+          const sData = await sRes.json();
+          const sess = sData?.payments_session || sData?.payment_session || sData;
+          const sessStatus = sess?.status || sess?.payment_status || "";
+          // Buscar el payment_id si la sesión tiene pagos asociados
+          const payment = sess?.payments?.[0] || sess?.payment || null;
+          const pid = payment?.payment_id || payment?.id || sess?.payment_id || "";
+          const captured = sessStatus === "captured" || sessStatus === "succeeded" || payment?.status === "succeeded";
+
+          if (!captured) { continue; }
+
+          // Match con reserva
+          const ref = s.reference;
+          const { data: reservas } = await SB.from("reservas")
+            .select("id, estado, total, lead_id")
+            .eq("id", ref).limit(1);
+          const reserva = reservas?.[0];
+
+          if (!reserva) { noMatch++; continue; }
+          if (reserva.estado === "confirmado" && Number(reserva.total) === 0) { alreadyOk++; continue; }
+
+          // Marcar pagada
+          await SB.from("reservas").update({
+            estado: "confirmado",
+            forma_pago: "zoho_pay",
+            abono: reserva.total,
+            saldo: 0,
+            fecha_pago: new Date().toISOString().slice(0, 10),
+            updated_at: new Date().toISOString(),
+          }).eq("id", reserva.id);
+
+          if (reserva.lead_id) {
+            await SB.from("leads").update({
+              stage: "Cerrado Ganado",
+              ultimo_contacto: new Date().toISOString().slice(0, 10),
+            }).eq("id", reserva.lead_id).then(() => {}).catch(() => {});
+          }
+
+          // Actualizar sesión
+          await SB.from("pagos_zoho_sessions").update({
+            status: "pagado",
+            payment_id: pid,
+            pagado_at: new Date().toISOString(),
+            raw: sess,
+          }).eq("payment_link_id", s.payment_link_id);
+
+          // Log
+          await SB.from("pagos_zoho_log").insert({
+            event_type: "payment.succeeded.poll",
+            reference: ref,
+            payment_id: pid,
+            raw: { sess, _origen: "poll-recent" },
+            firma_valida: true,
+          }).then(() => {}).catch(() => {});
+
+          matched++;
+          procesados.push({ ref, pid, sessionId: s.payment_link_id });
+        } catch (e) {
+          errCount++;
+          console.warn("[poll-recent] error en sesión", s.payment_link_id, ":", (e as Error).message);
+        }
+      }
+
+      return new Response(JSON.stringify({
+        ok: true,
+        sesiones_revisadas: (sesionesPend || []).length,
+        matched, alreadyOk, noMatch, errCount,
+        procesados,
+      }), { status: 200, headers: { ...CORS, "Content-Type": "application/json" } });
+    } catch (err) {
+      console.error("poll-recent error:", err);
+      return new Response(JSON.stringify({ ok: false, error: String(err) }), {
+        status: 500, headers: { ...CORS, "Content-Type": "application/json" },
+      });
+    }
   }
 
   return new Response("Not found", { status: 404 });
