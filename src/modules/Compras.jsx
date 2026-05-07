@@ -35,16 +35,14 @@ const OC_BADGE = {
 };
 
 // Estados editables — una OC se considera editable solo en borrador o emitida.
-// Una vez "enviada" al proveedor (o más allá), se bloquea: no se editan items
-// ni se le agregan items nuevos desde requisiciones — se debe crear una OC nueva.
-// Una OC se puede editar mientras no haya factura aplicada y no esté
-// recibida/pagada/cancelada. Esto incluye OCs ya enviadas al proveedor —
-// porque el proveedor responde con cambios (no tengo X, cantidad Y, precio Z)
-// y Compras debe poder ajustar antes de la recepción/factura.
+// Una OC se puede editar/abrir SIEMPRE excepto cuando está cancelada.
+// Si tiene anticipo pagado, factura aplicada, o ya fue recibida — el modal se
+// abre igual pero muestra un banner de advertencia y queda registrado en
+// cambios_historial cualquier modificación.
 const OC_EDITABLE = (oc) => {
   if (!oc) return false;
-  if (oc.factura_aplicada) return false;
-  return ["borrador","emitida","enviada","confirmada","anticipo_pendiente"].includes(oc.estado || "emitida");
+  if (oc.estado === "cancelada") return false;
+  return true;
 };
 
 export default function Compras() {
@@ -423,7 +421,7 @@ function TabOrdenes({ ordenes, reload, currentUser }) {
       {openLogistica && <LogisticaOCModal oc={openLogistica} onClose={() => setOpenLogistica(null)} reload={reload} currentUser={currentUser} />}
       {openEmail && <EmailOCModal oc={openEmail} onClose={() => setOpenEmail(null)} reload={reload} currentUser={currentUser} />}
       {openCotizResp && <CotizacionRespuestaModal oc={openCotizResp} onClose={() => setOpenCotizResp(null)} reload={reload} currentUser={currentUser} />}
-      {openEditar && <EditarOCModal oc={openEditar} onClose={() => setOpenEditar(null)} reload={reload} currentUser={currentUser} />}
+      {openEditar && <EditarOCModal oc={openEditar} ordenes={ordenes} onClose={() => setOpenEditar(null)} reload={reload} currentUser={currentUser} />}
       {openUnir && <UnirOCModal oc={openUnir} ordenes={ordenes} onClose={() => setOpenUnir(null)} reload={reload} currentUser={currentUser} />}
     </div>
   );
@@ -1189,7 +1187,8 @@ function UnirOCModal({ oc, ordenes, onClose, reload, currentUser }) {
   );
 }
 
-function EditarOCModal({ oc, onClose, reload, currentUser }) {
+function EditarOCModal({ oc, ordenes = [], onClose, reload, currentUser }) {
+  const [showUnir, setShowUnir] = useState(false);
   const { isMobile } = useBreakpoint();
   const [items, setItems] = useState(() => (oc.items || []).map(it => ({ ...it })));
   const [proveedores, setProveedores] = useState([]);
@@ -1208,10 +1207,17 @@ function EditarOCModal({ oc, onClose, reload, currentUser }) {
   const setItem = (idx, k, v) => setItems(arr => arr.map((it, i) => {
     if (i !== idx) return it;
     const next = { ...it, [k]: v };
+    // Mantener sincronizados los 3 alias del precio: precio_unit / precio / precioU
+    // (precioU viene de generarOC en Requisiciones.jsx; los otros del modal/factura)
+    if (k === "precio_unit" || k === "precio" || k === "precioU") {
+      next.precio_unit = Number(v) || 0;
+      next.precio = Number(v) || 0;
+      next.precioU = Number(v) || 0;
+    }
     // Recalcular subtotal cuando cambia cant o precio
-    if (k === "cant" || k === "precio_unit" || k === "precio") {
+    if (k === "cant" || k === "precio_unit" || k === "precio" || k === "precioU") {
       const cant = Number(k === "cant" ? v : (next.cant || 0));
-      const pu = Number(k === "precio_unit" ? v : (next.precio_unit || next.precio || 0));
+      const pu = Number(next.precio_unit || next.precio || next.precioU || 0);
       next.subtotal = cant * pu;
     }
     return next;
@@ -1283,12 +1289,10 @@ function EditarOCModal({ oc, onClose, reload, currentUser }) {
   const guardar = async () => {
     setSaving(true); setErr("");
     try {
-      // Bloquear si ya hay factura aplicada o si está en estados finales
-      if (oc.factura_aplicada) {
-        throw new Error("La OC tiene factura aplicada — no se puede editar.");
-      }
-      if (["recibida", "pagada", "cancelada"].includes(oc.estado)) {
-        throw new Error(`La OC está en estado ${oc.estado} — no se puede editar.`);
+      // Solo bloqueamos si está cancelada. Con factura aplicada o recibida
+      // permitimos editar pero queda registrado en cambios_historial.
+      if (oc.estado === "cancelada") {
+        throw new Error("La OC está cancelada — no se puede editar.");
       }
       if (!proveedorNombre.trim()) throw new Error("Debe seleccionar un proveedor");
       // Si no quedan items, cancelar la OC en vez de bloquear
@@ -1336,27 +1340,50 @@ function EditarOCModal({ oc, onClose, reload, currentUser }) {
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
       onClick={e => e.target === e.currentTarget && onClose()}>
-      <div style={{ background: B.navy, borderRadius: 14, width: isMobile ? "100%" : 720, maxWidth: "100%", maxHeight: "92vh", overflow: "auto", border: `1px solid ${B.navyLight}`, color: B.white }}>
+      <div style={{ background: B.navy, borderRadius: 14, width: isMobile ? "100%" : 880, maxWidth: "100%", maxHeight: "92vh", overflow: "auto", border: `1px solid ${B.navyLight}`, color: B.white }}>
 
-        <div style={{ padding: 18, borderBottom: `1px solid ${B.navyLight}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <div style={{ padding: 18, borderBottom: `1px solid ${B.navyLight}`, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
           <div>
             <div style={{ fontSize: 17, fontWeight: 800, color: B.sand }}>✏️ Editar OC {oc.codigo}</div>
             <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginTop: 2 }}>
               Estado: {oc.estado} · {(oc.items || []).length} líneas originales
-              {oc.enviada_at && ` · ya enviada al proveedor`}
+              {oc.enviada_at && ` · enviada`}
+              {oc.factura_aplicada && ` · facturada`}
+              {oc.anticipo_pagado && ` · anticipo pagado`}
             </div>
           </div>
           <button onClick={onClose} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.5)", fontSize: 22, cursor: "pointer" }}>×</button>
         </div>
 
         <div style={{ padding: 18 }}>
-          {oc.enviada_at && (
+          {/* Banner de advertencia según estado */}
+          {oc.factura_aplicada && (
+            <div style={{ marginBottom: 14, padding: "10px 14px", background: `${B.danger}11`, border: `1px solid ${B.danger}55`, borderRadius: 8 }}>
+              <div style={{ fontSize: 12, fontWeight: 800, color: B.danger, marginBottom: 4 }}>
+                🛑 Esta OC ya tiene factura aplicada
+              </div>
+              <div style={{ fontSize: 11, color: "rgba(255,255,255,0.7)", lineHeight: 1.5 }}>
+                Modificar items con factura aplicada puede desbalancear la contabilidad. Solo edita si sabés exactamente qué estás haciendo. Cada cambio queda en el historial.
+              </div>
+            </div>
+          )}
+          {oc.anticipo_pagado && !oc.factura_aplicada && (
+            <div style={{ marginBottom: 14, padding: "10px 14px", background: `${B.warning}11`, border: `1px solid ${B.warning}55`, borderRadius: 8 }}>
+              <div style={{ fontSize: 12, fontWeight: 800, color: B.warning, marginBottom: 4 }}>
+                💸 Esta OC tiene anticipo pagado
+              </div>
+              <div style={{ fontSize: 11, color: "rgba(255,255,255,0.7)", lineHeight: 1.5 }}>
+                Si bajás el monto total por debajo del anticipo, hay que coordinar devolución con el proveedor. Cambios quedan en el historial.
+              </div>
+            </div>
+          )}
+          {oc.enviada_at && !oc.factura_aplicada && !oc.anticipo_pagado && (
             <div style={{ marginBottom: 14, padding: "10px 14px", background: `${B.warning}11`, border: `1px solid ${B.warning}55`, borderRadius: 8 }}>
               <div style={{ fontSize: 12, fontWeight: 800, color: B.warning, marginBottom: 4 }}>
                 ⚠️ Esta OC ya fue enviada al proveedor
               </div>
               <div style={{ fontSize: 11, color: "rgba(255,255,255,0.7)", lineHeight: 1.5 }}>
-                Cualquier cambio queda registrado en el historial de la OC. Si el proveedor no tiene un item, usá <strong style={{ color: B.warning }}>↩️ Mesa</strong> para devolverlo a la requisición original — ahí Compras lo puede asignar a otro proveedor. Después del ajuste, recordá <strong>volver a enviar la OC actualizada al proveedor</strong>.
+                Cualquier cambio queda registrado en el historial. Si el proveedor no tiene un item, usá <strong style={{ color: B.warning }}>↩️ Mesa</strong> para devolverlo a la requisición. Después del ajuste, recordá <strong>volver a enviar la OC actualizada al proveedor</strong>.
               </div>
             </div>
           )}
@@ -1392,41 +1419,58 @@ function EditarOCModal({ oc, onClose, reload, currentUser }) {
               </button>
             </div>
 
-            <div style={{ background: B.navyMid, borderRadius: 8, padding: 10, maxHeight: 380, overflowY: "auto" }}>
+            <div style={{ background: B.navyMid, borderRadius: 8, padding: 10, maxHeight: 480, overflowY: "auto" }}>
+              {/* Header de columnas en desktop */}
+              {!isMobile && items.length > 0 && (
+                <div style={{ display: "grid", gridTemplateColumns: "minmax(180px, 1fr) 70px 70px 110px 110px 80px 36px", gap: 8, padding: "0 10px 6px", fontSize: 9, color: "rgba(255,255,255,0.4)", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em" }}>
+                  <span>Item</span>
+                  <span style={{ textAlign: "right" }}>Cant</span>
+                  <span>Unidad</span>
+                  <span style={{ textAlign: "right" }}>P. Unit</span>
+                  <span style={{ textAlign: "right" }}>Subtotal</span>
+                  <span style={{ textAlign: "center" }}>Acción</span>
+                  <span></span>
+                </div>
+              )}
               {items.length === 0 ? (
                 <div style={{ padding: 20, textAlign: "center", color: "rgba(255,255,255,0.4)", fontSize: 12 }}>Sin ítems. Agrega uno.</div>
               ) : items.map((it, idx) => {
                 const tieneReq = (Array.isArray(it.req_ids) && it.req_ids.length > 0) || it.req_id;
+                const subtotalNum = Number(it.subtotal) || ((Number(it.cant) || 0) * (Number(it.precio_unit || it.precio) || 0));
                 return (
-                <div key={idx} style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "2.3fr 0.7fr 0.7fr 1fr 1fr auto auto", gap: 6, marginBottom: 8, padding: 8, background: B.navy, borderRadius: 6, alignItems: "center" }}>
+                <div key={idx} style={{
+                  display: "grid",
+                  gridTemplateColumns: isMobile ? "1fr" : "minmax(180px, 1fr) 70px 70px 110px 110px 80px 36px",
+                  gap: 8, marginBottom: 6, padding: "8px 10px", background: B.navy, borderRadius: 6, alignItems: "center",
+                }}>
                   <input value={it.item || it.nombre || ""}
                     onChange={e => { setItem(idx, "item", e.target.value); setItem(idx, "nombre", e.target.value); }}
                     placeholder="Nombre del ítem"
-                    style={{ padding: "7px 10px", borderRadius: 6, background: B.navyMid, border: `1px solid ${B.navyLight}`, color: "#fff", fontSize: 12 }} />
+                    style={{ padding: "7px 10px", borderRadius: 6, background: B.navyMid, border: `1px solid ${B.navyLight}`, color: "#fff", fontSize: 12, minWidth: 0, width: "100%", boxSizing: "border-box" }} />
                   <input type="number" step="0.01" min="0" value={it.cant || 0}
                     onChange={e => setItem(idx, "cant", e.target.value)}
                     placeholder="Cant"
-                    style={{ padding: "7px 10px", borderRadius: 6, background: B.navyMid, border: `1px solid ${B.navyLight}`, color: "#fff", fontSize: 12, textAlign: "right" }} />
+                    style={{ padding: "7px 8px", borderRadius: 6, background: B.navyMid, border: `1px solid ${B.navyLight}`, color: "#fff", fontSize: 12, textAlign: "right", minWidth: 0, width: "100%", boxSizing: "border-box" }} />
                   <input value={it.unidad || ""} onChange={e => setItem(idx, "unidad", e.target.value)}
                     placeholder="und"
-                    style={{ padding: "7px 10px", borderRadius: 6, background: B.navyMid, border: `1px solid ${B.navyLight}`, color: "#fff", fontSize: 12 }} />
-                  <input type="number" min="0" value={it.precio_unit || it.precio || 0}
+                    style={{ padding: "7px 8px", borderRadius: 6, background: B.navyMid, border: `1px solid ${B.navyLight}`, color: "#fff", fontSize: 12, minWidth: 0, width: "100%", boxSizing: "border-box" }} />
+                  <input type="number" min="0" value={Number(it.precio_unit) || Number(it.precio) || Number(it.precioU) || 0}
                     onChange={e => setItem(idx, "precio_unit", e.target.value)}
                     placeholder="Precio"
-                    style={{ padding: "7px 10px", borderRadius: 6, background: B.navyMid, border: `1px solid ${B.navyLight}`, color: "#fff", fontSize: 12, textAlign: "right" }} />
-                  <div style={{ padding: "7px 8px", textAlign: "right", color: B.sand, fontWeight: 700, fontSize: 12, fontFamily: "monospace" }}>
-                    {COP(Number(it.subtotal) || 0)}
+                    style={{ padding: "7px 8px", borderRadius: 6, background: B.navyMid, border: `1px solid ${B.navyLight}`, color: "#fff", fontSize: 12, textAlign: "right", minWidth: 0, width: "100%", boxSizing: "border-box" }} />
+                  <div style={{ padding: "7px 6px", textAlign: "right", color: B.sand, fontWeight: 700, fontSize: 12, fontFamily: "monospace", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={COP(subtotalNum)}>
+                    {COP(subtotalNum)}
                   </div>
-                  {tieneReq && (
+                  {tieneReq ? (
                     <button type="button" onClick={() => devolverAMesa(idx)}
                       title="Devolver este item a la requisición original (mesa de compra) para asignar a otro proveedor"
-                      style={{ padding: "5px 8px", border: `1px solid ${B.warning}`, background: "transparent", color: B.warning, borderRadius: 6, cursor: "pointer", fontSize: 11, fontWeight: 700, whiteSpace: "nowrap" }}>
+                      style={{ padding: "5px 4px", border: `1px solid ${B.warning}`, background: "transparent", color: B.warning, borderRadius: 6, cursor: "pointer", fontSize: 10, fontWeight: 700, whiteSpace: "nowrap", textAlign: "center" }}>
                       ↩️ Mesa
                     </button>
-                  )}
+                  ) : <span />}
                   <button type="button" onClick={() => removeItem(idx)}
                     title="Eliminar línea (sin devolver a mesa)"
-                    style={{ padding: "5px 8px", border: `1px solid ${B.danger}`, background: "transparent", color: B.danger, borderRadius: 6, cursor: "pointer", fontSize: 14 }}>
+                    style={{ padding: "5px 8px", border: `1px solid ${B.danger}`, background: "transparent", color: B.danger, borderRadius: 6, cursor: "pointer", fontSize: 14, justifySelf: "center" }}>
                     🗑
                   </button>
                 </div>
@@ -1450,6 +1494,12 @@ function EditarOCModal({ oc, onClose, reload, currentUser }) {
 
           {err && <div style={{ marginBottom: 10, padding: 10, background: "rgba(239,68,68,0.15)", color: "#ef4444", borderRadius: 8, fontSize: 12 }}>⚠ {err}</div>}
 
+          {/* Botón Unir con otra OC del mismo proveedor */}
+          <button type="button" onClick={() => setShowUnir(true)}
+            style={{ width: "100%", padding: "9px 14px", marginBottom: 10, borderRadius: 8, border: `1px solid #a78bfa`, background: `#a78bfa11`, color: "#a78bfa", cursor: "pointer", fontSize: 12, fontWeight: 700 }}>
+            🔗 Unir con otra OC del mismo proveedor (consolidar facturación)
+          </button>
+
           <div style={{ display: "flex", gap: 10 }}>
             <button onClick={onClose} disabled={saving}
               style={{ flex: 1, padding: 11, borderRadius: 8, border: `1px solid ${B.navyLight}`, background: "transparent", color: "rgba(255,255,255,0.5)", cursor: "pointer", fontSize: 13 }}>
@@ -1461,6 +1511,11 @@ function EditarOCModal({ oc, onClose, reload, currentUser }) {
             </button>
           </div>
         </div>
+
+        {showUnir && <UnirOCModal oc={oc} ordenes={ordenes}
+          onClose={() => setShowUnir(false)}
+          reload={() => { reload?.(); onClose(); }}
+          currentUser={currentUser} />}
       </div>
     </div>
   );
