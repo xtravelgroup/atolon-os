@@ -123,8 +123,11 @@ function GrupoLink({ evento, onClose }) {
     setLoadingR(false);
   };
 
-  const totalPax      = (reservas || []).reduce((s, r) => s + (r.pax || 0), 0);
-  const totalCOP      = (reservas || []).reduce((s, r) => s + (r.total || 0), 0);
+  // Solo reservas activas (no canceladas) — el modal de grupo no debe inflar
+  // el total con reservas canceladas.
+  const reservasActivas = (reservas || []).filter(r => r.estado !== "cancelado");
+  const totalPax      = reservasActivas.reduce((s, r) => s + (r.pax || 0), 0);
+  const totalCOP      = reservasActivas.reduce((s, r) => s + (r.total || 0), 0);
   const pasadiaActual = pasadias.find(p => p.id === pasadiaId);
   const tieneAliado   = !!evento.aliado_id;
   const precioUnit    = (tieneAliado && tipoPrecio === "neto" && pasadiaActual?.precio_neto_agencia)
@@ -416,15 +419,25 @@ function GrupoLink({ evento, onClose }) {
           <div style={{ background: B.navy, borderRadius: 10, padding: 16, marginBottom: 12 }}>
             {loadingR ? (
               <div style={{ textAlign: "center", color: "rgba(255,255,255,0.3)", fontSize: 13, padding: "16px 0" }}>Cargando...</div>
-            ) : reservas?.length === 0 ? (
-              <div style={{ textAlign: "center", color: "rgba(255,255,255,0.3)", fontSize: 13, padding: "16px 0" }}>Aún no hay reservas en este grupo</div>
+            ) : reservasActivas.length === 0 ? (
+              <div style={{ textAlign: "center", color: "rgba(255,255,255,0.3)", fontSize: 13, padding: "16px 0" }}>
+                {reservas?.length === 0
+                  ? "Aún no hay reservas en este grupo"
+                  : `${reservas.length} ${reservas.length === 1 ? "reserva cancelada" : "reservas canceladas"} en este grupo (no se muestran)`}
+              </div>
             ) : (
               <>
-                <div style={{ display: "flex", gap: 16, marginBottom: 12, padding: "8px 12px", background: B.navyMid, borderRadius: 8 }}>
+                <div style={{ display: "flex", gap: 16, marginBottom: 12, padding: "8px 12px", background: B.navyMid, borderRadius: 8, alignItems: "center", flexWrap: "wrap" }}>
                   <span style={{ fontSize: 12, color: "rgba(255,255,255,0.5)" }}>Total personas: <strong style={{ color: B.white }}>{totalPax}</strong></span>
                   <span style={{ fontSize: 12, color: "rgba(255,255,255,0.5)" }}>Total recaudado: <strong style={{ color: B.success }}>{COP(totalCOP)}</strong></span>
+                  <span style={{ fontSize: 12, color: "rgba(255,255,255,0.5)" }}>Reservas: <strong style={{ color: B.white }}>{reservasActivas.length}</strong></span>
+                  {reservas.length > reservasActivas.length && (
+                    <span style={{ fontSize: 11, color: B.warning, marginLeft: "auto" }}>
+                      ({reservas.length - reservasActivas.length} {reservas.length - reservasActivas.length === 1 ? "cancelada oculta" : "canceladas ocultas"})
+                    </span>
+                  )}
                 </div>
-                {reservas.map(r => (
+                {reservasActivas.map(r => (
                   <div key={r.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0", borderBottom: `1px solid ${B.navyLight}`, fontSize: 13 }}>
                     <div style={{ flex: 1 }}>
                       <div style={{ fontWeight: 600 }}>{r.nombre}</div>
@@ -1863,8 +1876,11 @@ export function ReservasGrupoModal({ evento, onClose }) {
   };
   useEffect(load, [evento]);
 
-  const totalPax = (reservas || []).reduce((s, r) => s + (r.pax || 0), 0);
-  const totalCOP = (reservas || []).reduce((s, r) => s + (r.total || 0), 0);
+  // Solo reservas activas (no canceladas) en totales y en la lista — el grupo
+  // no debe inflar las cifras con cancelaciones.
+  const reservasActivas = (reservas || []).filter(r => r.estado !== "cancelado");
+  const totalPax = reservasActivas.reduce((s, r) => s + (r.pax || 0), 0);
+  const totalCOP = reservasActivas.reduce((s, r) => s + (r.total || 0), 0);
 
   const estadoColor = (e) => e === "confirmado" ? B.success : e === "cancelado" ? B.danger : B.warning;
 
@@ -1955,19 +1971,26 @@ export function ReservasGrupoModal({ evento, onClose }) {
 
         {reservas === null ? (
           <div style={{ textAlign: "center", padding: "32px 0", color: "rgba(255,255,255,0.3)" }}>Cargando...</div>
-        ) : reservas.length === 0 ? (
+        ) : reservasActivas.length === 0 ? (
           <div style={{ textAlign: "center", padding: "32px 0", color: "rgba(255,255,255,0.3)", fontSize: 14 }}>
             <div style={{ fontSize: 32, marginBottom: 10 }}>📭</div>
-            Aún no hay reservas en este grupo.
+            {reservas.length === 0
+              ? "Aún no hay reservas en este grupo."
+              : `${reservas.length} ${reservas.length === 1 ? "reserva cancelada" : "reservas canceladas"} en este grupo (no se muestran).`}
           </div>
         ) : (
           <>
-            <div style={{ display: "flex", gap: 20, padding: "10px 14px", background: B.navy, borderRadius: 10, marginBottom: 14 }}>
+            <div style={{ display: "flex", gap: 20, padding: "10px 14px", background: B.navy, borderRadius: 10, marginBottom: 14, alignItems: "center", flexWrap: "wrap" }}>
               <span style={{ fontSize: 13, color: "rgba(255,255,255,0.5)" }}>👥 <strong style={{ color: B.white }}>{totalPax} personas</strong></span>
               <span style={{ fontSize: 13, color: "rgba(255,255,255,0.5)" }}>💵 <strong style={{ color: B.success }}>{COP(totalCOP)}</strong></span>
-              <span style={{ fontSize: 13, color: "rgba(255,255,255,0.5)" }}>🎟 <strong style={{ color: B.white }}>{reservas.length} reservas</strong></span>
+              <span style={{ fontSize: 13, color: "rgba(255,255,255,0.5)" }}>🎟 <strong style={{ color: B.white }}>{reservasActivas.length} {reservasActivas.length === 1 ? "reserva" : "reservas"}</strong></span>
+              {reservas.length > reservasActivas.length && (
+                <span style={{ fontSize: 11, color: B.warning, marginLeft: "auto" }}>
+                  ({reservas.length - reservasActivas.length} {reservas.length - reservasActivas.length === 1 ? "cancelada oculta" : "canceladas ocultas"})
+                </span>
+              )}
             </div>
-            {reservas.map(r => (
+            {reservasActivas.map(r => (
               <div key={r.id} onClick={() => setSelected(r)}
                 style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 12px", borderBottom: `1px solid ${B.navyLight}`, cursor: "pointer", borderRadius: 8, margin: "2px 0" }}
                 onMouseEnter={e => e.currentTarget.style.background = B.navy}
