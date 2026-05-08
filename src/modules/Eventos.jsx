@@ -123,9 +123,11 @@ function GrupoLink({ evento, onClose }) {
     setLoadingR(false);
   };
 
-  // Solo reservas activas (no canceladas) — el modal de grupo no debe inflar
-  // el total con reservas canceladas.
-  const reservasActivas = (reservas || []).filter(r => r.estado !== "cancelado");
+  // Solo reservas confirmadas (y posteriores: check_in, finalizado).
+  // Se excluyen pendiente_pago y cancelado para que totales y lista
+  // reflejen solo lo que está realmente comprometido.
+  const ESTADOS_CONFIRMADOS = ["confirmado", "check_in", "finalizado"];
+  const reservasActivas = (reservas || []).filter(r => ESTADOS_CONFIRMADOS.includes(r.estado));
   const totalPax      = reservasActivas.reduce((s, r) => s + (r.pax || 0), 0);
   const totalCOP      = reservasActivas.reduce((s, r) => s + (r.total || 0), 0);
   const pasadiaActual = pasadias.find(p => p.id === pasadiaId);
@@ -422,18 +424,18 @@ function GrupoLink({ evento, onClose }) {
             ) : reservasActivas.length === 0 ? (
               <div style={{ textAlign: "center", color: "rgba(255,255,255,0.3)", fontSize: 13, padding: "16px 0" }}>
                 {reservas?.length === 0
-                  ? "Aún no hay reservas en este grupo"
-                  : `${reservas.length} ${reservas.length === 1 ? "reserva cancelada" : "reservas canceladas"} en este grupo (no se muestran)`}
+                  ? "Aún no hay reservas confirmadas en este grupo"
+                  : `Sin reservas confirmadas en este grupo (${reservas.length} ${reservas.length === 1 ? "no confirmada oculta" : "no confirmadas ocultas"})`}
               </div>
             ) : (
               <>
                 <div style={{ display: "flex", gap: 16, marginBottom: 12, padding: "8px 12px", background: B.navyMid, borderRadius: 8, alignItems: "center", flexWrap: "wrap" }}>
                   <span style={{ fontSize: 12, color: "rgba(255,255,255,0.5)" }}>Total personas: <strong style={{ color: B.white }}>{totalPax}</strong></span>
                   <span style={{ fontSize: 12, color: "rgba(255,255,255,0.5)" }}>Total recaudado: <strong style={{ color: B.success }}>{COP(totalCOP)}</strong></span>
-                  <span style={{ fontSize: 12, color: "rgba(255,255,255,0.5)" }}>Reservas: <strong style={{ color: B.white }}>{reservasActivas.length}</strong></span>
+                  <span style={{ fontSize: 12, color: "rgba(255,255,255,0.5)" }}>Confirmadas: <strong style={{ color: B.white }}>{reservasActivas.length}</strong></span>
                   {reservas.length > reservasActivas.length && (
                     <span style={{ fontSize: 11, color: B.warning, marginLeft: "auto" }}>
-                      ({reservas.length - reservasActivas.length} {reservas.length - reservasActivas.length === 1 ? "cancelada oculta" : "canceladas ocultas"})
+                      ({reservas.length - reservasActivas.length} {reservas.length - reservasActivas.length === 1 ? "no confirmada oculta" : "no confirmadas ocultas"})
                     </span>
                   )}
                 </div>
@@ -1876,9 +1878,10 @@ export function ReservasGrupoModal({ evento, onClose }) {
   };
   useEffect(load, [evento]);
 
-  // Solo reservas activas (no canceladas) en totales y en la lista — el grupo
-  // no debe inflar las cifras con cancelaciones.
-  const reservasActivas = (reservas || []).filter(r => r.estado !== "cancelado");
+  // Solo reservas confirmadas (y posteriores: check_in, finalizado).
+  // Se excluyen pendiente_pago y cancelado.
+  const ESTADOS_CONFIRMADOS_M = ["confirmado", "check_in", "finalizado"];
+  const reservasActivas = (reservas || []).filter(r => ESTADOS_CONFIRMADOS_M.includes(r.estado));
   const totalPax = reservasActivas.reduce((s, r) => s + (r.pax || 0), 0);
   const totalCOP = reservasActivas.reduce((s, r) => s + (r.total || 0), 0);
 
@@ -1975,42 +1978,60 @@ export function ReservasGrupoModal({ evento, onClose }) {
           <div style={{ textAlign: "center", padding: "32px 0", color: "rgba(255,255,255,0.3)", fontSize: 14 }}>
             <div style={{ fontSize: 32, marginBottom: 10 }}>📭</div>
             {reservas.length === 0
-              ? "Aún no hay reservas en este grupo."
-              : `${reservas.length} ${reservas.length === 1 ? "reserva cancelada" : "reservas canceladas"} en este grupo (no se muestran).`}
+              ? "Aún no hay reservas confirmadas en este grupo."
+              : `Sin reservas confirmadas en este grupo (${reservas.length} ${reservas.length === 1 ? "no confirmada oculta" : "no confirmadas ocultas"}).`}
           </div>
         ) : (
           <>
             <div style={{ display: "flex", gap: 20, padding: "10px 14px", background: B.navy, borderRadius: 10, marginBottom: 14, alignItems: "center", flexWrap: "wrap" }}>
               <span style={{ fontSize: 13, color: "rgba(255,255,255,0.5)" }}>👥 <strong style={{ color: B.white }}>{totalPax} personas</strong></span>
               <span style={{ fontSize: 13, color: "rgba(255,255,255,0.5)" }}>💵 <strong style={{ color: B.success }}>{COP(totalCOP)}</strong></span>
-              <span style={{ fontSize: 13, color: "rgba(255,255,255,0.5)" }}>🎟 <strong style={{ color: B.white }}>{reservasActivas.length} {reservasActivas.length === 1 ? "reserva" : "reservas"}</strong></span>
+              <span style={{ fontSize: 13, color: "rgba(255,255,255,0.5)" }}>🎟 <strong style={{ color: B.white }}>{reservasActivas.length} {reservasActivas.length === 1 ? "confirmada" : "confirmadas"}</strong></span>
               {reservas.length > reservasActivas.length && (
                 <span style={{ fontSize: 11, color: B.warning, marginLeft: "auto" }}>
-                  ({reservas.length - reservasActivas.length} {reservas.length - reservasActivas.length === 1 ? "cancelada oculta" : "canceladas ocultas"})
+                  ({reservas.length - reservasActivas.length} {reservas.length - reservasActivas.length === 1 ? "no confirmada oculta" : "no confirmadas ocultas"})
                 </span>
               )}
             </div>
-            {reservasActivas.map(r => (
-              <div key={r.id} onClick={() => setSelected(r)}
-                style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 12px", borderBottom: `1px solid ${B.navyLight}`, cursor: "pointer", borderRadius: 8, margin: "2px 0" }}
-                onMouseEnter={e => e.currentTarget.style.background = B.navy}
-                onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontWeight: 600, fontSize: 14 }}>{r.nombre}</div>
-                  <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>
-                    {r.id} · {r.tipo} · {r.pax} {r.pax === 1 ? "persona" : "personas"}
+            {reservasActivas.map(r => {
+              const contacto = r.email || r.telefono || r.contacto || "";
+              const salida = r.salida_id || r.salida_hora || "";
+              return (
+                <div key={r.id} onClick={() => setSelected(r)}
+                  style={{ display: "flex", alignItems: "flex-start", gap: 12, padding: "12px", borderBottom: `1px solid ${B.navyLight}`, cursor: "pointer", borderRadius: 8, margin: "2px 0" }}
+                  onMouseEnter={e => e.currentTarget.style.background = B.navy}
+                  onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontWeight: 600, fontSize: 14 }}>{r.nombre}</div>
+                    <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>
+                      {r.id} · {r.tipo} · {r.pax} {r.pax === 1 ? "persona" : "personas"}
+                    </div>
+                    {contacto && (
+                      <div style={{ fontSize: 11, color: "rgba(255,255,255,0.55)", marginTop: 3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {r.email && <span>📧 {r.email}</span>}
+                        {r.email && (r.telefono || r.contacto) && <span> · </span>}
+                        {(r.telefono || r.contacto) && <span>📱 {r.telefono || r.contacto}</span>}
+                      </div>
+                    )}
+                    {(salida || r.forma_pago) && (
+                      <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginTop: 3 }}>
+                        {salida && <span>⛵ {salida}</span>}
+                        {salida && r.forma_pago && <span> · </span>}
+                        {r.forma_pago && <span>💳 {r.forma_pago}</span>}
+                      </div>
+                    )}
                   </div>
+                  <div style={{ textAlign: "right", flexShrink: 0, display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
+                    <div style={{ fontWeight: 700, color: B.sand, fontSize: 14 }}>{COP(r.total)}</div>
+                    <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 10,
+                      background: estadoColor(r.estado) + "22", color: estadoColor(r.estado) }}>
+                      {r.estado}
+                    </span>
+                  </div>
+                  <div style={{ color: "rgba(255,255,255,0.2)", fontSize: 16 }}>›</div>
                 </div>
-                <div style={{ textAlign: "right", flexShrink: 0, display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
-                  <div style={{ fontWeight: 700, color: B.sand, fontSize: 14 }}>{COP(r.total)}</div>
-                  <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 10,
-                    background: estadoColor(r.estado) + "22", color: estadoColor(r.estado) }}>
-                    {r.estado}
-                  </span>
-                </div>
-                <div style={{ color: "rgba(255,255,255,0.2)", fontSize: 16 }}>›</div>
-              </div>
-            ))}
+              );
+            })}
           </>
         )}
       </div>
