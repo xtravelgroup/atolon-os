@@ -169,6 +169,39 @@ function ContratistasWizard({ assisted = false, onClose, adminUser }) {
   // -------- Crear borrador en DB al pasar del paso 0 al 1 --------
   const ensureDraftRow = async () => {
     if (contratistaId) return contratistaId;
+
+    // Antes de crear nuevo, buscar si ya existe un contratista con el mismo
+    // documento (cedula para naturales, NIT para empresas). Si existe — REUSAR
+    // ese registro (consolida toda la información en un solo record por cédula).
+    const docKey = tipo === "empresa" ? data.emp_nit : data.nat_cedula;
+    if (docKey && String(docKey).trim()) {
+      const filterCol = tipo === "empresa" ? "emp_nit" : "nat_cedula";
+      const { data: existente } = await supabase
+        .from("contratistas")
+        .select("id, radicado, estado")
+        .eq("tipo", tipo)
+        .eq(filterCol, String(docKey).trim())
+        .order("created_at", { ascending: false })
+        .limit(1);
+      const found = existente?.[0];
+      if (found) {
+        setContratistaId(found.id);
+        if (found.radicado) setRadicado(found.radicado);
+        // Actualizar con los datos nuevos del form (merge — no sobreescribe estado si ya está más avanzado)
+        const updatePayload = buildDbPayload(tipo, data);
+        updatePayload.nombre_display = tipo === "empresa" ? data.emp_razon_social : data.nat_nombre;
+        updatePayload.contacto_principal_email = tipo === "empresa" ? data.contacto_principal_email : data.nat_correo;
+        updatePayload.contacto_principal_cel = tipo === "empresa" ? (data.emp_op_cel || data.emp_rl_cel) : data.nat_celular;
+        // Si está en aprobado/rechazado/radicado, no tocamos el estado — solo mergeamos campos editables
+        if (["borrador", "devuelto"].includes(found.estado)) {
+          updatePayload.estado = "borrador";
+        }
+        await supabase.from("contratistas").update(updatePayload).eq("id", found.id);
+        return found.id;
+      }
+    }
+
+    // No existe — crear nuevo borrador
     const rad = radicado || genRadicado(tipo);
     setRadicado(rad);
     const nombre_display = tipo === "empresa" ? data.emp_razon_social : data.nat_nombre;
