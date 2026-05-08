@@ -44,6 +44,18 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const EVENTS_KEY = Deno.env.get("WOMPI_EVENTS_KEY") || "";
 
+// Public key de Wompi — primero env, luego BD (configuracion.wompi_pub_key).
+// Solo se usa para consultas read-only via /poll-recent.
+async function loadWompiPubKey(SB: any): Promise<string> {
+  const fromEnv = Deno.env.get("WOMPI_PUBLIC_KEY") || Deno.env.get("VITE_WOMPI_PUBLIC_KEY") || "";
+  if (fromEnv) return fromEnv;
+  try {
+    const { data } = await SB.from("configuracion").select("wompi_pub_key").eq("id", "atolon").single();
+    if (data?.wompi_pub_key) return data.wompi_pub_key;
+  } catch { /* ignore */ }
+  return "";
+}
+
 const CORS = {
   "Access-Control-Allow-Origin":  "*",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
@@ -86,14 +98,148 @@ function jsonResp(obj: any, status = 200) {
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS });
 
-  // ── GET de diagnóstico ──────────────────────────────────────────────
-  if (req.method === "GET") {
+  const url = new URL(req.url);
+  const path = url.pathname.replace(/^\/wompi-webhook/, "");
+
+  // ── GET /diag — diagnóstico público (sin auth) ──────────────────────
+  if (req.method === "GET" && path === "/diag") {
+    try {
+      const SB = createClient(
+        Deno.env.get("SUPABASE_URL")!,
+        Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+      );
+      const { data: ultimosEventos } = await SB
+        .from("wompi_eventos_log")
+        .select("evento, referencia, transaction_id, status, monto, firma_valida, created_at")
+        .order("created_at", { ascending: false })
+        .limit(10);
+      const { count: totalEventos } = await SB
+        .from("wompi_eventos_log")
+        .select("*", { count: "exact", head: true });
+
+      const pubKey = await loadWompiPubKey(SB);
+      return jsonResp({
+        ok: true,
+        timestamp: new Date().toISOString(),
+        webhook_url: `${Deno.env.get("SUPABASE_URL")}/functions/v1/wompi-webhook`,
+        config: {
+          events_key_configured: !!EVENTS_KEY,
+          public_key_configured: !!pubKey,
+          public_key_source: pubKey ? (Deno.env.get("WOMPI_PUBLIC_KEY") ? "env" : "db") : "none",
+        },
+        stats: { total_eventos_recibidos: totalEventos || 0 },
+        ultimos_eventos: ultimosEventos || [],
+      });
+    } catch (err) {
+      return jsonResp({ ok: false, error: String(err) }, 500);
+    }
+  }
+
+  // ── GET de diagnóstico (legacy) ─────────────────────────────────────
+  if (req.method === "GET" && path === "") {
     return jsonResp({
       ok: true,
       service: "wompi-webhook",
       events_key_configured: !!EVENTS_KEY,
-      version: "1.0.0",
+      version: "1.1.0",
     });
+  }
+
+  // ── POST /poll-recent — safety net mientras webhook no llegue ──────
+  // Lista reservas Wompi de últimas N horas (cancelado o pendiente_pago)
+  // y consulta Wompi por reference para detectar pagos APPROVED que no
+  // confirmaron la reserva por webhook fallido.
+  if (req.method === "POST" && path === "/poll-recent") {
+    try {
+      const body = await req.json().catch(() => ({}));
+      const horasAtras = Number(body?.hours) || 4;
+      const desdeStr = new Date(Date.now() - horasAtras * 3600 * 1000).toISOString();
+
+      const SB = createClient(
+        Deno.env.get("SUPABASE_URL")!,
+        Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+      );
+      const PUBLIC_KEY = await loadWompiPubKey(SB);
+      if (!PUBLIC_KEY) {
+        return jsonResp({ ok: false, error: "Wompi public key no configurada (configuracion.wompi_pub_key vacía)" }, 500);
+      }
+      const { data: candidatas } = await SB.from("reservas")
+        .select("id, total, abono, estado, forma_pago, created_at, lead_id, notas")
+        .eq("forma_pago", "wompi")
+        .in("estado", ["cancelado", "pendiente_pago"])
+        .gte("created_at", desdeStr)
+        .order("created_at", { ascending: false });
+
+      let recovered = 0, notFound = 0, stillPending = 0, errCount = 0;
+      const procesadas: any[] = [];
+
+      for (const r of (candidatas || [])) {
+        try {
+          const wRes = await fetch(
+            `https://production.wompi.co/v1/transactions?reference=${encodeURIComponent(r.id)}`,
+            { headers: { Authorization: `Bearer ${PUBLIC_KEY}` } }
+          );
+          const wData = await wRes.json();
+          const txs = (wData?.data || []) as any[];
+          // Buscar la transacción APPROVED más reciente para esta reference
+          const approved = txs.find(t => t.status === "APPROVED");
+
+          if (!approved) {
+            if (txs.length === 0) notFound++;
+            else stillPending++;
+            continue;
+          }
+
+          const monto = Math.round((approved.amount_in_cents || 0) / 100);
+          const finalizadoAt = (approved.finalized_at || approved.created_at || "").slice(0, 10);
+          await SB.from("reservas").update({
+            estado: "confirmado",
+            forma_pago: "wompi",
+            abono: monto,
+            saldo: Math.max(0, Number(r.total || 0) - monto),
+            fecha_pago: finalizadoAt,
+            referencia_pago: approved.id,
+            notas: (r.notas ? r.notas + " · " : "") + `Restaurada por safety-net (Wompi tx ${approved.id})`,
+            updated_at: new Date().toISOString(),
+          }).eq("id", r.id);
+
+          if (r.lead_id) {
+            await SB.from("leads").update({
+              stage: "Cerrado Ganado", ultimo_contacto: finalizadoAt,
+            }).eq("id", r.lead_id).then(() => {}).catch(() => {});
+          }
+          await SB.from("ac_carts").update({
+            estado: "recovered", recovered_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          }).eq("reserva_id", r.id).then(() => {}).catch(() => {});
+
+          await SB.from("wompi_eventos_log").insert({
+            evento: "transaction.recovered",
+            referencia: r.id,
+            transaction_id: approved.id,
+            status: "APPROVED",
+            monto,
+            raw: { _origen: "poll-recent", tx: approved },
+            firma_valida: true,
+          }).then(() => {}).catch(() => {});
+
+          recovered++;
+          procesadas.push({ ref: r.id, txId: approved.id, monto });
+        } catch (e) {
+          errCount++;
+          console.warn("[wompi-poll] error en", r.id, ":", (e as Error).message);
+        }
+      }
+
+      return jsonResp({
+        ok: true,
+        candidatas_revisadas: (candidatas || []).length,
+        recovered, notFound, stillPending, errCount,
+        procesadas,
+      });
+    } catch (err) {
+      return jsonResp({ ok: false, error: String(err) }, 500);
+    }
   }
 
   if (req.method !== "POST") return new Response("Method not allowed", { status: 405, headers: CORS });
