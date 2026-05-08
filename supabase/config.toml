@@ -383,6 +383,15 @@ verify_jwt = false
 verify_jwt = false
 [functions.ac-unsubscribe]
 verify_jwt = false
+# zoho-payments recibe webhooks externos de Zoho Pay (sin JWT) y también
+# atiende /create-session desde frontend con anon key. Cualquier rechazo
+# por JWT antes del handler causaría que Zoho marque webhooks como
+# "failed" y eventualmente los desactive. Bug 2026-05-08.
+[functions.zoho-payments]
+verify_jwt = false
+# loggro-sync se llama desde cron jobs externos sin auth header
+[functions.loggro-sync]
+verify_jwt = false
 
 # Experimental features may be deprecated any time
 [experimental]

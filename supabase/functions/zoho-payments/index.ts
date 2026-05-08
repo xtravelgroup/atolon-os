@@ -10,7 +10,26 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const ZOHO_WEBHOOK_SECRET = Deno.env.get("ZOHO_WEBHOOK_SECRET") || Deno.env.get("ZOHO_SIGNING_KEY") || "";
+// Lee de env vars; loadWebhookSecret() abajo agrega la opción de leer de BD
+const ZOHO_WEBHOOK_SECRET_ENV = Deno.env.get("ZOHO_WEBHOOK_SECRET") || Deno.env.get("ZOHO_SIGNING_KEY") || "";
+
+// Carga el webhook secret priorizando la BD para que el usuario pueda
+// rotarlo desde la UI sin tocar Supabase secrets.
+async function loadWebhookSecret(): Promise<string> {
+  try {
+    const SB = createClient(
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+    );
+    const { data } = await SB
+      .from("configuracion")
+      .select("zoho_pay_webhook_secret")
+      .eq("id", "atolon")
+      .single();
+    if (data?.zoho_pay_webhook_secret) return data.zoho_pay_webhook_secret;
+  } catch { /* fallback to env */ }
+  return ZOHO_WEBHOOK_SECRET_ENV;
+}
 
 // ── Lee credenciales: primero env vars, luego DB (configuracion) ─────────
 // Esto permite que el usuario configure desde la UI sin tener acceso a
@@ -134,7 +153,8 @@ const CORS = {
 
 // ── Verificar firma HMAC-SHA256 del webhook ──────────────────────────────
 async function verifyWebhookSignature(payload: string, signature: string): Promise<boolean> {
-  if (!signature || !ZOHO_WEBHOOK_SECRET) return false;
+  const SECRET = await loadWebhookSecret();
+  if (!signature || !SECRET) return false;
   try {
     // Formato Zoho: "t=TIMESTAMP,v=HMAC_HEX" (stripe-style)
     let tsPart = "";
@@ -150,10 +170,10 @@ async function verifyWebhookSignature(payload: string, signature: string): Promi
 
     // Probamos varios formatos de secret porque Zoho no documenta claramente
     // si entrega el signing key como string raw o como hex.
-    const secretRaw = new TextEncoder().encode(ZOHO_WEBHOOK_SECRET);
-    const isHex = /^[0-9a-fA-F]+$/.test(ZOHO_WEBHOOK_SECRET) && ZOHO_WEBHOOK_SECRET.length % 2 === 0;
+    const secretRaw = new TextEncoder().encode(SECRET);
+    const isHex = /^[0-9a-fA-F]+$/.test(SECRET) && SECRET.length % 2 === 0;
     const secretHex = isHex
-      ? new Uint8Array(ZOHO_WEBHOOK_SECRET.match(/.{2}/g)!.map(h => parseInt(h, 16)))
+      ? new Uint8Array(SECRET.match(/.{2}/g)!.map(h => parseInt(h, 16)))
       : null;
 
     const candidates: Array<[string, Uint8Array, Uint8Array]> = [
@@ -179,10 +199,10 @@ async function verifyWebhookSignature(payload: string, signature: string): Promi
       }
     }
     // Si nada matchea, log de debug para identificar el formato correcto
-    const previewSecret = ZOHO_WEBHOOK_SECRET.length > 12
-      ? ZOHO_WEBHOOK_SECRET.slice(0, 6) + "..." + ZOHO_WEBHOOK_SECRET.slice(-4)
+    const previewSecret = SECRET.length > 12
+      ? SECRET.slice(0, 6) + "..." + SECRET.slice(-4)
       : "***";
-    console.warn(`[zoho-webhook] firma INVÁLIDA. expected=${sigPart.slice(0, 16)}... ts=${tsPart} secret_preview=${previewSecret} secret_len=${ZOHO_WEBHOOK_SECRET.length} is_hex=${isHex} payload_len=${payload.length}`);
+    console.warn(`[zoho-webhook] firma INVÁLIDA. expected=${sigPart.slice(0, 16)}... ts=${tsPart} secret_preview=${previewSecret} secret_len=${SECRET.length} is_hex=${isHex} payload_len=${payload.length}`);
     return false;
   } catch (err) {
     console.error("verifyWebhookSignature error:", err);
@@ -280,6 +300,23 @@ serve(async (req) => {
   }
 
   // ══════════════════════════════════════════════════════════════════════
+  // GET /webhook — Zoho hace un GET ping cuando registras el webhook
+  // para verificar que la URL responde 200. Si responde 404/500 marca
+  // el webhook como "failed" y eventualmente lo desactiva.
+  // ══════════════════════════════════════════════════════════════════════
+  if (req.method === "GET" && path === "/webhook") {
+    return new Response(JSON.stringify({
+      ok: true,
+      service: "atolon-zoho-webhook",
+      message: "Endpoint vivo. Manda POST con eventos de Zoho Pay.",
+      timestamp: new Date().toISOString(),
+    }), {
+      status: 200,
+      headers: { ...CORS, "Content-Type": "application/json" },
+    });
+  }
+
+  // ══════════════════════════════════════════════════════════════════════
   // POST /webhook — recibe eventos de Zoho Pay
   // ══════════════════════════════════════════════════════════════════════
   if (req.method === "POST" && path === "/webhook") {
@@ -328,10 +365,11 @@ serve(async (req) => {
       }).then(() => {}).catch(() => {});
 
       // Validación de firma (después de loguear para debugging)
-      if (ZOHO_WEBHOOK_SECRET && signature) {
+      const SECRET_FOR_VERIFY = await loadWebhookSecret();
+      if (SECRET_FOR_VERIFY && signature) {
         const valid = await verifyWebhookSignature(payload, signature);
         if (!valid) {
-          console.error("Firma inválida. sig:", signature.slice(0, 20), "secret len:", ZOHO_WEBHOOK_SECRET.length);
+          console.error("Firma inválida. sig:", signature.slice(0, 20), "secret len:", SECRET_FOR_VERIFY.length);
           // Retornar 200 para que Zoho no reintente, pero no procesar el evento
           return new Response(JSON.stringify({ received: true, firma: "invalid", event_type: type }), {
             status: 200, headers: { "Content-Type": "application/json" },
@@ -343,8 +381,20 @@ serve(async (req) => {
         }
       }
 
-      // Pago exitoso
-      if (type === "payment.success" || type === "payment.succeeded" || type === "payment_success") {
+      // Pago exitoso — Zoho usa varios nombres de evento según versión
+      // del API. También aceptamos cualquier evento que tenga
+      // payment.status === "succeeded" / "captured" como fallback.
+      const isSuccess =
+        type === "payment.success" ||
+        type === "payment.succeeded" ||
+        type === "payment_success" ||
+        type === "payment.captured" ||
+        type === "paymentsession.captured" ||
+        type === "payment_captured" ||
+        payment.status === "succeeded" ||
+        payment.status === "captured" ||
+        payment.status === "success";
+      if (isSuccess) {
         // 1) Intentar actualizar reserva
         if (ref) {
           const { data: reservas } = await SB.from("reservas")
@@ -410,8 +460,14 @@ serve(async (req) => {
         }
       }
 
-      // Pago fallido
-      if (type === "payment.failed" || type === "payment_failed") {
+      // Pago fallido — múltiples variantes
+      const isFailed =
+        type === "payment.failed" ||
+        type === "payment_failed" ||
+        type === "payment.failure" ||
+        payment.status === "failed" ||
+        payment.status === "declined";
+      if (isFailed) {
         if (ref) {
           await SB.from("reservas").update({
             notas: `Pago con tarjeta internacional rechazado — ${new Date().toISOString().slice(0, 16)}`,
@@ -441,15 +497,73 @@ serve(async (req) => {
   // GET /webhook/test — endpoint de diagnóstico (sin auth)
   // ══════════════════════════════════════════════════════════════════════
   if (req.method === "GET" && path === "/webhook/test") {
+    const wSecret = await loadWebhookSecret();
     return new Response(JSON.stringify({
       ok: true,
       message: "Atolon Zoho webhook está en línea",
-      secret_configured: !!ZOHO_WEBHOOK_SECRET,
+      secret_configured: !!wSecret,
       timestamp: new Date().toISOString(),
     }), {
       status: 200,
       headers: { ...CORS, "Content-Type": "application/json" },
     });
+  }
+
+  // ══════════════════════════════════════════════════════════════════════
+  // GET /diag — diagnóstico completo (público, sin auth)
+  // Muestra: estado del secret, últimos eventos recibidos, sesiones
+  // pendientes. Pegar URL en el browser para verificar.
+  // ══════════════════════════════════════════════════════════════════════
+  if (req.method === "GET" && path === "/diag") {
+    try {
+      const SB = createClient(
+        Deno.env.get("SUPABASE_URL")!,
+        Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+      );
+      const creds = await loadZohoCreds();
+      const { data: ultimosEventos } = await SB
+        .from("pagos_zoho_log")
+        .select("event_type, reference, payment_id, firma_valida, created_at")
+        .order("created_at", { ascending: false })
+        .limit(10);
+      const { data: sesionesPendientes } = await SB
+        .from("pagos_zoho_sessions")
+        .select("payment_link_id, reference, amount, status, created_at")
+        .neq("status", "pagado")
+        .order("created_at", { ascending: false })
+        .limit(5);
+      const { count: totalEventos } = await SB
+        .from("pagos_zoho_log")
+        .select("*", { count: "exact", head: true });
+
+      const diagSecret = await loadWebhookSecret();
+      return new Response(JSON.stringify({
+        ok: true,
+        timestamp: new Date().toISOString(),
+        webhook_url: `${Deno.env.get("SUPABASE_URL")}/functions/v1/zoho-payments/webhook`,
+        config: {
+          secret_configured: !!diagSecret,
+          secret_length: diagSecret.length,
+          secret_source: diagSecret === ZOHO_WEBHOOK_SECRET_ENV ? "env" : "db",
+          oauth_configured: !!(creds.client_id && creds.client_secret && creds.refresh_token),
+          api_key_configured: !!creds.api_key,
+          account_id: creds.account_id,
+        },
+        stats: {
+          total_eventos_recibidos: totalEventos || 0,
+          sesiones_pendientes: (sesionesPendientes || []).length,
+        },
+        ultimos_eventos: ultimosEventos || [],
+        sesiones_pendientes: sesionesPendientes || [],
+      }, null, 2), {
+        status: 200,
+        headers: { ...CORS, "Content-Type": "application/json" },
+      });
+    } catch (err) {
+      return new Response(JSON.stringify({ ok: false, error: String(err) }), {
+        status: 500, headers: { ...CORS, "Content-Type": "application/json" },
+      });
+    }
   }
 
   // ══════════════════════════════════════════════════════════════════════
@@ -567,6 +681,153 @@ serve(async (req) => {
       }), { status: 200, headers: { ...CORS, "Content-Type": "application/json" } });
     } catch (err) {
       console.error("poll-recent error:", err);
+      return new Response(JSON.stringify({ ok: false, error: String(err) }), {
+        status: 500, headers: { ...CORS, "Content-Type": "application/json" },
+      });
+    }
+  }
+
+  // ══════════════════════════════════════════════════════════════════════
+  // GET /webhooks-list — lista webhooks registrados en Zoho Pay
+  // Endpoint confirmado: /api/v1/webhooks (auth con Zoho-oauthtoken)
+  // ══════════════════════════════════════════════════════════════════════
+  if (req.method === "GET" && path === "/webhooks-list") {
+    try {
+      const creds = await loadZohoCreds();
+      if (!creds.refresh_token || !creds.client_id || !creds.client_secret) {
+        return new Response(JSON.stringify({ ok: false, error: "OAuth no configurado" }), {
+          status: 500, headers: { ...CORS, "Content-Type": "application/json" },
+        });
+      }
+      const authHeader = await getZohoAuthHeader({ ...creds, api_key: "" });
+      const r = await fetch(
+        `https://payments.zoho.com/api/v1/webhooks?account_id=${creds.account_id}`,
+        { headers: { Authorization: authHeader } }
+      );
+      const text = await r.text();
+      let parsed: any = null;
+      try { parsed = JSON.parse(text); } catch { parsed = { _raw: text.slice(0, 1500) }; }
+
+      return new Response(JSON.stringify({
+        ok: r.ok,
+        account_id: creds.account_id,
+        status: r.status,
+        respuesta: parsed,
+      }, null, 2), {
+        status: 200, headers: { ...CORS, "Content-Type": "application/json" },
+      });
+    } catch (err) {
+      return new Response(JSON.stringify({ ok: false, error: String(err) }), {
+        status: 500, headers: { ...CORS, "Content-Type": "application/json" },
+      });
+    }
+  }
+
+  // ══════════════════════════════════════════════════════════════════════
+  // GET/POST /webhooks-register — registra el webhook vía Zoho API
+  // Acepta GET (más fácil de invocar desde browser) y POST.
+  // ══════════════════════════════════════════════════════════════════════
+  if ((req.method === "POST" || req.method === "GET") && path === "/webhooks-register") {
+    try {
+      let webhookUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/zoho-payments/webhook`;
+      if (req.method === "POST") {
+        const body = await req.json().catch(() => ({}));
+        if (body?.webhook_url) webhookUrl = body.webhook_url;
+      } else {
+        const qUrl = url.searchParams.get("webhook_url");
+        if (qUrl) webhookUrl = qUrl;
+      }
+      const creds = await loadZohoCreds();
+      if (!creds.refresh_token || !creds.client_id || !creds.client_secret) {
+        return new Response(JSON.stringify({ ok: false, error: "OAuth no configurado" }), {
+          status: 500, headers: { ...CORS, "Content-Type": "application/json" },
+        });
+      }
+      const authHeader = await getZohoAuthHeader({ ...creds, api_key: "" });
+
+      // Body que probaremos. Algunas versiones de Zoho Pay esperan campos
+      // distintos — incluimos varias formas.
+      const events = [
+        "payment.success",
+        "payment.succeeded",
+        "payment.captured",
+        "payment.failed",
+        "paymentsession.captured",
+      ];
+      const payloadVariants = [
+        { url: webhookUrl, events },
+        { url: webhookUrl, events, name: "Atolon OS" },
+        { url: webhookUrl, events, name: "Atolon OS", is_active: true },
+        { webhook_url: webhookUrl, events },
+        { notify_url: webhookUrl, events },
+        { url: webhookUrl, event_types: events },
+        { url: webhookUrl, subscribed_events: events },
+        { url: webhookUrl, events, application_name: "atolon-os" },
+        { url: webhookUrl, event_list: events },
+        // Algunos APIs de Zoho usan estructura anidada
+        { webhook: { url: webhookUrl, events } },
+        { data: { url: webhookUrl, events } },
+        // Sin events (default = todos)
+        { url: webhookUrl },
+        { url: webhookUrl, name: "Atolon OS Webhook" },
+      ];
+
+      // Solo el endpoint que sabemos funciona (los otros dan 404)
+      const endpoints = [
+        `https://payments.zoho.com/api/v1/webhooks?account_id=${creds.account_id}`,
+      ];
+
+      const intentos: any[] = [];
+      for (const ep of endpoints) {
+        for (const payload of payloadVariants) {
+          try {
+            const r = await fetch(ep, {
+              method: "POST",
+              headers: {
+                "Authorization": authHeader,
+                "Content-Type": "application/json",
+                "X-com-zoho-payments-organizationid": creds.account_id,
+                "X-Zoho-Account-Id": creds.account_id,
+              },
+              body: JSON.stringify(payload),
+            });
+            const text = await r.text();
+            const isHtml = text.trim().startsWith("<");
+            intentos.push({
+              endpoint: ep,
+              payload_keys: Object.keys(payload),
+              status: r.status,
+              isHtml,
+              body: isHtml ? "[HTML login redirect]" : text.slice(0, 800),
+            });
+            // Éxito = 2xx + JSON válido (no HTML de login)
+            if (r.status >= 200 && r.status < 300 && !isHtml) {
+              return new Response(JSON.stringify({
+                ok: true,
+                mensaje: "Webhook registrado",
+                webhook_url: webhookUrl,
+                endpoint_que_funcionó: ep,
+                payload_que_funcionó: payload,
+                respuesta: text.slice(0, 2000),
+              }, null, 2), {
+                status: 200, headers: { ...CORS, "Content-Type": "application/json" },
+              });
+            }
+          } catch (e) {
+            intentos.push({ endpoint: ep, payload_keys: Object.keys(payload), error: String(e) });
+          }
+        }
+      }
+
+      return new Response(JSON.stringify({
+        ok: false,
+        mensaje: "Zoho Pay no expone API pública para registrar webhooks. Hay que crearlo desde el dashboard de Zoho Pay → Settings → Webhooks → Add Endpoint.",
+        webhook_url_para_pegar: webhookUrl,
+        intentos,
+      }, null, 2), {
+        status: 200, headers: { ...CORS, "Content-Type": "application/json" },
+      });
+    } catch (err) {
       return new Response(JSON.stringify({ ok: false, error: String(err) }), {
         status: 500, headers: { ...CORS, "Content-Type": "application/json" },
       });

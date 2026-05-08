@@ -39,7 +39,7 @@ export default function Configuracion() {
   // Integraciones
   const [wompiForm,    setWompiForm]    = useState({ pub_key: "", integrity_key: "" });
   const [stripeForm,   setStripeForm]   = useState({ pub_key: "", secret_key: "", tasa_usd: "4200" });
-  const [zohoForm,     setZohoForm]     = useState({ api_key: "", client_id: "", client_secret: "", refresh_token: "", account_id: "", currency: "USD", merchant_name: "X Travel Group" });
+  const [zohoForm,     setZohoForm]     = useState({ api_key: "", client_id: "", client_secret: "", refresh_token: "", account_id: "", currency: "USD", merchant_name: "X Travel Group", webhook_secret: "" });
   const [merchantInt,  setMerchantInt]  = useState("stripe"); // stripe | zoho_pay
   const [savingInt,    setSavingInt]    = useState(null);   // "wompi" | "stripe" | "zoho_pay" | "merchant" | null
   const [showWompi,    setShowWompi]    = useState(false);
@@ -83,6 +83,7 @@ export default function Configuracion() {
           account_id: data.zoho_pay_account_id || "",
           currency: data.zoho_pay_currency || "USD",
           merchant_name: data.zoho_pay_merchant_name || "X Travel Group",
+          webhook_secret: data.zoho_pay_webhook_secret || "",
         });
         setMerchantInt(data.merchant_internacional || "stripe");
       }
@@ -182,13 +183,14 @@ export default function Configuracion() {
     if (!supabase || savingInt) return;
     setSavingInt("zoho_pay");
     await supabase.from("configuracion").update({
-      zoho_pay_api_key:       zohoForm.api_key.trim() || null,
-      zoho_pay_client_id:     zohoForm.client_id.trim(),
-      zoho_pay_client_secret: zohoForm.client_secret.trim(),
-      zoho_pay_refresh_token: zohoForm.refresh_token.trim() || null,
-      zoho_pay_account_id:    zohoForm.account_id.trim(),
-      zoho_pay_currency:      (zohoForm.currency || "USD").trim().toUpperCase(),
-      zoho_pay_merchant_name: (zohoForm.merchant_name || "X Travel Group").trim(),
+      zoho_pay_api_key:        zohoForm.api_key.trim() || null,
+      zoho_pay_client_id:      zohoForm.client_id.trim(),
+      zoho_pay_client_secret:  zohoForm.client_secret.trim(),
+      zoho_pay_refresh_token:  zohoForm.refresh_token.trim() || null,
+      zoho_pay_account_id:     zohoForm.account_id.trim(),
+      zoho_pay_currency:       (zohoForm.currency || "USD").trim().toUpperCase(),
+      zoho_pay_merchant_name:  (zohoForm.merchant_name || "X Travel Group").trim(),
+      zoho_pay_webhook_secret: zohoForm.webhook_secret.trim() || null,
       updated_at: new Date().toISOString(),
     }).eq("id", "atolon");
     await fetchConfig();
@@ -206,7 +208,7 @@ export default function Configuracion() {
       zoho_pay_account_id: null,
       updated_at: new Date().toISOString(),
     }).eq("id", "atolon");
-    setZohoForm({ api_key: "", client_id: "", client_secret: "", refresh_token: "", account_id: "", currency: "USD", merchant_name: "X Travel Group" });
+    setZohoForm({ api_key: "", client_id: "", client_secret: "", refresh_token: "", account_id: "", currency: "USD", merchant_name: "X Travel Group", webhook_secret: "" });
     // Si Zoho estaba como merchant activo, volver a Stripe
     if (merchantInt === "zoho_pay") {
       await supabase.from("configuracion").update({ merchant_internacional: "stripe" }).eq("id", "atolon");
@@ -826,6 +828,32 @@ export default function Configuracion() {
                         Así aparecerá el cargo en el estado de cuenta del huésped. Se mostrará como aviso en las pantallas de pago.
                       </div>
                     </div>
+
+                    {/* Webhook config */}
+                    <div style={{ padding: "12px 14px", background: B.navy, borderRadius: 8, border: `1px solid ${B.navyLight}` }}>
+                      <div style={{ fontSize: 12, fontWeight: 700, color: "#fff", marginBottom: 8 }}>🔔 Webhook (notificaciones de pago)</div>
+                      <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginBottom: 10, lineHeight: 1.5 }}>
+                        Pega esta URL en <strong>Zoho Pay → Settings → Webhooks → Add Endpoint</strong>:
+                      </div>
+                      <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
+                        <input readOnly value="https://ncdyttgxuicyruathkxd.supabase.co/functions/v1/zoho-payments/webhook"
+                          onClick={e => e.target.select()}
+                          style={{ ...IS, fontSize: 11, fontFamily: "monospace", flex: 1 }} />
+                        <button type="button" onClick={() => {
+                          navigator.clipboard.writeText("https://ncdyttgxuicyruathkxd.supabase.co/functions/v1/zoho-payments/webhook");
+                          alert("URL copiada");
+                        }} style={{ padding: "0 12px", background: B.navyLight, color: "#fff", border: "none", borderRadius: 8, fontSize: 11, cursor: "pointer", whiteSpace: "nowrap" }}>📋 Copiar</button>
+                      </div>
+                      <label style={LS}>Webhook Signing Secret <span style={{ color: "rgba(255,255,255,0.3)" }}>(de Zoho Pay → Webhooks)</span></label>
+                      <input value={zohoForm.webhook_secret} onChange={e => setZohoForm(f => ({ ...f, webhook_secret: e.target.value }))}
+                        placeholder="whsec_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+                        style={{ ...IS, fontFamily: "monospace", fontSize: 12 }} />
+                      <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", marginTop: 6, lineHeight: 1.4 }}>
+                        Eventos a marcar en Zoho: <code style={{ color: "#facc15" }}>payment.success, payment.captured, payment.failed</code>.<br/>
+                        Después de configurar, verifica en: <a href="https://ncdyttgxuicyruathkxd.supabase.co/functions/v1/zoho-payments/diag" target="_blank" rel="noreferrer" style={{ color: "#60a5fa" }}>/zoho-payments/diag</a>
+                      </div>
+                    </div>
+
                     <div style={{ padding: "10px 14px", background: B.warning + "11", borderRadius: 8, border: `1px solid ${B.warning}22`, fontSize: 12, color: B.warning }}>
                       ⚠️ Las credenciales se guardan en la base de datos. El Client Secret tiene acceso total a tu cuenta Zoho Pay.
                     </div>
