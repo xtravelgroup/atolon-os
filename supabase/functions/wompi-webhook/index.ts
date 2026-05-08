@@ -44,14 +44,15 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const EVENTS_KEY = Deno.env.get("WOMPI_EVENTS_KEY") || "";
 
-// Public key de Wompi — primero env, luego BD (configuracion.wompi_pub_key).
-// Solo se usa para consultas read-only via /poll-recent.
-async function loadWompiPubKey(SB: any): Promise<string> {
-  const fromEnv = Deno.env.get("WOMPI_PUBLIC_KEY") || Deno.env.get("VITE_WOMPI_PUBLIC_KEY") || "";
+// Private key de Wompi — necesaria para consultar GET /v1/transactions?reference=
+// (el endpoint de search no acepta public key). Se lee de configuracion.wompi_priv_key
+// o de env WOMPI_PRIVATE_KEY. Rotable desde la UI sin tocar Supabase secrets.
+async function loadWompiPrivKey(SB: any): Promise<string> {
+  const fromEnv = Deno.env.get("WOMPI_PRIVATE_KEY") || "";
   if (fromEnv) return fromEnv;
   try {
-    const { data } = await SB.from("configuracion").select("wompi_pub_key").eq("id", "atolon").single();
-    if (data?.wompi_pub_key) return data.wompi_pub_key;
+    const { data } = await SB.from("configuracion").select("wompi_priv_key").eq("id", "atolon").single();
+    if (data?.wompi_priv_key) return data.wompi_priv_key;
   } catch { /* ignore */ }
   return "";
 }
@@ -117,15 +118,15 @@ serve(async (req) => {
         .from("wompi_eventos_log")
         .select("*", { count: "exact", head: true });
 
-      const pubKey = await loadWompiPubKey(SB);
+      const privKey = await loadWompiPrivKey(SB);
       return jsonResp({
         ok: true,
         timestamp: new Date().toISOString(),
         webhook_url: `${Deno.env.get("SUPABASE_URL")}/functions/v1/wompi-webhook`,
         config: {
           events_key_configured: !!EVENTS_KEY,
-          public_key_configured: !!pubKey,
-          public_key_source: pubKey ? (Deno.env.get("WOMPI_PUBLIC_KEY") ? "env" : "db") : "none",
+          private_key_configured: !!privKey,
+          private_key_source: privKey ? (Deno.env.get("WOMPI_PRIVATE_KEY") ? "env" : "db") : "none",
         },
         stats: { total_eventos_recibidos: totalEventos || 0 },
         ultimos_eventos: ultimosEventos || [],
@@ -159,9 +160,9 @@ serve(async (req) => {
         Deno.env.get("SUPABASE_URL")!,
         Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
       );
-      const PUBLIC_KEY = await loadWompiPubKey(SB);
-      if (!PUBLIC_KEY) {
-        return jsonResp({ ok: false, error: "Wompi public key no configurada (configuracion.wompi_pub_key vacía)" }, 500);
+      const PRIV_KEY = await loadWompiPrivKey(SB);
+      if (!PRIV_KEY) {
+        return jsonResp({ ok: false, error: "Wompi private key no configurada (configuracion.wompi_priv_key vacía)" }, 500);
       }
       const { data: candidatas } = await SB.from("reservas")
         .select("id, total, abono, estado, forma_pago, created_at, lead_id, notas")
@@ -177,7 +178,7 @@ serve(async (req) => {
         try {
           const wRes = await fetch(
             `https://production.wompi.co/v1/transactions?reference=${encodeURIComponent(r.id)}`,
-            { headers: { Authorization: `Bearer ${PUBLIC_KEY}` } }
+            { headers: { Authorization: `Bearer ${PRIV_KEY}` } }
           );
           const wData = await wRes.json();
           const txs = (wData?.data || []) as any[];
