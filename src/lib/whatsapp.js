@@ -12,19 +12,20 @@ const SUPABASE_ANON    = import.meta.env.VITE_SUPABASE_ANON_KEY;
  * @param {string} to       - Teléfono: "+573001234567" o "3001234567"
  * @param {string} template - Nombre del template en Meta
  * @param {string[]} params - Variables {{1}}, {{2}}, ...
+ * @param {string} lang     - Código de idioma (default "es", usa "es_CO" para colombia)
  */
-export async function sendWhatsApp(to, template, params = []) {
+export async function sendWhatsApp(to, template, params = [], lang = "es") {
   if (!to || !template) return { error: "to and template required" };
 
   try {
-    const res = await fetch(`${SUPABASE_URL}/functions/v1/send-whatsapp`, {
+    const res = await fetch(`${SUPABASE_URL}/functions/v1/send-whatsapp/send`, {
       method:  "POST",
       headers: {
         "Content-Type":  "application/json",
         "Authorization": `Bearer ${SUPABASE_ANON}`,
         "apikey":        SUPABASE_ANON,
       },
-      body: JSON.stringify({ to, template, params }),
+      body: JSON.stringify({ to, template, params, lang }),
     });
     return res.json();
   } catch (err) {
@@ -36,7 +37,16 @@ export async function sendWhatsApp(to, template, params = []) {
 // ── Helpers por tipo de mensaje ──────────────────────────────────────────────
 
 /**
- * Confirmación de reserva (se llama al confirmar pago)
+ * Confirmación de reserva (se llama al confirmar pago).
+ *
+ * Templates disponibles:
+ * - "vip_pass_confirmacion" (es) — 6 variables {{1}}..{{6}}: nombre, fecha,
+ *   pax, hora_salida, total_pagado, reserva_id. Botón URL "Ver confirmación".
+ *   Estado: PENDING → cuando Meta lo apruebe (1-24h) será el preferido.
+ * - "confirmacionvip" (es_CO) — sin variables, fallback aprobado.
+ *
+ * Si la primera template falla (no aprobada aún), se reintenta con la
+ * segunda (sin params). Devuelve { template_used, ...meta_response }.
  */
 export async function waSendConfirmacion(reserva, salida) {
   const telefono = reserva.telefono || reserva.contacto;
@@ -47,26 +57,26 @@ export async function waSendConfirmacion(reserva, salida) {
     weekday: "long", day: "numeric", month: "long",
   });
 
-  // Calcular hora llegada muelle (20 min antes)
-  let llegada = "";
-  if (salida?.hora) {
-    const [h, m] = salida.hora.split(":").map(Number);
-    const total  = h * 60 + m - 20;
-    const norm   = ((total % 1440) + 1440) % 1440;
-    llegada = `${String(Math.floor(norm / 60)).padStart(2,"0")}:${String(norm % 60).padStart(2,"0")}`;
-  }
+  // Total pagado COP formateado
+  const totalCOP = `$${Number(reserva.total || 0).toLocaleString("es-CO")} COP`;
 
-  const zarpeUrl = `https://atolon.co/zarpe-info?id=${reserva.id}`;
+  // Hora de salida del muelle
+  const horaSalida = salida?.hora || "Ver confirmación";
 
-  return sendWhatsApp(telefono, "confirmacion_reserva", [
+  // Intento 1 — template con variables (vip_pass_confirmacion)
+  const r1 = await sendWhatsApp(telefono, "vip_pass_confirmacion", [
     nombre,
     fecha,
-    reserva.tipo || "Pasadía",
     String(reserva.pax || 1),
-    llegada || salida?.hora || "Ver confirmación",
-    salida?.hora || "Ver confirmación",
-    zarpeUrl,
-  ]);
+    horaSalida,
+    totalCOP,
+    reserva.id,
+  ], "es");
+  if (!r1?.error) return { template_used: "vip_pass_confirmacion", ...r1 };
+
+  // Fallback — template aprobada sin variables
+  const r2 = await sendWhatsApp(telefono, "confirmacionvip", [], "es_CO");
+  return { template_used: "confirmacionvip", first_attempt_error: r1?.error, ...r2 };
 }
 
 /**

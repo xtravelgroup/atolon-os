@@ -306,7 +306,7 @@ serve(async (req) => {
 
     // ── 1) Actualizar reserva ───────────────────────────────────────────
     const { data: reservas } = await SB.from("reservas")
-      .select("id, total, abono, estado")
+      .select("id, total, abono, estado, nombre, telefono, contacto, fecha, pax, tipo, salida_id, lead_id, notas")
       .eq("id", ref)
       .limit(1);
     const reserva = reservas?.[0];
@@ -340,6 +340,11 @@ serve(async (req) => {
         }).eq("reserva_id", reserva.id).then(() => {}).catch(() => {});
 
         console.log(`✓ Reserva ${reserva.id} confirmada vía Wompi (${monto} COP)`);
+
+        // Enviar confirmación por WhatsApp (best-effort, no falla el webhook)
+        await enviarWhatsAppConfirmacion(SB, reserva).catch(e =>
+          console.warn(`[wompi] WhatsApp send failed: ${(e as Error).message}`));
+
         return jsonResp({ received: true, processed: true, action: "confirmed", reserva_id: reserva.id });
       }
 
@@ -379,3 +384,69 @@ serve(async (req) => {
     return jsonResp({ received: true, error: String((err as Error).message || err) }, 200);
   }
 });
+
+// ── Enviar confirmación de reserva por WhatsApp ────────────────────────────
+// Llama al endpoint /send-whatsapp/send que ya tiene la lógica de templates
+// + fallback. Si la reserva no tiene teléfono o falla, no rompe el webhook.
+async function enviarWhatsAppConfirmacion(SB: any, reserva: any): Promise<void> {
+  const telefono = reserva?.telefono || reserva?.contacto;
+  if (!telefono || !/\d{7,}/.test(telefono)) return;
+
+  // Lookup salida para obtener la hora
+  let horaSalida = "Ver confirmación";
+  if (reserva.salida_id) {
+    try {
+      const { data: salida } = await SB.from("salidas")
+        .select("hora").eq("id", reserva.salida_id).single();
+      if (salida?.hora) horaSalida = salida.hora;
+    } catch { /* ignore */ }
+  }
+
+  const nombre = (reserva.nombre || "").split(" ")[0] || reserva.nombre || "Cliente";
+  const fecha = reserva.fecha
+    ? new Date(reserva.fecha + "T12:00:00").toLocaleDateString("es-CO", { weekday: "long", day: "numeric", month: "long" })
+    : "";
+  const totalCOP = `$${Number(reserva.total || 0).toLocaleString("es-CO")} COP`;
+
+  // Intento 1: vip_pass_confirmacion (con variables)
+  const r1 = await fetch(
+    `${Deno.env.get("SUPABASE_URL")}/functions/v1/send-whatsapp/send`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+        "apikey": Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+      },
+      body: JSON.stringify({
+        to: telefono,
+        template: "vip_pass_confirmacion",
+        params: [nombre, fecha, String(reserva.pax || 1), horaSalida, totalCOP, reserva.id],
+        lang: "es",
+        reserva_id: reserva.id,
+      }),
+    }
+  );
+  const d1 = await r1.json().catch(() => ({}));
+  if (r1.ok && !d1?.error) return;
+
+  // Fallback: confirmacionvip (sin variables)
+  await fetch(
+    `${Deno.env.get("SUPABASE_URL")}/functions/v1/send-whatsapp/send`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+        "apikey": Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+      },
+      body: JSON.stringify({
+        to: telefono,
+        template: "confirmacionvip",
+        params: [],
+        lang: "es_CO",
+        reserva_id: reserva.id,
+      }),
+    }
+  );
+}
