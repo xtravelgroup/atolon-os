@@ -189,15 +189,19 @@ async function callClaude(systemPrompt: string, messages: any[], model = DEFAULT
 }
 
 // ── Enviar mensaje vía WhatsApp ────────────────────────────────────────
+// Usa ANON_KEY en Authorization (verify_jwt=true en send-whatsapp acepta
+// anon como JWT válido). SERVICE_ROLE puede estar mal serializado en
+// algunos contextos de Deno edge runtime → causa UNAUTHORIZED_INVALID_JWT.
 async function sendWhatsAppText(to: string, body: string) {
+  const ANON = Deno.env.get("SUPABASE_ANON_KEY") || Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
   const r = await fetch(
     `${Deno.env.get("SUPABASE_URL")}/functions/v1/send-whatsapp/send-text`,
     {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
-        "apikey": Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+        "Authorization": `Bearer ${ANON}`,
+        "apikey": ANON,
       },
       body: JSON.stringify({ to, body }),
     }

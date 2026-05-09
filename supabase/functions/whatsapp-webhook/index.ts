@@ -62,17 +62,20 @@ async function upsertConversacion(SB: any, telefono: string, waId: string, nombr
   return nueva;
 }
 
-// Disparar respuesta de IA (best-effort, no bloquea)
+// Disparar respuesta de IA. Usa ANON_KEY (verify_jwt=true en whatsapp-ai
+// acepta anon). SERVICE_ROLE_KEY puede llegar mal serializado en edge
+// runtime → UNAUTHORIZED_INVALID_JWT.
 async function triggerAI(conversacion_id: string) {
   try {
+    const ANON = Deno.env.get("SUPABASE_ANON_KEY") || Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
     await fetch(
       `${Deno.env.get("SUPABASE_URL")}/functions/v1/whatsapp-ai/respond`,
       {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
-          "apikey": Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+          "Authorization": `Bearer ${ANON}`,
+          "apikey": ANON,
         },
         body: JSON.stringify({ conversacion_id }),
       }
@@ -122,10 +125,16 @@ async function processIncomingMessage(SB: any, msg: any, contact: any) {
     status:          "received",
   });
 
-  // Disparar IA si está activa para esta conversación (no bloqueante)
+  // Disparar IA si está activa para esta conversación.
+  // IMPORTANTE: await — fire-and-forget en Deno edge functions no funciona
+  // porque el worker se mata después de retornar la response, cortando el
+  // fetch en vuelo. Meta acepta acks de hasta 30s así que es seguro esperar.
   if (conv.ai_enabled && !conv.taken_over_by && tipo !== "reaction") {
-    // No await — fire and forget para no bloquear el ack a Meta
-    triggerAI(conv.id);
+    try {
+      await triggerAI(conv.id);
+    } catch (e) {
+      console.warn("[webhook] triggerAI error:", (e as Error).message);
+    }
   }
 
   return { ok: true, conv_id: conv.id, ai_enabled: conv.ai_enabled };
