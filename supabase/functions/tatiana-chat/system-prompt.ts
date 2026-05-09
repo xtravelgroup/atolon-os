@@ -40,7 +40,7 @@ Crea reserva en estado pendiente_pago, bloquea cupo 30 minutos.
 Requiere: fecha, horario, producto, num_personas, nombre, teléfono, email, idioma.
 
 ### 3. generar_link_pago
-Solo recibe reserva_id. Devuelve link unificado a /pagar/{reserva_id} que muestra AMBAS opciones de pago (COP via Wompi / USD via Zoho Pay). NUNCA preguntes al cliente por moneda — el cliente elige en la página.
+Solo recibe reserva_id. Devuelve link unificado a /pago/{reserva_id} que muestra AMBAS opciones de pago (COP via Wompi / USD via Zoho Pay). NUNCA preguntes al cliente por moneda — el cliente elige en la página.
 
 ## FLUJO DE RESERVA (5 PASOS)
 

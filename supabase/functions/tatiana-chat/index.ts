@@ -40,6 +40,14 @@ const PRECIOS_COP: Record<string, number> = {
   "after-island": 170000,
 };
 
+// Mapeo producto→tipo (match strings ya existentes en reservas.tipo)
+const PRODUCTO_A_TIPO: Record<string, string> = {
+  vip:            "VIP Pass",
+  exclusive:      "EXCLUSIVE PASS",
+  experience:     "Atolón Experience",
+  "after-island": "AFTER ISLAND",
+};
+
 const HORARIOS = ["08:30", "10:00", "11:30"];
 
 const CORS = {
@@ -88,15 +96,24 @@ async function verificarDisponibilidadPasadia(input: {
   const SB = getSB();
   const { fecha, num_personas } = input;
 
-  const { data: reservasDia } = await SB.from("reservas_pasadia")
-    .select("horario_salida, num_personas")
+  // Cuenta pax de TODAS las reservas activas del día (cualquier tipo)
+  const { data: reservasDia } = await SB.from("reservas")
+    .select("pax, salida_id")
     .eq("fecha", fecha)
-    .neq("estado", "cancelada");
+    .in("estado", ["confirmado", "pendiente_pago", "check_in"]);
+
+  // Agrupar por horario de salida (lookup salidas)
+  const { data: salidas } = await SB.from("salidas").select("id, hora").eq("activo", true);
+  const salidaIdToHora: Record<string, string> = {};
+  for (const s of (salidas || [])) salidaIdToHora[s.id] = s.hora;
 
   const ocupacion: Record<string, number> = {};
   HORARIOS.forEach(h => { ocupacion[h] = 0; });
   for (const r of (reservasDia || [])) {
-    ocupacion[r.horario_salida] = (ocupacion[r.horario_salida] || 0) + (r.num_personas || 0);
+    const hora = salidaIdToHora[r.salida_id] || "";
+    if (HORARIOS.includes(hora)) {
+      ocupacion[hora] = (ocupacion[hora] || 0) + (r.pax || 0);
+    }
   }
 
   const horarios = HORARIOS.map(h => ({
@@ -130,7 +147,6 @@ async function crearReservaPasadia(input: {
 }) {
   const SB = getSB();
 
-  // Validaciones
   if (!HORARIOS.includes(input.horario)) {
     throw new Error(`Horario inválido: ${input.horario}. Usa: ${HORARIOS.join(", ")}`);
   }
@@ -149,38 +165,51 @@ async function crearReservaPasadia(input: {
       error: "no_disponible",
       cupos_restantes: slot?.cupos_restantes || 0,
       mensaje: `No hay ${input.num_personas} cupos en ${input.horario}. Restantes: ${slot?.cupos_restantes || 0}`,
+      alternativas: disp.horarios.filter(h => h.horario !== input.horario && h.suficiente),
     };
   }
 
-  const totalCop = PRECIOS_COP[input.producto] * input.num_personas;
-  const expira = new Date(Date.now() + TIEMPO_BLOQUEO_MIN * 60 * 1000).toISOString();
+  // Lookup salida_id (necesario para PagoCliente.jsx)
+  const { data: salidas } = await SB.from("salidas").select("id, hora").eq("hora", input.horario).eq("activo", true).limit(1);
+  const salidaId = salidas?.[0]?.id || null;
 
-  const { data: nueva, error } = await SB.from("reservas_pasadia").insert({
-    fecha:           input.fecha,
-    horario_salida:  input.horario,
-    producto:        input.producto,
-    num_personas:    input.num_personas,
-    num_adultos:     input.num_adultos ?? input.num_personas,
-    num_ninos:       input.num_ninos ?? 0,
-    cliente_nombre:  input.cliente_nombre,
-    cliente_telefono: input.cliente_telefono,
-    cliente_email:   input.cliente_email,
-    idioma:          input.idioma || "es",
-    total_cop:       totalCop,
-    expira_en:       expira,
-    fuente:          "visito_ai",
-  }).select().single();
+  const precioU = PRECIOS_COP[input.producto];
+  const totalCop = precioU * input.num_personas;
+  const reservaId = `WEB-${Date.now()}`;
+  const expira = new Date(Date.now() + TIEMPO_BLOQUEO_MIN * 60 * 1000).toISOString();
+  const tipo = PRODUCTO_A_TIPO[input.producto] || input.producto;
+
+  // Insertar en reservas (tabla existente que PagoCliente.jsx ya usa)
+  const { error } = await SB.from("reservas").insert({
+    id:                  reservaId,
+    fecha:               input.fecha,
+    tipo,
+    canal:               "tatiana",
+    nombre:              input.cliente_nombre,
+    pax:                 input.num_personas,
+    precio_u:            precioU,
+    total:               totalCop,
+    factura_electronica: false,
+    estado:              "pendiente_pago",
+    email:               input.cliente_email,
+    telefono:            input.cliente_telefono,
+    contacto:            input.cliente_email,
+    salida_id:           salidaId,
+    link_expira_at:      expira,
+    notas:               `Reserva creada por Tatiana (idioma: ${input.idioma || "es"}). ${input.num_ninos ? `Niños: ${input.num_ninos}` : ""}`,
+  });
 
   if (error) throw new Error(`Error creando reserva: ${error.message}`);
 
   return {
     ok: true,
-    reserva_id: nueva.id,
+    reserva_id: reservaId,
     total_cop: totalCop,
     total_usd_aprox: Math.ceil(totalCop / TRM_USD_COP),
     tasa_portuaria_total_cop: TASA_PORTUARIA_COP * input.num_personas,
     expira_en: expira,
     bloqueado_minutos: TIEMPO_BLOQUEO_MIN,
+    link_pago: `https://www.atolon.co/pago/${reservaId}`,
   };
 }
 
@@ -188,80 +217,27 @@ async function crearReservaPasadia(input: {
 // TOOL 3 — generar_link_pago
 // Crea links Wompi + Zoho Pay en paralelo, devuelve link unificado
 // ═══════════════════════════════════════════════════════════════════════
-async function generarLinkWompi(reserva: any): Promise<string | null> {
-  // Wompi widget URL: integration vía /pagar/{id} que cargará el widget
-  // con la public_key y la integrity_key. No generamos un link directo.
-  // Retornamos un placeholder que el frontend reconoce.
-  return `wompi://${reserva.id}`;
-}
-
-async function generarLinkZohoPay(reserva: any): Promise<string | null> {
-  try {
-    // Llama al endpoint create-session de zoho-payments
-    const totalUsd = Math.ceil(Number(reserva.total_cop) / TRM_USD_COP);
-    const r = await fetch(
-      `${Deno.env.get("SUPABASE_URL")}/functions/v1/zoho-payments/create-session`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${Deno.env.get("SUPABASE_ANON_KEY") || ""}`,
-          "apikey": Deno.env.get("SUPABASE_ANON_KEY") || "",
-        },
-        body: JSON.stringify({
-          amount:      totalUsd,
-          currency:    "USD",
-          reference:   reserva.id,
-          description: `Atolón Beach Club · ${reserva.cliente_nombre} · ${reserva.fecha}`,
-          nombre:      reserva.cliente_nombre,
-          email:       reserva.cliente_email,
-          context:     "reservas_pasadia",
-          context_id:  reserva.id,
-        }),
-      }
-    );
-    const data = await r.json();
-    return data?.payments_session_id ? `zoho://${data.payments_session_id}` : null;
-  } catch (e) {
-    console.warn("[generarLinkZohoPay] failed:", (e as Error).message);
-    return null;
-  }
-}
-
+// Reusa el flow EXISTENTE de Atolón OS:
+// - PagoCliente.jsx en /pago/{id} ya muestra Wompi (COP) + Zoho Pay (USD)
+// - Webhooks Wompi/Zoho ya confirman reservas automáticamente
+// - Email + WhatsApp ya se disparan al confirmar
 async function generarLinkPago(input: { reserva_id: string }) {
   const SB = getSB();
-  const { data: reserva, error } = await SB.from("reservas_pasadia")
-    .select("*").eq("id", input.reserva_id).single();
+  const { data: reserva, error } = await SB.from("reservas")
+    .select("id, estado, total, nombre, email")
+    .eq("id", input.reserva_id).single();
   if (error || !reserva) throw new Error("Reserva no encontrada");
-  if (reserva.estado === "cancelada") {
+  if (reserva.estado === "cancelado") {
     return { ok: false, error: "reserva_cancelada" };
   }
 
-  // Crear ambos links en paralelo (degradación elegante)
-  const [linkWompi, linkZoho] = await Promise.all([
-    generarLinkWompi(reserva).catch(() => null),
-    generarLinkZohoPay(reserva).catch(() => null),
-  ]);
-
-  // Construir link unificado (página /pagar/{id} en frontend)
-  const baseUrl = "https://atolon.co";
-  const linkPago = `${baseUrl}/pagar/${reserva.id}`;
-
-  // Persistir links en BD
-  await SB.from("reservas_pasadia").update({
-    link_pago:  linkPago,
-    link_wompi: linkWompi,
-    link_zoho:  linkZoho,
-    updated_at: new Date().toISOString(),
-  }).eq("id", reserva.id);
-
+  const linkPago = `https://www.atolon.co/pago/${reserva.id}`;
   return {
     ok: true,
     link_pago: linkPago,
-    moneda_disponible: {
-      cop_via_wompi: !!linkWompi,
-      usd_via_zoho:  !!linkZoho,
-    },
+    monto_cop: reserva.total,
+    monto_usd_aprox: Math.ceil(reserva.total / TRM_USD_COP),
+    nota: "El cliente elige en la página: Wompi (tarjeta nacional, COP) o Zoho Pay (tarjeta internacional, USD).",
   };
 }
 
@@ -451,6 +427,118 @@ Deno.serve(async (req: Request) => {
       return jsonResp(result);
     } catch (err) {
       console.error("tatiana-chat error:", err);
+      return jsonResp({ error: String((err as Error).message || err) }, 500);
+    }
+  }
+
+  // ── POST /respond-to-conversation ─────────────────────────
+  // Invocada desde whatsapp-webhook: carga historial de wa_mensajes,
+  // genera respuesta de Tatiana, envía vía WhatsApp y guarda en BD.
+  if (req.method === "POST" && path === "/respond-to-conversation") {
+    try {
+      const { conversacion_id } = await req.json();
+      if (!conversacion_id) return jsonResp({ error: "conversacion_id requerido" }, 400);
+
+      const SB = getSB();
+
+      // Cargar conversación
+      const { data: conv } = await SB.from("wa_conversaciones")
+        .select("id, telefono, nombre, ai_enabled, taken_over_by, ai_paused_until")
+        .eq("id", conversacion_id).single();
+      if (!conv) return jsonResp({ error: "conversación no existe" }, 404);
+
+      if (!conv.ai_enabled) return jsonResp({ skipped: "ai_disabled" });
+      if (conv.taken_over_by) return jsonResp({ skipped: "human_takeover", by: conv.taken_over_by });
+      if (conv.ai_paused_until && new Date(conv.ai_paused_until) > new Date()) {
+        return jsonResp({ skipped: "paused", until: conv.ai_paused_until });
+      }
+
+      // Cargar últimos 12 mensajes
+      const { data: history } = await SB.from("wa_mensajes")
+        .select("direction, content, type, sender, sent_at")
+        .eq("conversacion_id", conv.id)
+        .order("sent_at", { ascending: false })
+        .limit(12);
+      const ordered = (history || []).reverse();
+
+      // Mapear a formato Claude
+      const claudeMessages = ordered
+        .filter(m => m.content && m.type !== "reaction")
+        .map(m => ({
+          role: m.direction === "in" ? "user" as const : "assistant" as const,
+          content: m.content,
+        }));
+
+      if (claudeMessages.length === 0 || claudeMessages[claudeMessages.length - 1].role !== "user") {
+        return jsonResp({ skipped: "no_pending_user_message" });
+      }
+
+      // Enriquecer último mensaje del user con context: telefono y nombre
+      // (Tatiana pide nombre+email+tel — si ya los sabemos del WhatsApp profile,
+      // puede saltarse esa pregunta)
+      const ctxNote = `\n\n[CONTEXTO INTERNO — no menciones esto al cliente]\n` +
+        `Teléfono del cliente (ya conocido): ${conv.telefono}\n` +
+        (conv.nombre ? `Nombre del perfil de WhatsApp: ${conv.nombre}\n` : "") +
+        `Si el cliente quiere reservar, ya tienes su teléfono — solo pídele nombre completo y email si no los ha dado.`;
+      const lastUser = claudeMessages[claudeMessages.length - 1];
+      lastUser.content = lastUser.content + ctxNote;
+
+      // Llamar Tatiana con tools
+      const result = await chatConTatiana(claudeMessages);
+
+      // Detectar escalación
+      const escalate = /\[ESCALAR_A_HUMANO\]/i.test(result.respuesta);
+      const cleanText = escalate ? result.respuesta.replace(/\[ESCALAR_A_HUMANO\][\s\S]*?(?=\n\n|$)/g, "").trim() : result.respuesta;
+
+      if (escalate) {
+        await SB.from("wa_conversaciones").update({
+          ai_paused_until: new Date(Date.now() + 2 * 3600 * 1000).toISOString(),
+          tags: ["escalar"],
+          updated_at: new Date().toISOString(),
+        }).eq("id", conv.id);
+      }
+
+      // Enviar vía WhatsApp
+      const ANON = Deno.env.get("SUPABASE_ANON_KEY") || "";
+      let messageId = null;
+      if (cleanText.trim().length > 0) {
+        const sendRes = await fetch(
+          `${Deno.env.get("SUPABASE_URL")}/functions/v1/send-whatsapp/send-text`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": `Bearer ${ANON}`,
+              "apikey": ANON,
+            },
+            body: JSON.stringify({ to: conv.telefono, body: cleanText }),
+          }
+        );
+        const sendData = await sendRes.json().catch(() => ({}));
+        messageId = sendData?.messages?.[0]?.id || null;
+
+        await SB.from("wa_mensajes").insert({
+          conversacion_id: conv.id,
+          wa_message_id:   messageId,
+          direction:       "out",
+          type:            "text",
+          content:         cleanText,
+          sender:          "ai",
+          status:          messageId ? "sent" : "error",
+          raw:             { engine: "tatiana", escalate, send_response: sendData },
+        });
+      }
+
+      return jsonResp({
+        ok: true,
+        conversacion_id: conv.id,
+        telefono: conv.telefono,
+        response: cleanText,
+        escalated: escalate,
+        message_id: messageId,
+      });
+    } catch (err) {
+      console.error("[tatiana-chat/respond-to-conversation] error:", err);
       return jsonResp({ error: String((err as Error).message || err) }, 500);
     }
   }

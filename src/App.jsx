@@ -332,7 +332,6 @@ const Actividades = lazy(() => import("./modules/Actividades"));
 const Mantenimiento = lazy(() => import("./modules/Mantenimiento"));
 const CarritoAbandonado = lazy(() => import("./modules/CarritoAbandonado"));
 const WhatsAppChat = lazy(() => import("./modules/WhatsAppChat"));
-const PagarTatiana = lazy(() => import("./modules/PagarTatiana"));
 const Metas = lazy(() => import("./modules/Metas"));
 const Comisiones = lazy(() => import("./modules/Comisiones"));
 const Resultados = lazy(() => import("./modules/Resultados"));
@@ -538,7 +537,7 @@ export default function App() {
   }, [route]);
 
   // Public routes — show WhatsApp button
-  const isPublic = ["empleados", "agencia", "booking", "", "reset-password", "zarpe-info", "despedidas", "contratistas"].includes(route) || route.startsWith("pago") || route.startsWith("pagar/") || route.startsWith("booking/") || route.startsWith("m/") || route.startsWith("room/") || route.startsWith("despedidas/") || route.startsWith("contratistas/") || route.startsWith("verificar/");
+  const isPublic = ["empleados", "agencia", "booking", "", "reset-password", "zarpe-info", "despedidas", "contratistas"].includes(route) || route.startsWith("pago") || route.startsWith("booking/") || route.startsWith("m/") || route.startsWith("room/") || route.startsWith("despedidas/") || route.startsWith("contratistas/") || route.startsWith("verificar/");
 
   // Always-public routes (no auth needed ever)
   if (route === "blueapple" || route.startsWith("blueapple/")) return <BlueApplePortal />;
@@ -548,7 +547,6 @@ export default function App() {
   if (route === "booking/lasamericas" || route === "las-americas") return <LasAmericasPortal />;
   if (route === "gran-fondo" || route === "nairo") return <GranFondoNairo />;
   if (route === "booking" || route.startsWith("booking/")) return <><BookingPopup /><WhatsAppFloat phone={waPhone} /></>;
-  if (route.startsWith("pagar/")) return <PagarTatiana />;
   if (route.startsWith("pago"))   return <><PagoCliente /><WhatsAppFloat phone={waPhone} /></>;
   if (route === "reset-password") return <><ResetPassword /><WhatsAppFloat phone={waPhone} /></>;
   if (route === "zarpe-info")     return <><ZarpeInfo /><WhatsAppFloat phone={waPhone} /></>;

@@ -62,14 +62,15 @@ async function upsertConversacion(SB: any, telefono: string, waId: string, nombr
   return nueva;
 }
 
-// Disparar respuesta de IA. Usa ANON_KEY (verify_jwt=true en whatsapp-ai
-// acepta anon). SERVICE_ROLE_KEY puede llegar mal serializado en edge
-// runtime → UNAUTHORIZED_INVALID_JWT.
+// Disparar respuesta de Tatiana (Conserje IA con tools). Carga historial
+// de wa_mensajes, llama Claude con tools, envía respuesta vía WhatsApp,
+// guarda en BD. Reemplaza el simple whatsapp-ai con un agente que SÍ
+// puede crear reservas y enviar links de pago.
 async function triggerAI(conversacion_id: string) {
   try {
     const ANON = Deno.env.get("SUPABASE_ANON_KEY") || Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
     await fetch(
-      `${Deno.env.get("SUPABASE_URL")}/functions/v1/whatsapp-ai/respond`,
+      `${Deno.env.get("SUPABASE_URL")}/functions/v1/tatiana-chat/respond-to-conversation`,
       {
         method: "POST",
         headers: {
@@ -81,7 +82,7 @@ async function triggerAI(conversacion_id: string) {
       }
     );
   } catch (e) {
-    console.warn("[webhook → AI] failed:", (e as Error).message);
+    console.warn("[webhook → Tatiana] failed:", (e as Error).message);
   }
 }
 
