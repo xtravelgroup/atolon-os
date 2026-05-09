@@ -395,7 +395,34 @@ serve(async (req) => {
         payment.status === "captured" ||
         payment.status === "success";
       if (isSuccess) {
-        // 1) Intentar actualizar reserva
+        // 1a) Buscar primero en reservas_pasadia (Tatiana / Visito.AI)
+        if (ref) {
+          const { data: rp } = await SB.from("reservas_pasadia")
+            .select("id, total_cop, estado, cliente_nombre, cliente_telefono, cliente_email, fecha, num_personas, producto, idioma, horario_salida")
+            .eq("id", ref).limit(1);
+          if (rp && rp[0]) {
+            const reservaP = rp[0];
+            await SB.from("reservas_pasadia").update({
+              estado:          "confirmada",
+              pasarela_usada:  "Zoho Pay",
+              moneda_pagada:   "USD",
+              pago_referencia: pid,
+              pagado_en:       new Date().toISOString(),
+              updated_at:      new Date().toISOString(),
+            }).eq("id", reservaP.id);
+            console.log(`✓ Reserva pasadía ${reservaP.id} confirmada (Zoho Pay)`);
+            // Enviar confirmación
+            await enviarConfirmacionPasadia(reservaP).catch(e =>
+              console.warn(`[zoho/pasadia] confirmacion failed: ${(e as Error).message}`));
+            // Continuar al final del bloque (no devolver, hay otros lookups)
+            // Pero tampoco buscar en reservas si ya matchó aquí
+            return new Response(JSON.stringify({ received: true, processed: true, action: "pasadia_confirmed", reserva_id: reservaP.id }), {
+              status: 200, headers: { "Content-Type": "application/json" },
+            });
+          }
+        }
+
+        // 1b) Reservas web (legacy)
         if (ref) {
           const { data: reservas } = await SB.from("reservas")
             .select("id, estado, total, lead_id, nombre, telefono, contacto, email, fecha, pax, tipo, salida_id")
@@ -866,6 +893,44 @@ async function enviarEmailConfirmacion(reserva: any): Promise<void> {
       body: JSON.stringify(payload),
     }
   );
+}
+
+// ── Enviar confirmación para reservas_pasadia (Tatiana) ────────────────────
+async function enviarConfirmacionPasadia(reserva: any): Promise<void> {
+  const headers = {
+    "Content-Type": "application/json",
+    "Authorization": `Bearer ${Deno.env.get("SUPABASE_ANON_KEY") || ""}`,
+    "apikey": Deno.env.get("SUPABASE_ANON_KEY") || "",
+  };
+
+  if (reserva.cliente_email) {
+    fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/send-confirmation`, {
+      method: "POST", headers,
+      body: JSON.stringify({
+        id: reserva.id, contacto: reserva.cliente_email, nombre: reserva.cliente_nombre,
+        tipo: reserva.producto, fecha: reserva.fecha, pax: reserva.num_personas,
+        total: reserva.total_cop, telefono: reserva.cliente_telefono,
+        idioma: reserva.idioma || "es", _source: "tatiana_pasadia",
+      }),
+    }).catch(() => {});
+  }
+
+  if (reserva.cliente_telefono) {
+    fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/send-whatsapp/send`, {
+      method: "POST", headers,
+      body: JSON.stringify({
+        to: reserva.cliente_telefono, template: "confirmacion_pasadia_atolon",
+        params: [
+          (reserva.cliente_nombre || "").split(" ")[0] || reserva.cliente_nombre || "Cliente",
+          reserva.producto, reserva.fecha, String(reserva.num_personas),
+          reserva.horario_salida + " AM",
+          `$${Number(reserva.total_cop || 0).toLocaleString("es-CO")} COP`,
+          reserva.id,
+        ],
+        lang: "es", reserva_id: reserva.id,
+      }),
+    }).catch(() => {});
+  }
 }
 
 // ── Enviar confirmación de reserva por WhatsApp ────────────────────────────

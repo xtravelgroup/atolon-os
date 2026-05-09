@@ -407,6 +407,10 @@ verify_jwt = false
 # (sin auth) y desde admin UI (con anon key).
 [functions.whatsapp-ai]
 verify_jwt = false
+# tatiana-chat — Conserje IA con tool calling. Endpoint público para Visito.AI
+# y otros clientes externos. Sin JWT para simplicidad.
+[functions.tatiana-chat]
+verify_jwt = false
 # send-whatsapp / send-confirmation: invocados internamente entre edge
 # functions. SUPABASE_SERVICE_ROLE_KEY tiene problemas de serialización
 # en algunos contextos de Deno → JWT inválido. Deshabilitar JWT permite
