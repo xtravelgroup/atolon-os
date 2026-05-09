@@ -86,6 +86,19 @@ async function loadConfig() {
   }
 }
 
+// Inyecta la fecha actual al system prompt para que Tatiana sepa SIEMPRE
+// qué día es hoy y nunca asuma fechas en el pasado.
+function withCurrentDate(systemPrompt: string): string {
+  const now = new Date();
+  // En formato Bogotá (UTC-5)
+  const bogota = new Date(now.toLocaleString("en-US", { timeZone: "America/Bogota" }));
+  const fechaIso = bogota.toISOString().slice(0, 10);
+  const fechaLarga = bogota.toLocaleDateString("es-CO", {
+    weekday: "long", day: "numeric", month: "long", year: "numeric",
+  });
+  return systemPrompt + `\n\n## FECHA ACTUAL (NO INVENTAR)\nHoy es: **${fechaLarga}** (${fechaIso} en Bogotá UTC-5).\nUsa esta fecha como referencia para interpretar "mañana", "este sábado", "el 25 de mayo", etc.\n`;
+}
+
 // ═══════════════════════════════════════════════════════════════════════
 // TOOL 1 — verificar_disponibilidad_pasadia
 // ═══════════════════════════════════════════════════════════════════════
@@ -343,7 +356,7 @@ async function chatConTatiana(messages: any[]) {
 
   while (intentos < 5) {
     intentos++;
-    const response = await callClaude(cfg.systemPrompt, mensajes, cfg.model);
+    const response = await callClaude(withCurrentDate(cfg.systemPrompt), mensajes, cfg.model);
 
     // Si respondió texto sin tools, terminamos
     const toolUses = (response.content || []).filter((b: any) => b.type === "tool_use");
