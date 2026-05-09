@@ -39,14 +39,12 @@ export async function sendWhatsApp(to, template, params = [], lang = "es") {
 /**
  * Confirmación de reserva (se llama al confirmar pago).
  *
- * Templates disponibles:
- * - "vip_pass_confirmacion" (es) — 6 variables {{1}}..{{6}}: nombre, fecha,
- *   pax, hora_salida, total_pagado, reserva_id. Botón URL "Ver confirmación".
- *   Estado: PENDING → cuando Meta lo apruebe (1-24h) será el preferido.
- * - "confirmacionvip" (es_CO) — sin variables, fallback aprobado.
- *
- * Si la primera template falla (no aprobada aún), se reintenta con la
- * segunda (sin params). Devuelve { template_used, ...meta_response }.
+ * Templates en orden de preferencia (cascade fallback):
+ * 1. "confirmacion_pasadia" (es) — 7 vars genérica para cualquier tipo de
+ *    pasadía (VIP, Exclusive, etc.). Botones: URL "Ver confirmación" +
+ *    teléfono Atolón. Variable button: {{1}} = reserva_id.
+ * 2. "vip_pass_confirmacion" (es) — 6 vars, específica VIP Pass.
+ * 3. "confirmacionvip" (es_CO) — sin variables, fallback aprobado.
  */
 export async function waSendConfirmacion(reserva, salida) {
   const telefono = reserva.telefono || reserva.contacto;
@@ -57,26 +55,31 @@ export async function waSendConfirmacion(reserva, salida) {
     weekday: "long", day: "numeric", month: "long",
   });
 
-  // Total pagado COP formateado
-  const totalCOP = `$${Number(reserva.total || 0).toLocaleString("es-CO")} COP`;
-
-  // Hora de salida del muelle
+  const totalCOP   = `$${Number(reserva.total || 0).toLocaleString("es-CO")} COP`;
   const horaSalida = salida?.hora || "Ver confirmación";
+  const tipo       = reserva.tipo || "Pasadía";
 
-  // Intento 1 — template con variables (vip_pass_confirmacion)
-  const r1 = await sendWhatsApp(telefono, "vip_pass_confirmacion", [
+  // Intento 1 — confirmacion_pasadia (genérica con tipo)
+  const r1 = await sendWhatsApp(telefono, "confirmacion_pasadia", [
     nombre,
+    tipo,
     fecha,
     String(reserva.pax || 1),
     horaSalida,
     totalCOP,
     reserva.id,
   ], "es");
-  if (!r1?.error) return { template_used: "vip_pass_confirmacion", ...r1 };
+  if (!r1?.error) return { template_used: "confirmacion_pasadia", ...r1 };
 
-  // Fallback — template aprobada sin variables
-  const r2 = await sendWhatsApp(telefono, "confirmacionvip", [], "es_CO");
-  return { template_used: "confirmacionvip", first_attempt_error: r1?.error, ...r2 };
+  // Intento 2 — vip_pass_confirmacion
+  const r2 = await sendWhatsApp(telefono, "vip_pass_confirmacion", [
+    nombre, fecha, String(reserva.pax || 1), horaSalida, totalCOP, reserva.id,
+  ], "es");
+  if (!r2?.error) return { template_used: "vip_pass_confirmacion", ...r2 };
+
+  // Fallback — confirmacionvip (sin variables, ya aprobada)
+  const r3 = await sendWhatsApp(telefono, "confirmacionvip", [], "es_CO");
+  return { template_used: "confirmacionvip", first_attempts: [r1?.error, r2?.error], ...r3 };
 }
 
 /**

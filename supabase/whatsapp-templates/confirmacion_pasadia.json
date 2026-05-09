@@ -1,0 +1,34 @@
+{
+  "name": "confirmacion_pasadia",
+  "category": "UTILITY",
+  "language": "es",
+  "components": [
+    {
+      "type": "BODY",
+      "text": "Hola {{1}}, ¡tu reserva {{2}} en Atolón Beach Club está confirmada! ✅\n\n📅 Fecha: {{3}}\n👥 Personas: {{4}}\n⛵ Hora de salida: {{5}}\n💳 Total pagado: {{6}}\n🆔 Reserva: {{7}}\n\n📍 Muelle La Bodeguita — Puerta 1\n⏰ Llegar 20 minutos antes con tu documento de identidad\n\nCualquier pregunta, responde a este mensaje.",
+      "example": {
+        "body_text": [["María González", "VIP Pass", "sábado 17 de mayo", "4", "11:00 AM", "$1.520.000 COP", "WEB-1778083991954"]]
+      }
+    },
+    {
+      "type": "FOOTER",
+      "text": "Atolón Beach Club · Cartagena de Indias"
+    },
+    {
+      "type": "BUTTONS",
+      "buttons": [
+        {
+          "type": "URL",
+          "text": "Ver mi confirmación",
+          "url": "https://atolon.co/zarpe-info?id={{1}}",
+          "example": ["WEB-1778083991954"]
+        },
+        {
+          "type": "PHONE_NUMBER",
+          "text": "Llamarnos",
+          "phone_number": "+573003194215"
+        }
+      ]
+    }
+  ]
+}

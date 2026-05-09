@@ -386,13 +386,13 @@ serve(async (req) => {
 });
 
 // ── Enviar confirmación de reserva por WhatsApp ────────────────────────────
-// Llama al endpoint /send-whatsapp/send que ya tiene la lógica de templates
-// + fallback. Si la reserva no tiene teléfono o falla, no rompe el webhook.
+// Cascade fallback de templates: confirmacion_pasadia (genérica con tipo) →
+// vip_pass_confirmacion (VIP Pass) → confirmacionvip (sin variables).
+// Si todas fallan o la reserva no tiene teléfono, no rompe el webhook.
 async function enviarWhatsAppConfirmacion(SB: any, reserva: any): Promise<void> {
   const telefono = reserva?.telefono || reserva?.contacto;
   if (!telefono || !/\d{7,}/.test(telefono)) return;
 
-  // Lookup salida para obtener la hora
   let horaSalida = "Ver confirmación";
   if (reserva.salida_id) {
     try {
@@ -407,46 +407,31 @@ async function enviarWhatsAppConfirmacion(SB: any, reserva: any): Promise<void> 
     ? new Date(reserva.fecha + "T12:00:00").toLocaleDateString("es-CO", { weekday: "long", day: "numeric", month: "long" })
     : "";
   const totalCOP = `$${Number(reserva.total || 0).toLocaleString("es-CO")} COP`;
+  const tipo = reserva.tipo || "Pasadía";
 
-  // Intento 1: vip_pass_confirmacion (con variables)
-  const r1 = await fetch(
-    `${Deno.env.get("SUPABASE_URL")}/functions/v1/send-whatsapp/send`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
-        "apikey": Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
-      },
-      body: JSON.stringify({
-        to: telefono,
-        template: "vip_pass_confirmacion",
-        params: [nombre, fecha, String(reserva.pax || 1), horaSalida, totalCOP, reserva.id],
-        lang: "es",
-        reserva_id: reserva.id,
-      }),
-    }
-  );
-  const d1 = await r1.json().catch(() => ({}));
-  if (r1.ok && !d1?.error) return;
+  const sendUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/send-whatsapp/send`;
+  const headers = {
+    "Content-Type": "application/json",
+    "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+    "apikey": Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+  };
 
-  // Fallback: confirmacionvip (sin variables)
-  await fetch(
-    `${Deno.env.get("SUPABASE_URL")}/functions/v1/send-whatsapp/send`,
-    {
+  const trySend = async (template: string, params: string[], lang: string) => {
+    const r = await fetch(sendUrl, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
-        "apikey": Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
-      },
-      body: JSON.stringify({
-        to: telefono,
-        template: "confirmacionvip",
-        params: [],
-        lang: "es_CO",
-        reserva_id: reserva.id,
-      }),
-    }
-  );
+      headers,
+      body: JSON.stringify({ to: telefono, template, params, lang, reserva_id: reserva.id }),
+    });
+    const d = await r.json().catch(() => ({}));
+    return r.ok && !d?.error;
+  };
+
+  // 1) Genérica con tipo (confirmacion_pasadia)
+  if (await trySend("confirmacion_pasadia", [nombre, tipo, fecha, String(reserva.pax || 1), horaSalida, totalCOP, reserva.id], "es")) return;
+
+  // 2) VIP-específica
+  if (await trySend("vip_pass_confirmacion", [nombre, fecha, String(reserva.pax || 1), horaSalida, totalCOP, reserva.id], "es")) return;
+
+  // 3) Fallback sin variables
+  await trySend("confirmacionvip", [], "es_CO");
 }
