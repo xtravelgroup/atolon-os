@@ -306,7 +306,7 @@ serve(async (req) => {
 
     // ── 1) Actualizar reserva ───────────────────────────────────────────
     const { data: reservas } = await SB.from("reservas")
-      .select("id, total, abono, estado, nombre, telefono, contacto, fecha, pax, tipo, salida_id, lead_id, notas")
+      .select("id, total, abono, estado, nombre, telefono, contacto, email, fecha, pax, tipo, salida_id, lead_id, notas")
       .eq("id", ref)
       .limit(1);
     const reserva = reservas?.[0];
@@ -341,9 +341,13 @@ serve(async (req) => {
 
         console.log(`✓ Reserva ${reserva.id} confirmada vía Wompi (${monto} COP)`);
 
-        // Enviar confirmación por WhatsApp (best-effort, no falla el webhook)
-        await enviarWhatsAppConfirmacion(SB, reserva).catch(e =>
-          console.warn(`[wompi] WhatsApp send failed: ${(e as Error).message}`));
+        // Enviar email + WhatsApp en paralelo (best-effort, no falla el webhook)
+        await Promise.all([
+          enviarEmailConfirmacion(reserva).catch(e =>
+            console.warn(`[wompi] Email send failed: ${(e as Error).message}`)),
+          enviarWhatsAppConfirmacion(SB, reserva).catch(e =>
+            console.warn(`[wompi] WhatsApp send failed: ${(e as Error).message}`)),
+        ]);
 
         return jsonResp({ received: true, processed: true, action: "confirmed", reserva_id: reserva.id });
       }
@@ -384,6 +388,29 @@ serve(async (req) => {
     return jsonResp({ received: true, error: String((err as Error).message || err) }, 200);
   }
 });
+
+// ── Enviar email de confirmación (Resend via /send-confirmation) ───────────
+// send-confirmation espera reserva.contacto como destinatario. Si solo está
+// reserva.email (campo dedicado), lo copiamos a contacto antes de enviar.
+async function enviarEmailConfirmacion(reserva: any): Promise<void> {
+  const email = (reserva?.email || reserva?.contacto || "").toString();
+  if (!email.includes("@")) return;
+
+  const payload = { ...reserva, contacto: email };
+
+  await fetch(
+    `${Deno.env.get("SUPABASE_URL")}/functions/v1/send-confirmation`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+        "apikey": Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+      },
+      body: JSON.stringify(payload),
+    }
+  );
+}
 
 // ── Enviar confirmación de reserva por WhatsApp ────────────────────────────
 // Cascade fallback de templates: confirmacion_pasadia_atolon (genérica con tipo) →
