@@ -1794,19 +1794,15 @@ function ContratistasSection({ fecha, icon, label, color }) {
     if (!code) { alert("Ingresa una cédula o código de certificado"); return; }
     setLoading(true); setResult(null);
     try {
-      const isDigits = /^\d+$/.test(code);
+      // Detectar tipo de input:
+      // - "CERT-..." → código de certificado SST
+      // - todo lo demás → cédula (incluye dígitos puros Y cédulas de
+      //   extranjería con prefijo de letra como X4707273, pasaportes, etc.)
+      const isCertCode = /^CERT-/i.test(code);
       let trabajador = null, contratista = null, certificado = null;
       const motivos = [];
 
-      if (isDigits) {
-        const { data: t } = await supabase
-          .from("contratistas_trabajadores")
-          .select("id, nombre, cedula, cargo, contratista_id")
-          .eq("cedula", code)
-          .order("created_at", { ascending: false })
-          .limit(1).maybeSingle();
-        trabajador = t;
-      } else {
+      if (isCertCode) {
         const { data: c } = await supabase.from("certificados_curso")
           .select("*").eq("codigo", code).maybeSingle();
         certificado = c;
@@ -1815,6 +1811,15 @@ function ContratistasSection({ fecha, icon, label, color }) {
             .select("id, nombre, cedula, cargo, contratista_id").eq("id", c.trabajador_id).maybeSingle();
           trabajador = t;
         }
+      } else {
+        // Cédula (digits o con prefijo de letra)
+        const { data: t } = await supabase
+          .from("contratistas_trabajadores")
+          .select("id, nombre, cedula, cargo, contratista_id")
+          .eq("cedula", code)
+          .order("created_at", { ascending: false })
+          .limit(1).maybeSingle();
+        trabajador = t;
       }
 
       if (trabajador?.contratista_id) {
