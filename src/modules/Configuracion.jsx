@@ -872,6 +872,7 @@ export default function Configuracion() {
 
             {/* ── WHATSAPP BUSINESS (Meta) ────────────────────────── */}
             <WhatsAppMetaCard config={config} onSaved={fetchConfig} />
+            <WhatsAppAIKnowledgeCard config={config} onSaved={fetchConfig} />
 
             {/* ── SUPABASE ─────────────────────────────────────────── */}
             <div style={{ background: B.navyMid, borderRadius: 12, padding: 22 }}>
@@ -1167,6 +1168,181 @@ function WhatsAppMetaCard({ config, onSaved }) {
               style={{ flex: 2, padding: "10px", background: saving ? B.navyLight : "#25D366", color: "#fff", border: "none", borderRadius: 8, fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
               {saving ? "Guardando..." : "Guardar credenciales"}
             </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// WhatsAppAIKnowledgeCard — Knowledge Base personalizable para la IA
+// ═══════════════════════════════════════════════════════════════════════════
+function WhatsAppAIKnowledgeCard({ config, onSaved }) {
+  const [kb, setKb] = useState("");
+  const [model, setModel] = useState("claude-haiku-4-5");
+  const [enabledGlobal, setEnabledGlobal] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [testMessage, setTestMessage] = useState("");
+  const [testResult, setTestResult] = useState(null);
+  const [testing, setTesting] = useState(false);
+  const [showFullPrompt, setShowFullPrompt] = useState(false);
+  const [fullPrompt, setFullPrompt] = useState(null);
+
+  useEffect(() => {
+    setKb(config?.whatsapp_ai_knowledge_base || "");
+    setModel(config?.whatsapp_ai_model || "claude-haiku-4-5");
+    setEnabledGlobal(config?.whatsapp_ai_enabled_global !== false);
+  }, [config]);
+
+  const guardar = async () => {
+    if (!supabase || saving) return;
+    setSaving(true);
+    await supabase.from("configuracion").update({
+      whatsapp_ai_knowledge_base: kb.trim() || null,
+      whatsapp_ai_model: model,
+      whatsapp_ai_enabled_global: enabledGlobal,
+      updated_at: new Date().toISOString(),
+    }).eq("id", "atolon");
+    await onSaved?.();
+    setSaving(false);
+  };
+
+  const probar = async () => {
+    if (!testMessage.trim() || testing) return;
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const r = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/whatsapp-ai/test`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+            "apikey": import.meta.env.VITE_SUPABASE_ANON_KEY,
+          },
+          body: JSON.stringify({ message: testMessage, model }),
+        }
+      );
+      setTestResult(await r.json());
+    } catch (e) { setTestResult({ error: String(e) }); }
+    setTesting(false);
+  };
+
+  const verPromptCompleto = async () => {
+    try {
+      const r = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/whatsapp-ai/system-prompt`,
+        {
+          headers: {
+            "Authorization": `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+            "apikey": import.meta.env.VITE_SUPABASE_ANON_KEY,
+          },
+        }
+      );
+      const data = await r.json();
+      setFullPrompt(data);
+      setShowFullPrompt(true);
+    } catch (e) { alert("Error: " + e.message); }
+  };
+
+  return (
+    <div style={{ background: B.navyMid, borderRadius: 12, padding: 22, border: `1px solid #25D36644` }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap", marginBottom: 14 }}>
+        <div style={{ width: 42, height: 42, borderRadius: 10, background: "linear-gradient(135deg, #25D366, #5B4CF5)", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 900, fontSize: 18, color: "#fff", flexShrink: 0 }}>🤖</div>
+        <div style={{ flex: 1, minWidth: 200 }}>
+          <div style={{ fontWeight: 700, fontSize: 15 }}>IA Conversacional · Knowledge Base</div>
+          <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)" }}>Información que la IA usa al responder por WhatsApp</div>
+        </div>
+        <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 12, color: enabledGlobal ? B.success : B.warning }}>
+          <input type="checkbox" checked={enabledGlobal} onChange={e => setEnabledGlobal(e.target.checked)} style={{ accentColor: "#25D366" }} />
+          {enabledGlobal ? "🤖 IA activa global" : "⏸️ IA pausada global"}
+        </label>
+      </div>
+
+      <div style={{ marginBottom: 12 }}>
+        <label style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: "0.05em", display: "block", marginBottom: 6 }}>
+          Conocimiento adicional (precios, FAQs, políticas, eventos especiales...)
+        </label>
+        <textarea value={kb} onChange={e => setKb(e.target.value)}
+          placeholder={`# Precios actualizados\n- VIP Pass: $380.000 COP por persona\n- Exclusive Pass: $XXX...\n\n# FAQs\nP: ¿Aceptan pago en USD?\nR: Sí, vía Zoho Pay con tarjeta internacional...\n\n# Promociones\n- May 2026: descuento 10% para grupos de 6+`}
+          rows={14}
+          style={{
+            width: "100%", padding: "12px 14px", background: B.navy, border: `1px solid ${B.navyLight}`, borderRadius: 8,
+            color: B.white, fontFamily: "ui-monospace, SF Mono, Monaco, monospace", fontSize: 12, lineHeight: 1.6,
+            outline: "none", boxSizing: "border-box", resize: "vertical", minHeight: 200,
+          }} />
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 4 }}>
+          <span style={{ fontSize: 10, color: "rgba(255,255,255,0.4)" }}>{kb.length} caracteres · markdown soportado</span>
+          {kb.length > 8000 && <span style={{ fontSize: 10, color: B.warning }}>⚠ Más de 8.000 chars puede aumentar costos</span>}
+        </div>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
+        <div>
+          <label style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: "0.05em", display: "block", marginBottom: 6 }}>Modelo Claude</label>
+          <select value={model} onChange={e => setModel(e.target.value)}
+            style={{ width: "100%", padding: "10px 14px", background: B.navy, border: `1px solid ${B.navyLight}`, borderRadius: 8, color: B.white, fontSize: 13, outline: "none", cursor: "pointer", boxSizing: "border-box" }}>
+            <option value="claude-haiku-4-5">Haiku 4.5 (rápido, ~$0.001/msg)</option>
+            <option value="claude-sonnet-4-5">Sonnet 4.5 (mejor calidad, ~$0.01/msg)</option>
+            <option value="claude-opus-4-5">Opus 4.5 (premium, ~$0.05/msg)</option>
+          </select>
+        </div>
+        <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
+          <button onClick={verPromptCompleto}
+            style={{ flex: 1, padding: "10px 14px", background: B.navyLight, color: B.sand, border: "none", borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
+            🔍 Ver prompt completo
+          </button>
+          <button onClick={guardar} disabled={saving}
+            style={{ flex: 1, padding: "10px 14px", background: saving ? B.navyLight : "#25D366", color: "#fff", border: "none", borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: saving ? "default" : "pointer" }}>
+            {saving ? "Guardando..." : "💾 Guardar"}
+          </button>
+        </div>
+      </div>
+
+      {/* Tester inline */}
+      <div style={{ background: B.navy, padding: 14, borderRadius: 10, border: `1px dashed ${B.navyLight}` }}>
+        <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>🧪 Probar respuesta IA</div>
+        <div style={{ display: "flex", gap: 8 }}>
+          <input value={testMessage} onChange={e => setTestMessage(e.target.value)}
+            onKeyDown={e => e.key === "Enter" && probar()}
+            placeholder="Ej: ¿Cuánto cuesta el VIP Pass?"
+            style={{ flex: 1, padding: "8px 12px", background: B.navyMid, border: `1px solid ${B.navyLight}`, borderRadius: 6, color: B.white, fontSize: 12, outline: "none" }} />
+          <button onClick={probar} disabled={testing || !testMessage.trim()}
+            style={{ padding: "8px 16px", background: "#5B4CF5", color: "#fff", border: "none", borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: testing ? "default" : "pointer" }}>
+            {testing ? "..." : "Probar"}
+          </button>
+        </div>
+        {testResult && (
+          <div style={{ marginTop: 10, padding: 10, background: B.navyMid, borderRadius: 6, fontSize: 12, lineHeight: 1.5 }}>
+            {testResult.error ? (
+              <span style={{ color: B.danger }}>Error: {testResult.error}</span>
+            ) : (
+              <>
+                <div style={{ whiteSpace: "pre-wrap", color: B.white }}>{testResult.text}</div>
+                {testResult.usage && (
+                  <div style={{ marginTop: 6, fontSize: 10, color: "rgba(255,255,255,0.4)" }}>
+                    {testResult.usage.input_tokens} in · {testResult.usage.output_tokens} out · {testResult.model}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Modal: prompt completo */}
+      {showFullPrompt && fullPrompt && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.85)", zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}
+          onClick={e => e.target === e.currentTarget && setShowFullPrompt(false)}>
+          <div style={{ background: B.navyMid, borderRadius: 12, padding: 24, maxWidth: 900, width: "100%", maxHeight: "85vh", display: "flex", flexDirection: "column", border: `1px solid ${B.navyLight}` }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+              <h3 style={{ fontSize: 16, fontWeight: 700, margin: 0 }}>System Prompt completo</h3>
+              <button onClick={() => setShowFullPrompt(false)} style={{ background: "none", border: "none", color: B.white, fontSize: 18, cursor: "pointer" }}>✕</button>
+            </div>
+            <pre style={{ flex: 1, overflow: "auto", background: B.navy, padding: 16, borderRadius: 8, fontSize: 11, lineHeight: 1.5, color: "rgba(255,255,255,0.85)", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{fullPrompt.full_prompt_preview}</pre>
+            <div style={{ marginTop: 10, fontSize: 10, color: "rgba(255,255,255,0.4)" }}>{(fullPrompt.full_prompt_preview || "").length} caracteres · modelo: {fullPrompt.model}</div>
           </div>
         </div>
       )}

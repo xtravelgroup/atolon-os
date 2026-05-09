@@ -121,6 +121,31 @@ Máximo 600 caracteres normalmente. Si necesitas más, divide.
 
 Cierra siempre con apertura: "¿Algo más en lo que te pueda ayudar? 🌴"`;
 
+// ── Cargar Knowledge Base extra desde BD ──────────────────────────────
+// El admin puede agregar contexto adicional (FAQs, precios, políticas
+// específicas) en Configuración → WhatsApp IA → Knowledge Base. Eso se
+// concatena al system prompt en cada respuesta.
+async function loadKnowledgeBase(SB: any): Promise<string> {
+  try {
+    const { data } = await SB.from("configuracion")
+      .select("whatsapp_ai_knowledge_base, whatsapp_ai_model")
+      .eq("id", "atolon").single();
+    return data?.whatsapp_ai_knowledge_base?.trim() || "";
+  } catch {
+    return "";
+  }
+}
+
+async function loadModel(SB: any): Promise<string> {
+  try {
+    const { data } = await SB.from("configuracion")
+      .select("whatsapp_ai_model").eq("id", "atolon").single();
+    return data?.whatsapp_ai_model || DEFAULT_MODEL;
+  } catch {
+    return DEFAULT_MODEL;
+  }
+}
+
 // ── Cargar contexto del cliente ───────────────────────────────────────
 async function buildCustomerContext(SB: any, telefono: string) {
   const lines: string[] = [];
@@ -217,16 +242,35 @@ Deno.serve(async (req: Request) => {
 
   // ── GET /system-prompt ─────────────────────────────────────
   if (req.method === "GET" && path === "/system-prompt") {
-    return jsonResp({ system_prompt: SYSTEM_PROMPT, model: DEFAULT_MODEL });
+    const SB = createClient(
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+    );
+    const kb = await loadKnowledgeBase(SB);
+    const model = await loadModel(SB);
+    return jsonResp({
+      system_prompt_base: SYSTEM_PROMPT,
+      knowledge_base: kb,
+      full_prompt_preview: SYSTEM_PROMPT + (kb ? "\n\n# CONOCIMIENTO ADICIONAL ATOLÓN\n" + kb : ""),
+      model,
+    });
   }
 
   // ── GET /diag ──────────────────────────────────────────────
   if (req.method === "GET" && (path === "/diag" || path === "")) {
+    const SB = createClient(
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+    );
+    const kb = await loadKnowledgeBase(SB);
+    const model = await loadModel(SB);
     return jsonResp({
       ok: true,
       service: "whatsapp-ai",
       anthropic_key_configured: !!ANTHROPIC_KEY,
       default_model: DEFAULT_MODEL,
+      configured_model: model,
+      knowledge_base_chars: kb.length,
       timestamp: new Date().toISOString(),
     });
   }
@@ -247,8 +291,12 @@ Deno.serve(async (req: Request) => {
       );
       const customerCtx = telefono ? await buildCustomerContext(SB, telefono) : "Test mode";
 
+      const kb = await loadKnowledgeBase(SB);
+      const fullSystemPrompt = SYSTEM_PROMPT
+        + (kb ? "\n\n# CONOCIMIENTO ADICIONAL ATOLÓN\n" + kb : "")
+        + "\n\n# CONTEXTO DEL CLIENTE\n" + customerCtx;
       const result = await callClaude(
-        SYSTEM_PROMPT + "\n\n# CONTEXTO DEL CLIENTE\n" + customerCtx,
+        fullSystemPrompt,
         [{ role: "user", content: message }],
         model || DEFAULT_MODEL,
       );
@@ -301,8 +349,12 @@ Deno.serve(async (req: Request) => {
         return jsonResp({ skipped: "no_pending_user_message" });
       }
 
+      const kb = await loadKnowledgeBase(SB);
+      const fullSystemPrompt = SYSTEM_PROMPT
+        + (kb ? "\n\n# CONOCIMIENTO ADICIONAL ATOLÓN\n" + kb : "")
+        + "\n\n# CONTEXTO DEL CLIENTE\n" + customerCtx;
       const result = await callClaude(
-        SYSTEM_PROMPT + "\n\n# CONTEXTO DEL CLIENTE\n" + customerCtx,
+        fullSystemPrompt,
         claudeMessages,
         model || DEFAULT_MODEL,
       );
