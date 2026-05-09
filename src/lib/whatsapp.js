@@ -40,7 +40,7 @@ export async function sendWhatsApp(to, template, params = [], lang = "es") {
  * Confirmación de reserva (se llama al confirmar pago).
  *
  * Templates en orden de preferencia (cascade fallback):
- * 1. "confirmacion_pasadia" (es) — 7 vars genérica para cualquier tipo de
+ * 1. "confirmacion_pasadia_atolon" (es) — 7 vars genérica para cualquier tipo de
  *    pasadía (VIP, Exclusive, etc.). Botones: URL "Ver confirmación" +
  *    teléfono Atolón. Variable button: {{1}} = reserva_id.
  * 2. "vip_pass_confirmacion" (es) — 6 vars, específica VIP Pass.
@@ -59,8 +59,8 @@ export async function waSendConfirmacion(reserva, salida) {
   const horaSalida = salida?.hora || "Ver confirmación";
   const tipo       = reserva.tipo || "Pasadía";
 
-  // Intento 1 — confirmacion_pasadia (genérica con tipo)
-  const r1 = await sendWhatsApp(telefono, "confirmacion_pasadia", [
+  // Intento 1 — confirmacion_pasadia_atolon (genérica con tipo)
+  const r1 = await sendWhatsApp(telefono, "confirmacion_pasadia_atolon", [
     nombre,
     tipo,
     fecha,
@@ -69,7 +69,7 @@ export async function waSendConfirmacion(reserva, salida) {
     totalCOP,
     reserva.id,
   ], "es");
-  if (!r1?.error) return { template_used: "confirmacion_pasadia", ...r1 };
+  if (!r1?.error) return { template_used: "confirmacion_pasadia_atolon", ...r1 };
 
   // Intento 2 — vip_pass_confirmacion
   const r2 = await sendWhatsApp(telefono, "vip_pass_confirmacion", [

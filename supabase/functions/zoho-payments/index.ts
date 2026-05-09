@@ -842,7 +842,7 @@ serve(async (req) => {
 });
 
 // ── Enviar confirmación de reserva por WhatsApp ────────────────────────────
-// Cascade fallback: confirmacion_pasadia (genérica con tipo) →
+// Cascade fallback: confirmacion_pasadia_atolon (genérica con tipo) →
 // vip_pass_confirmacion (VIP Pass) → confirmacionvip (sin variables).
 async function enviarWhatsAppConfirmacion(SB: any, reserva: any): Promise<void> {
   const telefono = reserva?.telefono || reserva?.contacto;
@@ -882,7 +882,7 @@ async function enviarWhatsAppConfirmacion(SB: any, reserva: any): Promise<void> 
   };
 
   // 1) Genérica con tipo
-  if (await trySend("confirmacion_pasadia", [nombre, tipo, fecha, String(reserva.pax || 1), horaSalida, totalCOP, reserva.id], "es")) return;
+  if (await trySend("confirmacion_pasadia_atolon", [nombre, tipo, fecha, String(reserva.pax || 1), horaSalida, totalCOP, reserva.id], "es")) return;
   // 2) VIP-específica
   if (await trySend("vip_pass_confirmacion", [nombre, fecha, String(reserva.pax || 1), horaSalida, totalCOP, reserva.id], "es")) return;
   // 3) Fallback sin variables

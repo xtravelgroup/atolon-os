@@ -386,7 +386,7 @@ serve(async (req) => {
 });
 
 // ── Enviar confirmación de reserva por WhatsApp ────────────────────────────
-// Cascade fallback de templates: confirmacion_pasadia (genérica con tipo) →
+// Cascade fallback de templates: confirmacion_pasadia_atolon (genérica con tipo) →
 // vip_pass_confirmacion (VIP Pass) → confirmacionvip (sin variables).
 // Si todas fallan o la reserva no tiene teléfono, no rompe el webhook.
 async function enviarWhatsAppConfirmacion(SB: any, reserva: any): Promise<void> {
@@ -426,8 +426,8 @@ async function enviarWhatsAppConfirmacion(SB: any, reserva: any): Promise<void> 
     return r.ok && !d?.error;
   };
 
-  // 1) Genérica con tipo (confirmacion_pasadia)
-  if (await trySend("confirmacion_pasadia", [nombre, tipo, fecha, String(reserva.pax || 1), horaSalida, totalCOP, reserva.id], "es")) return;
+  // 1) Genérica con tipo (confirmacion_pasadia_atolon)
+  if (await trySend("confirmacion_pasadia_atolon", [nombre, tipo, fecha, String(reserva.pax || 1), horaSalida, totalCOP, reserva.id], "es")) return;
 
   // 2) VIP-específica
   if (await trySend("vip_pass_confirmacion", [nombre, fecha, String(reserva.pax || 1), horaSalida, totalCOP, reserva.id], "es")) return;

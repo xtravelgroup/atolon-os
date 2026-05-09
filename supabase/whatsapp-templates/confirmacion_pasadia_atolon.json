@@ -1,5 +1,5 @@
 {
-  "name": "confirmacion_pasadia",
+  "name": "confirmacion_pasadia_atolon",
   "category": "UTILITY",
   "language": "es",
   "components": [
@@ -22,11 +22,6 @@
           "text": "Ver mi confirmación",
           "url": "https://atolon.co/zarpe-info?id={{1}}",
           "example": ["WEB-1778083991954"]
-        },
-        {
-          "type": "PHONE_NUMBER",
-          "text": "Llamarnos",
-          "phone_number": "+573003194215"
         }
       ]
     }
