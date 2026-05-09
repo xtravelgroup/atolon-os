@@ -42,7 +42,17 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const EVENTS_KEY = Deno.env.get("WOMPI_EVENTS_KEY") || "";
+// Events secret de Wompi — usado para validar firma HMAC del webhook.
+// Primero env, luego BD. Rotable desde UI sin Supabase secrets.
+async function loadWompiEventsSecret(SB: any): Promise<string> {
+  const fromEnv = Deno.env.get("WOMPI_EVENTS_SECRET") || Deno.env.get("WOMPI_EVENTS_KEY") || "";
+  if (fromEnv) return fromEnv;
+  try {
+    const { data } = await SB.from("configuracion").select("wompi_events_secret").eq("id", "atolon").single();
+    if (data?.wompi_events_secret) return data.wompi_events_secret;
+  } catch { /* ignore */ }
+  return "";
+}
 
 // Private key de Wompi — necesaria para consultar GET /v1/transactions?reference=
 // (el endpoint de search no acepta public key). Se lee de configuracion.wompi_priv_key
@@ -64,10 +74,10 @@ const CORS = {
 };
 
 // ── Validar firma del evento ────────────────────────────────────────────
-// Wompi calcula: SHA256( <prop1_value><prop2_value>...<propN_value><timestamp><events_key> )
-async function validarFirma(payload: any): Promise<boolean> {
-  if (!EVENTS_KEY) {
-    console.warn("WOMPI_EVENTS_KEY no configurada — saltando validación");
+// Wompi calcula: SHA256( <prop1_value><prop2_value>...<propN_value><timestamp><events_secret> )
+async function validarFirma(payload: any, eventsSecret: string): Promise<boolean> {
+  if (!eventsSecret) {
+    console.warn("WOMPI_EVENTS_SECRET no configurado — saltando validación");
     return true; // permitir mientras el secret no esté seteado (modo dev)
   }
   const signature = payload?.signature;
@@ -81,7 +91,7 @@ async function validarFirma(payload: any): Promise<boolean> {
     return String(v ?? "");
   }).join("");
 
-  const message = concatProps + String(payload.timestamp) + EVENTS_KEY;
+  const message = concatProps + String(payload.timestamp) + eventsSecret;
   const msgBytes = new TextEncoder().encode(message);
   const hashBuffer = await crypto.subtle.digest("SHA-256", msgBytes);
   const hashHex = Array.from(new Uint8Array(hashBuffer))
@@ -119,12 +129,14 @@ serve(async (req) => {
         .select("*", { count: "exact", head: true });
 
       const privKey = await loadWompiPrivKey(SB);
+      const eventsSecret = await loadWompiEventsSecret(SB);
       return jsonResp({
         ok: true,
         timestamp: new Date().toISOString(),
         webhook_url: `${Deno.env.get("SUPABASE_URL")}/functions/v1/wompi-webhook`,
         config: {
-          events_key_configured: !!EVENTS_KEY,
+          events_secret_configured: !!eventsSecret,
+          events_secret_source: eventsSecret ? (Deno.env.get("WOMPI_EVENTS_SECRET") || Deno.env.get("WOMPI_EVENTS_KEY") ? "env" : "db") : "none",
           private_key_configured: !!privKey,
           private_key_source: privKey ? (Deno.env.get("WOMPI_PRIVATE_KEY") ? "env" : "db") : "none",
         },
@@ -141,8 +153,7 @@ serve(async (req) => {
     return jsonResp({
       ok: true,
       service: "wompi-webhook",
-      events_key_configured: !!EVENTS_KEY,
-      version: "1.1.0",
+      version: "1.2.0",
     });
   }
 
@@ -278,7 +289,8 @@ serve(async (req) => {
     }).then(() => {}).catch(() => {});
 
     // Validar firma — pero retornar 200 igual para que Wompi no reintente
-    const firmaOK = await validarFirma(payload);
+    const eventsSecret = await loadWompiEventsSecret(SB);
+    const firmaOK = await validarFirma(payload, eventsSecret);
     if (!firmaOK) {
       console.error("Firma Wompi inválida:", { ref, txId, sig: payload?.signature?.checksum?.slice(0, 12) });
       return jsonResp({ received: true, firma: "invalid" }, 200);
