@@ -45,7 +45,10 @@ type MetaConfig = {
   source: { token: string; phoneId: string; wabaId: string };
 };
 
-// ── Cargar config: env vars primero, luego BD ────────────────────────────────
+// ── Cargar config: BD primero (rotable), env vars como fallback ──────────────
+// Razón: cuando se rota el token desde la UI, queda en BD. El env var de
+// Supabase puede quedar con el token viejo y bloquear envíos. Priorizar
+// DB asegura que siempre se use el más reciente.
 async function loadMetaConfig(SB: any): Promise<MetaConfig> {
   const envToken   = Deno.env.get("META_WHATSAPP_TOKEN") || "";
   const envPhone   = Deno.env.get("META_WHATSAPP_PHONE_ID") || "";
@@ -65,14 +68,14 @@ async function loadMetaConfig(SB: any): Promise<MetaConfig> {
   } catch { /* ignore */ }
 
   return {
-    token:   envToken || dbToken,
-    phoneId: envPhone || dbPhone,
-    wabaId:  envWaba  || dbWaba,
+    token:   dbToken || envToken,
+    phoneId: dbPhone || envPhone,
+    wabaId:  dbWaba  || envWaba,
     tokenExpiresAt: dbExpires,
     source: {
-      token:   envToken ? "env" : (dbToken ? "db" : "none"),
-      phoneId: envPhone ? "env" : (dbPhone ? "db" : "none"),
-      wabaId:  envWaba  ? "env" : (dbWaba  ? "db" : "none"),
+      token:   dbToken ? "db" : (envToken ? "env" : "none"),
+      phoneId: dbPhone ? "db" : (envPhone ? "env" : "none"),
+      wabaId:  dbWaba  ? "db" : (envWaba  ? "env" : "none"),
     },
   };
 }
