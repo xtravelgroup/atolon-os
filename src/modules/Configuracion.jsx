@@ -870,6 +870,9 @@ export default function Configuracion() {
               )}
             </div>
 
+            {/* ── WHATSAPP BUSINESS (Meta) ────────────────────────── */}
+            <WhatsAppMetaCard config={config} onSaved={fetchConfig} />
+
             {/* ── SUPABASE ─────────────────────────────────────────── */}
             <div style={{ background: B.navyMid, borderRadius: 12, padding: 22 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
@@ -981,6 +984,192 @@ export default function Configuracion() {
           </div>
         );
       })()}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// WhatsAppMetaCard — gestiona credenciales de WhatsApp Business (Meta Cloud API)
+// ═══════════════════════════════════════════════════════════════════════════
+function WhatsAppMetaCard({ config, onSaved }) {
+  const [showForm, setShowForm] = useState(false);
+  const [showToken, setShowToken] = useState(false);
+  const [diag, setDiag] = useState(null);
+  const [loadingDiag, setLoadingDiag] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [form, setForm] = useState({
+    token: "", phone_id: "", waba_id: "", token_expires_at: "",
+  });
+
+  useEffect(() => {
+    setForm({
+      token:    config?.meta_whatsapp_token    || "",
+      phone_id: config?.meta_whatsapp_phone_id || "",
+      waba_id:  config?.meta_whatsapp_waba_id  || "",
+      token_expires_at: config?.meta_whatsapp_token_expires_at?.slice(0, 16) || "",
+    });
+  }, [config]);
+
+  const conectado = !!(config?.meta_whatsapp_token && config?.meta_whatsapp_phone_id);
+  const mask = (s) => s ? s.slice(0, 8) + "••••••••••••" + s.slice(-4) : "";
+
+  const cargarDiag = async () => {
+    setLoadingDiag(true);
+    try {
+      const res = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/send-whatsapp/diag`,
+        { headers: { Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`, apikey: import.meta.env.VITE_SUPABASE_ANON_KEY } }
+      );
+      setDiag(await res.json());
+    } catch (e) {
+      setDiag({ ok: false, error: String(e) });
+    }
+    setLoadingDiag(false);
+  };
+
+  const guardar = async () => {
+    if (!supabase || saving) return;
+    setSaving(true);
+    await supabase.from("configuracion").update({
+      meta_whatsapp_token:    form.token.trim() || null,
+      meta_whatsapp_phone_id: form.phone_id.trim() || null,
+      meta_whatsapp_waba_id:  form.waba_id.trim() || null,
+      meta_whatsapp_token_expires_at: form.token_expires_at ? new Date(form.token_expires_at).toISOString() : null,
+      updated_at: new Date().toISOString(),
+    }).eq("id", "atolon");
+    await onSaved?.();
+    setSaving(false);
+    setShowForm(false);
+  };
+
+  // Computar alertas del estado actual
+  const expiresDate = config?.meta_whatsapp_token_expires_at ? new Date(config.meta_whatsapp_token_expires_at) : null;
+  const expired = expiresDate && expiresDate < new Date();
+  const expiringSoon = expiresDate && !expired && (expiresDate.getTime() - Date.now() < 7 * 24 * 3600 * 1000);
+
+  return (
+    <div style={{ background: B.navyMid, borderRadius: 12, padding: 22, border: `1px solid ${conectado ? "#25D366" + "44" : B.navyLight}` }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+        <div style={{ width: 42, height: 42, borderRadius: 10, background: "#25D366", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 900, fontSize: 18, color: "#fff", flexShrink: 0 }}>💬</div>
+        <div style={{ flex: 1, minWidth: 200 }}>
+          <div style={{ fontWeight: 700, fontSize: 15 }}>WhatsApp Business · Meta Cloud API</div>
+          <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)" }}>Confirmaciones · Recordatorios · Templates aprobadas</div>
+        </div>
+        <span style={{ fontSize: 11, padding: "3px 12px", borderRadius: 10,
+          background: expired ? B.danger + "22" : conectado ? B.success + "22" : B.navyLight,
+          color: expired ? B.danger : conectado ? B.success : "rgba(255,255,255,0.4)", flexShrink: 0 }}>
+          {expired ? "⚠ Token expirado" : conectado ? "✓ Conectado" : "Sin configurar"}
+        </span>
+        <button onClick={() => setShowForm(v => !v)} style={{ background: showForm ? B.navyLight : "#25D366", color: showForm ? B.sand : "#fff", border: "none", borderRadius: 8, padding: "7px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer", flexShrink: 0 }}>
+          {showForm ? "Cancelar" : conectado ? "Editar" : "Conectar"}
+        </button>
+        <button onClick={cargarDiag} disabled={loadingDiag || !conectado} style={{ background: B.navyLight, color: B.sand, border: "none", borderRadius: 8, padding: "7px 14px", fontSize: 12, cursor: "pointer", opacity: !conectado ? 0.4 : 1, flexShrink: 0 }}>
+          {loadingDiag ? "..." : "🔍 Diagnóstico"}
+        </button>
+      </div>
+
+      {/* Alertas críticas */}
+      {(expired || expiringSoon) && !showForm && (
+        <div style={{ marginTop: 14, padding: "10px 14px", background: B.danger + "15", borderRadius: 8, border: `1px solid ${B.danger}44`, fontSize: 12, color: B.danger }}>
+          {expired
+            ? `⚠️ Token expiró el ${expiresDate.toLocaleDateString("es-CO")}. Genera uno permanente en business.facebook.com → Settings → System Users.`
+            : `⏰ Token expira el ${expiresDate.toLocaleDateString("es-CO")} a las ${expiresDate.toLocaleTimeString("es-CO", { hour: '2-digit', minute: '2-digit' })}. Renuévalo antes para no interrumpir envíos.`}
+        </div>
+      )}
+
+      {/* Vista de credenciales actuales */}
+      {conectado && !showForm && (
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 16 }}>
+          <div>
+            <label style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: "0.05em", display: "block", marginBottom: 4 }}>Phone Number ID</label>
+            <div style={{ padding: "10px 14px", background: B.navy, borderRadius: 8, fontSize: 12, color: B.sky, fontFamily: "monospace" }}>{config.meta_whatsapp_phone_id || "—"}</div>
+          </div>
+          <div>
+            <label style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: "0.05em", display: "block", marginBottom: 4 }}>WABA ID</label>
+            <div style={{ padding: "10px 14px", background: B.navy, borderRadius: 8, fontSize: 12, color: B.sky, fontFamily: "monospace" }}>{config.meta_whatsapp_waba_id || "—"}</div>
+          </div>
+          <div style={{ gridColumn: "1 / -1" }}>
+            <label style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: "0.05em", display: "block", marginBottom: 4 }}>Token</label>
+            <div style={{ padding: "10px 14px", background: B.navy, borderRadius: 8, fontSize: 12, color: B.success, fontFamily: "monospace" }}>{mask(config.meta_whatsapp_token)}</div>
+          </div>
+        </div>
+      )}
+
+      {/* Diag panel */}
+      {diag && !showForm && (
+        <div style={{ marginTop: 16, padding: 16, background: B.navy, borderRadius: 10, fontSize: 12 }}>
+          <div style={{ fontWeight: 700, marginBottom: 10, color: B.sand }}>📊 Estado en Meta</div>
+          {diag.phone_status && (
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 12 }}>
+              <div>📞 Display: <strong>{diag.phone_status.display_phone_number}</strong></div>
+              <div>📋 Verified name: <strong style={{ color: diag.phone_status.name_status === "DECLINED" ? B.danger : B.white }}>{diag.phone_status.verified_name}</strong></div>
+              <div>✅ Status: <strong style={{ color: diag.phone_status.status === "CONNECTED" ? B.success : B.warning }}>{diag.phone_status.status}</strong></div>
+              <div>📡 Quality: <strong style={{ color: diag.phone_status.quality_rating === "GREEN" ? B.success : B.warning }}>{diag.phone_status.quality_rating}</strong></div>
+              <div>🔐 Code verification: <strong style={{ color: diag.phone_status.code_verification_status === "VERIFIED" ? B.success : B.danger }}>{diag.phone_status.code_verification_status}</strong></div>
+              <div>📛 Name status: <strong style={{ color: diag.phone_status.name_status === "APPROVED" ? B.success : B.danger }}>{diag.phone_status.name_status}</strong></div>
+            </div>
+          )}
+          {diag.templates && diag.templates.length > 0 && (
+            <div>
+              <div style={{ fontWeight: 700, marginTop: 8, marginBottom: 6, color: B.sand }}>📝 Templates</div>
+              {diag.templates.map(t => (
+                <div key={t.id} style={{ padding: "6px 10px", background: B.navyMid, borderRadius: 6, marginBottom: 4, display: "flex", justifyContent: "space-between" }}>
+                  <span style={{ fontFamily: "monospace" }}>{t.name}</span>
+                  <span style={{ color: t.status === "APPROVED" ? B.success : t.status === "REJECTED" ? B.danger : B.warning, fontWeight: 600 }}>{t.status}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Formulario edit */}
+      {showForm && (
+        <div style={{ marginTop: 16, padding: 18, background: B.navy, borderRadius: 10, border: `1px solid #25D36644` }}>
+          <div style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", marginBottom: 14, lineHeight: 1.6 }}>
+            Obtén estos valores en <strong style={{ color: "#25D366" }}>business.facebook.com</strong> → Business Settings → WhatsApp Accounts.<br />
+            Para token <strong>permanente (sin caducidad)</strong>: Settings → Users → System Users → Generate Token con scope <code style={{ background: B.navyLight, padding: "1px 5px", borderRadius: 4 }}>whatsapp_business_messaging</code>.
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            <div>
+              <label style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Access Token <span style={{ color: B.warning }}>*</span></label>
+              <div style={{ position: "relative" }}>
+                <input type={showToken ? "text" : "password"} value={form.token}
+                  onChange={e => setForm(f => ({ ...f, token: e.target.value }))}
+                  placeholder="EAAxxxxxxxxxxxxxxxxxxxxxxxxx"
+                  style={{ width: "100%", padding: "10px 80px 10px 14px", background: B.navyMid, border: `1px solid ${B.navyLight}`, borderRadius: 8, color: B.white, fontFamily: "monospace", fontSize: 11, outline: "none", boxSizing: "border-box" }} />
+                <button onClick={() => setShowToken(v => !v)} type="button" style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", color: "rgba(255,255,255,0.4)", fontSize: 11, cursor: "pointer" }}>{showToken ? "Ocultar" : "Ver"}</button>
+              </div>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+              <div>
+                <label style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Phone Number ID</label>
+                <input value={form.phone_id} onChange={e => setForm(f => ({ ...f, phone_id: e.target.value }))}
+                  placeholder="555249284336728"
+                  style={{ width: "100%", padding: "10px 14px", background: B.navyMid, border: `1px solid ${B.navyLight}`, borderRadius: 8, color: B.white, fontFamily: "monospace", fontSize: 12, outline: "none", boxSizing: "border-box" }} />
+              </div>
+              <div>
+                <label style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: "0.05em" }}>WABA ID</label>
+                <input value={form.waba_id} onChange={e => setForm(f => ({ ...f, waba_id: e.target.value }))}
+                  placeholder="604162649435767"
+                  style={{ width: "100%", padding: "10px 14px", background: B.navyMid, border: `1px solid ${B.navyLight}`, borderRadius: 8, color: B.white, fontFamily: "monospace", fontSize: 12, outline: "none", boxSizing: "border-box" }} />
+              </div>
+            </div>
+            <div>
+              <label style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Fecha de expiración del token <span style={{ color: "rgba(255,255,255,0.3)" }}>(opcional, alerta UI)</span></label>
+              <input type="datetime-local" value={form.token_expires_at} onChange={e => setForm(f => ({ ...f, token_expires_at: e.target.value }))}
+                style={{ width: "100%", padding: "10px 14px", background: B.navyMid, border: `1px solid ${B.navyLight}`, borderRadius: 8, color: B.white, fontSize: 12, outline: "none", boxSizing: "border-box", colorScheme: "dark" }} />
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: 10, marginTop: 16 }}>
+            <button onClick={() => setShowForm(false)} style={{ flex: 1, padding: "10px", background: "none", border: `1px solid ${B.navyLight}`, borderRadius: 8, color: "rgba(255,255,255,0.5)", fontSize: 13, cursor: "pointer" }}>Cancelar</button>
+            <button onClick={guardar} disabled={saving || !form.token || !form.phone_id}
+              style={{ flex: 2, padding: "10px", background: saving ? B.navyLight : "#25D366", color: "#fff", border: "none", borderRadius: 8, fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
+              {saving ? "Guardando..." : "Guardar credenciales"}
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
