@@ -62,6 +62,26 @@ async function upsertConversacion(SB: any, telefono: string, waId: string, nombr
   return nueva;
 }
 
+// Disparar respuesta de IA (best-effort, no bloquea)
+async function triggerAI(conversacion_id: string) {
+  try {
+    await fetch(
+      `${Deno.env.get("SUPABASE_URL")}/functions/v1/whatsapp-ai/respond`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+          "apikey": Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+        },
+        body: JSON.stringify({ conversacion_id }),
+      }
+    );
+  } catch (e) {
+    console.warn("[webhook → AI] failed:", (e as Error).message);
+  }
+}
+
 // Procesar mensaje individual de Meta
 async function processIncomingMessage(SB: any, msg: any, contact: any) {
   const waId       = msg.from || contact?.wa_id || "";
@@ -101,6 +121,12 @@ async function processIncomingMessage(SB: any, msg: any, contact: any) {
     sender:          "customer",
     status:          "received",
   });
+
+  // Disparar IA si está activa para esta conversación (no bloqueante)
+  if (conv.ai_enabled && !conv.taken_over_by && tipo !== "reaction") {
+    // No await — fire and forget para no bloquear el ack a Meta
+    triggerAI(conv.id);
+  }
 
   return { ok: true, conv_id: conv.id, ai_enabled: conv.ai_enabled };
 }

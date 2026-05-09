@@ -403,6 +403,10 @@ verify_jwt = false
 # verify_token query param + signing del payload.
 [functions.whatsapp-webhook]
 verify_jwt = false
+# whatsapp-ai motor de respuestas con Claude. Se invoca desde whatsapp-webhook
+# y desde admin UI. Auth con anon key suficiente.
+[functions.whatsapp-ai]
+verify_jwt = true
 
 # Experimental features may be deprecated any time
 [experimental]

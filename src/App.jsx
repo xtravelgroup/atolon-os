@@ -331,6 +331,7 @@ const CierreCaja = lazy(() => import("./modules/CierreCaja"));
 const Actividades = lazy(() => import("./modules/Actividades"));
 const Mantenimiento = lazy(() => import("./modules/Mantenimiento"));
 const CarritoAbandonado = lazy(() => import("./modules/CarritoAbandonado"));
+const WhatsAppChat = lazy(() => import("./modules/WhatsAppChat"));
 const Metas = lazy(() => import("./modules/Metas"));
 const Comisiones = lazy(() => import("./modules/Comisiones"));
 const Resultados = lazy(() => import("./modules/Resultados"));
@@ -400,6 +401,7 @@ const MODULE_MAP = {
   mantenimiento: <Mantenimiento />,
   actividades:  <Actividades />,
   carrito_abandonado: <CarritoAbandonado />,
+  whatsapp_chat: <WhatsAppChat />,
   metas: <Metas />,
   comisiones: <Comisiones />,
   resultados: <Resultados />,
