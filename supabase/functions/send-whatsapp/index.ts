@@ -86,7 +86,28 @@ function normalizePhone(raw: string): string {
 }
 
 // ── Build Meta API payload (template) ────────────────────────────────────────
-function buildTemplatePayload(to: string, template: string, params: string[], lang = "es") {
+// `params` son las variables del body. `buttonParams` opcional son los
+// parámetros para botones URL dinámicos (ej: link a confirmación con id de
+// reserva). Si la template tiene botón URL con {{1}}, ese {{1}} viene del
+// PRIMER buttonParams (sub_type=url, index=0).
+function buildTemplatePayload(to: string, template: string, params: string[], lang = "es", buttonParams?: string[]) {
+  const components: any[] = [];
+  if (params.length > 0) {
+    components.push({
+      type: "body",
+      parameters: params.map(p => ({ type: "text", text: String(p) })),
+    });
+  }
+  if (buttonParams && buttonParams.length > 0) {
+    buttonParams.forEach((bp, idx) => {
+      components.push({
+        type: "button",
+        sub_type: "url",
+        index: String(idx),
+        parameters: [{ type: "text", text: String(bp) }],
+      });
+    });
+  }
   return {
     messaging_product: "whatsapp",
     recipient_type:    "individual",
@@ -95,12 +116,7 @@ function buildTemplatePayload(to: string, template: string, params: string[], la
     template: {
       name:     template,
       language: { code: lang },
-      components: params.length > 0
-        ? [{
-            type:       "body",
-            parameters: params.map(p => ({ type: "text", text: String(p) })),
-          }]
-        : [],
+      components,
     },
   };
 }
@@ -231,7 +247,7 @@ Deno.serve(async (req: Request) => {
   // ══ POST send (template) — admite path "" o "/send" ═════════════════
   if (req.method === "POST" && (path === "" || path === "/send")) {
     try {
-      const { to, template, params = [], lang = "es", reserva_id } = await req.json();
+      const { to, template, params = [], lang = "es", reserva_id, buttonParams } = await req.json();
       if (!to || !template) return jsonResp({ error: "to and template are required" }, 400);
 
       const cfg = await loadMetaConfig(SB);
@@ -240,7 +256,13 @@ Deno.serve(async (req: Request) => {
       }
 
       const phone   = normalizePhone(to);
-      const payload = buildTemplatePayload(phone, template, params, lang);
+      // Si la template es confirmacion_pasadia_atolon o vip_pass_confirmacion
+      // y no se pasa buttonParams explícito, usar reserva_id (último param o
+      // el reserva_id del body) como parámetro del botón URL.
+      const autoButtonParams = !buttonParams && (template === "confirmacion_pasadia_atolon" || template === "vip_pass_confirmacion")
+        ? [String(reserva_id || params[params.length - 1] || "")]
+        : buttonParams;
+      const payload = buildTemplatePayload(phone, template, params, lang, autoButtonParams);
 
       const res = await fetch(
         `https://graph.facebook.com/v19.0/${cfg.phoneId}/messages`,
