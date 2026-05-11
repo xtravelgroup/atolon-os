@@ -4327,6 +4327,7 @@ export default function Reservas() {
                       {saldo > 0 && <div><span style={{ color: B.warning, fontWeight: 700 }}>Saldo: {COP(saldo)}</span></div>}
                     </div>
                     {r.notas && <div style={{ marginTop: 6, fontSize: 11, color: B.sand, opacity: 0.7 }}>{r.notas}</div>}
+                    {r.notas_club && <div style={{ marginTop: 6, fontSize: 11, color: "#c4b5fd", background: "rgba(167,139,250,0.08)", border: "1px solid rgba(167,139,250,0.25)", borderRadius: 6, padding: "4px 8px" }}>🏝 {r.notas_club}</div>}
                   </div>
                 );
               })}
@@ -4367,6 +4368,7 @@ export default function Reservas() {
                           <div>{r.nombre}</div>
                           {r.created_at && <div style={{ fontSize: 11, color: B.sand, marginTop: 1 }}>⏱ {fmtHora(r.created_at)}</div>}
                           {r.notas && <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginTop: 1, maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.notas}</div>}
+                          {r.notas_club && <div title={r.notas_club} style={{ fontSize: 11, color: "#c4b5fd", marginTop: 2, background: "rgba(167,139,250,0.08)", border: "1px solid rgba(167,139,250,0.25)", borderRadius: 4, padding: "2px 6px", maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", display: "inline-block" }}>🏝 {r.notas_club}</div>}
                         </td>
                         <td style={{ ...tdStyle, color: B.sand, fontSize: 13 }}>{r.tipo}</td>
                         <td style={{ ...tdStyle, textAlign: "center", fontWeight: 700, color: B.sky }}>{r.pax}</td>
