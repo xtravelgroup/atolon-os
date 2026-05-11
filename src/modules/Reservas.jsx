@@ -271,6 +271,54 @@ function FacturaElectronicaForm({ form, set, editing = true }) {
 
 // ── ReservaDetalle ────────────────────────────────────────────────────────────
 
+// Construye el state inicial completo del form desde la reserva.
+// Se reusa en useState y en el reset al cancelar — antes el reset era una
+// versión recortada (13 campos) que perdía notas_club, fe_*, aliado_id,
+// vendedor, forma_pago, fecha_pago, nombre_embarcacion, hora_llegada. Al
+// volver a editar y guardar, esos campos quedaban en undefined y el UPDATE
+// los sobreescribía a NULL en BD — bug destructivo que borró alergias
+// críticas de servicio y datos de facturación electrónica en producción.
+function formFromReserva(r0) {
+  return {
+    nombre:    r0.nombre    || "",
+    contacto:  r0.contacto  || "",
+    telefono:  r0.telefono  || "",
+    fecha:     r0.fecha     || "",
+    salida_id: r0.salida    || r0.salida_id || "",
+    tipo:      r0.tipo      || "",
+    canal:     r0.canal     || "",
+    pax_a:     r0.pax_a     ?? r0.pax ?? 1,
+    pax_n:     r0.pax_n     ?? 0,
+    abono:     r0.abono     || 0,
+    total:     r0.total     || 0,
+    estado:    r0.estado    || "pendiente",
+    notas:     r0.notas     || "",
+    forma_pago: r0.forma_pago || "Transferencia",
+    fecha_pago: r0.fecha_pago ? (r0.fecha_pago + "").slice(0, 10) : todayStr(),
+    vendedor:   r0.vendedor  || "Sin asignar",
+    aliado_id:  r0.aliado_id || "",
+    nombre_embarcacion: r0.nombre_embarcacion || "",
+    hora_llegada: r0.hora_llegada || "",
+    notas_club: r0.notas_club || "",
+    // Facturación electrónica
+    factura_electronica: r0.factura_electronica || false,
+    fe_tipo_persona:    r0.fe_tipo_persona    || "natural",
+    fe_tipo_documento:  r0.fe_tipo_documento  || "CC",
+    fe_numero_documento: r0.fe_numero_documento || "",
+    fe_dv:              r0.fe_dv              || "",
+    fe_razon_social:    r0.fe_razon_social    || "",
+    fe_nombres:         r0.fe_nombres         || "",
+    fe_apellidos:       r0.fe_apellidos       || "",
+    fe_email:           r0.fe_email           || r0.email || "",
+    fe_telefono:        r0.fe_telefono        || r0.telefono || "",
+    fe_direccion:       r0.fe_direccion       || "",
+    fe_ciudad:          r0.fe_ciudad          || "",
+    fe_departamento:    r0.fe_departamento    || "",
+    fe_pais:            r0.fe_pais            || "Colombia",
+    fe_regimen:         r0.fe_regimen         || "no_responsable_iva",
+  };
+}
+
 function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList = [], aliadoList = [], vendedoresList = VENDEDORES, pasadiaList = PASADIAS, conveniosMap = {} }) {
   const [tab, setTab]           = useState("detalles");
   const [histLogs,  setHistLogs]  = useState([]);
@@ -308,44 +356,7 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
   const [retractoMode, setRetractoMode]       = useState("retracto"); // "retracto" | "credito" when in retracto period
   const [sendingEmail, setSendingEmail]       = useState(false);
   const [emailSent, setEmailSent]             = useState(false);
-  const [form, setForm]     = useState({
-    nombre:    r0.nombre    || "",
-    contacto:  r0.contacto  || "",
-    telefono:  r0.telefono  || "",
-    fecha:     r0.fecha     || "",
-    salida_id: r0.salida    || "",
-    tipo:      r0.tipo      || "",
-    canal:     r0.canal     || "",
-    pax_a:     r0.pax_a     ?? r0.pax ?? 1,
-    pax_n:     r0.pax_n     ?? 0,
-    abono:     r0.abono     || 0,
-    total:     r0.total     || 0,
-    estado:    r0.estado    || "pendiente",
-    notas:     r0.notas     || "",
-    forma_pago: r0.forma_pago || "Transferencia",
-    fecha_pago: r0.fecha_pago ? (r0.fecha_pago + "").slice(0, 10) : todayStr(),
-    vendedor:   r0.vendedor  || "Sin asignar",
-    aliado_id:  r0.aliado_id || "",
-    nombre_embarcacion: r0.nombre_embarcacion || "",
-    hora_llegada: r0.hora_llegada || "",
-    notas_club: r0.notas_club || "",
-    // Facturación electrónica
-    factura_electronica: r0.factura_electronica || false,
-    fe_tipo_persona:    r0.fe_tipo_persona    || "natural",
-    fe_tipo_documento:  r0.fe_tipo_documento  || "CC",
-    fe_numero_documento: r0.fe_numero_documento || "",
-    fe_dv:              r0.fe_dv              || "",
-    fe_razon_social:    r0.fe_razon_social    || "",
-    fe_nombres:         r0.fe_nombres         || "",
-    fe_apellidos:       r0.fe_apellidos       || "",
-    fe_email:           r0.fe_email           || r0.email || "",
-    fe_telefono:        r0.fe_telefono        || r0.telefono || "",
-    fe_direccion:       r0.fe_direccion       || "",
-    fe_ciudad:          r0.fe_ciudad          || "",
-    fe_departamento:    r0.fe_departamento    || "",
-    fe_pais:            r0.fe_pais            || "Colombia",
-    fe_regimen:         r0.fe_regimen         || "no_responsable_iva",
-  });
+  const [form, setForm]     = useState(() => formFromReserva(r0));
 
   // ── Modo de precio (Público vs Neto) al editar ─────────────────────────────
   // Detecta el modo inicial: si el precio_u coincide con el neto del convenio/catálogo, inicia en "neto"
@@ -1433,7 +1444,7 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
               {/* Save / Cancel */}
               {editing && (
                 <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", paddingTop: 4 }}>
-                  <button onClick={() => { setEdit(false); setNotaMod(""); setForm({ nombre: r0.nombre||"", contacto: r0.contacto||"", telefono: r0.telefono||"", fecha: r0.fecha||"", salida_id: r0.salida||"", tipo: r0.tipo||"", canal: r0.canal||"", pax_a: r0.pax_a??r0.pax??1, pax_n: r0.pax_n??0, abono: r0.abono||0, total: r0.total||0, estado: r0.estado||"pendiente", notas: r0.notas||"" }); }} style={{ background: "none", border: `1px solid ${B.navyLight}`, borderRadius: 8, color: B.sand, padding: "9px 20px", fontSize: 14, cursor: "pointer", fontWeight: 600 }}>
+                  <button onClick={() => { setEdit(false); setNotaMod(""); setForm(formFromReserva(r0)); }} style={{ background: "none", border: `1px solid ${B.navyLight}`, borderRadius: 8, color: B.sand, padding: "9px 20px", fontSize: 14, cursor: "pointer", fontWeight: 600 }}>
                     Cancelar
                   </button>
                   <button onClick={handleSave} disabled={saving} style={{ background: B.sky, border: "none", borderRadius: 8, color: B.navy, padding: "9px 24px", fontSize: 14, cursor: "pointer", fontWeight: 700, opacity: saving ? 0.6 : 1 }}>
