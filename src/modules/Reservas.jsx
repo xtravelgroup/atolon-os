@@ -2653,6 +2653,7 @@ function mapRow(r) {
     extension:   r.extension,
     ext_regreso: r.ext_regreso,
     notas:       r.notas,
+    notas_club:  r.notas_club,   // ← antes se perdía aquí, dejando "Sin notas de club" en el detalle modal aún cuando BD tenía alergias críticas
     forma_pago:  r.forma_pago,
     fecha_pago:  r.fecha_pago ? (r.fecha_pago + "").slice(0, 10) : null,
     pagos:       r.pagos || [],
@@ -2661,6 +2662,38 @@ function mapRow(r) {
     grupo_id:    r.grupo_id,
     created_at:  r.created_at,
     updated_at:  r.updated_at,
+    // Embarcación / hora de llegada — también se perdían en mapRow
+    nombre_embarcacion: r.nombre_embarcacion,
+    hora_llegada:       r.hora_llegada,
+    // Facturación electrónica — TODOS los campos fe_* se perdían al hacer mapRow
+    factura_electronica: r.factura_electronica,
+    fe_tipo_persona:     r.fe_tipo_persona,
+    fe_tipo_documento:   r.fe_tipo_documento,
+    fe_numero_documento: r.fe_numero_documento,
+    fe_dv:               r.fe_dv,
+    fe_razon_social:     r.fe_razon_social,
+    fe_nombres:          r.fe_nombres,
+    fe_apellidos:        r.fe_apellidos,
+    fe_email:            r.fe_email,
+    fe_telefono:         r.fe_telefono,
+    fe_direccion:        r.fe_direccion,
+    fe_ciudad:           r.fe_ciudad,
+    fe_departamento:     r.fe_departamento,
+    fe_pais:             r.fe_pais,
+    fe_regimen:          r.fe_regimen,
+    fe_estado:           r.fe_estado,
+    fe_numero_factura:   r.fe_numero_factura,
+    fe_emitida_at:       r.fe_emitida_at,
+    // Descuentos / cortesía
+    descuento_cortesia:  r.descuento_cortesia,
+    descuento_agencia:   r.descuento_agencia,
+    descuento_general:   r.descuento_general,
+    // Web/Tatiana metadata
+    extras_solicitados:  r.extras_solicitados,
+    idioma:              r.idioma,
+    qr_code:             r.qr_code,
+    link_pago:           r.link_pago,
+    link_expira_at:      r.link_expira_at,
   };
 }
 
