@@ -198,10 +198,6 @@ export default function BookingPopup() {
   const [edadesNinos, setEdadesNinos] = useState([]); // array de edades por niño
   const [paxI,       setPaxI]      = useState(0);  // infants 0-2
   const [step,       setStep]      = useState(matchedProduct ? 1 : 0); // 0=select, 1=booking, 2=info, 3=done
-  // In popup mode the booking step is split into two screens:
-  // 0 = participants + Continue button → 1 = calendar/salidas/summary + Reservar
-  // In non-popup mode everything lives on one scroll, so this flag is ignored.
-  const [bookingSubStep, setBookingSubStep] = useState(0);
   const [form,      setForm]      = useState({ nombre: "", email: "", telefono: "", notas: "", ...FE_EMPTY });
   const setFE = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
@@ -866,18 +862,21 @@ export default function BookingPopup() {
 
   // ─── Shared UI helpers ──────────────────────────────────────────────────────
   function PaxRow({ label, sub, val, onDec, onInc, min = 0 }) {
+    const compact = isPopupMode;
+    const padY = compact ? 8 : 13;
+    const btn = compact ? 28 : 32;
     return (
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 0", borderBottom: `1px solid ${C.divider}` }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: `${padY}px 0`, borderBottom: `1px solid ${C.divider}` }}>
         <div>
-          <div style={{ fontSize: 14, fontWeight: 600, color: C.text }}>{label}</div>
-          {sub && <div style={{ fontSize: 12, color: C.textLight, marginTop: 1 }}>{sub}</div>}
+          <div style={{ fontSize: compact ? 13 : 14, fontWeight: 600, color: C.text }}>{label}</div>
+          {sub && <div style={{ fontSize: compact ? 11 : 12, color: C.textLight, marginTop: 1 }}>{sub}</div>}
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: compact ? 10 : 14 }}>
           <button onClick={onDec} disabled={val <= min}
-            style={{ width: 32, height: 32, borderRadius: "50%", border: `1.5px solid ${val <= min ? C.border : C.primary}`, background: "white", color: val <= min ? C.border : C.primary, fontSize: 18, lineHeight: 1, cursor: val <= min ? "not-allowed" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, flexShrink: 0 }}>−</button>
-          <span style={{ fontSize: 16, fontWeight: 700, color: C.text, minWidth: 20, textAlign: "center" }}>{val}</span>
+            style={{ width: btn, height: btn, borderRadius: "50%", border: `1.5px solid ${val <= min ? C.border : C.primary}`, background: "white", color: val <= min ? C.border : C.primary, fontSize: compact ? 16 : 18, lineHeight: 1, cursor: val <= min ? "not-allowed" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, flexShrink: 0 }}>−</button>
+          <span style={{ fontSize: compact ? 15 : 16, fontWeight: 700, color: C.text, minWidth: 18, textAlign: "center" }}>{val}</span>
           <button onClick={onInc}
-            style={{ width: 32, height: 32, borderRadius: "50%", border: `1.5px solid ${C.primary}`, background: "white", color: C.primary, fontSize: 18, lineHeight: 1, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, flexShrink: 0 }}>+</button>
+            style={{ width: btn, height: btn, borderRadius: "50%", border: `1.5px solid ${C.primary}`, background: "white", color: C.primary, fontSize: compact ? 16 : 18, lineHeight: 1, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, flexShrink: 0 }}>+</button>
         </div>
       </div>
     );
@@ -942,21 +941,8 @@ export default function BookingPopup() {
       );
     }
 
-    // Popup mode splits BookingStep into two sub-screens. Non-popup shows everything.
-    const showPaxBlock  = !isPopupMode || bookingSubStep === 0;
-    const showDateBlock = !isPopupMode || bookingSubStep === 1;
-
     return (
       <div>
-        {/* Back button — popup mode, when on dates sub-screen */}
-        {isPopupMode && bookingSubStep === 1 && (
-          <button
-            onClick={() => setBookingSubStep(0)}
-            style={{ background: "none", border: "none", color: C.accent, fontSize: 13, fontWeight: 600, cursor: "pointer", padding: 0, marginBottom: 14, display: "flex", alignItems: "center", gap: 4 }}>
-            ← {isEN ? "Back" : "Volver"}
-          </button>
-        )}
-
         {/* Photo gallery — hidden in popup mode (deep-link to a specific pasadía) */}
         {!isPopupMode && allPhotos.length > 0 && (
           <div style={{ marginBottom: 20, borderRadius: 12, overflow: "hidden", position: "relative" }}>
@@ -1047,9 +1033,8 @@ export default function BookingPopup() {
           );
         })()}
 
-        {/* Participants — popup sub-step 0 */}
-        {showPaxBlock && (
-        <div style={{ marginBottom: 24 }}>
+        {/* Participants */}
+        <div style={{ marginBottom: isPopupMode ? 14 : 24 }}>
           <h3 style={{ fontSize: 15, fontWeight: 700, color: C.text, marginBottom: 4 }}>{isEN ? "Participants" : "Participantes"}</h3>
           <div style={{ borderTop: `1px solid ${C.divider}` }}>
             <PaxRow
@@ -1114,11 +1099,9 @@ export default function BookingPopup() {
             )}
           </div>
         </div>
-        )}
 
-        {/* Calendar — hidden when date is locked by group; popup sub-step 1 */}
-        {showDateBlock && (
-        <div style={{ marginBottom: 24, display: grupoLock ? "none" : "block" }}>
+        {/* Calendar — hidden when date is locked by group */}
+        <div style={{ marginBottom: isPopupMode ? 14 : 24, display: grupoLock ? "none" : "block" }}>
           <h3 style={{ fontSize: 15, fontWeight: 700, color: C.text, marginBottom: 12 }}>{isEN ? "Select a date" : "Selecciona una fecha"}</h3>
           {/* Month navigation */}
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
@@ -1179,10 +1162,9 @@ export default function BookingPopup() {
             </div>
           )}
         </div>
-        )}
 
         {/* Salidas — group mode: solo buy-out groups necesitan seleccionar salida */}
-        {showDateBlock && grupoLock && grupoEvt?.buy_out && grupoEvt?.salidas_grupo?.length > 0 && (
+        {grupoLock && grupoEvt?.buy_out && grupoEvt?.salidas_grupo?.length > 0 && (
           <div style={{ marginBottom: 24 }}>
             <h3 style={{ fontSize: 15, fontWeight: 700, color: C.text, marginBottom: 12 }}>
               {isEN ? "Select departure time" : "Selecciona tu horario de salida"}
@@ -1212,7 +1194,7 @@ export default function BookingPopup() {
         )}
 
         {/* After Island — vessel name + arrival time instead of salida */}
-        {showDateBlock && product?.noSalida && !grupoLock && selDate && (
+        {product?.noSalida && !grupoLock && selDate && (
           <div style={{ marginBottom: 24 }}>
             <h3 style={{ fontSize: 15, fontWeight: 700, color: C.text, marginBottom: 12 }}>
               {isEN ? "Vessel details" : "Detalles de la embarcación"}
@@ -1245,7 +1227,7 @@ export default function BookingPopup() {
         )}
 
         {/* Salidas (departure times) — regular mode */}
-        {showDateBlock && !grupoLock && !product?.noSalida && selDate && (
+        {!grupoLock && !product?.noSalida && selDate && (
           <div style={{ marginBottom: 24 }}>
             <h3 style={{ fontSize: 15, fontWeight: 700, color: C.text, marginBottom: 12 }}>
               {isEN ? "Select departure time" : "Selecciona el horario de salida"}
@@ -1314,8 +1296,8 @@ export default function BookingPopup() {
           </div>
         )}
 
-        {/* Order summary — popup sub-step 1 only */}
-        {showDateBlock && (
+        {/* Order summary — compacto en popup */}
+        {!isPopupMode && (
         <div style={{ background: C.bgCard, borderRadius: 12, padding: "16px 18px", marginBottom: 20, border: `1px solid ${C.border}` }}>
           <h3 style={{ fontSize: 14, fontWeight: 700, color: C.text, marginBottom: 12, borderBottom: `2px solid ${C.accent}`, paddingBottom: 8, display: "inline-block" }}>{isEN ? "Order summary" : "Comprobar el pedido"}</h3>
           <div style={{ fontSize: 14, fontWeight: 600, color: C.text, marginBottom: 10 }}>{isEN && product.tipo_en ? product.tipo_en : product.tipo}</div>
@@ -1339,24 +1321,18 @@ export default function BookingPopup() {
         )}
 
         {/* CTA button */}
-        {isPopupMode && bookingSubStep === 0 ? (
-          <button
-            onClick={() => setBookingSubStep(1)}
-            disabled={paxA < product.minA}
-            style={{
-              width: "100%", padding: "15px 0", borderRadius: 10, border: "none",
-              background: paxA >= product.minA ? C.primary : C.border,
-              color: paxA >= product.minA ? "white" : C.textLight,
-              fontSize: 15, fontWeight: 700, cursor: paxA >= product.minA ? "pointer" : "not-allowed",
-              letterSpacing: "0.03em", transition: "all 0.15s",
-            }}>
-            {isEN ? "Continue →" : "Continuar →"}
-          </button>
-        ) : (() => {
+        {(() => {
           const afterOk = product.noSalida ? (embarcacion.trim() && horaLlegada) : true;
           const ready = selDate && (selSalida || grupoLock || product.noSalida) && paxA >= product.minA && afterOk;
           return (
             <>
+              {/* Total inline en popup mode (la summary card está oculta) */}
+              {isPopupMode && (
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, padding: "8px 4px" }}>
+                  <span style={{ fontSize: 14, fontWeight: 700, color: C.text }}>Total:</span>
+                  <span style={{ fontSize: 18, fontWeight: 800, color: C.accent }}>{COP(total)}</span>
+                </div>
+              )}
               <button
                 onClick={() => { if (ready) { gtmBeginCheckout(product, paxTotal, total); setStep(2); AtolanTrack.evento("begin_checkout", { producto: product?.tipo, fecha: selDate, pax: paxTotal, valor: total }, "booking"); AtolanTrack.setCurrentStep(2); } }}
                 disabled={!ready}
@@ -1705,7 +1681,7 @@ export default function BookingPopup() {
 
   // ─── Layout ─────────────────────────────────────────────────────────────────
   return (
-    <div style={{ minHeight: "100vh", background: "#F1F5F9", fontFamily: "'Segoe UI', Arial, sans-serif", color: C.text, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "24px 16px 60px" }}>
+    <div style={{ minHeight: "100vh", background: "#F1F5F9", fontFamily: "'Segoe UI', Arial, sans-serif", color: C.text, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: isPopupMode ? "10px 10px 14px" : "24px 16px 60px" }}>
       <div style={{ width: "100%", maxWidth: 480 }}>
 
         {/* Brand header — hidden in popup mode (deep-link to a specific pasadía) */}
@@ -1726,31 +1702,35 @@ export default function BookingPopup() {
         )}
 
         {/* Main card */}
-        <div style={{ background: C.bg, borderRadius: 16, padding: "24px 24px", boxShadow: "0 4px 24px rgba(0,0,0,0.07)", border: `1px solid ${C.border}` }}>
+        <div style={{ background: C.bg, borderRadius: 16, padding: isPopupMode ? "16px 18px" : "24px 24px", boxShadow: "0 4px 24px rgba(0,0,0,0.07)", border: `1px solid ${C.border}` }}>
           {step === 0 && ProductSelector()}
           {step === 1 && product && BookingStep()}
           {step === 2 && product && InfoStep()}
           {step === 3 && product && UpsellStep()}
         </div>
 
-        {/* Footer */}
-        <div style={{ textAlign: "center", marginTop: 16, fontSize: 11, color: C.textLight, lineHeight: 1.9 }}>
-          <div>Atolon Beach Club</div>
-          <div>
-            <a href="mailto:reservas@atoloncartagena.com" style={{ color: C.primary, textDecoration: "none" }}>reservas@atoloncartagena.com</a>
-          </div>
-          <div>
-            <a href="https://www.atoloncartagena.com" target="_blank" rel="noopener noreferrer" style={{ color: C.primary, textDecoration: "none" }}>www.atoloncartagena.com</a>
-          </div>
-        </div>
-        <div style={{ display: "flex", justifyContent: "center", gap: 20, marginTop: 10 }}>
-          <a href="/" style={{ fontSize: 11, color: C.textLight, textDecoration: "none", opacity: 0.5 }}>
-            Portal Agencias
-          </a>
-          <a href="/login" style={{ fontSize: 11, color: C.textLight, textDecoration: "none", opacity: 0.5 }}>
-            Colaborador Login
-          </a>
-        </div>
+        {/* Footer — hidden in popup mode */}
+        {!isPopupMode && (
+          <>
+            <div style={{ textAlign: "center", marginTop: 16, fontSize: 11, color: C.textLight, lineHeight: 1.9 }}>
+              <div>Atolon Beach Club</div>
+              <div>
+                <a href="mailto:reservas@atoloncartagena.com" style={{ color: C.primary, textDecoration: "none" }}>reservas@atoloncartagena.com</a>
+              </div>
+              <div>
+                <a href="https://www.atoloncartagena.com" target="_blank" rel="noopener noreferrer" style={{ color: C.primary, textDecoration: "none" }}>www.atoloncartagena.com</a>
+              </div>
+            </div>
+            <div style={{ display: "flex", justifyContent: "center", gap: 20, marginTop: 10 }}>
+              <a href="/" style={{ fontSize: 11, color: C.textLight, textDecoration: "none", opacity: 0.5 }}>
+                Portal Agencias
+              </a>
+              <a href="/login" style={{ fontSize: 11, color: C.textLight, textDecoration: "none", opacity: 0.5 }}>
+                Colaborador Login
+              </a>
+            </div>
+          </>
+        )}
       </div>
 
       {/* Widget de Zoho Payments — se muestra cuando hay sesión activa */}

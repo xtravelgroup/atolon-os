@@ -546,7 +546,15 @@ export default function App() {
   if (route === "carreras" || route.startsWith("carreras/")) return <><ReclutamientoPortal /><WhatsAppFloat phone={waPhone} /></>;
   if (route === "booking/lasamericas" || route === "las-americas") return <LasAmericasPortal />;
   if (route === "gran-fondo" || route === "nairo") return <GranFondoNairo />;
-  if (route === "booking" || route.startsWith("booking/")) return <><BookingPopup /><WhatsAppFloat phone={waPhone} /></>;
+  if (route === "booking" || route.startsWith("booking/")) {
+    // Hide the floating WhatsApp button when embedded in an iframe (popup mode)
+    // or when ?popup=1 is explicitly set. WhatsApp links always open top-level
+    // so they keep the float visible.
+    const inIframe = (() => { try { return window.self !== window.top; } catch { return true; } })();
+    const popupQ = new URLSearchParams(window.location.search).get("popup") === "1";
+    const isPopupMode = inIframe || popupQ;
+    return <><BookingPopup />{!isPopupMode && <WhatsAppFloat phone={waPhone} />}</>;
+  }
   if (route.startsWith("pago"))   return <><PagoCliente /><WhatsAppFloat phone={waPhone} /></>;
   if (route === "reset-password") return <><ResetPassword /><WhatsAppFloat phone={waPhone} /></>;
   if (route === "zarpe-info")     return <><ZarpeInfo /><WhatsAppFloat phone={waPhone} /></>;
