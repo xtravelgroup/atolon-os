@@ -180,6 +180,13 @@ export default function BookingPopup() {
 
   const matchedProduct = PRODUCTS.find(p => p.slug === tipoQ || p.tipo === tipoQ) || null;
 
+  // Popup mode: hide brand header (logo + lang switcher) and photo gallery so the
+  // engine reads as a clean booking form, not a full landing page.
+  // Trigger = embedded in an iframe (the marketing site popup) OR explicit ?popup=1.
+  // WhatsApp links open in a top-level browser → full chrome remains intact.
+  const inIframe = (() => { try { return window.self !== window.top; } catch { return true; } })();
+  const isPopupMode = inIframe || params.get("popup") === "1";
+
   const [product,    setProduct]   = useState(matchedProduct);
   const [grupoEvt,   setGrupoEvt]  = useState(null);  // the group event record
   const [grupoLock,  setGrupoLock] = useState(false);  // date/salida locked by group
@@ -933,8 +940,8 @@ export default function BookingPopup() {
 
     return (
       <div>
-        {/* Photo gallery */}
-        {allPhotos.length > 0 && (
+        {/* Photo gallery — hidden in popup mode (deep-link to a specific pasadía) */}
+        {!isPopupMode && allPhotos.length > 0 && (
           <div style={{ marginBottom: 20, borderRadius: 12, overflow: "hidden", position: "relative" }}>
             {/* Main image */}
             <div style={{ width: "100%", height: 220, position: "relative", background: C.bgCard, overflow: "hidden" }}>
@@ -1663,20 +1670,22 @@ export default function BookingPopup() {
     <div style={{ minHeight: "100vh", background: "#F1F5F9", fontFamily: "'Segoe UI', Arial, sans-serif", color: C.text, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "24px 16px 60px" }}>
       <div style={{ width: "100%", maxWidth: 480 }}>
 
-        {/* Brand header */}
-        <div style={{ position: "relative", textAlign: "center", marginBottom: 20 }}>
-          <a href="https://www.atoloncartagena.com" target="_blank" rel="noopener noreferrer">
-            <img src="/atolon-peces.png" alt="Atolon Beach Club" style={{ height: 195, objectFit: "contain", display: "block", margin: "0 auto" }} />
-          </a>
-          <div style={{ position: "absolute", top: "50%", right: 0, transform: "translateY(-50%)", display: "flex", gap: 4 }}>
-            {["es","en"].map(l => (
-              <button key={l} onClick={() => switchLang(l)}
-                style={{ fontSize: 11, fontWeight: 700, padding: "3px 9px", borderRadius: 6, background: langQ === l ? C.primary : "white", color: langQ === l ? "white" : C.textMid, border: `1px solid ${langQ === l ? C.primary : C.border}`, cursor: "pointer" }}>
-                {l.toUpperCase()}
-              </button>
-            ))}
+        {/* Brand header — hidden in popup mode (deep-link to a specific pasadía) */}
+        {!isPopupMode && (
+          <div style={{ position: "relative", textAlign: "center", marginBottom: 20 }}>
+            <a href="https://www.atoloncartagena.com" target="_blank" rel="noopener noreferrer">
+              <img src="/atolon-peces.png" alt="Atolon Beach Club" style={{ height: 195, objectFit: "contain", display: "block", margin: "0 auto" }} />
+            </a>
+            <div style={{ position: "absolute", top: "50%", right: 0, transform: "translateY(-50%)", display: "flex", gap: 4 }}>
+              {["es","en"].map(l => (
+                <button key={l} onClick={() => switchLang(l)}
+                  style={{ fontSize: 11, fontWeight: 700, padding: "3px 9px", borderRadius: 6, background: langQ === l ? C.primary : "white", color: langQ === l ? "white" : C.textMid, border: `1px solid ${langQ === l ? C.primary : C.border}`, cursor: "pointer" }}>
+                  {l.toUpperCase()}
+                </button>
+              ))}
+            </div>
           </div>
-        </div>
+        )}
 
         {/* Main card */}
         <div style={{ background: C.bg, borderRadius: 16, padding: "24px 24px", boxShadow: "0 4px 24px rgba(0,0,0,0.07)", border: `1px solid ${C.border}` }}>
