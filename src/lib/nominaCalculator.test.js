@@ -5,38 +5,55 @@ import {
   salarioBaseProporcional, valorDiaCalendario,
   calcularAuxilioTransporte, aportesEmpleado,
   clasificarNovedades, calcularNominaEmpleado,
+  franjasDelDia, horaAMinutos, calcularHorasDia, derivarNovedadesDeMarcaciones,
   SMMLV_2026, AUX_TRANSPORTE_2026, FESTIVOS_CO_2026, NOVEDAD_TIPOS,
 } from "./nominaCalculator.js";
 
-describe("quincenaActual", () => {
-  it("Q1 si dia <= 15", () => {
-    const q = quincenaActual("2026-05-10");
-    expect(q.desde).toBe("2026-05-01");
-    expect(q.hasta).toBe("2026-05-15");
-    expect(q.numero).toBe(1);
+describe("periodoActual (Atolón: pago 15 cubre 26→10, pago 30 cubre 11→25)", () => {
+  it("día 11–25 → período pago 30 del mes actual", () => {
+    const p = quincenaActual("2026-05-20");
+    expect(p.desde).toBe("2026-05-11");
+    expect(p.hasta).toBe("2026-05-25");
+    expect(p.pago).toBe(30);
+    expect(p.fecha_pago).toBe("2026-05-30");
   });
-  it("Q2 si dia > 15", () => {
-    const q = quincenaActual("2026-05-20");
-    expect(q.desde).toBe("2026-05-16");
-    expect(q.hasta).toBe("2026-05-31");
-    expect(q.numero).toBe(2);
+  it("día 1–10 → período pago 15 (26 mes anterior → 10 actual)", () => {
+    const p = quincenaActual("2026-05-08");
+    expect(p.desde).toBe("2026-04-26");
+    expect(p.hasta).toBe("2026-05-10");
+    expect(p.pago).toBe(15);
+    expect(p.fecha_pago).toBe("2026-05-15");
   });
-  it("Q2 febrero termina 28 (no bisiesto)", () => {
-    const q = quincenaActual("2026-02-25");
-    expect(q.hasta).toBe("2026-02-28");
+  it("día 26–31 → período pago 15 del mes siguiente", () => {
+    const p = quincenaActual("2026-04-28");
+    expect(p.desde).toBe("2026-04-26");
+    expect(p.hasta).toBe("2026-05-10");
+    expect(p.pago).toBe(15);
+  });
+  it("día 11 (borde) → período pago 30", () => {
+    const p = quincenaActual("2026-05-11");
+    expect(p.desde).toBe("2026-05-11");
+    expect(p.pago).toBe(30);
+  });
+  it("día 10 (borde) → cierre del período pago 15", () => {
+    const p = quincenaActual("2026-05-10");
+    expect(p.hasta).toBe("2026-05-10");
+    expect(p.pago).toBe(15);
   });
 });
 
-describe("quincenaAnterior", () => {
-  it("desde Q1 va a Q2 del mes anterior", () => {
-    const q = quincenaAnterior("2026-05-10");
-    expect(q.desde).toBe("2026-04-16");
-    expect(q.hasta).toBe("2026-04-30");
+describe("periodoAnterior", () => {
+  it("desde un período pago 30 va al pago 15 (mismo mes)", () => {
+    const p = quincenaAnterior("2026-05-20");
+    expect(p.pago).toBe(15);
+    expect(p.desde).toBe("2026-04-26");
+    expect(p.hasta).toBe("2026-05-10");
   });
-  it("desde Q2 va a Q1 del mismo mes", () => {
-    const q = quincenaAnterior("2026-05-20");
-    expect(q.desde).toBe("2026-05-01");
-    expect(q.hasta).toBe("2026-05-15");
+  it("desde un período pago 15 va al pago 30 (mes anterior)", () => {
+    const p = quincenaAnterior("2026-05-08");
+    expect(p.pago).toBe(30);
+    expect(p.desde).toBe("2026-04-11");
+    expect(p.hasta).toBe("2026-04-25");
   });
 });
 
@@ -215,6 +232,63 @@ describe("calcularNominaEmpleado — con novedades positivas y negativas", () =>
     // aux = 200.000 × 12/30 = 80.000
     expect(r.devengado.auxilio_transporte).toBe(80_000);
   });
+});
+
+describe("franjasDelDia + calcularHorasDia", () => {
+  it("8h diurnas 06:00-14:00", () => {
+    const f = franjasDelDia("06:00", "14:00");
+    expect(f.horasTotales).toBe(8);
+    expect(f.horasDiurnas).toBe(8);
+    expect(f.horasNocturnas).toBe(0);
+  });
+  it("turno nocturno 22:00-06:00 (cruce medianoche)", () => {
+    const f = franjasDelDia("22:00", "06:00");
+    expect(f.horasTotales).toBe(8);
+    expect(f.horasNocturnas).toBe(8);
+  });
+  it("calcularHorasDia 10h diurnas un lunes: 8 ord + 2 extras", () => {
+    const r = calcularHorasDia({ fecha: "2026-05-11", entrada: "06:00", salida: "16:00", tarifaHora: 10000 });
+    expect(r.horas_totales).toBe(10);
+    expect(r.horas_extras_diurnas).toBe(2);
+    expect(r.valor_extras_diurnas).toBe(2 * 10000 * 1.25);  // 25000
+  });
+  it("calcularHorasDia 8h dominical = recargo 75%", () => {
+    const r = calcularHorasDia({ fecha: "2026-05-10", entrada: "06:00", salida: "14:00", tarifaHora: 10000 });
+    expect(r.es_dominical).toBe(true);
+    expect(r.valor_recargo_dominical).toBe(8 * 10000 * 0.75);   // 60000
+  });
+  it("ausencia (sin entrada/salida)", () => {
+    const r = calcularHorasDia({ fecha: "2026-05-11", entrada: null, salida: null, tarifaHora: 10000 });
+    expect(r.ausencia).toBe(true);
+    expect(r.horas_totales).toBe(0);
+  });
+});
+
+describe("derivarNovedadesDeMarcaciones", () => {
+  it("genera novedades automáticas para extras y recargo dominical", () => {
+    const horas = new Map([
+      ["2026-05-10", { entrada: "06:00", salida: "16:00" }],   // dom, 10h
+      ["2026-05-11", { entrada: "06:00", salida: "14:00" }],   // lun, 8h ord (sin novedad auto)
+    ]);
+    const novs = derivarNovedadesDeMarcaciones({ empleadoId: "EMP-1", tarifaHora: 10000, horasPorDia: horas });
+    const tipos = novs.map(n => n.tipo);
+    expect(tipos).toContain("hora_extra_diurna");
+    expect(tipos).toContain("recargo_dominical");
+    expect(tipos.length).toBe(2);   // lunes 8h ordinarias no genera novedad auto
+  });
+  it("0 novedades si solo días ordinarios diurnos", () => {
+    const horas = new Map([
+      ["2026-05-11", { entrada: "06:00", salida: "14:00" }],
+      ["2026-05-12", { entrada: "06:00", salida: "14:00" }],
+    ]);
+    const novs = derivarNovedadesDeMarcaciones({ empleadoId: "EMP-1", tarifaHora: 10000, horasPorDia: horas });
+    expect(novs.length).toBe(0);
+  });
+});
+
+describe("horaAMinutos", () => {
+  it("06:00 → 360", () => expect(horaAMinutos("06:00")).toBe(360));
+  it("null → null", () => expect(horaAMinutos(null)).toBeNull());
 });
 
 describe("constantes Colombia 2026", () => {

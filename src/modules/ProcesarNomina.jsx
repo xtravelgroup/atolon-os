@@ -17,6 +17,7 @@ import { logAccion } from "../lib/logAccion";
 import {
   quincenaActual, quincenaAnterior, diasDelPeriodo,
   calcularNominaEmpleado, NOVEDAD_TIPOS, SMMLV_2026, AUX_TRANSPORTE_2026,
+  calcularHorasDia, derivarNovedadesDeMarcaciones, esDominical, esFestivo,
 } from "../lib/nominaCalculator.js";
 
 const IS = {
@@ -39,8 +40,80 @@ function Kpi({ label, value, sub, color }) {
   );
 }
 
+// ── Tabla día-por-día con inputs de entrada/salida ──────────────────────────
+function DiasTabla({ empleado, periodo, marcaciones, onChangeMarca }) {
+  const dias = diasDelPeriodo(periodo.desde, periodo.hasta);
+  const tarifaHora = Number(empleado.salario_base || 0) / 240;
+  return (
+    <div style={{ background: B.navyMid, borderRadius: 12, padding: 12, marginBottom: 14, overflowX: "auto" }}>
+      <div style={{ fontSize: 11, color: B.sky, textTransform: "uppercase", letterSpacing: 1, fontWeight: 700, marginBottom: 10 }}>
+        🕒 Horario del período · {dias.length} días
+      </div>
+      <table width="100%" cellPadding={0} cellSpacing={0} style={{ fontSize: 12, minWidth: 560 }}>
+        <thead>
+          <tr style={{ background: "rgba(255,255,255,0.04)" }}>
+            <th style={{ ...thStyle, padding: "8px 10px" }}>Día</th>
+            <th style={{ ...thStyle, padding: "8px 10px" }}>Entrada</th>
+            <th style={{ ...thStyle, padding: "8px 10px" }}>Salida</th>
+            <th style={{ ...thStyle, padding: "8px 10px", textAlign: "right" }}>Horas</th>
+            <th style={{ ...thStyle, padding: "8px 10px", textAlign: "right" }}>Recargo / Extra</th>
+          </tr>
+        </thead>
+        <tbody>
+          {dias.map(fecha => {
+            const key = `${empleado.id}|${fecha}`;
+            const marca = marcaciones[key] || {};
+            const entrada = marca.entrada || "";
+            const salida  = marca.salida || "";
+            const calc = calcularHorasDia({ fecha, entrada, salida, tarifaHora });
+            const isDom = esDominical(fecha);
+            const isFest = esFestivo(fecha);
+            const isWeekendOrHol = isDom || isFest;
+            const fechaDate = new Date(fecha + "T12:00:00");
+            const diaLabel = fechaDate.toLocaleDateString("es-CO", { weekday: "short" });
+            const dd = fechaDate.getDate();
+            const recargoTotal = calc.valor_recargo_nocturno + calc.valor_recargo_dominical + calc.valor_extras_diurnas + calc.valor_extras_nocturnas;
+            return (
+              <tr key={fecha} style={{ background: isFest ? "rgba(244,198,208,0.08)" : isDom ? "rgba(244,198,208,0.04)" : "transparent", borderTop: `1px solid ${B.navyLight}33` }}>
+                <td style={{ padding: "6px 10px", color: isWeekendOrHol ? B.pink : B.white }}>
+                  <div style={{ fontWeight: 600, fontSize: 12 }}>{diaLabel.charAt(0).toUpperCase() + diaLabel.slice(1)} {dd}</div>
+                  {isFest && <div style={{ fontSize: 9, color: B.pink, marginTop: 1 }}>FESTIVO</div>}
+                  {isDom && !isFest && <div style={{ fontSize: 9, color: B.pink, marginTop: 1 }}>DOM</div>}
+                </td>
+                <td style={{ padding: "4px 6px" }}>
+                  <input type="time" value={entrada}
+                    onChange={e => onChangeMarca(fecha, { ...marca, entrada: e.target.value })}
+                    style={{ ...IS, padding: "5px 8px", width: 100, fontSize: 12 }} />
+                </td>
+                <td style={{ padding: "4px 6px" }}>
+                  <input type="time" value={salida}
+                    onChange={e => onChangeMarca(fecha, { ...marca, salida: e.target.value })}
+                    style={{ ...IS, padding: "5px 8px", width: 100, fontSize: 12 }} />
+                </td>
+                <td style={{ padding: "6px 10px", textAlign: "right", color: calc.ausencia ? "rgba(255,255,255,0.3)" : B.white }}>
+                  {calc.ausencia ? "—" : `${calc.horas_totales.toFixed(1)}h`}
+                  {calc.horas_extras_diurnas + calc.horas_extras_nocturnas > 0 && (
+                    <div style={{ fontSize: 9, color: B.pink }}>+{(calc.horas_extras_diurnas + calc.horas_extras_nocturnas).toFixed(1)} extra</div>
+                  )}
+                </td>
+                <td style={{ padding: "6px 10px", textAlign: "right", color: recargoTotal > 0 ? B.success : "rgba(255,255,255,0.3)", fontWeight: 600 }}>
+                  {recargoTotal > 0 ? "+ " + COP(recargoTotal) : "—"}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+      <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", marginTop: 8, fontStyle: "italic" }}>
+        💡 Al editar entrada/salida se calculan recargos/extras automáticamente. Click "Guardar marcaciones" abajo para persistir.
+      </div>
+    </div>
+  );
+}
+
 // ── Drawer detalle empleado ──────────────────────────────────────────────────
-function DetalleDrawer({ empleado, calc, onClose, onAddNovedad, onDeleteNovedad, allNovedades }) {
+function DetalleDrawer({ empleado, calc, onClose, onAddNovedad, onDeleteNovedad, allNovedades,
+                          periodo, marcaciones, onChangeMarca, onSaveMarcaciones, savingMarcas }) {
   if (!empleado || !calc) return null;
   const novedadesDelEmpleado = allNovedades.filter(n => n.empleado_loggro_id === empleado.id);
   return (
@@ -56,6 +129,23 @@ function DetalleDrawer({ empleado, calc, onClose, onAddNovedad, onDeleteNovedad,
           </div>
           <button onClick={onClose} style={{ background: "none", border: "none", color: B.white, fontSize: 22, cursor: "pointer" }}>×</button>
         </div>
+
+        {/* TABLA DÍA-POR-DÍA */}
+        <DiasTabla
+          empleado={empleado}
+          periodo={periodo}
+          marcaciones={marcaciones}
+          onChangeMarca={onChangeMarca}
+        />
+        <button onClick={onSaveMarcaciones} disabled={savingMarcas} style={{
+          width: "100%", marginBottom: 16,
+          background: savingMarcas ? B.navyLight : B.success, color: B.white,
+          border: "none", borderRadius: 10, padding: "10px 18px",
+          cursor: savingMarcas ? "not-allowed" : "pointer", fontWeight: 700, fontSize: 13,
+          opacity: savingMarcas ? 0.6 : 1,
+        }}>
+          {savingMarcas ? "Guardando…" : "💾 Guardar marcaciones + recalcular novedades"}
+        </button>
 
         {/* DEVENGADO */}
         <div style={{ background: B.navyMid, borderRadius: 12, padding: 16, marginBottom: 14 }}>
@@ -239,17 +329,20 @@ export default function ProcesarNomina() {
   const isMobile = useMobile();
   const [empleados, setEmpleados] = useState([]);
   const [novedades, setNovedades] = useState([]);
+  const [marcacionesAsist, setMarcacionesAsist] = useState([]);  // de asistencia_zk
+  const [marcacionesLocales, setMarcacionesLocales] = useState({});  // key = empId|fecha → {entrada, salida}
   const [loading, setLoading] = useState(true);
   const [periodo, setPeriodo] = useState(() => quincenaActual());
   const [detalleEmpleado, setDetalleEmpleado] = useState(null);
   const [addNovedadEmp, setAddNovedadEmp] = useState(null);
   const [search, setSearch] = useState("");
   const [saving, setSaving] = useState(false);
+  const [savingMarcas, setSavingMarcas] = useState(false);
 
   const fetchData = useCallback(async () => {
     if (!supabase) return;
     setLoading(true);
-    const [empsRes, novsRes] = await Promise.all([
+    const [empsRes, novsRes, marcsRes] = await Promise.all([
       supabase.from("rh_empleados")
         .select("id, nombres, apellidos, cedula, cargo, departamento_id, salario_base, activo")
         .eq("activo", true)
@@ -257,11 +350,29 @@ export default function ProcesarNomina() {
       supabase.from("empleados_loggro_novedades")
         .select("*")
         .or(`fecha_inicio.lte.${periodo.hasta},fecha_fin.gte.${periodo.desde}`),
+      supabase.from("asistencia_zk")
+        .select("empleado_id, fecha, hora, timestamp, tipo_marca, metodo")
+        .gte("fecha", periodo.desde)
+        .lte("fecha", periodo.hasta),
     ]);
     if (empsRes.error) console.error("Error cargando empleados:", empsRes.error);
     if (novsRes.error) console.error("Error cargando novedades:", novsRes.error);
+    if (marcsRes.error) console.error("Error cargando marcaciones:", marcsRes.error);
     setEmpleados(empsRes.data || []);
     setNovedades(novsRes.data || []);
+    setMarcacionesAsist(marcsRes.data || []);
+
+    // Convertir marcaciones biométricas a mapa local { empId|fecha → {entrada,salida} }
+    const marcsLocal = {};
+    for (const m of marcsRes.data || []) {
+      const key = `${m.empleado_id}|${m.fecha}`;
+      const hora = (m.hora || "").slice(0, 5);
+      if (!marcsLocal[key]) marcsLocal[key] = { entrada: null, salida: null };
+      if (!marcsLocal[key].entrada || hora < marcsLocal[key].entrada) marcsLocal[key].entrada = hora;
+      if (!marcsLocal[key].salida  || hora > marcsLocal[key].salida)  marcsLocal[key].salida = hora;
+    }
+    setMarcacionesLocales(marcsLocal);
+
     setLoading(false);
   }, [periodo.desde, periodo.hasta]);
 
@@ -332,6 +443,90 @@ export default function ProcesarNomina() {
       await fetchData();
     } catch (e) {
       alert(`❌ Error: ${e.message || e}`);
+    }
+  };
+
+  // Editar marcación manual (entrada/salida de un día)
+  const handleChangeMarca = (fecha, marca) => {
+    if (!detalleEmpleado) return;
+    const key = `${detalleEmpleado.id}|${fecha}`;
+    setMarcacionesLocales(prev => ({ ...prev, [key]: marca }));
+  };
+
+  // Persistir marcaciones del empleado actual + auto-generar novedades derivadas
+  const handleSaveMarcaciones = async () => {
+    if (savingMarcas || !detalleEmpleado) return;
+    setSavingMarcas(true);
+    try {
+      const emp = detalleEmpleado;
+      const tarifaHora = Number(emp.salario_base || 0) / 240;
+      // 1. Recoger marcaciones del período de este empleado
+      const horasMap = new Map();
+      const inserts = [];
+      for (const fecha of diasDelPeriodo(periodo.desde, periodo.hasta)) {
+        const key = `${emp.id}|${fecha}`;
+        const m = marcacionesLocales[key];
+        if (m && (m.entrada || m.salida)) {
+          horasMap.set(fecha, m);
+          if (m.entrada) inserts.push({
+            id: `MAN-${emp.id}-${fecha}-E`,
+            empleado_id: emp.id,
+            fecha, hora: m.entrada + ":00",
+            timestamp: `${fecha}T${m.entrada}:00-05:00`,
+            tipo_marca: "entrada",
+            metodo: "manual",
+          });
+          if (m.salida) inserts.push({
+            id: `MAN-${emp.id}-${fecha}-S`,
+            empleado_id: emp.id,
+            fecha, hora: m.salida + ":00",
+            timestamp: `${fecha}T${m.salida}:00-05:00`,
+            tipo_marca: "salida",
+            metodo: "manual",
+          });
+        }
+      }
+      // 2. Borrar marcaciones manuales anteriores de este empleado/período
+      await supabase.from("asistencia_zk")
+        .delete()
+        .eq("empleado_id", emp.id)
+        .eq("metodo", "manual")
+        .gte("fecha", periodo.desde)
+        .lte("fecha", periodo.hasta);
+      // 3. Insertar las nuevas
+      if (inserts.length > 0) {
+        const { error: insErr } = await supabase.from("asistencia_zk").insert(inserts);
+        if (insErr) throw insErr;
+      }
+      // 4. Borrar novedades auto-generadas previas del período (las que tengan loggro_novedad_id 'AUTO-')
+      await supabase.from("empleados_loggro_novedades")
+        .delete()
+        .eq("empleado_loggro_id", emp.id)
+        .like("loggro_novedad_id", "AUTO-%")
+        .gte("fecha_inicio", periodo.desde)
+        .lte("fecha_inicio", periodo.hasta);
+      // 5. Derivar novedades nuevas
+      const novsDerivadas = derivarNovedadesDeMarcaciones({
+        empleadoId: emp.id, tarifaHora, horasPorDia: horasMap,
+      });
+      if (novsDerivadas.length > 0) {
+        const insertsNov = novsDerivadas.map(n => ({
+          ...n,
+          loggro_novedad_id: `AUTO-${emp.id}-${n.fecha_inicio}-${n.tipo}`,
+          raw_payload: { source: "ProcesarNomina auto", marcacion: horasMap.get(n.fecha_inicio) },
+        }));
+        const { error: novErr } = await supabase.from("empleados_loggro_novedades").insert(insertsNov);
+        if (novErr) throw novErr;
+      }
+      logAccion({ modulo: "nomina", accion: "guardar_marcaciones", tabla: "asistencia_zk",
+                  registroId: emp.id,
+                  notas: `${inserts.length} marcaciones · ${novsDerivadas.length} novedades auto` });
+      await fetchData();
+      alert(`✅ ${inserts.length} marcaciones guardadas\n${novsDerivadas.length} novedades automáticas creadas (extras/recargos)`);
+    } catch (e) {
+      alert(`❌ Error guardando marcaciones: ${e.message || e}`);
+    } finally {
+      setSavingMarcas(false);
     }
   };
 
@@ -526,6 +721,11 @@ export default function ProcesarNomina() {
           empleado={detalleEmpleado}
           calc={nominaPorEmpleado.find(x => x.empleado.id === detalleEmpleado.id)?.calc}
           allNovedades={novedades}
+          periodo={periodo}
+          marcaciones={marcacionesLocales}
+          onChangeMarca={handleChangeMarca}
+          onSaveMarcaciones={handleSaveMarcaciones}
+          savingMarcas={savingMarcas}
           onClose={() => setDetalleEmpleado(null)}
           onAddNovedad={() => setAddNovedadEmp(detalleEmpleado)}
           onDeleteNovedad={handleDeleteNovedad}

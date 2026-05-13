@@ -58,7 +58,10 @@ export const NOVEDAD_TIPOS = {
   "licencia_no_remunerada":   { categoria: "deducido",    label: "Licencia no rem.",    descripcion: "Licencia sin goce de salario — descuenta día" },
 };
 
-// ── Quincena helpers ─────────────────────────────────────────────────────────
+// ── Quincena helpers (Atolón) ────────────────────────────────────────────────
+// Períodos NO estándar:
+//   Pago del día 15 → corre del 26 (mes anterior) al 10 del mes corriente
+//   Pago del día 30 → corre del 11 al 25 del mismo mes
 const MESES_ES = ["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
 function nombreMes(m) { return MESES_ES[((m % 12) + 12) % 12]; }
 function isoDate(d) {
@@ -68,29 +71,58 @@ function isoDate(d) {
   return `${y}-${m}-${day}`;
 }
 
-export function quincenaActual(refDate = new Date()) {
+/**
+ * Período de pago que CONTIENE la fecha de referencia.
+ *  - Si día 11-25 → período "Pago día 30" del 11 al 25 (paga fin de mes)
+ *  - Si día 26-31 → período "Pago día 15" del 26 al 10 mes siguiente
+ *  - Si día 1-10  → período "Pago día 15" del 26 mes anterior al 10 actual
+ */
+export function periodoActual(refDate = new Date()) {
   const d = typeof refDate === "string" ? new Date(refDate + "T12:00:00") : refDate;
   const y = d.getFullYear();
   const m = d.getMonth();
-  if (d.getDate() <= 15) {
-    return { desde: isoDate(new Date(y, m, 1)), hasta: isoDate(new Date(y, m, 15)),
-             etiqueta: `Q1 ${nombreMes(m)} ${y}`, numero: 1, anio: y, mes: m };
+  const dia = d.getDate();
+  if (dia >= 11 && dia <= 25) {
+    return {
+      desde: isoDate(new Date(y, m, 11)),
+      hasta: isoDate(new Date(y, m, 25)),
+      etiqueta: `Pago 30 ${nombreMes(m)} ${y}`,
+      pago: 30, fecha_pago: isoDate(new Date(y, m, 30)),
+    };
   }
-  return { desde: isoDate(new Date(y, m, 16)), hasta: isoDate(new Date(y, m + 1, 0)),
-           etiqueta: `Q2 ${nombreMes(m)} ${y}`, numero: 2, anio: y, mes: m };
+  if (dia >= 26) {
+    return {
+      desde: isoDate(new Date(y, m, 26)),
+      hasta: isoDate(new Date(y, m + 1, 10)),
+      etiqueta: `Pago 15 ${nombreMes(m + 1)} ${y}`,
+      pago: 15, fecha_pago: isoDate(new Date(y, m + 1, 15)),
+    };
+  }
+  // dia 1-10: pertenece al período que arrancó el 26 del mes anterior
+  return {
+    desde: isoDate(new Date(y, m - 1, 26)),
+    hasta: isoDate(new Date(y, m, 10)),
+    etiqueta: `Pago 15 ${nombreMes(m)} ${y}`,
+    pago: 15, fecha_pago: isoDate(new Date(y, m, 15)),
+  };
 }
 
-export function quincenaAnterior(refDate = new Date()) {
-  const d = typeof refDate === "string" ? new Date(refDate + "T12:00:00") : refDate;
-  const y = d.getFullYear();
-  const m = d.getMonth();
-  if (d.getDate() <= 15) {
-    return { desde: isoDate(new Date(y, m - 1, 16)), hasta: isoDate(new Date(y, m, 0)),
-             etiqueta: `Q2 ${nombreMes(m - 1)} ${y}`, numero: 2, anio: y, mes: m - 1 };
-  }
-  return { desde: isoDate(new Date(y, m, 1)), hasta: isoDate(new Date(y, m, 15)),
-           etiqueta: `Q1 ${nombreMes(m)} ${y}`, numero: 1, anio: y, mes: m };
+/**
+ * Período inmediato anterior al actual.
+ */
+export function periodoAnterior(refDate = new Date()) {
+  const actual = periodoActual(refDate);
+  // El período anterior empieza el día siguiente al "hasta" de su anterior.
+  // Tomamos el día previo al "desde" del actual y devolvemos su periodoActual.
+  const d = new Date(actual.desde + "T12:00:00");
+  d.setDate(d.getDate() - 1);
+  return periodoActual(d);
 }
+
+// Aliases retro-compatibilidad (mantenemos los nombres anteriores que
+// ya importa la UI mientras refactorizamos)
+export const quincenaActual   = periodoActual;
+export const quincenaAnterior = periodoAnterior;
 
 export function diasDelPeriodo(desde, hasta) {
   const d0 = new Date(desde + "T12:00:00");
@@ -106,6 +138,137 @@ export function esFestivo(fechaIso, festivos = FESTIVOS_CO_2026) { return festiv
 export function esDominical(fechaIso) {
   const d = new Date(fechaIso + "T12:00:00");
   return d.getDay() === 0;
+}
+
+// ── Horas: clasificación diurna/nocturna y cálculo por día ───────────────────
+// Diurna 06:00–21:00 (reforma laboral CO 2025). Nocturna 21:00–06:00.
+const DIURNA_INICIO = 6 * 60;
+const DIURNA_FIN    = 21 * 60;
+const JORNADA_ORDINARIA_HORAS = 8;
+
+export function horaAMinutos(h) {
+  if (!h) return null;
+  const [hh, mm] = String(h).split(":").map(Number);
+  if (isNaN(hh) || isNaN(mm)) return null;
+  return hh * 60 + mm;
+}
+function redondear(n) { return Math.round(n * 100) / 100; }
+
+/**
+ * Divide horas trabajadas entre franja diurna y nocturna. Soporta cruce de
+ * medianoche (salida < entrada → asumimos día siguiente).
+ */
+export function franjasDelDia(entrada, salida) {
+  const ini = horaAMinutos(entrada);
+  let fin = horaAMinutos(salida);
+  if (ini == null || fin == null) {
+    return { horasDiurnas: 0, horasNocturnas: 0, horasTotales: 0 };
+  }
+  if (fin <= ini) fin += 24 * 60;
+  let diurnas = 0, nocturnas = 0;
+  for (let t = ini; t < fin; t++) {
+    const tDia = t % (24 * 60);
+    if (tDia >= DIURNA_INICIO && tDia < DIURNA_FIN) diurnas++;
+    else nocturnas++;
+  }
+  return {
+    horasDiurnas:   redondear(diurnas / 60),
+    horasNocturnas: redondear(nocturnas / 60),
+    horasTotales:   redondear((fin - ini) / 60),
+  };
+}
+
+/**
+ * Calcula el desglose de horas para UN día.
+ * Devuelve cantidades y valores SIN aplicar al neto — solo se usan para
+ * auto-generar novedades correspondientes.
+ */
+export function calcularHorasDia({ fecha, entrada, salida, tarifaHora, festivos = FESTIVOS_CO_2026 }) {
+  const out = {
+    fecha,
+    es_dominical: esDominical(fecha),
+    es_festivo:   esFestivo(fecha, festivos),
+    horas_diurnas: 0, horas_nocturnas: 0,
+    horas_extras_diurnas: 0, horas_extras_nocturnas: 0,
+    horas_totales: 0,
+    valor_extras_diurnas: 0,
+    valor_extras_nocturnas: 0,
+    valor_recargo_nocturno: 0,
+    valor_recargo_dominical: 0,
+    ausencia: false,
+  };
+  if (!entrada || !salida) { out.ausencia = true; return out; }
+
+  const f = franjasDelDia(entrada, salida);
+  out.horas_totales = f.horasTotales;
+
+  const horasOrd = Math.min(f.horasTotales, JORNADA_ORDINARIA_HORAS);
+  const horasExtra = Math.max(0, f.horasTotales - JORNADA_ORDINARIA_HORAS);
+  const propDiurna = f.horasTotales > 0 ? f.horasDiurnas / f.horasTotales : 1;
+  const propNoct   = 1 - propDiurna;
+
+  out.horas_diurnas         = redondear(horasOrd * propDiurna);
+  out.horas_nocturnas       = redondear(horasOrd * propNoct);
+  out.horas_extras_diurnas   = redondear(horasExtra * propDiurna);
+  out.horas_extras_nocturnas = redondear(horasExtra * propNoct);
+
+  const tarifa = Number(tarifaHora || 0);
+  const esDomFes = out.es_dominical || out.es_festivo;
+
+  // Recargos
+  out.valor_recargo_nocturno = Math.round(out.horas_nocturnas * tarifa * 0.35);
+  if (esDomFes) {
+    out.valor_recargo_dominical = Math.round(
+      (out.horas_diurnas + out.horas_nocturnas) * tarifa * 0.75
+    );
+  }
+  // Extras (incluyen base + recargo)
+  const recExtraDiurna   = 1.25 + (esDomFes ? 0.75 : 0);   // +25% diurna + dom
+  const recExtraNocturna = 1.75 + (esDomFes ? 0.75 : 0);   // +75% nocturna + dom
+  out.valor_extras_diurnas   = Math.round(out.horas_extras_diurnas * tarifa * recExtraDiurna);
+  out.valor_extras_nocturnas = Math.round(out.horas_extras_nocturnas * tarifa * recExtraNocturna);
+
+  return out;
+}
+
+/**
+ * Convierte un mapa de marcaciones por día en un arreglo de novedades
+ * automáticas para insertar en empleados_loggro_novedades. Solo emite filas
+ * para los recargos/extras DISTINTAS DE CERO.
+ *
+ * @param {object} opts
+ * @param {string} opts.empleadoId
+ * @param {number} opts.tarifaHora
+ * @param {Map<string, {entrada, salida}>} opts.horasPorDia
+ * @returns {Array<object>} novedades listas para insert
+ */
+export function derivarNovedadesDeMarcaciones({ empleadoId, tarifaHora, horasPorDia }) {
+  const out = [];
+  for (const [fecha, { entrada, salida }] of horasPorDia) {
+    if (!entrada || !salida) continue;
+    const c = calcularHorasDia({ fecha, entrada, salida, tarifaHora });
+    if (c.valor_extras_diurnas > 0) {
+      out.push({ empleado_loggro_id: empleadoId, tipo: "hora_extra_diurna",
+                 fecha_inicio: fecha, cantidad: c.horas_extras_diurnas,
+                 valor: c.valor_extras_diurnas, descripcion: "Auto: hora extra diurna" });
+    }
+    if (c.valor_extras_nocturnas > 0) {
+      out.push({ empleado_loggro_id: empleadoId, tipo: "hora_extra_nocturna",
+                 fecha_inicio: fecha, cantidad: c.horas_extras_nocturnas,
+                 valor: c.valor_extras_nocturnas, descripcion: "Auto: hora extra nocturna" });
+    }
+    if (c.valor_recargo_nocturno > 0) {
+      out.push({ empleado_loggro_id: empleadoId, tipo: "recargo_nocturno",
+                 fecha_inicio: fecha, cantidad: c.horas_nocturnas,
+                 valor: c.valor_recargo_nocturno, descripcion: "Auto: recargo nocturno (+35%)" });
+    }
+    if (c.valor_recargo_dominical > 0) {
+      out.push({ empleado_loggro_id: empleadoId, tipo: "recargo_dominical",
+                 fecha_inicio: fecha, cantidad: c.horas_totales,
+                 valor: c.valor_recargo_dominical, descripcion: c.es_festivo ? "Auto: recargo festivo (+75%)" : "Auto: recargo dominical (+75%)" });
+    }
+  }
+  return out;
 }
 
 // ── Cálculo de salario base proporcional ─────────────────────────────────────
