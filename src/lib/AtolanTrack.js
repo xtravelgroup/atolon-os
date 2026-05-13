@@ -11,6 +11,7 @@ import {
   gtmPurchase, gtmPaymentError, gtmAbandon, gtmWhatsApp,
   gtmExitIntent, gtmScrollDepth,
 } from "./gtm";
+import { emitFromAtolanTrackEvent, emitStep, emitToParent } from "./postMessageBridge";
 
 const SERVER_TRACK_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/track-event`;
 const SERVER_KEY       = import.meta.env.VITE_SUPABASE_ANON_KEY;
@@ -43,10 +44,13 @@ function parseUTMs() {
 function parseClickIds() {
   const p = new URLSearchParams(window.location.search);
   return {
-    gclid:   p.get("gclid")   || null,   // Google Ads
-    fbclid:  p.get("fbclid")  || null,   // Meta Ads
-    msclkid: p.get("msclkid") || null,   // Microsoft Ads
-    ttclid:  p.get("ttclid")  || null,   // TikTok Ads
+    gclid:     p.get("gclid")     || null,   // Google Ads (web)
+    wbraid:    p.get("wbraid")    || null,   // Google Ads (iOS, web→app)
+    gbraid:    p.get("gbraid")    || null,   // Google Ads (iOS, app→app)
+    fbclid:    p.get("fbclid")    || null,   // Meta Ads
+    msclkid:   p.get("msclkid")   || null,   // Microsoft / Bing Ads
+    ttclid:    p.get("ttclid")    || null,   // TikTok Ads
+    li_fat_id: p.get("li_fat_id") || null,   // LinkedIn Ads
   };
 }
 
@@ -186,6 +190,10 @@ class AtolanTrackSDK {
     this.usuarioId   = getUsuarioId();
     this.utms        = parseUTMs();
     this.clickIds    = parseClickIds();
+    // Aliases con guion bajo — algunos consumidores (BookingPopup) los usan así.
+    // Mantener ambos nombres sincronizados para evitar bugs latentes.
+    this._utms       = this.utms;
+    this._clickIds   = this.clickIds;
     this.canal       = clasificarCanal(this.utms, document.referrer, this.clickIds);
     this.isBot       = isBot();
     this.inicializado = false;
@@ -293,6 +301,15 @@ class AtolanTrackSDK {
       ts:               new Date().toISOString(),
       idempotency_key:  idKey,
     }, { onConflict: "idempotency_key", ignoreDuplicates: true });
+
+    // Bridge cross-domain: reemitir al window padre si estamos embebidos.
+    // Solo eventos del whitelist en EVENT_MAP (postMessageBridge.js) viajan.
+    try {
+      emitFromAtolanTrackEvent(tipo, datos, {
+        pasadia: this._pasadiaSlug ?? null,
+        lang:    this.siteLang ?? null,
+      });
+    } catch (_) { /* no romper el flujo si el bridge falla */ }
   }
 
   // ── Funnel Step ───────────────────────────────────────────────────────────
@@ -352,6 +369,11 @@ class AtolanTrackSDK {
     await this.evento(`embudo_paso_${paso}`, datos, "embudo");
     this.currentStep = paso;
     this._syncAbandonmentPayload(datos);
+
+    // Bridge: emitir step explícito al parent (además del evento genérico)
+    try {
+      emitStep(paso, { pasadia: this._pasadiaSlug ?? datos.tipo_slug ?? null, lang: this.siteLang ?? null });
+    } catch (_) {}
 
     // Update intent score on usuario
     const score = calcIntentScore(paso, this.maxScroll, this.eventCount);
@@ -428,6 +450,22 @@ class AtolanTrackSDK {
 
     gtmPurchase(reservaId, monto, { tipo: extras.package_type }, extras.adultos, extras.ninos, extras.fecha);
     await this.evento("conversion", { reserva_id: reservaId, monto, ...extras }, "conversion");
+
+    // Bridge: emit purchase con schema explícito al parent (más confiable que
+    // depender del mapeo automático en evento(), porque garantizamos los campos
+    // transaction_id/value/currency/pasadia bien estructurados).
+    try {
+      emitToParent("purchase", {
+        transaction_id: reservaId,
+        value:          monto,
+        currency:       "COP",
+        pasadia:        this._pasadiaSlug ?? extras.tipo_slug ?? null,
+        adults:         extras.adultos ?? null,
+        children:       extras.ninos   ?? null,
+        fecha:          extras.fecha   ?? null,
+        lang:           this._lang     ?? null,
+      });
+    } catch (_) {}
   }
 
   async _updateUsuarioStats(monto, now) {
@@ -526,6 +564,15 @@ class AtolanTrackSDK {
 
   setCurrentStep(step) {
     this.currentStep = step;
+  }
+
+  /**
+   * Establece el slug del pasadía actual (vip-pass, exclusive-pass, etc.) para
+   * que el bridge cross-domain (postMessageBridge) pueda incluirlo en cada
+   * evento que reemita al window padre.
+   */
+  setPasadiaSlug(slug) {
+    this._pasadiaSlug = slug || null;
   }
 
   // ── User Stitching ────────────────────────────────────────────────────────
