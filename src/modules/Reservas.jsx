@@ -68,7 +68,9 @@ function paxPorSalida(reservas, salidas, grupos = []) {
 const EMPTY_FORM = {
   nombre: "", contacto: "", telefono: "", fecha: "", tipo: PASADIAS[0]?.tipo || "", pax_a: 1, pax_n: 0,
   salida_id: "", canal: "WhatsApp", precio: PASADIAS[0]?.precio || 0, precio_nino: 0,
-  abono: 0, forma_pago: "Sin definir", fecha_pago: "", aliado_id: "", vendedor: "Sin asignar", notas: "",
+  abono: 0, forma_pago: "Sin definir", fecha_pago: "", aliado_id: "", vendedor: "Sin asignar",
+  notas: "", notas_club: "",
+  nombre_embarcacion: "", hora_llegada: "",
   // Facturación electrónica
   factura_electronica: false,
   fe_tipo_persona: "natural", fe_tipo_documento: "CC", fe_numero_documento: "", fe_dv: "",
@@ -269,6 +271,54 @@ function FacturaElectronicaForm({ form, set, editing = true }) {
 
 // ── ReservaDetalle ────────────────────────────────────────────────────────────
 
+// Construye el state inicial completo del form desde la reserva.
+// Se reusa en useState y en el reset al cancelar — antes el reset era una
+// versión recortada (13 campos) que perdía notas_club, fe_*, aliado_id,
+// vendedor, forma_pago, fecha_pago, nombre_embarcacion, hora_llegada. Al
+// volver a editar y guardar, esos campos quedaban en undefined y el UPDATE
+// los sobreescribía a NULL en BD — bug destructivo que borró alergias
+// críticas de servicio y datos de facturación electrónica en producción.
+function formFromReserva(r0) {
+  return {
+    nombre:    r0.nombre    || "",
+    contacto:  r0.contacto  || "",
+    telefono:  r0.telefono  || "",
+    fecha:     r0.fecha     || "",
+    salida_id: r0.salida    || r0.salida_id || "",
+    tipo:      r0.tipo      || "",
+    canal:     r0.canal     || "",
+    pax_a:     r0.pax_a     ?? r0.pax ?? 1,
+    pax_n:     r0.pax_n     ?? 0,
+    abono:     r0.abono     || 0,
+    total:     r0.total     || 0,
+    estado:    r0.estado    || "pendiente",
+    notas:     r0.notas     || "",
+    forma_pago: r0.forma_pago || "Transferencia",
+    fecha_pago: r0.fecha_pago ? (r0.fecha_pago + "").slice(0, 10) : todayStr(),
+    vendedor:   r0.vendedor  || "Sin asignar",
+    aliado_id:  r0.aliado_id || "",
+    nombre_embarcacion: r0.nombre_embarcacion || "",
+    hora_llegada: r0.hora_llegada || "",
+    notas_club: r0.notas_club || "",
+    // Facturación electrónica
+    factura_electronica: r0.factura_electronica || false,
+    fe_tipo_persona:    r0.fe_tipo_persona    || "natural",
+    fe_tipo_documento:  r0.fe_tipo_documento  || "CC",
+    fe_numero_documento: r0.fe_numero_documento || "",
+    fe_dv:              r0.fe_dv              || "",
+    fe_razon_social:    r0.fe_razon_social    || "",
+    fe_nombres:         r0.fe_nombres         || "",
+    fe_apellidos:       r0.fe_apellidos       || "",
+    fe_email:           r0.fe_email           || r0.email || "",
+    fe_telefono:        r0.fe_telefono        || r0.telefono || "",
+    fe_direccion:       r0.fe_direccion       || "",
+    fe_ciudad:          r0.fe_ciudad          || "",
+    fe_departamento:    r0.fe_departamento    || "",
+    fe_pais:            r0.fe_pais            || "Colombia",
+    fe_regimen:         r0.fe_regimen         || "no_responsable_iva",
+  };
+}
+
 function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList = [], aliadoList = [], vendedoresList = VENDEDORES, pasadiaList = PASADIAS, conveniosMap = {} }) {
   const [tab, setTab]           = useState("detalles");
   const [histLogs,  setHistLogs]  = useState([]);
@@ -306,44 +356,7 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
   const [retractoMode, setRetractoMode]       = useState("retracto"); // "retracto" | "credito" when in retracto period
   const [sendingEmail, setSendingEmail]       = useState(false);
   const [emailSent, setEmailSent]             = useState(false);
-  const [form, setForm]     = useState({
-    nombre:    r0.nombre    || "",
-    contacto:  r0.contacto  || "",
-    telefono:  r0.telefono  || "",
-    fecha:     r0.fecha     || "",
-    salida_id: r0.salida    || "",
-    tipo:      r0.tipo      || "",
-    canal:     r0.canal     || "",
-    pax_a:     r0.pax_a     ?? r0.pax ?? 1,
-    pax_n:     r0.pax_n     ?? 0,
-    abono:     r0.abono     || 0,
-    total:     r0.total     || 0,
-    estado:    r0.estado    || "pendiente",
-    notas:     r0.notas     || "",
-    forma_pago: r0.forma_pago || "Transferencia",
-    fecha_pago: r0.fecha_pago ? (r0.fecha_pago + "").slice(0, 10) : todayStr(),
-    vendedor:   r0.vendedor  || "Sin asignar",
-    aliado_id:  r0.aliado_id || "",
-    nombre_embarcacion: r0.nombre_embarcacion || "",
-    hora_llegada: r0.hora_llegada || "",
-    notas_club: r0.notas_club || "",
-    // Facturación electrónica
-    factura_electronica: r0.factura_electronica || false,
-    fe_tipo_persona:    r0.fe_tipo_persona    || "natural",
-    fe_tipo_documento:  r0.fe_tipo_documento  || "CC",
-    fe_numero_documento: r0.fe_numero_documento || "",
-    fe_dv:              r0.fe_dv              || "",
-    fe_razon_social:    r0.fe_razon_social    || "",
-    fe_nombres:         r0.fe_nombres         || "",
-    fe_apellidos:       r0.fe_apellidos       || "",
-    fe_email:           r0.fe_email           || r0.email || "",
-    fe_telefono:        r0.fe_telefono        || r0.telefono || "",
-    fe_direccion:       r0.fe_direccion       || "",
-    fe_ciudad:          r0.fe_ciudad          || "",
-    fe_departamento:    r0.fe_departamento    || "",
-    fe_pais:            r0.fe_pais            || "Colombia",
-    fe_regimen:         r0.fe_regimen         || "no_responsable_iva",
-  });
+  const [form, setForm]     = useState(() => formFromReserva(r0));
 
   // ── Modo de precio (Público vs Neto) al editar ─────────────────────────────
   // Detecta el modo inicial: si el precio_u coincide con el neto del convenio/catálogo, inicia en "neto"
@@ -1431,7 +1444,7 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
               {/* Save / Cancel */}
               {editing && (
                 <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", paddingTop: 4 }}>
-                  <button onClick={() => { setEdit(false); setNotaMod(""); setForm({ nombre: r0.nombre||"", contacto: r0.contacto||"", telefono: r0.telefono||"", fecha: r0.fecha||"", salida_id: r0.salida||"", tipo: r0.tipo||"", canal: r0.canal||"", pax_a: r0.pax_a??r0.pax??1, pax_n: r0.pax_n??0, abono: r0.abono||0, total: r0.total||0, estado: r0.estado||"pendiente", notas: r0.notas||"" }); }} style={{ background: "none", border: `1px solid ${B.navyLight}`, borderRadius: 8, color: B.sand, padding: "9px 20px", fontSize: 14, cursor: "pointer", fontWeight: 600 }}>
+                  <button onClick={() => { setEdit(false); setNotaMod(""); setForm(formFromReserva(r0)); }} style={{ background: "none", border: `1px solid ${B.navyLight}`, borderRadius: 8, color: B.sand, padding: "9px 20px", fontSize: 14, cursor: "pointer", fontWeight: 600 }}>
                     Cancelar
                   </button>
                   <button onClick={handleSave} disabled={saving} style={{ background: B.sky, border: "none", borderRadius: 8, color: B.navy, padding: "9px 24px", fontSize: 14, cursor: "pointer", fontWeight: 700, opacity: saving ? 0.6 : 1 }}>
@@ -2078,6 +2091,14 @@ function ReservaModal({ onClose, onSave, isMobile, salidaList = [], aliadoList =
       if (k === "forma_pago" && v === "CXC") {
         next.abono = 0;
       }
+      // Auto-prender factura_electronica si el usuario llena cualquier campo FE.
+      // Bug recurrente: usuarios llenan los datos pero olvidan el toggle, y
+      // los datos NO se guardan porque al guardar se hace
+      // factura_electronica ? form.fe_xxx : null
+      const FE_TRIGGER_FIELDS = ["fe_numero_documento", "fe_email", "fe_razon_social", "fe_nombres", "fe_apellidos", "fe_telefono", "fe_direccion"];
+      if (FE_TRIGGER_FIELDS.includes(k) && String(v || "").trim() !== "" && !next.factura_electronica) {
+        next.factura_electronica = true;
+      }
       return next;
     });
     setErrors(e => ({ ...e, [k]: undefined }));
@@ -2526,6 +2547,18 @@ function ReservaModal({ onClose, onSave, isMobile, salidaList = [], aliadoList =
           <textarea rows={2} style={{ ...IS(), resize: "vertical" }} value={form.notas} onChange={e => set("notas", e.target.value)} placeholder="Observaciones, peticiones especiales…" />
         </div>
 
+        {/* Notas Club — internas, equipo de servicio */}
+        <div style={FS}>
+          <label style={{ ...LS, color: "#a78bfa" }}>
+            🏝 Notas Club <span style={{ color: "rgba(255,255,255,0.35)", textTransform: "none", fontSize: 10, fontWeight: 400, letterSpacing: 0 }}>(internas — para el equipo de servicio)</span>
+          </label>
+          <textarea rows={2}
+            style={{ ...IS(), resize: "vertical", borderColor: "rgba(167,139,250,0.3)", background: "rgba(167,139,250,0.05)" }}
+            value={form.notas_club || ""}
+            onChange={e => set("notas_club", e.target.value)}
+            placeholder="Preferencias de servicio, alergias, detalles operativos…" />
+        </div>
+
         {/* Facturación electrónica */}
         <div style={FS}>
           <label style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer", padding: "10px 14px", background: "rgba(251,191,36,0.06)", border: `1px solid ${form.factura_electronica ? "#fbbf24" : "rgba(255,255,255,0.1)"}`, borderRadius: 10 }}>
@@ -2620,6 +2653,7 @@ function mapRow(r) {
     extension:   r.extension,
     ext_regreso: r.ext_regreso,
     notas:       r.notas,
+    notas_club:  r.notas_club,   // ← antes se perdía aquí, dejando "Sin notas de club" en el detalle modal aún cuando BD tenía alergias críticas
     forma_pago:  r.forma_pago,
     fecha_pago:  r.fecha_pago ? (r.fecha_pago + "").slice(0, 10) : null,
     pagos:       r.pagos || [],
@@ -2628,6 +2662,38 @@ function mapRow(r) {
     grupo_id:    r.grupo_id,
     created_at:  r.created_at,
     updated_at:  r.updated_at,
+    // Embarcación / hora de llegada — también se perdían en mapRow
+    nombre_embarcacion: r.nombre_embarcacion,
+    hora_llegada:       r.hora_llegada,
+    // Facturación electrónica — TODOS los campos fe_* se perdían al hacer mapRow
+    factura_electronica: r.factura_electronica,
+    fe_tipo_persona:     r.fe_tipo_persona,
+    fe_tipo_documento:   r.fe_tipo_documento,
+    fe_numero_documento: r.fe_numero_documento,
+    fe_dv:               r.fe_dv,
+    fe_razon_social:     r.fe_razon_social,
+    fe_nombres:          r.fe_nombres,
+    fe_apellidos:        r.fe_apellidos,
+    fe_email:            r.fe_email,
+    fe_telefono:         r.fe_telefono,
+    fe_direccion:        r.fe_direccion,
+    fe_ciudad:           r.fe_ciudad,
+    fe_departamento:     r.fe_departamento,
+    fe_pais:             r.fe_pais,
+    fe_regimen:          r.fe_regimen,
+    fe_estado:           r.fe_estado,
+    fe_numero_factura:   r.fe_numero_factura,
+    fe_emitida_at:       r.fe_emitida_at,
+    // Descuentos / cortesía
+    descuento_cortesia:  r.descuento_cortesia,
+    descuento_agencia:   r.descuento_agencia,
+    descuento_general:   r.descuento_general,
+    // Web/Tatiana metadata
+    extras_solicitados:  r.extras_solicitados,
+    idioma:              r.idioma,
+    qr_code:             r.qr_code,
+    link_pago:           r.link_pago,
+    link_expira_at:      r.link_expira_at,
   };
 }
 
@@ -3425,8 +3491,24 @@ export default function Reservas() {
   const [showModal, setShowModal]   = useState(false);
   const [detalle, setDetalle]       = useState(null);
 
-  const today    = todayStr();
-  const tomorrow = tomorrowStr();
+  // Bug 2026-05: si el usuario dejaba la pestaña abierta cruzando la
+  // medianoche, `today` quedaba congelado en el valor de ayer (no había
+  // re-render para que se recalcule el const). Resultado: aparecían las
+  // reservas de ayer marcadas como "Hoy". Solución: useState + intervalo
+  // que detecta cambio de día en Bogotá cada minuto y dispara re-render.
+  const [today,    setToday]    = useState(todayStr());
+  const [tomorrow, setTomorrow] = useState(tomorrowStr());
+  useEffect(() => {
+    const tick = () => {
+      const t = todayStr();
+      if (t !== today) {
+        setToday(t);
+        setTomorrow(tomorrowStr());
+      }
+    };
+    const id = setInterval(tick, 60_000);
+    return () => clearInterval(id);
+  }, [today]);
 
   const fetchReservas = useCallback(async () => {
     if (!supabase) { setLoading(false); return; }
@@ -3462,8 +3544,8 @@ export default function Reservas() {
       // Grupos hoy y mañana — incluidos en Promise.all para evitar flash de pax incorrecto
       supabase.from("eventos").select(GRUPO_FIELDS).eq("fecha", today).neq("stage", "Realizado"),
       supabase.from("eventos").select(GRUPO_FIELDS).eq("fecha", tomorrow).neq("stage", "Realizado"),
-      supabase.from("muelle_llegadas").select("id, fecha, embarcacion_nombre, pax_total, pax_a, pax_n, total_cobrado, metodo_pago, tipo, hora_llegada, estado, matricula, reserva_id").eq("fecha", today).neq("tipo", "lancha_atolon").order("hora_llegada"),
-      supabase.from("muelle_llegadas").select("id, fecha, embarcacion_nombre, pax_total, pax_a, pax_n, total_cobrado, metodo_pago, tipo, hora_llegada, estado, matricula, reserva_id").eq("fecha", tomorrow).neq("tipo", "lancha_atolon").order("hora_llegada"),
+      supabase.from("muelle_llegadas").select("id, fecha, embarcacion_nombre, pax_total, pax_a, pax_n, total_cobrado, metodo_pago, tipo, hora_llegada, estado, matricula, reserva_id, excluir_kpis").eq("fecha", today).neq("tipo", "lancha_atolon").order("hora_llegada"),
+      supabase.from("muelle_llegadas").select("id, fecha, embarcacion_nombre, pax_total, pax_a, pax_n, total_cobrado, metodo_pago, tipo, hora_llegada, estado, matricula, reserva_id, excluir_kpis").eq("fecha", tomorrow).neq("tipo", "lancha_atolon").order("hora_llegada"),
     ]);
     // Map llegadas to virtual reserva rows with "Sin Reserva" tag
     const mapLlegada = (l) => ({
@@ -3581,7 +3663,16 @@ export default function Reservas() {
   const grupos = tabDia === "hoy" ? gruposHoy : tabDia === "manana" ? gruposManana : (fechaFiltro ? gruposFecha : []);
   // Solo embarcaciones que traen pasadías (pax_a + pax_n > 0). Huéspedes/staff-only no se muestran.
   const llegadasDiaAll = tabDia === "hoy" ? llegadasHoyAll : tabDia === "manana" ? llegadasManAll : (fechaFiltro ? llegadasFechaAll : []);
-  const llegadasDia = llegadasDiaAll.filter(l => (Number(l.pax_a) || 0) + (Number(l.pax_n) || 0) > 0);
+  // Filtro para los KPIs (Total Pax / Venta Total): excluir huéspedes,
+  // inspecciones, staff/contratistas (excluir_kpis=true) y llegadas
+  // vinculadas a reserva (doble conteo). El operador sigue viendo TODAS
+  // las llegadas en la lista — esto solo afecta los números agregados.
+  const llegadasDia = llegadasDiaAll.filter(l =>
+    (Number(l.pax_a) || 0) + (Number(l.pax_n) || 0) > 0 &&
+    !l.excluir_kpis &&
+    !l.reserva_id &&
+    !["huespedes", "inspeccion", "lanchas_atolon"].includes(l.tipo)
+  );
   // Pax real del grupo: excluye Impuesto Muelle y STAFF del conteo de pasajeros
   // Calcula pax del grupo combinando pasadias_org + reservas vinculadas.
   // IMPORTANTE: usa la lista de reservas del día del grupo (no la del tab activo),
@@ -3709,6 +3800,7 @@ export default function Reservas() {
       aliado_id:       form.aliado_id || null,
       vendedor:        form.vendedor !== "Sin asignar" ? form.vendedor : null,
       notas:           (form.notas || "") + (Array.isArray(form.edades_ninos) && form.edades_ninos.filter(e => e !== "").length > 0 ? ` · Edades niños: ${form.edades_ninos.filter(e => e !== "").join(", ")}` : ""),
+      notas_club:      (form.notas_club || "").trim() || null,
       fecha_pago:      isCortesia ? todayStr() : (form.fecha_pago || null),
       nombre_embarcacion: form.nombre_embarcacion || null,
       hora_llegada:    form.hora_llegada || null,
@@ -4083,11 +4175,21 @@ export default function Reservas() {
       })()}
 
       {/* ── Day tabs ── */}
+      {/* Filtro de llegadas para el contador: excluye huéspedes, inspecciones,
+          contratistas/staff (excluir_kpis=true) y llegadas vinculadas a una
+          reserva (doble conteo). Para el conteo del badge "Hoy/Mañana" no
+          queremos sumar gente que no es pasadía pagante. */}
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: isMobile ? 16 : 20, alignItems: "center" }}>
-        {[
-          { key: "hoy",    label: "Hoy",    fecha: today,    count: reservasHoy.filter(r => r.estado !== "cancelado" && !r.grupo_id).reduce((s,r) => s + r.pax, 0) + gruposHoy.reduce((s,g) => s + grupoPaxTotal(g, reservasHoy), 0) + llegadasHoyAll.reduce((s,l) => s + (l.pax_total||0), 0) },
-          { key: "manana", label: "Mañana", fecha: tomorrow, count: reservasManana.filter(r => r.estado !== "cancelado" && !r.grupo_id).reduce((s,r) => s + r.pax, 0) + gruposManana.reduce((s,g) => s + grupoPaxTotal(g, reservasManana), 0) + llegadasManAll.reduce((s,l) => s + (l.pax_total||0), 0) },
-        ].map(t => (
+        {(() => {
+          const cuentaPasadia = (l) =>
+            !l.excluir_kpis &&
+            !l.reserva_id &&
+            !["huespedes", "inspeccion", "lanchas_atolon"].includes(l.tipo);
+          return [
+          { key: "hoy",    label: "Hoy",    fecha: today,    count: reservasHoy.filter(r => r.estado !== "cancelado" && !r.grupo_id).reduce((s,r) => s + r.pax, 0) + gruposHoy.reduce((s,g) => s + grupoPaxTotal(g, reservasHoy), 0) + llegadasHoyAll.filter(cuentaPasadia).reduce((s,l) => s + (l.pax_total||0), 0) },
+          { key: "manana", label: "Mañana", fecha: tomorrow, count: reservasManana.filter(r => r.estado !== "cancelado" && !r.grupo_id).reduce((s,r) => s + r.pax, 0) + gruposManana.reduce((s,g) => s + grupoPaxTotal(g, reservasManana), 0) + llegadasManAll.filter(cuentaPasadia).reduce((s,l) => s + (l.pax_total||0), 0) },
+          ];
+        })().map(t => (
           <button key={t.key} onClick={() => { setTabDia(t.key); setSearch(""); setFilter("todos"); }} style={{
             display: "flex", alignItems: "center", gap: 8,
             background: tabDia === t.key ? B.sky + "22" : B.navyMid,
@@ -4258,6 +4360,7 @@ export default function Reservas() {
                       {saldo > 0 && <div><span style={{ color: B.warning, fontWeight: 700 }}>Saldo: {COP(saldo)}</span></div>}
                     </div>
                     {r.notas && <div style={{ marginTop: 6, fontSize: 11, color: B.sand, opacity: 0.7 }}>{r.notas}</div>}
+                    {r.notas_club && <div style={{ marginTop: 6, fontSize: 11, color: "#c4b5fd", background: "rgba(167,139,250,0.08)", border: "1px solid rgba(167,139,250,0.25)", borderRadius: 6, padding: "4px 8px" }}>🏝 {r.notas_club}</div>}
                   </div>
                 );
               })}
@@ -4298,6 +4401,7 @@ export default function Reservas() {
                           <div>{r.nombre}</div>
                           {r.created_at && <div style={{ fontSize: 11, color: B.sand, marginTop: 1 }}>⏱ {fmtHora(r.created_at)}</div>}
                           {r.notas && <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginTop: 1, maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.notas}</div>}
+                          {r.notas_club && <div title={r.notas_club} style={{ fontSize: 11, color: "#c4b5fd", marginTop: 2, background: "rgba(167,139,250,0.08)", border: "1px solid rgba(167,139,250,0.25)", borderRadius: 4, padding: "2px 6px", maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", display: "inline-block" }}>🏝 {r.notas_club}</div>}
                         </td>
                         <td style={{ ...tdStyle, color: B.sand, fontSize: 13 }}>{r.tipo}</td>
                         <td style={{ ...tdStyle, textAlign: "center", fontWeight: 700, color: B.sky }}>{r.pax}</td>

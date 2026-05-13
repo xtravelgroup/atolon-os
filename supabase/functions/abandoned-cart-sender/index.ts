@@ -156,16 +156,22 @@ Deno.serve(async (req) => {
       continue;
     }
 
-    // Verificar si ya compró (anti duplicado — cross-device)
+    // Verificar si ya compró (anti duplicado — cross-device).
+    // Match por email O telefono (algunos usuarios reservan con email
+    // distinto al del cart pero mismo WhatsApp).
     if (cart.fecha_visita) {
-      const { data: existingBooking } = await supabase
+      const fechaSolo = (cart.fecha_visita as string).substring(0, 10);
+      const orParts: string[] = [];
+      if (cart.email)    orParts.push(`email.eq.${cart.email}`);
+      if (cart.telefono) orParts.push(`telefono.eq.${cart.telefono}`);
+      const q = supabase
         .from("reservas")
         .select("id")
-        .eq("email", cart.email as string)
-        .eq("fecha", (cart.fecha_visita as string).substring(0, 10))
+        .eq("fecha", fechaSolo)
         .in("estado", ["confirmado", "pagado", "checked_in"])
-        .limit(1)
-        .maybeSingle();
+        .limit(1);
+      if (orParts.length > 0) q.or(orParts.join(","));
+      const { data: existingBooking } = orParts.length > 0 ? await q.maybeSingle() : { data: null };
 
       if (existingBooking) {
         // Ya compró — cancelar todo el flujo

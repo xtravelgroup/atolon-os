@@ -44,11 +44,24 @@ function KpiCard({ label, value, sub, color }) {
 function Dashboard() {
   const [kpis, setKpis] = useState({});
   const [loading, setLoading] = useState(true);
+  // Bug 2026-05: si la pestaña quedaba abierta cruzando medianoche, el
+  // useEffect con [] no se re-ejecutaba y `hoy` se quedaba congelado en
+  // ayer. Resultado: el dashboard mostraba reservas/pax de ayer como
+  // "Hoy". Solución: state que se actualiza cada minuto al detectar
+  // cambio de día en Bogotá.
+  const [hoyState, setHoyState] = useState(todayStr());
+  useEffect(() => {
+    const id = setInterval(() => {
+      const t = todayStr();
+      if (t !== hoyState) setHoyState(t);
+    }, 60_000);
+    return () => clearInterval(id);
+  }, [hoyState]);
 
   useEffect(() => {
     if (!supabase) { setLoading(false); return; }
     const load = async () => {
-      const hoy = todayStr();
+      const hoy = hoyState;
       // tomorrow in Colombia timezone
       const manana = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Bogota" }));
       manana.setDate(manana.getDate() + 1);
@@ -85,9 +98,25 @@ function Dashboard() {
         // Grupos hoy y mañana
         supabase.from("eventos").select("id, pax, fecha, pasadias_org, categoria, aliado_id").eq("fecha", hoy).neq("stage", "Realizado"),
         supabase.from("eventos").select("id, pax, fecha, pasadias_org, categoria, aliado_id").eq("fecha", mananaStr).neq("stage", "Realizado"),
-        // Llegadas muelle (After Island, Restaurante, Walk-in) — excluye lancha_atolon
-        supabase.from("muelle_llegadas").select("pax_total").eq("fecha", hoy).neq("tipo", "lancha_atolon"),
-        supabase.from("muelle_llegadas").select("pax_total").eq("fecha", mananaStr).neq("tipo", "lancha_atolon"),
+        // Llegadas muelle (After Island, Restaurante, Walk-in) — excluye:
+        //   • lancha_atolon (lancha de staff/operación)
+        //   • lanchas_atolon (idem)
+        //   • huespedes (hotel guests, no son pasadía)
+        //   • inspeccion (B2B inspection tours, no pagan pasadía)
+        //   • llegadas vinculadas a reserva (doble conteo con paxHoyR)
+        //   • llegadas marcadas excluir_kpis (staff, contratistas, cortesía)
+        // Antes solo excluía lancha_atolon, así que llegadas de huéspedes
+        // mal categorizadas como "otras"/"walkin" se sumaban al pax del día.
+        supabase.from("muelle_llegadas").select("pax_total")
+          .eq("fecha", hoy)
+          .not("tipo", "in", '("lancha_atolon","lanchas_atolon","huespedes","inspeccion")')
+          .is("reserva_id", null)
+          .or("excluir_kpis.is.null,excluir_kpis.eq.false"),
+        supabase.from("muelle_llegadas").select("pax_total")
+          .eq("fecha", mananaStr)
+          .not("tipo", "in", '("lancha_atolon","lanchas_atolon","huespedes","inspeccion")')
+          .is("reserva_id", null)
+          .or("excluir_kpis.is.null,excluir_kpis.eq.false"),
       ]);
 
       const isGrupo = (e) => e.categoria === "grupo" || (!e.categoria && e.aliado_id);
@@ -110,7 +139,7 @@ function Dashboard() {
       setLoading(false);
     };
     load();
-  }, []);
+  }, [hoyState]); // re-correr cuando cambia el día en Bogotá
 
   const v = (k) => loading ? "..." : (typeof kpis[k] === "number" ? kpis[k] : "—");
 
@@ -295,24 +324,34 @@ export default function AtolanOS({ activeModule = "dashboard", onNavigate, modul
     logoSrc:       "/atolon-logo-white.png",
   };
 
-  // Load current user's modulos + role from DB
+  // Load current user's modulos + role from DB.
+  // Reglas de acceso:
+  //   1. Si el ROL tiene permisos["*"] (super_admin / dirección) → ver todo.
+  //   2. Si modulos[] está vacío/null → ver todo (legacy / no configurado).
+  //   3. Cualquier otro caso → respetar EXACTAMENTE la lista de modulos[],
+  //      sin importar cuántos sean (el conteo NO determina admin).
+  //
+  // Antes había una heurística "20+ módulos = admin" que daba acceso total
+  // a cualquier usuario con muchos módulos asignados, anulando la
+  // restricción explícita. Eso rompía a Contabilidad y otros roles con
+  // muchos pero NO-todos los módulos.
   useEffect(() => {
     if (!userEmail || !supabase) { setUserModulos(null); return; }
     supabase.from("usuarios").select("modulos, rol_id, nombre, avatar_color").eq("email", userEmail).maybeSingle()
       .then(async ({ data }) => {
         if (data?.nombre) setUserName(data.nombre);
         const mods = data?.modulos;
-        // If no modulos or empty → show all
-        if (!Array.isArray(mods) || mods.length === 0) { setUserModulos(null); return; }
-        // Heuristic: 20+ modules = effectively admin (full access)
-        if (mods.length >= 20) { setUserModulos(null); return; }
-        // Try roles table to confirm admin
+        // 1) ¿El rol tiene acceso total ("*")?
         if (data?.rol_id) {
           try {
             const { data: rol } = await supabase.from("roles").select("permisos").eq("id", data.rol_id).maybeSingle();
             if (rol?.permisos?.["*"]) { setUserModulos(null); return; }
           } catch (_) {}
         }
+        // 2) Sin modulos definidos → asumimos legacy / configuración
+        //    incompleta y NO restringimos. Para restringir, definir la lista.
+        if (!Array.isArray(mods) || mods.length === 0) { setUserModulos(null); return; }
+        // 3) Respetar exactamente la lista
         setUserModulos(mods);
       })
       .catch(() => setUserModulos(null));

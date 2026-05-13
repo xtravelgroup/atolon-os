@@ -522,52 +522,145 @@ function TabTransAcuatica() {
   );
 }
 
+// ───────────────────────────────────────────────────────────────────
+// LoggroLinker · subcomponente reusable para enlazar un menu_item con
+// un producto en Loggro (POS). Definido fuera de ItemModal para que no
+// se re-monte en cada render del padre (lo cual reseteaba la búsqueda).
+//
+// Para bebidas que se venden por copa Y botella, Loggro guarda cada
+// variante como un producto distinto (con su propio _id), así que el
+// modal de bebidas renderiza este linker dos veces — uno para copa y
+// otro para botella.
+// ───────────────────────────────────────────────────────────────────
+function LoggroLinker({ idField, catField, form, set, label, hint }) {
+  const idVal  = form[idField] || null;
+  const catVal = form[catField] || null;
+  const fnHeaders = {
+    apikey: import.meta.env.VITE_SUPABASE_ANON_KEY,
+    Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+  };
+  const [search, setSearch] = useState("");
+  const [results, setResults] = useState([]);
+  const [open, setOpen] = useState(false);
+  const [current, setCurrent] = useState(null);
+
+  // Al montar (o cuando cambia el id), trae el nombre actual del producto
+  useEffect(() => {
+    if (!idVal) { setCurrent(null); return; }
+    fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/loggro-sync/raw?path=${encodeURIComponent("/products/" + idVal)}`, {
+      headers: fnHeaders,
+    })
+      .then(r => r.json()).then(d => {
+        const prod = d?.body || d;
+        if (prod?.name) setCurrent(prod.name);
+      }).catch(() => {});
+  }, [idVal]);
+
+  // Buscador en Loggro
+  useEffect(() => {
+    if (!open) return;
+    const q = (search || form.nombre || "").trim();
+    if (q.length < 2) { setResults([]); return; }
+    const t = setTimeout(() => {
+      fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/loggro-sync/products?pagination=true&limit=30&page=0&name=${encodeURIComponent(q)}`, {
+        headers: fnHeaders,
+      })
+        .then(r => r.json()).then(d => setResults(d.products || [])).catch(() => setResults([]));
+    }, 300);
+    return () => clearTimeout(t);
+  }, [search, open, form.nombre]);
+
+  return (
+    <div style={{ padding: "10px 12px", background: "#38bdf811", border: "1px solid #38bdf833", borderRadius: 8 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: open ? 8 : 0 }}>
+        <div style={{ fontSize: 12, color: "#38bdf8", fontWeight: 700 }}>{label || "🔗 Enlace con Loggro (POS)"}</div>
+        <button type="button" onClick={() => setOpen(o => !o)} style={{ background: "none", border: "none", color: "#38bdf8", cursor: "pointer", fontSize: 11, fontWeight: 600 }}>
+          {open ? "▲ Cerrar" : "▼ Abrir"}
+        </button>
+      </div>
+      {hint && !open && (
+        <div style={{ fontSize: 10, color: "rgba(255,255,255,0.45)", marginTop: 2, marginBottom: 2 }}>{hint}</div>
+      )}
+      {!open && (
+        <div style={{ fontSize: 11, color: "rgba(255,255,255,0.6)", marginTop: 4 }}>
+          {idVal ? (
+            <span style={{ color: "#22c55e" }}>✓ Enlazado: {current || idVal.slice(-10)}</span>
+          ) : (
+            <span style={{ color: "#f59e0b" }}>⚠ Sin enlazar</span>
+          )}
+        </div>
+      )}
+      {open && (
+        <>
+          {idVal && (
+            <div style={{ fontSize: 11, color: "#22c55e", marginBottom: 8 }}>
+              Actualmente enlazado a: <strong>{current || idVal}</strong>
+              <button type="button" onClick={() => { set(idField, null); set(catField, null); setCurrent(null); }}
+                style={{ marginLeft: 8, padding: "2px 8px", fontSize: 10, borderRadius: 4, border: "1px solid #ef444455", background: "#ef444422", color: "#ef4444", cursor: "pointer" }}>
+                Quitar
+              </button>
+            </div>
+          )}
+          <input
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder={`🔍 Buscar en Loggro (ej: ${form.nombre || "nombre..."})`}
+            style={{ ...IS, padding: "7px 10px", fontSize: 12 }}
+          />
+          {results.length > 0 && (
+            <div style={{ marginTop: 6, maxHeight: 200, overflowY: "auto", background: B.navy, border: `1px solid ${B.navyLight}`, borderRadius: 6 }}>
+              {results.map(p => {
+                const id = p._id || p.id;
+                const isCurrent = idVal === id;
+                const isBT = /\bBT\b/i.test(p.name);
+                return (
+                  <div key={id} onClick={() => {
+                    set(idField, id);
+                    set(catField, p.category?.name || null);
+                    setCurrent(p.name);
+                    setOpen(false);
+                  }}
+                    style={{
+                      padding: "8px 10px", cursor: "pointer", fontSize: 12,
+                      background: isCurrent ? "#22c55e22" : "transparent",
+                      borderBottom: `1px solid ${B.navyLight}`,
+                      display: "flex", justifyContent: "space-between", alignItems: "center", gap: 6,
+                    }}
+                    onMouseEnter={e => { if (!isCurrent) e.currentTarget.style.background = "rgba(255,255,255,0.04)"; }}
+                    onMouseLeave={e => { if (!isCurrent) e.currentTarget.style.background = "transparent"; }}
+                  >
+                    <div style={{ minWidth: 0, flex: 1 }}>
+                      <div style={{ fontWeight: 600, display: "flex", alignItems: "center", gap: 6 }}>
+                        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</span>
+                        {isBT && <span style={{ fontSize: 9, padding: "1px 5px", borderRadius: 3, background: "#C8B99A33", color: "#C8B99A" }}>🍾 BT</span>}
+                      </div>
+                      <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)" }}>{p.category?.name || "Sin categoría"}</div>
+                    </div>
+                    {isCurrent && <span style={{ fontSize: 10, color: "#22c55e", fontWeight: 700 }}>✓</span>}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          {search.length >= 2 && results.length === 0 && (
+            <div style={{ marginTop: 6, padding: 8, fontSize: 11, color: "rgba(255,255,255,0.35)", textAlign: "center" }}>Sin resultados</div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 function ItemModal({ item, menuTipo, onClose, onSaved, categorias }) {
   const isEdit      = !!item?.id;
   const isEspacio   = menuTipo === "espacios_renta";
   const isServicio  = menuTipo === "otros_servicios";
   const isBanquete  = menuTipo === "banquetes";
+  const isBebida    = menuTipo === "bebidas";
   const [form, setForm] = useState(isEdit
-    ? { ...item, tiene_iva: item.tiene_iva ?? true, opciones: item.opciones || [], seleccion_modo: item.seleccion_modo || "todo", seleccion_cantidad: item.seleccion_cantidad || 0, room_service: item.room_service ?? false, foto_url: item.foto_url || "", destacado: item.destacado ?? false, disponible: item.disponible ?? true, nombre_en: item.nombre_en || "", descripcion_en: item.descripcion_en || "", categoria_en: item.categoria_en || "", loggro_id: item.loggro_id || null, loggro_categoria: item.loggro_categoria || null }
-    : { nombre: "", descripcion: "", precio: "", categoria: categorias[0] || "", activo: true, orden: 0, menu_tipo: menuTipo, tiene_iva: true, opciones: [], seleccion_modo: "todo", seleccion_cantidad: 0, room_service: false, foto_url: "", destacado: false, disponible: true, nombre_en: "", descripcion_en: "", categoria_en: "", loggro_id: null, loggro_categoria: null });
+    ? { ...item, tiene_iva: item.tiene_iva ?? true, opciones: item.opciones || [], seleccion_modo: item.seleccion_modo || "todo", seleccion_cantidad: item.seleccion_cantidad || 0, room_service: item.room_service ?? false, foto_url: item.foto_url || "", destacado: item.destacado ?? false, disponible: item.disponible ?? true, nombre_en: item.nombre_en || "", descripcion_en: item.descripcion_en || "", categoria_en: item.categoria_en || "", loggro_id: item.loggro_id || null, loggro_categoria: item.loggro_categoria || null, loggro_id_botella: item.loggro_id_botella || null, loggro_categoria_botella: item.loggro_categoria_botella || null, precio_botella: item.precio_botella ?? "" }
+    : { nombre: "", descripcion: "", precio: "", categoria: categorias[0] || "", activo: true, orden: 0, menu_tipo: menuTipo, tiene_iva: true, opciones: [], seleccion_modo: "todo", seleccion_cantidad: 0, room_service: false, foto_url: "", destacado: false, disponible: true, nombre_en: "", descripcion_en: "", categoria_en: "", loggro_id: null, loggro_categoria: null, loggro_id_botella: null, loggro_categoria_botella: null, precio_botella: "" });
 
-  // Loggro linker
-  const [loggroSearch, setLoggroSearch] = useState("");
-  const [loggroResults, setLoggroResults] = useState([]);
-  const [loggroOpen, setLoggroOpen] = useState(false);
-  const [loggroCurrent, setLoggroCurrent] = useState(null); // nombre actual si está linked
-  // Headers necesarios para llamar Edge Functions de Supabase (anon key)
-  const fnHeaders = {
-    apikey: import.meta.env.VITE_SUPABASE_ANON_KEY,
-    Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
-  };
-
-  useEffect(() => {
-    // Cuando se abre el modal, si ya tiene loggro_id, traer el producto DIRECTO por su _id
-    // (antes buscaba por nombre y no matcheaba si Atolón/Loggro tenían nombres distintos)
-    if (form.loggro_id) {
-      fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/loggro-sync/raw?path=${encodeURIComponent("/products/" + form.loggro_id)}`, {
-        headers: fnHeaders,
-      })
-        .then(r => r.json()).then(d => {
-          // /raw devuelve { status, body: { ..._id, name, ... } } o directo el producto
-          const prod = d?.body || d;
-          if (prod?.name) setLoggroCurrent(prod.name);
-        }).catch(() => {});
-    }
-  }, []);
-  useEffect(() => {
-    if (!loggroOpen) return;
-    const q = (loggroSearch || form.nombre || "").trim();
-    if (q.length < 2) { setLoggroResults([]); return; }
-    const t = setTimeout(() => {
-      fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/loggro-sync/products?pagination=true&limit=30&page=0&name=${encodeURIComponent(q)}`, {
-        headers: fnHeaders,
-      })
-        .then(r => r.json()).then(d => setLoggroResults(d.products || [])).catch(() => setLoggroResults([]));
-    }, 300);
-    return () => clearTimeout(t);
-  }, [loggroSearch, loggroOpen, form.nombre]);
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
   const fileInputRef = useRef(null);
 
@@ -613,6 +706,18 @@ function ItemModal({ item, menuTipo, onClose, onSaved, categorias }) {
       categoria_en:   form.categoria_en || null,
       loggro_id:      form.loggro_id || null,
       loggro_categoria: form.loggro_categoria || null,
+      // precio_botella: solo para bebidas. Vacío/0 = no se vende por botella.
+      precio_botella: isBebida && Number(form.precio_botella) > 0
+        ? Number(form.precio_botella)
+        : null,
+      // loggro_id_botella: solo si la bebida se vende por botella. La copa
+      // y la botella son productos distintos en Loggro (cada uno con su _id).
+      loggro_id_botella: isBebida && Number(form.precio_botella) > 0
+        ? (form.loggro_id_botella || null)
+        : null,
+      loggro_categoria_botella: isBebida && Number(form.precio_botella) > 0
+        ? (form.loggro_categoria_botella || null)
+        : null,
     };
     if (isBanquete) {
       payload.opciones = form.opciones || [];
@@ -704,11 +809,17 @@ function ItemModal({ item, menuTipo, onClose, onSaved, categorias }) {
             </div>
           )}
 
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+          <div style={{ display: "grid", gridTemplateColumns: isBebida ? "1fr 1fr 1fr" : "1fr 1fr", gap: 12 }}>
             <div>
-              <label style={LS}>{isEspacio ? "Tarifa (COP)" : "Precio (COP)"}</label>
+              <label style={LS}>{isEspacio ? "Tarifa (COP)" : isBebida ? "Precio copa (COP)" : "Precio (COP)"}</label>
               <input type="number" value={form.precio} onChange={e => set("precio", e.target.value)} style={IS} placeholder="0" />
             </div>
+            {isBebida && (
+              <div>
+                <label style={LS} title="Dejá vacío si no se vende por botella">Precio botella (COP)</label>
+                <input type="number" value={form.precio_botella} onChange={e => set("precio_botella", e.target.value)} style={IS} placeholder="(opcional)" />
+              </div>
+            )}
             <div>
               <label style={LS}>Orden</label>
               <input type="number" value={form.orden} onChange={e => set("orden", e.target.value)} style={IS} placeholder="0" />
@@ -748,81 +859,29 @@ function ItemModal({ item, menuTipo, onClose, onSaved, categorias }) {
                 </label>
               </div>
 
-              {/* ── Enlace con Loggro ── */}
-              <div style={{ padding: "10px 12px", background: "#38bdf811", border: "1px solid #38bdf833", borderRadius: 8 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: loggroOpen ? 8 : 0 }}>
-                  <div style={{ fontSize: 12, color: "#38bdf8", fontWeight: 700 }}>🔗 Enlace con Loggro (POS)</div>
-                  <button type="button" onClick={() => setLoggroOpen(o => !o)} style={{ background: "none", border: "none", color: "#38bdf8", cursor: "pointer", fontSize: 11, fontWeight: 600 }}>
-                    {loggroOpen ? "▲ Cerrar" : "▼ Abrir"}
-                  </button>
-                </div>
-                {!loggroOpen && (
-                  <div style={{ fontSize: 11, color: "rgba(255,255,255,0.6)", marginTop: 4 }}>
-                    {form.loggro_id ? (
-                      <span style={{ color: "#22c55e" }}>✓ Enlazado: {loggroCurrent || form.loggro_id.slice(-10)}</span>
-                    ) : (
-                      <span style={{ color: "#f59e0b" }}>⚠ Sin enlazar</span>
-                    )}
-                  </div>
-                )}
-                {loggroOpen && (
-                  <>
-                    {form.loggro_id && (
-                      <div style={{ fontSize: 11, color: "#22c55e", marginBottom: 8 }}>
-                        Actualmente enlazado a: <strong>{loggroCurrent || form.loggro_id}</strong>
-                        <button type="button" onClick={() => { set("loggro_id", null); set("loggro_categoria", null); setLoggroCurrent(null); }}
-                          style={{ marginLeft: 8, padding: "2px 8px", fontSize: 10, borderRadius: 4, border: "1px solid #ef444455", background: "#ef444422", color: "#ef4444", cursor: "pointer" }}>
-                          Quitar
-                        </button>
-                      </div>
-                    )}
-                    <input
-                      value={loggroSearch}
-                      onChange={e => setLoggroSearch(e.target.value)}
-                      placeholder={`🔍 Buscar en Loggro (ej: ${form.nombre || "nombre..."})`}
-                      style={{ ...IS, padding: "7px 10px", fontSize: 12 }}
-                    />
-                    {loggroResults.length > 0 && (
-                      <div style={{ marginTop: 6, maxHeight: 200, overflowY: "auto", background: B.navy, border: `1px solid ${B.navyLight}`, borderRadius: 6 }}>
-                        {loggroResults.map(p => {
-                          const id = p._id || p.id;
-                          const isCurrent = form.loggro_id === id;
-                          const isBT = /\bBT\b/i.test(p.name);
-                          return (
-                            <div key={id} onClick={() => {
-                              set("loggro_id", id);
-                              set("loggro_categoria", p.category?.name || null);
-                              setLoggroCurrent(p.name);
-                              setLoggroOpen(false);
-                            }}
-                              style={{
-                                padding: "8px 10px", cursor: "pointer", fontSize: 12,
-                                background: isCurrent ? "#22c55e22" : "transparent",
-                                borderBottom: `1px solid ${B.navyLight}`,
-                                display: "flex", justifyContent: "space-between", alignItems: "center", gap: 6,
-                              }}
-                              onMouseEnter={e => { if (!isCurrent) e.currentTarget.style.background = "rgba(255,255,255,0.04)"; }}
-                              onMouseLeave={e => { if (!isCurrent) e.currentTarget.style.background = "transparent"; }}
-                            >
-                              <div style={{ minWidth: 0, flex: 1 }}>
-                                <div style={{ fontWeight: 600, display: "flex", alignItems: "center", gap: 6 }}>
-                                  <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</span>
-                                  {isBT && <span style={{ fontSize: 9, padding: "1px 5px", borderRadius: 3, background: "#C8B99A33", color: "#C8B99A" }}>🍾 BT</span>}
-                                </div>
-                                <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)" }}>{p.category?.name || "Sin categoría"}</div>
-                              </div>
-                              {isCurrent && <span style={{ fontSize: 10, color: "#22c55e", fontWeight: 700 }}>✓</span>}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
-                    {loggroSearch.length >= 2 && loggroResults.length === 0 && (
-                      <div style={{ marginTop: 6, padding: 8, fontSize: 11, color: "rgba(255,255,255,0.35)", textAlign: "center" }}>Sin resultados</div>
-                    )}
-                  </>
-                )}
-              </div>
+              {/* ── Enlace con Loggro ──
+                  Para bebidas que se venden por copa Y botella, en Loggro
+                  cada variante es un producto distinto con su propio _id.
+                  Por eso renderizamos dos linkers (copa y botella) cuando
+                  isBebida && precio_botella > 0. */}
+              <LoggroLinker
+                idField="loggro_id"
+                catField="loggro_categoria"
+                form={form}
+                set={set}
+                label={isBebida && Number(form.precio_botella) > 0 ? "🥃 Loggro · Copa" : "🔗 Enlace con Loggro (POS)"}
+                hint={isBebida && Number(form.precio_botella) > 0 ? "Producto Loggro de la copa/trago." : null}
+              />
+              {isBebida && Number(form.precio_botella) > 0 && (
+                <LoggroLinker
+                  idField="loggro_id_botella"
+                  catField="loggro_categoria_botella"
+                  form={form}
+                  set={set}
+                  label="🍾 Loggro · Botella"
+                  hint="Producto Loggro distinto al de la copa (botella entera)."
+                />
+              )}
               <div style={{ display: "flex", gap: 8 }}>
                 <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 8, padding: "10px 12px", background: "#F5C84211", border: "1px solid #F5C84233", borderRadius: 8 }}>
                   <input type="checkbox" checked={!!form.destacado} onChange={e => set("destacado", e.target.checked)} id="dest-chk" />
@@ -979,13 +1038,18 @@ export default function Menus() {
           <h2 style={{ fontSize: 22, fontWeight: 600 }}>Productos</h2>
           {supabase && !loading && <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 10, background: B.success + "22", color: B.success }}>LIVE</span>}
           {!loading && (() => {
-            const enlazados = tabItems.filter(i => i.loggro_id).length;
+            // Una bebida con precio_botella debe tener AMBOS enlaces (copa + botella)
+            // para considerarse 100% vinculada — son productos distintos en Loggro.
+            const enlazados = tabItems.filter(i => {
+              const needsBT = i.menu_tipo === "bebidas" && Number(i.precio_botella) > 0;
+              return needsBT ? (i.loggro_id && i.loggro_id_botella) : !!i.loggro_id;
+            }).length;
             const total = tabItems.length;
             if (total === 0) return null;
             const pct = Math.round((enlazados / total) * 100);
             return (
               <span style={{ fontSize: 11, padding: "3px 10px", borderRadius: 10, background: "#22c55e11", color: "#22c55e", fontWeight: 700, border: "1px solid #22c55e44" }}
-                title={`${enlazados} de ${total} productos vinculados a Loggro POS`}>
+                title={`${enlazados} de ${total} productos vinculados a Loggro POS (bebidas con copa+botella requieren ambos enlaces)`}>
                 🔗 {enlazados}/{total} en Loggro ({pct}%)
               </span>
             );
@@ -1072,7 +1136,26 @@ export default function Menus() {
                         <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 2, flexWrap: "wrap" }}>
                           <div style={{ fontWeight: 600, fontSize: 14 }}>{item.nombre}</div>
                           {item.disponible === false && <span style={{ fontSize: 9, padding: "1px 5px", borderRadius: 4, background: "#ef444433", color: "#ef4444", fontWeight: 700, textTransform: "uppercase" }}>Agotado</span>}
-                          {item.loggro_id ? (
+                          {/* Bebidas con copa + botella → un chip por variante.
+                              El resto → un solo chip "🔗 Loggro". */}
+                          {item.precio_botella > 0 ? (
+                            <>
+                              <span title={item.loggro_id ? `Copa Loggro: ${item.loggro_id}` : "Copa sin enlace a Loggro"}
+                                style={{ fontSize: 9, padding: "1px 6px", borderRadius: 4,
+                                  background: item.loggro_id ? "#22c55e22" : "rgba(255,255,255,0.05)",
+                                  color: item.loggro_id ? "#22c55e" : "rgba(255,255,255,0.35)",
+                                  fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em" }}>
+                                🥃 {item.loggro_id ? "Copa" : "Copa s/e"}
+                              </span>
+                              <span title={item.loggro_id_botella ? `Botella Loggro: ${item.loggro_id_botella}` : "Botella sin enlace a Loggro"}
+                                style={{ fontSize: 9, padding: "1px 6px", borderRadius: 4,
+                                  background: item.loggro_id_botella ? "#22c55e22" : "rgba(255,255,255,0.05)",
+                                  color: item.loggro_id_botella ? "#22c55e" : "rgba(255,255,255,0.35)",
+                                  fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em" }}>
+                                🍾 {item.loggro_id_botella ? "Botella" : "Botella s/e"}
+                              </span>
+                            </>
+                          ) : item.loggro_id ? (
                             <span title={`Loggro: ${item.loggro_id}`} style={{ fontSize: 9, padding: "1px 6px", borderRadius: 4, background: "#22c55e22", color: "#22c55e", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em" }}>
                               🔗 Loggro
                             </span>
@@ -1083,8 +1166,19 @@ export default function Menus() {
                           )}
                         </div>
                         {item.descripcion && <div style={{ fontSize: 11, color: "rgba(255,255,255,0.45)", lineHeight: 1.4, marginBottom: 4, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{item.descripcion}</div>}
-                        {item.precio > 0 && <div style={{ fontSize: 13, fontWeight: 700, color: B.sand }}>{COP(item.precio)}</div>}
-                        {item.loggro_id && <LoggroLinkLabel loggroId={item.loggro_id} />}
+                        {item.precio > 0 && (
+                          <div style={{ fontSize: 13, fontWeight: 700, color: B.sand, display: "flex", gap: 10, flexWrap: "wrap" }}>
+                            <span>{item.precio_botella > 0 ? `🥃 Copa: ${COP(item.precio)}` : COP(item.precio)}</span>
+                            {item.precio_botella > 0 && (
+                              <span style={{ color: "#a78bfa" }}>🍾 Botella: {COP(item.precio_botella)}</span>
+                            )}
+                          </div>
+                        )}
+                        {(!item.precio || item.precio === 0) && item.precio_botella > 0 && (
+                          <div style={{ fontSize: 13, fontWeight: 700, color: "#a78bfa" }}>🍾 Botella: {COP(item.precio_botella)}</div>
+                        )}
+                        {item.loggro_id && <LoggroLinkLabel loggroId={item.loggro_id} prefix={item.precio_botella > 0 ? "🥃 " : ""} />}
+                        {item.loggro_id_botella && <LoggroLinkLabel loggroId={item.loggro_id_botella} prefix="🍾 " />}
                       </div>
                       {/* Actions */}
                       <div style={{ display: "flex", flexDirection: "column", gap: 4, flexShrink: 0 }}>
@@ -1129,7 +1223,7 @@ export default function Menus() {
 const _loggroNameCache = new Map();
 const _loggroNamePending = new Map();
 
-function LoggroLinkLabel({ loggroId }) {
+function LoggroLinkLabel({ loggroId, prefix = "" }) {
   const [name, setName] = useState(() => _loggroNameCache.get(loggroId) || null);
 
   useEffect(() => {
@@ -1163,7 +1257,7 @@ function LoggroLinkLabel({ loggroId }) {
 
   return (
     <div style={{ fontSize: 10, color: "#22c55ecc", marginTop: 3, display: "flex", alignItems: "center", gap: 4 }}>
-      <span>→</span>
+      <span>{prefix || "→"}</span>
       <span style={{ fontWeight: 600 }}>{name || "cargando..."}</span>
     </div>
   );

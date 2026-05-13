@@ -9,6 +9,8 @@ import { wompiCheckoutUrl } from "../lib/wompi";
 import AtolanTrack from "../lib/AtolanTrack";
 import { gtmViewItem, gtmBeginCheckout, gtmAddPaymentInfo, gtmAbandon } from "../lib/gtm";
 import FacturaElectronicaForm, { FacturaElectronicaToggle, FE_EMPTY, feValidate, fePayload } from "../lib/FacturaElectronicaForm.jsx";
+import ZohoPaymentWidget from "../components/ZohoPaymentWidget.jsx";
+import { crearSesionPago, getMerchantInternacional } from "../lib/internacional";
 
 // ── Palette (light theme) ───────────────────────────────────────────────────
 const C = {
@@ -198,6 +200,7 @@ export default function BookingPopup() {
   const [termsAccepted, setTermsAccepted] = useState(false);
   const [saving,    setSaving]    = useState(false);
   const [linkPago,  setLinkPago]  = useState("");
+  const [zohoWidget, setZohoWidget] = useState(null); // { session, address, description, onSuccess }
   const [dispon,      setDispon]      = useState({}); // ISO → remaining total
   const [cierres,     setCierres]     = useState([]); // dates closed
   const [salidas,     setSalidas]     = useState([]); // all active salidas
@@ -299,26 +302,56 @@ export default function BookingPopup() {
     return () => clearTimeout(_emailDebounceRef.current);
   }, [form.email]);
 
-  // ── Abandoned Cart: crear/actualizar registro cuando se captura el email ──
+  // ── Abandoned Cart: crear/actualizar registro tan pronto haya señales ──
+  // Cambios 2026-05:
+  //   1. Captura temprana — antes esperábamos email; ahora capturamos cart
+  //      apenas haya producto+fecha (estado=browsing) y enriquecemos con
+  //      email/nombre/tel cuando lleguen. Esto recupera la atribución de
+  //      usuarios que abandonan en step 2/3 sin ingresar email.
+  //   2. AtolanTrack.sesionId / .utms (antes _sesionId / _utms — campos
+  //      privados que NO existen → siempre null/{} → cero atribución).
+  //   3. Errores client-side ahora se loggean en `ac_errors` server-side
+  //      para diagnóstico. Antes solo iban a la consola del usuario.
+  const _acLogError = async (fase, err, ctx) => {
+    if (!supabase) return;
+    try {
+      await supabase.from("ac_errors").insert({
+        id: `acerr_${Date.now()}_${acNanoid(6)}`,
+        cart_id: acCartIdRef.current || null,
+        email:   form.email?.toLowerCase().trim() || null,
+        fase,
+        mensaje: String(err?.message || err || "unknown").slice(0, 1000),
+        contexto: ctx || null,
+        user_agent: (navigator.userAgent || "").slice(0, 500),
+        url: window.location.href.slice(0, 500),
+      });
+    } catch (_) { /* fallback: silencio si hasta el log falla */ }
+  };
+
   useEffect(() => {
-    const emailOk = form.email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email);
-    if (!emailOk || !supabase) return;
+    if (!supabase) return;
+    // Disparar el upsert si hay AL MENOS:
+    //   • producto seleccionado (paso 1+) — guarda intent básico
+    //   • o email válido — sigue capturando como antes
+    const emailOk    = form.email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email);
+    const hasProduct = !!product?.slug;
+    if (!emailOk && !hasProduct) return;
+
     clearTimeout(_acDebounceRef.current);
     _acDebounceRef.current = setTimeout(async () => {
       try {
-        const now   = new Date().toISOString();
-        const sesId = AtolanTrack._sesionId ?? null;
-        // Detectar device type
-        const isMob = /Mobile|Android|iPhone|iPad/i.test(navigator.userAgent);
+        const now    = new Date().toISOString();
+        const sesId  = AtolanTrack.sesionId ?? null;
+        const isMob  = /Mobile|Android|iPhone|iPad/i.test(navigator.userAgent);
         const deviceType = isMob ? "mobile" : "desktop";
         // UTMs desde sessionStorage / AtolanTrack
         const utms     = AtolanTrack._utms     ?? {};
         const clickIds = AtolanTrack._clickIds ?? {};
         const landing  = sessionStorage.getItem("ac_landing") || window.location.origin + "/booking";
 
-        if (!acCartIdRef.current) {
-          // Primero: verificar si hay un cart reciente con el mismo email
-          const { data: existingCart } = await supabase
+        // Primer fetch: si tenemos email, intentar reutilizar cart existente.
+        if (!acCartIdRef.current && emailOk) {
+          const lookup = await supabase
             .from("ac_carts")
             .select("id, estado")
             .eq("email", form.email.toLowerCase().trim())
@@ -327,17 +360,25 @@ export default function BookingPopup() {
             .limit(1)
             .maybeSingle();
 
-          if (existingCart) {
-            acCartIdRef.current = existingCart.id;
-          } else {
-            acCartIdRef.current = `AC-${Date.now()}-${acNanoid(8)}`;
+          if (lookup.error) {
+            _acLogError("lookup", lookup.error, { email: form.email });
+          } else if (lookup.data) {
+            acCartIdRef.current = lookup.data.id;
           }
         }
+        if (!acCartIdRef.current) {
+          acCartIdRef.current = `AC-${Date.now()}-${acNanoid(8)}`;
+        }
+
+        // Estado: "browsing" si aún no hay email; "checkout_started" cuando ya
+        // ingresó email válido. NUNCA degradamos: si ya pasó a checkout_started
+        // no volvemos a browsing.
+        const estado = emailOk ? "checkout_started" : "browsing";
 
         const cartData = {
           id:                   acCartIdRef.current,
           sesion_id:            sesId,
-          email:                form.email.toLowerCase().trim(),
+          email:                emailOk ? form.email.toLowerCase().trim() : null,
           nombre:               form.nombre?.trim() || null,
           telefono:             form.telefono?.trim() || null,
           producto:             product?.tipo || null,
@@ -369,14 +410,23 @@ export default function BookingPopup() {
           user_agent:           navigator.userAgent || null,
           landing_page:         landing,
           checkout_url:         window.location.href,
-          estado:               "checkout_started",
-          checkout_started_at:  now,
+          estado,
+          // Solo setear checkout_started_at la primera vez que es checkout_started
+          ...(emailOk ? { checkout_started_at: now } : {}),
           updated_at:           now,
         };
 
-        await supabase.from("ac_carts").upsert(cartData, { onConflict: "id" });
+        const ins = await supabase.from("ac_carts").upsert(cartData, { onConflict: "id" });
+        if (ins.error) {
+          _acLogError("upsert", ins.error, {
+            cartId: acCartIdRef.current,
+            estado,
+            hasEmail: emailOk,
+            hasProduct,
+          });
+        }
       } catch (err) {
-        console.warn("[AC] Cart upsert error:", err?.message);
+        _acLogError("upsert_throw", err, { cartId: acCartIdRef.current });
       }
     }, 1200);
     return () => clearTimeout(_acDebounceRef.current);
@@ -676,13 +726,13 @@ export default function BookingPopup() {
 
     const redirectBase = `${window.location.origin}/pago?reserva=${reservaId}${leadId ? `&lead=${leadId}` : ""}`;
 
+    let zohoSession = null; // si el merchant es Zoho con widget embebido
     if (method === "wompi") {
       payUrl = await wompiCheckoutUrl({ referencia: reservaId, totalCOP: grandTotal, email: form.email, redirectUrl: redirectBase });
     } else if (method === "stripe") {
       // "stripe" en la UI significa "tarjeta internacional" — ruteamos por el helper
       // que decide entre Stripe y Zoho Pay según configuracion.merchant_internacional
       try {
-        const { crearSesionPago, getMerchantInternacional } = await import("../lib/internacional");
         const merchantInfo = await getMerchantInternacional();
         console.log("[Pago internacional] Merchant activo:", merchantInfo);
         // Convertir COP a USD (monto que usa Zoho/Stripe)
@@ -701,7 +751,13 @@ export default function BookingPopup() {
           context_id: reservaId,
         });
         console.log("[Pago internacional] Session OK:", session);
-        payUrl = session.url;
+        if (session.payments_session_id && session.widget?.account_id) {
+          // Nuevo flujo: widget embebido. NO redirigimos — abrimos el widget aquí.
+          zohoSession = session;
+        } else {
+          // Compat: viejo flujo de Payment Links
+          payUrl = session.url;
+        }
       } catch (err) {
         console.error("[Pago internacional] Error:", err);
         AtolanTrack.paymentError("internacional", "session_create_failed", err?.message || "", grandTotal);
@@ -782,6 +838,35 @@ export default function BookingPopup() {
     }
 
     setSaving(false);
+
+    // Si es flujo widget Zoho → abrir el widget en lugar de redirigir
+    if (zohoSession) {
+      setZohoWidget({
+        session: zohoSession,
+        address: { name: form.nombre, email: form.email, phone: form.telefono || "" },
+        description: `${product.tipo} — ${selDate || ""}`,
+        invoiceNumber: reservaId,
+        onSuccess: (paymentData) => {
+          console.log("[Zoho widget] payment success:", paymentData);
+          AtolanTrack.evento("payment_success", { metodo: "zoho_widget", monto: grandTotal, payment_id: paymentData?.payment_id }, "conversion");
+          setZohoWidget(null);
+          // Redirigir a la página de confirmación. El webhook de Zoho confirmará la reserva.
+          window.location.href = `${window.location.origin}/pago/exito?reserva=${reservaId}`;
+        },
+        onError: (err) => {
+          console.error("[Zoho widget] error:", err);
+          AtolanTrack.paymentError("zoho_widget", "payment_failed", err?.message || JSON.stringify(err), grandTotal);
+          setZohoWidget(null);
+          alert("El pago no se pudo procesar. Por favor intenta de nuevo o usa tarjeta nacional.");
+        },
+        onClose: () => {
+          // Usuario cerró el widget sin pagar — la reserva queda como pendiente_pago
+          setZohoWidget(null);
+        },
+      });
+      return;
+    }
+
     window.location.href = payUrl;
   }
 
@@ -1637,6 +1722,20 @@ export default function BookingPopup() {
           </a>
         </div>
       </div>
+
+      {/* Widget de Zoho Payments — se muestra cuando hay sesión activa */}
+      {zohoWidget && (
+        <ZohoPaymentWidget
+          session={zohoWidget.session}
+          address={zohoWidget.address}
+          description={zohoWidget.description}
+          invoiceNumber={zohoWidget.invoiceNumber}
+          business="Atolón Beach Club"
+          onSuccess={zohoWidget.onSuccess}
+          onError={zohoWidget.onError}
+          onClose={zohoWidget.onClose}
+        />
+      )}
     </div>
   );
 }

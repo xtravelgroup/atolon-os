@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { B, COP, todayStr } from "../brand";
 import { supabase } from "../lib/supabase";
-import jsPDF from "jspdf";
+// jsPDF (~400KB) lazy: solo se carga al imprimir PDF
 
 const IS = { width: "100%", padding: "10px 14px", borderRadius: 8, background: B.navy, border: `1px solid ${B.navyLight}`, color: B.white, fontSize: 13, outline: "none", boxSizing: "border-box" };
 const LS = { fontSize: 11, color: B.sand, display: "block", marginBottom: 5, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 700 };
@@ -77,8 +77,9 @@ export default function HacerInventario() {
 
   const stockEn = (item_id) => Number(stockPorLoc[`${item_id}|${locId}`]) || 0;
 
-  // ── Imprimir conteo actual como PDF ──
-  const imprimirConteo = () => {
+  // ── Imprimir conteo actual como PDF (jsPDF lazy) ──
+  const imprimirConteo = async () => {
+    const { default: jsPDF } = await import("jspdf");
     const loc = locaciones.find(l => l.id === locId);
     const doc = new jsPDF();
     const m = 14;
@@ -109,9 +110,8 @@ export default function HacerInventario() {
     doc.rect(m, y, 182, 7, "F");
     doc.setTextColor(255).setFontSize(9);
     doc.text("Ítem", m + 2, y + 5);
-    doc.text("Categoría", m + 90, y + 5);
-    doc.text("Unidad", m + 130, y + 5);
-    doc.text("Stock", m + 158, y + 5, { align: "right" });
+    doc.text("Categoría", m + 100, y + 5);
+    doc.text("Unidad", m + 145, y + 5);
     doc.text("Contado", m + 180, y + 5, { align: "right" });
     y += 9;
 
@@ -121,25 +121,13 @@ export default function HacerInventario() {
         doc.addPage();
         y = 20;
       }
-      const stock = stockEn(it.id);
-      const cont  = Number(it.contado) || 0;
-      const dif   = cont - stock;
-      const tieneDif = Math.abs(dif) > 0.001;
-      doc.text(String(it.nombre || "—").slice(0, 50), m + 2, y);
-      doc.text(String(it.categoria || "—").slice(0, 16), m + 90, y);
-      doc.text(String(it.unidad || "—"), m + 130, y);
-      doc.setTextColor(120);
-      doc.text(String(stock), m + 158, y, { align: "right" });
-      // Contado en color si hay diferencia
-      if (tieneDif) {
-        doc.setTextColor(dif > 0 ? 16 : 200, dif > 0 ? 130 : 60, dif > 0 ? 80 : 60);
-        doc.setFont(undefined, "bold");
-      } else {
-        doc.setTextColor(0);
-        doc.setFont(undefined, "normal");
-      }
-      doc.text(String(cont), m + 180, y, { align: "right" });
-      doc.setTextColor(0).setFont(undefined, "normal");
+      const cont = Number(it.contado) || 0;
+      // Máximo 2 decimales (sin ceros innecesarios)
+      const contStr = Number.isInteger(cont) ? String(cont) : Number(cont.toFixed(2)).toString();
+      doc.text(String(it.nombre || "—").slice(0, 55), m + 2, y);
+      doc.text(String(it.categoria || "—").slice(0, 18), m + 100, y);
+      doc.text(String(it.unidad || "—"), m + 145, y);
+      doc.text(contStr, m + 180, y, { align: "right" });
       y += 5;
     });
 
@@ -150,8 +138,6 @@ export default function HacerInventario() {
     doc.rect(m, y, 182, 7, "F");
     doc.setFontSize(10).setTextColor(0).setFont(undefined, "bold");
     doc.text(`Total ítems contados: ${filas.length}`, m + 2, y + 5);
-    const dif = filas.filter(f => Math.abs(Number(f.contado) - stockEn(f.id)) > 0.001).length;
-    doc.text(`Con diferencia: ${dif}`, m + 130, y + 5);
     y += 12;
 
     // Notas

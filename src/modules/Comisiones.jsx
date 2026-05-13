@@ -36,10 +36,14 @@ const fmtDT = (d) => {
 };
 
 // ── Commission calc — same logic as B2B.jsx ──────────────────────────────────
-function calcComision(r, pasadiasMap) {
+function calcComision(r, pasadiasMap, aliadoComisionPct = null) {
   // Cortesías no generan comisión (total = 0)
   if (r.canal === "Cortesía" || r.forma_pago === "Cortesía") return 0;
   if (!r._esGrupo && (Number(r.total) || 0) === 0) return 0;
+
+  // Si el aliado tiene comisión = 0 → es modelo mayorista (paga neto, se queda con su markup).
+  // Atolón no le debe comisión, sin importar lo que diga el convenio.
+  if (aliadoComisionPct === 0) return 0;
 
   // For grupo entries, calculate per pasadía line
   if (r._esGrupo && r._pasadias_org) {
@@ -356,7 +360,8 @@ export default function Comisiones() {
           };
         }
         const pm = getPasadiasMap(r.aliado_id);
-        const comision = calcComision(r, pm);
+        const aliadoCom = aliadoMap[r.aliado_id]?.comision;
+        const comision = calcComision(r, pm, aliadoCom == null ? null : Number(aliadoCom));
         byAliado[r.aliado_id].reservas.push({ ...r, comision });
         byAliado[r.aliado_id].monto += comision;
         byAliado[r.aliado_id].paxTotal += (r.pax_a || r.pax || 0) + (r.pax_n || 0);

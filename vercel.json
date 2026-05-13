@@ -1,6 +1,31 @@
 {
-  "rewrites": [{ "source": "/(.*)", "destination": "/index.html" }],
+  "redirects": [
+    {
+      "source": "/",
+      "has": [{ "type": "host", "value": "atolon.co" }],
+      "destination": "https://atoloncartagena.com",
+      "permanent": false
+    },
+    {
+      "source": "/",
+      "has": [{ "type": "host", "value": "www.atolon.co" }],
+      "destination": "https://atoloncartagena.com",
+      "permanent": false
+    }
+  ],
+  "rewrites": [
+    { "source": "/iclock/:op*", "destination": "/api/zk-iclock?_zkop=:op*" },
+    { "source": "/(.*)", "destination": "/index.html" }
+  ],
   "headers": [
+    {
+      "source": "/((?!assets/|favicon|.*\\.(?:js|css|png|jpg|jpeg|gif|svg|webp|ico|woff|woff2|ttf|otf|map)$).*)",
+      "headers": [
+        { "key": "Cache-Control", "value": "no-cache, no-store, must-revalidate" },
+        { "key": "Pragma", "value": "no-cache" },
+        { "key": "Expires", "value": "0" }
+      ]
+    },
     {
       "source": "/index.html",
       "headers": [
@@ -24,6 +49,18 @@
     {
       "path": "/api/daily-resultados",
       "schedule": "0 16 * * *"
+    },
+    {
+      "path": "/api/sync-loggro",
+      "schedule": "*/15 * * * *"
+    },
+    {
+      "path": "/api/zoho-poll",
+      "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/wompi-poll",
+      "schedule": "*/5 * * * *"
     }
   ]
 }

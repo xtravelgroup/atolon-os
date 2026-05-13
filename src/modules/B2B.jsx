@@ -1,9 +1,12 @@
 import { useState, useEffect, useCallback } from "react";
 import { B, COP, PASADIAS, fmtFecha } from "../brand";
 import { supabase } from "../lib/supabase";
+import { getCatalogo } from "../lib/catalogoCache";
 import { asignarPuntosReserva, getRankingAgencia, getPuntosConfig } from "../lib/puntos";
 import Incentivos from "./Incentivos";
 import { EventoModal, ReservasGrupoModal } from "./Eventos";
+import ReporteVisitasB2B from "../components/ReporteVisitasB2B.jsx";
+import { wompiCheckoutUrl } from "../lib/wompi";
 
 const IS = { width: "100%", padding: "9px 12px", borderRadius: 8, background: B.navy, border: `1px solid ${B.navyLight}`, color: B.white, fontSize: 13, outline: "none", boxSizing: "border-box" };
 const LS = { fontSize: 11, color: B.sand, display: "block", marginBottom: 5, textTransform: "uppercase", letterSpacing: "0.06em" };
@@ -625,7 +628,9 @@ function HistorialReservasB2B({ aliadoId, comisionPct = 0 }) {
   const pendientes = reservas.filter(r => ["pendiente_pago","pendiente_comprobante","pendiente"].includes(r.estado)).length;
 
   // Comisión = margen adultos + margen niños − descuento_agencia
+  // Si aliado.comision === 0 → modelo mayorista, no se le paga comisión
   const getComision = (r) => {
+    if (Number(comisionPct) === 0) return 0;
     const pasadia   = pasadiasMap[(r.tipo || "").toLowerCase()];
     const cobradoA  = r.precio_u    || pasadia?.precio      || 0;
     const netoA     = r.precio_neto || pasadia?.neto        || 0;
@@ -1230,7 +1235,6 @@ function HistorialReservasB2B({ aliadoId, comisionPct = 0 }) {
                   placeholder="Ej: 123456789 (aparece en el correo de Wompi)" style={{ ...IS, marginBottom: 10 }} />
                 <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", marginBottom: 8 }}>— o —</div>
                 <button onClick={async () => {
-                  const { wompiCheckoutUrl } = await import("../lib/wompi.js");
                   const url = await wompiCheckoutUrl({ referencia: sel.id + "-R2", totalCOP: pagoForm.monto });
                   const linkPago = `${window.location.origin}/pago/${sel.id}`;
                   navigator.clipboard.writeText(linkPago);
@@ -1495,18 +1499,27 @@ function EventosGruposB2B({ aliadoId }) {
 
   const fetchItems = useCallback(async () => {
     if (!supabase) { setLoading(false); return; }
+    // Limitamos a últimos 12 meses + futuros para que aliados con histórico
+    // largo no carguen 500+ eventos. Si necesitan ver más viejos pueden ir
+    // al módulo Eventos directamente.
+    const unAnoAtras = new Date();
+    unAnoAtras.setFullYear(unAnoAtras.getFullYear() - 1);
+    const desde = unAnoAtras.toISOString().slice(0, 10);
     const { data } = await supabase.from("eventos").select("*")
-      .eq("aliado_id", aliadoId).order("fecha", { ascending: false });
+      .eq("aliado_id", aliadoId)
+      .gte("fecha", desde)
+      .order("fecha", { ascending: false });
     setItems(data || []); setLoading(false);
   }, [aliadoId]);
 
   useEffect(() => {
     fetchItems();
-    if (!supabase) return;
-    // prefetch para EventoModal
-    supabase.from("salidas").select("id, hora, nombre").eq("activo", true).order("orden").then(({ data }) => setSalidas(data || []));
-    supabase.from("aliados_b2b").select("id, nombre, tipo").order("nombre").then(({ data }) => setAliados(data || []));
-    supabase.from("usuarios").select("id, nombre").in("rol_id", ["ventas", "gerente_ventas"]).eq("activo", true).order("nombre").then(({ data }) => setVendedores(data || []));
+    // Estos 3 catálogos vienen del cache (TTL 5min, prefetch en main.jsx).
+    // En el cache hit son síncronos visualmente — la primera carga del día
+    // sí toca DB pero la próxima nav los reutiliza.
+    getCatalogo("salidas").then(setSalidas).catch(() => {});
+    getCatalogo("aliados_b2b").then(setAliados).catch(() => {});
+    getCatalogo("vendedores").then(setVendedores).catch(() => {});
   }, [fetchItems]);
 
   const filtered = items.filter(i => filterCat === "todos" || i.categoria === filterCat);
@@ -1658,50 +1671,72 @@ function VisitasAgencia({ aliadoId, aliado }) {
     setShowForm(true);
   };
 
+  const [saveError, setSaveError] = useState("");
   const handleSave = async () => {
-    if (!supabase || saving || !form.fecha) return;
+    if (!supabase || saving) return;
+    setSaveError("");
+    if (!form.fecha) { setSaveError("La fecha es obligatoria."); return; }
+    if (!aliadoId)   { setSaveError("Aliado no identificado — recargá la página."); return; }
     setSaving(true);
-    if (editVisita) {
-      await supabase.from("b2b_visitas").update({ ...form }).eq("id", editVisita.id);
-    } else {
-      const visitaId = `VIS-${Date.now()}`;
-      let reservaId = null;
+    // Sanitizar columnas date: Postgres rechaza "" — convertir a null.
+    // (Antes daba "Invalid input syntax for type date" si no se agendaba
+    // próxima visita.)
+    const cleanForm = {
+      ...form,
+      fecha_proxima: form.fecha_proxima || null,
+    };
+    try {
+      if (editVisita) {
+        const { error } = await supabase.from("b2b_visitas").update(cleanForm).eq("id", editVisita.id);
+        if (error) throw error;
+      } else {
+        const visitaId = `VIS-${Date.now()}`;
+        let reservaId = null;
 
-      // Si es visita de inspección → crear reserva en el log
-      if (form.tipo === "inspección") {
-        reservaId = `INS-${Date.now()}`;
-        const pax = parseInt(form.num_personas) || 1;
-        await supabase.from("reservas").insert({
-          id: reservaId,
+        // Si es visita de inspección → crear reserva en el log
+        if (form.tipo === "inspección") {
+          reservaId = `INS-${Date.now()}`;
+          const pax = parseInt(form.num_personas) || 1;
+          const { error: e1 } = await supabase.from("reservas").insert({
+            id: reservaId,
+            aliado_id: aliadoId,
+            tipo: "Visita Inspección",
+            fecha: form.fecha,
+            estado: "confirmado",
+            total: 0,
+            abono: 0,
+            forma_pago: "cortesía",
+            pax,
+            notas: `Visita de inspección B2B — ${aliado.nombre}${form.coordinador ? ` · Coordinador: ${form.coordinador}` : ""}${form.objetivo ? ` · Objetivo: ${form.objetivo}` : ""}`,
+            created_at: new Date().toISOString(),
+          });
+          if (e1) throw e1;
+          // Log en historial (no-fatal si falla)
+          await supabase.from("reservas_historial").insert({
+            id: `H-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
+            reserva_id: reservaId,
+            accion: "inspeccion_agendada",
+            descripcion: `🔍 Visita de inspección agendada — ${aliado.nombre} · ${pax} persona(s) · ${form.fecha}${form.hora ? " " + form.hora : ""}`,
+            usuario: form.realizada_por || "sistema",
+          });
+        }
+
+        const { error: e2 } = await supabase.from("b2b_visitas").insert({
+          id: visitaId,
           aliado_id: aliadoId,
-          tipo: "Visita Inspección",
-          fecha: form.fecha,
-          estado: "confirmado",
-          total: 0,
-          abono: 0,
-          forma_pago: "cortesía",
-          pax,
-          notas: `Visita de inspección B2B — ${aliado.nombre}${form.coordinador ? ` · Coordinador: ${form.coordinador}` : ""}${form.objetivo ? ` · Objetivo: ${form.objetivo}` : ""}`,
-          created_at: new Date().toISOString(),
-        });
-        // Log en historial
-        await supabase.from("reservas_historial").insert({
-          id: `H-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
+          ...cleanForm,
           reserva_id: reservaId,
-          accion: "inspeccion_agendada",
-          descripcion: `🔍 Visita de inspección agendada — ${aliado.nombre} · ${pax} persona(s) · ${form.fecha}${form.hora ? " " + form.hora : ""}`,
-          usuario: form.realizada_por || "sistema",
         });
+        if (e2) throw e2;
       }
-
-      await supabase.from("b2b_visitas").insert({
-        id: visitaId,
-        aliado_id: aliadoId,
-        ...form,
-        reserva_id: reservaId,
-      });
+      setShowForm(false);
+      fetchV();
+    } catch (err) {
+      console.error("[b2b_visitas] save error:", err);
+      setSaveError(err.message || String(err));
+    } finally {
+      setSaving(false);
     }
-    setSaving(false); setShowForm(false); fetchV();
   };
 
   const handleDelete = async (id) => {
@@ -1925,6 +1960,11 @@ function VisitasAgencia({ aliadoId, aliado }) {
               </div>
             </div>
 
+            {saveError && (
+              <div style={{ marginTop: 14, padding: "10px 14px", background: B.danger + "22", border: `1px solid ${B.danger}55`, borderRadius: 8, color: "#fca5a5", fontSize: 12 }}>
+                ⚠ {saveError}
+              </div>
+            )}
             <div style={{ display: "flex", gap: 10, marginTop: 24 }}>
               <button onClick={() => setShowForm(false)} style={{ flex: 1, padding: "12px", background: "none", border: `1px solid ${B.navyLight}`, borderRadius: 8, color: "rgba(255,255,255,0.4)", fontSize: 13, cursor: "pointer" }}>Cancelar</button>
               <button onClick={handleSave} disabled={saving || !form.fecha}
@@ -3729,7 +3769,7 @@ export default function B2B() {
     <div>
       {/* Tabs principales */}
       <div style={{ display: "flex", gap: 6, marginBottom: 24, background: B.navyMid, borderRadius: 12, padding: 5 }}>
-        {[["aliados", "🏢 Aliados"], ["incentivos", "🎯 Incentivos"]].map(([k, l]) => (
+        {[["aliados", "🏢 Aliados"], ["incentivos", "🎯 Incentivos"], ["reporte_visitas", "📊 Reporte Visitas"]].map(([k, l]) => (
           <button key={k} onClick={() => setTab(k)} style={{
             flex: 1, padding: "11px 20px", borderRadius: 9, border: "none", cursor: "pointer",
             fontSize: 14, fontWeight: tab === k ? 700 : 500,
@@ -3739,8 +3779,9 @@ export default function B2B() {
           }}>{l}</button>
         ))}
       </div>
-      {tab === "aliados"    && <AliadosList />}
-      {tab === "incentivos" && <Incentivos />}
+      {tab === "aliados"          && <AliadosList />}
+      {tab === "incentivos"       && <Incentivos />}
+      {tab === "reporte_visitas"  && <ReporteVisitasB2B />}
     </div>
   );
 }

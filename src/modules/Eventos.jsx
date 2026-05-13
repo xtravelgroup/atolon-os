@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { B, COP, fmtFecha, todayStr } from "../brand";
 import { supabase } from "../lib/supabase";
+import { getCatalogo } from "../lib/catalogoCache";
 import { useMobile } from "../lib/useMobile";
 import { wompiCheckoutUrl } from "../lib/wompi";
 import EventoDetalle from "./EventoDetalle";
@@ -122,8 +123,13 @@ function GrupoLink({ evento, onClose }) {
     setLoadingR(false);
   };
 
-  const totalPax      = (reservas || []).reduce((s, r) => s + (r.pax || 0), 0);
-  const totalCOP      = (reservas || []).reduce((s, r) => s + (r.total || 0), 0);
+  // Solo reservas confirmadas (y posteriores: check_in, finalizado).
+  // Se excluyen pendiente_pago y cancelado para que totales y lista
+  // reflejen solo lo que está realmente comprometido.
+  const ESTADOS_CONFIRMADOS = ["confirmado", "check_in", "finalizado"];
+  const reservasActivas = (reservas || []).filter(r => ESTADOS_CONFIRMADOS.includes(r.estado));
+  const totalPax      = reservasActivas.reduce((s, r) => s + (r.pax || 0), 0);
+  const totalCOP      = reservasActivas.reduce((s, r) => s + (r.total || 0), 0);
   const pasadiaActual = pasadias.find(p => p.id === pasadiaId);
   const tieneAliado   = !!evento.aliado_id;
   const precioUnit    = (tieneAliado && tipoPrecio === "neto" && pasadiaActual?.precio_neto_agencia)
@@ -415,15 +421,25 @@ function GrupoLink({ evento, onClose }) {
           <div style={{ background: B.navy, borderRadius: 10, padding: 16, marginBottom: 12 }}>
             {loadingR ? (
               <div style={{ textAlign: "center", color: "rgba(255,255,255,0.3)", fontSize: 13, padding: "16px 0" }}>Cargando...</div>
-            ) : reservas?.length === 0 ? (
-              <div style={{ textAlign: "center", color: "rgba(255,255,255,0.3)", fontSize: 13, padding: "16px 0" }}>Aún no hay reservas en este grupo</div>
+            ) : reservasActivas.length === 0 ? (
+              <div style={{ textAlign: "center", color: "rgba(255,255,255,0.3)", fontSize: 13, padding: "16px 0" }}>
+                {reservas?.length === 0
+                  ? "Aún no hay reservas confirmadas en este grupo"
+                  : `Sin reservas confirmadas en este grupo (${reservas.length} ${reservas.length === 1 ? "no confirmada oculta" : "no confirmadas ocultas"})`}
+              </div>
             ) : (
               <>
-                <div style={{ display: "flex", gap: 16, marginBottom: 12, padding: "8px 12px", background: B.navyMid, borderRadius: 8 }}>
+                <div style={{ display: "flex", gap: 16, marginBottom: 12, padding: "8px 12px", background: B.navyMid, borderRadius: 8, alignItems: "center", flexWrap: "wrap" }}>
                   <span style={{ fontSize: 12, color: "rgba(255,255,255,0.5)" }}>Total personas: <strong style={{ color: B.white }}>{totalPax}</strong></span>
                   <span style={{ fontSize: 12, color: "rgba(255,255,255,0.5)" }}>Total recaudado: <strong style={{ color: B.success }}>{COP(totalCOP)}</strong></span>
+                  <span style={{ fontSize: 12, color: "rgba(255,255,255,0.5)" }}>Confirmadas: <strong style={{ color: B.white }}>{reservasActivas.length}</strong></span>
+                  {reservas.length > reservasActivas.length && (
+                    <span style={{ fontSize: 11, color: B.warning, marginLeft: "auto" }}>
+                      ({reservas.length - reservasActivas.length} {reservas.length - reservasActivas.length === 1 ? "no confirmada oculta" : "no confirmadas ocultas"})
+                    </span>
+                  )}
                 </div>
-                {reservas.map(r => (
+                {reservasActivas.map(r => (
                   <div key={r.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0", borderBottom: `1px solid ${B.navyLight}`, fontSize: 13 }}>
                     <div style={{ flex: 1 }}>
                       <div style={{ fontWeight: 600 }}>{r.nombre}</div>
@@ -1862,8 +1878,12 @@ export function ReservasGrupoModal({ evento, onClose }) {
   };
   useEffect(load, [evento]);
 
-  const totalPax = (reservas || []).reduce((s, r) => s + (r.pax || 0), 0);
-  const totalCOP = (reservas || []).reduce((s, r) => s + (r.total || 0), 0);
+  // Solo reservas confirmadas (y posteriores: check_in, finalizado).
+  // Se excluyen pendiente_pago y cancelado.
+  const ESTADOS_CONFIRMADOS_M = ["confirmado", "check_in", "finalizado"];
+  const reservasActivas = (reservas || []).filter(r => ESTADOS_CONFIRMADOS_M.includes(r.estado));
+  const totalPax = reservasActivas.reduce((s, r) => s + (r.pax || 0), 0);
+  const totalCOP = reservasActivas.reduce((s, r) => s + (r.total || 0), 0);
 
   const estadoColor = (e) => e === "confirmado" ? B.success : e === "cancelado" ? B.danger : B.warning;
 
@@ -1954,39 +1974,64 @@ export function ReservasGrupoModal({ evento, onClose }) {
 
         {reservas === null ? (
           <div style={{ textAlign: "center", padding: "32px 0", color: "rgba(255,255,255,0.3)" }}>Cargando...</div>
-        ) : reservas.length === 0 ? (
+        ) : reservasActivas.length === 0 ? (
           <div style={{ textAlign: "center", padding: "32px 0", color: "rgba(255,255,255,0.3)", fontSize: 14 }}>
             <div style={{ fontSize: 32, marginBottom: 10 }}>📭</div>
-            Aún no hay reservas en este grupo.
+            {reservas.length === 0
+              ? "Aún no hay reservas confirmadas en este grupo."
+              : `Sin reservas confirmadas en este grupo (${reservas.length} ${reservas.length === 1 ? "no confirmada oculta" : "no confirmadas ocultas"}).`}
           </div>
         ) : (
           <>
-            <div style={{ display: "flex", gap: 20, padding: "10px 14px", background: B.navy, borderRadius: 10, marginBottom: 14 }}>
+            <div style={{ display: "flex", gap: 20, padding: "10px 14px", background: B.navy, borderRadius: 10, marginBottom: 14, alignItems: "center", flexWrap: "wrap" }}>
               <span style={{ fontSize: 13, color: "rgba(255,255,255,0.5)" }}>👥 <strong style={{ color: B.white }}>{totalPax} personas</strong></span>
               <span style={{ fontSize: 13, color: "rgba(255,255,255,0.5)" }}>💵 <strong style={{ color: B.success }}>{COP(totalCOP)}</strong></span>
-              <span style={{ fontSize: 13, color: "rgba(255,255,255,0.5)" }}>🎟 <strong style={{ color: B.white }}>{reservas.length} reservas</strong></span>
+              <span style={{ fontSize: 13, color: "rgba(255,255,255,0.5)" }}>🎟 <strong style={{ color: B.white }}>{reservasActivas.length} {reservasActivas.length === 1 ? "confirmada" : "confirmadas"}</strong></span>
+              {reservas.length > reservasActivas.length && (
+                <span style={{ fontSize: 11, color: B.warning, marginLeft: "auto" }}>
+                  ({reservas.length - reservasActivas.length} {reservas.length - reservasActivas.length === 1 ? "no confirmada oculta" : "no confirmadas ocultas"})
+                </span>
+              )}
             </div>
-            {reservas.map(r => (
-              <div key={r.id} onClick={() => setSelected(r)}
-                style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 12px", borderBottom: `1px solid ${B.navyLight}`, cursor: "pointer", borderRadius: 8, margin: "2px 0" }}
-                onMouseEnter={e => e.currentTarget.style.background = B.navy}
-                onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontWeight: 600, fontSize: 14 }}>{r.nombre}</div>
-                  <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>
-                    {r.id} · {r.tipo} · {r.pax} {r.pax === 1 ? "persona" : "personas"}
+            {reservasActivas.map(r => {
+              const contacto = r.email || r.telefono || r.contacto || "";
+              const salida = r.salida_id || r.salida_hora || "";
+              return (
+                <div key={r.id} onClick={() => setSelected(r)}
+                  style={{ display: "flex", alignItems: "flex-start", gap: 12, padding: "12px", borderBottom: `1px solid ${B.navyLight}`, cursor: "pointer", borderRadius: 8, margin: "2px 0" }}
+                  onMouseEnter={e => e.currentTarget.style.background = B.navy}
+                  onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontWeight: 600, fontSize: 14 }}>{r.nombre}</div>
+                    <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>
+                      {r.id} · {r.tipo} · {r.pax} {r.pax === 1 ? "persona" : "personas"}
+                    </div>
+                    {contacto && (
+                      <div style={{ fontSize: 11, color: "rgba(255,255,255,0.55)", marginTop: 3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {r.email && <span>📧 {r.email}</span>}
+                        {r.email && (r.telefono || r.contacto) && <span> · </span>}
+                        {(r.telefono || r.contacto) && <span>📱 {r.telefono || r.contacto}</span>}
+                      </div>
+                    )}
+                    {(salida || r.forma_pago) && (
+                      <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginTop: 3 }}>
+                        {salida && <span>⛵ {salida}</span>}
+                        {salida && r.forma_pago && <span> · </span>}
+                        {r.forma_pago && <span>💳 {r.forma_pago}</span>}
+                      </div>
+                    )}
                   </div>
+                  <div style={{ textAlign: "right", flexShrink: 0, display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
+                    <div style={{ fontWeight: 700, color: B.sand, fontSize: 14 }}>{COP(r.total)}</div>
+                    <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 10,
+                      background: estadoColor(r.estado) + "22", color: estadoColor(r.estado) }}>
+                      {r.estado}
+                    </span>
+                  </div>
+                  <div style={{ color: "rgba(255,255,255,0.2)", fontSize: 16 }}>›</div>
                 </div>
-                <div style={{ textAlign: "right", flexShrink: 0, display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
-                  <div style={{ fontWeight: 700, color: B.sand, fontSize: 14 }}>{COP(r.total)}</div>
-                  <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 10,
-                    background: estadoColor(r.estado) + "22", color: estadoColor(r.estado) }}>
-                    {r.estado}
-                  </span>
-                </div>
-                <div style={{ color: "rgba(255,255,255,0.2)", fontSize: 16 }}>›</div>
-              </div>
-            ))}
+              );
+            })}
           </>
         )}
       </div>
@@ -1995,7 +2040,7 @@ export function ReservasGrupoModal({ evento, onClose }) {
 }
 
 // ─── Kanban board ─────────────────────────────────────────────────────────────
-function KanbanBoard({ items, isGrupo, onEdit, onBeo, onLink, onCotizar, onReservas, onExtras, aliados }) {
+function KanbanBoard({ items, isGrupo, onEdit, onBeo, onLink, onCotizar, onReservas, onExtras, aliados, vistaOperativa = false }) {
   return (
     <div style={{ display: "grid", gridTemplateColumns: `repeat(${STAGES.length}, 1fr)`, gap: 16 }}>
       {STAGES.map(stage => (
@@ -2023,15 +2068,15 @@ function KanbanBoard({ items, isGrupo, onEdit, onBeo, onLink, onCotizar, onReser
                     <button onClick={e => { e.stopPropagation(); onBeo(ev); }}
                       style={{ fontSize: 11, padding: "4px 10px", borderRadius: 6, background: B.navyLight, color: B.white, border: "none", cursor: "pointer" }}>Ver BEO</button>
                   )}
-                  {ev.categoria !== "grupo" && (
+                  {!vistaOperativa && ev.categoria !== "grupo" && (
                     <button onClick={e => { e.stopPropagation(); onCotizar(ev); }}
                       style={{ fontSize: 11, padding: "4px 10px", borderRadius: 6, background: B.sand + "33", color: B.sand, border: `1px solid ${B.sand}44`, cursor: "pointer", fontWeight: 600 }}>📋 Cotizar</button>
                   )}
-                  {ev.categoria === "grupo" && ev.modalidad_pago !== "organizador" && (
+                  {!vistaOperativa && ev.categoria === "grupo" && ev.modalidad_pago !== "organizador" && (
                     <button onClick={e => { e.stopPropagation(); onLink(ev); }}
                       style={{ fontSize: 11, padding: "4px 10px", borderRadius: 6, background: B.sky + "33", color: B.sky, border: `1px solid ${B.sky}44`, cursor: "pointer" }}>🔗 Ver link</button>
                   )}
-                  {ev.categoria === "grupo" && ev.modalidad_pago !== "organizador" && (
+                  {!vistaOperativa && ev.categoria === "grupo" && ev.modalidad_pago !== "organizador" && (
                     <button onClick={e => { e.stopPropagation(); onReservas(ev); }}
                       style={{ fontSize: 11, padding: "4px 10px", borderRadius: 6, background: B.sand + "22", color: B.sand, border: `1px solid ${B.sand}44`, cursor: "pointer" }}>👥 Reservas</button>
                   )}
@@ -2064,13 +2109,42 @@ const MENU_TIPOS = ["Menú de Banquetes", "Menú Restaurant", "Custom Menu", "Me
 function SectionTable({ title, color, rows, setRows, showNoches = false, showMenuType = false, catalogItems = null, bebidasItems = null, menuCatalogs = null, defaultIva = 19 }) {
   const [picker,      setPicker]      = useState(false);
   const [activeCat,   setActiveCat]   = useState(null); // null | { label, items }
+  const [taxOpenIdx,  setTaxOpenIdx]  = useState(null); // popover de impuesto abierto en fila X
+  const [dragIdx,     setDragIdx]     = useState(null); // fila siendo arrastrada
+
+  // tipo de impuesto inferido por defecto: si la sección usa defaultIva=8 → ICO,
+  // sino → IVA. Se guarda en cada row como tax_type para poder mezclar.
+  const inferTaxType = (l) => l?.tax_type || (defaultIva === 8 ? "ico" : "iva");
 
   const addRow = (overrides = {}) => {
-    setRows(r => [...r, { ...EMPTY_LINE, iva: defaultIva, ...overrides }]);
+    setRows(r => [...r, { ...EMPTY_LINE, iva: defaultIva, tax_type: defaultIva === 8 ? "ico" : "iva", ...overrides }]);
     setPicker(false);
   };
   const upd = (i, k, v) => setRows(r => r.map((x, j) => j === i ? { ...x, [k]: v } : x));
   const del = (i) => setRows(r => r.filter((_, j) => j !== i));
+
+  // Drag & drop: reordenar rows
+  const onDragStart = (i) => (e) => {
+    setDragIdx(i);
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", String(i));
+  };
+  const onDragOver = (i) => (e) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+  };
+  const onDrop = (i) => (e) => {
+    e.preventDefault();
+    const from = Number(e.dataTransfer.getData("text/plain"));
+    if (Number.isNaN(from) || from === i) { setDragIdx(null); return; }
+    setRows(r => {
+      const arr = [...r];
+      const [moved] = arr.splice(from, 1);
+      arr.splice(i, 0, moved);
+      return arr;
+    });
+    setDragIdx(null);
+  };
 
   const totals = rows.reduce((acc, l) => {
     const { sub, tax, total } = calcLine(l);
@@ -2183,13 +2257,14 @@ function SectionTable({ title, color, rows, setRows, showNoches = false, showMen
       <table style={{ width: "100%", borderCollapse: "collapse", background: B.navyMid }}>
         <thead>
           <tr>
-            <th style={{ ...th, background: color + "cc", width: showMenuType ? "30%" : "35%" }}>Concepto</th>
+            <th style={{ ...th, background: color + "cc", width: 26, padding: "8px 4px" }}></th>
+            <th style={{ ...th, background: color + "cc", width: showMenuType ? "28%" : "33%" }}>Concepto</th>
             {showMenuType && <th style={{ ...th, background: color + "cc", width: "14%" }}>Tipo Menú</th>}
             <th style={{ ...th, background: color + "cc", width: "8%", textAlign: "center" }}>Cant.</th>
             {showNoches && <th style={{ ...th, background: color + "cc", width: "8%", textAlign: "center" }}>Noches</th>}
-            <th style={{ ...th, background: color + "cc", width: "15%", textAlign: "right" }}>Valor Unit.</th>
-            <th style={{ ...th, background: color + "cc", width: "8%", textAlign: "center" }}>{defaultIva === 8 ? "ICO" : "IVA"}</th>
-            <th style={{ ...th, background: color + "cc", width: "12%", textAlign: "right" }}>Subtotal</th>
+            <th style={{ ...th, background: color + "cc", width: "14%", textAlign: "right" }}>Valor Unit.</th>
+            <th style={{ ...th, background: color + "cc", width: "10%", textAlign: "center" }}>Impuesto</th>
+            <th style={{ ...th, background: color + "cc", width: "11%", textAlign: "right" }}>Subtotal</th>
             <th style={{ ...th, background: color + "cc", width: "12%", textAlign: "right" }}>Total</th>
             <th style={{ ...th, background: color + "cc", width: "4%" }}></th>
           </tr>
@@ -2197,8 +2272,27 @@ function SectionTable({ title, color, rows, setRows, showNoches = false, showMen
         <tbody>
           {rows.map((l, i) => {
             const { sub, total } = calcLine(l);
+            const taxType = inferTaxType(l);
+            const taxLabel = !l.iva || l.iva === 0
+              ? "Sin"
+              : `${taxType === "ico" ? "ICO" : "IVA"} ${l.iva}%`;
+            const taxColor = l.iva > 0
+              ? (taxType === "ico" ? "#fb923c" : "#4caf50")
+              : "rgba(255,255,255,0.35)";
+            const isDragOver = dragIdx !== null && dragIdx !== i;
             return (
-              <tr key={i}>
+              <tr key={i}
+                draggable
+                onDragStart={onDragStart(i)}
+                onDragOver={onDragOver(i)}
+                onDrop={onDrop(i)}
+                onDragEnd={() => setDragIdx(null)}
+                style={{
+                  background: dragIdx === i ? "rgba(255,255,255,0.04)" : "transparent",
+                  cursor: dragIdx === i ? "grabbing" : undefined,
+                  opacity: dragIdx === i ? 0.5 : 1,
+                }}>
+                <td style={{ ...td, textAlign: "center", color: "rgba(255,255,255,0.35)", cursor: "grab", userSelect: "none", fontSize: 14, padding: "6px 4px" }} title="Arrastrar para reordenar">⋮⋮</td>
                 <td style={td}>{inp(l.concepto, e => upd(i, "concepto", e.target.value))}</td>
                 {showMenuType && (
                   <td style={td}>
@@ -2212,13 +2306,50 @@ function SectionTable({ title, color, rows, setRows, showNoches = false, showMen
                 <td style={{ ...td, textAlign: "center" }}>{inp(l.cantidad, e => upd(i, "cantidad", Number(e.target.value)), "number", "60px")}</td>
                 {showNoches && <td style={{ ...td, textAlign: "center" }}>{inp(l.noches, e => upd(i, "noches", Number(e.target.value)), "number", "60px")}</td>}
                 <td style={{ ...td, textAlign: "right" }}>{inp(l.valor_unit, e => upd(i, "valor_unit", Number(e.target.value)), "number", "100px")}</td>
-                <td style={{ ...td, textAlign: "center" }}>
-                  <button onClick={() => upd(i, "iva", l.iva > 0 ? 0 : defaultIva)}
+                <td style={{ ...td, textAlign: "center", position: "relative" }}>
+                  <button onClick={() => setTaxOpenIdx(taxOpenIdx === i ? null : i)}
                     style={{ padding: "3px 8px", borderRadius: 5, border: "none", cursor: "pointer", fontSize: 11, fontWeight: 700,
-                      background: l.iva > 0 ? "rgba(46,125,82,0.3)" : "rgba(255,255,255,0.08)",
-                      color: l.iva > 0 ? "#4caf50" : "rgba(255,255,255,0.35)" }}>
-                    {l.iva > 0 ? `${l.iva}%` : "No"}
+                      background: l.iva > 0 ? `${taxColor}33` : "rgba(255,255,255,0.08)",
+                      color: taxColor, whiteSpace: "nowrap" }}>
+                    {taxLabel} ▾
                   </button>
+                  {taxOpenIdx === i && (
+                    <div style={{
+                      position: "absolute", top: "100%", right: 0, zIndex: 20,
+                      background: B.navyMid, border: `1px solid ${B.navyLight}`, borderRadius: 8,
+                      padding: 6, minWidth: 140, boxShadow: "0 4px 16px #0008",
+                      display: "flex", flexDirection: "column", gap: 2,
+                    }}>
+                      {[
+                        { label: "Sin impuesto", iva: 0,  type: null,  color: "rgba(255,255,255,0.5)" },
+                        { label: "IVA 19%",       iva: 19, type: "iva", color: "#4caf50" },
+                        { label: "ICO 8%",        iva: 8,  type: "ico", color: "#fb923c" },
+                      ].map(opt => (
+                        <button key={opt.label}
+                          onClick={() => {
+                            setRows(r => r.map((x, j) => j === i ? { ...x, iva: opt.iva, tax_type: opt.type || x.tax_type } : x));
+                            setTaxOpenIdx(null);
+                          }}
+                          style={{ padding: "6px 10px", textAlign: "left", border: "none", background: "transparent", color: opt.color, cursor: "pointer", fontSize: 12, fontWeight: 600, borderRadius: 5 }}>
+                          {opt.label}
+                        </button>
+                      ))}
+                      <div style={{ borderTop: `1px solid ${B.navyLight}`, paddingTop: 6, marginTop: 2 }}>
+                        <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", marginBottom: 4, paddingLeft: 4 }}>% Custom</div>
+                        <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+                          <select value={taxType} onChange={e => upd(i, "tax_type", e.target.value)}
+                            style={{ background: B.navy, border: `1px solid ${B.navyLight}`, color: B.white, fontSize: 11, padding: "4px 6px", borderRadius: 4 }}>
+                            <option value="iva">IVA</option>
+                            <option value="ico">ICO</option>
+                          </select>
+                          <input type="number" value={l.iva || 0} min="0" max="100"
+                            onChange={e => upd(i, "iva", Number(e.target.value))}
+                            style={{ width: 50, background: B.navy, border: `1px solid ${B.navyLight}`, color: B.white, fontSize: 11, padding: "4px 6px", borderRadius: 4 }} />
+                          <span style={{ fontSize: 11, color: "rgba(255,255,255,0.5)" }}>%</span>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </td>
                 <td style={{ ...td, textAlign: "right", color: B.sand }}>{COP(sub)}</td>
                 <td style={{ ...td, textAlign: "right", fontWeight: 700 }}>{COP(total)}</td>
@@ -2229,13 +2360,13 @@ function SectionTable({ title, color, rows, setRows, showNoches = false, showMen
             );
           })}
           {rows.length === 0 && (
-            <tr><td colSpan={showNoches ? (showMenuType ? 9 : 8) : (showMenuType ? 8 : 7)} style={{ ...td, textAlign: "center", color: "rgba(255,255,255,0.3)", padding: 16 }}>Sin ítems — haz click en "+ Agregar"</td></tr>
+            <tr><td colSpan={showNoches ? (showMenuType ? 10 : 9) : (showMenuType ? 9 : 8)} style={{ ...td, textAlign: "center", color: "rgba(255,255,255,0.3)", padding: 16 }}>Sin ítems — haz click en "+ Agregar"</td></tr>
           )}
         </tbody>
         {rows.length > 0 && (
           <tfoot>
             <tr>
-              <td colSpan={showNoches ? 5 : 4} style={{ padding: "8px 10px", fontSize: 12, color: B.sand, textAlign: "right", fontWeight: 600 }}>TOTAL {title.toUpperCase()}</td>
+              <td colSpan={showNoches ? 6 : 5} style={{ padding: "8px 10px", fontSize: 12, color: B.sand, textAlign: "right", fontWeight: 600 }}>TOTAL {title.toUpperCase()}</td>
               <td style={{ padding: "8px 10px", textAlign: "right", color: B.sand, fontSize: 12 }}>{COP(totals.sub)}</td>
               <td style={{ padding: "8px 10px", textAlign: "right", fontWeight: 700, color: B.white }}>{COP(totals.total)}</td>
               <td></td>
@@ -2486,12 +2617,21 @@ function CotizacionModal({ evento, aliados, onClose, onSaved }) {
             <div style={{ width: 60, height: 1, background: "#C8B99A", margin: "20px auto 0" }} />
           </div>
 
-          {[
-            ["ESPACIOS",             espacios,  false, "IVA", "El escenario de lo que está por suceder."],
-            ["HOSPEDAJE",            hospedaje, true,  "IVA", "Para quienes quieran quedarse a ver cómo termina la historia."],
-            ["ALIMENTOS Y BEBIDAS",  alimentos, false, "ICO", "Cada plato, un capítulo. Cada copa, una pausa."],
-            ["OTROS SERVICIOS",      servicios, false, "IVA", "Los detalles que convierten un evento en un recuerdo."],
-          ].map(([title, rows, noches, ivaLabel, story]) => rows.length > 0 && (
+          {(() => {
+            // Separar propina del resto de "Otros Servicios" — la propina
+            // es un cargo distinto (no es un servicio cotizable como tal)
+            // y debe aparecer en su propia sección al final.
+            const isPropina = (l) => /propina|tip\b|gratuit/i.test(l?.concepto || l?.descripcion || "");
+            const serviciosNoProp = (servicios || []).filter(l => !isPropina(l));
+            const propinas         = (servicios || []).filter(l =>  isPropina(l));
+            return [
+              ["ESPACIOS",             espacios,        false, "IVA", "El escenario de lo que está por suceder."],
+              ["HOSPEDAJE",            hospedaje,       true,  "IVA", "Para quienes quieran quedarse a ver cómo termina la historia."],
+              ["ALIMENTOS Y BEBIDAS",  alimentos,       false, "ICO", "Cada plato, un capítulo. Cada copa, una pausa."],
+              ["OTROS SERVICIOS",      serviciosNoProp, false, "IVA", "Los detalles que convierten un evento en un recuerdo."],
+              ["PROPINA",              propinas,        false, "IVA", "Reconocimiento al equipo que hace posible la experiencia."],
+            ];
+          })().map(([title, rows, noches, ivaLabel, story]) => rows.length > 0 && (
             <div key={title} style={{ marginBottom: 24, pageBreakInside: "avoid" }}>
               <div className="cot-eyebrow" style={{ marginBottom: 6, textAlign: "left" }}>{title}</div>
               <div className="cot-italic" style={{ fontSize: 14, color: "#1E3566", marginBottom: 12, textAlign: "left" }}>{story}</div>
@@ -3161,14 +3301,24 @@ export default function Eventos() {
   const [cotizacion,  setCotizacion] = useState(null);
   const [extrasGrupo, setExtrasGrupo] = useState(null);
   const [userRol,     setUserRol]     = useState("");
+  const [vistaOperativa, setVistaOperativa] = useState(false);
 
-  // Detectar rol del usuario para permisos de edición
+  // Detectar rol del usuario para permisos de edición.
+  // Vista operativa (cocina/maitre): solo ven eventos confirmados, no editan.
   useEffect(() => {
     if (!supabase) return;
     supabase.auth.getSession().then(async ({ data: { session } }) => {
       if (!session?.user?.email) return;
-      const { data } = await supabase.from("usuarios").select("rol_id").eq("email", session.user.email.toLowerCase()).single();
+      const { data } = await supabase.from("usuarios")
+        .select("rol_id, permisos_extra")
+        .eq("email", session.user.email.toLowerCase()).single();
       if (data?.rol_id) setUserRol(data.rol_id);
+      const rid = (data?.rol_id || "").toLowerCase();
+      const extras = Array.isArray(data?.permisos_extra) ? data.permisos_extra : [];
+      setVistaOperativa(
+        /^(chef|cocina|maitre|capitan_servicio|operativo)/.test(rid)
+        || extras.includes("eventos_vista_operativa")
+      );
     });
   }, []);
 
@@ -3183,12 +3333,22 @@ export default function Eventos() {
     if (!supabase) { setLoading(false); return; }
     setLoading(true);
     const hoy = todayStr();
-    const [evtR, salR, aliR, vendR] = await Promise.all([
-      supabase.from("eventos").select("*").order("fecha", { ascending: true }),
-      supabase.from("salidas").select("id, hora, nombre").eq("activo", true).order("orden"),
-      supabase.from("aliados_b2b").select("id, nombre, tipo").order("nombre"),
-      supabase.from("usuarios").select("id, nombre").in("rol_id", ["ventas", "gerente_ventas"]).eq("activo", true).order("nombre"),
+    // Filtrar eventos a últimos 6 meses + futuros: con miles de eventos
+    // históricos traer todo es lento.
+    const seisMesesAtras = new Date();
+    seisMesesAtras.setMonth(seisMesesAtras.getMonth() - 6);
+    const desdeFecha = seisMesesAtras.toISOString().slice(0, 10);
+    // Eventos siempre fresh; salidas/aliados/vendedores vienen del cache
+    // (TTL 5min) — se prefetcheó al cargar la app, así que es ~instantáneo.
+    const [evtR, salidasCat, aliadosCat, vendCat] = await Promise.all([
+      supabase.from("eventos").select("*").gte("fecha", desdeFecha).order("fecha", { ascending: true }),
+      getCatalogo("salidas"),
+      getCatalogo("aliados_b2b"),
+      getCatalogo("vendedores"),
     ]);
+    const salR = { data: salidasCat };
+    const aliR = { data: aliadosCat };
+    const vendR = { data: vendCat };
 
     // Auto-pasar Confirmado → Realizado cuando la fecha del evento ya pasó
     if (evtR.data) {
@@ -3288,7 +3448,12 @@ export default function Eventos() {
   }
 
   const isCalendario = tab === "calendario";
-  const items   = tab === "todos" ? todos : todos.filter(e => e.categoria === tab);
+  // Vista operativa: solo eventos/grupos confirmados (cocina necesita ver
+  // lo que está aprobado para preparar, no consultas/cotizados).
+  const todosVisible = vistaOperativa
+    ? todos.filter(e => e.stage === "Confirmado" || e.stage === "Realizado")
+    : todos;
+  const items   = tab === "todos" ? todosVisible : todosVisible.filter(e => e.categoria === tab);
   const isGrupo = tab === "grupo";
   const TABS    = [
     { key: "todos",      label: "📌 Todos" },
@@ -3325,8 +3490,8 @@ export default function Eventos() {
         ))}
       </div>
 
-      {/* KPIs */}
-      {!isCalendario && (
+      {/* KPIs — ocultos en vista operativa (no necesitan ver pipeline/$) */}
+      {!isCalendario && !vistaOperativa && (
         <div style={{ display: "flex", gap: 12, marginBottom: 24, flexWrap: "wrap" }}>
           {[
             { label: "Pipeline Total", val: COP(items.reduce((s, e) => s + e.valor, 0)), color: B.sand },
@@ -3344,7 +3509,7 @@ export default function Eventos() {
 
       {isCalendario
         ? <CalendarioEventos todos={todos} onEdit={ev => setDetalleEvento(ev)} isMobile={isMobile} />
-        : <KanbanBoard items={items} isGrupo={isGrupo} aliados={aliados} onEdit={ev => setDetalleEvento(ev)} onBeo={setBeo} onLink={setLinkEvt} onCotizar={setCotizacion} onReservas={setReservasEvt} onExtras={setExtrasGrupo} />
+        : <KanbanBoard items={items} isGrupo={isGrupo} aliados={aliados} onEdit={ev => setDetalleEvento(ev)} onBeo={setBeo} onLink={setLinkEvt} onCotizar={setCotizacion} onReservas={setReservasEvt} onExtras={setExtrasGrupo} vistaOperativa={vistaOperativa} />
       }
 
       {beo          && <BEOPreview evento={beo} onClose={() => setBeo(null)} />}

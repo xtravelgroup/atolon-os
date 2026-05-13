@@ -1,11 +1,20 @@
 // CosteoProductos.jsx — COGS por producto (pasadía/hotel/evento/upsell)
 // Cada producto tiene componentes con costo adulto/niño. El componente de
-// transporte se calcula automáticamente desde Flota (último mes con datos).
+// transporte usa el costo REAL por pasadía del MES ANTERIOR completo
+// (mismo cálculo que muestra Naturalle en su tab de Costos):
+//
+//   costo_total / pax_que_llegaron
+//   = (combustible + mantenimiento + marina + capitanes + reserva motores)
+//     / pax_a + pax_n de muelle_llegadas (sin staff, sin boca_chica)
+//
+// Filtra a lanchas tipo_uso != "servicio" → excluye Castillete (servicio
+// interno staff/insumos), incluye Naturalle.
 
 import { useState, useEffect, useMemo, useCallback } from "react";
 import { supabase } from "../lib/supabase";
 import { B } from "../brand";
 import { useMobile } from "../lib/useMobile";
+import { calcCostoPasadiaMesAnterior } from "../lib/costoFlotaPasadia";
 
 const fmtCOP = (n) => "$" + Math.round(Number(n) || 0).toLocaleString("es-CO");
 const fmtPct = (n) => (Number.isFinite(n) ? `${n.toFixed(1)}%` : "—");
@@ -23,26 +32,31 @@ export default function CosteoProductos() {
   const { isMobile } = useMobile();
   const [productos, setProductos] = useState([]);
   const [componentes, setComponentes] = useState([]);
-  const [transportePax, setTransportePax] = useState(0); // costo $/pax último mes
+  const [transportePax, setTransportePax] = useState(0); // costo $/pax mes anterior
+  const [transporteFuente, setTransporteFuente] = useState({ label: "—", zarpes: 0, fallback: false });
   const [activo, setActivo] = useState(null);
   const [loading, setLoading] = useState(true);
   const [modal, setModal] = useState(null); // { tipo: "producto"|"componente", edit? }
 
   const load = useCallback(async () => {
     setLoading(true);
-    // Costo transporte por pax: tomar último mes con zarpes y calcular
-    const seisAtras = new Date(); seisAtras.setMonth(seisAtras.getMonth() - 1);
-    const desde = seisAtras.toISOString().slice(0, 10);
-    const [{ data: prods }, { data: comps }, { data: zarpes }] = await Promise.all([
+    // Costo transporte real del mes anterior (mismo cálculo que Naturalle).
+    const [{ data: prods }, { data: comps }, costoFlota] = await Promise.all([
       supabase.from("productos_catalogo").select("*").eq("activo", true).order("nombre"),
       supabase.from("producto_componentes").select("*").order("orden"),
-      supabase.from("muelle_zarpes_flota").select("pax_a, pax_n, costo_operativo").gte("fecha", desde),
+      calcCostoPasadiaMesAnterior(), // soloPasadia=true por default
     ]);
     setProductos(prods || []);
     setComponentes(comps || []);
-    const totalPax   = (zarpes || []).reduce((s, z) => s + Number(z.pax_a || 0) + Number(z.pax_n || 0), 0);
-    const totalCosto = (zarpes || []).reduce((s, z) => s + Number(z.costo_operativo || 0), 0);
-    setTransportePax(totalPax > 0 ? totalCosto / totalPax : 0);
+    setTransportePax(costoFlota.costoPorPasadia);
+    setTransporteFuente({
+      label: costoFlota.mesLabel,
+      pax: costoFlota.pax,
+      total: costoFlota.costoTotal,
+      breakdown: costoFlota.breakdown,
+      fallback: costoFlota.fallback,
+      sinDatos: costoFlota.sinDatos,
+    });
     if (!activo && prods?.length) setActivo(prods[0].id);
     setLoading(false);
   }, [activo]);
@@ -141,13 +155,36 @@ export default function CosteoProductos() {
         </button>
       </div>
 
-      {/* Banner transporte */}
-      <div style={{ background: B.navyMid, border: `1px solid ${B.sky}33`, borderRadius: 10, padding: 12, marginBottom: 16, fontSize: 12, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
-        <span style={{ color: "rgba(255,255,255,0.6)" }}>
-          🚤 Costo transporte automático (último mes): <strong style={{ color: B.sky }}>{fmtCOP(transportePax)}</strong> por pasajero
-          {transportePax === 0 && <span style={{ color: B.warning, marginLeft: 8 }}>· sin zarpes registrados</span>}
-        </span>
-        <span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)" }}>= total costo viajes ÷ pax transportados</span>
+      {/* Banner transporte — mismo cálculo que muestra Naturalle */}
+      <div style={{ background: `linear-gradient(135deg, ${B.sky}15 0%, ${B.navyMid} 100%)`, border: `1px solid ${B.sky}55`, borderRadius: 12, padding: 14, marginBottom: 16 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 12 }}>
+          <div>
+            <div style={{ fontSize: 11, color: B.sky, textTransform: "uppercase", letterSpacing: 2, fontWeight: 700, marginBottom: 4 }}>
+              💰 Costo por Pasadía (real)
+            </div>
+            <div style={{ fontSize: 26, fontWeight: 900, color: B.sky, fontFamily: "'Barlow Condensed', sans-serif", lineHeight: 1 }}>
+              {fmtCOP(transportePax)}
+            </div>
+            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.55)", marginTop: 6 }}>
+              {transporteFuente.sinDatos
+                ? "⚠️ Sin datos de flota en los últimos meses"
+                : <>Total operativo {fmtCOP(transporteFuente.total || 0)} ÷ {transporteFuente.pax || 0} pax que llegaron</>}
+              {" · "}
+              <span style={{ color: transporteFuente.fallback ? B.warning : "rgba(255,255,255,0.45)" }}>
+                {transporteFuente.label}{transporteFuente.fallback ? " (fallback)" : ""}
+              </span>
+            </div>
+          </div>
+          {transporteFuente.breakdown && (
+            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.55)", display: "grid", gridTemplateColumns: "auto auto", columnGap: 12, rowGap: 2, textAlign: "right" }}>
+              <span>Combustible:</span>     <span style={{ color: "#fff" }}>{fmtCOP(transporteFuente.breakdown.costoComb)}</span>
+              <span>Mantenimiento:</span>   <span style={{ color: "#fff" }}>{fmtCOP(transporteFuente.breakdown.costoMant)}</span>
+              <span>Marina/parqueo:</span>  <span style={{ color: "#fff" }}>{fmtCOP(transporteFuente.breakdown.costoMarina)}</span>
+              <span>Capitanes:</span>       <span style={{ color: "#fff" }}>{fmtCOP(transporteFuente.breakdown.costoCapitanes)}</span>
+              <span>Reserva motores:</span> <span style={{ color: "#fff" }}>{fmtCOP(transporteFuente.breakdown.reservaMotores)}</span>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Tabs de productos */}
@@ -240,7 +277,7 @@ export default function CosteoProductos() {
                 <div>
                   <div style={{ fontSize: 13, fontWeight: 700 }}>🚤 Transporte (automático)</div>
                   <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>
-                    Calculado del costo operativo de flota / pax transportados último mes
+                    Calculado del costo operativo de flota / pax transportados ({transporteFuente.label})
                   </div>
                 </div>
                 <div style={{ display: "flex", gap: 16, fontSize: 13, fontWeight: 700 }}>

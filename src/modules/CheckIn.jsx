@@ -372,6 +372,138 @@ function PasajerosModal({ reserva, onClose, onSaved, autoCheckin = false }) {
   );
 }
 
+// ─── Embarcación Rentada (contratada en muelle) Modal ───────────────────────
+// Permite al operador del muelle agregar UNA embarcación que se contrató
+// in-situ — el bote queda en `embarcaciones` con propiedad='rentada' y
+// estado='activo' inmediatamente, así aparece en todos los selectores
+// (asignar pasajeros, despachar grupo, etc.) sin recargar la página.
+function EmbarcacionRentadaModal({ onClose, onSaved }) {
+  const [f, setF] = useState({
+    nombre: "",
+    capacidad: "",
+    tipo: "",
+    capitan: "",
+    matricula: "",
+    piloto_celular: "",
+    costo_renta: "",
+    notas: "",
+  });
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState("");
+  const set = (k, v) => setF(p => ({ ...p, [k]: v }));
+
+  const guardar = async () => {
+    setErr("");
+    if (!f.nombre.trim()) { setErr("El nombre de la embarcación es obligatorio."); return; }
+    if (!f.capacidad || Number(f.capacidad) <= 0) { setErr("La capacidad debe ser mayor a 0 (necesaria para asignar pax)."); return; }
+    setSaving(true);
+    try {
+      // ID corto y legible: EMB-RENT-<timestamp36>
+      const id = `EMB-RENT-${Date.now().toString(36).toUpperCase()}`;
+      const payload = {
+        id,
+        nombre: f.nombre.trim(),
+        tipo: f.tipo.trim() || "Rentada",
+        capacidad: Number(f.capacidad),
+        propiedad: "rentada",
+        estado: "activo",
+        capitan: f.capitan.trim() || null,
+        matricula: f.matricula.trim() || null,
+        piloto_celular: f.piloto_celular.trim() || null,
+        costo_renta: f.costo_renta ? Number(f.costo_renta) : null,
+        notas: f.notas.trim() || null,
+      };
+      const { data, error } = await supabase.from("embarcaciones").insert(payload).select().single();
+      if (error) throw error;
+      // Audit log
+      try { logAccion({ modulo: "checkin", accion: "embarcacion_rentada_creada", tabla: "embarcaciones", registroId: id, datos: payload }); } catch { /* no-op */ }
+      onSaved?.(data);
+      onClose();
+    } catch (e) {
+      setErr(e.message || String(e));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.78)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
+      onClick={e => e.target === e.currentTarget && onClose()}>
+      <div style={{ background: B.navyMid, borderRadius: 16, padding: 26, width: 520, maxWidth: "100%", maxHeight: "92vh", overflowY: "auto", boxShadow: "0 24px 64px rgba(0,0,0,0.6)" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
+          <div>
+            <div style={{ fontSize: 18, fontWeight: 800 }}>🛥 Agregar embarcación rentada</div>
+            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginTop: 4 }}>
+              Bote contratado en muelle — disponible al instante para asignar pasajeros
+            </div>
+          </div>
+          <button onClick={onClose} style={{ background: "transparent", border: "none", color: "rgba(255,255,255,0.45)", fontSize: 22, cursor: "pointer" }}>×</button>
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+          <div style={{ gridColumn: "1 / -1" }}>
+            <label style={LS}>Nombre de la embarcación *</label>
+            <input value={f.nombre} onChange={e => set("nombre", e.target.value)}
+              placeholder="Ej: Patricia, Don Pedro..." style={IS} autoFocus />
+          </div>
+          <div>
+            <label style={LS}>Capacidad (pax) *</label>
+            <input type="number" min="1" value={f.capacidad}
+              onChange={e => set("capacidad", e.target.value)} placeholder="Ej: 25" style={IS} />
+          </div>
+          <div>
+            <label style={LS}>Tipo</label>
+            <input value={f.tipo} onChange={e => set("tipo", e.target.value)}
+              placeholder="Lancha rápida, Yate..." style={IS} />
+          </div>
+          <div>
+            <label style={LS}>Capitán / Piloto</label>
+            <input value={f.capitan} onChange={e => set("capitan", e.target.value)}
+              placeholder="Nombre del capitán" style={IS} />
+          </div>
+          <div>
+            <label style={LS}>Celular del capitán</label>
+            <input value={f.piloto_celular} onChange={e => set("piloto_celular", e.target.value)}
+              placeholder="300 1234567" style={IS} />
+          </div>
+          <div>
+            <label style={LS}>Matrícula</label>
+            <input value={f.matricula} onChange={e => set("matricula", e.target.value)}
+              placeholder="CP-XXXXXX-X" style={IS} />
+          </div>
+          <div>
+            <label style={LS}>Costo de renta (COP)</label>
+            <input type="number" min="0" value={f.costo_renta}
+              onChange={e => set("costo_renta", e.target.value)} placeholder="Ej: 800000" style={IS} />
+          </div>
+          <div style={{ gridColumn: "1 / -1" }}>
+            <label style={LS}>Notas</label>
+            <input value={f.notas} onChange={e => set("notas", e.target.value)}
+              placeholder="Observaciones (cliente, hora estimada, etc.)" style={IS} />
+          </div>
+        </div>
+
+        {err && (
+          <div style={{ marginTop: 14, padding: "10px 14px", background: B.danger + "22", border: `1px solid ${B.danger}55`, borderRadius: 8, color: "#fca5a5", fontSize: 12 }}>
+            ⚠ {err}
+          </div>
+        )}
+
+        <div style={{ display: "flex", gap: 10, marginTop: 18 }}>
+          <button onClick={onClose} disabled={saving}
+            style={{ flex: 1, padding: 12, borderRadius: 10, border: `1px solid ${B.navyLight}`, background: "transparent", color: "rgba(255,255,255,0.5)", cursor: "pointer", fontWeight: 600 }}>
+            Cancelar
+          </button>
+          <button onClick={guardar} disabled={saving}
+            style={{ flex: 2, padding: 12, borderRadius: 10, border: "none", background: saving ? B.navyLight : B.success, color: B.navy, cursor: saving ? "wait" : "pointer", fontWeight: 800 }}>
+            {saving ? "Guardando…" : "✓ Agregar y dejar disponible"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Colaboradores Modal ─────────────────────────────────────────────────────
 function ColaboradoresModal({ salidaId, fecha, despacho, embarcaciones = [], onClose, onSaved }) {
   const init = despacho?.colaboradores?.length > 0
@@ -469,6 +601,15 @@ async function generarZarpe(salida, reservas, fecha, despacho, emb) {
       : [{ nombre: r.nombre, identificacion: "—", nacionalidad: "—" }]
   );
   const totalPax = paxList.length;
+  // Lista unificada para el zarpe: pasajeros + colaboradores en una sola tabla
+  // (colaboradores marcados con tag STAFF + rol en columna Nacionalidad)
+  const colabRows = (despacho?.colaboradores || []).map(c => ({
+    nombre:         c.nombre || "—",
+    identificacion: c.cedula || "—",
+    nacionalidad:   c.rol ? `STAFF · ${c.rol}` : "STAFF",
+    _isStaff:       true,
+  }));
+  const fullList = [...paxList, ...colabRows];
 
   // ─── Bitácora: registrar el zarpe generado ─────────────────────────────
   try {
@@ -479,31 +620,66 @@ async function generarZarpe(salida, reservas, fecha, despacho, emb) {
       const { data: u } = await supabase.from("usuarios").select("nombre").eq("email", email.toLowerCase()).maybeSingle();
       nombre = u?.nombre || email;
     }
-    await supabase.from("zarpes_log").insert({
+    // Buscar el código de zarpe del despacho de la salida (no del per-emb)
+    // — el código se guarda en salida_despachos por fecha+salida_id, y debe
+    // aparecer en TODOS los zarpes generados para esa salida.
+    let codigoFinal = despacho?.zarpe_codigo || null;
+    let despachoIdFinal = despacho?.id || null;
+    if (!codigoFinal && salida?.id) {
+      const { data: deRow } = await supabase
+        .from("salida_despachos")
+        .select("id, zarpe_codigo")
+        .eq("fecha", fecha)
+        .eq("salida_id", salida.id)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (deRow?.zarpe_codigo) codigoFinal = deRow.zarpe_codigo;
+      if (deRow?.id) despachoIdFinal = deRow.id;
+    }
+
+    // PREVENIR DUPLICADOS: si ya existe un zarpe para misma fecha+salida+
+    // embarcación, hacer UPDATE en vez de INSERT. Antes había hasta 10
+    // duplicados por click repetido del botón "📄 Generar zarpe".
+    const { data: existing } = await supabase
+      .from("zarpes_log")
+      .select("id")
+      .eq("fecha", fecha)
+      .eq("salida_id", salida.id)
+      .eq("embarcacion_nombre", emb?.nombre || "")
+      .maybeSingle();
+
+    const payload = {
       fecha,
       salida_id:           salida.id,
       salida_hora:         salida.hora,
       salida_nombre:       salida.nombre,
       embarcacion_id:      emb?.id || null,
       embarcacion_nombre:  emb?.nombre || null,
-      zarpe_codigo:        despacho?.zarpe_codigo || null,
+      zarpe_codigo:        codigoFinal,
       pax_total:           totalPax,
       colaboradores_count: despacho?.colaboradores?.length || 0,
       pasajeros:           paxList,
       colaboradores:       despacho?.colaboradores || [],
-      despacho_id:         despacho?.id || null,
+      despacho_id:         despachoIdFinal,
       generado_por_email:  email,
       generado_por_nombre: nombre,
-    });
+    };
+
+    if (existing?.id) {
+      await supabase.from("zarpes_log").update(payload).eq("id", existing.id);
+    } else {
+      await supabase.from("zarpes_log").insert(payload);
+    }
   } catch (e) {
     console.warn("No se pudo registrar zarpe en bitácora:", e);
   }
 
-  const bodyRows = paxList.map(p => `<tr>
+  const bodyRows = fullList.map(p => `<tr${p._isStaff ? ' style="background:#FAF6EE;"' : ''}>
       <td>${rowNum++}</td>
-      <td style="font-weight:600">${p.nombre || "—"}</td>
+      <td style="font-weight:600${p._isStaff ? ';color:#0D1B3E' : ''}">${p.nombre || "—"}</td>
       <td>${p.identificacion || "—"}</td>
-      <td>${p.nacionalidad || "—"}</td>
+      <td${p._isStaff ? ' style="font-weight:700;color:#7B5E2E;font-size:11px;letter-spacing:0.5px"' : ''}>${p.nacionalidad || "—"}</td>
     </tr>`).join("");
 
   const boteBlock = emb ? `
@@ -571,7 +747,7 @@ async function generarZarpe(salida, reservas, fecha, despacho, emb) {
     <div class="meta">
       <div><b>Fecha:</b> ${new Date(fecha + "T12:00:00").toLocaleDateString("es-CO", { weekday:"long", day:"numeric", month:"long", year:"numeric" })}</div>
       <div><b>Hora salida:</b> ${salida.hora} &nbsp;·&nbsp; Regreso ${salida.hora_regreso}</div>
-      <div><b>Total pasajeros:</b> ${totalPax}</div>
+      <div><b>Total pasajeros:</b> ${fullList.length}${(despacho?.colaboradores?.length > 0) ? ` <span style="color:#666;font-size:11px;">(${totalPax} pasadía + ${despacho.colaboradores.length} staff)</span>` : ""}</div>
       <div><b>Salida:</b> Muelle de La Bodeguita</div>
       <div><b>Destino:</b> Boca Chica, Tierra Bomba</div>
       <div><b>Generado:</b> ${new Date().toLocaleString("es-CO")}</div>
@@ -586,27 +762,10 @@ async function generarZarpe(salida, reservas, fecha, despacho, emb) {
       </tr></thead>
       <tbody>${bodyRows}</tbody>
     </table>
-    ${despacho?.colaboradores?.length > 0 ? `
-    <div style="margin-top:20px;">
-      <div style="background:#1E3566;color:white;padding:8px 10px;font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:1px;border-radius:4px 4px 0 0;">
-        👥 Tripulación / Colaboradores — ${despacho.colaboradores.length} persona${despacho.colaboradores.length !== 1 ? "s" : ""}
-      </div>
-      <table style="border-radius:0 0 4px 4px;overflow:hidden;">
-        <thead><tr>
-          <th style="width:5%">#</th>
-          <th style="width:40%">Nombre Completo</th>
-          <th style="width:30%">Cédula</th>
-          <th style="width:25%">Rol / Cargo</th>
-        </tr></thead>
-        <tbody>
-          ${despacho.colaboradores.map((c, i) => `<tr>
-            <td>${i + 1}</td>
-            <td style="font-weight:600">${c.nombre || "—"}</td>
-            <td>${c.cedula || "—"}</td>
-            <td>${c.rol || "—"}</td>
-          </tr>`).join("")}
-        </tbody>
-      </table>
+    ${(despacho?.colaboradores?.length > 0 || totalPax > 0) ? `
+    <div style="margin-top:14px;font-size:11px;color:#444;">
+      Total a bordo: <b>${fullList.length}</b> persona${fullList.length !== 1 ? "s" : ""} —
+      ${totalPax} pasajero${totalPax !== 1 ? "s" : ""}${despacho?.colaboradores?.length > 0 ? ` + ${despacho.colaboradores.length} staff` : ""}
     </div>` : ""}
     <div class="footer">Atolon Beach Club — ${new Date().toLocaleString("es-CO")}</div>
   </body></html>`;
@@ -718,6 +877,7 @@ export default function CheckIn() {
   const [qrGrupo,        setQrGrupo]        = useState(null); // { grupo, slot? }
   const [bulkFill,       setBulkFill]       = useState(null); // grupo
   const [grupoEmbModal,  setGrupoEmbModal]  = useState(null); // grupo
+  const [showAddEmb,     setShowAddEmb]     = useState(false);  // modal "agregar embarcación rentada"
 
   const load = useCallback(async () => {
     if (!supabase) { setLoading(false); return; }
@@ -746,6 +906,40 @@ export default function CheckIn() {
   }, [fecha]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Helper: embarcaciones disponibles para una salida específica.
+  // Combina: base (whitelist de salida.embarcaciones) + extras del día
+  // (salidas_override.extra_embarcaciones) + Blue Apple (siempre) + TODAS las
+  // RENTADAS ACTIVAS (las que el operador agregó en muelle "+ Embarcación
+  // rentada"). Las rentadas no están en el whitelist de ninguna salida pero
+  // por su naturaleza ad-hoc deben aparecer en cualquier salida del día.
+  const embsParaSalida = useCallback((salida) => {
+    if (!salida) return [];
+    const override = overrides.find(o => o.salida_id === salida.id);
+    const baseEmbs = (salida.embarcaciones || [])
+      .map(eid => embarcaciones.find(e => e.id === eid))
+      .filter(Boolean);
+    const extraEmbs = (override?.extra_embarcaciones || [])
+      .map(e => embarcaciones.find(eb => eb.id === e.id) || e)
+      .filter(e => !baseEmbs.some(b => b.id === e.id));
+    const blueApple = embarcaciones.find(e => e.id === "EMB-BLUEAPPLE");
+    const conBA = blueApple && !baseEmbs.some(b => b.id === "EMB-BLUEAPPLE") && !extraEmbs.some(b => b.id === "EMB-BLUEAPPLE")
+      ? [...baseEmbs, ...extraEmbs, blueApple]
+      : [...baseEmbs, ...extraEmbs];
+    const yaIncluidos = new Set(conBA.map(e => e.id));
+    // Rentadas: SOLO las que se contrataron HOY (la `fecha` seleccionada en
+    // Check-in). Si quedan activas en DB pero fueron de un día anterior, no
+    // aparecen — evitamos que el operador las vea día tras día. La identidad
+    // del día se mide en zona Bogotá para no fallar después de las 7pm UTC-5.
+    const rentadasDelDia = embarcaciones.filter(e => {
+      if (e.propiedad !== "rentada" || e.estado !== "activo") return false;
+      if (yaIncluidos.has(e.id)) return false; // ej: Blue Apple ya incluido
+      if (!e.created_at) return false;
+      const diaCreacion = new Date(e.created_at).toLocaleDateString("en-CA", { timeZone: "America/Bogota" });
+      return diaCreacion === fecha;
+    });
+    return [...conBA, ...rentadasDelDia];
+  }, [embarcaciones, overrides, fecha]);
 
   const AKEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5jZHl0dGd4dWljeXJ1YXRoa3hkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ4OTY4NDksImV4cCI6MjA5MDQ3Mjg0OX0.ppK_J1BUI8lrEZ-iQWNb0imO_ZwOGbF3MDyv7nct6bs";
 
@@ -883,19 +1077,31 @@ export default function CheckIn() {
   };
 
   // ── Despachar una embarcación específica
+  // Bloqueo: si ya está despachada en este (fecha + salida + embarcación)
+  // NO se permite re-despachar. Se debe corregir en DB si fue error.
   const despachar = async (salida, embNombre) => {
-    // Si ya existe despacho para esa embarcación, confirmar re-despacho
     const existing = despachos.find(d => d.salida_id === salida.id && d.embarcacion_nombre === embNombre);
     if (existing) {
-      if (!window.confirm(`${embNombre} ya fue despachada. ¿Registrar de nuevo?`)) return;
-      await supabase.from("salida_despachos").delete().eq("id", existing.id);
+      alert(`${embNombre} ya fue despachada en ${salida.nombre} ${salida.hora}. No se puede volver a despachar en este horario.`);
+      return;
     }
+    const embObj = embarcaciones.find(e => e.nombre === embNombre);
     const id = `DESP-${Date.now()}`;
-    const rec = { id, fecha, salida_id: salida.id, embarcacion_nombre: embNombre, despachado_at: new Date().toISOString() };
-    await supabase.from("salida_despachos").insert(rec);
+    const rec = {
+      id, fecha,
+      salida_id: salida.id,
+      embarcacion_nombre: embNombre,
+      embarcacion_id: embObj?.id || null,
+      despachado_at: new Date().toISOString(),
+    };
+    const { error } = await supabase.from("salida_despachos").insert(rec);
+    if (error) {
+      alert(`Error al despachar ${embNombre}:\n${error.message}`);
+      return;
+    }
     logAccion({ modulo: "checkin", accion: "despachar_embarcacion", tabla: "salida_despachos", registroId: id,
       datosDespues: rec, notas: `${embNombre} · ${salida.nombre} ${salida.hora}` });
-    setDespachos(prev => [...prev.filter(d => !(d.salida_id === salida.id && d.embarcacion_nombre === embNombre)), rec]);
+    setDespachos(prev => [...prev, rec]);
     setDespacharModal(null);
   };
 
@@ -910,6 +1116,41 @@ export default function CheckIn() {
 
   const assignEmbarcacion = async (resId, nombre) => {
     const val = nombre || null;
+    // Validar capacidad: pasajeros ya asignados + nuevos pax + staff <= capacidad
+    if (val) {
+      const emb = embarcaciones.find(e => e.nombre === val);
+      const cap = Number(emb?.capacidad) || 0;
+      if (cap > 0) {
+        // Reservas YA asignadas a este bote (excluyendo la que se está reasignando)
+        const reservaActual = reservas.find(r => r.id === resId);
+        const paxActual = Number(reservaActual?.pax || 0);
+        const paxYaAsignados = reservas
+          .filter(r => r.id !== resId && r.embarcacion_asignada === val && r.salida_id === reservaActual?.salida_id)
+          .reduce((s, r) => s + Number(r.pax || 0), 0);
+        // Staff en despacho de esta salida con embarcacion=val (o sin embarcacion = van a cualquiera)
+        const desp = despachos.filter(d => d.salida_id === reservaActual?.salida_id);
+        const staffMap = new Map();
+        desp.forEach(d => (d.colaboradores || []).forEach(c => {
+          const k = (c.cedula || "") + "|" + (c.nombre || "").toLowerCase().trim();
+          if (!staffMap.has(k) && (!c.embarcacion || c.embarcacion === val)) staffMap.set(k, c);
+        }));
+        const staffCount = staffMap.size;
+        const totalSiAsigno = paxYaAsignados + paxActual + staffCount;
+        if (totalSiAsigno > cap) {
+          alert(
+            `⚠️ Capacidad excedida\n\n` +
+            `${val} tiene capacidad ${cap} personas.\n\n` +
+            `· Pasajeros ya asignados: ${paxYaAsignados}\n` +
+            `· Esta reserva: ${paxActual}\n` +
+            `· Staff/colaboradores: ${staffCount}\n` +
+            `· TOTAL si se asigna: ${totalSiAsigno}\n\n` +
+            `Excede la capacidad por ${totalSiAsigno - cap} persona${totalSiAsigno - cap !== 1 ? "s" : ""}. ` +
+            `Asigna a otra embarcación o reduce la cantidad de pax/staff.`
+          );
+          return;
+        }
+      }
+    }
     await supabase.from("reservas").update({ embarcacion_asignada: val }).eq("id", resId);
     setReservas(prev => prev.map(r => r.id === resId ? { ...r, embarcacion_asignada: val } : r));
   };
@@ -971,6 +1212,21 @@ export default function CheckIn() {
           />
         );
       })()}
+
+      {/* Modal: agregar embarcación rentada en muelle.
+          Al guardar la insertamos en el state local para que aparezca
+          inmediatamente en todos los selectores sin recargar la página. */}
+      {showAddEmb && (
+        <EmbarcacionRentadaModal
+          onClose={() => setShowAddEmb(false)}
+          onSaved={(emb) => {
+            if (emb) setEmbarcaciones(prev => [...prev, emb].sort((a, b) => (a.nombre || "").localeCompare(b.nombre || "")));
+            setShowAddEmb(false);
+            // Refresh completo en background para sincronizar con DB
+            load();
+          }}
+        />
+      )}
 
       {/* ── QR zarpe grupo ── */}
       {qrGrupo && (() => {
@@ -1137,18 +1393,8 @@ export default function CheckIn() {
         );
       })()}
       {editColabs && salida && (() => {
-        // Construir lista de embarcaciones para esta salida (base + extras via overrides + Blue Apple)
-        const override = overrides.find(o => o.salida_id === salida.id);
-        const extras = (override?.extra_embarcaciones || []).map(e => {
-          const full = embarcaciones.find(eb => eb.id === e.id);
-          return full ? { ...full, _extra: true } : { id: e.id, nombre: e.nombre, _extra: true };
-        });
-        const base = (salida.embarcaciones || []).map(eid => embarcaciones.find(e => e.id === eid)).filter(Boolean);
-        const combined = [...base, ...extras.filter(e => !base.some(b => b.id === e.id))];
-        const blueApple = embarcaciones.find(e => e.id === "EMB-BLUEAPPLE");
-        const allEmbs = blueApple && !combined.some(e => e.id === "EMB-BLUEAPPLE")
-          ? [...combined, { ...blueApple }]
-          : combined;
+        // Lista de embarcaciones para esta salida: base + extras + Blue Apple + rentadas activas
+        const allEmbs = embsParaSalida(salida);
         return (
           <ColaboradoresModal
             salidaId={salida.id}
@@ -1210,12 +1456,19 @@ export default function CheckIn() {
       <div>
         {/* Header */}
         <div style={{ marginBottom: 16 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginBottom: 10 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginBottom: 10, flexWrap: "wrap" }}>
             <h2 style={{ fontSize: isMobile ? 18 : 22, fontWeight: 600, margin: 0 }}>Check-in · Muelle</h2>
-            <button onClick={() => setScanning(true)}
-              style={{ background: B.sky, color: B.navy, border: "none", borderRadius: 10, padding: isMobile ? "10px 14px" : "12px 20px", fontWeight: 700, fontSize: isMobile ? 13 : 14, cursor: "pointer", display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
-              📷 {isMobile ? "QR" : "Escanear QR"}
-            </button>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <button onClick={() => setShowAddEmb(true)}
+                title="Agregar embarcación rentada en muelle (queda disponible al instante)"
+                style={{ background: B.sand, color: B.navy, border: "none", borderRadius: 10, padding: isMobile ? "10px 14px" : "12px 18px", fontWeight: 700, fontSize: isMobile ? 13 : 14, cursor: "pointer", display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
+                🛥 {isMobile ? "+ Embarcación" : "+ Embarcación rentada"}
+              </button>
+              <button onClick={() => setScanning(true)}
+                style={{ background: B.sky, color: B.navy, border: "none", borderRadius: 10, padding: isMobile ? "10px 14px" : "12px 20px", fontWeight: 700, fontSize: isMobile ? 13 : 14, cursor: "pointer", display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
+                📷 {isMobile ? "QR" : "Escanear QR"}
+              </button>
+            </div>
           </div>
           <div style={{ ...IS, width: isMobile ? "100%" : "auto", fontSize: 14, display: "flex", alignItems: "center", gap: 6, color: "rgba(255,255,255,0.6)", userSelect: "none" }}>
             📅 {new Date(fecha + "T12:00:00").toLocaleDateString("es-CO", { weekday: "long", day: "numeric", month: "long" })}
@@ -1452,26 +1705,9 @@ export default function CheckIn() {
                     style={{ padding: "8px 12px", borderRadius: 8, background: despacho?.colaboradores?.length > 0 ? B.sky + "22" : B.navyLight, color: despacho?.colaboradores?.length > 0 ? B.sky : "rgba(255,255,255,0.6)", border: `1px solid ${despacho?.colaboradores?.length > 0 ? B.sky + "55" : "transparent"}`, fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
                     👥 {despacho?.colaboradores?.length > 0 ? `${despacho.colaboradores.length}` : "Colabs"}
                   </button>
-                  {/* Zarpe button per assigned embarcación (base + extra del calendario) */}
+                  {/* Zarpe button per embarcación (base + extras + Blue Apple + rentadas activas) */}
                   {(() => {
-                    const override = overrides.find(o => o.salida_id === salida.id);
-                    // Extra: buscar ficha completa en embarcaciones para traer datos de capitán
-                    const extraEmbs = (override?.extra_embarcaciones || []).map(e => {
-                      const full = embarcaciones.find(eb => eb.id === e.id);
-                      return full ? { ...full, _extra: true } : { id: e.id, nombre: e.nombre, _extra: true };
-                    });
-                    // Base: pasar objeto completo con capitán y cédulas
-                    const baseEmbs = (salida.embarcaciones || []).map(embId => {
-                      const emb = embarcaciones.find(e => e.id === embId);
-                      return emb ? { ...emb } : null;
-                    }).filter(Boolean);
-                    // Combinar sin duplicados
-                    const allEmbsBase = [...baseEmbs, ...extraEmbs.filter(e => !baseEmbs.some(b => b.id === e.id))];
-                    // Blue Apple siempre aparece en todas las salidas
-                    const blueApple = embarcaciones.find(e => e.id === "EMB-BLUEAPPLE");
-                    const allEmbs = blueApple && !allEmbsBase.some(e => e.id === "EMB-BLUEAPPLE")
-                      ? [...allEmbsBase, { ...blueApple }]
-                      : allEmbsBase;
+                    const allEmbs = embsParaSalida(salida);
                     return allEmbs.map(emb => (
                       <button key={emb.id} onClick={() => {
                         const embDesp = despachosDesal.find(d => d.embarcacion_nombre === emb.nombre);
@@ -1518,33 +1754,53 @@ export default function CheckIn() {
                   })()}
                 </div>
               </div>
-              {/* Botón despachar — usa allEmbs ya calculadas arriba */}
+              {/* Botones de despachar — uno por embarcación que tenga pasajeros asignados */}
               {(() => {
-                const override2 = overrides.find(o => o.salida_id === salida.id);
-                const extraE2 = (override2?.extra_embarcaciones || []).map(e => {
-                  const full = embarcaciones.find(eb => eb.id === e.id);
-                  return full ? { ...full, _extra: true } : { id: e.id, nombre: e.nombre, _extra: true };
+                const allEmbs2 = embsParaSalida(salida);
+
+                // Pax asignados por embarcación (solo cuentan reservas con embarcacion_asignada)
+                const paxPorEmb = {};
+                resDesal.forEach(r => {
+                  if (!r.embarcacion_asignada) return;
+                  paxPorEmb[r.embarcacion_asignada] = (paxPorEmb[r.embarcacion_asignada] || 0) + (Number(r.pax) || 0);
                 });
-                const baseE2 = (salida.embarcaciones || []).map(eid => {
-                  const emb = embarcaciones.find(e => e.id === eid);
-                  return emb ? { ...emb } : null;
-                }).filter(Boolean);
-                const allEmbs2Base = [...baseE2, ...extraE2.filter(e => !baseE2.some(b => b.id === e.id))];
-                // Blue Apple siempre aparece en todas las salidas
-                const blueApple2 = embarcaciones.find(e => e.id === "EMB-BLUEAPPLE");
-                const allEmbs2 = blueApple2 && !allEmbs2Base.some(e => e.id === "EMB-BLUEAPPLE")
-                  ? [...allEmbs2Base, { ...blueApple2 }]
-                  : allEmbs2Base;
-                const todasDespachadas = allEmbs2.length > 0 && allEmbs2.every(e => despachosDesal.some(d => d.embarcacion_nombre === e.nombre));
+
+                // Solo mostrar botón para embarcaciones CON pasajeros asignados
+                const embsConPax = allEmbs2.filter(e => (paxPorEmb[e.nombre] || 0) > 0);
+
+                if (embsConPax.length === 0) {
+                  return (
+                    <div style={{ padding: "11px", borderRadius: 8, background: B.navy, color: "rgba(255,255,255,0.4)", fontSize: 12, textAlign: "center", border: `1px dashed ${B.navyLight}` }}>
+                      Asigna pasajeros a una embarcación para poder despachar
+                    </div>
+                  );
+                }
+
                 return (
-                  <button
-                    onClick={() => handleDespachar(salida, allEmbs2)}
-                    style={{ width: "100%", padding: "11px", borderRadius: 8, fontWeight: 700, fontSize: 14, cursor: "pointer",
-                      background: todasDespachadas ? B.success + "33" : B.sand,
-                      color: todasDespachadas ? B.success : B.navy,
-                      border: todasDespachadas ? `1px solid ${B.success}` : "none" }}>
-                    {todasDespachadas ? "✈ Todas despachadas" : despachosDesal.length > 0 ? `✈ Despachar otra (${despachosDesal.length} ya)` : "✈ Despachar embarcación"}
-                  </button>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                    {embsConPax.map(emb => {
+                      const yaDespachada = despachosDesal.some(d => d.embarcacion_nombre === emb.nombre);
+                      const pax = paxPorEmb[emb.nombre] || 0;
+                      return (
+                        <button key={emb.id}
+                          onClick={() => !yaDespachada && despachar(salida, emb.nombre)}
+                          disabled={yaDespachada}
+                          title={yaDespachada ? `${emb.nombre} ya fue despachada en este horario — no se puede volver a despachar` : `Despachar ${emb.nombre} con ${pax} pasajero${pax !== 1 ? "s" : ""}`}
+                          style={{
+                            width: "100%", padding: "10px 14px", borderRadius: 8, fontWeight: 700, fontSize: 13,
+                            cursor: yaDespachada ? "not-allowed" : "pointer",
+                            background: yaDespachada ? B.success + "22" : B.sand,
+                            color: yaDespachada ? B.success : B.navy,
+                            border: yaDespachada ? `1px solid ${B.success}55` : "none",
+                            display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10,
+                            opacity: yaDespachada ? 0.85 : 1,
+                          }}>
+                          <span>{yaDespachada ? "🔒" : "✈"} {yaDespachada ? "Despachada · " : "Despachar "}{emb.nombre}</span>
+                          <span style={{ fontSize: 11, opacity: 0.75 }}>{pax} pax</span>
+                        </button>
+                      );
+                    })}
+                  </div>
                 );
               })()}
             </div>
@@ -1634,18 +1890,9 @@ export default function CheckIn() {
                           )}
                         </div>
                         {res.contacto && <div style={{ fontSize: 11, color: "rgba(255,255,255,0.3)", marginTop: 2 }}>{res.contacto}</div>}
-                        {/* Embarcación selector — asignadas a la salida + Blue Apple */}
+                        {/* Embarcación selector — base + extras + Blue Apple + rentadas activas */}
                         {(() => {
-                          const override = overrides.find(o => o.salida_id === salida.id);
-                          const baseEmbs = (salida.embarcaciones || [])
-                            .map(eid => embarcaciones.find(e => e.id === eid))
-                            .filter(Boolean);
-                          const extraEmbs = (override?.extra_embarcaciones || [])
-                            .map(e => embarcaciones.find(eb => eb.id === e.id) || e)
-                            .filter(e => !baseEmbs.some(b => b.id === e.id));
-                          const blueApple = embarcaciones.find(e => e.id === "EMB-BLUEAPPLE");
-                          const compartidas = blueApple && !baseEmbs.some(b => b.id === "EMB-BLUEAPPLE") && !extraEmbs.some(b => b.id === "EMB-BLUEAPPLE") ? [blueApple] : [];
-                          const todasEmbs = [...baseEmbs, ...extraEmbs, ...compartidas];
+                          const todasEmbs = embsParaSalida(salida);
                           if (todasEmbs.length === 0) return null;
                           return (
                             <div style={{ marginTop: 6 }}>

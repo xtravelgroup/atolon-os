@@ -1,14 +1,76 @@
-import { useState, useEffect, Component } from "react";
+import { useState, useEffect, Component, lazy, Suspense } from "react";
 import { supabase } from "./lib/supabase";
 import { B } from "./brand";
 import AtolanOS from "./modules/AtolanOS";
 import AtolanTrack from "./lib/AtolanTrack";
 
 // ── Error Boundary — muestra el error en pantalla en vez de pantalla azul ───
+//
+// Caso especial: chunk load errors. Cuando Vercel deploya una nueva versión,
+// los nombres de los chunks cambian (Eventos-XXXXXX.js). El usuario que tiene
+// la pestaña abierta apunta al chunk viejo, que ya no existe → "Failed to
+// fetch dynamically imported module". El handler global en main.jsx lo
+// captura, PERO si el error ocurre durante el render del lazy component,
+// React lo intercepta primero acá. Detectamos el patrón y recargamos solos.
+//
+// Debounce por timestamp en vez de flag binario: permite múltiples reloads
+// en una sesión larga (deploys seguidos) sin entrar en loop.
+const CHUNK_RELOAD_TS_KEY = "__atolon_chunk_reload";
+const CHUNK_RELOAD_DEBOUNCE_MS = 10_000; // mínimo entre reloads
+function isChunkLoadError(err) {
+  const msg = String(err?.message || err || "");
+  return /Failed to fetch dynamically imported module|Loading chunk|ChunkLoadError|Importing a module script failed/i.test(msg);
+}
+function chunkRecoveryAllowed() {
+  const last = Number(sessionStorage.getItem(CHUNK_RELOAD_TS_KEY)) || 0;
+  return Date.now() - last > CHUNK_RELOAD_DEBOUNCE_MS;
+}
+
 class ErrorBoundary extends Component {
-  constructor(props) { super(props); this.state = { error: null }; }
-  static getDerivedStateFromError(e) { return { error: e }; }
+  constructor(props) { super(props); this.state = { error: null, recovering: false }; }
+  static getDerivedStateFromError(e) {
+    if (isChunkLoadError(e) && chunkRecoveryAllowed()) {
+      // No mostrar el error rojo — mostrar "Actualizando..." y recargar.
+      return { error: e, recovering: true };
+    }
+    return { error: e, recovering: false };
+  }
+  componentDidCatch(err) {
+    if (this.state.recovering) {
+      sessionStorage.setItem(CHUNK_RELOAD_TS_KEY, String(Date.now()));
+      // Limpiar caches del navegador antes de recargar (por si el HTML
+      // viejo está cacheado y volveríamos a recibir hashes que ya no existen).
+      const reload = () => window.location.reload();
+      if (typeof caches !== "undefined") {
+        caches.keys().then(keys => Promise.all(keys.map(k => caches.delete(k)))).finally(reload);
+      } else {
+        reload();
+      }
+    }
+  }
   render() {
+    if (this.state.recovering) {
+      // Pantalla mínima durante el reload — ~200-500ms en redes normales.
+      return (
+        <div style={{
+          position: "fixed", inset: 0, background: "#0D1B3E",
+          display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+          color: "#C8B99A", fontFamily: "system-ui, -apple-system, sans-serif",
+        }}>
+          <div style={{
+            width: 40, height: 40, marginBottom: 16,
+            border: "3px solid rgba(200,185,154,0.2)",
+            borderTopColor: "#C8B99A",
+            borderRadius: "50%",
+            animation: "atolon-spin 0.8s linear infinite",
+          }} />
+          <div style={{ fontSize: 12, letterSpacing: "0.2em", textTransform: "uppercase" }}>
+            Actualizando…
+          </div>
+          <style>{`@keyframes atolon-spin { to { transform: rotate(360deg); } }`}</style>
+        </div>
+      );
+    }
     if (this.state.error) {
       const msg = this.state.error?.message || String(this.state.error);
       const stack = this.state.error?.stack || "";
@@ -200,92 +262,104 @@ function WhatsAppFloat({ phone }) {
     </a>
   );
 }
-import Login from "./modules/Login";
-import ResetPassword from "./modules/ResetPassword";
-import Pasadias from "./modules/Pasadias";
-import Reservas from "./modules/Reservas";
-import FloorPlan from "./modules/FloorPlan";
-import Comercial from "./modules/Comercial";
-import B2B from "./modules/B2B";
-import Eventos from "./modules/Eventos";
-import Financiero from "./modules/Financiero";
-import CXC from "./modules/CXC";
-import HotelReservas from "./modules/HotelReservas";
-import HotelHuespedes from "./modules/HotelHuespedes";
-import HotelTarifas from "./modules/HotelTarifas";
-import HotelCheckin from "./modules/HotelCheckin";
-import HotelHabitaciones from "./modules/HotelHabitaciones";
-import HotelRoomService from "./modules/HotelRoomService";
-import HotelMinibar from "./modules/HotelMinibar";
-import HotelHousekeeping from "./modules/HotelHousekeeping";
-import GuestPortal from "./modules/GuestPortal";
-import RoomQRLanding from "./modules/RoomQRLanding";
-import StaffView from "./modules/StaffView";
-import CamareraPortal from "./modules/CamareraPortal";
-import HousekeepingInspection from "./modules/HousekeepingInspection";
-import Briefings from "./modules/Briefings";
-import RHManuales from "./modules/RHManuales";
-import Reportes from "./modules/Reportes";
-import Presupuesto from "./modules/Presupuesto";
-import EstadoResultados from "./modules/EstadoResultados";
-import Activos from "./modules/Activos";
-import Requisiciones from "./modules/Requisiciones";
-import Compras from "./modules/Compras";
-import Pagos from "./modules/Pagos";
-import EmpleadoPortal from "./modules/EmpleadoPortal";
-import AgenciaPortal from "./modules/AgenciaPortal";
-import LasAmericasPortal from "./modules/LasAmericasPortal";
-import GranFondoNairo from "./modules/GranFondoNairo";
-import BookingWidget from "./modules/BookingWidget";
-import BookingPopup from "./modules/BookingPopup";
-import PagoCliente from "./modules/PagoCliente";
-import Configuracion from "./modules/Configuracion";
-import Usuarios from "./modules/Usuarios";
-import Contenido from "./modules/Contenido";
-import Upsells from "./modules/Upsells";
-import Menus from "./modules/Menus";
-import CheckIn from "./modules/CheckIn";
-import ZarpeInfo from "./modules/ZarpeInfo";
-import ZarpeGrupo from "./modules/ZarpeGrupo";
-import Analitica from "./modules/Analitica";
-import MuelleCheckin from "./modules/MuelleCheckin";
-import MuelleSalidas from "./modules/MuelleSalidas";
-import VIPAdmin from "./modules/VIPAdmin";
-import Clientes from "./modules/Clientes";
-import VIPPortal from "./modules/VIPPortal";
-import Staffing from "./modules/Staffing";
-import SelfCheckIn from "./modules/SelfCheckIn";
-import Historial from "./modules/Historial";
-import CierreCaja from "./modules/CierreCaja";
-import Actividades from "./modules/Actividades";
-import Mantenimiento from "./modules/Mantenimiento";
-import CarritoAbandonado from "./modules/CarritoAbandonado";
-import Metas from "./modules/Metas";
-import Comisiones from "./modules/Comisiones";
-import Resultados from "./modules/Resultados";
-import ResultadosViewer from "./modules/ResultadosViewer";
-import Lancha from "./modules/Lancha";
-import CosteoProductos from "./modules/CosteoProductos";
-import DiaDeLaMadre from "./modules/DiaDeLaMadre";
-import Despedidas from "./modules/Despedidas";
-import RecursosHumanos from "./modules/RecursosHumanos";
-import Nomina from "./modules/Nomina";
-import NominaPorDia from "./modules/NominaPorDia";
-import Horarios from "./modules/Horarios";
-import ContratistasAdmin from "./modules/ContratistasAdmin";
-import ContratistasPortal from "./modules/ContratistasPortal";
-import ContratistasCurso from "./modules/ContratistasCurso";
-import ContratistasVerificar from "./modules/ContratistasVerificar";
-import ContratistasMuelle from "./modules/ContratistasMuelle";
-import ZarpesLog from "./modules/ZarpesLog";
-import Proveedores from "./modules/Proveedores";
-import Items from "./modules/Items";
-import HacerInventario from "./modules/HacerInventario";
-import EscanearProductos from "./modules/EscanearProductos";
-import LoggroAdmin from "./modules/LoggroAdmin";
-import HotelFolios from "./modules/HotelFolios";
-import ApiPortal from "./modules/ApiPortal";
-import BlueApplePortal from "./modules/BlueApplePortal";
+// ── Lazy module imports ─────────────────────────────────────────────────────
+// Cada módulo se carga bajo demanda al primer uso (chunk separado por Vite).
+// Antes: bundle único de 4.2 MB cargaba todo de una vez.
+// Ahora: bundle inicial ~500 KB; cada módulo es ~30-100 KB on-demand.
+const Login = lazy(() => import("./modules/Login"));
+const ResetPassword = lazy(() => import("./modules/ResetPassword"));
+const Pasadias = lazy(() => import("./modules/Pasadias"));
+const Reservas = lazy(() => import("./modules/Reservas"));
+const FloorPlan = lazy(() => import("./modules/FloorPlan"));
+const Comercial = lazy(() => import("./modules/Comercial"));
+const B2B = lazy(() => import("./modules/B2B"));
+const Eventos = lazy(() => import("./modules/Eventos"));
+const Financiero = lazy(() => import("./modules/Financiero"));
+const CXC = lazy(() => import("./modules/CXC"));
+const HotelReservas = lazy(() => import("./modules/HotelReservas"));
+const HotelHuespedes = lazy(() => import("./modules/HotelHuespedes"));
+const HotelTarifas = lazy(() => import("./modules/HotelTarifas"));
+const HotelCheckin = lazy(() => import("./modules/HotelCheckin"));
+const HotelHabitaciones = lazy(() => import("./modules/HotelHabitaciones"));
+const HotelRoomService = lazy(() => import("./modules/HotelRoomService"));
+const PoolService = lazy(() => import("./modules/PoolService"));
+const PoolServicePortal = lazy(() => import("./modules/PoolServicePortal"));
+const HotelMinibar = lazy(() => import("./modules/HotelMinibar"));
+const HotelHousekeeping = lazy(() => import("./modules/HotelHousekeeping"));
+const GuestPortal = lazy(() => import("./modules/GuestPortal"));
+const RoomQRLanding = lazy(() => import("./modules/RoomQRLanding"));
+const StaffView = lazy(() => import("./modules/StaffView"));
+const CamareraPortal = lazy(() => import("./modules/CamareraPortal"));
+const HousekeepingInspection = lazy(() => import("./modules/HousekeepingInspection"));
+const Briefings = lazy(() => import("./modules/Briefings"));
+const RHManuales = lazy(() => import("./modules/RHManuales"));
+const Reportes = lazy(() => import("./modules/Reportes"));
+const Presupuesto = lazy(() => import("./modules/Presupuesto"));
+const EstadoResultados = lazy(() => import("./modules/EstadoResultados"));
+const Activos = lazy(() => import("./modules/Activos"));
+const Requisiciones = lazy(() => import("./modules/Requisiciones"));
+const Compras = lazy(() => import("./modules/Compras"));
+const Pagos = lazy(() => import("./modules/Pagos"));
+const EmpleadoPortal = lazy(() => import("./modules/EmpleadoPortal"));
+const AgenciaPortal = lazy(() => import("./modules/AgenciaPortal"));
+const ReclutamientoPortal = lazy(() => import("./modules/ReclutamientoPortal"));
+const Reclutamiento = lazy(() => import("./modules/Reclutamiento"));
+const Comedor = lazy(() => import("./modules/Comedor"));
+const LasAmericasPortal = lazy(() => import("./modules/LasAmericasPortal"));
+const GranFondoNairo = lazy(() => import("./modules/GranFondoNairo"));
+const BookingWidget = lazy(() => import("./modules/BookingWidget"));
+const BookingPopup = lazy(() => import("./modules/BookingPopup"));
+const PagoCliente = lazy(() => import("./modules/PagoCliente"));
+const Configuracion = lazy(() => import("./modules/Configuracion"));
+const Usuarios = lazy(() => import("./modules/Usuarios"));
+const Contenido = lazy(() => import("./modules/Contenido"));
+const Upsells = lazy(() => import("./modules/Upsells"));
+const Menus = lazy(() => import("./modules/Menus"));
+const CheckIn = lazy(() => import("./modules/CheckIn"));
+const ZarpeInfo = lazy(() => import("./modules/ZarpeInfo"));
+const ZarpeGrupo = lazy(() => import("./modules/ZarpeGrupo"));
+const Analitica = lazy(() => import("./modules/Analitica"));
+const MuelleCheckin = lazy(() => import("./modules/MuelleCheckin"));
+const MuelleSalidas = lazy(() => import("./modules/MuelleSalidas"));
+const VIPAdmin = lazy(() => import("./modules/VIPAdmin"));
+const Clientes = lazy(() => import("./modules/Clientes"));
+const VIPPortal = lazy(() => import("./modules/VIPPortal"));
+const Staffing = lazy(() => import("./modules/Staffing"));
+const SelfCheckIn = lazy(() => import("./modules/SelfCheckIn"));
+const Historial = lazy(() => import("./modules/Historial"));
+const CierreCaja = lazy(() => import("./modules/CierreCaja"));
+const Actividades = lazy(() => import("./modules/Actividades"));
+const Mantenimiento = lazy(() => import("./modules/Mantenimiento"));
+const CarritoAbandonado = lazy(() => import("./modules/CarritoAbandonado"));
+const WhatsAppChat = lazy(() => import("./modules/WhatsAppChat"));
+const Metas = lazy(() => import("./modules/Metas"));
+const Comisiones = lazy(() => import("./modules/Comisiones"));
+const Resultados = lazy(() => import("./modules/Resultados"));
+const ResultadosViewer = lazy(() => import("./modules/ResultadosViewer"));
+const Lancha = lazy(() => import("./modules/Lancha"));
+const CosteoProductos = lazy(() => import("./modules/CosteoProductos"));
+const DiaDeLaMadre = lazy(() => import("./modules/DiaDeLaMadre"));
+const Despedidas = lazy(() => import("./modules/Despedidas"));
+const RecursosHumanos = lazy(() => import("./modules/RecursosHumanos"));
+const Nomina = lazy(() => import("./modules/Nomina"));
+const NominaPorDia = lazy(() => import("./modules/NominaPorDia"));
+const Horarios = lazy(() => import("./modules/Horarios"));
+const AsistenciaZK = lazy(() => import("./modules/AsistenciaZK"));
+const ContratistasAdmin = lazy(() => import("./modules/ContratistasAdmin"));
+const ContratistasPortal = lazy(() => import("./modules/ContratistasPortal"));
+const ContratistasCurso = lazy(() => import("./modules/ContratistasCurso"));
+const ContratistasVerificar = lazy(() => import("./modules/ContratistasVerificar"));
+const ContratistasMuelle = lazy(() => import("./modules/ContratistasMuelle"));
+const ZarpesLog = lazy(() => import("./modules/ZarpesLog"));
+const Proveedores = lazy(() => import("./modules/Proveedores"));
+const Items = lazy(() => import("./modules/Items"));
+const HacerInventario = lazy(() => import("./modules/HacerInventario"));
+const Transferencias = lazy(() => import("./modules/Transferencias"));
+const EscanearProductos = lazy(() => import("./modules/EscanearProductos"));
+const LoggroAdmin = lazy(() => import("./modules/LoggroAdmin"));
+const HotelFolios = lazy(() => import("./modules/HotelFolios"));
+const ApiPortal = lazy(() => import("./modules/ApiPortal"));
+const BlueApplePortal = lazy(() => import("./modules/BlueApplePortal"));
 
 const MODULE_MAP = {
   pasadias: <Pasadias />,
@@ -304,6 +378,7 @@ const MODULE_MAP = {
   pagos: <Pagos />,
   items: <Items />,
   hacer_inventario: <HacerInventario />,
+  transferencias: <Transferencias />,
   loggro: <LoggroAdmin />,
   hotel_folios: <HotelFolios />,
   contenido: <Contenido />,
@@ -326,12 +401,16 @@ const MODULE_MAP = {
   mantenimiento: <Mantenimiento />,
   actividades:  <Actividades />,
   carrito_abandonado: <CarritoAbandonado />,
+  whatsapp_chat: <WhatsAppChat />,
   metas: <Metas />,
   comisiones: <Comisiones />,
   resultados: <Resultados />,
   rrhh: <RecursosHumanos />,
+  reclutamiento: <Reclutamiento />,
+  comedor: <Comedor />,
   nomina: <Nomina />,
   nomina_dia: <NominaPorDia />,
+  asistencia_zk: <AsistenciaZK />,
   horarios: <Horarios />,
   contratistas_admin: <ContratistasAdmin />,
   contratistas_muelle: <ContratistasMuelle />,
@@ -345,6 +424,7 @@ const MODULE_MAP = {
   hotel_checkin:      <HotelCheckin />,
   hotel_housekeeping: <HotelHousekeeping />,
   hotel_roomservice:  <HotelRoomService />,
+  pool_service:       <PoolService />,
   hotel_minibar:      <HotelMinibar />,
   hotel_tarifas:      <HotelTarifas />,
   api_portal:         <ApiPortal />,
@@ -463,6 +543,7 @@ export default function App() {
   if (route === "blueapple" || route.startsWith("blueapple/")) return <BlueApplePortal />;
   if (route === "empleados")      return <><EmpleadoPortal /><WhatsAppFloat phone={waPhone} /></>;
   if (route === "agencia" || route === "") return <><AgenciaPortal /><WhatsAppFloat phone={waPhone} /></>;
+  if (route === "carreras" || route.startsWith("carreras/")) return <><ReclutamientoPortal /><WhatsAppFloat phone={waPhone} /></>;
   if (route === "booking/lasamericas" || route === "las-americas") return <LasAmericasPortal />;
   if (route === "gran-fondo" || route === "nairo") return <GranFondoNairo />;
   if (route === "booking" || route.startsWith("booking/")) return <><BookingPopup /><WhatsAppFloat phone={waPhone} /></>;
@@ -480,6 +561,7 @@ export default function App() {
   if (route === "checkin-pax")    return <SelfCheckIn />;
   if (route.startsWith("m/"))     return <GuestPortal token={route.slice(2)} />;
   if (route.startsWith("room/"))  return <RoomQRLanding idOrNumero={decodeURIComponent(route.slice(5))} />;
+  if (route.startsWith("pool/"))  return <PoolServicePortal qr={decodeURIComponent(route.slice(5))} />;
   if (route.startsWith("staff/")) return <StaffView eventoId={route.slice(6)} />;
   if (route === "housekeeping/inspeccion") return <HousekeepingInspection />;
   if (route.startsWith("housekeeping/")) return <CamareraPortal token={route.slice(13)} />;

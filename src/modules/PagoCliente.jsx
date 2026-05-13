@@ -2,9 +2,11 @@ import { useState, useEffect, useCallback } from "react";
 import { B, COP } from "../brand";
 import { supabase } from "../lib/supabase";
 import { wompiCheckoutUrl, wompiTransactionStatus } from "../lib/wompi";
+import { crearSesionPago } from "../lib/internacional";
 import AvisoCargoInternacional from "../components/AvisoCargoInternacional";
 import AtolanTrack from "../lib/AtolanTrack";
 import { waSendConfirmacion } from "../lib/whatsapp";
+import ZohoPaymentWidget from "../components/ZohoPaymentWidget";
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 function getReservaId() {
@@ -391,11 +393,13 @@ export default function PagoCliente() {
     window.location.href = url;
   };
 
+  // Sesión de Zoho Pay activa (cuando se está mostrando el widget embebido)
+  const [zohoSession, setZohoSession] = useState(null);
+
   const pagarStripe = async () => {
     if (!reserva) return;
     setProcesando("stripe");
     try {
-      const { crearSesionPago } = await import("../lib/internacional");
       // Convertir COP a USD con tasa fallback 4200
       const tasa = 4200;
       const amountUSD = Math.ceil((reserva.total || 0) / tasa);
@@ -410,6 +414,13 @@ export default function PagoCliente() {
         context: "reserva",
         context_id: reserva.id,
       });
+      // Nuevo flujo: widget embebido (Zoho Pay) — abre modal con el widget
+      if (session?.payments_session_id && session?.widget?.account_id) {
+        setZohoSession(session);
+        // No reseteamos `procesando` — el widget se monta y maneja el flujo
+        return;
+      }
+      // Compat: viejo flujo de redirect URL
       if (session?.url) {
         window.location.href = session.url;
       } else {
@@ -432,6 +443,36 @@ export default function PagoCliente() {
       <div style={{ background: B.navyMid, borderRadius: 20, padding: 32, width: "100%", maxWidth: 440 }}>
         {content}
       </div>
+
+      {/* Widget de Zoho Pay (overlay) — se monta cuando zohoSession está activa */}
+      {zohoSession && (
+        <ZohoPaymentWidget
+          session={zohoSession}
+          description={`${reserva?.tipo || "Atolón"} — ${reserva?.fecha || ""}`}
+          invoiceNumber={reserva?.id || ""}
+          business="Atolón Beach Club"
+          address={{
+            name:  reserva?.nombre || "",
+            email: reserva?.contacto?.includes("@") ? reserva.contacto : "",
+            phone: reserva?.contacto && !reserva.contacto.includes("@") ? reserva.contacto : "",
+          }}
+          onSuccess={() => {
+            // El webhook va a marcar la reserva como confirmada. Refrescamos.
+            setZohoSession(null);
+            setProcesando("");
+            setTimeout(fetchReserva, 1500);
+          }}
+          onError={(err) => {
+            setZohoSession(null);
+            setProcesando("");
+            alert("Error en el pago: " + (err?.message || "Intenta de nuevo"));
+          }}
+          onClose={() => {
+            setZohoSession(null);
+            setProcesando("");
+          }}
+        />
+      )}
     </div>
   );
 
@@ -508,7 +549,7 @@ export default function PagoCliente() {
       </div>
 
       <p style={{ marginTop: 20, fontSize: 11, color: "rgba(255,255,255,0.2)", textAlign: "center" }}>
-        Pago seguro · Atolon Beach Club SAS · NIT 901.xxx.xxx
+        Pago seguro · Atolon Beach Club SAS · NIT 901.873.457
       </p>
     </div>
   );

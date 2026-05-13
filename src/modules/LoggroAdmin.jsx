@@ -395,6 +395,38 @@ function InventarioBaselineTab({ callSync, syncing, setSyncing }) {
   const [orphanResult, setOrphanResult] = useState(null);
   const [orphanDry, setOrphanDry] = useState(null);
   const [orphanCount, setOrphanCount] = useState(null);
+  const [syncBackResult, setSyncBackResult] = useState(null);
+  const [syncBackDry, setSyncBackDry] = useState(null);
+
+  const previewSyncBack = async () => {
+    setSyncing("/sync-loggro-to-atolon");
+    try {
+      const res = await fetch(`${FN_URL}/sync-loggro-to-atolon`, {
+        method: "POST", headers: { ...FN_HEADERS, "Content-Type": "application/json" },
+        body: JSON.stringify({ dry_run: true }),
+      });
+      const data = await res.json();
+      setSyncBackDry(data);
+    } catch (e) { alert(`Error: ${e.message}`); }
+    finally { setSyncing(null); }
+  };
+  const ejecutarSyncBack = async () => {
+    setSyncing("/sync-loggro-to-atolon");
+    try {
+      const res = await fetch(`${FN_URL}/sync-loggro-to-atolon`, {
+        method: "POST", headers: { ...FN_HEADERS, "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      const data = await res.json();
+      setSyncBackResult(data);
+      if (data.ok) {
+        alert(`✓ Sync Loggro → Atolón:\n• Items revisados: ${data.items_revisados}\n• Actualizados: ${data.items_actualizados}\n• Ventas descontadas: ${data.ventas_descontadas}\n• Entradas aplicadas: ${data.entradas_aplicadas}`);
+      } else {
+        alert(`Error: ${data.error}`);
+      }
+    } catch (e) { alert(`Error: ${e.message}`); }
+    finally { setSyncing(null); }
+  };
 
   // Cargar count de huerfanos al montar
   useEffect(() => {
@@ -508,6 +540,46 @@ function InventarioBaselineTab({ callSync, syncing, setSyncing }) {
 
   return (
     <div>
+      {/* Card sync Loggro → Atolón (ventas y consumos en tiempo real) */}
+      <div style={{ background: B.navyMid, borderRadius: 12, padding: 18, border: `1px solid ${B.success}55`, borderLeft: `4px solid ${B.success}`, marginBottom: 16 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 12 }}>
+          <div style={{ flex: 1, minWidth: 280 }}>
+            <div style={{ fontSize: 11, color: B.success, textTransform: "uppercase", fontWeight: 700, letterSpacing: "0.06em" }}>📥 SYNC DIARIO</div>
+            <h3 style={{ margin: "6px 0 8px", fontSize: 17 }}>🔄 Loggro → Atolón (ventas y consumos)</h3>
+            <p style={{ fontSize: 12, color: "rgba(255,255,255,0.6)", lineHeight: 1.5, margin: 0 }}>
+              Lee el stock actual de Loggro Restobar y aplica los deltas a Atolón OS.
+              Las ventas se descuentan de la bodega operativa correspondiente:
+              <br/>· <strong>Bebidas</strong> → Bar (LOC-BAR)
+              <br/>· <strong>Alimentos / cocina</strong> → Almacén Cocina
+            </p>
+            {syncBackDry && (
+              <div style={{ background: B.navy, borderRadius: 8, padding: 10, marginTop: 10, fontSize: 12 }}>
+                <div>Items a actualizar: <strong>{syncBackDry.items_a_actualizar}</strong></div>
+                <div>Delta total: <strong style={{ color: syncBackDry.delta_total < 0 ? B.danger : B.success }}>{Math.round(syncBackDry.delta_total).toLocaleString("es-CO")}</strong></div>
+              </div>
+            )}
+            {syncBackResult && (
+              <div style={{ background: B.success + "11", border: `1px solid ${B.success}55`, borderRadius: 8, padding: 10, marginTop: 10, fontSize: 12 }}>
+                <div style={{ color: B.success, fontWeight: 700 }}>✓ Sincronización completada</div>
+                <div style={{ fontSize: 11, color: "rgba(255,255,255,0.7)" }}>
+                  Actualizados {syncBackResult.items_actualizados} · Ventas {syncBackResult.ventas_descontadas} · Entradas {syncBackResult.entradas_aplicadas}
+                </div>
+              </div>
+            )}
+          </div>
+          <div style={{ display: "flex", gap: 6 }}>
+            <button onClick={previewSyncBack} disabled={!!syncing}
+              style={{ padding: "9px 14px", borderRadius: 8, border: `1px solid ${B.sky}`, background: B.sky + "22", color: B.sky, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+              👁 Preview
+            </button>
+            <button onClick={ejecutarSyncBack} disabled={!!syncing}
+              style={{ padding: "9px 14px", borderRadius: 8, border: "none", background: B.success, color: B.navy, fontSize: 12, fontWeight: 800, cursor: "pointer" }}>
+              🔄 Sync ahora
+            </button>
+          </div>
+        </div>
+      </div>
+
       {/* Card huerfanos — sincronizar ítems sin loggro_id */}
       {orphanCount !== null && orphanCount > 0 && (
         <div style={{ background: B.navyMid, borderRadius: 12, padding: 18, border: `1px solid ${B.warning}55`, borderLeft: `4px solid ${B.warning}`, marginBottom: 16 }}>

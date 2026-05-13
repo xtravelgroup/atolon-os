@@ -52,6 +52,7 @@ export default function Lancha() {
   const [lanchas, setLanchas] = useState([]);
   const [bitacora, setBitacora] = useState([]);
   const [zarpes, setZarpes] = useState([]);
+  const [llegadas, setLlegadas] = useState([]); // muelle_llegadas para computar viajes
   const [capitanes, setCapitanes] = useState([]);
   const [empleados, setEmpleados] = useState([]); // de rh_empleados (para vincular nómina)
   const [loading, setLoading] = useState(true);
@@ -61,24 +62,65 @@ export default function Lancha() {
   const [configModal, setConfigModal] = useState(false);
   const [capitanModal, setCapitanModal] = useState(null); // { edit? }
 
+  const [loadErrors, setLoadErrors] = useState([]);
   const load = useCallback(async () => {
     setLoading(true);
+    setLoadErrors([]);
     // Idempotente: asegura cargos recurrentes del mes actual (marina + capitanes terceros)
     supabase.rpc("generar_marina_mes").then(() => {});
     supabase.rpc("generar_capitanes_mes").then(() => {});
-    const [lR, bR, zR, cR, eR] = await Promise.all([
+    // Filtrar bitacora/zarpes/llegadas a últimos 90 días para no traer
+    // años de histórico al cambiar de módulo.
+    const noventaAtras = new Date();
+    noventaAtras.setDate(noventaAtras.getDate() - 90);
+    const desde = noventaAtras.toISOString().slice(0, 10);
+    // Ejecutamos cada query con allSettled + capturamos errores específicos.
+    // Antes con Promise.all si UNA query fallaba, todas se descartaban y el
+    // módulo aparecía vacío sin pista de qué pasó. Ahora cada una falla en
+    // aislamiento y el resto de la data se muestra.
+    const [lR, bR, zR, llR, cR, eR] = await Promise.allSettled([
       supabase.from("lanchas").select("*").eq("activo", true).order("nombre"),
-      supabase.from("lancha_bitacora").select("*").order("fecha", { ascending: false }).order("hora", { ascending: false }).limit(500),
-      supabase.from("muelle_zarpes_flota").select("*").order("fecha", { ascending: false }).limit(200),
+      supabase.from("lancha_bitacora").select("*").gte("fecha", desde).order("fecha", { ascending: false }).order("hora", { ascending: false }).limit(500),
+      supabase.from("muelle_zarpes_flota").select("*").gte("fecha", desde).order("fecha", { ascending: false }).limit(500),
+      // Incluir AMBOS tipos lancha_atolon (singular = pasadía) y lanchas_atolon
+      // (plural = staff/provisiones) + columnas de odómetro/foto para que
+      // ResumenTab pueda surfacear las lecturas pendientes.
+      supabase.from("muelle_llegadas")
+        .select("id, fecha, hora_llegada, embarcacion_nombre, tipo, pax_a, pax_n, boca_chica, odometro_foto_url, motores_horas, foto_url, notas")
+        .in("tipo", ["lancha_atolon", "lanchas_atolon"])
+        .gte("fecha", desde).order("fecha", { ascending: false }).limit(500),
       supabase.from("capitanes_flota").select("*").eq("activo", true).order("nombre"),
       supabase.from("rh_empleados").select("id, nombres, apellidos, cedula, telefono, email, cargo, salario_base, activo").eq("activo", true).order("nombres"),
     ]);
-    const lanchasArr = lR.data || [];
+    // Helper: extrae data o reporta error con label de tabla.
+    const errs = [];
+    const pick = (label, settled) => {
+      if (settled.status === "rejected") {
+        errs.push({ tabla: label, error: settled.reason?.message || String(settled.reason) });
+        console.error(`[Lancha] query ${label} rejected:`, settled.reason);
+        return [];
+      }
+      const { data, error } = settled.value || {};
+      if (error) {
+        errs.push({ tabla: label, error: error.message || String(error) });
+        console.error(`[Lancha] query ${label} error:`, error);
+        return [];
+      }
+      return data || [];
+    };
+    const lanchasArr = pick("lanchas", lR);
+    const bitacoraArr = pick("lancha_bitacora", bR);
+    const zarpesArr = pick("muelle_zarpes_flota", zR);
+    const llegadasArr = pick("muelle_llegadas", llR);
+    const capitanesArr = pick("capitanes_flota", cR);
+    const empleadosArr = pick("rh_empleados", eR);
     setLanchas(lanchasArr);
-    setBitacora(bR.data || []);
-    setZarpes(zR.data || []);
-    setCapitanes(cR.data || []);
-    setEmpleados(eR.data || []);
+    setBitacora(bitacoraArr);
+    setZarpes(zarpesArr);
+    setLlegadas(llegadasArr);
+    setCapitanes(capitanesArr);
+    setEmpleados(empleadosArr);
+    setLoadErrors(errs);
     if (!activeLancha && lanchasArr.length) setActiveLancha(lanchasArr[0].id);
     setLoading(false);
   }, [activeLancha]);
@@ -86,12 +128,117 @@ export default function Lancha() {
 
   const lancha = lanchas.find(l => l.id === activeLancha);
   const bitacoraLancha = useMemo(() => bitacora.filter(b => b.lancha_id === activeLancha), [bitacora, activeLancha]);
-  const zarpesLancha = useMemo(() => zarpes.filter(z => lancha && z.embarcacion === lancha.nombre), [zarpes, lancha]);
+  // Normaliza nombre: lowercase, sin tildes, colapsa letras repetidas.
+  // Esto permite que "Natturale" y "Naturalle" matcheen como la misma lancha.
+  const normNombre = (s) => (s || "").toLowerCase()
+    .normalize("NFD").replace(/[̀-ͯ]/g, "")
+    .replace(/(.)\1+/g, "$1").trim();
+  const zarpesLancha = useMemo(() => {
+    if (!lancha) return [];
+    const target = normNombre(lancha.nombre);
+    // Boca Chica = parqueo, no es viaje real → se excluye del conteo de viajes
+    return zarpes.filter(z => z.embarcacion && normNombre(z.embarcacion) === target && !z.boca_chica);
+  }, [zarpes, lancha]);
+  const llegadasLancha = useMemo(() => {
+    if (!lancha) return [];
+    const target = normNombre(lancha.nombre);
+    return llegadas.filter(l => l.embarcacion_nombre && normNombre(l.embarcacion_nombre) === target && !l.boca_chica);
+  }, [llegadas, lancha]);
   const capitanesLancha = useMemo(() => capitanes.filter(c => c.lancha_id === activeLancha), [capitanes, activeLancha]);
 
-  // KPIs del mes
+  // ─── Viajes computados por fecha ─────────────────────────────────────
+  // Lógica: cada llegada se parea con el siguiente zarpe del mismo barco.
+  // Si hay 2 llegadas seguidas → zarpe perdido. Si hay 2 zarpes seguidos
+  // → llegada perdida. # viajes = max(llegadas, zarpes) por día.
+  const viajesPorFecha = useMemo(() => {
+    const byDate = {}; // fecha → { llegadas: [{hora}], zarpes: [{hora}] }
+    llegadasLancha.forEach(l => {
+      const f = (l.fecha || "").slice(0, 10);
+      if (!f) return;
+      (byDate[f] ||= { llegadas: [], zarpes: [] }).llegadas.push({
+        hora: (l.hora_llegada || "").slice(0, 5),
+        pax_a: l.pax_a || 0,
+        pax_n: l.pax_n || 0,
+      });
+    });
+    zarpesLancha.forEach(z => {
+      const f = (z.fecha || "").slice(0, 10);
+      if (!f) return;
+      (byDate[f] ||= { llegadas: [], zarpes: [] }).zarpes.push({
+        hora: (z.hora_zarpe || "").slice(0, 5),
+        destino: z.destino,
+        pax_a: z.pax_a || 0,
+        pax_n: z.pax_n || 0,
+      });
+    });
+    // Ordenar y construir pareo por fecha
+    const fechas = Object.keys(byDate).sort().reverse();
+    return fechas.map(fecha => {
+      const d = byDate[fecha];
+      d.llegadas.sort((a, b) => a.hora.localeCompare(b.hora));
+      d.zarpes.sort((a, b) => a.hora.localeCompare(b.hora));
+      // Pareo cronológico
+      const pares = [];
+      let pendienteA = null;
+      const eventos = [
+        ...d.llegadas.map(l => ({ ...l, tipo: "L" })),
+        ...d.zarpes.map(z => ({ ...z, tipo: "Z" })),
+      ].sort((a, b) => a.hora.localeCompare(b.hora));
+      eventos.forEach(ev => {
+        if (ev.tipo === "L") {
+          if (pendienteA) pares.push({ llegada: pendienteA.hora, zarpe: null }); // zarpe perdido
+          pendienteA = ev;
+        } else {
+          if (pendienteA) {
+            pares.push({ llegada: pendienteA.hora, zarpe: ev.hora });
+            pendienteA = null;
+          } else {
+            pares.push({ llegada: null, zarpe: ev.hora }); // llegada perdida
+          }
+        }
+      });
+      if (pendienteA) pares.push({ llegada: pendienteA.hora, zarpe: null });
+      const viajes = Math.max(d.llegadas.length, d.zarpes.length);
+      return {
+        fecha,
+        llegadas: d.llegadas.length,
+        zarpes: d.zarpes.length,
+        viajes,
+        pares,
+      };
+    });
+  }, [llegadasLancha, zarpesLancha]);
+
+  // Costo por viaje (ida y vuelta) = 2 × costo_viaje_sencillo
+  const costoPorViaje = useMemo(() => {
+    if (!lancha) return 0;
+    return Number(lancha.costo_viaje_sencillo || 0) * 2;
+  }, [lancha]);
+
+  // KPIs por mes con SELECTOR. Default = mes actual, pero si está vacío
+  // (típico el 1ro de mes antes de cargar operaciones) cae al último mes
+  // con datos. Así nunca aparece todo en $0 sin razón. El usuario puede
+  // navegar a otros meses con flechas ‹ ›.
+  const mesesDisponibles = useMemo(() => {
+    const set = new Set();
+    bitacoraLancha.forEach(b => { if (b.fecha) set.add(b.fecha.slice(0, 7)); });
+    viajesPorFecha.forEach(v => { if (v.fecha) set.add(v.fecha.slice(0, 7)); });
+    set.add(thisMonth()); // siempre incluir el actual aunque esté vacío
+    return [...set].sort().reverse(); // más reciente primero
+  }, [bitacoraLancha, viajesPorFecha]);
+
+  const [mesKpi, setMesKpi] = useState(null);
+  // Auto-seleccionar: mes actual si tiene datos, sino el más reciente con datos.
+  useEffect(() => {
+    if (mesKpi || mesesDisponibles.length === 0) return;
+    const actual = thisMonth();
+    const hayDatosEnActual = bitacoraLancha.some(b => (b.fecha || "").startsWith(actual))
+      || viajesPorFecha.some(v => v.fecha.startsWith(actual));
+    setMesKpi(hayDatosEnActual ? actual : mesesDisponibles[0]);
+  }, [mesesDisponibles, bitacoraLancha, viajesPorFecha, mesKpi]);
+
   const kpis = useMemo(() => {
-    const mes = thisMonth();
+    const mes = mesKpi || thisMonth();
     const delMes = bitacoraLancha.filter(b => (b.fecha || "").startsWith(mes));
     const combustibleMes = delMes.filter(b => b.tipo === "combustible");
     const galonesMes = combustibleMes.reduce((s, b) => s + Number(b.galones || 0), 0);
@@ -100,14 +247,46 @@ export default function Lancha() {
     const gastoOperativosMes = delMes.filter(b => TIPOS_OPERATIVOS.includes(b.tipo)).reduce((s, b) => s + Number(b.costo_total || 0), 0);
     const gastoMarinaMes    = delMes.filter(b => b.tipo === "marina").reduce((s, b) => s + Number(b.costo_total || 0), 0);
     const gastoCapitanesMes = delMes.filter(b => b.tipo === "capitanes").reduce((s, b) => s + Number(b.costo_total || 0), 0);
-    const ultimoHoras = bitacoraLancha.find(b => b.kilometraje_h != null)?.kilometraje_h || 0;
+    // ÚLTIMAS HORAS DE MOTOR (por motor, no sumadas)
+    // Fuentes:
+    //   1. lancha_bitacora.kilometraje_h (registro manual: una sola cifra)
+    //   2. muelle_llegadas.motores_horas (jsonb {Babor, Estribor, Centro, ...})
+    //   3. muelle_zarpes_flota.motores_horas (mismo formato)
+    // Tomamos la lectura MÁS RECIENTE y la mostramos desglosada por motor.
+    const norm = (s) => (s || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/(.)\1+/g, "$1").trim();
+    const target = norm(lancha?.nombre);
+    const lecturasHoras = [
+      ...bitacoraLancha
+        .filter(b => b.kilometraje_h != null && Number(b.kilometraje_h) > 0)
+        .map(b => ({ ts: (b.fecha || "") + (b.hora || "00:00"), horas: { Total: Number(b.kilometraje_h) || 0 } })),
+      ...(llegadas || [])
+        .filter(l => l.motores_horas && lancha && norm(l.embarcacion_nombre) === target)
+        .map(l => ({ ts: (l.fecha || "") + (l.hora_llegada || "00:00"), horas: l.motores_horas || {} })),
+      ...(zarpes || [])
+        .filter(z => z.motores_horas && lancha && norm(z.embarcacion) === target)
+        .map(z => ({ ts: (z.fecha || "") + (z.hora_zarpe || "00:00"), horas: z.motores_horas || {} })),
+    ].filter(x => x.horas && Object.keys(x.horas).length > 0)
+     .sort((a, b) => b.ts.localeCompare(a.ts));
+    // Objeto {motor: horas} de la lectura más reciente, o {} si no hay
+    const ultimoHoras = lecturasHoras[0]?.horas || {};
     const proxServ = bitacoraLancha.find(b => b.proximo_servicio_h || b.proximo_servicio_fecha);
-    const zarpesMes = zarpesLancha.filter(z => (z.fecha || "").startsWith(mes));
-    const viajesMes = zarpesMes.length;
-    const gastoViajesMes = zarpesMes.reduce((s, z) => s + Number(z.costo_operativo || 0), 0);
+    const viajesMes = viajesPorFecha.filter(v => v.fecha.startsWith(mes)).reduce((s, v) => s + v.viajes, 0);
+    const costoCombustibleViajesMes = viajesMes * costoPorViaje;
+    const gastoViajesMes = 0;
     const incidentesAbiertos = bitacoraLancha.filter(b => b.tipo === "incidente" && !b.resuelto).length;
-    return { galonesMes, gastoCombustibleMes, gastoMantMes, gastoOperativosMes, gastoMarinaMes, gastoCapitanesMes, ultimoHoras, proxServ, viajesMes, gastoViajesMes, incidentesAbiertos };
-  }, [bitacoraLancha, zarpesLancha]);
+    return { galonesMes, gastoCombustibleMes, gastoMantMes, gastoOperativosMes, gastoMarinaMes, gastoCapitanesMes, ultimoHoras, proxServ, viajesMes, costoCombustibleViajesMes, gastoViajesMes, incidentesAbiertos };
+  }, [bitacoraLancha, viajesPorFecha, costoPorViaje, mesKpi, llegadas, zarpes, lancha]);
+
+  // Helpers para navegación de mes ‹ ›
+  const idxMesActual = mesesDisponibles.indexOf(mesKpi);
+  const irMesAnterior = () => { if (idxMesActual < mesesDisponibles.length - 1) setMesKpi(mesesDisponibles[idxMesActual + 1]); };
+  const irMesSiguiente = () => { if (idxMesActual > 0) setMesKpi(mesesDisponibles[idxMesActual - 1]); };
+  const fmtMesLabel = (ym) => {
+    if (!ym) return "";
+    const [y, m] = ym.split("-");
+    const nombres = ["ene","feb","mar","abr","may","jun","jul","ago","sep","oct","nov","dic"];
+    return `${nombres[Number(m) - 1]} ${y}`;
+  };
 
   async function saveEvento(data) {
     const payload = {
@@ -182,6 +361,18 @@ export default function Lancha() {
         </div>
       </div>
 
+      {/* Error banner — mostrar qué query falló para diagnóstico */}
+      {loadErrors.length > 0 && (
+        <div style={{ marginBottom: 14, padding: "12px 14px", background: B.danger + "22", border: `1px solid ${B.danger}55`, borderRadius: 10, color: "#fca5a5", fontSize: 12 }}>
+          <div style={{ fontWeight: 700, marginBottom: 4 }}>⚠ Error cargando datos:</div>
+          {loadErrors.map((e, i) => (
+            <div key={i} style={{ fontFamily: "monospace", marginTop: 2 }}>
+              · <strong>{e.tabla}</strong>: {e.error}
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* Tabs por lancha */}
       <div style={{ display: "flex", gap: 8, marginBottom: 20, flexWrap: "wrap" }}>
         {lanchas.map(l => (
@@ -221,21 +412,70 @@ export default function Lancha() {
         </div>
       </div>
 
-      {/* KPIs del mes */}
+      {/* Selector de mes para KPIs ─ default: actual o último con datos */}
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+        <span style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: "0.05em" }}>KPIs del mes:</span>
+        <button onClick={irMesAnterior}
+          disabled={idxMesActual >= mesesDisponibles.length - 1}
+          style={{ padding: "4px 10px", borderRadius: 6, border: `1px solid ${B.navyLight}`, background: "transparent", color: idxMesActual >= mesesDisponibles.length - 1 ? "rgba(255,255,255,0.2)" : "#fff", cursor: idxMesActual >= mesesDisponibles.length - 1 ? "default" : "pointer", fontSize: 12 }}>
+          ‹
+        </button>
+        <select value={mesKpi || ""} onChange={e => setMesKpi(e.target.value)}
+          style={{ padding: "5px 10px", borderRadius: 6, border: `1px solid ${B.navyLight}`, background: B.navyMid, color: "#fff", fontSize: 12, minWidth: 120 }}>
+          {mesesDisponibles.map(m => <option key={m} value={m}>{fmtMesLabel(m)}</option>)}
+        </select>
+        <button onClick={irMesSiguiente}
+          disabled={idxMesActual <= 0}
+          style={{ padding: "4px 10px", borderRadius: 6, border: `1px solid ${B.navyLight}`, background: "transparent", color: idxMesActual <= 0 ? "rgba(255,255,255,0.2)" : "#fff", cursor: idxMesActual <= 0 ? "default" : "pointer", fontSize: 12 }}>
+          ›
+        </button>
+        {mesKpi && mesKpi !== thisMonth() && (
+          <span style={{ fontSize: 10, color: B.sand, fontStyle: "italic" }}>
+            (mes actual sin datos — mostrando último con operación)
+          </span>
+        )}
+      </div>
+
+      {/* KPIs del mes seleccionado */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(140px,1fr))", gap: 10, marginBottom: 16 }}>
         {[
-          { l: "Galones (mes)",       v: `${kpis.galonesMes.toFixed(1)} gal`, c: B.warning },
-          { l: "Combustible (mes)",   v: fmtCOP(kpis.gastoCombustibleMes),    c: B.warning },
-          { l: "Mant./Rep. (mes)",    v: fmtCOP(kpis.gastoMantMes),           c: B.sky },
-          { l: "Marina (mes)",        v: fmtCOP(kpis.gastoMarinaMes),         c: "#22d3ee" },
-          { l: "Capitanes (mes)",     v: fmtCOP(kpis.gastoCapitanesMes),      c: "#fb923c" },
-          { l: "Viajes (mes)",        v: `${kpis.viajesMes} · ${fmtCOP(kpis.gastoViajesMes)}`, c: "#a78bfa" },
-          { l: "Horas motor",         v: kpis.ultimoHoras.toFixed(0) + " h",  c: B.sand },
+          { l: "Galones",             v: `${kpis.galonesMes.toFixed(1)} gal`, c: B.warning },
+          { l: "Combustible",         v: fmtCOP(kpis.gastoCombustibleMes),    c: B.warning },
+          { l: "Mant./Rep.",          v: fmtCOP(kpis.gastoMantMes),           c: B.sky },
+          { l: "Marina",              v: fmtCOP(kpis.gastoMarinaMes),         c: "#22d3ee" },
+          { l: "Capitanes",           v: fmtCOP(kpis.gastoCapitanesMes),      c: "#fb923c" },
+          // Horas motor: si la lectura tiene varios motores (ej Naturalle:
+          // {Babor, Estribor}), mostrarlos por separado en lugar de sumarlos.
+          (() => {
+            const horas = kpis.ultimoHoras || {};
+            const entries = Object.entries(horas).filter(([, v]) => Number(v) > 0);
+            return { l: "Horas motor", motores: entries, c: B.sand };
+          })(),
           { l: "Incidentes abiertos", v: kpis.incidentesAbiertos,             c: kpis.incidentesAbiertos > 0 ? B.danger : B.success },
         ].map((k, i) => (
           <div key={i} style={{ background: B.navyMid, padding: 12, borderRadius: 10, borderLeft: `3px solid ${k.c}` }}>
             <div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: "0.05em" }}>{k.l}</div>
-            <div style={{ fontSize: 18, fontWeight: 800, color: k.c, marginTop: 2 }}>{k.v}</div>
+            {k.motores ? (
+              k.motores.length === 0 ? (
+                <div style={{ fontSize: 18, fontWeight: 800, color: k.c, marginTop: 2 }}>0 h</div>
+              ) : k.motores.length === 1 && k.motores[0][0] === "Total" ? (
+                // Bitácora manual: solo un valor "Total"
+                <div style={{ fontSize: 18, fontWeight: 800, color: k.c, marginTop: 2 }}>
+                  {Number(k.motores[0][1]).toFixed(0)} h
+                </div>
+              ) : (
+                <div style={{ marginTop: 2, display: "flex", flexDirection: "column", gap: 1 }}>
+                  {k.motores.map(([nombre, valor]) => (
+                    <div key={nombre} style={{ display: "flex", alignItems: "baseline", gap: 6, fontSize: 14, fontWeight: 700, color: k.c }}>
+                      <span style={{ fontSize: 9, color: "rgba(255,255,255,0.55)", textTransform: "uppercase", letterSpacing: "0.04em", minWidth: 52 }}>{nombre}</span>
+                      <span>{Number(valor).toFixed(0)} h</span>
+                    </div>
+                  ))}
+                </div>
+              )
+            ) : (
+              <div style={{ fontSize: 18, fontWeight: 800, color: k.c, marginTop: 2 }}>{k.v}</div>
+            )}
           </div>
         ))}
       </div>
@@ -251,7 +491,7 @@ export default function Lancha() {
           { k: "operativos",    l: "🅿️ Operativos" },
           { k: "capitanes",     l: `👨‍✈️ Capitanes (${capitanesLancha.length})` },
           { k: "incidentes",    l: "⚠️ Incidentes" },
-          { k: "viajes",        l: `⛵ Viajes (${zarpesLancha.length})` },
+          { k: "viajes",        l: `⛵ Viajes (${viajesPorFecha.reduce((s, v) => s + v.viajes, 0)})` },
           { k: "todos",         l: "📋 Todo" },
         ].map(t => (
           <button key={t.k} onClick={() => setTab(t.k)}
@@ -272,10 +512,10 @@ export default function Lancha() {
       )}
 
       {tab === "resumen" && (
-        <ResumenTab bitacora={bitacoraLancha} zarpes={zarpesLancha} lancha={lancha} />
+        <ResumenTab bitacora={bitacoraLancha} zarpes={zarpesLancha} llegadas={llegadas} zarpesAll={zarpes} lancha={lancha} onReload={load} />
       )}
       {tab === "costos" && (
-        <CostosFlotaTab />
+        <CostosFlotaTab lanchaId={activeLancha} />
       )}
       {tab === "motores" && (
         <MotoresTab activeLancha={activeLancha} lanchas={lanchas} />
@@ -322,7 +562,7 @@ export default function Lancha() {
         />
       )}
       {tab === "viajes" && (
-        <ListaViajes viajes={zarpesLancha} />
+        <ListaViajesComputados viajesPorFecha={viajesPorFecha} costoPorViaje={costoPorViaje} />
       )}
       {tab === "todos" && (
         <ListaEventos
@@ -372,22 +612,185 @@ function defaultTipoForTab(tab) {
 }
 
 // ─── Resumen tab ───────────────────────────────────────────────────────────
-function ResumenTab({ bitacora, zarpes, lancha }) {
-  // 6 meses de gasto
+// ─── Lecturas de odómetro ──────────────────────────────────────────────
+// Muestra las fotos de odómetro y horas registradas desde el muelle
+// (ya sea llegadas o zarpes). Si una lectura tiene foto pero NO horas,
+// permite al manager capturarlas viendo la foto. Modal con zoom + inputs.
+function LecturasOdometro({ lecturas, onReload }) {
+  const [editar, setEditar] = useState(null); // lectura siendo editada
+  const sinHoras = lecturas.filter(l => !l.horas || Object.keys(l.horas).length === 0);
+  const conHoras = lecturas.filter(l => l.horas && Object.keys(l.horas).length > 0);
+
+  const guardarHoras = async (lec, horas) => {
+    // Construir el objeto motores_horas tal como lo escribe el form del muelle
+    const cleaned = {};
+    Object.entries(horas).forEach(([k, v]) => {
+      const n = Number(v);
+      if (!Number.isNaN(n) && n > 0) cleaned[k] = n;
+    });
+    if (Object.keys(cleaned).length === 0) {
+      alert("Ingresá al menos un valor de horas para guardar.");
+      return;
+    }
+    const { error } = await supabase.from(lec.tabla).update({ motores_horas: cleaned }).eq("id", lec.id);
+    if (error) { alert("Error: " + error.message); return; }
+    setEditar(null);
+    onReload?.();
+  };
+
+  return (
+    <div style={{ background: B.navyMid, borderRadius: 12, padding: 16, marginBottom: 16 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8, marginBottom: 12 }}>
+        <div style={{ fontWeight: 700, fontSize: 13 }}>📸 Lecturas de odómetro</div>
+        <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)" }}>
+          {conHoras.length} con horas · {sinHoras.length > 0 && <span style={{ color: B.warning, fontWeight: 700 }}>{sinHoras.length} pendiente{sinHoras.length === 1 ? "" : "s"}</span>}
+        </div>
+      </div>
+
+      {sinHoras.length > 0 && (
+        <div style={{ marginBottom: 12, padding: "10px 12px", background: B.warning + "22", border: `1px solid ${B.warning}55`, borderRadius: 8, fontSize: 12, color: B.warning }}>
+          ⚠ Hay {sinHoras.length} foto{sinHoras.length === 1 ? "" : "s"} de odómetro sin horas registradas. Capturá las horas leyendo cada foto para que entren al cálculo de reserva motores.
+        </div>
+      )}
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10 }}>
+        {lecturas.slice(0, 12).map(l => {
+          const tieneHoras = l.horas && Object.keys(l.horas).length > 0;
+          return (
+            <div key={l.tabla + l.id} style={{
+              background: B.navy, borderRadius: 10, padding: 10,
+              border: `1px solid ${tieneHoras ? B.success + "44" : B.warning + "55"}`,
+            }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, fontSize: 11 }}>
+                <span style={{ fontWeight: 700 }}>{l.tipo} · {l.fecha?.slice(0, 10)}</span>
+                <span style={{ color: "rgba(255,255,255,0.45)" }}>{(l.hora || "").slice(0, 5)}</span>
+              </div>
+              {l.foto ? (
+                <a href={l.foto} target="_blank" rel="noreferrer" style={{ display: "block" }}>
+                  <img src={l.foto} alt="odómetro" style={{ width: "100%", height: 120, objectFit: "cover", borderRadius: 6, border: `1px solid ${B.navyLight}` }} />
+                </a>
+              ) : (
+                <div style={{ height: 120, background: B.navyLight, borderRadius: 6, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, color: "rgba(255,255,255,0.3)" }}>Sin foto</div>
+              )}
+              <div style={{ marginTop: 8, fontSize: 11 }}>
+                {tieneHoras ? (
+                  <div style={{ color: B.success, fontWeight: 700 }}>
+                    {Object.entries(l.horas).map(([k, v]) => `${k}: ${v}h`).join(" · ")}
+                  </div>
+                ) : (
+                  <button onClick={() => setEditar(l)}
+                    style={{ width: "100%", padding: "7px 10px", borderRadius: 6, border: `1px solid ${B.warning}`, background: B.warning + "22", color: B.warning, fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
+                    ✏️ Capturar horas
+                  </button>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {editar && (
+        <CapturarHorasModal lectura={editar} onClose={() => setEditar(null)} onSave={guardarHoras} />
+      )}
+    </div>
+  );
+}
+
+function CapturarHorasModal({ lectura, onClose, onSave }) {
+  const [horas, setHoras] = useState({ Babor: "", Estribor: "", Centro: "" });
+  const [saving, setSaving] = useState(false);
+  return (
+    <div onClick={e => e.target === e.currentTarget && onClose()}
+      style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.85)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+      <div style={{ background: B.navyMid, borderRadius: 14, padding: 22, width: 520, maxWidth: "100%", maxHeight: "92vh", overflowY: "auto" }}>
+        <div style={{ fontWeight: 800, fontSize: 16, marginBottom: 4 }}>📸 Capturar horas de motor</div>
+        <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginBottom: 14 }}>
+          {lectura.tipo} · {lectura.fecha?.slice(0, 10)} {(lectura.hora || "").slice(0, 5)}
+        </div>
+        {lectura.foto && (
+          <img src={lectura.foto} alt="odómetro" style={{ width: "100%", maxHeight: 320, objectFit: "contain", borderRadius: 8, marginBottom: 14, background: "#000" }} />
+        )}
+        <div style={{ fontSize: 11, color: B.sand, marginBottom: 8, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+          Lee las horas de la foto y escribilas:
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginBottom: 14 }}>
+          {["Babor", "Estribor", "Centro"].map(k => (
+            <div key={k}>
+              <label style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", display: "block", marginBottom: 4 }}>{k}</label>
+              <input type="number" step="0.1" min="0" value={horas[k]}
+                onChange={e => setHoras(p => ({ ...p, [k]: e.target.value }))}
+                placeholder="ej: 1005"
+                style={{ width: "100%", padding: "8px 10px", borderRadius: 6, background: B.navy, border: `1px solid ${B.navyLight}`, color: "#fff", fontSize: 13, outline: "none", boxSizing: "border-box" }} />
+            </div>
+          ))}
+        </div>
+        <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", marginBottom: 14, lineHeight: 1.4 }}>
+          Solo llená los motores aplicables a esta embarcación. Naturalle = Babor+Estribor; Castillete = Centro.
+        </div>
+        <div style={{ display: "flex", gap: 10 }}>
+          <button onClick={onClose} disabled={saving}
+            style={{ flex: 1, padding: 11, borderRadius: 8, border: `1px solid ${B.navyLight}`, background: "transparent", color: "rgba(255,255,255,0.5)", cursor: "pointer" }}>
+            Cancelar
+          </button>
+          <button onClick={async () => { setSaving(true); await onSave(lectura, horas); setSaving(false); }}
+            disabled={saving}
+            style={{ flex: 2, padding: 11, borderRadius: 8, border: "none", background: saving ? B.navyLight : B.success, color: "#fff", fontWeight: 700, cursor: saving ? "wait" : "pointer" }}>
+            {saving ? "Guardando…" : "✓ Guardar horas"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ResumenTab({ bitacora, zarpes, llegadas = [], zarpesAll = [], lancha, onReload }) {
+  // ── Lecturas de odómetro: surface fotos/horas registradas en muelle ─
+  // El operador del muelle sube foto + (opcionalmente) horas en el form de
+  // llegada/zarpe. Antes esas lecturas vivían huérfanas — el manager nunca
+  // las veía. Acá las exponemos para que pueda revisarlas y, si solo subió
+  // foto, capturar las horas viendo la imagen.
+  const lecturasOdometro = useMemo(() => {
+    if (!lancha) return [];
+    const norm = (s) => (s || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/(.)\1+/g, "$1").trim();
+    const target = norm(lancha.nombre);
+    const fromLleg = (llegadas || [])
+      .filter(l => norm(l.embarcacion_nombre) === target && (l.odometro_foto_url || l.motores_horas))
+      .map(l => ({
+        tabla: "muelle_llegadas", id: l.id,
+        fecha: l.fecha, hora: l.hora_llegada, tipo: "Llegada",
+        foto: l.odometro_foto_url, horas: l.motores_horas,
+      }));
+    const fromZarp = (zarpesAll || [])
+      .filter(z => norm(z.embarcacion) === target && (z.odometro_foto_url || z.motores_horas))
+      .map(z => ({
+        tabla: "muelle_zarpes_flota", id: z.id,
+        fecha: z.fecha, hora: z.hora_zarpe, tipo: "Zarpe",
+        foto: z.odometro_foto_url, horas: z.motores_horas,
+      }));
+    return [...fromLleg, ...fromZarp].sort((a, b) =>
+      (b.fecha + (b.hora || "")).localeCompare(a.fecha + (a.hora || ""))
+    );
+  }, [llegadas, zarpesAll, lancha]);
+
+  // 6 meses de gasto. Usar día 1 + Bogotá: si hoy es abril 30, setMonth(-2)
+  // sobre día 30 caía en "Feb 30" → marzo, saltándose febrero. Día 1 + tz
+  // Bogotá garantiza que generamos: nov, dic, ene, feb, mar, abr correctamente.
   const meses = [];
+  const baseStr = new Date().toLocaleDateString("en-CA", { timeZone: "America/Bogota" });
   for (let i = 5; i >= 0; i--) {
-    const d = new Date(); d.setMonth(d.getMonth() - i);
+    const d = new Date(baseStr + "T12:00:00");
+    d.setDate(1);
+    d.setMonth(d.getMonth() - i);
     meses.push(d.toISOString().slice(0, 7));
   }
   const gastosMes = meses.map(m => {
     const items = bitacora.filter(b => (b.fecha || "").startsWith(m));
-    const zarpesM = zarpes.filter(z => (z.fecha || "").startsWith(m));
     return {
       mes: m,
       comb: items.filter(b => b.tipo === "combustible").reduce((s, b) => s + Number(b.costo_total || 0), 0),
       mant: items.filter(b => TIPOS_MANTENIMIENTO.includes(b.tipo)).reduce((s, b) => s + Number(b.costo_total || 0), 0),
       oper: items.filter(b => TIPOS_OPERATIVOS.includes(b.tipo)).reduce((s, b) => s + Number(b.costo_total || 0), 0),
-      viajes: zarpesM.reduce((s, z) => s + Number(z.costo_operativo || 0), 0),
+      viajes: 0, // costo se computa del combustible cargado, no per-zarpe
     };
   });
   const maxGasto = Math.max(1, ...gastosMes.map(g => g.comb + g.mant + g.oper + g.viajes));
@@ -397,6 +800,11 @@ function ResumenTab({ bitacora, zarpes, lancha }) {
 
   return (
     <div>
+      {/* Lecturas de odómetro registradas en muelle */}
+      {lecturasOdometro.length > 0 && (
+        <LecturasOdometro lecturas={lecturasOdometro} onReload={onReload} />
+      )}
+
       <div style={{ background: B.navyMid, borderRadius: 12, padding: 16, marginBottom: 16 }}>
         <div style={{ fontWeight: 700, marginBottom: 12, fontSize: 13 }}>Gasto últimos 6 meses</div>
         <div style={{ display: "flex", alignItems: "flex-end", gap: 8, height: 160 }}>
@@ -523,46 +931,85 @@ function EventoRow({ item, onEdit, onDelete, onToggleResuelto, compact }) {
 }
 
 // ─── Lista de viajes (desde muelle_zarpes_flota) ───────────────────────────
-function ListaViajes({ viajes }) {
-  if (!viajes.length) {
+// ─── Lista de Viajes Computados ───────────────────────────────────────
+// Computa viajes a partir de muelle_llegadas + muelle_zarpes_flota usando:
+//   · Cada llegada se parea con el siguiente zarpe del mismo barco
+//   · Si hay 2 llegadas seguidas → zarpe perdido (?? perdido)
+//   · Si hay 2 zarpes seguidos → llegada perdida (?? perdido)
+//   · # viajes = max(llegadas, zarpes)
+//   · Costo combustible (estimado) = viajes × costo_viaje_sencillo × 2
+function ListaViajesComputados({ viajesPorFecha, costoPorViaje }) {
+  if (!viajesPorFecha.length) {
     return (
       <div style={{ padding: 30, background: B.navyMid, borderRadius: 10, textAlign: "center", fontSize: 13, color: "rgba(255,255,255,0.3)" }}>
         Sin viajes registrados.
-        <div style={{ fontSize: 11, marginTop: 6 }}>Los viajes se registran desde el módulo Salidas.</div>
+        <div style={{ fontSize: 11, marginTop: 6 }}>Los viajes se computan a partir de llegadas y zarpes del muelle.</div>
       </div>
     );
   }
-  const totalCosto = viajes.reduce((s, v) => s + Number(v.costo_operativo || 0), 0);
+  const totalViajes = viajesPorFecha.reduce((s, v) => s + v.viajes, 0);
+  const totalPerdidos = viajesPorFecha.reduce((s, v) => s + v.pares.filter(p => !p.llegada || !p.zarpe).length, 0);
+
   return (
-    <div style={{ background: B.navyMid, borderRadius: 10, overflow: "hidden" }}>
-      {viajes.map(v => (
-        <div key={v.id} style={{ padding: "10px 14px", borderBottom: "1px solid rgba(255,255,255,0.04)", display: "flex", alignItems: "center", gap: 10, fontSize: 13 }}>
-          <div style={{ minWidth: 80, fontSize: 11, color: "rgba(255,255,255,0.5)" }}>
-            <div style={{ fontWeight: 700 }}>{fmtFechaCorta(v.fecha)}</div>
-            <div>{fmtHora(v.hora_zarpe)}</div>
-          </div>
-          <div style={{ flex: 1 }}>
-            <div style={{ fontWeight: 700 }}>→ {v.destino || "Cartagena"}</div>
-            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)" }}>
-              {v.motivo}{(v.pax_a + v.pax_n) > 0 ? ` · 👥 ${v.pax_a}A${v.pax_n ? ` + ${v.pax_n}N` : ""}` : ""}
-              {v.notas ? ` · ${v.notas}` : ""}
+    <div>
+      {/* Banner de regla */}
+      <div style={{ background: B.navy, border: `1px solid ${B.sand}33`, borderRadius: 10, padding: "10px 14px", marginBottom: 12, fontSize: 11, color: "rgba(255,255,255,0.65)", lineHeight: 1.55 }}>
+        <strong style={{ color: B.sand }}>📐 Regla de viajes:</strong>
+        Cada viaje = ida y vuelta (Cartagena ↔ Atolón). Se calcula como{" "}
+        <code style={{ color: B.sky }}>max(llegadas registradas, zarpes registrados)</code> por día.
+        Eventos faltantes se infieren cuando hay 2 llegadas (zarpe perdido) o 2 zarpes seguidos (llegada perdida).
+      </div>
+
+      <div style={{ background: B.navyMid, borderRadius: 10, overflow: "hidden" }}>
+        {viajesPorFecha.map(d => (
+          <div key={d.fecha} style={{ padding: "12px 14px", borderBottom: "1px solid rgba(255,255,255,0.04)" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
+              <div style={{ minWidth: 100, fontSize: 12, color: "rgba(255,255,255,0.6)", fontWeight: 700 }}>
+                {fmtFechaCorta(d.fecha)}
+              </div>
+              <div style={{ flex: 1, fontSize: 11, color: "rgba(255,255,255,0.45)" }}>
+                <span style={{ color: B.sky }}>{d.llegadas} 🛬</span>{" · "}
+                <span style={{ color: "#a78bfa" }}>{d.zarpes} 🛫</span>
+              </div>
+              <div style={{ fontSize: 13, fontWeight: 800, color: "#a78bfa" }}>
+                {d.viajes} viaje{d.viajes !== 1 ? "s" : ""}
+              </div>
+            </div>
+            {/* Pareo cronológico */}
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, paddingLeft: 110 }}>
+              {d.pares.map((p, i) => {
+                const incompleto = !p.llegada || !p.zarpe;
+                return (
+                  <span key={i} style={{
+                    fontSize: 10, padding: "3px 8px", borderRadius: 4,
+                    background: incompleto ? B.danger + "22" : B.success + "18",
+                    color: incompleto ? B.danger : "rgba(255,255,255,0.6)",
+                    border: incompleto ? `1px dashed ${B.danger}55` : "1px solid transparent",
+                  }}>
+                    {p.llegada || "??"}→{p.zarpe || "??"}
+                  </span>
+                );
+              })}
             </div>
           </div>
-          {Number(v.costo_operativo) > 0 && (
-            <div style={{ fontSize: 12, color: "#a78bfa", fontWeight: 700, whiteSpace: "nowrap" }}>
-              {fmtCOP(v.costo_operativo)}
+        ))}
+        {/* Footer total */}
+        <div style={{ padding: "12px 14px", background: B.navy, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div>
+            <div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: "0.05em", fontWeight: 700 }}>Total</div>
+            <div style={{ fontSize: 12, color: "rgba(255,255,255,0.7)", marginTop: 2 }}>
+              {totalViajes} viajes en {viajesPorFecha.length} días
+              {totalPerdidos > 0 && (
+                <span style={{ color: B.danger, marginLeft: 8 }}>· ⚠ {totalPerdidos} eventos faltantes</span>
+              )}
             </div>
-          )}
+          </div>
+          <div style={{ textAlign: "right" }}>
+            <div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", textTransform: "uppercase" }}>Total viajes</div>
+            <div style={{ fontSize: 16, fontWeight: 800, color: "#a78bfa" }}>{totalViajes}</div>
+          </div>
         </div>
-      ))}
-      {totalCosto > 0 && (
-        <div style={{ padding: "10px 14px", background: B.navy, display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 12 }}>
-          <span style={{ color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: "0.05em", fontSize: 10 }}>
-            Total costo viajes · {viajes.length} zarpes
-          </span>
-          <strong style={{ color: "#a78bfa", fontSize: 14 }}>{fmtCOP(totalCosto)}</strong>
-        </div>
-      )}
+      </div>
     </div>
   );
 }

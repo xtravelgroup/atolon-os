@@ -34,6 +34,17 @@ const OC_BADGE = {
   cancelada:        { bg: "#2A0A0A", color: B.danger,  label: "Cancelada" },
 };
 
+// Estados editables — una OC se considera editable solo en borrador o emitida.
+// Una OC se puede editar/abrir SIEMPRE excepto cuando está cancelada.
+// Si tiene anticipo pagado, factura aplicada, o ya fue recibida — el modal se
+// abre igual pero muestra un banner de advertencia y queda registrado en
+// cambios_historial cualquier modificación.
+const OC_EDITABLE = (oc) => {
+  if (!oc) return false;
+  if (oc.estado === "cancelada") return false;
+  return true;
+};
+
 export default function Compras() {
   const { isMobile } = useBreakpoint();
   const [tab, setTab] = useState("dashboard");
@@ -63,12 +74,16 @@ export default function Compras() {
 
   const reload = async () => {
     setLoading(true);
+    // Performance: limitar OCs y entregas a los últimos 90 días para no
+    // descargar todo el histórico cada vez que se entra al módulo.
+    // Cerradas/canceladas más antiguas se pueden buscar via filtros.
+    const noventaDiasAtras = new Date(Date.now() - 90 * 86400 * 1000).toISOString();
     const [oc, em, ta, zf, rq, pv] = await Promise.all([
-      supabase.from("ordenes_compra").select("*").order("created_at", { ascending: false }),
-      supabase.from("oc_entregas_muelle").select("*").order("fecha_programada", { ascending: true }),
-      supabase.from("oc_transporte_atolon").select("*").order("fecha_zarpe", { ascending: true }),
+      supabase.from("ordenes_compra").select("*").gte("created_at", noventaDiasAtras).order("created_at", { ascending: false }).limit(500),
+      supabase.from("oc_entregas_muelle").select("*").gte("fecha_programada", todayStr()).order("fecha_programada", { ascending: true }).limit(200),
+      supabase.from("oc_transporte_atolon").select("*").gte("fecha_zarpe", todayStr()).order("fecha_zarpe", { ascending: true }).limit(200),
       supabase.from("muelle_zarpes_flota").select("*").gte("fecha", todayStr()).order("fecha", { ascending: true }).limit(20),
-      supabase.from("requisiciones").select("*").order("fecha", { ascending: false }),
+      supabase.from("requisiciones").select("*").order("fecha", { ascending: false }).limit(300),
       supabase.from("proveedores").select("*").order("nombre"),
     ]);
     setOrdenes(oc.data || []);
@@ -224,6 +239,8 @@ function TabOrdenes({ ordenes, reload, currentUser }) {
   const [openLogistica, setOpenLogistica] = useState(null);
   const [openEmail, setOpenEmail] = useState(null);
   const [openCotizResp, setOpenCotizResp] = useState(null);
+  const [openEditar, setOpenEditar] = useState(null);
+  const [openUnir,   setOpenUnir]   = useState(null);
 
   const filtradas = useMemo(() => {
     let list = ordenes;
@@ -242,6 +259,24 @@ function TabOrdenes({ ordenes, reload, currentUser }) {
   }, [ordenes, filtroEstado, busqueda]);
 
   const totalFiltradas = filtradas.reduce((s, o) => s + Number(o.total || 0), 0);
+
+  // Marcar OC como enviada al proveedor — bloquea edición e impide
+  // que se le agreguen más items desde Requisiciones. Si necesitan más
+  // items, deben crear una OC nueva.
+  const marcarEnviada = async (oc) => {
+    if (!confirm(
+      `¿Confirmar que la OC ${oc.codigo} fue enviada al proveedor?\n\n` +
+      `Una vez marcada, NO se podrán agregar más items a esta orden — ` +
+      `los items nuevos crearán una OC nueva.`
+    )) return;
+    const { error } = await supabase.from("ordenes_compra").update({
+      estado:      "enviada",
+      enviada_at:  new Date().toISOString(),
+      updated_at:  new Date().toISOString(),
+    }).eq("id", oc.id);
+    if (error) return alert("Error: " + error.message);
+    reload?.();
+  };
 
   return (
     <div>
@@ -275,11 +310,21 @@ function TabOrdenes({ ordenes, reload, currentUser }) {
               const badge = OC_BADGE[oc.estado] || { bg: B.navyLight, color: "rgba(255,255,255,0.5)", label: oc.estado };
               const totalLineas = (oc.items || []).length;
               return (
-                <div key={oc.id} style={{
+                <div key={oc.id}
+                  onClick={(e) => {
+                    // No abrir si el click fue en un botón/link/input adentro
+                    if (e.target.closest("button, a, input, select, textarea")) return;
+                    if (OC_EDITABLE(oc)) setOpenEditar(oc);
+                  }}
+                  style={{
                   background: B.navy, borderRadius: 10, padding: "12px 14px",
                   border: `1px solid ${B.navyLight}`, borderLeft: `4px solid ${B.sand}`,
                   display: "flex", flexDirection: isMobile ? "column" : "row", gap: 10, justifyContent: "space-between",
-                }}>
+                  cursor: OC_EDITABLE(oc) ? "pointer" : "default",
+                  transition: "background 0.15s",
+                }}
+                  onMouseEnter={e => { if (OC_EDITABLE(oc)) e.currentTarget.style.background = B.navyMid; }}
+                  onMouseLeave={e => { e.currentTarget.style.background = B.navy; }}>
                   <div style={{ flex: 1 }}>
                     <div style={{ fontSize: 13, fontWeight: 800, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
                       🧾 {oc.codigo}
@@ -292,12 +337,64 @@ function TabOrdenes({ ordenes, reload, currentUser }) {
                   </div>
                   <div style={{ textAlign: isMobile ? "left" : "right", display: "flex", flexDirection: "column", gap: 6, alignItems: isMobile ? "flex-start" : "flex-end" }}>
                     <div style={{ fontSize: 16, fontWeight: 800, color: B.sand, fontFamily: "'Barlow Condensed', sans-serif" }}>{COP(oc.total || 0)}</div>
+                    {/* Acceso directo a archivos adjuntos: cotización / factura.
+                        El usuario puede previsualizar el PDF/imagen sin abrir el modal. */}
+                    {(oc.cotizacion_resp_url || oc.factura_url) && (
+                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", fontSize: 11 }}>
+                        {oc.cotizacion_resp_url && (
+                          <a href={oc.cotizacion_resp_url} target="_blank" rel="noreferrer"
+                            title={`Ver cotización del proveedor${oc.cotizacion_resp_subida_at ? " — subida " + fmtFecha(oc.cotizacion_resp_subida_at.slice(0,10)) : ""}`}
+                            style={{ color: oc.cotizacion_resp_aprobada ? B.success : "#a78bfa", textDecoration: "none", fontWeight: 600,
+                              padding: "2px 8px", borderRadius: 6, border: `1px solid ${(oc.cotizacion_resp_aprobada ? B.success : "#a78bfa") + "55"}`,
+                              background: (oc.cotizacion_resp_aprobada ? B.success : "#a78bfa") + "11" }}>
+                            📎 Cotización
+                          </a>
+                        )}
+                        {oc.factura_url && (
+                          <a href={oc.factura_url} target="_blank" rel="noreferrer"
+                            title={`Ver factura${oc.factura_numero ? " " + oc.factura_numero : ""}${oc.factura_fecha ? " — " + fmtFecha(oc.factura_fecha.slice(0,10)) : ""}`}
+                            style={{ color: oc.factura_aplicada ? B.success : B.warning, textDecoration: "none", fontWeight: 600,
+                              padding: "2px 8px", borderRadius: 6, border: `1px solid ${(oc.factura_aplicada ? B.success : B.warning) + "55"}`,
+                              background: (oc.factura_aplicada ? B.success : B.warning) + "11" }}>
+                            📎 Factura{oc.factura_numero ? " " + oc.factura_numero : ""}
+                          </a>
+                        )}
+                      </div>
+                    )}
                     <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                      {OC_EDITABLE(oc) && (
+                        <button onClick={() => setOpenEditar(oc)}
+                          style={btnAccion(B.sand)}
+                          title={oc.enviada_at
+                            ? "Editar OC tras respuesta del proveedor (cantidades, precios, devolver items a mesa)"
+                            : "Editar items, cantidades, proveedor de la OC"}>
+                          ✏️ Editar
+                        </button>
+                      )}
+                      {OC_EDITABLE(oc) && (
+                        <button onClick={() => setOpenUnir(oc)}
+                          style={btnAccion("#a78bfa")}
+                          title="Unir esta OC con otra del mismo proveedor (consolida items y reqs)">
+                          🔗 Unir
+                        </button>
+                      )}
                       <button onClick={() => setOpenEmail(oc)}
                         style={btnAccion(B.pink)}
                         title="Enviar OC al proveedor por correo con PDF">
                         📧 Email
                       </button>
+                      {OC_EDITABLE(oc) ? (
+                        <button onClick={() => marcarEnviada(oc)}
+                          style={btnAccion(B.sky)}
+                          title="Marcar como enviada al proveedor — bloquea edición y no permite agregar más items">
+                          📤 Enviada a proveedor
+                        </button>
+                      ) : (
+                        <span style={{ ...btnAccion(B.success + "44"), cursor: "default", color: B.success, display: "inline-flex", alignItems: "center", gap: 4 }}
+                          title={`Enviada${oc.enviada_at ? " el " + fmtFecha(oc.enviada_at.slice(0,10)) : ""} — bloqueada para nuevos items`}>
+                          🔒 Enviada
+                        </span>
+                      )}
                       <button onClick={() => setOpenCotizResp(oc)}
                         style={btnAccion(oc.cotizacion_resp_aprobada ? B.success : oc.cotizacion_resp_data ? B.warning : "#a78bfa")}
                         title="Cotización-respuesta del proveedor">
@@ -324,6 +421,8 @@ function TabOrdenes({ ordenes, reload, currentUser }) {
       {openLogistica && <LogisticaOCModal oc={openLogistica} onClose={() => setOpenLogistica(null)} reload={reload} currentUser={currentUser} />}
       {openEmail && <EmailOCModal oc={openEmail} onClose={() => setOpenEmail(null)} reload={reload} currentUser={currentUser} />}
       {openCotizResp && <CotizacionRespuestaModal oc={openCotizResp} onClose={() => setOpenCotizResp(null)} reload={reload} currentUser={currentUser} />}
+      {openEditar && <EditarOCModal oc={openEditar} ordenes={ordenes} onClose={() => setOpenEditar(null)} reload={reload} currentUser={currentUser} />}
+      {openUnir && <UnirOCModal oc={openUnir} ordenes={ordenes} onClose={() => setOpenUnir(null)} reload={reload} currentUser={currentUser} />}
     </div>
   );
 }
@@ -444,12 +543,25 @@ function SubtabAnticipos({ ordenes, reload, currentUser }) {
   const marcarPagado = async (oc) => {
     const referencia = prompt(`Referencia del pago del anticipo (Nº de transferencia, cheque, etc.):`);
     if (referencia === null) return;
+    // El anticipo cuenta como pago parcial → se acumula en monto_pagado.
+    // Cuando luego se aplique la factura completa, el saldo a pagar se calcula
+    // como total - monto_pagado (que ya incluye el anticipo). Esto evita
+    // doble-pago si Contabilidad olvida que ya se pagó el anticipo.
+    const montoAnticipo = Number(oc.anticipo_monto || 0);
+    const montoPagadoActual = Number(oc.monto_pagado || 0);
+    const nuevoMontoPagado = montoPagadoActual + montoAnticipo;
+    const total = Number(oc.total || 0);
+    const pagadaCompleta = total > 0 && nuevoMontoPagado >= total;
+
     await supabase.from("ordenes_compra").update({
       anticipo_pagado: true,
       anticipo_pagado_at: new Date().toISOString(),
       anticipo_pagado_por: currentUser?.email || null,
       anticipo_referencia_pago: referencia || null,
       estado: "confirmada",
+      monto_pagado: nuevoMontoPagado,
+      pagada_completa: pagadaCompleta,
+      pagada_at: pagadaCompleta ? new Date().toISOString() : oc.pagada_at || null,
       updated_at: new Date().toISOString(),
     }).eq("id", oc.id);
     reload?.();
@@ -829,4 +941,582 @@ function btnAccion(color) {
     padding: "4px 10px", fontSize: 11, fontWeight: 700, borderRadius: 6,
     border: `1px solid ${color}`, background: color + "22", color, cursor: "pointer",
   };
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// EditarOCModal — Editar items, cantidades, proveedor de una OC
+// Bloqueado si la OC ya tiene factura aplicada (lógica contable congelada)
+// ════════════════════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════════════════════
+// UnirOCModal — Consolidar 2 OCs en 1 (mismo proveedor)
+// Caso: el proveedor factura 2 OCs juntas. Compras une ambas para que el
+// flujo de factura/recepción/pago sea sobre una sola OC consolidada.
+// La OC "fuente" se cancela con referencia a la OC "destino".
+// ════════════════════════════════════════════════════════════════════════════
+function UnirOCModal({ oc, ordenes, onClose, reload, currentUser }) {
+  const { isMobile } = useBreakpoint();
+  const [seleccionada, setSeleccionada] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState("");
+
+  // Solo se puede unir con OCs del MISMO proveedor que NO estén recibidas,
+  // pagadas, canceladas o con factura ya aplicada.
+  const candidatas = useMemo(() => {
+    const sameProv = (a, b) =>
+      (a.proveedor_id && b.proveedor_id && a.proveedor_id === b.proveedor_id) ||
+      ((a.proveedor_nombre || "").trim().toLowerCase() === (b.proveedor_nombre || "").trim().toLowerCase());
+    return ordenes.filter(o =>
+      o.id !== oc.id &&
+      sameProv(o, oc) &&
+      !o.factura_aplicada &&
+      !["recibida", "pagada", "cancelada"].includes(o.estado)
+    );
+  }, [ordenes, oc]);
+
+  const consolidar = (a, b) => {
+    const map = new Map();
+    const all = [...(a || []), ...(b || [])];
+    for (const it of all) {
+      const nombre = (it.item || it.nombre || "").trim().toLowerCase();
+      const unidad = (it.unidad || "").toLowerCase();
+      const precio = Number(it.precio_unit || it.precioU || it.precio || 0);
+      // Si dos items tienen mismo nombre+unidad+precio → suman cantidades
+      const key = `${nombre}|${unidad}|${precio}`;
+      if (map.has(key)) {
+        const ex = map.get(key);
+        ex.cant = (Number(ex.cant) || 0) + (Number(it.cant) || 0);
+        ex.subtotal = ex.cant * precio;
+        ex.req_ids = [...new Set([...(ex.req_ids || []), ...(it.req_ids || (it.req_id ? [it.req_id] : []))])];
+      } else {
+        map.set(key, {
+          ...it,
+          item: it.item || it.nombre,
+          nombre: it.item || it.nombre,
+          cant: Number(it.cant) || 0,
+          unidad: it.unidad,
+          precio_unit: precio,
+          precioU: precio,
+          subtotal: (Number(it.cant) || 0) * precio,
+          req_ids: it.req_ids || (it.req_id ? [it.req_id] : []),
+        });
+      }
+    }
+    return Array.from(map.values());
+  };
+
+  const unir = async () => {
+    if (!seleccionada) return;
+    setSaving(true); setErr("");
+    try {
+      // Items consolidados — la OC actual (oc) es la "destino" (queda)
+      // y `seleccionada` es la "fuente" (se cancela con link a destino)
+      const merged = consolidar(oc.items, seleccionada.items);
+      const subtotal = merged.reduce((s, it) => s + (Number(it.subtotal) || 0), 0);
+      const newReqIds = [...new Set([
+        ...(Array.isArray(oc.requisicion_ids) ? oc.requisicion_ids : (oc.requisicion_id ? [oc.requisicion_id] : [])),
+        ...(Array.isArray(seleccionada.requisicion_ids) ? seleccionada.requisicion_ids : (seleccionada.requisicion_id ? [seleccionada.requisicion_id] : [])),
+      ])];
+
+      const cambioEntry = {
+        evento: "merge_oc",
+        at: new Date().toISOString(),
+        por: currentUser?.email || currentUser?.nombre || "—",
+        merged_from_oc_id: seleccionada.id,
+        merged_from_codigo: seleccionada.codigo,
+        items_antes: oc.items || [],
+        items_despues: merged,
+        delta_total: subtotal - Number(oc.total || 0),
+      };
+      const cambiosNuevos = [
+        ...(Array.isArray(oc.cambios_historial) ? oc.cambios_historial : []),
+        cambioEntry,
+      ];
+
+      // 1. Update destino (oc) con items consolidados
+      const { error: e1 } = await supabase.from("ordenes_compra").update({
+        items: merged,
+        subtotal,
+        total: subtotal,
+        requisicion_ids: newReqIds,
+        cambios_historial: cambiosNuevos,
+        notas: `${oc.notas || ""}\n[${new Date().toLocaleString("es-CO")}] Unida con ${seleccionada.codigo} por ${currentUser?.nombre || "—"}`,
+        updated_at: new Date().toISOString(),
+      }).eq("id", oc.id);
+      if (e1) throw e1;
+
+      // 2. Update fuente (seleccionada) → cancelada con referencia
+      const { error: e2 } = await supabase.from("ordenes_compra").update({
+        estado: "cancelada",
+        notas: `${seleccionada.notas || ""}\n[${new Date().toLocaleString("es-CO")}] Unida con ${oc.codigo} (consolidada). Cancelada por ${currentUser?.nombre || "—"}`,
+        cambios_historial: [
+          ...(Array.isArray(seleccionada.cambios_historial) ? seleccionada.cambios_historial : []),
+          {
+            evento: "merged_into",
+            at: new Date().toISOString(),
+            por: currentUser?.email || currentUser?.nombre || "—",
+            merged_into_oc_id: oc.id,
+            merged_into_codigo: oc.codigo,
+          },
+        ],
+        updated_at: new Date().toISOString(),
+      }).eq("id", seleccionada.id);
+      if (e2) throw e2;
+
+      // 3. Reqs de origen de la fuente: actualizar oc_id/oc_codigo de sus items
+      //    para que apunten a la OC destino (no a la cancelada)
+      const reqIdsFuente = Array.isArray(seleccionada.requisicion_ids) ? seleccionada.requisicion_ids
+                        : (seleccionada.requisicion_id ? [seleccionada.requisicion_id] : []);
+      for (const reqId of reqIdsFuente) {
+        const { data: req } = await supabase.from("requisiciones").select("items, timeline").eq("id", reqId).maybeSingle();
+        if (!req) continue;
+        const newItems = (req.items || []).map(it => {
+          if (it.oc_id === seleccionada.id) {
+            return { ...it, oc_id: oc.id, oc_codigo: oc.codigo };
+          }
+          return it;
+        });
+        await supabase.from("requisiciones").update({
+          items: newItems,
+          timeline: [...(req.timeline || []), {
+            quien: currentUser?.nombre || "—",
+            accion: "OC reasignada por unión",
+            fecha: new Date().toLocaleString("es-CO"),
+            comentario: `${seleccionada.codigo} unida con ${oc.codigo}`,
+          }],
+          updated_at: new Date().toISOString(),
+        }).eq("id", reqId);
+      }
+
+      reload?.();
+      onClose();
+    } catch (e) {
+      setErr(e.message || String(e));
+    } finally { setSaving(false); }
+  };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
+      onClick={e => e.target === e.currentTarget && onClose()}>
+      <div style={{ background: B.navy, borderRadius: 14, width: isMobile ? "100%" : 640, maxWidth: "100%", maxHeight: "92vh", overflow: "auto", border: `1px solid ${B.navyLight}`, color: B.white }}>
+
+        <div style={{ padding: 18, borderBottom: `1px solid ${B.navyLight}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div>
+            <div style={{ fontSize: 17, fontWeight: 800, color: B.sand }}>🔗 Unir OC {oc.codigo}</div>
+            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginTop: 2 }}>
+              {oc.proveedor_nombre} · Selecciona otra OC del mismo proveedor para consolidarla
+            </div>
+          </div>
+          <button onClick={onClose} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.5)", fontSize: 22, cursor: "pointer" }}>×</button>
+        </div>
+
+        <div style={{ padding: 18 }}>
+          <div style={{ marginBottom: 14, padding: "10px 14px", background: `${B.sky}11`, border: `1px solid ${B.sky}55`, borderRadius: 8 }}>
+            <div style={{ fontSize: 12, color: B.sky, lineHeight: 1.5 }}>
+              ℹ️ Esta OC ({oc.codigo}) queda como la <strong>OC consolidada</strong>. La que selecciones se <strong>cancela</strong> con referencia y sus items + requisiciones origen pasan a esta OC.
+              Items con mismo nombre + unidad + precio se suman.
+            </div>
+          </div>
+
+          <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 700, marginBottom: 8 }}>
+            Candidatas ({candidatas.length})
+          </div>
+
+          {candidatas.length === 0 ? (
+            <div style={{ padding: 30, textAlign: "center", color: "rgba(255,255,255,0.4)", background: B.navyMid, borderRadius: 10, fontSize: 13 }}>
+              No hay otras OCs activas del proveedor <strong>{oc.proveedor_nombre}</strong> para unir.
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 320, overflowY: "auto" }}>
+              {candidatas.map(c => {
+                const sel = seleccionada?.id === c.id;
+                const badge = OC_BADGE[c.estado] || { bg: B.navyLight, color: "rgba(255,255,255,0.5)", label: c.estado };
+                return (
+                  <button key={c.id} onClick={() => setSeleccionada(c)}
+                    style={{
+                      padding: "12px 14px", borderRadius: 8,
+                      background: sel ? `${B.sand}22` : B.navyMid,
+                      border: `1px solid ${sel ? B.sand : B.navyLight}`,
+                      color: B.white, cursor: "pointer", textAlign: "left",
+                      display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10,
+                    }}>
+                    <div>
+                      <div style={{ fontSize: 13, fontWeight: 800, display: "flex", gap: 8, alignItems: "center" }}>
+                        🧾 {c.codigo}
+                        <span style={{ background: badge.bg, color: badge.color, padding: "1px 7px", borderRadius: 10, fontSize: 9, fontWeight: 700 }}>{badge.label}</span>
+                      </div>
+                      <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginTop: 3 }}>
+                        {(c.items || []).length} líneas · {fmtFecha(c.fecha_emision)}
+                      </div>
+                    </div>
+                    <div style={{ textAlign: "right" }}>
+                      <div style={{ fontSize: 14, fontWeight: 800, color: B.sand, fontFamily: "'Barlow Condensed', sans-serif" }}>{COP(c.total || 0)}</div>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
+          {seleccionada && (
+            <div style={{ marginTop: 14, padding: "12px 14px", background: B.navyMid, borderRadius: 8, border: `1px solid ${B.sand}33` }}>
+              <div style={{ fontSize: 11, color: B.sand, fontWeight: 700, textTransform: "uppercase", marginBottom: 6 }}>Resumen tras unión</div>
+              <div style={{ fontSize: 12, color: "rgba(255,255,255,0.85)", lineHeight: 1.6 }}>
+                <div>• OC consolidada: <strong style={{ color: B.white }}>{oc.codigo}</strong></div>
+                <div>• OC cancelada: <strong style={{ color: B.danger }}>{seleccionada.codigo}</strong></div>
+                <div>• Items totales: <strong>{(oc.items || []).length} + {(seleccionada.items || []).length}</strong> (consolidados por nombre+unidad+precio)</div>
+                <div>• Total combinado: <strong style={{ color: B.sand, fontFamily: "monospace" }}>{COP(Number(oc.total || 0) + Number(seleccionada.total || 0))}</strong></div>
+              </div>
+            </div>
+          )}
+
+          {err && <div style={{ marginTop: 12, padding: 10, background: "rgba(239,68,68,0.15)", color: "#ef4444", borderRadius: 8, fontSize: 12 }}>⚠ {err}</div>}
+
+          <div style={{ display: "flex", gap: 10, marginTop: 18 }}>
+            <button onClick={onClose} disabled={saving}
+              style={{ flex: 1, padding: 11, borderRadius: 8, border: `1px solid ${B.navyLight}`, background: "transparent", color: "rgba(255,255,255,0.5)", cursor: "pointer", fontSize: 13 }}>
+              Cancelar
+            </button>
+            <button onClick={unir} disabled={saving || !seleccionada}
+              style={{ flex: 2, padding: 11, borderRadius: 8, border: "none", background: seleccionada ? B.sand : B.navyLight, color: seleccionada ? B.navy : "rgba(255,255,255,0.3)", cursor: seleccionada ? "pointer" : "not-allowed", fontSize: 13, fontWeight: 800 }}>
+              {saving ? "Uniendo…" : seleccionada ? `🔗 Unir ${seleccionada.codigo} → ${oc.codigo}` : "Selecciona una OC"}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function EditarOCModal({ oc, ordenes = [], onClose, reload, currentUser }) {
+  const [showUnir, setShowUnir] = useState(false);
+  const { isMobile } = useBreakpoint();
+  const [items, setItems] = useState(() => (oc.items || []).map(it => ({ ...it })));
+  const [proveedores, setProveedores] = useState([]);
+  const [proveedorId, setProveedorId] = useState(oc.proveedor_id || "");
+  const [proveedorNombre, setProveedorNombre] = useState(oc.proveedor_nombre || "");
+  const [notas, setNotas] = useState(oc.notas || "");
+  const [fechaEmision, setFechaEmision] = useState(oc.fecha_emision || "");
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState("");
+
+  useEffect(() => {
+    supabase.from("proveedores").select("id, nombre, nit, email, telefono").order("nombre")
+      .then(({ data }) => setProveedores(data || []));
+  }, []);
+
+  const setItem = (idx, k, v) => setItems(arr => arr.map((it, i) => {
+    if (i !== idx) return it;
+    const next = { ...it, [k]: v };
+    // Mantener sincronizados los 3 alias del precio: precio_unit / precio / precioU
+    // (precioU viene de generarOC en Requisiciones.jsx; los otros del modal/factura)
+    if (k === "precio_unit" || k === "precio" || k === "precioU") {
+      next.precio_unit = Number(v) || 0;
+      next.precio = Number(v) || 0;
+      next.precioU = Number(v) || 0;
+    }
+    // Recalcular subtotal cuando cambia cant o precio
+    if (k === "cant" || k === "precio_unit" || k === "precio" || k === "precioU") {
+      const cant = Number(k === "cant" ? v : (next.cant || 0));
+      const pu = Number(next.precio_unit || next.precio || next.precioU || 0);
+      next.subtotal = cant * pu;
+    }
+    return next;
+  }));
+
+  const removeItem = (idx) => setItems(arr => arr.filter((_, i) => i !== idx));
+
+  const addItem = () => setItems(arr => [...arr, {
+    item: "", nombre: "", cant: 1, unidad: "und", precio_unit: 0, subtotal: 0,
+  }]);
+
+  const subtotal = items.reduce((s, it) => s + (Number(it.subtotal) || 0), 0);
+
+  // Devolver un item a la mesa de compra (requisición original) para
+  // que Compras lo asigne a otro proveedor. El item se quita de esta OC
+  // y vuelve a las reqs origen con oc_id=null para que se pueda generar
+  // otra OC con un proveedor distinto.
+  const devolverAMesa = async (idx) => {
+    const item = items[idx];
+    if (!item) return;
+    const reqIds = Array.isArray(item.req_ids) ? item.req_ids : (item.req_id ? [item.req_id] : []);
+    const motivo = prompt(
+      `¿Devolver "${item.item || item.nombre}" a la mesa de compra?\n\n` +
+      `Motivo (queda en historial):`,
+      "Proveedor no tiene este item"
+    );
+    if (motivo === null) return;
+
+    // 1) Quitarlo de items local — queda persistido al darle Guardar
+    const newItems = items.filter((_, i) => i !== idx);
+    setItems(newItems);
+
+    // 2) Marcar en cambios_historial al guardar (lo hacemos dentro de guardar)
+    // Para no perder el motivo, lo guardamos en una nota local
+    setNotas(n => `${n || ""}\n[${new Date().toLocaleString("es-CO")}] Devuelto a mesa: "${item.item || item.nombre}" — ${motivo}`);
+
+    // 3) Para cada req_id, limpiar oc_id de ese item y poner req en "Aprobada"
+    //    si ya no le quedan items con oc_id (o sea, todos volvieron a la mesa)
+    for (const reqId of reqIds) {
+      const { data: req } = await supabase.from("requisiciones").select("items, estado, timeline").eq("id", reqId).maybeSingle();
+      if (!req) continue;
+      const itemsReq = (req.items || []).map(it => {
+        // Match por id si lo tiene, sino por nombre+unidad
+        const sameById = it.id && item.id && it.id === item.id;
+        const sameByName = !sameById && (it.item || it.nombre || "").toLowerCase() === (item.item || item.nombre || "").toLowerCase()
+          && (it.unidad || "").toLowerCase() === (item.unidad || "").toLowerCase();
+        if (sameById || sameByName) {
+          const { oc_id, oc_codigo, ...rest } = it;
+          return rest;
+        }
+        return it;
+      });
+      const tieneItemsConOC = itemsReq.some(it => it.oc_id);
+      const nuevoEstadoReq = tieneItemsConOC ? req.estado : "Aprobada";
+      await supabase.from("requisiciones").update({
+        items: itemsReq,
+        estado: nuevoEstadoReq,
+        timeline: [...(req.timeline || []), {
+          quien: currentUser?.nombre || "—",
+          accion: "Item devuelto a mesa",
+          fecha: new Date().toLocaleString("es-CO"),
+          comentario: `OC ${oc.codigo} · "${item.item || item.nombre}" · ${motivo}`,
+        }],
+        updated_at: new Date().toISOString(),
+      }).eq("id", reqId);
+    }
+  };
+
+  const guardar = async () => {
+    setSaving(true); setErr("");
+    try {
+      // Solo bloqueamos si está cancelada. Con factura aplicada o recibida
+      // permitimos editar pero queda registrado en cambios_historial.
+      if (oc.estado === "cancelada") {
+        throw new Error("La OC está cancelada — no se puede editar.");
+      }
+      if (!proveedorNombre.trim()) throw new Error("Debe seleccionar un proveedor");
+      // Si no quedan items, cancelar la OC en vez de bloquear
+      const cancelarOC = items.length === 0;
+
+      const prov = proveedores.find(p => p.id === proveedorId);
+      // Snapshot de cambios para auditoría
+      const cambioEntry = {
+        evento: "edit_post_envio",
+        at: new Date().toISOString(),
+        por: currentUser?.email || currentUser?.nombre || "—",
+        items_antes: oc.items || [],
+        items_despues: items,
+        delta_total: subtotal - Number(oc.total || 0),
+      };
+      const cambiosNuevos = [...(Array.isArray(oc.cambios_historial) ? oc.cambios_historial : []), cambioEntry];
+
+      const updates = {
+        items,
+        subtotal,
+        total: subtotal,
+        proveedor_id: proveedorId || null,
+        proveedor_nombre: proveedorNombre,
+        proveedor_nit: prov?.nit || null,
+        proveedor_email: prov?.email || null,
+        proveedor_telefono: prov?.telefono || null,
+        fecha_emision: fechaEmision || oc.fecha_emision,
+        notas: (notas || "") + `\n[${new Date().toLocaleString("es-CO")}] Editada por ${currentUser?.nombre || "—"}`,
+        cambios_historial: cambiosNuevos,
+        updated_at: new Date().toISOString(),
+      };
+      if (cancelarOC) {
+        updates.estado = "cancelada";
+        updates.notas += `\n[${new Date().toLocaleString("es-CO")}] OC cancelada — todos los items devueltos a la mesa de compra.`;
+      }
+      const { error } = await supabase.from("ordenes_compra").update(updates).eq("id", oc.id);
+      if (error) throw error;
+      reload?.();
+      onClose();
+    } catch (e) {
+      setErr(e.message || String(e));
+    } finally { setSaving(false); }
+  };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
+      onClick={e => e.target === e.currentTarget && onClose()}>
+      <div style={{ background: B.navy, borderRadius: 14, width: isMobile ? "100%" : 880, maxWidth: "100%", maxHeight: "92vh", overflow: "auto", border: `1px solid ${B.navyLight}`, color: B.white }}>
+
+        <div style={{ padding: 18, borderBottom: `1px solid ${B.navyLight}`, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+          <div>
+            <div style={{ fontSize: 17, fontWeight: 800, color: B.sand }}>✏️ Editar OC {oc.codigo}</div>
+            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginTop: 2 }}>
+              Estado: {oc.estado} · {(oc.items || []).length} líneas originales
+              {oc.enviada_at && ` · enviada`}
+              {oc.factura_aplicada && ` · facturada`}
+              {oc.anticipo_pagado && ` · anticipo pagado`}
+            </div>
+          </div>
+          <button onClick={onClose} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.5)", fontSize: 22, cursor: "pointer" }}>×</button>
+        </div>
+
+        <div style={{ padding: 18 }}>
+          {/* Banner de advertencia según estado */}
+          {oc.factura_aplicada && (
+            <div style={{ marginBottom: 14, padding: "10px 14px", background: `${B.danger}11`, border: `1px solid ${B.danger}55`, borderRadius: 8 }}>
+              <div style={{ fontSize: 12, fontWeight: 800, color: B.danger, marginBottom: 4 }}>
+                🛑 Esta OC ya tiene factura aplicada
+              </div>
+              <div style={{ fontSize: 11, color: "rgba(255,255,255,0.7)", lineHeight: 1.5 }}>
+                Modificar items con factura aplicada puede desbalancear la contabilidad. Solo edita si sabés exactamente qué estás haciendo. Cada cambio queda en el historial.
+              </div>
+            </div>
+          )}
+          {oc.anticipo_pagado && !oc.factura_aplicada && (
+            <div style={{ marginBottom: 14, padding: "10px 14px", background: `${B.warning}11`, border: `1px solid ${B.warning}55`, borderRadius: 8 }}>
+              <div style={{ fontSize: 12, fontWeight: 800, color: B.warning, marginBottom: 4 }}>
+                💸 Esta OC tiene anticipo pagado
+              </div>
+              <div style={{ fontSize: 11, color: "rgba(255,255,255,0.7)", lineHeight: 1.5 }}>
+                Si bajás el monto total por debajo del anticipo, hay que coordinar devolución con el proveedor. Cambios quedan en el historial.
+              </div>
+            </div>
+          )}
+          {oc.enviada_at && !oc.factura_aplicada && !oc.anticipo_pagado && (
+            <div style={{ marginBottom: 14, padding: "10px 14px", background: `${B.warning}11`, border: `1px solid ${B.warning}55`, borderRadius: 8 }}>
+              <div style={{ fontSize: 12, fontWeight: 800, color: B.warning, marginBottom: 4 }}>
+                ⚠️ Esta OC ya fue enviada al proveedor
+              </div>
+              <div style={{ fontSize: 11, color: "rgba(255,255,255,0.7)", lineHeight: 1.5 }}>
+                Cualquier cambio queda registrado en el historial. Si el proveedor no tiene un item, usá <strong style={{ color: B.warning }}>↩️ Mesa</strong> para devolverlo a la requisición. Después del ajuste, recordá <strong>volver a enviar la OC actualizada al proveedor</strong>.
+              </div>
+            </div>
+          )}
+          {/* Proveedor */}
+          <div style={{ marginBottom: 14 }}>
+            <label style={{ fontSize: 11, color: "rgba(255,255,255,0.6)", textTransform: "uppercase", fontWeight: 700, display: "block", marginBottom: 4 }}>Proveedor</label>
+            <select value={proveedorId}
+              onChange={e => {
+                setProveedorId(e.target.value);
+                const p = proveedores.find(x => x.id === e.target.value);
+                if (p) setProveedorNombre(p.nombre);
+              }}
+              style={{ width: "100%", padding: "9px 12px", borderRadius: 8, background: B.navyMid, border: `1px solid ${B.navyLight}`, color: "#fff", fontSize: 13 }}>
+              <option value="">— Selecciona proveedor —</option>
+              {proveedores.map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}
+            </select>
+          </div>
+
+          {/* Fecha emisión */}
+          <div style={{ marginBottom: 14 }}>
+            <label style={{ fontSize: 11, color: "rgba(255,255,255,0.6)", textTransform: "uppercase", fontWeight: 700, display: "block", marginBottom: 4 }}>Fecha emisión</label>
+            <input type="date" value={(fechaEmision || "").slice(0, 10)} onChange={e => setFechaEmision(e.target.value)}
+              style={{ padding: "9px 12px", borderRadius: 8, background: B.navyMid, border: `1px solid ${B.navyLight}`, color: "#fff", fontSize: 13 }} />
+          </div>
+
+          {/* Items */}
+          <div style={{ marginBottom: 12 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+              <label style={{ fontSize: 11, color: "rgba(255,255,255,0.6)", textTransform: "uppercase", fontWeight: 700 }}>Ítems</label>
+              <button type="button" onClick={addItem}
+                style={{ padding: "5px 10px", borderRadius: 6, border: `1px solid ${B.success}`, background: "transparent", color: B.success, fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
+                + Agregar línea
+              </button>
+            </div>
+
+            <div style={{ background: B.navyMid, borderRadius: 8, padding: 10, maxHeight: 480, overflowY: "auto" }}>
+              {/* Header de columnas en desktop */}
+              {!isMobile && items.length > 0 && (
+                <div style={{ display: "grid", gridTemplateColumns: "minmax(180px, 1fr) 70px 70px 110px 110px 80px 36px", gap: 8, padding: "0 10px 6px", fontSize: 9, color: "rgba(255,255,255,0.4)", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em" }}>
+                  <span>Item</span>
+                  <span style={{ textAlign: "right" }}>Cant</span>
+                  <span>Unidad</span>
+                  <span style={{ textAlign: "right" }}>P. Unit</span>
+                  <span style={{ textAlign: "right" }}>Subtotal</span>
+                  <span style={{ textAlign: "center" }}>Acción</span>
+                  <span></span>
+                </div>
+              )}
+              {items.length === 0 ? (
+                <div style={{ padding: 20, textAlign: "center", color: "rgba(255,255,255,0.4)", fontSize: 12 }}>Sin ítems. Agrega uno.</div>
+              ) : items.map((it, idx) => {
+                const tieneReq = (Array.isArray(it.req_ids) && it.req_ids.length > 0) || it.req_id;
+                const subtotalNum = Number(it.subtotal) || ((Number(it.cant) || 0) * (Number(it.precio_unit || it.precio) || 0));
+                return (
+                <div key={idx} style={{
+                  display: "grid",
+                  gridTemplateColumns: isMobile ? "1fr" : "minmax(180px, 1fr) 70px 70px 110px 110px 80px 36px",
+                  gap: 8, marginBottom: 6, padding: "8px 10px", background: B.navy, borderRadius: 6, alignItems: "center",
+                }}>
+                  <input value={it.item || it.nombre || ""}
+                    onChange={e => { setItem(idx, "item", e.target.value); setItem(idx, "nombre", e.target.value); }}
+                    placeholder="Nombre del ítem"
+                    style={{ padding: "7px 10px", borderRadius: 6, background: B.navyMid, border: `1px solid ${B.navyLight}`, color: "#fff", fontSize: 12, minWidth: 0, width: "100%", boxSizing: "border-box" }} />
+                  <input type="number" step="0.01" min="0" value={it.cant || 0}
+                    onChange={e => setItem(idx, "cant", e.target.value)}
+                    placeholder="Cant"
+                    style={{ padding: "7px 8px", borderRadius: 6, background: B.navyMid, border: `1px solid ${B.navyLight}`, color: "#fff", fontSize: 12, textAlign: "right", minWidth: 0, width: "100%", boxSizing: "border-box" }} />
+                  <input value={it.unidad || ""} onChange={e => setItem(idx, "unidad", e.target.value)}
+                    placeholder="und"
+                    style={{ padding: "7px 8px", borderRadius: 6, background: B.navyMid, border: `1px solid ${B.navyLight}`, color: "#fff", fontSize: 12, minWidth: 0, width: "100%", boxSizing: "border-box" }} />
+                  <input type="number" min="0" value={Number(it.precio_unit) || Number(it.precio) || Number(it.precioU) || 0}
+                    onChange={e => setItem(idx, "precio_unit", e.target.value)}
+                    placeholder="Precio"
+                    style={{ padding: "7px 8px", borderRadius: 6, background: B.navyMid, border: `1px solid ${B.navyLight}`, color: "#fff", fontSize: 12, textAlign: "right", minWidth: 0, width: "100%", boxSizing: "border-box" }} />
+                  <div style={{ padding: "7px 6px", textAlign: "right", color: B.sand, fontWeight: 700, fontSize: 12, fontFamily: "monospace", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={COP(subtotalNum)}>
+                    {COP(subtotalNum)}
+                  </div>
+                  {tieneReq ? (
+                    <button type="button" onClick={() => devolverAMesa(idx)}
+                      title="Devolver este item a la requisición original (mesa de compra) para asignar a otro proveedor"
+                      style={{ padding: "5px 4px", border: `1px solid ${B.warning}`, background: "transparent", color: B.warning, borderRadius: 6, cursor: "pointer", fontSize: 10, fontWeight: 700, whiteSpace: "nowrap", textAlign: "center" }}>
+                      ↩️ Mesa
+                    </button>
+                  ) : <span />}
+                  <button type="button" onClick={() => removeItem(idx)}
+                    title="Eliminar línea (sin devolver a mesa)"
+                    style={{ padding: "5px 8px", border: `1px solid ${B.danger}`, background: "transparent", color: B.danger, borderRadius: 6, cursor: "pointer", fontSize: 14, justifySelf: "center" }}>
+                    🗑
+                  </button>
+                </div>
+                );
+              })}
+            </div>
+
+            <div style={{ marginTop: 10, padding: "8px 12px", background: B.navyMid, borderRadius: 6, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <span style={{ fontSize: 12, color: "rgba(255,255,255,0.6)", textTransform: "uppercase" }}>Total</span>
+              <span style={{ fontSize: 18, fontWeight: 800, color: B.sand, fontFamily: "monospace" }}>{COP(subtotal)}</span>
+            </div>
+          </div>
+
+          {/* Notas */}
+          <div style={{ marginBottom: 14 }}>
+            <label style={{ fontSize: 11, color: "rgba(255,255,255,0.6)", textTransform: "uppercase", fontWeight: 700, display: "block", marginBottom: 4 }}>Notas</label>
+            <textarea value={notas} onChange={e => setNotas(e.target.value)} rows={3}
+              placeholder="Notas internas..."
+              style={{ width: "100%", padding: "9px 12px", borderRadius: 8, background: B.navyMid, border: `1px solid ${B.navyLight}`, color: "#fff", fontSize: 12, resize: "vertical", fontFamily: "inherit", boxSizing: "border-box" }} />
+          </div>
+
+          {err && <div style={{ marginBottom: 10, padding: 10, background: "rgba(239,68,68,0.15)", color: "#ef4444", borderRadius: 8, fontSize: 12 }}>⚠ {err}</div>}
+
+          {/* Botón Unir con otra OC del mismo proveedor */}
+          <button type="button" onClick={() => setShowUnir(true)}
+            style={{ width: "100%", padding: "9px 14px", marginBottom: 10, borderRadius: 8, border: `1px solid #a78bfa`, background: `#a78bfa11`, color: "#a78bfa", cursor: "pointer", fontSize: 12, fontWeight: 700 }}>
+            🔗 Unir con otra OC del mismo proveedor (consolidar facturación)
+          </button>
+
+          <div style={{ display: "flex", gap: 10 }}>
+            <button onClick={onClose} disabled={saving}
+              style={{ flex: 1, padding: 11, borderRadius: 8, border: `1px solid ${B.navyLight}`, background: "transparent", color: "rgba(255,255,255,0.5)", cursor: "pointer", fontSize: 13 }}>
+              Cancelar
+            </button>
+            <button onClick={guardar} disabled={saving}
+              style={{ flex: 2, padding: 11, borderRadius: 8, border: "none", background: saving ? B.navyLight : B.success, color: "#fff", cursor: saving ? "default" : "pointer", fontSize: 13, fontWeight: 700 }}>
+              {saving ? "Guardando..." : "✓ Guardar cambios"}
+            </button>
+          </div>
+        </div>
+
+        {showUnir && <UnirOCModal oc={oc} ordenes={ordenes}
+          onClose={() => setShowUnir(false)}
+          reload={() => { reload?.(); onClose(); }}
+          currentUser={currentUser} />}
+      </div>
+    </div>
+  );
 }

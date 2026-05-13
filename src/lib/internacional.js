@@ -61,30 +61,34 @@ export async function avisoCargoMerchant() {
 }
 
 /**
- * Crea una sesión de pago en el merchant activo y retorna la URL de checkout.
+ * Crea una Payment Session en Zoho para usar con el widget embebido.
+ * El frontend toma `payments_session_id` + `widget` y los pasa a `<ZohoPaymentWidget />`.
+ *
  * @param {Object} opts
  * @param {number} opts.amount       — monto en la moneda indicada (números, no cents)
  * @param {string} opts.currency     — "USD" | "EUR" | "COP" | ...
  * @param {string} opts.reference    — referencia única (ej: código de reserva/pedido)
  * @param {string} opts.description  — texto corto mostrado al cliente
  * @param {string} [opts.email]      — email del cliente (opcional)
+ * @param {string} [opts.nombre]     — nombre del cliente (opcional)
  * @param {string} [opts.context]    — 'pedido' | 'reserva' | 'evento' | 'estancia'
  * @param {string} [opts.context_id] — id del recurso para actualizar al pagar
- * @returns {Promise<{ url: string, provider: string, session_id: string }>}
+ * @returns {Promise<{
+ *   payments_session_id: string,
+ *   amount: string,
+ *   currency: string,
+ *   widget: { account_id: string, api_key: string, domain: string },
+ *   provider: string,
+ * }>}
  */
 export async function crearSesionPago(opts) {
-  // Política: siempre Zoho Pay
   return crearSesionZoho(opts);
 }
 
-// Zoho Payments — intenta primero atolon (secretos propios con descripción
-// "Atolon Beach Club"), si falla (sin secretos), cae a minivac-crm como fallback.
 const ATOLON_FN = () => `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/zoho-payments/create-session`;
-const MINIVAC_FN = "https://gsvnvahrjgswwejnuiyn.supabase.co/functions/v1/zoho-payments/create-session";
-const MINIVAC_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imdzdm52YWhyamdzd3dlam51aXluIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzMwMTUwNDIsImV4cCI6MjA4ODU5MTA0Mn0.xceJjgUnkAu7Jzeo0IY1EmBjRqgyybtPf4odcg1WFeA";
 
 async function crearSesionZoho(opts) {
-  const payloadAtolon = {
+  const payload = {
     amount: Number(opts.amount),
     currency: opts.currency || "USD",
     reference: opts.reference || `ATOLON-${Date.now()}`,
@@ -95,7 +99,7 @@ async function crearSesionZoho(opts) {
     context_id: opts.context_id || null,
   };
 
-  // 1) Intentar la función de atolon primero
+  let data;
   try {
     const res = await fetch(ATOLON_FN(), {
       method: "POST",
@@ -103,49 +107,36 @@ async function crearSesionZoho(opts) {
         "Content-Type": "application/json",
         "Authorization": `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
       },
-      body: JSON.stringify(payloadAtolon),
+      body: JSON.stringify(payload),
     });
-    const data = await res.json();
-    if (data.payment_url) {
-      return { url: data.payment_url, provider: "zoho_pay", session_id: data.payment_link_id || data.payments_session_id || "" };
-    }
-    // Si el error es "Zoho no configurado", caemos al fallback
-    if (data.error && /no configurado|refresh_token|client_id/i.test(data.error)) {
-      console.warn("[Zoho] Atolon function sin secretos, usando fallback minivac");
-    } else {
-      throw new Error(data.error || JSON.stringify(data));
-    }
+    data = await res.json();
   } catch (err) {
-    console.warn("[Zoho] Atolon function falló, intentando fallback minivac:", err?.message);
+    throw new Error("No se pudo conectar a Zoho Pay: " + (err?.message || err));
   }
 
-  // 2) Fallback: función de minivac (misma merchant account)
-  const res = await fetch(MINIVAC_FN, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${MINIVAC_ANON}`,
-    },
-    body: JSON.stringify({
-      amount: Number(opts.amount),
-      currency: opts.currency || "USD",
-      folio: opts.reference || `ATOLON-${Date.now()}`,
-      lead_id: opts.reference || null,
-      nombre: opts.nombre || "",
-      email: opts.email || undefined,
-      description: opts.description || `Atolon Beach Club${opts.nombre ? " - " + opts.nombre : ""}`,
-      source: "atolon",
-    }),
-  });
-  const data = await res.json();
-  if (!data.payment_url) {
-    throw new Error("Error Zoho Pay: " + (data.error || JSON.stringify(data)));
+  // Nuevo flujo: widget embebido (devuelve payments_session_id + config widget)
+  if (data.payments_session_id && data.widget?.account_id) {
+    return {
+      payments_session_id: data.payments_session_id,
+      amount:              data.amount,
+      currency:            data.currency,
+      widget:              data.widget,
+      provider:            "zoho_pay",
+    };
   }
-  return {
-    url: data.payment_url,
-    provider: "zoho_pay",
-    session_id: data.payments_session_id || "",
-  };
+
+  // Compat: viejo flujo de Payment Links (en caso de que la cuenta lo soporte)
+  if (data.payment_url) {
+    return {
+      url: data.payment_url,
+      provider: "zoho_pay",
+      session_id: data.payment_link_id || data.payments_session_id || "",
+    };
+  }
+
+  // Mostrar el error real al cliente
+  const errMsg = data.error || JSON.stringify(data);
+  throw new Error("Zoho Pay: " + errMsg);
 }
 
 async function crearSesionStripe(opts) {

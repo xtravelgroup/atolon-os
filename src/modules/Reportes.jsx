@@ -7,12 +7,14 @@ const IS = { width: "100%", padding: "9px 12px", borderRadius: 8, background: B.
 const LS = { fontSize: 11, color: "rgba(255,255,255,0.5)", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", display: "block", marginBottom: 4 };
 
 const REPORTES = [
+  { key: "facturacion",  label: "Facturación Diaria", icon: "🧾", desc: "Ventas del día para contabilidad · Quiénes pidieron factura electrónica · Exportable" },
   { key: "transacciones",label: "Transacciones",      icon: "💸", desc: "Todos los pagos procesados · Filtro por Wompi / Zoho / Stripe / Efectivo / etc." },
   { key: "cortesias",    label: "Cortesías",         icon: "🎁", desc: "Reservas entregadas como cortesía · Quién autoriza · Motivo · Impacto" },
   { key: "ventas",       label: "Ventas por periodo", icon: "📊", desc: "Ingresos por producto, canal, aliado B2B, vendedor" },
   { key: "pagos",        label: "Pagos por método",   icon: "💳", desc: "Desglose de pagos por Efectivo / Datáfono / Transferencia / Wompi / CXC" },
   { key: "ocupacion",    label: "Ocupación diaria",   icon: "📅", desc: "Pax por día · Ocupación vs. capacidad · Tendencia mensual" },
   { key: "cancelaciones",label: "Cancelaciones",      icon: "✕",  desc: "Reservas canceladas · Razón · Reembolsos" },
+  { key: "ayb",          label: "Reportes A&B",       icon: "🍽️", desc: "Cortesías · Anulaciones · Descuentos del Restaurant/Bar (Loggro)" },
 ];
 
 const firstOfMonth = () => {
@@ -44,12 +46,678 @@ export default function Reportes() {
         ))}
       </div>
 
+      {tab === "facturacion"   && <ReporteFacturacionDiaria />}
       {tab === "transacciones" && <ReporteTransacciones />}
       {tab === "cortesias"     && <ReporteCortesias />}
       {tab === "ventas"        && <ReporteVentas />}
       {tab === "pagos"         && <ReportePagosPorMetodo />}
       {tab === "ocupacion"     && <ReporteOcupacion />}
       {tab === "cancelaciones" && <ReporteCancelaciones />}
+      {tab === "ayb"           && <ReporteAyB />}
+    </div>
+  );
+}
+
+// ─── REPORTE FACTURACIÓN DIARIA ─────────────────────────────────────────────
+// Diseñado para que Contabilidad haga su corrida diaria de facturas.
+// Muestra:
+//   • Reservas con factura electrónica solicitada (datos completos para FE)
+//   • Reservas sin FE (resumen por canal/método)
+//   • Eventos / grupos del día
+//   • Ventas A&B Restobar (Loggro)
+//   • Otros (muelle, actividades)
+// Permite marcar reservas como "FE emitida" y exportar a CSV.
+function ReporteFacturacionDiaria() {
+  const [fecha, setFecha] = useState(todayStr());
+  const [reservas, setReservas] = useState([]);
+  const [eventos, setEventos] = useState([]);
+  const [muelle, setMuelle] = useState([]);
+  const [actividades, setActividades] = useState([]);
+  const [aybData, setAybData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [showEmitirModal, setShowEmitirModal] = useState(null); // reserva object
+
+  const cargar = useCallback(async () => {
+    setLoading(true);
+    try {
+      const auth = { apikey: import.meta.env.VITE_SUPABASE_ANON_KEY, Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}` };
+      const base = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/loggro-sync`;
+
+      const [resR, eveR, muelleR, actR, aybRes] = await Promise.all([
+        supabase.from("reservas")
+          .select("id, nombre, fecha, total, abono, saldo, tipo, pax_a, pax_n, pax, forma_pago, canal, estado, aliado_id, email, telefono, fe_tipo_documento, fe_numero_documento, fe_razon_social, fe_nombres, fe_telefono, fe_estado, fe_numero_factura, fe_emitida_at, grupo_id")
+          .eq("fecha", fecha)
+          .neq("estado", "cancelado"),
+        supabase.from("eventos")
+          .select("id, nombre, fecha, valor, valor_extras, pax, categoria, stage, nit, aliado_id, aliado_nombre")
+          .eq("fecha", fecha)
+          .in("stage", ["Confirmado", "Realizado"])
+          .in("categoria", ["grupo", "evento"]),
+        supabase.from("muelle_llegadas")
+          .select("id, fecha, total_cobrado, pax_total, tipo, reserva_id, observaciones")
+          .eq("fecha", fecha)
+          .gt("total_cobrado", 0)
+          .neq("tipo", "lancha_atolon"),
+        supabase.from("actividades_ventas")
+          .select("id, fecha, total, actividad, cliente, estado, forma_pago")
+          .eq("fecha", fecha)
+          .neq("estado", "cancelada"),
+        fetch(`${base}/cierre-caja-rango?from=${fecha}&to=${fecha}`, { headers: auth })
+          .then(r => r.json()).catch(() => null),
+      ]);
+
+      setReservas(resR.data || []);
+      setEventos(eveR.data || []);
+      setMuelle((muelleR.data || []).filter(m => !m.reserva_id));   // sin reserva = ingreso aparte
+      setActividades(actR.data || []);
+      setAybData(aybRes?.ok ? aybRes : null);
+    } catch (e) {
+      console.error("[ReporteFacturacionDiaria]", e);
+    }
+    setLoading(false);
+  }, [fecha]);
+
+  useEffect(() => { cargar(); }, [cargar]);
+
+  // ── Agrupaciones ───────────────────────────────────────────────────────
+  const reservasConFE = reservas.filter(r => r.fe_tipo_documento && r.fe_numero_documento);
+  const reservasSinFE = reservas.filter(r => !r.fe_tipo_documento || !r.fe_numero_documento);
+
+  const totalReservasFE = reservasConFE.reduce((s, r) => s + Number(r.total || 0), 0);
+  const totalReservasSinFE = reservasSinFE.reduce((s, r) => s + Number(r.total || 0), 0);
+  const totalEventos = eventos.reduce((s, e) => s + Number(e.valor || 0) + Number(e.valor_extras || 0), 0);
+  const totalMuelle = muelle.reduce((s, m) => s + Number(m.total_cobrado || 0), 0);
+  const totalActividades = actividades.reduce((s, a) => s + Number(a.total || 0), 0);
+  const totalAyB = Number(aybData?.resumen?.total_ventas || 0);
+  const totalGeneral = totalReservasFE + totalReservasSinFE + totalEventos + totalMuelle + totalActividades + totalAyB;
+
+  // Pendientes de emitir (FE solicitada pero no emitida)
+  const pendientesEmitir = reservasConFE.filter(r => r.fe_estado !== "emitida");
+  const yaEmitidas = reservasConFE.filter(r => r.fe_estado === "emitida");
+
+  // Marcar reserva como FE emitida
+  const marcarEmitida = async (reservaId, numeroFactura) => {
+    if (!numeroFactura?.trim()) return alert("Ingresá el número de factura");
+    const { error } = await supabase.from("reservas").update({
+      fe_estado: "emitida",
+      fe_numero_factura: numeroFactura.trim(),
+      fe_emitida_at: new Date().toISOString(),
+    }).eq("id", reservaId);
+    if (error) return alert("Error: " + error.message);
+    setShowEmitirModal(null);
+    cargar();
+  };
+
+  // ── Export CSV ─────────────────────────────────────────────────────────
+  const exportarCSV = () => {
+    const rows = [];
+    rows.push(["FACTURACIÓN DIARIA", `Fecha: ${fecha}`, "", "", "", "", "", ""].join(","));
+    rows.push("");
+
+    // Sección 1: FE solicitadas
+    rows.push(`SOLICITARON FACTURA ELECTRÓNICA (${reservasConFE.length})`);
+    rows.push(["ID","Cliente","Tipo Doc","Número Doc","Razón Social","Total","Forma Pago","Estado FE","N° Factura"].join(","));
+    reservasConFE.forEach(r => {
+      rows.push([
+        r.id, csv(r.nombre), r.fe_tipo_documento || "",
+        r.fe_numero_documento || "", csv(r.fe_razon_social || r.fe_nombres || r.nombre),
+        r.total || 0, r.forma_pago || "",
+        r.fe_estado || "pendiente", r.fe_numero_factura || ""
+      ].join(","));
+    });
+    rows.push(["","","","","TOTAL FE", totalReservasFE, "", "", ""].join(","));
+    rows.push("");
+
+    // Sección 2: Otras reservas
+    rows.push(`OTRAS RESERVAS DEL DÍA (${reservasSinFE.length})`);
+    rows.push(["ID","Cliente","Tipo","Pax","Total","Forma Pago","Canal","Estado"].join(","));
+    reservasSinFE.forEach(r => {
+      rows.push([
+        r.id, csv(r.nombre), r.tipo || "",
+        (r.pax_a || r.pax || 0) + (r.pax_n ? `+${r.pax_n}N` : ""),
+        r.total || 0, r.forma_pago || "", r.canal || "", r.estado || "",
+      ].join(","));
+    });
+    rows.push(["","","","TOTAL OTRAS", totalReservasSinFE, "", "", ""].join(","));
+    rows.push("");
+
+    // Sección 3: Eventos
+    if (eventos.length) {
+      rows.push(`EVENTOS / GRUPOS (${eventos.length})`);
+      rows.push(["ID","Nombre","Categoría","NIT","Aliado","Pax","Valor","Extras","Total"].join(","));
+      eventos.forEach(e => {
+        const total = Number(e.valor || 0) + Number(e.valor_extras || 0);
+        rows.push([
+          e.id, csv(e.nombre), e.categoria, e.nit || "", csv(e.aliado_nombre || ""),
+          e.pax || 0, e.valor || 0, e.valor_extras || 0, total,
+        ].join(","));
+      });
+      rows.push(["","","","","","TOTAL EVENTOS", totalEventos, "", ""].join(","));
+      rows.push("");
+    }
+
+    // Sección 4: A&B Loggro
+    rows.push(`VENTAS A&B RESTOBAR (LOGGRO)`);
+    rows.push(["Tickets","Total Ventas","Propinas","Por Método","",""].join(","));
+    if (aybData?.resumen) {
+      const porMetodo = Object.entries(aybData.por_metodo || {}).map(([m, v]) => `${m}: ${v}`).join(" | ");
+      rows.push([
+        aybData.resumen.tickets || 0,
+        aybData.resumen.total_ventas || 0,
+        aybData.resumen.total_propinas || 0,
+        csv(porMetodo), "", ""
+      ].join(","));
+    }
+    rows.push("");
+
+    rows.push(["","","","","","","TOTAL GENERAL", totalGeneral].join(","));
+
+    const csvContent = rows.join("\n");
+    const blob = new Blob(["﻿" + csvContent], { type: "text/csv;charset=utf-8;" });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = `facturacion-diaria-${fecha}.csv`;
+    link.click();
+  };
+
+  if (loading) return <div style={{ padding: 40, textAlign: "center", color: "rgba(255,255,255,0.4)" }}>Cargando…</div>;
+
+  return (
+    <div>
+      {/* Header con selector de fecha + export */}
+      <div style={{ display: "flex", gap: 12, marginBottom: 18, flexWrap: "wrap", alignItems: "flex-end" }}>
+        <div>
+          <label style={LS}>Fecha</label>
+          <input type="date" value={fecha} onChange={e => setFecha(e.target.value)} style={{ ...IS, width: 180 }} />
+        </div>
+        <button onClick={cargar} style={BTN(B.navyLight)}>🔄 Refrescar</button>
+        <button onClick={exportarCSV} style={BTN(B.success)}>📥 Exportar CSV</button>
+      </div>
+
+      {/* KPIs grandes */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10, marginBottom: 18 }}>
+        <Kpi color={B.warning} label="Pendientes FE" val={pendientesEmitir.length} sub={`${reservasConFE.length} solicitudes`} />
+        <Kpi color={B.success} label="FE Emitidas" val={yaEmitidas.length} />
+        <Kpi color={B.sand}    label="Total reservas" val={COP(totalReservasFE + totalReservasSinFE)} sub={`${reservas.length} reservas`} />
+        <Kpi color="#a78bfa"   label="Total eventos" val={COP(totalEventos)} sub={`${eventos.length} eventos`} />
+        <Kpi color="#fb923c"   label="A&B Restobar" val={COP(totalAyB)} sub={`${aybData?.resumen?.tickets || 0} tickets`} />
+        <Kpi color={B.sky}     label="TOTAL GENERAL" val={COP(totalGeneral)} highlight />
+      </div>
+
+      {/* SECCIÓN 1: Pendientes de emitir FE */}
+      <Seccion titulo="🧾 Pendientes de emitir Factura Electrónica" color={B.warning} count={pendientesEmitir.length} total={pendientesEmitir.reduce((s, r) => s + Number(r.total || 0), 0)}>
+        {pendientesEmitir.length === 0 ? (
+          <div style={{ padding: 14, color: "rgba(255,255,255,0.4)", textAlign: "center", fontStyle: "italic" }}>No hay pendientes — todo emitido o no se solicitó FE</div>
+        ) : (
+          <table style={tablaStyle}>
+            <thead>
+              <tr style={trHeader}>
+                <th style={th}>ID</th>
+                <th style={th}>Cliente</th>
+                <th style={th}>Tipo doc</th>
+                <th style={th}>Número doc</th>
+                <th style={th}>Razón social / Nombre</th>
+                <th style={{ ...th, textAlign: "right" }}>Total</th>
+                <th style={th}>Forma pago</th>
+                <th style={th}>Canal</th>
+                <th style={th}>Acción</th>
+              </tr>
+            </thead>
+            <tbody>
+              {pendientesEmitir.map(r => (
+                <tr key={r.id} style={trBody}>
+                  <td style={td}>{r.id}</td>
+                  <td style={td}>{r.nombre}</td>
+                  <td style={{ ...td, fontWeight: 700, color: B.sky }}>{r.fe_tipo_documento}</td>
+                  <td style={td}>{r.fe_numero_documento}</td>
+                  <td style={td}>{r.fe_razon_social || r.fe_nombres || r.nombre}</td>
+                  <td style={{ ...td, textAlign: "right", fontWeight: 700 }}>{COP(r.total)}</td>
+                  <td style={td}>{r.forma_pago}</td>
+                  <td style={td}>{r.canal}</td>
+                  <td style={td}>
+                    <button onClick={() => setShowEmitirModal(r)} style={{ ...BTN(B.success), fontSize: 11, padding: "4px 10px" }}>
+                      ✓ Marcar emitida
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </Seccion>
+
+      {/* SECCIÓN 2: FE ya emitidas hoy */}
+      {yaEmitidas.length > 0 && (
+        <Seccion titulo="✅ FE emitidas" color={B.success} count={yaEmitidas.length} total={yaEmitidas.reduce((s, r) => s + Number(r.total || 0), 0)}>
+          <table style={tablaStyle}>
+            <thead><tr style={trHeader}>
+              <th style={th}>ID</th><th style={th}>Cliente</th><th style={th}>Doc</th>
+              <th style={th}>N° Factura</th><th style={th}>Emitida</th><th style={{ ...th, textAlign: "right" }}>Total</th>
+            </tr></thead>
+            <tbody>
+              {yaEmitidas.map(r => (
+                <tr key={r.id} style={trBody}>
+                  <td style={td}>{r.id}</td>
+                  <td style={td}>{r.nombre}</td>
+                  <td style={td}>{r.fe_tipo_documento} {r.fe_numero_documento}</td>
+                  <td style={{ ...td, fontWeight: 700, color: B.success }}>{r.fe_numero_factura}</td>
+                  <td style={td}>{r.fe_emitida_at ? new Date(r.fe_emitida_at).toLocaleString("es-CO") : "—"}</td>
+                  <td style={{ ...td, textAlign: "right", fontWeight: 700 }}>{COP(r.total)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </Seccion>
+      )}
+
+      {/* SECCIÓN 3: Otras reservas (sin FE solicitada) */}
+      <Seccion titulo="📋 Otras reservas del día (sin FE solicitada)" color={B.navyLight} count={reservasSinFE.length} total={totalReservasSinFE}>
+        {reservasSinFE.length === 0 ? (
+          <div style={{ padding: 14, color: "rgba(255,255,255,0.4)", textAlign: "center", fontStyle: "italic" }}>Sin reservas adicionales</div>
+        ) : (
+          <table style={tablaStyle}>
+            <thead><tr style={trHeader}>
+              <th style={th}>ID</th><th style={th}>Cliente</th><th style={th}>Tipo</th>
+              <th style={th}>Pax</th><th style={th}>Forma pago</th><th style={th}>Canal</th>
+              <th style={{ ...th, textAlign: "right" }}>Total</th>
+            </tr></thead>
+            <tbody>
+              {reservasSinFE.map(r => (
+                <tr key={r.id} style={trBody}>
+                  <td style={td}>{r.id}</td>
+                  <td style={td}>{r.nombre}</td>
+                  <td style={td}>{r.tipo}</td>
+                  <td style={td}>{r.pax_a || r.pax || 0}{r.pax_n ? `+${r.pax_n}N` : ""}</td>
+                  <td style={td}>{r.forma_pago}</td>
+                  <td style={td}>{r.canal}</td>
+                  <td style={{ ...td, textAlign: "right", fontWeight: 700 }}>{COP(r.total)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </Seccion>
+
+      {/* SECCIÓN 4: Eventos */}
+      {eventos.length > 0 && (
+        <Seccion titulo="🎉 Eventos / Grupos" color="#a78bfa" count={eventos.length} total={totalEventos}>
+          <table style={tablaStyle}>
+            <thead><tr style={trHeader}>
+              <th style={th}>ID</th><th style={th}>Nombre</th><th style={th}>Categoría</th>
+              <th style={th}>NIT</th><th style={th}>Aliado</th><th style={th}>Pax</th>
+              <th style={{ ...th, textAlign: "right" }}>Valor</th>
+              <th style={{ ...th, textAlign: "right" }}>Total</th>
+            </tr></thead>
+            <tbody>
+              {eventos.map(e => (
+                <tr key={e.id} style={trBody}>
+                  <td style={td}>{e.id}</td>
+                  <td style={td}>{e.nombre}</td>
+                  <td style={td}>{e.categoria}</td>
+                  <td style={td}>{e.nit || "—"}</td>
+                  <td style={td}>{e.aliado_nombre || "—"}</td>
+                  <td style={td}>{e.pax || 0}</td>
+                  <td style={{ ...td, textAlign: "right" }}>{COP(e.valor)}</td>
+                  <td style={{ ...td, textAlign: "right", fontWeight: 700 }}>{COP(Number(e.valor || 0) + Number(e.valor_extras || 0))}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </Seccion>
+      )}
+
+      {/* SECCIÓN 5: A&B Loggro */}
+      <Seccion titulo="🍽️ Ventas A&B Restobar (Loggro)" color="#fb923c" count={aybData?.resumen?.tickets || 0} total={totalAyB}>
+        {!aybData?.resumen ? (
+          <div style={{ padding: 14, color: "rgba(255,255,255,0.4)", textAlign: "center" }}>No se pudo cargar Loggro</div>
+        ) : (
+          <div style={{ padding: "14px 16px" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 10, marginBottom: 12 }}>
+              <Kpi color={B.sand} label="Tickets" val={aybData.resumen.tickets} compact />
+              <Kpi color={B.success} label="Ventas" val={COP(aybData.resumen.total_ventas)} compact />
+              <Kpi color={B.warning} label="Propinas" val={COP(aybData.resumen.total_propinas)} compact />
+              <Kpi color={B.danger} label="Anuladas" val={COP(aybData.resumen.anuladas || 0)} compact />
+            </div>
+            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginBottom: 6, fontWeight: 700, textTransform: "uppercase" }}>Por método de pago:</div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+              {Object.entries(aybData.por_metodo || {}).map(([m, v]) => (
+                <div key={m} style={{ background: B.navy, padding: "6px 12px", borderRadius: 8, fontSize: 12 }}>
+                  <span style={{ color: "rgba(255,255,255,0.5)" }}>{m}: </span>
+                  <span style={{ fontWeight: 700, color: B.white }}>{COP(v)}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </Seccion>
+
+      {/* SECCIÓN 6: Otros (muelle, actividades) */}
+      {(muelle.length > 0 || actividades.length > 0) && (
+        <Seccion titulo="🛥️ Otros ingresos (Muelle + Actividades)" color={B.sky} count={muelle.length + actividades.length} total={totalMuelle + totalActividades}>
+          {muelle.length > 0 && (
+            <>
+              <div style={{ padding: "8px 14px", fontSize: 11, color: B.sand, fontWeight: 700, textTransform: "uppercase" }}>Muelle</div>
+              <table style={tablaStyle}>
+                <thead><tr style={trHeader}>
+                  <th style={th}>ID</th><th style={th}>Tipo</th><th style={th}>Pax</th>
+                  <th style={th}>Notas</th><th style={{ ...th, textAlign: "right" }}>Total</th>
+                </tr></thead>
+                <tbody>
+                  {muelle.map(m => (
+                    <tr key={m.id} style={trBody}>
+                      <td style={td}>{m.id}</td>
+                      <td style={td}>{m.tipo}</td>
+                      <td style={td}>{m.pax_total}</td>
+                      <td style={td}>{m.observaciones || "—"}</td>
+                      <td style={{ ...td, textAlign: "right", fontWeight: 700 }}>{COP(m.total_cobrado)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </>
+          )}
+          {actividades.length > 0 && (
+            <>
+              <div style={{ padding: "8px 14px", fontSize: 11, color: B.sand, fontWeight: 700, textTransform: "uppercase" }}>Actividades</div>
+              <table style={tablaStyle}>
+                <thead><tr style={trHeader}>
+                  <th style={th}>ID</th><th style={th}>Cliente</th><th style={th}>Actividad</th>
+                  <th style={th}>Forma pago</th><th style={{ ...th, textAlign: "right" }}>Total</th>
+                </tr></thead>
+                <tbody>
+                  {actividades.map(a => (
+                    <tr key={a.id} style={trBody}>
+                      <td style={td}>{a.id}</td>
+                      <td style={td}>{a.cliente}</td>
+                      <td style={td}>{a.actividad}</td>
+                      <td style={td}>{a.forma_pago}</td>
+                      <td style={{ ...td, textAlign: "right", fontWeight: 700 }}>{COP(a.total)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </>
+          )}
+        </Seccion>
+      )}
+
+      {/* Modal: marcar como emitida */}
+      {showEmitirModal && (
+        <EmitirFEModal reserva={showEmitirModal} onClose={() => setShowEmitirModal(null)} onConfirm={(num) => marcarEmitida(showEmitirModal.id, num)} />
+      )}
+    </div>
+  );
+}
+
+// Helpers de UI para FacturacionDiaria
+function Kpi({ color, label, val, sub, highlight, compact }) {
+  return (
+    <div style={{
+      background: highlight ? `${color}22` : B.navy,
+      border: `1px solid ${highlight ? color : B.navyLight}`,
+      borderRadius: 10,
+      padding: compact ? "8px 12px" : "12px 16px",
+      borderLeft: `4px solid ${color}`,
+    }}>
+      <div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", fontWeight: 700, letterSpacing: "0.04em" }}>{label}</div>
+      <div style={{ fontSize: compact ? 16 : 22, fontWeight: 800, color, fontFamily: "'Barlow Condensed', sans-serif", marginTop: 2 }}>{val}</div>
+      {sub && <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>{sub}</div>}
+    </div>
+  );
+}
+
+function Seccion({ titulo, color, count, total, children }) {
+  return (
+    <div style={{ background: B.navy, border: `1px solid ${B.navyLight}`, borderRadius: 12, marginBottom: 16, overflow: "hidden" }}>
+      <div style={{ padding: "12px 16px", borderBottom: `1px solid ${B.navyLight}`, borderLeft: `4px solid ${color}`, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+        <div style={{ fontSize: 14, fontWeight: 800, color: B.white, fontFamily: "'Barlow Condensed', sans-serif" }}>
+          {titulo} <span style={{ color: "rgba(255,255,255,0.4)", fontSize: 12 }}>({count})</span>
+        </div>
+        <div style={{ fontSize: 14, fontWeight: 800, color, fontFamily: "'Barlow Condensed', sans-serif" }}>{COP(total)}</div>
+      </div>
+      <div style={{ overflowX: "auto" }}>{children}</div>
+    </div>
+  );
+}
+
+function EmitirFEModal({ reserva, onClose, onConfirm }) {
+  const [num, setNum] = useState("");
+  return (
+    <div onClick={e => e.target === e.currentTarget && onClose()}
+      style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 1300, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+      <div style={{ background: B.navyMid, borderRadius: 14, padding: 24, width: 460, maxWidth: "92vw", border: `1px solid ${B.navyLight}` }}>
+        <div style={{ fontSize: 17, fontWeight: 800, marginBottom: 6, fontFamily: "'Barlow Condensed', sans-serif" }}>Marcar Factura Electrónica como emitida</div>
+        <div style={{ fontSize: 12, color: "rgba(255,255,255,0.6)", marginBottom: 16 }}>
+          {reserva.nombre} · {reserva.fe_tipo_documento} {reserva.fe_numero_documento} · <strong>{COP(reserva.total)}</strong>
+        </div>
+        <label style={LS}>Número de factura *</label>
+        <input value={num} onChange={e => setNum(e.target.value)} placeholder="Ej: FE-12345"
+          autoFocus
+          style={IS} />
+        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 18 }}>
+          <button onClick={onClose} style={BTN(B.navyLight)}>Cancelar</button>
+          <button onClick={() => onConfirm(num)} disabled={!num.trim()} style={{ ...BTN(B.success), opacity: !num.trim() ? 0.5 : 1 }}>✓ Confirmar emisión</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const tablaStyle = { width: "100%", borderCollapse: "collapse", fontSize: 12 };
+const trHeader = { background: B.navyLight };
+const trBody = { borderBottom: `1px solid rgba(255,255,255,0.05)` };
+const th = { padding: "8px 10px", textAlign: "left", fontSize: 10, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", fontWeight: 700 };
+const td = { padding: "8px 10px", color: "rgba(255,255,255,0.85)" };
+const csv = (s) => `"${String(s || "").replace(/"/g, '""')}"`;
+
+// ─── REPORTE A&B (Loggro Restobar) ──────────────────────────────────────────
+function ReporteAyB() {
+  const [subTab, setSubTab] = useState("pedidos_cortesia");
+  const [fechaIni, setFechaIni] = useState(firstOfMonth());
+  const [fechaFin, setFechaFin] = useState(todayStr());
+  const [data, setData] = useState({ cortesias: [], anuladas: [], descuentos: [], resumen: null });
+  const [pedidosCortesia, setPedidosCortesia] = useState([]);
+  const [pedidosInternos, setPedidosInternos] = useState([]);
+  const [pedidosCancelados, setPedidosCancelados] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  const cargar = useCallback(async () => {
+    setLoading(true);
+    try {
+      const auth = { apikey: import.meta.env.VITE_SUPABASE_ANON_KEY, Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}` };
+      const base = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/loggro-sync`;
+      const [r1, r2, r3, r4] = await Promise.all([
+        fetch(`${base}/reporte-ayb?from=${fechaIni}&to=${fechaFin}`, { headers: auth }),
+        fetch(`${base}/reporte-cortesias-pedidos?from=${fechaIni}&to=${fechaFin}`, { headers: auth }),
+        fetch(`${base}/reporte-internos-pedidos?from=${fechaIni}&to=${fechaFin}`, { headers: auth }),
+        fetch(`${base}/reporte-cancelaciones-pedidos?from=${fechaIni}&to=${fechaFin}`, { headers: auth }),
+      ]);
+      const [j1, j2, j3, j4] = await Promise.all([r1.json(), r2.json(), r3.json(), r4.json()]);
+      if (j1.ok) setData(j1);
+      if (j2.ok) setPedidosCortesia(j2.cortesias || []);
+      if (j3.ok) setPedidosInternos(j3.internos || []);
+      if (j4.ok) setPedidosCancelados(j4.canceladas || []);
+    } catch (e) {
+      console.error("[ReporteAyB]", e);
+    } finally {
+      setLoading(false);
+    }
+  }, [fechaIni, fechaFin]);
+  useEffect(() => { cargar(); }, [cargar]);
+
+  const lista =
+    subTab === "pedidos_cortesia" ? pedidosCortesia :
+    subTab === "pedidos_internos" ? pedidosInternos :
+    subTab === "pedidos_cancelados" ? pedidosCancelados :
+    (data[subTab] || []);
+
+  const handleExport = () => {
+    if (subTab === "pedidos_cortesia") {
+      const rows = [["Fecha pedido", "Fecha cortesía", "Producto", "Cantidad", "Cliente", "Nota", "Cortesía por", "Pedido por"]];
+      lista.forEach(r => rows.push([r.fecha_pedido, r.fecha_cortesia, r.producto, r.cantidad, r.cliente, r.nota, r.cortesia_por, r.pedido_por]));
+      exportCSV(`ayb_pedidos_cortesia_${fechaIni}_${fechaFin}.csv`, rows);
+    } else if (subTab === "pedidos_internos") {
+      const rows = [["Fecha pedido", "Fecha guardado", "Producto", "Cantidad", "Nota", "Guardado por", "Pedido por"]];
+      lista.forEach(r => rows.push([r.fecha_pedido, r.fecha_guardado, r.producto, r.cantidad, r.nota, r.guardado_por, r.pedido_por]));
+      exportCSV(`ayb_pedidos_internos_${fechaIni}_${fechaFin}.csv`, rows);
+    } else if (subTab === "pedidos_cancelados") {
+      const rows = [["Fecha pedido", "Fecha cancelación", "Producto", "Cantidad", "Motivo", "Cancelado por", "Pedido por"]];
+      lista.forEach(r => rows.push([r.fecha_pedido, r.fecha_cancelacion, r.producto, r.cantidad, r.motivo, r.cancelado_por, r.pedido_por]));
+      exportCSV(`ayb_pedidos_cancelados_${fechaIni}_${fechaFin}.csv`, rows);
+    } else if (subTab === "cortesias") {
+      const rows = [["Fecha", "Hora", "Factura", "Cliente", "Cajero", "Subtotal", "Descuento", "Total", "Items"]];
+      lista.forEach(r => rows.push([r.fecha, r.hora, r.numero, r.cliente, r.usuario, r.subtotal, r.discount, r.total, r.items_count]));
+      exportCSV(`ayb_cortesias_${fechaIni}_${fechaFin}.csv`, rows);
+    } else if (subTab === "anuladas") {
+      const rows = [["Fecha", "Hora", "Factura", "Cliente", "Cajero", "Total", "Motivo"]];
+      lista.forEach(r => rows.push([r.fecha, r.hora, r.numero, r.cliente, r.usuario, r.total, r.motivo]));
+      exportCSV(`ayb_anuladas_${fechaIni}_${fechaFin}.csv`, rows);
+    } else {
+      const rows = [["Fecha", "Hora", "Factura", "Cliente", "Cajero", "Subtotal", "Descuento", "% Desc", "Total"]];
+      lista.forEach(r => rows.push([r.fecha, r.hora, r.numero, r.cliente, r.usuario, r.subtotal, r.discount, r.discountPct?.toFixed(1), r.total]));
+      exportCSV(`ayb_descuentos_${fechaIni}_${fechaFin}.csv`, rows);
+    }
+  };
+
+  return (
+    <div>
+      <FiltroFechas
+        fechaIni={fechaIni} setFechaIni={setFechaIni}
+        fechaFin={fechaFin} setFechaFin={setFechaFin}
+        onExport={handleExport}
+      />
+
+      {/* Sub-tabs */}
+      <div style={{ display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap" }}>
+        {[
+          { k: "pedidos_cortesia",  l: "🎁 Pedidos Cortesía",  c: "#a78bfa", count: pedidosCortesia.length, total: null },
+          { k: "pedidos_internos",  l: "🏢 Pedidos Internos",  c: "#22d3ee", count: pedidosInternos.length, total: null },
+          { k: "pedidos_cancelados",l: "🚫 Pedidos Cancelados",c: B.danger,  count: pedidosCancelados.length, total: null },
+          { k: "cortesias",  l: "🧾 Facturas Cortesía",  c: "#c084fc", count: data.resumen?.cortesias?.count, total: data.resumen?.cortesias?.total },
+          { k: "anuladas",   l: "✕ Facturas Anuladas",     c: B.danger,  count: data.resumen?.anuladas?.count,  total: data.resumen?.anuladas?.total },
+          { k: "descuentos", l: "💰 Descuentos",  c: B.warning, count: data.resumen?.descuentos?.count, total: data.resumen?.descuentos?.total_descontado },
+        ].map(t => {
+          const active = subTab === t.k;
+          return (
+            <button key={t.k} onClick={() => setSubTab(t.k)}
+              style={{
+                padding: "12px 18px", borderRadius: 10,
+                border: `2px solid ${active ? t.c : B.navyLight}`,
+                background: active ? t.c + "22" : B.navyMid,
+                color: active ? t.c : "rgba(255,255,255,0.6)",
+                cursor: "pointer", fontSize: 13, fontWeight: 700, textAlign: "left",
+              }}>
+              <div>{t.l}</div>
+              <div style={{ fontSize: 10, marginTop: 4, opacity: 0.8 }}>
+                {t.count != null ? `${t.count} casos · ${COP(t.total || 0)}` : "—"}
+              </div>
+            </button>
+          );
+        })}
+      </div>
+
+      {loading ? (
+        <div style={{ padding: 40, textAlign: "center", color: "rgba(255,255,255,0.4)" }}>Cargando datos de Loggro…</div>
+      ) : lista.length === 0 ? (
+        <div style={{ padding: 40, textAlign: "center", background: B.navyMid, borderRadius: 12, color: "rgba(255,255,255,0.4)" }}>
+          Sin {subTab.replace("_", " ")} en este rango.
+        </div>
+      ) : (subTab === "pedidos_cortesia" || subTab === "pedidos_internos" || subTab === "pedidos_cancelados") ? (
+        (() => {
+          const cfg = {
+            pedidos_cortesia:  { col2: "Fecha cortesía",    col2k: "fecha_cortesia",    extra: "Cliente", extrak: "cliente", who: "Cortesía por", whok: "cortesia_por", color: "#a78bfa" },
+            pedidos_internos:  { col2: "Fecha guardado",    col2k: "fecha_guardado",    extra: null,      extrak: null,       who: "Guardado por", whok: "guardado_por", color: "#22d3ee" },
+            pedidos_cancelados:{ col2: "Fecha cancelación", col2k: "fecha_cancelacion", extra: null,      extrak: null,       who: "Cancelado por",whok: "cancelado_por",color: B.danger },
+          }[subTab];
+          const headers = ["Fecha pedido", cfg.col2, "Producto", "Cant"];
+          if (cfg.extra) headers.push(cfg.extra);
+          headers.push("Nota / Motivo", cfg.who, "Pedido por");
+          return (
+            <div style={{ background: B.navyMid, borderRadius: 12, overflow: "hidden", overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, minWidth: 1000 }}>
+                <thead>
+                  <tr style={{ background: B.navyLight }}>
+                    {headers.map(h => (
+                      <th key={h} style={{ padding: "10px 12px", textAlign: "left", fontSize: 10, color: "rgba(255,255,255,0.6)", textTransform: "uppercase", letterSpacing: "0.06em" }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {lista.map(r => (
+                    <tr key={r.id} style={{ borderTop: "1px solid rgba(255,255,255,0.04)" }}>
+                      <td style={{ padding: "10px 12px", fontFamily: "monospace", fontSize: 11, whiteSpace: "nowrap" }}>{r.fecha_pedido}</td>
+                      <td style={{ padding: "10px 12px", fontFamily: "monospace", fontSize: 11, color: "rgba(255,255,255,0.5)", whiteSpace: "nowrap" }}>{r[cfg.col2k]}</td>
+                      <td style={{ padding: "10px 12px", fontWeight: 700 }}>{r.producto}</td>
+                      <td style={{ padding: "10px 12px", textAlign: "center", fontWeight: 800, color: cfg.color }}>{r.cantidad}</td>
+                      {cfg.extrak && <td style={{ padding: "10px 12px" }}>{r[cfg.extrak]}</td>}
+                      <td style={{ padding: "10px 12px", fontSize: 11, color: "rgba(255,255,255,0.55)", maxWidth: 280 }}>{(r.nota || r.motivo) || "—"}</td>
+                      <td style={{ padding: "10px 12px", fontWeight: 700, color: cfg.color }}>{r[cfg.whok]}</td>
+                      <td style={{ padding: "10px 12px", color: "rgba(255,255,255,0.6)" }}>{r.pedido_por}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          );
+        })()
+      ) : (
+        <div style={{ background: B.navyMid, borderRadius: 12, overflow: "hidden", overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, minWidth: 850 }}>
+            <thead>
+              <tr style={{ background: B.navyLight }}>
+                <th style={{ padding: "10px 12px", textAlign: "left", fontSize: 10, color: "rgba(255,255,255,0.6)", textTransform: "uppercase", letterSpacing: "0.06em" }}>Fecha</th>
+                <th style={{ padding: "10px 12px", textAlign: "left", fontSize: 10, color: "rgba(255,255,255,0.6)", textTransform: "uppercase", letterSpacing: "0.06em" }}>Factura</th>
+                <th style={{ padding: "10px 12px", textAlign: "left", fontSize: 10, color: "rgba(255,255,255,0.6)", textTransform: "uppercase", letterSpacing: "0.06em" }}>Cliente / Mesa</th>
+                <th style={{ padding: "10px 12px", textAlign: "left", fontSize: 10, color: "rgba(255,255,255,0.6)", textTransform: "uppercase", letterSpacing: "0.06em" }}>Cajero</th>
+                <th style={{ padding: "10px 12px", textAlign: "right", fontSize: 10, color: "rgba(255,255,255,0.6)", textTransform: "uppercase", letterSpacing: "0.06em" }}>Subtotal</th>
+                {subTab !== "anuladas" && (
+                  <th style={{ padding: "10px 12px", textAlign: "right", fontSize: 10, color: "rgba(255,255,255,0.6)", textTransform: "uppercase", letterSpacing: "0.06em" }}>Descuento</th>
+                )}
+                <th style={{ padding: "10px 12px", textAlign: "right", fontSize: 10, color: "rgba(255,255,255,0.6)", textTransform: "uppercase", letterSpacing: "0.06em" }}>Total</th>
+                <th style={{ padding: "10px 12px", textAlign: "left", fontSize: 10, color: "rgba(255,255,255,0.6)", textTransform: "uppercase", letterSpacing: "0.06em" }}>{subTab === "anuladas" ? "Motivo" : "Items"}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {lista.map(r => (
+                <tr key={r.id} style={{ borderTop: "1px solid rgba(255,255,255,0.04)" }}>
+                  <td style={{ padding: "10px 12px" }}>
+                    <div style={{ fontWeight: 700 }}>{r.fecha}</div>
+                    <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)" }}>{r.hora}</div>
+                  </td>
+                  <td style={{ padding: "10px 12px", fontFamily: "monospace", fontSize: 11 }}>#{r.numero}</td>
+                  <td style={{ padding: "10px 12px" }}>{r.cliente}</td>
+                  <td style={{ padding: "10px 12px", color: "rgba(255,255,255,0.6)" }}>{r.usuario}</td>
+                  <td style={{ padding: "10px 12px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{COP(r.subtotal)}</td>
+                  {subTab !== "anuladas" && (
+                    <td style={{ padding: "10px 12px", textAlign: "right", fontVariantNumeric: "tabular-nums", color: B.warning, fontWeight: 700 }}>
+                      −{COP(r.discount)}
+                      {r.discountPct > 0 && (
+                        <div style={{ fontSize: 10, opacity: 0.7 }}>({r.discountPct.toFixed(1)}%)</div>
+                      )}
+                    </td>
+                  )}
+                  <td style={{ padding: "10px 12px", textAlign: "right", fontWeight: 800, fontVariantNumeric: "tabular-nums",
+                    color: subTab === "anuladas" ? B.danger : subTab === "cortesias" ? "#a78bfa" : "#fff" }}>
+                    {COP(r.total)}
+                  </td>
+                  <td style={{ padding: "10px 12px", fontSize: 11, color: "rgba(255,255,255,0.5)", maxWidth: 280 }}>
+                    {subTab === "anuladas" ? (r.motivo || "—") : `${r.items_count} ítem${r.items_count !== 1 ? "s" : ""}`}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <div style={{ marginTop: 16, padding: 12, background: B.navy, borderRadius: 8, fontSize: 11, color: "rgba(255,255,255,0.45)", lineHeight: 1.5 }}>
+        ℹ️ Datos directos de Loggro Restobar.{" "}
+        <strong style={{ color: "#a78bfa" }}>Pedidos Cortesía</strong>: KOTs marcados <code>complementary=true</code>.{" "}
+        <strong style={{ color: "#22d3ee" }}>Pedidos Internos</strong>: KOTs marcados <code>internal=true</code> (consumos staff/dirección).{" "}
+        <strong style={{ color: B.danger }}>Pedidos Cancelados</strong>: KOTs con <code>deletedInfo.isDeleted=true</code> (Loggro filtra deleted por API — pueden no aparecer todos).{" "}
+        <strong style={{ color: "#c084fc" }}>Facturas Cortesía</strong>: facturas completas con descuento ≥99%.{" "}
+        <strong style={{ color: B.warning }}>Descuentos</strong>: descuentos parciales aplicados.
+      </div>
     </div>
   );
 }

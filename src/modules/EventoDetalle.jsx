@@ -2,7 +2,10 @@
 // Timeline, transporte, contactos, dietas, modo staff, bitácora
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { supabase } from "../lib/supabase";
-import { B, COP, fmtFecha, todayStr } from "../brand";
+import { B, COP as COPbrand, fmtFecha, todayStr } from "../brand";
+// COP por defecto (file-level): el módulo lo usa fuera de TabServicios.
+// TabServicios redefine COP localmente cuando ocultarPrecios=true.
+const COP = COPbrand;
 import { useMobile } from "../lib/useMobile";
 import GrupoCotizacionModal from "./grupos/GrupoCotizacionModal";
 import InstructivoContratistasPDF from "./eventos/InstructivoContratistasPDF";
@@ -2565,7 +2568,7 @@ const CATS_TO_TIPO = {
   "Transportación Terrestre":"transportacion",
   "Otros Servicios":        "otros_servicios",
 };
-const EMPTY_SERV = { id: "", categoria: "Menú Restaurante", proveedor: "", descripcion: "", valor: "", estado: "cotizando", notas: "", cantidad: 1, fecha: "", hora: "" };
+const EMPTY_SERV = { id: "", categoria: "Menú Restaurante", proveedor: "", descripcion: "", valor: "", estado: "cotizando", notas: "", cantidad: 1, fecha: "", hora: "", iva: 0, tax_type: "iva" };
 
 function CortesiaButton({ pasadiasMap, onAdd }) {
   const [open, setOpen] = useState(false);
@@ -2654,7 +2657,12 @@ function CortesiaButton({ pasadiasMap, onAdd }) {
   );
 }
 
-function TabServicios({ items, onChange, pasadiasOrg = [], onChangePasadias, categoria, precioTipo = "publico", pasadiasMap = {}, cotizacionData = null, eventoId, eventoFecha, eventoNombre, evento = null }) {
+function TabServicios({ items, onChange, pasadiasOrg = [], onChangePasadias, categoria, precioTipo = "publico", pasadiasMap = {}, cotizacionData = null, eventoId, eventoFecha, eventoNombre, evento = null, ocultarPrecios = false }) {
+  // Vista operativa (cocina/maitre): ocultar todos los precios.
+  // Shadowing: COP local devuelve "—" en lugar de "$X" cuando aplica,
+  // así no hay que reescribir 15 lugares de UI individualmente.
+  // eslint-disable-next-line no-shadow
+  const COP = ocultarPrecios ? () => "—" : COPbrand;
   const [showForm, setShowForm] = useState(false);
   const [grupoCotOpen, setGrupoCotOpen] = useState(false);
   const [editId, setEditId]     = useState(null);
@@ -2734,11 +2742,24 @@ function TabServicios({ items, onChange, pasadiasOrg = [], onChangePasadias, cat
 
   const openNew  = () => { setForm(EMPTY_SERV); setEditId(null); setShowForm(true); };
   const openEdit = (item) => { setForm({ ...EMPTY_SERV, ...item }); setEditId(item.id); setShowForm(true); };
+  const [dragIdx, setDragIdx] = useState(null);
   const save = () => {
     if (!form.categoria) return;
     const cant  = Number(form.cantidad) || 1;
     const unit  = Number(form.valor) || 0;
-    const item  = { ...form, id: form.id || uid(), cantidad: cant, valor_unit: unit, valor: unit * cant };
+    const ivaPct = form.tax_type === "ninguno" ? 0 : (Number(form.iva) || 0);
+    // valor = total con impuesto incluido (consistente con cotizacion_data
+    // donde el P/L lee `valor` directamente sin volver a sumar IVA).
+    const valor = unit * cant * (1 + ivaPct / 100);
+    const item  = {
+      ...form,
+      id: form.id || uid(),
+      cantidad: cant,
+      valor_unit: unit,
+      valor,
+      iva: ivaPct,
+      tax_type: form.tax_type === "ninguno" ? null : (form.tax_type || "iva"),
+    };
     if (editId) onChange(items.map(x => x.id === editId ? item : x));
     else onChange([...items, item]);
     setShowForm(false);
@@ -2751,17 +2772,21 @@ function TabServicios({ items, onChange, pasadiasOrg = [], onChangePasadias, cat
 
   return (
     <div>
+      {/* Botón de cotización (oculto en vista operativa — sin precios) */}
+      {!ocultarPrecios && (
+        <div style={{ marginBottom: 14 }}>
+          <button
+            onClick={() => setGrupoCotOpen(true)}
+            style={{ width: "100%", padding: "12px 18px", background: B.sand, color: B.navy, border: "none", borderRadius: 10, fontSize: 14, fontWeight: 700, cursor: "pointer", letterSpacing: "0.04em" }}
+          >
+            📥 Descargar cotización para cliente
+          </button>
+        </div>
+      )}
+
       {/* ── Resumen de compra del cliente (grupos) ── */}
       {categoria === "grupo" && (
         <div style={{ marginBottom: 24 }}>
-          <div style={{ marginBottom: 14 }}>
-            <button
-              onClick={() => setGrupoCotOpen(true)}
-              style={{ width: "100%", padding: "12px 18px", background: B.sand, color: B.navy, border: "none", borderRadius: 10, fontSize: 14, fontWeight: 700, cursor: "pointer", letterSpacing: "0.04em" }}
-            >
-              📥 Descargar cotización para cliente
-            </button>
-          </div>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
             <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.07em" }}>
               🛒 Pasadías del grupo
@@ -2926,8 +2951,15 @@ function TabServicios({ items, onChange, pasadiasOrg = [], onChangePasadias, cat
         </div>
       )}
 
-      <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 16 }}>
-        <button onClick={openNew} style={BTN(B.success)}>+ Agregar servicio</button>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, gap: 10, flexWrap: "wrap" }}>
+        {items.length > 1 && (
+          <button onClick={() => onChange([...items].sort((a, b) => ((a.fecha||"")+(a.hora||"")).localeCompare((b.fecha||"")+(b.hora||""))))}
+            style={{ ...BTN(B.navyLight), fontSize: 11, padding: "6px 12px" }}
+            title="Reordenar todos los servicios cronológicamente">
+            🕒 Ordenar por fecha
+          </button>
+        )}
+        <button onClick={openNew} style={{ ...BTN(B.success), marginLeft: "auto" }}>+ Agregar servicio</button>
       </div>
 
       {items.length === 0 && (
@@ -2937,9 +2969,36 @@ function TabServicios({ items, onChange, pasadiasOrg = [], onChangePasadias, cat
       )}
 
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-        {[...items].sort((a, b) => ((a.fecha||"")+(a.hora||"")).localeCompare((b.fecha||"")+(b.hora||""))).map(item => (
-          <div key={item.id} style={{ background: B.navy, borderRadius: 12, padding: "14px 18px",
-            display: "flex", alignItems: "center", gap: 16 }}>
+        {items.map((item, idx) => (
+          <div key={item.id}
+            draggable
+            onDragStart={(e) => {
+              setDragIdx(idx);
+              e.dataTransfer.effectAllowed = "move";
+              e.dataTransfer.setData("text/plain", String(idx));
+            }}
+            onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; }}
+            onDrop={(e) => {
+              e.preventDefault();
+              const from = Number(e.dataTransfer.getData("text/plain"));
+              if (Number.isNaN(from) || from === idx) { setDragIdx(null); return; }
+              const arr = [...items];
+              const [moved] = arr.splice(from, 1);
+              arr.splice(idx, 0, moved);
+              onChange(arr);
+              setDragIdx(null);
+            }}
+            onDragEnd={() => setDragIdx(null)}
+            style={{
+              background: B.navy, borderRadius: 12, padding: "14px 18px",
+              display: "flex", alignItems: "center", gap: 12,
+              opacity: dragIdx === idx ? 0.4 : 1,
+              border: dragIdx !== null && dragIdx !== idx ? `1px dashed ${B.sand}33` : "1px solid transparent",
+            }}>
+            <div title="Arrastrar para reordenar"
+              style={{ color: "rgba(255,255,255,0.3)", fontSize: 18, cursor: "grab", userSelect: "none", padding: "0 4px", lineHeight: 1 }}>
+              ⋮⋮
+            </div>
             <div style={{ flex: 1 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
                 <span style={{ fontSize: 12, fontWeight: 700, color: "rgba(255,255,255,0.5)", textTransform: "uppercase" }}>{item.categoria}</span>
@@ -2948,6 +3007,11 @@ function TabServicios({ items, onChange, pasadiasOrg = [], onChangePasadias, cat
                   {item.fecha ? new Date(item.fecha + "T12:00:00").toLocaleDateString("es-CO", { day: "numeric", month: "short" }) : ""}
                   {item.hora ? ` · ${item.hora}` : ""}
                 </span>}
+                {item.iva > 0 && (
+                  <span style={{ fontSize: 10, color: item.tax_type === "ico" ? "#fb923c" : "#4caf50", fontWeight: 700 }}>
+                    {(item.tax_type || "iva").toUpperCase()} {item.iva}%
+                  </span>
+                )}
               </div>
               <div style={{ fontSize: 14, fontWeight: 800, marginBottom: 4 }}>{item.proveedor || item.descripcion}</div>
               {item.descripcion && item.proveedor && <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)" }}>{item.descripcion}</div>}
@@ -3071,6 +3135,29 @@ function TabServicios({ items, onChange, pasadiasOrg = [], onChangePasadias, cat
                 <span style={{ fontSize: 14, fontWeight: 800, color: B.sand }}>{COP(Number(form.valor) * Number(form.cantidad))}</span>
               </div>
             )}
+            <div>
+              <label style={LS}>Impuesto</label>
+              <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                <Sel value={form.tax_type || "iva"} onChange={v => set("tax_type", v)}>
+                  <option value="iva">IVA</option>
+                  <option value="ico">ICO</option>
+                  <option value="ninguno">Sin impuesto</option>
+                </Sel>
+                {form.tax_type !== "ninguno" && (
+                  <>
+                    <Inp type="number" value={form.iva ?? 0} onChange={v => set("iva", Number(v) || 0)}
+                      placeholder={form.tax_type === "ico" ? "8" : "19"} />
+                    <span style={{ fontSize: 13, color: "rgba(255,255,255,0.5)", fontWeight: 700 }}>%</span>
+                  </>
+                )}
+              </div>
+              {form.tax_type === "iva" && (!form.iva || form.iva === 0) && (
+                <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", marginTop: 3 }}>Tip: IVA estándar 19%</div>
+              )}
+              {form.tax_type === "ico" && (!form.iva || form.iva === 0) && (
+                <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", marginTop: 3 }}>Tip: ICO licores 8%</div>
+              )}
+            </div>
             <div><label style={LS}>Estado</label>
               <Sel value={form.estado} onChange={v => set("estado", v)}>
                 {ESTADOS_S.map(e => <option key={e.key} value={e.key}>{e.label}</option>)}
@@ -3079,6 +3166,24 @@ function TabServicios({ items, onChange, pasadiasOrg = [], onChangePasadias, cat
             <div><label style={LS}>Fecha</label><Inp type="date" value={form.fecha || ""} onChange={v => set("fecha", v)} /></div>
             <div><label style={LS}>Hora</label><Inp type="time" value={form.hora || ""} onChange={v => set("hora", v)} /></div>
             <div style={{ gridColumn: "span 2" }}><label style={LS}>Notas</label><Inp value={form.notas} onChange={v => set("notas", v)} /></div>
+
+            {/* Resumen final con impuesto incluido */}
+            {Number(form.valor) > 0 && Number(form.iva) > 0 && form.tax_type !== "ninguno" && (
+              <div style={{ gridColumn: "span 2", background: B.navyMid, borderRadius: 8, padding: "10px 14px", display: "flex", flexDirection: "column", gap: 4 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "rgba(255,255,255,0.5)" }}>
+                  <span>Subtotal</span>
+                  <span>{COP(Number(form.valor) * Number(form.cantidad || 1))}</span>
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: form.tax_type === "ico" ? "#fb923c" : "#4caf50" }}>
+                  <span>{(form.tax_type || "iva").toUpperCase()} {form.iva}%</span>
+                  <span>+ {COP(Number(form.valor) * Number(form.cantidad || 1) * (Number(form.iva) / 100))}</span>
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, color: B.sand, fontWeight: 800, borderTop: `1px solid ${B.navyLight}`, paddingTop: 4, marginTop: 2 }}>
+                  <span>Total</span>
+                  <span>{COP(Number(form.valor) * Number(form.cantidad || 1) * (1 + Number(form.iva) / 100))}</span>
+                </div>
+              </div>
+            )}
           </div>
           <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 16 }}>
             <button onClick={() => setShowForm(false)} style={{ ...BTN(B.navyLight), border: `1px solid ${B.navyLight}` }}>Cancelar</button>
@@ -3101,27 +3206,50 @@ function TabServicios({ items, onChange, pasadiasOrg = [], onChangePasadias, cat
 }
 
 // ─── PAGOS ────────────────────────────────────────────────────────────────────
-const FORMAS_PAGO_GRUPO = ["Transferencia", "Efectivo", "Datafono", "Wompi", "SKY", "CXC"];
-const EMPTY_PAGO = { id: "", monto: "", forma_pago: "Transferencia", fecha: "", notas: "", registrado_por: "" };
+const FORMAS_PAGO_GRUPO = ["Transferencia", "Efectivo", "Datafono", "Wompi", "Zelle", "Cheque"];
+const EMPTY_PAGO = { id: "", monto: "", forma_pago: "Transferencia", fecha: "", notas: "", registrado_por: "", comprobante_url: "" };
 
 function TabPagos({ pagos = [], onChange, totalGrupo = 0 }) {
   const [showForm, setShowForm] = useState(false);
   const [form, setForm]         = useState(EMPTY_PAGO);
+  const [uploading, setUploading] = useState(false);
+  const [uploadErr, setUploadErr] = useState("");
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
   const totalPagado  = pagos.reduce((s, p) => s + (Number(p.monto) || 0), 0);
   const saldo        = totalGrupo - totalPagado;
+
+  const handleFile = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 10 * 1024 * 1024) { setUploadErr("Archivo muy grande (máx 10MB)"); return; }
+    setUploading(true);
+    setUploadErr("");
+    try {
+      const ext = file.name.split(".").pop() || "bin";
+      const path = `eventos/PAG-${Date.now()}-${Math.random().toString(36).slice(2, 7)}.${ext}`;
+      const { error: upErr } = await supabase.storage.from("comprobantes").upload(path, file, { cacheControl: "3600", upsert: false });
+      if (upErr) throw upErr;
+      const { data: pub } = supabase.storage.from("comprobantes").getPublicUrl(path);
+      set("comprobante_url", pub.publicUrl);
+    } catch (err) {
+      setUploadErr("Error: " + (err.message || err));
+    } finally {
+      setUploading(false);
+    }
+  };
 
   const guardar = () => {
     if (!form.monto || !form.forma_pago) return;
     const pago = { ...form, id: form.id || `PAG-${Date.now()}`, monto: Number(form.monto), fecha: form.fecha || new Date().toISOString().slice(0,10) };
     onChange([...pagos, pago]);
     setForm(EMPTY_PAGO);
+    setUploadErr("");
     setShowForm(false);
   };
   const eliminar = (id) => { if (window.confirm("¿Eliminar este pago?")) onChange(pagos.filter(p => p.id !== id)); };
 
-  const FP_COLOR = { Transferencia: B.sky, Efectivo: B.success, Datafono: "#a78bfa", Wompi: B.sand, SKY: "#f97316", CXC: B.warning };
+  const FP_COLOR = { Transferencia: B.sky, Efectivo: B.success, Datafono: "#a78bfa", Wompi: B.sand, Zelle: "#10b981", Cheque: "#f59e0b" };
 
   return (
     <div>
@@ -3155,6 +3283,12 @@ function TabPagos({ pagos = [], onChange, totalGrupo = 0 }) {
                 </div>
                 {p.notas && <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", fontStyle: "italic" }}>{p.notas}</div>}
                 {p.registrado_por && <div style={{ fontSize: 11, color: "rgba(255,255,255,0.25)" }}>👤 {p.registrado_por}</div>}
+                {p.comprobante_url && (
+                  <a href={p.comprobante_url} target="_blank" rel="noreferrer"
+                    style={{ fontSize: 11, color: B.sky, textDecoration: "none", display: "inline-flex", alignItems: "center", gap: 4, marginTop: 4 }}>
+                    📎 Ver comprobante
+                  </a>
+                )}
               </div>
               <div style={{ fontSize: 18, fontWeight: 800, color: B.success, fontFamily: "'Barlow Condensed', sans-serif", flexShrink: 0 }}>{COP(p.monto)}</div>
               <button onClick={() => eliminar(p.id)} style={{ ...BTN(B.danger + "22"), padding: "3px 8px", fontSize: 11, color: B.danger, flexShrink: 0 }}>✕</button>
@@ -3193,9 +3327,29 @@ function TabPagos({ pagos = [], onChange, totalGrupo = 0 }) {
             <div><label style={LS}>Registrado por</label><Inp value={form.registrado_por} onChange={v => set("registrado_por", v)} /></div>
           </div>
 
+          {/* Comprobante de pago */}
+          <div style={{ marginTop: 14 }}>
+            <label style={LS}>Comprobante de pago (foto/PDF)</label>
+            <input type="file" accept="image/*,application/pdf" onChange={handleFile} disabled={uploading}
+              style={{ width: "100%", padding: "8px 10px", borderRadius: 8, background: B.navy, border: `1px solid ${B.navyLight}`, color: "#fff", fontSize: 12 }} />
+            {uploading && <div style={{ fontSize: 11, color: B.sky, marginTop: 6 }}>⏳ Subiendo…</div>}
+            {uploadErr && <div style={{ fontSize: 11, color: B.danger, marginTop: 6 }}>⚠ {uploadErr}</div>}
+            {form.comprobante_url && (
+              <div style={{ marginTop: 8, padding: 8, background: B.navy, borderRadius: 8, display: "flex", alignItems: "center", gap: 8 }}>
+                <a href={form.comprobante_url} target="_blank" rel="noreferrer" style={{ flex: 1, fontSize: 12, color: B.sky, textDecoration: "none", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  📎 Comprobante adjunto (click para ver)
+                </a>
+                <button onClick={() => set("comprobante_url", "")}
+                  style={{ ...BTN(B.danger + "22"), padding: "3px 8px", fontSize: 11, color: B.danger }}>✕ Quitar</button>
+              </div>
+            )}
+          </div>
+
           <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 16 }}>
-            <button onClick={() => { setShowForm(false); setForm(EMPTY_PAGO); }} style={{ ...BTN(B.navyLight), border: `1px solid ${B.navyLight}` }}>Cancelar</button>
-            <button onClick={guardar} style={BTN(B.success)}>✓ Guardar Pago</button>
+            <button onClick={() => { setShowForm(false); setForm(EMPTY_PAGO); setUploadErr(""); }} style={{ ...BTN(B.navyLight), border: `1px solid ${B.navyLight}` }}>Cancelar</button>
+            <button onClick={guardar} disabled={uploading} style={BTN(B.success)}>
+              {uploading ? "Subiendo comprobante…" : "✓ Guardar Pago"}
+            </button>
           </div>
         </div>
       ) : (
@@ -3838,14 +3992,36 @@ export default function EventoDetalle({ evento: inicial, canEdit = true, onBack,
   const [pasadiasMap, setPasadiasMap] = useState({});
   const [usuariosList, setUsuariosList] = useState([]);
   const [currentUser, setCurrentUser]   = useState("");
+  const [vistaOperativa, setVistaOperativa] = useState(false);
+  const [puedeVerPL, setPuedeVerPL] = useState(false);
 
-  // Load current user name for history logging
+  // Load current user name + rol para history logging y vista restringida.
+  // "Vista operativa" = roles operativos (cocina, etc.) que solo necesitan
+  // ver Rundown, Menús, Servicios (sin precios), Asignaciones y Dietas.
+  // "Puede ver P/L" = solo super_admin, admin, gerente_general_*, contabilidad
+  // o usuarios con permisos_extra.eventos_pl. Es el resumen financiero
+  // confidencial: cotizado vs costos reales (consumo + flota + extras) =
+  // margen del evento.
   useEffect(() => {
     if (!supabase) return;
     supabase.auth.getSession().then(async ({ data: { session } }) => {
       if (!session?.user?.email) return;
-      const { data } = await supabase.from("usuarios").select("nombre").eq("email", session.user.email.toLowerCase()).single();
+      const { data } = await supabase.from("usuarios")
+        .select("nombre, rol_id, permisos_extra, email")
+        .eq("email", session.user.email.toLowerCase()).single();
       setCurrentUser(data?.nombre || session.user.email);
+      const rid = (data?.rol_id || "").toLowerCase();
+      const email = (data?.email || "").toLowerCase();
+      const extras = Array.isArray(data?.permisos_extra) ? data.permisos_extra : [];
+      const esOperativo = /^(chef|cocina|maitre|capitan_servicio|operativo)/.test(rid)
+        || extras.includes("eventos_vista_operativa");
+      setVistaOperativa(esOperativo);
+      // P/L: super_admin, admin, gerente_general_*, contabilidad o el dueño Eric
+      const puedePL = ["super_admin", "admin", "contabilidad"].includes(rid)
+        || rid.startsWith("gerente_general")
+        || extras.includes("eventos_pl")
+        || email === "erickern1@gmail.com" || email === "eric@atoloncartagena.com";
+      setPuedeVerPL(puedePL);
     });
   }, []);
   const saveTimer = useRef(null);
@@ -4055,19 +4231,38 @@ export default function EventoDetalle({ evento: inicial, canEdit = true, onBack,
   const stageColor = stageColors[evento.stage] || B.sand;
 
   const esGrupo = evento.categoria === "grupo";
-  const TABS = [
+  // Vista operativa (cocina/maitre): solo lectura + sin pestañas de
+  // pagos / contactos / bitácora / contratistas / transporte / BEO.
+  // En Servicios se ocultan precios.
+  const efectivoCanEdit = canEdit && !vistaOperativa;
+  const TABS_FULL = [
     { key: "rundown",     label: isMobile ? "📋" : "📋 Rundown" },
     { key: "servicios",   label: isMobile ? "🛎" : "🛎 Servicios" },
     { key: "menus",       label: isMobile ? "🍽️" : "🍽️ Menús" },
+    { key: "openbar",     label: isMobile ? "🍾" : "🍾 Consumo" },
+    { key: "gastos",      label: isMobile ? "🧾" : "🧾 Gastos servicios" },
     { key: "asignaciones",label: isMobile ? "👥" : "👥 Asignaciones" },
-    ...(esGrupo ? [{ key: "pagos", label: isMobile ? "💳" : "💳 Pagos" }] : []),
+    { key: "pagos", label: isMobile ? "💳" : "💳 Pagos" },
     { key: "transporte",  label: isMobile ? "⛵" : "⛵ Transporte" },
     { key: "contactos",   label: isMobile ? "👤" : "👤 Contactos" },
     { key: "contratistas",label: isMobile ? "🤝" : "🤝 Contratistas" },
     { key: "dietas",      label: isMobile ? "🍽" : "🍽 Dietas" },
     { key: "beo",         label: isMobile ? "📋" : "📋 BEO" },
     { key: "bitacora",    label: isMobile ? "📝" : "📝 Bitácora" },
+    // Solo visible para super_admin, admin, gerente_general_*, contabilidad
+    // Comparativo cotizado vs costos reales (consumo + flota + extras).
+    ...(puedeVerPL ? [{ key: "pl", label: isMobile ? "💰" : "💰 P/L", restricted: true }] : []),
   ];
+  const TABS_OPERATIVA = TABS_FULL.filter(t =>
+    ["rundown", "servicios", "menus", "openbar", "asignaciones", "dietas"].includes(t.key)
+  );
+  const TABS = vistaOperativa ? TABS_OPERATIVA : TABS_FULL;
+  // Si el tab actual no está disponible en la vista operativa (ej: usuario
+  // navegó a "pagos" antes), mover a rundown automáticamente.
+  useEffect(() => {
+    if (vistaOperativa && !TABS.some(t => t.key === tab)) setTab("rundown");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [vistaOperativa, tab]);
 
   // Contar alertas
   const incidentesAbiertos = (evento.incidentes||[]).filter(x => !x.resuelto && x.prioridad === "critico").length;
@@ -4180,10 +4375,12 @@ export default function EventoDetalle({ evento: inicial, canEdit = true, onBack,
             cantidad: a.cantidad || 1, valor: (a.cantidad||1) * (a.valor_unit||0) * (1 + (a.iva||0)/100),
           }));
         }
-        return <TabTimeline items={evento.timeline_items||[]} onChange={v => updateLocal("timeline_items", v)} transportes={evento.transporte_detalle||[]} usuarios={usuariosList} serviciosAB={sAB} embarcacionesEvento={evento.embarcaciones_evento||[]} evento={evento} readOnly={!canEdit} />;
+        return <TabTimeline items={evento.timeline_items||[]} onChange={v => updateLocal("timeline_items", v)} transportes={evento.transporte_detalle||[]} usuarios={usuariosList} serviciosAB={sAB} embarcacionesEvento={evento.embarcaciones_evento||[]} evento={evento} readOnly={!efectivoCanEdit} />;
       })()}
-      {tab === "servicios" && <TabServicios  items={evento.servicios_contratados||[]}     onChange={v => updateLocal("servicios_contratados", v)} pasadiasOrg={evento.pasadias_org||[]} onChangePasadias={v => updateLocal("pasadias_org", v)} categoria={evento.categoria} precioTipo={evento.precio_tipo||"publico"} pasadiasMap={pasadiasMap} cotizacionData={evento.cotizacion_data||null} eventoId={evento.id} eventoFecha={evento.fecha} eventoNombre={evento.nombre} evento={evento} />}
+      {tab === "servicios" && <TabServicios  items={evento.servicios_contratados||[]}     onChange={v => updateLocal("servicios_contratados", v)} pasadiasOrg={evento.pasadias_org||[]} onChangePasadias={vistaOperativa ? null : v => updateLocal("pasadias_org", v)} categoria={evento.categoria} precioTipo={evento.precio_tipo||"publico"} pasadiasMap={pasadiasMap} cotizacionData={evento.cotizacion_data||null} eventoId={evento.id} eventoFecha={evento.fecha} eventoNombre={evento.nombre} evento={evento} ocultarPrecios={vistaOperativa} />}
       {tab === "menus"     && <TabMenus     servicios={evento.servicios_contratados||[]} menusDetalle={evento.menus_detalle||{}} onChange={v => updateLocal("menus_detalle", v)} cotizacionData={evento.cotizacion_data||null} timelineItems={evento.timeline_items||[]} />}
+      {tab === "openbar"   && <TabOpenBar      evento={evento} ocultarPrecios={vistaOperativa} />}
+      {tab === "gastos"    && <TabGastosServicios evento={evento} ocultarPrecios={vistaOperativa} />}
       {tab === "asignaciones" && <TabAsignaciones timelineItems={evento.timeline_items||[]} />}
       {tab === "pagos"     && (() => {
         const resolverPrecioLocal = (p) => {
@@ -4216,6 +4413,1505 @@ export default function EventoDetalle({ evento: inicial, canEdit = true, onBack,
       {tab === "dietas"    && <TabDietas     items={evento.restricciones_dieteticas||[]}  paxTotal={evento.pax||0} onChange={v => updateLocal("restricciones_dieteticas", v)} />}
       {tab === "beo"       && <TabBEO        evento={evento} notas={evento.beo_notas||{}} onChange={v => updateLocal("beo_notas", v)} readOnly={!canEdit} />}
       {tab === "bitacora"  && <TabBitacora   items={evento.incidentes||[]}               onChange={v => updateLocal("incidentes", v)} historial={evento.historial_cambios||[]} />}
+      {tab === "pl" && puedeVerPL && <TabPL  evento={evento} />}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// TabOpenBar — Registro de consumo del evento (3 tipos):
+//   • openbar         — Bebidas del open bar (servicio)
+//   • cocina_buffet   — Productos del buffet (cocina)
+//   • cocina_paquete  — Productos incluidos en el paquete (cocina)
+//
+// Cada registro descuenta del stock (vía trigger DB) y suma al costo
+// total del evento. Snapshot del precio de compra al momento del
+// registro → costo histórico fijo aunque suba el precio después.
+// ─────────────────────────────────────────────────────────────────────
+const TIPOS_CONSUMO = [
+  { k: "openbar",        l: "Open Bar",        icon: "🍾", color: "#a78bfa", desc: "Bebidas servidas en barra" },
+  { k: "cocina_buffet",  l: "Buffet",          icon: "🍽️", color: "#f59e0b", desc: "Productos del buffet" },
+  { k: "cocina_paquete", l: "Paquete incluido", icon: "🎁", color: "#22c55e", desc: "Productos del paquete contratado" },
+];
+
+function TabOpenBar({ evento, ocultarPrecios = false }) {
+  const eventoId = evento?.id;
+  const [items, setItems] = useState([]);
+  const [locaciones, setLocaciones] = useState([]);
+  const [consumo, setConsumo] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [filtroTipo, setFiltroTipo] = useState("todos"); // todos | openbar | cocina_buffet | cocina_paquete
+  const [showPick, setShowPick] = useState(false);
+  const [search, setSearch] = useState("");
+  const [pickItem, setPickItem] = useState(null);
+  const [pickTipo, setPickTipo] = useState("openbar");
+  const [pickServicio, setPickServicio] = useState("");  // formato: "origen|id"
+  const [cantidad, setCantidad] = useState("1");
+  const [locacionId, setLocacionId] = useState("LOC-EVENTOS");
+  const [notas, setNotas] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [userEmail, setUserEmail] = useState("");
+  // Carrito de productos antes de guardar (permite agregar varios sin
+  // cerrar el modal — al final se guardan todos juntos)
+  const [carrito, setCarrito] = useState([]);
+  // Vista por servicio: expandir/colapsar y modo agrupado vs lista plana
+  const [vistaAgrupada, setVistaAgrupada] = useState(true);
+  const [servicioAbierto, setServicioAbierto] = useState({});  // { key: bool }
+  const toggleServicio = (key) => setServicioAbierto(s => ({ ...s, [key]: !s[key] }));
+  const COPx = (n) => "$" + Math.round(Number(n) || 0).toLocaleString("es-CO");
+  const tipoInfo = (k) => TIPOS_CONSUMO.find(t => t.k === k) || TIPOS_CONSUMO[0];
+
+  // ── Servicios de A&B disponibles para vincular ──────────────────────
+  // Solo extraemos items relacionados con Alimentos & Bebidas:
+  //   • cotizacion_data.alimentos[]                    → "Cotizado A&B"
+  //   • extras_data.alimentos[]                        → "Extra A&B"
+  //   • servicios_contratados[] con categoría A&B      → "Servicio contratado"
+  //     (banquetes, bebidas, restaurant, alimentos, alimentos y bebidas)
+  const serviciosAyB = useMemo(() => {
+    const result = [];
+    const cot = evento?.cotizacion_data || {};
+    const extras = evento?.extras_data || {};
+
+    (cot.alimentos || []).forEach(a => {
+      if (!a) return;
+      result.push({
+        id: a.id || `alim-${result.length}`,
+        origen: "alimento",
+        origenLabel: "Cotizado A&B",
+        origenColor: "#f59e0b",
+        descripcion: a.concepto || a.descripcion || "Sin nombre",
+        cantidad: a.cantidad,
+      });
+    });
+    (extras.alimentos || []).forEach((a, i) => {
+      if (!a) return;
+      result.push({
+        id: a.id || `extra-alim-${i}`,
+        origen: "extra_alimento",
+        origenLabel: "Extra A&B",
+        origenColor: "#fb923c",
+        descripcion: a.concepto || a.descripcion || "Sin nombre",
+        cantidad: a.cantidad,
+      });
+    });
+    const CATS_AYB = /banquete|bebida|restaurant|alimento|comida|menu|cocktail|coctel|food|catering/i;
+    (evento?.servicios_contratados || []).forEach(s => {
+      if (!s) return;
+      const cat = String(s.categoria || "").toLowerCase();
+      const desc = String(s.descripcion || s.nombre || "").toLowerCase();
+      if (CATS_AYB.test(cat) || CATS_AYB.test(desc)) {
+        result.push({
+          id: s.id || `srv-${result.length}`,
+          origen: "contratado",
+          origenLabel: "Servicio contratado",
+          origenColor: "#a78bfa",
+          descripcion: s.descripcion || s.nombre || s.categoria || "Servicio",
+          cantidad: s.cantidad,
+        });
+      }
+    });
+    return result;
+  }, [evento]);
+
+  // Mapa para resolver "origen|id" → servicio
+  const servicioByKey = Object.fromEntries(serviciosAyB.map(s => [`${s.origen}|${s.id}`, s]));
+
+  const load = async () => {
+    setLoading(true);
+    const [iR, lR, cR, uR] = await Promise.all([
+      supabase.from("items_catalogo")
+        .select("id, nombre, categoria, unidad, stock_actual, precio_compra, foto_url")
+        .eq("activo", true).order("nombre"),
+      supabase.from("items_locaciones").select("id, nombre").order("nombre"),
+      supabase.from("eventos_consumo_openbar")
+        .select("*").eq("evento_id", eventoId).order("created_at", { ascending: false }),
+      supabase.auth.getUser(),
+    ]);
+    setItems(iR.data || []);
+    setLocaciones(lR.data || []);
+    setConsumo(cR.data || []);
+    setUserEmail(uR.data?.user?.email || "");
+    setLoading(false);
+  };
+  useEffect(() => { load(); }, [eventoId]);
+
+  // Mapa para enriquecer los registros de consumo con info del item
+  const itemsById = Object.fromEntries(items.map(i => [i.id, i]));
+  const locById   = Object.fromEntries(locaciones.map(l => [l.id, l]));
+
+  // ── Recalc en vivo: si el catálogo tiene precio_compra > 0, usarlo y
+  //    recalcular costo_total. Esto cubre el caso de consumos registrados
+  //    cuando el catálogo aún estaba en $0 y luego una factura actualizó
+  //    el precio. Si el catálogo está en $0, mantenemos el snapshot (no
+  //    queremos pisar un precio histórico válido con 0).
+  const consumoLive = consumo.map(c => {
+    const cat = itemsById[c.item_id];
+    const precioLive = Number(cat?.precio_compra) || 0;
+    if (precioLive <= 0) return c;
+    const cantidad = Number(c.cantidad) || 0;
+    return {
+      ...c,
+      precio_unitario: precioLive,
+      costo_total: cantidad * precioLive,
+      _precio_snapshot: c.precio_unitario,   // se preserva por si hace falta auditar
+    };
+  });
+
+  // Filtro de búsqueda en el picker
+  const itemsFiltrados = items.filter(i => {
+    if (!search.trim()) return true;
+    const q = search.toLowerCase();
+    return `${i.nombre || ""} ${i.categoria || ""}`.toLowerCase().includes(q);
+  }).slice(0, 50);
+
+  // Vigentes filtrados por tipo activo
+  const vigenteTodo = consumoLive.filter(c => !c.anulado);
+  const consumoVigente = filtroTipo === "todos"
+    ? vigenteTodo
+    : vigenteTodo.filter(c => (c.tipo || "openbar") === filtroTipo);
+
+  // Totales por tipo (siempre sobre vigenteTodo, para badges)
+  const totalesPorTipo = {};
+  vigenteTodo.forEach(c => {
+    const t = c.tipo || "openbar";
+    if (!totalesPorTipo[t]) totalesPorTipo[t] = { qty: 0, costo: 0, count: 0 };
+    totalesPorTipo[t].qty += Number(c.cantidad || 0);
+    totalesPorTipo[t].costo += Number(c.costo_total || 0);
+    totalesPorTipo[t].count++;
+  });
+
+  const totalCosto = consumoVigente.reduce((s, c) => s + Number(c.costo_total || 0), 0);
+  const totalUnidades = consumoVigente.reduce((s, c) => s + Number(c.cantidad || 0), 0);
+
+  // Agrupar por categoría para el resumen (sobre el subset filtrado)
+  const porCategoria = {};
+  consumoVigente.forEach(c => {
+    const cat = itemsById[c.item_id]?.categoria || "Otros";
+    if (!porCategoria[cat]) porCategoria[cat] = { qty: 0, costo: 0, items: [] };
+    porCategoria[cat].qty += Number(c.cantidad || 0);
+    porCategoria[cat].costo += Number(c.costo_total || 0);
+    porCategoria[cat].items.push(c);
+  });
+
+  // Agrupar por SERVICIO de la cotización: cada línea de A&B con sus
+  // ingredientes/productos consumidos. Click en un servicio → expande
+  // para ver el detalle. Permite ver costo real por línea cotizada.
+  const porServicio = {};
+  consumoVigente.forEach(c => {
+    const key = c.servicio_id ? `${c.servicio_origen}|${c.servicio_id}` : "_sin_servicio";
+    if (!porServicio[key]) {
+      porServicio[key] = {
+        key,
+        descripcion: c.servicio_descripcion || "Sin servicio asignado",
+        origen: c.servicio_origen || null,
+        registros: 0, qty: 0, costo: 0, items: [],
+      };
+    }
+    porServicio[key].registros++;
+    porServicio[key].qty += Number(c.cantidad || 0);
+    porServicio[key].costo += Number(c.costo_total || 0);
+    porServicio[key].items.push(c);
+  });
+  const serviciosRows = Object.values(porServicio).sort((a, b) => b.costo - a.costo);
+
+  // Agregar el item actual al CARRITO (no guarda en BD todavía).
+  // Permite ir cargando varios productos antes de hacer el save final.
+  const agregarAlCarrito = () => {
+    if (!pickItem) return;
+    const qty = Number(cantidad);
+    if (!qty || qty <= 0) return alert("Cantidad inválida");
+    if (serviciosAyB.length > 0 && !pickServicio) {
+      return alert("Seleccioná a qué servicio de A&B aplica este consumo.");
+    }
+    const precio = Number(pickItem.precio_compra) || 0;
+    const sv = pickServicio ? servicioByKey[pickServicio] : null;
+    setCarrito(c => [...c, {
+      _key: `${pickItem.id}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      item: pickItem,
+      cantidad: qty,
+      precio_unitario: precio,
+      costo_total: qty * precio,
+      tipo: pickTipo,
+      servicio: sv,
+      locacion_id: locacionId || null,
+      notas: notas.trim() || null,
+    }]);
+    // Reset solo del producto actual; mantenemos tipo/servicio/locación
+    // para que el siguiente producto los herede (caso típico).
+    setPickItem(null);
+    setCantidad("1");
+    setNotas("");
+    setSearch("");
+  };
+
+  const removerDelCarrito = (key) => setCarrito(c => c.filter(x => x._key !== key));
+
+  // Guardar TODO el carrito de una vez. Cierra el modal al terminar.
+  const guardarCarrito = async () => {
+    if (carrito.length === 0) {
+      // Si solo hay un item parcial (con producto seleccionado), agregarlo primero
+      if (pickItem) {
+        agregarAlCarrito();
+        // Re-llamar después de actualizar el state — usuario debe re-clickear
+        return;
+      }
+      return alert("No hay productos en el carrito");
+    }
+    setSaving(true);
+    const payload = carrito.map(c => ({
+      evento_id: eventoId,
+      item_id: c.item.id,
+      cantidad: c.cantidad,
+      unidad: c.item.unidad || null,
+      locacion_id: c.locacion_id,
+      precio_unitario: c.precio_unitario,
+      costo_total: c.costo_total,
+      tipo: c.tipo,
+      servicio_id: c.servicio?.id || null,
+      servicio_origen: c.servicio?.origen || null,
+      servicio_descripcion: c.servicio?.descripcion || null,
+      notas: c.notas,
+      registrado_por: userEmail,
+      loggro_sync_status: "pendiente",
+    }));
+    const { data: inserted, error } = await supabase.from("eventos_consumo_openbar").insert(payload).select();
+    setSaving(false);
+    if (error) return alert("Error: " + error.message);
+
+    // Disparar sync con Loggro para cada uno (fire-and-forget)
+    const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+    (inserted || []).forEach(row => {
+      fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/loggro-sync/consumo-evento-salida`, {
+        method: "POST",
+        headers: { apikey: anonKey, Authorization: `Bearer ${anonKey}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ consumo_id: row.id }),
+      }).catch(err => console.warn("[loggro-sync] fallo sync:", err));
+    });
+
+    setShowPick(false);
+    setCarrito([]);
+    setPickItem(null);
+    setPickServicio("");
+    setCantidad("1");
+    setNotas("");
+    setSearch("");
+    setTimeout(load, 1500);
+  };
+
+  const anular = async (c) => {
+    const motivo = prompt("Motivo de anulación:");
+    if (motivo === null) return;
+    await supabase.from("eventos_consumo_openbar").update({
+      anulado: true,
+      anulado_por: userEmail,
+      anulado_at: new Date().toISOString(),
+      motivo_anulacion: motivo || "Sin motivo",
+    }).eq("id", c.id);
+    load();
+  };
+
+  const retrySyncLoggro = async (c) => {
+    const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+    const r = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/loggro-sync/consumo-evento-salida`, {
+      method: "POST",
+      headers: { apikey: anonKey, Authorization: `Bearer ${anonKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ consumo_id: c.id }),
+    }).then(r => r.json()).catch(e => ({ ok: false, error: e.message }));
+    if (!r.ok) alert("Sync falló: " + (r.error || "ver logs"));
+    load();
+  };
+
+  if (loading) return <div style={{ padding: 30, textAlign: "center", color: "rgba(255,255,255,0.4)" }}>Cargando consumo…</div>;
+
+  return (
+    <div style={{ padding: "14px 6px" }}>
+      {/* Header con total */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, flexWrap: "wrap", gap: 12 }}>
+        <div>
+          <div style={{ fontSize: 16, fontWeight: 800, color: "#fff" }}>🍾 Consumo del evento</div>
+          <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginTop: 2 }}>
+            {consumoVigente.length} registro{consumoVigente.length === 1 ? "" : "s"} · {totalUnidades.toLocaleString("es-CO")} unidad{totalUnidades === 1 ? "" : "es"}
+            {!ocultarPrecios && <> · Costo: <strong style={{ color: B.sky }}>{COPx(totalCosto)}</strong></>}
+          </div>
+        </div>
+        <button type="button" onClick={() => setShowPick(true)}
+          style={{ padding: "10px 18px", borderRadius: 10, border: "none", background: B.success, color: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
+          + Cargar consumo
+        </button>
+      </div>
+
+      {/* Pills de filtrado por tipo */}
+      <div style={{ display: "flex", gap: 6, marginBottom: 14, flexWrap: "wrap" }}>
+        <button type="button" onClick={() => setFiltroTipo("todos")}
+          style={{ padding: "7px 14px", borderRadius: 18, border: filtroTipo === "todos" ? `1px solid ${B.sky}` : `1px solid ${B.navyLight}`,
+            background: filtroTipo === "todos" ? B.sky + "22" : "transparent", color: filtroTipo === "todos" ? B.sky : "rgba(255,255,255,0.5)",
+            fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+          Todos ({vigenteTodo.length})
+        </button>
+        {TIPOS_CONSUMO.map(t => {
+          const tot = totalesPorTipo[t.k] || { count: 0, costo: 0 };
+          const active = filtroTipo === t.k;
+          return (
+            <button key={t.k} type="button" onClick={() => setFiltroTipo(t.k)}
+              style={{ padding: "7px 14px", borderRadius: 18, border: active ? `1px solid ${t.color}` : `1px solid ${B.navyLight}`,
+                background: active ? t.color + "22" : "transparent", color: active ? t.color : "rgba(255,255,255,0.5)",
+                fontSize: 12, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
+              <span>{t.icon} {t.l}</span>
+              <span style={{ fontSize: 10, opacity: 0.8 }}>· {tot.count}{!ocultarPrecios && tot.costo > 0 && ` · ${COPx(tot.costo)}`}</span>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Resumen por categoría */}
+      {Object.keys(porCategoria).length > 0 && !ocultarPrecios && (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 8, marginBottom: 14 }}>
+          {Object.entries(porCategoria).map(([cat, g]) => (
+            <div key={cat} style={{ background: B.navyMid, borderRadius: 10, padding: "10px 12px", borderLeft: `3px solid ${B.sky}` }}>
+              <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.05em" }}>{cat}</div>
+              <div style={{ fontSize: 16, fontWeight: 800, color: "#fff", marginTop: 2 }}>{COPx(g.costo)}</div>
+              <div style={{ fontSize: 10, color: "rgba(255,255,255,0.45)" }}>{g.qty.toLocaleString("es-CO")} unidades</div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Lista de consumos */}
+      {consumo.length === 0 ? (
+        <div style={{ background: B.navyMid, borderRadius: 12, padding: 30, textAlign: "center", color: "rgba(255,255,255,0.4)" }}>
+          Sin consumo registrado. Tocá "+ Cargar consumo" cuando empieces a usar productos del open bar.
+        </div>
+      ) : (<>
+
+      {/* Toggle vista agrupada / lista plana */}
+      <div style={{ display: "flex", gap: 6, marginBottom: 10, justifyContent: "flex-end" }}>
+        <button type="button" onClick={() => setVistaAgrupada(true)}
+          style={{ padding: "6px 12px", borderRadius: 16, border: vistaAgrupada ? `1px solid ${B.sky}` : `1px solid ${B.navyLight}`,
+            background: vistaAgrupada ? B.sky + "22" : "transparent", color: vistaAgrupada ? B.sky : "rgba(255,255,255,0.5)",
+            fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
+          📊 Por servicio
+        </button>
+        <button type="button" onClick={() => setVistaAgrupada(false)}
+          style={{ padding: "6px 12px", borderRadius: 16, border: !vistaAgrupada ? `1px solid ${B.sky}` : `1px solid ${B.navyLight}`,
+            background: !vistaAgrupada ? B.sky + "22" : "transparent", color: !vistaAgrupada ? B.sky : "rgba(255,255,255,0.5)",
+            fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
+          📋 Lista plana
+        </button>
+      </div>
+
+      {vistaAgrupada ? (
+        // ── Vista agrupada por servicio ──────────────────────────────
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {serviciosRows.map(s => {
+            const isOpen = !!servicioAbierto[s.key];
+            // Subgrupo por categoría dentro del servicio
+            const porCat = {};
+            s.items.forEach(c => {
+              const cat = itemsById[c.item_id]?.categoria || "Otros";
+              if (!porCat[cat]) porCat[cat] = { qty: 0, costo: 0, items: [] };
+              porCat[cat].qty += Number(c.cantidad || 0);
+              porCat[cat].costo += Number(c.costo_total || 0);
+              porCat[cat].items.push(c);
+            });
+            return (
+              <div key={s.key} style={{ background: B.navyMid, borderRadius: 12, overflow: "hidden", border: isOpen ? `1px solid ${B.sky}55` : `1px solid transparent` }}>
+                {/* Header del servicio (clickeable) */}
+                <button type="button" onClick={() => toggleServicio(s.key)}
+                  style={{ display: "grid", gridTemplateColumns: "30px 1fr 90px 90px 110px", gap: 10, alignItems: "center",
+                    width: "100%", padding: "12px 16px", background: "transparent", border: "none", color: "#fff", cursor: "pointer", textAlign: "left" }}>
+                  <div style={{ fontSize: 16, color: B.sky }}>{isOpen ? "▼" : "▶"}</div>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontWeight: 700, fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      📋 {s.descripcion}
+                    </div>
+                    <div style={{ fontSize: 10, color: "rgba(255,255,255,0.45)", marginTop: 2 }}>
+                      {s.registros} registro{s.registros === 1 ? "" : "s"} · {s.qty.toLocaleString("es-CO")} unidades · {Object.keys(porCat).length} categoría{Object.keys(porCat).length === 1 ? "" : "s"}
+                    </div>
+                  </div>
+                  <div style={{ textAlign: "right", fontSize: 11, color: "rgba(255,255,255,0.45)" }}>
+                    {s.registros}<br/><span style={{ fontSize: 9 }}>productos</span>
+                  </div>
+                  <div style={{ textAlign: "right", fontSize: 11, color: "rgba(255,255,255,0.45)" }}>
+                    {s.qty.toLocaleString("es-CO")}<br/><span style={{ fontSize: 9 }}>unidades</span>
+                  </div>
+                  <div style={{ textAlign: "right" }}>
+                    {!ocultarPrecios && (
+                      <div style={{ fontSize: 16, fontWeight: 800, color: B.sky, fontFamily: "'Barlow Condensed', sans-serif" }}>{COPx(s.costo)}</div>
+                    )}
+                  </div>
+                </button>
+
+                {/* Detalle expandido */}
+                {isOpen && (
+                  <div style={{ borderTop: `1px solid ${B.navyLight}` }}>
+                    {Object.entries(porCat).sort((a, b) => b[1].costo - a[1].costo).map(([cat, g]) => (
+                      <div key={cat}>
+                        <div style={{ background: B.navy, padding: "6px 18px", fontSize: 10, color: B.sand, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 700, display: "flex", justifyContent: "space-between" }}>
+                          <span>{cat}</span>
+                          <span style={{ color: "rgba(255,255,255,0.5)" }}>
+                            {g.items.length} × {g.qty.toLocaleString("es-CO")} unidades{!ocultarPrecios && ` · ${COPx(g.costo)}`}
+                          </span>
+                        </div>
+                        {g.items.map(c => {
+                          const it = itemsById[c.item_id];
+                          const tInfo = tipoInfo(c.tipo || "openbar");
+                          return (
+                            <div key={c.id} style={{ display: "grid", gridTemplateColumns: "1fr 70px 90px 110px 100px 36px", gap: 10, padding: "8px 18px", borderTop: `1px solid ${B.navyLight}`, fontSize: 12, opacity: c.anulado ? 0.4 : 1, textDecoration: c.anulado ? "line-through" : "none" }}>
+                              <div>
+                                <div style={{ color: "#fff", fontWeight: 600, display: "flex", alignItems: "center", gap: 6 }}>
+                                  <span style={{ fontSize: 10, padding: "1px 6px", borderRadius: 6, background: tInfo.color + "22", color: tInfo.color, fontWeight: 700 }}>{tInfo.icon}</span>
+                                  <span>{it?.nombre || c.item_id}</span>
+                                </div>
+                                <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", marginTop: 1 }}>
+                                  {c.notas ? `${c.notas} · ` : ""}{c.registrado_por && `por ${c.registrado_por.split("@")[0]}`}
+                                  {c.anulado && c.motivo_anulacion && ` · anulado: ${c.motivo_anulacion}`}
+                                </div>
+                              </div>
+                              <div style={{ textAlign: "right", color: "#fff" }}>{Number(c.cantidad).toLocaleString("es-CO")}</div>
+                              <div style={{ color: "rgba(255,255,255,0.55)", fontSize: 11 }}>{locById[c.locacion_id]?.nombre || "—"}</div>
+                              <div style={{ textAlign: "right", color: "rgba(255,255,255,0.55)" }}>{ocultarPrecios ? "" : COPx(c.precio_unitario)}</div>
+                              <div style={{ textAlign: "right", color: B.sky, fontWeight: 700 }}>{ocultarPrecios ? "" : COPx(c.costo_total)}</div>
+                              <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
+                                {!c.anulado && c.loggro_sync_status === "ok" && <span title={`Loggro mov ${c.loggro_movement_id || ""}`} style={{ fontSize: 9, color: "#22c55e" }}>🔗</span>}
+                                {!c.anulado && c.loggro_sync_status === "pendiente" && <span style={{ fontSize: 9, color: B.warning }}>⏳</span>}
+                                {!c.anulado && c.loggro_sync_status === "error" && (
+                                  <button type="button" onClick={() => retrySyncLoggro(c)} title={c.loggro_sync_error}
+                                    style={{ background: "transparent", border: `1px solid ${B.danger}55`, color: B.danger, cursor: "pointer", fontSize: 9, padding: "1px 5px", borderRadius: 4 }}>⚠</button>
+                                )}
+                                {!c.anulado && (
+                                  <button type="button" onClick={() => anular(c)} title="Anular" style={{ background: "transparent", border: "none", color: B.danger, cursor: "pointer", fontSize: 14 }}>✕</button>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        // ── Vista plana (lista lineal) ───────────────────────────────
+        <div style={{ background: B.navyMid, borderRadius: 12, overflow: "hidden" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 70px 90px 110px 100px 36px", gap: 10, padding: "10px 14px", background: B.navy, fontSize: 10, color: "rgba(255,255,255,0.45)", textTransform: "uppercase", letterSpacing: "0.05em", fontWeight: 700 }}>
+            <div>Producto</div>
+            <div style={{ textAlign: "right" }}>Cant.</div>
+            <div>Locación</div>
+            <div style={{ textAlign: "right" }}>{ocultarPrecios ? "" : "P. Unit"}</div>
+            <div style={{ textAlign: "right" }}>{ocultarPrecios ? "" : "Total"}</div>
+            <div></div>
+          </div>
+          {(filtroTipo === "todos" ? consumo : consumo.filter(c => (c.tipo || "openbar") === filtroTipo)).map(c => {
+            const it = itemsById[c.item_id];
+            const loc = locById[c.locacion_id];
+            const tInfo = tipoInfo(c.tipo || "openbar");
+            return (
+              <div key={c.id} style={{ display: "grid", gridTemplateColumns: "1fr 70px 90px 110px 100px 36px", gap: 10, padding: "10px 14px", borderTop: `1px solid ${B.navyLight}`, fontSize: 12, opacity: c.anulado ? 0.4 : 1, textDecoration: c.anulado ? "line-through" : "none" }}>
+                <div>
+                  <div style={{ color: "#fff", fontWeight: 600, display: "flex", alignItems: "center", gap: 6 }}>
+                    <span title={tInfo.l} style={{ fontSize: 10, padding: "1px 6px", borderRadius: 6, background: tInfo.color + "22", color: tInfo.color, fontWeight: 700 }}>{tInfo.icon}</span>
+                    <span>{it?.nombre || c.item_id}</span>
+                  </div>
+                  <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", marginTop: 1 }}>
+                    {it?.categoria || "—"}
+                    {c.servicio_descripcion && (
+                      <> · <span style={{ color: "#fbbf24" }}>📋 {c.servicio_descripcion}</span></>
+                    )}
+                    {c.notas ? ` · ${c.notas}` : ""}
+                    {c.registrado_por && ` · por ${c.registrado_por.split("@")[0]}`}
+                    {c.anulado && c.motivo_anulacion && ` · anulado: ${c.motivo_anulacion}`}
+                  </div>
+                </div>
+                <div style={{ textAlign: "right", color: "#fff" }}>{Number(c.cantidad).toLocaleString("es-CO")}</div>
+                <div style={{ color: "rgba(255,255,255,0.55)", fontSize: 11 }}>{loc?.nombre || "—"}</div>
+                <div style={{ textAlign: "right", color: "rgba(255,255,255,0.55)" }}>{ocultarPrecios ? "" : COPx(c.precio_unitario)}</div>
+                <div style={{ textAlign: "right", color: B.sky, fontWeight: 700 }}>{ocultarPrecios ? "" : COPx(c.costo_total)}</div>
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
+                  {/* Indicador de sync con Loggro */}
+                  {!c.anulado && c.loggro_sync_status === "ok" && (
+                    <span title={`Sincronizado · Loggro mov ${c.loggro_movement_id || ""}`}
+                      style={{ fontSize: 9, color: "#22c55e" }}>🔗 Loggro</span>
+                  )}
+                  {!c.anulado && c.loggro_sync_status === "pendiente" && (
+                    <span title="Sincronizando con Loggro…" style={{ fontSize: 9, color: B.warning }}>⏳ sync…</span>
+                  )}
+                  {!c.anulado && c.loggro_sync_status === "error" && (
+                    <button type="button" onClick={() => retrySyncLoggro(c)}
+                      title={c.loggro_sync_error || "Error al sincronizar con Loggro"}
+                      style={{ background: "transparent", border: `1px solid ${B.danger}55`, color: B.danger, cursor: "pointer", fontSize: 9, padding: "2px 6px", borderRadius: 4 }}>
+                      ⚠ retry
+                    </button>
+                  )}
+                  {!c.anulado && (
+                    <button type="button" onClick={() => anular(c)} title="Anular" style={{ background: "transparent", border: "none", color: B.danger, cursor: "pointer", fontSize: 14 }}>✕</button>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+      </>)}
+
+      {/* Modal de selección */}
+      {showPick && (
+        <div onClick={() => setShowPick(false)}
+          style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 1000, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "30px 16px", overflowY: "auto" }}>
+          <div onClick={e => e.stopPropagation()}
+            style={{ background: B.navy, borderRadius: 16, padding: 22, maxWidth: 560, width: "100%", color: "#fff", border: `1px solid ${B.navyLight}` }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+              <div style={{ fontSize: 18, fontWeight: 800 }}>+ Cargar consumo</div>
+              <button type="button" onClick={() => setShowPick(false)} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.4)", cursor: "pointer", fontSize: 22 }}>×</button>
+            </div>
+
+            {/* Servicio de A&B al que aplica este consumo */}
+            <div style={{ marginBottom: 12 }}>
+              <label style={{ display: "block", fontSize: 11, color: "rgba(255,255,255,0.5)", fontWeight: 600, textTransform: "uppercase", marginBottom: 6 }}>
+                Servicio A&B del evento *
+              </label>
+              {serviciosAyB.length === 0 ? (
+                <div style={{ padding: "10px 12px", background: "rgba(245,158,11,0.08)", border: `1px solid ${B.warning}55`, borderRadius: 8, fontSize: 11, color: B.warning }}>
+                  ⚠️ No hay servicios de A&B en la cotización. Agregá items de "Alimentos y Bebidas" en la cotización primero.
+                </div>
+              ) : (
+                <select value={pickServicio} onChange={e => setPickServicio(e.target.value)} required
+                  style={{ width: "100%", padding: "10px 12px", borderRadius: 8, background: B.navyLight, border: `1px solid ${B.navyLight}`, color: "#fff", fontSize: 13, outline: "none", boxSizing: "border-box" }}>
+                  <option value="">— Seleccionar servicio —</option>
+                  {Object.entries(serviciosAyB.reduce((acc, s) => {
+                    if (!acc[s.origenLabel]) acc[s.origenLabel] = [];
+                    acc[s.origenLabel].push(s);
+                    return acc;
+                  }, {})).map(([grupo, items]) => (
+                    <optgroup key={grupo} label={grupo}>
+                      {items.map(s => (
+                        <option key={`${s.origen}|${s.id}`} value={`${s.origen}|${s.id}`}>
+                          {s.descripcion}{s.cantidad ? ` (×${s.cantidad})` : ""}
+                        </option>
+                      ))}
+                    </optgroup>
+                  ))}
+                </select>
+              )}
+              <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", marginTop: 4 }}>
+                Permite reportar costo por línea de cotización (ej: cuánto costó "Open Bar Premium").
+              </div>
+            </div>
+
+            {/* Selector de tipo: en qué categoría va este consumo */}
+            <div style={{ marginBottom: 12 }}>
+              <label style={{ display: "block", fontSize: 11, color: "rgba(255,255,255,0.5)", fontWeight: 600, textTransform: "uppercase", marginBottom: 6 }}>Tipo de consumo</label>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 6 }}>
+                {TIPOS_CONSUMO.map(t => (
+                  <button key={t.k} type="button" onClick={() => setPickTipo(t.k)}
+                    style={{ padding: "9px 10px", borderRadius: 8, border: pickTipo === t.k ? `2px solid ${t.color}` : `1px solid ${B.navyLight}`,
+                      background: pickTipo === t.k ? t.color + "22" : B.navyMid, color: pickTipo === t.k ? t.color : "rgba(255,255,255,0.6)",
+                      cursor: "pointer", fontSize: 11, fontWeight: 700, textAlign: "center", lineHeight: 1.2 }}>
+                    <div style={{ fontSize: 18, marginBottom: 2 }}>{t.icon}</div>
+                    {t.l}
+                  </button>
+                ))}
+              </div>
+              <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", marginTop: 6, textAlign: "center" }}>{tipoInfo(pickTipo).desc}</div>
+            </div>
+
+            {!pickItem ? (
+              <>
+                <input value={search} onChange={e => setSearch(e.target.value)}
+                  placeholder="🔍 Buscar producto…" autoFocus
+                  style={{ width: "100%", padding: "10px 12px", borderRadius: 8, background: B.navyLight, border: `1px solid ${B.navyLight}`, color: "#fff", fontSize: 13, outline: "none", boxSizing: "border-box", marginBottom: 10 }} />
+                <div style={{ background: B.navyMid, borderRadius: 8, maxHeight: 360, overflowY: "auto" }}>
+                  {itemsFiltrados.length === 0 ? (
+                    <div style={{ padding: 20, textAlign: "center", color: "rgba(255,255,255,0.4)", fontSize: 12 }}>Sin coincidencias</div>
+                  ) : itemsFiltrados.map(i => (
+                    <button key={i.id} type="button" onClick={() => setPickItem(i)}
+                      style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "10px 12px", background: "transparent", border: "none", borderBottom: `1px solid ${B.navyLight}`, color: "#fff", cursor: "pointer", textAlign: "left" }}>
+                      <div style={{ width: 40, height: 40, borderRadius: 6, background: i.foto_url ? `url(${i.foto_url}) center/cover` : B.navyLight, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14 }}>
+                        {!i.foto_url && "📦"}
+                      </div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 13, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{i.nombre}</div>
+                        <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)" }}>
+                          {i.categoria || "—"} · Stock: {Number(i.stock_actual || 0).toLocaleString("es-CO")} {i.unidad || ""}
+                          {!ocultarPrecios && i.precio_compra > 0 && ` · ${COPx(i.precio_compra)}/u`}
+                        </div>
+                      </div>
+                      <span style={{ fontSize: 12, color: B.success, fontWeight: 700 }}>+</span>
+                    </button>
+                  ))}
+                </div>
+              </>
+            ) : (
+              <>
+                <button type="button" onClick={() => setPickItem(null)}
+                  style={{ background: "none", border: "none", color: B.sky, fontSize: 11, cursor: "pointer", marginBottom: 10, padding: 0 }}>← Cambiar producto</button>
+                <div style={{ background: B.navyMid, borderRadius: 10, padding: 14, marginBottom: 12 }}>
+                  <div style={{ fontSize: 14, fontWeight: 700 }}>{pickItem.nombre}</div>
+                  <div style={{ fontSize: 11, color: "rgba(255,255,255,0.45)", marginTop: 2 }}>
+                    {pickItem.categoria || "—"} · Stock actual: {Number(pickItem.stock_actual || 0).toLocaleString("es-CO")} {pickItem.unidad || ""}
+                    {!ocultarPrecios && pickItem.precio_compra > 0 && ` · ${COPx(pickItem.precio_compra)} c/u`}
+                  </div>
+                </div>
+
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr", gap: 10, marginBottom: 10 }}>
+                  <div>
+                    <label style={{ display: "block", fontSize: 11, color: "rgba(255,255,255,0.5)", fontWeight: 600, textTransform: "uppercase", marginBottom: 4 }}>Cantidad</label>
+                    <input type="number" value={cantidad} onChange={e => setCantidad(e.target.value)} step="0.01" min="0.01" autoFocus
+                      style={{ width: "100%", padding: "10px 12px", borderRadius: 8, background: B.navyLight, border: `1px solid ${B.navyLight}`, color: "#fff", fontSize: 14, outline: "none", boxSizing: "border-box" }} />
+                  </div>
+                  <div>
+                    <label style={{ display: "block", fontSize: 11, color: "rgba(255,255,255,0.5)", fontWeight: 600, textTransform: "uppercase", marginBottom: 4 }}>Locación (descuenta de)</label>
+                    <select value={locacionId} onChange={e => setLocacionId(e.target.value)}
+                      style={{ width: "100%", padding: "10px 12px", borderRadius: 8, background: B.navyLight, border: `1px solid ${B.navyLight}`, color: "#fff", fontSize: 13, outline: "none", boxSizing: "border-box" }}>
+                      <option value="">— Sin descontar locación —</option>
+                      {locaciones.map(l => <option key={l.id} value={l.id}>{l.nombre}</option>)}
+                    </select>
+                  </div>
+                </div>
+
+                <div style={{ marginBottom: 12 }}>
+                  <label style={{ display: "block", fontSize: 11, color: "rgba(255,255,255,0.5)", fontWeight: 600, textTransform: "uppercase", marginBottom: 4 }}>Notas (opcional)</label>
+                  <input value={notas} onChange={e => setNotas(e.target.value)} placeholder="Ej: barra principal, reserva VIP…"
+                    style={{ width: "100%", padding: "9px 12px", borderRadius: 8, background: B.navyLight, border: `1px solid ${B.navyLight}`, color: "#fff", fontSize: 12, outline: "none", boxSizing: "border-box" }} />
+                </div>
+
+                {!ocultarPrecios && (
+                  <div style={{ background: B.navy, borderRadius: 8, padding: "10px 14px", marginBottom: 12, display: "flex", justifyContent: "space-between", fontSize: 13 }}>
+                    <span style={{ color: "rgba(255,255,255,0.6)" }}>Costo</span>
+                    <strong style={{ color: B.sky, fontFamily: "'Barlow Condensed', sans-serif", fontSize: 18 }}>
+                      {COPx((Number(cantidad) || 0) * (Number(pickItem.precio_compra) || 0))}
+                    </strong>
+                  </div>
+                )}
+
+                <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+                  <button type="button" onClick={() => setPickItem(null)}
+                    style={{ padding: "9px 16px", borderRadius: 8, border: "none", background: B.navyLight, color: "#fff", cursor: "pointer", fontWeight: 700, fontSize: 13 }} disabled={saving}>Cancelar producto</button>
+                  <button type="button" onClick={agregarAlCarrito}
+                    style={{ padding: "9px 18px", borderRadius: 8, border: "none", background: B.sky, color: B.navy, cursor: "pointer", fontWeight: 700, fontSize: 13 }} disabled={saving}>
+                    + Agregar al carrito
+                  </button>
+                </div>
+              </>
+            )}
+
+            {/* ── Carrito de productos por guardar ── */}
+            {carrito.length > 0 && (
+              <div style={{ marginTop: 16, paddingTop: 14, borderTop: `2px solid ${B.sky}55` }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: B.sky, textTransform: "uppercase", letterSpacing: "0.06em" }}>
+                    🛒 Carrito ({carrito.length} producto{carrito.length === 1 ? "" : "s"})
+                  </div>
+                  {!ocultarPrecios && (
+                    <span style={{ fontSize: 14, fontWeight: 800, color: B.sky, fontFamily: "'Barlow Condensed', sans-serif" }}>
+                      Total: {COPx(carrito.reduce((s, x) => s + (x.costo_total || 0), 0))}
+                    </span>
+                  )}
+                </div>
+                <div style={{ background: B.navyMid, borderRadius: 8, maxHeight: 220, overflowY: "auto" }}>
+                  {carrito.map(c => (
+                    <div key={c._key} style={{ padding: "8px 12px", borderBottom: `1px solid ${B.navyLight}`, display: "grid", gridTemplateColumns: "1fr 60px 90px 28px", gap: 8, alignItems: "center", fontSize: 11 }}>
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ fontWeight: 700, color: "#fff", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.item.nombre}</div>
+                        <div style={{ fontSize: 9, color: "rgba(255,255,255,0.4)" }}>
+                          {tipoInfo(c.tipo).icon} {c.servicio?.descripcion || "—"}
+                        </div>
+                      </div>
+                      <div style={{ textAlign: "right", color: "rgba(255,255,255,0.65)" }}>{c.cantidad} {c.item.unidad || ""}</div>
+                      <div style={{ textAlign: "right", color: B.sky, fontWeight: 700 }}>
+                        {ocultarPrecios ? "" : COPx(c.costo_total)}
+                      </div>
+                      <button type="button" onClick={() => removerDelCarrito(c._key)}
+                        style={{ background: "transparent", border: "none", color: B.danger, cursor: "pointer", fontSize: 14 }}>×</button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Botones del modal: cerrar / guardar todo el carrito */}
+            <div style={{ marginTop: 16, paddingTop: 14, borderTop: `1px solid ${B.navyLight}`, display: "flex", justifyContent: "space-between", gap: 8 }}>
+              <button type="button" onClick={() => { if (carrito.length > 0 && !confirm(`¿Descartar ${carrito.length} producto${carrito.length === 1 ? "" : "s"} del carrito?`)) return; setShowPick(false); setCarrito([]); setPickItem(null); setSearch(""); }}
+                style={{ padding: "10px 16px", borderRadius: 8, border: "none", background: B.navyLight, color: "#fff", cursor: "pointer", fontWeight: 700, fontSize: 13 }} disabled={saving}>
+                Cerrar
+              </button>
+              <button type="button" onClick={guardarCarrito} disabled={saving || carrito.length === 0}
+                style={{ padding: "10px 22px", borderRadius: 8, border: "none",
+                  background: carrito.length === 0 ? B.navyLight : B.success,
+                  color: "#fff", cursor: carrito.length === 0 ? "default" : "pointer", fontWeight: 800, fontSize: 13,
+                  opacity: carrito.length === 0 ? 0.5 : 1 }}>
+                {saving ? "Guardando…" : carrito.length === 0 ? "Agregá productos primero" : `✓ Registrar ${carrito.length} consumo${carrito.length === 1 ? "" : "s"}`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// TabPL — P/L confidencial del evento
+// Solo visible para super_admin, admin, gerente_general_*, contabilidad
+// y Eric. Muestra cotizado vs costos reales (consumo + extras) = margen.
+// ─────────────────────────────────────────────────────────────────────
+function TabPL({ evento }) {
+  const [consumo, setConsumo] = useState([]);
+  const [gastosTerc, setGastosTerc] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshKey, setRefreshKey] = useState(0);
+  const COPx = (n) => "$" + Math.round(Number(n) || 0).toLocaleString("es-CO");
+
+  useEffect(() => {
+    if (!evento?.id) return;
+    setLoading(true);
+    Promise.all([
+      supabase.from("eventos_consumo_openbar").select("*").eq("evento_id", evento.id).eq("anulado", false),
+      supabase.from("eventos_servicios_gastos").select("*").eq("evento_id", evento.id).neq("estado", "anulado"),
+      supabase.from("items_catalogo").select("id, precio_compra").eq("activo", true),
+    ]).then(([cR, gR, iR]) => {
+      if (cR.error) console.warn("[P/L] error consumo:", cR.error);
+      if (gR.error) console.warn("[P/L] error gastos:", gR.error);
+      // Recalc en vivo: aplicar precio_compra del catálogo a los registros de
+      // consumo. Si el catálogo trae > 0, sobreescribe el snapshot (cubre el
+      // caso típico donde el consumo se registró antes que la factura
+      // actualizara el precio). Si el catálogo está en 0, conserva snapshot.
+      const priceMap = Object.fromEntries((iR.data || []).map(i => [i.id, Number(i.precio_compra) || 0]));
+      const consumoLive = (cR.data || []).map(c => {
+        const live = priceMap[c.item_id] || 0;
+        if (live <= 0) return c;
+        const cant = Number(c.cantidad) || 0;
+        return { ...c, precio_unitario: live, costo_total: cant * live, _precio_snapshot: c.precio_unitario };
+      });
+      setConsumo(consumoLive);
+      setGastosTerc(gR.data || []);
+      setLoading(false);
+    });
+  }, [evento?.id, refreshKey]);
+
+  if (loading) return <div style={{ padding: 30, textAlign: "center", color: "rgba(255,255,255,0.4)" }}>Cargando P/L…</div>;
+
+  // ── INGRESOS ────────────────────────────────────────────────────
+  const cot = evento.cotizacion_data || {};
+  const calcSum = (rows = []) => rows.reduce((s, l) => {
+    const sub = (Number(l.cantidad) || 1) * (Number(l.noches) || 1) * (Number(l.valor_unit) || 0);
+    return s + sub + sub * ((Number(l.iva) || 0) / 100);
+  }, 0);
+  // Separar propina de "Otros servicios" — es un cargo distinto.
+  const isPropina = (l) => /propina|tip\b|gratuit/i.test(l?.concepto || l?.descripcion || "");
+  const cotServiciosNoProp = (cot.servicios || []).filter(l => !isPropina(l));
+  const cotPropinas         = (cot.servicios || []).filter(l =>  isPropina(l));
+  const ingEspacios   = calcSum(cot.espacios);
+  const ingHospedaje  = calcSum(cot.hospedaje || cot.alojamientos);
+  const ingAlimentos  = calcSum(cot.alimentos);
+  const ingOtrosCot   = calcSum(cotServiciosNoProp);
+  const ingPropina    = calcSum(cotPropinas);
+  const ingServicios  = (evento.servicios_contratados || []).reduce((s, x) => s + (Number(x.valor) || 0), 0);
+  // evento.valor incluye propina. La propina NO es ingreso de Atolón
+  // (se entrega al staff), así que la restamos para tener el valor base
+  // limpio. ingresoTotal tampoco incluye propina.
+  const valorBase     = Math.max(0, (Number(evento.valor) || 0) - ingPropina);
+  const valorExtras   = Number(evento.valor_extras) || 0;
+  const ingresoTotal  = Math.max(
+    valorBase + valorExtras + ingServicios,
+    ingEspacios + ingHospedaje + ingAlimentos + ingOtrosCot,
+  );
+
+  // ── COSTOS ──────────────────────────────────────────────────────
+  const costoConsumo = consumo.reduce((s, c) => s + (Number(c.costo_total) || 0), 0);
+  const costoGastosTerc = gastosTerc.reduce((s, g) => s + (Number(g.total) || 0), 0);
+  const costoExtras  = ["transporte", "alimentos", "servicios"].reduce((s, k) =>
+    s + calcSum((evento.extras_data || {})[k]), 0);
+  const costoTotal = costoConsumo + costoGastosTerc + costoExtras;
+  const margen = ingresoTotal - costoTotal;
+  const margenPct = ingresoTotal > 0 ? (margen / ingresoTotal) * 100 : 0;
+
+  // ── Desglose por servicio A&B: COSTO real por línea ─────────────
+  // Suma DOS fuentes:
+  //   • consumo de cocina/openbar (eventos_consumo_openbar)
+  //   • gastos a terceros (eventos_servicios_gastos)
+  // Ambos guardan servicio_id con la misma convención (key compuesta).
+  const consumoPorServicio = {};
+  consumo.forEach(c => {
+    const key = c.servicio_id ? `${c.servicio_origen}|${c.servicio_id}` : "_sin";
+    if (!consumoPorServicio[key]) {
+      consumoPorServicio[key] = { descripcion: c.servicio_descripcion || "Sin servicio asignado", costo: 0 };
+    }
+    consumoPorServicio[key].costo += Number(c.costo_total) || 0;
+  });
+  // gastosTerc.servicio_id ya viene como key compuesta "{origen}|{id}"
+  // (se registra así desde el modal de gastos)
+  gastosTerc.forEach(g => {
+    const key = g.servicio_id || "_sin";
+    if (!consumoPorServicio[key]) {
+      consumoPorServicio[key] = { descripcion: g.servicio_descripcion || "Sin servicio asignado", costo: 0 };
+    }
+    consumoPorServicio[key].costo += Number(g.total) || 0;
+  });
+  const ayBLines = [];
+  // IMPORTANTE: los alimentos en cotizacion_data NO tienen campo id propio
+  // (heredan iva/noches/cantidad/concepto/valor_unit). Cuando el modal de
+  // consumo los carga, les asigna `alim-${index}` como id. Acá hay que usar
+  // la MISMA convención para que los keys matcheen con servicio_id del
+  // consumo (`alimento|alim-N`).
+  (cot.alimentos || []).forEach((a, i) => {
+    if (!a) return;
+    const key = `alimento|${a.id || `alim-${i}`}`;
+    const sub = (Number(a.cantidad) || 1) * (Number(a.noches) || 1) * (Number(a.valor_unit) || 0);
+    ayBLines.push({
+      key, descripcion: a.concepto || a.descripcion || "Sin nombre", origen: "Cotizado A&B",
+      cobrado: sub + sub * ((Number(a.iva) || 0) / 100), costo: consumoPorServicio[key]?.costo || 0,
+    });
+  });
+  ((evento.extras_data || {}).alimentos || []).forEach((a, i) => {
+    if (!a) return;
+    const key = `extra_alimento|${a.id || `extra-alim-${i}`}`;
+    const sub = (Number(a.cantidad) || 1) * (Number(a.noches) || 1) * (Number(a.valor_unit) || 0);
+    ayBLines.push({
+      key, descripcion: a.concepto || a.descripcion || "Sin nombre", origen: "Extra A&B",
+      cobrado: sub + sub * ((Number(a.iva) || 0) / 100), costo: consumoPorServicio[key]?.costo || 0,
+    });
+  });
+  const CATS_AYB = /banquete|bebida|restaurant|alimento|comida|menu|cocktail|coctel|food|catering/i;
+  (evento.servicios_contratados || []).forEach(s => {
+    if (!s) return;
+    const cat = String(s.categoria || "").toLowerCase();
+    const desc = String(s.descripcion || "").toLowerCase();
+    if (CATS_AYB.test(cat) || CATS_AYB.test(desc)) {
+      const key = `contratado|${s.id}`;
+      ayBLines.push({
+        key, descripcion: s.descripcion || s.categoria, origen: "Servicio contratado",
+        cobrado: Number(s.valor) || 0, costo: consumoPorServicio[key]?.costo || 0,
+      });
+    }
+  });
+  if (consumoPorServicio._sin) {
+    ayBLines.push({ key: "_sin", descripcion: "Sin servicio asignado", origen: "—",
+      cobrado: 0, costo: consumoPorServicio._sin.costo });
+  }
+
+  return (
+    <div style={{ padding: "14px 6px" }}>
+      <div style={{ background: "rgba(245,158,11,0.08)", border: `1px solid ${B.warning}55`, borderRadius: 10, padding: "10px 14px", marginBottom: 16, fontSize: 11, color: B.warning, display: "flex", alignItems: "center", gap: 8 }}>
+        🔒 <strong>Información confidencial.</strong> Solo visible para Gerencia General, Contabilidad y Dirección.
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginBottom: 18 }}>
+        <div style={{ background: B.navyMid, borderRadius: 12, padding: "14px 16px", borderLeft: `4px solid ${B.success}` }}>
+          <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.06em" }}>Ingreso (cotizado)</div>
+          <div style={{ fontSize: 22, fontWeight: 800, color: B.success, fontFamily: "'Barlow Condensed', sans-serif", marginTop: 4 }}>{COPx(ingresoTotal)}</div>
+        </div>
+        <div style={{ background: B.navyMid, borderRadius: 12, padding: "14px 16px", borderLeft: `4px solid ${B.danger}` }}>
+          <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.06em" }}>Costo (real)</div>
+          <div style={{ fontSize: 22, fontWeight: 800, color: B.danger, fontFamily: "'Barlow Condensed', sans-serif", marginTop: 4 }}>{COPx(costoTotal)}</div>
+          <div style={{ fontSize: 10, color: "rgba(255,255,255,0.45)", marginTop: 2 }}>
+            Consumo {COPx(costoConsumo)}{costoExtras > 0 && ` · Extras ${COPx(costoExtras)}`}
+          </div>
+        </div>
+        <div style={{ background: B.navyMid, borderRadius: 12, padding: "14px 16px", borderLeft: `4px solid ${margen >= 0 ? B.sky : B.danger}` }}>
+          <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.06em" }}>Margen bruto</div>
+          <div style={{ fontSize: 22, fontWeight: 800, color: margen >= 0 ? B.sky : B.danger, fontFamily: "'Barlow Condensed', sans-serif", marginTop: 4 }}>{COPx(margen)}</div>
+          <div style={{ fontSize: 11, color: "rgba(255,255,255,0.55)", marginTop: 2 }}>{margenPct.toFixed(1)}%</div>
+        </div>
+      </div>
+
+      <div style={{ background: B.navyMid, borderRadius: 12, overflow: "hidden", marginBottom: 16 }}>
+        <div style={{ padding: "12px 16px", borderBottom: `1px solid ${B.navyLight}` }}>
+          <div style={{ fontSize: 13, fontWeight: 800, color: "#fff" }}>📊 Desglose por servicio A&B</div>
+          <div style={{ fontSize: 10, color: "rgba(255,255,255,0.45)", marginTop: 2 }}>Cobrado al cliente vs costo real (consumo)</div>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 110px 110px 110px 70px", gap: 10, padding: "10px 16px", background: B.navy, fontSize: 10, color: "rgba(255,255,255,0.45)", textTransform: "uppercase", letterSpacing: "0.05em", fontWeight: 700 }}>
+          <div>Servicio</div>
+          <div style={{ textAlign: "right" }}>Cobrado</div>
+          <div style={{ textAlign: "right" }}>Costo</div>
+          <div style={{ textAlign: "right" }}>Margen</div>
+          <div style={{ textAlign: "right" }}>%</div>
+        </div>
+        {ayBLines.length === 0 ? (
+          <div style={{ padding: 20, textAlign: "center", color: "rgba(255,255,255,0.35)", fontSize: 12, fontStyle: "italic" }}>
+            Sin items de A&B en la cotización.
+          </div>
+        ) : ayBLines.map(l => {
+          const m = l.cobrado - l.costo;
+          const pct = l.cobrado > 0 ? (m / l.cobrado) * 100 : 0;
+          return (
+            <div key={l.key} style={{ display: "grid", gridTemplateColumns: "1fr 110px 110px 110px 70px", gap: 10, padding: "10px 16px", borderTop: `1px solid ${B.navyLight}`, fontSize: 12 }}>
+              <div>
+                <div style={{ color: "#fff", fontWeight: 600 }}>{l.descripcion}</div>
+                <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)" }}>{l.origen}</div>
+              </div>
+              <div style={{ textAlign: "right", color: B.success, fontWeight: 600 }}>{COPx(l.cobrado)}</div>
+              <div style={{ textAlign: "right", color: B.danger }}>{COPx(l.costo)}</div>
+              <div style={{ textAlign: "right", color: m >= 0 ? B.sky : B.danger, fontWeight: 700 }}>{COPx(m)}</div>
+              <div style={{ textAlign: "right", color: "rgba(255,255,255,0.6)" }}>{l.cobrado > 0 ? pct.toFixed(0) + "%" : "—"}</div>
+            </div>
+          );
+        })}
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+        <div style={{ background: B.navyMid, borderRadius: 12, padding: "14px 16px" }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: B.success, marginBottom: 10, textTransform: "uppercase", letterSpacing: "0.05em" }}>💰 Ingresos cotizados</div>
+          {[
+            ["Espacios",   ingEspacios],
+            ["Hospedaje",  ingHospedaje],
+            ["Alimentos y Bebidas", ingAlimentos],
+            ["Otros servicios cotizados", ingOtrosCot],
+            ["Servicios contratados", ingServicios],
+            ["Valor base evento", valorBase],
+            ["Valor extras", valorExtras],
+          ].filter(([, v]) => v > 0).map(([k, v]) => (
+            <div key={k} style={{ display: "flex", justifyContent: "space-between", padding: "5px 0", fontSize: 12, borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
+              <span style={{ color: "rgba(255,255,255,0.6)" }}>{k}</span>
+              <span style={{ color: "#fff", fontWeight: 700 }}>{COPx(v)}</span>
+            </div>
+          ))}
+          <div style={{ display: "flex", justifyContent: "space-between", padding: "10px 0 0", marginTop: 6, borderTop: `2px solid ${B.success}`, fontSize: 14, fontWeight: 800 }}>
+            <span>Total ingreso</span><span style={{ color: B.success }}>{COPx(ingresoTotal)}</span>
+          </div>
+          {ingPropina > 0 && (
+            <div style={{ marginTop: 10, padding: "8px 10px", background: "rgba(245,158,11,0.08)", border: `1px solid ${B.warning}33`, borderRadius: 6, fontSize: 11, color: "rgba(255,255,255,0.6)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <span>💵 Propina cobrada (entregada al staff)</span>
+              <span style={{ color: B.warning, fontWeight: 700 }}>{COPx(ingPropina)}</span>
+            </div>
+          )}
+        </div>
+
+        <div style={{ background: B.navyMid, borderRadius: 12, padding: "14px 16px" }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: B.danger, marginBottom: 10, textTransform: "uppercase", letterSpacing: "0.05em" }}>📦 Costos reales</div>
+          {[
+            ["🍾 Open Bar (consumo)", consumo.filter(c => c.tipo === "openbar").reduce((s, c) => s + (Number(c.costo_total) || 0), 0)],
+            ["🍽️ Buffet (consumo)",   consumo.filter(c => c.tipo === "cocina_buffet").reduce((s, c) => s + (Number(c.costo_total) || 0), 0)],
+            ["🎁 Paquete (consumo)",  consumo.filter(c => c.tipo === "cocina_paquete").reduce((s, c) => s + (Number(c.costo_total) || 0), 0)],
+            ["🧾 Servicios contratados (facturas)", costoGastosTerc],
+            ["Extras transporte", calcSum((evento.extras_data || {}).transporte)],
+            ["Extras alimentos",  calcSum((evento.extras_data || {}).alimentos)],
+            ["Extras otros",      calcSum((evento.extras_data || {}).servicios)],
+          ].filter(([, v]) => v > 0).map(([k, v]) => (
+            <div key={k} style={{ display: "flex", justifyContent: "space-between", padding: "5px 0", fontSize: 12, borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
+              <span style={{ color: "rgba(255,255,255,0.6)" }}>{k}</span>
+              <span style={{ color: "#fff", fontWeight: 700 }}>{COPx(v)}</span>
+            </div>
+          ))}
+          <div style={{ display: "flex", justifyContent: "space-between", padding: "10px 0 0", marginTop: 6, borderTop: `2px solid ${B.danger}`, fontSize: 14, fontWeight: 800 }}>
+            <span>Total</span><span style={{ color: B.danger }}>{COPx(costoTotal)}</span>
+          </div>
+        </div>
+      </div>
+
+      <div style={{ marginTop: 14, padding: "10px 14px", background: margen >= 0 ? "rgba(34,197,94,0.08)" : "rgba(239,68,68,0.08)", borderRadius: 10, border: `1px solid ${margen >= 0 ? B.success : B.danger}55`, fontSize: 11, color: "rgba(255,255,255,0.6)" }}>
+        💡 El P/L se actualiza automáticamente al registrar consumos en el tab 🍾 Consumo. El costo se captura como snapshot al momento del registro (precio_compra del item) — el P/L histórico no cambia si después suben los precios.
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// TabGastosServicios — Gastos/facturas de servicios contratados (terceros)
+// Cada gasto: proveedor, concepto, monto, IVA, fecha, factura PDF, estado.
+// Se vincula opcionalmente a un servicio del evento (servicios_contratados).
+// ─────────────────────────────────────────────────────────────────────
+function TabGastosServicios({ evento, ocultarPrecios = false }) {
+  const [gastos, setGastos] = useState([]);
+  const [proveedores, setProveedores] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [showAdd, setShowAdd] = useState(false);
+  const [editing, setEditing] = useState(null);  // gasto en edición
+  const COPx = (n) => "$" + Math.round(Number(n) || 0).toLocaleString("es-CO");
+
+  const load = async () => {
+    setLoading(true);
+    const [gR, pR] = await Promise.all([
+      supabase.from("eventos_servicios_gastos").select("*").eq("evento_id", evento.id).order("fecha", { ascending: false }),
+      supabase.from("proveedores").select("id, nombre, nit").order("nombre"),
+    ]);
+    setGastos(gR.data || []);
+    setProveedores(pR.data || []);
+    setLoading(false);
+  };
+  useEffect(() => { load(); }, [evento.id]);
+
+  // ── Servicios disponibles del evento — incluye TODO lo cotizado ──
+  // No solo servicios_contratados sino también items de cotizacion_data
+  // (espacios, hospedaje, alimentos, otros servicios) y extras_data.
+  // Cada uno con su key compuesta {origen}|{id} para guardar en el gasto.
+  const cot = evento.cotizacion_data || {};
+  const extras = evento.extras_data || {};
+  const calcLine = (l) => {
+    const sub = (Number(l.cantidad) || 1) * (Number(l.noches) || 1) * (Number(l.valor_unit) || 0);
+    return sub + sub * ((Number(l.iva) || 0) / 100);
+  };
+  const serviciosEvento = [];
+  (cot.espacios || []).forEach((a, i) => a && serviciosEvento.push({
+    key: `espacio|${a.id || `esp-${i}`}`, origen: "Espacios cotizados", origenColor: "#a78bfa",
+    descripcion: a.concepto || a.descripcion || "Espacio", cobrado: calcLine(a),
+  }));
+  (cot.hospedaje || cot.alojamientos || []).forEach((a, i) => a && serviciosEvento.push({
+    key: `hospedaje|${a.id || `hos-${i}`}`, origen: "Hospedaje", origenColor: "#ec4899",
+    descripcion: a.concepto || a.descripcion || "Hospedaje", cobrado: calcLine(a),
+  }));
+  (cot.alimentos || []).forEach((a, i) => a && serviciosEvento.push({
+    key: `alimento|${a.id || `alim-${i}`}`, origen: "Alimentos & Bebidas (cotizado)", origenColor: "#f59e0b",
+    descripcion: a.concepto || a.descripcion || "A&B", cobrado: calcLine(a),
+  }));
+  (cot.servicios || []).forEach((a, i) => a && serviciosEvento.push({
+    key: `otro_cotizado|${a.id || `cot-${i}`}`, origen: "Otros servicios cotizados", origenColor: "#7B4F12",
+    descripcion: a.concepto || a.descripcion || "Servicio", cobrado: calcLine(a),
+  }));
+  (evento.servicios_contratados || []).forEach((s, i) => s && serviciosEvento.push({
+    key: `contratado|${s.id || `srv-${i}`}`, origen: "Servicio contratado", origenColor: "#22c55e",
+    descripcion: s.descripcion || s.categoria || "Servicio", cobrado: Number(s.valor) || 0,
+  }));
+  (extras.transporte || []).forEach((a, i) => a && serviciosEvento.push({
+    key: `extra_transporte|${a.id || `et-${i}`}`, origen: "Extra transporte", origenColor: "#06b6d4",
+    descripcion: a.concepto || "Transporte", cobrado: calcLine(a),
+  }));
+  (extras.alimentos || []).forEach((a, i) => a && serviciosEvento.push({
+    key: `extra_alimento|${a.id || `ea-${i}`}`, origen: "Extra A&B", origenColor: "#fb923c",
+    descripcion: a.concepto || "A&B extra", cobrado: calcLine(a),
+  }));
+  (extras.servicios || []).forEach((a, i) => a && serviciosEvento.push({
+    key: `extra_servicio|${a.id || `es-${i}`}`, origen: "Extra servicio", origenColor: "#94a3b8",
+    descripcion: a.concepto || "Servicio extra", cobrado: calcLine(a),
+  }));
+
+  // Resumen "Cobrado vs Gastado": SOLO items que tengan algún gasto
+  // registrado. Los items cotizados sin gasto NO aparecen — esto es un
+  // resumen de gastos efectivos, no del avance de la cotización.
+  const porServicio = {};
+  const serviciosEventoByKey = Object.fromEntries(serviciosEvento.map(s => [s.key, s]));
+  gastos.filter(g => g.estado !== "anulado").forEach(g => {
+    const key = g.servicio_id || "_sin_vincular";
+    if (!porServicio[key]) {
+      const s = serviciosEventoByKey[key];
+      porServicio[key] = {
+        descripcion: s?.descripcion || g.servicio_descripcion || "Sin vincular a servicio",
+        origen:      s?.origen      || (g.servicio_id ? "Servicio archivado" : "Gasto general"),
+        origenColor: s?.origenColor || "rgba(255,255,255,0.4)",
+        cobrado:     s?.cobrado     || 0,
+        gastado: 0, gastosPagados: 0, gastosPendientes: 0,
+      };
+    }
+    porServicio[key].gastado += Number(g.total) || 0;
+    if (g.estado === "pagado") porServicio[key].gastosPagados   += Number(g.total) || 0;
+    else                       porServicio[key].gastosPendientes += Number(g.total) || 0;
+  });
+
+  const totalGastos = gastos.filter(g => g.estado !== "anulado").reduce((s, g) => s + (Number(g.total) || 0), 0);
+  const totalPagado = gastos.filter(g => g.estado === "pagado").reduce((s, g) => s + (Number(g.total) || 0), 0);
+  const totalPendiente = gastos.filter(g => g.estado === "pendiente").reduce((s, g) => s + (Number(g.total) || 0), 0);
+
+  const eliminar = async (g) => {
+    if (!confirm(`¿Anular gasto "${g.concepto}" de ${COPx(g.total)}?`)) return;
+    await supabase.from("eventos_servicios_gastos").update({ estado: "anulado", updated_at: new Date().toISOString() }).eq("id", g.id);
+    load();
+  };
+  const marcarPagado = async (g) => {
+    await supabase.from("eventos_servicios_gastos").update({
+      estado: "pagado", pagado_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+    }).eq("id", g.id);
+    load();
+  };
+
+  if (loading) return <div style={{ padding: 30, textAlign: "center", color: "rgba(255,255,255,0.4)" }}>Cargando…</div>;
+
+  return (
+    <div style={{ padding: "14px 6px" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 14, flexWrap: "wrap", gap: 12 }}>
+        <div>
+          <div style={{ fontSize: 16, fontWeight: 800, color: "#fff" }}>🧾 Gastos de servicios contratados</div>
+          <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginTop: 2 }}>
+            {gastos.filter(g => g.estado !== "anulado").length} factura{gastos.length === 1 ? "" : "s"}
+            {!ocultarPrecios && <> · Total: <strong style={{ color: B.sky }}>{COPx(totalGastos)}</strong></>}
+          </div>
+        </div>
+        <button type="button" onClick={() => { setEditing(null); setShowAdd(true); }}
+          style={{ padding: "10px 18px", borderRadius: 10, border: "none", background: B.success, color: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
+          + Nueva factura/gasto
+        </button>
+      </div>
+
+      {/* KPIs */}
+      {!ocultarPrecios && (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10, marginBottom: 16 }}>
+          {[
+            { l: "Total facturado", v: COPx(totalGastos),  c: B.sky },
+            { l: "Pagado",          v: COPx(totalPagado),  c: "#22c55e" },
+            { l: "Pendiente",       v: COPx(totalPendiente), c: "#fbbf24" },
+          ].map(k => (
+            <div key={k.l} style={{ background: B.navyMid, borderRadius: 10, padding: "10px 14px", borderLeft: `3px solid ${k.c}` }}>
+              <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", textTransform: "uppercase" }}>{k.l}</div>
+              <div style={{ fontSize: 18, fontWeight: 800, color: k.c, fontFamily: "'Barlow Condensed', sans-serif", marginTop: 2 }}>{k.v}</div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Resumen por servicio contratado (cobrado vs gastado) */}
+      {!ocultarPrecios && Object.keys(porServicio).length > 0 && (
+        <div style={{ background: B.navyMid, borderRadius: 12, overflow: "hidden", marginBottom: 16 }}>
+          <div style={{ padding: "10px 14px", borderBottom: `1px solid ${B.navyLight}`, fontSize: 12, fontWeight: 700, color: "#fff" }}>
+            📊 Cobrado al cliente vs gastado a terceros
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 110px 110px 110px 70px", gap: 10, padding: "8px 14px", background: B.navy, fontSize: 10, color: "rgba(255,255,255,0.45)", textTransform: "uppercase", letterSpacing: "0.05em", fontWeight: 700 }}>
+            <div>Servicio contratado</div>
+            <div style={{ textAlign: "right" }}>Cobrado</div>
+            <div style={{ textAlign: "right" }}>Gastado</div>
+            <div style={{ textAlign: "right" }}>Margen</div>
+            <div style={{ textAlign: "right" }}>%</div>
+          </div>
+          {Object.entries(porServicio)
+            .sort(([, a], [, b]) => b.gastado - a.gastado)
+            .map(([id, s]) => {
+              const m = s.cobrado - s.gastado;
+              const pct = s.cobrado > 0 ? (m / s.cobrado) * 100 : 0;
+              return (
+                <div key={id} style={{ display: "grid", gridTemplateColumns: "1fr 110px 110px 110px 70px", gap: 10, padding: "8px 14px", borderTop: `1px solid ${B.navyLight}`, fontSize: 11 }}>
+                  <div>
+                    <div style={{ color: "#fff", fontWeight: 600 }}>{s.descripcion}</div>
+                    <div style={{ fontSize: 9, color: s.origenColor, marginTop: 1 }}>{s.origen}</div>
+                  </div>
+                  <div style={{ textAlign: "right", color: B.success }}>{COPx(s.cobrado)}</div>
+                  <div style={{ textAlign: "right", color: B.danger }}>{COPx(s.gastado)}</div>
+                  <div style={{ textAlign: "right", color: m >= 0 ? B.sky : B.danger, fontWeight: 700 }}>{COPx(m)}</div>
+                  <div style={{ textAlign: "right", color: "rgba(255,255,255,0.55)" }}>{s.cobrado > 0 ? pct.toFixed(0) + "%" : "—"}</div>
+                </div>
+              );
+            })}
+        </div>
+      )}
+
+      {/* Lista de gastos */}
+      {gastos.length === 0 ? (
+        <div style={{ background: B.navyMid, borderRadius: 12, padding: 30, textAlign: "center", color: "rgba(255,255,255,0.4)" }}>
+          Sin facturas ni gastos registrados todavía. Click "+ Nueva factura/gasto" para empezar.
+        </div>
+      ) : (
+        <div style={{ background: B.navyMid, borderRadius: 12, overflow: "hidden" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 130px 90px 110px 110px 80px", gap: 10, padding: "10px 14px", background: B.navy, fontSize: 10, color: "rgba(255,255,255,0.45)", textTransform: "uppercase", letterSpacing: "0.05em", fontWeight: 700 }}>
+            <div>Concepto · Servicio</div>
+            <div>Proveedor</div>
+            <div>Fecha</div>
+            <div style={{ textAlign: "right" }}>{ocultarPrecios ? "Estado" : "Total"}</div>
+            <div>Estado</div>
+            <div></div>
+          </div>
+          {gastos.map(g => {
+            const sv = serviciosEvento.find(s => s.key === g.servicio_id);
+            const estadoColor = g.estado === "pagado" ? "#22c55e" : g.estado === "anulado" ? "#64748B" : "#fbbf24";
+            return (
+              <div key={g.id} style={{ display: "grid", gridTemplateColumns: "1fr 130px 90px 110px 110px 80px", gap: 10, padding: "10px 14px", borderTop: `1px solid ${B.navyLight}`, fontSize: 12, opacity: g.estado === "anulado" ? 0.4 : 1, textDecoration: g.estado === "anulado" ? "line-through" : "none", alignItems: "center" }}>
+                <div>
+                  <div style={{ color: "#fff", fontWeight: 600 }}>{g.concepto}</div>
+                  <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", marginTop: 1 }}>
+                    {sv ? <span style={{ color: sv.origenColor }}>📋 {sv.descripcion}</span>
+                       : g.servicio_descripcion ? <span style={{ color: "#fbbf24" }}>📋 {g.servicio_descripcion}</span>
+                       : "—"}
+                    {g.factura_numero ? ` · Fact #${g.factura_numero}` : ""}
+                    {g.metodo_pago && ` · ${g.metodo_pago}`}
+                  </div>
+                </div>
+                <div style={{ fontSize: 11, color: "rgba(255,255,255,0.65)" }}>{g.proveedor_nombre || "—"}</div>
+                <div style={{ fontSize: 11, color: "rgba(255,255,255,0.55)" }}>{g.fecha ? new Date(g.fecha + "T12:00:00").toLocaleDateString("es-CO", { day: "2-digit", month: "short" }) : "—"}</div>
+                <div style={{ textAlign: "right", color: B.sky, fontWeight: 700 }}>{ocultarPrecios ? "" : COPx(g.total)}</div>
+                <div>
+                  <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 8, background: estadoColor + "22", color: estadoColor, fontWeight: 700, textTransform: "uppercase" }}>
+                    {g.estado}
+                  </span>
+                </div>
+                <div style={{ display: "flex", gap: 4, justifyContent: "flex-end" }}>
+                  {g.factura_url && (
+                    <button type="button" onClick={async () => {
+                      const path = g.factura_url.replace(/^.*facturas-servicios\//, "");
+                      const { data } = await supabase.storage.from("facturas-servicios").createSignedUrl(path, 60);
+                      if (data?.signedUrl) window.open(data.signedUrl, "_blank");
+                    }} title="Ver factura" style={{ background: "transparent", border: "none", color: B.sky, cursor: "pointer", fontSize: 14 }}>📎</button>
+                  )}
+                  {g.estado === "pendiente" && (
+                    <button type="button" onClick={() => marcarPagado(g)} title="Marcar pagado" style={{ background: "transparent", border: "none", color: "#22c55e", cursor: "pointer", fontSize: 14 }}>✓</button>
+                  )}
+                  <button type="button" onClick={() => { setEditing(g); setShowAdd(true); }} title="Editar"
+                    style={{ background: "transparent", border: "none", color: B.sky, cursor: "pointer", fontSize: 12 }}>✏️</button>
+                  {g.estado !== "anulado" && (
+                    <button type="button" onClick={() => eliminar(g)} title="Anular"
+                      style={{ background: "transparent", border: "none", color: B.danger, cursor: "pointer", fontSize: 14 }}>✕</button>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {showAdd && (
+        <GastoServicioModal evento={evento} editing={editing} proveedores={proveedores} servicios={serviciosEvento}
+          onClose={() => setShowAdd(false)}
+          onSaved={() => { setShowAdd(false); load(); }}
+        />
+      )}
+    </div>
+  );
+}
+
+// ─── Modal: crear/editar gasto ─────────────────────────────────────
+function GastoServicioModal({ evento, editing, proveedores, servicios, onClose, onSaved }) {
+  const isEdit = !!editing;
+  const todayBog = new Date().toLocaleDateString("en-CA", { timeZone: "America/Bogota" });
+  // editing?.fecha puede venir como "2026-05-04T00:00:00+00:00" — el input
+  // type=date solo acepta YYYY-MM-DD, así que rebanamos.
+  const fechaInicial = editing?.fecha
+    ? String(editing.fecha).slice(0, 10)
+    : todayBog;
+  const [f, setF] = useState({
+    servicio_id:    editing?.servicio_id || "",
+    concepto:       editing?.concepto || "",
+    proveedor_id:   editing?.proveedor_id || "",
+    proveedor_nombre: editing?.proveedor_nombre || "",
+    monto:          editing?.monto || "",
+    iva_pct:        editing?.iva_pct ?? 19,
+    metodo_pago:    editing?.metodo_pago || "transferencia",
+    fecha:          fechaInicial,
+    factura_numero: editing?.factura_numero || "",
+    notas:          editing?.notas || "",
+    estado:         editing?.estado || "pendiente",
+  });
+  const [archivo, setArchivo] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const set = (k, v) => setF(s => ({ ...s, [k]: v }));
+  const COPx = (n) => "$" + Math.round(Number(n) || 0).toLocaleString("es-CO");
+
+  const monto = Number(f.monto) || 0;
+  const ivaMonto = monto * (Number(f.iva_pct) || 0) / 100;
+  const total = monto + ivaMonto;
+
+  const guardar = async () => {
+    if (!f.concepto.trim()) return alert("Concepto requerido");
+    if (monto <= 0) return alert("Monto inválido");
+    setSaving(true);
+
+    // Subir factura si hay archivo nuevo
+    let factura_url = editing?.factura_url || null;
+    if (archivo) {
+      const ext = archivo.name.split(".").pop()?.toLowerCase() || "pdf";
+      const path = `${evento.id}/${Date.now()}-${Math.random().toString(36).slice(2, 6)}.${ext}`;
+      const { error: upErr } = await supabase.storage.from("facturas-servicios").upload(path, archivo, { contentType: archivo.type });
+      if (upErr) { alert("No se pudo subir la factura: " + upErr.message); setSaving(false); return; }
+      factura_url = path;
+    }
+
+    const proveedor = proveedores.find(p => p.id === f.proveedor_id);
+    // serviciosEvento usa { key, descripcion, origen } — buscamos por key compuesta
+    const servicio = servicios.find(s => s.key === f.servicio_id);
+    const userEmail = (await supabase.auth.getUser()).data?.user?.email || "";
+
+    // Sanitizar campos date/timestamp: Postgres rechaza "" — solo acepta
+    // valor válido o null. Mismo bug que tuvimos en B2B visitas.
+    const fechaClean = (f.fecha && /^\d{4}-\d{2}-\d{2}$/.test(f.fecha)) ? f.fecha : todayBog;
+    const payload = {
+      evento_id: evento.id,
+      servicio_id: f.servicio_id || null,
+      servicio_descripcion: servicio?.descripcion || null,
+      proveedor_id: f.proveedor_id || null,
+      proveedor_nombre: proveedor?.nombre || f.proveedor_nombre.trim() || null,
+      concepto: f.concepto.trim(),
+      monto, iva_pct: Number(f.iva_pct) || 0, iva_monto: ivaMonto, total,
+      metodo_pago: f.metodo_pago,
+      fecha: fechaClean,
+      factura_numero: f.factura_numero.trim() || null,
+      factura_url,
+      notas: f.notas.trim() || null,
+      estado: f.estado,
+      pagado_at: f.estado === "pagado" ? (editing?.pagado_at || new Date().toISOString()) : null,
+      registrado_por: userEmail,
+      updated_at: new Date().toISOString(),
+    };
+    let error;
+    if (isEdit) ({ error } = await supabase.from("eventos_servicios_gastos").update(payload).eq("id", editing.id));
+    else        ({ error } = await supabase.from("eventos_servicios_gastos").insert(payload));
+    setSaving(false);
+    if (error) return alert("Error: " + error.message);
+    onSaved();
+  };
+
+  const LS = { display: "block", fontSize: 11, color: "rgba(255,255,255,0.5)", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 4 };
+  const IS = { width: "100%", padding: "9px 12px", borderRadius: 8, background: B.navyLight, border: `1px solid ${B.navyLight}`, color: "#fff", fontSize: 13, outline: "none", boxSizing: "border-box" };
+
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 1000, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "30px 16px", overflowY: "auto" }}>
+      <div onClick={e => e.stopPropagation()} style={{ background: B.navy, borderRadius: 16, padding: 22, maxWidth: 580, width: "100%", color: "#fff", border: `1px solid ${B.navyLight}` }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+          <div style={{ fontSize: 18, fontWeight: 800 }}>{isEdit ? "Editar gasto" : "+ Nueva factura/gasto"}</div>
+          <button type="button" onClick={onClose} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.4)", cursor: "pointer", fontSize: 22 }}>×</button>
+        </div>
+
+        {/* Pregunta clara: ¿este gasto va a un servicio del evento? */}
+        <div style={{ background: B.navyMid, borderRadius: 10, padding: 14, marginBottom: 14, border: `1px solid ${B.navyLight}` }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: B.sand, marginBottom: 8 }}>
+            ¿Está relacionado a algún servicio del evento?
+          </div>
+          <div style={{ display: "flex", gap: 8, marginBottom: f.servicio_id || f._asociar === false ? 10 : 0 }}>
+            <button type="button" onClick={() => { set("_asociar", true); if (!f.servicio_id && servicios[0]) set("servicio_id", servicios[0].key); }}
+              style={{ flex: 1, padding: "10px", borderRadius: 8,
+                border: f.servicio_id || f._asociar === true ? `2px solid ${B.success}` : `1px solid ${B.navyLight}`,
+                background: f.servicio_id || f._asociar === true ? B.success + "22" : B.navy,
+                color: f.servicio_id || f._asociar === true ? B.success : "rgba(255,255,255,0.6)", cursor: "pointer", fontSize: 12, fontWeight: 700 }}>
+              ✓ Sí, vincular a un item de la cotización
+            </button>
+            <button type="button" onClick={() => { set("_asociar", false); set("servicio_id", ""); }}
+              style={{ flex: 1, padding: "10px", borderRadius: 8,
+                border: f._asociar === false && !f.servicio_id ? `2px solid ${B.warning}` : `1px solid ${B.navyLight}`,
+                background: f._asociar === false && !f.servicio_id ? B.warning + "22" : B.navy,
+                color: f._asociar === false && !f.servicio_id ? B.warning : "rgba(255,255,255,0.6)", cursor: "pointer", fontSize: 12, fontWeight: 700 }}>
+              No, gasto general del evento
+            </button>
+          </div>
+
+          {/* Lista de items del evento agrupada por origen */}
+          {(f.servicio_id || f._asociar === true) && (
+            <>
+              {servicios.length === 0 ? (
+                <div style={{ padding: 10, fontSize: 11, color: B.warning, textAlign: "center", fontStyle: "italic" }}>
+                  ⚠️ Este evento no tiene items en la cotización. Agregalos primero (tab Servicios o vía Cotización).
+                </div>
+              ) : (
+                <div style={{ background: B.navy, borderRadius: 8, maxHeight: 280, overflowY: "auto", border: `1px solid ${B.navyLight}` }}>
+                  {Object.entries(servicios.reduce((acc, s) => {
+                    if (!acc[s.origen]) acc[s.origen] = { color: s.origenColor, items: [] };
+                    acc[s.origen].items.push(s);
+                    return acc;
+                  }, {})).map(([origen, grupo]) => (
+                    <div key={origen}>
+                      <div style={{ padding: "6px 12px", fontSize: 9, fontWeight: 700, color: grupo.color, textTransform: "uppercase", letterSpacing: "0.06em", background: grupo.color + "11", borderBottom: `1px solid ${B.navyLight}` }}>
+                        {origen}
+                      </div>
+                      {grupo.items.map(s => {
+                        const sel = f.servicio_id === s.key;
+                        return (
+                          <button key={s.key} type="button" onClick={() => set("servicio_id", s.key)}
+                            style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "9px 14px",
+                              background: sel ? B.success + "22" : "transparent", border: "none",
+                              borderBottom: `1px solid ${B.navyLight}`,
+                              color: sel ? B.success : "#fff", cursor: "pointer", textAlign: "left" }}>
+                            <span style={{ fontSize: 14 }}>{sel ? "●" : "○"}</span>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ fontSize: 12, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                {s.descripcion}
+                              </div>
+                              <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)" }}>
+                                Cobrado {COPx(s.cobrado)}
+                              </div>
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+
+        <div style={{ marginBottom: 10 }}>
+          <label style={LS}>Concepto *</label>
+          <input value={f.concepto} onChange={e => set("concepto", e.target.value)} style={IS}
+            placeholder="Ej: Anticipo DJ · Factura final decoración" autoFocus />
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 10 }}>
+          <div>
+            <label style={LS}>Proveedor</label>
+            <select value={f.proveedor_id} onChange={e => set("proveedor_id", e.target.value)} style={IS}>
+              <option value="">— Externo / no en lista —</option>
+              {proveedores.map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}
+            </select>
+          </div>
+          {!f.proveedor_id && (
+            <div>
+              <label style={LS}>Nombre del proveedor</label>
+              <input value={f.proveedor_nombre} onChange={e => set("proveedor_nombre", e.target.value)} style={IS} placeholder="Si no está arriba" />
+            </div>
+          )}
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr", gap: 10, marginBottom: 10 }}>
+          <div>
+            <label style={LS}>Monto base (sin IVA)</label>
+            <input type="number" value={f.monto} onChange={e => set("monto", e.target.value)} style={IS} placeholder="0" />
+          </div>
+          <div>
+            <label style={LS}>IVA %</label>
+            <input type="number" value={f.iva_pct} onChange={e => set("iva_pct", e.target.value)} style={IS} />
+          </div>
+          <div>
+            <label style={LS}>Total (auto)</label>
+            <div style={{ ...IS, background: B.navy, color: B.sky, fontWeight: 800, fontFamily: "'Barlow Condensed', sans-serif", fontSize: 16 }}>{COPx(total)}</div>
+          </div>
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginBottom: 10 }}>
+          <div>
+            <label style={LS}>Fecha</label>
+            <input type="date" value={f.fecha} onChange={e => set("fecha", e.target.value)} style={IS} />
+          </div>
+          <div>
+            <label style={LS}>Método pago</label>
+            <select value={f.metodo_pago} onChange={e => set("metodo_pago", e.target.value)} style={IS}>
+              <option value="transferencia">Transferencia</option>
+              <option value="efectivo">Efectivo</option>
+              <option value="tarjeta">Tarjeta</option>
+              <option value="cheque">Cheque</option>
+              <option value="otro">Otro</option>
+            </select>
+          </div>
+          <div>
+            <label style={LS}>Factura #</label>
+            <input value={f.factura_numero} onChange={e => set("factura_numero", e.target.value)} style={IS} placeholder="(opcional)" />
+          </div>
+        </div>
+
+        <div style={{ marginBottom: 10 }}>
+          <label style={LS}>Adjuntar factura (PDF, JPG, PNG)</label>
+          <input type="file" accept=".pdf,.jpg,.jpeg,.png,.webp" onChange={e => setArchivo(e.target.files?.[0] || null)}
+            style={{ ...IS, padding: "8px 10px" }} />
+          {editing?.factura_url && !archivo && (
+            <div style={{ fontSize: 10, color: B.sky, marginTop: 4 }}>📎 Ya hay un archivo adjunto. Si no subís uno nuevo, queda el actual.</div>
+          )}
+        </div>
+
+        <div style={{ marginBottom: 12 }}>
+          <label style={LS}>Notas</label>
+          <textarea value={f.notas} onChange={e => set("notas", e.target.value)} rows={2} style={{ ...IS, resize: "vertical", fontFamily: "inherit" }} />
+        </div>
+
+        <div style={{ marginBottom: 14 }}>
+          <label style={LS}>Estado</label>
+          <div style={{ display: "flex", gap: 8 }}>
+            {[
+              { k: "pendiente", l: "Pendiente",  c: "#fbbf24" },
+              { k: "pagado",    l: "Pagado",     c: "#22c55e" },
+            ].map(e => (
+              <button key={e.k} type="button" onClick={() => set("estado", e.k)}
+                style={{ flex: 1, padding: "9px", borderRadius: 8, border: f.estado === e.k ? `2px solid ${e.c}` : `1px solid ${B.navyLight}`,
+                  background: f.estado === e.k ? e.c + "22" : B.navyMid,
+                  color: f.estado === e.k ? e.c : "rgba(255,255,255,0.6)", cursor: "pointer", fontSize: 12, fontWeight: 700 }}>
+                {e.l}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+          <button type="button" onClick={onClose} disabled={saving}
+            style={{ padding: "10px 16px", borderRadius: 8, border: "none", background: B.navyLight, color: "#fff", cursor: "pointer", fontWeight: 700, fontSize: 13 }}>Cancelar</button>
+          <button type="button" onClick={guardar} disabled={saving}
+            style={{ padding: "10px 18px", borderRadius: 8, border: "none", background: B.success, color: "#fff", cursor: "pointer", fontWeight: 700, fontSize: 13 }}>
+            {saving ? "Guardando…" : isEdit ? "Guardar cambios" : "Registrar gasto"}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

@@ -114,11 +114,35 @@ function UsuarioModal({ usuario, roles, onClose, onSaved }) {
       activo:       f.activo,
       avatar_color: f.avatar_color,
     };
-    if (isEdit) {
-      await supabase.from("usuarios").update(row).eq("id", usuario.id);
-    } else {
-      // Nuevo usuario: debe cambiar la clave Atolon123 en su primer ingreso
-      await supabase.from("usuarios").insert({ id: `USR-${Date.now()}`, ...row, must_change_password: true });
+
+    // Llamar al edge function admin-users (mantiene auth.users + public.usuarios sincronizados)
+    const fnUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/admin-users/${isEdit ? "update" : "create"}`;
+    const { data: { session } } = await supabase.auth.getSession();
+    const token = session?.access_token || import.meta.env.VITE_SUPABASE_ANON_KEY;
+
+    try {
+      const res = await fetch(fnUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`,
+        },
+        body: JSON.stringify(isEdit ? { id: usuario.id, ...row } : row),
+      });
+      const data = await res.json();
+      if (!res.ok || data.error) {
+        alert("Error al guardar usuario:\n" + (data.error || res.statusText));
+        setSaving(false);
+        return;
+      }
+      // Si es nuevo, mostrar al admin la clave inicial
+      if (!isEdit && data.password) {
+        alert(`Usuario creado correctamente.\n\nClave inicial: ${data.password}\n\n(El usuario deberá cambiarla en su primer ingreso.)`);
+      }
+    } catch (err) {
+      alert("Error de red al guardar:\n" + (err?.message || err));
+      setSaving(false);
+      return;
     }
     setSaving(false);
     onSaved();
@@ -457,15 +481,45 @@ function TabUsuarios({ roles, onRolesNeed }) {
 
   useEffect(() => { fetchAll(); }, [fetchAll]);
 
+  const callAdminFn = async (path, opts = {}) => {
+    const { data: { session } } = await supabase.auth.getSession();
+    const token = session?.access_token || import.meta.env.VITE_SUPABASE_ANON_KEY;
+    return fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/admin-users${path}`, {
+      ...opts,
+      headers: { ...(opts.headers || {}), "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+    });
+  };
+
   const toggleActivo = async (u) => {
+    // Update simple — sin sincronizar auth.users porque solo cambia el flag
     await supabase.from("usuarios").update({ activo: !u.activo }).eq("id", u.id);
     fetchAll();
   };
 
   const eliminar = async (u) => {
     if (!window.confirm(`¿Eliminar usuario "${u.nombre}"? Esta acción no se puede deshacer.`)) return;
-    await supabase.from("usuarios").delete().eq("id", u.id);
+    const res = await callAdminFn(`/delete?id=${encodeURIComponent(u.id)}`, { method: "DELETE" });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.error) {
+      alert("Error al eliminar:\n" + (data.error || res.statusText));
+      return;
+    }
     fetchAll();
+  };
+
+  const resetPassword = async (u) => {
+    const nueva = window.prompt(`Resetear clave de "${u.nombre}":`, "Atolon26");
+    if (!nueva) return;
+    const res = await callAdminFn("/reset-password", {
+      method: "POST",
+      body: JSON.stringify({ id: u.id, password: nueva }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.error) {
+      alert("Error al resetear clave:\n" + (data.error || res.statusText));
+      return;
+    }
+    alert(`Clave reseteada.\n\nUsuario: ${u.email}\nClave nueva: ${data.password}\n\n(El usuario deberá cambiarla en su primer ingreso.)`);
   };
 
   const activos = usuarios.filter(u => u.activo);
@@ -548,6 +602,9 @@ function TabUsuarios({ roles, onRolesNeed }) {
                 <div style={{ display: "flex", gap: 6, flexShrink: 0 }} onClick={e => e.stopPropagation()}>
                   <button onClick={() => { setEditando(u); setShowModal(true); }}
                     style={{ background: B.navyLight, color: B.sand, border: "none", borderRadius: 6, padding: "5px 10px", fontSize: 11, cursor: "pointer" }}>Editar</button>
+                  <button onClick={() => resetPassword(u)}
+                    title="Resetear clave"
+                    style={{ background: B.sky + "22", color: B.sky, border: "none", borderRadius: 6, padding: "5px 8px", fontSize: 11, cursor: "pointer" }}>🔑</button>
                   <button onClick={() => toggleActivo(u)}
                     style={{ background: u.activo ? B.warning + "22" : B.success + "22", color: u.activo ? B.warning : B.success, border: "none", borderRadius: 6, padding: "5px 10px", fontSize: 11, cursor: "pointer" }}>
                     {u.activo ? "Desactivar" : "Activar"}

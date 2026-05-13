@@ -34,9 +34,11 @@ export const GRUPOS_NAV = [
       { key: "muelle",       label: "Llegadas",   icon: "⚓" },
       { key: "salidas_isla", label: "Salidas",    icon: "⛵" },
       { key: "lancha",       label: "Lancha",     icon: "🚤" },
+      { key: "pool_service", label: "Pool Service", icon: "🏊" },
       { key: "cierre_caja",  label: "Cierre Caja", icon: "💵" },
       { key: "contratistas_muelle", label: "Muelle Contratistas", icon: "🦺" },
       { key: "hacer_inventario", label: "Hacer Inventario", icon: "📋" },
+      { key: "transferencias",   label: "Transferencias",   icon: "🔁" },
     ],
   },
   {
@@ -66,6 +68,7 @@ export const GRUPOS_NAV = [
       { key: "contenido",          label: "Contenido", icon: "📢" },
       { key: "vip",                label: "Society",   icon: "✦"  },
       { key: "carrito_abandonado", label: "Carritos",  icon: "🛒" },
+      { key: "whatsapp_chat",      label: "WhatsApp",  icon: "💬" },
     ],
   },
   {
@@ -75,9 +78,12 @@ export const GRUPOS_NAV = [
     color: "#C8B99A",
     items: [
       { key: "rrhh",      label: "Rec. Humanos", icon: "👷" },
+      { key: "reclutamiento", label: "Reclutamiento", icon: "👔" },
+      { key: "comedor",   label: "Comedor",      icon: "🍴" },
       { key: "horarios",  label: "Horarios",     icon: "📅" },
       { key: "nomina",    label: "Nómina",       icon: "💵" },
       { key: "nomina_dia",label: "Nómina Día",   icon: "📆" },
+      { key: "asistencia_zk", label: "Asistencia ZK", icon: "👆" },
       { key: "contratistas_admin", label: "Contratistas", icon: "🦺" },
       { key: "briefings", label: "Briefings",    icon: "📋" },
       { key: "manuales",  label: "Manuales",     icon: "📚" },

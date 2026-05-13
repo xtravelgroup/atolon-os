@@ -702,34 +702,473 @@ serve(async (req) => {
       });
     }
 
+    // GET /loggro-sync/reporte-cortesias-pedidos?from=...&to=...
+    // Reporte de "Pedidos de cortesía" (KOT-level) — equivalente al
+    // reporte que da Loggro Restobar. Lista cada pedido individual
+    // marcado como complementary (cortesía).
+    if (req.method === "GET" && path === "/reporte-cortesias-pedidos") {
+      const from = url.searchParams.get("from");
+      const to   = url.searchParams.get("to");
+      if (!from || !to) return json({ error: "params from y to requeridos" }, 400);
+
+      const pageSize = 100;
+      const allOrders: any[] = [];
+      const seen = new Set<string>();
+      const MAX_PAGES = 200;
+      let stopReached = false;
+      for (let batchStart = 0; batchStart < MAX_PAGES && !stopReached; batchStart += 20) {
+        const batch = [];
+        for (let p = batchStart; p < batchStart + 20 && p < MAX_PAGES; p++) {
+          batch.push(
+            loggroGet(`/orders?pagination=true&limit=${pageSize}&page=${p}`)
+              .then(d => ({ page: p, arr: d?.data || (Array.isArray(d) ? d : []) }))
+              .catch(() => ({ page: p, arr: [] }))
+          );
+        }
+        const results = await Promise.all(batch);
+        let emptyPagesInBatch = 0;
+        results.forEach(r => {
+          if (r.arr.length === 0) emptyPagesInBatch++;
+          r.arr.forEach((o: any) => {
+            if (o?._id && !seen.has(o._id)) { seen.add(o._id); allOrders.push(o); }
+          });
+        });
+        if (emptyPagesInBatch >= 5) stopReached = true;
+      }
+
+      const COTZ_OFFSET_MS = -5 * 3600 * 1000;
+      const cortesias: any[] = [];
+      for (const o of allOrders) {
+        if (!o?.complementary?.isComplementary) continue;
+        const ts = o?.createdOn;
+        if (!ts) continue;
+        const utc = new Date(ts).getTime();
+        const co = new Date(utc + COTZ_OFFSET_MS);
+        const coDay = co.toISOString().slice(0, 10);
+        if (coDay < from || coDay > to) continue;
+
+        const fechaCortesia = o?.complementary?.modifiedOn || o?.modifiedOn || o?.createdOn;
+        const fcUTC = new Date(fechaCortesia).getTime();
+        const fcLocal = new Date(fcUTC + COTZ_OFFSET_MS);
+
+        cortesias.push({
+          id: o._id,
+          fecha_pedido: co.toISOString().slice(0, 19).replace("T", " "),
+          fecha_cortesia: fcLocal.toISOString().slice(0, 19).replace("T", " "),
+          producto: o?.product?.name || "—",
+          cantidad: Number(o?.quantity) || 0,
+          cliente: o?.complementary?.client?.name || o?.table?.name || "General",
+          nota: o?.complementary?.note || "",
+          cortesia_por: o?.modifiedBy?.name || "—",        // quién autorizó la cortesía
+          pedido_por: o?.seller?.name || "—",              // mesero que tomó el pedido
+          total: Number(o?.total) || 0,
+          status: o?.status || "",
+        });
+      }
+
+      cortesias.sort((a, b) => b.fecha_pedido.localeCompare(a.fecha_pedido));
+
+      return json({
+        ok: true, from, to,
+        orders_revisados: allOrders.length,
+        total_cortesias: cortesias.length,
+        cortesias,
+      });
+    }
+
+    // GET /loggro-sync/reporte-internos-pedidos?from=...&to=...
+    // Reporte de "Pedidos Internos" (KOT-level) — items con
+    // internal.isInternal=true (consumos del staff/dirección).
+    if (req.method === "GET" && path === "/reporte-internos-pedidos") {
+      const from = url.searchParams.get("from");
+      const to   = url.searchParams.get("to");
+      if (!from || !to) return json({ error: "params from y to requeridos" }, 400);
+
+      const pageSize = 100;
+      const allOrders: any[] = [];
+      const seen = new Set<string>();
+      const MAX_PAGES = 200;
+      let stopReached = false;
+      for (let batchStart = 0; batchStart < MAX_PAGES && !stopReached; batchStart += 20) {
+        const batch = [];
+        for (let p = batchStart; p < batchStart + 20 && p < MAX_PAGES; p++) {
+          batch.push(
+            loggroGet(`/orders?pagination=true&limit=${pageSize}&page=${p}`)
+              .then(d => ({ page: p, arr: d?.data || (Array.isArray(d) ? d : []) }))
+              .catch(() => ({ page: p, arr: [] }))
+          );
+        }
+        const results = await Promise.all(batch);
+        let emptyPagesInBatch = 0;
+        results.forEach(r => {
+          if (r.arr.length === 0) emptyPagesInBatch++;
+          r.arr.forEach((o: any) => {
+            if (o?._id && !seen.has(o._id)) { seen.add(o._id); allOrders.push(o); }
+          });
+        });
+        if (emptyPagesInBatch >= 5) stopReached = true;
+      }
+
+      const COTZ_OFFSET_MS = -5 * 3600 * 1000;
+      const internos: any[] = [];
+      for (const o of allOrders) {
+        if (!o?.internal?.isInternal) continue;
+        const ts = o?.createdOn;
+        if (!ts) continue;
+        const utc = new Date(ts).getTime();
+        const co = new Date(utc + COTZ_OFFSET_MS);
+        const coDay = co.toISOString().slice(0, 10);
+        if (coDay < from || coDay > to) continue;
+
+        const fechaGuardado = o?.modifiedOn || o?.createdOn;
+        const fgUTC = new Date(fechaGuardado).getTime();
+        const fgLocal = new Date(fgUTC + COTZ_OFFSET_MS);
+
+        internos.push({
+          id: o._id,
+          fecha_pedido: co.toISOString().slice(0, 19).replace("T", " "),
+          fecha_guardado: fgLocal.toISOString().slice(0, 19).replace("T", " "),
+          producto: o?.product?.name || "—",
+          cantidad: Number(o?.quantity) || 0,
+          nota: o?.internal?.note || (Array.isArray(o?.notes) && o.notes.length ? o.notes.map((n: any) => n?.note || n?.text || n).join(" ") : "") || "",
+          guardado_por: o?.modifiedBy?.name || "—",
+          pedido_por: o?.seller?.name || "—",
+          total: Number(o?.total) || 0,
+        });
+      }
+
+      internos.sort((a, b) => b.fecha_pedido.localeCompare(a.fecha_pedido));
+
+      return json({
+        ok: true, from, to,
+        orders_revisados: allOrders.length,
+        total_internos: internos.length,
+        internos,
+      });
+    }
+
+    // GET /loggro-sync/inspect-order — debug: muestra un order completo
+    if (req.method === "GET" && path === "/inspect-order") {
+      const onlyComplementary = url.searchParams.get("complementary") === "true";
+      const onlyDeleted = url.searchParams.get("deleted") === "true";
+      for (let p = 0; p < 50; p++) {
+        const data: any = await loggroGet(`/orders?pagination=true&limit=100&page=${p}`);
+        const arr = data?.data || (Array.isArray(data) ? data : []);
+        if (arr.length === 0) break;
+        const found = onlyComplementary
+          ? arr.find((o: any) => o?.complementary?.isComplementary === true)
+          : onlyDeleted
+          ? arr.find((o: any) => o?.deletedInfo?.isDeleted === true)
+          : arr[0];
+        if (found) return json({ ok: true, page_found: p, sample: found });
+      }
+      return json({ ok: false, error: "no se encontró order que coincida" });
+    }
+
+    // GET /loggro-sync/reporte-cancelaciones-pedidos?from=...&to=...
+    // Reporte de "Pedidos cancelados" (KOT-level) — items individuales
+    // marcados como deletedInfo.isDeleted=true. Loggro filtra deleted por
+    // default así que hay que pedirlos con includeDeleted=true.
+    if (req.method === "GET" && path === "/reporte-cancelaciones-pedidos") {
+      const from = url.searchParams.get("from");
+      const to   = url.searchParams.get("to");
+      if (!from || !to) return json({ error: "params from y to requeridos" }, 400);
+
+      const pageSize = 100;
+      const allOrders: any[] = [];
+      const seen = new Set<string>();
+      const MAX_PAGES = 200;
+      let stopReached = false;
+      for (let batchStart = 0; batchStart < MAX_PAGES && !stopReached; batchStart += 20) {
+        const batch = [];
+        for (let p = batchStart; p < batchStart + 20 && p < MAX_PAGES; p++) {
+          batch.push(
+            loggroGet(`/orders?pagination=true&limit=${pageSize}&page=${p}&includeDeleted=true`)
+              .then(d => ({ page: p, arr: d?.data || (Array.isArray(d) ? d : []) }))
+              .catch(() => ({ page: p, arr: [] }))
+          );
+        }
+        const results = await Promise.all(batch);
+        let emptyPagesInBatch = 0;
+        results.forEach(r => {
+          if (r.arr.length === 0) emptyPagesInBatch++;
+          r.arr.forEach((o: any) => {
+            if (o?._id && !seen.has(o._id)) { seen.add(o._id); allOrders.push(o); }
+          });
+        });
+        if (emptyPagesInBatch >= 5) stopReached = true;
+      }
+
+      const COTZ_OFFSET_MS = -5 * 3600 * 1000;
+      const canceladas: any[] = [];
+      for (const o of allOrders) {
+        if (!o?.deletedInfo?.isDeleted) continue;
+        const ts = o?.createdOn;
+        if (!ts) continue;
+        const utc = new Date(ts).getTime();
+        const co = new Date(utc + COTZ_OFFSET_MS);
+        const coDay = co.toISOString().slice(0, 10);
+        if (coDay < from || coDay > to) continue;
+
+        const fechaCancel = o?.deletedInfo?.deletedOn || o?.deletedInfo?.modifiedOn || o?.modifiedOn || o?.createdOn;
+        const fcUTC = new Date(fechaCancel).getTime();
+        const fcLocal = new Date(fcUTC + COTZ_OFFSET_MS);
+
+        canceladas.push({
+          id: o._id,
+          fecha_pedido: co.toISOString().slice(0, 19).replace("T", " "),
+          fecha_cancelacion: fcLocal.toISOString().slice(0, 19).replace("T", " "),
+          producto: o?.product?.name || "—",
+          cantidad: Number(o?.quantity) || 0,
+          motivo: o?.deletedInfo?.reason || o?.deletedInfo?.note || "",
+          cancelado_por: o?.deletedInfo?.deletedBy?.name || o?.deletedInfo?.user?.name || o?.modifiedBy?.name || "—",
+          pedido_por: o?.seller?.name || "—",
+          total: Number(o?.total) || 0,
+        });
+      }
+
+      canceladas.sort((a, b) => b.fecha_pedido.localeCompare(a.fecha_pedido));
+
+      return json({
+        ok: true, from, to,
+        orders_revisados: allOrders.length,
+        total_cancelaciones: canceladas.length,
+        canceladas,
+      });
+    }
+
+    // GET /loggro-sync/inspect-invoice — debug: muestra una factura cruda
+    if (req.method === "GET" && path === "/inspect-invoice") {
+      const data: any = await loggroGet(`/invoices?pagination=true&limit=1&page=0`);
+      const arr = data?.data || (Array.isArray(data) ? data : []);
+      return json({ ok: true, sample: arr[0] || null, keys: arr[0] ? Object.keys(arr[0]) : [] });
+    }
+
+    // GET /loggro-sync/probe-loggro?path=... — debug: prueba un endpoint arbitrario
+    if (req.method === "GET" && path === "/probe-loggro") {
+      const probePath = url.searchParams.get("path");
+      if (!probePath) return json({ error: "param path requerido" }, 400);
+      try {
+        const data: any = await loggroGet(probePath);
+        const arr = Array.isArray(data) ? data : data?.data || data?.items || data?.results;
+        return json({
+          ok: true, path: probePath,
+          is_array: Array.isArray(arr),
+          count: Array.isArray(arr) ? arr.length : null,
+          sample: Array.isArray(arr) ? arr[0] : data,
+          keys: Array.isArray(arr) && arr[0] ? Object.keys(arr[0]) : (data ? Object.keys(data).slice(0, 30) : []),
+        });
+      } catch (e: any) {
+        return json({ ok: false, path: probePath, error: e?.message });
+      }
+    }
+
+    // GET /loggro-sync/reporte-ayb?from=...&to=...
+    // Reporte detallado de facturas de Loggro Restobar con info de
+    // cortesías (descuento 100% o total=0), descuentos parciales y
+    // anulaciones (deletedInfo.isDeleted=true).
+    if (req.method === "GET" && path === "/reporte-ayb") {
+      const from = url.searchParams.get("from");
+      const to   = url.searchParams.get("to");
+      if (!from || !to) return json({ error: "params from y to requeridos" }, 400);
+
+      const pageSize = 100;
+      const allInvoices: any[] = [];
+      const seen = new Set<string>();
+      const MAX_PAGES = 200;
+      let stopReached = false;
+      for (let batchStart = 0; batchStart < MAX_PAGES && !stopReached; batchStart += 20) {
+        const batch = [];
+        for (let p = batchStart; p < batchStart + 20 && p < MAX_PAGES; p++) {
+          batch.push(
+            loggroGet(`/invoices?pagination=true&limit=${pageSize}&page=${p}`)
+              .then(d => ({ page: p, arr: d?.data || (Array.isArray(d) ? d : []) }))
+              .catch(() => ({ page: p, arr: [] }))
+          );
+        }
+        const results = await Promise.all(batch);
+        let emptyPagesInBatch = 0;
+        results.forEach(r => {
+          if (r.arr.length === 0) emptyPagesInBatch++;
+          r.arr.forEach((inv: any) => {
+            if (inv?._id && !seen.has(inv._id)) { seen.add(inv._id); allInvoices.push(inv); }
+          });
+        });
+        if (emptyPagesInBatch >= 5) stopReached = true;
+      }
+
+      const COTZ_OFFSET_MS = -5 * 3600 * 1000;
+      const cortesias: any[] = [];
+      const anuladas: any[] = [];
+      const descuentos: any[] = [];
+
+      for (const inv of allInvoices) {
+        const ts = inv?.createdOn;
+        if (!ts) continue;
+        const utc = new Date(ts).getTime();
+        const co = new Date(utc + COTZ_OFFSET_MS);
+        const coDay = co.toISOString().slice(0, 10);
+        const coTime = co.toISOString().slice(11, 16);
+        if (coDay < from || coDay > to) continue;
+
+        const isDeleted = !!inv?.deletedInfo?.isDeleted;
+        const total = Number(inv?.total) || 0;
+        const totalBruto = Number(inv?.totalBruto) || 0;
+        const subtotal = Number(inv?.subTotal) || 0;
+        const tip = Number(inv?.tip) || 0;
+        const totalDiscount = Number(inv?.totalDiscount) || 0;
+        const discountAdditional = Number(inv?.discountAdditionalTotal) || Number(inv?.discountAdditional) || 0;
+        const discount = totalDiscount + discountAdditional;
+        const discountPct = totalBruto > 0 ? (discount / totalBruto) * 100 : 0;
+        const numero = inv?.number || inv?.numberUnique || inv?._id?.slice(-6);
+        const cliente = (inv?.client?.name && (inv?.client?.lastName ? `${inv.client.name} ${inv.client.lastName}` : inv.client.name)) || inv?.table?.name || "—";
+        const usuario = inv?.cashier?.name || inv?.seller?.name || "—";
+        const motivo = inv?.deletedInfo?.reason || inv?.observations || [inv?.note1, inv?.note2, inv?.note3].filter(Boolean).join(" · ") || "";
+        const items = (inv?.products || []).map((it: any) => ({
+          nombre: it?.name || it?.product?.name || "—",
+          cantidad: Number(it?.quantity) || 0,
+          precio: Number(it?.price) || 0,
+          subtotal: Number(it?.subTotal) || 0,
+          descuento: Number(it?.totalDiscount) || 0,
+        }));
+
+        const base = {
+          id: inv?._id,
+          numero,
+          fecha: coDay,
+          hora: coTime,
+          cliente,
+          usuario,
+          total,
+          subtotal,
+          tip,
+          discount,
+          discountPct,
+          isDeleted,
+          motivo,
+          items_count: items.length,
+          items,
+        };
+
+        // ANULADA
+        if (isDeleted) {
+          anuladas.push(base);
+          continue;
+        }
+        // CORTESÍA: descuento 100% o total = 0 con items
+        const esCortesia = discountPct >= 99.99 || (total === 0 && items.length > 0) || (subtotal > 0 && total === 0);
+        if (esCortesia) {
+          cortesias.push(base);
+        }
+        // DESCUENTO PARCIAL: discount > 0 pero no es cortesía 100%
+        if (discount > 0 && !esCortesia) {
+          descuentos.push(base);
+        }
+      }
+
+      return json({
+        ok: true,
+        from, to,
+        invoices_revisados: allInvoices.length,
+        resumen: {
+          cortesias: { count: cortesias.length, total: cortesias.reduce((s, x) => s + (x.subtotal || 0), 0) },
+          anuladas: { count: anuladas.length, total: anuladas.reduce((s, x) => s + (x.total || 0), 0) },
+          descuentos: { count: descuentos.length, total_descontado: descuentos.reduce((s, x) => s + (x.discount || 0), 0) },
+        },
+        cortesias: cortesias.sort((a, b) => (b.fecha + b.hora).localeCompare(a.fecha + a.hora)),
+        anuladas: anuladas.sort((a, b) => (b.fecha + b.hora).localeCompare(a.fecha + a.hora)),
+        descuentos: descuentos.sort((a, b) => (b.fecha + b.hora).localeCompare(a.fecha + a.hora)),
+      });
+    }
+
     // GET /loggro-sync/cierre-caja-rango?from=YYYY-MM-DD&to=YYYY-MM-DD
     // Retorna totales por día y resumen global para un rango. Usado por P/L,
     // Financiero y Resultados para consumir la data oficial de Loggro Restobar.
     if (req.method === "GET" && path === "/cierre-caja-rango") {
       const from = url.searchParams.get("from");
       const to   = url.searchParams.get("to");
+      const force = url.searchParams.get("force") === "1";
       if (!from || !to) return json({ error: "params from y to requeridos (YYYY-MM-DD)" }, 400);
 
-      // Bajar un rango de páginas lo suficientemente grande. Loggro no filtra
-      // por fecha, así que pagineamos y filtramos.
+      // ── 1. Lookup cache (5 min TTL) ──────────────────────────────────
+      // Salvo que pidan force=1, devolvemos cache si está fresca. Esto baja
+      // el tiempo de respuesta de 5-20s a ~50ms.
+      const cacheKey = `${from}|${to}`;
+      if (!force) {
+        try {
+          const { data: cached } = await sb()
+            .from("loggro_ayb_cache")
+            .select("payload, expires_at")
+            .eq("cache_key", cacheKey)
+            .gt("expires_at", new Date().toISOString())
+            .maybeSingle();
+          if (cached?.payload) {
+            return json({ ...cached.payload, cache_hit: true });
+          }
+        } catch (e) {
+          console.warn("[loggro-cache] read failed, fetching live:", (e as Error).message);
+        }
+      }
+
+      // ── 2. Pagina inversa: empezamos por las páginas más altas ───────
+      // Loggro tiene las facturas más recientes en las páginas más altas.
+      // En vez de barrer 200 páginas desde la 0, hacemos un sondeo binario
+      // primero para encontrar la última página con datos, y después
+      // bajamos hasta cuando salimos del rango "from".
       const pageSize = 100;
-      const PAGE_RANGE_SIZE = 40; // ~4000 facturas ≈ 3-4 meses
-      const pagePromises = [];
-      for (let p = 70; p < 70 + PAGE_RANGE_SIZE; p++) {
-        pagePromises.push(
+      const COTZ_OFFSET_MS = -5 * 3600 * 1000;
+      const dayOf = (ts: string) => {
+        const utc = new Date(ts).getTime();
+        const co = new Date(utc + COTZ_OFFSET_MS);
+        return co.toISOString().slice(0, 10);
+      };
+
+      // Sondeo binario para encontrar última página no vacía (rápido: ~10 calls).
+      let lo = 0, hi = 200, lastNonEmpty = 0;
+      while (lo <= hi) {
+        const mid = Math.floor((lo + hi) / 2);
+        const d = await loggroGet(`/invoices?pagination=true&limit=${pageSize}&page=${mid}`).catch(() => null);
+        const arr = d?.data || (Array.isArray(d) ? d : []) || [];
+        if (arr.length > 0) { lastNonEmpty = mid; lo = mid + 1; }
+        else { hi = mid - 1; }
+      }
+
+      const allInvoices: any[] = [];
+      const seen = new Set<string>();
+      let stopReached = false;
+      let pagesScanned = 0;
+      const MAX_BACKWARD = 30; // safety: nunca más que 30 páginas (3000 facturas)
+
+      // Bajamos en batches de 5 páginas paralelas, desde la última hacia atrás.
+      let curPage = lastNonEmpty;
+      while (curPage >= 0 && !stopReached && pagesScanned < MAX_BACKWARD) {
+        const batchPages: number[] = [];
+        for (let i = 0; i < 5 && curPage >= 0; i++) batchPages.push(curPage--);
+        const batch = batchPages.map(p =>
           loggroGet(`/invoices?pagination=true&limit=${pageSize}&page=${p}`)
             .then(d => ({ page: p, arr: d?.data || (Array.isArray(d) ? d : []) }))
             .catch(() => ({ page: p, arr: [] }))
         );
-      }
-      const results = await Promise.all(pagePromises);
-      const allInvoices: any[] = [];
-      const seen = new Set<string>();
-      results.forEach(r => r.arr.forEach((inv: any) => {
-        if (inv?._id && !seen.has(inv._id)) { seen.add(inv._id); allInvoices.push(inv); }
-      }));
+        const results = await Promise.all(batch);
+        pagesScanned += results.length;
 
-      const COTZ_OFFSET_MS = -5 * 3600 * 1000;
+        let allOlderThanFrom = true;
+        for (const r of results) {
+          for (const inv of r.arr) {
+            if (!inv?._id || seen.has(inv._id)) continue;
+            seen.add(inv._id);
+            allInvoices.push(inv);
+            const ts = inv?.createdOn;
+            if (ts) {
+              const d = dayOf(ts);
+              if (d >= from) allOlderThanFrom = false;
+            }
+          }
+        }
+        // Si TODAS las facturas del batch son anteriores al "from", paramos
+        if (allOlderThanFrom && allInvoices.length > 0) stopReached = true;
+      }
+
       // Bucket por día: { ventas, propinas, tickets, anuladas, por_metodo: {} }
       interface DayBucket { ventas: number; propinas: number; tickets: number; anuladas: number; por_metodo: Record<string, number>; }
       const porDia: Record<string, DayBucket> = {};
@@ -779,11 +1218,14 @@ serve(async (req) => {
         }
       }
 
-      return json({
+      const payload = {
         ok: true,
         from, to,
         timezone: "America/Bogota",
-        paginas_consultadas: PAGE_RANGE_SIZE,
+        invoices_revisados: allInvoices.length,
+        pages_scanned: pagesScanned,
+        last_non_empty_page: lastNonEmpty,
+        stop_reached: stopReached,
         resumen: {
           total_ventas: totalVentas,
           total_propinas: totalPropinas,
@@ -793,7 +1235,64 @@ serve(async (req) => {
         },
         por_metodo: porMetodoGlobal,
         por_dia: porDia,
-      });
+      };
+
+      // ── 3. Guardar en cache (5 min TTL) ──────────────────────────────
+      // Si la req era para un rango que termina HOY, el TTL es 5 min (datos
+      // cambian). Si termina antes de hoy, TTL es 24h (datos históricos no
+      // cambian). Esto baja muchísimo la carga en Loggro para queries de
+      // meses anteriores.
+      try {
+        const today = new Date(Date.now() - 5 * 3600 * 1000).toISOString().slice(0, 10);
+        const ttlMs = to >= today ? 5 * 60 * 1000 : 24 * 60 * 60 * 1000;
+        const expiresAt = new Date(Date.now() + ttlMs).toISOString();
+        await sb().from("loggro_ayb_cache").upsert({
+          cache_key: cacheKey,
+          from_date: from,
+          to_date: to,
+          payload,
+          cached_at: new Date().toISOString(),
+          expires_at: expiresAt,
+        }, { onConflict: "cache_key" });
+      } catch (e) {
+        console.warn("[loggro-cache] write failed:", (e as Error).message);
+      }
+
+      return json(payload);
+    }
+
+    // POST /loggro-sync/create-provider — crear proveedor en Loggro
+    // Body: { nombre, nit?, telefono?, email?, ciudad?, direccion? }
+    if (req.method === "POST" && path === "/create-provider") {
+      const body = await req.json().catch(() => ({}));
+      if (!body.nombre) return json({ ok: false, error: "nombre requerido" }, 400);
+      const { businessId, userId } = await getLoggroIdentity();
+
+      const payload: any = {
+        business: businessId,
+        user: userId,
+        name: body.nombre,
+        document: body.nit || null,
+        phone: body.telefono || null,
+        email: body.email || null,
+        city: body.ciudad || null,
+        address: body.direccion || null,
+        isActive: true,
+        createdOn: new Date().toISOString(),
+        modifiedOn: new Date().toISOString(),
+      };
+
+      // Probar paths comunes hasta encontrar uno que funcione
+      const paths = ["/providers", "/suppliers", "/proveedores"];
+      const intentos: any[] = [];
+      for (const p of paths) {
+        const r = await loggroRaw("POST", p, payload);
+        intentos.push({ path: p, status: r.status, body_preview: typeof r.body === "string" ? r.body.slice(0, 200) : r.body });
+        if (r.ok && r.body && (r.body._id || r.body.id)) {
+          return json({ ok: true, path_used: p, loggro_id: r.body._id || r.body.id, provider: r.body, intentos });
+        }
+      }
+      return json({ ok: false, error: "Ningún path POST respondió OK", intentos }, 502);
     }
 
     // GET /loggro-sync/providers — listar proveedores de Restobar
@@ -994,8 +1493,8 @@ serve(async (req) => {
           con_stock_negativo: negativos.length,
           stock_total_a_sacar:  positivos.reduce((s, x) => s + x.stock, 0),
           stock_total_a_reponer: negativos.reduce((s, x) => s + x.stock, 0),
-          ejemplos_positivos: positivos.slice(0, 20),
-          ejemplos_negativos: negativos.slice(0, 20),
+          all_positivos: positivos,
+          all_negativos: negativos,
         });
       }
 
@@ -1106,13 +1605,15 @@ serve(async (req) => {
       }
 
       const now = new Date().toISOString();
-      // type=1 (compra/ingreso) para que sí entre el stock — type=11 con
-      // isSubtracted=false no funciona como entrada en Loggro.
+      // type=3 (Entrada Ajuste) por defecto — apropiado para baselines de
+      // inventario. type=1 sería "Compra" (genera asiento contable de
+      // compra). Permite override por body.type.
+      const tipoMovimiento = Number(body.type) || 3;
       const movementPayload: any = {
         business: businessId,
         user: userId,
         date: now,
-        type: 1,                       // compra/ingreso
+        type: tipoMovimiento,
         isSubtracted: false,
         isProduction: false,
         isMoveTo: false,
@@ -1141,6 +1642,475 @@ serve(async (req) => {
         movement_id: result.body?._id || result.body?.id || null,
         items_cargados: baselineItems.length,
         cantidad_total: baselineItems.reduce((s, x) => s + x.quantity, 0),
+      });
+    }
+
+    // ════════════════════════════════════════════════════════════════════
+    // POST /loggro-sync/sync-loggro-to-atolon
+    // Sincronización inversa: lee stock actual de Loggro y aplica los
+    // deltas a Atolón OS (descuento por ventas, sumando entradas).
+    //
+    // Lógica de bodega destino:
+    //   · Bebidas/cocteles  → LOC-BAR (Bar operativo)
+    //   · Alimentos/cocina  → LOC-ALMACEN-COCINA (Almacén Restaurant)
+    //   · Otro              → LOC-ALMACEN-COCINA por default
+    //
+    // El delta = stock_loggro - stock_atolon_sum.
+    // Si delta > 0: hubo entrada en Loggro (compra/devolución) → sumar a bodega
+    // Si delta < 0: hubo venta/consumo → descontar de bodega
+    // ════════════════════════════════════════════════════════════════════
+    if (req.method === "POST" && path === "/sync-loggro-to-atolon") {
+      const body = await req.json().catch(() => ({}));
+      const dryRun = !!body.dry_run;
+      const supaUrl = Deno.env.get("SUPABASE_URL");
+      const supaKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+      if (!supaUrl || !supaKey) return json({ ok: false, error: "Supabase env missing" }, 500);
+
+      // 1) Items con loggro_id activos (incluyendo categoría)
+      const catRes = await fetch(`${supaUrl}/rest/v1/items_catalogo?activo=eq.true&loggro_id=not.is.null&select=id,nombre,categoria,loggro_id`, {
+        headers: { apikey: supaKey, Authorization: `Bearer ${supaKey}` },
+      });
+      const cats: any[] = await catRes.json();
+
+      // 2) Stock actual sumado por item en Atolón
+      const stockRes = await fetch(`${supaUrl}/rest/v1/items_stock_locacion?select=item_id,locacion_id,cantidad`, {
+        headers: { apikey: supaKey, Authorization: `Bearer ${supaKey}` },
+      });
+      const stocks: any[] = await stockRes.json();
+      const atolonByItem: Record<string, number> = {};
+      const stockByItemLoc: Record<string, number> = {};
+      stocks.forEach(s => {
+        atolonByItem[s.item_id] = (atolonByItem[s.item_id] || 0) + (Number(s.cantidad) || 0);
+        stockByItemLoc[`${s.item_id}|${s.locacion_id}`] = Number(s.cantidad) || 0;
+      });
+
+      // 3) Stock actual de Loggro
+      const ids = cats.map(c => c.loggro_id).filter(Boolean);
+      const loggroStock: Record<string, number> = {};
+      let idx = 0;
+      async function worker() {
+        while (idx < ids.length) {
+          const myIdx = idx++;
+          const id = ids[myIdx];
+          try {
+            const d: any = await loggroGet(`/ingredients/${id}`);
+            let totalStock = 0;
+            if (Array.isArray(d?.locationsStock)) {
+              totalStock = d.locationsStock.reduce((s: number, ls: any) => s + (Number(ls.stock) || 0), 0);
+            }
+            loggroStock[id] = totalStock;
+          } catch (_) { /* skip */ }
+        }
+      }
+      await Promise.all(Array.from({ length: 10 }, () => worker()));
+
+      // 4) Determinar bodega destino por categoría
+      const bodegaDestino = (cat: string): string => {
+        const c = (cat || "").toUpperCase();
+        // Bebidas → Bar
+        if (c.includes("CERVEZA") || c.includes("LICOR") || c.includes("RON")
+            || c.includes("TEQUILA") || c.includes("VODKA") || c.includes("GIN")
+            || c.includes("WHISKY") || c.includes("VINO") || c.includes("AGUARDIENTE")
+            || c.includes("MEZCAL") || c.includes("COCTEL") || c.includes("SHOT")
+            || c.includes("JUGO") || c.includes("GASEOSA") || c.includes("BEBIDA")
+            || c.includes("PRODUCCION BAR") || c.includes("PRODUCCIÓN BAR")
+            || c.includes("CHAMP") || c.includes("ESPUMOSO") || c.includes("BOTELLA")) {
+          return "LOC-BAR";
+        }
+        // Por default: Almacén Restaurant (antes Almacén Cocina)
+        return "LOC-ALMACEN-COCINA";
+      };
+
+      // 5) Calcular deltas y movimientos a aplicar
+      const movimientos: Array<{
+        item_id: string; nombre: string; categoria: string;
+        atolon: number; loggro: number; delta: number;
+        bodega: string; nuevo_valor: number;
+      }> = [];
+
+      for (const c of cats) {
+        const at = atolonByItem[c.id] || 0;
+        const lg = loggroStock[c.loggro_id];
+        if (lg === undefined) continue;
+        const delta = lg - at;
+        if (Math.abs(delta) < 0.001) continue;
+
+        const bodega = bodegaDestino(c.categoria || "");
+        const stockEnBodega = stockByItemLoc[`${c.id}|${bodega}`] || 0;
+        const nuevoValor = stockEnBodega + delta;
+
+        movimientos.push({
+          item_id: c.id, nombre: c.nombre, categoria: c.categoria || "",
+          atolon: at, loggro: lg, delta,
+          bodega, nuevo_valor: nuevoValor,
+        });
+      }
+
+      if (dryRun) {
+        return json({
+          ok: true, dry_run: true,
+          items_a_actualizar: movimientos.length,
+          delta_total: movimientos.reduce((s, m) => s + m.delta, 0),
+          ejemplos: movimientos.slice(0, 30),
+        });
+      }
+
+      // 6) Aplicar UPSERT en items_stock_locacion
+      let actualizados = 0;
+      for (const m of movimientos) {
+        const updRes = await fetch(`${supaUrl}/rest/v1/items_stock_locacion`, {
+          method: "POST",
+          headers: {
+            apikey: supaKey,
+            Authorization: `Bearer ${supaKey}`,
+            "Content-Type": "application/json",
+            Prefer: "resolution=merge-duplicates,return=minimal",
+          },
+          body: JSON.stringify({
+            item_id: m.item_id,
+            locacion_id: m.bodega,
+            cantidad: m.nuevo_valor,
+            updated_at: new Date().toISOString(),
+          }),
+        });
+        if (updRes.ok) actualizados++;
+      }
+
+      // 7) También actualizar items_catalogo.stock_actual con los valores de Loggro
+      //    (para que la vista "Inventario General" cuadre sin sync extra)
+      for (const c of cats) {
+        const lg = loggroStock[c.loggro_id];
+        if (lg === undefined) continue;
+        await fetch(`${supaUrl}/rest/v1/items_catalogo?id=eq.${c.id}`, {
+          method: "PATCH",
+          headers: {
+            apikey: supaKey, Authorization: `Bearer ${supaKey}`,
+            "Content-Type": "application/json", Prefer: "return=minimal",
+          },
+          body: JSON.stringify({ stock_actual: lg, updated_at: new Date().toISOString() }),
+        });
+      }
+
+      return json({
+        ok: true,
+        items_revisados: cats.length,
+        items_actualizados: actualizados,
+        delta_total: movimientos.reduce((s, m) => s + m.delta, 0),
+        ventas_descontadas:  movimientos.filter(m => m.delta < 0).length,
+        entradas_aplicadas:   movimientos.filter(m => m.delta > 0).length,
+      });
+    }
+
+    // ════════════════════════════════════════════════════════════════════
+    // POST /loggro-sync/consumo-comedor-salida
+    // Idéntico a consumo-evento-salida pero lee de comedor_consumo.
+    // ════════════════════════════════════════════════════════════════════
+    if (req.method === "POST" && path === "/consumo-comedor-salida") {
+      const body = await req.json().catch(() => ({}));
+      const consumoId = body?.consumo_id;
+      if (!consumoId) return json({ ok: false, error: "consumo_id requerido" }, 400);
+
+      const supaUrl = Deno.env.get("SUPABASE_URL");
+      const supaKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+      const sb = (path: string, init: RequestInit = {}) => fetch(`${supaUrl}/rest/v1/${path}`, {
+        ...init,
+        headers: { apikey: supaKey!, Authorization: `Bearer ${supaKey}`, "Content-Type": "application/json", Prefer: "return=representation", ...(init.headers || {}) },
+      }).then(r => r.json());
+
+      const consumos: any = await sb(`comedor_consumo?id=eq.${consumoId}&select=*`);
+      const c = Array.isArray(consumos) ? consumos[0] : null;
+      if (!c) return json({ ok: false, error: "Consumo no encontrado" }, 404);
+      if (c.anulado) return json({ ok: false, error: "Consumo anulado" }, 400);
+      if (c.loggro_movement_id) return json({ ok: true, skipped: "ya_sincronizado", movement_id: c.loggro_movement_id });
+
+      const items: any = await sb(`items_catalogo?id=eq.${encodeURIComponent(c.item_id)}&select=id,nombre,loggro_id`);
+      const item = Array.isArray(items) ? items[0] : null;
+      if (!item) return json({ ok: false, error: "Item no encontrado" }, 404);
+      if (!item.loggro_id) {
+        await sb(`comedor_consumo?id=eq.${consumoId}`, {
+          method: "PATCH",
+          body: JSON.stringify({ loggro_sync_status: "error", loggro_sync_error: "Item sin loggro_id", loggro_sync_at: new Date().toISOString() }),
+        });
+        return json({ ok: false, error: "Item sin loggro_id" }, 422);
+      }
+
+      const tipoLabel = c.comida === "desayuno" ? "Desayuno" : c.comida === "almuerzo" ? "Almuerzo" : c.comida === "cena" ? "Cena" : "Comedor";
+      const note = `Comedor ${c.fecha} — ${tipoLabel}${c.notas ? ` · ${c.notas}` : ""}`;
+      const { businessId, userId } = await getLoggroIdentity();
+      const now = new Date().toISOString();
+      const movResult = await loggroRaw("POST", "/inventories", {
+        business: businessId, user: userId, date: now,
+        type: 11, isSubtracted: true, isProduction: false, isMoveTo: false, deleted: false,
+        note,
+        ingredients: [{ ingredient: item.loggro_id, quantity: Number(c.cantidad), price: Number(c.precio_unitario) || 0 }],
+        createdOn: now, modifiedOn: now,
+      });
+      if (!movResult.ok) {
+        await sb(`comedor_consumo?id=eq.${consumoId}`, {
+          method: "PATCH",
+          body: JSON.stringify({ loggro_sync_status: "error", loggro_sync_error: JSON.stringify(movResult.body || {}).slice(0, 500), loggro_sync_at: new Date().toISOString() }),
+        });
+        return json({ ok: false, error: "Loggro rechazó", loggro_response: movResult.body }, 502);
+      }
+      const movementId = movResult.body?._id || movResult.body?.id || null;
+      await sb(`comedor_consumo?id=eq.${consumoId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ loggro_sync_status: "ok", loggro_movement_id: movementId, loggro_sync_error: null, loggro_sync_at: new Date().toISOString() }),
+      });
+      return json({ ok: true, movement_id: movementId, item: item.nombre });
+    }
+
+    // ════════════════════════════════════════════════════════════════════
+    // POST /loggro-sync/consumo-evento-salida
+    // Sincroniza un consumo de evento como "Salida - Otro" en Loggro.
+    // Body: { consumo_id }
+    //
+    // Flujo:
+    //   1. Lee el consumo + item + evento desde la BD
+    //   2. Verifica que el item tenga loggro_id
+    //   3. Crea movimiento en Loggro: type=11, isSubtracted=true (salida)
+    //      con note descriptivo "Consumo evento {nombre} — {tipo}"
+    //   4. Actualiza loggro_sync_status, loggro_movement_id, loggro_sync_at
+    // ════════════════════════════════════════════════════════════════════
+    if (req.method === "POST" && path === "/consumo-evento-salida") {
+      const body = await req.json().catch(() => ({}));
+      const consumoId = body?.consumo_id;
+      if (!consumoId) return json({ ok: false, error: "consumo_id requerido" }, 400);
+
+      const supaUrl = Deno.env.get("SUPABASE_URL");
+      const supaKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+      const sb = (path: string, init: RequestInit = {}) => fetch(`${supaUrl}/rest/v1/${path}`, {
+        ...init,
+        headers: { apikey: supaKey!, Authorization: `Bearer ${supaKey}`, "Content-Type": "application/json", Prefer: "return=representation", ...(init.headers || {}) },
+      }).then(r => r.json());
+
+      // 1. Leer consumo
+      const consumos: any = await sb(`eventos_consumo_openbar?id=eq.${consumoId}&select=*`);
+      const c = Array.isArray(consumos) ? consumos[0] : null;
+      if (!c) return json({ ok: false, error: "Consumo no encontrado" }, 404);
+      if (c.anulado) return json({ ok: false, error: "Consumo anulado, no se sincroniza" }, 400);
+      if (c.loggro_movement_id) return json({ ok: true, skipped: "ya_sincronizado", movement_id: c.loggro_movement_id });
+
+      // 2. Leer item para obtener loggro_id
+      const items: any = await sb(`items_catalogo?id=eq.${encodeURIComponent(c.item_id)}&select=id,nombre,loggro_id`);
+      const item = Array.isArray(items) ? items[0] : null;
+      if (!item) return json({ ok: false, error: "Item no encontrado" }, 404);
+      if (!item.loggro_id) {
+        // Marcar como error (no podemos sincronizar items sin Loggro vinculado)
+        await sb(`eventos_consumo_openbar?id=eq.${consumoId}`, {
+          method: "PATCH",
+          body: JSON.stringify({
+            loggro_sync_status: "error",
+            loggro_sync_error: "Item sin loggro_id (no enlazado a Loggro)",
+            loggro_sync_at: new Date().toISOString(),
+          }),
+        });
+        return json({ ok: false, error: "Item sin loggro_id", item: item.nombre }, 422);
+      }
+
+      // 3. Leer evento para el note
+      const eventos: any = await sb(`eventos?id=eq.${encodeURIComponent(c.evento_id)}&select=id,nombre,fecha`);
+      const evento = Array.isArray(eventos) ? eventos[0] : null;
+      const eventoNombre = evento?.nombre || c.evento_id;
+      const tipoLabel = c.tipo === "openbar" ? "Open Bar" : c.tipo === "cocina_buffet" ? "Buffet" : c.tipo === "cocina_paquete" ? "Paquete" : "Otro";
+      const note = `Consumo evento "${eventoNombre}" — ${tipoLabel}${c.servicio_descripcion ? ` (${c.servicio_descripcion})` : ""}${c.notas ? ` · ${c.notas}` : ""}`;
+
+      // 4. Crear movimiento en Loggro (type=11 + isSubtracted=true = Salida - Otro)
+      const { businessId, userId } = await getLoggroIdentity();
+      const now = new Date().toISOString();
+      const movResult = await loggroRaw("POST", "/inventories", {
+        business: businessId,
+        user: userId,
+        date: now,
+        type: 11,
+        isSubtracted: true,
+        isProduction: false,
+        isMoveTo: false,
+        deleted: false,
+        note,
+        ingredients: [{ ingredient: item.loggro_id, quantity: Number(c.cantidad), price: Number(c.precio_unitario) || 0 }],
+        createdOn: now, modifiedOn: now,
+      });
+
+      if (!movResult.ok) {
+        await sb(`eventos_consumo_openbar?id=eq.${consumoId}`, {
+          method: "PATCH",
+          body: JSON.stringify({
+            loggro_sync_status: "error",
+            loggro_sync_error: JSON.stringify(movResult.body || {}).slice(0, 500),
+            loggro_sync_at: new Date().toISOString(),
+          }),
+        });
+        return json({ ok: false, error: "Loggro rechazó el movimiento", loggro_response: movResult.body }, 502);
+      }
+
+      const movementId = movResult.body?._id || movResult.body?.id || null;
+      await sb(`eventos_consumo_openbar?id=eq.${consumoId}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          loggro_sync_status: "ok",
+          loggro_movement_id: movementId,
+          loggro_sync_error: null,
+          loggro_sync_at: new Date().toISOString(),
+        }),
+      });
+
+      return json({ ok: true, movement_id: movementId, item: item.nombre, cantidad: c.cantidad, note });
+    }
+
+    // ════════════════════════════════════════════════════════════════════
+    // GET /loggro-sync/list-recent-movements?limit=20
+    // Read-only — lista los últimos movimientos de inventario para que
+    // podamos inspeccionar el campo `type` y descubrir qué número usa
+    // Loggro para cada tipo de movimiento (Entrada Ajuste, Inventario a
+    // Cero, etc.). No crea ni modifica nada.
+    // ════════════════════════════════════════════════════════════════════
+    if (req.method === "GET" && path === "/list-recent-movements") {
+      const limit = Number(url.searchParams.get("limit")) || 20;
+      // Probar varios paths típicos
+      const candidates = [
+        `/inventories?pagination=true&limit=${limit}&page=0&sort=-createdOn`,
+        `/inventories?limit=${limit}&sort=-createdOn`,
+        `/inventories?limit=${limit}`,
+        `/inventories`,
+      ];
+      for (const p of candidates) {
+        try {
+          const data: any = await loggroGet(p);
+          const list = Array.isArray(data) ? data
+            : Array.isArray(data?.data) ? data.data
+            : Array.isArray(data?.items) ? data.items
+            : Array.isArray(data?.results) ? data.results
+            : null;
+          if (list) {
+            // Devolver solo campos relevantes
+            return json({
+              ok: true,
+              path_used: p,
+              count: list.length,
+              movements: list.slice(0, limit).map((m: any) => ({
+                _id: m._id || m.id,
+                type: m.type,
+                isSubtracted: m.isSubtracted,
+                isProduction: m.isProduction,
+                isMoveTo: m.isMoveTo,
+                date: m.date,
+                createdOn: m.createdOn,
+                note: m.note,
+                ingredients_count: Array.isArray(m.ingredients) ? m.ingredients.length : 0,
+              })),
+            });
+          }
+        } catch (_) { /* try next */ }
+      }
+      return json({ ok: false, error: "No pude listar /inventories en ningún path" }, 502);
+    }
+
+    // ════════════════════════════════════════════════════════════════════
+    // POST /loggro-sync/reconcile-with-atolon
+    // Ajusta Loggro para que CADA ítem tenga exactamente la cantidad
+    // que reporta Atolón OS (suma de items_stock_locacion). Genera dos
+    // movimientos: ENTRADA para deltas positivos, SALIDA para negativos.
+    // ════════════════════════════════════════════════════════════════════
+    if (req.method === "POST" && path === "/reconcile-with-atolon") {
+      const body = await req.json().catch(() => ({}));
+      const dryRun = !!body.dry_run;
+      const supaUrl = Deno.env.get("SUPABASE_URL");
+      const supaKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+      if (!supaUrl || !supaKey) return json({ ok: false, error: "Supabase env missing" }, 500);
+
+      const { businessId, userId } = await getLoggroIdentity();
+
+      // 1) Leer items_catalogo + suma de items_stock_locacion
+      const catRes = await fetch(`${supaUrl}/rest/v1/items_catalogo?activo=eq.true&loggro_id=not.is.null&select=id,nombre,loggro_id`, {
+        headers: { apikey: supaKey, Authorization: `Bearer ${supaKey}` },
+      });
+      const cats: any[] = await catRes.json();
+
+      const stockRes = await fetch(`${supaUrl}/rest/v1/items_stock_locacion?select=item_id,cantidad`, {
+        headers: { apikey: supaKey, Authorization: `Bearer ${supaKey}` },
+      });
+      const stocks: any[] = await stockRes.json();
+      const atolonByItem: Record<string, number> = {};
+      stocks.forEach(s => {
+        atolonByItem[s.item_id] = (atolonByItem[s.item_id] || 0) + (Number(s.cantidad) || 0);
+      });
+
+      // 2) Leer stock actual de Loggro por cada loggro_id
+      const ids = cats.map(c => c.loggro_id).filter(Boolean);
+      const loggroByLoggroId: Record<string, number> = {};
+      let idx = 0;
+      async function worker() {
+        while (idx < ids.length) {
+          const myIdx = idx++;
+          const id = ids[myIdx];
+          try {
+            const d: any = await loggroGet(`/ingredients/${id}`);
+            let totalStock = 0;
+            if (Array.isArray(d?.locationsStock)) {
+              totalStock = d.locationsStock.reduce((s: number, ls: any) => s + (Number(ls.stock) || 0), 0);
+            }
+            loggroByLoggroId[id] = totalStock;
+          } catch (_) { /* skip */ }
+        }
+      }
+      await Promise.all(Array.from({ length: 10 }, () => worker()));
+
+      // 3) Calcular deltas
+      const entradas: Array<{ id: string; name: string; quantity: number }> = [];
+      const salidas:  Array<{ id: string; name: string; quantity: number }> = [];
+      for (const c of cats) {
+        const at = atolonByItem[c.id] || 0;
+        const lg = loggroByLoggroId[c.loggro_id] || 0;
+        const diff = at - lg;
+        if (Math.abs(diff) < 0.001) continue;
+        if (diff > 0) entradas.push({ id: c.loggro_id, name: c.nombre, quantity: diff });
+        else          salidas.push({ id: c.loggro_id, name: c.nombre, quantity: Math.abs(diff) });
+      }
+
+      if (dryRun) {
+        return json({
+          ok: true, dry_run: true,
+          total_a_ajustar: entradas.length + salidas.length,
+          entradas: entradas.length, salidas: salidas.length,
+          entrada_total: entradas.reduce((s, x) => s + x.quantity, 0),
+          salida_total:  salidas.reduce((s, x) => s + x.quantity, 0),
+          ejemplos_entradas: entradas.slice(0, 50),
+          ejemplos_salidas:  salidas.slice(0, 50),
+        });
+      }
+
+      const now = new Date().toISOString();
+      const movements: any[] = [];
+
+      if (entradas.length > 0) {
+        const r = await loggroRaw("POST", "/inventories", {
+          business: businessId, user: userId, date: now,
+          type: 1, isSubtracted: false, isProduction: false, isMoveTo: false, deleted: false,
+          note: "Reconciliación Atolón OS — entradas",
+          ingredients: entradas.map(e => ({ ingredient: e.id, quantity: e.quantity, price: 0 })),
+          createdOn: now, modifiedOn: now,
+        });
+        if (!r.ok) return json({ ok: false, etapa: "entradas", loggro_response: r.body }, 502);
+        movements.push({ tipo: "entradas", id: r.body?._id, items: entradas.length });
+      }
+      if (salidas.length > 0) {
+        const r = await loggroRaw("POST", "/inventories", {
+          business: businessId, user: userId, date: now,
+          type: 11, isSubtracted: true, isProduction: false, isMoveTo: false, deleted: false,
+          note: "Reconciliación Atolón OS — salidas",
+          ingredients: salidas.map(e => ({ ingredient: e.id, quantity: e.quantity, price: 0 })),
+          createdOn: now, modifiedOn: now,
+        });
+        if (!r.ok) return json({ ok: false, etapa: "salidas", loggro_response: r.body, movements }, 502);
+        movements.push({ tipo: "salidas", id: r.body?._id, items: salidas.length });
+      }
+
+      return json({
+        ok: true, movements,
+        entradas: entradas.length, salidas: salidas.length,
+        entrada_total: entradas.reduce((s, x) => s + x.quantity, 0),
+        salida_total:  salidas.reduce((s, x) => s + x.quantity, 0),
       });
     }
 

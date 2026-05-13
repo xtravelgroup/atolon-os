@@ -50,9 +50,12 @@ export default function Curso({ token }) {
         return;
       }
 
+      // Nota: contratistas_trabajadores NO tiene columna `correo`.
+      // Si se selecciona, la query falla silenciosamente y retorna null
+      // (causando "Enlace inválido" aunque el token sea correcto).
       const { data } = await supabase
         .from("contratistas_trabajadores")
-        .select("id, nombre, cedula, correo, curso_completado, curso_score, curso_codigo")
+        .select("id, nombre, cedula, curso_completado, curso_score, codigo_curso")
         .eq("curso_token", token)
         .maybeSingle();
       setTrabajador(data);
@@ -265,8 +268,8 @@ export default function Curso({ token }) {
   }
 
   if (alreadyCompleted) {
-    const verifyUrl = trabajador.curso_codigo
-      ? `https://www.atolon.co/verificar/${trabajador.curso_codigo}`
+    const verifyUrl = trabajador.codigo_curso
+      ? `https://www.atolon.co/verificar/${trabajador.codigo_curso}`
       : null;
     return (
       <Shell progress={100}>
@@ -306,7 +309,7 @@ export default function Curso({ token }) {
                   marginBottom: 20,
                 }}
               >
-                {trabajador.curso_codigo}
+                {trabajador.codigo_curso}
               </div>
               <a
                 href={verifyUrl}

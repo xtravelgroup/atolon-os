@@ -39,7 +39,7 @@ export default function Configuracion() {
   // Integraciones
   const [wompiForm,    setWompiForm]    = useState({ pub_key: "", integrity_key: "" });
   const [stripeForm,   setStripeForm]   = useState({ pub_key: "", secret_key: "", tasa_usd: "4200" });
-  const [zohoForm,     setZohoForm]     = useState({ client_id: "", client_secret: "", account_id: "", currency: "USD", merchant_name: "X Travel Group" });
+  const [zohoForm,     setZohoForm]     = useState({ api_key: "", client_id: "", client_secret: "", refresh_token: "", account_id: "", currency: "USD", merchant_name: "X Travel Group", webhook_secret: "" });
   const [merchantInt,  setMerchantInt]  = useState("stripe"); // stripe | zoho_pay
   const [savingInt,    setSavingInt]    = useState(null);   // "wompi" | "stripe" | "zoho_pay" | "merchant" | null
   const [showWompi,    setShowWompi]    = useState(false);
@@ -76,11 +76,14 @@ export default function Configuracion() {
         setWompiForm({ pub_key: data.wompi_pub_key || "", integrity_key: data.wompi_integrity_key || "" });
         setStripeForm({ pub_key: data.stripe_pub_key || "", secret_key: data.stripe_secret_key || "", tasa_usd: String(data.tasa_usd || "4200") });
         setZohoForm({
+          api_key: data.zoho_pay_api_key || "",
           client_id: data.zoho_pay_client_id || "",
           client_secret: data.zoho_pay_client_secret || "",
+          refresh_token: data.zoho_pay_refresh_token || "",
           account_id: data.zoho_pay_account_id || "",
           currency: data.zoho_pay_currency || "USD",
           merchant_name: data.zoho_pay_merchant_name || "X Travel Group",
+          webhook_secret: data.zoho_pay_webhook_secret || "",
         });
         setMerchantInt(data.merchant_internacional || "stripe");
       }
@@ -180,11 +183,14 @@ export default function Configuracion() {
     if (!supabase || savingInt) return;
     setSavingInt("zoho_pay");
     await supabase.from("configuracion").update({
-      zoho_pay_client_id:     zohoForm.client_id.trim(),
-      zoho_pay_client_secret: zohoForm.client_secret.trim(),
-      zoho_pay_account_id:    zohoForm.account_id.trim(),
-      zoho_pay_currency:      (zohoForm.currency || "USD").trim().toUpperCase(),
-      zoho_pay_merchant_name: (zohoForm.merchant_name || "X Travel Group").trim(),
+      zoho_pay_api_key:        zohoForm.api_key.trim() || null,
+      zoho_pay_client_id:      zohoForm.client_id.trim(),
+      zoho_pay_client_secret:  zohoForm.client_secret.trim(),
+      zoho_pay_refresh_token:  zohoForm.refresh_token.trim() || null,
+      zoho_pay_account_id:     zohoForm.account_id.trim(),
+      zoho_pay_currency:       (zohoForm.currency || "USD").trim().toUpperCase(),
+      zoho_pay_merchant_name:  (zohoForm.merchant_name || "X Travel Group").trim(),
+      zoho_pay_webhook_secret: zohoForm.webhook_secret.trim() || null,
       updated_at: new Date().toISOString(),
     }).eq("id", "atolon");
     await fetchConfig();
@@ -195,12 +201,14 @@ export default function Configuracion() {
     if (!supabase || !window.confirm("¿Desconectar Zoho Pay? Los pagos a través de Zoho dejarán de funcionar.")) return;
     setSavingInt("zoho_pay");
     await supabase.from("configuracion").update({
+      zoho_pay_api_key: null,
       zoho_pay_client_id: null,
       zoho_pay_client_secret: null,
+      zoho_pay_refresh_token: null,
       zoho_pay_account_id: null,
       updated_at: new Date().toISOString(),
     }).eq("id", "atolon");
-    setZohoForm({ client_id: "", client_secret: "", account_id: "", currency: "USD" });
+    setZohoForm({ api_key: "", client_id: "", client_secret: "", refresh_token: "", account_id: "", currency: "USD", merchant_name: "X Travel Group", webhook_secret: "" });
     // Si Zoho estaba como merchant activo, volver a Stripe
     if (merchantInt === "zoho_pay") {
       await supabase.from("configuracion").update({ merchant_internacional: "stripe" }).eq("id", "atolon");
@@ -479,7 +487,7 @@ export default function Configuracion() {
       {tab === "integraciones" && (() => {
         const wompiConectado = !!(config?.wompi_pub_key);
         const stripeConectado = !!(config?.stripe_pub_key);
-        const zohoConectado = !!(config?.zoho_pay_client_id);
+        const zohoConectado = !!(config?.zoho_pay_api_key || config?.zoho_pay_client_id);
         const mask = (s) => s ? s.slice(0, 8) + "••••••••••••" + s.slice(-4) : "";
 
         return (
@@ -744,8 +752,32 @@ export default function Configuracion() {
               {/* Formulario conectar/editar */}
               {showZoho && (
                 <div style={{ marginTop: 20, padding: 20, background: B.navy, borderRadius: 10, border: `1px solid #E4252744` }}>
+                  {/* ── MÉTODO RECOMENDADO: API KEY ─────────────────── */}
+                  <div style={{ marginBottom: 20, padding: 14, background: B.success + "11", borderRadius: 8, border: `1px solid ${B.success}44` }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+                      <span style={{ fontSize: 11, fontWeight: 800, padding: "2px 8px", borderRadius: 4, background: B.success, color: "#fff" }}>RECOMENDADO</span>
+                      <strong style={{ color: B.success, fontSize: 13 }}>Método 1 · API Key</strong>
+                    </div>
+                    <div style={{ fontSize: 12, color: "rgba(255,255,255,0.6)", marginBottom: 12, lineHeight: 1.5 }}>
+                      Genera tu API Key en <strong style={{ color: "#fff" }}>payments.zoho.com → Settings → API Keys</strong>.
+                      Es el método más simple — no requiere OAuth ni scopes.
+                    </div>
+                    <label style={LS}>Zoho Payments API Key</label>
+                    <div style={{ position: "relative" }}>
+                      <input type={showZohoSecret ? "text" : "password"}
+                        value={zohoForm.api_key} onChange={e => setZohoForm(f => ({ ...f, api_key: e.target.value }))}
+                        placeholder="ZPapikey o token de Zoho Payments"
+                        style={{ ...IS, fontFamily: "monospace", fontSize: 12, paddingRight: 80 }} />
+                      <button onClick={() => setShowZohoSecret(v => !v)} style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", color: "rgba(255,255,255,0.4)", fontSize: 12, cursor: "pointer" }}>{showZohoSecret ? "Ocultar" : "Ver"}</button>
+                    </div>
+                  </div>
+
+                  <div style={{ height: 1, background: B.navyLight, margin: "16px 0" }} />
+
                   <div style={{ fontSize: 13, color: "rgba(255,255,255,0.5)", marginBottom: 16, lineHeight: 1.6 }}>
-                    Obtén tus credenciales en <strong style={{ color: "#fecaca" }}>api-console.zoho.com</strong> → crea una app Self-Client o Server-Based y activa <code style={{ background: B.navyLight, padding: "1px 5px", borderRadius: 4 }}>ZohoPay.fullaccess</code>.
+                    <strong style={{ color: "rgba(255,255,255,0.7)" }}>Método 2 · OAuth</strong> (alternativa).
+                    Requiere generar refresh_token con scope <code style={{ background: B.navyLight, padding: "1px 5px", borderRadius: 4, fontSize: 11 }}>ZohoPay.payments.CREATE</code>.
+                    Si solo usas API Key arriba, puedes dejar estos campos vacíos.
                   </div>
                   <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
                     <div>
@@ -762,6 +794,12 @@ export default function Configuracion() {
                           style={{ ...IS, fontFamily: "monospace", fontSize: 12, paddingRight: 80 }} />
                         <button onClick={() => setShowZohoSecret(v => !v)} style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", color: "rgba(255,255,255,0.4)", fontSize: 12, cursor: "pointer" }}>{showZohoSecret ? "Ocultar" : "Ver"}</button>
                       </div>
+                    </div>
+                    <div>
+                      <label style={LS}>Refresh Token <span style={{ color: "rgba(255,255,255,0.3)" }}>(scope ZohoPay.payments.CREATE)</span></label>
+                      <input value={zohoForm.refresh_token} onChange={e => setZohoForm(f => ({ ...f, refresh_token: e.target.value }))}
+                        placeholder="1000.xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+                        style={{ ...IS, fontFamily: "monospace", fontSize: 12 }} />
                     </div>
                     <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 12 }}>
                       <div>
@@ -790,13 +828,40 @@ export default function Configuracion() {
                         Así aparecerá el cargo en el estado de cuenta del huésped. Se mostrará como aviso en las pantallas de pago.
                       </div>
                     </div>
+
+                    {/* Webhook config */}
+                    <div style={{ padding: "12px 14px", background: B.navy, borderRadius: 8, border: `1px solid ${B.navyLight}` }}>
+                      <div style={{ fontSize: 12, fontWeight: 700, color: "#fff", marginBottom: 8 }}>🔔 Webhook (notificaciones de pago)</div>
+                      <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginBottom: 10, lineHeight: 1.5 }}>
+                        Pega esta URL en <strong>Zoho Pay → Settings → Webhooks → Add Endpoint</strong>:
+                      </div>
+                      <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
+                        <input readOnly value="https://ncdyttgxuicyruathkxd.supabase.co/functions/v1/zoho-payments/webhook"
+                          onClick={e => e.target.select()}
+                          style={{ ...IS, fontSize: 11, fontFamily: "monospace", flex: 1 }} />
+                        <button type="button" onClick={() => {
+                          navigator.clipboard.writeText("https://ncdyttgxuicyruathkxd.supabase.co/functions/v1/zoho-payments/webhook");
+                          alert("URL copiada");
+                        }} style={{ padding: "0 12px", background: B.navyLight, color: "#fff", border: "none", borderRadius: 8, fontSize: 11, cursor: "pointer", whiteSpace: "nowrap" }}>📋 Copiar</button>
+                      </div>
+                      <label style={LS}>Webhook Signing Secret <span style={{ color: "rgba(255,255,255,0.3)" }}>(de Zoho Pay → Webhooks)</span></label>
+                      <input value={zohoForm.webhook_secret} onChange={e => setZohoForm(f => ({ ...f, webhook_secret: e.target.value }))}
+                        placeholder="whsec_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+                        style={{ ...IS, fontFamily: "monospace", fontSize: 12 }} />
+                      <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", marginTop: 6, lineHeight: 1.4 }}>
+                        Eventos a marcar en Zoho: <code style={{ color: "#facc15" }}>payment.success, payment.captured, payment.failed</code>.<br/>
+                        Después de configurar, verifica en: <a href="https://ncdyttgxuicyruathkxd.supabase.co/functions/v1/zoho-payments/diag" target="_blank" rel="noreferrer" style={{ color: "#60a5fa" }}>/zoho-payments/diag</a>
+                      </div>
+                    </div>
+
                     <div style={{ padding: "10px 14px", background: B.warning + "11", borderRadius: 8, border: `1px solid ${B.warning}22`, fontSize: 12, color: B.warning }}>
                       ⚠️ Las credenciales se guardan en la base de datos. El Client Secret tiene acceso total a tu cuenta Zoho Pay.
                     </div>
                   </div>
                   <div style={{ display: "flex", gap: 10, marginTop: 16 }}>
                     <button onClick={() => setShowZoho(false)} style={{ flex: 1, padding: "10px", background: "none", border: `1px solid ${B.navyLight}`, borderRadius: 8, color: "rgba(255,255,255,0.4)", fontSize: 13, cursor: "pointer" }}>Cancelar</button>
-                    <button onClick={saveZoho} disabled={savingInt === "zoho_pay" || !zohoForm.client_id.trim() || !zohoForm.client_secret.trim()}
+                    <button onClick={saveZoho}
+                      disabled={savingInt === "zoho_pay" || (!zohoForm.api_key.trim() && (!zohoForm.client_id.trim() || !zohoForm.client_secret.trim()))}
                       style={{ flex: 2, padding: "10px", background: savingInt === "zoho_pay" ? B.navyLight : "#E42527", color: "#fff", border: "none", borderRadius: 8, fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
                       {savingInt === "zoho_pay" ? "Guardando..." : zohoConectado ? "Actualizar credenciales" : "Conectar Zoho Pay"}
                     </button>
@@ -804,6 +869,10 @@ export default function Configuracion() {
                 </div>
               )}
             </div>
+
+            {/* ── WHATSAPP BUSINESS (Meta) ────────────────────────── */}
+            <WhatsAppMetaCard config={config} onSaved={fetchConfig} />
+            <WhatsAppAIKnowledgeCard config={config} onSaved={fetchConfig} />
 
             {/* ── SUPABASE ─────────────────────────────────────────── */}
             <div style={{ background: B.navyMid, borderRadius: 12, padding: 22 }}>
@@ -916,6 +985,367 @@ export default function Configuracion() {
           </div>
         );
       })()}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// WhatsAppMetaCard — gestiona credenciales de WhatsApp Business (Meta Cloud API)
+// ═══════════════════════════════════════════════════════════════════════════
+function WhatsAppMetaCard({ config, onSaved }) {
+  const [showForm, setShowForm] = useState(false);
+  const [showToken, setShowToken] = useState(false);
+  const [diag, setDiag] = useState(null);
+  const [loadingDiag, setLoadingDiag] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [form, setForm] = useState({
+    token: "", phone_id: "", waba_id: "", token_expires_at: "",
+  });
+
+  useEffect(() => {
+    setForm({
+      token:    config?.meta_whatsapp_token    || "",
+      phone_id: config?.meta_whatsapp_phone_id || "",
+      waba_id:  config?.meta_whatsapp_waba_id  || "",
+      token_expires_at: config?.meta_whatsapp_token_expires_at?.slice(0, 16) || "",
+    });
+  }, [config]);
+
+  const conectado = !!(config?.meta_whatsapp_token && config?.meta_whatsapp_phone_id);
+  const mask = (s) => s ? s.slice(0, 8) + "••••••••••••" + s.slice(-4) : "";
+
+  const cargarDiag = async () => {
+    setLoadingDiag(true);
+    try {
+      const res = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/send-whatsapp/diag`,
+        { headers: { Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`, apikey: import.meta.env.VITE_SUPABASE_ANON_KEY } }
+      );
+      setDiag(await res.json());
+    } catch (e) {
+      setDiag({ ok: false, error: String(e) });
+    }
+    setLoadingDiag(false);
+  };
+
+  const guardar = async () => {
+    if (!supabase || saving) return;
+    setSaving(true);
+    await supabase.from("configuracion").update({
+      meta_whatsapp_token:    form.token.trim() || null,
+      meta_whatsapp_phone_id: form.phone_id.trim() || null,
+      meta_whatsapp_waba_id:  form.waba_id.trim() || null,
+      meta_whatsapp_token_expires_at: form.token_expires_at ? new Date(form.token_expires_at).toISOString() : null,
+      updated_at: new Date().toISOString(),
+    }).eq("id", "atolon");
+    await onSaved?.();
+    setSaving(false);
+    setShowForm(false);
+  };
+
+  // Computar alertas del estado actual
+  const expiresDate = config?.meta_whatsapp_token_expires_at ? new Date(config.meta_whatsapp_token_expires_at) : null;
+  const expired = expiresDate && expiresDate < new Date();
+  const expiringSoon = expiresDate && !expired && (expiresDate.getTime() - Date.now() < 7 * 24 * 3600 * 1000);
+
+  return (
+    <div style={{ background: B.navyMid, borderRadius: 12, padding: 22, border: `1px solid ${conectado ? "#25D366" + "44" : B.navyLight}` }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+        <div style={{ width: 42, height: 42, borderRadius: 10, background: "#25D366", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 900, fontSize: 18, color: "#fff", flexShrink: 0 }}>💬</div>
+        <div style={{ flex: 1, minWidth: 200 }}>
+          <div style={{ fontWeight: 700, fontSize: 15 }}>WhatsApp Business · Meta Cloud API</div>
+          <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)" }}>Confirmaciones · Recordatorios · Templates aprobadas</div>
+        </div>
+        <span style={{ fontSize: 11, padding: "3px 12px", borderRadius: 10,
+          background: expired ? B.danger + "22" : conectado ? B.success + "22" : B.navyLight,
+          color: expired ? B.danger : conectado ? B.success : "rgba(255,255,255,0.4)", flexShrink: 0 }}>
+          {expired ? "⚠ Token expirado" : conectado ? "✓ Conectado" : "Sin configurar"}
+        </span>
+        <button onClick={() => setShowForm(v => !v)} style={{ background: showForm ? B.navyLight : "#25D366", color: showForm ? B.sand : "#fff", border: "none", borderRadius: 8, padding: "7px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer", flexShrink: 0 }}>
+          {showForm ? "Cancelar" : conectado ? "Editar" : "Conectar"}
+        </button>
+        <button onClick={cargarDiag} disabled={loadingDiag || !conectado} style={{ background: B.navyLight, color: B.sand, border: "none", borderRadius: 8, padding: "7px 14px", fontSize: 12, cursor: "pointer", opacity: !conectado ? 0.4 : 1, flexShrink: 0 }}>
+          {loadingDiag ? "..." : "🔍 Diagnóstico"}
+        </button>
+      </div>
+
+      {/* Alertas críticas */}
+      {(expired || expiringSoon) && !showForm && (
+        <div style={{ marginTop: 14, padding: "10px 14px", background: B.danger + "15", borderRadius: 8, border: `1px solid ${B.danger}44`, fontSize: 12, color: B.danger }}>
+          {expired
+            ? `⚠️ Token expiró el ${expiresDate.toLocaleDateString("es-CO")}. Genera uno permanente en business.facebook.com → Settings → System Users.`
+            : `⏰ Token expira el ${expiresDate.toLocaleDateString("es-CO")} a las ${expiresDate.toLocaleTimeString("es-CO", { hour: '2-digit', minute: '2-digit' })}. Renuévalo antes para no interrumpir envíos.`}
+        </div>
+      )}
+
+      {/* Vista de credenciales actuales */}
+      {conectado && !showForm && (
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 16 }}>
+          <div>
+            <label style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: "0.05em", display: "block", marginBottom: 4 }}>Phone Number ID</label>
+            <div style={{ padding: "10px 14px", background: B.navy, borderRadius: 8, fontSize: 12, color: B.sky, fontFamily: "monospace" }}>{config.meta_whatsapp_phone_id || "—"}</div>
+          </div>
+          <div>
+            <label style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: "0.05em", display: "block", marginBottom: 4 }}>WABA ID</label>
+            <div style={{ padding: "10px 14px", background: B.navy, borderRadius: 8, fontSize: 12, color: B.sky, fontFamily: "monospace" }}>{config.meta_whatsapp_waba_id || "—"}</div>
+          </div>
+          <div style={{ gridColumn: "1 / -1" }}>
+            <label style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: "0.05em", display: "block", marginBottom: 4 }}>Token</label>
+            <div style={{ padding: "10px 14px", background: B.navy, borderRadius: 8, fontSize: 12, color: B.success, fontFamily: "monospace" }}>{mask(config.meta_whatsapp_token)}</div>
+          </div>
+        </div>
+      )}
+
+      {/* Diag panel */}
+      {diag && !showForm && (
+        <div style={{ marginTop: 16, padding: 16, background: B.navy, borderRadius: 10, fontSize: 12 }}>
+          <div style={{ fontWeight: 700, marginBottom: 10, color: B.sand }}>📊 Estado en Meta</div>
+          {diag.phone_status && (
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 12 }}>
+              <div>📞 Display: <strong>{diag.phone_status.display_phone_number}</strong></div>
+              <div>📋 Verified name: <strong style={{ color: diag.phone_status.name_status === "DECLINED" ? B.danger : B.white }}>{diag.phone_status.verified_name}</strong></div>
+              <div>✅ Status: <strong style={{ color: diag.phone_status.status === "CONNECTED" ? B.success : B.warning }}>{diag.phone_status.status}</strong></div>
+              <div>📡 Quality: <strong style={{ color: diag.phone_status.quality_rating === "GREEN" ? B.success : B.warning }}>{diag.phone_status.quality_rating}</strong></div>
+              <div>🔐 Code verification: <strong style={{ color: diag.phone_status.code_verification_status === "VERIFIED" ? B.success : B.danger }}>{diag.phone_status.code_verification_status}</strong></div>
+              <div>📛 Name status: <strong style={{ color: diag.phone_status.name_status === "APPROVED" ? B.success : B.danger }}>{diag.phone_status.name_status}</strong></div>
+            </div>
+          )}
+          {diag.templates && diag.templates.length > 0 && (
+            <div>
+              <div style={{ fontWeight: 700, marginTop: 8, marginBottom: 6, color: B.sand }}>📝 Templates</div>
+              {diag.templates.map(t => (
+                <div key={t.id} style={{ padding: "6px 10px", background: B.navyMid, borderRadius: 6, marginBottom: 4, display: "flex", justifyContent: "space-between" }}>
+                  <span style={{ fontFamily: "monospace" }}>{t.name}</span>
+                  <span style={{ color: t.status === "APPROVED" ? B.success : t.status === "REJECTED" ? B.danger : B.warning, fontWeight: 600 }}>{t.status}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Formulario edit */}
+      {showForm && (
+        <div style={{ marginTop: 16, padding: 18, background: B.navy, borderRadius: 10, border: `1px solid #25D36644` }}>
+          <div style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", marginBottom: 14, lineHeight: 1.6 }}>
+            Obtén estos valores en <strong style={{ color: "#25D366" }}>business.facebook.com</strong> → Business Settings → WhatsApp Accounts.<br />
+            Para token <strong>permanente (sin caducidad)</strong>: Settings → Users → System Users → Generate Token con scope <code style={{ background: B.navyLight, padding: "1px 5px", borderRadius: 4 }}>whatsapp_business_messaging</code>.
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            <div>
+              <label style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Access Token <span style={{ color: B.warning }}>*</span></label>
+              <div style={{ position: "relative" }}>
+                <input type={showToken ? "text" : "password"} value={form.token}
+                  onChange={e => setForm(f => ({ ...f, token: e.target.value }))}
+                  placeholder="EAAxxxxxxxxxxxxxxxxxxxxxxxxx"
+                  style={{ width: "100%", padding: "10px 80px 10px 14px", background: B.navyMid, border: `1px solid ${B.navyLight}`, borderRadius: 8, color: B.white, fontFamily: "monospace", fontSize: 11, outline: "none", boxSizing: "border-box" }} />
+                <button onClick={() => setShowToken(v => !v)} type="button" style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", color: "rgba(255,255,255,0.4)", fontSize: 11, cursor: "pointer" }}>{showToken ? "Ocultar" : "Ver"}</button>
+              </div>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+              <div>
+                <label style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Phone Number ID</label>
+                <input value={form.phone_id} onChange={e => setForm(f => ({ ...f, phone_id: e.target.value }))}
+                  placeholder="555249284336728"
+                  style={{ width: "100%", padding: "10px 14px", background: B.navyMid, border: `1px solid ${B.navyLight}`, borderRadius: 8, color: B.white, fontFamily: "monospace", fontSize: 12, outline: "none", boxSizing: "border-box" }} />
+              </div>
+              <div>
+                <label style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: "0.05em" }}>WABA ID</label>
+                <input value={form.waba_id} onChange={e => setForm(f => ({ ...f, waba_id: e.target.value }))}
+                  placeholder="604162649435767"
+                  style={{ width: "100%", padding: "10px 14px", background: B.navyMid, border: `1px solid ${B.navyLight}`, borderRadius: 8, color: B.white, fontFamily: "monospace", fontSize: 12, outline: "none", boxSizing: "border-box" }} />
+              </div>
+            </div>
+            <div>
+              <label style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Fecha de expiración del token <span style={{ color: "rgba(255,255,255,0.3)" }}>(opcional, alerta UI)</span></label>
+              <input type="datetime-local" value={form.token_expires_at} onChange={e => setForm(f => ({ ...f, token_expires_at: e.target.value }))}
+                style={{ width: "100%", padding: "10px 14px", background: B.navyMid, border: `1px solid ${B.navyLight}`, borderRadius: 8, color: B.white, fontSize: 12, outline: "none", boxSizing: "border-box", colorScheme: "dark" }} />
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: 10, marginTop: 16 }}>
+            <button onClick={() => setShowForm(false)} style={{ flex: 1, padding: "10px", background: "none", border: `1px solid ${B.navyLight}`, borderRadius: 8, color: "rgba(255,255,255,0.5)", fontSize: 13, cursor: "pointer" }}>Cancelar</button>
+            <button onClick={guardar} disabled={saving || !form.token || !form.phone_id}
+              style={{ flex: 2, padding: "10px", background: saving ? B.navyLight : "#25D366", color: "#fff", border: "none", borderRadius: 8, fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
+              {saving ? "Guardando..." : "Guardar credenciales"}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// WhatsAppAIKnowledgeCard — Knowledge Base personalizable para la IA
+// ═══════════════════════════════════════════════════════════════════════════
+function WhatsAppAIKnowledgeCard({ config, onSaved }) {
+  const [kb, setKb] = useState("");
+  const [model, setModel] = useState("claude-haiku-4-5");
+  const [enabledGlobal, setEnabledGlobal] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [testMessage, setTestMessage] = useState("");
+  const [testResult, setTestResult] = useState(null);
+  const [testing, setTesting] = useState(false);
+  const [showFullPrompt, setShowFullPrompt] = useState(false);
+  const [fullPrompt, setFullPrompt] = useState(null);
+
+  useEffect(() => {
+    setKb(config?.whatsapp_ai_knowledge_base || "");
+    setModel(config?.whatsapp_ai_model || "claude-haiku-4-5");
+    setEnabledGlobal(config?.whatsapp_ai_enabled_global !== false);
+  }, [config]);
+
+  const guardar = async () => {
+    if (!supabase || saving) return;
+    setSaving(true);
+    await supabase.from("configuracion").update({
+      whatsapp_ai_knowledge_base: kb.trim() || null,
+      whatsapp_ai_model: model,
+      whatsapp_ai_enabled_global: enabledGlobal,
+      updated_at: new Date().toISOString(),
+    }).eq("id", "atolon");
+    await onSaved?.();
+    setSaving(false);
+  };
+
+  const probar = async () => {
+    if (!testMessage.trim() || testing) return;
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const r = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/whatsapp-ai/test`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+            "apikey": import.meta.env.VITE_SUPABASE_ANON_KEY,
+          },
+          body: JSON.stringify({ message: testMessage, model }),
+        }
+      );
+      setTestResult(await r.json());
+    } catch (e) { setTestResult({ error: String(e) }); }
+    setTesting(false);
+  };
+
+  const verPromptCompleto = async () => {
+    try {
+      const r = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/whatsapp-ai/system-prompt`,
+        {
+          headers: {
+            "Authorization": `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+            "apikey": import.meta.env.VITE_SUPABASE_ANON_KEY,
+          },
+        }
+      );
+      const data = await r.json();
+      setFullPrompt(data);
+      setShowFullPrompt(true);
+    } catch (e) { alert("Error: " + e.message); }
+  };
+
+  return (
+    <div style={{ background: B.navyMid, borderRadius: 12, padding: 22, border: `1px solid #25D36644` }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap", marginBottom: 14 }}>
+        <div style={{ width: 42, height: 42, borderRadius: 10, background: "linear-gradient(135deg, #25D366, #5B4CF5)", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 900, fontSize: 18, color: "#fff", flexShrink: 0 }}>🤖</div>
+        <div style={{ flex: 1, minWidth: 200 }}>
+          <div style={{ fontWeight: 700, fontSize: 15 }}>IA Conversacional · Knowledge Base</div>
+          <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)" }}>Información que la IA usa al responder por WhatsApp</div>
+        </div>
+        <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 12, color: enabledGlobal ? B.success : B.warning }}>
+          <input type="checkbox" checked={enabledGlobal} onChange={e => setEnabledGlobal(e.target.checked)} style={{ accentColor: "#25D366" }} />
+          {enabledGlobal ? "🤖 IA activa global" : "⏸️ IA pausada global"}
+        </label>
+      </div>
+
+      <div style={{ marginBottom: 12 }}>
+        <label style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: "0.05em", display: "block", marginBottom: 6 }}>
+          Conocimiento adicional (precios, FAQs, políticas, eventos especiales...)
+        </label>
+        <textarea value={kb} onChange={e => setKb(e.target.value)}
+          placeholder={`# Precios actualizados\n- VIP Pass: $380.000 COP por persona\n- Exclusive Pass: $XXX...\n\n# FAQs\nP: ¿Aceptan pago en USD?\nR: Sí, vía Zoho Pay con tarjeta internacional...\n\n# Promociones\n- May 2026: descuento 10% para grupos de 6+`}
+          rows={14}
+          style={{
+            width: "100%", padding: "12px 14px", background: B.navy, border: `1px solid ${B.navyLight}`, borderRadius: 8,
+            color: B.white, fontFamily: "ui-monospace, SF Mono, Monaco, monospace", fontSize: 12, lineHeight: 1.6,
+            outline: "none", boxSizing: "border-box", resize: "vertical", minHeight: 200,
+          }} />
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 4 }}>
+          <span style={{ fontSize: 10, color: "rgba(255,255,255,0.4)" }}>{kb.length} caracteres · markdown soportado</span>
+          {kb.length > 8000 && <span style={{ fontSize: 10, color: B.warning }}>⚠ Más de 8.000 chars puede aumentar costos</span>}
+        </div>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
+        <div>
+          <label style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: "0.05em", display: "block", marginBottom: 6 }}>Modelo Claude</label>
+          <select value={model} onChange={e => setModel(e.target.value)}
+            style={{ width: "100%", padding: "10px 14px", background: B.navy, border: `1px solid ${B.navyLight}`, borderRadius: 8, color: B.white, fontSize: 13, outline: "none", cursor: "pointer", boxSizing: "border-box" }}>
+            <option value="claude-haiku-4-5">Haiku 4.5 (rápido, ~$0.001/msg)</option>
+            <option value="claude-sonnet-4-5">Sonnet 4.5 (mejor calidad, ~$0.01/msg)</option>
+            <option value="claude-opus-4-5">Opus 4.5 (premium, ~$0.05/msg)</option>
+          </select>
+        </div>
+        <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
+          <button onClick={verPromptCompleto}
+            style={{ flex: 1, padding: "10px 14px", background: B.navyLight, color: B.sand, border: "none", borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
+            🔍 Ver prompt completo
+          </button>
+          <button onClick={guardar} disabled={saving}
+            style={{ flex: 1, padding: "10px 14px", background: saving ? B.navyLight : "#25D366", color: "#fff", border: "none", borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: saving ? "default" : "pointer" }}>
+            {saving ? "Guardando..." : "💾 Guardar"}
+          </button>
+        </div>
+      </div>
+
+      {/* Tester inline */}
+      <div style={{ background: B.navy, padding: 14, borderRadius: 10, border: `1px dashed ${B.navyLight}` }}>
+        <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>🧪 Probar respuesta IA</div>
+        <div style={{ display: "flex", gap: 8 }}>
+          <input value={testMessage} onChange={e => setTestMessage(e.target.value)}
+            onKeyDown={e => e.key === "Enter" && probar()}
+            placeholder="Ej: ¿Cuánto cuesta el VIP Pass?"
+            style={{ flex: 1, padding: "8px 12px", background: B.navyMid, border: `1px solid ${B.navyLight}`, borderRadius: 6, color: B.white, fontSize: 12, outline: "none" }} />
+          <button onClick={probar} disabled={testing || !testMessage.trim()}
+            style={{ padding: "8px 16px", background: "#5B4CF5", color: "#fff", border: "none", borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: testing ? "default" : "pointer" }}>
+            {testing ? "..." : "Probar"}
+          </button>
+        </div>
+        {testResult && (
+          <div style={{ marginTop: 10, padding: 10, background: B.navyMid, borderRadius: 6, fontSize: 12, lineHeight: 1.5 }}>
+            {testResult.error ? (
+              <span style={{ color: B.danger }}>Error: {testResult.error}</span>
+            ) : (
+              <>
+                <div style={{ whiteSpace: "pre-wrap", color: B.white }}>{testResult.text}</div>
+                {testResult.usage && (
+                  <div style={{ marginTop: 6, fontSize: 10, color: "rgba(255,255,255,0.4)" }}>
+                    {testResult.usage.input_tokens} in · {testResult.usage.output_tokens} out · {testResult.model}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Modal: prompt completo */}
+      {showFullPrompt && fullPrompt && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.85)", zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}
+          onClick={e => e.target === e.currentTarget && setShowFullPrompt(false)}>
+          <div style={{ background: B.navyMid, borderRadius: 12, padding: 24, maxWidth: 900, width: "100%", maxHeight: "85vh", display: "flex", flexDirection: "column", border: `1px solid ${B.navyLight}` }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+              <h3 style={{ fontSize: 16, fontWeight: 700, margin: 0 }}>System Prompt completo</h3>
+              <button onClick={() => setShowFullPrompt(false)} style={{ background: "none", border: "none", color: B.white, fontSize: 18, cursor: "pointer" }}>✕</button>
+            </div>
+            <pre style={{ flex: 1, overflow: "auto", background: B.navy, padding: 16, borderRadius: 8, fontSize: 11, lineHeight: 1.5, color: "rgba(255,255,255,0.85)", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{fullPrompt.full_prompt_preview}</pre>
+            <div style={{ marginTop: 10, fontSize: 10, color: "rgba(255,255,255,0.4)" }}>{(fullPrompt.full_prompt_preview || "").length} caracteres · modelo: {fullPrompt.model}</div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

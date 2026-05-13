@@ -279,7 +279,7 @@ export default function GuestPortal({ token }) {
       const [{ data: itData }, { data: cfgData }] = await Promise.all([
         supabase
           .from("menu_items")
-          .select("id, nombre, nombre_en, descripcion, descripcion_en, precio, categoria, categoria_en, menu_tipo, foto_url, disponible, destacado, modificadores, tiempo_prep_min, tags, orden, room_service, loggro_id")
+          .select("id, nombre, nombre_en, descripcion, descripcion_en, precio, precio_botella, categoria, categoria_en, menu_tipo, foto_url, disponible, destacado, modificadores, tiempo_prep_min, tags, orden, room_service, loggro_id, loggro_id_botella")
           .eq("activo", true)
           .eq("room_service", true)
           .in("menu_tipo", ["restaurant", "bebidas", "experiencias", "servicios_hotel"])
@@ -306,16 +306,24 @@ export default function GuestPortal({ token }) {
   const addToCart = (item, opts = {}) => {
     const mods = opts.modificadores || [];
     const deltaMods = mods.reduce((s, m) => s + (Number(m.precio_delta) || 0), 0);
-    const precio_total = Number(item.precio || 0) + deltaMods;
-    const key = `${item.id}-${JSON.stringify(mods)}`;
+    // Variante de bebida: "copa" (default) o "botella". Cada variante usa
+    // su propio precio y su propio loggro_id (son productos distintos en POS).
+    const variante = opts.variante || "copa";
+    const isBT = variante === "botella" && Number(item.precio_botella) > 0;
+    const precioBase = isBT ? Number(item.precio_botella) : Number(item.precio || 0);
+    const precio_total = precioBase + deltaMods;
+    const nombreLinea = itemName(item, lang) + (isBT ? (lang === "en" ? " · Bottle 🍾" : " · Botella 🍾")
+                                                      : (Number(item.precio_botella) > 0 ? (lang === "en" ? " · Glass 🥃" : " · Copa 🥃") : ""));
+    const key = `${item.id}-${variante}-${JSON.stringify(mods)}`;
     setCart(prev => {
       const existing = prev.find(x => x._key === key && x.notas === (opts.notas || ""));
       if (existing) return prev.map(x => x === existing ? { ...x, cantidad: x.cantidad + (opts.cantidad || 1) } : x);
       return [...prev, {
         _key: key,
         id: item.id,
-        nombre: itemName(item, lang),
-        precio_base: item.precio || 0,
+        nombre: nombreLinea,
+        variante,
+        precio_base: precioBase,
         precio_total,
         modificadores: mods,
         notas: opts.notas || "",
@@ -386,6 +394,7 @@ export default function GuestPortal({ token }) {
       items: cart.map(c => ({
         id: c.id, nombre: c.nombre, cantidad: c.cantidad,
         precio: c.precio_total, modificadores: c.modificadores, notas: c.notas,
+        variante: c.variante || "copa",
       })),
       subtotal: cartTotal,
       propina: propinaMonto,
@@ -427,14 +436,17 @@ export default function GuestPortal({ token }) {
         }
         // Lookup loggro_id de cada menu_item
         const { data: menuItems } = await supabase.from("menu_items")
-          .select("id, loggro_id, precio").in("id", cart.map(c => c.id));
+          .select("id, loggro_id, loggro_id_botella, precio, precio_botella").in("id", cart.map(c => c.id));
         const mapLoggro = Object.fromEntries((menuItems || []).map(m => [m.id, m]));
         const items = cart.map(c => {
           const m = mapLoggro[c.id] || {};
+          // Si la línea es variante "botella", usar el loggro_id_botella
+          // (en Loggro la copa y la botella son productos separados).
+          const productId = c.variante === "botella" ? (m.loggro_id_botella || null) : (m.loggro_id || null);
           return {
-            productId: m.loggro_id,
+            productId,
             qty: c.cantidad,
-            unit_price: Number(c.precio_total) || Number(m.precio) || 0,
+            unit_price: Number(c.precio_total) || Number(c.variante === "botella" ? m.precio_botella : m.precio) || 0,
             notes: c.notas ? [String(c.notas)] : (notasGen ? [notasGen] : []),
           };
         }).filter(i => i.productId);
@@ -647,7 +659,11 @@ function Home({ session, items, setView, lang }) {
                 </div>
                 <div style={{ padding: "10px 12px" }}>
                   <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 4, lineHeight: 1.3 }}>{it.nombre}</div>
-                  <div style={{ fontSize: 13, color: B.sand, fontWeight: 800, fontFamily: "'Barlow Condensed', sans-serif" }}>{COP(it.precio)}</div>
+                  <div style={{ fontSize: 13, color: B.sand, fontWeight: 800, fontFamily: "'Barlow Condensed', sans-serif" }}>
+                    {Number(it.precio_botella) > 0
+                      ? <>{lang === "en" ? "from " : "desde "}{COP(it.precio)}</>
+                      : COP(it.precio)}
+                  </div>
                 </div>
               </div>
             ))}
@@ -695,7 +711,11 @@ function FoodSection({ session, items, itemsPorSeccion, setView, setActiveCat, s
                 </div>
                 <div style={{ padding: "10px 12px" }}>
                   <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 4, lineHeight: 1.3 }}>{itemName(it, lang)}</div>
-                  <div style={{ fontSize: 13, color: B.sand, fontWeight: 800, fontFamily: "'Barlow Condensed', sans-serif" }}>{COP(it.precio)}</div>
+                  <div style={{ fontSize: 13, color: B.sand, fontWeight: 800, fontFamily: "'Barlow Condensed', sans-serif" }}>
+                    {Number(it.precio_botella) > 0
+                      ? <>{lang === "en" ? "from " : "desde "}{COP(it.precio)}</>
+                      : COP(it.precio)}
+                  </div>
                 </div>
               </div>
             ))}
@@ -755,7 +775,13 @@ function CategoryView({ seccion, grupos, setItemOpen, addToCart, lang }) {
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             {g.items.map(it => (
               <ItemCard key={it.id} item={it} lang={lang} onTap={() => setItemOpen(it)}
-                onQuickAdd={(e) => { e.stopPropagation(); if ((it.modificadores || []).length > 0) setItemOpen(it); else addToCart(it); }} />
+                onQuickAdd={(e) => {
+                  e.stopPropagation();
+                  // Bebidas con botella → abrir detalle para que el huésped elija copa o botella.
+                  const needsVariant = Number(it.precio_botella) > 0;
+                  if ((it.modificadores || []).length > 0 || needsVariant) setItemOpen(it);
+                  else addToCart(it);
+                }} />
             ))}
           </div>
         </div>
@@ -765,6 +791,7 @@ function CategoryView({ seccion, grupos, setItemOpen, addToCart, lang }) {
 }
 
 function ItemCard({ item, onTap, onQuickAdd, lang = "es" }) {
+  const hasBotella = Number(item.precio_botella) > 0;
   return (
     <div onClick={onTap}
       style={{ display: "flex", gap: 12, padding: "12px", background: B.navy, borderRadius: 12, border: `1px solid ${B.navyLight}`, cursor: "pointer" }}>
@@ -774,10 +801,17 @@ function ItemCard({ item, onTap, onQuickAdd, lang = "es" }) {
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontSize: 14, fontWeight: 700, color: B.white, marginBottom: 3, lineHeight: 1.3 }}>{itemName(item, lang)}</div>
         {itemDesc(item, lang) && <div style={{ fontSize: 11, color: B.textDim, lineHeight: 1.4, marginBottom: 6, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{itemDesc(item, lang)}</div>}
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontSize: 17, fontWeight: 800, color: B.sand }}>{COP(item.precio)}</div>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+          {hasBotella ? (
+            <div style={{ display: "flex", flexDirection: "column", gap: 1, fontFamily: "'Barlow Condensed', sans-serif", lineHeight: 1.1 }}>
+              <div style={{ fontSize: 14, fontWeight: 800, color: B.sand }}>🥃 {COP(item.precio)}</div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: "#a78bfa" }}>🍾 {COP(item.precio_botella)}</div>
+            </div>
+          ) : (
+            <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontSize: 17, fontWeight: 800, color: B.sand }}>{COP(item.precio)}</div>
+          )}
           <button onClick={onQuickAdd}
-            style={{ width: 34, height: 34, borderRadius: "50%", background: B.sand, color: B.navy, border: "none", fontSize: 20, fontWeight: 800, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>+</button>
+            style={{ width: 34, height: 34, borderRadius: "50%", background: B.sand, color: B.navy, border: "none", fontSize: 20, fontWeight: 800, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>+</button>
         </div>
       </div>
     </div>
@@ -789,6 +823,8 @@ function ItemDetail({ item, onClose, addToCart, trackEvent, lang = "es" }) {
   const [cantidad, setCantidad] = useState(1);
   const [notas, setNotas] = useState("");
   const [modSel, setModSel] = useState({}); // { grupoIdx: [opcionIdx] }
+  const hasBotella = Number(item.precio_botella) > 0;
+  const [variante, setVariante] = useState("copa"); // "copa" | "botella"
 
   useEffect(() => { trackEvent(item.id, "view"); }, [item.id]);
 
@@ -804,7 +840,8 @@ function ItemDetail({ item, onClose, addToCart, trackEvent, lang = "es" }) {
   }, [modSel, grupos]);
 
   const deltaMods = seleccionadasFlat.reduce((s, o) => s + (Number(o.precio_delta) || 0), 0);
-  const precioUnit = (item.precio || 0) + deltaMods;
+  const precioBase = hasBotella && variante === "botella" ? Number(item.precio_botella) : Number(item.precio || 0);
+  const precioUnit = precioBase + deltaMods;
   const totalBtn = precioUnit * cantidad;
 
   const toggleMod = (gi, oi, maxSel) => {
@@ -827,7 +864,7 @@ function ItemDetail({ item, onClose, addToCart, trackEvent, lang = "es" }) {
       const sel = (modSel[gi] || []).length;
       if (sel < (g.min || 0)) return alert(`${t("item_min_select", lang)} ${g.min} — "${g.grupo}"`);
     }
-    addToCart(item, { modificadores: seleccionadasFlat, notas, cantidad });
+    addToCart(item, { modificadores: seleccionadasFlat, notas, cantidad, variante: hasBotella ? variante : undefined });
     onClose();
   };
 
@@ -845,6 +882,34 @@ function ItemDetail({ item, onClose, addToCart, trackEvent, lang = "es" }) {
           {(item.tags || []).length > 0 && (
             <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 14 }}>
               {item.tags.map(t => <span key={t} style={{ fontSize: 10, padding: "3px 8px", borderRadius: 10, background: B.navyLight, color: B.textDim }}>{t}</span>)}
+            </div>
+          )}
+
+          {/* Variante: copa vs botella (sólo bebidas con precio_botella).
+              Cada variante es un producto distinto en Loggro. */}
+          {hasBotella && (
+            <div style={{ marginBottom: 16 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: B.sand, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>
+                {lang === "en" ? "Choose size" : "Elegir presentación"} <span style={{ color: B.warning }}>*</span>
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                <label style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 14px", background: variante === "copa" ? `${B.gold}22` : B.navyLight, borderRadius: 10, cursor: "pointer", border: `1px solid ${variante === "copa" ? B.gold : "transparent"}` }}>
+                  <input type="radio" name="variante" checked={variante === "copa"} onChange={() => setVariante("copa")} style={{ accentColor: B.gold }} />
+                  <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 8 }}>
+                    <span style={{ fontSize: 18 }}>🥃</span>
+                    <span style={{ fontSize: 14, fontWeight: 700 }}>{lang === "en" ? "Glass" : "Copa"}</span>
+                  </div>
+                  <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontSize: 16, fontWeight: 800, color: B.sand }}>{COP(item.precio)}</div>
+                </label>
+                <label style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 14px", background: variante === "botella" ? `${B.gold}22` : B.navyLight, borderRadius: 10, cursor: "pointer", border: `1px solid ${variante === "botella" ? B.gold : "transparent"}` }}>
+                  <input type="radio" name="variante" checked={variante === "botella"} onChange={() => setVariante("botella")} style={{ accentColor: B.gold }} />
+                  <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 8 }}>
+                    <span style={{ fontSize: 18 }}>🍾</span>
+                    <span style={{ fontSize: 14, fontWeight: 700 }}>{lang === "en" ? "Bottle" : "Botella"}</span>
+                  </div>
+                  <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontSize: 16, fontWeight: 800, color: "#a78bfa" }}>{COP(item.precio_botella)}</div>
+                </label>
+              </div>
             </div>
           )}
 

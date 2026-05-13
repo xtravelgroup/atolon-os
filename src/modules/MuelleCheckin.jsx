@@ -137,12 +137,24 @@ function ModalNuevaLlegada({ tipo, fecha, reserva, llegadasDelDia = [], onClose,
     pax_n: reserva ? (reserva.pax_n || 0) : 0,
     hora_llegada: hoyHora(),
     notas: reserva?._notas_preset || "",
+    horas_babor: "",
+    horas_estribor: "",
+    horas_centro: "", // Castillete tiene 1 motor central
+    boca_chica: false, // ← cuando viene de Boca Chica no cuenta como viaje
   });
 
   const [fotoFile, setFotoFile]       = useState(null);
   const [fotoPreview, setFotoPreview] = useState(null);
+  const [odometroFile, setOdometroFile] = useState(null);
+  const [odometroPreview, setOdometroPreview] = useState(null);
   const [uploadingFoto, setUploadingFoto] = useState(false);
   const [saving, setSaving]           = useState(false);
+
+  // Embarcación propia → mostrar campos de odómetro y horas motor
+  const esLanchaPropia = ["Naturalle", "Natturale", "Castillete"]
+    .some(n => (f.embarcacion_nombre || "").toLowerCase().includes(n.toLowerCase()));
+  const esNaturalle = (f.embarcacion_nombre || "").toLowerCase().includes("nat");
+  const esCastillete = (f.embarcacion_nombre || "").toLowerCase().includes("castillete");
 
   const s = (k, v) => setF(p => ({ ...p, [k]: v }));
 
@@ -210,8 +222,10 @@ function ModalNuevaLlegada({ tipo, fecha, reserva, llegadasDelDia = [], onClose,
     const embarcacionNombre = f.embarcacion_nombre || (esWalkin ? "Walk-in" : null);
     // Costo operativo automático para flota propia (Castillete/Naturalle):
     // cada llegada = 1 medio viaje, costo definido en lanchas.costo_viaje_sencillo
+    // Excepción: si la lancha venía de Boca Chica (estaba parqueada cerca del
+    // hotel, no es un viaje real desde Cartagena) → costo 0 y no cuenta viaje.
     let costoOperativo = 0;
-    if (embarcacionNombre && (tipoSeleccionado === "lancha_atolon" || tipoSeleccionado === "lanchas_atolon")) {
+    if (!f.boca_chica && embarcacionNombre && (tipoSeleccionado === "lancha_atolon" || tipoSeleccionado === "lanchas_atolon")) {
       try {
         const { data: lch } = await supabase.from("lanchas")
           .select("costo_viaje_sencillo")
@@ -221,6 +235,41 @@ function ModalNuevaLlegada({ tipo, fecha, reserva, llegadasDelDia = [], onClose,
         costoOperativo = Number(lch?.costo_viaje_sencillo) || 0;
       } catch (_) { /* sin lancha registrada → costo 0 */ }
     }
+
+    // Subir foto de odómetro si existe
+    let odometro_foto_url = null;
+    if (odometroFile) {
+      try {
+        const ext = odometroFile.name.split(".").pop();
+        const path = `odom-${id}.${ext}`;
+        const { data: upData, error: upErr } = await supabase.storage
+          .from("muelle-fotos")
+          .upload(path, odometroFile, { upsert: true });
+        if (!upErr && upData) {
+          const { data: urlData } = supabase.storage.from("muelle-fotos").getPublicUrl(path);
+          odometro_foto_url = urlData?.publicUrl || null;
+        }
+      } catch (_) {}
+    }
+
+    // Construir motores_horas si se ingresaron
+    const motoresHoras = {};
+    if (esNaturalle) {
+      if (f.horas_babor) motoresHoras.Babor = Number(f.horas_babor);
+      if (f.horas_estribor) motoresHoras.Estribor = Number(f.horas_estribor);
+    } else if (esCastillete) {
+      if (f.horas_centro) motoresHoras.Centro = Number(f.horas_centro);
+    }
+
+    // ── Auto excluir_kpis ─────────────────────────────────────────────
+    // Si la llegada es 100% huéspedes/staff (no pasadía pagante) o el
+    // tipo es huespedes/inspeccion, marcar excluir_kpis=true para que
+    // NO sume al contador de pasadías del día. Antes esto se hacía a
+    // mano y quedaban llegadas de huéspedes contando como pasadías.
+    const totalPaxPagante = (Number(f.pax_a) || 0) + (Number(f.pax_n) || 0);
+    const totalNoPagante  = staff + huespedes;
+    const tipoExento = ["huespedes", "inspeccion"].includes(tipoSeleccionado);
+    const excluirKpisAuto = tipoExento || (totalNoPagante > 0 && totalPaxPagante === 0);
 
     const payload = {
       id, fecha, tipo: tipoSeleccionado,
@@ -234,9 +283,13 @@ function ModalNuevaLlegada({ tipo, fecha, reserva, llegadasDelDia = [], onClose,
       estado: "llegó",
       notas: notasExtras.join(" ") + (notasExtras.length ? " " : "") + (f.notas || ""),
       costo_operativo: costoOperativo,
+      boca_chica: !!f.boca_chica,
+      excluir_kpis: excluirKpisAuto,
     };
     // Solo incluir foto_url si está disponible (columna puede no existir aún)
     if (foto_url) payload.foto_url = foto_url;
+    if (odometro_foto_url) payload.odometro_foto_url = odometro_foto_url;
+    if (Object.keys(motoresHoras).length > 0) payload.motores_horas = motoresHoras;
 
     const { error } = await supabase.from("muelle_llegadas").insert(payload);
     setSaving(false);
@@ -405,6 +458,29 @@ function ModalNuevaLlegada({ tipo, fecha, reserva, llegadasDelDia = [], onClose,
               <input value={f.embarcacion_nombre} onChange={e => s("embarcacion_nombre", e.target.value)}
                 placeholder={esLancha ? "Ej: Atolon I" : "Ej: Patricia, sin nombre..."} style={IS} />
             )}
+            {/* Boca Chica: la lancha estaba parqueada cerca del hotel, no es un
+                viaje real → no consume costo_operativo ni cuenta como viaje. */}
+            {esLanchasAtolon && (
+              <label
+                title="La lancha venía de Boca Chica (estaba parqueada cerca del hotel). No cuenta como viaje real, costo operativo = 0."
+                style={{
+                  display: "flex", alignItems: "center", gap: 10,
+                  marginTop: 10, padding: "10px 12px", borderRadius: 8,
+                  background: f.boca_chica ? "rgba(56,189,248,0.12)" : B.navyLight,
+                  border: `1px solid ${f.boca_chica ? B.sky : "rgba(255,255,255,0.08)"}`,
+                  cursor: "pointer", fontSize: 13,
+                }}>
+                <input type="checkbox" checked={!!f.boca_chica}
+                  onChange={e => s("boca_chica", e.target.checked)}
+                  style={{ width: 16, height: 16, cursor: "pointer" }} />
+                <span style={{ flex: 1, color: f.boca_chica ? B.sky : "#fff", fontWeight: f.boca_chica ? 700 : 500 }}>
+                  🏝 Llegó de Boca Chica
+                </span>
+                <span style={{ fontSize: 10, color: "rgba(255,255,255,0.45)", textAlign: "right", lineHeight: 1.3 }}>
+                  no cuenta<br/>como viaje
+                </span>
+              </label>
+            )}
           </div>
           {!esLancha && (
             <div style={{ gridColumn: "1 / -1", marginBottom: 14 }}>
@@ -460,6 +536,70 @@ function ModalNuevaLlegada({ tipo, fecha, reserva, llegadasDelDia = [], onClose,
           </div>
         </div>
 
+        {/* Sección odómetro y horas motor — solo Natturale/Castillete (opcional) */}
+        {esLanchaPropia && (
+          <div style={{ background: B.navyMid, border: `1px solid ${B.sand}33`, borderRadius: 10, padding: 14, marginBottom: 12 }}>
+            <div style={{ fontSize: 12, color: B.sand, textTransform: "uppercase", letterSpacing: 1, fontWeight: 700, marginBottom: 10 }}>
+              ⚙️ Odómetro y horas de motor (opcional)
+            </div>
+            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.45)", marginBottom: 12, lineHeight: 1.5 }}>
+              Si puedes, toma una foto del odómetro y registra las horas de cada motor.
+              Esto nos ayuda a llevar el control de mantenimiento.
+            </div>
+
+            {/* Inputs de horas según embarcación */}
+            <div style={{ display: "grid", gridTemplateColumns: esCastillete ? "1fr" : "1fr 1fr", gap: 10, marginBottom: 12 }}>
+              {esNaturalle && (
+                <>
+                  <div>
+                    <label style={LS}>Horas Babor</label>
+                    <input type="number" step="0.1" min="0" value={f.horas_babor}
+                      onChange={e => s("horas_babor", e.target.value)}
+                      placeholder="ej: 1005" style={IS} />
+                  </div>
+                  <div>
+                    <label style={LS}>Horas Estribor</label>
+                    <input type="number" step="0.1" min="0" value={f.horas_estribor}
+                      onChange={e => s("horas_estribor", e.target.value)}
+                      placeholder="ej: 1004" style={IS} />
+                  </div>
+                </>
+              )}
+              {esCastillete && (
+                <div>
+                  <label style={LS}>Horas Motor</label>
+                  <input type="number" step="0.1" min="0" value={f.horas_centro}
+                    onChange={e => s("horas_centro", e.target.value)}
+                    placeholder="ej: 250" style={IS} />
+                </div>
+              )}
+            </div>
+
+            {/* Foto del odómetro */}
+            <label style={LS}>Foto del odómetro</label>
+            {odometroPreview ? (
+              <div style={{ position: "relative" }}>
+                <img src={odometroPreview} alt="odómetro" style={{ width: "100%", maxHeight: 180, objectFit: "cover", borderRadius: 10, border: `1px solid rgba(255,255,255,0.12)` }} />
+                <button onClick={() => { setOdometroFile(null); setOdometroPreview(null); }}
+                  style={{ position: "absolute", top: 6, right: 6, background: "rgba(0,0,0,0.6)", border: "none", color: "#fff", borderRadius: "50%", width: 26, height: 26, cursor: "pointer", fontSize: 13 }}>✕</button>
+              </div>
+            ) : (
+              <label style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, width: "100%", padding: "16px", borderRadius: 10, border: `2px dashed rgba(255,255,255,0.15)`, background: B.navyLight, cursor: "pointer", color: "rgba(255,255,255,0.4)", fontSize: 12, boxSizing: "border-box" }}>
+                <span style={{ fontSize: 22 }}>📸</span>
+                <span>Toca para foto del odómetro</span>
+                <input type="file" accept="image/*" capture="environment" style={{ display: "none" }}
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    setOdometroFile(file);
+                    const reader = new FileReader();
+                    reader.onload = (ev) => setOdometroPreview(ev.target.result);
+                    reader.readAsDataURL(file);
+                  }} />
+              </label>
+            )}
+          </div>
+        )}
 
         {errorMsg && (
           <div style={{ background: "#ff000022", border: "1px solid #ff000055", borderRadius: 8, padding: "10px 14px", marginTop: 12, fontSize: 12, color: "#ff6b6b" }}>
@@ -645,6 +785,34 @@ function ModalCobro({ llegada, onClose, onSaved }) {
         {/* ── PASO 1: Verificar datos ── */}
         {paso === 1 && (
           <>
+            {/* Selector tipo: After Island (cobra) / Restaurante (no cobra) / A Consumo (no cobra) */}
+            <div style={{ marginBottom: 16 }}>
+              <label style={LS}>Tipo de visita</label>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
+                {[
+                  { value: "after_island", label: "🌙 After Island", sub: "Paga", color: B.sand },
+                  { value: "restaurante",  label: "🍽️ Restaurante", sub: "Sin cobro", color: B.success },
+                  { value: "a_consumo",    label: "🛥️ A Consumo",   sub: "Sin cobro", color: B.sky },
+                ].map(opt => {
+                  const active = tipoSel === opt.value;
+                  return (
+                    <button key={opt.value} type="button" onClick={() => setTipoSel(opt.value)}
+                      style={{
+                        padding: "10px 8px", borderRadius: 10,
+                        border: `2px solid ${active ? opt.color : B.navyLight}`,
+                        background: active ? opt.color + "18" : B.navy,
+                        color: active ? opt.color : "rgba(255,255,255,0.6)",
+                        cursor: "pointer", fontSize: 12, fontWeight: 700,
+                        textAlign: "center", lineHeight: 1.3,
+                      }}>
+                      <div>{opt.label}</div>
+                      <div style={{ fontSize: 9, fontWeight: 500, marginTop: 2, opacity: 0.7 }}>{opt.sub}</div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 16px" }}>
               <div style={{ gridColumn: "1 / -1", marginBottom: 14 }}>
                 <label style={LS}>Nombre / ID embarcación</label>
@@ -724,8 +892,11 @@ function ModalCobro({ llegada, onClose, onSaved }) {
                 Cancelar
               </button>
               <button onClick={handleConfirmarDatos} disabled={saving}
-                style={{ flex: 2, padding: "11px", borderRadius: 10, border: "none", background: saving ? B.navyLight : B.sand, color: saving ? "rgba(255,255,255,0.4)" : B.navy, fontSize: 14, fontWeight: 700, cursor: "pointer" }}>
-                {saving ? "Guardando..." : esAfterIsland ? "Confirmar → Cobrar" : "Guardar"}
+                style={{ flex: 2, padding: "11px", borderRadius: 10, border: "none",
+                  background: saving ? B.navyLight : (esAfterIsland ? B.sand : B.success),
+                  color: saving ? "rgba(255,255,255,0.4)" : B.navy,
+                  fontSize: 14, fontWeight: 700, cursor: "pointer" }}>
+                {saving ? "Guardando..." : esAfterIsland ? "Confirmar → Cobrar" : "✓ Confirmar Llegada"}
               </button>
             </div>
           </>
@@ -1623,19 +1794,15 @@ function ContratistasSection({ fecha, icon, label, color }) {
     if (!code) { alert("Ingresa una cédula o código de certificado"); return; }
     setLoading(true); setResult(null);
     try {
-      const isDigits = /^\d+$/.test(code);
+      // Detectar tipo de input:
+      // - "CERT-..." → código de certificado SST
+      // - todo lo demás → cédula (incluye dígitos puros Y cédulas de
+      //   extranjería con prefijo de letra como X4707273, pasaportes, etc.)
+      const isCertCode = /^CERT-/i.test(code);
       let trabajador = null, contratista = null, certificado = null;
       const motivos = [];
 
-      if (isDigits) {
-        const { data: t } = await supabase
-          .from("contratistas_trabajadores")
-          .select("id, nombre, cedula, cargo, contratista_id")
-          .eq("cedula", code)
-          .order("created_at", { ascending: false })
-          .limit(1).maybeSingle();
-        trabajador = t;
-      } else {
+      if (isCertCode) {
         const { data: c } = await supabase.from("certificados_curso")
           .select("*").eq("codigo", code).maybeSingle();
         certificado = c;
@@ -1644,6 +1811,15 @@ function ContratistasSection({ fecha, icon, label, color }) {
             .select("id, nombre, cedula, cargo, contratista_id").eq("id", c.trabajador_id).maybeSingle();
           trabajador = t;
         }
+      } else {
+        // Cédula (digits o con prefijo de letra)
+        const { data: t } = await supabase
+          .from("contratistas_trabajadores")
+          .select("id, nombre, cedula, cargo, contratista_id")
+          .eq("cedula", code)
+          .order("created_at", { ascending: false })
+          .limit(1).maybeSingle();
+        trabajador = t;
       }
 
       if (trabajador?.contratista_id) {

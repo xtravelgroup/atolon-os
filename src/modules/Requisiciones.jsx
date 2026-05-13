@@ -25,6 +25,11 @@ const PRIORIDADES = ["Baja", "Media", "Alta", "Urgente"];
 const PRIO_COLOR = { Baja: B.sky, Media: B.sand, Alta: B.warning, Urgente: B.danger };
 const ROLES_APROBADOR = ["auto", "ventas", "operador", "gerente_general_op", "gerente_general_admin", "super_admin", "contabilidad"];
 
+// Gerente General puede tener cualquier rol_id que empiece con "gerente_general"
+// (incluye gerente_general_op, gerente_general_admin, y roles custom como
+// "gerente_general_1775236379654" que se crean desde el módulo de roles)
+const esGerenteGeneralRol = (rol) => typeof rol === "string" && rol.startsWith("gerente_general");
+
 const IS = { width: "100%", padding: "9px 12px", borderRadius: 8, background: B.navyLight, border: `1px solid ${B.navyLight}`, color: B.white, fontSize: 13, outline: "none", boxSizing: "border-box" };
 const LS = { display: "block", fontSize: 11, color: B.sand, marginBottom: 5, textTransform: "uppercase", letterSpacing: "0.06em" };
 const BTN = (bg, color = "#fff") => ({ padding: "8px 14px", borderRadius: 8, border: "none", background: bg, color, cursor: "pointer", fontWeight: 700, fontSize: 12 });
@@ -199,8 +204,8 @@ export default function Requisiciones() {
     const nivel = r.nivel_aprobacion || nivelAprobacion(r);
     // Super admin ve todas las pendientes (acceso total)
     if (currentUser.rol === "super_admin") return true;
-    // Gerente general ve todas las pendientes
-    if (currentUser.rol === "gerente_general_op" || currentUser.rol === "gerente_general_admin") return true;
+    // Gerente general ve todas las pendientes (cualquier rol que empiece con gerente_general)
+    if (esGerenteGeneralRol(currentUser.rol)) return true;
     // Dirección ve solo las que requieren dirección
     if (currentUser.rol === "direccion") return nivel === "direccion";
     return false;
@@ -316,13 +321,26 @@ export default function Requisiciones() {
     };
 
     // ¿Ya existe OC abierta (emitida) para este proveedor?
+    // IMPORTANTE: solo se mergea con OCs en estado "emitida" Y NO enviadas
+    // todavía al proveedor. Una OC con enviada_at o estado >= "enviada" se
+    // considera cerrada para nuevos items — siempre se crea una OC nueva.
     const provId = req.proveedor_id || prov?.id;
     const provNombre = prov?.nombre || req.proveedor_nombre || req.proveedor;
     const ocExistente = ordenes.find(o =>
-      o.estado === "emitida" &&
+      o.estado === "emitida" && !o.enviada_at &&
       ((provId && o.proveedor_id === provId) ||
        (!provId && (o.proveedor_nombre || "").trim().toLowerCase() === (provNombre || "").trim().toLowerCase()))
     );
+
+    // Agregar todos los req_ids únicos presentes en el conjunto consolidado.
+    const aggregateReqIds = (items) => {
+      const set = new Set();
+      for (const it of items) {
+        if (it.req_id) set.add(it.req_id);
+        if (Array.isArray(it.req_ids)) it.req_ids.forEach(id => id && set.add(id));
+      }
+      return Array.from(set);
+    };
 
     let codigo, ocData;
     if (ocExistente) {
@@ -330,8 +348,11 @@ export default function Requisiciones() {
       const nuevosItems = (req.items || []).map(it => ({ ...it, req_id: req.id }));
       const merged = consolidar([...(ocExistente.items || []), ...nuevosItems]);
       const subtotal = merged.reduce((s, it) => s + (Number(it.subtotal) || 0), 0);
+      const reqIdsExistentes = Array.isArray(ocExistente.requisicion_ids) ? ocExistente.requisicion_ids : (ocExistente.requisicion_id ? [ocExistente.requisicion_id] : []);
+      const reqIdsAll = Array.from(new Set([...reqIdsExistentes, ...aggregateReqIds(merged), req.id]));
       const { data, error } = await supabase.from("ordenes_compra").update({
         items: merged, subtotal, total: subtotal,
+        requisicion_ids: reqIdsAll,
       }).eq("id", ocExistente.id).select().single();
       if (error) { alert("Error: " + error.message); return; }
       codigo = ocExistente.codigo;
@@ -343,6 +364,7 @@ export default function Requisiciones() {
       const subtotal = items.reduce((s, it) => s + (Number(it.subtotal) || 0), 0);
       const { data, error } = await supabase.from("ordenes_compra").insert({
         codigo, requisicion_id: req.id,
+        requisicion_ids: [req.id],
         proveedor_id: provId || null, proveedor_nombre: provNombre || "—",
         proveedor_nit: prov?.nit || null,
         proveedor_email: prov?.email || null,
@@ -402,7 +424,8 @@ export default function Requisiciones() {
           ["solicitudes",  `📋 Solicitudes (${reqs.length})`],
           ["aprobaciones", `✅ Aprobaciones (${requierenAprobacion.length})`],
           ["ordenes",      `🧾 Órdenes de compra (${ordenes.length})`],
-          ["recepciones",  `📦 Recepciones`],
+          ["recepciones",  `📦 Recepciones (${ordenes.filter(o => !["cancelada", "recibida"].includes(o.estado)).length})`],
+          ["recibidas",    `✅ Recibidas (${ordenes.filter(o => o.estado === "recibida").length})`],
           ["reglas",       `⚙ Reglas`],
           ["reportes",     `📊 Reportes`],
         ].map(([k, l]) => (
@@ -425,6 +448,8 @@ export default function Requisiciones() {
         <TabOrdenes ordenes={ordenes} reload={load} />
       ) : tab === "recepciones" ? (
         <TabRecepciones ordenes={ordenes.filter(o => !["cancelada", "recibida"].includes(o.estado))} reqs={reqs} reload={load} currentUser={currentUser} />
+      ) : tab === "recibidas" ? (
+        <TabRecibidas ordenes={ordenes.filter(o => o.estado === "recibida")} reqs={reqs} reload={load} currentUser={currentUser} />
       ) : tab === "reglas" ? (
         <TabReglas reglas={reglas} onEdit={setShowRegla} reload={load} />
       ) : (
@@ -720,7 +745,7 @@ function TabAprobaciones({ reqs, reglas, onOpen, currentUser, reload }) {
     } else {
       // Verificar si necesita más aprobaciones
       const nivel = r.nivel_aprobacion || "gerente_general";
-      const yaGerenteAprobo = aprobaciones.some(a => a.accion === "aprobada" && (a.rol === "gerente_general_op" || a.rol === "gerente_general_admin"));
+      const yaGerenteAprobo = aprobaciones.some(a => a.accion === "aprobada" && esGerenteGeneralRol(a.rol));
       const yaDireccionAprobo = aprobaciones.some(a => a.accion === "aprobada" && (a.rol === "super_admin" || a.rol === "direccion"));
 
       let nuevoEstado = "Pendiente";
@@ -754,7 +779,7 @@ function TabAprobaciones({ reqs, reglas, onOpen, currentUser, reload }) {
   }
 
   const totalPend = reqs.reduce((s, r) => s + r.total, 0);
-  const esGerente = currentUser.rol === "gerente_general_op" || currentUser.rol === "gerente_general_admin";
+  const esGerente = esGerenteGeneralRol(currentUser.rol);
   const esDireccion = currentUser.rol === "super_admin" || currentUser.rol === "direccion";
 
   return (
@@ -769,7 +794,7 @@ function TabAprobaciones({ reqs, reglas, onOpen, currentUser, reload }) {
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
         {reqs.map(r => {
           const nivel = r.nivel_aprobacion || "gerente_general";
-          const yaGerenteAprobo = (r.aprobaciones || []).some(a => a.accion === "aprobada" && (a.rol === "gerente_general_op" || a.rol === "gerente_general_admin"));
+          const yaGerenteAprobo = (r.aprobaciones || []).some(a => a.accion === "aprobada" && esGerenteGeneralRol(a.rol));
           const reqDireccion = nivel === "direccion";
           const esperaDireccion = reqDireccion && yaGerenteAprobo;
           const borderColor = reqDireccion ? B.warning : B.sky;
@@ -910,7 +935,7 @@ function OCDetalleModal({ oc, onClose, reload }) {
   <div class="header">
     <div>
       <h1>ATOLON BEACH CLUB</h1>
-      <div class="meta">Cartagena de Indias · NIT 901.xxx.xxx</div>
+      <div class="meta">Cartagena de Indias · NIT 901.873.457</div>
     </div>
     <div style="text-align: right;">
       <div style="font-size: 10px; color: #999; text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 4px;">Orden de Compra</div>
@@ -1041,9 +1066,24 @@ function OCDetalleModal({ oc, onClose, reload }) {
 // ═══════════════════════════════════════════════════════════════════════════
 function TabRecepciones({ ordenes, reqs, reload, currentUser }) {
   const [openOC, setOpenOC] = useState(null);
-  const [openFactura, setOpenFactura] = useState(null);
-  const [openLogistica, setOpenLogistica] = useState(null);
-  const [openEmail, setOpenEmail] = useState(null);
+  // Estado: logística por OC. Solo se muestra (read-only) — la edición se
+  // hace desde el módulo Compras → tab Logística. Aquí Recepciones es para
+  // marcar lo que llega, no para gestionar logística ni facturas ni emails.
+  const [logisticaPorOC, setLogisticaPorOC] = useState({}); // { oc_id: { entrega, transporte } }
+
+  useEffect(() => {
+    if (!supabase || ordenes.length === 0) return;
+    const ocIds = ordenes.map(o => o.id);
+    Promise.all([
+      supabase.from("oc_entregas_muelle").select("*").in("oc_id", ocIds),
+      supabase.from("oc_transporte_atolon").select("*").in("oc_id", ocIds),
+    ]).then(([{ data: ent }, { data: tra }]) => {
+      const map = {};
+      (ent || []).forEach(e => { (map[e.oc_id] ||= {}).entrega = e; });
+      (tra || []).forEach(t => { (map[t.oc_id] ||= {}).transporte = t; });
+      setLogisticaPorOC(map);
+    });
+  }, [ordenes]);
 
   // Badges por estado de OC
   const OC_BADGE = {
@@ -1075,11 +1115,13 @@ function TabRecepciones({ ordenes, reqs, reload, currentUser }) {
             return item && (Number(rx.cant_recibida) || 0) >= Number(item.cant);
           }).length;
           const badge = OC_BADGE[oc.estado] || { bg: B.navyLight, color: "rgba(255,255,255,0.5)", label: oc.estado };
+          const log = logisticaPorOC[oc.id] || {};
+          const hasLogistica = !!(log.entrega || log.transporte);
           return (
             <div key={oc.id} onClick={() => setOpenOC(oc)}
               style={{ background: B.navy, borderRadius: 12, padding: "14px 18px", border: `1px solid ${B.navyLight}`, borderLeft: `4px solid ${B.sand}`, cursor: "pointer" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
-                <div style={{ flex: 1 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
+                <div style={{ flex: 1, minWidth: 220 }}>
                   <div style={{ fontSize: 14, fontWeight: 800, display: "flex", alignItems: "center", gap: 8 }}>
                     🧾 {oc.codigo}
                     {oc.requisicion_id && <span style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", fontWeight: 500 }}>· Req {oc.requisicion_id}</span>}
@@ -1094,45 +1136,153 @@ function TabRecepciones({ ordenes, reqs, reload, currentUser }) {
                 <div style={{ textAlign: "right" }}>
                   <div style={{ fontSize: 16, fontWeight: 800, color: B.sand, fontFamily: "'Barlow Condensed', sans-serif" }}>{COP(oc.total || 0)}</div>
                   <span style={{ background: badge.bg, color: badge.color, padding: "3px 10px", borderRadius: 20, fontSize: 11, fontWeight: 700, whiteSpace: "nowrap" }}>{badge.label}</span>
-                  <div style={{ marginTop: 6, display: "flex", gap: 6, justifyContent: "flex-end", flexWrap: "wrap" }}>
-                    <button onClick={(e) => { e.stopPropagation(); setOpenEmail(oc); }}
-                      style={{ padding: "4px 10px", fontSize: 11, fontWeight: 700, borderRadius: 6,
-                        border: `1px solid ${B.pink}`, background: B.pink + "22", color: B.pink, cursor: "pointer" }}
-                      title="Enviar OC al proveedor por correo">
-                      📧 Email
-                    </button>
-                    <button onClick={(e) => { e.stopPropagation(); setOpenFactura(oc); }}
-                      style={{ padding: "4px 10px", fontSize: 11, fontWeight: 700, borderRadius: 6,
-                        border: `1px solid ${oc.factura_aplicada ? B.success : B.warning}`,
-                        background: (oc.factura_aplicada ? B.success : B.warning) + "22",
-                        color: oc.factura_aplicada ? B.success : B.warning, cursor: "pointer" }}
-                      title={oc.factura_aplicada ? "Factura aplicada" : "Adjuntar factura del proveedor"}>
-                      {oc.factura_aplicada ? "📄✓ Factura" : "📎 Adjuntar Factura"}
-                    </button>
-                    <button onClick={(e) => { e.stopPropagation(); setOpenLogistica(oc); }}
-                      style={{ padding: "4px 10px", fontSize: 11, fontWeight: 700, borderRadius: 6,
-                        border: `1px solid ${B.sky}`,
-                        background: B.sky + "22",
-                        color: B.sky, cursor: "pointer" }}
-                      title="Programar entrega en muelle y transporte a Atolón">
-                      🚚 Logística
-                    </button>
-                  </div>
                 </div>
+              </div>
+
+              {/* Logística — solo informativa (read-only). Para editar:
+                  Compras → Logística. Aquí solo marcas lo recibido. */}
+              <div style={{ marginTop: 10, padding: "8px 12px", background: B.navyMid, borderRadius: 8, borderLeft: `3px solid ${hasLogistica ? B.sky : B.navyLight}`, fontSize: 11, color: "rgba(255,255,255,0.7)" }}
+                onClick={(e) => e.stopPropagation()}>
+                {hasLogistica ? (
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 14 }}>
+                    {log.entrega && (
+                      <div>
+                        <span style={{ color: B.sky, fontWeight: 700 }}>🚚 Entrega muelle:</span>{" "}
+                        {log.entrega.fecha_programada || "—"}{log.entrega.hora_programada ? ` · ${log.entrega.hora_programada}` : ""}
+                        {log.entrega.ubicacion ? <span style={{ color: "rgba(255,255,255,0.5)" }}> · {log.entrega.ubicacion}</span> : null}
+                        {log.entrega.estado ? <span style={{ marginLeft: 8, padding: "1px 8px", borderRadius: 10, background: B.navy, color: B.sky, fontSize: 10 }}>{log.entrega.estado}</span> : null}
+                      </div>
+                    )}
+                    {log.transporte && (
+                      <div>
+                        <span style={{ color: "#a78bfa", fontWeight: 700 }}>⛵ Transporte a Atolón:</span>{" "}
+                        {log.transporte.fecha_zarpe || "—"}{log.transporte.hora_zarpe ? ` · ${log.transporte.hora_zarpe}` : ""}
+                        {log.transporte.embarcacion ? <span style={{ color: "rgba(255,255,255,0.5)" }}> · {log.transporte.embarcacion}</span> : null}
+                        {log.transporte.estado ? <span style={{ marginLeft: 8, padding: "1px 8px", borderRadius: 10, background: B.navy, color: "#a78bfa", fontSize: 10 }}>{log.transporte.estado}</span> : null}
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <span style={{ color: "rgba(255,255,255,0.35)" }}>📋 Sin logística programada todavía. Configurar en Compras → Logística.</span>
+                )}
               </div>
             </div>
           );
         })}
       </div>
       {openOC && <RecepcionOCModal oc={openOC} reqs={reqs} onClose={() => setOpenOC(null)} reload={reload} currentUser={currentUser} />}
-      {openFactura && <FacturaProveedorModal oc={openFactura} onClose={() => setOpenFactura(null)} reload={reload} currentUser={currentUser} />}
-      {openLogistica && <LogisticaOCModal oc={openLogistica} onClose={() => setOpenLogistica(null)} reload={reload} currentUser={currentUser} />}
-      {openEmail && <EmailOCModal oc={openEmail} onClose={() => setOpenEmail(null)} reload={reload} currentUser={currentUser} />}
     </>
   );
 }
 
-function RecepcionOCModal({ oc, reqs, onClose, reload, currentUser }) {
+// ─── Tab Recibidas ──────────────────────────────────────────────────────
+// Muestra OCs ya recibidas (estado='recibida'). Read-only por defecto:
+// es histórico para consulta. Permite reabrir si fue marcada por error
+// (vuelve a Recepciones) y permite ver/descargar lo recibido.
+function TabRecibidas({ ordenes, reqs, reload, currentUser }) {
+  const [openOC, setOpenOC] = useState(null);
+  const [filtro, setFiltro] = useState("");
+
+  // Ordenadas por fecha de recepción (más recientes primero), fallback emisión
+  const sorted = useMemo(() => {
+    return [...ordenes].sort((a, b) => {
+      const aDate = a.recibida_at || a.updated_at || a.fecha_emision || "";
+      const bDate = b.recibida_at || b.updated_at || b.fecha_emision || "";
+      return bDate.localeCompare(aDate);
+    });
+  }, [ordenes]);
+
+  const filtradas = filtro
+    ? sorted.filter(o => {
+        const q = filtro.toLowerCase();
+        return (o.codigo || "").toLowerCase().includes(q)
+          || (o.proveedor_nombre || "").toLowerCase().includes(q)
+          || (o.requisicion_id || "").toLowerCase().includes(q);
+      })
+    : sorted;
+
+  const totalRecibido = filtradas.reduce((s, o) => s + Number(o.total || 0), 0);
+
+  const reabrir = async (oc) => {
+    if (!window.confirm(`¿Reabrir OC ${oc.codigo}?\n\nVuelve a Recepciones para ajustar cantidades. Útil si se marcó como recibida por error.`)) return;
+    const { error } = await supabase.from("ordenes_compra").update({
+      estado: "recibida_parcial",
+      recibida_at: null,
+      updated_at: new Date().toISOString(),
+    }).eq("id", oc.id);
+    if (error) return alert("Error: " + error.message);
+    reload?.();
+  };
+
+  if (ordenes.length === 0) {
+    return <div style={{ textAlign: "center", padding: 60, color: "rgba(255,255,255,0.3)" }}>
+      <div style={{ fontSize: 48, marginBottom: 12 }}>✅</div>
+      <div>Sin órdenes recibidas todavía</div>
+      <div style={{ fontSize: 11, marginTop: 6, opacity: 0.7 }}>Cuando una OC se marque como recibida en Recepciones, aparecerá aquí.</div>
+    </div>;
+  }
+
+  return (
+    <div>
+      {/* Header con buscador y total */}
+      <div style={{ display: "flex", gap: 10, marginBottom: 14, alignItems: "center", flexWrap: "wrap" }}>
+        <input type="text" placeholder="Buscar código, proveedor, requisición…"
+          value={filtro} onChange={e => setFiltro(e.target.value)}
+          style={{ flex: 1, minWidth: 200, padding: "8px 12px", borderRadius: 8, border: `1px solid ${B.navyLight}`, background: B.navyMid, color: B.white, fontSize: 13 }} />
+        <div style={{ fontSize: 12, color: "rgba(255,255,255,0.6)", marginLeft: "auto" }}>
+          {filtradas.length} OC · Total: <strong style={{ color: B.success }}>{COP(totalRecibido)}</strong>
+        </div>
+      </div>
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {filtradas.map(oc => {
+          const totalLineas = (oc.items || []).length;
+          const recibidos = oc.recibidos || [];
+          return (
+            <div key={oc.id}
+              style={{ background: B.navy, borderRadius: 12, padding: "14px 18px", border: `1px solid ${B.navyLight}`, borderLeft: `4px solid ${B.success}`, cursor: "pointer" }}
+              onClick={() => setOpenOC(oc)}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
+                <div style={{ flex: 1, minWidth: 220 }}>
+                  <div style={{ fontSize: 14, fontWeight: 800, display: "flex", alignItems: "center", gap: 8 }}>
+                    🧾 {oc.codigo}
+                    <span style={{ background: "#153322", color: B.success, padding: "2px 8px", borderRadius: 12, fontSize: 10, fontWeight: 700 }}>
+                      ✓ Recibida
+                    </span>
+                    {oc.requisicion_id && <span style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", fontWeight: 500 }}>· Req {oc.requisicion_id}</span>}
+                    {oc.factura_aplicada && <span style={{ fontSize: 10, color: B.sand }}>· 📄 Facturada</span>}
+                  </div>
+                  <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginTop: 3 }}>
+                    {oc.proveedor_nombre || "Sin proveedor"}
+                    {oc.recibida_at && <> · 📦 Recibida {fmtFecha(oc.recibida_at.slice(0, 10))}</>}
+                    {!oc.recibida_at && oc.fecha_emision && <> · Emitida {oc.fecha_emision}</>}
+                  </div>
+                  <div style={{ fontSize: 11, color: "rgba(255,255,255,0.45)", marginTop: 4 }}>
+                    📦 {totalLineas} línea{totalLineas !== 1 ? "s" : ""}
+                    {recibidos.length > 0 && <> · {recibidos.length} entrada{recibidos.length !== 1 ? "s" : ""} de recepción</>}
+                  </div>
+                </div>
+                <div style={{ textAlign: "right", display: "flex", flexDirection: "column", gap: 8, alignItems: "flex-end" }}>
+                  <div style={{ fontSize: 16, fontWeight: 800, color: B.success, fontFamily: "'Barlow Condensed', sans-serif" }}>{COP(oc.total || 0)}</div>
+                  <button onClick={(e) => { e.stopPropagation(); reabrir(oc); }}
+                    style={{ padding: "4px 10px", fontSize: 11, fontWeight: 700, borderRadius: 6,
+                      border: `1px solid ${B.warning}`, background: B.warning + "22", color: B.warning, cursor: "pointer" }}
+                    title="Reabrir esta OC (vuelve a Recepciones para ajustar)">
+                    ↩ Reabrir
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {openOC && <RecepcionOCModal oc={openOC} reqs={reqs} onClose={() => setOpenOC(null)} reload={reload} currentUser={currentUser} readOnly />}
+    </div>
+  );
+}
+
+function RecepcionOCModal({ oc, reqs, onClose, reload, currentUser, readOnly = false }) {
   // Cargar bodegas de recepción + mapeo item_id desde requisición (fallback
   // para OCs viejas que no traen item_id en sus items)
   const [locaciones, setLocaciones] = useState([]);
@@ -1145,8 +1295,72 @@ function RecepcionOCModal({ oc, reqs, onClose, reload, currentUser }) {
   const [notas, setNotas] = useState(oc.notas_recibo || "");
   const [numFactura, setNumFactura] = useState(oc.factura_numero || "");
   const [fechaFactura, setFechaFactura] = useState(oc.factura_fecha || todayStr());
-  const [registrarEnLoggro, setRegistrarEnLoggro] = useState(false);
+  const [catalogo, setCatalogo] = useState([]); // catálogo completo para auto-link
+  // El registro en Loggro es SIEMPRE automático para items con loggro_id.
+  // No hay opción de desactivar — eliminamos el checkbox para que no dependa
+  // del usuario marcar la opción y olvidar sincronizar.
+  const registrarEnLoggro = true;
   const [saving, setSaving] = useState(false);
+
+  // Vincular manual: el usuario elige del catálogo qué producto corresponde
+  // a un ítem de la OC que no se pudo matchear automáticamente.
+  const vincularManual = (idx, catalogId) => {
+    const cat = catalogo.find(c => c.id === catalogId);
+    if (!cat) return;
+    setRecibidos(prev => prev.map((r, i) =>
+      i === idx ? { ...r, item_id: cat.id, loggro_id: cat.loggro_id || r.loggro_id, _catNombre: cat.nombre } : r
+    ));
+  };
+
+  // Actualizar el nombre del producto en Atolón (items_catalogo) y en
+  // Loggro (vía edge function update-ingredient). Útil cuando el proveedor
+  // cambia el nombre en la cotización/factura y queremos reflejarlo en
+  // ambos sistemas para mantener consistencia.
+  const [actualizandoNombre, setActualizandoNombre] = useState(null); // idx del item siendo actualizado
+  const actualizarNombreProducto = async (idx) => {
+    const r = recibidos[idx];
+    if (!r.item_id) return alert("Vincula primero el ítem a un producto del catálogo.");
+    const nuevoNombre = (r.nombre || r.item || "").trim();
+    if (!nuevoNombre) return;
+    const cat = catalogo.find(c => c.id === r.item_id);
+    const nombreActual = cat?.nombre || "";
+    if (nombreActual === nuevoNombre) return alert("El nombre ya es igual, no hay nada que actualizar.");
+    if (!window.confirm(
+      `¿Actualizar el nombre del producto en Atolón y Loggro?\n\n` +
+      `Atolón actual: "${nombreActual}"\n` +
+      `Atolón nuevo: "${nuevoNombre}"\n\n` +
+      `Esto cambiará el nombre en items_catalogo y en Loggro (ingredient ${r.loggro_id || "—"}).`
+    )) return;
+    setActualizandoNombre(idx);
+    try {
+      // 1) Actualizar Atolón
+      const { error: atolonErr } = await supabase.from("items_catalogo")
+        .update({ nombre: nuevoNombre, updated_at: new Date().toISOString() })
+        .eq("id", r.item_id);
+      if (atolonErr) throw new Error("Atolón: " + atolonErr.message);
+
+      // 2) Actualizar Loggro (si tiene loggro_id)
+      if (r.loggro_id) {
+        const URL = import.meta.env.VITE_SUPABASE_URL;
+        const KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
+        const res = await fetch(`${URL}/functions/v1/loggro-sync/update-ingredient`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", apikey: KEY, Authorization: `Bearer ${KEY}` },
+          body: JSON.stringify({ loggro_id: r.loggro_id, nombre: nuevoNombre }),
+        });
+        const data = await res.json();
+        if (!data.ok) throw new Error("Loggro: " + (data.error || JSON.stringify(data).slice(0, 200)));
+      }
+
+      // 3) Refrescar catálogo local
+      setCatalogo(prev => prev.map(c => c.id === r.item_id ? { ...c, nombre: nuevoNombre } : c));
+      alert(`✓ Nombre actualizado a "${nuevoNombre}" en Atolón${r.loggro_id ? " y Loggro" : ""}.`);
+    } catch (e) {
+      alert("Error al actualizar: " + e.message);
+    } finally {
+      setActualizandoNombre(null);
+    }
+  };
 
   useEffect(() => {
     if (!supabase) return;
@@ -1159,20 +1373,61 @@ function RecepcionOCModal({ oc, reqs, onClose, reload, currentUser }) {
         if (recepcion) setBodegaDestino(recepcion.id);
       });
 
-    // Si los items de la OC no tienen item_id (OCs viejas), enriquecer
-    // cruzando con la req asociada
-    const sinItemId = (oc.items || []).filter(it => !it.item_id);
-    if (sinItemId.length > 0 && oc.requisicion_id) {
-      supabase.from("requisiciones").select("items").eq("id", oc.requisicion_id).maybeSingle()
-        .then(({ data }) => {
-          const reqItems = data?.items || [];
-          setRecibidos(prev => prev.map(r => {
-            if (r.item_id) return r;
-            const match = reqItems.find(ri => ri.id === r.id);
-            return match ? { ...r, item_id: match.item_id, loggro_id: match.loggro_id } : r;
-          }));
-        });
-    }
+    // Cargar TODO el catálogo para enriquecer + permitir vincular manualmente
+    // ítems que no se puedan matchear por nombre exacto/parcial.
+    supabase.from("items_catalogo").select("id, nombre, loggro_id, unidad")
+      .order("nombre")
+      .then(({ data }) => setCatalogo(data || []));
+  }, [oc.id, oc.requisicion_id]);
+
+  // Enriquecer recibidos cuando catalogo cargue: 3 niveles de match
+  // 1) Exact match (case-insensitive)
+  // 2) Substring match (catálogo contenido en nombre OC, o viceversa)
+  // 3) Si no hay match, queda sin loggro_id y el usuario podrá vincular manual
+  useEffect(() => {
+    if (catalogo.length === 0) return;
+    const norm = (s) => (s || "").toLowerCase().trim();
+    setRecibidos(prev => prev.map(r => {
+      if (r.item_id && r.loggro_id) return r;
+      const nombreItem = norm(r.nombre || r.item);
+      if (!nombreItem) return r;
+      // 1) Exact match
+      let match = catalogo.find(c => norm(c.nombre) === nombreItem);
+      // 2) Substring: nombre catálogo contenido en nombre OC (e.g. ARRACHERA en ARRACHERA CAB)
+      if (!match) match = catalogo.find(c => {
+        const cn = norm(c.nombre);
+        return cn.length >= 4 && nombreItem.includes(cn);
+      });
+      // 3) Substring inverso: nombre OC contenido en catálogo
+      if (!match) match = catalogo.find(c => {
+        const cn = norm(c.nombre);
+        return nombreItem.length >= 4 && cn.includes(nombreItem);
+      });
+      if (match) {
+        return { ...r, item_id: r.item_id || match.id, loggro_id: r.loggro_id || match.loggro_id };
+      }
+      return r;
+    }));
+  }, [catalogo]);
+
+  // Enriquecer también via la requisición (si existe) — fuente alterna
+  useEffect(() => {
+    if (!oc.requisicion_id) return;
+    const sinId = (oc.items || []).filter(it => !it.item_id || !it.loggro_id);
+    if (sinId.length === 0) return;
+    supabase.from("requisiciones").select("items").eq("id", oc.requisicion_id).maybeSingle()
+      .then(({ data }) => {
+        const reqItems = data?.items || [];
+        if (reqItems.length === 0) return;
+        setRecibidos(prev => prev.map(r => {
+          if (r.item_id && r.loggro_id) return r;
+          const reqMatch = reqItems.find(ri => ri.id === r.id);
+          if (reqMatch && (reqMatch.item_id || reqMatch.loggro_id)) {
+            return { ...r, item_id: r.item_id || reqMatch.item_id, loggro_id: r.loggro_id || reqMatch.loggro_id };
+          }
+          return r;
+        }));
+      });
   }, [oc.id, oc.requisicion_id]);
 
   const setRecibido = (idx, val) => {
@@ -1181,6 +1436,12 @@ function RecepcionOCModal({ oc, reqs, onClose, reload, currentUser }) {
   const recibirTodo = () => setRecibidos(prev => prev.map(r => ({ ...r, cant_recibida: r.cant })));
 
   const guardar = async () => {
+    // ── Fix #6: bloquear recepción si anticipo requerido y no pagado ──
+    if (oc.anticipo_requerido && !oc.anticipo_pagado) {
+      alert(`⛔ Esta OC requiere anticipo de ${oc.anticipo_porcentaje || "?"}% (${(oc.anticipo_monto || 0).toLocaleString("es-CO")}) y aún NO ha sido pagado.\n\nNo se puede registrar recepción hasta que Contabilidad marque el anticipo como pagado en la pestaña "Anticipos pendientes" del módulo Compras.`);
+      return;
+    }
+
     setSaving(true);
     const totalEsperado = (oc.items || []).reduce((s, it) => s + Number(it.cant), 0);
     const totalRecibido = recibidos.reduce((s, r) => s + Number(r.cant_recibida || 0), 0);
@@ -1202,21 +1463,56 @@ function RecepcionOCModal({ oc, reqs, onClose, reload, currentUser }) {
       recibida_por: currentUser.nombre,
     }).eq("id", oc.id);
 
-    // 2. Si la OC viene de una requisición, propagar estado
-    if (oc.requisicion_id) {
-      const req = reqs.find(r => r.id === oc.requisicion_id);
-      if (req) {
-        await supabase.from("requisiciones").update({
-          estado: todoRecibido ? "Recibida" : "Recibida Parcial",
-          recibidos: recibidos.map(r => ({ item_id: r.id, cant_recibida: r.cant_recibida })),
-          timeline: [...(req.timeline || []), {
-            quien: currentUser.nombre,
-            accion: todoRecibido ? "Recibida completa (desde OC)" : "Recibida parcial (desde OC)",
-            fecha: new Date().toLocaleString("es-CO"),
-            comentario: `OC ${oc.codigo} · ${totalRecibido}/${totalEsperado} unidades${notas ? ` — ${notas}` : ""}`,
-          }],
-        }).eq("id", req.id);
-      }
+    // 2. Propagar a TODAS las requisiciones de origen (multi-req).
+    //    Cada req se evalúa por sus PROPIOS items: si todos sus items están
+    //    completos → "Recibida"; si algunos → "Recibida Parcial"; si ninguno
+    //    de sus items se recibió en esta entrega → no toca el estado.
+    const reqIdsOrigen = Array.isArray(oc.requisicion_ids) && oc.requisicion_ids.length > 0
+      ? oc.requisicion_ids
+      : (oc.requisicion_id ? [oc.requisicion_id] : []);
+
+    for (const reqId of reqIdsOrigen) {
+      const req = reqs.find(r => r.id === reqId);
+      if (!req) continue;
+
+      // Items de OC que pertenecen a esta req (vía req_id legacy o req_ids merged)
+      const itemsDeEsteReq = (oc.items || []).filter(it =>
+        it.req_id === reqId || (Array.isArray(it.req_ids) && it.req_ids.includes(reqId))
+      );
+      if (itemsDeEsteReq.length === 0) continue;
+
+      // Lookup de cantidades recibidas por id de item (en esta entrega)
+      const recibidoPorId = new Map(recibidos.map(r => [r.id, Number(r.cant_recibida) || 0]));
+      const totalEsperadoReq = itemsDeEsteReq.reduce((s, it) => s + Number(it.cant), 0);
+      const totalRecibidoReq = itemsDeEsteReq.reduce((s, it) => s + (recibidoPorId.get(it.id) || 0), 0);
+
+      // Acumular contra recibidos previos de la req (si ya hubo recepción parcial antes)
+      const previos = Array.isArray(req.recibidos) ? req.recibidos : [];
+      const previosMap = new Map(previos.map(p => [p.item_id, Number(p.cant_recibida) || 0]));
+      const recibidosFinales = itemsDeEsteReq.map(it => ({
+        item_id: it.id,
+        cant_recibida: (previosMap.get(it.id) || 0) + (recibidoPorId.get(it.id) || 0),
+      }));
+
+      // Estado final de la req
+      const todoCompletoReq = recibidosFinales.every((rf, i) => rf.cant_recibida >= Number(itemsDeEsteReq[i].cant));
+      const algoCompletoReq = recibidosFinales.some(rf => rf.cant_recibida > 0);
+      const estadoReq = todoCompletoReq ? "Recibida" : algoCompletoReq ? "Recibida Parcial" : req.estado;
+
+      await supabase.from("requisiciones").update({
+        estado: estadoReq,
+        recibidos: recibidosFinales,
+        timeline: [...(req.timeline || []), {
+          quien: currentUser.nombre,
+          accion: todoCompletoReq
+            ? "Recibida completa (desde OC)"
+            : algoCompletoReq
+              ? "Recibida parcial (desde OC)"
+              : "Sin items en esta entrega",
+          fecha: new Date().toLocaleString("es-CO"),
+          comentario: `OC ${oc.codigo} · ${totalRecibidoReq}/${totalEsperadoReq} unidades de esta req${notas ? ` — ${notas}` : ""}`,
+        }],
+      }).eq("id", req.id);
     }
 
     // 2b. Sumar stock al inventario local en la bodega de recepción.
@@ -1331,6 +1627,23 @@ function RecepcionOCModal({ oc, reqs, onClose, reload, currentUser }) {
           <button onClick={onClose} style={{ background: "none", border: "none", color: B.sand, fontSize: 20, cursor: "pointer" }}>×</button>
         </div>
 
+        {/* ⛔ Aviso de anticipo pendiente — bloquea recepción */}
+        {oc.anticipo_requerido && !oc.anticipo_pagado && (
+          <div style={{
+            background: `${B.danger}22`, border: `2px solid ${B.danger}`, borderRadius: 10,
+            padding: "14px 16px", marginBottom: 14,
+          }}>
+            <div style={{ fontSize: 13, fontWeight: 800, color: B.danger, marginBottom: 4 }}>
+              ⛔ Anticipo pendiente · No se puede recibir
+            </div>
+            <div style={{ fontSize: 12, color: "rgba(255,255,255,0.85)" }}>
+              Esta OC requiere anticipo del <strong>{oc.anticipo_porcentaje || "?"}%</strong> ({(oc.anticipo_monto || 0).toLocaleString("es-CO")}).
+              Contabilidad debe marcar el anticipo como pagado en
+              <strong> Compras → Anticipos pendientes</strong> antes de poder registrar la recepción.
+            </div>
+          </div>
+        )}
+
         {/* Datos de factura del proveedor + bodega destino */}
         <div style={{ background: B.navy, borderRadius: 10, padding: 14, marginBottom: 14, display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
           <div>
@@ -1373,9 +1686,48 @@ function RecepcionOCModal({ oc, reqs, onClose, reload, currentUser }) {
               {recibidos.map((r, i) => {
                 const pendiente = r.cant - r.cant_recibida;
                 const completo = r.cant_recibida >= r.cant;
+                const sinLoggro = !r.loggro_id;
+                const cat = r.item_id ? catalogo.find(c => c.id === r.item_id) : null;
+                const nombreCatalogo = cat?.nombre || "";
+                const nombreOC = (r.nombre || r.item || "").trim();
+                const nombreDifiere = !!r.item_id && nombreCatalogo && nombreOC && nombreCatalogo !== nombreOC;
                 return (
                   <tr key={i} style={{ borderTop: `1px solid ${B.navyLight}` }}>
-                    <td style={{ padding: "10px 12px", fontSize: 12 }}>{r.item}</td>
+                    <td style={{ padding: "10px 12px", fontSize: 12 }}>
+                      <div>{r.item}</div>
+                      {sinLoggro ? (
+                        <div style={{ marginTop: 4, display: "flex", alignItems: "center", gap: 6 }}>
+                          <span style={{ fontSize: 9, color: B.warning, fontWeight: 700, padding: "1px 6px", borderRadius: 4, background: B.warning + "22" }}>
+                            ⚠ Sin Loggro
+                          </span>
+                          <select
+                            value=""
+                            onChange={e => e.target.value && vincularManual(i, e.target.value)}
+                            style={{ fontSize: 10, padding: "2px 4px", borderRadius: 4, background: B.navy, color: B.sky, border: `1px solid ${B.sky}55`, maxWidth: 200 }}>
+                            <option value="">🔗 Vincular a producto…</option>
+                            {catalogo.filter(c => c.loggro_id).map(c => (
+                              <option key={c.id} value={c.id}>{c.nombre} {c.unidad ? `(${c.unidad})` : ""}</option>
+                            ))}
+                          </select>
+                        </div>
+                      ) : (
+                        <div style={{ fontSize: 9, color: B.success, marginTop: 3, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                          <span>🔗 Vinculado a Loggro: <strong>{nombreCatalogo}</strong></span>
+                          {nombreDifiere && (
+                            <button onClick={() => actualizarNombreProducto(i)}
+                              disabled={actualizandoNombre === i}
+                              title={`Actualizar nombre en Atolón y Loggro a "${nombreOC}"`}
+                              style={{
+                                fontSize: 9, fontWeight: 700, padding: "2px 8px", borderRadius: 4,
+                                border: `1px solid ${B.warning}`, background: B.warning + "22",
+                                color: B.warning, cursor: actualizandoNombre === i ? "wait" : "pointer",
+                              }}>
+                              {actualizandoNombre === i ? "⏳ Actualizando…" : `📝 Renombrar → "${nombreOC}"`}
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </td>
                     <td style={{ padding: "10px 12px", fontSize: 12, textAlign: "center" }}>{r.cant} {r.unidad}</td>
                     <td style={{ padding: "8px 12px", textAlign: "center" }}>
                       <input type="number" value={r.cant_recibida} min="0" max={r.cant}
@@ -1408,19 +1760,35 @@ function RecepcionOCModal({ oc, reqs, onClose, reload, currentUser }) {
             style={{ ...IS, resize: "vertical", fontFamily: "inherit" }} />
         </div>
 
-        {/* Toggle registro en Loggro */}
-        <label style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer", padding: "10px 14px", background: "rgba(56,189,248,0.06)", border: `1px solid ${registrarEnLoggro ? B.sky : "rgba(255,255,255,0.1)"}`, borderRadius: 10, marginBottom: 16 }}>
-          <input type="checkbox" checked={registrarEnLoggro} onChange={e => setRegistrarEnLoggro(e.target.checked)}
-            style={{ width: 18, height: 18, accentColor: B.sky }} />
-          <div>
-            <div style={{ fontSize: 13, fontWeight: 700, color: registrarEnLoggro ? B.sky : B.white }}>🔗 Registrar movimiento de compra en Loggro</div>
-            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>Crea un movimiento de inventario (type=1) con los ítems recibidos, cantidades y costos.</div>
-          </div>
-        </label>
+        {/* Aviso informativo: el registro en Loggro es automático y no opcional */}
+        {(() => {
+          const conLoggro = recibidos.filter(r => r.loggro_id).length;
+          const sinLoggro = recibidos.length - conLoggro;
+          return (
+            <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", background: "rgba(56,189,248,0.10)", border: `1px solid ${B.sky}55`, borderRadius: 10, marginBottom: 16 }}>
+              <div style={{ fontSize: 18 }}>🔗</div>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: B.sky }}>
+                  Movimiento Loggro automático al guardar
+                </div>
+                <div style={{ fontSize: 11, color: "rgba(255,255,255,0.55)", marginTop: 3 }}>
+                  {conLoggro > 0 && <span style={{ color: B.success }}>✓ {conLoggro} ítem{conLoggro !== 1 ? "s" : ""} con Loggro vinculado se registrarán</span>}
+                  {sinLoggro > 0 && <span style={{ color: B.warning }}>{conLoggro > 0 ? " · " : ""}⚠ {sinLoggro} sin loggro_id quedan solo en Atolón</span>}
+                  {conLoggro === 0 && sinLoggro === 0 && <span style={{ color: "rgba(255,255,255,0.4)" }}>Sin ítems para registrar</span>}
+                </div>
+              </div>
+            </div>
+          );
+        })()}
 
         <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
           <button onClick={onClose} style={BTN(B.navyLight)}>Cancelar</button>
-          <button onClick={guardar} disabled={saving} style={BTN(B.success)}>{saving ? "Guardando..." : "Guardar recepción"}</button>
+          <button onClick={guardar}
+            disabled={saving || (oc.anticipo_requerido && !oc.anticipo_pagado)}
+            title={oc.anticipo_requerido && !oc.anticipo_pagado ? "Anticipo pendiente — no se puede recibir" : ""}
+            style={{ ...BTN(B.success), opacity: (oc.anticipo_requerido && !oc.anticipo_pagado) ? 0.4 : 1, cursor: (oc.anticipo_requerido && !oc.anticipo_pagado) ? "not-allowed" : "pointer" }}>
+            {saving ? "Guardando..." : "Guardar recepción"}
+          </button>
         </div>
       </div>
     </div>
@@ -1620,17 +1988,51 @@ function ItemSearchInput({ value, catalogoItems, onChange }) {
     return catalogoItems.filter(i => i.nombre.toLowerCase().includes(q)).slice(0, 30);
   }, [activeQuery, catalogoItems, open]);
 
+  // ¿El texto tipeado coincide exacto con algún item del catálogo?
+  // Si NO, ofrecemos guardarlo como item manual (no en sistema).
+  const hayExactMatch = useMemo(() => {
+    if (!popupQuery.trim()) return true;
+    const q = popupQuery.trim().toLowerCase();
+    return catalogoItems.some(i => i.nombre.toLowerCase() === q);
+  }, [popupQuery, catalogoItems]);
+
+  const usarManual = (texto) => {
+    const t = (texto || "").trim();
+    if (!t) return;
+    onChange(t, null);   // null = sin item del catálogo
+    setQuery(t);
+    setPopupQuery("");
+    setOpen(false);
+  };
+
   return (
     <div style={{ position: "relative" }} ref={ref}>
       <input
         value={query}
         onChange={e => { setQuery(e.target.value); onChange(e.target.value, null); }}
         onFocus={() => { if (query.length >= 2) setOpen(true); }}
-        placeholder="Buscar producto..."
-        style={{ ...IS, padding: "6px 8px", fontSize: 11, cursor: "pointer" }}
-        onClick={() => setOpen(true)}
-        readOnly={false}
+        onKeyDown={e => {
+          // Enter en el input inline = aceptar lo tipeado como manual
+          if (e.key === "Enter" && query.trim()) {
+            e.preventDefault();
+            onChange(query.trim(), null);
+          }
+        }}
+        placeholder="Tipeá nombre o click 🔍 para buscar en catálogo"
+        style={{ ...IS, padding: "6px 28px 6px 8px", fontSize: 11 }}
       />
+      {/* Botón pequeño para abrir el catálogo (no hace que cada click abra popup) */}
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        title="Buscar en catálogo"
+        style={{
+          position: "absolute", right: 4, top: "50%", transform: "translateY(-50%)",
+          background: "transparent", border: "none", color: B.sky, fontSize: 13,
+          cursor: "pointer", padding: "2px 4px", lineHeight: 1,
+        }}>
+        🔍
+      </button>
       {open && (
         <div style={{
           position: "fixed", top: 0, left: 0, right: 0, bottom: 0, zIndex: 1100,
@@ -1646,14 +2048,33 @@ function ItemSearchInput({ value, catalogoItems, onChange }) {
               <input
                 value={popupQuery}
                 onChange={e => setPopupQuery(e.target.value)}
-                placeholder="Buscar producto..."
+                onKeyDown={e => { if (e.key === "Enter" && popupQuery.trim()) { e.preventDefault(); usarManual(popupQuery); } }}
+                placeholder="Buscar producto…"
                 autoFocus
                 style={{ ...IS, border: "none", background: "transparent", fontSize: 14, padding: 0, flex: 1 }}
               />
               <button onClick={() => setOpen(false)} style={{ background: "none", border: "none", color: B.sand, fontSize: 18, cursor: "pointer" }}>×</button>
             </div>
             <div style={{ overflowY: "auto", flex: 1 }}>
-              {matches.length === 0 ? (
+              {/* Opción para usar el texto tipeado como item manual */}
+              {popupQuery.trim() && !hayExactMatch && (
+                <div onClick={() => usarManual(popupQuery)}
+                  style={{
+                    padding: "12px 18px", cursor: "pointer",
+                    borderBottom: `1px solid ${B.navyLight}`,
+                    background: `${B.warning}11`,
+                    display: "flex", justifyContent: "space-between", alignItems: "center",
+                  }}
+                  onMouseEnter={e => e.currentTarget.style.background = `${B.warning}22`}
+                  onMouseLeave={e => e.currentTarget.style.background = `${B.warning}11`}
+                >
+                  <span style={{ color: B.warning, fontSize: 13, fontWeight: 700 }}>
+                    ✏️ Usar "<span style={{ color: B.white }}>{popupQuery.trim()}</span>" como item manual
+                  </span>
+                  <span style={{ color: "rgba(255,255,255,0.35)", fontSize: 10 }}>No está en catálogo</span>
+                </div>
+              )}
+              {matches.length === 0 && (!popupQuery.trim() || hayExactMatch) ? (
                 <div style={{ padding: 30, textAlign: "center", color: "rgba(255,255,255,0.25)", fontSize: 13 }}>Sin resultados</div>
               ) : matches.map(m => (
                 <div key={m.id}
@@ -1671,7 +2092,7 @@ function ItemSearchInput({ value, catalogoItems, onChange }) {
               ))}
             </div>
             <div style={{ padding: "10px 18px", borderTop: `1px solid ${B.navyLight}`, fontSize: 11, color: "rgba(255,255,255,0.3)", textAlign: "center" }}>
-              {matches.length} resultado{matches.length !== 1 ? "s" : ""}
+              {matches.length} en catálogo · Tipeá lo que no esté y dale Enter para crear manual
             </div>
           </div>
         </div>
@@ -1707,12 +2128,26 @@ function NewReqModal({ tipoInicial, areaInicial, onClose, onSave, proveedores, r
   const fileInputRef = useRef(null);
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
-  // Cargar catálogo de items filtrado por departamento
+  // Cargar catálogo de items filtrado por departamento.
+  // Reglas:
+  //   • Alimentos → solo items con categoría del depto "Cocina"
+  //   • Bar → solo items con categoría del depto "Bar"
+  //   • Otros departamentos (Mantenimiento, Comercial, etc.) → no aplica catálogo,
+  //     el input se renderiza como texto libre.
+  // Nota: depende de `form.area` (no de areaInicial) — si el usuario cambia
+  // el departamento en el form, el catálogo se refiltra inmediatamente.
   const [catalogoItems, setCatalogoItems] = useState([]);
   const [catalogoCats, setCatalogoCats] = useState([]);
   useEffect(() => {
     if (!supabase) return;
-    const depto = AREA_TO_DEPTO[areaInicial] || "Cocina";
+    const deptoMap = { Alimentos: "Cocina", Bar: "Bar" };
+    const depto = deptoMap[form.area];
+    if (!depto) {
+      // No es A&B — limpiamos el catálogo (el input usará modo libre)
+      setCatalogoCats([]);
+      setCatalogoItems([]);
+      return;
+    }
     Promise.all([
       supabase.from("items_categorias").select("nombre, departamento").eq("activo", true),
       supabase.from("items_catalogo").select("id, nombre, unidad, categoria").eq("activo", true).order("nombre"),
@@ -1722,7 +2157,7 @@ function NewReqModal({ tipoInicial, areaInicial, onClose, onSave, proveedores, r
       const filtered = (itemR.data || []).filter(i => catsDepto.includes(i.categoria));
       setCatalogoItems(filtered);
     });
-  }, [areaInicial]);
+  }, [form.area]);
 
   const updateItem = (i, k, v) => {
     setForm(f => {
@@ -1843,26 +2278,41 @@ function NewReqModal({ tipoInicial, areaInicial, onClose, onSave, proveedores, r
             <div style={{ display: "grid", gridTemplateColumns: "2.5fr 0.7fr 1fr 1fr 1fr 36px", gap: 0, padding: "8px 12px", borderBottom: `1px solid ${B.navyLight}`, background: B.navyLight }}>
               {["Item", "Cant", "Unidad", "P. Unit", "Subtotal", ""].map(h => <span key={h} style={{ fontSize: 9, color: B.sand, textTransform: "uppercase" }}>{h}</span>)}
             </div>
-            {form.items.map((it, i) => (
+            {form.items.map((it, i) => {
+              // Catálogo (productos sincronizados con Loggro) solo aplica para
+              // departamentos de A&B: Alimentos (Cocina) y Bar. Para Mantenimiento,
+              // Comercial, Contabilidad, Flota, Otros, Ama de Llaves → input libre.
+              const usaCatalogo = form.area === "Alimentos" || form.area === "Bar";
+              return (
               <div key={it.id} style={{ display: "grid", gridTemplateColumns: "2.5fr 0.7fr 1fr 1fr 1fr 36px", gap: 4, padding: "6px 12px", borderBottom: `1px solid ${B.navyLight}`, alignItems: "center" }}>
-                <ItemSearchInput
-                  value={it.item}
-                  catalogoItems={catalogoItems}
-                  onChange={(val, selectedItem) => {
-                    updateItem(i, "item", val);
-                    if (selectedItem) {
-                      updateItem(i, "unidad", selectedItem.unidad || "Unidades");
-                      updateItem(i, "item_catalogo_id", selectedItem.id);
-                    }
-                  }}
-                />
+                {usaCatalogo ? (
+                  <ItemSearchInput
+                    value={it.item}
+                    catalogoItems={catalogoItems}
+                    onChange={(val, selectedItem) => {
+                      updateItem(i, "item", val);
+                      if (selectedItem) {
+                        updateItem(i, "unidad", selectedItem.unidad || "Unidades");
+                        updateItem(i, "item_catalogo_id", selectedItem.id);
+                      }
+                    }}
+                  />
+                ) : (
+                  <input
+                    value={it.item || ""}
+                    onChange={e => updateItem(i, "item", e.target.value)}
+                    placeholder="Nombre del item"
+                    style={{ ...IS, padding: "6px 8px", fontSize: 11 }}
+                  />
+                )}
                 <input type="number" value={it.cant} onChange={e => updateItem(i, "cant", Number(e.target.value))} style={{ ...IS, padding: "6px 8px", fontSize: 11, textAlign: "center" }} />
                 <input value={it.unidad} onChange={e => updateItem(i, "unidad", e.target.value)} style={{ ...IS, padding: "6px 8px", fontSize: 11 }} />
                 <input type="number" value={it.precioU} onChange={e => updateItem(i, "precioU", Number(e.target.value))} style={{ ...IS, padding: "6px 8px", fontSize: 11, textAlign: "right" }} />
                 <span style={{ fontSize: 11, color: B.sand, textAlign: "right", fontWeight: 700 }}>{COP(it.subtotal)}</span>
                 {form.items.length > 1 && <button onClick={() => removeItem(i)} style={{ background: "none", border: "none", color: B.danger, cursor: "pointer", fontSize: 14 }}>×</button>}
               </div>
-            ))}
+              );
+            })}
             <div style={{ padding: "10px 14px", borderTop: `2px solid ${B.navyLight}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
               <span style={{ fontSize: 12, color: "rgba(255,255,255,0.5)" }}>Total</span>
               <span style={{ fontSize: 18, fontWeight: 800, color: B.sand, fontFamily: "'Barlow Condensed', sans-serif" }}>{COP(total)}</span>
@@ -1927,6 +2377,27 @@ function DetailModal({ req, onClose, onUpdate, onGenerarOC, proveedores, reglas,
   const [comment, setComment] = useState("");
   const [openCotizaciones, setOpenCotizaciones] = useState(false);
   const [editingProv, setEditingProv] = useState(false);
+  // Stock total (suma todas las bodegas) por item_id, para mostrar al gerente
+  const [stockPorItem, setStockPorItem] = useState({});
+
+  useEffect(() => {
+    if (!supabase) return;
+    // Cargar suma de stock por item_id de todos los items en esta requisición
+    const itemIds = (req.items || [])
+      .map(it => it.item_id || it.item_catalogo_id)
+      .filter(Boolean);
+    if (itemIds.length === 0) return;
+    supabase.from("items_stock_locacion")
+      .select("item_id, cantidad")
+      .in("item_id", itemIds)
+      .then(({ data }) => {
+        const map = {};
+        (data || []).forEach(s => {
+          map[s.item_id] = (map[s.item_id] || 0) + (Number(s.cantidad) || 0);
+        });
+        setStockPorItem(map);
+      });
+  }, [req.id, req.items]);
   const [provSel, setProvSel] = useState(req.proveedor_id || "");
   // Split por proveedor: { item_idx: proveedor_id }
   const [itemProvs, setItemProvs] = useState({});
@@ -1974,7 +2445,17 @@ function DetailModal({ req, onClose, onUpdate, onGenerarOC, proveedores, reglas,
   } : p));
   const ec = ESTADO_COLOR[req.estado] || ESTADO_COLOR.Borrador;
   const regla = reglas.find(r => r.id === req.regla_aprobacion_id);
-  const puedeAprobar = req.estado === "Pendiente" && (currentUser.rol === "super_admin" || (regla && regla.rol_aprobador === currentUser.rol));
+  // Cualquier rol que empiece con "gerente_general" (op, admin, o custom con timestamp)
+  // puede aprobar reglas dirigidas a cualquier variante de gerente_general.
+  // Si la requisición NO tiene regla asignada, el gerente general aprueba por
+  // default (es el aprobador genérico de cualquier req sin regla específica).
+  const esGerenteGeneral = esGerenteGeneralRol(currentUser.rol);
+  const reglaPideGerente = !regla || esGerenteGeneralRol(regla.rol_aprobador);
+  const puedeAprobar = req.estado === "Pendiente" && (
+    currentUser.rol === "super_admin" ||
+    (regla && regla.rol_aprobador === currentUser.rol) ||
+    (esGerenteGeneral && reglaPideGerente)
+  );
 
   const advance = (nuevoEstado, accion, extras = {}) => {
     onUpdate({
@@ -2053,8 +2534,8 @@ function DetailModal({ req, onClose, onUpdate, onGenerarOC, proveedores, reglas,
         .select("id, items, estado")
         .eq("requisicion_id", req.id);
       for (const oc of (ocs || [])) {
-        // Solo tocar OCs que aún no fueron recibidas
-        if (oc.estado === "recibida" || oc.estado === "cerrada") continue;
+        // Solo tocar OCs en borrador/emitida (no enviadas, no recibidas)
+        if (oc.estado === "recibida" || oc.estado === "cerrada" || oc.estado === "enviada" || oc.estado === "confirmada" || oc.enviada_at) continue;
         const ocItems = (oc.items || []).map(ocIt => {
           const match = nuevosItems.find(ni => ni.item_id === ocIt.item_id || ni.id === ocIt.id);
           if (!match) return ocIt;
@@ -2229,7 +2710,7 @@ function DetailModal({ req, onClose, onUpdate, onGenerarOC, proveedores, reglas,
                   ? ["Item", "Cant.", "Unidad", "P. Unit.", "Subtotal", "Proveedor"]
                   : editPrecios
                     ? ["Item", "Cant.", "Unidad", "P. Unit.", "Subtotal", ""]
-                    : ["Item", "Cant.", "Unidad", "P. Unit.", "Subtotal"]
+                    : ["Item", "Cant.", "En stock", "Unidad", "P. Unit.", "Subtotal"]
                 ).map((h, idx) => (
                   <th key={h + idx} style={{ padding: "8px 12px", textAlign: h === "Item" || h === "Proveedor" ? "left" : "right", fontSize: 9, color: B.sand, textTransform: "uppercase", borderBottom: `1px solid ${B.navyLight}` }}>{h}</th>
                 ))}
@@ -2295,6 +2776,17 @@ function DetailModal({ req, onClose, onUpdate, onGenerarOC, proveedores, reglas,
                 }
                 // Vista normal (no edit)
                 const subtotalLocal = Number(it.subtotal) || (Number(it.cant) || 0) * (Number(it.precioU) || 0);
+                const itemId = it.item_id || it.item_catalogo_id;
+                const stockTotal = itemId ? (stockPorItem[itemId] ?? null) : null;
+                const cant = Number(it.cant) || 0;
+                // Color del stock: si hay menos del solicitado → rojo (necesario pedir)
+                //                  si hay >= solicitado pero menor a 2x → amarillo (justo)
+                //                  si hay mucho stock (≥ 2x) → verde (quizás no urgente)
+                const stockColor =
+                  stockTotal === null ? "rgba(255,255,255,0.3)"
+                  : stockTotal < cant ? B.danger
+                  : stockTotal < cant * 2 ? B.warning
+                  : B.success;
                 return (
                   <tr key={i} style={{
                     borderBottom: `1px solid ${B.navyLight}`,
@@ -2307,6 +2799,14 @@ function DetailModal({ req, onClose, onUpdate, onGenerarOC, proveedores, reglas,
                       )}
                     </td>
                     <td style={{ padding: "10px 12px", fontSize: 12, textAlign: "right" }}>{it.cant}</td>
+                    {!splitMode && !editPrecios && (
+                      <td style={{ padding: "10px 12px", fontSize: 12, textAlign: "right", color: stockColor, fontWeight: 700 }}>
+                        {stockTotal === null
+                          ? <span style={{ fontSize: 10, fontStyle: "italic" }}>—</span>
+                          : Math.round(stockTotal * 100) / 100
+                        }
+                      </td>
+                    )}
                     <td style={{ padding: "10px 12px", fontSize: 11, textAlign: "right", color: "rgba(255,255,255,0.5)" }}>{it.unidad}</td>
                     <td style={{ padding: "10px 12px", fontSize: 12, textAlign: "right" }}>{COP(it.precioU)}</td>
                     <td style={{ padding: "10px 12px", fontSize: 12, textAlign: "right", fontWeight: 700, color: B.sand }}>{COP(subtotalLocal)}</td>
@@ -2437,10 +2937,10 @@ function DetailModal({ req, onClose, onUpdate, onGenerarOC, proveedores, reglas,
                       const itemsNuevos = req.items.map((it, idx) =>
                         idxToOc[idx] ? { ...it, oc_id: idxToOc[idx], oc_codigo: idxToOc[idx] } : it
                       );
-                      const todosAsignados = itemsNuevos.every(it => it.oc_id);
+                      const algunoAsignado = itemsNuevos.some(it => it.oc_id);
                       await supabase.from("requisiciones").update({
                         items: itemsNuevos,
-                        estado: todosAsignados ? "En Compra" : req.estado,
+                        estado: algunoAsignado && req.estado === "Aprobada" ? "En Compra" : req.estado,
                         timeline: [...(req.timeline || []), {
                           quien: currentUser.nombre,
                           accion: `Dividida en ${ocsGeneradas.length} OC${ocsGeneradas.length !== 1 ? "s" : ""}`,
@@ -2511,6 +3011,28 @@ function DetailModal({ req, onClose, onUpdate, onGenerarOC, proveedores, reglas,
             {(req.estado === "En Compra" || req.estado === "Recibida Parcial") && (
               <button onClick={() => alert("Ve al tab Recepciones para registrar")} style={BTN(B.sky, B.navy)}>📦 Recepción en tab Recepciones</button>
             )}
+            {req.estado === "Rechazada" && (
+              <button
+                onClick={async () => {
+                  if (!confirm("¿Reabrir esta requisición y enviarla nuevamente a aprobación? Se conservará el historial de aprobaciones anteriores.")) return;
+                  await supabase.from("requisiciones").update({
+                    estado: "Pendiente",
+                    rechazada_motivo: null,
+                    aprobada_at: null,
+                    timeline: [...(req.timeline || []), {
+                      quien: currentUser.nombre,
+                      accion: "Reabierta",
+                      fecha: new Date().toLocaleString("es-CO"),
+                      comentario: comment ? `Reabierta tras rechazo · ${comment}` : "Reabierta tras rechazo · enviada de nuevo a aprobación",
+                    }],
+                    updated_at: new Date().toISOString(),
+                  }).eq("id", req.id);
+                  reload();
+                }}
+                style={BTN(B.warning)}>
+                🔄 Reabrir / re-enviar a aprobación
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -2572,7 +3094,8 @@ export function TabMesaCompras({ reqs, ordenes, proveedores, currentUser, reload
     reqs.forEach(r => {
       if (!["Aprobada", "En Compra", "Recibida Parcial"].includes(r.estado)) return;
       (r.items || []).forEach((it, idx) => {
-        if (it.oc_id) return; // ya asignado
+        if (it.oc_id) return;        // ya asignado a OC
+        if (it.cancelado) return;    // cancelado por mesa de compras (duplicado / solicitante)
         arr.push({
           req_id: r.id, req_desc: r.descripcion, req_area: r.area, req_prioridad: r.prioridad,
           req_fecha_necesaria: r.fecha_necesaria, req_solicitante: r.solicitante,
@@ -2594,6 +3117,46 @@ export function TabMesaCompras({ reqs, ordenes, proveedores, currentUser, reload
   const [filterArea, setFilterArea] = useState("todos");
   const [search, setSearch] = useState("");
   const [asignarModal, setAsignarModal] = useState(false);
+  const [cancelarModal, setCancelarModal] = useState(false);
+
+  // Cancelar items seleccionados con motivo (duplicado / solicitante / otro)
+  const cancelarItems = async (motivo, motivoTexto) => {
+    const itemsACancelar = seleccionadosItems;
+    const reqsAfectadas = [...new Set(itemsACancelar.map(i => i.req_id))];
+    for (const rid of reqsAfectadas) {
+      const req = reqs.find(r => r.id === rid);
+      if (!req) continue;
+      const idxs = itemsACancelar.filter(i => i.req_id === rid).map(i => i.item_idx);
+      const nuevosItems = (req.items || []).map((it, idx) => idxs.includes(idx) ? {
+        ...it,
+        cancelado: true,
+        cancelado_motivo: motivo,
+        cancelado_motivo_texto: motivoTexto,
+        cancelado_por: currentUser?.nombre || "—",
+        cancelado_at: new Date().toISOString(),
+      } : it);
+      // Si todos los items quedaron cancelados o asignados, mover req a "En Compra" / "Cancelada"
+      const todosResueltos = nuevosItems.every(it => it.oc_id || it.cancelado);
+      const todosCancelados = nuevosItems.every(it => it.cancelado);
+      let nuevoEstado = req.estado;
+      if (todosCancelados) nuevoEstado = "Rechazada";
+      else if (todosResueltos && req.estado === "Aprobada") nuevoEstado = "En Compra";
+
+      await supabase.from("requisiciones").update({
+        items: nuevosItems,
+        estado: nuevoEstado,
+        timeline: [...(req.timeline || []), {
+          quien: currentUser?.nombre || "—",
+          accion: `${idxs.length} ítem${idxs.length !== 1 ? "s" : ""} cancelado${idxs.length !== 1 ? "s" : ""} en Mesa de Compras`,
+          fecha: new Date().toLocaleString("es-CO"),
+          comentario: `${motivo}${motivoTexto ? " — " + motivoTexto : ""}`,
+        }],
+      }).eq("id", rid);
+    }
+    setSeleccion({});
+    setCancelarModal(false);
+    reload();
+  };
 
   const toggle = (it) => {
     const k = `${it.req_id}|${it.item_idx}`;
@@ -2681,6 +3244,9 @@ export function TabMesaCompras({ reqs, ordenes, proveedores, currentUser, reload
             <button onClick={clearSel} style={{ padding: "8px 14px", borderRadius: 8, border: `1px solid ${B.navyLight}`, background: "transparent", color: "rgba(255,255,255,0.5)", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
               Limpiar
             </button>
+            <button onClick={() => setCancelarModal(true)} style={{ padding: "8px 14px", borderRadius: 8, border: `1px solid ${B.danger}`, background: "transparent", color: B.danger, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+              🚫 Cancelar ítems
+            </button>
             <button onClick={() => setAsignarModal(true)} style={{ padding: "9px 18px", borderRadius: 8, border: "none", background: B.success, color: B.navy, fontSize: 13, fontWeight: 800, cursor: "pointer" }}>
               📦 Asignar a proveedor ({seleccionadosItems.length})
             </button>
@@ -2730,6 +3296,14 @@ export function TabMesaCompras({ reqs, ordenes, proveedores, currentUser, reload
           onClose={() => setAsignarModal(false)}
           onNuevoProv={onNuevoProv}
           onDone={() => { setAsignarModal(false); setSeleccion({}); reload(); }}
+        />
+      )}
+
+      {cancelarModal && (
+        <CancelarItemsModal
+          items={seleccionadosItems}
+          onClose={() => setCancelarModal(false)}
+          onConfirm={cancelarItems}
         />
       )}
     </>
@@ -2849,14 +3423,16 @@ export function AsignarOCModal({ items, proveedores, ordenes, reqs, currentUser,
       if (!req) continue;
       const idxs = items.filter(i => i.req_id === rid).map(i => i.item_idx);
       const nuevosItems = (req.items || []).map((it, idx) => idxs.includes(idx) ? { ...it, oc_id: ocIdFinal, oc_codigo: codigo } : it);
-      // Si todos los items ya tienen oc_id, la req pasa a "En Compra"
-      const todosAsignados = nuevosItems.every(it => it.oc_id);
+      // En cuanto AL MENOS un item se asigna a OC, la req pasa a "En Compra"
+      // (antes solo cambiaba cuando TODOS los items estaban asignados)
+      const algunoAsignado = nuevosItems.some(it => it.oc_id);
+      const nuevoEstado = algunoAsignado && req.estado === "Aprobada" ? "En Compra" : req.estado;
       await supabase.from("requisiciones").update({
         items: nuevosItems,
-        estado: todosAsignados ? "En Compra" : req.estado,
+        estado: nuevoEstado,
         timeline: [...(req.timeline || []), {
           quien: currentUser.nombre,
-          accion: `${idxs.length} ítem${idxs.length !== 1 ? "s" : ""} asignado${idxs.length !== 1 ? "s" : ""} a OC`,
+          accion: `${idxs.length} ítem${idxs.length !== 1 ? "s" : ""} asignado${idxs.length !== 1 ? "s" : ""} a OC` + (nuevoEstado === "En Compra" && req.estado !== "En Compra" ? " · estado → En Compra" : ""),
           fecha: new Date().toLocaleString("es-CO"),
           comentario: codigo,
         }],
@@ -2981,6 +3557,109 @@ export function AsignarOCModal({ items, proveedores, ordenes, reqs, currentUser,
               fontWeight: 800, fontSize: 13, cursor: (saving || (modo === "nueva" ? !provId : !ocId)) ? "default" : "pointer" }}>
             {saving ? "Guardando..." : modo === "nueva" ? "✓ Crear OC" : "✓ Agregar a OC"}
           </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// CancelarItemsModal — Cancelar items en Mesa de Compras con motivo
+// Se usa cuando hay duplicados (ya pedidos en otra req) o el solicitante
+// retiró la solicitud.
+// ════════════════════════════════════════════════════════════════════════════
+function CancelarItemsModal({ items, onClose, onConfirm }) {
+  const [motivo, setMotivo] = useState("duplicado");
+  const [motivoTexto, setMotivoTexto] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const motivos = [
+    { k: "duplicado",    l: "🔁 Duplicado",            d: "Ya está pedido en otra requisición / OC" },
+    { k: "solicitante",  l: "👤 Solicitud del solicitante", d: "El solicitante pidió retirar el ítem" },
+    { k: "no_disponible",l: "❌ Producto no disponible", d: "Proveedor no tiene el producto / agotado" },
+    { k: "stock",        l: "📦 Hay en stock",          d: "Ya hay suficiente en bodega" },
+    { k: "otro",         l: "✏️ Otro motivo",           d: "Especifica abajo" },
+  ];
+
+  const handleConfirm = async () => {
+    if (motivo === "otro" && !motivoTexto.trim()) {
+      alert("Especifica el motivo en el campo de texto.");
+      return;
+    }
+    setSaving(true);
+    await onConfirm(motivo, motivoTexto.trim());
+    setSaving(false);
+  };
+
+  const total = items.reduce((s, i) => s + (Number(i.subtotal) || 0), 0);
+
+  return (
+    <div onClick={e => e.target === e.currentTarget && onClose()}
+      style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+      <div style={{ background: B.navy, borderRadius: 14, width: 540, maxWidth: "100%", maxHeight: "92vh", overflow: "auto", border: `1px solid ${B.danger}55`, color: B.white }}>
+        <div style={{ padding: 18, borderBottom: `1px solid ${B.navyLight}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div>
+            <div style={{ fontSize: 17, fontWeight: 800, color: B.danger }}>🚫 Cancelar ítems</div>
+            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginTop: 2 }}>
+              {items.length} ítem{items.length !== 1 ? "s" : ""} · {COP(total)}
+            </div>
+          </div>
+          <button onClick={onClose} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.5)", fontSize: 22, cursor: "pointer" }}>×</button>
+        </div>
+
+        <div style={{ padding: 18 }}>
+          <div style={{ marginBottom: 16, padding: "12px 14px", background: B.navyMid, borderRadius: 8, fontSize: 12, color: "rgba(255,255,255,0.7)", lineHeight: 1.6 }}>
+            <strong style={{ color: B.danger }}>⚠ Atención:</strong> al cancelar, los ítems quedarán fuera de la Mesa de Compras y no podrán asignarse a ninguna OC. Esta acción se registra en el historial de la requisición.
+          </div>
+
+          <div style={{ fontSize: 11, color: B.sand, textTransform: "uppercase", fontWeight: 700, marginBottom: 8 }}>Motivo de cancelación</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 14 }}>
+            {motivos.map(m => (
+              <label key={m.k} style={{
+                display: "flex", alignItems: "flex-start", gap: 10, padding: "10px 12px",
+                background: motivo === m.k ? B.navyMid : "transparent",
+                border: `1px solid ${motivo === m.k ? B.danger : B.navyLight}`,
+                borderRadius: 8, cursor: "pointer",
+              }}>
+                <input type="radio" checked={motivo === m.k} onChange={() => setMotivo(m.k)}
+                  style={{ marginTop: 3, accentColor: B.danger }} />
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: motivo === m.k ? B.danger : "rgba(255,255,255,0.85)" }}>{m.l}</div>
+                  <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>{m.d}</div>
+                </div>
+              </label>
+            ))}
+          </div>
+
+          <div style={{ marginBottom: 14 }}>
+            <label style={{ fontSize: 11, color: "rgba(255,255,255,0.6)", textTransform: "uppercase", fontWeight: 700, display: "block", marginBottom: 4 }}>
+              Comentario {motivo === "otro" ? "(requerido)" : "(opcional)"}
+            </label>
+            <textarea value={motivoTexto} onChange={e => setMotivoTexto(e.target.value)} rows={2}
+              placeholder={motivo === "otro" ? "Especifica el motivo..." : "Detalles adicionales..."}
+              style={{ width: "100%", padding: "9px 12px", borderRadius: 8, background: B.navyMid, border: `1px solid ${B.navyLight}`, color: "#fff", fontSize: 12, resize: "vertical", fontFamily: "inherit", boxSizing: "border-box" }} />
+          </div>
+
+          {/* Resumen ítems */}
+          <div style={{ marginBottom: 14, padding: "10px 12px", background: B.navyMid, borderRadius: 8, maxHeight: 120, overflowY: "auto", fontSize: 11, color: "rgba(255,255,255,0.6)" }}>
+            {items.map((it, i) => (
+              <div key={i} style={{ display: "flex", justifyContent: "space-between", padding: "3px 0" }}>
+                <span>{it.nombre}</span>
+                <span style={{ color: B.sand }}>{it.cant} {it.unidad || ""}</span>
+              </div>
+            ))}
+          </div>
+
+          <div style={{ display: "flex", gap: 10 }}>
+            <button onClick={onClose} disabled={saving}
+              style={{ flex: 1, padding: 11, borderRadius: 8, border: `1px solid ${B.navyLight}`, background: "transparent", color: "rgba(255,255,255,0.5)", cursor: "pointer", fontSize: 13 }}>
+              Atrás
+            </button>
+            <button onClick={handleConfirm} disabled={saving || (motivo === "otro" && !motivoTexto.trim())}
+              style={{ flex: 2, padding: 11, borderRadius: 8, border: "none", background: saving ? B.navyLight : B.danger, color: "#fff", cursor: saving ? "default" : "pointer", fontSize: 13, fontWeight: 700 }}>
+              {saving ? "Cancelando…" : `Cancelar ${items.length} ítem${items.length !== 1 ? "s" : ""}`}
+            </button>
+          </div>
         </div>
       </div>
     </div>

@@ -226,10 +226,13 @@ export default function MuelleSalidas() {
     }
 
     const costoAuto = Number(lancha?.costo_viaje_sencillo) || 0;
-    const costoOperativo = data.costo_operativo != null && data.costo_operativo !== ""
-      ? Number(data.costo_operativo)
-      : costoAuto;
-    const { error } = await supabase.from("muelle_zarpes_flota").insert({
+    // Si va a Boca Chica → costo 0 SIEMPRE (no es un viaje real).
+    const costoOperativo = data.boca_chica
+      ? 0
+      : (data.costo_operativo != null && data.costo_operativo !== ""
+        ? Number(data.costo_operativo)
+        : costoAuto);
+    const insertPayload = {
       id,
       fecha,
       embarcacion: data.embarcacion,
@@ -239,7 +242,11 @@ export default function MuelleSalidas() {
       pax_n: Number(data.pax_n) || 0,
       costo_operativo: costoOperativo,
       notas: data.notas || null,
-    });
+      boca_chica: !!data.boca_chica,
+    };
+    if (data.odometro_foto_url) insertPayload.odometro_foto_url = data.odometro_foto_url;
+    if (data.motores_horas) insertPayload.motores_horas = data.motores_horas;
+    const { error } = await supabase.from("muelle_zarpes_flota").insert(insertPayload);
     if (!error) {
       setModalZarpe(null);
       fetchData();
@@ -345,10 +352,10 @@ export default function MuelleSalidas() {
                   ⛵ Zarpes de flota a Cartagena
                 </div>
                 <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>
-                  Cada vez que Castillete o Naturalle salen de la isla. Pasajeros, tripulación, vacío, provisiones…
+                  Cada vez que Castillete, Naturalle o Blue Apple salen de la isla. Pasajeros, tripulación, vacío, provisiones…
                 </div>
               </div>
-              <div style={{ display: "flex", gap: 8 }}>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                 <button onClick={() => setModalZarpe({ embarcacion: "Castillete" })}
                   style={{ padding: "9px 14px", borderRadius: 10, border: "none", background: B.navyMid, color: "#fff", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>
                   + Castillete
@@ -356,6 +363,17 @@ export default function MuelleSalidas() {
                 <button onClick={() => setModalZarpe({ embarcacion: "Naturalle" })}
                   style={{ padding: "9px 14px", borderRadius: 10, border: "none", background: B.navyMid, color: "#fff", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>
                   + Naturalle
+                </button>
+                <button onClick={() => setModalZarpe({ embarcacion: "Blue Apple" })}
+                  style={{ padding: "9px 14px", borderRadius: 10, border: "none", background: B.navyMid, color: "#fff", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>
+                  + Blue Apple
+                </button>
+                <button onClick={() => {
+                  const nombre = window.prompt("Nombre de la embarcación:");
+                  if (nombre && nombre.trim()) setModalZarpe({ embarcacion: nombre.trim() });
+                }}
+                  style={{ padding: "9px 14px", borderRadius: 10, border: `1px dashed ${B.navyLight}`, background: "transparent", color: "rgba(255,255,255,0.6)", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>
+                  + Otra
                 </button>
               </div>
             </div>
@@ -422,14 +440,64 @@ function ModalZarpeFlota({ embarcacion, costoDefault = 0, onClose, onSave }) {
     pax_n: 0,
     costo_operativo: costoDefault,
     notas: "",
+    horas_babor: "",
+    horas_estribor: "",
+    horas_centro: "",
+    boca_chica: false, // ← cuando va a Boca Chica no cuenta como viaje
   });
+  // Cuando se marca/desmarca Boca Chica: forzar costo 0 si está marcado,
+  // restaurar el costoDefault si se desmarca.
+  useEffect(() => {
+    setF(p => p.boca_chica
+      ? { ...p, costo_operativo: 0 }
+      : (p.costo_operativo === 0 ? { ...p, costo_operativo: costoDefault } : p)
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [f.boca_chica]);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState("");
+  const [odometroFile, setOdometroFile] = useState(null);
+  const [odometroPreview, setOdometroPreview] = useState(null);
   const set = (k, v) => setF(p => ({ ...p, [k]: v }));
+
+  const esNaturalle = (embarcacion || "").toLowerCase().includes("nat");
+  const esCastillete = (embarcacion || "").toLowerCase().includes("castillete");
+  const esLanchaPropia = esNaturalle || esCastillete;
 
   async function handleSave() {
     setSaving(true); setErr("");
-    const error = await onSave(f);
+    // Construir motores_horas
+    const motoresHoras = {};
+    if (esNaturalle) {
+      if (f.horas_babor) motoresHoras.Babor = Number(f.horas_babor);
+      if (f.horas_estribor) motoresHoras.Estribor = Number(f.horas_estribor);
+    } else if (esCastillete) {
+      if (f.horas_centro) motoresHoras.Centro = Number(f.horas_centro);
+    }
+
+    // Subir foto de odómetro si existe
+    let odometro_foto_url = null;
+    if (odometroFile) {
+      try {
+        const tempId = `odom-zarpe-${Date.now()}`;
+        const ext = odometroFile.name.split(".").pop();
+        const path = `${tempId}.${ext}`;
+        const { data: upData, error: upErr } = await supabase.storage
+          .from("muelle-fotos")
+          .upload(path, odometroFile, { upsert: true });
+        if (!upErr && upData) {
+          const { data: urlData } = supabase.storage.from("muelle-fotos").getPublicUrl(path);
+          odometro_foto_url = urlData?.publicUrl || null;
+        }
+      } catch (_) {}
+    }
+
+    const enrichedData = {
+      ...f,
+      odometro_foto_url,
+      motores_horas: Object.keys(motoresHoras).length > 0 ? motoresHoras : null,
+    };
+    const error = await onSave(enrichedData);
     setSaving(false);
     if (error) setErr(error.message || "Error");
   }
@@ -473,7 +541,83 @@ function ModalZarpeFlota({ embarcacion, costoDefault = 0, onClose, onSave }) {
             <label style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", fontWeight: 600, textTransform: "uppercase", display: "block", marginBottom: 4 }}>Notas</label>
             <input value={f.notas} onChange={e => set("notas", e.target.value)} placeholder="Observaciones..." style={IS} />
           </div>
+          {/* Boca Chica: si la lancha va a Boca Chica para parquear cerca del
+              hotel no es un viaje real → costo operativo = 0, no cuenta. */}
+          <div style={{ gridColumn: "1 / -1" }}>
+            <label
+              title="La lancha va a Boca Chica (parqueo cerca del hotel). No cuenta como viaje real, costo operativo = 0."
+              style={{
+                display: "flex", alignItems: "center", gap: 10,
+                padding: "10px 12px", borderRadius: 8,
+                background: f.boca_chica ? "rgba(56,189,248,0.12)" : B.navyLight,
+                border: `1px solid ${f.boca_chica ? B.sky : "rgba(255,255,255,0.08)"}`,
+                cursor: "pointer", fontSize: 13,
+              }}>
+              <input type="checkbox" checked={!!f.boca_chica}
+                onChange={e => set("boca_chica", e.target.checked)}
+                style={{ width: 16, height: 16, cursor: "pointer" }} />
+              <span style={{ flex: 1, color: f.boca_chica ? B.sky : "#fff", fontWeight: f.boca_chica ? 700 : 500 }}>
+                🏝 Va a Boca Chica
+              </span>
+              <span style={{ fontSize: 10, color: "rgba(255,255,255,0.45)", textAlign: "right", lineHeight: 1.3 }}>
+                no cuenta<br/>como viaje
+              </span>
+            </label>
+          </div>
         </div>
+
+        {/* Sección odómetro y horas motor — solo Natturale/Castillete (opcional) */}
+        {esLanchaPropia && (
+          <div style={{ background: B.navy, border: `1px solid ${B.sand}33`, borderRadius: 10, padding: 12, marginTop: 14 }}>
+            <div style={{ fontSize: 11, color: B.sand, textTransform: "uppercase", letterSpacing: 1, fontWeight: 700, marginBottom: 8 }}>
+              ⚙️ Odómetro y horas motor (opcional)
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: esCastillete ? "1fr" : "1fr 1fr", gap: 10, marginBottom: 10 }}>
+              {esNaturalle && (
+                <>
+                  <div>
+                    <label style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", fontWeight: 600, textTransform: "uppercase", display: "block", marginBottom: 4 }}>Horas Babor</label>
+                    <input type="number" step="0.1" min="0" value={f.horas_babor}
+                      onChange={e => set("horas_babor", e.target.value)} placeholder="ej: 1005" style={IS} />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", fontWeight: 600, textTransform: "uppercase", display: "block", marginBottom: 4 }}>Horas Estribor</label>
+                    <input type="number" step="0.1" min="0" value={f.horas_estribor}
+                      onChange={e => set("horas_estribor", e.target.value)} placeholder="ej: 1004" style={IS} />
+                  </div>
+                </>
+              )}
+              {esCastillete && (
+                <div>
+                  <label style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", fontWeight: 600, textTransform: "uppercase", display: "block", marginBottom: 4 }}>Horas Motor</label>
+                  <input type="number" step="0.1" min="0" value={f.horas_centro}
+                    onChange={e => set("horas_centro", e.target.value)} placeholder="ej: 250" style={IS} />
+                </div>
+              )}
+            </div>
+            {odometroPreview ? (
+              <div style={{ position: "relative" }}>
+                <img src={odometroPreview} alt="odómetro" style={{ width: "100%", maxHeight: 160, objectFit: "cover", borderRadius: 8, border: `1px solid rgba(255,255,255,0.12)` }} />
+                <button type="button" onClick={() => { setOdometroFile(null); setOdometroPreview(null); }}
+                  style={{ position: "absolute", top: 6, right: 6, background: "rgba(0,0,0,0.6)", border: "none", color: "#fff", borderRadius: "50%", width: 24, height: 24, cursor: "pointer", fontSize: 12 }}>✕</button>
+              </div>
+            ) : (
+              <label style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, width: "100%", padding: "12px", borderRadius: 8, border: `2px dashed rgba(255,255,255,0.15)`, background: B.navyLight, cursor: "pointer", color: "rgba(255,255,255,0.4)", fontSize: 12, boxSizing: "border-box" }}>
+                <span style={{ fontSize: 18 }}>📸</span>
+                <span>Foto del odómetro</span>
+                <input type="file" accept="image/*" capture="environment" style={{ display: "none" }}
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    setOdometroFile(file);
+                    const reader = new FileReader();
+                    reader.onload = (ev) => setOdometroPreview(ev.target.result);
+                    reader.readAsDataURL(file);
+                  }} />
+              </label>
+            )}
+          </div>
+        )}
 
         {err && <div style={{ marginTop: 12, padding: 10, background: "rgba(239,68,68,0.15)", color: "#ef4444", borderRadius: 8, fontSize: 12 }}>{err}</div>}
 
