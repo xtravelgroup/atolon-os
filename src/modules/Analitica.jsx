@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { supabase } from "../lib/supabase";
+import { clasificarOrigenReserva, clasificarOrigen, ORIGEN_BUCKETS, ORIGEN_LABELS } from "../lib/origenClassifier.js";
 
 const B = {
   navy: "#0a1628", navyMid: "#0f1f3d", navyLight: "#1a2f52",
@@ -47,6 +48,7 @@ export default function Analitica() {
   const [dailyTrend, setDailyTrend] = useState([]);
   const [idiomas, setIdiomas] = useState([]);
   const [segmentos, setSegmentos] = useState([]);
+  const [origenes, setOrigenes] = useState([]);
   const [selectedSession, setSelectedSession] = useState(null);
   const [sessionEvents, setSessionEvents] = useState([]);
   const [loadingJourney, setLoadingJourney] = useState(false);
@@ -78,7 +80,7 @@ export default function Analitica() {
       supabase.from("track_sesiones").select("*").gte("created_at", desde).lte("created_at", hasta),
       supabase.from("track_embudos").select("*").gte("created_at", desde).lte("created_at", hasta),
       supabase.from("track_eventos").select("tipo, categoria, datos, ts").gte("ts", desde).lte("ts", hasta),
-      supabase.from("reservas").select("id, total, canal, tipo, created_at").eq("estado", "confirmado").gte("created_at", desde).lte("created_at", hasta),
+      supabase.from("reservas").select("id, total, canal, tipo, grupo_id, vendedor, aliado_id, created_at").eq("estado", "confirmado").gte("created_at", desde).lte("created_at", hasta),
       supabase.from("track_atribuciones").select("*").gte("created_at", desde).lte("created_at", hasta),
       supabase.from("track_abandonment").select("*").gte("created_at", desde).lte("created_at", hasta),
       supabase.from("track_ingresos").select("*").gte("created_at", desde).lte("created_at", hasta),
@@ -136,6 +138,31 @@ export default function Analitica() {
       }))
       .sort((a, b) => b.ingreso - a.ingreso);
     setCanales(canalArr);
+
+    // ── Origen del cliente (5 buckets) ───────────────────────────────────────
+    // Roll-up que junta: visitas web + reservas internas + canal Tatiana.
+    // Bucket: grupo / whatsapp / marketing / staff / web
+    const origenMap = {};
+    ORIGEN_BUCKETS.forEach(b => {
+      origenMap[b] = { bucket: b, label: ORIGEN_LABELS[b], sesiones: 0, conversiones: 0, ingreso: 0 };
+    });
+    // Sesiones web — usar origen_tipo persistido o derivar al vuelo si null
+    sesList.forEach(s => {
+      const b = s.origen_tipo || clasificarOrigen({
+        utms: s.utms, referrer: s.referrer, canal: s.canal,
+      });
+      if (origenMap[b]) origenMap[b].sesiones++;
+    });
+    // TODAS las reservas confirmadas (sin filtro WEB_CANALES — aquí queremos ver
+    // grupos/staff/etc también)
+    (resConvRes.data || []).forEach(r => {
+      const b = clasificarOrigenReserva(r);
+      if (origenMap[b]) {
+        origenMap[b].conversiones++;
+        origenMap[b].ingreso += r.total || 0;
+      }
+    });
+    setOrigenes(Object.values(origenMap));
 
     // ── Embudo de conversión ──────────────────────────────────────────────────
     const pasos = [1,2,3,4,5,6].map(p => ({
@@ -392,9 +419,53 @@ export default function Analitica() {
           })}
         </div>
 
+        {/* Origen del Cliente (5 buckets) */}
+        <div style={{ background: B.navyMid, borderRadius: 14, padding: 24, border: "1px solid rgba(255,255,255,0.07)", marginBottom: 20 }}>
+          <h3 style={{ margin: "0 0 6px", fontSize: 15, fontWeight: 700, color: "#fff" }}>🎯 Origen del Cliente</h3>
+          <div style={{ fontSize: 11, color: B.muted, marginBottom: 16 }}>Roll-up por fuente: cómo llegó realmente a Atolón</div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
+            {(origenes || []).map(o => {
+              const totalConv = (origenes || []).reduce((s, x) => s + x.conversiones, 0);
+              const totalIng  = (origenes || []).reduce((s, x) => s + x.ingreso, 0);
+              const pctConv   = totalConv ? ((o.conversiones / totalConv) * 100).toFixed(1) : "0.0";
+              const pctIng    = totalIng  ? ((o.ingreso / totalIng) * 100).toFixed(1)      : "0.0";
+              const colors = {
+                grupo:     B.purple,
+                whatsapp:  B.success,
+                marketing: B.pink,
+                staff:     B.sand,
+                web:       B.sky,
+              };
+              const c = colors[o.bucket] || B.sky;
+              return (
+                <div key={o.bucket} style={{ background: "rgba(255,255,255,0.03)", borderLeft: `4px solid ${c}`, borderRadius: 10, padding: "14px 16px" }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: "#fff", marginBottom: 6 }}>{o.label}</div>
+                  <div style={{ fontSize: 11, color: B.muted, marginBottom: 8 }}>
+                    {o.sesiones} {o.bucket === "web" || o.bucket === "marketing" || o.bucket === "whatsapp" ? "visitas web" : "—"}
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8, marginBottom: 4 }}>
+                    <span style={{ fontSize: 10, color: B.muted, textTransform: "uppercase", letterSpacing: 0.5 }}>Reservas</span>
+                    <span style={{ fontSize: 18, fontWeight: 700, color: "#fff" }}>{o.conversiones}</span>
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8 }}>
+                    <span style={{ fontSize: 10, color: B.muted, textTransform: "uppercase", letterSpacing: 0.5 }}>Ingreso</span>
+                    <span style={{ fontSize: 14, fontWeight: 700, color: c }}>
+                      ${(o.ingreso / 1_000_000).toFixed(1)}M
+                    </span>
+                  </div>
+                  <div style={{ marginTop: 8, paddingTop: 8, borderTop: "1px dashed rgba(255,255,255,0.08)", fontSize: 10, color: B.muted, display: "flex", justifyContent: "space-between" }}>
+                    <span>{pctConv}% conv</span>
+                    <span>{pctIng}% ingreso</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
         {/* Canales */}
         <div style={{ background: B.navyMid, borderRadius: 14, padding: 24, border: "1px solid rgba(255,255,255,0.07)" }}>
-          <h3 style={{ margin: "0 0 20px", fontSize: 15, fontWeight: 700, color: "#fff" }}>📡 Canales de Adquisición</h3>
+          <h3 style={{ margin: "0 0 20px", fontSize: 15, fontWeight: 700, color: "#fff" }}>📡 Canales de Adquisición (granular)</h3>
           {canales.length === 0 && <div style={{ color: B.muted, fontSize: 13 }}>Sin datos aún</div>}
           {canales.map(c => (
             <div key={c.canal} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
