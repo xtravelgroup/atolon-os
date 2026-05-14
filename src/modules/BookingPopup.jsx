@@ -873,6 +873,26 @@ export default function BookingPopup() {
         ].filter(Boolean).join(" | ") || null,
         qr_code:        `ATOLON-WEB-${Date.now()}`,
         lead_id:        leadId || null,
+        // Captura de UTMs + referrer + landing → permite distinguir reservas WEB
+        // que vinieron por links rastreados (ej. links de WhatsApp con
+        // utm_source=whatsapp) de las orgánicas. Sin esto, una reserva del
+        // booking público hecha desde un link de WA se contaba como "web"
+        // cuando en realidad debe ir al bucket "whatsapp".
+        utms_capturados: (() => {
+          const utms = AtolanTrack?.utms || {};
+          const hasAny = utms.utm_source || utms.utm_medium || utms.utm_campaign
+                      || utms.utm_content || utms.utm_term;
+          if (!hasAny && !document.referrer && !window.location.search) return null;
+          return {
+            utm_source:   utms.utm_source   || null,
+            utm_medium:   utms.utm_medium   || null,
+            utm_campaign: utms.utm_campaign || null,
+            utm_content:  utms.utm_content  || null,
+            utm_term:     utms.utm_term     || null,
+            referrer:     document.referrer || null,
+            landing_page: window.location.pathname + window.location.search,
+          };
+        })(),
         ...fePayload(form),
       });
     }
