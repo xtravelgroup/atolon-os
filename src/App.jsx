@@ -344,7 +344,7 @@ const RecursosHumanos = lazy(() => import("./modules/RecursosHumanos"));
 const Nomina = lazy(() => import("./modules/Nomina"));
 const NominaPorDia = lazy(() => import("./modules/NominaPorDia"));
 const ProcesarNomina = lazy(() => import("./modules/ProcesarNomina"));
-const Horarios = lazy(() => import("./modules/Horarios"));
+const CustomerJourney = lazy(() => import("./modules/CustomerJourney"));const Horarios = lazy(() => import("./modules/Horarios"));
 const AsistenciaZK = lazy(() => import("./modules/AsistenciaZK"));
 const ContratistasAdmin = lazy(() => import("./modules/ContratistasAdmin"));
 const ContratistasPortal = lazy(() => import("./modules/ContratistasPortal"));
@@ -412,7 +412,7 @@ const MODULE_MAP = {
   nomina: <Nomina />,
   nomina_dia: <NominaPorDia />,
   procesar_nomina: <ProcesarNomina />,
-  asistencia_zk: <AsistenciaZK />,
+  customer_journey: <CustomerJourney />,  asistencia_zk: <AsistenciaZK />,
   horarios: <Horarios />,
   contratistas_admin: <ContratistasAdmin />,
   contratistas_muelle: <ContratistasMuelle />,
