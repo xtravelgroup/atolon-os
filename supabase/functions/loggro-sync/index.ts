@@ -190,6 +190,34 @@ serve(async (req) => {
       return json({ count: products.length, products });
     }
 
+    // ═══ Crear mesa en Loggro ═════════════════════════════════════════════
+    // Body: { name: "PS11", description?: "", coord?: { x, y } }
+    // Usado para crear mesas que faltan en Loggro (ej. floor plan de piscina).
+    if (req.method === "POST" && path === "/create-table") {
+      const body = await req.json().catch(() => ({}));
+      const name = String(body.name || "").trim();
+      if (!name) return json({ ok: false, error: "name requerido" }, 400);
+      // Validar que no exista ya
+      const existing = await loggroGet("/tables");
+      const mesas = Array.isArray(existing) ? existing : (existing.data || []);
+      const dup = mesas.find((m: any) => (m.name || "").trim().toUpperCase() === name.toUpperCase());
+      if (dup) {
+        return json({ ok: true, already_exists: true, mesa: dup });
+      }
+      const payload = {
+        name,
+        description: body.description || name,
+        coord: body.coord || { x: 0, y: 0 },
+        isHomeDelivery: body.isHomeDelivery !== false,
+        isActive: body.isActive !== false,
+      };
+      const result = await loggroRaw("POST", "/tables", payload);
+      if (!result.ok) {
+        return json({ ok: false, error: result.body, status: result.status }, 500);
+      }
+      return json({ ok: true, mesa: result.body });
+    }
+
     // ═══ Sync Tables → DB ═════════════════════════════════════════════════
     if (req.method === "POST" && path === "/sync-tables") {
       const data = await loggroGet("/tables");
