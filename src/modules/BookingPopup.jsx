@@ -508,27 +508,99 @@ export default function BookingPopup() {
     const toFix = `${y}-${String(m + 1).padStart(2,"0")}-${String(daysInMonth(y, m)).padStart(2,"0")}`;
 
     Promise.all([
-      supabase.from("reservas").select("fecha, pax")
+      // Pax POR SALIDA (sin transporte queda fuera porque salida_id es null)
+      supabase.from("reservas").select("fecha, salida_id, pax")
         .neq("estado", "cancelado").gte("fecha", from).lte("fecha", toFix),
-      supabase.from("cierres").select("fecha, tipo").eq("activo", true)
+      supabase.from("cierres").select("fecha, tipo, salidas").eq("activo", true)
         .gte("fecha", from).lte("fecha", toFix),
       supabase.from("salidas").select("id, hora, hora_regreso, nombre, capacidad_total, auto_apertura, orden").eq("activo", true).order("orden"),
-    ]).then(([resR, cierreR, salR]) => {
+      supabase.from("salidas_override").select("fecha, salida_id, accion, extra_embarcaciones")
+        .gte("fecha", from).lte("fecha", toFix),
+    ]).then(([resR, cierreR, salR, ovrR]) => {
       const sals = salR.data || [];
       setSalidas(sals);
-      const cap = sals.filter(s => !s.auto_apertura)
-        .reduce((s, r) => s + (r.capacidad_total || 0), 0) || 120;
-      const paxByDate = {};
+
+      // ── Modelo "basado en la lancha" ──
+      // No hay capacidad por día — cada salida tiene su propia lancha con su capacidad.
+      // Una fecha está disponible si la MEJOR salida (la que tiene más cupos libres)
+      // alcanza para el grupo solicitado. Suma global no sirve: 4 salidas de 20 cupos
+      // c/u NO equivalen a una "capacidad" de 80 para un grupo de 25.
+      //
+      // Reglas:
+      //   - Reservas con salida_id=null (Sin Transporte) → NO consumen cupo de lancha
+      //   - Cierres parciales / override "cerrar" → la salida no opera ese día
+      //   - extra_embarcaciones del override → suman capacidad a esa salida
+      //   - auto_apertura: la siguiente salida abre cuando la anterior llega a su umbral
+
+      // Pax por (fecha, salida_id) — solo los que viajan en lancha de Atolón
+      const paxByFechaSalida = {};
       (resR.data || []).forEach(r => {
-        paxByDate[r.fecha] = (paxByDate[r.fecha] || 0) + (r.pax || 0);
+        if (!r.salida_id) return;  // Sin Transporte
+        if (!paxByFechaSalida[r.fecha]) paxByFechaSalida[r.fecha] = {};
+        paxByFechaSalida[r.fecha][r.salida_id] = (paxByFechaSalida[r.fecha][r.salida_id] || 0) + (r.pax || 0);
       });
+
+      // Mapas auxiliares por fecha
+      const cierreTotalByDate = {};
+      const cierreParcialByDate = {};
+      (cierreR.data || []).forEach(c => {
+        if (c.tipo === "total") cierreTotalByDate[c.fecha] = true;
+        else if (Array.isArray(c.salidas)) {
+          if (!cierreParcialByDate[c.fecha]) cierreParcialByDate[c.fecha] = new Set();
+          c.salidas.forEach(sid => cierreParcialByDate[c.fecha].add(sid));
+        }
+      });
+      const overrideByDate = {};
+      (ovrR.data || []).forEach(o => {
+        if (!overrideByDate[o.fecha]) overrideByDate[o.fecha] = {};
+        overrideByDate[o.fecha][o.salida_id] = o;
+      });
+
+      // Para cada día: calcular cupo máximo en una salida individual
       const avail = {};
+      const closedDates = [];
+      const sortedSals = [...sals].sort((a, b) => (a.hora || "").localeCompare(b.hora || ""));
       for (let d = 1; d <= daysInMonth(y, m); d++) {
         const iso = isoDate(y, m, d);
-        avail[iso] = Math.max(0, cap - (paxByDate[iso] || 0));
+        if (cierreTotalByDate[iso]) {
+          avail[iso] = 0;
+          closedDates.push(iso);
+          continue;
+        }
+        const cierresDia = cierreParcialByDate[iso] || new Set();
+        const ovrDia = overrideByDate[iso] || {};
+        const paxDia = paxByFechaSalida[iso] || {};
+
+        // Pre-cómputo: visibilidad + capacidad + pax por salida
+        const prep = sortedSals.map(s => {
+          const ovr = ovrDia[s.id];
+          const extraCap = (ovr?.extra_embarcaciones || []).reduce((sum, e) => sum + (Number(e.capacidad) || 0), 0);
+          const capacidad = (s.capacidad_total || 0) + extraCap;
+          const pax = paxDia[s.id] || 0;
+          let visible = true;
+          if (ovr?.accion === "cerrar") visible = false;
+          else if (ovr?.accion === "abrir") visible = true;
+          else if (cierresDia.has(s.id)) visible = false;
+          return { s, ovr, capacidad, pax, visible };
+        });
+
+        // Cascada auto_apertura: la siguiente salida solo cuenta si la anterior llegó al umbral
+        let cuposMax = 0;
+        for (let i = 0; i < prep.length; i++) {
+          const p = prep[i];
+          if (!p.visible) continue;
+          if (p.s.auto_apertura && p.ovr?.accion !== "abrir" && i > 0) {
+            const prev = prep[i - 1];
+            const prevPct = (prev.pax || 0) / (prev.capacidad || 1);
+            if (prevPct < 0.75) continue;  // cascada no activada
+          }
+          const cuposSal = Math.max(0, p.capacidad - p.pax);
+          if (cuposSal > cuposMax) cuposMax = cuposSal;
+        }
+        avail[iso] = cuposMax;
       }
       setDispon(avail);
-      setCierres((cierreR.data || []).map(c => c.fecha));
+      setCierres(closedDates);
     });
   }, [calYear, calMonth, product]);
 
@@ -1241,63 +1313,69 @@ export default function BookingPopup() {
               <div style={{ textAlign: "center", padding: "20px 0", fontSize: 13, color: C.textLight }}>
                 {isEN ? "Checking availability..." : "Verificando disponibilidad..."}
               </div>
-            ) : (
-              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                {salidas.filter(s => disponSal[s.id] !== -1).length === 0 ? (
-                  <div style={{ padding: "16px", background: "#FFF8F8", border: `1px solid #FEE2E2`, borderRadius: 10, fontSize: 13, color: C.danger, textAlign: "center" }}>
-                    {isEN ? "No availability for this date. Please select another day." : "Sin disponibilidad para esta fecha. Por favor elige otro día."}
-                  </div>
-                ) : (
-                  salidas.map(s => {
-                    const spots    = disponSal[s.id];
-                    const esGrupo  = (paxA + paxN) >= 10;
-                    // Hide unavailable salidas unless it's a group (10+)
-                    if ((spots === -1 || spots === undefined) && !esGrupo) return null;
-                    const isSelected = selSalida?.id === s.id;
-                    const salidaFull = !esGrupo && spots !== undefined && spots < (paxA + paxN);
-
-                    return (
-                      <div key={s.id}
-                        onClick={() => !salidaFull && setSelSalida(s)}
-                        style={{
-                          display: "flex", alignItems: "center", gap: 14,
-                          padding: "14px 16px", borderRadius: 10, cursor: salidaFull ? "not-allowed" : "pointer",
-                          border: `2px solid ${isSelected ? C.accent : C.border}`,
-                          background: isSelected ? C.accentLight : salidaFull ? C.bgCard : C.bg,
-                          opacity: salidaFull ? 0.5 : 1, transition: "all 0.15s",
-                        }}
-                        onMouseEnter={e => { if (!salidaFull && !isSelected) e.currentTarget.style.borderColor = C.accent; }}
-                        onMouseLeave={e => { if (!salidaFull && !isSelected) e.currentTarget.style.borderColor = C.border; }}>
-                        <div style={{ width: 44, height: 44, borderRadius: 10, background: isSelected ? C.accent : C.bgCard, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, transition: "all 0.15s" }}>
-                          <span style={{ fontSize: 20 }}>{salidaFull ? "🚫" : "⛵"}</span>
-                        </div>
-                        <div style={{ flex: 1 }}>
-                          <div style={{ fontSize: 15, fontWeight: 700, color: isSelected ? C.accent : C.text }}>
-                            {isEN ? "Departure" : "Salida"} {s.hora || s.id}
+            ) : (() => {
+              // Reglas del motor: NO mostrar salidas Full ni cerradas.
+              // Solo se listan las que tienen cupo suficiente para el grupo solicitado.
+              //   spots === -1        → salida no visible (cerrada / override / cutoff / cascada)
+              //   spots === undefined → aún no calculada
+              //   spots <  paxA+paxN  → no hay cupo suficiente para el grupo
+              const paxReq = paxA + paxN;
+              const visibles = salidas.filter(s => {
+                const spots = disponSal[s.id];
+                if (spots === -1 || spots === undefined) return false;
+                if (spots < paxReq) return false;
+                return true;
+              });
+              return (
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  {visibles.length === 0 ? (
+                    <div style={{ padding: "16px", background: "#FFF8F8", border: `1px solid #FEE2E2`, borderRadius: 10, fontSize: 13, color: C.danger, textAlign: "center" }}>
+                      {isEN ? "No availability for this date. Please select another day." : "Sin disponibilidad para esta fecha. Por favor elige otro día."}
+                    </div>
+                  ) : (
+                    visibles.map(s => {
+                      const isSelected = selSalida?.id === s.id;
+                      return (
+                        <div key={s.id}
+                          onClick={() => setSelSalida(s)}
+                          style={{
+                            display: "flex", alignItems: "center", gap: 14,
+                            padding: "14px 16px", borderRadius: 10, cursor: "pointer",
+                            border: `2px solid ${isSelected ? C.accent : C.border}`,
+                            background: isSelected ? C.accentLight : C.bg,
+                            transition: "all 0.15s",
+                          }}
+                          onMouseEnter={e => { if (!isSelected) e.currentTarget.style.borderColor = C.accent; }}
+                          onMouseLeave={e => { if (!isSelected) e.currentTarget.style.borderColor = C.border; }}>
+                          <div style={{ width: 44, height: 44, borderRadius: 10, background: isSelected ? C.accent : C.bgCard, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, transition: "all 0.15s" }}>
+                            <span style={{ fontSize: 20 }}>⛵</span>
                           </div>
-                          <div style={{ fontSize: 12, color: C.textMid, marginTop: 2 }}>
-                            🕐 {isEN ? "Departure" : "Salida"}: <strong>{s.hora || "—"}</strong>
-                            &nbsp;&nbsp;→&nbsp;&nbsp;
-                            🔁 {isEN ? "Return" : "Regreso"}: <strong>{s.hora_regreso || s.regreso || "—"}</strong>
-                          </div>
-                        </div>
-                        <div style={{ textAlign: "right", flexShrink: 0 }}>
-                          {salidaFull ? (
-                            <span style={{ fontSize: 12, color: C.danger, fontWeight: 600 }}>{isEN ? "Full" : "Agotado"}</span>
-                          ) : isSelected ? (
-                            <div style={{ fontSize: 11, color: C.accent, fontWeight: 600 }}>✓ {isEN ? "Selected" : "Seleccionado"}</div>
-                          ) : (
-                            <div style={{ fontSize: 12, color: C.success, fontWeight: 600 }}>
-                              {isEN ? "Available" : "Disponible"}
+                          <div style={{ flex: 1 }}>
+                            <div style={{ fontSize: 15, fontWeight: 700, color: isSelected ? C.accent : C.text }}>
+                              {isEN ? "Departure" : "Salida"} {s.hora || s.id}
                             </div>
-                          )}
+                            <div style={{ fontSize: 12, color: C.textMid, marginTop: 2 }}>
+                              🕐 {isEN ? "Departure" : "Salida"}: <strong>{s.hora || "—"}</strong>
+                              &nbsp;&nbsp;→&nbsp;&nbsp;
+                              🔁 {isEN ? "Return" : "Regreso"}: <strong>{s.hora_regreso || s.regreso || "—"}</strong>
+                            </div>
+                          </div>
+                          <div style={{ textAlign: "right", flexShrink: 0 }}>
+                            {isSelected ? (
+                              <div style={{ fontSize: 11, color: C.accent, fontWeight: 600 }}>✓ {isEN ? "Selected" : "Seleccionado"}</div>
+                            ) : (
+                              <div style={{ fontSize: 12, color: C.success, fontWeight: 600 }}>
+                                {isEN ? "Available" : "Disponible"}
+                              </div>
+                            )}
+                          </div>
                         </div>
-                      </div>
-                    );
-                  })
-                )}
-              </div>
-            )}
+                      );
+                    })
+                  )}
+                </div>
+              );
+            })()}
           </div>
         )}
 
