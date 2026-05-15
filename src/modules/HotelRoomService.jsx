@@ -53,7 +53,8 @@ export default function HotelRoomService() {
     setLoading(true);
     const [{ data: hData }, { data: iData }, { data: pData }] = await Promise.all([
       supabase.from("hotel_habitaciones").select("*").eq("estado", "activa").order("numero"),
-      supabase.from("menu_items").select("id, nombre, descripcion, precio, categoria, menu_tipo, loggro_id, variantes").in("menu_tipo", ["restaurant", "bebidas"]).eq("activo", true).order("categoria").order("orden"),
+      // Fuente ÚNICA del menú: items marcados room_service en Productos (Menús.jsx).
+      supabase.from("menu_items").select("id, nombre, descripcion, precio, categoria, menu_tipo, loggro_id, variantes").in("menu_tipo", ["restaurant", "bebidas"]).eq("activo", true).eq("room_service", true).order("categoria").order("orden"),
       supabase.from("hotel_room_service_pedidos").select("*").order("created_at", { ascending: false }).limit(100),
     ]);
     setHabs(hData || []);

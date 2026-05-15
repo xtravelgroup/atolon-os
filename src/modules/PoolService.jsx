@@ -74,10 +74,14 @@ export default function PoolService() {
       // Pool Service usa los menús "restaurant" y "bebidas" del módulo de Productos
       // — fuente única de verdad, ya sincronizado con Loggro. Aquí NO se gestiona
       // catálogo, sólo se consume. Para crear/editar items: Productos → Menú.
+      // Fuente ÚNICA del menú: items marcados room_service en Productos (Menús.jsx).
+      // Mismo filtro que Room Service → se gestiona en un solo lugar (el checkbox
+      // "room_service" de cada producto en el módulo Productos).
       supabase.from("menu_items")
         .select("id, nombre, descripcion, precio, categoria, menu_tipo, orden, loggro_id, foto_url, variantes")
         .in("menu_tipo", ["restaurant", "bebidas"])
         .eq("activo", true)
+        .eq("room_service", true)
         .order("categoria").order("orden"),
       supabase.from("pool_service_pedidos").select("*").order("created_at", { ascending: false }).limit(120),
     ]);
