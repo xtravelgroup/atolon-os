@@ -75,7 +75,7 @@ export default function PoolService() {
       // — fuente única de verdad, ya sincronizado con Loggro. Aquí NO se gestiona
       // catálogo, sólo se consume. Para crear/editar items: Productos → Menú.
       supabase.from("menu_items")
-        .select("id, nombre, descripcion, precio, categoria, menu_tipo, orden, loggro_id, foto_url")
+        .select("id, nombre, descripcion, precio, categoria, menu_tipo, orden, loggro_id, foto_url, variantes")
         .in("menu_tipo", ["restaurant", "bebidas"])
         .eq("activo", true)
         .order("categoria").order("orden"),
@@ -149,7 +149,9 @@ export default function PoolService() {
     const items = (pedido.items || []).map(it => {
       const m = mapLoggro[it.id] || {};
       return {
-        productId: m.loggro_id,
+        // Si el ítem tiene variante elegida (michelada/clamato), su loggro_id
+        // es el del subProduct — ese es el que Loggro espera, no el padre.
+        productId: it.loggro_id || m.loggro_id,
         qty:       it.cantidad,
         unit_price: Number(it.precio) || Number(m.precio) || 0,
         notes:     it.notas ? [String(it.notas)] : (pedido.notas ? [String(pedido.notas)] : []),
@@ -379,15 +381,38 @@ function NuevoPedido({ areas, items, onSaved, enviarALoggro, isMobile }) {
     });
   }, [items, filtroCat]);
 
-  const add = (it) => setCarrito(prev => {
-    const ex = prev.find(x => x.id === it.id);
-    if (ex) return prev.map(x => x.id === it.id ? { ...x, cantidad: x.cantidad + 1 } : x);
-    return [...prev, { id: it.id, nombre: it.nombre, precio: it.precio || 0, cantidad: 1, notas: "" }];
+  // Picker de variante (michelada / con clamato / etc.). Cuando el ítem tiene
+  // variantes de Loggro, NO se agrega directo: el mesero debe elegir cuál.
+  const [variantePicker, setVariantePicker] = useState(null); // { item } | null
+
+  // cid = identificador único de la línea del carrito. Para variantes usamos
+  // el loggro_id del subProduct (así michelada y clamato son líneas distintas).
+  const addLinea = (linea) => setCarrito(prev => {
+    const ex = prev.find(x => x.cid === linea.cid);
+    if (ex) return prev.map(x => x.cid === linea.cid ? { ...x, cantidad: x.cantidad + 1 } : x);
+    return [...prev, { ...linea, cantidad: 1, notas: "" }];
   });
-  const setCant = (id, c) => {
+
+  const add = (it) => {
+    if (Array.isArray(it.variantes) && it.variantes.length > 0) {
+      setVariantePicker({ item: it });
+      return;
+    }
+    addLinea({ cid: it.id, id: it.id, loggro_id: it.loggro_id || null, nombre: it.nombre, precio: it.precio || 0 });
+  };
+
+  const addVariante = (item, v) => {
+    addLinea({
+      cid: v.loggro_id, id: item.id, loggro_id: v.loggro_id,
+      nombre: v.nombre, precio: Number(v.precio) || 0,
+    });
+    setVariantePicker(null);
+  };
+
+  const setCant = (cid, c) => {
     const n = Number(c);
-    if (n <= 0) return setCarrito(prev => prev.filter(x => x.id !== id));
-    setCarrito(prev => prev.map(x => x.id === id ? { ...x, cantidad: n } : x));
+    if (n <= 0) return setCarrito(prev => prev.filter(x => x.cid !== cid));
+    setCarrito(prev => prev.map(x => x.cid === cid ? { ...x, cantidad: n } : x));
   };
 
   const subtotal = carrito.reduce((s, x) => s + x.precio * x.cantidad, 0);
@@ -571,8 +596,8 @@ function NuevoPedido({ areas, items, onSaved, enviarALoggro, isMobile }) {
               {carrito.length === 0 ? (
                 <div style={{ fontSize: 11, color: "rgba(255,255,255,0.3)" }}>Vacío.</div>
               ) : carrito.map(c => (
-                <div key={c.id} style={{ display: "flex", alignItems: "center", gap: 6, padding: "5px 0", borderBottom: "1px solid rgba(255,255,255,0.04)" }}>
-                  <input type="number" value={c.cantidad} onChange={e => setCant(c.id, e.target.value)} min={0}
+                <div key={c.cid} style={{ display: "flex", alignItems: "center", gap: 6, padding: "5px 0", borderBottom: "1px solid rgba(255,255,255,0.04)" }}>
+                  <input type="number" value={c.cantidad} onChange={e => setCant(c.cid, e.target.value)} min={0}
                     style={{ ...IS, width: 50, padding: "4px 6px" }} />
                   <div style={{ flex: 1, fontSize: 12, minWidth: 0 }}>
                     <div style={{ color: "#fff", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.nombre}</div>
@@ -619,12 +644,19 @@ function NuevoPedido({ areas, items, onSaved, enviarALoggro, isMobile }) {
             </div>
         <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fill, minmax(${isMobile ? 140 : 180}px, 1fr))`, gap: isMobile ? 8 : 10 }}>
           {filtered.map(it => {
-            const sinLoggro = !it.loggro_id;
+            const sinLoggro = !it.loggro_id && !(it.variantes?.length);
+            const tieneVariantes = Array.isArray(it.variantes) && it.variantes.length > 0;
+            // Productos con variantes traen precio base 0 — el precio real está
+            // en cada variante. Mostramos "desde $X" con la variante más barata.
+            const precioMin = tieneVariantes
+              ? Math.min(...it.variantes.map(v => Number(v.precio) || 0).filter(n => n > 0))
+              : null;
             return (
               <button key={it.id} onClick={() => add(it)}
                 title={sinLoggro ? "Este ítem no tiene loggro_id — no se enviará a cocina vía Loggro" : undefined}
                 style={{
-                  background: B.navyMid, border: sinLoggro ? `1px dashed ${B.warning}66` : "none",
+                  background: B.navyMid,
+                  border: tieneVariantes ? `1px solid ${B.pool}55` : sinLoggro ? `1px dashed ${B.warning}66` : "none",
                   borderRadius: 10, padding: 12, textAlign: "left", cursor: "pointer", color: "#fff",
                   position: "relative",
                 }}>
@@ -633,12 +665,18 @@ function NuevoPedido({ areas, items, onSaved, enviarALoggro, isMobile }) {
                 </div>
                 <div style={{ fontSize: 13, fontWeight: 700, marginTop: 4, lineHeight: 1.2 }}>{it.nombre}</div>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 6 }}>
-                  <div style={{ fontSize: 14, fontWeight: 800, color: B.success }}>{COP(it.precio)}</div>
-                  {sinLoggro && (
+                  <div style={{ fontSize: 14, fontWeight: 800, color: B.success }}>
+                    {tieneVariantes ? `desde ${COP(precioMin)}` : COP(it.precio)}
+                  </div>
+                  {tieneVariantes ? (
+                    <span style={{ fontSize: 9, color: B.pool, fontWeight: 700, letterSpacing: "0.03em" }}>
+                      {it.variantes.length} opciones ▾
+                    </span>
+                  ) : sinLoggro ? (
                     <span style={{ fontSize: 9, color: B.warning, fontWeight: 700, letterSpacing: "0.04em" }}>
                       ⚠ SIN LOGGRO
                     </span>
-                  )}
+                  ) : null}
                 </div>
               </button>
             );
@@ -646,6 +684,42 @@ function NuevoPedido({ areas, items, onSaved, enviarALoggro, isMobile }) {
           </div>
         </div>
       </div>
+
+      {/* Modal: elegir variante (michelada / con clamato / etc.) */}
+      {variantePicker && (
+        <div onClick={() => setVariantePicker(null)} style={{
+          position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 60,
+          display: "flex", alignItems: "center", justifyContent: "center", padding: 16,
+        }}>
+          <div onClick={e => e.stopPropagation()} style={{
+            background: B.navyMid, borderRadius: 14, padding: 18,
+            width: "100%", maxWidth: 380, maxHeight: "80vh", overflowY: "auto",
+          }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+              <div style={{ fontSize: 16, fontWeight: 800, color: "#fff" }}>{variantePicker.item.nombre}</div>
+              <button onClick={() => setVariantePicker(null)}
+                style={{ background: "transparent", border: "none", color: B.muted, fontSize: 22, cursor: "pointer", lineHeight: 1 }}>✕</button>
+            </div>
+            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginBottom: 14 }}>
+              Elige la presentación
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {variantePicker.item.variantes.map(v => (
+                <button key={v.loggro_id} onClick={() => addVariante(variantePicker.item, v)}
+                  style={{
+                    display: "flex", justifyContent: "space-between", alignItems: "center",
+                    background: B.navy, border: `1px solid ${B.navyLight}`, borderRadius: 10,
+                    padding: "14px 16px", cursor: "pointer", color: "#fff", textAlign: "left",
+                    minHeight: 52,
+                  }}>
+                  <span style={{ fontSize: 14, fontWeight: 600 }}>{v.nombre}</span>
+                  <span style={{ fontSize: 15, fontWeight: 800, color: B.success }}>{COP(v.precio)}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

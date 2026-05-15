@@ -276,12 +276,26 @@ serve(async (req) => {
         const catName = p.category?.name || p.categoryName || "Otros";
         const menuTipo = mapMenuTipo(catName);
         const id = idByLoggro[loggroId] || `LGR-${String(loggroId).slice(-12)}`;
+        // Variantes = subProducts de Loggro. Cada uno es un producto real con
+        // su propio _id y precio (ej. Club Colombia → Cerveza $15k / Michelada
+        // $18k / Con Clamato $30k). Al ordenar se envía el _id del subProduct.
+        const subs = Array.isArray(p.subProducts) ? p.subProducts : [];
+        const variantes = subs.length > 0
+          ? subs
+              .filter((s: any) => s && (s._id || s.id) && s.deleted !== true)
+              .map((s: any) => ({
+                loggro_id: s._id || s.id,
+                nombre:    s.name || s.nombre || "Variante",
+                precio:    Number(s.price) || 0,
+              }))
+          : null;
         return {
           id,
           loggro_id: loggroId,
           nombre: p.name || "Sin nombre",
           descripcion: p.description || null,
           precio: Number(p.price) || 0,
+          variantes,
           categoria: catName,
           loggro_categoria: catName,
           foto_url: p.image || p.photo || null,
@@ -300,6 +314,7 @@ serve(async (req) => {
           nombre: r.nombre,
           descripcion: r.descripcion,
           precio: r.precio,
+          variantes: r.variantes,
           loggro_categoria: r.loggro_categoria,
           raw: r.raw,
         }).eq("id", r.id);
