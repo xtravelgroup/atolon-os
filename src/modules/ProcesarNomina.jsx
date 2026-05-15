@@ -16,8 +16,17 @@ import { useMobile } from "../lib/useMobile";
 import { logAccion } from "../lib/logAccion";
 import {
   quincenaActual, quincenaAnterior, diasDelPeriodo,
-  calcularNominaEmpleado, NOVEDAD_TIPOS, SMMLV_2026, AUX_TRANSPORTE_2026,
+  calcularNominaEmpleado, calcularHorasDia, ventanaNovedades, tarifaHoraEmpleado,
+  NOVEDAD_TIPOS, SMMLV_2026, AUX_TRANSPORTE_2026, FESTIVOS_CO_2026,
 } from "../lib/nominaCalculator.js";
+
+// Ventana de novedades del período (desfasada). Defensivo si es "Personalizado".
+function ventanaDe(periodo) {
+  if (periodo && periodo.numero && periodo.anio != null && periodo.mes != null) {
+    return ventanaNovedades(periodo);
+  }
+  return { desde: periodo?.desde, hasta: periodo?.hasta };
+}
 
 const IS = {
   width: "100%", padding: "9px 12px", borderRadius: 8,
@@ -40,7 +49,77 @@ function Kpi({ label, value, sub, color }) {
 }
 
 // ── Drawer detalle empleado ──────────────────────────────────────────────────
-function DetalleDrawer({ empleado, calc, onClose, onAddNovedad, onDeleteNovedad, allNovedades }) {
+function MarcacionesGrid({ empleado, periodo, marcaciones, onSave }) {
+  const dias = diasDelPeriodo(periodo.desde, periodo.hasta);
+  const norm = (t) => (t ? String(t).slice(0, 5) : "");
+  const seed = () => {
+    const m = {};
+    for (const d of dias) m[d] = { entrada: "", salida: "" };
+    for (const r of marcaciones) {
+      if (m[r.fecha]) m[r.fecha] = { entrada: norm(r.entrada), salida: norm(r.salida) };
+    }
+    return m;
+  };
+  const [grid, setGrid] = useState(seed);
+  const [guardando, setGuardando] = useState(false);
+  const tarifa = tarifaHoraEmpleado(empleado);
+  const DOW = ["Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"];
+
+  const set = (fecha, campo, val) => setGrid(g => ({ ...g, [fecha]: { ...g[fecha], [campo]: val } }));
+  const filas = dias.map(f => ({ fecha: f, ...grid[f] }));
+  const totalValor = filas.reduce((s, f) =>
+    s + (f.entrada && f.salida ? calcularHorasDia({ fecha: f.fecha, entrada: f.entrada, salida: f.salida, tarifaHora: tarifa }).valor : 0), 0);
+
+  const guardar = async () => {
+    setGuardando(true);
+    await onSave(empleado.id, filas);
+    setGuardando(false);
+  };
+
+  return (
+    <div style={{ background: B.navyMid, borderRadius: 12, padding: 16, marginBottom: 14 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+        <div style={{ fontSize: 11, color: B.sky, textTransform: "uppercase", letterSpacing: 1, fontWeight: 700 }}>
+          🕑 Marcaciones · {periodo.etiqueta}
+        </div>
+        <div style={{ fontSize: 12, color: B.sand, fontWeight: 700 }}>{COP(totalValor)}</div>
+      </div>
+      <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", marginBottom: 10 }}>
+        Hora de entrada/salida por día trabajado · tarifa {COP(tarifa)}/h
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+        {filas.map(f => {
+          const d = new Date(f.fecha + "T12:00:00");
+          const dom = d.getDay() === 0;
+          const fest = FESTIVOS_CO_2026.has(f.fecha);
+          const pre = (f.entrada && f.salida)
+            ? calcularHorasDia({ fecha: f.fecha, entrada: f.entrada, salida: f.salida, tarifaHora: tarifa })
+            : null;
+          return (
+            <div key={f.fecha} style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 0", borderBottom: `1px solid ${B.navyLight}33` }}>
+              <div style={{ width: 64, fontSize: 11, color: (dom || fest) ? B.warning : "rgba(255,255,255,0.7)" }}>
+                {DOW[d.getDay()]} {d.getDate()}{(dom || fest) ? " •" : ""}
+              </div>
+              <input type="time" value={f.entrada} onChange={e => set(f.fecha, "entrada", e.target.value)}
+                style={{ ...IS, width: 96, padding: "6px 8px" }} />
+              <input type="time" value={f.salida} onChange={e => set(f.fecha, "salida", e.target.value)}
+                style={{ ...IS, width: 96, padding: "6px 8px" }} />
+              <div style={{ flex: 1, textAlign: "right", fontSize: 11, color: pre ? B.success : "rgba(255,255,255,0.25)" }}>
+                {pre ? `${pre.horas}h · ${COP(pre.valor)}` : "—"}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      <button onClick={guardar} disabled={guardando}
+        style={{ width: "100%", marginTop: 12, background: guardando ? B.navyLight : B.sky, color: B.navy, border: "none", borderRadius: 10, padding: "11px 18px", cursor: "pointer", fontWeight: 700, fontSize: 13 }}>
+        {guardando ? "Guardando…" : "💾 Guardar marcaciones"}
+      </button>
+    </div>
+  );
+}
+
+function DetalleDrawer({ empleado, calc, onClose, onAddNovedad, onDeleteNovedad, allNovedades, periodo, marcaciones = [], onSaveMarcaciones }) {
   if (!empleado || !calc) return null;
   const novedadesDelEmpleado = allNovedades.filter(n => n.empleado_loggro_id === empleado.id);
   return (
@@ -56,6 +135,16 @@ function DetalleDrawer({ empleado, calc, onClose, onAddNovedad, onDeleteNovedad,
           </div>
           <button onClick={onClose} style={{ background: "none", border: "none", color: B.white, fontSize: 22, cursor: "pointer" }}>×</button>
         </div>
+
+        {/* MARCACIONES — entrada/salida por día de la quincena */}
+        {periodo && onSaveMarcaciones && (
+          <MarcacionesGrid
+            empleado={empleado}
+            periodo={periodo}
+            marcaciones={marcaciones}
+            onSave={onSaveMarcaciones}
+          />
+        )}
 
         {/* DEVENGADO */}
         <div style={{ background: B.navyMid, borderRadius: 12, padding: 16, marginBottom: 14 }}>
@@ -239,6 +328,7 @@ export default function ProcesarNomina() {
   const isMobile = useMobile();
   const [empleados, setEmpleados] = useState([]);
   const [novedades, setNovedades] = useState([]);
+  const [marcaciones, setMarcaciones] = useState([]);
   const [loading, setLoading] = useState(true);
   const [periodo, setPeriodo] = useState(() => quincenaActual());
   const [detalleEmpleado, setDetalleEmpleado] = useState(null);
@@ -246,22 +336,33 @@ export default function ProcesarNomina() {
   const [search, setSearch] = useState("");
   const [saving, setSaving] = useState(false);
 
+  const ventana = useMemo(() => ventanaDe(periodo), [periodo]);
+
   const fetchData = useCallback(async () => {
     if (!supabase) return;
     setLoading(true);
-    const [empsRes, novsRes] = await Promise.all([
+    const ven = ventanaDe(periodo);
+    const [empsRes, novsRes, marcsRes] = await Promise.all([
       supabase.from("rh_empleados")
-        .select("id, nombres, apellidos, cedula, cargo, departamento_id, salario_base, activo")
+        .select("id, nombres, apellidos, cedula, cargo, departamento_id, salario_base, tarifa_hora, modalidad_calculo, activo")
         .eq("activo", true)
         .order("apellidos"),
+      // Novedades viven en su ventana DESFASADA (26→10 / 11→25), no en la quincena.
       supabase.from("empleados_loggro_novedades")
         .select("*")
-        .or(`fecha_inicio.lte.${periodo.hasta},fecha_fin.gte.${periodo.desde}`),
+        .or(`fecha_inicio.lte.${ven.hasta},fecha_fin.gte.${ven.desde}`),
+      // Marcaciones (entrada/salida) de los días trabajados de la quincena.
+      supabase.from("rh_marcaciones")
+        .select("*")
+        .gte("fecha", periodo.desde)
+        .lte("fecha", periodo.hasta),
     ]);
     if (empsRes.error) console.error("Error cargando empleados:", empsRes.error);
     if (novsRes.error) console.error("Error cargando novedades:", novsRes.error);
+    if (marcsRes.error) console.error("Error cargando marcaciones:", marcsRes.error);
     setEmpleados(empsRes.data || []);
     setNovedades(novsRes.data || []);
+    setMarcaciones(marcsRes.data || []);
     setLoading(false);
   }, [periodo.desde, periodo.hasta]);
 
@@ -270,15 +371,18 @@ export default function ProcesarNomina() {
   // Calcular nómina por empleado
   const nominaPorEmpleado = useMemo(() => {
     return empleados.map(emp => {
-      const novsEmp = novedades.filter(n => n.empleado_loggro_id === emp.id);
+      const novsEmp  = novedades.filter(n => n.empleado_loggro_id === emp.id);
+      const marcsEmp = marcaciones.filter(m => m.empleado_id === emp.id);
       const calc = calcularNominaEmpleado({
         empleado: emp,
         periodo,
         novedades: novsEmp,
+        marcaciones: marcsEmp,
+        ventana,
       });
       return { empleado: emp, calc };
     });
-  }, [empleados, novedades, periodo]);
+  }, [empleados, novedades, marcaciones, periodo, ventana]);
 
   // Filtros
   const empleadosFiltrados = useMemo(() => {
@@ -335,6 +439,37 @@ export default function ProcesarNomina() {
     }
   };
 
+  // Guardar las marcaciones (entrada/salida) de un empleado para la quincena.
+  const handleSaveMarcaciones = async (empleadoId, filas) => {
+    try {
+      const llenas = filas
+        .filter(f => f.entrada && f.salida)
+        .map(f => ({
+          empleado_id: empleadoId, fecha: f.fecha,
+          entrada: f.entrada, salida: f.salida,
+          periodo: periodo.etiqueta, updated_at: new Date().toISOString(),
+        }));
+      const vacias = filas.filter(f => !f.entrada && !f.salida).map(f => f.fecha);
+      if (llenas.length) {
+        const { error } = await supabase.from("rh_marcaciones")
+          .upsert(llenas, { onConflict: "empleado_id,fecha" });
+        if (error) throw error;
+      }
+      if (vacias.length) {
+        const { error } = await supabase.from("rh_marcaciones")
+          .delete().eq("empleado_id", empleadoId).in("fecha", vacias);
+        if (error) throw error;
+      }
+      await fetchData();
+      logAccion({ modulo: "nomina", accion: "guardar_marcaciones", tabla: "rh_marcaciones",
+                  registroId: empleadoId, notas: `${llenas.length} día(s) · ${periodo.etiqueta}` });
+      return true;
+    } catch (e) {
+      alert(`❌ Error guardando marcaciones: ${e.message || e}`);
+      return false;
+    }
+  };
+
   // Guardar nómina consolidada (registros 1 por empleado)
   const procesarYGuardar = async () => {
     if (saving) return;
@@ -351,14 +486,16 @@ export default function ProcesarNomina() {
           cargo: empleado.cargo,
           area: empleado.departamento_id,
           valor_dia: calc.devengado.salario_base_periodo,
-          horas: calc.dias_trabajados * 8,
+          horas: calc.marcaciones?.horas ?? calc.dias_trabajados * 8,
           transporte: calc.devengado.auxilio_transporte,
           bonificacion: calc.devengado.extras_recargos_bonos,
+          deducciones: calc.deducciones.subtotal,
           total: calc.neto,
           metodo_pago: "transferencia",
           pagado: false,
           notas: [
-            `Quincena ${periodo.etiqueta}`,
+            periodo.etiqueta,
+            calc.marcaciones ? `${calc.marcaciones.horas}h (${calc.dias_trabajados} días)` : null,
             calc.dias_no_trabajados > 0 ? `−${calc.dias_no_trabajados} día(s) faltas` : null,
             `Devengado ${COP(calc.devengado.subtotal)} − Deducciones ${COP(calc.deducciones.subtotal)}`,
           ].filter(Boolean).join(" · "),
@@ -421,6 +558,11 @@ export default function ProcesarNomina() {
         <div>
           <label style={LS}>Hasta</label>
           <input type="date" value={periodo.hasta} onChange={e => setPeriodo(p => ({ ...p, hasta: e.target.value, etiqueta: "Personalizado" }))} style={{ ...IS, width: 160 }} />
+        </div>
+        <div style={{ flexBasis: "100%", fontSize: 11, color: "rgba(255,255,255,0.5)" }}>
+          📅 Días trabajados: <b style={{ color: B.white }}>{periodo.desde} → {periodo.hasta}</b>
+          {"   ·   "}
+          🗒 Novedades: <b style={{ color: B.white }}>{ventana.desde} → {ventana.hasta}</b>
         </div>
       </div>
 
@@ -526,17 +668,20 @@ export default function ProcesarNomina() {
           empleado={detalleEmpleado}
           calc={nominaPorEmpleado.find(x => x.empleado.id === detalleEmpleado.id)?.calc}
           allNovedades={novedades}
+          periodo={periodo}
+          marcaciones={marcaciones.filter(m => m.empleado_id === detalleEmpleado.id)}
+          onSaveMarcaciones={handleSaveMarcaciones}
           onClose={() => setDetalleEmpleado(null)}
           onAddNovedad={() => setAddNovedadEmp(detalleEmpleado)}
           onDeleteNovedad={handleDeleteNovedad}
         />
       )}
 
-      {/* Modal agregar novedad */}
+      {/* Modal agregar novedad — defaults a la ventana de novedades */}
       {addNovedadEmp && (
         <AddNovedadModal
           empleado={addNovedadEmp}
-          periodo={periodo}
+          periodo={ventana}
           onSave={handleAddNovedad}
           onClose={() => setAddNovedadEmp(null)}
         />

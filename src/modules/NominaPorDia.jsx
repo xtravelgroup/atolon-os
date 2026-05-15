@@ -93,6 +93,8 @@ export default function NominaPorDia() {
       horas: Number(form.horas) || 8,
       transporte: Number(form.transporte) || 0,
       bonificacion: Number(form.bonificacion) || 0,
+      // total ya no es columna generada → enviarlo explícito
+      total: (Number(form.valor_dia) || 0) + (Number(form.transporte) || 0) + (Number(form.bonificacion) || 0),
       metodo_pago: form.metodo_pago,
       pagado: !!form.pagado,
       notas: form.notas || null,
