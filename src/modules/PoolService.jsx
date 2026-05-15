@@ -433,6 +433,41 @@ function NuevoPedido({ areas, items, onSaved, enviarALoggro, isMobile }) {
     ? `${spotSel.id} · Cama ${spotSel.id.startsWith("PS") ? "Pool Side" : "Exterior"} · ${spotSel.zona.replace("piscina_","P. ").replace("_"," ")}`
     : areaSel ? `${TIPO_ICON[areaSel.tipo] || "📍"} ${areaSel.nombre}` : "";
 
+  // Persiste SOLO el huésped/pax/notas en la cama (floorplan_asignaciones),
+  // sin crear pedido. Útil para asignar la cama al llegar el cliente.
+  const persistirAsignacionCama = async () => {
+    if (!spotSel) return null;
+    const asignPayload = {
+      spot_id:  spotSel.id,
+      fecha:    todayBogota(),
+      estado:   "ocupado",
+      huesped:  (huesped || "").trim() || null,
+      pax:      Number(pax) || 1,
+      notas:    notas || null,
+      updated_at: new Date().toISOString(),
+    };
+    const { error: asignErr } = await supabase
+      .from("floorplan_asignaciones")
+      .upsert(
+        { id: asignSel?.id || `FPA-${Date.now()}`, ...asignPayload,
+          created_at: asignSel?.created_at || new Date().toISOString() },
+        { onConflict: "spot_id,fecha" },
+      );
+    if (asignErr) console.warn("[PoolService] no se pudo guardar asignación de cama:", asignErr.message);
+    return asignErr;
+  };
+
+  // Guardar solo el huésped en la cama (sin pedido).
+  const guardarHuespedSolo = async () => {
+    if (!spotSel) return alert("Selecciona una cama en el plano");
+    if (!(huesped || "").trim()) return alert("Escribe el nombre del huésped");
+    setSaving(true);
+    const err = await persistirAsignacionCama();
+    setSaving(false);
+    if (err) return alert("Error guardando huésped: " + err.message);
+    onSaved?.();
+  };
+
   const guardar = async ({ enviarLoggro = false } = {}) => {
     if (!destinoOk)           return alert("Selecciona un spot (cama / PS) o un área");
     if (carrito.length === 0) return alert("Agrega al menos un ítem");
@@ -465,33 +500,10 @@ function NuevoPedido({ areas, items, onSaved, enviarALoggro, isMobile }) {
       .from("pool_service_pedidos").insert(payload).select().single();
     if (error) { setSaving(false); return alert("Error: " + error.message); }
 
-    // Persistir el huésped en la cama (floorplan_asignaciones) la PRIMERA vez.
-    // Así la próxima vez que el mesero toque esta cama no vuelve a pedir el
-    // nombre — va directo al menú. Marca la cama como "ocupado".
+    // Persistir el huésped en la cama la PRIMERA vez — así la próxima que el
+    // mesero toque esta cama no vuelve a pedir el nombre (va directo al menú).
     if (spotSel && !yaAsignado) {
-      const fecha = todayBogota();
-      const nombreFinal = (huesped || "").trim();
-      const asignPayload = {
-        spot_id:  spotSel.id,
-        fecha,
-        estado:   "ocupado",
-        huesped:  nombreFinal || null,
-        pax:      Number(pax) || 1,
-        notas:    notas || null,
-        updated_at: new Date().toISOString(),
-      };
-      // Upsert por (spot_id, fecha) — hay UNIQUE constraint en esa combinación.
-      // Antes el insert por id chocaba con el UNIQUE si ya existía una fila
-      // para esa cama+fecha y el error se tragaba en silencio (huésped no se
-      // recordaba). Upsert resuelve insert o update en una sola operación.
-      const { error: asignErr } = await supabase
-        .from("floorplan_asignaciones")
-        .upsert(
-          { id: asignSel?.id || `FPA-${Date.now()}`, ...asignPayload,
-            created_at: asignSel?.created_at || new Date().toISOString() },
-          { onConflict: "spot_id,fecha" },
-        );
-      if (asignErr) console.warn("[PoolService] no se pudo guardar asignación de cama:", asignErr.message);
+      await persistirAsignacionCama();
     }
 
     // Si el operador pulsó "Crear y enviar a Loggro", dispara el envío a cocina.
@@ -598,6 +610,16 @@ function NuevoPedido({ areas, items, onSaved, enviarALoggro, isMobile }) {
                   <label style={LS}>Notas</label>
                   <textarea value={notas} onChange={e => setNotas(e.target.value)} style={{ ...IS, minHeight: 60, resize: "vertical" }} placeholder="Alergias, sin hielo, etc." />
                 </div>
+
+                {/* Guardar SOLO el huésped en la cama, sin crear pedido */}
+                {spotSel && (
+                  <button onClick={guardarHuespedSolo}
+                    disabled={saving || !(huesped || "").trim()}
+                    style={{ ...BTN(saving ? B.navyLight : B.sand, B.navy), width: "100%", marginBottom: 12,
+                      opacity: !(huesped || "").trim() ? 0.5 : 1 }}>
+                    {saving ? "Guardando…" : "👤 Guardar huésped (sin pedido)"}
+                  </button>
+                )}
               </>
             )}
 
