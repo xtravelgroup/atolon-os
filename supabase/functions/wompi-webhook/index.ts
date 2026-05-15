@@ -354,6 +354,22 @@ serve(async (req) => {
           updated_at:  new Date().toISOString(),
         }).eq("id", reserva.id);
 
+        // Confirmar el track_ingreso correspondiente (AtolonTrack)
+        // El SDK frontend marca 'pendiente' al hacer click "Pagar". El webhook
+        // lo escala a 'confirmado' aquí — ahora SÍ es venta real para reportes.
+        await SB.from("track_ingresos").update({
+          estado_pago: "confirmado",
+        }).eq("reserva_id", reserva.id).then(() => {}).catch(() => {});
+
+        // Marcar sesión como convertida (solo cuando hay venta real confirmada)
+        await SB.from("track_sesiones").update({
+          convertida: true,
+          ingreso: monto,
+        }).in("id",
+          (await SB.from("track_ingresos").select("sesion_id").eq("reserva_id", reserva.id))
+            .data?.map((r: any) => r.sesion_id).filter(Boolean) || []
+        ).then(() => {}).catch(() => {});
+
         // Cerrar lead asociado si existe
         await SB.from("leads").update({
           stage: "Cerrado Ganado",
@@ -369,12 +385,21 @@ serve(async (req) => {
 
         console.log(`✓ Reserva ${reserva.id} confirmada vía Wompi (${monto} COP)`);
 
-        // Enviar email + WhatsApp en paralelo (best-effort, no falla el webhook)
+        // Enviar email + WhatsApp + Tatiana follow-up en paralelo (best-effort)
         await Promise.all([
           enviarEmailConfirmacion(reserva).catch(e =>
             console.warn(`[wompi] Email send failed: ${(e as Error).message}`)),
           enviarWhatsAppConfirmacion(SB, reserva).catch(e =>
             console.warn(`[wompi] WhatsApp send failed: ${(e as Error).message}`)),
+          // Tatiana retoma la conversación post-pago (idempotente, solo si hay conversación)
+          fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/tatiana-chat/post-pago-followup`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+            },
+            body: JSON.stringify({ reserva_id: reserva.id }),
+          }).catch(e => console.warn(`[wompi] Tatiana followup failed: ${(e as Error).message}`)),
         ]);
 
         return jsonResp({ received: true, processed: true, action: "confirmed", reserva_id: reserva.id });
@@ -499,14 +524,18 @@ async function enviarConfirmacionPasadia(reserva: any): Promise<void> {
 }
 
 // ── Enviar confirmación de reserva por WhatsApp ────────────────────────────
-// Cascade fallback de templates: confirmacion_pasadia_atolon (genérica con tipo) →
-// vip_pass_confirmacion (VIP Pass) → confirmacionvip (sin variables).
+// Cascade fallback de templates por idioma:
+//   - reserva.idioma === "en": intenta `*_en` aprobados → fallback a ES + nota EN texto libre
+//   - reserva.idioma === "es" (default): confirmacion_pasadia_atolon → vip_pass_confirmacion → confirmacionvip
 // Si todas fallan o la reserva no tiene teléfono, no rompe el webhook.
 async function enviarWhatsAppConfirmacion(SB: any, reserva: any): Promise<void> {
   const telefono = reserva?.telefono || reserva?.contacto;
   if (!telefono || !/\d{7,}/.test(telefono)) return;
 
-  let horaSalida = "Ver confirmación";
+  const lang: "es" | "en" = reserva?.idioma === "en" ? "en" : "es";
+  const locale = lang === "en" ? "en-US" : "es-CO";
+
+  let horaSalida = lang === "en" ? "See confirmation" : "Ver confirmación";
   if (reserva.salida_id) {
     try {
       const { data: salida } = await SB.from("salidas")
@@ -515,36 +544,48 @@ async function enviarWhatsAppConfirmacion(SB: any, reserva: any): Promise<void> 
     } catch { /* ignore */ }
   }
 
-  const nombre = (reserva.nombre || "").split(" ")[0] || reserva.nombre || "Cliente";
+  const nombre = (reserva.nombre || "").split(" ")[0] || reserva.nombre || (lang === "en" ? "Guest" : "Cliente");
   const fecha = reserva.fecha
-    ? new Date(reserva.fecha + "T12:00:00").toLocaleDateString("es-CO", { weekday: "long", day: "numeric", month: "long" })
+    ? new Date(reserva.fecha + "T12:00:00").toLocaleDateString(locale, { weekday: "long", day: "numeric", month: "long" })
     : "";
-  const totalCOP = `$${Number(reserva.total || 0).toLocaleString("es-CO")} COP`;
-  const tipo = reserva.tipo || "Pasadía";
+  const totalCOP = `$${Number(reserva.total || 0).toLocaleString(locale)} COP`;
+  const tipo = reserva.tipo || (lang === "en" ? "Day pass" : "Pasadía");
 
   const sendUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/send-whatsapp/send`;
+  const sendTextUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/send-whatsapp/send-text`;
   const headers = {
     "Content-Type": "application/json",
     "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
     "apikey": Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
   };
 
-  const trySend = async (template: string, params: string[], lang: string) => {
+  const trySend = async (template: string, params: string[], tplLang: string) => {
     const r = await fetch(sendUrl, {
       method: "POST",
       headers,
-      body: JSON.stringify({ to: telefono, template, params, lang, reserva_id: reserva.id }),
+      body: JSON.stringify({ to: telefono, template, params, lang: tplLang, reserva_id: reserva.id }),
     });
     const d = await r.json().catch(() => ({}));
     return r.ok && !d?.error;
   };
 
-  // 1) Genérica con tipo (confirmacion_pasadia_atolon)
+  // EN flow: intenta templates *_en (cuando estén aprobadas en Meta).
+  // Si ninguna existe todavía, cae al ES y luego envía una nota en EN como texto libre
+  // (válido dentro de la ventana 24h post-pago).
+  if (lang === "en") {
+    if (await trySend("confirmacion_pasadia_atolon_en", [nombre, tipo, fecha, String(reserva.pax || 1), horaSalida, totalCOP, reserva.id], "en")) return;
+    if (await trySend("vip_pass_confirmacion_en",       [nombre, fecha, String(reserva.pax || 1), horaSalida, totalCOP, reserva.id], "en")) return;
+    // Fallback: ES template + EN texto libre como segundo mensaje (24h window post-payment).
+    const esOk = await trySend("vip_pass_confirmacion", [nombre, fecha, String(reserva.pax || 1), horaSalida, totalCOP, reserva.id], "es");
+    if (esOk) {
+      const enNote = `Hi ${nombre}! Your booking is confirmed for ${fecha} · ${reserva.pax || 1} guest(s) · departure ${horaSalida}. Total paid: ${totalCOP}. Booking ID: ${reserva.id}. Arrive 20 minutes before departure at La Bodeguita Pier — Gate 1. Pier tax COP 18,000 per person (not included in the day pass). See full details: https://www.atoloncartagena.com/zarpe-info?id=${reserva.id}&lang=en`;
+      await fetch(sendTextUrl, { method: "POST", headers, body: JSON.stringify({ to: telefono, body: enNote, reserva_id: reserva.id }) }).catch(() => {});
+    }
+    return;
+  }
+
+  // ES flow (default): cascade existente
   if (await trySend("confirmacion_pasadia_atolon", [nombre, tipo, fecha, String(reserva.pax || 1), horaSalida, totalCOP, reserva.id], "es")) return;
-
-  // 2) VIP-específica
-  if (await trySend("vip_pass_confirmacion", [nombre, fecha, String(reserva.pax || 1), horaSalida, totalCOP, reserva.id], "es")) return;
-
-  // 3) Fallback sin variables
+  if (await trySend("vip_pass_confirmacion",       [nombre, fecha, String(reserva.pax || 1), horaSalida, totalCOP, reserva.id], "es")) return;
   await trySend("confirmacionvip", [], "es_CO");
 }
