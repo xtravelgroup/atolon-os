@@ -220,42 +220,18 @@ export default function PoolService() {
 
   return (
     <div style={{ padding: isMobile ? 12 : 20, maxWidth: 1400, margin: "0 auto" }}>
-      {/* Header */}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10, marginBottom: 16 }}>
-        <div>
-          <div style={{ fontSize: isMobile ? 20 : 24, fontWeight: 800, color: "#fff", display: "flex", alignItems: "center", gap: 8 }}>
-            🏊 Pool Service
-          </div>
-          <div style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", marginTop: 2 }}>
-            Pedidos desde piscinas, beach, cabañas y bar — los huéspedes piden con QR.
-          </div>
-        </div>
-      </div>
-
-      {/* KPIs */}
-      <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${isMobile ? 130 : 170}px, 1fr))`, gap: 10, marginBottom: 16 }}>
-        <Kpi label="Pendientes"      valor={kpis.pendientes}             color={B.warning} />
-        <Kpi label="Pedidos hoy"     valor={kpis.hoy}                    color={B.sky} />
-        <Kpi label="Ventas hoy"      valor={COP(kpis.ventas_hoy)}        color={B.success} />
-        <Kpi label="Áreas activas"   valor={kpis.areas_activas}          color={B.pool} />
-      </div>
-
-      {/* Tabs */}
+      {/* Navegación mínima — solo lo esencial para cambiar de vista */}
       <div style={{ display: "flex", gap: 6, marginBottom: 16, flexWrap: "wrap" }}>
         {[
-          // Plano de piscina como landing — es lo PRIMERO que ve el mesero al entrar.
-          { k: "nuevo",   l: "🏊 Plano · Nuevo pedido" },
-          { k: "pedidos", l: `📋 Pedidos (${kpis.pendientes})` },
-          { k: "areas",   l: `📍 Áreas (${areas.length})` },
+          { k: "nuevo",   l: "🏊 Plano" },
+          { k: "pedidos", l: `📋 Pedidos${kpis.pendientes ? ` (${kpis.pendientes})` : ""}` },
+          { k: "areas",   l: "📍 Áreas" },
         ].map(t => (
-          <button key={t.k} onClick={() => setTab(t.k)} style={BTN(tab === t.k ? B.pool : B.navyMid, tab === t.k ? B.navy : "#fff")}>
+          <button key={t.k} onClick={() => setTab(t.k)}
+            style={BTN(tab === t.k ? B.pool : B.navyMid, tab === t.k ? B.navy : "#fff")}>
             {t.l}
           </button>
         ))}
-        {/* Recordatorio: la gestión del menú vive en Productos (no duplicar acá) */}
-        <a href="#/productos" style={{ ...BTN("transparent", "rgba(255,255,255,0.5)"), border: `1px dashed rgba(255,255,255,0.15)`, textDecoration: "none", fontSize: 11 }}>
-          📚 Menú vive en Productos →
-        </a>
       </div>
 
       {tab === "pedidos" && (
@@ -267,15 +243,6 @@ export default function PoolService() {
       {tab === "areas" && (
         <AreasManager areas={areas} onChanged={load} />
       )}
-    </div>
-  );
-}
-
-function Kpi({ label, valor, color }) {
-  return (
-    <div style={{ background: B.navyMid, padding: 12, borderRadius: 10, borderLeft: `3px solid ${color}` }}>
-      <div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: "0.05em" }}>{label}</div>
-      <div style={{ fontSize: 18, fontWeight: 800, color, marginTop: 4 }}>{valor}</div>
     </div>
   );
 }
