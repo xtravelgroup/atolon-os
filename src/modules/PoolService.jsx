@@ -452,7 +452,10 @@ function NuevoPedido({ areas, items, onSaved, enviarALoggro, isMobile }) {
     };
     if (spotSel) {
       payload.spot_id     = spotSel.id;
-      payload.area_id     = `spot:${spotSel.id}`;       // legacy compat
+      // area_id tiene FK a pool_service_areas. Para spots del floor plan NO
+      // existe ese registro → debe ir null (el link real es spot_id). Antes
+      // se ponía "spot:C13" y violaba el FK → el pedido NO se guardaba.
+      payload.area_id     = null;
       payload.area_nombre = `${spotSel.id} (Cama ${spotSel.id.startsWith("PS") ? "Pool Side" : "Exterior"})`;
     } else {
       payload.area_id     = areaId;
@@ -477,13 +480,18 @@ function NuevoPedido({ areas, items, onSaved, enviarALoggro, isMobile }) {
         notas:    notas || null,
         updated_at: new Date().toISOString(),
       };
-      if (asignSel?.id) {
-        await supabase.from("floorplan_asignaciones").update(asignPayload).eq("id", asignSel.id);
-      } else {
-        await supabase.from("floorplan_asignaciones").insert({
-          id: `FPA-${Date.now()}`, ...asignPayload, created_at: new Date().toISOString(),
-        }).then(() => {}).catch(() => {});
-      }
+      // Upsert por (spot_id, fecha) — hay UNIQUE constraint en esa combinación.
+      // Antes el insert por id chocaba con el UNIQUE si ya existía una fila
+      // para esa cama+fecha y el error se tragaba en silencio (huésped no se
+      // recordaba). Upsert resuelve insert o update en una sola operación.
+      const { error: asignErr } = await supabase
+        .from("floorplan_asignaciones")
+        .upsert(
+          { id: asignSel?.id || `FPA-${Date.now()}`, ...asignPayload,
+            created_at: asignSel?.created_at || new Date().toISOString() },
+          { onConflict: "spot_id,fecha" },
+        );
+      if (asignErr) console.warn("[PoolService] no se pudo guardar asignación de cama:", asignErr.message);
     }
 
     // Si el operador pulsó "Crear y enviar a Loggro", dispara el envío a cocina.
