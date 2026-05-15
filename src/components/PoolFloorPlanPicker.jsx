@@ -13,6 +13,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { B } from "../brand";
 import { supabase } from "../lib/supabase";
+import { useBreakpoint } from "../lib/responsive.js";
 
 const ESTADOS = {
   libre:      { color: B.success,  bg: B.success + "22", icon: "○" },
@@ -36,6 +37,7 @@ export default function PoolFloorPlanPicker({
   // visualmente). "sm" para vistas compactas (admin / tooltips).
   size = "lg",
 }) {
+  const { isMobile } = useBreakpoint();
   const [spots, setSpots] = useState([]);
   const [asignaciones, setAsignaciones] = useState({});
   const [loading, setLoading] = useState(true);
@@ -96,10 +98,14 @@ export default function PoolFloorPlanPicker({
     return <div style={{ textAlign: "center", padding: 30, color: B.muted }}>Cargando…</div>;
   }
 
-  // Tamaños proporcionales según size — todas las camas tienen mismo tamaño
-  // (no se distingue por mobiliario; la ubicación es lo que las diferencia).
+  // Tamaños proporcionales — todas las camas tienen mismo tamaño.
+  // En TELÉFONO (95% del uso real: meseros con iPhone/Samsung/Motorola) usamos
+  // un perfil compacto que mete TODO el plano espacial en ~360px de ancho sin
+  // scroll horizontal — el mesero reconoce la ubicación física aunque sea chico.
   const isLg = size === "lg";
-  const SIZES = isLg
+  const SIZES = isMobile
+    ? { camaW: 40,  camaH: 44, gap: 4,  pad: 8,  poolH: 260, fontSpot: 9,  fontHuesped: 0  }
+    : isLg
     ? { camaW: 100, camaH: 76, gap: 10, pad: 24, poolH: 480, fontSpot: 16, fontHuesped: 11 }
     : { camaW: 60,  camaH: 50, gap: 6,  pad: 16, poolH: 340, fontSpot: 11, fontHuesped: 9  };
 
@@ -108,12 +114,13 @@ export default function PoolFloorPlanPicker({
       background: B.navy, borderRadius: 14, padding: SIZES.pad,
       border: `2px dashed ${B.success}44`,
       maxWidth: 1400, margin: "0 auto",
+      width: "100%", boxSizing: "border-box", overflowX: "hidden",
     }}>
       {/* PISCINA CENTRAL — fila top */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr 1fr", gap: SIZES.gap * 1.5, marginBottom: SIZES.gap }}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr 1fr", gap: isMobile ? SIZES.gap : SIZES.gap * 1.5, marginBottom: SIZES.gap }}>
         <div />
         <div>
-          {showLabels && <SectionLabel size={size}>PISCINA CENTRAL</SectionLabel>}
+          {showLabels && <SectionLabel size={size} mobile={isMobile}>{isMobile ? "CENTRAL" : "PISCINA CENTRAL"}</SectionLabel>}
           <div style={{ display: "flex", gap: SIZES.gap, justifyContent: "center", padding: `${SIZES.gap}px 0` }}>
             {grouped.piscina_central.central.map(s => (
               <Spot key={s.id} spot={s} asign={asignaciones[s.id]}
@@ -127,10 +134,10 @@ export default function PoolFloorPlanPicker({
         <div />
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr 1fr", gap: SIZES.gap * 1.5 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr 1fr", gap: isMobile ? SIZES.gap : SIZES.gap * 1.5 }}>
         {/* DERECHA: camas exteriores (C1x) | camas poolside (PS1x) */}
         <div>
-          {showLabels && <SectionLabel size={size}>PISCINA DERECHA</SectionLabel>}
+          {showLabels && <SectionLabel size={size} mobile={isMobile}>{isMobile ? "DER." : "PISCINA DERECHA"}</SectionLabel>}
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: SIZES.gap, padding: `${SIZES.gap}px 0` }}>
             <div style={{ display: "flex", flexDirection: "column", gap: SIZES.gap }}>
               {grouped.piscina_derecha.exterior.map(s => (
@@ -159,7 +166,8 @@ export default function PoolFloorPlanPicker({
           borderRadius: 16, minHeight: SIZES.poolH, margin: `${SIZES.gap}px 0`,
           display: "flex", alignItems: "center", justifyContent: "center",
           color: "rgba(255,255,255,0.7)",
-          fontSize: isLg ? 24 : 13, fontWeight: 800, letterSpacing: "0.25em",
+          fontSize: isMobile ? 11 : isLg ? 24 : 13, fontWeight: 800,
+          letterSpacing: isMobile ? "0.05em" : "0.25em",
           textShadow: "0 2px 6px rgba(0,0,0,0.35)",
           boxShadow: "inset 0 6px 30px rgba(0,0,0,0.25), 0 2px 12px rgba(14,165,233,0.3)",
           position: "relative",
@@ -177,7 +185,7 @@ export default function PoolFloorPlanPicker({
 
         {/* IZQUIERDA: camas poolside (PS2x) | camas exteriores (C2x) */}
         <div>
-          {showLabels && <SectionLabel size={size}>PISCINA IZQUIERDA</SectionLabel>}
+          {showLabels && <SectionLabel size={size} mobile={isMobile}>{isMobile ? "IZQ." : "PISCINA IZQUIERDA"}</SectionLabel>}
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: SIZES.gap, padding: `${SIZES.gap}px 0` }}>
             <div style={{ display: "flex", flexDirection: "column", gap: SIZES.gap }}>
               {grouped.piscina_izquierda.poolside.map(s => (
@@ -249,10 +257,12 @@ function Spot({ spot, asign, selected, showEstadoColor, onClick, sizes }) {
       {SZ.fontSpot > 13 && (
         <div style={{ fontSize: 18, lineHeight: 1, marginBottom: 2 }}>🛋</div>
       )}
-      <div style={{ fontSize: SZ.fontSpot, fontWeight: 800, color: showEstadoColor ? cfg.color : B.white, letterSpacing: "0.06em" }}>
+      <div style={{ fontSize: SZ.fontSpot, fontWeight: 800, color: showEstadoColor ? cfg.color : B.white, letterSpacing: "0.04em" }}>
         {spot.id}
       </div>
-      {asign?.huesped && (
+      {/* Nombre del huésped — oculto en teléfono (fontHuesped=0): no hay espacio
+          a 40px de ancho. El badge de estado en la esquina ya indica ocupación. */}
+      {asign?.huesped && SZ.fontHuesped > 0 && (
         <div style={{
           fontSize: SZ.fontHuesped, color: B.white, marginTop: 2,
           maxWidth: SZ.camaW - 8,
@@ -277,15 +287,17 @@ function Spot({ spot, asign, selected, showEstadoColor, onClick, sizes }) {
   );
 }
 
-function SectionLabel({ children, size }) {
+function SectionLabel({ children, size, mobile }) {
   const isLg = size === "lg";
   return (
     <div style={{
       background: B.navyMid, color: B.white,
-      padding: isLg ? "8px 14px" : "5px 10px",
+      padding: mobile ? "3px 4px" : isLg ? "8px 14px" : "5px 10px",
       borderRadius: 6, textAlign: "center",
-      fontSize: isLg ? 13 : 10, fontWeight: 700, letterSpacing: "0.08em",
+      fontSize: mobile ? 8 : isLg ? 13 : 10,
+      fontWeight: 700, letterSpacing: mobile ? "0.02em" : "0.08em",
       boxShadow: "0 2px 6px rgba(0,0,0,0.2)",
+      whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
     }}>
       {children}
     </div>
