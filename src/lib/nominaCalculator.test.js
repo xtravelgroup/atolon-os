@@ -5,7 +5,7 @@ import {
   salarioBaseProporcional, valorDiaCalendario,
   calcularAuxilioTransporte, aportesEmpleado,
   clasificarNovedades, calcularNominaEmpleado,
-  ventanaNovedades, calcularHorasDia, resumenMarcaciones, tarifaHoraEmpleado,
+  ventanaNovedades, calcularHorasDia, desglosarPeriodo, tarifaHoraEmpleado,
   SMMLV_2026, AUX_TRANSPORTE_2026, FESTIVOS_CO_2026, NOVEDAD_TIPOS,
 } from "./nominaCalculator.js";
 
@@ -242,97 +242,93 @@ describe("ventanaNovedades — desfasada de los días trabajados", () => {
   });
 });
 
-describe("calcularHorasDia", () => {
-  const tarifa = 10_000;
-  it("8h diurnas día ordinario = base sin recargos", () => {
-    const r = calcularHorasDia({ fecha: "2026-05-11", entrada: "08:00", salida: "16:00", tarifaHora: tarifa });
-    expect(r.ordinarias).toBe(8);
-    expect(r.extra).toBe(0);
-    expect(r.recargo_nocturno).toBe(0);
-    expect(r.recargo_dom_festivo).toBe(0);
-    expect(r.valor).toBe(80_000);
-  });
-  it("turno nocturno 22:00→06:00 aplica recargo nocturno 35%", () => {
-    const r = calcularHorasDia({ fecha: "2026-05-11", entrada: "22:00", salida: "06:00", tarifaHora: tarifa });
+describe("calcularHorasDia (solo horas, informativo)", () => {
+  it("8h diurnas → horas/nocturnas/festivo", () => {
+    const r = calcularHorasDia({ fecha: "2026-05-11", entrada: "08:00", salida: "16:00" });
     expect(r.horas).toBe(8);
-    expect(r.recargo_nocturno).toBe(28_000); // 8 × 10.000 × 0.35
-    expect(r.valor).toBe(108_000);
+    expect(r.horas_nocturnas).toBe(0);
+    expect(r.es_festivo).toBe(false);
   });
-  it("DOMINGO no paga recargo (convención Atolón)", () => {
-    const r = calcularHorasDia({ fecha: "2026-05-10", entrada: "08:00", salida: "16:00", tarifaHora: tarifa });
-    expect(r.es_dom_festivo).toBe(false);
-    expect(r.recargo_dom_festivo).toBe(0);
-    expect(r.valor).toBe(80_000); // como día ordinario
+  it("turno nocturno 22:00→06:00 = 8h nocturnas", () => {
+    const r = calcularHorasDia({ fecha: "2026-05-11", entrada: "22:00", salida: "06:00" });
+    expect(r.horas).toBe(8);
+    expect(r.horas_nocturnas).toBe(8);
   });
-  it("FESTIVO (no domingo) sí paga recargo 75%", () => {
-    const r = calcularHorasDia({ fecha: "2026-05-01", entrada: "08:00", salida: "16:00", tarifaHora: tarifa });
-    expect(r.es_dom_festivo).toBe(true);
-    expect(r.recargo_dom_festivo).toBe(60_000); // 8 × 10.000 × 0.75
-    expect(r.valor).toBe(140_000);
-  });
-  it("10h diurnas = 8 ordinarias + 2 extra diurnas (×1.25)", () => {
-    const r = calcularHorasDia({ fecha: "2026-05-11", entrada: "08:00", salida: "18:00", tarifaHora: tarifa });
-    expect(r.ordinarias).toBe(8);
-    expect(r.extra).toBe(2);
-    expect(r.valor_extra).toBe(25_000); // 2 × 10.000 × 1.25
-    expect(r.valor).toBe(105_000);
+  it("festivo marcado, domingo NO", () => {
+    expect(calcularHorasDia({ fecha: "2026-05-01", entrada: "08:00", salida: "16:00" }).es_festivo).toBe(true);
+    expect(calcularHorasDia({ fecha: "2026-05-10", entrada: "08:00", salida: "16:00" }).es_festivo).toBe(false);
   });
   it("entrada/salida vacías = 0", () => {
-    expect(calcularHorasDia({ fecha: "2026-05-11", entrada: "", salida: "", tarifaHora: tarifa }).valor).toBe(0);
+    expect(calcularHorasDia({ fecha: "2026-05-11", entrada: "", salida: "" }).horas).toBe(0);
   });
 });
 
-describe("resumenMarcaciones", () => {
-  it("agrega días e ignora filas sin entrada/salida", () => {
-    const r = resumenMarcaciones([
-      { fecha: "2026-05-11", entrada: "08:00", salida: "16:00" },
-      { fecha: "2026-05-12", entrada: "08:00", salida: "16:00" },
-      { fecha: "2026-05-13", entrada: "", salida: "" },
-    ], 10_000);
-    expect(r.dias_trabajados).toBe(2);
-    expect(r.valor_total).toBe(160_000);
+describe("desglosarPeriodo — recargos de ley", () => {
+  const T = 10_000;
+  it("día ordinario diurno: sin adicionales", () => {
+    const d = desglosarPeriodo([{ fecha: "2026-05-11", entrada: "08:00", salida: "16:00" }], T);
+    expect(d.total_adicional).toBe(0);
+    expect(d.horas_ordinarias).toBe(8);
+    expect(d.horas_extra).toBe(0);
+  });
+  it("domingo NO paga recargo", () => {
+    const d = desglosarPeriodo([{ fecha: "2026-05-10", entrada: "08:00", salida: "16:00" }], T);
+    expect(d.total_adicional).toBe(0);
+  });
+  it("nocturno 22:00→06:00 = recargo nocturno +35%", () => {
+    const d = desglosarPeriodo([{ fecha: "2026-05-11", entrada: "22:00", salida: "06:00" }], T);
+    expect(d.recargo_nocturno).toBe(Math.round(8 * T * 0.35)); // 28.000
+    expect(d.total_adicional).toBe(28_000);
+  });
+  it("festivo diurno = recargo festivo +75%", () => {
+    const d = desglosarPeriodo([{ fecha: "2026-05-01", entrada: "08:00", salida: "16:00" }], T);
+    expect(d.recargo_festivo).toBe(Math.round(8 * T * 0.75)); // 60.000
+  });
+  it("hora extra es SEMANAL: 48h en una semana = 44 ord + 4 extra diurna", () => {
+    const sem = ["2026-05-11","2026-05-12","2026-05-13","2026-05-14","2026-05-15","2026-05-16"]
+      .map(f => ({ fecha: f, entrada: "08:00", salida: "16:00" }));
+    const d = desglosarPeriodo(sem, T);
+    expect(d.horas).toBe(48);
+    expect(d.horas_ordinarias).toBe(44);
+    expect(d.horas_extra).toBe(4);
+    expect(d.extra_diurna).toBe(Math.round(4 * T * 1.25)); // 50.000
+    expect(d.total_recargos).toBe(0);
   });
 });
 
 describe("tarifaHoraEmpleado", () => {
-  it("usa tarifa_hora si existe", () => {
-    expect(tarifaHoraEmpleado({ tarifa_hora: 12_345, salario_base: 9_000_000 })).toBe(12_345);
-  });
-  it("default = salario_base / 240", () => {
-    expect(tarifaHoraEmpleado({ salario_base: 2_400_000 })).toBe(10_000);
+  it("salario_base / 190.6667 (95.33 h/quincena)", () => {
+    expect(tarifaHoraEmpleado({ salario_base: 1_906_667 })).toBe(10_000);
   });
 });
 
-describe("calcularNominaEmpleado — modo horas_reales (marcaciones)", () => {
-  it("base = valor del tiempo trabajado, no salario_base/2", () => {
-    const empleado = { salario_base: 2_400_000, tarifa_hora: 10_000 };
+describe("calcularNominaEmpleado — modo horas_reales", () => {
+  it("base = salario ordinario (base/2) + extras itemizados", () => {
+    const empleado = { salario_base: 1_906_667 };
+    const sem = ["2026-05-11","2026-05-12","2026-05-13","2026-05-14","2026-05-15","2026-05-16"]
+      .map(f => ({ fecha: f, entrada: "08:00", salida: "16:00" }));
+    const periodo = quincenaActual("2026-05-12");
     const r = calcularNominaEmpleado({
-      empleado,
-      periodo: quincenaActual("2026-05-10"),
-      marcaciones: [
-        { fecha: "2026-05-11", entrada: "08:00", salida: "16:00" },
-        { fecha: "2026-05-12", entrada: "08:00", salida: "16:00" },
-      ],
-      novedades: [],
-      ventana: ventanaNovedades(quincenaActual("2026-05-10")),
+      empleado, periodo, marcaciones: sem, novedades: [],
+      ventana: ventanaNovedades(periodo),
     });
     expect(r.modalidad).toBe("horas_reales");
-    expect(r.dias_trabajados).toBe(2);
-    expect(r.devengado.salario_base_periodo).toBe(160_000);
-    expect(r.marcaciones.valor_total).toBe(160_000);
+    expect(r.devengado.salario_ordinario).toBe(Math.round(1_906_667 / 2));
+    expect(r.devengado.total_extras).toBe(50_000);
+    expect(r.devengado.horas_extra).toBe(4);
     expect(r.neto).toBeGreaterThan(0);
   });
 
-  it("novedades se filtran por la ventana desfasada, no por la quincena", () => {
-    const empleado = { salario_base: 2_400_000, tarifa_hora: 10_000 };
-    const periodo = quincenaActual("2026-05-10");      // Pago 15 → días 1–15 may
+  it("novedades se filtran por la ventana desfasada", () => {
+    const empleado = { salario_base: 1_906_667 };
+    const periodo = quincenaActual("2026-05-10");
     const ventana = ventanaNovedades(periodo);          // 26 abr → 10 may
     const r = calcularNominaEmpleado({
       empleado, periodo, ventana,
       marcaciones: [{ fecha: "2026-05-05", entrada: "08:00", salida: "16:00" }],
       novedades: [
-        { tipo: "bonificacion", fecha_inicio: "2026-04-28", valor: 50_000 }, // dentro de ventana
-        { tipo: "bonificacion", fecha_inicio: "2026-05-14", valor: 99_000 }, // fuera de ventana (>10 may)
+        { tipo: "bonificacion", fecha_inicio: "2026-04-28", valor: 50_000 },
+        { tipo: "bonificacion", fecha_inicio: "2026-05-14", valor: 99_000 },
       ],
     });
     expect(r.devengado.extras_recargos_bonos).toBe(50_000);
@@ -346,7 +342,7 @@ describe("calcularNominaEmpleado — modo horas_reales (marcaciones)", () => {
       novedades: [],
     });
     expect(r.modalidad).toBe("salario_fijo");
-    expect(r.devengado.salario_base_periodo).toBe(1_000_000);
+    expect(r.devengado.salario_ordinario).toBe(1_000_000);
   });
 });
 

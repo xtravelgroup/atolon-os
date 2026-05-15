@@ -16,8 +16,8 @@ import { useMobile } from "../lib/useMobile";
 import { logAccion } from "../lib/logAccion";
 import {
   quincenaActual, quincenaAnterior, diasDelPeriodo,
-  calcularNominaEmpleado, calcularHorasDia, ventanaNovedades, tarifaHoraEmpleado,
-  NOVEDAD_TIPOS, SMMLV_2026, AUX_TRANSPORTE_2026, FESTIVOS_CO_2026,
+  calcularNominaEmpleado, calcularHorasDia, desglosarPeriodo, ventanaNovedades,
+  tarifaHoraEmpleado, NOVEDAD_TIPOS, SMMLV_2026, AUX_TRANSPORTE_2026, FESTIVOS_CO_2026,
 } from "../lib/nominaCalculator.js";
 
 // Ventana de novedades del período (desfasada). Defensivo si es "Personalizado".
@@ -69,8 +69,9 @@ function MarcacionesGrid({ empleado, periodo, ventana, marcaciones, onSave }) {
 
   const set = (fecha, campo, val) => setGrid(g => ({ ...g, [fecha]: { ...g[fecha], [campo]: val } }));
   const filas = dias.map(f => ({ fecha: f, ...grid[f] }));
-  const totalValor = filas.reduce((s, f) =>
-    s + (f.entrada && f.salida ? calcularHorasDia({ fecha: f.fecha, entrada: f.entrada, salida: f.salida, tarifaHora: tarifa }).valor : 0), 0);
+  // La hora extra depende del acumulado SEMANAL → el dinero se calcula a
+  // nivel período, no por día. Aquí solo previsualizamos horas + adicionales.
+  const desg = desglosarPeriodo(filas, tarifa);
 
   const guardar = async () => {
     setGuardando(true);
@@ -84,17 +85,19 @@ function MarcacionesGrid({ empleado, periodo, ventana, marcaciones, onSave }) {
         <div style={{ fontSize: 11, color: B.sky, textTransform: "uppercase", letterSpacing: 1, fontWeight: 700 }}>
           🕑 Marcaciones · {periodo.etiqueta}
         </div>
-        <div style={{ fontSize: 12, color: B.sand, fontWeight: 700 }}>{COP(totalValor)}</div>
+        <div style={{ fontSize: 12, color: B.sand, fontWeight: 700 }}>
+          {desg.horas_ordinarias}h ord · {desg.horas_extra}h extra
+        </div>
       </div>
       <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", marginBottom: 10 }}>
-        Hora de entrada/salida por día trabajado · tarifa {COP(tarifa)}/h
+        Entrada/salida por día · tarifa {COP(tarifa)}/h · adicionales (recargos + extra): {COP(desg.total_adicional)}
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
         {filas.map(f => {
           const d = new Date(f.fecha + "T12:00:00");
           const fest = FESTIVOS_CO_2026.has(f.fecha); // domingos = día normal (sin recargo)
           const pre = (f.entrada && f.salida)
-            ? calcularHorasDia({ fecha: f.fecha, entrada: f.entrada, salida: f.salida, tarifaHora: tarifa })
+            ? calcularHorasDia({ fecha: f.fecha, entrada: f.entrada, salida: f.salida })
             : null;
           return (
             <div key={f.fecha} style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 0", borderBottom: `1px solid ${B.navyLight}33` }}>
@@ -106,7 +109,7 @@ function MarcacionesGrid({ empleado, periodo, ventana, marcaciones, onSave }) {
               <input type="time" value={f.salida} onChange={e => set(f.fecha, "salida", e.target.value)}
                 style={{ ...IS, width: 96, padding: "6px 8px" }} />
               <div style={{ flex: 1, textAlign: "right", fontSize: 11, color: pre ? B.success : "rgba(255,255,255,0.25)" }}>
-                {pre ? `${pre.horas}h · ${COP(pre.valor)}` : "—"}
+                {pre ? `${pre.horas}h${pre.horas_nocturnas ? ` · ${pre.horas_nocturnas}h noct` : ""}` : "—"}
               </div>
             </div>
           );
@@ -151,11 +154,37 @@ function DetalleDrawer({ empleado, calc, onClose, onAddNovedad, onDeleteNovedad,
         {/* DEVENGADO */}
         <div style={{ background: B.navyMid, borderRadius: 12, padding: 16, marginBottom: 14 }}>
           <div style={{ fontSize: 11, color: B.success, textTransform: "uppercase", letterSpacing: 1, fontWeight: 700, marginBottom: 12 }}>✓ Devengado</div>
-          <Row label="Salario base período" value={COP(calc.devengado.salario_base_periodo)} sub={calc.dias_no_trabajados > 0 ? `−${calc.dias_no_trabajados} día(s) por faltas` : `${calc.dias_trabajados} días trabajados`} />
+          <Row
+            label={`Salario ordinario (${calc.marcaciones?.horas_ordinarias ?? 0} de 95.33 h)`}
+            value={COP(calc.devengado.salario_ordinario)}
+            sub={calc.dias_no_trabajados > 0 ? `−${calc.dias_no_trabajados} día(s) por faltas` : `${calc.dias_trabajados} días · tarifa ${COP(calc.tarifa_hora)}/h`} />
+
+          {(() => {
+            const dg = calc.marcaciones; const d = calc.devengado;
+            const conceptos = dg ? [
+              ["Recargo nocturno (+35%)",          dg.h_recargo_nocturno,         d.recargo_nocturno],
+              ["Recargo festivo (+75%)",           dg.h_recargo_festivo,          d.recargo_festivo],
+              ["Recargo nocturno festivo (+110%)", dg.h_recargo_nocturno_festivo, d.recargo_nocturno_festivo],
+              ["Hora extra diurna (×1.25)",        dg.h_extra_diurna,             d.extra_diurna],
+              ["Hora extra nocturna (×1.75)",      dg.h_extra_nocturna,           d.extra_nocturna],
+              ["Hora extra festiva diurna (×2.0)", dg.h_extra_festiva_diurna,     d.extra_festiva_diurna],
+              ["Hora extra festiva nocturna (×2.5)", dg.h_extra_festiva_nocturna, d.extra_festiva_nocturna],
+            ].filter(([, , v]) => v > 0) : [];
+            if (!conceptos.length) return null;
+            return (
+              <>
+                <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", marginTop: 12, marginBottom: 6 }}>Recargos de ley</div>
+                {conceptos.map(([label, horas, valor]) => (
+                  <Row key={label} label={label} value={"+ " + COP(valor)} sub={`${horas} h`} />
+                ))}
+              </>
+            );
+          })()}
+
           <Row label="Auxilio transporte" value={COP(calc.devengado.auxilio_transporte)} muted={calc.devengado.auxilio_transporte === 0} sub={calc.devengado.auxilio_transporte === 0 && empleado.salario_base > (2 * SMMLV_2026) ? "no aplica (>2 SMMLV)" : null} />
           {calc.devengado.items.length > 0 && (
             <>
-              <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", marginTop: 12, marginBottom: 6 }}>Bonos / extras / recargos</div>
+              <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", marginTop: 12, marginBottom: 6 }}>Bonos / novedades manuales</div>
               {calc.devengado.items.map((n, i) => (
                 <Row key={n.id || i} label={n.label} value={"+ " + COP(Math.abs(n.valor))}
                   sub={n.descripcion || `${n.fecha_inicio || ""}`}
@@ -487,10 +516,11 @@ export default function ProcesarNomina() {
           documento: empleado.cedula,
           cargo: empleado.cargo,
           area: empleado.departamento_id,
-          valor_dia: calc.devengado.salario_base_periodo,
+          valor_dia: calc.devengado.salario_ordinario,
           horas: calc.marcaciones?.horas ?? calc.dias_trabajados * 8,
           transporte: calc.devengado.auxilio_transporte,
-          bonificacion: calc.devengado.extras_recargos_bonos,
+          // recargos de ley + horas extra + bonos manuales
+          bonificacion: calc.devengado.total_recargos + calc.devengado.total_extras + calc.devengado.extras_recargos_bonos,
           deducciones: calc.deducciones.subtotal,
           total: calc.neto,
           metodo_pago: "transferencia",
@@ -570,7 +600,7 @@ export default function ProcesarNomina() {
       {/* KPIs */}
       <div style={{ display: "flex", flexWrap: "wrap", gap: 12, marginBottom: 20 }}>
         <Kpi label="Empleados activos" value={empleadosFiltrados.length} color={B.sky} />
-        <Kpi label="Salario base período" value={COP(totales.base)} sub="base/2 × empleados" />
+        <Kpi label="Salario ordinario" value={COP(totales.base)} sub="95.33 h/quincena × empleados" />
         <Kpi label="Aux. transporte" value={COP(totales.aux)} sub={`${AUX_TRANSPORTE_2026.toLocaleString("es-CO")} máx/mes`} />
         <Kpi label="Novedades + (bonos/extras)" value={COP(totales.extras)} color={B.success} />
         <Kpi label="Novedades − (descuentos)" value={COP(totales.descuentos)} color={B.warning} />

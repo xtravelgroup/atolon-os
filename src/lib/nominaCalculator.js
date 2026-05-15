@@ -130,15 +130,22 @@ export function esDominical(fechaIso) {
   return d.getDay() === 0;
 }
 
-// ── Marcaciones (entrada/salida) → horas + recargos ──────────────────────────
-// Modelo CO. Constantes ajustables si cambia la ley o la convención interna.
-export const JORNADA_ORDINARIA_HORAS = 8;     // jornada legal diaria
-export const NOCTURNO_INICIO_H       = 21;    // 21:00 inicia franja nocturna
-export const NOCTURNO_FIN_H          = 6;     // 06:00 termina franja nocturna
-export const REC_NOCTURNO            = 0.35;  // +35% recargo nocturno
-export const REC_DOM_FESTIVO         = 0.75;  // +75% recargo festivo (domingos NO)
-export const FACTOR_EXTRA_DIURNA     = 0.25;  // hora extra diurna = tarifa × 1.25
-export const FACTOR_EXTRA_NOCTURNA   = 0.75;  // hora extra nocturna = tarifa × 1.75
+// ── Marcaciones (entrada/salida) → horas + recargos de ley ───────────────────
+// Modelo CO 2026 (jornada 44 h/sem, Ley 2101). Constantes ajustables.
+export const HORAS_QUINCENA_LEGAL = 95.33333333;          // h ordinarias/quincena
+export const HORAS_MES_LEGAL      = 190.66666667;         // = 95.3333 × 2
+export const JORNADA_SEMANAL_HORAS = 44;                  // tope ordinario semanal
+export const NOCTURNO_INICIO_H    = 21;                   // 21:00 inicia nocturno
+export const NOCTURNO_FIN_H       = 6;                    // 06:00 termina nocturno
+// Recargos sobre la hora ordinaria (aditivos: la hora base ya está en el salario).
+export const REC_NOCTURNO          = 0.35;  // recargo nocturno
+export const REC_FESTIVO           = 0.75;  // recargo festivo (domingos NO)
+export const REC_NOCTURNO_FESTIVO  = 1.10;  // nocturno + festivo (0.35 + 0.75)
+// Horas extra: multiplicador total (no están cubiertas por el salario).
+export const EXTRA_DIURNA          = 1.25;  // hora extra diurna
+export const EXTRA_NOCTURNA        = 1.75;  // hora extra nocturna
+export const EXTRA_FESTIVA_DIURNA  = 2.00;  // hora extra festiva diurna
+export const EXTRA_FESTIVA_NOCTURNA = 2.50; // hora extra festiva nocturna
 
 function hhmmAMin(s) {
   if (!s) return null;
@@ -147,101 +154,136 @@ function hhmmAMin(s) {
   return h * 60 + (Number(m) || 0);
 }
 
-// Minutos del intervalo [ini,fin) (en min absolutos, fin puede pasar de 1440)
-// que caen dentro de la franja nocturna [21:00,24:00) ∪ [00:00,06:00).
-function minutosNocturnos(ini, fin) {
-  let noct = 0;
-  for (let t = ini; t < fin; t++) {
-    const hod = ((t % 1440) + 1440) % 1440;     // minuto del día
-    const h = Math.floor(hod / 60);
-    if (h >= NOCTURNO_INICIO_H || h < NOCTURNO_FIN_H) noct++;
-  }
-  return noct;
+function isoAddDays(fechaIso, n) {
+  const d = new Date(fechaIso + "T12:00:00");
+  d.setDate(d.getDate() + n);
+  return isoDate(d);
+}
+
+// Lunes de la semana (clave para el tope semanal de 44 h).
+function lunesDeSemana(fechaIso) {
+  const d = new Date(fechaIso + "T12:00:00");
+  const dow = d.getDay();                 // 0=dom … 6=sáb
+  const diff = dow === 0 ? -6 : 1 - dow;  // retrocede al lunes
+  d.setDate(d.getDate() + diff);
+  return isoDate(d);
 }
 
 /**
- * Calcula horas y recargos de UN día a partir de entrada/salida.
- * Soporta turnos que cruzan medianoche (salida ≤ entrada → +24h).
- *
- * @param {object} o
- * @param {string} o.fecha       - "YYYY-MM-DD"
- * @param {string} o.entrada     - "HH:MM"
- * @param {string} o.salida      - "HH:MM"
- * @param {number} o.tarifaHora  - valor hora ordinaria diurna
- * @param {Set}    [o.festivos]
- * @returns {object} desglose del día
+ * Horas trabajadas de UN día (solo informativo para la grilla).
+ * El dinero se calcula a nivel período en desglosarPeriodo (la hora
+ * extra depende del acumulado SEMANAL, no del día).
  */
-export function calcularHorasDia({ fecha, entrada, salida, tarifaHora, festivos = FESTIVOS_CO_2026 }) {
-  const tarifa = Number(tarifaHora || 0);
-  const vacio = {
-    fecha, horas: 0, ordinarias: 0, extra: 0, horas_nocturnas: 0,
-    es_dom_festivo: false, valor_ordinario: 0, recargo_nocturno: 0,
-    recargo_dom_festivo: 0, valor_extra: 0, valor: 0,
-  };
+export function calcularHorasDia({ fecha, entrada, salida, festivos = FESTIVOS_CO_2026 }) {
   const ini = hhmmAMin(entrada);
   let fin = hhmmAMin(salida);
-  if (ini == null || fin == null) return vacio;
-  if (fin <= ini) fin += 1440;                          // turno cruza medianoche
+  if (ini == null || fin == null) return { fecha, horas: 0, horas_nocturnas: 0, es_festivo: false };
+  if (fin <= ini) fin += 1440;
   const totalMin = fin - ini;
-  if (totalMin <= 0) return vacio;
-
-  const jornadaMin = JORNADA_ORDINARIA_HORAS * 60;
-  const ordMin   = Math.min(totalMin, jornadaMin);
-  const extraMin = Math.max(0, totalMin - jornadaMin);
-  const noctMin  = minutosNocturnos(ini, fin);
-  const noctOrdMin   = Math.min(noctMin, ordMin);
-  const noctExtraMin = Math.max(0, noctMin - noctOrdMin);
-  // Convención Atolón: los DOMINGOS NO pagan recargo (es día normal de
-  // operación). Solo los festivos llevan recargo del 75%.
-  const esDF = festivos?.has?.(fecha) ?? false;
-
-  const h = (min) => min / 60;
-  const valorOrdinario   = h(ordMin) * tarifa;
-  const recargoNocturno  = h(noctOrdMin) * tarifa * REC_NOCTURNO;
-  const recargoDomFest   = esDF ? h(ordMin) * tarifa * REC_DOM_FESTIVO : 0;
-  const extraDiurnaMin   = extraMin - noctExtraMin;
-  const valorExtra       = h(extraDiurnaMin) * tarifa * (1 + FACTOR_EXTRA_DIURNA)
-                         + h(noctExtraMin)   * tarifa * (1 + FACTOR_EXTRA_NOCTURNA);
-  const valor = Math.round(valorOrdinario + recargoNocturno + recargoDomFest + valorExtra);
-
+  if (totalMin <= 0) return { fecha, horas: 0, horas_nocturnas: 0, es_festivo: false };
+  let noct = 0;
+  for (let t = ini; t < fin; t++) {
+    const h = Math.floor((((t % 1440) + 1440) % 1440) / 60);
+    if (h >= NOCTURNO_INICIO_H || h < NOCTURNO_FIN_H) noct++;
+  }
   return {
     fecha,
-    horas: +(h(totalMin)).toFixed(2),
-    ordinarias: +(h(ordMin)).toFixed(2),
-    extra: +(h(extraMin)).toFixed(2),
-    horas_nocturnas: +(h(noctMin)).toFixed(2),
-    es_dom_festivo: esDF,
-    valor_ordinario: Math.round(valorOrdinario),
-    recargo_nocturno: Math.round(recargoNocturno),
-    recargo_dom_festivo: Math.round(recargoDomFest),
-    valor_extra: Math.round(valorExtra),
-    valor,
+    horas: +(totalMin / 60).toFixed(2),
+    horas_nocturnas: +(noct / 60).toFixed(2),
+    es_festivo: festivos?.has?.(fecha) ?? false,
   };
 }
 
 /**
- * Agrega las marcaciones de un empleado en el período.
+ * Desglose legal del período a partir de las marcaciones.
+ * Las primeras 44 h de CADA semana son ordinarias; lo demás es extra.
+ * Las horas ordinarias solo suman su RECARGO (la hora base ya está en
+ * el salario). Las horas extra se pagan completas × su factor.
+ *
  * @param {Array}  marcaciones - [{ fecha, entrada, salida }]
- * @param {number} tarifaHora
+ * @param {number} tarifaHora  - salario_base / 190.6667
  * @param {Set}    [festivos]
  */
-export function resumenMarcaciones(marcaciones = [], tarifaHora = 0, festivos = FESTIVOS_CO_2026) {
-  const porDia = marcaciones
+export function desglosarPeriodo(marcaciones = [], tarifaHora = 0, festivos = FESTIVOS_CO_2026) {
+  const tarifa = Number(tarifaHora || 0);
+  const filas = marcaciones
     .filter(m => m.entrada && m.salida)
-    .map(m => calcularHorasDia({ ...m, tarifaHora, festivos }));
-  const acc = (k) => porDia.reduce((s, d) => s + (d[k] || 0), 0);
+    .map(m => ({ fecha: m.fecha, _ini: hhmmAMin(m.entrada), _fin: hhmmAMin(m.salida) }))
+    .filter(m => m._ini != null && m._fin != null)
+    .sort((a, b) => (a.fecha === b.fecha ? a._ini - b._ini : (a.fecha < b.fecha ? -1 : 1)));
+
+  const semanas = new Map();      // lunes → [maskPorMinuto] en orden cronológico
+  const diasSet = new Set();
+  let totalMin = 0, noctMinTot = 0;
+  for (const m of filas) {
+    let fin = m._fin;
+    if (fin <= m._ini) fin += 1440;
+    const dur = fin - m._ini;
+    if (dur <= 0) continue;
+    diasSet.add(m.fecha);
+    totalMin += dur;
+    for (let t = m._ini; t < fin; t++) {
+      const off = Math.floor(t / 1440);
+      const fechaReal = off ? isoAddDays(m.fecha, off) : m.fecha;
+      const hh = Math.floor((((t % 1440) + 1440) % 1440) / 60);
+      const night = hh >= NOCTURNO_INICIO_H || hh < NOCTURNO_FIN_H;
+      const fest = festivos?.has?.(fechaReal) ?? false;
+      if (night) noctMinTot++;
+      const wk = lunesDeSemana(fechaReal);
+      if (!semanas.has(wk)) semanas.set(wk, []);
+      semanas.get(wk).push((night ? 1 : 0) | (fest ? 2 : 0));
+    }
+  }
+
+  const capMin = JORNADA_SEMANAL_HORAS * 60;
+  let ordNoct = 0, ordFest = 0, ordFestNoct = 0;
+  let exDiu = 0, exNoc = 0, exFestDiu = 0, exFestNoc = 0;
+  for (const arr of semanas.values()) {
+    arr.forEach((mask, idx) => {
+      const night = !!(mask & 1), fest = !!(mask & 2);
+      if (idx < capMin) {                     // ORDINARIA (solo recargo)
+        if (fest && night) ordFestNoct++;
+        else if (fest)     ordFest++;
+        else if (night)    ordNoct++;
+      } else {                                // EXTRA (pago completo)
+        if (fest && night) exFestNoc++;
+        else if (fest)     exFestDiu++;
+        else if (night)    exNoc++;
+        else               exDiu++;
+      }
+    });
+  }
+  const H = (min) => +(min / 60).toFixed(2);
+  const recargo_nocturno         = Math.round((ordNoct / 60)     * tarifa * REC_NOCTURNO);
+  const recargo_festivo          = Math.round((ordFest / 60)     * tarifa * REC_FESTIVO);
+  const recargo_nocturno_festivo = Math.round((ordFestNoct / 60) * tarifa * REC_NOCTURNO_FESTIVO);
+  const extra_diurna             = Math.round((exDiu / 60)     * tarifa * EXTRA_DIURNA);
+  const extra_nocturna           = Math.round((exNoc / 60)     * tarifa * EXTRA_NOCTURNA);
+  const extra_festiva_diurna     = Math.round((exFestDiu / 60) * tarifa * EXTRA_FESTIVA_DIURNA);
+  const extra_festiva_nocturna   = Math.round((exFestNoc / 60) * tarifa * EXTRA_FESTIVA_NOCTURNA);
+  const total_recargos = recargo_nocturno + recargo_festivo + recargo_nocturno_festivo;
+  const total_extras   = extra_diurna + extra_nocturna + extra_festiva_diurna + extra_festiva_nocturna;
+  const extraMin = exDiu + exNoc + exFestDiu + exFestNoc;
+
   return {
-    dias_trabajados: porDia.filter(d => d.horas > 0).length,
-    horas: +acc("horas").toFixed(2),
-    ordinarias: +acc("ordinarias").toFixed(2),
-    extra: +acc("extra").toFixed(2),
-    horas_nocturnas: +acc("horas_nocturnas").toFixed(2),
-    valor_ordinario: acc("valor_ordinario"),
-    recargo_nocturno: acc("recargo_nocturno"),
-    recargo_dom_festivo: acc("recargo_dom_festivo"),
-    valor_extra: acc("valor_extra"),
-    valor_total: acc("valor"),
-    por_dia: porDia,
+    dias_trabajados: diasSet.size,
+    horas: H(totalMin),
+    horas_ordinarias: H(totalMin - extraMin),
+    horas_extra: H(extraMin),
+    horas_nocturnas: H(noctMinTot),
+    // horas por concepto (para mostrar el desglose)
+    h_recargo_nocturno: H(ordNoct),
+    h_recargo_festivo: H(ordFest),
+    h_recargo_nocturno_festivo: H(ordFestNoct),
+    h_extra_diurna: H(exDiu),
+    h_extra_nocturna: H(exNoc),
+    h_extra_festiva_diurna: H(exFestDiu),
+    h_extra_festiva_nocturna: H(exFestNoc),
+    // valores $ por concepto
+    recargo_nocturno, recargo_festivo, recargo_nocturno_festivo,
+    extra_diurna, extra_nocturna, extra_festiva_diurna, extra_festiva_nocturna,
+    total_recargos, total_extras,
+    total_adicional: total_recargos + total_extras,
   };
 }
 
@@ -348,10 +390,11 @@ export function clasificarNovedades(novedades = [], desde, hasta) {
 }
 
 // ── Cálculo consolidado por empleado ─────────────────────────────────────────
+// Valor hora ordinaria = salario_base / 190.6667 (95.3333 h/quincena × 2).
 export function tarifaHoraEmpleado(empleado) {
-  const t = Number(empleado?.tarifa_hora || 0);
-  if (t > 0) return t;
-  return Math.round(Number(empleado?.salario_base || 0) / 240); // 8h × 30d
+  const base = Number(empleado?.salario_base || 0);
+  if (base > 0) return Math.round(base / HORAS_MES_LEGAL);
+  return Number(empleado?.tarifa_hora || 0);
 }
 
 /**
@@ -380,26 +423,28 @@ export function calcularNominaEmpleado({ empleado, periodo, novedades = [], marc
   const modalidad = empleado?.modalidad_calculo || (tieneMarcaciones ? "horas_reales" : "salario_fijo");
   const usarHoras = modalidad !== "salario_fijo" && tieneMarcaciones;
 
-  let resumen = null;
-  let devengadoBase;       // valor del tiempo trabajado (sin aux ni novedades)
+  // Salario ordinario quincenal = las 95.3333 h obligatorias (base/2,
+  // menos faltas). Los recargos/extras son ADICIONALES sobre esto.
+  const salarioOrdinario = salarioBaseProporcional(salarioBase, dias, claves.dias_no_trabajados);
+
+  let desg = null;
   let diasTrabajados;
   if (usarHoras) {
-    resumen = resumenMarcaciones(marcaciones, tarifaHora, festivos);
-    devengadoBase = resumen.valor_total;
-    diasTrabajados = resumen.dias_trabajados;
+    desg = desglosarPeriodo(marcaciones, tarifaHora, festivos);
+    diasTrabajados = desg.dias_trabajados;
   } else {
-    devengadoBase = salarioBaseProporcional(salarioBase, dias, claves.dias_no_trabajados);
     diasTrabajados = Math.max(0, dias - claves.dias_no_trabajados);
   }
+  const totalAdicional = desg?.total_adicional || 0;
 
   const auxTransporte = calcularAuxilioTransporte({
     salarioBase, diasTrabajados, diasDelPeriodo: dias,
   });
 
-  const devengadoTotal = devengadoBase + auxTransporte + claves.total_devengado;
-  // Aportes obligatorios sobre devengado base (no incluye aux. transporte)
-  const aportes = aportesEmpleado(devengadoBase + claves.total_devengado);
-  // Neto = devengado total - aportes - novedades deducidas
+  // Base para aportes (IBC): salario ordinario + recargos + extras + bonos.
+  const baseAportes = salarioOrdinario + totalAdicional + claves.total_devengado;
+  const devengadoTotal = baseAportes + auxTransporte;
+  const aportes = aportesEmpleado(baseAportes);
   const neto = devengadoTotal - aportes.total - claves.total_deducido;
 
   return {
@@ -413,14 +458,25 @@ export function calcularNominaEmpleado({ empleado, periodo, novedades = [], marc
     dias_trabajados: diasTrabajados,
     dias_incapacidad: claves.dias_incapacidad,
     dias_vacaciones: claves.dias_vacaciones,
-    marcaciones: resumen,
+    marcaciones: desg,
     devengado: {
-      salario_base_periodo: devengadoBase,
+      salario_ordinario: salarioOrdinario,
+      salario_base_periodo: salarioOrdinario,   // alias compat
+      horas_ordinarias: desg?.horas_ordinarias || 0,
+      horas_extra: desg?.horas_extra || 0,
+      // recargos de ley (solo el % adicional sobre la hora ordinaria)
+      recargo_nocturno: desg?.recargo_nocturno || 0,
+      recargo_festivo: desg?.recargo_festivo || 0,
+      recargo_nocturno_festivo: desg?.recargo_nocturno_festivo || 0,
+      // horas extra (pago completo × factor)
+      extra_diurna: desg?.extra_diurna || 0,
+      extra_nocturna: desg?.extra_nocturna || 0,
+      extra_festiva_diurna: desg?.extra_festiva_diurna || 0,
+      extra_festiva_nocturna: desg?.extra_festiva_nocturna || 0,
+      total_recargos: desg?.total_recargos || 0,
+      total_extras: desg?.total_extras || 0,
       auxilio_transporte: auxTransporte,
       extras_recargos_bonos: claves.total_devengado,
-      recargo_nocturno: resumen?.recargo_nocturno || 0,
-      recargo_dom_festivo: resumen?.recargo_dom_festivo || 0,
-      valor_extra: resumen?.valor_extra || 0,
       items: claves.devengado,
       subtotal: devengadoTotal,
     },
