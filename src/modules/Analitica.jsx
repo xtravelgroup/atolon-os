@@ -162,6 +162,15 @@ export default function Analitica() {
         origenMap[b].ingreso += r.total || 0;
       }
     });
+    // Web Directo + Marketing = mismo grupo (todo el tráfico que llega al
+    // booking público, orgánico o por campañas). Se fusionan en "web".
+    if (origenMap.marketing) {
+      origenMap.web.sesiones     += origenMap.marketing.sesiones;
+      origenMap.web.conversiones += origenMap.marketing.conversiones;
+      origenMap.web.ingreso      += origenMap.marketing.ingreso;
+      delete origenMap.marketing;
+    }
+    if (origenMap.web) origenMap.web.label = "🌐 Web (directo + marketing)";
     setOrigenes(Object.values(origenMap).map(o => ({
       ...o,
       convRate: o.sesiones ? ((o.conversiones / o.sesiones) * 100).toFixed(1) : "—",
@@ -442,7 +451,7 @@ export default function Analitica() {
       <div style={{ background: B.navyMid, borderRadius: 14, padding: 24, border: "1px solid rgba(255,255,255,0.07)" }}>
         <h3 style={{ margin: "0 0 6px", fontSize: 15, fontWeight: 700, color: "#fff" }}>🎯 Origen del Cliente</h3>
         <div style={{ fontSize: 12, color: B.muted, marginBottom: 18 }}>
-          Segmentación real: separa Web (booking público) · WhatsApp · Grupos · Marketing · Staff/Manual.
+          Segmentación real: Web (directo + marketing) · WhatsApp · Grupos · Staff/Manual.
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(190px, 1fr))", gap: 12 }}>
           {origenes.map(o => {
