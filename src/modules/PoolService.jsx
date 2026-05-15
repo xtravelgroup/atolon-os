@@ -466,19 +466,18 @@ function NuevoPedido({ areas, items, onSaved, enviarALoggro }) {
     onSaved?.();
   };
 
-  return (
-    <div>
-      {/* ── PASO 1: PLANO DE LA PISCINA (siempre arriba, prominente) ───────────── */}
-      <div style={{ marginBottom: 16 }}>
+  // ── PÁGINA 1: PLANO ──────────────────────────────────────────────────────
+  // Sin mesa seleccionada → mostramos SOLO el plano (pantalla completa).
+  if (!destinoOk) {
+    return (
+      <div>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
           <div style={{ fontSize: 14, fontWeight: 800, color: "#fff", display: "flex", alignItems: "center", gap: 8 }}>
             🏊 Plano de Piscina
-            <span style={{ fontSize: 12, fontWeight: 500, color: spotSel ? B.sand : "rgba(255,255,255,0.5)" }}>
-              {spotSel ? `· seleccionada: ${spotSel.id}` : "· localiza la mesa del cliente y tócala"}
+            <span style={{ fontSize: 12, fontWeight: 500, color: "rgba(255,255,255,0.5)" }}>
+              · localiza la mesa del cliente y tócala
             </span>
           </div>
-
-          {/* Leyenda de colores */}
           <div style={{ display: "flex", gap: 10, fontSize: 10, color: "rgba(255,255,255,0.6)", alignItems: "center", flexWrap: "wrap" }}>
             <Legend dot={B.success}      label="Libre" />
             <Legend dot={B.sky}          label="Reservado" />
@@ -486,22 +485,14 @@ function NuevoPedido({ areas, items, onSaved, enviarALoggro }) {
             <Legend dot={B.warning}      label="Limpieza" />
             <Legend dot="rgba(255,255,255,0.3)" label="Bloqueado" />
           </div>
-
-          {destinoOk && (
-            <button onClick={() => { setSpotSel(null); setAsignSel(null); setAreaId(""); }}
-              style={{ ...BTN(B.navyMid, B.pool), padding: "8px 14px", fontSize: 12, minHeight: 0 }}>
-              ✕ Cambiar mesa
-            </button>
-          )}
         </div>
         <PoolFloorPlanPicker
-          selectedSpotId={spotSel?.id}
+          selectedSpotId={null}
           onSelectSpot={handleSelectSpot}
           showEstadoColor={true}
           size="lg"
         />
-        {/* Fallback: áreas sin floor plan (beach, cabañas, etc.) — colapsado */}
-        {!spotSel && areas.length > 0 && (
+        {areas.length > 0 && (
           <details style={{ marginTop: 10, background: B.navyMid, padding: 10, borderRadius: 8 }}>
             <summary style={{ fontSize: 11, color: "rgba(255,255,255,0.6)", cursor: "pointer" }}>
               ¿Pedido para zona sin plano? (beach, cabañas, bar exterior)
@@ -515,20 +506,26 @@ function NuevoPedido({ areas, items, onSaved, enviarALoggro }) {
           </details>
         )}
       </div>
+    );
+  }
 
-      {/* ── PASO 2: FORMULARIO + MENÚ (solo aparece cuando hay destino) ─────── */}
-      {!destinoOk ? (
-        <div style={{ background: B.navyMid, padding: 30, borderRadius: 12, textAlign: "center", color: "rgba(255,255,255,0.5)" }}>
-          <div style={{ fontSize: 36, marginBottom: 8 }}>👆</div>
-          <div style={{ fontSize: 14, fontWeight: 700, color: "rgba(255,255,255,0.7)" }}>
-            Toca una mesa en el plano para empezar a tomar el pedido
-          </div>
-          <div style={{ fontSize: 11, marginTop: 6 }}>
-            22 camas · Exterior (C) y Pool Side (PS)
-          </div>
+  // ── PÁGINA 2: MENÚ / PEDIDO ──────────────────────────────────────────────
+  // Mesa seleccionada → pantalla completa de pedido con botón "volver al plano".
+  return (
+    <div>
+      {/* Barra superior: volver + mesa */}
+      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16, flexWrap: "wrap" }}>
+        <button onClick={() => { setSpotSel(null); setAsignSel(null); setAreaId(""); setCarrito([]); }}
+          style={{ ...BTN(B.navyMid, B.pool), padding: "10px 16px", fontSize: 13, display: "flex", alignItems: "center", gap: 6 }}>
+          ← Volver al plano
+        </button>
+        <div style={{ flex: 1, minWidth: 200 }}>
+          <div style={{ fontSize: 10, color: B.pool, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 700 }}>Pedido para</div>
+          <div style={{ fontSize: 20, color: B.sand, fontWeight: 800, letterSpacing: "0.05em" }}>{destinoLabel}</div>
         </div>
-      ) : (
-        <div style={{ display: "grid", gridTemplateColumns: "minmax(280px, 1fr) minmax(0, 2fr)", gap: 16 }}>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(280px, 1fr) minmax(0, 2fr)", gap: 16 }}>
           {/* Sidebar pedido */}
           <div style={{ background: B.navyMid, padding: 14, borderRadius: 12, position: "sticky", top: 12, alignSelf: "start", maxHeight: "85vh", overflow: "auto" }}>
             {/* Banner destino seleccionado */}
@@ -639,8 +636,7 @@ function NuevoPedido({ areas, items, onSaved, enviarALoggro }) {
           })}
           </div>
         </div>
-        </div>
-      )}
+      </div>
     </div>
   );
 }
