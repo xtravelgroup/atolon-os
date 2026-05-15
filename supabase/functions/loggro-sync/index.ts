@@ -310,9 +310,10 @@ serve(async (req) => {
       let lastError: any = null;
       const toUpdate = rows.filter(r => idByLoggro[r.loggro_id!]);
       for (const r of toUpdate) {
+        // NO pisar nombre/descripcion: son curados en Productos (Menús.jsx) —
+        // el único lugar para gestionar el menú. El sync solo trae datos
+        // operativos de Loggro: precio, variantes, categoría POS, raw.
         const { error } = await SB.from("menu_items").update({
-          nombre: r.nombre,
-          descripcion: r.descripcion,
           precio: r.precio,
           variantes: r.variantes,
           loggro_categoria: r.loggro_categoria,
