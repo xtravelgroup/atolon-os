@@ -439,8 +439,9 @@ export default function HotelRoomService() {
                         <span style={{ marginLeft: "auto", fontSize: 13, fontWeight: 700, color: B.sand }}>{COP(x.precio * x.cantidad)}</span>
                       </div>
                       <input value={x.notas} onChange={e => setNotaItem(x.cid, e.target.value)}
-                        placeholder="Nota para cocina…"
-                        style={{ ...IS, marginTop: 6, fontSize: 11, padding: "5px 8px" }} />
+                        placeholder="Observación para la comanda (ej: sin cebolla, término medio)"
+                        style={{ ...IS, marginTop: 6, fontSize: 11, padding: "5px 8px",
+                          border: `1px solid ${x.notas ? B.pool : B.navyLight}` }} />
                     </div>
                   ))}
                 </div>

@@ -428,6 +428,10 @@ function NuevoPedido({ areas, items, reservasHoy = [], onSaved, enviarALoggro, i
     setCarrito(prev => prev.map(x => x.cid === cid ? { ...x, cantidad: n } : x));
   };
 
+  // Observación por línea → viaja a Loggro como `notes` de ese ítem (ver enviarALoggro).
+  const setNotaLinea = (cid, txt) =>
+    setCarrito(prev => prev.map(x => x.cid === cid ? { ...x, notas: txt } : x));
+
   const subtotal = carrito.reduce((s, x) => s + x.precio * x.cantidad, 0);
   const areaSel = areas.find(a => a.id === areaId);
 
@@ -670,14 +674,22 @@ function NuevoPedido({ areas, items, reservasHoy = [], onSaved, enviarALoggro, i
               {carrito.length === 0 ? (
                 <div style={{ fontSize: 11, color: "rgba(255,255,255,0.3)" }}>Vacío.</div>
               ) : carrito.map(c => (
-                <div key={c.cid} style={{ display: "flex", alignItems: "center", gap: 6, padding: "5px 0", borderBottom: "1px solid rgba(255,255,255,0.04)" }}>
-                  <input type="number" value={c.cantidad} onChange={e => setCant(c.cid, e.target.value)} min={0}
-                    style={{ ...IS, width: 50, padding: "4px 6px" }} />
-                  <div style={{ flex: 1, fontSize: 12, minWidth: 0 }}>
-                    <div style={{ color: "#fff", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.nombre}</div>
-                    <div style={{ color: "rgba(255,255,255,0.4)", fontSize: 10 }}>{COP(c.precio)} c/u</div>
+                <div key={c.cid} style={{ padding: "6px 0", borderBottom: "1px solid rgba(255,255,255,0.04)" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <input type="number" value={c.cantidad} onChange={e => setCant(c.cid, e.target.value)} min={0}
+                      style={{ ...IS, width: 50, padding: "4px 6px" }} />
+                    <div style={{ flex: 1, fontSize: 12, minWidth: 0 }}>
+                      <div style={{ color: "#fff", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.nombre}</div>
+                      <div style={{ color: "rgba(255,255,255,0.4)", fontSize: 10 }}>{COP(c.precio)} c/u</div>
+                    </div>
+                    <div style={{ fontSize: 11, color: B.success, fontWeight: 700 }}>{COP(c.precio * c.cantidad)}</div>
                   </div>
-                  <div style={{ fontSize: 11, color: B.success, fontWeight: 700 }}>{COP(c.precio * c.cantidad)}</div>
+                  <input
+                    value={c.notas || ""}
+                    onChange={e => setNotaLinea(c.cid, e.target.value)}
+                    placeholder="Observación para la comanda (ej: sin cebolla, término medio)"
+                    style={{ ...IS, marginTop: 6, padding: "8px 10px", fontSize: 12,
+                      background: B.navy, border: `1px solid ${c.notas ? B.pool : B.navyLight}` }} />
                 </div>
               ))}
               <div style={{ display: "flex", justifyContent: "space-between", paddingTop: 10, fontSize: 14, fontWeight: 800 }}>
