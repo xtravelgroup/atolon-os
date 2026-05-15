@@ -62,6 +62,7 @@ export default function PoolService() {
   const [areas, setAreas]     = useState([]);
   const [items, setItems]     = useState([]);
   const [pedidos, setPedidos] = useState([]);
+  const [reservasHoy, setReservasHoy] = useState([]); // reservas/pasadías del día
   const [loading, setLoading] = useState(true);
   // Tab por defecto = "nuevo" → muestra el plano de la piscina como landing.
   // Los meseros entran y lo primero que ven es el floor plan para tocar la mesa.
@@ -69,7 +70,7 @@ export default function PoolService() {
 
   const load = async () => {
     setLoading(true);
-    const [a, i, p] = await Promise.all([
+    const [a, i, p, rh] = await Promise.all([
       supabase.from("pool_service_areas").select("*").eq("activo", true).order("orden").order("nombre"),
       // Pool Service usa los menús "restaurant" y "bebidas" del módulo de Productos
       // — fuente única de verdad, ya sincronizado con Loggro. Aquí NO se gestiona
@@ -84,10 +85,17 @@ export default function PoolService() {
         .eq("room_service", true)
         .order("categoria").order("orden"),
       supabase.from("pool_service_pedidos").select("*").order("created_at", { ascending: false }).limit(120),
+      // Reservas/pasadías del día — para asignar a las camas sin escribir a mano.
+      supabase.from("reservas")
+        .select("id, nombre, pax, pax_a, pax_n, tipo, estado, telefono")
+        .eq("fecha", todayBogota())
+        .in("estado", ["confirmado", "check_in", "pendiente"])
+        .order("nombre"),
     ]);
     setAreas(a.data || []);
     setItems(i.data || []);
     setPedidos(p.data || []);
+    setReservasHoy(rh.data || []);
     setLoading(false);
   };
   useEffect(() => { load(); }, []);
@@ -244,7 +252,7 @@ export default function PoolService() {
         <Kanban pedidos={pedidos} cambiarEstado={cambiarEstado} enviarALoggro={enviarALoggro} isMobile={isMobile} />
       )}
       {tab === "nuevo" && (
-        <NuevoPedido areas={areas} items={items} onSaved={() => { setTab("pedidos"); load(); }} enviarALoggro={enviarALoggro} isMobile={isMobile} />
+        <NuevoPedido areas={areas} items={items} reservasHoy={reservasHoy} onSaved={() => { setTab("pedidos"); load(); }} enviarALoggro={enviarALoggro} isMobile={isMobile} />
       )}
       {tab === "areas" && (
         <AreasManager areas={areas} onChanged={load} />
@@ -352,7 +360,7 @@ function todayBogota() {
   return new Date().toLocaleString("en-CA", { timeZone: "America/Bogota" }).slice(0, 10);
 }
 
-function NuevoPedido({ areas, items, onSaved, enviarALoggro, isMobile }) {
+function NuevoPedido({ areas, items, reservasHoy = [], onSaved, enviarALoggro, isMobile }) {
   // Flujo: 1) mesero toca el spot en el floor plan → 2) llena pedido → 3) envía.
   // El spot puede ser de la Piscina (floorplan_spots) o un área tradicional
   // (pool_service_areas) para zonas que aún no tienen floor plan visual (beach, cabañas).
@@ -362,6 +370,7 @@ function NuevoPedido({ areas, items, onSaved, enviarALoggro, isMobile }) {
   const [huesped, setHuesped] = useState("");
   const [pax, setPax] = useState(1);
   const [notas, setNotas] = useState("");
+  const [reservaSelId, setReservaSelId] = useState(""); // reserva del día vinculada (opcional)
   const [carrito, setCarrito] = useState([]);
   const [filtroCat, setFiltroCat] = useState("");
   const [saving, setSaving] = useState(false);
@@ -444,6 +453,7 @@ function NuevoPedido({ areas, items, onSaved, enviarALoggro, isMobile }) {
       huesped:  (huesped || "").trim() || null,
       pax:      Number(pax) || 1,
       notas:    notas || null,
+      reserva_id: reservaSelId || asignSel?.reserva_id || null,
       updated_at: new Date().toISOString(),
     };
     const { error: asignErr } = await supabase
@@ -483,7 +493,7 @@ function NuevoPedido({ areas, items, onSaved, enviarALoggro, isMobile }) {
       notas:       notas || null,
       estado:      "recibido",
       creado_por:  "staff",
-      reserva_id:  asignSel?.reserva_id || null,
+      reserva_id:  reservaSelId || asignSel?.reserva_id || null,
     };
     if (spotSel) {
       payload.spot_id     = spotSel.id;
@@ -595,10 +605,40 @@ function NuevoPedido({ areas, items, onSaved, enviarALoggro, isMobile }) {
             {/* Formulario huésped/pax/notas — SOLO la primera vez (cama sin huésped) */}
             {!yaAsignado && (
               <>
+                {/* Elegir de las reservas/pasadías del día (o escribir manual abajo) */}
+                {reservasHoy.length > 0 && (
+                  <div style={{ marginBottom: 10 }}>
+                    <label style={LS}>Reserva del día ({reservasHoy.length})</label>
+                    <select
+                      value={reservaSelId}
+                      onChange={e => {
+                        const id = e.target.value;
+                        setReservaSelId(id);
+                        const r = reservasHoy.find(x => x.id === id);
+                        if (r) {
+                          setHuesped(r.nombre || "");
+                          const px = Number(r.pax) || ((Number(r.pax_a) || 0) + (Number(r.pax_n) || 0)) || 1;
+                          setPax(px);
+                        }
+                      }}
+                      style={IS}>
+                      <option value="">— Escribir manual / sin reserva —</option>
+                      {reservasHoy.map(r => {
+                        const px = Number(r.pax) || ((Number(r.pax_a) || 0) + (Number(r.pax_n) || 0)) || "?";
+                        return (
+                          <option key={r.id} value={r.id}>
+                            {r.nombre || "Sin nombre"} · {px} pax{r.tipo ? ` · ${r.tipo}` : ""}{r.estado === "check_in" ? " ✓" : ""}
+                          </option>
+                        );
+                      })}
+                    </select>
+                  </div>
+                )}
+
                 <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 8, marginBottom: 10 }}>
                   <div>
-                    <label style={LS}>Huésped (opcional)</label>
-                    <input value={huesped} onChange={e => setHuesped(e.target.value)} style={IS} placeholder="Nombre" />
+                    <label style={LS}>Huésped {reservaSelId ? "(de la reserva)" : "(opcional)"}</label>
+                    <input value={huesped} onChange={e => { setHuesped(e.target.value); setReservaSelId(""); }} style={IS} placeholder="Nombre" />
                   </div>
                   <div>
                     <label style={LS}>Pax</label>
