@@ -696,17 +696,11 @@ function NuevoPedido({ areas, items, reservasHoy = [], onSaved, enviarALoggro, i
                 <span style={{ color: "rgba(255,255,255,0.7)" }}>Total</span>
                 <span style={{ color: B.success }}>{COP(subtotal)}</span>
               </div>
-              <button onClick={() => guardar({ enviarLoggro: false })} disabled={saving || !destinoOk || carrito.length === 0}
-                style={{ ...BTN(saving ? B.navyLight : B.success), width: "100%", marginTop: 12, opacity: (!destinoOk || carrito.length === 0) ? 0.5 : 1 }}>
-                {saving ? "Guardando…" : "Guardar pedido"}
+              {/* Único flujo: lo que se pide va directo a Loggro (cocina/bar). */}
+              <button onClick={() => guardar({ enviarLoggro: true })} disabled={saving || !destinoOk || carrito.length === 0}
+                style={{ ...BTN(saving ? B.navyLight : B.pool, B.navy), width: "100%", marginTop: 12, opacity: (!destinoOk || carrito.length === 0) ? 0.5 : 1 }}>
+                {saving ? "Enviando…" : "🍳 Enviar a Loggro"}
               </button>
-              {/* Botón directo a cocina vía Loggro (solo para spots con mapeo) */}
-              {spotSel && (
-                <button onClick={() => guardar({ enviarLoggro: true })} disabled={saving || !destinoOk || carrito.length === 0}
-                  style={{ ...BTN(saving ? B.navyLight : B.pool, B.navy), width: "100%", marginTop: 8, opacity: (!destinoOk || carrito.length === 0) ? 0.5 : 1 }}>
-                  {saving ? "Enviando…" : "🍳 Crear y enviar a Loggro"}
-                </button>
-              )}
             </div>
           </div>
 
