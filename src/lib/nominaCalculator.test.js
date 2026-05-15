@@ -258,8 +258,14 @@ describe("calcularHorasDia", () => {
     expect(r.recargo_nocturno).toBe(28_000); // 8 × 10.000 × 0.35
     expect(r.valor).toBe(108_000);
   });
-  it("domingo aplica recargo dom/festivo 75%", () => {
+  it("DOMINGO no paga recargo (convención Atolón)", () => {
     const r = calcularHorasDia({ fecha: "2026-05-10", entrada: "08:00", salida: "16:00", tarifaHora: tarifa });
+    expect(r.es_dom_festivo).toBe(false);
+    expect(r.recargo_dom_festivo).toBe(0);
+    expect(r.valor).toBe(80_000); // como día ordinario
+  });
+  it("FESTIVO (no domingo) sí paga recargo 75%", () => {
+    const r = calcularHorasDia({ fecha: "2026-05-01", entrada: "08:00", salida: "16:00", tarifaHora: tarifa });
     expect(r.es_dom_festivo).toBe(true);
     expect(r.recargo_dom_festivo).toBe(60_000); // 8 × 10.000 × 0.75
     expect(r.valor).toBe(140_000);

@@ -136,7 +136,7 @@ export const JORNADA_ORDINARIA_HORAS = 8;     // jornada legal diaria
 export const NOCTURNO_INICIO_H       = 21;    // 21:00 inicia franja nocturna
 export const NOCTURNO_FIN_H          = 6;     // 06:00 termina franja nocturna
 export const REC_NOCTURNO            = 0.35;  // +35% recargo nocturno
-export const REC_DOM_FESTIVO         = 0.75;  // +75% recargo dom/festivo
+export const REC_DOM_FESTIVO         = 0.75;  // +75% recargo festivo (domingos NO)
 export const FACTOR_EXTRA_DIURNA     = 0.25;  // hora extra diurna = tarifa × 1.25
 export const FACTOR_EXTRA_NOCTURNA   = 0.75;  // hora extra nocturna = tarifa × 1.75
 
@@ -191,7 +191,9 @@ export function calcularHorasDia({ fecha, entrada, salida, tarifaHora, festivos 
   const noctMin  = minutosNocturnos(ini, fin);
   const noctOrdMin   = Math.min(noctMin, ordMin);
   const noctExtraMin = Math.max(0, noctMin - noctOrdMin);
-  const esDF = esDominical(fecha) || (festivos?.has?.(fecha) ?? false);
+  // Convención Atolón: los DOMINGOS NO pagan recargo (es día normal de
+  // operación). Solo los festivos llevan recargo del 75%.
+  const esDF = festivos?.has?.(fecha) ?? false;
 
   const h = (min) => min / 60;
   const valorOrdinario   = h(ordMin) * tarifa;

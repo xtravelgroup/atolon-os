@@ -92,15 +92,14 @@ function MarcacionesGrid({ empleado, periodo, ventana, marcaciones, onSave }) {
       <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
         {filas.map(f => {
           const d = new Date(f.fecha + "T12:00:00");
-          const dom = d.getDay() === 0;
-          const fest = FESTIVOS_CO_2026.has(f.fecha);
+          const fest = FESTIVOS_CO_2026.has(f.fecha); // domingos = día normal (sin recargo)
           const pre = (f.entrada && f.salida)
             ? calcularHorasDia({ fecha: f.fecha, entrada: f.entrada, salida: f.salida, tarifaHora: tarifa })
             : null;
           return (
             <div key={f.fecha} style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 0", borderBottom: `1px solid ${B.navyLight}33` }}>
-              <div style={{ width: 64, fontSize: 11, color: (dom || fest) ? B.warning : "rgba(255,255,255,0.7)" }}>
-                {DOW[d.getDay()]} {d.getDate()}{(dom || fest) ? " •" : ""}
+              <div style={{ width: 64, fontSize: 11, color: fest ? B.warning : "rgba(255,255,255,0.7)" }}>
+                {DOW[d.getDay()]} {d.getDate()}{fest ? " •" : ""}
               </div>
               <input type="time" value={f.entrada} onChange={e => set(f.fecha, "entrada", e.target.value)}
                 style={{ ...IS, width: 96, padding: "6px 8px" }} />
