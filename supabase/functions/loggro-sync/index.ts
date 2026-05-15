@@ -250,6 +250,16 @@ serve(async (req) => {
         if (page > 50) break; // safety
       }
 
+      // En Loggro/Pirpos el precio real NO está en p.price (siempre 0) sino en
+      // locationsStock[].price (la ubicación principal o la primera). Esto aplica
+      // tanto a productos como a subProducts (variantes).
+      const precioLoggro = (item: any): number => {
+        const raw = item?.locationsStock;
+        const ls = Array.isArray(raw) ? raw : (raw && typeof raw === "object" ? [raw] : []);
+        const main = ls.find((x: any) => x?.isMain) || ls[0] || {};
+        return Number(main.price) || Number(item?.price) || 0;
+      };
+
       // Mapeo de categorías Loggro → menu_tipo interno
       const mapMenuTipo = (cat: string): string => {
         const c = (cat || "").toUpperCase();
@@ -286,7 +296,7 @@ serve(async (req) => {
               .map((s: any) => ({
                 loggro_id: s._id || s.id,
                 nombre:    s.name || s.nombre || "Variante",
-                precio:    Number(s.price) || 0,
+                precio:    precioLoggro(s),
               }))
           : null;
         return {
@@ -294,7 +304,7 @@ serve(async (req) => {
           loggro_id: loggroId,
           nombre: p.name || "Sin nombre",
           descripcion: p.description || null,
-          precio: Number(p.price) || 0,
+          precio: precioLoggro(p),
           variantes,
           categoria: catName,
           loggro_categoria: catName,
