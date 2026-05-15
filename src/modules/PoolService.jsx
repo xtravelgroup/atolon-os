@@ -238,7 +238,7 @@ export default function PoolService() {
         <Kanban pedidos={pedidos} cambiarEstado={cambiarEstado} enviarALoggro={enviarALoggro} isMobile={isMobile} />
       )}
       {tab === "nuevo" && (
-        <NuevoPedido areas={areas} items={items} onSaved={() => { setTab("pedidos"); load(); }} enviarALoggro={enviarALoggro} />
+        <NuevoPedido areas={areas} items={items} onSaved={() => { setTab("pedidos"); load(); }} enviarALoggro={enviarALoggro} isMobile={isMobile} />
       )}
       {tab === "areas" && (
         <AreasManager areas={areas} onChanged={load} />
@@ -342,7 +342,11 @@ function PedidoCard({ p, cambiarEstado, enviarALoggro }) {
 }
 
 // ─── Nuevo pedido (uso staff) ──────────────────────────────────────────────
-function NuevoPedido({ areas, items, onSaved, enviarALoggro }) {
+function todayBogota() {
+  return new Date().toLocaleString("en-CA", { timeZone: "America/Bogota" }).slice(0, 10);
+}
+
+function NuevoPedido({ areas, items, onSaved, enviarALoggro, isMobile }) {
   // Flujo: 1) mesero toca el spot en el floor plan → 2) llena pedido → 3) envía.
   // El spot puede ser de la Piscina (floorplan_spots) o un área tradicional
   // (pool_service_areas) para zonas que aún no tienen floor plan visual (beach, cabañas).
@@ -389,6 +393,11 @@ function NuevoPedido({ areas, items, onSaved, enviarALoggro }) {
   const subtotal = carrito.reduce((s, x) => s + x.precio * x.cantidad, 0);
   const areaSel = areas.find(a => a.id === areaId);
 
+  // ¿La cama ya tiene huésped asignado? → no volver a mostrar el formulario.
+  // El mesero solo necesita capturar nombre/pax/notas la PRIMERA vez; luego
+  // queda guardado en floorplan_asignaciones y va directo al menú.
+  const yaAsignado = !!(spotSel && asignSel?.huesped);
+
   // El destino del pedido: spot del floor plan O área tradicional
   const destinoOk = !!spotSel || !!areaId;
   const destinoLabel = spotSel
@@ -423,6 +432,30 @@ function NuevoPedido({ areas, items, onSaved, enviarALoggro }) {
     const { data: inserted, error } = await supabase
       .from("pool_service_pedidos").insert(payload).select().single();
     if (error) { setSaving(false); return alert("Error: " + error.message); }
+
+    // Persistir el huésped en la cama (floorplan_asignaciones) la PRIMERA vez.
+    // Así la próxima vez que el mesero toque esta cama no vuelve a pedir el
+    // nombre — va directo al menú. Marca la cama como "ocupado".
+    if (spotSel && !yaAsignado) {
+      const fecha = todayBogota();
+      const nombreFinal = (huesped || "").trim();
+      const asignPayload = {
+        spot_id:  spotSel.id,
+        fecha,
+        estado:   "ocupado",
+        huesped:  nombreFinal || null,
+        pax:      Number(pax) || 1,
+        notas:    notas || null,
+        updated_at: new Date().toISOString(),
+      };
+      if (asignSel?.id) {
+        await supabase.from("floorplan_asignaciones").update(asignPayload).eq("id", asignSel.id);
+      } else {
+        await supabase.from("floorplan_asignaciones").insert({
+          id: `FPA-${Date.now()}`, ...asignPayload, created_at: new Date().toISOString(),
+        }).then(() => {}).catch(() => {});
+      }
+    }
 
     // Si el operador pulsó "Crear y enviar a Loggro", dispara el envío a cocina.
     // Sólo aplica para spots (los de área tradicional usan el flujo legacy).
@@ -492,35 +525,44 @@ function NuevoPedido({ areas, items, onSaved, enviarALoggro }) {
         </div>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "minmax(280px, 1fr) minmax(0, 2fr)", gap: 16 }}>
+      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "minmax(280px, 1fr) minmax(0, 2fr)", gap: 16 }}>
           {/* Sidebar pedido */}
-          <div style={{ background: B.navyMid, padding: 14, borderRadius: 12, position: "sticky", top: 12, alignSelf: "start", maxHeight: "85vh", overflow: "auto" }}>
-            {/* Banner destino seleccionado */}
+          <div style={{
+            background: B.navyMid, padding: 14, borderRadius: 12,
+            position: isMobile ? "static" : "sticky", top: 12, alignSelf: "start",
+            maxHeight: isMobile ? "none" : "85vh", overflow: isMobile ? "visible" : "auto",
+          }}>
+            {/* Banner destino — compacto si la cama ya tiene huésped */}
             <div style={{ background: B.pool + "22", border: `2px solid ${B.pool}`, borderRadius: 8, padding: 10, marginBottom: 10 }}>
               <div style={{ fontSize: 10, color: B.pool, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 700 }}>Mesa</div>
               <div style={{ fontSize: 18, color: B.sand, fontWeight: 800, marginTop: 2, letterSpacing: "0.05em" }}>{destinoLabel}</div>
-              {spotSel && asignSel?.huesped && (
-                <div style={{ fontSize: 11, color: "rgba(255,255,255,0.7)", marginTop: 4 }}>
-                  👤 {asignSel.huesped}
+              {yaAsignado && (
+                <div style={{ fontSize: 12, color: "rgba(255,255,255,0.85)", marginTop: 4 }}>
+                  👤 {asignSel.huesped}{asignSel.pax > 0 ? ` · ${asignSel.pax} pax` : ""}
                 </div>
               )}
             </div>
 
-            <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 8, marginBottom: 10 }}>
-              <div>
-                <label style={LS}>Huésped (opcional)</label>
-                <input value={huesped} onChange={e => setHuesped(e.target.value)} style={IS} placeholder="Nombre" />
-              </div>
-              <div>
-                <label style={LS}>Pax</label>
-                <input type="number" value={pax} onChange={e => setPax(e.target.value)} style={IS} min={1} />
-              </div>
-            </div>
+            {/* Formulario huésped/pax/notas — SOLO la primera vez (cama sin huésped) */}
+            {!yaAsignado && (
+              <>
+                <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 8, marginBottom: 10 }}>
+                  <div>
+                    <label style={LS}>Huésped (opcional)</label>
+                    <input value={huesped} onChange={e => setHuesped(e.target.value)} style={IS} placeholder="Nombre" />
+                  </div>
+                  <div>
+                    <label style={LS}>Pax</label>
+                    <input type="number" value={pax} onChange={e => setPax(e.target.value)} style={IS} min={1} />
+                  </div>
+                </div>
 
-            <div style={{ marginBottom: 10 }}>
-              <label style={LS}>Notas</label>
-              <textarea value={notas} onChange={e => setNotas(e.target.value)} style={{ ...IS, minHeight: 60, resize: "vertical" }} placeholder="Alergias, sin hielo, etc." />
-            </div>
+                <div style={{ marginBottom: 10 }}>
+                  <label style={LS}>Notas</label>
+                  <textarea value={notas} onChange={e => setNotas(e.target.value)} style={{ ...IS, minHeight: 60, resize: "vertical" }} placeholder="Alergias, sin hielo, etc." />
+                </div>
+              </>
+            )}
 
             <div style={{ borderTop: "1px solid rgba(255,255,255,0.08)", paddingTop: 10 }}>
               <div style={{ fontSize: 12, fontWeight: 700, color: "rgba(255,255,255,0.7)", marginBottom: 8 }}>
@@ -575,7 +617,7 @@ function NuevoPedido({ areas, items, onSaved, enviarALoggro }) {
                 </button>
               ))}
             </div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 10 }}>
+        <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fill, minmax(${isMobile ? 140 : 180}px, 1fr))`, gap: isMobile ? 8 : 10 }}>
           {filtered.map(it => {
             const sinLoggro = !it.loggro_id;
             return (
