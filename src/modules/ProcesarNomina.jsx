@@ -49,8 +49,10 @@ function Kpi({ label, value, sub, color }) {
 }
 
 // ── Drawer detalle empleado ──────────────────────────────────────────────────
-function MarcacionesGrid({ empleado, periodo, marcaciones, onSave }) {
-  const dias = diasDelPeriodo(periodo.desde, periodo.hasta);
+function MarcacionesGrid({ empleado, periodo, ventana, marcaciones, onSave }) {
+  // Las marcaciones se capturan en la ventana del período (Pago 15 = 26→10,
+  // Pago 30 = 11→25), no en la quincena calendario.
+  const dias = diasDelPeriodo(ventana.desde, ventana.hasta);
   const norm = (t) => (t ? String(t).slice(0, 5) : "");
   const seed = () => {
     const m = {};
@@ -119,7 +121,7 @@ function MarcacionesGrid({ empleado, periodo, marcaciones, onSave }) {
   );
 }
 
-function DetalleDrawer({ empleado, calc, onClose, onAddNovedad, onDeleteNovedad, allNovedades, periodo, marcaciones = [], onSaveMarcaciones }) {
+function DetalleDrawer({ empleado, calc, onClose, onAddNovedad, onDeleteNovedad, allNovedades, periodo, ventana, marcaciones = [], onSaveMarcaciones }) {
   if (!empleado || !calc) return null;
   const novedadesDelEmpleado = allNovedades.filter(n => n.empleado_loggro_id === empleado.id);
   return (
@@ -136,11 +138,12 @@ function DetalleDrawer({ empleado, calc, onClose, onAddNovedad, onDeleteNovedad,
           <button onClick={onClose} style={{ background: "none", border: "none", color: B.white, fontSize: 22, cursor: "pointer" }}>×</button>
         </div>
 
-        {/* MARCACIONES — entrada/salida por día de la quincena */}
-        {periodo && onSaveMarcaciones && (
+        {/* MARCACIONES — entrada/salida por día (ventana 26→10 / 11→25) */}
+        {periodo && ventana && onSaveMarcaciones && (
           <MarcacionesGrid
             empleado={empleado}
             periodo={periodo}
+            ventana={ventana}
             marcaciones={marcaciones}
             onSave={onSaveMarcaciones}
           />
@@ -351,11 +354,11 @@ export default function ProcesarNomina() {
       supabase.from("empleados_loggro_novedades")
         .select("*")
         .or(`fecha_inicio.lte.${ven.hasta},fecha_fin.gte.${ven.desde}`),
-      // Marcaciones (entrada/salida) de los días trabajados de la quincena.
+      // Marcaciones (entrada/salida) en la ventana del período (26→10 / 11→25).
       supabase.from("rh_marcaciones")
         .select("*")
-        .gte("fecha", periodo.desde)
-        .lte("fecha", periodo.hasta),
+        .gte("fecha", ven.desde)
+        .lte("fecha", ven.hasta),
     ]);
     if (empsRes.error) console.error("Error cargando empleados:", empsRes.error);
     if (novsRes.error) console.error("Error cargando novedades:", novsRes.error);
@@ -560,9 +563,8 @@ export default function ProcesarNomina() {
           <input type="date" value={periodo.hasta} onChange={e => setPeriodo(p => ({ ...p, hasta: e.target.value, etiqueta: "Personalizado" }))} style={{ ...IS, width: 160 }} />
         </div>
         <div style={{ flexBasis: "100%", fontSize: 11, color: "rgba(255,255,255,0.5)" }}>
-          📅 Días trabajados: <b style={{ color: B.white }}>{periodo.desde} → {periodo.hasta}</b>
-          {"   ·   "}
-          🗒 Novedades: <b style={{ color: B.white }}>{ventana.desde} → {ventana.hasta}</b>
+          🗓 {periodo.etiqueta} — marcaciones y novedades del{" "}
+          <b style={{ color: B.white }}>{ventana.desde} → {ventana.hasta}</b>
         </div>
       </div>
 
@@ -669,6 +671,7 @@ export default function ProcesarNomina() {
           calc={nominaPorEmpleado.find(x => x.empleado.id === detalleEmpleado.id)?.calc}
           allNovedades={novedades}
           periodo={periodo}
+          ventana={ventana}
           marcaciones={marcaciones.filter(m => m.empleado_id === detalleEmpleado.id)}
           onSaveMarcaciones={handleSaveMarcaciones}
           onClose={() => setDetalleEmpleado(null)}
