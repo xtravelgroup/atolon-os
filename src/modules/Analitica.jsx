@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { supabase } from "../lib/supabase";
+import { clasificarOrigenReserva, clasificarOrigen, ORIGEN_BUCKETS, ORIGEN_LABELS } from "../lib/origenClassifier.js";
 
 const B = {
   navy: "#0a1628", navyMid: "#0f1f3d", navyLight: "#1a2f52",
@@ -35,6 +36,7 @@ export default function Analitica() {
   const [sesiones, setSesiones] = useState([]);
   const [embudos, setEmbudos] = useState([]);
   const [canales, setCanales] = useState([]);
+  const [origenes, setOrigenes] = useState([]);  // 5 buckets: grupo/whatsapp/marketing/staff/web
   const [topEventos, setTopEventos] = useState([]);
   const [atribuciones, setAtribuciones] = useState([]);
   const [atribFirstTouch, setAtribFirstTouch] = useState([]);
@@ -78,7 +80,7 @@ export default function Analitica() {
       supabase.from("track_sesiones").select("*").gte("created_at", desde).lte("created_at", hasta),
       supabase.from("track_embudos").select("*").gte("created_at", desde).lte("created_at", hasta),
       supabase.from("track_eventos").select("tipo, categoria, datos, ts").gte("ts", desde).lte("ts", hasta),
-      supabase.from("reservas").select("id, total, canal, tipo, created_at").eq("estado", "confirmado").gte("created_at", desde).lte("created_at", hasta),
+      supabase.from("reservas").select("id, total, canal, tipo, grupo_id, vendedor, aliado_id, utms_capturados, created_at").eq("estado", "confirmado").gte("created_at", desde).lte("created_at", hasta),
       supabase.from("track_atribuciones").select("*").gte("created_at", desde).lte("created_at", hasta),
       supabase.from("track_abandonment").select("*").gte("created_at", desde).lte("created_at", hasta),
       supabase.from("track_ingresos").select("*").gte("created_at", desde).lte("created_at", hasta),
@@ -136,6 +138,34 @@ export default function Analitica() {
       }))
       .sort((a, b) => b.ingreso - a.ingreso);
     setCanales(canalArr);
+
+    // ── 🎯 Origen del Cliente (5 buckets: grupo/whatsapp/marketing/staff/web) ──
+    // Segmentación limpia que pediste: separa Web vs WhatsApp vs Grupo.
+    // Sesiones: usa origen_tipo persistido (ya backfilled en BD) o lo deriva.
+    // Conversiones: TODAS las reservas confirmadas (no solo WEB_CANALES) —
+    // clasificarOrigenReserva mira id (WEB-/R-), canal, grupo_id, utms.
+    const origenMap = {};
+    ORIGEN_BUCKETS.forEach(b => {
+      origenMap[b] = { bucket: b, label: ORIGEN_LABELS[b], sesiones: 0, conversiones: 0, ingreso: 0 };
+    });
+    sesList.forEach(s => {
+      const b = s.origen_tipo || clasificarOrigen({
+        utms: s.utms, referrer: s.referrer, canal: s.canal,
+        landing_page: s.primer_landing || s.entrada_url,
+      });
+      if (origenMap[b]) origenMap[b].sesiones++;
+    });
+    (resConvRes.data || []).forEach(r => {
+      const b = clasificarOrigenReserva(r);
+      if (origenMap[b]) {
+        origenMap[b].conversiones++;
+        origenMap[b].ingreso += r.total || 0;
+      }
+    });
+    setOrigenes(Object.values(origenMap).map(o => ({
+      ...o,
+      convRate: o.sesiones ? ((o.conversiones / o.sesiones) * 100).toFixed(1) : "—",
+    })));
 
     // ── Embudo de conversión ──────────────────────────────────────────────────
     const pasos = [1,2,3,4,5,6].map(p => ({
@@ -405,6 +435,30 @@ export default function Analitica() {
               <div style={{ fontSize: 13, fontWeight: 700, color: B.sky }}>{fmt(c.ingreso)}</div>
             </div>
           ))}
+        </div>
+      </div>
+
+      {/* 🎯 Origen del Cliente — segmentación Web / WhatsApp / Grupo / Marketing / Staff */}
+      <div style={{ background: B.navyMid, borderRadius: 14, padding: 24, border: "1px solid rgba(255,255,255,0.07)" }}>
+        <h3 style={{ margin: "0 0 6px", fontSize: 15, fontWeight: 700, color: "#fff" }}>🎯 Origen del Cliente</h3>
+        <div style={{ fontSize: 12, color: B.muted, marginBottom: 18 }}>
+          Segmentación real: separa Web (booking público) · WhatsApp · Grupos · Marketing · Staff/Manual.
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(190px, 1fr))", gap: 12 }}>
+          {origenes.map(o => {
+            const colores = { grupo: B.purple, whatsapp: B.success, marketing: B.pink, staff: B.sand, web: B.sky };
+            const c = colores[o.bucket] || B.sky;
+            return (
+              <div key={o.bucket} style={{ background: B.navyLight, borderRadius: 12, padding: 16, borderLeft: `4px solid ${c}` }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: "#fff", marginBottom: 8 }}>{o.label}</div>
+                <div style={{ fontSize: 22, fontWeight: 800, color: c }}>{fmt(o.ingreso)}</div>
+                <div style={{ fontSize: 11, color: B.muted, marginTop: 6, lineHeight: 1.7 }}>
+                  {o.conversiones} reservas · {o.sesiones} sesiones<br />
+                  conv {o.convRate}%
+                </div>
+              </div>
+            );
+          })}
         </div>
       </div>
 
