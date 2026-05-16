@@ -3151,7 +3151,7 @@ export function TabMesaCompras({ reqs, ordenes, proveedores, currentUser, reload
           item_idx: idx,
           item_id: it.id || `${r.id}-${idx}`,
           // Link al catálogo / Loggro tal como viene en el ítem de la req.
-          cat_item_id: it.item_id || null,
+          cat_item_id: it.item_id || it.item_catalogo_id || null,
           loggro_id: it.loggro_id || null,
           nombre: it.item || it.nombre,
           cant: Number(it.cant) || 0,
@@ -3182,12 +3182,23 @@ export function TabMesaCompras({ reqs, ordenes, proveedores, currentUser, reload
   // ¿El ítem ya tiene link a Loggro? Directo (loggro_id en la req) o vía
   // catálogo (por item_id o por nombre exacto) con loggro_id.
   const norm = (s) => String(s || "").trim().toLowerCase();
+  // Devuelve el producto de catálogo al que está vinculado el ítem (o null).
+  const resolverCatalogo = (it) => {
+    if (it.cat_item_id) {
+      const byId = catalogo.find(c => c.id === it.cat_item_id);
+      if (byId) return byId;
+    }
+    if (it.loggro_id) {
+      const byLg = catalogo.find(c => c.loggro_id === it.loggro_id);
+      if (byLg) return byLg;
+    }
+    const byName = catalogo.find(c => norm(c.nombre) === norm(it.nombre) && c.loggro_id);
+    return byName || null;
+  };
   const resolverLoggro = (it) => {
     if (it.loggro_id) return it.loggro_id;
-    const byId = it.cat_item_id && catalogo.find(c => c.id === it.cat_item_id);
-    if (byId?.loggro_id) return byId.loggro_id;
-    const byName = catalogo.find(c => norm(c.nombre) === norm(it.nombre));
-    return byName?.loggro_id || null;
+    const cat = resolverCatalogo(it);
+    return cat?.loggro_id || null;
   };
 
   // Persistir el link (item_id catálogo + loggro_id) en el ítem de la req,
@@ -3373,10 +3384,11 @@ export function TabMesaCompras({ reqs, ordenes, proveedores, currentUser, reload
                     {it.nombre}
                     {(() => {
                       const lg = resolverLoggro(it);
+                      const catLink = resolverCatalogo(it);
                       return lg
                         ? (
-                          <span style={{ marginLeft: 8, display: "inline-flex", gap: 6, alignItems: "center" }}>
-                            <span style={{ fontSize: 9, padding: "1px 6px", background: "#22c55e22", color: "#22c55e", borderRadius: 6, fontWeight: 700 }}>🔗 Vinculado a Loggro</span>
+                          <span style={{ marginLeft: 8, display: "inline-flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                            <span style={{ fontSize: 9, padding: "1px 6px", background: "#22c55e22", color: "#22c55e", borderRadius: 6, fontWeight: 700 }}>🔗 {catLink?.nombre || "Vinculado a Loggro"}</span>
                             <button onClick={(e) => { e.stopPropagation(); setLinkItem(it); }}
                               title="Cambiar el producto/ingrediente vinculado"
                               style={{ fontSize: 9, padding: "1px 7px", borderRadius: 6, border: `1px solid ${B.sand}`, background: B.sand + "22", color: B.sand, fontWeight: 700, cursor: "pointer" }}>
