@@ -332,6 +332,21 @@ describe("desglosarPeriodo — recargos de ley", () => {
     expect(d.recargo_nocturno).toBe(Math.round(2.5 * T * 0.35));
     expect(d.extra_nocturna).toBe(Math.round(5.5 * T * 1.75));
   });
+  it("extra diurna = trabajadas − extra nocturna − 95.33h (residuo quincenal)", () => {
+    // Quincena Meris: 13 días 08:00–17:00 + 9 may 12:00→03:00, almuerzo 1h.
+    const M = [
+      "2026-04-26","2026-04-27","2026-04-28","2026-04-29","2026-04-30",
+      "2026-05-01","2026-05-02","2026-05-03","2026-05-04","2026-05-06",
+      "2026-05-07","2026-05-08","2026-05-10",
+    ].map(f => ({ fecha: f, entrada: "08:00", salida: "17:00" }));
+    M.splice(12, 0, { fecha: "2026-05-09", entrada: "12:00", salida: "03:00" });
+    const d = desglosarPeriodo(M, T, undefined, 1);
+    expect(d.horas).toBe(117.5);
+    expect(d.horas_ordinarias).toBe(95.33);
+    expect(d.h_extra_nocturna).toBe(5.5);
+    // 117.5 − 5.5 − 95.3333 = 16.67
+    expect(d.h_extra_diurna).toBeCloseTo(16.67, 1);
+  });
 });
 
 describe("tarifaHoraEmpleado", () => {

@@ -299,6 +299,13 @@ export function desglosarPeriodo(marcaciones = [], tarifaHora = 0, festivos = FE
       }
     });
   }
+  // Hora extra DIURNA (definición quincenal): horas trabajadas − extra
+  // nocturna − 95.33 h ordinarias. Es el residuo tras quitar lo ordinario
+  // y todo lo extra no-diurno. Los recargos y la extra nocturna ya están
+  // calculados por la lógica diaria (no se tocan).
+  const otrosExtraMin = exNoc + exFestDiu + exFestNoc;
+  exDiu = Math.max(0, totalMin - Math.round(HORAS_QUINCENA_LEGAL * 60) - otrosExtraMin);
+
   const H = (min) => +(min / 60).toFixed(2);
   const recargo_nocturno         = Math.round((ordNoct / 60)     * tarifa * REC_NOCTURNO);
   const recargo_festivo          = Math.round((ordFest / 60)     * tarifa * REC_FESTIVO);
