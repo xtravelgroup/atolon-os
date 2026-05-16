@@ -483,9 +483,16 @@ function DetalleOCModal({ oc, onClose, onEditar, onFactura, onLogistica, editabl
   const items = Array.isArray(oc.items) ? oc.items : [];
   const recibidos = Array.isArray(oc.recibidos) ? oc.recibidos : [];
   const hist = Array.isArray(oc.cambios_historial) ? oc.cambios_historial : [];
-  const pagado = Number(oc.monto_pagado || 0) + pagos.reduce((s, p) => s + Number(p.monto || 0), 0) * 0; // monto_pagado ya agrega; pagos[] es el detalle
   const totalPagosDetalle = pagos.reduce((s, p) => s + Number(p.monto || 0), 0);
-  const montoPagado = Math.max(Number(oc.monto_pagado || 0), totalPagosDetalle);
+  // Parte CXP (cuentas por pagar): monto_pagado agrega cxp_pagos.
+  const cxpPart = Math.max(Number(oc.monto_pagado || 0), totalPagosDetalle);
+  // Anticipo: se registra aparte en la OC, NO en cxp_pagos. Cuenta como
+  // pagado salvo que ya esté representado como un cxp_pago (misma referencia).
+  const anticipoMonto = oc.anticipo_pagado ? Number(oc.anticipo_monto || 0) : 0;
+  const anticipoEnCxp = oc.anticipo_pagado && oc.anticipo_referencia_pago &&
+    pagos.some(p => p.referencia && p.referencia === oc.anticipo_referencia_pago);
+  const anticipoPart = anticipoEnCxp ? 0 : anticipoMonto;
+  const montoPagado = cxpPart + anticipoPart;
   const saldo = Number(oc.total || 0) - montoPagado;
   const itemNombre = (it) => it.nombre || it.descripcion || it.item || it.producto || "—";
   const itemCant = (it) => it.cantidad ?? it.cant ?? it.qty ?? "—";
@@ -668,8 +675,14 @@ function DetalleOCModal({ oc, onClose, onEditar, onFactura, onLogistica, editabl
                 <Row l="Anticipo pagado" v={oc.anticipo_pagado ? `Sí · ${fdt(oc.anticipo_pagado_at)}${oc.anticipo_referencia_pago ? " · ref " + oc.anticipo_referencia_pago : ""}` : "Pendiente"} />
               </div>
             )}
-            {pagos.length === 0 ? vacio("Sin pagos registrados.") : pagos.map((p, i) => (
-              <div key={i} style={{ padding: "5px 0", borderTop: i ? `1px solid ${B.navyLight}55` : "none" }}>
+            {anticipoPart > 0 && (
+              <div style={{ padding: "5px 0" }}>
+                <Row l={`${fmtFecha((oc.anticipo_pagado_at||"").slice(0,10))} · Anticipo`} v={<span style={{ color: B.sand }}>{COP(anticipoMonto)}</span>} />
+                {oc.anticipo_referencia_pago && <div style={{ color: "rgba(255,255,255,0.5)", fontSize: 11 }}>ref {oc.anticipo_referencia_pago}{oc.anticipo_comprobante_url ? " · " : ""}{oc.anticipo_comprobante_url && <a href={oc.anticipo_comprobante_url} target="_blank" rel="noreferrer" style={{ color: B.sky }}>comprobante</a>}</div>}
+              </div>
+            )}
+            {pagos.length === 0 && anticipoPart === 0 ? vacio("Sin pagos registrados.") : pagos.map((p, i) => (
+              <div key={i} style={{ padding: "5px 0", borderTop: (i || anticipoPart > 0) ? `1px solid ${B.navyLight}55` : "none" }}>
                 <Row l={`${fmtFecha((p.fecha_pago||"").slice(0,10))} · ${p.metodo || "—"}`} v={<span style={{ color: B.sand }}>{COP(p.monto || 0)}</span>} />
                 {(p.referencia || p.cuenta_origen) && <div style={{ color: "rgba(255,255,255,0.5)", fontSize: 11 }}>{[p.cuenta_origen, p.referencia].filter(Boolean).join(" · ")}{p.comprobante_url ? " · " : ""}{p.comprobante_url && <a href={p.comprobante_url} target="_blank" rel="noreferrer" style={{ color: B.sky }}>comprobante</a>}</div>}
               </div>
