@@ -3355,7 +3355,16 @@ export function TabMesaCompras({ reqs, ordenes, proveedores, currentUser, reload
                     {(() => {
                       const lg = resolverLoggro(it);
                       return lg
-                        ? <span style={{ fontSize: 9, marginLeft: 8, padding: "1px 6px", background: "#22c55e22", color: "#22c55e", borderRadius: 6, fontWeight: 700 }}>🔗 Loggro</span>
+                        ? (
+                          <span style={{ marginLeft: 8, display: "inline-flex", gap: 6, alignItems: "center" }}>
+                            <span style={{ fontSize: 9, padding: "1px 6px", background: "#22c55e22", color: "#22c55e", borderRadius: 6, fontWeight: 700 }}>🔗 Vinculado a Loggro</span>
+                            <button onClick={(e) => { e.stopPropagation(); setLinkItem(it); }}
+                              title="Cambiar el producto/ingrediente vinculado"
+                              style={{ fontSize: 9, padding: "1px 7px", borderRadius: 6, border: `1px solid ${B.sand}`, background: B.sand + "22", color: B.sand, fontWeight: 700, cursor: "pointer" }}>
+                              ✏️ Editar
+                            </button>
+                          </span>
+                        )
                         : (
                           <span style={{ marginLeft: 8, display: "inline-flex", gap: 6, alignItems: "center" }}>
                             <span style={{ fontSize: 9, padding: "1px 6px", background: B.warning + "22", color: B.warning, borderRadius: 6, fontWeight: 700 }}>⚠️ Sin Loggro</span>
