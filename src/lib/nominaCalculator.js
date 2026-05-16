@@ -293,16 +293,21 @@ export function desglosarPeriodo(marcaciones = [], tarifaHora = 0, festivos = FE
   for (const d of dias) {
     const gateOn = (weekTotal.get(d.weekKey) || 0) > gateMin;
     d.mins.forEach((x, idx) => {
+      // Festivo: TODA hora trabajada en festivo paga recargo festivo
+      // (80%, o 115% si además es nocturna), sin tope de jornada.
+      if (x.fest) {
+        if (x.night) ordFestNoct++;
+        else         ordFest++;
+        return;
+      }
+      // No festivo: primeras 7.33h del día = ordinarias; el resto es
+      // candidato a extra solo si la semana superó 44h.
       const ordinaria = idx < capDay || !gateOn;
       if (ordinaria) {
-        if (x.fest && x.night) ordFestNoct++;
-        else if (x.fest)       ordFest++;
-        else if (x.night)      ordNoct++;
+        if (x.night) ordNoct++;
       } else {
-        if (x.fest && x.night) exFestNoc++;
-        else if (x.fest)       exFestDiu++;
-        else if (x.night)      exNoc++;
-        else                   exDiu++;
+        if (x.night) exNoc++;
+        else         exDiu++;
       }
     });
   }

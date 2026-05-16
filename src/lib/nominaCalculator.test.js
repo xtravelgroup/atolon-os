@@ -304,6 +304,13 @@ describe("desglosarPeriodo — recargos de ley", () => {
     const d = desglosarPeriodo([{ fecha: "2026-05-01", entrada: "08:00", salida: "16:00" }], T);
     expect(d.recargo_festivo).toBe(Math.round(8 * T * 0.80)); // 64.000
   });
+  it("festivo: el recargo cubre TODAS las horas trabajadas (sin tope 7.33h)", () => {
+    // 1 may 08:00→17:00 (9h) − 1h almuerzo = 8h festivo → recargo sobre 8h,
+    // no sobre 7.33h.
+    const d = desglosarPeriodo([{ fecha: "2026-05-01", entrada: "08:00", salida: "17:00" }], T, undefined, 1);
+    expect(d.h_recargo_festivo).toBe(8);
+    expect(d.recargo_festivo).toBe(Math.round(8 * T * 0.80));
+  });
   it("ningún día > 8h: aunque la semana pase de 44h NO hay extra", () => {
     // 6 días × 8h = 48h (>44h) pero ningún día supera 8h → 0 extra.
     const sem = ["2026-05-11","2026-05-12","2026-05-13","2026-05-14","2026-05-15","2026-05-16"]
