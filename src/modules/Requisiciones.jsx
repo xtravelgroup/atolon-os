@@ -2189,7 +2189,7 @@ function NewReqModal({ tipoInicial, areaInicial, onClose, onSave, proveedores, r
     }
     Promise.all([
       supabase.from("items_categorias").select("nombre, departamento").eq("activo", true),
-      supabase.from("items_catalogo").select("id, nombre, unidad, categoria").eq("activo", true).order("nombre"),
+      supabase.from("items_catalogo").select("id, nombre, unidad, categoria, precio_compra, loggro_id").eq("activo", true).order("nombre"),
     ]).then(([catR, itemR]) => {
       const catsDepto = (catR.data || []).filter(c => c.departamento === depto).map(c => c.nombre);
       setCatalogoCats(catsDepto);
@@ -2333,6 +2333,12 @@ function NewReqModal({ tipoInicial, areaInicial, onClose, onSave, proveedores, r
                       if (selectedItem) {
                         updateItem(i, "unidad", selectedItem.unidad || "Unidades");
                         updateItem(i, "item_catalogo_id", selectedItem.id);
+                        updateItem(i, "item_id", selectedItem.id);
+                        updateItem(i, "loggro_id", selectedItem.loggro_id || null);
+                        // Precio unitario = última compra (precio_compra del
+                        // catálogo, que se actualiza con cada factura aplicada).
+                        const ultimaCompra = Number(selectedItem.precio_compra) || 0;
+                        if (ultimaCompra > 0) updateItem(i, "precioU", ultimaCompra);
                       }
                     }}
                   />
