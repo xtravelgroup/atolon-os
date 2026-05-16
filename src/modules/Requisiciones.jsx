@@ -743,9 +743,12 @@ function TabAprobaciones({ reqs, reglas, onOpen, currentUser, reload }) {
         estado: "Rechazada", aprobaciones, timeline, updated_at: new Date().toISOString(),
       }).eq("id", r.id);
     } else {
-      // Verificar si necesita más aprobaciones
+      // Verificar si necesita más aprobaciones.
+      // super_admin tiene acceso total: su aprobación cuenta tanto como
+      // Gerente General como Dirección (antes quedaba atascada en Pendiente
+      // porque su rol no empieza con "gerente_general").
       const nivel = r.nivel_aprobacion || "gerente_general";
-      const yaGerenteAprobo = aprobaciones.some(a => a.accion === "aprobada" && esGerenteGeneralRol(a.rol));
+      const yaGerenteAprobo = aprobaciones.some(a => a.accion === "aprobada" && (esGerenteGeneralRol(a.rol) || a.rol === "super_admin"));
       const yaDireccionAprobo = aprobaciones.some(a => a.accion === "aprobada" && (a.rol === "super_admin" || a.rol === "direccion"));
 
       let nuevoEstado = "Pendiente";
