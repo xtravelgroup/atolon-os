@@ -1455,7 +1455,9 @@ function RecepcionOCModal({ oc, reqs, onClose, reload, currentUser, readOnly = f
     // 1. Actualizar la OC
     await supabase.from("ordenes_compra").update({
       estado: nuevoEstado,
-      recibidos: recibidos.map(r => ({ item_id: r.id, cant_recibida: r.cant_recibida })),
+      // Persistir loggro_id por ítem: así el detalle de OC sabe cuáles
+      // realmente subieron a Loggro (los que NO tienen link no suben).
+      recibidos: recibidos.map(r => ({ item_id: r.id, cant_recibida: r.cant_recibida, loggro_id: r.loggro_id || null, nombre: r.item })),
       notas_recibo: notas,
       factura_numero: numFactura.trim() || null,
       factura_fecha: fechaFactura || null,
