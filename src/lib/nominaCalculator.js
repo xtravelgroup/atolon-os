@@ -134,7 +134,8 @@ export function esDominical(fechaIso) {
 // Modelo CO 2026 (jornada 44 h/sem, Ley 2101). Constantes ajustables.
 export const HORAS_QUINCENA_LEGAL = 95.33333333;          // h ordinarias/quincena
 export const HORAS_MES_LEGAL      = 190.66666667;         // = 95.3333 × 2
-export const JORNADA_SEMANAL_HORAS = 44;                  // tope ordinario semanal
+export const JORNADA_DIARIA_HORAS  = 8;                   // ordinaria máx por día
+export const JORNADA_SEMANAL_HORAS = 44;                  // gate: extra solo si la semana supera esto
 export const NOCTURNO_INICIO_H    = 19;                   // 7:00 p.m. inicia nocturno (CO 2026)
 export const NOCTURNO_FIN_H       = 6;                    // 06:00 termina nocturno
 // Recargos sobre la hora ordinaria (aditivos: la hora base ya está en el salario).
@@ -175,22 +176,29 @@ function lunesDeSemana(fechaIso) {
  * extra depende del acumulado SEMANAL, no del día).
  */
 export function calcularHorasDia({ fecha, entrada, salida, almuerzoHoras = 0, festivos = FESTIVOS_CO_2026 }) {
+  const vacio = { fecha, horas: 0, horas_nocturnas: 0, es_festivo: false };
   const ini = hhmmAMin(entrada);
   let fin = hhmmAMin(salida);
-  if (ini == null || fin == null) return { fecha, horas: 0, horas_nocturnas: 0, es_festivo: false };
+  if (ini == null || fin == null) return vacio;
   if (fin <= ini) fin += 1440;
-  // El almuerzo (1h o 0.5h) no se trabaja → se descuenta del turno (final).
-  fin = Math.max(ini, fin - Math.round(Number(almuerzoHoras || 0) * 60));
-  const totalMin = fin - ini;
-  if (totalMin <= 0) return { fecha, horas: 0, horas_nocturnas: 0, es_festivo: false };
-  let noct = 0;
+  if (fin - ini <= 0) return vacio;
+  // minutos del turno con clasif. de noche
+  const mins = [];
   for (let t = ini; t < fin; t++) {
     const h = Math.floor((((t % 1440) + 1440) % 1440) / 60);
-    if (h >= NOCTURNO_INICIO_H || h < NOCTURNO_FIN_H) noct++;
+    mins.push(h >= NOCTURNO_INICIO_H || h < NOCTURNO_FIN_H); // true = noche
   }
+  // El almuerzo se descuenta de las horas DIURNAS (la comida es de día);
+  // si el turno no tiene suficiente diurno, se quita de la noche.
+  let lunch = Math.round(Number(almuerzoHoras || 0) * 60);
+  const w1 = [];
+  for (const night of mins) { if (lunch > 0 && !night) { lunch--; continue; } w1.push(night); }
+  const w = [];
+  for (const night of w1) { if (lunch > 0 && night) { lunch--; continue; } w.push(night); }
+  const noct = w.filter(Boolean).length;
   return {
     fecha,
-    horas: +(totalMin / 60).toFixed(2),
+    horas: +(w.length / 60).toFixed(2),
     horas_nocturnas: +(noct / 60).toFixed(2),
     es_festivo: festivos?.has?.(fecha) ?? false,
   };
@@ -198,9 +206,12 @@ export function calcularHorasDia({ fecha, entrada, salida, almuerzoHoras = 0, fe
 
 /**
  * Desglose legal del período a partir de las marcaciones.
- * Las primeras 44 h de CADA semana son ordinarias; lo demás es extra.
- * Las horas ordinarias solo suman su RECARGO (la hora base ya está en
- * el salario). Las horas extra se pagan completas × su factor.
+ *
+ * Hora extra = horas trabajadas DESPUÉS de 8 h en el mismo día, y SOLO si
+ * la semana superó 44 h (si no, esas horas siguen siendo ordinarias).
+ * Las primeras 8 h del día son ordinarias (diurnas/nocturnas según el
+ * reloj) y solo suman su RECARGO. El almuerzo se descuenta de las horas
+ * DIURNAS del día. Las horas extra se pagan completas × su factor.
  *
  * @param {Array}  marcaciones - [{ fecha, entrada, salida }]
  * @param {number} tarifaHora  - salario_base / 190.6667
@@ -215,46 +226,62 @@ export function desglosarPeriodo(marcaciones = [], tarifaHora = 0, festivos = FE
     .filter(m => m._ini != null && m._fin != null)
     .sort((a, b) => (a.fecha === b.fecha ? a._ini - b._ini : (a.fecha < b.fecha ? -1 : 1)));
 
-  const semanas = new Map();      // lunes → [maskPorMinuto] en orden cronológico
-  const diasSet = new Set();
-  let totalMin = 0, noctMinTot = 0;
+  // Pase 1: minutos por FECHA de inicio del turno (soporta cruce de medianoche).
+  const porFecha = new Map(); // fecha → [{night,fest}] en orden cronológico
   for (const m of filas) {
     let fin = m._fin;
     if (fin <= m._ini) fin += 1440;
-    // Descuento de almuerzo (no trabajado): se resta del final del turno.
-    fin = Math.max(m._ini, fin - almMin);
-    const dur = fin - m._ini;
-    if (dur <= 0) continue;
-    diasSet.add(m.fecha);
-    totalMin += dur;
+    if (fin - m._ini <= 0) continue;
+    if (!porFecha.has(m.fecha)) porFecha.set(m.fecha, []);
+    const arr = porFecha.get(m.fecha);
     for (let t = m._ini; t < fin; t++) {
       const off = Math.floor(t / 1440);
       const fechaReal = off ? isoAddDays(m.fecha, off) : m.fecha;
       const hh = Math.floor((((t % 1440) + 1440) % 1440) / 60);
       const night = hh >= NOCTURNO_INICIO_H || hh < NOCTURNO_FIN_H;
       const fest = festivos?.has?.(fechaReal) ?? false;
-      if (night) noctMinTot++;
-      const wk = lunesDeSemana(fechaReal);
-      if (!semanas.has(wk)) semanas.set(wk, []);
-      semanas.get(wk).push((night ? 1 : 0) | (fest ? 2 : 0));
+      arr.push({ night, fest });
     }
   }
 
-  const capMin = JORNADA_SEMANAL_HORAS * 60;
+  // Quita el almuerzo de cada día (de los minutos DIURNOS primero) y
+  // acumula el total semanal para el gate de 44 h.
+  const dias = [];                 // { weekKey, mins:[{night,fest}] }
+  const weekTotal = new Map();
+  let totalMin = 0, noctMinTot = 0;
+  for (const [fecha, raw] of porFecha) {
+    let lunch = almMin;
+    const w1 = [];
+    for (const x of raw) { if (lunch > 0 && !x.night) { lunch--; continue; } w1.push(x); }
+    const w = [];
+    for (const x of w1) { if (lunch > 0 && x.night) { lunch--; continue; } w.push(x); }
+    if (w.length === 0) continue;
+    const wk = lunesDeSemana(fecha);
+    weekTotal.set(wk, (weekTotal.get(wk) || 0) + w.length);
+    for (const x of w) if (x.night) noctMinTot++;
+    totalMin += w.length;
+    dias.push({ weekKey: wk, mins: w });
+  }
+
+  // Pase 2: clasificar. Primeras 8 h del día = ordinarias. Lo que pase de
+  // 8 h ese día es EXTRA solo si la semana superó 44 h; si no, ordinaria.
+  const capDay  = JORNADA_DIARIA_HORAS * 60;
+  const gateMin = JORNADA_SEMANAL_HORAS * 60;
   let ordNoct = 0, ordFest = 0, ordFestNoct = 0;
   let exDiu = 0, exNoc = 0, exFestDiu = 0, exFestNoc = 0;
-  for (const arr of semanas.values()) {
-    arr.forEach((mask, idx) => {
-      const night = !!(mask & 1), fest = !!(mask & 2);
-      if (idx < capMin) {                     // ORDINARIA (solo recargo)
-        if (fest && night) ordFestNoct++;
-        else if (fest)     ordFest++;
-        else if (night)    ordNoct++;
-      } else {                                // EXTRA (pago completo)
-        if (fest && night) exFestNoc++;
-        else if (fest)     exFestDiu++;
-        else if (night)    exNoc++;
-        else               exDiu++;
+  for (const d of dias) {
+    const gateOn = (weekTotal.get(d.weekKey) || 0) > gateMin;
+    d.mins.forEach((x, idx) => {
+      const ordinaria = idx < capDay || !gateOn;
+      if (ordinaria) {
+        if (x.fest && x.night) ordFestNoct++;
+        else if (x.fest)       ordFest++;
+        else if (x.night)      ordNoct++;
+      } else {
+        if (x.fest && x.night) exFestNoc++;
+        else if (x.fest)       exFestDiu++;
+        else if (x.night)      exNoc++;
+        else                   exDiu++;
       }
     });
   }
@@ -271,7 +298,7 @@ export function desglosarPeriodo(marcaciones = [], tarifaHora = 0, festivos = FE
   const extraMin = exDiu + exNoc + exFestDiu + exFestNoc;
 
   return {
-    dias_trabajados: diasSet.size,
+    dias_trabajados: dias.length,
     horas: H(totalMin),
     horas_ordinarias: H(totalMin - extraMin),
     horas_extra: H(extraMin),

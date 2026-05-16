@@ -261,6 +261,13 @@ describe("calcularHorasDia (solo horas, informativo)", () => {
   it("entrada/salida vacías = 0", () => {
     expect(calcularHorasDia({ fecha: "2026-05-11", entrada: "", salida: "" }).horas).toBe(0);
   });
+  it("almuerzo se descuenta de las horas DIURNAS (no del final)", () => {
+    // 12:00→03:00 = 15h; noche 19:00–06:00. Almuerzo 1h sale del diurno →
+    // 6h diurnas + 8h nocturnas = 14h, 8h nocturnas (no 7).
+    const r = calcularHorasDia({ fecha: "2026-05-09", entrada: "12:00", salida: "03:00", almuerzoHoras: 1 });
+    expect(r.horas).toBe(14);
+    expect(r.horas_nocturnas).toBe(8);
+  });
 });
 
 describe("desglosarPeriodo — recargos de ley", () => {
@@ -284,15 +291,34 @@ describe("desglosarPeriodo — recargos de ley", () => {
     const d = desglosarPeriodo([{ fecha: "2026-05-01", entrada: "08:00", salida: "16:00" }], T);
     expect(d.recargo_festivo).toBe(Math.round(8 * T * 0.80)); // 64.000
   });
-  it("hora extra es SEMANAL: 48h en una semana = 44 ord + 4 extra diurna", () => {
+  it("ningún día > 8h: aunque la semana pase de 44h NO hay extra", () => {
+    // 6 días × 8h = 48h (>44h) pero ningún día supera 8h → 0 extra.
     const sem = ["2026-05-11","2026-05-12","2026-05-13","2026-05-14","2026-05-15","2026-05-16"]
       .map(f => ({ fecha: f, entrada: "08:00", salida: "16:00" }));
     const d = desglosarPeriodo(sem, T);
     expect(d.horas).toBe(48);
-    expect(d.horas_ordinarias).toBe(44);
-    expect(d.horas_extra).toBe(4);
-    expect(d.extra_diurna).toBe(Math.round(4 * T * 1.25)); // 50.000
-    expect(d.total_recargos).toBe(0);
+    expect(d.horas_extra).toBe(0);
+    expect(d.horas_ordinarias).toBe(48);
+  });
+  it("día > 8h en semana ≤ 44h: sigue ordinario (gate apagado)", () => {
+    const d = desglosarPeriodo([{ fecha: "2026-05-11", entrada: "08:00", salida: "20:00" }], T);
+    expect(d.horas).toBe(12);
+    expect(d.horas_extra).toBe(0);          // semana = 12h ≤ 44 → sin extra
+  });
+  it("ejemplo real: 9 may 12:00→03:00 (alm 1h) en semana >44h", () => {
+    // Semana lun 4–dom 10: 5 días de 8h + el 9 may largo. Semana = 54h (>44).
+    const sem = [
+      ["2026-05-04","08:00","17:00"],["2026-05-06","08:00","17:00"],
+      ["2026-05-07","08:00","17:00"],["2026-05-08","08:00","17:00"],
+      ["2026-05-09","12:00","03:00"],["2026-05-10","08:00","17:00"],
+    ].map(([fecha, entrada, salida]) => ({ fecha, entrada, salida }));
+    const d = desglosarPeriodo(sem, T, undefined, 1);
+    // 9 may: 6h ord diurnas + 2h recargo nocturno + 6h extra nocturna
+    expect(d.h_recargo_nocturno).toBe(2);
+    expect(d.h_extra_nocturna).toBe(6);
+    expect(d.h_extra_diurna).toBe(0);
+    expect(d.recargo_nocturno).toBe(Math.round(2 * T * 0.35));
+    expect(d.extra_nocturna).toBe(Math.round(6 * T * 1.75));
   });
 });
 
@@ -303,7 +329,7 @@ describe("tarifaHoraEmpleado", () => {
 });
 
 describe("calcularNominaEmpleado — modo horas_reales", () => {
-  it("base = salario ordinario (base/2) + extras itemizados", () => {
+  it("base = salario ordinario (base/2); días de 8h no generan extra", () => {
     const empleado = { salario_base: 1_906_667 };
     const sem = ["2026-05-11","2026-05-12","2026-05-13","2026-05-14","2026-05-15","2026-05-16"]
       .map(f => ({ fecha: f, entrada: "08:00", salida: "16:00" }));
@@ -314,8 +340,8 @@ describe("calcularNominaEmpleado — modo horas_reales", () => {
     });
     expect(r.modalidad).toBe("horas_reales");
     expect(r.devengado.salario_ordinario).toBe(Math.round(1_906_667 / 2));
-    expect(r.devengado.total_extras).toBe(50_000);
-    expect(r.devengado.horas_extra).toBe(4);
+    expect(r.devengado.total_extras).toBe(0);   // ningún día > 8h
+    expect(r.devengado.horas_extra).toBe(0);
     expect(r.neto).toBeGreaterThan(0);
   });
 
