@@ -105,6 +105,34 @@ async function loggroRaw(method: string, path: string, body?: unknown): Promise<
   return { status: res.status, body: data, ok: res.ok };
 }
 
+// ── Conversión de unidades ────────────────────────────────────────────
+// La factura/OC puede venir en una unidad (ej. KG) distinta a la del
+// ingrediente en Loggro (ej. Gr). Si no se convierte, entra 1000× menos
+// inventario y el costo unitario queda 1000× inflado.
+// Devuelve el factor por el que se MULTIPLICA la cantidad (y se DIVIDE el
+// precio unitario), para que el total monetario no cambie.
+// 1 = sin conversión (misma unidad, familia distinta, o desconocida).
+function normalizarUnidad(u: string): { base: string; factor: number } | null {
+  const n = String(u || "").trim().toUpperCase().replace(/\.$/, "").replace(/\s+/g, "");
+  if (!n) return null;
+  // Peso → base gramo
+  if (["G", "GR", "GRS", "GRM", "GRMS", "GRAMO", "GRAMOS", "GM", "GMS"].includes(n)) return { base: "PESO", factor: 1 };
+  if (["KG", "KGS", "KGM", "KILO", "KILOS", "KILOGRAMO", "KILOGRAMOS", "K"].includes(n)) return { base: "PESO", factor: 1000 };
+  if (["MG", "MILIGRAMO", "MILIGRAMOS"].includes(n)) return { base: "PESO", factor: 0.001 };
+  // Volumen → base mililitro
+  if (["ML", "CC", "MILILITRO", "MILILITROS"].includes(n)) return { base: "VOL", factor: 1 };
+  if (["L", "LT", "LTS", "LTR", "LITRO", "LITROS"].includes(n)) return { base: "VOL", factor: 1000 };
+  return null; // unidad desconocida → no convertir
+}
+function factorConversion(src: string, dst: string): number {
+  const s = normalizarUnidad(src);
+  const d = normalizarUnidad(dst);
+  if (!s || !d) return 1;          // alguna desconocida → no tocar
+  if (s.base !== d.base) return 1; // familias distintas (peso vs vol) → no tocar
+  if (d.factor === 0) return 1;
+  return s.factor / d.factor;      // ej. KG(1000) → Gr(1) = 1000
+}
+
 function sb() {
   return createClient(
     Deno.env.get("SUPABASE_URL")!,
@@ -2318,6 +2346,33 @@ serve(async (req) => {
       // Loggro requiere business + user en el body de /inventory
       const { businessId, userId } = await getLoggroIdentity();
 
+      // Convertir cantidades/precio a la unidad del ingrediente en Loggro.
+      // Si la factura viene en KG y el ingrediente en Loggro está en Gr,
+      // convertimos qty ×1000 y price ÷1000 (el total no cambia).
+      const conversiones: any[] = [];
+      const ingredientesPayload = await Promise.all((body.ingredients || []).map(async (it: any) => {
+        const ingId = it.ingredient_id || it.ingredient;
+        let quantity = Number(it.quantity) || 0;
+        // Loggro usa 'price' para el costo unitario, no 'cost'. Aceptamos ambos.
+        let price = Number(it.price ?? it.cost) || 0;
+        const srcUnit = it.unit || it.unidad || null;
+        if (srcUnit && ingId) {
+          try {
+            const d: any = await loggroGet(`/ingredients/${ingId}`);
+            const dstUnit = d?.unit?.name || d?.measurementUnit?.name || null;
+            const f = factorConversion(String(srcUnit), String(dstUnit || ""));
+            if (f > 0 && f !== 1) {
+              const qO = quantity, pO = price;
+              quantity = quantity * f;
+              price = price / f;
+              conversiones.push({ ingredient: ingId, from: srcUnit, to: dstUnit, factor: f,
+                quantity: `${qO} → ${quantity}`, price: `${pO} → ${price}` });
+            }
+          } catch (_e) { /* si no se puede leer el ingrediente, no convertir */ }
+        }
+        return { ingredient: ingId, quantity, price };
+      }));
+
       // Armar payload exacto de Loggro
       const now = new Date().toISOString();
       const movementPayload: any = {
@@ -2330,13 +2385,7 @@ serve(async (req) => {
         isMoveTo: !!body.isMoveTo,
         deleted: false,
         note: body.note || "",
-        ingredients: (body.ingredients || []).map((it: any) => ({
-          ingredient: it.ingredient_id || it.ingredient,
-          quantity:   Number(it.quantity) || 0,
-          // Loggro usa 'price' para el costo unitario, no 'cost'.
-          // Aceptamos ambos en el body por compatibilidad.
-          price:      Number(it.price ?? it.cost) || 0,
-        })),
+        ingredients: ingredientesPayload,
         createdOn: now,
         modifiedOn: now,
       };
@@ -2359,6 +2408,7 @@ serve(async (req) => {
       return json({
         ok: true,
         movement_id: result.body?._id || result.body?.id || null,
+        conversiones,
         loggro_response: result.body,
       });
     }

@@ -1576,6 +1576,10 @@ function RecepcionOCModal({ oc, reqs, onClose, reload, currentUser, readOnly = f
             ingredient_id: r.loggro_id,
             quantity: Number(r.cant_recibida),
             cost: Number(r.precioU) || 0,
+            // Unidad de ORIGEN (factura/OC). El edge function la compara con
+            // la unidad del ingrediente en Loggro y convierte si difieren
+            // (ej. factura en KG, Loggro en Gr → ×1000, costo ÷1000).
+            unit: r.unidad || r.unidad_compra || null,
           }));
         const sinLoggroId = recibidos.filter(r => (Number(r.cant_recibida) || 0) > 0 && !r.loggro_id);
         if (ingredientsPayload.length === 0) {
