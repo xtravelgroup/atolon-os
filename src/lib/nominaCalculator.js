@@ -174,11 +174,13 @@ function lunesDeSemana(fechaIso) {
  * El dinero se calcula a nivel período en desglosarPeriodo (la hora
  * extra depende del acumulado SEMANAL, no del día).
  */
-export function calcularHorasDia({ fecha, entrada, salida, festivos = FESTIVOS_CO_2026 }) {
+export function calcularHorasDia({ fecha, entrada, salida, almuerzoHoras = 0, festivos = FESTIVOS_CO_2026 }) {
   const ini = hhmmAMin(entrada);
   let fin = hhmmAMin(salida);
   if (ini == null || fin == null) return { fecha, horas: 0, horas_nocturnas: 0, es_festivo: false };
   if (fin <= ini) fin += 1440;
+  // El almuerzo (1h o 0.5h) no se trabaja → se descuenta del turno (final).
+  fin = Math.max(ini, fin - Math.round(Number(almuerzoHoras || 0) * 60));
   const totalMin = fin - ini;
   if (totalMin <= 0) return { fecha, horas: 0, horas_nocturnas: 0, es_festivo: false };
   let noct = 0;
@@ -204,8 +206,9 @@ export function calcularHorasDia({ fecha, entrada, salida, festivos = FESTIVOS_C
  * @param {number} tarifaHora  - salario_base / 190.6667
  * @param {Set}    [festivos]
  */
-export function desglosarPeriodo(marcaciones = [], tarifaHora = 0, festivos = FESTIVOS_CO_2026) {
+export function desglosarPeriodo(marcaciones = [], tarifaHora = 0, festivos = FESTIVOS_CO_2026, almuerzoHoras = 0) {
   const tarifa = Number(tarifaHora || 0);
+  const almMin = Math.round(Number(almuerzoHoras || 0) * 60);
   const filas = marcaciones
     .filter(m => m.entrada && m.salida)
     .map(m => ({ fecha: m.fecha, _ini: hhmmAMin(m.entrada), _fin: hhmmAMin(m.salida) }))
@@ -218,6 +221,8 @@ export function desglosarPeriodo(marcaciones = [], tarifaHora = 0, festivos = FE
   for (const m of filas) {
     let fin = m._fin;
     if (fin <= m._ini) fin += 1440;
+    // Descuento de almuerzo (no trabajado): se resta del final del turno.
+    fin = Math.max(m._ini, fin - almMin);
     const dur = fin - m._ini;
     if (dur <= 0) continue;
     diasSet.add(m.fecha);
@@ -419,6 +424,7 @@ export function calcularNominaEmpleado({ empleado, periodo, novedades = [], marc
 
   const salarioBase = Number(empleado?.salario_base || 0);
   const tarifaHora  = tarifaHoraEmpleado(empleado);
+  const almuerzo    = empleado?.almuerzo_horas == null ? 1 : Number(empleado.almuerzo_horas);
   const tieneMarcaciones = Array.isArray(marcaciones) && marcaciones.some(m => m.entrada && m.salida);
   const modalidad = empleado?.modalidad_calculo || (tieneMarcaciones ? "horas_reales" : "salario_fijo");
   const usarHoras = modalidad !== "salario_fijo" && tieneMarcaciones;
@@ -430,7 +436,7 @@ export function calcularNominaEmpleado({ empleado, periodo, novedades = [], marc
   let desg = null;
   let diasTrabajados;
   if (usarHoras) {
-    desg = desglosarPeriodo(marcaciones, tarifaHora, festivos);
+    desg = desglosarPeriodo(marcaciones, tarifaHora, festivos, almuerzo);
     diasTrabajados = desg.dias_trabajados;
   } else {
     diasTrabajados = Math.max(0, dias - claves.dias_no_trabajados);

@@ -171,6 +171,7 @@ const EMPTY_EMP = {
   banco:"", cuenta_bancaria:"", tipo_cuenta:"ahorros",
   eps:"", fondo_pension:"", fondo_cesantias:"", arl:"Positiva",
   caja_compensacion:"Comfamiliar", nivel_riesgo_arl:1,
+  almuerzo_horas:1,
   activo:true, avatar_color: AVATAR_COLORS[0], notas:"", usuario_id:"",
 };
 
@@ -223,6 +224,7 @@ function EmpleadoModal({ emp, depts, empleados, usuarios, onSave, onClose }) {
       arl:                str(form.arl) || "Positiva",
       caja_compensacion:  str(form.caja_compensacion) || "Comfamiliar",
       nivel_riesgo_arl:   Number(form.nivel_riesgo_arl) || 1,
+      almuerzo_horas:     Number(form.almuerzo_horas) === 0.5 ? 0.5 : 1,
       activo:             form.activo !== false,
       avatar_color:       form.avatar_color || AVATAR_COLORS[0],
       notas:              str(form.notas),
@@ -365,6 +367,12 @@ function EmpleadoModal({ emp, depts, empleados, usuarios, onSave, onClose }) {
             <Sel value={form.modalidad_pago} onChange={v => set("modalidad_pago", v)}>
               <option value="quincenal">Quincenal</option>
               <option value="mensual">Mensual</option>
+            </Sel>
+          </Field>
+          <Field label="Almuerzo (se descuenta por día trabajado)" half>
+            <Sel value={form.almuerzo_horas} onChange={v => set("almuerzo_horas", v)}>
+              <option value={1}>1 hora</option>
+              <option value={0.5}>0.5 hora (media)</option>
             </Sel>
           </Field>
           <Field label="Banco" half><Inp value={form.banco} onChange={v => set("banco", v)} /></Field>

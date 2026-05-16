@@ -65,13 +65,14 @@ function MarcacionesGrid({ empleado, periodo, ventana, marcaciones, onSave }) {
   const [grid, setGrid] = useState(seed);
   const [guardando, setGuardando] = useState(false);
   const tarifa = tarifaHoraEmpleado(empleado);
+  const almuerzo = empleado?.almuerzo_horas == null ? 1 : Number(empleado.almuerzo_horas);
   const DOW = ["Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"];
 
   const set = (fecha, campo, val) => setGrid(g => ({ ...g, [fecha]: { ...g[fecha], [campo]: val } }));
   const filas = dias.map(f => ({ fecha: f, ...grid[f] }));
   // La hora extra depende del acumulado SEMANAL → el dinero se calcula a
   // nivel período, no por día. Aquí solo previsualizamos horas + adicionales.
-  const desg = desglosarPeriodo(filas, tarifa);
+  const desg = desglosarPeriodo(filas, tarifa, undefined, almuerzo);
 
   const guardar = async () => {
     setGuardando(true);
@@ -97,7 +98,7 @@ function MarcacionesGrid({ empleado, periodo, ventana, marcaciones, onSave }) {
           const d = new Date(f.fecha + "T12:00:00");
           const fest = FESTIVOS_CO_2026.has(f.fecha); // domingos = día normal (sin recargo)
           const pre = (f.entrada && f.salida)
-            ? calcularHorasDia({ fecha: f.fecha, entrada: f.entrada, salida: f.salida })
+            ? calcularHorasDia({ fecha: f.fecha, entrada: f.entrada, salida: f.salida, almuerzoHoras: almuerzo })
             : null;
           return (
             <div key={f.fecha} style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 0", borderBottom: `1px solid ${B.navyLight}33` }}>
@@ -375,7 +376,7 @@ export default function ProcesarNomina() {
     const ven = ventanaDe(periodo);
     const [empsRes, novsRes, marcsRes] = await Promise.all([
       supabase.from("rh_empleados")
-        .select("id, nombres, apellidos, cedula, cargo, departamento_id, salario_base, tarifa_hora, modalidad_calculo, activo")
+        .select("id, nombres, apellidos, cedula, cargo, departamento_id, salario_base, tarifa_hora, modalidad_calculo, almuerzo_horas, activo")
         .eq("activo", true)
         .order("apellidos"),
       // Novedades viven en su ventana DESFASADA (26→10 / 11→25), no en la quincena.
