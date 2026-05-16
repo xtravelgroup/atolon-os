@@ -1027,7 +1027,9 @@ export default function Analitica({ externo = false }) {
       )}
 
       <div style={{ marginTop: 16, fontSize: 11, color: B.muted, textAlign: "center" }}>
-        AtolonTrack v2.1 · GTM/GA4/Meta Pixel · Server-side fallback · Datos en tiempo real desde Supabase
+        {externo
+          ? "Atolón · Analítica en tiempo real"
+          : "AtolonTrack v2.1 · GTM/GA4/Meta Pixel · Server-side fallback · Datos en tiempo real desde Supabase"}
       </div>
     </div>
   );
