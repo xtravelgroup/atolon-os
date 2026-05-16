@@ -1742,6 +1742,16 @@ function RecepcionOCModal({ oc, reqs, onClose, reload, currentUser, readOnly = f
                       ) : (
                         <div style={{ fontSize: 9, color: B.success, marginTop: 3, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
                           <span>🔗 Vinculado a Loggro: <strong>{nombreCatalogo}</strong></span>
+                          <select
+                            value=""
+                            onChange={e => e.target.value && vincularManual(i, e.target.value)}
+                            title="Cambiar el producto/ingrediente de Loggro vinculado"
+                            style={{ fontSize: 10, padding: "2px 4px", borderRadius: 4, background: B.navy, color: B.sand, border: `1px solid ${B.sand}55`, maxWidth: 200 }}>
+                            <option value="">✏️ Cambiar vínculo…</option>
+                            {catalogo.filter(c => c.loggro_id && c.id !== r.item_id).map(c => (
+                              <option key={c.id} value={c.id}>{c.nombre} {c.unidad ? `(${c.unidad})` : ""}</option>
+                            ))}
+                          </select>
                           {nombreDifiere && (
                             <button onClick={() => actualizarNombreProducto(i)}
                               disabled={actualizandoNombre === i}
