@@ -1467,9 +1467,15 @@ function RecepcionOCModal({ oc, reqs, onClose, reload, currentUser, readOnly = f
     //    Cada req se evalúa por sus PROPIOS items: si todos sus items están
     //    completos → "Recibida"; si algunos → "Recibida Parcial"; si ninguno
     //    de sus items se recibió en esta entrega → no toca el estado.
-    const reqIdsOrigen = Array.isArray(oc.requisicion_ids) && oc.requisicion_ids.length > 0
-      ? oc.requisicion_ids
-      : (oc.requisicion_id ? [oc.requisicion_id] : []);
+    // En OC consolidadas requisicion_ids/requisicion_id están vacíos y el
+    // link a requisición vive en cada item (items[].req_ids). Unir todo.
+    const reqDeItems = (oc.items || [])
+      .flatMap(it => Array.isArray(it.req_ids) ? it.req_ids : (it.req_id ? [it.req_id] : []));
+    const reqIdsOrigen = Array.from(new Set([
+      ...((Array.isArray(oc.requisicion_ids) ? oc.requisicion_ids : []) || []),
+      ...(oc.requisicion_id ? [oc.requisicion_id] : []),
+      ...reqDeItems,
+    ].filter(Boolean)));
 
     for (const reqId of reqIdsOrigen) {
       const req = reqs.find(r => r.id === reqId);
