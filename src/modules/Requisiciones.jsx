@@ -1587,6 +1587,15 @@ function RecepcionOCModal({ oc, reqs, onClose, reload, currentUser, readOnly = f
             unit: r.unidad || r.unidad_compra || null,
           }));
         const sinLoggroId = recibidos.filter(r => (Number(r.cant_recibida) || 0) > 0 && !r.loggro_id);
+        // Resolver el proveedor en Loggro: el id de Loggro vive en
+        // proveedores.loggro_id (NO existe oc.proveedor_loggro_id). Sin esto
+        // el movimiento Entrada-Compra quedaba SIN proveedor.
+        let provLoggroId = oc.proveedor_loggro_id || null;
+        if (!provLoggroId && oc.proveedor_id) {
+          const { data: prov } = await supabase
+            .from("proveedores").select("loggro_id").eq("id", oc.proveedor_id).maybeSingle();
+          provLoggroId = prov?.loggro_id || null;
+        }
         if (ingredientsPayload.length === 0) {
           alert("Ningún ítem recibido tiene loggro_id mapeado. No se puede registrar en Loggro.\n\nVincula los productos en el módulo Inventario → Productos → '🔗 Sync Loggro'.");
         } else {
@@ -1596,7 +1605,7 @@ function RecepcionOCModal({ oc, reqs, onClose, reload, currentUser, readOnly = f
             body: JSON.stringify({
               type: 1,
               isSubtracted: false,
-              provider_id: oc.proveedor_loggro_id || null,
+              provider_id: provLoggroId,
               // La entrada a Loggro usa la fecha de recepción ORIGINAL (no la
               // fecha en que se vincularon los productos / se re-guardó).
               date: fechaRecepcionOriginal,
