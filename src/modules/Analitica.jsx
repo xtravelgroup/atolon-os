@@ -76,6 +76,9 @@ export default function Analitica({ externo = false }) {
       const dias = parseInt(periodo);
       desde = new Date(Date.now() - dias * 86400000).toISOString();
     }
+    // Vista externa: nunca mostrar data anterior al 12 de mayo de 2026.
+    const TRACK_MIN_EXTERNO = "2026-05-12T00:00:00.000Z";
+    if (externo && desde < TRACK_MIN_EXTERNO) desde = TRACK_MIN_EXTERNO;
     const hasta = periodo === "custom" && customTo ? new Date(customTo + "T23:59:59").toISOString() : new Date().toISOString();
 
     const [sesRes, embRes, evRes, resConvRes, atribRes, abandRes, ingresosRes, usuariosRes] = await Promise.all([
