@@ -1452,6 +1452,11 @@ function RecepcionOCModal({ oc, reqs, onClose, reload, currentUser, readOnly = f
     if (todoRecibido) nuevoEstado = "recibida";
     else if (algoRecibido) nuevoEstado = "recibida_parcial";
 
+    // Fecha de recepción ORIGINAL: solo se fija la primera vez. En re-guardados
+    // (ej. vincular productos a Loggro después) NO se sobreescribe — así la
+    // entrada a Loggro queda con la fecha real en que llegó la mercancía.
+    const fechaRecepcionOriginal = oc.fecha_recepcion || oc.recibida_at || new Date().toISOString();
+
     // 1. Actualizar la OC
     await supabase.from("ordenes_compra").update({
       estado: nuevoEstado,
@@ -1461,7 +1466,7 @@ function RecepcionOCModal({ oc, reqs, onClose, reload, currentUser, readOnly = f
       notas_recibo: notas,
       factura_numero: numFactura.trim() || null,
       factura_fecha: fechaFactura || null,
-      fecha_recepcion: new Date().toISOString(),
+      fecha_recepcion: fechaRecepcionOriginal,
       recibida_por: currentUser.nombre,
     }).eq("id", oc.id);
 
@@ -1592,6 +1597,9 @@ function RecepcionOCModal({ oc, reqs, onClose, reload, currentUser, readOnly = f
               type: 1,
               isSubtracted: false,
               provider_id: oc.proveedor_loggro_id || null,
+              // La entrada a Loggro usa la fecha de recepción ORIGINAL (no la
+              // fecha en que se vincularon los productos / se re-guardó).
+              date: fechaRecepcionOriginal,
               note: `OC ${oc.codigo}${oc.requisicion_id ? ` · Req ${oc.requisicion_id}` : ""}${notas ? " · " + notas : ""}`,
               invoice: numFactura ? { number: numFactura, date: fechaFactura } : undefined,
               ingredients: ingredientsPayload,
