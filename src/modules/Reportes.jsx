@@ -169,16 +169,18 @@ function ReporteFacturacionDiaria() {
     rows.push("");
 
     // Sección 2: Otras reservas
-    rows.push(`OTRAS RESERVAS DEL DÍA (${reservasSinFE.length})`);
-    rows.push(["ID","Cliente","Tipo","Pax","Total","Forma Pago","Canal","Estado"].join(","));
+    rows.push(`OTRAS RESERVAS DEL DÍA — CONSUMIDOR FINAL (${reservasSinFE.length})`);
+    rows.push(["ID","Cliente","Tipo","Pax","Total","Forma Pago","Canal","Estado","Factura","Emitida"].join(","));
     reservasSinFE.forEach(r => {
       rows.push([
         r.id, csv(r.nombre), r.tipo || "",
         (r.pax_a || r.pax || 0) + (r.pax_n ? `+${r.pax_n}N` : ""),
         r.total || 0, r.forma_pago || "", r.canal || "", r.estado || "",
+        r.fe_estado === "emitida" ? "emitida" : "pendiente",
+        r.fe_numero_factura || "", r.fe_emitida_at ? new Date(r.fe_emitida_at).toLocaleString("es-CO") : "",
       ].join(","));
     });
-    rows.push(["","","","TOTAL OTRAS", totalReservasSinFE, "", "", ""].join(","));
+    rows.push(["","","","TOTAL OTRAS", totalReservasSinFE, "", "", "", "", ""].join(","));
     rows.push("");
 
     // Sección 3: Eventos
@@ -320,6 +322,7 @@ function ReporteFacturacionDiaria() {
               <th style={th}>ID</th><th style={th}>Cliente</th><th style={th}>Tipo</th>
               <th style={th}>Pax</th><th style={th}>Forma pago</th><th style={th}>Canal</th>
               <th style={{ ...th, textAlign: "right" }}>Total</th>
+              <th style={th}>Factura (consumidor final)</th>
             </tr></thead>
             <tbody>
               {reservasSinFE.map(r => (
@@ -331,6 +334,18 @@ function ReporteFacturacionDiaria() {
                   <td style={td}>{r.forma_pago}</td>
                   <td style={td}>{r.canal}</td>
                   <td style={{ ...td, textAlign: "right", fontWeight: 700 }}>{COP(r.total)}</td>
+                  <td style={td}>
+                    {r.fe_estado === "emitida" ? (
+                      <span style={{ fontWeight: 700, color: B.success }}>
+                        ✓ {r.fe_numero_factura}
+                        {r.fe_emitida_at && <span style={{ color: "rgba(255,255,255,0.4)", fontWeight: 400, marginLeft: 6 }}>{new Date(r.fe_emitida_at).toLocaleDateString("es-CO")}</span>}
+                      </span>
+                    ) : (
+                      <button onClick={() => setShowEmitirModal(r)} style={{ ...BTN(B.success), fontSize: 11, padding: "4px 10px" }}>
+                        ✓ Marcar emitida
+                      </button>
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -482,13 +497,16 @@ function Seccion({ titulo, color, count, total, children }) {
 
 function EmitirFEModal({ reserva, onClose, onConfirm }) {
   const [num, setNum] = useState("");
+  const esFE = !!(reserva.fe_tipo_documento && reserva.fe_numero_documento);
   return (
     <div onClick={e => e.target === e.currentTarget && onClose()}
       style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 1300, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
       <div style={{ background: B.navyMid, borderRadius: 14, padding: 24, width: 460, maxWidth: "92vw", border: `1px solid ${B.navyLight}` }}>
-        <div style={{ fontSize: 17, fontWeight: 800, marginBottom: 6, fontFamily: "'Barlow Condensed', sans-serif" }}>Marcar Factura Electrónica como emitida</div>
+        <div style={{ fontSize: 17, fontWeight: 800, marginBottom: 6, fontFamily: "'Barlow Condensed', sans-serif" }}>
+          {esFE ? "Marcar Factura Electrónica como emitida" : "Marcar factura emitida (consumidor final)"}
+        </div>
         <div style={{ fontSize: 12, color: "rgba(255,255,255,0.6)", marginBottom: 16 }}>
-          {reserva.nombre} · {reserva.fe_tipo_documento} {reserva.fe_numero_documento} · <strong>{COP(reserva.total)}</strong>
+          {reserva.nombre} · {esFE ? `${reserva.fe_tipo_documento} ${reserva.fe_numero_documento}` : "Consumidor final"} · <strong>{COP(reserva.total)}</strong>
         </div>
         <label style={LS}>Número de factura *</label>
         <input value={num} onChange={e => setNum(e.target.value)} placeholder="Ej: FE-12345"
