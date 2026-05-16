@@ -7,7 +7,7 @@ import { B } from "../brand";
 const Analitica = lazy(() => import("./Analitica.jsx"));
 
 // Clave configurable en Vercel (VITE_TRACK_CLAVE). Fallback por defecto.
-const CLAVE = import.meta.env.VITE_TRACK_CLAVE || "atolon-track";
+const CLAVE = import.meta.env.VITE_TRACK_CLAVE || "Sky";
 const LS_KEY = "atolon_track_externo_ok";
 
 export default function TrackExterno() {
