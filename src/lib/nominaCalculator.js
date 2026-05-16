@@ -299,12 +299,19 @@ export function desglosarPeriodo(marcaciones = [], tarifaHora = 0, festivos = FE
       }
     });
   }
-  // Hora extra DIURNA (definición quincenal): horas trabajadas − extra
-  // nocturna − 95.33 h ordinarias. Es el residuo tras quitar lo ordinario
-  // y todo lo extra no-diurno. Los recargos y la extra nocturna ya están
-  // calculados por la lógica diaria (no se tocan).
-  const otrosExtraMin = exNoc + exFestDiu + exFestNoc;
-  exDiu = Math.max(0, totalMin - Math.round(HORAS_QUINCENA_LEGAL * 60) - otrosExtraMin);
+  // Modelo quincenal: las 95.33 h son ordinarias (las paga el salario).
+  // Si NO se superan las 95.33 h en la quincena → no hay extra (ni diurna
+  // ni nocturna). Si se superan: extra total = trabajadas − 95.33; la
+  // extra nocturna es la de la lógica diaria (tope al extra total) y el
+  // resto es extra diurna. Invariante: 95.33 + extraDiu + extraNoc = total.
+  const ordCapMin    = Math.round(HORAS_QUINCENA_LEGAL * 60);
+  const ordinariaMin = Math.min(totalMin, ordCapMin);
+  const extraTotMin  = totalMin - ordinariaMin;            // = máx(0, total − 95.33)
+  const nocExtraMin  = exNoc + exFestNoc;                   // extra de noche (lógica diaria)
+  exNoc     = Math.min(nocExtraMin, extraTotMin);
+  exDiu     = extraTotMin - exNoc;
+  exFestDiu = 0;
+  exFestNoc = 0;
 
   const H = (min) => +(min / 60).toFixed(2);
   const recargo_nocturno         = Math.round((ordNoct / 60)     * tarifa * REC_NOCTURNO);
@@ -316,13 +323,11 @@ export function desglosarPeriodo(marcaciones = [], tarifaHora = 0, festivos = FE
   const extra_festiva_nocturna   = Math.round((exFestNoc / 60) * tarifa * EXTRA_FESTIVA_NOCTURNA);
   const total_recargos = recargo_nocturno + recargo_festivo + recargo_nocturno_festivo;
   const total_extras   = extra_diurna + extra_nocturna + extra_festiva_diurna + extra_festiva_nocturna;
-  const extraMin = exDiu + exNoc + exFestDiu + exFestNoc;
-
   return {
     dias_trabajados: dias.length,
     horas: H(totalMin),
-    horas_ordinarias: H(totalMin - extraMin),
-    horas_extra: H(extraMin),
+    horas_ordinarias: H(ordinariaMin),
+    horas_extra: H(extraTotMin),
     horas_nocturnas: H(noctMinTot),
     // horas por concepto (para mostrar el desglose)
     h_recargo_nocturno: H(ordNoct),

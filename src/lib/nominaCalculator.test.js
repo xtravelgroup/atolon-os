@@ -316,21 +316,20 @@ describe("desglosarPeriodo — recargos de ley", () => {
     expect(d.horas).toBe(12);
     expect(d.horas_extra).toBe(0);          // semana = 12h ≤ 44 → sin extra
   });
-  it("ejemplo real: 9 may 12:00→03:00 (alm 1h) en semana >44h", () => {
-    // Semana lun 4–dom 10: 5 días de 8h + el 9 may largo. Semana = 54h (>44).
+  it("≤95.33h en la quincena: SIN extra (ni diurna ni nocturna)", () => {
+    // Solo 53.5h trabajadas (< 95.33) → no hay extra; el recargo nocturno
+    // de horas ordinarias de noche SÍ se mantiene (no es "hora extra").
     const sem = [
       ["2026-05-04","08:00","17:00"],["2026-05-06","08:00","17:00"],
       ["2026-05-07","08:00","17:00"],["2026-05-08","08:00","17:00"],
       ["2026-05-09","12:00","03:00"],["2026-05-10","08:00","17:00"],
     ].map(([fecha, entrada, salida]) => ({ fecha, entrada, salida }));
     const d = desglosarPeriodo(sem, T, undefined, 1);
-    // 9 may: base 1h → net 14h → extra día 6h (>4) → +0.5h comida →
-    // net 13.5h → 5.5h ord diurnas + 2.5h recargo nocturno + 5.5h extra noct.
-    expect(d.h_recargo_nocturno).toBe(2.5);
-    expect(d.h_extra_nocturna).toBe(5.5);
     expect(d.h_extra_diurna).toBe(0);
+    expect(d.h_extra_nocturna).toBe(0);
+    expect(d.horas_ordinarias).toBe(d.horas);          // todo ordinario
+    expect(d.h_recargo_nocturno).toBe(2.5);            // recargo noct se mantiene
     expect(d.recargo_nocturno).toBe(Math.round(2.5 * T * 0.35));
-    expect(d.extra_nocturna).toBe(Math.round(5.5 * T * 1.75));
   });
   it("extra diurna = trabajadas − extra nocturna − 95.33h (residuo quincenal)", () => {
     // Quincena Meris: 13 días 08:00–17:00 + 9 may 12:00→03:00, almuerzo 1h.
