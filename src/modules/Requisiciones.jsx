@@ -3131,6 +3131,9 @@ export function TabMesaCompras({ reqs, ordenes, proveedores, currentUser, reload
           req_proveedor_id: r.proveedor_id, req_proveedor_nombre: r.proveedor_nombre || r.proveedor,
           item_idx: idx,
           item_id: it.id || `${r.id}-${idx}`,
+          // Link al catálogo / Loggro tal como viene en el ítem de la req.
+          cat_item_id: it.item_id || null,
+          loggro_id: it.loggro_id || null,
           nombre: it.item || it.nombre,
           cant: Number(it.cant) || 0,
           unidad: it.unidad,
@@ -3147,6 +3150,49 @@ export function TabMesaCompras({ reqs, ordenes, proveedores, currentUser, reload
   const [search, setSearch] = useState("");
   const [asignarModal, setAsignarModal] = useState(false);
   const [cancelarModal, setCancelarModal] = useState(false);
+  // Catálogo (id, nombre, loggro_id) para mostrar/forzar el link a Loggro
+  // ANTES de recibir, así al recibir ya están vinculados.
+  const [catalogo, setCatalogo] = useState([]);
+  const [linkItem, setLinkItem] = useState(null); // ítem de mesa a vincular
+
+  useEffect(() => {
+    supabase.from("items_catalogo").select("id, nombre, loggro_id, unidad").eq("activo", true)
+      .then(({ data }) => setCatalogo(data || []));
+  }, []);
+
+  // ¿El ítem ya tiene link a Loggro? Directo (loggro_id en la req) o vía
+  // catálogo (por item_id o por nombre exacto) con loggro_id.
+  const norm = (s) => String(s || "").trim().toLowerCase();
+  const resolverLoggro = (it) => {
+    if (it.loggro_id) return it.loggro_id;
+    const byId = it.cat_item_id && catalogo.find(c => c.id === it.cat_item_id);
+    if (byId?.loggro_id) return byId.loggro_id;
+    const byName = catalogo.find(c => norm(c.nombre) === norm(it.nombre));
+    return byName?.loggro_id || null;
+  };
+
+  // Persistir el link (item_id catálogo + loggro_id) en el ítem de la req,
+  // para que la OC y la recepción lo hereden ya vinculado.
+  const vincularItemAReq = async (mesaItem, cat) => {
+    const req = reqs.find(r => r.id === mesaItem.req_id);
+    if (!req) return;
+    const nuevosItems = (req.items || []).map((it, idx) =>
+      idx === mesaItem.item_idx
+        ? { ...it, item_id: cat.id, loggro_id: cat.loggro_id || null }
+        : it);
+    const { error } = await supabase.from("requisiciones").update({
+      items: nuevosItems,
+      timeline: [...(req.timeline || []), {
+        quien: currentUser?.nombre || "—",
+        accion: `Ítem "${mesaItem.nombre}" vinculado a Loggro desde Mesa de Compras`,
+        fecha: new Date().toLocaleString("es-CO"),
+        comentario: `→ ${cat.nombre} (loggro ${cat.loggro_id || "—"})`,
+      }],
+    }).eq("id", req.id);
+    if (error) { alert("Error al vincular: " + error.message); return; }
+    setLinkItem(null);
+    reload();
+  };
 
   // Cancelar items seleccionados con motivo (duplicado / solicitante / otro)
   const cancelarItems = async (motivo, motivoTexto) => {
@@ -3304,7 +3350,23 @@ export function TabMesaCompras({ reqs, ordenes, proveedores, currentUser, reload
                     background: isSel(it) ? B.success + "15" : "transparent",
                   }}>
                   <input type="checkbox" checked={isSel(it)} onChange={() => {}} style={{ width: 16, height: 16, accentColor: B.success }} />
-                  <div style={{ fontSize: 13, color: B.white }}>{it.nombre}</div>
+                  <div style={{ fontSize: 13, color: B.white }}>
+                    {it.nombre}
+                    {(() => {
+                      const lg = resolverLoggro(it);
+                      return lg
+                        ? <span style={{ fontSize: 9, marginLeft: 8, padding: "1px 6px", background: "#22c55e22", color: "#22c55e", borderRadius: 6, fontWeight: 700 }}>🔗 Loggro</span>
+                        : (
+                          <span style={{ marginLeft: 8, display: "inline-flex", gap: 6, alignItems: "center" }}>
+                            <span style={{ fontSize: 9, padding: "1px 6px", background: B.warning + "22", color: B.warning, borderRadius: 6, fontWeight: 700 }}>⚠️ Sin Loggro</span>
+                            <button onClick={(e) => { e.stopPropagation(); setLinkItem(it); }}
+                              style={{ fontSize: 9, padding: "1px 7px", borderRadius: 6, border: `1px solid ${B.sky}`, background: B.sky + "22", color: B.sky, fontWeight: 700, cursor: "pointer" }}>
+                              🔗 Vincular
+                            </button>
+                          </span>
+                        );
+                    })()}
+                  </div>
                   <div style={{ fontSize: 12, color: "rgba(255,255,255,0.55)", textAlign: "center" }}>{it.cant} {it.unidad || ""}</div>
                   <div style={{ fontSize: 12, color: "rgba(255,255,255,0.55)", textAlign: "right" }}>{COP(it.precioU)}</div>
                   <div style={{ fontSize: 13, fontWeight: 700, color: B.sand, textAlign: "right" }}>{COP(it.subtotal)}</div>
@@ -3335,7 +3397,60 @@ export function TabMesaCompras({ reqs, ordenes, proveedores, currentUser, reload
           onConfirm={cancelarItems}
         />
       )}
+
+      {linkItem && (
+        <LinkLoggroModal
+          mesaItem={linkItem}
+          catalogo={catalogo}
+          onClose={() => setLinkItem(null)}
+          onPick={(cat) => vincularItemAReq(linkItem, cat)}
+        />
+      )}
     </>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// LinkLoggroModal — vincular un ítem de Mesa de Compras a un producto del
+// catálogo que tenga loggro_id, para que llegue a la recepción ya enlazado.
+// ═══════════════════════════════════════════════════════════════════════════
+function LinkLoggroModal({ mesaItem, catalogo, onClose, onPick }) {
+  const [q, setQ] = useState(mesaItem?.nombre || "");
+  const norm = (s) => String(s || "").trim().toLowerCase();
+  const conLoggro = (catalogo || []).filter(c => c.loggro_id);
+  const res = q.trim()
+    ? conLoggro.filter(c => norm(c.nombre).includes(norm(q))).slice(0, 40)
+    : conLoggro.slice(0, 40);
+  return (
+    <div onClick={e => e.target === e.currentTarget && onClose()}
+      style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 1200, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: 24, overflowY: "auto" }}>
+      <div style={{ background: B.navy, borderRadius: 14, width: "100%", maxWidth: 560, border: `1px solid ${B.navyLight}`, color: B.white, marginTop: 30 }}>
+        <div style={{ padding: 16, borderBottom: `1px solid ${B.navyLight}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div>
+            <div style={{ fontSize: 15, fontWeight: 800 }}>🔗 Vincular a Loggro</div>
+            <div style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", marginTop: 3 }}>{mesaItem?.nombre}</div>
+          </div>
+          <button onClick={onClose} style={{ background: "transparent", border: "none", color: "#fff", fontSize: 20, cursor: "pointer" }}>×</button>
+        </div>
+        <div style={{ padding: 16 }}>
+          <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder="Buscar producto del catálogo (con Loggro)…"
+            style={{ ...IS, width: "100%", marginBottom: 12 }} />
+          {res.length === 0
+            ? <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", padding: 16, textAlign: "center" }}>Sin productos con Loggro que coincidan.</div>
+            : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 360, overflowY: "auto" }}>
+                {res.map(c => (
+                  <button key={c.id} onClick={() => onPick(c)}
+                    style={{ textAlign: "left", padding: "8px 12px", borderRadius: 8, border: `1px solid ${B.navyLight}`, background: B.navyMid, color: B.white, fontSize: 12, cursor: "pointer", display: "flex", justifyContent: "space-between", gap: 10 }}>
+                    <span>{c.nombre}</span>
+                    <span style={{ fontSize: 9, padding: "1px 6px", background: "#22c55e22", color: "#22c55e", borderRadius: 6, fontWeight: 700, whiteSpace: "nowrap" }}>🔗 {c.unidad || "—"}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+        </div>
+      </div>
+    </div>
   );
 }
 
