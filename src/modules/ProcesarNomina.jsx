@@ -18,7 +18,12 @@ import {
   quincenaActual, quincenaAnterior, diasDelPeriodo,
   calcularNominaEmpleado, calcularHorasDia, desglosarPeriodo, ventanaNovedades,
   tarifaHoraEmpleado, NOVEDAD_TIPOS, SMMLV_2026, AUX_TRANSPORTE_2026, FESTIVOS_CO_2026,
+  REC_NOCTURNO, REC_FESTIVO, REC_NOCTURNO_FESTIVO,
+  EXTRA_DIURNA, EXTRA_NOCTURNA, EXTRA_FESTIVA_DIURNA, EXTRA_FESTIVA_NOCTURNA,
 } from "../lib/nominaCalculator.js";
+
+const PCT = (f) => `${Math.round(f * 100)}%`;
+const MUL = (f) => `×${(+f.toFixed(2))}`;
 
 // Ventana de novedades del período (desfasada). Defensivo si es "Personalizado".
 function ventanaDe(periodo) {
@@ -162,22 +167,43 @@ function DetalleDrawer({ empleado, calc, onClose, onAddNovedad, onDeleteNovedad,
 
           {(() => {
             const dg = calc.marcaciones; const d = calc.devengado;
-            const conceptos = dg ? [
-              ["Recargo nocturno (+35%)",          dg.h_recargo_nocturno,         d.recargo_nocturno],
-              ["Recargo festivo (+75%)",           dg.h_recargo_festivo,          d.recargo_festivo],
-              ["Recargo nocturno festivo (+110%)", dg.h_recargo_nocturno_festivo, d.recargo_nocturno_festivo],
-              ["Hora extra diurna (×1.25)",        dg.h_extra_diurna,             d.extra_diurna],
-              ["Hora extra nocturna (×1.75)",      dg.h_extra_nocturna,           d.extra_nocturna],
-              ["Hora extra festiva diurna (×2.0)", dg.h_extra_festiva_diurna,     d.extra_festiva_diurna],
-              ["Hora extra festiva nocturna (×2.5)", dg.h_extra_festiva_nocturna, d.extra_festiva_nocturna],
+            // Recargos: SOLO sobre horas ordinarias (la hora base ya está en el
+            // salario; aquí se suma únicamente el % adicional).
+            const recargos = dg ? [
+              [`Recargo nocturno (+${PCT(REC_NOCTURNO)})`,          dg.h_recargo_nocturno,         d.recargo_nocturno],
+              [`Recargo festivo (+${PCT(REC_FESTIVO)})`,            dg.h_recargo_festivo,          d.recargo_festivo],
+              [`Recargo nocturno festivo (+${PCT(REC_NOCTURNO_FESTIVO)})`, dg.h_recargo_nocturno_festivo, d.recargo_nocturno_festivo],
             ].filter(([, , v]) => v > 0) : [];
-            if (!conceptos.length) return null;
+            // Horas extra: pago COMPLETO × factor. El factor ya incluye la
+            // nocturnidad/festividad → NO se les suma recargo aparte.
+            const extras = dg ? [
+              [`Hora extra diurna (${MUL(EXTRA_DIURNA)})`,           dg.h_extra_diurna,           d.extra_diurna],
+              [`Hora extra nocturna (${MUL(EXTRA_NOCTURNA)})`,       dg.h_extra_nocturna,         d.extra_nocturna],
+              [`Hora extra festiva diurna (${MUL(EXTRA_FESTIVA_DIURNA)})`,   dg.h_extra_festiva_diurna,   d.extra_festiva_diurna],
+              [`Hora extra festiva nocturna (${MUL(EXTRA_FESTIVA_NOCTURNA)})`, dg.h_extra_festiva_nocturna, d.extra_festiva_nocturna],
+            ].filter(([, , v]) => v > 0) : [];
             return (
               <>
-                <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", marginTop: 12, marginBottom: 6 }}>Recargos de ley</div>
-                {conceptos.map(([label, horas, valor]) => (
-                  <Row key={label} label={label} value={"+ " + COP(valor)} sub={`${horas} h`} />
-                ))}
+                {recargos.length > 0 && (
+                  <>
+                    <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", marginTop: 12, marginBottom: 6 }}>
+                      Recargos · solo horas ordinarias
+                    </div>
+                    {recargos.map(([label, horas, valor]) => (
+                      <Row key={label} label={label} value={"+ " + COP(valor)} sub={`${horas} h ordinarias`} />
+                    ))}
+                  </>
+                )}
+                {extras.length > 0 && (
+                  <>
+                    <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", marginTop: 12, marginBottom: 6 }}>
+                      Horas extra · pago completo (el factor ya incluye recargo)
+                    </div>
+                    {extras.map(([label, horas, valor]) => (
+                      <Row key={label} label={label} value={"+ " + COP(valor)} sub={`${horas} h`} />
+                    ))}
+                  </>
+                )}
               </>
             );
           })()}
