@@ -641,18 +641,42 @@ function DetalleOCModal({ oc, onClose, onEditar, onFactura, onLogistica, editabl
             <Row l="Estado OC" v={oc.estado} />
             <Row l="Recibida por" v={oc.recibida_por} />
             {oc.notas_recibo && <Row l="Notas recibo" v={oc.notas_recibo} />}
+            <Row l="Subido a Loggro" v={oc.loggro_movement_id
+              ? <span style={{ color: B.success }}>✅ Sí · mov {oc.loggro_movement_id}{oc.fecha_recepcion ? " · " + fmtFecha(oc.fecha_recepcion.slice(0,10)) : ""}</span>
+              : <span style={{ color: B.warning }}>⚠️ Pendiente de subir a Loggro</span>} />
             {recibidos.length > 0 && (
-              <div style={{ marginTop: 6 }}>
-                <div style={{ color: "rgba(255,255,255,0.5)", marginBottom: 2 }}>Ítems recibidos:</div>
-                {recibidos.map((r, i) => {
-                  const it = itemsById[r.item_id] || {};
-                  const nombre = itemNombre(it) !== "—" ? itemNombre(it) : (r.nombre || r.item_id || "—");
-                  const cantRec = r.cant_recibida ?? r.cantidad_recibida ?? r.cantidad ?? "—";
-                  const pedida = it.id ? itemCant(it) : null;
-                  return (
-                    <div key={i}>• {nombre} — <b>{cantRec}</b>{pedida != null ? ` / ${pedida}` : ""}{it.unidad ? " " + it.unidad : ""}</div>
-                  );
-                })}
+              <div style={{ marginTop: 6, overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
+                  <thead><tr style={{ color: "rgba(255,255,255,0.45)", textAlign: "left" }}>
+                    <th style={{ padding: "4px 6px" }}>Ítem</th>
+                    <th style={{ padding: "4px 6px" }}>Pedido</th>
+                    <th style={{ padding: "4px 6px" }}>Recibido</th>
+                    <th style={{ padding: "4px 6px" }}>→ Subido a Loggro</th>
+                  </tr></thead>
+                  <tbody>
+                    {recibidos.map((r, i) => {
+                      const it = itemsById[r.item_id] || {};
+                      const nombre = itemNombre(it) !== "—" ? itemNombre(it) : (r.nombre || r.item_id || "—");
+                      const cantRec = r.cant_recibida ?? r.cantidad_recibida ?? r.cantidad ?? "—";
+                      const pedida = it.id ? itemCant(it) : "—";
+                      return (
+                        <tr key={i} style={{ borderTop: `1px solid ${B.navyLight}55` }}>
+                          <td style={{ padding: "4px 6px" }}>{nombre}{it.unidad ? <span style={{ color: "rgba(255,255,255,0.4)" }}> ({it.unidad})</span> : ""}</td>
+                          <td style={{ padding: "4px 6px" }}>{pedida}</td>
+                          <td style={{ padding: "4px 6px", fontWeight: 700 }}>{cantRec}</td>
+                          <td style={{ padding: "4px 6px", color: oc.loggro_movement_id ? B.success : B.warning, fontWeight: 700 }}>
+                            {oc.loggro_movement_id ? `✅ ${cantRec}` : "⚠️ pendiente"}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+                {oc.loggro_movement_id && (
+                  <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", marginTop: 4 }}>
+                    Lo subido a Loggro = las cantidades recibidas (movimiento de inventario {oc.loggro_movement_id}).
+                  </div>
+                )}
               </div>
             )}
             {(muelle.length > 0 || transp.length > 0) && (
