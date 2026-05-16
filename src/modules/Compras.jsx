@@ -281,6 +281,18 @@ function TabOrdenes({ ordenes, reload, currentUser }) {
 
   return (
     <div>
+      {openDetalle && (
+        <DetalleOCModal
+          oc={openDetalle}
+          onClose={() => setOpenDetalle(null)}
+          onEditar={(o) => { setOpenDetalle(null); setOpenEditar(o); }}
+          onFactura={(o) => { setOpenDetalle(null); setOpenFactura(o); }}
+          onLogistica={(o) => { setOpenDetalle(null); setOpenLogistica(o); }}
+          editable={OC_EDITABLE(openDetalle)}
+        />
+      )}
+      {!openDetalle && (
+      <>
       {/* Filtros */}
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 14, alignItems: "center" }}>
         <input type="text" placeholder="Buscar código, proveedor, requisición…" value={busqueda} onChange={e => setBusqueda(e.target.value)}
@@ -418,6 +430,8 @@ function TabOrdenes({ ordenes, reload, currentUser }) {
           </div>
         )
       }
+      </>
+      )}
 
       {openFactura && <FacturaProveedorModal oc={openFactura} onClose={() => setOpenFactura(null)} reload={reload} currentUser={currentUser} />}
       {openLogistica && <LogisticaOCModal oc={openLogistica} onClose={() => setOpenLogistica(null)} reload={reload} currentUser={currentUser} />}
@@ -425,16 +439,6 @@ function TabOrdenes({ ordenes, reload, currentUser }) {
       {openCotizResp && <CotizacionRespuestaModal oc={openCotizResp} onClose={() => setOpenCotizResp(null)} reload={reload} currentUser={currentUser} />}
       {openEditar && <EditarOCModal oc={openEditar} ordenes={ordenes} onClose={() => setOpenEditar(null)} reload={reload} currentUser={currentUser} />}
       {openUnir && <UnirOCModal oc={openUnir} ordenes={ordenes} onClose={() => setOpenUnir(null)} reload={reload} currentUser={currentUser} />}
-      {openDetalle && (
-        <DetalleOCModal
-          oc={openDetalle}
-          onClose={() => setOpenDetalle(null)}
-          onEditar={(oc) => { setOpenDetalle(null); setOpenEditar(oc); }}
-          onFactura={(oc) => { setOpenDetalle(null); setOpenFactura(oc); }}
-          onLogistica={(oc) => { setOpenDetalle(null); setOpenLogistica(oc); }}
-          editable={OC_EDITABLE(openDetalle)}
-        />
-      )}
     </div>
   );
 }
@@ -535,9 +539,13 @@ function DetalleOCModal({ oc, onClose, onEditar, onFactura, onLogistica, editabl
   const vacio = (t) => <div style={{ color: "rgba(255,255,255,0.35)", fontStyle: "italic" }}>{t}</div>;
 
   return (
-    <div onClick={e => e.target === e.currentTarget && onClose()}
-      style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 1100, display: "flex", alignItems: "flex-start", justifyContent: "center", overflowY: "auto", padding: isMobile ? 0 : 24 }}>
-      <div style={{ background: B.navy, borderRadius: isMobile ? 0 : 14, width: isMobile ? "100%" : 920, maxWidth: "100%", minHeight: isMobile ? "100vh" : "auto", border: `1px solid ${B.navyLight}`, color: B.white, margin: isMobile ? 0 : "20px 0" }}>
+    <div style={{ width: "100%", color: B.white }}>
+      {/* Barra de navegación: volver a la lista de órdenes */}
+      <button onClick={onClose}
+        style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 12, padding: "8px 14px", borderRadius: 8, border: `1px solid ${B.navyLight}`, background: B.navyMid, color: B.white, fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
+        ← Volver a órdenes
+      </button>
+      <div style={{ background: B.navy, borderRadius: 14, width: "100%", border: `1px solid ${B.navyLight}` }}>
         {/* Cabecera */}
         <div style={{ padding: 16, borderBottom: `1px solid ${B.navyLight}`, display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap", position: "sticky", top: 0, background: B.navy, zIndex: 2 }}>
           <div>
@@ -555,7 +563,7 @@ function DetalleOCModal({ oc, onClose, onEditar, onFactura, onLogistica, editabl
             {editable && <button onClick={() => onEditar(oc)} style={btnAccion(B.sand)}>✏️ Editar</button>}
             <button onClick={() => onFactura(oc)} style={btnAccion(oc.factura_aplicada ? B.success : B.warning)}>📎 Factura</button>
             <button onClick={() => onLogistica(oc)} style={btnAccion(B.sky)}>🚚 Logística</button>
-            <button onClick={onClose} style={btnAccion("rgba(255,255,255,0.4)")}>✕ Cerrar</button>
+            <button onClick={onClose} style={btnAccion("rgba(255,255,255,0.4)")}>← Volver</button>
           </div>
         </div>
 
