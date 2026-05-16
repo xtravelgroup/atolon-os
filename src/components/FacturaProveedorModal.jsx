@@ -8,72 +8,151 @@ import { B } from "../brand";
 
 const COP = (n) => "$" + Math.round(Number(n) || 0).toLocaleString("es-CO");
 
-export default function FacturaProveedorModal({ oc, onClose, reload, currentUser }) {
-  // Si la factura ya fue aplicada, abrimos directo en modo "review" con los
-  // datos persistidos para que el usuario los vea/edite sin volver a subirla.
-  const [step, setStep] = useState(oc.factura_aplicada || oc.factura_url ? "review" : "upload"); // upload | parsing | review | applying | done
-  const [file, setFile] = useState(null);
-  const [parsed, setParsed] = useState(oc.factura_data || null);
-  const [data, setData] = useState({
-    factura_numero: oc.factura_numero || "",
-    factura_fecha: oc.factura_fecha?.slice(0, 10) || new Date().toISOString().slice(0, 10),
-    fecha_vencimiento: oc.fecha_vencimiento_pago?.slice(0, 10) || "",
-    forma_pago: oc.factura_data?.forma_pago || "",
-    subtotal: Number(oc.factura_subtotal) || 0,
-    subtotal_base: Number(oc.factura_data?.subtotal_base) || Number(oc.factura_subtotal) || 0,
-    iva: Number(oc.factura_iva) || 0,
-    iva_total: Number(oc.factura_data?.iva_total) || Number(oc.factura_iva) || 0,
-    consumo_total: Number(oc.factura_data?.consumo_total) || 0,
-    total: Number(oc.total) || 0,
-    factura_url: oc.factura_url || null,
+function blankData() {
+  return {
+    factura_numero: "",
+    factura_fecha: new Date().toISOString().slice(0, 10),
+    fecha_vencimiento: "",
+    forma_pago: "",
+    subtotal: 0, subtotal_base: 0,
+    iva: 0, iva_total: 0, consumo_total: 0,
+    total: 0,
+    factura_url: null,
     items: [],
+  };
+}
+
+const detectarPackDelNombre = (nombre) => {
+  if (!nombre) return 1;
+  const n = String(nombre).toUpperCase();
+  if (/\bBANDEJA\s*X\s*24\b|\bX\s*24\b|\bX24\b/.test(n)) return 24;
+  if (/\bBANDEJA\s*X\s*12\b|\bX\s*12\s*U?N?D?\b|\bX12\b/.test(n)) return 12;
+  if (/\bSIXPACK\b|\b6\s*PACK\b|\b6PK\b|\bX\s*6\b|\bX6\b/.test(n)) return 6;
+  return 1;
+};
+
+// Construye el objeto `data` (cabecera + items) a partir del resultado del
+// parser. SOLO incluye los items que vienen en la factura — los items de la
+// OC/cotización que NO se facturaron NO aparecen (requerimiento del negocio).
+// El match con la OC sólo enriquece "precio_anterior"/oc_idx para mostrar Δ;
+// la preservación de items no facturados ocurre en aplicar() (if (!f) return it).
+function buildDataFromParsed(result, ocItems, factura_url) {
+  const items = ocItems || [];
+  const ocItemsCount = items.length;
+  const itemsRich = (result.items || []).map((aiItem, aiIdx) => {
+    const ocIdx = aiItem.match_oc_idx;
+    const matchOc = (typeof ocIdx === "number" && ocIdx >= 0 && ocIdx < ocItemsCount) ? items[ocIdx] : null;
+    const nombre = aiItem.nombre || matchOc?.item || matchOc?.nombre || "—";
+    let cantPack    = Number(aiItem.cantidad_paquete ?? aiItem.cantidad) || 0;
+    let unPorPack   = Math.max(1, Number(aiItem.unidades_por_paquete) || 1);
+    const totalAI   = Number(aiItem.cantidad_individual_total) || 0;
+    const packReg   = detectarPackDelNombre(nombre);
+    if (packReg > 1 && unPorPack === 1) {
+      unPorPack = packReg;
+      if (cantPack > 0 && cantPack % packReg === 0 && totalAI === cantPack) cantPack = cantPack / packReg;
+    } else if (packReg > 1 && unPorPack !== packReg && totalAI > 0) {
+      unPorPack = packReg;
+      cantPack  = Math.round(totalAI / packReg);
+    }
+    const subRen      = Number(aiItem.subtotal_renglon) || 0;
+    let costoPack     = Number(aiItem.precio_costo_pack ?? aiItem.precio_costo_unit) || 0;
+    const ivaPack     = Number(aiItem.iva_valor_pack ?? aiItem.iva_valor_unit) || 0;
+    const finalPackAI = Number(aiItem.precio_final_pack ?? aiItem.precio_final_unit) || 0;
+    if (costoPack === 0 && subRen > 0 && cantPack > 0) {
+      const finalPack = finalPackAI || (subRen / cantPack);
+      costoPack = Math.max(0, Math.round(finalPack - ivaPack));
+    }
+    const costoIndiv  = Number(aiItem.precio_costo_unit_individual) || (unPorPack > 0 ? Math.round(costoPack / unPorPack) : 0);
+    const basePack    = Number(aiItem.precio_base_pack ?? aiItem.precio_base_unit) || costoPack;
+    const finalPack   = finalPackAI || (costoPack + ivaPack);
+    const esBonif     = !!aiItem.es_bonificacion || (costoPack === 0 && subRen === 0 && cantPack > 0);
+    return {
+      oc_idx: matchOc ? ocIdx : null,
+      ai_idx: aiIdx,
+      codigo_barras:        aiItem.codigo_barras || null,
+      referencia_proveedor: aiItem.referencia_proveedor || null,
+      nombre:               aiItem.nombre || matchOc?.item || matchOc?.nombre || "—",
+      nombre_anterior:      matchOc ? (matchOc.item || matchOc.nombre) : null,
+      cantidad_anterior:    matchOc ? (Number(matchOc.cant) || 0) : null,
+      loggro_id:            matchOc?.loggro_id || null,
+      cantidad_paquete:     cantPack,
+      unidad_compra:        aiItem.unidad_compra || matchOc?.unidad || "UND",
+      unidades_por_paquete: unPorPack,
+      unidad_individual:    aiItem.unidad_individual || "UND",
+      cantidad_individual_total: cantPack * unPorPack,
+      descuento_pct:        Number(aiItem.descuento_pct) || 0,
+      iva_pct:              Number(aiItem.iva_pct) || 0,
+      precio_base_pack:     basePack,
+      iva_valor_pack:       ivaPack,
+      ico_valor_pack:       Number(aiItem.ico_valor_pack ?? aiItem.ico_valor_unit) || 0,
+      icl_valor_pack:       Number(aiItem.icl_valor_pack ?? aiItem.icl_valor_unit) || 0,
+      adv_valor_pack:       Number(aiItem.adv_valor_pack ?? aiItem.adv_valor_unit) || 0,
+      precio_costo_pack:    costoPack,
+      precio_costo_unit_individual: Math.round(costoIndiv),
+      precio_final_pack:    finalPack,
+      subtotal_renglon:     Number(aiItem.subtotal_renglon) || cantPack * finalPack,
+      es_bonificacion:      esBonif,
+      requiere_revision:    !!aiItem.requiere_revision,
+      es_nuevo_oc:          !matchOc,
+      cantidad:             cantPack,
+      unidad:               aiItem.unidad_compra || matchOc?.unidad || "UND",
+      precio_costo_unit:    costoPack,
+      precio_unitario:      Math.round(costoIndiv),
+      precio_anterior:      matchOc ? Number(matchOc.precioU) || 0 : 0,
+      iva_valor_unit:       ivaPack,
+      ico_valor_unit:       Number(aiItem.ico_valor_pack ?? aiItem.ico_valor_unit) || 0,
+      icl_valor_unit:       Number(aiItem.icl_valor_pack ?? aiItem.icl_valor_unit) || 0,
+      adv_valor_unit:       Number(aiItem.adv_valor_pack ?? aiItem.adv_valor_unit) || 0,
+      iva:                  cantPack * ivaPack,
+      item_id:              matchOc?.item_id || null,
+    };
   });
+  return {
+    factura_numero:    result.factura_numero || "",
+    factura_fecha:     result.factura_fecha || new Date().toISOString().slice(0, 10),
+    fecha_vencimiento: result.fecha_vencimiento || "",
+    forma_pago:        result.forma_pago || "",
+    no_pedido:         result.no_pedido || null,
+    no_remision:       result.no_remision || null,
+    subtotal_base:     Number(result.subtotal_base) || 0,
+    iva_total:         Number(result.iva_total) || 0,
+    consumo_total:     Number(result.consumo_total) || 0,
+    ico_total:         Number(result.ico_total) || 0,
+    icl_total:         Number(result.icl_total) || 0,
+    adv_total:         Number(result.adv_total) || 0,
+    descuentos_total:  Number(result.descuentos_total) || 0,
+    subtotal:          Number(result.subtotal_base) || 0,
+    iva:               Number(result.iva_total) || 0,
+    total:             Number(result.total) || 0,
+    items:             itemsRich,
+    factura_url:       factura_url || null,
+  };
+}
+
+export default function FacturaProveedorModal({ oc, onClose, reload, currentUser }) {
+  // Una OC puede tener VARIAS facturas independientes (tabla oc_facturas).
+  // Si ya hay alguna, abrimos en la lista; si no, directo a subir.
+  const [step, setStep] = useState(oc.factura_aplicada || oc.factura_url ? "list" : "upload"); // list | upload | parsing | review | applying | done
+  const [file, setFile] = useState(null);
+  const [parsed, setParsed] = useState(null);
+  const [data, setData] = useState(blankData());
+  const [facturas, setFacturas] = useState([]);
+  const [loadingFacturas, setLoadingFacturas] = useState(true);
+  const [editingFacturaId, setEditingFacturaId] = useState(null);
   const [err, setErr] = useState("");
   const [progress, setProgress] = useState("");
 
-  // Pre-cargar items de la OC (items y cantidades) — el usuario sólo edita el precio_unit
-  // Si la factura YA fue aplicada, los items de la OC ya tienen los datos
-  // ricos (unidades_por_paquete, factura_costo_pack, etc) — los preservamos
-  // para que la vista de review se muestre correcta sin volver a subir nada.
-  useEffect(() => {
-    setData(d => ({
-      ...d,
-      items: (oc.items || []).map((it, i) => {
-        const unPP = Math.max(1, Number(it.unidades_por_paquete) || 1);
-        const cantInd = Number(it.cant) || 0;
-        const cantPack = unPP > 1 ? Math.round(cantInd / unPP) : cantInd;
-        const costoPack = Number(it.factura_costo_pack) || (Number(it.precioU) || 0) * unPP;
-        return {
-          oc_idx: i,
-          ai_idx: null,
-          nombre: it.item || it.nombre,
-          nombre_anterior: it.item || it.nombre,                  // ← detectar rename del proveedor
-          cantidad: cantPack,
-          cantidad_anterior: cantInd,                             // ← detectar cambio de cantidad (compara unidades individuales)
-          unidad: it.unidad || "UND",
-          precio_unitario: Number(it.precioU) || 0,
-          precio_anterior: Number(it.precioU) || 0,
-          // Empaque (preservado de la factura ya aplicada)
-          codigo_barras: it.factura_codigo_barras || it.codigo_barras || null,
-          referencia_proveedor: it.referencia_proveedor || null,
-          cantidad_paquete: cantPack,
-          unidades_por_paquete: unPP,
-          unidad_compra: it.unidad_compra || it.unidad || "UND",
-          unidad_individual: it.unidad || "UND",
-          cantidad_individual_total: cantInd,
-          precio_costo_pack: costoPack,
-          precio_costo_unit: Number(it.precioU) || 0,
-          iva_valor_pack: Number(it.factura_iva_pack) || 0,
-          iva: 0,
-          es_bonificacion: !!it.es_bonificacion,
-          requiere_revision: !!it.requiere_revision,
-          es_nuevo_oc: false,
-          item_id: it.item_id || null,
-          loggro_id: it.loggro_id || null,                        // ← para sync a Loggro
-        };
-      }),
-    }));
-  }, [oc.id]);
+  async function cargarFacturas() {
+    setLoadingFacturas(true);
+    const { data: fs } = await supabase
+      .from("oc_facturas").select("*").eq("oc_id", oc.id).order("created_at");
+    setFacturas(fs || []);
+    setLoadingFacturas(false);
+    return fs || [];
+  }
+
+  // Cargar la lista de facturas de la OC al abrir.
+  useEffect(() => { cargarFacturas(); /* eslint-disable-next-line */ }, [oc.id]);
   const [syncingNombreIdx, setSyncingNombreIdx] = useState(null);
 
   async function fileToBase64(f) {
@@ -125,162 +204,14 @@ export default function FacturaProveedorModal({ oc, onClose, reload, currentUser
         });
         const result = await res.json();
         if (result.ok) {
+          // Solo se muestran los items que vienen EN la factura (no los de la
+          // cotización/OC que no fueron facturados). Multi-factura: cada
+          // factura es independiente.
           setParsed(result);
-          // Pre-rellenar con datos de AI. Items de la factura se enriquecen con
-          // los rich fields del parser (código de barras, ICO, IVA, etc).
-          // Para los items que matchean con la OC, los completamos con el oc_idx
-          // y el item_id del catálogo. Los items extra de la factura se agregan
-          // al final como items "nuevos" para revisión.
-          const ocItemsCount = (oc.items || []).length;
-          const matched = new Set();
-          // Helpers: detectar pack del nombre y arreglar errores del AI
-          const detectarPackDelNombre = (nombre) => {
-            if (!nombre) return 1;
-            const n = String(nombre).toUpperCase();
-            // Orden importa: detectar primero los más específicos
-            if (/\bBANDEJA\s*X\s*24\b|\bX\s*24\b|\bX24\b/.test(n)) return 24;
-            if (/\bBANDEJA\s*X\s*12\b|\bX\s*12\s*U?N?D?\b|\bX12\b/.test(n)) return 12;
-            if (/\bSIXPACK\b|\b6\s*PACK\b|\b6PK\b|\bX\s*6\b|\bX6\b/.test(n)) return 6;
-            return 1;
-          };
-
-          const itemsRich = (result.items || []).map((aiItem, aiIdx) => {
-            const ocIdx = aiItem.match_oc_idx;
-            const matchOc = (typeof ocIdx === "number" && ocIdx >= 0 && ocIdx < ocItemsCount) ? oc.items[ocIdx] : null;
-            if (matchOc) matched.add(ocIdx);
-
-            const nombre = aiItem.nombre || matchOc?.item || matchOc?.nombre || "—";
-            // ── Post-proceso del factor de empaque ──────────────────────
-            // Si el AI dice unidades_por_paquete=1 pero el nombre tiene SIXPACK/X12/etc,
-            // confiamos en la regex y reajustamos cantidad_paquete.
-            let cantPack    = Number(aiItem.cantidad_paquete ?? aiItem.cantidad) || 0;
-            let unPorPack   = Math.max(1, Number(aiItem.unidades_por_paquete) || 1);
-            const totalAI   = Number(aiItem.cantidad_individual_total) || 0;
-            const packReg   = detectarPackDelNombre(nombre);
-
-            if (packReg > 1 && unPorPack === 1) {
-              // AI no detectó el pack pero el nombre lo dice claramente
-              unPorPack = packReg;
-              // Si el AI ya pre-multiplicó (cantPack es divisible por packReg), corregimos
-              if (cantPack > 0 && cantPack % packReg === 0 && totalAI === cantPack) {
-                cantPack = cantPack / packReg;
-              }
-            } else if (packReg > 1 && unPorPack !== packReg && totalAI > 0) {
-              // AI detectó un pack distinto al del nombre → confiar en regex
-              unPorPack = packReg;
-              cantPack  = Math.round(totalAI / packReg);
-            }
-
-            const cantTotal   = cantPack * unPorPack;
-            // ── Precios: si el AI nos dejó $0 pero hay subtotal_renglon, lo derivamos ──
-            const subRen      = Number(aiItem.subtotal_renglon) || 0;
-            let costoPack     = Number(aiItem.precio_costo_pack ?? aiItem.precio_costo_unit) || 0;
-            const ivaPack     = Number(aiItem.iva_valor_pack ?? aiItem.iva_valor_unit) || 0;
-            const finalPackAI = Number(aiItem.precio_final_pack ?? aiItem.precio_final_unit) || 0;
-            if (costoPack === 0 && subRen > 0 && cantPack > 0) {
-              // Estimamos costoPack desde el subtotal (asumiendo subRen ≈ cantPack × finalPack)
-              const finalPack = finalPackAI || (subRen / cantPack);
-              // Restamos IVA si lo conocemos para llegar al costo neto
-              costoPack = Math.max(0, Math.round(finalPack - ivaPack));
-            }
-            const costoIndiv  = Number(aiItem.precio_costo_unit_individual) || (unPorPack > 0 ? Math.round(costoPack / unPorPack) : 0);
-            const basePack    = Number(aiItem.precio_base_pack ?? aiItem.precio_base_unit) || costoPack;
-            const finalPack   = finalPackAI || (costoPack + ivaPack);
-            const esBonif     = !!aiItem.es_bonificacion || (costoPack === 0 && subRen === 0 && cantPack > 0);
-            const reqRevision = !!aiItem.requiere_revision;
-
-            return {
-              oc_idx: matchOc ? ocIdx : null,
-              ai_idx: aiIdx,
-              codigo_barras:        aiItem.codigo_barras || null,
-              referencia_proveedor: aiItem.referencia_proveedor || null,
-              nombre:               aiItem.nombre || matchOc?.item || matchOc?.nombre || "—",
-              // Capturamos el nombre/cantidad ORIGINAL de la OC para detectar
-              // si el proveedor cambió algo. Si no hay match, no hay "anterior".
-              nombre_anterior:      matchOc ? (matchOc.item || matchOc.nombre) : null,
-              cantidad_anterior:    matchOc ? (Number(matchOc.cant) || 0) : null,
-              loggro_id:            matchOc?.loggro_id || null,
-              // Empaque y unidad
-              cantidad_paquete:     cantPack,
-              unidad_compra:        aiItem.unidad_compra || matchOc?.unidad || "UND",
-              unidades_por_paquete: unPorPack,
-              unidad_individual:    aiItem.unidad_individual || "UND",
-              cantidad_individual_total: cantTotal,
-              // Impuestos por PAQUETE
-              descuento_pct:        Number(aiItem.descuento_pct) || 0,
-              iva_pct:              Number(aiItem.iva_pct) || 0,
-              precio_base_pack:     basePack,
-              iva_valor_pack:       ivaPack,
-              ico_valor_pack:       Number(aiItem.ico_valor_pack ?? aiItem.ico_valor_unit) || 0,
-              icl_valor_pack:       Number(aiItem.icl_valor_pack ?? aiItem.icl_valor_unit) || 0,
-              adv_valor_pack:       Number(aiItem.adv_valor_pack ?? aiItem.adv_valor_unit) || 0,
-              precio_costo_pack:    costoPack,            // costo por sixpack/bandeja
-              precio_costo_unit_individual: Math.round(costoIndiv), // costo por cerveza/botella → al catálogo
-              precio_final_pack:    finalPack,
-              subtotal_renglon:     Number(aiItem.subtotal_renglon) || cantPack * finalPack,
-              // Flags
-              es_bonificacion:      esBonif,
-              requiere_revision:    reqRevision,
-              es_nuevo_oc:          !matchOc,
-              // Compat con flujo anterior:
-              cantidad:             cantPack,
-              unidad:               aiItem.unidad_compra || matchOc?.unidad || "UND",
-              precio_costo_unit:    costoPack,
-              precio_unitario:      Math.round(costoIndiv),  // ← lo que va al precio_compra del catálogo
-              precio_anterior:      matchOc ? Number(matchOc.precioU) || 0 : 0,
-              iva_valor_unit:       ivaPack,
-              ico_valor_unit:       Number(aiItem.ico_valor_pack ?? aiItem.ico_valor_unit) || 0,
-              icl_valor_unit:       Number(aiItem.icl_valor_pack ?? aiItem.icl_valor_unit) || 0,
-              adv_valor_unit:       Number(aiItem.adv_valor_pack ?? aiItem.adv_valor_unit) || 0,
-              iva:                  cantPack * ivaPack,
-              item_id:              matchOc?.item_id || null,
-            };
-          });
-
-          // Items de la OC que no fueron matcheados (la factura no los trae)
-          const ocNoMatcheados = (oc.items || []).map((it, i) => {
-            if (matched.has(i)) return null;
-            return {
-              oc_idx: i, ai_idx: null,
-              nombre: it.item || it.nombre,
-              nombre_anterior: it.item || it.nombre,
-              cantidad: Number(it.cant) || 0,
-              cantidad_anterior: Number(it.cant) || 0,
-              unidad: it.unidad || "",
-              precio_unitario: Number(it.precioU) || 0,
-              precio_anterior: Number(it.precioU) || 0,
-              precio_costo_unit: Number(it.precioU) || 0,
-              precio_base_unit: Number(it.precioU) || 0,
-              iva: 0, iva_valor_unit: 0,
-              item_id: it.item_id || null,
-              loggro_id: it.loggro_id || null,
-              no_facturado: true,
-            };
-          }).filter(Boolean);
-
-          setData(d => ({
-            ...d,
-            factura_numero:    result.factura_numero || d.factura_numero,
-            factura_fecha:     result.factura_fecha || d.factura_fecha,
-            fecha_vencimiento: result.fecha_vencimiento || null,
-            forma_pago:        result.forma_pago || null,
-            no_pedido:         result.no_pedido || null,
-            no_remision:       result.no_remision || null,
-            subtotal_base:     Number(result.subtotal_base) || 0,
-            iva_total:         Number(result.iva_total) || 0,
-            consumo_total:     Number(result.consumo_total) || 0,
-            ico_total:         Number(result.ico_total) || 0,
-            icl_total:         Number(result.icl_total) || 0,
-            adv_total:         Number(result.adv_total) || 0,
-            descuentos_total:  Number(result.descuentos_total) || 0,
-            // Compat: campos antiguos
-            subtotal:          Number(result.subtotal_base) || 0,
-            iva:               Number(result.iva_total) || 0,
-            total:             Number(result.total) || 0,
-            items:             [...itemsRich, ...ocNoMatcheados],
-            factura_url:       pub.publicUrl,
-          }));
-          setProgress(`✅ Factura leída — ${itemsRich.length} items extraídos${ocNoMatcheados.length ? ` · ${ocNoMatcheados.length} de la OC no facturados` : ""}`);
+          setEditingFacturaId(null);
+          const built = buildDataFromParsed(result, oc.items || [], pub.publicUrl);
+          setData(built);
+          setProgress(`✅ Factura leída — ${built.items.length} items extraídos`);
         } else {
           // Mostrar el error real con un poco de detalle del raw para diagnóstico
           const detalle = result.stop_reason === "max_tokens"
@@ -396,7 +327,23 @@ export default function FacturaProveedorModal({ oc, onClose, reload, currentUser
       //    - precioU (costo individual) = precio_costo_pack / unidades_por_paquete
       //    Las BONIFICACIONES suman al inventario pero NO actualizan precio_compra ni
       //    afectan el costo (precioU=0 en la OC pero metadata en factura_data).
-      const ocItemsOriginal = oc.items || [];
+      // Re-leer items frescos de la OC: si ya se aplicó otra factura a esta
+      // misma OC, NO debemos pisar sus cambios. Cada factura es independiente
+      // y sólo toca sus propios items.
+      const { data: freshOC } = await supabase
+        .from("ordenes_compra").select("items").eq("id", oc.id).single();
+      const ocItemsOriginal = freshOC?.items || oc.items || [];
+
+      // Resolver el id de la fila oc_facturas (editar existente o crear nueva).
+      // Una factura con el mismo número en la misma OC se EDITA en su sitio
+      // (no se duplica → no se doble-cuenta en el agregado).
+      let facturaId = editingFacturaId;
+      if (!facturaId) {
+        const { data: exF } = await supabase.from("oc_facturas")
+          .select("id").eq("oc_id", oc.id).eq("factura_numero", data.factura_numero).maybeSingle();
+        facturaId = exF?.id || `OCF_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+      }
+
       const itemsActualizados = ocItemsOriginal.map((it, i) => {
         const f = data.items.find(x => x.oc_idx === i && !x.no_facturado);
         if (!f) return it;
@@ -423,13 +370,24 @@ export default function FacturaProveedorModal({ oc, onClose, reload, currentUser
           factura_consumo_pack:  (Number(f.ico_valor_pack) || 0) + (Number(f.icl_valor_pack) || 0) + (Number(f.adv_valor_pack) || 0),
           es_bonificacion:       !!f.es_bonificacion,
           requiere_revision:     !!f.requiere_revision,
+          factura_origen_id:     facturaId,
         };
       });
 
       // 1b. Items de la factura que NO estaban en la OC original — los agregamos.
       //    Aceptamos items con codigo_barras (auto-creados en catálogo) o
       //    manuales sin codigo (bonificaciones con nombre libre).
-      const itemsNuevosOC = data.items.filter(f => f.es_nuevo_oc && (f.codigo_barras || (f.nombre && f.nombre.trim()))).map(f => {
+      //    Dedupe: si una factura anterior ya agregó este código de barras a la
+      //    OC, NO lo volvemos a agregar (evita inflar inventario/total).
+      const cbYaEnOC = new Set(
+        ocItemsOriginal
+          .filter(it => it.agregado_post_factura && it.codigo_barras)
+          .map(it => String(it.codigo_barras))
+      );
+      const itemsNuevosOC = data.items
+        .filter(f => f.es_nuevo_oc && (f.codigo_barras || (f.nombre && f.nombre.trim())))
+        .filter(f => !(f.codigo_barras && cbYaEnOC.has(String(f.codigo_barras))))
+        .map(f => {
         const unPorPack      = Math.max(1, Number(f.unidades_por_paquete) || 1);
         const cantPaquete    = Number(f.cantidad_paquete) || Number(f.cantidad) || 0;
         const cantIndividual = cantPaquete * unPorPack;
@@ -449,6 +407,7 @@ export default function FacturaProveedorModal({ oc, onClose, reload, currentUser
           cantidad_paquete:     cantPaquete,
           factura_costo_pack:   costoPack,
           agregado_post_factura: true,
+          factura_origen_id:    facturaId,
           factura_iva_pack:     Number(f.iva_valor_pack) || 0,
           factura_consumo_pack: (Number(f.ico_valor_pack) || 0) + (Number(f.icl_valor_pack) || 0) + (Number(f.adv_valor_pack) || 0),
           es_bonificacion:      !!f.es_bonificacion,
@@ -537,21 +496,56 @@ export default function FacturaProveedorModal({ oc, onClose, reload, currentUser
       const itemsFinales = [...itemsActualizados, ...itemsNuevosOC];
       const subtotalOC = itemsFinales.reduce((s, it) => s + (Number(it.subtotal) || 0), 0);
 
-      // 4. Update OC con factura aplicada + vencimiento
+      // 4a. Upsert de ESTA factura en oc_facturas (independiente de las demás).
+      const facturaSubtotal = data.subtotal_base || usarSubtotal;
+      const facturaIva      = data.iva_total || usarIva;
+      const facturaTotal    = Number(data.total) || (facturaSubtotal + facturaIva);
+      const aplicadaPor     = currentUser?.email || currentUser?.nombre || "sistema";
+      const { error: efu } = await supabase.from("oc_facturas").upsert({
+        id: facturaId,
+        oc_id: oc.id,
+        oc_codigo: oc.codigo || null,
+        factura_numero: data.factura_numero,
+        factura_fecha: data.factura_fecha || null,
+        fecha_vencimiento_pago: data.fecha_vencimiento || null,
+        forma_pago: data.forma_pago || null,
+        subtotal: facturaSubtotal,
+        iva: facturaIva,
+        consumo: data.consumo_total || 0,
+        total: facturaTotal,
+        factura_data: parsed || null,
+        factura_url: data.factura_url || null,
+        aplicada: true,
+        aplicada_at: new Date().toISOString(),
+        aplicada_por: aplicadaPor,
+        created_by: aplicadaPor,
+      }, { onConflict: "id" });
+      if (efu) throw efu;
+
+      // 4b. Agregado: total/subtotal/iva de la OC = SUMA de todas sus facturas
+      //     aplicadas. Las columnas singulares factura_* quedan como ESPEJO de
+      //     la última factura (la recién aplicada) para compat con CxP/listados.
+      const { data: allF } = await supabase.from("oc_facturas")
+        .select("subtotal, iva, total").eq("oc_id", oc.id).eq("aplicada", true);
+      const sumSub   = (allF || []).reduce((s, x) => s + (Number(x.subtotal) || 0), 0);
+      const sumIva   = (allF || []).reduce((s, x) => s + (Number(x.iva) || 0), 0);
+      const sumTotal = (allF || []).reduce((s, x) => s + (Number(x.total) || 0), 0);
+
+      // 4c. Update OC: items mergeados + espejo de la última factura + agregado.
       const updateOC = {
         items: itemsFinales,
         subtotal: subtotalOC,
-        iva: data.iva_total || usarIva,
-        total: Number(data.total) || (subtotalOC + (data.iva_total || 0)),
+        iva: sumIva,
+        total: sumTotal,
         factura_numero: data.factura_numero,
         factura_fecha: data.factura_fecha,
         factura_url: data.factura_url || null,
-        factura_subtotal: data.subtotal_base || usarSubtotal,
-        factura_iva: data.iva_total || usarIva,
+        factura_subtotal: sumSub,
+        factura_iva: sumIva,
         factura_data: parsed || null,
         factura_aplicada: true,
         factura_aplicada_at: new Date().toISOString(),
-        factura_aplicada_por: currentUser?.email || currentUser?.nombre || "sistema",
+        factura_aplicada_por: aplicadaPor,
         updated_at: new Date().toISOString(),
       };
       if (data.fecha_vencimiento) {
@@ -664,8 +658,15 @@ export default function FacturaProveedorModal({ oc, onClose, reload, currentUser
         }
       }
 
-      setStep("done");
-      setTimeout(() => { reload(); onClose(); }, 1200);
+      // Refrescar la lista de facturas y volver a ella (NO cerrar el modal:
+      // el usuario puede adjuntar otra factura a esta misma OC).
+      reload();
+      await cargarFacturas();
+      setEditingFacturaId(null);
+      setData(blankData());
+      setParsed(null);
+      setProgress(`✅ Factura ${data.factura_numero} aplicada`);
+      setStep("list");
     } catch (e) {
       setErr(e.message || String(e));
       setStep("review");
@@ -678,13 +679,97 @@ export default function FacturaProveedorModal({ oc, onClose, reload, currentUser
       <div style={{ background: B.navyMid, borderRadius: 16, width: "100%", maxWidth: 880, padding: 24, marginTop: 30, border: `1px solid ${B.navyLight}` }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 6 }}>
           <div>
-            <div style={{ fontSize: 18, fontWeight: 800 }}>📎 Adjuntar Factura del Proveedor</div>
+            <div style={{ fontSize: 18, fontWeight: 800 }}>📎 Facturas del Proveedor</div>
             <div style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", marginTop: 4 }}>
               {oc.codigo} · {oc.proveedor_nombre} · OC original: {COP(oc.total)}
+              {facturas.length > 0 && ` · ${facturas.length} factura${facturas.length === 1 ? "" : "s"}`}
             </div>
           </div>
           <button onClick={onClose} style={{ background: "transparent", border: "none", color: "#fff", fontSize: 22, cursor: "pointer" }}>×</button>
         </div>
+
+        {/* STEP 0: Lista de facturas de la OC */}
+        {step === "list" && (
+          <div style={{ marginTop: 18 }}>
+            {progress && <div style={{ marginBottom: 10, padding: 8, background: B.success + "11", color: B.success, borderRadius: 6, fontSize: 12 }}>{progress}</div>}
+            {loadingFacturas ? (
+              <div style={{ padding: 30, textAlign: "center", color: "rgba(255,255,255,0.5)", fontSize: 13 }}>Cargando facturas…</div>
+            ) : facturas.length === 0 ? (
+              <div style={{ padding: 24, textAlign: "center", color: "rgba(255,255,255,0.5)", fontSize: 13 }}>
+                Esta OC aún no tiene facturas adjuntas.
+              </div>
+            ) : (
+              <div style={{ background: B.navy, borderRadius: 10, overflow: "hidden", marginBottom: 14 }}>
+                <table style={{ width: "100%", fontSize: 12, borderCollapse: "collapse" }}>
+                  <thead>
+                    <tr style={{ background: B.navyLight }}>
+                      {["N° Factura", "Fecha", "Subtotal", "IVA", "Total", "Estado", ""].map((h, i) => (
+                        <th key={h + i} style={{ padding: "8px 10px", textAlign: i < 1 || i === 5 ? "left" : i === 6 ? "center" : "right", fontSize: 9, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: "0.04em" }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {facturas.map((f) => (
+                      <tr key={f.id} style={{ borderTop: `1px solid ${B.navyLight}` }}>
+                        <td style={{ padding: "8px 10px", fontWeight: 700 }}>
+                          {f.factura_numero}
+                          {f.factura_url && (
+                            <a href={f.factura_url} target="_blank" rel="noreferrer" style={{ marginLeft: 8, color: B.sky, fontSize: 11, textDecoration: "none" }}>📎 ver</a>
+                          )}
+                        </td>
+                        <td style={{ padding: "8px 10px", color: "rgba(255,255,255,0.7)" }}>{f.factura_fecha ? String(f.factura_fecha).slice(0, 10) : "—"}</td>
+                        <td style={{ padding: "8px 10px", textAlign: "right" }}>{COP(f.subtotal)}</td>
+                        <td style={{ padding: "8px 10px", textAlign: "right", color: B.sky }}>{COP(f.iva)}</td>
+                        <td style={{ padding: "8px 10px", textAlign: "right", fontWeight: 700, color: B.sand }}>{COP(f.total)}</td>
+                        <td style={{ padding: "8px 10px" }}>
+                          {f.aplicada
+                            ? <span style={{ fontSize: 9, padding: "2px 7px", background: B.success + "33", color: B.success, borderRadius: 8, fontWeight: 700 }}>APLICADA</span>
+                            : <span style={{ fontSize: 9, padding: "2px 7px", background: B.warning + "33", color: B.warning, borderRadius: 8, fontWeight: 700 }}>PENDIENTE</span>}
+                        </td>
+                        <td style={{ padding: "8px 10px", textAlign: "center" }}>
+                          <button onClick={() => {
+                            const fd = f.factura_data || {};
+                            setParsed(fd);
+                            setEditingFacturaId(f.id);
+                            setData({
+                              ...buildDataFromParsed(fd, oc.items || [], f.factura_url),
+                              factura_numero: f.factura_numero || "",
+                              factura_fecha: f.factura_fecha ? String(f.factura_fecha).slice(0, 10) : new Date().toISOString().slice(0, 10),
+                              fecha_vencimiento: f.fecha_vencimiento_pago ? String(f.fecha_vencimiento_pago).slice(0, 10) : "",
+                            });
+                            setProgress("");
+                            setErr("");
+                            setStep("review");
+                          }} style={{ padding: "4px 10px", fontSize: 10, fontWeight: 700, borderRadius: 6, border: `1px solid ${B.sky}`, background: B.sky + "22", color: B.sky, cursor: "pointer" }}>
+                            👁 Revisar
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <tr style={{ background: B.navyMid, fontWeight: 800 }}>
+                      <td colSpan={2} style={{ padding: "8px 10px", textAlign: "right", color: "rgba(255,255,255,0.6)" }}>TOTALES</td>
+                      <td style={{ padding: "8px 10px", textAlign: "right" }}>{COP(facturas.reduce((s, x) => s + (Number(x.subtotal) || 0), 0))}</td>
+                      <td style={{ padding: "8px 10px", textAlign: "right", color: B.sky }}>{COP(facturas.reduce((s, x) => s + (Number(x.iva) || 0), 0))}</td>
+                      <td style={{ padding: "8px 10px", textAlign: "right", color: B.success }}>{COP(facturas.reduce((s, x) => s + (Number(x.total) || 0), 0))}</td>
+                      <td colSpan={2}></td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            )}
+            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+              <button onClick={onClose} style={{ padding: "10px 18px", borderRadius: 8, border: `1px solid ${B.navyLight}`, background: "transparent", color: "rgba(255,255,255,0.6)", fontSize: 13, cursor: "pointer" }}>
+                Cerrar
+              </button>
+              <button onClick={() => { setEditingFacturaId(null); setData(blankData()); setParsed(null); setErr(""); setProgress(""); setStep("upload"); }}
+                style={{ padding: "10px 22px", borderRadius: 8, border: "none", background: B.success, color: B.navy, fontSize: 13, cursor: "pointer", fontWeight: 800 }}>
+                + Adjuntar otra factura
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* STEP 1: Upload */}
         {step === "upload" && (
@@ -693,12 +778,18 @@ export default function FacturaProveedorModal({ oc, onClose, reload, currentUser
               <div style={{ fontSize: 38, marginBottom: 8 }}>📄</div>
               <div style={{ fontSize: 13, color: "rgba(255,255,255,0.6)", marginBottom: 14 }}>
                 Sube una <strong>foto/PDF</strong> de la factura del proveedor.
-                <br/>Las imágenes se procesan con IA para extraer precios, IVA y total.
-                <br/>Los PDF se adjuntan; los datos se ingresan manualmente.
+                <br/>Las imágenes y PDF se procesan con IA para extraer items, precios, IVA y total.
+                <br/>Solo aparecerán los items que vengan <strong>en esta factura</strong>.
               </div>
               <input type="file" accept="image/*,application/pdf" onChange={handleUpload}
                 style={{ background: B.sky, color: B.navy, padding: "10px 16px", borderRadius: 8, fontSize: 13, fontWeight: 700, cursor: "pointer", border: "none" }} />
             </div>
+            {facturas.length > 0 && (
+              <button onClick={() => { setErr(""); setProgress(""); setStep("list"); }}
+                style={{ marginTop: 12, padding: "8px 14px", borderRadius: 8, border: `1px solid ${B.navyLight}`, background: "transparent", color: "rgba(255,255,255,0.6)", fontSize: 12, cursor: "pointer" }}>
+                ← Volver a facturas ({facturas.length})
+              </button>
+            )}
             <div style={{ marginTop: 18, padding: 12, background: B.navy, borderRadius: 8, fontSize: 11, color: "rgba(255,255,255,0.45)", lineHeight: 1.5 }}>
               ℹ️ Al aplicar la factura, los precios reales sobreescriben los de cotización en la OC y en la requisición. Además se actualiza el <strong>precio_compra del catálogo</strong> para que próximas compras tengan el precio correcto.
             </div>
@@ -958,18 +1049,18 @@ export default function FacturaProveedorModal({ oc, onClose, reload, currentUser
             )}
 
             <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
-              <button onClick={onClose} style={{ padding: "10px 18px", borderRadius: 8, border: `1px solid ${B.navyLight}`, background: "transparent", color: "rgba(255,255,255,0.6)", fontSize: 13, cursor: "pointer" }}>
-                Cancelar
+              <button onClick={() => { setErr(""); setProgress(""); setStep(facturas.length > 0 ? "list" : "upload"); }} style={{ padding: "10px 18px", borderRadius: 8, border: `1px solid ${B.navyLight}`, background: "transparent", color: "rgba(255,255,255,0.6)", fontSize: 13, cursor: "pointer" }}>
+                {facturas.length > 0 ? "← Facturas" : "Cancelar"}
               </button>
               <button onClick={() => setStep("upload")} style={{ padding: "10px 18px", borderRadius: 8, border: `1px solid ${B.warning}`, background: B.warning + "22", color: B.warning, fontSize: 13, cursor: "pointer", fontWeight: 700 }}>
-                ↺ Subir otra
+                ↺ Subir otro archivo
               </button>
               <button onClick={aplicar} style={{ padding: "10px 22px", borderRadius: 8, border: "none", background: B.success, color: B.navy, fontSize: 13, cursor: "pointer", fontWeight: 800 }}>
-                ✓ Aplicar Factura
+                {editingFacturaId ? "✓ Re-aplicar esta factura" : "✓ Aplicar esta factura"}
               </button>
             </div>
             <div style={{ marginTop: 10, fontSize: 11, color: "rgba(255,255,255,0.4)", textAlign: "right" }}>
-              Al aplicar: actualiza precios de OC, requisición y precio_compra del catálogo
+              Cada factura es independiente. Al aplicar: actualiza precios de OC, catálogo y proveedor con los items de ESTA factura.
             </div>
           </div>
         )}
