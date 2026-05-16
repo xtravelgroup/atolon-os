@@ -288,6 +288,10 @@ function TabOrdenes({ ordenes, reload, currentUser }) {
           onEditar={(o) => { setOpenDetalle(null); setOpenEditar(o); }}
           onFactura={(o) => { setOpenDetalle(null); setOpenFactura(o); }}
           onLogistica={(o) => { setOpenDetalle(null); setOpenLogistica(o); }}
+          onUnir={(o) => { setOpenDetalle(null); setOpenUnir(o); }}
+          onEmail={(o) => { setOpenDetalle(null); setOpenEmail(o); }}
+          onCotizResp={(o) => { setOpenDetalle(null); setOpenCotizResp(o); }}
+          onEnviada={(o) => { setOpenDetalle(null); marcarEnviada(o); }}
           editable={OC_EDITABLE(openDetalle)}
         />
       )}
@@ -375,53 +379,8 @@ function TabOrdenes({ ordenes, reload, currentUser }) {
                         )}
                       </div>
                     )}
-                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                      {OC_EDITABLE(oc) && (
-                        <button onClick={() => setOpenEditar(oc)}
-                          style={btnAccion(B.sand)}
-                          title={oc.enviada_at
-                            ? "Editar OC tras respuesta del proveedor (cantidades, precios, devolver items a mesa)"
-                            : "Editar items, cantidades, proveedor de la OC"}>
-                          ✏️ Editar
-                        </button>
-                      )}
-                      {OC_EDITABLE(oc) && (
-                        <button onClick={() => setOpenUnir(oc)}
-                          style={btnAccion("#a78bfa")}
-                          title="Unir esta OC con otra del mismo proveedor (consolida items y reqs)">
-                          🔗 Unir
-                        </button>
-                      )}
-                      <button onClick={() => setOpenEmail(oc)}
-                        style={btnAccion(B.pink)}
-                        title="Enviar OC al proveedor por correo con PDF">
-                        📧 Email
-                      </button>
-                      {OC_EDITABLE(oc) ? (
-                        <button onClick={() => marcarEnviada(oc)}
-                          style={btnAccion(B.sky)}
-                          title="Marcar como enviada al proveedor — bloquea edición y no permite agregar más items">
-                          📤 Enviada a proveedor
-                        </button>
-                      ) : (
-                        <span style={{ ...btnAccion(B.success + "44"), cursor: "default", color: B.success, display: "inline-flex", alignItems: "center", gap: 4 }}
-                          title={`Enviada${oc.enviada_at ? " el " + fmtFecha(oc.enviada_at.slice(0,10)) : ""} — bloqueada para nuevos items`}>
-                          🔒 Enviada
-                        </span>
-                      )}
-                      <button onClick={() => setOpenCotizResp(oc)}
-                        style={btnAccion(oc.cotizacion_resp_aprobada ? B.success : oc.cotizacion_resp_data ? B.warning : "#a78bfa")}
-                        title="Cotización-respuesta del proveedor">
-                        {oc.cotizacion_resp_aprobada ? "📋✓ Cotiz" : oc.cotizacion_resp_data ? "📋⏳ Cotiz" : "📋 Cotiz Resp"}
-                      </button>
-                      <button onClick={() => setOpenFactura(oc)}
-                        style={btnAccion(oc.factura_aplicada ? B.success : B.warning)}>
-                        {oc.factura_aplicada ? "📄✓ Factura" : "📎 Factura"}
-                      </button>
-                      <button onClick={() => setOpenLogistica(oc)}
-                        style={btnAccion(B.sky)}>
-                        🚚 Logística
-                      </button>
+                    <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginTop: 4 }}>
+                      Abrir para ver detalle y acciones (editar, factura, logística…) →
                     </div>
                   </div>
                 </div>
@@ -447,7 +406,7 @@ function TabOrdenes({ ordenes, reload, currentUser }) {
 // DETALLE OC — pantalla de trazabilidad completa (requisición → OC → enviada
 // → cotización → recepción → factura → pagos → historial)
 // ═══════════════════════════════════════════════════════════════════════════
-function DetalleOCModal({ oc, onClose, onEditar, onFactura, onLogistica, editable }) {
+function DetalleOCModal({ oc, onClose, onEditar, onFactura, onLogistica, onUnir, onEmail, onCotizResp, onEnviada, editable }) {
   const { isMobile } = useBreakpoint();
   const [reqs, setReqs] = useState([]);
   const [cotis, setCotis] = useState([]);
@@ -560,8 +519,15 @@ function DetalleOCModal({ oc, onClose, onEditar, onFactura, onLogistica, editabl
             </div>
           </div>
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-            {editable && <button onClick={() => onEditar(oc)} style={btnAccion(B.sand)}>✏️ Editar</button>}
-            <button onClick={() => onFactura(oc)} style={btnAccion(oc.factura_aplicada ? B.success : B.warning)}>📎 Factura</button>
+            {editable && <button onClick={() => onEditar(oc)} style={btnAccion(B.sand)} title="Editar items, cantidades, proveedor de la OC">✏️ Editar</button>}
+            {editable && onUnir && <button onClick={() => onUnir(oc)} style={btnAccion("#a78bfa")} title="Unir esta OC con otra del mismo proveedor">🔗 Unir</button>}
+            {onEmail && <button onClick={() => onEmail(oc)} style={btnAccion(B.pink)} title="Enviar OC al proveedor por correo con PDF">📧 Email</button>}
+            {onEnviada && (editable
+              ? <button onClick={() => onEnviada(oc)} style={btnAccion(B.sky)} title="Marcar como enviada al proveedor — bloquea edición">📤 Enviada a proveedor</button>
+              : <span style={{ ...btnAccion(B.success + "44"), cursor: "default", color: B.success }} title={`Enviada${oc.enviada_at ? " el " + fmtFecha(oc.enviada_at.slice(0,10)) : ""}`}>🔒 Enviada</span>
+            )}
+            {onCotizResp && <button onClick={() => onCotizResp(oc)} style={btnAccion(oc.cotizacion_resp_aprobada ? B.success : oc.cotizacion_resp_data ? B.warning : "#a78bfa")} title="Cotización-respuesta del proveedor">{oc.cotizacion_resp_aprobada ? "📋✓ Cotiz" : oc.cotizacion_resp_data ? "📋⏳ Cotiz" : "📋 Cotiz Resp"}</button>}
+            <button onClick={() => onFactura(oc)} style={btnAccion(oc.factura_aplicada ? B.success : B.warning)}>{oc.factura_aplicada ? "📄✓ Factura" : "📎 Factura"}</button>
             <button onClick={() => onLogistica(oc)} style={btnAccion(B.sky)}>🚚 Logística</button>
             <button onClick={onClose} style={btnAccion("rgba(255,255,255,0.4)")}>← Volver</button>
           </div>
