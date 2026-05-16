@@ -261,12 +261,23 @@ describe("calcularHorasDia (solo horas, informativo)", () => {
   it("entrada/salida vacías = 0", () => {
     expect(calcularHorasDia({ fecha: "2026-05-11", entrada: "", salida: "" }).horas).toBe(0);
   });
-  it("almuerzo se descuenta de las horas DIURNAS (no del final)", () => {
-    // 12:00→03:00 = 15h; noche 19:00–06:00. Almuerzo 1h sale del diurno →
-    // 6h diurnas + 8h nocturnas = 14h, 8h nocturnas (no 7).
+  it("almuerzo se descuenta de horas DIURNAS + comida extra por >4h extra", () => {
+    // 12:00→03:00 = 15h. Almuerzo base 1h → net 14h → extra del día = 6h
+    // (>4) → +0.5h comida → total comida 1.5h → net 13.5h. Noche 8h intacta.
     const r = calcularHorasDia({ fecha: "2026-05-09", entrada: "12:00", salida: "03:00", almuerzoHoras: 1 });
-    expect(r.horas).toBe(14);
+    expect(r.horas).toBe(13.5);
     expect(r.horas_nocturnas).toBe(8);
+  });
+  it("comida extra acumulativa: ≥8h extra → almuerzo ×2.5 (L=1)", () => {
+    // 03:00→21:00 = 18h. base 1h → net 17h → extra 9h (≥8) → +0.5+1 →
+    // comida total 2.5h → net 15.5h.
+    const r = calcularHorasDia({ fecha: "2026-05-11", entrada: "03:00", salida: "21:00", almuerzoHoras: 1 });
+    expect(r.horas).toBe(15.5);
+  });
+  it("extra del día ≤4: solo almuerzo base", () => {
+    // 06:00→19:00 = 13h. base 1h → net 12h → extra 4h (no >4) → comida 1h.
+    const r = calcularHorasDia({ fecha: "2026-05-11", entrada: "06:00", salida: "19:00", almuerzoHoras: 1 });
+    expect(r.horas).toBe(12);
   });
 });
 
@@ -313,12 +324,13 @@ describe("desglosarPeriodo — recargos de ley", () => {
       ["2026-05-09","12:00","03:00"],["2026-05-10","08:00","17:00"],
     ].map(([fecha, entrada, salida]) => ({ fecha, entrada, salida }));
     const d = desglosarPeriodo(sem, T, undefined, 1);
-    // 9 may: 6h ord diurnas + 2h recargo nocturno + 6h extra nocturna
-    expect(d.h_recargo_nocturno).toBe(2);
-    expect(d.h_extra_nocturna).toBe(6);
+    // 9 may: base 1h → net 14h → extra día 6h (>4) → +0.5h comida →
+    // net 13.5h → 5.5h ord diurnas + 2.5h recargo nocturno + 5.5h extra noct.
+    expect(d.h_recargo_nocturno).toBe(2.5);
+    expect(d.h_extra_nocturna).toBe(5.5);
     expect(d.h_extra_diurna).toBe(0);
-    expect(d.recargo_nocturno).toBe(Math.round(2 * T * 0.35));
-    expect(d.extra_nocturna).toBe(Math.round(6 * T * 1.75));
+    expect(d.recargo_nocturno).toBe(Math.round(2.5 * T * 0.35));
+    expect(d.extra_nocturna).toBe(Math.round(5.5 * T * 1.75));
   });
 });
 

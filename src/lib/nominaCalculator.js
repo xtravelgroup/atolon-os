@@ -175,6 +175,29 @@ function lunesDeSemana(fechaIso) {
  * El dinero se calcula a nivel período en desglosarPeriodo (la hora
  * extra depende del acumulado SEMANAL, no del día).
  */
+// Quita `n` minutos de comida del arreglo de minutos del día: primero de
+// los DIURNOS (la comida es de día), si no alcanza, de los nocturnos.
+function _esNoche(x) { return x === true || (x && x.night === true); }
+function quitarMinutosComida(mins, n) {
+  let q = Math.max(0, Math.round(n));
+  const a = [];
+  for (const x of mins) { if (q > 0 && !_esNoche(x)) { q--; continue; } a.push(x); }
+  const b = [];
+  for (const x of a) { if (q > 0 && _esNoche(x)) { q--; continue; } b.push(x); }
+  return b;
+}
+
+// Minutos TOTALES de comida a descontar en el día (almuerzo base + extra):
+//  base = almMin; si horas extra del día (>8h tras almuerzo base) > 4 → +0.5·base;
+//  si ≥ 8 → +1·base más (acumulativo).
+function comidaTotalMin(mins, almMin) {
+  if (almMin <= 0) return 0;
+  const baseNet = quitarMinutosComida(mins, almMin).length;     // minutos tras almuerzo base
+  const extraHrs = Math.max(0, baseNet / 60 - JORNADA_DIARIA_HORAS);
+  const factor = (extraHrs > 4 ? 0.5 : 0) + (extraHrs >= 8 ? 1 : 0);
+  return Math.round(almMin * (1 + factor));
+}
+
 export function calcularHorasDia({ fecha, entrada, salida, almuerzoHoras = 0, festivos = FESTIVOS_CO_2026 }) {
   const vacio = { fecha, horas: 0, horas_nocturnas: 0, es_festivo: false };
   const ini = hhmmAMin(entrada);
@@ -188,13 +211,8 @@ export function calcularHorasDia({ fecha, entrada, salida, almuerzoHoras = 0, fe
     const h = Math.floor((((t % 1440) + 1440) % 1440) / 60);
     mins.push(h >= NOCTURNO_INICIO_H || h < NOCTURNO_FIN_H); // true = noche
   }
-  // El almuerzo se descuenta de las horas DIURNAS (la comida es de día);
-  // si el turno no tiene suficiente diurno, se quita de la noche.
-  let lunch = Math.round(Number(almuerzoHoras || 0) * 60);
-  const w1 = [];
-  for (const night of mins) { if (lunch > 0 && !night) { lunch--; continue; } w1.push(night); }
-  const w = [];
-  for (const night of w1) { if (lunch > 0 && night) { lunch--; continue; } w.push(night); }
+  const almMin = Math.round(Number(almuerzoHoras || 0) * 60);
+  const w = quitarMinutosComida(mins, comidaTotalMin(mins, almMin));
   const noct = w.filter(Boolean).length;
   return {
     fecha,
@@ -250,11 +268,7 @@ export function desglosarPeriodo(marcaciones = [], tarifaHora = 0, festivos = FE
   const weekTotal = new Map();
   let totalMin = 0, noctMinTot = 0;
   for (const [fecha, raw] of porFecha) {
-    let lunch = almMin;
-    const w1 = [];
-    for (const x of raw) { if (lunch > 0 && !x.night) { lunch--; continue; } w1.push(x); }
-    const w = [];
-    for (const x of w1) { if (lunch > 0 && x.night) { lunch--; continue; } w.push(x); }
+    const w = quitarMinutosComida(raw, comidaTotalMin(raw, almMin));
     if (w.length === 0) continue;
     const wk = lunesDeSemana(fecha);
     weekTotal.set(wk, (weekTotal.get(wk) || 0) + w.length);
