@@ -1,7 +1,7 @@
 // TrackExterno — vista pública de AtolonTrack (solo Web+Mkt y WhatsApp),
 // protegida con una clave propia (independiente del login admin).
 // Ruta pública: /track
-import { useState, lazy, Suspense } from "react";
+import { useState, lazy, Suspense, useEffect } from "react";
 import { B } from "../brand";
 
 const Analitica = lazy(() => import("./Analitica.jsx"));
@@ -11,6 +11,8 @@ const CLAVE = import.meta.env.VITE_TRACK_CLAVE || "atolon-track";
 const LS_KEY = "atolon_track_externo_ok";
 
 export default function TrackExterno() {
+  // Título neutral (marca propia) — no exponer nombres internos.
+  useEffect(() => { document.title = "Atolón · Analítica"; }, []);
   const [ok, setOk] = useState(() => {
     try { return localStorage.getItem(LS_KEY) === "1"; } catch { return false; }
   });
@@ -51,9 +53,9 @@ export default function TrackExterno() {
         background: B.navyMid, borderRadius: 16, padding: 32, width: "100%",
         maxWidth: 380, border: `1px solid ${B.navyLight}`,
       }}>
-        <div style={{ fontSize: 22, fontWeight: 800, color: "#fff", marginBottom: 4 }}>📊 AtolonTrack</div>
+        <img src="/atolon-logo-white.png" alt="Atolón" style={{ height: 44, width: "auto", display: "block", marginBottom: 14 }} />
         <div style={{ fontSize: 13, color: B.muted, marginBottom: 22 }}>
-          Vista externa — Web + Marketing y WhatsApp
+          Analítica — Web + Marketing y WhatsApp
         </div>
         <label style={{ fontSize: 11, color: B.muted, textTransform: "uppercase", letterSpacing: "0.06em", display: "block", marginBottom: 6 }}>
           Clave de acceso

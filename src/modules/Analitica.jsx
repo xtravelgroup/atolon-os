@@ -412,8 +412,12 @@ export default function Analitica({ externo = false }) {
       {/* Header */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 28, flexWrap: "wrap", gap: 12 }}>
         <div>
-          <h1 style={{ margin: 0, fontSize: 24, fontWeight: 800, color: "#fff" }}>📊 AtolonTrack</h1>
-          <div style={{ fontSize: 13, color: B.muted, marginTop: 4 }}>Analítica de conversión en tiempo real</div>
+          {externo ? (
+            <img src="/atolon-logo-white.png" alt="Atolón" style={{ height: 42, width: "auto", display: "block" }} />
+          ) : (
+            <h1 style={{ margin: 0, fontSize: 24, fontWeight: 800, color: "#fff" }}>📊 AtolonTrack</h1>
+          )}
+          <div style={{ fontSize: 13, color: B.muted, marginTop: externo ? 8 : 4 }}>Analítica de conversión en tiempo real</div>
         </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
           {periodos.map(p => (
