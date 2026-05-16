@@ -506,6 +506,15 @@ function DetalleOCModal({ oc, onClose, onEditar, onFactura, onLogistica, editabl
   // Mapa id→item para resolver lo recibido (recibidos[] = {item_id, cant_recibida}).
   const itemsById = {};
   (Array.isArray(oc.items) ? oc.items : []).forEach(it => { if (it.id) itemsById[it.id] = it; });
+  // Cotización ORIGINAL (snapshot, no se pisa con la factura). Se compara
+  // contra lo facturado (oc.items[].precioU = costo final tras aplicar factura).
+  const cotData = oc.cotizacion_resp_data && typeof oc.cotizacion_resp_data === "object" ? oc.cotizacion_resp_data : null;
+  const cotItems = Array.isArray(cotData?.items) ? cotData.items : [];
+  const cotByIdx = {};
+  cotItems.forEach((c, i) => { const k = (c.oc_idx ?? i); cotByIdx[k] = c; });
+  const cotSubtotal = cotItems.reduce((s, c) => s + (Number(c.precio_unitario) || 0) * (Number(c.cantidad) || 0), 0);
+  const factSubtotal = Number(oc.factura_subtotal) || (Array.isArray(oc.items) ? oc.items.reduce((s, it) => s + itemTotal(it), 0) : 0);
+  const difTotal = factSubtotal - cotSubtotal;
   const fdt = (v) => v ? new Date(v).toLocaleString("es-CO", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "—";
 
   const Sec = ({ icon, titulo, color = B.sand, children, sub }) => (
@@ -614,6 +623,29 @@ function DetalleOCModal({ oc, onClose, onEditar, onFactura, onLogistica, editabl
                 {oc.cotizacion_resp_url && <a href={oc.cotizacion_resp_url} target="_blank" rel="noreferrer" style={{ color: B.sky }}>📎 Ver archivo de cotización</a>}
               </div>
             ) : null}
+            {cotItems.length > 0 && (
+              <div style={{ marginTop: 8, overflowX: "auto" }}>
+                <div style={{ color: "rgba(255,255,255,0.5)", marginBottom: 2 }}>Precios cotizados (original — no se modifica con la factura):</div>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
+                  <thead><tr style={{ color: "rgba(255,255,255,0.45)", textAlign: "left" }}>
+                    <th style={{ padding: "4px 6px" }}>Ítem</th><th style={{ padding: "4px 6px" }}>Cant</th>
+                    <th style={{ padding: "4px 6px", textAlign: "right" }}>Precio cotizado</th>
+                    <th style={{ padding: "4px 6px", textAlign: "right" }}>Total cotizado</th>
+                  </tr></thead>
+                  <tbody>
+                    {cotItems.map((c, i) => (
+                      <tr key={i} style={{ borderTop: `1px solid ${B.navyLight}55` }}>
+                        <td style={{ padding: "4px 6px" }}>{c.nombre || "—"}</td>
+                        <td style={{ padding: "4px 6px" }}>{c.cantidad ?? "—"}</td>
+                        <td style={{ padding: "4px 6px", textAlign: "right" }}>{COP(Number(c.precio_unitario) || 0)}</td>
+                        <td style={{ padding: "4px 6px", textAlign: "right", color: "#a78bfa", fontWeight: 700 }}>{COP((Number(c.precio_unitario) || 0) * (Number(c.cantidad) || 0))}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <div style={{ textAlign: "right", marginTop: 4, fontWeight: 800, color: "#a78bfa" }}>Subtotal cotizado: {COP(cotSubtotal)}</div>
+              </div>
+            )}
             {cotis.length === 0 && !oc.cotizacion_resp_data && !oc.cotizacion_resp_url
               ? vacio("Sin cotizaciones registradas.")
               : cotis.map(c => (
@@ -708,8 +740,53 @@ function DetalleOCModal({ oc, onClose, onEditar, onFactura, onLogistica, editabl
                 <Row l="Aplicada" v={oc.factura_aplicada ? `Sí · ${fdt(oc.factura_aplicada_at)}${oc.factura_aplicada_por ? " · " + oc.factura_aplicada_por : ""}` : "No"} />
                 {oc.dias_credito ? <Row l="Crédito" v={`${oc.dias_credito} días · vence ${fmtFecha((oc.fecha_vencimiento_pago||"").slice(0,10))}`} /> : null}
                 {oc.factura_url && <a href={oc.factura_url} target="_blank" rel="noreferrer" style={{ color: B.sky }}>📎 Ver factura</a>}
+
+                {/* Comparación: cotizado (original) vs facturado (final) */}
+                {cotItems.length > 0 && (
+                  <div style={{ marginTop: 12, overflowX: "auto" }}>
+                    <div style={{ color: "rgba(255,255,255,0.5)", marginBottom: 2 }}>Cotizado vs Facturado (final):</div>
+                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
+                      <thead><tr style={{ color: "rgba(255,255,255,0.45)", textAlign: "left" }}>
+                        <th style={{ padding: "4px 6px" }}>Ítem</th>
+                        <th style={{ padding: "4px 6px", textAlign: "right" }}>Cotizado</th>
+                        <th style={{ padding: "4px 6px", textAlign: "right" }}>Facturado</th>
+                        <th style={{ padding: "4px 6px", textAlign: "right" }}>Δ unit</th>
+                      </tr></thead>
+                      <tbody>
+                        {(Array.isArray(oc.items) ? oc.items : []).map((it, idx) => {
+                          const c = cotByIdx[idx];
+                          const cot = c ? Number(c.precio_unitario) || 0 : null;
+                          const fac = itemPrecio(it);
+                          const d = cot != null ? fac - cot : null;
+                          return (
+                            <tr key={idx} style={{ borderTop: `1px solid ${B.navyLight}55` }}>
+                              <td style={{ padding: "4px 6px" }}>{itemNombre(it)}</td>
+                              <td style={{ padding: "4px 6px", textAlign: "right", color: "#a78bfa" }}>{cot != null ? COP(cot) : "—"}</td>
+                              <td style={{ padding: "4px 6px", textAlign: "right", color: B.sand, fontWeight: 700 }}>{fac ? COP(fac) : "—"}</td>
+                              <td style={{ padding: "4px 6px", textAlign: "right", fontWeight: 700, color: d == null ? "rgba(255,255,255,0.4)" : d === 0 ? B.success : d > 0 ? B.danger : B.success }}>
+                                {d == null ? "—" : (d === 0 ? "=" : (d > 0 ? "+" : "") + COP(d))}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                    <div style={{ marginTop: 6, borderTop: `1px solid ${B.navyLight}`, paddingTop: 6 }}>
+                      <Row l="Subtotal cotizado" v={<span style={{ color: "#a78bfa" }}>{COP(cotSubtotal)}</span>} />
+                      <Row l="Subtotal facturado" v={<span style={{ color: B.sand }}>{COP(factSubtotal)}</span>} />
+                      <Row l="Diferencia" v={
+                        <span style={{ color: difTotal === 0 ? B.success : difTotal > 0 ? B.danger : B.success, fontWeight: 800 }}>
+                          {difTotal === 0 ? "Sin diferencia" : `${difTotal > 0 ? "+" : ""}${COP(difTotal)}${cotSubtotal ? ` (${(difTotal / cotSubtotal * 100).toFixed(1)}%)` : ""}`}
+                        </span>} />
+                    </div>
+                  </div>
+                )}
               </>
-            ) : vacio("Sin factura aplicada.")}
+            ) : (
+              cotItems.length > 0
+                ? <div style={{ color: "rgba(255,255,255,0.5)" }}>Sin factura aplicada. Subtotal cotizado: <b style={{ color: "#a78bfa" }}>{COP(cotSubtotal)}</b></div>
+                : vacio("Sin factura aplicada.")
+            )}
           </Sec>
 
           {/* 7. Pagos */}
