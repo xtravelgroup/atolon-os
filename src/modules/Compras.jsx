@@ -241,6 +241,7 @@ function TabOrdenes({ ordenes, reload, currentUser }) {
   const [openCotizResp, setOpenCotizResp] = useState(null);
   const [openEditar, setOpenEditar] = useState(null);
   const [openUnir,   setOpenUnir]   = useState(null);
+  const [openDetalle, setOpenDetalle] = useState(null);
 
   const filtradas = useMemo(() => {
     let list = ordenes;
@@ -314,16 +315,17 @@ function TabOrdenes({ ordenes, reload, currentUser }) {
                   onClick={(e) => {
                     // No abrir si el click fue en un botón/link/input adentro
                     if (e.target.closest("button, a, input, select, textarea")) return;
-                    if (OC_EDITABLE(oc)) setOpenEditar(oc);
+                    setOpenDetalle(oc);
                   }}
+                  title="Ver detalle completo de la orden de compra"
                   style={{
                   background: B.navy, borderRadius: 10, padding: "12px 14px",
                   border: `1px solid ${B.navyLight}`, borderLeft: `4px solid ${B.sand}`,
                   display: "flex", flexDirection: isMobile ? "column" : "row", gap: 10, justifyContent: "space-between",
-                  cursor: OC_EDITABLE(oc) ? "pointer" : "default",
+                  cursor: "pointer",
                   transition: "background 0.15s",
                 }}
-                  onMouseEnter={e => { if (OC_EDITABLE(oc)) e.currentTarget.style.background = B.navyMid; }}
+                  onMouseEnter={e => { e.currentTarget.style.background = B.navyMid; }}
                   onMouseLeave={e => { e.currentTarget.style.background = B.navy; }}>
                   <div style={{ flex: 1 }}>
                     <div style={{ fontSize: 13, fontWeight: 800, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
@@ -423,6 +425,275 @@ function TabOrdenes({ ordenes, reload, currentUser }) {
       {openCotizResp && <CotizacionRespuestaModal oc={openCotizResp} onClose={() => setOpenCotizResp(null)} reload={reload} currentUser={currentUser} />}
       {openEditar && <EditarOCModal oc={openEditar} ordenes={ordenes} onClose={() => setOpenEditar(null)} reload={reload} currentUser={currentUser} />}
       {openUnir && <UnirOCModal oc={openUnir} ordenes={ordenes} onClose={() => setOpenUnir(null)} reload={reload} currentUser={currentUser} />}
+      {openDetalle && (
+        <DetalleOCModal
+          oc={openDetalle}
+          onClose={() => setOpenDetalle(null)}
+          onEditar={(oc) => { setOpenDetalle(null); setOpenEditar(oc); }}
+          onFactura={(oc) => { setOpenDetalle(null); setOpenFactura(oc); }}
+          onLogistica={(oc) => { setOpenDetalle(null); setOpenLogistica(oc); }}
+          editable={OC_EDITABLE(openDetalle)}
+        />
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// DETALLE OC — pantalla de trazabilidad completa (requisición → OC → enviada
+// → cotización → recepción → factura → pagos → historial)
+// ═══════════════════════════════════════════════════════════════════════════
+function DetalleOCModal({ oc, onClose, onEditar, onFactura, onLogistica, editable }) {
+  const { isMobile } = useBreakpoint();
+  const [reqs, setReqs] = useState([]);
+  const [cotis, setCotis] = useState([]);
+  const [emails, setEmails] = useState([]);
+  const [muelle, setMuelle] = useState([]);
+  const [transp, setTransp] = useState([]);
+  const [pagos, setPagos] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      setLoading(true);
+      const reqIds = Array.from(new Set([
+        ...((Array.isArray(oc.requisicion_ids) ? oc.requisicion_ids : []) || []),
+        ...(oc.requisicion_id ? [oc.requisicion_id] : []),
+      ].filter(Boolean)));
+      const [rq, ct, em, mu, tr, pg] = await Promise.all([
+        reqIds.length
+          ? supabase.from("requisiciones").select("id, descripcion, area, solicitante, prioridad, estado, fecha, fecha_necesaria, justificacion, items, total, aprobador_nombre, aprobada_at").in("id", reqIds)
+          : Promise.resolve({ data: [] }),
+        supabase.from("cotizaciones").select("id, cotizacion_numero, fecha_cotizacion, total, estado, archivo_url, proveedor_nombre, created_at").eq("oc_id", oc.id),
+        supabase.from("oc_emails_enviados").select("enviado_a, cc, asunto, con_pdf, enviado_at, enviado_por").eq("oc_id", oc.id).order("enviado_at", { ascending: false }),
+        supabase.from("oc_entregas_muelle").select("estado, fecha_programada, ubicacion, entregado_at, recibido_por, notas, created_at").eq("oc_id", oc.id).order("created_at", { ascending: false }),
+        supabase.from("oc_transporte_atolon").select("estado, embarcacion_nombre, fecha_zarpe, zarpado_at, recibido_atolon_at, recibido_por, bodega_destino, notas, created_at").eq("oc_id", oc.id).order("created_at", { ascending: false }),
+        supabase.from("cxp_pagos").select("fecha_pago, monto, metodo, referencia, cuenta_origen, comprobante_url, notas, created_at").eq("oc_id", oc.id).order("fecha_pago", { ascending: true }),
+      ]);
+      if (!alive) return;
+      setReqs(rq.data || []); setCotis(ct.data || []); setEmails(em.data || []);
+      setMuelle(mu.data || []); setTransp(tr.data || []); setPagos(pg.data || []);
+      setLoading(false);
+    })();
+    return () => { alive = false; };
+  }, [oc.id]);
+
+  const badge = OC_BADGE[oc.estado] || { bg: B.navyLight, color: "rgba(255,255,255,0.5)", label: oc.estado };
+  const items = Array.isArray(oc.items) ? oc.items : [];
+  const recibidos = Array.isArray(oc.recibidos) ? oc.recibidos : [];
+  const hist = Array.isArray(oc.cambios_historial) ? oc.cambios_historial : [];
+  const pagado = Number(oc.monto_pagado || 0) + pagos.reduce((s, p) => s + Number(p.monto || 0), 0) * 0; // monto_pagado ya agrega; pagos[] es el detalle
+  const totalPagosDetalle = pagos.reduce((s, p) => s + Number(p.monto || 0), 0);
+  const montoPagado = Math.max(Number(oc.monto_pagado || 0), totalPagosDetalle);
+  const saldo = Number(oc.total || 0) - montoPagado;
+  const itemNombre = (it) => it.nombre || it.descripcion || it.item || it.producto || "—";
+  const itemCant = (it) => it.cantidad ?? it.cant ?? it.qty ?? "—";
+  const itemPrecio = (it) => Number(it.precio_unitario ?? it.precio ?? it.valor_unitario ?? 0);
+  const fdt = (v) => v ? new Date(v).toLocaleString("es-CO", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "—";
+
+  const Sec = ({ icon, titulo, color = B.sand, children, sub }) => (
+    <div style={{ background: B.navyMid, borderRadius: 10, border: `1px solid ${B.navyLight}`, borderLeft: `4px solid ${color}`, marginBottom: 12, overflow: "hidden" }}>
+      <div style={{ padding: "10px 14px", borderBottom: `1px solid ${B.navyLight}`, fontSize: 13, fontWeight: 800, color: "#fff", display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+        <span>{icon} {titulo}</span>
+        {sub && <span style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", fontWeight: 600 }}>{sub}</span>}
+      </div>
+      <div style={{ padding: "12px 14px", fontSize: 12, color: "rgba(255,255,255,0.85)" }}>{children}</div>
+    </div>
+  );
+  const Row = ({ l, v }) => (
+    <div style={{ display: "flex", justifyContent: "space-between", gap: 12, padding: "3px 0", borderBottom: `1px dashed ${B.navyLight}55` }}>
+      <span style={{ color: "rgba(255,255,255,0.5)" }}>{l}</span>
+      <span style={{ color: "#fff", fontWeight: 600, textAlign: "right" }}>{v ?? "—"}</span>
+    </div>
+  );
+  const vacio = (t) => <div style={{ color: "rgba(255,255,255,0.35)", fontStyle: "italic" }}>{t}</div>;
+
+  return (
+    <div onClick={e => e.target === e.currentTarget && onClose()}
+      style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 1100, display: "flex", alignItems: "flex-start", justifyContent: "center", overflowY: "auto", padding: isMobile ? 0 : 24 }}>
+      <div style={{ background: B.navy, borderRadius: isMobile ? 0 : 14, width: isMobile ? "100%" : 920, maxWidth: "100%", minHeight: isMobile ? "100vh" : "auto", border: `1px solid ${B.navyLight}`, color: B.white, margin: isMobile ? 0 : "20px 0" }}>
+        {/* Cabecera */}
+        <div style={{ padding: 16, borderBottom: `1px solid ${B.navyLight}`, display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap", position: "sticky", top: 0, background: B.navy, zIndex: 2 }}>
+          <div>
+            <div style={{ fontSize: 16, fontWeight: 800, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+              🧾 {oc.codigo}
+              <span style={{ background: badge.bg, color: badge.color, padding: "2px 8px", borderRadius: 12, fontSize: 10, fontWeight: 700 }}>{badge.label}</span>
+              {oc.factura_aplicada && <span style={{ background: B.success + "22", color: B.success, padding: "2px 8px", borderRadius: 12, fontSize: 10, fontWeight: 700 }}>📄 Facturada</span>}
+              {oc.pagada_completa && <span style={{ background: B.success + "22", color: B.success, padding: "2px 8px", borderRadius: 12, fontSize: 10, fontWeight: 700 }}>💰 Pagada</span>}
+            </div>
+            <div style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", marginTop: 4 }}>
+              {oc.proveedor_nombre || "Sin proveedor"} · emitida {fmtFecha((oc.fecha_emision || "").slice(0, 10))} · <span style={{ color: B.sand, fontWeight: 700 }}>{COP(oc.total || 0)}</span>
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            {editable && <button onClick={() => onEditar(oc)} style={btnAccion(B.sand)}>✏️ Editar</button>}
+            <button onClick={() => onFactura(oc)} style={btnAccion(oc.factura_aplicada ? B.success : B.warning)}>📎 Factura</button>
+            <button onClick={() => onLogistica(oc)} style={btnAccion(B.sky)}>🚚 Logística</button>
+            <button onClick={onClose} style={btnAccion("rgba(255,255,255,0.4)")}>✕ Cerrar</button>
+          </div>
+        </div>
+
+        <div style={{ padding: 16 }}>
+          {loading && <div style={{ color: B.sand, fontSize: 12, marginBottom: 10 }}>Cargando trazabilidad…</div>}
+
+          {/* 1. Requisición(es) de origen */}
+          <Sec icon="📝" titulo="Requisición(es) de origen" color="#a78bfa" sub={`${reqs.length} requisición(es)`}>
+            {reqs.length === 0 ? vacio("OC sin requisición ligada (creada directa).") : reqs.map(r => (
+              <div key={r.id} style={{ padding: "8px 0", borderBottom: `1px solid ${B.navyLight}55` }}>
+                <div style={{ fontWeight: 700, color: "#fff" }}>{r.id} — {r.descripcion || "—"}</div>
+                <Row l="Solicitante" v={r.solicitante} />
+                <Row l="Área" v={r.area} />
+                <Row l="Prioridad" v={r.prioridad} />
+                <Row l="Estado" v={r.estado} />
+                <Row l="Fecha / necesaria" v={`${fmtFecha((r.fecha||"").slice(0,10))} · ${fmtFecha((r.fecha_necesaria||"").slice(0,10))}`} />
+                <Row l="Aprobada por" v={r.aprobador_nombre ? `${r.aprobador_nombre}${r.aprobada_at ? " · " + fdt(r.aprobada_at) : ""}` : "—"} />
+                <Row l="Ítems / total" v={`${(Array.isArray(r.items) ? r.items.length : 0)} líneas · ${COP(r.total || 0)}`} />
+                {r.justificacion && <div style={{ color: "rgba(255,255,255,0.6)", marginTop: 4 }}>📌 {r.justificacion}</div>}
+              </div>
+            ))}
+          </Sec>
+
+          {/* 2. OC inicial */}
+          <Sec icon="🧾" titulo="Orden de compra (inicial)" sub={`${items.length} líneas`}>
+            <Row l="Proveedor" v={`${oc.proveedor_nombre || "—"}${oc.proveedor_nit ? " · NIT " + oc.proveedor_nit : ""}`} />
+            <Row l="Contacto" v={[oc.proveedor_email, oc.proveedor_telefono].filter(Boolean).join(" · ") || "—"} />
+            <Row l="Emisión / entrega" v={`${fmtFecha((oc.fecha_emision||"").slice(0,10))} · ${fmtFecha((oc.fecha_entrega||"").slice(0,10))}`} />
+            <Row l="Emitida por" v={oc.emitida_por} />
+            <div style={{ marginTop: 10, overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
+                <thead><tr style={{ color: "rgba(255,255,255,0.45)", textAlign: "left" }}>
+                  <th style={{ padding: "4px 6px" }}>Ítem</th><th style={{ padding: "4px 6px" }}>Cant</th>
+                  <th style={{ padding: "4px 6px" }}>Unid</th><th style={{ padding: "4px 6px", textAlign: "right" }}>Precio</th>
+                  <th style={{ padding: "4px 6px", textAlign: "right" }}>Total</th>
+                </tr></thead>
+                <tbody>
+                  {items.map((it, i) => (
+                    <tr key={i} style={{ borderTop: `1px solid ${B.navyLight}55` }}>
+                      <td style={{ padding: "4px 6px" }}>{itemNombre(it)}</td>
+                      <td style={{ padding: "4px 6px" }}>{itemCant(it)}</td>
+                      <td style={{ padding: "4px 6px" }}>{it.unidad || "—"}</td>
+                      <td style={{ padding: "4px 6px", textAlign: "right" }}>{itemPrecio(it) ? COP(itemPrecio(it)) : "—"}</td>
+                      <td style={{ padding: "4px 6px", textAlign: "right", color: B.sand, fontWeight: 700 }}>{COP(Number(it.total ?? (itemPrecio(it) * (Number(itemCant(it)) || 0))) || 0)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div style={{ marginTop: 8 }}>
+              <Row l="Subtotal" v={COP(oc.subtotal || 0)} />
+              <Row l="IVA" v={COP(oc.iva || 0)} />
+              <Row l="Total" v={<span style={{ color: B.sand }}>{COP(oc.total || 0)}</span>} />
+            </div>
+            {oc.notas && <div style={{ color: "rgba(255,255,255,0.6)", marginTop: 6 }}>📝 {oc.notas}</div>}
+          </Sec>
+
+          {/* 3. Cotización del proveedor */}
+          <Sec icon="📋" titulo="Cotización del proveedor" color="#a78bfa">
+            {oc.cotizacion_resp_data || oc.cotizacion_resp_url ? (
+              <div style={{ marginBottom: cotis.length ? 10 : 0 }}>
+                <Row l="Respuesta subida" v={oc.cotizacion_resp_subida_at ? fdt(oc.cotizacion_resp_subida_at) + (oc.cotizacion_resp_subida_por ? " · " + oc.cotizacion_resp_subida_por : "") : "—"} />
+                <Row l="Aprobada" v={oc.cotizacion_resp_aprobada ? `Sí · ${fdt(oc.cotizacion_resp_aprobada_at)}${oc.cotizacion_resp_aprobada_por ? " · " + oc.cotizacion_resp_aprobada_por : ""}` : "Pendiente"} />
+                {oc.cotizacion_resp_notas && <Row l="Notas" v={oc.cotizacion_resp_notas} />}
+                {oc.cotizacion_resp_url && <a href={oc.cotizacion_resp_url} target="_blank" rel="noreferrer" style={{ color: B.sky }}>📎 Ver archivo de cotización</a>}
+              </div>
+            ) : null}
+            {cotis.length === 0 && !oc.cotizacion_resp_data && !oc.cotizacion_resp_url
+              ? vacio("Sin cotizaciones registradas.")
+              : cotis.map(c => (
+                <div key={c.id} style={{ padding: "6px 0", borderTop: `1px solid ${B.navyLight}55` }}>
+                  <Row l={`Cotiz ${c.cotizacion_numero || c.id}`} v={`${c.proveedor_nombre || "—"} · ${COP(c.total || 0)} · ${c.estado || "—"}`} />
+                  {c.archivo_url && <a href={c.archivo_url} target="_blank" rel="noreferrer" style={{ color: B.sky, fontSize: 11 }}>📎 Archivo</a>}
+                </div>
+              ))}
+          </Sec>
+
+          {/* 4. OC enviada al proveedor */}
+          <Sec icon="📤" titulo="OC enviada al proveedor" color={B.pink} sub={oc.enviada_at ? "Enviada " + fdt(oc.enviada_at) : "No marcada como enviada"}>
+            {emails.length === 0 ? vacio("Sin correos registrados a proveedor.") : emails.map((e, i) => (
+              <div key={i} style={{ padding: "6px 0", borderTop: i ? `1px solid ${B.navyLight}55` : "none" }}>
+                <Row l="Para" v={(Array.isArray(e.enviado_a) ? e.enviado_a.join(", ") : e.enviado_a) || "—"} />
+                <Row l="Asunto" v={e.asunto} />
+                <Row l="PDF" v={e.con_pdf ? "Sí" : "No"} />
+                <Row l="Enviado" v={`${fdt(e.enviado_at)}${e.enviado_por ? " · " + e.enviado_por : ""}`} />
+              </div>
+            ))}
+          </Sec>
+
+          {/* 5. Recepción */}
+          <Sec icon="📦" titulo="Recepción" color={B.success} sub={oc.recibida_at ? "Recibida " + fdt(oc.recibida_at) : (oc.fecha_recepcion ? "Recibida " + fmtFecha(oc.fecha_recepcion.slice(0,10)) : "Pendiente")}>
+            <Row l="Estado OC" v={oc.estado} />
+            <Row l="Recibida por" v={oc.recibida_por} />
+            {oc.notas_recibo && <Row l="Notas recibo" v={oc.notas_recibo} />}
+            {recibidos.length > 0 && (
+              <div style={{ marginTop: 6 }}>
+                <div style={{ color: "rgba(255,255,255,0.5)", marginBottom: 2 }}>Ítems recibidos:</div>
+                {recibidos.map((it, i) => (
+                  <div key={i}>• {itemNombre(it)} — {it.cantidad_recibida ?? itemCant(it)}{it.unidad ? " " + it.unidad : ""}</div>
+                ))}
+              </div>
+            )}
+            {(muelle.length > 0 || transp.length > 0) && (
+              <div style={{ marginTop: 8, borderTop: `1px solid ${B.navyLight}55`, paddingTop: 8 }}>
+                {muelle.map((m, i) => (
+                  <Row key={"m"+i} l="🏗 Entrega muelle" v={`${m.estado || "—"}${m.entregado_at ? " · " + fdt(m.entregado_at) : (m.fecha_programada ? " · prog " + fmtFecha(m.fecha_programada) : "")}${m.recibido_por ? " · " + m.recibido_por : ""}`} />
+                ))}
+                {transp.map((t, i) => (
+                  <Row key={"t"+i} l="⛴ Transporte Atolón" v={`${t.estado || "—"}${t.embarcacion_nombre ? " · " + t.embarcacion_nombre : ""}${t.recibido_atolon_at ? " · llegó " + fdt(t.recibido_atolon_at) : (t.zarpado_at ? " · zarpó " + fdt(t.zarpado_at) : "")}`} />
+                ))}
+              </div>
+            )}
+          </Sec>
+
+          {/* 6. Factura */}
+          <Sec icon="📄" titulo="Factura del proveedor" color={oc.factura_aplicada ? B.success : B.warning}>
+            {oc.factura_numero || oc.factura_url ? (
+              <>
+                <Row l="N° factura" v={oc.factura_numero} />
+                <Row l="Fecha" v={fmtFecha((oc.factura_fecha || "").slice(0, 10))} />
+                <Row l="Subtotal / IVA" v={`${COP(oc.factura_subtotal || 0)} · ${COP(oc.factura_iva || 0)}`} />
+                <Row l="Aplicada" v={oc.factura_aplicada ? `Sí · ${fdt(oc.factura_aplicada_at)}${oc.factura_aplicada_por ? " · " + oc.factura_aplicada_por : ""}` : "No"} />
+                {oc.dias_credito ? <Row l="Crédito" v={`${oc.dias_credito} días · vence ${fmtFecha((oc.fecha_vencimiento_pago||"").slice(0,10))}`} /> : null}
+                {oc.factura_url && <a href={oc.factura_url} target="_blank" rel="noreferrer" style={{ color: B.sky }}>📎 Ver factura</a>}
+              </>
+            ) : vacio("Sin factura aplicada.")}
+          </Sec>
+
+          {/* 7. Pagos */}
+          <Sec icon="💰" titulo="Pagos" color={oc.pagada_completa ? B.success : B.warning}
+            sub={`Pagado ${COP(montoPagado)} de ${COP(oc.total || 0)} · Saldo ${COP(saldo)}`}>
+            {oc.anticipo_requerido && (
+              <div style={{ marginBottom: 8, padding: 8, background: B.navy, borderRadius: 8 }}>
+                <Row l="Anticipo requerido" v={`${oc.anticipo_porcentaje ? oc.anticipo_porcentaje + "% · " : ""}${COP(oc.anticipo_monto || 0)}`} />
+                <Row l="Anticipo pagado" v={oc.anticipo_pagado ? `Sí · ${fdt(oc.anticipo_pagado_at)}${oc.anticipo_referencia_pago ? " · ref " + oc.anticipo_referencia_pago : ""}` : "Pendiente"} />
+              </div>
+            )}
+            {pagos.length === 0 ? vacio("Sin pagos registrados.") : pagos.map((p, i) => (
+              <div key={i} style={{ padding: "5px 0", borderTop: i ? `1px solid ${B.navyLight}55` : "none" }}>
+                <Row l={`${fmtFecha((p.fecha_pago||"").slice(0,10))} · ${p.metodo || "—"}`} v={<span style={{ color: B.sand }}>{COP(p.monto || 0)}</span>} />
+                {(p.referencia || p.cuenta_origen) && <div style={{ color: "rgba(255,255,255,0.5)", fontSize: 11 }}>{[p.cuenta_origen, p.referencia].filter(Boolean).join(" · ")}{p.comprobante_url ? " · " : ""}{p.comprobante_url && <a href={p.comprobante_url} target="_blank" rel="noreferrer" style={{ color: B.sky }}>comprobante</a>}</div>}
+              </div>
+            ))}
+            <div style={{ marginTop: 8, borderTop: `1px solid ${B.navyLight}`, paddingTop: 6 }}>
+              <Row l="Total OC" v={COP(oc.total || 0)} />
+              <Row l="Pagado" v={COP(montoPagado)} />
+              <Row l="Saldo" v={<span style={{ color: saldo > 0 ? B.warning : B.success }}>{COP(saldo)}</span>} />
+            </div>
+          </Sec>
+
+          {/* 8. Historial de cambios */}
+          {hist.length > 0 && (
+            <Sec icon="🕓" titulo="Historial de cambios" color="rgba(255,255,255,0.4)" sub={`${hist.length} eventos`}>
+              {hist.slice().reverse().map((h, i) => (
+                <div key={i} style={{ padding: "5px 0", borderTop: i ? `1px solid ${B.navyLight}55` : "none" }}>
+                  <div style={{ color: "#fff", fontWeight: 600 }}>{h.tipo || h.evento || "cambio"} <span style={{ color: "rgba(255,255,255,0.4)", fontWeight: 400 }}>· {fdt(h.at || h.fecha)} {h.por ? "· " + h.por : ""}</span></div>
+                  {(h.resumen || h.detalle) && <div style={{ color: "rgba(255,255,255,0.6)", fontSize: 11 }}>{h.resumen || h.detalle}</div>}
+                </div>
+              ))}
+            </Sec>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
