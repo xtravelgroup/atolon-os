@@ -457,9 +457,14 @@ function DetalleOCModal({ oc, onClose, onEditar, onFactura, onLogistica, editabl
     let alive = true;
     (async () => {
       setLoading(true);
+      // El link a requisición puede estar en la OC o, si la OC fue
+      // consolidada, en cada item (items[].req_ids).
+      const reqDeItems = (Array.isArray(oc.items) ? oc.items : [])
+        .flatMap(it => Array.isArray(it.req_ids) ? it.req_ids : (it.req_id ? [it.req_id] : []));
       const reqIds = Array.from(new Set([
         ...((Array.isArray(oc.requisicion_ids) ? oc.requisicion_ids : []) || []),
         ...(oc.requisicion_id ? [oc.requisicion_id] : []),
+        ...reqDeItems,
       ].filter(Boolean)));
       const [rq, ct, em, mu, tr, pg] = await Promise.all([
         reqIds.length
@@ -495,8 +500,12 @@ function DetalleOCModal({ oc, onClose, onEditar, onFactura, onLogistica, editabl
   const montoPagado = cxpPart + anticipoPart;
   const saldo = Number(oc.total || 0) - montoPagado;
   const itemNombre = (it) => it.nombre || it.descripcion || it.item || it.producto || "—";
-  const itemCant = (it) => it.cantidad ?? it.cant ?? it.qty ?? "—";
-  const itemPrecio = (it) => Number(it.precio_unitario ?? it.precio ?? it.valor_unitario ?? 0);
+  const itemCant = (it) => it.cant ?? it.cantidad ?? it.qty ?? "—";
+  const itemPrecio = (it) => Number(it.precioU ?? it.precio_unitario ?? it.precio ?? it.valor_unitario ?? 0);
+  const itemTotal = (it) => Number(it.subtotal ?? it.total ?? (itemPrecio(it) * (Number(itemCant(it)) || 0))) || 0;
+  // Mapa id→item para resolver lo recibido (recibidos[] = {item_id, cant_recibida}).
+  const itemsById = {};
+  (Array.isArray(oc.items) ? oc.items : []).forEach(it => { if (it.id) itemsById[it.id] = it; });
   const fdt = (v) => v ? new Date(v).toLocaleString("es-CO", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "—";
 
   const Sec = ({ icon, titulo, color = B.sand, children, sub }) => (
@@ -581,7 +590,7 @@ function DetalleOCModal({ oc, onClose, onEditar, onFactura, onLogistica, editabl
                       <td style={{ padding: "4px 6px" }}>{itemCant(it)}</td>
                       <td style={{ padding: "4px 6px" }}>{it.unidad || "—"}</td>
                       <td style={{ padding: "4px 6px", textAlign: "right" }}>{itemPrecio(it) ? COP(itemPrecio(it)) : "—"}</td>
-                      <td style={{ padding: "4px 6px", textAlign: "right", color: B.sand, fontWeight: 700 }}>{COP(Number(it.total ?? (itemPrecio(it) * (Number(itemCant(it)) || 0))) || 0)}</td>
+                      <td style={{ padding: "4px 6px", textAlign: "right", color: B.sand, fontWeight: 700 }}>{itemTotal(it) ? COP(itemTotal(it)) : "—"}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -635,9 +644,15 @@ function DetalleOCModal({ oc, onClose, onEditar, onFactura, onLogistica, editabl
             {recibidos.length > 0 && (
               <div style={{ marginTop: 6 }}>
                 <div style={{ color: "rgba(255,255,255,0.5)", marginBottom: 2 }}>Ítems recibidos:</div>
-                {recibidos.map((it, i) => (
-                  <div key={i}>• {itemNombre(it)} — {it.cantidad_recibida ?? itemCant(it)}{it.unidad ? " " + it.unidad : ""}</div>
-                ))}
+                {recibidos.map((r, i) => {
+                  const it = itemsById[r.item_id] || {};
+                  const nombre = itemNombre(it) !== "—" ? itemNombre(it) : (r.nombre || r.item_id || "—");
+                  const cantRec = r.cant_recibida ?? r.cantidad_recibida ?? r.cantidad ?? "—";
+                  const pedida = it.id ? itemCant(it) : null;
+                  return (
+                    <div key={i}>• {nombre} — <b>{cantRec}</b>{pedida != null ? ` / ${pedida}` : ""}{it.unidad ? " " + it.unidad : ""}</div>
+                  );
+                })}
               </div>
             )}
             {(muelle.length > 0 || transp.length > 0) && (
