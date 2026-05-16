@@ -361,6 +361,7 @@ const LoggroAdmin = lazy(() => import("./modules/LoggroAdmin"));
 const HotelFolios = lazy(() => import("./modules/HotelFolios"));
 const ApiPortal = lazy(() => import("./modules/ApiPortal"));
 const BlueApplePortal = lazy(() => import("./modules/BlueApplePortal"));
+const TrackExterno = lazy(() => import("./modules/TrackExterno"));
 
 const MODULE_MAP = {
   pasadias: <Pasadias />,
@@ -542,6 +543,7 @@ export default function App() {
   const isPublic = ["empleados", "agencia", "booking", "", "reset-password", "zarpe-info", "despedidas", "contratistas"].includes(route) || route.startsWith("pago") || route.startsWith("booking/") || route.startsWith("m/") || route.startsWith("room/") || route.startsWith("despedidas/") || route.startsWith("contratistas/") || route.startsWith("verificar/");
 
   // Always-public routes (no auth needed ever)
+  if (route === "track" || route.startsWith("track/")) return <TrackExterno />;
   if (route === "blueapple" || route.startsWith("blueapple/")) return <BlueApplePortal />;
   if (route === "empleados")      return <><EmpleadoPortal /><WhatsAppFloat phone={waPhone} /></>;
   if (route === "agencia" || route === "") return <><AgenciaPortal /><WhatsAppFloat phone={waPhone} /></>;

@@ -97,7 +97,7 @@ const isPublicRoute = (() => {
   return ["", "booking", "pago", "agencia", "empleados", "carreras", "blueapple",
           "las-americas", "gran-fondo", "nairo", "reset-password", "zarpe-info",
           "zarpe-grupo", "despedidas", "contratistas", "escanear", "escanear-productos",
-          "verificar", "dia-de-la-madre", "madres", "m", "room"
+          "verificar", "dia-de-la-madre", "madres", "m", "room", "track"
          ].includes(route);
 })();
 

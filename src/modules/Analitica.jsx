@@ -27,11 +27,12 @@ function normCanal(raw) {
   return raw.charAt(0).toUpperCase() + raw.slice(1).toLowerCase();
 }
 
-export default function Analitica() {
+// externo=true → vista pública limitada a Web+Mkt y WhatsApp (sin grupo/otros)
+export default function Analitica({ externo = false }) {
   const [periodo, setPeriodo] = useState("7d");
   const [customFrom, setCustomFrom] = useState("");
   const [customTo,   setCustomTo]   = useState("");
-  const [origen,     setOrigen]     = useState("all"); // all | web | whatsapp | grupo | otros
+  const [origen,     setOrigen]     = useState(externo ? "ambos" : "all"); // all|web|whatsapp|grupo|otros|ambos
   const [pkgData, setPkgData] = useState([]);
   const [stats, setStats] = useState(null);
   const [sesiones, setSesiones] = useState([]);
@@ -115,19 +116,24 @@ export default function Analitica() {
         landing_page: r.entrada_url, grupo_id: r.grupo_id, vendedor: r.vendedor, aliado_id: r.aliado_id,
       }));
     };
-    if (origen !== "all") {
-      sesList      = rawSes.filter(s => sesOrigen.get(s.id) === origen);
-      embList      = embList.filter(e => recOrigen(e) === origen);
-      evList       = evList.filter(e => !e.sesion_id || sesOrigen.get(e.sesion_id) === origen);
-      abandList    = abandList.filter(a => recOrigen(a) === origen);
-      ingresosList = ingresosList.filter(i => recOrigen(i) === origen);
+    // Orígenes permitidos. Externo: SIEMPRE solo web+whatsapp (nunca grupo/otros).
+    const allowedOrig = externo
+      ? (origen === "ambos" ? new Set(["web", "whatsapp"]) : new Set([origen]))
+      : (origen === "all" ? null : new Set([origen]));
+    const inAllowed = (b4) => !allowedOrig || allowedOrig.has(b4);
+    if (allowedOrig) {
+      sesList      = rawSes.filter(s => inAllowed(sesOrigen.get(s.id)));
+      embList      = embList.filter(e => inAllowed(recOrigen(e)));
+      evList       = evList.filter(e => e.sesion_id ? inAllowed(sesOrigen.get(e.sesion_id)) : !externo);
+      abandList    = abandList.filter(a => inAllowed(recOrigen(a)));
+      ingresosList = ingresosList.filter(i => inAllowed(recOrigen(i)));
     }
 
     // Solo reservas originadas en el widget web — excluir ventas internas (equipo) y agencias
     const WEB_CANALES = ["Web", "Directo", "Referido", "WhatsApp", "Google SEM", "SEO", "Meta Ads", "Social Orgánico", "Email"];
     let resConvList = (resConvRes.data || []).filter(r => WEB_CANALES.includes(normCanal(r.canal)));
-    if (origen !== "all") {
-      resConvList = resConvList.filter(r => o4(clasificarOrigenReserva(r)) === origen);
+    if (allowedOrig) {
+      resConvList = resConvList.filter(r => inAllowed(o4(clasificarOrigenReserva(r))));
     }
 
     // ── KPIs ─────────────────────────────────────────────────────────────────
@@ -202,6 +208,8 @@ export default function Analitica() {
       delete origenMap.marketing;
     }
     if (origenMap.web) origenMap.web.label = "🌐 Web (directo + marketing)";
+    // Externo: el comparativo solo muestra Web+Mkt y WhatsApp.
+    if (externo) { delete origenMap.grupo; delete origenMap.staff; delete origenMap.otros; }
     setOrigenes(Object.values(origenMap).map(o => ({
       ...o,
       convRate: o.sesiones ? ((o.conversiones / o.sesiones) * 100).toFixed(1) : "—",
@@ -428,13 +436,20 @@ export default function Analitica() {
       {/* Filtro global por ORIGEN de cliente — re-segmenta TODOS los paneles */}
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 24 }}>
         <span style={{ fontSize: 11, color: B.muted, textTransform: "uppercase", letterSpacing: "0.06em", marginRight: 4 }}>Origen del cliente:</span>
-        {[
-          { val: "all",      label: "Todos",        icon: "📊" },
-          { val: "web",      label: "Web + Mkt",    icon: "🌐" },
-          { val: "whatsapp", label: "WhatsApp",     icon: "💬" },
-          { val: "grupo",    label: "Grupo",        icon: "🎉" },
-          { val: "otros",    label: "Otros",        icon: "🔗" },
-        ].map(o => (
+        {(externo
+          ? [
+              { val: "ambos",    label: "Web+Mkt y WhatsApp", icon: "📊" },
+              { val: "web",      label: "Web + Mkt",          icon: "🌐" },
+              { val: "whatsapp", label: "WhatsApp",           icon: "💬" },
+            ]
+          : [
+              { val: "all",      label: "Todos",        icon: "📊" },
+              { val: "web",      label: "Web + Mkt",    icon: "🌐" },
+              { val: "whatsapp", label: "WhatsApp",     icon: "💬" },
+              { val: "grupo",    label: "Grupo",        icon: "🎉" },
+              { val: "otros",    label: "Otros",        icon: "🔗" },
+            ]
+        ).map(o => (
           <button key={o.val} onClick={() => setOrigen(o.val)}
             style={{
               padding: "6px 14px", borderRadius: 999, border: "none", cursor: "pointer",
