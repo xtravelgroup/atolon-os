@@ -135,17 +135,17 @@ export function esDominical(fechaIso) {
 export const HORAS_QUINCENA_LEGAL = 95.33333333;          // h ordinarias/quincena
 export const HORAS_MES_LEGAL      = 190.66666667;         // = 95.3333 × 2
 export const JORNADA_SEMANAL_HORAS = 44;                  // tope ordinario semanal
-export const NOCTURNO_INICIO_H    = 21;                   // 21:00 inicia nocturno
+export const NOCTURNO_INICIO_H    = 19;                   // 7:00 p.m. inicia nocturno (CO 2026)
 export const NOCTURNO_FIN_H       = 6;                    // 06:00 termina nocturno
 // Recargos sobre la hora ordinaria (aditivos: la hora base ya está en el salario).
-export const REC_NOCTURNO          = 0.35;  // recargo nocturno
-export const REC_FESTIVO           = 0.75;  // recargo festivo (domingos NO)
-export const REC_NOCTURNO_FESTIVO  = 1.10;  // nocturno + festivo (0.35 + 0.75)
+export const REC_NOCTURNO          = 0.35;                // recargo nocturno
+export const REC_FESTIVO           = 0.80;                // recargo festivo (domingos NO)
+export const REC_NOCTURNO_FESTIVO  = REC_NOCTURNO + REC_FESTIVO; // nocturno + festivo
 // Horas extra: multiplicador total (no están cubiertas por el salario).
-export const EXTRA_DIURNA          = 1.25;  // hora extra diurna
-export const EXTRA_NOCTURNA        = 1.75;  // hora extra nocturna
-export const EXTRA_FESTIVA_DIURNA  = 2.00;  // hora extra festiva diurna
-export const EXTRA_FESTIVA_NOCTURNA = 2.50; // hora extra festiva nocturna
+export const EXTRA_DIURNA          = 1.25;                // hora extra diurna (+25%)
+export const EXTRA_NOCTURNA        = 1.75;                // hora extra nocturna (+75%)
+export const EXTRA_FESTIVA_DIURNA  = 1 + REC_FESTIVO + 0.25; // festiva + extra diurna
+export const EXTRA_FESTIVA_NOCTURNA = 1 + REC_FESTIVO + 0.75; // festiva + extra nocturna
 
 function hhmmAMin(s) {
   if (!s) return null;

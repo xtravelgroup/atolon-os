@@ -280,9 +280,9 @@ describe("desglosarPeriodo — recargos de ley", () => {
     expect(d.recargo_nocturno).toBe(Math.round(8 * T * 0.35)); // 28.000
     expect(d.total_adicional).toBe(28_000);
   });
-  it("festivo diurno = recargo festivo +75%", () => {
+  it("festivo diurno = recargo festivo +80%", () => {
     const d = desglosarPeriodo([{ fecha: "2026-05-01", entrada: "08:00", salida: "16:00" }], T);
-    expect(d.recargo_festivo).toBe(Math.round(8 * T * 0.75)); // 60.000
+    expect(d.recargo_festivo).toBe(Math.round(8 * T * 0.80)); // 64.000
   });
   it("hora extra es SEMANAL: 48h en una semana = 44 ord + 4 extra diurna", () => {
     const sem = ["2026-05-11","2026-05-12","2026-05-13","2026-05-14","2026-05-15","2026-05-16"]
