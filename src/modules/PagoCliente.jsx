@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { B, COP } from "../brand";
 import { supabase } from "../lib/supabase";
 import { wompiCheckoutUrl, wompiTransactionStatus } from "../lib/wompi";
-import { crearSesionPago } from "../lib/internacional";
+import { crearSesionPago, getMerchantInternacional } from "../lib/internacional";
 import AvisoCargoInternacional from "../components/AvisoCargoInternacional";
 import AtolanTrack from "../lib/AtolanTrack";
 import { waSendConfirmacion } from "../lib/whatsapp";
@@ -319,20 +319,26 @@ export default function PagoCliente() {
     (async () => {
       const hoy = new Date().toLocaleDateString("en-CA", { timeZone: "America/Bogota" });
       const { data: resDataS } = await supabase.from("reservas").select("total, lead_id, tipo, pax_a, pax_n, fecha").eq("id", reservaId).single();
+      // Método real del pago internacional (zoho_pay | stripe), no hardcodeado.
+      let metodoInt = "internacional";
+      try {
+        const m = await getMerchantInternacional();
+        if (m?.activo && m.activo !== "ninguno") metodoInt = m.activo;
+      } catch { /* fallback "internacional" */ }
       await supabase.from("reservas").update({
-        estado: "confirmado", forma_pago: "stripe", saldo: 0, abono: resDataS?.total || 0,
+        estado: "confirmado", forma_pago: metodoInt, saldo: 0, abono: resDataS?.total || 0,
       }).eq("id", reservaId);
       // Track real conversion — server-side for reliability
       AtolanTrack.init().then(() => {
         AtolanTrack.conversion(reservaId, resDataS?.total || 0, {
-          metodo_pago:  "stripe",
+          metodo_pago:  metodoInt,
           package_type: resDataS?.tipo,
           adultos:      resDataS?.pax_a,
           ninos:        resDataS?.pax_n,
           fecha:        resDataS?.fecha,
           monto_bruto:  resDataS?.total,
         });
-        AtolanTrack.serverEvent("conversion_confirmed", { reserva_id: reservaId, monto: resDataS?.total, metodo: "stripe" }, "conversion");
+        AtolanTrack.serverEvent("conversion_confirmed", { reserva_id: reservaId, monto: resDataS?.total, metodo: metodoInt }, "conversion");
       });
       // Cerrar lead en Comercial
       const lid = leadIdParam || resDataS?.lead_id;
