@@ -3,6 +3,7 @@ import { supabase } from "./lib/supabase";
 import { B } from "./brand";
 import AtolanOS from "./modules/AtolanOS";
 import AtolanTrack from "./lib/AtolanTrack";
+import { initTracking } from "./lib/gtm";
 
 // ── Error Boundary — muestra el error en pantalla en vez de pantalla azul ───
 //
@@ -536,6 +537,15 @@ export default function App() {
     const isTrackable = publicTrackRoutes.some(r => route === r || route.startsWith(r + "/") || route.startsWith("pago"));
     if (isTrackable) {
       AtolanTrack.init().then(() => AtolanTrack.pageView("/" + route));
+      // Cargar píxeles de terceros configurados en /track (una sola vez).
+      if (!window.__pixelsInit) {
+        window.__pixelsInit = true;
+        supabase.from("configuracion")
+          .select("meta_pixel_id, gtm_id, ga4_id, google_ads_id, tiktok_pixel_id")
+          .eq("id", "atolon").single()
+          .then(({ data }) => { if (data) initTracking(data); })
+          .catch(() => {});
+      }
     }
   }, [route]);
 
