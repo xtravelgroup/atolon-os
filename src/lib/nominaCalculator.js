@@ -187,15 +187,22 @@ function quitarMinutosComida(mins, n) {
   return b;
 }
 
-// Minutos TOTALES de comida a descontar en el día (almuerzo base + extra):
-//  base = almMin; si horas extra del día (>8h tras almuerzo base) > 4 → +0.5·base;
-//  si ≥ 8 → +1·base más (acumulativo).
-function comidaTotalMin(mins, almMin) {
+// Comida EXTRA del día (sobre el almuerzo base): si las horas trabajadas
+// de más de 8 ese día (tras el almuerzo base) > 4 → +0.5·base; si ≥ 8 →
+// +1·base más (acumulativo).
+function comidaExtraMin(baseNetLen, almMin) {
   if (almMin <= 0) return 0;
-  const baseNet = quitarMinutosComida(mins, almMin).length;     // minutos tras almuerzo base
-  const extraHrs = Math.max(0, baseNet / 60 - JORNADA_DIARIA_HORAS);
+  const extraHrs = Math.max(0, baseNetLen / 60 - JORNADA_DIARIA_HORAS);
   const factor = (extraHrs > 4 ? 0.5 : 0) + (extraHrs >= 8 ? 1 : 0);
-  return Math.round(almMin * (1 + factor));
+  return Math.round(almMin * factor);
+}
+
+// Quita la comida del día: el almuerzo BASE de las horas diurnas (inicio),
+// y la comida EXTRA del FINAL del día (las últimas horas del turno).
+function quitarComida(mins, almMin) {
+  const base = quitarMinutosComida(mins, almMin);           // base: diurno primero
+  const ext  = comidaExtraMin(base.length, almMin);         // extra por horas extra
+  return ext > 0 ? base.slice(0, Math.max(0, base.length - ext)) : base;
 }
 
 export function calcularHorasDia({ fecha, entrada, salida, almuerzoHoras = 0, festivos = FESTIVOS_CO_2026 }) {
@@ -212,7 +219,7 @@ export function calcularHorasDia({ fecha, entrada, salida, almuerzoHoras = 0, fe
     mins.push(h >= NOCTURNO_INICIO_H || h < NOCTURNO_FIN_H); // true = noche
   }
   const almMin = Math.round(Number(almuerzoHoras || 0) * 60);
-  const w = quitarMinutosComida(mins, comidaTotalMin(mins, almMin));
+  const w = quitarComida(mins, almMin);
   const noct = w.filter(Boolean).length;
   return {
     fecha,
@@ -268,7 +275,7 @@ export function desglosarPeriodo(marcaciones = [], tarifaHora = 0, festivos = FE
   const weekTotal = new Map();
   let totalMin = 0, noctMinTot = 0;
   for (const [fecha, raw] of porFecha) {
-    const w = quitarMinutosComida(raw, comidaTotalMin(raw, almMin));
+    const w = quitarComida(raw, almMin);
     if (w.length === 0) continue;
     const wk = lunesDeSemana(fecha);
     weekTotal.set(wk, (weekTotal.get(wk) || 0) + w.length);

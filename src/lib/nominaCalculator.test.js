@@ -262,11 +262,12 @@ describe("calcularHorasDia (solo horas, informativo)", () => {
     expect(calcularHorasDia({ fecha: "2026-05-11", entrada: "", salida: "" }).horas).toBe(0);
   });
   it("almuerzo se descuenta de horas DIURNAS + comida extra por >4h extra", () => {
-    // 12:00→03:00 = 15h. Almuerzo base 1h → net 14h → extra del día = 6h
-    // (>4) → +0.5h comida → total comida 1.5h → net 13.5h. Noche 8h intacta.
+    // 12:00→03:00 = 15h. Almuerzo base 1h (de diurno) → net 14h → extra del
+    // día = 6h (>4) → +0.5h comida del FINAL del turno (02:30–03:00, noche).
+    // net 13.5h; la noche baja de 8h a 7.5h.
     const r = calcularHorasDia({ fecha: "2026-05-09", entrada: "12:00", salida: "03:00", almuerzoHoras: 1 });
     expect(r.horas).toBe(13.5);
-    expect(r.horas_nocturnas).toBe(8);
+    expect(r.horas_nocturnas).toBe(7.5);
   });
   it("comida extra acumulativa: ≥8h extra → almuerzo ×2.5 (L=1)", () => {
     // 03:00→21:00 = 18h. base 1h → net 17h → extra 9h (≥8) → +0.5+1 →
@@ -328,8 +329,8 @@ describe("desglosarPeriodo — recargos de ley", () => {
     expect(d.h_extra_diurna).toBe(0);
     expect(d.h_extra_nocturna).toBe(0);
     expect(d.horas_ordinarias).toBe(d.horas);          // todo ordinario
-    expect(d.h_recargo_nocturno).toBe(2.5);            // recargo noct se mantiene
-    expect(d.recargo_nocturno).toBe(Math.round(2.5 * T * 0.35));
+    expect(d.h_recargo_nocturno).toBe(2);              // recargo noct se mantiene
+    expect(d.recargo_nocturno).toBe(Math.round(2 * T * 0.35));
   });
   it("extra diurna = trabajadas − extra nocturna − 95.33h (residuo quincenal)", () => {
     // Quincena Meris: 13 días 08:00–17:00 + 9 may 12:00→03:00, almuerzo 1h.
