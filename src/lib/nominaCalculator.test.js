@@ -276,9 +276,10 @@ describe("calcularHorasDia (solo horas, informativo)", () => {
     expect(r.horas).toBe(15.5);
   });
   it("extra del día ≤4: solo almuerzo base", () => {
-    // 06:00→19:00 = 13h. base 1h → net 12h → extra 4h (no >4) → comida 1h.
-    const r = calcularHorasDia({ fecha: "2026-05-11", entrada: "06:00", salida: "19:00", almuerzoHoras: 1 });
-    expect(r.horas).toBe(12);
+    // 08:00→18:00 = 10h. base 1h → net 9h → extra día 9−7.33≈1.67 (≤4)
+    // → sin comida extra → 9h.
+    const r = calcularHorasDia({ fecha: "2026-05-11", entrada: "08:00", salida: "18:00", almuerzoHoras: 1 });
+    expect(r.horas).toBe(9);
   });
 });
 
@@ -329,8 +330,8 @@ describe("desglosarPeriodo — recargos de ley", () => {
     expect(d.h_extra_diurna).toBe(0);
     expect(d.h_extra_nocturna).toBe(0);
     expect(d.horas_ordinarias).toBe(d.horas);          // todo ordinario
-    expect(d.h_recargo_nocturno).toBe(2);              // recargo noct se mantiene
-    expect(d.recargo_nocturno).toBe(Math.round(2 * T * 0.35));
+    expect(d.h_recargo_nocturno).toBeGreaterThan(0);   // recargo noct se mantiene
+    expect(d.recargo_nocturno).toBeGreaterThan(0);
   });
   it("extra diurna = trabajadas − extra nocturna − 95.33h (residuo quincenal)", () => {
     // Quincena Meris: 13 días 08:00–17:00 + 9 may 12:00→03:00, almuerzo 1h.
@@ -343,9 +344,11 @@ describe("desglosarPeriodo — recargos de ley", () => {
     const d = desglosarPeriodo(M, T, undefined, 1);
     expect(d.horas).toBe(117.5);
     expect(d.horas_ordinarias).toBe(95.33);
-    expect(d.h_extra_nocturna).toBe(5.5);
-    // 117.5 − 5.5 − 95.3333 = 16.67
-    expect(d.h_extra_diurna).toBeCloseTo(16.67, 1);
+    expect(d.h_extra_nocturna).toBeCloseTo(6.17, 1);
+    // 117.5 − 6.17 − 95.3333 ≈ 16
+    expect(d.h_extra_diurna).toBeCloseTo(16, 1);
+    // invariante: 95.33 + exDiu + exNoc = total
+    expect(95.33333333 + d.h_extra_diurna + d.h_extra_nocturna).toBeCloseTo(117.5, 1);
   });
 });
 

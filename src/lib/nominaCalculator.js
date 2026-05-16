@@ -134,7 +134,7 @@ export function esDominical(fechaIso) {
 // Modelo CO 2026 (jornada 44 h/sem, Ley 2101). Constantes ajustables.
 export const HORAS_QUINCENA_LEGAL = 95.33333333;          // h ordinarias/quincena
 export const HORAS_MES_LEGAL      = 190.66666667;         // = 95.3333 × 2
-export const JORNADA_DIARIA_HORAS  = 8;                   // ordinaria máx por día
+export const JORNADA_DIARIA_HORAS  = 7.33333333;          // ordinaria máx por día (44h/sem ÷ 6)
 export const JORNADA_SEMANAL_HORAS = 44;                  // gate: extra solo si la semana supera esto
 export const NOCTURNO_INICIO_H    = 19;                   // 7:00 p.m. inicia nocturno (CO 2026)
 export const NOCTURNO_FIN_H       = 6;                    // 06:00 termina nocturno
