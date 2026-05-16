@@ -240,7 +240,7 @@ export default function PagoCliente() {
         // Confirmar reserva
         const { data: resData } = await supabase.from("reservas").select("total, lead_id, tipo, pax_a, pax_n, fecha").eq("id", reservaId).single();
         await supabase.from("reservas").update({
-          estado: "confirmado", forma_pago: "wompi", saldo: 0, abono: resData?.total || 0,
+          estado: "confirmado", forma_pago: "Wompi", saldo: 0, abono: resData?.total || 0,
         }).eq("id", reservaId);
         // Track real conversion (payment confirmed) — server-side for reliability
         AtolanTrack.init().then(() => {

@@ -1569,6 +1569,23 @@ function ReservaDetailModal({ reservaId, onClose }) {
 }
 
 
+// Canoniza el proveedor de pago para que variantes de capitalización
+// (ej. "wompi" vs "Wompi") no salgan como filas/tarjetas separadas.
+function normProveedor(raw) {
+  const k = String(raw || "").trim().toLowerCase();
+  if (!k) return "Otro";
+  if (k === "wompi")                                  return "Wompi";
+  if (k === "zoho_pay" || k === "zoho" || k === "zohopay") return "zoho_pay";
+  if (k === "stripe")                                 return "stripe";
+  if (k === "efectivo" || k === "cash")               return "Efectivo";
+  if (k === "transferencia" || k === "transfer")      return "Transferencia";
+  if (k === "datafono" || k === "datáfono")           return "Datafono";
+  if (k === "sky")                                    return "SKY";
+  if (k === "cxc")                                    return "CXC";
+  if (k === "cortesía" || k === "cortesia")           return "Cortesía";
+  return String(raw).trim();
+}
+
 function ReporteTransacciones() {
   const [fechaIni, setFechaIni] = useState(firstOfMonth());
   const [fechaFin, setFechaFin] = useState(todayStr());
@@ -1602,7 +1619,7 @@ function ReporteTransacciones() {
             cliente: r.nombre,
             email: r.email || r.contacto || "—",
             monto: Number(p.monto) || 0,
-            proveedor: (p.forma_pago || "Otro"),
+            proveedor: normProveedor(p.forma_pago || "Otro"),
             canal: r.canal,
             reference: p.id || p.reference_id || "—",
             estado: r.estado,
@@ -1618,7 +1635,7 @@ function ReporteTransacciones() {
           cliente: r.nombre,
           email: r.email || r.contacto || "—",
           monto: Number(r.abono) || 0,
-          proveedor: r.forma_pago || "Otro",
+          proveedor: normProveedor(r.forma_pago || "Otro"),
           canal: r.canal,
           reference: "—",
           estado: r.estado,
