@@ -31,6 +31,7 @@ export default function Analitica() {
   const [periodo, setPeriodo] = useState("7d");
   const [customFrom, setCustomFrom] = useState("");
   const [customTo,   setCustomTo]   = useState("");
+  const [origen,     setOrigen]     = useState("all"); // all | web | whatsapp | grupo | otros
   const [pkgData, setPkgData] = useState([]);
   const [stats, setStats] = useState(null);
   const [sesiones, setSesiones] = useState([]);
@@ -63,7 +64,7 @@ export default function Analitica() {
     { val: "90d", label: "90 días" },
   ];
 
-  useEffect(() => { if (periodo !== "custom" || (customFrom && customTo)) fetchAll(); }, [periodo, customFrom, customTo]);
+  useEffect(() => { if (periodo !== "custom" || (customFrom && customTo)) fetchAll(); }, [periodo, customFrom, customTo, origen]);
 
   async function fetchAll() {
     setLoading(true);
@@ -79,7 +80,7 @@ export default function Analitica() {
     const [sesRes, embRes, evRes, resConvRes, atribRes, abandRes, ingresosRes, usuariosRes] = await Promise.all([
       supabase.from("track_sesiones").select("*").gte("created_at", desde).lte("created_at", hasta),
       supabase.from("track_embudos").select("*").gte("created_at", desde).lte("created_at", hasta),
-      supabase.from("track_eventos").select("tipo, categoria, datos, ts").gte("ts", desde).lte("ts", hasta),
+      supabase.from("track_eventos").select("tipo, categoria, datos, ts, sesion_id").gte("ts", desde).lte("ts", hasta),
       supabase.from("reservas").select("id, total, canal, tipo, grupo_id, vendedor, aliado_id, utms_capturados, created_at").eq("estado", "confirmado").gte("created_at", desde).lte("created_at", hasta),
       supabase.from("track_atribuciones").select("*").gte("created_at", desde).lte("created_at", hasta),
       supabase.from("track_abandonment").select("*").gte("created_at", desde).lte("created_at", hasta),
@@ -87,17 +88,47 @@ export default function Analitica() {
       supabase.from("track_usuarios").select("segmento, intent_score, value_score").not("segmento", "is", null).limit(500),
     ]);
 
-    const sesList      = sesRes.data      || [];
-    const embList      = embRes.data      || [];
-    const evList       = evRes.data       || [];
+    const rawSes       = sesRes.data      || [];   // sin filtrar (panel comparativo de orígenes)
+    let   sesList      = rawSes;
+    let   embList      = embRes.data      || [];
+    let   evList       = evRes.data       || [];
     const atribList    = atribRes.data    || [];
-    const abandList    = abandRes.data    || [];
-    const ingresosList = ingresosRes.data || [];
+    let   abandList    = abandRes.data    || [];
+    let   ingresosList = ingresosRes.data || [];
     const usuariosList = usuariosRes.data || [];
+
+    // ── Filtro global por ORIGEN de cliente (re-segmenta los 13 paneles) ──────
+    // 5 buckets del clasificador → 4 visibles: Web+Mkt / WhatsApp / Grupo / Otros
+    const o4 = (b) => (b === "marketing" ? "web" : (b === "web" || b === "whatsapp" || b === "grupo") ? b : "otros");
+    const sesOrigen = new Map();
+    rawSes.forEach(s => {
+      const b5 = s.origen_tipo || clasificarOrigen({
+        utms: s.utms, referrer: s.referrer, canal: s.canal,
+        landing_page: s.primer_landing || s.entrada_url,
+      });
+      sesOrigen.set(s.id, o4(b5));
+    });
+    const recOrigen = (r) => {
+      if (r.sesion_id && sesOrigen.has(r.sesion_id)) return sesOrigen.get(r.sesion_id);
+      return o4(clasificarOrigen({
+        utms: r.utms || r.utms_capturados, referrer: r.referrer, canal: r.canal,
+        landing_page: r.entrada_url, grupo_id: r.grupo_id, vendedor: r.vendedor, aliado_id: r.aliado_id,
+      }));
+    };
+    if (origen !== "all") {
+      sesList      = rawSes.filter(s => sesOrigen.get(s.id) === origen);
+      embList      = embList.filter(e => recOrigen(e) === origen);
+      evList       = evList.filter(e => !e.sesion_id || sesOrigen.get(e.sesion_id) === origen);
+      abandList    = abandList.filter(a => recOrigen(a) === origen);
+      ingresosList = ingresosList.filter(i => recOrigen(i) === origen);
+    }
 
     // Solo reservas originadas en el widget web — excluir ventas internas (equipo) y agencias
     const WEB_CANALES = ["Web", "Directo", "Referido", "WhatsApp", "Google SEM", "SEO", "Meta Ads", "Social Orgánico", "Email"];
-    const resConvList = (resConvRes.data || []).filter(r => WEB_CANALES.includes(normCanal(r.canal)));
+    let resConvList = (resConvRes.data || []).filter(r => WEB_CANALES.includes(normCanal(r.canal)));
+    if (origen !== "all") {
+      resConvList = resConvList.filter(r => o4(clasificarOrigenReserva(r)) === origen);
+    }
 
     // ── KPIs ─────────────────────────────────────────────────────────────────
     const totalSesiones  = sesList.length;
@@ -148,7 +179,7 @@ export default function Analitica() {
     ORIGEN_BUCKETS.forEach(b => {
       origenMap[b] = { bucket: b, label: ORIGEN_LABELS[b], sesiones: 0, conversiones: 0, ingreso: 0 };
     });
-    sesList.forEach(s => {
+    rawSes.forEach(s => {  // comparativo: SIEMPRE todos los orígenes (no se filtra)
       const b = s.origen_tipo || clasificarOrigen({
         utms: s.utms, referrer: s.referrer, canal: s.canal,
         landing_page: s.primer_landing || s.entrada_url,
@@ -392,6 +423,33 @@ export default function Analitica() {
               style={{ padding: "6px 10px", borderRadius: 8, border: "none", background: periodo === "custom" ? B.sky : B.navyLight, color: periodo === "custom" ? B.navy : B.text, fontSize: 12, cursor: "pointer" }} />
           </div>
         </div>
+      </div>
+
+      {/* Filtro global por ORIGEN de cliente — re-segmenta TODOS los paneles */}
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 24 }}>
+        <span style={{ fontSize: 11, color: B.muted, textTransform: "uppercase", letterSpacing: "0.06em", marginRight: 4 }}>Origen del cliente:</span>
+        {[
+          { val: "all",      label: "Todos",        icon: "📊" },
+          { val: "web",      label: "Web + Mkt",    icon: "🌐" },
+          { val: "whatsapp", label: "WhatsApp",     icon: "💬" },
+          { val: "grupo",    label: "Grupo",        icon: "🎉" },
+          { val: "otros",    label: "Otros",        icon: "🔗" },
+        ].map(o => (
+          <button key={o.val} onClick={() => setOrigen(o.val)}
+            style={{
+              padding: "6px 14px", borderRadius: 999, border: "none", cursor: "pointer",
+              fontSize: 12, fontWeight: 700,
+              background: origen === o.val ? B.sand : B.navyLight,
+              color: origen === o.val ? B.navy : B.text,
+            }}>
+            {o.icon} {o.label}
+          </button>
+        ))}
+        {origen !== "all" && (
+          <span style={{ fontSize: 11, color: B.sand, marginLeft: 4 }}>
+            ▸ todos los paneles filtrados por este origen
+          </span>
+        )}
       </div>
 
       {/* KPIs */}
