@@ -2340,6 +2340,61 @@ serve(async (req) => {
       return json({ ok: r.ok, status: r.status, body: r.body });
     }
 
+    // POST /loggro-sync/update-movement-costs
+    // Body: { movement_id, costs: { <loggro_ingredient_id>: <precio_unit> } }
+    // Corrige SOLO el precio unitario de los ingredientes del movimiento
+    // (la cantidad queda intacta → NO duplica inventario). Usado cuando se
+    // recibió antes de tener precio (entró a $0) y luego se aplica la factura.
+    if (req.method === "POST" && path === "/update-movement-costs") {
+      const body = await req.json().catch(() => ({}));
+      const id = body.movement_id;
+      const costs = body.costs || {};
+      if (!id || Object.keys(costs).length === 0) {
+        return json({ ok: false, error: "movement_id y costs requeridos" }, 400);
+      }
+      // Obtener el movimiento (el GET /inventories/{id} responde 500 en esta
+      // API; lo buscamos en la lista reciente).
+      let mv: any = null;
+      for (const p of [
+        `/inventories?pagination=true&limit=300&page=0&sort=-createdOn`,
+        `/inventories?limit=300&sort=-createdOn`,
+        `/inventories?limit=300`,
+      ]) {
+        try {
+          const d: any = await loggroGet(p);
+          const list = Array.isArray(d) ? d : d?.data || d?.items || d?.results || [];
+          mv = list.find((m: any) => String(m._id || m.id) === String(id));
+          if (mv) break;
+        } catch (_) { /* try next */ }
+      }
+      if (!mv) return json({ ok: false, error: "movimiento no encontrado en /inventories" }, 404);
+
+      let tocados = 0;
+      const nuevos = (mv.ingredients || []).map((g: any) => {
+        const ingId = (g.ingredient && (g.ingredient._id || g.ingredient.id)) || g.ingredient;
+        const np = costs[String(ingId)];
+        const precioActual = Number(g.price ?? g.cost) || 0;
+        let precio = precioActual;
+        if (np != null && Number(np) > 0 && Number(np) !== precioActual) {
+          precio = Number(np);
+          tocados++;
+        }
+        return {
+          ingredient: ingId,
+          quantity: Number(g.quantity ?? g.amount) || 0,  // cantidad INTACTA
+          price: precio,
+        };
+      });
+      if (tocados === 0) {
+        return json({ ok: true, skipped: "sin cambios de costo", movement_id: id });
+      }
+      const r = await loggroRaw("PATCH", `/inventories/${id}`, {
+        ingredients: nuevos,
+        modifiedOn: new Date().toISOString(),
+      });
+      return json({ ok: r.ok, status: r.status, ingredientes_actualizados: tocados, body: r.body });
+    }
+
     if (req.method === "POST" && path === "/create-inventory-movement") {
       const body = await req.json().catch(() => ({}));
 

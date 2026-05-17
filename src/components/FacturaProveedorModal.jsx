@@ -658,6 +658,30 @@ export default function FacturaProveedorModal({ oc, onClose, reload, currentUser
         }
       }
 
+      // 5. Si la OC YA tenía movimiento en Loggro (se recibió ANTES de tener
+      //    precio → entró con costo $0), re-empujar el costo correcto a ese
+      //    movimiento. Solo corrige precio, cantidad intacta → NO duplica
+      //    inventario. Best-effort: si falla, NO rompe la factura.
+      if (oc.loggro_movement_id) {
+        try {
+          const costos = {};
+          for (const f of facturados) {
+            if (f.es_bonificacion || !f.loggro_id) continue;
+            const unPP = Math.max(1, Number(f.unidades_por_paquete) || 1);
+            const cPack = Number(f.precio_costo_pack) || 0;
+            const pIndiv = unPP > 0 ? Math.round(cPack / unPP) : 0;
+            if (pIndiv > 0) costos[f.loggro_id] = pIndiv;
+          }
+          if (Object.keys(costos).length > 0) {
+            await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/loggro-sync/update-movement-costs`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json", apikey: import.meta.env.VITE_SUPABASE_ANON_KEY, Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}` },
+              body: JSON.stringify({ movement_id: oc.loggro_movement_id, costs: costos }),
+            });
+          }
+        } catch (_e) { /* best-effort: no romper la aplicación de la factura */ }
+      }
+
       // Refrescar la lista de facturas y volver a ella (NO cerrar el modal:
       // el usuario puede adjuntar otra factura a esta misma OC).
       reload();
