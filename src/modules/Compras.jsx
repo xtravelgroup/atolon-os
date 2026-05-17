@@ -285,13 +285,13 @@ function TabOrdenes({ ordenes, reload, currentUser }) {
         <DetalleOCModal
           oc={openDetalle}
           onClose={() => setOpenDetalle(null)}
-          onEditar={(o) => { setOpenDetalle(null); setOpenEditar(o); }}
-          onFactura={(o) => { setOpenDetalle(null); setOpenFactura(o); }}
-          onLogistica={(o) => { setOpenDetalle(null); setOpenLogistica(o); }}
-          onUnir={(o) => { setOpenDetalle(null); setOpenUnir(o); }}
-          onEmail={(o) => { setOpenDetalle(null); setOpenEmail(o); }}
-          onCotizResp={(o) => { setOpenDetalle(null); setOpenCotizResp(o); }}
-          onEnviada={(o) => { setOpenDetalle(null); marcarEnviada(o); }}
+          onEditar={(o) => setOpenEditar(o)}
+          onFactura={(o) => setOpenFactura(o)}
+          onLogistica={(o) => setOpenLogistica(o)}
+          onUnir={(o) => setOpenUnir(o)}
+          onEmail={(o) => setOpenEmail(o)}
+          onCotizResp={(o) => setOpenCotizResp(o)}
+          onEnviada={(o) => marcarEnviada(o)}
           editable={OC_EDITABLE(openDetalle)}
         />
       )}
