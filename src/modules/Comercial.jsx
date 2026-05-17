@@ -14,6 +14,9 @@ const VENDEDORES = []; // No hardcoded vendors — derived from leads data
 const CANALES = ["Web", "WhatsApp", "Referido", "B2B", "Instagram", "Telefono"];
 
 const ETAPAS = ["Nuevo", "Contactado", "Cotizado", "Cerrado Ganado", "Perdido", "Duplicado"];
+// Columnas visibles del Kanban: "Duplicado" sigue siendo un status válido
+// (se puede marcar desde el detalle) pero NO se muestra como columna.
+const ETAPAS_KANBAN = ETAPAS.filter(e => e !== "Duplicado");
 
 // ─── Vendor stats derived from leads ─────────────────────────────────────────
 
@@ -1053,7 +1056,7 @@ export default function Comercial() {
       {/* Kanban View */}
       {activeTab === "kanban" && (
         <div style={{ display: "flex", gap: 12, overflowX: "auto", paddingBottom: 12, alignItems: "flex-start" }}>
-          {ETAPAS.map(etapa => (
+          {ETAPAS_KANBAN.map(etapa => (
             <KanbanColumn
               key={etapa}
               etapa={etapa}
