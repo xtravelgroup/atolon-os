@@ -68,9 +68,15 @@ function badge(canal) {
   };
 }
 
+// Fecha de HOY en zona horaria Bogotá (YYYY-MM-DD). Todo el módulo
+// Comercial debe operar en hora Bogotá (no UTC, no local del navegador).
+function hoyBogota() {
+  return new Date().toLocaleDateString("en-CA", { timeZone: "America/Bogota" });
+}
+
 function isOverdue(dateStr) {
   if (!dateStr || dateStr === "—") return false;
-  return dateStr < new Date().toISOString().slice(0, 10);
+  return dateStr < hoyBogota();
 }
 
 // ─── Components ───────────────────────────────────────────────────────────────
@@ -317,7 +323,7 @@ function Modal({ open, onClose, onSubmit }) {
       vendedor: form.vendedor,
       valor_est: Number(form.valorEstimado) || 0,
       stage: "Nuevo",
-      fecha_creacion: new Date().toLocaleDateString("en-CA"),
+      fecha_creacion: hoyBogota(),
       pax: Number(form.pax) || null,
       fecha_visita: form.fecha_visita || null,
       hora_visita: form.hora_visita || null,
@@ -374,7 +380,7 @@ function LeadDetail({ lead, onClose, onUpdateEtapa }) {
   if (!lead) return null;
   const accent = ETAPA_COLORS[lead.etapa]?.accent || B.sky;
   const [pendingEtapa, setPendingEtapa] = useState(null);
-  const [fechaPago, setFechaPago]       = useState(new Date().toLocaleDateString("en-CA"));
+  const [fechaPago, setFechaPago]       = useState(hoyBogota());
   const [reservaLinked, setReservaLinked] = useState(null);
   const [showTerminar, setShowTerminar]   = useState(false);
   const [terminando, setTerminando]       = useState(false);
@@ -382,7 +388,7 @@ function LeadDetail({ lead, onClose, onUpdateEtapa }) {
   const [salidas, setSalidas]             = useState([]);
   const [showPagoManual, setShowPagoManual] = useState(false);
   const [formaPagoManual, setFormaPagoManual] = useState("efectivo");
-  const [fechaPagoManual, setFechaPagoManual] = useState(new Date().toLocaleDateString("en-CA"));
+  const [fechaPagoManual, setFechaPagoManual] = useState(hoyBogota());
 
   // Parse datos from notas text e.g. "VIP Pass · 2026-04-04 · 4 pax · ..."
   const parsedFromNotas = (() => {
@@ -402,7 +408,7 @@ function LeadDetail({ lead, onClose, onUpdateEtapa }) {
     email:     lead.email     || lead.contacto || "",
     telefono:  lead.tel       || "",
     tipo:      lead.tipoPasadia || parsedFromNotas.tipo  || "VIP Pass",
-    fecha:     lead.fechaVisita || parsedFromNotas.fecha || new Date().toLocaleDateString("en-CA"),
+    fecha:     lead.fechaVisita || parsedFromNotas.fecha || hoyBogota(),
     salida_id: "",
     pax:       lead.pax > 0 ? lead.pax : (parsedFromNotas.pax || 2),
     grupo_id:  "",
@@ -566,7 +572,7 @@ function LeadDetail({ lead, onClose, onUpdateEtapa }) {
       }).eq("id", reserva.id);
       await supabase.from("leads").update({
         stage: "Cerrado Ganado",
-        ultimo_contacto: new Date().toLocaleDateString("en-CA"),
+        ultimo_contacto: hoyBogota(),
         fecha_pago: fechaPagoManual,
       }).eq("id", lead.id);
       onUpdateEtapa(lead.id, "Cerrado Ganado", fechaPagoManual);
@@ -918,8 +924,14 @@ export default function Comercial() {
         vendedor: r.vendedor,
         valorEstimado: r.valor_est || 0,
         etapa: r.stage,
+        // Días en etapa = diferencia de días-calendario en Bogotá. Antes se
+        // restaba Date.now() (UTC) menos new Date("YYYY-MM-DD") (medianoche
+        // UTC), así un lead creado HOY por la tarde en Bogotá (UTC-5) ya
+        // mostraba "1". Ahora se comparan fechas-calendario Bogotá.
         diasEtapa: r.fecha_creacion
-          ? Math.floor((Date.now() - new Date(r.fecha_creacion).getTime()) / 86400000)
+          ? Math.max(0, Math.floor(
+              (Date.parse(hoyBogota() + "T00:00:00Z")
+               - Date.parse(String(r.fecha_creacion).slice(0, 10) + "T00:00:00Z")) / 86400000))
           : 0,
         proximaAccion: r.prox_fecha || "—",
         notas: r.notas,
@@ -956,7 +968,7 @@ export default function Comercial() {
 
   async function updateEtapa(id, newStage, fechaPago = null) {
     if (!supabase) return;
-    const upd = { stage: newStage, ultimo_contacto: new Date().toLocaleDateString("en-CA") };
+    const upd = { stage: newStage, ultimo_contacto: hoyBogota() };
     if (newStage === "Cerrado Ganado" && fechaPago) upd.fecha_pago = fechaPago;
     await supabase.from("leads").update(upd).eq("id", id);
     fetchLeads();
