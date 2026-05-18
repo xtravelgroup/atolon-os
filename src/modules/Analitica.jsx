@@ -229,10 +229,10 @@ export default function Analitica({ externo = false }) {
 
     // ── Embudo de conversión ──────────────────────────────────────────────────
     // Orden REAL del widget (BookingPopup): el cliente primero elige PAQUETE
-    // (paso_3) y LUEGO la fecha (paso_2) — nunca al revés. En grupos el paquete
-    // ya viene fijo (por eso el embudo solo se muestra en web/all). Acumulado
-    // sobre el orden lógico → monotónico; el último paso se amarra a las
-    // CONVERSIONES reales del segmento para que siempre cuadre con el KPI.
+    // (paso_3) y LUEGO la fecha (paso_2) — nunca al revés. En grupos paquete y
+    // fecha vienen pre-fijados por el link (se registran al abrir). Acumulado
+    // sobre el orden lógico → monotónico. WhatsApp reserva vía el bot (no toca
+    // el widget): no hay filas de embudo, por eso normalizamos abajo.
     const FUNNEL = [
       { k: 1, label: "Vio widget" },
       { k: 3, label: "Eligió paquete" },
@@ -246,11 +246,19 @@ export default function Analitica({ externo = false }) {
       label: f.label,
       count: embList.filter(e => FUNNEL.slice(i).some(s => e[`paso_${s.k}_ts`])).length,
     }));
-    // El último paso "Completó pago" se amarra a las CONVERSIONES reales del
-    // segmento (mismo número del KPI Conversiones), no al evento de widget por
-    // sesión. Así el embudo siempre cuadra: si Conversiones=0 → Completó pago=0
-    // (antes salía "Completó pago 1" con "0 conversiones" = sin sentido).
-    if (pasos[5]) pasos[5].count = Math.min(pasos[4]?.count ?? sesConv, sesConv);
+    // "Completó pago" = SIEMPRE las conversiones reales del segmento → cuadra
+    // exacto con el KPI Conversiones y el panel "Origen del Cliente". Luego
+    // propagamos hacia arriba (cada paso ≥ el siguiente) para garantizar
+    // monotonía en TODOS los segmentos:
+    //  • web / grupo (pasan por el widget): se ve el embudo real del widget,
+    //    nunca por debajo de las conversiones.
+    //  • whatsapp (reserva vía el bot de IA, sin widget): no hay filas de
+    //    embudo, así que queda plano en las conversiones — honesto: entraron
+    //    por el link del bot y convirtieron, sin pasos de widget que medir.
+    if (pasos[5]) pasos[5].count = sesConv;
+    for (let i = pasos.length - 2; i >= 0; i--) {
+      pasos[i].count = Math.max(pasos[i].count, pasos[i + 1].count);
+    }
     setEmbudos(pasos);
 
     // ── Top eventos ───────────────────────────────────────────────────────────
@@ -525,7 +533,7 @@ export default function Analitica({ externo = false }) {
               pasos se completan automáticamente al abrir. El embudo aplica a
               todos los segmentos. */}
           <div style={{ fontSize: 11, color: B.muted, marginBottom: 18 }}>
-            Embudo del <strong>widget</strong> (solo self-service). En grupos el paquete y la fecha vienen pre-fijados por el link → esos pasos se completan al abrir.
+            Embudo <strong>self-service</strong>. Grupos: paquete y fecha vienen pre-fijados por el link. WhatsApp: reserva por el bot de IA (sin pasos de widget) → el embudo queda plano en las conversiones. El último paso siempre = Conversiones.
           </div>
           {embudos.map((p, i) => {
             const maxCount = embudos[0]?.count || 1;
