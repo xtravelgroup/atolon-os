@@ -85,12 +85,12 @@ export default function Analitica({ externo = false }) {
       supabase.from("track_sesiones").select("*").gte("created_at", desde).lte("created_at", hasta),
       supabase.from("track_embudos").select("*").gte("created_at", desde).lte("created_at", hasta),
       supabase.from("track_eventos").select("tipo, categoria, datos, ts, sesion_id").gte("ts", desde).lte("ts", hasta),
-      // Conversión = venta pagada. Una reserva que avanzó a check_in (el
-      // cliente pagó Y llegó) o quedó no_show (pagó y no vino) SIGUE siendo
-      // una conversión. Antes solo se contaba "confirmado", así que toda
-      // venta que pasó a check_in desaparecía de AtolonTrack (Web salía 4
-      // cuando había decenas). Se excluyen solo cancelado/pendiente.
-      supabase.from("reservas").select("id, total, canal, tipo, grupo_id, vendedor, aliado_id, utms_capturados, created_at").in("estado", ["confirmado", "check_in", "no_show"]).gte("created_at", desde).lte("created_at", hasta),
+      // Conversión = CUALQUIER reserva que PAGÓ, sin importar lo que pase
+      // después (check_in, no_show, o incluso cancelada tras pagar — la venta
+      // igual ocurrió). Señal de pago: estado post-pago (confirmado/check_in/
+      // no_show) O evidencia de pago (abono>0 / fecha_pago / referencia_pago).
+      // Así una cancelada-tras-pagar SÍ cuenta y una cancelada nunca-pagada NO.
+      supabase.from("reservas").select("id, total, canal, tipo, grupo_id, vendedor, aliado_id, utms_capturados, created_at").or("estado.in.(confirmado,check_in,no_show),abono.gt.0,fecha_pago.not.is.null,referencia_pago.not.is.null").gte("created_at", desde).lte("created_at", hasta),
       supabase.from("track_atribuciones").select("*").gte("created_at", desde).lte("created_at", hasta),
       supabase.from("track_abandonment").select("*").gte("created_at", desde).lte("created_at", hasta),
       supabase.from("track_ingresos").select("*").gte("created_at", desde).lte("created_at", hasta),
