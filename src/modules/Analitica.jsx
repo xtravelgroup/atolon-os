@@ -132,12 +132,17 @@ export default function Analitica({ externo = false }) {
       ingresosList = ingresosList.filter(i => inAllowed(recOrigen(i)));
     }
 
-    // Solo reservas originadas en el widget web — excluir ventas internas (equipo) y agencias
+    // resConvList = reservas confirmadas del segmento seleccionado.
+    //  • Sin filtro de origen ("all"): solo canales WEB — la vista global es el
+    //    embudo del widget web; ventas internas/agencia no pasan por el widget.
+    //  • Con filtro de origen: usa EXACTAMENTE el mismo clasificador que el
+    //    panel "🎯 Origen del Cliente" (clasificarOrigenReserva, sin restringir
+    //    a WEB_CANALES) para que los KPIs Conversiones/Ingresos y el embudo
+    //    cuadren con ese panel (ej. Grupos → 5 reservas / $4.800.000).
     const WEB_CANALES = ["Web", "Directo", "Referido", "WhatsApp", "Google SEM", "SEO", "Meta Ads", "Social Orgánico", "Email"];
-    let resConvList = (resConvRes.data || []).filter(r => WEB_CANALES.includes(normCanal(r.canal)));
-    if (allowedOrig) {
-      resConvList = resConvList.filter(r => inAllowed(o4(clasificarOrigenReserva(r))));
-    }
+    const resConvList = allowedOrig
+      ? (resConvRes.data || []).filter(r => inAllowed(o4(clasificarOrigenReserva(r))))
+      : (resConvRes.data || []).filter(r => WEB_CANALES.includes(normCanal(r.canal)));
 
     // ── KPIs ─────────────────────────────────────────────────────────────────
     const totalSesiones  = sesList.length;
