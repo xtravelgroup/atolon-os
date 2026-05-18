@@ -88,7 +88,7 @@ function ReservaRow({ r, isMobile, salidas = [], embarcaciones = [], onReasignar
             <select value={r.salida_id || ""} title="Horario / salida (solo abiertas)"
               onChange={e => onReasignar && onReasignar(r, { salida_id: e.target.value })}
               style={SEL}>
-              {salidasOpen.map(s => <option key={s.id} value={s.id}>Salida {fmtHora12(s.hora)}</option>)}
+              {salidasOpen.map(s => <option key={s.id} value={s.id}>Salida {fmtHora12(s.hora_regreso || HORARIO_REGRESO[s.id])}</option>)}
             </select>
           )}
           {!hayAlternativas && (
@@ -169,7 +169,7 @@ function SalidaBloque({ salida, reservas, zarpoAt, onZarpo, isMobile, salidas = 
         <div>
           <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
             <span style={{ fontWeight: 800, fontSize: 18, fontFamily: "'Barlow Condensed',sans-serif", letterSpacing: 0.5, color: zarpado ? B.success : "#fff" }}>
-              {zarpado ? "✓ " : proxima ? "🔔 " : "⛵ "}Salida {fmtHora12(salida.hora)}
+              {zarpado ? "✓ " : proxima ? "🔔 " : "⛵ "}Salida {fmtHora12(horaRegreso)}
             </span>
             {proxima && !zarpado && (
               <span style={{ fontSize: 11, background: B.warning + "33", color: B.warning, padding: "2px 8px", borderRadius: 20, fontWeight: 700 }}>PRÓXIMA SALIDA</span>
@@ -179,7 +179,7 @@ function SalidaBloque({ salida, reservas, zarpoAt, onZarpo, isMobile, salidas = 
             )}
           </div>
           <div style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", marginTop: 4, display: "flex", gap: 14, flexWrap: "wrap" }}>
-            <span>⛵ Hora de salida: <strong style={{ color: B.sky }}>{fmtHora12(salida.hora)}</strong></span>
+            <span>⛵ Hora de salida: <strong style={{ color: B.sky }}>{fmtHora12(horaRegreso)}</strong></span>
             <span>👥 {paxTotal} pax{reservas.length > 1 ? ` · ${reservas.length} reservas` : ""}</span>
             {conCheckin > 0 && <span style={{ color: B.success }}>✓ {conCheckin} con check-in</span>}
             {embarcaciones.length > 0 && (
