@@ -231,6 +231,11 @@ export default function Analitica({ externo = false }) {
         return false;
       }).length,
     }));
+    // El último paso "Completó pago" se amarra a las CONVERSIONES reales del
+    // segmento (mismo número del KPI Conversiones), no al evento de widget por
+    // sesión. Así el embudo siempre cuadra: si Conversiones=0 → Completó pago=0
+    // (antes salía "Completó pago 1" con "0 conversiones" = sin sentido).
+    if (pasos[5]) pasos[5].count = Math.min(pasos[4]?.count ?? sesConv, sesConv);
     setEmbudos(pasos);
 
     // ── Top eventos ───────────────────────────────────────────────────────────
