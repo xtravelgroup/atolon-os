@@ -801,11 +801,21 @@ function ZarpeCodigoRow({ desp, setDespachos }) {
   const save = async () => {
     if (!input.trim()) return;
     setSaving(true);
+    const code = input.trim();
     await supabase.from("salida_despachos")
-      .update({ zarpe_codigo: input.trim(), zarpe_generado: true })
+      .update({ zarpe_codigo: code, zarpe_generado: true })
       .eq("id", desp.id);
+    // El código también debe reflejarse en zarpes_log (módulo Zarpes), que
+    // se creó al hacer el check-in ANTES de tener el código. Aplica a TODOS
+    // los zarpes de esa salida+fecha (el código es por salida, no por emb).
+    if (desp.fecha && desp.salida_id) {
+      await supabase.from("zarpes_log")
+        .update({ zarpe_codigo: code })
+        .eq("fecha", desp.fecha)
+        .eq("salida_id", desp.salida_id);
+    }
     setDespachos(prev => prev.map(d =>
-      d.id === desp.id ? { ...d, zarpe_codigo: input.trim(), zarpe_generado: true } : d
+      d.id === desp.id ? { ...d, zarpe_codigo: code, zarpe_generado: true } : d
     ));
     setSaving(false);
     setEditing(false);
