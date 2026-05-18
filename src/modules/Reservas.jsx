@@ -3857,10 +3857,11 @@ export default function Reservas() {
     fetchReservas();
   };
 
-  const deleteReserva = async (id) => {
-    if (!supabase) return;
-    await supabase.from("reservas").delete().eq("id", id);
-    fetchReservas();
+  const deleteReserva = async () => {
+    // Borrado permanente DESHABILITADO. Una reserva no se elimina nunca
+    // (perdería venta/pagos/auditoría): solo se CANCELA ("❌ Cancelar
+    // Reserva") o se reagenda. Guardado como no-op por defensa.
+    alert('Las reservas no se eliminan. Usá "❌ Cancelar Reserva" o reagéndala.');
   };
 
   // ── styles ──
@@ -4340,8 +4341,6 @@ export default function Reservas() {
                         {!r._sinReserva && <>
                           <button onClick={e => { e.stopPropagation(); toggleEstado(r.id); }} title="Cambiar estado"
                             style={{ background: B.navyLight, border: "none", borderRadius: 8, color: B.sky, padding: "7px 10px", fontSize: 16, cursor: "pointer" }}>↻</button>
-                          <button onClick={e => { e.stopPropagation(); deleteReserva(r.id); }} title="Eliminar"
-                            style={{ background: B.danger + "22", border: `1px solid ${B.danger}44`, borderRadius: 8, color: B.danger, padding: "7px 10px", fontSize: 14, cursor: "pointer" }}>✕</button>
                         </>}
                       </div>
                     </div>
@@ -4428,7 +4427,6 @@ export default function Reservas() {
                         <td style={tdStyle} onClick={e => e.stopPropagation()}>
                           <div style={{ display: "flex", gap: 6 }}>
                             {!r._sinReserva && <button onClick={() => toggleEstado(r.id)} title="Cambiar estado" style={{ background: B.navyLight, border: "none", borderRadius: 6, color: B.sky, padding: "5px 10px", fontSize: 13, cursor: "pointer", fontWeight: 600 }}>↻</button>}
-                            <button onClick={() => deleteReserva(r.id)} title="Eliminar" style={{ background: B.danger + "22", border: `1px solid ${B.danger}44`, borderRadius: 6, color: B.danger, padding: "5px 10px", fontSize: 13, cursor: "pointer", fontWeight: 600 }}>✕</button>
                           </div>
                         </td>
                       </tr>
