@@ -20,25 +20,27 @@ $$;
 -- Login: valida PIN. Primera vez (sin PIN) acepta 0000 y pide configurar clave.
 create or replace function public.mesero_login(p_id text, p_pin text)
 returns json language plpgsql security definer set search_path = public as $$
-declare e record;
+-- ⚠ alias de tabla "el" distinto del record "r": usar "e" para ambos provoca
+-- "record e is not assigned yet" (la lista del SELECT resuelve e.* al record).
+declare r record;
 begin
-  select e.loggro_id, e.portal_pin,
-         coalesce(nullif(trim(e.nombre_completo), ''),
-                  trim(coalesce(e.nombres,'') || ' ' || coalesce(e.apellidos,''))) as nombre
-    into e
-    from empleados_loggro e
-   where e.loggro_id = p_id and e.portal_mesero = true and e.fecha_retiro is null;
+  select el.loggro_id, el.portal_pin,
+         coalesce(nullif(trim(el.nombre_completo), ''),
+                  trim(coalesce(el.nombres,'') || ' ' || coalesce(el.apellidos,''))) as nombre
+    into r
+    from empleados_loggro el
+   where el.loggro_id = p_id and el.portal_mesero = true and el.fecha_retiro is null;
   if not found then
     return json_build_object('ok', false, 'error', 'no_habilitado');
   end if;
-  if e.portal_pin is null or e.portal_pin = '' then
+  if r.portal_pin is null or r.portal_pin = '' then
     if p_pin = '0000' then
-      return json_build_object('ok', true, 'needs_setup', true, 'nombre', e.nombre, 'loggro_id', e.loggro_id);
+      return json_build_object('ok', true, 'needs_setup', true, 'nombre', r.nombre, 'loggro_id', r.loggro_id);
     end if;
     return json_build_object('ok', false, 'error', 'pin_incorrecto');
   end if;
-  if e.portal_pin = p_pin then
-    return json_build_object('ok', true, 'needs_setup', false, 'nombre', e.nombre, 'loggro_id', e.loggro_id);
+  if r.portal_pin = p_pin then
+    return json_build_object('ok', true, 'needs_setup', false, 'nombre', r.nombre, 'loggro_id', r.loggro_id);
   end if;
   return json_build_object('ok', false, 'error', 'pin_incorrecto');
 end $$;
