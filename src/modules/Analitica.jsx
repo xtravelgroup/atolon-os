@@ -150,14 +150,14 @@ export default function Analitica({ externo = false }) {
     const reservaMap = new Map((resConvRes.data || []).map(r => [r.id, r]));
     const resSelfSvc = (resConvRes.data || []).filter(r => String(r.id || "").startsWith("WEB-") && esPagada(r));
     // resConvList = reservas self-service del segmento seleccionado.
-    //  • Sin filtro de origen ("all"): solo canales WEB (vista global = embudo
-    //    del widget web).
-    //  • Con filtro de origen: mismo clasificador que el panel "🎯 Origen del
-    //    Cliente" para que KPIs Conversiones/Ingresos cuadren con ese panel.
-    const WEB_CANALES = ["Web", "Directo", "Referido", "WhatsApp", "Google SEM", "SEO", "Meta Ads", "Social Orgánico", "Email"];
+    //  • "Todos" (sin filtro): TODO el self-service pagado, de cualquier
+    //    origen → cuadra exacto con la suma del panel "🎯 Origen del Cliente"
+    //    (ej. 8 Web + 3 Grupos = 11). Antes se limitaba a canales WEB y los
+    //    grupos no sumaban en Todos.
+    //  • Con filtro de origen: mismo clasificador que ese panel.
     const resConvList = allowedOrig
       ? resSelfSvc.filter(r => inAllowed(o4(clasificarOrigenReserva(r))))
-      : resSelfSvc.filter(r => WEB_CANALES.includes(normCanal(r.canal)));
+      : resSelfSvc;
 
     // ── KPIs ─────────────────────────────────────────────────────────────────
     const totalSesiones  = sesList.length;
