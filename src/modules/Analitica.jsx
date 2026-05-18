@@ -85,12 +85,11 @@ export default function Analitica({ externo = false }) {
       supabase.from("track_sesiones").select("*").gte("created_at", desde).lte("created_at", hasta),
       supabase.from("track_embudos").select("*").gte("created_at", desde).lte("created_at", hasta),
       supabase.from("track_eventos").select("tipo, categoria, datos, ts, sesion_id").gte("ts", desde).lte("ts", hasta),
-      // Conversión = CUALQUIER reserva que PAGÓ, sin importar lo que pase
-      // después (check_in, no_show, o incluso cancelada tras pagar — la venta
-      // igual ocurrió). Señal de pago: estado post-pago (confirmado/check_in/
-      // no_show) O evidencia de pago (abono>0 / fecha_pago / referencia_pago).
-      // Así una cancelada-tras-pagar SÍ cuenta y una cancelada nunca-pagada NO.
-      supabase.from("reservas").select("id, total, canal, tipo, grupo_id, vendedor, aliado_id, utms_capturados, created_at").or("estado.in.(confirmado,check_in,no_show),abono.gt.0,fecha_pago.not.is.null,referencia_pago.not.is.null").gte("created_at", desde).lte("created_at", hasta),
+      // Traemos TODAS las reservas del periodo con estado, forma_pago y
+      // señales de pago. El filtro "pagada" se hace en JS (esPagada) para
+      // poder además mostrar Estado y el método REAL en Transacciones
+      // Recientes (track_ingresos.metodo_pago no es confiable — trae "stripe").
+      supabase.from("reservas").select("id, total, canal, tipo, grupo_id, vendedor, aliado_id, utms_capturados, created_at, estado, forma_pago, abono, fecha_pago, referencia_pago").gte("created_at", desde).lte("created_at", hasta),
       supabase.from("track_atribuciones").select("*").gte("created_at", desde).lte("created_at", hasta),
       supabase.from("track_abandonment").select("*").gte("created_at", desde).lte("created_at", hasta),
       supabase.from("track_ingresos").select("*").gte("created_at", desde).lte("created_at", hasta),
@@ -142,7 +141,14 @@ export default function Analitica({ externo = false }) {
     // que entran por el link de un grupo y compran. Las que crea el equipo
     // comercial a mano en Atolon OS (id "R-...") NO son self-service y quedan
     // FUERA de toda la analítica de AtolonTrack (KPIs, embudo, orígenes).
-    const resSelfSvc = (resConvRes.data || []).filter(r => String(r.id || "").startsWith("WEB-"));
+    // Conversión = CUALQUIER reserva que PAGÓ, sin importar lo que pase
+    // después (check_in/no_show, o incluso cancelada tras pagar — la venta
+    // ocurrió). NO cuenta: cancelada nunca pagada ni pendiente sin pago.
+    const esPagada = (r) =>
+      ["confirmado", "check_in", "no_show"].includes(r.estado) ||
+      (r.abono || 0) > 0 || !!r.fecha_pago || !!r.referencia_pago;
+    const reservaMap = new Map((resConvRes.data || []).map(r => [r.id, r]));
+    const resSelfSvc = (resConvRes.data || []).filter(r => String(r.id || "").startsWith("WEB-") && esPagada(r));
     // resConvList = reservas self-service del segmento seleccionado.
     //  • Sin filtro de origen ("all"): solo canales WEB (vista global = embudo
     //    del widget web).
@@ -417,7 +423,26 @@ export default function Analitica({ externo = false }) {
     setExitIntents(evList.filter(e => e.tipo === "exit_intent").length);
 
     // ── Transaction Explorer ──────────────────────────────────────────────────
-    setIngresos(ingresosList.slice(0,30).reverse());
+    // Método REAL desde reservas.forma_pago (track_ingresos.metodo_pago trae
+    // "stripe" que NO usamos). Estado = ¿pasó el pago? Si la transacción no
+    // tiene reserva enlazada → "Sin reserva" (fila huérfana/test).
+    const metodoLabel = (m) =>
+      ({ wompi: "Wompi", zoho_pay: "Zoho", tarjeta_internacional: "Tarjeta intl.", stripe: "Stripe" }[String(m || "").toLowerCase()] || m);
+    setIngresos(ingresosList.slice(0,30).reverse().map(i => {
+      const r  = reservaMap.get(i.reserva_id);
+      const fp = r?.forma_pago;
+      const est = r
+        ? ({ confirmado: ["Pagada", B.success], check_in: ["Pagada", B.success],
+             no_show: ["Pagada", B.success], cancelado: ["Cancelada", B.danger],
+             pendiente: ["Pendiente", B.sand] }[r.estado] || [r.estado, B.muted])
+        : ["Sin reserva", B.danger];
+      return {
+        ...i,
+        _metodo:   fp ? metodoLabel(fp) : (i.metodo_pago || "—"),
+        _estLabel: est[0],
+        _estColor: est[1],
+      };
+    }));
 
     setSesiones(sesList.slice(-50).reverse());
     setLoading(false);
@@ -899,7 +924,7 @@ export default function Analitica({ externo = false }) {
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
               <thead>
                 <tr>
-                  {["ID Reserva","Paquete","Monto","Método","Adultos","Niños","Fecha Visita","Canal","Creado"].map(h => (
+                  {["ID Reserva","Paquete","Monto","Método","Estado","Adultos","Niños","Fecha Visita","Canal","Creado"].map(h => (
                     <th key={h} style={{ textAlign: "left", padding: "8px 12px", color: B.sand, fontWeight: 600, borderBottom: "1px solid rgba(255,255,255,0.08)", whiteSpace: "nowrap" }}>{h}</th>
                   ))}
                 </tr>
@@ -910,7 +935,10 @@ export default function Analitica({ externo = false }) {
                     <td style={{ padding: "8px 12px", color: B.sky, fontFamily: "monospace", fontSize: 11 }}>{ing.reserva_id?.slice(0,18) || "—"}</td>
                     <td style={{ padding: "8px 12px", color: B.text }}>{ing.package_type || "—"}</td>
                     <td style={{ padding: "8px 12px", color: B.success, fontWeight: 700 }}>{fmt(ing.monto)}</td>
-                    <td style={{ padding: "8px 12px", color: B.muted }}>{ing.metodo_pago || "—"}</td>
+                    <td style={{ padding: "8px 12px", color: B.muted }}>{ing._metodo || "—"}</td>
+                    <td style={{ padding: "8px 12px" }}>
+                      <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 10, background: "rgba(255,255,255,0.06)", color: ing._estColor }}>{ing._estLabel || "—"}</span>
+                    </td>
                     <td style={{ padding: "8px 12px", color: B.muted }}>{ing.adultos ?? "—"}</td>
                     <td style={{ padding: "8px 12px", color: B.muted }}>{ing.ninos ?? "—"}</td>
                     <td style={{ padding: "8px 12px", color: B.muted }}>{ing.fecha_visita || "—"}</td>
