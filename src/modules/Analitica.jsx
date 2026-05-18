@@ -494,7 +494,10 @@ export default function Analitica({ externo = false }) {
           ) : (
             <h1 style={{ margin: 0, fontSize: 24, fontWeight: 800, color: "#fff" }}>📊 AtolonTrack</h1>
           )}
-          <div style={{ fontSize: 13, color: B.muted, marginTop: externo ? 8 : 4 }}>Analítica de conversión en tiempo real</div>
+          <div style={{ fontSize: 13, color: B.muted, marginTop: externo ? 8 : 4 }}>
+            Analítica de conversión en tiempo real
+            {!externo && <span style={{ marginLeft: 10, fontSize: 10, color: B.muted, opacity: 0.6 }}>build embudo-v3 · 2026-05-18</span>}
+          </div>
         </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
           {periodos.map(p => (

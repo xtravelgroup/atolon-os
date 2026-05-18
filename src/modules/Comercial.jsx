@@ -804,7 +804,17 @@ function LeadDetail({ lead, onClose, onUpdateEtapa }) {
                   ].map(([k, v]) => (
                     <div key={k}>
                       <div style={{ fontSize: 10, color: B.sand, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 2 }}>{k}</div>
-                      <div style={{ fontSize: 13, color: B.white, fontWeight: 600 }}>{v}</div>
+                      <div style={{ fontSize: 13, color: B.white, fontWeight: 600 }}>
+                        {k === "ID Reserva" ? (
+                          <span
+                            onClick={() => window.dispatchEvent(new CustomEvent("atolon-navigate", { detail: { modulo: "reservas", reservaId: reservaLinked.id } }))}
+                            title="Abrir reserva"
+                            style={{ color: B.sky, cursor: "pointer", textDecoration: "underline" }}
+                          >
+                            {v}
+                          </span>
+                        ) : v}
+                      </div>
                     </div>
                   ))}
                 </div>
