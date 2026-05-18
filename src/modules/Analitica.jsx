@@ -294,11 +294,18 @@ export default function Analitica({ externo = false }) {
       1: "Vio widget", 2: "Eligió fecha", 3: "Eligió paquete",
       4: "Ingresó datos", 5: "Llegó a pago", 6: "Completó pago",
     };
-    // Orden real del widget: paquete (3) antes que fecha (2).
+    // Orden real del widget: paquete (paso_3) antes que fecha (paso_2). El
+    // número de "paso" que ve el usuario es la POSICIÓN lógica (1..6), no el
+    // id interno de la columna — si no, salía "paso 1, 3, 2, 4, 5" (confuso).
     const FUNNEL_RANK = { 1: 0, 3: 1, 2: 2, 4: 3, 5: 4, 6: 5 };
     const abandArr = Object.entries(abandByStep)
-      .map(([paso, count]) => ({ paso: Number(paso), label: stepLabels[paso] || `Paso ${paso}`, count }))
-      .sort((a, b) => (FUNNEL_RANK[a.paso] ?? a.paso) - (FUNNEL_RANK[b.paso] ?? b.paso));
+      .map(([paso, count]) => ({
+        paso:  Number(paso),
+        orden: (FUNNEL_RANK[Number(paso)] ?? (Number(paso) - 1)) + 1,
+        label: stepLabels[paso] || `Paso ${paso}`,
+        count,
+      }))
+      .sort((a, b) => a.orden - b.orden);
     setAbandonos(abandArr);
 
     // ── Revenue por paquete ───────────────────────────────────────────────────
@@ -640,7 +647,7 @@ export default function Analitica({ externo = false }) {
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 12 }}>
             {abandonos.map(a => (
               <div key={a.paso} style={{ background: B.navyLight, borderRadius: 10, padding: "14px 16px" }}>
-                <div style={{ fontSize: 11, color: B.muted, marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.05em" }}>Abandonó en paso {a.paso}</div>
+                <div style={{ fontSize: 11, color: B.muted, marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.05em" }}>Abandonó en paso {a.orden}</div>
                 <div style={{ fontSize: 13, fontWeight: 600, color: B.text, marginBottom: 6 }}>{a.label}</div>
                 <div style={{ fontSize: 24, fontWeight: 800, color: B.danger }}>{a.count}</div>
               </div>
