@@ -519,44 +519,35 @@ export default function Analitica({ externo = false }) {
         {/* Embudo */}
         <div style={{ background: B.navyMid, borderRadius: 14, padding: 24, border: "1px solid rgba(255,255,255,0.07)" }}>
           <h3 style={{ margin: "0 0 4px", fontSize: 15, fontWeight: 700, color: "#fff" }}>🔽 Embudo de Conversión</h3>
-          {/* El embudo es del WIDGET WEB. Grupos/WhatsApp/Staff/Otros NO pasan
-              por el widget, así que sus "pasos" son ruido y nunca cuadran con
-              Conversiones. Para esos segmentos mostramos un mensaje claro en
-              vez de barras sin sentido. Solo aplica a all / web (o externo:ambos). */}
-          {(origen === "all" || origen === "web" || (externo && origen === "ambos")) ? (
-            <>
-              <div style={{ fontSize: 11, color: B.muted, marginBottom: 18 }}>
-                Embudo del <strong>widget web</strong> (tráfico directo + marketing). Grupos / WhatsApp / Staff se reservan por fuera del widget.
+          {/* AtolonTrack = self-service: TODA conversión pasó por el widget,
+              también las de grupo (abren el link y siguen los pasos). En grupo
+              el paquete y la fecha vienen pre-fijados por el link, así que esos
+              pasos se completan automáticamente al abrir. El embudo aplica a
+              todos los segmentos. */}
+          <div style={{ fontSize: 11, color: B.muted, marginBottom: 18 }}>
+            Embudo del <strong>widget</strong> (solo self-service). En grupos el paquete y la fecha vienen pre-fijados por el link → esos pasos se completan al abrir.
+          </div>
+          {embudos.map((p, i) => {
+            const maxCount = embudos[0]?.count || 1;
+            const pct = Math.max(0, Math.min(100, maxCount ? ((p.count / maxCount) * 100) : 0));
+            const dropPct = i > 0 && embudos[i-1].count > 0
+              ? Math.max(0, Math.round(((embudos[i-1].count - p.count) / embudos[i-1].count) * 100))
+              : null;
+            return (
+              <div key={p.paso} style={{ marginBottom: 12 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+                  <span style={{ fontSize: 12, color: B.muted }}>{p.label}</span>
+                  <span style={{ fontSize: 12, color: "#fff", fontWeight: 600 }}>
+                    {p.count.toLocaleString("es-CO")}
+                    {dropPct && <span style={{ color: B.danger, marginLeft: 8 }}>-{dropPct}%</span>}
+                  </span>
+                </div>
+                <div style={{ height: 8, background: "rgba(255,255,255,0.08)", borderRadius: 4, overflow: "hidden" }}>
+                  <div style={{ height: "100%", width: `${pct}%`, background: p.paso === 6 ? B.success : B.sky, borderRadius: 4, transition: "width 0.5s" }} />
+                </div>
               </div>
-              {embudos.map((p, i) => {
-                const maxCount = embudos[0]?.count || 1;
-                const pct = Math.max(0, Math.min(100, maxCount ? ((p.count / maxCount) * 100) : 0));
-                const dropPct = i > 0 && embudos[i-1].count > 0
-                  ? Math.max(0, Math.round(((embudos[i-1].count - p.count) / embudos[i-1].count) * 100))
-                  : null;
-                return (
-                  <div key={p.paso} style={{ marginBottom: 12 }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
-                      <span style={{ fontSize: 12, color: B.muted }}>{p.label}</span>
-                      <span style={{ fontSize: 12, color: "#fff", fontWeight: 600 }}>
-                        {p.count.toLocaleString("es-CO")}
-                        {dropPct && <span style={{ color: B.danger, marginLeft: 8 }}>-{dropPct}%</span>}
-                      </span>
-                    </div>
-                    <div style={{ height: 8, background: "rgba(255,255,255,0.08)", borderRadius: 4, overflow: "hidden" }}>
-                      <div style={{ height: "100%", width: `${pct}%`, background: p.paso === 6 ? B.success : B.sky, borderRadius: 4, transition: "width 0.5s" }} />
-                    </div>
-                  </div>
-                );
-              })}
-            </>
-          ) : (
-            <div style={{ fontSize: 12, color: B.muted, padding: "16px 0 6px", lineHeight: 1.55 }}>
-              Este segmento <strong style={{ color: "#fff" }}>no pasa por el widget web</strong>, así que no tiene
-              embudo de conversión. Sus reservas e ingresos se ven en
-              <strong style={{ color: "#fff" }}> “🎯 Origen del Cliente”</strong> y en los KPIs de arriba.
-            </div>
-          )}
+            );
+          })}
         </div>
 
         {/* Canales */}

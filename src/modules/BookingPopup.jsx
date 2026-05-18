@@ -464,6 +464,18 @@ export default function BookingPopup() {
         setCalYear(Number(y));
         setCalMonth(Number(m) - 1);
       }
+      // El link de grupo auto-fija paquete y fecha (grupoLock=true). El cliente
+      // SÍ entra al widget y sigue los pasos, así que registramos esos pasos
+      // del embudo como completados al abrir (orden real: paquete → fecha).
+      // Secuenciado para no crear filas de embudo duplicadas en carrera.
+      if (prod) {
+        AtolanTrack.embudo_paso(3, { producto: prod.tipo, package_type: prod.tipo, pax: prod.minA })
+          .then(() => {
+            if (data.fecha) AtolanTrack.embudo_paso(2, { fecha: data.fecha, producto: prod.tipo, package_type: prod.tipo });
+          });
+      } else if (data.fecha) {
+        AtolanTrack.embudo_paso(2, { fecha: data.fecha });
+      }
       setGrupoLock(true);
       setStep(1);
     });
