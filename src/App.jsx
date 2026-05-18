@@ -461,6 +461,7 @@ export default function App() {
   const [waPhone, setWaPhone]           = useState(null);
   const [mustChange, setMustChange]     = useState(false); // force password change
   const [appReady, setAppReady]         = useState(false); // prevents Chrome blue flash on first login
+  const [nuevaVersion, setNuevaVersion] = useState(false);  // deploy nuevo detectado
 
   useEffect(() => {
     // Timeout de seguridad: si getSession no responde en 4s, asumir no autenticado
@@ -502,6 +503,33 @@ export default function App() {
 
   const navigate = (mod) => setActiveModule(mod);
 
+  const aplicarActualizacion = () => {
+    try {
+      if (typeof caches !== "undefined") {
+        caches.keys()
+          .then(ks => Promise.all(ks.map(k => caches.delete(k))))
+          .finally(() => window.location.reload());
+        return;
+      }
+    } catch { /* noop */ }
+    window.location.reload();
+  };
+
+  const VersionBanner = () => nuevaVersion ? (
+    <div
+      onClick={aplicarActualizacion}
+      title="Recargar para actualizar"
+      style={{
+        position: "fixed", top: 0, left: 0, right: 0, zIndex: 99999,
+        background: "#7C3AED", color: "#fff", textAlign: "center",
+        padding: "8px 14px", fontSize: 13, fontWeight: 700, cursor: "pointer",
+        boxShadow: "0 2px 10px rgba(0,0,0,0.35)",
+      }}
+    >
+      🔄 Hay una versión nueva de Atolon OS — clic aquí para actualizar
+    </div>
+  ) : null;
+
   // Listen for cross-module navigation requests (e.g. CXC → Reservas, Clientes → Reservas)
   useEffect(() => {
     const handler = (e) => {
@@ -530,6 +558,33 @@ export default function App() {
       window.removeEventListener("atolon-navigate-back", backHandler);
     };
   }, [activeModule]);
+
+  // ── Detector de versión nueva desplegada ─────────────────────────────────
+  // El SPA mantiene el JS viejo en memoria mientras navegas dentro de la app
+  // (no re-descarga chunks ya cargados). Si Vercel desplegó otra versión, el
+  // index servido referencia otro entry hash. Lo detectamos comparando contra
+  // /booking (ruta SPA pública estable, sin redirect ni auth) y ofrecemos
+  // recargar — sin auto-reload para no perder datos en formularios.
+  useEffect(() => {
+    const entryRe = /assets\/index-[A-Za-z0-9_-]+\.js/;
+    const current = Array.from(document.querySelectorAll('script[type="module"]'))
+      .map(s => (s.getAttribute("src") || "").match(entryRe)?.[0])
+      .find(Boolean) || null;
+    if (!current) return;
+    let stop = false;
+    const check = async () => {
+      try {
+        const res = await fetch("/booking", { cache: "no-store" });
+        if (!res.ok) return;
+        const html = await res.text();
+        const deployed = html.match(entryRe)?.[0];
+        if (deployed && deployed !== current && !stop) setNuevaVersion(true);
+      } catch { /* offline — ignorar */ }
+    };
+    const t  = setTimeout(check, 45000);
+    const id = setInterval(check, 150000);
+    return () => { stop = true; clearTimeout(t); clearInterval(id); };
+  }, []);
 
   // AtolanTrack: page_view on public route load
   useEffect(() => {
@@ -613,6 +668,7 @@ export default function App() {
   // Logged in — show OS (internal, no WhatsApp button)
   return (
     <ErrorBoundary>
+      <VersionBanner />
       <AtolanOS
         activeModule={activeModule}
         onNavigate={navigate}
