@@ -41,12 +41,15 @@ export default function MeseroPortal() {
   const [np2, setNp2] = useState("");
 
   // pedido
-  const [step, setStep]   = useState("login");   // login | setpin | spots | menu | review | success
+  const [step, setStep]   = useState("login");   // login|setpin|spots|datos|menu|review|success
   const [spot, setSpot]   = useState(null);
   const [cart, setCart]   = useState([]);
   const [fc, setFc]       = useState("");
   const [notas, setNotas] = useState("");
-  const [pax, setPax]     = useState(1);
+  const [pax, setPax]     = useState(2);
+  const [huesped, setHuesped] = useState("");
+  const [reservaId, setReservaId] = useState(null);
+  const [pasadias, setPasadias] = useState([]); // pasadías de hoy sin mesa asignada
   const [okCodigo, setOkCodigo] = useState("");
   const [okLoggro, setOkLoggro] = useState(false);
 
@@ -54,12 +57,20 @@ export default function MeseroPortal() {
     (async () => {
       // El floor plan lo renderiza PoolFloorPlanPicker (mismo de Pool Service),
       // que trae sus propios spots/asignaciones. Aquí solo meseros + menú.
-      const [{ data: ml }, { data: it }] = await Promise.all([
+      const hoy = new Date().toLocaleString("en-CA", { timeZone: "America/Bogota" }).slice(0, 10);
+      const [{ data: ml }, { data: it }, { data: rv }, { data: asg }] = await Promise.all([
         supabase.rpc("mesero_list"),
         supabase.from("menu_items").select("id, nombre, descripcion, precio, categoria, menu_tipo, loggro_id, precio_botella, loggro_id_botella").in("menu_tipo", ["restaurant", "bebidas"]).eq("activo", true),
+        supabase.from("reservas").select("id, nombre, pax, pax_a, pax_n").eq("fecha", hoy).in("estado", ["confirmado", "check_in", "no_show"]),
+        supabase.from("floorplan_asignaciones").select("reserva_id").eq("fecha", hoy),
       ]);
       setMeseros(ml || []);
       setItems(it || []);
+      const conMesa = new Set((asg || []).map(a => a.reserva_id).filter(Boolean));
+      setPasadias((rv || [])
+        .filter(r => r.nombre && !conMesa.has(r.id))
+        .map(r => ({ id: r.id, nombre: r.nombre, pax: r.pax || ((r.pax_a || 0) + (r.pax_n || 0)) || 2 }))
+        .sort((a, b) => a.nombre.localeCompare(b.nombre)));
       try {
         const s = JSON.parse(sessionStorage.getItem(SS_KEY) || "null");
         if (s?.loggro_id && s?.nombre) { setMesero(s); setStep("spots"); }
@@ -143,6 +154,8 @@ export default function MeseroPortal() {
       subtotal,
       total:       subtotal,
       notas:       notas || null,
+      huesped:     huesped || null,
+      reserva_id:  reservaId || null,
       estado:      "recibido",
       creado_por:  mesero?.nombre || "mesero",
     }).select().maybeSingle();
@@ -187,7 +200,7 @@ export default function MeseroPortal() {
     setOkCodigo(codigo); setOkLoggro(loggroOk); setStep("success");
   };
 
-  const nuevoPedido = () => { setCart([]); setNotas(""); setPax(1); setSpot(null); setStep("spots"); setOkCodigo(""); };
+  const nuevoPedido = () => { setCart([]); setNotas(""); setPax(2); setHuesped(""); setReservaId(null); setSpot(null); setStep("spots"); setOkCodigo(""); };
 
   // ── UI ────────────────────────────────────────────────────────────────
   if (boot) return <Wrap><div style={{ padding: 60, textAlign: "center", color: C.textMid }}>Cargando…</div></Wrap>;
@@ -263,7 +276,7 @@ export default function MeseroPortal() {
         <div style={{ fontSize: 13, color: C.textMid, margin: "16px 0 12px" }}>Toca la cama del pedido en el plano:</div>
         <PoolFloorPlanPicker
           selectedSpotId={spot?.id || null}
-          onSelectSpot={(s) => { setSpot(s); setStep("menu"); }}
+          onSelectSpot={(s) => { setSpot(s); setStep("datos"); }}
           showEstadoColor={true}
           size="lg"
         />
@@ -273,7 +286,57 @@ export default function MeseroPortal() {
 
   // Menú / Review
   return (
-    <Wrap title={`${spot?.id} · ${mesero?.nombre || ""}`} onBack={step === "menu" ? () => { setSpot(null); setStep("spots"); } : () => setStep("menu")}>
+    <Wrap
+      title={`${spot?.id} · ${mesero?.nombre || ""}`}
+      onBack={
+        step === "datos"  ? () => { setSpot(null); setReservaId(null); setStep("spots"); }
+        : step === "menu" ? () => setStep("datos")
+        : () => setStep("menu")
+      }
+      backLabel={step === "datos" ? "Volver al plano" : step === "menu" ? "Volver" : "Volver al menú"}
+    >
+      {step === "datos" && (
+        <div style={{ paddingBottom: 90 }}>
+          <div style={{ fontSize: 13, color: C.textMid, margin: "16px 0 10px" }}>¿A nombre de quién es el pedido?</div>
+
+          {pasadias.length > 0 && (
+            <>
+              <div style={{ fontSize: 11, color: C.accent, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 }}>Pasadías de hoy (sin mesa)</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 16 }}>
+                {pasadias.map(p => {
+                  const selP = reservaId === p.id;
+                  return (
+                    <button key={p.id} onClick={() => { setHuesped(p.nombre); setReservaId(p.id); setPax(p.pax); }}
+                      style={{ textAlign: "left", background: selP ? C.primary : C.card, color: selP ? C.bg : C.text, border: `1px solid ${selP ? C.primary : C.line}`, borderRadius: 12, padding: "14px 16px", fontSize: 15, fontWeight: 700, cursor: "pointer", minHeight: 52, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <span>{p.nombre}</span>
+                      <span style={{ fontSize: 12, opacity: 0.7 }}>{p.pax} pax</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </>
+          )}
+
+          <Label>{pasadias.length > 0 ? "O escribe el nombre" : "Nombre del cliente"}</Label>
+          <input value={huesped} onChange={e => { setHuesped(e.target.value); setReservaId(null); }}
+            placeholder="Nombre del huésped / mesa" style={inp} />
+
+          <Label style={{ marginTop: 14 }}>Número de personas</Label>
+          <div style={{ display: "flex", alignItems: "center", gap: 14, marginTop: 4 }}>
+            <button onClick={() => setPax(p => Math.max(1, Number(p) - 1))} style={{ ...qbtn, width: 48, height: 48, fontSize: 22 }}>−</button>
+            <span style={{ fontSize: 26, fontWeight: 800, minWidth: 40, textAlign: "center" }}>{pax}</span>
+            <button onClick={() => setPax(p => Number(p) + 1)} style={{ ...qbtn, width: 48, height: 48, fontSize: 22 }}>+</button>
+          </div>
+
+          <div style={{ position: "fixed", left: 0, right: 0, bottom: 0, background: C.card, borderTop: `1px solid ${C.line}`, padding: 14 }}>
+            <button onClick={() => { if (!String(huesped).trim()) return alert("Indica el nombre"); setStep("menu"); }}
+              style={{ width: "100%", background: C.primary, color: C.bg, border: "none", borderRadius: 12, padding: 16, fontWeight: 800, fontSize: 16, cursor: "pointer", minHeight: 54 }}>
+              Continuar al menú →
+            </button>
+          </div>
+        </div>
+      )}
+
       {step === "menu" && (
         <>
           <div style={{ display: "flex", gap: 6, overflowX: "auto", padding: "12px 0" }}>
@@ -355,9 +418,14 @@ export default function MeseroPortal() {
             </div>
           </div>
           <div style={{ background: C.card, borderRadius: 12, padding: 16, marginBottom: 12 }}>
-            <Label>Pax</Label>
-            <input type="tel" inputMode="numeric" value={pax} onChange={e => setPax(e.target.value.replace(/\D/g, ""))} style={inp} />
-            <Label style={{ marginTop: 12 }}>Notas (opcional)</Label>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+              <div>
+                <div style={{ fontSize: 11, color: C.textLight, textTransform: "uppercase" }}>Cliente</div>
+                <div style={{ fontSize: 15, fontWeight: 800, color: C.text }}>{huesped || "—"} · {pax} pax</div>
+              </div>
+              <button onClick={() => setStep("datos")} style={{ background: "transparent", border: `1px solid ${C.line}`, color: C.primary, borderRadius: 8, padding: "8px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer", minHeight: 40 }}>Editar</button>
+            </div>
+            <Label>Notas (opcional)</Label>
             <textarea value={notas} onChange={e => setNotas(e.target.value)} placeholder="Sin hielo, alergias, etc."
               style={{ ...inp, minHeight: 70, resize: "vertical" }} />
           </div>
@@ -374,17 +442,22 @@ export default function MeseroPortal() {
 }
 
 // ── Sub-componentes ───────────────────────────────────────────────────────
-function Wrap({ title, children, onBack, onLogout }) {
+function Wrap({ title, children, onBack, backLabel = "Volver", onLogout }) {
   return (
     <div style={{ minHeight: "100vh", background: C.bg, color: C.text }}>
-      <div style={{ position: "sticky", top: 0, zIndex: 5, background: C.bg, borderBottom: `1px solid ${C.line}`, padding: "14px 16px", display: "flex", alignItems: "center", gap: 10 }}>
-        {onBack && <button onClick={onBack} style={{ background: "transparent", border: "none", color: C.primary, fontSize: 22, cursor: "pointer", padding: 0 }}>‹</button>}
-        <div style={{ flex: 1 }}>
+      <div style={{ position: "sticky", top: 0, zIndex: 5, background: C.bg, borderBottom: `1px solid ${C.line}`, padding: "12px 14px", display: "flex", alignItems: "center", gap: 10 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 10, color: C.accent, letterSpacing: "0.2em", textTransform: "uppercase" }}>Atolón · Meseros</div>
-          {title && <div style={{ fontSize: 17, fontWeight: 800 }}>{title}</div>}
+          {title && <div style={{ fontSize: 16, fontWeight: 800, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{title}</div>}
         </div>
         {onLogout && <button onClick={onLogout} style={{ background: "transparent", border: `1px solid ${C.line}`, color: C.textMid, fontSize: 11, borderRadius: 8, padding: "6px 10px", cursor: "pointer" }}>Salir</button>}
       </div>
+      {onBack && (
+        <button onClick={onBack}
+          style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", background: C.card, border: "none", borderBottom: `1px solid ${C.line}`, color: C.primary, fontSize: 16, fontWeight: 800, padding: "16px", cursor: "pointer", minHeight: 56 }}>
+          <span style={{ fontSize: 22, lineHeight: 1 }}>‹</span> {backLabel}
+        </button>
+      )}
       <div style={{ maxWidth: 640, margin: "0 auto", padding: 16 }}>{children}</div>
     </div>
   );
