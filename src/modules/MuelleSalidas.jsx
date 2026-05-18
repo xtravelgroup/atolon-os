@@ -33,6 +33,8 @@ const SEL = { background: B.navyLight, color: "#fff", border: "1px solid rgba(25
 
 function ReservaRow({ r, isMobile, salidas = [], embarcaciones = [], onReasignar, zarpado, onDragStart, onDragEnd }) {
   const emb = r.embarcacion_asignada;
+  const [editing, setEditing] = useState(false);
+  const propiaEmb = embarcaciones.find(x => x.nombre === emb)?.propiedad === "propia";
   return (
     <div
       draggable={!zarpado}
@@ -62,19 +64,29 @@ function ReservaRow({ r, isMobile, salidas = [], embarcaciones = [], onReasignar
             ⛵ {emb}
           </div>
         )
-      ) : (
-        <div style={{ display: "flex", gap: 6, alignItems: "center", flexShrink: 0 }}>
-          <select value={emb || ""} title="Embarcación"
+      ) : editing ? (
+        <div style={{ display: "flex", gap: 6, alignItems: "center", flexShrink: 0, flexWrap: "wrap" }}>
+          <select value={emb || ""} title="Embarcación" autoFocus
             onChange={e => onReasignar && onReasignar(r, { embarcacion_asignada: e.target.value || null })}
             style={SEL}>
             <option value="">⛵ Sin embarcación</option>
             {embarcaciones.map(em => <option key={em.nombre} value={em.nombre}>{em.nombre}{em.propiedad === "propia" ? " ★" : ""}</option>)}
           </select>
-          <select value={r.salida_id || ""} title="Horario / salida"
+          <select value={r.salida_id || ""} title="Horario / salida (solo abiertas)"
             onChange={e => onReasignar && onReasignar(r, { salida_id: e.target.value })}
             style={SEL}>
             {salidas.map(s => <option key={s.id} value={s.id}>{fmtHora12(s.hora)} → {fmtHora12(s.hora_regreso || HORARIO_REGRESO[s.id])}</option>)}
           </select>
+          <button onClick={() => setEditing(false)} title="Listo"
+            style={{ background: B.success, border: "none", color: "#fff", borderRadius: 8, fontSize: 11, padding: "5px 10px", fontWeight: 700, cursor: "pointer" }}>✓ Listo</button>
+        </div>
+      ) : (
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexShrink: 0 }}>
+          {emb
+            ? <span style={{ fontSize: 11, background: B.sky + "22", color: B.sky, padding: "3px 10px", borderRadius: 20, fontWeight: 600, whiteSpace: "nowrap" }}>⛵ {emb}{propiaEmb ? " ★" : ""}</span>
+            : <span style={{ fontSize: 11, background: B.warning + "22", color: B.warning, padding: "3px 10px", borderRadius: 20, fontWeight: 700, whiteSpace: "nowrap" }}>⚠ Sin embarcación</span>}
+          <button onClick={() => setEditing(true)} title="Cambiar embarcación u horario"
+            style={{ background: "transparent", border: `1px solid ${B.navyLight}`, color: "rgba(255,255,255,0.7)", borderRadius: 8, fontSize: 11, padding: "4px 10px", cursor: "pointer", whiteSpace: "nowrap" }}>✎ Cambiar</button>
         </div>
       )}
     </div>
