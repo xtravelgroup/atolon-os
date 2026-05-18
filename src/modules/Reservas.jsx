@@ -3739,7 +3739,11 @@ export default function Reservas() {
     const matchSearch = r.nombre.toLowerCase().includes(search.toLowerCase()) ||
                         r.id.toLowerCase().includes(search.toLowerCase()) ||
                         r.tipo.toLowerCase().includes(search.toLowerCase());
-    const matchEstado = filterEstado === "todos" || r.estado === filterEstado;
+    // "Todos" muestra confirmadas + pendientes + demás, pero NO canceladas.
+    // Las canceladas solo aparecen al elegir explícitamente el filtro "Cancelado".
+    const matchEstado = filterEstado === "todos"
+      ? r.estado !== "cancelado"
+      : r.estado === filterEstado;
     return matchSearch && matchEstado;
   });
 
