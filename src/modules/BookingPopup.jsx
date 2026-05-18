@@ -730,6 +730,18 @@ export default function BookingPopup() {
         return;
       }
     }
+    // Final guard: respetar el mínimo de personas del paquete (ej. Exclusive
+    // Pass = mín. 2 adultos). El gate del paso 1 ya lo valida en la UI, pero
+    // esto evita que un deep-link / cambio de idioma / estado raro cree una
+    // reserva por debajo del mínimo (caso real: Exclusive Pass con 1 pax).
+    const _minA = product?.minA || 1;
+    if (product && paxA < _minA) {
+      alert(isEN
+        ? `${product.tipo} requires a minimum of ${_minA} adults. Please add more guests.`
+        : `${product.tipo} requiere mínimo ${_minA} personas. Agrega más pasajeros.`);
+      setSaving(false);
+      return;
+    }
     setSaving(true);
     const reservaId  = `WEB-${Date.now()}`;
     const linkExpira = new Date(Date.now() + 15 * 60 * 1000).toISOString();
