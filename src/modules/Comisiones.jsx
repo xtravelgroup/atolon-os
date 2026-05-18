@@ -41,9 +41,10 @@ function calcComision(r, pasadiasMap, aliadoComisionPct = null) {
   if (r.canal === "Cortesía" || r.forma_pago === "Cortesía") return 0;
   if (!r._esGrupo && (Number(r.total) || 0) === 0) return 0;
 
-  // Si el aliado tiene comisión = 0 → es modelo mayorista (paga neto, se queda con su markup).
-  // Atolón no le debe comisión, sin importar lo que diga el convenio.
-  if (aliadoComisionPct === 0) return 0;
+  // Modelo uniforme para TODAS las agencias: la comisión es el spread entre
+  // lo cobrado y la tarifa neta de esa agencia (cobrado − neto, si > 0).
+  // No existe excepción "mayorista" — antes un aliado con comision=0 daba $0
+  // y su venta no aparecía en Comisiones (ej. Mantra).
 
   // For grupo entries, calculate per pasadía line
   if (r._esGrupo && r._pasadias_org) {
