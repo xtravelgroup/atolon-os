@@ -932,7 +932,19 @@ export default function Analitica({ externo = false }) {
               <tbody>
                 {ingresos.map(ing => (
                   <tr key={ing.id} style={{ borderBottom: "1px solid rgba(255,255,255,0.04)" }}>
-                    <td style={{ padding: "8px 12px", color: B.sky, fontFamily: "monospace", fontSize: 11 }}>{ing.reserva_id?.slice(0,18) || "—"}</td>
+                    <td style={{ padding: "8px 12px", fontFamily: "monospace", fontSize: 11 }}>
+                      {ing.reserva_id && ing._estLabel !== "Sin reserva" ? (
+                        <span
+                          onClick={() => window.dispatchEvent(new CustomEvent("atolon-navigate", { detail: { modulo: "reservas", reservaId: ing.reserva_id } }))}
+                          title="Abrir reserva"
+                          style={{ color: B.sky, cursor: "pointer", textDecoration: "underline" }}
+                        >
+                          {ing.reserva_id.slice(0,18)}
+                        </span>
+                      ) : (
+                        <span style={{ color: B.muted }}>{ing.reserva_id?.slice(0,18) || "—"}</span>
+                      )}
+                    </td>
                     <td style={{ padding: "8px 12px", color: B.text }}>{ing.package_type || "—"}</td>
                     <td style={{ padding: "8px 12px", color: B.success, fontWeight: 700 }}>{fmt(ing.monto)}</td>
                     <td style={{ padding: "8px 12px", color: B.muted }}>{ing._metodo || "—"}</td>
