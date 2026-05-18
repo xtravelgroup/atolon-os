@@ -134,6 +134,9 @@ function SalidaBloque({ salida, reservas, zarpoAt, onZarpo, isMobile, salidas = 
   });
   const embarcaciones = Object.keys(embGrupos).filter(k => k !== "__sin__");
   const sinEmb = embGrupos["__sin__"] || [];
+  const paxDe = (rs) => (rs || []).reduce((t, r) => t + (r.pax_a || r.pax || 1) + (r.pax_n || 0), 0);
+  const paxSin = paxDe(sinEmb);
+  const paxAsig = paxTotal - paxSin;
 
   const zarpado = !!zarpoAt;
   const ahoraMin = (() => {
@@ -179,7 +182,10 @@ function SalidaBloque({ salida, reservas, zarpoAt, onZarpo, isMobile, salidas = 
             <span>⛵ Hora de salida: <strong style={{ color: B.sky }}>{fmtHora12(salida.hora)}</strong></span>
             <span>👥 {paxTotal} pax{reservas.length > 1 ? ` · ${reservas.length} reservas` : ""}</span>
             {conCheckin > 0 && <span style={{ color: B.success }}>✓ {conCheckin} con check-in</span>}
-            {embarcaciones.length > 0 && <span>⛵ {embarcaciones.join(", ")}</span>}
+            {embarcaciones.length > 0 && (
+              <span>⛵ {embarcaciones.map(e => `${e} (${paxDe(embGrupos[e])})`).join(" · ")}</span>
+            )}
+            {paxSin > 0 && <span style={{ color: B.warning }}>⚠ {paxSin} sin embarcación</span>}
           </div>
         </div>
 
