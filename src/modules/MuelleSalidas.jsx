@@ -135,7 +135,7 @@ function SalidaBloque({ salida, reservas, zarpoAt, onZarpo, isMobile, salidas = 
         <div>
           <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
             <span style={{ fontWeight: 800, fontSize: 18, fontFamily: "'Barlow Condensed',sans-serif", letterSpacing: 0.5, color: zarpado ? B.success : "#fff" }}>
-              {zarpado ? "✓ " : proxima ? "🔔 " : "⛵ "}{labelSalida(salida)} → regresa {fmtHora12(horaRegreso)}
+              {zarpado ? "✓ " : proxima ? "🔔 " : "⛵ "}Regreso {fmtHora12(horaRegreso)}
             </span>
             {proxima && !zarpado && (
               <span style={{ fontSize: 11, background: B.warning + "33", color: B.warning, padding: "2px 8px", borderRadius: 20, fontWeight: 700 }}>PRÓXIMA SALIDA</span>
