@@ -28,6 +28,7 @@ const catRank = (cat) => {
 
 export default function PoolServicePortal({ qr }) {
   const [area, setArea]     = useState(null);
+  const [spot, setSpot]     = useState(null);  // modo cama: QR de un floorplan_spot
   const [items, setItems]   = useState([]);
   const [loading, setLoad]  = useState(true);
   const [carrito, setCart]  = useState([]);
@@ -45,10 +46,21 @@ export default function PoolServicePortal({ qr }) {
       if (!qr) return setLoad(false);
       const [{ data: a }, { data: i }] = await Promise.all([
         supabase.from("pool_service_areas").select("*").eq("qr_code", qr).eq("activo", true).maybeSingle(),
-        supabase.from("menu_items").select("id, nombre, descripcion, precio, categoria, menu_tipo").in("menu_tipo", ["restaurant", "bebidas"]).eq("activo", true),
+        supabase.from("menu_items").select("id, nombre, descripcion, precio, categoria, menu_tipo, loggro_id").in("menu_tipo", ["restaurant", "bebidas"]).eq("activo", true),
       ]);
-      setArea(a);
       setItems(i || []);
+      if (a) {
+        setArea(a);
+      } else {
+        // No es un área: probar como cama del floor plan (QR por spot_id)
+        const { data: sp } = await supabase.from("floorplan_spots")
+          .select("id, zona, loggro_mesa_id").eq("id", qr).eq("activo", true).maybeSingle();
+        if (sp) {
+          setSpot(sp);
+          const zlbl = (sp.zona || "").replace("piscina_derecha", "Piscina Derecha").replace("piscina_izquierda", "Piscina Izquierda").replace("piscina_central", "Piscina Centro").replace("piscina_", "P. ").replace(/_/g, " ");
+          setArea({ id: sp.id, nombre: sp.id, tipo: "piscina", _zona: zlbl }); // header del Shell
+        }
+      }
       setLoad(false);
     })();
   }, [qr]);
@@ -88,7 +100,7 @@ export default function PoolServicePortal({ qr }) {
   const add = (it) => setCart(prev => {
     const ex = prev.find(x => x.id === it.id);
     if (ex) return prev.map(x => x.id === it.id ? { ...x, cantidad: x.cantidad + 1 } : x);
-    return [...prev, { id: it.id, nombre: it.nombre, precio: it.precio || 0, cantidad: 1, notas: "" }];
+    return [...prev, { id: it.id, nombre: it.nombre, precio: it.precio || 0, loggro_id: it.loggro_id || null, cantidad: 1, notas: "" }];
   });
   const setCant = (id, c) => {
     const n = Number(c);
@@ -100,21 +112,41 @@ export default function PoolServicePortal({ qr }) {
     if (carrito.length === 0) return alert("Agrega algo al pedido");
     setSaving(true);
     const codigo = `PS-${Date.now()}`;
-    const { error } = await supabase.from("pool_service_pedidos").insert({
-      codigo,
-      area_id:     area.id,
-      area_nombre: area.nombre,
-      huesped:     huesped || null,
-      pax:         Number(pax) || 1,
-      items:       carrito,
-      subtotal,
-      total:       subtotal,
-      notas:       notas || null,
-      estado:      "recibido",
-      creado_por:  "huesped",
-    });
+    const row = spot
+      ? { codigo, spot_id: spot.id, area_nombre: `${spot.id} · ${area._zona || ""}`, huesped: huesped || null, pax: Number(pax) || 1, items: carrito, subtotal, total: subtotal, notas: notas || null, estado: "recibido", creado_por: "huesped" }
+      : { codigo, area_id: area.id, area_nombre: area.nombre, huesped: huesped || null, pax: Number(pax) || 1, items: carrito, subtotal, total: subtotal, notas: notas || null, estado: "recibido", creado_por: "huesped" };
+    const { data: ins, error } = await supabase.from("pool_service_pedidos").insert(row).select().maybeSingle();
+    if (error) { setSaving(false); return alert("Error al enviar el pedido: " + error.message); }
+
+    // Modo cama: enviar a la mesa de Loggro del spot (igual que Room Service)
+    if (spot?.loggro_mesa_id) {
+      try {
+        const anon = import.meta.env.VITE_SUPABASE_ANON_KEY;
+        const lgItems = carrito.map(c => ({
+          productId: c.loggro_id, qty: c.cantidad,
+          unit_price: Number(c.precio) || 0,
+          notes: c.notas ? [String(c.notas)] : (notas ? [String(notas)] : []),
+        })).filter(x => x.productId);
+        if (lgItems.length > 0) {
+          const res = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/loggro-sync/create-order`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", apikey: anon, Authorization: `Bearer ${anon}` },
+            body: JSON.stringify({ mesaId: spot.loggro_mesa_id, groupName: `Pool · ${spot.id}${huesped ? " · " + huesped : ""}`, items: lgItems }),
+          });
+          const d = await res.json();
+          if (d.ok) {
+            const arr = Array.isArray(d.order) ? d.order : [d.order];
+            await supabase.from("pool_service_pedidos").update({
+              estado: "enviado_loggro", enviado_loggro_at: new Date().toISOString(),
+              loggro_order_id: arr[0]?._id || arr[0]?.id || null,
+              loggro_group_id: arr[0]?.group || null, loggro_response: d.order,
+              updated_at: new Date().toISOString(),
+            }).eq("id", ins?.id || codigo);
+          }
+        }
+      } catch { /* el pedido ya quedó guardado; staff lo reenvía */ }
+    }
     setSaving(false);
-    if (error) return alert("Error al enviar el pedido: " + error.message);
     setPedidoCodigo(codigo);
     setPedidoEstado("recibido");
     setStep("success");

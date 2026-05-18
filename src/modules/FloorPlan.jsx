@@ -462,6 +462,44 @@ function DrawerSpot({ spot, asign, loggroMesas = [], onClose, onSave, saving }) 
           })()}
         </div>
 
+        {/* QR self-service de la cama — igual que Room Service */}
+        {(() => {
+          const url   = `${window.location.origin}/pool/${spot.id}`;
+          const qrSrc = `https://api.qrserver.com/v1/create-qr-code/?size=600x600&bgcolor=ffffff&color=000000&margin=0&data=${encodeURIComponent(url)}`;
+          const imprimir = () => {
+            const w = window.open("", "_blank", "width=420,height=560");
+            if (!w) return;
+            w.document.write(`<!doctype html><html><head><title>QR ${spot.id}</title><style>
+              body{font-family:system-ui,sans-serif;text-align:center;margin:0;padding:32px}
+              h1{font-size:42px;margin:0 0 4px} .s{color:#555;font-size:14px;margin-bottom:18px}
+              img{width:340px;height:340px} .u{font-family:monospace;font-size:11px;color:#888;margin-top:14px;word-break:break-all}
+            </style></head><body><h1>${spot.id}</h1><div class="s">Escanea para pedir · Atolón Beach Club</div>
+            <img src="${qrSrc}" alt="QR ${spot.id}" /><div class="u">${url}</div>
+            <script>window.onload=function(){setTimeout(function(){window.print()},400)}<\/script></body></html>`);
+            w.document.close();
+          };
+          return (
+            <div style={{ marginTop: 18, paddingTop: 14, borderTop: `1px solid ${B.navyLight}` }}>
+              <label style={{ fontSize: 12, color: B.sand, fontWeight: 600, display: "block", marginBottom: 8 }}>
+                QR Self-Service (cliente pide solo)
+              </label>
+              <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+                <img src={qrSrc} alt={`QR ${spot.id}`} style={{ width: 96, height: 96, background: "#fff", borderRadius: 8, padding: 4 }} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 10, color: B.muted, fontFamily: "monospace", wordBreak: "break-all", marginBottom: 8 }}>{url}</div>
+                  <button onClick={imprimir}
+                    style={{ background: B.sky, color: B.navy, border: "none", borderRadius: 8, padding: "8px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+                    🖨️ Imprimir QR
+                  </button>
+                </div>
+              </div>
+              <div style={{ fontSize: 10, color: B.muted, marginTop: 6 }}>
+                El cliente escanea, ve el menú y su pedido va directo a la mesa de Loggro de esta cama.
+              </div>
+            </div>
+          );
+        })()}
+
         <button onClick={() => onSave({ estado, huesped, pax, notas, reserva_id: reservaId, loggro_mesa_id: loggroMesaId })}
           disabled={saving}
           style={{
