@@ -8,6 +8,18 @@ const IS = { width: "100%", padding: "10px 14px", borderRadius: 8, background: B
 
 const fmtHora = (h) => h ? h.slice(0, 5) : "—";
 
+// "08:30" → "8:30 AM" · "16:30" → "4:30 PM"
+const fmtHora12 = (h) => {
+  if (!h || h === "—") return "—";
+  const [H, M] = String(h).slice(0, 5).split(":").map(Number);
+  if (isNaN(H)) return "—";
+  const ampm = H >= 12 ? "PM" : "AM";
+  const h12 = H % 12 === 0 ? 12 : H % 12;
+  return `${h12}:${String(M || 0).padStart(2, "0")} ${ampm}`;
+};
+// Las salidas se nombran por su HORA, no "Primera/Segunda Salida".
+const labelSalida = (s) => s ? `Salida ${fmtHora12(s.hora)}` : "Salida";
+
 // Departure times per salida
 const HORARIO_REGRESO = {
   S1: "15:30",
@@ -56,7 +68,7 @@ function ReservaRow({ r, isMobile, salidas = [], embarcaciones = [], onReasignar
           <select value={r.salida_id || ""} title="Horario / salida"
             onChange={e => onReasignar && onReasignar(r, { salida_id: e.target.value })}
             style={SEL}>
-            {salidas.map(s => <option key={s.id} value={s.id}>{s.nombre} · {s.hora}</option>)}
+            {salidas.map(s => <option key={s.id} value={s.id}>{fmtHora12(s.hora)} → {fmtHora12(s.hora_regreso || HORARIO_REGRESO[s.id])}</option>)}
           </select>
         </div>
       )}
@@ -115,7 +127,7 @@ function SalidaBloque({ salida, reservas, zarpoAt, onZarpo, isMobile, salidas = 
         <div>
           <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
             <span style={{ fontWeight: 800, fontSize: 18, fontFamily: "'Barlow Condensed',sans-serif", letterSpacing: 0.5, color: zarpado ? B.success : "#fff" }}>
-              {zarpado ? "✓ " : proxima ? "🔔 " : "⛵ "}{salida.nombre}
+              {zarpado ? "✓ " : proxima ? "🔔 " : "⛵ "}{labelSalida(salida)} → regresa {fmtHora12(horaRegreso)}
             </span>
             {proxima && !zarpado && (
               <span style={{ fontSize: 11, background: B.warning + "33", color: B.warning, padding: "2px 8px", borderRadius: 20, fontWeight: 700 }}>PRÓXIMA SALIDA</span>
@@ -125,8 +137,8 @@ function SalidaBloque({ salida, reservas, zarpoAt, onZarpo, isMobile, salidas = 
             )}
           </div>
           <div style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", marginTop: 4, display: "flex", gap: 14, flexWrap: "wrap" }}>
-            <span>⛵ Sale del muelle: <strong style={{ color: B.sky }}>{salida.hora}</strong></span>
-            <span>🏠 Regresa a muelle: <strong style={{ color: zarpado ? B.success : B.sand }}>{horaRegreso}</strong></span>
+            <span>⛵ Sale del muelle: <strong style={{ color: B.sky }}>{fmtHora12(salida.hora)}</strong></span>
+            <span>🏠 Regresa a muelle: <strong style={{ color: zarpado ? B.success : B.sand }}>{fmtHora12(horaRegreso)}</strong></span>
             <span>👥 {paxTotal} pax{reservas.length > 1 ? ` · ${reservas.length} reservas` : ""}</span>
             {conCheckin > 0 && <span style={{ color: B.success }}>✓ {conCheckin} con check-in</span>}
             {embarcaciones.length > 0 && <span>⛵ {embarcaciones.join(", ")}</span>}
@@ -385,12 +397,12 @@ export default function MuelleSalidas() {
           hora_zarpe: new Date().toTimeString().slice(0, 8),
           motivo: "pasajeros",
           pax_a: paxA, pax_n: paxN, costo_operativo: costo,
-          notas: `Auto desde Salidas · ${salObj?.nombre || salidaId} ${marker}`,
+          notas: `Auto desde Salidas · ${salObj ? labelSalida(salObj) : salidaId} ${marker}`,
           boca_chica: false,
         });
         logAccion({ modulo: "salidas", accion: "zarpe_flota_auto", tabla: "muelle_zarpes_flota", registroId: zfId,
           datosDespues: { embarcacion: emb, salida_id: salidaId, pax_a: paxA, pax_n: paxN, costo_operativo: costo },
-          notas: `Zarpe propia auto-registrado en Lancha: ${emb} (${salObj?.nombre || salidaId})` });
+          notas: `Zarpe propia auto-registrado en Lancha: ${emb} (${salObj ? labelSalida(salObj) : salidaId})` });
       }
       fetchData();
     } catch (e) { /* no romper el zarpado si falla el registro en Lancha */ }
@@ -532,7 +544,7 @@ export default function MuelleSalidas() {
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                 {salidasVacias.map(s => (
                   <div key={s.id} style={{ background: "rgba(255,255,255,0.04)", borderRadius: 10, padding: "8px 14px", fontSize: 12, color: "rgba(255,255,255,0.25)" }}>
-                    {s.nombre} · {s.hora_regreso || HORARIO_REGRESO[s.id] || s.hora}
+                    {labelSalida(s)} · regresa {fmtHora12(s.hora_regreso || HORARIO_REGRESO[s.id])}
                   </div>
                 ))}
               </div>
