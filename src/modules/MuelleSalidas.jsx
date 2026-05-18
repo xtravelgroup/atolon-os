@@ -638,21 +638,26 @@ export default function MuelleSalidas() {
           </div>
 
           {/* Salidas sin reservas (colapsadas) */}
-          {salidasChips.length > 0 && (
-            <div style={{ marginTop: 8 }}>
-              <div style={{ fontSize: 11, color: "rgba(255,255,255,0.2)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 10 }}>Sin reservas hoy · toca para asignar embarcaciones</div>
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                {salidasChips.map(s => (
-                  <button key={s.id}
-                    onClick={() => setExpandidas(prev => new Set([...prev, s.id]))}
-                    title="Expandir para asignar embarcaciones"
-                    style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 10, padding: "8px 14px", fontSize: 12, color: "rgba(255,255,255,0.45)", cursor: "pointer" }}>
-                    ➕ Regreso {fmtHora12(s.hora_regreso || HORARIO_REGRESO[s.id])} · {fmtHora12(s.hora)}
-                  </button>
-                ))}
-              </div>
+          <div style={{ marginTop: 8 }}>
+            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.2)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 10 }}>
+              {salidasChips.length > 0 ? "Sin reservas hoy · toca para asignar embarcaciones" : "Salidas"}
             </div>
-          )}
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+              <button onClick={agregarSalida}
+                title="Crear una salida con hora manual (la que quieras)"
+                style={{ background: B.sky, border: "none", borderRadius: 10, padding: "9px 16px", fontSize: 12, color: B.navy, fontWeight: 800, cursor: "pointer" }}>
+                ➕ Agregar salida (hora manual)
+              </button>
+              {salidasChips.map(s => (
+                <button key={s.id}
+                  onClick={() => setExpandidas(prev => new Set([...prev, s.id]))}
+                  title="Expandir para asignar embarcaciones"
+                  style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 10, padding: "8px 14px", fontSize: 12, color: "rgba(255,255,255,0.45)", cursor: "pointer" }}>
+                  ➕ Regreso {fmtHora12(s.hora_regreso || HORARIO_REGRESO[s.id])} · {fmtHora12(s.hora)}
+                </button>
+              ))}
+            </div>
+          </div>
         </>
       )}
 
