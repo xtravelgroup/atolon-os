@@ -31,12 +31,17 @@ const HORARIO_REGRESO = {
 // ─── Tarjeta de reserva individual ───────────────────────────────────────────
 const SEL = { background: B.navyLight, color: "#fff", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 8, fontSize: 11, padding: "4px 6px", outline: "none", maxWidth: 150 };
 
-function ReservaRow({ r, isMobile, salidas = [], embarcaciones = [], onReasignar, zarpado }) {
+function ReservaRow({ r, isMobile, salidas = [], embarcaciones = [], onReasignar, zarpado, onDragStart, onDragEnd }) {
   const emb = r.embarcacion_asignada;
   return (
-    <div style={{
+    <div
+      draggable={!zarpado}
+      onDragStart={!zarpado && onDragStart ? (e) => { e.dataTransfer.effectAllowed = "move"; onDragStart(r); } : undefined}
+      onDragEnd={onDragEnd}
+      style={{
       display: "flex", alignItems: "center", gap: 10, padding: "10px 14px",
       borderBottom: "1px solid rgba(255,255,255,0.04)", flexWrap: "wrap",
+      cursor: zarpado ? "default" : "grab",
     }}>
       <div style={{ width: 28, height: 28, borderRadius: "50%", background: B.navyLight, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, flexShrink: 0 }}>
         {r.estado === "check_in" || r.checkin_at ? "✓" : "·"}
@@ -82,6 +87,9 @@ function SalidaBloque({ salida, reservas, zarpoAt, onZarpo, isMobile, salidas = 
     const e = embarcacionesAll.find(x => x.nombre === nombre);
     return e && e.capacidad != null ? Number(e.capacidad) : null;
   };
+  const [dragR, setDragR] = useState(null);          // reserva en arrastre
+  const [overEmb, setOverEmb] = useState(undefined); // grupo bajo el cursor (drop highlight)
+  const [extraEmbs, setExtraEmbs] = useState([]);    // embarcaciones agregadas sin pax aún
   const horaRegreso = salida.hora_regreso || HORARIO_REGRESO[salida.id] || "—";
   const paxTotal = reservas.reduce((t, r) => t + (r.pax_a || r.pax || 1) + (r.pax_n || 0), 0);
   const conCheckin = reservas.filter(r => r.checkin_at || r.estado === "check_in").length;
@@ -163,45 +171,97 @@ function SalidaBloque({ salida, reservas, zarpoAt, onZarpo, isMobile, salidas = 
         )}
       </div>
 
-      {/* Lista de clientes */}
+      {/* Lista de clientes — arrastra una tarjeta a otra embarcación */}
       <div>
-        {/* Por embarcación */}
-        {embarcaciones.map(emb => {
-          const paxEmb = embGrupos[emb].reduce((t, r) => t + (r.pax_a || r.pax || 1) + (r.pax_n || 0), 0);
-          const cap = capDe(emb);
-          const propia = embarcacionesAll.find(x => x.nombre === emb)?.propiedad === "propia";
-          const excede = cap != null && paxEmb > cap;
-          return (
-          <div key={emb}>
-            <div style={{ padding: "8px 14px 4px", fontSize: 10, color: excede ? B.danger : B.sky, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", background: (excede ? B.danger : B.sky) + "08", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-              <span>⛵ {emb}{propia ? " ★" : ""} · {paxEmb} pax{cap != null ? ` / cap ${cap}` : ""}{excede ? " ⚠ EXCEDE" : ""}</span>
-              {!zarpado && onEditCap && (
-                <button onClick={() => onEditCap(emb, cap)} title="Editar capacidad de esta embarcación"
-                  style={{ background: "transparent", border: "none", color: "rgba(255,255,255,0.45)", cursor: "pointer", fontSize: 11, padding: 0 }}>✎ capacidad</button>
-              )}
-            </div>
-            {embGrupos[emb].map(r => <ReservaRow key={r.id} r={r} isMobile={isMobile} salidas={salidas} embarcaciones={embarcacionesAll} onReasignar={onReasignar} zarpado={zarpado} />)}
-          </div>
-          );
-        })}
-
-        {/* Sin embarcacion asignada */}
-        {sinEmb.length > 0 && (
-          <div>
-            {embarcaciones.length > 0 && (
-              <div style={{ padding: "8px 14px 4px", fontSize: 10, color: "rgba(255,255,255,0.3)", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em" }}>
-                Sin embarcación asignada
+        {(() => {
+          const gruposVacios = extraEmbs.filter(e => !embarcaciones.includes(e));
+          const dropProps = (emb) => zarpado ? {} : {
+            onDragOver: (e) => { e.preventDefault(); if (overEmb !== emb) setOverEmb(emb); },
+            onDragLeave: () => setOverEmb(u => (u === emb ? undefined : u)),
+            onDrop: () => {
+              if (dragR && (dragR.embarcacion_asignada || null) !== (emb || null)) {
+                onReasignar(dragR, { embarcacion_asignada: emb });
+              }
+              setDragR(null); setOverEmb(undefined);
+            },
+          };
+          const startProps = {
+            onDragStart: setDragR,
+            onDragEnd: () => { setDragR(null); setOverEmb(undefined); },
+          };
+          const Grupo = ({ emb, rows }) => {
+            const paxEmb = rows.reduce((t, r) => t + (r.pax_a || r.pax || 1) + (r.pax_n || 0), 0);
+            const cap = capDe(emb);
+            const propia = embarcacionesAll.find(x => x.nombre === emb)?.propiedad === "propia";
+            const excede = cap != null && paxEmb > cap;
+            const isOver = overEmb === emb && dragR;
+            return (
+              <div key={emb} {...dropProps(emb)}
+                style={{ outline: isOver ? `2px dashed ${B.sky}` : "none", outlineOffset: -2, background: isOver ? B.sky + "10" : "transparent", transition: "background .1s" }}>
+                <div style={{ padding: "8px 14px 4px", fontSize: 10, color: excede ? B.danger : B.sky, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", background: (excede ? B.danger : B.sky) + "08", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                  <span>⛵ {emb}{propia ? " ★" : ""} · {paxEmb} pax{cap != null ? ` / cap ${cap}` : ""}{excede ? " ⚠ EXCEDE" : ""}</span>
+                  {!zarpado && onEditCap && (
+                    <button onClick={() => onEditCap(emb, cap)} title="Editar capacidad de esta embarcación"
+                      style={{ background: "transparent", border: "none", color: "rgba(255,255,255,0.45)", cursor: "pointer", fontSize: 11, padding: 0 }}>✎ capacidad</button>
+                  )}
+                </div>
+                {rows.length === 0
+                  ? <div style={{ padding: "12px 14px", fontSize: 11, color: "rgba(255,255,255,0.25)", fontStyle: "italic" }}>Arrastra pasajeros aquí…</div>
+                  : rows.map(r => <ReservaRow key={r.id} r={r} isMobile={isMobile} salidas={salidas} embarcaciones={embarcacionesAll} onReasignar={onReasignar} zarpado={zarpado} {...startProps} />)}
               </div>
-            )}
-            {sinEmb.map(r => <ReservaRow key={r.id} r={r} isMobile={isMobile} salidas={salidas} embarcaciones={embarcacionesAll} onReasignar={onReasignar} zarpado={zarpado} />)}
-          </div>
-        )}
+            );
+          };
+          return (
+            <>
+              {embarcaciones.map(emb => <Grupo key={emb} emb={emb} rows={embGrupos[emb]} />)}
+              {gruposVacios.map(emb => <Grupo key={emb} emb={emb} rows={[]} />)}
 
-        {reservas.length === 0 && (
-          <div style={{ padding: "16px 20px", fontSize: 12, color: "rgba(255,255,255,0.2)", fontStyle: "italic" }}>
-            Sin reservas para esta salida
-          </div>
-        )}
+              {/* Sin embarcación — también es zona de drop (para desasignar) */}
+              {(sinEmb.length > 0 || (!zarpado && embarcaciones.length > 0)) && (
+                <div {...dropProps(null)}
+                  style={{ outline: (overEmb === null && dragR) ? `2px dashed ${B.warning}` : "none", outlineOffset: -2, background: (overEmb === null && dragR) ? B.warning + "10" : "transparent" }}>
+                  {embarcaciones.length > 0 && (
+                    <div style={{ padding: "8px 14px 4px", fontSize: 10, color: "rgba(255,255,255,0.3)", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em" }}>
+                      Sin embarcación asignada
+                    </div>
+                  )}
+                  {sinEmb.length === 0
+                    ? <div style={{ padding: "10px 14px", fontSize: 11, color: "rgba(255,255,255,0.2)", fontStyle: "italic" }}>(suelta aquí para quitar embarcación)</div>
+                    : sinEmb.map(r => <ReservaRow key={r.id} r={r} isMobile={isMobile} salidas={salidas} embarcaciones={embarcacionesAll} onReasignar={onReasignar} zarpado={zarpado} {...startProps} />)}
+                </div>
+              )}
+
+              {/* Agregar embarcación a esta salida */}
+              {!zarpado && (
+                <div style={{ padding: "10px 14px", borderTop: "1px solid rgba(255,255,255,0.05)", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                  <span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)" }}>➕ Agregar embarcación:</span>
+                  <select value="" style={SEL}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      if (!v) return;
+                      if (v === "__manual__") {
+                        const n = window.prompt("Nombre de la embarcación (manual):");
+                        if (n && n.trim() && !embarcaciones.includes(n.trim())) setExtraEmbs(p => [...new Set([...p, n.trim()])]);
+                      } else if (!embarcaciones.includes(v)) {
+                        setExtraEmbs(p => [...new Set([...p, v])]);
+                      }
+                    }}>
+                    <option value="">— elegir —</option>
+                    {embarcacionesAll.filter(em => !embarcaciones.includes(em.nombre) && !extraEmbs.includes(em.nombre))
+                      .map(em => <option key={em.nombre} value={em.nombre}>{em.nombre}{em.propiedad === "propia" ? " ★" : ""}{em.capacidad != null ? ` (cap ${em.capacidad})` : ""}</option>)}
+                    <option value="__manual__">+ Otra (manual)…</option>
+                  </select>
+                </div>
+              )}
+
+              {reservas.length === 0 && extraEmbs.length === 0 && (
+                <div style={{ padding: "16px 20px", fontSize: 12, color: "rgba(255,255,255,0.2)", fontStyle: "italic" }}>
+                  Sin reservas para esta salida
+                </div>
+              )}
+            </>
+          );
+        })()}
       </div>
     </div>
   );
