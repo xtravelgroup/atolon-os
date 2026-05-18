@@ -227,7 +227,18 @@ export default function BookingPopup() {
         AtolanTrack.setPasadiaSlug(product?.slug || null);
       }
       AtolanTrack.evento("booking_widget_visto", { lang: langQ, slug: product?.slug }, "booking");
-      AtolanTrack.embudo_paso(1, { lang: langQ });
+      AtolanTrack.embudo_paso(1, { lang: langQ }).then(() => {
+        // Deep-link con producto ya seleccionado (?tipo=/slug, p.ej. los
+        // links rastreados de WhatsApp/marketing): el cliente NO pasa por
+        // el selector de paquete, así que "Eligió paquete" (paso_3) nunca
+        // se registraba (salía 0). Lo registramos aquí. Grupo tiene su
+        // propio efecto que ya hace esto.
+        if (matchedProduct && !grupoQ) {
+          AtolanTrack.embudo_paso(3, {
+            producto: matchedProduct.tipo, package_type: matchedProduct.tipo, pax: matchedProduct.minA,
+          });
+        }
+      });
       AtolanTrack.setCurrentStep(1);
       if (langQ !== "es") AtolanTrack.setLang(langQ);
     });
