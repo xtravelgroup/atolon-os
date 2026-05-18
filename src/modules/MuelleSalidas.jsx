@@ -280,6 +280,7 @@ export default function MuelleSalidas() {
   const [embarcacionesAll, setEmbarcacionesAll] = useState([]); // master: nombre, capacidad, propiedad
   const [loading,  setLoading]  = useState(false);
   const [modalZarpe, setModalZarpe] = useState(null); // { embarcacion }
+  const [expandidas, setExpandidas] = useState(() => new Set()); // salidas vacías expandidas a bloque
 
   const fetchData = useCallback(async () => {
     if (!supabase) return;
@@ -468,6 +469,35 @@ export default function MuelleSalidas() {
     } catch (e) { /* no romper el zarpado si falla el registro en Lancha */ }
   };
 
+  const normHora = (h) => {
+    const m = String(h || "").trim().match(/^(\d{1,2}):(\d{2})$/);
+    if (!m) return null;
+    const H = Number(m[1]), M = Number(m[2]);
+    if (H > 23 || M > 59) return null;
+    return `${String(H).padStart(2, "0")}:${m[2]}`;
+  };
+
+  const agregarSalida = async () => {
+    if (!supabase) return;
+    const hIn = window.prompt("Hora de SALIDA del muelle (HH:MM, 24h). Ej: 14:00");
+    if (hIn == null) return;
+    const hora = normHora(hIn);
+    if (!hora) { alert("Hora inválida. Usa HH:MM 24h (ej. 14:00)."); return; }
+    const rIn = window.prompt("Hora de REGRESO al muelle (HH:MM, 24h). Ej: 20:00");
+    if (rIn == null) return;
+    const horaRegreso = normHora(rIn);
+    if (!horaRegreso) { alert("Hora de regreso inválida. Usa HH:MM 24h."); return; }
+    const id = `S-${Date.now().toString(36).toUpperCase()}`;
+    const { error } = await supabase.from("salidas").insert({
+      id, nombre: `Salida ${hora}`, hora, hora_regreso: horaRegreso, activo: true,
+    });
+    if (error) { alert("Error al crear salida: " + error.message); return; }
+    logAccion({ modulo: "salidas", accion: "crear_salida", tabla: "salidas", registroId: id,
+      datosDespues: { hora, hora_regreso: horaRegreso }, notas: `Nueva salida ${hora} → regreso ${horaRegreso}` });
+    setExpandidas(prev => new Set([...prev, id]));
+    fetchData();
+  };
+
   // Salidas that have reservas today (or all if no reservas yet)
   const reservasPorSalida = {};
   (reservas || []).forEach(r => {
@@ -477,6 +507,10 @@ export default function MuelleSalidas() {
 
   const salidasConRes = (salidas || []).filter(s => reservasPorSalida[s.id]?.length > 0);
   const salidasVacias = (salidas || []).filter(s => !reservasPorSalida[s.id]?.length);
+  // Bloques completos = con reservas o expandidas manualmente (para asignar
+  // embarcaciones aunque no tengan reservas, ej. salida recién creada).
+  const salidasFull  = (salidas || []).filter(s => reservasPorSalida[s.id]?.length > 0 || expandidas.has(s.id));
+  const salidasChips = (salidas || []).filter(s => !reservasPorSalida[s.id]?.length && !expandidas.has(s.id));
 
   // KPIs
   const totalPax    = reservas.reduce((t, r) => t + (r.pax_a || r.pax || 1) + (r.pax_n || 0), 0);
@@ -493,8 +527,14 @@ export default function MuelleSalidas() {
           <h2 style={{ margin: 0, fontSize: isMobile ? 20 : 24, fontWeight: 800, color: "#fff" }}>⛵ Salidas de Isla</h2>
           <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginTop: 4 }}>Programación automática de zarpes · Tierra Bomba</div>
         </div>
-        <input type="date" value={fecha} onChange={e => setFecha(e.target.value)}
-          style={{ ...IS, width: "auto", fontSize: 14, padding: "8px 14px" }} />
+        <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+          <button onClick={agregarSalida}
+            style={{ padding: "9px 16px", borderRadius: 10, border: "none", background: B.sky, color: B.navy, fontWeight: 800, fontSize: 13, cursor: "pointer", whiteSpace: "nowrap" }}>
+            ➕ Agregar salida
+          </button>
+          <input type="date" value={fecha} onChange={e => setFecha(e.target.value)}
+            style={{ ...IS, width: "auto", fontSize: 14, padding: "8px 14px" }} />
+        </div>
       </div>
 
       {/* KPIs */}
@@ -516,14 +556,14 @@ export default function MuelleSalidas() {
         <div style={{ textAlign: "center", padding: "50px 0", color: "rgba(255,255,255,0.3)", fontSize: 13 }}>Cargando...</div>
       ) : (
         <>
-          {salidasConRes.length === 0 && (
+          {salidasFull.length === 0 && (
             <div style={{ textAlign: "center", padding: "50px 0", color: "rgba(255,255,255,0.2)", fontSize: 14 }}>
               <div style={{ fontSize: 36, marginBottom: 12 }}>⛵</div>
               No hay reservas para este día
             </div>
           )}
 
-          {salidasConRes.map(sal => (
+          {salidasFull.map(sal => (
             <SalidaBloque
               key={sal.id}
               salida={sal}
@@ -598,14 +638,17 @@ export default function MuelleSalidas() {
           </div>
 
           {/* Salidas sin reservas (colapsadas) */}
-          {salidasVacias.length > 0 && salidasConRes.length > 0 && (
+          {salidasChips.length > 0 && (
             <div style={{ marginTop: 8 }}>
-              <div style={{ fontSize: 11, color: "rgba(255,255,255,0.2)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 10 }}>Sin reservas hoy</div>
+              <div style={{ fontSize: 11, color: "rgba(255,255,255,0.2)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 10 }}>Sin reservas hoy · toca para asignar embarcaciones</div>
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                {salidasVacias.map(s => (
-                  <div key={s.id} style={{ background: "rgba(255,255,255,0.04)", borderRadius: 10, padding: "8px 14px", fontSize: 12, color: "rgba(255,255,255,0.25)" }}>
-                    {labelSalida(s)} · regresa {fmtHora12(s.hora_regreso || HORARIO_REGRESO[s.id])}
-                  </div>
+                {salidasChips.map(s => (
+                  <button key={s.id}
+                    onClick={() => setExpandidas(prev => new Set([...prev, s.id]))}
+                    title="Expandir para asignar embarcaciones"
+                    style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 10, padding: "8px 14px", fontSize: 12, color: "rgba(255,255,255,0.45)", cursor: "pointer" }}>
+                    ➕ Regreso {fmtHora12(s.hora_regreso || HORARIO_REGRESO[s.id])} · {fmtHora12(s.hora)}
+                  </button>
                 ))}
               </div>
             </div>
