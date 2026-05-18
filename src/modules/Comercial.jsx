@@ -896,6 +896,7 @@ export default function Comercial() {
   const [selectedLead, setSelectedLead] = useState(null);
   const [filterVendedor, setFilterVendedor] = useState("Todos");
   const [filterCanal, setFilterCanal] = useState("Todos");
+  const [filterPeriodo, setFilterPeriodo] = useState("30d"); // default: últimos 30 días
   const [activeTab, setActiveTab] = useState("kanban");
 
   // Load vendedores from empleados table
@@ -941,6 +942,10 @@ export default function Comercial() {
         etiquetas: r.etiquetas,
         perdidoRazon: r.perdido_razon,
         fechaPago: r.fecha_pago || null,
+        // Fecha (YYYY-MM-DD, Bogotá) para el filtro de periodo.
+        fechaCreacion: r.fecha_creacion
+          ? String(r.fecha_creacion).slice(0, 10)
+          : (r.created_at ? String(r.created_at).slice(0, 10) : null),
         pax: r.pax || 0,
         fechaVisita: r.fecha_visita || null,
         horaVisita: r.hora_visita || null,
@@ -952,10 +957,33 @@ export default function Comercial() {
 
   useEffect(() => { fetchLeads(); }, [fetchLeads]);
 
-  const filtered = leads.filter(l =>
-    (filterVendedor === "Todos" || l.vendedor === filterVendedor) &&
-    (filterCanal === "Todos" || l.canal === filterCanal)
-  );
+  // Opciones de periodo: "Últimos 30 días" (default) + últimos 12 meses + "Todos".
+  const MESES_ES = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"];
+  const _hoyBog = hoyBogota(); // YYYY-MM-DD en Bogotá
+  const hace30Dias = new Date(Date.parse(_hoyBog + "T00:00:00Z") - 30 * 86400000).toISOString().slice(0, 10);
+  const periodoOpciones = (() => {
+    const [yy, mm] = _hoyBog.split("-").map(Number); // mm 1..12
+    const opts = [{ value: "30d", label: "Últimos 30 días" }];
+    for (let i = 0; i < 12; i++) {
+      let idx = (mm - 1) - i, y = yy;
+      while (idx < 0) { idx += 12; y--; }
+      opts.push({ value: `${y}-${String(idx + 1).padStart(2, "0")}`, label: `${MESES_ES[idx]} ${y}` });
+    }
+    opts.push({ value: "todos", label: "Todos" });
+    return opts;
+  })();
+
+  const filtered = leads.filter(l => {
+    const matchPeriodo =
+      filterPeriodo === "todos" ? true
+      : filterPeriodo === "30d" ? (!!l.fechaCreacion && l.fechaCreacion >= hace30Dias)
+      : (!!l.fechaCreacion && l.fechaCreacion.slice(0, 7) === filterPeriodo);
+    return (
+      (filterVendedor === "Todos" || l.vendedor === filterVendedor) &&
+      (filterCanal === "Todos" || l.canal === filterCanal) &&
+      matchPeriodo
+    );
+  });
 
   const enProceso = filtered.filter(l => !["Cerrado Ganado", "Perdido", "Duplicado"].includes(l.etapa)).length;
   const cerradosMes = filtered.filter(l => l.etapa === "Cerrado Ganado").length;
@@ -1042,6 +1070,9 @@ export default function Comercial() {
         <div style={{ flex: 1 }} />
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
           <span style={{ fontSize: 11, color: B.sand, textTransform: "uppercase", letterSpacing: "0.06em" }}>Filtrar por:</span>
+          <select value={filterPeriodo} onChange={e => setFilterPeriodo(e.target.value)} style={selectStyle}>
+            {periodoOpciones.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+          </select>
           <select value={filterVendedor} onChange={e => setFilterVendedor(e.target.value)} style={selectStyle}>
             <option value="Todos">Todos los vendedores</option>
             {vendedoresList.map(v => <option key={v} value={v}>{v}</option>)}
