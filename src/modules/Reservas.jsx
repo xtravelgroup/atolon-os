@@ -11,7 +11,7 @@ const fmtHora = (ts) => {
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
-const CANALES   = ["Web", "WhatsApp", "Email", "B2B", "Teléfono", "Walk-in", "Friends & Family"];
+const CANALES   = ["Web", "WhatsApp", "Email", "B2B", "Teléfono", "Walk-in", "Friends & Family", "Directo", "Muelle Bodeguita"];
 const VENDEDORES = ["Sin asignar"]; // fallback; real list loaded from usuarios (ventas + gerente_ventas)
 const FORMAS_PAGO = ["Transferencia", "Efectivo", "Datafono", "Wompi", "SKY", "CXC", "Cortesía", "Ajuste Retención", "Ajuste Agencia", "Enviar Link de Pago"];
 
