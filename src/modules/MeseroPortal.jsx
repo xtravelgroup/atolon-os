@@ -56,7 +56,7 @@ export default function MeseroPortal() {
       // que trae sus propios spots/asignaciones. Aquí solo meseros + menú.
       const [{ data: ml }, { data: it }] = await Promise.all([
         supabase.rpc("mesero_list"),
-        supabase.from("menu_items").select("id, nombre, descripcion, precio, categoria, menu_tipo, loggro_id").in("menu_tipo", ["restaurant", "bebidas"]).eq("activo", true),
+        supabase.from("menu_items").select("id, nombre, descripcion, precio, categoria, menu_tipo, loggro_id, precio_botella, loggro_id_botella").in("menu_tipo", ["restaurant", "bebidas"]).eq("activo", true),
       ]);
       setMeseros(ml || []);
       setItems(it || []);
@@ -113,12 +113,22 @@ export default function MeseroPortal() {
   const salir = () => { sessionStorage.removeItem(SS_KEY); setMesero(null); setSel(""); setPin(""); setStep("login"); setCart([]); setSpot(null); };
 
   // ── Carrito ───────────────────────────────────────────────────────────
-  const add = (it) => setCart(p => {
-    const e = p.find(x => x.id === it.id);
-    if (e) return p.map(x => x.id === it.id ? { ...x, cantidad: x.cantidad + 1 } : x);
-    return [...p, { id: it.id, nombre: it.nombre, precio: it.precio || 0, loggro_id: it.loggro_id || null, cantidad: 1, notas: "" }];
+  // variante: "trago" usa precio + loggro_id; "botella" usa precio_botella
+  // + loggro_id_botella. Cada variante es una línea de carrito distinta.
+  const add = (it, variante = "trago") => setCart(p => {
+    const key = `${it.id}:${variante}`;
+    const e = p.find(x => x.key === key);
+    if (e) return p.map(x => x.key === key ? { ...x, cantidad: x.cantidad + 1 } : x);
+    const esBot = variante === "botella";
+    return [...p, {
+      key, id: it.id, variante,
+      nombre: it.nombre + (esBot ? " · Botella" : (it.precio_botella > 0 ? " · Trago" : "")),
+      precio: (esBot ? it.precio_botella : it.precio) || 0,
+      loggro_id: (esBot ? it.loggro_id_botella : it.loggro_id) || null,
+      cantidad: 1, notas: "",
+    }];
   });
-  const setQ = (id, c) => { const n = Number(c); if (n <= 0) return setCart(p => p.filter(x => x.id !== id)); setCart(p => p.map(x => x.id === id ? { ...x, cantidad: n } : x)); };
+  const setQ = (key, c) => { const n = Number(c); if (n <= 0) return setCart(p => p.filter(x => x.key !== key)); setCart(p => p.map(x => x.key === key ? { ...x, cantidad: n } : x)); };
 
   const enviar = async () => {
     if (cart.length === 0) return alert("Agrega ítems al pedido");
@@ -272,22 +282,42 @@ export default function MeseroPortal() {
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 8, paddingBottom: cart.length ? 90 : 16 }}>
             {itemsF.map(it => {
-              const ic = cart.find(c => c.id === it.id);
+              const hasT = (it.precio > 0) && !!it.loggro_id;
+              const hasB = (it.precio_botella > 0) && !!it.loggro_id_botella;
+              const both = hasT && hasB;
+              const onlyVar = (hasB && !hasT) ? "botella" : "trago";
+              const cT = cart.find(c => c.key === `${it.id}:trago`);
+              const cB = cart.find(c => c.key === `${it.id}:botella`);
+              const cO = cart.find(c => c.key === `${it.id}:${onlyVar}`);
+              const step = (ck) => (
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <button onClick={() => setQ(ck.key, ck.cantidad - 1)} style={qbtn}>−</button>
+                  <span style={{ fontSize: 16, fontWeight: 800, minWidth: 20, textAlign: "center", color: C.text }}>{ck.cantidad}</span>
+                  <button onClick={() => setQ(ck.key, ck.cantidad + 1)} style={qbtn}>+</button>
+                </div>
+              );
+              const vbtn = (label, v) => (
+                <button onClick={() => add(it, v)} style={{ background: C.primary, color: C.bg, border: "none", borderRadius: 8, padding: "10px 12px", fontWeight: 800, fontSize: 12, cursor: "pointer", minHeight: 42, whiteSpace: "nowrap" }}>{label}</button>
+              );
               return (
                 <div key={it.id} style={{ background: C.card, borderRadius: 12, padding: 12, display: "flex", alignItems: "center", gap: 10 }}>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontSize: 9, color: C.textLight, textTransform: "uppercase" }}>{it.categoria || "—"}</div>
                     <div style={{ fontSize: 14, fontWeight: 700, color: C.text }}>{it.nombre}</div>
-                    <div style={{ fontSize: 14, fontWeight: 800, color: C.primary, marginTop: 2 }}>{COP(it.precio)}</div>
+                    <div style={{ fontSize: 12, fontWeight: 800, color: C.primary, marginTop: 2 }}>
+                      {both
+                        ? `🥃 ${COP(it.precio)}  ·  🍾 ${COP(it.precio_botella)}`
+                        : COP(onlyVar === "botella" ? it.precio_botella : it.precio)}
+                    </div>
                   </div>
-                  {ic ? (
-                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      <button onClick={() => setQ(it.id, ic.cantidad - 1)} style={qbtn}>−</button>
-                      <span style={{ fontSize: 16, fontWeight: 800, minWidth: 20, textAlign: "center", color: C.text }}>{ic.cantidad}</span>
-                      <button onClick={() => setQ(it.id, ic.cantidad + 1)} style={qbtn}>+</button>
+                  {both ? (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 6, alignItems: "flex-end" }}>
+                      {cT ? step(cT) : vbtn("🥃 Trago", "trago")}
+                      {cB ? step(cB) : vbtn("🍾 Botella", "botella")}
                     </div>
                   ) : (
-                    <button onClick={() => add(it)} style={{ background: C.primary, color: C.bg, border: "none", borderRadius: 8, padding: "12px 14px", fontWeight: 800, fontSize: 13, cursor: "pointer", minHeight: 44 }}>+ Agregar</button>
+                    cO ? step(cO)
+                       : <button onClick={() => add(it, onlyVar)} style={{ background: C.primary, color: C.bg, border: "none", borderRadius: 8, padding: "12px 14px", fontWeight: 800, fontSize: 13, cursor: "pointer", minHeight: 44 }}>+ Agregar</button>
                   )}
                 </div>
               );
@@ -312,10 +342,10 @@ export default function MeseroPortal() {
           <div style={{ background: C.card, borderRadius: 12, padding: 16, margin: "16px 0 12px" }}>
             <div style={{ fontSize: 14, fontWeight: 800, color: C.text, marginBottom: 8 }}>Pedido · {spot?.id}</div>
             {cart.map(c => (
-              <div key={c.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0", borderTop: `1px solid ${C.line}` }}>
-                <button onClick={() => setQ(c.id, c.cantidad - 1)} style={qbtn}>−</button>
+              <div key={c.key} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0", borderTop: `1px solid ${C.line}` }}>
+                <button onClick={() => setQ(c.key, c.cantidad - 1)} style={qbtn}>−</button>
                 <span style={{ minWidth: 22, textAlign: "center", fontWeight: 800, color: C.text }}>{c.cantidad}</span>
-                <button onClick={() => setQ(c.id, c.cantidad + 1)} style={qbtn}>+</button>
+                <button onClick={() => setQ(c.key, c.cantidad + 1)} style={qbtn}>+</button>
                 <div style={{ flex: 1, fontSize: 13, color: C.text }}>{c.nombre}</div>
                 <div style={{ fontWeight: 800, color: C.text }}>{COP(c.precio * c.cantidad)}</div>
               </div>
