@@ -78,12 +78,19 @@ function calcComision(r, pasadiasMap, aliadoComisionPct = null) {
   const paxA     = r.pax_a || r.pax || 1;
   const paxN     = r.pax_n || 0;
   const desc     = r.descuento_agencia || 0;
+  // Comisión = lo REALMENTE pagado (total) − tarifa neta − descuento agencia.
+  // NO usar precio_u (lista) como "cobrado": si la agencia negoció un total
+  // por debajo del público (o por debajo del neto), la comisión es sobre lo
+  // que realmente pagó, no sobre la lista. Si pagó ≤ neto → $0.
+  if (Number(r.total) > 0) {
+    return Math.max(0, Number(r.total) - (netoA * paxA + netoN * paxN) - desc);
+  }
+  // Fallback solo si NO hay total registrado: spread por unidad (lista − neto).
   if (netoA > 0 && cobradoA > 0) {
     const mA = (cobradoA - netoA) * paxA;
     const mN = cobradoN > 0 && netoN > 0 ? (cobradoN - netoN) * paxN : 0;
     return Math.max(0, mA + mN - desc);
   }
-  if (r.total > 0) return Math.max(0, r.total - (netoA * paxA + netoN * paxN) - desc);
   return 0;
 }
 
