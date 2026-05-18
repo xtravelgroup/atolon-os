@@ -10,6 +10,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../lib/supabase";
+import PoolFloorPlanPicker from "../components/PoolFloorPlanPicker.jsx";
 
 const C = {
   bg: "#0D1B3E", card: "#16244d", line: "#243358",
@@ -26,7 +27,6 @@ const SS_KEY = "atolon_mesero";
 export default function MeseroPortal() {
   const [boot, setBoot]   = useState(true);
   const [meseros, setMeseros] = useState([]);
-  const [spots, setSpots] = useState([]);
   const [items, setItems] = useState([]);
 
   // sesión mesero
@@ -52,13 +52,13 @@ export default function MeseroPortal() {
 
   useEffect(() => {
     (async () => {
-      const [{ data: ml }, { data: sp }, { data: it }] = await Promise.all([
+      // El floor plan lo renderiza PoolFloorPlanPicker (mismo de Pool Service),
+      // que trae sus propios spots/asignaciones. Aquí solo meseros + menú.
+      const [{ data: ml }, { data: it }] = await Promise.all([
         supabase.rpc("mesero_list"),
-        supabase.from("floorplan_spots").select("id, zona, tipo, capacidad, loggro_mesa_id").eq("area", "piscina").eq("activo", true).order("zona").order("orden"),
         supabase.from("menu_items").select("id, nombre, descripcion, precio, categoria, menu_tipo, loggro_id").in("menu_tipo", ["restaurant", "bebidas"]).eq("activo", true),
       ]);
       setMeseros(ml || []);
-      setSpots(sp || []);
       setItems(it || []);
       try {
         const s = JSON.parse(sessionStorage.getItem(SS_KEY) || "null");
@@ -78,11 +78,6 @@ export default function MeseroPortal() {
   }, [items, fc]);
   const subtotal = cart.reduce((s, x) => s + x.precio * x.cantidad, 0);
 
-  const spotsByZona = useMemo(() => {
-    const m = {};
-    spots.forEach(s => { (m[s.zona] = m[s.zona] || []).push(s); });
-    return m;
-  }, [spots]);
 
   // ── Auth ──────────────────────────────────────────────────────────────
   const entrar = async () => {
@@ -255,21 +250,13 @@ export default function MeseroPortal() {
   if (step === "spots") {
     return (
       <Wrap title={mesero?.nombre} onLogout={salir}>
-        <div style={{ fontSize: 13, color: C.textMid, margin: "16px 0 12px" }}>¿En qué cama es el pedido?</div>
-        {Object.keys(spotsByZona).sort().map(z => (
-          <div key={z} style={{ marginBottom: 16 }}>
-            <div style={{ fontSize: 11, color: C.accent, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>{zonaLabel(z)}</div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8 }}>
-              {spotsByZona[z].map(s => (
-                <button key={s.id} onClick={() => { setSpot(s); setStep("menu"); }}
-                  style={{ background: C.card, border: `1px solid ${s.loggro_mesa_id ? C.line : C.danger}`, color: C.text, borderRadius: 12, padding: "16px 4px", fontSize: 15, fontWeight: 800, cursor: "pointer", minHeight: 56 }}>
-                  {s.id}
-                  {!s.loggro_mesa_id && <div style={{ fontSize: 8, color: C.danger, fontWeight: 600 }}>sin mesa</div>}
-                </button>
-              ))}
-            </div>
-          </div>
-        ))}
+        <div style={{ fontSize: 13, color: C.textMid, margin: "16px 0 12px" }}>Toca la cama del pedido en el plano:</div>
+        <PoolFloorPlanPicker
+          selectedSpotId={spot?.id || null}
+          onSelectSpot={(s) => { setSpot(s); setStep("menu"); }}
+          showEstadoColor={true}
+          size="lg"
+        />
       </Wrap>
     );
   }
