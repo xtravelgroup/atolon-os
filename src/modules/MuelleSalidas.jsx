@@ -31,10 +31,17 @@ const HORARIO_REGRESO = {
 // ─── Tarjeta de reserva individual ───────────────────────────────────────────
 const SEL = { background: B.navyLight, color: "#fff", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 8, fontSize: 11, padding: "4px 6px", outline: "none", maxWidth: 150 };
 
-function ReservaRow({ r, isMobile, salidas = [], embarcaciones = [], onReasignar, zarpado, onDragStart, onDragEnd }) {
+function ReservaRow({ r, isMobile, salidas = [], embarcaciones = [], onReasignar, zarpado, onDragStart, onDragEnd, embsHoy = [], salidasOpen = [] }) {
   const emb = r.embarcacion_asignada;
   const [editing, setEditing] = useState(false);
   const propiaEmb = embarcaciones.find(x => x.nombre === emb)?.propiedad === "propia";
+  // Solo mostrar opciones que existen HOY y que son distintas a la actual.
+  const embNamesHoy = [...new Set((embsHoy || []).filter(Boolean))];
+  const otrasEmb = embNamesHoy.filter(n => n !== emb);
+  const otrasSal = (salidasOpen || []).filter(s => s.id !== r.salida_id);
+  const puedeCambiarEmb = otrasEmb.length > 0 || !emb;     // hay otro barco, o falta asignar
+  const puedeCambiarSal = otrasSal.length > 0;             // hay otra salida abierta
+  const hayAlternativas = puedeCambiarEmb || puedeCambiarSal;
   return (
     <div
       draggable={!zarpado}
@@ -66,17 +73,27 @@ function ReservaRow({ r, isMobile, salidas = [], embarcaciones = [], onReasignar
         )
       ) : editing ? (
         <div style={{ display: "flex", gap: 6, alignItems: "center", flexShrink: 0, flexWrap: "wrap" }}>
-          <select value={emb || ""} title="Embarcación" autoFocus
-            onChange={e => onReasignar && onReasignar(r, { embarcacion_asignada: e.target.value || null })}
-            style={SEL}>
-            <option value="">⛵ Sin embarcación</option>
-            {embarcaciones.map(em => <option key={em.nombre} value={em.nombre}>{em.nombre}{em.propiedad === "propia" ? " ★" : ""}</option>)}
-          </select>
-          <select value={r.salida_id || ""} title="Horario / salida (solo abiertas)"
-            onChange={e => onReasignar && onReasignar(r, { salida_id: e.target.value })}
-            style={SEL}>
-            {salidas.map(s => <option key={s.id} value={s.id}>{fmtHora12(s.hora)} → {fmtHora12(s.hora_regreso || HORARIO_REGRESO[s.id])}</option>)}
-          </select>
+          {puedeCambiarEmb && (
+            <select value={emb || ""} title="Embarcación" autoFocus
+              onChange={e => onReasignar && onReasignar(r, { embarcacion_asignada: e.target.value || null })}
+              style={SEL}>
+              <option value="">⛵ Sin embarcación</option>
+              {embNamesHoy.map(n => {
+                const p = embarcaciones.find(x => x.nombre === n)?.propiedad === "propia";
+                return <option key={n} value={n}>{n}{p ? " ★" : ""}</option>;
+              })}
+            </select>
+          )}
+          {puedeCambiarSal && (
+            <select value={r.salida_id || ""} title="Horario / salida (solo abiertas)"
+              onChange={e => onReasignar && onReasignar(r, { salida_id: e.target.value })}
+              style={SEL}>
+              {salidasOpen.map(s => <option key={s.id} value={s.id}>{fmtHora12(s.hora)} → {fmtHora12(s.hora_regreso || HORARIO_REGRESO[s.id])}</option>)}
+            </select>
+          )}
+          {!hayAlternativas && (
+            <span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", fontStyle: "italic" }}>No hay otras opciones para hoy</span>
+          )}
           <button onClick={() => setEditing(false)} title="Listo"
             style={{ background: B.success, border: "none", color: "#fff", borderRadius: 8, fontSize: 11, padding: "5px 10px", fontWeight: 700, cursor: "pointer" }}>✓ Listo</button>
         </div>
@@ -85,8 +102,10 @@ function ReservaRow({ r, isMobile, salidas = [], embarcaciones = [], onReasignar
           {emb
             ? <span style={{ fontSize: 11, background: B.sky + "22", color: B.sky, padding: "3px 10px", borderRadius: 20, fontWeight: 600, whiteSpace: "nowrap" }}>⛵ {emb}{propiaEmb ? " ★" : ""}</span>
             : <span style={{ fontSize: 11, background: B.warning + "22", color: B.warning, padding: "3px 10px", borderRadius: 20, fontWeight: 700, whiteSpace: "nowrap" }}>⚠ Sin embarcación</span>}
-          <button onClick={() => setEditing(true)} title="Cambiar embarcación u horario"
-            style={{ background: "transparent", border: `1px solid ${B.navyLight}`, color: "rgba(255,255,255,0.7)", borderRadius: 8, fontSize: 11, padding: "4px 10px", cursor: "pointer", whiteSpace: "nowrap" }}>✎ Cambiar</button>
+          {hayAlternativas && (
+            <button onClick={() => setEditing(true)} title="Cambiar embarcación u horario"
+              style={{ background: "transparent", border: `1px solid ${B.navyLight}`, color: "rgba(255,255,255,0.7)", borderRadius: 8, fontSize: 11, padding: "4px 10px", cursor: "pointer", whiteSpace: "nowrap" }}>✎ Cambiar</button>
+          )}
         </div>
       )}
     </div>
@@ -94,7 +113,7 @@ function ReservaRow({ r, isMobile, salidas = [], embarcaciones = [], onReasignar
 }
 
 // ─── Bloque por salida ────────────────────────────────────────────────────────
-function SalidaBloque({ salida, reservas, zarpoAt, onZarpo, isMobile, salidas = [], embarcacionesAll = [], onReasignar, onEditCap }) {
+function SalidaBloque({ salida, reservas, zarpoAt, onZarpo, isMobile, salidas = [], embarcacionesAll = [], onReasignar, onEditCap, embsHoy = [], salidasOpen = [] }) {
   const capDe = (nombre) => {
     const e = embarcacionesAll.find(x => x.nombre === nombre);
     return e && e.capacidad != null ? Number(e.capacidad) : null;
@@ -219,7 +238,7 @@ function SalidaBloque({ salida, reservas, zarpoAt, onZarpo, isMobile, salidas = 
                 </div>
                 {rows.length === 0
                   ? <div style={{ padding: "12px 14px", fontSize: 11, color: "rgba(255,255,255,0.25)", fontStyle: "italic" }}>Arrastra pasajeros aquí…</div>
-                  : rows.map(r => <ReservaRow key={r.id} r={r} isMobile={isMobile} salidas={salidas} embarcaciones={embarcacionesAll} onReasignar={onReasignar} zarpado={zarpado} {...startProps} />)}
+                  : rows.map(r => <ReservaRow key={r.id} r={r} isMobile={isMobile} salidas={salidas} embarcaciones={embarcacionesAll} onReasignar={onReasignar} zarpado={zarpado} embsHoy={embsHoy} salidasOpen={salidasOpen} {...startProps} />)}
               </div>
             );
           };
@@ -239,7 +258,7 @@ function SalidaBloque({ salida, reservas, zarpoAt, onZarpo, isMobile, salidas = 
                   )}
                   {sinEmb.length === 0
                     ? <div style={{ padding: "10px 14px", fontSize: 11, color: "rgba(255,255,255,0.2)", fontStyle: "italic" }}>(suelta aquí para quitar embarcación)</div>
-                    : sinEmb.map(r => <ReservaRow key={r.id} r={r} isMobile={isMobile} salidas={salidas} embarcaciones={embarcacionesAll} onReasignar={onReasignar} zarpado={zarpado} {...startProps} />)}
+                    : sinEmb.map(r => <ReservaRow key={r.id} r={r} isMobile={isMobile} salidas={salidas} embarcaciones={embarcacionesAll} onReasignar={onReasignar} zarpado={zarpado} embsHoy={embsHoy} salidasOpen={salidasOpen} {...startProps} />)}
                 </div>
               )}
 
@@ -524,6 +543,11 @@ export default function MuelleSalidas() {
   // embarcaciones aunque no tengan reservas, ej. salida recién creada).
   const salidasFull  = (salidas || []).filter(s => reservasPorSalida[s.id]?.length > 0 || expandidas.has(s.id));
   const salidasChips = (salidas || []).filter(s => !reservasPorSalida[s.id]?.length && !expandidas.has(s.id));
+  // Opciones reales de HOY para el botón "Cambiar":
+  //  - embarcaciones efectivamente en uso hoy (asignadas a alguna reserva)
+  //  - salidas que están operando hoy y aún NO han zarpado (abiertas)
+  const embsHoy = [...new Set((reservas || []).map(r => r.embarcacion_asignada).filter(Boolean))];
+  const salidasOpen = salidasFull.filter(s => !zarpos[s.id]);
 
   // KPIs
   const totalPax    = reservas.reduce((t, r) => t + (r.pax_a || r.pax || 1) + (r.pax_n || 0), 0);
@@ -588,6 +612,8 @@ export default function MuelleSalidas() {
               embarcacionesAll={embarcacionesAll}
               onReasignar={reasignar}
               onEditCap={editarCapacidad}
+              embsHoy={embsHoy}
+              salidasOpen={salidasOpen}
             />
           ))}
 
