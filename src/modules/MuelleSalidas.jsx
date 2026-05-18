@@ -697,7 +697,7 @@ export default function MuelleSalidas() {
                   onClick={() => setExpandidas(prev => new Set([...prev, s.id]))}
                   title="Expandir para asignar embarcaciones"
                   style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 10, padding: "8px 14px", fontSize: 12, color: "rgba(255,255,255,0.45)", cursor: "pointer" }}>
-                  ➕ Salida {fmtHora12(s.hora)}
+                  ➕ Salida {fmtHora12(s.hora_regreso || HORARIO_REGRESO[s.id])}
                 </button>
               ))}
             </div>
