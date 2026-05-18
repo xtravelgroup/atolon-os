@@ -240,6 +240,7 @@ export default function PoolService() {
           { k: "nuevo",   l: "🏊 Plano" },
           { k: "pedidos", l: `📋 Pedidos${kpis.pendientes ? ` (${kpis.pendientes})` : ""}` },
           { k: "areas",   l: "📍 Áreas" },
+          { k: "meseros", l: "🧑‍🍳 Meseros" },
         ].map(t => (
           <button key={t.k} onClick={() => setTab(t.k)}
             style={BTN(tab === t.k ? B.pool : B.navyMid, tab === t.k ? B.navy : "#fff")}>
@@ -256,6 +257,9 @@ export default function PoolService() {
       )}
       {tab === "areas" && (
         <AreasManager areas={areas} onChanged={load} />
+      )}
+      {tab === "meseros" && (
+        <MeserosManager />
       )}
     </div>
   );
@@ -908,6 +912,75 @@ function AreasManager({ areas, onChanged }) {
             </div>
           </div>
         ))}
+      </div>
+    </div>
+  );
+}
+
+// ─── Gestión de Meseros (acceso al portal /meseros) ────────────────────────
+function MeserosManager() {
+  const [emps, setEmps] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [q, setQ] = useState("");
+
+  const load = async () => {
+    setLoading(true);
+    const { data } = await supabase.from("empleados_loggro")
+      .select("id, loggro_id, nombre_completo, nombres, apellidos, cargo, portal_mesero, portal_pin")
+      .is("fecha_retiro", null);
+    const norm = (data || []).map(e => ({
+      ...e,
+      _nombre: (e.nombre_completo || `${e.nombres || ""} ${e.apellidos || ""}`).trim(),
+    })).sort((a, b) => a._nombre.localeCompare(b._nombre));
+    setEmps(norm);
+    setLoading(false);
+  };
+  useEffect(() => { load(); }, []);
+
+  const toggle = async (e) => {
+    await supabase.from("empleados_loggro").update({ portal_mesero: !e.portal_mesero }).eq("id", e.id);
+    load();
+  };
+  const resetPin = async (e) => {
+    if (!window.confirm(`Reiniciar PIN de ${e._nombre}? Entrará con 0000 y deberá crear uno nuevo.`)) return;
+    await supabase.from("empleados_loggro").update({ portal_pin: null }).eq("id", e.id);
+    load();
+  };
+
+  const filtered = emps.filter(e => e._nombre.toLowerCase().includes(q.toLowerCase()) || (e.cargo || "").toLowerCase().includes(q.toLowerCase()));
+  const habilitados = emps.filter(e => e.portal_mesero).length;
+
+  if (loading) return <div style={{ color: B.sand, padding: 20 }}>Cargando empleados…</div>;
+
+  return (
+    <div>
+      <div style={{ fontSize: 12, color: "rgba(255,255,255,0.6)", marginBottom: 12 }}>
+        Empleados de RH de Loggro. Activa <strong>"Acceso portal"</strong> para que aparezcan en <code style={{ color: B.sky }}>/meseros</code>.
+        Primera vez entran con <strong>0000</strong> y crean su clave. · <strong>{habilitados}</strong> con acceso.
+      </div>
+      <input value={q} onChange={e => setQ(e.target.value)} placeholder="Buscar por nombre o cargo…" style={{ ...IS, marginBottom: 12 }} />
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 10 }}>
+        {filtered.map(e => (
+          <div key={e.id} style={{ background: B.navyMid, borderRadius: 12, padding: 14, border: `1px solid ${e.portal_mesero ? B.pool + "66" : B.navyLight}` }}>
+            <div style={{ fontSize: 14, fontWeight: 800, color: "#fff" }}>{e._nombre}</div>
+            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", marginBottom: 10 }}>{e.cargo || "—"}</div>
+            <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 13, color: "#fff", marginBottom: 8 }}>
+              <input type="checkbox" checked={!!e.portal_mesero} onChange={() => toggle(e)} style={{ width: 18, height: 18, cursor: "pointer" }} />
+              Acceso al portal de meseros
+            </label>
+            {e.portal_mesero && (
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                <span style={{ fontSize: 11, color: e.portal_pin ? B.success : B.warning }}>
+                  {e.portal_pin ? "✓ PIN configurado" : "⏳ Pendiente (entra con 0000)"}
+                </span>
+                {e.portal_pin && (
+                  <button onClick={() => resetPin(e)} style={BTN(B.danger + "44", B.danger)}>Reiniciar PIN</button>
+                )}
+              </div>
+            )}
+          </div>
+        ))}
+        {filtered.length === 0 && <div style={{ color: "rgba(255,255,255,0.4)", fontSize: 13 }}>Sin resultados.</div>}
       </div>
     </div>
   );

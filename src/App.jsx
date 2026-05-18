@@ -285,6 +285,7 @@ const HotelHabitaciones = lazy(() => import("./modules/HotelHabitaciones"));
 const HotelRoomService = lazy(() => import("./modules/HotelRoomService"));
 const PoolService = lazy(() => import("./modules/PoolService"));
 const PoolServicePortal = lazy(() => import("./modules/PoolServicePortal"));
+const MeseroPortal = lazy(() => import("./modules/MeseroPortal"));
 const HotelMinibar = lazy(() => import("./modules/HotelMinibar"));
 const HotelHousekeeping = lazy(() => import("./modules/HotelHousekeeping"));
 const GuestPortal = lazy(() => import("./modules/GuestPortal"));
@@ -631,6 +632,7 @@ export default function App() {
   if (route.startsWith("m/"))     return <GuestPortal token={route.slice(2)} />;
   if (route.startsWith("room/"))  return <RoomQRLanding idOrNumero={decodeURIComponent(route.slice(5))} />;
   if (route.startsWith("pool/"))  return <PoolServicePortal qr={decodeURIComponent(route.slice(5))} />;
+  if (route === "meseros")        return <MeseroPortal />;
   if (route.startsWith("staff/")) return <StaffView eventoId={route.slice(6)} />;
   if (route === "housekeeping/inspeccion") return <HousekeepingInspection />;
   if (route.startsWith("housekeeping/")) return <CamareraPortal token={route.slice(13)} />;
