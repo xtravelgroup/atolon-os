@@ -219,10 +219,17 @@ export default function Analitica({ externo = false }) {
     })));
 
     // ── Embudo de conversión ──────────────────────────────────────────────────
+    // Embudo ACUMULADO: el widget permite saltarse pasos (ej. fecha
+    // pre-cargada por URL), así que contar cada paso por separado daba un
+    // "embudo" no monotónico (paso 4 > paso 3). Aquí cada paso cuenta las
+    // sesiones que llegaron a ESE paso O a uno posterior → monotónico.
     const pasos = [1,2,3,4,5,6].map(p => ({
       paso: p,
       label: ["Vio widget","Eligió fecha","Eligió paquete","Datos personales","Llegó a pago","Completó pago"][p-1],
-      count: embList.filter(e => e[`paso_${p}_ts`]).length,
+      count: embList.filter(e => {
+        for (let k = p; k <= 6; k++) if (e[`paso_${k}_ts`]) return true;
+        return false;
+      }).length,
     }));
     setEmbudos(pasos);
 
@@ -489,11 +496,16 @@ export default function Analitica({ externo = false }) {
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, marginBottom: 20 }}>
         {/* Embudo */}
         <div style={{ background: B.navyMid, borderRadius: 14, padding: 24, border: "1px solid rgba(255,255,255,0.07)" }}>
-          <h3 style={{ margin: "0 0 20px", fontSize: 15, fontWeight: 700, color: "#fff" }}>🔽 Embudo de Conversión</h3>
+          <h3 style={{ margin: "0 0 4px", fontSize: 15, fontWeight: 700, color: "#fff" }}>🔽 Embudo de Conversión</h3>
+          <div style={{ fontSize: 11, color: B.muted, marginBottom: 18 }}>
+            Embudo del <strong>widget web</strong>. Grupos / WhatsApp / Staff no pasan por el widget, así que con esos orígenes este panel sale en ~0.
+          </div>
           {embudos.map((p, i) => {
             const maxCount = embudos[0]?.count || 1;
-            const pct = maxCount ? ((p.count / maxCount) * 100) : 0;
-            const dropPct = i > 0 && embudos[i-1].count ? (((embudos[i-1].count - p.count) / embudos[i-1].count) * 100).toFixed(0) : null;
+            const pct = Math.max(0, Math.min(100, maxCount ? ((p.count / maxCount) * 100) : 0));
+            const dropPct = i > 0 && embudos[i-1].count > 0
+              ? Math.max(0, Math.round(((embudos[i-1].count - p.count) / embudos[i-1].count) * 100))
+              : null;
             return (
               <div key={p.paso} style={{ marginBottom: 12 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
