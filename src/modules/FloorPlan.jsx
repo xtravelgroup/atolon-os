@@ -75,6 +75,7 @@ export default function FloorPlan() {
   const [loading, setLoading] = useState(true);
   const [drawer, setDrawer] = useState(null); // { spot, asign }
   const [savingDrawer, setSavingDrawer] = useState(false);
+  const [loggroMesas, setLoggroMesas] = useState([]); // catálogo de mesas Loggro
 
   // Load spots once
   useEffect(() => {
@@ -83,6 +84,14 @@ export default function FloorPlan() {
       .select("*").eq("area", "piscina").eq("activo", true)
       .order("zona").order("fila").order("orden")
       .then(({ data }) => setSpots(data || []));
+  }, []);
+
+  // Catálogo de mesas de Loggro (para el desplegable por nombre del mapeo)
+  useEffect(() => {
+    if (!supabase) return;
+    supabase.from("loggro_mesas")
+      .select("loggro_id, nombre").eq("activa", true).order("nombre")
+      .then(({ data }) => setLoggroMesas(data || []));
   }, []);
 
   // Load asignaciones per fecha
@@ -245,6 +254,7 @@ export default function FloorPlan() {
         <DrawerSpot
           spot={drawer.spot}
           asign={drawer.asign}
+          loggroMesas={loggroMesas}
           onClose={() => setDrawer(null)}
           onSave={guardarAsignacion}
           saving={savingDrawer}
@@ -348,7 +358,7 @@ function SectionLabel({ children }) {
 }
 
 // ── Drawer lateral para editar un spot ─────────────────────────────────────
-function DrawerSpot({ spot, asign, onClose, onSave, saving }) {
+function DrawerSpot({ spot, asign, loggroMesas = [], onClose, onSave, saving }) {
   const [estado, setEstado] = useState(asign?.estado || "libre");
   const [huesped, setHuesped] = useState(asign?.huesped || "");
   // Todas son camas → capacidad default 2 pax.
@@ -418,16 +428,38 @@ function DrawerSpot({ spot, asign, onClose, onSave, saving }) {
         {/* Mapeo a Loggro — necesario para que Pool Service pueda enviar pedidos a cocina */}
         <div style={{ marginTop: 18, paddingTop: 14, borderTop: `1px solid ${B.navyLight}` }}>
           <label style={{ fontSize: 12, color: B.sand, fontWeight: 600, display: "block" }}>
-            Mesa Loggro (ID)
+            Mesa Loggro
           </label>
-          <input value={loggroMesaId} onChange={e => setLoggroMesaId(e.target.value)}
-            placeholder="ID de mesa en Loggro Restobar"
-            style={inputStyle} />
-          <div style={{ fontSize: 10, color: B.muted, marginTop: 4 }}>
-            {loggroMesaId
-              ? "✓ Los pedidos hechos en este spot se enviarán a esta mesa Loggro."
-              : "⚠ Sin mapear — los pedidos no se podrán enviar a cocina vía Loggro hasta configurar esto."}
-          </div>
+          {(() => {
+            const mesaSel  = loggroMesas.find(m => m.loggro_id === loggroMesaId);
+            const enLista  = !!mesaSel;
+            const sugerida = loggroMesas.find(m => (m.nombre || "").trim().toLowerCase() === String(spot.id).trim().toLowerCase());
+            return (
+              <>
+                <select value={loggroMesaId} onChange={e => setLoggroMesaId(e.target.value)} style={{ ...inputStyle, cursor: "pointer" }}>
+                  <option value="">— Sin asignar —</option>
+                  {/* Si el id guardado no está en el catálogo, lo mostramos igual para no perderlo */}
+                  {loggroMesaId && !enLista && (
+                    <option value={loggroMesaId}>⚠ ID actual sin nombre ({loggroMesaId})</option>
+                  )}
+                  {loggroMesas.map(m => (
+                    <option key={m.loggro_id} value={m.loggro_id}>{m.nombre}</option>
+                  ))}
+                </select>
+                {sugerida && sugerida.loggro_id !== loggroMesaId && (
+                  <button onClick={() => setLoggroMesaId(sugerida.loggro_id)}
+                    style={{ marginTop: 6, padding: "4px 10px", fontSize: 11, borderRadius: 6, border: `1px solid ${B.sky}55`, background: `${B.sky}11`, color: B.sky, cursor: "pointer" }}>
+                    💡 Auto-asignar mesa "{sugerida.nombre}"
+                  </button>
+                )}
+                <div style={{ fontSize: 10, color: B.muted, marginTop: 4 }}>
+                  {loggroMesaId
+                    ? `✓ Los pedidos de este spot van a la mesa Loggro ${mesaSel ? `"${mesaSel.nombre}"` : "(ID sin nombre — re-sincroniza mesas)"}.`
+                    : "⚠ Sin mapear — los pedidos no se podrán enviar a cocina vía Loggro hasta asignar una mesa."}
+                </div>
+              </>
+            );
+          })()}
         </div>
 
         <button onClick={() => onSave({ estado, huesped, pax, notas, reserva_id: reservaId, loggro_mesa_id: loggroMesaId })}
