@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { B, todayStr } from "../brand";
 import { supabase } from "../lib/supabase";
 import { useMobile } from "../lib/useMobile";
+import { logAccion } from "../lib/logAccion";
 
 const IS = { width: "100%", padding: "10px 14px", borderRadius: 8, background: B.navyLight, border: `1px solid rgba(255,255,255,0.1)`, color: "#fff", fontSize: 13, outline: "none", boxSizing: "border-box", fontFamily: "inherit" };
 
@@ -16,17 +17,19 @@ const HORARIO_REGRESO = {
 };
 
 // ─── Tarjeta de reserva individual ───────────────────────────────────────────
-function ReservaRow({ r, isMobile }) {
+const SEL = { background: B.navyLight, color: "#fff", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 8, fontSize: 11, padding: "4px 6px", outline: "none", maxWidth: 150 };
+
+function ReservaRow({ r, isMobile, salidas = [], embarcaciones = [], onReasignar, zarpado }) {
   const emb = r.embarcacion_asignada;
   return (
     <div style={{
       display: "flex", alignItems: "center", gap: 10, padding: "10px 14px",
-      borderBottom: "1px solid rgba(255,255,255,0.04)",
+      borderBottom: "1px solid rgba(255,255,255,0.04)", flexWrap: "wrap",
     }}>
       <div style={{ width: 28, height: 28, borderRadius: "50%", background: B.navyLight, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, flexShrink: 0 }}>
         {r.estado === "check_in" || r.checkin_at ? "✓" : "·"}
       </div>
-      <div style={{ flex: 1, minWidth: 0 }}>
+      <div style={{ flex: 1, minWidth: 140 }}>
         <div style={{ fontWeight: 600, fontSize: 13, color: "#fff", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
           {r.nombre}
         </div>
@@ -36,9 +39,25 @@ function ReservaRow({ r, isMobile }) {
           {r.aliado_id && <span>· 🤝 Agencia</span>}
         </div>
       </div>
-      {emb && (
-        <div style={{ fontSize: 11, background: B.sky + "22", color: B.sky, padding: "3px 10px", borderRadius: 20, fontWeight: 600, whiteSpace: "nowrap", flexShrink: 0 }}>
-          ⛵ {emb}
+      {zarpado ? (
+        emb && (
+          <div style={{ fontSize: 11, background: B.sky + "22", color: B.sky, padding: "3px 10px", borderRadius: 20, fontWeight: 600, whiteSpace: "nowrap", flexShrink: 0 }}>
+            ⛵ {emb}
+          </div>
+        )
+      ) : (
+        <div style={{ display: "flex", gap: 6, alignItems: "center", flexShrink: 0 }}>
+          <select value={emb || ""} title="Embarcación"
+            onChange={e => onReasignar && onReasignar(r, { embarcacion_asignada: e.target.value || null })}
+            style={SEL}>
+            <option value="">⛵ Sin embarcación</option>
+            {embarcaciones.map(em => <option key={em.nombre} value={em.nombre}>{em.nombre}{em.propiedad === "propia" ? " ★" : ""}</option>)}
+          </select>
+          <select value={r.salida_id || ""} title="Horario / salida"
+            onChange={e => onReasignar && onReasignar(r, { salida_id: e.target.value })}
+            style={SEL}>
+            {salidas.map(s => <option key={s.id} value={s.id}>{s.nombre} · {s.hora}</option>)}
+          </select>
         </div>
       )}
     </div>
@@ -46,7 +65,11 @@ function ReservaRow({ r, isMobile }) {
 }
 
 // ─── Bloque por salida ────────────────────────────────────────────────────────
-function SalidaBloque({ salida, reservas, zarpoAt, onZarpo, isMobile }) {
+function SalidaBloque({ salida, reservas, zarpoAt, onZarpo, isMobile, salidas = [], embarcacionesAll = [], onReasignar, onEditCap }) {
+  const capDe = (nombre) => {
+    const e = embarcacionesAll.find(x => x.nombre === nombre);
+    return e && e.capacidad != null ? Number(e.capacidad) : null;
+  };
   const horaRegreso = salida.hora_regreso || HORARIO_REGRESO[salida.id] || "—";
   const paxTotal = reservas.reduce((t, r) => t + (r.pax_a || r.pax || 1) + (r.pax_n || 0), 0);
   const conCheckin = reservas.filter(r => r.checkin_at || r.estado === "check_in").length;
@@ -131,14 +154,24 @@ function SalidaBloque({ salida, reservas, zarpoAt, onZarpo, isMobile }) {
       {/* Lista de clientes */}
       <div>
         {/* Por embarcación */}
-        {embarcaciones.map(emb => (
+        {embarcaciones.map(emb => {
+          const paxEmb = embGrupos[emb].reduce((t, r) => t + (r.pax_a || r.pax || 1) + (r.pax_n || 0), 0);
+          const cap = capDe(emb);
+          const propia = embarcacionesAll.find(x => x.nombre === emb)?.propiedad === "propia";
+          const excede = cap != null && paxEmb > cap;
+          return (
           <div key={emb}>
-            <div style={{ padding: "8px 14px 4px", fontSize: 10, color: B.sky, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", background: B.sky + "08" }}>
-              ⛵ {emb} · {embGrupos[emb].reduce((t, r) => t + (r.pax_a || r.pax || 1) + (r.pax_n || 0), 0)} pax
+            <div style={{ padding: "8px 14px 4px", fontSize: 10, color: excede ? B.danger : B.sky, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", background: (excede ? B.danger : B.sky) + "08", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+              <span>⛵ {emb}{propia ? " ★" : ""} · {paxEmb} pax{cap != null ? ` / cap ${cap}` : ""}{excede ? " ⚠ EXCEDE" : ""}</span>
+              {!zarpado && onEditCap && (
+                <button onClick={() => onEditCap(emb, cap)} title="Editar capacidad de esta embarcación"
+                  style={{ background: "transparent", border: "none", color: "rgba(255,255,255,0.45)", cursor: "pointer", fontSize: 11, padding: 0 }}>✎ capacidad</button>
+              )}
             </div>
-            {embGrupos[emb].map(r => <ReservaRow key={r.id} r={r} isMobile={isMobile} />)}
+            {embGrupos[emb].map(r => <ReservaRow key={r.id} r={r} isMobile={isMobile} salidas={salidas} embarcaciones={embarcacionesAll} onReasignar={onReasignar} zarpado={zarpado} />)}
           </div>
-        ))}
+          );
+        })}
 
         {/* Sin embarcacion asignada */}
         {sinEmb.length > 0 && (
@@ -148,7 +181,7 @@ function SalidaBloque({ salida, reservas, zarpoAt, onZarpo, isMobile }) {
                 Sin embarcación asignada
               </div>
             )}
-            {sinEmb.map(r => <ReservaRow key={r.id} r={r} isMobile={isMobile} />)}
+            {sinEmb.map(r => <ReservaRow key={r.id} r={r} isMobile={isMobile} salidas={salidas} embarcaciones={embarcacionesAll} onReasignar={onReasignar} zarpado={zarpado} />)}
           </div>
         )}
 
@@ -172,13 +205,14 @@ export default function MuelleSalidas() {
   const [zarpos,   setZarpos]   = useState({}); // { salida_id: hora_real }
   const [zarpesFlota, setZarpesFlota] = useState([]); // zarpes de Castillete/Naturalle
   const [lanchas, setLanchas] = useState([]); // para lookup de costo_viaje_sencillo
+  const [embarcacionesAll, setEmbarcacionesAll] = useState([]); // master: nombre, capacidad, propiedad
   const [loading,  setLoading]  = useState(false);
   const [modalZarpe, setModalZarpe] = useState(null); // { embarcacion }
 
   const fetchData = useCallback(async () => {
     if (!supabase) return;
     setLoading(true);
-    const [{ data: sals }, { data: res }, { data: zrps }, { data: zfl }, { data: lch }] = await Promise.all([
+    const [{ data: sals }, { data: res }, { data: zrps }, { data: zfl }, { data: lch }, { data: embs }] = await Promise.all([
       supabase.from("salidas").select("id, nombre, hora, hora_regreso, activo").eq("activo", true).order("hora"),
       supabase.from("reservas")
         .select("id, nombre, salida_id, pax, pax_a, pax_n, estado, canal, aliado_id, checkin_at, embarcacion_asignada")
@@ -188,9 +222,11 @@ export default function MuelleSalidas() {
       supabase.from("muelle_salidas").select("salida_id, hora_real, estado").eq("fecha", fecha).eq("estado", "zarpo"),
       supabase.from("muelle_zarpes_flota").select("*").eq("fecha", fecha).order("hora_zarpe"),
       supabase.from("lanchas").select("nombre, costo_viaje_sencillo").eq("activo", true),
+      supabase.from("embarcaciones").select("nombre, capacidad, estado, propiedad").eq("estado", "activo").order("nombre"),
     ]);
     setSalidas(sals || []);
     setReservas(res || []);
+    setEmbarcacionesAll(embs || []);
     // Build zarpos map { salida_id → hora_real }
     const zm = {};
     (zrps || []).forEach(z => { zm[z.salida_id] = z.hora_real || true; });
@@ -261,6 +297,56 @@ export default function MuelleSalidas() {
     fetchData();
   };
 
+  // Reasignar embarcación y/o salida(horario) de una reserva. Valida cupo
+  // contra embarcaciones.capacidad y deja auditoría de quién lo hizo.
+  const reasignar = async (r, patch) => {
+    if (!supabase) return;
+    // Validar cupo si se está asignando una embarcación
+    const nuevaEmb = "embarcacion_asignada" in patch ? patch.embarcacion_asignada : r.embarcacion_asignada;
+    const nuevaSal = "salida_id" in patch ? patch.salida_id : r.salida_id;
+    if (nuevaEmb) {
+      const em = embarcacionesAll.find(x => x.nombre === nuevaEmb);
+      const cap = em && em.capacidad != null ? Number(em.capacidad) : null;
+      if (cap != null) {
+        const paxOtros = (reservas || [])
+          .filter(x => x.id !== r.id && x.salida_id === nuevaSal && x.embarcacion_asignada === nuevaEmb)
+          .reduce((t, x) => t + (x.pax_a || x.pax || 1) + (x.pax_n || 0), 0);
+        const paxEsta = (r.pax_a || r.pax || 1) + (r.pax_n || 0);
+        if (paxOtros + paxEsta > cap) {
+          alert(`⚠️ Sin cupo: ${nuevaEmb} tiene capacidad ${cap} y quedaría en ${paxOtros + paxEsta} pax para esa salida.\n\nAjusta la capacidad (✎) o usa otra embarcación.`);
+          return;
+        }
+      }
+    }
+    const datosAntes = { embarcacion_asignada: r.embarcacion_asignada || null, salida_id: r.salida_id };
+    const upd = { updated_at: new Date().toISOString(), ...patch };
+    const { error } = await supabase.from("reservas").update(upd).eq("id", r.id);
+    if (error) { alert("Error al reasignar: " + error.message); return; }
+    const accion = "salida_id" in patch && !("embarcacion_asignada" in patch) ? "cambiar_salida" : "reasignar_embarcacion";
+    logAccion({
+      modulo: "salidas", accion, tabla: "reservas", registroId: r.id,
+      datosAntes, datosDespues: { ...datosAntes, ...patch },
+      notas: `${r.nombre}: ${accion === "cambiar_salida"
+        ? `salida ${datosAntes.salida_id} → ${patch.salida_id}`
+        : `embarcación "${datosAntes.embarcacion_asignada || "—"}" → "${patch.embarcacion_asignada || "—"}"`}`,
+    });
+    fetchData();
+  };
+
+  // Editar capacidad de una embarcación (manual por embarcación) + auditoría.
+  const editarCapacidad = async (nombre, capActual) => {
+    if (!supabase) return;
+    const val = window.prompt(`Capacidad (pax) de "${nombre}":`, capActual != null ? String(capActual) : "");
+    if (val == null) return;
+    const cap = parseInt(val, 10);
+    if (isNaN(cap) || cap < 0) { alert("Capacidad inválida."); return; }
+    const { error } = await supabase.from("embarcaciones").update({ capacidad: cap, updated_at: new Date().toISOString() }).eq("nombre", nombre);
+    if (error) { alert("Error: " + error.message); return; }
+    logAccion({ modulo: "salidas", accion: "editar_capacidad_embarcacion", tabla: "embarcaciones", registroId: nombre,
+      datosAntes: { capacidad: capActual }, datosDespues: { capacidad: cap }, notas: `${nombre}: capacidad ${capActual ?? "—"} → ${cap}` });
+    fetchData();
+  };
+
   const marcarZarpo = async (salidaId) => {
     if (!supabase) return;
     const horaReal = new Date().toTimeString().slice(0, 5);
@@ -276,6 +362,38 @@ export default function MuelleSalidas() {
       updated_at: new Date().toISOString(),
     }, { onConflict: "id" });
     setZarpos(prev => ({ ...prev, [salidaId]: horaReal }));
+
+    // Si la salida lleva embarcación(es) PROPIA(s), registrar también el
+    // zarpe en el módulo Lancha (muelle_zarpes_flota), una vez por embarcación.
+    try {
+      const salObj = (salidas || []).find(s => s.id === salidaId);
+      const resSal = (reservas || []).filter(r => r.salida_id === salidaId && r.embarcacion_asignada);
+      const porEmb = {};
+      resSal.forEach(r => { (porEmb[r.embarcacion_asignada] = porEmb[r.embarcacion_asignada] || []).push(r); });
+      for (const [emb, rs] of Object.entries(porEmb)) {
+        const meta = embarcacionesAll.find(x => x.nombre === emb);
+        if (!meta || meta.propiedad !== "propia") continue;
+        const marker = `[salida:${salidaId}]`;
+        const yaExiste = (zarpesFlota || []).some(z => z.embarcacion === emb && (z.notas || "").includes(marker));
+        if (yaExiste) continue;
+        const paxA = rs.reduce((t, r) => t + (r.pax_a || r.pax || 1), 0);
+        const paxN = rs.reduce((t, r) => t + (r.pax_n || 0), 0);
+        const costo = Number((lanchas.find(l => l.nombre === emb) || {}).costo_viaje_sencillo) || 0;
+        const zfId = `ZF-${Date.now().toString(36).toUpperCase()}-${emb.replace(/\W/g, "").slice(0, 4)}`;
+        await supabase.from("muelle_zarpes_flota").insert({
+          id: zfId, fecha, embarcacion: emb,
+          hora_zarpe: new Date().toTimeString().slice(0, 8),
+          motivo: "pasajeros",
+          pax_a: paxA, pax_n: paxN, costo_operativo: costo,
+          notas: `Auto desde Salidas · ${salObj?.nombre || salidaId} ${marker}`,
+          boca_chica: false,
+        });
+        logAccion({ modulo: "salidas", accion: "zarpe_flota_auto", tabla: "muelle_zarpes_flota", registroId: zfId,
+          datosDespues: { embarcacion: emb, salida_id: salidaId, pax_a: paxA, pax_n: paxN, costo_operativo: costo },
+          notas: `Zarpe propia auto-registrado en Lancha: ${emb} (${salObj?.nombre || salidaId})` });
+      }
+      fetchData();
+    } catch (e) { /* no romper el zarpado si falla el registro en Lancha */ }
   };
 
   // Salidas that have reservas today (or all if no reservas yet)
@@ -341,6 +459,10 @@ export default function MuelleSalidas() {
               zarpoAt={zarpos[sal.id]}
               onZarpo={() => marcarZarpo(sal.id)}
               isMobile={isMobile}
+              salidas={salidas}
+              embarcacionesAll={embarcacionesAll}
+              onReasignar={reasignar}
+              onEditCap={editarCapacidad}
             />
           ))}
 
