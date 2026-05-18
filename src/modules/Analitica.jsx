@@ -132,17 +132,21 @@ export default function Analitica({ externo = false }) {
       ingresosList = ingresosList.filter(i => inAllowed(recOrigen(i)));
     }
 
-    // resConvList = reservas confirmadas del segmento seleccionado.
-    //  • Sin filtro de origen ("all"): solo canales WEB — la vista global es el
-    //    embudo del widget web; ventas internas/agencia no pasan por el widget.
-    //  • Con filtro de origen: usa EXACTAMENTE el mismo clasificador que el
-    //    panel "🎯 Origen del Cliente" (clasificarOrigenReserva, sin restringir
-    //    a WEB_CANALES) para que los KPIs Conversiones/Ingresos y el embudo
-    //    cuadren con ese panel (ej. Grupos → 5 reservas / $4.800.000).
+    // ⚠️ AtolonTrack = SELF-SERVICE únicamente. Solo cuentan las reservas que
+    // hace el propio cliente desde el widget público (id "WEB-..."), p.ej. los
+    // que entran por el link de un grupo y compran. Las que crea el equipo
+    // comercial a mano en Atolon OS (id "R-...") NO son self-service y quedan
+    // FUERA de toda la analítica de AtolonTrack (KPIs, embudo, orígenes).
+    const resSelfSvc = (resConvRes.data || []).filter(r => String(r.id || "").startsWith("WEB-"));
+    // resConvList = reservas self-service del segmento seleccionado.
+    //  • Sin filtro de origen ("all"): solo canales WEB (vista global = embudo
+    //    del widget web).
+    //  • Con filtro de origen: mismo clasificador que el panel "🎯 Origen del
+    //    Cliente" para que KPIs Conversiones/Ingresos cuadren con ese panel.
     const WEB_CANALES = ["Web", "Directo", "Referido", "WhatsApp", "Google SEM", "SEO", "Meta Ads", "Social Orgánico", "Email"];
     const resConvList = allowedOrig
-      ? (resConvRes.data || []).filter(r => inAllowed(o4(clasificarOrigenReserva(r))))
-      : (resConvRes.data || []).filter(r => WEB_CANALES.includes(normCanal(r.canal)));
+      ? resSelfSvc.filter(r => inAllowed(o4(clasificarOrigenReserva(r))))
+      : resSelfSvc.filter(r => WEB_CANALES.includes(normCanal(r.canal)));
 
     // ── KPIs ─────────────────────────────────────────────────────────────────
     const totalSesiones  = sesList.length;
@@ -200,7 +204,7 @@ export default function Analitica({ externo = false }) {
       });
       if (origenMap[b]) origenMap[b].sesiones++;
     });
-    (resConvRes.data || []).forEach(r => {
+    resSelfSvc.forEach(r => {  // solo self-service (id WEB-), no reservas manuales
       const b = clasificarOrigenReserva(r);
       if (origenMap[b]) {
         origenMap[b].conversiones++;
@@ -224,17 +228,23 @@ export default function Analitica({ externo = false }) {
     })));
 
     // ── Embudo de conversión ──────────────────────────────────────────────────
-    // Embudo ACUMULADO: el widget permite saltarse pasos (ej. fecha
-    // pre-cargada por URL), así que contar cada paso por separado daba un
-    // "embudo" no monotónico (paso 4 > paso 3). Aquí cada paso cuenta las
-    // sesiones que llegaron a ESE paso O a uno posterior → monotónico.
-    const pasos = [1,2,3,4,5,6].map(p => ({
-      paso: p,
-      label: ["Vio widget","Eligió fecha","Eligió paquete","Datos personales","Llegó a pago","Completó pago"][p-1],
-      count: embList.filter(e => {
-        for (let k = p; k <= 6; k++) if (e[`paso_${k}_ts`]) return true;
-        return false;
-      }).length,
+    // Orden REAL del widget (BookingPopup): el cliente primero elige PAQUETE
+    // (paso_3) y LUEGO la fecha (paso_2) — nunca al revés. En grupos el paquete
+    // ya viene fijo (por eso el embudo solo se muestra en web/all). Acumulado
+    // sobre el orden lógico → monotónico; el último paso se amarra a las
+    // CONVERSIONES reales del segmento para que siempre cuadre con el KPI.
+    const FUNNEL = [
+      { k: 1, label: "Vio widget" },
+      { k: 3, label: "Eligió paquete" },
+      { k: 2, label: "Eligió fecha" },
+      { k: 4, label: "Datos personales" },
+      { k: 5, label: "Llegó a pago" },
+      { k: 6, label: "Completó pago" },
+    ];
+    const pasos = FUNNEL.map((f, i) => ({
+      paso:  f.k,
+      label: f.label,
+      count: embList.filter(e => FUNNEL.slice(i).some(s => e[`paso_${s.k}_ts`])).length,
     }));
     // El último paso "Completó pago" se amarra a las CONVERSIONES reales del
     // segmento (mismo número del KPI Conversiones), no al evento de widget por
@@ -271,9 +281,11 @@ export default function Analitica({ externo = false }) {
       1: "Vio widget", 2: "Eligió fecha", 3: "Eligió paquete",
       4: "Ingresó datos", 5: "Llegó a pago", 6: "Completó pago",
     };
+    // Orden real del widget: paquete (3) antes que fecha (2).
+    const FUNNEL_RANK = { 1: 0, 3: 1, 2: 2, 4: 3, 5: 4, 6: 5 };
     const abandArr = Object.entries(abandByStep)
       .map(([paso, count]) => ({ paso: Number(paso), label: stepLabels[paso] || `Paso ${paso}`, count }))
-      .sort((a, b) => a.paso - b.paso);
+      .sort((a, b) => (FUNNEL_RANK[a.paso] ?? a.paso) - (FUNNEL_RANK[b.paso] ?? b.paso));
     setAbandonos(abandArr);
 
     // ── Revenue por paquete ───────────────────────────────────────────────────
