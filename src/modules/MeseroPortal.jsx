@@ -50,6 +50,8 @@ export default function MeseroPortal() {
   const [huesped, setHuesped] = useState("");
   const [reservaId, setReservaId] = useState(null);
   const [pasadias, setPasadias] = useState([]); // pasadías de hoy sin mesa asignada
+  const [huespedes, setHuespedes] = useState([]); // huéspedes hotel en check-in sin mesa
+  const [huespedSel, setHuespedSel] = useState(""); // estancia id elegida en el dropdown
   const [okCodigo, setOkCodigo] = useState("");
   const [okLoggro, setOkLoggro] = useState(false);
 
@@ -58,18 +60,33 @@ export default function MeseroPortal() {
       // El floor plan lo renderiza PoolFloorPlanPicker (mismo de Pool Service),
       // que trae sus propios spots/asignaciones. Aquí solo meseros + menú.
       const hoy = new Date().toLocaleString("en-CA", { timeZone: "America/Bogota" }).slice(0, 10);
-      const [{ data: ml }, { data: it }, { data: rv }, { data: asg }] = await Promise.all([
+      const [{ data: ml }, { data: it }, { data: rv }, { data: asg }, { data: est }] = await Promise.all([
         supabase.rpc("mesero_list"),
         supabase.from("menu_items").select("id, nombre, descripcion, precio, categoria, menu_tipo, loggro_id, precio_botella, loggro_id_botella").in("menu_tipo", ["restaurant", "bebidas"]).eq("activo", true),
-        supabase.from("reservas").select("id, nombre, pax, pax_a, pax_n").eq("fecha", hoy).in("estado", ["confirmado", "check_in", "no_show"]),
-        supabase.from("floorplan_asignaciones").select("reserva_id").eq("fecha", hoy),
+        // NS (no_show) NO aparece: solo confirmado / check_in
+        supabase.from("reservas").select("id, nombre, pax, pax_a, pax_n").eq("fecha", hoy).in("estado", ["confirmado", "check_in"]),
+        supabase.from("floorplan_asignaciones").select("reserva_id, huesped").eq("fecha", hoy),
+        supabase.from("hotel_estancias").select("id, huesped_id, pax_adultos, pax_ninos").eq("estado", "in_house"),
       ]);
       setMeseros(ml || []);
       setItems(it || []);
-      const conMesa = new Set((asg || []).map(a => a.reserva_id).filter(Boolean));
+      const conMesaRes = new Set((asg || []).map(a => a.reserva_id).filter(Boolean));
+      const conMesaNom = new Set((asg || []).map(a => (a.huesped || "").trim().toLowerCase()).filter(Boolean));
       setPasadias((rv || [])
-        .filter(r => r.nombre && !conMesa.has(r.id))
+        .filter(r => r.nombre && !conMesaRes.has(r.id))
         .map(r => ({ id: r.id, nombre: r.nombre, pax: r.pax || ((r.pax_a || 0) + (r.pax_n || 0)) || 2 }))
+        .sort((a, b) => a.nombre.localeCompare(b.nombre)));
+      // Huéspedes de hotel en check-in (in_house), sin mesa asignada
+      const estList = est || [];
+      const hids = estList.map(e => e.huesped_id).filter(Boolean);
+      let hmap = {};
+      if (hids.length > 0) {
+        const { data: hs } = await supabase.from("hotel_huespedes").select("id, nombre, apellido").in("id", hids);
+        hmap = Object.fromEntries((hs || []).map(h => [h.id, `${h.nombre || ""} ${h.apellido || ""}`.trim()]));
+      }
+      setHuespedes(estList
+        .map(e => ({ id: e.id, nombre: hmap[e.huesped_id] || "", pax: (e.pax_adultos || 0) + (e.pax_ninos || 0) || 2 }))
+        .filter(h => h.nombre && !conMesaNom.has(h.nombre.toLowerCase()))
         .sort((a, b) => a.nombre.localeCompare(b.nombre)));
       try {
         const s = JSON.parse(sessionStorage.getItem(SS_KEY) || "null");
@@ -200,7 +217,7 @@ export default function MeseroPortal() {
     setOkCodigo(codigo); setOkLoggro(loggroOk); setStep("success");
   };
 
-  const nuevoPedido = () => { setCart([]); setNotas(""); setPax(2); setHuesped(""); setReservaId(null); setSpot(null); setStep("spots"); setOkCodigo(""); };
+  const nuevoPedido = () => { setCart([]); setNotas(""); setPax(2); setHuesped(""); setReservaId(null); setHuespedSel(""); setSpot(null); setStep("spots"); setOkCodigo(""); };
 
   // ── UI ────────────────────────────────────────────────────────────────
   if (boot) return <Wrap><div style={{ padding: 60, textAlign: "center", color: C.textMid }}>Cargando…</div></Wrap>;
@@ -299,26 +316,34 @@ export default function MeseroPortal() {
         <div style={{ paddingBottom: 90 }}>
           <div style={{ fontSize: 13, color: C.textMid, margin: "16px 0 10px" }}>¿A nombre de quién es el pedido?</div>
 
-          {pasadias.length > 0 && (
-            <>
-              <div style={{ fontSize: 11, color: C.accent, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 }}>Pasadías de hoy (sin mesa)</div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 16 }}>
-                {pasadias.map(p => {
-                  const selP = reservaId === p.id;
-                  return (
-                    <button key={p.id} onClick={() => { setHuesped(p.nombre); setReservaId(p.id); setPax(p.pax); }}
-                      style={{ textAlign: "left", background: selP ? C.primary : C.card, color: selP ? C.bg : C.text, border: `1px solid ${selP ? C.primary : C.line}`, borderRadius: 12, padding: "14px 16px", fontSize: 15, fontWeight: 700, cursor: "pointer", minHeight: 52, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                      <span>{p.nombre}</span>
-                      <span style={{ fontSize: 12, opacity: 0.7 }}>{p.pax} pax</span>
-                    </button>
-                  );
-                })}
-              </div>
-            </>
-          )}
+          <Label>Pasadía (sin mesa)</Label>
+          <select
+            value={reservaId || ""}
+            onChange={e => {
+              const p = pasadias.find(x => x.id === e.target.value);
+              if (p) { setHuesped(p.nombre); setReservaId(p.id); setPax(p.pax); setHuespedSel(""); }
+              else setReservaId("");
+            }}
+            style={{ ...inp, cursor: "pointer" }}>
+            <option value="">{pasadias.length ? "— Elegir pasadía —" : "— Sin pasadías hoy —"}</option>
+            {pasadias.map(p => <option key={p.id} value={p.id}>{p.nombre} · {p.pax} pax</option>)}
+          </select>
 
-          <Label>{pasadias.length > 0 ? "O escribe el nombre" : "Nombre del cliente"}</Label>
-          <input value={huesped} onChange={e => { setHuesped(e.target.value); setReservaId(null); }}
+          <Label style={{ marginTop: 14 }}>Huésped en check-in (sin mesa)</Label>
+          <select
+            value={huespedSel}
+            onChange={e => {
+              const h = huespedes.find(x => x.id === e.target.value);
+              if (h) { setHuesped(h.nombre); setHuespedSel(h.id); setPax(h.pax); setReservaId(null); }
+              else setHuespedSel("");
+            }}
+            style={{ ...inp, cursor: "pointer" }}>
+            <option value="">{huespedes.length ? "— Elegir huésped —" : "— Sin huéspedes en check-in —"}</option>
+            {huespedes.map(h => <option key={h.id} value={h.id}>{h.nombre} · {h.pax} pax</option>)}
+          </select>
+
+          <Label style={{ marginTop: 14 }}>O escribe el nombre</Label>
+          <input value={huesped} onChange={e => { setHuesped(e.target.value); setReservaId(null); setHuespedSel(""); }}
             placeholder="Nombre del huésped / mesa" style={inp} />
 
           <Label style={{ marginTop: 14 }}>Número de personas</Label>
