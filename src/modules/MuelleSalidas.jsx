@@ -291,6 +291,7 @@ export default function MuelleSalidas() {
         .select("id, nombre, salida_id, pax, pax_a, pax_n, estado, canal, aliado_id, checkin_at, embarcacion_asignada")
         .eq("fecha", fecha)
         .neq("estado", "cancelado")
+        .neq("estado", "no_show")
         .order("nombre"),
       supabase.from("muelle_salidas").select("salida_id, hora_real, estado").eq("fecha", fecha).eq("estado", "zarpo"),
       supabase.from("muelle_zarpes_flota").select("*").eq("fecha", fecha).order("hora_zarpe"),
