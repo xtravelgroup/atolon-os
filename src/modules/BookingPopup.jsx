@@ -773,9 +773,13 @@ export default function BookingPopup() {
         fecha:          selDate,
         salida_id:      selSalida?.id || grupoEvt?.salida_id || "S2",
         tipo:           product.tipo,
-        canal:          grupoEvt ? "GRUPO" : "WEB",
+        // Si el visitante llegó con link de grupo (?grupo=EVT-xxx), atribuir
+        // SIEMPRE a "GRUPO" aunque el registro del evento no haya cargado
+        // (evento borrado/renombrado, RLS, error de red). Así la reserva queda
+        // consistente con la sesión (que ya se marca "grupo" por el param URL).
+        canal:          (grupoEvt || grupoQ) ? "GRUPO" : "WEB",
         aliado_id:      grupoEvt?.aliado_id || null,
-        grupo_id:       grupoEvt?.id || null,
+        grupo_id:       grupoEvt?.id || grupoQ || null,
         nombre:         form.nombre,
         email:          form.email,
         telefono:       form.telefono || null,
@@ -1444,7 +1448,7 @@ export default function BookingPopup() {
               contacto:       form.nombre,
               email:          form.email,
               tel:            form.telefono,
-              canal:          grupoEvt ? "GRUPO" : "WEB",
+              canal:          (grupoEvt || grupoQ) ? "GRUPO" : "WEB",
               vendedor:       grupoEvt?.vendedor || "Web",
               stage:          "Nuevo",
               valor_est:      total,
@@ -1452,8 +1456,12 @@ export default function BookingPopup() {
               ultimo_contacto:hoy,
               notas:          grupoEvt
                 ? `GRUPO: ${grupoEvt.nombre} · ${product.tipo} · ${selDate} · ${paxA + paxN} pax`
-                : `${product.tipo} · ${selDate} · ${paxA + paxN} pax · Inicio de compra online`,
-              etiquetas:      grupoEvt ? ["grupo", product.slug, grupoEvt.id] : ["web", product.slug],
+                : grupoQ
+                  ? `GRUPO ${grupoQ} (evento no cargado) · ${product.tipo} · ${selDate} · ${paxA + paxN} pax`
+                  : `${product.tipo} · ${selDate} · ${paxA + paxN} pax · Inicio de compra online`,
+              etiquetas:      grupoEvt ? ["grupo", product.slug, grupoEvt.id]
+                              : grupoQ  ? ["grupo", product.slug, grupoQ]
+                              : ["web", product.slug],
             });
             setLeadId(lid);
           }
