@@ -1736,29 +1736,29 @@ function TabContratistas({ items, onChange, eventoId, evento }) {
                 <div onClick={() => openEdit(c)} style={{ fontSize: 15, fontWeight: 800, marginTop: 4, cursor: "pointer" }} title="Click para ver/editar todos los datos">{c.nombre}</div>
               </div>
               <div style={{ display: "flex", gap: 4 }}>
+                <button onClick={() => copiarLinkGestion(c.id)}
+                  style={{ ...BTN(B.sky + "22"), padding: "2px 8px", fontSize: 11, color: B.sky, border: `1px solid ${B.sky}55` }}
+                  title={c.gestion_token ? "Copiar link de gestión del contratista" : "Generar link de gestión y copiar"}>
+                  🔗
+                </button>
                 <button onClick={() => openEdit(c)} style={{ ...BTN(B.navyLight), padding: "2px 8px", fontSize: 11 }} title="Ver / Editar">✏</button>
                 <button onClick={() => remove(c.id)} style={{ ...BTN(B.danger + "33"), padding: "2px 8px", fontSize: 11, color: B.danger }}>✕</button>
               </div>
             </div>
             {c.funcion && <div style={{ fontSize: 12, color: "rgba(255,255,255,0.7)", marginBottom: 8, lineHeight: 1.5 }}>🎯 {c.funcion}</div>}
-            <div style={{ background: B.navyLight, borderRadius: 8, padding: "8px 10px", marginBottom: 8, fontSize: 11, color: "rgba(255,255,255,0.7)", lineHeight: 1.55 }}>
-              {c.nit && <div>🆔 NIT: <strong style={{ color: "#fff" }}>{c.nit}</strong></div>}
-              {c.telefono && <div>📞 {c.telefono}</div>}
-              {c.direccion && <div>📍 {c.direccion}</div>}
-              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: (c.nit || c.telefono || c.direccion) ? 4 : 0 }}>
-                  {c.rut_url && (
-                    <a href={c.rut_url} target="_blank" rel="noreferrer"
-                      style={{ color: B.success, textDecoration: "none", fontSize: 11, fontWeight: 700, border: `1px solid ${B.success}55`, borderRadius: 5, padding: "2px 8px" }}>
-                      📎 Ver RUT
-                    </a>
-                  )}
-                  <button
-                    onClick={() => copiarLinkGestion(c.id)}
-                    style={{ background: "transparent", color: B.sky, fontSize: 11, fontWeight: 700, border: `1px solid ${B.sky}55`, borderRadius: 5, padding: "2px 8px", cursor: "pointer" }}>
-                    🔗 {c.gestion_token ? "Copiar link del contratista" : "Generar link de gestión"}
-                  </button>
-                </div>
+            {(c.nit || c.telefono || c.direccion || c.rut_url) && (
+              <div style={{ background: B.navyLight, borderRadius: 8, padding: "8px 10px", marginBottom: 8, fontSize: 11, color: "rgba(255,255,255,0.7)", lineHeight: 1.55 }}>
+                {c.nit && <div>🆔 NIT: <strong style={{ color: "#fff" }}>{c.nit}</strong></div>}
+                {c.telefono && <div>📞 {c.telefono}</div>}
+                {c.direccion && <div>📍 {c.direccion}</div>}
+                {c.rut_url && (
+                  <a href={c.rut_url} target="_blank" rel="noreferrer"
+                    style={{ display: "inline-block", marginTop: 4, color: B.success, textDecoration: "none", fontSize: 11, fontWeight: 700, border: `1px solid ${B.success}55`, borderRadius: 5, padding: "2px 8px" }}>
+                    📎 Ver RUT
+                  </a>
+                )}
               </div>
+            )}
             {c.contacto && <div style={{ fontSize: 12, color: B.sky, marginBottom: 6 }}>📞 {c.contacto}</div>}
             {Number(c.costo) > 0 && <div style={{ fontSize: 12, color: B.sand, fontWeight: 700, marginBottom: 6 }}>💵 {COP(c.costo)}</div>}
             {(c.personas || []).length > 0 && (
