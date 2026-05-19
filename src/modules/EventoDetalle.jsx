@@ -1594,8 +1594,16 @@ function TabTransporte({ items, onChange, embarcacionesEvento, onChangeEmbarcaci
 // ─── CONTACTOS RÁPIDOS ────────────────────────────────────────────────────────
 const ROLES_CONTACTO = ["Cliente","Coordinador evento","Proveedor AV","Proveedor catering","Proveedor decoración","Proveedor fotografía","Staff Atolon","Capitán","Seguridad","Otro"];
 // ─── Contratistas del evento ─────────────────────────────────────────────
-const EMPTY_CTR = { id: "", nombre: "", tipo: "externo", cargo: "", funcion: "", costo: "", contacto: "", personas: [], notas: "" };
-const EMPTY_PERSONA = { nombre: "", cedula: "", rol: "", arl_url: "" };
+// Campos extendidos para el registro express (eventos → contratistas):
+// nit, direccion, telefono, rut_url, descripcion en empresa;
+// fecha_nacimiento en cada persona. Se mantienen vacíos en la carga manual
+// y se llenan cuando el contratista usa el link público.
+const EMPTY_CTR = {
+  id: "", nombre: "", tipo: "externo", cargo: "", funcion: "", costo: "", contacto: "",
+  nit: "", direccion: "", telefono: "", rut_url: "", descripcion: "",
+  personas: [], notas: "",
+};
+const EMPTY_PERSONA = { nombre: "", cedula: "", fecha_nacimiento: "", rol: "", arl_url: "" };
 
 // Helper para subir archivo ARL al bucket y devolver URL pública
 async function uploadArl(file, eventoId) {
@@ -1643,11 +1651,26 @@ function TabContratistas({ items, onChange, eventoId, evento }) {
         <div style={{ fontSize: 13, color: "rgba(255,255,255,0.5)" }}>
           {items.length} contratista{items.length !== 1 ? "s" : ""} · {totalPersonas} persona{totalPersonas !== 1 ? "s" : ""}{totalCosto > 0 ? ` · ${COP(totalCosto)}` : ""}
         </div>
-        <div style={{ display: "flex", gap: 8 }}>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           <button onClick={() => setShowInstructivo(true)}
             style={{ ...BTN(B.navyLight), color: B.sand, border: `1px solid ${B.sand}55` }}
             title="Genera PDF con los requisitos para que los contratistas accedan a Atolon">
             📄 Instructivo PDF
+          </button>
+          <button
+            onClick={() => {
+              const url = `${window.location.origin}/contratistas/registro/${encodeURIComponent(eventoId)}`;
+              if (navigator.clipboard?.writeText) {
+                navigator.clipboard.writeText(url)
+                  .then(() => alert(`📎 Link copiado:\n${url}\n\nMándaselo al contratista por WhatsApp o email. Llena empresa + personas + RUT + ARL y aparecerán aquí.`))
+                  .catch(() => prompt("Copia el link:", url));
+              } else {
+                prompt("Copia el link:", url);
+              }
+            }}
+            style={{ ...BTN(B.navyLight), color: B.sky, border: `1px solid ${B.sky}55` }}
+            title="Genera el link público express para que el contratista se registre solo">
+            📎 Link registro express
           </button>
           <button onClick={openNew} style={BTN(B.success)}>+ Agregar contratista</button>
         </div>

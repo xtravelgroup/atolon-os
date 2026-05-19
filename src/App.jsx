@@ -352,6 +352,7 @@ const AsistenciaZK = lazy(() => import("./modules/AsistenciaZK"));
 const ContratistasAdmin = lazy(() => import("./modules/ContratistasAdmin"));
 const ContratistasPortal = lazy(() => import("./modules/ContratistasPortal"));
 const ContratistasCurso = lazy(() => import("./modules/ContratistasCurso"));
+const ContratistasRegistro = lazy(() => import("./modules/ContratistasRegistro"));
 const ContratistasVerificar = lazy(() => import("./modules/ContratistasVerificar"));
 const ContratistasMuelle = lazy(() => import("./modules/ContratistasMuelle"));
 const ZarpesLog = lazy(() => import("./modules/ZarpesLog"));
@@ -627,6 +628,7 @@ export default function App() {
   if (route === "despedidas" || route.startsWith("despedidas/")) return <><Despedidas /><WhatsAppFloat phone={waPhone} /></>;
   if (route === "contratistas" || route === "contratistas/exito") return <ContratistasPortal />;
   if (route.startsWith("contratistas/curso/")) return <ContratistasCurso token={route.slice("contratistas/curso/".length)} />;
+  if (route.startsWith("contratistas/registro/")) return <ContratistasRegistro eventoId={route.slice("contratistas/registro/".length)} />;
   if (route.startsWith("verificar/")) return <ContratistasVerificar code={route.slice("verificar/".length)} />;
   if (route === "society")        return <VIPPortal />;
   if (route === "checkin-pax")    return <SelfCheckIn />;
