@@ -392,6 +392,21 @@ export default function MuelleSalidas() {
     };
     if (data.odometro_foto_url) insertPayload.odometro_foto_url = data.odometro_foto_url;
     if (data.motores_horas) insertPayload.motores_horas = data.motores_horas;
+
+    // Anti-duplicado: no permitir dos zarpes de la misma embarcación, misma
+    // fecha y misma hora (cubre doble-tap, reintentos por conexión lenta y
+    // re-registrar un viaje que ya fue auto-creado al marcar la salida).
+    const { data: dup } = await supabase
+      .from("muelle_zarpes_flota")
+      .select("id")
+      .eq("embarcacion", insertPayload.embarcacion)
+      .eq("fecha", fecha)
+      .eq("hora_zarpe", insertPayload.hora_zarpe)
+      .limit(1);
+    if (dup && dup.length) {
+      return new Error(`Ya existe un zarpe de ${insertPayload.embarcacion} a las ${String(insertPayload.hora_zarpe).slice(0, 5)} en esta fecha. No se duplicó.`);
+    }
+
     const { error } = await supabase.from("muelle_zarpes_flota").insert(insertPayload);
     if (!error) {
       setModalZarpe(null);
@@ -751,6 +766,7 @@ function ModalZarpeFlota({ embarcacion, costoDefault = 0, onClose, onSave }) {
   const esLanchaPropia = esNaturalle || esCastillete;
 
   async function handleSave() {
+    if (saving) return; // anti doble-tap (móvil dispara antes del re-render)
     setSaving(true); setErr("");
     // Construir motores_horas
     const motoresHoras = {};
