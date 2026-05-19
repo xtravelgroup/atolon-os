@@ -119,9 +119,10 @@ function dl(event, data = {}) {
   window.dataLayer = window.dataLayer || [];
   window.dataLayer.push({ event, ...data });
 }
-function fbTrack(event, data = {}) {
+function fbTrack(event, data = {}, eventID = null) {
   if (!CFG.meta_pixel_id || typeof window.fbq !== "function") return;
-  window.fbq("track", event, data);
+  if (eventID) window.fbq("track", event, data, { eventID });
+  else window.fbq("track", event, data);
 }
 function fbCustom(event, data = {}) {
   if (!CFG.meta_pixel_id || typeof window.fbq !== "function") return;
@@ -213,7 +214,7 @@ export function gtmPurchase(reservaId, monto, product, adultos, ninos, fecha) {
       transaction_id: reservaId, currency: "COP", value: monto,
       items: [{ item_id: id, item_name: product?.tipo || "Pasadía", price: monto / Math.max(qty, 1), quantity: qty }],
     });
-    fbTrack("Purchase", { value: monto, currency: "COP", content_ids: [id], content_type: "product", num_items: qty });
+    fbTrack("Purchase", { value: monto, currency: "COP", content_ids: [id], content_type: "product", num_items: qty }, reservaId);
     tt("CompletePayment", { content_id: id, value: monto, currency: "COP", quantity: qty });
     adsConversion(monto, reservaId);
   });

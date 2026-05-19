@@ -477,6 +477,9 @@ serve(async (req) => {
 
             console.log("Reserva confirmada vía webhook Zoho:", reserva.id);
 
+            // Meta Conversions API (server-side, dedup con pixel del navegador)
+            enviarMetaCapi(reserva, Number(reserva.total || 0)).catch(() => {});
+
             // Enviar email + WhatsApp en paralelo (best-effort)
             await Promise.all([
               enviarEmailConfirmacion(reserva).catch(e =>
@@ -893,6 +896,31 @@ serve(async (req) => {
 });
 
 // ── Enviar email de confirmación (Resend via /send-confirmation) ───────────
+// ── Meta Conversions API (server-side Purchase) ────────────────────────────
+// Fire-and-forget hacia meta-capi. Best-effort: nunca afecta el flujo de pago.
+async function enviarMetaCapi(reserva: any, monto: number): Promise<void> {
+  try {
+    await fetch(
+      `${Deno.env.get("SUPABASE_URL")}/functions/v1/meta-capi`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+          "apikey": Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+        },
+        body: JSON.stringify({
+          reserva_id: reserva.id,
+          value:      Number(monto || reserva.total || 0),
+          currency:   "COP",
+          email:      reserva.email || reserva.contacto || "",
+          phone:      reserva.telefono || "",
+        }),
+      },
+    );
+  } catch (_) { /* CAPI best-effort */ }
+}
+
 // send-confirmation espera reserva.contacto como destinatario. Si solo está
 // reserva.email (campo dedicado), lo copiamos a contacto antes de enviar.
 async function enviarEmailConfirmacion(reserva: any): Promise<void> {

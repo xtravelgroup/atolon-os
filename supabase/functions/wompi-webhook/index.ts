@@ -385,6 +385,9 @@ serve(async (req) => {
 
         console.log(`✓ Reserva ${reserva.id} confirmada vía Wompi (${monto} COP)`);
 
+        // Meta Conversions API (server-side, dedup con pixel del navegador)
+        enviarMetaCapi(reserva, monto).catch(() => {});
+
         // Enviar email + WhatsApp + Tatiana follow-up en paralelo (best-effort)
         await Promise.all([
           enviarEmailConfirmacion(reserva).catch(e =>
@@ -441,6 +444,32 @@ serve(async (req) => {
     return jsonResp({ received: true, error: String((err as Error).message || err) }, 200);
   }
 });
+
+// ── Meta Conversions API (server-side Purchase) ────────────────────────────
+// Fire-and-forget hacia la edge function meta-capi. Best-effort: cualquier
+// fallo se traga para NO afectar el flujo de pago.
+async function enviarMetaCapi(reserva: any, monto: number): Promise<void> {
+  try {
+    await fetch(
+      `${Deno.env.get("SUPABASE_URL")}/functions/v1/meta-capi`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+          "apikey": Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+        },
+        body: JSON.stringify({
+          reserva_id: reserva.id,
+          value:      Number(monto || reserva.total || 0),
+          currency:   "COP",
+          email:      reserva.email || reserva.contacto || "",
+          phone:      reserva.telefono || "",
+        }),
+      },
+    );
+  } catch (_) { /* CAPI best-effort */ }
+}
 
 // ── Enviar email de confirmación (Resend via /send-confirmation) ───────────
 // send-confirmation espera reserva.contacto como destinatario. Si solo está

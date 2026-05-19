@@ -1262,21 +1262,29 @@ const TRK_FIELDS = [
   { k: "meta_pixel_id",   label: "Meta Pixel ID",          ph: "Ej: 1234567890123456",  hint: "Solo el número del Pixel (Eventos → Orígenes de datos)." },
   { k: "ga4_id",          label: "GA4 Measurement ID",     ph: "G-XXXXXXXXXX",          hint: "Admin → Flujos de datos → ID de medición." },
   { k: "gtm_id",          label: "Google Tag Manager ID",  ph: "GTM-XXXXXXX",           hint: "Opcional. Si lo usas, GA4/Ads/Meta pueden ir dentro del contenedor." },
-  { k: "google_ads_id",   label: "Google Ads Conversion",  ph: "AW-123456789",          hint: "ID de conversión de Google Ads." },
-  { k: "tiktok_pixel_id", label: "TikTok Pixel ID",        ph: "Ej: C1A2B3...",         hint: "Eventos → Administrar → ID del pixel." },
+  { k: "google_ads_id",    label: "Google Ads Conversion", ph: "AW-123456789",          hint: "ID de conversión de Google Ads." },
+  { k: "google_ads_label", label: "Google Ads Label",      ph: "Ej: AbC-D_efGhIjk",     hint: "Etiqueta de la conversión (lo que va después del / en send_to)." },
+  { k: "tiktok_pixel_id",  label: "TikTok Pixel ID",       ph: "Ej: C1A2B3...",         hint: "Eventos → Administrar → ID del pixel." },
 ];
 
 function TrackingConfigPanel() {
-  const [open, setOpen]     = useState(false);
-  const [form, setForm]     = useState(null);
-  const [saving, setSaving] = useState(false);
-  const [saved, setSaved]   = useState(false);
+  const [open, setOpen]         = useState(false);
+  const [form, setForm]         = useState(null);
+  const [saving, setSaving]     = useState(false);
+  const [saved, setSaved]       = useState(false);
+  const [tokenSet, setTokenSet] = useState(false); // ¿hay token CAPI guardado?
+  const [tokenInput, setTokenInput] = useState(""); // write-only: solo para setear/reemplazar
 
   useEffect(() => {
     supabase.from("configuracion")
-      .select("meta_pixel_id, gtm_id, ga4_id, google_ads_id, tiktok_pixel_id")
+      .select("meta_pixel_id, gtm_id, ga4_id, google_ads_id, google_ads_label, tiktok_pixel_id, meta_capi_token")
       .eq("id", "atolon").single()
-      .then(({ data }) => setForm(data || {}))
+      .then(({ data }) => {
+        const d = data || {};
+        setTokenSet(!!(d.meta_capi_token || "").toString().trim());
+        delete d.meta_capi_token; // nunca lo mostramos en UI
+        setForm(d);
+      })
       .catch(() => setForm({}));
   }, []);
 
@@ -1286,11 +1294,15 @@ function TrackingConfigPanel() {
     setSaving(true);
     const payload = {};
     TRK_FIELDS.forEach(({ k }) => { payload[k] = (form?.[k] || "").trim() || null; });
+    if (tokenInput.trim()) payload.meta_capi_token = tokenInput.trim();
     payload.updated_at = new Date().toISOString();
     const { error } = await supabase.from("configuracion").update(payload).eq("id", "atolon");
     setSaving(false);
-    if (!error) { setSaved(true); setTimeout(() => setSaved(false), 4000); }
-    else alert("No se pudo guardar: " + error.message);
+    if (!error) {
+      setSaved(true);
+      if (tokenInput.trim()) { setTokenSet(true); setTokenInput(""); }
+      setTimeout(() => setSaved(false), 4000);
+    } else alert("No se pudo guardar: " + error.message);
   };
 
   const algunoActivo = form && TRK_FIELDS.some(({ k }) => (form[k] || "").trim());
@@ -1328,6 +1340,27 @@ function TrackingConfigPanel() {
               </div>
             ))}
           </div>
+
+          {/* Meta Conversions API token — write-only, server-side */}
+          <div style={{ marginTop: 18, padding: 14, borderRadius: 10, background: B.navy, border: "1px solid rgba(255,255,255,0.10)" }}>
+            <label style={{ display: "block", fontSize: 12, fontWeight: 700, color: B.sand, marginBottom: 6 }}>
+              Meta Conversions API · Token
+              <span style={{ marginLeft: 8, fontSize: 11, fontWeight: 600, color: tokenSet ? B.success : B.muted }}>
+                {tokenSet ? "● configurado" : "○ sin configurar"}
+              </span>
+            </label>
+            <input type="password" autoComplete="off" value={tokenInput}
+              onChange={e => { setTokenInput(e.target.value); setSaved(false); }}
+              placeholder={tokenSet ? "•••••••• (deja vacío para conservar el actual)" : "Pega el token de acceso CAPI"}
+              style={{ width: "100%", boxSizing: "border-box", padding: "10px 12px", borderRadius: 8,
+                border: "1px solid rgba(255,255,255,0.12)", background: B.navyMid, color: "#fff", fontSize: 13, outline: "none" }} />
+            <div style={{ fontSize: 11, color: B.muted, marginTop: 5, lineHeight: 1.5 }}>
+              Token de acceso del Pixel (Eventos → Configuración → Conversions API → Generar token).
+              Se guarda <strong>solo del lado servidor</strong> — nunca se muestra ni se expone al navegador.
+              Envía el <code>Purchase</code> a Meta aunque iOS/adblockers bloqueen el pixel, deduplicado por reserva.
+            </div>
+          </div>
+
           <div style={{ display: "flex", alignItems: "center", gap: 14, marginTop: 20 }}>
             <button onClick={guardar} disabled={saving}
               style={{ padding: "10px 22px", borderRadius: 8, border: "none", cursor: saving ? "default" : "pointer",

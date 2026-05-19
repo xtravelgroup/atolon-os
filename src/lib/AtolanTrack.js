@@ -220,7 +220,7 @@ class AtolanTrackSDK {
     // eventos se encolan en gtm.js hasta que initTracking() corre.
     supabase
       .from("configuracion")
-      .select("meta_pixel_id, gtm_id, ga4_id, google_ads_id, tiktok_pixel_id")
+      .select("meta_pixel_id, gtm_id, ga4_id, google_ads_id, google_ads_label, tiktok_pixel_id")
       .eq("id", "atolon")
       .single()
       .then(({ data }) => initTracking(data || {}))
