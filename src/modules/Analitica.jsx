@@ -479,7 +479,16 @@ export default function Analitica({ externo = false }) {
     // tiene reserva enlazada → "Sin reserva" (fila huérfana/test).
     const metodoLabel = (m) =>
       ({ wompi: "Wompi", zoho_pay: "Zoho", tarjeta_internacional: "Tarjeta intl.", stripe: "Stripe" }[String(m || "").toLowerCase()] || m);
-    setIngresos(ingresosList.slice(0,30).reverse().map(i => {
+    // Filtra por el MISMO origen que los paneles Conversiones/Origen:
+    // clasifica la RESERVA enlazada (ve grupo_id/canal/utms), no la sesión
+    // del track_ingreso — así "Web/Grupo" filtra consistente con el resto.
+    // Transacción sin reserva (huérfana) → cae al origen de la sesión.
+    const txOrigen = (i) => {
+      const r = reservaMap.get(i.reserva_id);
+      return r ? o4(clasificarOrigenReserva(r)) : recOrigen(i);
+    };
+    const txList = (ingresosRes.data || []).filter(i => inAllowed(txOrigen(i)));
+    setIngresos(txList.slice(0,30).reverse().map(i => {
       const r  = reservaMap.get(i.reserva_id);
       const fp = r?.forma_pago;
       const est = r
