@@ -1,6 +1,6 @@
 // PoolServicePortal — Portal público para huéspedes en /pool/:qr
-// El cliente escanea el QR del área (piscina, beach, cabaña), llega aquí,
-// arma su pedido y lo envía. El staff lo ve en tiempo real en PoolService.
+// El cliente escanea el QR del área (cabaña) o de una cama (floorplan_spot),
+// arma su pedido y lo envía. Bilingüe ES/EN.
 //
 // Usa Supabase con anon key — RLS permite INSERT/SELECT a anon en la
 // tabla pool_service_pedidos.
@@ -16,8 +16,8 @@ const C = {
 const COP = (n) => (Number(n) || 0).toLocaleString("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 });
 
 const TIPO_LABEL = {
-  piscina: "Piscina", piscina_chica: "Piscina chica", beach: "Beach", cabana: "Cabaña",
-  bar: "Bar", vip: "VIP", otra: "Área",
+  es: { piscina: "Piscina", piscina_chica: "Piscina chica", beach: "Beach", cabana: "Cabaña", bar: "Bar", vip: "VIP", otra: "Área" },
+  en: { piscina: "Pool", piscina_chica: "Small pool", beach: "Beach", cabana: "Cabana", bar: "Bar", vip: "VIP", otra: "Area" },
 };
 
 const CAT_ORDER = ["Bebidas", "Cervezas", "Cocteles", "Snacks", "Entradas", "Marinas", "Ensalada", "Ensaladas", "Tacos", "Pizza", "Pizzas", "Especialidades", "Especialidades de la Isla", "Parrilla", "De la Parrilla", "Complementos", "Postres"];
@@ -26,7 +26,54 @@ const catRank = (cat) => {
   return idx === -1 ? 999 : idx;
 };
 
+// ── i18n ────────────────────────────────────────────────────────────────────
+const STR = {
+  loading:        { es: "Cargando…", en: "Loading…" },
+  na_title:       { es: "Área no disponible", en: "Area unavailable" },
+  na_sub:         { es: "Este QR no corresponde a ningún área activa. Pídele a un colaborador un código nuevo.", en: "This QR doesn't match any active area. Ask a team member for a new code." },
+  hola:           { es: "Hola 👋", en: "Hi 👋" },
+  pide_cama:      { es: "Pide a tu cama", en: "Order to your daybed" },
+  comidas:        { es: "Comidas", en: "Food" },
+  bebidas:        { es: "Bebidas", en: "Drinks" },
+  actividades:    { es: "Actividades", en: "Activities" },
+  todo:           { es: "Todo", en: "All" },
+  vacio_act:      { es: "Consulta las actividades y pasadías con tu anfitrión 🏖", en: "Ask your host about activities & day passes 🏖" },
+  vacio:          { es: "No hay ítems en esta sección por ahora.", en: "No items in this section yet." },
+  agregar:        { es: "+ Agregar", en: "+ Add" },
+  revisar:        { es: "Revisar pedido →", en: "Review order →" },
+  tu_pedido:      { es: "Tu pedido", en: "Your order" },
+  total:          { es: "Total", en: "Total" },
+  info_entrega:   { es: "Información para entrega (opcional)", en: "Delivery info (optional)" },
+  tu_nombre:      { es: "Tu nombre", en: "Your name" },
+  personas:       { es: "Personas en la mesa", en: "People at the table" },
+  notas_ph:       { es: "Notas especiales (alergias, ubicación exacta, etc.)", en: "Special notes (allergies, exact location, etc.)" },
+  agregar_mas:    { es: "← Agregar más", en: "← Add more" },
+  enviando:       { es: "Enviando…", en: "Sending…" },
+  enviar:         { es: "Enviar pedido", en: "Send order" },
+  add_algo:       { es: "Agrega algo al pedido", en: "Add something to your order" },
+  err_enviar:     { es: "Error al enviar el pedido: ", en: "Error sending the order: " },
+  codigo:         { es: "Código", en: "Code" },
+  auto_refresh:   { es: "Esta página se actualiza automáticamente cuando cambia el estado.", en: "This page updates automatically when the status changes." },
+};
+const EST = {
+  recibido:   { emoji: "📥", l: { es: "Recibido", en: "Received" },   s: { es: "Tu pedido llegó al equipo.", en: "Your order reached the team." } },
+  preparando: { emoji: "👨‍🍳", l: { es: "Preparando", en: "Preparing" }, s: { es: "Lo están preparando con cariño.", en: "Being prepared with care." } },
+  listo:      { emoji: "🍽️", l: { es: "Listo", en: "Ready" },        s: { es: "Va en camino a tu área.", en: "On its way to you." } },
+  entregado:  { emoji: "✅", l: { es: "Entregado", en: "Delivered" },  s: { es: "¡Disfruta tu pedido!", en: "Enjoy your order!" } },
+  cancelado:  { emoji: "❌", l: { es: "Cancelado", en: "Cancelled" },  s: { es: "El pedido fue cancelado.", en: "The order was cancelled." } },
+};
+function initLang() {
+  try {
+    const p = new URLSearchParams(window.location.search).get("lang");
+    if (p === "en" || p === "es") return p;
+    return (navigator.language || "es").slice(0, 2).toLowerCase() === "en" ? "en" : "es";
+  } catch { return "es"; }
+}
+
 export default function PoolServicePortal({ qr }) {
+  const [lang, setLang]     = useState(initLang);
+  const t = (k) => STR[k]?.[lang] ?? STR[k]?.es ?? k;
+
   const [area, setArea]     = useState(null);
   const [spot, setSpot]     = useState(null);  // modo cama: QR de un floorplan_spot
   const [items, setItems]   = useState([]);
@@ -34,7 +81,7 @@ export default function PoolServicePortal({ qr }) {
   const [carrito, setCart]  = useState([]);
   const [filtroCat, setFC]  = useState("");
   const [seccion, setSeccion] = useState("comidas"); // comidas | bebidas | actividades
-  const [registrado, setRegistrado] = useState(false); // el spot ya tiene huésped hoy
+  const [registrado, setRegistrado] = useState(false);
   const [step, setStep]     = useState("menu"); // menu | review | success
   const [huesped, setHuesped] = useState("");
   const [notas, setNotas]   = useState("");
@@ -43,25 +90,28 @@ export default function PoolServicePortal({ qr }) {
   const [pedidoCodigo, setPedidoCodigo] = useState("");
   const [pedidoEstado, setPedidoEstado] = useState("");
 
+  // nombre/desc/categoría según idioma
+  const nm = (it) => (lang === "en" && it.nombre_en) ? it.nombre_en : it.nombre;
+  const ds = (it) => (lang === "en" && it.descripcion_en) ? it.descripcion_en : it.descripcion;
+  const ct = (it) => (lang === "en" && it.categoria_en) ? it.categoria_en : it.categoria;
+
   useEffect(() => {
     (async () => {
       if (!qr) return setLoad(false);
       const [{ data: a }, { data: i }] = await Promise.all([
         supabase.from("pool_service_areas").select("*").eq("qr_code", qr).eq("activo", true).maybeSingle(),
-        supabase.from("menu_items").select("id, nombre, descripcion, precio, categoria, menu_tipo, loggro_id").in("menu_tipo", ["restaurant", "bebidas", "experiencias", "trans_acuatica"]).eq("activo", true),
+        supabase.from("menu_items").select("id, nombre, nombre_en, descripcion, descripcion_en, precio, categoria, categoria_en, menu_tipo, loggro_id").in("menu_tipo", ["restaurant", "bebidas", "experiencias", "trans_acuatica"]).eq("activo", true),
       ]);
       setItems(i || []);
       if (a) {
         setArea(a);
       } else {
-        // No es un área: probar como cama del floor plan (QR por spot_id)
         const { data: sp } = await supabase.from("floorplan_spots")
           .select("id, zona, loggro_mesa_id").eq("id", qr).eq("activo", true).maybeSingle();
         if (sp) {
           setSpot(sp);
           const zlbl = (sp.zona || "").replace("piscina_derecha", "Piscina Derecha").replace("piscina_izquierda", "Piscina Izquierda").replace("piscina_central", "Piscina Centro").replace("piscina_", "P. ").replace(/_/g, " ");
-          setArea({ id: sp.id, nombre: sp.id, tipo: "piscina", _zona: zlbl }); // header del Shell
-          // ¿Ya registraron a la persona en esta cama hoy? → saludar por nombre
+          setArea({ id: sp.id, nombre: sp.id, tipo: "piscina", _zona: zlbl });
           const hoy = new Date().toLocaleString("en-CA", { timeZone: "America/Bogota" }).slice(0, 10);
           const { data: asg } = await supabase.from("floorplan_asignaciones")
             .select("huesped, pax").eq("spot_id", sp.id).eq("fecha", hoy)
@@ -73,7 +123,6 @@ export default function PoolServicePortal({ qr }) {
     })();
   }, [qr]);
 
-  // Tracking de pedido en realtime
   useEffect(() => {
     if (!pedidoCodigo) return;
     const ch = supabase
@@ -85,29 +134,24 @@ export default function PoolServicePortal({ qr }) {
     return () => { supabase.removeChannel(ch); };
   }, [pedidoCodigo]);
 
-  // Comidas = restaurant · Bebidas = bebidas · Actividades = experiencias/tours
   const SEC_TIPOS = { comidas: ["restaurant"], bebidas: ["bebidas"], actividades: ["experiencias", "trans_acuatica"] };
   const seccionItems = useMemo(
     () => items.filter(i => (SEC_TIPOS[seccion] || []).includes(i.menu_tipo)),
     [items, seccion]
   );
 
+  // categorías: clave canónica = categoria (es); etiqueta = según idioma
   const cats = useMemo(() => {
-    const list = Array.from(new Set(seccionItems.map(i => i.categoria).filter(Boolean)));
-    return list.sort((a, b) => {
-      const ra = catRank(a), rb = catRank(b);
-      if (ra !== rb) return ra - rb;
-      return a.localeCompare(b);
-    });
-  }, [seccionItems]);
+    const map = new Map();
+    seccionItems.forEach(i => { if (i.categoria && !map.has(i.categoria)) map.set(i.categoria, ct(i)); });
+    return Array.from(map.entries())
+      .sort((a, b) => (catRank(a[0]) - catRank(b[0])) || a[0].localeCompare(b[0]))
+      .map(([key, label]) => ({ key, label }));
+  }, [seccionItems, lang]);
 
   const itemsFiltered = useMemo(() => {
     const base = filtroCat ? seccionItems.filter(i => i.categoria === filtroCat) : seccionItems;
-    return [...base].sort((a, b) => {
-      const ra = catRank(a.categoria), rb = catRank(b.categoria);
-      if (ra !== rb) return ra - rb;
-      return (a.nombre || "").localeCompare(b.nombre || "");
-    });
+    return [...base].sort((a, b) => (catRank(a.categoria) - catRank(b.categoria)) || (a.nombre || "").localeCompare(b.nombre || ""));
   }, [seccionItems, filtroCat]);
 
   const subtotal = carrito.reduce((s, x) => s + x.precio * x.cantidad, 0);
@@ -115,25 +159,25 @@ export default function PoolServicePortal({ qr }) {
   const add = (it) => setCart(prev => {
     const ex = prev.find(x => x.id === it.id);
     if (ex) return prev.map(x => x.id === it.id ? { ...x, cantidad: x.cantidad + 1 } : x);
-    return [...prev, { id: it.id, nombre: it.nombre, precio: it.precio || 0, loggro_id: it.loggro_id || null, cantidad: 1, notas: "" }];
+    return [...prev, { id: it.id, nombre: it.nombre, nombre_en: it.nombre_en || null, precio: it.precio || 0, loggro_id: it.loggro_id || null, cantidad: 1, notas: "" }];
   });
   const setCant = (id, c) => {
     const n = Number(c);
     if (n <= 0) return setCart(prev => prev.filter(x => x.id !== id));
     setCart(prev => prev.map(x => x.id === id ? { ...x, cantidad: n } : x));
   };
+  const cnm = (c) => (lang === "en" && c.nombre_en) ? c.nombre_en : c.nombre;
 
   const enviar = async () => {
-    if (carrito.length === 0) return alert("Agrega algo al pedido");
+    if (carrito.length === 0) return alert(t("add_algo"));
     setSaving(true);
     const codigo = `PS-${Date.now()}`;
     const row = spot
       ? { codigo, spot_id: spot.id, area_nombre: `${spot.id} · ${area._zona || ""}`, huesped: huesped || null, pax: Number(pax) || 1, items: carrito, subtotal, total: subtotal, notas: notas || null, estado: "recibido", creado_por: "huesped" }
       : { codigo, area_id: area.id, area_nombre: area.nombre, huesped: huesped || null, pax: Number(pax) || 1, items: carrito, subtotal, total: subtotal, notas: notas || null, estado: "recibido", creado_por: "huesped" };
     const { data: ins, error } = await supabase.from("pool_service_pedidos").insert(row).select().maybeSingle();
-    if (error) { setSaving(false); return alert("Error al enviar el pedido: " + error.message); }
+    if (error) { setSaving(false); return alert(t("err_enviar") + error.message); }
 
-    // Modo cama: enviar a la mesa de Loggro del spot (igual que Room Service)
     if (spot?.loggro_mesa_id) {
       try {
         const anon = import.meta.env.VITE_SUPABASE_ANON_KEY;
@@ -168,74 +212,62 @@ export default function PoolServicePortal({ qr }) {
   };
 
   if (loading) {
-    return (
-      <Shell>
-        <div style={{ padding: 60, textAlign: "center", color: C.textMid }}>Cargando…</div>
-      </Shell>
-    );
+    return <Shell lang={lang} setLang={setLang}><div style={{ padding: 60, textAlign: "center", color: C.textMid }}>{t("loading")}</div></Shell>;
   }
   if (!area) {
     return (
-      <Shell>
+      <Shell lang={lang} setLang={setLang}>
         <div style={{ padding: 40, textAlign: "center" }}>
           <div style={{ fontSize: 48, marginBottom: 12 }}>⚠️</div>
-          <div style={{ fontSize: 20, fontWeight: 700, color: C.text, marginBottom: 8 }}>Área no disponible</div>
-          <div style={{ fontSize: 13, color: C.textMid }}>
-            Este QR no corresponde a ninguna área activa. Pídele a un colaborador del muelle un código nuevo.
-          </div>
+          <div style={{ fontSize: 20, fontWeight: 700, color: C.text, marginBottom: 8 }}>{t("na_title")}</div>
+          <div style={{ fontSize: 13, color: C.textMid }}>{t("na_sub")}</div>
         </div>
       </Shell>
     );
   }
 
   if (step === "success") {
-    return <SuccessView area={area} codigo={pedidoCodigo} estado={pedidoEstado} />;
+    return <SuccessView area={area} codigo={pedidoCodigo} estado={pedidoEstado} lang={lang} setLang={setLang} />;
   }
 
   return (
-    <Shell area={area}>
+    <Shell area={area} lang={lang} setLang={setLang}>
       {step === "menu" && (
         <>
-          {/* Saludo si la persona ya está registrada en esta cama (como Room Service) */}
           {registrado && huesped && (
             <div style={{ background: "white", borderRadius: 14, padding: "16px 18px", marginBottom: 12, boxShadow: "0 1px 3px rgba(13,27,62,0.06)" }}>
-              <div style={{ fontSize: 13, color: C.textMid }}>Hola 👋</div>
+              <div style={{ fontSize: 13, color: C.textMid }}>{t("hola")}</div>
               <div style={{ fontSize: 20, fontWeight: 800, color: C.text }}>{String(huesped).split(" ")[0]}</div>
-              <div style={{ fontSize: 12, color: C.textLight, marginTop: 2 }}>Pide a tu cama · {area?.nombre}</div>
+              <div style={{ fontSize: 12, color: C.textLight, marginTop: 2 }}>{t("pide_cama")} · {area?.nombre}</div>
             </div>
           )}
 
-          {/* Secciones tipo Room Service */}
           <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
             {[
-              { k: "comidas",     ic: "🍽", l: "Comidas" },
-              { k: "bebidas",     ic: "🍹", l: "Bebidas" },
-              { k: "actividades", ic: "🏖", l: "Actividades" },
+              { k: "comidas", ic: "🍽" },
+              { k: "bebidas", ic: "🍹" },
+              { k: "actividades", ic: "🏖" },
             ].map(s => {
               const on = seccion === s.k;
               return (
                 <button key={s.k} onClick={() => { setSeccion(s.k); setFC(""); }}
                   style={{ flex: 1, background: on ? C.primary : "white", color: on ? "#fff" : C.text, border: `1px solid ${on ? C.primary : C.border}`, borderRadius: 12, padding: "12px 4px", fontSize: 13, fontWeight: 800, cursor: "pointer", minHeight: 56 }}>
-                  <div style={{ fontSize: 20 }}>{s.ic}</div>{s.l}
+                  <div style={{ fontSize: 20 }}>{s.ic}</div>{t(s.k)}
                 </button>
               );
             })}
           </div>
 
-          {/* Filtros de categoría */}
           <div style={{ display: "flex", gap: 6, overflowX: "auto", padding: "8px 0 12px 0", marginBottom: 12 }}>
-            <Chip label="Todo" active={filtroCat === ""} onClick={() => setFC("")} />
+            <Chip label={t("todo")} active={filtroCat === ""} onClick={() => setFC("")} />
             {cats.map(c => (
-              <Chip key={c} label={c} active={filtroCat === c} onClick={() => setFC(c)} />
+              <Chip key={c.key} label={c.label} active={filtroCat === c.key} onClick={() => setFC(c.key)} />
             ))}
           </div>
 
-          {/* Items */}
           {itemsFiltered.length === 0 && (
             <div style={{ background: "white", borderRadius: 12, padding: 28, textAlign: "center", color: C.textMid, fontSize: 13 }}>
-              {seccion === "actividades"
-                ? "Consulta las actividades y pasadías con tu anfitrión 🏖"
-                : "No hay ítems en esta sección por ahora."}
+              {seccion === "actividades" ? t("vacio_act") : t("vacio")}
             </div>
           )}
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -244,11 +276,9 @@ export default function PoolServicePortal({ qr }) {
               return (
                 <div key={it.id} style={{ background: "white", borderRadius: 12, padding: 14, boxShadow: "0 1px 3px rgba(13,27,62,0.06)", display: "flex", alignItems: "center", gap: 12 }}>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 10, color: C.textLight, textTransform: "uppercase", letterSpacing: "0.05em" }}>
-                      {it.categoria || "—"}
-                    </div>
-                    <div style={{ fontSize: 14, fontWeight: 700, color: C.text, marginTop: 2 }}>{it.nombre}</div>
-                    {it.descripcion && <div style={{ fontSize: 11, color: C.textMid, marginTop: 2 }}>{it.descripcion}</div>}
+                    <div style={{ fontSize: 10, color: C.textLight, textTransform: "uppercase", letterSpacing: "0.05em" }}>{ct(it) || "—"}</div>
+                    <div style={{ fontSize: 14, fontWeight: 700, color: C.text, marginTop: 2 }}>{nm(it)}</div>
+                    {ds(it) && <div style={{ fontSize: 11, color: C.textMid, marginTop: 2 }}>{ds(it)}</div>}
                     <div style={{ fontSize: 14, fontWeight: 800, color: C.text, marginTop: 6 }}>{COP(it.precio)}</div>
                   </div>
                   {inCart ? (
@@ -258,22 +288,21 @@ export default function PoolServicePortal({ qr }) {
                       <button onClick={() => setCant(it.id, inCart.cantidad + 1)} style={qtyBtn}>+</button>
                     </div>
                   ) : (
-                    <button onClick={() => add(it)} style={addBtn}>+ Agregar</button>
+                    <button onClick={() => add(it)} style={addBtn}>{t("agregar")}</button>
                   )}
                 </div>
               );
             })}
           </div>
 
-          {/* Bottom bar */}
           {carrito.length > 0 && (
             <div style={{ position: "sticky", bottom: 0, background: "white", padding: "12px 16px", margin: "12px -16px -16px -16px", borderTop: `1px solid ${C.border}`, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
               <div>
-                <div style={{ fontSize: 11, color: C.textMid }}>{carrito.length} ítem{carrito.length !== 1 ? "s" : ""}</div>
+                <div style={{ fontSize: 11, color: C.textMid }}>{carrito.reduce((s, x) => s + x.cantidad, 0)} {lang === "en" ? "items" : "ítems"}</div>
                 <div style={{ fontSize: 18, fontWeight: 800, color: C.text }}>{COP(subtotal)}</div>
               </div>
               <button onClick={() => setStep("review")} style={{ background: C.primary, color: "#fff", border: "none", borderRadius: 10, padding: "12px 20px", fontWeight: 700, fontSize: 14, cursor: "pointer", minHeight: 48 }}>
-                Revisar pedido →
+                {t("revisar")}
               </button>
             </div>
           )}
@@ -283,42 +312,40 @@ export default function PoolServicePortal({ qr }) {
       {step === "review" && (
         <div>
           <div style={{ background: "white", borderRadius: 12, padding: 16, marginBottom: 12 }}>
-            <div style={{ fontSize: 14, fontWeight: 800, marginBottom: 10 }}>Tu pedido</div>
+            <div style={{ fontSize: 14, fontWeight: 800, marginBottom: 10 }}>{t("tu_pedido")}</div>
             {carrito.map(c => (
               <div key={c.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0", borderTop: `1px solid ${C.border}` }}>
                 <button onClick={() => setCant(c.id, c.cantidad - 1)} style={qtyBtnSm}>−</button>
                 <span style={{ minWidth: 24, textAlign: "center", fontWeight: 700 }}>{c.cantidad}</span>
                 <button onClick={() => setCant(c.id, c.cantidad + 1)} style={qtyBtnSm}>+</button>
-                <div style={{ flex: 1, fontSize: 13 }}>{c.nombre}</div>
+                <div style={{ flex: 1, fontSize: 13 }}>{cnm(c)}</div>
                 <div style={{ fontWeight: 700 }}>{COP(c.precio * c.cantidad)}</div>
               </div>
             ))}
             <div style={{ display: "flex", justifyContent: "space-between", paddingTop: 10, borderTop: `2px solid ${C.text}`, marginTop: 6, fontWeight: 800, fontSize: 16 }}>
-              <span>Total</span>
+              <span>{t("total")}</span>
               <span>{COP(subtotal)}</span>
             </div>
           </div>
 
           <div style={{ background: "white", borderRadius: 12, padding: 16, marginBottom: 12 }}>
-            <div style={{ fontSize: 13, color: C.textMid, marginBottom: 10 }}>
-              Información para entrega (opcional)
-            </div>
-            <input value={huesped} onChange={e => setHuesped(e.target.value)} placeholder="Tu nombre"
+            <div style={{ fontSize: 13, color: C.textMid, marginBottom: 10 }}>{t("info_entrega")}</div>
+            <input value={huesped} onChange={e => setHuesped(e.target.value)} placeholder={t("tu_nombre")}
               style={{ width: "100%", padding: "12px 14px", borderRadius: 10, border: `1px solid ${C.border}`, fontSize: 14, marginBottom: 8 }} />
-            <input type="number" value={pax} onChange={e => setPax(e.target.value)} placeholder="Personas en la mesa" min={1}
+            <input type="number" value={pax} onChange={e => setPax(e.target.value)} placeholder={t("personas")} min={1}
               style={{ width: "100%", padding: "12px 14px", borderRadius: 10, border: `1px solid ${C.border}`, fontSize: 14, marginBottom: 8 }} />
-            <textarea value={notas} onChange={e => setNotas(e.target.value)} placeholder="Notas especiales (alergias, ubicación exacta, etc.)"
+            <textarea value={notas} onChange={e => setNotas(e.target.value)} placeholder={t("notas_ph")}
               style={{ width: "100%", padding: "12px 14px", borderRadius: 10, border: `1px solid ${C.border}`, fontSize: 14, minHeight: 80, resize: "vertical" }} />
           </div>
 
           <div style={{ display: "flex", gap: 8 }}>
             <button onClick={() => setStep("menu")}
               style={{ flex: 1, background: "white", color: C.text, border: `1px solid ${C.border}`, borderRadius: 10, padding: 14, fontWeight: 700, cursor: "pointer", minHeight: 48 }}>
-              ← Agregar más
+              {t("agregar_mas")}
             </button>
             <button onClick={enviar} disabled={saving}
               style={{ flex: 2, background: saving ? C.textLight : C.primary, color: "#fff", border: "none", borderRadius: 10, padding: 14, fontWeight: 700, cursor: "pointer", minHeight: 48 }}>
-              {saving ? "Enviando…" : `Enviar pedido · ${COP(subtotal)}`}
+              {saving ? t("enviando") : `${t("enviar")} · ${COP(subtotal)}`}
             </button>
           </div>
         </div>
@@ -327,43 +354,47 @@ export default function PoolServicePortal({ qr }) {
   );
 }
 
-function SuccessView({ area, codigo, estado }) {
-  const ESTADO_INFO = {
-    recibido:   { emoji: "📥", label: "Recibido",   sub: "Tu pedido llegó al equipo." },
-    preparando: { emoji: "👨‍🍳", label: "Preparando", sub: "Lo están preparando con cariño." },
-    listo:      { emoji: "🍽️", label: "Listo",      sub: "Va en camino a tu área." },
-    entregado:  { emoji: "✅", label: "Entregado",  sub: "¡Disfruta tu pedido!" },
-    cancelado:  { emoji: "❌", label: "Cancelado",  sub: "El pedido fue cancelado." },
-  };
-  const info = ESTADO_INFO[estado] || ESTADO_INFO.recibido;
+function SuccessView({ area, codigo, estado, lang, setLang }) {
+  const t = (k) => STR[k]?.[lang] ?? STR[k]?.es ?? k;
+  const info = EST[estado] || EST.recibido;
   return (
-    <Shell area={area}>
+    <Shell area={area} lang={lang} setLang={setLang}>
       <div style={{ background: "white", borderRadius: 14, padding: 32, textAlign: "center", boxShadow: "0 6px 30px rgba(13,27,62,0.08)" }}>
         <div style={{ fontSize: 56, marginBottom: 12 }}>{info.emoji}</div>
-        <div style={{ fontSize: 22, fontWeight: 800, color: C.text }}>{info.label}</div>
-        <div style={{ fontSize: 14, color: C.textMid, marginTop: 6 }}>{info.sub}</div>
+        <div style={{ fontSize: 22, fontWeight: 800, color: C.text }}>{info.l[lang] || info.l.es}</div>
+        <div style={{ fontSize: 14, color: C.textMid, marginTop: 6 }}>{info.s[lang] || info.s.es}</div>
         <div style={{ background: C.bg, padding: "10px 16px", borderRadius: 8, display: "inline-block", marginTop: 18, fontFamily: "monospace", fontSize: 12, color: C.text }}>
-          Código: <strong>{codigo}</strong>
+          {t("codigo")}: <strong>{codigo}</strong>
         </div>
-        <div style={{ fontSize: 11, color: C.textLight, marginTop: 16 }}>
-          Esta página se actualiza automáticamente cuando cambia el estado.
-        </div>
+        <div style={{ fontSize: 11, color: C.textLight, marginTop: 16 }}>{t("auto_refresh")}</div>
       </div>
     </Shell>
   );
 }
 
-function Shell({ area, children }) {
+function Shell({ area, children, lang, setLang }) {
+  const tipo = area ? (TIPO_LABEL[lang]?.[area.tipo] || TIPO_LABEL.es[area.tipo] || (lang === "en" ? "Area" : "Área")) : "";
   return (
     <div style={{ minHeight: "100vh", background: C.bg, padding: 0 }}>
-      <div style={{ background: C.primary, color: "#fff", padding: "20px 16px", textAlign: "center" }}>
-        <div style={{ fontSize: 11, color: C.accent, letterSpacing: "0.2em", textTransform: "uppercase" }}>Atolón Beach Club</div>
-        {area && (
-          <>
-            <div style={{ fontSize: 22, fontWeight: 800, marginTop: 4 }}>{area.nombre}</div>
-            <div style={{ fontSize: 12, opacity: 0.7 }}>{TIPO_LABEL[area.tipo] || "Área"}</div>
-          </>
-        )}
+      <div style={{ background: C.primary, color: "#fff", padding: "16px", position: "relative" }}>
+        {/* Toggle ES / EN */}
+        <div style={{ position: "absolute", top: 12, right: 12, display: "flex", gap: 4 }}>
+          {["es", "en"].map(L => (
+            <button key={L} onClick={() => setLang(L)}
+              style={{ background: lang === L ? "#fff" : "transparent", color: lang === L ? C.primary : "#fff", border: `1px solid ${lang === L ? "#fff" : "rgba(255,255,255,0.4)"}`, borderRadius: 8, padding: "6px 10px", fontSize: 12, fontWeight: 800, cursor: "pointer", minWidth: 38 }}>
+              {L.toUpperCase()}
+            </button>
+          ))}
+        </div>
+        <div style={{ textAlign: "center" }}>
+          <div style={{ fontSize: 11, color: C.accent, letterSpacing: "0.2em", textTransform: "uppercase" }}>Atolón Beach Club</div>
+          {area && (
+            <>
+              <div style={{ fontSize: 22, fontWeight: 800, marginTop: 4 }}>{area.nombre}</div>
+              <div style={{ fontSize: 12, opacity: 0.7 }}>{tipo}</div>
+            </>
+          )}
+        </div>
       </div>
       <div style={{ maxWidth: 700, margin: "0 auto", padding: 16 }}>
         {children}
