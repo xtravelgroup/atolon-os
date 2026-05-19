@@ -549,8 +549,9 @@ export default function Lancha() {
         <MotoresTab activeLancha={activeLancha} lanchas={lanchas} />
       )}
       {tab === "combustible" && (
-        <ListaEventos
+        <CombustibleTab
           items={bitacoraLancha.filter(b => b.tipo === "combustible")}
+          viajesPorFecha={viajesPorFecha}
           onEdit={(e) => setModal({ tipo: "combustible", edit: e })}
           onDelete={borrarEvento}
         />
@@ -954,6 +955,108 @@ function EventoRow({ item, onEdit, onDelete, onToggleResuelto, compact }) {
           <button onClick={() => onDelete(item.id)} style={{ background: "transparent", border: "none", color: "rgba(255,255,255,0.3)", fontSize: 14, cursor: "pointer" }}>✕</button>
         </div>
       )}
+    </div>
+  );
+}
+
+// ─── Combustible: recargas con barra de autonomía ─────────────────────────
+// Cada recarga de $1.100.000 rinde ~4 viajes ida y vuelta (≈ $275.000 c/u).
+// La barra se llena a medida que los viajes consumen el combustible:
+//   · Viaje completo (zarpe + llegada) = 1 viaje
+//   · Tramo suelto (solo zarpe o solo llegada) = 0,5 viaje
+// El consumo de cada recarga cuenta los viajes desde su fecha/hora hasta
+// la siguiente recarga (o hasta ahora si es la más reciente).
+const COSTO_VIAJE_COMBUSTIBLE = 275000;
+
+function fmtViajes(n) {
+  const r = Math.round(n * 10) / 10;
+  return (Number.isInteger(r) ? String(r) : r.toFixed(1)).replace(".", ",");
+}
+
+function CombustibleTab({ items, viajesPorFecha, onEdit, onDelete }) {
+  // Aplanar todos los viajes (pares) con timestamp para ubicarlos por recarga.
+  const pares = useMemo(() => {
+    const out = [];
+    (viajesPorFecha || []).forEach(d => {
+      (d.pares || []).forEach(p => {
+        const hora = (p.zarpe?.hora || p.llegada?.hora || "00:00").slice(0, 5);
+        out.push({
+          ts: `${d.fecha}T${hora}`,
+          valor: (p.llegada && p.zarpe) ? 1 : 0.5,
+        });
+      });
+    });
+    return out.sort((a, b) => a.ts.localeCompare(b.ts));
+  }, [viajesPorFecha]);
+
+  // Recargas en orden cronológico para calcular la ventana de consumo.
+  const recargas = useMemo(() => {
+    const tsDe = (r) => `${r.fecha}T${(r.hora || "00:00").slice(0, 5)}`;
+    const asc = [...(items || [])].sort((a, b) => tsDe(a).localeCompare(tsDe(b)));
+    return asc.map((r, i) => {
+      const ts = tsDe(r);
+      const next = asc[i + 1];
+      const nextTs = next ? tsDe(next) : "9999-12-31T23:59";
+      const consumido = pares
+        .filter(p => p.ts >= ts && p.ts < nextTs)
+        .reduce((s, p) => s + p.valor, 0);
+      const capacidad = Math.max(1, Math.round(Number(r.costo_total || 0) / COSTO_VIAJE_COMBUSTIBLE));
+      const restante = Math.max(0, capacidad - consumido);
+      const pct = capacidad > 0 ? Math.min(100, (consumido / capacidad) * 100) : 0;
+      return { ...r, ts, consumido, capacidad, restante, pct, activa: i === asc.length - 1 };
+    }).reverse(); // más reciente primero
+  }, [items, pares]);
+
+  if (!recargas.length) {
+    return (
+      <div style={{ padding: 30, background: B.navyMid, borderRadius: 10, textAlign: "center", fontSize: 13, color: "rgba(255,255,255,0.3)" }}>
+        Sin recargas de combustible.
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      {recargas.map(r => {
+        const agotado = r.restante <= 0;
+        const bajo = !agotado && r.restante <= 1;
+        const barColor = agotado ? B.danger : bajo ? B.warning : B.success;
+        return (
+          <div key={r.id} style={{ background: B.navyMid, borderRadius: 12, padding: 16, border: r.activa ? `1px solid ${barColor}55` : "1px solid rgba(255,255,255,0.05)" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: "#fff" }}>
+                  {fmtFechaCorta(r.fecha)}
+                  {r.hora && <span style={{ color: "rgba(255,255,255,0.45)", fontWeight: 400 }}> · {fmtHora(r.hora)}</span>}
+                  {r.activa && <span style={{ marginLeft: 8, fontSize: 10, padding: "2px 8px", borderRadius: 4, background: B.sky + "33", color: B.sky, fontWeight: 700 }}>ACTUAL</span>}
+                </div>
+                <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginTop: 3, display: "flex", gap: 10, flexWrap: "wrap" }}>
+                  {r.costo_total && <strong style={{ color: B.success }}>{fmtCOP(r.costo_total)}</strong>}
+                  {r.galones && <span>· ⛽ {Number(r.galones).toFixed(1)} gal</span>}
+                  {r.proveedor && <span>· {r.proveedor}</span>}
+                </div>
+              </div>
+              <div style={{ display: "flex", gap: 6 }}>
+                {onEdit && <button onClick={() => onEdit(r)} style={{ background: "transparent", border: "none", color: "rgba(255,255,255,0.4)", fontSize: 14, cursor: "pointer" }}>✏️</button>}
+                {onDelete && <button onClick={() => onDelete(r.id)} style={{ background: "transparent", border: "none", color: "rgba(255,255,255,0.3)", fontSize: 14, cursor: "pointer" }}>✕</button>}
+              </div>
+            </div>
+
+            <div style={{ marginTop: 12 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, marginBottom: 5, flexWrap: "wrap", gap: 6 }}>
+                <span style={{ color: "rgba(255,255,255,0.6)" }}>{fmtViajes(r.consumido)} / {r.capacidad} viajes ida y vuelta</span>
+                <span style={{ color: barColor, fontWeight: 700 }}>
+                  {agotado ? "⚠️ Recargar combustible" : `Quedan ${fmtViajes(r.restante)} viaje${r.restante === 1 ? "" : "s"}`}
+                </span>
+              </div>
+              <div style={{ height: 16, background: "rgba(255,255,255,0.08)", borderRadius: 8, overflow: "hidden" }}>
+                <div style={{ width: `${r.pct}%`, height: "100%", background: barColor, borderRadius: 8, transition: "width .4s ease" }} />
+              </div>
+            </div>
+            {r.notas && <div style={{ fontSize: 11, color: "rgba(255,255,255,0.45)", marginTop: 8, fontStyle: "italic" }}>{r.notas}</div>}
+          </div>
+        );
+      })}
     </div>
   );
 }
