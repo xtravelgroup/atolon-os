@@ -423,11 +423,20 @@ function LeadDetail({ lead, onClose, onUpdateEtapa }) {
   // Fetch linked reservation — update form with its data when it arrives
   useEffect(() => {
     if (!supabase || !lead.id) return;
+    // OJO: NO usar .maybeSingle() — un lead puede tener VARIAS reservas
+    // (típico en GRUPO: 1 lead/evento = N reservas). maybeSingle() devuelve
+    // null cuando hay >1 → mostraba "sin reserva vinculada" falsamente.
     supabase.from("reservas")
-      .select("id,nombre,fecha,tipo,pax,total,estado,salida_id,link_pago,forma_pago,email,contacto,telefono")
-      .eq("lead_id", lead.id).maybeSingle()
-      .then(({ data }) => {
-        if (!data) return;
+      .select("id,nombre,fecha,tipo,pax,total,estado,salida_id,link_pago,forma_pago,email,contacto,telefono,created_at")
+      .eq("lead_id", lead.id)
+      .order("created_at", { ascending: false })
+      .then((res) => {
+        const rows = res.data || [];
+        if (!rows.length) return;
+        // Preferir una reserva activa/pagada; si todas canceladas, la más reciente
+        const data = rows.find(r => ["confirmado", "check_in", "no_show"].includes(r.estado))
+                  || rows.find(r => r.estado !== "cancelado")
+                  || rows[0];
         setReservaLinked(data);
         // Pre-fill form with reservation data (more complete than lead)
         setRForm(f => ({
