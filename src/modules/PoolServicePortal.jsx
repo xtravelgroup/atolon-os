@@ -101,7 +101,7 @@ export default function PoolServicePortal({ qr }) {
       if (!qr) return setLoad(false);
       const [{ data: a }, { data: i }, { data: acts }] = await Promise.all([
         supabase.from("pool_service_areas").select("*").eq("qr_code", qr).eq("activo", true).maybeSingle(),
-        supabase.from("menu_items").select("id, nombre, nombre_en, descripcion, descripcion_en, precio, categoria, categoria_en, menu_tipo, loggro_id, modificadores").in("menu_tipo", ["restaurant", "bebidas"]).eq("activo", true),
+        supabase.from("menu_items").select("id, nombre, nombre_en, descripcion, descripcion_en, precio, categoria, categoria_en, menu_tipo, loggro_id, modificadores, precio_botella, loggro_id_botella").in("menu_tipo", ["restaurant", "bebidas"]).eq("activo", true),
         supabase.from("actividades").select("id, nombre, descripcion, precio, categoria").eq("self_service", true).eq("activo", true).order("orden").order("nombre"),
       ]);
       // Actividades marcadas como self-service → se inyectan como sección "actividades"
@@ -178,18 +178,23 @@ export default function PoolServicePortal({ qr }) {
   const subtotal = carrito.reduce((s, x) => s + x.precio * x.cantidad, 0);
 
   // mods = [{ grupo, nombre, precio_delta }] — cada combinación es una línea.
-  const add = (it, mods = []) => setCart(prev => {
-    const key = mods.length ? `${it.id}::${mods.map(m => m.nombre).join("|")}` : it.id;
+  // variante: null | "trago" | "botella" (botella usa precio_botella + loggro_id_botella)
+  const add = (it, mods = [], variante = null) => setCart(prev => {
+    const esBot = variante === "botella";
+    const baseKey = variante ? `${it.id}:${variante}` : it.id;
+    const key = mods.length ? `${baseKey}::${mods.map(m => m.nombre).join("|")}` : baseKey;
     const ex = prev.find(x => x.key === key);
     if (ex) return prev.map(x => x.key === key ? { ...x, cantidad: x.cantidad + 1 } : x);
-    const suf = mods.length ? ` (${mods.map(m => m.nombre).join(", ")})` : "";
+    const vEs = esBot ? " · Botella" : (variante === "trago" ? " · Trago" : "");
+    const vEn = esBot ? " · Bottle"  : (variante === "trago" ? " · Glass" : "");
+    const mSuf = mods.length ? ` (${mods.map(m => m.nombre).join(", ")})` : "";
     const delta = mods.reduce((s, m) => s + (Number(m.precio_delta) || 0), 0);
     return [...prev, {
       key, id: it.id,
-      nombre: it.nombre + suf,
-      nombre_en: (it.nombre_en || it.nombre) + suf,
-      precio: (it.precio || 0) + delta,
-      loggro_id: it.loggro_id || null,
+      nombre: it.nombre + vEs + mSuf,
+      nombre_en: (it.nombre_en || it.nombre) + vEn + mSuf,
+      precio: (esBot ? (it.precio_botella || 0) : (it.precio || 0)) + delta,
+      loggro_id: (esBot ? it.loggro_id_botella : it.loggro_id) || null,
       notas: mods.map(m => `${m.grupo}: ${m.nombre}`).join(" · "),
       cantidad: 1,
     }];
@@ -307,23 +312,47 @@ export default function PoolServicePortal({ qr }) {
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             {itemsFiltered.map(it => {
               const hasMods = (it.modificadores || []).length > 0;
-              const inCart = !hasMods && carrito.find(c => (c.key ?? c.id) === it.id);
+              const hasB = (it.precio_botella > 0) && !!it.loggro_id_botella;
+              const inCart = (!hasMods && !hasB) && carrito.find(c => (c.key ?? c.id) === it.id);
+              const cT = hasB && carrito.find(c => c.key === `${it.id}:trago`);
+              const cB = hasB && carrito.find(c => c.key === `${it.id}:botella`);
+              const step = (ck) => (
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <button onClick={() => setCant(ck.key, ck.cantidad - 1)} style={qtyBtn}>−</button>
+                  <span style={{ fontSize: 16, fontWeight: 800, minWidth: 22, textAlign: "center" }}>{ck.cantidad}</span>
+                  <button onClick={() => setCant(ck.key, ck.cantidad + 1)} style={qtyBtn}>+</button>
+                </div>
+              );
+              const vbtn = (label, v) => (
+                <button onClick={() => add(it, [], v)} style={{ ...addBtn, padding: "10px 12px" }}>{label}</button>
+              );
               return (
                 <div key={it.id} style={{ background: "white", borderRadius: 12, padding: 14, boxShadow: "0 1px 3px rgba(13,27,62,0.06)", display: "flex", alignItems: "center", gap: 12 }}>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontSize: 10, color: C.textLight, textTransform: "uppercase", letterSpacing: "0.05em" }}>{ct(it) || "—"}</div>
                     <div style={{ fontSize: 14, fontWeight: 700, color: C.text, marginTop: 2 }}>{nm(it)}</div>
                     {ds(it) && <div style={{ fontSize: 11, color: C.textMid, marginTop: 2 }}>{ds(it)}</div>}
-                    <div style={{ fontSize: 14, fontWeight: 800, color: C.text, marginTop: 6 }}>{COP(it.precio)}{hasMods && <span style={{ fontSize: 11, fontWeight: 600, color: C.textMid }}> · {lang === "en" ? "options" : "opciones"}</span>}</div>
+                    <div style={{ fontSize: 14, fontWeight: 800, color: C.text, marginTop: 6 }}>
+                      {hasB
+                        ? `🥃 ${COP(it.precio)}  ·  🍾 ${COP(it.precio_botella)}`
+                        : <>{COP(it.precio)}{hasMods && <span style={{ fontSize: 11, fontWeight: 600, color: C.textMid }}> · {lang === "en" ? "options" : "opciones"}</span>}</>}
+                    </div>
                   </div>
-                  {inCart ? (
+                  {hasMods ? (
+                    <button onClick={() => addItem(it)} style={addBtn}>{lang === "en" ? "Choose" : "Elegir"}</button>
+                  ) : hasB ? (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 6, alignItems: "flex-end" }}>
+                      {cT ? step(cT) : vbtn(lang === "en" ? "🥃 Glass" : "🥃 Trago", "trago")}
+                      {cB ? step(cB) : vbtn(lang === "en" ? "🍾 Bottle" : "🍾 Botella", "botella")}
+                    </div>
+                  ) : inCart ? (
                     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                       <button onClick={() => setCant(it.id, inCart.cantidad - 1)} style={qtyBtn}>−</button>
                       <span style={{ fontSize: 16, fontWeight: 800, minWidth: 22, textAlign: "center" }}>{inCart.cantidad}</span>
                       <button onClick={() => setCant(it.id, inCart.cantidad + 1)} style={qtyBtn}>+</button>
                     </div>
                   ) : (
-                    <button onClick={() => addItem(it)} style={addBtn}>{hasMods ? (lang === "en" ? "Choose" : "Elegir") : t("agregar")}</button>
+                    <button onClick={() => addItem(it)} style={addBtn}>{t("agregar")}</button>
                   )}
                 </div>
               );
