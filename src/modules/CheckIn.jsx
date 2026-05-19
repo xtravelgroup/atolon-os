@@ -587,6 +587,11 @@ function ColaboradoresModal({ salidaId, fecha, despacho, embarcaciones = [], onC
 }
 
 // ─── Zarpe PDF (new window) ───────────────────────────────────────────────────
+// Guard anti-carrera: evita que dos clicks casi simultáneos de "Generar
+// zarpe" para el MISMO (fecha|salida|embarcación) escriban en zarpes_log
+// a la vez (causa de los duplicados 09:32 / 09:32).
+const _zarpeLogInFlight = new Set();
+
 // Generate zarpe for a SINGLE embarcación
 async function generarZarpe(salida, reservas, fecha, despacho, emb) {
   // emb: full embarcacion object — only show passengers assigned to this boat
@@ -638,17 +643,6 @@ async function generarZarpe(salida, reservas, fecha, despacho, emb) {
       if (deRow?.id) despachoIdFinal = deRow.id;
     }
 
-    // PREVENIR DUPLICADOS: si ya existe un zarpe para misma fecha+salida+
-    // embarcación, hacer UPDATE en vez de INSERT. Antes había hasta 10
-    // duplicados por click repetido del botón "📄 Generar zarpe".
-    const { data: existing } = await supabase
-      .from("zarpes_log")
-      .select("id")
-      .eq("fecha", fecha)
-      .eq("salida_id", salida.id)
-      .eq("embarcacion_nombre", emb?.nombre || "")
-      .maybeSingle();
-
     const payload = {
       fecha,
       salida_id:           salida.id,
@@ -666,10 +660,35 @@ async function generarZarpe(salida, reservas, fecha, despacho, emb) {
       generado_por_nombre: nombre,
     };
 
-    if (existing?.id) {
-      await supabase.from("zarpes_log").update(payload).eq("id", existing.id);
-    } else {
-      await supabase.from("zarpes_log").insert(payload);
+    // PREVENIR DUPLICADOS. Clave: (fecha, salida_id, embarcacion_nombre).
+    // Antes usaba .maybeSingle(): ante 2+ filas YA duplicadas devolvía
+    // null/error → caía en INSERT y duplicaba sin límite (cascada — el
+    // patrón 09:32/09:32/09:33/10:57). Ahora: guard anti-carrera en
+    // memoria + trae TODAS, UPDATE sobre la más reciente y borra las
+    // sobrantes (auto-sana los duplicados ya existentes).
+    const dkey = `${fecha}|${salida.id}|${emb?.nombre || ""}`;
+    if (!_zarpeLogInFlight.has(dkey)) {
+      _zarpeLogInFlight.add(dkey);
+      try {
+        const { data: prev } = await supabase
+          .from("zarpes_log")
+          .select("id")
+          .eq("fecha", fecha)
+          .eq("salida_id", salida.id)
+          .eq("embarcacion_nombre", emb?.nombre || "")
+          .order("created_at", { ascending: false });
+        if (prev && prev.length) {
+          await supabase.from("zarpes_log").update(payload).eq("id", prev[0].id);
+          const sobrantes = prev.slice(1).map(r => r.id);
+          if (sobrantes.length) {
+            await supabase.from("zarpes_log").delete().in("id", sobrantes);
+          }
+        } else {
+          await supabase.from("zarpes_log").insert(payload);
+        }
+      } finally {
+        _zarpeLogInFlight.delete(dkey);
+      }
     }
   } catch (e) {
     console.warn("No se pudo registrar zarpe en bitácora:", e);
