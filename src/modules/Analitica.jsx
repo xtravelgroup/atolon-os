@@ -637,37 +637,6 @@ export default function Analitica({ externo = false }) {
         </div>
       )}
 
-      {atribQA && !externo && (
-        <div style={{ background: B.navyMid, borderRadius: 14, padding: 24, border: "1px solid rgba(255,255,255,0.07)", marginBottom: 28 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 12, marginBottom: 6 }}>
-            <h3 style={{ margin: 0, fontSize: 15, fontWeight: 700, color: "#fff" }}>🎯 Calidad de Atribución · Paid Media</h3>
-            <button onClick={exportarConversiones} disabled={!atribRows.length}
-              style={{ background: B.sky, color: B.navy, border: "none", borderRadius: 8, padding: "8px 14px", fontSize: 12, fontWeight: 800, cursor: atribRows.length ? "pointer" : "default" }}>
-              ⬇ Exportar conversiones (Meta CAPI / Google Offline)
-            </button>
-          </div>
-          <div style={{ fontSize: 11, color: B.muted, marginBottom: 16 }}>
-            Ventas pagadas del período y si son atribuibles a una pauta. Sin click-id ni utm_source = la agencia NO puede probar ROI de ese gasto.
-          </div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 14, marginBottom: 16 }}>
-            <KPI label="Ventas pagadas" value={atribQA.tot} />
-            <KPI label="Con click-id" value={`${atribQA.tot ? Math.round(atribQA.click / atribQA.tot * 100) : 0}%`} sub={`${atribQA.click}/${atribQA.tot}`} color={B.success} />
-            <KPI label="Con fuente (utm)" value={`${atribQA.tot ? Math.round(atribQA.src / atribQA.tot * 100) : 0}%`} sub={`${atribQA.src}/${atribQA.tot}`} color={B.success} />
-            <KPI label="Sin fuente ⚠" value={atribQA.none} sub="no atribuible" color={atribQA.none ? B.danger : B.success} />
-            <KPI label="Ingreso no atribuible" value={fmt(atribQA.ingNone)} color={atribQA.ingNone ? B.danger : B.success} />
-          </div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 10 }}>
-            {Object.entries(atribQA.byVia).sort((a, b) => b[1].ing - a[1].ing).map(([via, d]) => (
-              <div key={via} style={{ background: B.navyLight, borderRadius: 10, padding: "12px 14px" }}>
-                <div style={{ fontSize: 11, color: B.sand, textTransform: "uppercase", letterSpacing: "0.05em" }}>{via === "web" ? "🌐 Web / Social" : via === "whatsapp" ? "💬 WhatsApp" : via === "grupo" ? "👥 Grupo" : "Otros"}</div>
-                <div style={{ fontSize: 18, fontWeight: 800, color: "#fff", marginTop: 4 }}>{d.n} · {fmt(d.ing)}</div>
-                <div style={{ fontSize: 11, color: d.nofuente ? B.danger : B.muted, marginTop: 2 }}>{d.nofuente} sin fuente</div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, marginBottom: 20 }}>
         {/* Embudo */}
         <div style={{ background: B.navyMid, borderRadius: 14, padding: 24, border: "1px solid rgba(255,255,255,0.07)" }}>
@@ -1229,6 +1198,37 @@ export default function Analitica({ externo = false }) {
                 }
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {atribQA && !externo && (
+        <div style={{ background: B.navyMid, borderRadius: 14, padding: 24, border: "1px solid rgba(255,255,255,0.07)", marginTop: 20, marginBottom: 8 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 12, marginBottom: 6 }}>
+            <h3 style={{ margin: 0, fontSize: 15, fontWeight: 700, color: "#fff" }}>🎯 Calidad de Atribución · Paid Media</h3>
+            <button onClick={exportarConversiones} disabled={!atribRows.length}
+              style={{ background: B.sky, color: B.navy, border: "none", borderRadius: 8, padding: "8px 14px", fontSize: 12, fontWeight: 800, cursor: atribRows.length ? "pointer" : "default" }}>
+              ⬇ Exportar conversiones (Meta CAPI / Google Offline)
+            </button>
+          </div>
+          <div style={{ fontSize: 11, color: B.muted, marginBottom: 16 }}>
+            Ventas pagadas del período y si son atribuibles a una pauta. Sin click-id ni utm_source = la agencia NO puede probar ROI de ese gasto.
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 14, marginBottom: 16 }}>
+            <KPI label="Ventas pagadas" value={atribQA.tot} />
+            <KPI label="Con click-id" value={`${atribQA.tot ? Math.round(atribQA.click / atribQA.tot * 100) : 0}%`} sub={`${atribQA.click}/${atribQA.tot}`} color={B.success} />
+            <KPI label="Con fuente (utm)" value={`${atribQA.tot ? Math.round(atribQA.src / atribQA.tot * 100) : 0}%`} sub={`${atribQA.src}/${atribQA.tot}`} color={B.success} />
+            <KPI label="Sin fuente ⚠" value={atribQA.none} sub="no atribuible" color={atribQA.none ? B.danger : B.success} />
+            <KPI label="Ingreso no atribuible" value={fmt(atribQA.ingNone)} color={atribQA.ingNone ? B.danger : B.success} />
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 10 }}>
+            {Object.entries(atribQA.byVia).sort((a, b) => b[1].ing - a[1].ing).map(([via, d]) => (
+              <div key={via} style={{ background: B.navyLight, borderRadius: 10, padding: "12px 14px" }}>
+                <div style={{ fontSize: 11, color: B.sand, textTransform: "uppercase", letterSpacing: "0.05em" }}>{via === "web" ? "🌐 Web / Social" : via === "whatsapp" ? "💬 WhatsApp" : via === "grupo" ? "👥 Grupo" : "Otros"}</div>
+                <div style={{ fontSize: 18, fontWeight: 800, color: "#fff", marginTop: 4 }}>{d.n} · {fmt(d.ing)}</div>
+                <div style={{ fontSize: 11, color: d.nofuente ? B.danger : B.muted, marginTop: 2 }}>{d.nofuente} sin fuente</div>
+              </div>
+            ))}
           </div>
         </div>
       )}
