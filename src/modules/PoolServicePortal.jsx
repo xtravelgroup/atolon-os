@@ -101,7 +101,7 @@ export default function PoolServicePortal({ qr }) {
       if (!qr) return setLoad(false);
       const [{ data: a }, { data: i }, { data: acts }] = await Promise.all([
         supabase.from("pool_service_areas").select("*").eq("qr_code", qr).eq("activo", true).maybeSingle(),
-        supabase.from("menu_items").select("id, nombre, nombre_en, descripcion, descripcion_en, precio, categoria, categoria_en, menu_tipo, loggro_id, modificadores, precio_botella, loggro_id_botella").in("menu_tipo", ["restaurant", "bebidas"]).eq("activo", true),
+        supabase.from("menu_items").select("id, nombre, nombre_en, descripcion, descripcion_en, precio, categoria, categoria_en, menu_tipo, loggro_id, modificadores, variantes, precio_botella, loggro_id_botella").in("menu_tipo", ["restaurant", "bebidas"]).eq("activo", true),
         supabase.from("actividades").select("id, nombre, descripcion, precio, categoria").eq("self_service", true).eq("activo", true).order("orden").order("nombre"),
       ]);
       // Actividades marcadas como self-service → se inyectan como sección "actividades"
@@ -180,26 +180,40 @@ export default function PoolServicePortal({ qr }) {
   // mods = [{ grupo, nombre, precio_delta }] — cada combinación es una línea.
   // variante: null | "trago" | "botella" (botella usa precio_botella + loggro_id_botella)
   const add = (it, mods = [], variante = null) => setCart(prev => {
+    // `variante` puede ser:
+    //   · "trago" / "botella"     — caso histórico licor (string)
+    //   · objeto {nombre, precio, loggro_id} — subProduct de Loggro
+    //     (ej. Cerveza/Michelada/Clamato). Define el precio y loggro_id.
+    //   · null — base del ítem
+    const isSubVar = variante && typeof variante === "object";
     const esBot = variante === "botella";
-    const baseKey = variante ? `${it.id}:${variante}` : it.id;
+    const baseKey = isSubVar ? `${it.id}:${variante.loggro_id || variante.nombre}` : (variante ? `${it.id}:${variante}` : it.id);
     const key = mods.length ? `${baseKey}::${mods.map(m => m.nombre).join("|")}` : baseKey;
     const ex = prev.find(x => x.key === key);
     if (ex) return prev.map(x => x.key === key ? { ...x, cantidad: x.cantidad + 1 } : x);
-    const vEs = esBot ? " · Botella" : (variante === "trago" ? " · Trago" : "");
-    const vEn = esBot ? " · Bottle"  : (variante === "trago" ? " · Glass" : "");
     const mSuf = mods.length ? ` (${mods.map(m => m.nombre).join(", ")})` : "";
     const delta = mods.reduce((s, m) => s + (Number(m.precio_delta) || 0), 0);
+    let nombre, nombre_en, precio, loggro_id;
+    if (isSubVar) {
+      nombre    = variante.nombre + mSuf;
+      nombre_en = variante.nombre + mSuf;
+      precio    = (Number(variante.precio) || 0) + delta;
+      loggro_id = variante.loggro_id || null;
+    } else {
+      const vEs = esBot ? " · Botella" : (variante === "trago" ? " · Trago" : "");
+      const vEn = esBot ? " · Bottle"  : (variante === "trago" ? " · Glass" : "");
+      nombre    = it.nombre + vEs + mSuf;
+      nombre_en = (it.nombre_en || it.nombre) + vEn + mSuf;
+      precio    = (esBot ? (it.precio_botella || 0) : (it.precio || 0)) + delta;
+      loggro_id = (esBot ? it.loggro_id_botella : it.loggro_id) || null;
+    }
     return [...prev, {
-      key, id: it.id,
-      nombre: it.nombre + vEs + mSuf,
-      nombre_en: (it.nombre_en || it.nombre) + vEn + mSuf,
-      precio: (esBot ? (it.precio_botella || 0) : (it.precio || 0)) + delta,
-      loggro_id: (esBot ? it.loggro_id_botella : it.loggro_id) || null,
+      key, id: it.id, nombre, nombre_en, precio, loggro_id,
       notas: mods.map(m => `${m.grupo}: ${m.nombre}`).join(" · "),
       cantidad: 1,
     }];
   });
-  const addItem = (it) => ((it.modificadores || []).length > 0 ? setModItem(it) : add(it));
+  const addItem = (it) => (((it.modificadores || []).length > 0 || (Array.isArray(it.variantes) && it.variantes.length > 0)) ? setModItem(it) : add(it));
   const setCant = (key, c) => {
     const n = Number(c);
     if (n <= 0) return setCart(prev => prev.filter(x => (x.key ?? x.id) !== key));
@@ -311,7 +325,7 @@ export default function PoolServicePortal({ qr }) {
           )}
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             {itemsFiltered.map(it => {
-              const hasMods = (it.modificadores || []).length > 0;
+              const hasMods = (it.modificadores || []).length > 0 || (Array.isArray(it.variantes) && it.variantes.length > 0);
               const hasB = (it.precio_botella > 0) && !!it.loggro_id_botella;
               const inCart = (!hasMods && !hasB) && carrito.find(c => (c.key ?? c.id) === it.id);
               const cT = hasB && carrito.find(c => c.key === `${it.id}:trago`);
@@ -419,7 +433,7 @@ export default function PoolServicePortal({ qr }) {
         <ModSheet
           item={modItem} lang={lang}
           onClose={() => setModItem(null)}
-          onAdd={(mods) => { add(modItem, mods); setModItem(null); }}
+          onAdd={({ variante, mods }) => { add(modItem, mods, variante); setModItem(null); }}
         />
       )}
     </Shell>
@@ -504,8 +518,12 @@ function Chip({ label, active, onClick }) {
 // Bottom-sheet de variantes/modificadores (mismo modelo que Room Service:
 // item.modificadores = [{ grupo, min, max, opciones:[{ nombre, precio_delta }] }])
 function ModSheet({ item, lang, onClose, onAdd }) {
+  const variantes = Array.isArray(item.variantes) ? item.variantes : [];
   const grupos = item.modificadores || [];
+  const [varIdx, setVarIdx] = useState(variantes.length > 0 ? 0 : -1);
   const [sel, setSel] = useState({});
+  const variante = varIdx >= 0 ? variantes[varIdx] : null;
+  const basePrecio = variante ? Number(variante.precio) || 0 : Number(item.precio) || 0;
   const flat = [];
   grupos.forEach((g, gi) => (sel[gi] || []).forEach(oi => {
     const o = g.opciones?.[oi];
@@ -522,19 +540,41 @@ function ModSheet({ item, lang, onClose, onAdd }) {
     return { ...p, [gi]: n };
   });
   const confirmar = () => {
+    if (variantes.length > 0 && varIdx < 0) {
+      return alert(lang === "en" ? "Choose a variant" : "Elige una variante");
+    }
     for (let gi = 0; gi < grupos.length; gi++) {
       const g = grupos[gi];
       if (((sel[gi] || []).length) < (g.min || 0)) {
         return alert(`${lang === "en" ? "Choose at least" : "Elige al menos"} ${g.min} — "${g.grupo}"`);
       }
     }
-    onAdd(flat);
+    onAdd({ variante, mods: flat });
   };
   return (
     <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 100, display: "flex", alignItems: "flex-end" }}>
       <div onClick={e => e.stopPropagation()} style={{ background: "white", width: "100%", maxHeight: "88vh", overflowY: "auto", borderRadius: "18px 18px 0 0", padding: 20 }}>
         <div style={{ width: 40, height: 4, background: C.border, borderRadius: 2, margin: "0 auto 14px" }} />
         <div style={{ fontSize: 18, fontWeight: 800, color: C.text, marginBottom: 12 }}>{(lang === "en" && item.nombre_en) ? item.nombre_en : item.nombre}</div>
+        {variantes.length > 0 && (
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ fontSize: 12, fontWeight: 800, color: C.textMid, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>
+              {lang === "en" ? "Variant" : "Variante"}<span style={{ color: C.danger }}> *</span>
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {variantes.map((v, i) => {
+                const on = varIdx === i;
+                return (
+                  <button key={i} onClick={() => setVarIdx(i)}
+                    style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, padding: "13px 14px", borderRadius: 10, border: `1px solid ${on ? C.primary : C.border}`, background: on ? `${C.primary}11` : "white", color: C.text, cursor: "pointer", minHeight: 48, fontWeight: 700, fontSize: 14 }}>
+                    <span>{v.nombre}</span>
+                    <span style={{ fontWeight: 800, color: C.textMid }}>{COP(Number(v.precio) || 0)}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
         {grupos.map((g, gi) => (
           <div key={gi} style={{ marginBottom: 16 }}>
             <div style={{ fontSize: 12, fontWeight: 800, color: C.textMid, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>
@@ -555,7 +595,7 @@ function ModSheet({ item, lang, onClose, onAdd }) {
           </div>
         ))}
         <button onClick={confirmar} style={{ width: "100%", marginTop: 6, background: C.primary, color: "#fff", border: "none", borderRadius: 12, padding: 16, fontWeight: 800, fontSize: 16, cursor: "pointer", minHeight: 54 }}>
-          {lang === "en" ? "Add" : "Agregar"} · {COP((item.precio || 0) + delta)}
+          {lang === "en" ? "Add" : "Agregar"} · {COP(basePrecio + delta)}
         </button>
       </div>
     </div>
