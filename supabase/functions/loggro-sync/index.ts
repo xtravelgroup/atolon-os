@@ -304,9 +304,16 @@ serve(async (req) => {
       const SB = sb();
 
       // Cargar productos existentes con loggro_id para preservar id (evitar null)
-      const { data: existing } = await SB.from("menu_items").select("id, loggro_id").not("loggro_id", "is", null);
+      const { data: existing } = await SB.from("menu_items").select("id, loggro_id, loggro_id_botella").not("loggro_id", "is", null);
       const idByLoggro: Record<string, string> = {};
       for (const e of existing || []) if (e.loggro_id) idByLoggro[e.loggro_id] = e.id;
+      // Mapa de precio Loggro por _id (para sincronizar también precio_botella,
+      // que es OTRO producto Loggro = loggro_id_botella, ej. la BT del licor).
+      const priceByLoggro: Record<string, number> = {};
+      for (const lp of allProducts) {
+        const lid = lp._id || lp.id;
+        if (lid) priceByLoggro[lid] = precioLoggro(lp);
+      }
 
       // Construir filas. Si no existe, generar id; si existe, reusar.
       const rows = allProducts.map((p: any) => {
@@ -360,7 +367,17 @@ serve(async (req) => {
         if (error) lastError = error;
         else upd++;
       }
-      return json({ updated_existing: upd, total_loggro: allProducts.length, note: "Solo actualiza menu_items ya enlazados. Usa /link-menu-to-loggro para enlazar por nombre primero.", error: lastError?.message });
+      // Segunda pasada: precio_botella desde el producto Loggro de la botella
+      // (loggro_id_botella). Así trago Y botella vienen ambos de Loggro.
+      let updBot = 0;
+      for (const e of existing || []) {
+        const bid = (e as any).loggro_id_botella;
+        if (bid && priceByLoggro[bid] != null) {
+          const { error } = await SB.from("menu_items").update({ precio_botella: priceByLoggro[bid] }).eq("id", e.id);
+          if (error) lastError = error; else updBot++;
+        }
+      }
+      return json({ updated_existing: upd, updated_botella: updBot, total_loggro: allProducts.length, note: "Actualiza precio (loggro_id) y precio_botella (loggro_id_botella) de menu_items enlazados.", error: lastError?.message });
     }
 
     // ═══ Sync Ingredients → items_catalogo ════════════════════════════════
