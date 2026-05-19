@@ -552,12 +552,12 @@ export default function Resultados() {
           .neq("estado", "cancelado")
           .not("aliado_id", "is", null),
         supabase.from("eventos")
-          .select("valor, valor_extras, pax, pasadias_org, categoria")
+          .select("valor, valor_extras, pax, pasadias_org, categoria, servicios_contratados")
           .gte("fecha", manana).lte("fecha", finMesStr)
           .in("stage", ["Confirmado"])
           .eq("categoria", "grupo"),
         supabase.from("eventos")
-          .select("valor, valor_extras, pax, pasadias_org, categoria")
+          .select("valor, valor_extras, pax, pasadias_org, categoria, servicios_contratados")
           .gte("fecha", manana).lte("fecha", finMesStr)
           .in("stage", ["Confirmado"])
           .eq("categoria", "evento"),
