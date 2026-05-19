@@ -89,6 +89,7 @@ export default function PoolServicePortal({ qr }) {
   const [saving, setSaving] = useState(false);
   const [pedidoCodigo, setPedidoCodigo] = useState("");
   const [pedidoEstado, setPedidoEstado] = useState("");
+  const [modItem, setModItem] = useState(null); // ítem con variantes abierto
 
   // nombre/desc/categoría según idioma
   const nm = (it) => (lang === "en" && it.nombre_en) ? it.nombre_en : it.nombre;
@@ -100,7 +101,7 @@ export default function PoolServicePortal({ qr }) {
       if (!qr) return setLoad(false);
       const [{ data: a }, { data: i }] = await Promise.all([
         supabase.from("pool_service_areas").select("*").eq("qr_code", qr).eq("activo", true).maybeSingle(),
-        supabase.from("menu_items").select("id, nombre, nombre_en, descripcion, descripcion_en, precio, categoria, categoria_en, menu_tipo, loggro_id").in("menu_tipo", ["restaurant", "bebidas", "experiencias", "trans_acuatica"]).eq("activo", true),
+        supabase.from("menu_items").select("id, nombre, nombre_en, descripcion, descripcion_en, precio, categoria, categoria_en, menu_tipo, loggro_id, modificadores").in("menu_tipo", ["restaurant", "bebidas", "experiencias", "trans_acuatica"]).eq("activo", true),
       ]);
       setItems(i || []);
       if (a) {
@@ -168,15 +169,28 @@ export default function PoolServicePortal({ qr }) {
 
   const subtotal = carrito.reduce((s, x) => s + x.precio * x.cantidad, 0);
 
-  const add = (it) => setCart(prev => {
-    const ex = prev.find(x => x.id === it.id);
-    if (ex) return prev.map(x => x.id === it.id ? { ...x, cantidad: x.cantidad + 1 } : x);
-    return [...prev, { id: it.id, nombre: it.nombre, nombre_en: it.nombre_en || null, precio: it.precio || 0, loggro_id: it.loggro_id || null, cantidad: 1, notas: "" }];
+  // mods = [{ grupo, nombre, precio_delta }] — cada combinación es una línea.
+  const add = (it, mods = []) => setCart(prev => {
+    const key = mods.length ? `${it.id}::${mods.map(m => m.nombre).join("|")}` : it.id;
+    const ex = prev.find(x => x.key === key);
+    if (ex) return prev.map(x => x.key === key ? { ...x, cantidad: x.cantidad + 1 } : x);
+    const suf = mods.length ? ` (${mods.map(m => m.nombre).join(", ")})` : "";
+    const delta = mods.reduce((s, m) => s + (Number(m.precio_delta) || 0), 0);
+    return [...prev, {
+      key, id: it.id,
+      nombre: it.nombre + suf,
+      nombre_en: (it.nombre_en || it.nombre) + suf,
+      precio: (it.precio || 0) + delta,
+      loggro_id: it.loggro_id || null,
+      notas: mods.map(m => `${m.grupo}: ${m.nombre}`).join(" · "),
+      cantidad: 1,
+    }];
   });
-  const setCant = (id, c) => {
+  const addItem = (it) => ((it.modificadores || []).length > 0 ? setModItem(it) : add(it));
+  const setCant = (key, c) => {
     const n = Number(c);
-    if (n <= 0) return setCart(prev => prev.filter(x => x.id !== id));
-    setCart(prev => prev.map(x => x.id === id ? { ...x, cantidad: n } : x));
+    if (n <= 0) return setCart(prev => prev.filter(x => (x.key ?? x.id) !== key));
+    setCart(prev => prev.map(x => (x.key ?? x.id) === key ? { ...x, cantidad: n } : x));
   };
   const cnm = (c) => (lang === "en" && c.nombre_en) ? c.nombre_en : c.nombre;
 
@@ -284,14 +298,15 @@ export default function PoolServicePortal({ qr }) {
           )}
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             {itemsFiltered.map(it => {
-              const inCart = carrito.find(c => c.id === it.id);
+              const hasMods = (it.modificadores || []).length > 0;
+              const inCart = !hasMods && carrito.find(c => (c.key ?? c.id) === it.id);
               return (
                 <div key={it.id} style={{ background: "white", borderRadius: 12, padding: 14, boxShadow: "0 1px 3px rgba(13,27,62,0.06)", display: "flex", alignItems: "center", gap: 12 }}>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontSize: 10, color: C.textLight, textTransform: "uppercase", letterSpacing: "0.05em" }}>{ct(it) || "—"}</div>
                     <div style={{ fontSize: 14, fontWeight: 700, color: C.text, marginTop: 2 }}>{nm(it)}</div>
                     {ds(it) && <div style={{ fontSize: 11, color: C.textMid, marginTop: 2 }}>{ds(it)}</div>}
-                    <div style={{ fontSize: 14, fontWeight: 800, color: C.text, marginTop: 6 }}>{COP(it.precio)}</div>
+                    <div style={{ fontSize: 14, fontWeight: 800, color: C.text, marginTop: 6 }}>{COP(it.precio)}{hasMods && <span style={{ fontSize: 11, fontWeight: 600, color: C.textMid }}> · {lang === "en" ? "options" : "opciones"}</span>}</div>
                   </div>
                   {inCart ? (
                     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -300,7 +315,7 @@ export default function PoolServicePortal({ qr }) {
                       <button onClick={() => setCant(it.id, inCart.cantidad + 1)} style={qtyBtn}>+</button>
                     </div>
                   ) : (
-                    <button onClick={() => add(it)} style={addBtn}>{t("agregar")}</button>
+                    <button onClick={() => addItem(it)} style={addBtn}>{hasMods ? (lang === "en" ? "Choose" : "Elegir") : t("agregar")}</button>
                   )}
                 </div>
               );
@@ -326,10 +341,10 @@ export default function PoolServicePortal({ qr }) {
           <div style={{ background: "white", borderRadius: 12, padding: 16, marginBottom: 12 }}>
             <div style={{ fontSize: 14, fontWeight: 800, marginBottom: 10 }}>{t("tu_pedido")}</div>
             {carrito.map(c => (
-              <div key={c.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0", borderTop: `1px solid ${C.border}` }}>
-                <button onClick={() => setCant(c.id, c.cantidad - 1)} style={qtyBtnSm}>−</button>
+              <div key={c.key ?? c.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0", borderTop: `1px solid ${C.border}` }}>
+                <button onClick={() => setCant(c.key ?? c.id, c.cantidad - 1)} style={qtyBtnSm}>−</button>
                 <span style={{ minWidth: 24, textAlign: "center", fontWeight: 700 }}>{c.cantidad}</span>
-                <button onClick={() => setCant(c.id, c.cantidad + 1)} style={qtyBtnSm}>+</button>
+                <button onClick={() => setCant(c.key ?? c.id, c.cantidad + 1)} style={qtyBtnSm}>+</button>
                 <div style={{ flex: 1, fontSize: 13 }}>{cnm(c)}</div>
                 <div style={{ fontWeight: 700 }}>{COP(c.precio * c.cantidad)}</div>
               </div>
@@ -361,6 +376,14 @@ export default function PoolServicePortal({ qr }) {
             </button>
           </div>
         </div>
+      )}
+
+      {modItem && (
+        <ModSheet
+          item={modItem} lang={lang}
+          onClose={() => setModItem(null)}
+          onAdd={(mods) => { add(modItem, mods); setModItem(null); }}
+        />
       )}
     </Shell>
   );
@@ -438,5 +461,66 @@ function Chip({ label, active, onClick }) {
       }}>
       {label}
     </button>
+  );
+}
+
+// Bottom-sheet de variantes/modificadores (mismo modelo que Room Service:
+// item.modificadores = [{ grupo, min, max, opciones:[{ nombre, precio_delta }] }])
+function ModSheet({ item, lang, onClose, onAdd }) {
+  const grupos = item.modificadores || [];
+  const [sel, setSel] = useState({});
+  const flat = [];
+  grupos.forEach((g, gi) => (sel[gi] || []).forEach(oi => {
+    const o = g.opciones?.[oi];
+    if (o) flat.push({ grupo: g.grupo, nombre: o.nombre, precio_delta: Number(o.precio_delta) || 0 });
+  }));
+  const delta = flat.reduce((s, o) => s + o.precio_delta, 0);
+  const toggle = (gi, oi, max) => setSel(p => {
+    const cur = p[gi] || [], has = cur.includes(oi);
+    let n;
+    if (has) n = cur.filter(x => x !== oi);
+    else if (max === 1) n = [oi];
+    else if (cur.length < max) n = [...cur, oi];
+    else n = cur;
+    return { ...p, [gi]: n };
+  });
+  const confirmar = () => {
+    for (let gi = 0; gi < grupos.length; gi++) {
+      const g = grupos[gi];
+      if (((sel[gi] || []).length) < (g.min || 0)) {
+        return alert(`${lang === "en" ? "Choose at least" : "Elige al menos"} ${g.min} — "${g.grupo}"`);
+      }
+    }
+    onAdd(flat);
+  };
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 100, display: "flex", alignItems: "flex-end" }}>
+      <div onClick={e => e.stopPropagation()} style={{ background: "white", width: "100%", maxHeight: "88vh", overflowY: "auto", borderRadius: "18px 18px 0 0", padding: 20 }}>
+        <div style={{ width: 40, height: 4, background: C.border, borderRadius: 2, margin: "0 auto 14px" }} />
+        <div style={{ fontSize: 18, fontWeight: 800, color: C.text, marginBottom: 12 }}>{(lang === "en" && item.nombre_en) ? item.nombre_en : item.nombre}</div>
+        {grupos.map((g, gi) => (
+          <div key={gi} style={{ marginBottom: 16 }}>
+            <div style={{ fontSize: 12, fontWeight: 800, color: C.textMid, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>
+              {g.grupo}{g.min > 0 && <span style={{ color: C.danger }}> *</span>}{g.max > 1 && <span style={{ fontWeight: 500, textTransform: "none" }}> ({lang === "en" ? "up to" : "hasta"} {g.max})</span>}
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {(g.opciones || []).map((o, oi) => {
+                const on = (sel[gi] || []).includes(oi);
+                return (
+                  <button key={oi} onClick={() => toggle(gi, oi, g.max || 1)}
+                    style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, padding: "13px 14px", borderRadius: 10, border: `1px solid ${on ? C.primary : C.border}`, background: on ? `${C.primary}11` : "white", color: C.text, cursor: "pointer", minHeight: 48, fontWeight: 700, fontSize: 14 }}>
+                    <span>{o.nombre}</span>
+                    <span style={{ fontWeight: 800, color: C.textMid }}>{Number(o.precio_delta) > 0 ? `+${COP(o.precio_delta)}` : (on ? "✓" : "")}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+        <button onClick={confirmar} style={{ width: "100%", marginTop: 6, background: C.primary, color: "#fff", border: "none", borderRadius: 12, padding: 16, fontWeight: 800, fontSize: 16, cursor: "pointer", minHeight: 54 }}>
+          {lang === "en" ? "Add" : "Agregar"} · {COP((item.precio || 0) + delta)}
+        </button>
+      </div>
+    </div>
   );
 }

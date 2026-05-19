@@ -54,6 +54,7 @@ export default function MeseroPortal() {
   const [huespedSel, setHuespedSel] = useState(""); // estancia id elegida en el dropdown
   const [okCodigo, setOkCodigo] = useState("");
   const [okRegistro, setOkRegistro] = useState(false); // se registró mesa sin pedido
+  const [modItem, setModItem] = useState(null); // ítem con variantes abierto
   const [okLoggro, setOkLoggro] = useState(false);
 
   useEffect(() => {
@@ -63,7 +64,7 @@ export default function MeseroPortal() {
       const hoy = new Date().toLocaleString("en-CA", { timeZone: "America/Bogota" }).slice(0, 10);
       const [{ data: ml }, { data: it }, { data: rv }, { data: asg }, { data: est }] = await Promise.all([
         supabase.rpc("mesero_list"),
-        supabase.from("menu_items").select("id, nombre, descripcion, precio, categoria, menu_tipo, loggro_id, precio_botella, loggro_id_botella").in("menu_tipo", ["restaurant", "bebidas"]).eq("activo", true),
+        supabase.from("menu_items").select("id, nombre, descripcion, precio, categoria, menu_tipo, loggro_id, precio_botella, loggro_id_botella, modificadores").in("menu_tipo", ["restaurant", "bebidas"]).eq("activo", true),
         // NS (no_show) NO aparece: solo confirmado / check_in
         supabase.from("reservas").select("id, nombre, pax, pax_a, pax_n").eq("fecha", hoy).in("estado", ["confirmado", "check_in"]),
         supabase.from("floorplan_asignaciones").select("reserva_id, huesped").eq("fecha", hoy),
@@ -155,6 +156,21 @@ export default function MeseroPortal() {
       precio: (esBot ? it.precio_botella : it.precio) || 0,
       loggro_id: (esBot ? it.loggro_id_botella : it.loggro_id) || null,
       cantidad: 1, notas: "",
+    }];
+  });
+  // Variantes/modificadores (mismo modelo que Room Service)
+  const addMods = (it, mods) => setCart(p => {
+    const key = `${it.id}::${mods.map(m => m.nombre).join("|")}`;
+    const e = p.find(x => x.key === key);
+    if (e) return p.map(x => x.key === key ? { ...x, cantidad: x.cantidad + 1 } : x);
+    const delta = mods.reduce((s, m) => s + (Number(m.precio_delta) || 0), 0);
+    return [...p, {
+      key, id: it.id,
+      nombre: it.nombre + (mods.length ? ` (${mods.map(m => m.nombre).join(", ")})` : ""),
+      precio: (it.precio || 0) + delta,
+      loggro_id: it.loggro_id || null,
+      notas: mods.map(m => `${m.grupo}: ${m.nombre}`).join(" · "),
+      cantidad: 1,
     }];
   });
   const setQ = (key, c) => { const n = Number(c); if (n <= 0) return setCart(p => p.filter(x => x.key !== key)); setCart(p => p.map(x => x.key === key ? { ...x, cantidad: n } : x)); };
@@ -423,6 +439,7 @@ export default function MeseroPortal() {
             {itemsF.map(it => {
               const hasT = (it.precio > 0) && !!it.loggro_id;
               const hasB = (it.precio_botella > 0) && !!it.loggro_id_botella;
+              const hasMods = (it.modificadores || []).length > 0;
               const both = hasT && hasB;
               const onlyVar = (hasB && !hasT) ? "botella" : "trago";
               const cT = cart.find(c => c.key === `${it.id}:trago`);
@@ -449,7 +466,9 @@ export default function MeseroPortal() {
                         : COP(onlyVar === "botella" ? it.precio_botella : it.precio)}
                     </div>
                   </div>
-                  {both ? (
+                  {hasMods ? (
+                    <button onClick={() => setModItem(it)} style={{ background: C.primary, color: C.bg, border: "none", borderRadius: 8, padding: "12px 14px", fontWeight: 800, fontSize: 13, cursor: "pointer", minHeight: 44, whiteSpace: "nowrap" }}>Elegir</button>
+                  ) : both ? (
                     <div style={{ display: "flex", flexDirection: "column", gap: 6, alignItems: "flex-end" }}>
                       {cT ? step(cT) : vbtn("🥃 Trago", "trago")}
                       {cB ? step(cB) : vbtn("🍾 Botella", "botella")}
@@ -513,6 +532,14 @@ export default function MeseroPortal() {
           </div>
         </div>
       )}
+
+      {modItem && (
+        <ModSheet
+          item={modItem}
+          onClose={() => setModItem(null)}
+          onAdd={(mods) => { addMods(modItem, mods); setModItem(null); }}
+        />
+      )}
     </Wrap>
   );
 }
@@ -547,4 +574,63 @@ function Btn({ children, onClick, busy }) {
 }
 function Chip({ label, active, onClick }) {
   return <button onClick={onClick} style={{ padding: "9px 16px", borderRadius: 999, fontSize: 12, fontWeight: 700, border: `1px solid ${active ? C.primary : C.line}`, background: active ? C.primary : "transparent", color: active ? C.bg : C.text, cursor: "pointer", whiteSpace: "nowrap" }}>{label}</button>;
+}
+
+// Bottom-sheet de variantes/modificadores (modelo Room Service:
+// item.modificadores = [{ grupo, min, max, opciones:[{ nombre, precio_delta }] }])
+function ModSheet({ item, onClose, onAdd }) {
+  const grupos = item.modificadores || [];
+  const [sel, setSel] = useState({});
+  const flat = [];
+  grupos.forEach((g, gi) => (sel[gi] || []).forEach(oi => {
+    const o = g.opciones?.[oi];
+    if (o) flat.push({ grupo: g.grupo, nombre: o.nombre, precio_delta: Number(o.precio_delta) || 0 });
+  }));
+  const delta = flat.reduce((s, o) => s + o.precio_delta, 0);
+  const toggle = (gi, oi, max) => setSel(p => {
+    const cur = p[gi] || [], has = cur.includes(oi);
+    let n;
+    if (has) n = cur.filter(x => x !== oi);
+    else if (max === 1) n = [oi];
+    else if (cur.length < max) n = [...cur, oi];
+    else n = cur;
+    return { ...p, [gi]: n };
+  });
+  const confirmar = () => {
+    for (let gi = 0; gi < grupos.length; gi++) {
+      const g = grupos[gi];
+      if (((sel[gi] || []).length) < (g.min || 0)) return alert(`Elige al menos ${g.min} — "${g.grupo}"`);
+    }
+    onAdd(flat);
+  };
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 100, display: "flex", alignItems: "flex-end" }}>
+      <div onClick={e => e.stopPropagation()} style={{ background: C.bg, width: "100%", maxHeight: "88vh", overflowY: "auto", borderRadius: "18px 18px 0 0", padding: 20 }}>
+        <div style={{ width: 40, height: 4, background: C.line, borderRadius: 2, margin: "0 auto 14px" }} />
+        <div style={{ fontSize: 18, fontWeight: 800, color: C.text, marginBottom: 12 }}>{item.nombre}</div>
+        {grupos.map((g, gi) => (
+          <div key={gi} style={{ marginBottom: 16 }}>
+            <div style={{ fontSize: 12, fontWeight: 800, color: C.accent, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>
+              {g.grupo}{g.min > 0 && <span style={{ color: C.danger }}> *</span>}{g.max > 1 && <span style={{ fontWeight: 500, textTransform: "none" }}> (hasta {g.max})</span>}
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {(g.opciones || []).map((o, oi) => {
+                const on = (sel[gi] || []).includes(oi);
+                return (
+                  <button key={oi} onClick={() => toggle(gi, oi, g.max || 1)}
+                    style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, padding: "14px", borderRadius: 10, border: `1px solid ${on ? C.primary : C.line}`, background: on ? C.card : "transparent", color: C.text, cursor: "pointer", minHeight: 50, fontWeight: 700, fontSize: 14 }}>
+                    <span>{o.nombre}</span>
+                    <span style={{ fontWeight: 800, color: C.accent }}>{Number(o.precio_delta) > 0 ? `+${COP(o.precio_delta)}` : (on ? "✓" : "")}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+        <button onClick={confirmar} style={{ width: "100%", marginTop: 6, background: C.primary, color: C.bg, border: "none", borderRadius: 12, padding: 16, fontWeight: 800, fontSize: 16, cursor: "pointer", minHeight: 54 }}>
+          Agregar · {COP((item.precio || 0) + delta)}
+        </button>
+      </div>
+    </div>
+  );
 }
