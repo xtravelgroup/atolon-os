@@ -85,19 +85,18 @@ Deno.serve(async (req) => {
     if (req.method === "GET" && action === "info") {
       const { data: evento, error } = await SB
         .from("eventos")
-        .select("id, cliente, fecha, hora_inicio, hora_fin, lugar")
+        .select("id, nombre, fecha, hora_ini, hora_fin")
         .eq("id", eventoId)
         .maybeSingle();
       if (error || !evento) return json({ ok: false, error: "not_found" }, 404);
       return json({
         ok: true,
         evento: {
-          id:          evento.id,
-          cliente:     evento.cliente || null,
-          fecha:       evento.fecha   || null,
-          hora_inicio: evento.hora_inicio || null,
-          hora_fin:    evento.hora_fin || null,
-          lugar:       evento.lugar  || null,
+          id:       evento.id,
+          nombre:   evento.nombre   || null,
+          fecha:    evento.fecha    || null,
+          hora_ini: evento.hora_ini || null,
+          hora_fin: evento.hora_fin || null,
         },
       });
     }

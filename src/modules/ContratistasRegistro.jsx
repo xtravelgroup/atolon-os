@@ -136,7 +136,7 @@ export default function ContratistasRegistro({ eventoId }) {
           <img src="/logo.png" alt="Atolón" style={{ height: 44, marginBottom: 12 }} onError={e => e.target.style.display = "none"} />
           <h1 style={{ margin: 0, fontSize: 22, fontWeight: 900, color: "#fff", letterSpacing: "0.02em" }}>Registro de Contratistas</h1>
           <div style={{ fontSize: 13, color: B.sand, marginTop: 6, fontWeight: 700 }}>
-            {evento.cliente || `Evento ${evento.id}`} · {fechaTxt}
+            {evento.nombre || `Evento ${evento.id}`} · {fechaTxt}
           </div>
           <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginTop: 8, lineHeight: 1.5, maxWidth: 480, margin: "8px auto 0" }}>
             Completa los datos de tu empresa y de las personas que vendrán al evento. Carga el RUT de la empresa y la ARL de cada persona.
