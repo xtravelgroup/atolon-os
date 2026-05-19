@@ -35,6 +35,8 @@ export default function Analitica({ externo = false }) {
   const [origen,     setOrigen]     = useState(externo ? "ambos" : "all"); // all|web|whatsapp|grupo|otros|ambos
   const [pkgData, setPkgData] = useState([]);
   const [stats, setStats] = useState(null);
+  const [atribQA, setAtribQA]   = useState(null);  // calidad de atribución paid media
+  const [atribRows, setAtribRows] = useState([]);  // filas para export CAPI/Offline
   const [sesiones, setSesiones] = useState([]);
   const [embudos, setEmbudos] = useState([]);
   const [canales, setCanales] = useState([]);
@@ -175,6 +177,49 @@ export default function Analitica({ externo = false }) {
     const sesXUsuario = usuariosUnicos ? (totalSesiones / usuariosUnicos).toFixed(1) : "1.0";
 
     setStats({ totalSesiones, usuariosUnicos, sesConv, tasaConv, ingresoTotal, ticketPromedio, durPromedio, sesXUsuario });
+
+    // ── Calidad de Atribución (Paid Media) + filas para Meta CAPI / Google ────
+    // Por cada venta pagada self-service: resolvemos click-id y fuente vía la
+    // sesión de track (track_ingresos.reserva_id → sesion_id → track_sesiones)
+    // con fallback a reservas.utms_capturados. Sin click-id ni utm_source =
+    // venta NO atribuible (el % que la agencia debe taggear).
+    const sesById = new Map(rawSes.map(s => [s.id, s]));
+    const ingByReserva = new Map();
+    (ingresosRes.data || []).forEach(i => { if (i.reserva_id && !ingByReserva.has(i.reserva_id)) ingByReserva.set(i.reserva_id, i); });
+    const atRows = resSelfSvc.map(r => {
+      const ing = ingByReserva.get(r.id);
+      const ses = ing ? sesById.get(ing.sesion_id) : null;
+      const u  = r.utms_capturados || {};
+      const su = (ses && ses.utms) || {};
+      const gclid   = ses?.gclid   || u.gclid   || su.gclid   || "";
+      const fbclid  = ses?.fbclid  || u.fbclid  || su.fbclid  || "";
+      const msclkid = ses?.msclkid || u.msclkid || su.msclkid || "";
+      const ttclid  = ses?.ttclid  || u.ttclid  || su.ttclid  || "";
+      const utm_source   = su.utm_source   || u.utm_source   || "";
+      const utm_campaign = su.utm_campaign || u.utm_campaign  || "";
+      const via = o4(clasificarOrigenReserva(r));
+      const hasClick = !!(gclid || fbclid || msclkid || ttclid);
+      const hasSource = !!utm_source;
+      return { reserva_id: r.id, ts: r.fecha_pago || r.created_at, value: Number(r.total) || 0,
+        gclid, fbclid, msclkid, ttclid, utm_source, utm_campaign, via, hasClick, hasSource };
+    });
+    const aNone = atRows.filter(x => !x.hasClick && !x.hasSource);
+    const byVia = {};
+    atRows.forEach(x => {
+      const k = x.via;
+      byVia[k] = byVia[k] || { n: 0, ing: 0, nofuente: 0 };
+      byVia[k].n++; byVia[k].ing += x.value; if (!x.hasClick && !x.hasSource) byVia[k].nofuente++;
+    });
+    setAtribRows(atRows);
+    setAtribQA({
+      tot: atRows.length,
+      ing: atRows.reduce((s, x) => s + x.value, 0),
+      click: atRows.filter(x => x.hasClick).length,
+      src: atRows.filter(x => x.hasSource).length,
+      none: aNone.length,
+      ingNone: aNone.reduce((s, x) => s + x.value, 0),
+      byVia,
+    });
 
     // ── Canales de Adquisición ────────────────────────────────────────────────
     // Sesiones por canal (widget), revenue por canal (desde reservas reales)
@@ -450,6 +495,30 @@ export default function Analitica({ externo = false }) {
 
   const fmt = (n) => new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 }).format(n);
 
+  // Export de conversiones para Meta CAPI / Google Offline Conversions.
+  // 1 fila por venta pagada: event + valor + click-id + fuente. Esto es lo
+  // que la agencia sube a Meta/Google para que optimicen hacia compradores.
+  const exportarConversiones = () => {
+    const esc = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+    const cols = ["event_name", "event_time", "reserva_id", "value", "currency", "gclid", "fbclid", "msclkid", "ttclid", "utm_source", "utm_campaign", "via"];
+    const lines = [cols.join(",")];
+    atribRows.forEach(x => {
+      lines.push([
+        "Purchase",
+        x.ts ? new Date(x.ts).toISOString() : "",
+        x.reserva_id, x.value, "COP",
+        x.gclid, x.fbclid, x.msclkid, x.ttclid,
+        x.utm_source, x.utm_campaign, x.via,
+      ].map(esc).join(","));
+    });
+    const blob = new Blob(["﻿" + lines.join("\n")], { type: "text/csv;charset=utf-8;" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `conversiones_capi_${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  };
+
   async function loadSessionJourney(ses) {
     setSelectedSession(ses);
     setLoadingJourney(true);
@@ -560,6 +629,37 @@ export default function Analitica({ externo = false }) {
           <KPI label="Ingresos Totales" value={fmt(stats.ingresoTotal)} color={B.sky} />
           <KPI label="Ticket Promedio" value={fmt(stats.ticketPromedio)} />
           <KPI label="Duración Promedio" value={`${Math.floor(stats.durPromedio / 60)}m ${stats.durPromedio % 60}s`} />
+        </div>
+      )}
+
+      {atribQA && !externo && (
+        <div style={{ background: B.navyMid, borderRadius: 14, padding: 24, border: "1px solid rgba(255,255,255,0.07)", marginBottom: 28 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 12, marginBottom: 6 }}>
+            <h3 style={{ margin: 0, fontSize: 15, fontWeight: 700, color: "#fff" }}>🎯 Calidad de Atribución · Paid Media</h3>
+            <button onClick={exportarConversiones} disabled={!atribRows.length}
+              style={{ background: B.sky, color: B.navy, border: "none", borderRadius: 8, padding: "8px 14px", fontSize: 12, fontWeight: 800, cursor: atribRows.length ? "pointer" : "default" }}>
+              ⬇ Exportar conversiones (Meta CAPI / Google Offline)
+            </button>
+          </div>
+          <div style={{ fontSize: 11, color: B.muted, marginBottom: 16 }}>
+            Ventas pagadas del período y si son atribuibles a una pauta. Sin click-id ni utm_source = la agencia NO puede probar ROI de ese gasto.
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 14, marginBottom: 16 }}>
+            <KPI label="Ventas pagadas" value={atribQA.tot} />
+            <KPI label="Con click-id" value={`${atribQA.tot ? Math.round(atribQA.click / atribQA.tot * 100) : 0}%`} sub={`${atribQA.click}/${atribQA.tot}`} color={B.success} />
+            <KPI label="Con fuente (utm)" value={`${atribQA.tot ? Math.round(atribQA.src / atribQA.tot * 100) : 0}%`} sub={`${atribQA.src}/${atribQA.tot}`} color={B.success} />
+            <KPI label="Sin fuente ⚠" value={atribQA.none} sub="no atribuible" color={atribQA.none ? B.danger : B.success} />
+            <KPI label="Ingreso no atribuible" value={fmt(atribQA.ingNone)} color={atribQA.ingNone ? B.danger : B.success} />
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 10 }}>
+            {Object.entries(atribQA.byVia).sort((a, b) => b[1].ing - a[1].ing).map(([via, d]) => (
+              <div key={via} style={{ background: B.navyLight, borderRadius: 10, padding: "12px 14px" }}>
+                <div style={{ fontSize: 11, color: B.sand, textTransform: "uppercase", letterSpacing: "0.05em" }}>{via === "web" ? "🌐 Web / Social" : via === "whatsapp" ? "💬 WhatsApp" : via === "grupo" ? "👥 Grupo" : "Otros"}</div>
+                <div style={{ fontSize: 18, fontWeight: 800, color: "#fff", marginTop: 4 }}>{d.n} · {fmt(d.ing)}</div>
+                <div style={{ fontSize: 11, color: d.nofuente ? B.danger : B.muted, marginTop: 2 }}>{d.nofuente} sin fuente</div>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 
