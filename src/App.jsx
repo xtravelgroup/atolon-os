@@ -338,6 +338,7 @@ const Metas = lazy(() => import("./modules/Metas"));
 const Comisiones = lazy(() => import("./modules/Comisiones"));
 const Resultados = lazy(() => import("./modules/Resultados"));
 const ResultadosViewer = lazy(() => import("./modules/ResultadosViewer"));
+const TrackViewer = lazy(() => import("./modules/TrackViewer"));
 const Lancha = lazy(() => import("./modules/Lancha"));
 const CosteoProductos = lazy(() => import("./modules/CosteoProductos"));
 const DiaDeLaMadre = lazy(() => import("./modules/DiaDeLaMadre"));
@@ -436,7 +437,7 @@ const MODULE_MAP = {
 };
 
 // Public routes — no auth required
-const PUBLIC_ROUTES = ["empleados", "agencia", "booking", "pago", "reset-password", "zarpe-info", "zarpe-grupo", "login", "las-americas", "resultados", "dia-de-la-madre", "madres", "blueapple", ""];
+const PUBLIC_ROUTES = ["empleados", "agencia", "booking", "pago", "reset-password", "zarpe-info", "zarpe-grupo", "login", "las-americas", "resultados", "track", "dia-de-la-madre", "madres", "blueapple", ""];
 
 function getRoute() {
   return window.location.pathname.replace(/^\//, "") || "";
@@ -656,6 +657,24 @@ export default function App() {
       );
     }
     return <ResultadosViewer />;
+  }
+
+  // /track: portal de la agencia (AtolonTrack). Autenticado → OS con módulo
+  // analitica; si no → viewer público con clave (Analitica modo externo).
+  if (route === "track") {
+    if (session) {
+      return (
+        <ErrorBoundary>
+          <AtolanOS
+            activeModule="analitica"
+            onNavigate={navigate}
+            moduleContent={MODULE_MAP["analitica"]}
+            userEmail={session.user?.email}
+          />
+        </ErrorBoundary>
+      );
+    }
+    return <TrackViewer />;
   }
 
   // /login: show login form if not authenticated, else fall through to OS
