@@ -1643,6 +1643,30 @@ function TabContratistas({ items, onChange, eventoId, evento }) {
   };
   const remove = (id) => onChange(items.filter(x => x.id !== id));
 
+  // Generar (o reutilizar) el token de gestión para un contratista existente
+  // — sirve tanto para los cargados a mano como para los express que no lo
+  // tengan. Lo guarda en el array de contratistas del evento de inmediato
+  // para que el link sirva aunque el modal aún no se haya guardado.
+  const generarTokenGestion = (id) => {
+    const existing = items.find(x => x.id === id);
+    if (!existing) return null;
+    if (existing.gestion_token) return existing.gestion_token;
+    const t = (crypto.randomUUID?.() || `${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`).replace(/-/g, "").slice(0, 24);
+    onChange(items.map(x => x.id === id ? { ...x, gestion_token: t } : x));
+    if (editId === id) set("gestion_token", t);
+    return t;
+  };
+  const copiarLinkGestion = (id) => {
+    const t = generarTokenGestion(id);
+    if (!t) return;
+    const url = `${window.location.origin}/contratistas/registro/${encodeURIComponent(eventoId)}/${encodeURIComponent(t)}`;
+    if (navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(url).then(() => alert(`📎 Link copiado:\n${url}\n\nMándaselo al contratista para que continúe cargando información.`));
+    } else {
+      prompt("Copia el link:", url);
+    }
+  };
+
   const addPersona = () => set("personas", [...(form.personas || []), { ...EMPTY_PERSONA }]);
   const setPersona = (i, k, v) => set("personas", (form.personas || []).map((p, j) => j === i ? { ...p, [k]: v } : p));
   const rmPersona = (i) => set("personas", (form.personas || []).filter((_, j) => j !== i));
@@ -1717,32 +1741,24 @@ function TabContratistas({ items, onChange, eventoId, evento }) {
               </div>
             </div>
             {c.funcion && <div style={{ fontSize: 12, color: "rgba(255,255,255,0.7)", marginBottom: 8, lineHeight: 1.5 }}>🎯 {c.funcion}</div>}
-            {(c.nit || c.telefono || c.direccion || c.rut_url || c.gestion_token) && (
-              <div style={{ background: B.navyLight, borderRadius: 8, padding: "8px 10px", marginBottom: 8, fontSize: 11, color: "rgba(255,255,255,0.7)", lineHeight: 1.55 }}>
-                {c.nit && <div>🆔 NIT: <strong style={{ color: "#fff" }}>{c.nit}</strong></div>}
-                {c.telefono && <div>📞 {c.telefono}</div>}
-                {c.direccion && <div>📍 {c.direccion}</div>}
-                <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 4 }}>
+            <div style={{ background: B.navyLight, borderRadius: 8, padding: "8px 10px", marginBottom: 8, fontSize: 11, color: "rgba(255,255,255,0.7)", lineHeight: 1.55 }}>
+              {c.nit && <div>🆔 NIT: <strong style={{ color: "#fff" }}>{c.nit}</strong></div>}
+              {c.telefono && <div>📞 {c.telefono}</div>}
+              {c.direccion && <div>📍 {c.direccion}</div>}
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: (c.nit || c.telefono || c.direccion) ? 4 : 0 }}>
                   {c.rut_url && (
                     <a href={c.rut_url} target="_blank" rel="noreferrer"
                       style={{ color: B.success, textDecoration: "none", fontSize: 11, fontWeight: 700, border: `1px solid ${B.success}55`, borderRadius: 5, padding: "2px 8px" }}>
                       📎 Ver RUT
                     </a>
                   )}
-                  {c.gestion_token && (
-                    <button
-                      onClick={() => {
-                        const url = `${window.location.origin}/contratistas/registro/${encodeURIComponent(eventoId)}/${encodeURIComponent(c.gestion_token)}`;
-                        if (navigator.clipboard?.writeText) navigator.clipboard.writeText(url).then(() => alert(`📎 Link copiado:\n${url}\n\nEs el link personal del contratista para volver a cargar más personal/archivos.`));
-                        else prompt("Copia el link:", url);
-                      }}
-                      style={{ background: "transparent", color: B.sky, fontSize: 11, fontWeight: 700, border: `1px solid ${B.sky}55`, borderRadius: 5, padding: "2px 8px", cursor: "pointer" }}>
-                      🔗 Copiar link del contratista
-                    </button>
-                  )}
+                  <button
+                    onClick={() => copiarLinkGestion(c.id)}
+                    style={{ background: "transparent", color: B.sky, fontSize: 11, fontWeight: 700, border: `1px solid ${B.sky}55`, borderRadius: 5, padding: "2px 8px", cursor: "pointer" }}>
+                    🔗 {c.gestion_token ? "Copiar link del contratista" : "Generar link de gestión"}
+                  </button>
                 </div>
               </div>
-            )}
             {c.contacto && <div style={{ fontSize: 12, color: B.sky, marginBottom: 6 }}>📞 {c.contacto}</div>}
             {Number(c.costo) > 0 && <div style={{ fontSize: 12, color: B.sand, fontWeight: 700, marginBottom: 6 }}>💵 {COP(c.costo)}</div>}
             {(c.personas || []).length > 0 && (
@@ -1781,7 +1797,23 @@ function TabContratistas({ items, onChange, eventoId, evento }) {
         <div style={{ background: B.navy, borderRadius: 12, padding: 20, marginTop: 16, border: `1px solid ${B.navyLight}` }}>
           <div style={{ fontWeight: 800, marginBottom: 16, fontSize: 14 }}>{editId ? "Editar contratista" : "Nuevo contratista"}</div>
 
-          {/* Link de gestión del contratista (si vino del registro express) */}
+          {/* Link de gestión del contratista — siempre disponible. Si no
+              tiene token aún (cargado a mano), un botón lo genera al vuelo. */}
+          {editId && !form.gestion_token && (
+            <div style={{ background: B.navyMid, border: `1px dashed ${B.sky}55`, borderRadius: 10, padding: 12, marginBottom: 16 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: B.sky, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em" }}>
+                🔗 Link personal del contratista
+              </div>
+              <div style={{ fontSize: 11, color: "rgba(255,255,255,0.55)", marginBottom: 8, lineHeight: 1.5 }}>
+                Este contratista todavía no tiene un link de gestión. Genera uno para mandárselo y que pueda continuar cargando información (personal, ARLs, RUT).
+              </div>
+              <button
+                onClick={() => copiarLinkGestion(editId)}
+                style={{ ...BTN(B.sky), color: B.navy, fontSize: 12, fontWeight: 800 }}>
+                🔗 Generar y copiar link
+              </button>
+            </div>
+          )}
           {form.gestion_token && (() => {
             const gestionUrl = `${window.location.origin}/contratistas/registro/${encodeURIComponent(eventoId)}/${encodeURIComponent(form.gestion_token)}`;
             return (
