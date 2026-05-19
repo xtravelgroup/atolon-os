@@ -33,6 +33,8 @@ export default function PoolServicePortal({ qr }) {
   const [loading, setLoad]  = useState(true);
   const [carrito, setCart]  = useState([]);
   const [filtroCat, setFC]  = useState("");
+  const [seccion, setSeccion] = useState("comidas"); // comidas | bebidas | actividades
+  const [registrado, setRegistrado] = useState(false); // el spot ya tiene huésped hoy
   const [step, setStep]     = useState("menu"); // menu | review | success
   const [huesped, setHuesped] = useState("");
   const [notas, setNotas]   = useState("");
@@ -46,7 +48,7 @@ export default function PoolServicePortal({ qr }) {
       if (!qr) return setLoad(false);
       const [{ data: a }, { data: i }] = await Promise.all([
         supabase.from("pool_service_areas").select("*").eq("qr_code", qr).eq("activo", true).maybeSingle(),
-        supabase.from("menu_items").select("id, nombre, descripcion, precio, categoria, menu_tipo, loggro_id").in("menu_tipo", ["restaurant", "bebidas"]).eq("activo", true),
+        supabase.from("menu_items").select("id, nombre, descripcion, precio, categoria, menu_tipo, loggro_id").in("menu_tipo", ["restaurant", "bebidas", "experiencias", "trans_acuatica"]).eq("activo", true),
       ]);
       setItems(i || []);
       if (a) {
@@ -59,6 +61,12 @@ export default function PoolServicePortal({ qr }) {
           setSpot(sp);
           const zlbl = (sp.zona || "").replace("piscina_derecha", "Piscina Derecha").replace("piscina_izquierda", "Piscina Izquierda").replace("piscina_central", "Piscina Centro").replace("piscina_", "P. ").replace(/_/g, " ");
           setArea({ id: sp.id, nombre: sp.id, tipo: "piscina", _zona: zlbl }); // header del Shell
+          // ¿Ya registraron a la persona en esta cama hoy? → saludar por nombre
+          const hoy = new Date().toLocaleString("en-CA", { timeZone: "America/Bogota" }).slice(0, 10);
+          const { data: asg } = await supabase.from("floorplan_asignaciones")
+            .select("huesped, pax").eq("spot_id", sp.id).eq("fecha", hoy)
+            .order("updated_at", { ascending: false }).limit(1).maybeSingle();
+          if (asg?.huesped) { setHuesped(asg.huesped); setPax(asg.pax || 1); setRegistrado(true); }
         }
       }
       setLoad(false);
@@ -77,23 +85,30 @@ export default function PoolServicePortal({ qr }) {
     return () => { supabase.removeChannel(ch); };
   }, [pedidoCodigo]);
 
+  // Comidas = restaurant · Bebidas = bebidas · Actividades = experiencias/tours
+  const SEC_TIPOS = { comidas: ["restaurant"], bebidas: ["bebidas"], actividades: ["experiencias", "trans_acuatica"] };
+  const seccionItems = useMemo(
+    () => items.filter(i => (SEC_TIPOS[seccion] || []).includes(i.menu_tipo)),
+    [items, seccion]
+  );
+
   const cats = useMemo(() => {
-    const list = Array.from(new Set(items.map(i => i.categoria).filter(Boolean)));
+    const list = Array.from(new Set(seccionItems.map(i => i.categoria).filter(Boolean)));
     return list.sort((a, b) => {
       const ra = catRank(a), rb = catRank(b);
       if (ra !== rb) return ra - rb;
       return a.localeCompare(b);
     });
-  }, [items]);
+  }, [seccionItems]);
 
   const itemsFiltered = useMemo(() => {
-    const base = filtroCat ? items.filter(i => i.categoria === filtroCat) : items;
+    const base = filtroCat ? seccionItems.filter(i => i.categoria === filtroCat) : seccionItems;
     return [...base].sort((a, b) => {
       const ra = catRank(a.categoria), rb = catRank(b.categoria);
       if (ra !== rb) return ra - rb;
       return (a.nombre || "").localeCompare(b.nombre || "");
     });
-  }, [items, filtroCat]);
+  }, [seccionItems, filtroCat]);
 
   const subtotal = carrito.reduce((s, x) => s + x.precio * x.cantidad, 0);
 
@@ -181,6 +196,32 @@ export default function PoolServicePortal({ qr }) {
     <Shell area={area}>
       {step === "menu" && (
         <>
+          {/* Saludo si la persona ya está registrada en esta cama (como Room Service) */}
+          {registrado && huesped && (
+            <div style={{ background: "white", borderRadius: 14, padding: "16px 18px", marginBottom: 12, boxShadow: "0 1px 3px rgba(13,27,62,0.06)" }}>
+              <div style={{ fontSize: 13, color: C.textMid }}>Hola 👋</div>
+              <div style={{ fontSize: 20, fontWeight: 800, color: C.text }}>{String(huesped).split(" ")[0]}</div>
+              <div style={{ fontSize: 12, color: C.textLight, marginTop: 2 }}>Pide a tu cama · {area?.nombre}</div>
+            </div>
+          )}
+
+          {/* Secciones tipo Room Service */}
+          <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+            {[
+              { k: "comidas",     ic: "🍽", l: "Comidas" },
+              { k: "bebidas",     ic: "🍹", l: "Bebidas" },
+              { k: "actividades", ic: "🏖", l: "Actividades" },
+            ].map(s => {
+              const on = seccion === s.k;
+              return (
+                <button key={s.k} onClick={() => { setSeccion(s.k); setFC(""); }}
+                  style={{ flex: 1, background: on ? C.primary : "white", color: on ? "#fff" : C.text, border: `1px solid ${on ? C.primary : C.border}`, borderRadius: 12, padding: "12px 4px", fontSize: 13, fontWeight: 800, cursor: "pointer", minHeight: 56 }}>
+                  <div style={{ fontSize: 20 }}>{s.ic}</div>{s.l}
+                </button>
+              );
+            })}
+          </div>
+
           {/* Filtros de categoría */}
           <div style={{ display: "flex", gap: 6, overflowX: "auto", padding: "8px 0 12px 0", marginBottom: 12 }}>
             <Chip label="Todo" active={filtroCat === ""} onClick={() => setFC("")} />
@@ -190,6 +231,13 @@ export default function PoolServicePortal({ qr }) {
           </div>
 
           {/* Items */}
+          {itemsFiltered.length === 0 && (
+            <div style={{ background: "white", borderRadius: 12, padding: 28, textAlign: "center", color: C.textMid, fontSize: 13 }}>
+              {seccion === "actividades"
+                ? "Consulta las actividades y pasadías con tu anfitrión 🏖"
+                : "No hay ítems en esta sección por ahora."}
+            </div>
+          )}
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             {itemsFiltered.map(it => {
               const inCart = carrito.find(c => c.id === it.id);
