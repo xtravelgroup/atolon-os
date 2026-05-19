@@ -113,7 +113,14 @@ function ConfirmModal({ data, onConfirm, onCancel, saving }) {
   const uploadDoc = async (key, file) => {
     if (!file || !supabase) return;
     setDocs(d => ({ ...d, [key]: { file, url: "", uploading: true } }));
-    const path = `comisiones/${data.aliado_id}/${Date.now()}-${key}-${file.name.replace(/\s+/g, "_")}`;
+    // Las keys de Supabase Storage solo aceptan ASCII: quitar acentos/ñ y
+    // cualquier caracter no [A-Za-z0-9._-] (ej. "MUÑOZ" → "MUNOZ"). Sin
+    // esto, archivos con tildes/ñ fallaban con "Invalid key".
+    const safeName = (file.name || "archivo")
+      .normalize("NFD").replace(/[̀-ͯ]/g, "")
+      .replace(/[^A-Za-z0-9._-]/g, "_")
+      .replace(/_+/g, "_");
+    const path = `comisiones/${data.aliado_id}/${Date.now()}-${key}-${safeName}`;
     const { error } = await supabase.storage.from("b2b-docs").upload(path, file, { upsert: true, contentType: file.type });
     if (error) {
       alert("Error subiendo archivo: " + error.message);
