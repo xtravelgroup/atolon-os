@@ -989,21 +989,28 @@ function CombustibleTab({ items, viajesPorFecha, onEdit, onDelete }) {
     return out.sort((a, b) => a.ts.localeCompare(b.ts));
   }, [viajesPorFecha]);
 
-  // Recargas en orden cronológico para calcular la ventana de consumo.
+  // Recargas: la ventana de consumo es POR DÍA, no por hora exacta. Una
+  // recarga cubre TODOS los viajes desde su fecha (sin importar a qué hora
+  // se registró — normalmente se anota después de los viajes de la mañana)
+  // hasta la fecha de la siguiente recarga.
   const recargas = useMemo(() => {
-    const tsDe = (r) => `${r.fecha}T${(r.hora || "00:00").slice(0, 5)}`;
-    const asc = [...(items || [])].sort((a, b) => tsDe(a).localeCompare(tsDe(b)));
+    const dOf = (r) => (r.fecha || "").slice(0, 10);
+    const asc = [...(items || [])].sort((a, b) =>
+      dOf(a).localeCompare(dOf(b)) || (a.hora || "").localeCompare(b.hora || "")
+    );
     return asc.map((r, i) => {
-      const ts = tsDe(r);
+      const d0 = dOf(r);
       const next = asc[i + 1];
-      const nextTs = next ? tsDe(next) : "9999-12-31T23:59";
+      // Si hay otra recarga el MISMO día, esta cubre hasta esa (vacío);
+      // los viajes del día se atribuyen a la última recarga de ese día.
+      const dEnd = next ? dOf(next) : "9999-12-31";
       const consumido = pares
-        .filter(p => p.ts >= ts && p.ts < nextTs)
+        .filter(p => { const pd = p.ts.slice(0, 10); return pd >= d0 && pd < dEnd; })
         .reduce((s, p) => s + p.valor, 0);
       const capacidad = Math.max(1, Math.round(Number(r.costo_total || 0) / COSTO_VIAJE_COMBUSTIBLE));
       const restante = Math.max(0, capacidad - consumido);
       const pct = capacidad > 0 ? Math.min(100, (consumido / capacidad) * 100) : 0;
-      return { ...r, ts, consumido, capacidad, restante, pct, activa: i === asc.length - 1 };
+      return { ...r, ts: `${d0}T${(r.hora || "00:00").slice(0, 5)}`, consumido, capacidad, restante, pct, activa: i === asc.length - 1 };
     }).reverse(); // más reciente primero
   }, [items, pares]);
 
