@@ -53,6 +53,7 @@ export default function MeseroPortal() {
   const [huespedes, setHuespedes] = useState([]); // huéspedes hotel en check-in sin mesa
   const [huespedSel, setHuespedSel] = useState(""); // estancia id elegida en el dropdown
   const [okCodigo, setOkCodigo] = useState("");
+  const [okRegistro, setOkRegistro] = useState(false); // se registró mesa sin pedido
   const [okLoggro, setOkLoggro] = useState(false);
 
   useEffect(() => {
@@ -158,6 +159,31 @@ export default function MeseroPortal() {
   });
   const setQ = (key, c) => { const n = Number(c); if (n <= 0) return setCart(p => p.filter(x => x.key !== key)); setCart(p => p.map(x => x.key === key ? { ...x, cantidad: n } : x)); };
 
+  // Registrar la mesa/huésped en el spot SIN pedir comida (asignación del día).
+  // Es lo que hace que el QR de la cama salude por nombre.
+  const registrarMesa = async () => {
+    if (!String(huesped).trim()) return alert("Indica el nombre");
+    if (!spot) return;
+    setBusy(true);
+    const hoy = new Date().toLocaleString("en-CA", { timeZone: "America/Bogota" }).slice(0, 10);
+    const payload = {
+      spot_id: spot.id, fecha: hoy, estado: "ocupada",
+      huesped: huesped.trim(), pax: Number(pax) || 1,
+      reserva_id: reservaId || null,
+      asignado_por: mesero?.nombre || "mesero",
+      updated_at: new Date().toISOString(),
+    };
+    const { data: ex } = await supabase.from("floorplan_asignaciones")
+      .select("id").eq("spot_id", spot.id).eq("fecha", hoy)
+      .order("updated_at", { ascending: false }).limit(1).maybeSingle();
+    const { error } = ex
+      ? await supabase.from("floorplan_asignaciones").update(payload).eq("id", ex.id)
+      : await supabase.from("floorplan_asignaciones").insert({ id: `FPA-${Date.now()}`, ...payload, created_at: new Date().toISOString() });
+    setBusy(false);
+    if (error) return alert("No se pudo registrar la mesa:\n" + error.message);
+    setOkRegistro(true); setOkCodigo(""); setStep("success");
+  };
+
   const enviar = async () => {
     if (cart.length === 0) return alert("Agrega ítems al pedido");
     setBusy(true);
@@ -214,10 +240,10 @@ export default function MeseroPortal() {
       } catch { /* el pedido ya quedó guardado; staff puede reenviar */ }
     }
     setBusy(false);
-    setOkCodigo(codigo); setOkLoggro(loggroOk); setStep("success");
+    setOkRegistro(false); setOkCodigo(codigo); setOkLoggro(loggroOk); setStep("success");
   };
 
-  const nuevoPedido = () => { setCart([]); setNotas(""); setPax(2); setHuesped(""); setReservaId(null); setHuespedSel(""); setSpot(null); setStep("spots"); setOkCodigo(""); };
+  const nuevoPedido = () => { setCart([]); setNotas(""); setPax(2); setHuesped(""); setReservaId(null); setHuespedSel(""); setSpot(null); setStep("spots"); setOkCodigo(""); setOkRegistro(false); };
 
   // ── UI ────────────────────────────────────────────────────────────────
   if (boot) return <Wrap><div style={{ padding: 60, textAlign: "center", color: C.textMid }}>Cargando…</div></Wrap>;
@@ -270,17 +296,21 @@ export default function MeseroPortal() {
     return (
       <Wrap title={mesero?.nombre}>
         <div style={{ background: C.card, borderRadius: 16, padding: 32, textAlign: "center", marginTop: 24 }}>
-          <div style={{ fontSize: 56 }}>{okLoggro ? "✅" : "📥"}</div>
+          <div style={{ fontSize: 56 }}>{okRegistro ? "📝" : (okLoggro ? "✅" : "📥")}</div>
           <div style={{ fontSize: 20, fontWeight: 800, color: C.text, marginTop: 8 }}>
-            {okLoggro ? "Pedido en cocina" : "Pedido guardado"}
+            {okRegistro ? "Mesa registrada" : (okLoggro ? "Pedido en cocina" : "Pedido guardado")}
           </div>
           <div style={{ fontSize: 13, color: C.textMid, marginTop: 6 }}>
-            {okLoggro ? "Enviado a la mesa de Loggro." : "El equipo lo enviará a Loggro."}
+            {okRegistro
+              ? `${spot?.id} · ${huesped} · ${pax} pax — ya pueden pedir por el QR`
+              : (okLoggro ? "Enviado a la mesa de Loggro." : "El equipo lo enviará a Loggro.")}
           </div>
-          <div style={{ display: "inline-block", background: C.bg, padding: "8px 14px", borderRadius: 8, marginTop: 16, fontFamily: "monospace", fontSize: 12, color: C.text }}>
-            {okCodigo}
-          </div>
-          <Btn onClick={nuevoPedido}>+ Nuevo pedido</Btn>
+          {okCodigo && (
+            <div style={{ display: "inline-block", background: C.bg, padding: "8px 14px", borderRadius: 8, marginTop: 16, fontFamily: "monospace", fontSize: 12, color: C.text }}>
+              {okCodigo}
+            </div>
+          )}
+          <Btn onClick={nuevoPedido}>{okRegistro ? "+ Otra mesa" : "+ Nuevo pedido"}</Btn>
         </div>
       </Wrap>
     );
@@ -353,10 +383,14 @@ export default function MeseroPortal() {
             <button onClick={() => setPax(p => Number(p) + 1)} style={{ ...qbtn, width: 48, height: 48, fontSize: 22 }}>+</button>
           </div>
 
-          <div style={{ position: "fixed", left: 0, right: 0, bottom: 0, background: C.card, borderTop: `1px solid ${C.line}`, padding: 14 }}>
+          <div style={{ position: "fixed", left: 0, right: 0, bottom: 0, background: C.card, borderTop: `1px solid ${C.line}`, padding: 14, display: "flex", flexDirection: "column", gap: 8 }}>
             <button onClick={() => { if (!String(huesped).trim()) return alert("Indica el nombre"); setStep("menu"); }}
               style={{ width: "100%", background: C.primary, color: C.bg, border: "none", borderRadius: 12, padding: 16, fontWeight: 800, fontSize: 16, cursor: "pointer", minHeight: 54 }}>
               Continuar al menú →
+            </button>
+            <button onClick={registrarMesa} disabled={busy}
+              style={{ width: "100%", background: "transparent", color: C.text, border: `1px solid ${C.line}`, borderRadius: 12, padding: 14, fontWeight: 700, fontSize: 14, cursor: "pointer", minHeight: 48 }}>
+              {busy ? "…" : "Solo registrar mesa (sin pedir)"}
             </button>
           </div>
         </div>
