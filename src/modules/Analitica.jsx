@@ -74,6 +74,11 @@ export default function Analitica({ externo = false }) {
     let desde;
     if (periodo === "custom" && customFrom) {
       desde = new Date(customFrom).toISOString();
+    } else if (periodo === "1d") {
+      // "Hoy" = día CALENDARIO de Bogotá (no rolling 24h, que arrastraba
+      // las ventas de ayer). Medianoche Bogotá (UTC-5) expresada en UTC.
+      const hoyBog = new Date().toLocaleString("en-CA", { timeZone: "America/Bogota" }).slice(0, 10);
+      desde = `${hoyBog}T05:00:00.000Z`;
     } else {
       const dias = parseInt(periodo);
       desde = new Date(Date.now() - dias * 86400000).toISOString();
