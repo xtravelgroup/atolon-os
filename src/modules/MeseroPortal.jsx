@@ -159,6 +159,23 @@ export default function MeseroPortal() {
   });
   const setQ = (key, c) => { const n = Number(c); if (n <= 0) return setCart(p => p.filter(x => x.key !== key)); setCart(p => p.map(x => x.key === key ? { ...x, cantidad: n } : x)); };
 
+  // Tocar una cama: si ya tiene huésped registrado hoy → directo al menú
+  // (no vuelve a pedir nombre/pax). Si no → paso de datos.
+  const abrirSpot = async (s) => {
+    setSpot(s);
+    const hoy = new Date().toLocaleString("en-CA", { timeZone: "America/Bogota" }).slice(0, 10);
+    const { data: asg } = await supabase.from("floorplan_asignaciones")
+      .select("huesped, pax, reserva_id").eq("spot_id", s.id).eq("fecha", hoy)
+      .not("huesped", "is", null)
+      .order("updated_at", { ascending: false }).limit(1).maybeSingle();
+    if (asg?.huesped) {
+      setHuesped(asg.huesped); setPax(asg.pax || 1); setReservaId(asg.reserva_id || null);
+      setStep("menu");
+    } else {
+      setStep("datos");
+    }
+  };
+
   // Registrar la mesa/huésped en el spot SIN pedir comida (asignación del día).
   // Es lo que hace que el QR de la cama salude por nombre.
   const registrarMesa = async () => {
@@ -323,7 +340,7 @@ export default function MeseroPortal() {
         <div style={{ fontSize: 13, color: C.textMid, margin: "16px 0 12px" }}>Toca la cama del pedido en el plano:</div>
         <PoolFloorPlanPicker
           selectedSpotId={spot?.id || null}
-          onSelectSpot={(s) => { setSpot(s); setStep("datos"); }}
+          onSelectSpot={abrirSpot}
           showEstadoColor={true}
           size="lg"
         />
