@@ -384,13 +384,13 @@ export default function MeseroPortal() {
           </div>
 
           <div style={{ position: "fixed", left: 0, right: 0, bottom: 0, background: C.card, borderTop: `1px solid ${C.line}`, padding: 14, display: "flex", flexDirection: "column", gap: 8 }}>
-            <button onClick={() => { if (!String(huesped).trim()) return alert("Indica el nombre"); setStep("menu"); }}
-              style={{ width: "100%", background: C.primary, color: C.bg, border: "none", borderRadius: 12, padding: 16, fontWeight: 800, fontSize: 16, cursor: "pointer", minHeight: 54 }}>
-              Continuar al menú →
-            </button>
             <button onClick={registrarMesa} disabled={busy}
+              style={{ width: "100%", background: C.primary, color: C.bg, border: "none", borderRadius: 12, padding: 16, fontWeight: 800, fontSize: 16, cursor: "pointer", minHeight: 54 }}>
+              {busy ? "…" : "Grabar"}
+            </button>
+            <button onClick={() => { if (!String(huesped).trim()) return alert("Indica el nombre"); setStep("menu"); }}
               style={{ width: "100%", background: "transparent", color: C.text, border: `1px solid ${C.line}`, borderRadius: 12, padding: 14, fontWeight: 700, fontSize: 14, cursor: "pointer", minHeight: 48 }}>
-              {busy ? "…" : "Solo registrar mesa (sin pedir)"}
+              Tomar pedido →
             </button>
           </div>
         </div>
