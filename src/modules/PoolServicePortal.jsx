@@ -112,11 +112,23 @@ export default function PoolServicePortal({ qr }) {
           setSpot(sp);
           const zlbl = (sp.zona || "").replace("piscina_derecha", "Piscina Derecha").replace("piscina_izquierda", "Piscina Izquierda").replace("piscina_central", "Piscina Centro").replace("piscina_", "P. ").replace(/_/g, " ");
           setArea({ id: sp.id, nombre: sp.id, tipo: "piscina", _zona: zlbl });
+          // ¿Ya registraron a la persona en esta cama hoy? Reconoce 2 fuentes:
+          // 1) asignación del Floor Plan, 2) pedido del mesero para esa cama hoy.
           const hoy = new Date().toLocaleString("en-CA", { timeZone: "America/Bogota" }).slice(0, 10);
           const { data: asg } = await supabase.from("floorplan_asignaciones")
             .select("huesped, pax").eq("spot_id", sp.id).eq("fecha", hoy)
+            .not("huesped", "is", null)
             .order("updated_at", { ascending: false }).limit(1).maybeSingle();
-          if (asg?.huesped) { setHuesped(asg.huesped); setPax(asg.pax || 1); setRegistrado(true); }
+          if (asg?.huesped) {
+            setHuesped(asg.huesped); setPax(asg.pax || 1); setRegistrado(true);
+          } else {
+            const { data: ped } = await supabase.from("pool_service_pedidos")
+              .select("huesped, pax").eq("spot_id", sp.id)
+              .gte("created_at", `${hoy}T00:00:00`)
+              .not("huesped", "is", null)
+              .order("created_at", { ascending: false }).limit(1).maybeSingle();
+            if (ped?.huesped) { setHuesped(ped.huesped); setPax(ped.pax || 1); setRegistrado(true); }
+          }
         }
       }
       setLoad(false);

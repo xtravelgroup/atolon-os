@@ -155,14 +155,17 @@ export default function FloorPlan() {
       reserva_id: form.reserva_id?.trim() || null,
       updated_at: new Date().toISOString(),
     };
-    if (existing) {
-      await supabase.from("floorplan_asignaciones").update(payload).eq("id", existing.id);
-    } else {
-      await supabase.from("floorplan_asignaciones").insert({
-        id: `FPA-${Date.now()}`,
-        ...payload,
-        created_at: new Date().toISOString(),
-      });
+    const { error: asgErr } = existing
+      ? await supabase.from("floorplan_asignaciones").update(payload).eq("id", existing.id)
+      : await supabase.from("floorplan_asignaciones").insert({
+          id: `FPA-${Date.now()}`,
+          ...payload,
+          created_at: new Date().toISOString(),
+        });
+    if (asgErr) {
+      setSavingDrawer(false);
+      alert("No se pudo guardar la asignación:\n" + asgErr.message);
+      return; // no cerrar el drawer: el usuario ve que NO se guardó
     }
 
     // Si el operador editó el mapeo a Loggro, persistirlo en el catálogo del spot
