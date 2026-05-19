@@ -578,7 +578,7 @@ export default function GuestPortal({ token }) {
       {/* ── CONTENT ── */}
       {view === "home" && <Home session={session} items={items} setView={setView} lang={lang} />}
       {view === "chat" && <ChatView session={session} config={config} lang={lang} />}
-      {view === "experiences" && <StubView icon="🏖" title={lang === "es" ? "Actividades" : "Activities"} subtitle={t("stub_activities_sub", lang)} session={session} config={config} lang={lang} />}
+      {view === "experiences" && <ExperienciasView addToCart={addToCart} lang={lang} />}
       {view === "transporte" && <StubView icon="⛵" title={lang === "es" ? "Transporte Marítimo" : "Boat Transfers"} subtitle={t("stub_transport_sub", lang)} session={session} config={config} lang={lang} />}
       {view === "food" && <FoodSection session={session} saludo={saludo} items={items} itemsPorSeccion={itemsPorSeccion} setView={setView} setActiveCat={setActiveCat} setItemOpen={setItemOpen} />}
       {view === "category" && activeCat && <CategoryView seccion={activeCat} grupos={itemsPorCategoria(activeCat.key)} setItemOpen={setItemOpen} addToCart={addToCart} lang={lang} />}
@@ -1379,6 +1379,55 @@ function MyStayView({ session }) {
 }
 
 // ─── STUB (placeholder para secciones en construcción) ─────────────────────
+// Actividades self-service (las marcadas en el módulo Actividades).
+// Se agregan al pedido; no van a Loggro (no son productos de cocina) →
+// quedan en el pedido para que el equipo las coordine.
+function ExperienciasView({ addToCart, lang = "es" }) {
+  const [acts, setActs] = useState(null);
+  useEffect(() => {
+    supabase.from("actividades")
+      .select("id, nombre, descripcion, precio, precio_nino, duracion, categoria")
+      .eq("self_service", true).eq("activo", true)
+      .order("orden").order("nombre")
+      .then(({ data }) => setActs(data || []));
+  }, []);
+
+  if (acts === null) return <div style={{ padding: 40, textAlign: "center", color: B.textDim }}>{lang === "es" ? "Cargando…" : "Loading…"}</div>;
+  if (acts.length === 0) {
+    return (
+      <div style={{ padding: "40px 24px", textAlign: "center" }}>
+        <div style={{ fontSize: 56, marginBottom: 14 }}>🏖</div>
+        <div style={{ fontSize: 18, fontWeight: 800, marginBottom: 6 }}>{lang === "es" ? "Actividades" : "Activities"}</div>
+        <div style={{ fontSize: 13, color: B.textDim }}>{lang === "es" ? "Consulta las actividades disponibles con tu anfitrión." : "Ask your host about available activities."}</div>
+      </div>
+    );
+  }
+  return (
+    <div style={{ padding: "16px 16px 90px" }}>
+      <div style={{ fontSize: 13, color: B.textDim, marginBottom: 14 }}>
+        {lang === "es" ? "Reserva tu actividad — el equipo te coordina los detalles." : "Book your activity — the team coordinates the details."}
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        {acts.map(a => (
+          <div key={a.id} style={{ background: B.navyMid, borderRadius: 14, padding: 16, border: `1px solid ${B.navyLight}` }}>
+            <div style={{ fontSize: 15, fontWeight: 800, color: B.white }}>{a.nombre}</div>
+            {a.descripcion && <div style={{ fontSize: 12, color: B.textDim, marginTop: 4, lineHeight: 1.4 }}>{a.descripcion}</div>}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 10, gap: 10 }}>
+              <div style={{ fontSize: 16, fontWeight: 800, color: B.gold }}>
+                {COP(a.precio)}{a.duracion ? <span style={{ fontSize: 11, color: B.textDim, fontWeight: 500 }}> · {a.duracion}</span> : null}
+              </div>
+              <button onClick={() => addToCart({ id: a.id, nombre: a.nombre, precio: a.precio || 0 })}
+                style={{ background: B.gold, color: B.navy, border: "none", borderRadius: 9, padding: "10px 16px", fontWeight: 800, fontSize: 13, cursor: "pointer", minHeight: 44 }}>
+                {lang === "en" ? "+ Add" : "+ Agregar"}
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function StubView({ icon, title, subtitle, session, config, lang = "es" }) {
   const numero = (config?.whatsapp_numero || "573001112233").replace(/\D/g, "");
   const nombre = session?.huesped?.nombre?.split(" ")[0] || "";

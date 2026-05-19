@@ -99,11 +99,19 @@ export default function PoolServicePortal({ qr }) {
   useEffect(() => {
     (async () => {
       if (!qr) return setLoad(false);
-      const [{ data: a }, { data: i }] = await Promise.all([
+      const [{ data: a }, { data: i }, { data: acts }] = await Promise.all([
         supabase.from("pool_service_areas").select("*").eq("qr_code", qr).eq("activo", true).maybeSingle(),
-        supabase.from("menu_items").select("id, nombre, nombre_en, descripcion, descripcion_en, precio, categoria, categoria_en, menu_tipo, loggro_id, modificadores").in("menu_tipo", ["restaurant", "bebidas", "experiencias", "trans_acuatica"]).eq("activo", true),
+        supabase.from("menu_items").select("id, nombre, nombre_en, descripcion, descripcion_en, precio, categoria, categoria_en, menu_tipo, loggro_id, modificadores").in("menu_tipo", ["restaurant", "bebidas"]).eq("activo", true),
+        supabase.from("actividades").select("id, nombre, descripcion, precio, categoria").eq("self_service", true).eq("activo", true).order("orden").order("nombre"),
       ]);
-      setItems(i || []);
+      // Actividades marcadas como self-service → se inyectan como sección "actividades"
+      const actItems = (acts || []).map(x => ({
+        id: x.id, nombre: x.nombre, nombre_en: null,
+        descripcion: x.descripcion || null, descripcion_en: null,
+        precio: x.precio || 0, categoria: x.categoria || "Actividades",
+        categoria_en: null, menu_tipo: "actividad", loggro_id: null, modificadores: [],
+      }));
+      setItems([...(i || []), ...actItems]);
       if (a) {
         setArea(a);
       } else {
@@ -147,7 +155,7 @@ export default function PoolServicePortal({ qr }) {
     return () => { supabase.removeChannel(ch); };
   }, [pedidoCodigo]);
 
-  const SEC_TIPOS = { comidas: ["restaurant"], bebidas: ["bebidas"], actividades: ["experiencias", "trans_acuatica"] };
+  const SEC_TIPOS = { comidas: ["restaurant"], bebidas: ["bebidas"], actividades: ["actividad"] };
   const seccionItems = useMemo(
     () => items.filter(i => (SEC_TIPOS[seccion] || []).includes(i.menu_tipo)),
     [items, seccion]
