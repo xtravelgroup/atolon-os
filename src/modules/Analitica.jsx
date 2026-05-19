@@ -23,6 +23,7 @@ function normCanal(raw) {
   if (c === "paid_social_meta") return "Meta Ads";
   if (c === "organic_social") return "Social Orgánico";
   if (c === "email") return "Email";
+  if (c === "getyourguide" || c === "get your guide" || c === "gyg") return "GetYourGuide";
   // Capitalize first letter for anything else
   return raw.charAt(0).toUpperCase() + raw.slice(1).toLowerCase();
 }
