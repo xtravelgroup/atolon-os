@@ -7,6 +7,7 @@
 
 import { supabase } from "./supabase";
 import {
+  initTracking,
   gtmPageView, gtmViewItem, gtmBeginCheckout, gtmAddPaymentInfo,
   gtmPurchase, gtmPaymentError, gtmAbandon, gtmWhatsApp,
   gtmExitIntent, gtmScrollDepth,
@@ -213,6 +214,17 @@ class AtolanTrackSDK {
     if (this.inicializado) return;
     this.inicializado = true;
     this._startTime = Date.now();
+
+    // Tracking (Pixel/GA4/GTM/Ads/TikTok): IDs desde `configuracion`
+    // (editables por la agencia en AtolonTrack). Fire-and-forget — los
+    // eventos se encolan en gtm.js hasta que initTracking() corre.
+    supabase
+      .from("configuracion")
+      .select("meta_pixel_id, gtm_id, ga4_id, google_ads_id, tiktok_pixel_id")
+      .eq("id", "atolon")
+      .single()
+      .then(({ data }) => initTracking(data || {}))
+      .catch(() => initTracking({}));
 
     const isReturning = localStorage.getItem("at_returning") === "true";
 

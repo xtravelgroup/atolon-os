@@ -635,6 +635,9 @@ export default function Analitica({ externo = false }) {
         )}
       </div>
 
+      {/* Tracking & Pixels — config editable por la agencia */}
+      <TrackingConfigPanel />
+
       {/* KPIs */}
       {stats && (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 16, marginBottom: 28 }}>
@@ -1248,6 +1251,93 @@ export default function Analitica({ externo = false }) {
           ? "Atolón · Analítica en tiempo real"
           : "AtolonTrack v2.1 · GTM/GA4/Meta Pixel · Server-side fallback · Datos en tiempo real desde Supabase"}
       </div>
+    </div>
+  );
+}
+
+// ─── Tracking & Pixels (config editable por la agencia) ──────────────────────
+// Guarda los IDs en `configuracion`. gtm.js (vía AtolanTrack.init) los lee y
+// arranca Meta Pixel / GA4 / GTM / Google Ads / TikTok en el booking engine.
+const TRK_FIELDS = [
+  { k: "meta_pixel_id",   label: "Meta Pixel ID",          ph: "Ej: 1234567890123456",  hint: "Solo el número del Pixel (Eventos → Orígenes de datos)." },
+  { k: "ga4_id",          label: "GA4 Measurement ID",     ph: "G-XXXXXXXXXX",          hint: "Admin → Flujos de datos → ID de medición." },
+  { k: "gtm_id",          label: "Google Tag Manager ID",  ph: "GTM-XXXXXXX",           hint: "Opcional. Si lo usas, GA4/Ads/Meta pueden ir dentro del contenedor." },
+  { k: "google_ads_id",   label: "Google Ads Conversion",  ph: "AW-123456789",          hint: "ID de conversión de Google Ads." },
+  { k: "tiktok_pixel_id", label: "TikTok Pixel ID",        ph: "Ej: C1A2B3...",         hint: "Eventos → Administrar → ID del pixel." },
+];
+
+function TrackingConfigPanel() {
+  const [open, setOpen]     = useState(false);
+  const [form, setForm]     = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved]   = useState(false);
+
+  useEffect(() => {
+    supabase.from("configuracion")
+      .select("meta_pixel_id, gtm_id, ga4_id, google_ads_id, tiktok_pixel_id")
+      .eq("id", "atolon").single()
+      .then(({ data }) => setForm(data || {}))
+      .catch(() => setForm({}));
+  }, []);
+
+  const set = (k, v) => { setForm(f => ({ ...f, [k]: v })); setSaved(false); };
+
+  const guardar = async () => {
+    setSaving(true);
+    const payload = {};
+    TRK_FIELDS.forEach(({ k }) => { payload[k] = (form?.[k] || "").trim() || null; });
+    payload.updated_at = new Date().toISOString();
+    const { error } = await supabase.from("configuracion").update(payload).eq("id", "atolon");
+    setSaving(false);
+    if (!error) { setSaved(true); setTimeout(() => setSaved(false), 4000); }
+    else alert("No se pudo guardar: " + error.message);
+  };
+
+  const algunoActivo = form && TRK_FIELDS.some(({ k }) => (form[k] || "").trim());
+
+  return (
+    <div style={{ background: B.navyMid, borderRadius: 14, border: "1px solid rgba(255,255,255,0.07)", marginBottom: 24, overflow: "hidden" }}>
+      <button onClick={() => setOpen(o => !o)}
+        style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12,
+          background: "transparent", border: "none", cursor: "pointer", color: "#fff", padding: "16px 20px", textAlign: "left" }}>
+        <span style={{ fontSize: 15, fontWeight: 700 }}>
+          🎯 Tracking &amp; Pixels
+          <span style={{ marginLeft: 10, fontSize: 11, fontWeight: 600,
+            color: algunoActivo ? B.success : B.sand }}>
+            {form == null ? "…" : algunoActivo ? "● configurado" : "○ sin configurar"}
+          </span>
+        </span>
+        <span style={{ color: B.muted, fontSize: 13 }}>{open ? "▲ ocultar" : "▼ configurar"}</span>
+      </button>
+
+      {open && form && (
+        <div style={{ padding: "4px 20px 22px" }}>
+          <div style={{ fontSize: 12, color: B.muted, marginBottom: 18, lineHeight: 1.5 }}>
+            Pega aquí los IDs de la agencia. Se aplican automáticamente en el booking engine
+            (<code>www.atolon.co/booking</code>) — dispara <strong>PageView</strong>, <strong>InitiateCheckout</strong> y
+            <strong> Purchase</strong> con valor. Deja un campo vacío para desactivar esa plataforma.
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 16 }}>
+            {TRK_FIELDS.map(({ k, label, ph, hint }) => (
+              <div key={k}>
+                <label style={{ display: "block", fontSize: 12, fontWeight: 700, color: B.sand, marginBottom: 6 }}>{label}</label>
+                <input value={form[k] || ""} onChange={e => set(k, e.target.value)} placeholder={ph}
+                  style={{ width: "100%", boxSizing: "border-box", padding: "10px 12px", borderRadius: 8,
+                    border: "1px solid rgba(255,255,255,0.12)", background: B.navy, color: "#fff", fontSize: 13, outline: "none" }} />
+                <div style={{ fontSize: 11, color: B.muted, marginTop: 5 }}>{hint}</div>
+              </div>
+            ))}
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 14, marginTop: 20 }}>
+            <button onClick={guardar} disabled={saving}
+              style={{ padding: "10px 22px", borderRadius: 8, border: "none", cursor: saving ? "default" : "pointer",
+                background: B.success, color: "#fff", fontSize: 13, fontWeight: 700, opacity: saving ? 0.6 : 1 }}>
+              {saving ? "Guardando…" : "Guardar"}
+            </button>
+            {saved && <span style={{ fontSize: 13, color: B.success, fontWeight: 700 }}>✓ Guardado · activo en el próximo ingreso al booking</span>}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
