@@ -1,9 +1,13 @@
 // ContratistasRegistro.jsx — Página pública de registro express de contratistas
-// Ruta: /contratistas/registro/<eventoId>
-// El admin genera el link desde EventoDetalle → Contratistas y se lo manda
-// al contratista. El contratista llena empresa + personas + sube RUT/ARLs.
-// Al enviar, el edge function contratistas-registro sube los archivos y
-// agrega el contratista a eventos.contratistas (jsonb).
+// Rutas:
+//   /contratistas/registro/<eventoId>          → modo "nuevo" registro
+//   /contratistas/registro/<eventoId>/<token>  → modo "gestión" (agregar más personal)
+//
+// Reglas:
+//   · El RUT de la empresa es OBLIGATORIO en el primer registro.
+//   · Cada persona requiere ARL OBLIGATORIA.
+//   · Tras enviar, el contratista recibe un link de gestión persistente
+//     para volver y agregar más personas con sus ARL en cualquier momento.
 import { useState, useEffect, useCallback } from "react";
 import { B } from "../brand";
 import { useBreakpoint } from "../lib/responsive";
@@ -11,29 +15,42 @@ import { useBreakpoint } from "../lib/responsive";
 const SUPA_URL = import.meta.env.VITE_SUPABASE_URL;
 const SUPA_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
-function fileToDataUrl(file) {
-  return new Promise((resolve, reject) => {
-    const r = new FileReader();
-    r.onload  = () => resolve(r.result);
-    r.onerror = () => reject(r.error);
-    r.readAsDataURL(file);
-  });
-}
+const fileToDataUrl = (file) => new Promise((res, rej) => {
+  const r = new FileReader();
+  r.onload  = () => res(r.result);
+  r.onerror = () => rej(r.error);
+  r.readAsDataURL(file);
+});
 
 const EMPTY_PERSONA = { nombre: "", cedula: "", fecha_nacimiento: "", rol: "", arl_file: null, arl_name: "" };
+const EMPTY_EMPRESA = { nombre: "", nit: "", direccion: "", telefono: "", contacto: "", descripcion: "", rut_file: null, rut_name: "" };
 
-export default function ContratistasRegistro({ eventoId }) {
-  const { isMobile } = useBreakpoint();
-  const [loading, setLoading] = useState(true);
-  const [evento, setEvento]   = useState(null);
-  const [error,  setError]    = useState(null);
-  const [submitting, setSubmitting] = useState(false);
-  const [done, setDone] = useState(false);
-
-  const [empresa, setEmpresa] = useState({
-    nombre: "", nit: "", direccion: "", telefono: "", contacto: "",
-    descripcion: "", rut_file: null, rut_name: "",
+async function callFn(path, { method = "GET", body } = {}) {
+  const resp = await fetch(`${SUPA_URL}/functions/v1/contratistas-registro${path}`, {
+    method,
+    headers: {
+      Authorization: `Bearer ${SUPA_KEY}`,
+      apikey: SUPA_KEY,
+      ...(body ? { "Content-Type": "application/json" } : {}),
+    },
+    ...(body ? { body: JSON.stringify(body) } : {}),
   });
+  return resp.json();
+}
+
+export default function ContratistasRegistro({ eventoId, token }) {
+  const { isMobile } = useBreakpoint();
+  const mode = token ? "manage" : "new";
+
+  const [loading, setLoading]       = useState(true);
+  const [evento, setEvento]         = useState(null);
+  const [contratistaExist, setCE]   = useState(null); // solo en modo manage
+  const [error, setError]           = useState(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [doneInfo, setDoneInfo]     = useState(null); // { gestion_token, personas } (modo new)
+  const [agregadoMsg, setAgregadoMsg] = useState(""); // toast en modo manage
+
+  const [empresa, setEmpresa]   = useState(EMPTY_EMPRESA);
   const [personas, setPersonas] = useState([{ ...EMPTY_PERSONA }]);
 
   const setE = (k, v) => setEmpresa(e => ({ ...e, [k]: v }));
@@ -42,63 +59,99 @@ export default function ContratistasRegistro({ eventoId }) {
   const rmP  = (i) => setPersonas(p => p.length > 1 ? p.filter((_, j) => j !== i) : p);
 
   useEffect(() => {
-    fetch(`${SUPA_URL}/functions/v1/contratistas-registro/info/${encodeURIComponent(eventoId)}`, {
-      headers: { Authorization: `Bearer ${SUPA_KEY}`, apikey: SUPA_KEY },
-    })
-      .then(r => r.json())
-      .then(d => {
-        if (d?.ok) setEvento(d.evento);
-        else setError(d?.error || "no_encontrado");
-      })
-      .catch(() => setError("network"))
-      .finally(() => setLoading(false));
-  }, [eventoId]);
+    if (mode === "manage") {
+      callFn(`/gestion/${encodeURIComponent(eventoId)}/${encodeURIComponent(token)}`)
+        .then(d => {
+          if (!d?.ok) { setError(d?.error || "token_invalido"); return; }
+          setEvento(d.evento);
+          setCE(d.contratista);
+        })
+        .catch(() => setError("network"))
+        .finally(() => setLoading(false));
+    } else {
+      callFn(`/info/${encodeURIComponent(eventoId)}`)
+        .then(d => {
+          if (!d?.ok) { setError(d?.error || "no_encontrado"); return; }
+          setEvento(d.evento);
+        })
+        .catch(() => setError("network"))
+        .finally(() => setLoading(false));
+    }
+  }, [eventoId, token, mode]);
 
-  const submit = useCallback(async () => {
+  // ── Validación + submit (modo nuevo) ───────────────────────────────────
+  const validarYEnviar = useCallback(async () => {
     if (submitting) return;
     if (!empresa.nombre.trim()) { alert("Falta el nombre de la empresa."); return; }
-    const personasValidas = personas.filter(p => p.nombre.trim());
-    if (personasValidas.length === 0) {
-      if (!confirm("No has agregado personas. ¿Enviar solo con datos de la empresa?")) return;
-    }
+    if (!empresa.rut_file)      { alert("El RUT de la empresa es obligatorio."); return; }
+    const personasConNombre = personas.filter(p => p.nombre.trim());
+    if (personasConNombre.length === 0) { alert("Debes agregar al menos 1 persona."); return; }
+    const sinArl = personasConNombre.filter(p => !p.arl_file).map(p => p.nombre);
+    if (sinArl.length > 0) { alert(`Falta la ARL de: ${sinArl.join(", ")}`); return; }
+
     setSubmitting(true);
     try {
-      const rut_data_url = empresa.rut_file ? await fileToDataUrl(empresa.rut_file) : null;
-      const personasPayload = await Promise.all(personasValidas.map(async (p) => ({
+      const rut_data_url = await fileToDataUrl(empresa.rut_file);
+      const personasPayload = await Promise.all(personasConNombre.map(async (p) => ({
         nombre:           p.nombre.trim(),
         cedula:           p.cedula.trim(),
         fecha_nacimiento: p.fecha_nacimiento || null,
         rol:              p.rol.trim(),
-        arl_data_url:     p.arl_file ? await fileToDataUrl(p.arl_file) : null,
+        arl_data_url:     await fileToDataUrl(p.arl_file),
       })));
-      const resp = await fetch(`${SUPA_URL}/functions/v1/contratistas-registro/submit/${encodeURIComponent(eventoId)}`, {
-        method:  "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${SUPA_KEY}`, apikey: SUPA_KEY },
-        body:    JSON.stringify({
+      const d = await callFn(`/submit/${encodeURIComponent(eventoId)}`, {
+        method: "POST",
+        body: {
           empresa: {
-            nombre:       empresa.nombre.trim(),
-            nit:          empresa.nit.trim(),
-            direccion:    empresa.direccion.trim(),
-            telefono:     empresa.telefono.trim(),
-            contacto:     empresa.contacto.trim(),
-            descripcion:  empresa.descripcion.trim(),
+            nombre: empresa.nombre.trim(), nit: empresa.nit.trim(),
+            direccion: empresa.direccion.trim(), telefono: empresa.telefono.trim(),
+            contacto: empresa.contacto.trim(), descripcion: empresa.descripcion.trim(),
             rut_data_url,
           },
           personas: personasPayload,
-        }),
+        },
       });
-      const data = await resp.json();
-      if (!data?.ok) {
-        alert("No se pudo enviar: " + (data?.error || "error"));
-        setSubmitting(false);
-        return;
-      }
-      setDone(true);
+      if (!d?.ok) { alert("No se pudo enviar: " + (d?.error || "error")); setSubmitting(false); return; }
+      setDoneInfo({ gestion_token: d.gestion_token, personas: d.personas });
     } catch (e) {
       alert("Error al enviar: " + e.message);
       setSubmitting(false);
     }
   }, [submitting, empresa, personas, eventoId]);
+
+  // ── Agregar más (modo gestión) ─────────────────────────────────────────
+  const agregarMas = useCallback(async () => {
+    if (submitting) return;
+    const personasConNombre = personas.filter(p => p.nombre.trim());
+    if (personasConNombre.length === 0) { alert("Agrega al menos una persona para enviar."); return; }
+    const sinArl = personasConNombre.filter(p => !p.arl_file).map(p => p.nombre);
+    if (sinArl.length > 0) { alert(`Falta la ARL de: ${sinArl.join(", ")}`); return; }
+
+    setSubmitting(true);
+    try {
+      const personasPayload = await Promise.all(personasConNombre.map(async (p) => ({
+        nombre:           p.nombre.trim(),
+        cedula:           p.cedula.trim(),
+        fecha_nacimiento: p.fecha_nacimiento || null,
+        rol:              p.rol.trim(),
+        arl_data_url:     await fileToDataUrl(p.arl_file),
+      })));
+      const d = await callFn(`/gestion/${encodeURIComponent(eventoId)}/${encodeURIComponent(token)}`, {
+        method: "POST",
+        body: { personas: personasPayload },
+      });
+      if (!d?.ok) { alert("No se pudo enviar: " + (d?.error || "error")); setSubmitting(false); return; }
+      const fresh = await callFn(`/gestion/${encodeURIComponent(eventoId)}/${encodeURIComponent(token)}`);
+      if (fresh?.ok) setCE(fresh.contratista);
+      setPersonas([{ ...EMPTY_PERSONA }]);
+      setAgregadoMsg(`✓ Se agregaron ${d.nuevas_personas} persona(s). Total: ${d.total_personas}.`);
+      setTimeout(() => setAgregadoMsg(""), 5000);
+      setSubmitting(false);
+    } catch (e) {
+      alert("Error al enviar: " + e.message);
+      setSubmitting(false);
+    }
+  }, [submitting, personas, eventoId, token]);
 
   // ── Estados de pantalla ─────────────────────────────────────────────────
   if (loading) return <Centered text="Cargando…" />;
@@ -111,17 +164,48 @@ export default function ContratistasRegistro({ eventoId }) {
       </div>
     </Centered>
   );
-  if (done) return (
-    <Centered>
-      <div style={{ textAlign: "center", maxWidth: 380 }}>
-        <div style={{ fontSize: 56, marginBottom: 14 }}>✅</div>
-        <div style={{ fontSize: 20, fontWeight: 800, color: "#fff", marginBottom: 8 }}>¡Registro enviado!</div>
-        <div style={{ fontSize: 13, color: "rgba(255,255,255,0.55)", lineHeight: 1.5 }}>
-          Tu información llegó al equipo de Atolón. Te contactarán para confirmar el acceso al evento.
+
+  // ── Pantalla de éxito tras el primer registro ──────────────────────────
+  if (doneInfo) {
+    const gestionUrl = `${window.location.origin}/contratistas/registro/${encodeURIComponent(eventoId)}/${encodeURIComponent(doneInfo.gestion_token)}`;
+    return (
+      <div style={{ minHeight: "100vh", background: B.navy, color: B.text, padding: 24, display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <div style={{ maxWidth: 520, width: "100%", background: B.navyMid, borderRadius: 16, padding: 28, border: "1px solid rgba(255,255,255,0.07)" }}>
+          <div style={{ fontSize: 56, textAlign: "center" }}>✅</div>
+          <div style={{ fontSize: 22, fontWeight: 800, color: "#fff", textAlign: "center", marginTop: 8 }}>¡Registro enviado!</div>
+          <div style={{ fontSize: 13, color: "rgba(255,255,255,0.55)", textAlign: "center", marginTop: 8, lineHeight: 1.5 }}>
+            {doneInfo.personas} persona{doneInfo.personas !== 1 ? "s" : ""} registrada{doneInfo.personas !== 1 ? "s" : ""} para <strong style={{ color: B.sand }}>{evento.nombre}</strong>.
+          </div>
+
+          <div style={{ marginTop: 22, padding: 14, background: B.navy, borderRadius: 10, border: `1px solid ${B.sky}55` }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: B.sky, marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+              📎 Guarda este link
+            </div>
+            <div style={{ fontSize: 12, color: "rgba(255,255,255,0.65)", lineHeight: 1.5, marginBottom: 10 }}>
+              Es <strong>tu link personal</strong> para volver y agregar más personal o archivos cuando quieras. Guárdalo en tus notas o mensajes.
+            </div>
+            <div style={{ wordBreak: "break-all", fontSize: 12, color: "#fff", background: B.navyLight, padding: "10px 12px", borderRadius: 8, fontFamily: "monospace" }}>
+              {gestionUrl}
+            </div>
+            <button
+              onClick={() => {
+                if (navigator.clipboard?.writeText) navigator.clipboard.writeText(gestionUrl).then(() => alert("✓ Link copiado"));
+                else prompt("Copia el link:", gestionUrl);
+              }}
+              style={{ marginTop: 10, padding: "10px 16px", borderRadius: 8, border: "none", background: B.sky, color: B.navy, fontWeight: 800, cursor: "pointer", fontSize: 13, width: "100%" }}>
+              📋 Copiar link de gestión
+            </button>
+          </div>
+
+          <button
+            onClick={() => window.location.href = gestionUrl}
+            style={{ marginTop: 12, padding: "12px 16px", borderRadius: 8, border: `1px solid ${B.navyLight}`, background: "transparent", color: "rgba(255,255,255,0.6)", cursor: "pointer", fontSize: 13, width: "100%" }}>
+            Ir a agregar más personas ahora →
+          </button>
         </div>
       </div>
-    </Centered>
-  );
+    );
+  }
 
   // ── Form ────────────────────────────────────────────────────────────────
   const fechaTxt = evento.fecha
@@ -134,50 +218,88 @@ export default function ContratistasRegistro({ eventoId }) {
         {/* Header */}
         <div style={{ textAlign: "center", marginBottom: 24 }}>
           <img src="/logo.png" alt="Atolón" style={{ height: 44, marginBottom: 12 }} onError={e => e.target.style.display = "none"} />
-          <h1 style={{ margin: 0, fontSize: 22, fontWeight: 900, color: "#fff", letterSpacing: "0.02em" }}>Registro de Contratistas</h1>
+          <h1 style={{ margin: 0, fontSize: 22, fontWeight: 900, color: "#fff", letterSpacing: "0.02em" }}>
+            {mode === "manage" ? "Gestión de Registro" : "Registro de Contratistas"}
+          </h1>
           <div style={{ fontSize: 13, color: B.sand, marginTop: 6, fontWeight: 700 }}>
             {evento.nombre || `Evento ${evento.id}`} · {fechaTxt}
           </div>
-          <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginTop: 8, lineHeight: 1.5, maxWidth: 480, margin: "8px auto 0" }}>
-            Completa los datos de tu empresa y de las personas que vendrán al evento. Carga el RUT de la empresa y la ARL de cada persona.
-          </div>
+          {mode === "new" && (
+            <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginTop: 8, lineHeight: 1.5, maxWidth: 480, margin: "8px auto 0" }}>
+              Completa los datos de tu empresa, el <strong>RUT</strong> y las personas que vendrán con su <strong>ARL</strong>. Al final recibirás un link para volver y agregar más personal cuando lo necesites.
+            </div>
+          )}
         </div>
 
-        {/* Empresa */}
-        <Card title="🏢 Datos de la empresa">
-          <Grid isMobile={isMobile}>
-            <Field label="Nombre o Razón Social *">
-              <Input value={empresa.nombre} onChange={v => setE("nombre", v)} placeholder="Ej: Eventos XYZ S.A.S." />
-            </Field>
-            <Field label="NIT">
-              <Input value={empresa.nit} onChange={v => setE("nit", v)} placeholder="900123456-7" />
-            </Field>
-            <Field label="Dirección" full>
-              <Input value={empresa.direccion} onChange={v => setE("direccion", v)} placeholder="Calle 1 # 2-3, Cartagena" />
-            </Field>
-            <Field label="Teléfono">
-              <Input value={empresa.telefono} onChange={v => setE("telefono", v)} placeholder="+57 300 123 4567" />
-            </Field>
-            <Field label="Contacto (nombre)">
-              <Input value={empresa.contacto} onChange={v => setE("contacto", v)} placeholder="Persona responsable" />
-            </Field>
-            <Field label="¿Qué van a hacer en el evento?" full>
-              <textarea value={empresa.descripcion} onChange={e => setE("descripcion", e.target.value)}
-                rows={3} placeholder="Ej: Montaje de tarima y luces, animación, decoración floral..."
-                style={textareaStyle} />
-            </Field>
-            <Field label="RUT (PDF / imagen)" full>
-              <FileInput
-                fileName={empresa.rut_name}
-                onPick={f => { setE("rut_file", f); setE("rut_name", f?.name || ""); }}
-                accept=".pdf,image/*"
-              />
-            </Field>
-          </Grid>
-        </Card>
+        {/* Modo gestión: tarjeta con el registro existente */}
+        {mode === "manage" && contratistaExist && (
+          <Card title={`✅ Registro existente · ${contratistaExist.nombre}`}>
+            <div style={{ fontSize: 12, color: "rgba(255,255,255,0.55)", lineHeight: 1.6 }}>
+              {contratistaExist.nit && <>NIT: <strong style={{ color: "#fff" }}>{contratistaExist.nit}</strong> · </>}
+              {contratistaExist.telefono && <>Tel: <strong style={{ color: "#fff" }}>{contratistaExist.telefono}</strong> · </>}
+              Personas registradas: <strong style={{ color: B.success }}>{(contratistaExist.personas || []).length}</strong>
+              {contratistaExist.rut_url && <> · <a href={contratistaExist.rut_url} target="_blank" rel="noreferrer" style={{ color: B.sky }}>📎 Ver RUT</a></>}
+            </div>
+            {(contratistaExist.personas || []).length > 0 && (
+              <div style={{ marginTop: 12, background: B.navy, borderRadius: 10, padding: 12 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: B.sand, marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.05em" }}>Personas ya registradas</div>
+                {contratistaExist.personas.map((p, i) => (
+                  <div key={i} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: i < contratistaExist.personas.length - 1 ? "1px solid rgba(255,255,255,0.06)" : "none", fontSize: 12, gap: 8 }}>
+                    <span style={{ color: "#fff", flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>{p.nombre} <span style={{ color: "rgba(255,255,255,0.4)" }}>· {p.cedula || "sin cédula"} · {p.rol || "—"}</span></span>
+                    {p.arl_url
+                      ? <a href={p.arl_url} target="_blank" rel="noreferrer" style={{ color: B.sky, fontSize: 11, whiteSpace: "nowrap" }}>📎 ARL</a>
+                      : <span style={{ color: B.warning, fontSize: 11, whiteSpace: "nowrap" }}>sin ARL</span>}
+                  </div>
+                ))}
+              </div>
+            )}
+            {agregadoMsg && (
+              <div style={{ marginTop: 10, padding: "8px 12px", background: B.success + "22", color: B.success, borderRadius: 8, fontSize: 12, fontWeight: 700 }}>
+                {agregadoMsg}
+              </div>
+            )}
+          </Card>
+        )}
 
-        {/* Personas */}
-        <Card title={`👥 Personas que vienen al evento (${personas.length})`}
+        {/* Empresa: solo en modo nuevo */}
+        {mode === "new" && (
+          <Card title="🏢 Datos de la empresa">
+            <Grid isMobile={isMobile}>
+              <Field label="Nombre o Razón Social *">
+                <Input value={empresa.nombre} onChange={v => setE("nombre", v)} placeholder="Ej: Eventos XYZ S.A.S." />
+              </Field>
+              <Field label="NIT">
+                <Input value={empresa.nit} onChange={v => setE("nit", v)} placeholder="900123456-7" />
+              </Field>
+              <Field label="Dirección" full>
+                <Input value={empresa.direccion} onChange={v => setE("direccion", v)} placeholder="Calle 1 # 2-3, Cartagena" />
+              </Field>
+              <Field label="Teléfono">
+                <Input value={empresa.telefono} onChange={v => setE("telefono", v)} placeholder="+57 300 123 4567" />
+              </Field>
+              <Field label="Contacto (nombre)">
+                <Input value={empresa.contacto} onChange={v => setE("contacto", v)} placeholder="Persona responsable" />
+              </Field>
+              <Field label="¿Qué van a hacer en el evento?" full>
+                <textarea value={empresa.descripcion} onChange={e => setE("descripcion", e.target.value)}
+                  rows={3} placeholder="Ej: Montaje de tarima y luces, animación, decoración floral..."
+                  style={textareaStyle} />
+              </Field>
+              <Field label="RUT (PDF o imagen) — OBLIGATORIO *" full>
+                <FileInput required={!empresa.rut_file}
+                  fileName={empresa.rut_name}
+                  onPick={f => { setE("rut_file", f); setE("rut_name", f?.name || ""); }}
+                  accept=".pdf,image/*"
+                />
+              </Field>
+            </Grid>
+          </Card>
+        )}
+
+        {/* Personas a agregar */}
+        <Card title={mode === "manage"
+          ? `➕ Agregar más personas (${personas.length})`
+          : `👥 Personas que vienen al evento (${personas.length})`}
           right={<button onClick={addP} style={btnSecondary}>+ Agregar persona</button>}>
           {personas.map((p, i) => (
             <div key={i} style={{ background: B.navy, border: "1px solid rgba(255,255,255,0.08)", borderRadius: 10, padding: 14, marginBottom: 12 }}>
@@ -205,8 +327,8 @@ export default function ContratistasRegistro({ eventoId }) {
                 <Field label="Rol / Cargo">
                   <Input value={p.rol} onChange={v => setP(i, "rol", v)} placeholder="Ej: Montajista, DJ, Mesero" />
                 </Field>
-                <Field label="ARL (PDF / imagen)" full>
-                  <FileInput
+                <Field label="ARL (PDF o imagen) — OBLIGATORIA *" full>
+                  <FileInput required={!p.arl_file && p.nombre.trim().length > 0}
                     fileName={p.arl_name}
                     onPick={f => { setP(i, "arl_file", f); setP(i, "arl_name", f?.name || ""); }}
                     accept=".pdf,image/*"
@@ -219,16 +341,19 @@ export default function ContratistasRegistro({ eventoId }) {
 
         {/* Submit */}
         <div style={{ display: "flex", justifyContent: "center", marginTop: 24 }}>
-          <button onClick={submit} disabled={submitting}
+          <button
+            onClick={mode === "manage" ? agregarMas : validarYEnviar}
+            disabled={submitting}
             style={{
               padding: "16px 36px", borderRadius: 12, border: "none",
               background: submitting ? B.navyLight : B.success, color: "#fff",
               fontSize: 15, fontWeight: 800, cursor: submitting ? "default" : "pointer",
               minWidth: 240, letterSpacing: "0.02em",
             }}>
-            {submitting ? "Enviando…" : "✓ Enviar registro"}
+            {submitting ? "Enviando…" : mode === "manage" ? "✓ Agregar al registro" : "✓ Enviar registro"}
           </button>
         </div>
+
         <div style={{ textAlign: "center", marginTop: 18, fontSize: 11, color: "rgba(255,255,255,0.25)" }}>
           © {new Date().getFullYear()} Atolón Beach Club · Cartagena de Indias
         </div>
@@ -287,16 +412,16 @@ function Field({ label, full, children }) {
 function Input({ value, onChange, placeholder, type = "text" }) {
   return <input type={type} value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder} style={inputStyle} />;
 }
-function FileInput({ fileName, onPick, accept }) {
+function FileInput({ fileName, onPick, accept, required }) {
   return (
     <label style={{
       display: "flex", alignItems: "center", justifyContent: "space-between",
       gap: 10, padding: "11px 14px", borderRadius: 8,
-      border: "1.5px dashed rgba(255,255,255,0.18)",
+      border: `1.5px dashed ${required ? B.warning + "88" : "rgba(255,255,255,0.18)"}`,
       background: B.navy, cursor: "pointer", fontSize: 13,
     }}>
-      <span style={{ color: fileName ? B.success : "rgba(255,255,255,0.5)", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-        {fileName ? `📎 ${fileName}` : "Toca para subir archivo (PDF o imagen)"}
+      <span style={{ color: fileName ? B.success : (required ? B.warning : "rgba(255,255,255,0.5)"), flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+        {fileName ? `📎 ${fileName}` : (required ? "⚠️ Falta el archivo (requerido)" : "Toca para subir archivo (PDF o imagen)")}
       </span>
       <input type="file" accept={accept} style={{ display: "none" }}
         onChange={e => onPick(e.target.files?.[0] || null)} />

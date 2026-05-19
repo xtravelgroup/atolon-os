@@ -628,7 +628,13 @@ export default function App() {
   if (route === "despedidas" || route.startsWith("despedidas/")) return <><Despedidas /><WhatsAppFloat phone={waPhone} /></>;
   if (route === "contratistas" || route === "contratistas/exito") return <ContratistasPortal />;
   if (route.startsWith("contratistas/curso/")) return <ContratistasCurso token={route.slice("contratistas/curso/".length)} />;
-  if (route.startsWith("contratistas/registro/")) return <ContratistasRegistro eventoId={route.slice("contratistas/registro/".length)} />;
+  if (route.startsWith("contratistas/registro/")) {
+    // /contratistas/registro/<eventoId>            → modo nuevo
+    // /contratistas/registro/<eventoId>/<token>    → modo gestión
+    const rest = route.slice("contratistas/registro/".length);
+    const [evId, tk] = rest.split("/");
+    return <ContratistasRegistro eventoId={evId} token={tk || null} />;
+  }
   if (route.startsWith("verificar/")) return <ContratistasVerificar code={route.slice("verificar/".length)} />;
   if (route === "society")        return <VIPPortal />;
   if (route === "checkin-pax")    return <SelfCheckIn />;
