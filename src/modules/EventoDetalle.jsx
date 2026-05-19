@@ -1615,6 +1615,16 @@ async function uploadArl(file, eventoId) {
   const { data } = supabase.storage.from("b2b-docs").getPublicUrl(path);
   return data?.publicUrl || null;
 }
+// Helper para subir RUT de la empresa
+async function uploadRut(file, eventoId) {
+  if (!file || !supabase) return null;
+  const ext = (file.name.split(".").pop() || "bin").toLowerCase().replace(/[^a-z0-9]/g, "");
+  const path = `contratistas/${eventoId || "misc"}/rut-${Date.now()}.${ext}`;
+  const { error } = await supabase.storage.from("b2b-docs").upload(path, file, { upsert: true, contentType: file.type });
+  if (error) { alert("Error subiendo RUT: " + error.message); return null; }
+  const { data } = supabase.storage.from("b2b-docs").getPublicUrl(path);
+  return data?.publicUrl || null;
+}
 function TabContratistas({ items, onChange, eventoId, evento }) {
   const [showForm, setShowForm] = useState(false);
   const [editId, setEditId] = useState(null);
@@ -1690,18 +1700,36 @@ function TabContratistas({ items, onChange, eventoId, evento }) {
         {items.map(c => (
           <div key={c.id} style={{ background: B.navy, borderRadius: 12, padding: "16px 18px", borderLeft: `4px solid ${tipoColor(c.tipo)}` }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 }}>
-              <div>
-                <div style={{ fontSize: 10, fontWeight: 700, color: tipoColor(c.tipo), textTransform: "uppercase", letterSpacing: "0.1em" }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 10, fontWeight: 700, color: tipoColor(c.tipo), textTransform: "uppercase", letterSpacing: "0.1em", display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
                   {c.tipo === "propio" ? "🏷️ Propio" : "🤝 Externo"} {c.cargo ? `· ${c.cargo}` : ""}
+                  {c.registro_express && (
+                    <span style={{ fontSize: 9, padding: "1px 6px", borderRadius: 4, background: B.sky + "33", color: B.sky, fontWeight: 700, letterSpacing: 0 }}>
+                      🌐 Express
+                    </span>
+                  )}
                 </div>
-                <div style={{ fontSize: 15, fontWeight: 800, marginTop: 4 }}>{c.nombre}</div>
+                <div onClick={() => openEdit(c)} style={{ fontSize: 15, fontWeight: 800, marginTop: 4, cursor: "pointer" }} title="Click para ver/editar todos los datos">{c.nombre}</div>
               </div>
               <div style={{ display: "flex", gap: 4 }}>
-                <button onClick={() => openEdit(c)} style={{ ...BTN(B.navyLight), padding: "2px 8px", fontSize: 11 }}>✏</button>
+                <button onClick={() => openEdit(c)} style={{ ...BTN(B.navyLight), padding: "2px 8px", fontSize: 11 }} title="Ver / Editar">✏</button>
                 <button onClick={() => remove(c.id)} style={{ ...BTN(B.danger + "33"), padding: "2px 8px", fontSize: 11, color: B.danger }}>✕</button>
               </div>
             </div>
             {c.funcion && <div style={{ fontSize: 12, color: "rgba(255,255,255,0.7)", marginBottom: 8, lineHeight: 1.5 }}>🎯 {c.funcion}</div>}
+            {(c.nit || c.telefono || c.direccion || c.rut_url) && (
+              <div style={{ background: B.navyLight, borderRadius: 8, padding: "8px 10px", marginBottom: 8, fontSize: 11, color: "rgba(255,255,255,0.7)", lineHeight: 1.55 }}>
+                {c.nit && <div>🆔 NIT: <strong style={{ color: "#fff" }}>{c.nit}</strong></div>}
+                {c.telefono && <div>📞 {c.telefono}</div>}
+                {c.direccion && <div>📍 {c.direccion}</div>}
+                {c.rut_url && (
+                  <a href={c.rut_url} target="_blank" rel="noreferrer"
+                    style={{ display: "inline-block", marginTop: 4, color: B.success, textDecoration: "none", fontSize: 11, fontWeight: 700, border: `1px solid ${B.success}55`, borderRadius: 5, padding: "2px 8px" }}>
+                    📎 Ver RUT
+                  </a>
+                )}
+              </div>
+            )}
             {c.contacto && <div style={{ fontSize: 12, color: B.sky, marginBottom: 6 }}>📞 {c.contacto}</div>}
             {Number(c.costo) > 0 && <div style={{ fontSize: 12, color: B.sand, fontWeight: 700, marginBottom: 6 }}>💵 {COP(c.costo)}</div>}
             {(c.personas || []).length > 0 && (
@@ -1711,13 +1739,21 @@ function TabContratistas({ items, onChange, eventoId, evento }) {
                 </div>
                 {c.personas.map((p, i) => (
                   <div key={i} style={{ fontSize: 11, color: "rgba(255,255,255,0.7)", padding: "3px 0", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 6 }}>
-                    <span style={{ flex: 1 }}>{p.nombre}</span>
-                    <span style={{ color: "rgba(255,255,255,0.4)" }}>{p.cedula || ""} {p.rol ? `· ${p.rol}` : ""}</span>
-                    {p.arl_url && (
+                    <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {p.nombre}
+                      <span style={{ color: "rgba(255,255,255,0.4)" }}>
+                        {p.cedula ? ` · ${p.cedula}` : ""}
+                        {p.fecha_nacimiento ? ` · 🎂 ${p.fecha_nacimiento}` : ""}
+                        {p.rol ? ` · ${p.rol}` : ""}
+                      </span>
+                    </span>
+                    {p.arl_url ? (
                       <a href={p.arl_url} target="_blank" rel="noreferrer" title="Ver ARL adjunta"
                         style={{ color: B.success, textDecoration: "none", fontSize: 10, fontWeight: 700, border: `1px solid ${B.success}55`, borderRadius: 5, padding: "1px 6px" }}>
                         ARL ✓
                       </a>
+                    ) : (
+                      <span style={{ color: B.warning, fontSize: 10, fontWeight: 700, border: `1px solid ${B.warning}55`, borderRadius: 5, padding: "1px 6px" }}>sin ARL</span>
                     )}
                   </div>
                 ))}
@@ -1747,6 +1783,38 @@ function TabContratistas({ items, onChange, eventoId, evento }) {
                 placeholder="Ej: Pone música ambiente de 3pm a 9pm, cocteles a la llegada"
                 style={{ width: "100%", padding: "9px 12px", borderRadius: 8, background: B.navyMid, border: `1px solid ${B.navyLight}`, color: B.white, fontSize: 13, outline: "none", resize: "vertical", fontFamily: "inherit", boxSizing: "border-box" }} />
             </div>
+            {/* Datos legales / contacto de empresa (vienen del registro express o se llenan a mano) */}
+            <div><label style={LS}>NIT</label><Inp value={form.nit || ""} onChange={v => set("nit", v)} placeholder="900123456-7" /></div>
+            <div><label style={LS}>Teléfono</label><Inp value={form.telefono || ""} onChange={v => set("telefono", v)} placeholder="+57 300..." /></div>
+            <div style={{ gridColumn: "span 2" }}><label style={LS}>Dirección</label><Inp value={form.direccion || ""} onChange={v => set("direccion", v)} placeholder="Calle 1 # 2-3, Cartagena" /></div>
+            {/* RUT — ver el cargado o reemplazar */}
+            <div style={{ gridColumn: "span 2" }}>
+              <label style={LS}>RUT</label>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                {form.rut_url ? (
+                  <>
+                    <a href={form.rut_url} target="_blank" rel="noreferrer"
+                      style={{ color: B.success, textDecoration: "none", fontSize: 12, fontWeight: 700, border: `1px solid ${B.success}55`, borderRadius: 6, padding: "5px 10px" }}>
+                      ✓ Ver RUT cargado
+                    </a>
+                    <input type="file" accept=".pdf,image/*" id="rut-replace" style={{ display: "none" }}
+                      onChange={async e => { const f = e.target.files?.[0]; if (!f) return; const url = await uploadRut(f, eventoId); if (url) set("rut_url", url); e.target.value = ""; }} />
+                    <label htmlFor="rut-replace" style={{ cursor: "pointer", color: B.sand, fontSize: 11, padding: "5px 10px", borderRadius: 6, border: `1px dashed ${B.sand}55` }}>
+                      🔄 Reemplazar
+                    </label>
+                    <button type="button" onClick={() => set("rut_url", "")} style={{ ...BTN(B.navyLight), fontSize: 10, padding: "4px 8px" }}>Quitar</button>
+                  </>
+                ) : (
+                  <>
+                    <input type="file" accept=".pdf,image/*" id="rut-upload" style={{ display: "none" }}
+                      onChange={async e => { const f = e.target.files?.[0]; if (!f) return; const url = await uploadRut(f, eventoId); if (url) set("rut_url", url); e.target.value = ""; }} />
+                    <label htmlFor="rut-upload" style={{ cursor: "pointer", color: B.sky, fontSize: 12, padding: "6px 12px", borderRadius: 6, border: `1px dashed ${B.sky}55` }}>
+                      📎 Adjuntar RUT (PDF / imagen)
+                    </label>
+                  </>
+                )}
+              </div>
+            </div>
             <div><label style={LS}>Contacto (tel / email)</label><Inp value={form.contacto} onChange={v => set("contacto", v)} placeholder="+57 300..." /></div>
             <div><label style={LS}>Costo (COP)</label><Inp type="number" value={form.costo} onChange={v => set("costo", v)} /></div>
             <div style={{ gridColumn: "span 2" }}><label style={LS}>Notas</label><Inp value={form.notas} onChange={v => set("notas", v)} placeholder="Llega 2h antes, necesita enchufe, etc." /></div>
@@ -1762,9 +1830,12 @@ function TabContratistas({ items, onChange, eventoId, evento }) {
             </div>
             {(form.personas || []).map((p, i) => (
               <div key={i} style={{ background: B.navyMid, borderRadius: 8, padding: 10, marginBottom: 8, border: `1px solid ${B.navyLight}` }}>
-                <div style={{ display: "grid", gridTemplateColumns: "2fr 1.5fr 1.5fr auto", gap: 8, marginBottom: 8 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "2fr 1.3fr 1.3fr 1.3fr auto", gap: 8, marginBottom: 8 }}>
                   <Inp value={p.nombre} onChange={v => setPersona(i, "nombre", v)} placeholder="Nombre" />
                   <Inp value={p.cedula} onChange={v => setPersona(i, "cedula", v)} placeholder="Cédula" />
+                  <input type="date" value={p.fecha_nacimiento || ""}
+                    onChange={e => setPersona(i, "fecha_nacimiento", e.target.value)} title="Fecha de nacimiento"
+                    style={{ padding: "9px 10px", borderRadius: 8, background: B.navy, border: `1px solid ${B.navyLight}`, color: B.white, fontSize: 13, outline: "none", boxSizing: "border-box" }} />
                   <Inp value={p.rol} onChange={v => setPersona(i, "rol", v)} placeholder="Rol (DJ, mesero…)" />
                   <button onClick={() => rmPersona(i)} style={{ ...BTN(B.danger + "33"), color: B.danger, padding: "0 10px", fontSize: 14 }}>✕</button>
                 </div>
