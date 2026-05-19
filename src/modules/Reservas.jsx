@@ -3769,8 +3769,14 @@ export default function Reservas() {
     }
 
     const pax   = Number(form.pax_a) + Number(form.pax_n);
+    // Precio de niño: si el form lo trae explícito úsalo; si no, el del
+    // catálogo (calcPrecioNinoUnit). NO caer al precio de adulto — eso
+    // cobraba niño como adulto (form.precio_nino default = 0).
+    const precioNinoUnit = Number(form.precio_nino) > 0
+      ? Number(form.precio_nino)
+      : calcPrecioNinoUnit(form.tipo, form.aliado_id, precioMode);
     const totalOriginal = Number(form.pax_a) * Number(form.precio)
-                        + Number(form.pax_n) * Number(form.precio_nino > 0 ? form.precio_nino : form.precio);
+                        + Number(form.pax_n) * precioNinoUnit;
     const isLink = form._isLink;
     const isCortesia = form._isCortesia;
     const sinDefinir = form.forma_pago === "Sin definir";
