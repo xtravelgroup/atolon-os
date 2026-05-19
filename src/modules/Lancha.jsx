@@ -63,6 +63,22 @@ export default function Lancha() {
   const [capitanModal, setCapitanModal] = useState(null); // { edit? }
 
   const [loadErrors, setLoadErrors] = useState([]);
+  const [esSuper, setEsSuper] = useState(false); // solo super admin puede borrar viajes
+
+  // ¿El usuario es super admin? (roles.permisos["*"])
+  useEffect(() => {
+    (async () => {
+      try {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user?.email) return;
+        const { data: u } = await supabase.from("usuarios").select("rol_id").eq("email", user.email).maybeSingle();
+        if (!u?.rol_id) return;
+        const { data: rol } = await supabase.from("roles").select("permisos").eq("id", u.rol_id).maybeSingle();
+        if (rol?.permisos?.["*"]) setEsSuper(true);
+      } catch (_) { /* sin permiso de borrado */ }
+    })();
+  }, []);
+
   const load = useCallback(async () => {
     setLoading(true);
     setLoadErrors([]);
@@ -126,6 +142,16 @@ export default function Lancha() {
   }, [activeLancha]);
   useEffect(() => { load(); }, []); // eslint-disable-line
 
+  // Solo super admin: eliminar un zarpe (muelle_zarpes_flota) o llegada
+  // (muelle_llegadas) incorrecto. Recalcula los viajes al recargar.
+  const onEliminarViaje = useCallback(async (tabla, id, label) => {
+    if (!esSuper || !id) return;
+    if (!window.confirm(`¿Eliminar este registro (${label})?\n\nEsta acción no se puede deshacer y recalculará los viajes.`)) return;
+    const { error } = await supabase.from(tabla).delete().eq("id", id);
+    if (error) { alert("No se pudo eliminar:\n" + error.message); return; }
+    load();
+  }, [esSuper, load]);
+
   const lancha = lanchas.find(l => l.id === activeLancha);
   const bitacoraLancha = useMemo(() => bitacora.filter(b => b.lancha_id === activeLancha), [bitacora, activeLancha]);
   // Normaliza nombre: lowercase, sin tildes, colapsa letras repetidas.
@@ -156,6 +182,7 @@ export default function Lancha() {
       const f = (l.fecha || "").slice(0, 10);
       if (!f) return;
       (byDate[f] ||= { llegadas: [], zarpes: [] }).llegadas.push({
+        id: l.id,
         hora: (l.hora_llegada || "").slice(0, 5),
         pax_a: l.pax_a || 0,
         pax_n: l.pax_n || 0,
@@ -165,6 +192,7 @@ export default function Lancha() {
       const f = (z.fecha || "").slice(0, 10);
       if (!f) return;
       (byDate[f] ||= { llegadas: [], zarpes: [] }).zarpes.push({
+        id: z.id,
         hora: (z.hora_zarpe || "").slice(0, 5),
         destino: z.destino,
         pax_a: z.pax_a || 0,
@@ -186,18 +214,18 @@ export default function Lancha() {
       ].sort((a, b) => a.hora.localeCompare(b.hora));
       eventos.forEach(ev => {
         if (ev.tipo === "L") {
-          if (pendienteA) pares.push({ llegada: pendienteA.hora, zarpe: null }); // zarpe perdido
+          if (pendienteA) pares.push({ llegada: pendienteA, zarpe: null }); // zarpe perdido
           pendienteA = ev;
         } else {
           if (pendienteA) {
-            pares.push({ llegada: pendienteA.hora, zarpe: ev.hora });
+            pares.push({ llegada: pendienteA, zarpe: ev });
             pendienteA = null;
           } else {
-            pares.push({ llegada: null, zarpe: ev.hora }); // llegada perdida
+            pares.push({ llegada: null, zarpe: ev }); // llegada perdida
           }
         }
       });
-      if (pendienteA) pares.push({ llegada: pendienteA.hora, zarpe: null });
+      if (pendienteA) pares.push({ llegada: pendienteA, zarpe: null });
       const viajes = Math.max(d.llegadas.length, d.zarpes.length);
       return {
         fecha,
@@ -562,7 +590,7 @@ export default function Lancha() {
         />
       )}
       {tab === "viajes" && (
-        <ListaViajesComputados viajesPorFecha={viajesPorFecha} costoPorViaje={costoPorViaje} />
+        <ListaViajesComputados viajesPorFecha={viajesPorFecha} costoPorViaje={costoPorViaje} esSuper={esSuper} onEliminarViaje={onEliminarViaje} />
       )}
       {tab === "todos" && (
         <ListaEventos
@@ -938,7 +966,7 @@ function EventoRow({ item, onEdit, onDelete, onToggleResuelto, compact }) {
 //   · Si hay 2 zarpes seguidos → llegada perdida (?? perdido)
 //   · # viajes = max(llegadas, zarpes)
 //   · Costo combustible (estimado) = viajes × costo_viaje_sencillo × 2
-function ListaViajesComputados({ viajesPorFecha, costoPorViaje }) {
+function ListaViajesComputados({ viajesPorFecha, costoPorViaje, esSuper, onEliminarViaje }) {
   if (!viajesPorFecha.length) {
     return (
       <div style={{ padding: 30, background: B.navyMid, borderRadius: 10, textAlign: "center", fontSize: 13, color: "rgba(255,255,255,0.3)" }}>
@@ -979,14 +1007,21 @@ function ListaViajesComputados({ viajesPorFecha, costoPorViaje }) {
             <div style={{ display: "flex", flexWrap: "wrap", gap: 6, paddingLeft: 110 }}>
               {d.pares.map((p, i) => {
                 const incompleto = !p.llegada || !p.zarpe;
+                const delBtn = (ev, tabla, lbl) => (esSuper && ev?.id ? (
+                  <button onClick={() => onEliminarViaje(tabla, ev.id, `${lbl} ${ev.hora || ""} · ${fmtFechaCorta(d.fecha)}`)}
+                    title={`Eliminar ${lbl} (solo super admin)`}
+                    style={{ background: "transparent", border: "none", color: B.danger, fontSize: 11, fontWeight: 800, cursor: "pointer", padding: "0 2px", lineHeight: 1 }}>✕</button>
+                ) : null);
                 return (
                   <span key={i} style={{
                     fontSize: 10, padding: "3px 8px", borderRadius: 4,
                     background: incompleto ? B.danger + "22" : B.success + "18",
                     color: incompleto ? B.danger : "rgba(255,255,255,0.6)",
                     border: incompleto ? `1px dashed ${B.danger}55` : "1px solid transparent",
+                    display: "inline-flex", alignItems: "center", gap: 3,
                   }}>
-                    {p.llegada || "??"}→{p.zarpe || "??"}
+                    {p.llegada?.hora || "??"}{delBtn(p.llegada, "muelle_llegadas", "llegada")}
+                    →{p.zarpe?.hora || "??"}{delBtn(p.zarpe, "muelle_zarpes_flota", "zarpe")}
                   </span>
                 );
               })}
