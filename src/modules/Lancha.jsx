@@ -974,19 +974,15 @@ function fmtViajes(n) {
 }
 
 function CombustibleTab({ items, viajesPorFecha, onEdit, onDelete }) {
-  // Aplanar todos los viajes (pares) con timestamp para ubicarlos por recarga.
-  const pares = useMemo(() => {
-    const out = [];
-    (viajesPorFecha || []).forEach(d => {
-      (d.pares || []).forEach(p => {
-        const hora = (p.zarpe?.hora || p.llegada?.hora || "00:00").slice(0, 5);
-        out.push({
-          ts: `${d.fecha}T${hora}`,
-          valor: (p.llegada && p.zarpe) ? 1 : 0.5,
-        });
-      });
-    });
-    return out.sort((a, b) => a.ts.localeCompare(b.ts));
+  // Consumo por día = número de ZARPES. Cada zarpe es 1 viaje ida y vuelta
+  // (el bote sale y regresa → consume 1). NO depende de emparejar la
+  // llegada de regreso (que a veces se registra con el nombre mal escrito
+  // y no matchea). Boca Chica ya viene excluido de zarpesLancha.
+  const consumoPorDia = useMemo(() => {
+    return (viajesPorFecha || []).map(d => ({
+      fecha:  (d.fecha || "").slice(0, 10),
+      viajes: Number(d.zarpes) || 0,
+    }));
   }, [viajesPorFecha]);
 
   // Recargas: la ventana de consumo es POR DÍA, no por hora exacta. Una
@@ -1004,15 +1000,15 @@ function CombustibleTab({ items, viajesPorFecha, onEdit, onDelete }) {
       // Si hay otra recarga el MISMO día, esta cubre hasta esa (vacío);
       // los viajes del día se atribuyen a la última recarga de ese día.
       const dEnd = next ? dOf(next) : "9999-12-31";
-      const consumido = pares
-        .filter(p => { const pd = p.ts.slice(0, 10); return pd >= d0 && pd < dEnd; })
-        .reduce((s, p) => s + p.valor, 0);
+      const consumido = consumoPorDia
+        .filter(x => x.fecha >= d0 && x.fecha < dEnd)
+        .reduce((s, x) => s + x.viajes, 0);
       const capacidad = Math.max(1, Math.round(Number(r.costo_total || 0) / COSTO_VIAJE_COMBUSTIBLE));
       const restante = Math.max(0, capacidad - consumido);
       const pct = capacidad > 0 ? Math.min(100, (consumido / capacidad) * 100) : 0;
       return { ...r, ts: `${d0}T${(r.hora || "00:00").slice(0, 5)}`, consumido, capacidad, restante, pct, activa: i === asc.length - 1 };
     }).reverse(); // más reciente primero
-  }, [items, pares]);
+  }, [items, consumoPorDia]);
 
   if (!recargas.length) {
     return (
