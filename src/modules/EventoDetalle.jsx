@@ -1717,17 +1717,30 @@ function TabContratistas({ items, onChange, eventoId, evento }) {
               </div>
             </div>
             {c.funcion && <div style={{ fontSize: 12, color: "rgba(255,255,255,0.7)", marginBottom: 8, lineHeight: 1.5 }}>🎯 {c.funcion}</div>}
-            {(c.nit || c.telefono || c.direccion || c.rut_url) && (
+            {(c.nit || c.telefono || c.direccion || c.rut_url || c.gestion_token) && (
               <div style={{ background: B.navyLight, borderRadius: 8, padding: "8px 10px", marginBottom: 8, fontSize: 11, color: "rgba(255,255,255,0.7)", lineHeight: 1.55 }}>
                 {c.nit && <div>🆔 NIT: <strong style={{ color: "#fff" }}>{c.nit}</strong></div>}
                 {c.telefono && <div>📞 {c.telefono}</div>}
                 {c.direccion && <div>📍 {c.direccion}</div>}
-                {c.rut_url && (
-                  <a href={c.rut_url} target="_blank" rel="noreferrer"
-                    style={{ display: "inline-block", marginTop: 4, color: B.success, textDecoration: "none", fontSize: 11, fontWeight: 700, border: `1px solid ${B.success}55`, borderRadius: 5, padding: "2px 8px" }}>
-                    📎 Ver RUT
-                  </a>
-                )}
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 4 }}>
+                  {c.rut_url && (
+                    <a href={c.rut_url} target="_blank" rel="noreferrer"
+                      style={{ color: B.success, textDecoration: "none", fontSize: 11, fontWeight: 700, border: `1px solid ${B.success}55`, borderRadius: 5, padding: "2px 8px" }}>
+                      📎 Ver RUT
+                    </a>
+                  )}
+                  {c.gestion_token && (
+                    <button
+                      onClick={() => {
+                        const url = `${window.location.origin}/contratistas/registro/${encodeURIComponent(eventoId)}/${encodeURIComponent(c.gestion_token)}`;
+                        if (navigator.clipboard?.writeText) navigator.clipboard.writeText(url).then(() => alert(`📎 Link copiado:\n${url}\n\nEs el link personal del contratista para volver a cargar más personal/archivos.`));
+                        else prompt("Copia el link:", url);
+                      }}
+                      style={{ background: "transparent", color: B.sky, fontSize: 11, fontWeight: 700, border: `1px solid ${B.sky}55`, borderRadius: 5, padding: "2px 8px", cursor: "pointer" }}>
+                      🔗 Copiar link del contratista
+                    </button>
+                  )}
+                </div>
               </div>
             )}
             {c.contacto && <div style={{ fontSize: 12, color: B.sky, marginBottom: 6 }}>📞 {c.contacto}</div>}
@@ -1767,6 +1780,39 @@ function TabContratistas({ items, onChange, eventoId, evento }) {
       {showForm && (
         <div style={{ background: B.navy, borderRadius: 12, padding: 20, marginTop: 16, border: `1px solid ${B.navyLight}` }}>
           <div style={{ fontWeight: 800, marginBottom: 16, fontSize: 14 }}>{editId ? "Editar contratista" : "Nuevo contratista"}</div>
+
+          {/* Link de gestión del contratista (si vino del registro express) */}
+          {form.gestion_token && (() => {
+            const gestionUrl = `${window.location.origin}/contratistas/registro/${encodeURIComponent(eventoId)}/${encodeURIComponent(form.gestion_token)}`;
+            return (
+              <div style={{ background: B.navyMid, border: `1px solid ${B.sky}55`, borderRadius: 10, padding: 12, marginBottom: 16 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: B.sky, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em" }}>
+                  🔗 Link personal del contratista
+                </div>
+                <div style={{ fontSize: 11, color: "rgba(255,255,255,0.55)", marginBottom: 8, lineHeight: 1.5 }}>
+                  Este es el link que se le creó cuando se registró. Lo puede usar para volver a cargar más personal o archivos. Si lo perdió, cópiaselo y mándaselo de nuevo.
+                </div>
+                <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                  <input readOnly value={gestionUrl}
+                    onFocus={e => e.target.select()}
+                    style={{ flex: 1, minWidth: 220, padding: "8px 10px", borderRadius: 6, background: B.navy, border: `1px solid ${B.navyLight}`, color: "#fff", fontSize: 11, fontFamily: "monospace", outline: "none" }} />
+                  <button
+                    onClick={() => {
+                      if (navigator.clipboard?.writeText) navigator.clipboard.writeText(gestionUrl).then(() => alert("✓ Link copiado"));
+                      else prompt("Copia el link:", gestionUrl);
+                    }}
+                    style={{ ...BTN(B.sky), color: B.navy, fontSize: 11, fontWeight: 800 }}>
+                    📋 Copiar
+                  </button>
+                  <a href={gestionUrl} target="_blank" rel="noreferrer"
+                    style={{ ...BTN(B.navyLight), color: B.sand, fontSize: 11, textDecoration: "none", display: "inline-block" }}>
+                    Abrir ↗
+                  </a>
+                </div>
+              </div>
+            );
+          })()}
+
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
             <div style={{ gridColumn: "span 2" }}><label style={LS}>Nombre / Empresa *</label><Inp value={form.nombre} onChange={v => set("nombre", v)} placeholder="Ej: DJ Ritmo Caribe" /></div>
             <div>
