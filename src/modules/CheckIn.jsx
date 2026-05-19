@@ -1125,6 +1125,16 @@ export default function CheckIn() {
     };
     const { error } = await supabase.from("salida_despachos").insert(rec);
     if (error) {
+      // 23505 = índice único (fecha, salida_id, embarcacion): ya hay un
+      // despacho para esa embarcación programada en ese horario. Es la
+      // regla de negocio, no un error técnico — refrescamos y avisamos.
+      if (error.code === "23505") {
+        alert(`${embNombre} ya fue despachada en ${salida.nombre} ${salida.hora}. Solo se permite 1 despacho por embarcación en ese horario.`);
+        const { data: fresh } = await supabase.from("salida_despachos").select("*").eq("fecha", fecha);
+        if (fresh) setDespachos(fresh);
+        setDespacharModal(null);
+        return;
+      }
       alert(`Error al despachar ${embNombre}:\n${error.message}`);
       return;
     }
