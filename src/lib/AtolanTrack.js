@@ -36,8 +36,20 @@ async function sha256(str) {
 function parseUTMs() {
   const p = new URLSearchParams(window.location.search);
   const utms = {};
-  ["utm_source","utm_medium","utm_campaign","utm_term","utm_content","utm_id"].forEach(k => {
-    const v = p.get(k); if (v) utms[k] = v;
+  // Estándar con guion bajo + alias sin guion bajo (la IA de WhatsApp
+  // generaba links con typos tipo utmsource/utmmedium → se perdía la
+  // atribución). Cualquier variación se normaliza a la forma con _.
+  const PAIRS = [
+    ["utm_source",   "utmsource"],
+    ["utm_medium",   "utmmedium"],
+    ["utm_campaign", "utmcampaign"],
+    ["utm_term",     "utmterm"],
+    ["utm_content",  "utmcontent"],
+    ["utm_id",       "utmid"],
+  ];
+  PAIRS.forEach(([std, alias]) => {
+    const v = p.get(std) || p.get(alias);
+    if (v) utms[std] = v;
   });
   return utms;
 }

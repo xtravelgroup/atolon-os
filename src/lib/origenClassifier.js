@@ -115,8 +115,10 @@ export function clasificarOrigen(input = {}) {
 
   const canalLower = String(canal || "").trim().toLowerCase();
   const refLower   = String(referrer || "").toLowerCase();
-  const src        = String(utms?.utm_source || "").toLowerCase();
-  const med        = String(utms?.utm_medium || "").toLowerCase();
+  // Aceptar typos comunes sin guion bajo (utmsource/utmmedium) — la IA
+  // de WhatsApp generaba links así y se perdía la atribución.
+  const src        = String(utms?.utm_source || utms?.utmsource || "").toLowerCase();
+  const med        = String(utms?.utm_medium || utms?.utmmedium || "").toLowerCase();
   const urlLower   = String(url || "").toLowerCase();
 
   // ── 1. Grupo (highest priority) ────────────────────────────────────────────
