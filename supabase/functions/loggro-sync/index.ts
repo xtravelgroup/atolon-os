@@ -88,6 +88,37 @@ async function getWaiterOrderArea(productId: string): Promise<string | null> {
   }
 }
 
+// Mapeo cédula (documentNumber) → Pirpos user _id. La tabla empleados_loggro
+// en Supabase guarda la cédula en `loggro_id`, pero Pirpos espera su propio
+// ObjectId (24-char hex) como `seller` en /orders. Cuando un caller manda
+// seller="1047514259" (cédula de Brayan, p.ej.) lo resolvemos al _id
+// correcto antes de pasárselo a Pirpos. Caso fácil: el caller ya pasa el
+// ObjectId — lo pasamos tal cual.
+let pirposSellerCache: Record<string, string> | null = null;
+
+async function resolveSellerId(seller: string | null | undefined): Promise<string | null> {
+  if (!seller) return null;
+  const s = String(seller).trim();
+  if (!s) return null;
+  // Si ya viene en formato Pirpos _id (24-char hex), úsalo tal cual.
+  if (/^[0-9a-f]{24}$/i.test(s)) return s;
+  // Build cache once per warm instance.
+  if (!pirposSellerCache) {
+    pirposSellerCache = {};
+    try {
+      const users = await loggroGet("/users");
+      const arr: any[] = Array.isArray(users) ? users
+        : (users?.users || users?.docs || users?.items || []);
+      for (const u of arr) {
+        if (u?.documentNumber && u?._id) {
+          pirposSellerCache[String(u.documentNumber)] = u._id;
+        }
+      }
+    } catch { /* keep empty, lookup returns null */ }
+  }
+  return pirposSellerCache[s] || null;
+}
+
 async function loggroGet(path: string): Promise<any> {
   const token = await getLoggroToken();
   const res = await fetch(`${LOGGRO_BASE}${path}`, {
@@ -646,7 +677,21 @@ serve(async (req) => {
         orders,
       };
       if (body.mesaId) payload.table = body.mesaId;
-      if (body.seller) payload.seller = body.seller;
+      // Resolver `seller` si vino como cédula (la app guarda la cédula en
+      // empleados_loggro.loggro_id, pero Pirpos quiere su ObjectId interno).
+      if (body.seller) {
+        const sellerId = await resolveSellerId(body.seller);
+        if (sellerId) {
+          payload.seller = sellerId;
+        } else {
+          // Si el caller envió un seller pero no lo pudimos mapear, devolvemos
+          // un 400 claro en vez de dejar que Pirpos responda "seller ID inválido".
+          return json({
+            ok: false,
+            error: `Seller "${body.seller}" no se pudo resolver a un usuario válido de Loggro. Verifica empleados_loggro.loggro_id (debe ser la cédula de un usuario que existe en Pirpos /users).`,
+          }, 400);
+        }
+      }
 
       try {
         const resp = await loggroPost("/orders", payload);
