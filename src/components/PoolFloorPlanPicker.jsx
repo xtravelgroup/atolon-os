@@ -219,15 +219,25 @@ export default function PoolFloorPlanPicker({
       </div>
 
       {/* ════════════ ZONA PLAYA ════════════
-          Se renderiza debajo del bloque de piscina. 3 filas horizontales con
-          orden ascendente (P11/P31/P52 a la izquierda). Termina con una
-          banda "MAR" estilizada simulando el agua del Caribe. */}
+          Bloque con FONDO COLOR ARENA (B.sand=#C8B99A) que simula la
+          arena del beach club. 3 filas horizontales con orden ascendente
+          (P11/P31/P52 a la izquierda). Termina con una banda "MAR"
+          turquesa simulando el agua del Caribe. */}
       {tienePlaya && (
-        <div style={{ marginTop: SIZES.gap * 3, paddingTop: SIZES.gap * 2, borderTop: `2px dashed ${B.sand}33` }}>
+        <div style={{
+          marginTop: SIZES.gap * 3,
+          // Fondo arena: gradiente cálido + textura granular leve simulando arena.
+          backgroundColor: `${B.sand}44`,
+          backgroundImage: `radial-gradient(circle at 20% 30%, ${B.sand}33 0%, transparent 40%), radial-gradient(circle at 80% 70%, ${B.sand}33 0%, transparent 40%), linear-gradient(180deg, ${B.sand}22 0%, ${B.sand}66 100%)`,
+          borderRadius: 16,
+          padding: SIZES.pad,
+          border: `2px dashed ${B.sand}99`,
+          boxShadow: `inset 0 4px 16px ${B.sand}44`,
+        }}>
           {showLabels && (
             <div style={{ textAlign: "center", marginBottom: SIZES.gap * 1.5 }}>
               <SectionLabel size={size} mobile={isMobile}>
-                {isMobile ? "🏖️ PLAYA" : "🏖️ PLAYA"}
+                🏖️ PLAYA
               </SectionLabel>
             </div>
           )}
@@ -246,7 +256,7 @@ export default function PoolFloorPlanPicker({
             textAlign: "center",
             fontSize: isMobile ? 12 : isLg ? 18 : 14,
             fontWeight: 800,
-            color: "rgba(255,255,255,0.9)",
+            color: "rgba(255,255,255,0.95)",
             letterSpacing: isMobile ? "0.1em" : "0.3em",
             textShadow: "0 2px 6px rgba(0,0,0,0.3)",
             boxShadow: "inset 0 4px 16px rgba(0,0,0,0.15), 0 2px 8px rgba(14,165,233,0.3)",
