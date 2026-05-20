@@ -2012,7 +2012,7 @@ function IncentivosAgencia({ aliadoId }) {
     // canceladas. Son las únicas elegibles para aplicar la cortesía.
     const desde = new Date(Date.now() - 180 * 86400000).toISOString().slice(0, 10);
     const { data } = await supabase.from("reservas")
-      .select("id, nombre, fecha, tipo, pax, total, abono, saldo, estado")
+      .select("id, nombre, fecha, tipo, pax, precio_u, total, abono, saldo, estado")
       .eq("aliado_id", aliadoId)
       .neq("estado", "cancelado")
       .gt("saldo", 0)
@@ -2054,19 +2054,27 @@ function IncentivosAgencia({ aliadoId }) {
     });
     if (error) { setSavingCanje(false); alert("Error al registrar canje: " + error.message); return; }
 
-    // 2) Aplicar a la reserva → saldo = $0 (cortesía total). El monto es
-    //    indiferente si era neto o PVP: la reserva queda saldada por la
-    //    cortesía del premio. Sumamos el saldo absorbido a descuento_cortesia
-    //    para auditoría.
+    // 2) Aplicar a la reserva → descontar SOLO el precio de las pasadías
+    //    canjeadas (no la reserva entera). Si la reserva tiene 4 pax y se
+    //    canjea 1 pasadía, se descuenta 1 × precio_unit. El resto sigue
+    //    cobrándosele al aliado.
     const { data: rNow } = await supabase.from("reservas")
-      .select("descuento_cortesia, forma_pago, notas").eq("id", canjeForm.reserva_id).maybeSingle();
-    const descuentoNuevo = (Number(rNow?.descuento_cortesia) || 0) + saldoActual;
+      .select("precio_u, total, pax, saldo, descuento_cortesia, forma_pago, notas")
+      .eq("id", canjeForm.reserva_id).maybeSingle();
+    const precioUnit = Number(rNow?.precio_u) > 0
+      ? Number(rNow.precio_u)
+      : (Number(rNow?.pax) > 0 ? (Number(rNow.total) || 0) / Number(rNow.pax) : 0);
+    const descuentoBruto = Math.round(precioUnit * cant);
+    const saldoAhora     = Number(rNow?.saldo) || 0;
+    const descuentoApl   = Math.min(descuentoBruto, saldoAhora); // no descontar más de lo que se debe
+    const nuevoSaldo     = Math.max(0, saldoAhora - descuentoApl);
+    const descuentoNuevo = (Number(rNow?.descuento_cortesia) || 0) + descuentoApl;
     const notaPrev = (rNow?.notas || "").trim();
-    const notaCanje = `Premio aplicado: ${canjeFor.inc.nombre} (${cant} pasadía${cant !== 1 ? "s" : ""})`;
+    const notaCanje = `Premio aplicado: ${canjeFor.inc.nombre} (${cant} pasadía${cant !== 1 ? "s" : ""} · -${(descuentoApl).toLocaleString("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 })})`;
     const { error: upErr } = await supabase.from("reservas").update({
-      saldo:               0,
+      saldo:               nuevoSaldo,
       descuento_cortesia:  descuentoNuevo,
-      forma_pago:          rNow?.forma_pago || "incentivo_premio",
+      forma_pago:          rNow?.forma_pago || (nuevoSaldo === 0 ? "incentivo_premio" : rNow?.forma_pago),
       notas:               notaPrev ? `${notaPrev} · ${notaCanje}` : notaCanje,
     }).eq("id", canjeForm.reserva_id);
     setSavingCanje(false);
@@ -2372,9 +2380,18 @@ function IncentivosAgencia({ aliadoId }) {
                     <div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", marginTop: 4 }}>
                       Máx <strong>{maxAplicable}</strong> · saldo del premio: {maxCant} · pax de la reserva: {r?.pax}
                     </div>
-                    <div style={{ marginTop: 10, padding: "8px 10px", background: B.success + "11", border: `1px solid ${B.success}44`, borderRadius: 6, fontSize: 11, color: B.success, lineHeight: 1.5 }}>
-                      💚 Al confirmar, el <strong>saldo de la reserva pasa a $0</strong> (cortesía total). Es indiferente si es tarifa neta o PVP — la reserva queda saldada y el monto absorbido se registra como <code>descuento_cortesia</code>.
-                    </div>
+                    {(() => {
+                      const cantNum  = Math.max(1, Math.min(Number(canjeForm.pasadias_usadas) || 1, maxAplicable));
+                      const precioU  = Number(r?.precio_u) > 0 ? Number(r.precio_u) : (Number(r?.pax) > 0 ? (Number(r?.total) || 0) / Number(r.pax) : 0);
+                      const desc     = Math.min(Math.round(precioU * cantNum), Number(r?.saldo) || 0);
+                      const nuevoS   = Math.max(0, (Number(r?.saldo) || 0) - desc);
+                      return (
+                        <div style={{ marginTop: 10, padding: "8px 10px", background: B.success + "11", border: `1px solid ${B.success}44`, borderRadius: 6, fontSize: 11, color: B.success, lineHeight: 1.5 }}>
+                          💚 Al confirmar, se descuenta <strong>{COP(desc)}</strong> ({cantNum} pasadía × {COP(precioU)} c/u) del saldo de la reserva.
+                          Saldo nuevo: <strong>{COP(nuevoS)}</strong>{nuevoS === 0 ? " ✓ saldada" : " pendiente"}.
+                        </div>
+                      );
+                    })()}
                   </div>
                 );
               })()}
