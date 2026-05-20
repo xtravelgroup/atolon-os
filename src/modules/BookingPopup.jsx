@@ -200,10 +200,13 @@ export default function BookingPopup() {
     return () => { ro.disconnect(); window.removeEventListener("load", post); };
   }, [isEmbedded]);
 
-  // En modo embebido, fijar html/body a 100vh sin scroll para que el iframe
-  // dicte la altura y nuestro layout flex-fill se acomode adentro.
+  // En modo iframe-fit (desktop embebido), fijar html/body a 100vh sin
+  // scroll para que el iframe dicte la altura y nuestro layout flex-fill
+  // se acomode adentro. NO se aplica en mobile (aunque esté embebido):
+  // ahí queremos preservar el scroll natural de página para que el usuario
+  // pueda navegar todo el contenido del widget con swipe.
   useEffect(() => {
-    if (!isEmbedded) return;
+    if (!iframeFit) return;
     const prev = { html: document.documentElement.style.cssText, body: document.body.style.cssText };
     document.documentElement.style.cssText += ";height:100%;overflow:hidden;";
     document.body.style.cssText += ";height:100%;overflow:hidden;margin:0;";
@@ -211,7 +214,7 @@ export default function BookingPopup() {
       document.documentElement.style.cssText = prev.html;
       document.body.style.cssText = prev.body;
     };
-  }, [isEmbedded]);
+  }, [iframeFit]);
 
   // Support both /booking?tipo=after-island and /booking/after-island
   const pathSlug = window.location.pathname.replace(/^\/booking\/?/, "").split("?")[0] || "";
