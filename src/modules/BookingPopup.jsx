@@ -1010,17 +1010,24 @@ export default function BookingPopup() {
       );
     }
 
-    // Layout 2-col en desktop: izquierda = visual/info (fotos + qué incluye +
-    // resumen), derecha = acción (producto + participantes + calendario + CTA).
-    // En mobile: layout original de una sola columna.
-    const cellL = isDesktop ? { gridColumn: "1" } : null;
-    const cellR = isDesktop ? { gridColumn: "2" } : null;
-    const cellFull = isDesktop ? { gridColumn: "1 / -1" } : null;
+    // Layout 2-col en desktop: flex con dos columnas independientes (cada
+    // columna fluye en su propio block-axis, sin compartir altura de filas).
+    // Esto elimina el dead-space que CSS grid causaba cuando la columna
+    // izquierda tenía bloques mucho más cortos que la derecha (calendar +
+    // salidas dictaban la altura de la fila y dejaban huecos a la izquierda).
+    // En mobile (flexDirection: column): primero columna izq, luego derecha,
+    // luego CTA — flujo lineal.
     return (
-      <div style={{ display: isDesktop ? "grid" : "block", gridTemplateColumns: isDesktop ? "1fr 1fr" : undefined, columnGap: isDesktop ? 24 : 0, alignItems: "start" }}>
+      <>
+        <div style={{ display: "flex", flexDirection: isDesktop ? "row" : "column", gap: isDesktop ? 24 : 0, alignItems: "flex-start" }}>
+
+          {/* ═════════ LEFT COLUMN ═════════
+              Carousel → What's Included → Producto + precio → Participants → Order Summary */}
+          <div style={{ flex: 1, minWidth: 0, width: isDesktop ? undefined : "100%", display: "flex", flexDirection: "column" }}>
+
         {/* Photo gallery */}
         {allPhotos.length > 0 && (
-          <div style={{ marginBottom: isDesktop ? 10 : 20, borderRadius: 12, overflow: "hidden", position: "relative", ...cellL }}>
+          <div style={{ marginBottom: isDesktop ? 10 : 20, borderRadius: 12, overflow: "hidden", position: "relative" }}>
             {/* Main image — protagonista en desktop (~290px, aspect 16:9) */}
             <div style={{ width: "100%", height: isDesktop ? 290 : 220, position: "relative", background: C.bgCard, overflow: "hidden" }}>
               <img src={allPhotos[fotoActiva]} alt="pasadia"
@@ -1054,24 +1061,29 @@ export default function BookingPopup() {
           </div>
         )}
 
-        {/* Group event banner */}
-        {grupoEvt && (
-          <div style={{ background: "#EEF2FF", borderRadius: 10, padding: "12px 16px", marginBottom: 16, border: "1.5px solid #C7D2FE", ...cellR }}>
-            <div style={{ fontSize: 11, fontWeight: 700, color: C.accent, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 3 }}>{isEN ? "Group Reservation" : "Reserva de Grupo"}</div>
-            <div style={{ fontSize: 15, fontWeight: 700, color: C.text }}>{grupoEvt.nombre}</div>
-            <div style={{ fontSize: 12, color: C.textMid, marginTop: 2 }}>
-              📅 {fmtDate(grupoEvt.fecha, langQ)}
-              {(grupoEvt.salidas_grupo||[]).length > 0 && <> &nbsp;·&nbsp; ⛵ {[...grupoEvt.salidas_grupo].sort((a,b)=>a.hora.localeCompare(b.hora)).map(s => {
-                const sal = salidas.find(x => x.id === s.id);
-                return s.hora + (sal?.hora_regreso ? ` → ${sal.hora_regreso}` : "");
-              }).join(" · ")}</>}
+        {/* What's included — fallback a product.includes si la BD no tiene datos */}
+        {(() => {
+          const items = incluye.length > 0
+            ? incluye.map(it => ({ es: it.descripcion, en: it.descripcion_en || it.descripcion }))
+            : (isEN ? (product.includes_en || product.includes || []) : (product.includes || []))
+                .map(txt => ({ es: txt, en: txt }));
+          if (items.length === 0) return null;
+          return (
+            <div style={{ marginBottom: isDesktop ? 8 : 20, padding: isDesktop ? "8px 12px" : "12px 16px", background: C.bgCard, borderRadius: 10, border: `1px solid ${C.border}` }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: C.textMid, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: isDesktop ? 4 : 8 }}>{isEN ? "What's included" : "Qué incluye"}</div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: "6px 16px" }}>
+                {items.map((item, i) => (
+                  <div key={i} style={{ fontSize: 12, color: C.textMid, display: "flex", alignItems: "center", gap: 5 }}>
+                    <span style={{ color: C.success, fontWeight: 700 }}>✓</span> {isEN ? item.en : item.es}
+                  </div>
+                ))}
+              </div>
             </div>
-          </div>
-        )}
+          );
+        })()}
 
-
-        {/* Product header — LEFT col, después de What's Included */}
-        <div style={{ marginBottom: isDesktop ? 8 : 16, ...cellL, ...(isDesktop ? { order: 2 } : null) }}>
+        {/* Product header — título + precio */}
+        <div style={{ marginBottom: isDesktop ? 8 : 16 }}>
           <div style={{ fontSize: 11, fontWeight: 600, color: C.textLight, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>Atolon Beach Club · Isla Tierra Bomba</div>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -1085,29 +1097,8 @@ export default function BookingPopup() {
           </div>
         </div>
 
-        {/* What's included — fallback a product.includes si la BD no tiene datos */}
-        {(() => {
-          const items = incluye.length > 0
-            ? incluye.map(it => ({ es: it.descripcion, en: it.descripcion_en || it.descripcion }))
-            : (isEN ? (product.includes_en || product.includes || []) : (product.includes || []))
-                .map(txt => ({ es: txt, en: txt }));
-          if (items.length === 0) return null;
-          return (
-            <div style={{ marginBottom: isDesktop ? 10 : 20, padding: isDesktop ? "8px 12px" : "12px 16px", background: C.bgCard, borderRadius: 10, border: `1px solid ${C.border}`, ...cellL, ...(isDesktop ? { order: 1 } : null) }}>
-              <div style={{ fontSize: 11, fontWeight: 700, color: C.textMid, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: isDesktop ? 4 : 8 }}>{isEN ? "What's included" : "Qué incluye"}</div>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: "6px 16px" }}>
-                {items.map((item, i) => (
-                  <div key={i} style={{ fontSize: 12, color: C.textMid, display: "flex", alignItems: "center", gap: 5 }}>
-                    <span style={{ color: C.success, fontWeight: 700 }}>✓</span> {isEN ? item.en : item.es}
-                  </div>
-                ))}
-              </div>
-            </div>
-          );
-        })()}
-
-        {/* Participants — LEFT col en desktop */}
-        <div style={{ marginBottom: isDesktop ? 10 : 24, ...cellL, ...(isDesktop ? { order: 3 } : null) }}>
+        {/* Participants */}
+        <div style={{ marginBottom: isDesktop ? 10 : 24 }}>
           <h3 style={{ fontSize: 15, fontWeight: 700, color: C.text, marginBottom: 4 }}>{isEN ? "Participants" : "Participantes"}</h3>
           <div style={{ borderTop: `1px solid ${C.divider}` }}>
             <PaxRow
@@ -1173,8 +1164,51 @@ export default function BookingPopup() {
           </div>
         </div>
 
-        {/* Calendar — RIGHT col en desktop, primer bloque arriba */}
-        <div style={{ marginBottom: isDesktop ? 10 : 24, display: grupoLock ? "none" : "block", ...cellR }}>
+        {/* Order summary — final de columna izquierda */}
+        <div style={{ background: C.bgCard, borderRadius: 12, padding: isDesktop ? "10px 14px" : "16px 18px", marginBottom: isDesktop ? 0 : 20, border: `1px solid ${C.border}` }}>
+          <h3 style={{ fontSize: 14, fontWeight: 700, color: C.text, marginBottom: 12, borderBottom: `2px solid ${C.accent}`, paddingBottom: 8, display: "inline-block" }}>{isEN ? "Order summary" : "Comprobar el pedido"}</h3>
+          <div style={{ fontSize: 14, fontWeight: 600, color: C.text, marginBottom: 10 }}>{isEN && product.tipo_en ? product.tipo_en : product.tipo}</div>
+          {[
+            selDate && [isEN ? "Date" : "Fecha", fmtDate(selDate, langQ)],
+            selSalida && [isEN ? "Departure" : "Salida", `${isEN ? "Departure" : "Salida"} ${selSalida.hora || selSalida.id}`],
+            [isEN ? `Adults (${paxA}×)` : `Adultos (${paxA}×)`, COP(product.precio * paxA)],
+            (!product.noNinos && paxN > 0) && [isEN ? `Children (${paxN}×)` : `Niños (${paxN}×)`, COP((product.precioNino || 0) * paxN)],
+            (!product.noNinos && paxI > 0) && [isEN ? `Infants (${paxI}×)` : `Infantes (${paxI}×)`, isEN ? "Free" : "Gratis"],
+          ].filter(Boolean).map(([k, v], i) => (
+            <div key={i} style={{ display: "flex", justifyContent: "space-between", fontSize: 13, color: C.textMid, padding: "4px 0" }}>
+              <span>{k}</span><span>{v}</span>
+            </div>
+          ))}
+          <div style={{ borderTop: `1px solid ${C.border}`, marginTop: 10, paddingTop: 10, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <span style={{ fontSize: 14, fontWeight: 700, color: C.text }}>Total:</span>
+            <span style={{ fontSize: 18, fontWeight: 800, color: C.accent }}>{COP(total)}</span>
+          </div>
+          <div style={{ fontSize: 11, color: C.textLight, marginTop: 6 }}>{isEN ? "Prices in COP (Colombian Peso)" : "Precios en COP (Peso colombiano)"}</div>
+        </div>
+
+          </div>{/* /LEFT COLUMN */}
+
+          {/* ═════════ RIGHT COLUMN ═════════
+              Group banner (si aplica) → Calendar → Salidas (condicional) */}
+          <div style={{ flex: 1, minWidth: 0, width: isDesktop ? undefined : "100%", display: "flex", flexDirection: "column" }}>
+
+        {/* Group event banner */}
+        {grupoEvt && (
+          <div style={{ background: "#EEF2FF", borderRadius: 10, padding: "12px 16px", marginBottom: 12, border: "1.5px solid #C7D2FE" }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: C.accent, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 3 }}>{isEN ? "Group Reservation" : "Reserva de Grupo"}</div>
+            <div style={{ fontSize: 15, fontWeight: 700, color: C.text }}>{grupoEvt.nombre}</div>
+            <div style={{ fontSize: 12, color: C.textMid, marginTop: 2 }}>
+              📅 {fmtDate(grupoEvt.fecha, langQ)}
+              {(grupoEvt.salidas_grupo||[]).length > 0 && <> &nbsp;·&nbsp; ⛵ {[...grupoEvt.salidas_grupo].sort((a,b)=>a.hora.localeCompare(b.hora)).map(s => {
+                const sal = salidas.find(x => x.id === s.id);
+                return s.hora + (sal?.hora_regreso ? ` → ${sal.hora_regreso}` : "");
+              }).join(" · ")}</>}
+            </div>
+          </div>
+        )}
+
+        {/* Calendar */}
+        <div style={{ marginBottom: isDesktop ? 10 : 24, display: grupoLock ? "none" : "block" }}>
           <h3 style={{ fontSize: 15, fontWeight: 700, color: C.text, marginBottom: 12 }}>{isEN ? "Select a date" : "Selecciona una fecha"}</h3>
           {/* Month navigation */}
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
@@ -1236,30 +1270,25 @@ export default function BookingPopup() {
           )}
         </div>
 
-        {/* Salidas — group mode: solo buy-out groups necesitan seleccionar salida.
-            En desktop usa order:1 para aparecer DESPUÉS del Order Summary. */}
+        {/* Salidas — group mode: solo buy-out groups necesitan seleccionar salida */}
         {grupoLock && grupoEvt?.buy_out && grupoEvt?.salidas_grupo?.length > 0 && (
-          <div style={{ marginBottom: isDesktop ? 10 : 24, ...cellR, ...(isDesktop ? { order: 1 } : null) }}>
-            <h3 style={{ fontSize: 15, fontWeight: 700, color: C.text, marginBottom: 12 }}>
+          <div style={{ marginBottom: isDesktop ? 10 : 24 }}>
+            <h3 style={{ fontSize: 14, fontWeight: 700, color: C.text, marginBottom: 8 }}>
               {isEN ? "Select departure time" : "Selecciona tu horario de salida"}
             </h3>
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
               {[...grupoEvt.salidas_grupo].sort((a,b) => a.hora.localeCompare(b.hora)).map(s => {
                 const isSel = selSalida?.hora === s.hora;
+                const sal = salidas.find(x => x.id === s.id);
                 return (
                   <div key={s.hora} onClick={() => setSelSalida(s)}
-                    style={{ padding: "14px 16px", borderRadius: 10, border: `2px solid ${isSel ? C.accent : C.border}`, background: isSel ? C.accentLight : C.bg, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "space-between", transition: "all 0.15s" }}>
+                    style={{ padding: "8px 12px", borderRadius: 8, border: `2px solid ${isSel ? C.accent : C.border}`, background: isSel ? C.accentLight : C.bg, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "space-between", transition: "all 0.15s" }}>
                     <div>
-                      <div style={{ fontSize: 14, fontWeight: 700, color: isSel ? C.accent : C.text }}>
-                        ⛵ {isEN ? "Departure" : "Salida"} {s.hora}
+                      <div style={{ fontSize: 13, fontWeight: 700, color: isSel ? C.accent : C.text }}>
+                        ⛵ {isEN ? "Departure" : "Salida"} {s.hora}{sal?.hora_regreso ? <span style={{ fontWeight: 400, color: C.textMid, marginLeft: 6 }}>→ {sal.hora_regreso}</span> : null}
                       </div>
-                      {(() => { const sal = salidas.find(x => x.id === s.id); return sal?.hora_regreso ? (
-                        <div style={{ fontSize: 12, color: isSel ? C.accent : C.textMid, marginTop: 2 }}>
-                          🔁 {isEN ? "Return" : "Regreso"}: <strong>{sal.hora_regreso}</strong>
-                        </div>
-                      ) : null; })()}
                     </div>
-                    {isSel && <div style={{ fontSize: 13, fontWeight: 700, color: C.accent }}>✓ {isEN ? "Selected" : "Seleccionado"}</div>}
+                    {isSel && <div style={{ fontSize: 12, fontWeight: 700, color: C.accent }}>✓</div>}
                   </div>
                 );
               })}
@@ -1300,21 +1329,20 @@ export default function BookingPopup() {
           </div>
         )}
 
-        {/* Salidas (departure times) — regular mode.
-            En desktop usa order:1 para aparecer DESPUÉS del Order Summary. */}
+        {/* Salidas (departure times) — regular mode, cards compactas (~48px) */}
         {!grupoLock && !product?.noSalida && selDate && (
-          <div style={{ marginBottom: isDesktop ? 10 : 24, ...cellR, ...(isDesktop ? { order: 1 } : null) }}>
-            <h3 style={{ fontSize: 15, fontWeight: 700, color: C.text, marginBottom: 12 }}>
+          <div style={{ marginBottom: isDesktop ? 10 : 24 }}>
+            <h3 style={{ fontSize: 14, fontWeight: 700, color: C.text, marginBottom: 8 }}>
               {isEN ? "Select departure time" : "Selecciona el horario de salida"}
             </h3>
             {loadingSal ? (
-              <div style={{ textAlign: "center", padding: "20px 0", fontSize: 13, color: C.textLight }}>
+              <div style={{ textAlign: "center", padding: "12px 0", fontSize: 12, color: C.textLight }}>
                 {isEN ? "Checking availability..." : "Verificando disponibilidad..."}
               </div>
             ) : (
-              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                 {salidas.filter(s => disponSal[s.id] !== -1).length === 0 ? (
-                  <div style={{ padding: "16px", background: "#FFF8F8", border: `1px solid #FEE2E2`, borderRadius: 10, fontSize: 13, color: C.danger, textAlign: "center" }}>
+                  <div style={{ padding: "12px", background: "#FFF8F8", border: `1px solid #FEE2E2`, borderRadius: 8, fontSize: 12, color: C.danger, textAlign: "center" }}>
                     {isEN ? "No availability for this date. Please select another day." : "Sin disponibilidad para esta fecha. Por favor elige otro día."}
                   </div>
                 ) : (
@@ -1330,34 +1358,30 @@ export default function BookingPopup() {
                       <div key={s.id}
                         onClick={() => !salidaFull && setSelSalida(s)}
                         style={{
-                          display: "flex", alignItems: "center", gap: 14,
-                          padding: "14px 16px", borderRadius: 10, cursor: salidaFull ? "not-allowed" : "pointer",
+                          display: "flex", alignItems: "center", gap: 10,
+                          padding: "8px 12px", borderRadius: 8, cursor: salidaFull ? "not-allowed" : "pointer",
                           border: `2px solid ${isSelected ? C.accent : C.border}`,
                           background: isSelected ? C.accentLight : salidaFull ? C.bgCard : C.bg,
                           opacity: salidaFull ? 0.5 : 1, transition: "all 0.15s",
                         }}
                         onMouseEnter={e => { if (!salidaFull && !isSelected) e.currentTarget.style.borderColor = C.accent; }}
                         onMouseLeave={e => { if (!salidaFull && !isSelected) e.currentTarget.style.borderColor = C.border; }}>
-                        <div style={{ width: 44, height: 44, borderRadius: 10, background: isSelected ? C.accent : C.bgCard, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, transition: "all 0.15s" }}>
-                          <span style={{ fontSize: 20 }}>{salidaFull ? "🚫" : "⛵"}</span>
-                        </div>
-                        <div style={{ flex: 1 }}>
-                          <div style={{ fontSize: 15, fontWeight: 700, color: isSelected ? C.accent : C.text }}>
+                        <span style={{ fontSize: 16, flexShrink: 0 }}>{salidaFull ? "🚫" : "⛵"}</span>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: 13, fontWeight: 700, color: isSelected ? C.accent : C.text }}>
                             {isEN ? "Departure" : "Salida"} {s.hora || s.id}
-                          </div>
-                          <div style={{ fontSize: 12, color: C.textMid, marginTop: 2 }}>
-                            🕐 {isEN ? "Departure" : "Salida"}: <strong>{s.hora || "—"}</strong>
-                            &nbsp;&nbsp;→&nbsp;&nbsp;
-                            🔁 {isEN ? "Return" : "Regreso"}: <strong>{s.hora_regreso || s.regreso || "—"}</strong>
+                            <span style={{ fontSize: 11, color: C.textMid, fontWeight: 400, marginLeft: 8 }}>
+                              → {isEN ? "Return" : "Regreso"} {s.hora_regreso || s.regreso || "—"}
+                            </span>
                           </div>
                         </div>
                         <div style={{ textAlign: "right", flexShrink: 0 }}>
                           {salidaFull ? (
-                            <span style={{ fontSize: 12, color: C.danger, fontWeight: 600 }}>{isEN ? "Full" : "Agotado"}</span>
+                            <span style={{ fontSize: 11, color: C.danger, fontWeight: 600 }}>{isEN ? "Full" : "Agotado"}</span>
                           ) : isSelected ? (
-                            <div style={{ fontSize: 11, color: C.accent, fontWeight: 600 }}>✓ {isEN ? "Selected" : "Seleccionado"}</div>
+                            <div style={{ fontSize: 11, color: C.accent, fontWeight: 700 }}>✓</div>
                           ) : (
-                            <div style={{ fontSize: 12, color: C.success, fontWeight: 600 }}>
+                            <div style={{ fontSize: 11, color: C.success, fontWeight: 600 }}>
                               {isEN ? "Available" : "Disponible"}
                             </div>
                           )}
@@ -1371,35 +1395,15 @@ export default function BookingPopup() {
           </div>
         )}
 
-        {/* Order summary — LEFT col en desktop, al fondo */}
-        <div style={{ background: C.bgCard, borderRadius: 12, padding: isDesktop ? "10px 14px" : "16px 18px", marginBottom: isDesktop ? 10 : 20, border: `1px solid ${C.border}`, ...cellL, ...(isDesktop ? { order: 4 } : null) }}>
-          <h3 style={{ fontSize: 14, fontWeight: 700, color: C.text, marginBottom: 12, borderBottom: `2px solid ${C.accent}`, paddingBottom: 8, display: "inline-block" }}>{isEN ? "Order summary" : "Comprobar el pedido"}</h3>
-          <div style={{ fontSize: 14, fontWeight: 600, color: C.text, marginBottom: 10 }}>{isEN && product.tipo_en ? product.tipo_en : product.tipo}</div>
-          {[
-            selDate && [isEN ? "Date" : "Fecha", fmtDate(selDate, langQ)],
-            selSalida && [isEN ? "Departure" : "Salida", `${isEN ? "Departure" : "Salida"} ${selSalida.hora || selSalida.id}`],
-            [isEN ? `Adults (${paxA}×)` : `Adultos (${paxA}×)`, COP(product.precio * paxA)],
-            (!product.noNinos && paxN > 0) && [isEN ? `Children (${paxN}×)` : `Niños (${paxN}×)`, COP((product.precioNino || 0) * paxN)],
-            (!product.noNinos && paxI > 0) && [isEN ? `Infants (${paxI}×)` : `Infantes (${paxI}×)`, isEN ? "Free" : "Gratis"],
-          ].filter(Boolean).map(([k, v], i) => (
-            <div key={i} style={{ display: "flex", justifyContent: "space-between", fontSize: 13, color: C.textMid, padding: "4px 0" }}>
-              <span>{k}</span><span>{v}</span>
-            </div>
-          ))}
-          <div style={{ borderTop: `1px solid ${C.border}`, marginTop: 10, paddingTop: 10, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <span style={{ fontSize: 14, fontWeight: 700, color: C.text }}>Total:</span>
-            <span style={{ fontSize: 18, fontWeight: 800, color: C.accent }}>{COP(total)}</span>
-          </div>
-          <div style={{ fontSize: 11, color: C.textLight, marginTop: 6 }}>{isEN ? "Prices in COP (Colombian Peso)" : "Precios en COP (Peso colombiano)"}</div>
-        </div>
+          </div>{/* /RIGHT COLUMN */}
+        </div>{/* /FLEX 2-COL */}
 
-        {/* CTA button — en desktop ocupa toda la fila inferior para que sea
-            el remate visual final. order:99 lo fuerza al final de todos los items. */}
+        {/* CTA button — full width, debajo de las dos columnas */}
         {(() => {
           const afterOk = product.noSalida ? (embarcacion.trim() && horaLlegada) : true;
           const ready = selDate && (selSalida || grupoLock || product.noSalida) && paxA >= product.minA && afterOk;
           return (
-            <div style={{ ...cellFull, ...(isDesktop ? { order: 99 } : null) }}>
+            <div style={{ marginTop: isDesktop ? 10 : 0 }}>
               <button
                 onClick={() => { if (ready) { gtmBeginCheckout(product, paxTotal, total); setStep(2); AtolanTrack.evento("begin_checkout", { producto: product?.tipo, fecha: selDate, pax: paxTotal, valor: total }, "booking"); AtolanTrack.setCurrentStep(2); } }}
                 disabled={!ready}
@@ -1425,7 +1429,7 @@ export default function BookingPopup() {
             </div>
           );
         })()}
-      </div>
+      </>
     );
   }
 
