@@ -1153,8 +1153,13 @@ function ListaViajesComputados({ viajesPorFecha, costoPorViaje, homeBase = "cart
                     border: incompleto ? `1px dashed ${B.danger}55` : "1px solid transparent",
                     display: "inline-flex", alignItems: "center", gap: 3,
                   }}>
-                    {p.llegada?.hora || "??"}{delBtn(p.llegada, "muelle_llegadas", "llegada")}
-                    →{p.zarpe?.hora || "??"}{delBtn(p.zarpe, "muelle_zarpes_flota", "zarpe")}
+                    {/* Orden cronológico real del viaje: zarpe (sale) → llegada
+                        (regresa). Antes pintaba L→Z lo que dejaba las horas
+                        invertidas (L 13:50 antes que Z 10:07). 🛫 = zarpe,
+                        🛬 = llegada. */}
+                    🛫{p.zarpe?.hora || "??"}{delBtn(p.zarpe, "muelle_zarpes_flota", "zarpe")}
+                    →
+                    🛬{p.llegada?.hora || "??"}{delBtn(p.llegada, "muelle_llegadas", "llegada")}
                   </span>
                 );
               })}
