@@ -241,12 +241,18 @@ export default function PoolFloorPlanPicker({
               </SectionLabel>
             </div>
           )}
-          {/* Fila 1 — frente a la piscina */}
-          <PlayaRow camas={grouped.playa.fila1} sizes={SIZES} {...{ selectedSpotId, showEstadoColor, asignaciones, handleClick, isMobile }} />
-          {/* Fila 2 — central */}
-          <PlayaRow camas={grouped.playa.fila2} sizes={SIZES} {...{ selectedSpotId, showEstadoColor, asignaciones, handleClick, isMobile }} />
-          {/* Fila 3 — frente al mar */}
-          <PlayaRow camas={grouped.playa.fila3} sizes={SIZES} {...{ selectedSpotId, showEstadoColor, asignaciones, handleClick, isMobile }} />
+          {/* Las 3 filas se alinean a la DERECHA — P11 alineada a P31 y
+              P52, P12 a P32 y P53, etc. Como Fila 2 tiene 12 camas (la
+              más larga), las otras dos se desplazan a la derecha. En móvil,
+              el contenedor permite scroll horizontal si las 12 camas no
+              entran de un solo. */}
+          <div style={{ overflowX: "auto", paddingBottom: 4, WebkitOverflowScrolling: "touch" }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: SIZES.gap, alignItems: "flex-end", minWidth: "max-content" }}>
+              <PlayaRow camas={grouped.playa.fila1} sizes={SIZES} {...{ selectedSpotId, showEstadoColor, asignaciones, handleClick, isMobile }} />
+              <PlayaRow camas={grouped.playa.fila2} sizes={SIZES} {...{ selectedSpotId, showEstadoColor, asignaciones, handleClick, isMobile }} />
+              <PlayaRow camas={grouped.playa.fila3} sizes={SIZES} {...{ selectedSpotId, showEstadoColor, asignaciones, handleClick, isMobile }} />
+            </div>
+          </div>
           {/* Banda MAR — gradiente turquesa con onda y emoji */}
           <div style={{
             marginTop: SIZES.gap * 1.5,
@@ -269,18 +275,15 @@ export default function PoolFloorPlanPicker({
   );
 }
 
-// Renderiza una fila de camas de playa. Usa flex-wrap para que en móvil
-// las filas largas (P31-P42 = 12 camas) se envuelvan suavemente.
-function PlayaRow({ camas, sizes, selectedSpotId, showEstadoColor, asignaciones, handleClick, isMobile }) {
+// Renderiza una fila de camas de playa. Sin wrap (el padre define alineación
+// y maneja scroll horizontal si no entran las 12 camas en móvil).
+function PlayaRow({ camas, sizes, selectedSpotId, showEstadoColor, asignaciones, handleClick }) {
   if (!camas || camas.length === 0) return null;
   return (
     <div style={{
       display: "flex",
-      flexWrap: isMobile ? "wrap" : "nowrap",
+      flexWrap: "nowrap",
       gap: sizes.gap,
-      justifyContent: "center",
-      marginBottom: sizes.gap,
-      overflowX: isMobile ? "visible" : "auto",
     }}>
       {camas.map(s => (
         <Spot key={s.id} spot={s} asign={asignaciones[s.id]}
