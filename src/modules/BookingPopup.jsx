@@ -164,12 +164,23 @@ export default function BookingPopup() {
   const { isDesktop } = useBreakpoint();
   const params  = new URLSearchParams(window.location.search);
 
+  // ── Detección de modo embebido (iframe) ──
+  // Si estamos dentro de un iframe (e.g. atoloncartagena.com en Webflow),
+  // el layout cambia: altura adaptable al iframe, scroll interno por columna,
+  // sin logo grande ni footer, header reducido al toggle ES|EN. Esto evita
+  // tener que ajustar pixeles uno por uno cada vez que el contenido crece.
+  const [isEmbedded] = useState(() => {
+    if (typeof window === "undefined") return false;
+    try { return window.self !== window.top; } catch { return true; /* cross-origin → asumimos embebido */ }
+  });
+
   // ── Auto-resize del iframe en el parent (Webflow / atoloncartagena) ──
-  // Postea la altura real del contenido cada vez que cambia. El parent
-  // debe escuchar message con type === "atolon-booking-height" y ajustar
-  // el style.height del iframe. Si no estamos embebidos no hace nada.
+  // Cuando NO usamos altura adaptable (iframe con height fijo legacy), el
+  // parent puede escuchar `atolon-booking-height` para ajustar el iframe.
+  // Con el nuevo layout (height: 100vh) este postMessage queda como fallback
+  // por si algún parent aún no migró a height calc(100vh - X).
   useEffect(() => {
-    if (window.self === window.top) return;
+    if (!isEmbedded) return;
     const post = () => {
       const h = Math.max(
         document.documentElement.scrollHeight,
@@ -182,7 +193,20 @@ export default function BookingPopup() {
     ro.observe(document.body);
     window.addEventListener("load", post);
     return () => { ro.disconnect(); window.removeEventListener("load", post); };
-  }, []);
+  }, [isEmbedded]);
+
+  // En modo embebido, fijar html/body a 100vh sin scroll para que el iframe
+  // dicte la altura y nuestro layout flex-fill se acomode adentro.
+  useEffect(() => {
+    if (!isEmbedded) return;
+    const prev = { html: document.documentElement.style.cssText, body: document.body.style.cssText };
+    document.documentElement.style.cssText += ";height:100%;overflow:hidden;";
+    document.body.style.cssText += ";height:100%;overflow:hidden;margin:0;";
+    return () => {
+      document.documentElement.style.cssText = prev.html;
+      document.body.style.cssText = prev.body;
+    };
+  }, [isEmbedded]);
 
   // Support both /booking?tipo=after-island and /booking/after-island
   const pathSlug = window.location.pathname.replace(/^\/booking\/?/, "").split("?")[0] || "";
@@ -937,17 +961,17 @@ export default function BookingPopup() {
   // ─── Shared UI helpers ──────────────────────────────────────────────────────
   function PaxRow({ label, sub, val, onDec, onInc, min = 0 }) {
     return (
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 0", borderBottom: `1px solid ${C.divider}` }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "7px 0", borderBottom: `1px solid ${C.divider}` }}>
         <div>
-          <div style={{ fontSize: 14, fontWeight: 600, color: C.text }}>{label}</div>
-          {sub && <div style={{ fontSize: 12, color: C.textLight, marginTop: 1 }}>{sub}</div>}
+          <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{label}</div>
+          {sub && <div style={{ fontSize: 11, color: C.textLight, marginTop: 1 }}>{sub}</div>}
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           <button onClick={onDec} disabled={val <= min}
-            style={{ width: 32, height: 32, borderRadius: "50%", border: `1.5px solid ${val <= min ? C.border : C.primary}`, background: "white", color: val <= min ? C.border : C.primary, fontSize: 18, lineHeight: 1, cursor: val <= min ? "not-allowed" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, flexShrink: 0 }}>−</button>
-          <span style={{ fontSize: 16, fontWeight: 700, color: C.text, minWidth: 20, textAlign: "center" }}>{val}</span>
+            style={{ width: 28, height: 28, borderRadius: "50%", border: `1.5px solid ${val <= min ? C.border : C.primary}`, background: "white", color: val <= min ? C.border : C.primary, fontSize: 16, lineHeight: 1, cursor: val <= min ? "not-allowed" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, flexShrink: 0 }}>−</button>
+          <span style={{ fontSize: 15, fontWeight: 700, color: C.text, minWidth: 18, textAlign: "center" }}>{val}</span>
           <button onClick={onInc}
-            style={{ width: 32, height: 32, borderRadius: "50%", border: `1.5px solid ${C.primary}`, background: "white", color: C.primary, fontSize: 18, lineHeight: 1, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, flexShrink: 0 }}>+</button>
+            style={{ width: 28, height: 28, borderRadius: "50%", border: `1.5px solid ${C.primary}`, background: "white", color: C.primary, fontSize: 16, lineHeight: 1, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, flexShrink: 0 }}>+</button>
         </div>
       </div>
     );
@@ -1020,12 +1044,26 @@ export default function BookingPopup() {
     // En mobile (flexDirection: column): primero columna izq, luego derecha,
     // luego CTA — flujo lineal.
     return (
-      <>
-        <div style={{ display: "flex", flexDirection: isDesktop ? "row" : "column", gap: isDesktop ? 24 : 0, alignItems: "flex-start" }}>
+      <div style={{
+        // En modo embebido: ocupa toda la altura del card padre (que a su vez
+        // ocupa 100vh del iframe). Flex column con overflow hidden para que el
+        // área de columnas tome el espacio restante después del CTA fijo.
+        // En standalone: height auto, sin overflow hidden — contenido fluye.
+        ...(isEmbedded ? { height: "100%", display: "flex", flexDirection: "column", overflow: "hidden" } : {}),
+      }}>
+        <div style={{
+          display: "flex", flexDirection: isDesktop ? "row" : "column",
+          gap: isDesktop ? 20 : 0, alignItems: "stretch",
+          ...(isEmbedded ? { flex: 1, minHeight: 0, overflow: "hidden" } : {}),
+        }}>
 
           {/* ═════════ LEFT COLUMN ═════════
               Carousel → What's Included → Producto + precio → Participants → Order Summary */}
-          <div style={{ flex: 1, minWidth: 0, width: isDesktop ? undefined : "100%", display: "flex", flexDirection: "column" }}>
+          <div style={{
+            flex: 1, minWidth: 0, width: isDesktop ? undefined : "100%",
+            display: "flex", flexDirection: "column",
+            ...(isEmbedded ? { overflowY: "auto", paddingRight: isDesktop ? 4 : 0 } : {}),
+          }}>
 
         {/* Photo gallery — solo en mobile. En desktop ocupaba ~340px que no
             tenemos en el iframe Sky de 680px; las fotos pueden vivir en la
@@ -1143,33 +1181,38 @@ export default function BookingPopup() {
           </div>
         </div>
 
-        {/* Order summary — final de columna izquierda */}
-        <div style={{ background: C.bgCard, borderRadius: 12, padding: isDesktop ? "10px 14px" : "16px 18px", marginBottom: isDesktop ? 0 : 20, border: `1px solid ${C.border}` }}>
-          <h3 style={{ fontSize: 14, fontWeight: 700, color: C.text, marginBottom: 12, borderBottom: `2px solid ${C.accent}`, paddingBottom: 8, display: "inline-block" }}>{isEN ? "Order summary" : "Comprobar el pedido"}</h3>
-          <div style={{ fontSize: 14, fontWeight: 600, color: C.text, marginBottom: 10 }}>{isEN && product.tipo_en ? product.tipo_en : product.tipo}</div>
+        {/* Order summary — compactado para caber en iframe 680px */}
+        <div style={{ background: C.bgCard, borderRadius: 10, padding: isDesktop ? "8px 12px" : "14px 16px", marginBottom: isDesktop ? 0 : 20, border: `1px solid ${C.border}` }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6, paddingBottom: 4, borderBottom: `1.5px solid ${C.accent}` }}>
+            <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{isEN ? "Order summary" : "Resumen"}</span>
+            <span style={{ fontSize: 12, fontWeight: 600, color: C.textMid }}>{isEN && product.tipo_en ? product.tipo_en : product.tipo}</span>
+          </div>
           {[
             selDate && [isEN ? "Date" : "Fecha", fmtDate(selDate, langQ)],
-            selSalida && [isEN ? "Departure" : "Salida", `${isEN ? "Departure" : "Salida"} ${selSalida.hora || selSalida.id}`],
+            selSalida && [isEN ? "Departure" : "Salida", `${selSalida.hora || selSalida.id}`],
             [isEN ? `Adults (${paxA}×)` : `Adultos (${paxA}×)`, COP(product.precio * paxA)],
             (!product.noNinos && paxN > 0) && [isEN ? `Children (${paxN}×)` : `Niños (${paxN}×)`, COP((product.precioNino || 0) * paxN)],
             (!product.noNinos && paxI > 0) && [isEN ? `Infants (${paxI}×)` : `Infantes (${paxI}×)`, isEN ? "Free" : "Gratis"],
           ].filter(Boolean).map(([k, v], i) => (
-            <div key={i} style={{ display: "flex", justifyContent: "space-between", fontSize: 13, color: C.textMid, padding: "4px 0" }}>
+            <div key={i} style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: C.textMid, padding: "2px 0" }}>
               <span>{k}</span><span>{v}</span>
             </div>
           ))}
-          <div style={{ borderTop: `1px solid ${C.border}`, marginTop: 10, paddingTop: 10, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <span style={{ fontSize: 14, fontWeight: 700, color: C.text }}>Total:</span>
-            <span style={{ fontSize: 18, fontWeight: 800, color: C.accent }}>{COP(total)}</span>
+          <div style={{ borderTop: `1px solid ${C.border}`, marginTop: 6, paddingTop: 6, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Total:</span>
+            <span style={{ fontSize: 16, fontWeight: 800, color: C.accent }}>{COP(total)}</span>
           </div>
-          <div style={{ fontSize: 11, color: C.textLight, marginTop: 6 }}>{isEN ? "Prices in COP (Colombian Peso)" : "Precios en COP (Peso colombiano)"}</div>
         </div>
 
           </div>{/* /LEFT COLUMN */}
 
           {/* ═════════ RIGHT COLUMN ═════════
               Group banner (si aplica) → Calendar → Salidas (condicional) */}
-          <div style={{ flex: 1, minWidth: 0, width: isDesktop ? undefined : "100%", display: "flex", flexDirection: "column" }}>
+          <div style={{
+            flex: 1, minWidth: 0, width: isDesktop ? undefined : "100%",
+            display: "flex", flexDirection: "column",
+            ...(isEmbedded ? { overflowY: "auto", paddingRight: isDesktop ? 4 : 0 } : {}),
+          }}>
 
         {/* Group event banner */}
         {grupoEvt && (
@@ -1377,12 +1420,17 @@ export default function BookingPopup() {
           </div>{/* /RIGHT COLUMN */}
         </div>{/* /FLEX 2-COL */}
 
-        {/* CTA button — full width, debajo de las dos columnas */}
+        {/* CTA button — full width, debajo de las dos columnas. En modo
+            embebido es flex-shrink: 0 (siempre visible al fondo del card),
+            en standalone fluye normal después del 2-col. */}
         {(() => {
           const afterOk = product.noSalida ? (embarcacion.trim() && horaLlegada) : true;
           const ready = selDate && (selSalida || grupoLock || product.noSalida) && paxA >= product.minA && afterOk;
           return (
-            <div style={{ marginTop: isDesktop ? 10 : 0 }}>
+            <div style={{
+              marginTop: isDesktop ? 10 : 8,
+              ...(isEmbedded ? { flexShrink: 0, paddingTop: 8, borderTop: `1px solid ${C.border}` } : {}),
+            }}>
               <button
                 onClick={() => { if (ready) { gtmBeginCheckout(product, paxTotal, total); setStep(2); AtolanTrack.evento("begin_checkout", { producto: product?.tipo, fecha: selDate, pax: paxTotal, valor: total }, "booking"); AtolanTrack.setCurrentStep(2); } }}
                 disabled={!ready}
@@ -1396,19 +1444,19 @@ export default function BookingPopup() {
                 {isEN ? "Book Now →" : "Reservar →"}
               </button>
               {!selDate && (
-                <p style={{ textAlign: "center", fontSize: 12, color: C.textLight, marginTop: 8 }}>
+                <p style={{ textAlign: "center", fontSize: 11, color: C.textLight, marginTop: 6, marginBottom: 0 }}>
                   {isEN ? "Please select a date to continue" : "Selecciona una fecha para continuar"}
                 </p>
               )}
               {selDate && !selSalida && !loadingSal && (
-                <p style={{ textAlign: "center", fontSize: 12, color: C.textLight, marginTop: 8 }}>
+                <p style={{ textAlign: "center", fontSize: 11, color: C.textLight, marginTop: 6, marginBottom: 0 }}>
                   {isEN ? "Please select a departure time" : "Selecciona un horario de salida"}
                 </p>
               )}
             </div>
           );
         })()}
-      </>
+      </div>
     );
   }
 
@@ -1778,50 +1826,91 @@ export default function BookingPopup() {
   }
 
   // ─── Layout ─────────────────────────────────────────────────────────────────
+  const LangToggle = (props = {}) => (
+    <div style={{ display: "flex", gap: 4, ...(props.style || {}) }}>
+      {["es","en"].map(l => (
+        <button key={l} onClick={() => switchLang(l)}
+          style={{ fontSize: 11, fontWeight: 700, padding: "4px 10px", borderRadius: 6, background: langQ === l ? C.primary : "white", color: langQ === l ? "white" : C.textMid, border: `1px solid ${langQ === l ? C.primary : C.border}`, cursor: "pointer" }}>
+          {l.toUpperCase()}
+        </button>
+      ))}
+    </div>
+  );
+
+  const stepContent = (
+    <>
+      {step === 0 && ProductSelector()}
+      {step === 1 && product && BookingStep()}
+      {step === 2 && product && InfoStep()}
+      {step === 3 && product && UpsellStep()}
+    </>
+  );
+
+  const zohoBlock = zohoWidget ? (
+    <ZohoPaymentWidget
+      session={zohoWidget.session}
+      address={zohoWidget.address}
+      description={zohoWidget.description}
+      invoiceNumber={zohoWidget.invoiceNumber}
+      business="Atolón Beach Club"
+      onSuccess={zohoWidget.onSuccess}
+      onError={zohoWidget.onError}
+      onClose={zohoWidget.onClose}
+    />
+  ) : null;
+
+  // ── Modo EMBEDDED (iframe Webflow / atoloncartagena.com) ──
+  // El widget toma 100vh del iframe y reparte: mini-header + área principal
+  // con scroll interno + (CTA fijo lo maneja cada step internamente con
+  // flex: 1 + overflow hidden en el contenedor padre). Esto hace que el
+  // contenido se adapte a la altura que sea (680px, 760px, 900px, etc.)
+  // sin tweaks de pixel.
+  if (isEmbedded) {
+    return (
+      <div style={{ height: "100vh", background: "#F1F5F9", fontFamily: "'Segoe UI', Arial, sans-serif", color: C.text, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+        {/* Mini header — solo lang toggle, ~36px */}
+        <div style={{ flexShrink: 0, display: "flex", justifyContent: "flex-end", alignItems: "center", padding: "6px 12px", background: "white", borderBottom: `1px solid ${C.border}` }}>
+          <LangToggle />
+        </div>
+        {/* Card principal — fills remaining height, contiene el step actual.
+            Step 1 maneja su propio overflow (scroll por columna + CTA fijo).
+            Steps 2/3 son una sola columna: dejamos overflow auto en la card
+            por si el contenido excede el iframe. */}
+        <div style={{ flex: 1, minHeight: 0, padding: 10, boxSizing: "border-box", overflow: "hidden" }}>
+          <div style={{ height: "100%", background: C.bg, borderRadius: 12, padding: isDesktop ? "12px 14px" : "10px 12px", boxShadow: "0 2px 8px rgba(0,0,0,0.06)", border: `1px solid ${C.border}`, display: "flex", flexDirection: "column", overflow: step === 1 ? "hidden" : "auto" }}>
+            {stepContent}
+          </div>
+        </div>
+        {zohoBlock}
+      </div>
+    );
+  }
+
+  // ── Modo STANDALONE (URL directa atolon.co/booking/<slug>) ──
   return (
     <div style={{ minHeight: "100vh", background: "#F1F5F9", fontFamily: "'Segoe UI', Arial, sans-serif", color: C.text, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: isDesktop ? "6px 12px 6px" : "24px 16px 60px" }}>
       <div style={{ width: "100%", maxWidth: isDesktop ? 1000 : 480 }}>
 
-        {/* Brand header — en desktop SIN logo (la página padre de Sky ya
-            tiene navbar con logo). Solo se mantiene el toggle ES/EN
-            alineado a la derecha. En mobile sigue con logo grande. */}
+        {/* Brand header — en desktop sin logo, en mobile con logo grande */}
         {isDesktop ? (
           <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 6, height: 28 }}>
-            <div style={{ display: "flex", gap: 4 }}>
-              {["es","en"].map(l => (
-                <button key={l} onClick={() => switchLang(l)}
-                  style={{ fontSize: 11, fontWeight: 700, padding: "4px 10px", borderRadius: 6, background: langQ === l ? C.primary : "white", color: langQ === l ? "white" : C.textMid, border: `1px solid ${langQ === l ? C.primary : C.border}`, cursor: "pointer" }}>
-                  {l.toUpperCase()}
-                </button>
-              ))}
-            </div>
+            <LangToggle />
           </div>
         ) : (
           <div style={{ position: "relative", textAlign: "center", marginBottom: 20 }}>
             <a href="https://www.atoloncartagena.com" target="_blank" rel="noopener noreferrer">
               <img src="/atolon-peces.png" alt="Atolon Beach Club" style={{ height: 195, objectFit: "contain", display: "block", margin: "0 auto" }} />
             </a>
-            <div style={{ position: "absolute", top: "50%", right: 0, transform: "translateY(-50%)", display: "flex", gap: 4 }}>
-              {["es","en"].map(l => (
-                <button key={l} onClick={() => switchLang(l)}
-                  style={{ fontSize: 11, fontWeight: 700, padding: "3px 9px", borderRadius: 6, background: langQ === l ? C.primary : "white", color: langQ === l ? "white" : C.textMid, border: `1px solid ${langQ === l ? C.primary : C.border}`, cursor: "pointer" }}>
-                  {l.toUpperCase()}
-                </button>
-              ))}
-            </div>
+            <LangToggle style={{ position: "absolute", top: "50%", right: 0, transform: "translateY(-50%)" }} />
           </div>
         )}
 
-        {/* Main card — padding compacto en desktop para entrar en 680px */}
+        {/* Main card */}
         <div style={{ background: C.bg, borderRadius: 16, padding: isDesktop ? "12px 16px" : "24px 24px", boxShadow: "0 4px 24px rgba(0,0,0,0.07)", border: `1px solid ${C.border}` }}>
-          {step === 0 && ProductSelector()}
-          {step === 1 && product && BookingStep()}
-          {step === 2 && product && InfoStep()}
-          {step === 3 && product && UpsellStep()}
+          {stepContent}
         </div>
 
-        {/* Footer — oculto en desktop (la página padre ya tiene su propio footer);
-            en mobile sigue mostrándose */}
+        {/* Footer — solo en mobile */}
         {!isDesktop && (
           <div style={{ textAlign: "center", marginTop: 16, fontSize: 11, color: C.textLight, lineHeight: 1.9 }}>
             <div>Atolon Beach Club</div>
@@ -1843,19 +1932,7 @@ export default function BookingPopup() {
         </div>
       </div>
 
-      {/* Widget de Zoho Payments — se muestra cuando hay sesión activa */}
-      {zohoWidget && (
-        <ZohoPaymentWidget
-          session={zohoWidget.session}
-          address={zohoWidget.address}
-          description={zohoWidget.description}
-          invoiceNumber={zohoWidget.invoiceNumber}
-          business="Atolón Beach Club"
-          onSuccess={zohoWidget.onSuccess}
-          onError={zohoWidget.onError}
-          onClose={zohoWidget.onClose}
-        />
-      )}
+      {zohoBlock}
     </div>
   );
 }
