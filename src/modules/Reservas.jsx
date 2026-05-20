@@ -3145,7 +3145,7 @@ function TabCalendario({ salidas, cierres, embarcaciones }) {
                       <div style={{ marginBottom: 8 }}>
                         <div style={{ fontSize: 10, color: "rgba(255,255,255,0.35)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 }}>Sin Lancha</div>
                         <div style={{ display: "flex", gap: 4, justifyContent: "center", flexWrap: "wrap" }}>
-                          {[15, 20, 40, 50].map(n => (
+                          {[10, 15, 20, 40, 50].map(n => (
                             <button key={n} onClick={(e) => { e.stopPropagation(); addCapacidadVirtual(selectedDay, s.id, n); }}
                               style={{ padding: "4px 10px", borderRadius: 6, background: B.sky + "22", color: B.sky, border: `1px solid ${B.sky}44`, fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
                               +{n}
