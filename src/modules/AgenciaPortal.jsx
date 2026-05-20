@@ -393,6 +393,24 @@ function NuevaReserva({ agencia, user, onCreated, vistaPrecios = "ambos" }) {
     <div style={{ background: B.navyMid, borderRadius: 12, padding: 24 }}>
       <h3 style={{ fontSize: 16, color: B.sand, marginBottom: 8 }}>Nueva Reserva</h3>
 
+      {/* Banner de premios disponibles — al ojo desde el inicio */}
+      {premiosDisponibles.length > 0 && (() => {
+        const totalSaldo = premiosDisponibles.reduce((s, p) => s + p.saldo, 0);
+        return (
+          <div style={{ background: `linear-gradient(135deg, ${B.sand}33 0%, ${B.success}33 100%)`, border: `1.5px solid ${B.sand}66`, borderRadius: 12, padding: "12px 16px", marginBottom: 16, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+            <div style={{ fontSize: 28 }}>🎁</div>
+            <div style={{ flex: 1, minWidth: 200 }}>
+              <div style={{ fontSize: 13, fontWeight: 800, color: B.sand }}>
+                Tienes {totalSaldo} pasadía{totalSaldo !== 1 ? "s" : ""} gratis disponible{totalSaldo !== 1 ? "s" : ""}
+              </div>
+              <div style={{ fontSize: 11, color: "rgba(255,255,255,0.55)", marginTop: 2 }}>
+                {premiosDisponibles.map(p => `${p.incentivo.nombre} (${p.saldo})`).join(" · ")} — selecciónalas al elegir método de pago.
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Progress */}
       <div style={{ display: "flex", gap: 8, marginBottom: 24 }}>
         {[1, 2].map(s => (
@@ -2635,7 +2653,7 @@ function SetPasswordScreen({ user, onDone }) {
 // ═══════════════════════════════════════════════
 export default function AgenciaPortal() {
   const { isMobile, isTablet } = useDevice();
-  const MOBILE_TABS = ["reservar", "historial", "qr", "info", "media"];
+  const MOBILE_TABS = ["reservar", "historial", "incentivos", "qr", "info", "media"];
   const [session, setSession] = useState(null);
   const [tab, setTab]         = useState("reservar");
   const [refreshKey, setRefreshKey] = useState(0);
@@ -2714,7 +2732,7 @@ export default function AgenciaPortal() {
             ["qr", "Link / QR"],
             ["grupos", "🎪 Grupos"],
             ...(!isAdmin ? [["puntos", "🏆 Mis Puntos"]] : []),
-            ...(isAdmin ? [["incentivos", "🎯 Incentivos"]] : []),
+            ["incentivos", "🎯 Incentivos"],
             ["info", "📢 Novedades"],
             ["media", "📲 Redes Sociales"],
             ...(isAdmin ? [["preferencias", "⚙ Preferencias"]] : []),
@@ -2732,7 +2750,7 @@ export default function AgenciaPortal() {
         {tab === "qr" && <QRSection agencia={agencia} />}
         {tab === "grupos" && <GruposPortal agencia={agencia} />}
         {tab === "puntos" && !isAdmin && <PuntosVendedor user={user} agencia={agencia} />}
-        {tab === "incentivos" && isAdmin && <IncentivosPortal agencia={agencia} />}
+        {tab === "incentivos" && <IncentivosPortal agencia={agencia} />}
         {tab === "info"  && <InfoPortal />}
         {tab === "media" && <MediaPortal />}
         {tab === "preferencias" && isAdmin && <PreferenciasAgencia agencia={agencia} onSaved={handlePrefsSaved} vendedor={vendedor} />}
