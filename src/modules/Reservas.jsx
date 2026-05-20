@@ -432,7 +432,7 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
       supabase.from("cierres").select("tipo, salidas, activo").eq("fecha", form.fecha).eq("activo", true),
       // Grupos que comparten lancha con pasadías en esta fecha
       supabase.from("eventos").select("pax, pasadias_org, comparte_lancha_pasadias, salida_compartida_id")
-        .eq("fecha", form.fecha).eq("comparte_lancha_pasadias", true).neq("stage", "Realizado"),
+        .eq("fecha", form.fecha).eq("comparte_lancha_pasadias", true).eq("stage", "Confirmado"),
     ]).then(([resR, ovrR, cieR, grpR]) => {
       const pmap = {};
       salidaList.forEach(s => (pmap[s.id] = 0));
@@ -2024,7 +2024,7 @@ function ReservaModal({ onClose, onSave, isMobile, salidaList = [], aliadoList =
       supabase.from("salidas_override").select("*").eq("fecha", form.fecha),
       supabase.from("cierres").select("tipo, salidas, activo, motivo").eq("fecha", form.fecha).eq("activo", true).limit(1),
       supabase.from("eventos").select("pax, pasadias_org, comparte_lancha_pasadias, salida_compartida_id")
-        .eq("fecha", form.fecha).eq("comparte_lancha_pasadias", true).neq("stage", "Realizado"),
+        .eq("fecha", form.fecha).eq("comparte_lancha_pasadias", true).eq("stage", "Confirmado"),
     ]).then(([resR, ovrR, cieR, grpR]) => {
       const map = {};
       salidaList.forEach(s => (map[s.id] = 0));
@@ -2733,7 +2733,7 @@ function TabCalendario({ salidas, cierres, embarcaciones }) {
       supabase.from("reservas").select("fecha, salida_id, pax").gte("fecha", desde).lte("fecha", hasta).neq("estado", "cancelado"),
       supabase.from("eventos")
         .select("id, nombre, tipo, pax, fecha, salidas_grupo, modalidad_pago, pasadias_org, stage, comparte_lancha_pasadias, salida_compartida_id, categoria")
-        .gte("fecha", desde).lte("fecha", hasta),
+        .gte("fecha", desde).lte("fecha", hasta).eq("stage", "Confirmado"),
     ]).then(([resR, evR]) => {
       const map = {};
       (resR.data || []).forEach(r => {
@@ -3542,8 +3542,8 @@ export default function Reservas() {
       supabase.from("reservas").select("abono").is("fecha_pago", null).gte("created_at", todayStart).lt("created_at", tomorrowStart).gt("abono", 0).neq("estado", "cancelado"),
       supabase.from("b2b_convenios").select("aliado_id, tipo_pasadia, tarifa_neta, tarifa_neta_nino").eq("activo", true),
       // Grupos hoy y mañana — incluidos en Promise.all para evitar flash de pax incorrecto
-      supabase.from("eventos").select(GRUPO_FIELDS).eq("fecha", today).neq("stage", "Realizado"),
-      supabase.from("eventos").select(GRUPO_FIELDS).eq("fecha", tomorrow).neq("stage", "Realizado"),
+      supabase.from("eventos").select(GRUPO_FIELDS).eq("fecha", today).eq("stage", "Confirmado"),
+      supabase.from("eventos").select(GRUPO_FIELDS).eq("fecha", tomorrow).eq("stage", "Confirmado"),
       supabase.from("muelle_llegadas").select("id, fecha, embarcacion_nombre, pax_total, pax_a, pax_n, total_cobrado, metodo_pago, tipo, hora_llegada, estado, matricula, reserva_id, excluir_kpis").eq("fecha", today).neq("tipo", "lancha_atolon").order("hora_llegada"),
       supabase.from("muelle_llegadas").select("id, fecha, embarcacion_nombre, pax_total, pax_a, pax_n, total_cobrado, metodo_pago, tipo, hora_llegada, estado, matricula, reserva_id, excluir_kpis").eq("fecha", tomorrow).neq("tipo", "lancha_atolon").order("hora_llegada"),
     ]);
@@ -3629,7 +3629,7 @@ export default function Reservas() {
         .then(({ data }) => setReservasFecha((data || []).map(mapRow)));
       // Grupos para esa fecha
       supabase.from("eventos").select("id, nombre, tipo, pax, fecha, pasadias_org, stage, modalidad_pago, aliado_id, categoria, comparte_lancha_pasadias, salida_compartida_id")
-        .eq("fecha", fechaFiltro).neq("stage", "Realizado")
+        .eq("fecha", fechaFiltro).eq("stage", "Confirmado")
         .then(({ data }) => setGruposFecha((data || []).filter(e => e.categoria === "grupo" || (!e.categoria && e.aliado_id))));
       // Llegadas (embarcaciones) para esa fecha
       supabase.from("muelle_llegadas").select("id, fecha, embarcacion_nombre, pax_total, pax_a, pax_n, total_cobrado, metodo_pago, tipo, hora_llegada, estado, matricula, reserva_id")
