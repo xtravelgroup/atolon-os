@@ -1999,6 +1999,46 @@ function IncentivosAgencia({ aliadoId }) {
   const [form, setForm] = useState(emptyForm);
   const f = (k, v) => setForm(p => ({ ...p, [k]: v }));
 
+  // ── Canje manual (admin) ───────────────────────────────────────────────
+  const [canjeFor,        setCanjeFor]        = useState(null);   // { inc, saldo }
+  const [canjeForm,       setCanjeForm]       = useState({ reserva_id: "", pasadias_usadas: 1, nota: "" });
+  const [reservasRecien,  setReservasRecien]  = useState([]);     // últimas reservas del aliado
+  const [savingCanje,     setSavingCanje]     = useState(false);
+
+  const abrirCanje = async (inc, saldo) => {
+    setCanjeFor({ inc, saldo });
+    setCanjeForm({ reserva_id: "", pasadias_usadas: 1, nota: "" });
+    // Traer últimas 30 reservas no canceladas del aliado para el dropdown
+    const desde = new Date(Date.now() - 90 * 86400000).toISOString().slice(0, 10);
+    const { data } = await supabase.from("reservas")
+      .select("id, nombre, fecha, tipo, pax, total, estado")
+      .eq("aliado_id", aliadoId)
+      .neq("estado", "cancelado")
+      .gte("fecha", desde)
+      .order("fecha", { ascending: false })
+      .limit(30);
+    setReservasRecien(data || []);
+  };
+
+  const guardarCanje = async () => {
+    if (!canjeFor || savingCanje) return;
+    const cant = Math.max(1, Math.min(Number(canjeForm.pasadias_usadas) || 1, canjeFor.saldo));
+    setSavingCanje(true);
+    const { error } = await supabase.from("b2b_premios_canjes").insert({
+      id:                `CNJ-${Date.now()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`,
+      aliado_id:         aliadoId,
+      incentivo_id:      canjeFor.inc.id,
+      reserva_id:        canjeForm.reserva_id || null,
+      pasadias_usadas:   cant,
+      fecha:             new Date().toISOString().slice(0, 10),
+      nota:              (canjeForm.nota || "").trim() || `Canje manual (admin) — ${canjeFor.inc.nombre}`,
+    });
+    setSavingCanje(false);
+    if (error) { alert("Error al registrar canje: " + error.message); return; }
+    setCanjeFor(null);
+    fetchAll();
+  };
+
   const fetchAll = useCallback(async () => {
     if (!supabase) { setLoading(false); return; }
     setLoading(true);
@@ -2158,15 +2198,24 @@ function IncentivosAgencia({ aliadoId }) {
                   <div style={{ fontSize: 10, color: "rgba(255,255,255,0.35)" }}>{fmtMeta(inc.tipo, p.actual)} / {fmtMeta(inc.tipo, inc.meta_valor)}</div>
                 </div>
               )}
-              {esGlobal ? (
-                <button onClick={() => quitarGlobal(inc)} style={{ background: B.danger + "22", color: B.danger, border: `1px solid ${B.danger}44`, borderRadius: 6, padding: "4px 10px", fontSize: 11, cursor: "pointer", fontWeight: 600 }}>
-                  ✕ Quitar
-                </button>
-              ) : (
-                <button onClick={() => toggleActivo(inc.id, inc.activo)} style={{ background: inc.activo ? B.danger + "22" : B.success + "22", color: inc.activo ? B.danger : B.success, border: "none", borderRadius: 6, padding: "4px 10px", fontSize: 11, cursor: "pointer" }}>
-                  {inc.activo ? "Desactivar" : "Activar"}
-                </button>
-              )}
+              <div style={{ display: "flex", flexDirection: "column", gap: 4, alignItems: "flex-end" }}>
+                {esAcum && p?.saldo > 0 && (
+                  <button onClick={() => abrirCanje(inc, p.saldo)}
+                    style={{ background: B.success + "22", color: B.success, border: `1px solid ${B.success}66`, borderRadius: 6, padding: "4px 10px", fontSize: 11, cursor: "pointer", fontWeight: 700, whiteSpace: "nowrap" }}
+                    title={`Marcar como usada 1 pasadía de las ${p.saldo} disponibles`}>
+                    🎁 Canjear
+                  </button>
+                )}
+                {esGlobal ? (
+                  <button onClick={() => quitarGlobal(inc)} style={{ background: B.danger + "22", color: B.danger, border: `1px solid ${B.danger}44`, borderRadius: 6, padding: "4px 10px", fontSize: 11, cursor: "pointer", fontWeight: 600 }}>
+                    ✕ Quitar
+                  </button>
+                ) : (
+                  <button onClick={() => toggleActivo(inc.id, inc.activo)} style={{ background: inc.activo ? B.danger + "22" : B.success + "22", color: inc.activo ? B.danger : B.success, border: "none", borderRadius: 6, padding: "4px 10px", fontSize: 11, cursor: "pointer" }}>
+                    {inc.activo ? "Desactivar" : "Activar"}
+                  </button>
+                )}
+              </div>
             </div>
             {pct !== null && (
               <>
@@ -2234,6 +2283,67 @@ function IncentivosAgencia({ aliadoId }) {
           </div>
         </div>
       )}
+
+      {/* ── Modal de canje manual ─────────────────────────────────────── */}
+      {canjeFor && (() => {
+        const { inc, saldo } = canjeFor;
+        const maxCant = Math.max(1, saldo);
+        return (
+          <div onClick={e => e.target === e.currentTarget && setCanjeFor(null)}
+            style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.75)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 999, padding: 20 }}>
+            <div style={{ background: B.navyMid, borderRadius: 16, padding: 24, width: 480, maxWidth: "100%", maxHeight: "90vh", overflowY: "auto", boxShadow: "0 20px 60px rgba(0,0,0,0.6)" }}>
+              <div style={{ marginBottom: 18 }}>
+                <h3 style={{ fontSize: 18, fontWeight: 800, color: "#fff", margin: 0 }}>🎁 Canjear premio</h3>
+                <div style={{ fontSize: 12, color: B.sand, marginTop: 4 }}>{inc.nombre} · {saldo} disponible{saldo !== 1 ? "s" : ""}</div>
+                {inc.acum_beneficio_desc && (
+                  <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginTop: 2 }}>Premio: {inc.acum_beneficio_desc}</div>
+                )}
+              </div>
+
+              <label style={LS}>Reserva a la que se aplica (opcional)</label>
+              <select value={canjeForm.reserva_id} onChange={e => setCanjeForm(c => ({ ...c, reserva_id: e.target.value }))} style={IS}>
+                <option value="">— Sin reserva (canje libre) —</option>
+                {reservasRecien.map(r => (
+                  <option key={r.id} value={r.id}>
+                    {r.fecha} · {r.id.slice(0, 18)} · {r.nombre || "—"} · {r.tipo} · {r.pax} pax
+                  </option>
+                ))}
+              </select>
+              <div style={{ fontSize: 10, color: "rgba(255,255,255,0.35)", marginTop: 4 }}>
+                Últimas 30 reservas del aliado (90 días). Dejá vacío si no querés vincularlo a una reserva específica.
+              </div>
+
+              <div style={{ marginTop: 14 }}>
+                <label style={LS}>Cantidad a canjear</label>
+                <input type="number" min={1} max={maxCant}
+                  value={canjeForm.pasadias_usadas}
+                  onChange={e => setCanjeForm(c => ({ ...c, pasadias_usadas: e.target.value }))}
+                  style={IS} />
+                <div style={{ fontSize: 10, color: "rgba(255,255,255,0.35)", marginTop: 4 }}>Máx: {maxCant}</div>
+              </div>
+
+              <div style={{ marginTop: 14 }}>
+                <label style={LS}>Nota (opcional)</label>
+                <textarea value={canjeForm.nota}
+                  onChange={e => setCanjeForm(c => ({ ...c, nota: e.target.value }))}
+                  rows={2} placeholder="Motivo del canje, contexto, etc."
+                  style={{ ...IS, resize: "vertical", fontFamily: "inherit" }} />
+              </div>
+
+              <div style={{ display: "flex", gap: 10, marginTop: 22, justifyContent: "flex-end" }}>
+                <button onClick={() => setCanjeFor(null)}
+                  style={{ background: "transparent", border: `1px solid ${B.navyLight}`, color: "rgba(255,255,255,0.55)", borderRadius: 8, padding: "10px 18px", fontSize: 12, cursor: "pointer" }}>
+                  Cancelar
+                </button>
+                <button onClick={guardarCanje} disabled={savingCanje}
+                  style={{ background: B.success, color: "#fff", border: "none", borderRadius: 8, padding: "10px 22px", fontSize: 13, fontWeight: 800, cursor: savingCanje ? "default" : "pointer" }}>
+                  {savingCanje ? "Guardando…" : "✓ Registrar canje"}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }
