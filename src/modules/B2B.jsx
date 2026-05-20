@@ -2014,19 +2014,52 @@ function IncentivosAgencia({ aliadoId }) {
     setIncentivos(inc);
 
     const prog = {};
+    // Cargar canjes una sola vez para los saldos de acumulación
+    const { data: canjes } = await supabase.from("b2b_premios_canjes")
+      .select("incentivo_id, pasadias_usadas").eq("aliado_id", aliadoId);
     for (const i of inc) {
-      if (!i.fecha_inicio || !i.fecha_fin || i.tipo === "especial") continue;
-      const { data: resData } = await supabase.from("reservas")
-        .select("pax, total")
-        .eq("aliado_id", aliadoId)
-        .neq("estado", "cancelado")
-        .gte("fecha", i.fecha_inicio)
-        .lte("fecha", i.fecha_fin);
-      const pax     = (resData || []).reduce((s, r) => s + (r.pax || 0), 0);
-      const revenue = (resData || []).reduce((s, r) => s + (r.total || 0), 0);
-      const reservas= (resData || []).length;
-      const actual  = i.tipo === "meta_pax" ? pax : i.tipo === "meta_revenue" ? revenue : reservas;
-      prog[i.id] = { actual, pct: Math.min(100, Math.round((actual / (i.meta_valor || 1)) * 100)) };
+      if (i.tipo === "acumulacion") {
+        // Acumulación: contar pax (filtrando día de semana si aplica),
+        // excluir cortesías y canal GRUPO, calcular bloques ganados y saldo.
+        const fi = i.fecha_inicio || "1900-01-01";
+        const ff = i.fecha_fin    || "9999-12-31";
+        const { data: resData } = await supabase.from("reservas")
+          .select("pax, fecha")
+          .eq("aliado_id", aliadoId)
+          .neq("estado", "cancelado")
+          .neq("canal", "Cortesía").neq("forma_pago", "Cortesía")
+          .neq("canal", "GRUPO")
+          .gte("fecha", fi).lte("fecha", ff);
+        let filtered = resData || [];
+        if (i.acum_dia_semana !== null && i.acum_dia_semana !== undefined) {
+          filtered = filtered.filter(r => new Date(r.fecha + "T12:00:00").getDay() === i.acum_dia_semana);
+        }
+        const totalPax = filtered.reduce((s, r) => s + (r.pax || 0), 0);
+        const cada     = i.acum_cada_pax || 1;
+        const bloques  = Math.floor(totalPax / cada);
+        const ganados  = bloques * (i.acum_beneficio_cant || 1);
+        const usados   = (canjes || []).filter(c => c.incentivo_id === i.id)
+                          .reduce((s, c) => s + (c.pasadias_usadas || 1), 0);
+        const saldo    = Math.max(0, ganados - usados);
+        const resto    = totalPax % cada;
+        const pct      = Math.min(100, Math.round((resto / cada) * 100));
+        prog[i.id] = { tipo: "acumulacion", totalPax, cada, bloques, ganados, usados, saldo, resto, pct };
+      } else if (!i.fecha_inicio || !i.fecha_fin || i.tipo === "especial") {
+        continue;
+      } else {
+        const { data: resData } = await supabase.from("reservas")
+          .select("pax, total")
+          .eq("aliado_id", aliadoId)
+          .neq("estado", "cancelado")
+          .neq("canal", "Cortesía").neq("forma_pago", "Cortesía")
+          .gte("fecha", i.fecha_inicio)
+          .lte("fecha", i.fecha_fin);
+        const pax     = (resData || []).reduce((s, r) => s + (r.pax || 0), 0);
+        const revenue = (resData || []).reduce((s, r) => s + (r.total || 0), 0);
+        const reservas= (resData || []).length;
+        const actual  = i.tipo === "meta_pax" ? pax : i.tipo === "meta_revenue" ? revenue : reservas;
+        prog[i.id] = { actual, pct: Math.min(100, Math.round((actual / (i.meta_valor || 1)) * 100)) };
+      }
     }
     setProgreso(prog);
     setLoading(false);
@@ -2089,8 +2122,9 @@ function IncentivosAgencia({ aliadoId }) {
 
       {incentivos.map(inc => {
         const p = progreso[inc.id];
+        const esAcum   = p?.tipo === "acumulacion";
         const pct = p?.pct ?? null;
-        const cumplido = pct !== null && pct >= 100;
+        const cumplido = esAcum ? (p?.saldo > 0) : (pct !== null && pct >= 100);
         const esGlobal = inc.aliado_id === null;
         const diasRestantes = inc.fecha_fin ? Math.max(0, Math.ceil((new Date(inc.fecha_fin) - new Date(hoy)) / 86400000)) : null;
         return (
@@ -2106,7 +2140,19 @@ function IncentivosAgencia({ aliadoId }) {
                 {inc.beneficio && <div style={{ fontSize: 12, color: B.sand, marginTop: 2 }}>🎁 {inc.beneficio}</div>}
                 {inc.fecha_inicio && <div style={{ fontSize: 11, color: "rgba(255,255,255,0.3)", marginTop: 2 }}>{inc.fecha_inicio} → {inc.fecha_fin}{diasRestantes !== null && !cumplido ? ` · ${diasRestantes}d restantes` : ""}</div>}
               </div>
-              {pct !== null && (
+              {esAcum ? (
+                <div style={{ textAlign: "right", minWidth: 110 }}>
+                  <div style={{ fontSize: 22, fontWeight: 700, fontFamily: "'Barlow Condensed', sans-serif", color: p.saldo > 0 ? B.success : B.sky }}>
+                    🎁 {p.saldo}
+                  </div>
+                  <div style={{ fontSize: 10, color: "rgba(255,255,255,0.45)" }}>
+                    disponible{p.saldo !== 1 ? "s" : ""}
+                  </div>
+                  <div style={{ fontSize: 10, color: "rgba(255,255,255,0.35)", marginTop: 2 }}>
+                    {p.totalPax} pax · ganados {p.ganados} · usados {p.usados}
+                  </div>
+                </div>
+              ) : pct !== null && (
                 <div style={{ textAlign: "right", minWidth: 80 }}>
                   <div style={{ fontSize: 20, fontWeight: 700, fontFamily: "'Barlow Condensed', sans-serif", color: cumplido ? B.success : B.sky }}>{pct}%</div>
                   <div style={{ fontSize: 10, color: "rgba(255,255,255,0.35)" }}>{fmtMeta(inc.tipo, p.actual)} / {fmtMeta(inc.tipo, inc.meta_valor)}</div>
@@ -2123,9 +2169,20 @@ function IncentivosAgencia({ aliadoId }) {
               )}
             </div>
             {pct !== null && (
-              <div style={{ marginTop: 10, height: 6, background: B.navyLight, borderRadius: 3, overflow: "hidden" }}>
-                <div style={{ height: "100%", borderRadius: 3, width: `${pct}%`, background: cumplido ? B.success : B.sky, transition: "width 0.5s ease" }} />
-              </div>
+              <>
+                <div style={{ marginTop: 10, height: 6, background: B.navyLight, borderRadius: 3, overflow: "hidden" }}>
+                  <div style={{ height: "100%", borderRadius: 3, width: `${pct}%`, background: cumplido ? B.success : B.sky, transition: "width 0.5s ease" }} />
+                </div>
+                {esAcum && (
+                  <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", marginTop: 4 }}>
+                    {p.resto}/{p.cada} pax hacia el próximo premio
+                    {inc.acum_dia_semana !== null && inc.acum_dia_semana !== undefined
+                      ? ` · solo ${["Domingos","Lunes","Martes","Miércoles","Jueves","Viernes","Sábados"][inc.acum_dia_semana]}`
+                      : ""}
+                    {inc.acum_periodo ? ` · ${inc.acum_periodo}` : ""}
+                  </div>
+                )}
+              </>
             )}
           </div>
         );
