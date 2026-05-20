@@ -2059,7 +2059,7 @@ function IncentivosAgencia({ aliadoId }) {
     //    canjea 1 pasadía, se descuenta 1 × precio_unit. El resto sigue
     //    cobrándosele al aliado.
     const { data: rNow } = await supabase.from("reservas")
-      .select("precio_u, total, pax, saldo, descuento_cortesia, forma_pago, notas")
+      .select("precio_u, total, pax, saldo, descuento_cortesia, forma_pago, notas, estado")
       .eq("id", canjeForm.reserva_id).maybeSingle();
     const precioUnit = Number(rNow?.precio_u) > 0
       ? Number(rNow.precio_u)
@@ -2071,10 +2071,18 @@ function IncentivosAgencia({ aliadoId }) {
     const descuentoNuevo = (Number(rNow?.descuento_cortesia) || 0) + descuentoApl;
     const notaPrev = (rNow?.notas || "").trim();
     const notaCanje = `Premio aplicado: ${canjeFor.inc.nombre} (${cant} pasadía${cant !== 1 ? "s" : ""} · -${(descuentoApl).toLocaleString("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 })})`;
+    // Si el saldo queda en 0 después del canje, la reserva queda confirmada
+    // por cortesía del premio (no hay nada más que cobrar). En cualquier otro
+    // caso (canje parcial) preservamos el estado actual — el aliado sigue
+    // debiendo el saldo restante.
+    const nuevoEstado = (nuevoSaldo === 0 && (rNow?.estado === "pendiente" || rNow?.estado === "pendiente_pago"))
+      ? "confirmado"
+      : rNow?.estado;
     const { error: upErr } = await supabase.from("reservas").update({
       saldo:               nuevoSaldo,
       descuento_cortesia:  descuentoNuevo,
       forma_pago:          rNow?.forma_pago || (nuevoSaldo === 0 ? "incentivo_premio" : rNow?.forma_pago),
+      estado:              nuevoEstado,
       notas:               notaPrev ? `${notaPrev} · ${notaCanje}` : notaCanje,
     }).eq("id", canjeForm.reserva_id);
     setSavingCanje(false);
