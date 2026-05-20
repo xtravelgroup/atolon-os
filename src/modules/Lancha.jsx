@@ -173,17 +173,18 @@ export default function Lancha() {
   const capitanesLancha = useMemo(() => capitanes.filter(c => c.lancha_id === activeLancha), [capitanes, activeLancha]);
 
   // ─── Viajes computados por fecha ─────────────────────────────────────
-  // Lógica depende de DÓNDE DUERME la lancha (lanchas.home_base):
-  //  - home_base="cartagena" (default, Naturalle, etc.): la lancha
-  //    arranca el día en Bodeguita. Viaje = Z (zarpa de Bodeguita) →
-  //    L (regresa a Bodeguita). 1ª Z del día abre un viaje; la siguiente
-  //    L lo cierra. Z sin L de regreso → llegada perdida.
-  //  - home_base="atolon" (Castillete): la lancha duerme en Atolón.
-  //    Viaje = L (llega a Bodeguita desde Atolón) → Z (regresa a Atolón).
-  //    1ª L del día abre un viaje; la siguiente Z lo cierra. L sin Z
-  //    de regreso → zarpe perdido.
-  // # viajes totales = max(llegadas, zarpes) por día — invariante (ambos
-  // patrones generan 1L + 1Z por viaje completo).
+  // Pareo Z→L (mismo para todas las lanchas): cada zarpe abre un viaje,
+  // la siguiente llegada lo cierra. El día funciona desde la perspectiva
+  // del muelle Bodeguita — al ver un Z, sabemos que el bote salió hacia
+  // su destino; al ver la próxima L, regresó. Ese par = 1 viaje completo.
+  //
+  // El campo `home_base` cambia solo la SEMÁNTICA visual:
+  //  - "cartagena" (Naturalle): Z = ida a Atolón · L = vuelta a Bodeguita.
+  //  - "atolon" (Castillete): Z = vuelta a Atolón (su casa) · L = ida a
+  //    Bodeguita (a recoger gente). Mecánicamente idéntico — solo cambia
+  //    el banner de regla en la UI.
+  //
+  // # viajes/día = max(llegadas, zarpes).
   const homeBase = (lancha?.home_base || "cartagena").toLowerCase();
   const viajesPorFecha = useMemo(() => {
     const byDate = {}; // fecha → { llegadas: [{hora}], zarpes: [{hora}] }
@@ -219,47 +220,27 @@ export default function Lancha() {
         ...d.zarpes.map(z => ({ ...z, tipo: "Z" })),
       ].sort((a, b) => a.hora.localeCompare(b.hora));
 
+      // Pareo Z→L: cada Z abre un viaje, la siguiente L lo cierra.
+      //  - Otra Z antes de su L = llegada perdida en la previa.
+      //  - Una L sin Z pendiente = zarpe perdido en esa L (no se registró
+      //    el zarpe que la causó).
+      //  - Z pendiente al fin del día = viaje en curso (sin L de regreso aún).
       const pares = [];
-      if (homeBase === "atolon") {
-        // CASTILLETE: viaje = L → Z. Una L pendiente espera el siguiente Z
-        // para cerrar el viaje. Si llega otra L antes, la primera quedó
-        // incompleta (zarpe de regreso perdido). Una Z sin L previa
-        // significa que faltó la llegada de ese viaje.
-        let pendienteL = null;
-        eventos.forEach(ev => {
-          if (ev.tipo === "L") {
-            if (pendienteL) pares.push({ llegada: pendienteL, zarpe: null }); // zarpe perdido
-            pendienteL = ev;
-          } else { // Z
-            if (pendienteL) {
-              pares.push({ llegada: pendienteL, zarpe: ev });
-              pendienteL = null;
-            } else {
-              pares.push({ llegada: null, zarpe: ev }); // llegada perdida
-            }
+      let pendienteZ = null;
+      eventos.forEach(ev => {
+        if (ev.tipo === "Z") {
+          if (pendienteZ) pares.push({ llegada: null, zarpe: pendienteZ });
+          pendienteZ = ev;
+        } else { // L
+          if (pendienteZ) {
+            pares.push({ llegada: ev, zarpe: pendienteZ });
+            pendienteZ = null;
+          } else {
+            pares.push({ llegada: ev, zarpe: null });
           }
-        });
-        if (pendienteL) pares.push({ llegada: pendienteL, zarpe: null });
-      } else {
-        // NATURALLE / default: viaje = Z → L. Una Z pendiente espera la
-        // siguiente L. Otra Z antes de su L = llegada perdida; una L
-        // suelta sin Z previa = zarpe perdido.
-        let pendienteZ = null;
-        eventos.forEach(ev => {
-          if (ev.tipo === "Z") {
-            if (pendienteZ) pares.push({ llegada: null, zarpe: pendienteZ }); // llegada perdida
-            pendienteZ = ev;
-          } else { // L
-            if (pendienteZ) {
-              pares.push({ llegada: ev, zarpe: pendienteZ });
-              pendienteZ = null;
-            } else {
-              pares.push({ llegada: ev, zarpe: null }); // zarpe perdido
-            }
-          }
-        });
-        if (pendienteZ) pares.push({ llegada: null, zarpe: pendienteZ });
-      }
+        }
+      });
+      if (pendienteZ) pares.push({ llegada: null, zarpe: pendienteZ });
 
       const viajes = Math.max(d.llegadas.length, d.zarpes.length);
       return {
@@ -1131,11 +1112,11 @@ function ListaViajesComputados({ viajesPorFecha, costoPorViaje, homeBase = "cart
       <div style={{ background: B.navy, border: `1px solid ${B.sand}33`, borderRadius: 10, padding: "10px 14px", marginBottom: 12, fontSize: 11, color: "rgba(255,255,255,0.65)", lineHeight: 1.55 }}>
         <strong style={{ color: B.sand }}>📐 Regla de viajes:</strong>
         {homeBase === "atolon" ? (
-          <> Esta lancha duerme en <strong>Atolón</strong>. Cada viaje = Atolón → Bodeguita → Atolón, registrado como{" "}
-          <code style={{ color: B.sky }}>llegada (L)</code> + <code style={{ color: "#a78bfa" }}>zarpe (Z)</code>.</>
+          <> Esta lancha duerme en <strong>Atolón</strong>. Cada viaje desde el muelle de Bodeguita ={" "}
+          <code style={{ color: "#a78bfa" }}>Z</code> (sale a Atolón) → <code style={{ color: B.sky }}>L</code> (regresa a recoger gente).</>
         ) : (
-          <> Esta lancha duerme en <strong>Cartagena</strong>. Cada viaje = Bodeguita → Atolón → Bodeguita, registrado como{" "}
-          <code style={{ color: "#a78bfa" }}>zarpe (Z)</code> + <code style={{ color: B.sky }}>llegada (L)</code>.</>
+          <> Esta lancha duerme en <strong>Cartagena</strong>. Cada viaje ={" "}
+          <code style={{ color: "#a78bfa" }}>Z</code> (zarpa de Bodeguita a Atolón) → <code style={{ color: B.sky }}>L</code> (regresa a Bodeguita).</>
         )}{" "}
         Total = <code style={{ color: B.sand }}>max(llegadas, zarpes)</code> por día. Eventos sueltos se marcan como faltantes.
       </div>
