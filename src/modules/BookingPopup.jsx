@@ -1463,76 +1463,84 @@ export default function BookingPopup() {
   // ─── Step 2: Personal info ───────────────────────────────────────────────────
   function InfoStep() {
     return (
-      <div>
-        <button onClick={() => setStep(1)} style={{ background: "none", border: "none", color: C.accent, fontSize: 13, fontWeight: 600, cursor: "pointer", padding: 0, marginBottom: 14, display: "flex", alignItems: "center", gap: 4 }}>
-          ← {isEN ? "Back" : "Volver"}
-        </button>
+      <div style={isEmbedded ? { height: "100%", display: "flex", flexDirection: "column", overflow: "hidden" } : {}}>
+        {/* ════ TOP zone — siempre visible ════ */}
+        <div style={isEmbedded ? { flexShrink: 0 } : {}}>
+          <button onClick={() => setStep(1)} style={{ background: "none", border: "none", color: C.accent, fontSize: 13, fontWeight: 600, cursor: "pointer", padding: 0, marginBottom: 10, display: "flex", alignItems: "center", gap: 4 }}>
+            ← {isEN ? "Back" : "Volver"}
+          </button>
 
-        <h2 style={{ fontSize: 18, fontWeight: 700, color: C.text, marginBottom: 12 }}>
-          {isEN ? "Your information" : "Tus datos"}
-        </h2>
+          <h2 style={{ fontSize: 18, fontWeight: 700, color: C.text, marginBottom: 10 }}>
+            {isEN ? "Your information" : "Tus datos"}
+          </h2>
 
-        {/* Order recap — gap reducido para que toda la página 2 quepa en iframe 680px */}
-        <div style={{ background: C.bgCard, borderRadius: 10, padding: "10px 14px", marginBottom: 8, border: `1px solid ${C.border}`, fontSize: 13 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 2 }}>
-            <span style={{ color: C.textMid }}>{product.tipo}</span>
-            <span style={{ fontWeight: 700, color: C.accent }}>{COP(total)}</span>
-          </div>
-          <div style={{ color: C.textMid }}>
-            📅 {fmtDate(selDate, langQ)}
-            {selSalida && <> &nbsp;·&nbsp; ⛵ {isEN ? "Departure" : "Salida"} {selSalida.hora || selSalida.id}</>}
-            &nbsp;·&nbsp; 👥 {paxA + paxN} {isEN ? `person${paxA + paxN !== 1 ? "s" : ""}` : `persona${paxA + paxN !== 1 ? "s" : ""}`}{paxI > 0 ? ` + ${paxI} infante${paxI !== 1 ? "s" : ""}` : ""}
+          {/* Order recap — siempre visible al tope */}
+          <div style={{ background: C.bgCard, borderRadius: 10, padding: "10px 14px", marginBottom: 10, border: `1px solid ${C.border}`, fontSize: 13 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 2 }}>
+              <span style={{ color: C.textMid }}>{product.tipo}</span>
+              <span style={{ fontWeight: 700, color: C.accent }}>{COP(total)}</span>
+            </div>
+            <div style={{ color: C.textMid }}>
+              📅 {fmtDate(selDate, langQ)}
+              {selSalida && <> &nbsp;·&nbsp; ⛵ {isEN ? "Departure" : "Salida"} {selSalida.hora || selSalida.id}</>}
+              &nbsp;·&nbsp; 👥 {paxA + paxN} {isEN ? `person${paxA + paxN !== 1 ? "s" : ""}` : `persona${paxA + paxN !== 1 ? "s" : ""}`}{paxI > 0 ? ` + ${paxI} infante${paxI !== 1 ? "s" : ""}` : ""}
+            </div>
           </div>
         </div>
 
-        {[
-          { key: "nombre",   label: isEN ? "Full name" : "Nombre completo",     type: "text",  placeholder: isEN ? "John Smith" : "Juan García" },
-          { key: "email",    label: isEN ? "Email" : "Correo electrónico",      type: "email", placeholder: "correo@ejemplo.com" },
-          { key: "telefono", label: isEN ? "Phone" : "Teléfono / WhatsApp",     type: "tel",   placeholder: "+57 300 000 0000" },
-        ].map(({ key, label, type, placeholder }) => (
-          <div key={key} style={{ marginBottom: 16 }}>
-            <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: C.text, marginBottom: 5, textTransform: "uppercase", letterSpacing: "0.04em" }}>{label}</label>
-            <input
-              type={type}
-              value={form[key]}
-              placeholder={placeholder}
-              onChange={e => { setForm(f => ({ ...f, [key]: e.target.value })); setErrors(er => ({ ...er, [key]: null })); }}
-              style={{
-                width: "100%", padding: "11px 14px", borderRadius: 8,
-                border: `1.5px solid ${errors[key] ? C.danger : C.border}`,
-                fontSize: 14, color: C.text, background: C.bg, outline: "none", boxSizing: "border-box",
-                transition: "border-color 0.15s",
-              }}
-              onFocus={e => e.target.style.borderColor = C.accent}
-              onBlur={e => e.target.style.borderColor = errors[key] ? C.danger : C.border}
+        {/* ════ MIDDLE zone — form fields scroll si excede ════ */}
+        <div style={isEmbedded ? { flex: 1, minHeight: 0, overflowY: "auto", paddingRight: 4 } : {}}>
+          {[
+            { key: "nombre",   label: isEN ? "Full name" : "Nombre completo",     type: "text",  placeholder: isEN ? "John Smith" : "Juan García" },
+            { key: "email",    label: isEN ? "Email" : "Correo electrónico",      type: "email", placeholder: "correo@ejemplo.com" },
+            { key: "telefono", label: isEN ? "Phone" : "Teléfono / WhatsApp",     type: "tel",   placeholder: "+57 300 000 0000" },
+          ].map(({ key, label, type, placeholder }) => (
+            <div key={key} style={{ marginBottom: 12 }}>
+              <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: C.text, marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.04em" }}>{label}</label>
+              <input
+                type={type}
+                value={form[key]}
+                placeholder={placeholder}
+                onChange={e => { setForm(f => ({ ...f, [key]: e.target.value })); setErrors(er => ({ ...er, [key]: null })); }}
+                style={{
+                  width: "100%", padding: "10px 14px", borderRadius: 8,
+                  border: `1.5px solid ${errors[key] ? C.danger : C.border}`,
+                  fontSize: 14, color: C.text, background: C.bg, outline: "none", boxSizing: "border-box",
+                  transition: "border-color 0.15s",
+                }}
+                onFocus={e => e.target.style.borderColor = C.accent}
+                onBlur={e => e.target.style.borderColor = errors[key] ? C.danger : C.border}
+              />
+              {errors[key] && <div style={{ fontSize: 11, color: C.danger, marginTop: 3 }}>{errors[key]}</div>}
+            </div>
+          ))}
+
+          <div style={{ marginBottom: 12 }}>
+            <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: C.text, marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.04em" }}>{isEN ? "Notes / special requests (optional)" : "Notas / solicitudes especiales (opcional)"}</label>
+            <textarea
+              value={form.notas}
+              onChange={e => setForm(f => ({ ...f, notas: e.target.value }))}
+              rows={1}
+              style={{ width: "100%", padding: "8px 14px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 14, color: C.text, background: C.bg, outline: "none", resize: "vertical", boxSizing: "border-box", fontFamily: "inherit", minHeight: 36 }}
             />
-            {errors[key] && <div style={{ fontSize: 11, color: C.danger, marginTop: 3 }}>{errors[key]}</div>}
           </div>
-        ))}
 
-        <div style={{ marginBottom: 14 }}>
-          <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: C.text, marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.04em" }}>{isEN ? "Notes / special requests (optional)" : "Notas / solicitudes especiales (opcional)"}</label>
-          <textarea
-            value={form.notas}
-            onChange={e => setForm(f => ({ ...f, notas: e.target.value }))}
-            rows={1}
-            style={{ width: "100%", padding: "8px 14px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 14, color: C.text, background: C.bg, outline: "none", resize: "vertical", boxSizing: "border-box", fontFamily: "inherit", minHeight: 36 }}
-          />
+          {/* Facturación electrónica: movida a la pantalla de confirmación POST-pago
+              (PagoCliente.jsx → PagoOk). Mantener form.factura_electronica = false
+              en este step para que fePayload(form) inserte nulls en la reserva;
+              el cliente puede activarla después del pago si la necesita. */}
         </div>
 
-        {/* Facturación electrónica: movida a la pantalla de confirmación POST-pago
-            (PagoCliente.jsx → PagoOk). Mantener form.factura_electronica = false
-            en este step para que fePayload(form) inserte nulls en la reserva;
-            el cliente puede activarla después del pago si la necesita. */}
+        {/* ════ BOTTOM zone — T&C + Continue siempre visibles ════ */}
+        <div style={isEmbedded ? { flexShrink: 0, paddingTop: 10, borderTop: `1px solid ${C.border}`, marginTop: 8 } : {}}>
+          {/* T&C */}
+          <div style={{ marginBottom: 10, textAlign: "center" }}>
+            <span style={{ fontSize: 11, color: "#94A3B8" }}>
+              {isEN ? "By continuing, I accept the terms and conditions." : "Al continuar, acepto los términos y condiciones."}
+            </span>
+          </div>
 
-        {/* T&C */}
-        <div style={{ marginBottom: 14, textAlign: "center" }}>
-          <span style={{ fontSize: 12, color: "#94A3B8" }}>
-            {isEN ? "By continuing, I accept the terms and conditions." : "Al continuar, acepto los términos y condiciones."}
-          </span>
-        </div>
-
-        <button onClick={async () => {
+          <button onClick={async () => {
           if (!validateForm()) return;
           AtolanTrack.evento("guest_info_completed", { producto: product?.tipo, pax: paxTotal, fecha: selDate }, "booking");
           // Crear lead en Comercial con stage "Nuevo"
@@ -1564,14 +1572,16 @@ export default function BookingPopup() {
           }
           setStep(3);
         }}
-          style={{ width: "100%", padding: "15px 0", borderRadius: 10, border: "none", background: C.primary, color: "white", fontSize: 15, fontWeight: 700, cursor: "pointer", letterSpacing: "0.03em", marginBottom: 10 }}>
+          style={{ width: "100%", padding: "12px 0", borderRadius: 10, border: "none", background: C.primary, color: "white", fontSize: 15, fontWeight: 700, cursor: "pointer", letterSpacing: "0.03em", marginBottom: 8 }}>
           {isEN ? "Continue →" : "Continuar →"}
         </button>
         <div style={{ textAlign: "center", fontSize: 11, color: C.textLight }}>
           🔒 {isEN ? "Secure payment · Cancellation policy applies" : "Pago seguro · Aplica política de cancelación"}
         </div>
+        </div>{/* /BOTTOM zone */}
 
-        {/* Hidden — payment buttons moved to upsell step */}
+        {/* Hidden legacy — payment buttons moved to upsell step. Mantengo
+            display:none por compatibilidad pero ya no se renderiza nada útil. */}
         <div style={{ display: "none" }}>
         <div style={{ marginBottom: 8 }}>
           <div style={{ fontSize: 12, fontWeight: 700, color: C.text, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 10 }}>
@@ -1641,19 +1651,25 @@ export default function BookingPopup() {
     const grandTotal = totalA + totalN + selUpsells.reduce((s, u) => s + (u.por_persona ? u.precio * (paxA + paxN) : u.precio), 0);
 
     return (
-      <div>
-        <button onClick={() => setStep(2)} style={{ background: "none", border: "none", color: C.accent, fontSize: 13, fontWeight: 600, cursor: "pointer", padding: 0, marginBottom: 20, display: "flex", alignItems: "center", gap: 4 }}>
-          ← {isEN ? "Back" : "Volver"}
-        </button>
+      <div style={isEmbedded ? { height: "100%", display: "flex", flexDirection: "column", overflow: "hidden" } : {}}>
+        {/* ════ TOP zone — Back + título + subtítulo ════ */}
+        <div style={isEmbedded ? { flexShrink: 0 } : {}}>
+          <button onClick={() => setStep(2)} style={{ background: "none", border: "none", color: C.accent, fontSize: 13, fontWeight: 600, cursor: "pointer", padding: 0, marginBottom: 10, display: "flex", alignItems: "center", gap: 4 }}>
+            ← {isEN ? "Back" : "Volver"}
+          </button>
 
-        <h2 style={{ fontSize: 18, fontWeight: 700, color: C.text, marginBottom: 4 }}>
-          {grupoEvt ? (isEN ? "Complete your booking" : "Completa tu reserva") : (isEN ? "Complete your experience" : "Completa tu experiencia")}
-        </h2>
-        {!grupoEvt && (
-          <p style={{ fontSize: 13, color: C.textMid, marginBottom: 22 }}>
-            {isEN ? "Add extras before paying" : "Agrega opciones especiales antes de pagar"}
-          </p>
-        )}
+          <h2 style={{ fontSize: 18, fontWeight: 700, color: C.text, marginBottom: 4 }}>
+            {grupoEvt ? (isEN ? "Complete your booking" : "Completa tu reserva") : (isEN ? "Complete your experience" : "Completa tu experiencia")}
+          </h2>
+          {!grupoEvt && (
+            <p style={{ fontSize: 13, color: C.textMid, marginBottom: 14 }}>
+              {isEN ? "Add extras before paying" : "Agrega opciones especiales antes de pagar"}
+            </p>
+          )}
+        </div>
+
+        {/* ════ MIDDLE zone — extras + summary + payment methods ════ */}
+        <div style={isEmbedded ? { flex: 1, minHeight: 0, overflowY: "auto", paddingRight: 4 } : {}}>
 
         {loadingUps ? (
           <div style={{ textAlign: "center", padding: "30px 0", color: C.textLight, fontSize: 13 }}>...</div>
@@ -1773,10 +1789,9 @@ export default function BookingPopup() {
           </div>
         </div>
 
-        {/* Payment method buttons — 2 cols en grid (era stack vertical).
-            Precio individual removido de cada card (ya está en el Order Summary
-            arriba). El warning de X Travel Group queda full-width abajo. */}
-        <div style={{ marginBottom: 8 }}>
+        {/* Payment method buttons — 2-col grid; el warning y el secure note
+            quedan en el BOTTOM zone abajo (flex-shrink: 0). */}
+        <div style={{ marginBottom: 0 }}>
           <div style={{ fontSize: 12, fontWeight: 700, color: C.text, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 10 }}>
             {isEN ? "Select payment method" : "Método de pago"}
           </div>
@@ -1807,9 +1822,13 @@ export default function BookingPopup() {
               <div style={{ fontSize: 11, color: C.textMid, lineHeight: 1.4 }}>Visa · Mastercard · Amex · Apple/Google Pay</div>
             </button>
           </div>
+        </div>
 
-          {/* Warning banner full-width debajo del grid de pago */}
-          <div style={{ marginTop: 8, padding: "8px 12px", background: "#FFF7E6", border: "1px solid #F5C842", borderRadius: 8, fontSize: 11, color: "#92400E", display: "flex", alignItems: "flex-start", gap: 8 }}>
+        </div>{/* /MIDDLE zone */}
+
+        {/* ════ BOTTOM zone — warning + secure note siempre visibles ════ */}
+        <div style={isEmbedded ? { flexShrink: 0, paddingTop: 8, borderTop: `1px solid ${C.border}`, marginTop: 8 } : { marginTop: 8 }}>
+          <div style={{ padding: "8px 12px", background: "#FFF7E6", border: "1px solid #F5C842", borderRadius: 8, fontSize: 11, color: "#92400E", display: "flex", alignItems: "flex-start", gap: 8 }}>
             <span style={{ fontSize: 14 }}>💳</span>
             <span>
               {isEN
@@ -1817,9 +1836,9 @@ export default function BookingPopup() {
                 : <>El cargo con tarjeta internacional aparecerá en tu estado de cuenta a nombre de <strong>X Travel Group</strong>.</>}
             </span>
           </div>
-        </div>
-        <div style={{ textAlign: "center", marginTop: 12, fontSize: 11, color: C.textLight }}>
-          🔒 {isEN ? "Secure payment · No refunds policy" : "Pago seguro · Política de no reembolso"}
+          <div style={{ textAlign: "center", marginTop: 6, fontSize: 11, color: C.textLight }}>
+            🔒 {isEN ? "Secure payment · No refunds policy" : "Pago seguro · Política de no reembolso"}
+          </div>
         </div>
       </div>
     );
@@ -1872,12 +1891,11 @@ export default function BookingPopup() {
         <div style={{ flexShrink: 0, display: "flex", justifyContent: "flex-end", alignItems: "center", padding: "6px 12px", background: "white", borderBottom: `1px solid ${C.border}` }}>
           <LangToggle />
         </div>
-        {/* Card principal — fills remaining height, contiene el step actual.
-            Step 1 maneja su propio overflow (scroll por columna + CTA fijo).
-            Steps 2/3 son una sola columna: dejamos overflow auto en la card
-            por si el contenido excede el iframe. */}
+        {/* Card principal — fills remaining height. Cada step maneja su propio
+            patrón TOP / MIDDLE-scroll / BOTTOM fijo, así que aquí siempre
+            overflow: hidden y el step internamente decide qué scrollea. */}
         <div style={{ flex: 1, minHeight: 0, padding: 10, boxSizing: "border-box", overflow: "hidden" }}>
-          <div style={{ height: "100%", background: C.bg, borderRadius: 12, padding: isDesktop ? "12px 14px" : "10px 12px", boxShadow: "0 2px 8px rgba(0,0,0,0.06)", border: `1px solid ${C.border}`, display: "flex", flexDirection: "column", overflow: step === 1 ? "hidden" : "auto" }}>
+          <div style={{ height: "100%", background: C.bg, borderRadius: 12, padding: isDesktop ? "12px 14px" : "10px 12px", boxShadow: "0 2px 8px rgba(0,0,0,0.06)", border: `1px solid ${C.border}`, display: "flex", flexDirection: "column", overflow: "hidden" }}>
             {stepContent}
           </div>
         </div>
