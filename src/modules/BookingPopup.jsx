@@ -1609,59 +1609,102 @@ export default function BookingPopup() {
 
         {loadingUps ? (
           <div style={{ textAlign: "center", padding: "30px 0", color: C.textLight, fontSize: 13 }}>...</div>
-        ) : upsells.length === 0 ? null : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 24 }}>
-            {upsells.map(u => {
-              const isUpg      = u.tipo === "upgrade";
-              const isSelected = selUpsells.find(x => x.id === u.id);
-              const uPrice     = u.por_persona ? u.precio * (paxA + paxN) : u.precio;
-
-              return (
-                <div key={u.id} style={{
-                  borderRadius: 12, overflow: "hidden",
-                  border: `2px solid ${isSelected ? C.accent : isUpg ? "#7C3AED44" : C.border}`,
-                  background: isSelected ? C.accentLight : isUpg ? "#F5F3FF" : C.bg,
-                  transition: "all 0.15s",
-                }}>
-                  {u.foto_url && (
-                    <div style={{ height: 130, overflow: "hidden" }}>
-                      <img src={u.foto_url} alt={u.nombre} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                    </div>
-                  )}
-                  <div style={{ padding: "16px 18px", display: "flex", alignItems: "flex-start", gap: 14 }}>
-                    {!u.foto_url && <div style={{ width: 48, height: 48, borderRadius: 12, background: isUpg ? "#EDE9FE" : C.bgCard, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 24, flexShrink: 0 }}>{u.emoji}</div>}
-                    <div style={{ flex: 1 }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 2 }}>
-                        <span style={{ fontSize: 15, fontWeight: 700, color: isUpg ? "#5B21B6" : C.text }}>{u.nombre}</span>
-                        {isUpg && <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 6, background: "#DDD6FE", color: "#5B21B6", fontWeight: 700 }}>UPGRADE</span>}
+        ) : upsells.length === 0 ? null : (() => {
+          // Upgrades van full-width arriba; addons regulares van en grid 2-col abajo.
+          const upgrades = upsells.filter(u => u.tipo === "upgrade");
+          const addons   = upsells.filter(u => u.tipo !== "upgrade");
+          return (
+            <>
+              {/* Upgrades — full-width, layout horizontal */}
+              {upgrades.length > 0 && (
+                <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: addons.length > 0 ? 12 : 24 }}>
+                  {upgrades.map(u => {
+                    const isSelected = selUpsells.find(x => x.id === u.id);
+                    const uPrice     = u.por_persona ? u.precio * (paxA + paxN) : u.precio;
+                    return (
+                      <div key={u.id} style={{
+                        borderRadius: 12, overflow: "hidden",
+                        border: `2px solid ${isSelected ? C.accent : "#7C3AED44"}`,
+                        background: isSelected ? C.accentLight : "#F5F3FF",
+                        transition: "all 0.15s",
+                      }}>
+                        {u.foto_url && (
+                          <div style={{ height: 130, overflow: "hidden" }}>
+                            <img src={u.foto_url} alt={u.nombre} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                          </div>
+                        )}
+                        <div style={{ padding: "16px 18px", display: "flex", alignItems: "flex-start", gap: 14 }}>
+                          {!u.foto_url && <div style={{ width: 48, height: 48, borderRadius: 12, background: "#EDE9FE", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 24, flexShrink: 0 }}>{u.emoji}</div>}
+                          <div style={{ flex: 1 }}>
+                            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 2 }}>
+                              <span style={{ fontSize: 15, fontWeight: 700, color: "#5B21B6" }}>{u.nombre}</span>
+                              <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 6, background: "#DDD6FE", color: "#5B21B6", fontWeight: 700 }}>UPGRADE</span>
+                            </div>
+                            {u.descripcion && <div style={{ fontSize: 12, color: C.textMid, lineHeight: 1.4, marginBottom: 6, display: "-webkit-box", WebkitLineClamp: 1, WebkitBoxOrient: "vertical", overflow: "hidden", textOverflow: "ellipsis" }}>{u.descripcion}</div>}
+                            <div style={{ fontSize: 14, fontWeight: 800, color: "#5B21B6" }}>
+                              +{COP(uPrice)}
+                              <span style={{ fontSize: 11, fontWeight: 400, color: C.textLight, marginLeft: 4 }}>
+                                {u.por_persona ? `(${paxA + paxN} persona${paxA + paxN !== 1 ? "s" : ""})` : "precio fijo"}
+                              </span>
+                            </div>
+                          </div>
+                          <div style={{ flexShrink: 0 }}>
+                            <button onClick={() => doUpgrade(u)}
+                              style={{ padding: "10px 16px", borderRadius: 10, border: "none", background: "#5B21B6", color: "white", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
+                              {isEN ? "Upgrade →" : "Hacer Upgrade →"}
+                            </button>
+                          </div>
+                        </div>
                       </div>
-                      {u.descripcion && <div style={{ fontSize: 12, color: C.textMid, lineHeight: 1.4, marginBottom: 6, display: "-webkit-box", WebkitLineClamp: 1, WebkitBoxOrient: "vertical", overflow: "hidden", textOverflow: "ellipsis" }}>{u.descripcion}</div>}
-                      <div style={{ fontSize: 14, fontWeight: 800, color: isUpg ? "#5B21B6" : C.accent }}>
-                        +{COP(uPrice)}
-                        <span style={{ fontSize: 11, fontWeight: 400, color: C.textLight, marginLeft: 4 }}>
-                          {u.por_persona ? `(${paxA + paxN} persona${paxA + paxN !== 1 ? "s" : ""})` : "precio fijo"}
-                        </span>
-                      </div>
-                    </div>
-                    <div style={{ flexShrink: 0 }}>
-                      {isUpg ? (
-                        <button onClick={() => doUpgrade(u)}
-                          style={{ padding: "10px 16px", borderRadius: 10, border: "none", background: "#5B21B6", color: "white", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
-                          {isEN ? "Upgrade →" : "Hacer Upgrade →"}
-                        </button>
-                      ) : (
-                        <button onClick={() => toggleAddon(u)}
-                          style={{ padding: "10px 16px", borderRadius: 10, border: `2px solid ${isSelected ? C.accent : C.border}`, background: isSelected ? C.accent : "white", color: isSelected ? "white" : C.text, fontWeight: 700, fontSize: 13, cursor: "pointer", transition: "all 0.15s" }}>
-                          {isSelected ? "✓ Agregado" : (isEN ? "Add" : "Agregar")}
-                        </button>
-                      )}
-                    </div>
-                  </div>
+                    );
+                  })}
                 </div>
-              );
-            })}
-          </div>
-        )}
+              )}
+
+              {/* Addons regulares — grid 2-col en desktop, 1-col si caben angostos */}
+              {addons.length > 0 && (
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 12, marginBottom: 24 }}>
+                  {addons.map(u => {
+                    const isSelected = selUpsells.find(x => x.id === u.id);
+                    const uPrice     = u.por_persona ? u.precio * (paxA + paxN) : u.precio;
+                    return (
+                      <div key={u.id} style={{
+                        borderRadius: 12, overflow: "hidden",
+                        border: `2px solid ${isSelected ? C.accent : C.border}`,
+                        background: isSelected ? C.accentLight : C.bg,
+                        transition: "all 0.15s",
+                        display: "flex", flexDirection: "column",
+                      }}>
+                        {u.foto_url && (
+                          <div style={{ height: 100, overflow: "hidden" }}>
+                            <img src={u.foto_url} alt={u.nombre} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                          </div>
+                        )}
+                        <div style={{ padding: "12px 14px", display: "flex", flexDirection: "column", gap: 8, flex: 1 }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                            {!u.foto_url && <div style={{ width: 32, height: 32, borderRadius: 8, background: C.bgCard, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, flexShrink: 0 }}>{u.emoji}</div>}
+                            <span style={{ fontSize: 13, fontWeight: 700, color: C.text, lineHeight: 1.3, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{u.nombre}</span>
+                          </div>
+                          {u.descripcion && <div style={{ fontSize: 11, color: C.textMid, lineHeight: 1.4, display: "-webkit-box", WebkitLineClamp: 1, WebkitBoxOrient: "vertical", overflow: "hidden", textOverflow: "ellipsis" }}>{u.descripcion}</div>}
+                          <div style={{ fontSize: 13, fontWeight: 800, color: C.accent }}>
+                            +{COP(uPrice)}
+                            <span style={{ fontSize: 10, fontWeight: 400, color: C.textLight, marginLeft: 4 }}>
+                              {u.por_persona ? `(${paxA + paxN}p)` : "fijo"}
+                            </span>
+                          </div>
+                          <button onClick={() => toggleAddon(u)}
+                            style={{ marginTop: "auto", padding: "8px 0", borderRadius: 8, border: `2px solid ${isSelected ? C.accent : C.border}`, background: isSelected ? C.accent : "white", color: isSelected ? "white" : C.text, fontWeight: 700, fontSize: 12, cursor: "pointer", transition: "all 0.15s", width: "100%" }}>
+                            {isSelected ? "✓ " + (isEN ? "Added" : "Agregado") : (isEN ? "Add" : "Agregar")}
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </>
+          );
+        })()}
 
         {/* Order total preview */}
         <div style={{ background: C.bgCard, borderRadius: 10, padding: "12px 16px", marginBottom: 20, border: `1px solid ${C.border}` }}>
