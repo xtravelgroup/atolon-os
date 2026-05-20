@@ -219,26 +219,29 @@ export default function PoolFloorPlanPicker({
       </div>
 
       {/* ════════════ ZONA PLAYA ════════════
-          Bloque con FONDO COLOR ARENA (B.sand=#C8B99A) que simula la
-          arena del beach club. 3 filas horizontales con orden ascendente
-          (P11/P31/P52 a la izquierda). Termina con una banda "MAR"
-          turquesa simulando el agua del Caribe. */}
+          Fondo navy (igual al resto del plano) — sin más arena. Lo único
+          color arena es la BARRA del header "🏖️ PLAYA". El resto es
+          consistente con la zona piscina. */}
       {tienePlaya && (
-        <div style={{
-          marginTop: SIZES.gap * 3,
-          // Fondo arena: gradiente cálido + textura granular leve simulando arena.
-          backgroundColor: `${B.sand}44`,
-          backgroundImage: `radial-gradient(circle at 20% 30%, ${B.sand}33 0%, transparent 40%), radial-gradient(circle at 80% 70%, ${B.sand}33 0%, transparent 40%), linear-gradient(180deg, ${B.sand}22 0%, ${B.sand}66 100%)`,
-          borderRadius: 16,
-          padding: SIZES.pad,
-          border: `2px dashed ${B.sand}99`,
-          boxShadow: `inset 0 4px 16px ${B.sand}44`,
-        }}>
+        <div style={{ marginTop: SIZES.gap * 3 }}>
           {showLabels && (
-            <div style={{ textAlign: "center", marginBottom: SIZES.gap * 1.5 }}>
-              <SectionLabel size={size} mobile={isMobile}>
+            <div style={{
+              background: `linear-gradient(90deg, ${B.sand}AA 0%, ${B.sand} 50%, ${B.sand}AA 100%)`,
+              borderRadius: 10,
+              padding: `${isMobile ? 6 : 10}px ${isMobile ? 12 : 18}px`,
+              textAlign: "center",
+              marginBottom: SIZES.gap * 1.5,
+              boxShadow: `0 2px 8px ${B.sand}55`,
+            }}>
+              <div style={{
+                fontSize: isMobile ? 12 : isLg ? 16 : 13,
+                fontWeight: 800,
+                color: B.navy,
+                letterSpacing: isMobile ? "0.08em" : "0.18em",
+                textTransform: "uppercase",
+              }}>
                 🏖️ PLAYA
-              </SectionLabel>
+              </div>
             </div>
           )}
           {/* Las 3 filas se alinean por COLUMNAS de derecha a izquierda:
