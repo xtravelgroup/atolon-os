@@ -46,7 +46,7 @@ const STR = {
   info_entrega:   { es: "Información para entrega (opcional)", en: "Delivery info (optional)" },
   tu_nombre:      { es: "Tu nombre", en: "Your name" },
   personas:       { es: "Personas en la mesa", en: "People at the table" },
-  notas_ph:       { es: "Notas especiales (alergias, ubicación exacta, etc.)", en: "Special notes (allergies, exact location, etc.)" },
+  notas_ph:       { es: "Nota general del pedido (alergias, ubicación exacta…). Las notas por plato van arriba en cada línea.", en: "Order-level note (allergies, exact location…). Per-dish notes go above on each line." },
   agregar_mas:    { es: "← Agregar más", en: "← Add more" },
   enviando:       { es: "Enviando…", en: "Sending…" },
   enviar:         { es: "Enviar pedido", en: "Send order" },
@@ -218,6 +218,11 @@ export default function PoolServicePortal({ qr }) {
     const n = Number(c);
     if (n <= 0) return setCart(prev => prev.filter(x => (x.key ?? x.id) !== key));
     setCart(prev => prev.map(x => (x.key ?? x.id) === key ? { ...x, cantidad: n } : x));
+  };
+  // Nota por plato: cocina/bar la ve en la comanda. Notas de modificadores
+  // (sin hielo, etc.) ya entran via mods → c.notas; este input las amplía.
+  const setNotaItem = (key, nota) => {
+    setCart(prev => prev.map(x => (x.key ?? x.id) === key ? { ...x, notas: nota } : x));
   };
   const cnm = (c) => (lang === "en" && c.nombre_en) ? c.nombre_en : c.nombre;
 
@@ -392,12 +397,20 @@ export default function PoolServicePortal({ qr }) {
           <div style={{ background: "white", borderRadius: 12, padding: 16, marginBottom: 12 }}>
             <div style={{ fontSize: 14, fontWeight: 800, marginBottom: 10 }}>{t("tu_pedido")}</div>
             {carrito.map(c => (
-              <div key={c.key ?? c.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0", borderTop: `1px solid ${C.border}` }}>
-                <button onClick={() => setCant(c.key ?? c.id, c.cantidad - 1)} style={qtyBtnSm}>−</button>
-                <span style={{ minWidth: 24, textAlign: "center", fontWeight: 700 }}>{c.cantidad}</span>
-                <button onClick={() => setCant(c.key ?? c.id, c.cantidad + 1)} style={qtyBtnSm}>+</button>
-                <div style={{ flex: 1, fontSize: 13 }}>{cnm(c)}</div>
-                <div style={{ fontWeight: 700 }}>{COP(c.precio * c.cantidad)}</div>
+              <div key={c.key ?? c.id} style={{ padding: "8px 0", borderTop: `1px solid ${C.border}` }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <button onClick={() => setCant(c.key ?? c.id, c.cantidad - 1)} style={qtyBtnSm}>−</button>
+                  <span style={{ minWidth: 24, textAlign: "center", fontWeight: 700 }}>{c.cantidad}</span>
+                  <button onClick={() => setCant(c.key ?? c.id, c.cantidad + 1)} style={qtyBtnSm}>+</button>
+                  <div style={{ flex: 1, fontSize: 13 }}>{cnm(c)}</div>
+                  <div style={{ fontWeight: 700 }}>{COP(c.precio * c.cantidad)}</div>
+                </div>
+                <input
+                  value={c.notas || ""}
+                  onChange={e => setNotaItem(c.key ?? c.id, e.target.value)}
+                  placeholder={lang === "en" ? "Note for kitchen (no onions, well done…)" : "Nota para cocina (sin cebolla, término medio…)"}
+                  style={{ width: "100%", marginTop: 6, padding: "8px 10px", borderRadius: 8, border: `1px solid ${C.border}`, fontSize: 12, outline: "none", boxSizing: "border-box" }}
+                />
               </div>
             ))}
             <div style={{ display: "flex", justifyContent: "space-between", paddingTop: 10, borderTop: `2px solid ${C.text}`, marginTop: 6, fontWeight: 800, fontSize: 16 }}>

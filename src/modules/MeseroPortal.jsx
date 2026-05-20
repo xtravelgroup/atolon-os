@@ -184,6 +184,9 @@ export default function MeseroPortal() {
   // Mantener firma vieja para compatibilidad (solo modificadores)
   const addMods = (it, mods) => addChoice(it, null, mods);
   const setQ = (key, c) => { const n = Number(c); if (n <= 0) return setCart(p => p.filter(x => x.key !== key)); setCart(p => p.map(x => x.key === key ? { ...x, cantidad: n } : x)); };
+  // Nota por plato: cocina/bar la ve impresa en la comanda. La nota
+  // general del pedido funciona como fallback si esta queda vacía.
+  const setNotaItem = (key, nota) => setCart(p => p.map(x => x.key === key ? { ...x, notas: nota } : x));
 
   // Tocar una cama: si ya tiene huésped registrado hoy → directo al menú
   // (no vuelve a pedir nombre/pax). Si no → paso de datos.
@@ -550,12 +553,20 @@ export default function MeseroPortal() {
           <div style={{ background: C.card, borderRadius: 12, padding: 16, margin: "16px 0 12px" }}>
             <div style={{ fontSize: 14, fontWeight: 800, color: C.text, marginBottom: 8 }}>Pedido · {spot?.id}</div>
             {cart.map(c => (
-              <div key={c.key} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0", borderTop: `1px solid ${C.line}` }}>
-                <button onClick={() => setQ(c.key, c.cantidad - 1)} style={qbtn}>−</button>
-                <span style={{ minWidth: 22, textAlign: "center", fontWeight: 800, color: C.text }}>{c.cantidad}</span>
-                <button onClick={() => setQ(c.key, c.cantidad + 1)} style={qbtn}>+</button>
-                <div style={{ flex: 1, fontSize: 13, color: C.text }}>{c.nombre}</div>
-                <div style={{ fontWeight: 800, color: C.text }}>{COP(c.precio * c.cantidad)}</div>
+              <div key={c.key} style={{ padding: "8px 0", borderTop: `1px solid ${C.line}` }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <button onClick={() => setQ(c.key, c.cantidad - 1)} style={qbtn}>−</button>
+                  <span style={{ minWidth: 22, textAlign: "center", fontWeight: 800, color: C.text }}>{c.cantidad}</span>
+                  <button onClick={() => setQ(c.key, c.cantidad + 1)} style={qbtn}>+</button>
+                  <div style={{ flex: 1, fontSize: 13, color: C.text }}>{c.nombre}</div>
+                  <div style={{ fontWeight: 800, color: C.text }}>{COP(c.precio * c.cantidad)}</div>
+                </div>
+                <input
+                  value={c.notas || ""}
+                  onChange={e => setNotaItem(c.key, e.target.value)}
+                  placeholder="Nota para cocina (sin cebolla, término medio…)"
+                  style={{ width: "100%", marginTop: 6, padding: "8px 10px", borderRadius: 8, border: `1px solid ${C.line}`, fontSize: 12, background: C.bg, color: C.text, outline: "none", boxSizing: "border-box" }}
+                />
               </div>
             ))}
             <div style={{ display: "flex", justifyContent: "space-between", paddingTop: 10, borderTop: `2px solid ${C.line}`, marginTop: 6, fontWeight: 800, fontSize: 16, color: C.text }}>
@@ -570,9 +581,12 @@ export default function MeseroPortal() {
               </div>
               <button onClick={() => setStep("datos")} style={{ background: "transparent", border: `1px solid ${C.line}`, color: C.primary, borderRadius: 8, padding: "8px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer", minHeight: 40 }}>Editar</button>
             </div>
-            <Label>Notas (opcional)</Label>
-            <textarea value={notas} onChange={e => setNotas(e.target.value)} placeholder="Sin hielo, alergias, etc."
-              style={{ ...inp, minHeight: 70, resize: "vertical" }} />
+            <Label>Nota general del pedido (opcional)</Label>
+            <div style={{ fontSize: 11, color: C.textLight, marginTop: -8, marginBottom: 6 }}>
+              Para instrucciones que apliquen a TODO el pedido. Las notas por plato van arriba en cada línea.
+            </div>
+            <textarea value={notas} onChange={e => setNotas(e.target.value)} placeholder="Alergias, ubicación de mesa, etc."
+              style={{ ...inp, minHeight: 60, resize: "vertical" }} />
           </div>
           <div style={{ display: "flex", gap: 8 }}>
             <button onClick={() => setStep("menu")} style={{ flex: 1, background: "transparent", color: C.text, border: `1px solid ${C.line}`, borderRadius: 12, padding: 16, fontWeight: 700, cursor: "pointer", minHeight: 52 }}>← Agregar</button>
