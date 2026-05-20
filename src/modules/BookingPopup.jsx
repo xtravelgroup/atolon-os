@@ -1124,40 +1124,11 @@ export default function BookingPopup() {
                   onDec={() => { setPaxN(n => Math.max(0, n - 1)); setEdadesNinos(e => e.slice(0, Math.max(0, paxN - 1))); }}
                   onInc={() => { setPaxN(n => Math.min(30, n + 1)); setEdadesNinos(e => [...e, ""]); }}
                 />
-                {paxN > 0 && (
-                  <div style={{ padding: "10px 14px", background: "rgba(200,185,154,0.06)", borderRadius: 10, border: "1px solid rgba(200,185,154,0.15)" }}>
-                    <div style={{ fontSize: 11, color: "#C8B99A", marginBottom: 8, fontWeight: 600 }}>
-                      {isEN ? "Age of each child" : "Edad de cada niño"} <span style={{ opacity: 0.6 }}>({isEN ? "over 11 pays as adult" : "+11 se cobra como adulto"})</span>
-                    </div>
-                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(80px, 1fr))", gap: 8 }}>
-                      {Array.from({ length: paxN }).map((_, i) => (
-                        <div key={i}>
-                          <div style={{ fontSize: 10, color: "rgba(255,255,255,0.45)", marginBottom: 3 }}>{isEN ? `Child ${i + 1}` : `Niño ${i + 1}`}</div>
-                          <input type="number" min="0" max="17"
-                            value={edadesNinos[i] ?? ""}
-                            onChange={e => {
-                              const v = e.target.value;
-                              const newArr = [...edadesNinos];
-                              while (newArr.length < paxN) newArr.push("");
-                              newArr[i] = v;
-                              setEdadesNinos(newArr);
-                              // Si la edad es > 11, mover a adulto automáticamente
-                              if (Number(v) > 11) {
-                                alert(isEN
-                                  ? `A ${v} year old pays as adult (added to adults)`
-                                  : `Un niño de ${v} años se cobra como adulto (movido a adultos)`);
-                                setPaxA(a => a + 1);
-                                setPaxN(n => Math.max(0, n - 1));
-                                setEdadesNinos(prev => prev.filter((_, idx) => idx !== i));
-                              }
-                            }}
-                            placeholder={isEN ? "Age" : "Edad"}
-                            style={{ width: "100%", padding: "6px 8px", borderRadius: 6, background: "#0D1B3E", border: "1px solid rgba(255,255,255,0.1)", color: "#fff", fontSize: 13, textAlign: "center" }} />
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
+                {/* Edad por niño removida del widget — la pregunta se hace por
+                    WhatsApp durante el confirmación o al hacer check-in. El
+                    sub-label de la fila Children ya informa "+11 se cobra como
+                    adulto". Mantenemos `edadesNinos` en state por compatibilidad
+                    con leads/reservas pero queda vacío. */}
                 <PaxRow
                   label={isEN ? "Infants" : "Infantes"}
                   sub={isEN ? "Age 0 – 2 (free)" : "Edad 0 – 2 (sin costo)"}
