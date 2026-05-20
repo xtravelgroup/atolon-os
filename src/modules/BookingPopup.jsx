@@ -1021,8 +1021,8 @@ export default function BookingPopup() {
         {/* Photo gallery */}
         {allPhotos.length > 0 && (
           <div style={{ marginBottom: isDesktop ? 10 : 20, borderRadius: 12, overflow: "hidden", position: "relative", ...cellL }}>
-            {/* Main image — más corta en desktop para entrar en 680px iframe */}
-            <div style={{ width: "100%", height: isDesktop ? 150 : 220, position: "relative", background: C.bgCard, overflow: "hidden" }}>
+            {/* Main image — protagonista en desktop (~290px, aspect 16:9) */}
+            <div style={{ width: "100%", height: isDesktop ? 290 : 220, position: "relative", background: C.bgCard, overflow: "hidden" }}>
               <img src={allPhotos[fotoActiva]} alt="pasadia"
                 style={{ width: "100%", height: "100%", objectFit: "cover", transition: "opacity 0.25s" }} />
               {allPhotos.length > 1 && (
@@ -1093,7 +1093,7 @@ export default function BookingPopup() {
                 .map(txt => ({ es: txt, en: txt }));
           if (items.length === 0) return null;
           return (
-            <div style={{ marginBottom: isDesktop ? 10 : 20, padding: isDesktop ? "8px 12px" : "12px 16px", background: C.bgCard, borderRadius: 10, border: `1px solid ${C.border}`, ...cellL }}>
+            <div style={{ marginBottom: isDesktop ? 10 : 20, padding: isDesktop ? "8px 12px" : "12px 16px", background: C.bgCard, borderRadius: 10, border: `1px solid ${C.border}`, ...cellR }}>
               <div style={{ fontSize: 11, fontWeight: 700, color: C.textMid, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: isDesktop ? 4 : 8 }}>{isEN ? "What's included" : "Qué incluye"}</div>
               <div style={{ display: "flex", flexWrap: "wrap", gap: "6px 16px" }}>
                 {items.map((item, i) => (
@@ -1173,8 +1173,8 @@ export default function BookingPopup() {
           </div>
         </div>
 
-        {/* Calendar — hidden when date is locked by group */}
-        <div style={{ marginBottom: isDesktop ? 10 : 24, display: grupoLock ? "none" : "block", ...cellR }}>
+        {/* Calendar — en desktop va en la columna izquierda debajo del carousel */}
+        <div style={{ marginBottom: isDesktop ? 10 : 24, display: grupoLock ? "none" : "block", ...cellL }}>
           <h3 style={{ fontSize: 15, fontWeight: 700, color: C.text, marginBottom: 12 }}>{isEN ? "Select a date" : "Selecciona una fecha"}</h3>
           {/* Month navigation */}
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
@@ -1236,9 +1236,10 @@ export default function BookingPopup() {
           )}
         </div>
 
-        {/* Salidas — group mode: solo buy-out groups necesitan seleccionar salida */}
+        {/* Salidas — group mode: solo buy-out groups necesitan seleccionar salida.
+            En desktop usa order:1 para aparecer DESPUÉS del Order Summary. */}
         {grupoLock && grupoEvt?.buy_out && grupoEvt?.salidas_grupo?.length > 0 && (
-          <div style={{ marginBottom: 24, ...cellR }}>
+          <div style={{ marginBottom: isDesktop ? 10 : 24, ...cellR, ...(isDesktop ? { order: 1 } : null) }}>
             <h3 style={{ fontSize: 15, fontWeight: 700, color: C.text, marginBottom: 12 }}>
               {isEN ? "Select departure time" : "Selecciona tu horario de salida"}
             </h3>
@@ -1299,9 +1300,10 @@ export default function BookingPopup() {
           </div>
         )}
 
-        {/* Salidas (departure times) — regular mode */}
+        {/* Salidas (departure times) — regular mode.
+            En desktop usa order:1 para aparecer DESPUÉS del Order Summary. */}
         {!grupoLock && !product?.noSalida && selDate && (
-          <div style={{ marginBottom: isDesktop ? 10 : 24, ...cellR }}>
+          <div style={{ marginBottom: isDesktop ? 10 : 24, ...cellR, ...(isDesktop ? { order: 1 } : null) }}>
             <h3 style={{ fontSize: 15, fontWeight: 700, color: C.text, marginBottom: 12 }}>
               {isEN ? "Select departure time" : "Selecciona el horario de salida"}
             </h3>
@@ -1369,8 +1371,8 @@ export default function BookingPopup() {
           </div>
         )}
 
-        {/* Order summary */}
-        <div style={{ background: C.bgCard, borderRadius: 12, padding: isDesktop ? "10px 14px" : "16px 18px", marginBottom: isDesktop ? 10 : 20, border: `1px solid ${C.border}`, ...cellL }}>
+        {/* Order summary — en desktop va en la columna derecha */}
+        <div style={{ background: C.bgCard, borderRadius: 12, padding: isDesktop ? "10px 14px" : "16px 18px", marginBottom: isDesktop ? 10 : 20, border: `1px solid ${C.border}`, ...cellR }}>
           <h3 style={{ fontSize: 14, fontWeight: 700, color: C.text, marginBottom: 12, borderBottom: `2px solid ${C.accent}`, paddingBottom: 8, display: "inline-block" }}>{isEN ? "Order summary" : "Comprobar el pedido"}</h3>
           <div style={{ fontSize: 14, fontWeight: 600, color: C.text, marginBottom: 10 }}>{isEN && product.tipo_en ? product.tipo_en : product.tipo}</div>
           {[
@@ -1391,12 +1393,13 @@ export default function BookingPopup() {
           <div style={{ fontSize: 11, color: C.textLight, marginTop: 6 }}>{isEN ? "Prices in COP (Colombian Peso)" : "Precios en COP (Peso colombiano)"}</div>
         </div>
 
-        {/* CTA button — en desktop ocupa toda la fila inferior para que sea el remate visual */}
+        {/* CTA button — en desktop ocupa toda la fila inferior para que sea
+            el remate visual final. order:2 lo fuerza después de salidas (order:1). */}
         {(() => {
           const afterOk = product.noSalida ? (embarcacion.trim() && horaLlegada) : true;
           const ready = selDate && (selSalida || grupoLock || product.noSalida) && paxA >= product.minA && afterOk;
           return (
-            <div style={{ ...cellFull }}>
+            <div style={{ ...cellFull, ...(isDesktop ? { order: 2 } : null) }}>
               <button
                 onClick={() => { if (ready) { gtmBeginCheckout(product, paxTotal, total); setStep(2); AtolanTrack.evento("begin_checkout", { producto: product?.tipo, fecha: selDate, pax: paxTotal, valor: total }, "booking"); AtolanTrack.setCurrentStep(2); } }}
                 disabled={!ready}
@@ -1752,20 +1755,35 @@ export default function BookingPopup() {
     <div style={{ minHeight: "100vh", background: "#F1F5F9", fontFamily: "'Segoe UI', Arial, sans-serif", color: C.text, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: isDesktop ? "6px 12px 6px" : "24px 16px 60px" }}>
       <div style={{ width: "100%", maxWidth: isDesktop ? 1000 : 480 }}>
 
-        {/* Brand header — logo muy compacto en desktop (iframe Sky ~680px) */}
-        <div style={{ position: "relative", textAlign: "center", marginBottom: isDesktop ? 4 : 20 }}>
-          <a href="https://www.atoloncartagena.com" target="_blank" rel="noopener noreferrer">
-            <img src="/atolon-peces.png" alt="Atolon Beach Club" style={{ height: isDesktop ? 36 : 195, objectFit: "contain", display: "block", margin: "0 auto" }} />
-          </a>
-          <div style={{ position: "absolute", top: "50%", right: 0, transform: "translateY(-50%)", display: "flex", gap: 4 }}>
-            {["es","en"].map(l => (
-              <button key={l} onClick={() => switchLang(l)}
-                style={{ fontSize: 11, fontWeight: 700, padding: "3px 9px", borderRadius: 6, background: langQ === l ? C.primary : "white", color: langQ === l ? "white" : C.textMid, border: `1px solid ${langQ === l ? C.primary : C.border}`, cursor: "pointer" }}>
-                {l.toUpperCase()}
-              </button>
-            ))}
+        {/* Brand header — en desktop SIN logo (la página padre de Sky ya
+            tiene navbar con logo). Solo se mantiene el toggle ES/EN
+            alineado a la derecha. En mobile sigue con logo grande. */}
+        {isDesktop ? (
+          <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 6, height: 28 }}>
+            <div style={{ display: "flex", gap: 4 }}>
+              {["es","en"].map(l => (
+                <button key={l} onClick={() => switchLang(l)}
+                  style={{ fontSize: 11, fontWeight: 700, padding: "4px 10px", borderRadius: 6, background: langQ === l ? C.primary : "white", color: langQ === l ? "white" : C.textMid, border: `1px solid ${langQ === l ? C.primary : C.border}`, cursor: "pointer" }}>
+                  {l.toUpperCase()}
+                </button>
+              ))}
+            </div>
           </div>
-        </div>
+        ) : (
+          <div style={{ position: "relative", textAlign: "center", marginBottom: 20 }}>
+            <a href="https://www.atoloncartagena.com" target="_blank" rel="noopener noreferrer">
+              <img src="/atolon-peces.png" alt="Atolon Beach Club" style={{ height: 195, objectFit: "contain", display: "block", margin: "0 auto" }} />
+            </a>
+            <div style={{ position: "absolute", top: "50%", right: 0, transform: "translateY(-50%)", display: "flex", gap: 4 }}>
+              {["es","en"].map(l => (
+                <button key={l} onClick={() => switchLang(l)}
+                  style={{ fontSize: 11, fontWeight: 700, padding: "3px 9px", borderRadius: 6, background: langQ === l ? C.primary : "white", color: langQ === l ? "white" : C.textMid, border: `1px solid ${langQ === l ? C.primary : C.border}`, cursor: "pointer" }}>
+                  {l.toUpperCase()}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Main card — padding compacto en desktop para entrar en 680px */}
         <div style={{ background: C.bg, borderRadius: 16, padding: isDesktop ? "12px 16px" : "24px 24px", boxShadow: "0 4px 24px rgba(0,0,0,0.07)", border: `1px solid ${C.border}` }}>
