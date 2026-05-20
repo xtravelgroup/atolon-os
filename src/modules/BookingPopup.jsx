@@ -584,82 +584,56 @@ export default function BookingPopup() {
   useEffect(() => {
     if (!supabase || !product) return;
     const y = calYear, m = calMonth;
-    const from  = isoDate(y, m, 1);
-    const toFix = `${y}-${String(m + 1).padStart(2,"0")}-${String(daysInMonth(y, m)).padStart(2,"0")}`;
 
+    // Migrado al availability-engine (single source of truth con admin).
+    // Antes: queries directas a reservas+cierres+salidas con cap base sumada
+    // y SIN leer salidas_override.extra_embarcaciones — eso causaba que
+    // overrides "Sin Lancha (+N)" agregados desde el admin no se reflejaran
+    // en el motor de reserva, mostrando "Agotado" cuando el admin ya había
+    // expandido cupo manualmente.
     Promise.all([
-      supabase.from("reservas").select("fecha, pax")
-        .neq("estado", "cancelado").gte("fecha", from).lte("fecha", toFix),
-      supabase.from("cierres").select("fecha, tipo").eq("activo", true)
-        .gte("fecha", from).lte("fecha", toFix),
+      import("../lib/availability.js").then(mod => mod.checkDisponibilidadMonth(y, m + 1)),
       supabase.from("salidas").select("id, hora, hora_regreso, nombre, capacidad_total, auto_apertura, orden").eq("activo", true).order("orden"),
-    ]).then(([resR, cierreR, salR]) => {
-      const sals = salR.data || [];
-      setSalidas(sals);
-      const cap = sals.filter(s => !s.auto_apertura)
-        .reduce((s, r) => s + (r.capacidad_total || 0), 0) || 120;
-      const paxByDate = {};
-      (resR.data || []).forEach(r => {
-        paxByDate[r.fecha] = (paxByDate[r.fecha] || 0) + (r.pax || 0);
-      });
+    ]).then(([monthData, salR]) => {
+      setSalidas(salR.data || []);
+      const dias = monthData?.dias || {};
       const avail = {};
-      for (let d = 1; d <= daysInMonth(y, m); d++) {
-        const iso = isoDate(y, m, d);
-        avail[iso] = Math.max(0, cap - (paxByDate[iso] || 0));
+      const closedDates = [];
+      for (const [iso, info] of Object.entries(dias)) {
+        // El engine ya aplica overrides + cierres + auto-apertura por día.
+        avail[iso] = info.cupos_max_salida ?? info.cupos ?? 0;
+        if (info.cierre === "total") closedDates.push(iso);
       }
       setDispon(avail);
-      setCierres((cierreR.data || []).map(c => c.fecha));
-    });
+      setCierres(closedDates);
+    }).catch(err => console.error("[BookingPopup] availability-engine month error:", err));
   }, [calYear, calMonth, product]);
 
-  // Load salida-level availability when date changes
+  // Load salida-level availability when date changes.
+  // Migrado al availability-engine con client_view=true: aplica cutoff 45min,
+  // overrides abrir/cerrar, extra_embarcaciones (capacidad ampliada manualmente),
+  // cierres parciales y cascada auto_apertura (S3/S4 visibles solo si la
+  // anterior llegó a 75%). Convención: cupos_restantes=-1 si la salida NO
+  // es visible al cliente (mismo contrato que la lógica anterior).
   useEffect(() => {
     if (!supabase || !selDate || salidas.length === 0) return;
     setLoadingSal(true);
     setSelSalida(null);
-    Promise.all([
-      supabase.from("reservas").select("salida_id, pax")
-        .eq("fecha", selDate).neq("estado", "cancelado"),
-      supabase.from("cierres").select("tipo, salidas").eq("fecha", selDate).eq("activo", true),
-      supabase.from("salidas_override").select("salida_id, accion").eq("fecha", selDate),
-    ]).then(([resR, cierreR, ovrR]) => {
-      const paxBySalida = {};
-      (resR.data || []).forEach(r => {
-        if (r.salida_id) paxBySalida[r.salida_id] = (paxBySalida[r.salida_id] || 0) + (r.pax || 0);
+    import("../lib/availability.js")
+      .then(mod => mod.checkDisponibilidadDetailed(selDate, null, { clientView: true }))
+      .then((detail) => {
+        const result = {};
+        for (const o of (detail.opciones || [])) {
+          result[o.salida_id] = o.visible ? o.cupos_restantes : -1;
+        }
+        setDisponSal(result);
+        setLoadingSal(false);
+      })
+      .catch((err) => {
+        console.error("[BookingPopup] availability-engine detailed error:", err);
+        setDisponSal({});
+        setLoadingSal(false);
       });
-      const cierre = (cierreR.data || [])[0] || null;
-      const ovrMap = {};
-      (ovrR.data || []).forEach(o => { ovrMap[o.salida_id] = o.accion; });
-
-      // 45-min cutoff: if date is today, close salidas within 45 mins (Colombia timezone)
-      const isToday = selDate === isoToday();
-      const nowMins = isToday ? (() => { const t = new Date().toLocaleString("en-US", { timeZone: "America/Bogota", hour: "2-digit", minute: "2-digit", hour12: false }); const [h, m] = t.split(":").map(Number); return h * 60 + m; })() : -1;
-
-      const result = {};
-      salidas.forEach(s => {
-        // Check if this salida is available on this date
-        if (ovrMap[s.id] === "cerrar") { result[s.id] = -1; return; }
-        if (ovrMap[s.id] === "abrir")  { result[s.id] = Math.max(0, (s.capacidad_total || 30) - (paxBySalida[s.id] || 0)); return; }
-        if (cierre) {
-          if (cierre.tipo === "total") { result[s.id] = -1; return; }
-          if ((cierre.salidas || []).includes(s.id)) { result[s.id] = -1; return; }
-        }
-        // Close sales 45 minutes before departure when booking for today
-        if (isToday && s.hora) {
-          const [h, m] = s.hora.split(":").map(Number);
-          if (nowMins >= (h * 60 + m) - 45) { result[s.id] = -1; return; }
-        }
-        if (s.auto_apertura) {
-          // Auto-open only if fixed salidas are 75%+ full
-          const fixedSals = salidas.filter(f => !f.auto_apertura);
-          const allFull = fixedSals.every(f => (paxBySalida[f.id] || 0) / (f.capacidad_total || 1) >= 0.75);
-          if (!allFull) { result[s.id] = -1; return; }
-        }
-        result[s.id] = Math.max(0, (s.capacidad_total || 30) - (paxBySalida[s.id] || 0));
-      });
-      setDisponSal(result);
-      setLoadingSal(false);
-    });
   }, [selDate, salidas]);
 
   const today      = isoToday();
