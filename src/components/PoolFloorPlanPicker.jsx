@@ -241,16 +241,22 @@ export default function PoolFloorPlanPicker({
               </SectionLabel>
             </div>
           )}
-          {/* Las 3 filas se alinean a la DERECHA — P11 alineada a P31 y
-              P52, P12 a P32 y P53, etc. Como Fila 2 tiene 12 camas (la
-              más larga), las otras dos se desplazan a la derecha. En móvil,
-              el contenedor permite scroll horizontal si las 12 camas no
-              entran de un solo. */}
+          {/* Las 3 filas se alinean por COLUMNAS de derecha a izquierda:
+                Fila 1 (P11..P16):  pegada al borde derecho — P11 rightmost
+                Fila 2 (P31..P42):  pegada al borde derecho — P31 alineada con P11
+                Fila 3 (P52..P62):  UNA columna a la izquierda — P52 alineada
+                                    con P12 y P32, NO con P11/P31
+              En móvil hay scroll horizontal con momentum iOS para que las
+              12 camas de fila 2 entren swipeables. */}
           <div style={{ overflowX: "auto", paddingBottom: 4, WebkitOverflowScrolling: "touch" }}>
             <div style={{ display: "flex", flexDirection: "column", gap: SIZES.gap, alignItems: "flex-end", minWidth: "max-content" }}>
-              <PlayaRow camas={grouped.playa.fila1} sizes={SIZES} {...{ selectedSpotId, showEstadoColor, asignaciones, handleClick, isMobile }} />
-              <PlayaRow camas={grouped.playa.fila2} sizes={SIZES} {...{ selectedSpotId, showEstadoColor, asignaciones, handleClick, isMobile }} />
-              <PlayaRow camas={grouped.playa.fila3} sizes={SIZES} {...{ selectedSpotId, showEstadoColor, asignaciones, handleClick, isMobile }} />
+              <PlayaRow camas={grouped.playa.fila1} sizes={SIZES} {...{ selectedSpotId, showEstadoColor, asignaciones, handleClick }} />
+              <PlayaRow camas={grouped.playa.fila2} sizes={SIZES} {...{ selectedSpotId, showEstadoColor, asignaciones, handleClick }} />
+              {/* Fila 3 desplazada 1 columna a la izq (marginRight = ancho cama + gap)
+                  para que P52 caiga bajo P32, no bajo P31 */}
+              <div style={{ marginRight: SIZES.camaW + SIZES.gap }}>
+                <PlayaRow camas={grouped.playa.fila3} sizes={SIZES} {...{ selectedSpotId, showEstadoColor, asignaciones, handleClick }} />
+              </div>
             </div>
           </div>
           {/* Banda MAR — gradiente turquesa con onda y emoji */}
