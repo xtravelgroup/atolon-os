@@ -1789,54 +1789,52 @@ export default function BookingPopup() {
           </div>
         </div>
 
-        {/* Payment method buttons — 2-col grid; el warning y el secure note
-            quedan en el BOTTOM zone abajo (flex-shrink: 0). */}
-        <div style={{ marginBottom: 0 }}>
-          <div style={{ fontSize: 12, fontWeight: 700, color: C.text, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 10 }}>
+        </div>{/* /MIDDLE zone */}
+
+        {/* ════ BOTTOM zone — métodos de pago + warning + secure note
+            (todos siempre visibles, nunca empujados por scroll). El usuario
+            siempre tiene los CTAs de pago a la vista, sea cual sea el alto
+            del iframe. ════ */}
+        <div style={isEmbedded ? { flexShrink: 0, paddingTop: 10, borderTop: `1px solid ${C.border}`, marginTop: 8 } : { marginTop: 12 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: C.text, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 }}>
             {isEN ? "Select payment method" : "Método de pago"}
           </div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10, marginBottom: 8 }}>
             {/* Wompi — show if integrity key configured */}
             {import.meta.env.VITE_WOMPI_INTEGRITY_KEY && (
               <button onClick={() => { gtmAddPaymentInfo("wompi", grandTotal); AtolanTrack.evento("payment_method_selected", { metodo: "wompi", monto: grandTotal }, "conversion"); handleReservar("wompi"); }} disabled={saving}
-                style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 8, padding: "12px 14px", borderRadius: 10, border: `1.5px solid ${C.border}`, background: C.bg, cursor: saving ? "wait" : "pointer", textAlign: "left", transition: "all 0.15s" }}
+                style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 6, padding: "10px 12px", borderRadius: 10, border: `1.5px solid ${C.border}`, background: C.bg, cursor: saving ? "wait" : "pointer", textAlign: "left", transition: "all 0.15s" }}
                 onMouseEnter={e => { e.currentTarget.style.borderColor = "#5B4CF5"; e.currentTarget.style.background = "#F5F3FF"; }}
                 onMouseLeave={e => { e.currentTarget.style.borderColor = C.border; e.currentTarget.style.background = C.bg; }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 10, width: "100%" }}>
-                  <div style={{ width: 32, height: 32, borderRadius: 8, background: "#5B4CF5", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, fontWeight: 900, color: "white", fontSize: 14 }}>W</div>
+                  <div style={{ width: 28, height: 28, borderRadius: 7, background: "#5B4CF5", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, fontWeight: 900, color: "white", fontSize: 13 }}>W</div>
                   <div style={{ fontWeight: 700, fontSize: 13, color: C.text }}>{isEN ? "National Card" : "Tarjeta Nacional"}</div>
                 </div>
-                <div style={{ fontSize: 11, color: C.textMid, lineHeight: 1.4 }}>PSE · Nequi · Bancolombia · Visa/MC Colombia</div>
+                <div style={{ fontSize: 10, color: C.textMid, lineHeight: 1.35 }}>PSE · Nequi · Bancolombia · Visa/MC Col.</div>
               </button>
             )}
 
             {/* Stripe — tarjeta internacional */}
             <button onClick={() => { gtmAddPaymentInfo("stripe", grandTotal); AtolanTrack.evento("payment_method_selected", { metodo: "stripe", monto: grandTotal }, "conversion"); handleReservar("stripe"); }} disabled={saving}
-              style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 8, padding: "12px 14px", borderRadius: 10, border: `1.5px solid ${C.border}`, background: C.bg, cursor: saving ? "wait" : "pointer", textAlign: "left", transition: "all 0.15s" }}
+              style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 6, padding: "10px 12px", borderRadius: 10, border: `1.5px solid ${C.border}`, background: C.bg, cursor: saving ? "wait" : "pointer", textAlign: "left", transition: "all 0.15s" }}
               onMouseEnter={e => { e.currentTarget.style.borderColor = "#635BFF"; e.currentTarget.style.background = "#F5F3FF"; }}
               onMouseLeave={e => { e.currentTarget.style.borderColor = C.border; e.currentTarget.style.background = C.bg; }}>
               <div style={{ display: "flex", alignItems: "center", gap: 10, width: "100%" }}>
-                <div style={{ width: 32, height: 32, borderRadius: 8, background: "#635BFF", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, fontWeight: 900, color: "white", fontSize: 14 }}>S</div>
+                <div style={{ width: 28, height: 28, borderRadius: 7, background: "#635BFF", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, fontWeight: 900, color: "white", fontSize: 13 }}>S</div>
                 <div style={{ fontWeight: 700, fontSize: 13, color: C.text }}>{isEN ? "International Card" : "Tarjeta Internacional"}</div>
               </div>
-              <div style={{ fontSize: 11, color: C.textMid, lineHeight: 1.4 }}>Visa · Mastercard · Amex · Apple/Google Pay</div>
+              <div style={{ fontSize: 10, color: C.textMid, lineHeight: 1.35 }}>Visa · Mastercard · Amex · Apple/Google Pay</div>
             </button>
           </div>
-        </div>
-
-        </div>{/* /MIDDLE zone */}
-
-        {/* ════ BOTTOM zone — warning + secure note siempre visibles ════ */}
-        <div style={isEmbedded ? { flexShrink: 0, paddingTop: 8, borderTop: `1px solid ${C.border}`, marginTop: 8 } : { marginTop: 8 }}>
-          <div style={{ padding: "8px 12px", background: "#FFF7E6", border: "1px solid #F5C842", borderRadius: 8, fontSize: 11, color: "#92400E", display: "flex", alignItems: "flex-start", gap: 8 }}>
-            <span style={{ fontSize: 14 }}>💳</span>
+          <div style={{ padding: "6px 10px", background: "#FFF7E6", border: "1px solid #F5C842", borderRadius: 7, fontSize: 10, color: "#92400E", display: "flex", alignItems: "flex-start", gap: 6, marginBottom: 4 }}>
+            <span style={{ fontSize: 12 }}>💳</span>
             <span>
               {isEN
-                ? <>The international card charge will appear on your statement as <strong>X Travel Group</strong>.</>
-                : <>El cargo con tarjeta internacional aparecerá en tu estado de cuenta a nombre de <strong>X Travel Group</strong>.</>}
+                ? <>International card charge appears as <strong>X Travel Group</strong>.</>
+                : <>Cargo con tarjeta internacional aparece como <strong>X Travel Group</strong>.</>}
             </span>
           </div>
-          <div style={{ textAlign: "center", marginTop: 6, fontSize: 11, color: C.textLight }}>
+          <div style={{ textAlign: "center", fontSize: 10, color: C.textLight }}>
             🔒 {isEN ? "Secure payment · No refunds policy" : "Pago seguro · Política de no reembolso"}
           </div>
         </div>
