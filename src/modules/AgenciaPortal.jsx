@@ -120,7 +120,8 @@ function NuevaReserva({ agencia, user, onCreated, vistaPrecios = "ambos" }) {
         .or(`aliado_id.is.null,aliado_id.eq.${agencia.id}`)
         .eq("activo", true).eq("tipo", "acumulacion"),
       supabase.from("reservas").select("pax, fecha")
-        .eq("aliado_id", agencia.id).neq("estado", "cancelado").neq("canal", "GRUPO"),
+        .eq("aliado_id", agencia.id).neq("estado", "cancelado").neq("canal", "GRUPO")
+        .neq("canal", "Cortesía").neq("forma_pago", "Cortesía"),
       supabase.from("b2b_premios_canjes").select("incentivo_id, pasadias_usadas")
         .eq("aliado_id", agencia.id),
     ]);
@@ -1339,7 +1340,7 @@ function IncentivosPortal({ agencia }) {
           prog[i.id] = { actual, pct: Math.min(100, Math.round((actual / (i.meta_valor || 1)) * 100)) };
         } else if (i.tipo === "acumulacion") {
           const [{ data: resData }, { data: canjesData }] = await Promise.all([
-            supabase.from("reservas").select("pax, fecha").eq("aliado_id", agencia.id).neq("estado", "cancelado"),
+            supabase.from("reservas").select("pax, fecha").eq("aliado_id", agencia.id).neq("estado", "cancelado").neq("canal", "Cortesía").neq("forma_pago", "Cortesía"),
             supabase.from("b2b_premios_canjes").select("pasadias_usadas").eq("aliado_id", agencia.id).eq("incentivo_id", i.id),
           ]);
           const ganados = calcPremiosGanadosLocal(resData || [], i);

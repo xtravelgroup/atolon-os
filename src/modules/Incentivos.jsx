@@ -456,21 +456,24 @@ function TabAgencias() {
         if (inc.aliado_id) {
           const { data: res } = await supabase.from("reservas")
             .select("fecha, pax").eq("aliado_id", inc.aliado_id)
-            .neq("estado", "cancelado").gte("fecha", desde).lte("fecha", hasta);
+            .neq("estado", "cancelado").neq("canal", "Cortesía").neq("forma_pago", "Cortesía")
+            .gte("fecha", desde).lte("fecha", hasta);
           prog[inc.id] = calcAcum(res || [], inc);
         } else {
           const map = {};
           for (const aid of targets) {
             const { data: res } = await supabase.from("reservas")
               .select("fecha, pax").eq("aliado_id", aid)
-              .neq("estado", "cancelado").gte("fecha", desde).lte("fecha", hasta);
+              .neq("estado", "cancelado").neq("canal", "Cortesía").neq("forma_pago", "Cortesía")
+              .gte("fecha", desde).lte("fecha", hasta);
             map[aid] = calcAcum(res || [], inc);
           }
           prog[inc.id] = map;
         }
       } else if (["meta_pax","meta_revenue","meta_reservas"].includes(inc.tipo) && inc.fecha_inicio) {
         const aid = inc.aliado_id;
-        const q = supabase.from("reservas").select("pax, total").neq("estado", "cancelado")
+        const q = supabase.from("reservas").select("pax, total")
+          .neq("estado", "cancelado").neq("canal", "Cortesía").neq("forma_pago", "Cortesía")
           .gte("fecha", inc.fecha_inicio).lte("fecha", inc.fecha_fin || fechaHoy());
         if (aid) q.eq("aliado_id", aid);
         const { data: res } = await q;
