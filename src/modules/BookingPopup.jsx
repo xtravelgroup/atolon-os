@@ -8,9 +8,9 @@ import { supabase } from "../lib/supabase";
 import { wompiCheckoutUrl } from "../lib/wompi";
 import AtolanTrack from "../lib/AtolanTrack";
 import { gtmViewItem, gtmBeginCheckout, gtmAddPaymentInfo, gtmAbandon } from "../lib/gtm";
-// FacturaElectronicaForm + Toggle se movieron a PagoCliente (post-pago).
-// Aquí solo necesitamos FE_EMPTY (init del form) y fePayload (insert reserva).
-import { FE_EMPTY, fePayload } from "../lib/FacturaElectronicaForm.jsx";
+// FacturaElectronicaForm + Toggle: en mobile se renderizan dentro del step 2
+// (UX original). En desktop la captura se movió a la pantalla post-pago.
+import FacturaElectronicaForm, { FacturaElectronicaToggle, FE_EMPTY, fePayload } from "../lib/FacturaElectronicaForm.jsx";
 import ZohoPaymentWidget from "../components/ZohoPaymentWidget.jsx";
 import { crearSesionPago, getMerchantInternacional } from "../lib/internacional";
 import { useBreakpoint } from "../lib/responsive";
@@ -173,6 +173,11 @@ export default function BookingPopup() {
     if (typeof window === "undefined") return false;
     try { return window.self !== window.top; } catch { return true; /* cross-origin → asumimos embebido */ }
   });
+
+  // Layout iframe-fit: solo en desktop. En mobile (aunque esté embebido)
+  // mantenemos la UX original con scroll de página completo, logo grande,
+  // padding generoso. Ningún cambio de hoy aplica a mobile.
+  const iframeFit = isEmbedded && isDesktop;
 
   // ── Auto-resize del iframe en el parent (Webflow / atoloncartagena) ──
   // Cuando NO usamos altura adaptable (iframe con height fijo legacy), el
@@ -960,18 +965,21 @@ export default function BookingPopup() {
 
   // ─── Shared UI helpers ──────────────────────────────────────────────────────
   function PaxRow({ label, sub, val, onDec, onInc, min = 0 }) {
+    // En desktop: versión compacta (padding 7px, fuentes 13/11, botones 28px).
+    // En mobile: versión original con padding 13px, fuentes 14/12, botones 32px.
+    const compact = isDesktop;
     return (
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "7px 0", borderBottom: `1px solid ${C.divider}` }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: compact ? "7px 0" : "13px 0", borderBottom: `1px solid ${C.divider}` }}>
         <div>
-          <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{label}</div>
-          {sub && <div style={{ fontSize: 11, color: C.textLight, marginTop: 1 }}>{sub}</div>}
+          <div style={{ fontSize: compact ? 13 : 14, fontWeight: 600, color: C.text }}>{label}</div>
+          {sub && <div style={{ fontSize: compact ? 11 : 12, color: C.textLight, marginTop: 1 }}>{sub}</div>}
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: compact ? 12 : 14 }}>
           <button onClick={onDec} disabled={val <= min}
-            style={{ width: 28, height: 28, borderRadius: "50%", border: `1.5px solid ${val <= min ? C.border : C.primary}`, background: "white", color: val <= min ? C.border : C.primary, fontSize: 16, lineHeight: 1, cursor: val <= min ? "not-allowed" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, flexShrink: 0 }}>−</button>
-          <span style={{ fontSize: 15, fontWeight: 700, color: C.text, minWidth: 18, textAlign: "center" }}>{val}</span>
+            style={{ width: compact ? 28 : 32, height: compact ? 28 : 32, borderRadius: "50%", border: `1.5px solid ${val <= min ? C.border : C.primary}`, background: "white", color: val <= min ? C.border : C.primary, fontSize: compact ? 16 : 18, lineHeight: 1, cursor: val <= min ? "not-allowed" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, flexShrink: 0 }}>−</button>
+          <span style={{ fontSize: compact ? 15 : 16, fontWeight: 700, color: C.text, minWidth: compact ? 18 : 20, textAlign: "center" }}>{val}</span>
           <button onClick={onInc}
-            style={{ width: 28, height: 28, borderRadius: "50%", border: `1.5px solid ${C.primary}`, background: "white", color: C.primary, fontSize: 16, lineHeight: 1, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, flexShrink: 0 }}>+</button>
+            style={{ width: compact ? 28 : 32, height: compact ? 28 : 32, borderRadius: "50%", border: `1.5px solid ${C.primary}`, background: "white", color: C.primary, fontSize: compact ? 16 : 18, lineHeight: 1, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, flexShrink: 0 }}>+</button>
         </div>
       </div>
     );
@@ -1049,12 +1057,12 @@ export default function BookingPopup() {
         // ocupa 100vh del iframe). Flex column con overflow hidden para que el
         // área de columnas tome el espacio restante después del CTA fijo.
         // En standalone: height auto, sin overflow hidden — contenido fluye.
-        ...(isEmbedded ? { height: "100%", display: "flex", flexDirection: "column", overflow: "hidden" } : {}),
+        ...(iframeFit ? { height: "100%", display: "flex", flexDirection: "column", overflow: "hidden" } : {}),
       }}>
         <div style={{
           display: "flex", flexDirection: isDesktop ? "row" : "column",
           gap: isDesktop ? 20 : 0, alignItems: "stretch",
-          ...(isEmbedded ? { flex: 1, minHeight: 0, overflow: "hidden" } : {}),
+          ...(iframeFit ? { flex: 1, minHeight: 0, overflow: "hidden" } : {}),
         }}>
 
           {/* ═════════ LEFT COLUMN ═════════
@@ -1062,7 +1070,7 @@ export default function BookingPopup() {
           <div style={{
             flex: 1, minWidth: 0, width: isDesktop ? undefined : "100%",
             display: "flex", flexDirection: "column",
-            ...(isEmbedded ? { overflowY: "auto", paddingRight: isDesktop ? 4 : 0 } : {}),
+            ...(iframeFit ? { overflowY: "auto", paddingRight: isDesktop ? 4 : 0 } : {}),
           }}>
 
         {/* Photo gallery — solo en mobile. En desktop ocupaba ~340px que no
@@ -1164,11 +1172,42 @@ export default function BookingPopup() {
                   onDec={() => { setPaxN(n => Math.max(0, n - 1)); setEdadesNinos(e => e.slice(0, Math.max(0, paxN - 1))); }}
                   onInc={() => { setPaxN(n => Math.min(30, n + 1)); setEdadesNinos(e => [...e, ""]); }}
                 />
-                {/* Edad por niño removida del widget — la pregunta se hace por
-                    WhatsApp durante el confirmación o al hacer check-in. El
-                    sub-label de la fila Children ya informa "+11 se cobra como
-                    adulto". Mantenemos `edadesNinos` en state por compatibilidad
-                    con leads/reservas pero queda vacío. */}
+                {/* Edad por niño: en DESKTOP la removimos del widget (la
+                    pregunta se hace por WhatsApp/check-in). En MOBILE
+                    restauramos el grid original para preservar la UX previa. */}
+                {!isDesktop && paxN > 0 && (
+                  <div style={{ padding: "10px 14px", background: "rgba(200,185,154,0.06)", borderRadius: 10, border: "1px solid rgba(200,185,154,0.15)" }}>
+                    <div style={{ fontSize: 11, color: "#C8B99A", marginBottom: 8, fontWeight: 600 }}>
+                      {isEN ? "Age of each child" : "Edad de cada niño"} <span style={{ opacity: 0.6 }}>({isEN ? "over 11 pays as adult" : "+11 se cobra como adulto"})</span>
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(80px, 1fr))", gap: 8 }}>
+                      {Array.from({ length: paxN }).map((_, i) => (
+                        <div key={i}>
+                          <div style={{ fontSize: 10, color: "rgba(255,255,255,0.45)", marginBottom: 3 }}>{isEN ? `Child ${i + 1}` : `Niño ${i + 1}`}</div>
+                          <input type="number" min="0" max="17"
+                            value={edadesNinos[i] ?? ""}
+                            onChange={e => {
+                              const v = e.target.value;
+                              const newArr = [...edadesNinos];
+                              while (newArr.length < paxN) newArr.push("");
+                              newArr[i] = v;
+                              setEdadesNinos(newArr);
+                              if (Number(v) > 11) {
+                                alert(isEN
+                                  ? `A ${v} year old pays as adult (added to adults)`
+                                  : `Un niño de ${v} años se cobra como adulto (movido a adultos)`);
+                                setPaxA(a => a + 1);
+                                setPaxN(n => Math.max(0, n - 1));
+                                setEdadesNinos(prev => prev.filter((_, idx) => idx !== i));
+                              }
+                            }}
+                            placeholder={isEN ? "Age" : "Edad"}
+                            style={{ width: "100%", padding: "6px 8px", borderRadius: 6, background: "#0D1B3E", border: "1px solid rgba(255,255,255,0.1)", color: "#fff", fontSize: 13, textAlign: "center" }} />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
                 <PaxRow
                   label={isEN ? "Infants" : "Infantes"}
                   sub={isEN ? "Age 0 – 2 (free)" : "Edad 0 – 2 (sin costo)"}
@@ -1181,28 +1220,53 @@ export default function BookingPopup() {
           </div>
         </div>
 
-        {/* Order summary — compactado para caber en iframe 680px */}
-        <div style={{ background: C.bgCard, borderRadius: 10, padding: isDesktop ? "8px 12px" : "14px 16px", marginBottom: isDesktop ? 0 : 20, border: `1px solid ${C.border}` }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6, paddingBottom: 4, borderBottom: `1.5px solid ${C.accent}` }}>
-            <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{isEN ? "Order summary" : "Resumen"}</span>
-            <span style={{ fontSize: 12, fontWeight: 600, color: C.textMid }}>{isEN && product.tipo_en ? product.tipo_en : product.tipo}</span>
-          </div>
-          {[
-            selDate && [isEN ? "Date" : "Fecha", fmtDate(selDate, langQ)],
-            selSalida && [isEN ? "Departure" : "Salida", `${selSalida.hora || selSalida.id}`],
-            [isEN ? `Adults (${paxA}×)` : `Adultos (${paxA}×)`, COP(product.precio * paxA)],
-            (!product.noNinos && paxN > 0) && [isEN ? `Children (${paxN}×)` : `Niños (${paxN}×)`, COP((product.precioNino || 0) * paxN)],
-            (!product.noNinos && paxI > 0) && [isEN ? `Infants (${paxI}×)` : `Infantes (${paxI}×)`, isEN ? "Free" : "Gratis"],
-          ].filter(Boolean).map(([k, v], i) => (
-            <div key={i} style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: C.textMid, padding: "2px 0" }}>
-              <span>{k}</span><span>{v}</span>
+        {/* Order summary
+            Desktop: versión compactada (header en una línea, sin label COP).
+            Mobile: layout original con h3 + nombre de producto + label "Precios en COP". */}
+        {isDesktop ? (
+          <div style={{ background: C.bgCard, borderRadius: 10, padding: "8px 12px", marginBottom: 0, border: `1px solid ${C.border}` }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6, paddingBottom: 4, borderBottom: `1.5px solid ${C.accent}` }}>
+              <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{isEN ? "Order summary" : "Resumen"}</span>
+              <span style={{ fontSize: 12, fontWeight: 600, color: C.textMid }}>{isEN && product.tipo_en ? product.tipo_en : product.tipo}</span>
             </div>
-          ))}
-          <div style={{ borderTop: `1px solid ${C.border}`, marginTop: 6, paddingTop: 6, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Total:</span>
-            <span style={{ fontSize: 16, fontWeight: 800, color: C.accent }}>{COP(total)}</span>
+            {[
+              selDate && [isEN ? "Date" : "Fecha", fmtDate(selDate, langQ)],
+              selSalida && [isEN ? "Departure" : "Salida", `${selSalida.hora || selSalida.id}`],
+              [isEN ? `Adults (${paxA}×)` : `Adultos (${paxA}×)`, COP(product.precio * paxA)],
+              (!product.noNinos && paxN > 0) && [isEN ? `Children (${paxN}×)` : `Niños (${paxN}×)`, COP((product.precioNino || 0) * paxN)],
+              (!product.noNinos && paxI > 0) && [isEN ? `Infants (${paxI}×)` : `Infantes (${paxI}×)`, isEN ? "Free" : "Gratis"],
+            ].filter(Boolean).map(([k, v], i) => (
+              <div key={i} style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: C.textMid, padding: "2px 0" }}>
+                <span>{k}</span><span>{v}</span>
+              </div>
+            ))}
+            <div style={{ borderTop: `1px solid ${C.border}`, marginTop: 6, paddingTop: 6, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Total:</span>
+              <span style={{ fontSize: 16, fontWeight: 800, color: C.accent }}>{COP(total)}</span>
+            </div>
           </div>
-        </div>
+        ) : (
+          <div style={{ background: C.bgCard, borderRadius: 12, padding: "16px 18px", marginBottom: 20, border: `1px solid ${C.border}` }}>
+            <h3 style={{ fontSize: 14, fontWeight: 700, color: C.text, marginBottom: 12, borderBottom: `2px solid ${C.accent}`, paddingBottom: 8, display: "inline-block" }}>{isEN ? "Order summary" : "Comprobar el pedido"}</h3>
+            <div style={{ fontSize: 14, fontWeight: 600, color: C.text, marginBottom: 10 }}>{isEN && product.tipo_en ? product.tipo_en : product.tipo}</div>
+            {[
+              selDate && [isEN ? "Date" : "Fecha", fmtDate(selDate, langQ)],
+              selSalida && [isEN ? "Departure" : "Salida", `${isEN ? "Departure" : "Salida"} ${selSalida.hora || selSalida.id}`],
+              [isEN ? `Adults (${paxA}×)` : `Adultos (${paxA}×)`, COP(product.precio * paxA)],
+              (!product.noNinos && paxN > 0) && [isEN ? `Children (${paxN}×)` : `Niños (${paxN}×)`, COP((product.precioNino || 0) * paxN)],
+              (!product.noNinos && paxI > 0) && [isEN ? `Infants (${paxI}×)` : `Infantes (${paxI}×)`, isEN ? "Free" : "Gratis"],
+            ].filter(Boolean).map(([k, v], i) => (
+              <div key={i} style={{ display: "flex", justifyContent: "space-between", fontSize: 13, color: C.textMid, padding: "4px 0" }}>
+                <span>{k}</span><span>{v}</span>
+              </div>
+            ))}
+            <div style={{ borderTop: `1px solid ${C.border}`, marginTop: 10, paddingTop: 10, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <span style={{ fontSize: 14, fontWeight: 700, color: C.text }}>Total:</span>
+              <span style={{ fontSize: 18, fontWeight: 800, color: C.accent }}>{COP(total)}</span>
+            </div>
+            <div style={{ fontSize: 11, color: C.textLight, marginTop: 6 }}>{isEN ? "Prices in COP (Colombian Peso)" : "Precios en COP (Peso colombiano)"}</div>
+          </div>
+        )}
 
           </div>{/* /LEFT COLUMN */}
 
@@ -1211,7 +1275,7 @@ export default function BookingPopup() {
           <div style={{
             flex: 1, minWidth: 0, width: isDesktop ? undefined : "100%",
             display: "flex", flexDirection: "column",
-            ...(isEmbedded ? { overflowY: "auto", paddingRight: isDesktop ? 4 : 0 } : {}),
+            ...(iframeFit ? { overflowY: "auto", paddingRight: isDesktop ? 4 : 0 } : {}),
           }}>
 
         {/* Group event banner */}
@@ -1351,20 +1415,22 @@ export default function BookingPopup() {
           </div>
         )}
 
-        {/* Salidas (departure times) — regular mode, cards compactas (~48px) */}
+        {/* Salidas (departure times) — regular mode.
+            Desktop: cards compactas ~48px (icono inline + una línea).
+            Mobile: cards originales con icon-box 44px + 2 líneas. */}
         {!grupoLock && !product?.noSalida && selDate && (
           <div style={{ marginBottom: isDesktop ? 10 : 24 }}>
-            <h3 style={{ fontSize: 14, fontWeight: 700, color: C.text, marginBottom: 8 }}>
+            <h3 style={{ fontSize: isDesktop ? 14 : 15, fontWeight: 700, color: C.text, marginBottom: isDesktop ? 8 : 12 }}>
               {isEN ? "Select departure time" : "Selecciona el horario de salida"}
             </h3>
             {loadingSal ? (
-              <div style={{ textAlign: "center", padding: "12px 0", fontSize: 12, color: C.textLight }}>
+              <div style={{ textAlign: "center", padding: isDesktop ? "12px 0" : "20px 0", fontSize: isDesktop ? 12 : 13, color: C.textLight }}>
                 {isEN ? "Checking availability..." : "Verificando disponibilidad..."}
               </div>
             ) : (
-              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: isDesktop ? 6 : 8 }}>
                 {salidas.filter(s => disponSal[s.id] !== -1).length === 0 ? (
-                  <div style={{ padding: "12px", background: "#FFF8F8", border: `1px solid #FEE2E2`, borderRadius: 8, fontSize: 12, color: C.danger, textAlign: "center" }}>
+                  <div style={{ padding: isDesktop ? "12px" : "16px", background: "#FFF8F8", border: `1px solid #FEE2E2`, borderRadius: isDesktop ? 8 : 10, fontSize: isDesktop ? 12 : 13, color: C.danger, textAlign: "center" }}>
                     {isEN ? "No availability for this date. Please select another day." : "Sin disponibilidad para esta fecha. Por favor elige otro día."}
                   </div>
                 ) : (
@@ -1376,34 +1442,75 @@ export default function BookingPopup() {
                     const isSelected = selSalida?.id === s.id;
                     const salidaFull = !esGrupo && spots !== undefined && spots < (paxA + paxN);
 
+                    if (isDesktop) {
+                      // Desktop compacto (~48px de alto)
+                      return (
+                        <div key={s.id}
+                          onClick={() => !salidaFull && setSelSalida(s)}
+                          style={{
+                            display: "flex", alignItems: "center", gap: 10,
+                            padding: "8px 12px", borderRadius: 8, cursor: salidaFull ? "not-allowed" : "pointer",
+                            border: `2px solid ${isSelected ? C.accent : C.border}`,
+                            background: isSelected ? C.accentLight : salidaFull ? C.bgCard : C.bg,
+                            opacity: salidaFull ? 0.5 : 1, transition: "all 0.15s",
+                          }}
+                          onMouseEnter={e => { if (!salidaFull && !isSelected) e.currentTarget.style.borderColor = C.accent; }}
+                          onMouseLeave={e => { if (!salidaFull && !isSelected) e.currentTarget.style.borderColor = C.border; }}>
+                          <span style={{ fontSize: 16, flexShrink: 0 }}>{salidaFull ? "🚫" : "⛵"}</span>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontSize: 13, fontWeight: 700, color: isSelected ? C.accent : C.text }}>
+                              {isEN ? "Departure" : "Salida"} {s.hora || s.id}
+                              <span style={{ fontSize: 11, color: C.textMid, fontWeight: 400, marginLeft: 8 }}>
+                                → {isEN ? "Return" : "Regreso"} {s.hora_regreso || s.regreso || "—"}
+                              </span>
+                            </div>
+                          </div>
+                          <div style={{ textAlign: "right", flexShrink: 0 }}>
+                            {salidaFull ? (
+                              <span style={{ fontSize: 11, color: C.danger, fontWeight: 600 }}>{isEN ? "Full" : "Agotado"}</span>
+                            ) : isSelected ? (
+                              <div style={{ fontSize: 11, color: C.accent, fontWeight: 700 }}>✓</div>
+                            ) : (
+                              <div style={{ fontSize: 11, color: C.success, fontWeight: 600 }}>
+                                {isEN ? "Available" : "Disponible"}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    }
+
+                    // Mobile: layout original (icon box 44px + 2 líneas, ~76px de alto)
                     return (
                       <div key={s.id}
                         onClick={() => !salidaFull && setSelSalida(s)}
                         style={{
-                          display: "flex", alignItems: "center", gap: 10,
-                          padding: "8px 12px", borderRadius: 8, cursor: salidaFull ? "not-allowed" : "pointer",
+                          display: "flex", alignItems: "center", gap: 14,
+                          padding: "14px 16px", borderRadius: 10, cursor: salidaFull ? "not-allowed" : "pointer",
                           border: `2px solid ${isSelected ? C.accent : C.border}`,
                           background: isSelected ? C.accentLight : salidaFull ? C.bgCard : C.bg,
                           opacity: salidaFull ? 0.5 : 1, transition: "all 0.15s",
-                        }}
-                        onMouseEnter={e => { if (!salidaFull && !isSelected) e.currentTarget.style.borderColor = C.accent; }}
-                        onMouseLeave={e => { if (!salidaFull && !isSelected) e.currentTarget.style.borderColor = C.border; }}>
-                        <span style={{ fontSize: 16, flexShrink: 0 }}>{salidaFull ? "🚫" : "⛵"}</span>
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ fontSize: 13, fontWeight: 700, color: isSelected ? C.accent : C.text }}>
+                        }}>
+                        <div style={{ width: 44, height: 44, borderRadius: 10, background: isSelected ? C.accent : C.bgCard, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, transition: "all 0.15s" }}>
+                          <span style={{ fontSize: 20 }}>{salidaFull ? "🚫" : "⛵"}</span>
+                        </div>
+                        <div style={{ flex: 1 }}>
+                          <div style={{ fontSize: 15, fontWeight: 700, color: isSelected ? C.accent : C.text }}>
                             {isEN ? "Departure" : "Salida"} {s.hora || s.id}
-                            <span style={{ fontSize: 11, color: C.textMid, fontWeight: 400, marginLeft: 8 }}>
-                              → {isEN ? "Return" : "Regreso"} {s.hora_regreso || s.regreso || "—"}
-                            </span>
+                          </div>
+                          <div style={{ fontSize: 12, color: C.textMid, marginTop: 2 }}>
+                            🕐 {isEN ? "Departure" : "Salida"}: <strong>{s.hora || "—"}</strong>
+                            &nbsp;&nbsp;→&nbsp;&nbsp;
+                            🔁 {isEN ? "Return" : "Regreso"}: <strong>{s.hora_regreso || s.regreso || "—"}</strong>
                           </div>
                         </div>
                         <div style={{ textAlign: "right", flexShrink: 0 }}>
                           {salidaFull ? (
-                            <span style={{ fontSize: 11, color: C.danger, fontWeight: 600 }}>{isEN ? "Full" : "Agotado"}</span>
+                            <span style={{ fontSize: 12, color: C.danger, fontWeight: 600 }}>{isEN ? "Full" : "Agotado"}</span>
                           ) : isSelected ? (
-                            <div style={{ fontSize: 11, color: C.accent, fontWeight: 700 }}>✓</div>
+                            <div style={{ fontSize: 11, color: C.accent, fontWeight: 600 }}>✓ {isEN ? "Selected" : "Seleccionado"}</div>
                           ) : (
-                            <div style={{ fontSize: 11, color: C.success, fontWeight: 600 }}>
+                            <div style={{ fontSize: 12, color: C.success, fontWeight: 600 }}>
                               {isEN ? "Available" : "Disponible"}
                             </div>
                           )}
@@ -1429,7 +1536,7 @@ export default function BookingPopup() {
           return (
             <div style={{
               marginTop: isDesktop ? 10 : 8,
-              ...(isEmbedded ? { flexShrink: 0, paddingTop: 8, borderTop: `1px solid ${C.border}` } : {}),
+              ...(iframeFit ? { flexShrink: 0, paddingTop: 8, borderTop: `1px solid ${C.border}` } : {}),
             }}>
               <button
                 onClick={() => { if (ready) { gtmBeginCheckout(product, paxTotal, total); setStep(2); AtolanTrack.evento("begin_checkout", { producto: product?.tipo, fecha: selDate, pax: paxTotal, valor: total }, "booking"); AtolanTrack.setCurrentStep(2); } }}
@@ -1462,21 +1569,24 @@ export default function BookingPopup() {
 
   // ─── Step 2: Personal info ───────────────────────────────────────────────────
   function InfoStep() {
+    // En mobile: layout original (sin flex column, márgenes 20/18, textarea
+    // rows=2, bloque FE de toggle + form). En desktop iframe: layout
+    // TOP/MIDDLE/BOTTOM con CTA fijo al fondo + FE movida a post-pago.
     return (
-      <div style={isEmbedded ? { height: "100%", display: "flex", flexDirection: "column", overflow: "hidden" } : {}}>
+      <div style={iframeFit ? { height: "100%", display: "flex", flexDirection: "column", overflow: "hidden" } : {}}>
         {/* ════ TOP zone — siempre visible ════ */}
-        <div style={isEmbedded ? { flexShrink: 0 } : {}}>
-          <button onClick={() => setStep(1)} style={{ background: "none", border: "none", color: C.accent, fontSize: 13, fontWeight: 600, cursor: "pointer", padding: 0, marginBottom: 10, display: "flex", alignItems: "center", gap: 4 }}>
+        <div style={iframeFit ? { flexShrink: 0 } : {}}>
+          <button onClick={() => setStep(1)} style={{ background: "none", border: "none", color: C.accent, fontSize: 13, fontWeight: 600, cursor: "pointer", padding: 0, marginBottom: isDesktop ? 10 : 20, display: "flex", alignItems: "center", gap: 4 }}>
             ← {isEN ? "Back" : "Volver"}
           </button>
 
-          <h2 style={{ fontSize: 18, fontWeight: 700, color: C.text, marginBottom: 10 }}>
+          <h2 style={{ fontSize: 18, fontWeight: 700, color: C.text, marginBottom: isDesktop ? 10 : 18 }}>
             {isEN ? "Your information" : "Tus datos"}
           </h2>
 
           {/* Order recap — siempre visible al tope */}
-          <div style={{ background: C.bgCard, borderRadius: 10, padding: "10px 14px", marginBottom: 10, border: `1px solid ${C.border}`, fontSize: 13 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 2 }}>
+          <div style={{ background: C.bgCard, borderRadius: 10, padding: isDesktop ? "10px 14px" : "12px 16px", marginBottom: isDesktop ? 10 : 20, border: `1px solid ${C.border}`, fontSize: 13 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: isDesktop ? 2 : 4 }}>
               <span style={{ color: C.textMid }}>{product.tipo}</span>
               <span style={{ fontWeight: 700, color: C.accent }}>{COP(total)}</span>
             </div>
@@ -1488,22 +1598,22 @@ export default function BookingPopup() {
           </div>
         </div>
 
-        {/* ════ MIDDLE zone — form fields scroll si excede ════ */}
-        <div style={isEmbedded ? { flex: 1, minHeight: 0, overflowY: "auto", paddingRight: 4 } : {}}>
+        {/* ════ MIDDLE zone — form fields scroll si excede (desktop) ════ */}
+        <div style={iframeFit ? { flex: 1, minHeight: 0, overflowY: "auto", paddingRight: 4 } : {}}>
           {[
             { key: "nombre",   label: isEN ? "Full name" : "Nombre completo",     type: "text",  placeholder: isEN ? "John Smith" : "Juan García" },
             { key: "email",    label: isEN ? "Email" : "Correo electrónico",      type: "email", placeholder: "correo@ejemplo.com" },
             { key: "telefono", label: isEN ? "Phone" : "Teléfono / WhatsApp",     type: "tel",   placeholder: "+57 300 000 0000" },
           ].map(({ key, label, type, placeholder }) => (
-            <div key={key} style={{ marginBottom: 12 }}>
-              <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: C.text, marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.04em" }}>{label}</label>
+            <div key={key} style={{ marginBottom: isDesktop ? 12 : 16 }}>
+              <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: C.text, marginBottom: isDesktop ? 4 : 5, textTransform: "uppercase", letterSpacing: "0.04em" }}>{label}</label>
               <input
                 type={type}
                 value={form[key]}
                 placeholder={placeholder}
                 onChange={e => { setForm(f => ({ ...f, [key]: e.target.value })); setErrors(er => ({ ...er, [key]: null })); }}
                 style={{
-                  width: "100%", padding: "10px 14px", borderRadius: 8,
+                  width: "100%", padding: isDesktop ? "10px 14px" : "11px 14px", borderRadius: 8,
                   border: `1.5px solid ${errors[key] ? C.danger : C.border}`,
                   fontSize: 14, color: C.text, background: C.bg, outline: "none", boxSizing: "border-box",
                   transition: "border-color 0.15s",
@@ -1515,27 +1625,31 @@ export default function BookingPopup() {
             </div>
           ))}
 
-          <div style={{ marginBottom: 12 }}>
-            <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: C.text, marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.04em" }}>{isEN ? "Notes / special requests (optional)" : "Notas / solicitudes especiales (opcional)"}</label>
+          <div style={{ marginBottom: isDesktop ? 12 : 20 }}>
+            <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: C.text, marginBottom: isDesktop ? 4 : 5, textTransform: "uppercase", letterSpacing: "0.04em" }}>{isEN ? "Notes / special requests (optional)" : "Notas / solicitudes especiales (opcional)"}</label>
             <textarea
               value={form.notas}
               onChange={e => setForm(f => ({ ...f, notas: e.target.value }))}
-              rows={1}
-              style={{ width: "100%", padding: "8px 14px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 14, color: C.text, background: C.bg, outline: "none", resize: "vertical", boxSizing: "border-box", fontFamily: "inherit", minHeight: 36 }}
+              rows={isDesktop ? 1 : 2}
+              style={{ width: "100%", padding: isDesktop ? "8px 14px" : "11px 14px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 14, color: C.text, background: C.bg, outline: "none", resize: isDesktop ? "vertical" : "none", boxSizing: "border-box", fontFamily: "inherit", minHeight: isDesktop ? 36 : undefined }}
             />
           </div>
 
-          {/* Facturación electrónica: movida a la pantalla de confirmación POST-pago
-              (PagoCliente.jsx → PagoOk). Mantener form.factura_electronica = false
-              en este step para que fePayload(form) inserte nulls en la reserva;
-              el cliente puede activarla después del pago si la necesita. */}
+          {/* Facturación electrónica — solo en MOBILE (UX original).
+              En desktop la captura se hace post-pago en PagoCliente. */}
+          {!isDesktop && (
+            <div style={{ marginBottom: 20 }}>
+              <FacturaElectronicaToggle checked={form.factura_electronica} onChange={v => setFE("factura_electronica", v)} theme="light" />
+              {form.factura_electronica && <FacturaElectronicaForm form={form} set={setFE} editing={true} theme="light" />}
+            </div>
+          )}
         </div>
 
         {/* ════ BOTTOM zone — T&C + Continue siempre visibles ════ */}
-        <div style={isEmbedded ? { flexShrink: 0, paddingTop: 10, borderTop: `1px solid ${C.border}`, marginTop: 8 } : {}}>
+        <div style={iframeFit ? { flexShrink: 0, paddingTop: 10, borderTop: `1px solid ${C.border}`, marginTop: 8 } : {}}>
           {/* T&C */}
-          <div style={{ marginBottom: 10, textAlign: "center" }}>
-            <span style={{ fontSize: 11, color: "#94A3B8" }}>
+          <div style={{ marginBottom: isDesktop ? 10 : 20, textAlign: "center" }}>
+            <span style={{ fontSize: 12, color: "#94A3B8" }}>
               {isEN ? "By continuing, I accept the terms and conditions." : "Al continuar, acepto los términos y condiciones."}
             </span>
           </div>
@@ -1651,10 +1765,10 @@ export default function BookingPopup() {
     const grandTotal = totalA + totalN + selUpsells.reduce((s, u) => s + (u.por_persona ? u.precio * (paxA + paxN) : u.precio), 0);
 
     return (
-      <div style={isEmbedded ? { height: "100%", display: "flex", flexDirection: "column", overflow: "hidden" } : {}}>
+      <div style={iframeFit ? { height: "100%", display: "flex", flexDirection: "column", overflow: "hidden" } : {}}>
         {/* ════ TOP zone — Back + título + subtítulo ════ */}
-        <div style={isEmbedded ? { flexShrink: 0 } : {}}>
-          <button onClick={() => setStep(2)} style={{ background: "none", border: "none", color: C.accent, fontSize: 13, fontWeight: 600, cursor: "pointer", padding: 0, marginBottom: 10, display: "flex", alignItems: "center", gap: 4 }}>
+        <div style={iframeFit ? { flexShrink: 0 } : {}}>
+          <button onClick={() => setStep(2)} style={{ background: "none", border: "none", color: C.accent, fontSize: 13, fontWeight: 600, cursor: "pointer", padding: 0, marginBottom: isDesktop ? 10 : 20, display: "flex", alignItems: "center", gap: 4 }}>
             ← {isEN ? "Back" : "Volver"}
           </button>
 
@@ -1662,23 +1776,19 @@ export default function BookingPopup() {
             {grupoEvt ? (isEN ? "Complete your booking" : "Completa tu reserva") : (isEN ? "Complete your experience" : "Completa tu experiencia")}
           </h2>
           {!grupoEvt && (
-            <p style={{ fontSize: 13, color: C.textMid, marginBottom: 14 }}>
+            <p style={{ fontSize: 13, color: C.textMid, marginBottom: isDesktop ? 14 : 22 }}>
               {isEN ? "Add extras before paying" : "Agrega opciones especiales antes de pagar"}
             </p>
           )}
         </div>
 
         {/* ════ MIDDLE zone — extras + summary + payment methods ════ */}
-        <div style={isEmbedded ? { flex: 1, minHeight: 0, overflowY: "auto", paddingRight: 4 } : {}}>
+        <div style={iframeFit ? { flex: 1, minHeight: 0, overflowY: "auto", paddingRight: 4 } : {}}>
 
         {loadingUps ? (
           <div style={{ textAlign: "center", padding: "30px 0", color: C.textLight, fontSize: 13 }}>...</div>
-        ) : upsells.length === 0 ? null : (
-          // Todos los upsells (upgrades + addons) en un solo grid de 3 cols
-          // para que entren en una sola línea y no haya scroll por culpa de
-          // los extras. Cada card mantiene su personalidad visual:
-          //   - upgrade → borde + fondo morado, badge UPGRADE, botón "Upgrade →"
-          //   - addon   → estilo neutro, botón "Agregar" toggle
+        ) : upsells.length === 0 ? null : isDesktop ? (
+          // DESKTOP: todos los upsells en grid 3-col responsive (sin scroll vertical).
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 10, marginBottom: 16 }}>
             {upsells.map(u => {
               const isUpg      = u.tipo === "upgrade";
@@ -1729,6 +1839,59 @@ export default function BookingPopup() {
               );
             })}
           </div>
+        ) : (
+          // MOBILE: layout original full-width stacked (cada upsell ocupa su fila).
+          <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 24 }}>
+            {upsells.map(u => {
+              const isUpg      = u.tipo === "upgrade";
+              const isSelected = selUpsells.find(x => x.id === u.id);
+              const uPrice     = u.por_persona ? u.precio * (paxA + paxN) : u.precio;
+
+              return (
+                <div key={u.id} style={{
+                  borderRadius: 12, overflow: "hidden",
+                  border: `2px solid ${isSelected ? C.accent : isUpg ? "#7C3AED44" : C.border}`,
+                  background: isSelected ? C.accentLight : isUpg ? "#F5F3FF" : C.bg,
+                  transition: "all 0.15s",
+                }}>
+                  {u.foto_url && (
+                    <div style={{ height: 130, overflow: "hidden" }}>
+                      <img src={u.foto_url} alt={u.nombre} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                    </div>
+                  )}
+                  <div style={{ padding: "16px 18px", display: "flex", alignItems: "flex-start", gap: 14 }}>
+                    {!u.foto_url && <div style={{ width: 48, height: 48, borderRadius: 12, background: isUpg ? "#EDE9FE" : C.bgCard, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 24, flexShrink: 0 }}>{u.emoji}</div>}
+                    <div style={{ flex: 1 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 2 }}>
+                        <span style={{ fontSize: 15, fontWeight: 700, color: isUpg ? "#5B21B6" : C.text }}>{u.nombre}</span>
+                        {isUpg && <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 6, background: "#DDD6FE", color: "#5B21B6", fontWeight: 700 }}>UPGRADE</span>}
+                      </div>
+                      {u.descripcion && <div style={{ fontSize: 12, color: C.textMid, lineHeight: 1.5, marginBottom: 6 }}>{u.descripcion}</div>}
+                      <div style={{ fontSize: 14, fontWeight: 800, color: isUpg ? "#5B21B6" : C.accent }}>
+                        +{COP(uPrice)}
+                        <span style={{ fontSize: 11, fontWeight: 400, color: C.textLight, marginLeft: 4 }}>
+                          {u.por_persona ? `(${paxA + paxN} persona${paxA + paxN !== 1 ? "s" : ""})` : "precio fijo"}
+                        </span>
+                      </div>
+                    </div>
+                    <div style={{ flexShrink: 0 }}>
+                      {isUpg ? (
+                        <button onClick={() => doUpgrade(u)}
+                          style={{ padding: "10px 16px", borderRadius: 10, border: "none", background: "#5B21B6", color: "white", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
+                          {isEN ? "Upgrade →" : "Hacer Upgrade →"}
+                        </button>
+                      ) : (
+                        <button onClick={() => toggleAddon(u)}
+                          style={{ padding: "10px 16px", borderRadius: 10, border: `2px solid ${isSelected ? C.accent : C.border}`, background: isSelected ? C.accent : "white", color: isSelected ? "white" : C.text, fontWeight: 700, fontSize: 13, cursor: "pointer", transition: "all 0.15s" }}>
+                          {isSelected ? "✓ Agregado" : (isEN ? "Add" : "Agregar")}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         )}
 
         {/* Order total preview */}
@@ -1752,50 +1915,74 @@ export default function BookingPopup() {
 
         </div>{/* /MIDDLE zone */}
 
-        {/* ════ BOTTOM zone — métodos de pago + warning + secure note
-            (todos siempre visibles, nunca empujados por scroll). El usuario
-            siempre tiene los CTAs de pago a la vista, sea cual sea el alto
-            del iframe. ════ */}
-        <div style={isEmbedded ? { flexShrink: 0, paddingTop: 10, borderTop: `1px solid ${C.border}`, marginTop: 8 } : { marginTop: 12 }}>
-          <div style={{ fontSize: 11, fontWeight: 700, color: C.text, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 }}>
+        {/* ════ BOTTOM zone — métodos de pago + warning + secure note ════
+            Desktop: layout compacto en grid 2-col (Wompi | Stripe lado a lado).
+            Mobile: layout original stacked vertical con precio visible en cada
+            card, padding generoso. */}
+        <div style={iframeFit ? { flexShrink: 0, paddingTop: 10, borderTop: `1px solid ${C.border}`, marginTop: 8 } : { marginTop: 12 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: C.text, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 10 }}>
             {isEN ? "Select payment method" : "Método de pago"}
           </div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10, marginBottom: 8 }}>
-            {/* Wompi — show if integrity key configured */}
-            {import.meta.env.VITE_WOMPI_INTEGRITY_KEY && (
-              <button onClick={() => { gtmAddPaymentInfo("wompi", grandTotal); AtolanTrack.evento("payment_method_selected", { metodo: "wompi", monto: grandTotal }, "conversion"); handleReservar("wompi"); }} disabled={saving}
+          {isDesktop ? (
+            // DESKTOP: 2-col compacto, sin precio repetido
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10, marginBottom: 8 }}>
+              {import.meta.env.VITE_WOMPI_INTEGRITY_KEY && (
+                <button onClick={() => { gtmAddPaymentInfo("wompi", grandTotal); AtolanTrack.evento("payment_method_selected", { metodo: "wompi", monto: grandTotal }, "conversion"); handleReservar("wompi"); }} disabled={saving}
+                  style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 6, padding: "10px 12px", borderRadius: 10, border: `1.5px solid ${C.border}`, background: C.bg, cursor: saving ? "wait" : "pointer", textAlign: "left", transition: "all 0.15s" }}
+                  onMouseEnter={e => { e.currentTarget.style.borderColor = "#5B4CF5"; e.currentTarget.style.background = "#F5F3FF"; }}
+                  onMouseLeave={e => { e.currentTarget.style.borderColor = C.border; e.currentTarget.style.background = C.bg; }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, width: "100%" }}>
+                    <div style={{ width: 28, height: 28, borderRadius: 7, background: "#5B4CF5", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, fontWeight: 900, color: "white", fontSize: 13 }}>W</div>
+                    <div style={{ fontWeight: 700, fontSize: 13, color: C.text }}>{isEN ? "National Card" : "Tarjeta Nacional"}</div>
+                  </div>
+                  <div style={{ fontSize: 10, color: C.textMid, lineHeight: 1.35 }}>PSE · Nequi · Bancolombia · Visa/MC Col.</div>
+                </button>
+              )}
+              <button onClick={() => { gtmAddPaymentInfo("stripe", grandTotal); AtolanTrack.evento("payment_method_selected", { metodo: "stripe", monto: grandTotal }, "conversion"); handleReservar("stripe"); }} disabled={saving}
                 style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 6, padding: "10px 12px", borderRadius: 10, border: `1.5px solid ${C.border}`, background: C.bg, cursor: saving ? "wait" : "pointer", textAlign: "left", transition: "all 0.15s" }}
-                onMouseEnter={e => { e.currentTarget.style.borderColor = "#5B4CF5"; e.currentTarget.style.background = "#F5F3FF"; }}
+                onMouseEnter={e => { e.currentTarget.style.borderColor = "#635BFF"; e.currentTarget.style.background = "#F5F3FF"; }}
                 onMouseLeave={e => { e.currentTarget.style.borderColor = C.border; e.currentTarget.style.background = C.bg; }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 10, width: "100%" }}>
-                  <div style={{ width: 28, height: 28, borderRadius: 7, background: "#5B4CF5", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, fontWeight: 900, color: "white", fontSize: 13 }}>W</div>
-                  <div style={{ fontWeight: 700, fontSize: 13, color: C.text }}>{isEN ? "National Card" : "Tarjeta Nacional"}</div>
+                  <div style={{ width: 28, height: 28, borderRadius: 7, background: "#635BFF", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, fontWeight: 900, color: "white", fontSize: 13 }}>S</div>
+                  <div style={{ fontWeight: 700, fontSize: 13, color: C.text }}>{isEN ? "International Card" : "Tarjeta Internacional"}</div>
                 </div>
-                <div style={{ fontSize: 10, color: C.textMid, lineHeight: 1.35 }}>PSE · Nequi · Bancolombia · Visa/MC Col.</div>
+                <div style={{ fontSize: 10, color: C.textMid, lineHeight: 1.35 }}>Visa · Mastercard · Amex · Apple/Google Pay</div>
               </button>
-            )}
-
-            {/* Stripe — tarjeta internacional */}
-            <button onClick={() => { gtmAddPaymentInfo("stripe", grandTotal); AtolanTrack.evento("payment_method_selected", { metodo: "stripe", monto: grandTotal }, "conversion"); handleReservar("stripe"); }} disabled={saving}
-              style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 6, padding: "10px 12px", borderRadius: 10, border: `1.5px solid ${C.border}`, background: C.bg, cursor: saving ? "wait" : "pointer", textAlign: "left", transition: "all 0.15s" }}
-              onMouseEnter={e => { e.currentTarget.style.borderColor = "#635BFF"; e.currentTarget.style.background = "#F5F3FF"; }}
-              onMouseLeave={e => { e.currentTarget.style.borderColor = C.border; e.currentTarget.style.background = C.bg; }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 10, width: "100%" }}>
-                <div style={{ width: 28, height: 28, borderRadius: 7, background: "#635BFF", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, fontWeight: 900, color: "white", fontSize: 13 }}>S</div>
-                <div style={{ fontWeight: 700, fontSize: 13, color: C.text }}>{isEN ? "International Card" : "Tarjeta Internacional"}</div>
-              </div>
-              <div style={{ fontSize: 10, color: C.textMid, lineHeight: 1.35 }}>Visa · Mastercard · Amex · Apple/Google Pay</div>
-            </button>
-          </div>
-          <div style={{ padding: "6px 10px", background: "#FFF7E6", border: "1px solid #F5C842", borderRadius: 7, fontSize: 10, color: "#92400E", display: "flex", alignItems: "flex-start", gap: 6, marginBottom: 4 }}>
-            <span style={{ fontSize: 12 }}>💳</span>
+            </div>
+          ) : (
+            // MOBILE: layout original stacked vertical con precio en cada card
+            <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 8 }}>
+              {import.meta.env.VITE_WOMPI_INTEGRITY_KEY && (
+                <button onClick={() => { gtmAddPaymentInfo("wompi", grandTotal); AtolanTrack.evento("payment_method_selected", { metodo: "wompi", monto: grandTotal }, "conversion"); handleReservar("wompi"); }} disabled={saving}
+                  style={{ display: "flex", alignItems: "center", gap: 14, width: "100%", padding: "14px 18px", borderRadius: 10, border: `1.5px solid ${C.border}`, background: C.bg, cursor: saving ? "wait" : "pointer", textAlign: "left", transition: "all 0.15s" }}>
+                  <div style={{ width: 40, height: 40, borderRadius: 10, background: "#5B4CF5", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, fontWeight: 900, color: "white", fontSize: 16 }}>W</div>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontWeight: 700, fontSize: 14, color: C.text }}>{isEN ? "National Card" : "Tarjeta Nacional"}</div>
+                    <div style={{ fontSize: 12, color: C.textMid }}>PSE · Nequi · Bancolombia · Visa / Mastercard Colombia</div>
+                  </div>
+                  <div style={{ fontSize: 14, fontWeight: 800, color: "#5B4CF5" }}>{COP(grandTotal)}</div>
+                </button>
+              )}
+              <button onClick={() => { gtmAddPaymentInfo("stripe", grandTotal); AtolanTrack.evento("payment_method_selected", { metodo: "stripe", monto: grandTotal }, "conversion"); handleReservar("stripe"); }} disabled={saving}
+                style={{ display: "flex", alignItems: "center", gap: 14, width: "100%", padding: "14px 18px", borderRadius: 10, border: `1.5px solid ${C.border}`, background: C.bg, cursor: saving ? "wait" : "pointer", textAlign: "left", transition: "all 0.15s" }}>
+                <div style={{ width: 40, height: 40, borderRadius: 10, background: "#635BFF", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, fontWeight: 900, color: "white", fontSize: 16 }}>S</div>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontWeight: 700, fontSize: 14, color: C.text }}>{isEN ? "International Card" : "Tarjeta Internacional"}</div>
+                  <div style={{ fontSize: 12, color: C.textMid }}>Visa · Mastercard · Amex · Apple Pay · Google Pay</div>
+                </div>
+                <div style={{ fontSize: 14, fontWeight: 800, color: "#635BFF" }}>{COP(grandTotal)}</div>
+              </button>
+            </div>
+          )}
+          <div style={{ padding: isDesktop ? "6px 10px" : "8px 12px", background: "#FFF7E6", border: "1px solid #F5C842", borderRadius: 8, fontSize: isDesktop ? 10 : 11, color: "#92400E", display: "flex", alignItems: "flex-start", gap: 8, marginBottom: 4 }}>
+            <span style={{ fontSize: 14 }}>💳</span>
             <span>
               {isEN
-                ? <>International card charge appears as <strong>X Travel Group</strong>.</>
-                : <>Cargo con tarjeta internacional aparece como <strong>X Travel Group</strong>.</>}
+                ? <>The international card charge will appear on your statement as <strong>X Travel Group</strong>.</>
+                : <>El cargo con tarjeta internacional aparecerá en tu estado de cuenta a nombre de <strong>X Travel Group</strong>.</>}
             </span>
           </div>
-          <div style={{ textAlign: "center", fontSize: 10, color: C.textLight }}>
+          <div style={{ textAlign: "center", marginTop: isDesktop ? 0 : 8, fontSize: 11, color: C.textLight }}>
             🔒 {isEN ? "Secure payment · No refunds policy" : "Pago seguro · Política de no reembolso"}
           </div>
         </div>
@@ -1843,7 +2030,10 @@ export default function BookingPopup() {
   // flex: 1 + overflow hidden en el contenedor padre). Esto hace que el
   // contenido se adapte a la altura que sea (680px, 760px, 900px, etc.)
   // sin tweaks de pixel.
-  if (isEmbedded) {
+  // Solo aplicamos el modo iframe-fit en DESKTOP. En mobile (incluso si está
+  // embebido en un iframe), preservamos el layout original con scroll de
+  // página completo, logo grande, footer — sin alterar la UX mobile previa.
+  if (isEmbedded && isDesktop) {
     return (
       <div style={{ height: "100vh", background: "#F1F5F9", fontFamily: "'Segoe UI', Arial, sans-serif", color: C.text, display: "flex", flexDirection: "column", overflow: "hidden" }}>
         {/* Mini header — solo lang toggle, ~36px */}
