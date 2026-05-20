@@ -237,10 +237,11 @@ export default function PoolService() {
       {/* Navegación mínima — solo lo esencial para cambiar de vista */}
       <div style={{ display: "flex", gap: 6, marginBottom: 16, flexWrap: "wrap" }}>
         {[
-          { k: "nuevo",   l: "🏊 Plano" },
-          { k: "pedidos", l: `📋 Pedidos${kpis.pendientes ? ` (${kpis.pendientes})` : ""}` },
-          { k: "areas",   l: "📍 Áreas" },
-          { k: "meseros", l: "🧑‍🍳 Meseros" },
+          { k: "nuevo",     l: "🏊 Plano" },
+          { k: "pedidos",   l: `📋 Pedidos${kpis.pendientes ? ` (${kpis.pendientes})` : ""}` },
+          { k: "areas",     l: "📍 Áreas" },
+          { k: "meseros",   l: "🧑‍🍳 Meseros" },
+          { k: "historial", l: "📊 Historial" },
         ].map(t => (
           <button key={t.k} onClick={() => setTab(t.k)}
             style={BTN(tab === t.k ? B.pool : B.navyMid, tab === t.k ? B.navy : "#fff")}>
@@ -260,6 +261,218 @@ export default function PoolService() {
       )}
       {tab === "meseros" && (
         <MeserosManager />
+      )}
+      {tab === "historial" && (
+        <HistorialReportes isMobile={isMobile} />
+      )}
+    </div>
+  );
+}
+
+// ─── Historial + Reporte de utilización ──────────────────────────────────
+// 2 vistas: "Día" (asignaciones de una fecha específica) y "Utilización
+// mensual" (heatmap de cuántos días se usó cada cama en el mes).
+// Los datos vienen 100% de `floorplan_asignaciones` que ya guarda 1 fila
+// por (spot, fecha) — el sistema HACE el reset diario natural por la
+// llave compuesta. Esta UI solo lee la historia.
+function HistorialReportes({ isMobile }) {
+  const [vista, setVista] = useState("dia"); // 'dia' | 'mes'
+  const todayIso = new Date().toLocaleString("en-CA", { timeZone: "America/Bogota" }).slice(0, 10);
+  const monthIso = todayIso.slice(0, 7); // YYYY-MM
+  const [fecha, setFecha] = useState(todayIso);
+  const [mes, setMes] = useState(monthIso);
+  const [asignaciones, setAsignaciones] = useState([]);
+  const [spots, setSpots] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  // Cargar spots una sola vez
+  useEffect(() => {
+    supabase.from("floorplan_spots")
+      .select("id, zona, fila, orden, activo")
+      .eq("activo", true)
+      .order("zona").order("fila").order("orden")
+      .then(({ data }) => setSpots(data || []));
+  }, []);
+
+  // Cargar asignaciones según vista
+  useEffect(() => {
+    setLoading(true);
+    if (vista === "dia") {
+      supabase.from("floorplan_asignaciones")
+        .select("*").eq("fecha", fecha)
+        .order("spot_id")
+        .then(({ data }) => { setAsignaciones(data || []); setLoading(false); });
+    } else {
+      // Vista mensual: rango YYYY-MM-01 a YYYY-MM-ult
+      const [y, m] = mes.split("-").map(Number);
+      const desde = `${mes}-01`;
+      const lastDay = new Date(y, m, 0).getDate();
+      const hasta = `${mes}-${String(lastDay).padStart(2, "0")}`;
+      supabase.from("floorplan_asignaciones")
+        .select("spot_id, fecha, huesped, pax")
+        .gte("fecha", desde).lte("fecha", hasta)
+        .then(({ data }) => { setAsignaciones(data || []); setLoading(false); });
+    }
+  }, [vista, fecha, mes]);
+
+  // Agrupar por zona para mejor display
+  const spotsByZona = useMemo(() => {
+    const g = {};
+    for (const s of spots) {
+      const z = s.zona || "otro";
+      (g[z] = g[z] || []).push(s);
+    }
+    return g;
+  }, [spots]);
+
+  // Días usados por spot (para vista mensual)
+  const utilizacion = useMemo(() => {
+    const map = {}; // spot_id → Set(fechas)
+    for (const a of asignaciones) {
+      const key = a.spot_id;
+      const fkey = (a.fecha || "").slice(0, 10);
+      if (!fkey) continue;
+      (map[key] = map[key] || new Set()).add(fkey);
+    }
+    return map;
+  }, [asignaciones]);
+
+  const exportCsv = () => {
+    if (vista !== "dia") return;
+    const headers = ["spot", "huesped", "pax", "estado", "hora_check_in", "hora_check_out", "notas", "asignado_por"];
+    const rows = asignaciones.map(a => [
+      a.spot_id, (a.huesped || "").replace(/[",\n]/g, " "), a.pax || "", a.estado || "",
+      a.hora_check_in || "", a.hora_check_out || "",
+      (a.notas || "").replace(/[",\n]/g, " "), a.asignado_por || "",
+    ].map(v => `"${v}"`).join(","));
+    const csv = [headers.join(","), ...rows].join("\n");
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = `pool-service-${fecha}.csv`; a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  return (
+    <div>
+      {/* Toggle de vista */}
+      <div style={{ display: "flex", gap: 6, marginBottom: 16, flexWrap: "wrap" }}>
+        <button onClick={() => setVista("dia")}
+          style={BTN(vista === "dia" ? B.pool : B.navyMid, vista === "dia" ? B.navy : "#fff")}>
+          📅 Por día
+        </button>
+        <button onClick={() => setVista("mes")}
+          style={BTN(vista === "mes" ? B.pool : B.navyMid, vista === "mes" ? B.navy : "#fff")}>
+          📈 Utilización mensual
+        </button>
+      </div>
+
+      {vista === "dia" && (
+        <div>
+          <div style={{ display: "flex", gap: 8, marginBottom: 16, alignItems: "center", flexWrap: "wrap" }}>
+            <label style={{ ...LS, marginBottom: 0 }}>Fecha:</label>
+            <input type="date" value={fecha} max={todayIso} onChange={e => setFecha(e.target.value)}
+              style={{ ...IS, width: "auto", minWidth: 150 }} />
+            <button onClick={exportCsv} disabled={asignaciones.length === 0}
+              style={{ ...BTN(B.navyLight, "#fff"), opacity: asignaciones.length === 0 ? 0.4 : 1 }}>
+              ⬇ Exportar CSV
+            </button>
+          </div>
+          {loading ? (
+            <div style={{ padding: 40, textAlign: "center", color: "rgba(255,255,255,0.5)" }}>Cargando…</div>
+          ) : asignaciones.length === 0 ? (
+            <div style={{ padding: 40, textAlign: "center", color: "rgba(255,255,255,0.4)", background: B.navyMid, borderRadius: 12, border: `1px dashed ${B.navyLight}` }}>
+              No hay mesas asignadas para {fecha}
+            </div>
+          ) : (
+            <div style={{ background: B.navyMid, borderRadius: 12, overflow: "hidden", border: `1px solid ${B.navyLight}` }}>
+              <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "100px 1fr 60px 100px 100px 1fr", gap: 0, padding: "10px 14px", background: B.navy, fontSize: 11, fontWeight: 700, color: B.sand, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                <div>Spot</div>
+                <div>Huésped</div>
+                {!isMobile && <><div>Pax</div><div>Check-in</div><div>Check-out</div><div>Notas</div></>}
+              </div>
+              {asignaciones.map(a => (
+                <div key={a.id} style={{
+                  display: "grid",
+                  gridTemplateColumns: isMobile ? "1fr" : "100px 1fr 60px 100px 100px 1fr",
+                  gap: isMobile ? 4 : 0,
+                  padding: "10px 14px",
+                  borderTop: `1px solid ${B.navyLight}`,
+                  fontSize: 13,
+                  alignItems: "center",
+                }}>
+                  <div style={{ fontWeight: 700, color: B.sand }}>{a.spot_id}</div>
+                  <div style={{ color: "#fff" }}>{a.huesped || "—"}</div>
+                  {!isMobile && (
+                    <>
+                      <div style={{ color: "rgba(255,255,255,0.7)" }}>{a.pax || ""}</div>
+                      <div style={{ color: "rgba(255,255,255,0.55)", fontSize: 11 }}>{a.hora_check_in ? new Date(a.hora_check_in).toLocaleTimeString("es-CO", { timeZone: "America/Bogota", hour: "2-digit", minute: "2-digit" }) : "—"}</div>
+                      <div style={{ color: "rgba(255,255,255,0.55)", fontSize: 11 }}>{a.hora_check_out ? new Date(a.hora_check_out).toLocaleTimeString("es-CO", { timeZone: "America/Bogota", hour: "2-digit", minute: "2-digit" }) : "—"}</div>
+                      <div style={{ color: "rgba(255,255,255,0.55)", fontSize: 12, fontStyle: a.notas ? "italic" : "normal" }}>{a.notas || ""}</div>
+                    </>
+                  )}
+                </div>
+              ))}
+              <div style={{ padding: "12px 14px", background: B.navy, borderTop: `2px solid ${B.navyLight}`, fontSize: 12, color: B.sand }}>
+                Total: <strong style={{ color: "#fff" }}>{asignaciones.length}</strong> mesas asignadas · {asignaciones.reduce((s, a) => s + (a.pax || 0), 0)} pax
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {vista === "mes" && (
+        <div>
+          <div style={{ display: "flex", gap: 8, marginBottom: 16, alignItems: "center", flexWrap: "wrap" }}>
+            <label style={{ ...LS, marginBottom: 0 }}>Mes:</label>
+            <input type="month" value={mes} max={monthIso} onChange={e => setMes(e.target.value)}
+              style={{ ...IS, width: "auto", minWidth: 150 }} />
+          </div>
+          {loading ? (
+            <div style={{ padding: 40, textAlign: "center", color: "rgba(255,255,255,0.5)" }}>Cargando…</div>
+          ) : (
+            <div>
+              {Object.entries(spotsByZona).map(([zona, zonaSpots]) => (
+                <div key={zona} style={{ marginBottom: 24 }}>
+                  <div style={{ fontSize: 12, fontWeight: 800, color: B.sand, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 10 }}>
+                    {zona.replace(/_/g, " ")}
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: isMobile ? "repeat(auto-fill, minmax(80px, 1fr))" : "repeat(auto-fill, minmax(120px, 1fr))", gap: 8 }}>
+                    {zonaSpots.map(s => {
+                      const dias = utilizacion[s.id]?.size || 0;
+                      const [y, m] = mes.split("-").map(Number);
+                      const lastDay = new Date(y, m, 0).getDate();
+                      const pct = lastDay > 0 ? Math.round((dias / lastDay) * 100) : 0;
+                      const bgColor = dias === 0 ? B.navyMid
+                        : dias < lastDay * 0.25 ? B.navyLight
+                        : dias < lastDay * 0.5 ? "#1e40af33"
+                        : dias < lastDay * 0.75 ? B.pool + "44"
+                        : B.success + "44";
+                      return (
+                        <div key={s.id} style={{
+                          padding: "10px 12px",
+                          background: bgColor,
+                          borderRadius: 8,
+                          border: `1px solid ${B.navyLight}`,
+                          textAlign: "center",
+                        }}>
+                          <div style={{ fontSize: 13, fontWeight: 800, color: B.sand, marginBottom: 4 }}>{s.id}</div>
+                          <div style={{ fontSize: 18, fontWeight: 900, color: "#fff", lineHeight: 1 }}>{dias}</div>
+                          <div style={{ fontSize: 10, color: "rgba(255,255,255,0.55)", marginTop: 2 }}>
+                            {dias === 0 ? "sin uso" : `${dias === 1 ? "día" : "días"} (${pct}%)`}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+              <div style={{ padding: "12px 14px", background: B.navyMid, borderRadius: 8, fontSize: 12, color: "rgba(255,255,255,0.7)" }}>
+                💡 Color de la cama indica utilización: gris=sin uso · azul claro=&lt;25% · azul=&lt;50% · cyan=&lt;75% · verde=&gt;75% del mes.
+              </div>
+            </div>
+          )}
+        </div>
       )}
     </div>
   );
