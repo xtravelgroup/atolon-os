@@ -66,6 +66,28 @@ async function getLoggroIdentity(): Promise<{ businessId: string | null; userId:
   return { businessId: cachedBusinessId, userId: cachedUserId };
 }
 
+// Cache en memoria (warm instance) del waiterOrderArea de cada producto.
+// Sin este campo en la orden, Loggro defaultea la impresión a Cocina aunque
+// el producto sea de bar (Corona → Bar). En el POS directo Loggro pone el
+// área automáticamente; al crear orden vía API hay que enviarlo explícito.
+const productAreaCache: Record<string, string | null> = {};
+
+async function getWaiterOrderArea(productId: string): Promise<string | null> {
+  if (!productId) return null;
+  if (Object.prototype.hasOwnProperty.call(productAreaCache, productId)) {
+    return productAreaCache[productId];
+  }
+  try {
+    const prod = await loggroGet(`/products/${productId}`);
+    const area = prod?.waiterOrderArea || null;
+    productAreaCache[productId] = area;
+    return area;
+  } catch {
+    productAreaCache[productId] = null;
+    return null;
+  }
+}
+
 async function loggroGet(path: string): Promise<any> {
   const token = await getLoggroToken();
   const res = await fetch(`${LOGGRO_BASE}${path}`, {
@@ -582,12 +604,23 @@ serve(async (req) => {
       // locationStock por defecto ("General" del negocio Atolón) — Pirpos exige este campo
       // aunque no aparezca en la spec pública. Se puede sobreescribir por item o a nivel body.
       const DEFAULT_LOCATION_STOCK = body.locationStock || "6399190e5fe56f01f9a56027";
-      const orders = body.items.map((it: any) => {
+      // Routing de impresora (Bar/Cocina): cada producto en Loggro tiene un
+      // `waiterOrderArea` que define la impresora destino. SIN este campo,
+      // Loggro defaultea TODO a la impresora de Cocina — bug visible: pedir
+      // Corona desde mesero portal y verla salir en la impresora de cocina
+      // en vez de la del bar. Resolvemos consultando el producto en Loggro
+      // si el caller no nos lo pasó. Resultado se cachea en memoria.
+      const orders = await Promise.all(body.items.map(async (it: any) => {
+        const productId = it.productId || it.loggro_id;
         const o: any = {
-          product: it.productId || it.loggro_id,
+          product: productId,
           quantity: Number(it.qty) || 1,
           locationStock: it.locationStock || DEFAULT_LOCATION_STOCK,
         };
+        // Prefiere el waiterOrderArea que pasó el caller (si lo conoce),
+        // sino lo busca en Loggro.
+        const area = it.waiterOrderArea || (await getWaiterOrderArea(productId));
+        if (area) o.waiterOrderArea = area;
         if (Number(it.unit_price) > 0) o.unit_price = Number(it.unit_price);
         const notesArr = Array.isArray(it.notes) ? it.notes : (it.notes ? [String(it.notes)] : []);
         if (notesArr.length > 0) o.notes = notesArr;
@@ -605,7 +638,7 @@ serve(async (req) => {
           o.delivery = it.delivery;
         }
         return o;
-      });
+      }));
 
       const payload: any = {
         group,
