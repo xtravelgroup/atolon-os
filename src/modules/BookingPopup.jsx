@@ -1635,7 +1635,7 @@ export default function BookingPopup() {
                         <span style={{ fontSize: 15, fontWeight: 700, color: isUpg ? "#5B21B6" : C.text }}>{u.nombre}</span>
                         {isUpg && <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 6, background: "#DDD6FE", color: "#5B21B6", fontWeight: 700 }}>UPGRADE</span>}
                       </div>
-                      {u.descripcion && <div style={{ fontSize: 12, color: C.textMid, lineHeight: 1.5, marginBottom: 6 }}>{u.descripcion}</div>}
+                      {u.descripcion && <div style={{ fontSize: 12, color: C.textMid, lineHeight: 1.4, marginBottom: 6, display: "-webkit-box", WebkitLineClamp: 1, WebkitBoxOrient: "vertical", overflow: "hidden", textOverflow: "ellipsis" }}>{u.descripcion}</div>}
                       <div style={{ fontSize: 14, fontWeight: 800, color: isUpg ? "#5B21B6" : C.accent }}>
                         +{COP(uPrice)}
                         <span style={{ fontSize: 11, fontWeight: 400, color: C.textLight, marginLeft: 4 }}>
@@ -1682,47 +1682,49 @@ export default function BookingPopup() {
           </div>
         </div>
 
-        {/* Payment method buttons */}
+        {/* Payment method buttons — 2 cols en grid (era stack vertical).
+            Precio individual removido de cada card (ya está en el Order Summary
+            arriba). El warning de X Travel Group queda full-width abajo. */}
         <div style={{ marginBottom: 8 }}>
           <div style={{ fontSize: 12, fontWeight: 700, color: C.text, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 10 }}>
             {isEN ? "Select payment method" : "Método de pago"}
           </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10 }}>
             {/* Wompi — show if integrity key configured */}
             {import.meta.env.VITE_WOMPI_INTEGRITY_KEY && (
               <button onClick={() => { gtmAddPaymentInfo("wompi", grandTotal); AtolanTrack.evento("payment_method_selected", { metodo: "wompi", monto: grandTotal }, "conversion"); handleReservar("wompi"); }} disabled={saving}
-                style={{ display: "flex", alignItems: "center", gap: 14, width: "100%", padding: "14px 18px", borderRadius: 10, border: `1.5px solid ${C.border}`, background: C.bg, cursor: saving ? "wait" : "pointer", textAlign: "left", transition: "all 0.15s" }}
+                style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 8, padding: "12px 14px", borderRadius: 10, border: `1.5px solid ${C.border}`, background: C.bg, cursor: saving ? "wait" : "pointer", textAlign: "left", transition: "all 0.15s" }}
                 onMouseEnter={e => { e.currentTarget.style.borderColor = "#5B4CF5"; e.currentTarget.style.background = "#F5F3FF"; }}
                 onMouseLeave={e => { e.currentTarget.style.borderColor = C.border; e.currentTarget.style.background = C.bg; }}>
-                <div style={{ width: 40, height: 40, borderRadius: 10, background: "#5B4CF5", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, fontWeight: 900, color: "white", fontSize: 16 }}>W</div>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontWeight: 700, fontSize: 14, color: C.text }}>{isEN ? "National Card" : "Tarjeta Nacional"}</div>
-                  <div style={{ fontSize: 12, color: C.textMid }}>PSE · Nequi · Bancolombia · Visa / Mastercard Colombia</div>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, width: "100%" }}>
+                  <div style={{ width: 32, height: 32, borderRadius: 8, background: "#5B4CF5", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, fontWeight: 900, color: "white", fontSize: 14 }}>W</div>
+                  <div style={{ fontWeight: 700, fontSize: 13, color: C.text }}>{isEN ? "National Card" : "Tarjeta Nacional"}</div>
                 </div>
-                <div style={{ fontSize: 14, fontWeight: 800, color: "#5B4CF5" }}>{COP(grandTotal)}</div>
+                <div style={{ fontSize: 11, color: C.textMid, lineHeight: 1.4 }}>PSE · Nequi · Bancolombia · Visa/MC Colombia</div>
               </button>
             )}
 
             {/* Stripe — tarjeta internacional */}
             <button onClick={() => { gtmAddPaymentInfo("stripe", grandTotal); AtolanTrack.evento("payment_method_selected", { metodo: "stripe", monto: grandTotal }, "conversion"); handleReservar("stripe"); }} disabled={saving}
-              style={{ display: "flex", alignItems: "center", gap: 14, width: "100%", padding: "14px 18px", borderRadius: 10, border: `1.5px solid ${C.border}`, background: C.bg, cursor: saving ? "wait" : "pointer", textAlign: "left", transition: "all 0.15s" }}
+              style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 8, padding: "12px 14px", borderRadius: 10, border: `1.5px solid ${C.border}`, background: C.bg, cursor: saving ? "wait" : "pointer", textAlign: "left", transition: "all 0.15s" }}
               onMouseEnter={e => { e.currentTarget.style.borderColor = "#635BFF"; e.currentTarget.style.background = "#F5F3FF"; }}
               onMouseLeave={e => { e.currentTarget.style.borderColor = C.border; e.currentTarget.style.background = C.bg; }}>
-              <div style={{ width: 40, height: 40, borderRadius: 10, background: "#635BFF", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, fontWeight: 900, color: "white", fontSize: 16 }}>S</div>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontWeight: 700, fontSize: 14, color: C.text }}>{isEN ? "International Card" : "Tarjeta Internacional"}</div>
-                <div style={{ fontSize: 12, color: C.textMid }}>Visa · Mastercard · Amex · Apple Pay · Google Pay</div>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, width: "100%" }}>
+                <div style={{ width: 32, height: 32, borderRadius: 8, background: "#635BFF", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, fontWeight: 900, color: "white", fontSize: 14 }}>S</div>
+                <div style={{ fontWeight: 700, fontSize: 13, color: C.text }}>{isEN ? "International Card" : "Tarjeta Internacional"}</div>
               </div>
-              <div style={{ fontSize: 14, fontWeight: 800, color: "#635BFF" }}>{COP(grandTotal)}</div>
+              <div style={{ fontSize: 11, color: C.textMid, lineHeight: 1.4 }}>Visa · Mastercard · Amex · Apple/Google Pay</div>
             </button>
-            <div style={{ marginTop: 8, padding: "8px 12px", background: "#FFF7E6", border: "1px solid #F5C842", borderRadius: 8, fontSize: 11, color: "#92400E", display: "flex", alignItems: "flex-start", gap: 8 }}>
-              <span style={{ fontSize: 14 }}>💳</span>
-              <span>
-                {isEN
-                  ? <>The international card charge will appear on your statement as <strong>X Travel Group</strong>.</>
-                  : <>El cargo con tarjeta internacional aparecerá en tu estado de cuenta a nombre de <strong>X Travel Group</strong>.</>}
-              </span>
-            </div>
+          </div>
+
+          {/* Warning banner full-width debajo del grid de pago */}
+          <div style={{ marginTop: 8, padding: "8px 12px", background: "#FFF7E6", border: "1px solid #F5C842", borderRadius: 8, fontSize: 11, color: "#92400E", display: "flex", alignItems: "flex-start", gap: 8 }}>
+            <span style={{ fontSize: 14 }}>💳</span>
+            <span>
+              {isEN
+                ? <>The international card charge will appear on your statement as <strong>X Travel Group</strong>.</>
+                : <>El cargo con tarjeta internacional aparecerá en tu estado de cuenta a nombre de <strong>X Travel Group</strong>.</>}
+            </span>
           </div>
         </div>
         <div style={{ textAlign: "center", marginTop: 12, fontSize: 11, color: C.textLight }}>
