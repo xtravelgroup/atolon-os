@@ -2008,30 +2008,47 @@ function IncentivosAgencia({ aliadoId }) {
   const abrirCanje = async (inc, saldo) => {
     setCanjeFor({ inc, saldo });
     setCanjeForm({ reserva_id: "", pasadias_usadas: 1, nota: "" });
-    // Traer últimas 30 reservas no canceladas del aliado para el dropdown
-    const desde = new Date(Date.now() - 90 * 86400000).toISOString().slice(0, 10);
+    // Reservas del MISMO aliado con SALDO PENDIENTE (saldo > 0), no
+    // canceladas. Son las únicas elegibles para aplicar la cortesía.
+    const desde = new Date(Date.now() - 180 * 86400000).toISOString().slice(0, 10);
     const { data } = await supabase.from("reservas")
-      .select("id, nombre, fecha, tipo, pax, total, estado")
+      .select("id, nombre, fecha, tipo, pax, total, abono, saldo, estado")
       .eq("aliado_id", aliadoId)
       .neq("estado", "cancelado")
+      .gt("saldo", 0)
       .gte("fecha", desde)
       .order("fecha", { ascending: false })
-      .limit(30);
+      .limit(50);
     setReservasRecien(data || []);
+  };
+
+  // Cuando elige una reserva, auto-ajustar la cantidad a canjear al menor
+  // entre el saldo del incentivo y los pax de la reserva (no se puede
+  // canjear más pasadías que pax tiene la reserva).
+  const onPickReserva = (rid) => {
+    const r = reservasRecien.find(x => x.id === rid);
+    const maxByReserva = r ? Math.max(1, Number(r.pax) || 1) : (canjeFor?.saldo || 1);
+    const cant = Math.min(canjeFor?.saldo || 1, maxByReserva);
+    setCanjeForm(c => ({ ...c, reserva_id: rid, pasadias_usadas: cant }));
   };
 
   const guardarCanje = async () => {
     if (!canjeFor || savingCanje) return;
-    const cant = Math.max(1, Math.min(Number(canjeForm.pasadias_usadas) || 1, canjeFor.saldo));
+    if (!canjeForm.reserva_id) { alert("Selecciona una reserva del aliado con saldo pendiente."); return; }
+    const r = reservasRecien.find(x => x.id === canjeForm.reserva_id);
+    if (!r) { alert("La reserva seleccionada ya no está disponible."); return; }
+    const maxByReserva = Math.max(1, Number(r.pax) || 1);
+    const maxAplicable = Math.min(canjeFor.saldo, maxByReserva);
+    const cant = Math.max(1, Math.min(Number(canjeForm.pasadias_usadas) || 1, maxAplicable));
     setSavingCanje(true);
     const { error } = await supabase.from("b2b_premios_canjes").insert({
       id:                `CNJ-${Date.now()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`,
       aliado_id:         aliadoId,
       incentivo_id:      canjeFor.inc.id,
-      reserva_id:        canjeForm.reserva_id || null,
+      reserva_id:        canjeForm.reserva_id,
       pasadias_usadas:   cant,
       fecha:             new Date().toISOString().slice(0, 10),
-      nota:              (canjeForm.nota || "").trim() || `Canje manual (admin) — ${canjeFor.inc.nombre}`,
+      nota:              (canjeForm.nota || "").trim() || `Canje manual (admin) — ${canjeFor.inc.nombre} aplicado a ${canjeForm.reserva_id}`,
     });
     setSavingCanje(false);
     if (error) { alert("Error al registrar canje: " + error.message); return; }
@@ -2300,27 +2317,43 @@ function IncentivosAgencia({ aliadoId }) {
                 )}
               </div>
 
-              <label style={LS}>Reserva a la que se aplica (opcional)</label>
-              <select value={canjeForm.reserva_id} onChange={e => setCanjeForm(c => ({ ...c, reserva_id: e.target.value }))} style={IS}>
-                <option value="">— Sin reserva (canje libre) —</option>
+              <label style={LS}>Reserva del aliado con saldo pendiente *</label>
+              <select value={canjeForm.reserva_id} onChange={e => onPickReserva(e.target.value)} style={IS}>
+                <option value="">— Elige una reserva —</option>
                 {reservasRecien.map(r => (
                   <option key={r.id} value={r.id}>
-                    {r.fecha} · {r.id.slice(0, 18)} · {r.nombre || "—"} · {r.tipo} · {r.pax} pax
+                    {r.fecha} · {r.nombre || "—"} · {r.tipo} · {r.pax} pax · saldo {COP(r.saldo)}
                   </option>
                 ))}
               </select>
-              <div style={{ fontSize: 10, color: "rgba(255,255,255,0.35)", marginTop: 4 }}>
-                Últimas 30 reservas del aliado (90 días). Dejá vacío si no querés vincularlo a una reserva específica.
-              </div>
+              {reservasRecien.length === 0 && (
+                <div style={{ fontSize: 11, color: B.warning, marginTop: 6 }}>
+                  ⚠️ Este aliado no tiene reservas con saldo pendiente en los últimos 6 meses. No hay dónde aplicar el premio.
+                </div>
+              )}
+              {reservasRecien.length > 0 && (
+                <div style={{ fontSize: 10, color: "rgba(255,255,255,0.35)", marginTop: 4 }}>
+                  Solo aparecen reservas no canceladas con saldo &gt; 0 (donde se puede aplicar la cortesía).
+                </div>
+              )}
 
-              <div style={{ marginTop: 14 }}>
-                <label style={LS}>Cantidad a canjear</label>
-                <input type="number" min={1} max={maxCant}
-                  value={canjeForm.pasadias_usadas}
-                  onChange={e => setCanjeForm(c => ({ ...c, pasadias_usadas: e.target.value }))}
-                  style={IS} />
-                <div style={{ fontSize: 10, color: "rgba(255,255,255,0.35)", marginTop: 4 }}>Máx: {maxCant}</div>
-              </div>
+              {canjeForm.reserva_id && (() => {
+                const r = reservasRecien.find(x => x.id === canjeForm.reserva_id);
+                const maxByReserva = r ? Math.max(1, Number(r.pax) || 1) : maxCant;
+                const maxAplicable = Math.min(maxCant, maxByReserva);
+                return (
+                  <div style={{ marginTop: 14 }}>
+                    <label style={LS}>Cantidad de pasadías a canjear</label>
+                    <input type="number" min={1} max={maxAplicable}
+                      value={canjeForm.pasadias_usadas}
+                      onChange={e => setCanjeForm(c => ({ ...c, pasadias_usadas: e.target.value }))}
+                      style={IS} />
+                    <div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", marginTop: 4 }}>
+                      Máx <strong>{maxAplicable}</strong> · saldo del premio: {maxCant} · pax de la reserva: {r?.pax}
+                    </div>
+                  </div>
+                );
+              })()}
 
               <div style={{ marginTop: 14 }}>
                 <label style={LS}>Nota (opcional)</label>
@@ -2335,8 +2368,8 @@ function IncentivosAgencia({ aliadoId }) {
                   style={{ background: "transparent", border: `1px solid ${B.navyLight}`, color: "rgba(255,255,255,0.55)", borderRadius: 8, padding: "10px 18px", fontSize: 12, cursor: "pointer" }}>
                   Cancelar
                 </button>
-                <button onClick={guardarCanje} disabled={savingCanje}
-                  style={{ background: B.success, color: "#fff", border: "none", borderRadius: 8, padding: "10px 22px", fontSize: 13, fontWeight: 800, cursor: savingCanje ? "default" : "pointer" }}>
+                <button onClick={guardarCanje} disabled={savingCanje || !canjeForm.reserva_id}
+                  style={{ background: (!canjeForm.reserva_id || savingCanje) ? B.navyLight : B.success, color: (!canjeForm.reserva_id || savingCanje) ? "rgba(255,255,255,0.4)" : "#fff", border: "none", borderRadius: 8, padding: "10px 22px", fontSize: 13, fontWeight: 800, cursor: (savingCanje || !canjeForm.reserva_id) ? "default" : "pointer" }}>
                   {savingCanje ? "Guardando…" : "✓ Registrar canje"}
                 </button>
               </div>
