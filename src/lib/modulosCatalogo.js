@@ -21,7 +21,6 @@ export const GRUPOS_NAV = [
       { key: "comercial",   label: "Comercial",   icon: "★"  },
       { key: "metas",       label: "Metas",       icon: "🎯" },
       { key: "comisiones",  label: "Comisiones",  icon: "💜" },
-      { key: "incentivos",  label: "Incentivos",  icon: "🎁" },
     ],
   },
   {
