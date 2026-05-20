@@ -2040,7 +2040,9 @@ function IncentivosAgencia({ aliadoId }) {
     const maxByReserva = Math.max(1, Number(r.pax) || 1);
     const maxAplicable = Math.min(canjeFor.saldo, maxByReserva);
     const cant = Math.max(1, Math.min(Number(canjeForm.pasadias_usadas) || 1, maxAplicable));
+    const saldoActual = Number(r.saldo) || 0;
     setSavingCanje(true);
+    // 1) Registrar el canje en b2b_premios_canjes
     const { error } = await supabase.from("b2b_premios_canjes").insert({
       id:                `CNJ-${Date.now()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`,
       aliado_id:         aliadoId,
@@ -2050,8 +2052,27 @@ function IncentivosAgencia({ aliadoId }) {
       fecha:             new Date().toISOString().slice(0, 10),
       nota:              (canjeForm.nota || "").trim() || `Canje manual (admin) — ${canjeFor.inc.nombre} aplicado a ${canjeForm.reserva_id}`,
     });
+    if (error) { setSavingCanje(false); alert("Error al registrar canje: " + error.message); return; }
+
+    // 2) Aplicar a la reserva → saldo = $0 (cortesía total). El monto es
+    //    indiferente si era neto o PVP: la reserva queda saldada por la
+    //    cortesía del premio. Sumamos el saldo absorbido a descuento_cortesia
+    //    para auditoría.
+    const { data: rNow } = await supabase.from("reservas")
+      .select("descuento_cortesia, forma_pago, notas").eq("id", canjeForm.reserva_id).maybeSingle();
+    const descuentoNuevo = (Number(rNow?.descuento_cortesia) || 0) + saldoActual;
+    const notaPrev = (rNow?.notas || "").trim();
+    const notaCanje = `Premio aplicado: ${canjeFor.inc.nombre} (${cant} pasadía${cant !== 1 ? "s" : ""})`;
+    const { error: upErr } = await supabase.from("reservas").update({
+      saldo:               0,
+      descuento_cortesia:  descuentoNuevo,
+      forma_pago:          rNow?.forma_pago || "incentivo_premio",
+      notas:               notaPrev ? `${notaPrev} · ${notaCanje}` : notaCanje,
+    }).eq("id", canjeForm.reserva_id);
     setSavingCanje(false);
-    if (error) { alert("Error al registrar canje: " + error.message); return; }
+    if (upErr) {
+      alert("Canje registrado pero hubo un problema al actualizar la reserva: " + upErr.message);
+    }
     setCanjeFor(null);
     fetchAll();
   };
@@ -2350,6 +2371,9 @@ function IncentivosAgencia({ aliadoId }) {
                       style={IS} />
                     <div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", marginTop: 4 }}>
                       Máx <strong>{maxAplicable}</strong> · saldo del premio: {maxCant} · pax de la reserva: {r?.pax}
+                    </div>
+                    <div style={{ marginTop: 10, padding: "8px 10px", background: B.success + "11", border: `1px solid ${B.success}44`, borderRadius: 6, fontSize: 11, color: B.success, lineHeight: 1.5 }}>
+                      💚 Al confirmar, el <strong>saldo de la reserva pasa a $0</strong> (cortesía total). Es indiferente si es tarifa neta o PVP — la reserva queda saldada y el monto absorbido se registra como <code>descuento_cortesia</code>.
                     </div>
                   </div>
                 );
