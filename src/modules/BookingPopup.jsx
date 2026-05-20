@@ -1025,9 +1025,11 @@ export default function BookingPopup() {
               Carousel → What's Included → Producto + precio → Participants → Order Summary */}
           <div style={{ flex: 1, minWidth: 0, width: isDesktop ? undefined : "100%", display: "flex", flexDirection: "column" }}>
 
-        {/* Photo gallery */}
-        {allPhotos.length > 0 && (
-          <div style={{ marginBottom: isDesktop ? 10 : 20, borderRadius: 12, overflow: "hidden", position: "relative" }}>
+        {/* Photo gallery — solo en mobile. En desktop ocupaba ~340px que no
+            tenemos en el iframe Sky de 680px; las fotos pueden vivir en la
+            página padre (Webflow) que ya tiene su propio carrusel arriba. */}
+        {!isDesktop && allPhotos.length > 0 && (
+          <div style={{ marginBottom: 20, borderRadius: 12, overflow: "hidden", position: "relative" }}>
             {/* Main image — protagonista en desktop (~290px, aspect 16:9) */}
             <div style={{ width: "100%", height: isDesktop ? 290 : 220, position: "relative", background: C.bgCard, overflow: "hidden" }}>
               <img src={allPhotos[fotoActiva]} alt="pasadia"
@@ -1061,15 +1063,18 @@ export default function BookingPopup() {
           </div>
         )}
 
-        {/* What's included — fallback a product.includes si la BD no tiene datos */}
+        {/* What's included — solo en mobile. En desktop esta info ya vive en
+            la landing de Webflow arriba del widget; mostrarla aquí ocuparía
+            ~80px que necesitamos para que todo entre en el iframe de 680px. */}
         {(() => {
+          if (isDesktop) return null;
           const items = incluye.length > 0
             ? incluye.map(it => ({ es: it.descripcion, en: it.descripcion_en || it.descripcion }))
             : (isEN ? (product.includes_en || product.includes || []) : (product.includes || []))
                 .map(txt => ({ es: txt, en: txt }));
           if (items.length === 0) return null;
           return (
-            <div style={{ marginBottom: isDesktop ? 8 : 20, padding: isDesktop ? "8px 12px" : "12px 16px", background: C.bgCard, borderRadius: 10, border: `1px solid ${C.border}` }}>
+            <div style={{ marginBottom: 20, padding: "12px 16px", background: C.bgCard, borderRadius: 10, border: `1px solid ${C.border}` }}>
               <div style={{ fontSize: 11, fontWeight: 700, color: C.textMid, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: isDesktop ? 4 : 8 }}>{isEN ? "What's included" : "Qué incluye"}</div>
               <div style={{ display: "flex", flexWrap: "wrap", gap: "6px 16px" }}>
                 {items.map((item, i) => (
@@ -1082,23 +1087,24 @@ export default function BookingPopup() {
           );
         })()}
 
-        {/* Product header — título + precio */}
-        <div style={{ marginBottom: isDesktop ? 8 : 16 }}>
-          <div style={{ fontSize: 11, fontWeight: 600, color: C.textLight, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>Atolon Beach Club · Isla Tierra Bomba</div>
+        {/* Product header — título + precio. En desktop con espaciado generoso
+            ya que ahora es el primer bloque de la col izq (sin carousel arriba). */}
+        <div style={{ marginBottom: isDesktop ? 24 : 16, paddingBottom: isDesktop ? 20 : 0, borderBottom: isDesktop ? `1px solid ${C.divider}` : "none" }}>
+          <div style={{ fontSize: 11, fontWeight: 600, color: C.textLight, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 }}>Atolon Beach Club · Isla Tierra Bomba</div>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <span style={{ fontSize: 24 }}>{product.icon}</span>
-              <span style={{ fontSize: 22, fontWeight: 800, color: C.text }}>{isEN && product.tipo_en ? product.tipo_en : product.tipo}</span>
+              <span style={{ fontSize: isDesktop ? 28 : 24 }}>{product.icon}</span>
+              <span style={{ fontSize: isDesktop ? 24 : 22, fontWeight: 800, color: C.text }}>{isEN && product.tipo_en ? product.tipo_en : product.tipo}</span>
             </div>
             <div style={{ textAlign: "right", flexShrink: 0 }}>
-              <div style={{ fontSize: 20, fontWeight: 800, color: C.accent }}>{COP(product.precio)}</div>
+              <div style={{ fontSize: isDesktop ? 22 : 20, fontWeight: 800, color: C.accent }}>{COP(product.precio)}</div>
               <div style={{ fontSize: 11, color: C.textLight }}>{isEN ? "per person" : "por persona"}</div>
             </div>
           </div>
         </div>
 
         {/* Participants */}
-        <div style={{ marginBottom: isDesktop ? 10 : 24 }}>
+        <div style={{ marginBottom: isDesktop ? 24 : 24 }}>
           <h3 style={{ fontSize: 15, fontWeight: 700, color: C.text, marginBottom: 4 }}>{isEN ? "Participants" : "Participantes"}</h3>
           <div style={{ borderTop: `1px solid ${C.divider}` }}>
             <PaxRow
