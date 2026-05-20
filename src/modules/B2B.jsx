@@ -2071,20 +2071,26 @@ function IncentivosAgencia({ aliadoId }) {
     const descuentoNuevo = (Number(rNow?.descuento_cortesia) || 0) + descuentoApl;
     const notaPrev = (rNow?.notas || "").trim();
     const notaCanje = `Premio aplicado: ${canjeFor.inc.nombre} (${cant} pasadía${cant !== 1 ? "s" : ""} · -${(descuentoApl).toLocaleString("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 })})`;
-    // Si el saldo queda en 0 después del canje, la reserva queda confirmada
-    // por cortesía del premio (no hay nada más que cobrar). En cualquier otro
-    // caso (canje parcial) preservamos el estado actual — el aliado sigue
-    // debiendo el saldo restante.
-    const nuevoEstado = (nuevoSaldo === 0 && (rNow?.estado === "pendiente" || rNow?.estado === "pendiente_pago"))
+    // Si el saldo queda en 0 después del canje:
+    //  - la reserva queda confirmada por cortesía del premio,
+    //  - total → 0 (mismo patrón que las cortesías creadas en Reservas.jsx:
+    //    total=0/abono=0/saldo=0 y el valor original se guarda en
+    //    descuento_cortesia para reportes).
+    // Canje parcial: preservamos total y estado actual — el aliado sigue
+    // debiendo el saldo restante y la reserva sigue contando como ingreso.
+    const canjeTotal = nuevoSaldo === 0;
+    const nuevoEstado = (canjeTotal && (rNow?.estado === "pendiente" || rNow?.estado === "pendiente_pago"))
       ? "confirmado"
       : rNow?.estado;
-    const { error: upErr } = await supabase.from("reservas").update({
+    const updates = {
       saldo:               nuevoSaldo,
       descuento_cortesia:  descuentoNuevo,
-      forma_pago:          rNow?.forma_pago || (nuevoSaldo === 0 ? "incentivo_premio" : rNow?.forma_pago),
+      forma_pago:          rNow?.forma_pago || (canjeTotal ? "incentivo_premio" : rNow?.forma_pago),
       estado:              nuevoEstado,
       notas:               notaPrev ? `${notaPrev} · ${notaCanje}` : notaCanje,
-    }).eq("id", canjeForm.reserva_id);
+    };
+    if (canjeTotal) updates.total = 0;
+    const { error: upErr } = await supabase.from("reservas").update(updates).eq("id", canjeForm.reserva_id);
     setSavingCanje(false);
     if (upErr) {
       alert("Canje registrado pero hubo un problema al actualizar la reserva: " + upErr.message);
