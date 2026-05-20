@@ -173,9 +173,18 @@ export default function Lancha() {
   const capitanesLancha = useMemo(() => capitanes.filter(c => c.lancha_id === activeLancha), [capitanes, activeLancha]);
 
   // ─── Viajes computados por fecha ─────────────────────────────────────
-  // Lógica: cada llegada se parea con el siguiente zarpe del mismo barco.
-  // Si hay 2 llegadas seguidas → zarpe perdido. Si hay 2 zarpes seguidos
-  // → llegada perdida. # viajes = max(llegadas, zarpes) por día.
+  // Lógica depende de DÓNDE DUERME la lancha (lanchas.home_base):
+  //  - home_base="cartagena" (default, Naturalle, etc.): la lancha
+  //    arranca el día en Bodeguita. Viaje = Z (zarpa de Bodeguita) →
+  //    L (regresa a Bodeguita). 1ª Z del día abre un viaje; la siguiente
+  //    L lo cierra. Z sin L de regreso → llegada perdida.
+  //  - home_base="atolon" (Castillete): la lancha duerme en Atolón.
+  //    Viaje = L (llega a Bodeguita desde Atolón) → Z (regresa a Atolón).
+  //    1ª L del día abre un viaje; la siguiente Z lo cierra. L sin Z
+  //    de regreso → zarpe perdido.
+  // # viajes totales = max(llegadas, zarpes) por día — invariante (ambos
+  // patrones generan 1L + 1Z por viaje completo).
+  const homeBase = (lancha?.home_base || "cartagena").toLowerCase();
   const viajesPorFecha = useMemo(() => {
     const byDate = {}; // fecha → { llegadas: [{hora}], zarpes: [{hora}] }
     llegadasLancha.forEach(l => {
@@ -205,27 +214,53 @@ export default function Lancha() {
       const d = byDate[fecha];
       d.llegadas.sort((a, b) => a.hora.localeCompare(b.hora));
       d.zarpes.sort((a, b) => a.hora.localeCompare(b.hora));
-      // Pareo cronológico
-      const pares = [];
-      let pendienteA = null;
       const eventos = [
         ...d.llegadas.map(l => ({ ...l, tipo: "L" })),
         ...d.zarpes.map(z => ({ ...z, tipo: "Z" })),
       ].sort((a, b) => a.hora.localeCompare(b.hora));
-      eventos.forEach(ev => {
-        if (ev.tipo === "L") {
-          if (pendienteA) pares.push({ llegada: pendienteA, zarpe: null }); // zarpe perdido
-          pendienteA = ev;
-        } else {
-          if (pendienteA) {
-            pares.push({ llegada: pendienteA, zarpe: ev });
-            pendienteA = null;
-          } else {
-            pares.push({ llegada: null, zarpe: ev }); // llegada perdida
+
+      const pares = [];
+      if (homeBase === "atolon") {
+        // CASTILLETE: viaje = L → Z. Una L pendiente espera el siguiente Z
+        // para cerrar el viaje. Si llega otra L antes, la primera quedó
+        // incompleta (zarpe de regreso perdido). Una Z sin L previa
+        // significa que faltó la llegada de ese viaje.
+        let pendienteL = null;
+        eventos.forEach(ev => {
+          if (ev.tipo === "L") {
+            if (pendienteL) pares.push({ llegada: pendienteL, zarpe: null }); // zarpe perdido
+            pendienteL = ev;
+          } else { // Z
+            if (pendienteL) {
+              pares.push({ llegada: pendienteL, zarpe: ev });
+              pendienteL = null;
+            } else {
+              pares.push({ llegada: null, zarpe: ev }); // llegada perdida
+            }
           }
-        }
-      });
-      if (pendienteA) pares.push({ llegada: pendienteA, zarpe: null });
+        });
+        if (pendienteL) pares.push({ llegada: pendienteL, zarpe: null });
+      } else {
+        // NATURALLE / default: viaje = Z → L. Una Z pendiente espera la
+        // siguiente L. Otra Z antes de su L = llegada perdida; una L
+        // suelta sin Z previa = zarpe perdido.
+        let pendienteZ = null;
+        eventos.forEach(ev => {
+          if (ev.tipo === "Z") {
+            if (pendienteZ) pares.push({ llegada: null, zarpe: pendienteZ }); // llegada perdida
+            pendienteZ = ev;
+          } else { // L
+            if (pendienteZ) {
+              pares.push({ llegada: ev, zarpe: pendienteZ });
+              pendienteZ = null;
+            } else {
+              pares.push({ llegada: ev, zarpe: null }); // zarpe perdido
+            }
+          }
+        });
+        if (pendienteZ) pares.push({ llegada: null, zarpe: pendienteZ });
+      }
+
       const viajes = Math.max(d.llegadas.length, d.zarpes.length);
       return {
         fecha,
@@ -235,7 +270,7 @@ export default function Lancha() {
         pares,
       };
     });
-  }, [llegadasLancha, zarpesLancha]);
+  }, [llegadasLancha, zarpesLancha, homeBase]);
 
   // Costo por viaje (ida y vuelta) = 2 × costo_viaje_sencillo
   const costoPorViaje = useMemo(() => {
@@ -592,7 +627,7 @@ export default function Lancha() {
         />
       )}
       {tab === "viajes" && (
-        <ListaViajesComputados viajesPorFecha={viajesPorFecha} costoPorViaje={costoPorViaje} esSuper={esSuper} onEliminarViaje={onEliminarViaje} />
+        <ListaViajesComputados viajesPorFecha={viajesPorFecha} costoPorViaje={costoPorViaje} homeBase={homeBase} esSuper={esSuper} onEliminarViaje={onEliminarViaje} />
       )}
       {tab === "todos" && (
         <ListaEventos
@@ -1078,7 +1113,7 @@ function CombustibleTab({ items, viajesPorFecha, costoPorViaje, onEdit, onDelete
 //   · Si hay 2 zarpes seguidos → llegada perdida (?? perdido)
 //   · # viajes = max(llegadas, zarpes)
 //   · Costo combustible (estimado) = viajes × costo_viaje_sencillo × 2
-function ListaViajesComputados({ viajesPorFecha, costoPorViaje, esSuper, onEliminarViaje }) {
+function ListaViajesComputados({ viajesPorFecha, costoPorViaje, homeBase = "cartagena", esSuper, onEliminarViaje }) {
   if (!viajesPorFecha.length) {
     return (
       <div style={{ padding: 30, background: B.navyMid, borderRadius: 10, textAlign: "center", fontSize: 13, color: "rgba(255,255,255,0.3)" }}>
@@ -1095,9 +1130,14 @@ function ListaViajesComputados({ viajesPorFecha, costoPorViaje, esSuper, onElimi
       {/* Banner de regla */}
       <div style={{ background: B.navy, border: `1px solid ${B.sand}33`, borderRadius: 10, padding: "10px 14px", marginBottom: 12, fontSize: 11, color: "rgba(255,255,255,0.65)", lineHeight: 1.55 }}>
         <strong style={{ color: B.sand }}>📐 Regla de viajes:</strong>
-        Cada viaje = ida y vuelta (Cartagena ↔ Atolón). Se calcula como{" "}
-        <code style={{ color: B.sky }}>max(llegadas registradas, zarpes registrados)</code> por día.
-        Eventos faltantes se infieren cuando hay 2 llegadas (zarpe perdido) o 2 zarpes seguidos (llegada perdida).
+        {homeBase === "atolon" ? (
+          <> Esta lancha duerme en <strong>Atolón</strong>. Cada viaje = Atolón → Bodeguita → Atolón, registrado como{" "}
+          <code style={{ color: B.sky }}>llegada (L)</code> + <code style={{ color: "#a78bfa" }}>zarpe (Z)</code>.</>
+        ) : (
+          <> Esta lancha duerme en <strong>Cartagena</strong>. Cada viaje = Bodeguita → Atolón → Bodeguita, registrado como{" "}
+          <code style={{ color: "#a78bfa" }}>zarpe (Z)</code> + <code style={{ color: B.sky }}>llegada (L)</code>.</>
+        )}{" "}
+        Total = <code style={{ color: B.sand }}>max(llegadas, zarpes)</code> por día. Eventos sueltos se marcan como faltantes.
       </div>
 
       <div style={{ background: B.navyMid, borderRadius: 10, overflow: "hidden" }}>
@@ -1371,6 +1411,7 @@ function ConfigLanchaModal({ lancha, onClose, onSaved }) {
     marina_costo_mensual: lancha.marina_costo_mensual || "",
     marina_proveedor: lancha.marina_proveedor || "",
     marina_activa: !!lancha.marina_activa,
+    home_base: lancha.home_base || "cartagena",
     foto_url: lancha.foto_url || "",
     notas: lancha.notas || "",
   });
@@ -1395,6 +1436,7 @@ function ConfigLanchaModal({ lancha, onClose, onSaved }) {
       capacidad_pax: f.capacidad_pax ? Number(f.capacidad_pax) : null,
       capacidad_tanque_gal: f.capacidad_tanque_gal ? Number(f.capacidad_tanque_gal) : null,
       ano: f.ano ? Number(f.ano) : null,
+      home_base: f.home_base || "cartagena",
       costo_viaje_sencillo: f.costo_viaje_sencillo ? Number(f.costo_viaje_sencillo) : 0,
       tarifa_alquiler_ida_vuelta: f.tarifa_alquiler_ida_vuelta ? Number(f.tarifa_alquiler_ida_vuelta) : 0,
       marina_costo_mensual: f.marina_costo_mensual ? Number(f.marina_costo_mensual) : 0,
@@ -1422,7 +1464,17 @@ function ConfigLanchaModal({ lancha, onClose, onSaved }) {
         <div><label style={LS}>Año</label><input type="number" value={f.ano} onChange={e => set("ano", e.target.value)} style={IS} /></div>
         <div><label style={LS}>Motor</label><input value={f.motor} onChange={e => set("motor", e.target.value)} placeholder="Ej: Yamaha 200HP" style={IS} /></div>
         <div><label style={LS}>Modelo</label><input value={f.modelo} onChange={e => set("modelo", e.target.value)} style={IS} /></div>
-        <div style={{ gridColumn: "1 / -1" }}><label style={LS}>Capitán principal</label><input value={f.capitan_default} onChange={e => set("capitan_default", e.target.value)} style={IS} /></div>
+        <div><label style={LS}>Capitán principal</label><input value={f.capitan_default} onChange={e => set("capitan_default", e.target.value)} style={IS} /></div>
+        <div>
+          <label style={LS}>Dónde duerme la lancha</label>
+          <select value={f.home_base} onChange={e => set("home_base", e.target.value)} style={IS}>
+            <option value="cartagena">Cartagena (zarpa→Atolón→regresa)</option>
+            <option value="atolon">Atolón (sale de Atolón→Cartagena→regresa)</option>
+          </select>
+          <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", marginTop: 4 }}>
+            Define el orden de eventos del viaje. Cambia el pareo llegada↔zarpe en la tab Viajes.
+          </div>
+        </div>
 
         <div style={{ gridColumn: "1 / -1", marginTop: 6, paddingTop: 14, borderTop: "1px solid rgba(255,255,255,0.08)" }}>
           <div style={{ fontSize: 11, color: B.sand, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em" }}>Costos operativos</div>
