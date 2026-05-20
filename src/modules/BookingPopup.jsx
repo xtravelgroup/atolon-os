@@ -1020,9 +1020,9 @@ export default function BookingPopup() {
       <div style={{ display: isDesktop ? "grid" : "block", gridTemplateColumns: isDesktop ? "1fr 1fr" : undefined, columnGap: isDesktop ? 24 : 0, alignItems: "start" }}>
         {/* Photo gallery */}
         {allPhotos.length > 0 && (
-          <div style={{ marginBottom: 20, borderRadius: 12, overflow: "hidden", position: "relative", ...cellL }}>
-            {/* Main image */}
-            <div style={{ width: "100%", height: 220, position: "relative", background: C.bgCard, overflow: "hidden" }}>
+          <div style={{ marginBottom: isDesktop ? 10 : 20, borderRadius: 12, overflow: "hidden", position: "relative", ...cellL }}>
+            {/* Main image — más corta en desktop para entrar en 680px iframe */}
+            <div style={{ width: "100%", height: isDesktop ? 150 : 220, position: "relative", background: C.bgCard, overflow: "hidden" }}>
               <img src={allPhotos[fotoActiva]} alt="pasadia"
                 style={{ width: "100%", height: "100%", objectFit: "cover", transition: "opacity 0.25s" }} />
               {allPhotos.length > 1 && (
@@ -1071,7 +1071,7 @@ export default function BookingPopup() {
 
 
         {/* Product header */}
-        <div style={{ marginBottom: 16, ...cellR }}>
+        <div style={{ marginBottom: isDesktop ? 8 : 16, ...cellR }}>
           <div style={{ fontSize: 11, fontWeight: 600, color: C.textLight, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>Atolon Beach Club · Isla Tierra Bomba</div>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -1093,8 +1093,8 @@ export default function BookingPopup() {
                 .map(txt => ({ es: txt, en: txt }));
           if (items.length === 0) return null;
           return (
-            <div style={{ marginBottom: 20, padding: "12px 16px", background: C.bgCard, borderRadius: 10, border: `1px solid ${C.border}`, ...cellL }}>
-              <div style={{ fontSize: 11, fontWeight: 700, color: C.textMid, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 }}>{isEN ? "What's included" : "Qué incluye"}</div>
+            <div style={{ marginBottom: isDesktop ? 10 : 20, padding: isDesktop ? "8px 12px" : "12px 16px", background: C.bgCard, borderRadius: 10, border: `1px solid ${C.border}`, ...cellL }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: C.textMid, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: isDesktop ? 4 : 8 }}>{isEN ? "What's included" : "Qué incluye"}</div>
               <div style={{ display: "flex", flexWrap: "wrap", gap: "6px 16px" }}>
                 {items.map((item, i) => (
                   <div key={i} style={{ fontSize: 12, color: C.textMid, display: "flex", alignItems: "center", gap: 5 }}>
@@ -1107,7 +1107,7 @@ export default function BookingPopup() {
         })()}
 
         {/* Participants */}
-        <div style={{ marginBottom: 24, ...cellR }}>
+        <div style={{ marginBottom: isDesktop ? 10 : 24, ...cellR }}>
           <h3 style={{ fontSize: 15, fontWeight: 700, color: C.text, marginBottom: 4 }}>{isEN ? "Participants" : "Participantes"}</h3>
           <div style={{ borderTop: `1px solid ${C.divider}` }}>
             <PaxRow
@@ -1174,7 +1174,7 @@ export default function BookingPopup() {
         </div>
 
         {/* Calendar — hidden when date is locked by group */}
-        <div style={{ marginBottom: 24, display: grupoLock ? "none" : "block", ...cellR }}>
+        <div style={{ marginBottom: isDesktop ? 10 : 24, display: grupoLock ? "none" : "block", ...cellR }}>
           <h3 style={{ fontSize: 15, fontWeight: 700, color: C.text, marginBottom: 12 }}>{isEN ? "Select a date" : "Selecciona una fecha"}</h3>
           {/* Month navigation */}
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
@@ -1301,7 +1301,7 @@ export default function BookingPopup() {
 
         {/* Salidas (departure times) — regular mode */}
         {!grupoLock && !product?.noSalida && selDate && (
-          <div style={{ marginBottom: 24, ...cellR }}>
+          <div style={{ marginBottom: isDesktop ? 10 : 24, ...cellR }}>
             <h3 style={{ fontSize: 15, fontWeight: 700, color: C.text, marginBottom: 12 }}>
               {isEN ? "Select departure time" : "Selecciona el horario de salida"}
             </h3>
@@ -1370,7 +1370,7 @@ export default function BookingPopup() {
         )}
 
         {/* Order summary */}
-        <div style={{ background: C.bgCard, borderRadius: 12, padding: "16px 18px", marginBottom: 20, border: `1px solid ${C.border}`, ...cellL }}>
+        <div style={{ background: C.bgCard, borderRadius: 12, padding: isDesktop ? "10px 14px" : "16px 18px", marginBottom: isDesktop ? 10 : 20, border: `1px solid ${C.border}`, ...cellL }}>
           <h3 style={{ fontSize: 14, fontWeight: 700, color: C.text, marginBottom: 12, borderBottom: `2px solid ${C.accent}`, paddingBottom: 8, display: "inline-block" }}>{isEN ? "Order summary" : "Comprobar el pedido"}</h3>
           <div style={{ fontSize: 14, fontWeight: 600, color: C.text, marginBottom: 10 }}>{isEN && product.tipo_en ? product.tipo_en : product.tipo}</div>
           {[
@@ -1401,7 +1401,7 @@ export default function BookingPopup() {
                 onClick={() => { if (ready) { gtmBeginCheckout(product, paxTotal, total); setStep(2); AtolanTrack.evento("begin_checkout", { producto: product?.tipo, fecha: selDate, pax: paxTotal, valor: total }, "booking"); AtolanTrack.setCurrentStep(2); } }}
                 disabled={!ready}
                 style={{
-                  width: "100%", padding: "15px 0", borderRadius: 10, border: "none",
+                  width: "100%", padding: isDesktop ? "11px 0" : "15px 0", borderRadius: 10, border: "none",
                   background: ready ? C.primary : C.border,
                   color: ready ? "white" : C.textLight,
                   fontSize: 15, fontWeight: 700, cursor: ready ? "pointer" : "not-allowed",
@@ -1749,13 +1749,13 @@ export default function BookingPopup() {
 
   // ─── Layout ─────────────────────────────────────────────────────────────────
   return (
-    <div style={{ minHeight: "100vh", background: "#F1F5F9", fontFamily: "'Segoe UI', Arial, sans-serif", color: C.text, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: isDesktop ? "16px 16px 24px" : "24px 16px 60px" }}>
-      <div style={{ width: "100%", maxWidth: isDesktop ? 960 : 480 }}>
+    <div style={{ minHeight: "100vh", background: "#F1F5F9", fontFamily: "'Segoe UI', Arial, sans-serif", color: C.text, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: isDesktop ? "6px 12px 6px" : "24px 16px 60px" }}>
+      <div style={{ width: "100%", maxWidth: isDesktop ? 1000 : 480 }}>
 
-        {/* Brand header — logo compacto en desktop (iframe ~680px de alto) */}
-        <div style={{ position: "relative", textAlign: "center", marginBottom: isDesktop ? 10 : 20 }}>
+        {/* Brand header — logo muy compacto en desktop (iframe Sky ~680px) */}
+        <div style={{ position: "relative", textAlign: "center", marginBottom: isDesktop ? 4 : 20 }}>
           <a href="https://www.atoloncartagena.com" target="_blank" rel="noopener noreferrer">
-            <img src="/atolon-peces.png" alt="Atolon Beach Club" style={{ height: isDesktop ? 64 : 195, objectFit: "contain", display: "block", margin: "0 auto" }} />
+            <img src="/atolon-peces.png" alt="Atolon Beach Club" style={{ height: isDesktop ? 36 : 195, objectFit: "contain", display: "block", margin: "0 auto" }} />
           </a>
           <div style={{ position: "absolute", top: "50%", right: 0, transform: "translateY(-50%)", display: "flex", gap: 4 }}>
             {["es","en"].map(l => (
@@ -1767,24 +1767,27 @@ export default function BookingPopup() {
           </div>
         </div>
 
-        {/* Main card */}
-        <div style={{ background: C.bg, borderRadius: 16, padding: "24px 24px", boxShadow: "0 4px 24px rgba(0,0,0,0.07)", border: `1px solid ${C.border}` }}>
+        {/* Main card — padding compacto en desktop para entrar en 680px */}
+        <div style={{ background: C.bg, borderRadius: 16, padding: isDesktop ? "12px 16px" : "24px 24px", boxShadow: "0 4px 24px rgba(0,0,0,0.07)", border: `1px solid ${C.border}` }}>
           {step === 0 && ProductSelector()}
           {step === 1 && product && BookingStep()}
           {step === 2 && product && InfoStep()}
           {step === 3 && product && UpsellStep()}
         </div>
 
-        {/* Footer */}
-        <div style={{ textAlign: "center", marginTop: 16, fontSize: 11, color: C.textLight, lineHeight: 1.9 }}>
-          <div>Atolon Beach Club</div>
-          <div>
-            <a href="mailto:reservas@atoloncartagena.com" style={{ color: C.primary, textDecoration: "none" }}>reservas@atoloncartagena.com</a>
+        {/* Footer — oculto en desktop (la página padre ya tiene su propio footer);
+            en mobile sigue mostrándose */}
+        {!isDesktop && (
+          <div style={{ textAlign: "center", marginTop: 16, fontSize: 11, color: C.textLight, lineHeight: 1.9 }}>
+            <div>Atolon Beach Club</div>
+            <div>
+              <a href="mailto:reservas@atoloncartagena.com" style={{ color: C.primary, textDecoration: "none" }}>reservas@atoloncartagena.com</a>
+            </div>
+            <div>
+              <a href="https://www.atoloncartagena.com" target="_blank" rel="noopener noreferrer" style={{ color: C.primary, textDecoration: "none" }}>www.atoloncartagena.com</a>
+            </div>
           </div>
-          <div>
-            <a href="https://www.atoloncartagena.com" target="_blank" rel="noopener noreferrer" style={{ color: C.primary, textDecoration: "none" }}>www.atoloncartagena.com</a>
-          </div>
-        </div>
+        )}
         <div style={{ display: "flex", justifyContent: "center", gap: 20, marginTop: 10 }}>
           <a href="/" style={{ fontSize: 11, color: C.textLight, textDecoration: "none", opacity: 0.5 }}>
             Portal Agencias
