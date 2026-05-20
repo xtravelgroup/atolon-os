@@ -552,6 +552,7 @@ export default function Lancha() {
         <CombustibleTab
           items={bitacoraLancha.filter(b => b.tipo === "combustible")}
           viajesPorFecha={viajesPorFecha}
+          costoPorViaje={costoPorViaje}
           onEdit={(e) => setModal({ tipo: "combustible", edit: e })}
           onDelete={borrarEvento}
         />
@@ -966,14 +967,19 @@ function EventoRow({ item, onEdit, onDelete, onToggleResuelto, compact }) {
 //   · Tramo suelto (solo zarpe o solo llegada) = 0,5 viaje
 // El consumo de cada recarga cuenta los viajes desde su fecha/hora hasta
 // la siguiente recarga (o hasta ahora si es la más reciente).
-const COSTO_VIAJE_COMBUSTIBLE = 275000;
+// El costo por viaje (ida+vuelta) viene parametrizado por embarcación
+// (`lancha.costo_viaje_sencillo * 2`) — el padre lo pasa vía prop.
 
 function fmtViajes(n) {
   const r = Math.round(n * 10) / 10;
   return (Number.isInteger(r) ? String(r) : r.toFixed(1)).replace(".", ",");
 }
 
-function CombustibleTab({ items, viajesPorFecha, onEdit, onDelete }) {
+function CombustibleTab({ items, viajesPorFecha, costoPorViaje, onEdit, onDelete }) {
+  // Fallback defensivo: si el padre no nos pasa costoPorViaje (lancha sin
+  // costo_viaje_sencillo configurado en DB), asumimos $275K (valor histórico
+  // de Naturalle) para no dividir por 0.
+  const costoViajeEfectivo = Number(costoPorViaje) > 0 ? Number(costoPorViaje) : 275000;
   // Consumo por día = número de ZARPES. Cada zarpe es 1 viaje ida y vuelta
   // (el bote sale y regresa → consume 1). NO depende de emparejar la
   // llegada de regreso (que a veces se registra con el nombre mal escrito
@@ -1003,7 +1009,7 @@ function CombustibleTab({ items, viajesPorFecha, onEdit, onDelete }) {
       const consumido = consumoPorDia
         .filter(x => x.fecha >= d0 && x.fecha < dEnd)
         .reduce((s, x) => s + x.viajes, 0);
-      const capacidad = Math.max(1, Math.round(Number(r.costo_total || 0) / COSTO_VIAJE_COMBUSTIBLE));
+      const capacidad = Math.max(1, Math.round(Number(r.costo_total || 0) / costoViajeEfectivo));
       const restante = Math.max(0, capacidad - consumido);
       const pct = capacidad > 0 ? Math.min(100, (consumido / capacidad) * 100) : 0;
       return { ...r, ts: `${d0}T${(r.hora || "00:00").slice(0, 5)}`, consumido, capacidad, restante, pct, activa: i === asc.length - 1 };
