@@ -161,6 +161,27 @@ function acNanoid(n = 16) {
 export default function BookingPopup() {
   const { isDesktop } = useBreakpoint();
   const params  = new URLSearchParams(window.location.search);
+
+  // ── Auto-resize del iframe en el parent (Webflow / atoloncartagena) ──
+  // Postea la altura real del contenido cada vez que cambia. El parent
+  // debe escuchar message con type === "atolon-booking-height" y ajustar
+  // el style.height del iframe. Si no estamos embebidos no hace nada.
+  useEffect(() => {
+    if (window.self === window.top) return;
+    const post = () => {
+      const h = Math.max(
+        document.documentElement.scrollHeight,
+        document.body.scrollHeight,
+      );
+      window.parent.postMessage({ type: "atolon-booking-height", height: h }, "*");
+    };
+    post();
+    const ro = new ResizeObserver(() => post());
+    ro.observe(document.body);
+    window.addEventListener("load", post);
+    return () => { ro.disconnect(); window.removeEventListener("load", post); };
+  }, []);
+
   // Support both /booking?tipo=after-island and /booking/after-island
   const pathSlug = window.location.pathname.replace(/^\/booking\/?/, "").split("?")[0] || "";
   const tipoQ   = params.get("tipo") || pathSlug || "";
