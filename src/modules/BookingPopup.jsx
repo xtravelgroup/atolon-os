@@ -1070,8 +1070,8 @@ export default function BookingPopup() {
         )}
 
 
-        {/* Product header */}
-        <div style={{ marginBottom: isDesktop ? 8 : 16, ...cellR }}>
+        {/* Product header — LEFT col, después de What's Included */}
+        <div style={{ marginBottom: isDesktop ? 8 : 16, ...cellL, ...(isDesktop ? { order: 2 } : null) }}>
           <div style={{ fontSize: 11, fontWeight: 600, color: C.textLight, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>Atolon Beach Club · Isla Tierra Bomba</div>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -1093,7 +1093,7 @@ export default function BookingPopup() {
                 .map(txt => ({ es: txt, en: txt }));
           if (items.length === 0) return null;
           return (
-            <div style={{ marginBottom: isDesktop ? 10 : 20, padding: isDesktop ? "8px 12px" : "12px 16px", background: C.bgCard, borderRadius: 10, border: `1px solid ${C.border}`, ...cellR }}>
+            <div style={{ marginBottom: isDesktop ? 10 : 20, padding: isDesktop ? "8px 12px" : "12px 16px", background: C.bgCard, borderRadius: 10, border: `1px solid ${C.border}`, ...cellL, ...(isDesktop ? { order: 1 } : null) }}>
               <div style={{ fontSize: 11, fontWeight: 700, color: C.textMid, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: isDesktop ? 4 : 8 }}>{isEN ? "What's included" : "Qué incluye"}</div>
               <div style={{ display: "flex", flexWrap: "wrap", gap: "6px 16px" }}>
                 {items.map((item, i) => (
@@ -1106,8 +1106,8 @@ export default function BookingPopup() {
           );
         })()}
 
-        {/* Participants */}
-        <div style={{ marginBottom: isDesktop ? 10 : 24, ...cellR }}>
+        {/* Participants — LEFT col en desktop */}
+        <div style={{ marginBottom: isDesktop ? 10 : 24, ...cellL, ...(isDesktop ? { order: 3 } : null) }}>
           <h3 style={{ fontSize: 15, fontWeight: 700, color: C.text, marginBottom: 4 }}>{isEN ? "Participants" : "Participantes"}</h3>
           <div style={{ borderTop: `1px solid ${C.divider}` }}>
             <PaxRow
@@ -1173,8 +1173,8 @@ export default function BookingPopup() {
           </div>
         </div>
 
-        {/* Calendar — en desktop va en la columna izquierda debajo del carousel */}
-        <div style={{ marginBottom: isDesktop ? 10 : 24, display: grupoLock ? "none" : "block", ...cellL }}>
+        {/* Calendar — RIGHT col en desktop, primer bloque arriba */}
+        <div style={{ marginBottom: isDesktop ? 10 : 24, display: grupoLock ? "none" : "block", ...cellR }}>
           <h3 style={{ fontSize: 15, fontWeight: 700, color: C.text, marginBottom: 12 }}>{isEN ? "Select a date" : "Selecciona una fecha"}</h3>
           {/* Month navigation */}
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
@@ -1371,8 +1371,8 @@ export default function BookingPopup() {
           </div>
         )}
 
-        {/* Order summary — en desktop va en la columna derecha */}
-        <div style={{ background: C.bgCard, borderRadius: 12, padding: isDesktop ? "10px 14px" : "16px 18px", marginBottom: isDesktop ? 10 : 20, border: `1px solid ${C.border}`, ...cellR }}>
+        {/* Order summary — LEFT col en desktop, al fondo */}
+        <div style={{ background: C.bgCard, borderRadius: 12, padding: isDesktop ? "10px 14px" : "16px 18px", marginBottom: isDesktop ? 10 : 20, border: `1px solid ${C.border}`, ...cellL, ...(isDesktop ? { order: 4 } : null) }}>
           <h3 style={{ fontSize: 14, fontWeight: 700, color: C.text, marginBottom: 12, borderBottom: `2px solid ${C.accent}`, paddingBottom: 8, display: "inline-block" }}>{isEN ? "Order summary" : "Comprobar el pedido"}</h3>
           <div style={{ fontSize: 14, fontWeight: 600, color: C.text, marginBottom: 10 }}>{isEN && product.tipo_en ? product.tipo_en : product.tipo}</div>
           {[
@@ -1394,12 +1394,12 @@ export default function BookingPopup() {
         </div>
 
         {/* CTA button — en desktop ocupa toda la fila inferior para que sea
-            el remate visual final. order:2 lo fuerza después de salidas (order:1). */}
+            el remate visual final. order:99 lo fuerza al final de todos los items. */}
         {(() => {
           const afterOk = product.noSalida ? (embarcacion.trim() && horaLlegada) : true;
           const ready = selDate && (selSalida || grupoLock || product.noSalida) && paxA >= product.minA && afterOk;
           return (
-            <div style={{ ...cellFull, ...(isDesktop ? { order: 2 } : null) }}>
+            <div style={{ ...cellFull, ...(isDesktop ? { order: 99 } : null) }}>
               <button
                 onClick={() => { if (ready) { gtmBeginCheckout(product, paxTotal, total); setStep(2); AtolanTrack.evento("begin_checkout", { producto: product?.tipo, fecha: selDate, pax: paxTotal, valor: total }, "booking"); AtolanTrack.setCurrentStep(2); } }}
                 disabled={!ready}
