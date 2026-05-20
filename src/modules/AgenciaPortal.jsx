@@ -248,6 +248,8 @@ function NuevaReserva({ agencia, user, onCreated, vistaPrecios = "ambos" }) {
     let estado = "pendiente_pago";
     let abono  = 0;
     let saldo  = totalFinal;
+    let totalAGuardar = totalFinal;
+    let descuentoCortesiaPremio = 0;
     let linkExpira = null;
     let comprob = extras.comprob_url || null;
 
@@ -269,10 +271,18 @@ function NuevaReserva({ agencia, user, onCreated, vistaPrecios = "ambos" }) {
       estado = "pendiente_comprobante";
       linkExpira = new Date(Date.now() + 60 * 60 * 1000).toISOString();
     } else if (esPremio) {
-      // Premio canjeado → confirmado automáticamente, sin cobro
+      // Premio canjeado → tratamiento de cortesía total. Mismo patrón que el
+      // canje manual del admin en B2B.jsx (commit fc1e012) y que las cortesías
+      // creadas en Reservas.jsx: total=0, abono=0, saldo=0,
+      // descuento_cortesia=valor original, estado=confirmado.
+      // Antes guardábamos abono=totalFinal lo que inflaba reportes de revenue
+      // del aliado: la reserva aparecía como "pagada" sin que haya entrado
+      // dinero.
       estado = "confirmado";
-      abono  = totalFinal;
+      abono  = 0;
       saldo  = 0;
+      totalAGuardar = 0;
+      descuentoCortesiaPremio = totalFinal;
     }
 
     // Generar URL de Wompi para pago en línea
@@ -307,14 +317,26 @@ function NuevaReserva({ agencia, user, onCreated, vistaPrecios = "ambos" }) {
       return;
     }
 
+    // Para reservas pagadas con premio, anexamos al notas el nombre del
+    // incentivo para auditoría (igual que B2B.jsx → guardarCanje).
+    const incentivoSel = esPremio && extras.incentivo_id
+      ? (premiosDisponibles.find(p => p.incentivo.id === extras.incentivo_id)?.incentivo || null)
+      : null;
+    const notasFinales = esPremio && incentivoSel
+      ? ((form.notas || "").trim()
+          ? `${(form.notas || "").trim()} · Premio aplicado: ${incentivoSel.nombre}`
+          : `Premio aplicado: ${incentivoSel.nombre}`)
+      : form.notas;
+
     const { error } = await supabase.from("reservas").insert({
       id: reservaId, fecha: form.fecha, salida_id: form.salida_id || null, tipo: form.tipo,
       canal: "B2B", nombre: form.nombre, contacto: form.contacto,
       pax: paxT, pax_a: form.pax_a || 1, pax_n: form.pax_n || 0,
-      precio_u: precioUnitario, total: totalFinal,
+      precio_u: precioUnitario, total: totalAGuardar,
       precio_neto: precioNeto, precio_publico: precioPublico,
       abono, saldo, estado,
-      notas: form.notas,
+      descuento_cortesia: descuentoCortesiaPremio || null,
+      notas: notasFinales,
       forma_pago: metodoPago, link_pago: linkGenerado,
       link_expira_at: linkExpira,
       comprobante_url: comprob,
@@ -326,15 +348,19 @@ function NuevaReserva({ agencia, user, onCreated, vistaPrecios = "ambos" }) {
     if (error) { setMsg("Error al guardar la reserva"); setSaving(false); return; }
 
     // ── Registrar canje de premio si aplica ──────────────────────────────
+    // Mismo formato de ID que B2B.jsx → guardarCanje para consistencia
+    // entre canjes desde el admin y desde el portal del aliado.
     if (esPremio && extras.incentivo_id) {
       await supabase.from("b2b_premios_canjes").insert({
-        id: `CANJE-${Date.now()}`,
+        id: `CNJ-${Date.now()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`,
         aliado_id: agencia.id,
         incentivo_id: extras.incentivo_id,
         reserva_id: reservaId,
         pasadias_usadas: 1,
         fecha: form.fecha,
-        nota: `Premio canjeado — reserva ${reservaId}`,
+        nota: incentivoSel
+          ? `Canje desde portal aliado — ${incentivoSel.nombre} aplicado a ${reservaId}`
+          : `Premio canjeado — reserva ${reservaId}`,
       });
     }
 
