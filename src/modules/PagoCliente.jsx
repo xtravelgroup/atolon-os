@@ -7,6 +7,7 @@ import AvisoCargoInternacional from "../components/AvisoCargoInternacional";
 import AtolanTrack from "../lib/AtolanTrack";
 import { waSendConfirmacion } from "../lib/whatsapp";
 import ZohoPaymentWidget from "../components/ZohoPaymentWidget";
+import FacturaElectronicaForm, { FE_EMPTY, feValidate, fePayload } from "../lib/FacturaElectronicaForm.jsx";
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 function getReservaId() {
@@ -48,6 +49,42 @@ function qrUrl(data, size = 200) {
 function PagoOk({ reserva, salida }) {
   const zarpeLink = `https://atolon.co/zarpe-info?id=${reserva.id}`;
   const horaTexto = salida?.hora ? `Salida: ${salida.hora}${salida.hora_regreso ? ` · Regreso: ${salida.hora_regreso}` : ""}` : "";
+
+  // ── Facturación electrónica (movida post-pago para no inflar el step 2 del booking widget) ──
+  const yaTieneFE = !!reserva.factura_electronica;
+  const [feOpen,   setFeOpen]   = useState(false);
+  const [feForm,   setFeForm]   = useState({
+    ...FE_EMPTY,
+    factura_electronica: true,
+    fe_email:    reserva.email    || (reserva.contacto?.includes("@") ? reserva.contacto : ""),
+    fe_telefono: reserva.tel      || reserva.telefono || (reserva.contacto && !reserva.contacto.includes("@") ? reserva.contacto : ""),
+  });
+  const [feSaving, setFeSaving] = useState(false);
+  const [feSaved,  setFeSaved]  = useState(yaTieneFE);
+  const [feError,  setFeError]  = useState("");
+  const setFE = (k, v) => setFeForm(f => ({ ...f, [k]: v }));
+
+  const guardarFE = async () => {
+    const faltan = feValidate(feForm);
+    if (faltan.length) {
+      setFeError(`Falta llenar: ${faltan.map(f => f.replace(/^fe_/, "").replace(/_/g, " ")).join(", ")}`);
+      return;
+    }
+    setFeError("");
+    setFeSaving(true);
+    const { error } = await supabase
+      .from("reservas")
+      .update(fePayload(feForm))
+      .eq("id", reserva.id);
+    setFeSaving(false);
+    if (error) {
+      setFeError("No se pudo guardar. Intenta de nuevo.");
+      return;
+    }
+    setFeSaved(true);
+    setFeOpen(false);
+    AtolanTrack.evento("invoice_requested", { reserva_id: reserva.id, tipo_persona: feForm.fe_tipo_persona }, "post_payment");
+  };
 
   // Pre-compute dock arrival time (20 min before departure)
   let llegadaHora = null;
@@ -159,6 +196,61 @@ function PagoOk({ reserva, salida }) {
         </div>
         <div style={{ marginTop: 8, fontSize: 12, color: B.sand }}>Abrir →</div>
       </a>
+
+      {/* Facturación electrónica DIAN — POST-pago, opcional */}
+      <div style={{ background: feSaved ? "rgba(52,211,153,0.06)" : "rgba(251,191,36,0.06)", border: `1px solid ${feSaved ? "rgba(52,211,153,0.25)" : "rgba(251,191,36,0.25)"}`, borderRadius: 14, padding: "16px 20px" }}>
+        {feSaved ? (
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <span style={{ fontSize: 22 }}>✅</span>
+            <div>
+              <div style={{ fontWeight: 700, fontSize: 14, color: B.success, marginBottom: 2 }}>
+                Factura electrónica solicitada
+              </div>
+              <div style={{ fontSize: 12, color: "rgba(255,255,255,0.55)", lineHeight: 1.5 }}>
+                Te llegará al correo registrado en 24-48h hábiles.
+              </div>
+            </div>
+          </div>
+        ) : !feOpen ? (
+          <>
+            <div style={{ display: "flex", alignItems: "flex-start", gap: 10, marginBottom: 10 }}>
+              <span style={{ fontSize: 22, marginTop: -2 }}>🧾</span>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontWeight: 700, fontSize: 14, color: B.white, marginBottom: 2 }}>
+                  ¿Necesitas factura electrónica DIAN?
+                </div>
+                <div style={{ fontSize: 12, color: "rgba(255,255,255,0.55)", lineHeight: 1.5 }}>
+                  Si requieres factura electrónica DIAN para tu empresa o gastos personales, ingresa los datos aquí.
+                </div>
+              </div>
+            </div>
+            <button onClick={() => setFeOpen(true)}
+              style={{ width: "100%", padding: "10px 0", borderRadius: 10, border: `1px solid rgba(251,191,36,0.4)`, background: "rgba(251,191,36,0.1)", color: "#fbbf24", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
+              Sí, requiero factura electrónica
+            </button>
+          </>
+        ) : (
+          <>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+              <div style={{ fontWeight: 700, fontSize: 14, color: B.white }}>🧾 Datos de facturación</div>
+              <button onClick={() => { setFeOpen(false); setFeError(""); }}
+                style={{ background: "none", border: "none", color: "rgba(255,255,255,0.5)", fontSize: 12, cursor: "pointer", padding: 0 }}>
+                Cancelar
+              </button>
+            </div>
+            <FacturaElectronicaForm form={feForm} set={setFE} editing={true} theme="dark" />
+            {feError && (
+              <div style={{ marginTop: 10, padding: "8px 12px", background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.3)", borderRadius: 8, fontSize: 12, color: B.danger }}>
+                {feError}
+              </div>
+            )}
+            <button onClick={guardarFE} disabled={feSaving}
+              style={{ width: "100%", marginTop: 12, padding: "12px 0", borderRadius: 10, border: "none", background: feSaving ? "rgba(251,191,36,0.4)" : "#fbbf24", color: "#1A2740", fontWeight: 700, fontSize: 14, cursor: feSaving ? "wait" : "pointer" }}>
+              {feSaving ? "Guardando..." : "Solicitar factura electrónica"}
+            </button>
+          </>
+        )}
+      </div>
 
       {/* WhatsApp save */}
       <a href={`https://wa.me/?text=${waMensaje}`} target="_blank" rel="noreferrer"

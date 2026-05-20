@@ -8,7 +8,9 @@ import { supabase } from "../lib/supabase";
 import { wompiCheckoutUrl } from "../lib/wompi";
 import AtolanTrack from "../lib/AtolanTrack";
 import { gtmViewItem, gtmBeginCheckout, gtmAddPaymentInfo, gtmAbandon } from "../lib/gtm";
-import FacturaElectronicaForm, { FacturaElectronicaToggle, FE_EMPTY, feValidate, fePayload } from "../lib/FacturaElectronicaForm.jsx";
+// FacturaElectronicaForm + Toggle se movieron a PagoCliente (post-pago).
+// Aquí solo necesitamos FE_EMPTY (init del form) y fePayload (insert reserva).
+import { FE_EMPTY, fePayload } from "../lib/FacturaElectronicaForm.jsx";
 import ZohoPaymentWidget from "../components/ZohoPaymentWidget.jsx";
 import { crearSesionPago, getMerchantInternacional } from "../lib/internacional";
 import { useBreakpoint } from "../lib/responsive";
@@ -1414,17 +1416,17 @@ export default function BookingPopup() {
   function InfoStep() {
     return (
       <div>
-        <button onClick={() => setStep(1)} style={{ background: "none", border: "none", color: C.accent, fontSize: 13, fontWeight: 600, cursor: "pointer", padding: 0, marginBottom: 20, display: "flex", alignItems: "center", gap: 4 }}>
+        <button onClick={() => setStep(1)} style={{ background: "none", border: "none", color: C.accent, fontSize: 13, fontWeight: 600, cursor: "pointer", padding: 0, marginBottom: 14, display: "flex", alignItems: "center", gap: 4 }}>
           ← {isEN ? "Back" : "Volver"}
         </button>
 
-        <h2 style={{ fontSize: 18, fontWeight: 700, color: C.text, marginBottom: 18 }}>
+        <h2 style={{ fontSize: 18, fontWeight: 700, color: C.text, marginBottom: 12 }}>
           {isEN ? "Your information" : "Tus datos"}
         </h2>
 
-        {/* Order recap */}
-        <div style={{ background: C.bgCard, borderRadius: 10, padding: "12px 16px", marginBottom: 20, border: `1px solid ${C.border}`, fontSize: 13 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+        {/* Order recap — gap reducido para que toda la página 2 quepa en iframe 680px */}
+        <div style={{ background: C.bgCard, borderRadius: 10, padding: "10px 14px", marginBottom: 8, border: `1px solid ${C.border}`, fontSize: 13 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 2 }}>
             <span style={{ color: C.textMid }}>{product.tipo}</span>
             <span style={{ fontWeight: 700, color: C.accent }}>{COP(total)}</span>
           </div>
@@ -1460,24 +1462,23 @@ export default function BookingPopup() {
           </div>
         ))}
 
-        <div style={{ marginBottom: 20 }}>
-          <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: C.text, marginBottom: 5, textTransform: "uppercase", letterSpacing: "0.04em" }}>{isEN ? "Notes / special requests (optional)" : "Notas / solicitudes especiales (opcional)"}</label>
+        <div style={{ marginBottom: 14 }}>
+          <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: C.text, marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.04em" }}>{isEN ? "Notes / special requests (optional)" : "Notas / solicitudes especiales (opcional)"}</label>
           <textarea
             value={form.notas}
             onChange={e => setForm(f => ({ ...f, notas: e.target.value }))}
-            rows={2}
-            style={{ width: "100%", padding: "11px 14px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 14, color: C.text, background: C.bg, outline: "none", resize: "none", boxSizing: "border-box", fontFamily: "inherit" }}
+            rows={1}
+            style={{ width: "100%", padding: "8px 14px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 14, color: C.text, background: C.bg, outline: "none", resize: "vertical", boxSizing: "border-box", fontFamily: "inherit", minHeight: 36 }}
           />
         </div>
 
-        {/* Facturación electrónica */}
-        <div style={{ marginBottom: 20 }}>
-          <FacturaElectronicaToggle checked={form.factura_electronica} onChange={v => setFE("factura_electronica", v)} theme="light" />
-          {form.factura_electronica && <FacturaElectronicaForm form={form} set={setFE} editing={true} theme="light" />}
-        </div>
+        {/* Facturación electrónica: movida a la pantalla de confirmación POST-pago
+            (PagoCliente.jsx → PagoOk). Mantener form.factura_electronica = false
+            en este step para que fePayload(form) inserte nulls en la reserva;
+            el cliente puede activarla después del pago si la necesita. */}
 
         {/* T&C */}
-        <div style={{ marginBottom: 20, textAlign: "center" }}>
+        <div style={{ marginBottom: 14, textAlign: "center" }}>
           <span style={{ fontSize: 12, color: "#94A3B8" }}>
             {isEN ? "By continuing, I accept the terms and conditions." : "Al continuar, acepto los términos y condiciones."}
           </span>
