@@ -42,11 +42,11 @@ export default function PoolFloorPlanPicker({
   const [asignaciones, setAsignaciones] = useState({});
   const [loading, setLoading] = useState(true);
 
-  // Load spots (once)
+  // Load spots (once) — trae area=piscina Y area=playa.
   useEffect(() => {
     if (!supabase) return;
     supabase.from("floorplan_spots")
-      .select("*").eq("area", "piscina").eq("activo", true)
+      .select("*").in("area", ["piscina", "playa"]).eq("activo", true)
       .order("zona").order("fila").order("orden")
       .then(({ data }) => setSpots(data || []));
   }, []);
@@ -70,13 +70,20 @@ export default function PoolFloorPlanPicker({
   //   - "poolside" → camas pegadas a la piscina (IDs que empiezan con "PS")
   //   - "central"  → camas detrás de la piscina (IDs PS31–PS34)
   // Todas son camas físicamente. La distinción es ubicación, no mobiliario.
+  // Playa: agrupa por `fila` (1=frente piscina, 2=central, 3=frente mar).
   const grouped = useMemo(() => {
     const g = {
       piscina_derecha:    { exterior: [], poolside: [] },
       piscina_izquierda:  { poolside: [], exterior: [] },
       piscina_central:    { central: [] },
+      playa:              { fila1: [], fila2: [], fila3: [] },
     };
     for (const s of spots) {
+      if (s.zona === "playa") {
+        const k = s.fila === 1 ? "fila1" : s.fila === 2 ? "fila2" : "fila3";
+        g.playa[k].push(s);
+        continue;
+      }
       const z = g[s.zona]; if (!z) continue;
       if (s.zona === "piscina_central") {
         z.central.push(s);
@@ -88,6 +95,8 @@ export default function PoolFloorPlanPicker({
     }
     return g;
   }, [spots]);
+
+  const tienePlaya = (grouped.playa.fila1.length + grouped.playa.fila2.length + grouped.playa.fila3.length) > 0;
 
   const handleClick = (spot) => {
     if (!onSelectSpot) return;
@@ -208,6 +217,68 @@ export default function PoolFloorPlanPicker({
           </div>
         </div>
       </div>
+
+      {/* ════════════ ZONA PLAYA ════════════
+          Se renderiza debajo del bloque de piscina. 3 filas horizontales con
+          orden ascendente (P11/P31/P52 a la izquierda). Termina con una
+          banda "MAR" estilizada simulando el agua del Caribe. */}
+      {tienePlaya && (
+        <div style={{ marginTop: SIZES.gap * 3, paddingTop: SIZES.gap * 2, borderTop: `2px dashed ${B.sand}33` }}>
+          {showLabels && (
+            <div style={{ textAlign: "center", marginBottom: SIZES.gap * 1.5 }}>
+              <SectionLabel size={size} mobile={isMobile}>
+                {isMobile ? "🏖️ PLAYA" : "🏖️ PLAYA"}
+              </SectionLabel>
+            </div>
+          )}
+          {/* Fila 1 — frente a la piscina */}
+          <PlayaRow camas={grouped.playa.fila1} sizes={SIZES} {...{ selectedSpotId, showEstadoColor, asignaciones, handleClick, isMobile }} />
+          {/* Fila 2 — central */}
+          <PlayaRow camas={grouped.playa.fila2} sizes={SIZES} {...{ selectedSpotId, showEstadoColor, asignaciones, handleClick, isMobile }} />
+          {/* Fila 3 — frente al mar */}
+          <PlayaRow camas={grouped.playa.fila3} sizes={SIZES} {...{ selectedSpotId, showEstadoColor, asignaciones, handleClick, isMobile }} />
+          {/* Banda MAR — gradiente turquesa con onda y emoji */}
+          <div style={{
+            marginTop: SIZES.gap * 1.5,
+            background: "linear-gradient(180deg, #67e8f9 0%, #38bdf8 50%, #0284c7 100%)",
+            borderRadius: 12,
+            padding: `${isMobile ? 10 : 16}px 0`,
+            textAlign: "center",
+            fontSize: isMobile ? 12 : isLg ? 18 : 14,
+            fontWeight: 800,
+            color: "rgba(255,255,255,0.9)",
+            letterSpacing: isMobile ? "0.1em" : "0.3em",
+            textShadow: "0 2px 6px rgba(0,0,0,0.3)",
+            boxShadow: "inset 0 4px 16px rgba(0,0,0,0.15), 0 2px 8px rgba(14,165,233,0.3)",
+          }}>
+            ≈≈ 🌊 MAR ≈≈
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Renderiza una fila de camas de playa. Usa flex-wrap para que en móvil
+// las filas largas (P31-P42 = 12 camas) se envuelvan suavemente.
+function PlayaRow({ camas, sizes, selectedSpotId, showEstadoColor, asignaciones, handleClick, isMobile }) {
+  if (!camas || camas.length === 0) return null;
+  return (
+    <div style={{
+      display: "flex",
+      flexWrap: isMobile ? "wrap" : "nowrap",
+      gap: sizes.gap,
+      justifyContent: "center",
+      marginBottom: sizes.gap,
+      overflowX: isMobile ? "visible" : "auto",
+    }}>
+      {camas.map(s => (
+        <Spot key={s.id} spot={s} asign={asignaciones[s.id]}
+          selected={selectedSpotId === s.id}
+          showEstadoColor={showEstadoColor}
+          sizes={sizes}
+          onClick={handleClick} />
+      ))}
     </div>
   );
 }
