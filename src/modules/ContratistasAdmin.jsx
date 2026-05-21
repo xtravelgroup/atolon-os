@@ -134,10 +134,11 @@ export default function ContratistasAdmin() {
           num_trabajadores: tipoFormal === "empresa" ? personas.length : 1,
         };
         if (tipoFormal === "natural") {
-          base.nat_nombre  = persona0.nombre || r.nombre;
-          base.nat_cedula  = persona0.cedula || null;
-          base.nat_celular = cel;
-          base.nat_correo  = mail;
+          base.nat_nombre    = persona0.nombre || r.nombre;
+          base.nat_cedula    = persona0.cedula || null;
+          base.nat_fecha_nac = persona0.fecha_nacimiento || null;
+          base.nat_celular   = cel;
+          base.nat_correo    = mail;
         } else {
           base.emp_razon_social = r.nombre;
           base.emp_direccion    = r.direccion || null;
@@ -203,20 +204,36 @@ export default function ContratistasAdmin() {
         contratistaId = row.id;
       }
 
-      // 3) Workers: si empresa, insertar las personas que no estén ya
+      // 3) Workers: si empresa, insertar las personas que no estén ya y
+      //    enriquecer los existentes con campos vacíos (fecha_nacimiento, etc.)
       let workersInserted = [];
       if (tipoFormal === "empresa" && personas.length > 0) {
         const { data: existingWs } = await supabase
           .from("contratistas_trabajadores")
-          .select("id, cedula, nombre")
+          .select("id, cedula, nombre, cargo, fecha_nacimiento")
           .eq("contratista_id", contratistaId);
         const existsByCed = new Map((existingWs || []).filter(w => w.cedula).map(w => [String(w.cedula).trim(), w]));
         workersInserted = [...(existingWs || [])];
         const toInsert = [];
+        const toEnrich = []; // { id, payload }
         personas.forEach(p => {
           const ced = p.cedula ? String(p.cedula).trim() : null;
-          if (ced && existsByCed.has(ced)) return;  // ya existe
-          toInsert.push({ contratista_id: contratistaId, nombre: p.nombre, cedula: ced, cargo: p.rol || null });
+          const existing = ced ? existsByCed.get(ced) : null;
+          if (existing) {
+            // Enrich: solo setear campos que están vacíos en el row actual
+            const upd = {};
+            if (!existing.cargo            && p.rol)              upd.cargo = p.rol;
+            if (!existing.fecha_nacimiento && p.fecha_nacimiento) upd.fecha_nacimiento = p.fecha_nacimiento;
+            if (Object.keys(upd).length > 0) toEnrich.push({ id: existing.id, payload: upd });
+            return;
+          }
+          toInsert.push({
+            contratista_id: contratistaId,
+            nombre: p.nombre,
+            cedula: ced,
+            cargo: p.rol || null,
+            fecha_nacimiento: p.fecha_nacimiento || null,
+          });
         });
         if (toInsert.length > 0) {
           const { data: ws } = await supabase
@@ -224,6 +241,10 @@ export default function ContratistasAdmin() {
             .insert(toInsert)
             .select("id, cedula, nombre");
           workersInserted = [...workersInserted, ...(ws || [])];
+        }
+        // Enrich existing workers (uno por uno para no overshadow campos)
+        for (const t of toEnrich) {
+          await supabase.from("contratistas_trabajadores").update(t.payload).eq("id", t.id);
         }
       }
 
