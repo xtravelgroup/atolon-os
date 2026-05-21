@@ -1277,22 +1277,46 @@ export default function BookingPopup() {
             ...(iframeFit ? { overflowY: "auto", paddingRight: isDesktop ? 4 : 0 } : {}),
           }}>
 
-        {/* Product header — solo desktop, arriba del calendar.
-            En mobile se renderiza en LEFT (col única) sobre Participants. */}
-        {isDesktop && (
-          <div style={{ marginBottom: 14, paddingBottom: 14, borderBottom: `1px solid ${C.divider}` }}>
-            <div style={{ fontSize: 11, fontWeight: 600, color: C.textLight, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 }}>Atolon Beach Club · Isla Tierra Bomba</div>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                <span style={{ fontSize: 28 }}>{product.icon}</span>
-                <span style={{ fontSize: 24, fontWeight: 800, color: C.text }}>{isEN && product.tipo_en ? product.tipo_en : product.tipo}</span>
-              </div>
-              <div style={{ textAlign: "right", flexShrink: 0 }}>
-                <div style={{ fontSize: 22, fontWeight: 800, color: C.accent }}>{COP(product.precio)}</div>
-                <div style={{ fontSize: 11, color: C.textLight }}>{isEN ? "per person" : "por persona"}</div>
+        {/* Product header + Qué incluye — solo desktop y solo cuando NO hay
+            fecha seleccionada. Al elegir fecha, ambos bloques desaparecen para
+            dejarle espacio al calendar + horarios disponibles. */}
+        {isDesktop && !selDate && (
+          <>
+            <div style={{ marginBottom: 14, paddingBottom: 14, borderBottom: `1px solid ${C.divider}` }}>
+              <div style={{ fontSize: 11, fontWeight: 600, color: C.textLight, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 }}>Atolon Beach Club · Isla Tierra Bomba</div>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <span style={{ fontSize: 28 }}>{product.icon}</span>
+                  <span style={{ fontSize: 24, fontWeight: 800, color: C.text }}>{isEN && product.tipo_en ? product.tipo_en : product.tipo}</span>
+                </div>
+                <div style={{ textAlign: "right", flexShrink: 0 }}>
+                  <div style={{ fontSize: 22, fontWeight: 800, color: C.accent }}>{COP(product.precio)}</div>
+                  <div style={{ fontSize: 11, color: C.textLight }}>{isEN ? "per person" : "por persona"}</div>
+                </div>
               </div>
             </div>
-          </div>
+
+            {/* Qué incluye — usa data de BD (pasadia_incluye) o el fallback de product.includes */}
+            {(() => {
+              const items = incluye.length > 0
+                ? incluye.map(it => ({ es: it.descripcion, en: it.descripcion_en || it.descripcion }))
+                : (isEN ? (product.includes_en || product.includes || []) : (product.includes || []))
+                    .map(txt => ({ es: txt, en: txt }));
+              if (items.length === 0) return null;
+              return (
+                <div style={{ marginBottom: 14, padding: "10px 14px", background: C.bgCard, borderRadius: 10, border: `1px solid ${C.border}` }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: C.textMid, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 }}>{isEN ? "What's included" : "Qué incluye"}</div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 14px" }}>
+                    {items.map((item, i) => (
+                      <div key={i} style={{ fontSize: 12, color: C.textMid, display: "flex", alignItems: "center", gap: 5 }}>
+                        <span style={{ color: C.success, fontWeight: 700 }}>✓</span> {isEN ? item.en : item.es}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
+          </>
         )}
 
         {/* Group event banner */}
