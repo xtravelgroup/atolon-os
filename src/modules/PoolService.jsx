@@ -187,7 +187,9 @@ export default function PoolService() {
         },
         body: JSON.stringify({
           mesaId:    spot.loggro_mesa_id,
-          groupName: `Pool Service · ${pedido.spot_id}${pedido.huesped ? " · " + pedido.huesped : ""}`,
+          // Por privacidad: NO enviamos el nombre del huésped a Loggro.
+          // El nombre vive sólo en Pool Service (floorplan_asignaciones).
+          groupName: `Pool Service · ${pedido.spot_id}`,
           items,
         }),
       });
@@ -592,13 +594,16 @@ function NuevoPedido({ areas, items, reservasHoy = [], onSaved, enviarALoggro, i
   const [filtroCat, setFiltroCat] = useState("");
   const [saving, setSaving] = useState(false);
 
-  // Pre-llenar huésped/pax cuando el mesero elige un spot ya asignado
+  // Pre-llenar huésped/pax/notas cuando el mesero elige un spot ya asignado.
+  // Las notas (alergias / restricciones) deben quedar visibles para que el mesero
+  // las recuerde antes de tomar la orden — ver banner prominente al inicio del menú.
   const handleSelectSpot = (spot, asign) => {
     setSpotSel(spot);
     setAsignSel(asign || null);
     setAreaId("");  // si elige spot, ignorar área tradicional
     if (asign?.huesped) setHuesped(asign.huesped);
     if (asign?.pax > 0) setPax(asign.pax);
+    if (asign?.notas)   setNotas(asign.notas);
   };
 
   const cats = useMemo(() => sortCats(Array.from(new Set(items.map(i => i.categoria).filter(Boolean)))), [items]);
@@ -793,7 +798,7 @@ function NuevoPedido({ areas, items, reservasHoy = [], onSaved, enviarALoggro, i
   // Mesa seleccionada → pantalla completa de pedido con botón "volver al plano".
   return (
     <div>
-      {/* Barra superior: volver + mesa */}
+      {/* Barra superior: volver + mesa + huésped (recordatorio para el mesero) */}
       <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16, flexWrap: "wrap" }}>
         <button onClick={() => { setSpotSel(null); setAsignSel(null); setAreaId(""); setCarrito([]); }}
           style={{ ...BTN(B.navyMid, B.pool), padding: "10px 16px", fontSize: 13, display: "flex", alignItems: "center", gap: 6 }}>
@@ -802,8 +807,37 @@ function NuevoPedido({ areas, items, reservasHoy = [], onSaved, enviarALoggro, i
         <div style={{ flex: 1, minWidth: 200 }}>
           <div style={{ fontSize: 10, color: B.pool, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 700 }}>Pedido para</div>
           <div style={{ fontSize: 20, color: B.sand, fontWeight: 800, letterSpacing: "0.05em" }}>{destinoLabel}</div>
+          {yaAsignado && (
+            <div style={{ fontSize: 14, color: "#fff", fontWeight: 700, marginTop: 4 }}>
+              👤 {asignSel.huesped}{asignSel.pax > 0 ? ` · ${asignSel.pax} pax` : ""}
+            </div>
+          )}
         </div>
       </div>
+
+      {/* Aviso de alergias / restricciones — full width, MUY visible */}
+      {yaAsignado && asignSel?.notas && (
+        <div style={{
+          background: "rgba(239,68,68,0.18)",
+          border: `2px solid ${B.danger}`,
+          borderRadius: 10,
+          padding: "12px 14px",
+          marginBottom: 16,
+          display: "flex",
+          alignItems: "center",
+          gap: 10,
+        }}>
+          <div style={{ fontSize: 22 }}>⚠️</div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 10, color: B.danger, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 800 }}>
+              Restricciones / Notas del huésped
+            </div>
+            <div style={{ fontSize: 15, color: "#fff", fontWeight: 700, marginTop: 2, lineHeight: 1.3 }}>
+              {asignSel.notas}
+            </div>
+          </div>
+        </div>
+      )}
 
       <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "minmax(280px, 1fr) minmax(0, 2fr)", gap: 16 }}>
           {/* Sidebar pedido */}
@@ -812,13 +846,29 @@ function NuevoPedido({ areas, items, reservasHoy = [], onSaved, enviarALoggro, i
             position: isMobile ? "static" : "sticky", top: 12, alignSelf: "start",
             maxHeight: isMobile ? "none" : "85vh", overflow: isMobile ? "visible" : "auto",
           }}>
-            {/* Banner destino — compacto si la cama ya tiene huésped */}
+            {/* Banner destino — incluye huésped y notas/alergias para que el mesero
+                las tenga presentes antes de tomar el pedido. */}
             <div style={{ background: B.pool + "22", border: `2px solid ${B.pool}`, borderRadius: 8, padding: 10, marginBottom: 10 }}>
               <div style={{ fontSize: 10, color: B.pool, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 700 }}>Mesa</div>
               <div style={{ fontSize: 18, color: B.sand, fontWeight: 800, marginTop: 2, letterSpacing: "0.05em" }}>{destinoLabel}</div>
               {yaAsignado && (
-                <div style={{ fontSize: 12, color: "rgba(255,255,255,0.85)", marginTop: 4 }}>
+                <div style={{ fontSize: 15, color: "#fff", fontWeight: 700, marginTop: 6 }}>
                   👤 {asignSel.huesped}{asignSel.pax > 0 ? ` · ${asignSel.pax} pax` : ""}
+                </div>
+              )}
+              {yaAsignado && asignSel?.notas && (
+                <div style={{
+                  marginTop: 8,
+                  padding: "8px 10px",
+                  background: "rgba(239,68,68,0.18)",
+                  border: `1px solid ${B.danger}`,
+                  borderRadius: 6,
+                  fontSize: 13,
+                  color: "#fff",
+                  fontWeight: 700,
+                  lineHeight: 1.3,
+                }}>
+                  ⚠️ {asignSel.notas}
                 </div>
               )}
             </div>
