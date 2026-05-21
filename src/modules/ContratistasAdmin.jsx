@@ -93,6 +93,7 @@ export default function ContratistasAdmin() {
   const [ingresosByContratista, setIngresosByContratista] = useState({}); // { id: { count, last, permitidos, rechazados } }
   const [expressRows, setExpressRows] = useState([]); // contratistas flatten-eados de eventos.contratistas JSON
   const [promoting, setPromoting] = useState(false);   // estado de "creando ficha desde Express"
+  const [verifyingKey, setVerifyingKey] = useState(""); // "evento_id:ctr_id:persona_idx" mientras sube archivo
 
   // Promueve un contratista Express (inline de eventos.contratistas) a la
   // tabla formal `contratistas` con estado="borrador" y abre la ficha
@@ -184,6 +185,51 @@ export default function ContratistasAdmin() {
       setDetailId(row.id);
     } finally {
       setPromoting(false);
+    }
+  };
+
+  // Sube documento de verificación de ARL para UNA persona específica de un
+  // contratista Express. Guarda url + timestamp + admin que verificó dentro
+  // del JSON eventos.contratistas[<ctr>].personas[<i>] — eso queda como
+  // "acceso autorizado" para esa persona.
+  const uploadVerificacionArl = async (expressRow, personaIdx, file) => {
+    if (!file || !supabase) return;
+    const key = `${expressRow.evento_id}:${expressRow.id}:${personaIdx}`;
+    setVerifyingKey(key);
+    try {
+      // 1) Subir archivo a storage
+      const ext = (file.name.split(".").pop() || "bin").toLowerCase();
+      const path = `contratistas/verifications/${expressRow.evento_id}/${Date.now()}-${personaIdx}.${ext}`;
+      const { error: upErr } = await supabase.storage.from("b2b-docs").upload(path, file, { upsert: true, contentType: file.type });
+      if (upErr) { alert("Error subiendo verificación: " + upErr.message); return; }
+      const { data: pub } = supabase.storage.from("b2b-docs").getPublicUrl(path);
+      const url = pub?.publicUrl;
+      if (!url) { alert("No se pudo obtener URL pública del archivo."); return; }
+
+      // 2) Re-leer el evento (no asumir que expressRow.personas está fresco)
+      const { data: ev } = await supabase.from("eventos").select("contratistas").eq("id", expressRow.evento_id).maybeSingle();
+      const ctrs = Array.isArray(ev?.contratistas) ? ev.contratistas : [];
+      // Encontrar la fila correspondiente (matchear por id que pusimos en el flatten)
+      const ctrIdRaw = expressRow.id.startsWith("evt:") ? expressRow.id.split(":").slice(2).join(":") : expressRow.id;
+      const updated = ctrs.map(c => {
+        if ((c.id || c.nombre) !== ctrIdRaw) return c;
+        const personas = Array.isArray(c.personas) ? [...c.personas] : [];
+        if (!personas[personaIdx]) return c;
+        personas[personaIdx] = {
+          ...personas[personaIdx],
+          arl_verificado_url: url,
+          arl_verificado_at:  new Date().toISOString(),
+          arl_verificado_by:  adminUser?.email || null,
+        };
+        return { ...c, personas };
+      });
+      const { error: updErr } = await supabase.from("eventos").update({ contratistas: updated }).eq("id", expressRow.evento_id);
+      if (updErr) { alert("Error guardando verificación: " + updErr.message); return; }
+
+      // 3) Recargar express rows
+      await load();
+    } finally {
+      setVerifyingKey("");
     }
   };
 
@@ -486,18 +532,45 @@ export default function ContratistasAdmin() {
                     <div style={{ fontSize: 10, color: B.sand, textTransform: "uppercase", letterSpacing: 1, fontWeight: 700, marginBottom: 6 }}>
                       👥 Personal ({r.personas.length})
                     </div>
-                    {r.personas.map((p, i) => (
-                      <div key={i} style={{ fontSize: 11, color: "rgba(255,255,255,0.7)", padding: "3px 0", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 6 }}>
-                        <span style={{ flex: 1 }}>{p.nombre}</span>
-                        <span style={{ color: "rgba(255,255,255,0.4)" }}>{p.cedula || ""}{p.rol ? ` · ${p.rol}` : ""}</span>
-                        {p.arl_url && (
-                          <a href={p.arl_url} target="_blank" rel="noreferrer"
-                            style={{ color: B.success, textDecoration: "none", fontSize: 10, fontWeight: 700, border: `1px solid ${B.success}55`, borderRadius: 5, padding: "1px 6px" }}>
-                            ARL ✓
-                          </a>
-                        )}
-                      </div>
-                    ))}
+                    {r.personas.map((p, i) => {
+                      const vKey = `${r.evento_id}:${r.id}:${i}`;
+                      const verifying = verifyingKey === vKey;
+                      const verified = !!p.arl_verificado_url;
+                      return (
+                        <div key={i} style={{ fontSize: 11, color: "rgba(255,255,255,0.7)", padding: "5px 0", borderTop: i > 0 ? `1px solid rgba(255,255,255,0.04)` : "none" }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 6 }}>
+                            <span style={{ flex: 1 }}>{p.nombre}</span>
+                            <span style={{ color: "rgba(255,255,255,0.4)" }}>{p.cedula || ""}{p.rol ? ` · ${p.rol}` : ""}</span>
+                            {p.arl_url && (
+                              <a href={p.arl_url} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()}
+                                title="ARL adjuntada por el organizador del evento"
+                                style={{ color: B.success, textDecoration: "none", fontSize: 10, fontWeight: 700, border: `1px solid ${B.success}55`, borderRadius: 5, padding: "1px 6px" }}>
+                                ARL ✓
+                              </a>
+                            )}
+                          </div>
+                          {/* Verificación admin — controla acceso a Atolon para esta persona */}
+                          <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4 }} onClick={e => e.stopPropagation()}>
+                            {verified ? (
+                              <>
+                                <a href={p.arl_verificado_url} target="_blank" rel="noreferrer"
+                                  title={`Verificada por ${p.arl_verificado_by || "admin"} el ${p.arl_verificado_at ? fmt(p.arl_verificado_at) : "—"}`}
+                                  style={{ flex: 1, fontSize: 10, fontWeight: 800, color: B.success, background: B.success + "18", border: `1px solid ${B.success}55`, borderRadius: 5, padding: "3px 8px", textAlign: "center", textDecoration: "none" }}>
+                                  ✓ Verificada · Acceso autorizado
+                                </a>
+                              </>
+                            ) : (
+                              <label style={{ flex: 1, fontSize: 10, fontWeight: 700, color: B.sand, background: B.navy, border: `1px dashed ${B.sand}55`, borderRadius: 5, padding: "3px 8px", textAlign: "center", cursor: verifying ? "wait" : "pointer", display: "block" }}>
+                                {verifying ? "Subiendo…" : "📎 Verificar ARL"}
+                                <input type="file" accept="image/*,application/pdf" style={{ display: "none" }}
+                                  disabled={verifying}
+                                  onChange={e => { const f = e.target.files?.[0]; if (f) uploadVerificacionArl(r, i, f); e.target.value = ""; }} />
+                              </label>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
                 <div style={{ display: "flex", gap: 8, marginTop: 10, paddingTop: 10, borderTop: `1px dashed ${B.navyLight}` }}>
