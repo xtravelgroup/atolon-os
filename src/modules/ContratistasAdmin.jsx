@@ -236,10 +236,14 @@ export default function ContratistasAdmin() {
           });
         });
         if (toInsert.length > 0) {
-          const { data: ws } = await supabase
+          const { data: ws, error: wErr } = await supabase
             .from("contratistas_trabajadores")
             .insert(toInsert)
             .select("id, cedula, nombre");
+          if (wErr) {
+            console.error("trabajadores insert failed", wErr, toInsert);
+            alert("Error insertando trabajadores: " + wErr.message);
+          }
           workersInserted = [...workersInserted, ...(ws || [])];
         }
         // Enrich existing workers (uno por uno para no overshadow campos)
