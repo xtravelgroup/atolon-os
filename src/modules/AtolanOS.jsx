@@ -95,9 +95,12 @@ function Dashboard() {
         supabase.from("reservas").select("abono").eq("fecha_pago", hoy).neq("estado", "cancelado"),
         // Cobrado hoy: abono sin fecha_pago pero creado hoy (web/Wompi automático)
         supabase.from("reservas").select("abono").is("fecha_pago", null).gte("created_at", inicioHoy).lte("created_at", finHoy).gt("abono", 0).neq("estado", "cancelado"),
-        // Grupos hoy y mañana
-        supabase.from("eventos").select("id, pax, fecha, pasadias_org, categoria, aliado_id").eq("fecha", hoy).neq("stage", "Realizado"),
-        supabase.from("eventos").select("id, pax, fecha, pasadias_org, categoria, aliado_id").eq("fecha", mananaStr).neq("stage", "Realizado"),
+        // Grupos hoy y mañana — solo confirmados (Consulta/Cotizado son pipeline,
+        // no son grupos reales con pax que vaya a llegar).
+        // HOY también acepta Realizado para no sub-contar eventos que ya
+        // concluyeron en el día (ej. brunch matutino).
+        supabase.from("eventos").select("id, pax, fecha, pasadias_org, categoria, aliado_id").eq("fecha", hoy).in("stage", ["Confirmado", "Realizado"]),
+        supabase.from("eventos").select("id, pax, fecha, pasadias_org, categoria, aliado_id").eq("fecha", mananaStr).eq("stage", "Confirmado"),
         // Llegadas muelle (After Island, Restaurante, Walk-in) — excluye:
         //   • lancha_atolon (lancha de staff/operación)
         //   • lanchas_atolon (idem)
