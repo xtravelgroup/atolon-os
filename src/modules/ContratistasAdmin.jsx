@@ -135,7 +135,11 @@ export default function ContratistasAdmin() {
         return;
       }
 
-      // 2) Insertar nueva row con prefill
+      // 2) Insertar nueva row con prefill.
+      // contacto_principal_email es NOT NULL en BD; el wizard formal lo pide
+      // en paso 0. Para Express no lo tenemos — usamos placeholder hasta que
+      // el admin lo complete en la ficha.
+      const contactoLooksLikeEmail = !!r.contacto && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(r.contacto);
       const radicado = genRadicado(tipoFormal);
       const payload = {
         tipo: tipoFormal,
@@ -143,12 +147,14 @@ export default function ContratistasAdmin() {
         radicado,
         nombre_display: r.nombre,
         servicio_desc:  r.funcion || null,
-        contacto_principal_cel: r.contacto || "pendiente",
+        contacto_principal_cel:   (!contactoLooksLikeEmail && r.contacto) || "pendiente",
+        contacto_principal_email: contactoLooksLikeEmail ? r.contacto : "pendiente@atolon.co",
       };
       if (tipoFormal === "natural") {
         payload.nat_nombre  = persona0.nombre || r.nombre;
         payload.nat_cedula  = persona0.cedula || null;
-        payload.nat_celular = r.contacto || null;
+        payload.nat_celular = (!contactoLooksLikeEmail && r.contacto) || null;
+        if (contactoLooksLikeEmail) payload.nat_correo = r.contacto;
       } else {
         payload.emp_razon_social = r.nombre;
       }
