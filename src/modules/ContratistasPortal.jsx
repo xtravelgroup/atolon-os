@@ -58,7 +58,7 @@ const emptyData = {
 // COMPONENTE WIZARD (reutilizado por portal público y admin asistido)
 // ==========================================================================
 
-function ContratistasWizard({ assisted = false, onClose, adminUser }) {
+function ContratistasWizard({ assisted = false, onClose, adminUser, prefillData = null }) {
   const [tipo, setTipo] = useState(null);              // null | "empresa" | "natural"
   const [step, setStep] = useState(-1);                // -1 = landing
   const [data, setData] = useState(emptyData);
@@ -73,6 +73,37 @@ function ContratistasWizard({ assisted = false, onClose, adminUser }) {
   const [saveMsg, setSaveMsg] = useState(null);
   const [doneRadicado, setDoneRadicado] = useState(null); // al terminar, guardado para la pantalla éxito
   const hydratedRef = useRef(false);
+  const prefilledRef = useRef(false);
+
+  // Pre-fill desde un contratista Express (registrado inline en un evento).
+  // Se aplica una sola vez cuando el usuario elige tipo (natural/empresa)
+  // — ahí ya sabemos a qué campos mapear nombre/cédula/contacto/personas.
+  useEffect(() => {
+    if (!prefillData || !tipo || prefilledRef.current) return;
+    prefilledRef.current = true;
+    if (tipo === "natural") {
+      const persona = (prefillData.personas || [])[0] || {};
+      setData(d => ({
+        ...d,
+        nat_nombre:    persona.nombre || prefillData.nombre || d.nat_nombre,
+        nat_cedula:    persona.cedula || d.nat_cedula,
+        nat_celular:   prefillData.contacto || d.nat_celular,
+        servicio_desc: prefillData.funcion || d.servicio_desc,
+        nat_oficio:    prefillData.cargo || d.nat_oficio,
+      }));
+    } else if (tipo === "empresa") {
+      setData(d => ({
+        ...d,
+        emp_razon_social:       prefillData.nombre || d.emp_razon_social,
+        contacto_principal_cel: prefillData.contacto || d.contacto_principal_cel,
+        servicio_desc:          prefillData.funcion || d.servicio_desc,
+      }));
+      const ws = (prefillData.personas || [])
+        .filter(p => p?.nombre)
+        .map(p => ({ nombre: p.nombre, cedula: p.cedula || "", cargo: p.rol || "" }));
+      if (ws.length > 0) setWorkers(ws);
+    }
+  }, [tipo, prefillData]);
 
   // -------- Draft: cargar al montar --------
   useEffect(() => {
@@ -958,7 +989,7 @@ export default function ContratistasPortal() {
 }
 
 // Wrapper para modo asistido (abre en modal desde el admin)
-export function ContratistasWizardAsistido({ onClose, adminUser }) {
+export function ContratistasWizardAsistido({ onClose, adminUser, prefillData = null }) {
   return (
     <div style={{
       position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 999,
@@ -984,7 +1015,7 @@ export function ContratistasWizardAsistido({ onClose, adminUser }) {
           </button>
         </div>
         <div style={{ padding: 24 }}>
-          <ContratistasWizard assisted onClose={onClose} adminUser={adminUser} />
+          <ContratistasWizard assisted onClose={onClose} adminUser={adminUser} prefillData={prefillData} />
         </div>
       </div>
     </div>
