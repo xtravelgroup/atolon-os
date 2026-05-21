@@ -2028,9 +2028,11 @@ export default function BookingPopup() {
         </div>
         {/* Card principal — fills remaining height. Cada step maneja su propio
             patrón TOP / MIDDLE-scroll / BOTTOM fijo, así que aquí siempre
-            overflow: hidden y el step internamente decide qué scrollea. */}
-        <div style={{ flex: 1, minHeight: 0, padding: 10, boxSizing: "border-box", overflow: "hidden" }}>
-          <div style={{ height: "100%", background: C.bg, borderRadius: 12, padding: isDesktop ? "12px 14px" : "10px 12px", boxShadow: "0 2px 8px rgba(0,0,0,0.06)", border: `1px solid ${C.border}`, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+            overflow: hidden y el step internamente decide qué scrollea.
+            maxWidth + margin auto deja un margen visible a cada lado en
+            pantallas anchas (en lugar de extenderse edge-to-edge en el iframe). */}
+        <div style={{ flex: 1, minHeight: 0, padding: 10, boxSizing: "border-box", overflow: "hidden", display: "flex", justifyContent: "center" }}>
+          <div style={{ width: "100%", maxWidth: 1100, height: "100%", background: C.bg, borderRadius: 12, padding: isDesktop ? "12px 14px" : "10px 12px", boxShadow: "0 2px 8px rgba(0,0,0,0.06)", border: `1px solid ${C.border}`, display: "flex", flexDirection: "column", overflow: "hidden" }}>
             {stepContent}
           </div>
         </div>
