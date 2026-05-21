@@ -1142,10 +1142,13 @@ export default function BookingPopup() {
         )}
 
         {/* Foto principal — solo desktop, arriba de Participants.
-            Altura fija reducida para no comerse espacio vertical en el iframe.
+            Altura reducida para no comerse espacio vertical en el iframe.
+            Cuando product.noNinos (Exclusive Pass, Atolon Experience), se ocultan
+            las filas Children + Infants → liberamos ~110px que la foto aprovecha
+            para verse más grande.
             Mobile ya tiene el carousel completo más arriba. */}
         {isDesktop && allPhotos.length > 0 && (
-          <div style={{ marginBottom: isDesktop ? 8 : 12, borderRadius: 10, overflow: "hidden", background: C.bgCard, flexShrink: 0, ...(isDesktop ? { height: 110 } : { aspectRatio: "16 / 9" }) }}>
+          <div style={{ marginBottom: isDesktop ? 8 : 12, borderRadius: 10, overflow: "hidden", background: C.bgCard, flexShrink: 0, ...(isDesktop ? { height: product.noNinos ? 230 : 110 } : { aspectRatio: "16 / 9" }) }}>
             <img src={allPhotos[0]} alt={isEN && product.tipo_en ? product.tipo_en : product.tipo}
               style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
           </div>
