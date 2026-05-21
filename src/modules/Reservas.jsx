@@ -24,6 +24,12 @@ const CORTESIA_AUTHORIZED_EMAILS = [
 // Variable a nivel módulo que los sub-componentes pueden leer (se setea en el componente padre al cargar)
 let __currentUserEmail = "";
 let __currentUserRolId = "";
+// Permisos granulares del rol para reservas — { ver, crear, editar, eliminar, ver_precios }.
+// Por defecto asume permisos completos para no romper roles antiguos sin esta config.
+let __currentUserPerms = { ver: true, crear: true, editar: true, eliminar: true, ver_precios: true };
+const canCreateReserva = () => __currentUserPerms.crear !== false;
+const canEditReserva   = () => __currentUserPerms.editar !== false;
+const canSeePrecios    = () => __currentUserPerms.ver_precios !== false;
 const canUseCortesia = () =>
   !!__currentUserEmail && CORTESIA_AUTHORIZED_EMAILS.includes(__currentUserEmail.toLowerCase());
 const filterCortesia = (arr) => canUseCortesia() ? arr : arr.filter(f => f !== "Cortesía");
@@ -3457,8 +3463,24 @@ export default function Reservas() {
       __currentUserEmail = em;
       // Cargar rol del usuario para checks de permisos (descuento, etc.)
       if (em) {
-        const { data: u } = await supabase.from("usuarios").select("rol_id").eq("email", em).maybeSingle();
+        const { data: u } = await supabase.from("usuarios").select("rol_id, permisos_extra").eq("email", em).maybeSingle();
         __currentUserRolId = u?.rol_id || "";
+        // Cargar permisos granulares del rol para reservas. Si no hay rol o
+        // no hay permisos.reservas, defaultea a acceso completo (no romper
+        // roles antiguos / super_admin).
+        if (u?.rol_id) {
+          const { data: r } = await supabase.from("roles").select("permisos").eq("id", u.rol_id).maybeSingle();
+          const perm = r?.permisos?.reservas;
+          if (perm) {
+            __currentUserPerms = {
+              ver:          perm.ver          !== false,
+              crear:        perm.crear        !== false,
+              editar:       perm.editar       !== false,
+              eliminar:     perm.eliminar     !== false,
+              ver_precios:  perm.ver_precios  !== false, // default true si el rol no lo declara
+            };
+          }
+        }
       }
       setUserEmail(em); // fuerza rerender de subcomponentes
     });
@@ -3948,17 +3970,19 @@ export default function Reservas() {
             <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 10, background: "#4CAF7D22", color: "#4CAF7D" }}>LIVE</span>
           )}
         </h1>
-        <button
-          onClick={() => setShowModal(true)}
-          style={{
-            background: B.sky, border: "none", borderRadius: 8, color: B.navy,
-            padding: isMobile ? "10px 14px" : "10px 22px",
-            fontSize: isMobile ? 13 : 15, fontWeight: 700, cursor: "pointer",
-            display: "flex", alignItems: "center", gap: 6, flexShrink: 0,
-          }}
-        >
-          <span style={{ fontSize: 18, lineHeight: 1 }}>+</span> {isMobile ? "Nueva" : "Nueva Reserva"}
-        </button>
+        {canCreateReserva() && (
+          <button
+            onClick={() => setShowModal(true)}
+            style={{
+              background: B.sky, border: "none", borderRadius: 8, color: B.navy,
+              padding: isMobile ? "10px 14px" : "10px 22px",
+              fontSize: isMobile ? 13 : 15, fontWeight: 700, cursor: "pointer",
+              display: "flex", alignItems: "center", gap: 6, flexShrink: 0,
+            }}
+          >
+            <span style={{ fontSize: 18, lineHeight: 1 }}>+</span> {isMobile ? "Nueva" : "Nueva Reserva"}
+          </button>
+        )}
       </div>
 
       {/* ── Main tab: Reservas / Calendario ── */}
@@ -4258,13 +4282,14 @@ export default function Reservas() {
         </div>
       </div>
 
-      {/* ── summary kpis — ocultar en "Otras" sin fecha específica ── */}
+      {/* ── summary kpis — ocultar en "Otras" sin fecha específica.
+          Si el rol no tiene ver_precios, mostramos solo Total Pax (sin Venta). ── */}
       {!(tabDia === "fecha" && !fechaFiltro) && (
-      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(2, 1fr)", gap: isMobile ? 8 : 14, marginBottom: isMobile ? 16 : 24 }}>
+      <div style={{ display: "grid", gridTemplateColumns: isMobile ? (canSeePrecios() ? "1fr 1fr" : "1fr") : (canSeePrecios() ? "repeat(2, 1fr)" : "1fr"), gap: isMobile ? 8 : 14, marginBottom: isMobile ? 16 : 24 }}>
         {[
-          { label: "Total Pax",   value: totalPax,        unit: "personas",          color: B.sky  },
-          { label: "Venta Total", value: COP(totalVenta), unit: "total en reservas", color: B.sand },
-        ].map(k => (
+          { label: "Total Pax",   value: totalPax,        unit: "personas",          color: B.sky,  showAlways: true  },
+          { label: "Venta Total", value: COP(totalVenta), unit: "total en reservas", color: B.sand, showAlways: false },
+        ].filter(k => k.showAlways || canSeePrecios()).map(k => (
           <div key={k.label} style={{ ...cardStyle, padding: "16px 20px" }}>
             <div style={{ fontSize: 12, color: B.sand, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.6 }}>{k.label}</div>
             <div style={{ fontSize: 28, fontWeight: 800, color: k.color, fontFamily: "'Barlow Condensed', sans-serif", marginTop: 4 }}>
@@ -4340,7 +4365,7 @@ export default function Reservas() {
                 const salida = salidas.find(s => s.id === r.salida);
                 const saldo = r.saldo ?? (r.total - r.abono);
                 return (
-                  <div key={r.id} onClick={() => setDetalle(r)} style={{ background: B.navyMid, borderRadius: 12, padding: "14px 16px", border: `1px solid ${B.navyLight}`, cursor: "pointer" }}>
+                  <div key={r.id} onClick={canEditReserva() ? () => setDetalle(r) : undefined} style={{ background: B.navyMid, borderRadius: 12, padding: "14px 16px", border: `1px solid ${B.navyLight}`, cursor: canEditReserva() ? "pointer" : "default" }}>
                     {/* Row 1: nombre + badge + actions */}
                     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 8 }}>
                       <div style={{ flex: 1, minWidth: 0 }}>
@@ -4373,12 +4398,14 @@ export default function Reservas() {
                       <span style={{ background: B.navyLight, borderRadius: 6, padding: "2px 8px", color: B.sky }}>{salida ? `${salida.hora} · ${salida.nombre}` : r.salida || "—"}</span>
                       <span style={{ background: B.navyLight, borderRadius: 6, padding: "2px 8px", color: "rgba(255,255,255,0.5)" }}>{r.canal}</span>
                     </div>
-                    {/* Row 3: money */}
-                    <div style={{ display: "flex", gap: 16, marginTop: 8, fontSize: 13 }}>
-                      <div><span style={{ color: "rgba(255,255,255,0.4)" }}>Total: </span><span style={{ fontWeight: 700 }}>{COP(r.total)}</span></div>
-                      <div><span style={{ color: "rgba(255,255,255,0.4)" }}>Abono: </span><span style={{ fontWeight: 700, color: B.success }}>{COP(r.abono)}</span></div>
-                      {saldo > 0 && <div><span style={{ color: B.warning, fontWeight: 700 }}>Saldo: {COP(saldo)}</span></div>}
-                    </div>
+                    {/* Row 3: money — oculto si el rol no tiene ver_precios */}
+                    {canSeePrecios() && (
+                      <div style={{ display: "flex", gap: 16, marginTop: 8, fontSize: 13 }}>
+                        <div><span style={{ color: "rgba(255,255,255,0.4)" }}>Total: </span><span style={{ fontWeight: 700 }}>{COP(r.total)}</span></div>
+                        <div><span style={{ color: "rgba(255,255,255,0.4)" }}>Abono: </span><span style={{ fontWeight: 700, color: B.success }}>{COP(r.abono)}</span></div>
+                        {saldo > 0 && <div><span style={{ color: B.warning, fontWeight: 700 }}>Saldo: {COP(saldo)}</span></div>}
+                      </div>
+                    )}
                     {r.notas && <div style={{ marginTop: 6, fontSize: 11, color: B.sand, opacity: 0.7 }}>{r.notas}</div>}
                     {r.notas_club && <div style={{ marginTop: 6, fontSize: 11, color: "#c4b5fd", background: "rgba(167,139,250,0.08)", border: "1px solid rgba(167,139,250,0.25)", borderRadius: 6, padding: "4px 8px" }}>🏝 {r.notas_club}</div>}
                   </div>
@@ -4393,17 +4420,20 @@ export default function Reservas() {
               <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 860 }}>
                 <thead>
                   <tr>
-                    {["#", "Nombre", "Tipo", "Pax", "Salida", "Canal", "Total", "Abono", "Estado", "Acciones"].map(h => (
+                    {(canSeePrecios()
+                      ? ["#", "Nombre", "Tipo", "Pax", "Salida", "Canal", "Total", "Abono", "Estado", "Acciones"]
+                      : ["#", "Nombre", "Tipo", "Pax", "Salida", "Canal", "Estado", "Acciones"]
+                    ).map(h => (
                       <th key={h} style={thStyle}>{h}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
                   {loading ? (
-                    <tr><td colSpan={10} style={{ ...tdStyle, textAlign: "center", color: B.sand, padding: "32px 0" }}>Cargando reservas…</td></tr>
+                    <tr><td colSpan={canSeePrecios() ? 10 : 8} style={{ ...tdStyle, textAlign: "center", color: B.sand, padding: "32px 0" }}>Cargando reservas…</td></tr>
                   ) : filtered.length === 0 ? (
                     <tr>
-                      <td colSpan={10} style={{ ...tdStyle, textAlign: "center", padding: "48px 0" }}>
+                      <td colSpan={canSeePrecios() ? 10 : 8} style={{ ...tdStyle, textAlign: "center", padding: "48px 0" }}>
                         <div style={{ fontSize: 32, marginBottom: 10, opacity: 0.4 }}>🏝️</div>
                         <div style={{ fontSize: 15, fontWeight: 700, color: B.sand, marginBottom: 4 }}>No hay reservas para hoy</div>
                         <div style={{ fontSize: 13, color: B.sky }}>Las reservas que ingreses aparecerán aquí.</div>
@@ -4413,9 +4443,9 @@ export default function Reservas() {
                     const salida = salidas.find(s => s.id === r.salida);
                     const saldo = r.saldo ?? (r.total - r.abono);
                     return (
-                      <tr key={r.id} onClick={() => setDetalle(r)} style={{ transition: "background 0.15s", cursor: "pointer" }}
-                        onMouseEnter={e => e.currentTarget.style.background = B.navyLight + "55"}
-                        onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                      <tr key={r.id} onClick={canEditReserva() ? () => setDetalle(r) : undefined} style={{ transition: "background 0.15s", cursor: canEditReserva() ? "pointer" : "default" }}
+                        onMouseEnter={canEditReserva() ? e => e.currentTarget.style.background = B.navyLight + "55" : undefined}
+                        onMouseLeave={canEditReserva() ? e => e.currentTarget.style.background = "transparent" : undefined}>
                         <td style={{ ...tdStyle, color: B.sky, fontWeight: 700, fontSize: 13 }}>{r.id}</td>
                         <td style={{ ...tdStyle, fontWeight: 600 }}>
                           <div>{r.nombre}</div>
@@ -4430,11 +4460,15 @@ export default function Reservas() {
                           {salida && <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)" }}>{salida.nombre}</div>}
                         </td>
                         <td style={tdStyle}><span style={{ background: B.navyLight, borderRadius: 6, padding: "2px 8px", fontSize: 12, color: B.sky, fontWeight: 600 }}>{r.canal}</span></td>
-                        <td style={{ ...tdStyle, fontWeight: 700, color: B.white }}>{COP(r.total)}</td>
-                        <td style={tdStyle}>
-                          <div style={{ fontWeight: 700, color: B.success }}>{COP(r.abono)}</div>
-                          {saldo > 0 && <div style={{ fontSize: 11, color: B.warning }}>Saldo: {COP(saldo)}</div>}
-                        </td>
+                        {canSeePrecios() && (
+                          <>
+                            <td style={{ ...tdStyle, fontWeight: 700, color: B.white }}>{COP(r.total)}</td>
+                            <td style={tdStyle}>
+                              <div style={{ fontWeight: 700, color: B.success }}>{COP(r.abono)}</div>
+                              {saldo > 0 && <div style={{ fontSize: 11, color: B.warning }}>Saldo: {COP(saldo)}</div>}
+                            </td>
+                          </>
+                        )}
                         <td style={tdStyle}>
                           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                             {r._sinReserva && <span style={{ background: "#f97316" + "22", border: "1px solid #f97316", borderRadius: 20, padding: "2px 8px", fontSize: 10, fontWeight: 700, color: "#f97316", whiteSpace: "nowrap" }}>⛵ Sin Reserva</span>}
@@ -4452,7 +4486,7 @@ export default function Reservas() {
                 </tbody>
               </table>
             </div>
-            {filtered.length > 0 && (
+            {filtered.length > 0 && canSeePrecios() && (
               <div style={{ display: "flex", gap: 24, justifyContent: "flex-end", paddingTop: 14, borderTop: `1px solid ${B.navyLight}`, marginTop: 4, flexWrap: "wrap" }}>
                 {[
                   { label: "Subtotal abonado", value: COP(filtered.reduce((s, r) => s + r.abono, 0)), color: B.success },
