@@ -1056,7 +1056,7 @@ export default function BookingPopup() {
           <div style={{
             flex: 1, minWidth: 0, width: isDesktop ? undefined : "100%",
             display: "flex", flexDirection: "column",
-            ...(iframeFit ? { overflowY: "auto", paddingRight: isDesktop ? 4 : 0 } : {}),
+            ...(iframeFit ? { overflow: "hidden", minHeight: 0 } : {}),
           }}>
 
         {/* Photo gallery — solo en mobile. En desktop ocupaba ~340px que no
@@ -1142,17 +1142,18 @@ export default function BookingPopup() {
         )}
 
         {/* Foto principal — solo desktop, arriba de Participants.
+            Altura fija reducida para no comerse espacio vertical en el iframe.
             Mobile ya tiene el carousel completo más arriba. */}
         {isDesktop && allPhotos.length > 0 && (
-          <div style={{ marginBottom: 12, borderRadius: 10, overflow: "hidden", aspectRatio: "16 / 9", background: C.bgCard }}>
+          <div style={{ marginBottom: isDesktop ? 8 : 12, borderRadius: 10, overflow: "hidden", background: C.bgCard, flexShrink: 0, ...(isDesktop ? { height: 110 } : { aspectRatio: "16 / 9" }) }}>
             <img src={allPhotos[0]} alt={isEN && product.tipo_en ? product.tipo_en : product.tipo}
               style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
           </div>
         )}
 
         {/* Participants */}
-        <div style={{ marginBottom: isDesktop ? 24 : 24 }}>
-          <h3 style={{ fontSize: 15, fontWeight: 700, color: C.text, marginBottom: 4 }}>{isEN ? "Participants" : "Participantes"}</h3>
+        <div style={{ marginBottom: isDesktop ? 8 : 24, flexShrink: 0 }}>
+          <h3 style={{ fontSize: isDesktop ? 13 : 15, fontWeight: 700, color: C.text, marginBottom: isDesktop ? 2 : 4 }}>{isEN ? "Participants" : "Participantes"}</h3>
           <div style={{ borderTop: `1px solid ${C.divider}` }}>
             <PaxRow
               label={isEN ? "Adults" : "Adultos"}
@@ -1274,7 +1275,7 @@ export default function BookingPopup() {
           <div style={{
             flex: 1, minWidth: 0, width: isDesktop ? undefined : "100%",
             display: "flex", flexDirection: "column",
-            ...(iframeFit ? { overflowY: "auto", paddingRight: isDesktop ? 4 : 0 } : {}),
+            ...(iframeFit ? { overflow: "hidden", minHeight: 0 } : {}),
           }}>
 
         {/* Product header + Qué incluye — solo desktop y solo cuando NO hay
@@ -1282,16 +1283,16 @@ export default function BookingPopup() {
             dejarle espacio al calendar + horarios disponibles. */}
         {isDesktop && !selDate && (
           <>
-            <div style={{ marginBottom: 14, paddingBottom: 14, borderBottom: `1px solid ${C.divider}` }}>
-              <div style={{ fontSize: 11, fontWeight: 600, color: C.textLight, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 }}>Atolon Beach Club · Isla Tierra Bomba</div>
+            <div style={{ marginBottom: 8, paddingBottom: 8, borderBottom: `1px solid ${C.divider}`, flexShrink: 0 }}>
+              <div style={{ fontSize: 10, fontWeight: 600, color: C.textLight, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>Atolon Beach Club · Isla Tierra Bomba</div>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <span style={{ fontSize: 28 }}>{product.icon}</span>
-                  <span style={{ fontSize: 24, fontWeight: 800, color: C.text }}>{isEN && product.tipo_en ? product.tipo_en : product.tipo}</span>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <span style={{ fontSize: 22 }}>{product.icon}</span>
+                  <span style={{ fontSize: 19, fontWeight: 800, color: C.text }}>{isEN && product.tipo_en ? product.tipo_en : product.tipo}</span>
                 </div>
                 <div style={{ textAlign: "right", flexShrink: 0 }}>
-                  <div style={{ fontSize: 22, fontWeight: 800, color: C.accent }}>{COP(product.precio)}</div>
-                  <div style={{ fontSize: 11, color: C.textLight }}>{isEN ? "per person" : "por persona"}</div>
+                  <div style={{ fontSize: 18, fontWeight: 800, color: C.accent }}>{COP(product.precio)}</div>
+                  <div style={{ fontSize: 10, color: C.textLight }}>{isEN ? "per person" : "por persona"}</div>
                 </div>
               </div>
             </div>
@@ -1304,11 +1305,11 @@ export default function BookingPopup() {
                     .map(txt => ({ es: txt, en: txt }));
               if (items.length === 0) return null;
               return (
-                <div style={{ marginBottom: 14, padding: "10px 14px", background: C.bgCard, borderRadius: 10, border: `1px solid ${C.border}` }}>
-                  <div style={{ fontSize: 11, fontWeight: 700, color: C.textMid, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 }}>{isEN ? "What's included" : "Qué incluye"}</div>
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 14px" }}>
+                <div style={{ marginBottom: 8, padding: "6px 10px", background: C.bgCard, borderRadius: 8, border: `1px solid ${C.border}`, flexShrink: 0 }}>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: C.textMid, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>{isEN ? "What's included" : "Qué incluye"}</div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: "2px 12px" }}>
                     {items.map((item, i) => (
-                      <div key={i} style={{ fontSize: 12, color: C.textMid, display: "flex", alignItems: "center", gap: 5 }}>
+                      <div key={i} style={{ fontSize: 11, color: C.textMid, display: "flex", alignItems: "center", gap: 4 }}>
                         <span style={{ color: C.success, fontWeight: 700 }}>✓</span> {isEN ? item.en : item.es}
                       </div>
                     ))}
@@ -1335,17 +1336,17 @@ export default function BookingPopup() {
         )}
 
         {/* Calendar */}
-        <div style={{ marginBottom: isDesktop ? 10 : 24, display: grupoLock ? "none" : "block" }}>
-          <h3 style={{ fontSize: 15, fontWeight: 700, color: C.text, marginBottom: 12 }}>{isEN ? "Select a date" : "Selecciona una fecha"}</h3>
+        <div style={{ marginBottom: isDesktop ? 8 : 24, display: grupoLock ? "none" : "block", flexShrink: 0 }}>
+          <h3 style={{ fontSize: isDesktop ? 13 : 15, fontWeight: 700, color: C.text, marginBottom: isDesktop ? 6 : 12 }}>{isEN ? "Select a date" : "Selecciona una fecha"}</h3>
           {/* Month navigation */}
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: isDesktop ? 6 : 12 }}>
             <button onClick={prevMonth} disabled={isPast}
-              style={{ width: 34, height: 34, borderRadius: "50%", border: `1.5px solid ${C.border}`, background: "white", cursor: isPast ? "not-allowed" : "pointer", color: isPast ? C.border : C.primary, fontSize: 16, display: "flex", alignItems: "center", justifyContent: "center" }}>‹</button>
+              style={{ width: isDesktop ? 28 : 34, height: isDesktop ? 28 : 34, borderRadius: "50%", border: `1.5px solid ${C.border}`, background: "white", cursor: isPast ? "not-allowed" : "pointer", color: isPast ? C.border : C.primary, fontSize: isDesktop ? 14 : 16, display: "flex", alignItems: "center", justifyContent: "center" }}>‹</button>
             <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              <span style={{ fontSize: 15, fontWeight: 700, color: C.text }}>{months[calMonth]} {calYear}</span>
+              <span style={{ fontSize: isDesktop ? 13 : 15, fontWeight: 700, color: C.text }}>{months[calMonth]} {calYear}</span>
             </div>
             <button onClick={nextMonth}
-              style={{ width: 34, height: 34, borderRadius: "50%", border: `1.5px solid ${C.border}`, background: "white", cursor: "pointer", color: C.primary, fontSize: 16, display: "flex", alignItems: "center", justifyContent: "center" }}>›</button>
+              style={{ width: isDesktop ? 28 : 34, height: isDesktop ? 28 : 34, borderRadius: "50%", border: `1.5px solid ${C.border}`, background: "white", cursor: "pointer", color: C.primary, fontSize: isDesktop ? 14 : 16, display: "flex", alignItems: "center", justifyContent: "center" }}>›</button>
           </div>
 
           {/* Day of week headers */}
@@ -1372,12 +1373,12 @@ export default function BookingPopup() {
                 <button key={iso} onClick={() => !disabled && handleSelectDate(iso)}
                   disabled={disabled}
                   style={{
-                    padding: "7px 2px",
+                    padding: isDesktop ? "5px 2px" : "7px 2px",
                     borderRadius: 8,
                     border: selected ? `2px solid ${C.accent}` : isToday ? `2px solid ${C.textLight}` : "2px solid transparent",
                     background: selected ? C.accent : "transparent",
                     color: disabled ? C.border : selected ? "white" : C.text,
-                    fontSize: 13,
+                    fontSize: isDesktop ? 12 : 13,
                     fontWeight: selected ? 700 : 400,
                     cursor: disabled ? "not-allowed" : "pointer",
                     textDecoration: closed ? "line-through" : "none",
