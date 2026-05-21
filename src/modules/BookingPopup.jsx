@@ -1121,21 +1121,25 @@ export default function BookingPopup() {
           );
         })()}
 
-        {/* Product header — título + precio. En desktop con espaciado generoso
-            ya que ahora es el primer bloque de la col izq (sin carousel arriba). */}
-        <div style={{ marginBottom: isDesktop ? 24 : 16, paddingBottom: isDesktop ? 20 : 0, borderBottom: isDesktop ? `1px solid ${C.divider}` : "none" }}>
-          <div style={{ fontSize: 11, fontWeight: 600, color: C.textLight, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 }}>Atolon Beach Club · Isla Tierra Bomba</div>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <span style={{ fontSize: isDesktop ? 28 : 24 }}>{product.icon}</span>
-              <span style={{ fontSize: isDesktop ? 24 : 22, fontWeight: 800, color: C.text }}>{isEN && product.tipo_en ? product.tipo_en : product.tipo}</span>
-            </div>
-            <div style={{ textAlign: "right", flexShrink: 0 }}>
-              <div style={{ fontSize: isDesktop ? 22 : 20, fontWeight: 800, color: C.accent }}>{COP(product.precio)}</div>
-              <div style={{ fontSize: 11, color: C.textLight }}>{isEN ? "per person" : "por persona"}</div>
+        {/* Product header (título + precio) — bloque reutilizable.
+            En MOBILE va arriba de Participants (col única).
+            En DESKTOP se renderiza arriba del calendar en la columna derecha
+            (no aquí en la izquierda). */}
+        {!isDesktop && (
+          <div style={{ marginBottom: 16, paddingBottom: 0, borderBottom: "none" }}>
+            <div style={{ fontSize: 11, fontWeight: 600, color: C.textLight, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 }}>Atolon Beach Club · Isla Tierra Bomba</div>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <span style={{ fontSize: 24 }}>{product.icon}</span>
+                <span style={{ fontSize: 22, fontWeight: 800, color: C.text }}>{isEN && product.tipo_en ? product.tipo_en : product.tipo}</span>
+              </div>
+              <div style={{ textAlign: "right", flexShrink: 0 }}>
+                <div style={{ fontSize: 20, fontWeight: 800, color: C.accent }}>{COP(product.precio)}</div>
+                <div style={{ fontSize: 11, color: C.textLight }}>{isEN ? "per person" : "por persona"}</div>
+              </div>
             </div>
           </div>
-        </div>
+        )}
 
         {/* Participants */}
         <div style={{ marginBottom: isDesktop ? 24 : 24 }}>
@@ -1257,12 +1261,30 @@ export default function BookingPopup() {
           </div>{/* /LEFT COLUMN */}
 
           {/* ═════════ RIGHT COLUMN ═════════
-              Group banner (si aplica) → Calendar → Salidas (condicional) */}
+              Producto + precio (desktop) → Group banner (si aplica) → Calendar → Salidas (condicional) */}
           <div style={{
             flex: 1, minWidth: 0, width: isDesktop ? undefined : "100%",
             display: "flex", flexDirection: "column",
             ...(iframeFit ? { overflowY: "auto", paddingRight: isDesktop ? 4 : 0 } : {}),
           }}>
+
+        {/* Product header — solo desktop, arriba del calendar.
+            En mobile se renderiza en LEFT (col única) sobre Participants. */}
+        {isDesktop && (
+          <div style={{ marginBottom: 14, paddingBottom: 14, borderBottom: `1px solid ${C.divider}` }}>
+            <div style={{ fontSize: 11, fontWeight: 600, color: C.textLight, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 }}>Atolon Beach Club · Isla Tierra Bomba</div>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <span style={{ fontSize: 28 }}>{product.icon}</span>
+                <span style={{ fontSize: 24, fontWeight: 800, color: C.text }}>{isEN && product.tipo_en ? product.tipo_en : product.tipo}</span>
+              </div>
+              <div style={{ textAlign: "right", flexShrink: 0 }}>
+                <div style={{ fontSize: 22, fontWeight: 800, color: C.accent }}>{COP(product.precio)}</div>
+                <div style={{ fontSize: 11, color: C.textLight }}>{isEN ? "per person" : "por persona"}</div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Group event banner */}
         {grupoEvt && (
