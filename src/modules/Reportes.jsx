@@ -1293,6 +1293,9 @@ function ReporteCortesias() {
       .order("fecha", { ascending: false });
 
     const list = (data || []).filter(r => {
+      // Excluir reservas canceladas/refundidas — no son cortesías efectivamente
+      // entregadas, solo gestos que se cancelaron antes de honrarse.
+      if (["cancelado", "cancelada", "reembolsado"].includes(r.estado)) return false;
       if (r.forma_pago === "Cortesía") return true;
       if (Array.isArray(r.pagos) && r.pagos.some(p => p?.forma_pago === "Cortesía")) return true;
       return false;
