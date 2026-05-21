@@ -324,6 +324,15 @@ export default function DetailModal({ contratistaId, adminUser, onClose, onChang
                     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                       {workers.map(w => {
                         const cert = certs.find(ct => ct.trabajador_id === w.id);
+                        // Estado ARL del trabajador (basado en contratistas_documentos)
+                        const arlDoc = docs.find(d => d.trabajador_id === w.id && d.tipo === "arl");
+                        let arlBadge = null;
+                        if (arlDoc) {
+                          if (arlDoc.rechazado) arlBadge = { color: B.danger, text: "❌ ARL rechazada" };
+                          else                  arlBadge = { color: B.success, text: "✅ ARL OK" };
+                        } else {
+                          arlBadge = { color: B.warning, text: "⏳ Sin ARL" };
+                        }
                         return (
                           <div key={w.id}
                             onClick={() => setSelectedWorker(w)}
@@ -332,6 +341,7 @@ export default function DetailModal({ contratistaId, adminUser, onClose, onChang
                               cursor: "pointer", display: "flex", justifyContent: "space-between",
                               alignItems: "center", gap: 12, flexWrap: "wrap",
                               transition: "background 0.15s",
+                              borderLeft: arlDoc?.rechazado ? `3px solid ${B.danger}` : "3px solid transparent",
                             }}
                             onMouseEnter={e => e.currentTarget.style.background = B.navyMid}
                             onMouseLeave={e => e.currentTarget.style.background = B.navyLight}
@@ -342,6 +352,14 @@ export default function DetailModal({ contratistaId, adminUser, onClose, onChang
                                 {w.cedula} · {w.cargo} · {w.arl}
                               </div>
                             </div>
+                            <span style={{
+                              padding: "4px 10px", borderRadius: 12, fontSize: 10,
+                              fontWeight: 700, textTransform: "uppercase", letterSpacing: 1,
+                              background: arlBadge.color + "22",
+                              color: arlBadge.color,
+                            }}>
+                              {arlBadge.text}
+                            </span>
                             <span style={{
                               padding: "4px 10px", borderRadius: 12, fontSize: 10,
                               fontWeight: 700, textTransform: "uppercase", letterSpacing: 1,
@@ -436,6 +454,10 @@ export default function DetailModal({ contratistaId, adminUser, onClose, onChang
         <WorkerPanel
           worker={selectedWorker}
           contratista={c}
+          docs={docs}
+          signedUrls={signedUrls}
+          adminUser={adminUser}
+          onChanged={load}
           onClose={() => setSelectedWorker(null)}
         />
       )}
