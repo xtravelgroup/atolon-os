@@ -1141,6 +1141,15 @@ export default function BookingPopup() {
           </div>
         )}
 
+        {/* Foto principal — solo desktop, arriba de Participants.
+            Mobile ya tiene el carousel completo más arriba. */}
+        {isDesktop && allPhotos.length > 0 && (
+          <div style={{ marginBottom: 12, borderRadius: 10, overflow: "hidden", aspectRatio: "16 / 9", background: C.bgCard }}>
+            <img src={allPhotos[0]} alt={isEN && product.tipo_en ? product.tipo_en : product.tipo}
+              style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+          </div>
+        )}
+
         {/* Participants */}
         <div style={{ marginBottom: isDesktop ? 24 : 24 }}>
           <h3 style={{ fontSize: 15, fontWeight: 700, color: C.text, marginBottom: 4 }}>{isEN ? "Participants" : "Participantes"}</h3>
@@ -1209,15 +1218,6 @@ export default function BookingPopup() {
             )}
           </div>
         </div>
-
-        {/* Foto principal — solo desktop, arriba del Order Summary.
-            Mobile ya tiene el carousel completo más arriba. */}
-        {isDesktop && allPhotos.length > 0 && (
-          <div style={{ marginBottom: 12, borderRadius: 10, overflow: "hidden", aspectRatio: "16 / 9", background: C.bgCard }}>
-            <img src={allPhotos[0]} alt={isEN && product.tipo_en ? product.tipo_en : product.tipo}
-              style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
-          </div>
-        )}
 
         {/* Order summary
             Desktop: versión compactada (header en una línea, sin label COP).
