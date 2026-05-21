@@ -3769,12 +3769,23 @@ export default function Reservas() {
     }
 
     const pax   = Number(form.pax_a) + Number(form.pax_n);
-    // Precio de niño: si el form lo trae explícito úsalo; si no, el del
-    // catálogo (calcPrecioNinoUnit). NO caer al precio de adulto — eso
+    // Precio de niño: si el form lo trae explícito úsalo; si no, buscar en
+    // el catálogo (pasadias state). NO caer al precio de adulto — eso
     // cobraba niño como adulto (form.precio_nino default = 0).
-    const precioNinoUnit = Number(form.precio_nino) > 0
-      ? Number(form.precio_nino)
-      : calcPrecioNinoUnit(form.tipo, form.aliado_id, precioMode);
+    // Bug previo: usaba calcPrecioNinoUnit() que sólo existe en
+    // ReservaDetalle (no en este scope) → ReferenceError al guardar reservas
+    // con pasadía cuyo precio_nino del catálogo es 0 (A CONSUMO, Cortesía…).
+    const precioNinoUnit = (() => {
+      if (Number(form.precio_nino) > 0) return Number(form.precio_nino);
+      const pas = pasadias.find(p => p.tipo?.toLowerCase() === (form.tipo || "").toLowerCase());
+      if (!pas) return 0;
+      // Si hay convenio B2B con tarifa de niño, úsala
+      if (form.aliado_id) {
+        const tarifaNino = conveniosMap[form.aliado_id]?.[(form.tipo || "").toLowerCase() + "__nino"];
+        if (tarifaNino > 0) return Number(tarifaNino);
+      }
+      return Number(pas.precio_nino) || 0;
+    })();
     const totalOriginal = Number(form.pax_a) * Number(form.precio)
                         + Number(form.pax_n) * precioNinoUnit;
     const isLink = form._isLink;
