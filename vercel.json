@@ -11,7 +11,15 @@
       "has": [{ "type": "host", "value": "www.atolon.co" }],
       "destination": "https://atoloncartagena.com",
       "permanent": false
-    }
+    },
+    { "source": "/wa/vip",        "destination": "/booking?tipo=vip-pass&utm_source=whatsapp&utm_medium=directo&utm_campaign=vip-pass",                "permanent": false },
+    { "source": "/wa/exclusive",  "destination": "/booking?tipo=exclusive-pass&utm_source=whatsapp&utm_medium=directo&utm_campaign=exclusive-pass",  "permanent": false },
+    { "source": "/wa/experience", "destination": "/booking?tipo=atolon-experience&utm_source=whatsapp&utm_medium=directo&utm_campaign=atolon-experience", "permanent": false },
+    { "source": "/wa/after",      "destination": "/booking?tipo=after-island&utm_source=whatsapp&utm_medium=directo&utm_campaign=after-island",      "permanent": false },
+    { "source": "/wa/consulta",   "destination": "/booking?utm_source=whatsapp&utm_medium=directo&utm_campaign=consulta",  "permanent": false },
+    { "source": "/wa/promo",      "destination": "/booking?utm_source=whatsapp&utm_medium=directo&utm_campaign=promo",     "permanent": false },
+    { "source": "/wa/followup",   "destination": "/booking?utm_source=whatsapp&utm_medium=directo&utm_campaign=followup",  "permanent": false },
+    { "source": "/wa/grupo",      "destination": "/booking?utm_source=whatsapp&utm_medium=directo&utm_campaign=grupo",     "permanent": false }
   ],
   "rewrites": [
     { "source": "/iclock/:op*", "destination": "/api/zk-iclock?_zkop=:op*" },

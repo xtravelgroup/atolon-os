@@ -777,26 +777,29 @@ export default function Analitica({ externo = false }) {
         <h3 style={{ margin: "0 0 6px", fontSize: 15, fontWeight: 700, color: "#fff" }}>📲 Links Rastreados por WhatsApp</h3>
         <div style={{ fontSize: 12, color: B.muted, marginBottom: 16 }}>Usa estos links cuando envíes el widget por WhatsApp. AtolonTrack sabrá exactamente qué visitas y reservas vinieron de WhatsApp.</div>
         {(() => {
-          const base = `${window.location.origin}/booking`;
+          // URLs cortas: /wa/<slug> redirige (vía vercel.json) a la URL larga con UTMs.
+          // Lo que el equipo copia/comparte es la URL corta — más limpia en WhatsApp
+          // y con preview de dominio confiable (atolon.co).
+          const base = `${window.location.origin}/wa`;
           const grupos = [
             {
               titulo: "🌴 Por Paquete",
               color: B.sky,
               links: [
-                { label: "VIP Pass",          icon: "🌴", utm: "?tipo=vip-pass&utm_source=whatsapp&utm_medium=directo&utm_campaign=vip-pass",                msg: "¡Reserva tu VIP Pass en Atolon Beach Club! 🌴" },
-                { label: "Exclusive Pass",    icon: "⭐", utm: "?tipo=exclusive-pass&utm_source=whatsapp&utm_medium=directo&utm_campaign=exclusive-pass",    msg: "¡Reserva tu Exclusive Pass en Atolon Beach Club! ⭐" },
-                { label: "Atolon Experience", icon: "🛥️", utm: "?tipo=atolon-experience&utm_source=whatsapp&utm_medium=directo&utm_campaign=atolon-experience", msg: "¡Reserva tu Atolon Experience en Atolon Beach Club! 🛥️" },
-                { label: "After Island",      icon: "🌙", utm: "?tipo=after-island&utm_source=whatsapp&utm_medium=directo&utm_campaign=after-island",        msg: "¡Reserva tu After Island en Atolon Beach Club! 🌙" },
+                { label: "VIP Pass",          icon: "🌴", slug: "vip",        msg: "¡Reserva tu VIP Pass en Atolon Beach Club! 🌴" },
+                { label: "Exclusive Pass",    icon: "⭐", slug: "exclusive",  msg: "¡Reserva tu Exclusive Pass en Atolon Beach Club! ⭐" },
+                { label: "Atolon Experience", icon: "🛥️", slug: "experience", msg: "¡Reserva tu Atolon Experience en Atolon Beach Club! 🛥️" },
+                { label: "After Island",      icon: "🌙", slug: "after",      msg: "¡Reserva tu After Island en Atolon Beach Club! 🌙" },
               ],
             },
             {
               titulo: "📣 General",
               color: B.success,
               links: [
-                { label: "Consulta general",       icon: "💬", utm: "?utm_source=whatsapp&utm_medium=directo&utm_campaign=consulta",  msg: "¡Reserva tu pasadía en Atolon Beach Club! 🌊" },
-                { label: "Oferta / Promo",         icon: "🏷️", utm: "?utm_source=whatsapp&utm_medium=directo&utm_campaign=promo",     msg: "¡Aprovecha esta promo en Atolon Beach Club! 🏷️" },
-                { label: "Follow-up",              icon: "🔁", utm: "?utm_source=whatsapp&utm_medium=directo&utm_campaign=followup",  msg: "Hola! Te comparto el link para tu reserva en Atolon Beach Club 🌊" },
-                { label: "Grupo / Evento",         icon: "🎉", utm: "?utm_source=whatsapp&utm_medium=directo&utm_campaign=grupo",     msg: "¡Reserva tu experiencia grupal en Atolon Beach Club! 🎉" },
+                { label: "Consulta general", icon: "💬", slug: "consulta", msg: "¡Reserva tu pasadía en Atolon Beach Club! 🌊" },
+                { label: "Oferta / Promo",   icon: "🏷️", slug: "promo",    msg: "¡Aprovecha esta promo en Atolon Beach Club! 🏷️" },
+                { label: "Follow-up",        icon: "🔁", slug: "followup", msg: "Hola! Te comparto el link para tu reserva en Atolon Beach Club 🌊" },
+                { label: "Grupo / Evento",   icon: "🎉", slug: "grupo",    msg: "¡Reserva tu experiencia grupal en Atolon Beach Club! 🎉" },
               ],
             },
           ];
@@ -807,7 +810,7 @@ export default function Analitica({ externo = false }) {
                   <div style={{ fontSize: 12, fontWeight: 700, color: g.color, marginBottom: 12, textTransform: "uppercase", letterSpacing: "0.06em" }}>{g.titulo}</div>
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 10 }}>
                     {g.links.map(l => {
-                      const url = base + l.utm;
+                      const url = `${base}/${l.slug}`;
                       return (
                         <div key={l.label} style={{ background: B.navyLight, borderRadius: 10, padding: "14px 16px" }}>
                           <div style={{ fontSize: 13, fontWeight: 700, color: "#fff", marginBottom: 6 }}>{l.icon} {l.label}</div>
