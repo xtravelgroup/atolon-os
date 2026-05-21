@@ -1858,7 +1858,7 @@ export default function BookingPopup() {
                         {isUpg && <span style={{ display: "inline-block", marginTop: 3, fontSize: 9, padding: "1px 6px", borderRadius: 4, background: "#DDD6FE", color: "#5B21B6", fontWeight: 700, letterSpacing: "0.05em" }}>UPGRADE</span>}
                       </div>
                     </div>
-                    {u.descripcion && <div style={{ fontSize: 10, color: C.textMid, lineHeight: 1.35, display: "-webkit-box", WebkitLineClamp: 1, WebkitBoxOrient: "vertical", overflow: "hidden", textOverflow: "ellipsis" }}>{u.descripcion}</div>}
+                    {u.descripcion && <div style={{ fontSize: 11, color: C.textMid, lineHeight: 1.4, display: "-webkit-box", WebkitLineClamp: 4, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{u.descripcion}</div>}
                     <div style={{ fontSize: 12, fontWeight: 800, color: accent }}>
                       +{COP(uPrice)}
                       <span style={{ fontSize: 9, fontWeight: 400, color: C.textLight, marginLeft: 3 }}>
