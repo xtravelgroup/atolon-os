@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { B, COP, fmtFecha, todayStr } from "../brand";
 import { supabase } from "../lib/supabase";
 
-const CATS_FORM = ["Embarcacion", "Mobiliario", "Electronico", "Cocina", "Deportes", "Vehiculo"];
+const CATS_FORM = ["Embarcacion", "Mobiliario", "Electronico", "Cocina", "Deportes", "Vehiculo", "Sin Clasificar"];
 const ESTADOS = ["bueno", "regular", "malo"];
 const PROPIETARIOS = ["Naturalle Hotel", "Interop Colombia"];
 
