@@ -161,8 +161,17 @@ function acNanoid(n = 16) {
 
 // ── Main component ───────────────────────────────────────────────────────────
 export default function BookingPopup() {
-  const { isDesktop } = useBreakpoint();
+  const { isDesktop: breakpointIsDesktop } = useBreakpoint();
   const params  = new URLSearchParams(window.location.search);
+
+  // ── view=full → fuerza el layout legacy (single-column 480px) ──
+  // Los redirects /wa/* (WhatsApp) añaden ?view=full al destino para que el
+  // usuario que llega por un link compartido vea el booking original (mobile-style),
+  // no la versión 2-col compacta optimizada para el iframe de Sky.
+  // Mobile preservó la UX original (commit 796ec4c), así que con isDesktop=false
+  // el componente cae automáticamente a la rama "original" en todos los ternarios.
+  const viewFull = params.get("view") === "full";
+  const isDesktop = viewFull ? false : breakpointIsDesktop;
 
   // ── Detección de modo embebido (iframe) ──
   // Si estamos dentro de un iframe (e.g. atoloncartagena.com en Webflow),
