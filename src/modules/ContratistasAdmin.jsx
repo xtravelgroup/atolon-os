@@ -20,6 +20,9 @@ const PIPELINE_COLUMNS = [
 
 const PIPELINE_ESTADOS = PIPELINE_COLUMNS.map(c => c.k);
 const APROBADOS_ESTADOS = ["aprobado", "vencido"];
+// EXPRESS: contratistas registrados inline en eventos.contratistas (JSON).
+// No pasan por el pipeline formal — vienen con cédula+ARL básicos, listos
+// para acceder al evento. Se muestran en su propio tab solo lectura.
 
 const ESTADO_COLOR = {
   borrador: "rgba(255,255,255,0.3)",
@@ -87,6 +90,7 @@ export default function ContratistasAdmin() {
   const [workerCounts, setWorkerCounts] = useState({}); // { contratista_id: count }
   const [activeWorkersCount, setActiveWorkersCount] = useState(0);
   const [ingresosByContratista, setIngresosByContratista] = useState({}); // { id: { count, last, permitidos, rechazados } }
+  const [expressRows, setExpressRows] = useState([]); // contratistas flatten-eados de eventos.contratistas JSON
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => setAdminUser(data?.user || null));
@@ -143,6 +147,37 @@ export default function ContratistasAdmin() {
       setActiveWorkersCount(0);
       setIngresosByContratista({});
     }
+
+    // Express: contratistas inline en eventos.contratistas (JSON).
+    // Carga eventos con array no vacío y aplana a filas individuales.
+    const { data: evs } = await supabase
+      .from("eventos")
+      .select("id, nombre, fecha, contratistas")
+      .not("contratistas", "is", null)
+      .order("fecha", { ascending: false });
+    const exp = [];
+    (evs || []).forEach(e => {
+      if (!Array.isArray(e.contratistas) || e.contratistas.length === 0) return;
+      e.contratistas.forEach(c => {
+        if (!c?.nombre) return;
+        exp.push({
+          id: `evt:${e.id}:${c.id || c.nombre}`,
+          evento_id: e.id,
+          evento_nombre: e.nombre,
+          evento_fecha: e.fecha,
+          nombre: c.nombre,
+          tipo: c.tipo,            // "propio" | "externo"
+          cargo: c.cargo,
+          funcion: c.funcion,
+          contacto: c.contacto,
+          costo: c.costo,
+          personas: c.personas || [],
+          notas: c.notas,
+        });
+      });
+    });
+    setExpressRows(exp);
+
     setLoading(false);
   };
   useEffect(() => { load(); /* eslint-disable-next-line */ }, []);
@@ -246,11 +281,12 @@ export default function ContratistasAdmin() {
         </div>
       </div>
 
-      {/* Tab switcher Pipeline / Aprobados */}
-      <div style={{ display: "flex", gap: 0, marginBottom: 16, borderRadius: 10, overflow: "hidden", border: `1px solid ${B.navyLight}`, maxWidth: 460 }}>
+      {/* Tab switcher Pipeline / Aprobados / Express */}
+      <div style={{ display: "flex", gap: 0, marginBottom: 16, borderRadius: 10, overflow: "hidden", border: `1px solid ${B.navyLight}`, maxWidth: 640 }}>
         {[
-          { k: "pipeline", label: "Pipeline", icon: "📥", count: rows.filter(r => PIPELINE_ESTADOS.includes(r.estado)).length, color: B.warning },
+          { k: "pipeline",  label: "Pipeline", icon: "📥", count: rows.filter(r => PIPELINE_ESTADOS.includes(r.estado)).length, color: B.warning },
           { k: "aprobados", label: "Aprobados · Historial", icon: "✓", count: rows.filter(r => APROBADOS_ESTADOS.includes(r.estado)).length, color: B.success },
+          { k: "express",   label: "Express · Eventos",    icon: "⚡", count: expressRows.length, color: B.sky },
         ].map(t => (
           <button key={t.k} onClick={() => setTab(t.k)}
             style={{
@@ -324,6 +360,57 @@ export default function ContratistasAdmin() {
       {/* Content */}
       {loading ? (
         <div style={{ padding: 40, textAlign: "center", color: B.sand }}>Cargando…</div>
+      ) : tab === "express" ? (
+        expressRows.length === 0 ? (
+          <div style={{ padding: 60, textAlign: "center", color: "rgba(255,255,255,0.4)", background: B.navyMid, borderRadius: 12, border: `1px solid ${B.navyLight}` }}>
+            No hay contratistas Express registrados desde eventos.
+          </div>
+        ) : (
+          <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(auto-fill, minmax(320px, 1fr))", gap: 12 }}>
+            {expressRows
+              .filter(r => {
+                const q = search.toLowerCase().trim();
+                if (!q) return true;
+                return [r.nombre, r.evento_nombre, r.contacto, r.cargo].filter(Boolean).some(v => String(v).toLowerCase().includes(q));
+              })
+              .map(r => (
+              <div key={r.id} style={{ background: B.navyMid, borderRadius: 12, padding: "14px 16px", border: `1px solid ${B.navyLight}`, borderLeft: `4px solid ${r.tipo === "propio" ? B.sky : B.sand}` }}>
+                <div style={{ fontSize: 10, fontWeight: 700, color: r.tipo === "propio" ? B.sky : B.sand, textTransform: "uppercase", letterSpacing: 1, marginBottom: 4 }}>
+                  ⚡ EXPRESS · {r.tipo === "propio" ? "🏷️ Propio" : "🤝 Externo"}{r.cargo ? ` · ${r.cargo}` : ""}
+                </div>
+                <div style={{ fontSize: 15, fontWeight: 800, color: B.white, marginBottom: 6 }}>{r.nombre}</div>
+                <div style={{ fontSize: 11, color: B.sand, background: "rgba(200,185,154,0.1)", border: `1px solid ${B.sand}33`, borderRadius: 6, padding: "5px 8px", marginBottom: 8, display: "inline-block" }}>
+                  🎫 {r.evento_nombre || "Evento sin nombre"}{r.evento_fecha ? ` · ${fmt(r.evento_fecha)}` : ""}
+                </div>
+                {r.funcion && <div style={{ fontSize: 12, color: "rgba(255,255,255,0.7)", marginBottom: 6, lineHeight: 1.4 }}>🎯 {r.funcion}</div>}
+                {r.contacto && <div style={{ fontSize: 12, color: B.sky, marginBottom: 4 }}>📞 {r.contacto}</div>}
+                {(r.personas || []).length > 0 && (
+                  <div style={{ marginTop: 10, paddingTop: 10, borderTop: `1px solid ${B.navyLight}` }}>
+                    <div style={{ fontSize: 10, color: B.sand, textTransform: "uppercase", letterSpacing: 1, fontWeight: 700, marginBottom: 6 }}>
+                      👥 Personal ({r.personas.length})
+                    </div>
+                    {r.personas.map((p, i) => (
+                      <div key={i} style={{ fontSize: 11, color: "rgba(255,255,255,0.7)", padding: "3px 0", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 6 }}>
+                        <span style={{ flex: 1 }}>{p.nombre}</span>
+                        <span style={{ color: "rgba(255,255,255,0.4)" }}>{p.cedula || ""}{p.rol ? ` · ${p.rol}` : ""}</span>
+                        {p.arl_url && (
+                          <a href={p.arl_url} target="_blank" rel="noreferrer"
+                            style={{ color: B.success, textDecoration: "none", fontSize: 10, fontWeight: 700, border: `1px solid ${B.success}55`, borderRadius: 5, padding: "1px 6px" }}>
+                            ARL ✓
+                          </a>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <a href="#" onClick={(e) => { e.preventDefault(); window.dispatchEvent(new CustomEvent("atolon-navigate", { detail: { module: "eventos", openEventoId: r.evento_id } })); }}
+                  style={{ display: "inline-block", marginTop: 8, fontSize: 11, color: B.sky, textDecoration: "none", fontWeight: 700 }}>
+                  → Ver en evento
+                </a>
+              </div>
+            ))}
+          </div>
+        )
       ) : filtered.length === 0 ? (
         <div style={{ padding: 60, textAlign: "center", color: "rgba(255,255,255,0.4)", background: B.navyMid, borderRadius: 12, border: `1px solid ${B.navyLight}` }}>
           {rows.length === 0 ? "Aún no hay contratistas registrados." : "Sin coincidencias con los filtros."}
