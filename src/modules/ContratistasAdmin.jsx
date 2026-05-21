@@ -91,6 +91,7 @@ export default function ContratistasAdmin() {
   const [activeWorkersCount, setActiveWorkersCount] = useState(0);
   const [ingresosByContratista, setIngresosByContratista] = useState({}); // { id: { count, last, permitidos, rechazados } }
   const [expressRows, setExpressRows] = useState([]); // contratistas flatten-eados de eventos.contratistas JSON
+  const [expressPrefill, setExpressPrefill] = useState(null); // contratista Express en proceso de "completar registro formal"
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => setAdminUser(data?.user || null));
@@ -374,7 +375,9 @@ export default function ContratistasAdmin() {
                 return [r.nombre, r.evento_nombre, r.contacto, r.cargo].filter(Boolean).some(v => String(v).toLowerCase().includes(q));
               })
               .map(r => (
-              <div key={r.id} style={{ background: B.navyMid, borderRadius: 12, padding: "14px 16px", border: `1px solid ${B.navyLight}`, borderLeft: `4px solid ${r.tipo === "propio" ? B.sky : B.sand}` }}>
+              <div key={r.id} onClick={() => setExpressPrefill(r)} style={{ background: B.navyMid, borderRadius: 12, padding: "14px 16px", border: `1px solid ${B.navyLight}`, borderLeft: `4px solid ${r.tipo === "propio" ? B.sky : B.sand}`, cursor: "pointer", transition: "background 0.15s" }}
+                onMouseEnter={e => e.currentTarget.style.background = B.navyLight}
+                onMouseLeave={e => e.currentTarget.style.background = B.navyMid}>
                 <div style={{ fontSize: 10, fontWeight: 700, color: r.tipo === "propio" ? B.sky : B.sand, textTransform: "uppercase", letterSpacing: 1, marginBottom: 4 }}>
                   ⚡ EXPRESS · {r.tipo === "propio" ? "🏷️ Propio" : "🤝 Externo"}{r.cargo ? ` · ${r.cargo}` : ""}
                 </div>
@@ -403,10 +406,16 @@ export default function ContratistasAdmin() {
                     ))}
                   </div>
                 )}
-                <a href="#" onClick={(e) => { e.preventDefault(); window.dispatchEvent(new CustomEvent("atolon-navigate", { detail: { module: "eventos", openEventoId: r.evento_id } })); }}
-                  style={{ display: "inline-block", marginTop: 8, fontSize: 11, color: B.sky, textDecoration: "none", fontWeight: 700 }}>
-                  → Ver en evento
-                </a>
+                <div style={{ display: "flex", gap: 8, marginTop: 10, paddingTop: 10, borderTop: `1px dashed ${B.navyLight}` }}>
+                  <button onClick={(e) => { e.stopPropagation(); setExpressPrefill(r); }}
+                    style={{ background: B.success, border: "none", color: B.white, padding: "6px 12px", borderRadius: 6, fontSize: 11, fontWeight: 800, cursor: "pointer", flex: 1 }}>
+                    ✓ Completar registro formal
+                  </button>
+                  <a href="#" onClick={(e) => { e.preventDefault(); e.stopPropagation(); window.dispatchEvent(new CustomEvent("atolon-navigate", { detail: { module: "eventos", openEventoId: r.evento_id } })); }}
+                    style={{ fontSize: 11, color: B.sky, textDecoration: "none", fontWeight: 700, padding: "6px 12px", border: `1px solid ${B.sky}55`, borderRadius: 6, alignSelf: "center" }}>
+                    Ver en evento →
+                  </a>
+                </div>
               </div>
             ))}
           </div>
@@ -523,6 +532,15 @@ export default function ContratistasAdmin() {
         <ContratistasWizardAsistido
           adminUser={adminUser}
           onClose={() => { setWizardOpen(false); load(); }}
+        />
+      )}
+
+      {/* Wizard asistido pre-cargado con datos de un contratista Express */}
+      {expressPrefill && (
+        <ContratistasWizardAsistido
+          adminUser={adminUser}
+          prefillData={expressPrefill}
+          onClose={() => { setExpressPrefill(null); load(); }}
         />
       )}
 
