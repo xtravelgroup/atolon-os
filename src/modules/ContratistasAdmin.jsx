@@ -6,6 +6,7 @@ import { supabase } from "../lib/supabase";
 import { B } from "../brand";
 import { useBreakpoint } from "../lib/responsive";
 import { ContratistasWizardAsistido } from "./ContratistasPortal";
+import { genRadicado } from "./contratistas/constants";
 import KanbanCard from "./contratistas/admin/KanbanCard";
 import DetailModal from "./contratistas/admin/DetailModal";
 
@@ -91,7 +92,94 @@ export default function ContratistasAdmin() {
   const [activeWorkersCount, setActiveWorkersCount] = useState(0);
   const [ingresosByContratista, setIngresosByContratista] = useState({}); // { id: { count, last, permitidos, rechazados } }
   const [expressRows, setExpressRows] = useState([]); // contratistas flatten-eados de eventos.contratistas JSON
-  const [expressPrefill, setExpressPrefill] = useState(null); // contratista Express en proceso de "completar registro formal"
+  const [promoting, setPromoting] = useState(false);   // estado de "creando ficha desde Express"
+
+  // Promueve un contratista Express (inline de eventos.contratistas) a la
+  // tabla formal `contratistas` con estado="borrador" y abre la ficha
+  // (DetailModal) para completar lo que falta desde Atolon OS — RUT, EPS,
+  // ARL formal, fechas, declaraciones SST, firma, etc.
+  //
+  // Idempotente vía cédula/nombre: si ya existe una row para esta persona
+  // (matched por nat_cedula o nombre_display + evento), reusa esa en lugar
+  // de crear duplicado.
+  const promoteExpressToFicha = async (r) => {
+    if (promoting || !supabase) return;
+    setPromoting(true);
+    try {
+      const personas = Array.isArray(r.personas) ? r.personas.filter(p => p?.nombre) : [];
+      // Heurística: 1 persona o ninguna → natural; >1 → empresa.
+      const tipoFormal = personas.length > 1 ? "empresa" : "natural";
+      const persona0 = personas[0] || {};
+
+      // 1) Buscar ya existente (evitar duplicados al re-clickear)
+      let existingId = null;
+      if (tipoFormal === "natural" && persona0.cedula) {
+        const { data: found } = await supabase
+          .from("contratistas")
+          .select("id")
+          .eq("tipo", "natural")
+          .eq("nat_cedula", String(persona0.cedula).trim())
+          .limit(1).maybeSingle();
+        if (found?.id) existingId = found.id;
+      } else if (tipoFormal === "empresa" && r.nombre) {
+        const { data: found } = await supabase
+          .from("contratistas")
+          .select("id")
+          .eq("tipo", "empresa")
+          .ilike("emp_razon_social", r.nombre.trim())
+          .limit(1).maybeSingle();
+        if (found?.id) existingId = found.id;
+      }
+      if (existingId) {
+        setDetailId(existingId);
+        return;
+      }
+
+      // 2) Insertar nueva row con prefill
+      const radicado = genRadicado(tipoFormal);
+      const payload = {
+        tipo: tipoFormal,
+        estado: "borrador",
+        radicado,
+        nombre_display: r.nombre,
+        servicio_desc:  r.funcion || null,
+        contacto_principal_cel: r.contacto || "pendiente",
+      };
+      if (tipoFormal === "natural") {
+        payload.nat_nombre  = persona0.nombre || r.nombre;
+        payload.nat_cedula  = persona0.cedula || null;
+        payload.nat_celular = r.contacto || null;
+      } else {
+        payload.emp_razon_social = r.nombre;
+      }
+      const { data: row, error } = await supabase
+        .from("contratistas")
+        .insert(payload)
+        .select("id")
+        .single();
+      if (error) {
+        alert("No se pudo promover: " + error.message);
+        return;
+      }
+
+      // 3) Si empresa, insertar workers de las personas del evento
+      if (tipoFormal === "empresa" && personas.length > 0) {
+        const workers = personas.map(p => ({
+          contratista_id: row.id,
+          nombre: p.nombre,
+          cedula: p.cedula || null,
+          cargo:  p.rol    || null,
+        }));
+        await supabase.from("contratistas_trabajadores").insert(workers);
+      }
+
+      // 4) Recargar y abrir la ficha
+      await load();
+      setDetailId(row.id);
+    } finally {
+      setPromoting(false);
+    }
+  };
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => setAdminUser(data?.user || null));
@@ -375,9 +463,9 @@ export default function ContratistasAdmin() {
                 return [r.nombre, r.evento_nombre, r.contacto, r.cargo].filter(Boolean).some(v => String(v).toLowerCase().includes(q));
               })
               .map(r => (
-              <div key={r.id} onClick={() => setExpressPrefill(r)} style={{ background: B.navyMid, borderRadius: 12, padding: "14px 16px", border: `1px solid ${B.navyLight}`, borderLeft: `4px solid ${r.tipo === "propio" ? B.sky : B.sand}`, cursor: "pointer", transition: "background 0.15s" }}
-                onMouseEnter={e => e.currentTarget.style.background = B.navyLight}
-                onMouseLeave={e => e.currentTarget.style.background = B.navyMid}>
+              <div key={r.id} onClick={() => promoteExpressToFicha(r)} style={{ background: B.navyMid, borderRadius: 12, padding: "14px 16px", border: `1px solid ${B.navyLight}`, borderLeft: `4px solid ${r.tipo === "propio" ? B.sky : B.sand}`, cursor: promoting ? "wait" : "pointer", opacity: promoting ? 0.6 : 1, transition: "background 0.15s" }}
+                onMouseEnter={e => { if (!promoting) e.currentTarget.style.background = B.navyLight; }}
+                onMouseLeave={e => { if (!promoting) e.currentTarget.style.background = B.navyMid; }}>
                 <div style={{ fontSize: 10, fontWeight: 700, color: r.tipo === "propio" ? B.sky : B.sand, textTransform: "uppercase", letterSpacing: 1, marginBottom: 4 }}>
                   ⚡ EXPRESS · {r.tipo === "propio" ? "🏷️ Propio" : "🤝 Externo"}{r.cargo ? ` · ${r.cargo}` : ""}
                 </div>
@@ -407,9 +495,10 @@ export default function ContratistasAdmin() {
                   </div>
                 )}
                 <div style={{ display: "flex", gap: 8, marginTop: 10, paddingTop: 10, borderTop: `1px dashed ${B.navyLight}` }}>
-                  <button onClick={(e) => { e.stopPropagation(); setExpressPrefill(r); }}
-                    style={{ background: B.success, border: "none", color: B.white, padding: "6px 12px", borderRadius: 6, fontSize: 11, fontWeight: 800, cursor: "pointer", flex: 1 }}>
-                    ✓ Completar registro formal
+                  <button onClick={(e) => { e.stopPropagation(); promoteExpressToFicha(r); }}
+                    disabled={promoting}
+                    style={{ background: B.success, border: "none", color: B.white, padding: "6px 12px", borderRadius: 6, fontSize: 11, fontWeight: 800, cursor: promoting ? "wait" : "pointer", flex: 1, opacity: promoting ? 0.6 : 1 }}>
+                    {promoting ? "Abriendo ficha…" : "✓ Abrir ficha y completar"}
                   </button>
                   <a href="#" onClick={(e) => { e.preventDefault(); e.stopPropagation(); window.dispatchEvent(new CustomEvent("atolon-navigate", { detail: { module: "eventos", openEventoId: r.evento_id } })); }}
                     style={{ fontSize: 11, color: B.sky, textDecoration: "none", fontWeight: 700, padding: "6px 12px", border: `1px solid ${B.sky}55`, borderRadius: 6, alignSelf: "center" }}>
@@ -532,15 +621,6 @@ export default function ContratistasAdmin() {
         <ContratistasWizardAsistido
           adminUser={adminUser}
           onClose={() => { setWizardOpen(false); load(); }}
-        />
-      )}
-
-      {/* Wizard asistido pre-cargado con datos de un contratista Express */}
-      {expressPrefill && (
-        <ContratistasWizardAsistido
-          adminUser={adminUser}
-          prefillData={expressPrefill}
-          onClose={() => { setExpressPrefill(null); load(); }}
         />
       )}
 
