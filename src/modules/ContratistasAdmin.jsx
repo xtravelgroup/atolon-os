@@ -112,7 +112,45 @@ export default function ContratistasAdmin() {
       const tipoFormal = personas.length > 1 ? "empresa" : "natural";
       const persona0 = personas[0] || {};
 
-      // 1) Buscar ya existente (evitar duplicados al re-clickear)
+      // Mapeo de campos del Express al schema formal:
+      //   - r.contacto    = nombre del responsable (ej. "JOHANNA TURIZO") → emp_op_nombre
+      //   - r.telefono    = teléfono real → emp_telefono + contacto_principal_cel
+      //   - r.direccion   = dirección → emp_direccion
+      //   - r.descripcion = descripción del servicio → servicio_desc (preferido sobre funcion)
+      //   - r.rut_url     = PDF/imagen RUT → documento tipo="rut"
+      //   - p.arl_url     = ARL de cada persona → documento tipo="arl"
+      const telLooksEmail = !!r.telefono && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(r.telefono);
+      const cel  = (!telLooksEmail && r.telefono) || null;
+      const mail = telLooksEmail ? r.telefono : null;
+      const servicio = r.descripcion || r.funcion || r.cargo || null;
+
+      // Construir payload base con campos comunes
+      const buildPayload = () => {
+        const base = {
+          nombre_display: r.nombre,
+          servicio_desc:  servicio,
+          contacto_principal_cel:   cel || "pendiente",
+          contacto_principal_email: mail || "pendiente@atolon.co",
+          num_trabajadores: tipoFormal === "empresa" ? personas.length : 1,
+        };
+        if (tipoFormal === "natural") {
+          base.nat_nombre  = persona0.nombre || r.nombre;
+          base.nat_cedula  = persona0.cedula || null;
+          base.nat_celular = cel;
+          base.nat_correo  = mail;
+        } else {
+          base.emp_razon_social = r.nombre;
+          base.emp_direccion    = r.direccion || null;
+          base.emp_telefono     = cel;
+          base.emp_op_nombre    = r.contacto || null;        // ahora SÍ es el rep
+          base.emp_op_cargo     = r.cargo || null;
+          base.emp_op_cel       = cel;
+          base.emp_op_correo    = mail;
+        }
+        return base;
+      };
+
+      // 1) Buscar row ya existente (evitar duplicados al re-clickear)
       let existingId = null;
       if (tipoFormal === "natural" && persona0.cedula) {
         const { data: found } = await supabase
@@ -131,96 +169,107 @@ export default function ContratistasAdmin() {
           .limit(1).maybeSingle();
         if (found?.id) existingId = found.id;
       }
+
+      let contratistaId;
       if (existingId) {
-        setDetailId(existingId);
-        return;
-      }
-
-      // 2) Insertar nueva row con TODO el prefill disponible del Express.
-      // contacto_principal_email es NOT NULL en BD; el wizard formal lo pide
-      // en paso 0. Para Express no lo tenemos — usamos placeholder hasta que
-      // el admin lo complete en la ficha.
-      const contactoLooksLikeEmail = !!r.contacto && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(r.contacto);
-      const contactoCel   = (!contactoLooksLikeEmail && r.contacto) || null;
-      const contactoMail  = contactoLooksLikeEmail ? r.contacto : null;
-      const servicioFull  = [r.cargo, r.funcion].filter(Boolean).join(" — ") || null;
-      const radicado = genRadicado(tipoFormal);
-      const payload = {
-        tipo: tipoFormal,
-        estado: "borrador",
-        radicado,
-        nombre_display: r.nombre,
-        servicio_desc:  servicioFull,
-        contacto_principal_cel:   contactoCel || "pendiente",
-        contacto_principal_email: contactoMail || "pendiente@atolon.co",
-        num_trabajadores: tipoFormal === "empresa" ? personas.length : 1,
-      };
-      if (tipoFormal === "natural") {
-        // persona única: replicar todos los datos disponibles
-        payload.nat_nombre  = persona0.nombre || r.nombre;
-        payload.nat_cedula  = persona0.cedula || null;
-        payload.nat_celular = contactoCel;
-        payload.nat_correo  = contactoMail;
+        // 2a) ENRICH: traer row existente y completar SOLO los campos vacíos
+        contratistaId = existingId;
+        const { data: cur } = await supabase
+          .from("contratistas")
+          .select("*")
+          .eq("id", existingId)
+          .single();
+        const updatePayload = {};
+        const enrich = buildPayload();
+        Object.entries(enrich).forEach(([k, v]) => {
+          if (v == null || v === "" || v === "pendiente" || v === "pendiente@atolon.co") return;
+          // Solo sobrescribir si el campo actual está vacío/pendiente (no pisar lo que el admin ya editó)
+          const cv = cur?.[k];
+          const empty = cv == null || cv === "" || cv === "pendiente" || cv === "pendiente@atolon.co";
+          if (empty) updatePayload[k] = v;
+        });
+        if (Object.keys(updatePayload).length > 0) {
+          await supabase.from("contratistas").update(updatePayload).eq("id", existingId);
+        }
       } else {
-        // empresa: razón social + contactos + operativo (mismo contacto)
-        payload.emp_razon_social = r.nombre;
-        // El responsable legal y operativo: si no tenemos info separada,
-        // usamos el mismo contacto que el principal — el admin lo separará.
-        payload.emp_op_nombre  = r.nombre;          // placeholder; admin edita
-        payload.emp_op_cargo   = r.cargo || null;
-        payload.emp_op_cel     = contactoCel;
-        payload.emp_op_correo  = contactoMail;
-      }
-      const { data: row, error } = await supabase
-        .from("contratistas")
-        .insert(payload)
-        .select("id")
-        .single();
-      if (error) {
-        alert("No se pudo promover: " + error.message);
-        return;
+        // 2b) INSERT: nuevo borrador
+        const payload = { ...buildPayload(), tipo: tipoFormal, estado: "borrador", radicado: genRadicado(tipoFormal) };
+        const { data: row, error } = await supabase
+          .from("contratistas")
+          .insert(payload)
+          .select("id")
+          .single();
+        if (error) { alert("No se pudo promover: " + error.message); return; }
+        contratistaId = row.id;
       }
 
-      // 3) Si empresa, insertar workers de las personas del evento.
-      //    Capturamos los IDs generados para vincular ARL docs después.
+      // 3) Workers: si empresa, insertar las personas que no estén ya
       let workersInserted = [];
       if (tipoFormal === "empresa" && personas.length > 0) {
-        const workers = personas.map(p => ({
-          contratista_id: row.id,
-          nombre: p.nombre,
-          cedula: p.cedula || null,
-          cargo:  p.rol    || null,
-        }));
-        const { data: ws } = await supabase
+        const { data: existingWs } = await supabase
           .from("contratistas_trabajadores")
-          .insert(workers)
-          .select("id, cedula, nombre");
-        workersInserted = ws || [];
+          .select("id, cedula, nombre")
+          .eq("contratista_id", contratistaId);
+        const existsByCed = new Map((existingWs || []).filter(w => w.cedula).map(w => [String(w.cedula).trim(), w]));
+        workersInserted = [...(existingWs || [])];
+        const toInsert = [];
+        personas.forEach(p => {
+          const ced = p.cedula ? String(p.cedula).trim() : null;
+          if (ced && existsByCed.has(ced)) return;  // ya existe
+          toInsert.push({ contratista_id: contratistaId, nombre: p.nombre, cedula: ced, cargo: p.rol || null });
+        });
+        if (toInsert.length > 0) {
+          const { data: ws } = await supabase
+            .from("contratistas_trabajadores")
+            .insert(toInsert)
+            .select("id, cedula, nombre");
+          workersInserted = [...workersInserted, ...(ws || [])];
+        }
       }
 
-      // 4) Copiar ARLs de cada persona del Express como contratistas_documentos
-      //    tipo "arl" — así la ficha del DetailModal las ve listadas como
-      //    documentos ya cargados (no toca re-subir).
+      // 4) Documentos: RUT (a nivel contratista) + ARLs (por persona)
+      const { data: existingDocs } = await supabase
+        .from("contratistas_documentos")
+        .select("tipo, trabajador_id, storage_path")
+        .eq("contratista_id", contratistaId);
+      const docsExisten = new Set((existingDocs || []).map(d => `${d.tipo}:${d.trabajador_id || "-"}:${d.storage_path}`));
       const docsToInsert = [];
+
+      // RUT a nivel empresa (solo empresas)
+      if (tipoFormal === "empresa" && r.rut_url) {
+        const key = `rut:-:${r.rut_url}`;
+        if (!docsExisten.has(key)) {
+          docsToInsert.push({
+            contratista_id: contratistaId,
+            trabajador_id:  null,
+            tipo: "rut",
+            nombre_original: `RUT - ${r.nombre}.pdf`,
+            storage_path: r.rut_url,
+            validado: false,
+          });
+        }
+      }
+
+      // ARLs por persona
       personas.forEach((p, idx) => {
         if (!p.arl_url) return;
-        // En natural: el doc va al contratista directo (no a trabajador)
-        // En empresa: lo vinculamos al trabajador correspondiente
         let trabajadorId = null;
         if (tipoFormal === "empresa") {
+          const ced = p.cedula ? String(p.cedula).trim() : null;
           const match = workersInserted.find(w =>
-            (p.cedula && w.cedula === p.cedula) ||
-            (!p.cedula && w.nombre === p.nombre)
+            (ced && String(w.cedula || "").trim() === ced) || (!ced && w.nombre === p.nombre)
           );
           trabajadorId = match?.id || null;
         }
+        const key = `arl:${trabajadorId || "-"}:${p.arl_url}`;
+        if (docsExisten.has(key)) return;
         docsToInsert.push({
-          contratista_id: row.id,
+          contratista_id: contratistaId,
           trabajador_id:  trabajadorId,
           tipo: "arl",
           nombre_original: `ARL - ${p.nombre || `Persona ${idx + 1}`}.${p.arl_url.split(".").pop() || "pdf"}`,
-          storage_path: p.arl_url,  // guardamos URL pública como path (legacy del evento)
-          validado: !!p.arl_verificado_url,  // si el admin ya verificó en Express, queda marcado
+          storage_path: p.arl_url,
+          validado: !!p.arl_verificado_url,
           validado_por: p.arl_verificado_by || null,
           validado_at:  p.arl_verificado_at  || null,
         });
@@ -229,9 +278,9 @@ export default function ContratistasAdmin() {
         await supabase.from("contratistas_documentos").insert(docsToInsert);
       }
 
-      // 4) Recargar y abrir la ficha
+      // 5) Recargar y abrir la ficha
       await load();
-      setDetailId(row.id);
+      setDetailId(contratistaId);
     } finally {
       setPromoting(false);
     }
@@ -359,7 +408,11 @@ export default function ContratistasAdmin() {
           tipo: c.tipo,            // "propio" | "externo"
           cargo: c.cargo,
           funcion: c.funcion,
-          contacto: c.contacto,
+          contacto: c.contacto,      // nombre del responsable (ej. JOHANNA TURIZO)
+          telefono: c.telefono,      // teléfono real (separado del nombre)
+          direccion: c.direccion,
+          descripcion: c.descripcion,
+          rut_url: c.rut_url,        // PDF/imagen del RUT (registro express)
           costo: c.costo,
           personas: c.personas || [],
           notas: c.notas,
