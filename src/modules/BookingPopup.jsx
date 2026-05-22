@@ -227,7 +227,7 @@ export default function BookingPopup() {
 
   // Support both /booking?tipo=after-island and /booking/after-island
   const pathSlug = window.location.pathname.replace(/^\/booking\/?/, "").split("?")[0] || "";
-  const tipoQ   = params.get("tipo") || pathSlug || "";
+  const tipoQ   = (params.get("tipo") || pathSlug || "").trim();
   const grupoQ  = params.get("grupo") || "";   // grupo mode: EVT-xxx
   const recoveryTokenQ = params.get("r") || "";  // Recovery link token
   // Auto-detect device language if ?lang= not explicitly set
@@ -244,7 +244,15 @@ export default function BookingPopup() {
     window.history.replaceState(null, "", "?" + sp.toString());
   };
 
-  const matchedProduct = PRODUCTS.find(p => p.slug === tipoQ || p.tipo === tipoQ) || null;
+  // Match del producto desde el deep-link. Case-insensitive + normaliza
+  // separadores (espacio/guión) para que cualquier variante del link de
+  // marketing registre el paquete: vip-pass, VIP-PASS, "VIP Pass", vip_pass…
+  const matchedProduct = (() => {
+    if (!tipoQ) return null;
+    const norm = (s) => String(s || "").toLowerCase().replace(/[\s_]+/g, "-").trim();
+    const q = norm(tipoQ);
+    return PRODUCTS.find(p => norm(p.slug) === q || norm(p.tipo) === q) || null;
+  })();
 
   const [product,    setProduct]   = useState(matchedProduct);
   const [grupoEvt,   setGrupoEvt]  = useState(null);  // the group event record
