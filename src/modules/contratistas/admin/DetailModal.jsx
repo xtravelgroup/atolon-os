@@ -129,10 +129,16 @@ export default function DetailModal({ contratistaId, adminUser, onClose, onChang
         setCerts([]);
       }
 
-      // Firmar URLs de documentos
+      // Firmar URLs de documentos. Algunos docs (los promovidos desde Express)
+      // ya tienen storage_path = URL pública absoluta de otro bucket (b2b-docs).
+      // En ese caso usar la URL directa sin firmar.
       const urls = {};
       await Promise.all((dRes.data || []).map(async (d) => {
         try {
+          if (/^https?:\/\//i.test(d.storage_path)) {
+            urls[d.id] = d.storage_path;  // URL pública absoluta, no requiere firma
+            return;
+          }
           const { data: s } = await supabase.storage.from("contratistas-docs").createSignedUrl(d.storage_path, 3600);
           if (s?.signedUrl) urls[d.id] = s.signedUrl;
         } catch { /* ignore */ }
