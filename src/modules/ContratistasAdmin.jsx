@@ -94,6 +94,8 @@ export default function ContratistasAdmin() {
   const [expressRows, setExpressRows] = useState([]); // contratistas flatten-eados de eventos.contratistas JSON
   const [promoting, setPromoting] = useState(false);   // estado de "creando ficha desde Express"
   const [verifyingKey, setVerifyingKey] = useState(""); // "evento_id:ctr_id:persona_idx" mientras sube archivo
+  const [rejectingKey, setRejectingKey] = useState(""); // misma key, mientras se escribe el motivo
+  const [rejectMotivo, setRejectMotivo] = useState("");
 
   // Promueve un contratista Express (inline de eventos.contratistas) a la
   // tabla formal `contratistas` con estado="borrador" y abre la ficha
@@ -350,6 +352,42 @@ export default function ContratistasAdmin() {
       if (updErr) { alert("Error guardando verificación: " + updErr.message); return; }
 
       // 3) Recargar express rows
+      await load();
+    } finally {
+      setVerifyingKey("");
+    }
+  };
+
+  // Marca una verificación de ARL Express como RECHAZADA (ej. póliza vencida).
+  // Limpia arl_verificado_* y graba arl_rechazo_motivo/_at/_por en el JSON
+  // de eventos.contratistas[<ctr>].personas[<i>]. La persona pierde el
+  // "Acceso autorizado" hasta que el admin re-verifique con un doc nuevo.
+  const rechazarVerificacionArl = async (expressRow, personaIdx, motivo) => {
+    if (!motivo?.trim() || !supabase) return;
+    const key = `${expressRow.evento_id}:${expressRow.id}:${personaIdx}`;
+    setVerifyingKey(key);
+    try {
+      const { data: ev } = await supabase.from("eventos").select("contratistas").eq("id", expressRow.evento_id).maybeSingle();
+      const ctrs = Array.isArray(ev?.contratistas) ? ev.contratistas : [];
+      const ctrIdRaw = expressRow.id.startsWith("evt:") ? expressRow.id.split(":").slice(2).join(":") : expressRow.id;
+      const updated = ctrs.map(c => {
+        if ((c.id || c.nombre) !== ctrIdRaw) return c;
+        const personas = Array.isArray(c.personas) ? [...c.personas] : [];
+        if (!personas[personaIdx]) return c;
+        personas[personaIdx] = {
+          ...personas[personaIdx],
+          arl_verificado_url: null,   // pierde el acceso autorizado
+          arl_verificado_at:  null,
+          arl_verificado_by:  null,
+          arl_rechazo_motivo: motivo.trim(),
+          arl_rechazo_at:     new Date().toISOString(),
+          arl_rechazo_por:    adminUser?.email || null,
+        };
+        return { ...c, personas };
+      });
+      const { error } = await supabase.from("eventos").update({ contratistas: updated }).eq("id", expressRow.evento_id);
+      if (error) { alert("Error guardando rechazo: " + error.message); return; }
+      setRejectingKey(""); setRejectMotivo("");
       await load();
     } finally {
       setVerifyingKey("");
@@ -662,7 +700,9 @@ export default function ContratistasAdmin() {
                     {r.personas.map((p, i) => {
                       const vKey = `${r.evento_id}:${r.id}:${i}`;
                       const verifying = verifyingKey === vKey;
-                      const verified = !!p.arl_verificado_url;
+                      const verified  = !!p.arl_verificado_url;
+                      const rejected  = !!p.arl_rechazo_motivo;
+                      const isRejectingThis = rejectingKey === vKey;
                       return (
                         <div key={i} style={{ fontSize: 11, color: "rgba(255,255,255,0.7)", padding: "5px 0", borderTop: i > 0 ? `1px solid rgba(255,255,255,0.04)` : "none" }}>
                           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 6 }}>
@@ -676,23 +716,65 @@ export default function ContratistasAdmin() {
                               </a>
                             )}
                           </div>
-                          {/* Verificación admin — controla acceso a Atolon para esta persona */}
-                          <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4 }} onClick={e => e.stopPropagation()}>
+                          {/* Verificación admin — controla acceso a Atolón para esta persona.
+                              3 estados: Verificada | Rechazada | Sin verificar. */}
+                          <div style={{ marginTop: 4 }} onClick={e => e.stopPropagation()}>
                             {verified ? (
-                              <>
+                              <div style={{ display: "flex", gap: 4 }}>
                                 <a href={p.arl_verificado_url} target="_blank" rel="noreferrer"
                                   title={`Verificada por ${p.arl_verificado_by || "admin"} el ${p.arl_verificado_at ? fmt(p.arl_verificado_at) : "—"}`}
                                   style={{ flex: 1, fontSize: 10, fontWeight: 800, color: B.success, background: B.success + "18", border: `1px solid ${B.success}55`, borderRadius: 5, padding: "3px 8px", textAlign: "center", textDecoration: "none" }}>
                                   ✓ Verificada · Acceso autorizado
                                 </a>
-                              </>
+                                <button onClick={() => { setRejectingKey(vKey); setRejectMotivo(""); }}
+                                  disabled={verifying}
+                                  title="Rechazar (ej. póliza vencida)"
+                                  style={{ fontSize: 10, fontWeight: 700, color: B.danger, background: "transparent", border: `1px solid ${B.danger}55`, borderRadius: 5, padding: "3px 8px", cursor: verifying ? "wait" : "pointer" }}>
+                                  ✗
+                                </button>
+                              </div>
+                            ) : rejected ? (
+                              <div>
+                                <div style={{ fontSize: 10, fontWeight: 800, color: B.danger, background: B.danger + "18", border: `1px solid ${B.danger}55`, borderRadius: 5, padding: "3px 8px" }}>
+                                  ✗ Rechazada · {p.arl_rechazo_motivo}
+                                  {p.arl_rechazo_at && (
+                                    <span style={{ opacity: 0.7, fontWeight: 400 }}> · {fmt(p.arl_rechazo_at)}</span>
+                                  )}
+                                </div>
+                                <label style={{ display: "block", marginTop: 4, fontSize: 10, fontWeight: 700, color: B.sand, background: B.navy, border: `1px dashed ${B.sand}55`, borderRadius: 5, padding: "3px 8px", textAlign: "center", cursor: verifying ? "wait" : "pointer" }}>
+                                  {verifying ? "Subiendo…" : "📎 Re-verificar ARL (subir nuevo)"}
+                                  <input type="file" accept="image/*,application/pdf" style={{ display: "none" }}
+                                    disabled={verifying}
+                                    onChange={e => { const f = e.target.files?.[0]; if (f) uploadVerificacionArl(r, i, f); e.target.value = ""; }} />
+                                </label>
+                              </div>
                             ) : (
-                              <label style={{ flex: 1, fontSize: 10, fontWeight: 700, color: B.sand, background: B.navy, border: `1px dashed ${B.sand}55`, borderRadius: 5, padding: "3px 8px", textAlign: "center", cursor: verifying ? "wait" : "pointer", display: "block" }}>
+                              <label style={{ display: "block", fontSize: 10, fontWeight: 700, color: B.sand, background: B.navy, border: `1px dashed ${B.sand}55`, borderRadius: 5, padding: "3px 8px", textAlign: "center", cursor: verifying ? "wait" : "pointer" }}>
                                 {verifying ? "Subiendo…" : "📎 Verificar ARL"}
                                 <input type="file" accept="image/*,application/pdf" style={{ display: "none" }}
                                   disabled={verifying}
                                   onChange={e => { const f = e.target.files?.[0]; if (f) uploadVerificacionArl(r, i, f); e.target.value = ""; }} />
                               </label>
+                            )}
+                            {/* Form inline para motivo de rechazo */}
+                            {isRejectingThis && (
+                              <div style={{ marginTop: 6, padding: 8, background: B.danger + "11", border: `1px solid ${B.danger}33`, borderRadius: 5 }}>
+                                <div style={{ fontSize: 9, fontWeight: 700, color: B.danger, textTransform: "uppercase", letterSpacing: 1, marginBottom: 4 }}>Motivo del rechazo</div>
+                                <textarea value={rejectMotivo} onChange={e => setRejectMotivo(e.target.value)} rows={2}
+                                  placeholder="Ej: Póliza vencida (fecha fin 22/05/2026)"
+                                  style={{ width: "100%", padding: "5px 8px", borderRadius: 4, background: B.navy, border: `1px solid ${B.navyLight}`, color: "#fff", fontSize: 11, outline: "none", resize: "vertical", boxSizing: "border-box", fontFamily: "inherit" }} />
+                                <div style={{ display: "flex", gap: 4, marginTop: 6 }}>
+                                  <button onClick={() => rechazarVerificacionArl(r, i, rejectMotivo)}
+                                    disabled={verifying || !rejectMotivo.trim()}
+                                    style={{ flex: 1, padding: "4px 8px", background: B.danger, color: "#fff", border: "none", borderRadius: 4, fontSize: 10, fontWeight: 700, cursor: (verifying || !rejectMotivo.trim()) ? "not-allowed" : "pointer", opacity: (verifying || !rejectMotivo.trim()) ? 0.6 : 1 }}>
+                                    Confirmar
+                                  </button>
+                                  <button onClick={() => { setRejectingKey(""); setRejectMotivo(""); }}
+                                    style={{ padding: "4px 8px", background: "transparent", color: "rgba(255,255,255,0.6)", border: `1px solid ${B.navyLight}`, borderRadius: 4, fontSize: 10, fontWeight: 700, cursor: "pointer" }}>
+                                    Cancelar
+                                  </button>
+                                </div>
+                              </div>
                             )}
                           </div>
                         </div>
