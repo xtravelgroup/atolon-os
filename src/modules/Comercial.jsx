@@ -851,7 +851,8 @@ function LeadDetail({ lead, onClose, onUpdateEtapa }) {
               ["Teléfono", lead.tel],
               ["Vendedor", lead.vendedor],
               ["Valor Estimado", COP(lead.valorEstimado)],
-              ["Días en pipeline", lead.diasEtapa],
+              ["Días en etapa actual", lead.diasEtapa],
+              ["Días en pipeline", lead.diasPipeline],
               ["Próxima acción", lead.proximaAccion !== "—" ? lead.proximaAccion : null],
               ...(lead.fechaPago ? [["Fecha de pago", lead.fechaPago]] : []),
             ].filter(([, v]) => v != null && v !== "").map(([k, v]) => (
@@ -947,11 +948,18 @@ export default function Comercial() {
         vendedor: r.vendedor,
         valorEstimado: r.valor_est || 0,
         etapa: r.stage,
-        // Días en etapa = diferencia de días-calendario en Bogotá. Antes se
-        // restaba Date.now() (UTC) menos new Date("YYYY-MM-DD") (medianoche
-        // UTC), así un lead creado HOY por la tarde en Bogotá (UTC-5) ya
-        // mostraba "1". Ahora se comparan fechas-calendario Bogotá.
-        diasEtapa: r.fecha_creacion
+        // Días en etapa = días-calendario en Bogotá desde que el lead entró
+        // a su etapa ACTUAL (fecha_cambio_etapa, sellada por trigger de BD
+        // cada vez que cambia `stage`). Antes se usaba fecha_creacion, así un
+        // lead creado hace días que recién cambió de etapa hoy mostraba >0.
+        // Fallback a fecha_creacion para filas viejas sin el campo.
+        diasEtapa: (r.fecha_cambio_etapa || r.fecha_creacion)
+          ? Math.max(0, Math.floor(
+              (Date.parse(hoyBogota() + "T00:00:00Z")
+               - Date.parse(String(r.fecha_cambio_etapa || r.fecha_creacion).slice(0, 10) + "T00:00:00Z")) / 86400000))
+          : 0,
+        // Días en pipeline = total desde la creación del lead (para el detalle).
+        diasPipeline: r.fecha_creacion
           ? Math.max(0, Math.floor(
               (Date.parse(hoyBogota() + "T00:00:00Z")
                - Date.parse(String(r.fecha_creacion).slice(0, 10) + "T00:00:00Z")) / 86400000))
