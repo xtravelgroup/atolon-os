@@ -1776,13 +1776,23 @@ function TabContratistas({ items, onChange, eventoId, evento }) {
                         {p.rol ? ` · ${p.rol}` : ""}
                       </span>
                     </span>
-                    {p.arl_url ? (
-                      <a href={p.arl_url} target="_blank" rel="noreferrer" title="Ver ARL adjunta"
+                    {/* Verde "ARL ✓" SOLO si admin verificó (arl_verificado_url).
+                        Si solo está subida por el organizador → "Pendiente" (naranja).
+                        Si no hay nada → "sin ARL" (rojo). */}
+                    {p.arl_verificado_url ? (
+                      <a href={p.arl_verificado_url} target="_blank" rel="noreferrer"
+                        title={`Verificada por ${p.arl_verificado_by || "admin"}${p.arl_verificado_at ? " · " + new Date(p.arl_verificado_at).toLocaleDateString("es-CO") : ""}`}
                         style={{ color: B.success, textDecoration: "none", fontSize: 10, fontWeight: 700, border: `1px solid ${B.success}55`, borderRadius: 5, padding: "1px 6px" }}>
                         ARL ✓
                       </a>
+                    ) : p.arl_url ? (
+                      <a href={p.arl_url} target="_blank" rel="noreferrer"
+                        title="ARL subida — pendiente de verificación por admin"
+                        style={{ color: B.warning, textDecoration: "none", fontSize: 10, fontWeight: 700, border: `1px solid ${B.warning}55`, borderRadius: 5, padding: "1px 6px" }}>
+                        Pendiente
+                      </a>
                     ) : (
-                      <span style={{ color: B.warning, fontSize: 10, fontWeight: 700, border: `1px solid ${B.warning}55`, borderRadius: 5, padding: "1px 6px" }}>sin ARL</span>
+                      <span style={{ color: B.danger, fontSize: 10, fontWeight: 700, border: `1px solid ${B.danger}55`, borderRadius: 5, padding: "1px 6px" }}>sin ARL</span>
                     )}
                   </div>
                 ))}
