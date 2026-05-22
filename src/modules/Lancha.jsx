@@ -1007,52 +1007,69 @@ function CombustibleTab({ items, viajesPorFecha, costoPorViaje, onEdit, onDelete
     }));
   }, [viajesPorFecha]);
 
-  // Recargas con consumo FIFO: cada viaje consume primero la recarga MÁS
-  // ANTIGUA que todavía tenga cupo. Una recarga nueva NO empieza a gastarse
-  // hasta que la anterior se agota — aunque la nueva ya esté registrada.
-  // Restricción: un viaje solo puede consumir recargas cuya fecha sea ≤ la
-  // fecha del viaje (no se gasta combustible que aún no se compró).
+  // Recargas con consumo en DOS eras separadas por una fecha de corte:
+  //   · ANTES del corte (< FIFO_DESDE): lógica histórica de ventana de fecha.
+  //     Cada recarga consume los viajes en [su fecha, fecha siguiente recarga
+  //     o el corte). Queda congelada — no se re-organiza.
+  //   · DESDE el corte (≥ FIFO_DESDE): consumo FIFO — cada viaje consume
+  //     primero la recarga más antigua con cupo. Una recarga nueva no arranca
+  //     hasta que la anterior se agota.
+  // El corte (domingo 17-may-2026) lo pidió el usuario: las recargas previas
+  // ya estaban correctas, FIFO solo organiza de ahí en adelante.
   const recargas = useMemo(() => {
+    const FIFO_DESDE = "2026-05-17";
     const dOf = (r) => (r.fecha || "").slice(0, 10);
     const asc = [...(items || [])].sort((a, b) =>
       dOf(a).localeCompare(dOf(b)) || (a.hora || "").localeCompare(b.hora || "")
     );
-    // Cada recarga: capacidad en viajes ida y vuelta, consumido arranca en 0
     const recs = asc.map(r => ({
       ...r,
       _d: dOf(r),
       capacidad: Math.max(1, Math.round(Number(r.costo_total || 0) / costoViajeEfectivo)),
       consumido: 0,
     }));
-    // Viajes en orden cronológico
     const viajesAsc = [...(consumoPorDia || [])]
       .filter(x => x.fecha && x.viajes > 0)
       .sort((a, b) => a.fecha.localeCompare(b.fecha));
-    // FIFO: distribuir cada viaje a la recarga elegible más antigua con cupo
-    for (const v of viajesAsc) {
+
+    // ── Era PRE-corte: ventana de fecha (lógica histórica congelada) ──
+    const recsPre = recs.filter(r => r._d < FIFO_DESDE);
+    recsPre.forEach((r, i) => {
+      const next = recsPre[i + 1];
+      const dEnd = next ? next._d : FIFO_DESDE;  // la ventana nunca pasa el corte
+      r.consumido = viajesAsc
+        .filter(x => x.fecha >= r._d && x.fecha < dEnd)
+        .reduce((s, x) => s + x.viajes, 0);
+    });
+
+    // ── Era FIFO: recargas y viajes desde el corte ──
+    const recsFifo  = recs.filter(r => r._d >= FIFO_DESDE);
+    const viajesFifo = viajesAsc.filter(x => x.fecha >= FIFO_DESDE);
+    for (const v of viajesFifo) {
       let pend = v.viajes;
       while (pend > 0) {
-        const idx = recs.findIndex(rc => rc._d <= v.fecha && rc.consumido < rc.capacidad);
+        const idx = recsFifo.findIndex(rc => rc._d <= v.fecha && rc.consumido < rc.capacidad);
         if (idx === -1) {
-          // Todas las recargas elegibles llenas → overflow a la última elegible
+          // Todas las recargas FIFO elegibles llenas → overflow a la última
           // (señal de sobre-consumo: gastaste más de lo que recargaste)
           let lastElig = null;
-          for (const rc of recs) { if (rc._d <= v.fecha) lastElig = rc; }
-          if (!lastElig) break; // viaje antes de cualquier recarga → no atribuible
+          for (const rc of recsFifo) { if (rc._d <= v.fecha) lastElig = rc; }
+          if (!lastElig) break; // viaje sin recarga FIFO previa → no atribuible
           lastElig.consumido += pend;
           pend = 0;
           break;
         }
-        const rc = recs[idx];
+        const rc = recsFifo[idx];
         const toma = Math.min(rc.capacidad - rc.consumido, pend);
         rc.consumido += toma;
         pend -= toma;
       }
     }
-    // "ACTUAL" = la recarga más antigua que todavía tiene cupo (la que se
-    // está consumiendo ahora). Si todas están agotadas → la más reciente.
-    const activaIdx = recs.findIndex(rc => rc.consumido < rc.capacidad);
-    const activaId = activaIdx >= 0 ? recs[activaIdx].id : recs[recs.length - 1]?.id;
+
+    // "ACTUAL" = la recarga FIFO más antigua con cupo (la que se consume hoy).
+    // Si todas las FIFO están llenas → la más reciente de todas.
+    const activaFifo = recsFifo.find(rc => rc.consumido < rc.capacidad);
+    const activaId = activaFifo?.id || recs[recs.length - 1]?.id;
     return recs.map(r => {
       const restante = Math.max(0, r.capacidad - r.consumido);
       const pct = r.capacidad > 0 ? Math.min(100, (r.consumido / r.capacidad) * 100) : 0;
