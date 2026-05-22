@@ -557,6 +557,50 @@ function DocumentosTab({ docs, urls, uploadList, contratistaId, adminUser, onCha
     }
   };
 
+  // Rechazar / revertir rechazo — disponible incluso si el doc ya estaba
+  // aprobado (caso real: certificado de ARL Sura aprobado pero la póliza ya
+  // se venció y el admin necesita pedir uno nuevo).
+  const [rejectingId, setRejectingId] = useState(null);
+  const [motivoText, setMotivoText] = useState("");
+
+  const marcarRechazado = async (existingDoc) => {
+    if (!motivoText.trim()) { setErrorMsg("Escriba el motivo del rechazo"); return; }
+    setBusyId(existingDoc.id);
+    setErrorMsg("");
+    try {
+      const { error } = await supabase.from("contratistas_documentos").update({
+        rechazado: true,
+        motivo_rechazo: motivoText.trim(),
+        rechazado_por: adminUser?.email || adminUser?.nombre || "admin",
+        rechazado_at:  new Date().toISOString(),
+        validado: false,
+      }).eq("id", existingDoc.id);
+      if (error) throw error;
+      setRejectingId(null); setMotivoText("");
+      await onChanged?.();
+    } catch (err) {
+      setErrorMsg(err.message || String(err));
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const revertirRechazo = async (existingDoc) => {
+    setBusyId(existingDoc.id);
+    setErrorMsg("");
+    try {
+      const { error } = await supabase.from("contratistas_documentos").update({
+        rechazado: false, motivo_rechazo: null, rechazado_por: null, rechazado_at: null,
+      }).eq("id", existingDoc.id);
+      if (error) throw error;
+      await onChanged?.();
+    } catch (err) {
+      setErrorMsg(err.message || String(err));
+    } finally {
+      setBusyId(null);
+    }
+  };
+
   return (
     <div>
       <div style={{ fontSize: 12, color: "rgba(255,255,255,0.55)", marginBottom: 12, display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
@@ -590,8 +634,16 @@ function DocumentosTab({ docs, urls, uploadList, contratistaId, adminUser, onCha
                   </div>
                 )}
                 {doc && (
-                  <div style={{ fontSize: 11, color: B.success, marginTop: 4, fontWeight: 600 }}>
-                    ✓ {doc.nombre_original} · {(doc.size_bytes / 1024).toFixed(0)} KB
+                  <div style={{ fontSize: 11, color: doc.rechazado ? B.danger : B.success, marginTop: 4, fontWeight: 600 }}>
+                    {doc.rechazado ? "✗" : "✓"} {doc.nombre_original} · {(doc.size_bytes / 1024).toFixed(0)} KB
+                  </div>
+                )}
+                {doc?.rechazado && doc.motivo_rechazo && (
+                  <div style={{ fontSize: 11, color: "#fca5a5", background: B.danger + "11", border: `1px solid ${B.danger}33`, borderRadius: 6, padding: "4px 8px", marginTop: 6 }}>
+                    <span style={{ fontWeight: 700 }}>Rechazado:</span> {doc.motivo_rechazo}
+                    {doc.rechazado_at && (
+                      <span style={{ opacity: 0.6 }}> · por {doc.rechazado_por || "admin"} · {new Date(doc.rechazado_at).toLocaleDateString("es-CO")}</span>
+                    )}
                   </div>
                 )}
               </div>
@@ -635,6 +687,30 @@ function DocumentosTab({ docs, urls, uploadList, contratistaId, adminUser, onCha
                       e.target.value = "";
                     }} />
                 </label>
+                {doc && !doc.rechazado && (
+                  <button
+                    type="button"
+                    onClick={() => { setRejectingId(doc.id); setMotivoText(""); setErrorMsg(""); }}
+                    disabled={busy}
+                    title="Rechazar (ej. póliza vencida, datos incorrectos)"
+                    style={{
+                      padding: "6px 10px", background: "transparent", color: B.warning,
+                      border: `1px solid ${B.warning}55`, borderRadius: 6, fontSize: 11, fontWeight: 700,
+                      cursor: busy ? "wait" : "pointer", opacity: busy ? 0.6 : 1,
+                    }}>
+                    ❌ Rechazar
+                  </button>
+                )}
+                {doc?.rechazado && (
+                  <button type="button" onClick={() => revertirRechazo(doc)} disabled={busy}
+                    style={{
+                      padding: "6px 10px", background: "transparent", color: B.sand,
+                      border: `1px solid ${B.sand}55`, borderRadius: 6, fontSize: 11, fontWeight: 700,
+                      cursor: busy ? "wait" : "pointer", opacity: busy ? 0.6 : 1,
+                    }}>
+                    ↺ Revertir rechazo
+                  </button>
+                )}
                 {doc && (
                   <button
                     type="button"
@@ -650,6 +726,25 @@ function DocumentosTab({ docs, urls, uploadList, contratistaId, adminUser, onCha
                   </button>
                 )}
               </div>
+              {/* Form de motivo de rechazo — aparece debajo del row cuando se hace click */}
+              {doc && rejectingId === doc.id && (
+                <div style={{ flexBasis: "100%", marginTop: 10, padding: 10, background: B.danger + "11", border: `1px solid ${B.danger}33`, borderRadius: 6 }}>
+                  <div style={{ fontSize: 11, color: B.danger, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>Motivo del rechazo</div>
+                  <textarea value={motivoText} onChange={e => setMotivoText(e.target.value)} rows={2}
+                    placeholder="Ej: Póliza vencida (constancia muestra fecha fin 22/05/2026), cédula no coincide, ilegible..."
+                    style={{ width: "100%", padding: "8px 10px", borderRadius: 6, background: B.navy, border: `1px solid ${B.navyLight}`, color: B.white, fontSize: 12, outline: "none", resize: "vertical", boxSizing: "border-box", fontFamily: "inherit" }} />
+                  <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+                    <button onClick={() => marcarRechazado(doc)} disabled={busy || !motivoText.trim()}
+                      style={{ flex: 1, padding: "6px 12px", background: B.danger, color: B.white, border: "none", borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: (busy || !motivoText.trim()) ? "not-allowed" : "pointer", opacity: (busy || !motivoText.trim()) ? 0.6 : 1 }}>
+                      {busy ? "Rechazando…" : "Confirmar rechazo"}
+                    </button>
+                    <button onClick={() => { setRejectingId(null); setMotivoText(""); }}
+                      style={{ padding: "6px 12px", background: "transparent", color: "rgba(255,255,255,0.6)", border: `1px solid ${B.navyLight}`, borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
+                      Cancelar
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           );
         })}
