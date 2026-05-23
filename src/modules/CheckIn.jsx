@@ -508,86 +508,187 @@ function EmbarcacionRentadaModal({ onClose, onSaved }) {
 // Misma idea que ColaboradoresModal pero para pasajeros que van a Blue Apple
 // (no a Atolón). NO cuentan como pasadía pero SÍ ocupan cupo en la lancha
 // y aparecen en el zarpe junto a nuestros pasajeros.
+//
+// Flujo:
+//  1) Admin entra cuántos pasajeros van a Blue Apple (count)
+//  2) Sistema genera token + link público + QR para compartir con Blue Apple
+//  3) Blue Apple llena los datos remoto, o el admin los puede entrar manual
+//
+// La ruta pública es /blueapple-pax?d=<despacho_id>&t=<token>
 function BlueAppleModal({ salidaId, fecha, despacho, embarcaciones = [], onClose, onSaved }) {
   const defaultEmb = embarcaciones.find(e => e.id === "EMB-BLUEAPPLE")?.nombre
     || embarcaciones[0]?.nombre || "";
-  const init = despacho?.pasajeros_blueapple?.length > 0
-    ? despacho.pasajeros_blueapple
-    : [{ nombre: "", cedula: "", nacionalidad: "", embarcacion: defaultEmb }];
-  const [paxs, setPaxs] = useState(init);
-  const [saving, setSaving] = useState(false);
 
-  const set = (i, k, v) => setPaxs(p => p.map((x, j) => j === i ? { ...x, [k]: v } : x));
-  const add = () => setPaxs(p => [...p, { nombre: "", cedula: "", nacionalidad: "", embarcacion: defaultEmb }]);
-  const remove = (i) => setPaxs(p => p.filter((_, j) => j !== i));
+  // Si ya hay un despacho con token + count o pax cargados → ir directo a paso 2
+  const tieneSetup = !!(despacho?.blueapple_token || despacho?.pasajeros_blueapple?.length);
+  const [step, setStep] = useState(tieneSetup ? 2 : 1);
+  const [countInput, setCountInput] = useState(despacho?.blueapple_count_esperado || 1);
+  const [embInput, setEmbInput] = useState(defaultEmb);
+  const [paxs, setPaxs] = useState(
+    despacho?.pasajeros_blueapple?.length > 0
+      ? despacho.pasajeros_blueapple
+      : Array.from({ length: despacho?.blueapple_count_esperado || 1 }, () => ({ nombre: "", cedula: "", nacionalidad: "", embarcacion: defaultEmb }))
+  );
+  const [token, setToken] = useState(despacho?.blueapple_token || "");
+  const [busy, setBusy] = useState(false);
 
-  const save = async () => {
-    setSaving(true);
-    const filtered = paxs.filter(p => p.nombre.trim());
-    if (despacho) {
-      await supabase.from("salida_despachos").update({ pasajeros_blueapple: filtered }).eq("id", despacho.id);
+  // Paso 1 → 2: generar token, guardar count, inicializar slots vacíos
+  const iniciarRegistro = async () => {
+    const n = Math.max(1, parseInt(countInput) || 1);
+    setBusy(true);
+    const newToken = `BA-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    const slots = Array.from({ length: n }, () => ({ nombre: "", cedula: "", nacionalidad: "", embarcacion: embInput }));
+    if (despacho?.id) {
+      await supabase.from("salida_despachos").update({
+        blueapple_token: newToken,
+        blueapple_count_esperado: n,
+        pasajeros_blueapple: slots,
+      }).eq("id", despacho.id);
     } else {
       const id = `DESP-${Date.now()}`;
-      await supabase.from("salida_despachos").insert({ id, fecha, salida_id: salidaId, pasajeros_blueapple: filtered });
+      await supabase.from("salida_despachos").insert({
+        id, fecha, salida_id: salidaId,
+        blueapple_token: newToken,
+        blueapple_count_esperado: n,
+        pasajeros_blueapple: slots,
+      });
     }
-    setSaving(false);
-    onSaved();
+    setToken(newToken);
+    setPaxs(slots);
+    setStep(2);
+    setBusy(false);
+    onSaved?.();
+  };
+
+  // En paso 2: actualizar paxs (admin manual)
+  const setPax = (i, k, v) => setPaxs(p => p.map((x, j) => j === i ? { ...x, [k]: v } : x));
+  const addPax = () => setPaxs(p => [...p, { nombre: "", cedula: "", nacionalidad: "", embarcacion: embInput }]);
+  const removePax = (i) => setPaxs(p => p.filter((_, j) => j !== i));
+
+  const guardarManual = async () => {
+    setBusy(true);
+    const filtered = paxs.filter(p => p.nombre.trim() || p.cedula.trim());
+    await supabase.from("salida_despachos").update({ pasajeros_blueapple: filtered }).eq("id", despacho?.id);
+    setBusy(false);
+    onSaved?.();
     onClose();
   };
 
+  const linkPublico = token ? `${window.location.origin}/blueapple-pax?d=${despacho?.id || ""}&t=${token}` : "";
+  const qrSrc = linkPublico
+    ? `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(linkPublico)}`
+    : "";
+
+  const copyLink = () => {
+    if (!linkPublico) return;
+    if (navigator.clipboard?.writeText) navigator.clipboard.writeText(linkPublico).then(() => alert("✓ Link copiado"));
+    else prompt("Copia el link:", linkPublico);
+  };
+
   return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.75)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 999 }}
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.75)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 999, padding: 16 }}
       onClick={e => e.target === e.currentTarget && onClose()}>
-      <div style={{ background: B.navyMid, borderRadius: 16, padding: 28, width: 520, maxHeight: "90vh", overflowY: "auto", boxShadow: "0 20px 60px rgba(0,0,0,0.6)" }}>
+      <div style={{ background: B.navyMid, borderRadius: 16, padding: 28, width: 560, maxHeight: "92vh", overflowY: "auto", boxShadow: "0 20px 60px rgba(0,0,0,0.6)" }}>
         <h3 style={{ fontSize: 17, fontWeight: 700, marginBottom: 4 }}>🍎 Pasajeros Blue Apple</h3>
         <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginBottom: 20 }}>
           Van a Blue Apple — no cuentan como pasadía pero SÍ ocupan cupo en la lancha y aparecen en el zarpe.
         </div>
-        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          {paxs.map((p, i) => (
-            <div key={i} style={{ background: B.navy, borderRadius: 10, padding: 12, display: "flex", gap: 8, alignItems: "flex-start" }}>
-              <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 8 }}>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-                  <div>
-                    <label style={LS}>Nombre completo</label>
-                    <input value={p.nombre} onChange={e => set(i, "nombre", e.target.value)} style={IS} placeholder="Nombre y apellido" />
-                  </div>
-                  <div>
-                    <label style={LS}>Cédula / Pasaporte</label>
-                    <input value={p.cedula} onChange={e => set(i, "cedula", e.target.value)} style={IS} placeholder="No. identificación" />
-                  </div>
-                </div>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-                  <div>
-                    <label style={LS}>Nacionalidad</label>
-                    <input value={p.nacionalidad} onChange={e => set(i, "nacionalidad", e.target.value)} style={IS} placeholder="Ej: Colombia, USA" />
-                  </div>
-                  <div>
-                    <label style={LS}>Embarcación</label>
-                    <select value={p.embarcacion || ""} onChange={e => set(i, "embarcacion", e.target.value)}
-                      style={{ ...IS, cursor: "pointer" }}>
-                      <option value="">— Sin asignar —</option>
-                      {embarcaciones.map(emb => (
-                        <option key={emb.id} value={emb.nombre}>{emb.nombre}</option>
-                      ))}
-                    </select>
+
+        {step === 1 ? (
+          <>
+            <div style={{ background: B.navy, borderRadius: 10, padding: 16, marginBottom: 14 }}>
+              <label style={{ ...LS, fontSize: 12 }}>¿Cuántos pasajeros van a Blue Apple?</label>
+              <input type="number" min={1} value={countInput} onChange={e => setCountInput(e.target.value)}
+                style={{ ...IS, fontSize: 22, fontWeight: 800, textAlign: "center" }} />
+              <label style={{ ...LS, fontSize: 12, marginTop: 14 }}>Embarcación</label>
+              <select value={embInput} onChange={e => setEmbInput(e.target.value)} style={{ ...IS, cursor: "pointer" }}>
+                <option value="">— Sin asignar —</option>
+                {embarcaciones.map(emb => <option key={emb.id} value={emb.nombre}>{emb.nombre}</option>)}
+              </select>
+              <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginTop: 10, lineHeight: 1.4 }}>
+                Al continuar generamos un link/QR que puedes compartirle a Blue Apple para que llenen los datos de cada pasajero. También puedes llenarlos tú manualmente.
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: 10 }}>
+              <button onClick={onClose} style={{ flex: 1, padding: "11px", background: "none", border: `1px solid ${B.navyLight}`, borderRadius: 8, color: "rgba(255,255,255,0.4)", fontSize: 13, cursor: "pointer" }}>Cancelar</button>
+              <button onClick={iniciarRegistro} disabled={busy || countInput < 1}
+                style={{ flex: 2, padding: "11px", background: B.sand, color: B.navy, border: "none", borderRadius: 8, fontWeight: 700, fontSize: 13, cursor: busy ? "wait" : "pointer", opacity: busy ? 0.6 : 1 }}>
+                {busy ? "Generando…" : `Continuar (${countInput} pax)`}
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            {/* Sección compartir */}
+            {linkPublico && (
+              <div style={{ background: B.navy, borderRadius: 10, padding: 16, marginBottom: 14, border: `1px solid ${B.sand}33` }}>
+                <div style={{ fontSize: 11, color: B.sand, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 700, marginBottom: 8 }}>📤 Compartir con Blue Apple</div>
+                <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+                  <img src={qrSrc} alt="QR" width={120} height={120} style={{ borderRadius: 6, background: "#fff", padding: 6, flexShrink: 0 }} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginBottom: 6 }}>Que escaneen el QR o abran este link:</div>
+                    <div style={{ fontSize: 10, color: B.sky, wordBreak: "break-all", marginBottom: 8, fontFamily: "monospace" }}>{linkPublico}</div>
+                    <button onClick={copyLink} style={{ padding: "6px 12px", background: B.sky, color: B.navy, border: "none", borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: "pointer", marginRight: 6 }}>📋 Copiar link</button>
+                    <a href={`https://wa.me/?text=${encodeURIComponent(`Hola — pásennos los datos de los ${despacho?.blueapple_count_esperado || paxs.length} pasajeros de Blue Apple en este link: ${linkPublico}`)}`}
+                      target="_blank" rel="noreferrer"
+                      style={{ padding: "6px 12px", background: "#25D366", color: "#fff", textDecoration: "none", borderRadius: 6, fontSize: 11, fontWeight: 700, display: "inline-block" }}>
+                      💬 WhatsApp
+                    </a>
                   </div>
                 </div>
               </div>
-              <button onClick={() => remove(i)}
-                style={{ marginTop: 22, padding: "6px 10px", borderRadius: 8, background: "none", border: `1px solid ${B.danger}44`, color: B.danger, cursor: "pointer", fontSize: 16, flexShrink: 0 }}>✕</button>
+            )}
+
+            {/* Manual entry */}
+            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.6)", textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 700, marginBottom: 8 }}>
+              ✏️ O entrarlos manualmente ({paxs.length} pax)
             </div>
-          ))}
-        </div>
-        <button onClick={add} style={{ marginTop: 10, width: "100%", padding: "9px", borderRadius: 8, background: "none", border: `1px dashed ${B.navyLight}`, color: "rgba(255,255,255,0.4)", fontSize: 13, cursor: "pointer" }}>
-          + Agregar pasajero Blue Apple
-        </button>
-        <div style={{ display: "flex", gap: 10, marginTop: 20 }}>
-          <button onClick={onClose} style={{ flex: 1, padding: "11px", background: "none", border: `1px solid ${B.navyLight}`, borderRadius: 8, color: "rgba(255,255,255,0.4)", fontSize: 13, cursor: "pointer" }}>Cancelar</button>
-          <button onClick={save} disabled={saving} style={{ flex: 2, padding: "11px", background: B.sand, color: B.navy, border: "none", borderRadius: 8, fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
-            {saving ? "Guardando..." : "Guardar pasajeros"}
-          </button>
-        </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {paxs.map((p, i) => (
+                <div key={i} style={{ background: B.navy, borderRadius: 10, padding: 12, display: "flex", gap: 8, alignItems: "flex-start" }}>
+                  <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 8 }}>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                      <div>
+                        <label style={LS}>Nombre completo</label>
+                        <input value={p.nombre} onChange={e => setPax(i, "nombre", e.target.value)} style={IS} placeholder="Nombre y apellido" />
+                      </div>
+                      <div>
+                        <label style={LS}>Cédula / Pasaporte</label>
+                        <input value={p.cedula} onChange={e => setPax(i, "cedula", e.target.value)} style={IS} placeholder="No. identificación" />
+                      </div>
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                      <div>
+                        <label style={LS}>Nacionalidad</label>
+                        <input value={p.nacionalidad} onChange={e => setPax(i, "nacionalidad", e.target.value)} style={IS} placeholder="Ej: Colombia, USA" />
+                      </div>
+                      <div>
+                        <label style={LS}>Embarcación</label>
+                        <select value={p.embarcacion || ""} onChange={e => setPax(i, "embarcacion", e.target.value)} style={{ ...IS, cursor: "pointer" }}>
+                          <option value="">— Sin asignar —</option>
+                          {embarcaciones.map(emb => <option key={emb.id} value={emb.nombre}>{emb.nombre}</option>)}
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+                  <button onClick={() => removePax(i)}
+                    style={{ marginTop: 22, padding: "6px 10px", borderRadius: 8, background: "none", border: `1px solid ${B.danger}44`, color: B.danger, cursor: "pointer", fontSize: 16, flexShrink: 0 }}>✕</button>
+                </div>
+              ))}
+            </div>
+            <button onClick={addPax} style={{ marginTop: 10, width: "100%", padding: "9px", borderRadius: 8, background: "none", border: `1px dashed ${B.navyLight}`, color: "rgba(255,255,255,0.4)", fontSize: 13, cursor: "pointer" }}>
+              + Agregar pasajero
+            </button>
+
+            <div style={{ display: "flex", gap: 10, marginTop: 20 }}>
+              <button onClick={onClose} style={{ flex: 1, padding: "11px", background: "none", border: `1px solid ${B.navyLight}`, borderRadius: 8, color: "rgba(255,255,255,0.4)", fontSize: 13, cursor: "pointer" }}>Cerrar</button>
+              <button onClick={guardarManual} disabled={busy}
+                style={{ flex: 2, padding: "11px", background: B.sand, color: B.navy, border: "none", borderRadius: 8, fontWeight: 700, fontSize: 13, cursor: busy ? "wait" : "pointer", opacity: busy ? 0.6 : 1 }}>
+                {busy ? "Guardando…" : "Guardar cambios manuales"}
+              </button>
+            </div>
+          </>
+        )}
       </div>
     </div>
   );
