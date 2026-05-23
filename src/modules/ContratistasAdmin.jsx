@@ -332,12 +332,22 @@ export default function ContratistasAdmin() {
       if (!url) { alert("No se pudo obtener URL pública del archivo."); return; }
 
       // 2) Re-leer el evento (no asumir que expressRow.personas está fresco)
-      const { data: ev } = await supabase.from("eventos").select("contratistas").eq("id", expressRow.evento_id).maybeSingle();
-      const ctrs = Array.isArray(ev?.contratistas) ? ev.contratistas : [];
+      const { data: ev, error: selErr } = await supabase.from("eventos").select("contratistas").eq("id", expressRow.evento_id).maybeSingle();
+      // SAFETY: si el select falla o ev es null → abortar.
+      // NUNCA escribir [] sobre contratistas — eso wipea data si por algún
+      // motivo (RLS, network) el SELECT no devolvió la fila correctamente.
+      if (selErr || !ev) { alert("No se pudo leer el evento. Refresca y reintenta."); return; }
+      if (!Array.isArray(ev.contratistas) || ev.contratistas.length === 0) {
+        alert("El evento no tiene contratistas registrados (no se hace ningún cambio).");
+        return;
+      }
+      const ctrs = ev.contratistas;
       // Encontrar la fila correspondiente (matchear por id que pusimos en el flatten)
       const ctrIdRaw = expressRow.id.startsWith("evt:") ? expressRow.id.split(":").slice(2).join(":") : expressRow.id;
+      let matched = false;
       const updated = ctrs.map(c => {
         if ((c.id || c.nombre) !== ctrIdRaw) return c;
+        matched = true;
         const personas = Array.isArray(c.personas) ? [...c.personas] : [];
         if (!personas[personaIdx]) return c;
         personas[personaIdx] = {
@@ -348,6 +358,15 @@ export default function ContratistasAdmin() {
         };
         return { ...c, personas };
       });
+      if (!matched) {
+        alert("No se encontró el contratista en el evento. Refresca la lista.");
+        return;
+      }
+      // SAFETY: no escribir si el array resultante quedó vacío (debería ser imposible aquí pero por si acaso)
+      if (!Array.isArray(updated) || updated.length !== ctrs.length) {
+        alert("Error interno: el array de contratistas cambió de tamaño. Abortado por seguridad.");
+        return;
+      }
       const { error: updErr } = await supabase.from("eventos").update({ contratistas: updated }).eq("id", expressRow.evento_id);
       if (updErr) { alert("Error guardando verificación: " + updErr.message); return; }
 
@@ -367,11 +386,19 @@ export default function ContratistasAdmin() {
     const key = `${expressRow.evento_id}:${expressRow.id}:${personaIdx}`;
     setVerifyingKey(key);
     try {
-      const { data: ev } = await supabase.from("eventos").select("contratistas").eq("id", expressRow.evento_id).maybeSingle();
-      const ctrs = Array.isArray(ev?.contratistas) ? ev.contratistas : [];
+      const { data: ev, error: selErr } = await supabase.from("eventos").select("contratistas").eq("id", expressRow.evento_id).maybeSingle();
+      // SAFETY: igual que en uploadVerificacionArl — NUNCA escribir [] sobre contratistas
+      if (selErr || !ev) { alert("No se pudo leer el evento. Refresca y reintenta."); return; }
+      if (!Array.isArray(ev.contratistas) || ev.contratistas.length === 0) {
+        alert("El evento no tiene contratistas registrados (no se hace ningún cambio).");
+        return;
+      }
+      const ctrs = ev.contratistas;
       const ctrIdRaw = expressRow.id.startsWith("evt:") ? expressRow.id.split(":").slice(2).join(":") : expressRow.id;
+      let matched = false;
       const updated = ctrs.map(c => {
         if ((c.id || c.nombre) !== ctrIdRaw) return c;
+        matched = true;
         const personas = Array.isArray(c.personas) ? [...c.personas] : [];
         if (!personas[personaIdx]) return c;
         personas[personaIdx] = {
@@ -385,6 +412,11 @@ export default function ContratistasAdmin() {
         };
         return { ...c, personas };
       });
+      if (!matched) { alert("No se encontró el contratista en el evento. Refresca la lista."); return; }
+      if (!Array.isArray(updated) || updated.length !== ctrs.length) {
+        alert("Error interno: el array de contratistas cambió de tamaño. Abortado por seguridad.");
+        return;
+      }
       const { error } = await supabase.from("eventos").update({ contratistas: updated }).eq("id", expressRow.evento_id);
       if (error) { alert("Error guardando rechazo: " + error.message); return; }
       setRejectingKey(""); setRejectMotivo("");
