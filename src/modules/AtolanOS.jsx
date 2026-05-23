@@ -81,9 +81,12 @@ function Dashboard() {
           .gte("created_at", inicioHoy)
           .lte("created_at", finHoy),
         // Pax hoy: confirmados + check_in + pipeline comercial
-        supabase.from("reservas").select("pax").eq("fecha", hoy).in("estado", ["confirmado", "check_in", "pendiente", "pendiente_pago", "pendiente_comprobante"]),
+        // Trae también `id` para poder excluir reservas referenciadas desde
+        // pasadias_org de un grupo del mismo día (evita doble conteo: la
+        // cortesía existe como reserva CORT-* Y como item dentro del grupo).
+        supabase.from("reservas").select("id, pax").eq("fecha", hoy).in("estado", ["confirmado", "check_in", "pendiente", "pendiente_pago", "pendiente_comprobante"]),
         // Pax mañana: confirmados + check_in + pipeline comercial
-        supabase.from("reservas").select("pax").eq("fecha", mananaStr).in("estado", ["confirmado", "check_in", "pendiente", "pendiente_pago", "pendiente_comprobante"]),
+        supabase.from("reservas").select("id, pax").eq("fecha", mananaStr).in("estado", ["confirmado", "check_in", "pendiente", "pendiente_pago", "pendiente_comprobante"]),
         // Leads creados hoy aún activos
         supabase.from("leads").select("id")
           .not("stage", "in", '("Cerrado Ganado","Perdido","Duplicado")')
@@ -123,10 +126,29 @@ function Dashboard() {
       ]);
 
       const isGrupo = (e) => e.categoria === "grupo" || (!e.categoria && e.aliado_id);
-      const paxGruposHoy    = (grpHoyR.data    || []).filter(isGrupo).reduce((s, g) => s + grupoPax(g), 0);
-      const paxGruposManana = (grpMananaR.data  || []).filter(isGrupo).reduce((s, g) => s + grupoPax(g), 0);
+      const gruposHoy    = (grpHoyR.data    || []).filter(isGrupo);
+      const gruposManana = (grpMananaR.data || []).filter(isGrupo);
+      const paxGruposHoy    = gruposHoy.reduce((s, g) => s + grupoPax(g), 0);
+      const paxGruposManana = gruposManana.reduce((s, g) => s + grupoPax(g), 0);
       const paxLlegHoy      = (llegHoyR.data    || []).reduce((s, l) => s + (l.pax_total || 0), 0);
       const paxLlegManana   = (llegMananaR.data || []).reduce((s, l) => s + (l.pax_total || 0), 0);
+
+      // Set de reservas referenciadas DESDE pasadias_org de grupos del día:
+      // estas reservas ya están contadas como parte del grupo (ej. cortesía
+      // de los novios). Excluirlas de paxHoy / paxManana para evitar doble.
+      const collectRefIds = (grupos) => {
+        const s = new Set();
+        grupos.forEach(g => (g.pasadias_org || []).forEach(p => {
+          if (p?.reserva_id) s.add(p.reserva_id);
+        }));
+        return s;
+      };
+      const refsHoy    = collectRefIds(gruposHoy);
+      const refsManana = collectRefIds(gruposManana);
+
+      const sumReservas = (rows, exclude) => (rows || [])
+        .filter(r => !exclude.has(r.id))
+        .reduce((s, r) => s + (r.pax || 0), 0);
 
       const ventasHoy = ventasHoyR.data || [];
       const cobradoHoy = [...(cobR.data || []), ...(cobR2.data || [])].reduce((s, r) => s + (r.abono || 0), 0);
@@ -134,8 +156,8 @@ function Dashboard() {
         pasadiasVendidos: ventasHoy.length,
         revenue: cobradoHoy,
         leadsHoy: (leadsHoyR.data || []).length,
-        paxHoy:    (paxHoyR.data    || []).reduce((s, r) => s + (r.pax || 0), 0) + paxGruposHoy + paxLlegHoy,
-        paxManana: (paxMananaR.data  || []).reduce((s, r) => s + (r.pax || 0), 0) + paxGruposManana + paxLlegManana,
+        paxHoy:    sumReservas(paxHoyR.data,    refsHoy)    + paxGruposHoy    + paxLlegHoy,
+        paxManana: sumReservas(paxMananaR.data, refsManana) + paxGruposManana + paxLlegManana,
         eventos: (evtR.data || []).length,
         reqPendientes: (reqR.data || []).length,
       });

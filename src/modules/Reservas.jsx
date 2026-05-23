@@ -2712,6 +2712,10 @@ function TabCalendario({ salidas, cierres, embarcaciones }) {
   const [reservasPorDia, setReservasPorDia] = useState({});
   const [gruposPorDia,   setGruposPorDia]   = useState({});
   const [sinTransportePorDia, setSinTransportePorDia] = useState({});
+  // Set por-fecha de reserva_ids referenciados desde pasadias_org de un grupo
+  // del mismo día (cortesías ligadas al grupo). Se excluyen del conteo para
+  // que no se cuenten dos veces.
+  const [reservasReferenciadasPorDia, setReservasReferenciadasPorDia] = useState({});
   const [overrides, setOverrides] = useState({});
   const [selectedDay, setSelectedDay] = useState(null);
   const [selectedSalida, setSelectedSalida] = useState(null);
@@ -2736,13 +2740,29 @@ function TabCalendario({ salidas, cierres, embarcaciones }) {
     const hasta = `${year}-${String(month + 1).padStart(2, "0")}-${String(diasEnMes).padStart(2, "0")}`;
     // Fetch grupos + reservas juntos para poder sumar los grupos que comparten lancha
     Promise.all([
-      supabase.from("reservas").select("fecha, salida_id, pax").gte("fecha", desde).lte("fecha", hasta).neq("estado", "cancelado"),
+      supabase.from("reservas").select("id, fecha, salida_id, pax").gte("fecha", desde).lte("fecha", hasta).neq("estado", "cancelado"),
       supabase.from("eventos")
         .select("id, nombre, tipo, pax, fecha, salidas_grupo, modalidad_pago, pasadias_org, stage, comparte_lancha_pasadias, salida_compartida_id, categoria")
         .gte("fecha", desde).lte("fecha", hasta).eq("stage", "Confirmado"),
     ]).then(([resR, evR]) => {
+      // Reservas referenciadas DESDE pasadias_org de grupos del mismo día
+      // (ej. cortesía: existe como reserva CORT-* Y como item del grupo).
+      // Para evitar doble conteo, las excluimos del map por-salida y las
+      // marcamos para que el array de "sin transporte" también las excluya.
+      const reservasReferenciadasPorDia = {};
+      (evR.data || []).forEach(g => {
+        if (!g.fecha) return;
+        (g.pasadias_org || []).forEach(p => {
+          if (!p?.reserva_id) return;
+          if (!reservasReferenciadasPorDia[g.fecha]) reservasReferenciadasPorDia[g.fecha] = new Set();
+          reservasReferenciadasPorDia[g.fecha].add(p.reserva_id);
+        });
+      });
+      setReservasReferenciadasPorDia(reservasReferenciadasPorDia);
+
       const map = {};
       (resR.data || []).forEach(r => {
+        if (reservasReferenciadasPorDia[r.fecha]?.has(r.id)) return; // ya cuenta dentro del grupo
         if (!map[r.fecha]) map[r.fecha] = {};
         if (!map[r.fecha][r.salida_id]) map[r.fecha][r.salida_id] = 0;
         map[r.fecha][r.salida_id] += r.pax || 0;
@@ -2767,20 +2787,36 @@ function TabCalendario({ salidas, cierres, embarcaciones }) {
       });
       setGruposPorDia(byDay);
     });
-    // Fetch reservas sin transporte (salida_id null) for the month
-    supabase.from("reservas")
-      .select("id, nombre, tipo, pax, pax_a, pax_n, total, abono, estado, forma_pago, canal, email, telefono, created_at, fecha, notas")
-      .is("salida_id", null)
-      .gte("fecha", desde).lte("fecha", hasta)
-      .neq("estado", "cancelado")
-      .then(({ data }) => {
-        const byDay = {};
-        (data || []).forEach(r => {
-          if (!byDay[r.fecha]) byDay[r.fecha] = [];
-          byDay[r.fecha].push(r);
+    // Fetch reservas sin transporte (salida_id null) for the month.
+    // Re-fetcheamos los grupos del rango (con pasadias_org) sólo para armar
+    // el set de reserva_ids referenciados — así excluimos cortesías ligadas
+    // a un grupo (ya contadas dentro del grupo).
+    Promise.all([
+      supabase.from("reservas")
+        .select("id, nombre, tipo, pax, pax_a, pax_n, total, abono, estado, forma_pago, canal, email, telefono, created_at, fecha, notas")
+        .is("salida_id", null)
+        .gte("fecha", desde).lte("fecha", hasta)
+        .neq("estado", "cancelado"),
+      supabase.from("eventos").select("fecha, pasadias_org, stage")
+        .gte("fecha", desde).lte("fecha", hasta).eq("stage", "Confirmado"),
+    ]).then(([resR, evR]) => {
+      const refs = {};
+      (evR.data || []).forEach(g => {
+        if (!g.fecha) return;
+        (g.pasadias_org || []).forEach(p => {
+          if (!p?.reserva_id) return;
+          if (!refs[g.fecha]) refs[g.fecha] = new Set();
+          refs[g.fecha].add(p.reserva_id);
         });
-        setSinTransportePorDia(byDay);
       });
+      const byDay = {};
+      (resR.data || []).forEach(r => {
+        if (refs[r.fecha]?.has(r.id)) return; // ya cuenta dentro del grupo
+        if (!byDay[r.fecha]) byDay[r.fecha] = [];
+        byDay[r.fecha].push(r);
+      });
+      setSinTransportePorDia(byDay);
+    });
     supabase.from("salidas_override").select("*").gte("fecha", desde).lte("fecha", hasta)
       .then(({ data }) => {
         const map = {};
