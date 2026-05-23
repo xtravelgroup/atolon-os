@@ -303,24 +303,20 @@ export default function Analitica({ externo = false }) {
       { k: 5, label: "Llegó a pago" },
       { k: 6, label: "Completó pago" },
     ];
-    const pasos = FUNNEL.map((f, i) => ({
+    // Conteo REAL por paso: cada paso N cuenta SOLO filas que tienen su
+    // propio paso_N_ts seteado. Sin propagación ni override — un usuario que
+    // saltó pasos del widget (vía deep-link, B2B, bot WhatsApp, etc.) no se
+    // distribuye artificialmente en pasos previos.
+    //
+    // Esto puede mostrar paso_5 < paso_6 ocasionalmente si un webhook seteó
+    // paso_6 sin paso_5 (ej. una reserva creada por canal no-widget). Es
+    // honesto: el "embudo del widget" mide el viaje del widget; las
+    // conversiones totales del segmento ya se muestran en el KPI Conversiones.
+    const pasos = FUNNEL.map(f => ({
       paso:  f.k,
       label: f.label,
-      count: embList.filter(e => FUNNEL.slice(i).some(s => e[`paso_${s.k}_ts`])).length,
+      count: embList.filter(e => !!e[`paso_${f.k}_ts`]).length,
     }));
-    // "Completó pago" = SIEMPRE las conversiones reales del segmento → cuadra
-    // exacto con el KPI Conversiones y el panel "Origen del Cliente". Luego
-    // propagamos hacia arriba (cada paso ≥ el siguiente) para garantizar
-    // monotonía en TODOS los segmentos:
-    //  • web / grupo (pasan por el widget): se ve el embudo real del widget,
-    //    nunca por debajo de las conversiones.
-    //  • whatsapp (reserva vía el bot de IA, sin widget): no hay filas de
-    //    embudo, así que queda plano en las conversiones — honesto: entraron
-    //    por el link del bot y convirtieron, sin pasos de widget que medir.
-    if (pasos[5]) pasos[5].count = sesConv;
-    for (let i = pasos.length - 2; i >= 0; i--) {
-      pasos[i].count = Math.max(pasos[i].count, pasos[i + 1].count);
-    }
     setEmbudos(pasos);
 
     // ── Top eventos ───────────────────────────────────────────────────────────
