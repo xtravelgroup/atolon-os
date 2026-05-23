@@ -1300,14 +1300,44 @@ serve(async (req) => {
         return co.toISOString().slice(0, 10);
       };
 
+      // Helper con retry para llamadas a Loggro durante el sondeo y descarga.
+      // Si una llamada falla (timeout / 5xx / red) y la marcamos como "vacía",
+      // el sondeo binario puede terminar apuntando a páginas equivocadas y el
+      // bucket resultante quedar vacío. Reintentamos hasta 3 veces antes de
+      // aceptar un "vacío de verdad".
+      const loggroGetPage = async (page: number) => {
+        for (let attempt = 0; attempt < 3; attempt++) {
+          try {
+            const d: any = await loggroGet(`/invoices?pagination=true&limit=${pageSize}&page=${page}`);
+            const arr = d?.data || (Array.isArray(d) ? d : []) || [];
+            return { ok: true, arr };
+          } catch (e) {
+            if (attempt === 2) {
+              console.warn(`[loggro] page=${page} falló 3 veces:`, (e as Error)?.message);
+              return { ok: false, arr: [] as any[] };
+            }
+            // backoff exponencial: 250ms, 750ms
+            await new Promise(r => setTimeout(r, 250 * Math.pow(3, attempt)));
+          }
+        }
+        return { ok: false, arr: [] as any[] };
+      };
+
       // Sondeo binario para encontrar última página no vacía (rápido: ~10 calls).
+      // Si una petición del sondeo falla, NO la contamos como "vacía" — la
+      // tratamos como error y abortamos el sondeo (evita acabar con
+      // lastNonEmpty bajo por culpa de un error transient).
       let lo = 0, hi = 200, lastNonEmpty = 0;
-      while (lo <= hi) {
+      let probeError = false;
+      while (lo <= hi && !probeError) {
         const mid = Math.floor((lo + hi) / 2);
-        const d = await loggroGet(`/invoices?pagination=true&limit=${pageSize}&page=${mid}`).catch(() => null);
-        const arr = d?.data || (Array.isArray(d) ? d : []) || [];
-        if (arr.length > 0) { lastNonEmpty = mid; lo = mid + 1; }
+        const r = await loggroGetPage(mid);
+        if (!r.ok) { probeError = true; break; }
+        if (r.arr.length > 0) { lastNonEmpty = mid; lo = mid + 1; }
         else { hi = mid - 1; }
+      }
+      if (probeError) {
+        return json({ ok: false, error: "Loggro no responde — sondeo de páginas falló tras 3 reintentos. Intentar de nuevo en unos segundos." }, 503);
       }
 
       const allInvoices: any[] = [];
@@ -1317,17 +1347,19 @@ serve(async (req) => {
       const MAX_BACKWARD = 30; // safety: nunca más que 30 páginas (3000 facturas)
 
       // Bajamos en batches de 5 páginas paralelas, desde la última hacia atrás.
+      // Usamos loggroGetPage (con retry) y abortamos si una página falla, en
+      // vez de tratarla como vacía — así no paramos antes de tiempo.
       let curPage = lastNonEmpty;
-      while (curPage >= 0 && !stopReached && pagesScanned < MAX_BACKWARD) {
+      let downloadError = false;
+      while (curPage >= 0 && !stopReached && pagesScanned < MAX_BACKWARD && !downloadError) {
         const batchPages: number[] = [];
         for (let i = 0; i < 5 && curPage >= 0; i++) batchPages.push(curPage--);
-        const batch = batchPages.map(p =>
-          loggroGet(`/invoices?pagination=true&limit=${pageSize}&page=${p}`)
-            .then(d => ({ page: p, arr: d?.data || (Array.isArray(d) ? d : []) }))
-            .catch(() => ({ page: p, arr: [] }))
-        );
-        const results = await Promise.all(batch);
+        const results = await Promise.all(batchPages.map(async p => ({ page: p, ...(await loggroGetPage(p)) })));
         pagesScanned += results.length;
+
+        // Si alguna falló todos los retries, abortar — no podemos confiar en
+        // el resultado.
+        if (results.some(r => !r.ok)) { downloadError = true; break; }
 
         let allOlderThanFrom = true;
         for (const r of results) {
@@ -1344,6 +1376,9 @@ serve(async (req) => {
         }
         // Si TODAS las facturas del batch son anteriores al "from", paramos
         if (allOlderThanFrom && allInvoices.length > 0) stopReached = true;
+      }
+      if (downloadError) {
+        return json({ ok: false, error: "Loggro no responde — descarga de páginas falló tras 3 reintentos. Intentar de nuevo en unos segundos." }, 503);
       }
 
       // Bucket por día: { ventas, propinas, tickets, anuladas, por_metodo: {} }
@@ -1419,23 +1454,33 @@ serve(async (req) => {
       // cambian). Si termina antes de hoy, TTL es 24h (datos históricos no
       // cambian). Esto baja muchísimo la carga en Loggro para queries de
       // meses anteriores.
-      try {
-        const today = new Date(Date.now() - 5 * 3600 * 1000).toISOString().slice(0, 10);
-        const ttlMs = to >= today ? 5 * 60 * 1000 : 24 * 60 * 60 * 1000;
-        const expiresAt = new Date(Date.now() + ttlMs).toISOString();
-        await sb().from("loggro_ayb_cache").upsert({
-          cache_key: cacheKey,
-          from_date: from,
-          to_date: to,
-          payload,
-          cached_at: new Date().toISOString(),
-          expires_at: expiresAt,
-        }, { onConflict: "cache_key" });
-      } catch (e) {
-        console.warn("[loggro-cache] write failed:", (e as Error).message);
+      //
+      // NO cachear resultados sospechosos: si revisamos > 50 invoices pero
+      // el resumen quedó en 0 (sin ventas y sin anuladas), algo falló en el
+      // filtrado o en la descarga. Mejor devolver y dejar que el siguiente
+      // request lo reintente, en vez de cachear basura 5 min - 24h.
+      const sospechoso = allInvoices.length > 50 && totalVentas === 0 && totalAnuladas === 0;
+      if (sospechoso) {
+        console.warn(`[loggro-cache] resultado sospechoso (${allInvoices.length} invoices, $0 ventas) — NO se cachea`);
+      } else {
+        try {
+          const today = new Date(Date.now() - 5 * 3600 * 1000).toISOString().slice(0, 10);
+          const ttlMs = to >= today ? 5 * 60 * 1000 : 24 * 60 * 60 * 1000;
+          const expiresAt = new Date(Date.now() + ttlMs).toISOString();
+          await sb().from("loggro_ayb_cache").upsert({
+            cache_key: cacheKey,
+            from_date: from,
+            to_date: to,
+            payload,
+            cached_at: new Date().toISOString(),
+            expires_at: expiresAt,
+          }, { onConflict: "cache_key" });
+        } catch (e) {
+          console.warn("[loggro-cache] write failed:", (e as Error).message);
+        }
       }
 
-      return json(payload);
+      return json({ ...payload, sospechoso: sospechoso || undefined });
     }
 
     // POST /loggro-sync/create-provider — crear proveedor en Loggro
