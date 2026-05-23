@@ -3072,6 +3072,8 @@ function TabCalendario({ salidas, cierres, embarcaciones }) {
               const paxRes = Object.values(reservasPorDia[selectedDay] || {}).reduce((s, v) => s + v, 0);
               const paxSinT = (sinTransportePorDia[selectedDay] || []).reduce((s, r) => s + (r.pax || 0), 0);
               const paxGrupos = (gruposPorDia[selectedDay] || []).reduce((sum, g) => {
+                // Si el grupo comparte lancha con pasadías, su pax ya está en paxRes — no doble-contar
+                if (g.comparte_lancha_pasadias) return sum;
                 const p = (g.pasadias_org || []).filter(p => p.tipo !== "Impuesto Muelle" && p.tipo !== "STAFF").reduce((s, p) => s + (Number(p.personas) || 0), 0) || g.pax || 0;
                 return sum + p;
               }, 0);
