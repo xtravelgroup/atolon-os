@@ -96,17 +96,16 @@ async function checkDisponibilidad(input: CheckInput) {
       .eq("fecha", fecha)
       .eq("activo", true),
     SB.from("salidas_override")
-      .select("salida_id, accion")
+      .select("salida_id, accion, extra_embarcaciones")
       .eq("fecha", fecha),
     SB.from("reservas")
-      .select("pax, salida_id, estado")
+      .select("id, pax, salida_id, estado, grupo_id")
       .eq("fecha", fecha)
       .neq("estado", "cancelado"),
     SB.from("eventos")
-      .select("pax, pasadias_org, comparte_lancha_pasadias, salida_compartida_id, stage")
+      .select("id, pax, pasadias_org, comparte_lancha_pasadias, salida_compartida_id, salidas_grupo, stage")
       .eq("fecha", fecha)
-      .eq("comparte_lancha_pasadias", true)
-      .neq("stage", "Realizado"),
+      .eq("stage", "Confirmado"),
   ]);
 
   const salidasActivas = (salidasR.data || []) as any[];
@@ -131,40 +130,80 @@ async function checkDisponibilidad(input: CheckInput) {
     for (const sid of (c.salidas || [])) salidasCerradas.add(sid);
   }
 
-  const overrideMap: Record<string, string> = {};
-  for (const o of overrides) overrideMap[o.salida_id] = o.accion;
+  const overrideMap: Record<string, any> = {};
+  for (const o of overrides) overrideMap[o.salida_id] = o;
 
   const ocupacion: Record<string, number> = {};
+  const paxIndivGrupo: Record<string, Record<string, number>> = {};
   for (const r of reservasDia) {
     if (!r.salida_id) continue;
     ocupacion[r.salida_id] = (ocupacion[r.salida_id] || 0) + (r.pax || 0);
+    if (r.grupo_id) {
+      if (!paxIndivGrupo[r.grupo_id]) paxIndivGrupo[r.grupo_id] = {};
+      paxIndivGrupo[r.grupo_id][r.salida_id] = (paxIndivGrupo[r.grupo_id][r.salida_id] || 0) + (r.pax || 0);
+    }
   }
   for (const g of eventosDia) {
-    if (!g.salida_compartida_id) continue;
-    const paxG = (g.pasadias_org || [])
+    const bulkTotal = ((g.pasadias_org || [])
       .filter((p: any) => p.tipo !== "Impuesto Muelle" && p.tipo !== "STAFF")
-      .reduce((s: number, p: any) => s + (Number(p.personas) || 0), 0) || g.pax || 0;
-    ocupacion[g.salida_compartida_id] = (ocupacion[g.salida_compartida_id] || 0) + paxG;
+      .reduce((s: number, p: any) => s + (Number(p.personas) || 0), 0)) || g.pax || 0;
+    if (bulkTotal <= 0) continue;
+    const targets = new Set<string>();
+    if (g.salida_compartida_id) targets.add(g.salida_compartida_id);
+    for (const sg of (g.salidas_grupo || [])) {
+      if (sg?.id) targets.add(sg.id);
+    }
+    if (targets.size === 0) continue;
+    const indivMap = paxIndivGrupo[g.id] || {};
+    if (targets.size === 1) {
+      const sid = Array.from(targets)[0];
+      const yaIndiv = indivMap[sid] || 0;
+      ocupacion[sid] = (ocupacion[sid] || 0) + Math.max(0, bulkTotal - yaIndiv);
+    } else {
+      const pesos = (g.salidas_grupo || [])
+        .map((sg: any) => ({ sid: sg?.id, peso: Number(sg?.personas) || 0 }))
+        .filter((x: any) => x.sid && targets.has(x.sid));
+      const totalPeso = pesos.reduce((s: number, x: any) => s + x.peso, 0);
+      if (totalPeso > 0) {
+        for (const { sid, peso } of pesos) {
+          const aporteBruto = Math.round(bulkTotal * peso / totalPeso);
+          ocupacion[sid] = (ocupacion[sid] || 0) + Math.max(0, aporteBruto - (indivMap[sid] || 0));
+        }
+      } else {
+        const tgArr = Array.from(targets);
+        const por = Math.floor(bulkTotal / tgArr.length);
+        for (const sid of tgArr) {
+          ocupacion[sid] = (ocupacion[sid] || 0) + Math.max(0, por - (indivMap[sid] || 0));
+        }
+      }
+    }
   }
 
   const sortedSalidas = [...salidasActivas].sort((a, b) =>
     (a.hora || "").localeCompare(b.hora || ""),
   );
 
+  const capOf = (s: any) => {
+    const ovr = overrideMap[s.id];
+    const extra = (ovr?.extra_embarcaciones || []).reduce(
+      (sum: number, e: any) => sum + (Number(e.capacidad) || 0), 0,
+    );
+    return (s.capacidad_total || 0) + extra;
+  };
   const visibles = sortedSalidas.filter((s, idx) => {
     const ovr = overrideMap[s.id];
-    if (ovr === "abrir")  return true;
-    if (ovr === "cerrar") return false;
+    if (ovr?.accion === "abrir")  return true;
+    if (ovr?.accion === "cerrar") return false;
     if (salidasCerradas.has(s.id)) return false;
     if (!s.auto_apertura) return true;
     if (idx === 0) return true;
     const prev = sortedSalidas[idx - 1];
-    const prevPct = (ocupacion[prev.id] || 0) / (prev.capacidad_total || 1);
+    const prevPct = (ocupacion[prev.id] || 0) / (capOf(prev) || 1);
     return prevPct >= ((prev.auto_umbral || 75) / 100);
   });
 
   const opciones: SalidaOpcion[] = visibles.map((s) => {
-    const cap = s.capacidad_total || 0;
+    const cap = capOf(s);
     const pax = ocupacion[s.id] || 0;
     const cupos = Math.max(0, cap - pax);
     return {
@@ -228,17 +267,19 @@ async function checkDisponibilidadDetailed(input: DetailedCheckInput) {
       .eq("fecha", fecha),
     (() => {
       let q = SB.from("reservas")
-        .select("id, pax, salida_id, estado, nombre")
+        .select("id, pax, salida_id, estado, nombre, grupo_id")
         .eq("fecha", fecha)
         .neq("estado", "cancelado");
       if (exclude_reserva_id) q = q.neq("id", exclude_reserva_id);
       return q;
     })(),
+    // Eventos del día: traemos TODOS los grupos confirmados (no sólo los
+    // que comparten lancha) — pueden tener salidas_grupo apuntando a una
+    // salida específica, y su bulk pesa en la ocupación de esa salida.
     SB.from("eventos")
-      .select("pax, nombre, pasadias_org, comparte_lancha_pasadias, salida_compartida_id, stage")
+      .select("id, pax, nombre, pasadias_org, comparte_lancha_pasadias, salida_compartida_id, salidas_grupo, categoria, stage")
       .eq("fecha", fecha)
-      .eq("comparte_lancha_pasadias", true)
-      .neq("stage", "Realizado"),
+      .eq("stage", "Confirmado"),
   ]);
 
   const salidas    = (salidasR.data    || []) as any[];
@@ -258,17 +299,71 @@ async function checkDisponibilidadDetailed(input: DetailedCheckInput) {
   const overrideMap: Record<string, any> = {};
   for (const o of overrides) overrideMap[o.salida_id] = o;
 
+  // Ocupación por salida. La calculamos en 2 pasos:
+  //
+  // 1) Reservas individuales con salida_id (cada persona física en lancha)
+  // 2) Aporte del BULK de cada grupo a las salidas que tenga asignadas
+  //    (salida_compartida_id O salidas_grupo[].id). Descontamos las
+  //    reservas con grupo_id apuntando al grupo ya contadas en (1) — son
+  //    "individuales dentro del grupo", parte del mismo bulk.
   const ocupacion: Record<string, number> = {};
+  // Pax individuales con grupo_id asignado a cada salida — para descontar
+  // del bulk del grupo y no doble-contar.
+  const paxIndivGrupoEnSalida: Record<string, Record<string, number>> = {}; // {grupoId:{salidaId:pax}}
   for (const r of reservas) {
     if (!r.salida_id) continue;
     ocupacion[r.salida_id] = (ocupacion[r.salida_id] || 0) + (r.pax || 0);
+    if (r.grupo_id) {
+      if (!paxIndivGrupoEnSalida[r.grupo_id]) paxIndivGrupoEnSalida[r.grupo_id] = {};
+      paxIndivGrupoEnSalida[r.grupo_id][r.salida_id] =
+        (paxIndivGrupoEnSalida[r.grupo_id][r.salida_id] || 0) + (r.pax || 0);
+    }
   }
   for (const g of eventos) {
-    if (!g.salida_compartida_id) continue;
-    const paxG = (g.pasadias_org || [])
+    const bulkTotal = ((g.pasadias_org || [])
       .filter((p: any) => p.tipo !== "Impuesto Muelle" && p.tipo !== "STAFF")
-      .reduce((s: number, p: any) => s + (Number(p.personas) || 0), 0) || g.pax || 0;
-    ocupacion[g.salida_compartida_id] = (ocupacion[g.salida_compartida_id] || 0) + paxG;
+      .reduce((s: number, p: any) => s + (Number(p.personas) || 0), 0)) || g.pax || 0;
+    if (bulkTotal <= 0) continue;
+
+    // Salidas a las que apunta el grupo (compartida + salidas_grupo)
+    const targets = new Set<string>();
+    if (g.salida_compartida_id) targets.add(g.salida_compartida_id);
+    for (const sg of (g.salidas_grupo || [])) {
+      if (sg?.id) targets.add(sg.id);
+    }
+    if (targets.size === 0) continue;
+
+    const indivPorSalida = paxIndivGrupoEnSalida[g.id] || {};
+
+    if (targets.size === 1) {
+      const sid = Array.from(targets)[0];
+      const yaIndiv = indivPorSalida[sid] || 0;
+      const aporte = Math.max(0, bulkTotal - yaIndiv);
+      ocupacion[sid] = (ocupacion[sid] || 0) + aporte;
+    } else {
+      // Reparto proporcional a "personas" en salidas_grupo
+      const pesos = (g.salidas_grupo || [])
+        .map((sg: any) => ({ sid: sg?.id, peso: Number(sg?.personas) || 0 }))
+        .filter((x: any) => x.sid && targets.has(x.sid));
+      const totalPeso = pesos.reduce((s: number, x: any) => s + x.peso, 0);
+      if (totalPeso > 0) {
+        for (const { sid, peso } of pesos) {
+          const aporteBruto = Math.round(bulkTotal * peso / totalPeso);
+          const yaIndiv = indivPorSalida[sid] || 0;
+          const aporte = Math.max(0, aporteBruto - yaIndiv);
+          ocupacion[sid] = (ocupacion[sid] || 0) + aporte;
+        }
+      } else {
+        // Sin pesos: reparto equitativo
+        const tgArr = Array.from(targets);
+        const por = Math.floor(bulkTotal / tgArr.length);
+        for (const sid of tgArr) {
+          const yaIndiv = indivPorSalida[sid] || 0;
+          const aporte = Math.max(0, por - yaIndiv);
+          ocupacion[sid] = (ocupacion[sid] || 0) + aporte;
+        }
+      }
+    }
   }
 
   const sortedSalidas = [...salidas].sort((a, b) =>
@@ -293,7 +388,13 @@ async function checkDisponibilidadDetailed(input: DetailedCheckInput) {
       visible = false; razon_oculta = "cierre_parcial";
     } else if (s.auto_apertura && idx > 0) {
       const prev = sortedSalidas[idx - 1];
-      const prevPct = (ocupacion[prev.id] || 0) / (prev.capacidad_total || 1);
+      // Capacidad de la salida previa = base + extra del override
+      const prevOvr = overrideMap[prev.id];
+      const prevExtra = (prevOvr?.extra_embarcaciones || []).reduce(
+        (sum: number, e: any) => sum + (Number(e.capacidad) || 0), 0,
+      );
+      const prevCap = (prev.capacidad_total || 0) + prevExtra;
+      const prevPct = (ocupacion[prev.id] || 0) / (prevCap || 1);
       if (prevPct < ((prev.auto_umbral || 75) / 100)) {
         visible = false; razon_oculta = "auto_apertura_pendiente";
       }
@@ -375,14 +476,13 @@ async function checkDisponibilidadMonth(input: MonthCheckInput) {
       .select("fecha, salida_id, accion, extra_embarcaciones")
       .gte("fecha", fromIso).lte("fecha", toIso),
     SB.from("reservas")
-      .select("fecha, pax, salida_id")
+      .select("id, fecha, pax, salida_id, grupo_id")
       .neq("estado", "cancelado")
       .gte("fecha", fromIso).lte("fecha", toIso),
     SB.from("eventos")
-      .select("fecha, pax, pasadias_org, comparte_lancha_pasadias, salida_compartida_id, stage")
+      .select("id, fecha, pax, pasadias_org, comparte_lancha_pasadias, salida_compartida_id, salidas_grupo, stage")
       .gte("fecha", fromIso).lte("fecha", toIso)
-      .eq("comparte_lancha_pasadias", true)
-      .neq("stage", "Realizado"),
+      .eq("stage", "Confirmado"),
   ]);
 
   const salidas   = (salidasR.data   || []) as any[];
@@ -417,16 +517,58 @@ async function checkDisponibilidadMonth(input: MonthCheckInput) {
     if (!paxPorFechaSalida[fecha]) paxPorFechaSalida[fecha] = {};
     paxPorFechaSalida[fecha][salidaId] = (paxPorFechaSalida[fecha][salidaId] || 0) + pax;
   }
+  // Track individuales con grupo_id para descontar del bulk del grupo
+  const indivPorGrupoFecha: Record<string, Record<string, Record<string, number>>> = {};
   for (const r of reservas) {
     if (!r.fecha || !r.salida_id) continue;
     addPax(r.fecha, r.salida_id, r.pax || 0);
+    if (r.grupo_id) {
+      if (!indivPorGrupoFecha[r.fecha]) indivPorGrupoFecha[r.fecha] = {};
+      if (!indivPorGrupoFecha[r.fecha][r.grupo_id]) indivPorGrupoFecha[r.fecha][r.grupo_id] = {};
+      indivPorGrupoFecha[r.fecha][r.grupo_id][r.salida_id] =
+        (indivPorGrupoFecha[r.fecha][r.grupo_id][r.salida_id] || 0) + (r.pax || 0);
+    }
   }
   for (const g of eventos) {
-    if (!g.fecha || !g.salida_compartida_id) continue;
-    const paxG = (g.pasadias_org || [])
+    if (!g.fecha) continue;
+    const bulkTotal = ((g.pasadias_org || [])
       .filter((p: any) => p.tipo !== "Impuesto Muelle" && p.tipo !== "STAFF")
-      .reduce((s: number, p: any) => s + (Number(p.personas) || 0), 0) || g.pax || 0;
-    addPax(g.fecha, g.salida_compartida_id, paxG);
+      .reduce((s: number, p: any) => s + (Number(p.personas) || 0), 0)) || g.pax || 0;
+    if (bulkTotal <= 0) continue;
+
+    const targets = new Set<string>();
+    if (g.salida_compartida_id) targets.add(g.salida_compartida_id);
+    for (const sg of (g.salidas_grupo || [])) {
+      if (sg?.id) targets.add(sg.id);
+    }
+    if (targets.size === 0) continue;
+
+    const indivMap = indivPorGrupoFecha[g.fecha]?.[g.id] || {};
+
+    if (targets.size === 1) {
+      const sid = Array.from(targets)[0];
+      const yaIndiv = indivMap[sid] || 0;
+      addPax(g.fecha, sid, Math.max(0, bulkTotal - yaIndiv));
+    } else {
+      const pesos = (g.salidas_grupo || [])
+        .map((sg: any) => ({ sid: sg?.id, peso: Number(sg?.personas) || 0 }))
+        .filter((x: any) => x.sid && targets.has(x.sid));
+      const totalPeso = pesos.reduce((s: number, x: any) => s + x.peso, 0);
+      if (totalPeso > 0) {
+        for (const { sid, peso } of pesos) {
+          const aporteBruto = Math.round(bulkTotal * peso / totalPeso);
+          const yaIndiv = indivMap[sid] || 0;
+          addPax(g.fecha, sid, Math.max(0, aporteBruto - yaIndiv));
+        }
+      } else {
+        const tgArr = Array.from(targets);
+        const por = Math.floor(bulkTotal / tgArr.length);
+        for (const sid of tgArr) {
+          const yaIndiv = indivMap[sid] || 0;
+          addPax(g.fecha, sid, Math.max(0, por - yaIndiv));
+        }
+      }
+    }
   }
 
   // ── Por día: calcular salidas visibles con cupos por lancha ──────────
