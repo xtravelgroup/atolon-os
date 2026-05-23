@@ -504,6 +504,95 @@ function EmbarcacionRentadaModal({ onClose, onSaved }) {
   );
 }
 
+// ─── Pasajeros Blue Apple Modal ──────────────────────────────────────────────
+// Misma idea que ColaboradoresModal pero para pasajeros que van a Blue Apple
+// (no a Atolón). NO cuentan como pasadía pero SÍ ocupan cupo en la lancha
+// y aparecen en el zarpe junto a nuestros pasajeros.
+function BlueAppleModal({ salidaId, fecha, despacho, embarcaciones = [], onClose, onSaved }) {
+  const defaultEmb = embarcaciones.find(e => e.id === "EMB-BLUEAPPLE")?.nombre
+    || embarcaciones[0]?.nombre || "";
+  const init = despacho?.pasajeros_blueapple?.length > 0
+    ? despacho.pasajeros_blueapple
+    : [{ nombre: "", cedula: "", nacionalidad: "", embarcacion: defaultEmb }];
+  const [paxs, setPaxs] = useState(init);
+  const [saving, setSaving] = useState(false);
+
+  const set = (i, k, v) => setPaxs(p => p.map((x, j) => j === i ? { ...x, [k]: v } : x));
+  const add = () => setPaxs(p => [...p, { nombre: "", cedula: "", nacionalidad: "", embarcacion: defaultEmb }]);
+  const remove = (i) => setPaxs(p => p.filter((_, j) => j !== i));
+
+  const save = async () => {
+    setSaving(true);
+    const filtered = paxs.filter(p => p.nombre.trim());
+    if (despacho) {
+      await supabase.from("salida_despachos").update({ pasajeros_blueapple: filtered }).eq("id", despacho.id);
+    } else {
+      const id = `DESP-${Date.now()}`;
+      await supabase.from("salida_despachos").insert({ id, fecha, salida_id: salidaId, pasajeros_blueapple: filtered });
+    }
+    setSaving(false);
+    onSaved();
+    onClose();
+  };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.75)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 999 }}
+      onClick={e => e.target === e.currentTarget && onClose()}>
+      <div style={{ background: B.navyMid, borderRadius: 16, padding: 28, width: 520, maxHeight: "90vh", overflowY: "auto", boxShadow: "0 20px 60px rgba(0,0,0,0.6)" }}>
+        <h3 style={{ fontSize: 17, fontWeight: 700, marginBottom: 4 }}>🍎 Pasajeros Blue Apple</h3>
+        <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginBottom: 20 }}>
+          Van a Blue Apple — no cuentan como pasadía pero SÍ ocupan cupo en la lancha y aparecen en el zarpe.
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {paxs.map((p, i) => (
+            <div key={i} style={{ background: B.navy, borderRadius: 10, padding: 12, display: "flex", gap: 8, alignItems: "flex-start" }}>
+              <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 8 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                  <div>
+                    <label style={LS}>Nombre completo</label>
+                    <input value={p.nombre} onChange={e => set(i, "nombre", e.target.value)} style={IS} placeholder="Nombre y apellido" />
+                  </div>
+                  <div>
+                    <label style={LS}>Cédula / Pasaporte</label>
+                    <input value={p.cedula} onChange={e => set(i, "cedula", e.target.value)} style={IS} placeholder="No. identificación" />
+                  </div>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                  <div>
+                    <label style={LS}>Nacionalidad</label>
+                    <input value={p.nacionalidad} onChange={e => set(i, "nacionalidad", e.target.value)} style={IS} placeholder="Ej: Colombia, USA" />
+                  </div>
+                  <div>
+                    <label style={LS}>Embarcación</label>
+                    <select value={p.embarcacion || ""} onChange={e => set(i, "embarcacion", e.target.value)}
+                      style={{ ...IS, cursor: "pointer" }}>
+                      <option value="">— Sin asignar —</option>
+                      {embarcaciones.map(emb => (
+                        <option key={emb.id} value={emb.nombre}>{emb.nombre}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              </div>
+              <button onClick={() => remove(i)}
+                style={{ marginTop: 22, padding: "6px 10px", borderRadius: 8, background: "none", border: `1px solid ${B.danger}44`, color: B.danger, cursor: "pointer", fontSize: 16, flexShrink: 0 }}>✕</button>
+            </div>
+          ))}
+        </div>
+        <button onClick={add} style={{ marginTop: 10, width: "100%", padding: "9px", borderRadius: 8, background: "none", border: `1px dashed ${B.navyLight}`, color: "rgba(255,255,255,0.4)", fontSize: 13, cursor: "pointer" }}>
+          + Agregar pasajero Blue Apple
+        </button>
+        <div style={{ display: "flex", gap: 10, marginTop: 20 }}>
+          <button onClick={onClose} style={{ flex: 1, padding: "11px", background: "none", border: `1px solid ${B.navyLight}`, borderRadius: 8, color: "rgba(255,255,255,0.4)", fontSize: 13, cursor: "pointer" }}>Cancelar</button>
+          <button onClick={save} disabled={saving} style={{ flex: 2, padding: "11px", background: B.sand, color: B.navy, border: "none", borderRadius: 8, fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
+            {saving ? "Guardando..." : "Guardar pasajeros"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Colaboradores Modal ─────────────────────────────────────────────────────
 function ColaboradoresModal({ salidaId, fecha, despacho, embarcaciones = [], onClose, onSaved }) {
   const init = despacho?.colaboradores?.length > 0
@@ -606,15 +695,25 @@ async function generarZarpe(salida, reservas, fecha, despacho, emb) {
       : [{ nombre: r.nombre, identificacion: "—", nacionalidad: "—" }]
   );
   const totalPax = paxList.length;
-  // Lista unificada para el zarpe: pasajeros + colaboradores en una sola tabla
-  // (colaboradores marcados con tag STAFF + rol en columna Nacionalidad)
+  // Lista unificada para el zarpe: pasajeros + colaboradores + Blue Apple en
+  // una sola tabla. Colaboradores: tag STAFF · rol. Blue Apple: tag BLUE APPLE
+  // (no son pasadía pero ocupan cupo en la lancha).
   const colabRows = (despacho?.colaboradores || []).map(c => ({
     nombre:         c.nombre || "—",
     identificacion: c.cedula || "—",
     nacionalidad:   c.rol ? `STAFF · ${c.rol}` : "STAFF",
     _isStaff:       true,
   }));
-  const fullList = [...paxList, ...colabRows];
+  // Filtrar Blue Apple pax que van en ESTA embarcación
+  const blueAppleRows = (despacho?.pasajeros_blueapple || [])
+    .filter(p => !emb || !p.embarcacion || p.embarcacion === emb.nombre)
+    .map(p => ({
+      nombre:         p.nombre || "—",
+      identificacion: p.cedula || "—",
+      nacionalidad:   p.nacionalidad ? `🍎 BLUE APPLE · ${p.nacionalidad}` : "🍎 BLUE APPLE",
+      _isBlueApple:   true,
+    }));
+  const fullList = [...paxList, ...colabRows, ...blueAppleRows];
 
   // ─── Bitácora: registrar el zarpe generado ─────────────────────────────
   try {
@@ -653,6 +752,8 @@ async function generarZarpe(salida, reservas, fecha, despacho, emb) {
       zarpe_codigo:        codigoFinal,
       pax_total:           totalPax,
       colaboradores_count: despacho?.colaboradores?.length || 0,
+      pasajeros_blueapple_count: (blueAppleRows || []).length,
+      pasajeros_blueapple:       blueAppleRows || [],
       pasajeros:           paxList,
       colaboradores:       despacho?.colaboradores || [],
       despacho_id:         despachoIdFinal,
@@ -766,7 +867,7 @@ async function generarZarpe(salida, reservas, fecha, despacho, emb) {
     <div class="meta">
       <div><b>Fecha:</b> ${new Date(fecha + "T12:00:00").toLocaleDateString("es-CO", { weekday:"long", day:"numeric", month:"long", year:"numeric" })}</div>
       <div><b>Hora salida:</b> ${salida.hora} &nbsp;·&nbsp; Regreso ${salida.hora_regreso}</div>
-      <div><b>Total pasajeros:</b> ${fullList.length}${(despacho?.colaboradores?.length > 0) ? ` <span style="color:#666;font-size:11px;">(${totalPax} pasadía + ${despacho.colaboradores.length} staff)</span>` : ""}</div>
+      <div><b>Total pasajeros:</b> ${fullList.length}${(despacho?.colaboradores?.length > 0 || blueAppleRows.length > 0) ? ` <span style="color:#666;font-size:11px;">(${totalPax} pasadía${despacho?.colaboradores?.length > 0 ? ` + ${despacho.colaboradores.length} staff` : ""}${blueAppleRows.length > 0 ? ` + ${blueAppleRows.length} Blue Apple` : ""})</span>` : ""}</div>
       <div><b>Salida:</b> Muelle de La Bodeguita</div>
       <div><b>Destino:</b> Boca Chica, Tierra Bomba</div>
       <div><b>Generado:</b> ${new Date().toLocaleString("es-CO")}</div>
@@ -781,10 +882,10 @@ async function generarZarpe(salida, reservas, fecha, despacho, emb) {
       </tr></thead>
       <tbody>${bodyRows}</tbody>
     </table>
-    ${(despacho?.colaboradores?.length > 0 || totalPax > 0) ? `
+    ${(despacho?.colaboradores?.length > 0 || totalPax > 0 || blueAppleRows.length > 0) ? `
     <div style="margin-top:14px;font-size:11px;color:#444;">
       Total a bordo: <b>${fullList.length}</b> persona${fullList.length !== 1 ? "s" : ""} —
-      ${totalPax} pasajero${totalPax !== 1 ? "s" : ""}${despacho?.colaboradores?.length > 0 ? ` + ${despacho.colaboradores.length} staff` : ""}
+      ${totalPax} pasajero${totalPax !== 1 ? "s" : ""}${despacho?.colaboradores?.length > 0 ? ` + ${despacho.colaboradores.length} staff` : ""}${blueAppleRows.length > 0 ? ` + ${blueAppleRows.length} Blue Apple` : ""}
     </div>` : ""}
     <div class="footer">Atolon Beach Club — ${new Date().toLocaleString("es-CO")}</div>
   </body></html>`;
@@ -893,6 +994,7 @@ export default function CheckIn() {
   const [scanMsg,        setScanMsg]        = useState(null); // { ok, text }
   const [editPax,        setEditPax]        = useState(null); // reserva to edit pasajeros
   const [editColabs,     setEditColabs]     = useState(false);
+  const [editBlueApple,  setEditBlueApple]  = useState(false);
   const [qrReserva,      setQrReserva]      = useState(null);
   const [confirmCheckin, setConfirmCheckin] = useState(null);
   const [ciPax,          setCiPax]          = useState(null); // pax override for check-in
@@ -1445,6 +1547,19 @@ export default function CheckIn() {
           />
         );
       })()}
+      {editBlueApple && salida && (() => {
+        const allEmbs = embsParaSalida(salida);
+        return (
+          <BlueAppleModal
+            salidaId={salida.id}
+            fecha={fecha}
+            despacho={despacho}
+            embarcaciones={allEmbs}
+            onClose={() => setEditBlueApple(false)}
+            onSaved={load}
+          />
+        );
+      })()}
 
       {/* ── Modal: seleccionar embarcación para despachar ── */}
       {despacharModal && (
@@ -1743,6 +1858,10 @@ export default function CheckIn() {
                   <button onClick={() => setEditColabs(true)}
                     style={{ padding: "8px 12px", borderRadius: 8, background: despacho?.colaboradores?.length > 0 ? B.sky + "22" : B.navyLight, color: despacho?.colaboradores?.length > 0 ? B.sky : "rgba(255,255,255,0.6)", border: `1px solid ${despacho?.colaboradores?.length > 0 ? B.sky + "55" : "transparent"}`, fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
                     👥 {despacho?.colaboradores?.length > 0 ? `${despacho.colaboradores.length}` : "Colabs"}
+                  </button>
+                  <button onClick={() => setEditBlueApple(true)}
+                    style={{ padding: "8px 12px", borderRadius: 8, background: despacho?.pasajeros_blueapple?.length > 0 ? "#dc2626" + "22" : B.navyLight, color: despacho?.pasajeros_blueapple?.length > 0 ? "#fca5a5" : "rgba(255,255,255,0.6)", border: `1px solid ${despacho?.pasajeros_blueapple?.length > 0 ? "#dc2626" + "55" : "transparent"}`, fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
+                    🍎 {despacho?.pasajeros_blueapple?.length > 0 ? `${despacho.pasajeros_blueapple.length}` : "Blue Apple"}
                   </button>
                   {/* Zarpe button per embarcación (base + extras + Blue Apple + rentadas activas) */}
                   {(() => {
