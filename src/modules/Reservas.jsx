@@ -2740,18 +2740,21 @@ function TabCalendario({ salidas, cierres, embarcaciones }) {
     const hasta = `${year}-${String(month + 1).padStart(2, "0")}-${String(diasEnMes).padStart(2, "0")}`;
     // Fetch grupos + reservas juntos para poder sumar los grupos que comparten lancha
     Promise.all([
-      supabase.from("reservas").select("id, fecha, salida_id, pax").gte("fecha", desde).lte("fecha", hasta).neq("estado", "cancelado"),
+      supabase.from("reservas").select("id, fecha, salida_id, pax, grupo_id").gte("fecha", desde).lte("fecha", hasta).neq("estado", "cancelado"),
       supabase.from("eventos")
         .select("id, nombre, tipo, pax, fecha, salidas_grupo, modalidad_pago, pasadias_org, stage, comparte_lancha_pasadias, salida_compartida_id, categoria")
         .gte("fecha", desde).lte("fecha", hasta).eq("stage", "Confirmado"),
     ]).then(([resR, evR]) => {
-      // Reservas referenciadas DESDE pasadias_org de grupos del mismo día
-      // (ej. cortesía: existe como reserva CORT-* Y como item del grupo).
-      // Para evitar doble conteo, las excluimos del map por-salida y las
-      // marcamos para que el array de "sin transporte" también las excluya.
+      // Excluimos del agregado las reservas ya contadas dentro del grupo:
+      //  (1) reserva_id explícito en pasadias_org (cortesía ligada al grupo)
+      //  (2) reservas.grupo_id apuntando a un evento-grupo del día (canal
+      //      "GRUPO" — entran con código de grupo y ya están en el bulk)
       const reservasReferenciadasPorDia = {};
+      const grupoIdsPorDia = {};
       (evR.data || []).forEach(g => {
         if (!g.fecha) return;
+        if (!grupoIdsPorDia[g.fecha]) grupoIdsPorDia[g.fecha] = new Set();
+        grupoIdsPorDia[g.fecha].add(g.id);
         (g.pasadias_org || []).forEach(p => {
           if (!p?.reserva_id) return;
           if (!reservasReferenciadasPorDia[g.fecha]) reservasReferenciadasPorDia[g.fecha] = new Set();
@@ -2760,9 +2763,15 @@ function TabCalendario({ salidas, cierres, embarcaciones }) {
       });
       setReservasReferenciadasPorDia(reservasReferenciadasPorDia);
 
+      const yaContadaEnGrupo = (r) => {
+        if (reservasReferenciadasPorDia[r.fecha]?.has(r.id)) return true;
+        if (r.grupo_id && grupoIdsPorDia[r.fecha]?.has(r.grupo_id)) return true;
+        return false;
+      };
+
       const map = {};
       (resR.data || []).forEach(r => {
-        if (reservasReferenciadasPorDia[r.fecha]?.has(r.id)) return; // ya cuenta dentro del grupo
+        if (yaContadaEnGrupo(r)) return;
         if (!map[r.fecha]) map[r.fecha] = {};
         if (!map[r.fecha][r.salida_id]) map[r.fecha][r.salida_id] = 0;
         map[r.fecha][r.salida_id] += r.pax || 0;
@@ -2793,16 +2802,19 @@ function TabCalendario({ salidas, cierres, embarcaciones }) {
     // a un grupo (ya contadas dentro del grupo).
     Promise.all([
       supabase.from("reservas")
-        .select("id, nombre, tipo, pax, pax_a, pax_n, total, abono, estado, forma_pago, canal, email, telefono, created_at, fecha, notas")
+        .select("id, nombre, tipo, pax, pax_a, pax_n, total, abono, estado, forma_pago, canal, email, telefono, created_at, fecha, notas, grupo_id")
         .is("salida_id", null)
         .gte("fecha", desde).lte("fecha", hasta)
         .neq("estado", "cancelado"),
-      supabase.from("eventos").select("fecha, pasadias_org, stage")
+      supabase.from("eventos").select("id, fecha, pasadias_org, stage")
         .gte("fecha", desde).lte("fecha", hasta).eq("stage", "Confirmado"),
     ]).then(([resR, evR]) => {
       const refs = {};
+      const grupoIds = {};
       (evR.data || []).forEach(g => {
         if (!g.fecha) return;
+        if (!grupoIds[g.fecha]) grupoIds[g.fecha] = new Set();
+        grupoIds[g.fecha].add(g.id);
         (g.pasadias_org || []).forEach(p => {
           if (!p?.reserva_id) return;
           if (!refs[g.fecha]) refs[g.fecha] = new Set();
@@ -2812,6 +2824,7 @@ function TabCalendario({ salidas, cierres, embarcaciones }) {
       const byDay = {};
       (resR.data || []).forEach(r => {
         if (refs[r.fecha]?.has(r.id)) return; // ya cuenta dentro del grupo
+        if (r.grupo_id && grupoIds[r.fecha]?.has(r.grupo_id)) return; // ya cuenta en bulk del grupo
         if (!byDay[r.fecha]) byDay[r.fecha] = [];
         byDay[r.fecha].push(r);
       });

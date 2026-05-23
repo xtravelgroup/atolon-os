@@ -81,12 +81,12 @@ function Dashboard() {
           .gte("created_at", inicioHoy)
           .lte("created_at", finHoy),
         // Pax hoy: confirmados + check_in + pipeline comercial
-        // Trae también `id` para poder excluir reservas referenciadas desde
-        // pasadias_org de un grupo del mismo día (evita doble conteo: la
-        // cortesía existe como reserva CORT-* Y como item dentro del grupo).
-        supabase.from("reservas").select("id, pax").eq("fecha", hoy).in("estado", ["confirmado", "check_in", "pendiente", "pendiente_pago", "pendiente_comprobante"]),
+        // Trae también `id` y `grupo_id` para excluir reservas que ya están
+        // contadas dentro de pasadias_org del grupo (cortesías y reservas
+        // canal="GRUPO" que entran con código de grupo).
+        supabase.from("reservas").select("id, pax, grupo_id").eq("fecha", hoy).in("estado", ["confirmado", "check_in", "pendiente", "pendiente_pago", "pendiente_comprobante"]),
         // Pax mañana: confirmados + check_in + pipeline comercial
-        supabase.from("reservas").select("id, pax").eq("fecha", mananaStr).in("estado", ["confirmado", "check_in", "pendiente", "pendiente_pago", "pendiente_comprobante"]),
+        supabase.from("reservas").select("id, pax, grupo_id").eq("fecha", mananaStr).in("estado", ["confirmado", "check_in", "pendiente", "pendiente_pago", "pendiente_comprobante"]),
         // Leads creados hoy aún activos
         supabase.from("leads").select("id")
           .not("stage", "in", '("Cerrado Ganado","Perdido","Duplicado")')
@@ -133,9 +133,11 @@ function Dashboard() {
       const paxLlegHoy      = (llegHoyR.data    || []).reduce((s, l) => s + (l.pax_total || 0), 0);
       const paxLlegManana   = (llegMananaR.data || []).reduce((s, l) => s + (l.pax_total || 0), 0);
 
-      // Set de reservas referenciadas DESDE pasadias_org de grupos del día:
-      // estas reservas ya están contadas como parte del grupo (ej. cortesía
-      // de los novios). Excluirlas de paxHoy / paxManana para evitar doble.
+      // Excluir reservas ya contadas dentro del grupo. Hay 2 vías:
+      //  1) reserva_id explícito en pasadias_org (cortesías ligadas)
+      //  2) reservas.grupo_id apuntando a un evento-grupo del día (las
+      //     reservas canal="GRUPO" entran con código y ya están dentro
+      //     del bulk de pasadias_org del grupo)
       const collectRefIds = (grupos) => {
         const s = new Set();
         grupos.forEach(g => (g.pasadias_org || []).forEach(p => {
@@ -143,11 +145,14 @@ function Dashboard() {
         }));
         return s;
       };
-      const refsHoy    = collectRefIds(gruposHoy);
-      const refsManana = collectRefIds(gruposManana);
+      const grupoIdSet = (grupos) => new Set(grupos.map(g => g.id));
+      const refsHoy        = collectRefIds(gruposHoy);
+      const refsManana     = collectRefIds(gruposManana);
+      const grupoIdsHoy    = grupoIdSet(gruposHoy);
+      const grupoIdsManana = grupoIdSet(gruposManana);
 
-      const sumReservas = (rows, exclude) => (rows || [])
-        .filter(r => !exclude.has(r.id))
+      const sumReservas = (rows, refIds, grupoIds) => (rows || [])
+        .filter(r => !refIds.has(r.id) && !(r.grupo_id && grupoIds.has(r.grupo_id)))
         .reduce((s, r) => s + (r.pax || 0), 0);
 
       const ventasHoy = ventasHoyR.data || [];
@@ -156,8 +161,8 @@ function Dashboard() {
         pasadiasVendidos: ventasHoy.length,
         revenue: cobradoHoy,
         leadsHoy: (leadsHoyR.data || []).length,
-        paxHoy:    sumReservas(paxHoyR.data,    refsHoy)    + paxGruposHoy    + paxLlegHoy,
-        paxManana: sumReservas(paxMananaR.data, refsManana) + paxGruposManana + paxLlegManana,
+        paxHoy:    sumReservas(paxHoyR.data,    refsHoy,    grupoIdsHoy)    + paxGruposHoy    + paxLlegHoy,
+        paxManana: sumReservas(paxMananaR.data, refsManana, grupoIdsManana) + paxGruposManana + paxLlegManana,
         eventos: (evtR.data || []).length,
         reqPendientes: (reqR.data || []).length,
       });
