@@ -3751,13 +3751,17 @@ export default function Reservas() {
   // IMPORTANTE: usa la lista de reservas del día del grupo (no la del tab activo),
   // para que el conteo sea consistente entre el botón del día y el KPI dentro.
   const grupoPaxTotal = (g, reservasDelDia = null) => {
-    // 1) Pax de pasadías organizadas (incluye cortesías)
+    // 1) Pax bulk + cortesías de pasadias_org
     const paxOrg = (g.pasadias_org || [])
       .filter(p => p.tipo !== "Impuesto Muelle" && p.tipo !== "STAFF")
       .reduce((s, p) => s + (Number(p.personas) || 0), 0);
-    // 2) Pax de reservas vinculadas (grupo_id === g.id) que no están canceladas
+    // Cortesías dentro de pasadias_org (novios, cumpleañera, etc.)
+    const paxCortesiasOrg = (g.pasadias_org || [])
+      .filter(p => p.cortesia)
+      .reduce((s, p) => s + (Number(p.personas) || 0), 0);
+    // 2) Reservas vinculadas (grupo_id === g.id), excluyendo cortesías
+    //    ya contadas en pasadias_org por reserva_id
     const cortesiaResIds = new Set((g.pasadias_org || []).filter(p => p.cortesia && p.reserva_id).map(p => p.reserva_id));
-    // Elegir la lista correcta: si se pasó explícita, usarla; si no, decidir por la fecha del grupo
     let pool = reservasDelDia;
     if (!pool) {
       if      (g.fecha === today)    pool = reservasHoy;
@@ -3767,7 +3771,13 @@ export default function Reservas() {
     const paxReservas = pool
       .filter(r => r.grupo_id === g.id && r.estado !== "cancelado" && !cortesiaResIds.has(r.id))
       .reduce((s, r) => s + (r.pax || 0), 0);
-    const total = paxOrg + paxReservas;
+    // Las reservas individuales canal=GRUPO YA están dentro del bulk de
+    // pasadias_org (ej. "VIP Pass: 38" es la capacidad total del grupo y
+    // las reservas con grupo_id son personas dentro de ese 38). Sumar
+    // ambas dobla. Usar MAX preserva la lógica correcta:
+    //   - caso normal: paxOrg (bulk) ≥ paxReservas → total = paxOrg
+    //   - overbooking: paxReservas excede el bulk → total = reservas + cortesías
+    const total = Math.max(paxOrg, paxReservas + paxCortesiasOrg);
     return total > 0 ? total : (g.pax || 0);
   };
   const paxMap = paxPorSalida(reservas, salidas, grupos);
