@@ -303,16 +303,18 @@ export default function Analitica({ externo = false }) {
       { k: 5, label: "Llegó a pago" },
       { k: 6, label: "Completó pago" },
     ];
-    // Conteo por paso del embudo:
+    // Conteo por paso del embudo, MONOTÓNICO respecto a paso 1.
     //
-    // Pasos 1-5: cada uno cuenta filas con su propio paso_N_ts.
+    // Cada paso N>1 cuenta SOLO filas que ADEMÁS tengan paso_1_ts.
+    // Razón: webhooks externos (Wompi, bot WhatsApp, B2B manual, deep
+    // links a /booking/{slug} que precargan paso_3) pueden marcar
+    // paso_2_ts, paso_3_ts ... paso_6_ts en filas que NUNCA abrieron
+    // el widget — eso producía pasos intermedios > paso 1 (ej.
+    // "Eligió fecha: 120" cuando "Vio widget: 22"), lo cual no tiene
+    // sentido en un embudo.
     //
-    // Paso 6 (Completó pago): se restringe a filas que ADEMÁS tengan
-    // paso_1_ts. Razón: webhooks externos (Wompi al confirmar pago, bot
-    // WhatsApp, B2B manual) pueden marcar paso_6_ts en filas que NUNCA
-    // abrieron el widget — eso producía paso_6 > paso_1, lo cual no
-    // tiene sentido en un embudo. Con el AND paso_1_ts garantizamos
-    // que paso 6 ≤ paso 1 y el embudo queda monotónico.
+    // Con el AND paso_1_ts garantizamos que pN ≤ p1 para todos los
+    // N>1 — el embudo queda monotónico respecto al paso de entrada.
     //
     // Las conversiones "no-widget" (bot, B2B, grupos sin tracking) se
     // siguen viendo en el KPI superior "Conversiones" del segmento,
@@ -320,9 +322,9 @@ export default function Analitica({ externo = false }) {
     const pasos = FUNNEL.map(f => ({
       paso:  f.k,
       label: f.label,
-      count: f.k === 6
-        ? embList.filter(e => !!e.paso_1_ts && !!e.paso_6_ts).length
-        : embList.filter(e => !!e[`paso_${f.k}_ts`]).length,
+      count: f.k === 1
+        ? embList.filter(e => !!e.paso_1_ts).length
+        : embList.filter(e => !!e.paso_1_ts && !!e[`paso_${f.k}_ts`]).length,
     }));
     setEmbudos(pasos);
 
