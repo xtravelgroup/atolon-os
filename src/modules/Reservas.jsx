@@ -3842,13 +3842,23 @@ export default function Reservas() {
     const paxReservas = pool
       .filter(r => r.grupo_id === g.id && r.estado !== "cancelado" && !cortesiaResIds.has(r.id))
       .reduce((s, r) => s + (r.pax || 0), 0);
-    // Las reservas individuales canal=GRUPO YA están dentro del bulk de
-    // pasadias_org (ej. "VIP Pass: 38" es la capacidad total del grupo y
-    // las reservas con grupo_id son personas dentro de ese 38). Sumar
-    // ambas dobla. Usar MAX preserva la lógica correcta:
-    //   - caso normal: paxOrg (bulk) ≥ paxReservas → total = paxOrg
-    //   - overbooking: paxReservas excede el bulk → total = reservas + cortesías
-    const total = Math.max(paxOrg, paxReservas + paxCortesiasOrg);
+
+    // ¿Cuenta el bulk completo o solo las reservas reales?
+    // Misma regla que paxPorSalida y availability-engine (PR #58):
+    //   (a) comparte_lancha_pasadias=true + salida_compartida_id → bulk firme
+    //   (b) salidas_grupo[].personas > 0 → cantidad declarada firme
+    //   (c) salidas_grupo[].personas vacío/0 → solo reservas individuales (no fantasmas)
+    const bulkFirme = !!(g.comparte_lancha_pasadias && g.salida_compartida_id)
+      || (g.salidas_grupo || []).some(sg => Number(sg?.personas) > 0);
+
+    let total;
+    if (bulkFirme) {
+      // Bulk del grupo asegurado: max entre lo declarado y lo que ya entró
+      total = Math.max(paxOrg, paxReservas + paxCortesiasOrg);
+    } else {
+      // Solo reservas reales + cortesías individualizadas (cero fantasmas)
+      total = paxReservas + paxCortesiasOrg;
+    }
     return total > 0 ? total : (g.pax || 0);
   };
   const paxMap = paxPorSalida(reservas, salidas, grupos);
