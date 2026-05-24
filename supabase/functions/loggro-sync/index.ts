@@ -701,25 +701,25 @@ serve(async (req) => {
         orders,
       };
       if (body.mesaId) payload.table = body.mesaId;
-      // Resolver `seller` si vino como cédula (la app guarda la cédula en
-      // empleados_loggro.loggro_id, pero Pirpos quiere su ObjectId interno).
+      // Resolver `seller` si vino como cédula. Si NO se puede resolver,
+      // omitimos seller (Loggro acepta orders sin él) en vez de fallar —
+      // así un mesero sin usuario POS configurado puede igual mandar
+      // pedidos a cocina, atribuidos al "default" del negocio. El nombre
+      // del mesero sigue visible en groupName.
+      let sellerWarning: string | null = null;
       if (body.seller) {
         const sellerId = await resolveSellerId(body.seller);
         if (sellerId) {
           payload.seller = sellerId;
         } else {
-          // Si el caller envió un seller pero no lo pudimos mapear, devolvemos
-          // un 400 claro en vez de dejar que Pirpos responda "seller ID inválido".
-          return json({
-            ok: false,
-            error: `Seller "${body.seller}" no se pudo resolver a un usuario válido de Loggro. Verifica empleados_loggro.loggro_id (debe ser la cédula de un usuario que existe en Pirpos /users).`,
-          }, 400);
+          sellerWarning = `Seller "${body.seller}" no se pudo mapear a un usuario POS de Loggro. Pedido enviado SIN atribución de mesero — el nombre va en groupName.`;
+          console.warn("[create-order] " + sellerWarning);
         }
       }
 
       try {
         const resp = await loggroPost("/orders", payload);
-        return json({ ok: true, order: resp, payload_sent: payload });
+        return json({ ok: true, order: resp, payload_sent: payload, seller_warning: sellerWarning });
       } catch (err) {
         return json({ ok: false, error: String(err), payload_sent: payload }, 500);
       }

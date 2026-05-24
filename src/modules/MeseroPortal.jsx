@@ -268,6 +268,13 @@ export default function MeseroPortal() {
 
     // Hasta `intentos` intentos con backoff 0s, 2s, 5s. Si todos fallan,
     // graba el último error en loggro_response.
+    //
+    // SELLER: Loggro espera un ObjectId 24-hex de su tabla de usuarios POS.
+    // empleados_loggro.loggro_id a veces guarda la cédula del mesero (8-10
+    // dígitos) — eso NO es un seller válido y produce error "Seller no
+    // se pudo resolver". Solo mandamos seller si el formato matchea.
+    const sellerId = mesero?.loggro_id;
+    const sellerObjectId = (typeof sellerId === "string" && /^[0-9a-fA-F]{24}$/.test(sellerId)) ? sellerId : undefined;
     let ultimoError = "";
     for (let i = 0; i < intentos; i++) {
       if (i > 0) await new Promise(r => setTimeout(r, i === 1 ? 2000 : 5000));
@@ -279,7 +286,7 @@ export default function MeseroPortal() {
           headers: { "Content-Type": "application/json", apikey: anon, Authorization: `Bearer ${anon}` },
           body: JSON.stringify({
             mesaId:    spot.loggro_mesa_id,
-            seller:    mesero?.loggro_id || undefined,
+            seller:    sellerObjectId,
             groupName: `Pool · ${spot.id} · ${mesero?.nombre || ""}`,
             items:     lgItems,
           }),
