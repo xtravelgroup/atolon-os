@@ -403,34 +403,58 @@ serve(async (req) => {
         };
       });
 
-      // Solo actualizar los que YA están enlazados (match por loggro_id)
+      // Solo actualizar los que YA están enlazados (match por loggro_id).
+      //
+      // PRECIO: Loggro a veces envía price=0 (productos con "Precio Variable"
+      // o cuando el precio vive en una lista/menú separada). Si el precio
+      // entrante es 0, NO sobreescribir el precio existente — preservar el
+      // último precio manual o el último válido sincronizado.
       let upd = 0;
+      let preservados = 0;
       let lastError: any = null;
       const toUpdate = rows.filter(r => idByLoggro[r.loggro_id!]);
       for (const r of toUpdate) {
         // NO pisar nombre/descripcion: son curados en Productos (Menús.jsx) —
         // el único lugar para gestionar el menú. El sync solo trae datos
         // operativos de Loggro: precio, variantes, categoría POS, raw.
-        const { error } = await SB.from("menu_items").update({
-          precio: r.precio,
+        const updateFields: any = {
           variantes: r.variantes,
           loggro_categoria: r.loggro_categoria,
           raw: r.raw,
-        }).eq("id", r.id);
+        };
+        if (r.precio > 0) {
+          updateFields.precio = r.precio;
+        } else {
+          preservados++;
+        }
+        const { error } = await SB.from("menu_items").update(updateFields).eq("id", r.id);
         if (error) lastError = error;
         else upd++;
       }
       // Segunda pasada: precio_botella desde el producto Loggro de la botella
-      // (loggro_id_botella). Así trago Y botella vienen ambos de Loggro.
+      // (loggro_id_botella). También preserva si Loggro envía 0.
       let updBot = 0;
+      let preservadosBot = 0;
       for (const e of existing || []) {
         const bid = (e as any).loggro_id_botella;
-        if (bid && priceByLoggro[bid] != null) {
-          const { error } = await SB.from("menu_items").update({ precio_botella: priceByLoggro[bid] }).eq("id", e.id);
+        if (!bid || priceByLoggro[bid] == null) continue;
+        const p = priceByLoggro[bid];
+        if (p > 0) {
+          const { error } = await SB.from("menu_items").update({ precio_botella: p }).eq("id", e.id);
           if (error) lastError = error; else updBot++;
+        } else {
+          preservadosBot++;
         }
       }
-      return json({ updated_existing: upd, updated_botella: updBot, total_loggro: allProducts.length, note: "Actualiza precio (loggro_id) y precio_botella (loggro_id_botella) de menu_items enlazados.", error: lastError?.message });
+      return json({
+        updated_existing: upd,
+        precios_preservados: preservados,
+        updated_botella: updBot,
+        botellas_preservadas: preservadosBot,
+        total_loggro: allProducts.length,
+        note: `Sync trajo ${allProducts.length} productos. ${preservados} precios conservados (Loggro envió 0). El último precio bueno queda grabado.`,
+        error: lastError?.message,
+      });
     }
 
     // ═══ Sync Ingredients → items_catalogo ════════════════════════════════
