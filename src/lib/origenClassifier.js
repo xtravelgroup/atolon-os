@@ -124,7 +124,15 @@ export function clasificarOrigen(input = {}) {
   // ── 1. Grupo (highest priority) ────────────────────────────────────────────
   if (grupo_id) return "grupo";
   if (GRUPO_CANALES.has(canalLower)) return "grupo";
-  if (urlLower.includes("?grupo=") || urlLower.includes("&grupo=")) return "grupo";
+  // Aceptar el indicador `?grupo=` en cualquiera de los 2 campos: `url` (cuando
+  // se pasa explícito) o `landing_page` (cuando Analítica pasa la entrada_url
+  // de la sesión). Sin esto, las sesiones que entran por link de grupo y caen
+  // a canal=directo no se clasifican como bucket Grupo en los reportes.
+  const landingLower = String(landing_page || "").toLowerCase();
+  if (urlLower.includes("?grupo=")     || urlLower.includes("&grupo=")     ||
+      landingLower.includes("?grupo=") || landingLower.includes("&grupo=")) {
+    return "grupo";
+  }
   if (aliado_id && (canalLower === "" || canalLower === "web")) return "grupo";
 
   // ── 2. WhatsApp ────────────────────────────────────────────────────────────
