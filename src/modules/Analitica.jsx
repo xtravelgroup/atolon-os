@@ -308,15 +308,21 @@ export default function Analitica({ externo = false }) {
     // saltó pasos del widget (vía deep-link, B2B, bot WhatsApp, etc.) no se
     // distribuye artificialmente en pasos previos.
     //
-    // Esto puede mostrar paso_5 < paso_6 ocasionalmente si un webhook seteó
-    // paso_6 sin paso_5 (ej. una reserva creada por canal no-widget). Es
-    // honesto: el "embudo del widget" mide el viaje del widget; las
-    // conversiones totales del segmento ya se muestran en el KPI Conversiones.
-    const pasos = FUNNEL.map(f => ({
-      paso:  f.k,
-      label: f.label,
-      count: embList.filter(e => !!e[`paso_${f.k}_ts`]).length,
-    }));
+    // Excepción: el ÚLTIMO paso ("Completó pago") = MAX(paso_6_ts del widget,
+    // conversiones reales del segmento). Razón: en segmentos donde la reserva
+    // no pasa por el widget (Grupos por link, WhatsApp bot, B2B directo), no
+    // hay paso_6_ts pero sí hay conversiones — el copy en la UI promete que
+    // "el último paso siempre = Conversiones", así que se respeta esa
+    // promesa sin alterar los pasos 1-5 (que siguen siendo honestos).
+    const convCount = resConvList.length;
+    const pasos = FUNNEL.map(f => {
+      const widgetCount = embList.filter(e => !!e[`paso_${f.k}_ts`]).length;
+      return {
+        paso:  f.k,
+        label: f.label,
+        count: f.k === 6 ? Math.max(widgetCount, convCount) : widgetCount,
+      };
+    });
     setEmbudos(pasos);
 
     // ── Top eventos ───────────────────────────────────────────────────────────
