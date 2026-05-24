@@ -55,17 +55,29 @@ const ESTADO_STYLE = {
 
 // pax already booked per salida from reservas + grupos que comparten lancha con pasadías
 //
-// Distribuye correctamente cuando hay reservas individuales con grupo_id apuntando
-// al mismo grupo (canal=GRUPO entran con código de promoción) — esas YA están dentro
-// del bulk del grupo y se descuentan para no doble-contar.
+// Devuelve un map { [salida_id]: total } pero también lleva un map paralelo
+// `paxPorSalida.lastBreakdown = { [salida_id]: { individual, bulkGrupo, total } }`
+// que la UI puede leer para mostrar el desglose visual:
+//   "30 reservas + 12 del grupo sin reserva = 42 pax"
+//
+// individual = pax que ya tienen reserva individual con salida_id
+// bulkGrupo  = pax del bulk de un grupo que aún no tienen reserva individual
+// total      = individual + bulkGrupo (lo que se usa para cupos)
 function paxPorSalida(reservas, salidas, grupos = []) {
   const map = {};
-  salidas.forEach(s => (map[s.id] = 0));
+  const breakdown = {};
+  salidas.forEach(s => {
+    map[s.id] = 0;
+    breakdown[s.id] = { individual: 0, bulkGrupo: 0, total: 0 };
+  });
 
   // 1) Sumar reservas individuales por salida (cada persona ocupa cupo)
   reservas.forEach(r => {
-    if (r.estado !== "cancelado" && map[r.salida] !== undefined)
-      map[r.salida] += (r.pax || 0);
+    if (r.estado !== "cancelado" && map[r.salida] !== undefined) {
+      const px = r.pax || 0;
+      map[r.salida] += px;
+      breakdown[r.salida].individual += px;
+    }
   });
 
   // 2) Aporte del bulk de cada grupo a sus salidas, descontando las reservas
@@ -76,7 +88,6 @@ function paxPorSalida(reservas, salidas, grupos = []) {
       .reduce((s, p) => s + (Number(p.personas) || 0), 0) || g.pax || 0;
     if (bulk <= 0) return;
 
-    // Targets: salida_compartida_id ∪ salidas_grupo[].id
     const targets = new Set();
     if (g.salida_compartida_id && map[g.salida_compartida_id] !== undefined) {
       targets.add(g.salida_compartida_id);
@@ -86,7 +97,6 @@ function paxPorSalida(reservas, salidas, grupos = []) {
     }
     if (targets.size === 0) return;
 
-    // Pax individuales con grupo_id apuntando a este grupo, por salida (ya en (1))
     const yaIndiv = {};
     reservas.forEach(r => {
       if (r.estado === "cancelado") return;
@@ -95,29 +105,36 @@ function paxPorSalida(reservas, salidas, grupos = []) {
       }
     });
 
+    const addBulk = (sid, aporte) => {
+      const v = Math.max(0, aporte);
+      map[sid] += v;
+      breakdown[sid].bulkGrupo += v;
+    };
+
     const tgArr = Array.from(targets);
     if (tgArr.length === 1) {
       const sid = tgArr[0];
-      map[sid] += Math.max(0, bulk - (yaIndiv[sid] || 0));
+      addBulk(sid, bulk - (yaIndiv[sid] || 0));
     } else {
-      // Reparto proporcional a "personas" declaradas en salidas_grupo
       const pesos = (g.salidas_grupo || [])
         .map(sg => ({ sid: sg?.id, peso: Number(sg?.personas) || 0 }))
         .filter(x => x.sid && targets.has(x.sid));
       const totalPeso = pesos.reduce((s, x) => s + x.peso, 0);
       if (totalPeso > 0) {
         pesos.forEach(({ sid, peso }) => {
-          const aporte = Math.round(bulk * peso / totalPeso);
-          map[sid] += Math.max(0, aporte - (yaIndiv[sid] || 0));
+          addBulk(sid, Math.round(bulk * peso / totalPeso) - (yaIndiv[sid] || 0));
         });
       } else {
         const por = Math.floor(bulk / tgArr.length);
         tgArr.forEach(sid => {
-          map[sid] += Math.max(0, por - (yaIndiv[sid] || 0));
+          addBulk(sid, por - (yaIndiv[sid] || 0));
         });
       }
     }
   });
+
+  salidas.forEach(s => { breakdown[s.id].total = map[s.id]; });
+  paxPorSalida.lastBreakdown = breakdown;
   return map;
 }
 
@@ -156,7 +173,7 @@ function StatusBadge({ estado }) {
   );
 }
 
-function DepartureCard({ salida, paxCount, extraCap = 0 }) {
+function DepartureCard({ salida, paxCount, extraCap = 0, paxIndividual, paxBulkGrupo }) {
   const cap = (salida.capacidad_total || 30) + extraCap;
   const pct = paxCount / cap;
   const full = pct >= 1;
@@ -165,6 +182,7 @@ function DepartureCard({ salida, paxCount, extraCap = 0 }) {
   const statusLabel = full ? "LLENO" : almostFull ? "CASI LLENO" : "DISPONIBLE";
   const statusColor = full ? B.danger : almostFull ? B.warning : B.success;
   const disp = Math.max(0, cap - paxCount);
+  const hayBulk = (paxBulkGrupo || 0) > 0;
 
   return (
     <div style={{
@@ -196,6 +214,11 @@ function DepartureCard({ salida, paxCount, extraCap = 0 }) {
         <div style={{ background: B.navyLight, borderRadius: 4, height: 6, overflow: "hidden" }}>
           <div style={{ width: `${Math.min(pct * 100, 100)}%`, height: "100%", background: barColor, borderRadius: 4, transition: "width 0.4s ease" }} />
         </div>
+        {hayBulk && (
+          <div style={{ fontSize: 10, color: "rgba(255,255,255,0.55)", marginTop: 6, lineHeight: 1.4 }}>
+            {paxIndividual} con reserva + <span style={{ color: B.sand }}>{paxBulkGrupo} del grupo sin reserva individual</span>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -4433,7 +4456,15 @@ export default function Reservas() {
               const dayOvr = fechaBoard ? (overridesMap[fechaBoard] || {}) : {};
               return [...abiertas, ...conReservas].sort((a, b) => a.hora.localeCompare(b.hora)).map(s => {
                 const extraCap = (dayOvr[s.id]?.extra_embarcaciones || []).reduce((sum, e) => sum + (e.capacidad || 0), 0);
-                return <DepartureCard key={s.id} salida={s} paxCount={paxMap[s.id] || 0} extraCap={extraCap} />;
+                const bd = paxPorSalida.lastBreakdown?.[s.id];
+                return <DepartureCard
+                  key={s.id}
+                  salida={s}
+                  paxCount={paxMap[s.id] || 0}
+                  extraCap={extraCap}
+                  paxIndividual={bd?.individual || 0}
+                  paxBulkGrupo={bd?.bulkGrupo || 0}
+                />;
               });
             })()}
           </div>
