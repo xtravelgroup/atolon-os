@@ -303,26 +303,27 @@ export default function Analitica({ externo = false }) {
       { k: 5, label: "Llegó a pago" },
       { k: 6, label: "Completó pago" },
     ];
-    // Conteo REAL por paso: cada paso N cuenta SOLO filas que tienen su
-    // propio paso_N_ts seteado. Sin propagación ni override — un usuario que
-    // saltó pasos del widget (vía deep-link, B2B, bot WhatsApp, etc.) no se
-    // distribuye artificialmente en pasos previos.
+    // Conteo por paso del embudo:
     //
-    // Excepción: el ÚLTIMO paso ("Completó pago") = MAX(paso_6_ts del widget,
-    // conversiones reales del segmento). Razón: en segmentos donde la reserva
-    // no pasa por el widget (Grupos por link, WhatsApp bot, B2B directo), no
-    // hay paso_6_ts pero sí hay conversiones — el copy en la UI promete que
-    // "el último paso siempre = Conversiones", así que se respeta esa
-    // promesa sin alterar los pasos 1-5 (que siguen siendo honestos).
-    const convCount = resConvList.length;
-    const pasos = FUNNEL.map(f => {
-      const widgetCount = embList.filter(e => !!e[`paso_${f.k}_ts`]).length;
-      return {
-        paso:  f.k,
-        label: f.label,
-        count: f.k === 6 ? Math.max(widgetCount, convCount) : widgetCount,
-      };
-    });
+    // Pasos 1-5: cada uno cuenta filas con su propio paso_N_ts.
+    //
+    // Paso 6 (Completó pago): se restringe a filas que ADEMÁS tengan
+    // paso_1_ts. Razón: webhooks externos (Wompi al confirmar pago, bot
+    // WhatsApp, B2B manual) pueden marcar paso_6_ts en filas que NUNCA
+    // abrieron el widget — eso producía paso_6 > paso_1, lo cual no
+    // tiene sentido en un embudo. Con el AND paso_1_ts garantizamos
+    // que paso 6 ≤ paso 1 y el embudo queda monotónico.
+    //
+    // Las conversiones "no-widget" (bot, B2B, grupos sin tracking) se
+    // siguen viendo en el KPI superior "Conversiones" del segmento,
+    // que es la fuente de verdad para el total de reservas pagadas.
+    const pasos = FUNNEL.map(f => ({
+      paso:  f.k,
+      label: f.label,
+      count: f.k === 6
+        ? embList.filter(e => !!e.paso_1_ts && !!e.paso_6_ts).length
+        : embList.filter(e => !!e[`paso_${f.k}_ts`]).length,
+    }));
     setEmbudos(pasos);
 
     // ── Top eventos ───────────────────────────────────────────────────────────
@@ -662,7 +663,7 @@ export default function Analitica({ externo = false }) {
               pasos se completan automáticamente al abrir. El embudo aplica a
               todos los segmentos. */}
           <div style={{ fontSize: 11, color: B.muted, marginBottom: 18 }}>
-            Embudo <strong>self-service</strong>. Grupos: paquete y fecha vienen pre-fijados por el link. WhatsApp: reserva por el bot de IA (sin pasos de widget) → el embudo queda plano en las conversiones. El último paso siempre = Conversiones.
+            Embudo <strong>del widget</strong>. Cada paso cuenta solo a quien lo registró en el widget. <strong>Completó pago</strong> = personas que abrieron el widget y terminaron pagando (no incluye bot WhatsApp / B2B / Grupos sin tracking — esos se ven arriba en el KPI <strong>Conversiones</strong>).
           </div>
           {embudos.map((p, i) => {
             const maxCount = embudos[0]?.count || 1;
