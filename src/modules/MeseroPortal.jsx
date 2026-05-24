@@ -53,6 +53,8 @@ export default function MeseroPortal() {
   const [huespedes, setHuespedes] = useState([]); // huéspedes hotel en check-in sin mesa
   const [huespedSel, setHuespedSel] = useState(""); // estancia id elegida en el dropdown
   const [okCodigo, setOkCodigo] = useState("");
+  const [okPedidoId, setOkPedidoId] = useState(null); // uuid del pedido para reintentar
+  const [reintentando, setReintentando] = useState(false);
   const [okRegistro, setOkRegistro] = useState(false); // se registró mesa sin pedido
   const [modItem, setModItem] = useState(null); // ítem con variantes abierto
   const [okLoggro, setOkLoggro] = useState(false);
@@ -230,6 +232,85 @@ export default function MeseroPortal() {
     setOkRegistro(true); setOkCodigo(""); setStep("success");
   };
 
+  // Envía un pedido (recién guardado o existente) a Loggro con reintento
+  // automático con backoff exponencial. Devuelve { ok, error } y SIEMPRE
+  // persiste el resultado en pool_service_pedidos para visibilidad.
+  const enviarPedidoALoggro = async ({ pedidoId, codigo, spot, cart, notas, mesero, intentos = 3 }) => {
+    const grabarError = async (motivo, extra = {}) => {
+      console.error("[MeseroPortal] " + motivo);
+      try {
+        await supabase.from("pool_service_pedidos").update({
+          loggro_response: { error: motivo, attempted_at: new Date().toISOString(), ...extra },
+          updated_at: new Date().toISOString(),
+        }).eq("id", pedidoId || codigo);
+      } catch (_) { /* el mesero verá el mensaje en la UI igual */ }
+    };
+
+    if (!spot?.loggro_mesa_id) {
+      const msg = `Spot ${spot?.id || "?"} sin loggro_mesa_id configurado. Pedido guardado local, NO enviado a Loggro.`;
+      await grabarError(msg);
+      return { ok: false, error: msg };
+    }
+
+    const anon = import.meta.env.VITE_SUPABASE_ANON_KEY;
+    const lgItems = cart.map(c => ({
+      productId: c.loggro_id, qty: c.cantidad,
+      unit_price: Number(c.precio) || 0,
+      notes: c.notas ? [String(c.notas)] : (notas ? [String(notas)] : []),
+    })).filter(i => i.productId);
+    const sinId = cart.length - lgItems.length;
+
+    if (lgItems.length === 0) {
+      const msg = "Ningún ítem tiene loggro_id mapeado. Revisa el catálogo en Admin → Loggro.";
+      await grabarError(msg);
+      return { ok: false, error: msg };
+    }
+
+    // Hasta `intentos` intentos con backoff 0s, 2s, 5s. Si todos fallan,
+    // graba el último error en loggro_response.
+    let ultimoError = "";
+    for (let i = 0; i < intentos; i++) {
+      if (i > 0) await new Promise(r => setTimeout(r, i === 1 ? 2000 : 5000));
+      const ctrl = new AbortController();
+      const timeoutId = setTimeout(() => ctrl.abort(), 15000);
+      try {
+        const res = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/loggro-sync/create-order`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", apikey: anon, Authorization: `Bearer ${anon}` },
+          body: JSON.stringify({
+            mesaId:    spot.loggro_mesa_id,
+            seller:    mesero?.loggro_id || undefined,
+            groupName: `Pool · ${spot.id} · ${mesero?.nombre || ""}`,
+            items:     lgItems,
+          }),
+          signal: ctrl.signal,
+        });
+        clearTimeout(timeoutId);
+        const d = await res.json().catch(() => ({ ok: false, error: `HTTP ${res.status} sin body JSON` }));
+        if (d.ok) {
+          const arr = Array.isArray(d.order) ? d.order : [d.order];
+          const updPayload = {
+            estado: "enviado_loggro", enviado_loggro_at: new Date().toISOString(),
+            loggro_order_id: arr[0]?._id || arr[0]?.id || null,
+            loggro_group_id: arr[0]?.group || null, loggro_response: d.order,
+            updated_at: new Date().toISOString(),
+          };
+          await supabase.from("pool_service_pedidos").update(updPayload).eq("id", pedidoId || codigo);
+          const advertencia = sinId > 0 ? `Advertencia: ${sinId} ítem(s) sin loggro_id se omitieron.` : "";
+          return { ok: true, error: advertencia, intentos: i + 1 };
+        }
+        ultimoError = `Loggro rechazó el pedido: ${d.error || JSON.stringify(d).slice(0, 240)}`;
+      } catch (err) {
+        clearTimeout(timeoutId);
+        ultimoError = err?.name === "AbortError"
+          ? `Loggro no respondió en 15s (timeout intento ${i + 1}/${intentos})`
+          : `No se pudo contactar a Loggro (intento ${i + 1}/${intentos}): ${err?.message || String(err)}`;
+      }
+    }
+    await grabarError(`${ultimoError}. Pedido guardado local — staff debe reenviar desde Pool Service.`, { intentos });
+    return { ok: false, error: ultimoError };
+  };
+
   const enviar = async () => {
     if (cart.length === 0) return alert("Agrega ítems al pedido");
     setBusy(true);
@@ -250,88 +331,23 @@ export default function MeseroPortal() {
     }).select().maybeSingle();
     if (error) { setBusy(false); return alert("Error al guardar: " + error.message); }
 
-    // Enviar a la mesa de Loggro del spot (con el mesero como seller).
-    //
-    // GARANTÍA: en TODOS los caminos (sin loggro_mesa_id, sin loggro_id en
-    // items, fetch falla, timeout, etc.) escribimos `loggro_response` con
-    // el motivo. Si no, el pedido queda "huérfano" y el admin no sabe que
-    // falta reenviarlo. ANTES había 2 huecos (early-returns que solo hacían
-    // console.error) — ahora siempre se persiste el intento.
-    let loggroOk = false;
-    let loggroErrMsg = "";
-    const grabarError = async (motivo) => {
-      console.error("[MeseroPortal] " + motivo);
-      try {
-        await supabase.from("pool_service_pedidos").update({
-          loggro_response: { error: motivo, attempted_at: new Date().toISOString() },
-          updated_at: new Date().toISOString(),
-        }).eq("id", ins?.id || codigo);
-      } catch (_) { /* no se pudo registrar; el mesero verá el mensaje en la UI igual */ }
-    };
-
-    if (!spot.loggro_mesa_id) {
-      loggroErrMsg = `Spot ${spot.id} sin loggro_mesa_id configurado. Pedido guardado local, NO enviado a Loggro.`;
-      await grabarError(loggroErrMsg);
-    } else {
-      const anon = import.meta.env.VITE_SUPABASE_ANON_KEY;
-      const lgItems = cart.map(c => ({
-        productId: c.loggro_id, qty: c.cantidad,
-        unit_price: Number(c.precio) || 0,
-        notes: c.notas ? [String(c.notas)] : (notas ? [String(notas)] : []),
-      })).filter(i => i.productId);
-      const sinId = cart.length - lgItems.length;
-
-      if (lgItems.length === 0) {
-        loggroErrMsg = "Ningún ítem tiene loggro_id mapeado. Revisa el catálogo en Admin → Loggro.";
-        await grabarError(loggroErrMsg);
-      } else {
-        // Timeout 15s: si Loggro no responde, abortamos y registramos error.
-        // Antes el fetch podía quedar colgado indefinidamente cuando Loggro
-        // tenía latencia alta y el mesero veía la UI "spinning" eterno.
-        const ctrl = new AbortController();
-        const timeoutId = setTimeout(() => ctrl.abort(), 15000);
-        try {
-          const res = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/loggro-sync/create-order`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json", apikey: anon, Authorization: `Bearer ${anon}` },
-            body: JSON.stringify({
-              mesaId:    spot.loggro_mesa_id,
-              seller:    mesero?.loggro_id || undefined,
-              groupName: `Pool · ${spot.id} · ${mesero?.nombre || ""}`,
-              items:     lgItems,
-            }),
-            signal: ctrl.signal,
-          });
-          clearTimeout(timeoutId);
-          // res.json puede fallar si Loggro devolvió HTML/error — cubrimos
-          const d = await res.json().catch(() => ({ ok: false, error: `HTTP ${res.status} sin body JSON` }));
-          if (d.ok) {
-            loggroOk = true;
-            const arr = Array.isArray(d.order) ? d.order : [d.order];
-            const updPayload = {
-              estado: "enviado_loggro", enviado_loggro_at: new Date().toISOString(),
-              loggro_order_id: arr[0]?._id || arr[0]?.id || null,
-              loggro_group_id: arr[0]?.group || null, loggro_response: d.order,
-              updated_at: new Date().toISOString(),
-            };
-            if (sinId > 0) loggroErrMsg = `Advertencia: ${sinId} ítem(s) sin loggro_id se omitieron.`;
-            await supabase.from("pool_service_pedidos").update(updPayload).eq("id", ins?.id || codigo);
-          } else {
-            loggroErrMsg = `Loggro rechazó el pedido: ${d.error || JSON.stringify(d).slice(0, 240)}`;
-            await grabarError(loggroErrMsg);
-          }
-        } catch (err) {
-          clearTimeout(timeoutId);
-          const motivo = err?.name === "AbortError"
-            ? "Loggro no respondió en 15s (timeout). El pedido se guardó local — staff debe reenviar."
-            : `No se pudo contactar a Loggro: ${err?.message || String(err)}. El pedido se guardó local — staff debe reenviar.`;
-          loggroErrMsg = motivo;
-          await grabarError(motivo);
-        }
-      }
-    }
+    const res = await enviarPedidoALoggro({ pedidoId: ins?.id, codigo, spot, cart, notas, mesero });
     setBusy(false);
-    setOkRegistro(false); setOkCodigo(codigo); setOkLoggro(loggroOk); setLoggroErr(loggroErrMsg); setStep("success");
+    setOkRegistro(false);
+    setOkCodigo(codigo);
+    setOkPedidoId(ins?.id || null);
+    setOkLoggro(!!res.ok);
+    setLoggroErr(res.error || "");
+    setStep("success");
+  };
+
+  const reintentar = async () => {
+    if (!okPedidoId && !okCodigo) return;
+    setReintentando(true);
+    const res = await enviarPedidoALoggro({ pedidoId: okPedidoId, codigo: okCodigo, spot, cart, notas, mesero });
+    setReintentando(false);
+    setOkLoggro(!!res.ok);
+    setLoggroErr(res.error || "");
   };
 
   const nuevoPedido = () => { setCart([]); setNotas(""); setPax(2); setHuesped(""); setReservaId(null); setHuespedSel(""); setSpot(null); setStep("spots"); setOkCodigo(""); setOkRegistro(false); };
@@ -405,7 +421,16 @@ export default function MeseroPortal() {
           {huboLoggroErr && (
             <div style={{ background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.4)", borderRadius: 10, padding: "12px 14px", marginTop: 16, textAlign: "left" }}>
               <div style={{ fontSize: 11, fontWeight: 800, color: "#ef4444", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>⚠ Error de sincronización Loggro</div>
-              <div style={{ fontSize: 12, color: C.text, lineHeight: 1.45 }}>{loggroErr}</div>
+              <div style={{ fontSize: 12, color: C.text, lineHeight: 1.45, marginBottom: 12 }}>{loggroErr}</div>
+              <button onClick={reintentar} disabled={reintentando}
+                style={{
+                  width: "100%", padding: "10px 14px", borderRadius: 8,
+                  background: reintentando ? "#374151" : "#ef4444",
+                  color: "#fff", border: "none", fontWeight: 700, fontSize: 13,
+                  cursor: reintentando ? "wait" : "pointer",
+                }}>
+                {reintentando ? "Reintentando…" : "🔄 Reintentar envío a Loggro"}
+              </button>
             </div>
           )}
           <Btn onClick={nuevoPedido}>{okRegistro ? "+ Otra mesa" : "+ Nuevo pedido"}</Btn>
@@ -561,18 +586,45 @@ export default function MeseroPortal() {
         </>
       )}
 
-      {step === "review" && (
+      {step === "review" && (() => {
+        // Pre-validación visible para el mesero antes de enviar:
+        // ítems sin loggro_id (no llegan a Loggro) y sin precio (ticket en $0).
+        const itemsSinLoggro = cart.filter(c => !c.loggro_id).length;
+        const itemsSinPrecio = cart.filter(c => Number(c.precio) === 0).length;
+        const haySpotSinMesa = !spot?.loggro_mesa_id;
+        return (
         <div style={{ paddingBottom: 16 }}>
-          <div style={{ background: C.card, borderRadius: 12, padding: 16, margin: "16px 0 12px" }}>
+          {(itemsSinLoggro > 0 || itemsSinPrecio > 0 || haySpotSinMesa) && (
+            <div style={{ background: "rgba(245,158,11,0.12)", border: "1px solid rgba(245,158,11,0.5)", borderRadius: 10, padding: "12px 14px", margin: "16px 0 0" }}>
+              <div style={{ fontSize: 12, fontWeight: 800, color: "#f59e0b", marginBottom: 6 }}>⚠ Antes de enviar — revisa:</div>
+              <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12, color: C.text, lineHeight: 1.5 }}>
+                {haySpotSinMesa && <li>El spot <b>{spot?.id || "?"}</b> NO está mapeado a una mesa en Loggro. El pedido se guardará pero no llegará a cocina.</li>}
+                {itemsSinLoggro > 0 && <li><b>{itemsSinLoggro}</b> ítem(s) sin <code>loggro_id</code> → no llegarán a Loggro (los demás sí).</li>}
+                {itemsSinPrecio > 0 && <li><b>{itemsSinPrecio}</b> ítem(s) con precio $0 → el ticket sale sin valor en cocina.</li>}
+              </ul>
+            </div>
+          )}
+          <div style={{ background: C.card, borderRadius: 12, padding: 16, margin: "12px 0 12px" }}>
             <div style={{ fontSize: 14, fontWeight: 800, color: C.text, marginBottom: 8 }}>Pedido · {spot?.id}</div>
-            {cart.map(c => (
+            {cart.map(c => {
+              const sinLoggro = !c.loggro_id;
+              const sinPrecio = Number(c.precio) === 0;
+              return (
               <div key={c.key} style={{ padding: "8px 0", borderTop: `1px solid ${C.line}` }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                   <button onClick={() => setQ(c.key, c.cantidad - 1)} style={qbtn}>−</button>
                   <span style={{ minWidth: 22, textAlign: "center", fontWeight: 800, color: C.text }}>{c.cantidad}</span>
                   <button onClick={() => setQ(c.key, c.cantidad + 1)} style={qbtn}>+</button>
-                  <div style={{ flex: 1, fontSize: 13, color: C.text }}>{c.nombre}</div>
-                  <div style={{ fontWeight: 800, color: C.text }}>{COP(c.precio * c.cantidad)}</div>
+                  <div style={{ flex: 1, fontSize: 13, color: C.text, display: "flex", flexDirection: "column", gap: 2 }}>
+                    <span>{c.nombre}</span>
+                    {(sinLoggro || sinPrecio) && (
+                      <span style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                        {sinLoggro && <span style={{ fontSize: 9, padding: "1px 6px", borderRadius: 8, background: "#ef444433", color: "#ef4444", fontWeight: 700 }}>⚠ Sin Loggro</span>}
+                        {sinPrecio && <span style={{ fontSize: 9, padding: "1px 6px", borderRadius: 8, background: "#f59e0b33", color: "#f59e0b", fontWeight: 700 }}>⚠ Sin precio</span>}
+                      </span>
+                    )}
+                  </div>
+                  <div style={{ fontWeight: 800, color: sinPrecio ? "#f59e0b" : C.text }}>{COP(c.precio * c.cantidad)}</div>
                 </div>
                 <input
                   value={c.notas || ""}
@@ -581,7 +633,8 @@ export default function MeseroPortal() {
                   style={{ width: "100%", marginTop: 6, padding: "8px 10px", borderRadius: 8, border: `1px solid ${C.line}`, fontSize: 12, background: C.bg, color: C.text, outline: "none", boxSizing: "border-box" }}
                 />
               </div>
-            ))}
+              );
+            })}
             <div style={{ display: "flex", justifyContent: "space-between", paddingTop: 10, borderTop: `2px solid ${C.line}`, marginTop: 6, fontWeight: 800, fontSize: 16, color: C.text }}>
               <span>Total</span><span>{COP(subtotal)}</span>
             </div>
@@ -608,7 +661,8 @@ export default function MeseroPortal() {
             </button>
           </div>
         </div>
-      )}
+        );
+      })()}
 
       {modItem && (
         <ModSheet
