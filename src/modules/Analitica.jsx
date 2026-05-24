@@ -319,13 +319,16 @@ export default function Analitica({ externo = false }) {
     // Las conversiones "no-widget" (bot, B2B, grupos sin tracking) se
     // siguen viendo en el KPI superior "Conversiones" del segmento,
     // que es la fuente de verdad para el total de reservas pagadas.
-    const pasos = FUNNEL.map(f => ({
-      paso:  f.k,
-      label: f.label,
-      count: f.k === 1
+    const pasos = FUNNEL.map(f => {
+      const widgetCount = f.k === 1
         ? embList.filter(e => !!e.paso_1_ts).length
-        : embList.filter(e => !!e.paso_1_ts && !!e[`paso_${f.k}_ts`]).length,
-    }));
+        : embList.filter(e => !!e.paso_1_ts && !!e[`paso_${f.k}_ts`]).length;
+      // En el último paso: además del conteo del widget, exponemos
+      // cuántas conversiones del segmento NO pasaron por el embudo
+      // del widget. Eso explica la diferencia con el KPI Conversiones.
+      const extra = f.k === 6 ? Math.max(0, sesConv - widgetCount) : 0;
+      return { paso: f.k, label: f.label, count: widgetCount, extra };
+    });
     setEmbudos(pasos);
 
     // ── Top eventos ───────────────────────────────────────────────────────────
@@ -679,7 +682,12 @@ export default function Analitica({ externo = false }) {
                   <span style={{ fontSize: 12, color: B.muted }}>{p.label}</span>
                   <span style={{ fontSize: 12, color: "#fff", fontWeight: 600 }}>
                     {p.count.toLocaleString("es-CO")}
-                    {dropPct && <span style={{ color: B.danger, marginLeft: 8 }}>-{dropPct}%</span>}
+                    {dropPct ? <span style={{ color: B.danger, marginLeft: 8 }}>-{dropPct}%</span> : null}
+                    {p.extra > 0 && (
+                      <span style={{ color: B.muted, marginLeft: 8, fontWeight: 400 }}>
+                        + {p.extra.toLocaleString("es-CO")} no-widget = {(p.count + p.extra).toLocaleString("es-CO")} total
+                      </span>
+                    )}
                   </span>
                 </div>
                 <div style={{ height: 8, background: "rgba(255,255,255,0.08)", borderRadius: 4, overflow: "hidden" }}>
