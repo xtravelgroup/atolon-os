@@ -70,7 +70,22 @@ function parseClickIds() {
 function clasificarCanal(utms, referrer, clickIds) {
   const src = utms.utm_source?.toLowerCase() || "";
   const med = utms.utm_medium?.toLowerCase() || "";
+  const cmp = utms.utm_campaign?.toLowerCase() || "";
   const ref = referrer?.toLowerCase() || "";
+
+  // Grupos / Eventos: el cliente llega por un link compartido tipo
+  // ?grupo=EVT-... (paquete y fecha pre-fijados). Antes caía en "directo"
+  // porque no trae UTMs → la sesión no se contaba en el segmento Grupos
+  // del dashboard, y su embudo quedaba vacío aunque sí completaba pasos.
+  // Cualquier sesión con `?grupo=` o utm_campaign=grupo/evento se etiqueta
+  // como "grupo" para que el embudo registre los pasos correctamente.
+  try {
+    if (typeof window !== "undefined" && window.location && window.location.search) {
+      const p = new URLSearchParams(window.location.search);
+      if (p.get("grupo")) return "grupo";
+    }
+  } catch (_) {}
+  if (cmp === "grupo" || cmp === "grupos" || cmp === "evento" || cmp === "eventos") return "grupo";
 
   if (clickIds?.gclid || (src === "google" && med === "cpc")) return "sem_google";
   if (clickIds?.msclkid || (src === "bing" && med === "cpc")) return "sem_bing";
