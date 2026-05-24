@@ -251,17 +251,27 @@ export default function MeseroPortal() {
     if (error) { setBusy(false); return alert("Error al guardar: " + error.message); }
 
     // Enviar a la mesa de Loggro del spot (con el mesero como seller).
-    // ⚠️ ANTES había try/catch silencioso: si fallaba la red/CORS/timeout el
-    // pedido quedaba "huérfano" con estado=recibido sin que el mesero se
-    // enterara (caso real: PS-1779283345669 / C11 / Corona el 2026-05-20).
-    // AHORA cualquier fallo: 1) loggea console.error con detalles, 2) guarda
-    // un resumen del error en loggro_response (jsonb existente), 3) lo
-    // muestra al mesero en la pantalla de success para que pueda reenviar.
+    //
+    // GARANTÍA: en TODOS los caminos (sin loggro_mesa_id, sin loggro_id en
+    // items, fetch falla, timeout, etc.) escribimos `loggro_response` con
+    // el motivo. Si no, el pedido queda "huérfano" y el admin no sabe que
+    // falta reenviarlo. ANTES había 2 huecos (early-returns que solo hacían
+    // console.error) — ahora siempre se persiste el intento.
     let loggroOk = false;
     let loggroErrMsg = "";
+    const grabarError = async (motivo) => {
+      console.error("[MeseroPortal] " + motivo);
+      try {
+        await supabase.from("pool_service_pedidos").update({
+          loggro_response: { error: motivo, attempted_at: new Date().toISOString() },
+          updated_at: new Date().toISOString(),
+        }).eq("id", ins?.id || codigo);
+      } catch (_) { /* no se pudo registrar; el mesero verá el mensaje en la UI igual */ }
+    };
+
     if (!spot.loggro_mesa_id) {
       loggroErrMsg = `Spot ${spot.id} sin loggro_mesa_id configurado. Pedido guardado local, NO enviado a Loggro.`;
-      console.error("[MeseroPortal] " + loggroErrMsg);
+      await grabarError(loggroErrMsg);
     } else {
       const anon = import.meta.env.VITE_SUPABASE_ANON_KEY;
       const lgItems = cart.map(c => ({
@@ -273,8 +283,13 @@ export default function MeseroPortal() {
 
       if (lgItems.length === 0) {
         loggroErrMsg = "Ningún ítem tiene loggro_id mapeado. Revisa el catálogo en Admin → Loggro.";
-        console.error("[MeseroPortal] " + loggroErrMsg, { cart });
+        await grabarError(loggroErrMsg);
       } else {
+        // Timeout 15s: si Loggro no responde, abortamos y registramos error.
+        // Antes el fetch podía quedar colgado indefinidamente cuando Loggro
+        // tenía latencia alta y el mesero veía la UI "spinning" eterno.
+        const ctrl = new AbortController();
+        const timeoutId = setTimeout(() => ctrl.abort(), 15000);
         try {
           const res = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/loggro-sync/create-order`, {
             method: "POST",
@@ -285,7 +300,9 @@ export default function MeseroPortal() {
               groupName: `Pool · ${spot.id} · ${mesero?.nombre || ""}`,
               items:     lgItems,
             }),
+            signal: ctrl.signal,
           });
+          clearTimeout(timeoutId);
           // res.json puede fallar si Loggro devolvió HTML/error — cubrimos
           const d = await res.json().catch(() => ({ ok: false, error: `HTTP ${res.status} sin body JSON` }));
           if (d.ok) {
@@ -301,19 +318,15 @@ export default function MeseroPortal() {
             await supabase.from("pool_service_pedidos").update(updPayload).eq("id", ins?.id || codigo);
           } else {
             loggroErrMsg = `Loggro rechazó el pedido: ${d.error || JSON.stringify(d).slice(0, 240)}`;
-            console.error("[MeseroPortal] loggro-sync devolvió ok:false", d);
-            await supabase.from("pool_service_pedidos").update({
-              loggro_response: { error: d.error || d, attempted_at: new Date().toISOString() },
-              updated_at: new Date().toISOString(),
-            }).eq("id", ins?.id || codigo);
+            await grabarError(loggroErrMsg);
           }
         } catch (err) {
-          loggroErrMsg = `No se pudo contactar a Loggro: ${err?.message || String(err)}. El pedido se guardó local — staff debe reenviar.`;
-          console.error("[MeseroPortal] fetch a loggro-sync falló", err);
-          await supabase.from("pool_service_pedidos").update({
-            loggro_response: { error: err?.message || String(err), attempted_at: new Date().toISOString() },
-            updated_at: new Date().toISOString(),
-          }).eq("id", ins?.id || codigo).catch(() => {});
+          clearTimeout(timeoutId);
+          const motivo = err?.name === "AbortError"
+            ? "Loggro no respondió en 15s (timeout). El pedido se guardó local — staff debe reenviar."
+            : `No se pudo contactar a Loggro: ${err?.message || String(err)}. El pedido se guardó local — staff debe reenviar.`;
+          loggroErrMsg = motivo;
+          await grabarError(motivo);
         }
       }
     }

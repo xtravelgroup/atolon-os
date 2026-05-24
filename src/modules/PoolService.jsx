@@ -490,21 +490,59 @@ function Kanban({ pedidos, cambiarEstado, enviarALoggro, isMobile }) {
     return buckets;
   }, [pedidos]);
 
+  // Pedidos del día que NO llegaron a Loggro (sin loggro_order_id, no cancelados,
+  // creados con spot_id que requería envío). Alerta visible para que el equipo
+  // los reenvíe manualmente.
+  const sinLoggro = useMemo(() => {
+    const hoy = new Date().toLocaleString("en-CA", { timeZone: "America/Bogota" }).slice(0, 10);
+    return pedidos.filter(p =>
+      (p.created_at || "").slice(0, 10) === hoy
+      && p.spot_id
+      && !p.loggro_order_id
+      && p.estado !== "cancelado"
+    );
+  }, [pedidos]);
+
+  const reenviarTodos = async () => {
+    if (sinLoggro.length === 0) return;
+    if (!window.confirm(`Reenviar ${sinLoggro.length} pedido(s) sin enviar a Loggro?`)) return;
+    for (const p of sinLoggro) {
+      await enviarALoggro(p);
+    }
+  };
+
   return (
-    <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : `repeat(${KANBAN_COLS.length}, 1fr)`, gap: 12 }}>
-      {KANBAN_COLS.map(k => (
-        <div key={k} style={{ background: B.navyMid, borderRadius: 12, padding: 12, minHeight: 200 }}>
-          <div style={{ fontSize: 12, fontWeight: 800, color: estColor(k), marginBottom: 10, textTransform: "uppercase", letterSpacing: "0.05em" }}>
-            {estLabel(k)} <span style={{ color: "rgba(255,255,255,0.4)", fontWeight: 400 }}>({cols[k].length})</span>
+    <>
+      {sinLoggro.length > 0 && (
+        <div style={{
+          background: B.warning + "18", border: `1px solid ${B.warning}66`, borderRadius: 10,
+          padding: "12px 16px", marginBottom: 14, display: "flex", alignItems: "center",
+          justifyContent: "space-between", flexWrap: "wrap", gap: 10,
+        }}>
+          <div style={{ fontSize: 13, color: B.warning, fontWeight: 600 }}>
+            ⚠️ {sinLoggro.length} pedido{sinLoggro.length === 1 ? "" : "s"} de hoy sin enviar a Loggro — la cocina/barra no los está viendo
           </div>
-          {cols[k].length === 0 ? (
-            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.25)", padding: "10px 4px" }}>Sin pedidos.</div>
-          ) : cols[k].map(p => (
-            <PedidoCard key={p.id} p={p} cambiarEstado={cambiarEstado} enviarALoggro={enviarALoggro} />
-          ))}
+          <button onClick={reenviarTodos}
+            style={{ padding: "8px 14px", background: B.warning, color: B.navy, border: "none", borderRadius: 8, fontWeight: 700, fontSize: 12, cursor: "pointer" }}>
+            🍳 Reenviar todos
+          </button>
         </div>
-      ))}
-    </div>
+      )}
+      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : `repeat(${KANBAN_COLS.length}, 1fr)`, gap: 12 }}>
+        {KANBAN_COLS.map(k => (
+          <div key={k} style={{ background: B.navyMid, borderRadius: 12, padding: 12, minHeight: 200 }}>
+            <div style={{ fontSize: 12, fontWeight: 800, color: estColor(k), marginBottom: 10, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+              {estLabel(k)} <span style={{ color: "rgba(255,255,255,0.4)", fontWeight: 400 }}>({cols[k].length})</span>
+            </div>
+            {cols[k].length === 0 ? (
+              <div style={{ fontSize: 11, color: "rgba(255,255,255,0.25)", padding: "10px 4px" }}>Sin pedidos.</div>
+            ) : cols[k].map(p => (
+              <PedidoCard key={p.id} p={p} cambiarEstado={cambiarEstado} enviarALoggro={enviarALoggro} />
+            ))}
+          </div>
+        ))}
+      </div>
+    </>
   );
 }
 
