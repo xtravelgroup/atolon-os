@@ -54,18 +54,68 @@ const ESTADO_STYLE = {
 };
 
 // pax already booked per salida from reservas + grupos que comparten lancha con pasadías
+//
+// Distribuye correctamente cuando hay reservas individuales con grupo_id apuntando
+// al mismo grupo (canal=GRUPO entran con código de promoción) — esas YA están dentro
+// del bulk del grupo y se descuentan para no doble-contar.
 function paxPorSalida(reservas, salidas, grupos = []) {
   const map = {};
   salidas.forEach(s => (map[s.id] = 0));
+
+  // 1) Sumar reservas individuales por salida (cada persona ocupa cupo)
   reservas.forEach(r => {
     if (r.estado !== "cancelado" && map[r.salida] !== undefined)
       map[r.salida] += (r.pax || 0);
   });
-  // Sumar pax de grupos que comparten lancha con esta salida
+
+  // 2) Aporte del bulk de cada grupo a sus salidas, descontando las reservas
+  //    individuales con grupo_id apuntando al mismo grupo y misma salida.
   grupos.forEach(g => {
-    if (g.comparte_lancha_pasadias && g.salida_compartida_id && map[g.salida_compartida_id] !== undefined) {
-      const paxGrupo = (g.pasadias_org || []).filter(p => p.tipo !== "Impuesto Muelle" && p.tipo !== "STAFF").reduce((s, p) => s + (Number(p.personas) || 0), 0) || g.pax || 0;
-      map[g.salida_compartida_id] += paxGrupo;
+    const bulk = (g.pasadias_org || [])
+      .filter(p => p.tipo !== "Impuesto Muelle" && p.tipo !== "STAFF")
+      .reduce((s, p) => s + (Number(p.personas) || 0), 0) || g.pax || 0;
+    if (bulk <= 0) return;
+
+    // Targets: salida_compartida_id ∪ salidas_grupo[].id
+    const targets = new Set();
+    if (g.salida_compartida_id && map[g.salida_compartida_id] !== undefined) {
+      targets.add(g.salida_compartida_id);
+    }
+    for (const sg of (g.salidas_grupo || [])) {
+      if (sg?.id && map[sg.id] !== undefined) targets.add(sg.id);
+    }
+    if (targets.size === 0) return;
+
+    // Pax individuales con grupo_id apuntando a este grupo, por salida (ya en (1))
+    const yaIndiv = {};
+    reservas.forEach(r => {
+      if (r.estado === "cancelado") return;
+      if (r.grupo_id === g.id && r.salida && targets.has(r.salida)) {
+        yaIndiv[r.salida] = (yaIndiv[r.salida] || 0) + (r.pax || 0);
+      }
+    });
+
+    const tgArr = Array.from(targets);
+    if (tgArr.length === 1) {
+      const sid = tgArr[0];
+      map[sid] += Math.max(0, bulk - (yaIndiv[sid] || 0));
+    } else {
+      // Reparto proporcional a "personas" declaradas en salidas_grupo
+      const pesos = (g.salidas_grupo || [])
+        .map(sg => ({ sid: sg?.id, peso: Number(sg?.personas) || 0 }))
+        .filter(x => x.sid && targets.has(x.sid));
+      const totalPeso = pesos.reduce((s, x) => s + x.peso, 0);
+      if (totalPeso > 0) {
+        pesos.forEach(({ sid, peso }) => {
+          const aporte = Math.round(bulk * peso / totalPeso);
+          map[sid] += Math.max(0, aporte - (yaIndiv[sid] || 0));
+        });
+      } else {
+        const por = Math.floor(bulk / tgArr.length);
+        tgArr.forEach(sid => {
+          map[sid] += Math.max(0, por - (yaIndiv[sid] || 0));
+        });
+      }
     }
   });
   return map;
@@ -3812,9 +3862,15 @@ export default function Reservas() {
       }
       if (!s.auto_apertura) return true; // fixed salida: always open
       // cascade: open only if previous salida is ≥ auto_umbral% full
+      // (la capacidad de la salida previa incluye extra_embarcaciones del override)
       if (idx === 0) return true;
       const prev = sorted[idx - 1];
-      return (pm[prev.id] || 0) / (prev.capacidad_total || 1) >= (prev.auto_umbral || 75) / 100;
+      const prevOvr = dayOvr[prev.id];
+      const prevExtra = (prevOvr?.extra_embarcaciones || []).reduce(
+        (sum, e) => sum + (Number(e.capacidad) || 0), 0,
+      );
+      const prevCap = (prev.capacidad_total || 0) + prevExtra;
+      return (pm[prev.id] || 0) / (prevCap || 1) >= (prev.auto_umbral || 75) / 100;
     });
   };
 
