@@ -143,39 +143,26 @@ async function checkDisponibilidad(input: CheckInput) {
       paxIndivGrupo[r.grupo_id][r.salida_id] = (paxIndivGrupo[r.grupo_id][r.salida_id] || 0) + (r.pax || 0);
     }
   }
+  // Bulk del grupo aporta cupo SOLO si:
+  //   (a) comparte_lancha_pasadias=true + salida_compartida_id (bulk total)
+  //   (b) salidas_grupo[].personas > 0 (cantidad declarada)
+  // Si personas vacío/0, el bulk NO ocupa cupo — espera a reservas individuales.
   for (const g of eventosDia) {
     const bulkTotal = ((g.pasadias_org || [])
       .filter((p: any) => p.tipo !== "Impuesto Muelle" && p.tipo !== "STAFF")
       .reduce((s: number, p: any) => s + (Number(p.personas) || 0), 0)) || g.pax || 0;
     if (bulkTotal <= 0) continue;
-    const targets = new Set<string>();
-    if (g.salida_compartida_id) targets.add(g.salida_compartida_id);
-    for (const sg of (g.salidas_grupo || [])) {
-      if (sg?.id) targets.add(sg.id);
-    }
-    if (targets.size === 0) continue;
     const indivMap = paxIndivGrupo[g.id] || {};
-    if (targets.size === 1) {
-      const sid = Array.from(targets)[0];
-      const yaIndiv = indivMap[sid] || 0;
-      ocupacion[sid] = (ocupacion[sid] || 0) + Math.max(0, bulkTotal - yaIndiv);
-    } else {
-      const pesos = (g.salidas_grupo || [])
-        .map((sg: any) => ({ sid: sg?.id, peso: Number(sg?.personas) || 0 }))
-        .filter((x: any) => x.sid && targets.has(x.sid));
-      const totalPeso = pesos.reduce((s: number, x: any) => s + x.peso, 0);
-      if (totalPeso > 0) {
-        for (const { sid, peso } of pesos) {
-          const aporteBruto = Math.round(bulkTotal * peso / totalPeso);
-          ocupacion[sid] = (ocupacion[sid] || 0) + Math.max(0, aporteBruto - (indivMap[sid] || 0));
-        }
-      } else {
-        const tgArr = Array.from(targets);
-        const por = Math.floor(bulkTotal / tgArr.length);
-        for (const sid of tgArr) {
-          ocupacion[sid] = (ocupacion[sid] || 0) + Math.max(0, por - (indivMap[sid] || 0));
-        }
-      }
+    if (g.comparte_lancha_pasadias && g.salida_compartida_id) {
+      const sid = g.salida_compartida_id;
+      ocupacion[sid] = (ocupacion[sid] || 0) + Math.max(0, bulkTotal - (indivMap[sid] || 0));
+      continue;
+    }
+    for (const sg of (g.salidas_grupo || [])) {
+      if (!sg?.id) continue;
+      const personas = Number(sg.personas) || 0;
+      if (personas <= 0) continue;
+      ocupacion[sg.id] = (ocupacion[sg.id] || 0) + Math.max(0, personas - (indivMap[sg.id] || 0));
     }
   }
 
@@ -319,50 +306,41 @@ async function checkDisponibilidadDetailed(input: DetailedCheckInput) {
         (paxIndivGrupoEnSalida[r.grupo_id][r.salida_id] || 0) + (r.pax || 0);
     }
   }
+  // Aporte del bulk del grupo a las salidas — SOLO cuando el grupo declara
+  // explícitamente cuántas personas reservar:
+  //
+  //  (a) comparte_lancha_pasadias=true + salida_compartida_id
+  //      → el grupo asegura su bulk completo en esa salida.
+  //  (b) salidas_grupo[].personas > 0
+  //      → ese número exacto se reserva en cupo.
+  //
+  // Si salidas_grupo[].personas está vacío/0 (caso típico cuando el grupo va
+  // confirmando con reservas individuales), el bulk NO ocupa cupo — los
+  // "fantasmas" no se cuentan hasta que el cliente declare personas o lleguen
+  // las reservas individuales reales.
   for (const g of eventos) {
     const bulkTotal = ((g.pasadias_org || [])
       .filter((p: any) => p.tipo !== "Impuesto Muelle" && p.tipo !== "STAFF")
       .reduce((s: number, p: any) => s + (Number(p.personas) || 0), 0)) || g.pax || 0;
     if (bulkTotal <= 0) continue;
 
-    // Salidas a las que apunta el grupo (compartida + salidas_grupo)
-    const targets = new Set<string>();
-    if (g.salida_compartida_id) targets.add(g.salida_compartida_id);
-    for (const sg of (g.salidas_grupo || [])) {
-      if (sg?.id) targets.add(sg.id);
-    }
-    if (targets.size === 0) continue;
-
     const indivPorSalida = paxIndivGrupoEnSalida[g.id] || {};
 
-    if (targets.size === 1) {
-      const sid = Array.from(targets)[0];
-      const yaIndiv = indivPorSalida[sid] || 0;
-      const aporte = Math.max(0, bulkTotal - yaIndiv);
+    // (a) Comparte lancha con pasadías: bulk completo aporta en la salida compartida
+    if (g.comparte_lancha_pasadias && g.salida_compartida_id) {
+      const sid = g.salida_compartida_id;
+      const aporte = Math.max(0, bulkTotal - (indivPorSalida[sid] || 0));
       ocupacion[sid] = (ocupacion[sid] || 0) + aporte;
-    } else {
-      // Reparto proporcional a "personas" en salidas_grupo
-      const pesos = (g.salidas_grupo || [])
-        .map((sg: any) => ({ sid: sg?.id, peso: Number(sg?.personas) || 0 }))
-        .filter((x: any) => x.sid && targets.has(x.sid));
-      const totalPeso = pesos.reduce((s: number, x: any) => s + x.peso, 0);
-      if (totalPeso > 0) {
-        for (const { sid, peso } of pesos) {
-          const aporteBruto = Math.round(bulkTotal * peso / totalPeso);
-          const yaIndiv = indivPorSalida[sid] || 0;
-          const aporte = Math.max(0, aporteBruto - yaIndiv);
-          ocupacion[sid] = (ocupacion[sid] || 0) + aporte;
-        }
-      } else {
-        // Sin pesos: reparto equitativo
-        const tgArr = Array.from(targets);
-        const por = Math.floor(bulkTotal / tgArr.length);
-        for (const sid of tgArr) {
-          const yaIndiv = indivPorSalida[sid] || 0;
-          const aporte = Math.max(0, por - yaIndiv);
-          ocupacion[sid] = (ocupacion[sid] || 0) + aporte;
-        }
-      }
+      continue;
+    }
+
+    // (b) salidas_grupo con personas declaradas: respetar la cantidad por salida
+    for (const sg of (g.salidas_grupo || [])) {
+      if (!sg?.id) continue;
+      const personas = Number(sg.personas) || 0;
+      if (personas <= 0) continue; // sin declarar → no aporta bulk
+      const aporte = Math.max(0, personas - (indivPorSalida[sg.id] || 0));
+      ocupacion[sg.id] = (ocupacion[sg.id] || 0) + aporte;
     }
   }
 
@@ -529,6 +507,10 @@ async function checkDisponibilidadMonth(input: MonthCheckInput) {
         (indivPorGrupoFecha[r.fecha][r.grupo_id][r.salida_id] || 0) + (r.pax || 0);
     }
   }
+  // Bulk del grupo aporta cupo SOLO si:
+  //   (a) comparte_lancha_pasadias=true + salida_compartida_id (bulk total)
+  //   (b) salidas_grupo[].personas > 0 (cantidad declarada)
+  // Si personas vacío/0, el bulk NO ocupa cupo — espera a reservas individuales.
   for (const g of eventos) {
     if (!g.fecha) continue;
     const bulkTotal = ((g.pasadias_org || [])
@@ -536,38 +518,18 @@ async function checkDisponibilidadMonth(input: MonthCheckInput) {
       .reduce((s: number, p: any) => s + (Number(p.personas) || 0), 0)) || g.pax || 0;
     if (bulkTotal <= 0) continue;
 
-    const targets = new Set<string>();
-    if (g.salida_compartida_id) targets.add(g.salida_compartida_id);
-    for (const sg of (g.salidas_grupo || [])) {
-      if (sg?.id) targets.add(sg.id);
-    }
-    if (targets.size === 0) continue;
-
     const indivMap = indivPorGrupoFecha[g.fecha]?.[g.id] || {};
 
-    if (targets.size === 1) {
-      const sid = Array.from(targets)[0];
-      const yaIndiv = indivMap[sid] || 0;
-      addPax(g.fecha, sid, Math.max(0, bulkTotal - yaIndiv));
-    } else {
-      const pesos = (g.salidas_grupo || [])
-        .map((sg: any) => ({ sid: sg?.id, peso: Number(sg?.personas) || 0 }))
-        .filter((x: any) => x.sid && targets.has(x.sid));
-      const totalPeso = pesos.reduce((s: number, x: any) => s + x.peso, 0);
-      if (totalPeso > 0) {
-        for (const { sid, peso } of pesos) {
-          const aporteBruto = Math.round(bulkTotal * peso / totalPeso);
-          const yaIndiv = indivMap[sid] || 0;
-          addPax(g.fecha, sid, Math.max(0, aporteBruto - yaIndiv));
-        }
-      } else {
-        const tgArr = Array.from(targets);
-        const por = Math.floor(bulkTotal / tgArr.length);
-        for (const sid of tgArr) {
-          const yaIndiv = indivMap[sid] || 0;
-          addPax(g.fecha, sid, Math.max(0, por - yaIndiv));
-        }
-      }
+    if (g.comparte_lancha_pasadias && g.salida_compartida_id) {
+      const sid = g.salida_compartida_id;
+      addPax(g.fecha, sid, Math.max(0, bulkTotal - (indivMap[sid] || 0)));
+      continue;
+    }
+    for (const sg of (g.salidas_grupo || [])) {
+      if (!sg?.id) continue;
+      const personas = Number(sg.personas) || 0;
+      if (personas <= 0) continue;
+      addPax(g.fecha, sg.id, Math.max(0, personas - (indivMap[sg.id] || 0)));
     }
   }
 

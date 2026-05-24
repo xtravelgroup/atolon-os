@@ -80,56 +80,54 @@ function paxPorSalida(reservas, salidas, grupos = []) {
     }
   });
 
-  // 2) Aporte del bulk de cada grupo a sus salidas, descontando las reservas
-  //    individuales con grupo_id apuntando al mismo grupo y misma salida.
+  // 2) Aporte del bulk de cada grupo a sus salidas — SOLO cuando el grupo
+  //    declara explícitamente cuántas personas reservar:
+  //
+  //    a) comparte_lancha_pasadias=true + salida_compartida_id
+  //       → el grupo asegura su bulk completo (pasadias_org) en esa salida.
+  //         Aporta bulk - reservas individuales con grupo_id en esa salida.
+  //
+  //    b) salidas_grupo[].personas > 0
+  //       → ese número exacto se reserva en cupo. Aporta personas -
+  //         reservas individuales con grupo_id en esa salida.
+  //
+  //    Si solo hay salidas_grupo[].personas vacío/0 (caso típico cuando el
+  //    grupo va confirmando con reservas individuales), el bulk NO ocupa
+  //    cupo — los "fantasmas" no se cuentan hasta que el cliente declare.
   grupos.forEach(g => {
-    const bulk = (g.pasadias_org || [])
+    const bulkTotal = (g.pasadias_org || [])
       .filter(p => p.tipo !== "Impuesto Muelle" && p.tipo !== "STAFF")
       .reduce((s, p) => s + (Number(p.personas) || 0), 0) || g.pax || 0;
-    if (bulk <= 0) return;
-
-    const targets = new Set();
-    if (g.salida_compartida_id && map[g.salida_compartida_id] !== undefined) {
-      targets.add(g.salida_compartida_id);
-    }
-    for (const sg of (g.salidas_grupo || [])) {
-      if (sg?.id && map[sg.id] !== undefined) targets.add(sg.id);
-    }
-    if (targets.size === 0) return;
+    if (bulkTotal <= 0) return;
 
     const yaIndiv = {};
     reservas.forEach(r => {
       if (r.estado === "cancelado") return;
-      if (r.grupo_id === g.id && r.salida && targets.has(r.salida)) {
+      if (r.grupo_id === g.id && r.salida) {
         yaIndiv[r.salida] = (yaIndiv[r.salida] || 0) + (r.pax || 0);
       }
     });
 
     const addBulk = (sid, aporte) => {
+      if (map[sid] === undefined) return;
       const v = Math.max(0, aporte);
       map[sid] += v;
       breakdown[sid].bulkGrupo += v;
     };
 
-    const tgArr = Array.from(targets);
-    if (tgArr.length === 1) {
-      const sid = tgArr[0];
-      addBulk(sid, bulk - (yaIndiv[sid] || 0));
-    } else {
-      const pesos = (g.salidas_grupo || [])
-        .map(sg => ({ sid: sg?.id, peso: Number(sg?.personas) || 0 }))
-        .filter(x => x.sid && targets.has(x.sid));
-      const totalPeso = pesos.reduce((s, x) => s + x.peso, 0);
-      if (totalPeso > 0) {
-        pesos.forEach(({ sid, peso }) => {
-          addBulk(sid, Math.round(bulk * peso / totalPeso) - (yaIndiv[sid] || 0));
-        });
-      } else {
-        const por = Math.floor(bulk / tgArr.length);
-        tgArr.forEach(sid => {
-          addBulk(sid, por - (yaIndiv[sid] || 0));
-        });
-      }
+    // (a) comparte lancha con pasadías: el bulk completo aporta en la salida compartida.
+    if (g.comparte_lancha_pasadias && g.salida_compartida_id) {
+      addBulk(g.salida_compartida_id, bulkTotal - (yaIndiv[g.salida_compartida_id] || 0));
+      return;
+    }
+
+    // (b) salidas_grupo con personas > 0: respetar la cantidad declarada en cada salida.
+    //     Si personas vacío/0 → ese target NO aporta bulk (espera a las reservas individuales).
+    for (const sg of (g.salidas_grupo || [])) {
+      if (!sg?.id) continue;
+      const personas = Number(sg.personas) || 0;
+      if (personas <= 0) continue; // sin declarar → no aporta bulk
+      addBulk(sg.id, personas - (yaIndiv[sg.id] || 0));
     }
   });
 
