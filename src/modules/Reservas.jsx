@@ -80,21 +80,24 @@ function paxPorSalida(reservas, salidas, grupos = []) {
     }
   });
 
-  // 2) Aporte del bulk de cada grupo a sus salidas — SOLO cuando el grupo
-  //    declara explícitamente cuántas personas reservar:
+  // 2) Aporte del bulk de cada grupo a sus salidas — depende de modalidad_pago:
   //
-  //    a) comparte_lancha_pasadias=true + salida_compartida_id
-  //       → el grupo asegura su bulk completo (pasadias_org) en esa salida.
-  //         Aporta bulk - reservas individuales con grupo_id en esa salida.
+  //    "organizador" → el organizador paga TODO el bulk. Es real, ocupa
+  //                    cupo aunque no haya reservas individuales (los
+  //                    fantasmas son personas garantizadas).
   //
-  //    b) salidas_grupo[].personas > 0
-  //       → ese número exacto se reserva en cupo. Aporta personas -
-  //         reservas individuales con grupo_id en esa salida.
+  //    "individual"  → cada persona compra su propia pasadía. Solo
+  //                    cuentan reservas individuales con grupo_id. El
+  //                    bulk es una proyección de cuántos se esperan, no
+  //                    un compromiso de pago — NO ocupa cupo.
   //
-  //    Si solo hay salidas_grupo[].personas vacío/0 (caso típico cuando el
-  //    grupo va confirmando con reservas individuales), el bulk NO ocupa
-  //    cupo — los "fantasmas" no se cuentan hasta que el cliente declare.
+  //    En modalidad="organizador", la salida a la que aporta el bulk se
+  //    determina por:
+  //      a) salida_compartida_id (cuando comparte_lancha_pasadias)
+  //      b) salidas_grupo[].id (cuando el organizador asignó salidas)
+  //         con reparto proporcional si declaró personas, o equitativo si no.
   grupos.forEach(g => {
+    if (g.modalidad_pago !== "organizador") return; // "individual" → solo reales
     const bulkTotal = (g.pasadias_org || [])
       .filter(p => p.tipo !== "Impuesto Muelle" && p.tipo !== "STAFF")
       .reduce((s, p) => s + (Number(p.personas) || 0), 0) || g.pax || 0;
@@ -115,19 +118,26 @@ function paxPorSalida(reservas, salidas, grupos = []) {
       breakdown[sid].bulkGrupo += v;
     };
 
-    // (a) comparte lancha con pasadías: el bulk completo aporta en la salida compartida.
+    // (a) Comparte lancha con pasadías: bulk completo a la salida compartida.
     if (g.comparte_lancha_pasadias && g.salida_compartida_id) {
       addBulk(g.salida_compartida_id, bulkTotal - (yaIndiv[g.salida_compartida_id] || 0));
       return;
     }
 
-    // (b) salidas_grupo con personas > 0: respetar la cantidad declarada en cada salida.
-    //     Si personas vacío/0 → ese target NO aporta bulk (espera a las reservas individuales).
-    for (const sg of (g.salidas_grupo || [])) {
-      if (!sg?.id) continue;
-      const personas = Number(sg.personas) || 0;
-      if (personas <= 0) continue; // sin declarar → no aporta bulk
-      addBulk(sg.id, personas - (yaIndiv[sg.id] || 0));
+    // (b) salidas_grupo con personas declaradas, o reparto equitativo si vacío.
+    const sgs = (g.salidas_grupo || []).filter(sg => sg?.id && map[sg.id] !== undefined);
+    if (sgs.length === 0) return;
+    const pesos = sgs.map(sg => Number(sg.personas) || 0);
+    const totalPeso = pesos.reduce((s, p) => s + p, 0);
+    if (totalPeso > 0) {
+      sgs.forEach((sg, i) => {
+        const aporteBruto = Math.round(bulkTotal * pesos[i] / totalPeso);
+        addBulk(sg.id, aporteBruto - (yaIndiv[sg.id] || 0));
+      });
+    } else {
+      // Sin pesos declarados: bulk se reparte equitativo entre las salidas asignadas.
+      const por = Math.floor(bulkTotal / sgs.length);
+      sgs.forEach(sg => addBulk(sg.id, por - (yaIndiv[sg.id] || 0)));
     }
   });
 
@@ -3843,20 +3853,13 @@ export default function Reservas() {
       .filter(r => r.grupo_id === g.id && r.estado !== "cancelado" && !cortesiaResIds.has(r.id))
       .reduce((s, r) => s + (r.pax || 0), 0);
 
-    // ¿Cuenta el bulk completo o solo las reservas reales?
-    // Misma regla que paxPorSalida y availability-engine (PR #58):
-    //   (a) comparte_lancha_pasadias=true + salida_compartida_id → bulk firme
-    //   (b) salidas_grupo[].personas > 0 → cantidad declarada firme
-    //   (c) salidas_grupo[].personas vacío/0 → solo reservas individuales (no fantasmas)
-    const bulkFirme = !!(g.comparte_lancha_pasadias && g.salida_compartida_id)
-      || (g.salidas_grupo || []).some(sg => Number(sg?.personas) > 0);
-
+    // Misma regla que paxPorSalida: depende de modalidad_pago.
+    //   "organizador" → el bulk es real (lo pagó el organizador) → MAX(bulk, reales)
+    //   "individual"  → cada quien paga su pasadía → solo cuentan reservas reales
     let total;
-    if (bulkFirme) {
-      // Bulk del grupo asegurado: max entre lo declarado y lo que ya entró
+    if (g.modalidad_pago === "organizador") {
       total = Math.max(paxOrg, paxReservas + paxCortesiasOrg);
     } else {
-      // Solo reservas reales + cortesías individualizadas (cero fantasmas)
       total = paxReservas + paxCortesiasOrg;
     }
     return total > 0 ? total : (g.pax || 0);
