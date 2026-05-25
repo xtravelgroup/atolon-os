@@ -135,6 +135,73 @@ const ES_EN_DICT = {
   "básico": "Basic",
   "basico": "Basic",
   "vip": "VIP",
+  // Términos vistos en cotizaciones reales (ampliación 2026-05)
+  "renta": "Rental",
+  "buy out": "Buy-out",
+  "buy-out": "Buy-out",
+  "full buy out": "Full Buy-out",
+  "full buy-out": "Full Buy-out",
+  "exclusividad": "Exclusivity",
+  "exclusividad completa": "Full exclusivity",
+  "completa": "Complete",
+  "completo": "Complete",
+  "club": "club",
+  "enero": "January",
+  "febrero": "February",
+  "marzo": "March",
+  "abril": "April",
+  "mayo": "May",
+  "junio": "June",
+  "julio": "July",
+  "agosto": "August",
+  "septiembre": "September",
+  "octubre": "October",
+  "noviembre": "November",
+  "diciembre": "December",
+  "de enero": "of January",
+  "de febrero": "of February",
+  "de marzo": "of March",
+  "de abril": "of April",
+  "de mayo": "of May",
+  "de junio": "of June",
+  "de julio": "of July",
+  "de agosto": "of August",
+  "de septiembre": "of September",
+  "de octubre": "of October",
+  "de noviembre": "of November",
+  "de diciembre": "of December",
+  "tarifa": "Rate",
+  "tarifa para dos personas": "Rate for two people",
+  "vista al mar": "Sea view",
+  "vista": "view",
+  "incluye desayuno": "Breakfast included",
+  "banquetes": "Banquets",
+  "banquete": "Banquet",
+  "menú banquetes": "Banquet menu",
+  "menu banquetes": "Banquet menu",
+  "buffet": "Buffet",
+  "tipo": "type",
+  "cena tipo buffet": "Buffet dinner",
+  "otros": "Other",
+  "otros servicios": "Other services",
+  "propina": "Gratuity",
+  "personal de servicio": "Service staff",
+  "doble": "Double",
+  "king": "King",
+  "queen": "Queen",
+  "matrimonial": "Double bed",
+  "individual": "Single",
+  "twin": "Twin",
+  "suite": "Suite",
+  "suite king": "King Suite",
+  "suite double king": "Double King Suite",
+  "cabana king": "King Cabana",
+  "espacios renta": "Venue rental",
+  "renta de espacios": "Venue rental",
+  "alquiler": "Rental",
+  "espacio de evento": "Event venue",
+  "del club": "of the club",
+  "de la casa": "of the house",
 };
 
 // Traduce un string usando ES_EN_DICT. Funciona por reemplazo de palabras/frases
@@ -167,6 +234,45 @@ export default function GrupoCotizacionModal({ evento, pasadiasOrg = [], servici
   // La UI del modal (botones, resumen previo) se queda en español siempre.
   const [lang, setLang] = useState("es");
   const t = (es, en) => lang === "en" ? en : es;
+
+  // Cache de traducciones (es → en) obtenidas vía edge function. Se llena al
+  // descargar PDF en inglés y se reutiliza si se vuelve a generar.
+  const [translationCache, setTranslationCache] = useState({});
+  const trEn = (s) => {
+    if (!s || lang !== "en") return s;
+    return translationCache[s] || s;
+  };
+
+  // Llama a la edge function translate-cotizacion para traducir un array de
+  // strings (es→en). Devuelve un objeto { es: en }. Cachea para no re-traducir.
+  async function traducirStrings(strings) {
+    const limpios = strings.filter(s => s && typeof s === "string" && s.trim());
+    const noEnCache = limpios.filter(s => !translationCache[s]);
+    if (noEnCache.length === 0) return translationCache;
+    try {
+      const { data, error } = await supabase.functions.invoke("translate-cotizacion", {
+        body: { strings: noEnCache },
+      });
+      if (error || !data?.ok) {
+        console.warn("[translate-cotizacion] failed, falling back to dict:", error || data?.error);
+        // Fallback: usar diccionario local
+        const fallback = { ...translationCache };
+        noEnCache.forEach(s => { fallback[s] = traducirItem(s); });
+        setTranslationCache(fallback);
+        return fallback;
+      }
+      const nuevo = { ...translationCache };
+      noEnCache.forEach((s, i) => { nuevo[s] = data.translations[i] || s; });
+      setTranslationCache(nuevo);
+      return nuevo;
+    } catch (e) {
+      console.warn("[translate-cotizacion] exception, falling back:", e);
+      const fallback = { ...translationCache };
+      noEnCache.forEach(s => { fallback[s] = traducirItem(s); });
+      setTranslationCache(fallback);
+      return fallback;
+    }
+  }
   // Lookup vendedor (nombre + tel + email) para "Esta propuesta es preparada por:"
   const [vendedor, setVendedor] = useState({ nombre: evento?.vendedor || "Atolon Eventos", tel: "", email: "" });
   useEffect(() => {
@@ -366,13 +472,54 @@ ${source.innerHTML}
   async function descargarPDF(targetLang = "es") {
     const isEn = targetLang === "en";
     if (isEn) setPdfLoadingEn(true); else setPdfLoading(true);
+
+    // Si es inglés: colectar todos los strings que necesitan traducción y
+    // pedirlos a la edge function en una sola llamada. Cuando regresan, el
+    // cache se llena, lang cambia, y el render se hace con `trEn(...)`.
+    if (isEn) {
+      const toTranslate = [];
+      // Pasadías: tipos (los items de incluye_items ya tienen descripcion_en)
+      pasadiasCobrables.forEach(p => { if (p.tipo) toTranslate.push(p.tipo); });
+      // Cortesías: tipos
+      cortesias.forEach(c => { if (c.tipo) toTranslate.push(c.tipo); });
+      // Servicios contratados: categoria + descripcion
+      serviciosRows.forEach(s => {
+        if (s.categoria && !s.categoria_en) toTranslate.push(s.categoria);
+        if (s.descripcion && !s.descripcion_en) toTranslate.push(s.descripcion);
+      });
+      // Extras_data: concepto
+      [extrasTransporte, extrasAlimentos, extrasServicios].forEach(arr => {
+        (arr || []).forEach(l => { if (l.concepto && !l.concepto_en) toTranslate.push(l.concepto); });
+      });
+      // Cotizacion_data: concepto
+      [cotEspacios, cotHospedaje, cotAlimentos, cotServicios].forEach(arr => {
+        (arr || []).forEach(l => { if (l.concepto && !l.concepto_en) toTranslate.push(l.concepto); });
+      });
+      // Pasadía incluye items sin descripcion_en (caen al español)
+      pasadiasRows.forEach(r => {
+        if (Array.isArray(r.descripcionEs) && Array.isArray(r.descripcionEn)) {
+          r.descripcionEs.forEach((es, i) => {
+            if (es && (!r.descripcionEn[i] || r.descripcionEn[i] === es)) {
+              toTranslate.push(es);
+            }
+          });
+        }
+      });
+      if (toTranslate.length > 0) {
+        await traducirStrings(toTranslate);
+      }
+    }
+
     // Si la descarga es en inglés, cambiar lang y esperar al re-render del print area
     if (isEn && lang !== "en") {
       setLang("en");
-      await new Promise(r => setTimeout(r, 300));
+      await new Promise(r => setTimeout(r, 500));
     } else if (!isEn && lang !== "es") {
       setLang("es");
       await new Promise(r => setTimeout(r, 300));
+    } else if (isEn) {
+      // Ya estamos en EN pero el cache pudo haberse llenado — re-render
+      await new Promise(r => setTimeout(r, 200));
     }
     try {
       const source = document.getElementById("grupo-cotizacion-print");
@@ -743,14 +890,24 @@ ${source.innerHTML}
               ]}
               rows={pasadiasRows.map(r => ({
                 cells: [
-                  lang === "en" ? traducirItem(r.tipo) : r.tipo,
+                  lang === "en" ? trEn(r.tipo) : r.tipo,
                   r.adultos || "—",
                   r.ninos || "—",
                   r.precioA > 0 ? COP(r.precioA) : "—",
                   r.precioN > 0 ? COP(r.precioN) : "—",
                   COP(r.subtotal),
                 ],
-                descripcion: lang === "en" ? r.descripcionEn : r.descripcionEs,
+                // Para los items "incluye": si descripcion_en del item venía
+                // de BD, lo usamos; si no, intentamos cache de traducción.
+                descripcion: lang === "en"
+                  ? (Array.isArray(r.descripcionEs)
+                      ? r.descripcionEs.map((es, i) => {
+                          const enFromDb = r.descripcionEn?.[i];
+                          if (enFromDb && enFromDb !== es) return enFromDb;
+                          return trEn(es);
+                        })
+                      : r.descripcionEn)
+                  : r.descripcionEs,
               }))}
               subtotal={totalPasadias}
             />
@@ -763,7 +920,7 @@ ${source.innerHTML}
               <ul style={{ margin: 0, padding: 0, listStyle: "none", fontSize: 12, color: NAVY2, lineHeight: 1.7, fontFamily: "'Barlow', sans-serif" }}>
                 {cortesias.map((c, i) => {
                   const cant = (Number(c.adultos) || 0) + (Number(c.ninos) || 0) || Number(c.personas) || 0;
-                  const tipo = lang === "en" ? traducirItem(c.tipo) : c.tipo;
+                  const tipo = lang === "en" ? trEn(c.tipo) : c.tipo;
                   return (
                     <li key={i}>· {cant} {t("de tipo", "of type")} {tipo}{c.nombre ? ` — ${c.nombre}` : ""}</li>
                   );
@@ -786,8 +943,8 @@ ${source.innerHTML}
                 const cant = Number(s.cantidad) || 1;
                 const unit = Number(s.valor_unit) || (Number(s.valor) / cant) || 0;
                 const sub  = Number(s.valor) || cant * unit;
-                const categoria = lang === "en" ? pickEn(s, "categoria", "categoria_en") : s.categoria;
-                const descripcion = lang === "en" ? pickEn(s, "descripcion", "descripcion_en") : s.descripcion;
+                const categoria = lang === "en" ? (s.categoria_en || trEn(s.categoria)) : s.categoria;
+                const descripcion = lang === "en" ? (s.descripcion_en || trEn(s.descripcion)) : s.descripcion;
                 const desc = [categoria, descripcion].filter(Boolean).join(" — ");
                 return [desc, cant, COP(unit), COP(sub)];
               })}
@@ -817,7 +974,7 @@ ${source.innerHTML}
                   ]}
                   rows={rows.map(l => {
                     const { sub, total } = calcLine(l);
-                    const concepto = lang === "en" ? pickEn(l, "concepto", "concepto_en") : l.concepto;
+                    const concepto = lang === "en" ? (l.concepto_en || trEn(l.concepto)) : l.concepto;
                     return [concepto, l.cantidad, COP(l.valor_unit), COP(sub), `${l.iva || 0}%`, COP(total)];
                   })}
                   subtotal={tot}
@@ -857,7 +1014,7 @@ ${source.innerHTML}
                   ]}
                   rows={rows.map(l => {
                     const { sub, total } = calcLine(l);
-                    const concepto = lang === "en" ? pickEn(l, "concepto", "concepto_en") : l.concepto;
+                    const concepto = lang === "en" ? (l.concepto_en || trEn(l.concepto)) : l.concepto;
                     return showNoches
                       ? [concepto, l.cantidad, l.noches || 1, COP(l.valor_unit), COP(sub), `${l.iva || 0}%`, COP(total)]
                       : [concepto, l.cantidad, COP(l.valor_unit), COP(sub), `${l.iva || 0}%`, COP(total)];
