@@ -369,7 +369,7 @@ export default function Resultados() {
         .gte("fecha", desdeAll).lte("fecha", hastaAll)
         .neq("estado", "cancelado"),
       supabase.from("eventos")
-        .select("id, valor, valor_extras, pax, pasadias_org, categoria, servicios_contratados, fecha")
+        .select("id, valor, valor_extras, pax, pasadias_org, categoria, modalidad_pago, servicios_contratados, fecha")
         .gte("fecha", desdeAll).lte("fecha", hastaAll)
         .in("stage", ["Confirmado", "Realizado"])
         .in("categoria", ["grupo", "evento"]),
@@ -469,19 +469,32 @@ export default function Resultados() {
       };
     });
 
-    // Grupos: cantidad = suma de pasajeros, monto = valor cotizado + reservas vinculadas pagadas
+    // Grupos: cantidad = suma de pasajeros, monto según modalidad_pago.
+    //   organizador → cotización del paquete que paga el organizador
+    //   individual  → suma de reservas individuales reales (no doble-contar)
+    // Sumar ambos doblaba: si BEACH DAY tiene modalidad=individual con
+    // 14 reservas pagadas, su cotización proyectada NO se cobró al
+    // organizador — solo las reservas reales son ingreso.
     const grpR = {};
     periodos.forEach(p => {
       const rows = resultados.find(r => r.cat === "grupos" && r.periodo === p.key)?.data || [];
       const resLinked = resultados.find(r => r.cat === "reservas_grupos" && r.periodo === p.key)?.data || [];
-      const grupoIds = new Set(rows.map(r => r.id));
-      // Reservas vinculadas a estos grupos (que están en el mismo período)
-      const montoReservasVinculadas = resLinked
-        .filter(r => grupoIds.has(r.grupo_id))
-        .reduce((s, r) => s + (Number(r.total) || 0), 0);
+      const montoPorGrupo = (g) => {
+        const reservasDelGrupo = resLinked.filter(r => r.grupo_id === g.id);
+        const montoReservas = reservasDelGrupo
+          .filter(r => r.estado !== "no_show")
+          .reduce((s, r) => s + (Number(r.total) || 0), 0);
+        if (g.modalidad_pago === "organizador") {
+          // El organizador paga la cotización + cualquier reserva extra
+          // (raro que existan, pero si las hay, suman)
+          return totalCotizacion(g) + montoReservas;
+        }
+        // individual: solo lo realmente cobrado a los huéspedes
+        return montoReservas;
+      };
       grpR[p.key] = {
         cantidad: pasadiasGrupo(rows),
-        monto:    rows.reduce((s, e) => s + totalCotizacion(e), 0) + montoReservasVinculadas,
+        monto:    rows.reduce((s, e) => s + montoPorGrupo(e), 0),
       };
     });
 
