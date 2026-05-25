@@ -17,15 +17,20 @@ function calcLine(l) {
   return { sub, tax, total: sub + tax };
 }
 
-const fmtFechaLarga = (d) => {
+const fmtFechaLarga = (d, lang = "es") => {
   if (!d) return "";
   try {
     const dt = new Date(d + (String(d).length === 10 ? "T12:00:00" : ""));
-    return dt.toLocaleDateString("es-CO", { day: "2-digit", month: "long", year: "numeric" });
+    const locale = lang === "en" ? "en-US" : "es-CO";
+    return dt.toLocaleDateString(locale, { day: "2-digit", month: "long", year: "numeric" });
   } catch { return d; }
 };
 
 export default function GrupoCotizacionModal({ evento, pasadiasOrg = [], servicios = [], pasadiasMap = {}, onClose }) {
+  // ── Idioma: "es" o "en". Solo afecta el contenido del PDF/impresión.
+  // La UI del modal (botones, resumen previo) se queda en español siempre.
+  const [lang, setLang] = useState("es");
+  const t = (es, en) => lang === "en" ? en : es;
   // Lookup vendedor (nombre + tel + email) para "Esta propuesta es preparada por:"
   const [vendedor, setVendedor] = useState({ nombre: evento?.vendedor || "Atolon Eventos", tel: "", email: "" });
   useEffect(() => {
@@ -208,12 +213,29 @@ ${source.innerHTML}
 
   // "Descargar PDF" usa html2pdf.js con scale alto — genera el PDF y lo baja directamente
   // sin abrir el diálogo del navegador. La calidad es raster pero a 3x queda nítida.
+  //
+  // Soporta `targetLang` ("es" | "en"): cambia el state lang, espera el re-render
+  // del print area, descarga el PDF, y vuelve al español. El nombre del archivo
+  // incluye el idioma (Cotizacion_xx_EN.pdf vs Cotizacion_xx.pdf).
   const [pdfLoading, setPdfLoading] = useState(false);
-  async function descargarPDF() {
-    setPdfLoading(true);
+  const [pdfLoadingEn, setPdfLoadingEn] = useState(false);
+  async function descargarPDF(targetLang = "es") {
+    const isEn = targetLang === "en";
+    if (isEn) setPdfLoadingEn(true); else setPdfLoading(true);
+    // Si la descarga es en inglés, cambiar lang y esperar al re-render del print area
+    if (isEn && lang !== "en") {
+      setLang("en");
+      await new Promise(r => setTimeout(r, 300));
+    } else if (!isEn && lang !== "es") {
+      setLang("es");
+      await new Promise(r => setTimeout(r, 300));
+    }
     try {
       const source = document.getElementById("grupo-cotizacion-print");
-      if (!source) { setPdfLoading(false); return; }
+      if (!source) {
+        if (isEn) setPdfLoadingEn(false); else setPdfLoading(false);
+        return;
+      }
 
       // Estrategia: clonar el HTML a un iframe visible a opacity 0, esperar a que cargue,
       // renderizar con html2canvas página por página, y armar el PDF con jsPDF.
@@ -290,14 +312,21 @@ ${source.innerHTML}
         }
       }
 
-      const nombreArchivo = `Cotizacion_${(evento?.nombre || header.empresa || "grupo").replace(/[^a-zA-Z0-9]/g, "_")}_${evento?.id || ""}.pdf`;
+      const baseName = (isEn ? "Quotation" : "Cotizacion");
+      const suffix = isEn ? "_EN" : "";
+      const nombreArchivo = `${baseName}_${(evento?.nombre || header.empresa || "grupo").replace(/[^a-zA-Z0-9]/g, "_")}_${evento?.id || ""}${suffix}.pdf`;
       pdf.save(nombreArchivo);
       document.body.removeChild(iframe);
     } catch (err) {
       console.error("[pdf] error:", err);
       alert("Error generando PDF: " + (err.message || err));
     } finally {
-      setPdfLoading(false);
+      if (isEn) {
+        setPdfLoadingEn(false);
+        setLang("es"); // restaurar UI a español
+      } else {
+        setPdfLoading(false);
+      }
     }
   }
 
@@ -344,7 +373,7 @@ ${source.innerHTML}
                     <tr style={{ background: bg, borderBottom: `1px solid ${HAIR}` }}>
                       <td colSpan={headers.length} style={{ padding: "4px 16px 18px 22px" }}>
                         <div style={{ fontSize: 9, letterSpacing: "0.22em", textTransform: "uppercase", color: SAND, fontWeight: 700, marginBottom: 8 }}>
-                          Incluye
+                          {t("Incluye", "Includes")}
                         </div>
                         <ul style={{ margin: 0, padding: 0, listStyle: "none", fontSize: 12, lineHeight: 1.7, color: NAVY }}>
                           {(Array.isArray(desc) ? desc : String(desc).split(/\s*[·•;\n]\s*|\s+\-\s+/).filter(Boolean))
@@ -363,7 +392,7 @@ ${source.innerHTML}
             })}
             <tr style={{ background: "#EFE7D3" }}>
               <td colSpan={headers.length - 1} style={{ padding: "9px 10px", textAlign: "right", fontSize: 10, letterSpacing: "0.18em", textTransform: "uppercase", color: NAVY, fontWeight: 600 }}>
-                Subtotal {title.toLowerCase()}
+                {t("Subtotal", "Subtotal")} {title.toLowerCase()}
               </td>
               <td style={{ padding: "9px 10px", textAlign: "right", color: NAVY, fontWeight: 700 }}>{COP(subtotal)}</td>
             </tr>
@@ -431,23 +460,26 @@ ${source.innerHTML}
             <div style={{ margin: "48px 0 36px", width: 80, height: 1, background: SAND }} />
 
             <div className="cot-story" style={{ fontSize: 22, color: NAVY2, maxWidth: 480, lineHeight: 1.4 }}>
-              Una historia a orillas del Caribe, escrita para ustedes.
+              {t(
+                "Una historia a orillas del Caribe, escrita para ustedes.",
+                "A Caribbean story, written for you."
+              )}
             </div>
 
             <div style={{ margin: "56px 0 0" }}>
-              <div className="cot-italic" style={{ fontSize: 14, color: NAVY2 }}>Propuesta para</div>
+              <div className="cot-italic" style={{ fontSize: 14, color: NAVY2 }}>{t("Propuesta para", "Proposal for")}</div>
               <div className="cot-title" style={{ fontSize: 36, fontWeight: 700, color: NAVY, marginTop: 6, lineHeight: 1.15 }}>
                 {(evento?.nombre || header.empresa || "—").toUpperCase()}
               </div>
               {evento?.tipo && <div className="cot-title" style={{ fontSize: 18, fontWeight: 400, color: NAVY2, marginTop: 8, letterSpacing: "0.05em" }}>{evento.tipo}</div>}
-              {evento?.fecha && <div className="cot-italic" style={{ fontSize: 15, color: NAVY2, marginTop: 14 }}>{fmtFechaLarga(evento.fecha)}</div>}
+              {evento?.fecha && <div className="cot-italic" style={{ fontSize: 15, color: NAVY2, marginTop: 14 }}>{fmtFechaLarga(evento.fecha, lang)}</div>}
             </div>
           </div>
 
           <div>
             <hr className="cot-hairline" style={{ width: 220, margin: "0 auto 20px", border: 0, height: 1, background: SAND }} />
             <div className="cot-italic" style={{ fontSize: 13, color: NAVY2, marginBottom: 8 }}>
-              Esta propuesta es preparada por:
+              {t("Esta propuesta es preparada por:", "This proposal is prepared by:")}
             </div>
             <div className="cot-title" style={{ fontSize: 17, fontWeight: 700, color: NAVY, letterSpacing: "0.03em" }}>
               {vendedor.nombre}
@@ -458,7 +490,7 @@ ${source.innerHTML}
               </div>
             )}
             <div style={{ fontSize: 10, letterSpacing: "0.18em", color: "rgba(30,53,102,0.6)", textTransform: "uppercase", marginTop: 14 }}>
-              Cotización {evento?.id} &nbsp;·&nbsp; {new Date().toLocaleDateString("es-CO", { day: "2-digit", month: "long", year: "numeric" })}
+              {t("Cotización", "Quotation")} {evento?.id} &nbsp;·&nbsp; {new Date().toLocaleDateString(lang === "en" ? "en-US" : "es-CO", { day: "2-digit", month: "long", year: "numeric" })}
             </div>
           </div>
         </section>
@@ -471,39 +503,55 @@ ${source.innerHTML}
               Atolon Beach Club
             </div>
             <div className="cot-italic" style={{ fontSize: 19, color: NAVY2, marginBottom: 28 }}>
-              Donde comienza tu historia en el Caribe
+              {t("Donde comienza tu historia en el Caribe", "Where your Caribbean story begins")}
             </div>
             <div style={{ width: 60, height: 1, background: SAND, margin: "0 auto 32px" }} />
 
             <div className="cot-italic" style={{ fontSize: 20, lineHeight: 1.5, color: NAVY2, marginBottom: 28, maxWidth: 420, marginLeft: "auto", marginRight: "auto" }}>
-              Dicen que hay lugares que no se buscan…<br/>te encuentran.
+              {lang === "en"
+                ? <>They say there are places you don't seek…<br/>they find you.</>
+                : <>Dicen que hay lugares que no se buscan…<br/>te encuentran.</>}
             </div>
 
             <div style={{ fontSize: 13, lineHeight: 1.8, color: NAVY2, textAlign: "left", fontFamily: "'Barlow', sans-serif" }}>
-              <p style={{ margin: "0 0 18px" }}>A solo minutos de Cartagena, cruzando un breve trayecto sobre el mar, aparece un rincón donde el tiempo pierde prisa y cada detalle parece pensado para un momento que aún no sucede… pero que ya se siente inolvidable.</p>
+              <p style={{ margin: "0 0 18px" }}>{t(
+                "A solo minutos de Cartagena, cruzando un breve trayecto sobre el mar, aparece un rincón donde el tiempo pierde prisa y cada detalle parece pensado para un momento que aún no sucede… pero que ya se siente inolvidable.",
+                "Just minutes from Cartagena, across a brief journey over the sea, appears a corner where time loses its hurry and every detail seems crafted for a moment that hasn't happened yet… but already feels unforgettable."
+              )}</p>
 
               <p style={{ margin: "0 0 18px" }}>
-                <span style={{ fontFamily: "'Cormorant Garamond', Georgia, serif", fontStyle: "italic", fontSize: 17, color: NAVY }}>Atolon no nació como un destino.</span><br/>
-                Nació como una idea: crear un espacio donde celebrar la vida de una forma distinta.<br/>
-                Más íntima. Más auténtica. Más tuya.
+                <span style={{ fontFamily: "'Cormorant Garamond', Georgia, serif", fontStyle: "italic", fontSize: 17, color: NAVY }}>{t("Atolon no nació como un destino.", "Atolon wasn't born as a destination.")}</span><br/>
+                {t(
+                  <>Nació como una idea: crear un espacio donde celebrar la vida de una forma distinta.<br/>Más íntima. Más auténtica. Más tuya.</>,
+                  <>It was born as an idea: to create a space where life is celebrated differently.<br/>More intimate. More authentic. More yours.</>
+                )}
               </p>
 
-              <p style={{ margin: "0 0 18px" }}>Aquí, el sonido del mar marca el ritmo de cada encuentro,<br/>la brisa acompaña cada brindis,<br/>y los atardeceres no son un cierre… sino el comienzo de algo más.</p>
+              <p style={{ margin: "0 0 18px" }}>{t(
+                <>Aquí, el sonido del mar marca el ritmo de cada encuentro,<br/>la brisa acompaña cada brindis,<br/>y los atardeceres no son un cierre… sino el comienzo de algo más.</>,
+                <>Here, the sound of the sea sets the rhythm of every gathering,<br/>the breeze accompanies every toast,<br/>and sunsets are not an ending… but the beginning of something more.</>
+              )}</p>
 
-              <p style={{ margin: "0 0 18px" }}>Cada experiencia en Atolon está diseñada para convertirse en memoria:<br/>desde una celebración frente al mar, hasta un reencuentro que merecía un escenario especial.</p>
+              <p style={{ margin: "0 0 18px" }}>{t(
+                <>Cada experiencia en Atolon está diseñada para convertirse en memoria:<br/>desde una celebración frente al mar, hasta un reencuentro que merecía un escenario especial.</>,
+                <>Every experience at Atolon is designed to become memory:<br/>from a celebration by the sea, to a reunion that deserved a special setting.</>
+              )}</p>
 
               <p style={{ margin: "0 0 24px", fontFamily: "'Cormorant Garamond', Georgia, serif", fontStyle: "italic", fontSize: 17, color: NAVY, textAlign: "center" }}>
-                Este no es solo un lugar al que vienes.<br/>Es un lugar que se queda contigo.
+                {t(
+                  <>Este no es solo un lugar al que vienes.<br/>Es un lugar que se queda contigo.</>,
+                  <>This is not just a place you come to.<br/>It's a place that stays with you.</>
+                )}
               </p>
             </div>
 
             <div style={{ width: 60, height: 1, background: SAND, margin: "28px auto 24px" }} />
 
             <div className="cot-title" style={{ fontSize: 18, fontWeight: 700, color: NAVY, letterSpacing: "0.05em", marginBottom: 6 }}>
-              Bienvenido a Atolon Beach Club.
+              {t("Bienvenido a Atolon Beach Club.", "Welcome to Atolon Beach Club.")}
             </div>
             <div className="cot-italic" style={{ fontSize: 16, color: NAVY2 }}>
-              Ahora, la historia continúa contigo.
+              {t("Ahora, la historia continúa contigo.", "Now, the story continues with you.")}
             </div>
           </div>
         </section>
@@ -513,22 +561,22 @@ ${source.innerHTML}
           <img src="/atolon-logo.png" alt="Atolon" style={{ height: 32, width: "auto", display: "block", margin: "0 auto 18px" }} />
 
           <div style={{ textAlign: "center", marginBottom: 18 }}>
-            <div className="cot-eyebrow" style={{ marginBottom: 10 }}>Lo que hemos preparado</div>
-            <div className="cot-title" style={{ fontSize: 34, fontWeight: 700, color: NAVY, marginBottom: 8 }}>La propuesta</div>
-            <div className="cot-italic" style={{ fontSize: 15, color: NAVY2 }}>Las piezas que dan forma a la visita de su grupo.</div>
+            <div className="cot-eyebrow" style={{ marginBottom: 10 }}>{t("Lo que hemos preparado", "What we've prepared")}</div>
+            <div className="cot-title" style={{ fontSize: 34, fontWeight: 700, color: NAVY, marginBottom: 8 }}>{t("La propuesta", "The proposal")}</div>
+            <div className="cot-italic" style={{ fontSize: 15, color: NAVY2 }}>{t("Las piezas que dan forma a la visita de su grupo.", "The elements that shape your group's visit.")}</div>
             <div style={{ width: 60, height: 1, background: SAND, margin: "14px auto 0" }} />
           </div>
 
           {/* Mini fact sheet compacto */}
           <div style={{ maxWidth: 640, margin: "0 auto 24px", display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: "8px 20px", padding: "14px 16px", background: CREAM2, border: `1px solid ${HAIR}` }}>
             {[
-              ["Evento", evento?.tipo],
-              ["Fecha", evento?.fecha ? fmtFechaLarga(evento.fecha) : ""],
-              ["Invitados", evento?.pax ? `${evento.pax} pax` : (totalPaxPasadias ? `${totalPaxPasadias} pax` : "")],
-              ["Horario", (header.hora_ini || header.hora_fin) ? `${header.hora_ini || "—"} a ${header.hora_fin || "—"}` : ""],
-              ["Empresa", header.empresa],
-              ["Contacto", header.contacto],
-              ["Teléfono", header.telefono],
+              [t("Evento", "Event"), evento?.tipo],
+              [t("Fecha", "Date"), evento?.fecha ? fmtFechaLarga(evento.fecha, lang) : ""],
+              [t("Invitados", "Guests"), evento?.pax ? `${evento.pax} pax` : (totalPaxPasadias ? `${totalPaxPasadias} pax` : "")],
+              [t("Horario", "Schedule"), (header.hora_ini || header.hora_fin) ? `${header.hora_ini || "—"} ${t("a","to")} ${header.hora_fin || "—"}` : ""],
+              [t("Empresa", "Company"), header.empresa],
+              [t("Contacto", "Contact"), header.contacto],
+              [t("Teléfono", "Phone"), header.telefono],
               ["Email", header.email],
             ].filter(([, v]) => v).map(([k, v]) => (
               <div key={k}>
@@ -540,14 +588,14 @@ ${source.innerHTML}
           {/* Pasadías */}
           {pasadiasRows.length > 0 && (
             <PropuestaTable
-              title="PASADÍAS"
+              title={t("PASADÍAS", "DAY PASSES")}
               headers={[
-                { label: "Tipo", width: "30%", align: "left" },
-                { label: "Adultos", width: "10%", align: "center" },
-                { label: "Niños", width: "10%", align: "center" },
-                { label: "V. Unit. Adulto", width: "16%", align: "right" },
-                { label: "V. Unit. Niño", width: "16%", align: "right" },
-                { label: "Subtotal", width: "18%", align: "right" },
+                { label: t("Tipo", "Type"), width: "30%", align: "left" },
+                { label: t("Adultos", "Adults"), width: "10%", align: "center" },
+                { label: t("Niños", "Children"), width: "10%", align: "center" },
+                { label: t("V. Unit. Adulto", "Adult Unit"), width: "16%", align: "right" },
+                { label: t("V. Unit. Niño", "Child Unit"), width: "16%", align: "right" },
+                { label: t("Subtotal", "Subtotal"), width: "18%", align: "right" },
               ]}
               rows={pasadiasRows.map(r => ({
                 cells: [
@@ -567,12 +615,12 @@ ${source.innerHTML}
           {/* Cortesías (sublista aparte) */}
           {cortesias.length > 0 && (
             <div style={{ marginBottom: 24, padding: "12px 14px", background: CREAM2, border: `1px dashed ${SAND}`, borderRadius: 4 }}>
-              <div className="cot-eyebrow" style={{ marginBottom: 6 }}>Cortesías incluidas</div>
+              <div className="cot-eyebrow" style={{ marginBottom: 6 }}>{t("Cortesías incluidas", "Complimentary included")}</div>
               <ul style={{ margin: 0, padding: 0, listStyle: "none", fontSize: 12, color: NAVY2, lineHeight: 1.7, fontFamily: "'Barlow', sans-serif" }}>
                 {cortesias.map((c, i) => {
                   const cant = (Number(c.adultos) || 0) + (Number(c.ninos) || 0) || Number(c.personas) || 0;
                   return (
-                    <li key={i}>· {cant} de tipo {c.tipo}{c.nombre ? ` — ${c.nombre}` : ""}</li>
+                    <li key={i}>· {cant} {t("de tipo", "of type")} {c.tipo}{c.nombre ? ` — ${c.nombre}` : ""}</li>
                   );
                 })}
               </ul>
@@ -582,12 +630,12 @@ ${source.innerHTML}
           {/* Servicios contratados */}
           {serviciosRows.length > 0 && (
             <PropuestaTable
-              title="SERVICIOS"
+              title={t("SERVICIOS", "SERVICES")}
               headers={[
-                { label: "Descripción", width: "50%", align: "left" },
-                { label: "Cant.", width: "10%", align: "center" },
-                { label: "Valor Unit.", width: "18%", align: "right" },
-                { label: "Subtotal", width: "22%", align: "right" },
+                { label: t("Descripción", "Description"), width: "50%", align: "left" },
+                { label: t("Cant.", "Qty"), width: "10%", align: "center" },
+                { label: t("Valor Unit.", "Unit Price"), width: "18%", align: "right" },
+                { label: t("Subtotal", "Subtotal"), width: "22%", align: "right" },
               ]}
               rows={serviciosRows.map(s => {
                 const cant = Number(s.cantidad) || 1;
@@ -603,22 +651,22 @@ ${source.innerHTML}
           {/* Cobros adicionales (extras_data) */}
           {totalExtras > 0 && (
             <>
-              <div className="cot-eyebrow" style={{ marginTop: 20, marginBottom: 10, textAlign: "left" }}>Cobros adicionales</div>
+              <div className="cot-eyebrow" style={{ marginTop: 20, marginBottom: 10, textAlign: "left" }}>{t("Cobros adicionales", "Additional charges")}</div>
               {[
-                ["TRANSPORTE", extrasTransporte, totExtrasTrans],
-                ["ALIMENTOS Y BEBIDAS", extrasAlimentos, totExtrasAli],
-                ["SERVICIOS ADICIONALES", extrasServicios, totExtrasSer],
+                [t("TRANSPORTE", "TRANSPORTATION"), extrasTransporte, totExtrasTrans],
+                [t("ALIMENTOS Y BEBIDAS", "FOOD & BEVERAGE"), extrasAlimentos, totExtrasAli],
+                [t("SERVICIOS ADICIONALES", "ADDITIONAL SERVICES"), extrasServicios, totExtrasSer],
               ].map(([title, rows, tot]) => (
                 <PropuestaTable
                   key={title}
                   title={title}
                   headers={[
-                    { label: "Concepto", width: "45%", align: "left" },
-                    { label: "Cant.", width: "8%", align: "center" },
-                    { label: "V. Unit.", width: "15%", align: "right" },
-                    { label: "Subtotal", width: "15%", align: "right" },
-                    { label: "IVA", width: "7%", align: "center" },
-                    { label: "Total", width: "10%", align: "right" },
+                    { label: t("Concepto", "Item"), width: "45%", align: "left" },
+                    { label: t("Cant.", "Qty"), width: "8%", align: "center" },
+                    { label: t("V. Unit.", "Unit"), width: "15%", align: "right" },
+                    { label: t("Subtotal", "Subtotal"), width: "15%", align: "right" },
+                    { label: t("IVA", "VAT"), width: "7%", align: "center" },
+                    { label: t("Total", "Total"), width: "10%", align: "right" },
                   ]}
                   rows={rows.map(l => {
                     const { sub, total } = calcLine(l);
@@ -633,31 +681,31 @@ ${source.innerHTML}
           {/* Otros servicios cotizados (cotizacion_data) */}
           {totalCotizacion > 0 && (
             <>
-              <div className="cot-eyebrow" style={{ marginTop: 20, marginBottom: 10, textAlign: "left" }}>Otros servicios cotizados</div>
+              <div className="cot-eyebrow" style={{ marginTop: 20, marginBottom: 10, textAlign: "left" }}>{t("Otros servicios cotizados", "Other quoted services")}</div>
               {[
-                ["ESPACIOS", cotEspacios, totCotEsp, false],
-                ["HOSPEDAJE", cotHospedaje, totCotHos, true],
-                ["ALIMENTOS Y BEBIDAS", cotAlimentos, totCotAli, false],
-                ["SERVICIOS", cotServicios, totCotSer, false],
+                [t("ESPACIOS", "VENUES"), cotEspacios, totCotEsp, false],
+                [t("HOSPEDAJE", "ACCOMMODATION"), cotHospedaje, totCotHos, true],
+                [t("ALIMENTOS Y BEBIDAS", "FOOD & BEVERAGE"), cotAlimentos, totCotAli, false],
+                [t("SERVICIOS", "SERVICES"), cotServicios, totCotSer, false],
               ].map(([title, rows, tot, showNoches]) => (
                 <PropuestaTable
                   key={title}
                   title={title}
                   headers={showNoches ? [
-                    { label: "Concepto", width: "38%", align: "left" },
-                    { label: "Cant.", width: "8%", align: "center" },
-                    { label: "Noches", width: "8%", align: "center" },
-                    { label: "V. Unit.", width: "15%", align: "right" },
-                    { label: "Subtotal", width: "12%", align: "right" },
-                    { label: "IVA", width: "7%", align: "center" },
-                    { label: "Total", width: "12%", align: "right" },
+                    { label: t("Concepto", "Item"), width: "38%", align: "left" },
+                    { label: t("Cant.", "Qty"), width: "8%", align: "center" },
+                    { label: t("Noches", "Nights"), width: "8%", align: "center" },
+                    { label: t("V. Unit.", "Unit"), width: "15%", align: "right" },
+                    { label: t("Subtotal", "Subtotal"), width: "12%", align: "right" },
+                    { label: t("IVA", "VAT"), width: "7%", align: "center" },
+                    { label: t("Total", "Total"), width: "12%", align: "right" },
                   ] : [
-                    { label: "Concepto", width: "45%", align: "left" },
-                    { label: "Cant.", width: "8%", align: "center" },
-                    { label: "V. Unit.", width: "15%", align: "right" },
-                    { label: "Subtotal", width: "15%", align: "right" },
-                    { label: "IVA", width: "7%", align: "center" },
-                    { label: "Total", width: "10%", align: "right" },
+                    { label: t("Concepto", "Item"), width: "45%", align: "left" },
+                    { label: t("Cant.", "Qty"), width: "8%", align: "center" },
+                    { label: t("V. Unit.", "Unit"), width: "15%", align: "right" },
+                    { label: t("Subtotal", "Subtotal"), width: "15%", align: "right" },
+                    { label: t("IVA", "VAT"), width: "7%", align: "center" },
+                    { label: t("Total", "Total"), width: "10%", align: "right" },
                   ]}
                   rows={rows.map(l => {
                     const { sub, total } = calcLine(l);
@@ -677,7 +725,7 @@ ${source.innerHTML}
               <tbody>
                 <tr style={{ background: "#EFE7D3" }}>
                   <td style={{ padding: "10px 10px", textAlign: "right", fontSize: 10, letterSpacing: "0.18em", textTransform: "uppercase", color: NAVY, fontWeight: 700 }}>
-                    Total
+                    {t("Total", "Total")}
                   </td>
                   <td style={{ padding: "10px 10px", textAlign: "right", color: NAVY, fontWeight: 700, width: 140 }}>
                     {COP(grandTotal)}
@@ -694,43 +742,64 @@ ${source.innerHTML}
           <img src="/atolon-logo.png" alt="Atolon" style={{ height: 30, width: "auto", display: "block", margin: "0 auto 18px" }} />
 
           <div style={{ textAlign: "center", marginBottom: 24 }}>
-            <div className="cot-eyebrow" style={{ marginBottom: 10 }}>El marco</div>
+            <div className="cot-eyebrow" style={{ marginBottom: 10 }}>{t("El marco", "The framework")}</div>
             <div style={{ width: 60, height: 1, background: SAND, margin: "10px auto 18px" }} />
             <div className="cot-italic" style={{ fontSize: 15, color: NAVY2, maxWidth: 540, margin: "0 auto", lineHeight: 1.5 }}>
-              Como toda buena historia, la nuestra también necesita un marco — pensado para proteger la experiencia de su grupo tanto como la nuestra.
+              {t(
+                "Como toda buena historia, la nuestra también necesita un marco — pensado para proteger la experiencia de su grupo tanto como la nuestra.",
+                "Like every good story, ours also needs a framework — designed to protect your group's experience as much as our own."
+              )}
             </div>
           </div>
 
           <div style={{ maxWidth: 640, margin: "0 auto", fontSize: 12, lineHeight: 1.7, color: NAVY2 }}>
 
             <div style={{ marginBottom: 18 }}>
-              <div className="cot-eyebrow" style={{ marginBottom: 6 }}>1. Vigencia de la propuesta</div>
-              <p style={{ margin: 0 }}>Esta cotización es válida por <strong>siete (7) días calendario</strong> contados desde su fecha de emisión.</p>
+              <div className="cot-eyebrow" style={{ marginBottom: 6 }}>{t("1. Vigencia de la propuesta", "1. Proposal validity")}</div>
+              <p style={{ margin: 0 }}>{t(
+                <>Esta cotización es válida por <strong>siete (7) días calendario</strong> contados desde su fecha de emisión.</>,
+                <>This quotation is valid for <strong>seven (7) calendar days</strong> from the date of issue.</>
+              )}</p>
             </div>
 
             <div style={{ marginBottom: 18 }}>
-              <div className="cot-eyebrow" style={{ marginBottom: 6 }}>2. Confirmación de la reserva</div>
-              <p style={{ margin: 0 }}>La fecha del evento, los espacios y los servicios cotizados <strong>no se consideran reservados ni garantizados</strong> hasta tanto el cliente (i) realice el pago del anticipo del <strong>50%</strong> del valor total, y (ii) suscriba el contrato de servicios correspondiente. Atolon se reserva el derecho de aceptar otras reservas sobre la misma fecha mientras no se cumplan ambas condiciones.</p>
+              <div className="cot-eyebrow" style={{ marginBottom: 6 }}>{t("2. Confirmación de la reserva", "2. Reservation confirmation")}</div>
+              <p style={{ margin: 0 }}>{t(
+                <>La fecha del evento, los espacios y los servicios cotizados <strong>no se consideran reservados ni garantizados</strong> hasta tanto el cliente (i) realice el pago del anticipo del <strong>50%</strong> del valor total, y (ii) suscriba el contrato de servicios correspondiente. Atolon se reserva el derecho de aceptar otras reservas sobre la misma fecha mientras no se cumplan ambas condiciones.</>,
+                <>The event date, venues and quoted services <strong>are not considered reserved nor guaranteed</strong> until the client (i) pays the <strong>50%</strong> deposit of the total value, and (ii) signs the corresponding services contract. Atolon reserves the right to accept other reservations on the same date until both conditions are met.</>
+              )}</p>
             </div>
 
             <div style={{ marginBottom: 18 }}>
-              <div className="cot-eyebrow" style={{ marginBottom: 6 }}>3. Forma de pago</div>
-              <p style={{ margin: 0 }}>Anticipo del 50% al momento de confirmar. Saldo del 50% restante al menos <strong>siete (7) días calendario antes</strong> de la fecha del evento. Los consumos adicionales no incluidos en la cotización deberán cancelarse el mismo día del evento. Medios de pago aceptados: transferencia bancaria, consignación o pasarela de pagos autorizada por Atolon.</p>
+              <div className="cot-eyebrow" style={{ marginBottom: 6 }}>{t("3. Forma de pago", "3. Payment terms")}</div>
+              <p style={{ margin: 0 }}>{t(
+                <>Anticipo del 50% al momento de confirmar. Saldo del 50% restante al menos <strong>siete (7) días calendario antes</strong> de la fecha del evento. Los consumos adicionales no incluidos en la cotización deberán cancelarse el mismo día del evento. Medios de pago aceptados: transferencia bancaria, consignación o pasarela de pagos autorizada por Atolon.</>,
+                <>50% deposit upon confirmation. Remaining 50% balance at least <strong>seven (7) calendar days before</strong> the event date. Additional consumptions not included in the quotation must be paid the same day of the event. Accepted payment methods: bank transfer, deposit, or payment gateway authorized by Atolon.</>
+              )}</p>
             </div>
 
             <div style={{ marginBottom: 18 }}>
-              <div className="cot-eyebrow" style={{ marginBottom: 6 }}>4. Impuestos y tarifas</div>
-              <p style={{ margin: 0 }}>Los valores expresados están en pesos colombianos (COP) e incluyen IVA e impuesto al consumo (INC) donde aplique. Cualquier modificación tributaria posterior a la firma podrá trasladarse al cliente conforme a la ley.</p>
+              <div className="cot-eyebrow" style={{ marginBottom: 6 }}>{t("4. Impuestos y tarifas", "4. Taxes and fees")}</div>
+              <p style={{ margin: 0 }}>{t(
+                "Los valores expresados están en pesos colombianos (COP) e incluyen IVA e impuesto al consumo (INC) donde aplique. Cualquier modificación tributaria posterior a la firma podrá trasladarse al cliente conforme a la ley.",
+                "Values are expressed in Colombian pesos (COP) and include VAT and consumption tax (INC) where applicable. Any tax changes after signing may be passed on to the client as per law."
+              )}</p>
             </div>
 
             <div style={{ marginBottom: 18 }}>
-              <div className="cot-eyebrow" style={{ marginBottom: 6 }}>5. Términos y condiciones completos</div>
-              <p style={{ margin: 0 }}>Los términos y condiciones íntegros que regirán la prestación de los servicios serán descritos en el <strong>contrato</strong> que suscribirán las partes al confirmar la reserva.</p>
+              <div className="cot-eyebrow" style={{ marginBottom: 6 }}>{t("5. Términos y condiciones completos", "5. Complete terms and conditions")}</div>
+              <p style={{ margin: 0 }}>{t(
+                <>Los términos y condiciones íntegros que regirán la prestación de los servicios serán descritos en el <strong>contrato</strong> que suscribirán las partes al confirmar la reserva.</>,
+                <>The complete terms and conditions governing the services will be described in the <strong>contract</strong> signed by both parties upon reservation confirmation.</>
+              )}</p>
             </div>
 
             <div style={{ marginTop: 26, padding: "16px 20px", background: "#EFE7D3", textAlign: "center", borderLeft: `3px solid ${SAND}` }}>
               <div className="cot-italic" style={{ fontSize: 13, color: NAVY, lineHeight: 1.6 }}>
-                La aceptación de esta propuesta y/o el pago del anticipo implica la aceptación íntegra de estos términos y condiciones.
+                {t(
+                  "La aceptación de esta propuesta y/o el pago del anticipo implica la aceptación íntegra de estos términos y condiciones.",
+                  "Acceptance of this proposal and/or payment of the deposit implies full acceptance of these terms and conditions."
+                )}
               </div>
             </div>
 
@@ -740,10 +809,10 @@ ${source.innerHTML}
             <div style={{ width: 80, height: 1, background: SAND, margin: "0 auto 16px" }} />
             <div style={{ fontSize: 12, letterSpacing: "0.25em", textTransform: "uppercase", fontWeight: 700, color: NAVY, marginBottom: 6 }}>Atolon Beach Club</div>
             <div style={{ fontSize: 11, lineHeight: 1.7 }}>
-              Isla Tierra Bomba · Cartagena de Indias · Colombia<br/>
+              {t("Isla Tierra Bomba · Cartagena de Indias · Colombia", "Tierra Bomba Island · Cartagena de Indias · Colombia")}<br/>
               eventos@atoloncartagena.com · www.atolon.co
             </div>
-            <div className="cot-italic" style={{ fontSize: 12, marginTop: 12, opacity: 0.85 }}>Escrito a mano en la isla, con vista al Caribe.</div>
+            <div className="cot-italic" style={{ fontSize: 12, marginTop: 12, opacity: 0.85 }}>{t("Escrito a mano en la isla, con vista al Caribe.", "Hand-written on the island, with a view of the Caribbean.")}</div>
           </div>
         </section>
 
@@ -808,10 +877,13 @@ ${source.innerHTML}
 
           <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", flexWrap: "wrap" }}>
             <button onClick={onClose} style={{ padding: "11px 20px", background: "none", border: `1px solid ${B.navyLight}`, borderRadius: 8, color: "rgba(255,255,255,0.6)", fontSize: 13, cursor: "pointer" }}>Cancelar</button>
-            <button onClick={descargarPDF} disabled={pdfLoading} title="Descarga el PDF directamente" style={{ padding: "11px 22px", background: B.navyLight, color: B.sand, border: `1px solid ${B.sand}44`, borderRadius: 8, fontWeight: 700, fontSize: 13, cursor: pdfLoading ? "wait" : "pointer", opacity: pdfLoading ? 0.6 : 1 }}>
-              {pdfLoading ? "Generando…" : "📥 Descargar PDF"}
+            <button onClick={() => descargarPDF("es")} disabled={pdfLoading || pdfLoadingEn} title="Descarga el PDF en español" style={{ padding: "11px 22px", background: B.navyLight, color: B.sand, border: `1px solid ${B.sand}44`, borderRadius: 8, fontWeight: 700, fontSize: 13, cursor: (pdfLoading || pdfLoadingEn) ? "wait" : "pointer", opacity: (pdfLoading || pdfLoadingEn) ? 0.6 : 1 }}>
+              {pdfLoading ? "Generando…" : "📥 PDF"}
             </button>
-            <button onClick={imprimir} style={{ padding: "11px 22px", background: B.sand, color: B.navy, border: "none", borderRadius: 8, fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
+            <button onClick={() => descargarPDF("en")} disabled={pdfLoading || pdfLoadingEn} title="Download PDF in English" style={{ padding: "11px 22px", background: B.navyLight, color: B.sand, border: `1px solid ${B.sand}44`, borderRadius: 8, fontWeight: 700, fontSize: 13, cursor: (pdfLoading || pdfLoadingEn) ? "wait" : "pointer", opacity: (pdfLoading || pdfLoadingEn) ? 0.6 : 1 }}>
+              {pdfLoadingEn ? "Generating…" : "📥 PDF English"}
+            </button>
+            <button onClick={imprimir} disabled={pdfLoading || pdfLoadingEn} style={{ padding: "11px 22px", background: B.sand, color: B.navy, border: "none", borderRadius: 8, fontWeight: 700, fontSize: 13, cursor: "pointer", opacity: (pdfLoading || pdfLoadingEn) ? 0.6 : 1 }}>
               🖨 Imprimir
             </button>
           </div>
