@@ -86,23 +86,29 @@ export default async function handler(req, res) {
     for (const p of periodos) {
       const rangeFilter = `fecha=gte.${p.desde}&fecha=lte.${p.hasta}`;
 
-      const [pasDir, pasB2B, grupos, eventos, aybLoggro, llegadas, otrosVentas] = await Promise.all([
+      const llegadasExcluir = "(lancha_atolon,lanchas_atolon,huespedes,inspeccion)";
+      const [pasDir, pasB2B, grupos, eventos, aybLoggro, llegadas, otrosVentas, resVinculadasGrupos] = await Promise.all([
         // Pasadías directas
         sbQuery(sbUrl, sbKey, "reservas", `select=id,total,pax,estado&${rangeFilter}&estado=neq.cancelado&aliado_id=is.null&grupo_id=is.null`),
         // Pasadías B2B
         sbQuery(sbUrl, sbKey, "reservas", `select=id,total,pax,estado&${rangeFilter}&estado=neq.cancelado&aliado_id=not.is.null&grupo_id=is.null`),
-        // Grupos
-        sbQuery(sbUrl, sbKey, "eventos", `select=id,valor,valor_extras,pax,pasadias_org,servicios_contratados,categoria&${rangeFilter}&stage=in.(Confirmado,Realizado)&categoria=eq.grupo`),
+        // Grupos — incluir modalidad_pago para distinguir cobro real vs proyectado
+        sbQuery(sbUrl, sbKey, "eventos", `select=id,valor,valor_extras,pax,pasadias_org,servicios_contratados,categoria,modalidad_pago&${rangeFilter}&stage=in.(Confirmado,Realizado)&categoria=eq.grupo`),
         // Eventos
         sbQuery(sbUrl, sbKey, "eventos", `select=id,valor,valor_extras,pax,pasadias_org,servicios_contratados,categoria&${rangeFilter}&stage=in.(Confirmado,Realizado)&categoria=eq.evento`),
         // A&B — desde Loggro Restobar (fuente oficial de facturación)
         fetch(`${sbUrl}/functions/v1/loggro-sync/cierre-caja-rango?from=${p.desde}&to=${p.hasta}`, {
           headers: { apikey: sbKey, Authorization: `Bearer ${sbKey}` }
         }).then(r => r.json()).catch(() => ({ ok: false })),
-        // Llegadas muelle (sin las vinculadas a reservas ni las marcadas para excluir KPI)
-        sbQuery(sbUrl, sbKey, "muelle_llegadas", `select=id,total_cobrado,pax_total,tipo,reserva_id,excluir_kpis&${rangeFilter}&tipo=neq.lancha_atolon&reserva_id=is.null&or=(excluir_kpis.is.null,excluir_kpis.eq.false)`),
+        // Llegadas muelle (excluir transporte interno y categorías no-pasadía).
+        // Antes solo excluía "lancha_atolon" (singular) → se colaban 64+ pax
+        // de "lanchas_atolon" (plural) como pasadías inflando el conteo.
+        sbQuery(sbUrl, sbKey, "muelle_llegadas", `select=id,total_cobrado,pax_total,tipo,reserva_id,excluir_kpis&${rangeFilter}&tipo=not.in.${llegadasExcluir}&reserva_id=is.null&or=(excluir_kpis.is.null,excluir_kpis.eq.false)`),
         // Otros ingresos: actividades, masajes, transporte, spa
         sbQuery(sbUrl, sbKey, "actividades_ventas", `select=id,total,fecha,estado&${rangeFilter}&estado=neq.cancelada&total=gt.0`),
+        // Reservas individuales vinculadas a grupos (canal=GRUPO con grupo_id)
+        // — para modalidad=individual donde el cobro real son las reservas
+        sbQuery(sbUrl, sbKey, "reservas", `select=id,total,pax,estado,grupo_id&${rangeFilter}&estado=neq.cancelado&grupo_id=not.is.null`),
       ]);
 
       // Helpers
@@ -114,9 +120,38 @@ export default async function handler(req, res) {
         const servicios = (e.servicios_contratados || []).reduce((s, x) => s + (Number(x.valor) || 0), 0);
         return base + extras + servicios;
       };
-      const pasadiasGrupo = (rows) => rows.reduce((s, e) => s + (e.pasadias_org || [])
-        .filter(p => p.tipo !== "Impuesto Muelle" && p.tipo !== "STAFF")
-        .reduce((ss, p) => ss + (Number(p.personas) || 0), 0), 0);
+
+      // Pax + monto de un grupo según modalidad_pago (alineado con
+      // grupoPaxTotal, availability-engine y trigger recalc_evento_pax):
+      //   organizador → MAX(bulk, reservas+cortesías) / cotización + reservas extra
+      //   individual  → solo reservas + cortesías individualizadas / solo reservas reales
+      const paxGrupo = (e) => {
+        const paxOrg = (e.pasadias_org || [])
+          .filter(p => p.tipo !== "Impuesto Muelle" && p.tipo !== "STAFF")
+          .reduce((s, p) => s + (Number(p.personas) || 0), 0);
+        const paxCortesias = (e.pasadias_org || [])
+          .filter(p => p.cortesia)
+          .reduce((s, p) => s + (Number(p.personas) || 0), 0);
+        const cortesiaResIds = new Set((e.pasadias_org || [])
+          .filter(p => p.cortesia && p.reserva_id).map(p => p.reserva_id));
+        const paxRes = (resVinculadasGrupos || [])
+          .filter(r => r.grupo_id === e.id && r.estado !== "cancelado" && !cortesiaResIds.has(r.id))
+          .reduce((s, r) => s + (Number(r.pax) || 0), 0);
+        if (e.modalidad_pago === "organizador") {
+          return Math.max(paxOrg, paxRes + paxCortesias);
+        }
+        return paxRes + paxCortesias;
+      };
+
+      const montoGrupo = (e) => {
+        const montoRes = (resVinculadasGrupos || [])
+          .filter(r => r.grupo_id === e.id && r.estado !== "no_show" && r.estado !== "cancelado")
+          .reduce((s, r) => s + (Number(r.total) || 0), 0);
+        if (e.modalidad_pago === "organizador") {
+          return totalCotizacion(e) + montoRes;
+        }
+        return montoRes;
+      };
 
       const allPas = [...pasDir, ...pasB2B];
 
@@ -128,8 +163,8 @@ export default async function handler(req, res) {
                + llegadas.reduce((s, l) => s + (Number(l.total_cobrado) || 0), 0),
         },
         grupos: {
-          cantidad: pasadiasGrupo(grupos),
-          monto: grupos.reduce((s, e) => s + totalCotizacion(e), 0),
+          cantidad: grupos.reduce((s, e) => s + paxGrupo(e), 0),
+          monto: grupos.reduce((s, e) => s + montoGrupo(e), 0),
         },
         eventos: {
           cantidad: eventos.length,
