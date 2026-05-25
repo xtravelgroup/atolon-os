@@ -376,7 +376,11 @@ export default function Resultados() {
       supabase.from("muelle_llegadas")
         .select("id, total_cobrado, pax_total, pax_a, pax_n, fecha, tipo, reserva_id, excluir_kpis")
         .gte("fecha", desdeAll).lte("fecha", hastaAll)
-        .neq("tipo", "lancha_atolon"),
+        // Excluir transporte interno y categorías no-pasadía. Antes solo
+        // excluía "lancha_atolon" (singular), pero las llegadas reales son
+        // tipo "lanchas_atolon" (plural) — esos 64+ pax de lanchas
+        // operacionales se colaban como pasadías inflando el conteo.
+        .not("tipo", "in", '("lancha_atolon","lanchas_atolon","huespedes","inspeccion")'),
       supabase.from("actividades_ventas")
         .select("id, total, fecha, estado")
         .gte("fecha", desdeAll).lte("fecha", hastaAll)
