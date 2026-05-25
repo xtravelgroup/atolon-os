@@ -4224,14 +4224,32 @@ export default function EventoDetalle({ evento: inicial, canEdit = true, onBack,
   }, []);
 
   // Cargar precios de pasadías para lookup en tab Servicios
+  // Incluye los items de `pasadia_incluye` con ES/EN para que la cotización
+  // pueda render en español o inglés (descripcion / descripcion_en).
   useEffect(() => {
     if (!supabase) return;
-    supabase.from("pasadias").select("nombre, precio, precio_neto_agencia, precio_nino, precio_neto_nino, descripcion, incluye")
-      .then(({ data }) => {
-        const map = {};
-        (data || []).forEach(p => { map[p.nombre.toLowerCase()] = p; });
-        setPasadiasMap(map);
+    (async () => {
+      const { data: pasadiasData } = await supabase
+        .from("pasadias")
+        .select("id, nombre, precio, precio_neto_agencia, precio_nino, precio_neto_nino, descripcion, incluye");
+      const { data: incluyeData } = await supabase
+        .from("pasadia_incluye")
+        .select("pasadia_id, descripcion, descripcion_en, orden")
+        .order("orden", { ascending: true });
+      const incluyeByPasadia = {};
+      (incluyeData || []).forEach(i => {
+        if (!incluyeByPasadia[i.pasadia_id]) incluyeByPasadia[i.pasadia_id] = [];
+        incluyeByPasadia[i.pasadia_id].push({ es: i.descripcion, en: i.descripcion_en || null });
       });
+      const map = {};
+      (pasadiasData || []).forEach(p => {
+        map[p.nombre.toLowerCase()] = {
+          ...p,
+          incluye_items: incluyeByPasadia[p.id] || [],
+        };
+      });
+      setPasadiasMap(map);
+    })();
   }, []);
 
   // B2B: cargar aliado nombre y calcular comisión

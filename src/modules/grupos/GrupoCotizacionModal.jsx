@@ -26,6 +26,142 @@ const fmtFechaLarga = (d, lang = "es") => {
   } catch { return d; }
 };
 
+// Diccionario para traducir términos comunes que aparecen en cotizaciones
+// (categorías, conceptos típicos de extras_data y cotizacion_data).
+// Solo se usa cuando el item no trae su campo _en explícito.
+const ES_EN_DICT = {
+  // Categorías
+  "decoración": "Decoration",
+  "decoracion": "Decoration",
+  "transporte": "Transportation",
+  "alimentos": "Food",
+  "bebidas": "Beverage",
+  "alimentos y bebidas": "Food & Beverage",
+  "hospedaje": "Accommodation",
+  "alojamiento": "Lodging",
+  "alojamientos": "Lodging",
+  "espacios": "Venues",
+  "espacio": "Venue",
+  "servicios": "Services",
+  "servicio": "Service",
+  "logística": "Logistics",
+  "logistica": "Logistics",
+  "audio": "Audio",
+  "sonido": "Sound",
+  "iluminación": "Lighting",
+  "iluminacion": "Lighting",
+  "música": "Music",
+  "musica": "Music",
+  "dj": "DJ",
+  "fotografía": "Photography",
+  "fotografia": "Photography",
+  "video": "Video",
+  "personal": "Staff",
+  "meseros": "Waiters",
+  "mesero": "Waiter",
+  "seguridad": "Security",
+  "muelle": "Dock",
+  "lancha": "Boat",
+  "lanchas": "Boats",
+  "yate": "Yacht",
+  "almuerzo": "Lunch",
+  "cena": "Dinner",
+  "desayuno": "Breakfast",
+  "menu": "Menu",
+  "menú": "Menu",
+  "menu degustacion": "Tasting menu",
+  "menú degustación": "Tasting menu",
+  "entrada": "Starter",
+  "plato fuerte": "Main course",
+  "postre": "Dessert",
+  "cabana": "Cabana",
+  "cabaña": "Cabana",
+  "cama de playa": "Beach bed",
+  "cama": "Bed",
+  "silla": "Chair",
+  "sillas": "Chairs",
+  "mesa": "Table",
+  "mesas": "Tables",
+  "toalla": "Towel",
+  "toallas": "Towels",
+  "piscina": "Pool",
+  "playa": "Beach",
+  "mar": "Sea",
+  "carpa": "Tent",
+  "carpas": "Tents",
+  "ida y vuelta": "Round trip",
+  "ida": "Outbound",
+  "regreso": "Return",
+  "consumible": "Consumable",
+  "consumo": "Consumption",
+  "incluye": "Includes",
+  "no incluye": "Does not include",
+  "extras": "Extras",
+  "cotización": "Quotation",
+  "cotizacion": "Quotation",
+  "evento": "Event",
+  "grupo": "Group",
+  "noche": "Night",
+  "noches": "Nights",
+  "día": "Day",
+  "dia": "Day",
+  "días": "Days",
+  "dias": "Days",
+  "persona": "Person",
+  "personas": "People",
+  "adultos": "Adults",
+  "adulto": "Adult",
+  "niños": "Children",
+  "ninos": "Children",
+  "niño": "Child",
+  "nino": "Child",
+  "cocktail": "Cocktail",
+  "cóctel": "Cocktail",
+  "coctel": "Cocktail",
+  "bienvenida": "Welcome",
+  "torta": "Cake",
+  "decoración floral": "Floral decoration",
+  "centros de mesa": "Centerpieces",
+  "centro de mesa": "Centerpiece",
+  "manteleria": "Tablecloths",
+  "mantelería": "Tablecloths",
+  "incluido": "Included",
+  "incluida": "Included",
+  "exclusivo": "Exclusive",
+  "exclusiva": "Exclusive",
+  "premium": "Premium",
+  "estándar": "Standard",
+  "estandar": "Standard",
+  "básico": "Basic",
+  "basico": "Basic",
+  "vip": "VIP",
+};
+
+// Traduce un string usando ES_EN_DICT. Funciona por reemplazo de palabras/frases
+// (case-insensitive, mantiene el resto del texto). Si no encuentra nada, devuelve
+// el original. NO es un traductor real — solo cubre términos frecuentes para
+// que la cotización en inglés se vea decente sin requerir captura manual.
+function traducirItem(texto) {
+  if (!texto || typeof texto !== "string") return texto;
+  let result = texto;
+  // Ordenamos por longitud descendente para que "alimentos y bebidas" se procese antes que "alimentos"
+  const keys = Object.keys(ES_EN_DICT).sort((a, b) => b.length - a.length);
+  for (const k of keys) {
+    const en = ES_EN_DICT[k];
+    // \b no funciona bien con tildes en español, usamos lookbehind/ahead con caracteres no-letra
+    const re = new RegExp(`(^|[^a-záéíóúñü])${k.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}([^a-záéíóúñü]|$)`, "gi");
+    result = result.replace(re, (m, p1, p2) => `${p1}${en}${p2}`);
+  }
+  return result;
+}
+
+// Devuelve la propiedad EN si existe y no es vacía, o traduce desde el campo ES.
+function pickEn(obj, esField, enField) {
+  const en = obj?.[enField];
+  if (en && String(en).trim()) return en;
+  return traducirItem(obj?.[esField] || "");
+}
+
 export default function GrupoCotizacionModal({ evento, pasadiasOrg = [], servicios = [], pasadiasMap = {}, onClose }) {
   // ── Idioma: "es" o "en". Solo afecta el contenido del PDF/impresión.
   // La UI del modal (botones, resumen previo) se queda en español siempre.
@@ -84,15 +220,23 @@ export default function GrupoCotizacionModal({ evento, pasadiasOrg = [], servici
       subtotal     = totalAdul;
     }
     const match = pasadiasMap[(p.tipo || "").toLowerCase()] || {};
-    // incluye = array si viene array, o string; descripcion como string. Unimos ambos en una lista.
-    let descripcion = null;
-    if (Array.isArray(match.incluye) && match.incluye.length > 0) {
-      descripcion = match.incluye;
-      if (match.descripcion) descripcion = [match.descripcion, ...descripcion];
+    // Preferimos los items estructurados de `pasadia_incluye` que vienen con
+    // descripcion (es) y descripcion_en (en). Si no existen, caemos al texto
+    // legacy de pasadias.incluye / pasadias.descripcion (solo español).
+    let descripcionEs = null;
+    let descripcionEn = null;
+    if (Array.isArray(match.incluye_items) && match.incluye_items.length > 0) {
+      descripcionEs = match.incluye_items.map(it => it.es).filter(Boolean);
+      descripcionEn = match.incluye_items.map(it => it.en || it.es).filter(Boolean);
+    } else if (Array.isArray(match.incluye) && match.incluye.length > 0) {
+      descripcionEs = match.incluye;
+      if (match.descripcion) descripcionEs = [match.descripcion, ...descripcionEs];
+      descripcionEn = descripcionEs; // sin traducción disponible
     } else if (match.incluye || match.descripcion) {
-      descripcion = [match.descripcion, match.incluye].filter(Boolean).join(" · ");
+      descripcionEs = [match.descripcion, match.incluye].filter(Boolean).join(" · ");
+      descripcionEn = descripcionEs;
     }
-    return { tipo: p.tipo, adultos: adultosShown, ninos: ninosShown, precioA, precioN, subtotal, descripcion };
+    return { tipo: p.tipo, adultos: adultosShown, ninos: ninosShown, precioA, precioN, subtotal, descripcionEs, descripcionEn };
   });
 
   const totalPasadias = pasadiasRows.reduce((s, r) => s + r.subtotal, 0);
@@ -599,14 +743,14 @@ ${source.innerHTML}
               ]}
               rows={pasadiasRows.map(r => ({
                 cells: [
-                  r.tipo,
+                  lang === "en" ? traducirItem(r.tipo) : r.tipo,
                   r.adultos || "—",
                   r.ninos || "—",
                   r.precioA > 0 ? COP(r.precioA) : "—",
                   r.precioN > 0 ? COP(r.precioN) : "—",
                   COP(r.subtotal),
                 ],
-                descripcion: r.descripcion,
+                descripcion: lang === "en" ? r.descripcionEn : r.descripcionEs,
               }))}
               subtotal={totalPasadias}
             />
@@ -619,8 +763,9 @@ ${source.innerHTML}
               <ul style={{ margin: 0, padding: 0, listStyle: "none", fontSize: 12, color: NAVY2, lineHeight: 1.7, fontFamily: "'Barlow', sans-serif" }}>
                 {cortesias.map((c, i) => {
                   const cant = (Number(c.adultos) || 0) + (Number(c.ninos) || 0) || Number(c.personas) || 0;
+                  const tipo = lang === "en" ? traducirItem(c.tipo) : c.tipo;
                   return (
-                    <li key={i}>· {cant} {t("de tipo", "of type")} {c.tipo}{c.nombre ? ` — ${c.nombre}` : ""}</li>
+                    <li key={i}>· {cant} {t("de tipo", "of type")} {tipo}{c.nombre ? ` — ${c.nombre}` : ""}</li>
                   );
                 })}
               </ul>
@@ -641,7 +786,9 @@ ${source.innerHTML}
                 const cant = Number(s.cantidad) || 1;
                 const unit = Number(s.valor_unit) || (Number(s.valor) / cant) || 0;
                 const sub  = Number(s.valor) || cant * unit;
-                const desc = [s.categoria, s.descripcion].filter(Boolean).join(" — ");
+                const categoria = lang === "en" ? pickEn(s, "categoria", "categoria_en") : s.categoria;
+                const descripcion = lang === "en" ? pickEn(s, "descripcion", "descripcion_en") : s.descripcion;
+                const desc = [categoria, descripcion].filter(Boolean).join(" — ");
                 return [desc, cant, COP(unit), COP(sub)];
               })}
               subtotal={totalServicios}
@@ -670,7 +817,8 @@ ${source.innerHTML}
                   ]}
                   rows={rows.map(l => {
                     const { sub, total } = calcLine(l);
-                    return [l.concepto, l.cantidad, COP(l.valor_unit), COP(sub), `${l.iva || 0}%`, COP(total)];
+                    const concepto = lang === "en" ? pickEn(l, "concepto", "concepto_en") : l.concepto;
+                    return [concepto, l.cantidad, COP(l.valor_unit), COP(sub), `${l.iva || 0}%`, COP(total)];
                   })}
                   subtotal={tot}
                 />
@@ -709,9 +857,10 @@ ${source.innerHTML}
                   ]}
                   rows={rows.map(l => {
                     const { sub, total } = calcLine(l);
+                    const concepto = lang === "en" ? pickEn(l, "concepto", "concepto_en") : l.concepto;
                     return showNoches
-                      ? [l.concepto, l.cantidad, l.noches || 1, COP(l.valor_unit), COP(sub), `${l.iva || 0}%`, COP(total)]
-                      : [l.concepto, l.cantidad, COP(l.valor_unit), COP(sub), `${l.iva || 0}%`, COP(total)];
+                      ? [concepto, l.cantidad, l.noches || 1, COP(l.valor_unit), COP(sub), `${l.iva || 0}%`, COP(total)]
+                      : [concepto, l.cantidad, COP(l.valor_unit), COP(sub), `${l.iva || 0}%`, COP(total)];
                   })}
                   subtotal={tot}
                 />
