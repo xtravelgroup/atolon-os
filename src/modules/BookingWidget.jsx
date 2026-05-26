@@ -505,9 +505,12 @@ export default function BookingWidget() {
     } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) {
       e.email = t.invalidEmail;
     }
+    // Contamos dígitos en vez de validar formato — autofill/paste pueden
+    // introducir caracteres invisibles (NBSP, zero-width) que rompen la regex.
+    const digitosTel = (form.telefono || "").replace(/\D/g, "");
     if (!form.telefono.trim()) {
       e.telefono = t.required;
-    } else if (!/^[\d\s+\-()]{7,}$/.test(form.telefono)) {
+    } else if (digitosTel.length < 7) {
       e.telefono = t.invalidPhone;
     }
     setErrors(e);
