@@ -2256,8 +2256,13 @@ function ReservaModal({ onClose, onSave, isMobile, salidaList = [], aliadoList =
     const e = {};
     if (!form.nombre.trim()) e.nombre = "Requerido";
     // Teléfono opcional para reservas B2B (la agencia puede no tener el dato del cliente)
+    // Validamos contando dígitos en vez de regex de formato completo — autofill
+    // o pegado desde otras apps puede introducir caracteres invisibles
+    // (zero-width space, NBSP, etc.) que invalidan la regex aunque el usuario
+    // vea un número válido en pantalla.
     if (form.canal !== "B2B") {
-      if (!form.telefono.trim() || !/^[\d\s+\-()\\.]{7,}$/.test(form.telefono)) e.telefono = "Teléfono requerido";
+      const digitos = (form.telefono || "").replace(/\D/g, "");
+      if (digitos.length < 7) e.telefono = "Teléfono requerido";
     }
     if (!form.fecha)         e.fecha = "Requerido";
     if (cierreFecha?.tipo === "total") e.fecha = "Fecha cerrada — no se pueden crear reservas";

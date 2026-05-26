@@ -770,7 +770,10 @@ export default function BookingPopup() {
     if (!form.nombre.trim()) e.nombre = isEN ? "Required" : "Campo requerido";
     if (!form.email.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email))
       e.email = isEN ? "Valid email required" : "Email inválido";
-    if (!form.telefono.trim() || !/^[\d\s+\-()\\.]{7,}$/.test(form.telefono))
+    // Contamos dígitos en vez de validar formato — autofill/paste pueden
+    // introducir caracteres invisibles (NBSP, zero-width) que rompen la regex.
+    const digitosTelPopup = (form.telefono || "").replace(/\D/g, "");
+    if (!form.telefono.trim() || digitosTelPopup.length < 7)
       e.telefono = isEN ? "Valid phone required" : "Teléfono inválido";
     setErrors(e);
     if (Object.keys(e).length > 0) {
