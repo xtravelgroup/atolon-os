@@ -1687,8 +1687,17 @@ function VisitasAgencia({ aliadoId, aliado }) {
     };
     try {
       if (editVisita) {
-        const { error } = await supabase.from("b2b_visitas").update(cleanForm).eq("id", editVisita.id);
+        // .select() obliga a Supabase a devolver el row actualizado — si no
+        // viene data, sabemos que la actualización falló silenciosamente.
+        const { data, error } = await supabase
+          .from("b2b_visitas")
+          .update(cleanForm)
+          .eq("id", editVisita.id)
+          .select()
+          .single();
         if (error) throw error;
+        if (!data) throw new Error("La actualización no devolvió el registro — revisa permisos RLS");
+        console.info("[b2b_visitas] update OK:", data.id);
       } else {
         const visitaId = `VIS-${Date.now()}`;
         let reservaId = null;
@@ -1697,7 +1706,7 @@ function VisitasAgencia({ aliadoId, aliado }) {
         if (form.tipo === "inspección") {
           reservaId = `INS-${Date.now()}`;
           const pax = parseInt(form.num_personas) || 1;
-          const { error: e1 } = await supabase.from("reservas").insert({
+          const { data: insData, error: e1 } = await supabase.from("reservas").insert({
             id: reservaId,
             aliado_id: aliadoId,
             tipo: "Visita Inspección",
@@ -1709,8 +1718,9 @@ function VisitasAgencia({ aliadoId, aliado }) {
             pax,
             notas: `Visita de inspección B2B — ${aliado.nombre}${form.coordinador ? ` · Coordinador: ${form.coordinador}` : ""}${form.objetivo ? ` · Objetivo: ${form.objetivo}` : ""}`,
             created_at: new Date().toISOString(),
-          });
+          }).select().single();
           if (e1) throw e1;
+          if (!insData) throw new Error("La reserva de inspección no quedó guardada (sin error pero sin row) — abortando.");
           // Log en historial (no-fatal si falla)
           await supabase.from("reservas_historial").insert({
             id: `H-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
@@ -1721,13 +1731,34 @@ function VisitasAgencia({ aliadoId, aliado }) {
           });
         }
 
-        const { error: e2 } = await supabase.from("b2b_visitas").insert({
-          id: visitaId,
-          aliado_id: aliadoId,
-          ...cleanForm,
-          reserva_id: reservaId,
-        });
+        // .select().single() devuelve el row insertado. Si no llega data sin
+        // error, es señal de que un policy/proxy comió la operación —
+        // tratamos eso como fallo explícito para no engañar al usuario.
+        const { data: visData, error: e2 } = await supabase
+          .from("b2b_visitas")
+          .insert({
+            id: visitaId,
+            aliado_id: aliadoId,
+            ...cleanForm,
+            reserva_id: reservaId,
+          })
+          .select()
+          .single();
         if (e2) throw e2;
+        if (!visData) throw new Error("La visita no quedó guardada (sin error pero sin row devuelto). Revisa conexión o permisos.");
+        console.info("[b2b_visitas] insert OK:", visData.id, "aliado:", aliadoId);
+
+        // Doble verificación: re-leemos la row por id. Si no aparece, algo
+        // estuvo mal a pesar del select().single() — alertamos sin cerrar
+        // el modal para que el usuario reintente.
+        const { data: verifyData } = await supabase
+          .from("b2b_visitas")
+          .select("id")
+          .eq("id", visitaId)
+          .maybeSingle();
+        if (!verifyData) {
+          throw new Error("La visita no aparece después de guardar. Re-intenta o avisa al admin.");
+        }
       }
       setShowForm(false);
       fetchV();
