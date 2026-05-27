@@ -735,11 +735,21 @@ export default function BookingPopup() {
   }, [product]);
 
   async function handleSelectDate(iso) {
-    // Double-check cierre directly in DB (handles stale cache)
+    // Double-check cierre directly in DB (handles stale cache).
+    // Excepción: invitados de un grupo Confirmado en la fecha NO se bloquean
+    // por un cierre que apareció después (ver handleReservar).
     if (supabase) {
       const { data: cierreCheck } = await supabase.from("cierres")
-        .select("tipo").eq("fecha", iso).eq("activo", true).limit(1).maybeSingle();
-      if (cierreCheck) return; // date is closed (total or partial) — block silently
+        .select("tipo, motivo").eq("fecha", iso).eq("activo", true).limit(1).maybeSingle();
+      if (cierreCheck) {
+        const grupoBypass = grupoEvt && grupoEvt.fecha === iso && grupoEvt.stage === "Confirmado";
+        if (!grupoBypass) {
+          alert(isEN
+            ? `This date is not available for online booking.${cierreCheck.motivo ? ` Reason: ${cierreCheck.motivo}.` : ""}`
+            : `Esta fecha no está disponible para reservas online.${cierreCheck.motivo ? ` Motivo: ${cierreCheck.motivo}.` : ""}`);
+          return;
+        }
+      }
     }
     setSelDate(iso);
     setSelSalida(null);
@@ -780,13 +790,25 @@ export default function BookingPopup() {
   }
 
   async function handleReservar(method = "wompi") {
-    // Final guard: verify date is not closed before creating reservation
+    // Final guard: verify date is not closed before creating reservation.
+    //
+    // Excepción: si el visitante llegó con ?grupo= y el grupo está Confirmado
+    // en esa fecha, dejamos pasar — los invitados de un grupo NO deben quedar
+    // bloqueados por un cierre total que aparece después de que el grupo se
+    // confirmó (caso real: BEACH DAY + buy-out en la misma fecha).
     if (supabase && selDate) {
       const { data: cierreCheck } = await supabase.from("cierres")
-        .select("tipo").eq("fecha", selDate).eq("activo", true).limit(1).maybeSingle();
+        .select("tipo, motivo").eq("fecha", selDate).eq("activo", true).limit(1).maybeSingle();
       if (cierreCheck?.tipo === "total") {
-        setSaving(false);
-        return;
+        const grupoBypass = grupoEvt && grupoEvt.fecha === selDate && grupoEvt.stage === "Confirmado";
+        if (!grupoBypass) {
+          setSaving(false);
+          alert(isEN
+            ? `This date is not available for online booking.${cierreCheck.motivo ? ` Reason: ${cierreCheck.motivo}.` : ""}\n\nFor private events please contact eventos@atoloncartagena.com`
+            : `Esta fecha no está disponible para reservas online.${cierreCheck.motivo ? ` Motivo: ${cierreCheck.motivo}.` : ""}\n\nPara eventos privados escríbenos a eventos@atoloncartagena.com`);
+          return;
+        }
+        console.info("[booking] cierre total bypass — invitado de grupo confirmado", { grupo: grupoEvt.id });
       }
     }
     // Final guard: respetar el mínimo de personas del paquete (ej. Exclusive
