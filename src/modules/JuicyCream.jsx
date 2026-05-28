@@ -442,14 +442,16 @@ function TicketsSection({ vendidos, onSelect }) {
                   )}
                 </div>
                 <div style={{ fontSize: 12, color: C.textMid, fontWeight: 500 }}>{t.sub}</div>
-                <div style={{ fontSize: 11, color: C.textLow, marginTop: 6 }}>
-                  {sold ? "Agotado" : `${disponible} de ${t.cupo} disponibles`}
-                  {earlyActive && !sold && (
-                    <span style={{ color: C.red, marginLeft: 8, fontWeight: 700 }}>
-                      · Early hasta {t.early.hasta}:00 hrs
-                    </span>
-                  )}
-                </div>
+                {(sold || (earlyActive && !sold)) && (
+                  <div style={{ fontSize: 11, color: C.textLow, marginTop: 6 }}>
+                    {sold && "Agotado"}
+                    {earlyActive && !sold && (
+                      <span style={{ color: C.red, fontWeight: 700 }}>
+                        Early hasta {t.early.hasta}:00 hrs
+                      </span>
+                    )}
+                  </div>
+                )}
               </div>
               <div style={{ textAlign: "right" }}>
                 <div style={{ fontSize: 10, color: C.textLow, letterSpacing: "0.15em", fontWeight: 700 }}>
