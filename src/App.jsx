@@ -367,6 +367,7 @@ const ApiPortal = lazy(() => import("./modules/ApiPortal"));
 const BlueApplePortal = lazy(() => import("./modules/BlueApplePortal"));
 const BlueApplePaxPublic = lazy(() => import("./modules/BlueApplePaxPublic"));
 const JuicyCream = lazy(() => import("./modules/JuicyCream"));
+const JuicyOrganizador = lazy(() => import("./modules/JuicyOrganizador"));
 const TrackExterno = lazy(() => import("./modules/TrackExterno"));
 
 const MODULE_MAP = {
@@ -440,7 +441,7 @@ const MODULE_MAP = {
 };
 
 // Public routes — no auth required
-const PUBLIC_ROUTES = ["empleados", "agencia", "booking", "pago", "reset-password", "zarpe-info", "zarpe-grupo", "login", "las-americas", "resultados", "track", "dia-de-la-madre", "madres", "blueapple", "blueapple-pax", "juicy", "juicyandcream", ""];
+const PUBLIC_ROUTES = ["empleados", "agencia", "booking", "pago", "reset-password", "zarpe-info", "zarpe-grupo", "login", "las-americas", "resultados", "track", "dia-de-la-madre", "madres", "blueapple", "blueapple-pax", "juicy", "juicyandcream", "juicy-organizador", "juice-organizador", ""];
 
 function getRoute() {
   return window.location.pathname.replace(/^\//, "") || "";
@@ -617,6 +618,7 @@ export default function App() {
   if (route === "blueapple-pax") return <BlueApplePaxPublic />;
   if (route === "blueapple" || route.startsWith("blueapple/")) return <BlueApplePortal />;
   if (route === "juicy" || route === "juicyandcream") return <JuicyCream />;
+  if (route === "juicy-organizador" || route === "juice-organizador") return <JuicyOrganizador />;
   if (route === "empleados")      return <><EmpleadoPortal /><WhatsAppFloat phone={waPhone} /></>;
   if (route === "agencia" || route === "") return <><AgenciaPortal /><WhatsAppFloat phone={waPhone} /></>;
   if (route === "carreras" || route.startsWith("carreras/")) return <><ReclutamientoPortal /><WhatsAppFloat phone={waPhone} /></>;
