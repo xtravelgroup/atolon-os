@@ -111,27 +111,30 @@ const TICKETS_VISIBLES = TICKETS.filter(t => t.visible !== false);
 
 // ── Mesas ─────────────────────────────────────────────────────────────
 // Capacidad por zona:
-//   DJ Booth & Backstage → 12 pax (mesas premium)
-//   Front Pool & VIP Beach → 10 pax (mesas VIP estándar)
+//   DJ Booth & Backstage → 12 pax (premium · 25% consumible · transporte)
+//   VIP Beach → 10 pax (15% consumible · sin transporte)
+//
+// No existe "Front Pool" como zona aparte — todas las mesas alrededor
+// del pool son parte del área Backstage.
 const MESAS = [
-  { key: "A1", zona: "DJ BOOTH",   precio: 20350000, consumible: 0.25, transporte: true, premium: true, pax: 12 },
-  { key: "A2", zona: "DJ BOOTH",   precio: 20350000, consumible: 0.25, transporte: true, premium: true, pax: 12 },
-  { key: "1A", zona: "BACKSTAGE",  precio: 14300000, consumible: 0.25, transporte: true, premium: true, pax: 12 },
-  { key: "1B", zona: "BACKSTAGE",  precio: 14300000, consumible: 0.25, transporte: true, premium: true, pax: 12 },
-  { key: "2A", zona: "FRONT POOL", precio: 12100000, consumible: 0.15, pax: 10 },
-  { key: "2B", zona: "FRONT POOL", precio: 12100000, consumible: 0.15, pax: 10 },
-  { key: "3A", zona: "FRONT POOL", precio: 9900000,  consumible: 0.15, pax: 10 },
-  { key: "3B", zona: "FRONT POOL", precio: 9900000,  consumible: 0.15, pax: 10 },
-  { key: "4A", zona: "FRONT POOL", precio: 8250000,  consumible: 0.15, pax: 10 },
-  { key: "4B", zona: "FRONT POOL", precio: 8250000,  consumible: 0.15, pax: 10 },
-  { key: "1C", zona: "VIP BEACH",  precio: 6600000,  consumible: 0.15, pax: 10 },
-  { key: "5C", zona: "VIP BEACH",  precio: 6600000,  consumible: 0.15, pax: 10 },
-  { key: "2C", zona: "VIP BEACH",  precio: 5500000,  consumible: 0.15, pax: 10 },
-  { key: "6C", zona: "VIP BEACH",  precio: 5500000,  consumible: 0.15, pax: 10 },
-  { key: "3C", zona: "VIP BEACH",  precio: 4400000,  consumible: 0.15, pax: 10 },
-  { key: "7C", zona: "VIP BEACH",  precio: 4400000,  consumible: 0.15, pax: 10 },
-  { key: "4C", zona: "VIP BEACH",  precio: 3850000,  consumible: 0.15, pax: 10 },
-  { key: "8C", zona: "VIP BEACH",  precio: 3850000,  consumible: 0.15, pax: 10 },
+  { key: "A1", zona: "DJ BOOTH",  precio: 20350000, consumible: 0.25, transporte: true, premium: true, pax: 12 },
+  { key: "A2", zona: "DJ BOOTH",  precio: 20350000, consumible: 0.25, transporte: true, premium: true, pax: 12 },
+  { key: "1A", zona: "BACKSTAGE", precio: 14300000, consumible: 0.25, transporte: true, premium: true, pax: 12 },
+  { key: "1B", zona: "BACKSTAGE", precio: 14300000, consumible: 0.25, transporte: true, premium: true, pax: 12 },
+  { key: "2A", zona: "BACKSTAGE", precio: 12100000, consumible: 0.25, transporte: true, premium: true, pax: 12 },
+  { key: "2B", zona: "BACKSTAGE", precio: 12100000, consumible: 0.25, transporte: true, premium: true, pax: 12 },
+  { key: "3A", zona: "BACKSTAGE", precio: 9900000,  consumible: 0.25, transporte: true, premium: true, pax: 12 },
+  { key: "3B", zona: "BACKSTAGE", precio: 9900000,  consumible: 0.25, transporte: true, premium: true, pax: 12 },
+  { key: "4A", zona: "BACKSTAGE", precio: 8250000,  consumible: 0.25, transporte: true, premium: true, pax: 12 },
+  { key: "4B", zona: "BACKSTAGE", precio: 8250000,  consumible: 0.25, transporte: true, premium: true, pax: 12 },
+  { key: "1C", zona: "VIP BEACH", precio: 6600000,  consumible: 0.15, pax: 10 },
+  { key: "5C", zona: "VIP BEACH", precio: 6600000,  consumible: 0.15, pax: 10 },
+  { key: "2C", zona: "VIP BEACH", precio: 5500000,  consumible: 0.15, pax: 10 },
+  { key: "6C", zona: "VIP BEACH", precio: 5500000,  consumible: 0.15, pax: 10 },
+  { key: "3C", zona: "VIP BEACH", precio: 4400000,  consumible: 0.15, pax: 10 },
+  { key: "7C", zona: "VIP BEACH", precio: 4400000,  consumible: 0.15, pax: 10 },
+  { key: "4C", zona: "VIP BEACH", precio: 3850000,  consumible: 0.15, pax: 10 },
+  { key: "8C", zona: "VIP BEACH", precio: 3850000,  consumible: 0.15, pax: 10 },
 ];
 
 // Descripción / beneficios por zona — se muestra dentro de cada bloque de
@@ -654,7 +657,7 @@ function MesasSection({ reservadas, onSelect }) {
         fontSize: 13, lineHeight: 1.7, color: C.textMid,
       }}>
         <p style={{ margin: "0 0 12px" }}>
-          Todas las mesas incluyen <strong style={{ color: C.text }}>consumo redimible en bebidas</strong> durante el evento — <strong style={{ color: C.text }}>15%</strong> en Front Pool y VIP Beach, <strong style={{ color: C.text }}>25%</strong> en DJ Booth y Backstage.
+          Todas las mesas incluyen <strong style={{ color: C.text }}>consumo redimible en bebidas</strong> durante el evento — <strong style={{ color: C.text }}>25%</strong> en DJ Booth y Backstage, <strong style={{ color: C.text }}>15%</strong> en VIP Beach.
         </p>
         <p style={{ margin: "0 0 12px" }}>
           Las mesas <strong style={{ color: C.text }}>DJ Booth</strong> y <strong style={{ color: C.text }}>Backstage</strong> incluyen <span style={{ color: C.red, fontWeight: 600 }}>transporte privado en lancha rápida ida & regreso desde Cartagena</span> para todo el grupo.
