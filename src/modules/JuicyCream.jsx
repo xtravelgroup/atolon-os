@@ -133,17 +133,18 @@ const MESAS = [
 
 // Descripción / beneficios por zona — se muestra dentro de cada bloque de
 // mesas en MesasSection. Cada zona tiene su lista de "incluye".
+const BENEFICIOS_PREMIUM = [
+  "25% consumible incluido",
+  "Transporte privado en lancha ida & regreso para el grupo completo",
+  "Concierge VIP",
+  "Ingreso preferente",
+  "Baños exclusivos",
+  "Experiencias de marca únicas",
+];
 const ZONA_DESCRIPCION = {
-  "BACKSTAGE": [
-    "25% consumible incluido",
-    "Transporte privado en lancha ida & regreso para el grupo completo",
-    "Concierge VIP",
-    "Ingreso preferente",
-    "Baños exclusivos",
-    "Experiencias de marca únicas",
-  ],
-  // Placeholder para las demás zonas — el usuario las va a enviar:
-  // "DJ BOOTH":   [...],
+  "DJ BOOTH":  BENEFICIOS_PREMIUM,
+  "BACKSTAGE": BENEFICIOS_PREMIUM,
+  // Placeholder — el usuario va a enviar:
   // "FRONT POOL": [...],
   // "VIP BEACH":  [...],
 };
