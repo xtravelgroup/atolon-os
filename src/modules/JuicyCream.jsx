@@ -632,6 +632,17 @@ function MesasSection({ reservadas, onSelect }) {
     MESAS.forEach(m => { if (!g[m.zona]) g[m.zona] = []; g[m.zona].push(m); });
     return g;
   }, []);
+  // Highlight transitorio: cuando el usuario hace click en una mesa del plano,
+  // se hace scroll hasta su fila en la lista y la marcamos brevemente para
+  // que sea fácil ubicarla.
+  const [highlight, setHighlight] = useState(null);
+  const handlePlanoClick = (m) => {
+    if (reservadas.has(m.key)) return; // mesas tomadas no scrollean
+    const el = document.getElementById(`mesa-row-${m.key}`);
+    if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+    setHighlight(m.key);
+    setTimeout(() => setHighlight(null), 2000);
+  };
   return (
     <div>
       <SectionTitle title="MESAS / CAMAS" />
@@ -661,7 +672,7 @@ function MesasSection({ reservadas, onSelect }) {
 
         <div style={{ display: "grid", gridTemplateColumns: "auto 1fr auto", gap: 8, marginBottom: 12 }}>
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            {["4A","3A","2A","1A"].map(k => <MesaSlot key={k} k={k} reservadas={reservadas} onSelect={onSelect} />)}
+            {["4A","3A","2A","1A"].map(k => <MesaSlot key={k} k={k} reservadas={reservadas} onSelect={handlePlanoClick} />)}
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 6, justifyContent: "space-between" }}>
             <div style={{
@@ -675,8 +686,8 @@ function MesasSection({ reservadas, onSelect }) {
               fontWeight: 700, letterSpacing: "0.15em", fontSize: 11,
             }}>BACKSTAGE</div>
             <div style={{ display: "flex", gap: 6, justifyContent: "center" }}>
-              <MesaSlot k="A1" reservadas={reservadas} onSelect={onSelect} size="lg" />
-              <MesaSlot k="A2" reservadas={reservadas} onSelect={onSelect} size="lg" />
+              <MesaSlot k="A1" reservadas={reservadas} onSelect={handlePlanoClick} size="lg" />
+              <MesaSlot k="A2" reservadas={reservadas} onSelect={handlePlanoClick} size="lg" />
             </div>
             <div style={{
               background: C.red, color: "#fff", borderRadius: 6,
@@ -685,7 +696,7 @@ function MesasSection({ reservadas, onSelect }) {
             }}>DJ</div>
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            {["4B","3B","2B","1B"].map(k => <MesaSlot key={k} k={k} reservadas={reservadas} onSelect={onSelect} />)}
+            {["4B","3B","2B","1B"].map(k => <MesaSlot key={k} k={k} reservadas={reservadas} onSelect={handlePlanoClick} />)}
           </div>
         </div>
 
@@ -697,10 +708,10 @@ function MesasSection({ reservadas, onSelect }) {
         }}>☀ VIP BEACH · DANCEFLOOR</div>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            {["1C","2C","3C","4C"].map(k => <MesaSlot key={k} k={k} reservadas={reservadas} onSelect={onSelect} />)}
+            {["1C","2C","3C","4C"].map(k => <MesaSlot key={k} k={k} reservadas={reservadas} onSelect={handlePlanoClick} />)}
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            {["5C","6C","7C","8C"].map(k => <MesaSlot key={k} k={k} reservadas={reservadas} onSelect={onSelect} />)}
+            {["5C","6C","7C","8C"].map(k => <MesaSlot key={k} k={k} reservadas={reservadas} onSelect={handlePlanoClick} />)}
           </div>
         </div>
       </div>
@@ -729,16 +740,20 @@ function MesasSection({ reservadas, onSelect }) {
             <div style={{ display: "grid", gap: 6 }}>
               {mesas.map(m => {
                 const taken = reservadas.has(m.key);
+                const isHi  = highlight === m.key;
                 return (
-                  <button key={m.key} onClick={() => onSelect(m)} disabled={taken}
+                  <button key={m.key} id={`mesa-row-${m.key}`} onClick={() => onSelect(m)} disabled={taken}
                     style={{
                       display: "grid", gridTemplateColumns: "60px 1fr auto",
                       alignItems: "center", gap: 12, padding: "10px 12px",
-                      background: taken ? "#F5F5F5" : "transparent",
-                      border: `1px solid ${C.border}`, borderRadius: 4,
+                      background: taken ? "#F5F5F5" : (isHi ? "#FEF3C7" : "transparent"),
+                      border: `${isHi ? 2 : 1}px solid ${isHi ? C.red : C.border}`,
+                      borderRadius: 4,
                       cursor: taken ? "not-allowed" : "pointer",
                       color: taken ? C.textLow : C.text, textAlign: "left",
                       opacity: taken ? 0.5 : 1, fontFamily: "inherit",
+                      transition: "background 0.3s, border-color 0.3s",
+                      scrollMarginTop: 120, // compensa sticky selector cuando se hace scroll
                     }}>
                     <div style={{
                       fontFamily: "'Anton', sans-serif", fontSize: 18,
