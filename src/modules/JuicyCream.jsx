@@ -59,52 +59,47 @@ const EVENTO = {
 //
 // `incluye` es el detalle que se muestra dentro del card de ese ticket
 // (transporte, horarios, recargos, impuesto muelle, etc.).
-const INCLUYE_BASE = [
-  {
-    titulo: "Entrada válida hasta las 4:00 PM",
-    detalle: "Si llegas después de esa hora deberás pagar un recargo.",
-    icon: "🎟",
-  },
-  {
-    titulo: "Transporte incluido",
-    detalle: "Lancha rápida ida y vuelta desde el Muelle de La Bodeguita.",
-    icon: "🚤",
-  },
-  {
-    titulo: "Duración del trayecto",
-    detalle: "Aproximadamente 15 minutos por trayecto.",
-    icon: "⏱",
-  },
-  {
-    titulo: "Horarios de salida (ida)",
-    detalle: "Desde las 1:30 PM · Salidas cada 30 minutos.",
-    icon: "🕐",
-  },
-  {
-    titulo: "Horarios de regreso",
-    detalle: "Desde las 9:00 PM hasta las 2:00 AM · Regresos cada 30 minutos.",
-    icon: "🌙",
-  },
-  {
-    titulo: "Impuesto de muelle NO incluido",
-    detalle: "Se paga directamente en la taquilla de La Bodeguita.",
-    icon: "⚠",
-    warning: true,
-  },
+const INCLUYE_TRANSPORTE = [
+  { icon: "🚤", titulo: "Transporte incluido", detalle: "Lancha rápida ida y vuelta desde el Muelle de La Bodeguita." },
+  { icon: "⏱", titulo: "Duración del trayecto", detalle: "Aproximadamente 15 minutos por trayecto." },
+  { icon: "🕐", titulo: "Horarios de salida (ida)", detalle: "Desde las 1:30 PM · Salidas cada 30 minutos." },
+  { icon: "🌙", titulo: "Horarios de regreso", detalle: "Desde las 9:00 PM hasta las 2:00 AM · Regresos cada 30 minutos." },
+  { icon: "⚠", titulo: "Impuesto de muelle NO incluido", detalle: "Se paga directamente en la taquilla de La Bodeguita.", warning: true },
+];
+
+const INCLUYE_EARLY = [
+  { icon: "🎟", titulo: "Acceso válido hasta las 4:00 PM", detalle: "Debes ingresar antes de las 4:00 PM. Después de esa hora deberás pagar el ticket Anytime." },
+  ...INCLUYE_TRANSPORTE,
+];
+const INCLUYE_ANYTIME = [
+  { icon: "🎟", titulo: "Acceso a cualquier hora", detalle: "Sin restricción de horario de ingreso durante el evento." },
+  ...INCLUYE_TRANSPORTE,
 ];
 
 const TICKETS = [
+  // VIP — Hasta 4 PM (cheaper, restricted entry time)
   {
-    key: "VIP", label: "VIP", sub: "Acceso preferente · Área general",
-    cupo: 100, early: { hasta: 16, precio: 150000 }, anytime: 175000,
+    key: "VIP_EARLY", label: "VIP · Hasta 4 PM",
+    sub: "Acceso preferente · Ingreso antes de las 4:00 PM",
+    cupo: 100, early: { hasta: 99, precio: 150000 }, anytime: 150000, // flat
     visible: true,
-    incluye: INCLUYE_BASE,
+    incluye: INCLUYE_EARLY,
   },
+  // VIP — Anytime (full price, no entry restriction)
+  {
+    key: "VIP_ANYTIME", label: "VIP · Anytime",
+    sub: "Acceso preferente · Ingreso a cualquier hora",
+    cupo: 100, early: { hasta: 99, precio: 175000 }, anytime: 175000, // flat
+    visible: true,
+    incluye: INCLUYE_ANYTIME,
+    badge: "Sin restricción",
+  },
+  // Backstage
   {
     key: "BACKSTAGE", label: "Backstage", sub: "Mismo acceso de VIP · Área Backstage",
-    cupo: 60, early: { hasta: 99, precio: 450000 }, anytime: 450000, // sin early bird — precio fijo
+    cupo: 60, early: { hasta: 99, precio: 450000 }, anytime: 450000,
     visible: true,
-    incluye: INCLUYE_BASE,
+    incluye: INCLUYE_ANYTIME, // backstage también es anytime
     badge: "Área exclusiva",
   },
   { key: "ETAPA_1", label: "Etapa 1", sub: "Primera etapa",            cupo: 100, early: { hasta: 16, precio: 193000 }, anytime: 248000, visible: false },
