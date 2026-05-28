@@ -743,7 +743,7 @@ function MesasSection({ reservadas, onSelect }) {
                       {m.transporte === "compartido" && <span style={{ color: C.text, marginLeft: 8 }}>· 🚤 Transporte incluido</span>}
                     </div>
                     <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 18, color: taken ? C.textLow : C.text, letterSpacing: "0.04em" }}>
-                      {taken ? "RESERVADA" : COP(m.precio)}
+                      {taken ? "VENDIDA" : COP(m.precio)}
                     </div>
                   </button>
                 );
@@ -830,7 +830,7 @@ function PlanoImagen({ reservadas, onClick, highlight }) {
           const isHi  = highlight === k;
           return (
             <button key={k} onClick={() => !taken && onClick(m)} disabled={taken}
-              title={`${m.zona} · ${k} · ${COP(m.precio)}${taken ? " · RESERVADA" : ""}`}
+              title={`${m.zona} · ${k} · ${COP(m.precio)}${taken ? " · VENDIDA" : ""}`}
               style={{
                 position: "absolute",
                 top: `${pos.top}%`, left: `${pos.left}%`,
@@ -856,7 +856,7 @@ function PlanoImagen({ reservadas, onClick, highlight }) {
                 <span style={{
                   color: "#fff", fontWeight: 900, fontSize: 11,
                   letterSpacing: "0.06em",
-                }}>RESERVADA</span>
+                }}>VENDIDA</span>
               )}
             </button>
           );
@@ -866,7 +866,7 @@ function PlanoImagen({ reservadas, onClick, highlight }) {
         marginTop: 12, fontSize: 11, color: C.textMid, textAlign: "center",
       }}>
         <span style={{ display: "inline-block", width: 14, height: 14, background: "rgba(225,29,42,0.45)", borderRadius: 3, verticalAlign: "middle", marginRight: 6 }} />
-        Reservadas
+        Vendidas
         <span style={{ marginLeft: 16, display: "inline-block", width: 14, height: 14, border: `2px solid ${C.red}`, borderRadius: 3, verticalAlign: "middle", marginRight: 6 }} />
         Seleccionada
       </div>
@@ -1028,7 +1028,7 @@ function CheckoutModal({ item, onClose, onConfirmar }) {
         .limit(1)
         .maybeSingle();
       if (existe) {
-        alert("Esta mesa ya fue reservada hace unos segundos. Refresca la página y elige otra.");
+        alert("Esta mesa ya fue vendida hace unos segundos. Refresca la página y elige otra.");
         onClose();
         return null;
       }
@@ -1054,7 +1054,7 @@ function CheckoutModal({ item, onClose, onConfirmar }) {
       .single();
     if (error) {
       if (error.code === "23505") {
-        alert("Esta mesa ya fue reservada por otra persona — refresca la página y elige otra.");
+        alert("Esta mesa ya fue vendida — refresca la página y elige otra.");
         onClose();
       } else {
         alert("Error guardando reserva: " + error.message);
