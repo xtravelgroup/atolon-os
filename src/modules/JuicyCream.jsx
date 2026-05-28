@@ -996,6 +996,54 @@ function DoodlesRow() {
 // ──────────────────────────────────────────────────────────────────────
 // CHECKOUT MODAL
 // ──────────────────────────────────────────────────────────────────────
+// Envía email a admin notificando que se creó una nueva reserva pendiente
+// de pago. Fire-and-forget — no bloquea el flujo de pago.
+async function notificarReservaCreada({ id, item, cantidad, metodo, form, totalFinal }) {
+  const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/send-generic-email`;
+  const subject = `🟡 Nueva reserva Juicy & Cream — ${item.label}`;
+  const html = `
+    <div style="font-family: Arial, sans-serif; max-width: 560px; margin: 0 auto; color: #0a0a0a;">
+      <div style="background: #E11D2A; color: #fff; padding: 18px 22px; border-radius: 8px 8px 0 0;">
+        <div style="font-size: 20px; font-weight: 800; letter-spacing: 0.04em;">JUICY &amp; CREAM</div>
+        <div style="font-size: 12px; letter-spacing: 0.2em; margin-top: 4px; opacity: 0.9;">NUEVA RESERVA · PENDIENTE PAGO</div>
+      </div>
+      <div style="background: #fff; border: 1px solid #ccc; border-top: none; padding: 22px; border-radius: 0 0 8px 8px;">
+        <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
+          <tr><td style="padding: 6px 0; color: #666;">Reserva ID</td><td style="padding: 6px 0; font-weight: 700;">${id}</td></tr>
+          <tr><td style="padding: 6px 0; color: #666;">Tipo</td><td style="padding: 6px 0; font-weight: 700;">${item.kind === "ticket" ? `🎟 ${item.label} × ${cantidad}` : `🛋 ${item.label}`}</td></tr>
+          <tr><td style="padding: 6px 0; color: #666;">Total</td><td style="padding: 6px 0; font-weight: 800; color: #E11D2A; font-size: 18px;">$${Math.round(totalFinal).toLocaleString("es-CO")}</td></tr>
+          <tr><td style="padding: 6px 0; color: #666;">Método</td><td style="padding: 6px 0;">${metodo === "wompi" ? "Tarjeta Nacional (Wompi)" : "Tarjeta Internacional (Zoho)"}</td></tr>
+          <tr><td colspan="2" style="padding: 12px 0 6px; border-top: 1px solid #eee; font-weight: 700;">Cliente</td></tr>
+          <tr><td style="padding: 4px 0; color: #666;">Nombre</td><td style="padding: 4px 0;">${form.nombre}</td></tr>
+          <tr><td style="padding: 4px 0; color: #666;">Teléfono</td><td style="padding: 4px 0;">${form.telefono}</td></tr>
+          ${form.email ? `<tr><td style="padding: 4px 0; color: #666;">Email</td><td style="padding: 4px 0;">${form.email}</td></tr>` : ""}
+          ${form.cedula ? `<tr><td style="padding: 4px 0; color: #666;">Cédula</td><td style="padding: 4px 0;">${form.cedula}</td></tr>` : ""}
+        </table>
+        <div style="margin-top: 18px; padding: 10px 14px; background: #FFF7E6; border: 1px solid #F5C842; border-radius: 6px; font-size: 12px; color: #92400E;">
+          ⏳ Aún pendiente de pago — recibirás otro correo cuando el pago sea confirmado.
+        </div>
+        <div style="margin-top: 16px; font-size: 11px; color: #888;">
+          Portal organizador: <a href="https://www.atolon.co/juicy-organizador" style="color: #E11D2A;">/juicy-organizador</a> · 7 jun 2026 · Atolón Beach Club
+        </div>
+      </div>
+    </div>
+  `;
+  await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+      "apikey": import.meta.env.VITE_SUPABASE_ANON_KEY,
+    },
+    body: JSON.stringify({
+      to: ["eric@atoloncartagena.com"],
+      subject,
+      html,
+      from: "Juicy & Cream <reservas@atolon.co>",
+    }),
+  });
+}
+
 function CheckoutModal({ item, onClose, onConfirmar }) {
   const [cantidad, setCantidad] = useState(item.cantidad);
   const [form, setForm] = useState({ nombre: "", email: "", telefono: "", cedula: "" });
@@ -1065,6 +1113,12 @@ function CheckoutModal({ item, onClose, onConfirmar }) {
       alert("La reserva no quedó guardada (sin error). Re-intenta.");
       return null;
     }
+
+    // Notifica por email a admin — fire-and-forget. Si falla, no afecta
+    // el flujo de pago (el usuario sigue al checkout normalmente).
+    notificarReservaCreada({ id, item, cantidad, metodo, form, totalFinal })
+      .catch(err => console.warn("[juicy/email] notify failed:", err));
+
     return id;
   }
 
