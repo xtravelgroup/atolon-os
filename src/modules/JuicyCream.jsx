@@ -52,13 +52,16 @@ const EVENTO = {
 };
 
 // ── Tickets: precios cambian según hora actual y categoría ────────────
+// `visible: false` oculta la categoría del booking (sigue en el código por si
+// la queremos reactivar más adelante). Por ahora solo se vende VIP.
 const TICKETS = [
-  { key: "VIP",     label: "VIP",     sub: "Acceso preferente",        cupo: 100, early: { hasta: 16, precio: 165000 }, anytime: 193000 },
-  { key: "ETAPA_1", label: "Etapa 1", sub: "Primera etapa",            cupo: 100, early: { hasta: 16, precio: 193000 }, anytime: 248000 },
-  { key: "ETAPA_2", label: "Etapa 2", sub: "Segunda etapa",            cupo: 100, early: { hasta: 18, precio: 248000 }, anytime: 303000 },
-  { key: "ETAPA_3", label: "Etapa 3", sub: "Tercera etapa",            cupo: 100, early: { hasta: 18, precio: 303000 }, anytime: 358000 },
-  { key: "DOOR",    label: "Door",    sub: "Última disponibilidad",    cupo: 300, early: { hasta: 18, precio: 385000 }, anytime: 440000 },
+  { key: "VIP",     label: "VIP",     sub: "Acceso preferente",        cupo: 100, early: { hasta: 16, precio: 165000 }, anytime: 193000, visible: true },
+  { key: "ETAPA_1", label: "Etapa 1", sub: "Primera etapa",            cupo: 100, early: { hasta: 16, precio: 193000 }, anytime: 248000, visible: false },
+  { key: "ETAPA_2", label: "Etapa 2", sub: "Segunda etapa",            cupo: 100, early: { hasta: 18, precio: 248000 }, anytime: 303000, visible: false },
+  { key: "ETAPA_3", label: "Etapa 3", sub: "Tercera etapa",            cupo: 100, early: { hasta: 18, precio: 303000 }, anytime: 358000, visible: false },
+  { key: "DOOR",    label: "Door",    sub: "Última disponibilidad",    cupo: 300, early: { hasta: 18, precio: 385000 }, anytime: 440000, visible: false },
 ];
+const TICKETS_VISIBLES = TICKETS.filter(t => t.visible !== false);
 
 // ── Mesas ─────────────────────────────────────────────────────────────
 const MESAS = [
@@ -410,7 +413,7 @@ function TicketsSection({ vendidos, onSelect }) {
     <div>
       <SectionTitle title="BOLETERÍA" sub="Todos los tickets incluyen transporte en lancha desde el Muelle de la Bodeguita · ida y regreso" />
       <div style={{ display: "grid", gap: 12 }}>
-        {TICKETS.map(t => {
+        {TICKETS_VISIBLES.map(t => {
           const earlyActive = h < t.early.hasta;
           const precio = earlyActive ? t.early.precio : t.anytime;
           const vendido = vendidos[t.key] || 0;
