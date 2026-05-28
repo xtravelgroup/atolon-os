@@ -111,10 +111,10 @@ const TICKETS_VISIBLES = TICKETS.filter(t => t.visible !== false);
 
 // ── Mesas ─────────────────────────────────────────────────────────────
 const MESAS = [
-  { key: "A1", zona: "DJ BOOTH",   precio: 20350000, consumible: 0.15, transporte: true, premium: true },
-  { key: "A2", zona: "DJ BOOTH",   precio: 20350000, consumible: 0.15, transporte: true, premium: true },
-  { key: "1A", zona: "BACKSTAGE",  precio: 14300000, consumible: 0.15, transporte: true, premium: true },
-  { key: "1B", zona: "BACKSTAGE",  precio: 14300000, consumible: 0.15, transporte: true, premium: true },
+  { key: "A1", zona: "DJ BOOTH",   precio: 20350000, consumible: 0.25, transporte: true, premium: true },
+  { key: "A2", zona: "DJ BOOTH",   precio: 20350000, consumible: 0.25, transporte: true, premium: true },
+  { key: "1A", zona: "BACKSTAGE",  precio: 14300000, consumible: 0.25, transporte: true, premium: true },
+  { key: "1B", zona: "BACKSTAGE",  precio: 14300000, consumible: 0.25, transporte: true, premium: true },
   { key: "2A", zona: "FRONT POOL", precio: 12100000, consumible: 0.15 },
   { key: "2B", zona: "FRONT POOL", precio: 12100000, consumible: 0.15 },
   { key: "3A", zona: "FRONT POOL", precio: 9900000,  consumible: 0.15 },
@@ -130,6 +130,23 @@ const MESAS = [
   { key: "4C", zona: "VIP BEACH",  precio: 3850000,  consumible: 0.15 },
   { key: "8C", zona: "VIP BEACH",  precio: 3850000,  consumible: 0.15 },
 ];
+
+// Descripción / beneficios por zona — se muestra dentro de cada bloque de
+// mesas en MesasSection. Cada zona tiene su lista de "incluye".
+const ZONA_DESCRIPCION = {
+  "BACKSTAGE": [
+    "25% consumible incluido",
+    "Transporte privado en lancha ida & regreso para el grupo completo",
+    "Concierge VIP",
+    "Ingreso preferente",
+    "Baños exclusivos",
+    "Experiencias de marca únicas",
+  ],
+  // Placeholder para las demás zonas — el usuario las va a enviar:
+  // "DJ BOOTH":   [...],
+  // "FRONT POOL": [...],
+  // "VIP BEACH":  [...],
+};
 
 const horaCO = () => {
   const t = new Date().toLocaleString("en-US", { timeZone: "America/Bogota", hour: "2-digit", minute: "2-digit", hour12: false });
@@ -621,7 +638,7 @@ function MesasSection({ reservadas, onSelect }) {
         fontSize: 13, lineHeight: 1.7, color: C.textMid,
       }}>
         <p style={{ margin: "0 0 12px" }}>
-          <strong style={{ color: C.text }}>Todas las mesas incluyen 15% de consumo,</strong> redimible en bebidas durante el evento.
+          Todas las mesas incluyen <strong style={{ color: C.text }}>consumo redimible en bebidas</strong> durante el evento — <strong style={{ color: C.text }}>15%</strong> en Front Pool y VIP Beach, <strong style={{ color: C.text }}>25%</strong> en DJ Booth y Backstage.
         </p>
         <p style={{ margin: "0 0 12px" }}>
           Las mesas <strong style={{ color: C.text }}>DJ Booth</strong> y <strong style={{ color: C.text }}>Backstage</strong> incluyen <span style={{ color: C.red, fontWeight: 600 }}>transporte privado en lancha rápida ida & regreso desde Cartagena</span> para todo el grupo.
@@ -685,7 +702,9 @@ function MesasSection({ reservadas, onSelect }) {
 
       {/* Lista por zonas */}
       <div style={{ display: "grid", gap: 12 }}>
-        {Object.entries(grupos).map(([zona, mesas]) => (
+        {Object.entries(grupos).map(([zona, mesas]) => {
+          const beneficios = ZONA_DESCRIPCION[zona];
+          return (
           <div key={zona} style={{
             background: "#fff", border: `1px solid ${C.borderMid}`, borderRadius: 6, padding: 16,
           }}>
@@ -693,6 +712,15 @@ function MesasSection({ reservadas, onSelect }) {
               fontFamily: "'Anton', sans-serif", fontSize: 18, letterSpacing: "0.12em",
               color: C.red, marginBottom: 10,
             }}>{zona}</div>
+            {beneficios && (
+              <ul style={{
+                margin: "0 0 14px", padding: "10px 14px 10px 24px",
+                background: C.bg, border: `1px solid ${C.border}`, borderRadius: 4,
+                fontSize: 12, color: C.textMid, lineHeight: 1.7,
+              }}>
+                {beneficios.map((b, i) => <li key={i}>{b}</li>)}
+              </ul>
+            )}
             <div style={{ display: "grid", gap: 6 }}>
               {mesas.map(m => {
                 const taken = reservadas.has(m.key);
@@ -723,7 +751,8 @@ function MesasSection({ reservadas, onSelect }) {
               })}
             </div>
           </div>
-        ))}
+          );
+        })}
       </div>
 
       {/* Beneficios */}
