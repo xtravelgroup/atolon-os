@@ -398,7 +398,7 @@ serve(async (req) => {
         // 1aa) Juicy & Cream event reservations (prefix JC-)
         if (ref && ref.startsWith("JC-")) {
           const { data: jc } = await SB.from("juicy_cream_reservas")
-            .select("id, total, estado, nombre, email").eq("id", ref).limit(1);
+            .select("id, total, estado, nombre, email, telefono, tipo, categoria").eq("id", ref).limit(1);
           if (jc && jc[0]) {
             const reservaJC = jc[0];
             await SB.from("juicy_cream_reservas").update({
@@ -409,6 +409,8 @@ serve(async (req) => {
               updated_at: new Date().toISOString(),
             }).eq("id", reservaJC.id);
             console.log(`✓ Juicy & Cream ${reservaJC.id} confirmada (Zoho Pay)`);
+            await notificarJuicyPagoConfirmado(reservaJC, Number(reservaJC.total) || 0, "Zoho Pay", pid).catch(e =>
+              console.warn("[juicy/email-confirmado-zoho] failed:", (e as Error).message));
             return new Response(JSON.stringify({ received: true, processed: true, action: "juicy_confirmed", reserva_id: reservaJC.id }), {
               status: 200, headers: { "Content-Type": "application/json" },
             });
@@ -1061,4 +1063,50 @@ async function enviarWhatsAppConfirmacion(SB: any, reserva: any): Promise<void> 
   if (await trySend("confirmacion_pasadia_atolon", [nombre, tipo, fecha, String(reserva.pax || 1), horaSalida, totalCOP, reserva.id], "es")) return;
   if (await trySend("vip_pass_confirmacion",       [nombre, fecha, String(reserva.pax || 1), horaSalida, totalCOP, reserva.id], "es")) return;
   await trySend("confirmacionvip", [], "es_CO");
+}
+
+// ── Notificación email admin: pago Juicy & Cream confirmado vía Zoho ──
+async function notificarJuicyPagoConfirmado(jc: any, monto: number, pasarela: string, pid: string) {
+  const RESEND_KEY = Deno.env.get("RESEND_API_KEY") || "";
+  if (!RESEND_KEY) {
+    console.warn("[juicy/email] RESEND_API_KEY no configurada — skip");
+    return;
+  }
+  const tipoLabel = jc.tipo === "ticket" ? `🎟 Ticket — ${jc.categoria}` : `🛋 Mesa — ${jc.categoria}`;
+  const html = `
+    <div style="font-family: Arial, sans-serif; max-width: 560px; margin: 0 auto; color: #0a0a0a;">
+      <div style="background: #16A34A; color: #fff; padding: 18px 22px; border-radius: 8px 8px 0 0;">
+        <div style="font-size: 20px; font-weight: 800; letter-spacing: 0.04em;">JUICY &amp; CREAM</div>
+        <div style="font-size: 12px; letter-spacing: 0.2em; margin-top: 4px;">✅ PAGO CONFIRMADO</div>
+      </div>
+      <div style="background: #fff; border: 1px solid #ccc; border-top: none; padding: 22px; border-radius: 0 0 8px 8px;">
+        <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
+          <tr><td style="padding: 6px 0; color: #666;">Reserva ID</td><td style="padding: 6px 0; font-weight: 700;">${jc.id}</td></tr>
+          <tr><td style="padding: 6px 0; color: #666;">Tipo</td><td style="padding: 6px 0; font-weight: 700;">${tipoLabel}</td></tr>
+          <tr><td style="padding: 6px 0; color: #666;">Total pagado</td><td style="padding: 6px 0; font-weight: 800; color: #16A34A; font-size: 18px;">$${Math.round(monto).toLocaleString("es-CO")}</td></tr>
+          <tr><td style="padding: 6px 0; color: #666;">Pasarela</td><td style="padding: 6px 0;">${pasarela} — Payment ${pid}</td></tr>
+          <tr><td colspan="2" style="padding: 12px 0 6px; border-top: 1px solid #eee; font-weight: 700;">Cliente</td></tr>
+          <tr><td style="padding: 4px 0; color: #666;">Nombre</td><td style="padding: 4px 0;">${jc.nombre || "—"}</td></tr>
+          <tr><td style="padding: 4px 0; color: #666;">Teléfono</td><td style="padding: 4px 0;">${jc.telefono || "—"}</td></tr>
+          ${jc.email ? `<tr><td style="padding: 4px 0; color: #666;">Email</td><td style="padding: 4px 0;">${jc.email}</td></tr>` : ""}
+        </table>
+        <div style="margin-top: 18px; padding: 10px 14px; background: #DCFCE7; border: 1px solid #16A34A; border-radius: 6px; font-size: 12px; color: #166534;">
+          ✅ Esta venta ya está confirmada y aparecerá en tu portal de organizador y en Grupos del día.
+        </div>
+        <div style="margin-top: 16px; font-size: 11px; color: #888;">
+          Portal organizador: <a href="https://www.atolon.co/juicy-organizador" style="color: #16A34A;">/juicy-organizador</a> · 7 jun 2026 · Atolón Beach Club
+        </div>
+      </div>
+    </div>
+  `;
+  await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: { "Authorization": `Bearer ${RESEND_KEY}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      from: "Juicy & Cream <reservas@atolon.co>",
+      to: ["eric@atoloncartagena.com"],
+      subject: `✅ Venta confirmada Juicy & Cream — ${tipoLabel} · $${Math.round(monto).toLocaleString("es-CO")}`,
+      html,
+    }),
+  });
 }
