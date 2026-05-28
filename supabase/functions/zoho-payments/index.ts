@@ -395,6 +395,26 @@ serve(async (req) => {
         payment.status === "captured" ||
         payment.status === "success";
       if (isSuccess) {
+        // 1aa) Juicy & Cream event reservations (prefix JC-)
+        if (ref && ref.startsWith("JC-")) {
+          const { data: jc } = await SB.from("juicy_cream_reservas")
+            .select("id, total, estado, nombre, email").eq("id", ref).limit(1);
+          if (jc && jc[0]) {
+            const reservaJC = jc[0];
+            await SB.from("juicy_cream_reservas").update({
+              estado: "confirmado",
+              forma_pago: "tarjeta_internacional",
+              abono: reservaJC.total,
+              notas: `Pago Zoho Pay — Payment ${pid}`,
+              updated_at: new Date().toISOString(),
+            }).eq("id", reservaJC.id);
+            console.log(`✓ Juicy & Cream ${reservaJC.id} confirmada (Zoho Pay)`);
+            return new Response(JSON.stringify({ received: true, processed: true, action: "juicy_confirmed", reserva_id: reservaJC.id }), {
+              status: 200, headers: { "Content-Type": "application/json" },
+            });
+          }
+        }
+
         // 1a) Buscar primero en reservas_pasadia (Tatiana / Visito.AI)
         if (ref) {
           const { data: rp } = await SB.from("reservas_pasadia")
