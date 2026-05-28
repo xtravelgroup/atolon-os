@@ -53,9 +53,58 @@ const EVENTO = {
 
 // ── Tickets: precios cambian según hora actual y categoría ────────────
 // `visible: false` oculta la categoría del booking (sigue en el código por si
-// la queremos reactivar más adelante). Por ahora solo se vende VIP.
+// la queremos reactivar más adelante). Por ahora solo VIP y Backstage.
+//
+// `incluye` es el detalle que se muestra dentro del card de ese ticket
+// (transporte, horarios, recargos, impuesto muelle, etc.).
+const INCLUYE_BASE = [
+  {
+    titulo: "Entrada válida hasta las 4:00 PM",
+    detalle: "Si llegas después de esa hora deberás pagar un recargo.",
+    icon: "🎟",
+  },
+  {
+    titulo: "Transporte incluido",
+    detalle: "Lancha rápida ida y vuelta desde el Muelle de La Bodeguita.",
+    icon: "🚤",
+  },
+  {
+    titulo: "Duración del trayecto",
+    detalle: "Aproximadamente 15 minutos por trayecto.",
+    icon: "⏱",
+  },
+  {
+    titulo: "Horarios de salida (ida)",
+    detalle: "Desde las 1:30 PM · Salidas cada 30 minutos.",
+    icon: "🕐",
+  },
+  {
+    titulo: "Horarios de regreso",
+    detalle: "Desde las 9:00 PM hasta las 2:00 AM · Regresos cada 30 minutos.",
+    icon: "🌙",
+  },
+  {
+    titulo: "Impuesto de muelle NO incluido",
+    detalle: "Se paga directamente en la taquilla de La Bodeguita.",
+    icon: "⚠",
+    warning: true,
+  },
+];
+
 const TICKETS = [
-  { key: "VIP",     label: "VIP",     sub: "Acceso preferente",        cupo: 100, early: { hasta: 16, precio: 165000 }, anytime: 193000, visible: true },
+  {
+    key: "VIP", label: "VIP", sub: "Acceso preferente · Área general",
+    cupo: 100, early: { hasta: 16, precio: 165000 }, anytime: 193000,
+    visible: true,
+    incluye: INCLUYE_BASE,
+  },
+  {
+    key: "BACKSTAGE", label: "Backstage", sub: "Mismo acceso de VIP · Área Backstage",
+    cupo: 60, early: { hasta: 99, precio: 450000 }, anytime: 450000, // sin early bird — precio fijo
+    visible: true,
+    incluye: INCLUYE_BASE,
+    badge: "Área exclusiva",
+  },
   { key: "ETAPA_1", label: "Etapa 1", sub: "Primera etapa",            cupo: 100, early: { hasta: 16, precio: 193000 }, anytime: 248000, visible: false },
   { key: "ETAPA_2", label: "Etapa 2", sub: "Segunda etapa",            cupo: 100, early: { hasta: 18, precio: 248000 }, anytime: 303000, visible: false },
   { key: "ETAPA_3", label: "Etapa 3", sub: "Tercera etapa",            cupo: 100, early: { hasta: 18, precio: 303000 }, anytime: 358000, visible: false },
@@ -180,7 +229,9 @@ export default function JuicyCream() {
             ? <TicketsSection vendidos={ticketsVendidos} onSelect={abrirTicket} />
             : <MesasSection reservadas={reservadas} onSelect={abrirMesa} />
           }
-          <Transporte />
+          {/* Transporte general solo en mesas — los tickets ya muestran el
+              detalle de horarios dentro de cada card. */}
+          {tab === "mesas" && <Transporte />}
         </div>
       )}
 
@@ -412,9 +463,10 @@ function TicketsSection({ vendidos, onSelect }) {
   return (
     <div>
       <SectionTitle title="BOLETERÍA" sub="Todos los tickets incluyen transporte en lancha desde el Muelle de la Bodeguita · ida y regreso" />
-      <div style={{ display: "grid", gap: 12 }}>
+      <div style={{ display: "grid", gap: 14 }}>
         {TICKETS_VISIBLES.map(t => {
           const earlyActive = h < t.early.hasta;
+          const tieneEarly = t.early.precio !== t.anytime; // flat-price si son iguales
           const precio = earlyActive ? t.early.precio : t.anytime;
           const vendido = vendidos[t.key] || 0;
           const disponible = t.cupo - vendido;
@@ -425,57 +477,94 @@ function TicketsSection({ vendidos, onSelect }) {
               border: `2px solid ${sold ? C.border : C.text}`,
               borderRadius: 6,
               padding: "18px 22px",
-              display: "grid", gridTemplateColumns: "1fr auto",
-              alignItems: "center", gap: 14,
               opacity: sold ? 0.5 : 1,
             }}>
-              <div>
-                <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
-                  <div style={{ fontFamily: "'Anton', sans-serif", fontSize: 26, letterSpacing: "0.06em", textTransform: "uppercase" }}>
-                    {t.label}
-                  </div>
-                  {earlyActive && !sold && (
-                    <span style={{
-                      fontSize: 10, padding: "3px 9px", borderRadius: 20,
-                      background: C.red, color: "#fff", fontWeight: 800, letterSpacing: "0.1em",
-                    }}>EARLY BIRD</span>
-                  )}
-                </div>
-                <div style={{ fontSize: 12, color: C.textMid, fontWeight: 500 }}>{t.sub}</div>
-                {(sold || (earlyActive && !sold)) && (
-                  <div style={{ fontSize: 11, color: C.textLow, marginTop: 6 }}>
-                    {sold && "Agotado"}
-                    {earlyActive && !sold && (
-                      <span style={{ color: C.red, fontWeight: 700 }}>
-                        Early hasta {t.early.hasta}:00 hrs
-                      </span>
+              {/* Encabezado: nombre + precio + comprar */}
+              <div style={{
+                display: "grid", gridTemplateColumns: "1fr auto",
+                alignItems: "center", gap: 14,
+                paddingBottom: t.incluye ? 14 : 0,
+                borderBottom: t.incluye ? `1px solid ${C.border}` : "none",
+              }}>
+                <div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4, flexWrap: "wrap" }}>
+                    <div style={{ fontFamily: "'Anton', sans-serif", fontSize: 26, letterSpacing: "0.06em", textTransform: "uppercase" }}>
+                      {t.label}
+                    </div>
+                    {earlyActive && tieneEarly && !sold && (
+                      <span style={{
+                        fontSize: 10, padding: "3px 9px", borderRadius: 20,
+                        background: C.red, color: "#fff", fontWeight: 800, letterSpacing: "0.1em",
+                      }}>EARLY BIRD</span>
+                    )}
+                    {t.badge && !sold && (
+                      <span style={{
+                        fontSize: 10, padding: "3px 9px", borderRadius: 20,
+                        background: C.text, color: "#fff", fontWeight: 800, letterSpacing: "0.08em",
+                      }}>{t.badge.toUpperCase()}</span>
                     )}
                   </div>
-                )}
-              </div>
-              <div style={{ textAlign: "right" }}>
-                <div style={{ fontSize: 10, color: C.textLow, letterSpacing: "0.15em", fontWeight: 700 }}>
-                  {earlyActive ? "EARLY" : "ANYTIME"}
+                  <div style={{ fontSize: 12, color: C.textMid, fontWeight: 500 }}>{t.sub}</div>
+                  {(sold || (earlyActive && tieneEarly && !sold)) && (
+                    <div style={{ fontSize: 11, color: C.textLow, marginTop: 6 }}>
+                      {sold && "Agotado"}
+                      {earlyActive && tieneEarly && !sold && (
+                        <span style={{ color: C.red, fontWeight: 700 }}>
+                          Early hasta {t.early.hasta}:00 hrs
+                        </span>
+                      )}
+                    </div>
+                  )}
                 </div>
-                <div style={{ fontFamily: "'Anton', sans-serif", fontSize: 30, color: C.red, lineHeight: 1, marginTop: 2 }}>
-                  {COP(precio)}
-                </div>
-                {earlyActive && (
-                  <div style={{ fontSize: 11, color: C.textLow, textDecoration: "line-through", marginTop: 2 }}>
-                    {COP(t.anytime)}
+                <div style={{ textAlign: "right" }}>
+                  {tieneEarly && (
+                    <div style={{ fontSize: 10, color: C.textLow, letterSpacing: "0.15em", fontWeight: 700 }}>
+                      {earlyActive ? "EARLY" : "ANYTIME"}
+                    </div>
+                  )}
+                  <div style={{ fontFamily: "'Anton', sans-serif", fontSize: 30, color: C.red, lineHeight: 1, marginTop: tieneEarly ? 2 : 0 }}>
+                    {COP(precio)}
                   </div>
-                )}
-                <button onClick={() => !sold && onSelect(t)} disabled={sold}
-                  style={{
-                    marginTop: 12, padding: "9px 22px",
-                    background: sold ? C.border : C.red, color: sold ? C.textLow : "#fff",
-                    border: "none", borderRadius: 4, fontWeight: 900, fontSize: 12,
-                    letterSpacing: "0.1em", cursor: sold ? "not-allowed" : "pointer",
-                    fontFamily: "'Bebas Neue', sans-serif",
-                  }}>
-                  {sold ? "AGOTADO" : "COMPRAR"}
-                </button>
+                  {earlyActive && tieneEarly && (
+                    <div style={{ fontSize: 11, color: C.textLow, textDecoration: "line-through", marginTop: 2 }}>
+                      {COP(t.anytime)}
+                    </div>
+                  )}
+                  <button onClick={() => !sold && onSelect(t)} disabled={sold}
+                    style={{
+                      marginTop: 12, padding: "9px 22px",
+                      background: sold ? C.border : C.red, color: sold ? C.textLow : "#fff",
+                      border: "none", borderRadius: 4, fontWeight: 900, fontSize: 12,
+                      letterSpacing: "0.1em", cursor: sold ? "not-allowed" : "pointer",
+                      fontFamily: "'Bebas Neue', sans-serif",
+                    }}>
+                    {sold ? "AGOTADO" : "COMPRAR"}
+                  </button>
+                </div>
               </div>
+
+              {/* Lista incluye (detalles del ticket) */}
+              {t.incluye && (
+                <div style={{ paddingTop: 14, display: "grid", gap: 10 }}>
+                  {t.incluye.map((it, i) => (
+                    <div key={i} style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
+                      <div style={{
+                        fontSize: 16, lineHeight: 1, flexShrink: 0, width: 22,
+                        color: it.warning ? C.red : C.text,
+                      }}>{it.icon}</div>
+                      <div style={{ flex: 1 }}>
+                        <div style={{
+                          fontSize: 12, fontWeight: 700,
+                          color: it.warning ? C.red : C.text, lineHeight: 1.3,
+                        }}>{it.titulo}</div>
+                        <div style={{
+                          fontSize: 11, color: C.textMid, marginTop: 2, lineHeight: 1.4,
+                        }}>{it.detalle}</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           );
         })}
