@@ -304,6 +304,33 @@ serve(async (req) => {
       return jsonResp({ received: true, processed: false, reason: "evento ignorado" });
     }
 
+    // ── 1aa) Buscar en juicy_cream_reservas (event-specific, prefix JC-) ──
+    if (ref.startsWith("JC-")) {
+      const { data: jcRows } = await SB.from("juicy_cream_reservas")
+        .select("id, total, estado, nombre, email, telefono, tipo, categoria")
+        .eq("id", ref).limit(1);
+      const jc = jcRows?.[0];
+      if (jc) {
+        if (status === "APPROVED") {
+          await SB.from("juicy_cream_reservas").update({
+            estado: "confirmado",
+            forma_pago: "wompi",
+            abono: monto,
+            notas: `Pago Wompi (${metodo}) — Trx #${txId}`,
+            updated_at: new Date().toISOString(),
+          }).eq("id", jc.id);
+          console.log(`✓ Juicy & Cream ${jc.id} confirmada (Wompi)`);
+          return jsonResp({ received: true, processed: true, action: "juicy_confirmed", reserva_id: jc.id });
+        }
+        if (status === "DECLINED" || status === "VOIDED" || status === "ERROR") {
+          // No cancelamos automáticamente — el cupo queda bloqueado para que
+          // el usuario pueda reintentar. Un job de limpieza lo libera si pasa
+          // demasiado tiempo sin pago.
+          return jsonResp({ received: true, processed: true, action: "juicy_declined", reserva_id: jc.id });
+        }
+      }
+    }
+
     // ── 1a) Buscar primero en reservas_pasadia (Tatiana / Visito.AI) ──
     const { data: reservasP } = await SB.from("reservas_pasadia")
       .select("id, total_cop, estado, cliente_nombre, cliente_telefono, cliente_email, fecha, num_personas, producto, idioma, horario_salida")

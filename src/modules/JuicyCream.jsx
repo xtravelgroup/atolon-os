@@ -12,6 +12,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../lib/supabase";
+import { wompiCheckoutUrl } from "../lib/wompi";
+import { crearSesionPago } from "../lib/internacional";
 
 const COP = n => `$${Math.round(Number(n) || 0).toLocaleString("es-CO")}`;
 
@@ -220,8 +222,8 @@ export default function JuicyCream() {
         }
       `}</style>
 
-      <Hero />
-      <Selector tab={tab} onTab={setTab} />
+      <Hero tab={tab} onTab={setTab} />
+      <Selector tab={tab} onTab={setTab} sticky />
 
       {tab && (
         <div style={{ maxWidth: 1100, margin: "0 auto", padding: "32px 16px 80px" }}>
@@ -251,7 +253,7 @@ export default function JuicyCream() {
 // ──────────────────────────────────────────────────────────────────────
 // HERO — replica el flyer
 // ──────────────────────────────────────────────────────────────────────
-function Hero() {
+function Hero({ tab, onTab }) {
   return (
     <div style={{ position: "relative", textAlign: "center", padding: "40px 16px 24px", maxWidth: 920, margin: "0 auto" }}>
       {/* JBalvin tag */}
@@ -294,9 +296,16 @@ function Hero() {
 
       <div style={{
         fontSize: 13, letterSpacing: "0.18em", color: C.text, fontWeight: 700,
-        marginTop: 8, marginBottom: 28,
+        marginTop: 8, marginBottom: 22,
       }}>
         ELECTRONIC WORLD. <span style={{ color: C.red }}>URBAN VIBES.</span>
+      </div>
+
+      {/* Selector inline — arriba de AriaVega, dentro del hero.
+          La versión sticky sigue apareciendo después del hero (Selector con
+          prop sticky) para que el usuario siempre tenga acceso al toggle. */}
+      <div style={{ maxWidth: 760, margin: "0 auto 32px" }}>
+        <Selector tab={tab} onTab={onTab} compact />
       </div>
 
       {/* AriaVega cursive signature */}
@@ -388,31 +397,39 @@ function Hero() {
 // ──────────────────────────────────────────────────────────────────────
 // SELECTOR — Boletería / Mesas y Camas (sticky)
 // ──────────────────────────────────────────────────────────────────────
-function Selector({ tab, onTab }) {
-  return (
-    <div style={{
-      position: "sticky", top: 0, zIndex: 30,
-      background: "rgba(250,250,248,0.96)", backdropFilter: "blur(8px)",
-      borderTop: `1px solid ${C.border}`, borderBottom: `1px solid ${C.border}`,
-      marginTop: 30,
-    }}>
-      <div style={{ maxWidth: 1100, margin: "0 auto", padding: "18px 16px" }}>
+function Selector({ tab, onTab, compact = false, sticky = false }) {
+  // `compact`: versión inline dentro del hero — sin sticky, sin contenedor extra.
+  // `sticky`: versión bajo el hero que queda fija en scroll.
+  if (compact) {
+    return (
+      <div>
         {!tab && (
-          <div style={{ textAlign: "center", marginBottom: 14, fontSize: 11, letterSpacing: "0.25em", color: C.textMid, fontWeight: 700 }}>
+          <div style={{ textAlign: "center", marginBottom: 12, fontSize: 11, letterSpacing: "0.25em", color: C.textMid, fontWeight: 700 }}>
             ELIGE TU EXPERIENCIA
           </div>
         )}
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-          <ChoiceBtn
-            active={tab === "tickets"} onClick={() => onTab("tickets")}
-            icon="🎟" titulo="BOLETERÍA"
-            sub="Tickets desde $165.000"
-          />
-          <ChoiceBtn
-            active={tab === "mesas"} onClick={() => onTab("mesas")}
-            icon="🛋" titulo="MESAS / CAMAS"
-            sub="Experiencia VIP con consumible"
-          />
+          <ChoiceBtn active={tab === "tickets"} onClick={() => onTab("tickets")}
+            icon="🎟" titulo="BOLETERÍA" sub="Tickets desde $165.000" />
+          <ChoiceBtn active={tab === "mesas"} onClick={() => onTab("mesas")}
+            icon="🛋" titulo="MESAS / CAMAS" sub="Experiencia VIP con consumible" />
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div style={{
+      position: sticky ? "sticky" : "static", top: 0, zIndex: 30,
+      background: "rgba(250,250,248,0.96)", backdropFilter: "blur(8px)",
+      borderTop: `1px solid ${C.border}`, borderBottom: `1px solid ${C.border}`,
+      marginTop: 10,
+    }}>
+      <div style={{ maxWidth: 1100, margin: "0 auto", padding: "14px 16px" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+          <ChoiceBtn active={tab === "tickets"} onClick={() => onTab("tickets")}
+            icon="🎟" titulo="BOLETERÍA" sub="Tickets desde $165.000" />
+          <ChoiceBtn active={tab === "mesas"} onClick={() => onTab("mesas")}
+            icon="🛋" titulo="MESAS / CAMAS" sub="Experiencia VIP con consumible" />
         </div>
       </div>
     </div>
@@ -834,7 +851,6 @@ function CheckoutModal({ item, onClose, onConfirmar }) {
   const [cantidad, setCantidad] = useState(item.cantidad);
   const [form, setForm] = useState({ nombre: "", email: "", telefono: "", cedula: "" });
   const [busy, setBusy] = useState(false);
-  const [exitoLink, setExitoLink] = useState("");
 
   const totalBase = item.precio * (item.kind === "ticket" ? cantidad : 1);
   const consumibleMonto = item.consumible ? totalBase * item.consumible : 0;
@@ -842,64 +858,118 @@ function CheckoutModal({ item, onClose, onConfirmar }) {
 
   const setF = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
-  const confirmar = async () => {
-    const digitos = (form.telefono || "").replace(/\D/g, "");
-    if (!form.nombre.trim() || digitos.length < 7) {
-      alert("Nombre y teléfono (mínimo 7 dígitos) son requeridos");
-      return;
-    }
-    setBusy(true);
+  // Crea el registro en juicy_cream_reservas y bloquea la mesa (si aplica).
+  // Devuelve el id de la reserva (o null si hubo error).
+  async function crearReservaPendiente(metodo) {
     const id = `JC-${Date.now()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
     const payload = {
       id, tipo: item.kind, categoria: item.categoria,
       cantidad: item.kind === "ticket" ? Number(cantidad) : 1,
       precio_unitario: item.precio, total: totalFinal,
       consumible_pct: item.consumible ? item.consumible * 100 : 0,
-      nombre: form.nombre.trim(), email: form.email.trim() || null,
-      telefono: form.telefono.trim(), cedula: form.cedula.trim() || null,
+      nombre: form.nombre.trim(),
+      email: form.email.trim() || null,
+      telefono: form.telefono.trim(),
+      cedula: form.cedula.trim() || null,
       estado: "pendiente_pago",
+      forma_pago: metodo, // "wompi" | "tarjeta_internacional"
     };
-    const { error } = await supabase.from("juicy_cream_reservas").insert(payload);
-    setBusy(false);
+    const { data, error } = await supabase
+      .from("juicy_cream_reservas")
+      .insert(payload)
+      .select()
+      .single();
     if (error) {
       if (error.code === "23505") {
         alert("Esta mesa ya fue reservada por otra persona — refresca la página y elige otra.");
         onClose();
       } else {
-        alert("Error: " + error.message);
+        alert("Error guardando reserva: " + error.message);
       }
+      return null;
+    }
+    if (!data) {
+      alert("La reserva no quedó guardada (sin error). Re-intenta.");
+      return null;
+    }
+    return id;
+  }
+
+  // Wompi (tarjeta nacional): redirige al checkout hospedado de Wompi.
+  async function pagarWompi() {
+    const digitos = (form.telefono || "").replace(/\D/g, "");
+    if (!form.nombre.trim() || digitos.length < 7) {
+      alert("Nombre y teléfono (mínimo 7 dígitos) son requeridos");
       return;
     }
-    const msg = `*JUICY & CREAM · Nueva reserva*\n\nID: ${id}\n${item.kind === "ticket" ? "Ticket" : "Mesa"}: ${item.label}\n${item.kind === "ticket" ? `Cantidad: ${cantidad}\n` : ""}Total: ${COP(totalFinal)}${item.consumible ? `\n(Consumible ${Math.round(item.consumible * 100)}%: ${COP(consumibleMonto)})` : ""}\n\nCliente: ${form.nombre}\nTel: ${form.telefono}${form.email ? `\nEmail: ${form.email}` : ""}${form.cedula ? `\nCC: ${form.cedula}` : ""}\n\nNecesito link de pago para confirmar mi reserva.`;
-    setExitoLink(`https://wa.me/${WA_PHONE}?text=${encodeURIComponent(msg)}`);
-    onConfirmar();
-  };
+    setBusy(true);
+    const id = await crearReservaPendiente("wompi");
+    if (!id) { setBusy(false); return; }
+    try {
+      const redirectBase = `${window.location.origin}/pago?reserva=${id}`;
+      const payUrl = await wompiCheckoutUrl({
+        referencia: id, totalCOP: totalFinal,
+        email: form.email || "", redirectUrl: redirectBase,
+      });
+      // Guardar link_pago para auditoría
+      supabase.from("juicy_cream_reservas")
+        .update({ link_pago: payUrl }).eq("id", id)
+        .then(() => {}).catch(() => {});
+      onConfirmar(); // permite refrescar la lista de mesas
+      window.location.href = payUrl;
+    } catch (err) {
+      console.error("[juicy/wompi]", err);
+      alert("Error con tarjeta nacional: " + (err.message || err));
+      setBusy(false);
+    }
+  }
 
-  if (exitoLink) {
-    return (
-      <Overlay onClose={onClose}>
-        <div style={{ textAlign: "center", padding: "16px 6px" }}>
-          <div style={{ fontSize: 48, marginBottom: 8 }}>✅</div>
-          <h3 style={{ fontFamily: "'Anton', sans-serif", fontSize: 26, letterSpacing: "0.06em", margin: "8px 0 6px" }}>
-            RESERVA CREADA
-          </h3>
-          <div style={{ fontSize: 13, color: C.textMid, marginBottom: 22, lineHeight: 1.5 }}>
-            Tu reserva está <strong>guardada y bloqueada</strong>. Confirma con el equipo por WhatsApp para recibir el link de pago.
-          </div>
-          <a href={exitoLink} target="_blank" rel="noreferrer" style={{
-            display: "block", padding: "16px 22px",
-            background: "#25D366", color: "#fff", textDecoration: "none",
-            borderRadius: 6, fontWeight: 900, fontSize: 14, letterSpacing: "0.05em",
-            fontFamily: "'Bebas Neue', sans-serif",
-          }}>💬 ABRIR WHATSAPP PARA PAGAR</a>
-          <button onClick={onClose} style={{
-            marginTop: 14, padding: "10px 20px", background: "none",
-            border: `1px solid ${C.border}`, borderRadius: 4, color: C.textMid,
-            fontSize: 12, cursor: "pointer",
-          }}>Cerrar</button>
-        </div>
-      </Overlay>
-    );
+  // Tarjeta internacional (Zoho Pay): abre widget embebido o redirige.
+  async function pagarInternacional() {
+    const digitos = (form.telefono || "").replace(/\D/g, "");
+    if (!form.nombre.trim() || digitos.length < 7) {
+      alert("Nombre y teléfono (mínimo 7 dígitos) son requeridos");
+      return;
+    }
+    setBusy(true);
+    const id = await crearReservaPendiente("tarjeta_internacional");
+    if (!id) { setBusy(false); return; }
+    try {
+      const tasa = 4200; // COP → USD aprox; el backend usa tasa real si la tiene
+      const amountUSD = Math.ceil(totalFinal / tasa);
+      const session = await crearSesionPago({
+        amount: amountUSD, currency: "USD", reference: id,
+        description: `JUICY & CREAM · ${item.label}`,
+        email: form.email || "", nombre: form.nombre,
+        context: "juicy_cream", context_id: id,
+      });
+      if (session.payments_session_id && session.widget?.account_id) {
+        // Para MVP: abrir Zoho Pay en nueva pestaña con el payment link si está,
+        // o caer al flujo de pago/exito. El widget embebido requiere componente
+        // específico (ZohoPaymentWidget) que aquí no está integrado.
+        // Por ahora redirigimos a la URL si viene, sino mostramos alerta.
+        if (session.url) {
+          supabase.from("juicy_cream_reservas").update({ link_pago: session.url }).eq("id", id).then(() => {});
+          onConfirmar();
+          window.location.href = session.url;
+        } else {
+          alert("Sesión de pago internacional creada. Te contactamos para finalizar.\n\nID: " + id);
+          setBusy(false);
+          onConfirmar();
+          onClose();
+        }
+      } else if (session.url) {
+        supabase.from("juicy_cream_reservas").update({ link_pago: session.url }).eq("id", id).then(() => {});
+        onConfirmar();
+        window.location.href = session.url;
+      } else {
+        throw new Error("Sin URL de pago ni session widget");
+      }
+    } catch (err) {
+      console.error("[juicy/internacional]", err);
+      alert("Error con tarjeta internacional: " + (err.message || err) + "\n\nIntenta con tarjeta nacional.");
+      setBusy(false);
+    }
   }
 
   return (
@@ -956,17 +1026,75 @@ function CheckoutModal({ item, onClose, onConfirmar }) {
         </div>
       </div>
 
-      <button onClick={confirmar} disabled={busy} style={{
-        width: "100%", padding: "16px 22px",
-        background: busy ? C.border : C.red, color: "#fff",
-        border: "none", borderRadius: 6, fontWeight: 900, fontSize: 14,
-        letterSpacing: "0.1em", cursor: busy ? "wait" : "pointer",
-        fontFamily: "'Bebas Neue', sans-serif",
+      <div style={{ fontSize: 11, color: C.textMid, letterSpacing: "0.18em", fontWeight: 700, marginBottom: 10 }}>
+        ELIGE MÉTODO DE PAGO
+      </div>
+      <div style={{ display: "grid", gap: 10 }}>
+        {/* Tarjeta Nacional → Wompi */}
+        <button onClick={pagarWompi} disabled={busy} style={{
+          display: "flex", alignItems: "center", gap: 14,
+          width: "100%", padding: "14px 18px",
+          background: "#fff", color: C.text,
+          border: `2px solid ${busy ? C.border : C.text}`, borderRadius: 6,
+          cursor: busy ? "wait" : "pointer", textAlign: "left",
+          opacity: busy ? 0.6 : 1,
+        }}>
+          <div style={{
+            width: 40, height: 40, borderRadius: 8, background: "#5B4CF5",
+            color: "#fff", display: "flex", alignItems: "center", justifyContent: "center",
+            fontWeight: 900, fontSize: 18,
+          }}>W</div>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 18, letterSpacing: "0.08em" }}>
+              TARJETA NACIONAL
+            </div>
+            <div style={{ fontSize: 11, color: C.textMid, marginTop: 2 }}>
+              PSE · Nequi · Bancolombia · Visa / Mastercard CO
+            </div>
+          </div>
+          <div style={{ fontFamily: "'Anton', sans-serif", fontSize: 18, color: C.red }}>
+            {COP(totalFinal)}
+          </div>
+        </button>
+        {/* Tarjeta Internacional → Zoho Pay */}
+        <button onClick={pagarInternacional} disabled={busy} style={{
+          display: "flex", alignItems: "center", gap: 14,
+          width: "100%", padding: "14px 18px",
+          background: "#fff", color: C.text,
+          border: `2px solid ${busy ? C.border : C.text}`, borderRadius: 6,
+          cursor: busy ? "wait" : "pointer", textAlign: "left",
+          opacity: busy ? 0.6 : 1,
+        }}>
+          <div style={{
+            width: 40, height: 40, borderRadius: 8, background: "#0A0A0A",
+            color: "#fff", display: "flex", alignItems: "center", justifyContent: "center",
+            fontWeight: 900, fontSize: 18,
+          }}>$</div>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 18, letterSpacing: "0.08em" }}>
+              TARJETA INTERNACIONAL
+            </div>
+            <div style={{ fontSize: 11, color: C.textMid, marginTop: 2 }}>
+              Visa · Mastercard · Amex · Apple Pay · Google Pay
+            </div>
+          </div>
+          <div style={{ fontFamily: "'Anton', sans-serif", fontSize: 18, color: C.red }}>
+            {COP(totalFinal)}
+          </div>
+        </button>
+      </div>
+      <div style={{
+        marginTop: 12, padding: "8px 12px", background: "#FFF7E6",
+        border: "1px solid #F5C842", borderRadius: 6, fontSize: 11,
+        color: "#92400E", display: "flex", alignItems: "flex-start", gap: 6,
       }}>
-        {busy ? "Procesando…" : "CONFIRMAR RESERVA →"}
-      </button>
+        <span>💳</span>
+        <span>
+          El cargo con tarjeta internacional aparecerá en tu estado de cuenta a nombre de <strong>X Travel Group</strong>.
+        </span>
+      </div>
       <div style={{ fontSize: 10, color: C.textLow, marginTop: 10, textAlign: "center" }}>
-        Al confirmar, tu reserva queda bloqueada y recibirás el link de pago por WhatsApp.
+        🔒 Pago seguro · Tu reserva queda bloqueada al iniciar el pago.
       </div>
     </Overlay>
   );
