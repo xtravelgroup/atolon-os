@@ -96,7 +96,7 @@ const INCLUYE_BASE = [
 const TICKETS = [
   {
     key: "VIP", label: "VIP", sub: "Acceso preferente · Área general",
-    cupo: 100, early: { hasta: 16, precio: 165000 }, anytime: 193000,
+    cupo: 100, early: { hasta: 16, precio: 150000 }, anytime: 175000,
     visible: true,
     incluye: INCLUYE_BASE,
   },
@@ -410,7 +410,7 @@ function Selector({ tab, onTab, compact = false, sticky = false }) {
         )}
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
           <ChoiceBtn active={tab === "tickets"} onClick={() => onTab("tickets")}
-            icon="🎟" titulo="BOLETERÍA" sub="Tickets desde $165.000" />
+            icon="🎟" titulo="BOLETERÍA" sub="Tickets desde $150.000" />
           <ChoiceBtn active={tab === "mesas"} onClick={() => onTab("mesas")}
             icon="🛋" titulo="MESAS / CAMAS" sub="Experiencia VIP con consumible" />
         </div>
@@ -427,7 +427,7 @@ function Selector({ tab, onTab, compact = false, sticky = false }) {
       <div style={{ maxWidth: 1100, margin: "0 auto", padding: "14px 16px" }}>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
           <ChoiceBtn active={tab === "tickets"} onClick={() => onTab("tickets")}
-            icon="🎟" titulo="BOLETERÍA" sub="Tickets desde $165.000" />
+            icon="🎟" titulo="BOLETERÍA" sub="Tickets desde $150.000" />
           <ChoiceBtn active={tab === "mesas"} onClick={() => onTab("mesas")}
             icon="🛋" titulo="MESAS / CAMAS" sub="Experiencia VIP con consumible" />
         </div>
