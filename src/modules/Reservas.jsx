@@ -2797,6 +2797,10 @@ function TabCalendario({ salidas, cierres, embarcaciones }) {
   const [mesOffset, setMesOffset] = useState(0);
   const [reservasPorDia, setReservasPorDia] = useState({});
   const [gruposPorDia,   setGruposPorDia]   = useState({});
+  // Ventas de JUICY & CREAM (juicy_cream_reservas) — agregadas por evento.
+  // Hoy solo aplica al evento "2Nomads + Dj Pope and Friends" (7-jun) pero
+  // la estructura soporta múltiples eventos a futuro.
+  const [juicyPorEvento, setJuicyPorEvento] = useState({});
   const [sinTransportePorDia, setSinTransportePorDia] = useState({});
   // Set por-fecha de reserva_ids referenciados desde pasadias_org de un grupo
   // del mismo día (cortesías ligadas al grupo). Se excluyen del conteo para
@@ -2882,6 +2886,35 @@ function TabCalendario({ salidas, cierres, embarcaciones }) {
       });
       setGruposPorDia(byDay);
     });
+
+    // Fetch ventas Juicy & Cream para los eventos del mes.
+    // Por ahora todas las juicy reservas están asociadas al evento
+    // "2Nomads + Dj Pope and Friends" (7-jun). El mapa se llena con el
+    // evento_id como key.
+    const JUICY_EVENTO_ID = "EVT-3NOMADS-DJPOPE-1777678361";
+    // Pax por mesa (mismo modelo que JuicyCream.jsx):
+    const MESA_PAX = { A1:12, A2:12, "1A":12, "1B":12, "2A":12, "2B":12, "3A":12, "3B":12, "4A":12, "4B":12,
+                       "1C":10, "2C":10, "3C":10, "4C":10, "5C":10, "6C":10, "7C":10, "8C":10 };
+    supabase.from("juicy_cream_reservas")
+      .select("tipo, categoria, cantidad, total, estado")
+      .neq("estado", "cancelado")
+      .then(({ data }) => {
+        const agg = { tickets: 0, mesas: 0, paxTickets: 0, paxMesas: 0, total: 0, confirmados: 0 };
+        (data || []).forEach(r => {
+          const monto = Number(r.total) || 0;
+          agg.total += monto;
+          if (r.estado === "confirmado") agg.confirmados += monto;
+          if (r.tipo === "ticket") {
+            agg.tickets += r.cantidad || 1;
+            agg.paxTickets += r.cantidad || 1;
+          } else if (r.tipo === "mesa") {
+            agg.mesas += 1;
+            agg.paxMesas += MESA_PAX[r.categoria] || 0;
+          }
+        });
+        agg.pax = agg.paxTickets + agg.paxMesas;
+        setJuicyPorEvento({ [JUICY_EVENTO_ID]: agg });
+      });
     // Fetch reservas sin transporte (salida_id null) for the month.
     // Re-fetcheamos los grupos del rango (con pasadias_org) sólo para armar
     // el set de reserva_ids referenciados — así excluimos cortesías ligadas
@@ -3356,7 +3389,8 @@ function TabCalendario({ salidas, cierres, embarcaciones }) {
               <div style={{ fontSize: 11, color: B.sand, textTransform: "uppercase", letterSpacing: "0.07em", fontWeight: 700, marginBottom: 10 }}>
                 👥 Grupos del día — {(gruposPorDia[selectedDay] || []).reduce((sum, g) => {
                   const p = (g.pasadias_org || []).filter(p => p.tipo !== "Impuesto Muelle" && p.tipo !== "STAFF").reduce((s, p) => s + (Number(p.personas) || 0), 0) || g.pax || 0;
-                  return sum + p;
+                  const juicy = juicyPorEvento[g.id]?.pax || 0;
+                  return sum + p + juicy;
                 }, 0)} pax
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -3366,6 +3400,8 @@ function TabCalendario({ salidas, cierres, embarcaciones }) {
                   const totalPaxGrupo = (g.pasadias_org || [])
                     .filter(p => p.tipo !== "Impuesto Muelle")
                     .reduce((s, p) => s + (Number(p.personas) || 0), 0) || g.pax || 0;
+                  // Ventas Juicy asociadas a este evento (si las hay)
+                  const juicy = juicyPorEvento[g.id];
                   return (
                     <div key={g.id} style={{ background: "rgba(200,185,154,0.08)", borderRadius: 10, padding: "12px 14px", border: "1px solid rgba(200,185,154,0.2)" }}>
                       {/* Header */}
@@ -3377,10 +3413,37 @@ function TabCalendario({ salidas, cierres, embarcaciones }) {
                           )}
                           {g.tipo && <span style={{ fontSize: 10, color: "rgba(255,255,255,0.4)" }}>🌴 {g.tipo}</span>}
                           <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 8, background: B.sand + "33", color: B.sand, fontWeight: 700 }}>
-                            👥 {totalPaxGrupo} pax
+                            👥 {totalPaxGrupo + (juicy?.pax || 0)} pax
                           </span>
                         </div>
                       </div>
+
+                      {/* Ventas Juicy & Cream — solo si hay registros vinculados al evento */}
+                      {juicy && (juicy.tickets > 0 || juicy.mesas > 0) && (
+                        <div style={{
+                          marginBottom: 10, padding: "10px 12px",
+                          background: "rgba(225,29,42,0.08)",
+                          border: "1px solid rgba(225,29,42,0.3)",
+                          borderRadius: 8,
+                          fontSize: 12, color: "#fff",
+                        }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                            <span style={{ fontWeight: 700, color: "#FFB4BA", letterSpacing: "0.06em", fontSize: 11 }}>
+                              🎟 VENTAS JUICY &amp; CREAM
+                            </span>
+                            <span style={{ fontWeight: 800, color: B.sand }}>
+                              ${(juicy.total || 0).toLocaleString("es-CO")}
+                            </span>
+                          </div>
+                          <div style={{ fontSize: 11, color: "rgba(255,255,255,0.65)", display: "flex", gap: 12, flexWrap: "wrap" }}>
+                            <span>🎟 {juicy.tickets} ticket{juicy.tickets !== 1 ? "s" : ""} · {juicy.paxTickets} pax</span>
+                            <span>🛋 {juicy.mesas} mesa{juicy.mesas !== 1 ? "s" : ""} · {juicy.paxMesas} pax</span>
+                            {juicy.confirmados < juicy.total && (
+                              <span style={{ color: B.warning }}>⏳ ${(juicy.total - juicy.confirmados).toLocaleString("es-CO")} pendiente</span>
+                            )}
+                          </div>
+                        </div>
+                      )}
                       {/* Salidas con embarcaciones */}
                       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                         {allSGs.map(sg => {
