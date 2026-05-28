@@ -2895,9 +2895,12 @@ function TabCalendario({ salidas, cierres, embarcaciones }) {
     // Pax por mesa (mismo modelo que JuicyCream.jsx):
     const MESA_PAX = { A1:12, A2:12, "1A":12, "1B":12, "2A":12, "2B":12, "3A":12, "3B":12, "4A":12, "4B":12,
                        "1C":10, "2C":10, "3C":10, "4C":10, "5C":10, "6C":10, "7C":10, "8C":10 };
+    // Excluye ventas externas (forma_pago='externo') — son mesas vendidas
+    // por el organizador, solo ocupan cupo, no son revenue nuestro.
     supabase.from("juicy_cream_reservas")
-      .select("tipo, categoria, cantidad, total, estado")
+      .select("tipo, categoria, cantidad, total, estado, forma_pago")
       .neq("estado", "cancelado")
+      .neq("forma_pago", "externo")
       .then(({ data }) => {
         const agg = { tickets: 0, mesas: 0, paxTickets: 0, paxMesas: 0, total: 0, confirmados: 0 };
         (data || []).forEach(r => {

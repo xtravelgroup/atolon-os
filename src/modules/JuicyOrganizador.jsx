@@ -138,8 +138,13 @@ function Dashboard({ onLogout }) {
   useEffect(() => {
     if (!supabase) { setLoading(false); return; }
     setLoading(true);
+    // Excluye ventas externas (forma_pago='externo') — son mesas que el
+    // organizador vendió directamente, sin pasar por nuestro booking. Solo
+    // ocupan el cupo en /juicy para evitar doble venta; no son ingresos
+    // nuestros y no deben verse en su propio portal de reportes.
     supabase.from("juicy_cream_reservas")
       .select("*")
+      .neq("forma_pago", "externo")
       .order("created_at", { ascending: false })
       .then(({ data, error }) => {
         if (error) console.error("[juicy-organizador] fetch error:", error);
