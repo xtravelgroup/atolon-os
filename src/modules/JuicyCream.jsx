@@ -1,10 +1,14 @@
 // Landing + booking engine para evento JUICY & CREAM (afterparty oficial
 // J Balvin · Cartagena · Domingo 07-jun-2026). Vende:
-//  • Tickets generales (VIP, ETAPA 1-3, DOOR) con precio dinámico early/anytime
-//  • Mesas (DJ BOOTH, BACKSTAGE, VIP BEACH) con consumible 15%/25%
+//  • Boletería (VIP, ETAPA 1-3, DOOR) con precio dinámico early/anytime
+//  • Mesas / camas (DJ BOOTH, BACKSTAGE, FRONT POOL, VIP BEACH) con consumible 15%/25%
 // Las reservas se guardan en juicy_cream_reservas y el flujo de pago
 // es vía WhatsApp al equipo comercial (MVP). Las mesas son únicas — al
 // reservarse una, se bloquea automáticamente por unique index DB.
+//
+// Estilo visual replica el flyer oficial: fondo cream, "JUICY" rojo cherry
+// liquid, "CREAM" chrome/silver, doodles de fauna marina en outline rojo,
+// firma cursiva para AriaJega.
 
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../lib/supabase";
@@ -13,111 +17,71 @@ const COP = n => `$${Math.round(Number(n) || 0).toLocaleString("es-CO")}`;
 
 // ── Paleta inspirada en el flyer ──────────────────────────────────────
 const C = {
-  bg:      "#0a0a0a",
-  bgSoft:  "#141414",
-  card:    "#1a1a1a",
-  border:  "#2a2a2a",
-  text:    "#fff",
-  textMid: "rgba(255,255,255,0.65)",
-  textLow: "rgba(255,255,255,0.35)",
-  red:     "#E11D2A",  // rojo cherry del flyer
-  redDark: "#9B1018",
-  cream:   "#F4EBD8",  // cream/vainilla
-  gold:    "#D9A55B",
-  silver:  "#C0C0C0",
+  bg:        "#FAFAF8",       // off-white casi cream
+  bgAlt:     "#FFFFFF",
+  cream:     "#F4EBD8",       // cream del flyer (acentos)
+  text:      "#0A0A0A",
+  textMid:   "#404040",
+  textLow:   "#888888",
+  border:    "#E5E5E5",
+  borderMid: "#CCCCCC",
+  red:       "#E11D2A",       // cherry red del flyer
+  redDark:   "#9B1018",
+  silver1:   "#FFFFFF",
+  silver2:   "#D8D8D8",
+  silver3:   "#888888",
 };
 
-const WA_PHONE = "573104077720"; // mismo número operativo de Atolón
+const WA_PHONE = "573104077720";
 
 // ── Datos del evento ──────────────────────────────────────────────────
 const EVENTO = {
-  fecha: "Domingo 07 de Junio",
+  fecha: "Domingo · Junio 07",
+  fechaCorta: "JUNE 07",
   doors: "2:00 PM",
   venue: "Atolón Beach Club · Isla Tierra Bomba · Cartagena",
   tagline: "ELECTRONIC WORLD · URBAN VIBES",
   lineup: {
-    headliner: "Aria Vega",
-    electronic: ["2 NOMADS", "Gustavo Ibarra"],
-    urban: ["DJ Pope", "DJ Tornall"],
-    extra: "Argüello — precisamente en Cartagena",
+    headliner: "AriaVega",
+    electronic: ["2 NOMADS", "GUSTAVO IBARRA"],
+    urban: ["DJ POPE", "DJ TORNALL"],
+    extra: "ARGÜELLO precisamente en Cartagena",
   },
   by: "3 NOMADS X · 574 STUDIO",
-  oficial: "Official Afterparty J Balvin Colombian Tour Finale",
+  oficial: "OFFICIAL AFTERPARTY J BALVIN COLOMBIAN TOUR FINALE",
 };
 
 // ── Tickets: precios cambian según hora actual y categoría ────────────
 const TICKETS = [
-  {
-    key: "VIP", label: "VIP",
-    sub: "Acceso preferente",
-    cupo: 100,
-    early: { hasta: 16, precio: 165000 },   // < 4PM
-    anytime: 193000,
-    color: C.red,
-  },
-  {
-    key: "ETAPA_1", label: "Etapa 1",
-    sub: "Primera etapa",
-    cupo: 100,
-    early: { hasta: 16, precio: 193000 },
-    anytime: 248000,
-    color: C.gold,
-  },
-  {
-    key: "ETAPA_2", label: "Etapa 2",
-    sub: "Segunda etapa",
-    cupo: 100,
-    early: { hasta: 18, precio: 248000 },   // < 6PM
-    anytime: 303000,
-    color: C.gold,
-  },
-  {
-    key: "ETAPA_3", label: "Etapa 3",
-    sub: "Tercera etapa",
-    cupo: 100,
-    early: { hasta: 18, precio: 303000 },
-    anytime: 358000,
-    color: C.gold,
-  },
-  {
-    key: "DOOR", label: "Door",
-    sub: "Última disponibilidad",
-    cupo: 300,
-    early: { hasta: 18, precio: 385000 },
-    anytime: 440000,
-    color: C.cream,
-  },
+  { key: "VIP",     label: "VIP",     sub: "Acceso preferente",        cupo: 100, early: { hasta: 16, precio: 165000 }, anytime: 193000 },
+  { key: "ETAPA_1", label: "Etapa 1", sub: "Primera etapa",            cupo: 100, early: { hasta: 16, precio: 193000 }, anytime: 248000 },
+  { key: "ETAPA_2", label: "Etapa 2", sub: "Segunda etapa",            cupo: 100, early: { hasta: 18, precio: 248000 }, anytime: 303000 },
+  { key: "ETAPA_3", label: "Etapa 3", sub: "Tercera etapa",            cupo: 100, early: { hasta: 18, precio: 303000 }, anytime: 358000 },
+  { key: "DOOR",    label: "Door",    sub: "Última disponibilidad",    cupo: 300, early: { hasta: 18, precio: 385000 }, anytime: 440000 },
 ];
 
 // ── Mesas ─────────────────────────────────────────────────────────────
 const MESAS = [
-  // DJ Booth
-  { key: "A1", zona: "DJ BOOTH",  precio: 20350000, consumible: 0.25, transporte: true, premium: true },
-  { key: "A2", zona: "DJ BOOTH",  precio: 20350000, consumible: 0.25, transporte: true, premium: true },
-  // Backstage
-  { key: "1A", zona: "BACKSTAGE", precio: 14300000, consumible: 0.25, transporte: true, premium: true },
-  { key: "1B", zona: "BACKSTAGE", precio: 14300000, consumible: 0.25, transporte: true, premium: true },
-  // 2A-2B
+  { key: "A1", zona: "DJ BOOTH",   precio: 20350000, consumible: 0.25, transporte: true, premium: true },
+  { key: "A2", zona: "DJ BOOTH",   precio: 20350000, consumible: 0.25, transporte: true, premium: true },
+  { key: "1A", zona: "BACKSTAGE",  precio: 14300000, consumible: 0.25, transporte: true, premium: true },
+  { key: "1B", zona: "BACKSTAGE",  precio: 14300000, consumible: 0.25, transporte: true, premium: true },
   { key: "2A", zona: "FRONT POOL", precio: 12100000, consumible: 0.25 },
   { key: "2B", zona: "FRONT POOL", precio: 12100000, consumible: 0.25 },
-  // 3A-3B
-  { key: "3A", zona: "FRONT POOL", precio: 9900000, consumible: 0.25 },
-  { key: "3B", zona: "FRONT POOL", precio: 9900000, consumible: 0.25 },
-  // 4A-4B
-  { key: "4A", zona: "FRONT POOL", precio: 8250000, consumible: 0.25 },
-  { key: "4B", zona: "FRONT POOL", precio: 8250000, consumible: 0.25 },
-  // VIP Beach
-  { key: "1C", zona: "VIP BEACH", precio: 6600000, consumible: 0.15 },
-  { key: "5C", zona: "VIP BEACH", precio: 6600000, consumible: 0.15 },
-  { key: "2C", zona: "VIP BEACH", precio: 5500000, consumible: 0.15 },
-  { key: "6C", zona: "VIP BEACH", precio: 5500000, consumible: 0.15 },
-  { key: "3C", zona: "VIP BEACH", precio: 4400000, consumible: 0.15 },
-  { key: "7C", zona: "VIP BEACH", precio: 4400000, consumible: 0.15 },
-  { key: "4C", zona: "VIP BEACH", precio: 3850000, consumible: 0.15 },
-  { key: "8C", zona: "VIP BEACH", precio: 3850000, consumible: 0.15 },
+  { key: "3A", zona: "FRONT POOL", precio: 9900000,  consumible: 0.25 },
+  { key: "3B", zona: "FRONT POOL", precio: 9900000,  consumible: 0.25 },
+  { key: "4A", zona: "FRONT POOL", precio: 8250000,  consumible: 0.25 },
+  { key: "4B", zona: "FRONT POOL", precio: 8250000,  consumible: 0.25 },
+  { key: "1C", zona: "VIP BEACH",  precio: 6600000,  consumible: 0.15 },
+  { key: "5C", zona: "VIP BEACH",  precio: 6600000,  consumible: 0.15 },
+  { key: "2C", zona: "VIP BEACH",  precio: 5500000,  consumible: 0.15 },
+  { key: "6C", zona: "VIP BEACH",  precio: 5500000,  consumible: 0.15 },
+  { key: "3C", zona: "VIP BEACH",  precio: 4400000,  consumible: 0.15 },
+  { key: "7C", zona: "VIP BEACH",  precio: 4400000,  consumible: 0.15 },
+  { key: "4C", zona: "VIP BEACH",  precio: 3850000,  consumible: 0.15 },
+  { key: "8C", zona: "VIP BEACH",  precio: 3850000,  consumible: 0.15 },
 ];
 
-// ── Hora actual Colombia (en horas decimales) ─────────────────────────
 const horaCO = () => {
   const t = new Date().toLocaleString("en-US", { timeZone: "America/Bogota", hour: "2-digit", minute: "2-digit", hour12: false });
   const [h, m] = t.split(":").map(Number);
@@ -130,14 +94,14 @@ const precioTicket = (t) => {
 };
 
 // ──────────────────────────────────────────────────────────────────────
-// MAIN COMPONENT
+// MAIN
 // ──────────────────────────────────────────────────────────────────────
 export default function JuicyCream() {
-  const [tab, setTab] = useState("tickets");       // tickets | mesas
-  const [reservadas, setReservadas] = useState(new Set());   // keys de mesas tomadas
-  const [ticketsVendidos, setTicketsVendidos] = useState({}); // {VIP: 12, ETAPA_1: 8, ...}
-  const [cart, setCart] = useState(null);          // pedido en construcción
-  const [confirmandoCheckout, setConfirmandoCheckout] = useState(false);
+  const [tab, setTab] = useState(null);             // null = pantalla inicial · "tickets" | "mesas"
+  const [reservadas, setReservadas] = useState(new Set());
+  const [ticketsVendidos, setTicketsVendidos] = useState({});
+  const [cart, setCart] = useState(null);
+  const [reload, setReload] = useState(0);
 
   useEffect(() => {
     if (!supabase) return;
@@ -149,94 +113,81 @@ export default function JuicyCream() {
         const tickets = {};
         (data || []).forEach(r => {
           if (r.tipo === "mesa") mesas.add(r.categoria);
-          else if (r.tipo === "ticket") {
-            tickets[r.categoria] = (tickets[r.categoria] || 0) + (r.cantidad || 1);
-          }
+          else if (r.tipo === "ticket") tickets[r.categoria] = (tickets[r.categoria] || 0) + (r.cantidad || 1);
         });
         setReservadas(mesas);
         setTicketsVendidos(tickets);
       });
-  }, [confirmandoCheckout]);
+  }, [reload]);
 
-  // ── Carrito ──
-  const abrirTicket = (tipo) => {
+  const abrirTicket = (t) => setCart({
+    kind: "ticket", categoria: t.key, label: t.label, cantidad: 1,
+    precio: precioTicket(t),
+  });
+  const abrirMesa = (m) => {
+    if (reservadas.has(m.key)) return;
     setCart({
-      kind: "ticket",
-      categoria: tipo.key,
-      label: tipo.label,
-      cantidad: 1,
-      precio: precioTicket(tipo),
-      color: tipo.color,
+      kind: "mesa", categoria: m.key, label: `${m.zona} · ${m.key}`, cantidad: 1,
+      precio: m.precio, consumible: m.consumible, transporte: !!m.transporte,
     });
   };
-
-  const abrirMesa = (mesa) => {
-    if (reservadas.has(mesa.key)) return;
-    setCart({
-      kind: "mesa",
-      categoria: mesa.key,
-      label: `${mesa.zona} · ${mesa.key}`,
-      cantidad: 1,
-      precio: mesa.precio,
-      consumible: mesa.consumible,
-      transporte: mesa.transporte || false,
-      color: mesa.premium ? C.red : C.gold,
-    });
-  };
-
-  const cerrarCart = () => setCart(null);
 
   return (
     <div style={{
       minHeight: "100vh",
-      background: `linear-gradient(180deg, ${C.bg} 0%, #1a0505 50%, ${C.bg} 100%)`,
+      background: C.bg,
       color: C.text,
       fontFamily: "'Inter', 'Segoe UI', system-ui, sans-serif",
     }}>
+      {/* Google Fonts: condensed + script */}
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Anton&family=Bebas+Neue&family=Allura&family=Inter:wght@400;500;600;700;800;900&display=swap');
+        @keyframes drip {
+          0%, 100% { transform: translateY(0); }
+          50%      { transform: translateY(3px); }
+        }
+        .jc-juicy {
+          background: linear-gradient(180deg, #E11D2A 0%, #9B1018 60%, #5C0A0F 100%);
+          -webkit-background-clip: text;
+          background-clip: text;
+          -webkit-text-fill-color: transparent;
+          filter: drop-shadow(0 4px 0 #5C0A0F) drop-shadow(0 6px 16px rgba(225,29,42,0.3));
+        }
+        .jc-cream {
+          background: linear-gradient(180deg, #FFFFFF 0%, #D8D8D8 35%, #FFFFFF 50%, #888888 75%, #BBBBBB 100%);
+          -webkit-background-clip: text;
+          background-clip: text;
+          -webkit-text-fill-color: transparent;
+          filter: drop-shadow(0 3px 0 #555555) drop-shadow(0 5px 12px rgba(0,0,0,0.15));
+        }
+        .jc-amp {
+          background: linear-gradient(180deg, #FFFFFF 0%, #C8C8C8 50%, #888888 100%);
+          -webkit-background-clip: text; background-clip: text;
+          -webkit-text-fill-color: transparent;
+          filter: drop-shadow(0 2px 0 #666);
+        }
+      `}</style>
+
       <Hero />
+      <Selector tab={tab} onTab={setTab} />
 
-      {/* Tabs */}
-      <div style={{
-        position: "sticky", top: 0, zIndex: 30,
-        background: "rgba(10,10,10,0.92)", backdropFilter: "blur(12px)",
-        borderBottom: `1px solid ${C.border}`,
-      }}>
-        <div style={{ maxWidth: 1100, margin: "0 auto", display: "flex", gap: 0 }}>
-          {[
-            { key: "tickets", label: "🎟  TICKETS" },
-            { key: "mesas",   label: "🛋  MESAS / CAMAS" },
-          ].map(t => (
-            <button key={t.key}
-              onClick={() => setTab(t.key)}
-              style={{
-                flex: 1, padding: "18px 16px",
-                background: "none", border: "none", cursor: "pointer",
-                color: tab === t.key ? C.red : C.textMid,
-                fontWeight: 800, fontSize: 14, letterSpacing: "0.1em",
-                borderBottom: `3px solid ${tab === t.key ? C.red : "transparent"}`,
-                transition: "all 0.2s",
-              }}>{t.label}</button>
-          ))}
+      {tab && (
+        <div style={{ maxWidth: 1100, margin: "0 auto", padding: "32px 16px 80px" }}>
+          {tab === "tickets"
+            ? <TicketsSection vendidos={ticketsVendidos} onSelect={abrirTicket} />
+            : <MesasSection reservadas={reservadas} onSelect={abrirMesa} />
+          }
+          <Transporte />
         </div>
-      </div>
+      )}
 
-      {/* Content */}
-      <div style={{ maxWidth: 1100, margin: "0 auto", padding: "32px 16px 80px" }}>
-        {tab === "tickets" ? (
-          <TicketsSection vendidos={ticketsVendidos} onSelect={abrirTicket} />
-        ) : (
-          <MesasSection reservadas={reservadas} onSelect={abrirMesa} />
-        )}
-
-        <Transporte />
-        <Footer />
-      </div>
+      <Footer />
 
       {cart && (
         <CheckoutModal
           item={cart}
-          onClose={cerrarCart}
-          onConfirmar={() => { setConfirmandoCheckout(c => !c); cerrarCart(); }}
+          onClose={() => setCart(null)}
+          onConfirmar={() => { setReload(x => x + 1); setCart(null); }}
         />
       )}
     </div>
@@ -244,121 +195,211 @@ export default function JuicyCream() {
 }
 
 // ──────────────────────────────────────────────────────────────────────
-// HERO
+// HERO — replica el flyer
 // ──────────────────────────────────────────────────────────────────────
 function Hero() {
   return (
-    <div style={{
-      position: "relative",
-      padding: "60px 16px 40px",
-      textAlign: "center",
-      background: "radial-gradient(ellipse at 50% 0%, rgba(225,29,42,0.15), transparent 65%)",
-      borderBottom: `1px solid ${C.border}`,
-    }}>
-      <div style={{ maxWidth: 800, margin: "0 auto" }}>
-        <div style={{
-          fontSize: 11, letterSpacing: "0.3em", color: C.textLow,
-          fontWeight: 700, marginBottom: 12, textTransform: "uppercase",
-        }}>
-          {EVENTO.oficial}
-        </div>
+    <div style={{ position: "relative", textAlign: "center", padding: "40px 16px 24px", maxWidth: 920, margin: "0 auto" }}>
+      {/* JBalvin tag */}
+      <div style={{ fontSize: 11, letterSpacing: "0.32em", color: C.text, fontWeight: 600, marginBottom: 4 }}>
+        OFFICIAL AFTERPARTY
+      </div>
+      <div style={{ fontFamily: "'Bebas Neue', Impact, sans-serif", fontSize: 38, letterSpacing: "0.32em", marginBottom: 2 }}>
+        J BALVIN
+      </div>
+      <div style={{ fontSize: 11, letterSpacing: "0.28em", color: C.text, fontWeight: 500 }}>
+        COLOMBIAN TOUR FINALE
+      </div>
+      <div style={{ width: 56, height: 2, background: C.red, margin: "10px auto 18px" }} />
+
+      {/* JUICY & CREAM principal */}
+      <div style={{ position: "relative", display: "inline-block" }}>
+        {/* Splash decoración detrás */}
+        <SplashDeco />
 
         <h1 style={{
-          fontSize: "clamp(56px, 11vw, 120px)",
-          fontWeight: 900, lineHeight: 0.95, margin: "0 0 8px",
-          fontFamily: "'Bebas Neue', 'Barlow Condensed', Impact, sans-serif",
-          letterSpacing: "-0.01em",
+          fontFamily: "'Anton', Impact, sans-serif",
+          fontSize: "clamp(72px, 14vw, 160px)",
+          fontWeight: 900,
+          lineHeight: 0.88,
+          margin: 0,
+          letterSpacing: "0.02em",
+          position: "relative",
+          zIndex: 2,
         }}>
-          <span style={{
-            background: `linear-gradient(180deg, ${C.red} 0%, ${C.redDark} 100%)`,
-            WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent",
-            textShadow: `0 0 40px ${C.red}66`,
-          }}>JUICY</span>
-          <span style={{ color: C.textLow, margin: "0 16px" }}>&</span>
-          <span style={{
-            background: `linear-gradient(180deg, ${C.cream} 0%, ${C.silver} 100%)`,
-            WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent",
-          }}>CREAM</span>
+          <span className="jc-juicy">JUICY</span>
+          <br />
+          <span className="jc-amp" style={{ fontSize: "0.6em" }}>&amp;</span>
+          {" "}
+          <span className="jc-cream">CREAM</span>
         </h1>
+      </div>
 
+      {/* Doodles laterales */}
+      <DoodlesRow />
+
+      <div style={{
+        fontSize: 13, letterSpacing: "0.18em", color: C.text, fontWeight: 700,
+        marginTop: 8, marginBottom: 28,
+      }}>
+        ELECTRONIC WORLD. <span style={{ color: C.red }}>URBAN VIBES.</span>
+      </div>
+
+      {/* AriaVega cursive signature */}
+      <div style={{ marginBottom: 18, position: "relative" }}>
+        {/* Estrella roja arriba */}
+        <div style={{ position: "absolute", left: "50%", top: -8, transform: "translateX(-50%)", color: C.red, fontSize: 22 }}>✦</div>
         <div style={{
-          fontSize: 13, letterSpacing: "0.25em", color: C.cream, fontWeight: 600,
-          marginBottom: 32, textTransform: "uppercase",
+          fontFamily: "'Allura', 'Brush Script MT', cursive",
+          fontSize: "clamp(56px, 10vw, 96px)",
+          color: C.red,
+          lineHeight: 1,
+          transform: "rotate(-3deg)",
+          display: "inline-block",
         }}>
-          {EVENTO.tagline}
+          {EVENTO.lineup.headliner}
         </div>
-
-        {/* Lineup */}
-        <div style={{ marginBottom: 32 }}>
-          <div style={{
-            fontFamily: "'Brush Script MT', cursive",
-            fontSize: 56, color: C.red,
-            transform: "rotate(-3deg)", display: "inline-block",
-          }}>
-            {EVENTO.lineup.headliner}
-          </div>
-          <div style={{ fontSize: 13, color: C.textMid, marginTop: 4 }}>+ very special guests</div>
+        <div style={{ marginTop: 6, fontSize: 13, color: C.text, fontWeight: 500 }}>
+          <span style={{ color: C.border }}>──</span> + very special guests <span style={{ color: C.border }}>──</span>
         </div>
+      </div>
 
+      {/* Líneup en 2 columnas */}
+      <div style={{
+        display: "grid", gridTemplateColumns: "1fr auto 1fr",
+        gap: 20, maxWidth: 520, margin: "0 auto", alignItems: "center",
+        paddingTop: 14, borderTop: `1px solid ${C.border}`,
+      }}>
+        <div>
+          <div style={{ fontSize: 10, color: C.textMid, letterSpacing: "0.22em", fontWeight: 600, marginBottom: 6 }}>ELECTRONIC WORLD</div>
+          {EVENTO.lineup.electronic.map(a => (
+            <div key={a} style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 22, letterSpacing: "0.04em", lineHeight: 1.1 }}>{a}</div>
+          ))}
+        </div>
+        <div style={{ color: C.text, fontSize: 22, fontWeight: 200, opacity: 0.4 }}>X</div>
+        <div>
+          <div style={{ fontSize: 10, color: C.red, letterSpacing: "0.22em", fontWeight: 600, marginBottom: 6 }}>URBAN WORLD</div>
+          {EVENTO.lineup.urban.map(a => (
+            <div key={a} style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 22, letterSpacing: "0.04em", lineHeight: 1.1, color: C.red }}>{a}</div>
+          ))}
+        </div>
+      </div>
+
+      {/* Argüello */}
+      <div style={{ marginTop: 22, fontSize: 13, color: C.text }}>
+        <span style={{ fontWeight: 700, letterSpacing: "0.05em" }}>ARGÜ<span style={{ color: C.red }}>ELLO</span></span>
+        <div style={{ fontSize: 11, color: C.textMid, fontStyle: "italic", marginTop: 2 }}>precisamente en</div>
         <div style={{
-          display: "grid", gridTemplateColumns: "1fr 1px 1fr", gap: 20,
-          maxWidth: 480, margin: "0 auto", padding: "20px 0",
-          borderTop: `1px solid ${C.border}`, borderBottom: `1px solid ${C.border}`,
+          fontFamily: "'Anton', sans-serif", fontSize: "clamp(40px, 7vw, 64px)",
+          letterSpacing: "0.06em", marginTop: 2,
         }}>
-          <div>
-            <div style={{ fontSize: 10, color: C.textLow, letterSpacing: "0.2em", fontWeight: 700, marginBottom: 6 }}>ELECTRONIC WORLD</div>
-            {EVENTO.lineup.electronic.map(a => (
-              <div key={a} style={{ fontSize: 14, fontWeight: 800, lineHeight: 1.3 }}>{a}</div>
-            ))}
+          <span className="jc-cream">CARTAGENA</span>
+        </div>
+        <div style={{ fontSize: 11, color: C.textMid, letterSpacing: "0.1em", marginTop: 2 }}>
+          ISLA TIERRA BOMBA · COLOMBIA
+        </div>
+      </div>
+
+      {/* Pills info */}
+      <div style={{
+        display: "grid", gap: 0,
+        gridTemplateColumns: "1fr 1px 1fr 1px 1fr",
+        maxWidth: 560, margin: "26px auto 0",
+        padding: "12px 18px",
+        border: `1.5px solid ${C.red}`, borderRadius: 4,
+        background: "#fff",
+      }}>
+        <Pill icon="📅" titulo="SUNDAY" valor="JUNE 07" />
+        <Sep />
+        <Pill icon="🕐" titulo="DOORS OPEN" valor="2PM" />
+        <Sep />
+        <Pill icon="📍" titulo="ATOLÓN" valor="BEACH CLUB" />
+      </div>
+
+      <div style={{
+        display: "inline-block", marginTop: 14, padding: "8px 18px",
+        border: `1.5px solid ${C.red}`, borderRadius: 50, fontSize: 11,
+        letterSpacing: "0.25em", color: C.red, fontWeight: 700,
+      }}>
+        JUICYANDCREAM.COM
+      </div>
+
+      <div style={{ marginTop: 10, fontSize: 10, color: C.textLow, letterSpacing: "0.2em", fontWeight: 600 }}>
+        POWERED BY : <span style={{ color: C.text }}>3 NOMADS X</span> & <span style={{ color: C.text }}>574 STUDIO</span>
+      </div>
+    </div>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// SELECTOR — Boletería / Mesas y Camas (sticky)
+// ──────────────────────────────────────────────────────────────────────
+function Selector({ tab, onTab }) {
+  return (
+    <div style={{
+      position: "sticky", top: 0, zIndex: 30,
+      background: "rgba(250,250,248,0.96)", backdropFilter: "blur(8px)",
+      borderTop: `1px solid ${C.border}`, borderBottom: `1px solid ${C.border}`,
+      marginTop: 30,
+    }}>
+      <div style={{ maxWidth: 1100, margin: "0 auto", padding: "18px 16px" }}>
+        {!tab && (
+          <div style={{ textAlign: "center", marginBottom: 14, fontSize: 11, letterSpacing: "0.25em", color: C.textMid, fontWeight: 700 }}>
+            ELIGE TU EXPERIENCIA
           </div>
-          <div style={{ background: C.border }} />
-          <div>
-            <div style={{ fontSize: 10, color: C.red, letterSpacing: "0.2em", fontWeight: 700, marginBottom: 6 }}>URBAN WORLD</div>
-            {EVENTO.lineup.urban.map(a => (
-              <div key={a} style={{ fontSize: 14, fontWeight: 800, lineHeight: 1.3, color: C.red }}>{a}</div>
-            ))}
-          </div>
-        </div>
-
-        <div style={{ marginTop: 16, fontSize: 12, color: C.textMid, fontStyle: "italic" }}>
-          {EVENTO.lineup.extra}
-        </div>
-
-        {/* Info principal */}
-        <div style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))",
-          gap: 14, marginTop: 36, maxWidth: 600, marginLeft: "auto", marginRight: "auto",
-        }}>
-          <InfoPill icon="📅" label={EVENTO.fecha.toUpperCase()} />
-          <InfoPill icon="🕐" label={`DOORS ${EVENTO.doors}`} />
-          <InfoPill icon="📍" label="ATOLÓN BEACH CLUB" />
-        </div>
-
-        <div style={{ marginTop: 18, fontSize: 11, color: C.textLow, letterSpacing: "0.15em", fontWeight: 600 }}>
-          ISLA TIERRA BOMBA · CARTAGENA · COLOMBIA
-        </div>
-
-        <div style={{ marginTop: 28, fontSize: 10, color: C.textLow, letterSpacing: "0.2em" }}>
-          POWERED BY <span style={{ color: C.cream, fontWeight: 800 }}>{EVENTO.by}</span>
+        )}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+          <ChoiceBtn
+            active={tab === "tickets"} onClick={() => onTab("tickets")}
+            icon="🎟" titulo="BOLETERÍA"
+            sub="Tickets desde $165.000"
+          />
+          <ChoiceBtn
+            active={tab === "mesas"} onClick={() => onTab("mesas")}
+            icon="🛋" titulo="MESAS / CAMAS"
+            sub="Experiencia VIP con consumible"
+          />
         </div>
       </div>
     </div>
   );
 }
 
-function InfoPill({ icon, label }) {
+function ChoiceBtn({ active, onClick, icon, titulo, sub }) {
   return (
-    <div style={{
-      padding: "10px 14px",
-      background: C.card, border: `1px solid ${C.border}`, borderRadius: 10,
-      display: "flex", alignItems: "center", gap: 8, justifyContent: "center",
+    <button onClick={onClick} style={{
+      padding: "18px 20px",
+      background: active ? C.red : "#fff",
+      color: active ? "#fff" : C.text,
+      border: `2px solid ${active ? C.red : C.borderMid}`,
+      borderRadius: 6,
+      cursor: "pointer",
+      textAlign: "left",
+      transition: "all 0.15s",
+      display: "flex", alignItems: "center", gap: 14,
     }}>
-      <span style={{ fontSize: 18 }}>{icon}</span>
-      <span style={{ fontSize: 12, fontWeight: 800, color: C.cream, letterSpacing: "0.05em" }}>{label}</span>
+      <div style={{ fontSize: 30 }}>{icon}</div>
+      <div style={{ flex: 1 }}>
+        <div style={{ fontFamily: "'Anton', sans-serif", fontSize: 22, letterSpacing: "0.08em", lineHeight: 1 }}>
+          {titulo}
+        </div>
+        <div style={{ fontSize: 11, marginTop: 4, opacity: active ? 0.85 : 0.6, fontWeight: 500 }}>{sub}</div>
+      </div>
+      <div style={{ fontSize: 18 }}>{active ? "✕" : "→"}</div>
+    </button>
+  );
+}
+
+function Pill({ icon, titulo, valor }) {
+  return (
+    <div style={{ textAlign: "center" }}>
+      <div style={{ fontSize: 18 }}>{icon}</div>
+      <div style={{ fontSize: 9, color: C.textMid, letterSpacing: "0.18em", fontWeight: 700, marginTop: 2 }}>{titulo}</div>
+      <div style={{ fontFamily: "'Anton', sans-serif", fontSize: 18, letterSpacing: "0.05em", color: C.red, marginTop: 1 }}>{valor}</div>
     </div>
   );
 }
+const Sep = () => <div style={{ background: C.borderMid, width: 1 }} />;
 
 // ──────────────────────────────────────────────────────────────────────
 // TICKETS
@@ -366,56 +407,52 @@ function InfoPill({ icon, label }) {
 function TicketsSection({ vendidos, onSelect }) {
   const h = horaCO();
   return (
-    <div style={{ marginTop: 24 }}>
-      <SectionTitle title="Tickets" sub="Todos los tickets incluyen transporte en lancha desde Muelle de la Bodeguita (ida y regreso)." />
-
-      <div style={{ display: "grid", gap: 14 }}>
+    <div>
+      <SectionTitle title="BOLETERÍA" sub="Todos los tickets incluyen transporte en lancha desde el Muelle de la Bodeguita · ida y regreso" />
+      <div style={{ display: "grid", gap: 12 }}>
         {TICKETS.map(t => {
           const earlyActive = h < t.early.hasta;
           const precio = earlyActive ? t.early.precio : t.anytime;
           const vendido = vendidos[t.key] || 0;
           const disponible = t.cupo - vendido;
           const sold = disponible <= 0;
-
           return (
             <div key={t.key} style={{
-              background: C.card, border: `1px solid ${sold ? C.border : t.color + "44"}`,
-              borderRadius: 14, padding: "20px 22px",
-              display: "grid", gridTemplateColumns: "1fr auto", gap: 16, alignItems: "center",
+              background: "#fff",
+              border: `2px solid ${sold ? C.border : C.text}`,
+              borderRadius: 6,
+              padding: "18px 22px",
+              display: "grid", gridTemplateColumns: "1fr auto",
+              alignItems: "center", gap: 14,
               opacity: sold ? 0.5 : 1,
             }}>
               <div>
                 <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
-                  <div style={{
-                    fontSize: 22, fontWeight: 900, letterSpacing: "0.05em",
-                    color: t.color, textTransform: "uppercase",
-                  }}>{t.label}</div>
+                  <div style={{ fontFamily: "'Anton', sans-serif", fontSize: 26, letterSpacing: "0.06em", textTransform: "uppercase" }}>
+                    {t.label}
+                  </div>
                   {earlyActive && !sold && (
                     <span style={{
-                      fontSize: 10, padding: "2px 8px", borderRadius: 12,
-                      background: C.red + "22", color: C.red, fontWeight: 800, letterSpacing: "0.08em",
+                      fontSize: 10, padding: "3px 9px", borderRadius: 20,
+                      background: C.red, color: "#fff", fontWeight: 800, letterSpacing: "0.1em",
                     }}>EARLY BIRD</span>
                   )}
                 </div>
-                <div style={{ fontSize: 12, color: C.textMid }}>{t.sub}</div>
+                <div style={{ fontSize: 12, color: C.textMid, fontWeight: 500 }}>{t.sub}</div>
                 <div style={{ fontSize: 11, color: C.textLow, marginTop: 6 }}>
-                  {sold ? "Agotado" : `${disponible} disponibles de ${t.cupo}`}
-                  {earlyActive && (
-                    <span style={{ color: C.red, marginLeft: 8 }}>
-                      · Early hasta {t.early.hasta}:00 PM
+                  {sold ? "Agotado" : `${disponible} de ${t.cupo} disponibles`}
+                  {earlyActive && !sold && (
+                    <span style={{ color: C.red, marginLeft: 8, fontWeight: 700 }}>
+                      · Early hasta {t.early.hasta}:00 hrs
                     </span>
                   )}
                 </div>
               </div>
-
               <div style={{ textAlign: "right" }}>
-                <div style={{ fontSize: 11, color: C.textLow, marginBottom: 2 }}>
+                <div style={{ fontSize: 10, color: C.textLow, letterSpacing: "0.15em", fontWeight: 700 }}>
                   {earlyActive ? "EARLY" : "ANYTIME"}
                 </div>
-                <div style={{
-                  fontSize: 26, fontWeight: 900, color: t.color,
-                  fontFamily: "'Bebas Neue', sans-serif", lineHeight: 1,
-                }}>
+                <div style={{ fontFamily: "'Anton', sans-serif", fontSize: 30, color: C.red, lineHeight: 1, marginTop: 2 }}>
                   {COP(precio)}
                 </div>
                 {earlyActive && (
@@ -425,10 +462,11 @@ function TicketsSection({ vendidos, onSelect }) {
                 )}
                 <button onClick={() => !sold && onSelect(t)} disabled={sold}
                   style={{
-                    marginTop: 10, padding: "8px 16px",
-                    background: sold ? C.border : t.color, color: sold ? C.textLow : "#000",
-                    border: "none", borderRadius: 8, fontWeight: 900, fontSize: 12,
-                    letterSpacing: "0.08em", cursor: sold ? "not-allowed" : "pointer",
+                    marginTop: 12, padding: "9px 22px",
+                    background: sold ? C.border : C.red, color: sold ? C.textLow : "#fff",
+                    border: "none", borderRadius: 4, fontWeight: 900, fontSize: 12,
+                    letterSpacing: "0.1em", cursor: sold ? "not-allowed" : "pointer",
+                    fontFamily: "'Bebas Neue', sans-serif",
                   }}>
                   {sold ? "AGOTADO" : "COMPRAR"}
                 </button>
@@ -442,75 +480,63 @@ function TicketsSection({ vendidos, onSelect }) {
 }
 
 // ──────────────────────────────────────────────────────────────────────
-// MESAS (plano visual)
+// MESAS
 // ──────────────────────────────────────────────────────────────────────
 function MesasSection({ reservadas, onSelect }) {
-  // Agrupar por zona para mostrar precios
   const grupos = useMemo(() => {
     const g = {};
-    MESAS.forEach(m => {
-      if (!g[m.zona]) g[m.zona] = [];
-      g[m.zona].push(m);
-    });
+    MESAS.forEach(m => { if (!g[m.zona]) g[m.zona] = []; g[m.zona].push(m); });
     return g;
   }, []);
-
   return (
-    <div style={{ marginTop: 24 }}>
-      <SectionTitle title="Mesas / Camas" sub="Experiencia exclusiva con consumible incluido. Las mesas DJ Booth y Backstage incluyen transporte privado en lancha para el grupo completo (ida y regreso)." />
+    <div>
+      <SectionTitle
+        title="MESAS / CAMAS"
+        sub="Experiencia exclusiva con consumible incluido · Las mesas DJ Booth y Backstage incluyen transporte privado para el grupo completo"
+      />
 
       {/* Plano visual */}
-      <div style={{
-        background: C.card, border: `1px solid ${C.border}`, borderRadius: 14,
-        padding: 18, marginBottom: 20,
-      }}>
-        <div style={{ fontSize: 11, color: C.textLow, letterSpacing: "0.2em", marginBottom: 14, textAlign: "center", fontWeight: 700 }}>
+      <div style={{ background: "#fff", border: `2px solid ${C.text}`, borderRadius: 6, padding: 18, marginBottom: 20 }}>
+        <div style={{ fontSize: 10, letterSpacing: "0.25em", color: C.textMid, fontWeight: 700, textAlign: "center", marginBottom: 12 }}>
           PLANO DEL EVENTO
         </div>
 
-        {/* Columna A (izquierda) | POOL/BACKSTAGE/DJ | Columna B (derecha) */}
-        <div style={{ display: "grid", gridTemplateColumns: "auto 1fr auto", gap: 8, marginBottom: 14 }}>
-          {/* Lado A */}
+        <div style={{ display: "grid", gridTemplateColumns: "auto 1fr auto", gap: 8, marginBottom: 12 }}>
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
             {["4A","3A","2A","1A"].map(k => <MesaSlot key={k} k={k} reservadas={reservadas} onSelect={onSelect} />)}
           </div>
-
-          {/* Centro: POOL, BACKSTAGE, DJ */}
           <div style={{ display: "flex", flexDirection: "column", gap: 6, justifyContent: "space-between" }}>
             <div style={{
-              background: "linear-gradient(180deg, #1a3a52, #0d2540)", borderRadius: 8,
-              padding: "20px 0", textAlign: "center", fontWeight: 900, color: C.cream,
-              letterSpacing: "0.3em", fontSize: 14,
+              background: "linear-gradient(180deg, #1a3a52, #0d2540)", color: C.cream,
+              borderRadius: 6, padding: "20px 0", textAlign: "center",
+              fontWeight: 900, letterSpacing: "0.3em", fontSize: 14,
             }}>P O O L</div>
             <div style={{
-              background: C.bgSoft, borderRadius: 8, padding: "12px 0", textAlign: "center",
-              fontWeight: 700, color: C.textMid, letterSpacing: "0.15em", fontSize: 11,
-              border: `1px solid ${C.border}`,
+              background: C.bg, border: `1px solid ${C.border}`, color: C.textMid,
+              borderRadius: 6, padding: "12px 0", textAlign: "center",
+              fontWeight: 700, letterSpacing: "0.15em", fontSize: 11,
             }}>BACKSTAGE</div>
             <div style={{ display: "flex", gap: 6, justifyContent: "center" }}>
               <MesaSlot k="A1" reservadas={reservadas} onSelect={onSelect} size="lg" />
               <MesaSlot k="A2" reservadas={reservadas} onSelect={onSelect} size="lg" />
             </div>
             <div style={{
-              background: C.red + "22", color: C.red, borderRadius: 8,
-              padding: "6px 0", textAlign: "center", fontWeight: 900, fontSize: 11, letterSpacing: "0.2em",
-              border: `1px solid ${C.red}44`,
+              background: C.red, color: "#fff", borderRadius: 6,
+              padding: "6px 0", textAlign: "center", fontWeight: 900,
+              fontSize: 11, letterSpacing: "0.2em",
             }}>DJ</div>
           </div>
-
-          {/* Lado B */}
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
             {["4B","3B","2B","1B"].map(k => <MesaSlot key={k} k={k} reservadas={reservadas} onSelect={onSelect} />)}
           </div>
         </div>
 
-        {/* VIP Beach abajo */}
         <div style={{
-          background: C.gold + "11", border: `1px solid ${C.gold}33`, borderRadius: 8,
-          padding: "10px 0", textAlign: "center",
-          fontWeight: 700, color: C.gold, letterSpacing: "0.2em", fontSize: 11, marginBottom: 8,
+          background: C.cream, border: `1px solid ${C.borderMid}`,
+          borderRadius: 6, padding: "10px 0", textAlign: "center",
+          fontWeight: 700, letterSpacing: "0.2em", fontSize: 11, marginBottom: 10,
+          color: C.text,
         }}>☀ VIP BEACH · DANCEFLOOR</div>
-
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
             {["1C","2C","3C","4C"].map(k => <MesaSlot key={k} k={k} reservadas={reservadas} onSelect={onSelect} />)}
@@ -521,14 +547,15 @@ function MesasSection({ reservadas, onSelect }) {
         </div>
       </div>
 
-      {/* Lista por zonas con precios */}
+      {/* Lista por zonas */}
       <div style={{ display: "grid", gap: 12 }}>
         {Object.entries(grupos).map(([zona, mesas]) => (
           <div key={zona} style={{
-            background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, padding: 16,
+            background: "#fff", border: `1px solid ${C.borderMid}`, borderRadius: 6, padding: 16,
           }}>
             <div style={{
-              fontSize: 11, color: C.gold, letterSpacing: "0.2em", marginBottom: 10, fontWeight: 800,
+              fontFamily: "'Anton', sans-serif", fontSize: 18, letterSpacing: "0.12em",
+              color: C.red, marginBottom: 10,
             }}>{zona}</div>
             <div style={{ display: "grid", gap: 6 }}>
               {mesas.map(m => {
@@ -538,21 +565,21 @@ function MesasSection({ reservadas, onSelect }) {
                     style={{
                       display: "grid", gridTemplateColumns: "60px 1fr auto",
                       alignItems: "center", gap: 12, padding: "10px 12px",
-                      background: taken ? C.border : "transparent",
-                      border: `1px solid ${taken ? C.border : C.border}`,
-                      borderRadius: 8, cursor: taken ? "not-allowed" : "pointer",
+                      background: taken ? "#F5F5F5" : "transparent",
+                      border: `1px solid ${C.border}`, borderRadius: 4,
+                      cursor: taken ? "not-allowed" : "pointer",
                       color: taken ? C.textLow : C.text, textAlign: "left",
-                      opacity: taken ? 0.5 : 1,
+                      opacity: taken ? 0.5 : 1, fontFamily: "inherit",
                     }}>
                     <div style={{
-                      fontSize: 13, fontWeight: 900, color: m.premium ? C.red : C.cream,
-                      letterSpacing: "0.05em",
+                      fontFamily: "'Anton', sans-serif", fontSize: 18,
+                      color: m.premium ? C.red : C.text, letterSpacing: "0.05em",
                     }}>{m.key}</div>
                     <div style={{ fontSize: 11, color: C.textMid }}>
                       Consumible {Math.round(m.consumible * 100)}%
-                      {m.transporte && <span style={{ color: C.gold, marginLeft: 8 }}>· 🚤 Transporte</span>}
+                      {m.transporte && <span style={{ color: C.red, marginLeft: 8, fontWeight: 700 }}>· 🚤 Transporte</span>}
                     </div>
-                    <div style={{ fontSize: 14, fontWeight: 800, color: taken ? C.textLow : C.cream }}>
+                    <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 18, color: taken ? C.textLow : C.text, letterSpacing: "0.04em" }}>
                       {taken ? "RESERVADA" : COP(m.precio)}
                     </div>
                   </button>
@@ -564,12 +591,11 @@ function MesasSection({ reservadas, onSelect }) {
       </div>
 
       {/* Beneficios */}
-      <div style={{
-        background: C.card, border: `1px solid ${C.gold}33`, borderRadius: 12, padding: 16, marginTop: 14,
-      }}>
-        <div style={{ fontSize: 11, color: C.gold, letterSpacing: "0.15em", fontWeight: 800, marginBottom: 10 }}>
-          MESAS DJ BOOTH & BACKSTAGE INCLUYEN
-        </div>
+      <div style={{ background: "#fff", border: `2px solid ${C.red}`, borderRadius: 6, padding: 16, marginTop: 14 }}>
+        <div style={{
+          fontFamily: "'Anton', sans-serif", fontSize: 18, letterSpacing: "0.1em",
+          color: C.red, marginBottom: 10, textAlign: "center",
+        }}>MESAS DJ BOOTH & BACKSTAGE INCLUYEN</div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px,1fr))", gap: 10 }}>
           {[
             { icon: "🛎", label: "Concierge VIP" },
@@ -592,59 +618,117 @@ function MesaSlot({ k, reservadas, onSelect, size = "md" }) {
   const m = MESAS.find(x => x.key === k);
   if (!m) return <div style={{ height: 38 }} />;
   const taken = reservadas.has(k);
-  const color = m.premium ? C.red : C.gold;
+  const color = m.premium ? C.red : C.text;
   return (
-    <button onClick={() => onSelect(m)} disabled={taken}
-      style={{
-        background: taken ? C.border : C.bgSoft, border: `1px solid ${taken ? C.border : color + "55"}`,
-        borderRadius: 6, padding: size === "lg" ? "10px 12px" : "8px 6px",
-        color: taken ? C.textLow : color, fontWeight: 900,
-        fontSize: size === "lg" ? 14 : 11, letterSpacing: "0.05em",
-        cursor: taken ? "not-allowed" : "pointer",
-        minWidth: size === "lg" ? 44 : 32, textAlign: "center",
-        opacity: taken ? 0.5 : 1,
-      }}>{k}</button>
+    <button onClick={() => onSelect(m)} disabled={taken} style={{
+      background: taken ? "#F5F5F5" : "#fff",
+      border: `1.5px solid ${taken ? C.border : color}`,
+      borderRadius: 4, padding: size === "lg" ? "10px 12px" : "8px 6px",
+      color: taken ? C.textLow : color,
+      fontFamily: "'Anton', sans-serif",
+      fontSize: size === "lg" ? 16 : 13,
+      letterSpacing: "0.05em",
+      cursor: taken ? "not-allowed" : "pointer",
+      minWidth: size === "lg" ? 44 : 32, textAlign: "center",
+      opacity: taken ? 0.5 : 1,
+    }}>{k}</button>
   );
 }
 
 // ──────────────────────────────────────────────────────────────────────
-// TRANSPORTE
-// ──────────────────────────────────────────────────────────────────────
 function Transporte() {
   return (
     <div style={{
-      marginTop: 40,
-      background: C.card, border: `1px solid ${C.border}`, borderRadius: 14, padding: 22,
+      marginTop: 36, background: "#fff", border: `1px solid ${C.borderMid}`,
+      borderRadius: 6, padding: 22,
     }}>
-      <div style={{ fontSize: 11, color: C.cream, letterSpacing: "0.2em", fontWeight: 800, marginBottom: 14 }}>
-        🚤 TRANSPORTE
-      </div>
-      <div style={{ display: "grid", gap: 10, fontSize: 13, color: C.textMid, lineHeight: 1.6 }}>
+      <div style={{
+        fontFamily: "'Anton', sans-serif", fontSize: 20, letterSpacing: "0.12em",
+        color: C.text, marginBottom: 14,
+      }}>🚤 TRANSPORTE</div>
+      <div style={{ display: "grid", gap: 8, fontSize: 13, color: C.textMid, lineHeight: 1.6 }}>
         <div><strong style={{ color: C.text }}>Salida:</strong> Lanchas rápidas desde Muelle de la Bodeguita · Trayecto 15 min</div>
         <div><strong style={{ color: C.text }}>Ida:</strong> Desde 1:30 PM, cada 30 minutos</div>
         <div><strong style={{ color: C.text }}>Regreso:</strong> Desde 9:00 PM hasta 2:00 AM, cada 30 minutos</div>
-        <div style={{ color: C.red, marginTop: 4 }}>
-          ⚠ <strong>Impuesto de Muelle NO incluido</strong> — se paga directamente en la taquilla de la Bodeguita
+        <div style={{ color: C.red, marginTop: 4, fontWeight: 600 }}>
+          ⚠ Impuesto de Muelle NO incluido — se paga en la taquilla de la Bodeguita
         </div>
       </div>
     </div>
   );
 }
 
-// ──────────────────────────────────────────────────────────────────────
-// FOOTER
-// ──────────────────────────────────────────────────────────────────────
 function Footer() {
   return (
-    <div style={{
-      marginTop: 50, paddingTop: 28, borderTop: `1px solid ${C.border}`,
-      textAlign: "center", color: C.textLow,
+    <div style={{ borderTop: `1px solid ${C.border}`, padding: "32px 16px", textAlign: "center", background: "#fff" }}>
+      <div style={{ fontFamily: "'Anton', sans-serif", fontSize: 24, letterSpacing: "0.1em", color: C.text }}>
+        ATOLÓN BEACH CLUB
+      </div>
+      <div style={{ fontSize: 10, letterSpacing: "0.25em", marginTop: 4, color: C.textMid }}>TIERRA BOMBA · CARTAGENA</div>
+      <div style={{ fontSize: 10, marginTop: 14, color: C.textLow, letterSpacing: "0.05em" }}>
+        juicyandcream.com · powered by <strong style={{ color: C.text }}>3 NOMADS X</strong> & <strong style={{ color: C.text }}>574 STUDIO</strong>
+      </div>
+    </div>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// SVG decorations
+// ──────────────────────────────────────────────────────────────────────
+function SplashDeco() {
+  // splash rojo detrás de "JUICY"
+  return (
+    <svg viewBox="0 0 800 240" style={{
+      position: "absolute", top: -28, left: -20, width: "60%", height: "auto",
+      zIndex: 1, pointerEvents: "none", opacity: 0.85,
     }}>
-      <div style={{
-        fontFamily: "'Bebas Neue', sans-serif", fontSize: 28, color: C.cream, letterSpacing: "0.1em",
-      }}>ATOLÓN BEACH CLUB</div>
-      <div style={{ fontSize: 10, letterSpacing: "0.25em", marginTop: 4 }}>TIERRA BOMBA · CARTAGENA</div>
-      <div style={{ fontSize: 10, marginTop: 16 }}>juicyandcream.com · powered by 3 NOMADS X & 574 STUDIO</div>
+      <g fill="#E11D2A">
+        <circle cx="80" cy="60" r="22" />
+        <circle cx="30" cy="40" r="6" />
+        <circle cx="50" cy="100" r="9" />
+        <circle cx="120" cy="20" r="5" />
+        <circle cx="170" cy="50" r="14" />
+        <circle cx="200" cy="120" r="7" />
+        <circle cx="240" cy="30" r="8" />
+        <circle cx="20" cy="160" r="11" />
+        <circle cx="280" cy="90" r="5" />
+        <path d="M 60 80 Q 50 120 80 150 T 130 200" stroke="#E11D2A" strokeWidth="3" fill="none" />
+        <path d="M 200 60 Q 220 90 210 130" stroke="#E11D2A" strokeWidth="2.5" fill="none" />
+      </g>
+    </svg>
+  );
+}
+
+function DoodlesRow() {
+  // Pez · tortuga · estrella · olas — alrededor de la firma AriaVega
+  return (
+    <div style={{
+      position: "absolute", left: 0, right: 0, top: "55%", pointerEvents: "none",
+      display: "flex", justifyContent: "space-between", padding: "0 6%", zIndex: 0,
+    }}>
+      {/* Izquierda */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 14, opacity: 0.85 }}>
+        <svg width="46" height="22" viewBox="0 0 46 22" fill="none">
+          <path d="M 4 11 Q 14 2 28 5 L 42 11 L 28 17 Q 14 20 4 11 Z" stroke="#E11D2A" strokeWidth="1.5" />
+          <circle cx="32" cy="9" r="1.2" fill="#E11D2A" />
+        </svg>
+        <svg width="40" height="28" viewBox="0 0 40 28" fill="none">
+          <ellipse cx="20" cy="16" rx="12" ry="8" stroke="#E11D2A" strokeWidth="1.5" />
+          <circle cx="20" cy="16" r="3" stroke="#E11D2A" strokeWidth="1" />
+          <path d="M 12 10 L 8 6 M 28 10 L 32 6 M 12 22 L 8 26 M 28 22 L 32 26" stroke="#E11D2A" strokeWidth="1.5" />
+          <circle cx="30" cy="8" r="2" stroke="#E11D2A" strokeWidth="1.2" />
+        </svg>
+      </div>
+      {/* Derecha */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 12, opacity: 0.85, alignItems: "flex-end" }}>
+        <svg width="44" height="20" viewBox="0 0 44 20" fill="none">
+          <path d="M 4 10 Q 10 4 16 10 T 28 10 T 40 10" stroke="#E11D2A" strokeWidth="1.5" />
+          <path d="M 32 14 L 36 18 M 36 14 L 40 18" stroke="#E11D2A" strokeWidth="1.5" />
+        </svg>
+        <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
+          <path d="M 16 3 L 19 12 L 29 13 L 21 19 L 24 28 L 16 23 L 8 28 L 11 19 L 3 13 L 13 12 Z" stroke="#E11D2A" strokeWidth="1.5" />
+        </svg>
+      </div>
     </div>
   );
 }
@@ -660,29 +744,25 @@ function CheckoutModal({ item, onClose, onConfirmar }) {
 
   const totalBase = item.precio * (item.kind === "ticket" ? cantidad : 1);
   const consumibleMonto = item.consumible ? totalBase * item.consumible : 0;
-  const totalFinal = totalBase; // el consumible está incluido (no se suma)
+  const totalFinal = totalBase;
 
   const setF = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
   const confirmar = async () => {
-    if (!form.nombre.trim() || !form.telefono.trim()) {
-      alert("Nombre y teléfono son requeridos");
+    const digitos = (form.telefono || "").replace(/\D/g, "");
+    if (!form.nombre.trim() || digitos.length < 7) {
+      alert("Nombre y teléfono (mínimo 7 dígitos) son requeridos");
       return;
     }
     setBusy(true);
-    const id = `JC-${Date.now()}-${Math.random().toString(36).slice(2,6).toUpperCase()}`;
+    const id = `JC-${Date.now()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
     const payload = {
-      id,
-      tipo: item.kind,
-      categoria: item.categoria,
+      id, tipo: item.kind, categoria: item.categoria,
       cantidad: item.kind === "ticket" ? Number(cantidad) : 1,
-      precio_unitario: item.precio,
-      total: totalFinal,
+      precio_unitario: item.precio, total: totalFinal,
       consumible_pct: item.consumible ? item.consumible * 100 : 0,
-      nombre: form.nombre.trim(),
-      email: form.email.trim() || null,
-      telefono: form.telefono.trim(),
-      cedula: form.cedula.trim() || null,
+      nombre: form.nombre.trim(), email: form.email.trim() || null,
+      telefono: form.telefono.trim(), cedula: form.cedula.trim() || null,
       estado: "pendiente_pago",
     };
     const { error } = await supabase.from("juicy_cream_reservas").insert(payload);
@@ -696,31 +776,31 @@ function CheckoutModal({ item, onClose, onConfirmar }) {
       }
       return;
     }
-
-    // Generar mensaje WhatsApp con resumen
-    const msg = `*JUICY & CREAM · Nueva reserva*\n\nID: ${id}\n${item.kind === "ticket" ? "Ticket" : "Mesa"}: ${item.label}\n${item.kind === "ticket" ? `Cantidad: ${cantidad}\n` : ""}Total: ${COP(totalFinal)}${item.consumible ? `\n(Consumible ${Math.round(item.consumible*100)}%: ${COP(consumibleMonto)})` : ""}\n\nCliente: ${form.nombre}\nTel: ${form.telefono}${form.email ? `\nEmail: ${form.email}` : ""}${form.cedula ? `\nCC: ${form.cedula}` : ""}\n\nNecesito link de pago para confirmar mi reserva.`;
-    const link = `https://wa.me/${WA_PHONE}?text=${encodeURIComponent(msg)}`;
-    setExitoLink(link);
+    const msg = `*JUICY & CREAM · Nueva reserva*\n\nID: ${id}\n${item.kind === "ticket" ? "Ticket" : "Mesa"}: ${item.label}\n${item.kind === "ticket" ? `Cantidad: ${cantidad}\n` : ""}Total: ${COP(totalFinal)}${item.consumible ? `\n(Consumible ${Math.round(item.consumible * 100)}%: ${COP(consumibleMonto)})` : ""}\n\nCliente: ${form.nombre}\nTel: ${form.telefono}${form.email ? `\nEmail: ${form.email}` : ""}${form.cedula ? `\nCC: ${form.cedula}` : ""}\n\nNecesito link de pago para confirmar mi reserva.`;
+    setExitoLink(`https://wa.me/${WA_PHONE}?text=${encodeURIComponent(msg)}`);
     onConfirmar();
   };
 
   if (exitoLink) {
     return (
       <Overlay onClose={onClose}>
-        <div style={{ textAlign: "center", padding: 20 }}>
-          <div style={{ fontSize: 56 }}>✅</div>
-          <h3 style={{ fontSize: 22, fontWeight: 800, margin: "12px 0 8px" }}>Reserva creada</h3>
-          <div style={{ fontSize: 13, color: C.textMid, marginBottom: 24, lineHeight: 1.5 }}>
+        <div style={{ textAlign: "center", padding: "16px 6px" }}>
+          <div style={{ fontSize: 48, marginBottom: 8 }}>✅</div>
+          <h3 style={{ fontFamily: "'Anton', sans-serif", fontSize: 26, letterSpacing: "0.06em", margin: "8px 0 6px" }}>
+            RESERVA CREADA
+          </h3>
+          <div style={{ fontSize: 13, color: C.textMid, marginBottom: 22, lineHeight: 1.5 }}>
             Tu reserva está <strong>guardada y bloqueada</strong>. Confirma con el equipo por WhatsApp para recibir el link de pago.
           </div>
           <a href={exitoLink} target="_blank" rel="noreferrer" style={{
             display: "block", padding: "16px 22px",
-            background: "#25D366", color: "#000", textDecoration: "none",
-            borderRadius: 10, fontWeight: 900, fontSize: 14, letterSpacing: "0.05em",
+            background: "#25D366", color: "#fff", textDecoration: "none",
+            borderRadius: 6, fontWeight: 900, fontSize: 14, letterSpacing: "0.05em",
+            fontFamily: "'Bebas Neue', sans-serif",
           }}>💬 ABRIR WHATSAPP PARA PAGAR</a>
           <button onClick={onClose} style={{
             marginTop: 14, padding: "10px 20px", background: "none",
-            border: `1px solid ${C.border}`, borderRadius: 8, color: C.textMid,
+            border: `1px solid ${C.border}`, borderRadius: 4, color: C.textMid,
             fontSize: 12, cursor: "pointer",
           }}>Cerrar</button>
         </div>
@@ -730,15 +810,20 @@ function CheckoutModal({ item, onClose, onConfirmar }) {
 
   return (
     <Overlay onClose={onClose}>
-      <h3 style={{ fontSize: 20, fontWeight: 900, margin: "0 0 4px", color: item.color }}>{item.label}</h3>
-      <div style={{ fontSize: 11, color: C.textLow, marginBottom: 18 }}>JUICY & CREAM · 07 JUN 2026</div>
+      <h3 style={{
+        fontFamily: "'Anton', sans-serif", fontSize: 24, letterSpacing: "0.05em",
+        margin: "0 0 2px", color: C.red,
+      }}>{item.label}</h3>
+      <div style={{ fontSize: 11, color: C.textLow, marginBottom: 18, letterSpacing: "0.15em", fontWeight: 600 }}>
+        JUICY &amp; CREAM · 07 JUN 2026
+      </div>
 
       {item.kind === "ticket" && (
         <div style={{ marginBottom: 14 }}>
           <Label>Cantidad</Label>
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
             <button onClick={() => setCantidad(c => Math.max(1, c - 1))} style={qBtn}>−</button>
-            <span style={{ fontSize: 22, fontWeight: 900, minWidth: 36, textAlign: "center" }}>{cantidad}</span>
+            <span style={{ fontFamily: "'Anton', sans-serif", fontSize: 26, minWidth: 36, textAlign: "center" }}>{cantidad}</span>
             <button onClick={() => setCantidad(c => Math.min(10, c + 1))} style={qBtn}>+</button>
             <div style={{ marginLeft: "auto", fontSize: 13, color: C.textMid }}>
               {COP(item.precio)} c/u
@@ -749,27 +834,28 @@ function CheckoutModal({ item, onClose, onConfirmar }) {
 
       <div style={{ display: "grid", gap: 10, marginBottom: 14 }}>
         <Field label="Nombre completo *" value={form.nombre} onChange={v => setF("nombre", v)} />
-        <Field label="Teléfono *" value={form.telefono} onChange={v => setF("telefono", v)} type="tel" placeholder="+57 300 000 0000" />
-        <Field label="Email" value={form.email} onChange={v => setF("email", v)} type="email" />
-        <Field label="Cédula" value={form.cedula} onChange={v => setF("cedula", v)} />
+        <Field label="Teléfono *"        value={form.telefono} onChange={v => setF("telefono", v)} type="tel" placeholder="+57 300 000 0000" />
+        <Field label="Email"             value={form.email} onChange={v => setF("email", v)} type="email" />
+        <Field label="Cédula"            value={form.cedula} onChange={v => setF("cedula", v)} />
       </div>
 
       <div style={{
-        background: C.bgSoft, border: `1px solid ${C.border}`, borderRadius: 10, padding: 14, marginBottom: 14,
+        background: C.bg, border: `1px solid ${C.border}`, borderRadius: 6, padding: 14, marginBottom: 14,
       }}>
         <div style={{ display: "flex", justifyContent: "space-between", fontSize: 14, marginBottom: item.consumible ? 6 : 0 }}>
           <span style={{ color: C.textMid }}>{item.kind === "ticket" ? `${cantidad} ticket${cantidad > 1 ? "s" : ""}` : "Mesa"}</span>
           <span style={{ fontWeight: 700 }}>{COP(totalBase)}</span>
         </div>
         {item.consumible && (
-          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: C.gold, marginBottom: 8 }}>
-            <span>Incluye consumible {Math.round(item.consumible*100)}%</span>
+          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: C.red, marginBottom: 8 }}>
+            <span>Incluye consumible {Math.round(item.consumible * 100)}%</span>
             <span>({COP(consumibleMonto)})</span>
           </div>
         )}
         <div style={{
           display: "flex", justifyContent: "space-between", paddingTop: 10,
-          borderTop: `1px solid ${C.border}`, fontWeight: 900, fontSize: 18, color: item.color,
+          borderTop: `1px solid ${C.border}`,
+          fontFamily: "'Anton', sans-serif", fontSize: 22, color: C.red,
         }}>
           <span>TOTAL</span>
           <span>{COP(totalFinal)}</span>
@@ -778,9 +864,10 @@ function CheckoutModal({ item, onClose, onConfirmar }) {
 
       <button onClick={confirmar} disabled={busy} style={{
         width: "100%", padding: "16px 22px",
-        background: busy ? C.border : item.color, color: "#000",
-        border: "none", borderRadius: 10, fontWeight: 900, fontSize: 14,
-        letterSpacing: "0.05em", cursor: busy ? "wait" : "pointer",
+        background: busy ? C.border : C.red, color: "#fff",
+        border: "none", borderRadius: 6, fontWeight: 900, fontSize: 14,
+        letterSpacing: "0.1em", cursor: busy ? "wait" : "pointer",
+        fontFamily: "'Bebas Neue', sans-serif",
       }}>
         {busy ? "Procesando…" : "CONFIRMAR RESERVA →"}
       </button>
@@ -797,31 +884,30 @@ function CheckoutModal({ item, onClose, onConfirmar }) {
 function SectionTitle({ title, sub }) {
   return (
     <div style={{ marginBottom: 18 }}>
-      <h2 style={{
-        fontFamily: "'Bebas Neue', sans-serif", fontSize: 40, margin: 0,
-        letterSpacing: "0.05em", color: C.cream,
-      }}>{title}</h2>
-      {sub && <div style={{ fontSize: 12, color: C.textMid, marginTop: 4, lineHeight: 1.5 }}>{sub}</div>}
+      <h2 style={{ fontFamily: "'Anton', sans-serif", fontSize: 42, margin: 0, letterSpacing: "0.05em", color: C.text }}>
+        {title}
+      </h2>
+      <div style={{ width: 60, height: 3, background: C.red, marginTop: 6 }} />
+      {sub && <div style={{ fontSize: 12, color: C.textMid, marginTop: 8, lineHeight: 1.5 }}>{sub}</div>}
     </div>
   );
 }
 
 function Overlay({ children, onClose }) {
   return (
-    <div onClick={e => e.target === e.currentTarget && onClose()}
-      style={{
-        position: "fixed", inset: 0, background: "rgba(0,0,0,0.92)",
-        display: "flex", alignItems: "center", justifyContent: "center",
-        zIndex: 100, padding: 16, overflowY: "auto",
-      }}>
+    <div onClick={e => e.target === e.currentTarget && onClose()} style={{
+      position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)",
+      display: "flex", alignItems: "center", justifyContent: "center",
+      zIndex: 100, padding: 16, overflowY: "auto",
+    }}>
       <div style={{
-        background: C.card, border: `1px solid ${C.border}`, borderRadius: 14,
+        background: "#fff", border: `2px solid ${C.text}`, borderRadius: 8,
         padding: 24, width: "100%", maxWidth: 460, position: "relative",
       }}>
         <button onClick={onClose} style={{
-          position: "absolute", top: 12, right: 12,
+          position: "absolute", top: 10, right: 12,
           background: "none", border: "none", color: C.textMid,
-          fontSize: 24, cursor: "pointer", lineHeight: 1, padding: 4,
+          fontSize: 26, cursor: "pointer", lineHeight: 1, padding: 4,
         }}>×</button>
         {children}
       </div>
@@ -830,8 +916,10 @@ function Overlay({ children, onClose }) {
 }
 
 const Label = ({ children }) => (
-  <div style={{ fontSize: 10, color: C.textLow, letterSpacing: "0.15em",
-    fontWeight: 700, marginBottom: 6, textTransform: "uppercase" }}>{children}</div>
+  <div style={{
+    fontSize: 10, color: C.textMid, letterSpacing: "0.18em",
+    fontWeight: 700, marginBottom: 6, textTransform: "uppercase",
+  }}>{children}</div>
 );
 
 function Field({ label, value, onChange, type = "text", placeholder }) {
@@ -841,15 +929,16 @@ function Field({ label, value, onChange, type = "text", placeholder }) {
       <input value={value} onChange={e => onChange(e.target.value)} type={type} placeholder={placeholder}
         style={{
           width: "100%", padding: "11px 14px",
-          background: C.bgSoft, border: `1px solid ${C.border}`, borderRadius: 8,
+          background: "#fff", border: `1.5px solid ${C.borderMid}`, borderRadius: 4,
           color: C.text, fontSize: 14, outline: "none", boxSizing: "border-box",
+          fontFamily: "inherit",
         }} />
     </div>
   );
 }
 
 const qBtn = {
-  width: 36, height: 36, borderRadius: 8,
-  background: C.bgSoft, border: `1px solid ${C.border}`, color: C.text,
+  width: 38, height: 38, borderRadius: 4,
+  background: "#fff", border: `1.5px solid ${C.text}`, color: C.text,
   fontSize: 18, fontWeight: 900, cursor: "pointer",
 };
