@@ -110,25 +110,28 @@ const TICKETS = [
 const TICKETS_VISIBLES = TICKETS.filter(t => t.visible !== false);
 
 // ── Mesas ─────────────────────────────────────────────────────────────
+// Capacidad por zona:
+//   DJ Booth & Backstage → 12 pax (mesas premium)
+//   Front Pool & VIP Beach → 10 pax (mesas VIP estándar)
 const MESAS = [
-  { key: "A1", zona: "DJ BOOTH",   precio: 20350000, consumible: 0.25, transporte: true, premium: true },
-  { key: "A2", zona: "DJ BOOTH",   precio: 20350000, consumible: 0.25, transporte: true, premium: true },
-  { key: "1A", zona: "BACKSTAGE",  precio: 14300000, consumible: 0.25, transporte: true, premium: true },
-  { key: "1B", zona: "BACKSTAGE",  precio: 14300000, consumible: 0.25, transporte: true, premium: true },
-  { key: "2A", zona: "FRONT POOL", precio: 12100000, consumible: 0.15 },
-  { key: "2B", zona: "FRONT POOL", precio: 12100000, consumible: 0.15 },
-  { key: "3A", zona: "FRONT POOL", precio: 9900000,  consumible: 0.15 },
-  { key: "3B", zona: "FRONT POOL", precio: 9900000,  consumible: 0.15 },
-  { key: "4A", zona: "FRONT POOL", precio: 8250000,  consumible: 0.15 },
-  { key: "4B", zona: "FRONT POOL", precio: 8250000,  consumible: 0.15 },
-  { key: "1C", zona: "VIP BEACH",  precio: 6600000,  consumible: 0.15 },
-  { key: "5C", zona: "VIP BEACH",  precio: 6600000,  consumible: 0.15 },
-  { key: "2C", zona: "VIP BEACH",  precio: 5500000,  consumible: 0.15 },
-  { key: "6C", zona: "VIP BEACH",  precio: 5500000,  consumible: 0.15 },
-  { key: "3C", zona: "VIP BEACH",  precio: 4400000,  consumible: 0.15 },
-  { key: "7C", zona: "VIP BEACH",  precio: 4400000,  consumible: 0.15 },
-  { key: "4C", zona: "VIP BEACH",  precio: 3850000,  consumible: 0.15 },
-  { key: "8C", zona: "VIP BEACH",  precio: 3850000,  consumible: 0.15 },
+  { key: "A1", zona: "DJ BOOTH",   precio: 20350000, consumible: 0.25, transporte: true, premium: true, pax: 12 },
+  { key: "A2", zona: "DJ BOOTH",   precio: 20350000, consumible: 0.25, transporte: true, premium: true, pax: 12 },
+  { key: "1A", zona: "BACKSTAGE",  precio: 14300000, consumible: 0.25, transporte: true, premium: true, pax: 12 },
+  { key: "1B", zona: "BACKSTAGE",  precio: 14300000, consumible: 0.25, transporte: true, premium: true, pax: 12 },
+  { key: "2A", zona: "FRONT POOL", precio: 12100000, consumible: 0.15, pax: 10 },
+  { key: "2B", zona: "FRONT POOL", precio: 12100000, consumible: 0.15, pax: 10 },
+  { key: "3A", zona: "FRONT POOL", precio: 9900000,  consumible: 0.15, pax: 10 },
+  { key: "3B", zona: "FRONT POOL", precio: 9900000,  consumible: 0.15, pax: 10 },
+  { key: "4A", zona: "FRONT POOL", precio: 8250000,  consumible: 0.15, pax: 10 },
+  { key: "4B", zona: "FRONT POOL", precio: 8250000,  consumible: 0.15, pax: 10 },
+  { key: "1C", zona: "VIP BEACH",  precio: 6600000,  consumible: 0.15, pax: 10 },
+  { key: "5C", zona: "VIP BEACH",  precio: 6600000,  consumible: 0.15, pax: 10 },
+  { key: "2C", zona: "VIP BEACH",  precio: 5500000,  consumible: 0.15, pax: 10 },
+  { key: "6C", zona: "VIP BEACH",  precio: 5500000,  consumible: 0.15, pax: 10 },
+  { key: "3C", zona: "VIP BEACH",  precio: 4400000,  consumible: 0.15, pax: 10 },
+  { key: "7C", zona: "VIP BEACH",  precio: 4400000,  consumible: 0.15, pax: 10 },
+  { key: "4C", zona: "VIP BEACH",  precio: 3850000,  consumible: 0.15, pax: 10 },
+  { key: "8C", zona: "VIP BEACH",  precio: 3850000,  consumible: 0.15, pax: 10 },
 ];
 
 // Descripción / beneficios por zona — se muestra dentro de cada bloque de
@@ -209,6 +212,7 @@ export default function JuicyCream() {
     setCart({
       kind: "mesa", categoria: m.key, label: `${m.zona} · ${m.key}`, cantidad: 1,
       precio: m.precio, consumible: m.consumible, transporte: !!m.transporte,
+      pax: m.pax || null,
     });
   };
 
@@ -741,6 +745,8 @@ function MesasSection({ reservadas, onSelect }) {
                       color: m.premium ? C.red : C.text, letterSpacing: "0.05em",
                     }}>{m.key}</div>
                     <div style={{ fontSize: 11, color: C.textMid }}>
+                      {m.pax && <span style={{ fontWeight: 700, color: C.text }}>👥 {m.pax} pax</span>}
+                      {m.pax && <span style={{ color: C.borderMid, margin: "0 6px" }}>·</span>}
                       Consumible {Math.round(m.consumible * 100)}%
                       {m.transporte && <span style={{ color: C.red, marginLeft: 8, fontWeight: 700 }}>· 🚤 Transporte</span>}
                     </div>
@@ -1035,6 +1041,7 @@ function CheckoutModal({ item, onClose, onConfirmar }) {
       }}>{item.label}</h3>
       <div style={{ fontSize: 11, color: C.textLow, marginBottom: 18, letterSpacing: "0.15em", fontWeight: 600 }}>
         JUICY &amp; CREAM · 07 JUN 2026
+        {item.kind === "mesa" && item.pax && <span style={{ color: C.text, marginLeft: 8 }}>· 👥 {item.pax} PAX</span>}
       </div>
 
       {item.kind === "ticket" && (
