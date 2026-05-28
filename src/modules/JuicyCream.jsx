@@ -193,22 +193,38 @@ export default function JuicyCream() {
     }
   };
 
+  // Carga inicial + cada vez que se completa un checkout (reload++).
   useEffect(() => {
     if (!supabase) return;
-    supabase.from("juicy_cream_reservas")
-      .select("tipo, categoria, cantidad, estado")
-      .neq("estado", "cancelado")
-      .then(({ data }) => {
-        const mesas = new Set();
-        const tickets = {};
-        (data || []).forEach(r => {
-          if (r.tipo === "mesa") mesas.add(r.categoria);
-          else if (r.tipo === "ticket") tickets[r.categoria] = (tickets[r.categoria] || 0) + (r.cantidad || 1);
-        });
-        setReservadas(mesas);
-        setTicketsVendidos(tickets);
-      });
+    fetchEstado();
   }, [reload]);
+
+  // Auto-refresh cada 20s mientras la página esté abierta — evita que un
+  // cliente vea como disponible una mesa que ya fue vendida por otro o
+  // por el organizador. La defensa final sigue siendo el unique DB index
+  // al hacer INSERT, pero esto hace que el cliente lo vea antes de pagar.
+  // El polling se pausa cuando hay un checkout modal abierto para no
+  // sobrescribir el carrito en plena venta.
+  useEffect(() => {
+    if (!supabase || cart) return;
+    const t = setInterval(fetchEstado, 20000);
+    return () => clearInterval(t);
+  }, [cart]);
+
+  async function fetchEstado() {
+    if (!supabase) return;
+    const { data } = await supabase.from("juicy_cream_reservas")
+      .select("tipo, categoria, cantidad, estado")
+      .neq("estado", "cancelado");
+    const mesas = new Set();
+    const tickets = {};
+    (data || []).forEach(r => {
+      if (r.tipo === "mesa") mesas.add(r.categoria);
+      else if (r.tipo === "ticket") tickets[r.categoria] = (tickets[r.categoria] || 0) + (r.cantidad || 1);
+    });
+    setReservadas(mesas);
+    setTicketsVendidos(tickets);
+  }
 
   const abrirTicket = (t) => setCart({
     kind: "ticket", categoria: t.key, label: t.label, cantidad: 1,
@@ -993,7 +1009,31 @@ function CheckoutModal({ item, onClose, onConfirmar }) {
 
   // Crea el registro en juicy_cream_reservas y bloquea la mesa (si aplica).
   // Devuelve el id de la reserva (o null si hubo error).
+  //
+  // Anti double-booking en 2 capas:
+  //   1) Pre-check explícito: justo antes del INSERT, consultamos si ya
+  //      existe un row activo para esa categoria de mesa. Si sí, cortamos.
+  //   2) Unique index DB (juicy_cream_mesa_unica): si por race condition
+  //      dos clientes pasaron el pre-check, el INSERT del segundo falla
+  //      con code 23505 y mostramos error claro.
   async function crearReservaPendiente(metodo) {
+    // Pre-check solo para mesas — los tickets tienen cupo elástico
+    if (item.kind === "mesa") {
+      const { data: existe } = await supabase
+        .from("juicy_cream_reservas")
+        .select("id")
+        .eq("categoria", item.categoria)
+        .eq("tipo", "mesa")
+        .in("estado", ["pendiente_pago", "confirmado"])
+        .limit(1)
+        .maybeSingle();
+      if (existe) {
+        alert("Esta mesa ya fue reservada hace unos segundos. Refresca la página y elige otra.");
+        onClose();
+        return null;
+      }
+    }
+
     const id = `JC-${Date.now()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
     const payload = {
       id, tipo: item.kind, categoria: item.categoria,
