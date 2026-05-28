@@ -111,16 +111,16 @@ const TICKETS_VISIBLES = TICKETS.filter(t => t.visible !== false);
 
 // ── Mesas ─────────────────────────────────────────────────────────────
 const MESAS = [
-  { key: "A1", zona: "DJ BOOTH",   precio: 20350000, consumible: 0.25, transporte: true, premium: true },
-  { key: "A2", zona: "DJ BOOTH",   precio: 20350000, consumible: 0.25, transporte: true, premium: true },
-  { key: "1A", zona: "BACKSTAGE",  precio: 14300000, consumible: 0.25, transporte: true, premium: true },
-  { key: "1B", zona: "BACKSTAGE",  precio: 14300000, consumible: 0.25, transporte: true, premium: true },
-  { key: "2A", zona: "FRONT POOL", precio: 12100000, consumible: 0.25 },
-  { key: "2B", zona: "FRONT POOL", precio: 12100000, consumible: 0.25 },
-  { key: "3A", zona: "FRONT POOL", precio: 9900000,  consumible: 0.25 },
-  { key: "3B", zona: "FRONT POOL", precio: 9900000,  consumible: 0.25 },
-  { key: "4A", zona: "FRONT POOL", precio: 8250000,  consumible: 0.25 },
-  { key: "4B", zona: "FRONT POOL", precio: 8250000,  consumible: 0.25 },
+  { key: "A1", zona: "DJ BOOTH",   precio: 20350000, consumible: 0.15, transporte: true, premium: true },
+  { key: "A2", zona: "DJ BOOTH",   precio: 20350000, consumible: 0.15, transporte: true, premium: true },
+  { key: "1A", zona: "BACKSTAGE",  precio: 14300000, consumible: 0.15, transporte: true, premium: true },
+  { key: "1B", zona: "BACKSTAGE",  precio: 14300000, consumible: 0.15, transporte: true, premium: true },
+  { key: "2A", zona: "FRONT POOL", precio: 12100000, consumible: 0.15 },
+  { key: "2B", zona: "FRONT POOL", precio: 12100000, consumible: 0.15 },
+  { key: "3A", zona: "FRONT POOL", precio: 9900000,  consumible: 0.15 },
+  { key: "3B", zona: "FRONT POOL", precio: 9900000,  consumible: 0.15 },
+  { key: "4A", zona: "FRONT POOL", precio: 8250000,  consumible: 0.15 },
+  { key: "4B", zona: "FRONT POOL", precio: 8250000,  consumible: 0.15 },
   { key: "1C", zona: "VIP BEACH",  precio: 6600000,  consumible: 0.15 },
   { key: "5C", zona: "VIP BEACH",  precio: 6600000,  consumible: 0.15 },
   { key: "2C", zona: "VIP BEACH",  precio: 5500000,  consumible: 0.15 },
@@ -612,10 +612,24 @@ function MesasSection({ reservadas, onSelect }) {
   }, []);
   return (
     <div>
-      <SectionTitle
-        title="MESAS / CAMAS"
-        sub="Experiencia exclusiva con consumible incluido · Las mesas DJ Booth y Backstage incluyen transporte privado para el grupo completo"
-      />
+      <SectionTitle title="MESAS / CAMAS" />
+
+      {/* Intro / descripción general */}
+      <div style={{
+        background: "#fff", border: `1px solid ${C.borderMid}`, borderRadius: 6,
+        padding: "18px 22px", marginBottom: 20,
+        fontSize: 13, lineHeight: 1.7, color: C.textMid,
+      }}>
+        <p style={{ margin: "0 0 12px" }}>
+          <strong style={{ color: C.text }}>Todas las mesas incluyen 15% de consumo,</strong> redimible en bebidas durante el evento.
+        </p>
+        <p style={{ margin: "0 0 12px" }}>
+          Las mesas <strong style={{ color: C.text }}>DJ Booth</strong> y <strong style={{ color: C.text }}>Backstage</strong> incluyen <span style={{ color: C.red, fontWeight: 600 }}>transporte privado en lancha rápida ida & regreso desde Cartagena</span> para todo el grupo.
+        </p>
+        <p style={{ margin: 0, fontStyle: "italic", color: C.text }}>
+          JUICY &amp; CREAM es una experiencia premium curada por <strong>3 NOMADS X × 574 STUDIO</strong>, diseñada para quienes buscan vivir el mejor crossover entre música electrónica, urbano, lujo y cultura de playa en el Caribe colombiano.
+        </p>
+      </div>
 
       {/* Plano visual */}
       <div style={{ background: "#fff", border: `2px solid ${C.text}`, borderRadius: 6, padding: 18, marginBottom: 20 }}>
