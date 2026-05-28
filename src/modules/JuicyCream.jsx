@@ -10,7 +10,7 @@
 // liquid, "CREAM" chrome/silver, doodles de fauna marina en outline rojo,
 // firma cursiva para AriaJega.
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "../lib/supabase";
 import { wompiCheckoutUrl } from "../lib/wompi";
 import { crearSesionPago } from "../lib/internacional";
@@ -156,6 +156,19 @@ export default function JuicyCream() {
   const [ticketsVendidos, setTicketsVendidos] = useState({});
   const [cart, setCart] = useState(null);
   const [reload, setReload] = useState(0);
+  const contentRef = useRef(null);
+
+  // Cuando el usuario elige Boletería o Mesas, scrollea hasta la sección de
+  // contenido (donde están las cards) en vez de obligarlo a deslizar.
+  // Pequeño delay para que React renderice la sección antes del scroll.
+  const handleTab = (next) => {
+    setTab(next);
+    if (next) {
+      setTimeout(() => {
+        contentRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      }, 80);
+    }
+  };
 
   useEffect(() => {
     if (!supabase) return;
@@ -222,11 +235,14 @@ export default function JuicyCream() {
         }
       `}</style>
 
-      <Hero tab={tab} onTab={setTab} />
-      <Selector tab={tab} onTab={setTab} sticky />
+      <Hero tab={tab} onTab={handleTab} />
+      <Selector tab={tab} onTab={handleTab} sticky />
 
       {tab && (
-        <div style={{ maxWidth: 1100, margin: "0 auto", padding: "32px 16px 80px" }}>
+        <div ref={contentRef} style={{
+          maxWidth: 1100, margin: "0 auto", padding: "32px 16px 80px",
+          scrollMarginTop: 80, // compensa el alto del selector sticky
+        }}>
           {tab === "tickets"
             ? <TicketsSection vendidos={ticketsVendidos} onSelect={abrirTicket} />
             : <MesasSection reservadas={reservadas} onSelect={abrirMesa} />
