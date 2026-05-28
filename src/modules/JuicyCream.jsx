@@ -111,30 +111,30 @@ const TICKETS_VISIBLES = TICKETS.filter(t => t.visible !== false);
 
 // ── Mesas ─────────────────────────────────────────────────────────────
 // Capacidad por zona:
-//   DJ Booth & Backstage → 12 pax (premium · 25% consumible · transporte)
-//   VIP Beach → 10 pax (15% consumible · sin transporte)
+//   DJ Booth & Backstage → 12 pax (premium · 25% consumo · transporte PRIVADO)
+//   VIP Beach → 10 pax (15% consumo · transporte COMPARTIDO igual que boletería)
 //
-// No existe "Front Pool" como zona aparte — todas las mesas alrededor
-// del pool son parte del área Backstage.
+// transporte: "privado"     = lancha privada solo para el grupo de esa mesa
+// transporte: "compartido"  = lancha rápida desde Bodeguita (mismo de boletería)
 const MESAS = [
-  { key: "A1", zona: "DJ BOOTH",  precio: 20350000, consumible: 0.25, transporte: true, premium: true, pax: 12 },
-  { key: "A2", zona: "DJ BOOTH",  precio: 20350000, consumible: 0.25, transporte: true, premium: true, pax: 12 },
-  { key: "1A", zona: "BACKSTAGE", precio: 14300000, consumible: 0.25, transporte: true, premium: true, pax: 12 },
-  { key: "1B", zona: "BACKSTAGE", precio: 14300000, consumible: 0.25, transporte: true, premium: true, pax: 12 },
-  { key: "2A", zona: "BACKSTAGE", precio: 12100000, consumible: 0.25, transporte: true, premium: true, pax: 12 },
-  { key: "2B", zona: "BACKSTAGE", precio: 12100000, consumible: 0.25, transporte: true, premium: true, pax: 12 },
-  { key: "3A", zona: "BACKSTAGE", precio: 9900000,  consumible: 0.25, transporte: true, premium: true, pax: 12 },
-  { key: "3B", zona: "BACKSTAGE", precio: 9900000,  consumible: 0.25, transporte: true, premium: true, pax: 12 },
-  { key: "4A", zona: "BACKSTAGE", precio: 8250000,  consumible: 0.25, transporte: true, premium: true, pax: 12 },
-  { key: "4B", zona: "BACKSTAGE", precio: 8250000,  consumible: 0.25, transporte: true, premium: true, pax: 12 },
-  { key: "1C", zona: "VIP BEACH", precio: 6600000,  consumible: 0.15, pax: 10 },
-  { key: "5C", zona: "VIP BEACH", precio: 6600000,  consumible: 0.15, pax: 10 },
-  { key: "2C", zona: "VIP BEACH", precio: 5500000,  consumible: 0.15, pax: 10 },
-  { key: "6C", zona: "VIP BEACH", precio: 5500000,  consumible: 0.15, pax: 10 },
-  { key: "3C", zona: "VIP BEACH", precio: 4400000,  consumible: 0.15, pax: 10 },
-  { key: "7C", zona: "VIP BEACH", precio: 4400000,  consumible: 0.15, pax: 10 },
-  { key: "4C", zona: "VIP BEACH", precio: 3850000,  consumible: 0.15, pax: 10 },
-  { key: "8C", zona: "VIP BEACH", precio: 3850000,  consumible: 0.15, pax: 10 },
+  { key: "A1", zona: "DJ BOOTH",  precio: 20350000, consumible: 0.25, transporte: "privado",    premium: true, pax: 12 },
+  { key: "A2", zona: "DJ BOOTH",  precio: 20350000, consumible: 0.25, transporte: "privado",    premium: true, pax: 12 },
+  { key: "1A", zona: "BACKSTAGE", precio: 14300000, consumible: 0.25, transporte: "privado",    premium: true, pax: 12 },
+  { key: "1B", zona: "BACKSTAGE", precio: 14300000, consumible: 0.25, transporte: "privado",    premium: true, pax: 12 },
+  { key: "2A", zona: "BACKSTAGE", precio: 12100000, consumible: 0.25, transporte: "privado",    premium: true, pax: 12 },
+  { key: "2B", zona: "BACKSTAGE", precio: 12100000, consumible: 0.25, transporte: "privado",    premium: true, pax: 12 },
+  { key: "3A", zona: "BACKSTAGE", precio: 9900000,  consumible: 0.25, transporte: "privado",    premium: true, pax: 12 },
+  { key: "3B", zona: "BACKSTAGE", precio: 9900000,  consumible: 0.25, transporte: "privado",    premium: true, pax: 12 },
+  { key: "4A", zona: "BACKSTAGE", precio: 8250000,  consumible: 0.25, transporte: "privado",    premium: true, pax: 12 },
+  { key: "4B", zona: "BACKSTAGE", precio: 8250000,  consumible: 0.25, transporte: "privado",    premium: true, pax: 12 },
+  { key: "1C", zona: "VIP BEACH", precio: 6600000,  consumible: 0.15, transporte: "compartido", pax: 10 },
+  { key: "5C", zona: "VIP BEACH", precio: 6600000,  consumible: 0.15, transporte: "compartido", pax: 10 },
+  { key: "2C", zona: "VIP BEACH", precio: 5500000,  consumible: 0.15, transporte: "compartido", pax: 10 },
+  { key: "6C", zona: "VIP BEACH", precio: 5500000,  consumible: 0.15, transporte: "compartido", pax: 10 },
+  { key: "3C", zona: "VIP BEACH", precio: 4400000,  consumible: 0.15, transporte: "compartido", pax: 10 },
+  { key: "7C", zona: "VIP BEACH", precio: 4400000,  consumible: 0.15, transporte: "compartido", pax: 10 },
+  { key: "4C", zona: "VIP BEACH", precio: 3850000,  consumible: 0.15, transporte: "compartido", pax: 10 },
+  { key: "8C", zona: "VIP BEACH", precio: 3850000,  consumible: 0.15, transporte: "compartido", pax: 10 },
 ];
 
 // Descripción / beneficios por zona — se muestra dentro de cada bloque de
@@ -147,12 +147,16 @@ const BENEFICIOS_PREMIUM = [
   "Baños exclusivos",
   "Experiencias de marca únicas",
 ];
+const BENEFICIOS_VIP_BEACH = [
+  "15% consumible incluido",
+  "Transporte en lancha ida & regreso desde el Muelle de La Bodeguita (mismo de boletería)",
+  "Acceso directo al dancefloor",
+  "Ubicación frente al mar",
+];
 const ZONA_DESCRIPCION = {
   "DJ BOOTH":  BENEFICIOS_PREMIUM,
   "BACKSTAGE": BENEFICIOS_PREMIUM,
-  // Placeholder — el usuario va a enviar:
-  // "FRONT POOL": [...],
-  // "VIP BEACH":  [...],
+  "VIP BEACH": BENEFICIOS_VIP_BEACH,
 };
 
 const horaCO = () => {
@@ -214,7 +218,7 @@ export default function JuicyCream() {
     if (reservadas.has(m.key)) return;
     setCart({
       kind: "mesa", categoria: m.key, label: `${m.zona} · ${m.key}`, cantidad: 1,
-      precio: m.precio, consumible: m.consumible, transporte: !!m.transporte,
+      precio: m.precio, consumible: m.consumible, transporte: m.transporte || null,
       pax: m.pax || null,
     });
   };
@@ -719,7 +723,8 @@ function MesasSection({ reservadas, onSelect }) {
                       {m.pax && <span style={{ fontWeight: 700, color: C.text }}>👥 {m.pax} pax</span>}
                       {m.pax && <span style={{ color: C.borderMid, margin: "0 6px" }}>·</span>}
                       Consumible {Math.round(m.consumible * 100)}%
-                      {m.transporte && <span style={{ color: C.red, marginLeft: 8, fontWeight: 700 }}>· 🚤 Transporte</span>}
+                      {m.transporte === "privado" && <span style={{ color: C.red, marginLeft: 8, fontWeight: 700 }}>· 🚤 Transporte privado</span>}
+                      {m.transporte === "compartido" && <span style={{ color: C.text, marginLeft: 8 }}>· 🚤 Transporte incluido</span>}
                     </div>
                     <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 18, color: taken ? C.textLow : C.text, letterSpacing: "0.04em" }}>
                       {taken ? "RESERVADA" : COP(m.precio)}
