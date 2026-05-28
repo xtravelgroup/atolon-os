@@ -664,57 +664,10 @@ function MesasSection({ reservadas, onSelect }) {
         </p>
       </div>
 
-      {/* Plano visual */}
-      <div style={{ background: "#fff", border: `2px solid ${C.text}`, borderRadius: 6, padding: 18, marginBottom: 20 }}>
-        <div style={{ fontSize: 10, letterSpacing: "0.25em", color: C.textMid, fontWeight: 700, textAlign: "center", marginBottom: 12 }}>
-          PLANO DEL EVENTO
-        </div>
-
-        <div style={{ display: "grid", gridTemplateColumns: "auto 1fr auto", gap: 8, marginBottom: 12 }}>
-          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            {["4A","3A","2A","1A"].map(k => <MesaSlot key={k} k={k} reservadas={reservadas} onSelect={handlePlanoClick} />)}
-          </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 6, justifyContent: "space-between" }}>
-            <div style={{
-              background: "linear-gradient(180deg, #1a3a52, #0d2540)", color: C.cream,
-              borderRadius: 6, padding: "20px 0", textAlign: "center",
-              fontWeight: 900, letterSpacing: "0.3em", fontSize: 14,
-            }}>P O O L</div>
-            <div style={{
-              background: C.bg, border: `1px solid ${C.border}`, color: C.textMid,
-              borderRadius: 6, padding: "12px 0", textAlign: "center",
-              fontWeight: 700, letterSpacing: "0.15em", fontSize: 11,
-            }}>BACKSTAGE</div>
-            <div style={{ display: "flex", gap: 6, justifyContent: "center" }}>
-              <MesaSlot k="A1" reservadas={reservadas} onSelect={handlePlanoClick} size="lg" />
-              <MesaSlot k="A2" reservadas={reservadas} onSelect={handlePlanoClick} size="lg" />
-            </div>
-            <div style={{
-              background: C.red, color: "#fff", borderRadius: 6,
-              padding: "6px 0", textAlign: "center", fontWeight: 900,
-              fontSize: 11, letterSpacing: "0.2em",
-            }}>DJ</div>
-          </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            {["4B","3B","2B","1B"].map(k => <MesaSlot key={k} k={k} reservadas={reservadas} onSelect={handlePlanoClick} />)}
-          </div>
-        </div>
-
-        <div style={{
-          background: C.cream, border: `1px solid ${C.borderMid}`,
-          borderRadius: 6, padding: "10px 0", textAlign: "center",
-          fontWeight: 700, letterSpacing: "0.2em", fontSize: 11, marginBottom: 10,
-          color: C.text,
-        }}>☀ VIP BEACH · DANCEFLOOR</div>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
-          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            {["1C","2C","3C","4C"].map(k => <MesaSlot key={k} k={k} reservadas={reservadas} onSelect={handlePlanoClick} />)}
-          </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            {["5C","6C","7C","8C"].map(k => <MesaSlot key={k} k={k} reservadas={reservadas} onSelect={handlePlanoClick} />)}
-          </div>
-        </div>
-      </div>
+      {/* Plano visual — usa la imagen oficial con hotspots clickeables sobre
+          cada mesa. La imagen está en public/juicy-plano.png. Los hotspots
+          se posicionan en % para que escalen con el ancho responsive. */}
+      <PlanoImagen reservadas={reservadas} onClick={handlePlanoClick} highlight={highlight} />
 
       {/* Lista por zonas */}
       <div style={{ display: "grid", gap: 12 }}>
@@ -796,6 +749,102 @@ function MesasSection({ reservadas, onSelect }) {
             </div>
           ))}
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ── PLANO con imagen oficial + hotspots clickeables ───────────────────
+// Las coordenadas son porcentajes respecto al alto/ancho de la imagen
+// (juicy-plano.png, vertical ~627×1024). Cada hotspot es un botón
+// transparente posicionado en absoluto.
+const HOTSPOTS = {
+  // Columna izquierda (4A, 3A, 2A, 1A) — top→bottom
+  "4A": { top:  4.5, left:  4,  width: 17, height: 7.5 },
+  "3A": { top: 13,   left:  4,  width: 17, height: 7.5 },
+  "2A": { top: 22,   left:  4,  width: 17, height: 7.5 },
+  "1A": { top: 31,   left:  4,  width: 17, height: 7.5 },
+  // Columna derecha (4B, 3B, 2B, 1B)
+  "4B": { top:  4.5, left: 79,  width: 17, height: 7.5 },
+  "3B": { top: 13,   left: 79,  width: 17, height: 7.5 },
+  "2B": { top: 22,   left: 79,  width: 17, height: 7.5 },
+  "1B": { top: 31,   left: 79,  width: 17, height: 7.5 },
+  // Backstage / DJ (centro)
+  "A1": { top: 42.5, left: 26.5, width: 16, height: 7 },
+  "A2": { top: 42.5, left: 57.5, width: 16, height: 7 },
+  // VIP Beach izquierda (1C-4C)
+  "1C": { top: 58,   left:  4,  width: 17, height: 7 },
+  "2C": { top: 66,   left:  4,  width: 17, height: 7 },
+  "3C": { top: 74,   left:  4,  width: 17, height: 7 },
+  "4C": { top: 82,   left:  4,  width: 17, height: 7 },
+  // VIP Beach derecha (5C-8C)
+  "5C": { top: 58,   left: 79,  width: 17, height: 7 },
+  "6C": { top: 66,   left: 79,  width: 17, height: 7 },
+  "7C": { top: 74,   left: 79,  width: 17, height: 7 },
+  "8C": { top: 82,   left: 79,  width: 17, height: 7 },
+};
+
+function PlanoImagen({ reservadas, onClick, highlight }) {
+  return (
+    <div style={{
+      background: "#fff", border: `2px solid ${C.text}`, borderRadius: 6,
+      padding: 14, marginBottom: 20,
+    }}>
+      <div style={{
+        fontSize: 10, letterSpacing: "0.25em", color: C.textMid,
+        fontWeight: 700, textAlign: "center", marginBottom: 12,
+      }}>
+        PLANO DEL EVENTO · Toca una mesa para ver detalles
+      </div>
+      <div style={{ position: "relative", maxWidth: 520, margin: "0 auto", lineHeight: 0 }}>
+        <img src="/juicy-plano.png" alt="Plano JUICY & CREAM"
+          style={{ width: "100%", height: "auto", display: "block", borderRadius: 4 }} />
+        {Object.entries(HOTSPOTS).map(([k, pos]) => {
+          const m = MESAS.find(x => x.key === k);
+          if (!m) return null;
+          const taken = reservadas.has(k);
+          const isHi  = highlight === k;
+          return (
+            <button key={k} onClick={() => !taken && onClick(m)} disabled={taken}
+              title={`${m.zona} · ${k} · ${COP(m.precio)}${taken ? " · RESERVADA" : ""}`}
+              style={{
+                position: "absolute",
+                top: `${pos.top}%`, left: `${pos.left}%`,
+                width: `${pos.width}%`, height: `${pos.height}%`,
+                background: taken
+                  ? "rgba(225,29,42,0.45)"
+                  : (isHi ? "rgba(254,243,199,0.45)" : "transparent"),
+                border: isHi ? `2px solid ${C.red}` : "2px solid transparent",
+                borderRadius: 6,
+                cursor: taken ? "not-allowed" : "pointer",
+                padding: 0,
+                transition: "background 0.2s, border-color 0.2s, box-shadow 0.2s",
+                boxShadow: isHi ? `0 0 0 4px rgba(225,29,42,0.25)` : "none",
+              }}
+              onMouseEnter={e => { if (!taken) e.currentTarget.style.background = "rgba(225,29,42,0.18)"; }}
+              onMouseLeave={e => {
+                if (!taken && !isHi) e.currentTarget.style.background = "transparent";
+                else if (taken) e.currentTarget.style.background = "rgba(225,29,42,0.45)";
+                else if (isHi) e.currentTarget.style.background = "rgba(254,243,199,0.45)";
+              }}
+            >
+              {taken && (
+                <span style={{
+                  color: "#fff", fontWeight: 900, fontSize: 11,
+                  letterSpacing: "0.06em",
+                }}>RESERVADA</span>
+              )}
+            </button>
+          );
+        })}
+      </div>
+      <div style={{
+        marginTop: 12, fontSize: 11, color: C.textMid, textAlign: "center",
+      }}>
+        <span style={{ display: "inline-block", width: 14, height: 14, background: "rgba(225,29,42,0.45)", borderRadius: 3, verticalAlign: "middle", marginRight: 6 }} />
+        Reservadas
+        <span style={{ marginLeft: 16, display: "inline-block", width: 14, height: 14, border: `2px solid ${C.red}`, borderRadius: 3, verticalAlign: "middle", marginRight: 6 }} />
+        Seleccionada
       </div>
     </div>
   );
