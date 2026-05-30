@@ -4290,8 +4290,27 @@ export default function EventoDetalle({ evento: inicial, canEdit = true, onBack,
   const saveField = useCallback(async (field, value) => {
     if (!supabase || !evento?.id) return;
     setSaving(true);
-    await supabase.from("eventos").update({ [field]: value, updated_at: new Date().toISOString() }).eq("id", evento.id);
+    // .select().single() obliga a Supabase a devolver el row actualizado.
+    // Si llega data=null sin error, el UPDATE no persistió (silent fail) —
+    // mostramos error visible para que el usuario sepa que no quedó guardado.
+    const { data, error } = await supabase
+      .from("eventos")
+      .update({ [field]: value, updated_at: new Date().toISOString() })
+      .eq("id", evento.id)
+      .select()
+      .single();
     setSaving(false);
+    if (error) {
+      console.error("[evento/saveField] error:", field, error);
+      alert(`No se pudo guardar "${field}":\n${error.message}\n\nIntenta de nuevo o recarga la página.`);
+      return;
+    }
+    if (!data) {
+      console.warn("[evento/saveField] sin error pero sin row:", field);
+      alert(`El cambio en "${field}" no quedó guardado en BD. Recarga la página.`);
+      return;
+    }
+    console.info("[evento/saveField] OK:", field);
     onSaved?.();
   }, [evento?.id, onSaved]);
 
