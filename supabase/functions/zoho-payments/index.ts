@@ -409,6 +409,14 @@ serve(async (req) => {
               updated_at: new Date().toISOString(),
             }).eq("id", reservaJC.id);
             console.log(`✓ Juicy & Cream ${reservaJC.id} confirmada (Zoho Pay)`);
+            // Update lead en Comercial → Cerrado Ganado
+            await SB.from("leads").update({
+              stage: "Cerrado Ganado",
+              fecha_pago: new Date().toISOString().slice(0, 10),
+              ultimo_contacto: new Date().toISOString().slice(0, 10),
+              updated_at: new Date().toISOString(),
+            }).eq("id", `LEAD-${reservaJC.id}`).then(() => {}).catch((e: any) =>
+              console.warn("[juicy/lead-update-zoho] failed:", e?.message));
             await notificarJuicyPagoConfirmado(reservaJC, Number(reservaJC.total) || 0, "Zoho Pay", pid).catch(e =>
               console.warn("[juicy/email-confirmado-zoho] failed:", (e as Error).message));
             return new Response(JSON.stringify({ received: true, processed: true, action: "juicy_confirmed", reserva_id: reservaJC.id }), {
