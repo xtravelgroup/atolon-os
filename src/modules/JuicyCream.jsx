@@ -14,6 +14,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "../lib/supabase";
 import { wompiCheckoutUrl } from "../lib/wompi";
 import { crearSesionPago } from "../lib/internacional";
+import ZohoPaymentWidget from "../components/ZohoPaymentWidget.jsx";
 
 const COP = n => `$${Math.round(Number(n) || 0).toLocaleString("es-CO")}`;
 
@@ -1000,6 +1001,9 @@ function CheckoutModal({ item, onClose, onConfirmar }) {
   const [cantidad, setCantidad] = useState(item.cantidad);
   const [form, setForm] = useState({ nombre: "", email: "", telefono: "", cedula: "" });
   const [busy, setBusy] = useState(false);
+  // Widget de Zoho Payments — se abre cuando el cliente elige tarjeta internacional.
+  // Mismo patrón que BookingPopup.jsx (booking de pasadías).
+  const [zohoWidget, setZohoWidget] = useState(null);
 
   const totalBase = item.precio * (item.kind === "ticket" ? cantidad : 1);
   const consumibleMonto = item.consumible ? totalBase * item.consumible : 0;
@@ -1144,24 +1148,42 @@ function CheckoutModal({ item, onClose, onConfirmar }) {
         amount: amountUSD, currency: "USD", reference: id,
         description: `JUICY & CREAM · ${item.label}`,
         email: form.email || "", nombre: form.nombre,
-        context: "juicy_cream", context_id: id,
+        // context_id queda null porque la tabla pagos_zoho_sessions lo
+        // tiene typed como UUID y nuestro id de juicy es text. La referencia
+        // (string `JC-...`) se guarda en `reference` y es lo que el webhook
+        // usa para matchear con juicy_cream_reservas.
+        context: "juicy_cream",
       });
+      // Flujo widget embebido (mismo que BookingPopup): abrir el ZohoPaymentWidget
+      // sin redirigir. El widget maneja la tarjeta, y al confirmar redirige a
+      // /pago/exito. El webhook de Zoho actualiza juicy_cream_reservas y el lead.
       if (session.payments_session_id && session.widget?.account_id) {
-        // Para MVP: abrir Zoho Pay en nueva pestaña con el payment link si está,
-        // o caer al flujo de pago/exito. El widget embebido requiere componente
-        // específico (ZohoPaymentWidget) que aquí no está integrado.
-        // Por ahora redirigimos a la URL si viene, sino mostramos alerta.
-        if (session.url) {
-          supabase.from("juicy_cream_reservas").update({ link_pago: session.url }).eq("id", id).then(() => {});
-          onConfirmar();
-          window.location.href = session.url;
-        } else {
-          alert("Sesión de pago internacional creada. Te contactamos para finalizar.\n\nID: " + id);
-          setBusy(false);
-          onConfirmar();
-          onClose();
-        }
+        setBusy(false); // el modal de tarjeta toma el control
+        setZohoWidget({
+          session,
+          address: { name: form.nombre, email: form.email, phone: form.telefono || "" },
+          description: `JUICY & CREAM · ${item.label}`,
+          invoiceNumber: id,
+          onSuccess: (paymentData) => {
+            console.log("[juicy/zoho-widget] payment success:", paymentData);
+            setZohoWidget(null);
+            onConfirmar();
+            window.location.href = `${window.location.origin}/pago/exito?reserva=${id}`;
+          },
+          onError: (err) => {
+            console.error("[juicy/zoho-widget] error:", err);
+            setZohoWidget(null);
+            alert("El pago no se pudo procesar. Intenta de nuevo o usa tarjeta nacional.");
+          },
+          onClose: () => {
+            // Usuario cerró sin pagar — reserva queda como pendiente_pago
+            // (el cupo permanece bloqueado hasta que se cancele manual o
+            //  expire por job de limpieza).
+            setZohoWidget(null);
+          },
+        });
       } else if (session.url) {
+        // Compat: viejo flujo de Payment Links — redirige a la URL.
         supabase.from("juicy_cream_reservas").update({ link_pago: session.url }).eq("id", id).then(() => {});
         onConfirmar();
         window.location.href = session.url;
@@ -1300,6 +1322,21 @@ function CheckoutModal({ item, onClose, onConfirmar }) {
       <div style={{ fontSize: 10, color: C.textLow, marginTop: 10, textAlign: "center" }}>
         🔒 Pago seguro · Tu reserva queda bloqueada al iniciar el pago.
       </div>
+
+      {/* Widget Zoho Payments para tarjeta internacional — se monta sobre
+          el modal con z-index mayor cuando el usuario elige internacional. */}
+      {zohoWidget && (
+        <ZohoPaymentWidget
+          session={zohoWidget.session}
+          address={zohoWidget.address}
+          description={zohoWidget.description}
+          invoiceNumber={zohoWidget.invoiceNumber}
+          business="JUICY & CREAM"
+          onSuccess={zohoWidget.onSuccess}
+          onError={zohoWidget.onError}
+          onClose={zohoWidget.onClose}
+        />
+      )}
     </Overlay>
   );
 }
