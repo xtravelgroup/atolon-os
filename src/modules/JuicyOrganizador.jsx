@@ -153,33 +153,32 @@ function Dashboard({ onLogout }) {
       });
   }, [refresh]);
 
-  // ── Métricas globales (excluyendo canceladas) ──
+  // ── Métricas del dashboard: SOLO reservas pagadas (confirmadas) ──
+  // El usuario quiere que el organizador vea solo lo realmente vendido,
+  // no las pendientes de pago (que pueden abandonarse).
   const stats = useMemo(() => {
-    const activas = reservas.filter(r => r.estado !== "cancelado");
-    const tickets = activas.filter(r => r.tipo === "ticket");
-    const mesas   = activas.filter(r => r.tipo === "mesa");
+    const pagadas = reservas.filter(r => r.estado === "confirmado");
+    const tickets = pagadas.filter(r => r.tipo === "ticket");
+    const mesas   = pagadas.filter(r => r.tipo === "mesa");
 
     const ticketsCantidad = tickets.reduce((s, r) => s + (r.cantidad || 1), 0);
     const ticketsRevenue  = tickets.reduce((s, r) => s + (Number(r.total) || 0), 0);
-    const ticketsConf     = tickets.filter(r => r.estado === "confirmado").reduce((s, r) => s + (Number(r.total) || 0), 0);
 
     const mesasCount      = mesas.length;
     const mesasRevenue    = mesas.reduce((s, r) => s + (Number(r.total) || 0), 0);
-    const mesasConf       = mesas.filter(r => r.estado === "confirmado").reduce((s, r) => s + (Number(r.total) || 0), 0);
     const mesasPax        = mesas.reduce((s, r) => s + (MESA_PAX[r.categoria] || 0), 0);
 
     const paxTotal = ticketsCantidad + mesasPax;
-    const revenueBruto = ticketsRevenue + mesasRevenue;
-    const revenueConfirmado = ticketsConf + mesasConf;
+    const revenueTotal = ticketsRevenue + mesasRevenue;
 
-    // Tickets por categoría
+    // Tickets por categoría (solo pagadas)
     const ticketsPorCat = {};
     tickets.forEach(r => {
       if (!ticketsPorCat[r.categoria]) ticketsPorCat[r.categoria] = { count: 0, revenue: 0 };
       ticketsPorCat[r.categoria].count += r.cantidad || 1;
       ticketsPorCat[r.categoria].revenue += Number(r.total) || 0;
     });
-    // Mesas por zona
+    // Mesas por zona (solo pagadas)
     const mesasPorZona = {};
     mesas.forEach(r => {
       const zona = MESA_ZONA[r.categoria] || "OTRA";
@@ -190,10 +189,10 @@ function Dashboard({ onLogout }) {
     });
 
     return {
-      total: activas.length,
-      ticketsCantidad, ticketsRevenue, ticketsConf,
-      mesasCount, mesasRevenue, mesasConf, mesasPax,
-      paxTotal, revenueBruto, revenueConfirmado,
+      total: pagadas.length,
+      ticketsCantidad, ticketsRevenue,
+      mesasCount, mesasRevenue, mesasPax,
+      paxTotal, revenueTotal,
       ticketsPorCat, mesasPorZona,
     };
   }, [reservas]);
@@ -243,15 +242,17 @@ function Dashboard({ onLogout }) {
         <div style={{ maxWidth: 1100, margin: "0 auto", padding: "24px 16px 60px" }}>
 
           {/* KPIs principales */}
+          {/* KPIs principales — solo reservas pagadas */}
+          <div style={{ fontSize: 11, color: C.textMid, letterSpacing: "0.18em", fontWeight: 700, marginBottom: 10 }}>
+            VENTAS CONFIRMADAS (PAGADAS)
+          </div>
           <div style={{
-            display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+            display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
             gap: 12, marginBottom: 22,
           }}>
-            <Kpi label="REVENUE TOTAL" valor={COP(stats.revenueBruto)} accent />
-            <Kpi label="CONFIRMADO" valor={COP(stats.revenueConfirmado)} color={C.green} />
-            <Kpi label="PENDIENTE PAGO" valor={COP(stats.revenueBruto - stats.revenueConfirmado)} color={C.amber} />
-            <Kpi label="PAX TOTAL" valor={stats.paxTotal} />
-            <Kpi label="RESERVAS" valor={stats.total} />
+            <Kpi label="RESERVAS"      valor={stats.total} />
+            <Kpi label="PAX TOTAL"     valor={stats.paxTotal} />
+            <Kpi label="MONTO"         valor={COP(stats.revenueTotal)} accent />
           </div>
 
           {/* Bloque Tickets */}
@@ -262,8 +263,7 @@ function Dashboard({ onLogout }) {
           }}>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, marginBottom: 14 }}>
               <Mini label="Tickets vendidos" valor={stats.ticketsCantidad} />
-              <Mini label="Revenue tickets" valor={COP(stats.ticketsRevenue)} />
-              <Mini label="Confirmados" valor={COP(stats.ticketsConf)} color={C.green} />
+              <Mini label="Monto" valor={COP(stats.ticketsRevenue)} color={C.red} />
             </div>
             {Object.keys(stats.ticketsPorCat).length > 0 && (
               <div style={{ borderTop: `1px solid ${C.border}`, paddingTop: 12 }}>
@@ -293,10 +293,9 @@ function Dashboard({ onLogout }) {
             padding: 18, marginBottom: 22,
           }}>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, marginBottom: 14 }}>
-              <Mini label="Mesas reservadas" valor={stats.mesasCount} />
+              <Mini label="Mesas vendidas" valor={stats.mesasCount} />
               <Mini label="Pax en mesas" valor={stats.mesasPax} />
-              <Mini label="Revenue mesas" valor={COP(stats.mesasRevenue)} />
-              <Mini label="Confirmadas" valor={COP(stats.mesasConf)} color={C.green} />
+              <Mini label="Monto" valor={COP(stats.mesasRevenue)} color={C.red} />
             </div>
             {Object.keys(stats.mesasPorZona).length > 0 && (
               <div style={{ borderTop: `1px solid ${C.border}`, paddingTop: 12 }}>
