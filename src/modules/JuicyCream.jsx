@@ -1071,6 +1071,30 @@ function CheckoutModal({ item, onClose, onConfirmar }) {
     // para no recibir un correo por cada checkout iniciado que podría no
     // completarse.
 
+    // Crear lead en Comercial — stage "Cotizado" mientras está pendiente
+    // de pago. Cuando Wompi/Zoho confirmen el pago, el webhook actualiza
+    // el lead a "Cerrado Ganado". Fire-and-forget.
+    const leadId = `LEAD-${id}`;
+    const hoyStr = new Date().toLocaleDateString("en-CA", { timeZone: "America/Bogota" });
+    supabase.from("leads").insert({
+      id: leadId,
+      vendedor: "Juicy & Cream",
+      canal: "JUICY",
+      nombre: form.nombre.trim(),
+      contacto: form.nombre.trim(),
+      tel: form.telefono.trim(),
+      email: form.email.trim() || null,
+      valor_est: totalFinal,
+      stage: "Cotizado",
+      fecha_creacion: hoyStr,
+      ultimo_contacto: hoyStr,
+      notas: `JUICY & CREAM · ${item.kind === "ticket" ? `🎟 ${item.label} × ${cantidad}` : `🛋 ${item.label}`} · Forma: ${metodo}`,
+      etiquetas: ["juicy", item.kind, item.categoria],
+      pax: item.kind === "ticket" ? Number(cantidad) : 0,
+    }).then(({ error }) => {
+      if (error) console.warn("[juicy/lead] insert failed:", error);
+    });
+
     return id;
   }
 

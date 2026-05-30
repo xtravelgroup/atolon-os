@@ -320,6 +320,14 @@ serve(async (req) => {
             updated_at: new Date().toISOString(),
           }).eq("id", jc.id);
           console.log(`✓ Juicy & Cream ${jc.id} confirmada (Wompi)`);
+          // Update lead en Comercial → Cerrado Ganado
+          await SB.from("leads").update({
+            stage: "Cerrado Ganado",
+            fecha_pago: new Date().toISOString().slice(0, 10),
+            ultimo_contacto: new Date().toISOString().slice(0, 10),
+            updated_at: new Date().toISOString(),
+          }).eq("id", `LEAD-${jc.id}`).then(() => {}).catch((e: any) =>
+            console.warn("[juicy/lead-update] failed:", e?.message));
           await notificarJuicyPagoConfirmado(SB, jc, monto, "Wompi", txId).catch(e =>
             console.warn("[juicy/email-confirmado] failed:", (e as Error).message));
           return jsonResp({ received: true, processed: true, action: "juicy_confirmed", reserva_id: jc.id });
