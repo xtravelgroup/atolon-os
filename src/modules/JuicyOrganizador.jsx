@@ -346,40 +346,59 @@ function Dashboard({ onLogout }) {
                 Sin reservas que coincidan con los filtros.
               </div>
             ) : (
-              <div style={{ overflowX: "auto" }}>
-                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-                  <thead>
-                    <tr style={{ background: C.bg }}>
-                      <th style={th}>Fecha</th>
-                      <th style={th}>Tipo</th>
-                      <th style={th}>Detalle</th>
-                      <th style={th}>Cliente</th>
-                      <th style={th}>Teléfono</th>
-                      <th style={{ ...th, textAlign: "right" }}>Total</th>
-                      <th style={th}>Estado</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {lista.map(r => (
-                      <tr key={r.id} style={{ borderTop: `1px solid ${C.border}` }}>
-                        <td style={td}>{fmtFecha(r.created_at)}</td>
-                        <td style={td}>{r.tipo === "ticket" ? "🎟" : "🛋"}</td>
-                        <td style={td}>
-                          {r.tipo === "ticket"
-                            ? `${labelCategoria(r.categoria)} × ${r.cantidad}`
-                            : `${MESA_ZONA[r.categoria] || ""} · ${r.categoria} (${MESA_PAX[r.categoria]} pax)`}
-                        </td>
-                        <td style={td}>{r.nombre}</td>
-                        <td style={td}>{r.telefono}</td>
-                        <td style={{ ...td, textAlign: "right", fontWeight: 700 }}>{COP(r.total)}</td>
-                        <td style={td}>
-                          <EstadoBadge estado={r.estado} />
-                        </td>
+              <>
+                <div style={{
+                  display: "flex", justifyContent: "flex-end",
+                  marginBottom: 10,
+                }}>
+                  <button onClick={() => descargarCSV(lista)} style={{
+                    padding: "8px 16px", background: C.text, color: "#fff",
+                    border: "none", borderRadius: 6, fontSize: 12, fontWeight: 700,
+                    letterSpacing: "0.06em", cursor: "pointer",
+                    display: "flex", alignItems: "center", gap: 6,
+                  }}>
+                    📥 DESCARGAR CSV ({lista.length})
+                  </button>
+                </div>
+                <div style={{ overflowX: "auto" }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                    <thead>
+                      <tr style={{ background: C.bg }}>
+                        <th style={th}>Fecha</th>
+                        <th style={th}>Tipo</th>
+                        <th style={th}>Detalle</th>
+                        <th style={th}>Cliente</th>
+                        <th style={th}>Teléfono</th>
+                        <th style={th}>Email</th>
+                        <th style={{ ...th, textAlign: "right" }}>Total</th>
+                        <th style={th}>Estado</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+                    </thead>
+                    <tbody>
+                      {lista.map(r => (
+                        <tr key={r.id} style={{ borderTop: `1px solid ${C.border}` }}>
+                          <td style={td}>{fmtFecha(r.created_at)}</td>
+                          <td style={td}>{r.tipo === "ticket" ? "🎟" : "🛋"}</td>
+                          <td style={td}>
+                            {r.tipo === "ticket"
+                              ? `${labelCategoria(r.categoria)} × ${r.cantidad}`
+                              : `${MESA_ZONA[r.categoria] || ""} · ${r.categoria} (${MESA_PAX[r.categoria]} pax)`}
+                          </td>
+                          <td style={td}>{r.nombre}</td>
+                          <td style={td}>{r.telefono}</td>
+                          <td style={{ ...td, fontSize: 11, color: C.textMid }}>
+                            {r.email ? <a href={`mailto:${r.email}`} style={{ color: C.red, textDecoration: "none" }}>{r.email}</a> : "—"}
+                          </td>
+                          <td style={{ ...td, textAlign: "right", fontWeight: 700 }}>{COP(r.total)}</td>
+                          <td style={td}>
+                            <EstadoBadge estado={r.estado} />
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
             )}
           </div>
         </div>
@@ -467,6 +486,54 @@ function fmtFecha(iso) {
     return d.toLocaleDateString("es-CO", { day: "2-digit", month: "short" }) +
            " " + d.toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit" });
   } catch { return iso || "—"; }
+}
+
+// Genera y descarga un CSV con las reservas filtradas. Incluye BOM UTF-8
+// para que Excel abra correctamente los caracteres con tilde.
+function descargarCSV(reservas) {
+  const headers = ["Fecha", "Tipo", "Categoría", "Detalle", "Cantidad", "Pax", "Cliente", "Teléfono", "Email", "Cédula", "Total", "Estado", "Forma de pago", "Reserva ID"];
+  const escapeCsv = (s) => {
+    if (s == null) return "";
+    const str = String(s);
+    if (str.includes(";") || str.includes('"') || str.includes("\n")) {
+      return `"${str.replace(/"/g, '""')}"`;
+    }
+    return str;
+  };
+  const rows = reservas.map(r => {
+    const tipoLabel = r.tipo === "ticket" ? "Boletería" : "Mesa";
+    const detalle = r.tipo === "ticket"
+      ? `${labelCategoria(r.categoria)} × ${r.cantidad}`
+      : `${MESA_ZONA[r.categoria] || ""} · ${r.categoria}`;
+    const pax = r.tipo === "ticket" ? (r.cantidad || 1) : (MESA_PAX[r.categoria] || 0);
+    return [
+      fmtFecha(r.created_at),
+      tipoLabel,
+      r.categoria,
+      detalle,
+      r.cantidad || 1,
+      pax,
+      r.nombre || "",
+      r.telefono || "",
+      r.email || "",
+      r.cedula || "",
+      Math.round(Number(r.total) || 0),
+      r.estado || "",
+      r.forma_pago || "",
+      r.id,
+    ].map(escapeCsv).join(";");
+  });
+  const BOM = "﻿";
+  const csv = BOM + headers.join(";") + "\n" + rows.join("\n");
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `Juicy_Cream_reservas_${new Date().toISOString().slice(0, 10)}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 function labelCategoria(c) {
   const map = {
