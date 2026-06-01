@@ -82,7 +82,7 @@ const TICKETS = [
   {
     key: "VIP_EARLY", label: "VIP · Hasta 4 PM",
     sub: "Acceso preferente · Ingreso antes de las 4:00 PM",
-    cupo: 100, early: { hasta: 99, precio: 150000 }, anytime: 150000, // flat
+    cupo: 100, early: { hasta: 99, precio: 165000 }, anytime: 165000, // flat
     visible: true,
     incluye: INCLUYE_EARLY,
   },
@@ -90,7 +90,7 @@ const TICKETS = [
   {
     key: "VIP_ANYTIME", label: "VIP · Anytime",
     sub: "Acceso preferente · Ingreso a cualquier hora",
-    cupo: 100, early: { hasta: 99, precio: 175000 }, anytime: 175000, // flat
+    cupo: 100, early: { hasta: 99, precio: 192500 }, anytime: 192500, // flat
     visible: true,
     incluye: INCLUYE_ANYTIME,
     badge: "Sin restricción",
@@ -467,7 +467,7 @@ function Selector({ tab, onTab, compact = false, sticky = false }) {
         )}
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
           <ChoiceBtn active={tab === "tickets"} onClick={() => onTab("tickets")}
-            icon="🎟" titulo="BOLETERÍA" sub="Tickets desde $150.000" />
+            icon="🎟" titulo="BOLETERÍA" sub="Tickets desde $165.000" />
           <ChoiceBtn active={tab === "mesas"} onClick={() => onTab("mesas")}
             icon="🛋" titulo="MESAS / CAMAS" sub="Experiencia VIP con consumible" />
         </div>
@@ -484,7 +484,7 @@ function Selector({ tab, onTab, compact = false, sticky = false }) {
       <div style={{ maxWidth: 1100, margin: "0 auto", padding: "14px 16px" }}>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
           <ChoiceBtn active={tab === "tickets"} onClick={() => onTab("tickets")}
-            icon="🎟" titulo="BOLETERÍA" sub="Tickets desde $150.000" />
+            icon="🎟" titulo="BOLETERÍA" sub="Tickets desde $165.000" />
           <ChoiceBtn active={tab === "mesas"} onClick={() => onTab("mesas")}
             icon="🛋" titulo="MESAS / CAMAS" sub="Experiencia VIP con consumible" />
         </div>
