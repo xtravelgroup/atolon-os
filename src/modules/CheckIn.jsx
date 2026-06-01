@@ -795,7 +795,23 @@ async function generarZarpe(salida, reservas, fecha, despacho, emb) {
       ? r.pasajeros
       : [{ nombre: r.nombre, identificacion: "—", nacionalidad: "—" }]
   );
-  const totalPax = paxList.length;
+
+  // Blue Apple pax que van en ESTA embarcación — capturados en despacho.
+  // Se usan para 2 propósitos:
+  //   1. Persistirlos en zarpes_log.pasajeros (antes faltaban en BD)
+  //   2. Render del PDF (se muestran en una sección visual aparte abajo)
+  const paxBA = (despacho?.pasajeros_blueapple || [])
+    .filter(p => !emb || !p.embarcacion || p.embarcacion === emb.nombre)
+    .map(p => ({
+      nombre: p.nombre || "—",
+      identificacion: p.cedula || "—",
+      nacionalidad: p.nacionalidad || "Blue Apple",
+      _blueApple: true,
+    }));
+
+  // pax_total y pasajeros (lo que va a BD) incluyen BA — antes solo reservas.
+  const pasajerosPersistidos = [...paxList, ...paxBA];
+  const totalPax = pasajerosPersistidos.length;
   // Lista unificada para el zarpe: pasajeros + colaboradores + Blue Apple en
   // una sola tabla. Colaboradores: tag STAFF · rol. Blue Apple: tag BLUE APPLE
   // (no son pasadía pero ocupan cupo en la lancha).
@@ -843,6 +859,11 @@ async function generarZarpe(salida, reservas, fecha, despacho, emb) {
       if (deRow?.id) despachoIdFinal = deRow.id;
     }
 
+    // BA pax marcados con `_blueApple: true` y nacionalidad "Blue Apple" para
+    // que cualquier consumidor de zarpes_log.pasajeros pueda identificarlos.
+    // Se incluyen en `pasajeros` (la columna que existe) — las columnas
+    // pasajeros_blueapple/_count que estaban antes no existen en la tabla
+    // y Supabase JS las descartaba silenciosamente (era el bug).
     const payload = {
       fecha,
       salida_id:           salida.id,
@@ -853,9 +874,7 @@ async function generarZarpe(salida, reservas, fecha, despacho, emb) {
       zarpe_codigo:        codigoFinal,
       pax_total:           totalPax,
       colaboradores_count: despacho?.colaboradores?.length || 0,
-      pasajeros_blueapple_count: (blueAppleRows || []).length,
-      pasajeros_blueapple:       blueAppleRows || [],
-      pasajeros:           paxList,
+      pasajeros:           pasajerosPersistidos,
       colaboradores:       despacho?.colaboradores || [],
       despacho_id:         despachoIdFinal,
       generado_por_email:  email,
