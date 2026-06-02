@@ -77,12 +77,18 @@ const INCLUYE_ANYTIME = [
   ...INCLUYE_TRANSPORTE,
 ];
 
+// Fee administrativo (11%) — se suma al precio base en el checkout para
+// armar el total a pagar. El precio que se muestra en la card del ticket
+// es el BASE; el fee se revela al final del checkout junto al total.
+const FEE_PCT = 0.11;
+
 const TICKETS = [
   // VIP — Hasta 4 PM (cheaper, restricted entry time)
   {
     key: "VIP_EARLY", label: "VIP · Hasta 4 PM",
     sub: "Acceso preferente · Ingreso antes de las 4:00 PM",
-    cupo: 100, early: { hasta: 99, precio: 165000 }, anytime: 165000, // flat
+    cupo: 100, early: { hasta: 99, precio: 150000 }, anytime: 150000, // base, sin fee
+    feePct: FEE_PCT,
     visible: true,
     incluye: INCLUYE_EARLY,
   },
@@ -90,7 +96,8 @@ const TICKETS = [
   {
     key: "VIP_ANYTIME", label: "VIP · Anytime",
     sub: "Acceso preferente · Ingreso a cualquier hora",
-    cupo: 100, early: { hasta: 99, precio: 192500 }, anytime: 192500, // flat
+    cupo: 100, early: { hasta: 99, precio: 175000 }, anytime: 175000,
+    feePct: FEE_PCT,
     visible: true,
     incluye: INCLUYE_ANYTIME,
     badge: "Sin restricción",
@@ -99,8 +106,9 @@ const TICKETS = [
   {
     key: "BACKSTAGE", label: "Backstage", sub: "Mismo acceso de VIP · Área Backstage",
     cupo: 60, early: { hasta: 99, precio: 450000 }, anytime: 450000,
+    feePct: FEE_PCT,
     visible: true,
-    incluye: INCLUYE_ANYTIME, // backstage también es anytime
+    incluye: INCLUYE_ANYTIME,
     badge: "Área exclusiva",
   },
   { key: "ETAPA_1", label: "Etapa 1", sub: "Primera etapa",            cupo: 100, early: { hasta: 16, precio: 193000 }, anytime: 248000, visible: false },
@@ -230,6 +238,7 @@ export default function JuicyCream() {
   const abrirTicket = (t) => setCart({
     kind: "ticket", categoria: t.key, label: t.label, cantidad: 1,
     precio: precioTicket(t),
+    feePct: t.feePct || 0,
   });
   const abrirMesa = (m) => {
     if (reservadas.has(m.key)) return;
@@ -467,7 +476,7 @@ function Selector({ tab, onTab, compact = false, sticky = false }) {
         )}
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
           <ChoiceBtn active={tab === "tickets"} onClick={() => onTab("tickets")}
-            icon="🎟" titulo="BOLETERÍA" sub="Tickets desde $165.000" />
+            icon="🎟" titulo="BOLETERÍA" sub="Tickets desde $150.000" />
           <ChoiceBtn active={tab === "mesas"} onClick={() => onTab("mesas")}
             icon="🛋" titulo="MESAS / CAMAS" sub="Experiencia VIP con consumible" />
         </div>
@@ -484,7 +493,7 @@ function Selector({ tab, onTab, compact = false, sticky = false }) {
       <div style={{ maxWidth: 1100, margin: "0 auto", padding: "14px 16px" }}>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
           <ChoiceBtn active={tab === "tickets"} onClick={() => onTab("tickets")}
-            icon="🎟" titulo="BOLETERÍA" sub="Tickets desde $165.000" />
+            icon="🎟" titulo="BOLETERÍA" sub="Tickets desde $150.000" />
           <ChoiceBtn active={tab === "mesas"} onClick={() => onTab("mesas")}
             icon="🛋" titulo="MESAS / CAMAS" sub="Experiencia VIP con consumible" />
         </div>
@@ -1007,7 +1016,12 @@ function CheckoutModal({ item, onClose, onConfirmar }) {
 
   const totalBase = item.precio * (item.kind === "ticket" ? cantidad : 1);
   const consumibleMonto = item.consumible ? totalBase * item.consumible : 0;
-  const totalFinal = totalBase;
+  // Fee administrativo (solo aplica si el item lo trae configurado).
+  // Se cobra encima del precio base. El cliente lo ve transparente en el
+  // breakdown del checkout.
+  const feePct = Number(item.feePct) || 0;
+  const feeMonto = Math.round(totalBase * feePct);
+  const totalFinal = totalBase + feeMonto;
 
   const setF = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
@@ -1236,10 +1250,16 @@ function CheckoutModal({ item, onClose, onConfirmar }) {
       <div style={{
         background: C.bg, border: `1px solid ${C.border}`, borderRadius: 6, padding: 14, marginBottom: 14,
       }}>
-        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 14, marginBottom: item.consumible ? 6 : 0 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 14, marginBottom: 6 }}>
           <span style={{ color: C.textMid }}>{item.kind === "ticket" ? `${cantidad} ticket${cantidad > 1 ? "s" : ""}` : "Mesa"}</span>
           <span style={{ fontWeight: 700 }}>{COP(totalBase)}</span>
         </div>
+        {feeMonto > 0 && (
+          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: C.textMid, marginBottom: 6 }}>
+            <span>Fee administrativo ({Math.round(feePct * 100)}%)</span>
+            <span>{COP(feeMonto)}</span>
+          </div>
+        )}
         {item.consumible && (
           <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: C.red, marginBottom: 8 }}>
             <span>Incluye consumible {Math.round(item.consumible * 100)}%</span>
