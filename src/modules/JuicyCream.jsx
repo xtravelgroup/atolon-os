@@ -806,16 +806,16 @@ const HOTSPOTS = {
   // Backstage / DJ (centro)
   "A1": { top: 42.5, left: 26.5, width: 16, height: 7 },
   "A2": { top: 42.5, left: 57.5, width: 16, height: 7 },
-  // VIP Beach izquierda (1C-4C)
-  "1C": { top: 58,   left:  4,  width: 17, height: 7 },
-  "2C": { top: 66,   left:  4,  width: 17, height: 7 },
-  "3C": { top: 74,   left:  4,  width: 17, height: 7 },
-  "4C": { top: 82,   left:  4,  width: 17, height: 7 },
+  // VIP Beach izquierda (1C-4C) — subidos 4% para alinear con las mesas
+  "1C": { top: 54,   left:  4,  width: 17, height: 7 },
+  "2C": { top: 62,   left:  4,  width: 17, height: 7 },
+  "3C": { top: 70,   left:  4,  width: 17, height: 7 },
+  "4C": { top: 78,   left:  4,  width: 17, height: 7 },
   // VIP Beach derecha (5C-8C)
-  "5C": { top: 58,   left: 79,  width: 17, height: 7 },
-  "6C": { top: 66,   left: 79,  width: 17, height: 7 },
-  "7C": { top: 74,   left: 79,  width: 17, height: 7 },
-  "8C": { top: 82,   left: 79,  width: 17, height: 7 },
+  "5C": { top: 54,   left: 79,  width: 17, height: 7 },
+  "6C": { top: 62,   left: 79,  width: 17, height: 7 },
+  "7C": { top: 70,   left: 79,  width: 17, height: 7 },
+  "8C": { top: 78,   left: 79,  width: 17, height: 7 },
 };
 
 function PlanoImagen({ reservadas, onClick, highlight }) {
