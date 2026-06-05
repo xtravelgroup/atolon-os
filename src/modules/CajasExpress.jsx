@@ -476,7 +476,7 @@ function CajaScreen({ sesion, onLogout, onUpdateSesion }) {
   const productosFiltrados = productos.filter(p => p.tipo === vista);
 
   return (
-    <div style={{ paddingBottom: cartCount > 0 && (vista === "comida" || vista === "bebida") ? 120 : 0 }}>
+    <div style={{ paddingBottom: cartCount > 0 && (vista === "comida" || vista === "bebida" || vista === "botellas") ? 120 : 0 }}>
       {/* Header */}
       <div style={{
         position: "sticky", top: 0, zIndex: 20,
@@ -505,9 +505,10 @@ function CajaScreen({ sesion, onLogout, onUpdateSesion }) {
         )}
         <div style={{ flex: 1, textAlign: "center" }}>
           {vista === "impresora" && <span style={{ fontWeight: 800, letterSpacing: "0.06em" }}>🖨 IMPRESORA</span>}
-          {vista === "comida" && <span style={{ fontWeight: 800, letterSpacing: "0.06em" }}>🍔 COMIDA</span>}
-          {vista === "bebida" && <span style={{ fontWeight: 800, letterSpacing: "0.06em" }}>🍺 BEBIDA</span>}
-          {vista === "cierre" && <span style={{ fontWeight: 800, letterSpacing: "0.06em" }}>📊 CIERRE</span>}
+          {vista === "comida"   && <span style={{ fontWeight: 800, letterSpacing: "0.06em" }}>🍔 COMIDA</span>}
+          {vista === "bebida"   && <span style={{ fontWeight: 800, letterSpacing: "0.06em" }}>🍺 BEBIDA</span>}
+          {vista === "botellas" && <span style={{ fontWeight: 800, letterSpacing: "0.06em" }}>🍾 BOTELLAS</span>}
+          {vista === "cierre"   && <span style={{ fontWeight: 800, letterSpacing: "0.06em" }}>📊 CIERRE</span>}
         </div>
         <button onClick={() => { if (confirm("¿Cerrar sesión del cajero?")) onLogout(); }}
           style={{
@@ -538,8 +539,8 @@ function CajaScreen({ sesion, onLogout, onUpdateSesion }) {
         />
       )}
 
-      {/* Vista Comida / Bebida (grid) */}
-      {(vista === "comida" || vista === "bebida") && (
+      {/* Vista Comida / Bebida / Botellas (grid) */}
+      {(vista === "comida" || vista === "bebida" || vista === "botellas") && (
         <div style={{ padding: 12 }}>
           {productosFiltrados.length === 0 ? (
             <div style={{ padding: 40, textAlign: "center", color: C.textLow }}>
@@ -557,8 +558,8 @@ function CajaScreen({ sesion, onLogout, onUpdateSesion }) {
         <CierreCajaScreen sesion={sesion} onLogout={onLogout} />
       )}
 
-      {/* Carrito fijo abajo (solo en grids de comida/bebida) */}
-      {cartCount > 0 && (vista === "comida" || vista === "bebida") && (
+      {/* Carrito fijo abajo (solo en grids de comida/bebida/botellas) */}
+      {cartCount > 0 && (vista === "comida" || vista === "bebida" || vista === "botellas") && (
         <CarritoBar items={cartItems}
           subtotal={subtotal} propinaActiva={propinaActiva} propinaMonto={propinaMonto}
           onTogglePropina={() => setPropinaActiva(p => !p)}
@@ -586,9 +587,10 @@ function CajaScreen({ sesion, onLogout, onUpdateSesion }) {
 function HomeOpciones({ onSelect, cart, impresoraNombre }) {
   const cartCount = Object.values(cart).reduce((s, it) => s + it.cantidad, 0);
   const opciones = [
-    { key: "comida",  icon: "🍔", label: "COMIDA",         desc: "Barco · Entradas · Pizzas · Grill · Sides", color: C.green },
-    { key: "bebida",  icon: "🍺", label: "BEBIDA",         desc: "Cervezas · Cocteles · Licores",            color: C.amber },
-    { key: "cierre",  icon: "📊", label: "CIERRE DE CAJA", desc: "Resumen del turno + cerrar sesión",        color: C.navy },
+    { key: "comida",   icon: "🍔", label: "COMIDA",         desc: "Barco · Entradas · Pizzas · Grill · Sides",   color: C.green },
+    { key: "bebida",   icon: "🍺", label: "BEBIDA",         desc: "Cervezas · Cocteles · Tragos · Sin alcohol",  color: C.amber },
+    { key: "botellas", icon: "🍾", label: "BOTELLAS",       desc: "Botellas enteras de licor",                   color: "#7B2D26" },
+    { key: "cierre",   icon: "📊", label: "CIERRE DE CAJA", desc: "Resumen del turno + cerrar sesión",           color: C.navy },
   ];
   return (
     <div style={{ padding: "24px 16px", maxWidth: 480, margin: "0 auto" }}>
