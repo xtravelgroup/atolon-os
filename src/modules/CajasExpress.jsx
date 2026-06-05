@@ -71,6 +71,9 @@ function PinScreen({ onAuth }) {
   const [selectedCaja, setSelectedCaja] = useState(() => {
     try { return localStorage.getItem("caja_express_id") || ""; } catch { return ""; }
   });
+  // Modo registro: cuando el PIN no existe, pasamos a esta vista para
+  // capturar el nombre del cajero y crear el cajero on-the-fly.
+  const [registro, setRegistro] = useState(null); // null | { pin, nombre }
 
   useEffect(() => {
     if (!supabase) return;
@@ -81,6 +84,18 @@ function PinScreen({ onAuth }) {
       .then(({ data }) => setCajas(data || []));
   }, []);
 
+  const enterAs = (cajero) => {
+    try { localStorage.setItem("caja_express_id", selectedCaja); } catch {}
+    const cajaObj = cajas.find(c => c.id === selectedCaja);
+    onAuth({
+      cajero_id: cajero.id, cajero_nombre: cajero.nombre, loggro_seller_id: cajero.loggro_seller_id,
+      caja_id: cajaObj?.id, caja_nombre: cajaObj?.nombre, loggro_mesa_id: cajaObj?.loggro_mesa_id,
+      started_at: new Date().toISOString(),
+    });
+  };
+
+  // Intento login con PIN. Si no existe, abre formulario de registro
+  // pre-llenado con el PIN escogido (no obliga al usuario a re-tipear).
   const tryLogin = async (fullPin) => {
     if (!selectedCaja) { setError("Selecciona la caja"); return; }
     if (fullPin.length < 4) return;
@@ -92,22 +107,37 @@ function PinScreen({ onAuth }) {
       .eq("activo", true)
       .maybeSingle();
     setBusy(false);
-    if (!data) {
-      setError("PIN incorrecto");
-      setPin("");
+    if (data) {
+      enterAs(data);
       return;
     }
-    try { localStorage.setItem("caja_express_id", selectedCaja); } catch {}
-    const cajaObj = cajas.find(c => c.id === selectedCaja);
-    onAuth({
-      cajero_id: data.id, cajero_nombre: data.nombre, loggro_seller_id: data.loggro_seller_id,
-      caja_id: cajaObj?.id, caja_nombre: cajaObj?.nombre, loggro_mesa_id: cajaObj?.loggro_mesa_id,
-      started_at: new Date().toISOString(),
-    });
+    // PIN nuevo → modo registro
+    setRegistro({ pin: fullPin, nombre: "" });
+    setPin("");
+  };
+
+  // Crea el cajero con el nombre + PIN escogidos y entra.
+  const guardarRegistro = async () => {
+    const nombre = (registro?.nombre || "").trim();
+    if (!nombre) { setError("Pon tu nombre"); return; }
+    if (nombre.length < 2) { setError("Nombre muy corto"); return; }
+    setBusy(true);
+    setError("");
+    const id = `CAJERO-${Date.now()}`;
+    const { data, error: insErr } = await supabase.from("cajas_evento_cajeros").insert({
+      id, nombre, pin: registro.pin, activo: true,
+    }).select().single();
+    setBusy(false);
+    if (insErr) {
+      if (insErr.code === "23505") setError("Ese PIN ya fue usado por otro cajero");
+      else setError(insErr.message);
+      return;
+    }
+    enterAs(data);
   };
 
   const pressKey = (k) => {
-    if (busy) return;
+    if (busy || registro) return;
     setError("");
     if (k === "del") { setPin(p => p.slice(0, -1)); return; }
     setPin(p => {
@@ -147,41 +177,87 @@ function PinScreen({ onAuth }) {
         </select>
       </div>
 
-      {/* PIN display */}
-      <div style={{
-        background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 12,
-        padding: "20px", marginBottom: 18, textAlign: "center",
-      }}>
-        <div style={{ fontSize: 11, color: C.textMid, letterSpacing: "0.18em", fontWeight: 700, marginBottom: 10 }}>
-          PIN DEL CAJERO
-        </div>
-        <div style={{ fontSize: 36, fontWeight: 900, letterSpacing: "0.5em", color: C.gold, height: 44, lineHeight: 1.1 }}>
-          {Array.from({ length: 6 }).map((_, i) => (
-            <span key={i} style={{ display: "inline-block", width: 16, opacity: i < pin.length ? 1 : 0.18 }}>•</span>
-          ))}
-        </div>
-        {error && (
-          <div style={{ marginTop: 10, fontSize: 13, color: C.red, fontWeight: 700 }}>{error}</div>
-        )}
-      </div>
-
-      {/* Keypad */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
-        {["1","2","3","4","5","6","7","8","9","","0","del"].map((k, i) =>
-          k === "" ? <div key={i} /> : (
-            <button key={i} onClick={() => pressKey(k)} disabled={busy}
+      {/* Modo registro: pide nombre cuando el PIN es nuevo */}
+      {registro ? (
+        <div style={{
+          background: C.bgCard, border: `2px solid ${C.gold}`, borderRadius: 12,
+          padding: "22px 20px", marginBottom: 18,
+        }}>
+          <div style={{ fontSize: 11, color: C.gold, letterSpacing: "0.18em", fontWeight: 700, marginBottom: 6, textAlign: "center" }}>
+            👋 PRIMERA VEZ
+          </div>
+          <div style={{ fontSize: 14, color: C.textMid, marginBottom: 18, textAlign: "center", lineHeight: 1.4 }}>
+            Tu PIN <strong style={{ color: C.gold, letterSpacing: "0.15em" }}>{registro.pin}</strong> queda guardado.<br/>
+            ¿Cómo te llamas?
+          </div>
+          <input value={registro.nombre} autoFocus
+            onChange={e => { setRegistro(r => ({ ...r, nombre: e.target.value })); setError(""); }}
+            onKeyDown={e => e.key === "Enter" && guardarRegistro()}
+            placeholder="Nombre y apellido"
+            style={{
+              width: "100%", padding: "14px 16px", fontSize: 16,
+              background: "#000", border: `2px solid ${error ? C.red : C.border}`, borderRadius: 10,
+              color: C.text, outline: "none", boxSizing: "border-box", fontWeight: 600,
+            }} />
+          {error && <div style={{ marginTop: 10, fontSize: 13, color: C.red, fontWeight: 700 }}>{error}</div>}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 14 }}>
+            <button onClick={() => { setRegistro(null); setError(""); }} disabled={busy}
               style={{
-                aspectRatio: "1.5/1", background: k === "del" ? C.bgCard : "#222",
-                border: `1px solid ${C.border}`, borderRadius: 12,
-                color: C.text, fontSize: 28, fontWeight: 800,
-                cursor: "pointer", transition: "transform 0.05s, background 0.1s",
-                touchAction: "manipulation",
-              }}>
-              {k === "del" ? "⌫" : k}
-            </button>
-          )
-        )}
-      </div>
+                padding: "14px", background: "none", color: C.textMid,
+                border: `1.5px solid ${C.border}`, borderRadius: 10,
+                fontSize: 13, cursor: "pointer", fontWeight: 600,
+              }}>← Volver</button>
+            <button onClick={guardarRegistro} disabled={busy}
+              style={{
+                padding: "14px", background: C.gold, color: "#000",
+                border: "none", borderRadius: 10,
+                fontSize: 14, fontWeight: 900, letterSpacing: "0.06em",
+                cursor: "pointer", opacity: busy ? 0.6 : 1,
+              }}>{busy ? "..." : "ENTRAR →"}</button>
+          </div>
+        </div>
+      ) : (
+        <>
+          {/* PIN display */}
+          <div style={{
+            background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 12,
+            padding: "20px", marginBottom: 18, textAlign: "center",
+          }}>
+            <div style={{ fontSize: 11, color: C.textMid, letterSpacing: "0.18em", fontWeight: 700, marginBottom: 10 }}>
+              TU PIN
+            </div>
+            <div style={{ fontSize: 36, fontWeight: 900, letterSpacing: "0.5em", color: C.gold, height: 44, lineHeight: 1.1 }}>
+              {Array.from({ length: 6 }).map((_, i) => (
+                <span key={i} style={{ display: "inline-block", width: 16, opacity: i < pin.length ? 1 : 0.18 }}>•</span>
+              ))}
+            </div>
+            {error && (
+              <div style={{ marginTop: 10, fontSize: 13, color: C.red, fontWeight: 700 }}>{error}</div>
+            )}
+            <div style={{ marginTop: 10, fontSize: 11, color: C.textLow }}>
+              4 a 6 dígitos · Primera vez te pedimos tu nombre
+            </div>
+          </div>
+
+          {/* Keypad */}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
+            {["1","2","3","4","5","6","7","8","9","","0","del"].map((k, i) =>
+              k === "" ? <div key={i} /> : (
+                <button key={i} onClick={() => pressKey(k)} disabled={busy}
+                  style={{
+                    aspectRatio: "1.5/1", background: k === "del" ? C.bgCard : "#222",
+                    border: `1px solid ${C.border}`, borderRadius: 12,
+                    color: C.text, fontSize: 28, fontWeight: 800,
+                    cursor: "pointer", transition: "transform 0.05s, background 0.1s",
+                    touchAction: "manipulation",
+                  }}>
+                  {k === "del" ? "⌫" : k}
+                </button>
+              )
+            )}
+          </div>
+        </>
+      )}
 
       <div style={{ fontSize: 10, color: C.textLow, marginTop: 22, textAlign: "center", letterSpacing: "0.15em" }}>
         ATOLON BEACH CLUB
