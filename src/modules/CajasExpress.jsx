@@ -329,13 +329,20 @@ function CajaScreen({ sesion, onLogout }) {
   const clearCart = () => setCart({});
 
   const cartItems = Object.values(cart);
-  const total = cartItems.reduce(
+  const subtotal = cartItems.reduce(
     (s, it) => s + (Number(it.producto.evento_caja_precio) || 0) * it.cantidad, 0
   );
+  const [propinaActiva, setPropinaActiva] = useState(false);
+  const propinaPct = 0.10;
+  const propinaMonto = propinaActiva ? Math.round(subtotal * propinaPct) : 0;
+  const total = subtotal + propinaMonto;
   const cartCount = cartItems.reduce((s, it) => s + it.cantidad, 0);
+  // Modal de efectivo (selección de billete / USD)
+  const [modalEfectivo, setModalEfectivo] = useState(false);
 
   // ── Cobrar (envía a Loggro + guarda en BD) ──
-  async function cobrar(metodo) {
+  // pagoDetalle (opcional, solo efectivo): { moneda, monto, monto_cop, tasa_cambio, cambio_cop }
+  async function cobrar(metodo, pagoDetalle = null) {
     if (cartItems.length === 0 || pagandoCon) return;
     setPagandoCon(metodo);
     const ventaId = `VTE-${Date.now()}-${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
@@ -353,9 +360,11 @@ function CajaScreen({ sesion, onLogout }) {
       cajero_id: sesion.cajero_id,
       cajero_nombre: sesion.cajero_nombre,
       items,
-      subtotal: total,
+      subtotal,
+      propina: propinaMonto,
       total,
       metodo_pago: metodo,
+      pago_recibido: pagoDetalle || {},
     };
     const { error: insErr } = await supabase.from("cajas_evento_ventas").insert(payload);
     if (insErr) {
@@ -404,9 +413,11 @@ function CajaScreen({ sesion, onLogout }) {
       }).eq("id", ventaId).then(() => {});
     }
 
-    setExito({ ventaId, total, metodo });
+    setExito({ ventaId, total, metodo, propina: propinaMonto, pago: pagoDetalle });
     clearCart();
+    setPropinaActiva(false);
     setPagandoCon(null);
+    setModalEfectivo(false);
   }
 
   if (loading) return <div style={{ padding: 40, textAlign: "center", color: C.textMid }}>Cargando…</div>;
@@ -479,10 +490,21 @@ function CajaScreen({ sesion, onLogout }) {
 
       {/* Carrito fijo abajo (solo en grids de comida/bebida) */}
       {cartCount > 0 && (vista === "comida" || vista === "bebida") && (
-        <CarritoBar items={cartItems} total={total} count={cartCount}
-          onCobrarEfectivo={() => cobrar("efectivo")}
+        <CarritoBar items={cartItems}
+          subtotal={subtotal} propinaActiva={propinaActiva} propinaMonto={propinaMonto}
+          onTogglePropina={() => setPropinaActiva(p => !p)}
+          total={total} count={cartCount}
+          onCobrarEfectivo={() => setModalEfectivo(true)}
           onCobrarTarjeta={() => cobrar("tarjeta")}
           onClear={clearCart}
+          pagandoCon={pagandoCon} />
+      )}
+
+      {/* Modal de efectivo: COP/USD + selección de billete + cambio */}
+      {modalEfectivo && (
+        <ModalEfectivo total={total}
+          onClose={() => setModalEfectivo(false)}
+          onConfirmar={(detalle) => cobrar("efectivo", detalle)}
           pagandoCon={pagandoCon} />
       )}
     </div>
@@ -738,7 +760,10 @@ function ProductosGrid({ productos, cart, onAdd, onRemove }) {
   );
 }
 
-function CarritoBar({ items, total, count, onCobrarEfectivo, onCobrarTarjeta, onClear, pagandoCon }) {
+function CarritoBar({
+  items, subtotal, propinaActiva, propinaMonto, onTogglePropina,
+  total, count, onCobrarEfectivo, onCobrarTarjeta, onClear, pagandoCon,
+}) {
   return (
     <div style={{
       position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 30,
@@ -746,12 +771,17 @@ function CarritoBar({ items, total, count, onCobrarEfectivo, onCobrarTarjeta, on
       padding: "12px 14px 18px",
       boxShadow: "0 -10px 30px rgba(0,0,0,0.3)",
     }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
         <div>
           <div style={{ fontSize: 11, color: "rgba(255,255,255,0.65)", letterSpacing: "0.12em", fontWeight: 700 }}>
-            {count} {count === 1 ? "ÍTEM" : "ÍTEMS"}
+            {count} {count === 1 ? "ÍTEM" : "ÍTEMS"}{propinaActiva ? ` · +10% propina` : ""}
           </div>
           <div style={{ fontSize: 26, fontWeight: 900, color: C.sand }}>{COP(total)}</div>
+          {propinaActiva && (
+            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.55)", marginTop: 2 }}>
+              Subtotal {COP(subtotal)} + propina {COP(propinaMonto)}
+            </div>
+          )}
         </div>
         <button onClick={onClear} disabled={!!pagandoCon}
           style={{
@@ -760,6 +790,21 @@ function CarritoBar({ items, total, count, onCobrarEfectivo, onCobrarTarjeta, on
             opacity: pagandoCon ? 0.5 : 1,
           }}>Limpiar</button>
       </div>
+
+      {/* Toggle propina */}
+      <button onClick={onTogglePropina} disabled={!!pagandoCon}
+        style={{
+          width: "100%", padding: "10px 12px", marginBottom: 10,
+          background: propinaActiva ? C.sand : "transparent",
+          color: propinaActiva ? C.navy : "rgba(255,255,255,0.85)",
+          border: `1.5px solid ${propinaActiva ? C.sand : "rgba(255,255,255,0.25)"}`,
+          borderRadius: 10, fontSize: 13, fontWeight: 800,
+          cursor: pagandoCon ? "not-allowed" : "pointer",
+          letterSpacing: "0.06em",
+        }}>
+        {propinaActiva ? `✓ PROPINA 10% (${COP(propinaMonto)})` : "+ AGREGAR PROPINA 10%"}
+      </button>
+
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
         <button onClick={onCobrarEfectivo} disabled={!!pagandoCon}
           style={{
@@ -776,6 +821,183 @@ function CarritoBar({ items, total, count, onCobrarEfectivo, onCobrarTarjeta, on
             letterSpacing: "0.06em", opacity: pagandoCon === "tarjeta" ? 0.6 : 1,
           }}>
           {pagandoCon === "tarjeta" ? "PROCESANDO…" : "💳 TARJETA"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// MODAL DE EFECTIVO — selección billete COP o USD + cálculo de cambio
+// ──────────────────────────────────────────────────────────────────────
+const TRM_USD = 3400; // pesos por dólar — fijado por la administración
+const BILLETES_COP = [10000, 20000, 50000, 100000];
+
+function ModalEfectivo({ total, onClose, onConfirmar, pagandoCon }) {
+  const [moneda, setMoneda] = useState("COP"); // COP | USD
+  const [monto, setMonto] = useState("");      // string editable
+
+  const montoNum = Number(monto) || 0;
+  const montoCop = moneda === "USD" ? Math.round(montoNum * TRM_USD) : montoNum;
+  const cambio = montoCop - total;
+  const faltante = total - montoCop;
+
+  const confirmar = () => {
+    if (montoCop < total) return;
+    onConfirmar({
+      moneda,
+      monto: montoNum,
+      monto_cop: montoCop,
+      tasa_cambio: moneda === "USD" ? TRM_USD : 1,
+      cambio_cop: Math.max(0, cambio),
+    });
+  };
+
+  return (
+    <div onClick={e => e.target === e.currentTarget && onClose()} style={{
+      position: "fixed", inset: 0, background: "rgba(13,27,62,0.7)",
+      display: "flex", alignItems: "flex-end", justifyContent: "center",
+      zIndex: 100,
+    }}>
+      <div style={{
+        background: C.bg, borderTopLeftRadius: 18, borderTopRightRadius: 18,
+        padding: 20, width: "100%", maxWidth: 480, maxHeight: "92vh", overflowY: "auto",
+        boxShadow: "0 -20px 40px rgba(0,0,0,0.3)",
+      }}>
+        {/* Header */}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+          <div>
+            <div style={{ fontSize: 11, color: C.textMid, letterSpacing: "0.18em", fontWeight: 700 }}>
+              TOTAL A COBRAR
+            </div>
+            <div style={{ fontFamily: "monospace", fontSize: 30, fontWeight: 900, color: C.text }}>
+              {COP(total)}
+            </div>
+          </div>
+          <button onClick={onClose} style={{
+            background: "none", border: "none", color: C.textMid,
+            fontSize: 28, cursor: "pointer", padding: 4, lineHeight: 1,
+          }}>×</button>
+        </div>
+
+        {/* Selector moneda */}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 16 }}>
+          {[
+            { v: "COP", l: "💵 COP", sub: "Pesos colombianos" },
+            { v: "USD", l: "💵 USD", sub: `Dólar @ ${TRM_USD}` },
+          ].map(o => (
+            <button key={o.v} onClick={() => { setMoneda(o.v); setMonto(""); }}
+              style={{
+                padding: "14px 12px", borderRadius: 10,
+                background: moneda === o.v ? C.navy : C.bgCard,
+                color: moneda === o.v ? "#fff" : C.text,
+                border: `2px solid ${moneda === o.v ? C.navy : C.border}`,
+                fontSize: 16, fontWeight: 800, cursor: "pointer",
+                textAlign: "center", letterSpacing: "0.04em",
+              }}>
+              <div>{o.l}</div>
+              <div style={{ fontSize: 10, fontWeight: 500, opacity: 0.75, marginTop: 3 }}>{o.sub}</div>
+            </button>
+          ))}
+        </div>
+
+        {/* Quick bills (solo COP) */}
+        {moneda === "COP" && (
+          <div style={{ marginBottom: 14 }}>
+            <div style={{ fontSize: 11, color: C.textMid, letterSpacing: "0.15em", fontWeight: 700, marginBottom: 8 }}>
+              BILLETE RECIBIDO
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8 }}>
+              {BILLETES_COP.map(b => (
+                <button key={b} onClick={() => setMonto(String(b))}
+                  style={{
+                    padding: "12px 4px", borderRadius: 8,
+                    background: montoNum === b ? C.sand : C.bgCard,
+                    border: `2px solid ${montoNum === b ? C.text : C.border}`,
+                    fontSize: 13, fontWeight: 800, cursor: "pointer",
+                    color: C.text,
+                  }}>
+                  ${(b/1000)}k
+                </button>
+              ))}
+            </div>
+            <button onClick={() => setMonto(String(total))}
+              style={{
+                width: "100%", padding: "10px 12px", marginTop: 8,
+                background: "transparent", border: `1.5px dashed ${C.border}`,
+                borderRadius: 8, fontSize: 12, color: C.textMid,
+                cursor: "pointer", fontWeight: 600,
+              }}>
+              💯 Monto exacto ({COP(total)})
+            </button>
+          </div>
+        )}
+
+        {/* Monto manual */}
+        <div style={{ marginBottom: 14 }}>
+          <div style={{ fontSize: 11, color: C.textMid, letterSpacing: "0.15em", fontWeight: 700, marginBottom: 6 }}>
+            {moneda === "USD" ? "MONTO EN USD" : "O INGRESA OTRO MONTO (COP)"}
+          </div>
+          <div style={{ position: "relative" }}>
+            <span style={{ position: "absolute", left: 16, top: "50%", transform: "translateY(-50%)", fontSize: 18, color: C.textMid, fontWeight: 700 }}>
+              {moneda === "USD" ? "US$" : "$"}
+            </span>
+            <input type="number" value={monto} onChange={e => setMonto(e.target.value)}
+              placeholder="0"
+              style={{
+                width: "100%", padding: "14px 16px 14px 50px",
+                fontSize: 20, fontWeight: 800,
+                border: `2px solid ${C.border}`, borderRadius: 10,
+                background: C.bgCard, color: C.text, outline: "none", boxSizing: "border-box",
+                fontFamily: "monospace",
+              }} />
+          </div>
+          {moneda === "USD" && montoNum > 0 && (
+            <div style={{ fontSize: 12, color: C.textMid, marginTop: 6, textAlign: "right" }}>
+              = {COP(montoCop)} COP ({montoNum} × {TRM_USD})
+            </div>
+          )}
+        </div>
+
+        {/* Cambio o faltante */}
+        {montoNum > 0 && (
+          <div style={{
+            padding: "14px 18px", borderRadius: 12, marginBottom: 14,
+            background: cambio >= 0 ? C.green + "22" : C.red + "22",
+            border: `1.5px solid ${cambio >= 0 ? C.green : C.red}`,
+          }}>
+            {cambio >= 0 ? (
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+                <span style={{ fontSize: 13, color: C.green, fontWeight: 800, letterSpacing: "0.08em" }}>
+                  CAMBIO A ENTREGAR
+                </span>
+                <span style={{ fontSize: 24, color: C.green, fontWeight: 900, fontFamily: "monospace" }}>
+                  {COP(cambio)}
+                </span>
+              </div>
+            ) : (
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+                <span style={{ fontSize: 13, color: C.red, fontWeight: 800, letterSpacing: "0.06em" }}>
+                  FALTA
+                </span>
+                <span style={{ fontSize: 22, color: C.red, fontWeight: 900, fontFamily: "monospace" }}>
+                  {COP(faltante)}
+                </span>
+              </div>
+            )}
+          </div>
+        )}
+
+        <button onClick={confirmar} disabled={!!pagandoCon || montoCop < total}
+          style={{
+            width: "100%", padding: "18px",
+            background: montoCop >= total ? C.green : "#ccc",
+            color: "#fff", border: "none", borderRadius: 12,
+            fontSize: 15, fontWeight: 900, letterSpacing: "0.08em",
+            cursor: montoCop >= total ? "pointer" : "not-allowed",
+            opacity: pagandoCon ? 0.6 : 1,
+          }}>
+          {pagandoCon ? "PROCESANDO…" : "✓ CONFIRMAR PAGO"}
         </button>
       </div>
     </div>
