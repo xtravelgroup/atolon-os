@@ -873,6 +873,14 @@ function ModalEfectivo({ total, onClose, onConfirmar, pagandoCon }) {
             <div style={{ fontFamily: "monospace", fontSize: 30, fontWeight: 900, color: C.text }}>
               {COP(total)}
             </div>
+            {moneda === "USD" && (
+              <div style={{ fontFamily: "monospace", fontSize: 18, fontWeight: 800, color: C.green, marginTop: 2 }}>
+                ≈ US$ {(total / TRM_USD).toFixed(2)}
+                <span style={{ fontSize: 10, color: C.textMid, fontWeight: 500, marginLeft: 8, fontFamily: "inherit" }}>
+                  @ {TRM_USD}
+                </span>
+              </div>
+            )}
           </div>
           <button onClick={onClose} style={{
             background: "none", border: "none", color: C.textMid,
