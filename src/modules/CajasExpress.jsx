@@ -9,7 +9,7 @@
 //   - cajas_evento_ventas (log de cada venta)
 //   - items_catalogo (productos con evento_caja_visible=true)
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "../lib/supabase";
 
 const COP = n => `$${Math.round(Number(n) || 0).toLocaleString("es-CO")}`;
@@ -413,7 +413,10 @@ function CajaScreen({ sesion, onLogout }) {
       }).eq("id", ventaId).then(() => {});
     }
 
-    setExito({ ventaId, total, metodo, propina: propinaMonto, pago: pagoDetalle });
+    setExito({
+      ventaId, total, metodo, propina: propinaMonto, pago: pagoDetalle,
+      items, when: new Date().toISOString(),
+    });
     clearCart();
     setPropinaActiva(false);
     setPagandoCon(null);
@@ -423,7 +426,7 @@ function CajaScreen({ sesion, onLogout }) {
   if (loading) return <div style={{ padding: 40, textAlign: "center", color: C.textMid }}>Cargando…</div>;
 
   if (exito) return (
-    <ExitoScreen exito={exito} onContinuar={() => setExito(null)} />
+    <ExitoScreen exito={exito} sesion={sesion} onContinuar={() => setExito(null)} />
   );
 
   // Filtra productos según vista (comida o bebida). En home no se usa.
@@ -1012,36 +1015,251 @@ function ModalEfectivo({ total, onClose, onConfirmar, pagandoCon }) {
   );
 }
 
-function ExitoScreen({ exito, onContinuar }) {
+function ExitoScreen({ exito, sesion, onContinuar }) {
+  const printedRef = useRef(false);
+  const [printStatus, setPrintStatus] = useState(""); // "" | "ok" | "err"
+
+  // Auto-imprimir tickets al entrar — una sola vez. Si el cajero quiere
+  // re-imprimir usa el botón. localStorage "caja_express_noprint" desactiva.
   useEffect(() => {
-    const t = setTimeout(onContinuar, 2500);
+    if (printedRef.current) return;
+    printedRef.current = true;
+    const off = (() => {
+      try { return localStorage.getItem("caja_express_noprint") === "1"; }
+      catch { return false; }
+    })();
+    if (off) return;
+    setTimeout(() => triggerPrint(exito, sesion, setPrintStatus), 200);
+  }, [exito, sesion]);
+
+  // Auto-continuar (más tiempo que antes para que la impresión termine)
+  useEffect(() => {
+    const t = setTimeout(onContinuar, 6500);
     return () => clearTimeout(t);
   }, [onContinuar]);
+
   return (
     <div style={{
       minHeight: "100vh", display: "flex", flexDirection: "column",
-      alignItems: "center", justifyContent: "center", padding: 30, textAlign: "center",
+      alignItems: "center", justifyContent: "center", padding: 24, textAlign: "center",
     }}>
-      <div style={{ fontSize: 80, marginBottom: 16 }}>✅</div>
-      <div style={{ fontSize: 26, fontWeight: 900, marginBottom: 8 }}>VENTA REGISTRADA</div>
-      <div style={{ fontSize: 36, fontWeight: 900, color: C.gold, marginBottom: 12 }}>
+      <div style={{ fontSize: 72, marginBottom: 12 }}>✅</div>
+      <div style={{ fontSize: 24, fontWeight: 900, marginBottom: 6 }}>VENTA REGISTRADA</div>
+      <div style={{ fontSize: 34, fontWeight: 900, color: C.gold, marginBottom: 10 }}>
         {COP(exito.total)}
       </div>
       <div style={{
         fontSize: 11, padding: "4px 12px", background: C.bgCard,
         border: `1px solid ${C.border}`, borderRadius: 20, color: C.textMid,
-        letterSpacing: "0.12em", fontWeight: 700, marginBottom: 24,
+        letterSpacing: "0.12em", fontWeight: 700, marginBottom: 18,
       }}>
         {exito.metodo === "efectivo" ? "💵 EFECTIVO" : "💳 TARJETA"}
+        {" · "}
+        {(exito.items || []).length} ticket{(exito.items || []).length === 1 ? "" : "s"}
       </div>
-      <button onClick={onContinuar} style={{
-        background: C.gold, color: "#fff", border: "none", borderRadius: 12,
-        padding: "16px 32px", fontSize: 16, fontWeight: 900, cursor: "pointer",
-        letterSpacing: "0.06em",
-      }}>SIGUIENTE VENTA →</button>
-      <div style={{ fontSize: 10, color: C.textLow, marginTop: 18 }}>
+
+      {printStatus === "ok" && (
+        <div style={{ fontSize: 12, color: C.green, fontWeight: 700, marginBottom: 12 }}>
+          🖨 Enviando tickets a la impresora…
+        </div>
+      )}
+      {printStatus === "err" && (
+        <div style={{ fontSize: 12, color: C.red, fontWeight: 700, marginBottom: 12 }}>
+          ⚠ No se pudo imprimir. Toca "Reimprimir".
+        </div>
+      )}
+
+      <div style={{ display: "grid", gap: 10, width: "100%", maxWidth: 320 }}>
+        <button onClick={() => triggerPrint(exito, sesion, setPrintStatus)} style={{
+          background: C.bgCard, color: C.text,
+          border: `2px solid ${C.text}`, borderRadius: 12,
+          padding: "14px 22px", fontSize: 14, fontWeight: 900, cursor: "pointer",
+          letterSpacing: "0.06em",
+        }}>🖨 REIMPRIMIR TICKETS</button>
+
+        <button onClick={onContinuar} style={{
+          background: C.gold, color: "#fff", border: "none", borderRadius: 12,
+          padding: "16px 22px", fontSize: 15, fontWeight: 900, cursor: "pointer",
+          letterSpacing: "0.06em",
+        }}>SIGUIENTE VENTA →</button>
+      </div>
+
+      <div style={{ fontSize: 10, color: C.textLow, marginTop: 14 }}>
         {exito.ventaId}
       </div>
     </div>
   );
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// IMPRESIÓN DE TICKETS — DIG-E200I (papel 72mm × 72mm)
+// ──────────────────────────────────────────────────────────────────────
+// Genera 1 ticket por LÍNEA del carrito (ej: Burger × 3 = 1 papel con
+// "BURGER × 3"). Cada ticket es una página de 72×72 mm con el nombre
+// del item escalado al ancho del papel (truco SVG textLength) + la
+// cantidad debajo. Footer pequeño con caja, cajero, hora y ventaId
+// para que cocina rastree.
+//
+// Implementación: iframe oculto + window.print() del iframe. Funciona
+// tanto en iOS como Android — el navegador abre el diálogo del
+// sistema y el cajero confirma con la impresora ya pareada (Bluetooth
+// o WiFi). El nombre usa SVG con `textLength` + `lengthAdjust` para
+// que un "YUCA" se vea igual de grande que un "COCKTAIL CAMARONES".
+
+function triggerPrint(exito, sesion, setStatus) {
+  try {
+    imprimirTickets({
+      items: exito?.items || [],
+      ventaId: exito?.ventaId,
+      cajaNombre: sesion?.caja_nombre,
+      cajeroNombre: sesion?.cajero_nombre,
+      cuandoIso: exito?.when,
+    });
+    setStatus && setStatus("ok");
+  } catch (e) {
+    console.error("[caja/print]", e);
+    setStatus && setStatus("err");
+  }
+}
+
+function escapeHtml(s) {
+  return String(s ?? "").replace(/[&<>"']/g, c =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]
+  );
+}
+
+function imprimirTickets({ items, ventaId, cajaNombre, cajeroNombre, cuandoIso }) {
+  if (!items || items.length === 0) return;
+
+  const fecha = new Date(cuandoIso || Date.now());
+  const horaTxt = fecha.toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit" });
+
+  // SVG con textLength="94" + lengthAdjust="spacingAndGlyphs" fuerza
+  // al texto a ocupar el ancho completo del viewBox sin importar
+  // si la palabra tiene 4 o 18 letras. Resultado: el nombre siempre
+  // se ve enorme y ocupa todo el papel.
+  const ticketsHtml = items.map((it, idx) => {
+    const nombre = String(it.nombre || "").toUpperCase();
+    const cant = it.cantidad || 1;
+    // Si el nombre tiene 2 palabras y es largo, lo partimos en 2 líneas
+    // para no perder tamaño visual.
+    const palabras = nombre.split(/\s+/);
+    const partirEnDos = nombre.length > 11 && palabras.length >= 2;
+    let l1 = nombre, l2 = "";
+    if (partirEnDos) {
+      // partir aproximadamente por la mitad por palabras
+      const mid = Math.ceil(palabras.length / 2);
+      l1 = palabras.slice(0, mid).join(" ");
+      l2 = palabras.slice(mid).join(" ");
+    }
+
+    const renderLinea = (txt, y) => `
+      <text x="50" y="${y}" text-anchor="middle"
+            font-family="'Arial Black','Helvetica Neue','Helvetica',sans-serif"
+            font-weight="900" font-size="22"
+            textLength="94" lengthAdjust="spacingAndGlyphs">${escapeHtml(txt)}</text>`;
+
+    const svg = partirEnDos
+      ? `<svg class="big" viewBox="0 0 100 50" preserveAspectRatio="xMidYMid meet">
+           ${renderLinea(l1, 22)}
+           ${renderLinea(l2, 46)}
+         </svg>`
+      : `<svg class="big" viewBox="0 0 100 25" preserveAspectRatio="xMidYMid meet">
+           ${renderLinea(l1, 20)}
+         </svg>`;
+
+    return `
+      <section class="t">
+        <div class="hdr">
+          <span>${idx + 1}/${items.length}</span>
+          <span>${escapeHtml(cajaNombre || "")}</span>
+        </div>
+        <div class="body">
+          ${svg}
+          <div class="qty">× ${cant}</div>
+        </div>
+        <div class="ftr">
+          <span>${escapeHtml(cajeroNombre || "")}</span>
+          <span>${horaTxt}</span>
+        </div>
+        <div class="vid">${escapeHtml(ventaId || "")}</div>
+      </section>
+    `;
+  }).join("");
+
+  const html = `<!doctype html><html><head><meta charset="utf-8"><title>Tickets</title>
+<style>
+  @page { size: 72mm 72mm; margin: 0; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: #fff; color: #000; }
+  body { font-family: 'Arial Black','Helvetica',sans-serif; }
+  .t {
+    width: 72mm; height: 72mm;
+    padding: 3mm 3mm 2mm;
+    display: flex; flex-direction: column;
+    page-break-after: always; break-after: page;
+    overflow: hidden;
+  }
+  .t:last-child { page-break-after: auto; break-after: auto; }
+  .hdr {
+    display: flex; justify-content: space-between;
+    font-size: 9pt; font-weight: 800; letter-spacing: 0.04em;
+  }
+  .body {
+    flex: 1;
+    display: flex; flex-direction: column;
+    justify-content: center; align-items: center;
+    gap: 2mm;
+  }
+  .big { width: 64mm; height: 38mm; display: block; }
+  .qty {
+    font-size: 28pt; font-weight: 900; letter-spacing: 0.04em;
+    margin-top: 1mm;
+  }
+  .ftr {
+    display: flex; justify-content: space-between;
+    font-size: 7pt; font-weight: 700; color: #333;
+  }
+  .vid {
+    font-family: monospace; font-size: 6pt; color: #888;
+    text-align: center; margin-top: 0.5mm;
+  }
+  @media print {
+    body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  }
+</style></head><body>${ticketsHtml}</body></html>`;
+
+  const iframe = document.createElement("iframe");
+  iframe.setAttribute("aria-hidden", "true");
+  iframe.style.cssText = [
+    "position:fixed",
+    "right:0", "bottom:0",
+    "width:80mm", "height:80mm",
+    "border:0", "opacity:0", "pointer-events:none",
+    "z-index:-1",
+  ].join(";");
+  document.body.appendChild(iframe);
+
+  const cleanup = () => {
+    try { document.body.removeChild(iframe); } catch {}
+  };
+
+  iframe.onload = () => {
+    try {
+      const w = iframe.contentWindow;
+      w.focus();
+      // pequeño delay para asegurar que el SVG renderizó
+      setTimeout(() => {
+        try { w.print(); } catch (e) { console.error("[caja/print/win]", e); }
+        // Limpiar después de que cierre el diálogo (~6s) o si nunca abre
+        setTimeout(cleanup, 8000);
+      }, 250);
+    } catch (e) {
+      console.error("[caja/print/load]", e);
+      cleanup();
+    }
+  };
+
+  // srcdoc dispara onload de forma fiable en iOS y Android Chrome
+  iframe.srcdoc = html;
 }
