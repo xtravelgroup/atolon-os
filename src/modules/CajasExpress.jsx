@@ -1055,9 +1055,7 @@ function ExitoScreen({ exito, sesion, onContinuar }) {
       }}>
         {exito.metodo === "efectivo" ? "💵 EFECTIVO" : "💳 TARJETA"}
         {" · "}
-        {(exito.items || []).reduce((s, i) => s + (Number(i.cantidad) || 0), 0)}
-        {" ticket"}
-        {(exito.items || []).reduce((s, i) => s + (Number(i.cantidad) || 0), 0) === 1 ? "" : "s"}
+        {(exito.items || []).length} ticket{(exito.items || []).length === 1 ? "" : "s"}
       </div>
 
       {printStatus === "ok" && (
@@ -1136,27 +1134,14 @@ function imprimirTickets({ items, ventaId, cajaNombre, cajeroNombre, cuandoIso }
   const fecha = new Date(cuandoIso || Date.now());
   const horaTxt = fecha.toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit" });
 
-  // Expandimos cada línea en N tickets individuales (uno por unidad).
-  // Burger × 3 → 3 papeles separados. Cada uno lleva su posición
-  // dentro del item (1/3, 2/3, 3/3) y dentro de toda la venta (#3/#7).
-  const unidades = [];
-  items.forEach((it) => {
+  // Un papel por LÍNEA del carrito. Si el mismo ítem aparece varias
+  // veces (Burger × 3), sale UN solo papel con "BURGER" grande y
+  // "× 3" debajo. SVG con textLength="94" + lengthAdjust="spacingAndGlyphs"
+  // fuerza al nombre a ocupar el ancho completo del papel sin importar
+  // si la palabra tiene 4 o 18 letras.
+  const ticketsHtml = items.map((it, idx) => {
+    const nombre = String(it.nombre || "").toUpperCase();
     const cant = Math.max(1, Number(it.cantidad) || 1);
-    for (let n = 1; n <= cant; n++) {
-      unidades.push({
-        nombre: String(it.nombre || "").toUpperCase(),
-        posLine: n, totalLine: cant,
-      });
-    }
-  });
-  const totalGlobal = unidades.length;
-
-  // SVG con textLength="94" + lengthAdjust="spacingAndGlyphs" fuerza
-  // al texto a ocupar el ancho completo del viewBox sin importar
-  // si la palabra tiene 4 o 18 letras. Resultado: el nombre siempre
-  // se ve enorme y ocupa todo el papel.
-  const ticketsHtml = unidades.map((u, idx) => {
-    const nombre = u.nombre;
     // Si el nombre tiene 2 palabras y es largo, lo partimos en 2 líneas
     // para no perder tamaño visual.
     const palabras = nombre.split(/\s+/);
@@ -1183,21 +1168,15 @@ function imprimirTickets({ items, ventaId, cajaNombre, cajeroNombre, cuandoIso }
            ${renderLinea(l1, 20)}
          </svg>`;
 
-    // Sub-posición solo si la línea tenía cantidad > 1 — para 1 unidad
-    // sería redundante mostrar "1 / 1".
-    const subPos = u.totalLine > 1
-      ? `<div class="qty">${u.posLine} / ${u.totalLine}</div>`
-      : "";
-
     return `
       <section class="t">
         <div class="hdr">
-          <span>#${idx + 1} / ${totalGlobal}</span>
+          <span>${idx + 1} / ${items.length}</span>
           <span>${escapeHtml(cajaNombre || "")}</span>
         </div>
         <div class="body">
           ${svg}
-          ${subPos}
+          <div class="qty">× ${cant}</div>
         </div>
         <div class="ftr">
           <span>${escapeHtml(cajeroNombre || "")}</span>
