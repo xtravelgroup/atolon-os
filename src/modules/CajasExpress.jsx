@@ -1134,6 +1134,11 @@ function imprimirTickets({ items, ventaId, cajaNombre, cajeroNombre, cuandoIso }
   const fecha = new Date(cuandoIso || Date.now());
   const horaTxt = fecha.toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit" });
 
+  // Referencia corta para que el cajero / cocina cante el ticket en voz
+  // alta sin tener que leer todo el VTE-1780123456789-XYZ. Usamos el
+  // sufijo aleatorio (3 chars base36) que ya viene en el ventaId.
+  const shortRef = ((ventaId || "").split("-").pop() || "").toUpperCase();
+
   // Un papel por LÍNEA del carrito. Si el mismo ítem aparece varias
   // veces (Burger × 3), sale UN solo papel con "BURGER" grande y
   // "× 3" debajo. SVG con textLength="94" + lengthAdjust="spacingAndGlyphs"
@@ -1172,14 +1177,19 @@ function imprimirTickets({ items, ventaId, cajaNombre, cajeroNombre, cuandoIso }
       <section class="t">
         <div class="hdr">
           <span>${idx + 1} / ${items.length}</span>
-          <span>${escapeHtml(cajaNombre || "")}</span>
+          <span class="caja">${escapeHtml(cajaNombre || "")}</span>
         </div>
         <div class="body">
           ${svg}
           <div class="qty">× ${cant}</div>
         </div>
+        <div class="ref">
+          <span class="reflbl">TICKET</span>
+          <span class="refnum">#${escapeHtml(shortRef)}</span>
+        </div>
         <div class="ftr">
           <span>${escapeHtml(cajeroNombre || "")}</span>
+          <span>${escapeHtml(cajaNombre || "")}</span>
           <span>${horaTxt}</span>
         </div>
         <div class="vid">${escapeHtml(ventaId || "")}</div>
@@ -1202,9 +1212,10 @@ function imprimirTickets({ items, ventaId, cajaNombre, cajeroNombre, cuandoIso }
   }
   .t:last-child { page-break-after: auto; break-after: auto; }
   .hdr {
-    display: flex; justify-content: space-between;
+    display: flex; justify-content: space-between; align-items: baseline;
     font-size: 9pt; font-weight: 800; letter-spacing: 0.04em;
   }
+  .hdr .caja { font-size: 11pt; font-weight: 900; letter-spacing: 0.08em; }
   .body {
     flex: 1;
     display: flex; flex-direction: column;
@@ -1216,9 +1227,18 @@ function imprimirTickets({ items, ventaId, cajaNombre, cajeroNombre, cuandoIso }
     font-size: 28pt; font-weight: 900; letter-spacing: 0.04em;
     margin-top: 1mm;
   }
+  .ref {
+    display: flex; justify-content: center; align-items: baseline;
+    gap: 2mm; margin-top: 1mm;
+    border-top: 1px dashed #000;
+    padding-top: 1.5mm;
+  }
+  .reflbl { font-size: 8pt; font-weight: 800; letter-spacing: 0.18em; color: #444; }
+  .refnum { font-size: 16pt; font-weight: 900; letter-spacing: 0.08em; color: #000; font-family: 'Courier New', monospace; }
   .ftr {
-    display: flex; justify-content: space-between;
-    font-size: 7pt; font-weight: 700; color: #333;
+    display: flex; justify-content: space-between; align-items: baseline;
+    font-size: 7.5pt; font-weight: 700; color: #333;
+    margin-top: 1mm;
   }
   .vid {
     font-family: monospace; font-size: 6pt; color: #888;
