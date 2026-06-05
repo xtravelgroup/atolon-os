@@ -277,22 +277,38 @@ function PinScreen({ onAuth }) {
 // CAJA SCREEN (grid + carrito + cobrar)
 // ──────────────────────────────────────────────────────────────────────
 function CajaScreen({ sesion, onLogout }) {
+  // vista: null = home con 3 opciones · "comida" · "bebida" · "cierre"
+  const [vista, setVista] = useState(null);
   const [productos, setProductos] = useState([]);
   const [cart, setCart] = useState({});
   const [loading, setLoading] = useState(true);
   const [pagandoCon, setPagandoCon] = useState(null); // null | "efectivo" | "tarjeta"
   const [exito, setExito] = useState(null); // { ventaId, total, metodo }
 
+  // Carga el menú propio del evento (cajas_evento_menu) — desacoplado de
+  // items_catalogo. Subcategorías custom: Barco, Entradas, Pizzas, Grill, Sides
+  // para comida; las que el equipo configure para bebida.
   useEffect(() => {
     if (!supabase) return;
-    supabase.from("items_catalogo")
-      .select("id, nombre, categoria, evento_caja_precio, foto_url, loggro_id, codigo, unidad")
-      .eq("evento_caja_visible", true)
+    supabase.from("cajas_evento_menu")
+      .select("id, tipo, subcategoria, nombre, precio, loggro_id, orden")
       .eq("activo", true)
-      .order("categoria")
+      .order("tipo")
+      .order("subcategoria")
+      .order("orden")
       .order("nombre")
       .then(({ data }) => {
-        setProductos(data || []);
+        // Adaptamos al shape que usa el grid (mantiene compatibilidad con
+        // el resto del código que esperaba `evento_caja_precio` y `categoria`).
+        const adapted = (data || []).map(m => ({
+          id: m.id,
+          nombre: m.nombre,
+          categoria: m.subcategoria,
+          tipo: m.tipo, // "comida" | "bebida" — filtra el grid según la vista
+          evento_caja_precio: m.precio,
+          loggro_id: m.loggro_id || null,
+        }));
+        setProductos(adapted);
         setLoading(false);
       });
   }, []);
@@ -393,26 +409,42 @@ function CajaScreen({ sesion, onLogout }) {
     setPagandoCon(null);
   }
 
-  if (loading) return <div style={{ padding: 40, textAlign: "center", color: C.textMid }}>Cargando productos…</div>;
+  if (loading) return <div style={{ padding: 40, textAlign: "center", color: C.textMid }}>Cargando…</div>;
 
   if (exito) return (
     <ExitoScreen exito={exito} onContinuar={() => setExito(null)} />
   );
 
+  // Filtra productos según vista (comida o bebida). En home no se usa.
+  const productosFiltrados = productos.filter(p => p.tipo === vista);
+
   return (
-    <div style={{ paddingBottom: cartCount > 0 ? 120 : 0 }}>
+    <div style={{ paddingBottom: cartCount > 0 && (vista === "comida" || vista === "bebida") ? 120 : 0 }}>
       {/* Header */}
       <div style={{
         position: "sticky", top: 0, zIndex: 20,
         background: C.bg, borderBottom: `1px solid ${C.border}`,
         padding: "12px 16px",
-        display: "flex", justifyContent: "space-between", alignItems: "center",
+        display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10,
       }}>
-        <div>
-          <div style={{ fontSize: 11, color: C.textMid, letterSpacing: "0.15em", fontWeight: 700 }}>
-            {sesion.caja_nombre}
+        {vista ? (
+          <button onClick={() => { setVista(null); }}
+            style={{
+              background: "none", border: "none", color: C.text,
+              fontSize: 14, fontWeight: 700, cursor: "pointer", padding: 6,
+            }}>← Inicio</button>
+        ) : (
+          <div>
+            <div style={{ fontSize: 11, color: C.textMid, letterSpacing: "0.15em", fontWeight: 700 }}>
+              {sesion.caja_nombre}
+            </div>
+            <div style={{ fontSize: 14, fontWeight: 700 }}>{sesion.cajero_nombre}</div>
           </div>
-          <div style={{ fontSize: 14, fontWeight: 700 }}>{sesion.cajero_nombre}</div>
+        )}
+        <div style={{ flex: 1, textAlign: "center" }}>
+          {vista === "comida" && <span style={{ fontWeight: 800, letterSpacing: "0.06em" }}>🍔 COMIDA</span>}
+          {vista === "bebida" && <span style={{ fontWeight: 800, letterSpacing: "0.06em" }}>🍺 BEBIDA</span>}
+          {vista === "cierre" && <span style={{ fontWeight: 800, letterSpacing: "0.06em" }}>📊 CIERRE</span>}
         </div>
         <button onClick={() => { if (confirm("¿Cerrar sesión del cajero?")) onLogout(); }}
           style={{
@@ -421,26 +453,215 @@ function CajaScreen({ sesion, onLogout }) {
           }}>Salir</button>
       </div>
 
-      {/* Grid de productos */}
-      <div style={{ padding: 12 }}>
-        {productos.length === 0 ? (
-          <div style={{ padding: 40, textAlign: "center", color: C.textLow }}>
-            No hay productos configurados.<br />
-            Pídele al admin que los agregue en /cajas-admin.
-          </div>
-        ) : (
-          <ProductosGrid productos={productos} cart={cart} onAdd={addItem} onRemove={removeItem} />
-        )}
-      </div>
+      {/* Vista Home con 3 opciones */}
+      {!vista && (
+        <HomeOpciones onSelect={setVista} cart={cart} />
+      )}
 
-      {/* Carrito fijo abajo */}
-      {cartCount > 0 && (
+      {/* Vista Comida / Bebida (grid) */}
+      {(vista === "comida" || vista === "bebida") && (
+        <div style={{ padding: 12 }}>
+          {productosFiltrados.length === 0 ? (
+            <div style={{ padding: 40, textAlign: "center", color: C.textLow }}>
+              No hay productos configurados aún en {vista}.<br />
+              Pídele al admin que los agregue.
+            </div>
+          ) : (
+            <ProductosGrid productos={productosFiltrados} cart={cart} onAdd={addItem} onRemove={removeItem} />
+          )}
+        </div>
+      )}
+
+      {/* Vista Cierre de Caja */}
+      {vista === "cierre" && (
+        <CierreCajaScreen sesion={sesion} onLogout={onLogout} />
+      )}
+
+      {/* Carrito fijo abajo (solo en grids de comida/bebida) */}
+      {cartCount > 0 && (vista === "comida" || vista === "bebida") && (
         <CarritoBar items={cartItems} total={total} count={cartCount}
           onCobrarEfectivo={() => cobrar("efectivo")}
           onCobrarTarjeta={() => cobrar("tarjeta")}
           onClear={clearCart}
           pagandoCon={pagandoCon} />
       )}
+    </div>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// HOME: 3 opciones grandes
+// ──────────────────────────────────────────────────────────────────────
+function HomeOpciones({ onSelect, cart }) {
+  const cartCount = Object.values(cart).reduce((s, it) => s + it.cantidad, 0);
+  const opciones = [
+    { key: "comida",  icon: "🍔", label: "COMIDA",         desc: "Barco · Entradas · Pizzas · Grill · Sides", color: C.green },
+    { key: "bebida",  icon: "🍺", label: "BEBIDA",         desc: "Cervezas · Cocteles · Licores",            color: C.amber },
+    { key: "cierre",  icon: "📊", label: "CIERRE DE CAJA", desc: "Resumen del turno + cerrar sesión",        color: C.navy },
+  ];
+  return (
+    <div style={{ padding: "24px 16px", maxWidth: 480, margin: "0 auto" }}>
+      {cartCount > 0 && (
+        <div style={{
+          background: C.cream, border: `1.5px solid ${C.text}`, borderRadius: 10,
+          padding: "12px 16px", marginBottom: 18, textAlign: "center",
+        }}>
+          <div style={{ fontSize: 12, color: C.textMid, fontWeight: 600 }}>
+            🛒 Tienes {cartCount} {cartCount === 1 ? "ítem" : "ítems"} en el carrito
+          </div>
+          <div style={{ fontSize: 11, color: C.textLow, marginTop: 2 }}>
+            Vuelve a Comida o Bebida para seguir o cobrar
+          </div>
+        </div>
+      )}
+      <div style={{ display: "grid", gap: 14 }}>
+        {opciones.map(o => (
+          <button key={o.key} onClick={() => onSelect(o.key)}
+            style={{
+              background: C.bgCard,
+              border: `2px solid ${C.border}`,
+              borderLeft: `8px solid ${o.color}`,
+              borderRadius: 14, padding: "22px 18px",
+              cursor: "pointer", textAlign: "left", color: C.text,
+              display: "flex", alignItems: "center", gap: 16,
+              touchAction: "manipulation",
+            }}>
+            <div style={{ fontSize: 44, lineHeight: 1 }}>{o.icon}</div>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 20, fontWeight: 900, letterSpacing: "0.05em" }}>
+                {o.label}
+              </div>
+              <div style={{ fontSize: 12, color: C.textMid, marginTop: 4 }}>{o.desc}</div>
+            </div>
+            <div style={{ fontSize: 24, color: C.textLow }}>→</div>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// CIERRE DE CAJA
+// ──────────────────────────────────────────────────────────────────────
+function CierreCajaScreen({ sesion, onLogout }) {
+  const [ventas, setVentas] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [confirmando, setConfirmando] = useState(false);
+
+  useEffect(() => {
+    if (!supabase) return;
+    supabase.from("cajas_evento_ventas")
+      .select("id, total, metodo_pago, items, created_at, estado")
+      .eq("cajero_id", sesion.cajero_id)
+      .eq("caja_id", sesion.caja_id)
+      .gte("created_at", sesion.started_at)
+      .neq("estado", "anulada")
+      .order("created_at", { ascending: false })
+      .then(({ data }) => {
+        setVentas(data || []);
+        setLoading(false);
+      });
+  }, [sesion]);
+
+  const totales = useMemo(() => {
+    const t = { count: 0, total: 0, efectivo: 0, tarjeta: 0, items: 0 };
+    ventas.forEach(v => {
+      t.count++;
+      t.total += Number(v.total) || 0;
+      if (v.metodo_pago === "efectivo") t.efectivo += Number(v.total) || 0;
+      if (v.metodo_pago === "tarjeta")  t.tarjeta  += Number(v.total) || 0;
+      t.items += (v.items || []).reduce((s, i) => s + (i.cantidad || 0), 0);
+    });
+    return t;
+  }, [ventas]);
+
+  const cerrar = () => {
+    if (!confirm(`¿Cerrar tu turno?\n\n${totales.count} ventas · ${totales.items} ítems\nTotal: $${Math.round(totales.total).toLocaleString("es-CO")}`)) return;
+    setConfirmando(true);
+    setTimeout(() => onLogout(), 300);
+  };
+
+  if (loading) return <div style={{ padding: 40, textAlign: "center", color: C.textMid }}>Cargando ventas…</div>;
+
+  return (
+    <div style={{ padding: "20px 16px", maxWidth: 480, margin: "0 auto" }}>
+      {/* Resumen */}
+      <div style={{
+        background: C.bgCard, border: `2px solid ${C.text}`, borderRadius: 12,
+        padding: "18px 20px", marginBottom: 18,
+      }}>
+        <div style={{ fontSize: 10, color: C.textMid, letterSpacing: "0.18em", fontWeight: 700, marginBottom: 4 }}>
+          RESUMEN DE TU TURNO
+        </div>
+        <div style={{ fontSize: 13, color: C.textMid, marginBottom: 14 }}>
+          {sesion.cajero_nombre} · {sesion.caja_nombre}
+        </div>
+        <div style={{ display: "grid", gap: 8 }}>
+          <RowKpi label="Ventas" valor={totales.count} />
+          <RowKpi label="Ítems vendidos" valor={totales.items} />
+          <RowKpi label="💵 Efectivo" valor={COP(totales.efectivo)} color={C.green} />
+          <RowKpi label="💳 Tarjeta" valor={COP(totales.tarjeta)} color={C.amber} />
+          <div style={{ borderTop: `2px solid ${C.text}`, paddingTop: 10, marginTop: 4 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+              <span style={{ fontWeight: 900, fontSize: 14, letterSpacing: "0.06em" }}>TOTAL</span>
+              <span style={{ fontWeight: 900, fontSize: 26, color: C.text }}>{COP(totales.total)}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Lista de ventas del turno */}
+      <div style={{
+        background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 12,
+        padding: 14, marginBottom: 18,
+      }}>
+        <div style={{ fontSize: 10, color: C.textMid, letterSpacing: "0.18em", fontWeight: 700, marginBottom: 10 }}>
+          VENTAS ({ventas.length})
+        </div>
+        {ventas.length === 0 ? (
+          <div style={{ padding: 20, textAlign: "center", color: C.textLow, fontSize: 13 }}>
+            Aún no has hecho ninguna venta en este turno.
+          </div>
+        ) : (
+          <div style={{ display: "grid", gap: 6, maxHeight: 280, overflowY: "auto" }}>
+            {ventas.map(v => (
+              <div key={v.id} style={{
+                padding: "8px 10px", background: C.bgSoft, borderRadius: 6,
+                display: "grid", gridTemplateColumns: "auto 1fr auto", gap: 10, fontSize: 12,
+              }}>
+                <span style={{ fontFamily: "monospace", color: C.textMid }}>
+                  {new Date(v.created_at).toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit" })}
+                </span>
+                <span>{v.metodo_pago === "efectivo" ? "💵" : "💳"} {(v.items || []).length} ítem{(v.items || []).length !== 1 ? "s" : ""}</span>
+                <span style={{ fontWeight: 700 }}>{COP(v.total)}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <button onClick={cerrar} disabled={confirmando}
+        style={{
+          width: "100%", padding: "18px", background: C.red, color: "#fff",
+          border: "none", borderRadius: 12, fontSize: 15, fontWeight: 900,
+          letterSpacing: "0.1em", cursor: confirmando ? "wait" : "pointer",
+          opacity: confirmando ? 0.6 : 1,
+        }}>
+        {confirmando ? "CERRANDO…" : "🔒 CONFIRMAR CIERRE DE TURNO"}
+      </button>
+      <div style={{ fontSize: 11, color: C.textLow, marginTop: 10, textAlign: "center" }}>
+        Al cerrar saldrás de la caja y la próxima persona deberá ingresar su PIN
+      </div>
+    </div>
+  );
+}
+
+function RowKpi({ label, valor, color }) {
+  return (
+    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 14 }}>
+      <span style={{ color: C.textMid }}>{label}</span>
+      <span style={{ fontWeight: 700, color: color || C.text }}>{valor}</span>
     </div>
   );
 }
