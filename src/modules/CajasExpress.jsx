@@ -61,7 +61,8 @@ export default function CajasExpress() {
         * { -webkit-tap-highlight-color: transparent; }
         button:active { transform: scale(0.97); }
       `}</style>
-      {sesion ? <CajaScreen sesion={sesion} onLogout={() => persist(null)} />
+      {sesion ? <CajaScreen sesion={sesion} onLogout={() => persist(null)}
+                            onUpdateSesion={(patch) => persist({ ...sesion, ...patch })} />
               : <PinScreen onAuth={persist} />}
     </div>
   );
@@ -318,7 +319,7 @@ function PinScreen({ onAuth }) {
 // ──────────────────────────────────────────────────────────────────────
 // CAJA SCREEN (grid + carrito + cobrar)
 // ──────────────────────────────────────────────────────────────────────
-function CajaScreen({ sesion, onLogout }) {
+function CajaScreen({ sesion, onLogout, onUpdateSesion }) {
   // vista: null = home con 3 opciones · "comida" · "bebida" · "cierre"
   const [vista, setVista] = useState(null);
   const [productos, setProductos] = useState([]);
@@ -503,6 +504,7 @@ function CajaScreen({ sesion, onLogout }) {
           </div>
         )}
         <div style={{ flex: 1, textAlign: "center" }}>
+          {vista === "impresora" && <span style={{ fontWeight: 800, letterSpacing: "0.06em" }}>🖨 IMPRESORA</span>}
           {vista === "comida" && <span style={{ fontWeight: 800, letterSpacing: "0.06em" }}>🍔 COMIDA</span>}
           {vista === "bebida" && <span style={{ fontWeight: 800, letterSpacing: "0.06em" }}>🍺 BEBIDA</span>}
           {vista === "cierre" && <span style={{ fontWeight: 800, letterSpacing: "0.06em" }}>📊 CIERRE</span>}
@@ -516,7 +518,24 @@ function CajaScreen({ sesion, onLogout }) {
 
       {/* Vista Home con 3 opciones */}
       {!vista && (
-        <HomeOpciones onSelect={setVista} cart={cart} />
+        <HomeOpciones onSelect={setVista} cart={cart}
+          impresoraNombre={sesion.impresora_nombre} />
+      )}
+
+      {/* Vista Cambiar Impresora */}
+      {vista === "impresora" && (
+        <CambiarImpresoraScreen
+          sesion={sesion}
+          onSave={(imp) => {
+            try { localStorage.setItem("caja_express_impresora_id", imp?.id || ""); } catch {}
+            onUpdateSesion({
+              impresora_id: imp?.id || null,
+              impresora_nombre: imp?.nombre || null,
+            });
+            setVista(null);
+          }}
+          onCancel={() => setVista(null)}
+        />
       )}
 
       {/* Vista Comida / Bebida (grid) */}
@@ -564,7 +583,7 @@ function CajaScreen({ sesion, onLogout }) {
 // ──────────────────────────────────────────────────────────────────────
 // HOME: 3 opciones grandes
 // ──────────────────────────────────────────────────────────────────────
-function HomeOpciones({ onSelect, cart }) {
+function HomeOpciones({ onSelect, cart, impresoraNombre }) {
   const cartCount = Object.values(cart).reduce((s, it) => s + it.cantidad, 0);
   const opciones = [
     { key: "comida",  icon: "🍔", label: "COMIDA",         desc: "Barco · Entradas · Pizzas · Grill · Sides", color: C.green },
@@ -609,6 +628,135 @@ function HomeOpciones({ onSelect, cart }) {
           </button>
         ))}
       </div>
+
+      {/* Botón secundario: cambiar impresora */}
+      <button onClick={() => onSelect("impresora")}
+        style={{
+          marginTop: 14, width: "100%",
+          background: "transparent",
+          border: `1.5px dashed ${C.border}`,
+          borderRadius: 12, padding: "14px 16px",
+          cursor: "pointer", color: C.text,
+          display: "flex", alignItems: "center", justifyContent: "space-between",
+          gap: 10, touchAction: "manipulation",
+        }}>
+        <span style={{ fontSize: 13, fontWeight: 700 }}>
+          🖨 Cambiar impresora
+        </span>
+        <span style={{ fontSize: 12, color: C.textMid, fontWeight: 600 }}>
+          {impresoraNombre ? `${impresoraNombre} →` : "Local →"}
+        </span>
+      </button>
+    </div>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// CAMBIAR IMPRESORA
+// ──────────────────────────────────────────────────────────────────────
+function CambiarImpresoraScreen({ sesion, onSave, onCancel }) {
+  const [impresoras, setImpresoras] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!supabase) return;
+    supabase.from("cajas_evento_impresoras")
+      .select("id, numero, nombre, ubicacion")
+      .eq("activa", true)
+      .order("numero")
+      .then(({ data }) => {
+        setImpresoras(data || []);
+        setLoading(false);
+      });
+  }, []);
+
+  const seleccionar = (imp) => onSave(imp);
+
+  if (loading) return <div style={{ padding: 40, textAlign: "center", color: C.textMid }}>Cargando…</div>;
+
+  return (
+    <div style={{ padding: "24px 16px", maxWidth: 480, margin: "0 auto" }}>
+      <div style={{
+        background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 10,
+        padding: "12px 14px", marginBottom: 18, fontSize: 12, color: C.textMid, lineHeight: 1.5,
+      }}>
+        Tus ventas se imprimen en la impresora que escojas aquí. Si seleccionas
+        <strong style={{ color: C.text }}> "Local"</strong>, sale el diálogo de impresión en este mismo celular.
+      </div>
+
+      <div style={{ fontSize: 11, color: C.textMid, letterSpacing: "0.18em", fontWeight: 700, marginBottom: 10 }}>
+        IMPRESORA ACTUAL
+      </div>
+      <div style={{
+        background: C.cream, border: `2px solid ${C.text}`, borderRadius: 10,
+        padding: "12px 16px", marginBottom: 20,
+        fontSize: 16, fontWeight: 800,
+      }}>
+        🖨 {sesion?.impresora_nombre || "Imprimir en este dispositivo"}
+      </div>
+
+      <div style={{ fontSize: 11, color: C.textMid, letterSpacing: "0.18em", fontWeight: 700, marginBottom: 10 }}>
+        ESCOGER OTRA
+      </div>
+
+      <div style={{ display: "grid", gap: 8 }}>
+        {/* Opción local */}
+        <button onClick={() => seleccionar(null)}
+          style={{
+            background: !sesion?.impresora_id ? C.cream : C.bgCard,
+            border: `2px solid ${!sesion?.impresora_id ? C.text : C.border}`,
+            borderRadius: 12, padding: "14px 16px",
+            cursor: "pointer", textAlign: "left", color: C.text,
+            display: "flex", alignItems: "center", gap: 12,
+          }}>
+          <div style={{ fontSize: 26 }}>📱</div>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 14, fontWeight: 800 }}>Imprimir en este dispositivo</div>
+            <div style={{ fontSize: 11, color: C.textMid, marginTop: 2 }}>
+              Usa el diálogo de impresión del celular
+            </div>
+          </div>
+        </button>
+
+        {/* Impresoras remotas */}
+        {impresoras.map(i => {
+          const seleccionada = i.id === sesion?.impresora_id;
+          return (
+            <button key={i.id} onClick={() => seleccionar(i)}
+              style={{
+                background: seleccionada ? C.cream : C.bgCard,
+                border: `2px solid ${seleccionada ? C.text : C.border}`,
+                borderRadius: 12, padding: "14px 16px",
+                cursor: "pointer", textAlign: "left", color: C.text,
+                display: "flex", alignItems: "center", gap: 12,
+              }}>
+              <div style={{
+                background: C.navy, color: "#fff",
+                width: 44, height: 44, borderRadius: 10,
+                display: "flex", alignItems: "center", justifyContent: "center",
+                fontSize: 20, fontWeight: 900,
+              }}>#{i.numero}</div>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 15, fontWeight: 800 }}>{i.nombre}</div>
+                {i.ubicacion && (
+                  <div style={{ fontSize: 11, color: C.textMid, marginTop: 2 }}>📍 {i.ubicacion}</div>
+                )}
+              </div>
+              {seleccionada && <div style={{ color: C.green, fontSize: 22, fontWeight: 900 }}>✓</div>}
+            </button>
+          );
+        })}
+      </div>
+
+      <button onClick={onCancel}
+        style={{
+          marginTop: 18, width: "100%",
+          background: "transparent",
+          border: `1.5px solid ${C.border}`,
+          borderRadius: 10, padding: "12px",
+          color: C.textMid, fontSize: 13, fontWeight: 700,
+          cursor: "pointer",
+        }}>← Volver</button>
     </div>
   );
 }
