@@ -78,6 +78,12 @@ function PinScreen({ onAuth }) {
   const [selectedCaja, setSelectedCaja] = useState(() => {
     try { return localStorage.getItem("caja_express_id") || ""; } catch { return ""; }
   });
+  // Impresora cercana al cajero (saved por teléfono). Si queda en "" el
+  // cajero imprimirá localmente en su propio dispositivo (legacy/fallback).
+  const [impresoras, setImpresoras] = useState([]);
+  const [selectedImpresora, setSelectedImpresora] = useState(() => {
+    try { return localStorage.getItem("caja_express_impresora_id") || ""; } catch { return ""; }
+  });
   // Modo registro: cuando el PIN no existe, pasamos a esta vista para
   // capturar el nombre del cajero y crear el cajero on-the-fly.
   const [registro, setRegistro] = useState(null); // null | { pin, nombre }
@@ -89,14 +95,24 @@ function PinScreen({ onAuth }) {
       .eq("activo", true)
       .order("nombre")
       .then(({ data }) => setCajas(data || []));
+    supabase.from("cajas_evento_impresoras")
+      .select("id, numero, nombre, ubicacion")
+      .eq("activa", true)
+      .order("numero")
+      .then(({ data }) => setImpresoras(data || []));
   }, []);
 
   const enterAs = (cajero) => {
-    try { localStorage.setItem("caja_express_id", selectedCaja); } catch {}
+    try {
+      localStorage.setItem("caja_express_id", selectedCaja);
+      localStorage.setItem("caja_express_impresora_id", selectedImpresora || "");
+    } catch {}
     const cajaObj = cajas.find(c => c.id === selectedCaja);
+    const impObj  = impresoras.find(i => i.id === selectedImpresora);
     onAuth({
       cajero_id: cajero.id, cajero_nombre: cajero.nombre, loggro_seller_id: cajero.loggro_seller_id,
       caja_id: cajaObj?.id, caja_nombre: cajaObj?.nombre, loggro_mesa_id: cajaObj?.loggro_mesa_id,
+      impresora_id: impObj?.id || null, impresora_nombre: impObj?.nombre || null,
       started_at: new Date().toISOString(),
     });
   };
@@ -166,7 +182,7 @@ function PinScreen({ onAuth }) {
       </div>
 
       {/* Selector de caja */}
-      <div style={{ marginBottom: 22 }}>
+      <div style={{ marginBottom: 14 }}>
         <div style={{ fontSize: 11, color: C.textMid, letterSpacing: "0.18em", fontWeight: 700, marginBottom: 8 }}>
           CAJA
         </div>
@@ -182,6 +198,32 @@ function PinScreen({ onAuth }) {
           <option value="">Selecciona caja…</option>
           {cajas.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
         </select>
+      </div>
+
+      {/* Selector de impresora cercana */}
+      <div style={{ marginBottom: 22 }}>
+        <div style={{ fontSize: 11, color: C.textMid, letterSpacing: "0.18em", fontWeight: 700, marginBottom: 8 }}>
+          🖨 IMPRESORA CERCANA
+        </div>
+        <select value={selectedImpresora} onChange={e => { setSelectedImpresora(e.target.value); }}
+          style={{
+            width: "100%", padding: "16px 16px", fontSize: 16, fontWeight: 700,
+            background: C.bgCard, border: `2px solid ${C.border}`, borderRadius: 10,
+            color: C.text, outline: "none", appearance: "none",
+            backgroundImage: "url(\"data:image/svg+xml;charset=US-ASCII,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='20' viewBox='0 0 20 20'%3E%3Cpath d='M5 8l5 5 5-5z' fill='%230D1B3E66'/%3E%3C/svg%3E\")",
+            backgroundRepeat: "no-repeat", backgroundPosition: "right 14px center", backgroundSize: "20px",
+            paddingRight: 40,
+          }}>
+          <option value="">Imprimir en este dispositivo</option>
+          {impresoras.map(i => (
+            <option key={i.id} value={i.id}>
+              #{i.numero} · {i.nombre}{i.ubicacion ? ` (${i.ubicacion})` : ""}
+            </option>
+          ))}
+        </select>
+        <div style={{ fontSize: 10, color: C.textLow, marginTop: 6, lineHeight: 1.4 }}>
+          Los tickets se envían a esa impresora automáticamente. Si queda vacío, imprime en este celular.
+        </div>
       </div>
 
       {/* Modo registro: pide nombre cuando el PIN es nuevo */}
@@ -451,6 +493,11 @@ function CajaScreen({ sesion, onLogout }) {
           <div>
             <div style={{ fontSize: 11, color: C.textMid, letterSpacing: "0.15em", fontWeight: 700 }}>
               {sesion.caja_nombre}
+              {sesion.impresora_nombre && (
+                <span style={{ marginLeft: 6, color: C.green, fontWeight: 800 }}>
+                  · 🖨 {sesion.impresora_nombre}
+                </span>
+              )}
             </div>
             <div style={{ fontSize: 14, fontWeight: 700 }}>{sesion.cajero_nombre}</div>
           </div>
@@ -1058,7 +1105,12 @@ function ExitoScreen({ exito, sesion, onContinuar }) {
         {(exito.items || []).length} ticket{(exito.items || []).length === 1 ? "" : "s"}
       </div>
 
-      {printStatus === "ok" && (
+      {printStatus === "ok-remoto" && (
+        <div style={{ fontSize: 13, color: C.green, fontWeight: 700, marginBottom: 12 }}>
+          🖨 Tickets enviados a {sesion?.impresora_nombre || "la impresora"}
+        </div>
+      )}
+      {printStatus === "ok-local" && (
         <div style={{ fontSize: 12, color: C.green, fontWeight: 700, marginBottom: 12 }}>
           🖨 Enviando tickets a la impresora…
         </div>
@@ -1106,18 +1158,45 @@ function ExitoScreen({ exito, sesion, onContinuar }) {
 // o WiFi). El nombre usa SVG con `textLength` + `lengthAdjust` para
 // que un "YUCA" se vea igual de grande que un "COCKTAIL CAMARONES".
 
-function triggerPrint(exito, sesion, setStatus) {
+async function triggerPrint(exito, sesion, setStatus) {
+  const ctx = {
+    items: exito?.items || [],
+    ventaId: exito?.ventaId,
+    cajaNombre: sesion?.caja_nombre,
+    cajeroNombre: sesion?.cajero_nombre,
+    cuandoIso: exito?.when,
+  };
+  // Si el cajero escogió una impresora remota → encola, el bridge la
+  // imprime. Si no → fallback: imprime localmente con el diálogo del
+  // sistema en este mismo dispositivo (como antes).
+  if (sesion?.impresora_id) {
+    try {
+      const html = buildTicketsHtml(ctx);
+      const { error } = await supabase.from("cajas_evento_impresion_queue").insert({
+        impresora_id: sesion.impresora_id,
+        venta_id: exito?.ventaId,
+        caja_id: sesion?.caja_id || null,
+        cajero_id: sesion?.cajero_id || null,
+        cajero_nombre: sesion?.cajero_nombre || null,
+        ticket_html: html,
+        items: ctx.items,
+      });
+      if (error) throw error;
+      setStatus && setStatus("ok-remoto");
+    } catch (e) {
+      console.error("[caja/print/remoto]", e);
+      // Fallback: si la cola falla, imprime local
+      try { imprimirTickets(ctx); setStatus && setStatus("ok-local"); }
+      catch (e2) { setStatus && setStatus("err"); }
+    }
+    return;
+  }
+  // Sin impresora asignada → local
   try {
-    imprimirTickets({
-      items: exito?.items || [],
-      ventaId: exito?.ventaId,
-      cajaNombre: sesion?.caja_nombre,
-      cajeroNombre: sesion?.cajero_nombre,
-      cuandoIso: exito?.when,
-    });
-    setStatus && setStatus("ok");
+    imprimirTickets(ctx);
+    setStatus && setStatus("ok-local");
   } catch (e) {
-    console.error("[caja/print]", e);
+    console.error("[caja/print/local]", e);
     setStatus && setStatus("err");
   }
 }
@@ -1128,8 +1207,11 @@ function escapeHtml(s) {
   );
 }
 
-function imprimirTickets({ items, ventaId, cajaNombre, cajeroNombre, cuandoIso }) {
-  if (!items || items.length === 0) return;
+// Genera el HTML completo del lote de tickets (uno por línea del carrito)
+// Se usa tanto en impresión local (window.print()) como remota (Supabase
+// Realtime queue → página puente en el computador con la impresora).
+function buildTicketsHtml({ items, ventaId, cajaNombre, cajeroNombre, cuandoIso }) {
+  if (!items || items.length === 0) return "";
 
   const fecha = new Date(cuandoIso || Date.now());
   const horaTxt = fecha.toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit" });
@@ -1233,6 +1315,16 @@ function imprimirTickets({ items, ventaId, cajaNombre, cajeroNombre, cuandoIso }
     body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   }
 </style></head><body>${ticketsHtml}</body></html>`;
+
+  return html;
+}
+
+// Imprime localmente vía iframe oculto + window.print(). Útil cuando el
+// cajero no asignó impresora remota (imprime en el diálogo del sistema
+// del propio dispositivo — la impresora ya debe estar pareada por OS).
+function imprimirTickets(ctx) {
+  const html = buildTicketsHtml(ctx);
+  if (!html) return;
 
   const iframe = document.createElement("iframe");
   iframe.setAttribute("aria-hidden", "true");
