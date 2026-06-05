@@ -14,17 +14,24 @@ import { supabase } from "../lib/supabase";
 
 const COP = n => `$${Math.round(Number(n) || 0).toLocaleString("es-CO")}`;
 
+// Paleta tema "Día" Atolón — background arena (B.sand), texto navy,
+// botones navy con acentos sand. Coherente con la marca.
 const C = {
-  bg:      "#0A0A0A",
-  bgCard:  "#1A1A1A",
-  text:    "#FFFFFF",
-  textMid: "rgba(255,255,255,0.65)",
-  textLow: "rgba(255,255,255,0.40)",
-  border:  "#2A2A2A",
-  red:     "#E11D2A",
-  green:   "#22C55E",
-  amber:   "#F59E0B",
-  gold:    "#D9A55B",
+  bg:      "#C8B99A",                  // arena (B.sand)
+  bgCard:  "#FFFFFF",                  // tarjetas blancas sobre arena
+  bgSoft:  "#F4EBD8",                  // cream para áreas grandes
+  text:    "#0D1B3E",                  // navy (B.navy)
+  textMid: "rgba(13,27,62,0.65)",
+  textLow: "rgba(13,27,62,0.40)",
+  border:  "rgba(13,27,62,0.18)",
+  navy:    "#0D1B3E",
+  navyMid: "#152650",
+  sand:    "#C8B99A",
+  cream:   "#F4EBD8",
+  red:     "#D64545",                  // B.danger
+  green:   "#4CAF7D",                  // B.success
+  amber:   "#E8A020",                  // B.warning
+  gold:    "#0D1B3E",                  // legacy alias → navy
 };
 
 const STORAGE_KEY = "cajas_express_session_v1";
@@ -168,7 +175,7 @@ function PinScreen({ onAuth }) {
             width: "100%", padding: "16px 16px", fontSize: 18, fontWeight: 700,
             background: C.bgCard, border: `2px solid ${C.border}`, borderRadius: 10,
             color: C.text, outline: "none", appearance: "none",
-            backgroundImage: "url(\"data:image/svg+xml;charset=US-ASCII,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='20' viewBox='0 0 20 20'%3E%3Cpath d='M5 8l5 5 5-5z' fill='%23ffffff66'/%3E%3C/svg%3E\")",
+            backgroundImage: "url(\"data:image/svg+xml;charset=US-ASCII,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='20' viewBox='0 0 20 20'%3E%3Cpath d='M5 8l5 5 5-5z' fill='%230D1B3E66'/%3E%3C/svg%3E\")",
             backgroundRepeat: "no-repeat", backgroundPosition: "right 14px center", backgroundSize: "20px",
             paddingRight: 40,
           }}>
@@ -196,7 +203,7 @@ function PinScreen({ onAuth }) {
             placeholder="Nombre y apellido"
             style={{
               width: "100%", padding: "14px 16px", fontSize: 16,
-              background: "#000", border: `2px solid ${error ? C.red : C.border}`, borderRadius: 10,
+              background: C.bgCard, border: `2px solid ${error ? C.red : C.border}`, borderRadius: 10,
               color: C.text, outline: "none", boxSizing: "border-box", fontWeight: 600,
             }} />
           {error && <div style={{ marginTop: 10, fontSize: 13, color: C.red, fontWeight: 700 }}>{error}</div>}
@@ -209,7 +216,7 @@ function PinScreen({ onAuth }) {
               }}>← Volver</button>
             <button onClick={guardarRegistro} disabled={busy}
               style={{
-                padding: "14px", background: C.gold, color: "#000",
+                padding: "14px", background: C.gold, color: "#fff",
                 border: "none", borderRadius: 10,
                 fontSize: 14, fontWeight: 900, letterSpacing: "0.06em",
                 cursor: "pointer", opacity: busy ? 0.6 : 1,
@@ -245,7 +252,7 @@ function PinScreen({ onAuth }) {
               k === "" ? <div key={i} /> : (
                 <button key={i} onClick={() => pressKey(k)} disabled={busy}
                   style={{
-                    aspectRatio: "1.5/1", background: k === "del" ? C.bgCard : "#222",
+                    aspectRatio: "1.5/1", background: k === "del" ? C.bgCard : "#fff",
                     border: `1px solid ${C.border}`, borderRadius: 12,
                     color: C.text, fontSize: 28, fontWeight: 800,
                     cursor: "pointer", transition: "transform 0.05s, background 0.1s",
@@ -494,7 +501,7 @@ function ProductosGrid({ productos, cart, onAdd, onRemove }) {
                     {cantidad > 0 && (
                       <button onClick={(e) => { e.stopPropagation(); onRemove(p.id); }}
                         style={{
-                          background: "#000", border: `1px solid ${C.red}`,
+                          background: C.cream, border: `1px solid ${C.red}`,
                           color: C.red, borderRadius: 8, width: 32, height: 32,
                           fontSize: 18, fontWeight: 900, cursor: "pointer",
                         }}>−</button>
@@ -514,28 +521,28 @@ function CarritoBar({ items, total, count, onCobrarEfectivo, onCobrarTarjeta, on
   return (
     <div style={{
       position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 30,
-      background: "#000", borderTop: `2px solid ${C.gold}`,
+      background: C.navy, borderTop: `2px solid ${C.sand}`,
       padding: "12px 14px 18px",
-      boxShadow: "0 -10px 30px rgba(0,0,0,0.6)",
+      boxShadow: "0 -10px 30px rgba(0,0,0,0.3)",
     }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
         <div>
-          <div style={{ fontSize: 11, color: C.textMid, letterSpacing: "0.12em", fontWeight: 700 }}>
+          <div style={{ fontSize: 11, color: "rgba(255,255,255,0.65)", letterSpacing: "0.12em", fontWeight: 700 }}>
             {count} {count === 1 ? "ÍTEM" : "ÍTEMS"}
           </div>
-          <div style={{ fontSize: 26, fontWeight: 900, color: C.gold }}>{COP(total)}</div>
+          <div style={{ fontSize: 26, fontWeight: 900, color: C.sand }}>{COP(total)}</div>
         </div>
         <button onClick={onClear} disabled={!!pagandoCon}
           style={{
-            background: "none", border: `1px solid ${C.border}`, borderRadius: 8,
-            padding: "8px 14px", color: C.textMid, fontSize: 12, cursor: "pointer",
+            background: "none", border: `1px solid rgba(255,255,255,0.25)`, borderRadius: 8,
+            padding: "8px 14px", color: "rgba(255,255,255,0.7)", fontSize: 12, cursor: "pointer",
             opacity: pagandoCon ? 0.5 : 1,
           }}>Limpiar</button>
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
         <button onClick={onCobrarEfectivo} disabled={!!pagandoCon}
           style={{
-            background: C.green, color: "#000", border: "none", borderRadius: 12,
+            background: C.green, color: "#fff", border: "none", borderRadius: 12,
             padding: "16px 12px", fontSize: 14, fontWeight: 900, cursor: "pointer",
             letterSpacing: "0.06em", opacity: pagandoCon === "efectivo" ? 0.6 : 1,
           }}>
@@ -543,7 +550,7 @@ function CarritoBar({ items, total, count, onCobrarEfectivo, onCobrarTarjeta, on
         </button>
         <button onClick={onCobrarTarjeta} disabled={!!pagandoCon}
           style={{
-            background: C.amber, color: "#000", border: "none", borderRadius: 12,
+            background: C.amber, color: "#fff", border: "none", borderRadius: 12,
             padding: "16px 12px", fontSize: 14, fontWeight: 900, cursor: "pointer",
             letterSpacing: "0.06em", opacity: pagandoCon === "tarjeta" ? 0.6 : 1,
           }}>
@@ -577,7 +584,7 @@ function ExitoScreen({ exito, onContinuar }) {
         {exito.metodo === "efectivo" ? "💵 EFECTIVO" : "💳 TARJETA"}
       </div>
       <button onClick={onContinuar} style={{
-        background: C.gold, color: "#000", border: "none", borderRadius: 12,
+        background: C.gold, color: "#fff", border: "none", borderRadius: 12,
         padding: "16px 32px", fontSize: 16, fontWeight: 900, cursor: "pointer",
         letterSpacing: "0.06em",
       }}>SIGUIENTE VENTA →</button>

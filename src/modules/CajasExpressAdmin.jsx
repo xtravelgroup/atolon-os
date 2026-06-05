@@ -14,11 +14,21 @@ const COP = n => `$${Math.round(Number(n) || 0).toLocaleString("es-CO")}`;
 const ADMIN_PIN = "ATOLON26"; // PIN admin — cambiar si se necesita
 const STORAGE_KEY = "cajas_admin_auth_v1";
 
+// Paleta Atolón "Día" — fondo arena, navy para texto y elementos primarios.
 const C = {
-  bg: "#FAFAF8", bgCard: "#FFFFFF",
-  text: "#0A0A0A", textMid: "#404040", textLow: "#888888",
-  border: "#E5E5E5", borderMid: "#CCCCCC",
-  red: "#E11D2A", green: "#16A34A", amber: "#F59E0B",
+  bg:      "#C8B99A",                  // arena (B.sand)
+  bgCard:  "#FFFFFF",
+  bgSoft:  "#F4EBD8",                  // cream para filas alternas / hover
+  text:    "#0D1B3E",                  // navy
+  textMid: "rgba(13,27,62,0.65)",
+  textLow: "rgba(13,27,62,0.40)",
+  border:  "rgba(13,27,62,0.14)",
+  borderMid: "rgba(13,27,62,0.30)",
+  navy:    "#0D1B3E",
+  sand:    "#C8B99A",
+  red:     "#D64545",
+  green:   "#4CAF7D",
+  amber:   "#E8A020",
 };
 
 export default function CajasExpressAdmin() {
