@@ -38,6 +38,7 @@ export default function CajasImpresion() {
   const [ultimoCheck, setUltimoCheck] = useState(null);
   const [modalSilent, setModalSilent] = useState(false);
   const procesadosRef = useRef(new Set()); // evita doble-print si llega 2x
+  const refreshImpresoraTimerRef = useRef(null);
 
   // procesarPendientes — busca pending+failed para esta impresora y los imprime.
   // Reutilizable: corre al montar, en cada poll de seguridad, al volver el
@@ -73,13 +74,22 @@ export default function CajasImpresion() {
     (async () => {
       const { data, error: err } = await supabase
         .from("cajas_evento_impresoras")
-        .select("id, numero, nombre, ubicacion, activa")
+        .select("id, numero, nombre, ubicacion, activa, tipo_conexion, agent_last_seen")
         .eq("id", impresoraId)
         .maybeSingle();
       if (!alive) return;
       if (err)   { setError(err.message); return; }
       if (!data) { setError(`Impresora ${impresoraId} no existe. Pídele al admin que la cree.`); return; }
       setImpresora(data);
+      // Re-fetch impresora cada 30s para tener heartbeat fresco
+      const refTimer = setInterval(() => {
+        supabase.from("cajas_evento_impresoras")
+          .select("id, agent_last_seen, tipo_conexion")
+          .eq("id", impresoraId)
+          .maybeSingle()
+          .then(({ data: d }) => { if (alive && d) setImpresora(prev => ({ ...prev, ...d })); });
+      }, 30000);
+      refreshImpresoraTimerRef.current = refTimer;
 
       // 1) Procesar pendientes que estaban antes de que abrieras la pestaña
       await procesarPendientes();
@@ -119,6 +129,7 @@ export default function CajasImpresion() {
       alive = false;
       if (canal) supabase.removeChannel(canal);
       if (pollTimer) clearInterval(pollTimer);
+      if (refreshImpresoraTimerRef.current) clearInterval(refreshImpresoraTimerRef.current);
       if (visibilityHandler) document.removeEventListener("visibilitychange", visibilityHandler);
       if (onlineHandler) window.removeEventListener("online", onlineHandler);
     };
@@ -129,15 +140,23 @@ export default function CajasImpresion() {
     if (procesadosRef.current.has(job.id)) return;
     procesadosRef.current.add(job.id);
 
-    // Si la impresora tiene un print-agent (.exe) configurado para
-    // tipo_conexion='usb' o 'network', ESE se encarga — el browser
-    // bridge no debe procesar (era el que mostraba el diálogo).
-    // El bridge solo procesa impresoras de tipo 'browser' (legacy) o
-    // si no hay tipo definido (default).
+    // Si la impresora tiene tipo_conexion=usb|network Y el agent .exe
+    // está corriendo (heartbeat reciente <60s), ESE se encarga y el
+    // browser bridge skip.
+    //
+    // Si el agent NO está corriendo (offline/nunca visto), el bridge
+    // procesa como fallback — esto previene que ventas queden sin
+    // imprimir cuando el .exe no está deployado todavía o crashea.
     const tipo = impresora?.tipo_conexion;
-    if (tipo === "usb" || tipo === "network") {
-      console.log(`[bridge/skip] ${job.venta_id} — agent maneja tipo=${tipo}`);
+    const lastSeen = impresora?.agent_last_seen
+      ? new Date(impresora.agent_last_seen).getTime() : 0;
+    const agentOnline = lastSeen > 0 && (Date.now() - lastSeen) < 60000;
+    if ((tipo === "usb" || tipo === "network") && agentOnline) {
+      console.log(`[bridge/skip] ${job.venta_id} — agent online maneja tipo=${tipo}`);
       return;
+    }
+    if (tipo === "usb" || tipo === "network") {
+      console.log(`[bridge/fallback] ${job.venta_id} — agent offline (last seen ${lastSeen ? Math.round((Date.now()-lastSeen)/1000)+'s' : 'nunca'}), procesando vía window.print()`);
     }
 
     setEnCola(c => c + 1);
