@@ -371,6 +371,7 @@ const JuicyOrganizador = lazy(() => import("./modules/JuicyOrganizador"));
 const CajasExpress = lazy(() => import("./modules/CajasExpress"));
 const CajasExpressAdmin = lazy(() => import("./modules/CajasExpressAdmin"));
 const CajasImpresion = lazy(() => import("./modules/CajasImpresion"));
+const CajasVentas = lazy(() => import("./modules/CajasVentas"));
 const TrackExterno = lazy(() => import("./modules/TrackExterno"));
 
 const MODULE_MAP = {
@@ -441,6 +442,7 @@ const MODULE_MAP = {
   hotel_minibar:      <HotelMinibar />,
   hotel_tarifas:      <HotelTarifas />,
   api_portal:         <ApiPortal />,
+  cajas_ventas:       <CajasVentas />,
 };
 
 // Public routes — no auth required

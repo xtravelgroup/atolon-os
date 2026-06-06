@@ -36,6 +36,7 @@ export const GRUPOS_NAV = [
       { key: "lancha",       label: "Lancha",     icon: "🚤" },
       { key: "pool_service", label: "Pool Service", icon: "🏊" },
       { key: "cierre_caja",  label: "Cierre Caja", icon: "💵" },
+      { key: "cajas_ventas", label: "Ventas Cajas Express", icon: "💰" },
       { key: "contratistas_muelle", label: "Muelle Contratistas", icon: "🦺" },
       { key: "hacer_inventario", label: "Hacer Inventario", icon: "📋" },
       { key: "transferencias",   label: "Transferencias",   icon: "🔁" },
