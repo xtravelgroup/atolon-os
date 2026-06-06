@@ -23,3 +23,8 @@ dist-ssr
 *.sln
 *.sw?
 .vercel
+
+# Print agent local files
+print-agent/.env
+print-agent/dist/
+print-agent/node_modules/
