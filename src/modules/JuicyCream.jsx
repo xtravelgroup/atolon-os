@@ -87,7 +87,7 @@ const TICKETS = [
   {
     key: "VIP_EARLY", label: "VIP · Hasta 4 PM",
     sub: "Acceso preferente · Ingreso antes de las 4:00 PM",
-    cupo: 100, early: { hasta: 99, precio: 160000 }, anytime: 160000, // base, sin fee
+    cupo: 100, early: { hasta: 99, precio: 175000 }, anytime: 175000, // base sin fee · +11% = 19.250
     feePct: FEE_PCT,
     visible: true,
     incluye: INCLUYE_EARLY,
@@ -96,7 +96,7 @@ const TICKETS = [
   {
     key: "VIP_ANYTIME", label: "VIP · Anytime",
     sub: "Acceso preferente · Ingreso a cualquier hora",
-    cupo: 100, early: { hasta: 99, precio: 190000 }, anytime: 190000,
+    cupo: 100, early: { hasta: 99, precio: 215000 }, anytime: 215000, // base sin fee · +11% = 23.650
     feePct: FEE_PCT,
     visible: true,
     incluye: INCLUYE_ANYTIME,
@@ -105,7 +105,7 @@ const TICKETS = [
   // Backstage
   {
     key: "BACKSTAGE", label: "Backstage", sub: "Mismo acceso de VIP · Área Backstage",
-    cupo: 60, early: { hasta: 99, precio: 450000 }, anytime: 450000,
+    cupo: 60, early: { hasta: 99, precio: 500000 }, anytime: 500000, // base sin fee · +11% = 55.000
     feePct: FEE_PCT,
     visible: true,
     incluye: INCLUYE_ANYTIME,
