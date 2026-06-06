@@ -197,7 +197,7 @@ export default function CajasVentas() {
   const maxPico = Math.max(...porHora.map(h => h.total), 1);
 
   return (
-    <div style={{ padding: pad, maxWidth: 1400, margin: "0 auto" }}>
+    <div style={{ padding: pad, maxWidth: 1400, margin: "0 auto", color: "#0D1B3E" }}>
       {/* Header + controles */}
       <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "flex-end", marginBottom: 18 }}>
         <div style={{ flex: "1 1 auto", minWidth: 200 }}>
