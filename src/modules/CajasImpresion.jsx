@@ -460,8 +460,23 @@ if errorlevel 1 (
 )
 
 echo OK. Chrome corriendo en modo silencioso.
-echo Esta ventana se cierra en 4 segundos...
-timeout /t 4 /nobreak >nul
+echo.
+echo ============================================================
+echo  FALTA (una sola vez, A MANO en el driver de Windows):
+echo ------------------------------------------------------------
+echo  1. Preferencias de impresion -^> Tamano de papel = 80(72.1) x 210 mm
+echo     (el default 297mm = A4 saca tickets larguisimos)
+echo  2. Propiedades de impresora -^> Configuracion del dispositivo -^>
+echo     Cutter Select = Report[Cut]   (asi corta el papel)
+echo  3. En Chrome: Ctrl+P una vez -^> Margenes = Ninguno -^> Imprimir
+echo     (quita fecha / URL / numero de pagina de los tickets)
+echo  4. La termica debe ser la impresora PREDETERMINADA del sistema
+echo ------------------------------------------------------------
+echo  Mas detalle en el boton "Hacer silencioso" de la pagina.
+echo ============================================================
+echo.
+echo Apreta una tecla para cerrar esta ventana.
+pause >nul
 `;
 
   const scriptMac = `#!/bin/bash
@@ -567,7 +582,7 @@ sleep 2
               <>
                 <li>Toca <strong>"Descargar atajo"</strong> abajo → baja un archivo <code>atolon-{idLower}.bat</code></li>
                 <li>Abrí <strong>Downloads</strong> → <strong>Doble click</strong> al archivo .bat</li>
-                <li>Aparece una ventana negra, busca Chrome, lo lanza silencioso. Se cierra sola.</li>
+                <li>Aparece una ventana negra: busca Chrome, lo lanza silencioso y te recuerda los 4 ajustes del driver (Paso 2 abajo). Apretá una tecla para cerrarla.</li>
                 <li>Si Windows muestra alerta "SmartScreen": <strong>"Más información" → "Ejecutar de todos modos"</strong></li>
               </>
             )}
@@ -623,6 +638,53 @@ sleep 2
             {copiado ? "✓ COMANDO COPIADO" : "📋 Copiar comando"}
           </button>
         </details>
+
+        {/* PASO 2 (Windows) — configurar el driver de la térmica a mano.
+            --kiosk-printing imprime sin diálogo, pero NO ajusta papel ni corte:
+            eso vive en el driver de Windows y hay que hacerlo una sola vez. */}
+        {os === "windows" && (
+          <div style={{
+            background: "#FFF4E5", border: "2px solid #E8A020", borderRadius: 10,
+            padding: 16, marginBottom: 12,
+          }}>
+            <div style={{ fontSize: 12, color: "#B26A00", fontWeight: 800, letterSpacing: "0.1em", marginBottom: 8 }}>
+              🖨️ PASO 2 — CONFIGURAR EL DRIVER (UNA VEZ, A MANO)
+            </div>
+            <div style={{ fontSize: 13, color: "#5C4300", lineHeight: 1.5, marginBottom: 10 }}>
+              El <code>--kiosk-printing</code> imprime sin diálogo, pero <strong>no</strong> ajusta el papel ni el corte.
+              Sin estos pasos la térmica <strong>DIG-E200I / POS-80 (80mm)</strong> saca tickets larguísimos
+              (tamaño A4), sin cortar y con encabezados de Chrome.
+            </div>
+            <ol style={{ paddingLeft: 20, fontSize: 13, lineHeight: 1.7, color: "#3D2D00", margin: 0 }}>
+              <li>
+                <strong>Tamaño de papel.</strong> Panel de control → Dispositivos e impresoras →
+                click derecho en la térmica → <strong>Preferencias de impresión</strong> →
+                Tamaño de papel = <strong>80(72.1) x 210 mm</strong>.
+                <div style={{ color: "#8B5A00", fontSize: 12, marginTop: 2 }}>
+                  El default de 297 mm (A4) hace tickets larguísimos. El driver solo ofrece 210 / 297 / 3276 — usá <strong>210</strong>.
+                </div>
+              </li>
+              <li>
+                <strong>Cortador.</strong> Click derecho en la térmica → <strong>Propiedades de impresora</strong> →
+                pestaña <strong>Configuración del dispositivo</strong> → <strong>Cutter Select = Report[Cut]</strong>.
+                <div style={{ color: "#8B5A00", fontSize: 12, marginTop: 2 }}>
+                  Viene en <em>Report[No Cut]</em>, por eso nunca corta el papel.
+                </div>
+              </li>
+              <li>
+                <strong>Quitar encabezados/pies de Chrome.</strong> En la ventana kiosk presioná
+                <strong> Ctrl+P</strong> una vez → Márgenes = <strong>Ninguno</strong> → Imprimir.
+                <div style={{ color: "#8B5A00", fontSize: 12, marginTop: 2 }}>
+                  Chrome guarda ese ajuste en el perfil y, con margen "Ninguno", oculta solo la fecha / URL / número de página.
+                </div>
+              </li>
+              <li>
+                <strong>Impresora predeterminada.</strong> La térmica debe quedar como la
+                <strong> predeterminada del sistema</strong> para que <code>--kiosk-printing</code> imprima sin preguntar.
+              </li>
+            </ol>
+          </div>
+        )}
 
         <div style={{ marginTop: 6, padding: "12px 16px", background: "#FFF9E6", borderRadius: 8, fontSize: 12, color: "#8B5A00", lineHeight: 1.5 }}>
           <strong>Después de correr</strong>, esta pestaña se reemplaza por una NUEVA con
