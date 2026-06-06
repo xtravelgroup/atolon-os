@@ -110,7 +110,7 @@ function PinScreen({ onAuth }) {
       .order("numero")
       .then(({ data }) => setImpresoras(data || []));
     supabase.from("cajas_evento_cajeros")
-      .select("id, nombre")
+      .select("id, nombre, caja_id")
       .eq("activo", true)
       .order("nombre")
       .then(({ data }) => setCajeros(data || []));
@@ -118,14 +118,16 @@ function PinScreen({ onAuth }) {
 
   const enterAs = (cajero) => {
     try {
-      localStorage.setItem("caja_express_id", selectedCaja);
       localStorage.setItem("caja_express_impresora_id", selectedImpresora || "");
     } catch {}
-    const cajaObj = cajas.find(c => c.id === selectedCaja);
+    // La caja se auto-asigna al cajero (cajero.caja_id apunta a su caja).
+    // Si por algún motivo no hay caja, derivamos una con el mismo nombre.
+    const cajaObj = cajas.find(c => c.id === cajero.caja_id)
+      || { id: cajero.caja_id || cajero.id.replace("CAJERO-", "CAJA-"), nombre: cajero.nombre };
     const impObj  = impresoras.find(i => i.id === selectedImpresora);
     onAuth({
       cajero_id: cajero.id, cajero_nombre: cajero.nombre, loggro_seller_id: cajero.loggro_seller_id,
-      caja_id: cajaObj?.id, caja_nombre: cajaObj?.nombre, loggro_mesa_id: cajaObj?.loggro_mesa_id,
+      caja_id: cajaObj.id, caja_nombre: cajaObj.nombre, loggro_mesa_id: cajaObj.loggro_mesa_id,
       impresora_id: impObj?.id || null, impresora_nombre: impObj?.nombre || null,
       started_at: new Date().toISOString(),
     });
@@ -133,16 +135,13 @@ function PinScreen({ onAuth }) {
 
   // Intento login con NOMBRE + PIN. Si el cajero seleccionado tiene
   // pin_temporal=true → fuerza cambio de PIN antes de entrar.
-  // Si no hay cajero seleccionado y el PIN no matchea a ninguno → modo
-  // registro (legacy, cuando alguien quiere crear un nuevo cajero).
   const tryLogin = async (fullPin) => {
-    if (!selectedCaja) { setError("Selecciona la caja"); return; }
     if (!selectedCajero) { setError("Selecciona tu nombre"); return; }
     if (fullPin.length < 4) return;
     setBusy(true);
     setError("");
     const { data } = await supabase.from("cajas_evento_cajeros")
-      .select("id, nombre, loggro_seller_id, pin, pin_temporal")
+      .select("id, nombre, loggro_seller_id, pin, pin_temporal, caja_id")
       .eq("id", selectedCajero)
       .eq("activo", true)
       .maybeSingle();
@@ -254,25 +253,6 @@ function PinScreen({ onAuth }) {
         <div style={{ fontSize: 12, letterSpacing: "0.2em", color: C.textLow, fontWeight: 600, marginTop: 4 }}>
           PUNTO DE VENTA EXPRESS
         </div>
-      </div>
-
-      {/* Selector de caja */}
-      <div style={{ marginBottom: 14 }}>
-        <div style={{ fontSize: 11, color: C.textMid, letterSpacing: "0.18em", fontWeight: 700, marginBottom: 8 }}>
-          CAJA
-        </div>
-        <select value={selectedCaja} onChange={e => { setSelectedCaja(e.target.value); setError(""); }}
-          style={{
-            width: "100%", padding: "16px 16px", fontSize: 18, fontWeight: 700,
-            background: C.bgCard, border: `2px solid ${C.border}`, borderRadius: 10,
-            color: C.text, outline: "none", appearance: "none",
-            backgroundImage: "url(\"data:image/svg+xml;charset=US-ASCII,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='20' viewBox='0 0 20 20'%3E%3Cpath d='M5 8l5 5 5-5z' fill='%230D1B3E66'/%3E%3C/svg%3E\")",
-            backgroundRepeat: "no-repeat", backgroundPosition: "right 14px center", backgroundSize: "20px",
-            paddingRight: 40,
-          }}>
-          <option value="">Selecciona caja…</option>
-          {cajas.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
-        </select>
       </div>
 
       {/* Selector de impresora cercana */}
