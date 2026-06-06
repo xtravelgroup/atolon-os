@@ -380,7 +380,7 @@ function ModalSilencioso({ impresoraId, onClose }) {
   // El .bat busca Chrome en las 3 ubicaciones comunes. El .command incluye
   // un shebang y se ejecuta cuando se le da chmod +x.
   const scriptWin = `@echo off
-chcp 65001 >nul
+title Atolon Kiosk Setup - ${impresoraId}
 echo === Atolon: lanzando Chrome silencioso para ${impresoraId} ===
 echo.
 echo Cerrando Chrome existente...
@@ -388,29 +388,69 @@ taskkill /F /IM chrome.exe /T 2>nul
 taskkill /F /IM "Google Chrome.exe" /T 2>nul
 timeout /t 3 /nobreak >nul
 
-echo Buscando Chrome...
+echo.
+echo Buscando Chrome (probando varias formas)...
 set "CHROME="
-if exist "%ProgramFiles%\\Google\\Chrome\\Application\\chrome.exe" set "CHROME=%ProgramFiles%\\Google\\Chrome\\Application\\chrome.exe"
-if exist "%ProgramFiles(x86)%\\Google\\Chrome\\Application\\chrome.exe" set "CHROME=%ProgramFiles(x86)%\\Google\\Chrome\\Application\\chrome.exe"
-if exist "%LOCALAPPDATA%\\Google\\Chrome\\Application\\chrome.exe" set "CHROME=%LOCALAPPDATA%\\Google\\Chrome\\Application\\chrome.exe"
 
-if "%CHROME%"=="" (
+REM 1) Via comando where (PATH + App Paths)
+for /f "delims=" %%i in ('where chrome.exe 2^>nul') do if not defined CHROME set "CHROME=%%i"
+
+REM 2) Via registro HKLM App Paths
+if not defined CHROME for /f "tokens=2,*" %%a in ('reg query "HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths\\chrome.exe" /ve 2^>nul ^| findstr REG_SZ') do set "CHROME=%%~b"
+
+REM 3) Via registro HKCU App Paths
+if not defined CHROME for /f "tokens=2,*" %%a in ('reg query "HKCU\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths\\chrome.exe" /ve 2^>nul ^| findstr REG_SZ') do set "CHROME=%%~b"
+
+REM 4) Rutas comunes en disco
+if not defined CHROME if exist "%ProgramFiles%\\Google\\Chrome\\Application\\chrome.exe" set "CHROME=%ProgramFiles%\\Google\\Chrome\\Application\\chrome.exe"
+if not defined CHROME if exist "%ProgramFiles(x86)%\\Google\\Chrome\\Application\\chrome.exe" set "CHROME=%ProgramFiles(x86)%\\Google\\Chrome\\Application\\chrome.exe"
+if not defined CHROME if exist "%LOCALAPPDATA%\\Google\\Chrome\\Application\\chrome.exe" set "CHROME=%LOCALAPPDATA%\\Google\\Chrome\\Application\\chrome.exe"
+
+if not defined CHROME (
+  echo.
+  echo ============================================================
   echo ERROR: No encontre Chrome instalado en este computador.
-  echo Buscado en:
-  echo   %ProgramFiles%\\Google\\Chrome\\Application\\chrome.exe
-  echo   %ProgramFiles(x86)%\\Google\\Chrome\\Application\\chrome.exe
-  echo   %LOCALAPPDATA%\\Google\\Chrome\\Application\\chrome.exe
+  echo ============================================================
+  echo.
+  echo Busque en:
+  echo   - comando where chrome.exe
+  echo   - registro Windows HKLM y HKCU App Paths
+  echo   - %ProgramFiles%\\Google\\Chrome\\Application\\chrome.exe
+  echo   - %ProgramFiles(x86)%\\Google\\Chrome\\Application\\chrome.exe
+  echo   - %LOCALAPPDATA%\\Google\\Chrome\\Application\\chrome.exe
+  echo.
+  echo Por favor decile a Eric donde esta tu Chrome y ajustamos el script.
+  echo.
   pause
   exit /b 1
 )
 
-echo Encontrado en: %CHROME%
-mkdir "C:\\Temp\\atolon-kiosk-${idLower}" 2>nul
-echo Lanzando con --kiosk-printing...
-start "" "%CHROME%" --user-data-dir="C:\\Temp\\atolon-kiosk-${idLower}" --kiosk-printing --new-window "${url}"
 echo.
-echo Listo. Esta ventana se cierra en 3 segundos.
-timeout /t 3 /nobreak >nul
+echo Chrome encontrado en:
+echo   %CHROME%
+echo.
+mkdir "C:\\Temp\\atolon-kiosk-${idLower}" 2>nul
+echo Lanzando con --kiosk-printing apuntando a:
+echo   ${url}
+echo.
+start "" "%CHROME%" --user-data-dir="C:\\Temp\\atolon-kiosk-${idLower}" --kiosk-printing --new-window "${url}"
+
+REM Espera 2s y verifica que Chrome haya arrancado
+timeout /t 2 /nobreak >nul
+tasklist /FI "IMAGENAME eq chrome.exe" 2>nul | find /I "chrome.exe" >nul
+if errorlevel 1 (
+  echo.
+  echo ADVERTENCIA: Chrome no parece haber arrancado.
+  echo Comando ejecutado:
+  echo   start "" "%CHROME%" --kiosk-printing --new-window "${url}"
+  echo.
+  pause
+  exit /b 1
+)
+
+echo OK. Chrome corriendo en modo silencioso.
+echo Esta ventana se cierra en 4 segundos...
+timeout /t 4 /nobreak >nul
 `;
 
   const scriptMac = `#!/bin/bash
