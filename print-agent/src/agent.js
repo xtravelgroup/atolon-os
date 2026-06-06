@@ -31,6 +31,7 @@ const net = require('net');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const ws = require('ws'); // Realtime WebSocket transport (Node < 22 sin native)
 
 // ── Config ────────────────────────────────────────────────────────────────
 function loadEnv() {
@@ -89,7 +90,11 @@ const IMPRESORA_IDS = (() => {
 })();
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-  realtime: { params: { eventsPerSecond: 10 } },
+  realtime: {
+    params: { eventsPerSecond: 10 },
+    // Node 18 (pkg) no tiene WebSocket nativo — pasamos el paquete `ws`
+    transport: ws,
+  },
 });
 
 // Cache de info de impresoras (id → {nombre, printer_ip, printer_port})
