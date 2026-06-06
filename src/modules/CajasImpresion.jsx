@@ -346,11 +346,16 @@ function ModalSilencioso({ impresoraId, onClose }) {
   // Usamos `start "" chrome` (sin hardcodear ruta) — Windows resuelve Chrome via
   // App Paths registry, así funciona en Program Files, Program Files (x86) o
   // installs per-user.
+  // Removidos los `>nul` y `2>nul` — el clipboard a veces mangela el `>`
+  // cuando pasa por editores/autocorrectores. Los errores que muestre CMD
+  // (ej. "process not found" si no había Chrome corriendo, o "directory
+  // already exists" si la carpeta ya estaba) son inofensivos. Vale más
+  // un comando feo pero confiable que uno limpio que falla en paste.
   const cmdWin = [
-    `taskkill /F /IM chrome.exe /T 2>nul`,
-    `taskkill /F /IM "Google Chrome.exe" /T 2>nul`,
-    `timeout /t 4 /nobreak >nul`,
-    `mkdir "C:\\Temp\\atolon-kiosk-${idLower}" 2>nul`,
+    `taskkill /F /IM chrome.exe /T`,
+    `taskkill /F /IM "Google Chrome.exe" /T`,
+    `timeout /t 4 /nobreak`,
+    `mkdir "C:\\Temp\\atolon-kiosk-${idLower}"`,
     `start "" chrome --user-data-dir="C:\\Temp\\atolon-kiosk-${idLower}" --kiosk-printing --new-window "${url}"`,
   ].join("\r\n");
 
