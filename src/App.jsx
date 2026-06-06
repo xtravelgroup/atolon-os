@@ -372,6 +372,7 @@ const CajasExpress = lazy(() => import("./modules/CajasExpress"));
 const CajasExpressAdmin = lazy(() => import("./modules/CajasExpressAdmin"));
 const CajasImpresion = lazy(() => import("./modules/CajasImpresion"));
 const CajasVentas = lazy(() => import("./modules/CajasVentas"));
+const CajasSetup = lazy(() => import("./modules/CajasSetup"));
 const TrackExterno = lazy(() => import("./modules/TrackExterno"));
 
 const MODULE_MAP = {
@@ -446,7 +447,7 @@ const MODULE_MAP = {
 };
 
 // Public routes — no auth required
-const PUBLIC_ROUTES = ["empleados", "agencia", "booking", "pago", "reset-password", "zarpe-info", "zarpe-grupo", "login", "las-americas", "resultados", "track", "dia-de-la-madre", "madres", "blueapple", "blueapple-pax", "juicy", "juicyandcream", "juicy-organizador", "juice-organizador", "cajas", "cajas-admin", "cajas-imprimir", ""];
+const PUBLIC_ROUTES = ["empleados", "agencia", "booking", "pago", "reset-password", "zarpe-info", "zarpe-grupo", "login", "las-americas", "resultados", "track", "dia-de-la-madre", "madres", "blueapple", "blueapple-pax", "juicy", "juicyandcream", "juicy-organizador", "juice-organizador", "cajas", "cajas-admin", "cajas-imprimir", "cajas-setup", ""];
 
 function getRoute() {
   return window.location.pathname.replace(/^\//, "") || "";
@@ -627,6 +628,7 @@ export default function App() {
   if (route === "cajas")           return <CajasExpress />;
   if (route === "cajas-admin")     return <CajasExpressAdmin />;
   if (route === "cajas-imprimir")  return <CajasImpresion />;
+  if (route === "cajas-setup")     return <CajasSetup />;
   if (route === "empleados")      return <><EmpleadoPortal /><WhatsAppFloat phone={waPhone} /></>;
   if (route === "agencia" || route === "") return <><AgenciaPortal /><WhatsAppFloat phone={waPhone} /></>;
   if (route === "carreras" || route.startsWith("carreras/")) return <><ReclutamientoPortal /><WhatsAppFloat phone={waPhone} /></>;
