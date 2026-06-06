@@ -36,6 +36,7 @@ export default function CajasImpresion() {
   const [enCola, setEnCola] = useState(0);
   const [conexion, setConexion] = useState("conectando"); // "conectando" | "live" | "polling" | "error"
   const [ultimoCheck, setUltimoCheck] = useState(null);
+  const [modalSilent, setModalSilent] = useState(false);
   const procesadosRef = useRef(new Set()); // evita doble-print si llega 2x
 
   // procesarPendientes — busca pending+failed para esta impresora y los imprime.
@@ -251,6 +252,13 @@ export default function CajasImpresion() {
                 </span>
               )}
             </div>
+            <button onClick={() => setModalSilent(true)} style={{
+              marginTop: 12, padding: "8px 16px",
+              background: C.sand, color: C.navy,
+              border: "none", borderRadius: 8,
+              fontSize: 12, fontWeight: 800, letterSpacing: "0.08em",
+              cursor: "pointer",
+            }}>🔇 HACER SILENCIOSO</button>
           </div>
         </div>
       </div>
@@ -307,6 +315,145 @@ export default function CajasImpresion() {
       }}>
         <span>⚠ Dejá esta pestaña abierta. Mantené el laptop conectado a corriente y desactivá el sleep. Chrome --kiosk-printing imprime sin diálogo.</span>
         <span>Papel: 72×72mm · DIG-E200I</span>
+      </div>
+
+      {modalSilent && <ModalSilencioso impresoraId={impresoraId} onClose={() => setModalSilent(false)} />}
+    </div>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// MODAL: comando para hacer Chrome silencioso (--kiosk-printing)
+// ──────────────────────────────────────────────────────────────────────
+function ModalSilencioso({ impresoraId, onClose }) {
+  const [os, setOs] = useState(() =>
+    navigator.platform.toLowerCase().includes("win") ? "windows" : "mac"
+  );
+  const [copiado, setCopiado] = useState(false);
+
+  const idLower = (impresoraId || "imp").toLowerCase();
+  const url = `https://www.atolon.co/cajas-imprimir?id=${impresoraId}`;
+
+  const cmdMac = [
+    `lpoptions -p Gainscha_GA_E200I -o media=Custom.72x72mm 2>/dev/null`,
+    `killall "Google Chrome" 2>/dev/null`,
+    `sleep 2`,
+    `mkdir -p /tmp/atolon-kiosk-${idLower}`,
+    `open -na "Google Chrome" --args --user-data-dir=/tmp/atolon-kiosk-${idLower} --kiosk-printing --new-window "${url}"`,
+  ].join("\n");
+
+  const cmdWin = [
+    `taskkill /F /IM chrome.exe 2>nul`,
+    `timeout /t 2 /nobreak >nul`,
+    `mkdir "C:\\Temp\\atolon-kiosk-${idLower}" 2>nul`,
+    `"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe" --user-data-dir="C:\\Temp\\atolon-kiosk-${idLower}" --kiosk-printing --new-window "${url}"`,
+  ].join("\r\n");
+
+  const cmd = os === "mac" ? cmdMac : cmdWin;
+
+  const copiar = async () => {
+    try {
+      await navigator.clipboard.writeText(cmd);
+      setCopiado(true);
+      setTimeout(() => setCopiado(false), 2500);
+    } catch {
+      // Fallback con execCommand
+      const ta = document.createElement("textarea");
+      ta.value = cmd; document.body.appendChild(ta); ta.select();
+      document.execCommand("copy");
+      document.body.removeChild(ta);
+      setCopiado(true);
+      setTimeout(() => setCopiado(false), 2500);
+    }
+  };
+
+  return (
+    <div onClick={e => e.target === e.currentTarget && onClose()} style={{
+      position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)",
+      display: "flex", alignItems: "center", justifyContent: "center",
+      zIndex: 1000, padding: 20,
+    }}>
+      <div style={{
+        background: "#fff", color: "#0D1B3E",
+        borderRadius: 16, padding: 32, maxWidth: 720, width: "100%",
+        maxHeight: "92vh", overflowY: "auto",
+        boxShadow: "0 20px 60px rgba(0,0,0,0.5)",
+      }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18 }}>
+          <h2 style={{ margin: 0, fontSize: 22, fontWeight: 900 }}>🔇 Configurar impresión silenciosa</h2>
+          <button onClick={onClose} style={{
+            background: "none", border: "none", fontSize: 28, cursor: "pointer", color: "#666",
+            padding: 0, lineHeight: 1,
+          }}>×</button>
+        </div>
+
+        <div style={{ fontSize: 14, lineHeight: 1.5, marginBottom: 20, color: "#444" }}>
+          Esto reinicia Chrome con la bandera <code>--kiosk-printing</code> para que cada ticket
+          se imprima sin mostrar el diálogo. <strong>Hacelo una sola vez por computador.</strong>
+        </div>
+
+        {/* Tabs */}
+        <div style={{ display: "flex", gap: 4, marginBottom: 14 }}>
+          {[
+            { v: "mac", l: "🍎 Mac" },
+            { v: "windows", l: "🪟 Windows" },
+          ].map(o => (
+            <button key={o.v} onClick={() => setOs(o.v)} style={{
+              padding: "10px 20px", fontSize: 13, fontWeight: 800,
+              background: os === o.v ? "#0D1B3E" : "#F3F4F6",
+              color: os === o.v ? "#fff" : "#666",
+              border: "none", borderRadius: "8px 8px 0 0", cursor: "pointer",
+            }}>{o.l}</button>
+          ))}
+        </div>
+
+        {/* Pasos */}
+        <ol style={{ paddingLeft: 22, fontSize: 14, lineHeight: 1.7, marginBottom: 14, color: "#333" }}>
+          {os === "mac" ? (
+            <>
+              <li>Abrí <strong>Terminal</strong> (Cmd+Espacio → escribí "Terminal" → Enter)</li>
+              <li>Toca <strong>"Copiar comando"</strong> abajo</li>
+              <li>Pegá en Terminal (Cmd+V) y presioná <strong>Enter</strong></li>
+              <li>Chrome se cierra y se abre solo en modo silencioso</li>
+            </>
+          ) : (
+            <>
+              <li>Abrí <strong>PowerShell</strong> (botón Inicio → buscá "PowerShell" → click derecho → "Ejecutar como administrador")</li>
+              <li>Toca <strong>"Copiar comando"</strong> abajo</li>
+              <li>Pegá en PowerShell (click derecho o Ctrl+V) y presioná <strong>Enter</strong></li>
+              <li>Chrome se cierra y se abre solo en modo silencioso</li>
+            </>
+          )}
+        </ol>
+
+        {/* Code block */}
+        <div style={{
+          background: "#0D1B3E", color: "#FFF",
+          padding: "16px 18px", borderRadius: 10,
+          fontFamily: "monospace", fontSize: 12, lineHeight: 1.6,
+          whiteSpace: "pre-wrap", wordBreak: "break-all",
+          marginBottom: 14, position: "relative",
+          maxHeight: 200, overflowY: "auto",
+        }}>
+          {cmd}
+        </div>
+
+        {/* Copy button */}
+        <button onClick={copiar} style={{
+          width: "100%", padding: "16px",
+          background: copiado ? "#4CAF7D" : "#0D1B3E",
+          color: "#fff", border: "none", borderRadius: 10,
+          fontSize: 15, fontWeight: 900, letterSpacing: "0.05em",
+          cursor: "pointer", transition: "background 0.2s",
+        }}>
+          {copiado ? "✓ COMANDO COPIADO" : "📋 COPIAR COMANDO"}
+        </button>
+
+        <div style={{ marginTop: 16, padding: "12px 16px", background: "#FFF9E6", borderRadius: 8, fontSize: 12, color: "#8B5A00", lineHeight: 1.5 }}>
+          <strong>Importante:</strong> Después de correr el comando, esta pestaña se cierra
+          y se abre una NUEVA pestaña ya configurada. Trabajá con la nueva, no con esta.
+          La impresora debe estar configurada como <strong>default</strong> del sistema.
+        </div>
       </div>
     </div>
   );
