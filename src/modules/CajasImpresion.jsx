@@ -367,7 +367,6 @@ function ModalSilencioso({ impresoraId, onClose }) {
       setCopiado(true);
       setTimeout(() => setCopiado(false), 2500);
     } catch {
-      // Fallback con execCommand
       const ta = document.createElement("textarea");
       ta.value = cmd; document.body.appendChild(ta); ta.select();
       document.execCommand("copy");
@@ -375,6 +374,87 @@ function ModalSilencioso({ impresoraId, onClose }) {
       setCopiado(true);
       setTimeout(() => setCopiado(false), 2500);
     }
+  };
+
+  // .bat (Windows) y .command (Mac) — más robustos que copy-paste.
+  // El .bat busca Chrome en las 3 ubicaciones comunes. El .command incluye
+  // un shebang y se ejecuta cuando se le da chmod +x.
+  const scriptWin = `@echo off
+chcp 65001 >nul
+echo === Atolon: lanzando Chrome silencioso para ${impresoraId} ===
+echo.
+echo Cerrando Chrome existente...
+taskkill /F /IM chrome.exe /T 2>nul
+taskkill /F /IM "Google Chrome.exe" /T 2>nul
+timeout /t 3 /nobreak >nul
+
+echo Buscando Chrome...
+set "CHROME="
+if exist "%ProgramFiles%\\Google\\Chrome\\Application\\chrome.exe" set "CHROME=%ProgramFiles%\\Google\\Chrome\\Application\\chrome.exe"
+if exist "%ProgramFiles(x86)%\\Google\\Chrome\\Application\\chrome.exe" set "CHROME=%ProgramFiles(x86)%\\Google\\Chrome\\Application\\chrome.exe"
+if exist "%LOCALAPPDATA%\\Google\\Chrome\\Application\\chrome.exe" set "CHROME=%LOCALAPPDATA%\\Google\\Chrome\\Application\\chrome.exe"
+
+if "%CHROME%"=="" (
+  echo ERROR: No encontre Chrome instalado en este computador.
+  echo Buscado en:
+  echo   %ProgramFiles%\\Google\\Chrome\\Application\\chrome.exe
+  echo   %ProgramFiles(x86)%\\Google\\Chrome\\Application\\chrome.exe
+  echo   %LOCALAPPDATA%\\Google\\Chrome\\Application\\chrome.exe
+  pause
+  exit /b 1
+)
+
+echo Encontrado en: %CHROME%
+mkdir "C:\\Temp\\atolon-kiosk-${idLower}" 2>nul
+echo Lanzando con --kiosk-printing...
+start "" "%CHROME%" --user-data-dir="C:\\Temp\\atolon-kiosk-${idLower}" --kiosk-printing --new-window "${url}"
+echo.
+echo Listo. Esta ventana se cierra en 3 segundos.
+timeout /t 3 /nobreak >nul
+`;
+
+  const scriptMac = `#!/bin/bash
+set -e
+echo "=== Atolón: lanzando Chrome silencioso para ${impresoraId} ==="
+
+# Configurar papel custom 72x72mm
+if command -v lpoptions >/dev/null 2>&1; then
+  lpoptions -p Gainscha_GA_E200I -o media=Custom.72x72mm 2>/dev/null || true
+fi
+
+echo "Cerrando Chrome existente..."
+pkill -f "Google Chrome" 2>/dev/null || true
+killall "Google Chrome" 2>/dev/null || true
+sleep 3
+
+mkdir -p "/tmp/atolon-kiosk-${idLower}"
+echo "Lanzando con --kiosk-printing..."
+open -na "Google Chrome" --args \\
+  --user-data-dir="/tmp/atolon-kiosk-${idLower}" \\
+  --kiosk-printing \\
+  --new-window \\
+  "${url}"
+
+echo "Listo. Cerrando esta ventana en 2 segundos..."
+sleep 2
+`;
+
+  const descargar = () => {
+    const isMac = os === "mac";
+    const content = isMac ? scriptMac : scriptWin;
+    const filename = isMac
+      ? `atolon-${idLower}.command`
+      : `atolon-${idLower}.bat`;
+    const blob = new Blob([content], {
+      type: isMac ? "text/x-shellscript" : "application/x-bat",
+    });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
   };
 
   return (
@@ -417,54 +497,86 @@ function ModalSilencioso({ impresoraId, onClose }) {
           ))}
         </div>
 
-        {/* Pasos */}
-        <ol style={{ paddingLeft: 22, fontSize: 14, lineHeight: 1.7, marginBottom: 14, color: "#333" }}>
-          {os === "mac" ? (
-            <>
-              <li>Abrí <strong>Terminal</strong> (Cmd+Espacio → escribí "Terminal" → Enter)</li>
-              <li>Toca <strong>"Copiar comando"</strong> abajo</li>
-              <li>Pegá en Terminal (Cmd+V) y presioná <strong>Enter</strong></li>
-              <li>Chrome se cierra y se abre solo en modo silencioso</li>
-            </>
-          ) : (
-            <>
-              <li>Cerrá <strong>TODAS</strong> las ventanas de Chrome primero</li>
-              <li>Presioná <strong>Windows ⊞</strong> → escribí <strong>cmd</strong> → Enter (abre "Símbolo del sistema")<br/>
-                <strong style={{ color: "#D64545" }}>⚠ Usá CMD, no PowerShell</strong> (la sintaxis es distinta)</li>
-              <li>Toca <strong>"Copiar comando"</strong> abajo</li>
-              <li>En CMD: <strong>click derecho</strong> → Pegar, luego Enter</li>
-              <li>Chrome se cierra y se abre solo una <strong>nueva ventana</strong> en modo silencioso. <strong>Usá solo esa nueva ventana</strong>, no la vieja.</li>
-            </>
-          )}
-        </ol>
-
-        {/* Code block */}
+        {/* OPCIÓN 1 — Descargar script (recomendado) */}
         <div style={{
-          background: "#0D1B3E", color: "#FFF",
-          padding: "16px 18px", borderRadius: 10,
-          fontFamily: "monospace", fontSize: 12, lineHeight: 1.6,
-          whiteSpace: "pre-wrap", wordBreak: "break-all",
-          marginBottom: 14, position: "relative",
-          maxHeight: 200, overflowY: "auto",
+          background: "#E8F5E9", border: "2px solid #4CAF7D", borderRadius: 10,
+          padding: 16, marginBottom: 12,
         }}>
-          {cmd}
+          <div style={{ fontSize: 12, color: "#2E7D32", fontWeight: 800, letterSpacing: "0.1em", marginBottom: 8 }}>
+            ✅ OPCIÓN A — RECOMENDADA
+          </div>
+          <ol style={{ paddingLeft: 22, fontSize: 13, lineHeight: 1.7, color: "#333", margin: 0, marginBottom: 12 }}>
+            {os === "mac" ? (
+              <>
+                <li>Toca <strong>"Descargar atajo"</strong> abajo → baja un archivo <code>atolon-{idLower}.command</code></li>
+                <li>Abrí Terminal → tipea <code>chmod +x ~/Downloads/atolon-{idLower}.command</code> → Enter</li>
+                <li><strong>Doble click</strong> al archivo en Downloads → Chrome se abre solo en modo silencioso</li>
+              </>
+            ) : (
+              <>
+                <li>Toca <strong>"Descargar atajo"</strong> abajo → baja un archivo <code>atolon-{idLower}.bat</code></li>
+                <li>Abrí <strong>Downloads</strong> → <strong>Doble click</strong> al archivo .bat</li>
+                <li>Aparece una ventana negra, busca Chrome, lo lanza silencioso. Se cierra sola.</li>
+                <li>Si Windows muestra alerta "SmartScreen": <strong>"Más información" → "Ejecutar de todos modos"</strong></li>
+              </>
+            )}
+          </ol>
+          <button onClick={descargar} style={{
+            width: "100%", padding: "14px",
+            background: "#4CAF7D", color: "#fff", border: "none",
+            borderRadius: 8, fontSize: 14, fontWeight: 900, letterSpacing: "0.05em",
+            cursor: "pointer",
+          }}>
+            📥 DESCARGAR ATAJO {os === "mac" ? "(.command)" : "(.bat)"}
+          </button>
         </div>
 
-        {/* Copy button */}
-        <button onClick={copiar} style={{
-          width: "100%", padding: "16px",
-          background: copiado ? "#4CAF7D" : "#0D1B3E",
-          color: "#fff", border: "none", borderRadius: 10,
-          fontSize: 15, fontWeight: 900, letterSpacing: "0.05em",
-          cursor: "pointer", transition: "background 0.2s",
+        {/* OPCIÓN 2 — Pegar comando (manual, fallback) */}
+        <details style={{
+          background: "#F7F9FC", border: "1px solid #E3E7EF", borderRadius: 10,
+          padding: 12, marginBottom: 14,
         }}>
-          {copiado ? "✓ COMANDO COPIADO" : "📋 COPIAR COMANDO"}
-        </button>
+          <summary style={{ fontSize: 12, fontWeight: 700, color: "#666", cursor: "pointer", letterSpacing: "0.06em" }}>
+            ⚙️ OPCIÓN B — Pegar comando manual
+          </summary>
+          <ol style={{ paddingLeft: 22, fontSize: 13, lineHeight: 1.7, marginTop: 10, color: "#333", marginBottom: 10 }}>
+            {os === "mac" ? (
+              <>
+                <li>Abrí <strong>Terminal</strong> (Cmd+Espacio → "Terminal")</li>
+                <li>Toca "Copiar" abajo → pegá en Terminal → Enter</li>
+              </>
+            ) : (
+              <>
+                <li>Cerrá TODAS las Chrome</li>
+                <li>Presioná Win ⊞ → escribí <strong>cmd</strong> (NO PowerShell) → Enter</li>
+                <li>Toca "Copiar" → click derecho en CMD para pegar → Enter</li>
+              </>
+            )}
+          </ol>
+          <div style={{
+            background: "#0D1B3E", color: "#FFF",
+            padding: "12px 14px", borderRadius: 8,
+            fontFamily: "monospace", fontSize: 11, lineHeight: 1.5,
+            whiteSpace: "pre-wrap", wordBreak: "break-all",
+            marginBottom: 10, maxHeight: 160, overflowY: "auto",
+          }}>
+            {cmd}
+          </div>
+          <button onClick={copiar} style={{
+            width: "100%", padding: "10px",
+            background: copiado ? "#4CAF7D" : "#666",
+            color: "#fff", border: "none", borderRadius: 6,
+            fontSize: 12, fontWeight: 700, letterSpacing: "0.04em",
+            cursor: "pointer", transition: "background 0.2s",
+          }}>
+            {copiado ? "✓ COMANDO COPIADO" : "📋 Copiar comando"}
+          </button>
+        </details>
 
-        <div style={{ marginTop: 16, padding: "12px 16px", background: "#FFF9E6", borderRadius: 8, fontSize: 12, color: "#8B5A00", lineHeight: 1.5 }}>
-          <strong>Importante:</strong> Después de correr el comando, esta pestaña se cierra
-          y se abre una NUEVA pestaña ya configurada. Trabajá con la nueva, no con esta.
-          La impresora debe estar configurada como <strong>default</strong> del sistema.
+        <div style={{ marginTop: 6, padding: "12px 16px", background: "#FFF9E6", borderRadius: 8, fontSize: 12, color: "#8B5A00", lineHeight: 1.5 }}>
+          <strong>Después de correr</strong>, esta pestaña se reemplaza por una NUEVA con
+          <code> --kiosk-printing</code> activo. Trabajá con la nueva. La impresora debe ser
+          la <strong>default</strong> del sistema.
         </div>
       </div>
     </div>
