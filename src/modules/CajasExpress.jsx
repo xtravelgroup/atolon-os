@@ -400,7 +400,7 @@ function PinScreen({ onAuth }) {
         </div>
       ) : (
         <>
-          {/* PIN display */}
+          {/* PIN display — solo en modo login normal */}
           <div style={{
             background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 12,
             padding: "20px", marginBottom: 18, textAlign: "center",
@@ -420,25 +420,28 @@ function PinScreen({ onAuth }) {
               4 a 6 dígitos · Primera vez te pedimos tu nombre
             </div>
           </div>
-
-          {/* Keypad */}
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
-            {["1","2","3","4","5","6","7","8","9","","0","del"].map((k, i) =>
-              k === "" ? <div key={i} /> : (
-                <button key={i} onClick={() => pressKey(k)} disabled={busy}
-                  style={{
-                    aspectRatio: "1.5/1", background: k === "del" ? C.bgCard : "#fff",
-                    border: `1px solid ${C.border}`, borderRadius: 12,
-                    color: C.text, fontSize: 28, fontWeight: 800,
-                    cursor: "pointer", transition: "transform 0.05s, background 0.1s",
-                    touchAction: "manipulation",
-                  }}>
-                  {k === "del" ? "⌫" : k}
-                </button>
-              )
-            )}
-          </div>
         </>
+      )}
+
+      {/* Keypad — disponible en modo login normal Y en modo cambio-PIN.
+          Solo se oculta en modo registro (que usa input de texto para el nombre). */}
+      {!registro && (
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
+          {["1","2","3","4","5","6","7","8","9","","0","del"].map((k, i) =>
+            k === "" ? <div key={i} /> : (
+              <button key={i} onClick={() => pressKey(k)} disabled={busy}
+                style={{
+                  aspectRatio: "1.5/1", background: k === "del" ? C.bgCard : "#fff",
+                  border: `1px solid ${C.border}`, borderRadius: 12,
+                  color: C.text, fontSize: 28, fontWeight: 800,
+                  cursor: "pointer", transition: "transform 0.05s, background 0.1s",
+                  touchAction: "manipulation",
+                }}>
+                {k === "del" ? "⌫" : k}
+              </button>
+            )
+          )}
+        </div>
       )}
 
       <div style={{ fontSize: 10, color: C.textLow, marginTop: 22, textAlign: "center", letterSpacing: "0.15em" }}>
