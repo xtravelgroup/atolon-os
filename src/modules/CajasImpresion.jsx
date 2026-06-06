@@ -34,7 +34,30 @@ export default function CajasImpresion() {
   const [stats, setStats] = useState({ recibidos: 0, impresos: 0, errores: 0 });
   const [ultimo, setUltimo] = useState(null);
   const [enCola, setEnCola] = useState(0);
+  const [conexion, setConexion] = useState("conectando"); // "conectando" | "live" | "polling" | "error"
+  const [ultimoCheck, setUltimoCheck] = useState(null);
   const procesadosRef = useRef(new Set()); // evita doble-print si llega 2x
+
+  // procesarPendientes — busca pending+failed para esta impresora y los imprime.
+  // Reutilizable: corre al montar, en cada poll de seguridad, al volver el
+  // foco a la pestaña, y al reconectar después de perder internet.
+  async function procesarPendientes() {
+    if (!supabase || !impresoraId) return;
+    const { data, error: err } = await supabase
+      .from("cajas_evento_impresion_queue")
+      .select("*")
+      .eq("impresora_id", impresoraId)
+      .in("status", ["pending", "failed"])
+      .order("created_at", { ascending: true })
+      .limit(20);
+    if (err) {
+      console.warn("[imp/poll]", err.message);
+      setConexion("error");
+      return;
+    }
+    setUltimoCheck(new Date());
+    (data || []).forEach(job => imprimirJob(job));
+  }
 
   useEffect(() => {
     if (!impresoraId) { setError("Falta el parámetro ?id=IMP-N en la URL"); return; }
@@ -42,6 +65,9 @@ export default function CajasImpresion() {
 
     let alive = true;
     let canal;
+    let pollTimer;
+    let visibilityHandler;
+    let onlineHandler;
 
     (async () => {
       const { data, error: err } = await supabase
@@ -55,16 +81,9 @@ export default function CajasImpresion() {
       setImpresora(data);
 
       // 1) Procesar pendientes que estaban antes de que abrieras la pestaña
-      const { data: pendientes } = await supabase
-        .from("cajas_evento_impresion_queue")
-        .select("*")
-        .eq("impresora_id", impresoraId)
-        .in("status", ["pending", "failed"])
-        .order("created_at", { ascending: true })
-        .limit(20);
-      (pendientes || []).forEach(job => imprimirJob(job));
+      await procesarPendientes();
 
-      // 2) Suscribirse a INSERTs nuevos
+      // 2) Suscribirse a INSERTs nuevos vía Realtime
       canal = supabase.channel(`imp-${impresoraId}`)
         .on("postgres_changes", {
           event: "INSERT",
@@ -72,10 +91,36 @@ export default function CajasImpresion() {
           table: "cajas_evento_impresion_queue",
           filter: `impresora_id=eq.${impresoraId}`,
         }, payload => imprimirJob(payload.new))
-        .subscribe();
+        .subscribe((status) => {
+          if (status === "SUBSCRIBED")          setConexion("live");
+          else if (status === "CHANNEL_ERROR")  setConexion("polling");
+          else if (status === "TIMED_OUT")      setConexion("polling");
+          else if (status === "CLOSED")         setConexion("polling");
+        });
+
+      // 3) Polling de respaldo cada 30s — si Realtime se cae sin avisar,
+      //    igual pescamos los pendientes. Cinturón + tirantes.
+      pollTimer = setInterval(() => { if (alive) procesarPendientes(); }, 30000);
+
+      // 4) Al volver foco a la pestaña, forzar un check inmediato.
+      //    Útil cuando el laptop sale del sleep.
+      visibilityHandler = () => {
+        if (!document.hidden && alive) procesarPendientes();
+      };
+      document.addEventListener("visibilitychange", visibilityHandler);
+
+      // 5) Al reconectar internet, también procesar pendientes.
+      onlineHandler = () => { if (alive) procesarPendientes(); };
+      window.addEventListener("online", onlineHandler);
     })();
 
-    return () => { alive = false; if (canal) supabase.removeChannel(canal); };
+    return () => {
+      alive = false;
+      if (canal) supabase.removeChannel(canal);
+      if (pollTimer) clearInterval(pollTimer);
+      if (visibilityHandler) document.removeEventListener("visibilitychange", visibilityHandler);
+      if (onlineHandler) window.removeEventListener("online", onlineHandler);
+    };
   }, [impresoraId]);
 
   async function imprimirJob(job) {
@@ -177,20 +222,34 @@ export default function CajasImpresion() {
             )}
           </div>
           <div style={{ textAlign: "right" }}>
-            <div style={{
-              display: "inline-flex", alignItems: "center", gap: 10,
-              padding: "10px 18px", background: C.green + "33",
-              border: `2px solid ${C.green}`, borderRadius: 30,
-              fontSize: 14, fontWeight: 800, letterSpacing: "0.1em",
-            }}>
-              <span style={{
-                display: "inline-block", width: 10, height: 10, borderRadius: "50%",
-                background: C.green, animation: "pulse 1.4s ease-in-out infinite",
-              }} />
-              ESCUCHANDO
-            </div>
+            {(() => {
+              const conf = conexion === "live"     ? { color: C.green,  label: "LIVE",     pulse: true  }
+                         : conexion === "polling"  ? { color: C.amber,  label: "POLLING",  pulse: true  }
+                         : conexion === "error"    ? { color: C.red,    label: "ERROR",    pulse: false }
+                         :                            { color: C.amber, label: "CONECTANDO…", pulse: true };
+              return (
+                <div style={{
+                  display: "inline-flex", alignItems: "center", gap: 10,
+                  padding: "10px 18px", background: conf.color + "33",
+                  border: `2px solid ${conf.color}`, borderRadius: 30,
+                  fontSize: 14, fontWeight: 800, letterSpacing: "0.1em",
+                }}>
+                  <span style={{
+                    display: "inline-block", width: 10, height: 10, borderRadius: "50%",
+                    background: conf.color,
+                    animation: conf.pulse ? "pulse 1.4s ease-in-out infinite" : "none",
+                  }} />
+                  {conf.label}
+                </div>
+              );
+            })()}
             <div style={{ fontSize: 11, color: C.textLow, marginTop: 10, fontFamily: "monospace" }}>
               {impresora.id}
+              {ultimoCheck && (
+                <span style={{ marginLeft: 8, opacity: 0.7 }}>
+                  · check {ultimoCheck.toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+                </span>
+              )}
             </div>
           </div>
         </div>
@@ -246,7 +305,7 @@ export default function CajasImpresion() {
         fontSize: 11, color: C.textLow, letterSpacing: "0.06em",
         display: "flex", justifyContent: "space-between", gap: 16, flexWrap: "wrap",
       }}>
-        <span>⚠ Dejá esta pestaña abierta todo el evento. Chrome con --kiosk-printing imprime sin diálogo.</span>
+        <span>⚠ Dejá esta pestaña abierta. Mantené el laptop conectado a corriente y desactivá el sleep. Chrome --kiosk-printing imprime sin diálogo.</span>
         <span>Papel: 72×72mm · DIG-E200I</span>
       </div>
     </div>
