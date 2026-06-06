@@ -231,15 +231,21 @@ async function enviarPorWindowsUsb(printerName, buffer) {
   fs.writeFileSync(tmpFile, buffer);
   try {
     await new Promise((resolve, reject) => {
-      // cmd /c copy /b <file> "\\.\PrinterName"
-      const args = ['/d', '/c', 'copy', '/b', tmpFile, `\\\\.\\${printerName}`];
-      const proc = spawn('cmd.exe', args, { windowsHide: true });
+      // cmd /c "copy /b "file" "\\.\PrinterName""
+      // Pasamos UN solo string a cmd /c (no args array) — así CMD parsea
+      // las comillas internas correctamente. Si dividís en argv, los
+      // nombres de impresora con espacio ("POS-80 1") rompen porque CMD
+      // toma el espacio como separador.
+      const cmdLine = `copy /b "${tmpFile}" "\\\\.\\${printerName}"`;
+      const proc = spawn('cmd.exe', ['/d', '/s', '/c', cmdLine], { windowsHide: true });
       let stderr = '';
+      let stdout = '';
+      proc.stdout.on('data', d => { stdout += d.toString(); });
       proc.stderr.on('data', d => { stderr += d.toString(); });
       proc.on('error', reject);
       proc.on('close', (code) => {
         if (code === 0) resolve();
-        else reject(new Error(`copy /b → ${printerName} exited ${code}: ${stderr || '(sin stderr)'}`));
+        else reject(new Error(`copy /b → "${printerName}" exited ${code}: ${stderr || stdout || '(sin output)'}`));
       });
     });
   } finally {
