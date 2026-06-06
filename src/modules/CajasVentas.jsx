@@ -204,15 +204,15 @@ export default function CajasVentas() {
           <h2 style={{ margin: 0, fontSize: isMobile ? 22 : 28, fontWeight: 900, color: B.navy, letterSpacing: "-0.01em" }}>
             💰 Ventas Cajas Express
           </h2>
-          <div style={{ fontSize: 12, color: B.muted, marginTop: 4 }}>
+          <div style={{ fontSize: 12, color: "#64748b", marginTop: 4 }}>
             {loading ? "Cargando…" : `${kpis.count} ventas activas${kpis.anuladas ? ` · ${kpis.anuladas} anuladas` : ""} · Auto-refresh ${autoRefresh ? "ON" : "OFF"}`}
           </div>
         </div>
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-          <button onClick={() => setAutoRefresh(a => !a)} style={btnSec(autoRefresh ? B.success : B.muted)}>
+          <button onClick={() => setAutoRefresh(a => !a)} style={btnSec(autoRefresh ? B.success : "#64748b")}>
             {autoRefresh ? "🔄 Live" : "⏸ Pausa"}
           </button>
-          <button onClick={() => setReload(r => r + 1)} style={btnSec(B.muted)}>↻ Refrescar</button>
+          <button onClick={() => setReload(r => r + 1)} style={btnSec("#64748b")}>↻ Refrescar</button>
           <button onClick={exportCSV} style={btnSec(B.navy)}>⬇ CSV</button>
         </div>
       </div>
@@ -255,7 +255,7 @@ export default function CajasVentas() {
       }}>
         <Kpi label="REVENUE" valor={COP(kpis.total)} color={B.navy} big />
         <Kpi label="VENTAS"  valor={kpis.count} color={B.navy} />
-        <Kpi label="ITEMS"   valor={kpis.items} color={B.muted} />
+        <Kpi label="ITEMS"   valor={kpis.items} color={"#64748b"} />
         <Kpi label="EFECTIVO" valor={COP(kpis.efectivo)} color={B.success} />
         <Kpi label="TARJETA"  valor={COP(kpis.tarjeta)}  color={B.warning} />
         <Kpi label="PROPINAS" valor={COP(kpis.propinas)} color="#9333ea" />
@@ -276,7 +276,7 @@ export default function CajasVentas() {
                     minHeight: 2,
                     transition: "height 0.4s",
                   }} />
-                <div style={{ fontSize: 10, color: B.muted, marginTop: 4, fontVariantNumeric: "tabular-nums" }}>
+                <div style={{ fontSize: 10, color: "#64748b", marginTop: 4, fontVariantNumeric: "tabular-nums" }}>
                   {String(h.hora).padStart(2, "0")}
                 </div>
               </div>
@@ -307,7 +307,7 @@ export default function CajasVentas() {
       <Card title="Top productos vendidos">
         <div style={{ display: "grid", gap: 6 }}>
           {topProductos.length === 0 && (
-            <div style={{ padding: 20, textAlign: "center", color: B.muted, fontSize: 13 }}>Sin productos vendidos en este rango.</div>
+            <div style={{ padding: 20, textAlign: "center", color: "#64748b", fontSize: 13 }}>Sin productos vendidos en este rango.</div>
           )}
           {topProductos.map((p, idx) => (
             <div key={p.nombre} style={{
@@ -315,9 +315,9 @@ export default function CajasVentas() {
               padding: "8px 12px", background: idx === 0 ? "#FFF4D6" : "#F7F9FC",
               borderRadius: 6, alignItems: "center", fontSize: 13,
             }}>
-              <span style={{ color: B.muted, fontWeight: 800, fontFamily: "monospace" }}>#{idx + 1}</span>
+              <span style={{ color: "#64748b", fontWeight: 800, fontFamily: "monospace" }}>#{idx + 1}</span>
               <span style={{ fontWeight: 700 }}>{p.nombre}</span>
-              <span style={{ color: B.muted }}>{p.cantidad} u.</span>
+              <span style={{ color: "#64748b" }}>{p.cantidad} u.</span>
               <span style={{ fontWeight: 800, color: B.navy, fontVariantNumeric: "tabular-nums" }}>{COP(p.revenue)}</span>
             </div>
           ))}
@@ -327,7 +327,7 @@ export default function CajasVentas() {
       {/* Lista de ventas */}
       <Card title={`Ventas (${activas.length})`}>
         {loading ? (
-          <div style={{ padding: 30, textAlign: "center", color: B.muted }}>Cargando…</div>
+          <div style={{ padding: 30, textAlign: "center", color: "#64748b" }}>Cargando…</div>
         ) : isMobile ? (
           <div style={{ display: "grid", gap: 8 }}>
             {activas.map(v => (
@@ -382,7 +382,7 @@ function Card({ title, children }) {
       background: "#fff", border: "1px solid #e3e7ef", borderRadius: 12,
       padding: 16, marginBottom: 14,
     }}>
-      <div style={{ fontSize: 11, color: B.muted, letterSpacing: "0.16em", fontWeight: 800, marginBottom: 12 }}>
+      <div style={{ fontSize: 11, color: "#64748b", letterSpacing: "0.16em", fontWeight: 800, marginBottom: 12 }}>
         {title.toUpperCase()}
       </div>
       {children}
@@ -396,7 +396,7 @@ function Kpi({ label, valor, color, big }) {
       background: "#fff", border: "1px solid #e3e7ef", borderRadius: 10,
       padding: "14px 16px", display: "flex", flexDirection: "column",
     }}>
-      <div style={{ fontSize: 10, color: B.muted, letterSpacing: "0.18em", fontWeight: 800 }}>
+      <div style={{ fontSize: 10, color: "#64748b", letterSpacing: "0.18em", fontWeight: 800 }}>
         {label}
       </div>
       <div style={{
@@ -412,7 +412,7 @@ function Kpi({ label, valor, color, big }) {
 
 function Lista({ rows }) {
   if (!rows || rows.length === 0) {
-    return <div style={{ padding: 16, textAlign: "center", color: B.muted, fontSize: 13 }}>Sin datos.</div>;
+    return <div style={{ padding: 16, textAlign: "center", color: "#64748b", fontSize: 13 }}>Sin datos.</div>;
   }
   return (
     <div style={{ display: "grid", gap: 4 }}>
@@ -424,7 +424,7 @@ function Lista({ rows }) {
         }}>
           <div>
             <div style={{ fontWeight: 700 }}>{r.label}</div>
-            <div style={{ fontSize: 11, color: B.muted, marginTop: 1 }}>{r.sub}</div>
+            <div style={{ fontSize: 11, color: "#64748b", marginTop: 1 }}>{r.sub}</div>
           </div>
           <div style={{ fontWeight: 800, color: B.navy, fontVariantNumeric: "tabular-nums", alignSelf: "center" }}>
             {r.valor}
@@ -436,7 +436,7 @@ function Lista({ rows }) {
 }
 
 function Vacio() {
-  return <div style={{ padding: 30, textAlign: "center", color: B.muted, fontSize: 13 }}>Sin ventas en este filtro / rango.</div>;
+  return <div style={{ padding: 30, textAlign: "center", color: "#64748b", fontSize: 13 }}>Sin ventas en este filtro / rango.</div>;
 }
 
 function VentaRowDesktop({ v, expandido, onExpand, onAnular }) {
@@ -447,13 +447,13 @@ function VentaRowDesktop({ v, expandido, onExpand, onAnular }) {
         <td style={td}>{fmtHora(v.created_at)}</td>
         <td style={td}>{v.caja_id}</td>
         <td style={{ ...td, fontWeight: 600 }}>{v.cajero_nombre || "—"}</td>
-        <td style={{ ...td, fontSize: 12, color: B.muted, maxWidth: 300, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+        <td style={{ ...td, fontSize: 12, color: "#64748b", maxWidth: 300, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
           {itemsTxt}
         </td>
         <td style={{ ...td, textAlign: "right", fontWeight: 800, fontVariantNumeric: "tabular-nums" }}>
           {COP(v.total)}
           {Number(v.propina) > 0 && (
-            <div style={{ fontSize: 10, color: B.muted, fontWeight: 500 }}>+{COP(v.propina)} 💵</div>
+            <div style={{ fontSize: 10, color: "#64748b", fontWeight: 500 }}>+{COP(v.propina)} 💵</div>
           )}
         </td>
         <td style={td}><Tag metodo={v.metodo_pago} pago={v.pago_recibido} /></td>
@@ -487,7 +487,7 @@ function VentaCardMobile({ v, expandido, onExpand, onAnular }) {
       <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
         <div>
           <div style={{ fontWeight: 700, fontSize: 13 }}>{v.cajero_nombre || "—"}</div>
-          <div style={{ fontSize: 11, color: B.muted, marginTop: 2 }}>
+          <div style={{ fontSize: 11, color: "#64748b", marginTop: 2 }}>
             {fmtHora(v.created_at)} · {v.caja_id} · {(v.items || []).length} ítems
           </div>
         </div>
@@ -518,14 +518,14 @@ function DetallesVenta({ v }) {
         {(v.items || []).map((it, i) => (
           <div key={i} style={{ display: "grid", gridTemplateColumns: "1fr auto auto", gap: 8 }}>
             <span>{it.cantidad}× {it.nombre}</span>
-            <span style={{ color: B.muted, fontVariantNumeric: "tabular-nums" }}>{COP(it.precio)}</span>
+            <span style={{ color: "#64748b", fontVariantNumeric: "tabular-nums" }}>{COP(it.precio)}</span>
             <span style={{ fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{COP(it.subtotal || it.precio * it.cantidad)}</span>
           </div>
         ))}
       </div>
       <div style={{
         marginTop: 6, paddingTop: 6, borderTop: "1px dashed #ccc",
-        fontSize: 11, color: B.muted, fontFamily: "monospace",
+        fontSize: 11, color: "#64748b", fontFamily: "monospace",
       }}>
         {v.id} · {fmtFechaHora(v.created_at)}
         {v.pago_recibido?.moneda === "USD" && (
@@ -554,13 +554,13 @@ function Tag({ metodo, pago }) {
 }
 
 function LoggroBadge({ estado, error }) {
-  if (!estado) return <span style={{ fontSize: 10, color: B.muted }}>—</span>;
+  if (!estado) return <span style={{ fontSize: 10, color: "#64748b" }}>—</span>;
   const map = {
     sent:    { l: "✓ Sent",    c: B.success },
     failed:  { l: "✗ Failed",  c: B.danger },
     pending: { l: "⏳ Pending", c: B.warning },
   };
-  const m = map[estado] || { l: estado, c: B.muted };
+  const m = map[estado] || { l: estado, c: "#64748b" };
   return (
     <span title={error || ""} style={{
       fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 8,
@@ -569,7 +569,7 @@ function LoggroBadge({ estado, error }) {
   );
 }
 
-const th = { padding: "8px 10px", fontSize: 10, fontWeight: 800, color: B.muted, letterSpacing: "0.1em", textAlign: "left" };
+const th = { padding: "8px 10px", fontSize: 10, fontWeight: 800, color: "#64748b", letterSpacing: "0.1em", textAlign: "left" };
 const td = { padding: "8px 10px", verticalAlign: "top" };
 
 function btnSec(color) {
