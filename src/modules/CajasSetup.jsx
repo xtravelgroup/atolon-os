@@ -48,21 +48,79 @@ export default function CajasSetup() {
   const [os, setOs] = useState(detectOS());
   const [impresoras, setImpresoras] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [ultimoImp, setUltimoImp] = useState(null); // IMP-N que se descargó al final
+  const [ultimoImp, setUltimoImp] = useState(null);
+  const [ahora, setAhora] = useState(Date.now());
+  const [colas, setColas] = useState({}); // impresora_id → { pending, printed, failed, last }
 
   useEffect(() => {
     if (!supabase) return;
-    setLoading(true);
-    supabase
+    let alive = true;
+
+    const cargarImpresoras = () => supabase
       .from("cajas_evento_impresoras")
-      .select("id, numero, nombre, ubicacion, printer_ip, printer_port, tipo_conexion, activa")
+      .select("id, numero, nombre, ubicacion, printer_ip, printer_port, printer_usb_name, tipo_conexion, agent_last_seen, agent_status, activa")
       .eq("activa", true)
       .order("numero")
+      .then(({ data }) => { if (alive) { setImpresoras(data || []); setLoading(false); } });
+
+    const cargarColas = () => supabase
+      .from("cajas_evento_impresion_queue")
+      .select("impresora_id, status, error, venta_id, created_at, printed_at")
+      .order("created_at", { ascending: false })
+      .limit(200)
       .then(({ data }) => {
-        setImpresoras(data || []);
-        setLoading(false);
+        if (!alive) return;
+        const agg = {};
+        (data || []).forEach(j => {
+          if (!agg[j.impresora_id]) agg[j.impresora_id] = { pending: 0, printed: 0, failed: 0, total: 0, last: null, lastError: null };
+          const a = agg[j.impresora_id];
+          a.total++;
+          if (j.status === "pending" || j.status === "printing") a.pending++;
+          if (j.status === "printed") a.printed++;
+          if (j.status === "failed")  { a.failed++; if (!a.lastError) a.lastError = j.error; }
+          if (!a.last) a.last = j;
+        });
+        setColas(agg);
       });
+
+    cargarImpresoras();
+    cargarColas();
+
+    // Realtime: cambios en impresoras (heartbeat) + nuevas ventas en cola
+    const chImp = supabase.channel("setup-impresoras")
+      .on("postgres_changes", { event: "*", schema: "public", table: "cajas_evento_impresoras" }, cargarImpresoras)
+      .subscribe();
+    const chCola = supabase.channel("setup-cola")
+      .on("postgres_changes", { event: "*", schema: "public", table: "cajas_evento_impresion_queue" }, cargarColas)
+      .subscribe();
+
+    // Tick para refrescar "hace X seg" en pantalla
+    const tickTimer = setInterval(() => setAhora(Date.now()), 2000);
+    // Poll de seguridad cada 15s
+    const pollTimer = setInterval(() => { cargarImpresoras(); cargarColas(); }, 15000);
+
+    return () => {
+      alive = false;
+      supabase.removeChannel(chImp);
+      supabase.removeChannel(chCola);
+      clearInterval(tickTimer);
+      clearInterval(pollTimer);
+    };
   }, []);
+
+  const enviarTest = async (imp) => {
+    const venta_id = `VTE-TEST-${imp.id}-${Date.now()}`;
+    const { error: err } = await supabase.from("cajas_evento_impresion_queue").insert({
+      impresora_id: imp.id,
+      venta_id,
+      caja_id: "TEST",
+      cajero_nombre: "Test Setup Page",
+      ticket_html: "<html><body>Test</body></html>",
+      items: [{ nombre: "PRUEBA", cantidad: 1, precio: 0, subtotal: 0 }],
+    });
+    if (err) { alert("Error: " + err.message); return; }
+    alert(`Test enviado a ${imp.nombre}. Revisá si sale el papel.`);
+  };
 
   const descargarBatWin = (imp) => {
     const bat = `@echo off
@@ -249,45 +307,111 @@ sleep 2
 
         {/* Lista de impresoras */}
         <div style={{ display: "grid", gap: 12 }}>
-          {impresoras.map(imp => (
+          {impresoras.map(imp => {
+            const cola = colas[imp.id] || { pending: 0, printed: 0, failed: 0, total: 0, lastError: null };
+            const lastSeenMs = imp.agent_last_seen ? new Date(imp.agent_last_seen).getTime() : 0;
+            const elapsedS = lastSeenMs ? Math.round((ahora - lastSeenMs) / 1000) : null;
+            const agentStatus = !lastSeenMs ? "nunca"
+              : elapsedS <= 25 ? "online"
+              : elapsedS <= 60 ? "atrasado"
+              : "offline";
+            const statusColor = agentStatus === "online" ? C.green
+                              : agentStatus === "atrasado" ? C.amber
+                              : C.red;
+            const statusLabel = agentStatus === "online" ? `🟢 ONLINE — ${elapsedS}s`
+                              : agentStatus === "atrasado" ? `🟡 ATRASADO — ${elapsedS}s`
+                              : agentStatus === "offline" ? `🔴 OFFLINE — ${elapsedS}s`
+                              : "⚫ NUNCA VISTO";
+            return (
             <div key={imp.id} style={{
-              background: C.card, border: `1px solid ${C.border}`, borderRadius: 14,
-              padding: 18,
-              display: "grid", gridTemplateColumns: "auto 1fr auto", gap: 16, alignItems: "center",
+              background: C.card, border: `1.5px solid ${statusColor}66`, borderRadius: 14,
+              padding: 16,
+              display: "flex", flexDirection: "column", gap: 12,
             }}>
+              {/* Fila 1: número + datos + status */}
               <div style={{
-                background: C.sand, color: C.bg,
-                width: 60, height: 60, borderRadius: 12,
-                display: "flex", alignItems: "center", justifyContent: "center",
-                fontSize: 26, fontWeight: 900,
-              }}>#{imp.numero}</div>
-              <div>
-                <div style={{ fontSize: 18, fontWeight: 900 }}>
-                  {imp.nombre}
-                </div>
-                {imp.ubicacion && (
-                  <div style={{ fontSize: 13, color: C.textMid, marginTop: 3 }}>
-                    📍 {imp.ubicacion}
+                display: "grid", gridTemplateColumns: "auto 1fr auto", gap: 14, alignItems: "center",
+              }}>
+                <div style={{
+                  background: C.sand, color: C.bg,
+                  width: 54, height: 54, borderRadius: 12,
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  fontSize: 22, fontWeight: 900,
+                }}>#{imp.numero}</div>
+                <div>
+                  <div style={{ fontSize: 17, fontWeight: 900 }}>{imp.nombre}</div>
+                  {imp.ubicacion && (
+                    <div style={{ fontSize: 12, color: C.textMid, marginTop: 2 }}>📍 {imp.ubicacion}</div>
+                  )}
+                  <div style={{ fontSize: 10, color: C.textLow, marginTop: 4, fontFamily: "monospace", letterSpacing: "0.04em" }}>
+                    {imp.id} ·
+                    {imp.tipo_conexion === "network"
+                      ? ` 🌐 ${imp.printer_ip || ""}:${imp.printer_port || 9100}`
+                      : imp.tipo_conexion === "usb"
+                        ? ` 🔌 USB${imp.printer_usb_name ? ` (${imp.printer_usb_name})` : ""}`
+                        : " ❓ sin tipo"}
                   </div>
-                )}
-                <div style={{ fontSize: 11, color: C.textLow, marginTop: 6, fontFamily: "monospace", letterSpacing: "0.04em" }}>
-                  {imp.id} ·
-                  {imp.tipo_conexion === "network"
-                    ? ` Red ${imp.printer_ip || ""}:${imp.printer_port || 9100}`
-                    : " USB"}
+                </div>
+                <div style={{
+                  background: statusColor + "22", border: `1.5px solid ${statusColor}`,
+                  borderRadius: 20, padding: "6px 12px",
+                  fontSize: 11, fontWeight: 800, letterSpacing: "0.08em",
+                  color: statusColor, whiteSpace: "nowrap",
+                }}>
+                  {statusLabel}
                 </div>
               </div>
-              <button onClick={() => descargar(imp)}
-                style={{
-                  background: C.green, color: "#fff", border: "none",
-                  padding: "14px 24px", borderRadius: 10, cursor: "pointer",
-                  fontSize: 13, fontWeight: 900, letterSpacing: "0.06em",
-                  whiteSpace: "nowrap",
+
+              {/* Fila 2: stats de cola */}
+              <div style={{
+                display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8,
+                fontSize: 11, padding: "8px 12px",
+                background: "rgba(0,0,0,0.18)", borderRadius: 8,
+              }}>
+                <Stat label="Pendientes" valor={cola.pending} color={cola.pending > 0 ? C.amber : C.textMid} />
+                <Stat label="Impresos"   valor={cola.printed} color={C.green} />
+                <Stat label="Falladas"   valor={cola.failed}  color={cola.failed > 0 ? C.red : C.textMid} />
+                <Stat label="Total"      valor={cola.total}   color={C.textMid} />
+              </div>
+
+              {/* Fila 3 (si hay error): muestra el último error */}
+              {cola.lastError && (
+                <div style={{
+                  background: C.red + "22", border: `1px solid ${C.red}`,
+                  borderRadius: 8, padding: "8px 12px",
+                  fontSize: 11, color: C.text, fontFamily: "monospace",
                 }}>
-                ⬇ SETUP EN ESTE COMPUTADOR
-              </button>
+                  ⚠ Último error: {cola.lastError}
+                </div>
+              )}
+
+              {/* Fila 4: botones */}
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <button onClick={() => descargar(imp)}
+                  style={{
+                    flex: 1,
+                    background: C.green, color: "#fff", border: "none",
+                    padding: "12px 18px", borderRadius: 10, cursor: "pointer",
+                    fontSize: 12, fontWeight: 900, letterSpacing: "0.05em",
+                    whiteSpace: "nowrap",
+                  }}>
+                  ⬇ SETUP {os === "windows" ? "(.bat)" : "(.command)"}
+                </button>
+                <button onClick={() => enviarTest(imp)}
+                  style={{
+                    background: agentStatus === "online" ? C.sand : "rgba(255,255,255,0.1)",
+                    color: agentStatus === "online" ? C.bg : C.textMid,
+                    border: "none",
+                    padding: "12px 18px", borderRadius: 10,
+                    cursor: agentStatus === "online" ? "pointer" : "not-allowed",
+                    fontSize: 12, fontWeight: 900, letterSpacing: "0.05em",
+                  }}>
+                  🖨 TEST PRINT
+                </button>
+              </div>
             </div>
-          ))}
+            );
+          })}
         </div>
 
         {/* Notes */}
@@ -320,6 +444,19 @@ sleep 2
         <div style={{ marginTop: 22, textAlign: "center", fontSize: 11, color: C.textLow, letterSpacing: "0.06em" }}>
           ATOLÓN BEACH CLUB · Para soporte avisá a Eric
         </div>
+      </div>
+    </div>
+  );
+}
+
+function Stat({ label, valor, color }) {
+  return (
+    <div style={{ textAlign: "center" }}>
+      <div style={{ fontSize: 9, color: "rgba(255,255,255,0.5)", letterSpacing: "0.12em", fontWeight: 700 }}>
+        {label.toUpperCase()}
+      </div>
+      <div style={{ fontSize: 18, fontWeight: 900, color: color, fontVariantNumeric: "tabular-nums", lineHeight: 1.2 }}>
+        {valor}
       </div>
     </div>
   );
