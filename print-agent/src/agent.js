@@ -353,35 +353,11 @@ function suscribir() {
     });
 }
 
-// ── Heartbeat ──────────────────────────────────────────────────────────
-// Cada 10s el agent actualiza `agent_last_seen` + `agent_status` en la BD
-// para CADA impresora que maneja. La página /cajas-setup muestra esto en
-// vivo, así el usuario VE si el agent está corriendo sin abrir consola.
-async function heartbeat() {
-  const status = {
-    version: '1.1.0',
-    platform: process.platform,
-    pid: process.pid,
-    uptime_s: Math.round(process.uptime()),
-    hostname: require('os').hostname(),
-    impresoras: IMPRESORA_IDS,
-  };
-  const now = new Date().toISOString();
-  for (const id of IMPRESORA_IDS) {
-    if (!impresoras.has(id)) continue;
-    supabase.from('cajas_evento_impresoras').update({
-      agent_last_seen: now,
-      agent_status: status,
-    }).eq('id', id).then(() => {});
-  }
-}
-
 // ── Bootstrap ────────────────────────────────────────────────────────────
 async function start() {
-  console.log('=== Atolón Print Agent (Supabase mode) v1.1.0 ===');
+  console.log('=== Atolón Print Agent (Supabase mode) ===');
   console.log(`Impresoras a manejar: ${IMPRESORA_IDS.join(', ')}`);
   console.log(`Supabase: ${SUPABASE_URL}`);
-  console.log(`Platform: ${process.platform}`);
   console.log();
 
   await loadImpresoras();
@@ -393,10 +369,6 @@ async function start() {
 
   // Recargar info de impresoras cada 5 min (por si cambia la IP en la BD)
   setInterval(loadImpresoras, 5 * 60 * 1000);
-
-  // Heartbeat — cada 10s
-  await heartbeat();
-  setInterval(heartbeat, 10000);
 
   console.log('\n→ Agent listo. Escuchando ventas…\n');
 }
