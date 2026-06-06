@@ -85,6 +85,14 @@ function PinScreen({ onAuth }) {
   const [selectedImpresora, setSelectedImpresora] = useState(() => {
     try { return localStorage.getItem("caja_express_impresora_id") || ""; } catch { return ""; }
   });
+  // Lista de cajeros activos para el selector de "Soy:". Login por
+  // nombre + PIN (antes era solo PIN, pero ahora múltiples pueden
+  // tener el mismo PIN inicial 0000).
+  const [cajeros, setCajeros] = useState([]);
+  const [selectedCajero, setSelectedCajero] = useState("");
+  // Cuando el cajero entra con un pin_temporal=true → forzamos cambio
+  // de PIN antes de continuar. Estado: null | { cajero, nuevoPin, conf }
+  const [cambioPin, setCambioPin] = useState(null);
   // Modo registro: cuando el PIN no existe, pasamos a esta vista para
   // capturar el nombre del cajero y crear el cajero on-the-fly.
   const [registro, setRegistro] = useState(null); // null | { pin, nombre }
@@ -101,6 +109,11 @@ function PinScreen({ onAuth }) {
       .eq("activa", true)
       .order("numero")
       .then(({ data }) => setImpresoras(data || []));
+    supabase.from("cajas_evento_cajeros")
+      .select("id, nombre")
+      .eq("activo", true)
+      .order("nombre")
+      .then(({ data }) => setCajeros(data || []));
   }, []);
 
   const enterAs = (cajero) => {
@@ -118,26 +131,73 @@ function PinScreen({ onAuth }) {
     });
   };
 
-  // Intento login con PIN. Si no existe, abre formulario de registro
-  // pre-llenado con el PIN escogido (no obliga al usuario a re-tipear).
+  // Intento login con NOMBRE + PIN. Si el cajero seleccionado tiene
+  // pin_temporal=true → fuerza cambio de PIN antes de entrar.
+  // Si no hay cajero seleccionado y el PIN no matchea a ninguno → modo
+  // registro (legacy, cuando alguien quiere crear un nuevo cajero).
   const tryLogin = async (fullPin) => {
     if (!selectedCaja) { setError("Selecciona la caja"); return; }
+    if (!selectedCajero) { setError("Selecciona tu nombre"); return; }
     if (fullPin.length < 4) return;
     setBusy(true);
     setError("");
     const { data } = await supabase.from("cajas_evento_cajeros")
-      .select("id, nombre, loggro_seller_id")
-      .eq("pin", fullPin)
+      .select("id, nombre, loggro_seller_id, pin, pin_temporal")
+      .eq("id", selectedCajero)
       .eq("activo", true)
       .maybeSingle();
     setBusy(false);
-    if (data) {
-      enterAs(data);
+    if (!data) {
+      setError("Cajero no encontrado");
+      setPin("");
       return;
     }
-    // PIN nuevo → modo registro
-    setRegistro({ pin: fullPin, nombre: "" });
-    setPin("");
+    if (data.pin !== fullPin) {
+      setError("PIN incorrecto");
+      setPin("");
+      return;
+    }
+    if (data.pin_temporal) {
+      // Forzar cambio de PIN
+      setCambioPin({ cajero: data, nuevoPin: "", conf: "", fase: "nuevo" });
+      setPin("");
+      return;
+    }
+    enterAs(data);
+  };
+
+  // Guardar el nuevo PIN del cajero y entrar
+  const guardarCambioPin = async () => {
+    if (!cambioPin) return;
+    const { nuevoPin, conf, cajero } = cambioPin;
+    if (nuevoPin.length < 4 || nuevoPin.length > 6) {
+      setError("El PIN debe ser de 4 a 6 dígitos");
+      return;
+    }
+    if (nuevoPin === "0000") {
+      setError("No podés dejar el PIN por defecto. Elegí otro.");
+      return;
+    }
+    if (nuevoPin !== conf) {
+      setError("Los PINs no coinciden");
+      return;
+    }
+    setBusy(true);
+    setError("");
+    const { error: updErr } = await supabase.from("cajas_evento_cajeros").update({
+      pin: nuevoPin, pin_temporal: false,
+    }).eq("id", cajero.id);
+    setBusy(false);
+    if (updErr) {
+      // Si choca con otro cajero que también puso ese PIN → unique violation
+      // Solo aplica si la tabla volviese a tener UNIQUE; por seguridad lo manejamos.
+      if (updErr.code === "23505") setError("Ese PIN ya lo usa otro cajero, elige otro");
+      else setError(updErr.message);
+      return;
+    }
+    // Entrar como ese cajero con el nuevo PIN
+    setCambioPin(null);
+    enterAs({ ...cajero, pin: nuevoPin });
   };
 
   // Crea el cajero con el nombre + PIN escogidos y entra.
@@ -163,6 +223,20 @@ function PinScreen({ onAuth }) {
   const pressKey = (k) => {
     if (busy || registro) return;
     setError("");
+    // Modo cambio de PIN: cambia el valor de la fase activa (nuevo o conf)
+    if (cambioPin) {
+      const fase = cambioPin.fase || "nuevo";
+      const key = fase === "nuevo" ? "nuevoPin" : "conf";
+      if (k === "del") {
+        setCambioPin(cp => ({ ...cp, [key]: (cp[key] || "").slice(0, -1) }));
+        return;
+      }
+      setCambioPin(cp => ({
+        ...cp,
+        [key]: ((cp[key] || "") + k).slice(0, 6),
+      }));
+      return;
+    }
     if (k === "del") { setPin(p => p.slice(0, -1)); return; }
     setPin(p => {
       const next = (p + k).slice(0, 6);
@@ -227,8 +301,86 @@ function PinScreen({ onAuth }) {
         </div>
       </div>
 
-      {/* Modo registro: pide nombre cuando el PIN es nuevo */}
-      {registro ? (
+      {/* Selector de cajero — quién soy */}
+      <div style={{ marginBottom: 22 }}>
+        <div style={{ fontSize: 11, color: C.textMid, letterSpacing: "0.18em", fontWeight: 700, marginBottom: 8 }}>
+          SOY
+        </div>
+        <select value={selectedCajero} onChange={e => { setSelectedCajero(e.target.value); setError(""); setPin(""); }}
+          style={{
+            width: "100%", padding: "16px 16px", fontSize: 18, fontWeight: 700,
+            background: C.bgCard, border: `2px solid ${C.border}`, borderRadius: 10,
+            color: C.text, outline: "none", appearance: "none",
+            backgroundImage: "url(\"data:image/svg+xml;charset=US-ASCII,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='20' viewBox='0 0 20 20'%3E%3Cpath d='M5 8l5 5 5-5z' fill='%230D1B3E66'/%3E%3C/svg%3E\")",
+            backgroundRepeat: "no-repeat", backgroundPosition: "right 14px center", backgroundSize: "20px",
+            paddingRight: 40,
+          }}>
+          <option value="">Selecciona tu nombre…</option>
+          {cajeros.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+        </select>
+      </div>
+
+      {/* Modo cambio-PIN: forzar nuevo PIN antes de entrar */}
+      {cambioPin ? (
+        <div style={{
+          background: C.bgCard, border: `2px solid ${C.gold}`, borderRadius: 12,
+          padding: "22px 20px", marginBottom: 18,
+        }}>
+          <div style={{ fontSize: 11, color: C.gold, letterSpacing: "0.18em", fontWeight: 700, marginBottom: 6, textAlign: "center" }}>
+            🔐 PRIMER INGRESO
+          </div>
+          <div style={{ fontSize: 14, color: C.textMid, marginBottom: 18, textAlign: "center", lineHeight: 1.4 }}>
+            Hola <strong style={{ color: C.gold }}>{cambioPin.cajero.nombre}</strong>.<br/>
+            Elige tu PIN personal (4 a 6 dígitos, no puede ser 0000).
+          </div>
+          {/* Pestañas para fase nuevo / confirmar */}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginBottom: 14 }}>
+            {[
+              { v: "nuevo", l: "1. Nuevo PIN" },
+              { v: "conf",  l: "2. Confirmar" },
+            ].map(f => (
+              <button key={f.v} onClick={() => setCambioPin(cp => ({ ...cp, fase: f.v }))}
+                style={{
+                  padding: "10px", fontSize: 12, fontWeight: 800,
+                  background: cambioPin.fase === f.v ? C.gold : C.bgCard,
+                  color: cambioPin.fase === f.v ? "#fff" : C.textMid,
+                  border: `1.5px solid ${cambioPin.fase === f.v ? C.gold : C.border}`,
+                  borderRadius: 8, cursor: "pointer",
+                }}>{f.l}</button>
+            ))}
+          </div>
+          {/* Visualización del PIN actual de la fase */}
+          <div style={{ textAlign: "center", marginBottom: 10 }}>
+            <div style={{ fontSize: 30, fontWeight: 900, letterSpacing: "0.5em", color: C.gold, height: 38, lineHeight: 1.1 }}>
+              {Array.from({ length: 6 }).map((_, i) => {
+                const val = (cambioPin.fase === "nuevo" ? cambioPin.nuevoPin : cambioPin.conf) || "";
+                return (
+                  <span key={i} style={{ display: "inline-block", width: 14, opacity: i < val.length ? 1 : 0.18 }}>•</span>
+                );
+              })}
+            </div>
+          </div>
+          {error && <div style={{ marginBottom: 10, fontSize: 13, color: C.red, fontWeight: 700, textAlign: "center" }}>{error}</div>}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 12 }}>
+            <button onClick={() => { setCambioPin(null); setError(""); setPin(""); }} disabled={busy}
+              style={{
+                padding: "14px", background: "none", color: C.textMid,
+                border: `1.5px solid ${C.border}`, borderRadius: 10,
+                fontSize: 13, cursor: "pointer", fontWeight: 600,
+              }}>← Cancelar</button>
+            <button onClick={guardarCambioPin} disabled={busy}
+              style={{
+                padding: "14px", background: C.green, color: "#fff",
+                border: "none", borderRadius: 10,
+                fontSize: 14, fontWeight: 900, letterSpacing: "0.06em",
+                cursor: "pointer", opacity: busy ? 0.6 : 1,
+              }}>{busy ? "..." : "GUARDAR Y ENTRAR →"}</button>
+          </div>
+          <div style={{ fontSize: 10, color: C.textLow, textAlign: "center" }}>
+            Memoriza tu PIN — vas a usarlo cada vez que entres.
+          </div>
+        </div>
+      ) : registro ? (
         <div style={{
           background: C.bgCard, border: `2px solid ${C.gold}`, borderRadius: 12,
           padding: "22px 20px", marginBottom: 18,
