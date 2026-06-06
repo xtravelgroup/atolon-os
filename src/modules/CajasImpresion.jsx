@@ -336,17 +336,21 @@ function ModalSilencioso({ impresoraId, onClose }) {
 
   const cmdMac = [
     `lpoptions -p Gainscha_GA_E200I -o media=Custom.72x72mm 2>/dev/null`,
-    `killall "Google Chrome" 2>/dev/null`,
-    `sleep 2`,
+    `pkill -f "Google Chrome" 2>/dev/null; killall "Google Chrome" 2>/dev/null`,
+    `sleep 3`,
     `mkdir -p /tmp/atolon-kiosk-${idLower}`,
     `open -na "Google Chrome" --args --user-data-dir=/tmp/atolon-kiosk-${idLower} --kiosk-printing --new-window "${url}"`,
   ].join("\n");
 
+  // /T mata el árbol completo (subprocesos), start "" desencadena Chrome del CMD
+  // Sin esto Chrome a veces se aferra a la instancia vieja y --kiosk-printing
+  // se ignora.
   const cmdWin = [
-    `taskkill /F /IM chrome.exe 2>nul`,
-    `timeout /t 2 /nobreak >nul`,
+    `taskkill /F /IM chrome.exe /T 2>nul`,
+    `taskkill /F /IM "Google Chrome.exe" /T 2>nul`,
+    `timeout /t 4 /nobreak >nul`,
     `mkdir "C:\\Temp\\atolon-kiosk-${idLower}" 2>nul`,
-    `"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe" --user-data-dir="C:\\Temp\\atolon-kiosk-${idLower}" --kiosk-printing --new-window "${url}"`,
+    `start "" "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe" --user-data-dir="C:\\Temp\\atolon-kiosk-${idLower}" --kiosk-printing --new-window "${url}"`,
   ].join("\r\n");
 
   const cmd = os === "mac" ? cmdMac : cmdWin;
@@ -418,10 +422,12 @@ function ModalSilencioso({ impresoraId, onClose }) {
             </>
           ) : (
             <>
-              <li>Abrí <strong>PowerShell</strong> (botón Inicio → buscá "PowerShell" → click derecho → "Ejecutar como administrador")</li>
+              <li>Cerrá <strong>TODAS</strong> las ventanas de Chrome primero</li>
+              <li>Presioná <strong>Windows ⊞</strong> → escribí <strong>cmd</strong> → Enter (abre "Símbolo del sistema")<br/>
+                <strong style={{ color: "#D64545" }}>⚠ Usá CMD, no PowerShell</strong> (la sintaxis es distinta)</li>
               <li>Toca <strong>"Copiar comando"</strong> abajo</li>
-              <li>Pegá en PowerShell (click derecho o Ctrl+V) y presioná <strong>Enter</strong></li>
-              <li>Chrome se cierra y se abre solo en modo silencioso</li>
+              <li>En CMD: <strong>click derecho</strong> → Pegar, luego Enter</li>
+              <li>Chrome se cierra y se abre solo una <strong>nueva ventana</strong> en modo silencioso. <strong>Usá solo esa nueva ventana</strong>, no la vieja.</li>
             </>
           )}
         </ol>
