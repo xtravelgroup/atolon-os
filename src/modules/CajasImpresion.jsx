@@ -342,15 +342,16 @@ function ModalSilencioso({ impresoraId, onClose }) {
     `open -na "Google Chrome" --args --user-data-dir=/tmp/atolon-kiosk-${idLower} --kiosk-printing --new-window "${url}"`,
   ].join("\n");
 
-  // /T mata el árbol completo (subprocesos), start "" desencadena Chrome del CMD
-  // Sin esto Chrome a veces se aferra a la instancia vieja y --kiosk-printing
-  // se ignora.
+  // /T mata el árbol completo (subprocesos), start "" desencadena Chrome del CMD.
+  // Usamos `start "" chrome` (sin hardcodear ruta) — Windows resuelve Chrome via
+  // App Paths registry, así funciona en Program Files, Program Files (x86) o
+  // installs per-user.
   const cmdWin = [
     `taskkill /F /IM chrome.exe /T 2>nul`,
     `taskkill /F /IM "Google Chrome.exe" /T 2>nul`,
     `timeout /t 4 /nobreak >nul`,
     `mkdir "C:\\Temp\\atolon-kiosk-${idLower}" 2>nul`,
-    `start "" "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe" --user-data-dir="C:\\Temp\\atolon-kiosk-${idLower}" --kiosk-printing --new-window "${url}"`,
+    `start "" chrome --user-data-dir="C:\\Temp\\atolon-kiosk-${idLower}" --kiosk-printing --new-window "${url}"`,
   ].join("\r\n");
 
   const cmd = os === "mac" ? cmdMac : cmdWin;
