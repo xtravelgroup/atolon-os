@@ -129,6 +129,17 @@ export default function CajasImpresion() {
     if (procesadosRef.current.has(job.id)) return;
     procesadosRef.current.add(job.id);
 
+    // Si la impresora tiene un print-agent (.exe) configurado para
+    // tipo_conexion='usb' o 'network', ESE se encarga — el browser
+    // bridge no debe procesar (era el que mostraba el diálogo).
+    // El bridge solo procesa impresoras de tipo 'browser' (legacy) o
+    // si no hay tipo definido (default).
+    const tipo = impresora?.tipo_conexion;
+    if (tipo === "usb" || tipo === "network") {
+      console.log(`[bridge/skip] ${job.venta_id} — agent maneja tipo=${tipo}`);
+      return;
+    }
+
     setEnCola(c => c + 1);
     setStats(s => ({ ...s, recibidos: s.recibidos + 1 }));
 
