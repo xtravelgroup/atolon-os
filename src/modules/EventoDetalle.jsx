@@ -4680,6 +4680,35 @@ function TabOpenBar({ evento, ocultarPrecios = false }) {
   const COPx = (n) => "$" + Math.round(Number(n) || 0).toLocaleString("es-CO");
   const tipoInfo = (k) => TIPOS_CONSUMO.find(t => t.k === k) || TIPOS_CONSUMO[0];
 
+  // ── Edición de precio_compra del catálogo (sobrescribe el precio
+  //    sincronizado desde Loggro o el snapshot $0 del consumo). Útil
+  //    cuando Loggro envió 0 o un valor desactualizado.
+  const [editPrecio, setEditPrecio] = useState(null); // { item, valorActual, nuevoValor }
+  const abrirEditPrecio = (item) => {
+    if (!item) return;
+    setEditPrecio({
+      item,
+      valorActual: Number(item.precio_compra) || 0,
+      nuevoValor: String(Math.round(Number(item.precio_compra) || 0)),
+    });
+  };
+  const guardarEditPrecio = async () => {
+    if (!editPrecio?.item) return;
+    const nuevo = Math.max(0, Math.round(Number(editPrecio.nuevoValor) || 0));
+    if (nuevo === Math.round(Number(editPrecio.valorActual) || 0)) {
+      setEditPrecio(null);
+      return;
+    }
+    const { error } = await supabase.from("items_catalogo")
+      .update({ precio_compra: nuevo, updated_at: new Date().toISOString() })
+      .eq("id", editPrecio.item.id);
+    if (error) { alert("Error guardando: " + error.message); return; }
+    // Refresh local de items → consumoLive recalcula automáticamente
+    setItems(prev => prev.map(i => i.id === editPrecio.item.id
+      ? { ...i, precio_compra: nuevo } : i));
+    setEditPrecio(null);
+  };
+
   // ── Servicios de A&B disponibles para vincular ──────────────────────
   // Solo extraemos items relacionados con Alimentos & Bebidas:
   //   • cotizacion_data.alimentos[]                    → "Cotizado A&B"
@@ -5146,7 +5175,29 @@ function TabOpenBar({ evento, ocultarPrecios = false }) {
                 </div>
                 <div style={{ textAlign: "right", color: "#fff" }}>{Number(c.cantidad).toLocaleString("es-CO")}</div>
                 <div style={{ color: "rgba(255,255,255,0.55)", fontSize: 11 }}>{loc?.nombre || "—"}</div>
-                <div style={{ textAlign: "right", color: "rgba(255,255,255,0.55)" }}>{ocultarPrecios ? "" : COPx(c.precio_unitario)}</div>
+                <div style={{ textAlign: "right", display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 4 }}>
+                  {!ocultarPrecios && (
+                    <>
+                      {Number(c.precio_unitario) <= 0 && (
+                        <span title="Precio en $0 — falta actualizar"
+                          style={{ fontSize: 11, color: B.danger, fontWeight: 800 }}>⚠</span>
+                      )}
+                      <span style={{ color: Number(c.precio_unitario) <= 0 ? B.danger : "rgba(255,255,255,0.55)",
+                        fontWeight: Number(c.precio_unitario) <= 0 ? 800 : 400 }}>
+                        {COPx(c.precio_unitario)}
+                      </span>
+                      {it && (
+                        <button type="button" onClick={() => abrirEditPrecio(it)}
+                          title={`Editar precio (Loggro envió ${COPx(it.precio_compra)})`}
+                          style={{
+                            background: "transparent", border: "none", cursor: "pointer",
+                            color: Number(c.precio_unitario) <= 0 ? B.warning : "rgba(255,255,255,0.4)",
+                            fontSize: 12, padding: 2, lineHeight: 1,
+                          }}>✏️</button>
+                      )}
+                    </>
+                  )}
+                </div>
                 <div style={{ textAlign: "right", color: B.sky, fontWeight: 700 }}>{ocultarPrecios ? "" : COPx(c.costo_total)}</div>
                 <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
                   {/* Indicador de sync con Loggro */}
@@ -5174,6 +5225,68 @@ function TabOpenBar({ evento, ocultarPrecios = false }) {
         </div>
       )}
       </>)}
+
+      {/* Modal: editar precio_compra del item (sobrescribe Loggro) */}
+      {editPrecio && (
+        <div onClick={() => setEditPrecio(null)}
+          style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 1100, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+          <div onClick={e => e.stopPropagation()}
+            style={{ background: B.navy, borderRadius: 14, padding: 22, maxWidth: 420, width: "100%", color: "#fff", border: `1px solid ${B.navyLight}` }}>
+            <div style={{ fontSize: 17, fontWeight: 800, marginBottom: 4 }}>✏️ Editar precio</div>
+            <div style={{ fontSize: 13, color: "rgba(255,255,255,0.65)", marginBottom: 16 }}>
+              {editPrecio.item?.nombre}
+            </div>
+            <div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", letterSpacing: "0.12em", fontWeight: 700, marginBottom: 6 }}>
+              PRECIO ACTUAL (LOGGRO)
+            </div>
+            <div style={{
+              padding: "10px 12px", marginBottom: 14, borderRadius: 8,
+              background: editPrecio.valorActual <= 0 ? B.danger + "22" : B.navyLight,
+              border: `1px solid ${editPrecio.valorActual <= 0 ? B.danger : B.navyLight}`,
+              fontFamily: "monospace", fontSize: 14, fontWeight: 700,
+              color: editPrecio.valorActual <= 0 ? B.danger : "#fff",
+            }}>
+              {COPx(editPrecio.valorActual)}
+              {editPrecio.valorActual <= 0 && (
+                <span style={{ marginLeft: 8, fontSize: 11, fontWeight: 600 }}>⚠ sin precio</span>
+              )}
+            </div>
+            <div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", letterSpacing: "0.12em", fontWeight: 700, marginBottom: 6 }}>
+              NUEVO PRECIO
+            </div>
+            <div style={{ position: "relative", marginBottom: 14 }}>
+              <span style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", color: "rgba(255,255,255,0.4)", fontWeight: 700 }}>$</span>
+              <input
+                type="number" min="0" step="1" autoFocus
+                value={editPrecio.nuevoValor}
+                onChange={e => setEditPrecio(p => ({ ...p, nuevoValor: e.target.value }))}
+                onKeyDown={e => { if (e.key === "Enter") guardarEditPrecio(); if (e.key === "Escape") setEditPrecio(null); }}
+                placeholder="0"
+                style={{ width: "100%", padding: "12px 14px 12px 28px", borderRadius: 8,
+                  background: B.navyLight, border: `2px solid ${B.sky}`, color: "#fff",
+                  fontSize: 18, fontWeight: 700, fontFamily: "monospace",
+                  outline: "none", boxSizing: "border-box" }}
+              />
+            </div>
+            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", lineHeight: 1.4, marginBottom: 16 }}>
+              💡 Actualiza el catálogo. Los consumos vivos del evento recalculan
+              automáticamente — pero los snapshots históricos quedan intactos.
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+              <button type="button" onClick={() => setEditPrecio(null)}
+                style={{ padding: 12, background: "transparent", color: "rgba(255,255,255,0.7)",
+                  border: "1px solid rgba(255,255,255,0.25)", borderRadius: 8, cursor: "pointer", fontWeight: 600 }}>
+                Cancelar
+              </button>
+              <button type="button" onClick={guardarEditPrecio}
+                style={{ padding: 12, background: B.sky, color: B.navy,
+                  border: "none", borderRadius: 8, cursor: "pointer", fontWeight: 800, letterSpacing: "0.04em" }}>
+                💾 Guardar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Modal de selección */}
       {showPick && (
