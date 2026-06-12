@@ -739,6 +739,12 @@ export default function CierreCaja() {
   const guardar = async () => {
     if (!supabase) return;
     if (!cajero.trim()) { setError("Ingresa el nombre del cajero."); return; }
+    // KPMG CC-H2: comprobante físico obligatorio
+    const fotosValidas = (photos || []).filter(p => p && p.url).length;
+    if (fotosValidas === 0) {
+      setError("Debes adjuntar al menos una foto del comprobante físico antes de cerrar la caja (control de auditoría).");
+      return;
+    }
     setSaving(true);
     setError(null);
 
@@ -808,6 +814,10 @@ export default function CierreCaja() {
         <h2 style={{ margin: 0, fontSize: 22, fontWeight: 800 }}>💵 Cierre de Caja</h2>
         <div style={{ fontSize: 12, color: "rgba(255,255,255,0.35)", marginTop: 4 }}>Registro de ingresos por punto de venta</div>
       </div>
+
+      {/* KPMG CC-H1: alerta si hay más de 1 día sin cierre */}
+      <AlertaDiasSinCierre area={area} />
+
 
       {saved ? (
         /* ── Éxito ── */
@@ -1333,6 +1343,65 @@ export default function CierreCaja() {
         <HistorialCierres refresh={historialKey} area={area} userRol={userRol} userPermisos={userPermisos} />
       </div>
 
+    </div>
+  );
+}
+
+// ── Alerta KPMG CC-H1: días sin cierre por área ─────────────────────────────
+function AlertaDiasSinCierre({ area }) {
+  const [info, setInfo] = useState(null);
+  useEffect(() => {
+    if (!supabase) return;
+    supabase.from("cierres_caja")
+      .select("fecha, cajero_nombre, created_at")
+      .eq("area", area)
+      .order("fecha", { ascending: false })
+      .limit(1)
+      .then(({ data }) => {
+        const row = (data || [])[0];
+        if (!row) { setInfo({ dias: null, ultimoCajero: null, ultimaFecha: null }); return; }
+        const ultima = new Date(row.fecha);
+        const hoy = new Date();
+        hoy.setHours(0,0,0,0);
+        ultima.setHours(0,0,0,0);
+        const ms = hoy.getTime() - ultima.getTime();
+        const dias = Math.max(0, Math.round(ms / (24*3600*1000)));
+        setInfo({ dias, ultimoCajero: row.cajero_nombre, ultimaFecha: row.fecha });
+      });
+  }, [area]);
+
+  if (!info) return null;
+  const { dias, ultimoCajero, ultimaFecha } = info;
+  if (dias === null) {
+    return (
+      <div style={{
+        marginBottom: 20, padding: "12px 16px",
+        background: "rgba(232, 160, 32, 0.10)", border: "1px solid rgba(232, 160, 32, 0.4)",
+        borderRadius: 10, color: B.warning, fontSize: 13,
+      }}>
+        ⚠️ Esta área <strong>nunca</strong> ha tenido un cierre registrado.
+      </div>
+    );
+  }
+  if (dias <= 1) return null;
+  const critico = dias > 2;
+  return (
+    <div style={{
+      marginBottom: 20, padding: "14px 18px",
+      background: critico ? "rgba(214, 69, 69, 0.12)" : "rgba(232, 160, 32, 0.10)",
+      border: `1px solid ${critico ? "rgba(214,69,69,0.5)" : "rgba(232,160,32,0.4)"}`,
+      borderRadius: 10,
+      color: critico ? B.danger : B.warning,
+      fontSize: 13, lineHeight: 1.5,
+    }}>
+      <div style={{ fontWeight: 700, marginBottom: 4 }}>
+        {critico ? "🚨 ALERTA — días sin cierre" : "⚠️ Cierre atrasado"}
+      </div>
+      <div>
+        Han pasado <strong>{dias} días</strong> desde el último cierre del área <strong>{area}</strong>.
+        Último cierre: {new Date(ultimaFecha).toLocaleDateString("es-CO")} por <strong>{ultimoCajero}</strong>.
+        {critico && " Si hubo ventas en esos días, hay un agujero documental. Reporta a Gerencia."}
+      </div>
     </div>
   );
 }
