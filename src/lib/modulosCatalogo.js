@@ -125,6 +125,7 @@ export const BOTTOM_NAV = [
   { key: "configuracion", label: "Configuración", icon: "⚙"  },
   { key: "usuarios",      label: "Usuarios",      icon: "👥" },
   { key: "audit_log",     label: "Audit Log",     icon: "📋" },
+  { key: "sod_violations", label: "SoD (KPMG C-4)", icon: "🛡" },
   { key: "api_portal",    label: "API Portal",    icon: "🔌" },
 ];
 

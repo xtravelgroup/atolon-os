@@ -305,6 +305,7 @@ const Comercial = lazy(() => import("./modules/Comercial"));
 const B2B = lazy(() => import("./modules/B2B"));
 const Eventos = lazy(() => import("./modules/Eventos"));
 const AuditLog = lazy(() => import("./modules/AuditLog"));
+const SoDViolations = lazy(() => import("./modules/SoDViolations"));
 const Financiero = lazy(() => import("./modules/Financiero"));
 const CXC = lazy(() => import("./modules/CXC"));
 const HotelReservas = lazy(() => import("./modules/HotelReservas"));
@@ -413,6 +414,7 @@ const MODULE_MAP = {
   b2b: <B2B />,
   eventos: <Eventos />,
   audit_log: <AuditLog />,
+  sod_violations: <SoDViolations />,
   financiero: <Financiero />,
   cxc: <CXC />,
   presupuesto: <Presupuesto />,
