@@ -307,6 +307,7 @@ const Eventos = lazy(() => import("./modules/Eventos"));
 const AuditLog = lazy(() => import("./modules/AuditLog"));
 const SoDViolations = lazy(() => import("./modules/SoDViolations"));
 const BackupDR = lazy(() => import("./modules/BackupDR"));
+const EventosVariance = lazy(() => import("./modules/EventosVariance"));
 const Financiero = lazy(() => import("./modules/Financiero"));
 const CXC = lazy(() => import("./modules/CXC"));
 const HotelReservas = lazy(() => import("./modules/HotelReservas"));
@@ -417,6 +418,7 @@ const MODULE_MAP = {
   audit_log: <AuditLog />,
   sod_violations: <SoDViolations />,
   backup_dr: <BackupDR />,
+  eventos_variance: <EventosVariance />,
   financiero: <Financiero />,
   cxc: <CXC />,
   presupuesto: <Presupuesto />,
