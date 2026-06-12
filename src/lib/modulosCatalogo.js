@@ -124,6 +124,7 @@ export const BOTTOM_NAV = [
   { key: "historial",     label: "Historial",     icon: "📋" },
   { key: "configuracion", label: "Configuración", icon: "⚙"  },
   { key: "usuarios",      label: "Usuarios",      icon: "👥" },
+  { key: "audit_log",     label: "Audit Log",     icon: "📋" },
   { key: "api_portal",    label: "API Portal",    icon: "🔌" },
 ];
 
