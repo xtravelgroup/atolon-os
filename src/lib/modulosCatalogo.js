@@ -128,6 +128,7 @@ export const BOTTOM_NAV = [
   { key: "sod_violations", label: "SoD (KPMG C-4)", icon: "🛡" },
   { key: "backup_dr",     label: "Backups & DR",   icon: "💾" },
   { key: "eventos_variance", label: "Eventos: Cot vs Real", icon: "📈" },
+  { key: "dian_compliance", label: "DIAN / Loggro Sync", icon: "🧾" },
   { key: "api_portal",    label: "API Portal",    icon: "🔌" },
 ];
 
