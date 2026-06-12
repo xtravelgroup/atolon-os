@@ -4,7 +4,7 @@ import {
   validatePassword, hashPassword, isInHistory, strengthSignals,
   PASSWORD_POLICY, aplicaCaducidad, diasHastaCaducidad,
 } from "./lib/passwordPolicy";
-import { aplicaMFA, getMFAStatus } from "./lib/mfaPolicy";
+import { aplicaMFAEffective, getMFAStatus } from "./lib/mfaPolicy";
 import MFAEnrollment from "./components/MFAEnrollment";
 import MFAChallenge from "./components/MFAChallenge";
 import { B } from "./brand";
@@ -564,7 +564,7 @@ export default function App() {
     const email = session.user.email.toLowerCase();
     (async () => {
       const { data } = await supabase.from("usuarios")
-        .select("must_change_password, rol_id, password_changed_at")
+        .select("must_change_password, rol_id, password_changed_at, mfa_required")
         .eq("email", email).single();
 
       // 1) Cambio de password forzado (override todo)
@@ -586,8 +586,10 @@ export default function App() {
       setMustChange(false);
       setPwdExpiredMotivo("");
 
-      // 2) MFA — solo aplica a roles sensibles
-      if (data?.rol_id && aplicaMFA(data.rol_id)) {
+      // 2) MFA — aplica a roles sensibles (super_admin, admin) o si el
+      //    super_admin marcó explícitamente mfa_required=true para este
+      //    usuario en Usuarios.jsx. mfa_required=false exime aun siendo admin.
+      if (aplicaMFAEffective(data?.rol_id, data?.mfa_required)) {
         const status = await getMFAStatus(supabase);
         if (status?.needsChallenge && status.verifiedTotp) {
           setMfaState({ checked: true, needsEnrollment: false, needsChallenge: true, factorId: status.verifiedTotp.id, rolId: data.rol_id });

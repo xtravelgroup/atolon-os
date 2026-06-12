@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { B, fmtFecha } from "../brand";
 import { supabase } from "../lib/supabase";
 import { GRUPOS_NAV, BOTTOM_NAV, TODOS_MODULOS } from "../lib/modulosCatalogo";
+import { aplicaMFA } from "../lib/mfaPolicy";
 
 const IS   = { width: "100%", padding: "10px 14px", borderRadius: 8, background: B.navy, border: `1px solid ${B.navyLight}`, color: "#fff", fontSize: 13, outline: "none", boxSizing: "border-box" };
 const LS   = { fontSize: 11, color: B.sand, display: "block", marginBottom: 5, textTransform: "uppercase", letterSpacing: "0.06em" };
@@ -53,6 +54,72 @@ function RolBadge({ rol, roles }) {
 }
 
 // ════════════════════════════════════════════════════════
+// MFA SECTION — sub-form en el modal de Usuario
+// (KPMG C-2 · per-user override de la política)
+// ════════════════════════════════════════════════════════
+function MFASection({ f, upd, usuario }) {
+  const aplicaPorRol = aplicaMFA(f.rol_id);
+  const enrolled = !!usuario?.mfa_enrolled_at;
+  const enrolledAt = usuario?.mfa_enrolled_at ? new Date(usuario.mfa_enrolled_at).toLocaleDateString("es-CO", { day: "2-digit", month: "short", year: "numeric" }) : null;
+
+  // Resolver estado efectivo
+  const effective =
+    f.mfa_required === true  ? true  :
+    f.mfa_required === false ? false :
+    aplicaPorRol;
+
+  // 3 opciones: heredar del rol, forzar, eximir
+  const optionStyle = (active) => ({
+    flex: 1, padding: "10px 12px", borderRadius: 8,
+    border: `2px solid ${active ? B.sky : B.navyLight}`,
+    background: active ? B.sky + "18" : B.navy,
+    cursor: "pointer", fontSize: 12, color: active ? B.sky : "rgba(255,255,255,0.6)",
+    fontWeight: active ? 700 : 500, textAlign: "center",
+  });
+
+  return (
+    <div style={{ marginBottom: 16, padding: 14, borderRadius: 10, background: B.navy, border: `1px solid ${B.navyLight}` }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+        <label style={{ ...LS, margin: 0 }}>🔐 Autenticación en 2 pasos (MFA)</label>
+        {enrolled
+          ? <span style={{ fontSize: 11, color: B.success, fontWeight: 600 }}>✅ Configurado · {enrolledAt}</span>
+          : <span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)" }}>Sin configurar</span>}
+      </div>
+
+      <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+        <div onClick={() => upd("mfa_required", null)} style={optionStyle(f.mfa_required === null || f.mfa_required === undefined)}>
+          Heredar del rol
+          <div style={{ fontSize: 10, marginTop: 2, color: "rgba(255,255,255,0.4)", fontWeight: 400 }}>
+            {aplicaPorRol ? "= Obligatorio" : "= No requerido"}
+          </div>
+        </div>
+        <div onClick={() => upd("mfa_required", true)} style={optionStyle(f.mfa_required === true)}>
+          Forzar MFA
+          <div style={{ fontSize: 10, marginTop: 2, color: "rgba(255,255,255,0.4)", fontWeight: 400 }}>
+            Obligatorio aunque el rol no lo exija
+          </div>
+        </div>
+        <div onClick={() => upd("mfa_required", false)} style={optionStyle(f.mfa_required === false)}>
+          Eximir
+          <div style={{ fontSize: 10, marginTop: 2, color: "rgba(255,255,255,0.4)", fontWeight: 400 }}>
+            Sin MFA aunque el rol lo exija
+          </div>
+        </div>
+      </div>
+
+      <div style={{ fontSize: 11, color: effective ? B.success : "rgba(255,255,255,0.4)", marginTop: 6 }}>
+        <b>Estado efectivo:</b> {effective ? "🔐 Requerido — al próximo login el usuario verá la pantalla de configuración TOTP" : "Sin MFA"}
+      </div>
+
+      <div style={{ fontSize: 10, color: "rgba(255,255,255,0.35)", marginTop: 8, lineHeight: 1.5 }}>
+        Por defecto solo <code>super_admin</code> y <code>admin</code> requieren MFA.
+        Usá "Forzar MFA" para activarlo en usuarios de contabilidad, stripe_admin o cualquier rol sensible.
+      </div>
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════
 // MODAL USUARIO
 // ════════════════════════════════════════════════════════
 function UsuarioModal({ usuario, roles, onClose, onSaved }) {
@@ -70,6 +137,8 @@ function UsuarioModal({ usuario, roles, onClose, onSaved }) {
     notas:        usuario?.notas        || "",
     activo:       usuario?.activo       ?? true,
     avatar_color: usuario?.avatar_color || AVATAR_COLORS[0],
+    // KPMG C-2 · MFA per-user override. null = usar default del rol.
+    mfa_required: usuario?.mfa_required ?? null,
   });
   const [saving, setSaving] = useState(false);
   const upd = (k, v) => setF(p => ({ ...p, [k]: v }));
@@ -139,6 +208,14 @@ function UsuarioModal({ usuario, roles, onClose, onSaved }) {
       if (!isEdit && data.password) {
         alert(`Usuario creado correctamente.\n\nClave inicial: ${data.password}\n\n(El usuario deberá cambiarla en su primer ingreso.)`);
       }
+
+      // KPMG C-2 · persistir mfa_required (no es campo del edge function
+      // admin-users; lo grabamos directo en public.usuarios).
+      try {
+        await supabase.from("usuarios")
+          .update({ mfa_required: f.mfa_required })
+          .eq("email", f.email.toLowerCase().trim());
+      } catch { /* no romper el flow si falla */ }
     } catch (err) {
       alert("Error de red al guardar:\n" + (err?.message || err));
       setSaving(false);
@@ -256,6 +333,12 @@ function UsuarioModal({ usuario, roles, onClose, onSaved }) {
             </label>
           </div>
         </div>
+
+        {/* KPMG C-2 · Autenticación en 2 pasos (MFA) */}
+        <MFASection
+          f={f} upd={upd}
+          usuario={usuario}
+        />
 
         <div style={{ marginBottom: 20 }}>
           <label style={LS}>Notas internas (opcional)</label>
