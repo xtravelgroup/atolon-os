@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { useMobile } from "../lib/useMobile";
 import { B, COP, todayDisplay, todayStr } from "../brand";
 import { supabase } from "../lib/supabase";
+import { setAuditMode } from "../lib/auditMode";
 import { GRUPOS_NAV, BOTTOM_NAV } from "../lib/modulosCatalogo";
 
 async function logout() {
@@ -365,12 +366,19 @@ export default function AtolanOS({ activeModule = "dashboard", onNavigate, modul
   // a cualquier usuario con muchos módulos asignados, anulando la
   // restricción explícita. Eso rompía a Contabilidad y otros roles con
   // muchos pero NO-todos los módulos.
+  // Modo auditoría — se activa si el rol del usuario es 'auditor'
+  const [auditMode, setAuditModeUI] = useState(false);
+
   useEffect(() => {
-    if (!userEmail || !supabase) { setUserModulos(null); return; }
+    if (!userEmail || !supabase) { setUserModulos(null); setAuditMode(false); setAuditModeUI(false); return; }
     supabase.from("usuarios").select("modulos, rol_id, nombre, avatar_color").eq("email", userEmail).maybeSingle()
       .then(async ({ data }) => {
         if (data?.nombre) setUserName(data.nombre);
         const mods = data?.modulos;
+        // 0) ¿Es un usuario auditor? Activar modo bloqueo global de writes
+        const esAuditor = data?.rol_id === "auditor";
+        setAuditMode(esAuditor);
+        setAuditModeUI(esAuditor);
         // 1) ¿El rol tiene acceso total ("*")?
         if (data?.rol_id) {
           try {
@@ -384,7 +392,7 @@ export default function AtolanOS({ activeModule = "dashboard", onNavigate, modul
         // 3) Respetar exactamente la lista
         setUserModulos(mods);
       })
-      .catch(() => setUserModulos(null));
+      .catch(() => { setUserModulos(null); setAuditMode(false); setAuditModeUI(false); });
   }, [userEmail]);
 
   const canSee = useCallback((key) => {
@@ -434,10 +442,34 @@ export default function AtolanOS({ activeModule = "dashboard", onNavigate, modul
 
   return (
     <div style={{ display: "flex", position: "fixed", top: 0, left: 0, right: 0, bottom: 0, overflow: "hidden" }}>
+      {/* Banner persistente para modo auditoría */}
+      {auditMode && (
+        <div style={{
+          position: "fixed", top: 0, left: 0, right: 0, zIndex: 9999,
+          background: "linear-gradient(90deg, #9333ea, #c026d3)",
+          color: "#fff", padding: "8px 16px",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          gap: 12, fontSize: 12, fontWeight: 800, letterSpacing: "0.08em",
+          boxShadow: "0 2px 12px rgba(147, 51, 234, 0.4)",
+          fontFamily: "'Inter', system-ui, sans-serif",
+        }}>
+          🔒 MODO AUDITORÍA · ACCESO DE SOLO LECTURA · No se pueden crear, editar ni eliminar registros
+        </div>
+      )}
       {/* Light mode: overrides de los colores de tema oscuro más comunes usados en los módulos.
          Cada override apunta a tanto hex como rgb() porque React puede normalizar. */}
       <style>{`
         .atolon-light-content { color: #0D1B3E; }
+
+        /* Modo auditoría — opacidad visual en botones de acción + cursor */
+        body[data-auditor-mode="true"] {
+          padding-top: 28px;
+        }
+        body[data-auditor-mode="true"] button[type="submit"],
+        body[data-auditor-mode="true"] [data-audit-block="true"] {
+          opacity: 0.5 !important;
+          cursor: not-allowed !important;
+        }
 
         /* Backgrounds dark → light */
         .atolon-light-content [style*="#0D1B3E"][style*="background"],
