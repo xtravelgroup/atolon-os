@@ -161,12 +161,22 @@ export default function CajasVentas() {
   }, [activas]);
 
   const anular = async (venta) => {
-    const motivo = prompt(`¿Anular venta ${venta.id}?\n\nMotivo:`);
-    if (!motivo || motivo.trim().length < 3) return;
+    // KPMG B-2: motivo obligatorio para anulación (mínimo 5 chars)
+    const motivo = prompt(
+      `¿Anular venta ${venta.id}?\n\nMotivo (mínimo 5 caracteres):\n` +
+      `Ejemplos: "Cliente no recibió", "Cobrado dos veces", "Cambio a tarjeta", "Error de cajero"`
+    );
+    if (!motivo || motivo.trim().length < 5) {
+      if (motivo !== null) alert("El motivo debe tener al menos 5 caracteres. Anulación cancelada.");
+      return;
+    }
+    const { data: { session } } = await supabase.auth.getSession();
+    const email = session?.user?.email || "sistema";
     const { error } = await supabase.from("cajas_evento_ventas").update({
       estado: "anulada",
       anulada_motivo: motivo.trim(),
       anulada_at: new Date().toISOString(),
+      anulada_por: email,
       updated_at: new Date().toISOString(),
     }).eq("id", venta.id);
     if (error) { alert("Error: " + error.message); return; }
