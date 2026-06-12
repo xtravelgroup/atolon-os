@@ -129,6 +129,7 @@ export const BOTTOM_NAV = [
   { key: "backup_dr",     label: "Backups & DR",   icon: "💾" },
   { key: "eventos_variance", label: "Eventos: Cot vs Real", icon: "📈" },
   { key: "dian_compliance", label: "DIAN / Loggro Sync", icon: "🧾" },
+  { key: "habeas_data",   label: "Hábeas Data (Ley 1581)", icon: "🔏" },
   { key: "api_portal",    label: "API Portal",    icon: "🔌" },
 ];
 
