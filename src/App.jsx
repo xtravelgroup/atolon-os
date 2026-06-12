@@ -310,6 +310,7 @@ const BackupDR = lazy(() => import("./modules/BackupDR"));
 const EventosVariance = lazy(() => import("./modules/EventosVariance"));
 const DianCompliance = lazy(() => import("./modules/DianCompliance"));
 const HabeasData = lazy(() => import("./modules/HabeasData"));
+const NIIFCompliance = lazy(() => import("./modules/NIIFCompliance"));
 const Financiero = lazy(() => import("./modules/Financiero"));
 const CXC = lazy(() => import("./modules/CXC"));
 const HotelReservas = lazy(() => import("./modules/HotelReservas"));
@@ -423,6 +424,7 @@ const MODULE_MAP = {
   eventos_variance: <EventosVariance />,
   dian_compliance: <DianCompliance />,
   habeas_data: <HabeasData />,
+  niif_pymes: <NIIFCompliance />,
   financiero: <Financiero />,
   cxc: <CXC />,
   presupuesto: <Presupuesto />,
