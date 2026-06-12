@@ -1,4 +1,4 @@
-// KPMG D-3 · NIIF para PYMES (Colombia)
+// NIIF para PYMES (Colombia)
 // =============================================================
 // Módulo de cumplimiento NIIF Pymes (Grupo 2). 4 tabs:
 //   1. Dashboard — compliance check + KPIs
@@ -80,7 +80,7 @@ export default function NIIFCompliance() {
       <div style={{ marginBottom: S.lg }}>
         <h1 style={{ fontSize: T.h1, margin: 0, fontWeight: 700 }}>NIIF para PYMES (Colombia)</h1>
         <p style={{ color: B.fgMuted, fontSize: T.sm, marginTop: 6 }}>
-          KPMG D-3 · Marco normativo: Decreto 2420/2015 (Grupo 2 — NIIF Pymes). Política contable + depreciación + reconocimiento de ingresos.
+          Marco normativo: Decreto 2420/2015 (Grupo 2 — NIIF Pymes). Política contable + depreciación + reconocimiento de ingresos.
         </p>
       </div>
 

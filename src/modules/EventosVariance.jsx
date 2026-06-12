@@ -1,4 +1,4 @@
-// KPMG B-5 · Módulo "Eventos: Cotizado vs Real"
+// Módulo "Eventos: Cotizado vs Real" — Control financiero
 // =============================================================
 // Vista para super_admin / contabilidad / auditor.
 // Lista eventos con su análisis de varianza y banderas.
@@ -145,7 +145,7 @@ export default function EventosVariance() {
       <div style={{ marginBottom: S.lg }}>
         <h1 style={{ fontSize: T.h1, margin: 0, fontWeight: 700 }}>Eventos: Cotizado vs Real</h1>
         <p style={{ color: B.fgMuted, fontSize: T.sm, marginTop: 6 }}>
-          KPMG B-5 · Análisis de varianza entre lo cotizado, lo pagado y lo consumido. Detecta procesos rotos, subfacturación y sobreconsumo.
+          Análisis de varianza entre lo cotizado, lo pagado y lo consumido. Detecta procesos rotos, subfacturación y sobreconsumo.
         </p>
       </div>
 

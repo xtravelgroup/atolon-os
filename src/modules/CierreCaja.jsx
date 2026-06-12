@@ -739,7 +739,7 @@ export default function CierreCaja() {
   const guardar = async () => {
     if (!supabase) return;
     if (!cajero.trim()) { setError("Ingresa el nombre del cajero."); return; }
-    // KPMG CC-H2: comprobante físico obligatorio
+    // Control interno CC-H2: comprobante físico obligatorio
     const fotosValidas = (photos || []).filter(p => p && p.url).length;
     if (fotosValidas === 0) {
       setError("Debes adjuntar al menos una foto del comprobante físico antes de cerrar la caja (control de auditoría).");
@@ -815,7 +815,7 @@ export default function CierreCaja() {
         <div style={{ fontSize: 12, color: "rgba(255,255,255,0.35)", marginTop: 4 }}>Registro de ingresos por punto de venta</div>
       </div>
 
-      {/* KPMG CC-H1: alerta si hay más de 1 día sin cierre */}
+      {/* Control interno CC-H1: alerta si hay más de 1 día sin cierre */}
       <AlertaDiasSinCierre area={area} />
 
 
@@ -1347,7 +1347,7 @@ export default function CierreCaja() {
   );
 }
 
-// ── Alerta KPMG CC-H1: días sin cierre por área ─────────────────────────────
+// ── Alerta CC-H1: días sin cierre por área ─────────────────────────────
 function AlertaDiasSinCierre({ area }) {
   const [info, setInfo] = useState(null);
   useEffect(() => {

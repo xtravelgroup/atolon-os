@@ -1,4 +1,4 @@
-// KPMG D-2 · Ley 1581/2012 — Hábeas Data
+// Ley 1581/2012 — Hábeas Data
 // =============================================================
 // Módulo para super_admin / contabilidad / auditor.
 // 4 tabs:
@@ -87,7 +87,7 @@ export default function HabeasData() {
       <div style={{ marginBottom: S.lg }}>
         <h1 style={{ fontSize: T.h1, margin: 0, fontWeight: 700 }}>Hábeas Data (Ley 1581/2012)</h1>
         <p style={{ color: B.fgMuted, fontSize: T.sm, marginTop: 6 }}>
-          KPMG D-2 · Tratamiento de datos personales en Colombia. Política, inventario PII, consentimientos y solicitudes ARCO.
+          Tratamiento de datos personales en Colombia. Política, inventario PII, consentimientos y solicitudes ARCO.
         </p>
       </div>
 

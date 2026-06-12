@@ -1,6 +1,6 @@
 // Política de contraseñas Atolón Beach Club
 // =========================================
-// KPMG C-2: control de auditoría. Documentado para revisores externos.
+// Control de acceso institucional. Documentado para revisores externos.
 //
 // Regla 1 — Largo mínimo 8 caracteres
 // Regla 2 — Complejidad: al menos 3 de 4 categorías (minúscula,

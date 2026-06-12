@@ -1,4 +1,4 @@
-// KPMG D-1 · Módulo "Cumplimiento DIAN / Facturación Electrónica"
+// Módulo "Cumplimiento DIAN / Facturación Electrónica"
 // =============================================================
 // La facturación electrónica está delegada en:
 //   - Loggro Restrobar : F&B (consumo eventos + Pool Service)
@@ -79,7 +79,7 @@ export default function DianCompliance() {
       <div style={{ marginBottom: S.lg }}>
         <h1 style={{ fontSize: T.h1, margin: 0, fontWeight: 700 }}>Cumplimiento DIAN (Facturación Electrónica)</h1>
         <p style={{ color: B.fgMuted, fontSize: T.sm, marginTop: 6 }}>
-          KPMG D-1 · La facturación electrónica está delegada en Loggro. Acá se monitorea que toda transacción de Atolón haya llegado a su Loggro correcto.
+          La facturación electrónica está delegada en Loggro. Acá se monitorea que toda transacción de Atolón haya llegado a su Loggro correcto.
         </p>
       </div>
 

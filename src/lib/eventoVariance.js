@@ -1,4 +1,4 @@
-// KPMG B-5 · Análisis de varianza Cotizado vs Consumido vs Pagado
+// Análisis de varianza Cotizado vs Consumido vs Pagado
 // ===================================================================
 // Funciones puras para calcular la diferencia entre lo que se cotizó,
 // lo que el cliente realmente consumió (A&B) y lo que pagó.

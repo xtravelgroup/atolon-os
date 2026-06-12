@@ -55,7 +55,7 @@ function RolBadge({ rol, roles }) {
 
 // ════════════════════════════════════════════════════════
 // MFA SECTION — sub-form en el modal de Usuario
-// (KPMG C-2 · per-user override de la política)
+// (Per-user override de la política de MFA)
 // ════════════════════════════════════════════════════════
 function MFASection({ f, upd, usuario }) {
   const aplicaPorRol = aplicaMFA(f.rol_id);
@@ -137,7 +137,7 @@ function UsuarioModal({ usuario, roles, onClose, onSaved }) {
     notas:        usuario?.notas        || "",
     activo:       usuario?.activo       ?? true,
     avatar_color: usuario?.avatar_color || AVATAR_COLORS[0],
-    // KPMG C-2 · MFA per-user override. null = usar default del rol.
+    // MFA per-user override. null = usar default del rol.
     mfa_required: usuario?.mfa_required ?? null,
   });
   const [saving, setSaving] = useState(false);
@@ -209,7 +209,7 @@ function UsuarioModal({ usuario, roles, onClose, onSaved }) {
         alert(`Usuario creado correctamente.\n\nClave inicial: ${data.password}\n\n(El usuario deberá cambiarla en su primer ingreso.)`);
       }
 
-      // KPMG C-2 · persistir mfa_required (no es campo del edge function
+      // Persistir mfa_required (no es campo del edge function
       // admin-users; lo grabamos directo en public.usuarios).
       try {
         await supabase.from("usuarios")
@@ -334,7 +334,7 @@ function UsuarioModal({ usuario, roles, onClose, onSaved }) {
           </div>
         </div>
 
-        {/* KPMG C-2 · Autenticación en 2 pasos (MFA) */}
+        {/* Autenticación en 2 pasos (MFA) */}
         <MFASection
           f={f} upd={upd}
           usuario={usuario}
