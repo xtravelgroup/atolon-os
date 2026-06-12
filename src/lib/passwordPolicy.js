@@ -2,7 +2,7 @@
 // =========================================
 // KPMG C-2: control de auditoría. Documentado para revisores externos.
 //
-// Regla 1 — Largo mínimo 10 caracteres
+// Regla 1 — Largo mínimo 8 caracteres
 // Regla 2 — Complejidad: al menos 3 de 4 categorías (minúscula,
 //           mayúscula, número, símbolo)
 // Regla 3 — Lista negra de patrones triviales / passwords leakeadas
@@ -34,7 +34,7 @@ const COMMON_PASSWORDS = new Set([
 ]);
 
 export const PASSWORD_POLICY = Object.freeze({
-  minLength: 10,
+  minLength: 8,
   minCategories: 3, // de 4: lower, upper, digit, symbol
   maxAgeDays: 90,
   historySize: 3,
