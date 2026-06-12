@@ -1,5 +1,9 @@
 import { useState, useEffect, Component, lazy, Suspense } from "react";
 import { supabase } from "./lib/supabase";
+import {
+  validatePassword, hashPassword, isInHistory, strengthSignals,
+  PASSWORD_POLICY, aplicaCaducidad, diasHastaCaducidad,
+} from "./lib/passwordPolicy";
 import { B } from "./brand";
 import AtolanOS from "./modules/AtolanOS";
 import AtolanTrack from "./lib/AtolanTrack";
@@ -101,13 +105,26 @@ class ErrorBoundary extends Component {
 }
 
 // ── Force Change Password ───────────────────────────────────────────────────
-function ForceChangePassword({ userEmail, onDone }) {
+function ForceChangePassword({ userEmail, onDone, motivo }) {
   const [pass, setPass]     = useState("");
   const [pass2, setPass2]   = useState("");
   const [error, setError]   = useState("");
   const [saving, setSaving] = useState(false);
   const [show, setShow]     = useState(false);
   const [show2, setShow2]   = useState(false);
+  const [userNombre, setUserNombre] = useState("");
+  const [pwdHistory, setPwdHistory] = useState([]);
+
+  // Cargar nombre + historial para validaciones KPMG C-2
+  useEffect(() => {
+    if (!supabase || !userEmail) return;
+    supabase.from("usuarios").select("nombre, password_history")
+      .eq("email", userEmail.toLowerCase()).maybeSingle()
+      .then(({ data }) => {
+        if (data?.nombre) setUserNombre(data.nombre);
+        if (Array.isArray(data?.password_history)) setPwdHistory(data.password_history);
+      });
+  }, [userEmail]);
 
   const IS = {
     width: "100%", padding: "12px 14px", borderRadius: 10,
@@ -119,15 +136,29 @@ function ForceChangePassword({ userEmail, onDone }) {
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError("");
-    if (pass.length < 8)          { setError("La contraseña debe tener mínimo 8 caracteres"); return; }
-    if (pass === "Atolon123")      { setError("No puedes seguir usando la clave temporal"); return; }
-    if (pass !== pass2)            { setError("Las contraseñas no coinciden"); return; }
+    // KPMG C-2 — validar contra política institucional
+    const policyError = validatePassword(pass, { email: userEmail, nombre: userNombre });
+    if (policyError) { setError(policyError); return; }
+    if (pass !== pass2) { setError("Las contraseñas no coinciden"); return; }
+    // No reutilizar las últimas N
+    if (await isInHistory(pass, pwdHistory, userEmail.toLowerCase())) {
+      setError(`No podés reutilizar tus últimas ${PASSWORD_POLICY.historySize} contraseñas. Elegí una nueva.`);
+      return;
+    }
     setSaving(true);
     // 1. Cambiar la clave en Supabase Auth
     const { error: authErr } = await supabase.auth.updateUser({ password: pass });
     if (authErr) { setError(authErr.message); setSaving(false); return; }
-    // 2. Apagar la bandera en la tabla usuarios
-    await supabase.from("usuarios").update({ must_change_password: false }).eq("email", userEmail.toLowerCase());
+    // 2. Actualizar usuarios: flag, timestamp, historial
+    const newHash = await hashPassword(pass, userEmail.toLowerCase());
+    const newHistory = [newHash, ...pwdHistory].slice(0, PASSWORD_POLICY.historySize);
+    await supabase.from("usuarios").update({
+      must_change_password: false,
+      password_changed_at: new Date().toISOString(),
+      password_history: newHistory,
+      failed_login_count: 0,
+      locked_until: null,
+    }).eq("email", userEmail.toLowerCase());
     setSaving(false);
     onDone();
   };
@@ -163,7 +194,7 @@ function ForceChangePassword({ userEmail, onDone }) {
             <label style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", display: "block", marginBottom: 6 }}>NUEVA CONTRASEÑA</label>
             <div style={{ position: "relative" }}>
               <input type={show ? "text" : "password"} value={pass} onChange={e => setPass(e.target.value)}
-                placeholder="Mínimo 8 caracteres" required style={{ ...IS, paddingRight: 44 }} />
+                placeholder={`Mínimo ${PASSWORD_POLICY.minLength} caracteres · 3 categorías`} required style={{ ...IS, paddingRight: 44 }} />
               <button type="button" onClick={() => setShow(s => !s)}
                 style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", color: "rgba(255,255,255,0.4)", cursor: "pointer", fontSize: 16 }}>
                 {show ? "🙈" : "👁"}
@@ -182,16 +213,11 @@ function ForceChangePassword({ userEmail, onDone }) {
             </div>
           </div>
 
-          {/* Indicadores de fortaleza */}
+          {/* Indicadores de fortaleza KPMG C-2 */}
           {pass.length > 0 && (
-            <div style={{ display: "flex", gap: 6, marginBottom: 14 }}>
-              {[
-                { ok: pass.length >= 8,           label: "8+ chars" },
-                { ok: /[A-Z]/.test(pass),          label: "Mayúscula" },
-                { ok: /[0-9]/.test(pass),          label: "Número" },
-                { ok: pass !== "Atolon123",        label: "No temporal" },
-              ].map(({ ok, label }) => (
-                <div key={label} style={{ flex: 1, textAlign: "center", padding: "4px 0", borderRadius: 6, background: ok ? B.success + "22" : "rgba(255,255,255,0.06)", border: `1px solid ${ok ? B.success + "55" : "transparent"}` }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 6, marginBottom: 14 }}>
+              {strengthSignals(pass).map(({ ok, label }) => (
+                <div key={label} style={{ textAlign: "center", padding: "4px 6px", borderRadius: 6, background: ok ? B.success + "22" : "rgba(255,255,255,0.06)", border: `1px solid ${ok ? B.success + "55" : "transparent"}` }}>
                   <div style={{ fontSize: 10, color: ok ? B.success : "rgba(255,255,255,0.3)", fontWeight: 600 }}>{ok ? "✓" : "·"} {label}</div>
                 </div>
               ))}
@@ -509,18 +535,37 @@ export default function App() {
   }, []);
 
   // Verificar si el usuario debe cambiar su clave
+  // + KPMG C-2: caducidad de password para roles administrativos
   // + KPMG C-3: tracking de ultimo_acceso para detectar cuentas zombie
+  const [pwdExpiredMotivo, setPwdExpiredMotivo] = useState("");
   useEffect(() => {
-    if (!session?.user?.email || !supabase) { setMustChange(false); return; }
+    if (!session?.user?.email || !supabase) { setMustChange(false); setPwdExpiredMotivo(""); return; }
     const email = session.user.email.toLowerCase();
-    supabase.from("usuarios").select("must_change_password").eq("email", email).single()
-      .then(({ data }) => setMustChange(!!data?.must_change_password));
-    // Fire-and-forget: actualizar ultimo_acceso (no se await porque no debe
-    // bloquear el login si la columna no existe en versiones viejas)
+    supabase.from("usuarios")
+      .select("must_change_password, rol_id, password_changed_at")
+      .eq("email", email).single()
+      .then(({ data }) => {
+        // 1) Flag explícito de cambio obligatorio
+        if (data?.must_change_password) {
+          setMustChange(true);
+          setPwdExpiredMotivo("Cambio obligatorio en primer ingreso o por instrucción de Gerencia.");
+          return;
+        }
+        // 2) Caducidad de 90 días para roles sensibles (KPMG C-2)
+        if (data?.rol_id && aplicaCaducidad(data.rol_id)) {
+          const dias = diasHastaCaducidad(data.password_changed_at);
+          if (dias !== null && dias <= 0) {
+            setMustChange(true);
+            setPwdExpiredMotivo(`Tu contraseña expiró hace ${Math.abs(dias)} días (política Atolón · cambio cada ${PASSWORD_POLICY.maxAgeDays} días para rol ${data.rol_id}).`);
+            return;
+          }
+        }
+        setMustChange(false);
+        setPwdExpiredMotivo("");
+      });
+    // Fire-and-forget: actualizar ultimo_acceso
     supabase.from("usuarios").update({ ultimo_acceso: new Date().toISOString() })
-      .eq("email", email)
-      .then(() => {})
-      .catch(() => {});
+      .eq("email", email).then(() => {}).catch(() => {});
   }, [session]);
 
   const navigate = (mod) => setActiveModule(mod);
@@ -718,7 +763,7 @@ export default function App() {
   if (!session) return <><Login /><WhatsAppFloat phone={waPhone} /></>;
 
   // Logged in but must change password first
-  if (mustChange) return <ForceChangePassword userEmail={session.user.email} onDone={() => setMustChange(false)} />;
+  if (mustChange) return <ForceChangePassword userEmail={session.user.email} motivo={pwdExpiredMotivo} onDone={() => setMustChange(false)} />;
 
   // Logged in — show OS (internal, no WhatsApp button)
   return (
