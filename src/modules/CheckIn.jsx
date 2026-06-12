@@ -5,6 +5,12 @@ import { supabase } from "../lib/supabase";
 import { useMobile } from "../lib/useMobile";
 import jsQR from "jsqr";
 
+// Credenciales centralizadas — todas las llamadas raw `fetch()` de este módulo
+// reciben las claves desde env vars, no hardcoded. Esto permite rotar el
+// anon key sin tocar código.
+const SB_URL  = import.meta.env.VITE_SUPABASE_URL;
+const SB_ANON = import.meta.env.VITE_SUPABASE_ANON_KEY;
+
 const IS = { width: "100%", padding: "9px 12px", borderRadius: 8, background: B.navy, border: `1px solid ${B.navyLight}`, color: B.white, fontSize: 13, outline: "none", boxSizing: "border-box" };
 const LS = { fontSize: 11, color: B.sand, display: "block", marginBottom: 5, textTransform: "uppercase", letterSpacing: "0.06em" };
 
@@ -148,7 +154,7 @@ function buildGrupoSlots(pasadiasOrg) {
 }
 
 // ─── Slot Editor para grupos (edita un slot de zarpe_data) ───────────────────
-const AKEY_CONST = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5jZHl0dGd4dWljeXJ1YXRoa3hkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ4OTY4NDksImV4cCI6MjA5MDQ3Mjg0OX0.ppK_J1BUI8lrEZ-iQWNb0imO_ZwOGbF3MDyv7nct6bs";
+const AKEY_CONST = SB_ANON;
 
 function SlotEditorModal({ grupo, slot, onClose, onSaved, embarcaciones = [] }) {
   const [f, setF] = useState({
@@ -168,7 +174,7 @@ function SlotEditorModal({ grupo, slot, onClose, onSaved, embarcaciones = [] }) 
         ? { ...z, ...f, checkin_at: hacerCheckin ? now : z.checkin_at }
         : z
     );
-    await fetch(`https://ncdyttgxuicyruathkxd.supabase.co/rest/v1/eventos?id=eq.${grupo.id}`,
+    await fetch(`${SB_URL}/rest/v1/eventos?id=eq.${grupo.id}`,
       { method: "PATCH", headers: { apikey: AKEY_CONST, Authorization: `Bearer ${AKEY_CONST}`, "Content-Type": "application/json", Prefer: "return=minimal" },
         body: JSON.stringify({ zarpe_data: newZarpe }) });
     setSaving(false);
@@ -229,7 +235,7 @@ function SlotEditorModal({ grupo, slot, onClose, onSaved, embarcaciones = [] }) 
 
 // ─── Bulk Fill Modal — llenar todos los slots sin datos de un grupo ───────────
 function BulkFillModal({ grupo, slotsSinDatos, embarcaciones, onClose, onSaved }) {
-  const AKEY_BF = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5jZHl0dGd4dWljeXJ1YXRoa3hkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ4OTY4NDksImV4cCI6MjA5MDQ3Mjg0OX0.ppK_J1BUI8lrEZ-iQWNb0imO_ZwOGbF3MDyv7nct6bs";
+  const AKEY_BF = SB_ANON;
   const [rows, setRows]     = useState(slotsSinDatos.map(s => ({ ...s, nombre: "", identificacion: "", nacionalidad: "Colombiana", embarcacion: "" })));
   const [saving, setSaving] = useState(false);
 
@@ -244,7 +250,7 @@ function BulkFillModal({ grupo, slotsSinDatos, embarcaciones, onClose, onSaved }
       zarpeBySlot[r.slot_id] = { slot_id: r.slot_id, tipo: r.tipo, idx: r.idx, nombre: r.nombre.trim(), identificacion: r.identificacion.trim(), nacionalidad: r.nacionalidad, embarcacion: r.embarcacion, checkin_at: now };
     });
     const newZarpe = Object.values(zarpeBySlot);
-    await fetch(`https://ncdyttgxuicyruathkxd.supabase.co/rest/v1/eventos?id=eq.${grupo.id}`,
+    await fetch(`${SB_URL}/rest/v1/eventos?id=eq.${grupo.id}`,
       { method: "PATCH", headers: { apikey: AKEY_BF, Authorization: `Bearer ${AKEY_BF}`, "Content-Type": "application/json", Prefer: "return=minimal" },
         body: JSON.stringify({ zarpe_data: newZarpe }) });
     setSaving(false);
@@ -1133,8 +1139,8 @@ export default function CheckIn() {
   const load = useCallback(async () => {
     if (!supabase) { setLoading(false); return; }
     setLoading(true);
-    const SURL = "https://ncdyttgxuicyruathkxd.supabase.co";
-    const AKEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5jZHl0dGd4dWljeXJ1YXRoa3hkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ4OTY4NDksImV4cCI6MjA5MDQ3Mjg0OX0.ppK_J1BUI8lrEZ-iQWNb0imO_ZwOGbF3MDyv7nct6bs";
+    const SURL = SB_URL;
+    const AKEY = SB_ANON;
     const [salR, resR, desR, embR, ovrR, grpR] = await Promise.all([
       supabase.from("salidas").select("*").eq("activo", true).order("orden"),
       supabase.from("reservas").select("*").eq("fecha", fecha).neq("estado", "cancelado").order("nombre"),
@@ -1192,14 +1198,14 @@ export default function CheckIn() {
     return [...conBA, ...rentadasDelDia];
   }, [embarcaciones, overrides, fecha]);
 
-  const AKEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5jZHl0dGd4dWljeXJ1YXRoa3hkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ4OTY4NDksImV4cCI6MjA5MDQ3Mjg0OX0.ppK_J1BUI8lrEZ-iQWNb0imO_ZwOGbF3MDyv7nct6bs";
+  const AKEY = SB_ANON;
 
   const checkinPaxGrupo = async (grupo, slotId) => {
     const now = new Date().toISOString();
     const newZarpe = (grupo.zarpe_data || []).map(z =>
       z.slot_id === slotId ? { ...z, checkin_at: z.checkin_at ? null : now } : z
     );
-    await fetch(`https://ncdyttgxuicyruathkxd.supabase.co/rest/v1/eventos?id=eq.${grupo.id}`,
+    await fetch(`${SB_URL}/rest/v1/eventos?id=eq.${grupo.id}`,
       { method: "PATCH", headers: { apikey: AKEY, Authorization: `Bearer ${AKEY}`, "Content-Type": "application/json", Prefer: "return=minimal" }, body: JSON.stringify({ zarpe_data: newZarpe }) });
     setGrupos(prev => prev.map(g => g.id === grupo.id ? { ...g, zarpe_data: newZarpe } : g));
   };
@@ -1209,7 +1215,7 @@ export default function CheckIn() {
     const newZarpe = (grupo.zarpe_data || []).map(z =>
       z.nombre && !z.checkin_at && !z.no_show ? { ...z, checkin_at: now } : z
     );
-    await fetch(`https://ncdyttgxuicyruathkxd.supabase.co/rest/v1/eventos?id=eq.${grupo.id}`,
+    await fetch(`${SB_URL}/rest/v1/eventos?id=eq.${grupo.id}`,
       { method: "PATCH", headers: { apikey: AKEY, Authorization: `Bearer ${AKEY}`, "Content-Type": "application/json", Prefer: "return=minimal" }, body: JSON.stringify({ zarpe_data: newZarpe }) });
     setGrupos(prev => prev.map(g => g.id === grupo.id ? { ...g, zarpe_data: newZarpe } : g));
   };
@@ -1234,7 +1240,7 @@ export default function CheckIn() {
       const existing = zarpeBySlot[s.slot_id] || s;
       return s.slot_id === slotId ? { ...existing, embarcacion: embNombre || null } : existing;
     });
-    await fetch(`https://ncdyttgxuicyruathkxd.supabase.co/rest/v1/eventos?id=eq.${grupo.id}`,
+    await fetch(`${SB_URL}/rest/v1/eventos?id=eq.${grupo.id}`,
       { method: "PATCH", headers: { apikey: AKEY, Authorization: `Bearer ${AKEY}`, "Content-Type": "application/json", Prefer: "return=minimal" },
         body: JSON.stringify({ zarpe_data: newZarpe }) });
     setGrupos(prev => prev.map(g => g.id === grupo.id ? { ...g, zarpe_data: newZarpe } : g));
@@ -1251,7 +1257,7 @@ export default function CheckIn() {
       }
       return existing;
     });
-    await fetch(`https://ncdyttgxuicyruathkxd.supabase.co/rest/v1/eventos?id=eq.${grupo.id}`,
+    await fetch(`${SB_URL}/rest/v1/eventos?id=eq.${grupo.id}`,
       { method: "PATCH", headers: { apikey: AKEY, Authorization: `Bearer ${AKEY}`, "Content-Type": "application/json", Prefer: "return=minimal" }, body: JSON.stringify({ zarpe_data: newZarpe }) });
     setGrupos(prev => prev.map(g => g.id === grupo.id ? { ...g, zarpe_data: newZarpe } : g));
   };
