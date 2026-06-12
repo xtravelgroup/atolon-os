@@ -8,8 +8,12 @@
 import pg from "pg";
 const { Client } = pg;
 
-const SUPABASE_URL = "https://ncdyttgxuicyruathkxd.supabase.co";
-const ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5jZHl0dGd4dWljeXJ1YXRoa3hkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ4OTY4NDksImV4cCI6MjA5MDQ3Mjg0OX0.ppK_J1BUI8lrEZ-iQWNb0imO_ZwOGbF3MDyv7nct6bs";
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const ANON_KEY = process.env.SUPABASE_ANON_KEY;
+if (!SUPABASE_URL || !ANON_KEY) {
+  console.error("Falta SUPABASE_URL o SUPABASE_ANON_KEY en env");
+  process.exit(1);
+}
 
 const CAJAS = Array.from({ length: 10 }, (_, i) => ({
   name: `CAJA ${i + 1}`,

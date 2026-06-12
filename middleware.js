@@ -6,8 +6,10 @@ export const config = {
   matcher: ["/zarpe-info", "/booking", "/zarpe-grupo", "/pago"],
 };
 
-const SUPABASE_URL = "https://ncdyttgxuicyruathkxd.supabase.co";
-const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5jZHl0dGd4dWljeXJ1YXRoa3hkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ4OTY4NDksImV4cCI6MjA5MDQ3Mjg0OX0.ppK_J1BUI8lrEZ-iQWNb0imO_ZwOGbF3MDyv7nct6bs";
+// Edge Middleware runs on Vercel Edge runtime which exposes process.env.
+// SUPABASE_URL and SUPABASE_ANON_KEY deben estar configurados en Vercel.
+const SUPABASE_URL = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
+const SUPABASE_KEY = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY;
 
 const BOT_UA = /whatsapp|facebookexternalhit|twitterbot|linkedinbot|telegrambot|slackbot|discordbot|googlebot|bingbot|applebot/i;
 

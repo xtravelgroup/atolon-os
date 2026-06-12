@@ -65,8 +65,14 @@ loadEnv();
 // en el bundle JS de atolon.co — son la URL del proyecto y la anon key
 // (RLS controla qué puede leer/escribir, no son secrets). Se pueden
 // sobreescribir vía env vars si hace falta.
-const SUPABASE_URL      = process.env.SUPABASE_URL      || 'https://ncdyttgxuicyruathkxd.supabase.co';
-const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5jZHl0dGd4dWljeXJ1YXRoa3hkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ4OTY4NDksImV4cCI6MjA5MDQ3Mjg0OX0.ppK_J1BUI8lrEZ-iQWNb0imO_ZwOGbF3MDyv7nct6bs';
+// Credenciales SOLO desde env vars (.env junto al .exe). No hardcoded
+// para permitir rotación del anon key sin reempaquetar el binario.
+const SUPABASE_URL      = process.env.SUPABASE_URL;
+const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
+if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+  console.error('[fatal] Falta SUPABASE_URL o SUPABASE_ANON_KEY en .env');
+  process.exit(1);
+}
 
 // Resolver IMPRESORA_IDS en orden de prioridad:
 //   1. CLI args:        atolon-print-agent.exe IMP-3 IMP-4

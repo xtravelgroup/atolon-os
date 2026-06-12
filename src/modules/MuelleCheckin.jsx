@@ -5,6 +5,10 @@ import { useMobile } from "../lib/useMobile";
 import { wompiCheckoutUrl } from "../lib/wompi";
 import { logAccion } from "../lib/logAccion";
 
+// Credenciales para llamadas raw fetch() — desde env vars (rotación segura)
+const SB_URL  = import.meta.env.VITE_SUPABASE_URL;
+const SB_ANON = import.meta.env.VITE_SUPABASE_ANON_KEY;
+
 const IS = { width: "100%", padding: "10px 14px", borderRadius: 8, background: B.navyLight, border: `1px solid rgba(255,255,255,0.1)`, color: "#fff", fontSize: 13, outline: "none", boxSizing: "border-box", fontFamily: "inherit" };
 const LS = { fontSize: 11, color: "rgba(255,255,255,0.5)", display: "block", marginBottom: 5, textTransform: "uppercase", letterSpacing: "0.06em" };
 
@@ -1468,8 +1472,8 @@ export default function MuelleCheckin() {
 
   const fetchGrupos = useCallback(async () => {
     try {
-      const SURL = "https://ncdyttgxuicyruathkxd.supabase.co";
-      const AKEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5jZHl0dGd4dWljeXJ1YXRoa3hkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ4OTY4NDksImV4cCI6MjA5MDQ3Mjg0OX0.ppK_J1BUI8lrEZ-iQWNb0imO_ZwOGbF3MDyv7nct6bs";
+      const SURL = SB_URL;
+      const AKEY = SB_ANON;
       const res = await fetch(
         `${SURL}/rest/v1/eventos?fecha=eq.${fecha}&categoria=eq.grupo&select=id,nombre,fecha,pasadias_org,salidas_grupo,zarpe_data`,
         { headers: { apikey: AKEY, Authorization: `Bearer ${AKEY}` } }
@@ -1482,8 +1486,8 @@ export default function MuelleCheckin() {
     }
   }, [fecha]);
 
-  const SURL = "https://ncdyttgxuicyruathkxd.supabase.co";
-  const AKEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5jZHl0dGd4dWljeXJ1YXRoa3hkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ4OTY4NDksImV4cCI6MjA5MDQ3Mjg0OX0.ppK_J1BUI8lrEZ-iQWNb0imO_ZwOGbF3MDyv7nct6bs";
+  const SURL = SB_URL;
+  const AKEY = SB_ANON;
 
   const patchEvento = (id, body) => fetch(
     `${SURL}/rest/v1/eventos?id=eq.${id}`,
