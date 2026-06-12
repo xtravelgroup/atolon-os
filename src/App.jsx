@@ -4,6 +4,9 @@ import {
   validatePassword, hashPassword, isInHistory, strengthSignals,
   PASSWORD_POLICY, aplicaCaducidad, diasHastaCaducidad,
 } from "./lib/passwordPolicy";
+import { aplicaMFA, getMFAStatus } from "./lib/mfaPolicy";
+import MFAEnrollment from "./components/MFAEnrollment";
+import MFAChallenge from "./components/MFAChallenge";
 import { B } from "./brand";
 import AtolanOS from "./modules/AtolanOS";
 import AtolanTrack from "./lib/AtolanTrack";
@@ -536,33 +539,62 @@ export default function App() {
 
   // Verificar si el usuario debe cambiar su clave
   // + KPMG C-2: caducidad de password para roles administrativos
+  // + KPMG C-2: MFA obligatorio para roles administrativos
   // + KPMG C-3: tracking de ultimo_acceso para detectar cuentas zombie
   const [pwdExpiredMotivo, setPwdExpiredMotivo] = useState("");
+  const [mfaState, setMfaState] = useState({
+    checked: false,        // ya corrió el check
+    needsEnrollment: false,
+    needsChallenge: false,
+    factorId: null,
+    rolId: null,
+  });
   useEffect(() => {
-    if (!session?.user?.email || !supabase) { setMustChange(false); setPwdExpiredMotivo(""); return; }
+    if (!session?.user?.email || !supabase) {
+      setMustChange(false); setPwdExpiredMotivo("");
+      setMfaState({ checked: false, needsEnrollment: false, needsChallenge: false, factorId: null, rolId: null });
+      return;
+    }
     const email = session.user.email.toLowerCase();
-    supabase.from("usuarios")
-      .select("must_change_password, rol_id, password_changed_at")
-      .eq("email", email).single()
-      .then(({ data }) => {
-        // 1) Flag explícito de cambio obligatorio
-        if (data?.must_change_password) {
+    (async () => {
+      const { data } = await supabase.from("usuarios")
+        .select("must_change_password, rol_id, password_changed_at")
+        .eq("email", email).single();
+
+      // 1) Cambio de password forzado (override todo)
+      if (data?.must_change_password) {
+        setMustChange(true);
+        setPwdExpiredMotivo("Cambio obligatorio en primer ingreso o por instrucción de Gerencia.");
+        setMfaState({ checked: true, needsEnrollment: false, needsChallenge: false, factorId: null, rolId: data?.rol_id || null });
+        return;
+      }
+      if (data?.rol_id && aplicaCaducidad(data.rol_id)) {
+        const dias = diasHastaCaducidad(data.password_changed_at);
+        if (dias !== null && dias <= 0) {
           setMustChange(true);
-          setPwdExpiredMotivo("Cambio obligatorio en primer ingreso o por instrucción de Gerencia.");
+          setPwdExpiredMotivo(`Tu contraseña expiró hace ${Math.abs(dias)} días (política Atolón · cambio cada ${PASSWORD_POLICY.maxAgeDays} días para rol ${data.rol_id}).`);
+          setMfaState({ checked: true, needsEnrollment: false, needsChallenge: false, factorId: null, rolId: data.rol_id });
           return;
         }
-        // 2) Caducidad de 90 días para roles sensibles (KPMG C-2)
-        if (data?.rol_id && aplicaCaducidad(data.rol_id)) {
-          const dias = diasHastaCaducidad(data.password_changed_at);
-          if (dias !== null && dias <= 0) {
-            setMustChange(true);
-            setPwdExpiredMotivo(`Tu contraseña expiró hace ${Math.abs(dias)} días (política Atolón · cambio cada ${PASSWORD_POLICY.maxAgeDays} días para rol ${data.rol_id}).`);
-            return;
-          }
+      }
+      setMustChange(false);
+      setPwdExpiredMotivo("");
+
+      // 2) MFA — solo aplica a roles sensibles
+      if (data?.rol_id && aplicaMFA(data.rol_id)) {
+        const status = await getMFAStatus(supabase);
+        if (status?.needsChallenge && status.verifiedTotp) {
+          setMfaState({ checked: true, needsEnrollment: false, needsChallenge: true, factorId: status.verifiedTotp.id, rolId: data.rol_id });
+          return;
         }
-        setMustChange(false);
-        setPwdExpiredMotivo("");
-      });
+        if (status?.needsEnrollment) {
+          setMfaState({ checked: true, needsEnrollment: true, needsChallenge: false, factorId: null, rolId: data.rol_id });
+          return;
+        }
+      }
+      setMfaState({ checked: true, needsEnrollment: false, needsChallenge: false, factorId: null, rolId: data?.rol_id || null });
+    })();
+
     // Fire-and-forget: actualizar ultimo_acceso
     supabase.from("usuarios").update({ ultimo_acceso: new Date().toISOString() })
       .eq("email", email).then(() => {}).catch(() => {});
@@ -764,6 +796,27 @@ export default function App() {
 
   // Logged in but must change password first
   if (mustChange) return <ForceChangePassword userEmail={session.user.email} motivo={pwdExpiredMotivo} onDone={() => setMustChange(false)} />;
+
+  // KPMG C-2 · MFA gate — bloquear OS hasta que el segundo factor se complete
+  if (mfaState.checked && mfaState.needsChallenge && mfaState.factorId) {
+    return (
+      <MFAChallenge
+        factorId={mfaState.factorId}
+        userEmail={session.user.email}
+        onDone={() => setMfaState(s => ({ ...s, needsChallenge: false }))}
+        onCancel={() => setSession(null)}
+      />
+    );
+  }
+  if (mfaState.checked && mfaState.needsEnrollment) {
+    return (
+      <MFAEnrollment
+        userEmail={session.user.email}
+        motivo={`Tu rol "${mfaState.rolId}" exige autenticación en 2 pasos (política Atolón · KPMG C-2). Configurá tu app de autenticación ahora.`}
+        onDone={() => setMfaState(s => ({ ...s, needsEnrollment: false }))}
+      />
+    );
+  }
 
   // Logged in — show OS (internal, no WhatsApp button)
   return (
