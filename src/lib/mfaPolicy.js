@@ -13,26 +13,25 @@
 // privilegiado), y supera el piso de Circular 007/2018 SFC.
 
 /**
- * Roles que DEBEN tener MFA habilitado.
- * Cualquier acceso administrativo o que mueva dinero entra acá.
+ * Roles que DEBEN tener MFA habilitado por defecto.
+ * Decisión de Gerencia (2026-06): por ahora solo super_admin y admin.
+ * Para otros roles sensibles (contabilidad, stripe_admin, gerente_*),
+ * un super_admin puede habilitar MFA usuario-por-usuario en
+ * Usuarios.jsx vía el toggle "Requiere MFA".
  */
 export const MFA_REQUIRED_ROLES = [
   "super_admin",
   "admin",
-  "contabilidad",
-  "stripe_admin",
-  "auditor",
 ];
 
 /**
- * Prefijos de rol que exigen MFA (ej. "gerente_eventos", "gerente_ar").
+ * Prefijos de rol que exigen MFA por defecto.
+ * Vacío por ahora — se gestiona por usuario.
  */
-export const MFA_REQUIRED_ROLE_PREFIXES = [
-  "gerente_",
-];
+export const MFA_REQUIRED_ROLE_PREFIXES = [];
 
 /**
- * ¿Este rol exige MFA?
+ * ¿Este rol exige MFA según la política GENERAL (default del rol)?
  * @param {string|null|undefined} rolId
  * @returns {boolean}
  */
@@ -40,6 +39,23 @@ export function aplicaMFA(rolId) {
   if (!rolId) return false;
   if (MFA_REQUIRED_ROLES.includes(rolId)) return true;
   return MFA_REQUIRED_ROLE_PREFIXES.some(p => rolId.startsWith(p));
+}
+
+/**
+ * Resuelve MFA para un usuario concreto, considerando el override
+ * almacenado en usuarios.mfa_required:
+ *   - true      → fuerza MFA aunque el rol no lo exija
+ *   - false     → exime al usuario aunque el rol lo exija
+ *   - null/undef → usa la política del rol (aplicaMFA)
+ *
+ * @param {string|null|undefined} rolId
+ * @param {boolean|null|undefined} mfaRequired
+ * @returns {boolean}
+ */
+export function aplicaMFAEffective(rolId, mfaRequired) {
+  if (mfaRequired === true)  return true;
+  if (mfaRequired === false) return false;
+  return aplicaMFA(rolId);
 }
 
 /**
