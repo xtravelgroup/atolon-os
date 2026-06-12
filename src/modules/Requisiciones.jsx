@@ -2998,8 +2998,12 @@ function DetailModal({ req, onClose, onUpdate, onGenerarOC, proveedores, reglas,
                         if (existente) {
                           const merged = consolidar([...(existente.items || []), ...nuevos]);
                           const subtotal = merged.reduce((s, it) => s + (Number(it.subtotal) || 0), 0);
+                          const reqIdsPrev = Array.isArray(existente.requisicion_ids) ? existente.requisicion_ids
+                                           : (existente.requisicion_id ? [existente.requisicion_id] : []);
+                          const reqIdsAll = [...new Set([...reqIdsPrev, req.id])];
                           const { error } = await supabase.from("ordenes_compra").update({
                             items: merged, subtotal, total: subtotal,
+                            requisicion_ids: reqIdsAll,
                           }).eq("id", existente.id);
                           if (error) { setSplitting(false); return alert("Error: " + error.message); }
                           ocsGeneradas.push({ codigo: existente.codigo, idxs: g.items.map(x => x._idx), merge: true });
@@ -3010,6 +3014,7 @@ function DetailModal({ req, onClose, onUpdate, onGenerarOC, proveedores, reglas,
                           const subtotal = items.reduce((s, it) => s + it.subtotal, 0);
                           const { error } = await supabase.from("ordenes_compra").insert({
                             codigo, requisicion_id: req.id,
+                            requisicion_ids: [req.id],
                             proveedor_id: prov.id, proveedor_nombre: prov.nombre,
                             proveedor_nit: prov.nit || null, proveedor_email: prov.email || null, proveedor_telefono: prov.telefono || null,
                             fecha_emision: todayStr(), items, subtotal, iva: 0, total: subtotal,
@@ -3629,6 +3634,10 @@ export function AsignarOCModal({ items, proveedores, ordenes, reqs, currentUser,
 
     const ocItems = consolidar(items);
 
+    // Req IDs únicos consolidados — para poblar requisicion_ids jsonb
+    // y permitir trazabilidad OC → Req (control interno H-7)
+    const reqIdsConsolidados = [...new Set(items.map(i => i.req_id).filter(Boolean))];
+
     let ocIdFinal;
     let codigo;
     if (modo === "nueva") {
@@ -3637,8 +3646,12 @@ export function AsignarOCModal({ items, proveedores, ordenes, reqs, currentUser,
       if (ocAbierta) {
         const merged = consolidar([...(ocAbierta.items || []), ...items]);
         const subtotal = merged.reduce((s, it) => s + (Number(it.subtotal) || 0), 0);
+        const reqIdsPrev = Array.isArray(ocAbierta.requisicion_ids) ? ocAbierta.requisicion_ids
+                         : (ocAbierta.requisicion_id ? [ocAbierta.requisicion_id] : []);
+        const reqIdsAll = [...new Set([...reqIdsPrev, ...reqIdsConsolidados])];
         const { error } = await supabase.from("ordenes_compra").update({
           items: merged, subtotal, total: subtotal,
+          requisicion_ids: reqIdsAll,
         }).eq("id", ocAbierta.id);
         if (error) { setSaving(false); return alert("Error: " + error.message); }
         ocIdFinal = ocAbierta.id;
@@ -3660,7 +3673,8 @@ export function AsignarOCModal({ items, proveedores, ordenes, reqs, currentUser,
           total: subtotal,
           estado: "emitida",
           emitida_por: currentUser.nombre,
-          notas: `Consolidado desde ${[...new Set(items.map(i => i.req_id))].join(", ")}`,
+          requisicion_ids: reqIdsConsolidados,
+          notas: `Consolidado desde ${reqIdsConsolidados.join(", ")}`,
         }).select().single();
         if (error) { setSaving(false); return alert("Error creando OC: " + error.message); }
         ocIdFinal = data.id;
@@ -3670,10 +3684,14 @@ export function AsignarOCModal({ items, proveedores, ordenes, reqs, currentUser,
       const oc = ordenes.find(o => o.id === ocId);
       const merged = consolidar([...(oc.items || []), ...items]);
       const subtotal = merged.reduce((s, it) => s + (Number(it.subtotal) || 0), 0);
+      const reqIdsPrev = Array.isArray(oc.requisicion_ids) ? oc.requisicion_ids
+                       : (oc.requisicion_id ? [oc.requisicion_id] : []);
+      const reqIdsAll = [...new Set([...reqIdsPrev, ...reqIdsConsolidados])];
       const { error } = await supabase.from("ordenes_compra").update({
         items: merged,
         subtotal,
         total: subtotal,
+        requisicion_ids: reqIdsAll,
       }).eq("id", ocId);
       if (error) { setSaving(false); return alert("Error actualizando OC: " + error.message); }
       ocIdFinal = ocId;
