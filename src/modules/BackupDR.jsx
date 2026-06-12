@@ -1,4 +1,4 @@
-// KPMG C-5 · Módulo Backups & DR
+// Módulo Backups & DR — Continuidad operativa
 // =============================================================
 // Para super_admin / auditor.
 // Muestra: política RPO/RTO, historial de verificaciones, runbook,
@@ -78,7 +78,7 @@ export default function BackupDR() {
       <div style={{ marginBottom: S.lg }}>
         <h1 style={{ fontSize: T.h1, margin: 0, fontWeight: 700 }}>Backups & Disaster Recovery</h1>
         <p style={{ color: B.fgMuted, fontSize: T.sm, marginTop: 6 }}>
-          KPMG C-5 · Política RPO/RTO, verificación de integridad, runbook de restauración.
+          Política RPO/RTO, verificación de integridad, runbook de restauración.
         </p>
       </div>
 

@@ -1,4 +1,4 @@
-// KPMG C-2 · Pantalla de inscripción de TOTP (Google Authenticator, 1Password, Authy)
+// Pantalla de inscripción de TOTP (Google Authenticator, 1Password, Authy)
 //
 // Se monta cuando aplicaMFA(rol) === true y el usuario NO tiene factor verificado.
 // Flujo:
@@ -106,7 +106,7 @@ export default function MFAEnrollment({ userEmail, onDone, motivo }) {
           <img src="/favicon-blue.png" alt="" style={{ width: 48, height: 48, opacity: 0.9 }} />
           <h2 style={{ margin: "12px 0 4px", fontSize: 22 }}>Configurar autenticación en 2 pasos</h2>
           <p style={{ color: B.fgMuted, fontSize: 13, margin: 0 }}>
-            Requerido para tu rol (política Atolón · KPMG C-2)
+            Requerido para tu rol (política Atolón)
           </p>
         </div>
 

@@ -125,7 +125,7 @@ export const BOTTOM_NAV = [
   { key: "configuracion", label: "Configuración", icon: "⚙"  },
   { key: "usuarios",      label: "Usuarios",      icon: "👥" },
   { key: "audit_log",     label: "Audit Log",     icon: "📋" },
-  { key: "sod_violations", label: "SoD (KPMG C-4)", icon: "🛡" },
+  { key: "sod_violations", label: "Segregación de Funciones", icon: "🛡" },
   { key: "backup_dr",     label: "Backups & DR",   icon: "💾" },
   { key: "eventos_variance", label: "Eventos: Cot vs Real", icon: "📈" },
   { key: "dian_compliance", label: "DIAN / Loggro Sync", icon: "🧾" },

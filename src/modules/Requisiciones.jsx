@@ -174,7 +174,7 @@ export default function Requisiciones() {
   const enCompra = reqs.filter(r => r.estado === "En Compra" || r.estado === "Recibida Parcial").length;
   const totalMes = reqs.filter(r => r.estado !== "Rechazada" && r.estado !== "Borrador").reduce((s, r) => s + r.total, 0);
 
-  // H-5 audit KPMG: aging — requisiciones activas con más de 30 días.
+  // Control interno H-5: aging — requisiciones activas con más de 30 días.
   // Esto sirve para alertar al gerente de compras sobre pedidos olvidados
   // o entregas parciales que nunca se cerraron.
   const ESTADOS_ACTIVOS = ["Pendiente", "Aprobada", "En Compra", "Recibida Parcial"];
@@ -744,11 +744,11 @@ function TabAprobaciones({ reqs, reglas, onOpen, currentUser, reload }) {
   const aprobar = async (r, accion) => {
     if (!supabase) return;
 
-    // H-2 audit KPMG: motivo obligatorio en rechazo (mínimo 10 chars)
+    // Control interno H-2: motivo obligatorio en rechazo (mínimo 10 chars)
     let motivoRechazo = null;
     if (accion === "rechazada") {
       motivoRechazo = window.prompt(
-        "Motivo del rechazo (mínimo 10 caracteres, control de calidad auditoría):"
+        "Motivo del rechazo (mínimo 10 caracteres, control de calidad):"
       );
       if (!motivoRechazo || motivoRechazo.trim().length < 10) {
         alert("El motivo es obligatorio y debe tener al menos 10 caracteres. Rechazo cancelado.");
@@ -757,7 +757,7 @@ function TabAprobaciones({ reqs, reglas, onOpen, currentUser, reload }) {
       motivoRechazo = motivoRechazo.trim();
     }
 
-    // H-3 audit KPMG: no aprobar con total $0
+    // Control interno H-3: no aprobar con total $0
     if (accion === "aprobada" && (!r.total || Number(r.total) <= 0)) {
       alert("No se puede aprobar la requisición " + r.id + " con total $0. Valoriza los items primero.");
       return;
@@ -3095,13 +3095,13 @@ function DetailModal({ req, onClose, onUpdate, onGenerarOC, proveedores, reglas,
               <>
                 <button
                   onClick={() => {
-                    // H-3 (audit KPMG): no aprobar con total = 0
+                    // Control interno H-3: no aprobar con total = 0
                     if (!req.total || Number(req.total) <= 0) {
                       alert("No se puede aprobar una requisición con total $0.\n\nValoriza los items antes (cada item debe tener precio unitario > 0).");
                       return;
                     }
-                    // H-1 (audit KPMG): registrar la aprobación en aprobaciones[]
-                    // para trazabilidad SOX-404. El trigger DB exige al menos 1 entry.
+                    // Control interno H-1: registrar la aprobación en aprobaciones[]
+                    // para trazabilidad. El trigger DB exige al menos 1 entry.
                     const nuevaAprobacion = {
                       quien: currentUser.nombre,
                       usuario_id: currentUser.id,
@@ -3125,7 +3125,7 @@ function DetailModal({ req, onClose, onUpdate, onGenerarOC, proveedores, reglas,
                   style={BTN(B.success)}>✓ Aprobar</button>
                 <button
                   onClick={() => {
-                    // H-2 (audit KPMG): motivo obligatorio para rechazo, mínimo 10 chars
+                    // Control interno H-2: motivo obligatorio para rechazo, mínimo 10 chars
                     const motivo = (comment || "").trim();
                     if (motivo.length < 10) {
                       alert("Para rechazar la requisición debes escribir un motivo de al menos 10 caracteres en el campo Comentario.\n\nEjemplos:\n• Precio fuera de presupuesto Q3\n• Falta cotización alternativa\n• Item ya disponible en bodega central");

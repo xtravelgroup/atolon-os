@@ -1,4 +1,4 @@
-// KPMG C-2 · Pantalla de challenge MFA (login con segundo factor)
+// Pantalla de challenge MFA (login con segundo factor)
 //
 // Se monta cuando el usuario ya tiene un factor TOTP verificado y la
 // sesión está en aal1 (solo password). Bloquea el acceso a la OS

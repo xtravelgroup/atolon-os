@@ -161,7 +161,7 @@ export default function CajasVentas() {
   }, [activas]);
 
   const anular = async (venta) => {
-    // KPMG B-2: motivo obligatorio para anulación (mínimo 5 chars)
+    // Control interno B-2: motivo obligatorio para anulación (mínimo 5 chars)
     const motivo = prompt(
       `¿Anular venta ${venta.id}?\n\nMotivo (mínimo 5 caracteres):\n` +
       `Ejemplos: "Cliente no recibió", "Cobrado dos veces", "Cambio a tarjeta", "Error de cajero"`

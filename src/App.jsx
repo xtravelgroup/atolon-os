@@ -118,7 +118,7 @@ function ForceChangePassword({ userEmail, onDone, motivo }) {
   const [userNombre, setUserNombre] = useState("");
   const [pwdHistory, setPwdHistory] = useState([]);
 
-  // Cargar nombre + historial para validaciones KPMG C-2
+  // Cargar nombre + historial para validaciones de política de contraseña
   useEffect(() => {
     if (!supabase || !userEmail) return;
     supabase.from("usuarios").select("nombre, password_history")
@@ -139,7 +139,7 @@ function ForceChangePassword({ userEmail, onDone, motivo }) {
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError("");
-    // KPMG C-2 — validar contra política institucional
+    // Validar contra política institucional
     const policyError = validatePassword(pass, { email: userEmail, nombre: userNombre });
     if (policyError) { setError(policyError); return; }
     if (pass !== pass2) { setError("Las contraseñas no coinciden"); return; }
@@ -216,7 +216,7 @@ function ForceChangePassword({ userEmail, onDone, motivo }) {
             </div>
           </div>
 
-          {/* Indicadores de fortaleza KPMG C-2 */}
+          {/* Indicadores de fortaleza de la contraseña */}
           {pass.length > 0 && (
             <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 6, marginBottom: 14 }}>
               {strengthSignals(pass).map(({ ok, label }) => (
@@ -550,9 +550,9 @@ export default function App() {
   }, []);
 
   // Verificar si el usuario debe cambiar su clave
-  // + KPMG C-2: caducidad de password para roles administrativos
-  // + KPMG C-2: MFA obligatorio para roles administrativos
-  // + KPMG C-3: tracking de ultimo_acceso para detectar cuentas zombie
+  // + Caducidad de password para roles administrativos
+  // + MFA obligatorio para roles administrativos
+  // + Tracking de ultimo_acceso para detectar cuentas zombie
   const [pwdExpiredMotivo, setPwdExpiredMotivo] = useState("");
   const [mfaState, setMfaState] = useState({
     checked: false,        // ya corrió el check
@@ -811,7 +811,7 @@ export default function App() {
   // Logged in but must change password first
   if (mustChange) return <ForceChangePassword userEmail={session.user.email} motivo={pwdExpiredMotivo} onDone={() => setMustChange(false)} />;
 
-  // KPMG C-2 · MFA gate — bloquear OS hasta que el segundo factor se complete
+  // MFA gate — bloquear OS hasta que el segundo factor se complete
   if (mfaState.checked && mfaState.needsChallenge && mfaState.factorId) {
     return (
       <MFAChallenge
@@ -826,7 +826,7 @@ export default function App() {
     return (
       <MFAEnrollment
         userEmail={session.user.email}
-        motivo={`Tu rol "${mfaState.rolId}" exige autenticación en 2 pasos (política Atolón · KPMG C-2). Configurá tu app de autenticación ahora.`}
+        motivo={`Tu rol "${mfaState.rolId}" exige autenticación en 2 pasos (política Atolón). Configurá tu app de autenticación ahora.`}
         onDone={() => setMfaState(s => ({ ...s, needsEnrollment: false }))}
       />
     );

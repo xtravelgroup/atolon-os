@@ -1,4 +1,4 @@
-// KPMG C-4 · Módulo "Segregación de Funciones (SoD)"
+// Módulo "Segregación de Funciones (SoD)" — Control interno
 // =============================================================
 // Vista para super_admin / auditor. Muestra:
 //   1) Violaciones detectadas en datos actuales (sod_violations_log)
@@ -55,7 +55,7 @@ export default function SoDViolations() {
       <div style={{ marginBottom: S.lg }}>
         <h1 style={{ fontSize: T.h1, margin: 0, fontWeight: 700 }}>Segregación de Funciones (SoD)</h1>
         <p style={{ color: B.fgMuted, fontSize: T.sm, marginTop: 6 }}>
-          KPMG C-4 · Matriz de incompatibilidad de roles. Detecta y previene que el mismo usuario cumpla funciones que deberían estar separadas.
+          Matriz de incompatibilidad de roles. Detecta y previene que el mismo usuario cumpla funciones que deberían estar separadas.
         </p>
       </div>
 

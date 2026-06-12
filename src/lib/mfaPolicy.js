@@ -1,4 +1,4 @@
-// KPMG C-2 · Política de MFA (2FA TOTP)
+// Política de MFA (2FA TOTP)
 //
 // Define qué roles requieren un segundo factor. La verificación corre en
 // dos puntos del flujo de auth:
