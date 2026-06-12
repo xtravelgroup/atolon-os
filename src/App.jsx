@@ -509,10 +509,18 @@ export default function App() {
   }, []);
 
   // Verificar si el usuario debe cambiar su clave
+  // + KPMG C-3: tracking de ultimo_acceso para detectar cuentas zombie
   useEffect(() => {
     if (!session?.user?.email || !supabase) { setMustChange(false); return; }
-    supabase.from("usuarios").select("must_change_password").eq("email", session.user.email.toLowerCase()).single()
+    const email = session.user.email.toLowerCase();
+    supabase.from("usuarios").select("must_change_password").eq("email", email).single()
       .then(({ data }) => setMustChange(!!data?.must_change_password));
+    // Fire-and-forget: actualizar ultimo_acceso (no se await porque no debe
+    // bloquear el login si la columna no existe en versiones viejas)
+    supabase.from("usuarios").update({ ultimo_acceso: new Date().toISOString() })
+      .eq("email", email)
+      .then(() => {})
+      .catch(() => {});
   }, [session]);
 
   const navigate = (mod) => setActiveModule(mod);
