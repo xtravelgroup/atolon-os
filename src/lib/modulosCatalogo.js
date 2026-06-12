@@ -130,6 +130,7 @@ export const BOTTOM_NAV = [
   { key: "eventos_variance", label: "Eventos: Cot vs Real", icon: "📈" },
   { key: "dian_compliance", label: "DIAN / Loggro Sync", icon: "🧾" },
   { key: "habeas_data",   label: "Hábeas Data (Ley 1581)", icon: "🔏" },
+  { key: "niif_pymes",    label: "NIIF Pymes",    icon: "📊" },
   { key: "api_portal",    label: "API Portal",    icon: "🔌" },
 ];
 
