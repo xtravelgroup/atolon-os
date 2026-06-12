@@ -368,11 +368,16 @@ export default function Proveedores() {
   const [filterActivo, setFilterActivo] = useState("true");
   const [selected, setSelected]       = useState(null);
   const [showModal, setShowModal]     = useState(false);
+  const [incompletos, setIncompletos] = useState([]);
 
   useEffect(() => {
     supabase.from("proveedores").select("*").order("nombre")
       .then(({ data }) => { setProveedores(data || []); setLoading(false); });
+    supabase.from("proveedores_incompletos").select("*")
+      .then(({ data }) => setIncompletos(data || []));
   }, []);
+
+  const sinNit = incompletos.filter(p => (p.problemas || []).includes("sin_nit"));
 
   const tiposUsados = [...new Set(proveedores.map(p => p.tipo).filter(Boolean))].sort();
 
@@ -421,6 +426,34 @@ export default function Proveedores() {
           <button onClick={() => setShowModal(true)} style={{ background: B.sky, color: B.navy, border: "none", borderRadius: 10, padding: "10px 20px", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>+ Nuevo Proveedor</button>
         </div>
       </div>
+
+      {/* Banner H-9: proveedores sin NIT bloquean facturación */}
+      {sinNit.length > 0 && (
+        <div style={{
+          background: "rgba(239,68,68,0.1)",
+          border: "1px solid rgba(239,68,68,0.4)",
+          borderRadius: 12, padding: 14, marginBottom: 16,
+        }}>
+          <div style={{ fontWeight: 700, color: "#fca5a5", marginBottom: 6 }}>
+            ⚠️ {sinNit.length} proveedor{sinNit.length === 1 ? "" : "es"} sin NIT — bloquea facturación electrónica
+          </div>
+          <div style={{ fontSize: 12, color: "rgba(255,255,255,0.7)", lineHeight: 1.5 }}>
+            Sin NIT no se puede emitir factura electrónica DIAN (Decreto 358/2020). El sistema ahora bloquea OCs nuevas a estos proveedores hasta que se complete el NIT:
+            <div style={{ marginTop: 6, display: "flex", gap: 6, flexWrap: "wrap" }}>
+              {sinNit.map(p => (
+                <button key={p.id} onClick={() => setSelected(proveedores.find(x => x.id === p.id))}
+                  style={{
+                    background: "rgba(239,68,68,0.2)", border: "1px solid rgba(239,68,68,0.5)",
+                    color: "#fca5a5", padding: "4px 10px", borderRadius: 6,
+                    fontSize: 12, fontWeight: 600, cursor: "pointer",
+                  }}>
+                  {p.nombre.trim()} {p.oc_count > 0 ? `· ${p.oc_count} OC${p.oc_count !== 1 ? 's' : ''}` : ''}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Filtros */}
       <div style={{ display: "flex", gap: 10, marginBottom: 20, flexWrap: "wrap" }}>
