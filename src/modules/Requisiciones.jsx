@@ -174,6 +174,20 @@ export default function Requisiciones() {
   const enCompra = reqs.filter(r => r.estado === "En Compra" || r.estado === "Recibida Parcial").length;
   const totalMes = reqs.filter(r => r.estado !== "Rechazada" && r.estado !== "Borrador").reduce((s, r) => s + r.total, 0);
 
+  // H-5 audit KPMG: aging — requisiciones activas con más de 30 días.
+  // Esto sirve para alertar al gerente de compras sobre pedidos olvidados
+  // o entregas parciales que nunca se cerraron.
+  const ESTADOS_ACTIVOS = ["Pendiente", "Aprobada", "En Compra", "Recibida Parcial"];
+  const ahora = Date.now();
+  const reqsAging = reqs.filter(r => {
+    if (!ESTADOS_ACTIVOS.includes(r.estado)) return false;
+    const t = r.created_at ? new Date(r.created_at).getTime() : 0;
+    if (!t) return false;
+    return (ahora - t) > 30 * 24 * 60 * 60 * 1000;
+  });
+  const agingCount = reqsAging.length;
+  const agingMonto = reqsAging.reduce((s, r) => s + Number(r.total || 0), 0);
+
   // ── Reglas de aprobación fijas ──────────────────────────────────────────────
   // Todas las req → gerente_general
   // Si monto > $12M o total semanal > $30M → requiere también dirección (super_admin)
@@ -416,6 +430,9 @@ export default function Requisiciones() {
         <StatCard label="Aprobadas listas para OC" value={aprobadas} color={B.success} />
         <StatCard label="En proceso de compra" value={enCompra} color={B.sky} />
         <StatCard label="Gasto comprometido" value={COP(totalMes)} color={B.sand} />
+        <StatCard label="⚠ Aging > 30 días" value={agingCount}
+          sub={agingCount > 0 ? COP(agingMonto) : "todo al día"}
+          color={agingCount > 0 ? B.danger : B.success} />
       </div>
 
       {/* Tabs */}
@@ -726,21 +743,45 @@ function ReqCard({ req, reglas, onSelect }) {
 function TabAprobaciones({ reqs, reglas, onOpen, currentUser, reload }) {
   const aprobar = async (r, accion) => {
     if (!supabase) return;
+
+    // H-2 audit KPMG: motivo obligatorio en rechazo (mínimo 10 chars)
+    let motivoRechazo = null;
+    if (accion === "rechazada") {
+      motivoRechazo = window.prompt(
+        "Motivo del rechazo (mínimo 10 caracteres, control de calidad auditoría):"
+      );
+      if (!motivoRechazo || motivoRechazo.trim().length < 10) {
+        alert("El motivo es obligatorio y debe tener al menos 10 caracteres. Rechazo cancelado.");
+        return;
+      }
+      motivoRechazo = motivoRechazo.trim();
+    }
+
+    // H-3 audit KPMG: no aprobar con total $0
+    if (accion === "aprobada" && (!r.total || Number(r.total) <= 0)) {
+      alert("No se puede aprobar la requisición " + r.id + " con total $0. Valoriza los items primero.");
+      return;
+    }
+
     const aprobaciones = [...(r.aprobaciones || []), {
       quien: currentUser.nombre,
       rol: currentUser.rol,
       fecha: new Date().toLocaleString("es-CO"),
       accion,
+      motivo: motivoRechazo || null,
     }];
     const timeline = [...(r.timeline || []), {
       quien: currentUser.nombre,
       accion: accion === "rechazada" ? "Rechazada" : "Aprobada por " + currentUser.nombre,
       fecha: new Date().toLocaleString("es-CO"),
+      comentario: motivoRechazo || null,
     }];
 
     if (accion === "rechazada") {
       await supabase.from("requisiciones").update({
-        estado: "Rechazada", aprobaciones, timeline, updated_at: new Date().toISOString(),
+        estado: "Rechazada", aprobaciones, timeline,
+        rechazada_motivo: motivoRechazo,
+        updated_at: new Date().toISOString(),
       }).eq("id", r.id);
     } else {
       // Verificar si necesita más aprobaciones.
@@ -3052,8 +3093,47 @@ function DetailModal({ req, onClose, onUpdate, onGenerarOC, proveedores, reglas,
             )}
             {puedeAprobar && (
               <>
-                <button onClick={() => advance("Aprobada", "Aprobada", { aprobador_id: currentUser.id, aprobador_nombre: currentUser.nombre, aprobada_at: new Date().toISOString() })} style={BTN(B.success)}>✓ Aprobar</button>
-                <button onClick={() => advance("Rechazada", "Rechazada", { rechazada_motivo: comment })} style={BTN(B.danger)}>✕ Rechazar</button>
+                <button
+                  onClick={() => {
+                    // H-3 (audit KPMG): no aprobar con total = 0
+                    if (!req.total || Number(req.total) <= 0) {
+                      alert("No se puede aprobar una requisición con total $0.\n\nValoriza los items antes (cada item debe tener precio unitario > 0).");
+                      return;
+                    }
+                    // H-1 (audit KPMG): registrar la aprobación en aprobaciones[]
+                    // para trazabilidad SOX-404. El trigger DB exige al menos 1 entry.
+                    const nuevaAprobacion = {
+                      quien: currentUser.nombre,
+                      usuario_id: currentUser.id,
+                      rol: currentUser.rol,
+                      accion: "aprobada",
+                      fecha: new Date().toISOString(),
+                      comentario: comment || null,
+                      monto: req.total,
+                    };
+                    const aprobacionesActualizadas = [
+                      ...(Array.isArray(req.aprobaciones) ? req.aprobaciones : []),
+                      nuevaAprobacion,
+                    ];
+                    advance("Aprobada", "Aprobada", {
+                      aprobador_id: currentUser.id,
+                      aprobador_nombre: currentUser.nombre,
+                      aprobada_at: new Date().toISOString(),
+                      aprobaciones: aprobacionesActualizadas,
+                    });
+                  }}
+                  style={BTN(B.success)}>✓ Aprobar</button>
+                <button
+                  onClick={() => {
+                    // H-2 (audit KPMG): motivo obligatorio para rechazo, mínimo 10 chars
+                    const motivo = (comment || "").trim();
+                    if (motivo.length < 10) {
+                      alert("Para rechazar la requisición debes escribir un motivo de al menos 10 caracteres en el campo Comentario.\n\nEjemplos:\n• Precio fuera de presupuesto Q3\n• Falta cotización alternativa\n• Item ya disponible en bodega central");
+                      return;
+                    }
+                    advance("Rechazada", "Rechazada", { rechazada_motivo: motivo });
+                  }}
+                  style={BTN(B.danger)}>✕ Rechazar</button>
               </>
             )}
             {(req.estado === "En Compra" || req.estado === "Recibida Parcial") && (
