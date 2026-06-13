@@ -1656,9 +1656,17 @@ function RecepcionOCModal({ oc, reqs, onClose, reload, currentUser, readOnly = f
       }));
       await supabase.from("items_stock_locacion").upsert(upserts, { onConflict: "item_id,locacion_id" });
 
-      // Auditoría: 1 fila por item en items_ajustes
+      // Auditoría: 1 fila por item en items_ajustes.
+      // Audit rank 70: el id era 'AJ-{codigo}-{item}' (determinístico solo
+      // por OC + item). En recepciones parciales sucesivas del mismo item,
+      // el segundo upsert pisaba el primero — cantidad_antes/despues/diferencia
+      // reflejaban solo la ultima recepcion y auditoria de inventario
+      // imposible de reconstruir. Ahora incluimos timestamp para conservar
+      // una fila por recepcion. Idempotencia ante DOBLE-CLICK en el MISMO
+      // save (mismo timestamp) se mantiene gracias al onConflict.
+      const recepcionTs = Date.now();
       const ajustes = movimientos.map(m => ({
-        id: `AJ-${oc.codigo}-${m.item_id}`,
+        id: `AJ-${oc.codigo}-${m.item_id}-${recepcionTs}`,
         item_id: m.item_id,
         locacion_id: bodegaDestino,
         tipo: "manual",
@@ -1668,7 +1676,6 @@ function RecepcionOCModal({ oc, reqs, onClose, reload, currentUser, readOnly = f
         motivo: `Recepción ${oc.codigo}${oc.requisicion_id ? ` (Req ${oc.requisicion_id})` : ""}${numFactura ? ` · Factura ${numFactura}` : ""}`,
         usuario_email: (currentUser.email || currentUser.nombre || ""),
       }));
-      // upsert por id determinístico para que reintentos no dupliquen
       await supabase.from("items_ajustes").upsert(ajustes, { onConflict: "id" });
     }
 
@@ -3707,8 +3714,12 @@ export function AsignarOCModal({ items, proveedores, ordenes, reqs, currentUser,
     let ocIdFinal;
     let codigo;
     if (modo === "nueva") {
-      // Auto-merge: si ya hay OC emitida para este proveedor, agregar a esa
-      const ocAbierta = ordenes.find(o => o.estado === "emitida" && o.proveedor_id === prov.id);
+      // Auto-merge: si ya hay OC emitida (y NO enviada al proveedor) para este
+      // proveedor, agregar a esa. Audit rank 69: filtro debe excluir enviada_at
+      // — si la OC ya se mando por email al proveedor, agregar items mas tarde
+      // hace que la factura no cuadre con la OC. Mismo patron que otros lugares
+      // del archivo (linea 351, 2687).
+      const ocAbierta = ordenes.find(o => o.estado === "emitida" && !o.enviada_at && o.proveedor_id === prov.id);
       if (ocAbierta) {
         const merged = consolidar([...(ocAbierta.items || []), ...items]);
         const subtotal = merged.reduce((s, it) => s + (Number(it.subtotal) || 0), 0);

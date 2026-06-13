@@ -1384,7 +1384,10 @@ function UnirOCModal({ oc, ordenes, onClose, reload, currentUser }) {
   const [err, setErr] = useState("");
 
   // Solo se puede unir con OCs del MISMO proveedor que NO estén recibidas,
-  // pagadas, canceladas o con factura ya aplicada.
+  // pagadas, canceladas, con recepcion parcial, o con factura aplicada.
+  // Audit rank 20: excluir 'recibida_parcial' es crucial — si la fuente tiene
+  // recibidos previos, consolidar() los pierde y los items consolidados
+  // muestran mas pendiente del real → riesgo de doble-recepcion fisica.
   const candidatas = useMemo(() => {
     const sameProv = (a, b) =>
       (a.proveedor_id && b.proveedor_id && a.proveedor_id === b.proveedor_id) ||
@@ -1393,7 +1396,7 @@ function UnirOCModal({ oc, ordenes, onClose, reload, currentUser }) {
       o.id !== oc.id &&
       sameProv(o, oc) &&
       !o.factura_aplicada &&
-      !["recibida", "pagada", "cancelada"].includes(o.estado)
+      !["recibida", "recibida_parcial", "pagada", "cancelada"].includes(o.estado)
     );
   }, [ordenes, oc]);
 
@@ -1456,8 +1459,39 @@ function UnirOCModal({ oc, ordenes, onClose, reload, currentUser }) {
         cambioEntry,
       ];
 
-      // 1. Update destino (oc) con items consolidados
-      const { error: e1 } = await supabase.from("ordenes_compra").update({
+      // Orden invertido vs version anterior para mitigar el riesgo de doble-pago
+      // si los dos updates no son atomicos (audit rank 19): cancelamos la
+      // FUENTE primero con condicional estado=eq.<estado actual> para evitar
+      // TOCTOU. Si la cancelacion falla, la operacion entera aborta sin tocar
+      // el destino. Si la cancelacion pasa pero el update del destino falla,
+      // intentamos reactivar la fuente para no perder datos.
+      const estadoFuentePrev = seleccionada.estado;
+      const fuenteCambios = [
+        ...(Array.isArray(seleccionada.cambios_historial) ? seleccionada.cambios_historial : []),
+        {
+          evento: "merged_into",
+          at: new Date().toISOString(),
+          por: currentUser?.email || currentUser?.nombre || "—",
+          merged_into_oc_id: oc.id,
+          merged_into_codigo: oc.codigo,
+        },
+      ];
+
+      // 1. Cancelar la fuente con guard de estado (evita doble-cancelacion si
+      //    otra ventana esta tocando la fuente al mismo tiempo)
+      const { error: e1, count: c1 } = await supabase.from("ordenes_compra").update({
+        estado: "cancelada",
+        notas: `${seleccionada.notas || ""}\n[${new Date().toLocaleString("es-CO")}] Unida con ${oc.codigo} (consolidada). Cancelada por ${currentUser?.nombre || "—"}`,
+        cambios_historial: fuenteCambios,
+        updated_at: new Date().toISOString(),
+      }, { count: "exact" })
+        .eq("id", seleccionada.id)
+        .eq("estado", estadoFuentePrev);
+      if (e1) throw e1;
+      if (c1 === 0) throw new Error("La OC fuente cambió de estado durante la operación. Recargá y reintentá.");
+
+      // 2. Update destino con items consolidados
+      const { error: e2 } = await supabase.from("ordenes_compra").update({
         items: merged,
         subtotal,
         total: subtotal,
@@ -1466,25 +1500,23 @@ function UnirOCModal({ oc, ordenes, onClose, reload, currentUser }) {
         notas: `${oc.notas || ""}\n[${new Date().toLocaleString("es-CO")}] Unida con ${seleccionada.codigo} por ${currentUser?.nombre || "—"}`,
         updated_at: new Date().toISOString(),
       }).eq("id", oc.id);
-      if (e1) throw e1;
-
-      // 2. Update fuente (seleccionada) → cancelada con referencia
-      const { error: e2 } = await supabase.from("ordenes_compra").update({
-        estado: "cancelada",
-        notas: `${seleccionada.notas || ""}\n[${new Date().toLocaleString("es-CO")}] Unida con ${oc.codigo} (consolidada). Cancelada por ${currentUser?.nombre || "—"}`,
-        cambios_historial: [
-          ...(Array.isArray(seleccionada.cambios_historial) ? seleccionada.cambios_historial : []),
-          {
-            evento: "merged_into",
-            at: new Date().toISOString(),
-            por: currentUser?.email || currentUser?.nombre || "—",
-            merged_into_oc_id: oc.id,
-            merged_into_codigo: oc.codigo,
-          },
-        ],
-        updated_at: new Date().toISOString(),
-      }).eq("id", seleccionada.id);
-      if (e2) throw e2;
+      if (e2) {
+        // Compensacion: intentar reactivar la fuente al estado previo.
+        // Si falla la compensacion, queda inconsistente; al menos logueamos.
+        const { error: eComp } = await supabase.from("ordenes_compra").update({
+          estado: estadoFuentePrev,
+          notas: seleccionada.notas || null,
+          cambios_historial: [
+            ...fuenteCambios,
+            { evento: "merge_rollback", at: new Date().toISOString(), reason: e2.message },
+          ],
+          updated_at: new Date().toISOString(),
+        }).eq("id", seleccionada.id);
+        if (eComp) {
+          console.error("[UnirOC] compensacion fallo:", eComp.message);
+        }
+        throw new Error(`Falló el update del destino: ${e2.message}. Fuente reactivada.`);
+      }
 
       // 3. Reqs de origen de la fuente: actualizar oc_id/oc_codigo de sus items
       //    para que apunten a la OC destino (no a la cancelada)
@@ -1684,10 +1716,15 @@ function EditarOCModal({ oc, ordenes = [], onClose, reload, currentUser }) {
       const { data: req } = await supabase.from("requisiciones").select("items, estado, timeline").eq("id", reqId).maybeSingle();
       if (!req) continue;
       const itemsReq = (req.items || []).map(it => {
-        // Match por id si lo tiene, sino por nombre+unidad
+        // Match por id si lo tiene, sino por nombre+unidad — pero solo si
+        // el item de la req apunta a ESTA OC (no a otra OC viva). Audit
+        // rank 74: si una req tenia dos items con mismo nombre asignados a
+        // OCs distintas, el sameByName matcheaba ambos y limpiaba oc_id en
+        // los dos — la OC-B seguia con el item pero la req lo daba por libre.
         const sameById = it.id && item.id && it.id === item.id;
         const sameByName = !sameById && (it.item || it.nombre || "").toLowerCase() === (item.item || item.nombre || "").toLowerCase()
-          && (it.unidad || "").toLowerCase() === (item.unidad || "").toLowerCase();
+          && (it.unidad || "").toLowerCase() === (item.unidad || "").toLowerCase()
+          && (!it.oc_id || it.oc_id === oc.id);
         if (sameById || sameByName) {
           const { oc_id, oc_codigo, ...rest } = it;
           return rest;
@@ -1754,6 +1791,49 @@ function EditarOCModal({ oc, ordenes = [], onClose, reload, currentUser }) {
       }
       const { error } = await supabase.from("ordenes_compra").update(updates).eq("id", oc.id);
       if (error) throw error;
+
+      // Audit rank 21: al cancelar la OC por items vacios, los items de las
+      // reqs origen quedaban con oc_id apuntando a OC cancelada. KPI itemsMesa
+      // (que filtra por !oc_id) los contaba como invisibles y no se podian
+      // reasignar. Ahora limpiamos oc_id/oc_codigo de cada item en su req
+      // origen + restablecemos estado de la req si todos sus items quedan libres.
+      if (cancelarOC) {
+        const itemsOriginales = oc.items || [];
+        const reqIdsAfectadas = new Set();
+        for (const it of itemsOriginales) {
+          const ids = Array.isArray(it.req_ids) ? it.req_ids : (it.req_id ? [it.req_id] : []);
+          ids.forEach(rid => rid && reqIdsAfectadas.add(rid));
+        }
+        for (const reqId of reqIdsAfectadas) {
+          const { data: req } = await supabase.from("requisiciones")
+            .select("items, estado, timeline").eq("id", reqId).maybeSingle();
+          if (!req) continue;
+          const newItems = (req.items || []).map(it => {
+            if (it.oc_id === oc.id) {
+              const { oc_id, oc_codigo, ...rest } = it;
+              return rest;
+            }
+            return it;
+          });
+          const tieneItemsConOC = newItems.some(it => it.oc_id);
+          // Si NINGUN item de la req sigue con oc_id, vuelve a 'Aprobada'
+          // (lista para nueva mesa). Si todavia tiene items en otras OCs,
+          // preservamos el estado actual.
+          const nuevoEstadoReq = tieneItemsConOC ? req.estado : "Aprobada";
+          await supabase.from("requisiciones").update({
+            items: newItems,
+            estado: nuevoEstadoReq,
+            timeline: [...(req.timeline || []), {
+              quien: currentUser?.nombre || "—",
+              accion: "Items liberados por cancelacion de OC",
+              fecha: new Date().toLocaleString("es-CO"),
+              comentario: `OC ${oc.codigo} cancelada — items vuelven a mesa.`,
+            }],
+            updated_at: new Date().toISOString(),
+          }).eq("id", reqId);
+        }
+      }
+
       reload?.();
       onClose();
     } catch (e) {
