@@ -6,6 +6,7 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { B, COP, fmtFecha, todayStr } from "../brand";
 import { supabase } from "../lib/supabase";
+import { logAccion } from "../lib/logAccion";
 import { useBreakpoint } from "../lib/responsive.js";
 import FacturaProveedorModal from "../components/FacturaProveedorModal";
 import LogisticaOCModal from "../components/LogisticaOCModal";
@@ -916,14 +917,17 @@ function TabCXP({ ordenes, reload, currentUser }) {
 }
 
 function SubtabAnticipos({ ordenes, reload, currentUser }) {
+  const [loadingId, setLoadingId] = useState(null);
   const pendientes = ordenes.filter(o => o.anticipo_requerido && !o.anticipo_pagado);
   const pagados    = ordenes.filter(o => o.anticipo_requerido && o.anticipo_pagado);
   const totalPend  = pendientes.reduce((s, o) => s + Number(o.anticipo_monto || 0), 0);
   const totalPag   = pagados.reduce((s, o) => s + Number(o.anticipo_monto || 0), 0);
 
   const marcarPagado = async (oc) => {
+    if (loadingId) return; // guard doble click
     const referencia = prompt(`Referencia del pago del anticipo (Nº de transferencia, cheque, etc.):`);
     if (referencia === null) return;
+    setLoadingId(oc.id);
     // El anticipo cuenta como pago parcial → se acumula en monto_pagado.
     // Cuando luego se aplique la factura completa, el saldo a pagar se calcula
     // como total - monto_pagado (que ya incluye el anticipo). Esto evita
@@ -934,17 +938,56 @@ function SubtabAnticipos({ ordenes, reload, currentUser }) {
     const total = Number(oc.total || 0);
     const pagadaCompleta = total > 0 && nuevoMontoPagado >= total;
 
-    await supabase.from("ordenes_compra").update({
+    // Solo retrocedemos a 'confirmada' si la OC esta en estados tempranos.
+    // Antes era incondicional — caso real: OC ya recibida que se reasigna
+    // anticipo retroactivamente, retrocedia su estado y reaparecia en
+    // OCs abiertas del Dashboard. (audit rank 76)
+    const estadoPrev = oc.estado;
+    const debeSubirEstado = ["emitida", "enviada"].includes(estadoPrev);
+    const nuevoEstado = debeSubirEstado ? "confirmada" : estadoPrev;
+
+    const cambioEntry = {
+      id: `CH-${Date.now()}`,
+      ts: new Date().toISOString(),
+      quien: currentUser?.email || "—",
+      accion: "marcar_anticipo_pagado",
+      monto: montoAnticipo,
+      referencia,
+      estado_antes: estadoPrev,
+      estado_despues: nuevoEstado,
+    };
+    const cambiosNuevos = [
+      ...(Array.isArray(oc.cambios_historial) ? oc.cambios_historial : []),
+      cambioEntry,
+    ];
+
+    const { error } = await supabase.from("ordenes_compra").update({
       anticipo_pagado: true,
       anticipo_pagado_at: new Date().toISOString(),
       anticipo_pagado_por: currentUser?.email || null,
       anticipo_referencia_pago: referencia || null,
-      estado: "confirmada",
+      estado: nuevoEstado,
       monto_pagado: nuevoMontoPagado,
       pagada_completa: pagadaCompleta,
       pagada_at: pagadaCompleta ? new Date().toISOString() : oc.pagada_at || null,
+      cambios_historial: cambiosNuevos,
       updated_at: new Date().toISOString(),
     }).eq("id", oc.id);
+
+    setLoadingId(null);
+    if (error) {
+      alert(`Error registrando anticipo: ${error.message}`);
+      return;
+    }
+    logAccion({
+      modulo: "compras",
+      accion: "marcar_anticipo_pagado",
+      tabla: "ordenes_compra",
+      registroId: oc.id,
+      datosAntes:   { anticipo_pagado: false, monto_pagado: montoPagadoActual, estado: estadoPrev },
+      datosDespues: { anticipo_pagado: true,  monto_pagado: nuevoMontoPagado,  estado: nuevoEstado, referencia },
+      notas: `💸 Anticipo ${COP(montoAnticipo)} pagado · ref ${referencia} · ${oc.codigo || oc.id}`,
+    });
     reload?.();
   };
 
@@ -988,9 +1031,9 @@ function SubtabAnticipos({ ordenes, reload, currentUser }) {
                   <div style={{ fontSize: 18, fontWeight: 800, color: B.warning, fontFamily: "'Barlow Condensed', sans-serif" }}>
                     {COP(oc.anticipo_monto || 0)}
                   </div>
-                  <button onClick={() => marcarPagado(oc)}
-                    style={{ marginTop: 6, padding: "6px 14px", borderRadius: 6, border: "none", background: B.success, color: B.navy, fontSize: 12, fontWeight: 800, cursor: "pointer" }}>
-                    💸 Marcar como pagado
+                  <button onClick={() => marcarPagado(oc)} disabled={loadingId === oc.id}
+                    style={{ marginTop: 6, padding: "6px 14px", borderRadius: 6, border: "none", background: B.success, color: B.navy, fontSize: 12, fontWeight: 800, cursor: loadingId === oc.id ? "wait" : "pointer", opacity: loadingId === oc.id ? 0.6 : 1 }}>
+                    {loadingId === oc.id ? "⏳ Procesando…" : "💸 Marcar como pagado"}
                   </button>
                 </div>
               </div>

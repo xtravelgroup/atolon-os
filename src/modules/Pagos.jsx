@@ -4,6 +4,7 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { B, COP, fmtFecha, todayStr } from "../brand";
 import { supabase } from "../lib/supabase";
+import { logAccion } from "../lib/logAccion";
 import { useBreakpoint } from "../lib/responsive.js";
 import OCViewerModal from "../components/OCViewerModal.jsx";
 import MarcarPagadoModal from "../components/MarcarPagadoModal.jsx";
@@ -382,19 +383,44 @@ function TabPorPagar({ ordenes, otros, comisiones = [], reload, currentUser }) {
 function TabRecurrentes({ recurrentes, reload, currentUser }) {
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState(null);
+  const [gen, setGen] = useState(false);
   const total = recurrentes.filter(r => r.activo).reduce((s, r) => s + Number(r.monto || 0), 0);
 
   const generar = async () => {
+    if (gen) return; // guard doble click — RPC no es idempotente por defecto
     if (!confirm("¿Generar pagos pendientes para este mes desde los recurrentes activos?")) return;
+    setGen(true);
     const { data, error } = await supabase.rpc("generar_pagos_recurrentes_mes");
+    setGen(false);
     if (error) return alert(`Error: ${error.message}`);
+    logAccion({
+      modulo: "pagos",
+      accion: "generar_pagos_recurrentes_mes",
+      tabla: "pagos_recurrentes",
+      registroId: null,
+      datosAntes:   null,
+      datosDespues: { generados: data || 0, mes: todayStr().slice(0, 7) },
+      notas: `Generó ${data || 0} pagos del mes desde recurrentes activos`,
+    });
     alert(`✓ ${data || 0} pagos generados. Revisa la pestaña "Por Pagar".`);
     reload();
   };
 
   const eliminar = async (id) => {
     if (!confirm("¿Eliminar este pago recurrente? Los pagos ya generados no se borran.")) return;
-    await supabase.from("pagos_recurrentes").delete().eq("id", id);
+    // Capturar snapshot antes para que el log tenga datosAntes utiles
+    const prev = recurrentes.find(r => r.id === id) || null;
+    const { error } = await supabase.from("pagos_recurrentes").delete().eq("id", id);
+    if (error) return alert(`Error eliminando: ${error.message}`);
+    logAccion({
+      modulo: "pagos",
+      accion: "eliminar_pago_recurrente",
+      tabla: "pagos_recurrentes",
+      registroId: id,
+      datosAntes:   prev,
+      datosDespues: null,
+      notas: prev ? `🗑️ ${prev.nombre} (${COP(prev.monto)})` : `🗑️ recurrente ${id}`,
+    });
     reload();
   };
 
@@ -407,8 +433,9 @@ function TabRecurrentes({ recurrentes, reload, currentUser }) {
           </div>
         </div>
         <div style={{ display: "flex", gap: 8 }}>
-          <button onClick={generar} style={{ padding: "8px 14px", borderRadius: 8, border: `1px solid ${B.sky}`, background: B.sky + "22", color: B.sky, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
-            🔄 Generar pagos del mes
+          <button onClick={generar} disabled={gen}
+            style={{ padding: "8px 14px", borderRadius: 8, border: `1px solid ${B.sky}`, background: B.sky + "22", color: B.sky, fontSize: 12, fontWeight: 700, cursor: gen ? "wait" : "pointer", opacity: gen ? 0.6 : 1 }}>
+            {gen ? "⏳ Generando…" : "🔄 Generar pagos del mes"}
           </button>
           <button onClick={() => { setEditing(null); setShowForm(true); }}
             style={{ padding: "8px 14px", borderRadius: 8, border: "none", background: B.sand, color: B.navy, fontSize: 12, fontWeight: 800, cursor: "pointer" }}>
@@ -491,20 +518,40 @@ function RecurrenteFormModal({ recurrente, onClose, onSaved, currentUser }) {
     if (!f.nombre.trim() || !f.monto) return setErr("Nombre y monto son obligatorios");
     setSaving(true); setErr("");
     try {
+      const payloadCore = {
+        ...f,
+        monto: Number(f.monto),
+        dia_pago: Math.min(31, Math.max(1, Number(f.dia_pago) || 1)),
+      };
       if (isEdit) {
         const { error } = await supabase.from("pagos_recurrentes").update({
-          ...f, monto: Number(f.monto), dia_pago: Math.min(31, Math.max(1, Number(f.dia_pago) || 1)),
-          updated_at: new Date().toISOString(),
+          ...payloadCore, updated_at: new Date().toISOString(),
         }).eq("id", recurrente.id);
         if (error) throw error;
+        logAccion({
+          modulo: "pagos",
+          accion: "editar_pago_recurrente",
+          tabla: "pagos_recurrentes",
+          registroId: recurrente.id,
+          datosAntes:   { nombre: recurrente.nombre, monto: recurrente.monto, dia_pago: recurrente.dia_pago, activo: recurrente.activo },
+          datosDespues: { nombre: payloadCore.nombre, monto: payloadCore.monto, dia_pago: payloadCore.dia_pago, activo: payloadCore.activo },
+          notas: `📝 ${payloadCore.nombre} (${COP(payloadCore.monto)})`,
+        });
       } else {
         const id = `REC_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
         const { error } = await supabase.from("pagos_recurrentes").insert({
-          id, ...f, monto: Number(f.monto),
-          dia_pago: Math.min(31, Math.max(1, Number(f.dia_pago) || 1)),
-          created_by: currentUser?.email,
+          id, ...payloadCore, created_by: currentUser?.email,
         });
         if (error) throw error;
+        logAccion({
+          modulo: "pagos",
+          accion: "crear_pago_recurrente",
+          tabla: "pagos_recurrentes",
+          registroId: id,
+          datosAntes:   null,
+          datosDespues: payloadCore,
+          notas: `➕ ${payloadCore.nombre} (${COP(payloadCore.monto)}) · día ${payloadCore.dia_pago}`,
+        });
       }
       onSaved();
     } catch (e) { setErr(e.message || String(e)); } finally { setSaving(false); }
@@ -663,12 +710,27 @@ function GastoFormModal({ onClose, onSaved, currentUser }) {
     setSaving(true);
     try {
       const id = `PO_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
-      const { error } = await supabase.from("pagos_otros").insert({
-        id, ...f, monto: Number(f.monto),
+      const payload = {
+        id,
+        ...f,
+        monto: Number(f.monto),
+        // Si el usuario vacio la fecha en el input, usamos hoy (Postgres
+        // rechaza '' como date — antes daba error 22007 visible al usuario).
+        fecha: f.fecha || todayStr(),
         fecha_vencimiento: f.fecha_vencimiento || null,
         created_by: currentUser?.email,
-      });
+      };
+      const { error } = await supabase.from("pagos_otros").insert(payload);
       if (error) throw error;
+      logAccion({
+        modulo: "pagos",
+        accion: "crear_gasto",
+        tabla: "pagos_otros",
+        registroId: id,
+        datosAntes:   null,
+        datosDespues: { concepto: payload.concepto, monto: payload.monto, proveedor: payload.proveedor, fecha: payload.fecha },
+        notas: `➕ Gasto "${payload.concepto}" (${COP(payload.monto)})`,
+      });
       onSaved();
     } catch (e) { setErr(e.message || String(e)); } finally { setSaving(false); }
   };
