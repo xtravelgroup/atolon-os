@@ -851,10 +851,13 @@ export function EventoModal({ evento, categoria, salidas, aliados, vendedores, o
 
     if (form.buy_out && form.stage === "Confirmado") {
       // Determinar qué fechas aplican buy-out
-      // Si hay buy_out_fechas seleccionadas → usar esas; si no (evento 1 día) → solo form.fecha
       const buyOutFechasEfectivas = (form.buy_out_fechas && form.buy_out_fechas.length > 0)
         ? form.buy_out_fechas
         : (form.fecha ? [form.fecha] : []);
+
+      // savedId es el id del evento (sea nuevo o edicion). Lo usamos para
+      // vincular los cierres y poder borrarlos sin riesgo al editar.
+      const eventoId = savedId;
 
       if (!wasConfirmado && buyOutFechasEfectivas.length > 0) {
         // Primera vez que se confirma → crear cierres para cada fecha buy-out
@@ -866,15 +869,17 @@ export function EventoModal({ evento, categoria, salidas, aliados, vendedores, o
             motivo: `Buy-Out: ${form.nombre.trim()}`,
             activo: true,
             creado_por: "Eventos",
+            evento_id: eventoId,
           });
         }
-      } else if (wasConfirmado) {
-        // Ya estaba confirmado → borrar cierres anteriores de este evento y recrear con nuevas fechas
-        const nombreAnterior = evento?.nombre || form.nombre.trim();
+      } else if (wasConfirmado && eventoId) {
+        // Ya estaba confirmado → borrar cierres anteriores de ESTE evento
+        // (por evento_id, NO por match LIKE en motivo). Esto impide tumbar
+        // cierres de otros eventos con nombre prefijo similar.
         await supabase.from("cierres")
           .delete()
           .eq("creado_por", "Eventos")
-          .ilike("motivo", `%${nombreAnterior}%`);
+          .eq("evento_id", eventoId);
         for (let i = 0; i < buyOutFechasEfectivas.length; i++) {
           await supabase.from("cierres").insert({
             id: `CIE-${Date.now()}-${i}`,
@@ -883,6 +888,7 @@ export function EventoModal({ evento, categoria, salidas, aliados, vendedores, o
             motivo: `Buy-Out: ${form.nombre.trim()}`,
             activo: true,
             creado_por: "Eventos",
+            evento_id: eventoId,
           });
         }
       }
