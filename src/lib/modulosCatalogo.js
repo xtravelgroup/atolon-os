@@ -132,6 +132,7 @@ export const BOTTOM_NAV = [
   { key: "habeas_data",   label: "Hábeas Data (Ley 1581)", icon: "🔏" },
   { key: "niif_pymes",    label: "NIIF Pymes",    icon: "📊" },
   { key: "secretos",      label: "Secretos & Tokens", icon: "🔑" },
+  { key: "edge_functions", label: "Edge Functions", icon: "⚡" },
   { key: "api_portal",    label: "API Portal",    icon: "🔌" },
 ];
 

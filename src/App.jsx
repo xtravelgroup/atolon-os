@@ -312,6 +312,7 @@ const DianCompliance = lazy(() => import("./modules/DianCompliance"));
 const HabeasData = lazy(() => import("./modules/HabeasData"));
 const NIIFCompliance = lazy(() => import("./modules/NIIFCompliance"));
 const Secretos = lazy(() => import("./modules/Secretos"));
+const EdgeFunctions = lazy(() => import("./modules/EdgeFunctions"));
 const Financiero = lazy(() => import("./modules/Financiero"));
 const CXC = lazy(() => import("./modules/CXC"));
 const HotelReservas = lazy(() => import("./modules/HotelReservas"));
@@ -427,6 +428,7 @@ const MODULE_MAP = {
   habeas_data: <HabeasData />,
   niif_pymes: <NIIFCompliance />,
   secretos: <Secretos />,
+  edge_functions: <EdgeFunctions />,
   financiero: <Financiero />,
   cxc: <CXC />,
   presupuesto: <Presupuesto />,
