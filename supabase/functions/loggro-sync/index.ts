@@ -768,30 +768,90 @@ serve(async (req) => {
       const fecha = url.searchParams.get("fecha");
       if (!fecha) return json({ error: "param fecha requerido (YYYY-MM-DD)" }, 400);
 
-      // Traer varias páginas para cubrir ~30 días (invoices API no acepta filtros por fecha,
-      // así que descargamos hasta encontrar facturas fuera del rango).
       const pageSize = 100;
-      const target = new Date(fecha + "T00:00:00-05:00");
-      const diaSig = new Date(target.getTime() + 24 * 3600 * 1000);
+      const COTZ_OFFSET_MS = -5 * 3600 * 1000;
+      const dayOf = (ts: string) => {
+        const utc = new Date(ts).getTime();
+        const co = new Date(utc + COTZ_OFFSET_MS);
+        return co.toISOString().slice(0, 10);
+      };
 
-      // Estrategia: bajar páginas en paralelo cubriendo las últimas ~2500 facturas
-      // (≈2 meses). La API no acepta filtros por fecha, así que descargamos y filtramos.
-      const PAGE_RANGE_SIZE = 25;
-      const pagePromises = [];
-      // Iteramos pages 85–110 (cubre recent history, incluye hoy)
-      for (let p = 85; p < 85 + PAGE_RANGE_SIZE; p++) {
-        pagePromises.push(
-          loggroGet(`/invoices?pagination=true&limit=${pageSize}&page=${p}`)
-            .then(d => ({ page: p, arr: d?.data || (Array.isArray(d) ? d : []) }))
-            .catch(() => ({ page: p, arr: [] }))
-        );
+      // Antes: el loop estaba hardcodeado a paginas 85-110. A medida que crecia
+      // el historico de Loggro, la pagina con "hoy" se movia y el cierre del
+      // dia eventualmente devolvia subset incompleto o vacio sin warning.
+      // Audit rank 31. Replicamos el patron de /cierre-caja-rango:
+      // binary-search para encontrar la ultima pagina con datos, luego bajamos
+      // hacia atras hasta cruzar el dia objetivo.
+
+      const loggroGetPageSafe = async (page: number) => {
+        for (let attempt = 0; attempt < 3; attempt++) {
+          try {
+            const d: any = await loggroGet(`/invoices?pagination=true&limit=${pageSize}&page=${page}`);
+            const arr = d?.data || (Array.isArray(d) ? d : []) || [];
+            return { ok: true, arr };
+          } catch (e) {
+            if (attempt === 2) {
+              console.warn(`[loggro cierre-caja] page=${page} fallo:`, (e as Error)?.message);
+              return { ok: false, arr: [] as any[] };
+            }
+            await new Promise(r => setTimeout(r, 250 * Math.pow(3, attempt)));
+          }
+        }
+        return { ok: false, arr: [] as any[] };
+      };
+
+      // Sondeo binario para ultima pagina con datos.
+      let lo = 0, hi = 300, lastNonEmpty = 0;
+      let probeError = false;
+      while (lo <= hi && !probeError) {
+        const mid = Math.floor((lo + hi) / 2);
+        const r = await loggroGetPageSafe(mid);
+        if (!r.ok) { probeError = true; break; }
+        if (r.arr.length > 0) { lastNonEmpty = mid; lo = mid + 1; }
+        else { hi = mid - 1; }
       }
-      const results = await Promise.all(pagePromises);
+      if (probeError) {
+        return json({ ok: false, error: "Loggro no responde — sondeo de paginas fallo. Intentar de nuevo." }, 503);
+      }
+
+      // Bajamos pagina por pagina desde lastNonEmpty hasta que TODAS las
+      // facturas de la pagina actual sean DEL DIA o ANTERIORES al dia
+      // objetivo. Las facturas mas recientes estan en las paginas mas altas
+      // (Loggro almacena cronologicamente). Capeamos a 50 paginas (5000
+      // facturas, mas que suficiente para un dia).
       const allInvoices: any[] = [];
       const seen = new Set<string>();
-      results.forEach(r => r.arr.forEach((inv: any) => {
-        if (inv?._id && !seen.has(inv._id)) { seen.add(inv._id); allInvoices.push(inv); }
-      }));
+      let stopReached = false;
+      let pagesScanned = 0;
+      let downloadError = false;
+      const MAX_PAGES = 50;
+      let curPage = lastNonEmpty;
+      while (curPage >= 0 && !stopReached && pagesScanned < MAX_PAGES && !downloadError) {
+        const batchPages: number[] = [];
+        for (let i = 0; i < 5 && curPage >= 0; i++) batchPages.push(curPage--);
+        const results = await Promise.all(batchPages.map(async p => ({ page: p, ...(await loggroGetPageSafe(p)) })));
+        pagesScanned += results.length;
+        if (results.some(r => !r.ok)) { downloadError = true; break; }
+
+        // Stop cuando una pagina completa esta ANTES del dia objetivo
+        let allOlderThanTarget = true;
+        for (const r of results) {
+          for (const inv of r.arr) {
+            if (!inv?._id || seen.has(inv._id)) continue;
+            seen.add(inv._id);
+            allInvoices.push(inv);
+            const ts = inv?.createdOn;
+            if (ts) {
+              const d = dayOf(ts);
+              if (d >= fecha) allOlderThanTarget = false;
+            }
+          }
+        }
+        if (allOlderThanTarget) stopReached = true;
+      }
+      if (downloadError) {
+        return json({ ok: false, error: "Loggro tuvo errores transient durante la descarga." }, 503);
+      }
 
       // Filtrar facturas del día en timezone Colombia
       const COTZ_OFFSET_MS = -5 * 3600 * 1000; // UTC-5
@@ -1368,7 +1428,12 @@ serve(async (req) => {
       const seen = new Set<string>();
       let stopReached = false;
       let pagesScanned = 0;
-      const MAX_BACKWARD = 30; // safety: nunca más que 30 páginas (3000 facturas)
+      // Safety cap. Antes era 30 (3000 facturas); para rangos largos o historicos
+      // grandes esto truncaba silenciosamente. Subimos a 200 paginas (20K
+      // facturas) — Atolon Restobar genera ~50 facturas/dia, asi que 200 paginas
+      // cubren ~400 dias. Si aun asi se golpea el cap, devolvemos truncated:true
+      // para que el caller sepa que los totales NO son completos (audit rank 32).
+      const MAX_BACKWARD = 200;
 
       // Bajamos en batches de 5 páginas paralelas, desde la última hacia atrás.
       // Usamos loggroGetPage (con retry) y abortamos si una página falla, en
@@ -1454,6 +1519,16 @@ serve(async (req) => {
         }
       }
 
+      // Truncated: golpeamos el cap MAX_BACKWARD sin terminar de barrer
+      // hacia atras. Los totales son INCOMPLETOS — el caller debe
+      // mostrar warning visible al usuario (audit rank 32). Antes el
+      // cap se silenciaba: el reporte salia con datos parciales y nadie
+      // sabia.
+      const truncated = pagesScanned >= MAX_BACKWARD && !stopReached;
+      if (truncated) {
+        console.warn(`[loggro cierre-caja-rango] cap MAX_BACKWARD=${MAX_BACKWARD} alcanzado sin cubrir el rango ${from}..${to}. Totales pueden estar incompletos.`);
+      }
+
       const payload = {
         ok: true,
         from, to,
@@ -1462,6 +1537,7 @@ serve(async (req) => {
         pages_scanned: pagesScanned,
         last_non_empty_page: lastNonEmpty,
         stop_reached: stopReached,
+        truncated, // true si MAX_BACKWARD se golpeo sin cubrir el rango completo
         resumen: {
           total_ventas: totalVentas,
           total_propinas: totalPropinas,
@@ -1479,13 +1555,13 @@ serve(async (req) => {
       // cambian). Esto baja muchísimo la carga en Loggro para queries de
       // meses anteriores.
       //
-      // NO cachear resultados sospechosos: si revisamos > 50 invoices pero
-      // el resumen quedó en 0 (sin ventas y sin anuladas), algo falló en el
-      // filtrado o en la descarga. Mejor devolver y dejar que el siguiente
-      // request lo reintente, en vez de cachear basura 5 min - 24h.
+      // NO cachear resultados sospechosos NI truncados. Sospechosos:
+      // > 50 invoices con $0 ventas = filtrado/descarga falló. Truncados:
+      // MAX_BACKWARD pegado sin terminar = totales incompletos, cachearlos
+      // 5min-24h dejaria al dashboard mostrar datos parciales sin reintentar.
       const sospechoso = allInvoices.length > 50 && totalVentas === 0 && totalAnuladas === 0;
-      if (sospechoso) {
-        console.warn(`[loggro-cache] resultado sospechoso (${allInvoices.length} invoices, $0 ventas) — NO se cachea`);
+      if (sospechoso || truncated) {
+        console.warn(`[loggro-cache] NO se cachea (sospechoso=${sospechoso}, truncated=${truncated})`);
       } else {
         try {
           const today = new Date(Date.now() - 5 * 3600 * 1000).toISOString().slice(0, 10);
@@ -1504,7 +1580,7 @@ serve(async (req) => {
         }
       }
 
-      return json({ ...payload, sospechoso: sospechoso || undefined });
+      return json({ ...payload, sospechoso: sospechoso || undefined, truncated: truncated || undefined });
     }
 
     // POST /loggro-sync/create-provider — crear proveedor en Loggro
@@ -1765,15 +1841,17 @@ serve(async (req) => {
         movements.push({ tipo: "salida_positivos", movement_id: result.body?._id || "", items: positivos.length });
       }
 
-      // 2) Movimiento ENTRADA para items con stock negativo (los lleva a 0)
-      //    Usamos type=1 (compra/ingreso) ya que type=11 con isSubtracted=false
-      //    no funciona como entrada en Loggro (siempre resta).
+      // 2) Movimiento ENTRADA AJUSTE para items con stock negativo (los lleva a 0)
+      //    type=3 (Entrada Ajuste) — el patron correcto que /load-baseline
+      //    documenta explicitamente. Antes usabamos type=1 (Compra) que
+      //    contamina los libros con asientos de compra ficticios por el
+      //    monto repuesto (audit rank 33).
       if (negativos.length > 0) {
         const result = await loggroRaw("POST", "/inventories", {
           business: businessId,
           user: userId,
           date: now,
-          type: 1, isSubtracted: false, isProduction: false, isMoveTo: false,
+          type: 3, isSubtracted: false, isProduction: false, isMoveTo: false,
           deleted: false,
           note: "Reset a 0 — repone stock negativo (baseline Atolón OS)",
           ingredients: negativos.map(it => ({ ingredient: it.id, quantity: it.stock, price: 0 })),
@@ -2330,9 +2408,13 @@ serve(async (req) => {
       const movements: any[] = [];
 
       if (entradas.length > 0) {
+        // type=3 (Entrada Ajuste) — NO type=1 (Compra). Una reconciliacion
+        // de inventario no es una compra; usar type=1 contaminaria el libro
+        // de compras de Loggro Pyme con asientos ficticios por el monto
+        // repuesto (audit rank 33).
         const r = await loggroRaw("POST", "/inventories", {
           business: businessId, user: userId, date: now,
-          type: 1, isSubtracted: false, isProduction: false, isMoveTo: false, deleted: false,
+          type: 3, isSubtracted: false, isProduction: false, isMoveTo: false, deleted: false,
           note: "Reconciliación Atolón OS — entradas",
           ingredients: entradas.map(e => ({ ingredient: e.id, quantity: e.quantity, price: 0 })),
           createdOn: now, modifiedOn: now,
