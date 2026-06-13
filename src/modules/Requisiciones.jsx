@@ -307,13 +307,18 @@ export default function Requisiciones() {
     }
     const prov = proveedores.find(p => p.id === req.proveedor_id);
 
-    // Consolidar items del mismo producto (suma cantidades)
+    // Consolidar items del mismo producto Y mismo precio (suma cantidades).
+    // Si dos items tienen mismo nombre+unidad pero distinto precio, NO se
+    // consolidan — quedan como lineas separadas en la OC para preservar
+    // el precio real de cada item (audit rank 18). Antes la key era
+    // nombre|unidad y el precio del primero ganaba silenciosamente.
     const consolidar = (lista) => {
       const map = new Map();
       for (const it of lista) {
         const nombre = (it.nombre || it.item || "").trim();
         const unidad = (it.unidad || "").toLowerCase();
-        const key = `${nombre.toLowerCase()}|${unidad}`;
+        const precioU = Math.round(Number(it.precioU) || 0);
+        const key = `${nombre.toLowerCase()}|${unidad}|${precioU}`;
         const reqIds = it.req_id ? [it.req_id] : (it.req_ids || []);
         if (map.has(key)) {
           const ex = map.get(key);
@@ -327,8 +332,8 @@ export default function Requisiciones() {
             // sumar al stock local sin tener que cruzar con la requisición
             item_id: it.item_id || it.item_catalogo_id || null,
             loggro_id: it.loggro_id || null,
-            precioU: Math.round(Number(it.precioU) || 0),
-            subtotal: Math.round(Number(it.subtotal) || (Number(it.cant) || 0) * (Number(it.precioU) || 0)),
+            precioU,
+            subtotal: Math.round(Number(it.subtotal) || (Number(it.cant) || 0) * precioU),
             req_ids: reqIds.length ? reqIds : [req.id],
           });
         }
@@ -1590,17 +1595,20 @@ function RecepcionOCModal({ oc, reqs, onClose, reload, currentUser, readOnly = f
       );
       if (itemsDeEsteReq.length === 0) continue;
 
-      // Lookup de cantidades recibidas por id de item (en esta entrega)
+      // Lookup de cantidades recibidas por id de item (en esta entrega).
+      // recibidos contiene el TOTAL acumulado del input (el form muestra el
+      // valor previo y el usuario edita ese mismo total — no es una delta).
+      // La OC se persiste con este valor absoluto (linea 1561). req.recibidos
+      // DEBE persistirse igual — el bug previo sumaba previos+actual, inflando
+      // 5→10→17 a cada re-save (audit rank 17).
       const recibidoPorId = new Map(recibidos.map(r => [r.id, Number(r.cant_recibida) || 0]));
       const totalEsperadoReq = itemsDeEsteReq.reduce((s, it) => s + Number(it.cant), 0);
       const totalRecibidoReq = itemsDeEsteReq.reduce((s, it) => s + (recibidoPorId.get(it.id) || 0), 0);
 
-      // Acumular contra recibidos previos de la req (si ya hubo recepción parcial antes)
-      const previos = Array.isArray(req.recibidos) ? req.recibidos : [];
-      const previosMap = new Map(previos.map(p => [p.item_id, Number(p.cant_recibida) || 0]));
+      // Valor ABSOLUTO del input — mismo que se persiste en la OC.
       const recibidosFinales = itemsDeEsteReq.map(it => ({
         item_id: it.id,
-        cant_recibida: (previosMap.get(it.id) || 0) + (recibidoPorId.get(it.id) || 0),
+        cant_recibida: recibidoPorId.get(it.id) || 0,
       }));
 
       // Estado final de la req
@@ -3006,12 +3014,15 @@ function DetailModal({ req, onClose, onUpdate, onGenerarOC, proveedores, reglas,
                       if (!confirm(`Generar/actualizar ${provsAsignados.length} OC${provsAsignados.length !== 1 ? "s" : ""}? (Se hace auto-merge si el proveedor tiene OC abierta)`)) return;
                       setSplitting(true);
 
+                      // Key incluye precioU para no perder precios distintos
+                      // del mismo nombre+unidad (audit rank 18).
                       const consolidar = (lista) => {
                         const map = new Map();
                         for (const it of lista) {
                           const nombre = (it.nombre || it.item || "").trim();
                           const unidad = (it.unidad || "").toLowerCase();
-                          const key = `${nombre.toLowerCase()}|${unidad}`;
+                          const precioU = Math.round(Number(it.precioU) || 0);
+                          const key = `${nombre.toLowerCase()}|${unidad}|${precioU}`;
                           const reqIds = it.req_id ? [it.req_id] : (it.req_ids || []);
                           if (map.has(key)) {
                             const ex = map.get(key);
@@ -3021,8 +3032,8 @@ function DetailModal({ req, onClose, onUpdate, onGenerarOC, proveedores, reglas,
                           } else {
                             map.set(key, {
                               id: it.id, item: nombre, cant: Number(it.cant) || 0, unidad: it.unidad,
-                              precioU: Math.round(Number(it.precioU) || 0),
-                              subtotal: Math.round(Number(it.subtotal) || (Number(it.cant) || 0) * (Number(it.precioU) || 0)),
+                              precioU,
+                              subtotal: Math.round(Number(it.subtotal) || (Number(it.cant) || 0) * precioU),
                               req_ids: reqIds.length ? reqIds : [req.id],
                             });
                           }
@@ -3656,13 +3667,16 @@ export function AsignarOCModal({ items, proveedores, ordenes, reqs, currentUser,
     setSaving(true);
     const prov = proveedores.find(p => p.id === provId);
 
-    // Consolidar items del mismo producto en una sola línea (suma cantidades)
+    // Consolidar items con mismo nombre + unidad + PRECIO. Si difiere el
+    // precio, quedan lineas separadas para no perder el precio nuevo
+    // (audit rank 18).
     const consolidar = (lista) => {
       const map = new Map();
       for (const it of lista) {
         const nombre = (it.nombre || it.item || "").trim();
         const unidad = (it.unidad || "").toLowerCase();
-        const key = `${nombre.toLowerCase()}|${unidad}`;
+        const precioU = Math.round(Number(it.precioU) || 0);
+        const key = `${nombre.toLowerCase()}|${unidad}|${precioU}`;
         const reqIds = it.req_id ? [it.req_id] : (it.req_ids || []);
         if (map.has(key)) {
           const ex = map.get(key);
@@ -3675,8 +3689,8 @@ export function AsignarOCModal({ items, proveedores, ordenes, reqs, currentUser,
             item: nombre,
             cant: Number(it.cant) || 0,
             unidad: it.unidad,
-            precioU: Math.round(Number(it.precioU) || 0),
-            subtotal: Math.round(Number(it.subtotal) || (Number(it.cant) || 0) * (Number(it.precioU) || 0)),
+            precioU,
+            subtotal: Math.round(Number(it.subtotal) || (Number(it.cant) || 0) * precioU),
             req_ids: reqIds,
           });
         }
