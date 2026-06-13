@@ -1260,12 +1260,53 @@ function TabRecibidas({ ordenes, reqs, reload, currentUser }) {
 
   const reabrir = async (oc) => {
     if (!window.confirm(`¿Reabrir OC ${oc.codigo}?\n\nVuelve a Recepciones para ajustar cantidades. Útil si se marcó como recibida por error.`)) return;
+
+    // Encontrar requisiciones origen (mismo patron que marcarRecibida).
+    const reqDeItems = (oc.items || [])
+      .flatMap(it => Array.isArray(it.req_ids) ? it.req_ids : (it.req_id ? [it.req_id] : []));
+    const reqIdsOrigen = Array.from(new Set([
+      ...((Array.isArray(oc.requisicion_ids) ? oc.requisicion_ids : []) || []),
+      ...(oc.requisicion_id ? [oc.requisicion_id] : []),
+      ...reqDeItems,
+    ].filter(Boolean)));
+
     const { error } = await supabase.from("ordenes_compra").update({
       estado: "recibida_parcial",
       recibida_at: null,
       updated_at: new Date().toISOString(),
     }).eq("id", oc.id);
     if (error) return alert("Error: " + error.message);
+
+    // Propagar el revert a las requisiciones origen.
+    // Si una req estaba 'Recibida' (marcada como completa) y tenia items
+    // en ESTA OC, ya no esta completa — volverla a 'Recibida Parcial'
+    // (asumiendo que tenia algun recibido; sino, queda en el estado anterior).
+    // No tocamos reqs en otros estados (En Compra, Aprobada, etc).
+    for (const reqId of reqIdsOrigen) {
+      const req = reqs.find(r => r.id === reqId);
+      if (!req) continue;
+      if (req.estado !== "Recibida") continue;
+
+      const itemsDeEsteReq = (oc.items || []).filter(it =>
+        it.req_id === reqId || (Array.isArray(it.req_ids) && it.req_ids.includes(reqId))
+      );
+      if (itemsDeEsteReq.length === 0) continue;
+
+      const algunRecibido = (Array.isArray(req.recibidos) ? req.recibidos : [])
+        .some(r => Number(r.cant_recibida) > 0);
+      const nuevoEstadoReq = algunRecibido ? "Recibida Parcial" : "En Compra";
+
+      await supabase.from("requisiciones").update({
+        estado: nuevoEstadoReq,
+        timeline: [...(req.timeline || []), {
+          quien: currentUser?.nombre || "—",
+          accion: `Revertida a ${nuevoEstadoReq} (OC ${oc.codigo} reabrió)`,
+          fecha: new Date().toLocaleString("es-CO"),
+          comentario: `OC ${oc.codigo} se reabrió — recepción de esta req queda parcial.`,
+        }],
+      }).eq("id", req.id);
+    }
+
     reload?.();
   };
 
