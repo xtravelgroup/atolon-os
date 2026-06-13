@@ -191,7 +191,9 @@ export default function Requisiciones() {
   // ── Reglas de aprobación fijas ──────────────────────────────────────────────
   // Todas las req → gerente_general
   // Si monto > $12M o total semanal > $30M → requiere también dirección (super_admin)
-  const UMBRAL_DIRECCION = 12_000_000;
+  // Umbral para doble firma — requisiciones >= UMBRAL_DIRECCION requieren
+  // aprobación de gerente_general + super_admin/admin.
+  const UMBRAL_DIRECCION = 10_000_000;
   const UMBRAL_SEMANAL = 30_000_000;
 
   // Total aprobado esta semana (lunes a domingo)
@@ -784,21 +786,25 @@ function TabAprobaciones({ reqs, reglas, onOpen, currentUser, reload }) {
         updated_at: new Date().toISOString(),
       }).eq("id", r.id);
     } else {
-      // Verificar si necesita más aprobaciones.
-      // super_admin tiene acceso total: su aprobación cuenta tanto como
-      // Gerente General como Dirección (antes quedaba atascada en Pendiente
-      // porque su rol no empieza con "gerente_general").
+      // Doble firma estricta para reqs nivel "direccion" (>= $10M):
+      // - gerente_general_* DEBE firmar (no se cuenta super_admin como gerente)
+      // - super_admin o admin DEBE firmar (la firma de control de gobierno)
+      // Esto matchea el trigger SQL req_aprobador_check.
       const nivel = r.nivel_aprobacion || "gerente_general";
-      const yaGerenteAprobo = aprobaciones.some(a => a.accion === "aprobada" && (esGerenteGeneralRol(a.rol) || a.rol === "super_admin"));
-      const yaDireccionAprobo = aprobaciones.some(a => a.accion === "aprobada" && (a.rol === "super_admin" || a.rol === "direccion"));
+      const yaGerenteAprobo   = aprobaciones.some(a => a.accion === "aprobada" && esGerenteGeneralRol(a.rol));
+      const yaDireccionAprobo = aprobaciones.some(a => a.accion === "aprobada" && (a.rol === "super_admin" || a.rol === "admin" || a.rol === "direccion"));
 
       let nuevoEstado = "Pendiente";
-      if (nivel === "gerente_general" && yaGerenteAprobo) {
-        nuevoEstado = "Aprobada"; // Gerente aprobó, pasa a compras
-      } else if (nivel === "direccion" && yaGerenteAprobo && yaDireccionAprobo) {
-        nuevoEstado = "Aprobada"; // Ambos aprobaron, pasa a compras
-      } else if (nivel === "direccion" && yaGerenteAprobo && !yaDireccionAprobo) {
-        nuevoEstado = "Pendiente"; // Gerente aprobó, falta dirección
+      if (nivel === "gerente_general") {
+        // <$10M: alcanza con gerente_general (o super_admin que cubre por jerarquía)
+        if (yaGerenteAprobo || aprobaciones.some(a => a.accion === "aprobada" && (a.rol === "super_admin" || a.rol === "admin"))) {
+          nuevoEstado = "Aprobada";
+        }
+      } else if (nivel === "direccion") {
+        // >=$10M: doble firma obligatoria — ambas firmas presentes
+        if (yaGerenteAprobo && yaDireccionAprobo) {
+          nuevoEstado = "Aprobada";
+        }
       }
 
       await supabase.from("requisiciones").update({
@@ -838,9 +844,10 @@ function TabAprobaciones({ reqs, reglas, onOpen, currentUser, reload }) {
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
         {reqs.map(r => {
           const nivel = r.nivel_aprobacion || "gerente_general";
-          const yaGerenteAprobo = (r.aprobaciones || []).some(a => a.accion === "aprobada" && esGerenteGeneralRol(a.rol));
+          const yaGerenteAprobo   = (r.aprobaciones || []).some(a => a.accion === "aprobada" && esGerenteGeneralRol(a.rol));
+          const yaDireccionAprobo = (r.aprobaciones || []).some(a => a.accion === "aprobada" && (a.rol === "super_admin" || a.rol === "admin" || a.rol === "direccion"));
           const reqDireccion = nivel === "direccion";
-          const esperaDireccion = reqDireccion && yaGerenteAprobo;
+          const esperaDireccion = reqDireccion && yaGerenteAprobo && !yaDireccionAprobo;
           const borderColor = reqDireccion ? B.warning : B.sky;
 
           return (
@@ -861,8 +868,12 @@ function TabAprobaciones({ reqs, reglas, onOpen, currentUser, reload }) {
                       {yaGerenteAprobo ? "✅ Gerente" : "⏳ Gerente"}
                     </span>
                     {reqDireccion && (
-                      <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 10, background: `${B.sand}22`, color: B.sand }}>
-                        {esperaDireccion ? "⏳ Dirección" : "— Dirección"}
+                      <span style={{
+                        fontSize: 10, padding: "2px 8px", borderRadius: 10,
+                        background: yaDireccionAprobo ? `${B.success}22` : `${B.sand}22`,
+                        color: yaDireccionAprobo ? B.success : B.sand,
+                      }}>
+                        {yaDireccionAprobo ? "✅ Dirección" : (esperaDireccion ? "⏳ Falta Dirección" : "— Dirección")}
                       </span>
                     )}
                     <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 10, background: `${B.navyLight}`, color: "rgba(255,255,255,0.3)" }}>
