@@ -36,7 +36,11 @@ const METODOS = [
   { key: "otros",         label: "Otros",          icon: "➕" },
 ];
 
-function parseCOP(v) { return parseInt(String(v).replace(/[^0-9-]/g, ""), 10) || 0; }
+// Solo digitos — el guion ya no pasa. Antes el regex era /[^0-9-]/g, que
+// preservaba el guion y permitia pegar/teclear valores negativos en inputs
+// type=number min=0 (audit rank 56). Las ventas/propinas no pueden ser
+// negativas en cierre de caja.
+function parseCOP(v) { return parseInt(String(v).replace(/[^0-9]/g, ""), 10) || 0; }
 function fmtFecha(d) {
   if (!d) return "—";
   const p = d.split("-");
@@ -564,6 +568,13 @@ export default function CierreCaja() {
   const [reservasDia,     setReservasDia]     = useState([]);
   const [loadingReservas, setLoadingReservas] = useState(false);
 
+  // Audit rank 52: el auto-fill de metodos pisaba ediciones manuales cada
+  // vez que cambiaba area/fecha/cajero. Si el cajero ajustaba efectivo por
+  // propina y luego cambiaba la fecha, el form se reseteaba sin warning.
+  // Ahora autoFilledRef marca combinaciones (cajero+fecha+area) ya pre-rellenadas.
+  // Solo auto-fillea la PRIMERA vez por combinacion. Si el usuario ya tocó
+  // los inputs (metodos !== iniciales), no pisamos.
+  const autoFilledRef = useRef(new Set());
   useEffect(() => {
     if (!supabase || area !== "pasadias" || !fecha || !cajero) {
       setReservasDia([]); return;
@@ -579,7 +590,16 @@ export default function CierreCaja() {
       .then(({ data }) => {
         const rows = data || [];
         setReservasDia(rows);
-        // Auto-llenar métodos desde las reservas (excluye CXC)
+
+        const comboKey = `${area}|${fecha}|${cajero}`;
+        // Si la combinacion ya fue auto-rellenada, NO pisamos. El usuario
+        // pudo haber editado a mano y no queremos perder eso.
+        if (autoFilledRef.current.has(comboKey)) {
+          setLoadingReservas(false);
+          return;
+        }
+        autoFilledRef.current.add(comboKey);
+
         const newM = initMetodos();
         rows.forEach(r => {
           const mk = FORMA_TO_METODO[r.forma_pago];
@@ -745,6 +765,55 @@ export default function CierreCaja() {
       setError("Debes adjuntar al menos una foto del comprobante físico antes de cerrar la caja (control de auditoría).");
       return;
     }
+
+    // Audit rank 53: validar rango de fecha. Sin esto se puede backdatear
+    // alterando ingresos historicos ya conciliados, o tipear una fecha
+    // futura que contamine dashboards.
+    const hoyCo = new Date().toLocaleDateString("en-CA", { timeZone: "America/Bogota" });
+    if (fecha > hoyCo) {
+      setError("No se pueden cerrar cajas con fecha futura.");
+      return;
+    }
+    const diasAtras = Math.floor((new Date(hoyCo) - new Date(fecha)) / 86400000);
+    if (diasAtras > 7) {
+      const ok = window.confirm(
+        `Estás cerrando una caja de hace ${diasAtras} días (${fecha}). Esto puede alterar reportes ya conciliados. ` +
+        `¿Estás seguro de continuar?`
+      );
+      if (!ok) return;
+    }
+
+    // Audit rank 55: faltante de efectivo significativo requiere justificación
+    // por escrito. Sin esto los faltantes llegan a auditoría sin contexto.
+    const UMBRAL_FALTANTE = -50000; // -$50K, por encima de eso pedimos nota
+    if (diferencia < UMBRAL_FALTANTE && notas.trim().length < 10) {
+      setError(
+        `Faltante de ${COP(Math.abs(diferencia))} detectado. Las notas son obligatorias ` +
+        `(mínimo 10 caracteres explicando la razón del faltante).`
+      );
+      return;
+    }
+
+    // Audit rank 51: pre-check de duplicado (area, fecha, cajero).
+    // No hay UNIQUE constraint en DB todavia (requeriria migracion); este
+    // check evita doble-close desde UI. Race remoto multi-usuario queda
+    // como brecha conocida hasta que se aplique constraint.
+    const { data: existente } = await supabase.from("cierres_caja")
+      .select("id, total_ventas")
+      .eq("area", area)
+      .eq("fecha", fecha)
+      .eq("cajero_nombre", cajero.trim())
+      .limit(1)
+      .maybeSingle();
+    if (existente) {
+      setError(
+        `Ya existe un cierre para ${area} · ${fecha} · ${cajero.trim()} ` +
+        `(ID ${existente.id}, ${COP(existente.total_ventas)}). ` +
+        `Si necesitas corregirlo, anulá el anterior o pedile a Gerencia.`
+      );
+      return;
+    }
+
     setSaving(true);
     setError(null);
 
@@ -764,13 +833,19 @@ export default function CierreCaja() {
     }
 
     const id = `CC-${Date.now()}`;
+    // Audit rank 54: numCaja/numComp solo aplican a areas distintas de
+    // pasadias. Los inputs no se renderizan cuando area='pasadias' pero el
+    // state persiste si el usuario cambio de area sin recargar. Antes el
+    // insert escribia esos valores stale, clasificando mal el cierre en
+    // reportes filtrados por caja.
+    const esPasadias = area === "pasadias";
     const record = {
       id,
       fecha,
       area,
       cajero_nombre: cajero.trim(),
-      numero_caja: numCaja.trim() || null,
-      numero_comprobante: numComp.trim() || null,
+      numero_caja: esPasadias ? null : (numCaja.trim() || null),
+      numero_comprobante: esPasadias ? null : (numComp.trim() || null),
       comprobante_url: photos.find(p => p.url)?.url || null,
       comprobante_urls: photos.filter(p => p.url).map(p => p.url),
       usuario_email: email,
@@ -803,6 +878,9 @@ export default function CierreCaja() {
     setCajero(userNombre || ""); setNumCaja(""); setNumComp(""); setPhotos([]);
     setMetodos(initMetodos()); setOtrosList([]); setIncBase(""); setIncImpuesto("");
     setEfectivoContado(""); setNotas("");
+    // Olvidar combinaciones auto-rellenadas — el siguiente cierre del mismo
+    // (area, fecha, cajero) volvera a pre-rellenar.
+    autoFilledRef.current = new Set();
   };
 
   // ────────────────────────────────────────────────────────────────────────────
