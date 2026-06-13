@@ -286,6 +286,29 @@ function ReservaModal({ huespedes, habitaciones, tarifas, categorias, reservas, 
 
     setSaving(true); setErr("");
     try {
+      // Re-validar overlap server-side antes del INSERT — la lista 'disponibles'
+      // del state local puede estar stale si dos canales (web/recepción/OTA)
+      // crearon reservas en la misma habitacion mientras el modal estaba abierto.
+      if (f.habitacion_id) {
+        const { data: conflicts } = await supabase
+          .from("hotel_estancias")
+          .select("id, codigo, check_in_at, check_out_at, estado")
+          .eq("habitacion_id", f.habitacion_id)
+          .in("estado", ["reservada", "in_house"]);
+        const nuevoIn  = new Date(f.check_in_at  + "T15:00:00").toISOString();
+        const nuevoOut = new Date(f.check_out_at + "T12:00:00").toISOString();
+        const conflict = (conflicts || []).find(r =>
+          r.check_in_at && r.check_out_at &&
+          new Date(r.check_in_at) < new Date(nuevoOut) &&
+          new Date(nuevoIn) < new Date(r.check_out_at)
+        );
+        if (conflict) {
+          setSaving(false);
+          setErr(`La habitación ya está reservada (${conflict.codigo}) entre ${conflict.check_in_at.slice(0,10)} y ${conflict.check_out_at.slice(0,10)}. Otro usuario la tomó mientras armabas esta reserva.`);
+          return;
+        }
+      }
+
       let huesped_id = f.huesped_id;
       if (f.nuevoHuesped) {
         const { data, error } = await supabase.from("hotel_huespedes").insert({
@@ -507,6 +530,35 @@ function DetalleModal({ reserva, huesped, habitacion, onClose, onChanged }) {
 
   async function cambiarEstado(nuevoEstado) {
     setLoading(true); setErr("");
+    // Si pasamos de cancelada/no_show/checked_out a un estado ACTIVO
+    // (reservada / in_house), re-validar que la habitación no se haya
+    // reservado mientras tanto. Audit rank 30: reactivar una reserva
+    // cancelada permitia double-booking porque el codigo NO chequeaba.
+    const estadosActivosNuevos = ["reservada", "in_house"];
+    const estadosNoActivosPrev = ["cancelada", "no_show", "checked_out"];
+    if (
+      estadosActivosNuevos.includes(nuevoEstado) &&
+      estadosNoActivosPrev.includes(reserva.estado) &&
+      reserva.habitacion_id
+    ) {
+      const { data: conflicts } = await supabase
+        .from("hotel_estancias")
+        .select("id, codigo, check_in_at, check_out_at")
+        .eq("habitacion_id", reserva.habitacion_id)
+        .in("estado", estadosActivosNuevos)
+        .neq("id", reserva.id);
+      const conflict = (conflicts || []).find(r =>
+        r.check_in_at && r.check_out_at &&
+        new Date(r.check_in_at) < new Date(reserva.check_out_at) &&
+        new Date(reserva.check_in_at) < new Date(r.check_out_at)
+      );
+      if (conflict) {
+        setLoading(false);
+        setErr(`No se puede reactivar: la habitación ya tiene otra reserva activa (${conflict.codigo}) entre ${conflict.check_in_at.slice(0,10)} y ${conflict.check_out_at.slice(0,10)}. Reasignala primero.`);
+        return;
+      }
+    }
+
     const r = await supabase.from("hotel_estancias").update({
       estado: nuevoEstado,
       updated_at: new Date().toISOString(),
