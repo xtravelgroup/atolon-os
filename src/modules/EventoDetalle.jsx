@@ -4206,14 +4206,35 @@ export default function EventoDetalle({ evento: inicial, canEdit = true, onBack,
       setPuedeVerPL(puedePL);
     });
   }, []);
-  const saveTimer = useRef(null);
+  // Timers por CAMPO — no compartidos. Antes había un solo saveTimer para
+  // todos los campos: editar campo A y luego B antes de 800ms cancelaba
+  // el save de A. Ahora cada campo tiene su propio timer y se save
+  // independientemente (audit rank 41).
+  const saveTimers = useRef({});
+  // Log buffer: acumula entries de logCambio entre ticks del timer y al
+  // disparar flushea TODOS (antes el clearTimeout descartaba entries
+  // intermedios — audit rank 67).
+  const logBuffer = useRef([]);
   const logTimer  = useRef(null);
+  // Campos editados por el usuario — el fetch inicial NO debe pisarlos
+  // si llega tarde (audit rank 66).
+  const dirtyFields = useRef(new Set());
 
   // Reload fresh data on mount
   useEffect(() => {
     if (!supabase || !inicial?.id) return;
     supabase.from("eventos").select("*").eq("id", inicial.id).single()
-      .then(({ data }) => { if (data) setEvento(prev => ({ ...prev, ...data })); });
+      .then(({ data }) => {
+        if (!data) return;
+        // Mergear solo keys que NO esten dirty — preserva ediciones en curso.
+        setEvento(prev => {
+          const merged = { ...prev };
+          for (const k of Object.keys(data)) {
+            if (!dirtyFields.current.has(k)) merged[k] = data[k];
+          }
+          return merged;
+        });
+      });
   }, [inicial?.id]);
 
   // Cargar usuarios para dropdown de encargados
@@ -4421,15 +4442,26 @@ export default function EventoDetalle({ evento: inicial, canEdit = true, onBack,
       const historial = [entry, ...(prev.historial_cambios || [])].slice(0, 500); // cap at 500 entries
       return { ...prev, historial_cambios: historial };
     });
-    // Save historial asynchronously (without triggering another log)
+    // Save historial asynchronously. Buffer acumula entries de multiples
+    // logCambio entre ticks del timer y al disparar flushea TODOS los
+    // pending entries (antes el clearTimeout descartaba intermedios).
     if (supabase && evento?.id) {
+      logBuffer.current.push(entry);
       clearTimeout(logTimer.current);
-      logTimer.current = setTimeout(() => {
-        supabase.from("eventos").select("historial_cambios").eq("id", evento.id).single().then(({ data }) => {
-          const existing = data?.historial_cambios || [];
-          const newHist = [entry, ...existing].slice(0, 500);
-          supabase.from("eventos").update({ historial_cambios: newHist }).eq("id", evento.id);
-        });
+      logTimer.current = setTimeout(async () => {
+        const pending = logBuffer.current;
+        logBuffer.current = []; // reset antes del fetch para nuevos entries no se pierdan
+        if (pending.length === 0) return;
+        const { data } = await supabase.from("eventos")
+          .select("historial_cambios").eq("id", evento.id).single();
+        const existing = data?.historial_cambios || [];
+        // Prepend TODOS los pending (mas recientes primero, dado que pending
+        // ya esta en orden de inserccion, hay que reverse para que el mas
+        // nuevo quede arriba).
+        const newHist = [...pending.slice().reverse(), ...existing].slice(0, 500);
+        await supabase.from("eventos")
+          .update({ historial_cambios: newHist })
+          .eq("id", evento.id);
       }, 1200);
     }
   };
@@ -4438,8 +4470,14 @@ export default function EventoDetalle({ evento: inicial, canEdit = true, onBack,
     if (!canEdit) return; // read-only users can't update
     const prevValue = evento[field];
     setEvento(prev => ({ ...prev, [field]: value }));
-    clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(() => saveField(field, value), 800);
+    dirtyFields.current.add(field);
+    // Timer per-field: editar campo A y luego B antes de 800ms ya NO
+    // cancela el save de A. Cada campo se persiste independiente.
+    if (saveTimers.current[field]) clearTimeout(saveTimers.current[field]);
+    saveTimers.current[field] = setTimeout(() => {
+      saveField(field, value);
+      delete saveTimers.current[field];
+    }, 800);
     // Log the change
     if (JSON.stringify(prevValue) !== JSON.stringify(value)) {
       logCambio(field, prevValue, value);
