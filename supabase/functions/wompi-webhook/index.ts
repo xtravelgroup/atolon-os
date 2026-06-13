@@ -73,23 +73,39 @@ const CORS = {
   "Access-Control-Allow-Headers": "Content-Type, Authorization, apikey",
 };
 
+// Timing-safe equality sobre hex strings de igual length.
+function timingSafeEqualHex(a: string, b: string): boolean {
+  if (typeof a !== "string" || typeof b !== "string") return false;
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+}
+
 // ── Validar firma del evento ────────────────────────────────────────────
 // Wompi calcula: SHA256( <prop1_value><prop2_value>...<propN_value><timestamp><events_secret> )
-async function validarFirma(payload: any, eventsSecret: string): Promise<boolean> {
-  if (!eventsSecret) {
-    console.warn("WOMPI_EVENTS_SECRET no configurado — saltando validación");
-    return true; // permitir mientras el secret no esté seteado (modo dev)
-  }
-  const signature = payload?.signature;
-  if (!signature?.checksum || !Array.isArray(signature.properties)) return false;
+// FAIL-CLOSED: si no hay secret O signature ausente, rechaza.
+async function validarFirma(payload: any, eventsSecret: string): Promise<{ ok: boolean; reason?: string }> {
+  if (!eventsSecret) return { ok: false, reason: "no_secret" };
 
-  // Concatena el valor de cada propiedad listada (paths como "transaction.id")
-  const concatProps = signature.properties.map((path: string) => {
-    const parts = path.split(".");
-    let v: any = payload?.data;
-    for (const p of parts) v = v?.[p];
-    return String(v ?? "");
-  }).join("");
+  const signature = payload?.signature;
+  if (!signature?.checksum || !Array.isArray(signature.properties)) {
+    return { ok: false, reason: "missing_signature" };
+  }
+
+  let concatProps: string;
+  try {
+    concatProps = signature.properties.map((path: string) => {
+      const parts = path.split(".");
+      let v: any = payload?.data;
+      for (const p of parts) v = v?.[p];
+      return String(v ?? "");
+    }).join("");
+  } catch (e) {
+    return { ok: false, reason: `properties_parse_error: ${(e as Error).message}` };
+  }
+
+  if (!payload.timestamp) return { ok: false, reason: "missing_timestamp" };
 
   const message = concatProps + String(payload.timestamp) + eventsSecret;
   const msgBytes = new TextEncoder().encode(message);
@@ -97,7 +113,9 @@ async function validarFirma(payload: any, eventsSecret: string): Promise<boolean
   const hashHex = Array.from(new Uint8Array(hashBuffer))
     .map(b => b.toString(16).padStart(2, "0"))
     .join("");
-  return hashHex === signature.checksum.toLowerCase();
+  return timingSafeEqualHex(hashHex, String(signature.checksum).toLowerCase())
+    ? { ok: true }
+    : { ok: false, reason: "checksum_mismatch" };
 }
 
 function jsonResp(obj: any, status = 200) {
@@ -112,8 +130,13 @@ serve(async (req) => {
   const url = new URL(req.url);
   const path = url.pathname.replace(/^\/wompi-webhook/, "");
 
-  // ── GET /diag — diagnóstico público (sin auth) ──────────────────────
+  // ── GET /diag — diagnóstico (requiere CRON_SECRET o service_role JWT) ──
   if (req.method === "GET" && path === "/diag") {
+    const cronSecret = req.headers.get("x-atolon-cron-secret");
+    const expectedSecret = Deno.env.get("CRON_SECRET") || "";
+    if (!expectedSecret || cronSecret !== expectedSecret) {
+      return jsonResp({ error: "unauthorized" }, 401);
+    }
     try {
       const SB = createClient(
         Deno.env.get("SUPABASE_URL")!,
@@ -157,14 +180,20 @@ serve(async (req) => {
     });
   }
 
-  // ── POST /poll-recent — safety net mientras webhook no llegue ──────
+  // ── POST /poll-recent — safety net (requiere CRON_SECRET) ──────────
   // Lista reservas Wompi de últimas N horas (cancelado o pendiente_pago)
   // y consulta Wompi por reference para detectar pagos APPROVED que no
   // confirmaron la reserva por webhook fallido.
   if (req.method === "POST" && path === "/poll-recent") {
+    const cronSecret = req.headers.get("x-atolon-cron-secret");
+    const expectedSecret = Deno.env.get("CRON_SECRET") || "";
+    if (!expectedSecret || cronSecret !== expectedSecret) {
+      return jsonResp({ error: "unauthorized" }, 401);
+    }
     try {
       const body = await req.json().catch(() => ({}));
-      const horasAtras = Number(body?.hours) || 4;
+      // Cap a 48h para impedir abuso (spam Wompi rate-limit con hours=999999)
+      const horasAtras = Math.min(Math.max(Number(body?.hours) || 4, 1), 48);
       const desdeStr = new Date(Date.now() - horasAtras * 3600 * 1000).toISOString();
 
       const SB = createClient(
@@ -278,25 +307,51 @@ serve(async (req) => {
     const finalizadoAt = tx.finalized_at || tx.updated_at || new Date().toISOString();
 
     // Persistir log antes de validar firma (debug si la firma falla)
-    await SB.from("wompi_eventos_log").insert({
+    // Capturamos el id insertado para hacer updates scoped a esta fila
+    // (impide que un APPROVED valido posterior flipee firma_valida=true
+    // de eventos forjados previos).
+    const { data: logRow } = await SB.from("wompi_eventos_log").insert({
       evento,
       referencia: ref,
       transaction_id: txId,
       status,
       monto,
       raw: payload,
-      firma_valida: false, // se actualiza abajo
-    }).then(() => {}).catch(() => {});
+      firma_valida: false,
+    }).select("id").maybeSingle();
+    const logRowId = logRow?.id;
 
-    // Validar firma — pero retornar 200 igual para que Wompi no reintente
+    // FAIL-CLOSED: si la firma es invalida o el secret no esta configurado,
+    // rechazar con 401 y NO procesar. Wompi reintenta — pero es preferible
+    // que reintente con firma valida que dejarse colar un evento forjado.
     const eventsSecret = await loadWompiEventsSecret(SB);
-    const firmaOK = await validarFirma(payload, eventsSecret);
-    if (!firmaOK) {
-      console.error("Firma Wompi inválida:", { ref, txId, sig: payload?.signature?.checksum?.slice(0, 12) });
-      return jsonResp({ received: true, firma: "invalid" }, 200);
+    const allowUnsigned = Deno.env.get("WOMPI_ALLOW_UNSIGNED") === "true";
+    const verdict = await validarFirma(payload, eventsSecret);
+    if (!verdict.ok) {
+      const msg = `Firma Wompi rechazada (${verdict.reason})`;
+      console.error(msg, { ref, txId, sig: payload?.signature?.checksum?.slice(0, 12) });
+      if (!allowUnsigned) {
+        return jsonResp({ error: "unauthorized", reason: verdict.reason }, 401);
+      }
+      console.warn("[wompi-webhook] WOMPI_ALLOW_UNSIGNED=true — procesando sin firma valida (solo dev).");
+    } else if (logRowId) {
+      await SB.from("wompi_eventos_log").update({ firma_valida: true }).eq("id", logRowId).then(() => {}).catch(() => {});
     }
+
+    // Idempotencia: si esta transaction_id ya fue procesada (processed_at set),
+    // devolver 200 sin reprocesar. Evita duplicar emails/WhatsApp y reescribir
+    // estados ante retries de Wompi.
     if (txId) {
-      await SB.from("wompi_eventos_log").update({ firma_valida: true }).eq("transaction_id", txId).then(() => {}).catch(() => {});
+      const { data: prevProcessed } = await SB.from("wompi_eventos_log")
+        .select("id")
+        .eq("transaction_id", txId)
+        .not("processed_at", "is", null)
+        .limit(1)
+        .maybeSingle();
+      if (prevProcessed) {
+        console.log(`[wompi-webhook] Tx ${txId} ya procesada, skip.`);
+        return jsonResp({ received: true, skipped: "already_processed" });
+      }
     }
 
     // Solo procesamos el evento de transacción
@@ -379,17 +434,53 @@ serve(async (req) => {
     if (reserva) {
       const fechaPago = (finalizadoAt || "").slice(0, 10);
       const notaTrx = `Pago Wompi (${metodo}) — Trx #${txId} — ${status}`;
+      const currency = String(tx.currency || "").toUpperCase();
+      const totalReserva = Number(reserva.total || 0);
 
       if (status === "APPROVED") {
-        await SB.from("reservas").update({
+        // Validacion de currency: Wompi opera en COP. Cualquier otra es sospechosa.
+        if (currency && currency !== "COP") {
+          console.error(`[wompi-webhook] Currency inesperada ${currency} en tx ${txId}`);
+          return jsonResp({ error: "currency_mismatch", currency }, 400);
+        }
+
+        // Validacion de undercharge: el monto cobrado debe cubrir al menos el total.
+        // 1% de tolerancia por rounding de centavos.
+        if (totalReserva > 0 && monto < totalReserva - Math.max(100, totalReserva * 0.01)) {
+          console.error(`[wompi-webhook] Undercharge: monto=${monto} vs total=${totalReserva} (tx ${txId})`);
+          await SB.from("historial_acciones").insert({
+            accion: "wompi_webhook_undercharge",
+            detalle: `Cobrado ${monto} vs total ${totalReserva}`,
+            metadata: { tx_id: txId, reserva_id: reserva.id },
+          }).then(() => {}).catch(() => {});
+          return jsonResp({ error: "undercharge", monto, total: totalReserva }, 400);
+        }
+
+        // Skip si ya esta confirmada y referencia_pago coincide (idempotencia)
+        if (reserva.estado === "confirmado") {
+          console.log(`[wompi-webhook] Reserva ${reserva.id} ya confirmada, skip.`);
+          if (logRowId) {
+            await SB.from("wompi_eventos_log").update({ processed_at: new Date().toISOString() }).eq("id", logRowId).then(() => {}).catch(() => {});
+          }
+          return jsonResp({ received: true, skipped: "already_confirmed" });
+        }
+
+        const { error: updErr } = await SB.from("reservas").update({
           abono:       monto,
-          saldo:       Math.max(0, Number(reserva.total || 0) - monto),
+          saldo:       Math.max(0, totalReserva - monto),
           estado:      "confirmado",
           forma_pago:  "wompi",
           fecha_pago:  fechaPago,
           referencia_pago: txId,
           updated_at:  new Date().toISOString(),
-        }).eq("id", reserva.id);
+        })
+          .eq("id", reserva.id)
+          .eq("estado", "pendiente_pago"); // guard: solo desde pendiente_pago
+
+        if (updErr) {
+          console.error(`[wompi-webhook] Update reserva fallo: ${updErr.message}`);
+          return jsonResp({ error: "update_failed", message: updErr.message }, 500);
+        }
 
         // Confirmar el track_ingreso correspondiente (AtolonTrack)
         // El SDK frontend marca 'pendiente' al hacer click "Pagar". El webhook
@@ -442,17 +533,33 @@ serve(async (req) => {
           }).catch(e => console.warn(`[wompi] Tatiana followup failed: ${(e as Error).message}`)),
         ]);
 
+        if (logRowId) {
+          await SB.from("wompi_eventos_log")
+            .update({ processed_at: new Date().toISOString() })
+            .eq("id", logRowId).then(() => {}).catch(() => {});
+        }
+
         return jsonResp({ received: true, processed: true, action: "confirmed", reserva_id: reserva.id });
       }
 
       if (status === "DECLINED" || status === "VOIDED" || status === "ERROR") {
+        // Guard: si la reserva YA esta confirmada (puede pasar si llega un DECLINED
+        // tardio despues de un APPROVED valido), no la regresemos a pendiente.
         await SB.from("reservas").update({
           estado: "pendiente",
           notas:  (reserva as any).notas
             ? (reserva as any).notas + " | " + notaTrx
             : notaTrx,
           updated_at: new Date().toISOString(),
-        }).eq("id", reserva.id);
+        })
+          .eq("id", reserva.id)
+          .neq("estado", "confirmado");
+
+        if (logRowId) {
+          await SB.from("wompi_eventos_log")
+            .update({ processed_at: new Date().toISOString() })
+            .eq("id", logRowId).then(() => {}).catch(() => {});
+        }
 
         return jsonResp({ received: true, processed: true, action: "declined", reserva_id: reserva.id });
       }
