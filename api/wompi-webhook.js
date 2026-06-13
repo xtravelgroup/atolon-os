@@ -32,33 +32,45 @@ export default async function handler(req, res) {
     process.env.VITE_SUPABASE_ANON_KEY;
 
   const eventsSecret = process.env.WOMPI_EVENTS_SECRET;
+  const allowUnsigned = process.env.WOMPI_ALLOW_UNSIGNED === "true";
 
   const body = req.body;
 
-  // ── Validar firma Wompi ──────────────────────────────────────────────────
-  // Wompi firma: SHA256( propValues.join("") + timestamp + events_secret )
-  // Campos firmados vienen en signature.properties
-  if (eventsSecret && body?.signature?.checksum) {
+  // ── FAIL-CLOSED: sin secret no procesar ────────────────────────────────
+  if (!eventsSecret) {
+    if (!allowUnsigned) {
+      console.error("[wompi-webhook] WOMPI_EVENTS_SECRET no configurado — fail-closed");
+      return res.status(500).json({ error: "webhook_misconfigured" });
+    }
+    console.warn("[wompi-webhook] WOMPI_ALLOW_UNSIGNED=true — bypass solo para dev");
+  } else {
+    // Si hay secret pero no signature, rechazar.
+    if (!body?.signature?.checksum || !Array.isArray(body?.signature?.properties)) {
+      console.error("[wompi-webhook] Sin firma en payload — rechazado");
+      return res.status(401).json({ error: "missing_signature" });
+    }
     try {
-      const props = body.signature.properties || [];
+      const props = body.signature.properties;
       const tx = body?.data?.transaction || {};
-
-      // Resolver cada propiedad del path "transaction.xxx"
       const propValues = props.map((p) => {
         const key = p.replace("transaction.", "");
         return tx[key] !== undefined ? String(tx[key]) : "";
       });
-
       const raw = propValues.join("") + body.timestamp + eventsSecret;
       const expected = crypto.createHash("sha256").update(raw).digest("hex");
 
-      if (expected !== body.signature.checksum) {
-        console.warn("[wompi-webhook] ⚠️ Firma inválida — ignorando evento");
-        // Responder 200 para que Wompi no reintente, pero no procesar
-        return res.status(200).json({ ok: false, reason: "invalid_signature" });
+      // Timing-safe compare (buffers de igual length)
+      const expBuf = Buffer.from(expected, "hex");
+      const gotBuf = Buffer.from(String(body.signature.checksum), "hex");
+      const valid = expBuf.length === gotBuf.length && crypto.timingSafeEqual(expBuf, gotBuf);
+
+      if (!valid) {
+        console.error("[wompi-webhook] Firma inválida — rechazado");
+        return res.status(401).json({ error: "invalid_signature" });
       }
     } catch (sigErr) {
       console.error("[wompi-webhook] Error validando firma:", sigErr.message);
+      return res.status(400).json({ error: "signature_error", message: sigErr.message });
     }
   }
 
@@ -118,10 +130,27 @@ export default async function handler(req, res) {
 
   const totalCentavos = amount_in_cents || 0;
   const totalCOP = Math.round(totalCentavos / 100);
+  const reservaTotal = Number(reserva.total) || 0;
+  const currency = String(tx.currency || "").toUpperCase();
 
-  // ── Confirmar reserva ────────────────────────────────────────────────────
+  // Validación de currency
+  if (currency && currency !== "COP") {
+    console.error(`[wompi-webhook] Currency inesperada: ${currency}`);
+    return res.status(400).json({ error: "currency_mismatch", currency });
+  }
+
+  // Validación de undercharge: monto cobrado >= reserva.total - 1% tolerancia
+  if (reservaTotal > 0 && totalCOP < reservaTotal - Math.max(100, reservaTotal * 0.01)) {
+    console.error(`[wompi-webhook] Undercharge: cobrado=${totalCOP} vs total=${reservaTotal} (tx ${txId})`);
+    return res.status(400).json({ error: "undercharge", totalCOP, reservaTotal });
+  }
+
+  // ── Confirmar reserva ───────────────────────────────────────────────────
+  // PATCH condicional con estado=eq.pendiente_pago para evitar TOCTOU + no
+  // pisar reservas ya confirmadas por otro canal (Supabase webhook).
+  // abono = monto REAL cobrado, no reserva.total (importa cuando hay abonos parciales).
   const patchRes = await fetch(
-    `${sbUrl}/rest/v1/reservas?id=eq.${encodeURIComponent(reference)}`,
+    `${sbUrl}/rest/v1/reservas?id=eq.${encodeURIComponent(reference)}&estado=eq.pendiente_pago`,
     {
       method: "PATCH",
       headers: {
@@ -132,10 +161,11 @@ export default async function handler(req, res) {
       },
       body: JSON.stringify({
         estado: "confirmado",
-        abono: reserva.total || totalCOP,
-        saldo: 0,
+        abono: totalCOP,
+        saldo: Math.max(0, reservaTotal - totalCOP),
         forma_pago: "wompi",
         fecha_pago: new Date().toISOString().slice(0, 10),
+        referencia_pago: txId,
         updated_at: new Date().toISOString(),
       }),
     }
