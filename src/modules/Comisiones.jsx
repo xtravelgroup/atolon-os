@@ -75,8 +75,11 @@ function calcComision(r, pasadiasMap, aliadoComisionPct = null) {
   const netoA    = r.precio_neto || pasadia.neto        || 0;
   const cobradoN = r.precio_nino || pasadia.precio_nino || 0;
   const netoN    =                  pasadia.neto_nino   || 0;
-  const paxA     = r.pax_a || r.pax || 1;
-  const paxN     = r.pax_n || 0;
+  // paxA con nullish coalescing — NO || que cae en r.pax (=pax_a+pax_n)
+  // cuando pax_a=0. Caso real: reserva kids-only con pax_a=0, pax_n=3 le
+  // calculaba comision por 3 adultos fantasma (audit rank 38).
+  const paxA     = Number(r.pax_a) || 0;
+  const paxN     = Number(r.pax_n) || 0;
   const desc     = r.descuento_agencia || 0;
   // Comisión = lo REALMENTE pagado (total) − tarifa neta − descuento agencia.
   // NO usar precio_u (lista) como "cobrado": si la agencia negoció un total
@@ -280,20 +283,36 @@ export default function Comisiones() {
           .not("aliado_id", "is", null)
           .in("estado", ["confirmado", "check_in"])
           .lte("saldo", 0),
-        // Grupos B2B (Confirmado/Realizado con aliado)
+        // Grupos B2B con aliado. NO restringir solo por stage — el stage
+        // 'Realizado' se auto-transiciona por fecha sin verificar pago.
+        // Filtramos aqui y depues, en JS, solo dejamos pasar los que tienen
+        // pagos >= valor cotizado (audit rank 40: antes se comisionaba sobre
+        // eventos no cobrados).
         supabase.from("eventos")
-          .select("id, nombre, fecha, aliado_id, pasadias_org, precio_tipo, categoria, stage")
+          .select("id, nombre, fecha, aliado_id, pasadias_org, precio_tipo, categoria, stage, valor, pagos")
           .gte("fecha", inicio).lte("fecha", fin)
           .not("aliado_id", "is", null)
           .eq("categoria", "grupo")
           .in("stage", ["Confirmado", "Realizado"]),
       ]);
 
-      // Convert grupos to virtual reserva entries for commission calculation
-      const grupoReservas = (gruposB2B || []).map(g => {
+      // Convert grupos to virtual reserva entries for commission calculation.
+      // Filtrado de pago: total_pagado (sum de pagos[].monto) >= valor cotizado.
+      // Asi el aliado recibe comision SOLO sobre grupos efectivamente cobrados
+      // (audit rank 40).
+      const grupoReservas = (gruposB2B || []).flatMap(g => {
+        const valor = Number(g.valor) || 0;
+        const totalPagado = Array.isArray(g.pagos)
+          ? g.pagos.reduce((s, p) => s + (Number(p.monto) || 0), 0)
+          : 0;
+        // Si el grupo tiene valor cotizado, exigimos pago completo. Si valor=0
+        // (legacy sin cotizacion), dejamos pasar (no es regresion vs estado anterior).
+        const cobrado = valor === 0 || totalPagado >= valor;
+        if (!cobrado) return [];
+
         const org = (g.pasadias_org || []).filter(p => p.tipo !== "Impuesto Muelle" && p.tipo !== "STAFF");
         const paxTotal = org.reduce((s, p) => s + (Number(p.personas) || 0), 0);
-        return {
+        return [{
           id: g.id,
           nombre: g.nombre,
           fecha: g.fecha,
@@ -308,7 +327,9 @@ export default function Comisiones() {
           _esGrupo: true,
           _pasadias_org: g.pasadias_org,
           _precio_tipo: g.precio_tipo,
-        };
+          _grupo_valor: valor,
+          _grupo_pagado: totalPagado,
+        }];
       });
 
       const allReservas = [...(reservas || []), ...grupoReservas];

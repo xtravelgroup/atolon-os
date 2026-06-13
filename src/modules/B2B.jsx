@@ -636,8 +636,10 @@ function HistorialReservasB2B({ aliadoId, comisionPct = 0 }) {
     const netoA     = r.precio_neto || pasadia?.neto        || 0;
     const cobradoN  = r.precio_nino || pasadia?.precio_nino || 0;
     const netoN     =                  pasadia?.neto_nino   || 0;
-    const paxA      = r.pax_a || r.pax || 1;
-    const paxN      = r.pax_n || 0;
+    // Nullish — NO || que cae en r.pax (=pax_a+pax_n) cuando pax_a=0
+    // (audit rank 38: reservas kids-only inflaban comision por adultos fantasma).
+    const paxA      = Number(r.pax_a) || 0;
+    const paxN      = Number(r.pax_n) || 0;
     const descuento = r.descuento_agencia || 0;
     if (netoA > 0 && cobradoA > 0) {
       const margenA = (cobradoA - netoA) * paxA;
@@ -664,8 +666,9 @@ function HistorialReservasB2B({ aliadoId, comisionPct = 0 }) {
       const conv = pasadiasMap[(r.tipo || "").toLowerCase()];
       const netoA = conv?.neto || 0;
       const netoN = conv?.neto_nino || 0;
-      const paxA  = r.pax_a || r.pax || 1;
-      const paxN  = r.pax_n || 0;
+      // Nullish (audit rank 38)
+      const paxA  = Number(r.pax_a) || 0;
+      const paxN  = Number(r.pax_n) || 0;
       const nuevoTotal = netoA > 0 ? paxA * netoA + paxN * netoN : r.total;
       const abonoActual = r.abono || 0;
       const nuevoSaldo  = Math.max(0, nuevoTotal - abonoActual);
