@@ -722,6 +722,15 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
       : Number(pagoMonto);
     if (!supabase) return;
     if (!esCortesia && (!monto || monto <= 0)) return alert("Monto debe ser mayor a 0");
+    // Guard: una reserva cancelada NO debe volverse confirmado por un nuevo pago.
+    // Si el usuario quiere reactivarla, debe usar "Regenerar link" o pedir gerencia.
+    if (r0.estado === "cancelado") {
+      return alert(
+        "Esta reserva está cancelada — no podés registrarle un pago.\n\n" +
+        "Si necesitás reactivarla, usá 'Regenerar link' (vuelve a pendiente_pago) " +
+        "o pedile a un super_admin que la traiga de vuelta con una nota."
+      );
+    }
     setSaving(true);
     // Cortesía y Ajuste Agencia = descuentos, NO son dinero recibido. No se suman al abono.
     const esDescuento = esCortesia || esAjusteAgencia;
@@ -904,6 +913,10 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
   };
 
   // ── Política de cancelación según polizas Atolón ──────────────────────────
+  // El crédito emitido se capea al abono REAL recibido — no se emite crédito
+  // por dinero que nunca entró (caso típico: B2B/CXC con abono parcial o cero).
+  // Para retracto (refund a dinero) el monto se capea al abono porque no se
+  // puede devolver lo que no se cobró.
   const calcPolitica = () => {
     const now         = new Date();
     const serviceDate = new Date(r0.fecha + "T08:00:00");
@@ -911,24 +924,37 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
     const hoursUntil  = (serviceDate - now) / 3_600_000;
     const calDaysUntil= (serviceDate - now) / 86_400_000;
     const daysSincePurchase = (now - purchaseDate) / 86_400_000;
+    const abonoReal = Number(r0.abono) || 0;
     // Retracto: compra no presencial, ≤5 días hábiles desde compra, servicio >5 días calendario
     const noPresencial = !["Walk-in", "Presencial"].includes(r0.canal);
     const bizDays = daysSincePurchase * (5 / 7);
     if (noPresencial && bizDays <= 5 && calDaysUntil > 5) {
-      return { tipo: "retracto", pct: 100, monto: r0.total, refundType: "dinero",
+      const montoBruto = Number(r0.total) || 0;
+      // Retracto: refund dinero — cap al abono real (no se devuelve lo que no se cobró).
+      const monto = Math.min(montoBruto, abonoReal);
+      return { tipo: "retracto", pct: 100, monto, refundType: "dinero",
         label: "Derecho de Retracto (Ley 1480)",
-        desc: "100% devolución al medio de pago original dentro de los plazos legales." };
+        desc: monto < montoBruto
+          ? `100% en dinero (limitado a abono real ${COP(abonoReal)} de ${COP(montoBruto)}). Devolución al medio de pago original.`
+          : "100% devolución al medio de pago original dentro de los plazos legales." };
     }
     if (hoursUntil > 48) {
-      return { tipo: "politica", pct: 100, monto: r0.total, refundType: "credito",
+      const montoBruto = Number(r0.total) || 0;
+      const monto = Math.min(montoBruto, abonoReal);
+      return { tipo: "politica", pct: 100, monto, refundType: "credito",
         label: "Cancelación > 48 h",
-        desc: "100% en crédito · Vigencia 12 meses · Transferible · No redimible en dinero." };
+        desc: monto < montoBruto
+          ? `100% del abono real (${COP(abonoReal)} de ${COP(montoBruto)}) en crédito · Vigencia 12 meses · Transferible · No redimible en dinero.`
+          : "100% en crédito · Vigencia 12 meses · Transferible · No redimible en dinero." };
     }
     if (hoursUntil >= 24) {
-      const monto = Math.round(r0.total * 0.70);
+      const montoBruto = Math.round((Number(r0.total) || 0) * 0.70);
+      const monto = Math.min(montoBruto, abonoReal);
       return { tipo: "politica", pct: 70, monto, refundType: "credito",
         label: "Cancelación 24–48 h",
-        desc: "70% en crédito · Vigencia 12 meses · Transferible · No redimible en dinero." };
+        desc: monto < montoBruto
+          ? `70% del abono real (${COP(monto)} de ${COP(abonoReal)} abonado) en crédito · Vigencia 12 meses.`
+          : "70% en crédito · Vigencia 12 meses · Transferible · No redimible en dinero." };
     }
     return { tipo: "noshow", pct: 0, monto: 0, refundType: "ninguno",
       label: "Menos de 24 h / No show",
@@ -4107,6 +4133,47 @@ export default function Reservas() {
     if (!r) return;
     const cycle = { pendiente: "confirmado", confirmado: "cancelado", cancelado: "pendiente" };
     const nextEstado = cycle[r.estado] || "pendiente";
+
+    // Guard: revivir cancelado → pendiente puede dejar créditos vigentes
+    // y la reserva activa al mismo tiempo (doble cobro / doble servicio).
+    // Buscamos créditos no redimidos vinculados a esta reserva y, si los hay,
+    // pedimos confirmación + los anulamos al revivir.
+    if (r.estado === "cancelado" && nextEstado === "pendiente") {
+      const hoy = new Date().toISOString().slice(0, 10);
+      const { data: creditosVigentes } = await supabase
+        .from("creditos")
+        .select("id, monto, saldo, motivo, vigencia_hasta")
+        .eq("reserva_id", id)
+        .eq("redimido", false)
+        .gte("vigencia_hasta", hoy);
+      if (creditosVigentes && creditosVigentes.length > 0) {
+        const total = creditosVigentes.reduce((s, c) => s + (c.saldo || c.monto || 0), 0);
+        const ok = window.confirm(
+          `Esta reserva tiene ${creditosVigentes.length} crédito(s) vigente(s) por ${COP(total)}.\n\n` +
+          `Reactivarla anularia esos créditos (sino habría doble compensación).\n\n` +
+          `¿Reactivar y anular los créditos?`
+        );
+        if (!ok) return;
+        const stamp = new Date().toISOString();
+        await Promise.all(creditosVigentes.map(c =>
+          supabase.from("creditos").update({
+            redimido: true,
+            redimido_at: stamp,
+            notas: ((c.notas || "") + ` · Anulado al revivir reserva ${id}`).trim(),
+          }).eq("id", c.id)
+        ));
+        logAccion({
+          modulo: "reservas",
+          accion: "anular_creditos_al_revivir",
+          tabla: "creditos",
+          registroId: id,
+          datosAntes: { reserva_estado: r.estado, creditos_vigentes: creditosVigentes.length, monto_anulado: total },
+          datosDespues: { reserva_estado: nextEstado, creditos_anulados: creditosVigentes.map(c => c.id) },
+          notas: `Reserva ${id} reactivada — ${creditosVigentes.length} crédito(s) anulado(s) por ${COP(total)}`,
+        });
+      }
+    }
+
     await supabase.from("reservas").update({ estado: nextEstado }).eq("id", id);
     // Si se confirma manualmente y la reserva tiene un lead, cerrarlo
     if (nextEstado === "confirmado" && r.lead_id) {
