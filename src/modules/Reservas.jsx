@@ -4020,12 +4020,18 @@ export default function Reservas() {
   const llegPax   = llegadasDia.reduce((s, l) => s + (l.pax_total || 0), 0);
   // Solo sumar al monto de llegadas las que NO están vinculadas a una reserva (para evitar doble conteo)
   const llegMonto = llegadasDia.filter(l => !l.reserva_id).reduce((s, l) => s + (l.total_cobrado || 0), 0);
-  const totalPax   = reservas.filter(r => r.estado !== "cancelado" && !r.grupo_id).reduce((s, r) => s + r.pax, 0)
+  // Importante: reservas YA incluye las llegadas inyectadas como filas
+  // virtuales (mapLlegada con _sinReserva=true y total=abono=total_cobrado).
+  // Si las sumamos en .reduce y AGREGAMOS llegMonto/llegPax, contamos dos veces.
+  // Filtramos las virtuales en el reduce — el llegMonto/llegPax les agrega una sola vez.
+  // Audit rank 22: cierre de caja con cifras infladas 2x.
+  const reservasReales = reservas.filter(r => !r._sinReserva);
+  const totalPax   = reservasReales.filter(r => r.estado !== "cancelado" && !r.grupo_id).reduce((s, r) => s + r.pax, 0)
                    + grupos.reduce((s, g) => s + grupoPaxTotal(g), 0)
                    + llegPax;
   // Cortesías ya tienen total=0 y abono=0 (descuento_cortesia guarda el valor original para reportes)
-  const totalAbono = reservas.filter(r => r.estado !== "cancelado").reduce((s, r) => s + (r.abono || 0), 0) + llegMonto;
-  const totalVenta = reservas.filter(r => r.estado !== "cancelado").reduce((s, r) => s + (r.total || 0), 0) + llegMonto;
+  const totalAbono = reservasReales.filter(r => r.estado !== "cancelado").reduce((s, r) => s + (r.abono || 0), 0) + llegMonto;
+  const totalVenta = reservasReales.filter(r => r.estado !== "cancelado").reduce((s, r) => s + (r.total || 0), 0) + llegMonto;
 
   const addReserva = async (form) => {
     if (!supabase) return null;
