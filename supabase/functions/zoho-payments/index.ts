@@ -185,6 +185,14 @@ async function verifyWebhookSignature(payload: string, signature: string): Promi
       candidates.push(["hex+payload",    secretHex, msgBytesNoTs]);
     }
 
+    // Timing-safe compare sobre hex strings de igual length.
+    const timingSafeEqualHex = (a: string, b: string) => {
+      if (a.length !== b.length) return false;
+      let diff = 0;
+      for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+      return diff === 0;
+    };
+
     for (const [label, key, msg] of candidates) {
       const cryptoKey = await crypto.subtle.importKey(
         "raw", key, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]
@@ -193,8 +201,8 @@ async function verifyWebhookSignature(payload: string, signature: string): Promi
       const computed = Array.from(new Uint8Array(sigBuffer))
         .map(b => b.toString(16).padStart(2, "0"))
         .join("");
-      if (computed === sigPart) {
-        console.log(`[zoho-webhook] firma válida con formato: ${label}`);
+      if (timingSafeEqualHex(computed, sigPart)) {
+        console.log(`[zoho-webhook] firma valida con formato: ${label}`);
         return true;
       }
     }
@@ -355,29 +363,66 @@ serve(async (req) => {
         Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
       );
 
-      // Guardar evento en log SIEMPRE (antes de validar firma, para debugging)
-      await SB.from("pagos_zoho_log").insert({
+      // Guardar evento en log SIEMPRE (antes de validar firma, para debugging).
+      // Capturamos el id de la fila para hacer updates scoped a esta entrada
+      // (impide que un evento valido posterior flipee firma_valida=true en
+      // intentos forjados previos con mismo payment_id).
+      const { data: logRow } = await SB.from("pagos_zoho_log").insert({
         event_type: type,
         reference: ref,
         payment_id: pid,
         raw: { event, _debug_headers: allHeaders, _debug_sig: signature },
-        firma_valida: false, // se actualiza abajo si pasa
-      }).then(() => {}).catch(() => {});
+        firma_valida: false,
+      }).select("id").maybeSingle();
+      const logRowId = logRow?.id;
 
-      // Validación de firma (después de loguear para debugging)
+      // FAIL-CLOSED: firma obligatoria. Sin secret configurado o signature
+      // ausente, rechazamos con 401. Bypass solo con ZOHO_ALLOW_UNSIGNED=true.
       const SECRET_FOR_VERIFY = await loadWebhookSecret();
-      if (SECRET_FOR_VERIFY && signature) {
-        const valid = await verifyWebhookSignature(payload, signature);
-        if (!valid) {
-          console.error("Firma inválida. sig:", signature.slice(0, 20), "secret len:", SECRET_FOR_VERIFY.length);
-          // Retornar 200 para que Zoho no reintente, pero no procesar el evento
-          return new Response(JSON.stringify({ received: true, firma: "invalid", event_type: type }), {
-            status: 200, headers: { "Content-Type": "application/json" },
+      const allowUnsigned = Deno.env.get("ZOHO_ALLOW_UNSIGNED") === "true";
+
+      if (!SECRET_FOR_VERIFY) {
+        if (!allowUnsigned) {
+          console.error("[zoho-webhook] webhook secret no configurado — fail-closed");
+          return new Response(JSON.stringify({ error: "webhook_misconfigured" }), {
+            status: 500, headers: { "Content-Type": "application/json" },
           });
         }
-        // Marcar firma válida en el log
-        if (pid) {
-          await SB.from("pagos_zoho_log").update({ firma_valida: true }).eq("payment_id", pid).then(() => {}).catch(() => {});
+        console.warn("[zoho-webhook] ZOHO_ALLOW_UNSIGNED=true — solo dev");
+      } else {
+        if (!signature) {
+          console.error("[zoho-webhook] sin header de firma — rechazado");
+          return new Response(JSON.stringify({ error: "missing_signature" }), {
+            status: 401, headers: { "Content-Type": "application/json" },
+          });
+        }
+        const valid = await verifyWebhookSignature(payload, signature);
+        if (!valid) {
+          console.error("Firma invalida. sig:", signature.slice(0, 20), "secret len:", SECRET_FOR_VERIFY.length);
+          return new Response(JSON.stringify({ error: "invalid_signature" }), {
+            status: 401, headers: { "Content-Type": "application/json" },
+          });
+        }
+        if (logRowId) {
+          await SB.from("pagos_zoho_log").update({ firma_valida: true }).eq("id", logRowId).then(() => {}).catch(() => {});
+        }
+      }
+
+      // Idempotencia: si este payment_id ya fue procesado antes (processed_at
+      // NOT NULL), devolver 200 sin reprocesar. Evita duplicar emails/WhatsApp
+      // y reescribir fecha_pago/pagado_en con timestamps tardios.
+      if (pid) {
+        const { data: prevProc } = await SB.from("pagos_zoho_log")
+          .select("id")
+          .eq("payment_id", pid)
+          .not("processed_at", "is", null)
+          .limit(1)
+          .maybeSingle();
+        if (prevProc) {
+          console.log(`[zoho-webhook] payment_id ${pid} ya procesado, skip.`);
+          return new Response(JSON.stringify({ received: true, skipped: "already_processed" }), {
+            status: 200, headers: { "Content-Type": "application/json" },
+          });
         }
       }
 
@@ -419,6 +464,9 @@ serve(async (req) => {
               console.warn("[juicy/lead-update-zoho] failed:", e?.message));
             await notificarJuicyPagoConfirmado(reservaJC, Number(reservaJC.total) || 0, "Zoho Pay", pid).catch(e =>
               console.warn("[juicy/email-confirmado-zoho] failed:", (e as Error).message));
+            if (logRowId) {
+              await SB.from("pagos_zoho_log").update({ processed_at: new Date().toISOString() }).eq("id", logRowId).then(() => {}).catch(() => {});
+            }
             return new Response(JSON.stringify({ received: true, processed: true, action: "juicy_confirmed", reserva_id: reservaJC.id }), {
               status: 200, headers: { "Content-Type": "application/json" },
             });
@@ -444,8 +492,9 @@ serve(async (req) => {
             // Enviar confirmación
             await enviarConfirmacionPasadia(reservaP).catch(e =>
               console.warn(`[zoho/pasadia] confirmacion failed: ${(e as Error).message}`));
-            // Continuar al final del bloque (no devolver, hay otros lookups)
-            // Pero tampoco buscar en reservas si ya matchó aquí
+            if (logRowId) {
+              await SB.from("pagos_zoho_log").update({ processed_at: new Date().toISOString() }).eq("id", logRowId).then(() => {}).catch(() => {});
+            }
             return new Response(JSON.stringify({ received: true, processed: true, action: "pasadia_confirmed", reserva_id: reservaP.id }), {
               status: 200, headers: { "Content-Type": "application/json" },
             });
@@ -546,6 +595,11 @@ serve(async (req) => {
             last4, brand, raw: event,
           }).eq("reference", ref).then(() => {}).catch(() => {});
         }
+
+        // Marcar evento como procesado (idempotencia)
+        if (logRowId) {
+          await SB.from("pagos_zoho_log").update({ processed_at: new Date().toISOString() }).eq("id", logRowId).then(() => {}).catch(() => {});
+        }
       }
 
       // Pago fallido — múltiples variantes
@@ -598,11 +652,17 @@ serve(async (req) => {
   }
 
   // ══════════════════════════════════════════════════════════════════════
-  // GET /diag — diagnóstico completo (público, sin auth)
-  // Muestra: estado del secret, últimos eventos recibidos, sesiones
-  // pendientes. Pegar URL en el browser para verificar.
+  // GET /diag — diagnóstico (requiere header x-atolon-cron-secret)
+  // Muestra: estado del secret, últimos eventos, sesiones pendientes.
   // ══════════════════════════════════════════════════════════════════════
   if (req.method === "GET" && path === "/diag") {
+    const cronSecret = req.headers.get("x-atolon-cron-secret");
+    const expectedSecret = Deno.env.get("CRON_SECRET") || "";
+    if (!expectedSecret || cronSecret !== expectedSecret) {
+      return new Response(JSON.stringify({ error: "unauthorized" }), {
+        status: 401, headers: { ...CORS, "Content-Type": "application/json" },
+      });
+    }
     try {
       const SB = createClient(
         Deno.env.get("SUPABASE_URL")!,
@@ -635,7 +695,8 @@ serve(async (req) => {
           secret_source: diagSecret === ZOHO_WEBHOOK_SECRET_ENV ? "env" : "db",
           oauth_configured: !!(creds.client_id && creds.client_secret && creds.refresh_token),
           api_key_configured: !!creds.api_key,
-          account_id: creds.account_id,
+          // account_id ofuscado — solo primeros 4 chars
+          account_id_preview: creds.account_id ? `${String(creds.account_id).slice(0, 4)}...` : null,
         },
         stats: {
           total_eventos_recibidos: totalEventos || 0,
@@ -661,9 +722,17 @@ serve(async (req) => {
   // Llamado por Vercel cron cada 5 min.
   // ══════════════════════════════════════════════════════════════════════
   if (req.method === "POST" && path === "/poll-recent") {
+    const cronSecret = req.headers.get("x-atolon-cron-secret");
+    const expectedSecret = Deno.env.get("CRON_SECRET") || "";
+    if (!expectedSecret || cronSecret !== expectedSecret) {
+      return new Response(JSON.stringify({ error: "unauthorized" }), {
+        status: 401, headers: { ...CORS, "Content-Type": "application/json" },
+      });
+    }
     try {
       const body = await req.json().catch(() => ({}));
-      const horasAtras = Number(body?.hours) || 2; // default últimas 2h
+      // Cap a 48h
+      const horasAtras = Math.min(Math.max(Number(body?.hours) || 2, 1), 48);
 
       const creds = await loadZohoCreds();
       if (!creds.refresh_token || !creds.client_id || !creds.client_secret) {
@@ -816,6 +885,13 @@ serve(async (req) => {
   // Acepta GET (más fácil de invocar desde browser) y POST.
   // ══════════════════════════════════════════════════════════════════════
   if ((req.method === "POST" || req.method === "GET") && path === "/webhooks-register") {
+    const cronSecret = req.headers.get("x-atolon-cron-secret");
+    const expectedSecret = Deno.env.get("CRON_SECRET") || "";
+    if (!expectedSecret || cronSecret !== expectedSecret) {
+      return new Response(JSON.stringify({ error: "unauthorized" }), {
+        status: 401, headers: { ...CORS, "Content-Type": "application/json" },
+      });
+    }
     try {
       let webhookUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/zoho-payments/webhook`;
       if (req.method === "POST") {
