@@ -158,6 +158,12 @@ export default function HotelRoomService() {
   const crearPedido = async (enviarLoggro = false) => {
     if (!selHab) return alert("Selecciona una habitación");
     if (carrito.length === 0) return alert("Agrega al menos un ítem al carrito");
+    // Validar total > 0. Si todos los items tienen precio 0 (o el carrito
+    // termino con cantidades 0 tras ediciones), pedido entraba como $0 y
+    // contaminaba los KPIs de ventas con tickets fantasma.
+    if (!Number.isFinite(total) || total <= 0) {
+      return alert("El total del pedido debe ser mayor a 0. Verifica precios y cantidades.");
+    }
     const codigo = `RS-${Date.now()}`;
     const payload = {
       codigo,
