@@ -81,13 +81,18 @@ export default function CosteoProductos() {
   }, [producto, compsActivo, transportePax]);
 
   async function saveProducto(data) {
+    // Precio negativo voltea los KPIs de margen/pct (pct = margen/precio).
+    // Si el operador pega un valor mal copiado de excel con signo, en lugar
+    // de fallar la UI mostraba un producto perdedor con "margen 60%".
+    const precioAdulto = Math.max(0, Number(data.precio_venta_adulto) || 0);
+    const precioNino   = Math.max(0, Number(data.precio_venta_nino)   || 0);
     const payload = {
       codigo: data.codigo || null,
       nombre: data.nombre,
       categoria: data.categoria || "pasadia",
       descripcion: data.descripcion || null,
-      precio_venta_adulto: Number(data.precio_venta_adulto) || 0,
-      precio_venta_nino:   Number(data.precio_venta_nino)   || 0,
+      precio_venta_adulto: precioAdulto,
+      precio_venta_nino:   precioNino,
       transporte_auto: !!data.transporte_auto,
       activo: data.activo !== false,
       notas: data.notas || null,

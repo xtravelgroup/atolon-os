@@ -169,7 +169,23 @@ function SlotEditorModal({ grupo, slot, onClose, onSaved, embarcaciones = [] }) 
   const save = async (hacerCheckin = false) => {
     setSaving(true);
     const now = new Date().toISOString();
-    const newZarpe = (grupo.zarpe_data || []).map(z =>
+    // Antes este save calculaba newZarpe sobre grupo.zarpe_data del state
+    // local, que podia tener varios minutos de antiguedad si otro recepcionista
+    // abrio otro SlotEditor del mismo grupo. El ultimo PATCH ganaba y pisaba
+    // los slots del primero. Ahora re-fetcheamos el zarpe_data fresco de la
+    // DB justo antes del PATCH, mergeamos solo nuestro slot, y enviamos.
+    // Ventana de race baja de minutos a ms (no es serializable sin RPC, pero
+    // cubre el caso practico).
+    let baseZarpe = grupo.zarpe_data || [];
+    try {
+      const r = await fetch(`${SB_URL}/rest/v1/eventos?id=eq.${grupo.id}&select=zarpe_data`,
+        { headers: { apikey: AKEY_CONST, Authorization: `Bearer ${AKEY_CONST}` } });
+      if (r.ok) {
+        const arr = await r.json();
+        if (Array.isArray(arr) && arr[0]?.zarpe_data) baseZarpe = arr[0].zarpe_data;
+      }
+    } catch (_) { /* si falla, caemos al state local */ }
+    const newZarpe = baseZarpe.map(z =>
       z.slot_id === slot.slot_id
         ? { ...z, ...f, checkin_at: hacerCheckin ? now : z.checkin_at }
         : z
