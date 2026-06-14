@@ -16,8 +16,12 @@ Deno.serve(async (req) => {
     const { imageBase64, mediaType } = await req.json();
     if (!imageBase64) return new Response(JSON.stringify({ error: "No image provided" }), { status: 400, headers: corsHeaders });
 
+    // Timeout 30s en fetch a Anthropic (recibos son cortos, 30s alcanza).
+    const anthCtrl = new AbortController();
+    const anthTimer = setTimeout(() => anthCtrl.abort(), 30_000);
     const res = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
+      signal: anthCtrl.signal,
       headers: {
         "x-api-key": ANTHROPIC_KEY,
         "anthropic-version": "2023-06-01",
@@ -52,6 +56,7 @@ La fecha debe estar en formato ISO YYYY-MM-DD. Si no encuentras fecha clara, usa
         }],
       }),
     });
+    clearTimeout(anthTimer);
 
     const data = await res.json();
     const text = data.content?.[0]?.text ?? "";

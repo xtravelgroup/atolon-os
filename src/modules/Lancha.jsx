@@ -1285,6 +1285,12 @@ function EventoModal({ tipo: tipoInicial, edit, onClose, onSave, capitanDefault 
   }
 
   async function handleSave() {
+    // Guard contra doble-click. El boton ya tiene disabled={saving||uploading}
+    // pero entre el primer onClick y el re-render con saving=true hay un
+    // microtask que un click muy rapido podia colarse — resultaba en dos
+    // INSERTs idénticos a lancha_bitacora (ej. dos cargas de combustible
+    // en el mismo timestamp).
+    if (saving) return;
     setSaving(true); setErr("");
     const error = await onSave(f);
     setSaving(false);
