@@ -454,15 +454,22 @@ function LeadDetail({ lead, onClose, onUpdateEtapa }) {
 
   const IS = { background: "#0D1B3E", border: `1px solid ${B.navyLight}`, borderRadius: 8, color: B.white, padding: "8px 12px", fontSize: 14, width: "100%", boxSizing: "border-box", outline: "none" };
 
-  const handleEtapaClick = (e) => {
+  // Guard contra doble-click. Antes los handlers eran sync y disparaban
+  // dos UPDATEs si el usuario clickeaba rapido — fetchLeads concurrente
+  // ademas dejaba la UI en estado intermedio.
+  const [updatingEtapa, setUpdatingEtapa] = useState(false);
+  const handleEtapaClick = async (e) => {
+    if (updatingEtapa) return;
     if (e === "Cerrado Ganado") { setPendingEtapa(e); return; }
-    onUpdateEtapa(lead.id, e, null);
+    setUpdatingEtapa(true);
+    try { await onUpdateEtapa(lead.id, e, null); } finally { setUpdatingEtapa(false); }
     onClose();
   };
 
-  const confirmCerrado = () => {
-    if (!fechaPago) return;
-    onUpdateEtapa(lead.id, "Cerrado Ganado", fechaPago);
+  const confirmCerrado = async () => {
+    if (updatingEtapa || !fechaPago) return;
+    setUpdatingEtapa(true);
+    try { await onUpdateEtapa(lead.id, "Cerrado Ganado", fechaPago); } finally { setUpdatingEtapa(false); }
     onClose();
   };
 
@@ -1029,7 +1036,9 @@ export default function Comercial() {
     const upd = { stage: newStage, ultimo_contacto: hoyBogota() };
     if (newStage === "Cerrado Ganado" && fechaPago) upd.fecha_pago = fechaPago;
     await supabase.from("leads").update(upd).eq("id", id);
-    fetchLeads();
+    // Esperar fetchLeads para que el caller pueda await este flujo completo
+    // y la UI no muestre estado stale entre el update y el refresh.
+    await fetchLeads();
   }
 
   const vendorStats = buildVendorStats(leads);
