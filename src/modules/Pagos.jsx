@@ -120,10 +120,15 @@ function TabDashboard({ ordenes, otros, recurrentes, nominas, comisiones = [], s
   const month = today.slice(0, 7);
   const en7Dias = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
 
+  // OCs canceladas/anuladas NO deben aparecer en KPIs de pendientes.
+  // Antes una OC anulada con factura_aplicada=true seguía contando como
+  // deuda en "Vencidos" → inflaba el total adeudado.
+  const ocActiva = (o) => !["cancelada", "anulada"].includes(o.estado);
+
   // Anticipos pendientes (de Compras)
-  const anticipos = ordenes.filter(o => o.anticipo_requerido && !o.anticipo_pagado);
+  const anticipos = ordenes.filter(o => o.anticipo_requerido && !o.anticipo_pagado && ocActiva(o));
   // Facturas con factura aplicada y no pagada completa
-  const facturas = ordenes.filter(o => o.factura_aplicada && !o.pagada_completa)
+  const facturas = ordenes.filter(o => o.factura_aplicada && !o.pagada_completa && ocActiva(o))
     .map(o => ({ ...o, _saldo: Number(o.total || 0) - Number(o.monto_pagado || 0) }));
   // Otros gastos pendientes
   const gastosPend = otros.filter(o => !o.pagado);
