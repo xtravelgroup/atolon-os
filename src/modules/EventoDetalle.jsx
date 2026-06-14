@@ -2949,7 +2949,9 @@ function TabServicios({ items, onChange, pasadiasOrg = [], onChangePasadias, cat
   const remove = (id) => onChange(items.filter(x => x.id !== id));
   const setEstado = (id, estado) => onChange(items.map(x => x.id === id ? { ...x, estado } : x));
 
-  const total = items.reduce((s, x) => s + (Number(x.valor) || 0), 0);
+  // Total de servicios excluyendo cancelados. Antes los items 'cancelado'
+  // seguian sumando al total mostrado en el KPI, inflando lo facturable.
+  const total = items.filter(x => x.estado !== "cancelado").reduce((s, x) => s + (Number(x.valor) || 0), 0);
   const confirmados = items.filter(x => x.estado === "confirmado" || x.estado === "pagado").reduce((s, x) => s + (Number(x.valor)||0), 0);
 
   return (

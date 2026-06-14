@@ -620,17 +620,24 @@ export function EventoModal({ evento, categoria, salidas, aliados, vendedores, o
     })
   }));
 
+  // Match con trim+lowercase porque la lista pasadiasPrecios puede tener
+  // " VIP" (con espacio) cargado desde una hoja externa y el form local
+  // guarda "VIP" sin espacio → no matcheaba y getPrecio retornaba null.
+  const matchPasadia = (tipo) => {
+    const k = String(tipo || "").trim().toLowerCase();
+    return pasadiasPrecios.find(x => String(x.nombre || "").trim().toLowerCase() === k);
+  };
   // Precio unitario por tipo de pasadía (adulto)
   const getPrecioTipo = (p) => {
     if (p.tipo === "Impuesto Muelle") return PRECIO_MUELLE;
     if (p.tipo === "STAFF") return Number(p.precio_manual) || 0;
-    const match = pasadiasPrecios.find(x => x.nombre.toLowerCase() === p.tipo.toLowerCase());
+    const match = matchPasadia(p.tipo);
     if (!match) return null;
     return form.precio_tipo === "neto" ? (match.precio_neto_agencia || match.precio) : match.precio;
   };
   // Precio unitario niño
   const getPrecioNino = (p) => {
-    const match = pasadiasPrecios.find(x => x.nombre.toLowerCase() === p.tipo.toLowerCase());
+    const match = matchPasadia(p.tipo);
     if (!match) return 0;
     return form.precio_tipo === "neto" ? (match.precio_neto_nino || 0) : (match.precio_nino || 0);
   };
@@ -749,6 +756,18 @@ export function EventoModal({ evento, categoria, salidas, aliados, vendedores, o
 
   const save = async () => {
     if (!supabase || !form.nombre.trim() || !form.fecha) return;
+    // Guard contra doble-click: si ya estamos guardando o chequeando, no
+    // re-entrar. Antes habia una ventana microtask entre setCheckingDate(false)
+    // y setSaving(true) donde el boton se volvia clickable y un doble-click
+    // rapido podia disparar dos saves.
+    if (saving || checkingDate) return;
+    // Validar fecha_fin >= fecha. El input tiene min={form.fecha} pero esa
+    // restriccion no garantiza nada: si el user cambia fecha despues, el
+    // fecha_fin queda inconsistente. Aqui chequeamos final pre-submit.
+    if (form.fecha_fin && form.fecha_fin < form.fecha) {
+      setSaveError("La fecha de fin no puede ser anterior a la fecha de inicio.");
+      return;
+    }
     setCheckingDate(true);
 
     // Para buy-out multi-día, revisar todas las fechas marcadas para buy-out
@@ -3497,13 +3516,19 @@ export default function Eventos() {
       </div>
 
       {/* KPIs — ocultos en vista operativa (no necesitan ver pipeline/$) */}
-      {!isCalendario && !vistaOperativa && (
+      {!isCalendario && !vistaOperativa && (() => {
+        // Pipeline = oportunidades VIVAS o GANADAS. Excluye "Perdido" porque
+        // sino el numero crece sin cota: el equipo crea muchos eventos y luego
+        // marca varios como Perdido — antes seguian sumando al pipeline y
+        // inflaban la metrica de negocio falsamente.
+        const itemsActivos = items.filter(e => e.stage !== "Perdido");
+        return (
         <div style={{ display: "flex", gap: 12, marginBottom: 24, flexWrap: "wrap" }}>
           {[
-            { label: "Pipeline Total", val: COP(items.reduce((s, e) => s + e.valor, 0)), color: B.sand },
+            { label: "Pipeline Total", val: COP(itemsActivos.reduce((s, e) => s + e.valor, 0)), color: B.sand },
             { label: "Confirmados",    val: items.filter(e => e.stage === "Confirmado").length, color: B.success },
             { label: "Por Cotizar",    val: items.filter(e => e.stage === "Consulta").length, color: B.warning },
-            { label: "Pax Total",      val: items.reduce((s, e) => s + e.pax, 0), color: B.sky },
+            { label: "Pax Total",      val: itemsActivos.reduce((s, e) => s + e.pax, 0), color: B.sky },
           ].map(s => (
             <div key={s.label} style={{ background: B.navyMid, borderRadius: 12, padding: "14px 18px", flex: 1, minWidth: 130, borderLeft: `4px solid ${s.color}` }}>
               <div style={{ fontSize: 11, color: B.sand, textTransform: "uppercase", letterSpacing: 1 }}>{s.label}</div>
@@ -3511,7 +3536,8 @@ export default function Eventos() {
             </div>
           ))}
         </div>
-      )}
+        );
+      })()}
 
       {isCalendario
         ? <CalendarioEventos todos={todos} onEdit={ev => setDetalleEvento(ev)} isMobile={isMobile} />
