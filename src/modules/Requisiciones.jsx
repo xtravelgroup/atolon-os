@@ -1713,8 +1713,12 @@ function RecepcionOCModal({ oc, reqs, onClose, reload, currentUser, readOnly = f
             cost: Number(r.precioU) || 0,
             // Unidad de ORIGEN (factura/OC). El edge function la compara con
             // la unidad del ingrediente en Loggro y convierte si difieren
-            // (ej. factura en KG, Loggro en Gr → ×1000, costo ÷1000).
+            // (ej. factura en KG, Loggro en Gr → ×1000, costo ÷1000). Si la
+            // conversion no es posible y la unidad es de peso/volumen, el
+            // endpoint BLOQUEA (strict=true por default — evita stock 1000×
+            // incorrecto en Loggro).
             unit: r.unidad || r.unidad_compra || null,
+            nombre: r.item || r._catNombre || null, // para mostrar en bloqueos/conversiones
           }));
         const sinLoggroId = recibidos.filter(r => (Number(r.cant_recibida) || 0) > 0 && !r.loggro_id);
         // Resolver el proveedor en Loggro: el id de Loggro vive en
@@ -1746,15 +1750,46 @@ function RecepcionOCModal({ oc, reqs, onClose, reload, currentUser, readOnly = f
           });
           const data = await res.json();
           if (!data.ok) {
-            alert("⚠️ Recepción guardada, pero falló el registro en Loggro:\n" + (data.error || JSON.stringify(data).slice(0, 200)));
+            // Caso especial: el endpoint bloqueó por incompatibilidad de unidad.
+            // Mostrar al operador exactamente qué ítems y por qué.
+            if (data.error === "bloqueo_conversion_unidad" && Array.isArray(data.bloqueos)) {
+              const detalle = data.bloqueos.map(b =>
+                `  • ${b.item || b.ingredient}\n      ${b.motivo}`
+              ).join("\n");
+              alert(
+                `⚠️ Recepción guardada, pero NO se registró en Loggro:\n\n` +
+                `Hay ${data.bloqueos.length} ítem(s) con unidad incompatible. Si subiéramos ` +
+                `sin convertir, el stock entraría en la cantidad incorrecta (riesgo de 1000× error).\n\n` +
+                `Ítems afectados:\n${detalle}\n\n` +
+                `Solución: configurar la unidad correcta del ingrediente en Loggro y reintentar el recibo.`
+              );
+            } else {
+              alert("⚠️ Recepción guardada, pero falló el registro en Loggro:\n" + (data.error || JSON.stringify(data).slice(0, 200)));
+            }
           } else {
             // Guardar el movement_id en la OC
             await supabase.from("ordenes_compra").update({
               loggro_movement_id: data.movement_id,
             }).eq("id", oc.id);
-            if (sinLoggroId.length > 0) {
-              alert(`✓ Registrado en Loggro (movement ${data.movement_id}).\n\n⚠️ ${sinLoggroId.length} ítems sin loggro_id NO se registraron: ${sinLoggroId.map(r => r.item).join(", ")}`);
+
+            // Construir mensaje informativo: conversiones aplicadas + advertencias + items sin loggro_id
+            const msgs = [`✓ Registrado en Loggro (movement ${data.movement_id}).`];
+            if (Array.isArray(data.conversiones) && data.conversiones.length > 0) {
+              const convDetalle = data.conversiones.map(c =>
+                `  • ${c.item || c.ingredient}: ${c.quantity_from} ${c.from} → ${c.quantity_to} ${c.to} (×${c.factor})`
+              ).join("\n");
+              msgs.push(`\nConversiones de unidad aplicadas:\n${convDetalle}`);
             }
+            if (Array.isArray(data.advertencias) && data.advertencias.length > 0) {
+              const advDetalle = data.advertencias.map(a =>
+                `  • ${a.item || a.ingredient} (${a.src_unit}): ${a.motivo}`
+              ).join("\n");
+              msgs.push(`\n⚠ Advertencias:\n${advDetalle}`);
+            }
+            if (sinLoggroId.length > 0) {
+              msgs.push(`\n⚠️ ${sinLoggroId.length} ítems sin loggro_id NO se registraron: ${sinLoggroId.map(r => r.item).join(", ")}`);
+            }
+            alert(msgs.join("\n"));
           }
         }
       } catch (e) {
