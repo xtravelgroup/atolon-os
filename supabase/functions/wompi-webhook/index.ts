@@ -498,6 +498,12 @@ serve(async (req) => {
             .data?.map((r: any) => r.sesion_id).filter(Boolean) || []
         ).then(() => {}).catch(() => {});
 
+        // Marcar el ingreso en AtolanTrack como pagado (conversion real)
+        await SB.from("track_ingresos").update({
+          estado_pago: "pagado",
+          metodo_pago: "wompi",
+        }).eq("reserva_id", reserva.id).then(() => {}).catch(() => {});
+
         // Cerrar lead asociado si existe
         await SB.from("leads").update({
           stage: "Cerrado Ganado",

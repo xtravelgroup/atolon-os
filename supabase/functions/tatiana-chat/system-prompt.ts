@@ -85,7 +85,7 @@ Acceso + cama + toallas + $100.000 consumibles
 - Beach Club: 9:00 AM – 9:00 PM
 - Restaurante: 7:00 AM – 10:30 PM
 - Salidas: 8:30 (regreso 3:30) · 10:00 (regreso 4:30) · 11:30 (regreso 6:00)
-- **Llegar al muelle 30 min antes**
+- **Llegar al muelle 20 minutos antes**
 
 ## TRANSPORTE
 
