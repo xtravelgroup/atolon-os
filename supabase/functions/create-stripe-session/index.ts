@@ -125,14 +125,31 @@ serve(async (req) => {
 
     if (email) params.set("customer_email", email);
 
-    const stripeRes = await fetch("https://api.stripe.com/v1/checkout/sessions", {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${stripeKey}`,
-        "Content-Type":  "application/x-www-form-urlencoded",
-      },
-      body: params.toString(),
-    });
+    // Timeout 15s en la llamada a Stripe. Sin AbortController, un Stripe lento
+    // colgaba toda la edge function hasta el timeout global (~150s) y el
+    // booking engine devolvia un error generico al cliente despues de minutos.
+    const stripeCtrl = new AbortController();
+    const stripeTimer = setTimeout(() => stripeCtrl.abort(), 15_000);
+    let stripeRes: Response;
+    try {
+      stripeRes = await fetch("https://api.stripe.com/v1/checkout/sessions", {
+        method: "POST",
+        signal: stripeCtrl.signal,
+        headers: {
+          "Authorization": `Bearer ${stripeKey}`,
+          "Content-Type":  "application/x-www-form-urlencoded",
+        },
+        body: params.toString(),
+      });
+    } catch (e) {
+      clearTimeout(stripeTimer);
+      const isAbort = e instanceof Error && e.name === "AbortError";
+      console.error(isAbort ? "Stripe timeout (15s)" : "Stripe fetch error:", e);
+      return new Response(JSON.stringify({ error: isAbort ? "Stripe timeout — intenta de nuevo." : "Error de red con Stripe." }), {
+        status: 504, headers: { ...CORS, "Content-Type": "application/json" },
+      });
+    }
+    clearTimeout(stripeTimer);
 
     const session = await stripeRes.json();
     if (!stripeRes.ok) {
