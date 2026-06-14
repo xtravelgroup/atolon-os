@@ -391,6 +391,7 @@ const ContratistasAdmin = lazy(() => import("./modules/ContratistasAdmin"));
 const ContratistasPortal = lazy(() => import("./modules/ContratistasPortal"));
 const ContratistasCurso = lazy(() => import("./modules/ContratistasCurso"));
 const ContratistasRegistro = lazy(() => import("./modules/ContratistasRegistro"));
+const PrivacidadPage = lazy(() => import("./modules/PrivacidadPage"));
 const ContratistasVerificar = lazy(() => import("./modules/ContratistasVerificar"));
 const ContratistasMuelle = lazy(() => import("./modules/ContratistasMuelle"));
 const ZarpesLog = lazy(() => import("./modules/ZarpesLog"));
@@ -757,6 +758,7 @@ export default function App() {
     return <ContratistasRegistro eventoId={evId} token={tk || null} />;
   }
   if (route.startsWith("verificar/")) return <ContratistasVerificar code={route.slice("verificar/".length)} />;
+  if (route === "privacidad" || route === "politica-de-privacidad") return <PrivacidadPage />;
   if (route === "society")        return <VIPPortal />;
   if (route === "checkin-pax")    return <SelfCheckIn />;
   if (route.startsWith("m/"))     return <GuestPortal token={route.slice(2)} />;
