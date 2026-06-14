@@ -205,26 +205,57 @@ async function loggroRaw(method: string, path: string, body?: unknown): Promise<
 // La factura/OC puede venir en una unidad (ej. KG) distinta a la del
 // ingrediente en Loggro (ej. Gr). Si no se convierte, entra 1000× menos
 // inventario y el costo unitario queda 1000× inflado.
-// Devuelve el factor por el que se MULTIPLICA la cantidad (y se DIVIDE el
-// precio unitario), para que el total monetario no cambie.
-// 1 = sin conversión (misma unidad, familia distinta, o desconocida).
+//
+// Bases:
+//   - PESO   → factor = gramos por unidad (G=1, KG=1000, LB=453.592...)
+//   - VOL    → factor = mililitros por unidad (ML=1, L=1000, GAL=3785.41)
+//   - UNIDAD → factor = 1 (contables; reconocidas pero NO convertibles)
+//   - null   → unidad NO reconocida (potencialmente riesgosa)
 function normalizarUnidad(u: string): { base: string; factor: number } | null {
-  const n = String(u || "").trim().toUpperCase().replace(/\.$/, "").replace(/\s+/g, "");
+  const n = String(u || "")
+    .trim()
+    .toUpperCase()
+    .replace(/\./g, "")           // "GR." → "GR", "GAL." → "GAL"
+    .replace(/\s+/g, "");
+
   if (!n) return null;
-  // Peso → base gramo
+
+  // ── PESO → base gramo ──
   if (["G", "GR", "GRS", "GRM", "GRMS", "GRAMO", "GRAMOS", "GM", "GMS"].includes(n)) return { base: "PESO", factor: 1 };
-  if (["KG", "KGS", "KGM", "KILO", "KILOS", "KILOGRAMO", "KILOGRAMOS", "K"].includes(n)) return { base: "PESO", factor: 1000 };
+  if (["KG", "KGS", "KGM", "KILO", "KILOS", "KILOGRAMO", "KILOGRAMOS", "K",
+       "KL"   // ⚠ alias real visto en OCs Atolon: 'KL' significa Kilo (no kilolitro)
+      ].includes(n)) return { base: "PESO", factor: 1000 };
   if (["MG", "MILIGRAMO", "MILIGRAMOS"].includes(n)) return { base: "PESO", factor: 0.001 };
-  // Volumen → base mililitro
+  // Libras y onzas (carnes, pescados, abarrotes en algunos proveedores)
+  if (["LB", "LBS", "LIBRA", "LIBRAS"].includes(n)) return { base: "PESO", factor: 453.592 };
+  if (["OZ", "ONZA", "ONZAS"].includes(n)) return { base: "PESO", factor: 28.3495 };
+
+  // ── VOLUMEN → base mililitro ──
   if (["ML", "CC", "MILILITRO", "MILILITROS"].includes(n)) return { base: "VOL", factor: 1 };
   if (["L", "LT", "LTS", "LTR", "LITRO", "LITROS"].includes(n)) return { base: "VOL", factor: 1000 };
-  return null; // unidad desconocida → no convertir
+  // Galones US (estándar comercial Colombia)
+  if (["GAL", "GALON", "GALONES", "GALLON"].includes(n)) return { base: "VOL", factor: 3785.41 };
+
+  // ── UNIDAD (contable, no convertible entre sí) ──
+  // Reconocerlas EXPLÍCITAMENTE permite distinguir "unidad desconocida"
+  // (potencialmente riesgosa) de "unidad sin conversión necesaria".
+  if (["UN", "UND", "U", "UNI", "UNID", "UNIDAD", "UNIDADES",
+       "PZA", "PIEZA", "PIEZAS",
+       "EA", "EACH"].includes(n)) return { base: "UNIDAD", factor: 1 };
+  if (["CAJA", "CJ", "BOX", "BOTELLA", "BOT", "BTL",
+       "PAQ", "PAQUETE", "PAQUETES", "PACK",
+       "BOLSA", "BOLSAS", "BAG",
+       "LATA", "LATAS", "CAN",
+       "ROLLO", "ROLLOS"].includes(n)) return { base: "UNIDAD", factor: 1 };
+
+  return null; // unidad NO reconocida → caller decide qué hacer
 }
+
 function factorConversion(src: string, dst: string): number {
   const s = normalizarUnidad(src);
   const d = normalizarUnidad(dst);
   if (!s || !d) return 1;          // alguna desconocida → no tocar
-  if (s.base !== d.base) return 1; // familias distintas (peso vs vol) → no tocar
+  if (s.base !== d.base) return 1; // familias distintas → no tocar
   if (d.factor === 0) return 1;
   return s.factor / d.factor;      // ej. KG(1000) → Gr(1) = 1000
 }
@@ -2713,36 +2744,110 @@ serve(async (req) => {
 
     if (req.method === "POST" && path === "/create-inventory-movement") {
       const body = await req.json().catch(() => ({}));
+      const strictMode = body.strict !== false; // default true; cliente puede pasar strict=false para forzar
 
       // Loggro requiere business + user en el body de /inventory
       const { businessId, userId } = await getLoggroIdentity();
 
-      // Convertir cantidades/precio a la unidad del ingrediente en Loggro.
-      // Si la factura viene en KG y el ingrediente en Loggro está en Gr,
-      // convertimos qty ×1000 y price ÷1000 (el total no cambia).
+      // Procesamiento de cada ingrediente: convertir unidad o flagear riesgo.
+      //
+      // Tres escenarios:
+      //  (a) Ambas unidades misma familia (peso/vol) → multiplicar y dividir
+      //      precio (idempotente al total $).
+      //  (b) Ambas unidades misma familia "UNIDAD" o sin srcUnit → pasar
+      //      cantidad tal cual.
+      //  (c) RIESGO: srcUnit es peso/vol conocido (ej. "Kg") pero dstUnit
+      //      es null/desconocida → si subiéramos así, entraría 1000× menos
+      //      stock o el ratio incorrecto. En strict mode (default),
+      //      bloqueamos. Sin strict, pasamos sin convertir + reportamos.
       const conversiones: any[] = [];
-      const ingredientesPayload = await Promise.all((body.ingredients || []).map(async (it: any) => {
+      const advertencias: any[] = [];
+      const bloqueos: any[] = [];
+
+      const ingredientesPayload: any[] = [];
+      for (const it of (body.ingredients || [])) {
         const ingId = it.ingredient_id || it.ingredient;
         let quantity = Number(it.quantity) || 0;
-        // Loggro usa 'price' para el costo unitario, no 'cost'. Aceptamos ambos.
         let price = Number(it.price ?? it.cost) || 0;
         const srcUnit = it.unit || it.unidad || null;
+        const itemNombre = it.nombre || it.name || ingId;
+
         if (srcUnit && ingId) {
+          let dstUnit: string | null = null;
           try {
             const d: any = await loggroGet(`/ingredients/${ingId}`);
-            const dstUnit = d?.unit?.name || d?.measurementUnit?.name || null;
-            const f = factorConversion(String(srcUnit), String(dstUnit || ""));
-            if (f > 0 && f !== 1) {
+            dstUnit = d?.unit?.name || d?.measurementUnit?.name || d?.unit_name || null;
+          } catch (_e) {
+            // No pudimos leer el ingrediente — registramos advertencia.
+            advertencias.push({
+              ingredient: ingId, item: itemNombre, src_unit: srcUnit,
+              motivo: "no_se_pudo_leer_ingrediente_en_loggro",
+            });
+          }
+
+          const srcNorm = normalizarUnidad(String(srcUnit));
+          const dstNorm = dstUnit ? normalizarUnidad(String(dstUnit)) : null;
+
+          if (srcNorm && dstNorm && srcNorm.base === dstNorm.base && srcNorm.base !== "UNIDAD") {
+            // (a) Conversion clara: peso↔peso o vol↔vol
+            const f = srcNorm.factor / dstNorm.factor;
+            if (f !== 1) {
               const qO = quantity, pO = price;
               quantity = quantity * f;
               price = price / f;
-              conversiones.push({ ingredient: ingId, from: srcUnit, to: dstUnit, factor: f,
-                quantity: `${qO} → ${quantity}`, price: `${pO} → ${price}` });
+              conversiones.push({
+                ingredient: ingId, item: itemNombre,
+                from: srcUnit, to: dstUnit, factor: f,
+                quantity_from: qO, quantity_to: quantity,
+                price_from: pO, price_to: price,
+              });
             }
-          } catch (_e) { /* si no se puede leer el ingrediente, no convertir */ }
+          } else if (srcNorm && srcNorm.base !== "UNIDAD" && !dstNorm) {
+            // (c) RIESGO 1000×: factura es peso/vol pero Loggro no reporta unidad
+            // o reporta una que no podemos normalizar. Si subimos así, entra mal.
+            bloqueos.push({
+              ingredient: ingId, item: itemNombre,
+              src_unit: srcUnit, src_base: srcNorm.base,
+              dst_unit_raw: dstUnit,
+              motivo: dstUnit
+                ? `factura en ${srcUnit} (${srcNorm.base}) pero unidad Loggro '${dstUnit}' no reconocida`
+                : `factura en ${srcUnit} (${srcNorm.base}) pero ingrediente Loggro no tiene unidad configurada`,
+            });
+          } else if (srcNorm && dstNorm && srcNorm.base !== dstNorm.base && srcNorm.base !== "UNIDAD" && dstNorm.base !== "UNIDAD") {
+            // (c) RIESGO: bases distintas (ej. factura en peso, Loggro en volumen).
+            // Nunca convertir entre familias sin info de densidad — bloquear.
+            bloqueos.push({
+              ingredient: ingId, item: itemNombre,
+              src_unit: srcUnit, dst_unit: dstUnit,
+              motivo: `familias incompatibles: factura ${srcNorm.base}, Loggro ${dstNorm.base}`,
+            });
+          } else if (!srcNorm) {
+            // srcUnit no reconocida — advertencia. Si dstUnit es UNIDAD,
+            // probablemente está bien (Loggro maneja por unidad).
+            advertencias.push({
+              ingredient: ingId, item: itemNombre, src_unit: srcUnit,
+              motivo: `unidad de factura '${srcUnit}' no reconocida — pasando sin convertir`,
+            });
+          }
+          // En cualquier otro caso (UNIDAD↔UNIDAD, srcNorm sin dstNorm pero
+          // base UNIDAD, etc.) pasa sin convertir — caso normal.
         }
-        return { ingredient: ingId, quantity, price };
-      }));
+
+        ingredientesPayload.push({ ingredient: ingId, quantity, price });
+      }
+
+      // Fail-closed: si hay bloqueos y strictMode está activo, abortar.
+      if (bloqueos.length > 0 && strictMode) {
+        return json({
+          ok: false,
+          error: "bloqueo_conversion_unidad",
+          mensaje: `${bloqueos.length} ítem(s) tienen unidad de factura incompatible con Loggro. Revisar manualmente para evitar stock incorrecto.`,
+          bloqueos,
+          conversiones,
+          advertencias,
+          sugerencia: "Configurar la unidad del ingrediente en Loggro o pasar strict=false si está OK proceder sin convertir.",
+        }, 422);
+      }
 
       // Armar payload exacto de Loggro
       const now = new Date().toISOString();
@@ -2780,6 +2885,8 @@ serve(async (req) => {
         ok: true,
         movement_id: result.body?._id || result.body?.id || null,
         conversiones,
+        advertencias,
+        bloqueos,             // vacío si strict=true (ya retornamos arriba si había)
         loggro_response: result.body,
       });
     }
