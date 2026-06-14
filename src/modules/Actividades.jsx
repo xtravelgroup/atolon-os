@@ -89,19 +89,26 @@ export function TabCatalogo() {
 
   const save = async () => {
     if (!supabase || !form.nombre.trim()) return;
+    // Rechazar precios/cupos negativos. Antes un -100 se guardaba como
+    // tarifa visible al cliente — el booking engine la mostraba con "$ -100"
+    // y el operador no se daba cuenta hasta que alguien intentaba reservar.
+    const precio      = Math.max(0, Number(form.precio) || 0);
+    const precioNino  = Math.max(0, Number(form.precio_nino) || 0);
+    const cupoMaxNum  = form.cupo_max !== "" ? Math.max(0, Number(form.cupo_max) || 0) : null;
+    const orden       = Math.max(0, Number(form.orden) || 0);
     setSaving(true);
     const payload = {
       nombre:      form.nombre.trim(),
       categoria:   form.categoria,
       descripcion: form.descripcion || "",
-      precio:      Number(form.precio) || 0,
-      precio_nino: Number(form.precio_nino) || 0,
+      precio:      precio,
+      precio_nino: precioNino,
       duracion:    form.duracion || "",
-      cupo_max:    form.cupo_max !== "" ? Number(form.cupo_max) : null,
+      cupo_max:    cupoMaxNum,
       precio_tipo: form.precio_tipo || "por_persona",
       proveedor:   form.proveedor || null,
       activo:      form.activo,
-      orden:       Number(form.orden) || 0,
+      orden:       orden,
       self_service: !!form.self_service,
     };
     let error;

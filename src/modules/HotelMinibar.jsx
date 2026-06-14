@@ -167,16 +167,36 @@ function TabConsumo({ habitaciones, stockByHab, userEmail, onDone }) {
     }
 
     // 3. Descontar del inventario de la habitación: actualizar cantidad_esperada
-    //    al valor "encontrado" (que refleja el stock real después del consumo)
-    await Promise.all(consumos.map(c =>
-      supabase.from("minibar_stock_habitacion")
+    //    al valor "encontrado" (que refleja el stock real después del consumo).
+    //
+    //    Antes hacíamos Promise.all() con c.cantidad_esperada del state local
+    //    (read en el render inicial). Si dos staff guardaban consumo de la
+    //    misma habitación en paralelo, ambos restaban del mismo stock viejo.
+    //    Stock real se desfasaba silenciosamente del libro.
+    //
+    //    Sin RPC server-side no podemos hacer UPDATE atómico (decrement). El
+    //    mejor compromiso disponible: re-fetch el stock fresh justo antes
+    //    de cada UPDATE, secuencial. Reduce la ventana de race de minutos
+    //    (state local viejo) a ms.
+    for (const c of consumos) {
+      const { data: fresh } = await supabase
+        .from("minibar_stock_habitacion")
+        .select("cantidad_esperada")
+        .eq("habitacion_id", habId)
+        .eq("item_id", c.item_id)
+        .maybeSingle();
+      const base = Number(fresh?.cantidad_esperada);
+      // Si no encontramos el row (puede pasar tras un cambio de inventario),
+      // caemos al valor del state local — al menos no escribimos NaN.
+      const valor = Number.isFinite(base) ? base : (Number(c.cantidad_esperada) || 0);
+      await supabase.from("minibar_stock_habitacion")
         .update({
-          cantidad_esperada: Math.max(0, Number(c.cantidad_esperada) - c.consumido),
+          cantidad_esperada: Math.max(0, valor - c.consumido),
           updated_at: new Date().toISOString(),
         })
         .eq("habitacion_id", habId)
-        .eq("item_id", c.item_id)
-    ));
+        .eq("item_id", c.item_id);
+    }
 
     setSaved({ total: totalVenta, count: consumos.length, reserva: estancia.huesped_nombre || null, folio: !chErr });
     setSaving(false);
