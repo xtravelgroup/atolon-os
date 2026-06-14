@@ -119,11 +119,45 @@ async function resolveSellerId(seller: string | null | undefined): Promise<strin
   return pirposSellerCache[s] || null;
 }
 
-async function loggroGet(path: string): Promise<any> {
+// rank 111: fetch a Loggro tiene timeout explicito (30s) y retry con backoff
+// para 429/5xx. Sin esto, una API Loggro lenta colgaba toda la edge function
+// hasta el timeout global de Supabase (~150s) sin visibilidad.
+async function loggroFetch(path: string, init: RequestInit = {}, timeoutMs = 30_000): Promise<Response> {
   const token = await getLoggroToken();
-  const res = await fetch(`${LOGGRO_BASE}${path}`, {
-    headers: { "Authorization": `Bearer ${token}` },
-  });
+  const url = `${LOGGRO_BASE}${path}`;
+  const baseHeaders = { Authorization: `Bearer ${token}`, ...(init.headers || {}) };
+
+  let lastErr: unknown = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), timeoutMs);
+    try {
+      const res = await fetch(url, { ...init, headers: baseHeaders, signal: ctrl.signal });
+      clearTimeout(t);
+      // Retry en 429 y 5xx (transitorios). 4xx no-429 son determinísticos: no reintentar.
+      if (res.status === 429 || (res.status >= 500 && res.status < 600)) {
+        if (attempt < 2) {
+          const backoff = 500 * Math.pow(2, attempt) + Math.floor(Math.random() * 250);
+          await new Promise(r => setTimeout(r, backoff));
+          continue;
+        }
+      }
+      return res;
+    } catch (e) {
+      clearTimeout(t);
+      lastErr = e;
+      if (attempt < 2) {
+        const backoff = 500 * Math.pow(2, attempt) + Math.floor(Math.random() * 250);
+        await new Promise(r => setTimeout(r, backoff));
+        continue;
+      }
+    }
+  }
+  throw new Error(`Loggro fetch ${path} falló tras 3 intentos: ${lastErr instanceof Error ? lastErr.message : String(lastErr)}`);
+}
+
+async function loggroGet(path: string): Promise<any> {
+  const res = await loggroFetch(path);
   if (!res.ok) {
     const txt = await res.text();
     throw new Error(`Loggro GET ${path} → ${res.status}: ${txt.slice(0, 200)}`);
@@ -132,10 +166,10 @@ async function loggroGet(path: string): Promise<any> {
 }
 
 async function loggroPost(path: string, body: unknown): Promise<any> {
-  const token = await getLoggroToken();
-  const res = await fetch(`${LOGGRO_BASE}${path}`, {
+  // Misma robustez (timeout+retry) que loggroGet via loggroFetch.
+  const res = await loggroFetch(path, {
     method: "POST",
-    headers: { "Authorization": `Bearer ${token}`, "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
   const txt = await res.text();
@@ -146,16 +180,25 @@ async function loggroPost(path: string, body: unknown): Promise<any> {
 }
 
 async function loggroRaw(method: string, path: string, body?: unknown): Promise<{ status: number; body: any; ok: boolean }> {
-  const token = await getLoggroToken();
-  const res = await fetch(`${LOGGRO_BASE}${path}`, {
-    method,
-    headers: { "Authorization": `Bearer ${token}`, "Content-Type": "application/json" },
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  const txt = await res.text();
-  let data: any = null;
-  try { data = JSON.parse(txt); } catch { data = { raw: txt }; }
-  return { status: res.status, body: data, ok: res.ok };
+  // Timeout explicito (30s). Sin retry: callers de loggroRaw esperan ver el
+  // status code exacto inmediatamente (ej. para detectar 404 y crear el recurso).
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), 30_000);
+  try {
+    const token = await getLoggroToken();
+    const res = await fetch(`${LOGGRO_BASE}${path}`, {
+      method,
+      headers: { "Authorization": `Bearer ${token}`, "Content-Type": "application/json" },
+      body: body ? JSON.stringify(body) : undefined,
+      signal: ctrl.signal,
+    });
+    const txt = await res.text();
+    let data: any = null;
+    try { data = JSON.parse(txt); } catch { data = { raw: txt }; }
+    return { status: res.status, body: data, ok: res.ok };
+  } finally {
+    clearTimeout(t);
+  }
 }
 
 // ── Conversión de unidades ────────────────────────────────────────────
@@ -1784,6 +1827,12 @@ serve(async (req) => {
       // Items con stock distinto de 0 (positivo o negativo)
       const positivos: Array<{ id: string; name: string; stock: number }> = [];
       const negativos: Array<{ id: string; name: string; stock: number }> = [];
+      // rank 34: antes el worker silenciaba errores con catch (_). Si la API
+      // Loggro fallaba para 50/1000 ingredients, esos 50 NO se reseteaban y
+      // el operador no se enteraba — el reset se daba por exitoso. Ahora
+      // capturamos los IDs fallidos y los retornamos para que el usuario
+      // pueda reintentar selectivamente.
+      const fallidos: Array<{ id: string; error: string }> = [];
       const ids = ingredients.map((i: any) => i?._id || i?.id).filter(Boolean);
       let idx = 0;
       async function worker() {
@@ -1801,10 +1850,26 @@ serve(async (req) => {
             } else if (totalStock < -0.0001) {
               negativos.push({ id, name: d?.name || "", stock: Math.abs(totalStock) });
             }
-          } catch (_) { /* skip */ }
+          } catch (e) {
+            fallidos.push({ id, error: e instanceof Error ? e.message.slice(0, 200) : String(e).slice(0, 200) });
+          }
         }
       }
       await Promise.all(Array.from({ length: 10 }, () => worker()));
+
+      // rank 34: si fallaron mas del 5% NO procedemos con los movimientos.
+      // El reset es destructivo (SALIDA + ENTRADA_AJUSTE en Loggro): si tenemos
+      // vision incompleta del estado actual, esta visto que produce diferencias
+      // grandes contra el libro contable. Mejor abortar y pedir reintento.
+      const tasaFallo = ids.length ? fallidos.length / ids.length : 0;
+      if (tasaFallo > 0.05) {
+        return json({
+          ok: false,
+          error: `Reset abortado: ${fallidos.length}/${ids.length} ingredients no respondieron (${Math.round(tasaFallo * 100)}%). Reintentar cuando la API Loggro este estable.`,
+          fallidos: fallidos.slice(0, 50),
+          total_fallidos: fallidos.length,
+        }, 503);
+      }
 
       if (dryRun) {
         return json({
@@ -1817,6 +1882,7 @@ serve(async (req) => {
           stock_total_a_reponer: negativos.reduce((s, x) => s + x.stock, 0),
           all_positivos: positivos,
           all_negativos: negativos,
+          fallidos_consulta: fallidos,
         });
       }
 
@@ -1870,6 +1936,10 @@ serve(async (req) => {
         items_negativos_repuestos: negativos.length,
         stock_total_sacado: positivos.reduce((s, x) => s + x.stock, 0),
         stock_total_repuesto: negativos.reduce((s, x) => s + x.stock, 0),
+        // rank 34: visibilidad de items que NO se pudieron consultar (<=5% del total,
+        // sino habriamos abortado arriba). El operador puede reintentar.
+        ingredients_fallidos_consulta: fallidos.length,
+        fallidos_muestra: fallidos.slice(0, 20),
       });
     }
 
