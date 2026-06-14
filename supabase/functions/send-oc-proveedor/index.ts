@@ -108,11 +108,25 @@ serve(async (req) => {
     if (replyTo) resendBody.reply_to = replyTo;
     if (attachments) resendBody.attachments = attachments;
 
-    const res = await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: { "Authorization": `Bearer ${RESEND_KEY}`, "Content-Type": "application/json" },
-      body: JSON.stringify(resendBody),
-    });
+    // Timeout 15s en fetch a Resend. Sin esto, un Resend lento dejaba la
+    // funcion esperando hasta el timeout global y el usuario veia "Enviando..."
+    // por minutos sin feedback.
+    const sendCtrl = new AbortController();
+    const sendTimer = setTimeout(() => sendCtrl.abort(), 15_000);
+    let res: Response;
+    try {
+      res = await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        signal: sendCtrl.signal,
+        headers: { "Authorization": `Bearer ${RESEND_KEY}`, "Content-Type": "application/json" },
+        body: JSON.stringify(resendBody),
+      });
+    } catch (e: any) {
+      clearTimeout(sendTimer);
+      const isAbort = e?.name === "AbortError";
+      return jsonResp({ ok: false, error: isAbort ? "Resend timeout (15s)" : "Resend network error", detail: String(e?.message || e) }, 504);
+    }
+    clearTimeout(sendTimer);
     const data = await res.json();
     if (!res.ok) return jsonResp({ ok: false, error: "Resend error", detail: data }, res.status);
 
