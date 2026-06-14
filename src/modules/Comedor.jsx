@@ -134,6 +134,9 @@ function TabComensales({ fecha, registros, esperados, empleados, precios, userEm
   const [pickTipo, setPickTipo] = useState("incluido");
   const [search, setSearch] = useState("");
   const [saving, setSaving] = useState(false);
+  // Set de IDs en proceso de borrado — evita doble click que disparaba
+  // dos DELETE seguidos del mismo registro.
+  const [deleting, setDeleting] = useState(new Set());
 
   const precioComida = (k) => Number(precios.find(p => p.comida === k)?.precio || 0);
 
@@ -257,11 +260,14 @@ function TabComensales({ fecha, registros, esperados, empleados, precios, userEm
                             {r.comensal_tipo === "contratista" && " · Contratista"}
                           </div>
                         </div>
-                        <button type="button" onClick={async () => {
+                        <button type="button" disabled={deleting.has(r.id)} onClick={async () => {
+                          if (deleting.has(r.id)) return;
                           if (!confirm("¿Eliminar registro?")) return;
+                          setDeleting(prev => new Set(prev).add(r.id));
                           await supabase.from("comedor_registros").delete().eq("id", r.id);
-                          onReload();
-                        }} style={{ background: "none", border: "none", color: B.danger, cursor: "pointer", fontSize: 12 }}>×</button>
+                          await onReload();
+                          setDeleting(prev => { const n = new Set(prev); n.delete(r.id); return n; });
+                        }} style={{ background: "none", border: "none", color: B.danger, cursor: deleting.has(r.id) ? "wait" : "pointer", fontSize: 12, opacity: deleting.has(r.id) ? 0.4 : 1 }}>×</button>
                       </div>
                     ))}
                   </div>
