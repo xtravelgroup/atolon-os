@@ -2770,19 +2770,30 @@ serve(async (req) => {
         let quantity = Number(it.quantity) || 0;
         let price = Number(it.price ?? it.cost) || 0;
         const srcUnit = it.unit || it.unidad || null;
+        // Override manual del operador: cuando la factura llega por OCR/parse
+        // automático y el ingrediente Loggro tiene una unidad mal configurada
+        // o ambigua, el operador puede forzar la unidad destino para que la
+        // conversión use ese valor en lugar del que reporta /ingredients/${id}.
+        // Solo afecta a Loggro — no se persiste en la factura original.
+        const dstUnitOverride = it.unit_dst_override || null;
         const itemNombre = it.nombre || it.name || ingId;
 
         if (srcUnit && ingId) {
           let dstUnit: string | null = null;
-          try {
-            const d: any = await loggroGet(`/ingredients/${ingId}`);
-            dstUnit = d?.unit?.name || d?.measurementUnit?.name || d?.unit_name || null;
-          } catch (_e) {
-            // No pudimos leer el ingrediente — registramos advertencia.
-            advertencias.push({
-              ingredient: ingId, item: itemNombre, src_unit: srcUnit,
-              motivo: "no_se_pudo_leer_ingrediente_en_loggro",
-            });
+          let dstSource: "loggro" | "override" = "loggro";
+          if (dstUnitOverride) {
+            dstUnit = String(dstUnitOverride);
+            dstSource = "override";
+          } else {
+            try {
+              const d: any = await loggroGet(`/ingredients/${ingId}`);
+              dstUnit = d?.unit?.name || d?.measurementUnit?.name || d?.unit_name || null;
+            } catch (_e) {
+              advertencias.push({
+                ingredient: ingId, item: itemNombre, src_unit: srcUnit,
+                motivo: "no_se_pudo_leer_ingrediente_en_loggro",
+              });
+            }
           }
 
           const srcNorm = normalizarUnidad(String(srcUnit));
@@ -2798,6 +2809,7 @@ serve(async (req) => {
               conversiones.push({
                 ingredient: ingId, item: itemNombre,
                 from: srcUnit, to: dstUnit, factor: f,
+                dst_source: dstSource,
                 quantity_from: qO, quantity_to: quantity,
                 price_from: pO, price_to: price,
               });
