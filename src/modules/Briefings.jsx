@@ -453,10 +453,16 @@ function BriefingAIRecorder({ briefing, empleados, onApply }) {
     if (!transcripcion.trim()) return setError("Sin transcripción");
     setEstado("processing");
     setError(null);
+    // Timeout 90s — cubrir el peor caso (analyze-briefing tiene timeout
+    // interno de 60s a Anthropic + overhead). Sin esto, la UI quedaba en
+    // "processing" indefinidamente y el usuario no sabia si re-intentar.
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 90_000);
     try {
       const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/analyze-briefing`;
       const res = await fetch(url, {
         method: "POST",
+        signal: ctrl.signal,
         headers: {
           "Content-Type": "application/json",
           "Authorization": `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
@@ -471,12 +477,15 @@ function BriefingAIRecorder({ briefing, empleados, onApply }) {
           contexto: `Briefing "${briefing.titulo || briefing.codigo}" del ${briefing.fecha}.`,
         }),
       });
+      clearTimeout(timer);
       const data = await res.json();
       if (!data.ok) throw new Error(data.error || "Error de IA");
       setResultado(data);
       setEstado("preview");
     } catch (e) {
-      setError("Error procesando: " + e.message);
+      clearTimeout(timer);
+      const msg = e?.name === "AbortError" ? "Tiempo de espera agotado (90s). Intenta de nuevo." : e.message;
+      setError("Error procesando: " + msg);
       setEstado("idle");
     }
   };

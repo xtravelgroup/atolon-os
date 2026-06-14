@@ -247,7 +247,13 @@ export default function ContratistasMuelle() {
   };
 
   const registrarIngreso = async () => {
-    if (!result) return;
+    // Guard contra doble-click. El boton tenia disabled={saving} pero el
+    // primer click setea saving=true y React necesita re-renderizar antes
+    // de que un segundo click sea bloqueado — en muelle (mobile en condiciones
+    // de mala señal) eso disparaba dos INSERT en contratistas_ingresos_muelle
+    // con el mismo trabajador y timestamp. Doble ingreso visible en
+    // bitacora.
+    if (saving || !result) return;
     setSaving(true);
     try {
       const row = {
@@ -278,7 +284,7 @@ export default function ContratistasMuelle() {
   };
 
   const registrarRechazo = async () => {
-    if (!result) return;
+    if (saving || !result) return;
     setSaving(true);
     try {
       const row = {
