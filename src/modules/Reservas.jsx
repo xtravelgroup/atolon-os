@@ -793,6 +793,17 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
     const nuevaNota = esCortesia
       ? `Cortesía${notaBase ? " — " + notaBase : ""}`
       : r0.notas;
+    // Audit rank 59: forma_pago/fecha_pago top-level se sobreescribian con
+    // los del ULTIMO pago. Reportes "Por Método de Pago" (Financiero,
+    // conciliacion de CierreCaja) agrupan por r.forma_pago — atribuian el
+    // total de la reserva al ultimo metodo cobrado.
+    // Solucion: solo setear forma_pago/fecha_pago al PRIMER pago (cuando
+    // pagosPrev esta vacio y abono=0). En pagos subsiguientes preservar
+    // los valores originales. Cortesia y Ajuste Agencia preservan tambien.
+    const esPrimerPago = (pagosPrev.length === 0) && ((r0.abono || 0) === 0);
+    const formaPagoFinal = esPrimerPago ? pagoForma : (r0.forma_pago || pagoForma);
+    const fechaPagoFinal = esPrimerPago ? pagoFecha : (r0.fecha_pago || pagoFecha);
+
     const updatePayload = {
       abono:              esCortesia ? 0 : nuevoAbono,
       // Cortesía: total=0. Ajuste Agencia: reduce total por el monto del ajuste.
@@ -800,8 +811,8 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
       precio_u:           esCortesia ? 0 : (r0.precio_u || 0),
       saldo:              esCortesia ? 0 : (esAjusteAgencia ? saldoFinalAjuste : Math.max(0, nuevoSaldo)),
       estado:             esCortesia ? "confirmado" : nuevoEstado,
-      forma_pago:         pagoForma,
-      fecha_pago:         pagoFecha,
+      forma_pago:         formaPagoFinal,
+      fecha_pago:         fechaPagoFinal,
       pagos:              pagosNext,
       descuento_cortesia: nuevoDescuentoCortesia,
       descuento_agencia:  nuevoDescuentoAgencia,
@@ -878,6 +889,14 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
     // email se guarda en reserva.email (nuevo campo) o fallback a reserva.contacto si tiene @
     const emailKey = reserva.email || (reserva.contacto?.includes("@") ? reserva.contacto : null);
     if (!supabase || !emailKey) return;
+    // Audit rank 99: validar email con regex antes de meterlo en .or() de
+    // PostgREST. La sintaxis de .or() interpreta comas/parentesis como
+    // operadores y un email basura tipo 'a@b,foo.eq.X' rompe el query o
+    // contamina stats del cliente atacante. Limitamos a chars seguros.
+    if (!/^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/.test(emailKey)) {
+      console.warn("[upsertCliente] emailKey inválido, skip:", emailKey);
+      return;
+    }
     const { data: allRes } = await supabase.from("reservas")
       .select("total")
       .or(`email.eq.${emailKey},contacto.eq.${emailKey}`)
@@ -4036,12 +4055,27 @@ export default function Reservas() {
   const addReserva = async (form) => {
     if (!supabase) return null;
 
-    // Bloquear reservas en fechas con cierre activo (validación en el momento de guardar)
+    // Bloquear reservas en fechas con cierre activo (validación en el momento de guardar).
+    // Re-fetch para evitar race: la lista 'cierres' del state pudo no
+    // incluir un cierre creado entre el render y el submit (audit rank 60).
     const fechaRes = form.fecha || (tabDia === "manana" ? tomorrow : today);
-    const cierre = cierres.find(c => c.activo && c.fecha === fechaRes);
+    const { data: cierresFresh } = await supabase.from("cierres")
+      .select("tipo, motivo, salidas, activo, fecha")
+      .eq("fecha", fechaRes).eq("activo", true);
+    const cierre = (cierresFresh || []).find(c => c.activo && c.fecha === fechaRes)
+                || cierres.find(c => c.activo && c.fecha === fechaRes);
     if (cierre?.tipo === "total") {
       alert(`❌ La fecha ${fechaRes} está cerrada (${cierre.motivo || "Buy-Out / Cierre total"}). No se puede crear la reserva.`);
       return null;
+    }
+    // Audit rank 60: cierre PARCIAL — bloquear solo si afecta a esta salida.
+    // Antes solo se bloqueaba 'total'. Si un cierre parcial cerraba salidas
+    // especificas, la reserva entraba igual y el cliente llegaba sin lancha.
+    if (cierre?.tipo === "parcial" && Array.isArray(cierre.salidas) && form.salida_id) {
+      if (cierre.salidas.includes(form.salida_id)) {
+        alert(`❌ La salida ${form.salida_id} del ${fechaRes} está cerrada (${cierre.motivo || "cierre parcial"}). Elegí otra salida o fecha.`);
+        return null;
+      }
     }
 
     const pax   = Number(form.pax_a) + Number(form.pax_n);

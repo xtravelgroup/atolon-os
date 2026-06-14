@@ -231,7 +231,26 @@ export default function Requisiciones() {
   const handleSave = async (newReq) => {
     if (!supabase) return;
     const monto = Math.round(Number(newReq.total) || 0);
-    const nivel = monto >= UMBRAL_DIRECCION || (totalSemanal + monto > UMBRAL_SEMANAL) ? "direccion" : "gerente_general";
+
+    // Audit rank 100: totalSemanal del state local puede estar stale si dos
+    // reqs concurrentes se crean — ambas pasan el check (25M+4M<30M) y la
+    // segunda evita el escalado a Direccion. Re-fetch desde DB antes de
+    // decidir el nivel. Race remoto puro sigue posible pero la ventana baja
+    // de minutos a ~100ms (el tiempo entre fetch e insert).
+    let totalSemanalFresh = totalSemanal;
+    try {
+      const hoy = new Date();
+      const lunes = new Date(hoy);
+      lunes.setDate(hoy.getDate() - ((hoy.getDay() + 6) % 7));
+      const lunesStr = lunes.toISOString().slice(0, 10);
+      const { data: semR } = await supabase.from("requisiciones")
+        .select("total")
+        .in("estado", ["Aprobada", "En Compra", "Recibida Parcial", "Recibida"])
+        .gte("fecha", lunesStr);
+      totalSemanalFresh = (semR || []).reduce((s, r) => s + (r.total || 0), 0);
+    } catch (_) { /* fallback al state local si la consulta falla */ }
+
+    const nivel = monto >= UMBRAL_DIRECCION || (totalSemanalFresh + monto > UMBRAL_SEMANAL) ? "direccion" : "gerente_general";
 
     // Normalizar ítems: asegurar que cant, precioU, subtotal sean números enteros
     // (la columna total es INTEGER en Postgres)
