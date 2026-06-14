@@ -318,6 +318,50 @@ export default function FacturaProveedorModal({ oc, onClose, reload, currentUser
 
   async function aplicar() {
     if (!data.factura_numero) { setErr("Número de factura obligatorio"); return; }
+
+    // Validación 1: fecha factura no futura. Sin esto un OCR podía extraer
+    // una fecha mal (ej. 2026 → 2027) y entraban días de crédito negativos.
+    const hoy = new Date().toISOString().slice(0, 10);
+    if (data.factura_fecha && data.factura_fecha > hoy) {
+      setErr(`Fecha de factura no puede ser futura (${data.factura_fecha}). Verifica el dato del OCR.`);
+      return;
+    }
+
+    // Validación 2: factura duplicada del MISMO proveedor (en otra OC).
+    // El UNIQUE en oc_facturas(oc_id, factura_numero) solo previene dups
+    // dentro de la misma OC. Un proveedor podía facturar dos veces el mismo
+    // número en OCs distintas y entraban ambas (CxP duplicado).
+    if (oc.proveedor_id) {
+      const { data: dupsOC } = await supabase
+        .from("ordenes_compra")
+        .select("id, codigo, factura_numero")
+        .eq("proveedor_id", oc.proveedor_id)
+        .eq("factura_numero", data.factura_numero)
+        .neq("id", oc.id);
+      const dups = (dupsOC || []).filter(d => d.factura_numero === data.factura_numero);
+      if (dups.length > 0) {
+        const lista = dups.slice(0, 3).map(d => d.codigo).join(", ");
+        const ok = window.confirm(
+          `⚠️ FACTURA YA EXISTE\n\nEl proveedor ya tiene la factura ${data.factura_numero} aplicada en:\n${lista}${dups.length > 3 ? `\n... (+${dups.length - 3} más)` : ""}\n\n¿Aplicarla igual? Confirma que NO es el mismo documento del proveedor — generar duplicado en CxP es serio.`
+        );
+        if (!ok) { setErr("Aplicación cancelada — verifica número de factura."); return; }
+      }
+    }
+
+    // Validación 3: total factura vs total OC. Warning si difiere >5%.
+    const totalFacturaCalc = Number(data.total) || 0;
+    const totalOC = Number(oc.total) || 0;
+    if (totalFacturaCalc > 0 && totalOC > 0) {
+      const difAbs = Math.abs(totalFacturaCalc - totalOC);
+      const difPct = (difAbs / totalOC) * 100;
+      if (difPct > 5) {
+        const ok = window.confirm(
+          `⚠️ Diferencia de total\n\nFactura: ${totalFacturaCalc.toLocaleString("es-CO")}\nOC esperaba: ${totalOC.toLocaleString("es-CO")}\nDiferencia: ${difPct.toFixed(1)}% (${difAbs.toLocaleString("es-CO")})\n\n¿Aplicar igual? Verifica que la factura corresponda exactamente a esta OC.`
+        );
+        if (!ok) { setErr("Aplicación cancelada — revisar totales."); return; }
+      }
+    }
+
     setStep("applying");
     setErr("");
     try {
@@ -548,6 +592,14 @@ export default function FacturaProveedorModal({ oc, onClose, reload, currentUser
         factura_aplicada_por: aplicadaPor,
         updated_at: new Date().toISOString(),
       };
+      // Transicionar el estado si la OC está en estados pre-recibo. Una OC con
+      // factura aplicada pero estado='aprobada' o 'enviada' es inconsistente —
+      // si llegó factura, la mercancía/servicio ya se movió. Pasamos a
+      // 'confirmada' como bridge hacia recepción. No tocamos estados
+      // posteriores (recibida, recibida_parcial, pagada, cancelada).
+      if (oc.estado === "aprobada" || oc.estado === "enviada") {
+        updateOC.estado = "confirmada";
+      }
       if (data.fecha_vencimiento) {
         updateOC.fecha_vencimiento_pago = data.fecha_vencimiento;
         const dc = Math.floor((new Date(data.fecha_vencimiento) - new Date(data.factura_fecha || new Date())) / 86400000);
