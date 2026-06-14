@@ -117,7 +117,7 @@ function NuevaReserva({ agencia, user, onCreated, vistaPrecios = "ambos" }) {
     if (!supabase) return;
     const [{ data: incs }, { data: reservas }, { data: canjes }] = await Promise.all([
       supabase.from("b2b_incentivos").select("*")
-        .or(`aliado_id.is.null,aliado_id.eq.${agencia.id}`)
+        .or(`aliado_id.is.null,aliado_id.eq.${String(agencia.id || "").replace(/[,()*\s]/g, "")}`)
         .eq("activo", true).eq("tipo", "acumulacion"),
       supabase.from("reservas").select("pax, fecha")
         .eq("aliado_id", agencia.id).neq("estado", "cancelado").neq("canal", "GRUPO")
@@ -1341,7 +1341,7 @@ function IncentivosPortal({ agencia }) {
       // Incentivos globales (aliado_id IS NULL) + los de esta agencia
       const { data } = await supabase.from("b2b_incentivos")
         .select("*")
-        .or(`aliado_id.is.null,aliado_id.eq.${agencia.id}`)
+        .or(`aliado_id.is.null,aliado_id.eq.${String(agencia.id || "").replace(/[,()*\s]/g, "")}`)
         .eq("activo", true)
         .order("fecha_fin", { ascending: true });
       const inc = data || [];

@@ -225,7 +225,12 @@ serve(async (req) => {
   // ── Confirm reservation ─────────────────────────────────────────────────
   const hoy = new Date().toLocaleDateString("en-CA", { timeZone: "America/Bogota" });
 
-  const { error: updateErr } = await supabase
+  // UPDATE condicional (estado='pendiente_pago') + .select() para detectar
+  // si realmente cambiamos algo. Si entre el read de arriba y este UPDATE
+  // otro proceso ya confirmo la reserva (race), el UPDATE no afecta filas y
+  // NO debemos enviar email/lead-close/audit de nuevo. Sin este chequeo,
+  // el TOCTOU disparaba un email duplicado en ese caso.
+  const { data: updated, error: updateErr } = await supabase
     .from("reservas")
     .update({
       estado: "confirmado",
@@ -237,12 +242,20 @@ serve(async (req) => {
       updated_at: new Date().toISOString(),
     })
     .eq("id", reservaId)
-    .eq("estado", "pendiente_pago");
+    .eq("estado", "pendiente_pago")
+    .select("id");
 
   if (updateErr) {
     console.error("Error updating reserva:", updateErr.message);
     return new Response(JSON.stringify({ error: updateErr.message }), {
       status: 500, headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  if (!updated || updated.length === 0) {
+    console.log(`[stripe-webhook] Reserva ${reservaId} ya no estaba en pendiente_pago, otro proceso la confirmo. Skip email/audit.`);
+    return new Response(JSON.stringify({ received: true, skipped: "concurrent_confirm" }), {
+      headers: { "Content-Type": "application/json" },
     });
   }
 
