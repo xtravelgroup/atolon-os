@@ -239,10 +239,22 @@ function ModalAgregar({ onClose, onCreated }) {
   const s = (k, v) => setF(p => ({ ...p, [k]: v }));
 
   const handleSave = async () => {
-    if (!f.nombre.trim()) return;
+    if (!f.nombre.trim()) {
+      setStatusMsg({ type: "err", text: "Nombre obligatorio." });
+      return;
+    }
+    // NIT obligatorio para proveedores nacionales — sin NIT no se puede
+    // emitir factura electrónica DIAN. Antes solo había un banner visual
+    // de advertencia sin enforcement: el operador creaba el proveedor
+    // pensando que era opcional y se trababa al facturar.
+    const tipoEsNacional = !f.tipo || f.tipo.toLowerCase().includes("nacional");
+    if (tipoEsNacional && !(f.nit || "").trim()) {
+      setStatusMsg({ type: "err", text: "NIT obligatorio para proveedores nacionales (requerido para facturación DIAN)." });
+      return;
+    }
     setSaving(true);
     setStatusMsg(null);
-    const nuevo = { id: uid(), ...f };
+    const nuevo = { id: uid(), ...f, nit: (f.nit || "").trim() };
     const { data, error } = await supabase.from("proveedores").insert(nuevo).select().single();
     if (error) { setSaving(false); setStatusMsg({ type: "err", text: "Error: " + error.message }); return; }
 
