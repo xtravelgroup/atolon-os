@@ -6,6 +6,7 @@ import { supabase } from "../lib/supabase";
 import { B } from "../brand";
 import { useBreakpoint } from "../lib/responsive";
 import { ContratistasWizardAsistido } from "./ContratistasPortal";
+import { genRadicado } from "./contratistas/constants";
 import KanbanCard from "./contratistas/admin/KanbanCard";
 import DetailModal from "./contratistas/admin/DetailModal";
 
@@ -20,6 +21,9 @@ const PIPELINE_COLUMNS = [
 
 const PIPELINE_ESTADOS = PIPELINE_COLUMNS.map(c => c.k);
 const APROBADOS_ESTADOS = ["aprobado", "vencido"];
+// EXPRESS: contratistas registrados inline en eventos.contratistas (JSON).
+// No pasan por el pipeline formal — vienen con cédula+ARL básicos, listos
+// para acceder al evento. Se muestran en su propio tab solo lectura.
 
 const ESTADO_COLOR = {
   borrador: "rgba(255,255,255,0.3)",
@@ -87,6 +91,340 @@ export default function ContratistasAdmin() {
   const [workerCounts, setWorkerCounts] = useState({}); // { contratista_id: count }
   const [activeWorkersCount, setActiveWorkersCount] = useState(0);
   const [ingresosByContratista, setIngresosByContratista] = useState({}); // { id: { count, last, permitidos, rechazados } }
+  const [expressRows, setExpressRows] = useState([]); // contratistas flatten-eados de eventos.contratistas JSON
+  const [promoting, setPromoting] = useState(false);   // estado de "creando ficha desde Express"
+  const [verifyingKey, setVerifyingKey] = useState(""); // "evento_id:ctr_id:persona_idx" mientras sube archivo
+  const [rejectingKey, setRejectingKey] = useState(""); // misma key, mientras se escribe el motivo
+  const [rejectMotivo, setRejectMotivo] = useState("");
+
+  // Promueve un contratista Express (inline de eventos.contratistas) a la
+  // tabla formal `contratistas` con estado="borrador" y abre la ficha
+  // (DetailModal) para completar lo que falta desde Atolon OS — RUT, EPS,
+  // ARL formal, fechas, declaraciones SST, firma, etc.
+  //
+  // Idempotente vía cédula/nombre: si ya existe una row para esta persona
+  // (matched por nat_cedula o nombre_display + evento), reusa esa en lugar
+  // de crear duplicado.
+  const promoteExpressToFicha = async (r) => {
+    if (promoting || !supabase) return;
+    setPromoting(true);
+    try {
+      const personas = Array.isArray(r.personas) ? r.personas.filter(p => p?.nombre) : [];
+      // Heurística: 1 persona o ninguna → natural; >1 → empresa.
+      const tipoFormal = personas.length > 1 ? "empresa" : "natural";
+      const persona0 = personas[0] || {};
+
+      // Mapeo de campos del Express al schema formal:
+      //   - r.contacto    = nombre del responsable (ej. "JOHANNA TURIZO") → emp_op_nombre
+      //   - r.telefono    = teléfono real → emp_telefono + contacto_principal_cel
+      //   - r.direccion   = dirección → emp_direccion
+      //   - r.descripcion = descripción del servicio → servicio_desc (preferido sobre funcion)
+      //   - r.rut_url     = PDF/imagen RUT → documento tipo="rut"
+      //   - p.arl_url     = ARL de cada persona → documento tipo="arl"
+      const telLooksEmail = !!r.telefono && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(r.telefono);
+      const cel  = (!telLooksEmail && r.telefono) || null;
+      const mail = telLooksEmail ? r.telefono : null;
+      const servicio = r.descripcion || r.funcion || r.cargo || null;
+
+      // Construir payload base con campos comunes
+      const buildPayload = () => {
+        const base = {
+          nombre_display: r.nombre,
+          servicio_desc:  servicio,
+          contacto_principal_cel:   cel || "pendiente",
+          contacto_principal_email: mail || "pendiente@atolon.co",
+          num_trabajadores: tipoFormal === "empresa" ? personas.length : 1,
+        };
+        if (tipoFormal === "natural") {
+          base.nat_nombre    = persona0.nombre || r.nombre;
+          base.nat_cedula    = persona0.cedula || null;
+          base.nat_fecha_nac = persona0.fecha_nacimiento || null;
+          base.nat_celular   = cel;
+          base.nat_correo    = mail;
+        } else {
+          base.emp_razon_social = r.nombre;
+          base.emp_direccion    = r.direccion || null;
+          base.emp_telefono     = cel;
+          base.emp_op_nombre    = r.contacto || null;        // ahora SÍ es el rep
+          base.emp_op_cargo     = r.cargo || null;
+          base.emp_op_cel       = cel;
+          base.emp_op_correo    = mail;
+        }
+        return base;
+      };
+
+      // 1) Buscar row ya existente (evitar duplicados al re-clickear)
+      let existingId = null;
+      if (tipoFormal === "natural" && persona0.cedula) {
+        const { data: found } = await supabase
+          .from("contratistas")
+          .select("id")
+          .eq("tipo", "natural")
+          .eq("nat_cedula", String(persona0.cedula).trim())
+          .limit(1).maybeSingle();
+        if (found?.id) existingId = found.id;
+      } else if (tipoFormal === "empresa" && r.nombre) {
+        const { data: found } = await supabase
+          .from("contratistas")
+          .select("id")
+          .eq("tipo", "empresa")
+          .ilike("emp_razon_social", r.nombre.trim())
+          .limit(1).maybeSingle();
+        if (found?.id) existingId = found.id;
+      }
+
+      let contratistaId;
+      if (existingId) {
+        // 2a) ENRICH: traer row existente y completar SOLO los campos vacíos
+        contratistaId = existingId;
+        const { data: cur } = await supabase
+          .from("contratistas")
+          .select("*")
+          .eq("id", existingId)
+          .single();
+        const updatePayload = {};
+        const enrich = buildPayload();
+        Object.entries(enrich).forEach(([k, v]) => {
+          if (v == null || v === "" || v === "pendiente" || v === "pendiente@atolon.co") return;
+          // Solo sobrescribir si el campo actual está vacío/pendiente (no pisar lo que el admin ya editó)
+          const cv = cur?.[k];
+          const empty = cv == null || cv === "" || cv === "pendiente" || cv === "pendiente@atolon.co";
+          if (empty) updatePayload[k] = v;
+        });
+        if (Object.keys(updatePayload).length > 0) {
+          await supabase.from("contratistas").update(updatePayload).eq("id", existingId);
+        }
+      } else {
+        // 2b) INSERT: nuevo borrador
+        const payload = { ...buildPayload(), tipo: tipoFormal, estado: "borrador", radicado: genRadicado(tipoFormal) };
+        const { data: row, error } = await supabase
+          .from("contratistas")
+          .insert(payload)
+          .select("id")
+          .single();
+        if (error) { alert("No se pudo promover: " + error.message); return; }
+        contratistaId = row.id;
+      }
+
+      // 3) Workers: si empresa, insertar las personas que no estén ya y
+      //    enriquecer los existentes con campos vacíos (fecha_nacimiento, etc.)
+      let workersInserted = [];
+      if (tipoFormal === "empresa" && personas.length > 0) {
+        const { data: existingWs } = await supabase
+          .from("contratistas_trabajadores")
+          .select("id, cedula, nombre, cargo, fecha_nacimiento")
+          .eq("contratista_id", contratistaId);
+        const existsByCed = new Map((existingWs || []).filter(w => w.cedula).map(w => [String(w.cedula).trim(), w]));
+        workersInserted = [...(existingWs || [])];
+        const toInsert = [];
+        const toEnrich = []; // { id, payload }
+        personas.forEach(p => {
+          const ced = p.cedula ? String(p.cedula).trim() : null;
+          const existing = ced ? existsByCed.get(ced) : null;
+          if (existing) {
+            // Enrich: solo setear campos que están vacíos en el row actual
+            const upd = {};
+            if (!existing.cargo            && p.rol)              upd.cargo = p.rol;
+            if (!existing.fecha_nacimiento && p.fecha_nacimiento) upd.fecha_nacimiento = p.fecha_nacimiento;
+            if (Object.keys(upd).length > 0) toEnrich.push({ id: existing.id, payload: upd });
+            return;
+          }
+          toInsert.push({
+            contratista_id: contratistaId,
+            nombre: p.nombre,
+            cedula: ced,
+            cargo: p.rol || null,
+            fecha_nacimiento: p.fecha_nacimiento || null,
+          });
+        });
+        if (toInsert.length > 0) {
+          const { data: ws, error: wErr } = await supabase
+            .from("contratistas_trabajadores")
+            .insert(toInsert)
+            .select("id, cedula, nombre");
+          if (wErr) {
+            console.error("trabajadores insert failed", wErr, toInsert);
+            alert("Error insertando trabajadores: " + wErr.message);
+          }
+          workersInserted = [...workersInserted, ...(ws || [])];
+        }
+        // Enrich existing workers (uno por uno para no overshadow campos)
+        for (const t of toEnrich) {
+          await supabase.from("contratistas_trabajadores").update(t.payload).eq("id", t.id);
+        }
+      }
+
+      // 4) Documentos: RUT (a nivel contratista) + ARLs (por persona)
+      const { data: existingDocs } = await supabase
+        .from("contratistas_documentos")
+        .select("tipo, trabajador_id, storage_path")
+        .eq("contratista_id", contratistaId);
+      const docsExisten = new Set((existingDocs || []).map(d => `${d.tipo}:${d.trabajador_id || "-"}:${d.storage_path}`));
+      const docsToInsert = [];
+
+      // RUT a nivel empresa (solo empresas)
+      if (tipoFormal === "empresa" && r.rut_url) {
+        const key = `rut:-:${r.rut_url}`;
+        if (!docsExisten.has(key)) {
+          docsToInsert.push({
+            contratista_id: contratistaId,
+            trabajador_id:  null,
+            tipo: "rut",
+            nombre_original: `RUT - ${r.nombre}.pdf`,
+            storage_path: r.rut_url,
+            validado: false,
+          });
+        }
+      }
+
+      // ARLs por persona
+      personas.forEach((p, idx) => {
+        if (!p.arl_url) return;
+        let trabajadorId = null;
+        if (tipoFormal === "empresa") {
+          const ced = p.cedula ? String(p.cedula).trim() : null;
+          const match = workersInserted.find(w =>
+            (ced && String(w.cedula || "").trim() === ced) || (!ced && w.nombre === p.nombre)
+          );
+          trabajadorId = match?.id || null;
+        }
+        const key = `arl:${trabajadorId || "-"}:${p.arl_url}`;
+        if (docsExisten.has(key)) return;
+        docsToInsert.push({
+          contratista_id: contratistaId,
+          trabajador_id:  trabajadorId,
+          tipo: "arl",
+          nombre_original: `ARL - ${p.nombre || `Persona ${idx + 1}`}.${p.arl_url.split(".").pop() || "pdf"}`,
+          storage_path: p.arl_url,
+          validado: !!p.arl_verificado_url,
+          validado_por: p.arl_verificado_by || null,
+          validado_at:  p.arl_verificado_at  || null,
+        });
+      });
+      if (docsToInsert.length > 0) {
+        await supabase.from("contratistas_documentos").insert(docsToInsert);
+      }
+
+      // 5) Recargar y abrir la ficha
+      await load();
+      setDetailId(contratistaId);
+    } finally {
+      setPromoting(false);
+    }
+  };
+
+  // Sube documento de verificación de ARL para UNA persona específica de un
+  // contratista Express. Guarda url + timestamp + admin que verificó dentro
+  // del JSON eventos.contratistas[<ctr>].personas[<i>] — eso queda como
+  // "acceso autorizado" para esa persona.
+  const uploadVerificacionArl = async (expressRow, personaIdx, file) => {
+    if (!file || !supabase) return;
+    const key = `${expressRow.evento_id}:${expressRow.id}:${personaIdx}`;
+    setVerifyingKey(key);
+    try {
+      // 1) Subir archivo a storage
+      const ext = (file.name.split(".").pop() || "bin").toLowerCase();
+      const path = `contratistas/verifications/${expressRow.evento_id}/${Date.now()}-${personaIdx}.${ext}`;
+      const { error: upErr } = await supabase.storage.from("b2b-docs").upload(path, file, { upsert: true, contentType: file.type });
+      if (upErr) { alert("Error subiendo verificación: " + upErr.message); return; }
+      const { data: pub } = supabase.storage.from("b2b-docs").getPublicUrl(path);
+      const url = pub?.publicUrl;
+      if (!url) { alert("No se pudo obtener URL pública del archivo."); return; }
+
+      // 2) Re-leer el evento (no asumir que expressRow.personas está fresco)
+      const { data: ev, error: selErr } = await supabase.from("eventos").select("contratistas").eq("id", expressRow.evento_id).maybeSingle();
+      // SAFETY: si el select falla o ev es null → abortar.
+      // NUNCA escribir [] sobre contratistas — eso wipea data si por algún
+      // motivo (RLS, network) el SELECT no devolvió la fila correctamente.
+      if (selErr || !ev) { alert("No se pudo leer el evento. Refresca y reintenta."); return; }
+      if (!Array.isArray(ev.contratistas) || ev.contratistas.length === 0) {
+        alert("El evento no tiene contratistas registrados (no se hace ningún cambio).");
+        return;
+      }
+      const ctrs = ev.contratistas;
+      // Encontrar la fila correspondiente (matchear por id que pusimos en el flatten)
+      const ctrIdRaw = expressRow.id.startsWith("evt:") ? expressRow.id.split(":").slice(2).join(":") : expressRow.id;
+      let matched = false;
+      const updated = ctrs.map(c => {
+        if ((c.id || c.nombre) !== ctrIdRaw) return c;
+        matched = true;
+        const personas = Array.isArray(c.personas) ? [...c.personas] : [];
+        if (!personas[personaIdx]) return c;
+        personas[personaIdx] = {
+          ...personas[personaIdx],
+          arl_verificado_url: url,
+          arl_verificado_at:  new Date().toISOString(),
+          arl_verificado_by:  adminUser?.email || null,
+        };
+        return { ...c, personas };
+      });
+      if (!matched) {
+        alert("No se encontró el contratista en el evento. Refresca la lista.");
+        return;
+      }
+      // SAFETY: no escribir si el array resultante quedó vacío (debería ser imposible aquí pero por si acaso)
+      if (!Array.isArray(updated) || updated.length !== ctrs.length) {
+        alert("Error interno: el array de contratistas cambió de tamaño. Abortado por seguridad.");
+        return;
+      }
+      const { error: updErr } = await supabase.from("eventos").update({ contratistas: updated }).eq("id", expressRow.evento_id);
+      if (updErr) { alert("Error guardando verificación: " + updErr.message); return; }
+
+      // 3) Recargar express rows
+      await load();
+    } finally {
+      setVerifyingKey("");
+    }
+  };
+
+  // Marca una verificación de ARL Express como RECHAZADA (ej. póliza vencida).
+  // Limpia arl_verificado_* y graba arl_rechazo_motivo/_at/_por en el JSON
+  // de eventos.contratistas[<ctr>].personas[<i>]. La persona pierde el
+  // "Acceso autorizado" hasta que el admin re-verifique con un doc nuevo.
+  const rechazarVerificacionArl = async (expressRow, personaIdx, motivo) => {
+    if (!motivo?.trim() || !supabase) return;
+    const key = `${expressRow.evento_id}:${expressRow.id}:${personaIdx}`;
+    setVerifyingKey(key);
+    try {
+      const { data: ev, error: selErr } = await supabase.from("eventos").select("contratistas").eq("id", expressRow.evento_id).maybeSingle();
+      // SAFETY: igual que en uploadVerificacionArl — NUNCA escribir [] sobre contratistas
+      if (selErr || !ev) { alert("No se pudo leer el evento. Refresca y reintenta."); return; }
+      if (!Array.isArray(ev.contratistas) || ev.contratistas.length === 0) {
+        alert("El evento no tiene contratistas registrados (no se hace ningún cambio).");
+        return;
+      }
+      const ctrs = ev.contratistas;
+      const ctrIdRaw = expressRow.id.startsWith("evt:") ? expressRow.id.split(":").slice(2).join(":") : expressRow.id;
+      let matched = false;
+      const updated = ctrs.map(c => {
+        if ((c.id || c.nombre) !== ctrIdRaw) return c;
+        matched = true;
+        const personas = Array.isArray(c.personas) ? [...c.personas] : [];
+        if (!personas[personaIdx]) return c;
+        personas[personaIdx] = {
+          ...personas[personaIdx],
+          arl_verificado_url: null,   // pierde el acceso autorizado
+          arl_verificado_at:  null,
+          arl_verificado_by:  null,
+          arl_rechazo_motivo: motivo.trim(),
+          arl_rechazo_at:     new Date().toISOString(),
+          arl_rechazo_por:    adminUser?.email || null,
+        };
+        return { ...c, personas };
+      });
+      if (!matched) { alert("No se encontró el contratista en el evento. Refresca la lista."); return; }
+      if (!Array.isArray(updated) || updated.length !== ctrs.length) {
+        alert("Error interno: el array de contratistas cambió de tamaño. Abortado por seguridad.");
+        return;
+      }
+      const { error } = await supabase.from("eventos").update({ contratistas: updated }).eq("id", expressRow.evento_id);
+      if (error) { alert("Error guardando rechazo: " + error.message); return; }
+      setRejectingKey(""); setRejectMotivo("");
+      await load();
+    } finally {
+      setVerifyingKey("");
+    }
+  };
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => setAdminUser(data?.user || null));
@@ -143,6 +481,41 @@ export default function ContratistasAdmin() {
       setActiveWorkersCount(0);
       setIngresosByContratista({});
     }
+
+    // Express: contratistas inline en eventos.contratistas (JSON).
+    // Carga eventos con array no vacío y aplana a filas individuales.
+    const { data: evs } = await supabase
+      .from("eventos")
+      .select("id, nombre, fecha, contratistas")
+      .not("contratistas", "is", null)
+      .order("fecha", { ascending: false });
+    const exp = [];
+    (evs || []).forEach(e => {
+      if (!Array.isArray(e.contratistas) || e.contratistas.length === 0) return;
+      e.contratistas.forEach(c => {
+        if (!c?.nombre) return;
+        exp.push({
+          id: `evt:${e.id}:${c.id || c.nombre}`,
+          evento_id: e.id,
+          evento_nombre: e.nombre,
+          evento_fecha: e.fecha,
+          nombre: c.nombre,
+          tipo: c.tipo,            // "propio" | "externo"
+          cargo: c.cargo,
+          funcion: c.funcion,
+          contacto: c.contacto,      // nombre del responsable (ej. JOHANNA TURIZO)
+          telefono: c.telefono,      // teléfono real (separado del nombre)
+          direccion: c.direccion,
+          descripcion: c.descripcion,
+          rut_url: c.rut_url,        // PDF/imagen del RUT (registro express)
+          costo: c.costo,
+          personas: c.personas || [],
+          notas: c.notas,
+        });
+      });
+    });
+    setExpressRows(exp);
+
     setLoading(false);
   };
   useEffect(() => { load(); /* eslint-disable-next-line */ }, []);
@@ -246,11 +619,12 @@ export default function ContratistasAdmin() {
         </div>
       </div>
 
-      {/* Tab switcher Pipeline / Aprobados */}
-      <div style={{ display: "flex", gap: 0, marginBottom: 16, borderRadius: 10, overflow: "hidden", border: `1px solid ${B.navyLight}`, maxWidth: 460 }}>
+      {/* Tab switcher Pipeline / Aprobados / Express */}
+      <div style={{ display: "flex", gap: 0, marginBottom: 16, borderRadius: 10, overflow: "hidden", border: `1px solid ${B.navyLight}`, maxWidth: 640 }}>
         {[
-          { k: "pipeline", label: "Pipeline", icon: "📥", count: rows.filter(r => PIPELINE_ESTADOS.includes(r.estado)).length, color: B.warning },
+          { k: "pipeline",  label: "Pipeline", icon: "📥", count: rows.filter(r => PIPELINE_ESTADOS.includes(r.estado)).length, color: B.warning },
           { k: "aprobados", label: "Aprobados · Historial", icon: "✓", count: rows.filter(r => APROBADOS_ESTADOS.includes(r.estado)).length, color: B.success },
+          { k: "express",   label: "Express · Eventos",    icon: "⚡", count: expressRows.length, color: B.sky },
         ].map(t => (
           <button key={t.k} onClick={() => setTab(t.k)}
             style={{
@@ -324,6 +698,137 @@ export default function ContratistasAdmin() {
       {/* Content */}
       {loading ? (
         <div style={{ padding: 40, textAlign: "center", color: B.sand }}>Cargando…</div>
+      ) : tab === "express" ? (
+        expressRows.length === 0 ? (
+          <div style={{ padding: 60, textAlign: "center", color: "rgba(255,255,255,0.4)", background: B.navyMid, borderRadius: 12, border: `1px solid ${B.navyLight}` }}>
+            No hay contratistas Express registrados desde eventos.
+          </div>
+        ) : (
+          <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(auto-fill, minmax(320px, 1fr))", gap: 12 }}>
+            {expressRows
+              .filter(r => {
+                const q = search.toLowerCase().trim();
+                if (!q) return true;
+                return [r.nombre, r.evento_nombre, r.contacto, r.cargo].filter(Boolean).some(v => String(v).toLowerCase().includes(q));
+              })
+              .map(r => (
+              <div key={r.id} onClick={() => promoteExpressToFicha(r)} style={{ background: B.navyMid, borderRadius: 12, padding: "14px 16px", border: `1px solid ${B.navyLight}`, borderLeft: `4px solid ${r.tipo === "propio" ? B.sky : B.sand}`, cursor: promoting ? "wait" : "pointer", opacity: promoting ? 0.6 : 1, transition: "background 0.15s" }}
+                onMouseEnter={e => { if (!promoting) e.currentTarget.style.background = B.navyLight; }}
+                onMouseLeave={e => { if (!promoting) e.currentTarget.style.background = B.navyMid; }}>
+                <div style={{ fontSize: 10, fontWeight: 700, color: r.tipo === "propio" ? B.sky : B.sand, textTransform: "uppercase", letterSpacing: 1, marginBottom: 4 }}>
+                  ⚡ EXPRESS · {r.tipo === "propio" ? "🏷️ Propio" : "🤝 Externo"}{r.cargo ? ` · ${r.cargo}` : ""}
+                </div>
+                <div style={{ fontSize: 15, fontWeight: 800, color: B.white, marginBottom: 6 }}>{r.nombre}</div>
+                <div style={{ fontSize: 11, color: B.sand, background: "rgba(200,185,154,0.1)", border: `1px solid ${B.sand}33`, borderRadius: 6, padding: "5px 8px", marginBottom: 8, display: "inline-block" }}>
+                  🎫 {r.evento_nombre || "Evento sin nombre"}{r.evento_fecha ? ` · ${fmt(r.evento_fecha)}` : ""}
+                </div>
+                {r.funcion && <div style={{ fontSize: 12, color: "rgba(255,255,255,0.7)", marginBottom: 6, lineHeight: 1.4 }}>🎯 {r.funcion}</div>}
+                {r.contacto && <div style={{ fontSize: 12, color: B.sky, marginBottom: 4 }}>📞 {r.contacto}</div>}
+                {(r.personas || []).length > 0 && (
+                  <div style={{ marginTop: 10, paddingTop: 10, borderTop: `1px solid ${B.navyLight}` }}>
+                    <div style={{ fontSize: 10, color: B.sand, textTransform: "uppercase", letterSpacing: 1, fontWeight: 700, marginBottom: 6 }}>
+                      👥 Personal ({r.personas.length})
+                    </div>
+                    {r.personas.map((p, i) => {
+                      const vKey = `${r.evento_id}:${r.id}:${i}`;
+                      const verifying = verifyingKey === vKey;
+                      const verified  = !!p.arl_verificado_url;
+                      const rejected  = !!p.arl_rechazo_motivo;
+                      const isRejectingThis = rejectingKey === vKey;
+                      return (
+                        <div key={i} style={{ fontSize: 11, color: "rgba(255,255,255,0.7)", padding: "5px 0", borderTop: i > 0 ? `1px solid rgba(255,255,255,0.04)` : "none" }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 6 }}>
+                            <span style={{ flex: 1 }}>{p.nombre}</span>
+                            <span style={{ color: "rgba(255,255,255,0.4)" }}>{p.cedula || ""}{p.rol ? ` · ${p.rol}` : ""}</span>
+                            {p.arl_url && (
+                              <a href={p.arl_url} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()}
+                                title="ARL adjuntada por el organizador del evento"
+                                style={{ color: B.success, textDecoration: "none", fontSize: 10, fontWeight: 700, border: `1px solid ${B.success}55`, borderRadius: 5, padding: "1px 6px" }}>
+                                ARL ✓
+                              </a>
+                            )}
+                          </div>
+                          {/* Verificación admin — controla acceso a Atolón para esta persona.
+                              3 estados: Verificada | Rechazada | Sin verificar. */}
+                          <div style={{ marginTop: 4 }} onClick={e => e.stopPropagation()}>
+                            {verified ? (
+                              <div style={{ display: "flex", gap: 4 }}>
+                                <a href={p.arl_verificado_url} target="_blank" rel="noreferrer"
+                                  title={`Verificada por ${p.arl_verificado_by || "admin"} el ${p.arl_verificado_at ? fmt(p.arl_verificado_at) : "—"}`}
+                                  style={{ flex: 1, fontSize: 10, fontWeight: 800, color: B.success, background: B.success + "18", border: `1px solid ${B.success}55`, borderRadius: 5, padding: "3px 8px", textAlign: "center", textDecoration: "none" }}>
+                                  ✓ Verificada · Acceso autorizado
+                                </a>
+                                <button onClick={() => { setRejectingKey(vKey); setRejectMotivo(""); }}
+                                  disabled={verifying}
+                                  title="Rechazar (ej. póliza vencida)"
+                                  style={{ fontSize: 10, fontWeight: 700, color: B.danger, background: "transparent", border: `1px solid ${B.danger}55`, borderRadius: 5, padding: "3px 8px", cursor: verifying ? "wait" : "pointer" }}>
+                                  ✗
+                                </button>
+                              </div>
+                            ) : rejected ? (
+                              <div>
+                                <div style={{ fontSize: 10, fontWeight: 800, color: B.danger, background: B.danger + "18", border: `1px solid ${B.danger}55`, borderRadius: 5, padding: "3px 8px" }}>
+                                  ✗ Rechazada · {p.arl_rechazo_motivo}
+                                  {p.arl_rechazo_at && (
+                                    <span style={{ opacity: 0.7, fontWeight: 400 }}> · {fmt(p.arl_rechazo_at)}</span>
+                                  )}
+                                </div>
+                                <label style={{ display: "block", marginTop: 4, fontSize: 10, fontWeight: 700, color: B.sand, background: B.navy, border: `1px dashed ${B.sand}55`, borderRadius: 5, padding: "3px 8px", textAlign: "center", cursor: verifying ? "wait" : "pointer" }}>
+                                  {verifying ? "Subiendo…" : "📎 Re-verificar ARL (subir nuevo)"}
+                                  <input type="file" accept="image/*,application/pdf" style={{ display: "none" }}
+                                    disabled={verifying}
+                                    onChange={e => { const f = e.target.files?.[0]; if (f) uploadVerificacionArl(r, i, f); e.target.value = ""; }} />
+                                </label>
+                              </div>
+                            ) : (
+                              <label style={{ display: "block", fontSize: 10, fontWeight: 700, color: B.sand, background: B.navy, border: `1px dashed ${B.sand}55`, borderRadius: 5, padding: "3px 8px", textAlign: "center", cursor: verifying ? "wait" : "pointer" }}>
+                                {verifying ? "Subiendo…" : "📎 Verificar ARL"}
+                                <input type="file" accept="image/*,application/pdf" style={{ display: "none" }}
+                                  disabled={verifying}
+                                  onChange={e => { const f = e.target.files?.[0]; if (f) uploadVerificacionArl(r, i, f); e.target.value = ""; }} />
+                              </label>
+                            )}
+                            {/* Form inline para motivo de rechazo */}
+                            {isRejectingThis && (
+                              <div style={{ marginTop: 6, padding: 8, background: B.danger + "11", border: `1px solid ${B.danger}33`, borderRadius: 5 }}>
+                                <div style={{ fontSize: 9, fontWeight: 700, color: B.danger, textTransform: "uppercase", letterSpacing: 1, marginBottom: 4 }}>Motivo del rechazo</div>
+                                <textarea value={rejectMotivo} onChange={e => setRejectMotivo(e.target.value)} rows={2}
+                                  placeholder="Ej: Póliza vencida (fecha fin 22/05/2026)"
+                                  style={{ width: "100%", padding: "5px 8px", borderRadius: 4, background: B.navy, border: `1px solid ${B.navyLight}`, color: "#fff", fontSize: 11, outline: "none", resize: "vertical", boxSizing: "border-box", fontFamily: "inherit" }} />
+                                <div style={{ display: "flex", gap: 4, marginTop: 6 }}>
+                                  <button onClick={() => rechazarVerificacionArl(r, i, rejectMotivo)}
+                                    disabled={verifying || !rejectMotivo.trim()}
+                                    style={{ flex: 1, padding: "4px 8px", background: B.danger, color: "#fff", border: "none", borderRadius: 4, fontSize: 10, fontWeight: 700, cursor: (verifying || !rejectMotivo.trim()) ? "not-allowed" : "pointer", opacity: (verifying || !rejectMotivo.trim()) ? 0.6 : 1 }}>
+                                    Confirmar
+                                  </button>
+                                  <button onClick={() => { setRejectingKey(""); setRejectMotivo(""); }}
+                                    style={{ padding: "4px 8px", background: "transparent", color: "rgba(255,255,255,0.6)", border: `1px solid ${B.navyLight}`, borderRadius: 4, fontSize: 10, fontWeight: 700, cursor: "pointer" }}>
+                                    Cancelar
+                                  </button>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+                <div style={{ display: "flex", gap: 8, marginTop: 10, paddingTop: 10, borderTop: `1px dashed ${B.navyLight}` }}>
+                  <button onClick={(e) => { e.stopPropagation(); promoteExpressToFicha(r); }}
+                    disabled={promoting}
+                    style={{ background: B.success, border: "none", color: B.white, padding: "6px 12px", borderRadius: 6, fontSize: 11, fontWeight: 800, cursor: promoting ? "wait" : "pointer", flex: 1, opacity: promoting ? 0.6 : 1 }}>
+                    {promoting ? "Abriendo ficha…" : "✓ Abrir ficha y completar"}
+                  </button>
+                  <a href="#" onClick={(e) => { e.preventDefault(); e.stopPropagation(); window.dispatchEvent(new CustomEvent("atolon-navigate", { detail: { module: "eventos", openEventoId: r.evento_id } })); }}
+                    style={{ fontSize: 11, color: B.sky, textDecoration: "none", fontWeight: 700, padding: "6px 12px", border: `1px solid ${B.sky}55`, borderRadius: 6, alignSelf: "center" }}>
+                    Ver en evento →
+                  </a>
+                </div>
+              </div>
+            ))}
+          </div>
+        )
       ) : filtered.length === 0 ? (
         <div style={{ padding: 60, textAlign: "center", color: "rgba(255,255,255,0.4)", background: B.navyMid, borderRadius: 12, border: `1px solid ${B.navyLight}` }}>
           {rows.length === 0 ? "Aún no hay contratistas registrados." : "Sin coincidencias con los filtros."}

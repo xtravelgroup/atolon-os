@@ -93,6 +93,8 @@ export default function NominaPorDia() {
       horas: Number(form.horas) || 8,
       transporte: Number(form.transporte) || 0,
       bonificacion: Number(form.bonificacion) || 0,
+      // total ya no es columna generada → enviarlo explícito
+      total: (Number(form.valor_dia) || 0) + (Number(form.transporte) || 0) + (Number(form.bonificacion) || 0),
       metodo_pago: form.metodo_pago,
       pagado: !!form.pagado,
       notas: form.notas || null,
@@ -142,13 +144,16 @@ export default function NominaPorDia() {
     });
   }, [registros, filtroPagado, search]);
 
+  // KPIs sobre filtered, no sobre registros total. Antes el operador filtraba
+  // por "Pagados" y veia 3 filas en la tabla, pero el KPI seguia sumando los
+  // 10 jornales (pagados + pendientes) — incoherente con lo que veia abajo.
   const kpis = useMemo(() => {
-    const jornadas = registros.length;
-    const personasUnicas = new Set(registros.map(r => r.documento || r.nombre)).size;
-    const totalPagado = registros.filter(r => r.pagado).reduce((s, r) => s + (Number(r.total) || 0), 0);
-    const totalPendiente = registros.filter(r => !r.pagado).reduce((s, r) => s + (Number(r.total) || 0), 0);
+    const jornadas = filtered.length;
+    const personasUnicas = new Set(filtered.map(r => r.documento || r.nombre)).size;
+    const totalPagado = filtered.filter(r => r.pagado).reduce((s, r) => s + (Number(r.total) || 0), 0);
+    const totalPendiente = filtered.filter(r => !r.pagado).reduce((s, r) => s + (Number(r.total) || 0), 0);
     return { jornadas, personasUnicas, totalPagado, totalPendiente, total: totalPagado + totalPendiente };
-  }, [registros]);
+  }, [filtered]);
 
   return (
     <div>

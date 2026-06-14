@@ -184,8 +184,14 @@ Instrucciones detalladas:
 - NO incluir comentarios ni texto fuera del JSON
 - IMPORTANTE: procesa TODAS las páginas del documento, no solo la primera`;
 
+    // Timeout 60s para fetch a Anthropic. Sin esto, una API lenta colgaba
+    // toda la edge function hasta el timeout global (~150s) y el frontend
+    // recibia error generico. 60s es generoso pero realista para PDFs largos.
+    const anthCtrl = new AbortController();
+    const anthTimer = setTimeout(() => anthCtrl.abort(), 60_000);
     const res = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
+      signal: anthCtrl.signal,
       headers: {
         "x-api-key": ANTHROPIC_KEY,
         "anthropic-version": "2023-06-01",
@@ -266,6 +272,7 @@ Instrucciones detalladas:
         }],
       }),
     });
+    clearTimeout(anthTimer);
 
     const data = await res.json();
     if (!res.ok) {

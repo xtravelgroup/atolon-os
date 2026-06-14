@@ -41,9 +41,10 @@ function calcComision(r, pasadiasMap, aliadoComisionPct = null) {
   if (r.canal === "Cortesía" || r.forma_pago === "Cortesía") return 0;
   if (!r._esGrupo && (Number(r.total) || 0) === 0) return 0;
 
-  // Si el aliado tiene comisión = 0 → es modelo mayorista (paga neto, se queda con su markup).
-  // Atolón no le debe comisión, sin importar lo que diga el convenio.
-  if (aliadoComisionPct === 0) return 0;
+  // Modelo uniforme para TODAS las agencias: la comisión es el spread entre
+  // lo cobrado y la tarifa neta de esa agencia (cobrado − neto, si > 0).
+  // No existe excepción "mayorista" — antes un aliado con comision=0 daba $0
+  // y su venta no aparecía en Comisiones (ej. Mantra).
 
   // For grupo entries, calculate per pasadía line
   if (r._esGrupo && r._pasadias_org) {
@@ -74,15 +75,25 @@ function calcComision(r, pasadiasMap, aliadoComisionPct = null) {
   const netoA    = r.precio_neto || pasadia.neto        || 0;
   const cobradoN = r.precio_nino || pasadia.precio_nino || 0;
   const netoN    =                  pasadia.neto_nino   || 0;
-  const paxA     = r.pax_a || r.pax || 1;
-  const paxN     = r.pax_n || 0;
+  // paxA con nullish coalescing — NO || que cae en r.pax (=pax_a+pax_n)
+  // cuando pax_a=0. Caso real: reserva kids-only con pax_a=0, pax_n=3 le
+  // calculaba comision por 3 adultos fantasma (audit rank 38).
+  const paxA     = Number(r.pax_a) || 0;
+  const paxN     = Number(r.pax_n) || 0;
   const desc     = r.descuento_agencia || 0;
+  // Comisión = lo REALMENTE pagado (total) − tarifa neta − descuento agencia.
+  // NO usar precio_u (lista) como "cobrado": si la agencia negoció un total
+  // por debajo del público (o por debajo del neto), la comisión es sobre lo
+  // que realmente pagó, no sobre la lista. Si pagó ≤ neto → $0.
+  if (Number(r.total) > 0) {
+    return Math.max(0, Number(r.total) - (netoA * paxA + netoN * paxN) - desc);
+  }
+  // Fallback solo si NO hay total registrado: spread por unidad (lista − neto).
   if (netoA > 0 && cobradoA > 0) {
     const mA = (cobradoA - netoA) * paxA;
     const mN = cobradoN > 0 && netoN > 0 ? (cobradoN - netoN) * paxN : 0;
     return Math.max(0, mA + mN - desc);
   }
-  if (r.total > 0) return Math.max(0, r.total - (netoA * paxA + netoN * paxN) - desc);
   return 0;
 }
 
@@ -105,7 +116,14 @@ function ConfirmModal({ data, onConfirm, onCancel, saving }) {
   const uploadDoc = async (key, file) => {
     if (!file || !supabase) return;
     setDocs(d => ({ ...d, [key]: { file, url: "", uploading: true } }));
-    const path = `comisiones/${data.aliado_id}/${Date.now()}-${key}-${file.name.replace(/\s+/g, "_")}`;
+    // Las keys de Supabase Storage solo aceptan ASCII: quitar acentos/ñ y
+    // cualquier caracter no [A-Za-z0-9._-] (ej. "MUÑOZ" → "MUNOZ"). Sin
+    // esto, archivos con tildes/ñ fallaban con "Invalid key".
+    const safeName = (file.name || "archivo")
+      .normalize("NFD").replace(/[̀-ͯ]/g, "")
+      .replace(/[^A-Za-z0-9._-]/g, "_")
+      .replace(/_+/g, "_");
+    const path = `comisiones/${data.aliado_id}/${Date.now()}-${key}-${safeName}`;
     const { error } = await supabase.storage.from("b2b-docs").upload(path, file, { upsert: true, contentType: file.type });
     if (error) {
       alert("Error subiendo archivo: " + error.message);
@@ -265,20 +283,36 @@ export default function Comisiones() {
           .not("aliado_id", "is", null)
           .in("estado", ["confirmado", "check_in"])
           .lte("saldo", 0),
-        // Grupos B2B (Confirmado/Realizado con aliado)
+        // Grupos B2B con aliado. NO restringir solo por stage — el stage
+        // 'Realizado' se auto-transiciona por fecha sin verificar pago.
+        // Filtramos aqui y depues, en JS, solo dejamos pasar los que tienen
+        // pagos >= valor cotizado (audit rank 40: antes se comisionaba sobre
+        // eventos no cobrados).
         supabase.from("eventos")
-          .select("id, nombre, fecha, aliado_id, pasadias_org, precio_tipo, categoria, stage")
+          .select("id, nombre, fecha, aliado_id, pasadias_org, precio_tipo, categoria, stage, valor, pagos")
           .gte("fecha", inicio).lte("fecha", fin)
           .not("aliado_id", "is", null)
           .eq("categoria", "grupo")
           .in("stage", ["Confirmado", "Realizado"]),
       ]);
 
-      // Convert grupos to virtual reserva entries for commission calculation
-      const grupoReservas = (gruposB2B || []).map(g => {
+      // Convert grupos to virtual reserva entries for commission calculation.
+      // Filtrado de pago: total_pagado (sum de pagos[].monto) >= valor cotizado.
+      // Asi el aliado recibe comision SOLO sobre grupos efectivamente cobrados
+      // (audit rank 40).
+      const grupoReservas = (gruposB2B || []).flatMap(g => {
+        const valor = Number(g.valor) || 0;
+        const totalPagado = Array.isArray(g.pagos)
+          ? g.pagos.reduce((s, p) => s + (Number(p.monto) || 0), 0)
+          : 0;
+        // Si el grupo tiene valor cotizado, exigimos pago completo. Si valor=0
+        // (legacy sin cotizacion), dejamos pasar (no es regresion vs estado anterior).
+        const cobrado = valor === 0 || totalPagado >= valor;
+        if (!cobrado) return [];
+
         const org = (g.pasadias_org || []).filter(p => p.tipo !== "Impuesto Muelle" && p.tipo !== "STAFF");
         const paxTotal = org.reduce((s, p) => s + (Number(p.personas) || 0), 0);
-        return {
+        return [{
           id: g.id,
           nombre: g.nombre,
           fecha: g.fecha,
@@ -293,7 +327,9 @@ export default function Comisiones() {
           _esGrupo: true,
           _pasadias_org: g.pasadias_org,
           _precio_tipo: g.precio_tipo,
-        };
+          _grupo_valor: valor,
+          _grupo_pagado: totalPagado,
+        }];
       });
 
       const allReservas = [...(reservas || []), ...grupoReservas];

@@ -185,6 +185,14 @@ async function verifyWebhookSignature(payload: string, signature: string): Promi
       candidates.push(["hex+payload",    secretHex, msgBytesNoTs]);
     }
 
+    // Timing-safe compare sobre hex strings de igual length.
+    const timingSafeEqualHex = (a: string, b: string) => {
+      if (a.length !== b.length) return false;
+      let diff = 0;
+      for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+      return diff === 0;
+    };
+
     for (const [label, key, msg] of candidates) {
       const cryptoKey = await crypto.subtle.importKey(
         "raw", key, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]
@@ -193,8 +201,8 @@ async function verifyWebhookSignature(payload: string, signature: string): Promi
       const computed = Array.from(new Uint8Array(sigBuffer))
         .map(b => b.toString(16).padStart(2, "0"))
         .join("");
-      if (computed === sigPart) {
-        console.log(`[zoho-webhook] firma válida con formato: ${label}`);
+      if (timingSafeEqualHex(computed, sigPart)) {
+        console.log(`[zoho-webhook] firma valida con formato: ${label}`);
         return true;
       }
     }
@@ -355,29 +363,66 @@ serve(async (req) => {
         Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
       );
 
-      // Guardar evento en log SIEMPRE (antes de validar firma, para debugging)
-      await SB.from("pagos_zoho_log").insert({
+      // Guardar evento en log SIEMPRE (antes de validar firma, para debugging).
+      // Capturamos el id de la fila para hacer updates scoped a esta entrada
+      // (impide que un evento valido posterior flipee firma_valida=true en
+      // intentos forjados previos con mismo payment_id).
+      const { data: logRow } = await SB.from("pagos_zoho_log").insert({
         event_type: type,
         reference: ref,
         payment_id: pid,
         raw: { event, _debug_headers: allHeaders, _debug_sig: signature },
-        firma_valida: false, // se actualiza abajo si pasa
-      }).then(() => {}).catch(() => {});
+        firma_valida: false,
+      }).select("id").maybeSingle();
+      const logRowId = logRow?.id;
 
-      // Validación de firma (después de loguear para debugging)
+      // FAIL-CLOSED: firma obligatoria. Sin secret configurado o signature
+      // ausente, rechazamos con 401. Bypass solo con ZOHO_ALLOW_UNSIGNED=true.
       const SECRET_FOR_VERIFY = await loadWebhookSecret();
-      if (SECRET_FOR_VERIFY && signature) {
-        const valid = await verifyWebhookSignature(payload, signature);
-        if (!valid) {
-          console.error("Firma inválida. sig:", signature.slice(0, 20), "secret len:", SECRET_FOR_VERIFY.length);
-          // Retornar 200 para que Zoho no reintente, pero no procesar el evento
-          return new Response(JSON.stringify({ received: true, firma: "invalid", event_type: type }), {
-            status: 200, headers: { "Content-Type": "application/json" },
+      const allowUnsigned = Deno.env.get("ZOHO_ALLOW_UNSIGNED") === "true";
+
+      if (!SECRET_FOR_VERIFY) {
+        if (!allowUnsigned) {
+          console.error("[zoho-webhook] webhook secret no configurado — fail-closed");
+          return new Response(JSON.stringify({ error: "webhook_misconfigured" }), {
+            status: 500, headers: { "Content-Type": "application/json" },
           });
         }
-        // Marcar firma válida en el log
-        if (pid) {
-          await SB.from("pagos_zoho_log").update({ firma_valida: true }).eq("payment_id", pid).then(() => {}).catch(() => {});
+        console.warn("[zoho-webhook] ZOHO_ALLOW_UNSIGNED=true — solo dev");
+      } else {
+        if (!signature) {
+          console.error("[zoho-webhook] sin header de firma — rechazado");
+          return new Response(JSON.stringify({ error: "missing_signature" }), {
+            status: 401, headers: { "Content-Type": "application/json" },
+          });
+        }
+        const valid = await verifyWebhookSignature(payload, signature);
+        if (!valid) {
+          console.error("Firma invalida. sig:", signature.slice(0, 20), "secret len:", SECRET_FOR_VERIFY.length);
+          return new Response(JSON.stringify({ error: "invalid_signature" }), {
+            status: 401, headers: { "Content-Type": "application/json" },
+          });
+        }
+        if (logRowId) {
+          await SB.from("pagos_zoho_log").update({ firma_valida: true }).eq("id", logRowId).then(() => {}).catch(() => {});
+        }
+      }
+
+      // Idempotencia: si este payment_id ya fue procesado antes (processed_at
+      // NOT NULL), devolver 200 sin reprocesar. Evita duplicar emails/WhatsApp
+      // y reescribir fecha_pago/pagado_en con timestamps tardios.
+      if (pid) {
+        const { data: prevProc } = await SB.from("pagos_zoho_log")
+          .select("id")
+          .eq("payment_id", pid)
+          .not("processed_at", "is", null)
+          .limit(1)
+          .maybeSingle();
+        if (prevProc) {
+          console.log(`[zoho-webhook] payment_id ${pid} ya procesado, skip.`);
+          return new Response(JSON.stringify({ received: true, skipped: "already_processed" }), {
+            status: 200, headers: { "Content-Type": "application/json" },
+          });
         }
       }
 
@@ -395,6 +440,39 @@ serve(async (req) => {
         payment.status === "captured" ||
         payment.status === "success";
       if (isSuccess) {
+        // 1aa) Juicy & Cream event reservations (prefix JC-)
+        if (ref && ref.startsWith("JC-")) {
+          const { data: jc } = await SB.from("juicy_cream_reservas")
+            .select("id, total, estado, nombre, email, telefono, tipo, categoria").eq("id", ref).limit(1);
+          if (jc && jc[0]) {
+            const reservaJC = jc[0];
+            await SB.from("juicy_cream_reservas").update({
+              estado: "confirmado",
+              forma_pago: "tarjeta_internacional",
+              abono: reservaJC.total,
+              notas: `Pago Zoho Pay — Payment ${pid}`,
+              updated_at: new Date().toISOString(),
+            }).eq("id", reservaJC.id);
+            console.log(`✓ Juicy & Cream ${reservaJC.id} confirmada (Zoho Pay)`);
+            // Update lead en Comercial → Cerrado Ganado
+            await SB.from("leads").update({
+              stage: "Cerrado Ganado",
+              fecha_pago: new Date().toISOString().slice(0, 10),
+              ultimo_contacto: new Date().toISOString().slice(0, 10),
+              updated_at: new Date().toISOString(),
+            }).eq("id", `LEAD-${reservaJC.id}`).then(() => {}).catch((e: any) =>
+              console.warn("[juicy/lead-update-zoho] failed:", e?.message));
+            await notificarJuicyPagoConfirmado(reservaJC, Number(reservaJC.total) || 0, "Zoho Pay", pid).catch(e =>
+              console.warn("[juicy/email-confirmado-zoho] failed:", (e as Error).message));
+            if (logRowId) {
+              await SB.from("pagos_zoho_log").update({ processed_at: new Date().toISOString() }).eq("id", logRowId).then(() => {}).catch(() => {});
+            }
+            return new Response(JSON.stringify({ received: true, processed: true, action: "juicy_confirmed", reserva_id: reservaJC.id }), {
+              status: 200, headers: { "Content-Type": "application/json" },
+            });
+          }
+        }
+
         // 1a) Buscar primero en reservas_pasadia (Tatiana / Visito.AI)
         if (ref) {
           const { data: rp } = await SB.from("reservas_pasadia")
@@ -414,8 +492,9 @@ serve(async (req) => {
             // Enviar confirmación
             await enviarConfirmacionPasadia(reservaP).catch(e =>
               console.warn(`[zoho/pasadia] confirmacion failed: ${(e as Error).message}`));
-            // Continuar al final del bloque (no devolver, hay otros lookups)
-            // Pero tampoco buscar en reservas si ya matchó aquí
+            if (logRowId) {
+              await SB.from("pagos_zoho_log").update({ processed_at: new Date().toISOString() }).eq("id", logRowId).then(() => {}).catch(() => {});
+            }
             return new Response(JSON.stringify({ received: true, processed: true, action: "pasadia_confirmed", reserva_id: reservaP.id }), {
               status: 200, headers: { "Content-Type": "application/json" },
             });
@@ -439,6 +518,26 @@ serve(async (req) => {
               updated_at: new Date().toISOString(),
             }).eq("id", reserva.id);
 
+            // Confirmar track_ingreso correspondiente — AtolonTrack lo dejó en 'pendiente'
+            // al click "Pagar"; ahora que Zoho confirmó, es venta real.
+            await SB.from("track_ingresos").update({
+              estado_pago: "confirmado",
+            }).eq("reserva_id", reserva.id).then(() => {}).catch(() => {});
+
+            // Marcar la sesión asociada como convertida (venta real)
+            const { data: ings } = await SB.from("track_ingresos")
+              .select("sesion_id, monto")
+              .eq("reserva_id", reserva.id);
+            if (ings && ings.length > 0) {
+              const sesIds = ings.map((i: any) => i.sesion_id).filter(Boolean);
+              if (sesIds.length > 0) {
+                await SB.from("track_sesiones").update({
+                  convertida: true,
+                  ingreso: ings[0].monto || reserva.total,
+                }).in("id", sesIds).then(() => {}).catch(() => {});
+              }
+            }
+
             // Cerrar lead asociado si existe
             if (reserva.lead_id) {
               await SB.from("leads").update({
@@ -456,6 +555,9 @@ serve(async (req) => {
             }).eq("reserva_id", reserva.id).then(() => {}).catch(() => {});
 
             console.log("Reserva confirmada vía webhook Zoho:", reserva.id);
+
+            // Meta Conversions API (server-side, dedup con pixel del navegador)
+            enviarMetaCapi(reserva, Number(reserva.total || 0)).catch(() => {});
 
             // Enviar email + WhatsApp en paralelo (best-effort)
             await Promise.all([
@@ -492,6 +594,11 @@ serve(async (req) => {
             pagado_at: new Date().toISOString(),
             last4, brand, raw: event,
           }).eq("reference", ref).then(() => {}).catch(() => {});
+        }
+
+        // Marcar evento como procesado (idempotencia)
+        if (logRowId) {
+          await SB.from("pagos_zoho_log").update({ processed_at: new Date().toISOString() }).eq("id", logRowId).then(() => {}).catch(() => {});
         }
       }
 
@@ -545,11 +652,17 @@ serve(async (req) => {
   }
 
   // ══════════════════════════════════════════════════════════════════════
-  // GET /diag — diagnóstico completo (público, sin auth)
-  // Muestra: estado del secret, últimos eventos recibidos, sesiones
-  // pendientes. Pegar URL en el browser para verificar.
+  // GET /diag — diagnóstico (requiere header x-atolon-cron-secret)
+  // Muestra: estado del secret, últimos eventos, sesiones pendientes.
   // ══════════════════════════════════════════════════════════════════════
   if (req.method === "GET" && path === "/diag") {
+    const cronSecret = req.headers.get("x-atolon-cron-secret");
+    const expectedSecret = Deno.env.get("CRON_SECRET") || "";
+    if (!expectedSecret || cronSecret !== expectedSecret) {
+      return new Response(JSON.stringify({ error: "unauthorized" }), {
+        status: 401, headers: { ...CORS, "Content-Type": "application/json" },
+      });
+    }
     try {
       const SB = createClient(
         Deno.env.get("SUPABASE_URL")!,
@@ -582,7 +695,8 @@ serve(async (req) => {
           secret_source: diagSecret === ZOHO_WEBHOOK_SECRET_ENV ? "env" : "db",
           oauth_configured: !!(creds.client_id && creds.client_secret && creds.refresh_token),
           api_key_configured: !!creds.api_key,
-          account_id: creds.account_id,
+          // account_id ofuscado — solo primeros 4 chars
+          account_id_preview: creds.account_id ? `${String(creds.account_id).slice(0, 4)}...` : null,
         },
         stats: {
           total_eventos_recibidos: totalEventos || 0,
@@ -608,9 +722,17 @@ serve(async (req) => {
   // Llamado por Vercel cron cada 5 min.
   // ══════════════════════════════════════════════════════════════════════
   if (req.method === "POST" && path === "/poll-recent") {
+    const cronSecret = req.headers.get("x-atolon-cron-secret");
+    const expectedSecret = Deno.env.get("CRON_SECRET") || "";
+    if (!expectedSecret || cronSecret !== expectedSecret) {
+      return new Response(JSON.stringify({ error: "unauthorized" }), {
+        status: 401, headers: { ...CORS, "Content-Type": "application/json" },
+      });
+    }
     try {
       const body = await req.json().catch(() => ({}));
-      const horasAtras = Number(body?.hours) || 2; // default últimas 2h
+      // Cap a 48h
+      const horasAtras = Math.min(Math.max(Number(body?.hours) || 2, 1), 48);
 
       const creds = await loadZohoCreds();
       if (!creds.refresh_token || !creds.client_id || !creds.client_secret) {
@@ -763,6 +885,13 @@ serve(async (req) => {
   // Acepta GET (más fácil de invocar desde browser) y POST.
   // ══════════════════════════════════════════════════════════════════════
   if ((req.method === "POST" || req.method === "GET") && path === "/webhooks-register") {
+    const cronSecret = req.headers.get("x-atolon-cron-secret");
+    const expectedSecret = Deno.env.get("CRON_SECRET") || "";
+    if (!expectedSecret || cronSecret !== expectedSecret) {
+      return new Response(JSON.stringify({ error: "unauthorized" }), {
+        status: 401, headers: { ...CORS, "Content-Type": "application/json" },
+      });
+    }
     try {
       let webhookUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/zoho-payments/webhook`;
       if (req.method === "POST") {
@@ -873,6 +1002,31 @@ serve(async (req) => {
 });
 
 // ── Enviar email de confirmación (Resend via /send-confirmation) ───────────
+// ── Meta Conversions API (server-side Purchase) ────────────────────────────
+// Fire-and-forget hacia meta-capi. Best-effort: nunca afecta el flujo de pago.
+async function enviarMetaCapi(reserva: any, monto: number): Promise<void> {
+  try {
+    await fetch(
+      `${Deno.env.get("SUPABASE_URL")}/functions/v1/meta-capi`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+          "apikey": Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+        },
+        body: JSON.stringify({
+          reserva_id: reserva.id,
+          value:      Number(monto || reserva.total || 0),
+          currency:   "COP",
+          email:      reserva.email || reserva.contacto || "",
+          phone:      reserva.telefono || "",
+        }),
+      },
+    );
+  } catch (_) { /* CAPI best-effort */ }
+}
+
 // send-confirmation espera reserva.contacto como destinatario. Si solo está
 // reserva.email (campo dedicado), lo copiamos a contacto antes de enviar.
 async function enviarEmailConfirmacion(reserva: any): Promise<void> {
@@ -934,13 +1088,17 @@ async function enviarConfirmacionPasadia(reserva: any): Promise<void> {
 }
 
 // ── Enviar confirmación de reserva por WhatsApp ────────────────────────────
-// Cascade fallback: confirmacion_pasadia_atolon (genérica con tipo) →
-// vip_pass_confirmacion (VIP Pass) → confirmacionvip (sin variables).
+// Cascade por idioma:
+//   - reserva.idioma === "en": *_en aprobados → fallback ES + nota EN texto libre (24h window)
+//   - reserva.idioma === "es" (default): cascade existente
 async function enviarWhatsAppConfirmacion(SB: any, reserva: any): Promise<void> {
   const telefono = reserva?.telefono || reserva?.contacto;
   if (!telefono || !/\d{7,}/.test(telefono)) return;
 
-  let horaSalida = "Ver confirmación";
+  const lang: "es" | "en" = reserva?.idioma === "en" ? "en" : "es";
+  const locale = lang === "en" ? "en-US" : "es-CO";
+
+  let horaSalida = lang === "en" ? "See confirmation" : "Ver confirmación";
   if (reserva.salida_id) {
     try {
       const { data: salida } = await SB.from("salidas")
@@ -949,34 +1107,90 @@ async function enviarWhatsAppConfirmacion(SB: any, reserva: any): Promise<void> 
     } catch { /* ignore */ }
   }
 
-  const nombre = (reserva.nombre || "").split(" ")[0] || reserva.nombre || "Cliente";
+  const nombre = (reserva.nombre || "").split(" ")[0] || reserva.nombre || (lang === "en" ? "Guest" : "Cliente");
   const fecha = reserva.fecha
-    ? new Date(reserva.fecha + "T12:00:00").toLocaleDateString("es-CO", { weekday: "long", day: "numeric", month: "long" })
+    ? new Date(reserva.fecha + "T12:00:00").toLocaleDateString(locale, { weekday: "long", day: "numeric", month: "long" })
     : "";
-  const totalCOP = `$${Number(reserva.total || 0).toLocaleString("es-CO")} COP`;
-  const tipo = reserva.tipo || "Pasadía";
+  const totalCOP = `$${Number(reserva.total || 0).toLocaleString(locale)} COP`;
+  const tipo = reserva.tipo || (lang === "en" ? "Day pass" : "Pasadía");
 
   const sendUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/send-whatsapp/send`;
+  const sendTextUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/send-whatsapp/send-text`;
   const headers = {
     "Content-Type": "application/json",
     "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
     "apikey": Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
   };
 
-  const trySend = async (template: string, params: string[], lang: string) => {
+  const trySend = async (template: string, params: string[], tplLang: string) => {
     const r = await fetch(sendUrl, {
       method: "POST",
       headers,
-      body: JSON.stringify({ to: telefono, template, params, lang, reserva_id: reserva.id }),
+      body: JSON.stringify({ to: telefono, template, params, lang: tplLang, reserva_id: reserva.id }),
     });
     const d = await r.json().catch(() => ({}));
     return r.ok && !d?.error;
   };
 
-  // 1) Genérica con tipo
+  if (lang === "en") {
+    if (await trySend("confirmacion_pasadia_atolon_en", [nombre, tipo, fecha, String(reserva.pax || 1), horaSalida, totalCOP, reserva.id], "en")) return;
+    if (await trySend("vip_pass_confirmacion_en",       [nombre, fecha, String(reserva.pax || 1), horaSalida, totalCOP, reserva.id], "en")) return;
+    const esOk = await trySend("vip_pass_confirmacion", [nombre, fecha, String(reserva.pax || 1), horaSalida, totalCOP, reserva.id], "es");
+    if (esOk) {
+      const enNote = `Hi ${nombre}! Your booking is confirmed for ${fecha} · ${reserva.pax || 1} guest(s) · departure ${horaSalida}. Total paid: ${totalCOP}. Booking ID: ${reserva.id}. Arrive 20 minutes before departure at La Bodeguita Pier — Gate 1. Pier tax COP 18,000 per person (not included in the day pass). See full details: https://www.atoloncartagena.com/zarpe-info?id=${reserva.id}&lang=en`;
+      await fetch(sendTextUrl, { method: "POST", headers, body: JSON.stringify({ to: telefono, body: enNote, reserva_id: reserva.id }) }).catch(() => {});
+    }
+    return;
+  }
+
+  // ES flow (default)
   if (await trySend("confirmacion_pasadia_atolon", [nombre, tipo, fecha, String(reserva.pax || 1), horaSalida, totalCOP, reserva.id], "es")) return;
-  // 2) VIP-específica
-  if (await trySend("vip_pass_confirmacion", [nombre, fecha, String(reserva.pax || 1), horaSalida, totalCOP, reserva.id], "es")) return;
-  // 3) Fallback sin variables
+  if (await trySend("vip_pass_confirmacion",       [nombre, fecha, String(reserva.pax || 1), horaSalida, totalCOP, reserva.id], "es")) return;
   await trySend("confirmacionvip", [], "es_CO");
+}
+
+// ── Notificación email admin: pago Juicy & Cream confirmado vía Zoho ──
+async function notificarJuicyPagoConfirmado(jc: any, monto: number, pasarela: string, pid: string) {
+  const RESEND_KEY = Deno.env.get("RESEND_API_KEY") || "";
+  if (!RESEND_KEY) {
+    console.warn("[juicy/email] RESEND_API_KEY no configurada — skip");
+    return;
+  }
+  const tipoLabel = jc.tipo === "ticket" ? `🎟 Ticket — ${jc.categoria}` : `🛋 Mesa — ${jc.categoria}`;
+  const html = `
+    <div style="font-family: Arial, sans-serif; max-width: 560px; margin: 0 auto; color: #0a0a0a;">
+      <div style="background: #16A34A; color: #fff; padding: 18px 22px; border-radius: 8px 8px 0 0;">
+        <div style="font-size: 20px; font-weight: 800; letter-spacing: 0.04em;">JUICY &amp; CREAM</div>
+        <div style="font-size: 12px; letter-spacing: 0.2em; margin-top: 4px;">✅ PAGO CONFIRMADO</div>
+      </div>
+      <div style="background: #fff; border: 1px solid #ccc; border-top: none; padding: 22px; border-radius: 0 0 8px 8px;">
+        <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
+          <tr><td style="padding: 6px 0; color: #666;">Reserva ID</td><td style="padding: 6px 0; font-weight: 700;">${jc.id}</td></tr>
+          <tr><td style="padding: 6px 0; color: #666;">Tipo</td><td style="padding: 6px 0; font-weight: 700;">${tipoLabel}</td></tr>
+          <tr><td style="padding: 6px 0; color: #666;">Total pagado</td><td style="padding: 6px 0; font-weight: 800; color: #16A34A; font-size: 18px;">$${Math.round(monto).toLocaleString("es-CO")}</td></tr>
+          <tr><td style="padding: 6px 0; color: #666;">Pasarela</td><td style="padding: 6px 0;">${pasarela} — Payment ${pid}</td></tr>
+          <tr><td colspan="2" style="padding: 12px 0 6px; border-top: 1px solid #eee; font-weight: 700;">Cliente</td></tr>
+          <tr><td style="padding: 4px 0; color: #666;">Nombre</td><td style="padding: 4px 0;">${jc.nombre || "—"}</td></tr>
+          <tr><td style="padding: 4px 0; color: #666;">Teléfono</td><td style="padding: 4px 0;">${jc.telefono || "—"}</td></tr>
+          ${jc.email ? `<tr><td style="padding: 4px 0; color: #666;">Email</td><td style="padding: 4px 0;">${jc.email}</td></tr>` : ""}
+        </table>
+        <div style="margin-top: 18px; padding: 10px 14px; background: #DCFCE7; border: 1px solid #16A34A; border-radius: 6px; font-size: 12px; color: #166534;">
+          ✅ Esta venta ya está confirmada y aparecerá en tu portal de organizador y en Grupos del día.
+        </div>
+        <div style="margin-top: 16px; font-size: 11px; color: #888;">
+          Portal organizador: <a href="https://www.atolon.co/juicy-organizador" style="color: #16A34A;">/juicy-organizador</a> · 7 jun 2026 · Atolón Beach Club
+        </div>
+      </div>
+    </div>
+  `;
+  await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: { "Authorization": `Bearer ${RESEND_KEY}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      from: "Juicy & Cream <reservas@atolon.co>",
+      to: ["eric@atoloncartagena.com"],
+      subject: `✅ Venta confirmada Juicy & Cream — ${tipoLabel} · $${Math.round(monto).toLocaleString("es-CO")}`,
+      html,
+    }),
+  });
 }

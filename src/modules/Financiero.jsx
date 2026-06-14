@@ -139,7 +139,9 @@ export default function Financiero() {
 
     Promise.all([
       supabase.from("reservas")
-        .select("fecha, created_at, total, tipo, canal, forma_pago, pax, estado, grupo_id")
+        // abono + fecha_pago necesarios para Flujo de Caja (cash recibido,
+        // no revenue prometido — audit rank 36).
+        .select("fecha, created_at, total, abono, fecha_pago, tipo, canal, forma_pago, pax, estado, grupo_id")
         .gte("fecha", desdeStr)
         .neq("estado", "cancelado")
         .is("grupo_id", null),       // solo pasadías directas — grupos/eventos vienen de la tabla eventos
@@ -167,7 +169,10 @@ export default function Financiero() {
         .not("aliado_id", "is", null)
         .is("grupo_id", null),
       supabase.from("b2b_convenios")
-        .select("aliado_id, tipo_pasadia, tarifa_publica, tarifa_neta")
+        // Incluye tarifas de NINO para calcular comision en grupos mixtos.
+        // Antes faltaban — la formula que descartaba ninos cuando habia
+        // adultos generaba sub-pago al aliado (audit rank 39).
+        .select("aliado_id, tipo_pasadia, tarifa_publica, tarifa_neta, tarifa_publica_nino, tarifa_neta_nino")
         .eq("activo", true),
     ]).then(async ([resR, cierresR, reqsR, evR, llegR, b2bResR, convR]) => {
       // A&B oficial desde Loggro Restobar (rango = últimos 13 meses → hoy)
@@ -442,6 +447,11 @@ export default function Financiero() {
   const eventosConfirmados = (key) => eventosDePeriodo(key).filter(e => ["Confirmado","Realizado"].includes(e.stage));
   const totalGrupos = (key) => eventosConfirmados(key).filter(e => e.categoria === "grupo").reduce((s, e) => s + montoEvento(e), 0);
   const totalEventos = (key) => eventosConfirmados(key).filter(e => e.categoria === "evento").reduce((s, e) => s + montoEvento(e), 0);
+  // Pasadias (reservas individuales): mismo calculo que totalA arriba pero
+  // parametrizado por key. Necesario para Evolucion Mensual (audit rank 35)
+  // y otros reportes que iteran sobre meses.
+  const totalPasadias = (key) =>
+    resDePeriodo(key).reduce((s, r) => s + (r.total || 0), 0);
 
   // totalCotizacion para el tab Eventos & Grupos (incluye servicios_contratados)
   const totalCotizacion = (e) => {
@@ -455,7 +465,12 @@ export default function Financiero() {
   const convMap = {};
   conveniosData.forEach(c => {
     if (!convMap[c.aliado_id]) convMap[c.aliado_id] = {};
-    convMap[c.aliado_id][c.tipo_pasadia.toLowerCase()] = { publica: c.tarifa_publica, neta: c.tarifa_neta };
+    convMap[c.aliado_id][c.tipo_pasadia.toLowerCase()] = {
+      publica: c.tarifa_publica,
+      neta: c.tarifa_neta,
+      publica_nino: c.tarifa_publica_nino || 0,
+      neta_nino: c.tarifa_neta_nino || 0,
+    };
   });
 
   const comisionesDePeriodo = (key) => {
@@ -475,9 +490,15 @@ export default function Financiero() {
           const adultos = Number(p.adultos) || 0;
           const ninos   = Number(p.ninos)   || 0;
           const personas = Number(p.personas) || 0;
+          // Audit rank 39: antes solo sumaba adultos cuando adultos>0,
+          // descartando ninos. En grupos mixtos eso era sub-pago al aliado.
+          // Ahora sumamos ambos componentes con sus tarifas respectivas
+          // (mismo patron que EventoDetalle.jsx para coherencia).
           if (adultos > 0 || ninos > 0) {
-            total += (conv.publica - conv.neta) * adultos;
+            total += (conv.publica - conv.neta) * adultos
+                   + ((conv.publica_nino || 0) - (conv.neta_nino || 0)) * ninos;
           } else {
+            // Fallback legacy: grupos sin desglose pax — usar personas
             total += (conv.publica - conv.neta) * personas;
           }
         });
@@ -715,10 +736,22 @@ export default function Financiero() {
                 <h3 style={{ fontSize: 15, color: B.sand, margin: "0 0 16px" }}>Evolución Mensual P&L</h3>
                 <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
                   {meses.slice(0, 6).reverse().map(mes => {
-                    const i = totalCierres(mes) + totalAyB(mes);
+                    // Ingresos = MISMA composicion que el agregado del periodo
+                    // actual arriba (linea 580). Antes faltaban pasadias,
+                    // grupos y eventos — solo se sumaban cierres + A&B. Eso
+                    // hacia que la utilidad u=i-g saliera falsamente negativa
+                    // todos los meses porque los gastos SI estaban completos.
+                    // Audit rank 35.
+                    const ingMes = (mes) =>
+                      totalPasadias(mes)
+                      + totalGrupos(mes)
+                      + totalEventos(mes)
+                      + totalCierres(mes)
+                      + totalAyB(mes);
+                    const i = ingMes(mes);
                     const g = totalGastos(mes);
                     const u = i - g;
-                    const maxVal = Math.max(...meses.slice(0, 6).map(m => totalCierres(m) + totalAyB(m)), 1);
+                    const maxVal = Math.max(...meses.slice(0, 6).map(m => ingMes(m)), 1);
                     const hI = Math.max((i / maxVal) * 80, i > 0 ? 3 : 0);
                     const hG = Math.max((g / maxVal) * 80, g > 0 ? 3 : 0);
                     const isSel = mes === periodoActual;
@@ -1006,18 +1039,27 @@ export default function Financiero() {
         const [y, m] = flujoMes.slice(0, 7).split("-").map(Number);
         const daysInMonth = new Date(y, m, 0).getDate();
 
-        // Build day-by-day data
+        // Build day-by-day data — Flujo de CAJA = cash recibido (no revenue
+        // prometido). Antes se sumaba r.total keyeado por created_at; eso
+        // inflaba el dia con $1M aunque solo se abonaran $300K. Ahora sumamos
+        // r.abono keyeado por r.fecha_pago (fallback created_at solo si la
+        // reserva no tiene fecha_pago) — audit rank 36.
         const days = Array.from({ length: daysInMonth }, (_, i) => {
           const d = String(i + 1).padStart(2, "0");
           const fecha = `${y}-${String(m).padStart(2, "0")}-${d}`;
           const resTotal   = reservas.filter(r => {
-            const fechaPago = r.created_at
-              ? new Date(r.created_at).toLocaleDateString("en-CA", { timeZone: "America/Bogota" })
-              : r.fecha;
+            const fechaPago = r.fecha_pago
+              || (r.created_at
+                ? new Date(r.created_at).toLocaleDateString("en-CA", { timeZone: "America/Bogota" })
+                : r.fecha);
             return fechaPago === fecha;
-          }).reduce((s, r) => s + (r.total || 0), 0);
-          // cierres_caja sin A&B (A&B viene de Loggro) + ventas A&B del día desde Loggro
-          const cierreTotal = cierres.filter(c => c.fecha === fecha && c.area !== "ayb").reduce((s, c) => s + (c.total_ventas || c.total_general || 0), 0)
+          }).reduce((s, r) => s + (Number(r.abono) || 0), 0);
+          // cierres_caja sin A&B Y sin pasadias (audit rank 37: pasadias YA se
+          // cuenta arriba en reservas → no contar dos veces). Mismo filtro que
+          // usa totalCierres() en la vista P&L del periodo actual.
+          const cierreTotal = cierres
+            .filter(c => c.fecha === fecha && c.area !== "ayb" && c.area !== "pasadias")
+            .reduce((s, c) => s + (c.total_ventas || c.total_general || 0), 0)
                             + (Number(aybLoggroPorDia[fecha]) || 0);
           // Pagos de eventos/grupos (array pagos[] con {fecha, monto})
           const eventosTotal = eventosData.reduce((s, e) => {

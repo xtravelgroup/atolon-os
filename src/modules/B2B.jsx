@@ -636,8 +636,10 @@ function HistorialReservasB2B({ aliadoId, comisionPct = 0 }) {
     const netoA     = r.precio_neto || pasadia?.neto        || 0;
     const cobradoN  = r.precio_nino || pasadia?.precio_nino || 0;
     const netoN     =                  pasadia?.neto_nino   || 0;
-    const paxA      = r.pax_a || r.pax || 1;
-    const paxN      = r.pax_n || 0;
+    // Nullish — NO || que cae en r.pax (=pax_a+pax_n) cuando pax_a=0
+    // (audit rank 38: reservas kids-only inflaban comision por adultos fantasma).
+    const paxA      = Number(r.pax_a) || 0;
+    const paxN      = Number(r.pax_n) || 0;
     const descuento = r.descuento_agencia || 0;
     if (netoA > 0 && cobradoA > 0) {
       const margenA = (cobradoA - netoA) * paxA;
@@ -664,8 +666,9 @@ function HistorialReservasB2B({ aliadoId, comisionPct = 0 }) {
       const conv = pasadiasMap[(r.tipo || "").toLowerCase()];
       const netoA = conv?.neto || 0;
       const netoN = conv?.neto_nino || 0;
-      const paxA  = r.pax_a || r.pax || 1;
-      const paxN  = r.pax_n || 0;
+      // Nullish (audit rank 38)
+      const paxA  = Number(r.pax_a) || 0;
+      const paxN  = Number(r.pax_n) || 0;
       const nuevoTotal = netoA > 0 ? paxA * netoA + paxN * netoN : r.total;
       const abonoActual = r.abono || 0;
       const nuevoSaldo  = Math.max(0, nuevoTotal - abonoActual);
@@ -1687,8 +1690,17 @@ function VisitasAgencia({ aliadoId, aliado }) {
     };
     try {
       if (editVisita) {
-        const { error } = await supabase.from("b2b_visitas").update(cleanForm).eq("id", editVisita.id);
+        // .select() obliga a Supabase a devolver el row actualizado — si no
+        // viene data, sabemos que la actualización falló silenciosamente.
+        const { data, error } = await supabase
+          .from("b2b_visitas")
+          .update(cleanForm)
+          .eq("id", editVisita.id)
+          .select()
+          .single();
         if (error) throw error;
+        if (!data) throw new Error("La actualización no devolvió el registro — revisa permisos RLS");
+        console.info("[b2b_visitas] update OK:", data.id);
       } else {
         const visitaId = `VIS-${Date.now()}`;
         let reservaId = null;
@@ -1697,7 +1709,7 @@ function VisitasAgencia({ aliadoId, aliado }) {
         if (form.tipo === "inspección") {
           reservaId = `INS-${Date.now()}`;
           const pax = parseInt(form.num_personas) || 1;
-          const { error: e1 } = await supabase.from("reservas").insert({
+          const { data: insData, error: e1 } = await supabase.from("reservas").insert({
             id: reservaId,
             aliado_id: aliadoId,
             tipo: "Visita Inspección",
@@ -1709,8 +1721,9 @@ function VisitasAgencia({ aliadoId, aliado }) {
             pax,
             notas: `Visita de inspección B2B — ${aliado.nombre}${form.coordinador ? ` · Coordinador: ${form.coordinador}` : ""}${form.objetivo ? ` · Objetivo: ${form.objetivo}` : ""}`,
             created_at: new Date().toISOString(),
-          });
+          }).select().single();
           if (e1) throw e1;
+          if (!insData) throw new Error("La reserva de inspección no quedó guardada (sin error pero sin row) — abortando.");
           // Log en historial (no-fatal si falla)
           await supabase.from("reservas_historial").insert({
             id: `H-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
@@ -1721,13 +1734,34 @@ function VisitasAgencia({ aliadoId, aliado }) {
           });
         }
 
-        const { error: e2 } = await supabase.from("b2b_visitas").insert({
-          id: visitaId,
-          aliado_id: aliadoId,
-          ...cleanForm,
-          reserva_id: reservaId,
-        });
+        // .select().single() devuelve el row insertado. Si no llega data sin
+        // error, es señal de que un policy/proxy comió la operación —
+        // tratamos eso como fallo explícito para no engañar al usuario.
+        const { data: visData, error: e2 } = await supabase
+          .from("b2b_visitas")
+          .insert({
+            id: visitaId,
+            aliado_id: aliadoId,
+            ...cleanForm,
+            reserva_id: reservaId,
+          })
+          .select()
+          .single();
         if (e2) throw e2;
+        if (!visData) throw new Error("La visita no quedó guardada (sin error pero sin row devuelto). Revisa conexión o permisos.");
+        console.info("[b2b_visitas] insert OK:", visData.id, "aliado:", aliadoId);
+
+        // Doble verificación: re-leemos la row por id. Si no aparece, algo
+        // estuvo mal a pesar del select().single() — alertamos sin cerrar
+        // el modal para que el usuario reintente.
+        const { data: verifyData } = await supabase
+          .from("b2b_visitas")
+          .select("id")
+          .eq("id", visitaId)
+          .maybeSingle();
+        if (!verifyData) {
+          throw new Error("La visita no aparece después de guardar. Re-intenta o avisa al admin.");
+        }
       }
       setShowForm(false);
       fetchV();
@@ -1999,6 +2033,106 @@ function IncentivosAgencia({ aliadoId }) {
   const [form, setForm] = useState(emptyForm);
   const f = (k, v) => setForm(p => ({ ...p, [k]: v }));
 
+  // ── Canje manual (admin) ───────────────────────────────────────────────
+  const [canjeFor,        setCanjeFor]        = useState(null);   // { inc, saldo }
+  const [canjeForm,       setCanjeForm]       = useState({ reserva_id: "", pasadias_usadas: 1, nota: "" });
+  const [reservasRecien,  setReservasRecien]  = useState([]);     // últimas reservas del aliado
+  const [savingCanje,     setSavingCanje]     = useState(false);
+
+  const abrirCanje = async (inc, saldo) => {
+    setCanjeFor({ inc, saldo });
+    setCanjeForm({ reserva_id: "", pasadias_usadas: 1, nota: "" });
+    // Reservas del MISMO aliado con SALDO PENDIENTE (saldo > 0), no
+    // canceladas. Son las únicas elegibles para aplicar la cortesía.
+    const desde = new Date(Date.now() - 180 * 86400000).toISOString().slice(0, 10);
+    const { data } = await supabase.from("reservas")
+      .select("id, nombre, fecha, tipo, pax, precio_u, total, abono, saldo, estado")
+      .eq("aliado_id", aliadoId)
+      .neq("estado", "cancelado")
+      .gt("saldo", 0)
+      .gte("fecha", desde)
+      .order("fecha", { ascending: false })
+      .limit(50);
+    setReservasRecien(data || []);
+  };
+
+  // Cuando elige una reserva, auto-ajustar la cantidad a canjear al menor
+  // entre el saldo del incentivo y los pax de la reserva (no se puede
+  // canjear más pasadías que pax tiene la reserva).
+  const onPickReserva = (rid) => {
+    const r = reservasRecien.find(x => x.id === rid);
+    const maxByReserva = r ? Math.max(1, Number(r.pax) || 1) : (canjeFor?.saldo || 1);
+    const cant = Math.min(canjeFor?.saldo || 1, maxByReserva);
+    setCanjeForm(c => ({ ...c, reserva_id: rid, pasadias_usadas: cant }));
+  };
+
+  const guardarCanje = async () => {
+    if (!canjeFor || savingCanje) return;
+    if (!canjeForm.reserva_id) { alert("Selecciona una reserva del aliado con saldo pendiente."); return; }
+    const r = reservasRecien.find(x => x.id === canjeForm.reserva_id);
+    if (!r) { alert("La reserva seleccionada ya no está disponible."); return; }
+    const maxByReserva = Math.max(1, Number(r.pax) || 1);
+    const maxAplicable = Math.min(canjeFor.saldo, maxByReserva);
+    const cant = Math.max(1, Math.min(Number(canjeForm.pasadias_usadas) || 1, maxAplicable));
+    const saldoActual = Number(r.saldo) || 0;
+    setSavingCanje(true);
+    // 1) Registrar el canje en b2b_premios_canjes
+    const { error } = await supabase.from("b2b_premios_canjes").insert({
+      id:                `CNJ-${Date.now()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`,
+      aliado_id:         aliadoId,
+      incentivo_id:      canjeFor.inc.id,
+      reserva_id:        canjeForm.reserva_id,
+      pasadias_usadas:   cant,
+      fecha:             new Date().toISOString().slice(0, 10),
+      nota:              (canjeForm.nota || "").trim() || `Canje manual (admin) — ${canjeFor.inc.nombre} aplicado a ${canjeForm.reserva_id}`,
+    });
+    if (error) { setSavingCanje(false); alert("Error al registrar canje: " + error.message); return; }
+
+    // 2) Aplicar a la reserva → descontar SOLO el precio de las pasadías
+    //    canjeadas (no la reserva entera). Si la reserva tiene 4 pax y se
+    //    canjea 1 pasadía, se descuenta 1 × precio_unit. El resto sigue
+    //    cobrándosele al aliado.
+    const { data: rNow } = await supabase.from("reservas")
+      .select("precio_u, total, pax, saldo, descuento_cortesia, forma_pago, notas, estado")
+      .eq("id", canjeForm.reserva_id).maybeSingle();
+    const precioUnit = Number(rNow?.precio_u) > 0
+      ? Number(rNow.precio_u)
+      : (Number(rNow?.pax) > 0 ? (Number(rNow.total) || 0) / Number(rNow.pax) : 0);
+    const descuentoBruto = Math.round(precioUnit * cant);
+    const saldoAhora     = Number(rNow?.saldo) || 0;
+    const descuentoApl   = Math.min(descuentoBruto, saldoAhora); // no descontar más de lo que se debe
+    const nuevoSaldo     = Math.max(0, saldoAhora - descuentoApl);
+    const descuentoNuevo = (Number(rNow?.descuento_cortesia) || 0) + descuentoApl;
+    const notaPrev = (rNow?.notas || "").trim();
+    const notaCanje = `Premio aplicado: ${canjeFor.inc.nombre} (${cant} pasadía${cant !== 1 ? "s" : ""} · -${(descuentoApl).toLocaleString("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 })})`;
+    // Si el saldo queda en 0 después del canje:
+    //  - la reserva queda confirmada por cortesía del premio,
+    //  - total → 0 (mismo patrón que las cortesías creadas en Reservas.jsx:
+    //    total=0/abono=0/saldo=0 y el valor original se guarda en
+    //    descuento_cortesia para reportes).
+    // Canje parcial: preservamos total y estado actual — el aliado sigue
+    // debiendo el saldo restante y la reserva sigue contando como ingreso.
+    const canjeTotal = nuevoSaldo === 0;
+    const nuevoEstado = (canjeTotal && (rNow?.estado === "pendiente" || rNow?.estado === "pendiente_pago"))
+      ? "confirmado"
+      : rNow?.estado;
+    const updates = {
+      saldo:               nuevoSaldo,
+      descuento_cortesia:  descuentoNuevo,
+      forma_pago:          rNow?.forma_pago || (canjeTotal ? "incentivo_premio" : rNow?.forma_pago),
+      estado:              nuevoEstado,
+      notas:               notaPrev ? `${notaPrev} · ${notaCanje}` : notaCanje,
+    };
+    if (canjeTotal) updates.total = 0;
+    const { error: upErr } = await supabase.from("reservas").update(updates).eq("id", canjeForm.reserva_id);
+    setSavingCanje(false);
+    if (upErr) {
+      alert("Canje registrado pero hubo un problema al actualizar la reserva: " + upErr.message);
+    }
+    setCanjeFor(null);
+    fetchAll();
+  };
+
   const fetchAll = useCallback(async () => {
     if (!supabase) { setLoading(false); return; }
     setLoading(true);
@@ -2014,19 +2148,52 @@ function IncentivosAgencia({ aliadoId }) {
     setIncentivos(inc);
 
     const prog = {};
+    // Cargar canjes una sola vez para los saldos de acumulación
+    const { data: canjes } = await supabase.from("b2b_premios_canjes")
+      .select("incentivo_id, pasadias_usadas").eq("aliado_id", aliadoId);
     for (const i of inc) {
-      if (!i.fecha_inicio || !i.fecha_fin || i.tipo === "especial") continue;
-      const { data: resData } = await supabase.from("reservas")
-        .select("pax, total")
-        .eq("aliado_id", aliadoId)
-        .neq("estado", "cancelado")
-        .gte("fecha", i.fecha_inicio)
-        .lte("fecha", i.fecha_fin);
-      const pax     = (resData || []).reduce((s, r) => s + (r.pax || 0), 0);
-      const revenue = (resData || []).reduce((s, r) => s + (r.total || 0), 0);
-      const reservas= (resData || []).length;
-      const actual  = i.tipo === "meta_pax" ? pax : i.tipo === "meta_revenue" ? revenue : reservas;
-      prog[i.id] = { actual, pct: Math.min(100, Math.round((actual / (i.meta_valor || 1)) * 100)) };
+      if (i.tipo === "acumulacion") {
+        // Acumulación: contar pax (filtrando día de semana si aplica),
+        // excluir cortesías y canal GRUPO, calcular bloques ganados y saldo.
+        const fi = i.fecha_inicio || "1900-01-01";
+        const ff = i.fecha_fin    || "9999-12-31";
+        const { data: resData } = await supabase.from("reservas")
+          .select("pax, fecha")
+          .eq("aliado_id", aliadoId)
+          .neq("estado", "cancelado")
+          .neq("canal", "Cortesía").neq("forma_pago", "Cortesía")
+          .neq("canal", "GRUPO")
+          .gte("fecha", fi).lte("fecha", ff);
+        let filtered = resData || [];
+        if (i.acum_dia_semana !== null && i.acum_dia_semana !== undefined) {
+          filtered = filtered.filter(r => new Date(r.fecha + "T12:00:00").getDay() === i.acum_dia_semana);
+        }
+        const totalPax = filtered.reduce((s, r) => s + (r.pax || 0), 0);
+        const cada     = i.acum_cada_pax || 1;
+        const bloques  = Math.floor(totalPax / cada);
+        const ganados  = bloques * (i.acum_beneficio_cant || 1);
+        const usados   = (canjes || []).filter(c => c.incentivo_id === i.id)
+                          .reduce((s, c) => s + (c.pasadias_usadas || 1), 0);
+        const saldo    = Math.max(0, ganados - usados);
+        const resto    = totalPax % cada;
+        const pct      = Math.min(100, Math.round((resto / cada) * 100));
+        prog[i.id] = { tipo: "acumulacion", totalPax, cada, bloques, ganados, usados, saldo, resto, pct };
+      } else if (!i.fecha_inicio || !i.fecha_fin || i.tipo === "especial") {
+        continue;
+      } else {
+        const { data: resData } = await supabase.from("reservas")
+          .select("pax, total")
+          .eq("aliado_id", aliadoId)
+          .neq("estado", "cancelado")
+          .neq("canal", "Cortesía").neq("forma_pago", "Cortesía")
+          .gte("fecha", i.fecha_inicio)
+          .lte("fecha", i.fecha_fin);
+        const pax     = (resData || []).reduce((s, r) => s + (r.pax || 0), 0);
+        const revenue = (resData || []).reduce((s, r) => s + (r.total || 0), 0);
+        const reservas= (resData || []).length;
+        const actual  = i.tipo === "meta_pax" ? pax : i.tipo === "meta_revenue" ? revenue : reservas;
+        prog[i.id] = { actual, pct: Math.min(100, Math.round((actual / (i.meta_valor || 1)) * 100)) };
+      }
     }
     setProgreso(prog);
     setLoading(false);
@@ -2089,8 +2256,9 @@ function IncentivosAgencia({ aliadoId }) {
 
       {incentivos.map(inc => {
         const p = progreso[inc.id];
+        const esAcum   = p?.tipo === "acumulacion";
         const pct = p?.pct ?? null;
-        const cumplido = pct !== null && pct >= 100;
+        const cumplido = esAcum ? (p?.saldo > 0) : (pct !== null && pct >= 100);
         const esGlobal = inc.aliado_id === null;
         const diasRestantes = inc.fecha_fin ? Math.max(0, Math.ceil((new Date(inc.fecha_fin) - new Date(hoy)) / 86400000)) : null;
         return (
@@ -2106,26 +2274,58 @@ function IncentivosAgencia({ aliadoId }) {
                 {inc.beneficio && <div style={{ fontSize: 12, color: B.sand, marginTop: 2 }}>🎁 {inc.beneficio}</div>}
                 {inc.fecha_inicio && <div style={{ fontSize: 11, color: "rgba(255,255,255,0.3)", marginTop: 2 }}>{inc.fecha_inicio} → {inc.fecha_fin}{diasRestantes !== null && !cumplido ? ` · ${diasRestantes}d restantes` : ""}</div>}
               </div>
-              {pct !== null && (
+              {esAcum ? (
+                <div style={{ textAlign: "right", minWidth: 110 }}>
+                  <div style={{ fontSize: 22, fontWeight: 700, fontFamily: "'Barlow Condensed', sans-serif", color: p.saldo > 0 ? B.success : B.sky }}>
+                    🎁 {p.saldo}
+                  </div>
+                  <div style={{ fontSize: 10, color: "rgba(255,255,255,0.45)" }}>
+                    disponible{p.saldo !== 1 ? "s" : ""}
+                  </div>
+                  <div style={{ fontSize: 10, color: "rgba(255,255,255,0.35)", marginTop: 2 }}>
+                    {p.totalPax} pax · ganados {p.ganados} · usados {p.usados}
+                  </div>
+                </div>
+              ) : pct !== null && (
                 <div style={{ textAlign: "right", minWidth: 80 }}>
                   <div style={{ fontSize: 20, fontWeight: 700, fontFamily: "'Barlow Condensed', sans-serif", color: cumplido ? B.success : B.sky }}>{pct}%</div>
                   <div style={{ fontSize: 10, color: "rgba(255,255,255,0.35)" }}>{fmtMeta(inc.tipo, p.actual)} / {fmtMeta(inc.tipo, inc.meta_valor)}</div>
                 </div>
               )}
-              {esGlobal ? (
-                <button onClick={() => quitarGlobal(inc)} style={{ background: B.danger + "22", color: B.danger, border: `1px solid ${B.danger}44`, borderRadius: 6, padding: "4px 10px", fontSize: 11, cursor: "pointer", fontWeight: 600 }}>
-                  ✕ Quitar
-                </button>
-              ) : (
-                <button onClick={() => toggleActivo(inc.id, inc.activo)} style={{ background: inc.activo ? B.danger + "22" : B.success + "22", color: inc.activo ? B.danger : B.success, border: "none", borderRadius: 6, padding: "4px 10px", fontSize: 11, cursor: "pointer" }}>
-                  {inc.activo ? "Desactivar" : "Activar"}
-                </button>
-              )}
+              <div style={{ display: "flex", flexDirection: "column", gap: 4, alignItems: "flex-end" }}>
+                {esAcum && p?.saldo > 0 && (
+                  <button onClick={() => abrirCanje(inc, p.saldo)}
+                    style={{ background: B.success + "22", color: B.success, border: `1px solid ${B.success}66`, borderRadius: 6, padding: "4px 10px", fontSize: 11, cursor: "pointer", fontWeight: 700, whiteSpace: "nowrap" }}
+                    title={`Marcar como usada 1 pasadía de las ${p.saldo} disponibles`}>
+                    🎁 Canjear
+                  </button>
+                )}
+                {esGlobal ? (
+                  <button onClick={() => quitarGlobal(inc)} style={{ background: B.danger + "22", color: B.danger, border: `1px solid ${B.danger}44`, borderRadius: 6, padding: "4px 10px", fontSize: 11, cursor: "pointer", fontWeight: 600 }}>
+                    ✕ Quitar
+                  </button>
+                ) : (
+                  <button onClick={() => toggleActivo(inc.id, inc.activo)} style={{ background: inc.activo ? B.danger + "22" : B.success + "22", color: inc.activo ? B.danger : B.success, border: "none", borderRadius: 6, padding: "4px 10px", fontSize: 11, cursor: "pointer" }}>
+                    {inc.activo ? "Desactivar" : "Activar"}
+                  </button>
+                )}
+              </div>
             </div>
             {pct !== null && (
-              <div style={{ marginTop: 10, height: 6, background: B.navyLight, borderRadius: 3, overflow: "hidden" }}>
-                <div style={{ height: "100%", borderRadius: 3, width: `${pct}%`, background: cumplido ? B.success : B.sky, transition: "width 0.5s ease" }} />
-              </div>
+              <>
+                <div style={{ marginTop: 10, height: 6, background: B.navyLight, borderRadius: 3, overflow: "hidden" }}>
+                  <div style={{ height: "100%", borderRadius: 3, width: `${pct}%`, background: cumplido ? B.success : B.sky, transition: "width 0.5s ease" }} />
+                </div>
+                {esAcum && (
+                  <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", marginTop: 4 }}>
+                    {p.resto}/{p.cada} pax hacia el próximo premio
+                    {inc.acum_dia_semana !== null && inc.acum_dia_semana !== undefined
+                      ? ` · solo ${["Domingos","Lunes","Martes","Miércoles","Jueves","Viernes","Sábados"][inc.acum_dia_semana]}`
+                      : ""}
+                    {inc.acum_periodo ? ` · ${inc.acum_periodo}` : ""}
+                  </div>
+                )}
+              </>
             )}
           </div>
         );
@@ -2177,6 +2377,95 @@ function IncentivosAgencia({ aliadoId }) {
           </div>
         </div>
       )}
+
+      {/* ── Modal de canje manual ─────────────────────────────────────── */}
+      {canjeFor && (() => {
+        const { inc, saldo } = canjeFor;
+        const maxCant = Math.max(1, saldo);
+        return (
+          <div onClick={e => e.target === e.currentTarget && setCanjeFor(null)}
+            style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.75)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 999, padding: 20 }}>
+            <div style={{ background: B.navyMid, borderRadius: 16, padding: 24, width: 480, maxWidth: "100%", maxHeight: "90vh", overflowY: "auto", boxShadow: "0 20px 60px rgba(0,0,0,0.6)" }}>
+              <div style={{ marginBottom: 18 }}>
+                <h3 style={{ fontSize: 18, fontWeight: 800, color: "#fff", margin: 0 }}>🎁 Canjear premio</h3>
+                <div style={{ fontSize: 12, color: B.sand, marginTop: 4 }}>{inc.nombre} · {saldo} disponible{saldo !== 1 ? "s" : ""}</div>
+                {inc.acum_beneficio_desc && (
+                  <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginTop: 2 }}>Premio: {inc.acum_beneficio_desc}</div>
+                )}
+              </div>
+
+              <label style={LS}>Reserva del aliado con saldo pendiente *</label>
+              <select value={canjeForm.reserva_id} onChange={e => onPickReserva(e.target.value)} style={IS}>
+                <option value="">— Elige una reserva —</option>
+                {reservasRecien.map(r => (
+                  <option key={r.id} value={r.id}>
+                    {r.fecha} · {r.nombre || "—"} · {r.tipo} · {r.pax} pax · saldo {COP(r.saldo)}
+                  </option>
+                ))}
+              </select>
+              {reservasRecien.length === 0 && (
+                <div style={{ fontSize: 11, color: B.warning, marginTop: 6 }}>
+                  ⚠️ Este aliado no tiene reservas con saldo pendiente en los últimos 6 meses. No hay dónde aplicar el premio.
+                </div>
+              )}
+              {reservasRecien.length > 0 && (
+                <div style={{ fontSize: 10, color: "rgba(255,255,255,0.35)", marginTop: 4 }}>
+                  Solo aparecen reservas no canceladas con saldo &gt; 0 (donde se puede aplicar la cortesía).
+                </div>
+              )}
+
+              {canjeForm.reserva_id && (() => {
+                const r = reservasRecien.find(x => x.id === canjeForm.reserva_id);
+                const maxByReserva = r ? Math.max(1, Number(r.pax) || 1) : maxCant;
+                const maxAplicable = Math.min(maxCant, maxByReserva);
+                return (
+                  <div style={{ marginTop: 14 }}>
+                    <label style={LS}>Cantidad de pasadías a canjear</label>
+                    <input type="number" min={1} max={maxAplicable}
+                      value={canjeForm.pasadias_usadas}
+                      onChange={e => setCanjeForm(c => ({ ...c, pasadias_usadas: e.target.value }))}
+                      style={IS} />
+                    <div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", marginTop: 4 }}>
+                      Máx <strong>{maxAplicable}</strong> · saldo del premio: {maxCant} · pax de la reserva: {r?.pax}
+                    </div>
+                    {(() => {
+                      const cantNum  = Math.max(1, Math.min(Number(canjeForm.pasadias_usadas) || 1, maxAplicable));
+                      const precioU  = Number(r?.precio_u) > 0 ? Number(r.precio_u) : (Number(r?.pax) > 0 ? (Number(r?.total) || 0) / Number(r.pax) : 0);
+                      const desc     = Math.min(Math.round(precioU * cantNum), Number(r?.saldo) || 0);
+                      const nuevoS   = Math.max(0, (Number(r?.saldo) || 0) - desc);
+                      return (
+                        <div style={{ marginTop: 10, padding: "8px 10px", background: B.success + "11", border: `1px solid ${B.success}44`, borderRadius: 6, fontSize: 11, color: B.success, lineHeight: 1.5 }}>
+                          💚 Al confirmar, se descuenta <strong>{COP(desc)}</strong> ({cantNum} pasadía × {COP(precioU)} c/u) del saldo de la reserva.
+                          Saldo nuevo: <strong>{COP(nuevoS)}</strong>{nuevoS === 0 ? " ✓ saldada" : " pendiente"}.
+                        </div>
+                      );
+                    })()}
+                  </div>
+                );
+              })()}
+
+              <div style={{ marginTop: 14 }}>
+                <label style={LS}>Nota (opcional)</label>
+                <textarea value={canjeForm.nota}
+                  onChange={e => setCanjeForm(c => ({ ...c, nota: e.target.value }))}
+                  rows={2} placeholder="Motivo del canje, contexto, etc."
+                  style={{ ...IS, resize: "vertical", fontFamily: "inherit" }} />
+              </div>
+
+              <div style={{ display: "flex", gap: 10, marginTop: 22, justifyContent: "flex-end" }}>
+                <button onClick={() => setCanjeFor(null)}
+                  style={{ background: "transparent", border: `1px solid ${B.navyLight}`, color: "rgba(255,255,255,0.55)", borderRadius: 8, padding: "10px 18px", fontSize: 12, cursor: "pointer" }}>
+                  Cancelar
+                </button>
+                <button onClick={guardarCanje} disabled={savingCanje || !canjeForm.reserva_id}
+                  style={{ background: (!canjeForm.reserva_id || savingCanje) ? B.navyLight : B.success, color: (!canjeForm.reserva_id || savingCanje) ? "rgba(255,255,255,0.4)" : "#fff", border: "none", borderRadius: 8, padding: "10px 22px", fontSize: 13, fontWeight: 800, cursor: (savingCanje || !canjeForm.reserva_id) ? "default" : "pointer" }}>
+                  {savingCanje ? "Guardando…" : "✓ Registrar canje"}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }

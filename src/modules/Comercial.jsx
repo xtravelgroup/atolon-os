@@ -14,6 +14,9 @@ const VENDEDORES = []; // No hardcoded vendors — derived from leads data
 const CANALES = ["Web", "WhatsApp", "Referido", "B2B", "Instagram", "Telefono"];
 
 const ETAPAS = ["Nuevo", "Contactado", "Cotizado", "Cerrado Ganado", "Perdido", "Duplicado"];
+// Columnas visibles del Kanban: "Duplicado" sigue siendo un status válido
+// (se puede marcar desde el detalle) pero NO se muestra como columna.
+const ETAPAS_KANBAN = ETAPAS.filter(e => e !== "Duplicado");
 
 // ─── Vendor stats derived from leads ─────────────────────────────────────────
 
@@ -68,9 +71,15 @@ function badge(canal) {
   };
 }
 
+// Fecha de HOY en zona horaria Bogotá (YYYY-MM-DD). Todo el módulo
+// Comercial debe operar en hora Bogotá (no UTC, no local del navegador).
+function hoyBogota() {
+  return new Date().toLocaleDateString("en-CA", { timeZone: "America/Bogota" });
+}
+
 function isOverdue(dateStr) {
   if (!dateStr || dateStr === "—") return false;
-  return dateStr < new Date().toISOString().slice(0, 10);
+  return dateStr < hoyBogota();
 }
 
 // ─── Components ───────────────────────────────────────────────────────────────
@@ -317,7 +326,7 @@ function Modal({ open, onClose, onSubmit }) {
       vendedor: form.vendedor,
       valor_est: Number(form.valorEstimado) || 0,
       stage: "Nuevo",
-      fecha_creacion: new Date().toLocaleDateString("en-CA"),
+      fecha_creacion: hoyBogota(),
       pax: Number(form.pax) || null,
       fecha_visita: form.fecha_visita || null,
       hora_visita: form.hora_visita || null,
@@ -374,7 +383,7 @@ function LeadDetail({ lead, onClose, onUpdateEtapa }) {
   if (!lead) return null;
   const accent = ETAPA_COLORS[lead.etapa]?.accent || B.sky;
   const [pendingEtapa, setPendingEtapa] = useState(null);
-  const [fechaPago, setFechaPago]       = useState(new Date().toLocaleDateString("en-CA"));
+  const [fechaPago, setFechaPago]       = useState(hoyBogota());
   const [reservaLinked, setReservaLinked] = useState(null);
   const [showTerminar, setShowTerminar]   = useState(false);
   const [terminando, setTerminando]       = useState(false);
@@ -382,7 +391,7 @@ function LeadDetail({ lead, onClose, onUpdateEtapa }) {
   const [salidas, setSalidas]             = useState([]);
   const [showPagoManual, setShowPagoManual] = useState(false);
   const [formaPagoManual, setFormaPagoManual] = useState("efectivo");
-  const [fechaPagoManual, setFechaPagoManual] = useState(new Date().toLocaleDateString("en-CA"));
+  const [fechaPagoManual, setFechaPagoManual] = useState(hoyBogota());
 
   // Parse datos from notas text e.g. "VIP Pass · 2026-04-04 · 4 pax · ..."
   const parsedFromNotas = (() => {
@@ -402,7 +411,7 @@ function LeadDetail({ lead, onClose, onUpdateEtapa }) {
     email:     lead.email     || lead.contacto || "",
     telefono:  lead.tel       || "",
     tipo:      lead.tipoPasadia || parsedFromNotas.tipo  || "VIP Pass",
-    fecha:     lead.fechaVisita || parsedFromNotas.fecha || new Date().toLocaleDateString("en-CA"),
+    fecha:     lead.fechaVisita || parsedFromNotas.fecha || hoyBogota(),
     salida_id: "",
     pax:       lead.pax > 0 ? lead.pax : (parsedFromNotas.pax || 2),
     grupo_id:  "",
@@ -414,11 +423,20 @@ function LeadDetail({ lead, onClose, onUpdateEtapa }) {
   // Fetch linked reservation — update form with its data when it arrives
   useEffect(() => {
     if (!supabase || !lead.id) return;
+    // OJO: NO usar .maybeSingle() — un lead puede tener VARIAS reservas
+    // (típico en GRUPO: 1 lead/evento = N reservas). maybeSingle() devuelve
+    // null cuando hay >1 → mostraba "sin reserva vinculada" falsamente.
     supabase.from("reservas")
-      .select("id,nombre,fecha,tipo,pax,total,estado,salida_id,link_pago,forma_pago,email,contacto,telefono")
-      .eq("lead_id", lead.id).maybeSingle()
-      .then(({ data }) => {
-        if (!data) return;
+      .select("id,nombre,fecha,tipo,pax,total,estado,salida_id,link_pago,forma_pago,email,contacto,telefono,created_at")
+      .eq("lead_id", lead.id)
+      .order("created_at", { ascending: false })
+      .then((res) => {
+        const rows = res.data || [];
+        if (!rows.length) return;
+        // Preferir una reserva activa/pagada; si todas canceladas, la más reciente
+        const data = rows.find(r => ["confirmado", "check_in", "no_show"].includes(r.estado))
+                  || rows.find(r => r.estado !== "cancelado")
+                  || rows[0];
         setReservaLinked(data);
         // Pre-fill form with reservation data (more complete than lead)
         setRForm(f => ({
@@ -436,15 +454,22 @@ function LeadDetail({ lead, onClose, onUpdateEtapa }) {
 
   const IS = { background: "#0D1B3E", border: `1px solid ${B.navyLight}`, borderRadius: 8, color: B.white, padding: "8px 12px", fontSize: 14, width: "100%", boxSizing: "border-box", outline: "none" };
 
-  const handleEtapaClick = (e) => {
+  // Guard contra doble-click. Antes los handlers eran sync y disparaban
+  // dos UPDATEs si el usuario clickeaba rapido — fetchLeads concurrente
+  // ademas dejaba la UI en estado intermedio.
+  const [updatingEtapa, setUpdatingEtapa] = useState(false);
+  const handleEtapaClick = async (e) => {
+    if (updatingEtapa) return;
     if (e === "Cerrado Ganado") { setPendingEtapa(e); return; }
-    onUpdateEtapa(lead.id, e, null);
+    setUpdatingEtapa(true);
+    try { await onUpdateEtapa(lead.id, e, null); } finally { setUpdatingEtapa(false); }
     onClose();
   };
 
-  const confirmCerrado = () => {
-    if (!fechaPago) return;
-    onUpdateEtapa(lead.id, "Cerrado Ganado", fechaPago);
+  const confirmCerrado = async () => {
+    if (updatingEtapa || !fechaPago) return;
+    setUpdatingEtapa(true);
+    try { await onUpdateEtapa(lead.id, "Cerrado Ganado", fechaPago); } finally { setUpdatingEtapa(false); }
     onClose();
   };
 
@@ -566,7 +591,7 @@ function LeadDetail({ lead, onClose, onUpdateEtapa }) {
       }).eq("id", reserva.id);
       await supabase.from("leads").update({
         stage: "Cerrado Ganado",
-        ultimo_contacto: new Date().toLocaleDateString("en-CA"),
+        ultimo_contacto: hoyBogota(),
         fecha_pago: fechaPagoManual,
       }).eq("id", lead.id);
       onUpdateEtapa(lead.id, "Cerrado Ganado", fechaPagoManual);
@@ -795,7 +820,17 @@ function LeadDetail({ lead, onClose, onUpdateEtapa }) {
                   ].map(([k, v]) => (
                     <div key={k}>
                       <div style={{ fontSize: 10, color: B.sand, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 2 }}>{k}</div>
-                      <div style={{ fontSize: 13, color: B.white, fontWeight: 600 }}>{v}</div>
+                      <div style={{ fontSize: 13, color: B.white, fontWeight: 600 }}>
+                        {k === "ID Reserva" ? (
+                          <span
+                            onClick={() => window.dispatchEvent(new CustomEvent("atolon-navigate", { detail: { modulo: "reservas", reservaId: reservaLinked.id } }))}
+                            title="Abrir reserva"
+                            style={{ color: B.sky, cursor: "pointer", textDecoration: "underline" }}
+                          >
+                            {v}
+                          </span>
+                        ) : v}
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -823,7 +858,8 @@ function LeadDetail({ lead, onClose, onUpdateEtapa }) {
               ["Teléfono", lead.tel],
               ["Vendedor", lead.vendedor],
               ["Valor Estimado", COP(lead.valorEstimado)],
-              ["Días en pipeline", lead.diasEtapa],
+              ["Días en etapa actual", lead.diasEtapa],
+              ["Días en pipeline", lead.diasPipeline],
               ["Próxima acción", lead.proximaAccion !== "—" ? lead.proximaAccion : null],
               ...(lead.fechaPago ? [["Fecha de pago", lead.fechaPago]] : []),
             ].filter(([, v]) => v != null && v !== "").map(([k, v]) => (
@@ -887,6 +923,7 @@ export default function Comercial() {
   const [selectedLead, setSelectedLead] = useState(null);
   const [filterVendedor, setFilterVendedor] = useState("Todos");
   const [filterCanal, setFilterCanal] = useState("Todos");
+  const [filterPeriodo, setFilterPeriodo] = useState("30d"); // default: últimos 30 días
   const [activeTab, setActiveTab] = useState("kanban");
 
   // Load vendedores from empleados table
@@ -918,14 +955,31 @@ export default function Comercial() {
         vendedor: r.vendedor,
         valorEstimado: r.valor_est || 0,
         etapa: r.stage,
-        diasEtapa: r.fecha_creacion
-          ? Math.floor((Date.now() - new Date(r.fecha_creacion).getTime()) / 86400000)
+        // Días en etapa = días-calendario en Bogotá desde que el lead entró
+        // a su etapa ACTUAL (fecha_cambio_etapa, sellada por trigger de BD
+        // cada vez que cambia `stage`). Antes se usaba fecha_creacion, así un
+        // lead creado hace días que recién cambió de etapa hoy mostraba >0.
+        // Fallback a fecha_creacion para filas viejas sin el campo.
+        diasEtapa: (r.fecha_cambio_etapa || r.fecha_creacion)
+          ? Math.max(0, Math.floor(
+              (Date.parse(hoyBogota() + "T00:00:00Z")
+               - Date.parse(String(r.fecha_cambio_etapa || r.fecha_creacion).slice(0, 10) + "T00:00:00Z")) / 86400000))
+          : 0,
+        // Días en pipeline = total desde la creación del lead (para el detalle).
+        diasPipeline: r.fecha_creacion
+          ? Math.max(0, Math.floor(
+              (Date.parse(hoyBogota() + "T00:00:00Z")
+               - Date.parse(String(r.fecha_creacion).slice(0, 10) + "T00:00:00Z")) / 86400000))
           : 0,
         proximaAccion: r.prox_fecha || "—",
         notas: r.notas,
         etiquetas: r.etiquetas,
         perdidoRazon: r.perdido_razon,
         fechaPago: r.fecha_pago || null,
+        // Fecha (YYYY-MM-DD, Bogotá) para el filtro de periodo.
+        fechaCreacion: r.fecha_creacion
+          ? String(r.fecha_creacion).slice(0, 10)
+          : (r.created_at ? String(r.created_at).slice(0, 10) : null),
         pax: r.pax || 0,
         fechaVisita: r.fecha_visita || null,
         horaVisita: r.hora_visita || null,
@@ -937,10 +991,33 @@ export default function Comercial() {
 
   useEffect(() => { fetchLeads(); }, [fetchLeads]);
 
-  const filtered = leads.filter(l =>
-    (filterVendedor === "Todos" || l.vendedor === filterVendedor) &&
-    (filterCanal === "Todos" || l.canal === filterCanal)
-  );
+  // Opciones de periodo: "Últimos 30 días" (default) + últimos 12 meses + "Todos".
+  const MESES_ES = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"];
+  const _hoyBog = hoyBogota(); // YYYY-MM-DD en Bogotá
+  const hace30Dias = new Date(Date.parse(_hoyBog + "T00:00:00Z") - 30 * 86400000).toISOString().slice(0, 10);
+  const periodoOpciones = (() => {
+    const [yy, mm] = _hoyBog.split("-").map(Number); // mm 1..12
+    const opts = [{ value: "30d", label: "Últimos 30 días" }];
+    for (let i = 0; i < 12; i++) {
+      let idx = (mm - 1) - i, y = yy;
+      while (idx < 0) { idx += 12; y--; }
+      opts.push({ value: `${y}-${String(idx + 1).padStart(2, "0")}`, label: `${MESES_ES[idx]} ${y}` });
+    }
+    opts.push({ value: "todos", label: "Todos" });
+    return opts;
+  })();
+
+  const filtered = leads.filter(l => {
+    const matchPeriodo =
+      filterPeriodo === "todos" ? true
+      : filterPeriodo === "30d" ? (!!l.fechaCreacion && l.fechaCreacion >= hace30Dias)
+      : (!!l.fechaCreacion && l.fechaCreacion.slice(0, 7) === filterPeriodo);
+    return (
+      (filterVendedor === "Todos" || l.vendedor === filterVendedor) &&
+      (filterCanal === "Todos" || l.canal === filterCanal) &&
+      matchPeriodo
+    );
+  });
 
   const enProceso = filtered.filter(l => !["Cerrado Ganado", "Perdido", "Duplicado"].includes(l.etapa)).length;
   const cerradosMes = filtered.filter(l => l.etapa === "Cerrado Ganado").length;
@@ -956,10 +1033,12 @@ export default function Comercial() {
 
   async function updateEtapa(id, newStage, fechaPago = null) {
     if (!supabase) return;
-    const upd = { stage: newStage, ultimo_contacto: new Date().toLocaleDateString("en-CA") };
+    const upd = { stage: newStage, ultimo_contacto: hoyBogota() };
     if (newStage === "Cerrado Ganado" && fechaPago) upd.fecha_pago = fechaPago;
     await supabase.from("leads").update(upd).eq("id", id);
-    fetchLeads();
+    // Esperar fetchLeads para que el caller pueda await este flujo completo
+    // y la UI no muestre estado stale entre el update y el refresh.
+    await fetchLeads();
   }
 
   const vendorStats = buildVendorStats(leads);
@@ -1027,6 +1106,9 @@ export default function Comercial() {
         <div style={{ flex: 1 }} />
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
           <span style={{ fontSize: 11, color: B.sand, textTransform: "uppercase", letterSpacing: "0.06em" }}>Filtrar por:</span>
+          <select value={filterPeriodo} onChange={e => setFilterPeriodo(e.target.value)} style={selectStyle}>
+            {periodoOpciones.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+          </select>
           <select value={filterVendedor} onChange={e => setFilterVendedor(e.target.value)} style={selectStyle}>
             <option value="Todos">Todos los vendedores</option>
             {vendedoresList.map(v => <option key={v} value={v}>{v}</option>)}
@@ -1041,7 +1123,7 @@ export default function Comercial() {
       {/* Kanban View */}
       {activeTab === "kanban" && (
         <div style={{ display: "flex", gap: 12, overflowX: "auto", paddingBottom: 12, alignItems: "flex-start" }}>
-          {ETAPAS.map(etapa => (
+          {ETAPAS_KANBAN.map(etapa => (
             <KanbanColumn
               key={etapa}
               etapa={etapa}

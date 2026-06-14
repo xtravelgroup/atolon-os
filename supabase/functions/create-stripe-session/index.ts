@@ -30,12 +30,43 @@ serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
 
   try {
-    const { reserva_id, total_cop, nombre, email, tipo, fecha } = await req.json();
+    const { reserva_id, nombre, email, tipo, fecha } = await req.json();
+
+    if (!reserva_id) {
+      return new Response(JSON.stringify({ error: "reserva_id requerido" }), {
+        status: 400, headers: { ...CORS, "Content-Type": "application/json" },
+      });
+    }
 
     const supabase = createClient(
       Deno.env.get("SUPABASE_URL")!,
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
     );
+
+    // ── Leer reserva.total de DB (source of truth) — NO confiar en cliente ──
+    const { data: reserva, error: reservaErr } = await supabase
+      .from("reservas")
+      .select("id, total, saldo, abono, estado")
+      .eq("id", reserva_id)
+      .single();
+
+    if (reservaErr || !reserva) {
+      return new Response(JSON.stringify({ error: "Reserva no encontrada" }), {
+        status: 404, headers: { ...CORS, "Content-Type": "application/json" },
+      });
+    }
+
+    // El cobro es por el saldo pendiente, no por el total (permite abonos parciales previos)
+    const saldoPendiente = Number(reserva.saldo);
+    const totalReserva   = Number(reserva.total);
+    const amountToCharge = saldoPendiente > 0 ? saldoPendiente : totalReserva;
+
+    if (!Number.isFinite(amountToCharge) || amountToCharge <= 0) {
+      return new Response(JSON.stringify({ error: "Reserva sin saldo a cobrar" }), {
+        status: 400, headers: { ...CORS, "Content-Type": "application/json" },
+      });
+    }
+
     const { data: config } = await supabase
       .from("configuracion")
       .select("stripe_secret_key, tasa_usd")
@@ -62,11 +93,13 @@ serve(async (req) => {
     }
 
     const origin     = req.headers.get("origin") || "https://atolon.co";
-    const successUrl = `${origin}/pago/${reserva_id}?stripe=ok&session_id={CHECKOUT_SESSION_ID}`;
+    // success_url incluye session_id para que el cliente pueda verificar server-side,
+    // pero la confirmación REAL solo ocurre via webhook (no client-side).
+    const successUrl = `${origin}/pago/${reserva_id}?session_id={CHECKOUT_SESSION_ID}`;
     const cancelUrl  = `${origin}/pago/${reserva_id}?stripe=cancel`;
 
-    // Convert COP → USD cents
-    const totalUsd    = total_cop / tasaUsd;
+    // Convert COP → USD cents (basado en total leído de DB, no cliente)
+    const totalUsd    = amountToCharge / tasaUsd;
     const amountCents = Math.round(totalUsd * 100);
 
     const params = new URLSearchParams({
@@ -79,23 +112,44 @@ serve(async (req) => {
       "line_items[0][price_data][unit_amount]":               String(amountCents),
       "line_items[0][price_data][product_data][name]":        tipo || "Pasadia Atolon Beach Club",
       "line_items[0][price_data][product_data][description]": fecha
-        ? `Reserva ${reserva_id} — ${fecha} (COP ${total_cop.toLocaleString("es-CO")})`
+        ? `Reserva ${reserva_id} — ${fecha} (COP ${amountToCharge.toLocaleString("es-CO")})`
         : `Reserva ${reserva_id}`,
-      "metadata[reserva_id]":  reserva_id,
-      "metadata[total_cop]":   String(total_cop),
-      "metadata[tasa_usd]":    String(tasaUsd),
+      // Metadata: el webhook usa estos campos para validar el monto cobrado
+      // y detectar tampering entre crear-sesión y pago efectivo.
+      "metadata[reserva_id]":     reserva_id,
+      "metadata[db_total_cop]":   String(totalReserva),
+      "metadata[db_saldo_cop]":   String(saldoPendiente),
+      "metadata[expected_cop]":   String(amountToCharge),
+      "metadata[tasa_usd]":       String(tasaUsd),
     });
 
     if (email) params.set("customer_email", email);
 
-    const stripeRes = await fetch("https://api.stripe.com/v1/checkout/sessions", {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${stripeKey}`,
-        "Content-Type":  "application/x-www-form-urlencoded",
-      },
-      body: params.toString(),
-    });
+    // Timeout 15s en la llamada a Stripe. Sin AbortController, un Stripe lento
+    // colgaba toda la edge function hasta el timeout global (~150s) y el
+    // booking engine devolvia un error generico al cliente despues de minutos.
+    const stripeCtrl = new AbortController();
+    const stripeTimer = setTimeout(() => stripeCtrl.abort(), 15_000);
+    let stripeRes: Response;
+    try {
+      stripeRes = await fetch("https://api.stripe.com/v1/checkout/sessions", {
+        method: "POST",
+        signal: stripeCtrl.signal,
+        headers: {
+          "Authorization": `Bearer ${stripeKey}`,
+          "Content-Type":  "application/x-www-form-urlencoded",
+        },
+        body: params.toString(),
+      });
+    } catch (e) {
+      clearTimeout(stripeTimer);
+      const isAbort = e instanceof Error && e.name === "AbortError";
+      console.error(isAbort ? "Stripe timeout (15s)" : "Stripe fetch error:", e);
+      return new Response(JSON.stringify({ error: isAbort ? "Stripe timeout — intenta de nuevo." : "Error de red con Stripe." }), {
+        status: 504, headers: { ...CORS, "Content-Type": "application/json" },
+      });
+    }
+    clearTimeout(stripeTimer);
 
     const session = await stripeRes.json();
     if (!stripeRes.ok) {

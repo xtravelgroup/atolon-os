@@ -37,22 +37,48 @@ function sb() {
   );
 }
 
-async function loggro(path: string, init?: RequestInit): Promise<any> {
+// rank 111: timeout (30s) + retry con backoff para 429/5xx. Sin esto, una
+// API Loggro lenta colgaba toda la function hasta el timeout global de Supabase.
+async function loggro(path: string, init?: RequestInit, timeoutMs = 30_000): Promise<any> {
   if (!LOGGRO_TOKEN) throw new Error("LOGGRO_NOMINA_TOKEN no configurado. Generar token en Loggro → Configuración/Organización → Integración APIs.");
   const url = path.startsWith("http") ? path : `${LOGGRO_BASE}${path.startsWith("/") ? path : "/" + path}`;
-  const res = await fetch(url, {
-    ...init,
-    headers: {
-      "Authorization": `Bearer ${LOGGRO_TOKEN}`,
-      "Content-Type":  "application/json",
-      ...(init?.headers || {}),
-    },
-  });
-  const txt = await res.text();
-  let data: any = null;
-  try { data = JSON.parse(txt); } catch { data = { raw: txt }; }
-  if (!res.ok) throw new Error(`${init?.method || "GET"} ${url} → ${res.status}: ${txt.slice(0, 400)}`);
-  return data;
+  const headers = {
+    "Authorization": `Bearer ${LOGGRO_TOKEN}`,
+    "Content-Type":  "application/json",
+    ...(init?.headers || {}),
+  };
+
+  let lastErr: unknown = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), timeoutMs);
+    try {
+      const res = await fetch(url, { ...init, headers, signal: ctrl.signal });
+      clearTimeout(t);
+      if (res.status === 429 || (res.status >= 500 && res.status < 600)) {
+        if (attempt < 2) {
+          const backoff = 500 * Math.pow(2, attempt) + Math.floor(Math.random() * 250);
+          await new Promise(r => setTimeout(r, backoff));
+          continue;
+        }
+      }
+      const txt = await res.text();
+      let data: any = null;
+      try { data = JSON.parse(txt); } catch { data = { raw: txt }; }
+      if (!res.ok) throw new Error(`${init?.method || "GET"} ${url} → ${res.status}: ${txt.slice(0, 400)}`);
+      return data;
+    } catch (e) {
+      clearTimeout(t);
+      lastErr = e;
+      // 4xx no-429 ya hizo throw arriba; aqui solo caen abort/network/5xx-retry-agotado.
+      const msg = e instanceof Error ? e.message : String(e);
+      const isHttpDeterministic = /→ 4\d\d:/.test(msg) && !/→ 429:/.test(msg);
+      if (isHttpDeterministic || attempt === 2) throw e;
+      const backoff = 500 * Math.pow(2, attempt) + Math.floor(Math.random() * 250);
+      await new Promise(r => setTimeout(r, backoff));
+    }
+  }
+  throw new Error(`loggro fetch ${url} falló tras 3 intentos: ${lastErr instanceof Error ? lastErr.message : String(lastErr)}`);
 }
 
 // ─── Mapeo de campos desde Loggro Nómina → tabla empleados_loggro ─────────
@@ -195,13 +221,29 @@ async function syncVinculados(enriquecer = false): Promise<any> {
     const merged = { ...src, ...(detalle || {}) };
     const mapped = mapEmpleado(merged);
     if (!mapped.loggro_id) continue;
-    const { data: existing } = await supa.from("empleados_loggro").select("id").eq("loggro_id", mapped.loggro_id).maybeSingle();
-    if (existing) {
-      await supa.from("empleados_loggro").update(mapped).eq("id", existing.id);
-      actualizados++;
-    } else {
-      await supa.from("empleados_loggro").insert(mapped);
+    // rank 110: el patron check-then-insert original era no-atomico. Dos
+    // syncs concurrentes (cron + trigger manual) podian pasar el .select
+    // simultaneamente con existing=null y ambos hacian .insert(), creando
+    // dos filas con el mismo loggro_id. Reemplazamos con upsert nativo
+    // de Postgres usando onConflict en loggro_id (UNIQUE en la tabla).
+    const { data: upserted, error } = await supa
+      .from("empleados_loggro")
+      .upsert(mapped, { onConflict: "loggro_id", ignoreDuplicates: false })
+      .select("id, created_at, updated_at")
+      .single();
+    if (error) {
+      // Si falta el constraint UNIQUE, log silencioso y continuar (no rompemos el batch).
+      console.warn("[loggro-nomina-sync] upsert error:", error.message, "loggro_id:", mapped.loggro_id);
+      continue;
+    }
+    // Heuristica nuevos/actualizados: si created_at == updated_at (o ambos
+    // recientes), trato como nuevo. Postgres no expone "was inserted" en
+    // upsert via PostgREST, asi que usamos timestamps.
+    if (upserted?.created_at && upserted?.updated_at &&
+        Math.abs(new Date(upserted.created_at).getTime() - new Date(upserted.updated_at).getTime()) < 1000) {
       nuevos++;
+    } else {
+      actualizados++;
     }
   }
 

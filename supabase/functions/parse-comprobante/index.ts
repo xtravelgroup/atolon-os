@@ -15,8 +15,12 @@ Deno.serve(async (req) => {
     const { imageBase64, mediaType } = await req.json();
     if (!imageBase64) return new Response(JSON.stringify({ error: "No image provided" }), { status: 400, headers: corsHeaders });
 
+    // Timeout 60s en fetch a Anthropic (mismo patron que parse-factura/cotizacion).
+    const anthCtrl = new AbortController();
+    const anthTimer = setTimeout(() => anthCtrl.abort(), 60_000);
     const res = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
+      signal: anthCtrl.signal,
       headers: {
         "x-api-key": ANTHROPIC_KEY,
         "anthropic-version": "2023-06-01",
@@ -78,6 +82,7 @@ Instrucciones de extracción:
         }],
       }),
     });
+    clearTimeout(anthTimer);
 
     const data = await res.json();
     const text = data.content?.[0]?.text ?? "";

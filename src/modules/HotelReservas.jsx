@@ -257,17 +257,37 @@ function ReservaModal({ huespedes, habitaciones, tarifas, categorias, reservas, 
     });
   }, [habitaciones, reservas, f.categoria_preferida, f.check_in_at, f.check_out_at]);
 
-  // Tarifas aplicables
+  // Tarifas aplicables — rank 113: vigencia debe cubrir TODAS las noches,
+  // no solo el check_in. Si la reserva cruza un cambio de temporada, ninguna
+  // tarifa parcial debe aparecer; el usuario debe partir la reserva o aplicar
+  // tarifa manual por tramo.
+  const checkOutMinusOne = useMemo(() => {
+    // El check_out cuenta hasta la noche ANTERIOR (estandar hotelero: noche
+    // del 10 al 11 cuenta como 10/oct, no 11/oct).
+    if (!f.check_in_at || !f.check_out_at) return f.check_in_at;
+    const d = new Date(f.check_out_at + "T00:00:00");
+    d.setDate(d.getDate() - 1);
+    return d.toISOString().slice(0, 10);
+  }, [f.check_in_at, f.check_out_at]);
   const tarifasAplicables = useMemo(() => {
     return tarifas.filter(t => {
-      const cat = categorias.find(c => c.nombre === f.categoria_preferida || c.id === habitaciones.find(h => h.id === f.habitacion_id)?.categoria);
+      // rank 114: la habitacion guarda categoria como NOMBRE (string), pero
+      // este find comparaba c.id === h.categoria (uuid vs string), por lo
+      // que nunca matcheaba via habitacion. Soportamos ambos: categoria_id
+      // (cuando existe) o categoria nombre.
+      const hab = habitaciones.find(h => h.id === f.habitacion_id);
+      const cat = categorias.find(c =>
+        c.nombre === f.categoria_preferida ||
+        (hab && (c.id === hab.categoria_id || c.nombre === hab.categoria))
+      );
       if (t.categoria && cat && t.categoria !== cat.nombre) return false;
+      // Vigencia debe abarcar el rango completo: primera y ultima noche.
       if (t.vigencia_desde && f.check_in_at < t.vigencia_desde) return false;
-      if (t.vigencia_hasta && f.check_in_at > t.vigencia_hasta) return false;
+      if (t.vigencia_hasta && checkOutMinusOne > t.vigencia_hasta) return false;
       if (t.min_noches > noches) return false;
       return true;
     });
-  }, [tarifas, f.categoria_preferida, f.habitacion_id, f.check_in_at, habitaciones, categorias, noches]);
+  }, [tarifas, f.categoria_preferida, f.habitacion_id, f.check_in_at, checkOutMinusOne, habitaciones, categorias, noches]);
 
   const huespedesFiltrados = huespedes
     .filter(h => {
@@ -286,6 +306,29 @@ function ReservaModal({ huespedes, habitaciones, tarifas, categorias, reservas, 
 
     setSaving(true); setErr("");
     try {
+      // Re-validar overlap server-side antes del INSERT — la lista 'disponibles'
+      // del state local puede estar stale si dos canales (web/recepción/OTA)
+      // crearon reservas en la misma habitacion mientras el modal estaba abierto.
+      if (f.habitacion_id) {
+        const { data: conflicts } = await supabase
+          .from("hotel_estancias")
+          .select("id, codigo, check_in_at, check_out_at, estado")
+          .eq("habitacion_id", f.habitacion_id)
+          .in("estado", ["reservada", "in_house"]);
+        const nuevoIn  = new Date(f.check_in_at  + "T15:00:00").toISOString();
+        const nuevoOut = new Date(f.check_out_at + "T12:00:00").toISOString();
+        const conflict = (conflicts || []).find(r =>
+          r.check_in_at && r.check_out_at &&
+          new Date(r.check_in_at) < new Date(nuevoOut) &&
+          new Date(nuevoIn) < new Date(r.check_out_at)
+        );
+        if (conflict) {
+          setSaving(false);
+          setErr(`La habitación ya está reservada (${conflict.codigo}) entre ${conflict.check_in_at.slice(0,10)} y ${conflict.check_out_at.slice(0,10)}. Otro usuario la tomó mientras armabas esta reserva.`);
+          return;
+        }
+      }
+
       let huesped_id = f.huesped_id;
       if (f.nuevoHuesped) {
         const { data, error } = await supabase.from("hotel_huespedes").insert({
@@ -506,7 +549,43 @@ function DetalleModal({ reserva, huesped, habitacion, onClose, onChanged }) {
   const saldo = Number(reserva.total || 0) - Number(reserva.deposito || 0);
 
   async function cambiarEstado(nuevoEstado) {
+    // rank 116: no permitir transicion a in_house sin habitacion_id. Una
+    // reserva "Sin asignar (asignar al check-in)" debe pasar primero por
+    // edicion de habitacion antes de marcarse como huesped en casa.
+    if (nuevoEstado === "in_house" && !reserva.habitacion_id) {
+      setErr("Asigna una habitación antes de hacer check-in.");
+      return;
+    }
     setLoading(true); setErr("");
+    // Si pasamos de cancelada/no_show/checked_out a un estado ACTIVO
+    // (reservada / in_house), re-validar que la habitación no se haya
+    // reservado mientras tanto. Audit rank 30: reactivar una reserva
+    // cancelada permitia double-booking porque el codigo NO chequeaba.
+    const estadosActivosNuevos = ["reservada", "in_house"];
+    const estadosNoActivosPrev = ["cancelada", "no_show", "checked_out"];
+    if (
+      estadosActivosNuevos.includes(nuevoEstado) &&
+      estadosNoActivosPrev.includes(reserva.estado) &&
+      reserva.habitacion_id
+    ) {
+      const { data: conflicts } = await supabase
+        .from("hotel_estancias")
+        .select("id, codigo, check_in_at, check_out_at")
+        .eq("habitacion_id", reserva.habitacion_id)
+        .in("estado", estadosActivosNuevos)
+        .neq("id", reserva.id);
+      const conflict = (conflicts || []).find(r =>
+        r.check_in_at && r.check_out_at &&
+        new Date(r.check_in_at) < new Date(reserva.check_out_at) &&
+        new Date(reserva.check_in_at) < new Date(r.check_out_at)
+      );
+      if (conflict) {
+        setLoading(false);
+        setErr(`No se puede reactivar: la habitación ya tiene otra reserva activa (${conflict.codigo}) entre ${conflict.check_in_at.slice(0,10)} y ${conflict.check_out_at.slice(0,10)}. Reasignala primero.`);
+        return;
+      }
+    }
+
     const r = await supabase.from("hotel_estancias").update({
       estado: nuevoEstado,
       updated_at: new Date().toISOString(),
@@ -518,8 +597,14 @@ function DetalleModal({ reserva, huesped, habitacion, onClose, onChanged }) {
   }
 
   async function eliminar() {
+    // rank 115: guard contra doble-click. Sin esto, dos clicks rapidos
+    // disparaban dos DELETE consecutivos. El segundo no-op a nivel DB pero
+    // re-disparaba onChanged() y a veces onClose() encima de un modal ya
+    // cerrando, llevando a inconsistencias visuales.
+    if (loading) return;
+    setLoading(true); setErr("");
     const r = await supabase.from("hotel_estancias").delete().eq("id", reserva.id);
-    if (r.error) { setErr(r.error.message); return; }
+    if (r.error) { setLoading(false); setErr(r.error.message); return; }
     onChanged();
     onClose();
   }
@@ -545,7 +630,11 @@ function DetalleModal({ reserva, huesped, habitacion, onClose, onChanged }) {
         <InfoBox l="Check-in" v={fmtFull(reserva.check_in_at)} />
         <InfoBox l="Check-out" v={fmtFull(reserva.check_out_at)} />
         <InfoBox l="Noches" v={`${noches} · ${reserva.pax_adultos || 0}A ${reserva.pax_ninos || 0}N`} />
-        <InfoBox l="Habitación" v={habitacion ? `${habitacion.categoria} ${habitacion.numero}` : (reserva.categoria_preferida || "Sin asignar")} />
+        <InfoBox
+          l="Habitación"
+          v={habitacion ? `${habitacion.categoria} ${habitacion.numero}` : (reserva.categoria_preferida || "Sin asignar")}
+          alert={!habitacion ? "Asignar habitación antes del check-in" : null}
+        />
         <InfoBox l="Canal" v={reserva.canal || "directo"} />
         <InfoBox l="Precio / noche" v={fmtCOP(reserva.precio_noche)} />
       </div>
@@ -598,8 +687,8 @@ function DetalleModal({ reserva, huesped, habitacion, onClose, onChanged }) {
         ) : (
           <div>
             <span style={{ fontSize: 12, color: B.danger, marginRight: 8 }}>¿Seguro?</span>
-            <button onClick={eliminar} style={BTN(B.danger)}>Sí</button>
-            <button onClick={() => setConfirmDel(false)} style={{ ...BTN(B.navyLight), marginLeft: 6 }}>No</button>
+            <button onClick={eliminar} disabled={loading} style={{ ...BTN(B.danger), opacity: loading ? 0.6 : 1 }}>{loading ? "Eliminando…" : "Sí"}</button>
+            <button onClick={() => setConfirmDel(false)} disabled={loading} style={{ ...BTN(B.navyLight), marginLeft: 6 }}>No</button>
           </div>
         )}
         <button onClick={onClose} style={BTN(B.navyLight)}>Cerrar</button>
@@ -608,11 +697,16 @@ function DetalleModal({ reserva, huesped, habitacion, onClose, onChanged }) {
   );
 }
 
-function InfoBox({ l, v }) {
+function InfoBox({ l, v, alert }) {
   return (
-    <div style={{ background: B.navyLight, padding: 10, borderRadius: 8 }}>
-      <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", textTransform: "uppercase" }}>{l}</div>
+    <div style={{
+      background: alert ? B.warning + "22" : B.navyLight,
+      padding: 10, borderRadius: 8,
+      border: alert ? `1px solid ${B.warning}55` : "none",
+    }}>
+      <div style={{ fontSize: 10, color: alert ? B.warning : "rgba(255,255,255,0.4)", textTransform: "uppercase" }}>{l}</div>
       <div style={{ fontSize: 13, marginTop: 2 }}>{v}</div>
+      {alert && <div style={{ fontSize: 10, color: B.warning, marginTop: 4 }}>⚠ {alert}</div>}
     </div>
   );
 }

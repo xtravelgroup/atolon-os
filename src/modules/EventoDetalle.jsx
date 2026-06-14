@@ -2,6 +2,7 @@
 // Timeline, transporte, contactos, dietas, modo staff, bitácora
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { supabase } from "../lib/supabase";
+import { logAccion } from "../lib/logAccion";
 import { B, COP as COPbrand, fmtFecha, todayStr } from "../brand";
 // COP por defecto (file-level): el módulo lo usa fuera de TabServicios.
 // TabServicios redefine COP localmente cuando ocultarPrecios=true.
@@ -1594,8 +1595,16 @@ function TabTransporte({ items, onChange, embarcacionesEvento, onChangeEmbarcaci
 // ─── CONTACTOS RÁPIDOS ────────────────────────────────────────────────────────
 const ROLES_CONTACTO = ["Cliente","Coordinador evento","Proveedor AV","Proveedor catering","Proveedor decoración","Proveedor fotografía","Staff Atolon","Capitán","Seguridad","Otro"];
 // ─── Contratistas del evento ─────────────────────────────────────────────
-const EMPTY_CTR = { id: "", nombre: "", tipo: "externo", cargo: "", funcion: "", costo: "", contacto: "", personas: [], notas: "" };
-const EMPTY_PERSONA = { nombre: "", cedula: "", rol: "", arl_url: "" };
+// Campos extendidos para el registro express (eventos → contratistas):
+// nit, direccion, telefono, rut_url, descripcion en empresa;
+// fecha_nacimiento en cada persona. Se mantienen vacíos en la carga manual
+// y se llenan cuando el contratista usa el link público.
+const EMPTY_CTR = {
+  id: "", nombre: "", tipo: "externo", cargo: "", funcion: "", costo: "", contacto: "",
+  nit: "", direccion: "", telefono: "", rut_url: "", descripcion: "",
+  personas: [], notas: "",
+};
+const EMPTY_PERSONA = { nombre: "", cedula: "", fecha_nacimiento: "", rol: "", arl_url: "" };
 
 // Helper para subir archivo ARL al bucket y devolver URL pública
 async function uploadArl(file, eventoId) {
@@ -1604,6 +1613,16 @@ async function uploadArl(file, eventoId) {
   const path = `contratistas/${eventoId || "misc"}/arl-${Date.now()}.${ext}`;
   const { error } = await supabase.storage.from("b2b-docs").upload(path, file, { upsert: true, contentType: file.type });
   if (error) { alert("Error subiendo ARL: " + error.message); return null; }
+  const { data } = supabase.storage.from("b2b-docs").getPublicUrl(path);
+  return data?.publicUrl || null;
+}
+// Helper para subir RUT de la empresa
+async function uploadRut(file, eventoId) {
+  if (!file || !supabase) return null;
+  const ext = (file.name.split(".").pop() || "bin").toLowerCase().replace(/[^a-z0-9]/g, "");
+  const path = `contratistas/${eventoId || "misc"}/rut-${Date.now()}.${ext}`;
+  const { error } = await supabase.storage.from("b2b-docs").upload(path, file, { upsert: true, contentType: file.type });
+  if (error) { alert("Error subiendo RUT: " + error.message); return null; }
   const { data } = supabase.storage.from("b2b-docs").getPublicUrl(path);
   return data?.publicUrl || null;
 }
@@ -1625,6 +1644,30 @@ function TabContratistas({ items, onChange, eventoId, evento }) {
   };
   const remove = (id) => onChange(items.filter(x => x.id !== id));
 
+  // Generar (o reutilizar) el token de gestión para un contratista existente
+  // — sirve tanto para los cargados a mano como para los express que no lo
+  // tengan. Lo guarda en el array de contratistas del evento de inmediato
+  // para que el link sirva aunque el modal aún no se haya guardado.
+  const generarTokenGestion = (id) => {
+    const existing = items.find(x => x.id === id);
+    if (!existing) return null;
+    if (existing.gestion_token) return existing.gestion_token;
+    const t = (crypto.randomUUID?.() || `${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`).replace(/-/g, "").slice(0, 24);
+    onChange(items.map(x => x.id === id ? { ...x, gestion_token: t } : x));
+    if (editId === id) set("gestion_token", t);
+    return t;
+  };
+  const copiarLinkGestion = (id) => {
+    const t = generarTokenGestion(id);
+    if (!t) return;
+    const url = `${window.location.origin}/contratistas/registro/${encodeURIComponent(eventoId)}/${encodeURIComponent(t)}`;
+    if (navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(url).then(() => alert(`📎 Link copiado:\n${url}\n\nMándaselo al contratista para que continúe cargando información.`));
+    } else {
+      prompt("Copia el link:", url);
+    }
+  };
+
   const addPersona = () => set("personas", [...(form.personas || []), { ...EMPTY_PERSONA }]);
   const setPersona = (i, k, v) => set("personas", (form.personas || []).map((p, j) => j === i ? { ...p, [k]: v } : p));
   const rmPersona = (i) => set("personas", (form.personas || []).filter((_, j) => j !== i));
@@ -1643,11 +1686,26 @@ function TabContratistas({ items, onChange, eventoId, evento }) {
         <div style={{ fontSize: 13, color: "rgba(255,255,255,0.5)" }}>
           {items.length} contratista{items.length !== 1 ? "s" : ""} · {totalPersonas} persona{totalPersonas !== 1 ? "s" : ""}{totalCosto > 0 ? ` · ${COP(totalCosto)}` : ""}
         </div>
-        <div style={{ display: "flex", gap: 8 }}>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           <button onClick={() => setShowInstructivo(true)}
             style={{ ...BTN(B.navyLight), color: B.sand, border: `1px solid ${B.sand}55` }}
             title="Genera PDF con los requisitos para que los contratistas accedan a Atolon">
             📄 Instructivo PDF
+          </button>
+          <button
+            onClick={() => {
+              const url = `${window.location.origin}/contratistas/registro/${encodeURIComponent(eventoId)}`;
+              if (navigator.clipboard?.writeText) {
+                navigator.clipboard.writeText(url)
+                  .then(() => alert(`📎 Link copiado:\n${url}\n\nMándaselo al contratista por WhatsApp o email. Llena empresa + personas + RUT + ARL y aparecerán aquí.`))
+                  .catch(() => prompt("Copia el link:", url));
+              } else {
+                prompt("Copia el link:", url);
+              }
+            }}
+            style={{ ...BTN(B.navyLight), color: B.sky, border: `1px solid ${B.sky}55` }}
+            title="Genera el link público express para que el contratista se registre solo">
+            📎 Link registro express
           </button>
           <button onClick={openNew} style={BTN(B.success)}>+ Agregar contratista</button>
         </div>
@@ -1667,18 +1725,41 @@ function TabContratistas({ items, onChange, eventoId, evento }) {
         {items.map(c => (
           <div key={c.id} style={{ background: B.navy, borderRadius: 12, padding: "16px 18px", borderLeft: `4px solid ${tipoColor(c.tipo)}` }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 }}>
-              <div>
-                <div style={{ fontSize: 10, fontWeight: 700, color: tipoColor(c.tipo), textTransform: "uppercase", letterSpacing: "0.1em" }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 10, fontWeight: 700, color: tipoColor(c.tipo), textTransform: "uppercase", letterSpacing: "0.1em", display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
                   {c.tipo === "propio" ? "🏷️ Propio" : "🤝 Externo"} {c.cargo ? `· ${c.cargo}` : ""}
+                  {c.registro_express && (
+                    <span style={{ fontSize: 9, padding: "1px 6px", borderRadius: 4, background: B.sky + "33", color: B.sky, fontWeight: 700, letterSpacing: 0 }}>
+                      🌐 Express
+                    </span>
+                  )}
                 </div>
-                <div style={{ fontSize: 15, fontWeight: 800, marginTop: 4 }}>{c.nombre}</div>
+                <div onClick={() => openEdit(c)} style={{ fontSize: 15, fontWeight: 800, marginTop: 4, cursor: "pointer" }} title="Click para ver/editar todos los datos">{c.nombre}</div>
               </div>
               <div style={{ display: "flex", gap: 4 }}>
-                <button onClick={() => openEdit(c)} style={{ ...BTN(B.navyLight), padding: "2px 8px", fontSize: 11 }}>✏</button>
+                <button onClick={() => copiarLinkGestion(c.id)}
+                  style={{ ...BTN(B.sky + "22"), padding: "2px 8px", fontSize: 11, color: B.sky, border: `1px solid ${B.sky}55` }}
+                  title={c.gestion_token ? "Copiar link de gestión del contratista" : "Generar link de gestión y copiar"}>
+                  🔗
+                </button>
+                <button onClick={() => openEdit(c)} style={{ ...BTN(B.navyLight), padding: "2px 8px", fontSize: 11 }} title="Ver / Editar">✏</button>
                 <button onClick={() => remove(c.id)} style={{ ...BTN(B.danger + "33"), padding: "2px 8px", fontSize: 11, color: B.danger }}>✕</button>
               </div>
             </div>
             {c.funcion && <div style={{ fontSize: 12, color: "rgba(255,255,255,0.7)", marginBottom: 8, lineHeight: 1.5 }}>🎯 {c.funcion}</div>}
+            {(c.nit || c.telefono || c.direccion || c.rut_url) && (
+              <div style={{ background: B.navyLight, borderRadius: 8, padding: "8px 10px", marginBottom: 8, fontSize: 11, color: "rgba(255,255,255,0.7)", lineHeight: 1.55 }}>
+                {c.nit && <div>🆔 NIT: <strong style={{ color: "#fff" }}>{c.nit}</strong></div>}
+                {c.telefono && <div>📞 {c.telefono}</div>}
+                {c.direccion && <div>📍 {c.direccion}</div>}
+                {c.rut_url && (
+                  <a href={c.rut_url} target="_blank" rel="noreferrer"
+                    style={{ display: "inline-block", marginTop: 4, color: B.success, textDecoration: "none", fontSize: 11, fontWeight: 700, border: `1px solid ${B.success}55`, borderRadius: 5, padding: "2px 8px" }}>
+                    📎 Ver RUT
+                  </a>
+                )}
+              </div>
+            )}
             {c.contacto && <div style={{ fontSize: 12, color: B.sky, marginBottom: 6 }}>📞 {c.contacto}</div>}
             {Number(c.costo) > 0 && <div style={{ fontSize: 12, color: B.sand, fontWeight: 700, marginBottom: 6 }}>💵 {COP(c.costo)}</div>}
             {(c.personas || []).length > 0 && (
@@ -1688,13 +1769,31 @@ function TabContratistas({ items, onChange, eventoId, evento }) {
                 </div>
                 {c.personas.map((p, i) => (
                   <div key={i} style={{ fontSize: 11, color: "rgba(255,255,255,0.7)", padding: "3px 0", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 6 }}>
-                    <span style={{ flex: 1 }}>{p.nombre}</span>
-                    <span style={{ color: "rgba(255,255,255,0.4)" }}>{p.cedula || ""} {p.rol ? `· ${p.rol}` : ""}</span>
-                    {p.arl_url && (
-                      <a href={p.arl_url} target="_blank" rel="noreferrer" title="Ver ARL adjunta"
+                    <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {p.nombre}
+                      <span style={{ color: "rgba(255,255,255,0.4)" }}>
+                        {p.cedula ? ` · ${p.cedula}` : ""}
+                        {p.fecha_nacimiento ? ` · 🎂 ${p.fecha_nacimiento}` : ""}
+                        {p.rol ? ` · ${p.rol}` : ""}
+                      </span>
+                    </span>
+                    {/* Verde "ARL ✓" SOLO si admin verificó (arl_verificado_url).
+                        Si solo está subida por el organizador → "Pendiente" (naranja).
+                        Si no hay nada → "sin ARL" (rojo). */}
+                    {p.arl_verificado_url ? (
+                      <a href={p.arl_verificado_url} target="_blank" rel="noreferrer"
+                        title={`Verificada por ${p.arl_verificado_by || "admin"}${p.arl_verificado_at ? " · " + new Date(p.arl_verificado_at).toLocaleDateString("es-CO") : ""}`}
                         style={{ color: B.success, textDecoration: "none", fontSize: 10, fontWeight: 700, border: `1px solid ${B.success}55`, borderRadius: 5, padding: "1px 6px" }}>
                         ARL ✓
                       </a>
+                    ) : p.arl_url ? (
+                      <a href={p.arl_url} target="_blank" rel="noreferrer"
+                        title="ARL subida — pendiente de verificación por admin"
+                        style={{ color: B.warning, textDecoration: "none", fontSize: 10, fontWeight: 700, border: `1px solid ${B.warning}55`, borderRadius: 5, padding: "1px 6px" }}>
+                        Pendiente
+                      </a>
+                    ) : (
+                      <span style={{ color: B.danger, fontSize: 10, fontWeight: 700, border: `1px solid ${B.danger}55`, borderRadius: 5, padding: "1px 6px" }}>sin ARL</span>
                     )}
                   </div>
                 ))}
@@ -1708,6 +1807,55 @@ function TabContratistas({ items, onChange, eventoId, evento }) {
       {showForm && (
         <div style={{ background: B.navy, borderRadius: 12, padding: 20, marginTop: 16, border: `1px solid ${B.navyLight}` }}>
           <div style={{ fontWeight: 800, marginBottom: 16, fontSize: 14 }}>{editId ? "Editar contratista" : "Nuevo contratista"}</div>
+
+          {/* Link de gestión del contratista — siempre disponible. Si no
+              tiene token aún (cargado a mano), un botón lo genera al vuelo. */}
+          {editId && !form.gestion_token && (
+            <div style={{ background: B.navyMid, border: `1px dashed ${B.sky}55`, borderRadius: 10, padding: 12, marginBottom: 16 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: B.sky, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em" }}>
+                🔗 Link personal del contratista
+              </div>
+              <div style={{ fontSize: 11, color: "rgba(255,255,255,0.55)", marginBottom: 8, lineHeight: 1.5 }}>
+                Este contratista todavía no tiene un link de gestión. Genera uno para mandárselo y que pueda continuar cargando información (personal, ARLs, RUT).
+              </div>
+              <button
+                onClick={() => copiarLinkGestion(editId)}
+                style={{ ...BTN(B.sky), color: B.navy, fontSize: 12, fontWeight: 800 }}>
+                🔗 Generar y copiar link
+              </button>
+            </div>
+          )}
+          {form.gestion_token && (() => {
+            const gestionUrl = `${window.location.origin}/contratistas/registro/${encodeURIComponent(eventoId)}/${encodeURIComponent(form.gestion_token)}`;
+            return (
+              <div style={{ background: B.navyMid, border: `1px solid ${B.sky}55`, borderRadius: 10, padding: 12, marginBottom: 16 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: B.sky, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em" }}>
+                  🔗 Link personal del contratista
+                </div>
+                <div style={{ fontSize: 11, color: "rgba(255,255,255,0.55)", marginBottom: 8, lineHeight: 1.5 }}>
+                  Este es el link que se le creó cuando se registró. Lo puede usar para volver a cargar más personal o archivos. Si lo perdió, cópiaselo y mándaselo de nuevo.
+                </div>
+                <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                  <input readOnly value={gestionUrl}
+                    onFocus={e => e.target.select()}
+                    style={{ flex: 1, minWidth: 220, padding: "8px 10px", borderRadius: 6, background: B.navy, border: `1px solid ${B.navyLight}`, color: "#fff", fontSize: 11, fontFamily: "monospace", outline: "none" }} />
+                  <button
+                    onClick={() => {
+                      if (navigator.clipboard?.writeText) navigator.clipboard.writeText(gestionUrl).then(() => alert("✓ Link copiado"));
+                      else prompt("Copia el link:", gestionUrl);
+                    }}
+                    style={{ ...BTN(B.sky), color: B.navy, fontSize: 11, fontWeight: 800 }}>
+                    📋 Copiar
+                  </button>
+                  <a href={gestionUrl} target="_blank" rel="noreferrer"
+                    style={{ ...BTN(B.navyLight), color: B.sand, fontSize: 11, textDecoration: "none", display: "inline-block" }}>
+                    Abrir ↗
+                  </a>
+                </div>
+              </div>
+            );
+          })()}
+
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
             <div style={{ gridColumn: "span 2" }}><label style={LS}>Nombre / Empresa *</label><Inp value={form.nombre} onChange={v => set("nombre", v)} placeholder="Ej: DJ Ritmo Caribe" /></div>
             <div>
@@ -1724,6 +1872,38 @@ function TabContratistas({ items, onChange, eventoId, evento }) {
                 placeholder="Ej: Pone música ambiente de 3pm a 9pm, cocteles a la llegada"
                 style={{ width: "100%", padding: "9px 12px", borderRadius: 8, background: B.navyMid, border: `1px solid ${B.navyLight}`, color: B.white, fontSize: 13, outline: "none", resize: "vertical", fontFamily: "inherit", boxSizing: "border-box" }} />
             </div>
+            {/* Datos legales / contacto de empresa (vienen del registro express o se llenan a mano) */}
+            <div><label style={LS}>NIT</label><Inp value={form.nit || ""} onChange={v => set("nit", v)} placeholder="900123456-7" /></div>
+            <div><label style={LS}>Teléfono</label><Inp value={form.telefono || ""} onChange={v => set("telefono", v)} placeholder="+57 300..." /></div>
+            <div style={{ gridColumn: "span 2" }}><label style={LS}>Dirección</label><Inp value={form.direccion || ""} onChange={v => set("direccion", v)} placeholder="Calle 1 # 2-3, Cartagena" /></div>
+            {/* RUT — ver el cargado o reemplazar */}
+            <div style={{ gridColumn: "span 2" }}>
+              <label style={LS}>RUT</label>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                {form.rut_url ? (
+                  <>
+                    <a href={form.rut_url} target="_blank" rel="noreferrer"
+                      style={{ color: B.success, textDecoration: "none", fontSize: 12, fontWeight: 700, border: `1px solid ${B.success}55`, borderRadius: 6, padding: "5px 10px" }}>
+                      ✓ Ver RUT cargado
+                    </a>
+                    <input type="file" accept=".pdf,image/*" id="rut-replace" style={{ display: "none" }}
+                      onChange={async e => { const f = e.target.files?.[0]; if (!f) return; const url = await uploadRut(f, eventoId); if (url) set("rut_url", url); e.target.value = ""; }} />
+                    <label htmlFor="rut-replace" style={{ cursor: "pointer", color: B.sand, fontSize: 11, padding: "5px 10px", borderRadius: 6, border: `1px dashed ${B.sand}55` }}>
+                      🔄 Reemplazar
+                    </label>
+                    <button type="button" onClick={() => set("rut_url", "")} style={{ ...BTN(B.navyLight), fontSize: 10, padding: "4px 8px" }}>Quitar</button>
+                  </>
+                ) : (
+                  <>
+                    <input type="file" accept=".pdf,image/*" id="rut-upload" style={{ display: "none" }}
+                      onChange={async e => { const f = e.target.files?.[0]; if (!f) return; const url = await uploadRut(f, eventoId); if (url) set("rut_url", url); e.target.value = ""; }} />
+                    <label htmlFor="rut-upload" style={{ cursor: "pointer", color: B.sky, fontSize: 12, padding: "6px 12px", borderRadius: 6, border: `1px dashed ${B.sky}55` }}>
+                      📎 Adjuntar RUT (PDF / imagen)
+                    </label>
+                  </>
+                )}
+              </div>
+            </div>
             <div><label style={LS}>Contacto (tel / email)</label><Inp value={form.contacto} onChange={v => set("contacto", v)} placeholder="+57 300..." /></div>
             <div><label style={LS}>Costo (COP)</label><Inp type="number" value={form.costo} onChange={v => set("costo", v)} /></div>
             <div style={{ gridColumn: "span 2" }}><label style={LS}>Notas</label><Inp value={form.notas} onChange={v => set("notas", v)} placeholder="Llega 2h antes, necesita enchufe, etc." /></div>
@@ -1739,9 +1919,12 @@ function TabContratistas({ items, onChange, eventoId, evento }) {
             </div>
             {(form.personas || []).map((p, i) => (
               <div key={i} style={{ background: B.navyMid, borderRadius: 8, padding: 10, marginBottom: 8, border: `1px solid ${B.navyLight}` }}>
-                <div style={{ display: "grid", gridTemplateColumns: "2fr 1.5fr 1.5fr auto", gap: 8, marginBottom: 8 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "2fr 1.3fr 1.3fr 1.3fr auto", gap: 8, marginBottom: 8 }}>
                   <Inp value={p.nombre} onChange={v => setPersona(i, "nombre", v)} placeholder="Nombre" />
                   <Inp value={p.cedula} onChange={v => setPersona(i, "cedula", v)} placeholder="Cédula" />
+                  <input type="date" value={p.fecha_nacimiento || ""}
+                    onChange={e => setPersona(i, "fecha_nacimiento", e.target.value)} title="Fecha de nacimiento"
+                    style={{ padding: "9px 10px", borderRadius: 8, background: B.navy, border: `1px solid ${B.navyLight}`, color: B.white, fontSize: 13, outline: "none", boxSizing: "border-box" }} />
                   <Inp value={p.rol} onChange={v => setPersona(i, "rol", v)} placeholder="Rol (DJ, mesero…)" />
                   <button onClick={() => rmPersona(i)} style={{ ...BTN(B.danger + "33"), color: B.danger, padding: "0 10px", fontSize: 14 }}>✕</button>
                 </div>
@@ -2767,7 +2950,9 @@ function TabServicios({ items, onChange, pasadiasOrg = [], onChangePasadias, cat
   const remove = (id) => onChange(items.filter(x => x.id !== id));
   const setEstado = (id, estado) => onChange(items.map(x => x.id === id ? { ...x, estado } : x));
 
-  const total = items.reduce((s, x) => s + (Number(x.valor) || 0), 0);
+  // Total de servicios excluyendo cancelados. Antes los items 'cancelado'
+  // seguian sumando al total mostrado en el KPI, inflando lo facturable.
+  const total = items.filter(x => x.estado !== "cancelado").reduce((s, x) => s + (Number(x.valor) || 0), 0);
   const confirmados = items.filter(x => x.estado === "confirmado" || x.estado === "pagado").reduce((s, x) => s + (Number(x.valor)||0), 0);
 
   return (
@@ -3209,11 +3394,16 @@ function TabServicios({ items, onChange, pasadiasOrg = [], onChangePasadias, cat
 const FORMAS_PAGO_GRUPO = ["Transferencia", "Efectivo", "Datafono", "Wompi", "Zelle", "Cheque"];
 const EMPTY_PAGO = { id: "", monto: "", forma_pago: "Transferencia", fecha: "", notas: "", registrado_por: "", comprobante_url: "" };
 
-function TabPagos({ pagos = [], onChange, totalGrupo = 0 }) {
+function TabPagos({ pagos = [], onChange, totalGrupo = 0, eventoId = null, descuento = 0, onChangeDescuento = null }) {
   const [showForm, setShowForm] = useState(false);
   const [form, setForm]         = useState(EMPTY_PAGO);
   const [uploading, setUploading] = useState(false);
   const [uploadErr, setUploadErr] = useState("");
+  const [saving,    setSaving]    = useState(false);
+  // Buffer local del input descuento — confirma con onBlur para no
+  // disparar updates al evento en cada keystroke.
+  const [descBuf, setDescBuf] = useState(String(Math.max(0, Number(descuento) || 0)));
+  useEffect(() => { setDescBuf(String(Math.max(0, Number(descuento) || 0))); }, [descuento]);
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
   const totalPagado  = pagos.reduce((s, p) => s + (Number(p.monto) || 0), 0);
@@ -3240,19 +3430,74 @@ function TabPagos({ pagos = [], onChange, totalGrupo = 0 }) {
   };
 
   const guardar = () => {
-    if (!form.monto || !form.forma_pago) return;
-    const pago = { ...form, id: form.id || `PAG-${Date.now()}`, monto: Number(form.monto), fecha: form.fecha || new Date().toISOString().slice(0,10) };
+    // Guard contra doble-click. Aunque guardar() es sync, el state update
+    // de showForm/pagos puede tomar un tick — un click muy rapido podia
+    // disparar dos inserts antes del unmount del form.
+    if (saving) return;
+    // Validar monto > 0. Antes !form.monto bloqueaba "" pero NO bloqueaba
+    // numeros negativos. Un pago de -500.000 inflaba el saldo del organizador.
+    const monto = Number(form.monto);
+    if (!Number.isFinite(monto) || monto <= 0) return;
+    if (!form.forma_pago) return;
+    setSaving(true);
+    const isNew = !form.id;
+    const pago = { ...form, id: form.id || `PAG-${Date.now()}`, monto, fecha: form.fecha || new Date().toISOString().slice(0,10) };
     onChange([...pagos, pago]);
+    // Audit trail (fire-and-forget). Pagos de evento se editan localmente
+    // en evento.pagos[] sin trail propio — antes nada quedaba registrado.
+    if (eventoId) {
+      logAccion({
+        modulo: "eventos",
+        accion: isNew ? "agregar_pago_evento" : "editar_pago_evento",
+        tabla: "eventos",
+        registroId: eventoId,
+        datosDespues: { id: pago.id, monto: pago.monto, forma_pago: pago.forma_pago, fecha: pago.fecha },
+        notas: pago.notas || null,
+      });
+    }
     setForm(EMPTY_PAGO);
     setUploadErr("");
     setShowForm(false);
+    setSaving(false);
   };
-  const eliminar = (id) => { if (window.confirm("¿Eliminar este pago?")) onChange(pagos.filter(p => p.id !== id)); };
+  const eliminar = (id) => {
+    if (!window.confirm("¿Eliminar este pago?")) return;
+    const removed = pagos.find(p => p.id === id);
+    onChange(pagos.filter(p => p.id !== id));
+    if (eventoId && removed) {
+      logAccion({
+        modulo: "eventos",
+        accion: "eliminar_pago_evento",
+        tabla: "eventos",
+        registroId: eventoId,
+        datosAntes: { id: removed.id, monto: removed.monto, forma_pago: removed.forma_pago, fecha: removed.fecha },
+      });
+    }
+  };
 
   const FP_COLOR = { Transferencia: B.sky, Efectivo: B.success, Datafono: "#a78bfa", Wompi: B.sand, Zelle: "#10b981", Cheque: "#f59e0b" };
 
   return (
     <div>
+      {/* Descuento — visible si onChangeDescuento esta disponible (vista no operativa).
+          Editar restará del totalGrupo en vivo. */}
+      {onChangeDescuento && (
+        <div style={{ background: B.navy, borderRadius: 10, padding: "10px 14px", marginBottom: 12, display: "flex", alignItems: "center", gap: 12, borderLeft: `3px solid ${B.sand}` }}>
+          <div style={{ fontSize: 11, color: B.sand, textTransform: "uppercase", letterSpacing: "0.05em", fontWeight: 700 }}>Descuento aplicado</div>
+          <input
+            type="number"
+            value={descBuf}
+            onChange={e => setDescBuf(e.target.value)}
+            onBlur={() => {
+              const n = Math.max(0, Number(descBuf) || 0);
+              if (n !== Number(descuento)) onChangeDescuento(n);
+            }}
+            style={{ flex: 1, maxWidth: 180, padding: "6px 10px", borderRadius: 6, border: `1px solid ${B.navyLight}`, background: B.navyLight, color: B.white, fontSize: 13, outline: "none" }}
+            placeholder="0"
+          />
+          <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)" }}>Se resta del Total Grupo</div>
+        </div>
+      )}
       {/* Resumen */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginBottom: 24 }}>
         {[
@@ -3347,8 +3592,8 @@ function TabPagos({ pagos = [], onChange, totalGrupo = 0 }) {
 
           <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 16 }}>
             <button onClick={() => { setShowForm(false); setForm(EMPTY_PAGO); setUploadErr(""); }} style={{ ...BTN(B.navyLight), border: `1px solid ${B.navyLight}` }}>Cancelar</button>
-            <button onClick={guardar} disabled={uploading} style={BTN(B.success)}>
-              {uploading ? "Subiendo comprobante…" : "✓ Guardar Pago"}
+            <button onClick={guardar} disabled={uploading || saving} style={{ ...BTN(B.success), opacity: (uploading || saving) ? 0.6 : 1 }}>
+              {uploading ? "Subiendo comprobante…" : (saving ? "Guardando…" : "✓ Guardar Pago")}
             </button>
           </div>
         </div>
@@ -4024,14 +4269,35 @@ export default function EventoDetalle({ evento: inicial, canEdit = true, onBack,
       setPuedeVerPL(puedePL);
     });
   }, []);
-  const saveTimer = useRef(null);
+  // Timers por CAMPO — no compartidos. Antes había un solo saveTimer para
+  // todos los campos: editar campo A y luego B antes de 800ms cancelaba
+  // el save de A. Ahora cada campo tiene su propio timer y se save
+  // independientemente (audit rank 41).
+  const saveTimers = useRef({});
+  // Log buffer: acumula entries de logCambio entre ticks del timer y al
+  // disparar flushea TODOS (antes el clearTimeout descartaba entries
+  // intermedios — audit rank 67).
+  const logBuffer = useRef([]);
   const logTimer  = useRef(null);
+  // Campos editados por el usuario — el fetch inicial NO debe pisarlos
+  // si llega tarde (audit rank 66).
+  const dirtyFields = useRef(new Set());
 
   // Reload fresh data on mount
   useEffect(() => {
     if (!supabase || !inicial?.id) return;
     supabase.from("eventos").select("*").eq("id", inicial.id).single()
-      .then(({ data }) => { if (data) setEvento(prev => ({ ...prev, ...data })); });
+      .then(({ data }) => {
+        if (!data) return;
+        // Mergear solo keys que NO esten dirty — preserva ediciones en curso.
+        setEvento(prev => {
+          const merged = { ...prev };
+          for (const k of Object.keys(data)) {
+            if (!dirtyFields.current.has(k)) merged[k] = data[k];
+          }
+          return merged;
+        });
+      });
   }, [inicial?.id]);
 
   // Cargar usuarios para dropdown de encargados
@@ -4042,14 +4308,32 @@ export default function EventoDetalle({ evento: inicial, canEdit = true, onBack,
   }, []);
 
   // Cargar precios de pasadías para lookup en tab Servicios
+  // Incluye los items de `pasadia_incluye` con ES/EN para que la cotización
+  // pueda render en español o inglés (descripcion / descripcion_en).
   useEffect(() => {
     if (!supabase) return;
-    supabase.from("pasadias").select("nombre, precio, precio_neto_agencia, precio_nino, precio_neto_nino, descripcion, incluye")
-      .then(({ data }) => {
-        const map = {};
-        (data || []).forEach(p => { map[p.nombre.toLowerCase()] = p; });
-        setPasadiasMap(map);
+    (async () => {
+      const { data: pasadiasData } = await supabase
+        .from("pasadias")
+        .select("id, nombre, precio, precio_neto_agencia, precio_nino, precio_neto_nino, descripcion, incluye");
+      const { data: incluyeData } = await supabase
+        .from("pasadia_incluye")
+        .select("pasadia_id, descripcion, descripcion_en, orden")
+        .order("orden", { ascending: true });
+      const incluyeByPasadia = {};
+      (incluyeData || []).forEach(i => {
+        if (!incluyeByPasadia[i.pasadia_id]) incluyeByPasadia[i.pasadia_id] = [];
+        incluyeByPasadia[i.pasadia_id].push({ es: i.descripcion, en: i.descripcion_en || null });
       });
+      const map = {};
+      (pasadiasData || []).forEach(p => {
+        map[p.nombre.toLowerCase()] = {
+          ...p,
+          incluye_items: incluyeByPasadia[p.id] || [],
+        };
+      });
+      setPasadiasMap(map);
+    })();
   }, []);
 
   // B2B: cargar aliado nombre y calcular comisión
@@ -4090,8 +4374,27 @@ export default function EventoDetalle({ evento: inicial, canEdit = true, onBack,
   const saveField = useCallback(async (field, value) => {
     if (!supabase || !evento?.id) return;
     setSaving(true);
-    await supabase.from("eventos").update({ [field]: value, updated_at: new Date().toISOString() }).eq("id", evento.id);
+    // .select().single() obliga a Supabase a devolver el row actualizado.
+    // Si llega data=null sin error, el UPDATE no persistió (silent fail) —
+    // mostramos error visible para que el usuario sepa que no quedó guardado.
+    const { data, error } = await supabase
+      .from("eventos")
+      .update({ [field]: value, updated_at: new Date().toISOString() })
+      .eq("id", evento.id)
+      .select()
+      .single();
     setSaving(false);
+    if (error) {
+      console.error("[evento/saveField] error:", field, error);
+      alert(`No se pudo guardar "${field}":\n${error.message}\n\nIntenta de nuevo o recarga la página.`);
+      return;
+    }
+    if (!data) {
+      console.warn("[evento/saveField] sin error pero sin row:", field);
+      alert(`El cambio en "${field}" no quedó guardado en BD. Recarga la página.`);
+      return;
+    }
+    console.info("[evento/saveField] OK:", field);
     onSaved?.();
   }, [evento?.id, onSaved]);
 
@@ -4202,15 +4505,26 @@ export default function EventoDetalle({ evento: inicial, canEdit = true, onBack,
       const historial = [entry, ...(prev.historial_cambios || [])].slice(0, 500); // cap at 500 entries
       return { ...prev, historial_cambios: historial };
     });
-    // Save historial asynchronously (without triggering another log)
+    // Save historial asynchronously. Buffer acumula entries de multiples
+    // logCambio entre ticks del timer y al disparar flushea TODOS los
+    // pending entries (antes el clearTimeout descartaba intermedios).
     if (supabase && evento?.id) {
+      logBuffer.current.push(entry);
       clearTimeout(logTimer.current);
-      logTimer.current = setTimeout(() => {
-        supabase.from("eventos").select("historial_cambios").eq("id", evento.id).single().then(({ data }) => {
-          const existing = data?.historial_cambios || [];
-          const newHist = [entry, ...existing].slice(0, 500);
-          supabase.from("eventos").update({ historial_cambios: newHist }).eq("id", evento.id);
-        });
+      logTimer.current = setTimeout(async () => {
+        const pending = logBuffer.current;
+        logBuffer.current = []; // reset antes del fetch para nuevos entries no se pierdan
+        if (pending.length === 0) return;
+        const { data } = await supabase.from("eventos")
+          .select("historial_cambios").eq("id", evento.id).single();
+        const existing = data?.historial_cambios || [];
+        // Prepend TODOS los pending (mas recientes primero, dado que pending
+        // ya esta en orden de inserccion, hay que reverse para que el mas
+        // nuevo quede arriba).
+        const newHist = [...pending.slice().reverse(), ...existing].slice(0, 500);
+        await supabase.from("eventos")
+          .update({ historial_cambios: newHist })
+          .eq("id", evento.id);
       }, 1200);
     }
   };
@@ -4219,8 +4533,14 @@ export default function EventoDetalle({ evento: inicial, canEdit = true, onBack,
     if (!canEdit) return; // read-only users can't update
     const prevValue = evento[field];
     setEvento(prev => ({ ...prev, [field]: value }));
-    clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(() => saveField(field, value), 800);
+    dirtyFields.current.add(field);
+    // Timer per-field: editar campo A y luego B antes de 800ms ya NO
+    // cancela el save de A. Cada campo se persiste independiente.
+    if (saveTimers.current[field]) clearTimeout(saveTimers.current[field]);
+    saveTimers.current[field] = setTimeout(() => {
+      saveField(field, value);
+      delete saveTimers.current[field];
+    }, 800);
     // Log the change
     if (JSON.stringify(prevValue) !== JSON.stringify(value)) {
       logCambio(field, prevValue, value);
@@ -4404,8 +4724,12 @@ export default function EventoDetalle({ evento: inicial, canEdit = true, onBack,
         const totalCompras   = (evento.pasadias_org||[]).reduce((s, p) => s + subtotalLineaLocal(p), 0);
         const totalServicios = (evento.servicios_contratados||[]).reduce((s, x) => s + (Number(x.valor)||0), 0);
         const base           = evento.valor > 0 ? evento.valor : totalCompras;
-        const totalGrupo     = base + (Number(evento.valor_extras)||0) + totalServicios;
-        return <TabPagos pagos={evento.pagos||[]} onChange={v => updateLocal("pagos", v)} totalGrupo={totalGrupo} />;
+        // Restamos descuento del totalGrupo. Columna eventos.descuento se
+        // agrego en la migracion 20260614 para que el saldo del organizador
+        // refleje promociones sin tener que reducir manualmente el valor base.
+        const descuento      = Math.max(0, Number(evento.descuento) || 0);
+        const totalGrupo     = Math.max(0, base + (Number(evento.valor_extras)||0) + totalServicios - descuento);
+        return <TabPagos pagos={evento.pagos||[]} onChange={v => updateLocal("pagos", v)} totalGrupo={totalGrupo} eventoId={evento.id} descuento={evento.descuento || 0} onChangeDescuento={vistaOperativa ? null : (v => updateLocal("descuento", v))} />;
       })()}
       {tab === "transporte"&& <TabTransporte items={evento.transporte_detalle||[]} onChange={v => updateLocal("transporte_detalle", v)} embarcacionesEvento={evento.embarcaciones_evento||[]} onChangeEmbarcaciones={v => updateLocal("embarcaciones_evento", v)} timelineItems={evento.timeline_items||[]} evento={evento} updateLocal={updateLocal} />}
       {tab === "contactos" && <TabContactos  items={evento.contactos_rapidos||[]}         onChange={v => updateLocal("contactos_rapidos", v)} />}
@@ -4460,6 +4784,35 @@ function TabOpenBar({ evento, ocultarPrecios = false }) {
   const toggleServicio = (key) => setServicioAbierto(s => ({ ...s, [key]: !s[key] }));
   const COPx = (n) => "$" + Math.round(Number(n) || 0).toLocaleString("es-CO");
   const tipoInfo = (k) => TIPOS_CONSUMO.find(t => t.k === k) || TIPOS_CONSUMO[0];
+
+  // ── Edición de precio_compra del catálogo (sobrescribe el precio
+  //    sincronizado desde Loggro o el snapshot $0 del consumo). Útil
+  //    cuando Loggro envió 0 o un valor desactualizado.
+  const [editPrecio, setEditPrecio] = useState(null); // { item, valorActual, nuevoValor }
+  const abrirEditPrecio = (item) => {
+    if (!item) return;
+    setEditPrecio({
+      item,
+      valorActual: Number(item.precio_compra) || 0,
+      nuevoValor: String(Math.round(Number(item.precio_compra) || 0)),
+    });
+  };
+  const guardarEditPrecio = async () => {
+    if (!editPrecio?.item) return;
+    const nuevo = Math.max(0, Math.round(Number(editPrecio.nuevoValor) || 0));
+    if (nuevo === Math.round(Number(editPrecio.valorActual) || 0)) {
+      setEditPrecio(null);
+      return;
+    }
+    const { error } = await supabase.from("items_catalogo")
+      .update({ precio_compra: nuevo, updated_at: new Date().toISOString() })
+      .eq("id", editPrecio.item.id);
+    if (error) { alert("Error guardando: " + error.message); return; }
+    // Refresh local de items → consumoLive recalcula automáticamente
+    setItems(prev => prev.map(i => i.id === editPrecio.item.id
+      ? { ...i, precio_compra: nuevo } : i));
+    setEditPrecio(null);
+  };
 
   // ── Servicios de A&B disponibles para vincular ──────────────────────
   // Solo extraemos items relacionados con Alimentos & Bebidas:
@@ -4927,7 +5280,29 @@ function TabOpenBar({ evento, ocultarPrecios = false }) {
                 </div>
                 <div style={{ textAlign: "right", color: "#fff" }}>{Number(c.cantidad).toLocaleString("es-CO")}</div>
                 <div style={{ color: "rgba(255,255,255,0.55)", fontSize: 11 }}>{loc?.nombre || "—"}</div>
-                <div style={{ textAlign: "right", color: "rgba(255,255,255,0.55)" }}>{ocultarPrecios ? "" : COPx(c.precio_unitario)}</div>
+                <div style={{ textAlign: "right", display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 4 }}>
+                  {!ocultarPrecios && (
+                    <>
+                      {Number(c.precio_unitario) <= 0 && (
+                        <span title="Precio en $0 — falta actualizar"
+                          style={{ fontSize: 11, color: B.danger, fontWeight: 800 }}>⚠</span>
+                      )}
+                      <span style={{ color: Number(c.precio_unitario) <= 0 ? B.danger : "rgba(255,255,255,0.55)",
+                        fontWeight: Number(c.precio_unitario) <= 0 ? 800 : 400 }}>
+                        {COPx(c.precio_unitario)}
+                      </span>
+                      {it && (
+                        <button type="button" onClick={() => abrirEditPrecio(it)}
+                          title={`Editar precio (Loggro envió ${COPx(it.precio_compra)})`}
+                          style={{
+                            background: "transparent", border: "none", cursor: "pointer",
+                            color: Number(c.precio_unitario) <= 0 ? B.warning : "rgba(255,255,255,0.4)",
+                            fontSize: 12, padding: 2, lineHeight: 1,
+                          }}>✏️</button>
+                      )}
+                    </>
+                  )}
+                </div>
                 <div style={{ textAlign: "right", color: B.sky, fontWeight: 700 }}>{ocultarPrecios ? "" : COPx(c.costo_total)}</div>
                 <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
                   {/* Indicador de sync con Loggro */}
@@ -4955,6 +5330,68 @@ function TabOpenBar({ evento, ocultarPrecios = false }) {
         </div>
       )}
       </>)}
+
+      {/* Modal: editar precio_compra del item (sobrescribe Loggro) */}
+      {editPrecio && (
+        <div onClick={() => setEditPrecio(null)}
+          style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 1100, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+          <div onClick={e => e.stopPropagation()}
+            style={{ background: B.navy, borderRadius: 14, padding: 22, maxWidth: 420, width: "100%", color: "#fff", border: `1px solid ${B.navyLight}` }}>
+            <div style={{ fontSize: 17, fontWeight: 800, marginBottom: 4 }}>✏️ Editar precio</div>
+            <div style={{ fontSize: 13, color: "rgba(255,255,255,0.65)", marginBottom: 16 }}>
+              {editPrecio.item?.nombre}
+            </div>
+            <div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", letterSpacing: "0.12em", fontWeight: 700, marginBottom: 6 }}>
+              PRECIO ACTUAL (LOGGRO)
+            </div>
+            <div style={{
+              padding: "10px 12px", marginBottom: 14, borderRadius: 8,
+              background: editPrecio.valorActual <= 0 ? B.danger + "22" : B.navyLight,
+              border: `1px solid ${editPrecio.valorActual <= 0 ? B.danger : B.navyLight}`,
+              fontFamily: "monospace", fontSize: 14, fontWeight: 700,
+              color: editPrecio.valorActual <= 0 ? B.danger : "#fff",
+            }}>
+              {COPx(editPrecio.valorActual)}
+              {editPrecio.valorActual <= 0 && (
+                <span style={{ marginLeft: 8, fontSize: 11, fontWeight: 600 }}>⚠ sin precio</span>
+              )}
+            </div>
+            <div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", letterSpacing: "0.12em", fontWeight: 700, marginBottom: 6 }}>
+              NUEVO PRECIO
+            </div>
+            <div style={{ position: "relative", marginBottom: 14 }}>
+              <span style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", color: "rgba(255,255,255,0.4)", fontWeight: 700 }}>$</span>
+              <input
+                type="number" min="0" step="1" autoFocus
+                value={editPrecio.nuevoValor}
+                onChange={e => setEditPrecio(p => ({ ...p, nuevoValor: e.target.value }))}
+                onKeyDown={e => { if (e.key === "Enter") guardarEditPrecio(); if (e.key === "Escape") setEditPrecio(null); }}
+                placeholder="0"
+                style={{ width: "100%", padding: "12px 14px 12px 28px", borderRadius: 8,
+                  background: B.navyLight, border: `2px solid ${B.sky}`, color: "#fff",
+                  fontSize: 18, fontWeight: 700, fontFamily: "monospace",
+                  outline: "none", boxSizing: "border-box" }}
+              />
+            </div>
+            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", lineHeight: 1.4, marginBottom: 16 }}>
+              💡 Actualiza el catálogo. Los consumos vivos del evento recalculan
+              automáticamente — pero los snapshots históricos quedan intactos.
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+              <button type="button" onClick={() => setEditPrecio(null)}
+                style={{ padding: 12, background: "transparent", color: "rgba(255,255,255,0.7)",
+                  border: "1px solid rgba(255,255,255,0.25)", borderRadius: 8, cursor: "pointer", fontWeight: 600 }}>
+                Cancelar
+              </button>
+              <button type="button" onClick={guardarEditPrecio}
+                style={{ padding: 12, background: B.sky, color: B.navy,
+                  border: "none", borderRadius: 8, cursor: "pointer", fontWeight: 800, letterSpacing: "0.04em" }}>
+                💾 Guardar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Modal de selección */}
       {showPick && (

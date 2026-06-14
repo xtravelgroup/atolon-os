@@ -53,7 +53,8 @@ export default function HotelRoomService() {
     setLoading(true);
     const [{ data: hData }, { data: iData }, { data: pData }] = await Promise.all([
       supabase.from("hotel_habitaciones").select("*").eq("estado", "activa").order("numero"),
-      supabase.from("menu_items").select("id, nombre, descripcion, precio, categoria, menu_tipo").in("menu_tipo", ["restaurant", "bebidas"]).eq("activo", true).order("categoria").order("orden"),
+      // Fuente ÚNICA del menú: items marcados room_service en Productos (Menús.jsx).
+      supabase.from("menu_items").select("id, nombre, descripcion, precio, categoria, menu_tipo, loggro_id, variantes").in("menu_tipo", ["restaurant", "bebidas"]).eq("activo", true).eq("room_service", true).order("categoria").order("orden"),
       supabase.from("hotel_room_service_pedidos").select("*").order("created_at", { ascending: false }).limit(100),
     ]);
     setHabs(hData || []);
@@ -121,20 +122,33 @@ export default function HotelRoomService() {
   const nComida  = items.filter(i => i.menu_tipo === "restaurant").length;
   const nBebidas = items.filter(i => i.menu_tipo === "bebidas").length;
 
+  // Picker de variante (michelada/clamato/etc.). cid = id único de la línea
+  // (loggro_id del subProduct si hay variante, si no el id del menu_item).
+  const [variantePicker, setVariantePicker] = useState(null); // { item } | null
+
+  const addLinea = (linea) => setCarrito(prev => {
+    const ex = prev.find(x => x.cid === linea.cid);
+    if (ex) return prev.map(x => x.cid === linea.cid ? { ...x, cantidad: x.cantidad + 1 } : x);
+    return [...prev, { ...linea, cantidad: 1, notas: "" }];
+  });
   const addAlCarrito = (it) => {
-    setCarrito(prev => {
-      const existing = prev.find(x => x.id === it.id);
-      if (existing) return prev.map(x => x.id === it.id ? { ...x, cantidad: x.cantidad + 1 } : x);
-      return [...prev, { id: it.id, nombre: it.nombre, precio: it.precio || 0, cantidad: 1, notas: "" }];
-    });
+    if (Array.isArray(it.variantes) && it.variantes.length > 0) {
+      setVariantePicker({ item: it });
+      return;
+    }
+    addLinea({ cid: it.id, id: it.id, loggro_id: it.loggro_id || null, nombre: it.nombre, precio: it.precio || 0 });
   };
-  const setCantidad = (id, cant) => {
+  const addVariante = (item, v) => {
+    addLinea({ cid: v.loggro_id, id: item.id, loggro_id: v.loggro_id, nombre: v.nombre, precio: Number(v.precio) || 0 });
+    setVariantePicker(null);
+  };
+  const setCantidad = (cid, cant) => {
     const n = Number(cant);
-    if (n <= 0) return setCarrito(prev => prev.filter(x => x.id !== id));
-    setCarrito(prev => prev.map(x => x.id === id ? { ...x, cantidad: n } : x));
+    if (n <= 0) return setCarrito(prev => prev.filter(x => x.cid !== cid));
+    setCarrito(prev => prev.map(x => x.cid === cid ? { ...x, cantidad: n } : x));
   };
-  const setNotaItem = (id, notas) => setCarrito(prev => prev.map(x => x.id === id ? { ...x, notas } : x));
-  const quitar = (id) => setCarrito(prev => prev.filter(x => x.id !== id));
+  const setNotaItem = (cid, notas) => setCarrito(prev => prev.map(x => x.cid === cid ? { ...x, notas } : x));
+  const quitar = (cid) => setCarrito(prev => prev.filter(x => x.cid !== cid));
 
   const subtotal = carrito.reduce((s, x) => s + x.precio * x.cantidad, 0);
   const total = subtotal;
@@ -144,6 +158,12 @@ export default function HotelRoomService() {
   const crearPedido = async (enviarLoggro = false) => {
     if (!selHab) return alert("Selecciona una habitación");
     if (carrito.length === 0) return alert("Agrega al menos un ítem al carrito");
+    // Validar total > 0. Si todos los items tienen precio 0 (o el carrito
+    // termino con cantidades 0 tras ediciones), pedido entraba como $0 y
+    // contaminaba los KPIs de ventas con tickets fantasma.
+    if (!Number.isFinite(total) || total <= 0) {
+      return alert("El total del pedido debe ser mayor a 0. Verifica precios y cantidades.");
+    }
     const codigo = `RS-${Date.now()}`;
     const payload = {
       codigo,
@@ -195,7 +215,8 @@ export default function HotelRoomService() {
     const items = (pedido.items || []).map(it => {
       const m = mapLoggro[it.id] || {};
       return {
-        productId: m.loggro_id,
+        // Variante elegida → su loggro_id (subProduct) es el que Loggro espera.
+        productId: it.loggro_id || m.loggro_id,
         qty: it.cantidad,
         unit_price: Number(it.precio) || Number(m.precio) || 0,
         notes: it.notas ? [String(it.notas)] : (pedido.notas ? [String(pedido.notas)] : []),
@@ -369,17 +390,30 @@ export default function HotelRoomService() {
               </div>
             ) : (
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 10 }}>
-                {itemsFiltrados.map(it => (
+                {itemsFiltrados.map(it => {
+                  const tieneVar = Array.isArray(it.variantes) && it.variantes.length > 0;
+                  const precioMin = tieneVar
+                    ? Math.min(...it.variantes.map(v => Number(v.precio) || 0).filter(n => n > 0))
+                    : null;
+                  return (
                   <div key={it.id} onClick={() => addAlCarrito(it)}
-                    style={{ background: B.navy, borderRadius: 10, padding: "12px 14px", border: `1px solid ${B.navyLight}`, cursor: "pointer", transition: "all 0.15s" }}
+                    style={{ background: B.navy, borderRadius: 10, padding: "12px 14px", border: `1px solid ${tieneVar ? B.hotel + "55" : B.navyLight}`, cursor: "pointer", transition: "all 0.15s" }}
                     onMouseEnter={e => e.currentTarget.style.borderColor = B.hotel}
-                    onMouseLeave={e => e.currentTarget.style.borderColor = B.navyLight}>
+                    onMouseLeave={e => e.currentTarget.style.borderColor = tieneVar ? B.hotel + "55" : B.navyLight}>
                     <div style={{ fontSize: 10, color: B.hotel, fontWeight: 700, textTransform: "uppercase", marginBottom: 3 }}>{it.categoria}</div>
                     <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 4 }}>{it.nombre}</div>
                     {it.descripcion && <div style={{ fontSize: 11, color: "rgba(255,255,255,0.45)", marginBottom: 6, lineHeight: 1.4 }}>{it.descripcion}</div>}
-                    <div style={{ fontSize: 15, fontWeight: 800, color: B.sand, fontFamily: "'Barlow Condensed', sans-serif" }}>{COP(it.precio || 0)}</div>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <div style={{ fontSize: 15, fontWeight: 800, color: B.sand, fontFamily: "'Barlow Condensed', sans-serif" }}>
+                        {tieneVar ? `desde ${COP(precioMin)}` : COP(it.precio || 0)}
+                      </div>
+                      {tieneVar && (
+                        <span style={{ fontSize: 9, color: B.hotel, fontWeight: 700 }}>{it.variantes.length} opciones ▾</span>
+                      )}
+                    </div>
                   </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>
@@ -399,20 +433,21 @@ export default function HotelRoomService() {
               <>
                 <div style={{ display: "flex", flexDirection: "column", gap: 10, maxHeight: 360, overflowY: "auto", marginBottom: 14 }}>
                   {carrito.map(x => (
-                    <div key={x.id} style={{ background: B.navyLight, borderRadius: 8, padding: "10px 12px" }}>
+                    <div key={x.cid} style={{ background: B.navyLight, borderRadius: 8, padding: "10px 12px" }}>
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
                         <div style={{ fontSize: 13, fontWeight: 700, flex: 1 }}>{x.nombre}</div>
-                        <button onClick={() => quitar(x.id)} style={{ background: "transparent", border: "none", color: B.danger, cursor: "pointer", fontSize: 12 }}>✕</button>
+                        <button onClick={() => quitar(x.cid)} style={{ background: "transparent", border: "none", color: B.danger, cursor: "pointer", fontSize: 12 }}>✕</button>
                       </div>
                       <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6 }}>
-                        <input type="number" min="1" value={x.cantidad} onChange={e => setCantidad(x.id, e.target.value)}
+                        <input type="number" min="1" value={x.cantidad} onChange={e => setCantidad(x.cid, e.target.value)}
                           style={{ width: 50, padding: "4px 8px", borderRadius: 6, background: B.navy, border: `1px solid ${B.navy}`, color: "#fff", fontSize: 12, outline: "none" }} />
                         <span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)" }}>× {COP(x.precio)}</span>
                         <span style={{ marginLeft: "auto", fontSize: 13, fontWeight: 700, color: B.sand }}>{COP(x.precio * x.cantidad)}</span>
                       </div>
-                      <input value={x.notas} onChange={e => setNotaItem(x.id, e.target.value)}
-                        placeholder="Nota para cocina…"
-                        style={{ ...IS, marginTop: 6, fontSize: 11, padding: "5px 8px" }} />
+                      <input value={x.notas} onChange={e => setNotaItem(x.cid, e.target.value)}
+                        placeholder="Observación para la comanda (ej: sin cebolla, término medio)"
+                        style={{ ...IS, marginTop: 6, fontSize: 11, padding: "5px 8px",
+                          border: `1px solid ${x.notas ? B.pool : B.navyLight}` }} />
                     </div>
                   ))}
                 </div>
@@ -447,6 +482,40 @@ export default function HotelRoomService() {
       ) : (
         /* ── Tab: Vista Menú ── */
         <VistaMenu items={items} />
+      )}
+
+      {/* Modal: elegir variante (michelada / con clamato / etc.) */}
+      {variantePicker && (
+        <div onClick={() => setVariantePicker(null)} style={{
+          position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 60,
+          display: "flex", alignItems: "center", justifyContent: "center", padding: 16,
+        }}>
+          <div onClick={e => e.stopPropagation()} style={{
+            background: B.navyMid || B.navy, borderRadius: 14, padding: 18,
+            width: "100%", maxWidth: 380, maxHeight: "80vh", overflowY: "auto",
+            border: `1px solid ${B.navyLight}`,
+          }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+              <div style={{ fontSize: 16, fontWeight: 800, color: "#fff" }}>{variantePicker.item.nombre}</div>
+              <button onClick={() => setVariantePicker(null)}
+                style={{ background: "transparent", border: "none", color: "rgba(255,255,255,0.5)", fontSize: 22, cursor: "pointer", lineHeight: 1 }}>✕</button>
+            </div>
+            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginBottom: 14 }}>Elige la presentación</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {variantePicker.item.variantes.map(v => (
+                <button key={v.loggro_id} onClick={() => addVariante(variantePicker.item, v)}
+                  style={{
+                    display: "flex", justifyContent: "space-between", alignItems: "center",
+                    background: B.navy, border: `1px solid ${B.navyLight}`, borderRadius: 10,
+                    padding: "14px 16px", cursor: "pointer", color: "#fff", textAlign: "left", minHeight: 52,
+                  }}>
+                  <span style={{ fontSize: 14, fontWeight: 600 }}>{v.nombre}</span>
+                  <span style={{ fontSize: 15, fontWeight: 800, color: B.sand }}>{COP(v.precio)}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

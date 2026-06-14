@@ -70,15 +70,25 @@ export default function Clientes() {
     if (!supabase) return;
     setSelected(cliente);
     setLoadingPerfil(true);
-    const email = cliente.email || "";
-    const nombre = cliente.nombre || "";
-    // Build OR filter: email fields + nombre fallback
-    let orFilter = `nombre.ilike.${nombre}`;
-    if (email) orFilter += `,email.ilike.${email},contacto.ilike.${email}`;
+    const email = (cliente.email || "").trim();
+    const nombre = (cliente.nombre || "").trim();
+    // PostgREST .or() interpreta comas y parentesis como separadores de
+    // expresion. Si nombre contiene una coma, paren o asterisco, el filtro
+    // se rompe (en el mejor caso) o se altera (en el peor). Sanitizamos
+    // escapando esos chars; si quedan vacios tras escape, skip esa rama.
+    const sanitize = (s) => String(s).replace(/[,()*]/g, "");
+    const safeNombre = sanitize(nombre);
+    const safeEmail  = sanitize(email);
+    const parts = [];
+    if (safeNombre) parts.push(`nombre.ilike.${safeNombre}`);
+    if (safeEmail) {
+      parts.push(`email.ilike.${safeEmail}`);
+      parts.push(`contacto.ilike.${safeEmail}`);
+    }
+    const q = supabase.from("reservas").select("*").order("fecha", { ascending: false });
+    const resPromise = parts.length > 0 ? q.or(parts.join(",")) : Promise.resolve({ data: [] });
     const [resR, crdR] = await Promise.all([
-      supabase.from("reservas").select("*")
-        .or(orFilter)
-        .order("fecha", { ascending: false }),
+      resPromise,
       email ? supabase.from("creditos").select("*")
         .eq("cliente_email", email)
         .order("created_at", { ascending: false })

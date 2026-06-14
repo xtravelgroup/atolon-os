@@ -25,6 +25,7 @@ export default function Items() {
   const [catFilter, setCatFilter] = useState("todos");
   const [showModal, setShowModal] = useState(null); // null | "new" | item object
   const [detail, setDetail] = useState(null);
+  const [deletingId, setDeletingId] = useState(null);
   const [tab, setTab] = useState("inventario"); // "inventario" | "catalogo" | "categorias" | "conteos"
   const [invSearch, setInvSearch] = useState("");
   const [invCatFilter, setInvCatFilter] = useState("todos");
@@ -178,10 +179,19 @@ export default function Items() {
   };
 
   const deleteItem = async (id) => {
+    // Guard contra doble-click — el modal de detalle dispara onDelete sin
+    // disabled state. Sin esto, dos clicks rapidos disparaban dos UPDATE
+    // y dos load() concurrentes.
+    if (deletingId === id) return;
     if (!confirm("¿Desactivar este producto?")) return;
-    await supabase.from("items_catalogo").update({ activo: false, updated_at: new Date().toISOString() }).eq("id", id);
-    setDetail(null);
-    load();
+    setDeletingId(id);
+    try {
+      await supabase.from("items_catalogo").update({ activo: false, updated_at: new Date().toISOString() }).eq("id", id);
+      setDetail(null);
+      await load();
+    } finally {
+      setDeletingId(null);
+    }
   };
 
   // ═══════════════════════════════════════════════════════════════════════════

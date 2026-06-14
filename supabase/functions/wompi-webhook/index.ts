@@ -73,23 +73,39 @@ const CORS = {
   "Access-Control-Allow-Headers": "Content-Type, Authorization, apikey",
 };
 
+// Timing-safe equality sobre hex strings de igual length.
+function timingSafeEqualHex(a: string, b: string): boolean {
+  if (typeof a !== "string" || typeof b !== "string") return false;
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+}
+
 // ── Validar firma del evento ────────────────────────────────────────────
 // Wompi calcula: SHA256( <prop1_value><prop2_value>...<propN_value><timestamp><events_secret> )
-async function validarFirma(payload: any, eventsSecret: string): Promise<boolean> {
-  if (!eventsSecret) {
-    console.warn("WOMPI_EVENTS_SECRET no configurado — saltando validación");
-    return true; // permitir mientras el secret no esté seteado (modo dev)
-  }
-  const signature = payload?.signature;
-  if (!signature?.checksum || !Array.isArray(signature.properties)) return false;
+// FAIL-CLOSED: si no hay secret O signature ausente, rechaza.
+async function validarFirma(payload: any, eventsSecret: string): Promise<{ ok: boolean; reason?: string }> {
+  if (!eventsSecret) return { ok: false, reason: "no_secret" };
 
-  // Concatena el valor de cada propiedad listada (paths como "transaction.id")
-  const concatProps = signature.properties.map((path: string) => {
-    const parts = path.split(".");
-    let v: any = payload?.data;
-    for (const p of parts) v = v?.[p];
-    return String(v ?? "");
-  }).join("");
+  const signature = payload?.signature;
+  if (!signature?.checksum || !Array.isArray(signature.properties)) {
+    return { ok: false, reason: "missing_signature" };
+  }
+
+  let concatProps: string;
+  try {
+    concatProps = signature.properties.map((path: string) => {
+      const parts = path.split(".");
+      let v: any = payload?.data;
+      for (const p of parts) v = v?.[p];
+      return String(v ?? "");
+    }).join("");
+  } catch (e) {
+    return { ok: false, reason: `properties_parse_error: ${(e as Error).message}` };
+  }
+
+  if (!payload.timestamp) return { ok: false, reason: "missing_timestamp" };
 
   const message = concatProps + String(payload.timestamp) + eventsSecret;
   const msgBytes = new TextEncoder().encode(message);
@@ -97,7 +113,9 @@ async function validarFirma(payload: any, eventsSecret: string): Promise<boolean
   const hashHex = Array.from(new Uint8Array(hashBuffer))
     .map(b => b.toString(16).padStart(2, "0"))
     .join("");
-  return hashHex === signature.checksum.toLowerCase();
+  return timingSafeEqualHex(hashHex, String(signature.checksum).toLowerCase())
+    ? { ok: true }
+    : { ok: false, reason: "checksum_mismatch" };
 }
 
 function jsonResp(obj: any, status = 200) {
@@ -112,8 +130,13 @@ serve(async (req) => {
   const url = new URL(req.url);
   const path = url.pathname.replace(/^\/wompi-webhook/, "");
 
-  // ── GET /diag — diagnóstico público (sin auth) ──────────────────────
+  // ── GET /diag — diagnóstico (requiere CRON_SECRET o service_role JWT) ──
   if (req.method === "GET" && path === "/diag") {
+    const cronSecret = req.headers.get("x-atolon-cron-secret");
+    const expectedSecret = Deno.env.get("CRON_SECRET") || "";
+    if (!expectedSecret || cronSecret !== expectedSecret) {
+      return jsonResp({ error: "unauthorized" }, 401);
+    }
     try {
       const SB = createClient(
         Deno.env.get("SUPABASE_URL")!,
@@ -157,14 +180,20 @@ serve(async (req) => {
     });
   }
 
-  // ── POST /poll-recent — safety net mientras webhook no llegue ──────
+  // ── POST /poll-recent — safety net (requiere CRON_SECRET) ──────────
   // Lista reservas Wompi de últimas N horas (cancelado o pendiente_pago)
   // y consulta Wompi por reference para detectar pagos APPROVED que no
   // confirmaron la reserva por webhook fallido.
   if (req.method === "POST" && path === "/poll-recent") {
+    const cronSecret = req.headers.get("x-atolon-cron-secret");
+    const expectedSecret = Deno.env.get("CRON_SECRET") || "";
+    if (!expectedSecret || cronSecret !== expectedSecret) {
+      return jsonResp({ error: "unauthorized" }, 401);
+    }
     try {
       const body = await req.json().catch(() => ({}));
-      const horasAtras = Number(body?.hours) || 4;
+      // Cap a 48h para impedir abuso (spam Wompi rate-limit con hours=999999)
+      const horasAtras = Math.min(Math.max(Number(body?.hours) || 4, 1), 48);
       const desdeStr = new Date(Date.now() - horasAtras * 3600 * 1000).toISOString();
 
       const SB = createClient(
@@ -278,30 +307,93 @@ serve(async (req) => {
     const finalizadoAt = tx.finalized_at || tx.updated_at || new Date().toISOString();
 
     // Persistir log antes de validar firma (debug si la firma falla)
-    await SB.from("wompi_eventos_log").insert({
+    // Capturamos el id insertado para hacer updates scoped a esta fila
+    // (impide que un APPROVED valido posterior flipee firma_valida=true
+    // de eventos forjados previos).
+    const { data: logRow } = await SB.from("wompi_eventos_log").insert({
       evento,
       referencia: ref,
       transaction_id: txId,
       status,
       monto,
       raw: payload,
-      firma_valida: false, // se actualiza abajo
-    }).then(() => {}).catch(() => {});
+      firma_valida: false,
+    }).select("id").maybeSingle();
+    const logRowId = logRow?.id;
 
-    // Validar firma — pero retornar 200 igual para que Wompi no reintente
+    // FAIL-CLOSED: si la firma es invalida o el secret no esta configurado,
+    // rechazar con 401 y NO procesar. Wompi reintenta — pero es preferible
+    // que reintente con firma valida que dejarse colar un evento forjado.
     const eventsSecret = await loadWompiEventsSecret(SB);
-    const firmaOK = await validarFirma(payload, eventsSecret);
-    if (!firmaOK) {
-      console.error("Firma Wompi inválida:", { ref, txId, sig: payload?.signature?.checksum?.slice(0, 12) });
-      return jsonResp({ received: true, firma: "invalid" }, 200);
+    const allowUnsigned = Deno.env.get("WOMPI_ALLOW_UNSIGNED") === "true";
+    const verdict = await validarFirma(payload, eventsSecret);
+    if (!verdict.ok) {
+      const msg = `Firma Wompi rechazada (${verdict.reason})`;
+      console.error(msg, { ref, txId, sig: payload?.signature?.checksum?.slice(0, 12) });
+      if (!allowUnsigned) {
+        return jsonResp({ error: "unauthorized", reason: verdict.reason }, 401);
+      }
+      console.warn("[wompi-webhook] WOMPI_ALLOW_UNSIGNED=true — procesando sin firma valida (solo dev).");
+    } else if (logRowId) {
+      await SB.from("wompi_eventos_log").update({ firma_valida: true }).eq("id", logRowId).then(() => {}).catch(() => {});
     }
+
+    // Idempotencia: si esta transaction_id ya fue procesada (processed_at set),
+    // devolver 200 sin reprocesar. Evita duplicar emails/WhatsApp y reescribir
+    // estados ante retries de Wompi.
     if (txId) {
-      await SB.from("wompi_eventos_log").update({ firma_valida: true }).eq("transaction_id", txId).then(() => {}).catch(() => {});
+      const { data: prevProcessed } = await SB.from("wompi_eventos_log")
+        .select("id")
+        .eq("transaction_id", txId)
+        .not("processed_at", "is", null)
+        .limit(1)
+        .maybeSingle();
+      if (prevProcessed) {
+        console.log(`[wompi-webhook] Tx ${txId} ya procesada, skip.`);
+        return jsonResp({ received: true, skipped: "already_processed" });
+      }
     }
 
     // Solo procesamos el evento de transacción
     if (evento !== "transaction.updated" || !ref) {
       return jsonResp({ received: true, processed: false, reason: "evento ignorado" });
+    }
+
+    // ── 1aa) Buscar en juicy_cream_reservas (event-specific, prefix JC-) ──
+    if (ref.startsWith("JC-")) {
+      const { data: jcRows } = await SB.from("juicy_cream_reservas")
+        .select("id, total, estado, nombre, email, telefono, tipo, categoria")
+        .eq("id", ref).limit(1);
+      const jc = jcRows?.[0];
+      if (jc) {
+        if (status === "APPROVED") {
+          await SB.from("juicy_cream_reservas").update({
+            estado: "confirmado",
+            forma_pago: "wompi",
+            abono: monto,
+            notas: `Pago Wompi (${metodo}) — Trx #${txId}`,
+            updated_at: new Date().toISOString(),
+          }).eq("id", jc.id);
+          console.log(`✓ Juicy & Cream ${jc.id} confirmada (Wompi)`);
+          // Update lead en Comercial → Cerrado Ganado
+          await SB.from("leads").update({
+            stage: "Cerrado Ganado",
+            fecha_pago: new Date().toISOString().slice(0, 10),
+            ultimo_contacto: new Date().toISOString().slice(0, 10),
+            updated_at: new Date().toISOString(),
+          }).eq("id", `LEAD-${jc.id}`).then(() => {}).catch((e: any) =>
+            console.warn("[juicy/lead-update] failed:", e?.message));
+          await notificarJuicyPagoConfirmado(SB, jc, monto, "Wompi", txId).catch(e =>
+            console.warn("[juicy/email-confirmado] failed:", (e as Error).message));
+          return jsonResp({ received: true, processed: true, action: "juicy_confirmed", reserva_id: jc.id });
+        }
+        if (status === "DECLINED" || status === "VOIDED" || status === "ERROR") {
+          // No cancelamos automáticamente — el cupo queda bloqueado para que
+          // el usuario pueda reintentar. Un job de limpieza lo libera si pasa
+          // demasiado tiempo sin pago.
+          return jsonResp({ received: true, processed: true, action: "juicy_declined", reserva_id: jc.id });
+        }
+      }
     }
 
     // ── 1a) Buscar primero en reservas_pasadia (Tatiana / Visito.AI) ──
@@ -342,17 +434,69 @@ serve(async (req) => {
     if (reserva) {
       const fechaPago = (finalizadoAt || "").slice(0, 10);
       const notaTrx = `Pago Wompi (${metodo}) — Trx #${txId} — ${status}`;
+      const currency = String(tx.currency || "").toUpperCase();
+      const totalReserva = Number(reserva.total || 0);
 
       if (status === "APPROVED") {
-        await SB.from("reservas").update({
+        // Validacion de currency: Wompi opera en COP. Cualquier otra es sospechosa.
+        if (currency && currency !== "COP") {
+          console.error(`[wompi-webhook] Currency inesperada ${currency} en tx ${txId}`);
+          return jsonResp({ error: "currency_mismatch", currency }, 400);
+        }
+
+        // Validacion de undercharge: el monto cobrado debe cubrir al menos el total.
+        // 1% de tolerancia por rounding de centavos.
+        if (totalReserva > 0 && monto < totalReserva - Math.max(100, totalReserva * 0.01)) {
+          console.error(`[wompi-webhook] Undercharge: monto=${monto} vs total=${totalReserva} (tx ${txId})`);
+          await SB.from("historial_acciones").insert({
+            accion: "wompi_webhook_undercharge",
+            detalle: `Cobrado ${monto} vs total ${totalReserva}`,
+            metadata: { tx_id: txId, reserva_id: reserva.id },
+          }).then(() => {}).catch(() => {});
+          return jsonResp({ error: "undercharge", monto, total: totalReserva }, 400);
+        }
+
+        // Skip si ya esta confirmada y referencia_pago coincide (idempotencia)
+        if (reserva.estado === "confirmado") {
+          console.log(`[wompi-webhook] Reserva ${reserva.id} ya confirmada, skip.`);
+          if (logRowId) {
+            await SB.from("wompi_eventos_log").update({ processed_at: new Date().toISOString() }).eq("id", logRowId).then(() => {}).catch(() => {});
+          }
+          return jsonResp({ received: true, skipped: "already_confirmed" });
+        }
+
+        const { error: updErr } = await SB.from("reservas").update({
           abono:       monto,
-          saldo:       Math.max(0, Number(reserva.total || 0) - monto),
+          saldo:       Math.max(0, totalReserva - monto),
           estado:      "confirmado",
           forma_pago:  "wompi",
           fecha_pago:  fechaPago,
           referencia_pago: txId,
           updated_at:  new Date().toISOString(),
-        }).eq("id", reserva.id);
+        })
+          .eq("id", reserva.id)
+          .eq("estado", "pendiente_pago"); // guard: solo desde pendiente_pago
+
+        if (updErr) {
+          console.error(`[wompi-webhook] Update reserva fallo: ${updErr.message}`);
+          return jsonResp({ error: "update_failed", message: updErr.message }, 500);
+        }
+
+        // Confirmar el track_ingreso correspondiente (AtolonTrack)
+        // El SDK frontend marca 'pendiente' al hacer click "Pagar". El webhook
+        // lo escala a 'confirmado' aquí — ahora SÍ es venta real para reportes.
+        await SB.from("track_ingresos").update({
+          estado_pago: "confirmado",
+        }).eq("reserva_id", reserva.id).then(() => {}).catch(() => {});
+
+        // Marcar sesión como convertida (solo cuando hay venta real confirmada)
+        await SB.from("track_sesiones").update({
+          convertida: true,
+          ingreso: monto,
+        }).in("id",
+          (await SB.from("track_ingresos").select("sesion_id").eq("reserva_id", reserva.id))
+            .data?.map((r: any) => r.sesion_id).filter(Boolean) || []
+        ).then(() => {}).catch(() => {});
 
         // Cerrar lead asociado si existe
         await SB.from("leads").update({
@@ -369,25 +513,53 @@ serve(async (req) => {
 
         console.log(`✓ Reserva ${reserva.id} confirmada vía Wompi (${monto} COP)`);
 
-        // Enviar email + WhatsApp en paralelo (best-effort, no falla el webhook)
+        // Meta Conversions API (server-side, dedup con pixel del navegador)
+        enviarMetaCapi(reserva, monto).catch(() => {});
+
+        // Enviar email + WhatsApp + Tatiana follow-up en paralelo (best-effort)
         await Promise.all([
           enviarEmailConfirmacion(reserva).catch(e =>
             console.warn(`[wompi] Email send failed: ${(e as Error).message}`)),
           enviarWhatsAppConfirmacion(SB, reserva).catch(e =>
             console.warn(`[wompi] WhatsApp send failed: ${(e as Error).message}`)),
+          // Tatiana retoma la conversación post-pago (idempotente, solo si hay conversación)
+          fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/tatiana-chat/post-pago-followup`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+            },
+            body: JSON.stringify({ reserva_id: reserva.id }),
+          }).catch(e => console.warn(`[wompi] Tatiana followup failed: ${(e as Error).message}`)),
         ]);
+
+        if (logRowId) {
+          await SB.from("wompi_eventos_log")
+            .update({ processed_at: new Date().toISOString() })
+            .eq("id", logRowId).then(() => {}).catch(() => {});
+        }
 
         return jsonResp({ received: true, processed: true, action: "confirmed", reserva_id: reserva.id });
       }
 
       if (status === "DECLINED" || status === "VOIDED" || status === "ERROR") {
+        // Guard: si la reserva YA esta confirmada (puede pasar si llega un DECLINED
+        // tardio despues de un APPROVED valido), no la regresemos a pendiente.
         await SB.from("reservas").update({
           estado: "pendiente",
           notas:  (reserva as any).notas
             ? (reserva as any).notas + " | " + notaTrx
             : notaTrx,
           updated_at: new Date().toISOString(),
-        }).eq("id", reserva.id);
+        })
+          .eq("id", reserva.id)
+          .neq("estado", "confirmado");
+
+        if (logRowId) {
+          await SB.from("wompi_eventos_log")
+            .update({ processed_at: new Date().toISOString() })
+            .eq("id", logRowId).then(() => {}).catch(() => {});
+        }
 
         return jsonResp({ received: true, processed: true, action: "declined", reserva_id: reserva.id });
       }
@@ -416,6 +588,32 @@ serve(async (req) => {
     return jsonResp({ received: true, error: String((err as Error).message || err) }, 200);
   }
 });
+
+// ── Meta Conversions API (server-side Purchase) ────────────────────────────
+// Fire-and-forget hacia la edge function meta-capi. Best-effort: cualquier
+// fallo se traga para NO afectar el flujo de pago.
+async function enviarMetaCapi(reserva: any, monto: number): Promise<void> {
+  try {
+    await fetch(
+      `${Deno.env.get("SUPABASE_URL")}/functions/v1/meta-capi`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+          "apikey": Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+        },
+        body: JSON.stringify({
+          reserva_id: reserva.id,
+          value:      Number(monto || reserva.total || 0),
+          currency:   "COP",
+          email:      reserva.email || reserva.contacto || "",
+          phone:      reserva.telefono || "",
+        }),
+      },
+    );
+  } catch (_) { /* CAPI best-effort */ }
+}
 
 // ── Enviar email de confirmación (Resend via /send-confirmation) ───────────
 // send-confirmation espera reserva.contacto como destinatario. Si solo está
@@ -499,14 +697,18 @@ async function enviarConfirmacionPasadia(reserva: any): Promise<void> {
 }
 
 // ── Enviar confirmación de reserva por WhatsApp ────────────────────────────
-// Cascade fallback de templates: confirmacion_pasadia_atolon (genérica con tipo) →
-// vip_pass_confirmacion (VIP Pass) → confirmacionvip (sin variables).
+// Cascade fallback de templates por idioma:
+//   - reserva.idioma === "en": intenta `*_en` aprobados → fallback a ES + nota EN texto libre
+//   - reserva.idioma === "es" (default): confirmacion_pasadia_atolon → vip_pass_confirmacion → confirmacionvip
 // Si todas fallan o la reserva no tiene teléfono, no rompe el webhook.
 async function enviarWhatsAppConfirmacion(SB: any, reserva: any): Promise<void> {
   const telefono = reserva?.telefono || reserva?.contacto;
   if (!telefono || !/\d{7,}/.test(telefono)) return;
 
-  let horaSalida = "Ver confirmación";
+  const lang: "es" | "en" = reserva?.idioma === "en" ? "en" : "es";
+  const locale = lang === "en" ? "en-US" : "es-CO";
+
+  let horaSalida = lang === "en" ? "See confirmation" : "Ver confirmación";
   if (reserva.salida_id) {
     try {
       const { data: salida } = await SB.from("salidas")
@@ -515,36 +717,96 @@ async function enviarWhatsAppConfirmacion(SB: any, reserva: any): Promise<void> 
     } catch { /* ignore */ }
   }
 
-  const nombre = (reserva.nombre || "").split(" ")[0] || reserva.nombre || "Cliente";
+  const nombre = (reserva.nombre || "").split(" ")[0] || reserva.nombre || (lang === "en" ? "Guest" : "Cliente");
   const fecha = reserva.fecha
-    ? new Date(reserva.fecha + "T12:00:00").toLocaleDateString("es-CO", { weekday: "long", day: "numeric", month: "long" })
+    ? new Date(reserva.fecha + "T12:00:00").toLocaleDateString(locale, { weekday: "long", day: "numeric", month: "long" })
     : "";
-  const totalCOP = `$${Number(reserva.total || 0).toLocaleString("es-CO")} COP`;
-  const tipo = reserva.tipo || "Pasadía";
+  const totalCOP = `$${Number(reserva.total || 0).toLocaleString(locale)} COP`;
+  const tipo = reserva.tipo || (lang === "en" ? "Day pass" : "Pasadía");
 
   const sendUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/send-whatsapp/send`;
+  const sendTextUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/send-whatsapp/send-text`;
   const headers = {
     "Content-Type": "application/json",
     "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
     "apikey": Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
   };
 
-  const trySend = async (template: string, params: string[], lang: string) => {
+  const trySend = async (template: string, params: string[], tplLang: string) => {
     const r = await fetch(sendUrl, {
       method: "POST",
       headers,
-      body: JSON.stringify({ to: telefono, template, params, lang, reserva_id: reserva.id }),
+      body: JSON.stringify({ to: telefono, template, params, lang: tplLang, reserva_id: reserva.id }),
     });
     const d = await r.json().catch(() => ({}));
     return r.ok && !d?.error;
   };
 
-  // 1) Genérica con tipo (confirmacion_pasadia_atolon)
+  // EN flow: intenta templates *_en (cuando estén aprobadas en Meta).
+  // Si ninguna existe todavía, cae al ES y luego envía una nota en EN como texto libre
+  // (válido dentro de la ventana 24h post-pago).
+  if (lang === "en") {
+    if (await trySend("confirmacion_pasadia_atolon_en", [nombre, tipo, fecha, String(reserva.pax || 1), horaSalida, totalCOP, reserva.id], "en")) return;
+    if (await trySend("vip_pass_confirmacion_en",       [nombre, fecha, String(reserva.pax || 1), horaSalida, totalCOP, reserva.id], "en")) return;
+    // Fallback: ES template + EN texto libre como segundo mensaje (24h window post-payment).
+    const esOk = await trySend("vip_pass_confirmacion", [nombre, fecha, String(reserva.pax || 1), horaSalida, totalCOP, reserva.id], "es");
+    if (esOk) {
+      const enNote = `Hi ${nombre}! Your booking is confirmed for ${fecha} · ${reserva.pax || 1} guest(s) · departure ${horaSalida}. Total paid: ${totalCOP}. Booking ID: ${reserva.id}. Arrive 20 minutes before departure at La Bodeguita Pier — Gate 1. Pier tax COP 18,000 per person (not included in the day pass). See full details: https://www.atoloncartagena.com/zarpe-info?id=${reserva.id}&lang=en`;
+      await fetch(sendTextUrl, { method: "POST", headers, body: JSON.stringify({ to: telefono, body: enNote, reserva_id: reserva.id }) }).catch(() => {});
+    }
+    return;
+  }
+
+  // ES flow (default): cascade existente
   if (await trySend("confirmacion_pasadia_atolon", [nombre, tipo, fecha, String(reserva.pax || 1), horaSalida, totalCOP, reserva.id], "es")) return;
-
-  // 2) VIP-específica
-  if (await trySend("vip_pass_confirmacion", [nombre, fecha, String(reserva.pax || 1), horaSalida, totalCOP, reserva.id], "es")) return;
-
-  // 3) Fallback sin variables
+  if (await trySend("vip_pass_confirmacion",       [nombre, fecha, String(reserva.pax || 1), horaSalida, totalCOP, reserva.id], "es")) return;
   await trySend("confirmacionvip", [], "es_CO");
+}
+
+// ── Notificación email admin: pago Juicy & Cream confirmado ───────────
+// Se llama desde el handler de juicy_cream_reservas tras marcar la
+// reserva como confirmada. Manda email a eric@atoloncartagena.com.
+async function notificarJuicyPagoConfirmado(SB: any, jc: any, monto: number, pasarela: string, txId: string) {
+  const RESEND_KEY = Deno.env.get("RESEND_API_KEY") || "";
+  if (!RESEND_KEY) {
+    console.warn("[juicy/email] RESEND_API_KEY no configurada — skip");
+    return;
+  }
+  const tipoLabel = jc.tipo === "ticket" ? `🎟 Ticket — ${jc.categoria}` : `🛋 Mesa — ${jc.categoria}`;
+  const html = `
+    <div style="font-family: Arial, sans-serif; max-width: 560px; margin: 0 auto; color: #0a0a0a;">
+      <div style="background: #16A34A; color: #fff; padding: 18px 22px; border-radius: 8px 8px 0 0;">
+        <div style="font-size: 20px; font-weight: 800; letter-spacing: 0.04em;">JUICY &amp; CREAM</div>
+        <div style="font-size: 12px; letter-spacing: 0.2em; margin-top: 4px;">✅ PAGO CONFIRMADO</div>
+      </div>
+      <div style="background: #fff; border: 1px solid #ccc; border-top: none; padding: 22px; border-radius: 0 0 8px 8px;">
+        <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
+          <tr><td style="padding: 6px 0; color: #666;">Reserva ID</td><td style="padding: 6px 0; font-weight: 700;">${jc.id}</td></tr>
+          <tr><td style="padding: 6px 0; color: #666;">Tipo</td><td style="padding: 6px 0; font-weight: 700;">${tipoLabel}</td></tr>
+          <tr><td style="padding: 6px 0; color: #666;">Total pagado</td><td style="padding: 6px 0; font-weight: 800; color: #16A34A; font-size: 18px;">$${Math.round(monto).toLocaleString("es-CO")}</td></tr>
+          <tr><td style="padding: 6px 0; color: #666;">Pasarela</td><td style="padding: 6px 0;">${pasarela} — Trx ${txId}</td></tr>
+          <tr><td colspan="2" style="padding: 12px 0 6px; border-top: 1px solid #eee; font-weight: 700;">Cliente</td></tr>
+          <tr><td style="padding: 4px 0; color: #666;">Nombre</td><td style="padding: 4px 0;">${jc.nombre || "—"}</td></tr>
+          <tr><td style="padding: 4px 0; color: #666;">Teléfono</td><td style="padding: 4px 0;">${jc.telefono || "—"}</td></tr>
+          ${jc.email ? `<tr><td style="padding: 4px 0; color: #666;">Email</td><td style="padding: 4px 0;">${jc.email}</td></tr>` : ""}
+        </table>
+        <div style="margin-top: 18px; padding: 10px 14px; background: #DCFCE7; border: 1px solid #16A34A; border-radius: 6px; font-size: 12px; color: #166534;">
+          ✅ Esta venta ya está confirmada y aparecerá en tu portal de organizador y en Grupos del día.
+        </div>
+        <div style="margin-top: 16px; font-size: 11px; color: #888;">
+          Portal organizador: <a href="https://www.atolon.co/juicy-organizador" style="color: #16A34A;">/juicy-organizador</a> · 7 jun 2026 · Atolón Beach Club
+        </div>
+      </div>
+    </div>
+  `;
+  await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: { "Authorization": `Bearer ${RESEND_KEY}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      from: "Juicy & Cream <reservas@atolon.co>",
+      to: ["eric@atoloncartagena.com"],
+      subject: `✅ Venta confirmada Juicy & Cream — ${tipoLabel} · $${Math.round(monto).toLocaleString("es-CO")}`,
+      html,
+    }),
+  });
 }

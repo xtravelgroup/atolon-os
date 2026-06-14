@@ -8,8 +8,12 @@ export default async function handler(req, res) {
 
   const sbUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
   const sbKey = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY;
+  const cronSecret = process.env.CRON_SECRET;
   if (!sbUrl || !sbKey) {
     return res.status(500).json({ ok: false, error: "Supabase env missing" });
+  }
+  if (!cronSecret) {
+    return res.status(500).json({ ok: false, error: "CRON_SECRET no configurado en Vercel env" });
   }
 
   try {
@@ -19,6 +23,9 @@ export default async function handler(req, res) {
         "Content-Type": "application/json",
         Authorization: `Bearer ${sbKey}`,
         apikey: sbKey,
+        // El endpoint /poll-recent exige este header desde el fix de seguridad.
+        // Debe coincidir con CRON_SECRET en Supabase Functions Secrets.
+        "x-atolon-cron-secret": cronSecret,
       },
       body: JSON.stringify({ hours: 2 }),
     });

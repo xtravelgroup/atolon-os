@@ -66,11 +66,98 @@ async function getLoggroIdentity(): Promise<{ businessId: string | null; userId:
   return { businessId: cachedBusinessId, userId: cachedUserId };
 }
 
-async function loggroGet(path: string): Promise<any> {
+// Cache en memoria (warm instance) del waiterOrderArea de cada producto.
+// Sin este campo en la orden, Loggro defaultea la impresión a Cocina aunque
+// el producto sea de bar (Corona → Bar). En el POS directo Loggro pone el
+// área automáticamente; al crear orden vía API hay que enviarlo explícito.
+const productAreaCache: Record<string, string | null> = {};
+
+async function getWaiterOrderArea(productId: string): Promise<string | null> {
+  if (!productId) return null;
+  if (Object.prototype.hasOwnProperty.call(productAreaCache, productId)) {
+    return productAreaCache[productId];
+  }
+  try {
+    const prod = await loggroGet(`/products/${productId}`);
+    const area = prod?.waiterOrderArea || null;
+    productAreaCache[productId] = area;
+    return area;
+  } catch {
+    productAreaCache[productId] = null;
+    return null;
+  }
+}
+
+// Mapeo cédula (documentNumber) → Pirpos user _id. La tabla empleados_loggro
+// en Supabase guarda la cédula en `loggro_id`, pero Pirpos espera su propio
+// ObjectId (24-char hex) como `seller` en /orders. Cuando un caller manda
+// seller="1047514259" (cédula de Brayan, p.ej.) lo resolvemos al _id
+// correcto antes de pasárselo a Pirpos. Caso fácil: el caller ya pasa el
+// ObjectId — lo pasamos tal cual.
+let pirposSellerCache: Record<string, string> | null = null;
+
+async function resolveSellerId(seller: string | null | undefined): Promise<string | null> {
+  if (!seller) return null;
+  const s = String(seller).trim();
+  if (!s) return null;
+  // Si ya viene en formato Pirpos _id (24-char hex), úsalo tal cual.
+  if (/^[0-9a-f]{24}$/i.test(s)) return s;
+  // Build cache once per warm instance.
+  if (!pirposSellerCache) {
+    pirposSellerCache = {};
+    try {
+      const users = await loggroGet("/users");
+      const arr: any[] = Array.isArray(users) ? users
+        : (users?.users || users?.docs || users?.items || []);
+      for (const u of arr) {
+        if (u?.documentNumber && u?._id) {
+          pirposSellerCache[String(u.documentNumber)] = u._id;
+        }
+      }
+    } catch { /* keep empty, lookup returns null */ }
+  }
+  return pirposSellerCache[s] || null;
+}
+
+// rank 111: fetch a Loggro tiene timeout explicito (30s) y retry con backoff
+// para 429/5xx. Sin esto, una API Loggro lenta colgaba toda la edge function
+// hasta el timeout global de Supabase (~150s) sin visibilidad.
+async function loggroFetch(path: string, init: RequestInit = {}, timeoutMs = 30_000): Promise<Response> {
   const token = await getLoggroToken();
-  const res = await fetch(`${LOGGRO_BASE}${path}`, {
-    headers: { "Authorization": `Bearer ${token}` },
-  });
+  const url = `${LOGGRO_BASE}${path}`;
+  const baseHeaders = { Authorization: `Bearer ${token}`, ...(init.headers || {}) };
+
+  let lastErr: unknown = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), timeoutMs);
+    try {
+      const res = await fetch(url, { ...init, headers: baseHeaders, signal: ctrl.signal });
+      clearTimeout(t);
+      // Retry en 429 y 5xx (transitorios). 4xx no-429 son determinísticos: no reintentar.
+      if (res.status === 429 || (res.status >= 500 && res.status < 600)) {
+        if (attempt < 2) {
+          const backoff = 500 * Math.pow(2, attempt) + Math.floor(Math.random() * 250);
+          await new Promise(r => setTimeout(r, backoff));
+          continue;
+        }
+      }
+      return res;
+    } catch (e) {
+      clearTimeout(t);
+      lastErr = e;
+      if (attempt < 2) {
+        const backoff = 500 * Math.pow(2, attempt) + Math.floor(Math.random() * 250);
+        await new Promise(r => setTimeout(r, backoff));
+        continue;
+      }
+    }
+  }
+  throw new Error(`Loggro fetch ${path} falló tras 3 intentos: ${lastErr instanceof Error ? lastErr.message : String(lastErr)}`);
+}
+
+async function loggroGet(path: string): Promise<any> {
+  const res = await loggroFetch(path);
   if (!res.ok) {
     const txt = await res.text();
     throw new Error(`Loggro GET ${path} → ${res.status}: ${txt.slice(0, 200)}`);
@@ -79,10 +166,10 @@ async function loggroGet(path: string): Promise<any> {
 }
 
 async function loggroPost(path: string, body: unknown): Promise<any> {
-  const token = await getLoggroToken();
-  const res = await fetch(`${LOGGRO_BASE}${path}`, {
+  // Misma robustez (timeout+retry) que loggroGet via loggroFetch.
+  const res = await loggroFetch(path, {
     method: "POST",
-    headers: { "Authorization": `Bearer ${token}`, "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
   const txt = await res.text();
@@ -93,16 +180,53 @@ async function loggroPost(path: string, body: unknown): Promise<any> {
 }
 
 async function loggroRaw(method: string, path: string, body?: unknown): Promise<{ status: number; body: any; ok: boolean }> {
-  const token = await getLoggroToken();
-  const res = await fetch(`${LOGGRO_BASE}${path}`, {
-    method,
-    headers: { "Authorization": `Bearer ${token}`, "Content-Type": "application/json" },
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  const txt = await res.text();
-  let data: any = null;
-  try { data = JSON.parse(txt); } catch { data = { raw: txt }; }
-  return { status: res.status, body: data, ok: res.ok };
+  // Timeout explicito (30s). Sin retry: callers de loggroRaw esperan ver el
+  // status code exacto inmediatamente (ej. para detectar 404 y crear el recurso).
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), 30_000);
+  try {
+    const token = await getLoggroToken();
+    const res = await fetch(`${LOGGRO_BASE}${path}`, {
+      method,
+      headers: { "Authorization": `Bearer ${token}`, "Content-Type": "application/json" },
+      body: body ? JSON.stringify(body) : undefined,
+      signal: ctrl.signal,
+    });
+    const txt = await res.text();
+    let data: any = null;
+    try { data = JSON.parse(txt); } catch { data = { raw: txt }; }
+    return { status: res.status, body: data, ok: res.ok };
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+// ── Conversión de unidades ────────────────────────────────────────────
+// La factura/OC puede venir en una unidad (ej. KG) distinta a la del
+// ingrediente en Loggro (ej. Gr). Si no se convierte, entra 1000× menos
+// inventario y el costo unitario queda 1000× inflado.
+// Devuelve el factor por el que se MULTIPLICA la cantidad (y se DIVIDE el
+// precio unitario), para que el total monetario no cambie.
+// 1 = sin conversión (misma unidad, familia distinta, o desconocida).
+function normalizarUnidad(u: string): { base: string; factor: number } | null {
+  const n = String(u || "").trim().toUpperCase().replace(/\.$/, "").replace(/\s+/g, "");
+  if (!n) return null;
+  // Peso → base gramo
+  if (["G", "GR", "GRS", "GRM", "GRMS", "GRAMO", "GRAMOS", "GM", "GMS"].includes(n)) return { base: "PESO", factor: 1 };
+  if (["KG", "KGS", "KGM", "KILO", "KILOS", "KILOGRAMO", "KILOGRAMOS", "K"].includes(n)) return { base: "PESO", factor: 1000 };
+  if (["MG", "MILIGRAMO", "MILIGRAMOS"].includes(n)) return { base: "PESO", factor: 0.001 };
+  // Volumen → base mililitro
+  if (["ML", "CC", "MILILITRO", "MILILITROS"].includes(n)) return { base: "VOL", factor: 1 };
+  if (["L", "LT", "LTS", "LTR", "LITRO", "LITROS"].includes(n)) return { base: "VOL", factor: 1000 };
+  return null; // unidad desconocida → no convertir
+}
+function factorConversion(src: string, dst: string): number {
+  const s = normalizarUnidad(src);
+  const d = normalizarUnidad(dst);
+  if (!s || !d) return 1;          // alguna desconocida → no tocar
+  if (s.base !== d.base) return 1; // familias distintas (peso vs vol) → no tocar
+  if (d.factor === 0) return 1;
+  return s.factor / d.factor;      // ej. KG(1000) → Gr(1) = 1000
 }
 
 function sb() {
@@ -190,6 +314,34 @@ serve(async (req) => {
       return json({ count: products.length, products });
     }
 
+    // ═══ Crear mesa en Loggro ═════════════════════════════════════════════
+    // Body: { name: "PS11", description?: "", coord?: { x, y } }
+    // Usado para crear mesas que faltan en Loggro (ej. floor plan de piscina).
+    if (req.method === "POST" && path === "/create-table") {
+      const body = await req.json().catch(() => ({}));
+      const name = String(body.name || "").trim();
+      if (!name) return json({ ok: false, error: "name requerido" }, 400);
+      // Validar que no exista ya
+      const existing = await loggroGet("/tables");
+      const mesas = Array.isArray(existing) ? existing : (existing.data || []);
+      const dup = mesas.find((m: any) => (m.name || "").trim().toUpperCase() === name.toUpperCase());
+      if (dup) {
+        return json({ ok: true, already_exists: true, mesa: dup });
+      }
+      const payload = {
+        name,
+        description: body.description || name,
+        coord: body.coord || { x: 0, y: 0 },
+        isHomeDelivery: body.isHomeDelivery !== false,
+        isActive: body.isActive !== false,
+      };
+      const result = await loggroRaw("POST", "/tables", payload);
+      if (!result.ok) {
+        return json({ ok: false, error: result.body, status: result.status }, 500);
+      }
+      return json({ ok: true, mesa: result.body });
+    }
+
     // ═══ Sync Tables → DB ═════════════════════════════════════════════════
     if (req.method === "POST" && path === "/sync-tables") {
       const data = await loggroGet("/tables");
@@ -222,6 +374,16 @@ serve(async (req) => {
         if (page > 50) break; // safety
       }
 
+      // En Loggro/Pirpos el precio real NO está en p.price (siempre 0) sino en
+      // locationsStock[].price (la ubicación principal o la primera). Esto aplica
+      // tanto a productos como a subProducts (variantes).
+      const precioLoggro = (item: any): number => {
+        const raw = item?.locationsStock;
+        const ls = Array.isArray(raw) ? raw : (raw && typeof raw === "object" ? [raw] : []);
+        const main = ls.find((x: any) => x?.isMain) || ls[0] || {};
+        return Number(main.price) || Number(item?.price) || 0;
+      };
+
       // Mapeo de categorías Loggro → menu_tipo interno
       const mapMenuTipo = (cat: string): string => {
         const c = (cat || "").toUpperCase();
@@ -238,9 +400,16 @@ serve(async (req) => {
       const SB = sb();
 
       // Cargar productos existentes con loggro_id para preservar id (evitar null)
-      const { data: existing } = await SB.from("menu_items").select("id, loggro_id").not("loggro_id", "is", null);
+      const { data: existing } = await SB.from("menu_items").select("id, loggro_id, loggro_id_botella").not("loggro_id", "is", null);
       const idByLoggro: Record<string, string> = {};
       for (const e of existing || []) if (e.loggro_id) idByLoggro[e.loggro_id] = e.id;
+      // Mapa de precio Loggro por _id (para sincronizar también precio_botella,
+      // que es OTRO producto Loggro = loggro_id_botella, ej. la BT del licor).
+      const priceByLoggro: Record<string, number> = {};
+      for (const lp of allProducts) {
+        const lid = lp._id || lp.id;
+        if (lid) priceByLoggro[lid] = precioLoggro(lp);
+      }
 
       // Construir filas. Si no existe, generar id; si existe, reusar.
       const rows = allProducts.map((p: any) => {
@@ -248,12 +417,26 @@ serve(async (req) => {
         const catName = p.category?.name || p.categoryName || "Otros";
         const menuTipo = mapMenuTipo(catName);
         const id = idByLoggro[loggroId] || `LGR-${String(loggroId).slice(-12)}`;
+        // Variantes = subProducts de Loggro. Cada uno es un producto real con
+        // su propio _id y precio (ej. Club Colombia → Cerveza $15k / Michelada
+        // $18k / Con Clamato $30k). Al ordenar se envía el _id del subProduct.
+        const subs = Array.isArray(p.subProducts) ? p.subProducts : [];
+        const variantes = subs.length > 0
+          ? subs
+              .filter((s: any) => s && (s._id || s.id) && s.deleted !== true)
+              .map((s: any) => ({
+                loggro_id: s._id || s.id,
+                nombre:    s.name || s.nombre || "Variante",
+                precio:    precioLoggro(s),
+              }))
+          : null;
         return {
           id,
           loggro_id: loggroId,
           nombre: p.name || "Sin nombre",
           descripcion: p.description || null,
-          precio: Number(p.price) || 0,
+          precio: precioLoggro(p),
+          variantes,
           categoria: catName,
           loggro_categoria: catName,
           foto_url: p.image || p.photo || null,
@@ -263,22 +446,58 @@ serve(async (req) => {
         };
       });
 
-      // Solo actualizar los que YA están enlazados (match por loggro_id)
+      // Solo actualizar los que YA están enlazados (match por loggro_id).
+      //
+      // PRECIO: Loggro a veces envía price=0 (productos con "Precio Variable"
+      // o cuando el precio vive en una lista/menú separada). Si el precio
+      // entrante es 0, NO sobreescribir el precio existente — preservar el
+      // último precio manual o el último válido sincronizado.
       let upd = 0;
+      let preservados = 0;
       let lastError: any = null;
       const toUpdate = rows.filter(r => idByLoggro[r.loggro_id!]);
       for (const r of toUpdate) {
-        const { error } = await SB.from("menu_items").update({
-          nombre: r.nombre,
-          descripcion: r.descripcion,
-          precio: r.precio,
+        // NO pisar nombre/descripcion: son curados en Productos (Menús.jsx) —
+        // el único lugar para gestionar el menú. El sync solo trae datos
+        // operativos de Loggro: precio, variantes, categoría POS, raw.
+        const updateFields: any = {
+          variantes: r.variantes,
           loggro_categoria: r.loggro_categoria,
           raw: r.raw,
-        }).eq("id", r.id);
+        };
+        if (r.precio > 0) {
+          updateFields.precio = r.precio;
+        } else {
+          preservados++;
+        }
+        const { error } = await SB.from("menu_items").update(updateFields).eq("id", r.id);
         if (error) lastError = error;
         else upd++;
       }
-      return json({ updated_existing: upd, total_loggro: allProducts.length, note: "Solo actualiza menu_items ya enlazados. Usa /link-menu-to-loggro para enlazar por nombre primero.", error: lastError?.message });
+      // Segunda pasada: precio_botella desde el producto Loggro de la botella
+      // (loggro_id_botella). También preserva si Loggro envía 0.
+      let updBot = 0;
+      let preservadosBot = 0;
+      for (const e of existing || []) {
+        const bid = (e as any).loggro_id_botella;
+        if (!bid || priceByLoggro[bid] == null) continue;
+        const p = priceByLoggro[bid];
+        if (p > 0) {
+          const { error } = await SB.from("menu_items").update({ precio_botella: p }).eq("id", e.id);
+          if (error) lastError = error; else updBot++;
+        } else {
+          preservadosBot++;
+        }
+      }
+      return json({
+        updated_existing: upd,
+        precios_preservados: preservados,
+        updated_botella: updBot,
+        botellas_preservadas: preservadosBot,
+        total_loggro: allProducts.length,
+        note: `Sync trajo ${allProducts.length} productos. ${preservados} precios conservados (Loggro envió 0). El último precio bueno queda grabado.`,
+        error: lastError?.message,
+      });
     }
 
     // ═══ Sync Ingredients → items_catalogo ════════════════════════════════
@@ -483,12 +702,23 @@ serve(async (req) => {
       // locationStock por defecto ("General" del negocio Atolón) — Pirpos exige este campo
       // aunque no aparezca en la spec pública. Se puede sobreescribir por item o a nivel body.
       const DEFAULT_LOCATION_STOCK = body.locationStock || "6399190e5fe56f01f9a56027";
-      const orders = body.items.map((it: any) => {
+      // Routing de impresora (Bar/Cocina): cada producto en Loggro tiene un
+      // `waiterOrderArea` que define la impresora destino. SIN este campo,
+      // Loggro defaultea TODO a la impresora de Cocina — bug visible: pedir
+      // Corona desde mesero portal y verla salir en la impresora de cocina
+      // en vez de la del bar. Resolvemos consultando el producto en Loggro
+      // si el caller no nos lo pasó. Resultado se cachea en memoria.
+      const orders = await Promise.all(body.items.map(async (it: any) => {
+        const productId = it.productId || it.loggro_id;
         const o: any = {
-          product: it.productId || it.loggro_id,
+          product: productId,
           quantity: Number(it.qty) || 1,
           locationStock: it.locationStock || DEFAULT_LOCATION_STOCK,
         };
+        // Prefiere el waiterOrderArea que pasó el caller (si lo conoce),
+        // sino lo busca en Loggro.
+        const area = it.waiterOrderArea || (await getWaiterOrderArea(productId));
+        if (area) o.waiterOrderArea = area;
         if (Number(it.unit_price) > 0) o.unit_price = Number(it.unit_price);
         const notesArr = Array.isArray(it.notes) ? it.notes : (it.notes ? [String(it.notes)] : []);
         if (notesArr.length > 0) o.notes = notesArr;
@@ -506,7 +736,7 @@ serve(async (req) => {
           o.delivery = it.delivery;
         }
         return o;
-      });
+      }));
 
       const payload: any = {
         group,
@@ -514,11 +744,25 @@ serve(async (req) => {
         orders,
       };
       if (body.mesaId) payload.table = body.mesaId;
-      if (body.seller) payload.seller = body.seller;
+      // Resolver `seller` si vino como cédula. Si NO se puede resolver,
+      // omitimos seller (Loggro acepta orders sin él) en vez de fallar —
+      // así un mesero sin usuario POS configurado puede igual mandar
+      // pedidos a cocina, atribuidos al "default" del negocio. El nombre
+      // del mesero sigue visible en groupName.
+      let sellerWarning: string | null = null;
+      if (body.seller) {
+        const sellerId = await resolveSellerId(body.seller);
+        if (sellerId) {
+          payload.seller = sellerId;
+        } else {
+          sellerWarning = `Seller "${body.seller}" no se pudo mapear a un usuario POS de Loggro. Pedido enviado SIN atribución de mesero — el nombre va en groupName.`;
+          console.warn("[create-order] " + sellerWarning);
+        }
+      }
 
       try {
         const resp = await loggroPost("/orders", payload);
-        return json({ ok: true, order: resp, payload_sent: payload });
+        return json({ ok: true, order: resp, payload_sent: payload, seller_warning: sellerWarning });
       } catch (err) {
         return json({ ok: false, error: String(err), payload_sent: payload }, 500);
       }
@@ -567,30 +811,90 @@ serve(async (req) => {
       const fecha = url.searchParams.get("fecha");
       if (!fecha) return json({ error: "param fecha requerido (YYYY-MM-DD)" }, 400);
 
-      // Traer varias páginas para cubrir ~30 días (invoices API no acepta filtros por fecha,
-      // así que descargamos hasta encontrar facturas fuera del rango).
       const pageSize = 100;
-      const target = new Date(fecha + "T00:00:00-05:00");
-      const diaSig = new Date(target.getTime() + 24 * 3600 * 1000);
+      const COTZ_OFFSET_MS = -5 * 3600 * 1000;
+      const dayOf = (ts: string) => {
+        const utc = new Date(ts).getTime();
+        const co = new Date(utc + COTZ_OFFSET_MS);
+        return co.toISOString().slice(0, 10);
+      };
 
-      // Estrategia: bajar páginas en paralelo cubriendo las últimas ~2500 facturas
-      // (≈2 meses). La API no acepta filtros por fecha, así que descargamos y filtramos.
-      const PAGE_RANGE_SIZE = 25;
-      const pagePromises = [];
-      // Iteramos pages 85–110 (cubre recent history, incluye hoy)
-      for (let p = 85; p < 85 + PAGE_RANGE_SIZE; p++) {
-        pagePromises.push(
-          loggroGet(`/invoices?pagination=true&limit=${pageSize}&page=${p}`)
-            .then(d => ({ page: p, arr: d?.data || (Array.isArray(d) ? d : []) }))
-            .catch(() => ({ page: p, arr: [] }))
-        );
+      // Antes: el loop estaba hardcodeado a paginas 85-110. A medida que crecia
+      // el historico de Loggro, la pagina con "hoy" se movia y el cierre del
+      // dia eventualmente devolvia subset incompleto o vacio sin warning.
+      // Audit rank 31. Replicamos el patron de /cierre-caja-rango:
+      // binary-search para encontrar la ultima pagina con datos, luego bajamos
+      // hacia atras hasta cruzar el dia objetivo.
+
+      const loggroGetPageSafe = async (page: number) => {
+        for (let attempt = 0; attempt < 3; attempt++) {
+          try {
+            const d: any = await loggroGet(`/invoices?pagination=true&limit=${pageSize}&page=${page}`);
+            const arr = d?.data || (Array.isArray(d) ? d : []) || [];
+            return { ok: true, arr };
+          } catch (e) {
+            if (attempt === 2) {
+              console.warn(`[loggro cierre-caja] page=${page} fallo:`, (e as Error)?.message);
+              return { ok: false, arr: [] as any[] };
+            }
+            await new Promise(r => setTimeout(r, 250 * Math.pow(3, attempt)));
+          }
+        }
+        return { ok: false, arr: [] as any[] };
+      };
+
+      // Sondeo binario para ultima pagina con datos.
+      let lo = 0, hi = 300, lastNonEmpty = 0;
+      let probeError = false;
+      while (lo <= hi && !probeError) {
+        const mid = Math.floor((lo + hi) / 2);
+        const r = await loggroGetPageSafe(mid);
+        if (!r.ok) { probeError = true; break; }
+        if (r.arr.length > 0) { lastNonEmpty = mid; lo = mid + 1; }
+        else { hi = mid - 1; }
       }
-      const results = await Promise.all(pagePromises);
+      if (probeError) {
+        return json({ ok: false, error: "Loggro no responde — sondeo de paginas fallo. Intentar de nuevo." }, 503);
+      }
+
+      // Bajamos pagina por pagina desde lastNonEmpty hasta que TODAS las
+      // facturas de la pagina actual sean DEL DIA o ANTERIORES al dia
+      // objetivo. Las facturas mas recientes estan en las paginas mas altas
+      // (Loggro almacena cronologicamente). Capeamos a 50 paginas (5000
+      // facturas, mas que suficiente para un dia).
       const allInvoices: any[] = [];
       const seen = new Set<string>();
-      results.forEach(r => r.arr.forEach((inv: any) => {
-        if (inv?._id && !seen.has(inv._id)) { seen.add(inv._id); allInvoices.push(inv); }
-      }));
+      let stopReached = false;
+      let pagesScanned = 0;
+      let downloadError = false;
+      const MAX_PAGES = 50;
+      let curPage = lastNonEmpty;
+      while (curPage >= 0 && !stopReached && pagesScanned < MAX_PAGES && !downloadError) {
+        const batchPages: number[] = [];
+        for (let i = 0; i < 5 && curPage >= 0; i++) batchPages.push(curPage--);
+        const results = await Promise.all(batchPages.map(async p => ({ page: p, ...(await loggroGetPageSafe(p)) })));
+        pagesScanned += results.length;
+        if (results.some(r => !r.ok)) { downloadError = true; break; }
+
+        // Stop cuando una pagina completa esta ANTES del dia objetivo
+        let allOlderThanTarget = true;
+        for (const r of results) {
+          for (const inv of r.arr) {
+            if (!inv?._id || seen.has(inv._id)) continue;
+            seen.add(inv._id);
+            allInvoices.push(inv);
+            const ts = inv?.createdOn;
+            if (ts) {
+              const d = dayOf(ts);
+              if (d >= fecha) allOlderThanTarget = false;
+            }
+          }
+        }
+        if (allOlderThanTarget) stopReached = true;
+      }
+      if (downloadError) {
+        return json({ ok: false, error: "Loggro tuvo errores transient durante la descarga." }, 503);
+      }
 
       // Filtrar facturas del día en timezone Colombia
       const COTZ_OFFSET_MS = -5 * 3600 * 1000; // UTC-5
@@ -1123,34 +1427,71 @@ serve(async (req) => {
         return co.toISOString().slice(0, 10);
       };
 
+      // Helper con retry para llamadas a Loggro durante el sondeo y descarga.
+      // Si una llamada falla (timeout / 5xx / red) y la marcamos como "vacía",
+      // el sondeo binario puede terminar apuntando a páginas equivocadas y el
+      // bucket resultante quedar vacío. Reintentamos hasta 3 veces antes de
+      // aceptar un "vacío de verdad".
+      const loggroGetPage = async (page: number) => {
+        for (let attempt = 0; attempt < 3; attempt++) {
+          try {
+            const d: any = await loggroGet(`/invoices?pagination=true&limit=${pageSize}&page=${page}`);
+            const arr = d?.data || (Array.isArray(d) ? d : []) || [];
+            return { ok: true, arr };
+          } catch (e) {
+            if (attempt === 2) {
+              console.warn(`[loggro] page=${page} falló 3 veces:`, (e as Error)?.message);
+              return { ok: false, arr: [] as any[] };
+            }
+            // backoff exponencial: 250ms, 750ms
+            await new Promise(r => setTimeout(r, 250 * Math.pow(3, attempt)));
+          }
+        }
+        return { ok: false, arr: [] as any[] };
+      };
+
       // Sondeo binario para encontrar última página no vacía (rápido: ~10 calls).
+      // Si una petición del sondeo falla, NO la contamos como "vacía" — la
+      // tratamos como error y abortamos el sondeo (evita acabar con
+      // lastNonEmpty bajo por culpa de un error transient).
       let lo = 0, hi = 200, lastNonEmpty = 0;
-      while (lo <= hi) {
+      let probeError = false;
+      while (lo <= hi && !probeError) {
         const mid = Math.floor((lo + hi) / 2);
-        const d = await loggroGet(`/invoices?pagination=true&limit=${pageSize}&page=${mid}`).catch(() => null);
-        const arr = d?.data || (Array.isArray(d) ? d : []) || [];
-        if (arr.length > 0) { lastNonEmpty = mid; lo = mid + 1; }
+        const r = await loggroGetPage(mid);
+        if (!r.ok) { probeError = true; break; }
+        if (r.arr.length > 0) { lastNonEmpty = mid; lo = mid + 1; }
         else { hi = mid - 1; }
+      }
+      if (probeError) {
+        return json({ ok: false, error: "Loggro no responde — sondeo de páginas falló tras 3 reintentos. Intentar de nuevo en unos segundos." }, 503);
       }
 
       const allInvoices: any[] = [];
       const seen = new Set<string>();
       let stopReached = false;
       let pagesScanned = 0;
-      const MAX_BACKWARD = 30; // safety: nunca más que 30 páginas (3000 facturas)
+      // Safety cap. Antes era 30 (3000 facturas); para rangos largos o historicos
+      // grandes esto truncaba silenciosamente. Subimos a 200 paginas (20K
+      // facturas) — Atolon Restobar genera ~50 facturas/dia, asi que 200 paginas
+      // cubren ~400 dias. Si aun asi se golpea el cap, devolvemos truncated:true
+      // para que el caller sepa que los totales NO son completos (audit rank 32).
+      const MAX_BACKWARD = 200;
 
       // Bajamos en batches de 5 páginas paralelas, desde la última hacia atrás.
+      // Usamos loggroGetPage (con retry) y abortamos si una página falla, en
+      // vez de tratarla como vacía — así no paramos antes de tiempo.
       let curPage = lastNonEmpty;
-      while (curPage >= 0 && !stopReached && pagesScanned < MAX_BACKWARD) {
+      let downloadError = false;
+      while (curPage >= 0 && !stopReached && pagesScanned < MAX_BACKWARD && !downloadError) {
         const batchPages: number[] = [];
         for (let i = 0; i < 5 && curPage >= 0; i++) batchPages.push(curPage--);
-        const batch = batchPages.map(p =>
-          loggroGet(`/invoices?pagination=true&limit=${pageSize}&page=${p}`)
-            .then(d => ({ page: p, arr: d?.data || (Array.isArray(d) ? d : []) }))
-            .catch(() => ({ page: p, arr: [] }))
-        );
-        const results = await Promise.all(batch);
+        const results = await Promise.all(batchPages.map(async p => ({ page: p, ...(await loggroGetPage(p)) })));
         pagesScanned += results.length;
+
+        // Si alguna falló todos los retries, abortar — no podemos confiar en
+        // el resultado.
+        if (results.some(r => !r.ok)) { downloadError = true; break; }
 
         let allOlderThanFrom = true;
         for (const r of results) {
@@ -1167,6 +1508,9 @@ serve(async (req) => {
         }
         // Si TODAS las facturas del batch son anteriores al "from", paramos
         if (allOlderThanFrom && allInvoices.length > 0) stopReached = true;
+      }
+      if (downloadError) {
+        return json({ ok: false, error: "Loggro no responde — descarga de páginas falló tras 3 reintentos. Intentar de nuevo en unos segundos." }, 503);
       }
 
       // Bucket por día: { ventas, propinas, tickets, anuladas, por_metodo: {} }
@@ -1218,6 +1562,16 @@ serve(async (req) => {
         }
       }
 
+      // Truncated: golpeamos el cap MAX_BACKWARD sin terminar de barrer
+      // hacia atras. Los totales son INCOMPLETOS — el caller debe
+      // mostrar warning visible al usuario (audit rank 32). Antes el
+      // cap se silenciaba: el reporte salia con datos parciales y nadie
+      // sabia.
+      const truncated = pagesScanned >= MAX_BACKWARD && !stopReached;
+      if (truncated) {
+        console.warn(`[loggro cierre-caja-rango] cap MAX_BACKWARD=${MAX_BACKWARD} alcanzado sin cubrir el rango ${from}..${to}. Totales pueden estar incompletos.`);
+      }
+
       const payload = {
         ok: true,
         from, to,
@@ -1226,6 +1580,7 @@ serve(async (req) => {
         pages_scanned: pagesScanned,
         last_non_empty_page: lastNonEmpty,
         stop_reached: stopReached,
+        truncated, // true si MAX_BACKWARD se golpeo sin cubrir el rango completo
         resumen: {
           total_ventas: totalVentas,
           total_propinas: totalPropinas,
@@ -1242,23 +1597,33 @@ serve(async (req) => {
       // cambian). Si termina antes de hoy, TTL es 24h (datos históricos no
       // cambian). Esto baja muchísimo la carga en Loggro para queries de
       // meses anteriores.
-      try {
-        const today = new Date(Date.now() - 5 * 3600 * 1000).toISOString().slice(0, 10);
-        const ttlMs = to >= today ? 5 * 60 * 1000 : 24 * 60 * 60 * 1000;
-        const expiresAt = new Date(Date.now() + ttlMs).toISOString();
-        await sb().from("loggro_ayb_cache").upsert({
-          cache_key: cacheKey,
-          from_date: from,
-          to_date: to,
-          payload,
-          cached_at: new Date().toISOString(),
-          expires_at: expiresAt,
-        }, { onConflict: "cache_key" });
-      } catch (e) {
-        console.warn("[loggro-cache] write failed:", (e as Error).message);
+      //
+      // NO cachear resultados sospechosos NI truncados. Sospechosos:
+      // > 50 invoices con $0 ventas = filtrado/descarga falló. Truncados:
+      // MAX_BACKWARD pegado sin terminar = totales incompletos, cachearlos
+      // 5min-24h dejaria al dashboard mostrar datos parciales sin reintentar.
+      const sospechoso = allInvoices.length > 50 && totalVentas === 0 && totalAnuladas === 0;
+      if (sospechoso || truncated) {
+        console.warn(`[loggro-cache] NO se cachea (sospechoso=${sospechoso}, truncated=${truncated})`);
+      } else {
+        try {
+          const today = new Date(Date.now() - 5 * 3600 * 1000).toISOString().slice(0, 10);
+          const ttlMs = to >= today ? 5 * 60 * 1000 : 24 * 60 * 60 * 1000;
+          const expiresAt = new Date(Date.now() + ttlMs).toISOString();
+          await sb().from("loggro_ayb_cache").upsert({
+            cache_key: cacheKey,
+            from_date: from,
+            to_date: to,
+            payload,
+            cached_at: new Date().toISOString(),
+            expires_at: expiresAt,
+          }, { onConflict: "cache_key" });
+        } catch (e) {
+          console.warn("[loggro-cache] write failed:", (e as Error).message);
+        }
       }
 
-      return json(payload);
+      return json({ ...payload, sospechoso: sospechoso || undefined, truncated: truncated || undefined });
     }
 
     // POST /loggro-sync/create-provider — crear proveedor en Loggro
@@ -1462,6 +1827,12 @@ serve(async (req) => {
       // Items con stock distinto de 0 (positivo o negativo)
       const positivos: Array<{ id: string; name: string; stock: number }> = [];
       const negativos: Array<{ id: string; name: string; stock: number }> = [];
+      // rank 34: antes el worker silenciaba errores con catch (_). Si la API
+      // Loggro fallaba para 50/1000 ingredients, esos 50 NO se reseteaban y
+      // el operador no se enteraba — el reset se daba por exitoso. Ahora
+      // capturamos los IDs fallidos y los retornamos para que el usuario
+      // pueda reintentar selectivamente.
+      const fallidos: Array<{ id: string; error: string }> = [];
       const ids = ingredients.map((i: any) => i?._id || i?.id).filter(Boolean);
       let idx = 0;
       async function worker() {
@@ -1479,10 +1850,26 @@ serve(async (req) => {
             } else if (totalStock < -0.0001) {
               negativos.push({ id, name: d?.name || "", stock: Math.abs(totalStock) });
             }
-          } catch (_) { /* skip */ }
+          } catch (e) {
+            fallidos.push({ id, error: e instanceof Error ? e.message.slice(0, 200) : String(e).slice(0, 200) });
+          }
         }
       }
       await Promise.all(Array.from({ length: 10 }, () => worker()));
+
+      // rank 34: si fallaron mas del 5% NO procedemos con los movimientos.
+      // El reset es destructivo (SALIDA + ENTRADA_AJUSTE en Loggro): si tenemos
+      // vision incompleta del estado actual, esta visto que produce diferencias
+      // grandes contra el libro contable. Mejor abortar y pedir reintento.
+      const tasaFallo = ids.length ? fallidos.length / ids.length : 0;
+      if (tasaFallo > 0.05) {
+        return json({
+          ok: false,
+          error: `Reset abortado: ${fallidos.length}/${ids.length} ingredients no respondieron (${Math.round(tasaFallo * 100)}%). Reintentar cuando la API Loggro este estable.`,
+          fallidos: fallidos.slice(0, 50),
+          total_fallidos: fallidos.length,
+        }, 503);
+      }
 
       if (dryRun) {
         return json({
@@ -1495,6 +1882,7 @@ serve(async (req) => {
           stock_total_a_reponer: negativos.reduce((s, x) => s + x.stock, 0),
           all_positivos: positivos,
           all_negativos: negativos,
+          fallidos_consulta: fallidos,
         });
       }
 
@@ -1519,15 +1907,17 @@ serve(async (req) => {
         movements.push({ tipo: "salida_positivos", movement_id: result.body?._id || "", items: positivos.length });
       }
 
-      // 2) Movimiento ENTRADA para items con stock negativo (los lleva a 0)
-      //    Usamos type=1 (compra/ingreso) ya que type=11 con isSubtracted=false
-      //    no funciona como entrada en Loggro (siempre resta).
+      // 2) Movimiento ENTRADA AJUSTE para items con stock negativo (los lleva a 0)
+      //    type=3 (Entrada Ajuste) — el patron correcto que /load-baseline
+      //    documenta explicitamente. Antes usabamos type=1 (Compra) que
+      //    contamina los libros con asientos de compra ficticios por el
+      //    monto repuesto (audit rank 33).
       if (negativos.length > 0) {
         const result = await loggroRaw("POST", "/inventories", {
           business: businessId,
           user: userId,
           date: now,
-          type: 1, isSubtracted: false, isProduction: false, isMoveTo: false,
+          type: 3, isSubtracted: false, isProduction: false, isMoveTo: false,
           deleted: false,
           note: "Reset a 0 — repone stock negativo (baseline Atolón OS)",
           ingredients: negativos.map(it => ({ ingredient: it.id, quantity: it.stock, price: 0 })),
@@ -1546,6 +1936,10 @@ serve(async (req) => {
         items_negativos_repuestos: negativos.length,
         stock_total_sacado: positivos.reduce((s, x) => s + x.stock, 0),
         stock_total_repuesto: negativos.reduce((s, x) => s + x.stock, 0),
+        // rank 34: visibilidad de items que NO se pudieron consultar (<=5% del total,
+        // sino habriamos abortado arriba). El operador puede reintentar.
+        ingredients_fallidos_consulta: fallidos.length,
+        fallidos_muestra: fallidos.slice(0, 20),
       });
     }
 
@@ -2084,9 +2478,13 @@ serve(async (req) => {
       const movements: any[] = [];
 
       if (entradas.length > 0) {
+        // type=3 (Entrada Ajuste) — NO type=1 (Compra). Una reconciliacion
+        // de inventario no es una compra; usar type=1 contaminaria el libro
+        // de compras de Loggro Pyme con asientos ficticios por el monto
+        // repuesto (audit rank 33).
         const r = await loggroRaw("POST", "/inventories", {
           business: businessId, user: userId, date: now,
-          type: 1, isSubtracted: false, isProduction: false, isMoveTo: false, deleted: false,
+          type: 3, isSubtracted: false, isProduction: false, isMoveTo: false, deleted: false,
           note: "Reconciliación Atolón OS — entradas",
           ingredients: entradas.map(e => ({ ingredient: e.id, quantity: e.quantity, price: 0 })),
           createdOn: now, modifiedOn: now,
@@ -2258,11 +2656,93 @@ serve(async (req) => {
       return json({ ok: r.ok, status: r.status, body: r.body });
     }
 
+    // POST /loggro-sync/update-movement-costs
+    // Body: { movement_id, costs: { <loggro_ingredient_id>: <precio_unit> } }
+    // Corrige SOLO el precio unitario de los ingredientes del movimiento
+    // (la cantidad queda intacta → NO duplica inventario). Usado cuando se
+    // recibió antes de tener precio (entró a $0) y luego se aplica la factura.
+    if (req.method === "POST" && path === "/update-movement-costs") {
+      const body = await req.json().catch(() => ({}));
+      const id = body.movement_id;
+      const costs = body.costs || {};
+      if (!id || Object.keys(costs).length === 0) {
+        return json({ ok: false, error: "movement_id y costs requeridos" }, 400);
+      }
+      // Obtener el movimiento (el GET /inventories/{id} responde 500 en esta
+      // API; lo buscamos en la lista reciente).
+      let mv: any = null;
+      for (const p of [
+        `/inventories?pagination=true&limit=300&page=0&sort=-createdOn`,
+        `/inventories?limit=300&sort=-createdOn`,
+        `/inventories?limit=300`,
+      ]) {
+        try {
+          const d: any = await loggroGet(p);
+          const list = Array.isArray(d) ? d : d?.data || d?.items || d?.results || [];
+          mv = list.find((m: any) => String(m._id || m.id) === String(id));
+          if (mv) break;
+        } catch (_) { /* try next */ }
+      }
+      if (!mv) return json({ ok: false, error: "movimiento no encontrado en /inventories" }, 404);
+
+      let tocados = 0;
+      const nuevos = (mv.ingredients || []).map((g: any) => {
+        const ingId = (g.ingredient && (g.ingredient._id || g.ingredient.id)) || g.ingredient;
+        const np = costs[String(ingId)];
+        const precioActual = Number(g.price ?? g.cost) || 0;
+        let precio = precioActual;
+        if (np != null && Number(np) > 0 && Number(np) !== precioActual) {
+          precio = Number(np);
+          tocados++;
+        }
+        return {
+          ingredient: ingId,
+          quantity: Number(g.quantity ?? g.amount) || 0,  // cantidad INTACTA
+          price: precio,
+        };
+      });
+      if (tocados === 0) {
+        return json({ ok: true, skipped: "sin cambios de costo", movement_id: id });
+      }
+      const r = await loggroRaw("PATCH", `/inventories/${id}`, {
+        ingredients: nuevos,
+        modifiedOn: new Date().toISOString(),
+      });
+      return json({ ok: r.ok, status: r.status, ingredientes_actualizados: tocados, body: r.body });
+    }
+
     if (req.method === "POST" && path === "/create-inventory-movement") {
       const body = await req.json().catch(() => ({}));
 
       // Loggro requiere business + user en el body de /inventory
       const { businessId, userId } = await getLoggroIdentity();
+
+      // Convertir cantidades/precio a la unidad del ingrediente en Loggro.
+      // Si la factura viene en KG y el ingrediente en Loggro está en Gr,
+      // convertimos qty ×1000 y price ÷1000 (el total no cambia).
+      const conversiones: any[] = [];
+      const ingredientesPayload = await Promise.all((body.ingredients || []).map(async (it: any) => {
+        const ingId = it.ingredient_id || it.ingredient;
+        let quantity = Number(it.quantity) || 0;
+        // Loggro usa 'price' para el costo unitario, no 'cost'. Aceptamos ambos.
+        let price = Number(it.price ?? it.cost) || 0;
+        const srcUnit = it.unit || it.unidad || null;
+        if (srcUnit && ingId) {
+          try {
+            const d: any = await loggroGet(`/ingredients/${ingId}`);
+            const dstUnit = d?.unit?.name || d?.measurementUnit?.name || null;
+            const f = factorConversion(String(srcUnit), String(dstUnit || ""));
+            if (f > 0 && f !== 1) {
+              const qO = quantity, pO = price;
+              quantity = quantity * f;
+              price = price / f;
+              conversiones.push({ ingredient: ingId, from: srcUnit, to: dstUnit, factor: f,
+                quantity: `${qO} → ${quantity}`, price: `${pO} → ${price}` });
+            }
+          } catch (_e) { /* si no se puede leer el ingrediente, no convertir */ }
+        }
+        return { ingredient: ingId, quantity, price };
+      }));
 
       // Armar payload exacto de Loggro
       const now = new Date().toISOString();
@@ -2276,13 +2756,7 @@ serve(async (req) => {
         isMoveTo: !!body.isMoveTo,
         deleted: false,
         note: body.note || "",
-        ingredients: (body.ingredients || []).map((it: any) => ({
-          ingredient: it.ingredient_id || it.ingredient,
-          quantity:   Number(it.quantity) || 0,
-          // Loggro usa 'price' para el costo unitario, no 'cost'.
-          // Aceptamos ambos en el body por compatibilidad.
-          price:      Number(it.price ?? it.cost) || 0,
-        })),
+        ingredients: ingredientesPayload,
         createdOn: now,
         modifiedOn: now,
       };
@@ -2305,6 +2779,7 @@ serve(async (req) => {
       return json({
         ok: true,
         movement_id: result.body?._id || result.body?.id || null,
+        conversiones,
         loggro_response: result.body,
       });
     }

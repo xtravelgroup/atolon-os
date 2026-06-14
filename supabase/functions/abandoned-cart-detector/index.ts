@@ -72,8 +72,15 @@ Deno.serve(async (req) => {
       const fechaSolo = String(cart.fecha_visita).substring(0, 10);
       // Construir filtro OR: email O telefono
       const orParts: string[] = [];
-      if (cart.email)    orParts.push(`email.eq.${cart.email}`);
-      if (cart.telefono) orParts.push(`telefono.eq.${cart.telefono}`);
+      // Sanitizar email/telefono antes de interpolar en .or() — PostgREST
+      // interpreta ,()* como separadores/operadores. cart.email viene de
+      // input del usuario; un email con coma inyectaba una clausula falsa
+      // y matcheaba reservas que no eran del cart.
+      const sanitize = (s: string) => String(s || "").replace(/[,()*]/g, "");
+      const safeEmail = sanitize(cart.email);
+      const safeTel = sanitize(cart.telefono);
+      if (safeEmail) orParts.push(`email.eq.${safeEmail}`);
+      if (safeTel)   orParts.push(`telefono.eq.${safeTel}`);
       if (orParts.length > 0) {
         const q = supabase
           .from("reservas")

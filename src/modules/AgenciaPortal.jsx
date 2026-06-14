@@ -117,10 +117,11 @@ function NuevaReserva({ agencia, user, onCreated, vistaPrecios = "ambos" }) {
     if (!supabase) return;
     const [{ data: incs }, { data: reservas }, { data: canjes }] = await Promise.all([
       supabase.from("b2b_incentivos").select("*")
-        .or(`aliado_id.is.null,aliado_id.eq.${agencia.id}`)
+        .or(`aliado_id.is.null,aliado_id.eq.${String(agencia.id || "").replace(/[,()*\s]/g, "")}`)
         .eq("activo", true).eq("tipo", "acumulacion"),
       supabase.from("reservas").select("pax, fecha")
-        .eq("aliado_id", agencia.id).neq("estado", "cancelado").neq("canal", "GRUPO"),
+        .eq("aliado_id", agencia.id).neq("estado", "cancelado").neq("canal", "GRUPO")
+        .neq("canal", "Cortesía").neq("forma_pago", "Cortesía"),
       supabase.from("b2b_premios_canjes").select("incentivo_id, pasadias_usadas")
         .eq("aliado_id", agencia.id),
     ]);
@@ -247,6 +248,8 @@ function NuevaReserva({ agencia, user, onCreated, vistaPrecios = "ambos" }) {
     let estado = "pendiente_pago";
     let abono  = 0;
     let saldo  = totalFinal;
+    let totalAGuardar = totalFinal;
+    let descuentoCortesiaPremio = 0;
     let linkExpira = null;
     let comprob = extras.comprob_url || null;
 
@@ -268,10 +271,18 @@ function NuevaReserva({ agencia, user, onCreated, vistaPrecios = "ambos" }) {
       estado = "pendiente_comprobante";
       linkExpira = new Date(Date.now() + 60 * 60 * 1000).toISOString();
     } else if (esPremio) {
-      // Premio canjeado → confirmado automáticamente, sin cobro
+      // Premio canjeado → tratamiento de cortesía total. Mismo patrón que el
+      // canje manual del admin en B2B.jsx (commit fc1e012) y que las cortesías
+      // creadas en Reservas.jsx: total=0, abono=0, saldo=0,
+      // descuento_cortesia=valor original, estado=confirmado.
+      // Antes guardábamos abono=totalFinal lo que inflaba reportes de revenue
+      // del aliado: la reserva aparecía como "pagada" sin que haya entrado
+      // dinero.
       estado = "confirmado";
-      abono  = totalFinal;
+      abono  = 0;
       saldo  = 0;
+      totalAGuardar = 0;
+      descuentoCortesiaPremio = totalFinal;
     }
 
     // Generar URL de Wompi para pago en línea
@@ -306,14 +317,26 @@ function NuevaReserva({ agencia, user, onCreated, vistaPrecios = "ambos" }) {
       return;
     }
 
+    // Para reservas pagadas con premio, anexamos al notas el nombre del
+    // incentivo para auditoría (igual que B2B.jsx → guardarCanje).
+    const incentivoSel = esPremio && extras.incentivo_id
+      ? (premiosDisponibles.find(p => p.incentivo.id === extras.incentivo_id)?.incentivo || null)
+      : null;
+    const notasFinales = esPremio && incentivoSel
+      ? ((form.notas || "").trim()
+          ? `${(form.notas || "").trim()} · Premio aplicado: ${incentivoSel.nombre}`
+          : `Premio aplicado: ${incentivoSel.nombre}`)
+      : form.notas;
+
     const { error } = await supabase.from("reservas").insert({
       id: reservaId, fecha: form.fecha, salida_id: form.salida_id || null, tipo: form.tipo,
       canal: "B2B", nombre: form.nombre, contacto: form.contacto,
       pax: paxT, pax_a: form.pax_a || 1, pax_n: form.pax_n || 0,
-      precio_u: precioUnitario, total: totalFinal,
+      precio_u: precioUnitario, total: totalAGuardar,
       precio_neto: precioNeto, precio_publico: precioPublico,
       abono, saldo, estado,
-      notas: form.notas,
+      descuento_cortesia: descuentoCortesiaPremio || null,
+      notas: notasFinales,
       forma_pago: metodoPago, link_pago: linkGenerado,
       link_expira_at: linkExpira,
       comprobante_url: comprob,
@@ -325,15 +348,19 @@ function NuevaReserva({ agencia, user, onCreated, vistaPrecios = "ambos" }) {
     if (error) { setMsg("Error al guardar la reserva"); setSaving(false); return; }
 
     // ── Registrar canje de premio si aplica ──────────────────────────────
+    // Mismo formato de ID que B2B.jsx → guardarCanje para consistencia
+    // entre canjes desde el admin y desde el portal del aliado.
     if (esPremio && extras.incentivo_id) {
       await supabase.from("b2b_premios_canjes").insert({
-        id: `CANJE-${Date.now()}`,
+        id: `CNJ-${Date.now()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`,
         aliado_id: agencia.id,
         incentivo_id: extras.incentivo_id,
         reserva_id: reservaId,
         pasadias_usadas: 1,
         fecha: form.fecha,
-        nota: `Premio canjeado — reserva ${reservaId}`,
+        nota: incentivoSel
+          ? `Canje desde portal aliado — ${incentivoSel.nombre} aplicado a ${reservaId}`
+          : `Premio canjeado — reserva ${reservaId}`,
       });
     }
 
@@ -392,6 +419,24 @@ function NuevaReserva({ agencia, user, onCreated, vistaPrecios = "ambos" }) {
   return (
     <div style={{ background: B.navyMid, borderRadius: 12, padding: 24 }}>
       <h3 style={{ fontSize: 16, color: B.sand, marginBottom: 8 }}>Nueva Reserva</h3>
+
+      {/* Banner de premios disponibles — al ojo desde el inicio */}
+      {premiosDisponibles.length > 0 && (() => {
+        const totalSaldo = premiosDisponibles.reduce((s, p) => s + p.saldo, 0);
+        return (
+          <div style={{ background: `linear-gradient(135deg, ${B.sand}33 0%, ${B.success}33 100%)`, border: `1.5px solid ${B.sand}66`, borderRadius: 12, padding: "12px 16px", marginBottom: 16, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+            <div style={{ fontSize: 28 }}>🎁</div>
+            <div style={{ flex: 1, minWidth: 200 }}>
+              <div style={{ fontSize: 13, fontWeight: 800, color: B.sand }}>
+                Tienes {totalSaldo} pasadía{totalSaldo !== 1 ? "s" : ""} gratis disponible{totalSaldo !== 1 ? "s" : ""}
+              </div>
+              <div style={{ fontSize: 11, color: "rgba(255,255,255,0.55)", marginTop: 2 }}>
+                {premiosDisponibles.map(p => `${p.incentivo.nombre} (${p.saldo})`).join(" · ")} — selecciónalas al elegir método de pago.
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Progress */}
       <div style={{ display: "flex", gap: 8, marginBottom: 24 }}>
@@ -1296,7 +1341,7 @@ function IncentivosPortal({ agencia }) {
       // Incentivos globales (aliado_id IS NULL) + los de esta agencia
       const { data } = await supabase.from("b2b_incentivos")
         .select("*")
-        .or(`aliado_id.is.null,aliado_id.eq.${agencia.id}`)
+        .or(`aliado_id.is.null,aliado_id.eq.${String(agencia.id || "").replace(/[,()*\s]/g, "")}`)
         .eq("activo", true)
         .order("fecha_fin", { ascending: true });
       const inc = data || [];
@@ -1321,7 +1366,7 @@ function IncentivosPortal({ agencia }) {
           prog[i.id] = { actual, pct: Math.min(100, Math.round((actual / (i.meta_valor || 1)) * 100)) };
         } else if (i.tipo === "acumulacion") {
           const [{ data: resData }, { data: canjesData }] = await Promise.all([
-            supabase.from("reservas").select("pax, fecha").eq("aliado_id", agencia.id).neq("estado", "cancelado"),
+            supabase.from("reservas").select("pax, fecha").eq("aliado_id", agencia.id).neq("estado", "cancelado").neq("canal", "Cortesía").neq("forma_pago", "Cortesía"),
             supabase.from("b2b_premios_canjes").select("pasadias_usadas").eq("aliado_id", agencia.id).eq("incentivo_id", i.id),
           ]);
           const ganados = calcPremiosGanadosLocal(resData || [], i);
@@ -2635,7 +2680,7 @@ function SetPasswordScreen({ user, onDone }) {
 // ═══════════════════════════════════════════════
 export default function AgenciaPortal() {
   const { isMobile, isTablet } = useDevice();
-  const MOBILE_TABS = ["reservar", "historial", "qr", "info", "media"];
+  const MOBILE_TABS = ["reservar", "historial", "incentivos", "qr", "info", "media"];
   const [session, setSession] = useState(null);
   const [tab, setTab]         = useState("reservar");
   const [refreshKey, setRefreshKey] = useState(0);
@@ -2714,7 +2759,7 @@ export default function AgenciaPortal() {
             ["qr", "Link / QR"],
             ["grupos", "🎪 Grupos"],
             ...(!isAdmin ? [["puntos", "🏆 Mis Puntos"]] : []),
-            ...(isAdmin ? [["incentivos", "🎯 Incentivos"]] : []),
+            ["incentivos", "🎯 Incentivos"],
             ["info", "📢 Novedades"],
             ["media", "📲 Redes Sociales"],
             ...(isAdmin ? [["preferencias", "⚙ Preferencias"]] : []),
@@ -2732,7 +2777,7 @@ export default function AgenciaPortal() {
         {tab === "qr" && <QRSection agencia={agencia} />}
         {tab === "grupos" && <GruposPortal agencia={agencia} />}
         {tab === "puntos" && !isAdmin && <PuntosVendedor user={user} agencia={agencia} />}
-        {tab === "incentivos" && isAdmin && <IncentivosPortal agencia={agencia} />}
+        {tab === "incentivos" && <IncentivosPortal agencia={agencia} />}
         {tab === "info"  && <InfoPortal />}
         {tab === "media" && <MediaPortal />}
         {tab === "preferencias" && isAdmin && <PreferenciasAgencia agencia={agencia} onSaved={handlePrefsSaved} vendedor={vendedor} />}

@@ -6,6 +6,7 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { B, COP, fmtFecha, todayStr } from "../brand";
 import { supabase } from "../lib/supabase";
+import { logAccion } from "../lib/logAccion";
 import { useBreakpoint } from "../lib/responsive.js";
 import FacturaProveedorModal from "../components/FacturaProveedorModal";
 import LogisticaOCModal from "../components/LogisticaOCModal";
@@ -241,6 +242,7 @@ function TabOrdenes({ ordenes, reload, currentUser }) {
   const [openCotizResp, setOpenCotizResp] = useState(null);
   const [openEditar, setOpenEditar] = useState(null);
   const [openUnir,   setOpenUnir]   = useState(null);
+  const [openDetalle, setOpenDetalle] = useState(null);
 
   const filtradas = useMemo(() => {
     let list = ordenes;
@@ -280,6 +282,22 @@ function TabOrdenes({ ordenes, reload, currentUser }) {
 
   return (
     <div>
+      {openDetalle && (
+        <DetalleOCModal
+          oc={openDetalle}
+          onClose={() => setOpenDetalle(null)}
+          onEditar={(o) => setOpenEditar(o)}
+          onFactura={(o) => setOpenFactura(o)}
+          onLogistica={(o) => setOpenLogistica(o)}
+          onUnir={(o) => setOpenUnir(o)}
+          onEmail={(o) => setOpenEmail(o)}
+          onCotizResp={(o) => setOpenCotizResp(o)}
+          onEnviada={(o) => marcarEnviada(o)}
+          editable={OC_EDITABLE(openDetalle)}
+        />
+      )}
+      {!openDetalle && (
+      <>
       {/* Filtros */}
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 14, alignItems: "center" }}>
         <input type="text" placeholder="Buscar código, proveedor, requisición…" value={busqueda} onChange={e => setBusqueda(e.target.value)}
@@ -314,16 +332,17 @@ function TabOrdenes({ ordenes, reload, currentUser }) {
                   onClick={(e) => {
                     // No abrir si el click fue en un botón/link/input adentro
                     if (e.target.closest("button, a, input, select, textarea")) return;
-                    if (OC_EDITABLE(oc)) setOpenEditar(oc);
+                    setOpenDetalle(oc);
                   }}
+                  title="Ver detalle completo de la orden de compra"
                   style={{
                   background: B.navy, borderRadius: 10, padding: "12px 14px",
                   border: `1px solid ${B.navyLight}`, borderLeft: `4px solid ${B.sand}`,
                   display: "flex", flexDirection: isMobile ? "column" : "row", gap: 10, justifyContent: "space-between",
-                  cursor: OC_EDITABLE(oc) ? "pointer" : "default",
+                  cursor: "pointer",
                   transition: "background 0.15s",
                 }}
-                  onMouseEnter={e => { if (OC_EDITABLE(oc)) e.currentTarget.style.background = B.navyMid; }}
+                  onMouseEnter={e => { e.currentTarget.style.background = B.navyMid; }}
                   onMouseLeave={e => { e.currentTarget.style.background = B.navy; }}>
                   <div style={{ flex: 1 }}>
                     <div style={{ fontSize: 13, fontWeight: 800, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
@@ -361,53 +380,8 @@ function TabOrdenes({ ordenes, reload, currentUser }) {
                         )}
                       </div>
                     )}
-                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                      {OC_EDITABLE(oc) && (
-                        <button onClick={() => setOpenEditar(oc)}
-                          style={btnAccion(B.sand)}
-                          title={oc.enviada_at
-                            ? "Editar OC tras respuesta del proveedor (cantidades, precios, devolver items a mesa)"
-                            : "Editar items, cantidades, proveedor de la OC"}>
-                          ✏️ Editar
-                        </button>
-                      )}
-                      {OC_EDITABLE(oc) && (
-                        <button onClick={() => setOpenUnir(oc)}
-                          style={btnAccion("#a78bfa")}
-                          title="Unir esta OC con otra del mismo proveedor (consolida items y reqs)">
-                          🔗 Unir
-                        </button>
-                      )}
-                      <button onClick={() => setOpenEmail(oc)}
-                        style={btnAccion(B.pink)}
-                        title="Enviar OC al proveedor por correo con PDF">
-                        📧 Email
-                      </button>
-                      {OC_EDITABLE(oc) ? (
-                        <button onClick={() => marcarEnviada(oc)}
-                          style={btnAccion(B.sky)}
-                          title="Marcar como enviada al proveedor — bloquea edición y no permite agregar más items">
-                          📤 Enviada a proveedor
-                        </button>
-                      ) : (
-                        <span style={{ ...btnAccion(B.success + "44"), cursor: "default", color: B.success, display: "inline-flex", alignItems: "center", gap: 4 }}
-                          title={`Enviada${oc.enviada_at ? " el " + fmtFecha(oc.enviada_at.slice(0,10)) : ""} — bloqueada para nuevos items`}>
-                          🔒 Enviada
-                        </span>
-                      )}
-                      <button onClick={() => setOpenCotizResp(oc)}
-                        style={btnAccion(oc.cotizacion_resp_aprobada ? B.success : oc.cotizacion_resp_data ? B.warning : "#a78bfa")}
-                        title="Cotización-respuesta del proveedor">
-                        {oc.cotizacion_resp_aprobada ? "📋✓ Cotiz" : oc.cotizacion_resp_data ? "📋⏳ Cotiz" : "📋 Cotiz Resp"}
-                      </button>
-                      <button onClick={() => setOpenFactura(oc)}
-                        style={btnAccion(oc.factura_aplicada ? B.success : B.warning)}>
-                        {oc.factura_aplicada ? "📄✓ Factura" : "📎 Factura"}
-                      </button>
-                      <button onClick={() => setOpenLogistica(oc)}
-                        style={btnAccion(B.sky)}>
-                        🚚 Logística
-                      </button>
+                    <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginTop: 4 }}>
+                      Abrir para ver detalle y acciones (editar, factura, logística…) →
                     </div>
                   </div>
                 </div>
@@ -416,6 +390,8 @@ function TabOrdenes({ ordenes, reload, currentUser }) {
           </div>
         )
       }
+      </>
+      )}
 
       {openFactura && <FacturaProveedorModal oc={openFactura} onClose={() => setOpenFactura(null)} reload={reload} currentUser={currentUser} />}
       {openLogistica && <LogisticaOCModal oc={openLogistica} onClose={() => setOpenLogistica(null)} reload={reload} currentUser={currentUser} />}
@@ -423,6 +399,412 @@ function TabOrdenes({ ordenes, reload, currentUser }) {
       {openCotizResp && <CotizacionRespuestaModal oc={openCotizResp} onClose={() => setOpenCotizResp(null)} reload={reload} currentUser={currentUser} />}
       {openEditar && <EditarOCModal oc={openEditar} ordenes={ordenes} onClose={() => setOpenEditar(null)} reload={reload} currentUser={currentUser} />}
       {openUnir && <UnirOCModal oc={openUnir} ordenes={ordenes} onClose={() => setOpenUnir(null)} reload={reload} currentUser={currentUser} />}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// DETALLE OC — pantalla de trazabilidad completa (requisición → OC → enviada
+// → cotización → recepción → factura → pagos → historial)
+// ═══════════════════════════════════════════════════════════════════════════
+function DetalleOCModal({ oc, onClose, onEditar, onFactura, onLogistica, onUnir, onEmail, onCotizResp, onEnviada, editable }) {
+  const { isMobile } = useBreakpoint();
+  const [reqs, setReqs] = useState([]);
+  const [cotis, setCotis] = useState([]);
+  const [emails, setEmails] = useState([]);
+  const [muelle, setMuelle] = useState([]);
+  const [transp, setTransp] = useState([]);
+  const [pagos, setPagos] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      setLoading(true);
+      // El link a requisición puede estar en la OC o, si la OC fue
+      // consolidada, en cada item (items[].req_ids).
+      const reqDeItems = (Array.isArray(oc.items) ? oc.items : [])
+        .flatMap(it => Array.isArray(it.req_ids) ? it.req_ids : (it.req_id ? [it.req_id] : []));
+      const reqIds = Array.from(new Set([
+        ...((Array.isArray(oc.requisicion_ids) ? oc.requisicion_ids : []) || []),
+        ...(oc.requisicion_id ? [oc.requisicion_id] : []),
+        ...reqDeItems,
+      ].filter(Boolean)));
+      const [rq, ct, em, mu, tr, pg] = await Promise.all([
+        reqIds.length
+          ? supabase.from("requisiciones").select("id, descripcion, area, solicitante, prioridad, estado, fecha, fecha_necesaria, justificacion, items, total, aprobador_nombre, aprobada_at").in("id", reqIds)
+          : Promise.resolve({ data: [] }),
+        supabase.from("cotizaciones").select("id, cotizacion_numero, fecha_cotizacion, total, estado, archivo_url, proveedor_nombre, created_at").eq("oc_id", oc.id),
+        supabase.from("oc_emails_enviados").select("enviado_a, cc, asunto, con_pdf, enviado_at, enviado_por").eq("oc_id", oc.id).order("enviado_at", { ascending: false }),
+        supabase.from("oc_entregas_muelle").select("estado, fecha_programada, ubicacion, entregado_at, recibido_por, notas, created_at").eq("oc_id", oc.id).order("created_at", { ascending: false }),
+        supabase.from("oc_transporte_atolon").select("estado, embarcacion_nombre, fecha_zarpe, zarpado_at, recibido_atolon_at, recibido_por, bodega_destino, notas, created_at").eq("oc_id", oc.id).order("created_at", { ascending: false }),
+        supabase.from("cxp_pagos").select("fecha_pago, monto, metodo, referencia, cuenta_origen, comprobante_url, notas, created_at").eq("oc_id", oc.id).order("fecha_pago", { ascending: true }),
+      ]);
+      if (!alive) return;
+      setReqs(rq.data || []); setCotis(ct.data || []); setEmails(em.data || []);
+      setMuelle(mu.data || []); setTransp(tr.data || []); setPagos(pg.data || []);
+      setLoading(false);
+    })();
+    return () => { alive = false; };
+  }, [oc.id]);
+
+  const badge = OC_BADGE[oc.estado] || { bg: B.navyLight, color: "rgba(255,255,255,0.5)", label: oc.estado };
+  const items = Array.isArray(oc.items) ? oc.items : [];
+  const recibidos = Array.isArray(oc.recibidos) ? oc.recibidos : [];
+  const hist = Array.isArray(oc.cambios_historial) ? oc.cambios_historial : [];
+  const totalPagosDetalle = pagos.reduce((s, p) => s + Number(p.monto || 0), 0);
+  // Parte CXP (cuentas por pagar): monto_pagado agrega cxp_pagos.
+  const cxpPart = Math.max(Number(oc.monto_pagado || 0), totalPagosDetalle);
+  // Anticipo: se registra aparte en la OC, NO en cxp_pagos. Cuenta como
+  // pagado salvo que ya esté representado como un cxp_pago (misma referencia).
+  const anticipoMonto = oc.anticipo_pagado ? Number(oc.anticipo_monto || 0) : 0;
+  const anticipoEnCxp = oc.anticipo_pagado && oc.anticipo_referencia_pago &&
+    pagos.some(p => p.referencia && p.referencia === oc.anticipo_referencia_pago);
+  const anticipoPart = anticipoEnCxp ? 0 : anticipoMonto;
+  const montoPagado = cxpPart + anticipoPart;
+  const saldo = Number(oc.total || 0) - montoPagado;
+  const itemNombre = (it) => it.nombre || it.descripcion || it.item || it.producto || "—";
+  const itemCant = (it) => it.cant ?? it.cantidad ?? it.qty ?? "—";
+  const itemPrecio = (it) => Number(it.precioU ?? it.precio_unitario ?? it.precio ?? it.valor_unitario ?? 0);
+  const itemTotal = (it) => Number(it.subtotal ?? it.total ?? (itemPrecio(it) * (Number(itemCant(it)) || 0))) || 0;
+  // Mapa id→item para resolver lo recibido (recibidos[] = {item_id, cant_recibida}).
+  const itemsById = {};
+  (Array.isArray(oc.items) ? oc.items : []).forEach(it => { if (it.id) itemsById[it.id] = it; });
+  // Cotización ORIGINAL (snapshot, no se pisa con la factura). Se compara
+  // contra lo facturado (oc.items[].precioU = costo final tras aplicar factura).
+  const cotData = oc.cotizacion_resp_data && typeof oc.cotizacion_resp_data === "object" ? oc.cotizacion_resp_data : null;
+  const cotItems = Array.isArray(cotData?.items) ? cotData.items : [];
+  const cotByIdx = {};
+  cotItems.forEach((c, i) => { const k = (c.oc_idx ?? i); cotByIdx[k] = c; });
+  const cotSubtotal = cotItems.reduce((s, c) => s + (Number(c.precio_unitario) || 0) * (Number(c.cantidad) || 0), 0);
+  const factSubtotal = Number(oc.factura_subtotal) || (Array.isArray(oc.items) ? oc.items.reduce((s, it) => s + itemTotal(it), 0) : 0);
+  const difTotal = factSubtotal - cotSubtotal;
+  const fdt = (v) => v ? new Date(v).toLocaleString("es-CO", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "—";
+
+  const Sec = ({ icon, titulo, color = B.sand, children, sub }) => (
+    <div style={{ background: B.navyMid, borderRadius: 10, border: `1px solid ${B.navyLight}`, borderLeft: `4px solid ${color}`, marginBottom: 12, overflow: "hidden" }}>
+      <div style={{ padding: "10px 14px", borderBottom: `1px solid ${B.navyLight}`, fontSize: 13, fontWeight: 800, color: "#fff", display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+        <span>{icon} {titulo}</span>
+        {sub && <span style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", fontWeight: 600 }}>{sub}</span>}
+      </div>
+      <div style={{ padding: "12px 14px", fontSize: 12, color: "rgba(255,255,255,0.85)" }}>{children}</div>
+    </div>
+  );
+  const Row = ({ l, v }) => (
+    <div style={{ display: "flex", justifyContent: "space-between", gap: 12, padding: "3px 0", borderBottom: `1px dashed ${B.navyLight}55` }}>
+      <span style={{ color: "rgba(255,255,255,0.5)" }}>{l}</span>
+      <span style={{ color: "#fff", fontWeight: 600, textAlign: "right" }}>{v ?? "—"}</span>
+    </div>
+  );
+  const vacio = (t) => <div style={{ color: "rgba(255,255,255,0.35)", fontStyle: "italic" }}>{t}</div>;
+
+  return (
+    <div style={{ width: "100%", color: B.white }}>
+      {/* Barra de navegación: volver a la lista de órdenes */}
+      <button onClick={onClose}
+        style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 12, padding: "8px 14px", borderRadius: 8, border: `1px solid ${B.navyLight}`, background: B.navyMid, color: B.white, fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
+        ← Volver a órdenes
+      </button>
+      <div style={{ background: B.navy, borderRadius: 14, width: "100%", border: `1px solid ${B.navyLight}` }}>
+        {/* Cabecera */}
+        <div style={{ padding: 16, borderBottom: `1px solid ${B.navyLight}`, display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap", position: "sticky", top: 0, background: B.navy, zIndex: 2 }}>
+          <div>
+            <div style={{ fontSize: 16, fontWeight: 800, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+              🧾 {oc.codigo}
+              <span style={{ background: badge.bg, color: badge.color, padding: "2px 8px", borderRadius: 12, fontSize: 10, fontWeight: 700 }}>{badge.label}</span>
+              {oc.factura_aplicada && <span style={{ background: B.success + "22", color: B.success, padding: "2px 8px", borderRadius: 12, fontSize: 10, fontWeight: 700 }}>📄 Facturada</span>}
+              {oc.pagada_completa && <span style={{ background: B.success + "22", color: B.success, padding: "2px 8px", borderRadius: 12, fontSize: 10, fontWeight: 700 }}>💰 Pagada</span>}
+            </div>
+            <div style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", marginTop: 4 }}>
+              {oc.proveedor_nombre || "Sin proveedor"} · emitida {fmtFecha((oc.fecha_emision || "").slice(0, 10))} · <span style={{ color: B.sand, fontWeight: 700 }}>{COP(oc.total || 0)}</span>
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            {editable && <button onClick={() => onEditar(oc)} style={btnAccion(B.sand)} title="Editar items, cantidades, proveedor de la OC">✏️ Editar</button>}
+            {editable && onUnir && <button onClick={() => onUnir(oc)} style={btnAccion("#a78bfa")} title="Unir esta OC con otra del mismo proveedor">🔗 Unir</button>}
+            {onEmail && <button onClick={() => onEmail(oc)} style={btnAccion(B.pink)} title="Enviar OC al proveedor por correo con PDF">📧 Email</button>}
+            {onEnviada && (editable
+              ? <button onClick={() => onEnviada(oc)} style={btnAccion(B.sky)} title="Marcar como enviada al proveedor — bloquea edición">📤 Enviada a proveedor</button>
+              : <span style={{ ...btnAccion(B.success + "44"), cursor: "default", color: B.success }} title={`Enviada${oc.enviada_at ? " el " + fmtFecha(oc.enviada_at.slice(0,10)) : ""}`}>🔒 Enviada</span>
+            )}
+            {onCotizResp && <button onClick={() => onCotizResp(oc)} style={btnAccion(oc.cotizacion_resp_aprobada ? B.success : oc.cotizacion_resp_data ? B.warning : "#a78bfa")} title="Cotización-respuesta del proveedor">{oc.cotizacion_resp_aprobada ? "📋✓ Cotiz" : oc.cotizacion_resp_data ? "📋⏳ Cotiz" : "📋 Cotiz Resp"}</button>}
+            <button onClick={() => onFactura(oc)} style={btnAccion(oc.factura_aplicada ? B.success : B.warning)}>{oc.factura_aplicada ? "📄✓ Factura" : "📎 Factura"}</button>
+            <button onClick={() => onLogistica(oc)} style={btnAccion(B.sky)}>🚚 Logística</button>
+            <button onClick={onClose} style={btnAccion("rgba(255,255,255,0.4)")}>← Volver</button>
+          </div>
+        </div>
+
+        <div style={{ padding: 16 }}>
+          {loading && <div style={{ color: B.sand, fontSize: 12, marginBottom: 10 }}>Cargando trazabilidad…</div>}
+
+          {/* 1. Requisición(es) de origen */}
+          <Sec icon="📝" titulo="Requisición(es) de origen" color="#a78bfa" sub={`${reqs.length} requisición(es)`}>
+            {reqs.length === 0 ? vacio("OC sin requisición ligada (creada directa).") : reqs.map(r => (
+              <div key={r.id} style={{ padding: "8px 0", borderBottom: `1px solid ${B.navyLight}55` }}>
+                <div style={{ fontWeight: 700, color: "#fff" }}>{r.id} — {r.descripcion || "—"}</div>
+                <Row l="Solicitante" v={r.solicitante} />
+                <Row l="Área" v={r.area} />
+                <Row l="Prioridad" v={r.prioridad} />
+                <Row l="Estado" v={r.estado} />
+                <Row l="Fecha / necesaria" v={`${fmtFecha((r.fecha||"").slice(0,10))} · ${fmtFecha((r.fecha_necesaria||"").slice(0,10))}`} />
+                <Row l="Aprobada por" v={r.aprobador_nombre ? `${r.aprobador_nombre}${r.aprobada_at ? " · " + fdt(r.aprobada_at) : ""}` : "—"} />
+                <Row l="Ítems / total" v={`${(Array.isArray(r.items) ? r.items.length : 0)} líneas · ${COP(r.total || 0)}`} />
+                {r.justificacion && <div style={{ color: "rgba(255,255,255,0.6)", marginTop: 4 }}>📌 {r.justificacion}</div>}
+              </div>
+            ))}
+          </Sec>
+
+          {/* 2. OC inicial */}
+          <Sec icon="🧾" titulo="Orden de compra (inicial)" sub={`${items.length} líneas`}>
+            <Row l="Proveedor" v={`${oc.proveedor_nombre || "—"}${oc.proveedor_nit ? " · NIT " + oc.proveedor_nit : ""}`} />
+            <Row l="Contacto" v={[oc.proveedor_email, oc.proveedor_telefono].filter(Boolean).join(" · ") || "—"} />
+            <Row l="Emisión / entrega" v={`${fmtFecha((oc.fecha_emision||"").slice(0,10))} · ${fmtFecha((oc.fecha_entrega||"").slice(0,10))}`} />
+            <Row l="Emitida por" v={oc.emitida_por} />
+            <div style={{ marginTop: 10, overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
+                <thead><tr style={{ color: "rgba(255,255,255,0.45)", textAlign: "left" }}>
+                  <th style={{ padding: "4px 6px" }}>Ítem</th><th style={{ padding: "4px 6px" }}>Cant</th>
+                  <th style={{ padding: "4px 6px" }}>Unid</th><th style={{ padding: "4px 6px", textAlign: "right" }}>Precio</th>
+                  <th style={{ padding: "4px 6px", textAlign: "right" }}>Total</th>
+                </tr></thead>
+                <tbody>
+                  {items.map((it, i) => (
+                    <tr key={i} style={{ borderTop: `1px solid ${B.navyLight}55` }}>
+                      <td style={{ padding: "4px 6px" }}>{itemNombre(it)}</td>
+                      <td style={{ padding: "4px 6px" }}>{itemCant(it)}</td>
+                      <td style={{ padding: "4px 6px" }}>{it.unidad || "—"}</td>
+                      <td style={{ padding: "4px 6px", textAlign: "right" }}>{itemPrecio(it) ? COP(itemPrecio(it)) : "—"}</td>
+                      <td style={{ padding: "4px 6px", textAlign: "right", color: B.sand, fontWeight: 700 }}>{itemTotal(it) ? COP(itemTotal(it)) : "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div style={{ marginTop: 8 }}>
+              <Row l="Subtotal" v={COP(oc.subtotal || 0)} />
+              <Row l="IVA" v={COP(oc.iva || 0)} />
+              <Row l="Total" v={<span style={{ color: B.sand }}>{COP(oc.total || 0)}</span>} />
+            </div>
+            {oc.notas && <div style={{ color: "rgba(255,255,255,0.6)", marginTop: 6 }}>📝 {oc.notas}</div>}
+          </Sec>
+
+          {/* 3. Cotización del proveedor */}
+          <Sec icon="📋" titulo="Cotización del proveedor" color="#a78bfa">
+            {oc.cotizacion_resp_data || oc.cotizacion_resp_url ? (
+              <div style={{ marginBottom: cotis.length ? 10 : 0 }}>
+                <Row l="Respuesta subida" v={oc.cotizacion_resp_subida_at ? fdt(oc.cotizacion_resp_subida_at) + (oc.cotizacion_resp_subida_por ? " · " + oc.cotizacion_resp_subida_por : "") : "—"} />
+                <Row l="Aprobada" v={oc.cotizacion_resp_aprobada ? `Sí · ${fdt(oc.cotizacion_resp_aprobada_at)}${oc.cotizacion_resp_aprobada_por ? " · " + oc.cotizacion_resp_aprobada_por : ""}` : "Pendiente"} />
+                {oc.cotizacion_resp_notas && <Row l="Notas" v={oc.cotizacion_resp_notas} />}
+                {oc.cotizacion_resp_url && <a href={oc.cotizacion_resp_url} target="_blank" rel="noreferrer" style={{ color: B.sky }}>📎 Ver archivo de cotización</a>}
+              </div>
+            ) : null}
+            {cotItems.length > 0 && (
+              <div style={{ marginTop: 8, overflowX: "auto" }}>
+                <div style={{ color: "rgba(255,255,255,0.5)", marginBottom: 2 }}>Precios cotizados (original — no se modifica con la factura):</div>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
+                  <thead><tr style={{ color: "rgba(255,255,255,0.45)", textAlign: "left" }}>
+                    <th style={{ padding: "4px 6px" }}>Ítem</th><th style={{ padding: "4px 6px" }}>Cant</th>
+                    <th style={{ padding: "4px 6px", textAlign: "right" }}>Precio cotizado</th>
+                    <th style={{ padding: "4px 6px", textAlign: "right" }}>Total cotizado</th>
+                  </tr></thead>
+                  <tbody>
+                    {cotItems.map((c, i) => (
+                      <tr key={i} style={{ borderTop: `1px solid ${B.navyLight}55` }}>
+                        <td style={{ padding: "4px 6px" }}>{c.nombre || "—"}</td>
+                        <td style={{ padding: "4px 6px" }}>{c.cantidad ?? "—"}</td>
+                        <td style={{ padding: "4px 6px", textAlign: "right" }}>{COP(Number(c.precio_unitario) || 0)}</td>
+                        <td style={{ padding: "4px 6px", textAlign: "right", color: "#a78bfa", fontWeight: 700 }}>{COP((Number(c.precio_unitario) || 0) * (Number(c.cantidad) || 0))}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <div style={{ textAlign: "right", marginTop: 4, fontWeight: 800, color: "#a78bfa" }}>Subtotal cotizado: {COP(cotSubtotal)}</div>
+              </div>
+            )}
+            {cotis.length === 0 && !oc.cotizacion_resp_data && !oc.cotizacion_resp_url
+              ? vacio("Sin cotizaciones registradas.")
+              : cotis.map(c => (
+                <div key={c.id} style={{ padding: "6px 0", borderTop: `1px solid ${B.navyLight}55` }}>
+                  <Row l={`Cotiz ${c.cotizacion_numero || c.id}`} v={`${c.proveedor_nombre || "—"} · ${COP(c.total || 0)} · ${c.estado || "—"}`} />
+                  {c.archivo_url && <a href={c.archivo_url} target="_blank" rel="noreferrer" style={{ color: B.sky, fontSize: 11 }}>📎 Archivo</a>}
+                </div>
+              ))}
+          </Sec>
+
+          {/* 4. OC enviada al proveedor */}
+          <Sec icon="📤" titulo="OC enviada al proveedor" color={B.pink} sub={oc.enviada_at ? "Enviada " + fdt(oc.enviada_at) : "No marcada como enviada"}>
+            {emails.length === 0 ? vacio("Sin correos registrados a proveedor.") : emails.map((e, i) => (
+              <div key={i} style={{ padding: "6px 0", borderTop: i ? `1px solid ${B.navyLight}55` : "none" }}>
+                <Row l="Para" v={(Array.isArray(e.enviado_a) ? e.enviado_a.join(", ") : e.enviado_a) || "—"} />
+                <Row l="Asunto" v={e.asunto} />
+                <Row l="PDF" v={e.con_pdf ? "Sí" : "No"} />
+                <Row l="Enviado" v={`${fdt(e.enviado_at)}${e.enviado_por ? " · " + e.enviado_por : ""}`} />
+              </div>
+            ))}
+          </Sec>
+
+          {/* 5. Recepción */}
+          <Sec icon="📦" titulo="Recepción" color={B.success} sub={oc.recibida_at ? "Recibida " + fdt(oc.recibida_at) : (oc.fecha_recepcion ? "Recibida " + fmtFecha(oc.fecha_recepcion.slice(0,10)) : "Pendiente")}>
+            <Row l="Estado OC" v={oc.estado} />
+            <Row l="Recibida por" v={oc.recibida_por} />
+            {oc.notas_recibo && <Row l="Notas recibo" v={oc.notas_recibo} />}
+            <Row l="Subido a Loggro" v={oc.loggro_movement_id
+              ? <span style={{ color: B.success }}>✅ Movimiento {oc.loggro_movement_id}{oc.fecha_recepcion ? " · " + fmtFecha(oc.fecha_recepcion.slice(0,10)) : ""} <span style={{ color: "rgba(255,255,255,0.45)", fontWeight: 400 }}>(solo ítems con link)</span></span>
+              : <span style={{ color: B.warning }}>⚠️ Pendiente de subir a Loggro</span>} />
+            {recibidos.length > 0 && (
+              <div style={{ marginTop: 6, overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
+                  <thead><tr style={{ color: "rgba(255,255,255,0.45)", textAlign: "left" }}>
+                    <th style={{ padding: "4px 6px" }}>Ítem</th>
+                    <th style={{ padding: "4px 6px" }}>Pedido</th>
+                    <th style={{ padding: "4px 6px" }}>Recibido</th>
+                    <th style={{ padding: "4px 6px" }}>→ Subido a Loggro</th>
+                  </tr></thead>
+                  <tbody>
+                    {recibidos.map((r, i) => {
+                      const it = itemsById[r.item_id] || {};
+                      const nombre = itemNombre(it) !== "—" ? itemNombre(it) : (r.nombre || r.item_id || "—");
+                      const cantRec = r.cant_recibida ?? r.cantidad_recibida ?? r.cantidad ?? "—";
+                      const pedida = it.id ? itemCant(it) : "—";
+                      // Solo subió a Loggro si el ítem tiene link (loggro_id) Y se
+                      // creó el movimiento. Si no tiene link → NO subió.
+                      const tieneInfo = ("loggro_id" in r);
+                      const tieneLink = !!r.loggro_id;
+                      let lg, lgColor;
+                      if (!oc.loggro_movement_id) { lg = "⚠️ pendiente"; lgColor = B.warning; }
+                      else if (tieneLink) { lg = `✅ ${cantRec}`; lgColor = B.success; }
+                      else if (tieneInfo) { lg = "✕ sin link — no subió"; lgColor = B.danger; }
+                      else { lg = "— (verificar)"; lgColor = "rgba(255,255,255,0.4)"; }
+                      return (
+                        <tr key={i} style={{ borderTop: `1px solid ${B.navyLight}55` }}>
+                          <td style={{ padding: "4px 6px" }}>{nombre}{it.unidad ? <span style={{ color: "rgba(255,255,255,0.4)" }}> ({it.unidad})</span> : ""}</td>
+                          <td style={{ padding: "4px 6px" }}>{pedida}</td>
+                          <td style={{ padding: "4px 6px", fontWeight: 700 }}>{cantRec}</td>
+                          <td style={{ padding: "4px 6px", color: lgColor, fontWeight: 700 }}>{lg}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+                {oc.loggro_movement_id && (
+                  <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", marginTop: 4 }}>
+                    Solo subieron a Loggro los ítems con link (loggro_id). Los que no tienen link NO se cargaron. Mov: {oc.loggro_movement_id}.
+                  </div>
+                )}
+              </div>
+            )}
+            {(muelle.length > 0 || transp.length > 0) && (
+              <div style={{ marginTop: 8, borderTop: `1px solid ${B.navyLight}55`, paddingTop: 8 }}>
+                {muelle.map((m, i) => (
+                  <Row key={"m"+i} l="🏗 Entrega muelle" v={`${m.estado || "—"}${m.entregado_at ? " · " + fdt(m.entregado_at) : (m.fecha_programada ? " · prog " + fmtFecha(m.fecha_programada) : "")}${m.recibido_por ? " · " + m.recibido_por : ""}`} />
+                ))}
+                {transp.map((t, i) => (
+                  <Row key={"t"+i} l="⛴ Transporte Atolón" v={`${t.estado || "—"}${t.embarcacion_nombre ? " · " + t.embarcacion_nombre : ""}${t.recibido_atolon_at ? " · llegó " + fdt(t.recibido_atolon_at) : (t.zarpado_at ? " · zarpó " + fdt(t.zarpado_at) : "")}`} />
+                ))}
+              </div>
+            )}
+          </Sec>
+
+          {/* 6. Factura */}
+          <Sec icon="📄" titulo="Factura del proveedor" color={oc.factura_aplicada ? B.success : B.warning}>
+            {oc.factura_numero || oc.factura_url ? (
+              <>
+                <Row l="N° factura" v={oc.factura_numero} />
+                <Row l="Fecha" v={fmtFecha((oc.factura_fecha || "").slice(0, 10))} />
+                <Row l="Subtotal / IVA" v={`${COP(oc.factura_subtotal || 0)} · ${COP(oc.factura_iva || 0)}`} />
+                <Row l="Aplicada" v={oc.factura_aplicada ? `Sí · ${fdt(oc.factura_aplicada_at)}${oc.factura_aplicada_por ? " · " + oc.factura_aplicada_por : ""}` : "No"} />
+                {oc.dias_credito ? <Row l="Crédito" v={`${oc.dias_credito} días · vence ${fmtFecha((oc.fecha_vencimiento_pago||"").slice(0,10))}`} /> : null}
+                {oc.factura_url && <a href={oc.factura_url} target="_blank" rel="noreferrer" style={{ color: B.sky }}>📎 Ver factura</a>}
+
+                {/* Comparación: cotizado (original) vs facturado (final) */}
+                {cotItems.length > 0 && (
+                  <div style={{ marginTop: 12, overflowX: "auto" }}>
+                    <div style={{ color: "rgba(255,255,255,0.5)", marginBottom: 2 }}>Cotizado vs Facturado (final):</div>
+                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
+                      <thead><tr style={{ color: "rgba(255,255,255,0.45)", textAlign: "left" }}>
+                        <th style={{ padding: "4px 6px" }}>Ítem</th>
+                        <th style={{ padding: "4px 6px", textAlign: "right" }}>Cotizado</th>
+                        <th style={{ padding: "4px 6px", textAlign: "right" }}>Facturado</th>
+                        <th style={{ padding: "4px 6px", textAlign: "right" }}>Δ unit</th>
+                      </tr></thead>
+                      <tbody>
+                        {(Array.isArray(oc.items) ? oc.items : []).map((it, idx) => {
+                          const c = cotByIdx[idx];
+                          const cot = c ? Number(c.precio_unitario) || 0 : null;
+                          const fac = itemPrecio(it);
+                          const d = cot != null ? fac - cot : null;
+                          return (
+                            <tr key={idx} style={{ borderTop: `1px solid ${B.navyLight}55` }}>
+                              <td style={{ padding: "4px 6px" }}>{itemNombre(it)}</td>
+                              <td style={{ padding: "4px 6px", textAlign: "right", color: "#a78bfa" }}>{cot != null ? COP(cot) : "—"}</td>
+                              <td style={{ padding: "4px 6px", textAlign: "right", color: B.sand, fontWeight: 700 }}>{fac ? COP(fac) : "—"}</td>
+                              <td style={{ padding: "4px 6px", textAlign: "right", fontWeight: 700, color: d == null ? "rgba(255,255,255,0.4)" : d === 0 ? B.success : d > 0 ? B.danger : B.success }}>
+                                {d == null ? "—" : (d === 0 ? "=" : (d > 0 ? "+" : "") + COP(d))}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                    <div style={{ marginTop: 6, borderTop: `1px solid ${B.navyLight}`, paddingTop: 6 }}>
+                      <Row l="Subtotal cotizado" v={<span style={{ color: "#a78bfa" }}>{COP(cotSubtotal)}</span>} />
+                      <Row l="Subtotal facturado" v={<span style={{ color: B.sand }}>{COP(factSubtotal)}</span>} />
+                      <Row l="Diferencia" v={
+                        <span style={{ color: difTotal === 0 ? B.success : difTotal > 0 ? B.danger : B.success, fontWeight: 800 }}>
+                          {difTotal === 0 ? "Sin diferencia" : `${difTotal > 0 ? "+" : ""}${COP(difTotal)}${cotSubtotal ? ` (${(difTotal / cotSubtotal * 100).toFixed(1)}%)` : ""}`}
+                        </span>} />
+                    </div>
+                  </div>
+                )}
+              </>
+            ) : (
+              cotItems.length > 0
+                ? <div style={{ color: "rgba(255,255,255,0.5)" }}>Sin factura aplicada. Subtotal cotizado: <b style={{ color: "#a78bfa" }}>{COP(cotSubtotal)}</b></div>
+                : vacio("Sin factura aplicada.")
+            )}
+          </Sec>
+
+          {/* 7. Pagos */}
+          <Sec icon="💰" titulo="Pagos" color={oc.pagada_completa ? B.success : B.warning}
+            sub={`Pagado ${COP(montoPagado)} de ${COP(oc.total || 0)} · Saldo ${COP(saldo)}`}>
+            {oc.anticipo_requerido && (
+              <div style={{ marginBottom: 8, padding: 8, background: B.navy, borderRadius: 8 }}>
+                <Row l="Anticipo requerido" v={`${oc.anticipo_porcentaje ? oc.anticipo_porcentaje + "% · " : ""}${COP(oc.anticipo_monto || 0)}`} />
+                <Row l="Anticipo pagado" v={oc.anticipo_pagado ? `Sí · ${fdt(oc.anticipo_pagado_at)}${oc.anticipo_referencia_pago ? " · ref " + oc.anticipo_referencia_pago : ""}` : "Pendiente"} />
+              </div>
+            )}
+            {anticipoPart > 0 && (
+              <div style={{ padding: "5px 0" }}>
+                <Row l={`${fmtFecha((oc.anticipo_pagado_at||"").slice(0,10))} · Anticipo`} v={<span style={{ color: B.sand }}>{COP(anticipoMonto)}</span>} />
+                {oc.anticipo_referencia_pago && <div style={{ color: "rgba(255,255,255,0.5)", fontSize: 11 }}>ref {oc.anticipo_referencia_pago}{oc.anticipo_comprobante_url ? " · " : ""}{oc.anticipo_comprobante_url && <a href={oc.anticipo_comprobante_url} target="_blank" rel="noreferrer" style={{ color: B.sky }}>comprobante</a>}</div>}
+              </div>
+            )}
+            {pagos.length === 0 && anticipoPart === 0 ? vacio("Sin pagos registrados.") : pagos.map((p, i) => (
+              <div key={i} style={{ padding: "5px 0", borderTop: (i || anticipoPart > 0) ? `1px solid ${B.navyLight}55` : "none" }}>
+                <Row l={`${fmtFecha((p.fecha_pago||"").slice(0,10))} · ${p.metodo || "—"}`} v={<span style={{ color: B.sand }}>{COP(p.monto || 0)}</span>} />
+                {(p.referencia || p.cuenta_origen) && <div style={{ color: "rgba(255,255,255,0.5)", fontSize: 11 }}>{[p.cuenta_origen, p.referencia].filter(Boolean).join(" · ")}{p.comprobante_url ? " · " : ""}{p.comprobante_url && <a href={p.comprobante_url} target="_blank" rel="noreferrer" style={{ color: B.sky }}>comprobante</a>}</div>}
+              </div>
+            ))}
+            <div style={{ marginTop: 8, borderTop: `1px solid ${B.navyLight}`, paddingTop: 6 }}>
+              <Row l="Total OC" v={COP(oc.total || 0)} />
+              <Row l="Pagado" v={COP(montoPagado)} />
+              <Row l="Saldo" v={<span style={{ color: saldo > 0 ? B.warning : B.success }}>{COP(saldo)}</span>} />
+            </div>
+          </Sec>
+
+          {/* 8. Historial de cambios */}
+          {hist.length > 0 && (
+            <Sec icon="🕓" titulo="Historial de cambios" color="rgba(255,255,255,0.4)" sub={`${hist.length} eventos`}>
+              {hist.slice().reverse().map((h, i) => (
+                <div key={i} style={{ padding: "5px 0", borderTop: i ? `1px solid ${B.navyLight}55` : "none" }}>
+                  <div style={{ color: "#fff", fontWeight: 600 }}>{h.tipo || h.evento || "cambio"} <span style={{ color: "rgba(255,255,255,0.4)", fontWeight: 400 }}>· {fdt(h.at || h.fecha)} {h.por ? "· " + h.por : ""}</span></div>
+                  {(h.resumen || h.detalle) && <div style={{ color: "rgba(255,255,255,0.6)", fontSize: 11 }}>{h.resumen || h.detalle}</div>}
+                </div>
+              ))}
+            </Sec>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
@@ -535,14 +917,17 @@ function TabCXP({ ordenes, reload, currentUser }) {
 }
 
 function SubtabAnticipos({ ordenes, reload, currentUser }) {
+  const [loadingId, setLoadingId] = useState(null);
   const pendientes = ordenes.filter(o => o.anticipo_requerido && !o.anticipo_pagado);
   const pagados    = ordenes.filter(o => o.anticipo_requerido && o.anticipo_pagado);
   const totalPend  = pendientes.reduce((s, o) => s + Number(o.anticipo_monto || 0), 0);
   const totalPag   = pagados.reduce((s, o) => s + Number(o.anticipo_monto || 0), 0);
 
   const marcarPagado = async (oc) => {
+    if (loadingId) return; // guard doble click
     const referencia = prompt(`Referencia del pago del anticipo (Nº de transferencia, cheque, etc.):`);
     if (referencia === null) return;
+    setLoadingId(oc.id);
     // El anticipo cuenta como pago parcial → se acumula en monto_pagado.
     // Cuando luego se aplique la factura completa, el saldo a pagar se calcula
     // como total - monto_pagado (que ya incluye el anticipo). Esto evita
@@ -553,17 +938,56 @@ function SubtabAnticipos({ ordenes, reload, currentUser }) {
     const total = Number(oc.total || 0);
     const pagadaCompleta = total > 0 && nuevoMontoPagado >= total;
 
-    await supabase.from("ordenes_compra").update({
+    // Solo retrocedemos a 'confirmada' si la OC esta en estados tempranos.
+    // Antes era incondicional — caso real: OC ya recibida que se reasigna
+    // anticipo retroactivamente, retrocedia su estado y reaparecia en
+    // OCs abiertas del Dashboard. (audit rank 76)
+    const estadoPrev = oc.estado;
+    const debeSubirEstado = ["emitida", "enviada"].includes(estadoPrev);
+    const nuevoEstado = debeSubirEstado ? "confirmada" : estadoPrev;
+
+    const cambioEntry = {
+      id: `CH-${Date.now()}`,
+      ts: new Date().toISOString(),
+      quien: currentUser?.email || "—",
+      accion: "marcar_anticipo_pagado",
+      monto: montoAnticipo,
+      referencia,
+      estado_antes: estadoPrev,
+      estado_despues: nuevoEstado,
+    };
+    const cambiosNuevos = [
+      ...(Array.isArray(oc.cambios_historial) ? oc.cambios_historial : []),
+      cambioEntry,
+    ];
+
+    const { error } = await supabase.from("ordenes_compra").update({
       anticipo_pagado: true,
       anticipo_pagado_at: new Date().toISOString(),
       anticipo_pagado_por: currentUser?.email || null,
       anticipo_referencia_pago: referencia || null,
-      estado: "confirmada",
+      estado: nuevoEstado,
       monto_pagado: nuevoMontoPagado,
       pagada_completa: pagadaCompleta,
       pagada_at: pagadaCompleta ? new Date().toISOString() : oc.pagada_at || null,
+      cambios_historial: cambiosNuevos,
       updated_at: new Date().toISOString(),
     }).eq("id", oc.id);
+
+    setLoadingId(null);
+    if (error) {
+      alert(`Error registrando anticipo: ${error.message}`);
+      return;
+    }
+    logAccion({
+      modulo: "compras",
+      accion: "marcar_anticipo_pagado",
+      tabla: "ordenes_compra",
+      registroId: oc.id,
+      datosAntes:   { anticipo_pagado: false, monto_pagado: montoPagadoActual, estado: estadoPrev },
+      datosDespues: { anticipo_pagado: true,  monto_pagado: nuevoMontoPagado,  estado: nuevoEstado, referencia },
+      notas: `💸 Anticipo ${COP(montoAnticipo)} pagado · ref ${referencia} · ${oc.codigo || oc.id}`,
+    });
     reload?.();
   };
 
@@ -607,9 +1031,9 @@ function SubtabAnticipos({ ordenes, reload, currentUser }) {
                   <div style={{ fontSize: 18, fontWeight: 800, color: B.warning, fontFamily: "'Barlow Condensed', sans-serif" }}>
                     {COP(oc.anticipo_monto || 0)}
                   </div>
-                  <button onClick={() => marcarPagado(oc)}
-                    style={{ marginTop: 6, padding: "6px 14px", borderRadius: 6, border: "none", background: B.success, color: B.navy, fontSize: 12, fontWeight: 800, cursor: "pointer" }}>
-                    💸 Marcar como pagado
+                  <button onClick={() => marcarPagado(oc)} disabled={loadingId === oc.id}
+                    style={{ marginTop: 6, padding: "6px 14px", borderRadius: 6, border: "none", background: B.success, color: B.navy, fontSize: 12, fontWeight: 800, cursor: loadingId === oc.id ? "wait" : "pointer", opacity: loadingId === oc.id ? 0.6 : 1 }}>
+                    {loadingId === oc.id ? "⏳ Procesando…" : "💸 Marcar como pagado"}
                   </button>
                 </div>
               </div>
@@ -960,7 +1384,10 @@ function UnirOCModal({ oc, ordenes, onClose, reload, currentUser }) {
   const [err, setErr] = useState("");
 
   // Solo se puede unir con OCs del MISMO proveedor que NO estén recibidas,
-  // pagadas, canceladas o con factura ya aplicada.
+  // pagadas, canceladas, con recepcion parcial, o con factura aplicada.
+  // Audit rank 20: excluir 'recibida_parcial' es crucial — si la fuente tiene
+  // recibidos previos, consolidar() los pierde y los items consolidados
+  // muestran mas pendiente del real → riesgo de doble-recepcion fisica.
   const candidatas = useMemo(() => {
     const sameProv = (a, b) =>
       (a.proveedor_id && b.proveedor_id && a.proveedor_id === b.proveedor_id) ||
@@ -969,7 +1396,7 @@ function UnirOCModal({ oc, ordenes, onClose, reload, currentUser }) {
       o.id !== oc.id &&
       sameProv(o, oc) &&
       !o.factura_aplicada &&
-      !["recibida", "pagada", "cancelada"].includes(o.estado)
+      !["recibida", "recibida_parcial", "pagada", "cancelada"].includes(o.estado)
     );
   }, [ordenes, oc]);
 
@@ -1032,8 +1459,39 @@ function UnirOCModal({ oc, ordenes, onClose, reload, currentUser }) {
         cambioEntry,
       ];
 
-      // 1. Update destino (oc) con items consolidados
-      const { error: e1 } = await supabase.from("ordenes_compra").update({
+      // Orden invertido vs version anterior para mitigar el riesgo de doble-pago
+      // si los dos updates no son atomicos (audit rank 19): cancelamos la
+      // FUENTE primero con condicional estado=eq.<estado actual> para evitar
+      // TOCTOU. Si la cancelacion falla, la operacion entera aborta sin tocar
+      // el destino. Si la cancelacion pasa pero el update del destino falla,
+      // intentamos reactivar la fuente para no perder datos.
+      const estadoFuentePrev = seleccionada.estado;
+      const fuenteCambios = [
+        ...(Array.isArray(seleccionada.cambios_historial) ? seleccionada.cambios_historial : []),
+        {
+          evento: "merged_into",
+          at: new Date().toISOString(),
+          por: currentUser?.email || currentUser?.nombre || "—",
+          merged_into_oc_id: oc.id,
+          merged_into_codigo: oc.codigo,
+        },
+      ];
+
+      // 1. Cancelar la fuente con guard de estado (evita doble-cancelacion si
+      //    otra ventana esta tocando la fuente al mismo tiempo)
+      const { error: e1, count: c1 } = await supabase.from("ordenes_compra").update({
+        estado: "cancelada",
+        notas: `${seleccionada.notas || ""}\n[${new Date().toLocaleString("es-CO")}] Unida con ${oc.codigo} (consolidada). Cancelada por ${currentUser?.nombre || "—"}`,
+        cambios_historial: fuenteCambios,
+        updated_at: new Date().toISOString(),
+      }, { count: "exact" })
+        .eq("id", seleccionada.id)
+        .eq("estado", estadoFuentePrev);
+      if (e1) throw e1;
+      if (c1 === 0) throw new Error("La OC fuente cambió de estado durante la operación. Recargá y reintentá.");
+
+      // 2. Update destino con items consolidados
+      const { error: e2 } = await supabase.from("ordenes_compra").update({
         items: merged,
         subtotal,
         total: subtotal,
@@ -1042,25 +1500,23 @@ function UnirOCModal({ oc, ordenes, onClose, reload, currentUser }) {
         notas: `${oc.notas || ""}\n[${new Date().toLocaleString("es-CO")}] Unida con ${seleccionada.codigo} por ${currentUser?.nombre || "—"}`,
         updated_at: new Date().toISOString(),
       }).eq("id", oc.id);
-      if (e1) throw e1;
-
-      // 2. Update fuente (seleccionada) → cancelada con referencia
-      const { error: e2 } = await supabase.from("ordenes_compra").update({
-        estado: "cancelada",
-        notas: `${seleccionada.notas || ""}\n[${new Date().toLocaleString("es-CO")}] Unida con ${oc.codigo} (consolidada). Cancelada por ${currentUser?.nombre || "—"}`,
-        cambios_historial: [
-          ...(Array.isArray(seleccionada.cambios_historial) ? seleccionada.cambios_historial : []),
-          {
-            evento: "merged_into",
-            at: new Date().toISOString(),
-            por: currentUser?.email || currentUser?.nombre || "—",
-            merged_into_oc_id: oc.id,
-            merged_into_codigo: oc.codigo,
-          },
-        ],
-        updated_at: new Date().toISOString(),
-      }).eq("id", seleccionada.id);
-      if (e2) throw e2;
+      if (e2) {
+        // Compensacion: intentar reactivar la fuente al estado previo.
+        // Si falla la compensacion, queda inconsistente; al menos logueamos.
+        const { error: eComp } = await supabase.from("ordenes_compra").update({
+          estado: estadoFuentePrev,
+          notas: seleccionada.notas || null,
+          cambios_historial: [
+            ...fuenteCambios,
+            { evento: "merge_rollback", at: new Date().toISOString(), reason: e2.message },
+          ],
+          updated_at: new Date().toISOString(),
+        }).eq("id", seleccionada.id);
+        if (eComp) {
+          console.error("[UnirOC] compensacion fallo:", eComp.message);
+        }
+        throw new Error(`Falló el update del destino: ${e2.message}. Fuente reactivada.`);
+      }
 
       // 3. Reqs de origen de la fuente: actualizar oc_id/oc_codigo de sus items
       //    para que apunten a la OC destino (no a la cancelada)
@@ -1260,10 +1716,15 @@ function EditarOCModal({ oc, ordenes = [], onClose, reload, currentUser }) {
       const { data: req } = await supabase.from("requisiciones").select("items, estado, timeline").eq("id", reqId).maybeSingle();
       if (!req) continue;
       const itemsReq = (req.items || []).map(it => {
-        // Match por id si lo tiene, sino por nombre+unidad
+        // Match por id si lo tiene, sino por nombre+unidad — pero solo si
+        // el item de la req apunta a ESTA OC (no a otra OC viva). Audit
+        // rank 74: si una req tenia dos items con mismo nombre asignados a
+        // OCs distintas, el sameByName matcheaba ambos y limpiaba oc_id en
+        // los dos — la OC-B seguia con el item pero la req lo daba por libre.
         const sameById = it.id && item.id && it.id === item.id;
         const sameByName = !sameById && (it.item || it.nombre || "").toLowerCase() === (item.item || item.nombre || "").toLowerCase()
-          && (it.unidad || "").toLowerCase() === (item.unidad || "").toLowerCase();
+          && (it.unidad || "").toLowerCase() === (item.unidad || "").toLowerCase()
+          && (!it.oc_id || it.oc_id === oc.id);
         if (sameById || sameByName) {
           const { oc_id, oc_codigo, ...rest } = it;
           return rest;
@@ -1330,6 +1791,49 @@ function EditarOCModal({ oc, ordenes = [], onClose, reload, currentUser }) {
       }
       const { error } = await supabase.from("ordenes_compra").update(updates).eq("id", oc.id);
       if (error) throw error;
+
+      // Audit rank 21: al cancelar la OC por items vacios, los items de las
+      // reqs origen quedaban con oc_id apuntando a OC cancelada. KPI itemsMesa
+      // (que filtra por !oc_id) los contaba como invisibles y no se podian
+      // reasignar. Ahora limpiamos oc_id/oc_codigo de cada item en su req
+      // origen + restablecemos estado de la req si todos sus items quedan libres.
+      if (cancelarOC) {
+        const itemsOriginales = oc.items || [];
+        const reqIdsAfectadas = new Set();
+        for (const it of itemsOriginales) {
+          const ids = Array.isArray(it.req_ids) ? it.req_ids : (it.req_id ? [it.req_id] : []);
+          ids.forEach(rid => rid && reqIdsAfectadas.add(rid));
+        }
+        for (const reqId of reqIdsAfectadas) {
+          const { data: req } = await supabase.from("requisiciones")
+            .select("items, estado, timeline").eq("id", reqId).maybeSingle();
+          if (!req) continue;
+          const newItems = (req.items || []).map(it => {
+            if (it.oc_id === oc.id) {
+              const { oc_id, oc_codigo, ...rest } = it;
+              return rest;
+            }
+            return it;
+          });
+          const tieneItemsConOC = newItems.some(it => it.oc_id);
+          // Si NINGUN item de la req sigue con oc_id, vuelve a 'Aprobada'
+          // (lista para nueva mesa). Si todavia tiene items en otras OCs,
+          // preservamos el estado actual.
+          const nuevoEstadoReq = tieneItemsConOC ? req.estado : "Aprobada";
+          await supabase.from("requisiciones").update({
+            items: newItems,
+            estado: nuevoEstadoReq,
+            timeline: [...(req.timeline || []), {
+              quien: currentUser?.nombre || "—",
+              accion: "Items liberados por cancelacion de OC",
+              fecha: new Date().toLocaleString("es-CO"),
+              comentario: `OC ${oc.codigo} cancelada — items vuelven a mesa.`,
+            }],
+            updated_at: new Date().toISOString(),
+          }).eq("id", reqId);
+        }
+      }
+
       reload?.();
       onClose();
     } catch (e) {
