@@ -399,7 +399,8 @@ function TabDetalle({ cart, onBack }) {
   }
 
   async function pausarFlujo() {
-    if (!supabase) return;
+    if (!supabase || saving) return;
+    setSaving(true);
     const nuevoPause = !cart.flow_pausado;
     await supabase.from("ac_carts").update({ flow_pausado: nuevoPause, updated_at: new Date().toISOString() }).eq("id", cart.id);
     if (nuevoPause) {
@@ -407,13 +408,16 @@ function TabDetalle({ cart, onBack }) {
     }
     setMsg(nuevoPause ? "Flujo pausado" : "Flujo reactivado");
     setTimeout(() => setMsg(""), 2000);
+    setSaving(false);
   }
 
   async function marcarRecuperado() {
-    if (!supabase) return;
+    if (!supabase || saving) return;
+    setSaving(true);
     await supabase.from("ac_carts").update({ estado: "recovered", recovered_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq("id", cart.id);
     setMsg("Marcado como recuperado ✓");
     setTimeout(() => setMsg(""), 2000);
+    setSaving(false);
   }
 
   const TIPO_ICONS = { sent: "📤", opened: "👁", clicked: "🖱", bounced: "↩️", unsubscribed: "🚫", cart_recovered: "✅" };
@@ -559,13 +563,13 @@ function TabDetalle({ cart, onBack }) {
             style={{ padding: "8px 20px", borderRadius: 8, border: "none", background: P.sand, color: P.navy, fontWeight: 700, cursor: "pointer", fontSize: 13 }}>
             {saving ? "Guardando..." : "Guardar notas"}
           </button>
-          <button onClick={pausarFlujo}
-            style={{ padding: "8px 20px", borderRadius: 8, border: `1px solid ${P.warning}`, background: "none", color: P.warning, fontWeight: 700, cursor: "pointer", fontSize: 13 }}>
+          <button onClick={pausarFlujo} disabled={saving}
+            style={{ padding: "8px 20px", borderRadius: 8, border: `1px solid ${P.warning}`, background: "none", color: P.warning, fontWeight: 700, cursor: "pointer", fontSize: 13, opacity: saving ? 0.5 : 1 }}>
             {cart.flow_pausado ? "▶ Reactivar flujo" : "⏸ Pausar flujo"}
           </button>
           {cart.estado !== "recovered" && (
-            <button onClick={marcarRecuperado}
-              style={{ padding: "8px 20px", borderRadius: 8, border: `1px solid ${P.success}`, background: "none", color: P.success, fontWeight: 700, cursor: "pointer", fontSize: 13 }}>
+            <button onClick={marcarRecuperado} disabled={saving}
+              style={{ padding: "8px 20px", borderRadius: 8, border: `1px solid ${P.success}`, background: "none", color: P.success, fontWeight: 700, cursor: "pointer", fontSize: 13, opacity: saving ? 0.5 : 1 }}>
               ✓ Marcar recuperado
             </button>
           )}
