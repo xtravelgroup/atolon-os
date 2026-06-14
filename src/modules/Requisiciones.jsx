@@ -1410,7 +1410,14 @@ function RecepcionOCModal({ oc, reqs, onClose, reload, currentUser, readOnly = f
   const [recibidos, setRecibidos] = useState(() => {
     const map = {};
     (oc.recibidos || []).forEach(r => { map[r.item_id] = r.cant_recibida; });
-    return (oc.items || []).map(it => ({ ...it, cant_recibida: map[it.id] || 0 }));
+    // _unitDstOverride: override manual de la unidad destino para Loggro.
+    // Persistido en items[i].unidad_loggro_override de la OC (no afecta la
+    // unidad original de la factura — solo cómo subimos a Loggro).
+    return (oc.items || []).map(it => ({
+      ...it,
+      cant_recibida: map[it.id] || 0,
+      _unitDstOverride: it.unidad_loggro_override || "",
+    }));
   });
   const [notas, setNotas] = useState(oc.notas_recibo || "");
   const [numFactura, setNumFactura] = useState(oc.factura_numero || "");
@@ -1555,6 +1562,11 @@ function RecepcionOCModal({ oc, reqs, onClose, reload, currentUser, readOnly = f
   };
   const recibirTodo = () => setRecibidos(prev => prev.map(r => ({ ...r, cant_recibida: r.cant })));
 
+  // Set override de unidad para Loggro. "" = auto (lookup de Loggro).
+  const setUnitOverride = (idx, val) => setRecibidos(prev =>
+    prev.map((r, i) => i === idx ? { ...r, _unitDstOverride: val } : r)
+  );
+
   const guardar = async () => {
     // ── Fix #6: bloquear recepción si anticipo requerido y no pagado ──
     if (oc.anticipo_requerido && !oc.anticipo_pagado) {
@@ -1577,12 +1589,30 @@ function RecepcionOCModal({ oc, reqs, onClose, reload, currentUser, readOnly = f
     // entrada a Loggro queda con la fecha real en que llegó la mercancía.
     const fechaRecepcionOriginal = oc.fecha_recepcion || oc.recibida_at || new Date().toISOString();
 
+    // Persistir el override de unidad por item en oc.items[] para que sea
+    // recordado en futuras recepciones (ej. recepción parcial 1 con override,
+    // luego recepción parcial 2 ya viene con el override aplicado).
+    const itemsActualizados = (oc.items || []).map(it => {
+      const rec = recibidos.find(r => r.id === it.id);
+      if (!rec) return it;
+      if (rec._unitDstOverride) {
+        return { ...it, unidad_loggro_override: rec._unitDstOverride };
+      }
+      // Limpiar override si el operador volvió a "auto"
+      if (it.unidad_loggro_override && !rec._unitDstOverride) {
+        const { unidad_loggro_override, ...rest } = it;
+        return rest;
+      }
+      return it;
+    });
+
     // 1. Actualizar la OC
     await supabase.from("ordenes_compra").update({
       estado: nuevoEstado,
       // Persistir loggro_id por ítem: así el detalle de OC sabe cuáles
       // realmente subieron a Loggro (los que NO tienen link no suben).
       recibidos: recibidos.map(r => ({ item_id: r.id, cant_recibida: r.cant_recibida, loggro_id: r.loggro_id || null, nombre: r.item })),
+      items: itemsActualizados,
       notas_recibo: notas,
       factura_numero: numFactura.trim() || null,
       factura_fecha: fechaFactura || null,
@@ -1718,6 +1748,10 @@ function RecepcionOCModal({ oc, reqs, onClose, reload, currentUser, readOnly = f
             // endpoint BLOQUEA (strict=true por default — evita stock 1000×
             // incorrecto en Loggro).
             unit: r.unidad || r.unidad_compra || null,
+            // Override manual del operador (solo afecta Loggro, no la factura
+            // original). Cuando Loggro tiene la unidad mal configurada o no
+            // la tiene, el operador puede forzar la unidad destino aquí.
+            unit_dst_override: r._unitDstOverride || null,
             nombre: r.item || r._catNombre || null, // para mostrar en bloqueos/conversiones
           }));
         const sinLoggroId = recibidos.filter(r => (Number(r.cant_recibida) || 0) > 0 && !r.loggro_id);
@@ -1928,6 +1962,35 @@ function RecepcionOCModal({ oc, reqs, onClose, reload, currentUser, readOnly = f
                               }}>
                               {actualizandoNombre === i ? "⏳ Actualizando…" : `📝 Renombrar → "${nombreOC}"`}
                             </button>
+                          )}
+                          {/* Override unidad para Loggro — solo aplica al subir a Loggro,
+                              no toca la factura original. Útil cuando la factura llega
+                              por OCR con unidad ambigua, o cuando Loggro tiene el ingrediente
+                              mal configurado. */}
+                          <select
+                            value={r._unitDstOverride || ""}
+                            onChange={e => setUnitOverride(i, e.target.value)}
+                            title="Forzar unidad destino al subir a Loggro (no afecta la factura)"
+                            style={{
+                              fontSize: 10, padding: "2px 4px", borderRadius: 4,
+                              background: B.navy,
+                              color: r._unitDstOverride ? B.warning : "rgba(255,255,255,0.5)",
+                              border: `1px solid ${r._unitDstOverride ? B.warning : "rgba(255,255,255,0.2)"}`,
+                            }}>
+                            <option value="">🤖 Unidad Loggro: auto-detectar</option>
+                            <option value="Gr">⚖️ Forzar: Gramos (Gr)</option>
+                            <option value="Kg">⚖️ Forzar: Kilogramos (Kg)</option>
+                            <option value="Ml">💧 Forzar: Mililitros (Ml)</option>
+                            <option value="L">💧 Forzar: Litros (L)</option>
+                            <option value="UN">🔢 Forzar: Unidad</option>
+                            <option value="LB">⚖️ Forzar: Libras (LB)</option>
+                            <option value="OZ">⚖️ Forzar: Onzas (OZ)</option>
+                            <option value="GAL">💧 Forzar: Galones (GAL)</option>
+                          </select>
+                          {r._unitDstOverride && r.unidad && (
+                            <span style={{ fontSize: 9, color: B.warning, fontWeight: 700, padding: "1px 6px", borderRadius: 4, background: B.warning + "22" }}>
+                              {r.unidad} → {r._unitDstOverride}
+                            </span>
                           )}
                         </div>
                       )}
