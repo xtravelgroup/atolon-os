@@ -2,6 +2,7 @@
 // Timeline, transporte, contactos, dietas, modo staff, bitácora
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { supabase } from "../lib/supabase";
+import { logAccion } from "../lib/logAccion";
 import { B, COP as COPbrand, fmtFecha, todayStr } from "../brand";
 // COP por defecto (file-level): el módulo lo usa fuera de TabServicios.
 // TabServicios redefine COP localmente cuando ocultarPrecios=true.
@@ -3393,11 +3394,12 @@ function TabServicios({ items, onChange, pasadiasOrg = [], onChangePasadias, cat
 const FORMAS_PAGO_GRUPO = ["Transferencia", "Efectivo", "Datafono", "Wompi", "Zelle", "Cheque"];
 const EMPTY_PAGO = { id: "", monto: "", forma_pago: "Transferencia", fecha: "", notas: "", registrado_por: "", comprobante_url: "" };
 
-function TabPagos({ pagos = [], onChange, totalGrupo = 0 }) {
+function TabPagos({ pagos = [], onChange, totalGrupo = 0, eventoId = null }) {
   const [showForm, setShowForm] = useState(false);
   const [form, setForm]         = useState(EMPTY_PAGO);
   const [uploading, setUploading] = useState(false);
   const [uploadErr, setUploadErr] = useState("");
+  const [saving,    setSaving]    = useState(false);
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
   const totalPagado  = pagos.reduce((s, p) => s + (Number(p.monto) || 0), 0);
@@ -3424,14 +3426,50 @@ function TabPagos({ pagos = [], onChange, totalGrupo = 0 }) {
   };
 
   const guardar = () => {
-    if (!form.monto || !form.forma_pago) return;
-    const pago = { ...form, id: form.id || `PAG-${Date.now()}`, monto: Number(form.monto), fecha: form.fecha || new Date().toISOString().slice(0,10) };
+    // Guard contra doble-click. Aunque guardar() es sync, el state update
+    // de showForm/pagos puede tomar un tick — un click muy rapido podia
+    // disparar dos inserts antes del unmount del form.
+    if (saving) return;
+    // Validar monto > 0. Antes !form.monto bloqueaba "" pero NO bloqueaba
+    // numeros negativos. Un pago de -500.000 inflaba el saldo del organizador.
+    const monto = Number(form.monto);
+    if (!Number.isFinite(monto) || monto <= 0) return;
+    if (!form.forma_pago) return;
+    setSaving(true);
+    const isNew = !form.id;
+    const pago = { ...form, id: form.id || `PAG-${Date.now()}`, monto, fecha: form.fecha || new Date().toISOString().slice(0,10) };
     onChange([...pagos, pago]);
+    // Audit trail (fire-and-forget). Pagos de evento se editan localmente
+    // en evento.pagos[] sin trail propio — antes nada quedaba registrado.
+    if (eventoId) {
+      logAccion({
+        modulo: "eventos",
+        accion: isNew ? "agregar_pago_evento" : "editar_pago_evento",
+        tabla: "eventos",
+        registroId: eventoId,
+        datosDespues: { id: pago.id, monto: pago.monto, forma_pago: pago.forma_pago, fecha: pago.fecha },
+        notas: pago.notas || null,
+      });
+    }
     setForm(EMPTY_PAGO);
     setUploadErr("");
     setShowForm(false);
+    setSaving(false);
   };
-  const eliminar = (id) => { if (window.confirm("¿Eliminar este pago?")) onChange(pagos.filter(p => p.id !== id)); };
+  const eliminar = (id) => {
+    if (!window.confirm("¿Eliminar este pago?")) return;
+    const removed = pagos.find(p => p.id === id);
+    onChange(pagos.filter(p => p.id !== id));
+    if (eventoId && removed) {
+      logAccion({
+        modulo: "eventos",
+        accion: "eliminar_pago_evento",
+        tabla: "eventos",
+        registroId: eventoId,
+        datosAntes: { id: removed.id, monto: removed.monto, forma_pago: removed.forma_pago, fecha: removed.fecha },
+      });
+    }
+  };
 
   const FP_COLOR = { Transferencia: B.sky, Efectivo: B.success, Datafono: "#a78bfa", Wompi: B.sand, Zelle: "#10b981", Cheque: "#f59e0b" };
 
@@ -3531,8 +3569,8 @@ function TabPagos({ pagos = [], onChange, totalGrupo = 0 }) {
 
           <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 16 }}>
             <button onClick={() => { setShowForm(false); setForm(EMPTY_PAGO); setUploadErr(""); }} style={{ ...BTN(B.navyLight), border: `1px solid ${B.navyLight}` }}>Cancelar</button>
-            <button onClick={guardar} disabled={uploading} style={BTN(B.success)}>
-              {uploading ? "Subiendo comprobante…" : "✓ Guardar Pago"}
+            <button onClick={guardar} disabled={uploading || saving} style={{ ...BTN(B.success), opacity: (uploading || saving) ? 0.6 : 1 }}>
+              {uploading ? "Subiendo comprobante…" : (saving ? "Guardando…" : "✓ Guardar Pago")}
             </button>
           </div>
         </div>
@@ -4664,7 +4702,7 @@ export default function EventoDetalle({ evento: inicial, canEdit = true, onBack,
         const totalServicios = (evento.servicios_contratados||[]).reduce((s, x) => s + (Number(x.valor)||0), 0);
         const base           = evento.valor > 0 ? evento.valor : totalCompras;
         const totalGrupo     = base + (Number(evento.valor_extras)||0) + totalServicios;
-        return <TabPagos pagos={evento.pagos||[]} onChange={v => updateLocal("pagos", v)} totalGrupo={totalGrupo} />;
+        return <TabPagos pagos={evento.pagos||[]} onChange={v => updateLocal("pagos", v)} totalGrupo={totalGrupo} eventoId={evento.id} />;
       })()}
       {tab === "transporte"&& <TabTransporte items={evento.transporte_detalle||[]} onChange={v => updateLocal("transporte_detalle", v)} embarcacionesEvento={evento.embarcaciones_evento||[]} onChangeEmbarcaciones={v => updateLocal("embarcaciones_evento", v)} timelineItems={evento.timeline_items||[]} evento={evento} updateLocal={updateLocal} />}
       {tab === "contactos" && <TabContactos  items={evento.contactos_rapidos||[]}         onChange={v => updateLocal("contactos_rapidos", v)} />}

@@ -19,7 +19,7 @@ export default function CXC() {
     setLoading(true);
     Promise.all([
       supabase.from("reservas")
-        .select("id, fecha, nombre, contacto, telefono, tipo, total, abono, saldo, estado, forma_pago, aliado_id, canal, vendedor, created_at, grupo_id")
+        .select("id, fecha, nombre, contacto, telefono, tipo, total, abono, saldo, estado, forma_pago, aliado_id, canal, vendedor, created_at, grupo_id, link_expira_at")
         .gt("saldo", 0)
         .neq("estado", "cancelado")
         .order("fecha", { ascending: false }),
@@ -41,6 +41,18 @@ export default function CXC() {
     return Math.floor((nowCO - f) / (1000 * 60 * 60 * 24));
   };
   const agingColor = (d) => d <= 7 ? B.success : d <= 30 ? B.warning : B.danger;
+
+  // Reservas con link_expira_at vencido — la auto-cancelacion solo dispara
+  // cuando alguien abre PagoCliente para esa reserva, asi que el CXC inflama
+  // saldo con reservas "muertas" (link de pago expirado, cliente ya no va a
+  // pagar). Las marcamos visualmente para que el cobrador las separe.
+  const linkVencido = (r) => {
+    if (!r.link_expira_at) return false;
+    if (r.estado !== "pendiente_pago" && r.estado !== "pendiente_comprobante") return false;
+    return new Date(r.link_expira_at) < nowCO;
+  };
+  const totalVencido = rows.filter(linkVencido).reduce((s, r) => s + (r.saldo || 0), 0);
+  const cntVencido = rows.filter(linkVencido).length;
 
   // Filter
   const filtered = rows.filter(r => {
@@ -103,6 +115,13 @@ export default function CXC() {
           <div style={{ fontSize: 22, fontWeight: 900, color: B.sand, fontFamily: "'Barlow Condensed', sans-serif", marginTop: 4 }}>{COP(totalDir)}</div>
           <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)" }}>{directo.length} reservas</div>
         </div>
+        {cntVencido > 0 && (
+          <div style={{ background: B.navyMid, borderRadius: 12, padding: "16px 20px", borderLeft: `4px solid ${B.danger}` }}>
+            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.06em" }}>Link de pago vencido</div>
+            <div style={{ fontSize: 22, fontWeight: 900, color: B.danger, fontFamily: "'Barlow Condensed', sans-serif", marginTop: 4 }}>{COP(totalVencido)}</div>
+            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)" }}>{cntVencido} reserva{cntVencido !== 1 ? "s" : ""} a revisar</div>
+          </div>
+        )}
       </div>
 
       {/* Aging buckets */}
@@ -181,7 +200,10 @@ export default function CXC() {
                       onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
                       <td style={{ padding: "10px 12px", fontSize: 11, color: B.sky, fontFamily: "monospace", whiteSpace: "nowrap" }}>{r.id}</td>
                       <td style={{ padding: "10px 12px", fontSize: 13 }}>
-                        <div style={{ fontWeight: 700 }}>{r.nombre || "—"}</div>
+                        <div style={{ fontWeight: 700, display: "flex", alignItems: "center", gap: 6 }}>
+                          {r.nombre || "—"}
+                          {linkVencido(r) && <span style={{ fontSize: 9, padding: "1px 6px", borderRadius: 4, background: B.danger + "22", color: B.danger, fontWeight: 700 }}>LINK VENC</span>}
+                        </div>
                         {r.telefono && <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)" }}>{r.telefono}</div>}
                       </td>
                       <td style={{ padding: "10px 12px", fontSize: 12, color: "rgba(255,255,255,0.6)", whiteSpace: "nowrap" }}>{r.fecha}</td>
