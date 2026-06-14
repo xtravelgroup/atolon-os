@@ -3394,12 +3394,16 @@ function TabServicios({ items, onChange, pasadiasOrg = [], onChangePasadias, cat
 const FORMAS_PAGO_GRUPO = ["Transferencia", "Efectivo", "Datafono", "Wompi", "Zelle", "Cheque"];
 const EMPTY_PAGO = { id: "", monto: "", forma_pago: "Transferencia", fecha: "", notas: "", registrado_por: "", comprobante_url: "" };
 
-function TabPagos({ pagos = [], onChange, totalGrupo = 0, eventoId = null }) {
+function TabPagos({ pagos = [], onChange, totalGrupo = 0, eventoId = null, descuento = 0, onChangeDescuento = null }) {
   const [showForm, setShowForm] = useState(false);
   const [form, setForm]         = useState(EMPTY_PAGO);
   const [uploading, setUploading] = useState(false);
   const [uploadErr, setUploadErr] = useState("");
   const [saving,    setSaving]    = useState(false);
+  // Buffer local del input descuento — confirma con onBlur para no
+  // disparar updates al evento en cada keystroke.
+  const [descBuf, setDescBuf] = useState(String(Math.max(0, Number(descuento) || 0)));
+  useEffect(() => { setDescBuf(String(Math.max(0, Number(descuento) || 0))); }, [descuento]);
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
   const totalPagado  = pagos.reduce((s, p) => s + (Number(p.monto) || 0), 0);
@@ -3475,6 +3479,25 @@ function TabPagos({ pagos = [], onChange, totalGrupo = 0, eventoId = null }) {
 
   return (
     <div>
+      {/* Descuento — visible si onChangeDescuento esta disponible (vista no operativa).
+          Editar restará del totalGrupo en vivo. */}
+      {onChangeDescuento && (
+        <div style={{ background: B.navy, borderRadius: 10, padding: "10px 14px", marginBottom: 12, display: "flex", alignItems: "center", gap: 12, borderLeft: `3px solid ${B.sand}` }}>
+          <div style={{ fontSize: 11, color: B.sand, textTransform: "uppercase", letterSpacing: "0.05em", fontWeight: 700 }}>Descuento aplicado</div>
+          <input
+            type="number"
+            value={descBuf}
+            onChange={e => setDescBuf(e.target.value)}
+            onBlur={() => {
+              const n = Math.max(0, Number(descBuf) || 0);
+              if (n !== Number(descuento)) onChangeDescuento(n);
+            }}
+            style={{ flex: 1, maxWidth: 180, padding: "6px 10px", borderRadius: 6, border: `1px solid ${B.navyLight}`, background: B.navyLight, color: B.white, fontSize: 13, outline: "none" }}
+            placeholder="0"
+          />
+          <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)" }}>Se resta del Total Grupo</div>
+        </div>
+      )}
       {/* Resumen */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginBottom: 24 }}>
         {[
@@ -4701,8 +4724,12 @@ export default function EventoDetalle({ evento: inicial, canEdit = true, onBack,
         const totalCompras   = (evento.pasadias_org||[]).reduce((s, p) => s + subtotalLineaLocal(p), 0);
         const totalServicios = (evento.servicios_contratados||[]).reduce((s, x) => s + (Number(x.valor)||0), 0);
         const base           = evento.valor > 0 ? evento.valor : totalCompras;
-        const totalGrupo     = base + (Number(evento.valor_extras)||0) + totalServicios;
-        return <TabPagos pagos={evento.pagos||[]} onChange={v => updateLocal("pagos", v)} totalGrupo={totalGrupo} eventoId={evento.id} />;
+        // Restamos descuento del totalGrupo. Columna eventos.descuento se
+        // agrego en la migracion 20260614 para que el saldo del organizador
+        // refleje promociones sin tener que reducir manualmente el valor base.
+        const descuento      = Math.max(0, Number(evento.descuento) || 0);
+        const totalGrupo     = Math.max(0, base + (Number(evento.valor_extras)||0) + totalServicios - descuento);
+        return <TabPagos pagos={evento.pagos||[]} onChange={v => updateLocal("pagos", v)} totalGrupo={totalGrupo} eventoId={evento.id} descuento={evento.descuento || 0} onChangeDescuento={vistaOperativa ? null : (v => updateLocal("descuento", v))} />;
       })()}
       {tab === "transporte"&& <TabTransporte items={evento.transporte_detalle||[]} onChange={v => updateLocal("transporte_detalle", v)} embarcacionesEvento={evento.embarcaciones_evento||[]} onChangeEmbarcaciones={v => updateLocal("embarcaciones_evento", v)} timelineItems={evento.timeline_items||[]} evento={evento} updateLocal={updateLocal} />}
       {tab === "contactos" && <TabContactos  items={evento.contactos_rapidos||[]}         onChange={v => updateLocal("contactos_rapidos", v)} />}
