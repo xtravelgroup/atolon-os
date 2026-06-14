@@ -450,7 +450,11 @@ function Asignaciones({ habs, camareras, asignaciones, fecha, setFecha, reload }
       {bulkMode && (
         <div style={{ marginTop: 20 }}>
           <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8, fontWeight: 700 }}>
-            Habitaciones disponibles ({habsSinAsignar.length})
+            {/* rank 117: el label antes decia "disponibles" pero esto es la
+                lista de habitaciones SIN asignacion de housekeeping para
+                {fecha}, no las habitaciones libres de huesped (esa metrica
+                vive en HotelCheckin con datos distintos). */}
+            Sin asignar para {fecha} ({habsSinAsignar.length})
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(110px, 1fr))", gap: 8 }}>
             {habsSinAsignar.map(h => {
