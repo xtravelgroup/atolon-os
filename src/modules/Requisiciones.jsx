@@ -610,6 +610,12 @@ function AsignarProveedorModal({ req, proveedores, onClose, onSaved, onNuevoProv
   const confirmar = async () => {
     const prov = proveedores.find(p => p.id === provId);
     if (!prov) return alert("Selecciona un proveedor");
+    // Validar activo aunque el filtro de la lista ya excluya inactivos:
+    // si un proveedor se desactivo entre el render y el click (o si user
+    // manipula DOM), evitamos crear OC con proveedor no operativo.
+    if (prov.activo === false) {
+      return alert(`El proveedor "${prov.nombre}" está desactivado y no puede recibir OCs nuevas.`);
+    }
     setSaving(true);
     await onSaved({ id: prov.id, nombre: prov.nombre });
   };
@@ -789,7 +795,34 @@ function TabAprobaciones({ reqs, reglas, onOpen, currentUser, reload }) {
       return;
     }
 
-    const aprobaciones = [...(r.aprobaciones || []), {
+    // Race condition guard: si dos aprobadores cliquean concurrentemente
+    // sobre una req nivel "direccion" (>=$10M, doble firma), cada uno
+    // operaria sobre r.aprobaciones del state local (puede tener minutos de
+    // antiguedad) y el segundo UPDATE pisaria al primero — la req nunca
+    // llegaria a "Aprobada" aunque ambos firmaran. Re-fetch fresco antes
+    // de armar el array para mergear correctamente.
+    let aprobacionesBase = r.aprobaciones || [];
+    try {
+      const { data: fresh } = await supabase.from("requisiciones")
+        .select("aprobaciones, estado").eq("id", r.id).maybeSingle();
+      if (fresh?.aprobaciones) aprobacionesBase = fresh.aprobaciones;
+      // Si otro proceso ya la cerro (Aprobada o Rechazada), abort.
+      if (fresh?.estado && ["Aprobada", "Rechazada"].includes(fresh.estado) && accion === "aprobada") {
+        alert(`La requisición ya fue ${fresh.estado.toLowerCase()} por otro usuario. Recarga la lista.`);
+        return;
+      }
+    } catch (_) { /* fallback al state local */ }
+
+    // No firmar dos veces el mismo usuario (idempotencia visual)
+    const yaFirmoEsteUsuario = aprobacionesBase.some(
+      a => a.accion === accion && a.rol === currentUser.rol && a.quien === currentUser.nombre
+    );
+    if (yaFirmoEsteUsuario && accion === "aprobada") {
+      alert("Ya firmaste esta requisición. Esperando otra firma si es nivel dirección.");
+      return;
+    }
+
+    const aprobaciones = [...aprobacionesBase, {
       quien: currentUser.nombre,
       rol: currentUser.rol,
       fecha: new Date().toLocaleString("es-CO"),
@@ -2879,7 +2912,8 @@ function DetailModal({ req, onClose, onUpdate, onGenerarOC, proveedores, reglas,
             <div style={{ display: "flex", gap: 8 }}>
               <select value={provSel} onChange={e => setProvSel(e.target.value)} style={{ ...IS, cursor: "pointer", flex: 1 }}>
                 <option value="">Sin proveedor</option>
-                {proveedores.map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}
+                {/* Excluir inactivos (consistencia con AsignarProveedorModal y otros selects). */}
+                {proveedores.filter(p => p.activo !== false).map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}
               </select>
               <button onClick={guardarProveedor} style={BTN(B.success)}>Guardar</button>
             </div>
