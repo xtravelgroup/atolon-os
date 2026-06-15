@@ -93,9 +93,12 @@ serve(async (req) => {
     // veía "aprobado" en la UI pero la DB nunca cambiaba.
     const upd = await supabase.from("contratistas").update(update).eq("id", contratista_id);
     if (upd.error) {
-      console.error("update contratistas error:", upd.error);
+      // Antes el response incluia upd.error.message + hint "schema mismatch"
+      // — info disclosure directo sobre la estructura de la DB. Loggear
+      // server-side y devolver al cliente solo error generico.
+      console.error("[contratistas-change-state] update DB falló:", upd.error);
       return new Response(
-        JSON.stringify({ error: `update DB falló: ${upd.error.message}`, hint: "Probable schema mismatch — revisar columnas." }),
+        JSON.stringify({ error: "update_failed" }),
         { status: 500, headers: { ...CORS, "Content-Type": "application/json" } },
       );
     }
