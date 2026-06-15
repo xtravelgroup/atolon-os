@@ -47,13 +47,26 @@ export default function CotizacionRespuestaModal({ oc, onClose, reload, currentU
   const handleUpload = async (e) => {
     const f = e.target.files?.[0];
     if (!f) return;
+    // Validar tamaño antes de subir (≤25MB) — evita uploads gigantes que
+    // hacen timeout silencioso.
+    if (f.size > 25 * 1024 * 1024) {
+      setError("Archivo muy grande (máx 25MB). Comprime el PDF o usa una imagen más liviana.");
+      return;
+    }
     setFile(f); setStep("parsing"); setError(""); setProgress("Subiendo archivo…");
     try {
       const safe = f.name.replace(/[^\w.\-]/g, "_");
       const path = `oc/${oc.codigo || oc.id}/cotizacion-resp-${Date.now()}_${safe}`;
-      const { error: upErr } = await supabase.storage.from("motores").upload(path, f, { upsert: true });
+      // Race contra timeout 60s — antes un upload colgado dejaba el modal
+      // con "Subiendo archivo…" para siempre, sin error visible.
+      const uploadPromise = supabase.storage.from("motores").upload(path, f, { upsert: true });
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error("Upload timeout (60s). Reintenta con archivo más pequeño o mejor conexión.")), 60_000)
+      );
+      const { error: upErr } = await Promise.race([uploadPromise, timeoutPromise]);
       if (upErr) throw upErr;
       const { data: pub } = supabase.storage.from("motores").getPublicUrl(path);
+      if (!pub?.publicUrl) throw new Error("No se obtuvo URL pública del archivo.");
       setArchivoUrl(pub.publicUrl);
 
       setProgress("Leyendo cotización con IA…");
@@ -382,7 +395,13 @@ export default function CotizacionRespuestaModal({ oc, onClose, reload, currentU
                         <td style={{ padding: "8px 10px", color: "rgba(255,255,255,0.5)" }}>{it.unidad}</td>
                         <td style={{ padding: "8px 10px", textAlign: "right", color: "rgba(255,255,255,0.5)" }}>{COP(it.precio_anterior)}</td>
                         <td style={{ padding: "6px 10px", textAlign: "right" }}>
-                          <input type="number" value={it.precio_unitario} onChange={e => setItems(arr => arr.map((p, j) => j === i ? { ...p, precio_unitario: Number(e.target.value) || 0 } : p))}
+                          <input type="number" min="0" step="0.01" value={it.precio_unitario}
+                            onChange={e => setItems(arr => arr.map((p, j) => j === i ? {
+                              ...p,
+                              // Math.max(0, ...) — input type=number permite negativos sin min,
+                              // y Number(NaN) || 0 sin guard se persistia en BD.
+                              precio_unitario: Math.max(0, Number(e.target.value) || 0)
+                            } : p))}
                             style={{ ...INP, padding: "4px 6px", fontSize: 11, width: 90, textAlign: "right",
                               borderColor: diff.precioCambio ? B.warning : B.navyLight, color: diff.precioCambio ? B.warning : "#fff" }} />
                         </td>
