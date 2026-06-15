@@ -417,7 +417,13 @@ function DrawerSpot({ spot, asign, loggroMesas = [], onClose, onSave, saving }) 
           style={inputStyle} />
 
         <label style={{ fontSize: 12, color: B.sand, fontWeight: 600, marginTop: 12, display: "block" }}>Pax</label>
-        <input type="number" min={0} max={spot.capacidad * 2} value={pax} onChange={e => setPax(e.target.value)}
+        <input type="number" min={0} max={spot.capacidad * 2} value={pax}
+          onChange={e => {
+            // Guard NaN — input puede tener letras/símbolos. Antes se guardaba
+            // como string y al persistir con Number() quedaba NaN en la BD.
+            const v = e.target.value === "" ? "" : Math.max(0, Number(e.target.value) || 0);
+            setPax(v);
+          }}
           style={inputStyle} />
 
         <label style={{ fontSize: 12, color: B.sand, fontWeight: 600, marginTop: 12, display: "block" }}>Reserva ID (opcional)</label>
