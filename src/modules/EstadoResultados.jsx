@@ -21,9 +21,17 @@ const COP_COMPACT = (v, decimals = 2) => {
 const PCT = (v, decimals = 1) => (v === null || v === undefined || isNaN(v)) ? "—" : `${Number(v).toFixed(decimals)}%`;
 const safeDiv = (a, b) => (b && !isNaN(a / b) ? (a / b) * 100 : null);
 
+// Mes actual en zona Bogotá (no UTC). Usar getMonth() crudo en la noche
+// (después de las 19:00 hora local) daba el mes siguiente porque getMonth
+// retorna UTC y a esa hora UTC ya pasó medianoche del día siguiente.
+function mesActualBogota() {
+  const [, mm] = new Date().toLocaleDateString("en-CA", { timeZone: "America/Bogota" }).split("-");
+  return Math.max(0, Math.min(11, parseInt(mm, 10) - 1)); // 0-based
+}
+
 export default function EstadoResultados() {
   const [year, setYear] = useState(2026);
-  const [month, setMonth] = useState(new Date().getMonth()); // 0-based
+  const [month, setMonth] = useState(mesActualBogota()); // 0-based, zona Bogotá
   const [cats, setCats] = useState([]);
   const [loading, setLoading] = useState(true);
   const [drillDown, setDrillDown] = useState(null); // { categoria, tipo, ytd }
