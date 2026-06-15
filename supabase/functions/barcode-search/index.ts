@@ -23,7 +23,12 @@ function json(body: any, status = 200) {
 async function searchOpenFoodFacts(q: string, limit: number) {
   try {
     const url = `https://world.openfoodfacts.org/cgi/search.pl?search_terms=${encodeURIComponent(q)}&search_simple=1&action=process&json=1&page_size=${limit}`;
-    const res = await fetch(url, { headers: { "User-Agent": "AtolonOS-Inventory/1.0" } });
+    // Timeout 8s — antes un OFF lento bloqueaba toda la búsqueda hasta el
+    // global timeout. El usuario veía spinner sin saber qué pasaba.
+    const res = await fetch(url, {
+      headers: { "User-Agent": "AtolonOS-Inventory/1.0" },
+      signal: AbortSignal.timeout(8_000),
+    });
     if (!res.ok) return [];
     const data = await res.json();
     const products = data.products || [];
@@ -48,8 +53,10 @@ async function searchOpenFoodFacts(q: string, limit: number) {
 async function searchVTEX(baseUrl: string, sourceName: string, q: string, limit: number) {
   try {
     const url = `${baseUrl}/api/catalog_system/pub/products/search?ft=${encodeURIComponent(q)}&_from=0&_to=${limit - 1}`;
+    // Timeout 8s (VTEX puede estar lento o caído).
     const res = await fetch(url, {
       redirect: "follow",
+      signal: AbortSignal.timeout(8_000),
       headers: {
         "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36",
         "Accept": "application/json",
