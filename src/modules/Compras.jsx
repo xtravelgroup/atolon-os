@@ -1656,9 +1656,11 @@ function EditarOCModal({ oc, ordenes = [], onClose, reload, currentUser }) {
   const [err, setErr] = useState("");
 
   useEffect(() => {
-    supabase.from("proveedores").select("id, nombre, nit, email, telefono").order("nombre")
-      .then(({ data }) => setProveedores(data || []));
-  }, []);
+    // Solo proveedores activos — no permitir reasignar OC a un proveedor
+    // desactivado. Conservar el actual aunque sea inactivo (no rompe el form).
+    supabase.from("proveedores").select("id, nombre, nit, email, telefono, activo").order("nombre")
+      .then(({ data }) => setProveedores((data || []).filter(p => p.activo !== false || p.id === oc.proveedor_id)));
+  }, [oc.proveedor_id]);
 
   const setItem = (idx, k, v) => setItems(arr => arr.map((it, i) => {
     if (i !== idx) return it;
