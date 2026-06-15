@@ -58,6 +58,31 @@ async function pgSelect(table, params) {
   return res.json();
 }
 
+// ── Whitelist de terminales autorizados ─────────────────────────────
+// Antes el endpoint aceptaba cualquier SN — riesgo de inyección de punches
+// fake (nómina/control físico). Ahora valida contra zk_terminals_autorizados.
+// Si SN no listado o activo=false → 401.
+//
+// Modo MONITOR para IP: registra last_seen_ip pero NO bloquea si difiere
+// de ip_origen_esperada — fase 1 de descubrimiento. Hard-enforce en futuro.
+async function autorizarTerminal(sn, ipOrigen) {
+  if (!sn) return { ok: false, motivo: "sn_missing" };
+  const rows = await pgSelect("zk_terminals_autorizados", {
+    select: "sn,activo,ip_origen_esperada",
+    sn: `eq.${sn}`,
+    limit: 1,
+  });
+  const t = rows[0];
+  if (!t) return { ok: false, motivo: "sn_no_autorizado" };
+  if (!t.activo) return { ok: false, motivo: "terminal_inactivo" };
+  // Update last_seen (fire-and-forget — no romper si falla)
+  pgUpdate("zk_terminals_autorizados", { sn },
+    { last_seen_ip: ipOrigen || null, last_seen_at: new Date().toISOString() }
+  ).catch(() => {});
+  const ipMismatch = !!(t.ip_origen_esperada && ipOrigen && t.ip_origen_esperada !== ipOrigen);
+  return { ok: true, ip_mismatch: ipMismatch };
+}
+
 // ── Read raw body (text/plain con tabs) ──────────────────────────────
 function readRawBody(req) {
   // Vercel Node runtime: req.body puede venir ya como string si Content-Type es text/plain.
@@ -194,6 +219,14 @@ export default async function handler(req, res) {
 
   const rawBody = req.method === "POST" ? await readRawBody(req).catch(() => "") : "";
 
+  // IP de origen para auditoría (modo monitor, no bloquea aún).
+  const ipOrigen = String(
+    req.headers["x-forwarded-for"]?.split(",")[0]?.trim() ||
+    req.headers["x-real-ip"] ||
+    req.socket?.remoteAddress ||
+    ""
+  ).trim() || null;
+
   // Best-effort log (no bloquear si falla)
   logComm({
     terminal_sn: terminalSn || null,
@@ -202,6 +235,28 @@ export default async function handler(req, res) {
     query:       Object.fromEntries(url.searchParams.entries()),
     body_text:   rawBody?.slice(0, 4000) || null,
   });
+
+  // Validar SN contra whitelist. Si no autorizado, 401 inmediato sin tocar
+  // asistencia_zk ni responder OK al terminal — así no se simula handshake
+  // a un atacante.
+  const auth = await autorizarTerminal(terminalSn, ipOrigen);
+  if (!auth.ok) {
+    logComm({
+      terminal_sn: terminalSn || null,
+      operation:   `REJECT_AUTH ${req.method} ${opPath}`,
+      method:      req.method,
+      query:       Object.fromEntries(url.searchParams.entries()),
+      body_text:   `motivo=${auth.motivo} ip=${ipOrigen || "?"}`,
+      response:    auth.motivo,
+      status_code: 401,
+    });
+    res.setHeader("Content-Type", "text/plain");
+    return res.status(401).send("Unauthorized");
+  }
+  if (auth.ip_mismatch) {
+    // Solo logueamos — no bloqueamos. Fase 1 de descubrimiento de IP real.
+    console.warn(`[zk-iclock] IP mismatch para ${terminalSn}: esperada vs actual ${ipOrigen}`);
+  }
 
   try {
     if (req.method === "GET" && opPath === "/cdata") {
