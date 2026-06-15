@@ -35,11 +35,31 @@ function mesIniDeAyer() {
 }
 
 async function sbQuery(sbUrl, sbKey, table, params = "") {
-  const r = await fetch(`${sbUrl}/rest/v1/${table}?${params}`, {
-    headers: { apikey: sbKey, Authorization: `Bearer ${sbKey}` },
-  });
-  if (!r.ok) throw new Error(`Supabase query error: ${table} → ${r.status}`);
-  return r.json();
+  // Timeout 15s — antes un Supabase lento colgaba el cron entero hasta el
+  // global timeout de Vercel (~60s), bloqueando otros crons en cola.
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 15_000);
+  try {
+    const r = await fetch(`${sbUrl}/rest/v1/${table}?${params}`, {
+      signal: ctrl.signal,
+      headers: { apikey: sbKey, Authorization: `Bearer ${sbKey}` },
+    });
+    if (!r.ok) throw new Error(`Supabase query error: ${table} → ${r.status}`);
+    return r.json();
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// Escape HTML para evitar XSS cuando query params del cron se inyectan en
+// el HTML del email (ej. ?nota=<script>...).
+function escapeHtml(s) {
+  return String(s ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
 export default async function handler(req, res) {
@@ -211,11 +231,13 @@ export default async function handler(req, res) {
       </td>`;
     }).join("");
 
-    // Nota de corrección opcional (parámetro ?nota=... en la URL)
+    // Nota de corrección opcional (parámetro ?nota=... en la URL).
+    // ESCAPAR para prevenir XSS — el param viene de URL pública, se inyecta
+    // en HTML y se envia por Resend a destinatarios reales.
     const notaCorreccion = typeof req.query?.nota === "string" ? req.query.nota : "";
     const notaHTML = notaCorreccion ? `
       <div style="background:#F59E0B22;border:1px solid #F59E0B88;border-radius:10px;padding:12px 16px;margin-bottom:18px;color:#F59E0B;font-size:13px;line-height:1.5;">
-        ⚠️ <strong>Corrección:</strong> ${notaCorreccion}
+        ⚠️ <strong>Corrección:</strong> ${escapeHtml(notaCorreccion)}
       </div>` : "";
 
     const html = `
