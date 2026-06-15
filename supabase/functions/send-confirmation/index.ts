@@ -212,7 +212,10 @@ Deno.serve(async (req: Request) => {
     });
 
   } catch (e) {
-    return new Response(JSON.stringify({ error: String(e) }), {
+    // No exponer stack/mensaje crudo al cliente — puede revelar nombres de
+    // env vars, paths internos, etc. Loggear server-side y devolver genérico.
+    console.error("[send-confirmation] error:", e);
+    return new Response(JSON.stringify({ error: "internal_error" }), {
       status: 500,
       headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
     });

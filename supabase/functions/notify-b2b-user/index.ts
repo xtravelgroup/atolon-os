@@ -24,6 +24,15 @@ Deno.serve(async (req: Request) => {
         headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
       });
     }
+    // Validar formato de email — antes el handler pasaba "notanemail" a
+    // Resend, que rechazaba con 422 y se loggeaba sin contexto. Mejor
+    // rechazar acá con un error específico.
+    if (!/^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/.test(vendedor_email)) {
+      return new Response(JSON.stringify({ error: "vendedor_email tiene formato inválido" }), {
+        status: 400,
+        headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
+      });
+    }
 
     const html = `<!DOCTYPE html>
 <html lang="es">
@@ -124,7 +133,9 @@ Deno.serve(async (req: Request) => {
     const body = await res.json();
     if (!res.ok) {
       console.error("Resend error:", body);
-      return new Response(JSON.stringify({ error: body }), {
+      // No devolver body completo al cliente — puede contener detalles
+      // internos del request a Resend (api keys masked, payload, etc).
+      return new Response(JSON.stringify({ error: "resend_error" }), {
         status: 500,
         headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
       });
@@ -135,7 +146,9 @@ Deno.serve(async (req: Request) => {
     });
 
   } catch (e) {
-    return new Response(JSON.stringify({ error: String(e) }), {
+    // Loggear server-side pero no exponer stack al cliente.
+    console.error("[notify-b2b-user] error:", e);
+    return new Response(JSON.stringify({ error: "internal_error" }), {
       status: 500,
       headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
     });
