@@ -23,10 +23,13 @@ Deno.serve(async (req) => {
 
   const supabase = createClient(SUPABASE_URL, SERVICE_KEY);
 
-  // Verificar que el cart_id y token coinciden (seguridad básica)
+  // Verificar que el cart_id y token coinciden (seguridad básica).
+  // Incluir 'unsubscribed' en el SELECT — antes faltaba y el check de
+  // multi-unsubscribe recibía undefined → no detectaba que ya estaba dado
+  // de baja si solo el campo unsubscribed=true (sin tocar estado).
   const { data: cart } = await supabase
     .from("ac_carts")
-    .select("id, email, estado, recovery_token")
+    .select("id, email, estado, recovery_token, unsubscribed")
     .eq("id", cartId)
     .eq("recovery_token", token)
     .maybeSingle();
@@ -36,7 +39,7 @@ Deno.serve(async (req) => {
   }
 
   if (cart.unsubscribed || cart.estado === "unsubscribed") {
-    return htmlResponse("✅ Ya estás dado de baja", `El email ${cart.email} ya no recibe emails de Atolón.`);
+    return htmlResponse("✅ Ya estás dado de baja", `El email ${escapeHtml(cart.email || "")} ya no recibe emails de Atolón.`);
   }
 
   // Marcar como unsubscribed
@@ -61,9 +64,20 @@ Deno.serve(async (req) => {
 
   return htmlResponse(
     "✅ Dado de baja exitosamente",
-    `El email <strong>${cart.email}</strong> no recibirá más correos de Atolón Beach Club.<br><br>Si esto fue un error, puedes volver a reservar en <a href="https://atolon.co" style="color:#0D1B3E;">atolon.co</a>`
+    `El email <strong>${escapeHtml(cart.email || "")}</strong> no recibirá más correos de Atolón Beach Club.<br><br>Si esto fue un error, puedes volver a reservar en <a href="https://atolon.co" style="color:#0D1B3E;">atolon.co</a>`
   );
 });
+
+// Escape HTML para prevenir XSS — el email viene de input del booking
+// engine. Si por algún path no se validó, podría tener < o >.
+function escapeHtml(s: string): string {
+  return String(s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
 
 function htmlResponse(title: string, message: string) {
   const html = `<!DOCTYPE html>
