@@ -267,10 +267,13 @@ Deno.serve(async (req: Request) => {
         : buttonParams;
       const payload = buildTemplatePayload(phone, template, params, lang, autoButtonParams);
 
+      // Timeout 15s en fetch a Meta Graph — antes podia colgar la function
+      // hasta el global timeout (60s+) si Meta se ponia lenta.
       const res = await fetch(
         `https://graph.facebook.com/v19.0/${cfg.phoneId}/messages`,
         {
           method:  "POST",
+          signal:  AbortSignal.timeout(15_000),
           headers: { Authorization: `Bearer ${cfg.token}`, "Content-Type": "application/json" },
           body: JSON.stringify(payload),
         }
@@ -289,7 +292,10 @@ Deno.serve(async (req: Request) => {
 
       return jsonResp(data, res.ok ? 200 : 400);
     } catch (err) {
-      return jsonResp({ error: String(err) }, 500);
+      // No exponer String(err) — puede contener Authorization header truncado o env names.
+      console.error("[send-whatsapp /send-template] error:", err);
+      const isAbort = err instanceof Error && err.name === "AbortError";
+      return jsonResp({ error: isAbort ? "meta_timeout" : "internal_error" }, isAbort ? 504 : 500);
     }
   }
 
@@ -311,6 +317,7 @@ Deno.serve(async (req: Request) => {
         `https://graph.facebook.com/v19.0/${cfg.phoneId}/messages`,
         {
           method:  "POST",
+          signal:  AbortSignal.timeout(15_000),
           headers: { Authorization: `Bearer ${cfg.token}`, "Content-Type": "application/json" },
           body: JSON.stringify(payload),
         }
@@ -329,7 +336,9 @@ Deno.serve(async (req: Request) => {
 
       return jsonResp(data, res.ok ? 200 : 400);
     } catch (err) {
-      return jsonResp({ error: String(err) }, 500);
+      console.error("[send-whatsapp /send-text] error:", err);
+      const isAbort = err instanceof Error && err.name === "AbortError";
+      return jsonResp({ error: isAbort ? "meta_timeout" : "internal_error" }, isAbort ? 504 : 500);
     }
   }
 

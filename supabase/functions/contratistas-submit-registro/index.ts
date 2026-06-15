@@ -127,10 +127,13 @@ serve(async (req) => {
 
     // Email a cada trabajador con link al curso
     // El email del trabajador no se almacena por trabajador, se usa el del
-    // contratista padre (contacto_principal_email).
+    // contratista padre (contacto_principal_email). Validar formato antes
+    // de mandar — un email mal formateado pasaba a Resend, que rechazaba
+    // con 422 sin contexto y el contratista nunca recibía el link.
     const emailDestino = c.contacto_principal_email;
+    const emailValido = emailDestino && /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/.test(emailDestino);
     for (const t of trabajadoresConToken || []) {
-      if (!emailDestino || t.curso_completado) continue;
+      if (!emailValido || t.curso_completado) continue;
       const url = `${PORTAL_BASE}/contratistas/curso/${t.curso_token}`;
       await sendEmail({
         to: [emailDestino],

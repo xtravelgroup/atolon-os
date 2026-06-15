@@ -30,11 +30,23 @@ serve(async (req) => {
     return new Response(JSON.stringify({ error: "to[], subject, html requeridos" }), { status: 400, headers: { ...CORS, "Content-Type": "application/json" } });
   }
 
-  const res = await fetch("https://api.resend.com/emails", {
-    method: "POST",
-    headers: { "Authorization": `Bearer ${RESEND_KEY}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ from: FROM, to, subject, html, reply_to: REPLY_TO }),
-  });
+  // Timeout 15s en fetch a Resend — antes un Resend lento dejaba el handler
+  // colgado hasta el global timeout, bloqueando otras notificaciones.
+  let res: Response;
+  try {
+    res = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      signal: AbortSignal.timeout(15_000),
+      headers: { "Authorization": `Bearer ${RESEND_KEY}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ from: FROM, to, subject, html, reply_to: REPLY_TO }),
+    });
+  } catch (e) {
+    const isAbort = e instanceof Error && e.name === "AbortError";
+    return new Response(
+      JSON.stringify({ error: isAbort ? "resend_timeout" : "resend_network_error" }),
+      { status: 504, headers: { ...CORS, "Content-Type": "application/json" } },
+    );
+  }
   const data = await res.json();
 
   // Registrar notificación
