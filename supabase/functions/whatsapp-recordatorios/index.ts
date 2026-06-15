@@ -28,46 +28,90 @@ function horaLlegada(horaStr: string | null): string {
   return `${String(Math.floor(norm / 60)).padStart(2, "0")}:${String(norm % 60).padStart(2, "0")}`;
 }
 
+// Helper para fetch con timeout. Antes los fetch a Meta Graph y Supabase
+// colgaban si la API se ponia lenta — el cron se quedaba esperando
+// indefinidamente y bloqueaba ejecuciones posteriores.
+async function fetchConTimeout(url: string, init: RequestInit, timeoutMs = 15_000) {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: ctrl.signal });
+  } finally {
+    clearTimeout(t);
+  }
+}
+
 async function sendWhatsApp(to: string, template: string, params: string[]) {
   if (!META_TOKEN || !to) return null;
   const phone = normalizePhone(to);
   if (!phone) return null;
 
-  const res = await fetch(
-    `https://graph.facebook.com/v19.0/${PHONE_NUMBER_ID}/messages`,
-    {
-      method:  "POST",
-      headers: {
-        "Authorization": `Bearer ${META_TOKEN}`,
-        "Content-Type":  "application/json",
-      },
-      body: JSON.stringify({
-        messaging_product: "whatsapp",
-        recipient_type:    "individual",
-        to:                phone,
-        type:              "template",
-        template: {
-          name:     template,
-          language: { code: "es" },
-          components: [{
-            type:       "body",
-            parameters: params.map(p => ({ type: "text", text: p })),
-          }],
+  try {
+    const res = await fetchConTimeout(
+      `https://graph.facebook.com/v19.0/${PHONE_NUMBER_ID}/messages`,
+      {
+        method:  "POST",
+        headers: {
+          "Authorization": `Bearer ${META_TOKEN}`,
+          "Content-Type":  "application/json",
         },
-      }),
-    }
-  );
-  return res.json();
+        body: JSON.stringify({
+          messaging_product: "whatsapp",
+          recipient_type:    "individual",
+          to:                phone,
+          type:              "template",
+          template: {
+            name:     template,
+            language: { code: "es" },
+            components: [{
+              type:       "body",
+              parameters: params.map(p => ({ type: "text", text: p })),
+            }],
+          },
+        }),
+      }
+    );
+    return res.json();
+  } catch (e) {
+    return { error: e instanceof Error && e.name === "AbortError" ? "meta_timeout" : "meta_error" };
+  }
 }
 
 async function dbGet(path: string) {
-  const res = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
-    headers: {
-      "apikey":        SUPABASE_KEY,
-      "Authorization": `Bearer ${SUPABASE_KEY}`,
-    },
-  });
-  return res.json();
+  try {
+    const res = await fetchConTimeout(`${SUPABASE_URL}/rest/v1/${path}`, {
+      headers: {
+        "apikey":        SUPABASE_KEY,
+        "Authorization": `Bearer ${SUPABASE_KEY}`,
+      },
+    });
+    return res.json();
+  } catch (e) {
+    return [];
+  }
+}
+
+async function dbInsertSilent(path: string, body: unknown) {
+  try {
+    await fetchConTimeout(`${SUPABASE_URL}/rest/v1/${path}`, {
+      method: "POST",
+      headers: {
+        "apikey":        SUPABASE_KEY,
+        "Authorization": `Bearer ${SUPABASE_KEY}`,
+        "Content-Type":  "application/json",
+        "Prefer":        "return=minimal",
+      },
+      body: JSON.stringify(body),
+    });
+  } catch (_) { /* best effort */ }
+}
+
+// Dedup en memoria + DB: registramos cada envio en wa_recordatorios_log
+// con UNIQUE(reserva_id, tipo, fecha_envio). Si el cron corre dos veces
+// el mismo dia, el segundo INSERT falla por UNIQUE y NO re-enviamos.
+async function yaEnviado(reservaId: string, tipo: string, fechaISO: string): Promise<boolean> {
+  const rows = await dbGet(`wa_recordatorios_log?select=reserva_id&reserva_id=eq.${reservaId}&tipo=eq.${tipo}&fecha_envio=eq.${fechaISO}&limit=1`);
+  return Array.isArray(rows) && rows.length > 0;
 }
 
 Deno.serve(async () => {
@@ -94,6 +138,14 @@ Deno.serve(async () => {
   for (const r of (Array.isArray(reservas24) ? reservas24 : [])) {
     if (!r.telefono) continue;
 
+    // Dedup: si ya enviamos el recordatorio 24h para esta reserva hoy, skip.
+    // El cron puede re-ejecutarse (reschedule, retry, clock skew) y el
+    // cliente recibia el mismo mensaje 2 o 3 veces.
+    if (await yaEnviado(r.id, "24h", todayISO)) {
+      results.push({ reserva: r.id, tipo: "24h", skipped: "ya_enviado" });
+      continue;
+    }
+
     // Fetch salida
     let salida: { hora?: string; hora_regreso?: string } = {};
     if (r.salida_id) {
@@ -116,6 +168,14 @@ Deno.serve(async () => {
       salida.hora ?? "ver confirmación",
     ]);
 
+    // Registrar envío SOLO si Meta lo aceptó (no marcar errores como enviados).
+    const enviado = res && !res.error && res.messages?.[0]?.id;
+    if (enviado) {
+      await dbInsertSilent("wa_recordatorios_log",
+        { reserva_id: r.id, tipo: "24h", fecha_envio: todayISO, meta_message_id: res.messages[0].id }
+      );
+    }
+
     results.push({ reserva: r.id, tipo: "24h", result: res });
   }
 
@@ -129,6 +189,13 @@ Deno.serve(async () => {
 
   for (const r of (Array.isArray(reservasHoy) ? reservasHoy : [])) {
     if (!r.telefono || !r.salida_id) continue;
+
+    // Dedup 2h también — el cron puede correr varias veces dentro de la
+    // ventana 90-150 min y disparar el mismo mensaje 2-3 veces.
+    if (await yaEnviado(r.id, "2h", todayISO)) {
+      results.push({ reserva: r.id, tipo: "2h", skipped: "ya_enviado" });
+      continue;
+    }
 
     const sals = await dbGet(`salidas?select=hora,hora_regreso&id=eq.${r.salida_id}`);
     const salida = (Array.isArray(sals) && sals[0]) ? sals[0] : {};
@@ -150,6 +217,13 @@ Deno.serve(async () => {
       llegada || salida.hora,
       salida.hora,
     ]);
+
+    const enviado = res && !res.error && res.messages?.[0]?.id;
+    if (enviado) {
+      await dbInsertSilent("wa_recordatorios_log",
+        { reserva_id: r.id, tipo: "2h", fecha_envio: todayISO, meta_message_id: res.messages[0].id }
+      );
+    }
 
     results.push({ reserva: r.id, tipo: "2h", result: res });
   }

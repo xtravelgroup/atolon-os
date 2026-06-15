@@ -150,11 +150,17 @@ async function loadModel(SB: any): Promise<string> {
 async function buildCustomerContext(SB: any, telefono: string) {
   const lines: string[] = [];
 
+  // Sanitizar teléfono antes de interpolar en .or() — PostgREST interpreta
+  // comas y paréntesis como operadores. Sin escape, "+57|foo=bar" puede
+  // romper o alterar la query. Solo dígitos y "+".
+  const telSafe = String(telefono || "").replace(/[^0-9+]/g, "");
+  if (!telSafe) return "";
+
   // Buscar reservas asociadas al teléfono
   try {
     const { data: reservas } = await SB.from("reservas")
       .select("id, fecha, tipo, estado, pax, total, salida_id")
-      .or(`telefono.eq.${telefono},contacto.eq.${telefono}`)
+      .or(`telefono.eq.${telSafe},contacto.eq.${telSafe}`)
       .order("created_at", { ascending: false })
       .limit(3);
     if (reservas && reservas.length > 0) {
@@ -169,7 +175,7 @@ async function buildCustomerContext(SB: any, telefono: string) {
   try {
     const { data: leads } = await SB.from("leads")
       .select("id, nombre, email, stage, ultimo_contacto, notas")
-      .or(`telefono.eq.${telefono},contacto.eq.${telefono}`)
+      .or(`telefono.eq.${telSafe},contacto.eq.${telSafe}`)
       .order("ultimo_contacto", { ascending: false })
       .limit(1);
     if (leads && leads[0]) {
