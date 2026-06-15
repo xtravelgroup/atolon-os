@@ -509,7 +509,10 @@ serve(async (req) => {
     }
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    res = err("INTERNAL_SYSTEM_FAILURE", msg, 500);
+    // Loggear el msg server-side completo, pero devolver al partner solo
+    // un mensaje generico — no exponer rutas internas, env vars o SQL.
+    console.error("[gyg-api] INTERNAL_SYSTEM_FAILURE:", msg);
+    res = err("INTERNAL_SYSTEM_FAILURE", "internal_error", 500);
     logCall({ endpoint: endpointKey, metodo: req.method, status: 500, reqBody: body, reqQuery: Object.fromEntries(url.searchParams), durationMs: Date.now() - t0, clientIp: ip, errorMsg: msg });
     return res;
   }
