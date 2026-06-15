@@ -31,6 +31,69 @@ const detectarPackDelNombre = (nombre) => {
   return 1;
 };
 
+// ── Matching heurístico OC ↔ factura ─────────────────────────────────────
+// El AI (parse-factura) intenta matchear pero suele dejar items sin asociar
+// cuando el nombre difiere ligeramente entre OC y factura (ej. "CORONA 330 ML"
+// vs "Cerveza Corona Botella 330ml"). El heurístico cubre ese gap usando
+// token overlap + bonificaciones por barcode/referencia.
+
+function normalizarTextoMatch(s) {
+  return String(s || "")
+    .toUpperCase()
+    .normalize("NFD").replace(/[̀-ͯ]/g, "")  // quitar diacríticos
+    // Quitar qualifiers de pack/unidad que generan ruido
+    .replace(/\bX\s*\d+\s*(PK|PACK|UN|UND|UNIDADES|BTL|BTLS|BOTELLAS|CC|ML|L|GR|GRS|KG|GAL|LB|OZ)?\b/gi, " ")
+    .replace(/\b\d+(\.\d+)?\s*(ML|CC|L|GR|GRS|KG|GAL|LB|OZ|UN|UND)\b/gi, " ")
+    .replace(/[^A-Z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+// Score 0-1 por similitud de tokens. 1.0 = idénticos tras normalizar.
+function scoreSimilitud(facName, ocName) {
+  const facNorm = normalizarTextoMatch(facName);
+  const ocNorm = normalizarTextoMatch(ocName);
+  if (!facNorm || !ocNorm) return 0;
+  if (facNorm === ocNorm) return 1.0;
+  // Tokens significativos (longitud > 2 — descarta "DE", "EL", "LA")
+  const facTokens = facNorm.split(" ").filter(t => t.length > 2);
+  const ocTokens = ocNorm.split(" ").filter(t => t.length > 2);
+  if (facTokens.length === 0 || ocTokens.length === 0) return 0;
+  const facSet = new Set(facTokens);
+  const matches = ocTokens.filter(t => facSet.has(t)).length;
+  // Promedio de recall y precision → penaliza nombres muy distintos en longitud
+  const recall    = matches / facTokens.length;
+  const precision = matches / ocTokens.length;
+  return (recall + precision) / 2;
+}
+
+// Encuentra el mejor match en ocItems para facItem. Retorna { idx, score, source }.
+// takenIndices: Set de indices ya tomados por matches previos (evita doble match).
+function findBestOcMatch(facItem, ocItems, takenIndices) {
+  let best = { idx: null, score: 0, source: null };
+  for (let i = 0; i < ocItems.length; i++) {
+    if (takenIndices.has(i)) continue;
+    const it = ocItems[i];
+    const nombreOC = it.item || it.nombre || "";
+
+    // Barcode = match deterministico, score 1.0 inmediato
+    if (facItem.codigo_barras && it.codigo_barras && facItem.codigo_barras === it.codigo_barras) {
+      return { idx: i, score: 1.0, source: "barcode" };
+    }
+    // Referencia del proveedor = casi deterministico
+    if (facItem.referencia_proveedor && it.referencia && facItem.referencia_proveedor === it.referencia) {
+      const s = 0.95;
+      if (s > best.score) best = { idx: i, score: s, source: "ref_proveedor" };
+      continue;
+    }
+    // Token overlap
+    const s = scoreSimilitud(facItem.nombre, nombreOC);
+    if (s > best.score) best = { idx: i, score: s, source: "nombre" };
+  }
+  // Threshold: 0.6 → tokens significativamente compartidos.
+  return best.score >= 0.6 ? best : { idx: null, score: 0, source: null };
+}
+
 // Construye el objeto `data` (cabecera + items) a partir del resultado del
 // parser. SOLO incluye los items que vienen en la factura — los items de la
 // OC/cotización que NO se facturaron NO aparecen (requerimiento del negocio).
@@ -39,8 +102,51 @@ const detectarPackDelNombre = (nombre) => {
 function buildDataFromParsed(result, ocItems, factura_url) {
   const items = ocItems || [];
   const ocItemsCount = items.length;
-  const itemsRich = (result.items || []).map((aiItem, aiIdx) => {
-    const ocIdx = aiItem.match_oc_idx;
+  const aiItems = result.items || [];
+
+  // Tracking de qué índices de OC ya están tomados (por AI primero, después
+  // por heurístico) para que cada OC item se asigne a máximo UN item factura.
+  const takenByAI = new Set();
+  for (const aiItem of aiItems) {
+    if (typeof aiItem.match_oc_idx === "number" && aiItem.match_oc_idx >= 0 && aiItem.match_oc_idx < ocItemsCount) {
+      takenByAI.add(aiItem.match_oc_idx);
+    }
+  }
+  // Segunda pasada: rellenamos con heurístico los items que el AI no asoció.
+  // Pre-computa los matches sugeridos por heurístico de forma estable (no
+  // depende del orden de procesamiento de aiItems).
+  const heuristicMatches = new Map();   // ai_idx → { idx, score, source }
+  const taken = new Set(takenByAI);
+  // Ordenamos los AI items por orden de proceso: los que tengan barcode o
+  // referencia primero (matches más confiables), después por nombre largo
+  // (más información disponible).
+  const aiOrdenProceso = aiItems
+    .map((ai, idx) => ({ ai, idx }))
+    .filter(x => !(typeof x.ai.match_oc_idx === "number" && x.ai.match_oc_idx >= 0))
+    .sort((a, b) => {
+      const aBC = !!(a.ai.codigo_barras || a.ai.referencia_proveedor);
+      const bBC = !!(b.ai.codigo_barras || b.ai.referencia_proveedor);
+      if (aBC !== bBC) return bBC - aBC;  // los con barcode/ref primero
+      return (b.ai.nombre || "").length - (a.ai.nombre || "").length;
+    });
+  for (const { ai, idx } of aiOrdenProceso) {
+    const m = findBestOcMatch(ai, items, taken);
+    if (m.idx !== null) {
+      heuristicMatches.set(idx, m);
+      taken.add(m.idx);
+    }
+  }
+
+  const itemsRich = aiItems.map((aiItem, aiIdx) => {
+    // 1) Primero respetar match del AI si lo dio.
+    let ocIdx = aiItem.match_oc_idx;
+    let matchSource = (typeof ocIdx === "number" && ocIdx >= 0 && ocIdx < ocItemsCount) ? "ai" : null;
+    // 2) Si AI no matcheó, usar heurístico.
+    if (matchSource === null && heuristicMatches.has(aiIdx)) {
+      const h = heuristicMatches.get(aiIdx);
+      ocIdx = h.idx;
+      matchSource = `heur_${h.source}_${Math.round(h.score * 100)}`;
+    }
     const matchOc = (typeof ocIdx === "number" && ocIdx >= 0 && ocIdx < ocItemsCount) ? items[ocIdx] : null;
     const nombre = aiItem.nombre || matchOc?.item || matchOc?.nombre || "—";
     let cantPack    = Number(aiItem.cantidad_paquete ?? aiItem.cantidad) || 0;
@@ -94,6 +200,7 @@ function buildDataFromParsed(result, ocItems, factura_url) {
       es_bonificacion:      esBonif,
       requiere_revision:    !!aiItem.requiere_revision,
       es_nuevo_oc:          !matchOc,
+      match_source:         matchSource, // "ai" | "heur_nombre_85" | "heur_barcode_100" | "heur_ref_proveedor_95" | null
       cantidad:             cantPack,
       unidad:               aiItem.unidad_compra || matchOc?.unidad || "UND",
       precio_costo_unit:    costoPack,
@@ -1033,6 +1140,25 @@ export default function FacturaProveedorModal({ oc, onClose, reload, currentUser
                             {it.requiere_revision && <span style={{ fontSize: 9, padding: "1px 6px", background: B.warning, color: B.navy, borderRadius: 8, fontWeight: 800 }}>⚠ COMBO</span>}
                             {it.no_facturado && <span style={{ fontSize: 9, padding: "1px 6px", background: B.danger + "33", color: B.danger, borderRadius: 8, fontWeight: 700 }}>NO FACT</span>}
                             {it.es_nuevo_oc && !it.es_bonificacion && <span style={{ fontSize: 9, padding: "1px 6px", background: B.sky + "33", color: B.sky, borderRadius: 8, fontWeight: 700 }}>NUEVO</span>}
+                            {/* Badge indicando origen del match con la OC.
+                                Permite al operador saber si confiar (AI/barcode/ref) o revisar (heurístico por nombre). */}
+                            {it.match_source && it.match_source !== "ai" && !it.es_nuevo_oc && (() => {
+                              const isHeur = it.match_source.startsWith("heur_");
+                              const source = isHeur ? it.match_source.slice(5).split("_")[0] : it.match_source;
+                              const score = isHeur ? it.match_source.split("_").pop() : null;
+                              const label = source === "barcode" ? "📊 BARCODE"
+                                          : source === "ref" ? "📑 REF PROV"
+                                          : source === "nombre" ? `🔎 NOMBRE ${score}%`
+                                          : source;
+                              const color = source === "barcode" || source === "ref" ? B.success : (Number(score) >= 80 ? B.success : B.warning);
+                              return (
+                                <span
+                                  title={`Match heurístico (no AI): ${source}${score ? ` · score ${score}%` : ""}. Verifica que sea el item correcto.`}
+                                  style={{ fontSize: 9, padding: "1px 6px", background: color + "22", color, borderRadius: 8, fontWeight: 700, border: `1px dashed ${color}66` }}>
+                                  {label}
+                                </span>
+                              );
+                            })()}
                           </div>
                           {(it.codigo_barras || it.referencia_proveedor) && (
                             <div style={{ fontSize: 10, color: "rgba(255,255,255,0.35)", marginTop: 2 }}>
