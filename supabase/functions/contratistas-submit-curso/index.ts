@@ -66,8 +66,9 @@ serve(async (req) => {
       .select("id, nombre, cedula, contratista_id, curso_completado")
       .eq("curso_token", token).maybeSingle();
     if (tErr) {
+      // No exponer tErr.message — puede revelar schema/columnas. Loggear server-side.
       console.error("[submit-curso] select error:", tErr);
-      return new Response(JSON.stringify({ error: "Error al validar token: " + tErr.message }), { status: 500, headers: { ...CORS, "Content-Type": "application/json" } });
+      return new Response(JSON.stringify({ error: "validation_failed" }), { status: 500, headers: { ...CORS, "Content-Type": "application/json" } });
     }
     if (!t) return new Response(JSON.stringify({ error: "Token inválido" }), { status: 404, headers: { ...CORS, "Content-Type": "application/json" } });
 
@@ -95,7 +96,7 @@ serve(async (req) => {
       const rpc = await supabase.rpc("generate_cert_code");
       if (rpc.error || !rpc.data) {
         console.error("[submit-curso] generate_cert_code error:", rpc.error);
-        return new Response(JSON.stringify({ error: "No se pudo generar código de certificado: " + (rpc.error?.message || "RPC sin data") }), { status: 500, headers: { ...CORS, "Content-Type": "application/json" } });
+        return new Response(JSON.stringify({ error: "cert_code_generation_failed" }), { status: 500, headers: { ...CORS, "Content-Type": "application/json" } });
       }
       codigo = rpc.data as string;
 
@@ -109,7 +110,7 @@ serve(async (req) => {
       });
       if (certIns.error) {
         console.error("[submit-curso] cert insert error:", certIns.error);
-        return new Response(JSON.stringify({ error: "No se pudo guardar el certificado: " + certIns.error.message }), { status: 500, headers: { ...CORS, "Content-Type": "application/json" } });
+        return new Response(JSON.stringify({ error: "cert_insert_failed" }), { status: 500, headers: { ...CORS, "Content-Type": "application/json" } });
       }
 
       const trabUpd = await supabase.from("contratistas_trabajadores").update({
@@ -141,8 +142,12 @@ serve(async (req) => {
       if (emailDestino) {
         const verifyUrl = `${PORTAL_BASE}/verificar/${codigo}`;
         const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?data=${encodeURIComponent(verifyUrl)}&size=200x200`;
+        // Timeout 15s. Antes el fetch podia colgar y el trabajador ya
+        // tenia el cert pero el email nunca llegaba (con loud silence).
         await fetch(SEND_URL, {
-          method: "POST", headers: { "Content-Type": "application/json" },
+          method: "POST",
+          signal: AbortSignal.timeout(15_000),
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             to: [emailDestino],
             kind: "certificado",
