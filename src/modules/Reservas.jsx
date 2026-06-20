@@ -3880,6 +3880,24 @@ export default function Reservas() {
 
   useEffect(() => { fetchReservas(); }, [fetchReservas]);
 
+  // Auto-refresh: el Tab Reservas se queda abierto toda la jornada y reservas
+  // creadas vía web/B2B después del mount no aparecían hasta refresh manual.
+  // (1) Polling cada 60s como red de seguridad.
+  // (2) Subscription realtime a INSERT/UPDATE en reservas del día — instant.
+  useEffect(() => {
+    if (!supabase) return;
+    const poll = setInterval(() => { fetchReservas(); }, 60_000);
+    const channel = supabase
+      .channel("reservas-tab-realtime")
+      .on("postgres_changes", { event: "*", schema: "public", table: "reservas", filter: `fecha=eq.${today}` }, () => fetchReservas())
+      .on("postgres_changes", { event: "*", schema: "public", table: "reservas", filter: `fecha=eq.${tomorrow}` }, () => fetchReservas())
+      .subscribe();
+    return () => {
+      clearInterval(poll);
+      supabase.removeChannel(channel);
+    };
+  }, [fetchReservas, today, tomorrow]);
+
   // Check if another module requested to open a specific reserva
   const [cameFromNavigate, setCameFromNavigate] = useState(false);
   useEffect(() => {
