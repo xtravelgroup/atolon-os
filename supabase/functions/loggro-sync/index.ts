@@ -58,7 +58,7 @@ async function getLoggroToken(): Promise<string> {
     data.business?.id || data.business || data.businessId || null;
   // JWT típicamente dura 2h; asumimos 90 min de gracia
   tokenExpires = now + 90 * 60_000;
-  return cachedToken;
+  return cachedToken!;
 }
 
 async function getLoggroIdentity(): Promise<{ businessId: string | null; userId: string | null }> {
@@ -927,8 +927,7 @@ serve(async (req) => {
         return json({ ok: false, error: "Loggro tuvo errores transient durante la descarga." }, 503);
       }
 
-      // Filtrar facturas del día en timezone Colombia
-      const COTZ_OFFSET_MS = -5 * 3600 * 1000; // UTC-5
+      // Filtrar facturas del día en timezone Colombia (COTZ_OFFSET_MS ya declarado arriba)
       const invoicesDia: any[] = [];
       for (const inv of allInvoices) {
         const ts = inv?.createdOn;
@@ -1020,7 +1019,7 @@ serve(async (req) => {
         ok: true,
         fecha,
         timezone: "America/Bogota",
-        paginas_consultadas: PAGE_RANGE_SIZE,
+        paginas_consultadas: pagesScanned,
         invoices_totales_descargadas: allInvoices.length,
         invoices_del_dia: invoicesDia.length,
         resumen: {
@@ -1548,6 +1547,11 @@ serve(async (req) => {
       interface DayBucket { ventas: number; propinas: number; tickets: number; anuladas: number; por_metodo: Record<string, number>; }
       const porDia: Record<string, DayBucket> = {};
 
+      // Si se pidió ?productos=1, agregamos también productos vendidos del rango.
+      const includeProductos = url.searchParams.get("productos") === "1";
+      interface ProdBucket { cantidad: number; ventas: number; tickets: number; costo_total: number; costo_unit_max: number; categoria: string; }
+      const porProducto: Record<string, ProdBucket> = {};
+
       for (const inv of allInvoices) {
         const ts = inv?.createdOn;
         if (!ts) continue;
@@ -1577,6 +1581,25 @@ serve(async (req) => {
         } else {
           const pm = (inv?.paymentMethod || "Desconocido").trim();
           d.por_metodo[pm] = (d.por_metodo[pm] || 0) + total;
+        }
+
+        // Agregación por producto (solo si pedida — agrega ~50ms por 500 facturas).
+        // Costo viene de costProduct/avgCost (campos Loggro): es el costo de
+        // inventario al momento del cierre = lo que mueve contablemente a costo.
+        if (includeProductos) {
+          for (const p of (inv?.products || [])) {
+            const nombre = (p?.name || p?.product?.name || "—").trim();
+            const cant = Number(p?.quantity) || 0;
+            const venta = Number(p?.total) || Number(p?.totalBruto) || (Number(p?.price) || 0) * cant;
+            const costoUnit = Number(p?.costProduct) || Number(p?.avgCost) || 0;
+            const categoria = (p?.categoryName || "Sin categoría").trim();
+            if (!porProducto[nombre]) porProducto[nombre] = { cantidad: 0, ventas: 0, tickets: 0, costo_total: 0, costo_unit_max: 0, categoria };
+            porProducto[nombre].cantidad += cant;
+            porProducto[nombre].ventas += venta;
+            porProducto[nombre].tickets += 1;
+            porProducto[nombre].costo_total += costoUnit * cant;
+            if (costoUnit > porProducto[nombre].costo_unit_max) porProducto[nombre].costo_unit_max = costoUnit;
+          }
         }
       }
 
@@ -1621,6 +1644,7 @@ serve(async (req) => {
         },
         por_metodo: porMetodoGlobal,
         por_dia: porDia,
+        ...(includeProductos ? { por_producto: porProducto } : {}),
       };
 
       // ── 3. Guardar en cache (5 min TTL) ──────────────────────────────
@@ -1655,6 +1679,137 @@ serve(async (req) => {
       }
 
       return json({ ...payload, sospechoso: sospechoso || undefined, truncated: truncated || undefined });
+    }
+
+    // GET /loggro-sync/movimientos-inventario-rango?from=YYYY-MM-DD&to=YYYY-MM-DD
+    // Descarga TODOS los movimientos de inventario de Loggro en el rango y los
+    // agrupa por (tipo de movimiento, ingrediente). Es lo que el contador
+    // necesita para CMV real: ingredientes que ENTRARON (compras type=1),
+    // se PRODUJERON (type=9), SALIERON por ajuste/merma (type=6,7,10).
+    if (req.method === "GET" && path === "/movimientos-inventario-rango") {
+      const from = url.searchParams.get("from");
+      const to   = url.searchParams.get("to");
+      if (!from || !to) return json({ error: "params from y to requeridos (YYYY-MM-DD)" }, 400);
+
+      const pageSize = 100;
+      const COTZ_OFFSET_MS = -5 * 3600 * 1000;
+      const dayOf = (ts: string) => {
+        const utc = new Date(ts).getTime();
+        return new Date(utc + COTZ_OFFSET_MS).toISOString().slice(0, 10);
+      };
+
+      // Recorremos páginas desde 0 hasta página vacía. /inventories no tiene
+      // ordering claro; descargamos todo y filtramos por fecha al final.
+      const allMovs: any[] = [];
+      const seen = new Set<string>();
+      let pagesScanned = 0;
+      const MAX_PAGES = 50;
+      for (let p = 0; p < MAX_PAGES; p++) {
+        let arr: any[] = [];
+        for (let attempt = 0; attempt < 3; attempt++) {
+          try {
+            const d: any = await loggroGet(`/inventories?pagination=true&limit=${pageSize}&page=${p}`);
+            arr = d?.data || (Array.isArray(d) ? d : []) || [];
+            break;
+          } catch (e) {
+            if (attempt === 2) return json({ ok: false, error: `Loggro /inventories page ${p} falló tras 3 reintentos: ${(e as Error).message}` }, 503);
+            await new Promise(r => setTimeout(r, 250 * Math.pow(3, attempt)));
+          }
+        }
+        pagesScanned++;
+        if (arr.length === 0) break;
+        for (const m of arr) {
+          if (!m?._id || seen.has(m._id)) continue;
+          seen.add(m._id);
+          allMovs.push(m);
+        }
+      }
+
+      // Filtrar por rango y deletedInfo
+      const enRango = allMovs.filter(m => {
+        if (m?.deleted === true) return false;
+        const ts = m?.date || m?.createdOn;
+        if (!ts) return false;
+        const d = dayOf(ts);
+        return d >= from && d <= to;
+      });
+
+      // Agrupar por (tipo, ingrediente). Cada movimiento tiene ingredients[]
+      // con { ingredient, quantity, price, locationStock }. Sumamos qty y costo.
+      interface IngBucket { tipo: number; tipoNombre: string; ingrediente_id: string; nombre: string; categoria: string; unidad: string; cantidad: number; costo_total: number; movimientos: number; locaciones: Set<string>; }
+      const buckets: Record<string, IngBucket> = {};
+      let totalMovs = 0;
+      let totalLineas = 0;
+      for (const m of enRango) {
+        totalMovs++;
+        for (const it of (m.ingredients || [])) {
+          totalLineas++;
+          const ing = it.ingredient;
+          if (!ing) continue;
+          const ingId = ing._id || ing.id || ing.name;
+          const key = `${m.type}|${ingId}`;
+          if (!buckets[key]) {
+            buckets[key] = {
+              tipo: m.type,
+              tipoNombre: m.typeName || `Tipo ${m.type}`,
+              ingrediente_id: ingId,
+              nombre: ing.name || "(sin nombre)",
+              categoria: ing.category?.name || "Sin categoría",
+              unidad: ing.unit?.shortName || ing.unit?.name || "",
+              cantidad: 0,
+              costo_total: 0,
+              movimientos: 0,
+              locaciones: new Set<string>(),
+            };
+          }
+          const b = buckets[key];
+          const qty = Number(it.quantity) || 0;
+          const precio = Number(it.price) || 0;
+          b.cantidad += qty;
+          b.costo_total += qty * precio;
+          b.movimientos++;
+          const loc = it.locationStock?.name;
+          if (loc) b.locaciones.add(loc);
+        }
+      }
+
+      // Convertir a array y simplificar (Set → array)
+      const lineas = Object.values(buckets).map(b => ({
+        tipo: b.tipo,
+        tipo_nombre: b.tipoNombre,
+        ingrediente_id: b.ingrediente_id,
+        nombre: b.nombre,
+        categoria: b.categoria,
+        unidad: b.unidad,
+        cantidad: Math.round(b.cantidad * 1000) / 1000,
+        costo_total: Math.round(b.costo_total * 100) / 100,
+        movimientos: b.movimientos,
+        locaciones: Array.from(b.locaciones),
+      }));
+
+      // Resumen por tipo
+      const porTipo: Record<string, { tipo_nombre: string; movimientos: number; lineas: number; costo_total: number }> = {};
+      for (const m of enRango) {
+        const k = `${m.type}|${m.typeName || ''}`;
+        if (!porTipo[k]) porTipo[k] = { tipo_nombre: m.typeName || `Tipo ${m.type}`, movimientos: 0, lineas: 0, costo_total: 0 };
+        porTipo[k].movimientos++;
+        for (const it of (m.ingredients || [])) {
+          porTipo[k].lineas++;
+          porTipo[k].costo_total += (Number(it.quantity) || 0) * (Number(it.price) || 0);
+        }
+      }
+
+      return json({
+        ok: true,
+        from, to,
+        timezone: "America/Bogota",
+        pages_scanned: pagesScanned,
+        movimientos_total_descargados: allMovs.length,
+        movimientos_en_rango: enRango.length,
+        lineas_total: totalLineas,
+        por_tipo: porTipo,
+        lineas,
+      });
     }
 
     // POST /loggro-sync/create-provider — crear proveedor en Loggro
