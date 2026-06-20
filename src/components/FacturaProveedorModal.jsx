@@ -1478,8 +1478,27 @@ export default function FacturaProveedorModal({ oc, onClose, reload, currentUser
                             const requiereInput = sinConversionAuto && (it.loggro_qty_override == null);
                             return (
                               <div style={{ marginTop: 4, padding: "5px 8px", background: sinConversionAuto ? B.warning + "11" : B.sky + "08", border: `1px solid ${sinConversionAuto ? B.warning + "55" : B.sky + "33"}`, borderRadius: 6, fontSize: 10 }}>
-                                <div style={{ color: B.sky, fontWeight: 600, marginBottom: 3 }}>
-                                  🔗 Loggro: <span style={{ color: "#fff" }}>{loggroIng?.nombre || "(no encontrado en catálogo)"}</span>
+                                <div style={{ color: B.sky, fontWeight: 600, marginBottom: 3, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                                  <span>🔗 Loggro: <span style={{ color: "#fff" }}>{loggroIng?.nombre || "(no encontrado en catálogo)"}</span></span>
+                                  <button
+                                    onClick={() => {
+                                      if (!window.confirm("¿Desvincular este item de Loggro? Podrás elegir otro.")) return;
+                                      setData(d => ({
+                                        ...d,
+                                        items: d.items.map((p, j) => j === i ? {
+                                          ...p,
+                                          loggro_id: null,
+                                          item_id: null,
+                                          nombre_anterior: null,
+                                          match_source: null,
+                                          loggro_qty_override: null,
+                                        } : p),
+                                      }));
+                                    }}
+                                    title="Desvincular y elegir otro item de Loggro"
+                                    style={{ background: "transparent", border: `1px solid ${B.navyLight}`, color: "rgba(255,255,255,0.6)", borderRadius: 5, padding: "1px 7px", fontSize: 9, cursor: "pointer", whiteSpace: "nowrap" }}>
+                                    ✕ cambiar
+                                  </button>
                                 </div>
                                 <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", color: "rgba(255,255,255,0.7)" }}>
                                   <span>Factura: <b style={{ color: B.sand }}>{cantFactura} {unidadFactura}</b></span>
