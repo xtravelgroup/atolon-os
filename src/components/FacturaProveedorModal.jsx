@@ -8,6 +8,35 @@ import { B } from "../brand";
 
 const COP = (n) => "$" + Math.round(Number(n) || 0).toLocaleString("es-CO");
 
+// ── Conversión de unidades para preview de qué se carga en Loggro ────────
+// Loggro mantiene el stock en una unidad fija por ingrediente. Si la factura
+// viene en otra (ej. 1 Kg) y Loggro está en Gr, el edge function convierte
+// (×1000) al aplicar. Esta misma lógica la mostramos en UI para que el
+// operario vea ANTES de aplicar qué cantidad va a entrar a Loggro.
+function normUnidad(u) {
+  return String(u || "").toLowerCase().trim().replace(/\.$/, "");
+}
+// Factor de conversión origen → destino. Retorna null si no son compatibles.
+function factorConversion(origen, destino) {
+  const a = normUnidad(origen);
+  const b = normUnidad(destino);
+  if (!a || !b) return null;
+  if (a === b) return 1;
+  // Tablas: base = gramo (peso), mililitro (volumen), unidad (cuenta)
+  const peso = { g: 1, gr: 1, gramo: 1, gramos: 1, kg: 1000, kilo: 1000, kilos: 1000, lb: 453.592, libra: 453.592, oz: 28.3495 };
+  const volumen = { ml: 1, mililitro: 1, mililitros: 1, cc: 1, l: 1000, lt: 1000, litro: 1000, litros: 1000, gal: 3785.41, galon: 3785.41 };
+  const cuenta = { un: 1, und: 1, unidad: 1, unidades: 1, u: 1 };
+  for (const tabla of [peso, volumen, cuenta]) {
+    if (tabla[a] != null && tabla[b] != null) return tabla[a] / tabla[b];
+  }
+  return null;
+}
+function convertir(qty, origen, destino) {
+  const f = factorConversion(origen, destino);
+  if (f == null) return null;
+  return qty * f;
+}
+
 function blankData() {
   return {
     factura_numero: "",
@@ -337,6 +366,25 @@ export default function FacturaProveedorModal({ oc, onClose, reload, currentUser
 
   // Cargar la lista de facturas de la OC al abrir.
   useEffect(() => { cargarFacturas(); /* eslint-disable-next-line */ }, [oc.id]);
+
+  // Cargar items_catalogo (los que están linked a Loggro) para mostrar bajo
+  // cada item de la factura el ingrediente Loggro al que apunta + su unidad.
+  // Esto permite al operario verificar el match y la conversión ANTES de
+  // aplicar (ej. factura en Kg, Loggro en Gr → muestra que entrará ×1000).
+  const [loggroCatMap, setLoggroCatMap] = useState({});
+  useEffect(() => {
+    (async () => {
+      const { data: items } = await supabase
+        .from("items_catalogo")
+        .select("id, nombre, unidad, loggro_id")
+        .not("loggro_id", "is", null);
+      const map = {};
+      (items || []).forEach(it => {
+        map[it.loggro_id] = { id: it.id, nombre: it.nombre, unidad: it.unidad };
+      });
+      setLoggroCatMap(map);
+    })();
+  }, []);
   const [syncingNombreIdx, setSyncingNombreIdx] = useState(null);
 
   async function fileToBase64(f) {
@@ -1269,6 +1317,61 @@ export default function FacturaProveedorModal({ oc, onClose, reload, currentUser
                               {it.unidad_compra} · {it.unidad_individual || "UND"}
                             </div>
                           )}
+                          {/* ── Vínculo a Loggro + conversión de unidad ── */}
+                          {(() => {
+                            const loggroIng = it.loggro_id ? loggroCatMap[it.loggro_id] : null;
+                            if (!it.loggro_id) {
+                              return (
+                                <div style={{ marginTop: 4, padding: "3px 7px", background: B.danger + "11", border: `1px dashed ${B.danger}66`, borderRadius: 6, fontSize: 10, color: B.danger }}>
+                                  ⚠ Sin vincular a Loggro — no se cargará en Restobar
+                                </div>
+                              );
+                            }
+                            const unidadFactura = (it.unidad_individual || it.unidad_compra || "UND").toLowerCase();
+                            const unidadLoggro  = (loggroIng?.unidad || "").toLowerCase() || unidadFactura;
+                            const cantPack      = Number(it.cantidad_paquete ?? it.cantidad) || 0;
+                            const unPorPack     = Math.max(1, Number(it.unidades_por_paquete) || 1);
+                            const cantFactura   = cantPack * unPorPack;
+                            const factor        = factorConversion(unidadFactura, unidadLoggro);
+                            const cantLoggroAuto = factor != null ? cantFactura * factor : null;
+                            const cantLoggro    = it.loggro_qty_override != null
+                              ? Number(it.loggro_qty_override)
+                              : (cantLoggroAuto != null ? cantLoggroAuto : cantFactura);
+                            const necesitaConversion = unidadFactura !== unidadLoggro && factor != null;
+                            const bloqueado = unidadFactura !== unidadLoggro && factor == null;
+                            return (
+                              <div style={{ marginTop: 4, padding: "5px 8px", background: bloqueado ? B.danger + "11" : B.sky + "08", border: `1px solid ${bloqueado ? B.danger + "55" : B.sky + "33"}`, borderRadius: 6, fontSize: 10 }}>
+                                <div style={{ color: B.sky, fontWeight: 600, marginBottom: 3 }}>
+                                  🔗 Loggro: <span style={{ color: "#fff" }}>{loggroIng?.nombre || "(no encontrado en catálogo)"}</span>
+                                </div>
+                                <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", color: "rgba(255,255,255,0.7)" }}>
+                                  <span>Factura: <b style={{ color: B.sand }}>{cantFactura} {unidadFactura}</b></span>
+                                  <span style={{ color: necesitaConversion ? B.warning : "rgba(255,255,255,0.4)" }}>→</span>
+                                  <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                                    Restobar:
+                                    <input type="number" value={cantLoggro}
+                                      onChange={e => setItemField(i, "loggro_qty_override", Number(e.target.value))}
+                                      disabled={bloqueado}
+                                      style={{ ...IS, padding: "2px 5px", fontSize: 11, width: 80, textAlign: "right", color: bloqueado ? B.danger : "#fff" }} />
+                                    <b style={{ color: B.sand }}>{unidadLoggro}</b>
+                                  </span>
+                                  {necesitaConversion && (
+                                    <span style={{ color: B.warning, fontSize: 9 }}>(×{factor})</span>
+                                  )}
+                                  {it.loggro_qty_override != null && (
+                                    <button onClick={() => setItemField(i, "loggro_qty_override", null)}
+                                      title="Volver al cálculo automático"
+                                      style={{ background: "transparent", border: `1px solid ${B.navyLight}`, color: "rgba(255,255,255,0.5)", borderRadius: 5, padding: "1px 6px", fontSize: 9, cursor: "pointer" }}>↺ auto</button>
+                                  )}
+                                </div>
+                                {bloqueado && (
+                                  <div style={{ marginTop: 3, color: B.danger, fontSize: 9, fontWeight: 600 }}>
+                                    ⚠ No hay conversión {unidadFactura} → {unidadLoggro}. Ajusta unidades o ingresa cantidad manual.
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })()}
                         </td>
                         {/* Pack: cantidad de paquetes */}
                         <td style={{ padding: "6px 8px", textAlign: "right" }}>
