@@ -1465,39 +1465,47 @@ export default function FacturaProveedorModal({ oc, onClose, reload, currentUser
                             const cantFactura   = cantPack * unPorPack;
                             const factor        = factorConversion(unidadFactura, unidadLoggro);
                             const cantLoggroAuto = factor != null ? cantFactura * factor : null;
+                            // Si el operador editó manualmente, usar ese valor.
+                            // Si no, usar la conversión auto (cuando existe).
+                            // Si no hay conversión (ej. 1 UND → ?? Gr porque el salchichón
+                            // pesa 1500 g por unidad), dejamos el campo en blanco — el
+                            // operador escribe la cantidad real.
                             const cantLoggro    = it.loggro_qty_override != null
                               ? Number(it.loggro_qty_override)
-                              : (cantLoggroAuto != null ? cantLoggroAuto : cantFactura);
+                              : (cantLoggroAuto != null ? cantLoggroAuto : "");
                             const necesitaConversion = unidadFactura !== unidadLoggro && factor != null;
-                            const bloqueado = unidadFactura !== unidadLoggro && factor == null;
+                            const sinConversionAuto = unidadFactura !== unidadLoggro && factor == null;
+                            const requiereInput = sinConversionAuto && (it.loggro_qty_override == null);
                             return (
-                              <div style={{ marginTop: 4, padding: "5px 8px", background: bloqueado ? B.danger + "11" : B.sky + "08", border: `1px solid ${bloqueado ? B.danger + "55" : B.sky + "33"}`, borderRadius: 6, fontSize: 10 }}>
+                              <div style={{ marginTop: 4, padding: "5px 8px", background: sinConversionAuto ? B.warning + "11" : B.sky + "08", border: `1px solid ${sinConversionAuto ? B.warning + "55" : B.sky + "33"}`, borderRadius: 6, fontSize: 10 }}>
                                 <div style={{ color: B.sky, fontWeight: 600, marginBottom: 3 }}>
                                   🔗 Loggro: <span style={{ color: "#fff" }}>{loggroIng?.nombre || "(no encontrado en catálogo)"}</span>
                                 </div>
                                 <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", color: "rgba(255,255,255,0.7)" }}>
                                   <span>Factura: <b style={{ color: B.sand }}>{cantFactura} {unidadFactura}</b></span>
-                                  <span style={{ color: necesitaConversion ? B.warning : "rgba(255,255,255,0.4)" }}>→</span>
+                                  <span style={{ color: necesitaConversion ? B.warning : sinConversionAuto ? B.warning : "rgba(255,255,255,0.4)" }}>→</span>
                                   <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
                                     Restobar:
                                     <input type="number" value={cantLoggro}
-                                      onChange={e => setItemField(i, "loggro_qty_override", Number(e.target.value))}
-                                      disabled={bloqueado}
-                                      style={{ ...IS, padding: "2px 5px", fontSize: 11, width: 80, textAlign: "right", color: bloqueado ? B.danger : "#fff" }} />
+                                      onChange={e => setItemField(i, "loggro_qty_override", e.target.value === "" ? null : Number(e.target.value))}
+                                      placeholder={sinConversionAuto ? "?" : ""}
+                                      style={{ ...IS, padding: "2px 5px", fontSize: 11, width: 90, textAlign: "right",
+                                        borderColor: requiereInput ? B.warning : B.navyLight,
+                                        color: requiereInput ? B.warning : "#fff" }} />
                                     <b style={{ color: B.sand }}>{unidadLoggro}</b>
                                   </span>
                                   {necesitaConversion && (
                                     <span style={{ color: B.warning, fontSize: 9 }}>(×{factor})</span>
                                   )}
-                                  {it.loggro_qty_override != null && (
+                                  {it.loggro_qty_override != null && cantLoggroAuto != null && (
                                     <button onClick={() => setItemField(i, "loggro_qty_override", null)}
                                       title="Volver al cálculo automático"
                                       style={{ background: "transparent", border: `1px solid ${B.navyLight}`, color: "rgba(255,255,255,0.5)", borderRadius: 5, padding: "1px 6px", fontSize: 9, cursor: "pointer" }}>↺ auto</button>
                                   )}
                                 </div>
-                                {bloqueado && (
-                                  <div style={{ marginTop: 3, color: B.danger, fontSize: 9, fontWeight: 600 }}>
-                                    ⚠ No hay conversión {unidadFactura} → {unidadLoggro}. Ajusta unidades o ingresa cantidad manual.
+                                {sinConversionAuto && (
+                                  <div style={{ marginTop: 3, color: B.warning, fontSize: 9, fontWeight: 600 }}>
+                                    ⚠ Sin conversión automática {unidadFactura} → {unidadLoggro}. Escribe cuánto entra a Loggro (ej. 1 salchichón = 1500 gr).
                                   </div>
                                 )}
                               </div>
