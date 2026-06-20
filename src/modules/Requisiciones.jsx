@@ -393,11 +393,9 @@ export default function Requisiciones() {
       items: itemsMarcados,
       timeline: [...(req.timeline || []), {
         quien: currentUser.nombre,
-        accion: ocExistente ? "Ítems agregados a OC" : "OC generada",
+        accion: "OC generada",
         fecha: new Date().toLocaleString("es-CO"),
-        comentario: ocExistente
-          ? `Unida a OC abierta ${codigo} (${provNombre})`
-          : `Orden de compra ${codigo}`,
+        comentario: `Orden de compra ${codigo}`,
       }],
     }).eq("id", req.id);
     load();
