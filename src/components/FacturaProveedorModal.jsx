@@ -372,19 +372,48 @@ export default function FacturaProveedorModal({ oc, onClose, reload, currentUser
   // Esto permite al operario verificar el match y la conversión ANTES de
   // aplicar (ej. factura en Kg, Loggro en Gr → muestra que entrará ×1000).
   const [loggroCatMap, setLoggroCatMap] = useState({});
+  const [loggroCatList, setLoggroCatList] = useState([]);
   useEffect(() => {
     (async () => {
       const { data: items } = await supabase
         .from("items_catalogo")
-        .select("id, nombre, unidad, loggro_id")
-        .not("loggro_id", "is", null);
+        .select("id, nombre, unidad, loggro_id, categoria")
+        .not("loggro_id", "is", null)
+        .order("nombre");
       const map = {};
       (items || []).forEach(it => {
-        map[it.loggro_id] = { id: it.id, nombre: it.nombre, unidad: it.unidad };
+        map[it.loggro_id] = { id: it.id, nombre: it.nombre, unidad: it.unidad, categoria: it.categoria };
       });
       setLoggroCatMap(map);
+      setLoggroCatList(items || []);
     })();
   }, []);
+
+  // Items de la OC que SÍ tienen loggro_id mapeado — los que podemos
+  // ofrecer al operador para vincular un item de la factura sin match.
+  const ocItemsConLoggro = (oc.items || []).filter(it => it.loggro_id);
+
+  // Estado local del buscador en el catálogo Loggro completo (por nombre).
+  // Indexado por idx del item de la factura para soportar varios abiertos.
+  const [buscarLoggroTxt, setBuscarLoggroTxt] = useState({});
+
+  // Cuando el operador elige un item Loggro para vincular, copiamos los
+  // metadatos al item de la factura (loggro_id, item_id, nombre del catálogo
+  // como nombre_anterior para mostrar matching) y reseteamos el buscador.
+  const vincularAItemLoggro = (i, item) => {
+    setData(d => ({
+      ...d,
+      items: d.items.map((p, j) => j === i ? {
+        ...p,
+        loggro_id: item.loggro_id,
+        item_id: item.id || p.item_id,
+        nombre_anterior: item.nombre,
+        es_nuevo_oc: false,
+        match_source: "vinculado_manual",
+      } : p),
+    }));
+    setBuscarLoggroTxt(s => ({ ...s, [i]: "" }));
+  };
   const [syncingNombreIdx, setSyncingNombreIdx] = useState(null);
 
   async function fileToBase64(f) {
@@ -1321,9 +1350,64 @@ export default function FacturaProveedorModal({ oc, onClose, reload, currentUser
                           {(() => {
                             const loggroIng = it.loggro_id ? loggroCatMap[it.loggro_id] : null;
                             if (!it.loggro_id) {
+                              const txt = (buscarLoggroTxt[i] || "").toLowerCase().trim();
+                              const sugeridos = txt.length >= 2
+                                ? loggroCatList
+                                    .filter(x => (x.nombre || "").toLowerCase().includes(txt))
+                                    .slice(0, 8)
+                                : [];
                               return (
-                                <div style={{ marginTop: 4, padding: "3px 7px", background: B.danger + "11", border: `1px dashed ${B.danger}66`, borderRadius: 6, fontSize: 10, color: B.danger }}>
-                                  ⚠ Sin vincular a Loggro — no se cargará en Restobar
+                                <div style={{ marginTop: 4, padding: "6px 8px", background: B.danger + "11", border: `1px dashed ${B.danger}66`, borderRadius: 6, fontSize: 10 }}>
+                                  <div style={{ color: B.danger, fontWeight: 600, marginBottom: 5 }}>
+                                    ⚠ Sin vincular a Loggro — no se cargará en Restobar
+                                  </div>
+                                  {/* Opción 1: dropdown con items de la OC que tienen loggro_id */}
+                                  {ocItemsConLoggro.length > 0 && (
+                                    <div style={{ marginBottom: 6, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                                      <span style={{ color: "rgba(255,255,255,0.6)" }}>Vincular a item de la OC:</span>
+                                      <select
+                                        value=""
+                                        onChange={e => {
+                                          const ocIt = ocItemsConLoggro.find(x => x.loggro_id === e.target.value);
+                                          if (ocIt) vincularAItemLoggro(i, { loggro_id: ocIt.loggro_id, id: ocIt.item_id, nombre: ocIt.item || ocIt.nombre });
+                                        }}
+                                        style={{ ...IS, padding: "3px 6px", fontSize: 10, minWidth: 180 }}>
+                                        <option value="">— elige item —</option>
+                                        {ocItemsConLoggro.map(ocIt => (
+                                          <option key={ocIt.loggro_id} value={ocIt.loggro_id}>
+                                            {ocIt.item || ocIt.nombre} ({ocIt.unidad || "?"})
+                                          </option>
+                                        ))}
+                                      </select>
+                                    </div>
+                                  )}
+                                  {/* Opción 2: buscador en catálogo Loggro completo */}
+                                  <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                                    <span style={{ color: "rgba(255,255,255,0.6)" }}>O buscar en Loggro:</span>
+                                    <input
+                                      value={buscarLoggroTxt[i] || ""}
+                                      onChange={e => setBuscarLoggroTxt(s => ({ ...s, [i]: e.target.value }))}
+                                      placeholder="ej. queso mozarella…"
+                                      style={{ ...IS, padding: "3px 6px", fontSize: 10, minWidth: 200, flex: 1 }} />
+                                  </div>
+                                  {sugeridos.length > 0 && (
+                                    <div style={{ marginTop: 5, background: B.navy, borderRadius: 5, maxHeight: 160, overflowY: "auto" }}>
+                                      {sugeridos.map(x => (
+                                        <div key={x.id} onClick={() => vincularAItemLoggro(i, x)}
+                                          style={{ padding: "5px 8px", fontSize: 10, color: "#fff", cursor: "pointer", borderBottom: `1px solid ${B.navyLight}` }}
+                                          onMouseEnter={e => e.currentTarget.style.background = B.navyLight}
+                                          onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                                          <span style={{ color: B.sand }}>{x.nombre}</span>
+                                          <span style={{ color: "rgba(255,255,255,0.4)", marginLeft: 6 }}>· {x.unidad || "?"} {x.categoria ? `· ${x.categoria}` : ""}</span>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
+                                  {txt.length >= 2 && sugeridos.length === 0 && (
+                                    <div style={{ marginTop: 5, fontSize: 9, color: "rgba(255,255,255,0.4)", fontStyle: "italic" }}>
+                                      No hay coincidencias en el catálogo Loggro. Verifica el nombre o crea el ingrediente primero.
+                                    </div>
+                                  )}
                                 </div>
                               );
                             }
