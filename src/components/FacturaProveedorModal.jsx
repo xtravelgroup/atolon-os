@@ -99,6 +99,83 @@ function findBestOcMatch(facItem, ocItems, takenIndices) {
 // OC/cotización que NO se facturaron NO aparecen (requerimiento del negocio).
 // El match con la OC sólo enriquece "precio_anterior"/oc_idx para mostrar Δ;
 // la preservación de items no facturados ocurre en aplicar() (if (!f) return it).
+// Construir `data` para el step "review" tomando los items DIRECTOS de la OC.
+// Usado cuando el operario elige hacer la carga manual (sin AI) o cuando el
+// parser falla: traemos todo lo que está en la OC para que solo revise cantidades
+// y precios contra la factura física, sin tener que tipear todos los items.
+function buildDataFromOC(oc, factura_url) {
+  const items = (oc.items || []).map((it, idx) => {
+    const cant       = Number(it.cant || it.cantidad) || 0;
+    const precioU    = Number(it.precioU || it.precio_unitario) || 0;
+    const ivaPct     = Number(it.iva_pct) || 0;
+    const unPorPack  = Math.max(1, Number(it.unidades_por_paquete) || 1);
+    const ivaUnit    = Math.round(precioU * ivaPct / 100);
+    return {
+      oc_idx:               idx,
+      ai_idx:               null,
+      codigo_barras:        it.codigo_barras || null,
+      referencia_proveedor: it.referencia_proveedor || null,
+      nombre:               it.item || it.nombre || "—",
+      nombre_anterior:      it.item || it.nombre || null,
+      cantidad_anterior:    cant,
+      loggro_id:            it.loggro_id || null,
+      cantidad_paquete:     cant,
+      unidad_compra:        it.unidad || "UND",
+      unidades_por_paquete: unPorPack,
+      unidad_individual:    it.unidad_individual || "UND",
+      cantidad_individual_total: cant * unPorPack,
+      descuento_pct:        0,
+      iva_pct:              ivaPct,
+      precio_base_pack:     precioU,
+      iva_valor_pack:       ivaUnit,
+      ico_valor_pack:       0,
+      icl_valor_pack:       0,
+      adv_valor_pack:       0,
+      precio_costo_pack:    precioU,
+      precio_costo_unit_individual: unPorPack > 0 ? Math.round(precioU / unPorPack) : precioU,
+      precio_final_pack:    precioU + ivaUnit,
+      subtotal_renglon:     cant * (precioU + ivaUnit),
+      es_bonificacion:      false,
+      requiere_revision:    false,
+      es_nuevo_oc:          false,
+      match_source:         "manual_oc",
+      cantidad:             cant,
+      unidad:               it.unidad || "UND",
+      precio_costo_unit:    precioU,
+      precio_unitario:      precioU,
+      precio_anterior:      precioU,
+      iva_valor_unit:       ivaUnit,
+      ico_valor_unit:       0,
+      icl_valor_unit:       0,
+      adv_valor_unit:       0,
+      iva:                  cant * ivaUnit,
+      item_id:              it.item_id || null,
+    };
+  });
+  const subtotalBase = items.reduce((s, it) => s + it.cantidad * it.precio_costo_pack, 0);
+  const ivaTotal     = items.reduce((s, it) => s + it.iva, 0);
+  return {
+    factura_numero:    "",
+    factura_fecha:     new Date().toISOString().slice(0, 10),
+    fecha_vencimiento: "",
+    forma_pago:        "",
+    no_pedido:         null,
+    no_remision:       null,
+    subtotal_base:     subtotalBase,
+    iva_total:         ivaTotal,
+    consumo_total:     0,
+    ico_total:         0,
+    icl_total:         0,
+    adv_total:         0,
+    descuentos_total:  0,
+    subtotal:          subtotalBase,
+    iva:               ivaTotal,
+    total:             subtotalBase + ivaTotal,
+    items,
+    factura_url:       factura_url || null,
+  };
+}
+
 function buildDataFromParsed(result, ocItems, factura_url) {
   const items = ocItems || [];
   const ocItemsCount = items.length;
@@ -326,13 +403,16 @@ export default function FacturaProveedorModal({ oc, onClose, reload, currentUser
             : result.raw_first_chars
               ? ` · Inicio: ${result.raw_first_chars.slice(0, 80)}…`
               : "";
-          setErr((result.error || "No se pudo leer la factura") + detalle + " — Puedes ingresar los datos manualmente abajo.");
-          setData(d => ({ ...d, factura_url: pub.publicUrl }));
+          setErr((result.error || "No se pudo leer la factura") + detalle + " — Cargamos los items de la OC abajo: revisa cantidades y precios contra la factura.");
+          // Fallback: traer los items de la OC con sus cantidades y precios
+          // actuales, así el operario revisa contra la factura física en vez
+          // de tener que tipear todo desde cero.
+          setData(buildDataFromOC(oc, pub.publicUrl));
         }
       } else {
-        // Otros tipos (no imagen ni PDF): solo adjunto, manual
-        setData(d => ({ ...d, factura_url: pub.publicUrl }));
-        setProgress("📎 Archivo adjuntado — ingresa los datos manualmente abajo");
+        // Otros tipos (no imagen ni PDF): solo adjunto, manual con items OC.
+        setData(buildDataFromOC(oc, pub.publicUrl));
+        setProgress("📎 Archivo adjuntado — items de la OC cargados abajo, revisa cantidades y precios");
       }
       setStep("review");
     } catch (e) {
@@ -966,6 +1046,23 @@ export default function FacturaProveedorModal({ oc, onClose, reload, currentUser
               </div>
               <input type="file" accept="image/*,application/pdf" onChange={handleUpload}
                 style={{ background: B.sky, color: B.navy, padding: "10px 16px", borderRadius: 8, fontSize: 13, fontWeight: 700, cursor: "pointer", border: "none" }} />
+              <div style={{ marginTop: 14, fontSize: 11, color: "rgba(255,255,255,0.45)" }}>
+                — o —
+              </div>
+              <button
+                onClick={() => {
+                  setErr(""); setProgress("");
+                  setEditingFacturaId(null);
+                  setParsed(null);
+                  setData(buildDataFromOC(oc, null));
+                  setStep("review");
+                }}
+                style={{ marginTop: 10, background: "transparent", color: B.sand, padding: "10px 18px", borderRadius: 8, fontSize: 13, fontWeight: 700, cursor: "pointer", border: `1px solid ${B.sand}` }}>
+                ✏️ Cargar manual (revisar items de la OC)
+              </button>
+              <div style={{ marginTop: 6, fontSize: 10, color: "rgba(255,255,255,0.4)" }}>
+                Trae cantidades y precios de la OC para que los revises contra la factura física.
+              </div>
             </div>
             {facturas.length > 0 && (
               <button onClick={() => { setErr(""); setProgress(""); setStep("list"); }}
