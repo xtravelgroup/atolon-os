@@ -59,6 +59,41 @@ function Dashboard() {
     return () => clearInterval(id);
   }, [hoyState]);
 
+  // Health-check de Loggro Restobar cada 30 min. Pinta el badge "Conectado"
+  // o "Caído" en Estado del Sistema según el último ping al edge function.
+  // Se hace 1 check inmediato al montar y luego cada 30 min mientras la
+  // pestaña esté abierta.
+  const [loggroStatus, setLoggroStatus] = useState({ ok: null, last: null, error: null });
+  useEffect(() => {
+    let cancelled = false;
+    const checkLoggro = async () => {
+      try {
+        const URL = import.meta.env.VITE_SUPABASE_URL;
+        const KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
+        const ctrl = new AbortController();
+        const to = setTimeout(() => ctrl.abort(), 15_000);
+        const res = await fetch(`${URL}/functions/v1/loggro-sync/ping`, {
+          headers: { apikey: KEY, Authorization: `Bearer ${KEY}` },
+          signal: ctrl.signal,
+        });
+        clearTimeout(to);
+        const data = await res.json().catch(() => ({}));
+        if (cancelled) return;
+        setLoggroStatus({
+          ok: !!data?.ok && !!data?.has_token,
+          last: new Date(),
+          error: data?.error || (!res.ok ? `HTTP ${res.status}` : null),
+        });
+      } catch (e) {
+        if (cancelled) return;
+        setLoggroStatus({ ok: false, last: new Date(), error: e.name === "AbortError" ? "timeout" : String(e.message || e) });
+      }
+    };
+    checkLoggro();
+    const id = setInterval(checkLoggro, 30 * 60_000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, []);
+
   useEffect(() => {
     if (!supabase) { setLoading(false); return; }
     const load = async () => {
@@ -195,27 +230,43 @@ function Dashboard() {
         <div style={{ background: B.navyMid, borderRadius: 12, padding: 24 }}>
           <h3 style={{ color: B.sand, marginBottom: 16, fontSize: 18 }}>Estado del Sistema</h3>
           {[
-            { label: "Reservas", color: B.sky },
-            { label: "Leads", color: B.pink },
-            { label: "Eventos", color: B.sand },
-            { label: "Requisiciones", color: B.warning },
-            { label: "Activos", color: B.success },
-          ].map(s => (
-            <div key={s.label} style={{
-              display: "flex", justifyContent: "space-between", alignItems: "center",
-              padding: "12px 0", borderBottom: `1px solid ${B.navyLight}`,
-            }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                <div style={{ width: 8, height: 8, borderRadius: 4, background: s.color }} />
-                <span style={{ fontSize: 14 }}>{s.label}</span>
+            { label: "Reservas", color: B.sky, kind: "supabase" },
+            { label: "Leads", color: B.pink, kind: "supabase" },
+            { label: "Eventos", color: B.sand, kind: "supabase" },
+            { label: "Requisiciones", color: B.warning, kind: "supabase" },
+            { label: "Activos", color: B.success, kind: "supabase" },
+            { label: "Loggro Restobar", color: "#C8244A", kind: "loggro" },
+          ].map(s => {
+            const isLoggro = s.kind === "loggro";
+            let badge;
+            if (isLoggro) {
+              if (loggroStatus.ok === null) {
+                badge = <span style={{ fontSize: 11, padding: "3px 10px", borderRadius: 20, background: B.navyLight, color: "rgba(255,255,255,0.4)" }}>Verificando…</span>;
+              } else if (loggroStatus.ok) {
+                const hh = loggroStatus.last ? loggroStatus.last.toLocaleTimeString("es-CO", { timeZone: "America/Bogota", hour: "2-digit", minute: "2-digit" }) : "";
+                badge = <span title={`Último check: ${hh}`} style={{ fontSize: 11, padding: "3px 10px", borderRadius: 20, background: B.success + "22", color: B.success }}>Conectado · {hh}</span>;
+              } else {
+                const hh = loggroStatus.last ? loggroStatus.last.toLocaleTimeString("es-CO", { timeZone: "America/Bogota", hour: "2-digit", minute: "2-digit" }) : "";
+                badge = <span title={`Error: ${loggroStatus.error || "?"} (último check ${hh})`} style={{ fontSize: 11, padding: "3px 10px", borderRadius: 20, background: B.danger + "22", color: B.danger, fontWeight: 700 }}>⚠ Caído · {hh}</span>;
+              }
+            } else {
+              badge = supabase
+                ? <span style={{ fontSize: 11, padding: "3px 10px", borderRadius: 20, background: B.success + "22", color: B.success }}>Conectado</span>
+                : <span style={{ fontSize: 11, padding: "3px 10px", borderRadius: 20, background: B.navyLight, color: "rgba(255,255,255,0.4)" }}>Sin conexion</span>;
+            }
+            return (
+              <div key={s.label} style={{
+                display: "flex", justifyContent: "space-between", alignItems: "center",
+                padding: "12px 0", borderBottom: `1px solid ${B.navyLight}`,
+              }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <div style={{ width: 8, height: 8, borderRadius: 4, background: s.color }} />
+                  <span style={{ fontSize: 14 }}>{s.label}</span>
+                </div>
+                {badge}
               </div>
-              {supabase ? (
-                <span style={{ fontSize: 11, padding: "3px 10px", borderRadius: 20, background: B.success + "22", color: B.success }}>Conectado</span>
-              ) : (
-                <span style={{ fontSize: 11, padding: "3px 10px", borderRadius: 20, background: B.navyLight, color: "rgba(255,255,255,0.4)" }}>Sin conexion</span>
-              )}
-            </div>
-          ))}
+            );
+          })}
         </div>
         <div style={{ background: B.navyMid, borderRadius: 12, padding: 24 }}>
           <h3 style={{ color: B.sand, marginBottom: 16, fontSize: 18 }}>Info del Sistema</h3>
