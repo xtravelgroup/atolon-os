@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { B, COP, PASADIAS, todayStr, fmtFecha } from "../brand";
 import { supabase } from "../lib/supabase";
 import { useMobile } from "../lib/useMobile";
@@ -3784,18 +3784,19 @@ export default function Reservas() {
     if (!supabase) { setLoading(false); return; }
     setLoading(true);
 
-    // Auto-cancelar reservas pendiente_pago cuyo link ya expiró
-    await supabase.from("reservas")
-      .update({ estado: "cancelado" })
-      .eq("estado", "pendiente_pago")
-      .lt("link_expira_at", new Date().toISOString())
-      .not("link_expira_at", "is", null);
-
     const todayStart = `${today}T00:00:00.000Z`;
     const tomorrowStart = `${tomorrow}T00:00:00.000Z`;
 
     const GRUPO_FIELDS = "id, nombre, tipo, pax, fecha, pasadias_org, salidas_grupo, stage, modalidad_pago, aliado_id, categoria, comparte_lancha_pasadias, salida_compartida_id";
     const isGrupo = (e) => e.categoria === "grupo" || (!e.categoria && e.aliado_id);
+    // Auto-cancelar reservas pendiente_pago expiradas — fire-and-forget en
+    // paralelo (no bloquea el fetch). Si falla el update, no impide cargar.
+    supabase.from("reservas")
+      .update({ estado: "cancelado" })
+      .eq("estado", "pendiente_pago")
+      .lt("link_expira_at", new Date().toISOString())
+      .not("link_expira_at", "is", null)
+      .then(() => {});
     const [resHoy, resManana, salR, aliR, cierreR, embR, ovrR, empR, pasR, cobR, cobR2, convR, grpHoyR, grpMananaR, llegHoyR, llegMananaR] = await Promise.all([
       supabase.from("reservas").select("*").eq("fecha", today).order("salida_id"),
       supabase.from("reservas").select("*").eq("fecha", tomorrow).order("salida_id"),
@@ -3980,7 +3981,7 @@ export default function Reservas() {
     }
     return total > 0 ? total : (g.pax || 0);
   };
-  const paxMap = paxPorSalida(reservas, salidas, grupos);
+  const paxMap = useMemo(() => paxPorSalida(reservas, salidas, grupos), [reservas, salidas, grupos]);
 
   // Determine which salidas are open for a given date (respects cierres + overrides + 30-min cutoff)
   const getSalidasAbiertas = (fecha, paxMapOverride, ignorarCutoff = false) => {
