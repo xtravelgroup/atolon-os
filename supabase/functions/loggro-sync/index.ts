@@ -2931,7 +2931,28 @@ serve(async (req) => {
         // conversión use ese valor en lugar del que reporta /ingredients/${id}.
         // Solo afecta a Loggro — no se persiste en la factura original.
         const dstUnitOverride = it.unit_dst_override || null;
+        // Override directo de CANTIDAD: el operador ya hizo la conversión en la
+        // UI (FacturaProveedorModal) y nos pasó el valor exacto que debe entrar
+        // a Loggro. Si está definido, saltamos toda la lógica de conversión
+        // automática y preservamos el total $ (price = total_original / new_qty).
+        const qtyOverride = it.quantity_override != null ? Number(it.quantity_override) : null;
         const itemNombre = it.nombre || it.name || ingId;
+
+        if (qtyOverride != null && qtyOverride > 0 && quantity > 0) {
+          const totalOriginal = quantity * price;
+          const qO = quantity;
+          quantity = qtyOverride;
+          price = totalOriginal / qtyOverride;
+          conversiones.push({
+            ingredient: ingId, item: itemNombre,
+            from: srcUnit, to: srcUnit, factor: qtyOverride / qO,
+            dst_source: "operator_qty_override",
+            quantity_from: qO, quantity_to: quantity,
+            price_from: totalOriginal / qO, price_to: price,
+          });
+          ingredientesPayload.push({ ingredient: ingId, quantity, price });
+          continue;
+        }
 
         if (srcUnit && ingId) {
           let dstUnit: string | null = null;

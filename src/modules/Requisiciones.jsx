@@ -1734,6 +1734,25 @@ function RecepcionOCModal({ oc, reqs, onClose, reload, currentUser, readOnly = f
       try {
         const URL = import.meta.env.VITE_SUPABASE_URL;
         const KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
+
+        // Leer overrides de cantidad guardados por el operador al cargar la
+        // factura en FacturaProveedorModal. Si el operador modificó la
+        // cantidad que entra a Loggro (ej. factura 1 Kg, Loggro Gr, operador
+        // ajustó a 950 gr porque revisó el peso real), usamos ese valor en
+        // lugar de la conversión automática del edge function.
+        const { data: facturasAplicadas } = await supabase
+          .from("oc_facturas")
+          .select("factura_data")
+          .eq("oc_id", oc.id);
+        const qtyOverridesPorLoggroId = {};
+        for (const f of (facturasAplicadas || [])) {
+          for (const it of (f.factura_data?.items || [])) {
+            if (it.loggro_id && it.loggro_qty_override != null) {
+              qtyOverridesPorLoggroId[it.loggro_id] = Number(it.loggro_qty_override);
+            }
+          }
+        }
+
         const ingredientsPayload = recibidos
           .filter(r => (Number(r.cant_recibida) || 0) > 0 && r.loggro_id)
           .map(r => ({
@@ -1751,6 +1770,11 @@ function RecepcionOCModal({ oc, reqs, onClose, reload, currentUser, readOnly = f
             // original). Cuando Loggro tiene la unidad mal configurada o no
             // la tiene, el operador puede forzar la unidad destino aquí.
             unit_dst_override: r._unitDstOverride || null,
+            // Override de CANTIDAD final (si el operador ajustó la cantidad
+            // que entra a Loggro en FacturaProveedorModal). Si está presente,
+            // el edge function lo usa tal cual y NO aplica conversión.
+            quantity_override: qtyOverridesPorLoggroId[r.loggro_id] != null
+              ? qtyOverridesPorLoggroId[r.loggro_id] : undefined,
             nombre: r.item || r._catNombre || null, // para mostrar en bloqueos/conversiones
           }));
         const sinLoggroId = recibidos.filter(r => (Number(r.cant_recibida) || 0) > 0 && !r.loggro_id);
