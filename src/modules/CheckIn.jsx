@@ -5,6 +5,12 @@ import { supabase } from "../lib/supabase";
 import { useMobile } from "../lib/useMobile";
 import jsQR from "jsqr";
 
+// Credenciales centralizadas — todas las llamadas raw `fetch()` de este módulo
+// reciben las claves desde env vars, no hardcoded. Esto permite rotar el
+// anon key sin tocar código.
+const SB_URL  = import.meta.env.VITE_SUPABASE_URL;
+const SB_ANON = import.meta.env.VITE_SUPABASE_ANON_KEY;
+
 const IS = { width: "100%", padding: "9px 12px", borderRadius: 8, background: B.navy, border: `1px solid ${B.navyLight}`, color: B.white, fontSize: 13, outline: "none", boxSizing: "border-box" };
 const LS = { fontSize: 11, color: B.sand, display: "block", marginBottom: 5, textTransform: "uppercase", letterSpacing: "0.06em" };
 
@@ -148,7 +154,7 @@ function buildGrupoSlots(pasadiasOrg) {
 }
 
 // ─── Slot Editor para grupos (edita un slot de zarpe_data) ───────────────────
-const AKEY_CONST = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5jZHl0dGd4dWljeXJ1YXRoa3hkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ4OTY4NDksImV4cCI6MjA5MDQ3Mjg0OX0.ppK_J1BUI8lrEZ-iQWNb0imO_ZwOGbF3MDyv7nct6bs";
+const AKEY_CONST = SB_ANON;
 
 function SlotEditorModal({ grupo, slot, onClose, onSaved, embarcaciones = [] }) {
   const [f, setF] = useState({
@@ -163,12 +169,28 @@ function SlotEditorModal({ grupo, slot, onClose, onSaved, embarcaciones = [] }) 
   const save = async (hacerCheckin = false) => {
     setSaving(true);
     const now = new Date().toISOString();
-    const newZarpe = (grupo.zarpe_data || []).map(z =>
+    // Antes este save calculaba newZarpe sobre grupo.zarpe_data del state
+    // local, que podia tener varios minutos de antiguedad si otro recepcionista
+    // abrio otro SlotEditor del mismo grupo. El ultimo PATCH ganaba y pisaba
+    // los slots del primero. Ahora re-fetcheamos el zarpe_data fresco de la
+    // DB justo antes del PATCH, mergeamos solo nuestro slot, y enviamos.
+    // Ventana de race baja de minutos a ms (no es serializable sin RPC, pero
+    // cubre el caso practico).
+    let baseZarpe = grupo.zarpe_data || [];
+    try {
+      const r = await fetch(`${SB_URL}/rest/v1/eventos?id=eq.${grupo.id}&select=zarpe_data`,
+        { headers: { apikey: AKEY_CONST, Authorization: `Bearer ${AKEY_CONST}` } });
+      if (r.ok) {
+        const arr = await r.json();
+        if (Array.isArray(arr) && arr[0]?.zarpe_data) baseZarpe = arr[0].zarpe_data;
+      }
+    } catch (_) { /* si falla, caemos al state local */ }
+    const newZarpe = baseZarpe.map(z =>
       z.slot_id === slot.slot_id
         ? { ...z, ...f, checkin_at: hacerCheckin ? now : z.checkin_at }
         : z
     );
-    await fetch(`https://ncdyttgxuicyruathkxd.supabase.co/rest/v1/eventos?id=eq.${grupo.id}`,
+    await fetch(`${SB_URL}/rest/v1/eventos?id=eq.${grupo.id}`,
       { method: "PATCH", headers: { apikey: AKEY_CONST, Authorization: `Bearer ${AKEY_CONST}`, "Content-Type": "application/json", Prefer: "return=minimal" },
         body: JSON.stringify({ zarpe_data: newZarpe }) });
     setSaving(false);
@@ -229,7 +251,7 @@ function SlotEditorModal({ grupo, slot, onClose, onSaved, embarcaciones = [] }) 
 
 // ─── Bulk Fill Modal — llenar todos los slots sin datos de un grupo ───────────
 function BulkFillModal({ grupo, slotsSinDatos, embarcaciones, onClose, onSaved }) {
-  const AKEY_BF = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5jZHl0dGd4dWljeXJ1YXRoa3hkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ4OTY4NDksImV4cCI6MjA5MDQ3Mjg0OX0.ppK_J1BUI8lrEZ-iQWNb0imO_ZwOGbF3MDyv7nct6bs";
+  const AKEY_BF = SB_ANON;
   const [rows, setRows]     = useState(slotsSinDatos.map(s => ({ ...s, nombre: "", identificacion: "", nacionalidad: "Colombiana", embarcacion: "" })));
   const [saving, setSaving] = useState(false);
 
@@ -244,7 +266,7 @@ function BulkFillModal({ grupo, slotsSinDatos, embarcaciones, onClose, onSaved }
       zarpeBySlot[r.slot_id] = { slot_id: r.slot_id, tipo: r.tipo, idx: r.idx, nombre: r.nombre.trim(), identificacion: r.identificacion.trim(), nacionalidad: r.nacionalidad, embarcacion: r.embarcacion, checkin_at: now };
     });
     const newZarpe = Object.values(zarpeBySlot);
-    await fetch(`https://ncdyttgxuicyruathkxd.supabase.co/rest/v1/eventos?id=eq.${grupo.id}`,
+    await fetch(`${SB_URL}/rest/v1/eventos?id=eq.${grupo.id}`,
       { method: "PATCH", headers: { apikey: AKEY_BF, Authorization: `Bearer ${AKEY_BF}`, "Content-Type": "application/json", Prefer: "return=minimal" },
         body: JSON.stringify({ zarpe_data: newZarpe }) });
     setSaving(false);
@@ -504,6 +526,196 @@ function EmbarcacionRentadaModal({ onClose, onSaved }) {
   );
 }
 
+// ─── Pasajeros Blue Apple Modal ──────────────────────────────────────────────
+// Misma idea que ColaboradoresModal pero para pasajeros que van a Blue Apple
+// (no a Atolón). NO cuentan como pasadía pero SÍ ocupan cupo en la lancha
+// y aparecen en el zarpe junto a nuestros pasajeros.
+//
+// Flujo:
+//  1) Admin entra cuántos pasajeros van a Blue Apple (count)
+//  2) Sistema genera token + link público + QR para compartir con Blue Apple
+//  3) Blue Apple llena los datos remoto, o el admin los puede entrar manual
+//
+// La ruta pública es /blueapple-pax?d=<despacho_id>&t=<token>
+function BlueAppleModal({ salidaId, fecha, despacho, embarcaciones = [], onClose, onSaved }) {
+  const defaultEmb = embarcaciones.find(e => e.id === "EMB-BLUEAPPLE")?.nombre
+    || embarcaciones[0]?.nombre || "";
+
+  // Si ya hay un despacho con token + count o pax cargados → ir directo a paso 2
+  const tieneSetup = !!(despacho?.blueapple_token || despacho?.pasajeros_blueapple?.length);
+  const [step, setStep] = useState(tieneSetup ? 2 : 1);
+  const [countInput, setCountInput] = useState(despacho?.blueapple_count_esperado || 1);
+  const [embInput, setEmbInput] = useState(defaultEmb);
+  const [paxs, setPaxs] = useState(
+    despacho?.pasajeros_blueapple?.length > 0
+      ? despacho.pasajeros_blueapple
+      : Array.from({ length: despacho?.blueapple_count_esperado || 1 }, () => ({ nombre: "", cedula: "", nacionalidad: "", embarcacion: defaultEmb }))
+  );
+  const [token, setToken] = useState(despacho?.blueapple_token || "");
+  const [busy, setBusy] = useState(false);
+
+  // Paso 1 → 2: generar token, guardar count, inicializar slots vacíos
+  const iniciarRegistro = async () => {
+    const n = Math.max(1, parseInt(countInput) || 1);
+    setBusy(true);
+    const newToken = `BA-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    const slots = Array.from({ length: n }, () => ({ nombre: "", cedula: "", nacionalidad: "", embarcacion: embInput }));
+    if (despacho?.id) {
+      await supabase.from("salida_despachos").update({
+        blueapple_token: newToken,
+        blueapple_count_esperado: n,
+        pasajeros_blueapple: slots,
+      }).eq("id", despacho.id);
+    } else {
+      const id = `DESP-${Date.now()}`;
+      await supabase.from("salida_despachos").insert({
+        id, fecha, salida_id: salidaId,
+        blueapple_token: newToken,
+        blueapple_count_esperado: n,
+        pasajeros_blueapple: slots,
+      });
+    }
+    setToken(newToken);
+    setPaxs(slots);
+    setStep(2);
+    setBusy(false);
+    onSaved?.();
+  };
+
+  // En paso 2: actualizar paxs (admin manual)
+  const setPax = (i, k, v) => setPaxs(p => p.map((x, j) => j === i ? { ...x, [k]: v } : x));
+  const addPax = () => setPaxs(p => [...p, { nombre: "", cedula: "", nacionalidad: "", embarcacion: embInput }]);
+  const removePax = (i) => setPaxs(p => p.filter((_, j) => j !== i));
+
+  const guardarManual = async () => {
+    setBusy(true);
+    const filtered = paxs.filter(p => p.nombre.trim() || p.cedula.trim());
+    await supabase.from("salida_despachos").update({ pasajeros_blueapple: filtered }).eq("id", despacho?.id);
+    setBusy(false);
+    onSaved?.();
+    onClose();
+  };
+
+  const linkPublico = token ? `${window.location.origin}/blueapple-pax?d=${despacho?.id || ""}&t=${token}` : "";
+  const qrSrc = linkPublico
+    ? `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(linkPublico)}`
+    : "";
+
+  const copyLink = () => {
+    if (!linkPublico) return;
+    if (navigator.clipboard?.writeText) navigator.clipboard.writeText(linkPublico).then(() => alert("✓ Link copiado"));
+    else prompt("Copia el link:", linkPublico);
+  };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.75)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 999, padding: 16 }}
+      onClick={e => e.target === e.currentTarget && onClose()}>
+      <div style={{ background: B.navyMid, borderRadius: 16, padding: 28, width: 560, maxHeight: "92vh", overflowY: "auto", boxShadow: "0 20px 60px rgba(0,0,0,0.6)" }}>
+        <h3 style={{ fontSize: 17, fontWeight: 700, marginBottom: 4 }}>🍎 Pasajeros Blue Apple</h3>
+        <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginBottom: 20 }}>
+          Van a Blue Apple — no cuentan como pasadía pero SÍ ocupan cupo en la lancha y aparecen en el zarpe.
+        </div>
+
+        {step === 1 ? (
+          <>
+            <div style={{ background: B.navy, borderRadius: 10, padding: 16, marginBottom: 14 }}>
+              <label style={{ ...LS, fontSize: 12 }}>¿Cuántos pasajeros van a Blue Apple?</label>
+              <input type="number" min={1} value={countInput} onChange={e => setCountInput(e.target.value)}
+                style={{ ...IS, fontSize: 22, fontWeight: 800, textAlign: "center" }} />
+              <label style={{ ...LS, fontSize: 12, marginTop: 14 }}>Embarcación</label>
+              <select value={embInput} onChange={e => setEmbInput(e.target.value)} style={{ ...IS, cursor: "pointer" }}>
+                <option value="">— Sin asignar —</option>
+                {embarcaciones.map(emb => <option key={emb.id} value={emb.nombre}>{emb.nombre}</option>)}
+              </select>
+              <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginTop: 10, lineHeight: 1.4 }}>
+                Al continuar generamos un link/QR que puedes compartirle a Blue Apple para que llenen los datos de cada pasajero. También puedes llenarlos tú manualmente.
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: 10 }}>
+              <button onClick={onClose} style={{ flex: 1, padding: "11px", background: "none", border: `1px solid ${B.navyLight}`, borderRadius: 8, color: "rgba(255,255,255,0.4)", fontSize: 13, cursor: "pointer" }}>Cancelar</button>
+              <button onClick={iniciarRegistro} disabled={busy || countInput < 1}
+                style={{ flex: 2, padding: "11px", background: B.sand, color: B.navy, border: "none", borderRadius: 8, fontWeight: 700, fontSize: 13, cursor: busy ? "wait" : "pointer", opacity: busy ? 0.6 : 1 }}>
+                {busy ? "Generando…" : `Continuar (${countInput} pax)`}
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            {/* Sección compartir */}
+            {linkPublico && (
+              <div style={{ background: B.navy, borderRadius: 10, padding: 16, marginBottom: 14, border: `1px solid ${B.sand}33` }}>
+                <div style={{ fontSize: 11, color: B.sand, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 700, marginBottom: 8 }}>📤 Compartir con Blue Apple</div>
+                <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+                  <img src={qrSrc} alt="QR" width={120} height={120} style={{ borderRadius: 6, background: "#fff", padding: 6, flexShrink: 0 }} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginBottom: 6 }}>Que escaneen el QR o abran este link:</div>
+                    <div style={{ fontSize: 10, color: B.sky, wordBreak: "break-all", marginBottom: 8, fontFamily: "monospace" }}>{linkPublico}</div>
+                    <button onClick={copyLink} style={{ padding: "6px 12px", background: B.sky, color: B.navy, border: "none", borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: "pointer", marginRight: 6 }}>📋 Copiar link</button>
+                    <a href={`https://wa.me/?text=${encodeURIComponent(`Hola — pásennos los datos de los ${despacho?.blueapple_count_esperado || paxs.length} pasajeros de Blue Apple en este link: ${linkPublico}`)}`}
+                      target="_blank" rel="noreferrer"
+                      style={{ padding: "6px 12px", background: "#25D366", color: "#fff", textDecoration: "none", borderRadius: 6, fontSize: 11, fontWeight: 700, display: "inline-block" }}>
+                      💬 WhatsApp
+                    </a>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Manual entry */}
+            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.6)", textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 700, marginBottom: 8 }}>
+              ✏️ O entrarlos manualmente ({paxs.length} pax)
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {paxs.map((p, i) => (
+                <div key={i} style={{ background: B.navy, borderRadius: 10, padding: 12, display: "flex", gap: 8, alignItems: "flex-start" }}>
+                  <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 8 }}>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                      <div>
+                        <label style={LS}>Nombre completo</label>
+                        <input value={p.nombre} onChange={e => setPax(i, "nombre", e.target.value)} style={IS} placeholder="Nombre y apellido" />
+                      </div>
+                      <div>
+                        <label style={LS}>Cédula / Pasaporte</label>
+                        <input value={p.cedula} onChange={e => setPax(i, "cedula", e.target.value)} style={IS} placeholder="No. identificación" />
+                      </div>
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                      <div>
+                        <label style={LS}>Nacionalidad</label>
+                        <input value={p.nacionalidad} onChange={e => setPax(i, "nacionalidad", e.target.value)} style={IS} placeholder="Ej: Colombia, USA" />
+                      </div>
+                      <div>
+                        <label style={LS}>Embarcación</label>
+                        <select value={p.embarcacion || ""} onChange={e => setPax(i, "embarcacion", e.target.value)} style={{ ...IS, cursor: "pointer" }}>
+                          <option value="">— Sin asignar —</option>
+                          {embarcaciones.map(emb => <option key={emb.id} value={emb.nombre}>{emb.nombre}</option>)}
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+                  <button onClick={() => removePax(i)}
+                    style={{ marginTop: 22, padding: "6px 10px", borderRadius: 8, background: "none", border: `1px solid ${B.danger}44`, color: B.danger, cursor: "pointer", fontSize: 16, flexShrink: 0 }}>✕</button>
+                </div>
+              ))}
+            </div>
+            <button onClick={addPax} style={{ marginTop: 10, width: "100%", padding: "9px", borderRadius: 8, background: "none", border: `1px dashed ${B.navyLight}`, color: "rgba(255,255,255,0.4)", fontSize: 13, cursor: "pointer" }}>
+              + Agregar pasajero
+            </button>
+
+            <div style={{ display: "flex", gap: 10, marginTop: 20 }}>
+              <button onClick={onClose} style={{ flex: 1, padding: "11px", background: "none", border: `1px solid ${B.navyLight}`, borderRadius: 8, color: "rgba(255,255,255,0.4)", fontSize: 13, cursor: "pointer" }}>Cerrar</button>
+              <button onClick={guardarManual} disabled={busy}
+                style={{ flex: 2, padding: "11px", background: B.sand, color: B.navy, border: "none", borderRadius: 8, fontWeight: 700, fontSize: 13, cursor: busy ? "wait" : "pointer", opacity: busy ? 0.6 : 1 }}>
+                {busy ? "Guardando…" : "Guardar cambios manuales"}
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ─── Colaboradores Modal ─────────────────────────────────────────────────────
 function ColaboradoresModal({ salidaId, fecha, despacho, embarcaciones = [], onClose, onSaved }) {
   const init = despacho?.colaboradores?.length > 0
@@ -587,6 +799,11 @@ function ColaboradoresModal({ salidaId, fecha, despacho, embarcaciones = [], onC
 }
 
 // ─── Zarpe PDF (new window) ───────────────────────────────────────────────────
+// Guard anti-carrera: evita que dos clicks casi simultáneos de "Generar
+// zarpe" para el MISMO (fecha|salida|embarcación) escriban en zarpes_log
+// a la vez (causa de los duplicados 09:32 / 09:32).
+const _zarpeLogInFlight = new Set();
+
 // Generate zarpe for a SINGLE embarcación
 async function generarZarpe(salida, reservas, fecha, despacho, emb) {
   // emb: full embarcacion object — only show passengers assigned to this boat
@@ -600,16 +817,42 @@ async function generarZarpe(salida, reservas, fecha, despacho, emb) {
       ? r.pasajeros
       : [{ nombre: r.nombre, identificacion: "—", nacionalidad: "—" }]
   );
-  const totalPax = paxList.length;
-  // Lista unificada para el zarpe: pasajeros + colaboradores en una sola tabla
-  // (colaboradores marcados con tag STAFF + rol en columna Nacionalidad)
+
+  // Blue Apple pax que van en ESTA embarcación — capturados en despacho.
+  // Se usan para 2 propósitos:
+  //   1. Persistirlos en zarpes_log.pasajeros (antes faltaban en BD)
+  //   2. Render del PDF (se muestran en una sección visual aparte abajo)
+  const paxBA = (despacho?.pasajeros_blueapple || [])
+    .filter(p => !emb || !p.embarcacion || p.embarcacion === emb.nombre)
+    .map(p => ({
+      nombre: p.nombre || "—",
+      identificacion: p.cedula || "—",
+      nacionalidad: p.nacionalidad || "Blue Apple",
+      _blueApple: true,
+    }));
+
+  // pax_total y pasajeros (lo que va a BD) incluyen BA — antes solo reservas.
+  const pasajerosPersistidos = [...paxList, ...paxBA];
+  const totalPax = pasajerosPersistidos.length;
+  // Lista unificada para el zarpe: pasajeros + colaboradores + Blue Apple en
+  // una sola tabla. Colaboradores: tag STAFF · rol. Blue Apple: tag BLUE APPLE
+  // (no son pasadía pero ocupan cupo en la lancha).
   const colabRows = (despacho?.colaboradores || []).map(c => ({
     nombre:         c.nombre || "—",
     identificacion: c.cedula || "—",
     nacionalidad:   c.rol ? `STAFF · ${c.rol}` : "STAFF",
     _isStaff:       true,
   }));
-  const fullList = [...paxList, ...colabRows];
+  // Filtrar Blue Apple pax que van en ESTA embarcación
+  const blueAppleRows = (despacho?.pasajeros_blueapple || [])
+    .filter(p => !emb || !p.embarcacion || p.embarcacion === emb.nombre)
+    .map(p => ({
+      nombre:         p.nombre || "—",
+      identificacion: p.cedula || "—",
+      nacionalidad:   p.nacionalidad ? `🍎 BLUE APPLE · ${p.nacionalidad}` : "🍎 BLUE APPLE",
+      _isBlueApple:   true,
+    }));
+  const fullList = [...paxList, ...colabRows, ...blueAppleRows];
 
   // ─── Bitácora: registrar el zarpe generado ─────────────────────────────
   try {
@@ -638,17 +881,11 @@ async function generarZarpe(salida, reservas, fecha, despacho, emb) {
       if (deRow?.id) despachoIdFinal = deRow.id;
     }
 
-    // PREVENIR DUPLICADOS: si ya existe un zarpe para misma fecha+salida+
-    // embarcación, hacer UPDATE en vez de INSERT. Antes había hasta 10
-    // duplicados por click repetido del botón "📄 Generar zarpe".
-    const { data: existing } = await supabase
-      .from("zarpes_log")
-      .select("id")
-      .eq("fecha", fecha)
-      .eq("salida_id", salida.id)
-      .eq("embarcacion_nombre", emb?.nombre || "")
-      .maybeSingle();
-
+    // BA pax marcados con `_blueApple: true` y nacionalidad "Blue Apple" para
+    // que cualquier consumidor de zarpes_log.pasajeros pueda identificarlos.
+    // Se incluyen en `pasajeros` (la columna que existe) — las columnas
+    // pasajeros_blueapple/_count que estaban antes no existen en la tabla
+    // y Supabase JS las descartaba silenciosamente (era el bug).
     const payload = {
       fecha,
       salida_id:           salida.id,
@@ -659,17 +896,42 @@ async function generarZarpe(salida, reservas, fecha, despacho, emb) {
       zarpe_codigo:        codigoFinal,
       pax_total:           totalPax,
       colaboradores_count: despacho?.colaboradores?.length || 0,
-      pasajeros:           paxList,
+      pasajeros:           pasajerosPersistidos,
       colaboradores:       despacho?.colaboradores || [],
       despacho_id:         despachoIdFinal,
       generado_por_email:  email,
       generado_por_nombre: nombre,
     };
 
-    if (existing?.id) {
-      await supabase.from("zarpes_log").update(payload).eq("id", existing.id);
-    } else {
-      await supabase.from("zarpes_log").insert(payload);
+    // PREVENIR DUPLICADOS. Clave: (fecha, salida_id, embarcacion_nombre).
+    // Antes usaba .maybeSingle(): ante 2+ filas YA duplicadas devolvía
+    // null/error → caía en INSERT y duplicaba sin límite (cascada — el
+    // patrón 09:32/09:32/09:33/10:57). Ahora: guard anti-carrera en
+    // memoria + trae TODAS, UPDATE sobre la más reciente y borra las
+    // sobrantes (auto-sana los duplicados ya existentes).
+    const dkey = `${fecha}|${salida.id}|${emb?.nombre || ""}`;
+    if (!_zarpeLogInFlight.has(dkey)) {
+      _zarpeLogInFlight.add(dkey);
+      try {
+        const { data: prev } = await supabase
+          .from("zarpes_log")
+          .select("id")
+          .eq("fecha", fecha)
+          .eq("salida_id", salida.id)
+          .eq("embarcacion_nombre", emb?.nombre || "")
+          .order("created_at", { ascending: false });
+        if (prev && prev.length) {
+          await supabase.from("zarpes_log").update(payload).eq("id", prev[0].id);
+          const sobrantes = prev.slice(1).map(r => r.id);
+          if (sobrantes.length) {
+            await supabase.from("zarpes_log").delete().in("id", sobrantes);
+          }
+        } else {
+          await supabase.from("zarpes_log").insert(payload);
+        }
+      } finally {
+        _zarpeLogInFlight.delete(dkey);
+      }
     }
   } catch (e) {
     console.warn("No se pudo registrar zarpe en bitácora:", e);
@@ -747,7 +1009,7 @@ async function generarZarpe(salida, reservas, fecha, despacho, emb) {
     <div class="meta">
       <div><b>Fecha:</b> ${new Date(fecha + "T12:00:00").toLocaleDateString("es-CO", { weekday:"long", day:"numeric", month:"long", year:"numeric" })}</div>
       <div><b>Hora salida:</b> ${salida.hora} &nbsp;·&nbsp; Regreso ${salida.hora_regreso}</div>
-      <div><b>Total pasajeros:</b> ${fullList.length}${(despacho?.colaboradores?.length > 0) ? ` <span style="color:#666;font-size:11px;">(${totalPax} pasadía + ${despacho.colaboradores.length} staff)</span>` : ""}</div>
+      <div><b>Total pasajeros:</b> ${fullList.length}${(despacho?.colaboradores?.length > 0 || blueAppleRows.length > 0) ? ` <span style="color:#666;font-size:11px;">(${totalPax} pasadía${despacho?.colaboradores?.length > 0 ? ` + ${despacho.colaboradores.length} staff` : ""}${blueAppleRows.length > 0 ? ` + ${blueAppleRows.length} Blue Apple` : ""})</span>` : ""}</div>
       <div><b>Salida:</b> Muelle de La Bodeguita</div>
       <div><b>Destino:</b> Boca Chica, Tierra Bomba</div>
       <div><b>Generado:</b> ${new Date().toLocaleString("es-CO")}</div>
@@ -762,10 +1024,10 @@ async function generarZarpe(salida, reservas, fecha, despacho, emb) {
       </tr></thead>
       <tbody>${bodyRows}</tbody>
     </table>
-    ${(despacho?.colaboradores?.length > 0 || totalPax > 0) ? `
+    ${(despacho?.colaboradores?.length > 0 || totalPax > 0 || blueAppleRows.length > 0) ? `
     <div style="margin-top:14px;font-size:11px;color:#444;">
       Total a bordo: <b>${fullList.length}</b> persona${fullList.length !== 1 ? "s" : ""} —
-      ${totalPax} pasajero${totalPax !== 1 ? "s" : ""}${despacho?.colaboradores?.length > 0 ? ` + ${despacho.colaboradores.length} staff` : ""}
+      ${totalPax} pasajero${totalPax !== 1 ? "s" : ""}${despacho?.colaboradores?.length > 0 ? ` + ${despacho.colaboradores.length} staff` : ""}${blueAppleRows.length > 0 ? ` + ${blueAppleRows.length} Blue Apple` : ""}
     </div>` : ""}
     <div class="footer">Atolon Beach Club — ${new Date().toLocaleString("es-CO")}</div>
   </body></html>`;
@@ -801,11 +1063,21 @@ function ZarpeCodigoRow({ desp, setDespachos }) {
   const save = async () => {
     if (!input.trim()) return;
     setSaving(true);
+    const code = input.trim();
     await supabase.from("salida_despachos")
-      .update({ zarpe_codigo: input.trim(), zarpe_generado: true })
+      .update({ zarpe_codigo: code, zarpe_generado: true })
       .eq("id", desp.id);
+    // El código también debe reflejarse en zarpes_log (módulo Zarpes), que
+    // se creó al hacer el check-in ANTES de tener el código. Aplica a TODOS
+    // los zarpes de esa salida+fecha (el código es por salida, no por emb).
+    if (desp.fecha && desp.salida_id) {
+      await supabase.from("zarpes_log")
+        .update({ zarpe_codigo: code })
+        .eq("fecha", desp.fecha)
+        .eq("salida_id", desp.salida_id);
+    }
     setDespachos(prev => prev.map(d =>
-      d.id === desp.id ? { ...d, zarpe_codigo: input.trim(), zarpe_generado: true } : d
+      d.id === desp.id ? { ...d, zarpe_codigo: code, zarpe_generado: true } : d
     ));
     setSaving(false);
     setEditing(false);
@@ -864,6 +1136,7 @@ export default function CheckIn() {
   const [scanMsg,        setScanMsg]        = useState(null); // { ok, text }
   const [editPax,        setEditPax]        = useState(null); // reserva to edit pasajeros
   const [editColabs,     setEditColabs]     = useState(false);
+  const [editBlueApple,  setEditBlueApple]  = useState(false);
   const [qrReserva,      setQrReserva]      = useState(null);
   const [confirmCheckin, setConfirmCheckin] = useState(null);
   const [ciPax,          setCiPax]          = useState(null); // pax override for check-in
@@ -882,8 +1155,8 @@ export default function CheckIn() {
   const load = useCallback(async () => {
     if (!supabase) { setLoading(false); return; }
     setLoading(true);
-    const SURL = "https://ncdyttgxuicyruathkxd.supabase.co";
-    const AKEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5jZHl0dGd4dWljeXJ1YXRoa3hkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ4OTY4NDksImV4cCI6MjA5MDQ3Mjg0OX0.ppK_J1BUI8lrEZ-iQWNb0imO_ZwOGbF3MDyv7nct6bs";
+    const SURL = SB_URL;
+    const AKEY = SB_ANON;
     const [salR, resR, desR, embR, ovrR, grpR] = await Promise.all([
       supabase.from("salidas").select("*").eq("activo", true).order("orden"),
       supabase.from("reservas").select("*").eq("fecha", fecha).neq("estado", "cancelado").order("nombre"),
@@ -941,14 +1214,14 @@ export default function CheckIn() {
     return [...conBA, ...rentadasDelDia];
   }, [embarcaciones, overrides, fecha]);
 
-  const AKEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5jZHl0dGd4dWljeXJ1YXRoa3hkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ4OTY4NDksImV4cCI6MjA5MDQ3Mjg0OX0.ppK_J1BUI8lrEZ-iQWNb0imO_ZwOGbF3MDyv7nct6bs";
+  const AKEY = SB_ANON;
 
   const checkinPaxGrupo = async (grupo, slotId) => {
     const now = new Date().toISOString();
     const newZarpe = (grupo.zarpe_data || []).map(z =>
       z.slot_id === slotId ? { ...z, checkin_at: z.checkin_at ? null : now } : z
     );
-    await fetch(`https://ncdyttgxuicyruathkxd.supabase.co/rest/v1/eventos?id=eq.${grupo.id}`,
+    await fetch(`${SB_URL}/rest/v1/eventos?id=eq.${grupo.id}`,
       { method: "PATCH", headers: { apikey: AKEY, Authorization: `Bearer ${AKEY}`, "Content-Type": "application/json", Prefer: "return=minimal" }, body: JSON.stringify({ zarpe_data: newZarpe }) });
     setGrupos(prev => prev.map(g => g.id === grupo.id ? { ...g, zarpe_data: newZarpe } : g));
   };
@@ -958,7 +1231,7 @@ export default function CheckIn() {
     const newZarpe = (grupo.zarpe_data || []).map(z =>
       z.nombre && !z.checkin_at && !z.no_show ? { ...z, checkin_at: now } : z
     );
-    await fetch(`https://ncdyttgxuicyruathkxd.supabase.co/rest/v1/eventos?id=eq.${grupo.id}`,
+    await fetch(`${SB_URL}/rest/v1/eventos?id=eq.${grupo.id}`,
       { method: "PATCH", headers: { apikey: AKEY, Authorization: `Bearer ${AKEY}`, "Content-Type": "application/json", Prefer: "return=minimal" }, body: JSON.stringify({ zarpe_data: newZarpe }) });
     setGrupos(prev => prev.map(g => g.id === grupo.id ? { ...g, zarpe_data: newZarpe } : g));
   };
@@ -983,7 +1256,7 @@ export default function CheckIn() {
       const existing = zarpeBySlot[s.slot_id] || s;
       return s.slot_id === slotId ? { ...existing, embarcacion: embNombre || null } : existing;
     });
-    await fetch(`https://ncdyttgxuicyruathkxd.supabase.co/rest/v1/eventos?id=eq.${grupo.id}`,
+    await fetch(`${SB_URL}/rest/v1/eventos?id=eq.${grupo.id}`,
       { method: "PATCH", headers: { apikey: AKEY, Authorization: `Bearer ${AKEY}`, "Content-Type": "application/json", Prefer: "return=minimal" },
         body: JSON.stringify({ zarpe_data: newZarpe }) });
     setGrupos(prev => prev.map(g => g.id === grupo.id ? { ...g, zarpe_data: newZarpe } : g));
@@ -1000,7 +1273,7 @@ export default function CheckIn() {
       }
       return existing;
     });
-    await fetch(`https://ncdyttgxuicyruathkxd.supabase.co/rest/v1/eventos?id=eq.${grupo.id}`,
+    await fetch(`${SB_URL}/rest/v1/eventos?id=eq.${grupo.id}`,
       { method: "PATCH", headers: { apikey: AKEY, Authorization: `Bearer ${AKEY}`, "Content-Type": "application/json", Prefer: "return=minimal" }, body: JSON.stringify({ zarpe_data: newZarpe }) });
     setGrupos(prev => prev.map(g => g.id === grupo.id ? { ...g, zarpe_data: newZarpe } : g));
   };
@@ -1096,6 +1369,16 @@ export default function CheckIn() {
     };
     const { error } = await supabase.from("salida_despachos").insert(rec);
     if (error) {
+      // 23505 = índice único (fecha, salida_id, embarcacion): ya hay un
+      // despacho para esa embarcación programada en ese horario. Es la
+      // regla de negocio, no un error técnico — refrescamos y avisamos.
+      if (error.code === "23505") {
+        alert(`${embNombre} ya fue despachada en ${salida.nombre} ${salida.hora}. Solo se permite 1 despacho por embarcación en ese horario.`);
+        const { data: fresh } = await supabase.from("salida_despachos").select("*").eq("fecha", fecha);
+        if (fresh) setDespachos(fresh);
+        setDespacharModal(null);
+        return;
+      }
       alert(`Error al despachar ${embNombre}:\n${error.message}`);
       return;
     }
@@ -1406,6 +1689,19 @@ export default function CheckIn() {
           />
         );
       })()}
+      {editBlueApple && salida && (() => {
+        const allEmbs = embsParaSalida(salida);
+        return (
+          <BlueAppleModal
+            salidaId={salida.id}
+            fecha={fecha}
+            despacho={despacho}
+            embarcaciones={allEmbs}
+            onClose={() => setEditBlueApple(false)}
+            onSaved={load}
+          />
+        );
+      })()}
 
       {/* ── Modal: seleccionar embarcación para despachar ── */}
       {despacharModal && (
@@ -1704,6 +2000,10 @@ export default function CheckIn() {
                   <button onClick={() => setEditColabs(true)}
                     style={{ padding: "8px 12px", borderRadius: 8, background: despacho?.colaboradores?.length > 0 ? B.sky + "22" : B.navyLight, color: despacho?.colaboradores?.length > 0 ? B.sky : "rgba(255,255,255,0.6)", border: `1px solid ${despacho?.colaboradores?.length > 0 ? B.sky + "55" : "transparent"}`, fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
                     👥 {despacho?.colaboradores?.length > 0 ? `${despacho.colaboradores.length}` : "Colabs"}
+                  </button>
+                  <button onClick={() => setEditBlueApple(true)}
+                    style={{ padding: "8px 12px", borderRadius: 8, background: despacho?.pasajeros_blueapple?.length > 0 ? "#dc2626" + "22" : B.navyLight, color: despacho?.pasajeros_blueapple?.length > 0 ? "#fca5a5" : "rgba(255,255,255,0.6)", border: `1px solid ${despacho?.pasajeros_blueapple?.length > 0 ? "#dc2626" + "55" : "transparent"}`, fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
+                    🍎 {despacho?.pasajeros_blueapple?.length > 0 ? `${despacho.pasajeros_blueapple.length}` : "Blue Apple"}
                   </button>
                   {/* Zarpe button per embarcación (base + extras + Blue Apple + rentadas activas) */}
                   {(() => {

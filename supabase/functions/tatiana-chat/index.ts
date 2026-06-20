@@ -40,6 +40,14 @@ const PRECIOS_COP: Record<string, number> = {
   "after-island": 170000,
 };
 
+// Tarifa niño (0–11). 0 = sin tarifa especial → paga tarifa de adulto.
+const PRECIOS_NINO_COP: Record<string, number> = {
+  vip:           240000,
+  exclusive:          0, // sin tarifa de niño → paga adulto
+  experience:         0, // sin tarifa de niño → paga adulto
+  "after-island": 120000,
+};
+
 // Mapeo producto→tipo (match strings ya existentes en reservas.tipo)
 const PRODUCTO_A_TIPO: Record<string, string> = {
   vip:            "VIP Pass",
@@ -187,7 +195,10 @@ async function crearReservaPasadia(input: {
   const salidaId = salidas?.[0]?.id || null;
 
   const precioU = PRECIOS_COP[input.producto];
-  const totalCop = precioU * input.num_personas;
+  const precioNino = PRECIOS_NINO_COP[input.producto] || precioU;
+  const numNinos = Math.max(0, Math.min(input.num_ninos || 0, input.num_personas));
+  const numAdultos = input.num_personas - numNinos;
+  const totalCop = numAdultos * precioU + numNinos * precioNino;
   const reservaId = `WEB-${Date.now()}`;
   const expira = new Date(Date.now() + TIEMPO_BLOQUEO_MIN * 60 * 1000).toISOString();
   const tipo = PRODUCTO_A_TIPO[input.producto] || input.producto;
@@ -200,6 +211,8 @@ async function crearReservaPasadia(input: {
     canal:               "tatiana",
     nombre:              input.cliente_nombre,
     pax:                 input.num_personas,
+    pax_a:               numAdultos,
+    pax_n:               numNinos,
     precio_u:            precioU,
     total:               totalCop,
     factura_electronica: false,
@@ -209,7 +222,7 @@ async function crearReservaPasadia(input: {
     contacto:            input.cliente_email,
     salida_id:           salidaId,
     link_expira_at:      expira,
-    notas:               `Reserva creada por Tatiana (idioma: ${input.idioma || "es"}). ${input.num_ninos ? `Niños: ${input.num_ninos}` : ""}`,
+    notas:               `Reserva creada por Tatiana (idioma: ${input.idioma || "es"}). ${numNinos ? `Niños: ${numNinos} (tarifa ${PRECIOS_NINO_COP[input.producto] ? "niño" : "adulto"})` : ""}`,
   });
 
   if (error) throw new Error(`Error creando reserva: ${error.message}`);

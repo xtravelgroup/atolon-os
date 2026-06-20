@@ -1,0 +1,36 @@
+{
+  "name": "atolon-print-agent",
+  "version": "1.1.0",
+  "description": "Print Agent para Atolón OS — Supabase Realtime subscriber, envía ESC/POS a impresoras térmicas (USB raw en Windows, TCP para red)",
+  "main": "src/agent.js",
+  "bin": "src/agent.js",
+  "scripts": {
+    "start": "node src/agent.js",
+    "dev": "node --watch src/agent.js",
+    "agent": "node src/agent.js",
+    "server": "node src/server.js",
+    "agent:dev": "node --watch src/agent.js",
+    "build:win": "pkg . --targets node18-win-x64 --output dist/atolon-print-agent.exe",
+    "build:mac": "pkg . --targets node18-macos-x64 --output dist/atolon-print-agent-mac",
+    "build:linux": "pkg . --targets node18-linux-x64 --output dist/atolon-print-agent-linux"
+  },
+  "pkg": {
+    "scripts": [
+      "src/**/*.js"
+    ],
+    "assets": [
+      "config.default.json"
+    ]
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.107.0",
+    "node-thermal-printer": "^4.4.4",
+    "ws": "^8.21.0"
+  },
+  "devDependencies": {
+    "pkg": "^5.8.1"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

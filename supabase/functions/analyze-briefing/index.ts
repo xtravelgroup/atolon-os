@@ -66,8 +66,14 @@ Reglas:
 - No inventes información que no esté en la transcripción.
 - Si la transcripción está vacía o no tiene contenido útil, devuelve arrays/strings vacíos pero mantén la estructura.`;
 
+    // Timeout 60s en fetch a Anthropic. Sin esto, una API lenta colgaba la
+    // funcion hasta el global y el usuario perdia la sesion de grabacion
+    // sin feedback.
+    const anthCtrl = new AbortController();
+    const anthTimer = setTimeout(() => anthCtrl.abort(), 60_000);
     const res = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
+      signal: anthCtrl.signal,
       headers: {
         "x-api-key": ANTHROPIC_KEY,
         "anthropic-version": "2023-06-01",
@@ -79,6 +85,7 @@ Reglas:
         messages: [{ role: "user", content: prompt }],
       }),
     });
+    clearTimeout(anthTimer);
 
     const data = await res.json();
     const text = data.content?.[0]?.text ?? "";

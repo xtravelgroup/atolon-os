@@ -167,6 +167,16 @@ function TarifaModal({ tarifa, categorias, onClose, onSaved }) {
 
   async function save() {
     if (!f.nombre.trim()) { setErr("Falta nombre"); return; }
+    // Validar precio y rangos basicos. Sin esto, una tarifa con precio
+    // negativo entra y al aplicarla a una reserva el total queda negativo
+    // (el operador no ve la inconsistencia hasta que el cliente pregunta).
+    const precio = Number(f.precio_base);
+    if (!Number.isFinite(precio) || precio < 0) { setErr("Precio inválido"); return; }
+    const minN = Number(f.min_noches);
+    if (!Number.isFinite(minN) || minN < 1) { setErr("Mínimo noches debe ser ≥ 1"); return; }
+    if (f.vigencia_desde && f.vigencia_hasta && f.vigencia_hasta < f.vigencia_desde) {
+      setErr("Vigencia hasta debe ser posterior a vigencia desde"); return;
+    }
     setSaving(true); setErr("");
     const payload = {
       ...f,
@@ -174,8 +184,8 @@ function TarifaModal({ tarifa, categorias, onClose, onSaved }) {
       categoria: f.categoria || null,
       vigencia_desde: f.vigencia_desde || null,
       vigencia_hasta: f.vigencia_hasta || null,
-      precio_base: Number(f.precio_base) || 0,
-      min_noches: Number(f.min_noches) || 1,
+      precio_base: precio,
+      min_noches: minN,
       notas: f.notas.trim() || null,
       updated_at: new Date().toISOString(),
     };

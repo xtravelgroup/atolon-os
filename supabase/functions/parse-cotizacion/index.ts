@@ -86,8 +86,13 @@ Instrucciones:
 - Todos los montos como números enteros sin separadores
 - NO incluir comentarios ni texto fuera del JSON`;
 
+    // Timeout 60s para fetch a Anthropic — evita colgar la edge function
+    // hasta el global timeout cuando la API responde lento.
+    const anthCtrl = new AbortController();
+    const anthTimer = setTimeout(() => anthCtrl.abort(), 60_000);
     const res = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
+      signal: anthCtrl.signal,
       headers: {
         "x-api-key": ANTHROPIC_KEY,
         "anthropic-version": "2023-06-01",
@@ -114,6 +119,7 @@ Instrucciones:
         }],
       }),
     });
+    clearTimeout(anthTimer);
 
     const data = await res.json();
     if (!res.ok) {

@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { supabase } from "../lib/supabase";
+import { clasificarOrigenReserva, clasificarOrigen, ORIGEN_BUCKETS, ORIGEN_LABELS } from "../lib/origenClassifier.js";
 
 const B = {
   navy: "#0a1628", navyMid: "#0f1f3d", navyLight: "#1a2f52",
@@ -22,19 +23,25 @@ function normCanal(raw) {
   if (c === "paid_social_meta") return "Meta Ads";
   if (c === "organic_social") return "Social Orgánico";
   if (c === "email") return "Email";
+  if (c === "getyourguide" || c === "get your guide" || c === "gyg") return "GetYourGuide";
   // Capitalize first letter for anything else
   return raw.charAt(0).toUpperCase() + raw.slice(1).toLowerCase();
 }
 
-export default function Analitica() {
+// externo=true → vista pública limitada a Web+Mkt y WhatsApp (sin grupo/otros)
+export default function Analitica({ externo = false }) {
   const [periodo, setPeriodo] = useState("7d");
   const [customFrom, setCustomFrom] = useState("");
   const [customTo,   setCustomTo]   = useState("");
+  const [origen,     setOrigen]     = useState(externo ? "ambos" : "all"); // all|web|whatsapp|grupo|otros|ambos
   const [pkgData, setPkgData] = useState([]);
   const [stats, setStats] = useState(null);
+  const [atribQA, setAtribQA]   = useState(null);  // calidad de atribución paid media
+  const [atribRows, setAtribRows] = useState([]);  // filas para export CAPI/Offline
   const [sesiones, setSesiones] = useState([]);
   const [embudos, setEmbudos] = useState([]);
   const [canales, setCanales] = useState([]);
+  const [origenes, setOrigenes] = useState([]);  // 5 buckets: grupo/whatsapp/marketing/staff/web
   const [topEventos, setTopEventos] = useState([]);
   const [atribuciones, setAtribuciones] = useState([]);
   const [atribFirstTouch, setAtribFirstTouch] = useState([]);
@@ -61,41 +68,104 @@ export default function Analitica() {
     { val: "90d", label: "90 días" },
   ];
 
-  useEffect(() => { if (periodo !== "custom" || (customFrom && customTo)) fetchAll(); }, [periodo, customFrom, customTo]);
+  useEffect(() => { if (periodo !== "custom" || (customFrom && customTo)) fetchAll(); }, [periodo, customFrom, customTo, origen]);
 
   async function fetchAll() {
     setLoading(true);
     let desde;
     if (periodo === "custom" && customFrom) {
       desde = new Date(customFrom).toISOString();
+    } else if (periodo === "1d") {
+      // "Hoy" = día CALENDARIO de Bogotá (no rolling 24h, que arrastraba
+      // las ventas de ayer). Medianoche Bogotá (UTC-5) expresada en UTC.
+      const hoyBog = new Date().toLocaleString("en-CA", { timeZone: "America/Bogota" }).slice(0, 10);
+      desde = `${hoyBog}T05:00:00.000Z`;
     } else {
       const dias = parseInt(periodo);
       desde = new Date(Date.now() - dias * 86400000).toISOString();
     }
+    // Vista externa: nunca mostrar data anterior al 12 de mayo de 2026.
+    const TRACK_MIN_EXTERNO = "2026-05-12T00:00:00.000Z";
+    if (externo && desde < TRACK_MIN_EXTERNO) desde = TRACK_MIN_EXTERNO;
     const hasta = periodo === "custom" && customTo ? new Date(customTo + "T23:59:59").toISOString() : new Date().toISOString();
 
     const [sesRes, embRes, evRes, resConvRes, atribRes, abandRes, ingresosRes, usuariosRes] = await Promise.all([
       supabase.from("track_sesiones").select("*").gte("created_at", desde).lte("created_at", hasta),
       supabase.from("track_embudos").select("*").gte("created_at", desde).lte("created_at", hasta),
-      supabase.from("track_eventos").select("tipo, categoria, datos, ts").gte("ts", desde).lte("ts", hasta),
-      supabase.from("reservas").select("id, total, canal, tipo, created_at").eq("estado", "confirmado").gte("created_at", desde).lte("created_at", hasta),
+      supabase.from("track_eventos").select("tipo, categoria, datos, ts, sesion_id").gte("ts", desde).lte("ts", hasta),
+      // Traemos TODAS las reservas del periodo con estado, forma_pago y
+      // señales de pago. El filtro "pagada" se hace en JS (esPagada) para
+      // poder además mostrar Estado y el método REAL en Transacciones
+      // Recientes (track_ingresos.metodo_pago no es confiable — trae "stripe").
+      supabase.from("reservas").select("id, total, canal, tipo, grupo_id, vendedor, aliado_id, utms_capturados, created_at, estado, forma_pago, abono, fecha_pago, referencia_pago").gte("created_at", desde).lte("created_at", hasta),
       supabase.from("track_atribuciones").select("*").gte("created_at", desde).lte("created_at", hasta),
       supabase.from("track_abandonment").select("*").gte("created_at", desde).lte("created_at", hasta),
       supabase.from("track_ingresos").select("*").gte("created_at", desde).lte("created_at", hasta),
       supabase.from("track_usuarios").select("segmento, intent_score, value_score").not("segmento", "is", null).limit(500),
     ]);
 
-    const sesList      = sesRes.data      || [];
-    const embList      = embRes.data      || [];
-    const evList       = evRes.data       || [];
+    const rawSes       = sesRes.data      || [];   // sin filtrar (panel comparativo de orígenes)
+    let   sesList      = rawSes;
+    let   embList      = embRes.data      || [];
+    let   evList       = evRes.data       || [];
     const atribList    = atribRes.data    || [];
-    const abandList    = abandRes.data    || [];
-    const ingresosList = ingresosRes.data || [];
+    let   abandList    = abandRes.data    || [];
+    let   ingresosList = ingresosRes.data || [];
     const usuariosList = usuariosRes.data || [];
 
-    // Solo reservas originadas en el widget web — excluir ventas internas (equipo) y agencias
-    const WEB_CANALES = ["Web", "Directo", "Referido", "WhatsApp", "Google SEM", "SEO", "Meta Ads", "Social Orgánico", "Email"];
-    const resConvList = (resConvRes.data || []).filter(r => WEB_CANALES.includes(normCanal(r.canal)));
+    // ── Filtro global por ORIGEN de cliente (re-segmenta los 13 paneles) ──────
+    // 5 buckets del clasificador → 4 visibles: Web+Mkt / WhatsApp / Grupo / Otros
+    const o4 = (b) => (b === "marketing" ? "web" : (b === "web" || b === "whatsapp" || b === "grupo") ? b : "otros");
+    const sesOrigen = new Map();
+    rawSes.forEach(s => {
+      const b5 = s.origen_tipo || clasificarOrigen({
+        utms: s.utms, referrer: s.referrer, canal: s.canal,
+        landing_page: s.primer_landing || s.entrada_url,
+      });
+      sesOrigen.set(s.id, o4(b5));
+    });
+    const recOrigen = (r) => {
+      if (r.sesion_id && sesOrigen.has(r.sesion_id)) return sesOrigen.get(r.sesion_id);
+      return o4(clasificarOrigen({
+        utms: r.utms || r.utms_capturados, referrer: r.referrer, canal: r.canal,
+        landing_page: r.entrada_url, grupo_id: r.grupo_id, vendedor: r.vendedor, aliado_id: r.aliado_id,
+      }));
+    };
+    // Orígenes permitidos. Externo: SIEMPRE solo web+whatsapp (nunca grupo/otros).
+    const allowedOrig = externo
+      ? (origen === "ambos" ? new Set(["web", "whatsapp"]) : new Set([origen]))
+      : (origen === "all" ? null : new Set([origen]));
+    const inAllowed = (b4) => !allowedOrig || allowedOrig.has(b4);
+    if (allowedOrig) {
+      sesList      = rawSes.filter(s => inAllowed(sesOrigen.get(s.id)));
+      embList      = embList.filter(e => inAllowed(recOrigen(e)));
+      evList       = evList.filter(e => e.sesion_id ? inAllowed(sesOrigen.get(e.sesion_id)) : !externo);
+      abandList    = abandList.filter(a => inAllowed(recOrigen(a)));
+      ingresosList = ingresosList.filter(i => inAllowed(recOrigen(i)));
+    }
+
+    // ⚠️ AtolonTrack = SELF-SERVICE únicamente. Solo cuentan las reservas que
+    // hace el propio cliente desde el widget público (id "WEB-..."), p.ej. los
+    // que entran por el link de un grupo y compran. Las que crea el equipo
+    // comercial a mano en Atolon OS (id "R-...") NO son self-service y quedan
+    // FUERA de toda la analítica de AtolonTrack (KPIs, embudo, orígenes).
+    // Conversión = CUALQUIER reserva que PAGÓ, sin importar lo que pase
+    // después (check_in/no_show, o incluso cancelada tras pagar — la venta
+    // ocurrió). NO cuenta: cancelada nunca pagada ni pendiente sin pago.
+    const esPagada = (r) =>
+      ["confirmado", "check_in", "no_show"].includes(r.estado) ||
+      (r.abono || 0) > 0 || !!r.fecha_pago || !!r.referencia_pago;
+    const reservaMap = new Map((resConvRes.data || []).map(r => [r.id, r]));
+    const resSelfSvc = (resConvRes.data || []).filter(r => String(r.id || "").startsWith("WEB-") && esPagada(r));
+    // resConvList = reservas self-service del segmento seleccionado.
+    //  • "Todos" (sin filtro): TODO el self-service pagado, de cualquier
+    //    origen → cuadra exacto con la suma del panel "🎯 Origen del Cliente"
+    //    (ej. 8 Web + 3 Grupos = 11). Antes se limitaba a canales WEB y los
+    //    grupos no sumaban en Todos.
+    //  • Con filtro de origen: mismo clasificador que ese panel.
+    const resConvList = allowedOrig
+      ? resSelfSvc.filter(r => inAllowed(o4(clasificarOrigenReserva(r))))
+      : resSelfSvc;
 
     // ── KPIs ─────────────────────────────────────────────────────────────────
     const totalSesiones  = sesList.length;
@@ -113,6 +183,49 @@ export default function Analitica() {
     const sesXUsuario = usuariosUnicos ? (totalSesiones / usuariosUnicos).toFixed(1) : "1.0";
 
     setStats({ totalSesiones, usuariosUnicos, sesConv, tasaConv, ingresoTotal, ticketPromedio, durPromedio, sesXUsuario });
+
+    // ── Calidad de Atribución (Paid Media) + filas para Meta CAPI / Google ────
+    // Por cada venta pagada self-service: resolvemos click-id y fuente vía la
+    // sesión de track (track_ingresos.reserva_id → sesion_id → track_sesiones)
+    // con fallback a reservas.utms_capturados. Sin click-id ni utm_source =
+    // venta NO atribuible (el % que la agencia debe taggear).
+    const sesById = new Map(rawSes.map(s => [s.id, s]));
+    const ingByReserva = new Map();
+    (ingresosRes.data || []).forEach(i => { if (i.reserva_id && !ingByReserva.has(i.reserva_id)) ingByReserva.set(i.reserva_id, i); });
+    const atRows = resSelfSvc.map(r => {
+      const ing = ingByReserva.get(r.id);
+      const ses = ing ? sesById.get(ing.sesion_id) : null;
+      const u  = r.utms_capturados || {};
+      const su = (ses && ses.utms) || {};
+      const gclid   = ses?.gclid   || u.gclid   || su.gclid   || "";
+      const fbclid  = ses?.fbclid  || u.fbclid  || su.fbclid  || "";
+      const msclkid = ses?.msclkid || u.msclkid || su.msclkid || "";
+      const ttclid  = ses?.ttclid  || u.ttclid  || su.ttclid  || "";
+      const utm_source   = su.utm_source   || u.utm_source   || "";
+      const utm_campaign = su.utm_campaign || u.utm_campaign  || "";
+      const via = o4(clasificarOrigenReserva(r));
+      const hasClick = !!(gclid || fbclid || msclkid || ttclid);
+      const hasSource = !!utm_source;
+      return { reserva_id: r.id, ts: r.fecha_pago || r.created_at, value: Number(r.total) || 0,
+        gclid, fbclid, msclkid, ttclid, utm_source, utm_campaign, via, hasClick, hasSource };
+    });
+    const aNone = atRows.filter(x => !x.hasClick && !x.hasSource);
+    const byVia = {};
+    atRows.forEach(x => {
+      const k = x.via;
+      byVia[k] = byVia[k] || { n: 0, ing: 0, nofuente: 0 };
+      byVia[k].n++; byVia[k].ing += x.value; if (!x.hasClick && !x.hasSource) byVia[k].nofuente++;
+    });
+    setAtribRows(atRows);
+    setAtribQA({
+      tot: atRows.length,
+      ing: atRows.reduce((s, x) => s + x.value, 0),
+      click: atRows.filter(x => x.hasClick).length,
+      src: atRows.filter(x => x.hasSource).length,
+      none: aNone.length,
+      ingNone: aNone.reduce((s, x) => s + x.value, 0),
+      byVia,
+    });
 
     // ── Canales de Adquisición ────────────────────────────────────────────────
     // Sesiones por canal (widget), revenue por canal (desde reservas reales)
@@ -137,12 +250,85 @@ export default function Analitica() {
       .sort((a, b) => b.ingreso - a.ingreso);
     setCanales(canalArr);
 
+    // ── 🎯 Origen del Cliente (5 buckets: grupo/whatsapp/marketing/staff/web) ──
+    // Segmentación limpia que pediste: separa Web vs WhatsApp vs Grupo.
+    // Sesiones: usa origen_tipo persistido (ya backfilled en BD) o lo deriva.
+    // Conversiones: TODAS las reservas confirmadas (no solo WEB_CANALES) —
+    // clasificarOrigenReserva mira id (WEB-/R-), canal, grupo_id, utms.
+    const origenMap = {};
+    ORIGEN_BUCKETS.forEach(b => {
+      origenMap[b] = { bucket: b, label: ORIGEN_LABELS[b], sesiones: 0, conversiones: 0, ingreso: 0 };
+    });
+    rawSes.forEach(s => {  // comparativo: SIEMPRE todos los orígenes (no se filtra)
+      const b = s.origen_tipo || clasificarOrigen({
+        utms: s.utms, referrer: s.referrer, canal: s.canal,
+        landing_page: s.primer_landing || s.entrada_url,
+      });
+      if (origenMap[b]) origenMap[b].sesiones++;
+    });
+    resSelfSvc.forEach(r => {  // solo self-service (id WEB-), no reservas manuales
+      const b = clasificarOrigenReserva(r);
+      if (origenMap[b]) {
+        origenMap[b].conversiones++;
+        origenMap[b].ingreso += r.total || 0;
+      }
+    });
+    // Web Directo + Marketing = mismo grupo (todo el tráfico que llega al
+    // booking público, orgánico o por campañas). Se fusionan en "web".
+    if (origenMap.marketing) {
+      origenMap.web.sesiones     += origenMap.marketing.sesiones;
+      origenMap.web.conversiones += origenMap.marketing.conversiones;
+      origenMap.web.ingreso      += origenMap.marketing.ingreso;
+      delete origenMap.marketing;
+    }
+    if (origenMap.web) origenMap.web.label = "🌐 Web (directo + marketing)";
+    // Externo: el comparativo solo muestra Web+Mkt y WhatsApp.
+    if (externo) { delete origenMap.grupo; delete origenMap.staff; delete origenMap.otros; }
+    setOrigenes(Object.values(origenMap).map(o => ({
+      ...o,
+      convRate: o.sesiones ? ((o.conversiones / o.sesiones) * 100).toFixed(1) : "—",
+    })));
+
     // ── Embudo de conversión ──────────────────────────────────────────────────
-    const pasos = [1,2,3,4,5,6].map(p => ({
-      paso: p,
-      label: ["Vio widget","Eligió fecha","Eligió paquete","Datos personales","Llegó a pago","Completó pago"][p-1],
-      count: embList.filter(e => e[`paso_${p}_ts`]).length,
-    }));
+    // Orden REAL del widget (BookingPopup): el cliente primero elige PAQUETE
+    // (paso_3) y LUEGO la fecha (paso_2) — nunca al revés. En grupos paquete y
+    // fecha vienen pre-fijados por el link (se registran al abrir). Acumulado
+    // sobre el orden lógico → monotónico. WhatsApp reserva vía el bot (no toca
+    // el widget): no hay filas de embudo, por eso normalizamos abajo.
+    const FUNNEL = [
+      { k: 1, label: "Vio widget" },
+      { k: 3, label: "Eligió paquete" },
+      { k: 2, label: "Eligió fecha" },
+      { k: 4, label: "Datos personales" },
+      { k: 5, label: "Llegó a pago" },
+      { k: 6, label: "Completó pago" },
+    ];
+    // Conteo por paso del embudo, MONOTÓNICO respecto a paso 1.
+    //
+    // Cada paso N>1 cuenta SOLO filas que ADEMÁS tengan paso_1_ts.
+    // Razón: webhooks externos (Wompi, bot WhatsApp, B2B manual, deep
+    // links a /booking/{slug} que precargan paso_3) pueden marcar
+    // paso_2_ts, paso_3_ts ... paso_6_ts en filas que NUNCA abrieron
+    // el widget — eso producía pasos intermedios > paso 1 (ej.
+    // "Eligió fecha: 120" cuando "Vio widget: 22"), lo cual no tiene
+    // sentido en un embudo.
+    //
+    // Con el AND paso_1_ts garantizamos que pN ≤ p1 para todos los
+    // N>1 — el embudo queda monotónico respecto al paso de entrada.
+    //
+    // Las conversiones "no-widget" (bot, B2B, grupos sin tracking) se
+    // siguen viendo en el KPI superior "Conversiones" del segmento,
+    // que es la fuente de verdad para el total de reservas pagadas.
+    const pasos = FUNNEL.map(f => {
+      const widgetCount = f.k === 1
+        ? embList.filter(e => !!e.paso_1_ts).length
+        : embList.filter(e => !!e.paso_1_ts && !!e[`paso_${f.k}_ts`]).length;
+      // En el último paso: además del conteo del widget, exponemos
+      // cuántas conversiones del segmento NO pasaron por el embudo
+      // del widget. Eso explica la diferencia con el KPI Conversiones.
+      const extra = f.k === 6 ? Math.max(0, sesConv - widgetCount) : 0;
+      return { paso: f.k, label: f.label, count: widgetCount, extra };
+    });
     setEmbudos(pasos);
 
     // ── Top eventos ───────────────────────────────────────────────────────────
@@ -173,9 +359,18 @@ export default function Analitica() {
       1: "Vio widget", 2: "Eligió fecha", 3: "Eligió paquete",
       4: "Ingresó datos", 5: "Llegó a pago", 6: "Completó pago",
     };
+    // Orden real del widget: paquete (paso_3) antes que fecha (paso_2). El
+    // número de "paso" que ve el usuario es la POSICIÓN lógica (1..6), no el
+    // id interno de la columna — si no, salía "paso 1, 3, 2, 4, 5" (confuso).
+    const FUNNEL_RANK = { 1: 0, 3: 1, 2: 2, 4: 3, 5: 4, 6: 5 };
     const abandArr = Object.entries(abandByStep)
-      .map(([paso, count]) => ({ paso: Number(paso), label: stepLabels[paso] || `Paso ${paso}`, count }))
-      .sort((a, b) => a.paso - b.paso);
+      .map(([paso, count]) => ({
+        paso:  Number(paso),
+        orden: (FUNNEL_RANK[Number(paso)] ?? (Number(paso) - 1)) + 1,
+        label: stepLabels[paso] || `Paso ${paso}`,
+        count,
+      }))
+      .sort((a, b) => a.orden - b.orden);
     setAbandonos(abandArr);
 
     // ── Revenue por paquete ───────────────────────────────────────────────────
@@ -287,13 +482,65 @@ export default function Analitica() {
     setExitIntents(evList.filter(e => e.tipo === "exit_intent").length);
 
     // ── Transaction Explorer ──────────────────────────────────────────────────
-    setIngresos(ingresosList.slice(0,30).reverse());
+    // Método REAL desde reservas.forma_pago (track_ingresos.metodo_pago trae
+    // "stripe" que NO usamos). Estado = ¿pasó el pago? Si la transacción no
+    // tiene reserva enlazada → "Sin reserva" (fila huérfana/test).
+    const metodoLabel = (m) =>
+      ({ wompi: "Wompi", zoho_pay: "Zoho", tarjeta_internacional: "Tarjeta intl.", stripe: "Stripe" }[String(m || "").toLowerCase()] || m);
+    // Filtra por el MISMO origen que los paneles Conversiones/Origen:
+    // clasifica la RESERVA enlazada (ve grupo_id/canal/utms), no la sesión
+    // del track_ingreso — así "Web/Grupo" filtra consistente con el resto.
+    // Transacción sin reserva (huérfana) → cae al origen de la sesión.
+    const txOrigen = (i) => {
+      const r = reservaMap.get(i.reserva_id);
+      return r ? o4(clasificarOrigenReserva(r)) : recOrigen(i);
+    };
+    const txList = (ingresosRes.data || []).filter(i => inAllowed(txOrigen(i)));
+    setIngresos(txList.slice(0,30).reverse().map(i => {
+      const r  = reservaMap.get(i.reserva_id);
+      const fp = r?.forma_pago;
+      const est = r
+        ? ({ confirmado: ["Pagada", B.success], check_in: ["Pagada", B.success],
+             no_show: ["Pagada", B.success], cancelado: ["Cancelada", B.danger],
+             pendiente: ["Pendiente", B.sand] }[r.estado] || [r.estado, B.muted])
+        : ["Sin reserva", B.danger];
+      return {
+        ...i,
+        _metodo:   fp ? metodoLabel(fp) : (i.metodo_pago || "—"),
+        _estLabel: est[0],
+        _estColor: est[1],
+      };
+    }));
 
     setSesiones(sesList.slice(-50).reverse());
     setLoading(false);
   }
 
   const fmt = (n) => new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 }).format(n);
+
+  // Export de conversiones para Meta CAPI / Google Offline Conversions.
+  // 1 fila por venta pagada: event + valor + click-id + fuente. Esto es lo
+  // que la agencia sube a Meta/Google para que optimicen hacia compradores.
+  const exportarConversiones = () => {
+    const esc = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+    const cols = ["event_name", "event_time", "reserva_id", "value", "currency", "gclid", "fbclid", "msclkid", "ttclid", "utm_source", "utm_campaign", "via"];
+    const lines = [cols.join(",")];
+    atribRows.forEach(x => {
+      lines.push([
+        "Purchase",
+        x.ts ? new Date(x.ts).toISOString() : "",
+        x.reserva_id, x.value, "COP",
+        x.gclid, x.fbclid, x.msclkid, x.ttclid,
+        x.utm_source, x.utm_campaign, x.via,
+      ].map(esc).join(","));
+    });
+    const blob = new Blob(["﻿" + lines.join("\n")], { type: "text/csv;charset=utf-8;" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `conversiones_capi_${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  };
 
   async function loadSessionJourney(ses) {
     setSelectedSession(ses);
@@ -334,8 +581,15 @@ export default function Analitica() {
       {/* Header */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 28, flexWrap: "wrap", gap: 12 }}>
         <div>
-          <h1 style={{ margin: 0, fontSize: 24, fontWeight: 800, color: "#fff" }}>📊 AtolonTrack</h1>
-          <div style={{ fontSize: 13, color: B.muted, marginTop: 4 }}>Analítica de conversión en tiempo real</div>
+          {externo ? (
+            <img src="/atolon-logo-white.png" alt="Atolón" style={{ height: 42, width: "auto", display: "block" }} />
+          ) : (
+            <h1 style={{ margin: 0, fontSize: 24, fontWeight: 800, color: "#fff" }}>📊 AtolonTrack</h1>
+          )}
+          <div style={{ fontSize: 13, color: B.muted, marginTop: externo ? 8 : 4 }}>
+            Analítica de conversión en tiempo real
+            {!externo && <span style={{ marginLeft: 10, fontSize: 10, color: B.muted, opacity: 0.6 }}>build embudo-v3 · 2026-05-18</span>}
+          </div>
         </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
           {periodos.map(p => (
@@ -355,6 +609,43 @@ export default function Analitica() {
         </div>
       </div>
 
+      {/* Filtro global por ORIGEN de cliente — re-segmenta TODOS los paneles */}
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 24 }}>
+        <span style={{ fontSize: 11, color: B.muted, textTransform: "uppercase", letterSpacing: "0.06em", marginRight: 4 }}>Origen del cliente:</span>
+        {(externo
+          ? [
+              { val: "ambos",    label: "Web+Mkt y WhatsApp", icon: "📊" },
+              { val: "web",      label: "Web + Mkt",          icon: "🌐" },
+              { val: "whatsapp", label: "WhatsApp",           icon: "💬" },
+            ]
+          : [
+              { val: "all",      label: "Todos",        icon: "📊" },
+              { val: "web",      label: "Web + Mkt",    icon: "🌐" },
+              { val: "whatsapp", label: "WhatsApp",     icon: "💬" },
+              { val: "grupo",    label: "Grupo",        icon: "🎉" },
+              { val: "otros",    label: "Otros",        icon: "🔗" },
+            ]
+        ).map(o => (
+          <button key={o.val} onClick={() => setOrigen(o.val)}
+            style={{
+              padding: "6px 14px", borderRadius: 999, border: "none", cursor: "pointer",
+              fontSize: 12, fontWeight: 700,
+              background: origen === o.val ? B.sand : B.navyLight,
+              color: origen === o.val ? B.navy : B.text,
+            }}>
+            {o.icon} {o.label}
+          </button>
+        ))}
+        {origen !== "all" && (
+          <span style={{ fontSize: 11, color: B.sand, marginLeft: 4 }}>
+            ▸ todos los paneles filtrados por este origen
+          </span>
+        )}
+      </div>
+
+      {/* Tracking & Pixels — config editable por la agencia */}
+      <TrackingConfigPanel />
+
       {/* KPIs */}
       {stats && (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 16, marginBottom: 28 }}>
@@ -370,18 +661,33 @@ export default function Analitica() {
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, marginBottom: 20 }}>
         {/* Embudo */}
         <div style={{ background: B.navyMid, borderRadius: 14, padding: 24, border: "1px solid rgba(255,255,255,0.07)" }}>
-          <h3 style={{ margin: "0 0 20px", fontSize: 15, fontWeight: 700, color: "#fff" }}>🔽 Embudo de Conversión</h3>
+          <h3 style={{ margin: "0 0 4px", fontSize: 15, fontWeight: 700, color: "#fff" }}>🔽 Embudo de Conversión</h3>
+          {/* AtolonTrack = self-service: TODA conversión pasó por el widget,
+              también las de grupo (abren el link y siguen los pasos). En grupo
+              el paquete y la fecha vienen pre-fijados por el link, así que esos
+              pasos se completan automáticamente al abrir. El embudo aplica a
+              todos los segmentos. */}
+          <div style={{ fontSize: 11, color: B.muted, marginBottom: 18 }}>
+            Embudo <strong>del widget</strong>. Cada paso cuenta solo a quien lo registró en el widget. <strong>Completó pago</strong> = personas que abrieron el widget y terminaron pagando (no incluye bot WhatsApp / B2B / Grupos sin tracking — esos se ven arriba en el KPI <strong>Conversiones</strong>).
+          </div>
           {embudos.map((p, i) => {
             const maxCount = embudos[0]?.count || 1;
-            const pct = maxCount ? ((p.count / maxCount) * 100) : 0;
-            const dropPct = i > 0 && embudos[i-1].count ? (((embudos[i-1].count - p.count) / embudos[i-1].count) * 100).toFixed(0) : null;
+            const pct = Math.max(0, Math.min(100, maxCount ? ((p.count / maxCount) * 100) : 0));
+            const dropPct = i > 0 && embudos[i-1].count > 0
+              ? Math.max(0, Math.round(((embudos[i-1].count - p.count) / embudos[i-1].count) * 100))
+              : null;
             return (
               <div key={p.paso} style={{ marginBottom: 12 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
                   <span style={{ fontSize: 12, color: B.muted }}>{p.label}</span>
                   <span style={{ fontSize: 12, color: "#fff", fontWeight: 600 }}>
                     {p.count.toLocaleString("es-CO")}
-                    {dropPct && <span style={{ color: B.danger, marginLeft: 8 }}>-{dropPct}%</span>}
+                    {dropPct ? <span style={{ color: B.danger, marginLeft: 8 }}>-{dropPct}%</span> : null}
+                    {p.extra > 0 && (
+                      <span style={{ color: B.muted, marginLeft: 8, fontWeight: 400 }}>
+                        + {p.extra.toLocaleString("es-CO")} no-widget = {(p.count + p.extra).toLocaleString("es-CO")} total
+                      </span>
+                    )}
                   </span>
                 </div>
                 <div style={{ height: 8, background: "rgba(255,255,255,0.08)", borderRadius: 4, overflow: "hidden" }}>
@@ -405,6 +711,30 @@ export default function Analitica() {
               <div style={{ fontSize: 13, fontWeight: 700, color: B.sky }}>{fmt(c.ingreso)}</div>
             </div>
           ))}
+        </div>
+      </div>
+
+      {/* 🎯 Origen del Cliente — segmentación Web / WhatsApp / Grupo / Marketing / Staff */}
+      <div style={{ background: B.navyMid, borderRadius: 14, padding: 24, border: "1px solid rgba(255,255,255,0.07)" }}>
+        <h3 style={{ margin: "0 0 6px", fontSize: 15, fontWeight: 700, color: "#fff" }}>🎯 Origen del Cliente</h3>
+        <div style={{ fontSize: 12, color: B.muted, marginBottom: 18 }}>
+          Segmentación real: Web (directo + marketing) · WhatsApp · Grupos · Staff/Manual.
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(190px, 1fr))", gap: 12 }}>
+          {origenes.map(o => {
+            const colores = { grupo: B.purple, whatsapp: B.success, marketing: B.pink, staff: B.sand, web: B.sky };
+            const c = colores[o.bucket] || B.sky;
+            return (
+              <div key={o.bucket} style={{ background: B.navyLight, borderRadius: 12, padding: 16, borderLeft: `4px solid ${c}` }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: "#fff", marginBottom: 8 }}>{o.label}</div>
+                <div style={{ fontSize: 22, fontWeight: 800, color: c }}>{fmt(o.ingreso)}</div>
+                <div style={{ fontSize: 11, color: B.muted, marginTop: 6, lineHeight: 1.7 }}>
+                  {o.conversiones} reservas · {o.sesiones} sesiones<br />
+                  conv {o.convRate}%
+                </div>
+              </div>
+            );
+          })}
         </div>
       </div>
 
@@ -445,7 +775,7 @@ export default function Analitica() {
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 12 }}>
             {abandonos.map(a => (
               <div key={a.paso} style={{ background: B.navyLight, borderRadius: 10, padding: "14px 16px" }}>
-                <div style={{ fontSize: 11, color: B.muted, marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.05em" }}>Abandonó en paso {a.paso}</div>
+                <div style={{ fontSize: 11, color: B.muted, marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.05em" }}>Abandonó en paso {a.orden}</div>
                 <div style={{ fontSize: 13, fontWeight: 600, color: B.text, marginBottom: 6 }}>{a.label}</div>
                 <div style={{ fontSize: 24, fontWeight: 800, color: B.danger }}>{a.count}</div>
               </div>
@@ -460,26 +790,29 @@ export default function Analitica() {
         <h3 style={{ margin: "0 0 6px", fontSize: 15, fontWeight: 700, color: "#fff" }}>📲 Links Rastreados por WhatsApp</h3>
         <div style={{ fontSize: 12, color: B.muted, marginBottom: 16 }}>Usa estos links cuando envíes el widget por WhatsApp. AtolonTrack sabrá exactamente qué visitas y reservas vinieron de WhatsApp.</div>
         {(() => {
-          const base = `${window.location.origin}/booking`;
+          // URLs cortas: /wa/<slug> redirige (vía vercel.json) a la URL larga con UTMs.
+          // Lo que el equipo copia/comparte es la URL corta — más limpia en WhatsApp
+          // y con preview de dominio confiable (atolon.co).
+          const base = `${window.location.origin}/wa`;
           const grupos = [
             {
               titulo: "🌴 Por Paquete",
               color: B.sky,
               links: [
-                { label: "VIP Pass",          icon: "🌴", utm: "?tipo=vip-pass&utm_source=whatsapp&utm_medium=directo&utm_campaign=vip-pass",                msg: "¡Reserva tu VIP Pass en Atolon Beach Club! 🌴" },
-                { label: "Exclusive Pass",    icon: "⭐", utm: "?tipo=exclusive-pass&utm_source=whatsapp&utm_medium=directo&utm_campaign=exclusive-pass",    msg: "¡Reserva tu Exclusive Pass en Atolon Beach Club! ⭐" },
-                { label: "Atolon Experience", icon: "🛥️", utm: "?tipo=atolon-experience&utm_source=whatsapp&utm_medium=directo&utm_campaign=atolon-experience", msg: "¡Reserva tu Atolon Experience en Atolon Beach Club! 🛥️" },
-                { label: "After Island",      icon: "🌙", utm: "?tipo=after-island&utm_source=whatsapp&utm_medium=directo&utm_campaign=after-island",        msg: "¡Reserva tu After Island en Atolon Beach Club! 🌙" },
+                { label: "VIP Pass",          icon: "🌴", slug: "vip",        msg: "¡Reserva tu VIP Pass en Atolon Beach Club! 🌴" },
+                { label: "Exclusive Pass",    icon: "⭐", slug: "exclusive",  msg: "¡Reserva tu Exclusive Pass en Atolon Beach Club! ⭐" },
+                { label: "Atolon Experience", icon: "🛥️", slug: "experience", msg: "¡Reserva tu Atolon Experience en Atolon Beach Club! 🛥️" },
+                { label: "After Island",      icon: "🌙", slug: "after",      msg: "¡Reserva tu After Island en Atolon Beach Club! 🌙" },
               ],
             },
             {
               titulo: "📣 General",
               color: B.success,
               links: [
-                { label: "Consulta general",       icon: "💬", utm: "?utm_source=whatsapp&utm_medium=directo&utm_campaign=consulta",  msg: "¡Reserva tu pasadía en Atolon Beach Club! 🌊" },
-                { label: "Oferta / Promo",         icon: "🏷️", utm: "?utm_source=whatsapp&utm_medium=directo&utm_campaign=promo",     msg: "¡Aprovecha esta promo en Atolon Beach Club! 🏷️" },
-                { label: "Follow-up",              icon: "🔁", utm: "?utm_source=whatsapp&utm_medium=directo&utm_campaign=followup",  msg: "Hola! Te comparto el link para tu reserva en Atolon Beach Club 🌊" },
-                { label: "Grupo / Evento",         icon: "🎉", utm: "?utm_source=whatsapp&utm_medium=directo&utm_campaign=grupo",     msg: "¡Reserva tu experiencia grupal en Atolon Beach Club! 🎉" },
+                { label: "Consulta general", icon: "💬", slug: "consulta", msg: "¡Reserva tu pasadía en Atolon Beach Club! 🌊" },
+                { label: "Oferta / Promo",   icon: "🏷️", slug: "promo",    msg: "¡Aprovecha esta promo en Atolon Beach Club! 🏷️" },
+                { label: "Follow-up",        icon: "🔁", slug: "followup", msg: "Hola! Te comparto el link para tu reserva en Atolon Beach Club 🌊" },
+                { label: "Grupo / Evento",   icon: "🎉", slug: "grupo",    msg: "¡Reserva tu experiencia grupal en Atolon Beach Club! 🎉" },
               ],
             },
           ];
@@ -490,7 +823,7 @@ export default function Analitica() {
                   <div style={{ fontSize: 12, fontWeight: 700, color: g.color, marginBottom: 12, textTransform: "uppercase", letterSpacing: "0.06em" }}>{g.titulo}</div>
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 10 }}>
                     {g.links.map(l => {
-                      const url = base + l.utm;
+                      const url = `${base}/${l.slug}`;
                       return (
                         <div key={l.label} style={{ background: B.navyLight, borderRadius: 10, padding: "14px 16px" }}>
                           <div style={{ fontSize: 13, fontWeight: 700, color: "#fff", marginBottom: 6 }}>{l.icon} {l.label}</div>
@@ -697,7 +1030,7 @@ export default function Analitica() {
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
               <thead>
                 <tr>
-                  {["ID Reserva","Paquete","Monto","Método","Adultos","Niños","Fecha Visita","Canal","Creado"].map(h => (
+                  {["ID Reserva","Paquete","Monto","Método","Estado","Adultos","Niños","Fecha Visita","Canal","Creado"].map(h => (
                     <th key={h} style={{ textAlign: "left", padding: "8px 12px", color: B.sand, fontWeight: 600, borderBottom: "1px solid rgba(255,255,255,0.08)", whiteSpace: "nowrap" }}>{h}</th>
                   ))}
                 </tr>
@@ -705,10 +1038,25 @@ export default function Analitica() {
               <tbody>
                 {ingresos.map(ing => (
                   <tr key={ing.id} style={{ borderBottom: "1px solid rgba(255,255,255,0.04)" }}>
-                    <td style={{ padding: "8px 12px", color: B.sky, fontFamily: "monospace", fontSize: 11 }}>{ing.reserva_id?.slice(0,18) || "—"}</td>
+                    <td style={{ padding: "8px 12px", fontFamily: "monospace", fontSize: 11 }}>
+                      {ing.reserva_id && ing._estLabel !== "Sin reserva" ? (
+                        <span
+                          onClick={() => window.dispatchEvent(new CustomEvent("atolon-navigate", { detail: { modulo: "reservas", reservaId: ing.reserva_id } }))}
+                          title="Abrir reserva"
+                          style={{ color: B.sky, cursor: "pointer", textDecoration: "underline" }}
+                        >
+                          {ing.reserva_id.slice(0,18)}
+                        </span>
+                      ) : (
+                        <span style={{ color: B.muted }}>{ing.reserva_id?.slice(0,18) || "—"}</span>
+                      )}
+                    </td>
                     <td style={{ padding: "8px 12px", color: B.text }}>{ing.package_type || "—"}</td>
                     <td style={{ padding: "8px 12px", color: B.success, fontWeight: 700 }}>{fmt(ing.monto)}</td>
-                    <td style={{ padding: "8px 12px", color: B.muted }}>{ing.metodo_pago || "—"}</td>
+                    <td style={{ padding: "8px 12px", color: B.muted }}>{ing._metodo || "—"}</td>
+                    <td style={{ padding: "8px 12px" }}>
+                      <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 10, background: "rgba(255,255,255,0.06)", color: ing._estColor }}>{ing._estLabel || "—"}</span>
+                    </td>
                     <td style={{ padding: "8px 12px", color: B.muted }}>{ing.adultos ?? "—"}</td>
                     <td style={{ padding: "8px 12px", color: B.muted }}>{ing.ninos ?? "—"}</td>
                     <td style={{ padding: "8px 12px", color: B.muted }}>{ing.fecha_visita || "—"}</td>
@@ -883,9 +1231,162 @@ export default function Analitica() {
         </div>
       )}
 
+      {atribQA && !externo && (
+        <div style={{ background: B.navyMid, borderRadius: 14, padding: 24, border: "1px solid rgba(255,255,255,0.07)", marginTop: 20, marginBottom: 8 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 12, marginBottom: 6 }}>
+            <h3 style={{ margin: 0, fontSize: 15, fontWeight: 700, color: "#fff" }}>🎯 Calidad de Atribución · Paid Media</h3>
+            <button onClick={exportarConversiones} disabled={!atribRows.length}
+              style={{ background: B.sky, color: B.navy, border: "none", borderRadius: 8, padding: "8px 14px", fontSize: 12, fontWeight: 800, cursor: atribRows.length ? "pointer" : "default" }}>
+              ⬇ Exportar conversiones (Meta CAPI / Google Offline)
+            </button>
+          </div>
+          <div style={{ fontSize: 11, color: B.muted, marginBottom: 16 }}>
+            Ventas pagadas del período y si son atribuibles a una pauta. Sin click-id ni utm_source = la agencia NO puede probar ROI de ese gasto.
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 14, marginBottom: 16 }}>
+            <KPI label="Ventas pagadas" value={atribQA.tot} />
+            <KPI label="Con click-id" value={`${atribQA.tot ? Math.round(atribQA.click / atribQA.tot * 100) : 0}%`} sub={`${atribQA.click}/${atribQA.tot}`} color={B.success} />
+            <KPI label="Con fuente (utm)" value={`${atribQA.tot ? Math.round(atribQA.src / atribQA.tot * 100) : 0}%`} sub={`${atribQA.src}/${atribQA.tot}`} color={B.success} />
+            <KPI label="Sin fuente ⚠" value={atribQA.none} sub="no atribuible" color={atribQA.none ? B.danger : B.success} />
+            <KPI label="Ingreso no atribuible" value={fmt(atribQA.ingNone)} color={atribQA.ingNone ? B.danger : B.success} />
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 10 }}>
+            {Object.entries(atribQA.byVia).sort((a, b) => b[1].ing - a[1].ing).map(([via, d]) => (
+              <div key={via} style={{ background: B.navyLight, borderRadius: 10, padding: "12px 14px" }}>
+                <div style={{ fontSize: 11, color: B.sand, textTransform: "uppercase", letterSpacing: "0.05em" }}>{via === "web" ? "🌐 Web / Social" : via === "whatsapp" ? "💬 WhatsApp" : via === "grupo" ? "👥 Grupo" : "Otros"}</div>
+                <div style={{ fontSize: 18, fontWeight: 800, color: "#fff", marginTop: 4 }}>{d.n} · {fmt(d.ing)}</div>
+                <div style={{ fontSize: 11, color: d.nofuente ? B.danger : B.muted, marginTop: 2 }}>{d.nofuente} sin fuente</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div style={{ marginTop: 16, fontSize: 11, color: B.muted, textAlign: "center" }}>
-        AtolonTrack v2.1 · GTM/GA4/Meta Pixel · Server-side fallback · Datos en tiempo real desde Supabase
+        {externo
+          ? "Atolón · Analítica en tiempo real"
+          : "AtolonTrack v2.1 · GTM/GA4/Meta Pixel · Server-side fallback · Datos en tiempo real desde Supabase"}
       </div>
+    </div>
+  );
+}
+
+// ─── Tracking & Pixels (config editable por la agencia) ──────────────────────
+// Guarda los IDs en `configuracion`. gtm.js (vía AtolanTrack.init) los lee y
+// arranca Meta Pixel / GA4 / GTM / Google Ads / TikTok en el booking engine.
+const TRK_FIELDS = [
+  { k: "meta_pixel_id",   label: "Meta Pixel ID",          ph: "Ej: 1234567890123456",  hint: "Solo el número del Pixel (Eventos → Orígenes de datos)." },
+  { k: "ga4_id",          label: "GA4 Measurement ID",     ph: "G-XXXXXXXXXX",          hint: "Admin → Flujos de datos → ID de medición." },
+  { k: "gtm_id",          label: "Google Tag Manager ID",  ph: "GTM-XXXXXXX",           hint: "Opcional. Si lo usas, GA4/Ads/Meta pueden ir dentro del contenedor." },
+  { k: "google_ads_id",    label: "Google Ads Conversion", ph: "AW-123456789",          hint: "ID de conversión de Google Ads." },
+  { k: "google_ads_label", label: "Google Ads Label",      ph: "Ej: AbC-D_efGhIjk",     hint: "Etiqueta de la conversión (lo que va después del / en send_to)." },
+  { k: "tiktok_pixel_id",  label: "TikTok Pixel ID",       ph: "Ej: C1A2B3...",         hint: "Eventos → Administrar → ID del pixel." },
+];
+
+function TrackingConfigPanel() {
+  const [open, setOpen]         = useState(false);
+  const [form, setForm]         = useState(null);
+  const [saving, setSaving]     = useState(false);
+  const [saved, setSaved]       = useState(false);
+  const [tokenSet, setTokenSet] = useState(false); // ¿hay token CAPI guardado?
+  const [tokenInput, setTokenInput] = useState(""); // write-only: solo para setear/reemplazar
+
+  useEffect(() => {
+    supabase.from("configuracion")
+      .select("meta_pixel_id, gtm_id, ga4_id, google_ads_id, google_ads_label, tiktok_pixel_id, meta_capi_token")
+      .eq("id", "atolon").single()
+      .then(({ data }) => {
+        const d = data || {};
+        setTokenSet(!!(d.meta_capi_token || "").toString().trim());
+        delete d.meta_capi_token; // nunca lo mostramos en UI
+        setForm(d);
+      })
+      .catch(() => setForm({}));
+  }, []);
+
+  const set = (k, v) => { setForm(f => ({ ...f, [k]: v })); setSaved(false); };
+
+  const guardar = async () => {
+    setSaving(true);
+    const payload = {};
+    TRK_FIELDS.forEach(({ k }) => { payload[k] = (form?.[k] || "").trim() || null; });
+    if (tokenInput.trim()) payload.meta_capi_token = tokenInput.trim();
+    payload.updated_at = new Date().toISOString();
+    const { error } = await supabase.from("configuracion").update(payload).eq("id", "atolon");
+    setSaving(false);
+    if (!error) {
+      setSaved(true);
+      if (tokenInput.trim()) { setTokenSet(true); setTokenInput(""); }
+      setTimeout(() => setSaved(false), 4000);
+    } else alert("No se pudo guardar: " + error.message);
+  };
+
+  const algunoActivo = form && TRK_FIELDS.some(({ k }) => (form[k] || "").trim());
+
+  return (
+    <div style={{ background: B.navyMid, borderRadius: 14, border: "1px solid rgba(255,255,255,0.07)", marginBottom: 24, overflow: "hidden" }}>
+      <button onClick={() => setOpen(o => !o)}
+        style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12,
+          background: "transparent", border: "none", cursor: "pointer", color: "#fff", padding: "16px 20px", textAlign: "left" }}>
+        <span style={{ fontSize: 15, fontWeight: 700 }}>
+          🎯 Tracking &amp; Pixels
+          <span style={{ marginLeft: 10, fontSize: 11, fontWeight: 600,
+            color: algunoActivo ? B.success : B.sand }}>
+            {form == null ? "…" : algunoActivo ? "● configurado" : "○ sin configurar"}
+          </span>
+        </span>
+        <span style={{ color: B.muted, fontSize: 13 }}>{open ? "▲ ocultar" : "▼ configurar"}</span>
+      </button>
+
+      {open && form && (
+        <div style={{ padding: "4px 20px 22px" }}>
+          <div style={{ fontSize: 12, color: B.muted, marginBottom: 18, lineHeight: 1.5 }}>
+            Pega aquí los IDs de la agencia. Se aplican automáticamente en el booking engine
+            (<code>www.atolon.co/booking</code>) — dispara <strong>PageView</strong>, <strong>InitiateCheckout</strong> y
+            <strong> Purchase</strong> con valor. Deja un campo vacío para desactivar esa plataforma.
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 16 }}>
+            {TRK_FIELDS.map(({ k, label, ph, hint }) => (
+              <div key={k}>
+                <label style={{ display: "block", fontSize: 12, fontWeight: 700, color: B.sand, marginBottom: 6 }}>{label}</label>
+                <input value={form[k] || ""} onChange={e => set(k, e.target.value)} placeholder={ph}
+                  style={{ width: "100%", boxSizing: "border-box", padding: "10px 12px", borderRadius: 8,
+                    border: "1px solid rgba(255,255,255,0.12)", background: B.navy, color: "#fff", fontSize: 13, outline: "none" }} />
+                <div style={{ fontSize: 11, color: B.muted, marginTop: 5 }}>{hint}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* Meta Conversions API token — write-only, server-side */}
+          <div style={{ marginTop: 18, padding: 14, borderRadius: 10, background: B.navy, border: "1px solid rgba(255,255,255,0.10)" }}>
+            <label style={{ display: "block", fontSize: 12, fontWeight: 700, color: B.sand, marginBottom: 6 }}>
+              Meta Conversions API · Token
+              <span style={{ marginLeft: 8, fontSize: 11, fontWeight: 600, color: tokenSet ? B.success : B.muted }}>
+                {tokenSet ? "● configurado" : "○ sin configurar"}
+              </span>
+            </label>
+            <input type="password" autoComplete="off" value={tokenInput}
+              onChange={e => { setTokenInput(e.target.value); setSaved(false); }}
+              placeholder={tokenSet ? "•••••••• (deja vacío para conservar el actual)" : "Pega el token de acceso CAPI"}
+              style={{ width: "100%", boxSizing: "border-box", padding: "10px 12px", borderRadius: 8,
+                border: "1px solid rgba(255,255,255,0.12)", background: B.navyMid, color: "#fff", fontSize: 13, outline: "none" }} />
+            <div style={{ fontSize: 11, color: B.muted, marginTop: 5, lineHeight: 1.5 }}>
+              Token de acceso del Pixel (Eventos → Configuración → Conversions API → Generar token).
+              Se guarda <strong>solo del lado servidor</strong> — nunca se muestra ni se expone al navegador.
+              Envía el <code>Purchase</code> a Meta aunque iOS/adblockers bloqueen el pixel, deduplicado por reserva.
+            </div>
+          </div>
+
+          <div style={{ display: "flex", alignItems: "center", gap: 14, marginTop: 20 }}>
+            <button onClick={guardar} disabled={saving}
+              style={{ padding: "10px 22px", borderRadius: 8, border: "none", cursor: saving ? "default" : "pointer",
+                background: B.success, color: "#fff", fontSize: 13, fontWeight: 700, opacity: saving ? 0.6 : 1 }}>
+              {saving ? "Guardando…" : "Guardar"}
+            </button>
+            {saved && <span style={{ fontSize: 13, color: B.success, fontWeight: 700 }}>✓ Guardado · activo en el próximo ingreso al booking</span>}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

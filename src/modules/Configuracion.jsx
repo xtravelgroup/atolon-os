@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { B } from "../brand";
 import { supabase } from "../lib/supabase";
+import * as printLib from "../lib/print";
 
 const IS = { width: "100%", padding: "10px 14px", borderRadius: 8, background: B.navy, border: `1px solid ${B.navyLight}`, color: B.white, fontSize: 13, outline: "none", boxSizing: "border-box" };
 const LS = { fontSize: 11, color: B.sand, display: "block", marginBottom: 5, textTransform: "uppercase", letterSpacing: "0.06em" };
@@ -241,6 +242,7 @@ export default function Configuracion() {
     { key: "negocio", label: "🏢 Negocio" },
     { key: "cuentas", label: "🏦 Cuentas Bancarias" },
     { key: "integraciones", label: "🔌 Integraciones" },
+    { key: "impresora", label: "🖨 Impresora" },
     { key: "widget", label: "🌐 Widget Web" },
   ];
 
@@ -895,6 +897,13 @@ export default function Configuracion() {
         );
       })()}
 
+      {/* ── TAB: IMPRESORA ───────────────────────────────────────── */}
+      {tab === "impresora" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+          <PrintAgentCard config={config} />
+        </div>
+      )}
+
       {/* ── TAB: WIDGET WEB ──────────────────────────────────────── */}
       {tab === "widget" && (() => {
         const baseUrl = window.location.origin;
@@ -1343,6 +1352,199 @@ function WhatsAppAIKnowledgeCard({ config, onSaved }) {
             </div>
             <pre style={{ flex: 1, overflow: "auto", background: B.navy, padding: 16, borderRadius: 8, fontSize: 11, lineHeight: 1.5, color: "rgba(255,255,255,0.85)", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{fullPrompt.full_prompt_preview}</pre>
             <div style={{ marginTop: 10, fontSize: 10, color: "rgba(255,255,255,0.4)" }}>{(fullPrompt.full_prompt_preview || "").length} caracteres · modelo: {fullPrompt.model}</div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// PrintAgentCard — config y prueba de la impresora térmica DIG-E2001
+// El agente corre como proceso separado en una PC de la LAN.
+// Esta card permite: cambiar URL del agente, IP/puerto impresora, datos
+// de la empresa para encabezado de recibos, y test print.
+// ─────────────────────────────────────────────────────────────────────────
+function PrintAgentCard({ config }) {
+  const [agentUrl, setAgentUrl] = useState(printLib.getAgentUrl());
+  const [status, setStatus] = useState(null);
+  const [printerIp, setPrinterIp] = useState("");
+  const [printerPort, setPrinterPort] = useState("9100");
+  const [printerWidth, setPrinterWidth] = useState("48");
+  const [empresa, setEmpresa] = useState({ nombre: "", nit: "", direccion: "", telefono: "" });
+  const [saving, setSaving] = useState(false);
+  const [printing, setPrinting] = useState(false);
+  const [msg, setMsg] = useState(null);
+
+  const refresh = useCallback(async () => {
+    setStatus("checking");
+    setMsg(null);
+    try {
+      const s = await printLib.getStatus();
+      setStatus(s);
+      if (s?.printer) {
+        setPrinterIp(s.printer.ip || "");
+        setPrinterPort(String(s.printer.port || "9100"));
+      }
+      if (s?.config?.printerWidth) setPrinterWidth(String(s.config.printerWidth));
+      if (s?.config?.empresa) setEmpresa({ nombre: s.config.empresa.nombre || "", nit: s.config.empresa.nit || "", direccion: s.config.empresa.direccion || "", telefono: s.config.empresa.telefono || "" });
+    } catch (e) {
+      setStatus({ ok: false, error: e.message });
+    }
+  }, []);
+
+  useEffect(() => { refresh(); }, [refresh]);
+
+  useEffect(() => {
+    if (config && !empresa.nombre && status && status.ok) {
+      setEmpresa(e => ({
+        nombre:    e.nombre    || config.nombre_empresa || "ATOLÓN",
+        nit:       e.nit       || config.nit            || "",
+        direccion: e.direccion || config.direccion      || "",
+        telefono:  e.telefono  || config.telefono       || "",
+      }));
+    }
+  }, [config, status]); // eslint-disable-line
+
+  const handleSaveUrl = () => {
+    printLib.setAgentUrl(agentUrl.trim() || "http://localhost:9100");
+    setMsg({ type: "ok", text: "URL del agente guardada." });
+    refresh();
+  };
+
+  const handleSaveConfig = async () => {
+    setSaving(true); setMsg(null);
+    try {
+      await printLib.updateAgentConfig({
+        printerIp: printerIp.trim(),
+        printerPort: Number(printerPort) || 9100,
+        printerWidth: Number(printerWidth) || 48,
+        empresa,
+      });
+      setMsg({ type: "ok", text: "✓ Configuración guardada en el agente" });
+      await refresh();
+    } catch (e) {
+      setMsg({ type: "err", text: e.message });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleTestPrint = async () => {
+    setPrinting(true); setMsg(null);
+    try {
+      await printLib.testPrint();
+      setMsg({ type: "ok", text: "✓ Impresión de prueba enviada" });
+    } catch (e) {
+      setMsg({ type: "err", text: e.message });
+    } finally {
+      setPrinting(false);
+    }
+  };
+
+  const agentOk = status && status.ok && status.agent;
+  const printerOk = status?.printer?.reachable;
+
+  return (
+    <div style={{ background: B.navyMid, borderRadius: 12, padding: 22 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 18, flexWrap: "wrap" }}>
+        <div style={{ width: 42, height: 42, borderRadius: 10, background: "#0EA5E9", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22 }}>🖨</div>
+        <div style={{ flex: 1, minWidth: 180 }}>
+          <div style={{ fontWeight: 700, fontSize: 15 }}>Impresora Térmica</div>
+          <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)" }}>Digital POS DIG-E2001 vía Print Agent local</div>
+        </div>
+        <span style={{ fontSize: 11, padding: "3px 12px", borderRadius: 10, background: agentOk ? B.success + "22" : B.danger + "22", color: agentOk ? B.success : B.danger }}>
+          {status === "checking" ? "Verificando..." : agentOk ? "✓ Agente OK" : "Agente sin conexión"}
+        </span>
+        <span style={{ fontSize: 11, padding: "3px 12px", borderRadius: 10, background: printerOk ? B.success + "22" : "#f5972422", color: printerOk ? B.success : "#f59724" }}>
+          {printerOk ? "✓ Impresora OK" : "Sin impresora"}
+        </span>
+      </div>
+
+      <div style={{ background: B.navy, padding: 14, borderRadius: 8, marginBottom: 14 }}>
+        <label style={LS}>URL del Print Agent <span style={{ color: "rgba(255,255,255,0.3)", textTransform: "none", letterSpacing: 0 }}>· por dispositivo</span></label>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <input value={agentUrl} onChange={e => setAgentUrl(e.target.value)} style={{ ...IS, flex: "1 1 220px" }} placeholder="http://localhost:9100" />
+          <button onClick={handleSaveUrl} style={{ padding: "10px 16px", background: B.sand, color: B.navy, border: "none", borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>Guardar URL</button>
+          <button onClick={refresh} style={{ padding: "10px 16px", background: "transparent", color: B.white, border: `1px solid ${B.navyLight}`, borderRadius: 8, fontSize: 12, cursor: "pointer", whiteSpace: "nowrap" }}>↻ Probar</button>
+        </div>
+        <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", marginTop: 6, lineHeight: 1.6 }}>
+          Si el Print Agent corre en este mismo dispositivo: <code style={{ color: B.sand }}>http://localhost:9100</code>.<br/>
+          Si corre en otra PC de la red: usá la IP de esa PC, ej: <code style={{ color: B.sand }}>http://192.168.1.10:9100</code>.
+        </div>
+      </div>
+
+      <div style={{ background: B.navy, padding: 14, borderRadius: 8, marginBottom: 14 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(160px, 2fr) minmax(80px, 1fr) minmax(80px, 1fr)", gap: 10 }}>
+          <div>
+            <label style={LS}>IP de la impresora</label>
+            <input value={printerIp} onChange={e => setPrinterIp(e.target.value)} style={IS} placeholder="192.168.1.50" />
+          </div>
+          <div>
+            <label style={LS}>Puerto</label>
+            <input value={printerPort} onChange={e => setPrinterPort(e.target.value)} style={IS} placeholder="9100" />
+          </div>
+          <div>
+            <label style={LS}>Ancho (chars)</label>
+            <input value={printerWidth} onChange={e => setPrinterWidth(e.target.value)} style={IS} placeholder="48" />
+          </div>
+        </div>
+
+        <div style={{ marginTop: 14, paddingTop: 14, borderTop: `1px solid ${B.navyLight}` }}>
+          <div style={{ fontSize: 11, color: B.sand, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 10 }}>Encabezado de los recibos</div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10 }}>
+            <div>
+              <label style={LS}>Nombre empresa</label>
+              <input value={empresa.nombre} onChange={e => setEmpresa({ ...empresa, nombre: e.target.value })} style={IS} placeholder="ATOLÓN" />
+            </div>
+            <div>
+              <label style={LS}>NIT</label>
+              <input value={empresa.nit} onChange={e => setEmpresa({ ...empresa, nit: e.target.value })} style={IS} placeholder="901.175.815-5" />
+            </div>
+            <div>
+              <label style={LS}>Dirección</label>
+              <input value={empresa.direccion} onChange={e => setEmpresa({ ...empresa, direccion: e.target.value })} style={IS} placeholder="Bocachica, Cartagena" />
+            </div>
+            <div>
+              <label style={LS}>Teléfono</label>
+              <input value={empresa.telefono} onChange={e => setEmpresa({ ...empresa, telefono: e.target.value })} style={IS} placeholder="+57 300 ..." />
+            </div>
+          </div>
+        </div>
+
+        <div style={{ display: "flex", gap: 10, marginTop: 16, flexWrap: "wrap" }}>
+          <button onClick={handleSaveConfig} disabled={saving || !agentOk}
+            style={{ flex: "2 1 220px", padding: "11px", background: saving ? B.navyLight : B.success, color: "#fff", border: "none", borderRadius: 8, fontWeight: 700, fontSize: 13, cursor: agentOk ? "pointer" : "not-allowed", opacity: agentOk ? 1 : 0.4, minHeight: 44 }}>
+            {saving ? "Guardando..." : "Guardar config en el agente"}
+          </button>
+          <button onClick={handleTestPrint} disabled={printing || !agentOk}
+            style={{ flex: "1 1 160px", padding: "11px", background: printing ? B.navyLight : B.sand, color: B.navy, border: "none", borderRadius: 8, fontWeight: 700, fontSize: 13, cursor: agentOk ? "pointer" : "not-allowed", opacity: agentOk ? 1 : 0.4, minHeight: 44 }}>
+            {printing ? "Imprimiendo..." : "🖨 Probar impresión"}
+          </button>
+        </div>
+      </div>
+
+      {msg && (
+        <div style={{ padding: 12, borderRadius: 8, background: msg.type === "ok" ? B.success + "22" : B.danger + "22", color: msg.type === "ok" ? B.success : B.danger, fontSize: 12, marginBottom: 10 }}>
+          {msg.text}
+        </div>
+      )}
+
+      {status && status.ok && (
+        <div style={{ background: B.navy, padding: 12, borderRadius: 8, fontSize: 11, color: "rgba(255,255,255,0.6)", lineHeight: 1.8 }}>
+          Agente: <code style={{ color: B.sand }}>{status.agent} v{status.version}</code> · Impresora: <code style={{ color: B.sand }}>{status.printer?.ip}:{status.printer?.port}</code>
+          {status.printer?.error && (<div style={{ color: B.danger, marginTop: 4 }}>⚠ {status.printer.error}</div>)}
+        </div>
+      )}
+
+      {status && !status.ok && (
+        <div style={{ background: B.danger + "11", border: `1px solid ${B.danger}44`, padding: 12, borderRadius: 8, fontSize: 11, color: "rgba(255,255,255,0.7)", lineHeight: 1.7 }}>
+          <div style={{ color: B.danger, fontWeight: 700, marginBottom: 4 }}>No se pudo conectar al Print Agent</div>
+          {status.error}
+          <div style={{ marginTop: 8, color: "rgba(255,255,255,0.4)" }}>
+            Verificá que el agente esté corriendo. En la PC con la impresora ejecutá:<br/>
+            <code style={{ color: B.sand, background: B.navy, padding: "2px 6px", borderRadius: 4 }}>cd print-agent && npm start</code>
+            <br/>o lanzá el ejecutable <code style={{ color: B.sand }}>atolon-print-agent.exe</code>.
           </div>
         </div>
       )}

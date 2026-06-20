@@ -620,17 +620,24 @@ export function EventoModal({ evento, categoria, salidas, aliados, vendedores, o
     })
   }));
 
+  // Match con trim+lowercase porque la lista pasadiasPrecios puede tener
+  // " VIP" (con espacio) cargado desde una hoja externa y el form local
+  // guarda "VIP" sin espacio → no matcheaba y getPrecio retornaba null.
+  const matchPasadia = (tipo) => {
+    const k = String(tipo || "").trim().toLowerCase();
+    return pasadiasPrecios.find(x => String(x.nombre || "").trim().toLowerCase() === k);
+  };
   // Precio unitario por tipo de pasadía (adulto)
   const getPrecioTipo = (p) => {
     if (p.tipo === "Impuesto Muelle") return PRECIO_MUELLE;
     if (p.tipo === "STAFF") return Number(p.precio_manual) || 0;
-    const match = pasadiasPrecios.find(x => x.nombre.toLowerCase() === p.tipo.toLowerCase());
+    const match = matchPasadia(p.tipo);
     if (!match) return null;
     return form.precio_tipo === "neto" ? (match.precio_neto_agencia || match.precio) : match.precio;
   };
   // Precio unitario niño
   const getPrecioNino = (p) => {
-    const match = pasadiasPrecios.find(x => x.nombre.toLowerCase() === p.tipo.toLowerCase());
+    const match = matchPasadia(p.tipo);
     if (!match) return 0;
     return form.precio_tipo === "neto" ? (match.precio_neto_nino || 0) : (match.precio_nino || 0);
   };
@@ -749,6 +756,18 @@ export function EventoModal({ evento, categoria, salidas, aliados, vendedores, o
 
   const save = async () => {
     if (!supabase || !form.nombre.trim() || !form.fecha) return;
+    // Guard contra doble-click: si ya estamos guardando o chequeando, no
+    // re-entrar. Antes habia una ventana microtask entre setCheckingDate(false)
+    // y setSaving(true) donde el boton se volvia clickable y un doble-click
+    // rapido podia disparar dos saves.
+    if (saving || checkingDate) return;
+    // Validar fecha_fin >= fecha. El input tiene min={form.fecha} pero esa
+    // restriccion no garantiza nada: si el user cambia fecha despues, el
+    // fecha_fin queda inconsistente. Aqui chequeamos final pre-submit.
+    if (form.fecha_fin && form.fecha_fin < form.fecha) {
+      setSaveError("La fecha de fin no puede ser anterior a la fecha de inicio.");
+      return;
+    }
     setCheckingDate(true);
 
     // Para buy-out multi-día, revisar todas las fechas marcadas para buy-out
@@ -851,10 +870,13 @@ export function EventoModal({ evento, categoria, salidas, aliados, vendedores, o
 
     if (form.buy_out && form.stage === "Confirmado") {
       // Determinar qué fechas aplican buy-out
-      // Si hay buy_out_fechas seleccionadas → usar esas; si no (evento 1 día) → solo form.fecha
       const buyOutFechasEfectivas = (form.buy_out_fechas && form.buy_out_fechas.length > 0)
         ? form.buy_out_fechas
         : (form.fecha ? [form.fecha] : []);
+
+      // savedId es el id del evento (sea nuevo o edicion). Lo usamos para
+      // vincular los cierres y poder borrarlos sin riesgo al editar.
+      const eventoId = savedId;
 
       if (!wasConfirmado && buyOutFechasEfectivas.length > 0) {
         // Primera vez que se confirma → crear cierres para cada fecha buy-out
@@ -866,15 +888,17 @@ export function EventoModal({ evento, categoria, salidas, aliados, vendedores, o
             motivo: `Buy-Out: ${form.nombre.trim()}`,
             activo: true,
             creado_por: "Eventos",
+            evento_id: eventoId,
           });
         }
-      } else if (wasConfirmado) {
-        // Ya estaba confirmado → borrar cierres anteriores de este evento y recrear con nuevas fechas
-        const nombreAnterior = evento?.nombre || form.nombre.trim();
+      } else if (wasConfirmado && eventoId) {
+        // Ya estaba confirmado → borrar cierres anteriores de ESTE evento
+        // (por evento_id, NO por match LIKE en motivo). Esto impide tumbar
+        // cierres de otros eventos con nombre prefijo similar.
         await supabase.from("cierres")
           .delete()
           .eq("creado_por", "Eventos")
-          .ilike("motivo", `%${nombreAnterior}%`);
+          .eq("evento_id", eventoId);
         for (let i = 0; i < buyOutFechasEfectivas.length; i++) {
           await supabase.from("cierres").insert({
             id: `CIE-${Date.now()}-${i}`,
@@ -883,6 +907,7 @@ export function EventoModal({ evento, categoria, salidas, aliados, vendedores, o
             motivo: `Buy-Out: ${form.nombre.trim()}`,
             activo: true,
             creado_por: "Eventos",
+            evento_id: eventoId,
           });
         }
       }
@@ -3491,13 +3516,19 @@ export default function Eventos() {
       </div>
 
       {/* KPIs — ocultos en vista operativa (no necesitan ver pipeline/$) */}
-      {!isCalendario && !vistaOperativa && (
+      {!isCalendario && !vistaOperativa && (() => {
+        // Pipeline = oportunidades VIVAS o GANADAS. Excluye "Perdido" porque
+        // sino el numero crece sin cota: el equipo crea muchos eventos y luego
+        // marca varios como Perdido — antes seguian sumando al pipeline y
+        // inflaban la metrica de negocio falsamente.
+        const itemsActivos = items.filter(e => e.stage !== "Perdido");
+        return (
         <div style={{ display: "flex", gap: 12, marginBottom: 24, flexWrap: "wrap" }}>
           {[
-            { label: "Pipeline Total", val: COP(items.reduce((s, e) => s + e.valor, 0)), color: B.sand },
+            { label: "Pipeline Total", val: COP(itemsActivos.reduce((s, e) => s + e.valor, 0)), color: B.sand },
             { label: "Confirmados",    val: items.filter(e => e.stage === "Confirmado").length, color: B.success },
             { label: "Por Cotizar",    val: items.filter(e => e.stage === "Consulta").length, color: B.warning },
-            { label: "Pax Total",      val: items.reduce((s, e) => s + e.pax, 0), color: B.sky },
+            { label: "Pax Total",      val: itemsActivos.reduce((s, e) => s + e.pax, 0), color: B.sky },
           ].map(s => (
             <div key={s.label} style={{ background: B.navyMid, borderRadius: 12, padding: "14px 18px", flex: 1, minWidth: 130, borderLeft: `4px solid ${s.color}` }}>
               <div style={{ fontSize: 11, color: B.sand, textTransform: "uppercase", letterSpacing: 1 }}>{s.label}</div>
@@ -3505,7 +3536,8 @@ export default function Eventos() {
             </div>
           ))}
         </div>
-      )}
+        );
+      })()}
 
       {isCalendario
         ? <CalendarioEventos todos={todos} onEdit={ev => setDetalleEvento(ev)} isMobile={isMobile} />

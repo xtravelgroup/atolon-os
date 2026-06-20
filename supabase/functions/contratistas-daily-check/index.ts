@@ -33,11 +33,22 @@ serve(async (_req) => {
     }
   }
 
+  // Idempotencia: UPDATE conditional + .select() para detectar transicion
+  // real. Si el cron se re-dispara (manual o concurrente), el segundo run
+  // NO insertara bitacora duplicada NI enviara email duplicado al
+  // contratista (spam).
+  const realmenteCambiados: any[] = [];
   for (const c of vencidos) {
-    await supabase.from("contratistas").update({
+    const { data: updated } = await supabase.from("contratistas").update({
       estado: "vencido",
       updated_at: new Date().toISOString(),
-    }).eq("id", c.id);
+    }).eq("id", c.id).neq("estado", "vencido").select("id");
+
+    if (!updated || updated.length === 0) {
+      // Ya estaba vencido — skip bitacora/email para evitar duplicados.
+      continue;
+    }
+    realmenteCambiados.push(c);
 
     await supabase.from("contratistas_bitacora").insert({
       contratista_id: c.id,
@@ -61,20 +72,21 @@ serve(async (_req) => {
     }
   }
 
-  // Resumen al SST
-  if (vencidos.length > 0) {
+  // Resumen al SST — solo si hubo transiciones reales, no si fueron skips
+  // por idempotencia.
+  if (realmenteCambiados.length > 0) {
     fetch(SEND_URL, {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         to: [INTERNAL_SST],
         kind: "cron_vencimientos",
-        subject: `⚠️ ${vencidos.length} contratista(s) vencido(s) hoy`,
-        html: `<h3>Contratistas marcados como vencidos</h3><ul>${vencidos.map(v => `<li>${v.radicado} — ${v.nombre_display}</li>`).join("")}</ul>`,
+        subject: `⚠️ ${realmenteCambiados.length} contratista(s) vencido(s) hoy`,
+        html: `<h3>Contratistas marcados como vencidos</h3><ul>${realmenteCambiados.map(v => `<li>${v.radicado} — ${v.nombre_display}</li>`).join("")}</ul>`,
       }),
     }).catch(() => {});
   }
 
-  return new Response(JSON.stringify({ ok: true, vencidos: vencidos.length, total_revisados: (rows || []).length }), {
+  return new Response(JSON.stringify({ ok: true, vencidos: realmenteCambiados.length, candidatos: vencidos.length, total_revisados: (rows || []).length }), {
     headers: { ...CORS, "Content-Type": "application/json" },
   });
 });

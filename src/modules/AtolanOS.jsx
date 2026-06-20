@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { useMobile } from "../lib/useMobile";
 import { B, COP, todayDisplay, todayStr } from "../brand";
 import { supabase } from "../lib/supabase";
+import { setAuditMode } from "../lib/auditMode";
 import { GRUPOS_NAV, BOTTOM_NAV } from "../lib/modulosCatalogo";
 
 async function logout() {
@@ -81,9 +82,12 @@ function Dashboard() {
           .gte("created_at", inicioHoy)
           .lte("created_at", finHoy),
         // Pax hoy: confirmados + check_in + pipeline comercial
-        supabase.from("reservas").select("pax").eq("fecha", hoy).in("estado", ["confirmado", "check_in", "pendiente", "pendiente_pago", "pendiente_comprobante"]),
+        // Trae también `id` y `grupo_id` para excluir reservas que ya están
+        // contadas dentro de pasadias_org del grupo (cortesías y reservas
+        // canal="GRUPO" que entran con código de grupo).
+        supabase.from("reservas").select("id, pax, grupo_id").eq("fecha", hoy).in("estado", ["confirmado", "check_in", "pendiente", "pendiente_pago", "pendiente_comprobante"]),
         // Pax mañana: confirmados + check_in + pipeline comercial
-        supabase.from("reservas").select("pax").eq("fecha", mananaStr).in("estado", ["confirmado", "check_in", "pendiente", "pendiente_pago", "pendiente_comprobante"]),
+        supabase.from("reservas").select("id, pax, grupo_id").eq("fecha", mananaStr).in("estado", ["confirmado", "check_in", "pendiente", "pendiente_pago", "pendiente_comprobante"]),
         // Leads creados hoy aún activos
         supabase.from("leads").select("id")
           .not("stage", "in", '("Cerrado Ganado","Perdido","Duplicado")')
@@ -95,9 +99,12 @@ function Dashboard() {
         supabase.from("reservas").select("abono").eq("fecha_pago", hoy).neq("estado", "cancelado"),
         // Cobrado hoy: abono sin fecha_pago pero creado hoy (web/Wompi automático)
         supabase.from("reservas").select("abono").is("fecha_pago", null).gte("created_at", inicioHoy).lte("created_at", finHoy).gt("abono", 0).neq("estado", "cancelado"),
-        // Grupos hoy y mañana
-        supabase.from("eventos").select("id, pax, fecha, pasadias_org, categoria, aliado_id").eq("fecha", hoy).neq("stage", "Realizado"),
-        supabase.from("eventos").select("id, pax, fecha, pasadias_org, categoria, aliado_id").eq("fecha", mananaStr).neq("stage", "Realizado"),
+        // Grupos hoy y mañana — solo confirmados (Consulta/Cotizado son pipeline,
+        // no son grupos reales con pax que vaya a llegar).
+        // HOY también acepta Realizado para no sub-contar eventos que ya
+        // concluyeron en el día (ej. brunch matutino).
+        supabase.from("eventos").select("id, pax, fecha, pasadias_org, categoria, aliado_id").eq("fecha", hoy).in("stage", ["Confirmado", "Realizado"]),
+        supabase.from("eventos").select("id, pax, fecha, pasadias_org, categoria, aliado_id").eq("fecha", mananaStr).eq("stage", "Confirmado"),
         // Llegadas muelle (After Island, Restaurante, Walk-in) — excluye:
         //   • lancha_atolon (lancha de staff/operación)
         //   • lanchas_atolon (idem)
@@ -120,10 +127,34 @@ function Dashboard() {
       ]);
 
       const isGrupo = (e) => e.categoria === "grupo" || (!e.categoria && e.aliado_id);
-      const paxGruposHoy    = (grpHoyR.data    || []).filter(isGrupo).reduce((s, g) => s + grupoPax(g), 0);
-      const paxGruposManana = (grpMananaR.data  || []).filter(isGrupo).reduce((s, g) => s + grupoPax(g), 0);
+      const gruposHoy    = (grpHoyR.data    || []).filter(isGrupo);
+      const gruposManana = (grpMananaR.data || []).filter(isGrupo);
+      const paxGruposHoy    = gruposHoy.reduce((s, g) => s + grupoPax(g), 0);
+      const paxGruposManana = gruposManana.reduce((s, g) => s + grupoPax(g), 0);
       const paxLlegHoy      = (llegHoyR.data    || []).reduce((s, l) => s + (l.pax_total || 0), 0);
       const paxLlegManana   = (llegMananaR.data || []).reduce((s, l) => s + (l.pax_total || 0), 0);
+
+      // Excluir reservas ya contadas dentro del grupo. Hay 2 vías:
+      //  1) reserva_id explícito en pasadias_org (cortesías ligadas)
+      //  2) reservas.grupo_id apuntando a un evento-grupo del día (las
+      //     reservas canal="GRUPO" entran con código y ya están dentro
+      //     del bulk de pasadias_org del grupo)
+      const collectRefIds = (grupos) => {
+        const s = new Set();
+        grupos.forEach(g => (g.pasadias_org || []).forEach(p => {
+          if (p?.reserva_id) s.add(p.reserva_id);
+        }));
+        return s;
+      };
+      const grupoIdSet = (grupos) => new Set(grupos.map(g => g.id));
+      const refsHoy        = collectRefIds(gruposHoy);
+      const refsManana     = collectRefIds(gruposManana);
+      const grupoIdsHoy    = grupoIdSet(gruposHoy);
+      const grupoIdsManana = grupoIdSet(gruposManana);
+
+      const sumReservas = (rows, refIds, grupoIds) => (rows || [])
+        .filter(r => !refIds.has(r.id) && !(r.grupo_id && grupoIds.has(r.grupo_id)))
+        .reduce((s, r) => s + (r.pax || 0), 0);
 
       const ventasHoy = ventasHoyR.data || [];
       const cobradoHoy = [...(cobR.data || []), ...(cobR2.data || [])].reduce((s, r) => s + (r.abono || 0), 0);
@@ -131,8 +162,8 @@ function Dashboard() {
         pasadiasVendidos: ventasHoy.length,
         revenue: cobradoHoy,
         leadsHoy: (leadsHoyR.data || []).length,
-        paxHoy:    (paxHoyR.data    || []).reduce((s, r) => s + (r.pax || 0), 0) + paxGruposHoy + paxLlegHoy,
-        paxManana: (paxMananaR.data  || []).reduce((s, r) => s + (r.pax || 0), 0) + paxGruposManana + paxLlegManana,
+        paxHoy:    sumReservas(paxHoyR.data,    refsHoy,    grupoIdsHoy)    + paxGruposHoy    + paxLlegHoy,
+        paxManana: sumReservas(paxMananaR.data, refsManana, grupoIdsManana) + paxGruposManana + paxLlegManana,
         eventos: (evtR.data || []).length,
         reqPendientes: (reqR.data || []).length,
       });
@@ -335,12 +366,19 @@ export default function AtolanOS({ activeModule = "dashboard", onNavigate, modul
   // a cualquier usuario con muchos módulos asignados, anulando la
   // restricción explícita. Eso rompía a Contabilidad y otros roles con
   // muchos pero NO-todos los módulos.
+  // Modo auditoría — se activa si el rol del usuario es 'auditor'
+  const [auditMode, setAuditModeUI] = useState(false);
+
   useEffect(() => {
-    if (!userEmail || !supabase) { setUserModulos(null); return; }
+    if (!userEmail || !supabase) { setUserModulos(null); setAuditMode(false); setAuditModeUI(false); return; }
     supabase.from("usuarios").select("modulos, rol_id, nombre, avatar_color").eq("email", userEmail).maybeSingle()
       .then(async ({ data }) => {
         if (data?.nombre) setUserName(data.nombre);
         const mods = data?.modulos;
+        // 0) ¿Es un usuario auditor? Activar modo bloqueo global de writes
+        const esAuditor = data?.rol_id === "auditor";
+        setAuditMode(esAuditor);
+        setAuditModeUI(esAuditor);
         // 1) ¿El rol tiene acceso total ("*")?
         if (data?.rol_id) {
           try {
@@ -354,7 +392,7 @@ export default function AtolanOS({ activeModule = "dashboard", onNavigate, modul
         // 3) Respetar exactamente la lista
         setUserModulos(mods);
       })
-      .catch(() => setUserModulos(null));
+      .catch(() => { setUserModulos(null); setAuditMode(false); setAuditModeUI(false); });
   }, [userEmail]);
 
   const canSee = useCallback((key) => {
@@ -404,10 +442,34 @@ export default function AtolanOS({ activeModule = "dashboard", onNavigate, modul
 
   return (
     <div style={{ display: "flex", position: "fixed", top: 0, left: 0, right: 0, bottom: 0, overflow: "hidden" }}>
+      {/* Banner persistente para modo auditoría */}
+      {auditMode && (
+        <div style={{
+          position: "fixed", top: 0, left: 0, right: 0, zIndex: 9999,
+          background: "linear-gradient(90deg, #9333ea, #c026d3)",
+          color: "#fff", padding: "8px 16px",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          gap: 12, fontSize: 12, fontWeight: 800, letterSpacing: "0.08em",
+          boxShadow: "0 2px 12px rgba(147, 51, 234, 0.4)",
+          fontFamily: "'Inter', system-ui, sans-serif",
+        }}>
+          🔒 MODO AUDITORÍA · ACCESO DE SOLO LECTURA · No se pueden crear, editar ni eliminar registros
+        </div>
+      )}
       {/* Light mode: overrides de los colores de tema oscuro más comunes usados en los módulos.
          Cada override apunta a tanto hex como rgb() porque React puede normalizar. */}
       <style>{`
         .atolon-light-content { color: #0D1B3E; }
+
+        /* Modo auditoría — opacidad visual en botones de acción + cursor */
+        body[data-auditor-mode="true"] {
+          padding-top: 28px;
+        }
+        body[data-auditor-mode="true"] button[type="submit"],
+        body[data-auditor-mode="true"] [data-audit-block="true"] {
+          opacity: 0.5 !important;
+          cursor: not-allowed !important;
+        }
 
         /* Backgrounds dark → light */
         .atolon-light-content [style*="#0D1B3E"][style*="background"],

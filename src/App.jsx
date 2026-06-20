@@ -1,8 +1,16 @@
 import { useState, useEffect, Component, lazy, Suspense } from "react";
 import { supabase } from "./lib/supabase";
+import {
+  validatePassword, hashPassword, isInHistory, strengthSignals,
+  PASSWORD_POLICY, aplicaCaducidad, diasHastaCaducidad,
+} from "./lib/passwordPolicy";
+import { aplicaMFAEffective, getMFAStatus } from "./lib/mfaPolicy";
+import MFAEnrollment from "./components/MFAEnrollment";
+import MFAChallenge from "./components/MFAChallenge";
 import { B } from "./brand";
 import AtolanOS from "./modules/AtolanOS";
 import AtolanTrack from "./lib/AtolanTrack";
+import { initTracking } from "./lib/gtm";
 
 // ── Error Boundary — muestra el error en pantalla en vez de pantalla azul ───
 //
@@ -100,13 +108,26 @@ class ErrorBoundary extends Component {
 }
 
 // ── Force Change Password ───────────────────────────────────────────────────
-function ForceChangePassword({ userEmail, onDone }) {
+function ForceChangePassword({ userEmail, onDone, motivo }) {
   const [pass, setPass]     = useState("");
   const [pass2, setPass2]   = useState("");
   const [error, setError]   = useState("");
   const [saving, setSaving] = useState(false);
   const [show, setShow]     = useState(false);
   const [show2, setShow2]   = useState(false);
+  const [userNombre, setUserNombre] = useState("");
+  const [pwdHistory, setPwdHistory] = useState([]);
+
+  // Cargar nombre + historial para validaciones de política de contraseña
+  useEffect(() => {
+    if (!supabase || !userEmail) return;
+    supabase.from("usuarios").select("nombre, password_history")
+      .eq("email", userEmail.toLowerCase()).maybeSingle()
+      .then(({ data }) => {
+        if (data?.nombre) setUserNombre(data.nombre);
+        if (Array.isArray(data?.password_history)) setPwdHistory(data.password_history);
+      });
+  }, [userEmail]);
 
   const IS = {
     width: "100%", padding: "12px 14px", borderRadius: 10,
@@ -118,15 +139,29 @@ function ForceChangePassword({ userEmail, onDone }) {
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError("");
-    if (pass.length < 8)          { setError("La contraseña debe tener mínimo 8 caracteres"); return; }
-    if (pass === "Atolon123")      { setError("No puedes seguir usando la clave temporal"); return; }
-    if (pass !== pass2)            { setError("Las contraseñas no coinciden"); return; }
+    // Validar contra política institucional
+    const policyError = validatePassword(pass, { email: userEmail, nombre: userNombre });
+    if (policyError) { setError(policyError); return; }
+    if (pass !== pass2) { setError("Las contraseñas no coinciden"); return; }
+    // No reutilizar las últimas N
+    if (await isInHistory(pass, pwdHistory, userEmail.toLowerCase())) {
+      setError(`No podés reutilizar tus últimas ${PASSWORD_POLICY.historySize} contraseñas. Elegí una nueva.`);
+      return;
+    }
     setSaving(true);
     // 1. Cambiar la clave en Supabase Auth
     const { error: authErr } = await supabase.auth.updateUser({ password: pass });
     if (authErr) { setError(authErr.message); setSaving(false); return; }
-    // 2. Apagar la bandera en la tabla usuarios
-    await supabase.from("usuarios").update({ must_change_password: false }).eq("email", userEmail.toLowerCase());
+    // 2. Actualizar usuarios: flag, timestamp, historial
+    const newHash = await hashPassword(pass, userEmail.toLowerCase());
+    const newHistory = [newHash, ...pwdHistory].slice(0, PASSWORD_POLICY.historySize);
+    await supabase.from("usuarios").update({
+      must_change_password: false,
+      password_changed_at: new Date().toISOString(),
+      password_history: newHistory,
+      failed_login_count: 0,
+      locked_until: null,
+    }).eq("email", userEmail.toLowerCase());
     setSaving(false);
     onDone();
   };
@@ -162,7 +197,7 @@ function ForceChangePassword({ userEmail, onDone }) {
             <label style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", display: "block", marginBottom: 6 }}>NUEVA CONTRASEÑA</label>
             <div style={{ position: "relative" }}>
               <input type={show ? "text" : "password"} value={pass} onChange={e => setPass(e.target.value)}
-                placeholder="Mínimo 8 caracteres" required style={{ ...IS, paddingRight: 44 }} />
+                placeholder={`Mínimo ${PASSWORD_POLICY.minLength} caracteres · 3 categorías`} required style={{ ...IS, paddingRight: 44 }} />
               <button type="button" onClick={() => setShow(s => !s)}
                 style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", color: "rgba(255,255,255,0.4)", cursor: "pointer", fontSize: 16 }}>
                 {show ? "🙈" : "👁"}
@@ -181,16 +216,11 @@ function ForceChangePassword({ userEmail, onDone }) {
             </div>
           </div>
 
-          {/* Indicadores de fortaleza */}
+          {/* Indicadores de fortaleza de la contraseña */}
           {pass.length > 0 && (
-            <div style={{ display: "flex", gap: 6, marginBottom: 14 }}>
-              {[
-                { ok: pass.length >= 8,           label: "8+ chars" },
-                { ok: /[A-Z]/.test(pass),          label: "Mayúscula" },
-                { ok: /[0-9]/.test(pass),          label: "Número" },
-                { ok: pass !== "Atolon123",        label: "No temporal" },
-              ].map(({ ok, label }) => (
-                <div key={label} style={{ flex: 1, textAlign: "center", padding: "4px 0", borderRadius: 6, background: ok ? B.success + "22" : "rgba(255,255,255,0.06)", border: `1px solid ${ok ? B.success + "55" : "transparent"}` }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 6, marginBottom: 14 }}>
+              {strengthSignals(pass).map(({ ok, label }) => (
+                <div key={label} style={{ textAlign: "center", padding: "4px 6px", borderRadius: 6, background: ok ? B.success + "22" : "rgba(255,255,255,0.06)", border: `1px solid ${ok ? B.success + "55" : "transparent"}` }}>
                   <div style={{ fontSize: 10, color: ok ? B.success : "rgba(255,255,255,0.3)", fontWeight: 600 }}>{ok ? "✓" : "·"} {label}</div>
                 </div>
               ))}
@@ -274,6 +304,15 @@ const FloorPlan = lazy(() => import("./modules/FloorPlan"));
 const Comercial = lazy(() => import("./modules/Comercial"));
 const B2B = lazy(() => import("./modules/B2B"));
 const Eventos = lazy(() => import("./modules/Eventos"));
+const AuditLog = lazy(() => import("./modules/AuditLog"));
+const SoDViolations = lazy(() => import("./modules/SoDViolations"));
+const BackupDR = lazy(() => import("./modules/BackupDR"));
+const EventosVariance = lazy(() => import("./modules/EventosVariance"));
+const DianCompliance = lazy(() => import("./modules/DianCompliance"));
+const HabeasData = lazy(() => import("./modules/HabeasData"));
+const NIIFCompliance = lazy(() => import("./modules/NIIFCompliance"));
+const Secretos = lazy(() => import("./modules/Secretos"));
+const EdgeFunctions = lazy(() => import("./modules/EdgeFunctions"));
 const Financiero = lazy(() => import("./modules/Financiero"));
 const CXC = lazy(() => import("./modules/CXC"));
 const HotelReservas = lazy(() => import("./modules/HotelReservas"));
@@ -284,6 +323,7 @@ const HotelHabitaciones = lazy(() => import("./modules/HotelHabitaciones"));
 const HotelRoomService = lazy(() => import("./modules/HotelRoomService"));
 const PoolService = lazy(() => import("./modules/PoolService"));
 const PoolServicePortal = lazy(() => import("./modules/PoolServicePortal"));
+const MeseroPortal = lazy(() => import("./modules/MeseroPortal"));
 const HotelMinibar = lazy(() => import("./modules/HotelMinibar"));
 const HotelHousekeeping = lazy(() => import("./modules/HotelHousekeeping"));
 const GuestPortal = lazy(() => import("./modules/GuestPortal"));
@@ -336,6 +376,7 @@ const Metas = lazy(() => import("./modules/Metas"));
 const Comisiones = lazy(() => import("./modules/Comisiones"));
 const Resultados = lazy(() => import("./modules/Resultados"));
 const ResultadosViewer = lazy(() => import("./modules/ResultadosViewer"));
+const TrackViewer = lazy(() => import("./modules/TrackViewer"));
 const Lancha = lazy(() => import("./modules/Lancha"));
 const CosteoProductos = lazy(() => import("./modules/CosteoProductos"));
 const DiaDeLaMadre = lazy(() => import("./modules/DiaDeLaMadre"));
@@ -343,11 +384,14 @@ const Despedidas = lazy(() => import("./modules/Despedidas"));
 const RecursosHumanos = lazy(() => import("./modules/RecursosHumanos"));
 const Nomina = lazy(() => import("./modules/Nomina"));
 const NominaPorDia = lazy(() => import("./modules/NominaPorDia"));
+const ProcesarNomina = lazy(() => import("./modules/ProcesarNomina"));
 const Horarios = lazy(() => import("./modules/Horarios"));
 const AsistenciaZK = lazy(() => import("./modules/AsistenciaZK"));
 const ContratistasAdmin = lazy(() => import("./modules/ContratistasAdmin"));
 const ContratistasPortal = lazy(() => import("./modules/ContratistasPortal"));
 const ContratistasCurso = lazy(() => import("./modules/ContratistasCurso"));
+const ContratistasRegistro = lazy(() => import("./modules/ContratistasRegistro"));
+const PrivacidadPage = lazy(() => import("./modules/PrivacidadPage"));
 const ContratistasVerificar = lazy(() => import("./modules/ContratistasVerificar"));
 const ContratistasMuelle = lazy(() => import("./modules/ContratistasMuelle"));
 const ZarpesLog = lazy(() => import("./modules/ZarpesLog"));
@@ -360,6 +404,15 @@ const LoggroAdmin = lazy(() => import("./modules/LoggroAdmin"));
 const HotelFolios = lazy(() => import("./modules/HotelFolios"));
 const ApiPortal = lazy(() => import("./modules/ApiPortal"));
 const BlueApplePortal = lazy(() => import("./modules/BlueApplePortal"));
+const BlueApplePaxPublic = lazy(() => import("./modules/BlueApplePaxPublic"));
+const JuicyCream = lazy(() => import("./modules/JuicyCream"));
+const JuicyOrganizador = lazy(() => import("./modules/JuicyOrganizador"));
+const CajasExpress = lazy(() => import("./modules/CajasExpress"));
+const CajasExpressAdmin = lazy(() => import("./modules/CajasExpressAdmin"));
+const CajasImpresion = lazy(() => import("./modules/CajasImpresion"));
+const CajasVentas = lazy(() => import("./modules/CajasVentas"));
+const CajasSetup = lazy(() => import("./modules/CajasSetup"));
+const TrackExterno = lazy(() => import("./modules/TrackExterno"));
 
 const MODULE_MAP = {
   pasadias: <Pasadias />,
@@ -368,6 +421,15 @@ const MODULE_MAP = {
   comercial: <Comercial />,
   b2b: <B2B />,
   eventos: <Eventos />,
+  audit_log: <AuditLog />,
+  sod_violations: <SoDViolations />,
+  backup_dr: <BackupDR />,
+  eventos_variance: <EventosVariance />,
+  dian_compliance: <DianCompliance />,
+  habeas_data: <HabeasData />,
+  niif_pymes: <NIIFCompliance />,
+  secretos: <Secretos />,
+  edge_functions: <EdgeFunctions />,
   financiero: <Financiero />,
   cxc: <CXC />,
   presupuesto: <Presupuesto />,
@@ -410,6 +472,7 @@ const MODULE_MAP = {
   comedor: <Comedor />,
   nomina: <Nomina />,
   nomina_dia: <NominaPorDia />,
+  procesar_nomina: <ProcesarNomina />,
   asistencia_zk: <AsistenciaZK />,
   horarios: <Horarios />,
   contratistas_admin: <ContratistasAdmin />,
@@ -428,10 +491,11 @@ const MODULE_MAP = {
   hotel_minibar:      <HotelMinibar />,
   hotel_tarifas:      <HotelTarifas />,
   api_portal:         <ApiPortal />,
+  cajas_ventas:       <CajasVentas />,
 };
 
 // Public routes — no auth required
-const PUBLIC_ROUTES = ["empleados", "agencia", "booking", "pago", "reset-password", "zarpe-info", "zarpe-grupo", "login", "las-americas", "resultados", "dia-de-la-madre", "madres", "blueapple", ""];
+const PUBLIC_ROUTES = ["empleados", "agencia", "booking", "pago", "reset-password", "zarpe-info", "zarpe-grupo", "login", "las-americas", "resultados", "track", "dia-de-la-madre", "madres", "blueapple", "blueapple-pax", "juicy", "juicyandcream", "juicy-organizador", "juice-organizador", "cajas", "cajas-admin", "cajas-imprimir", "cajas-setup", ""];
 
 function getRoute() {
   return window.location.pathname.replace(/^\//, "") || "";
@@ -457,6 +521,7 @@ export default function App() {
   const [waPhone, setWaPhone]           = useState(null);
   const [mustChange, setMustChange]     = useState(false); // force password change
   const [appReady, setAppReady]         = useState(false); // prevents Chrome blue flash on first login
+  const [nuevaVersion, setNuevaVersion] = useState(false);  // deploy nuevo detectado
 
   useEffect(() => {
     // Timeout de seguridad: si getSession no responde en 4s, asumir no autenticado
@@ -490,13 +555,98 @@ export default function App() {
   }, []);
 
   // Verificar si el usuario debe cambiar su clave
+  // + Caducidad de password para roles administrativos
+  // + MFA obligatorio para roles administrativos
+  // + Tracking de ultimo_acceso para detectar cuentas zombie
+  const [pwdExpiredMotivo, setPwdExpiredMotivo] = useState("");
+  const [mfaState, setMfaState] = useState({
+    checked: false,        // ya corrió el check
+    needsEnrollment: false,
+    needsChallenge: false,
+    factorId: null,
+    rolId: null,
+  });
   useEffect(() => {
-    if (!session?.user?.email || !supabase) { setMustChange(false); return; }
-    supabase.from("usuarios").select("must_change_password").eq("email", session.user.email.toLowerCase()).single()
-      .then(({ data }) => setMustChange(!!data?.must_change_password));
+    if (!session?.user?.email || !supabase) {
+      setMustChange(false); setPwdExpiredMotivo("");
+      setMfaState({ checked: false, needsEnrollment: false, needsChallenge: false, factorId: null, rolId: null });
+      return;
+    }
+    const email = session.user.email.toLowerCase();
+    (async () => {
+      const { data } = await supabase.from("usuarios")
+        .select("must_change_password, rol_id, password_changed_at, mfa_required")
+        .eq("email", email).single();
+
+      // 1) Cambio de password forzado (override todo)
+      if (data?.must_change_password) {
+        setMustChange(true);
+        setPwdExpiredMotivo("Cambio obligatorio en primer ingreso o por instrucción de Gerencia.");
+        setMfaState({ checked: true, needsEnrollment: false, needsChallenge: false, factorId: null, rolId: data?.rol_id || null });
+        return;
+      }
+      if (data?.rol_id && aplicaCaducidad(data.rol_id)) {
+        const dias = diasHastaCaducidad(data.password_changed_at);
+        if (dias !== null && dias <= 0) {
+          setMustChange(true);
+          setPwdExpiredMotivo(`Tu contraseña expiró hace ${Math.abs(dias)} días (política Atolón · cambio cada ${PASSWORD_POLICY.maxAgeDays} días para rol ${data.rol_id}).`);
+          setMfaState({ checked: true, needsEnrollment: false, needsChallenge: false, factorId: null, rolId: data.rol_id });
+          return;
+        }
+      }
+      setMustChange(false);
+      setPwdExpiredMotivo("");
+
+      // 2) MFA — aplica a roles sensibles (super_admin, admin) o si el
+      //    super_admin marcó explícitamente mfa_required=true para este
+      //    usuario en Usuarios.jsx. mfa_required=false exime aun siendo admin.
+      if (aplicaMFAEffective(data?.rol_id, data?.mfa_required)) {
+        const status = await getMFAStatus(supabase);
+        if (status?.needsChallenge && status.verifiedTotp) {
+          setMfaState({ checked: true, needsEnrollment: false, needsChallenge: true, factorId: status.verifiedTotp.id, rolId: data.rol_id });
+          return;
+        }
+        if (status?.needsEnrollment) {
+          setMfaState({ checked: true, needsEnrollment: true, needsChallenge: false, factorId: null, rolId: data.rol_id });
+          return;
+        }
+      }
+      setMfaState({ checked: true, needsEnrollment: false, needsChallenge: false, factorId: null, rolId: data?.rol_id || null });
+    })();
+
+    // Fire-and-forget: actualizar ultimo_acceso
+    supabase.from("usuarios").update({ ultimo_acceso: new Date().toISOString() })
+      .eq("email", email).then(() => {}).catch(() => {});
   }, [session]);
 
   const navigate = (mod) => setActiveModule(mod);
+
+  const aplicarActualizacion = () => {
+    try {
+      if (typeof caches !== "undefined") {
+        caches.keys()
+          .then(ks => Promise.all(ks.map(k => caches.delete(k))))
+          .finally(() => window.location.reload());
+        return;
+      }
+    } catch { /* noop */ }
+    window.location.reload();
+  };
+
+  const VersionBanner = () => nuevaVersion ? (
+    <div
+      onClick={aplicarActualizacion}
+      title="Recargar para actualizar"
+      style={{
+        position: "fixed", top: 0, left: 0, right: 0, zIndex: 99999,
+        background: "#7C3AED", color: "#fff", textAlign: "center",
+        padding: "8px 14px", fontSize: 13, fontWeight: 700, cursor: "pointer",
+        boxShadow: "0 2px 10px rgba(0,0,0,0.35)",
+      }}
+    >
+      🔄 Hay una versión nueva de Atolon OS — clic aquí para actualizar
+    </div>
+  ) : null;
 
   // Listen for cross-module navigation requests (e.g. CXC → Reservas, Clientes → Reservas)
   useEffect(() => {
@@ -527,12 +677,48 @@ export default function App() {
     };
   }, [activeModule]);
 
+  // ── Detector de versión nueva desplegada ─────────────────────────────────
+  // El SPA mantiene el JS viejo en memoria mientras navegas dentro de la app
+  // (no re-descarga chunks ya cargados). Si Vercel desplegó otra versión, el
+  // index servido referencia otro entry hash. Lo detectamos comparando contra
+  // /booking (ruta SPA pública estable, sin redirect ni auth) y ofrecemos
+  // recargar — sin auto-reload para no perder datos en formularios.
+  useEffect(() => {
+    const entryRe = /assets\/index-[A-Za-z0-9_-]+\.js/;
+    const current = Array.from(document.querySelectorAll('script[type="module"]'))
+      .map(s => (s.getAttribute("src") || "").match(entryRe)?.[0])
+      .find(Boolean) || null;
+    if (!current) return;
+    let stop = false;
+    const check = async () => {
+      try {
+        const res = await fetch("/booking", { cache: "no-store" });
+        if (!res.ok) return;
+        const html = await res.text();
+        const deployed = html.match(entryRe)?.[0];
+        if (deployed && deployed !== current && !stop) setNuevaVersion(true);
+      } catch { /* offline — ignorar */ }
+    };
+    const t  = setTimeout(check, 45000);
+    const id = setInterval(check, 150000);
+    return () => { stop = true; clearTimeout(t); clearInterval(id); };
+  }, []);
+
   // AtolanTrack: page_view on public route load
   useEffect(() => {
     const publicTrackRoutes = ["booking", "pago", ""];
     const isTrackable = publicTrackRoutes.some(r => route === r || route.startsWith(r + "/") || route.startsWith("pago"));
     if (isTrackable) {
       AtolanTrack.init().then(() => AtolanTrack.pageView("/" + route));
+      // Cargar píxeles de terceros configurados en /track (una sola vez).
+      if (!window.__pixelsInit) {
+        window.__pixelsInit = true;
+        supabase.from("configuracion")
+          .select("meta_pixel_id, gtm_id, ga4_id, google_ads_id, tiktok_pixel_id")
+          .eq("id", "atolon").single()
+          .then(({ data }) => { if (data) initTracking(data); })
+          .catch(() => {});
+      }
     }
   }, [route]);
 
@@ -540,7 +726,15 @@ export default function App() {
   const isPublic = ["empleados", "agencia", "booking", "", "reset-password", "zarpe-info", "despedidas", "contratistas"].includes(route) || route.startsWith("pago") || route.startsWith("booking/") || route.startsWith("m/") || route.startsWith("room/") || route.startsWith("despedidas/") || route.startsWith("contratistas/") || route.startsWith("verificar/");
 
   // Always-public routes (no auth needed ever)
+  if (route === "track" || route.startsWith("track/")) return <TrackExterno />;
+  if (route === "blueapple-pax") return <BlueApplePaxPublic />;
   if (route === "blueapple" || route.startsWith("blueapple/")) return <BlueApplePortal />;
+  if (route === "juicy" || route === "juicyandcream") return <JuicyCream />;
+  if (route === "juicy-organizador" || route === "juice-organizador") return <JuicyOrganizador />;
+  if (route === "cajas")           return <CajasExpress />;
+  if (route === "cajas-admin")     return <CajasExpressAdmin />;
+  if (route === "cajas-imprimir")  return <CajasImpresion />;
+  if (route === "cajas-setup")     return <CajasSetup />;
   if (route === "empleados")      return <><EmpleadoPortal /><WhatsAppFloat phone={waPhone} /></>;
   if (route === "agencia" || route === "") return <><AgenciaPortal /><WhatsAppFloat phone={waPhone} /></>;
   if (route === "carreras" || route.startsWith("carreras/")) return <><ReclutamientoPortal /><WhatsAppFloat phone={waPhone} /></>;
@@ -556,12 +750,21 @@ export default function App() {
   if (route === "despedidas" || route.startsWith("despedidas/")) return <><Despedidas /><WhatsAppFloat phone={waPhone} /></>;
   if (route === "contratistas" || route === "contratistas/exito") return <ContratistasPortal />;
   if (route.startsWith("contratistas/curso/")) return <ContratistasCurso token={route.slice("contratistas/curso/".length)} />;
+  if (route.startsWith("contratistas/registro/")) {
+    // /contratistas/registro/<eventoId>            → modo nuevo
+    // /contratistas/registro/<eventoId>/<token>    → modo gestión
+    const rest = route.slice("contratistas/registro/".length);
+    const [evId, tk] = rest.split("/");
+    return <ContratistasRegistro eventoId={evId} token={tk || null} />;
+  }
   if (route.startsWith("verificar/")) return <ContratistasVerificar code={route.slice("verificar/".length)} />;
+  if (route === "privacidad" || route === "politica-de-privacidad") return <PrivacidadPage />;
   if (route === "society")        return <VIPPortal />;
   if (route === "checkin-pax")    return <SelfCheckIn />;
   if (route.startsWith("m/"))     return <GuestPortal token={route.slice(2)} />;
   if (route.startsWith("room/"))  return <RoomQRLanding idOrNumero={decodeURIComponent(route.slice(5))} />;
   if (route.startsWith("pool/"))  return <PoolServicePortal qr={decodeURIComponent(route.slice(5))} />;
+  if (route === "meseros")        return <MeseroPortal />;
   if (route.startsWith("staff/")) return <StaffView eventoId={route.slice(6)} />;
   if (route === "housekeeping/inspeccion") return <HousekeepingInspection />;
   if (route.startsWith("housekeeping/")) return <CamareraPortal token={route.slice(13)} />;
@@ -587,6 +790,24 @@ export default function App() {
     return <ResultadosViewer />;
   }
 
+  // /track: portal de la agencia (AtolonTrack). Autenticado → OS con módulo
+  // analitica; si no → viewer público con clave (Analitica modo externo).
+  if (route === "track") {
+    if (session) {
+      return (
+        <ErrorBoundary>
+          <AtolanOS
+            activeModule="analitica"
+            onNavigate={navigate}
+            moduleContent={MODULE_MAP["analitica"]}
+            userEmail={session.user?.email}
+          />
+        </ErrorBoundary>
+      );
+    }
+    return <TrackViewer />;
+  }
+
   // /login: show login form if not authenticated, else fall through to OS
   if (route === "login" && !session) return <><Login /><WhatsAppFloat phone={waPhone} /></>;
 
@@ -594,11 +815,33 @@ export default function App() {
   if (!session) return <><Login /><WhatsAppFloat phone={waPhone} /></>;
 
   // Logged in but must change password first
-  if (mustChange) return <ForceChangePassword userEmail={session.user.email} onDone={() => setMustChange(false)} />;
+  if (mustChange) return <ForceChangePassword userEmail={session.user.email} motivo={pwdExpiredMotivo} onDone={() => setMustChange(false)} />;
+
+  // MFA gate — bloquear OS hasta que el segundo factor se complete
+  if (mfaState.checked && mfaState.needsChallenge && mfaState.factorId) {
+    return (
+      <MFAChallenge
+        factorId={mfaState.factorId}
+        userEmail={session.user.email}
+        onDone={() => setMfaState(s => ({ ...s, needsChallenge: false }))}
+        onCancel={() => setSession(null)}
+      />
+    );
+  }
+  if (mfaState.checked && mfaState.needsEnrollment) {
+    return (
+      <MFAEnrollment
+        userEmail={session.user.email}
+        motivo={`Tu rol "${mfaState.rolId}" exige autenticación en 2 pasos (política Atolón). Configurá tu app de autenticación ahora.`}
+        onDone={() => setMfaState(s => ({ ...s, needsEnrollment: false }))}
+      />
+    );
+  }
 
   // Logged in — show OS (internal, no WhatsApp button)
   return (
     <ErrorBoundary>
+      <VersionBanner />
       <AtolanOS
         activeModule={activeModule}
         onNavigate={navigate}

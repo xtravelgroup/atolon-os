@@ -174,10 +174,26 @@ export default function Requisiciones() {
   const enCompra = reqs.filter(r => r.estado === "En Compra" || r.estado === "Recibida Parcial").length;
   const totalMes = reqs.filter(r => r.estado !== "Rechazada" && r.estado !== "Borrador").reduce((s, r) => s + r.total, 0);
 
+  // Control interno H-5: aging — requisiciones activas con más de 30 días.
+  // Esto sirve para alertar al gerente de compras sobre pedidos olvidados
+  // o entregas parciales que nunca se cerraron.
+  const ESTADOS_ACTIVOS = ["Pendiente", "Aprobada", "En Compra", "Recibida Parcial"];
+  const ahora = Date.now();
+  const reqsAging = reqs.filter(r => {
+    if (!ESTADOS_ACTIVOS.includes(r.estado)) return false;
+    const t = r.created_at ? new Date(r.created_at).getTime() : 0;
+    if (!t) return false;
+    return (ahora - t) > 30 * 24 * 60 * 60 * 1000;
+  });
+  const agingCount = reqsAging.length;
+  const agingMonto = reqsAging.reduce((s, r) => s + Number(r.total || 0), 0);
+
   // ── Reglas de aprobación fijas ──────────────────────────────────────────────
   // Todas las req → gerente_general
   // Si monto > $12M o total semanal > $30M → requiere también dirección (super_admin)
-  const UMBRAL_DIRECCION = 12_000_000;
+  // Umbral para doble firma — requisiciones >= UMBRAL_DIRECCION requieren
+  // aprobación de gerente_general + super_admin/admin.
+  const UMBRAL_DIRECCION = 10_000_000;
   const UMBRAL_SEMANAL = 30_000_000;
 
   // Total aprobado esta semana (lunes a domingo)
@@ -215,7 +231,26 @@ export default function Requisiciones() {
   const handleSave = async (newReq) => {
     if (!supabase) return;
     const monto = Math.round(Number(newReq.total) || 0);
-    const nivel = monto >= UMBRAL_DIRECCION || (totalSemanal + monto > UMBRAL_SEMANAL) ? "direccion" : "gerente_general";
+
+    // Audit rank 100: totalSemanal del state local puede estar stale si dos
+    // reqs concurrentes se crean — ambas pasan el check (25M+4M<30M) y la
+    // segunda evita el escalado a Direccion. Re-fetch desde DB antes de
+    // decidir el nivel. Race remoto puro sigue posible pero la ventana baja
+    // de minutos a ~100ms (el tiempo entre fetch e insert).
+    let totalSemanalFresh = totalSemanal;
+    try {
+      const hoy = new Date();
+      const lunes = new Date(hoy);
+      lunes.setDate(hoy.getDate() - ((hoy.getDay() + 6) % 7));
+      const lunesStr = lunes.toISOString().slice(0, 10);
+      const { data: semR } = await supabase.from("requisiciones")
+        .select("total")
+        .in("estado", ["Aprobada", "En Compra", "Recibida Parcial", "Recibida"])
+        .gte("fecha", lunesStr);
+      totalSemanalFresh = (semR || []).reduce((s, r) => s + (r.total || 0), 0);
+    } catch (_) { /* fallback al state local si la consulta falla */ }
+
+    const nivel = monto >= UMBRAL_DIRECCION || (totalSemanalFresh + monto > UMBRAL_SEMANAL) ? "direccion" : "gerente_general";
 
     // Normalizar ítems: asegurar que cant, precioU, subtotal sean números enteros
     // (la columna total es INTEGER en Postgres)
@@ -281,8 +316,9 @@ export default function Requisiciones() {
   };
 
   // ── Crear orden de compra desde una requisición aprobada ─────────────────
-  // Auto-merge: si ya existe una OC con estado "emitida" para el mismo proveedor,
-  // se agregan los ítems a esa OC en lugar de crear una nueva.
+  // Siempre crea OC nueva. (Antes había auto-merge con OCs emitidas del mismo
+  // proveedor — generaba OCs invisibles para mesa de compras que se inflaban
+  // con docenas de items de reqs distintas. Reportado por Dailis 2026-06-20.)
   const generarOC = async (req) => {
     if (!supabase) return;
     if (!req.proveedor_id && !req.proveedor_nombre) {
@@ -291,13 +327,18 @@ export default function Requisiciones() {
     }
     const prov = proveedores.find(p => p.id === req.proveedor_id);
 
-    // Consolidar items del mismo producto (suma cantidades)
+    // Consolidar items del mismo producto Y mismo precio (suma cantidades).
+    // Si dos items tienen mismo nombre+unidad pero distinto precio, NO se
+    // consolidan — quedan como lineas separadas en la OC para preservar
+    // el precio real de cada item (audit rank 18). Antes la key era
+    // nombre|unidad y el precio del primero ganaba silenciosamente.
     const consolidar = (lista) => {
       const map = new Map();
       for (const it of lista) {
         const nombre = (it.nombre || it.item || "").trim();
         const unidad = (it.unidad || "").toLowerCase();
-        const key = `${nombre.toLowerCase()}|${unidad}`;
+        const precioU = Math.round(Number(it.precioU) || 0);
+        const key = `${nombre.toLowerCase()}|${unidad}|${precioU}`;
         const reqIds = it.req_id ? [it.req_id] : (it.req_ids || []);
         if (map.has(key)) {
           const ex = map.get(key);
@@ -311,8 +352,8 @@ export default function Requisiciones() {
             // sumar al stock local sin tener que cruzar con la requisición
             item_id: it.item_id || it.item_catalogo_id || null,
             loggro_id: it.loggro_id || null,
-            precioU: Math.round(Number(it.precioU) || 0),
-            subtotal: Math.round(Number(it.subtotal) || (Number(it.cant) || 0) * (Number(it.precioU) || 0)),
+            precioU,
+            subtotal: Math.round(Number(it.subtotal) || (Number(it.cant) || 0) * precioU),
             req_ids: reqIds.length ? reqIds : [req.id],
           });
         }
@@ -320,44 +361,11 @@ export default function Requisiciones() {
       return Array.from(map.values());
     };
 
-    // ¿Ya existe OC abierta (emitida) para este proveedor?
-    // IMPORTANTE: solo se mergea con OCs en estado "emitida" Y NO enviadas
-    // todavía al proveedor. Una OC con enviada_at o estado >= "enviada" se
-    // considera cerrada para nuevos items — siempre se crea una OC nueva.
     const provId = req.proveedor_id || prov?.id;
     const provNombre = prov?.nombre || req.proveedor_nombre || req.proveedor;
-    const ocExistente = ordenes.find(o =>
-      o.estado === "emitida" && !o.enviada_at &&
-      ((provId && o.proveedor_id === provId) ||
-       (!provId && (o.proveedor_nombre || "").trim().toLowerCase() === (provNombre || "").trim().toLowerCase()))
-    );
-
-    // Agregar todos los req_ids únicos presentes en el conjunto consolidado.
-    const aggregateReqIds = (items) => {
-      const set = new Set();
-      for (const it of items) {
-        if (it.req_id) set.add(it.req_id);
-        if (Array.isArray(it.req_ids)) it.req_ids.forEach(id => id && set.add(id));
-      }
-      return Array.from(set);
-    };
 
     let codigo, ocData;
-    if (ocExistente) {
-      // ── Auto-merge con la OC existente ──
-      const nuevosItems = (req.items || []).map(it => ({ ...it, req_id: req.id }));
-      const merged = consolidar([...(ocExistente.items || []), ...nuevosItems]);
-      const subtotal = merged.reduce((s, it) => s + (Number(it.subtotal) || 0), 0);
-      const reqIdsExistentes = Array.isArray(ocExistente.requisicion_ids) ? ocExistente.requisicion_ids : (ocExistente.requisicion_id ? [ocExistente.requisicion_id] : []);
-      const reqIdsAll = Array.from(new Set([...reqIdsExistentes, ...aggregateReqIds(merged), req.id]));
-      const { data, error } = await supabase.from("ordenes_compra").update({
-        items: merged, subtotal, total: subtotal,
-        requisicion_ids: reqIdsAll,
-      }).eq("id", ocExistente.id).select().single();
-      if (error) { alert("Error: " + error.message); return; }
-      codigo = ocExistente.codigo;
-      ocData = data;
-    } else {
+    {
       // ── Nueva OC ──
       codigo = `OC-${new Date().getFullYear()}-${String(ordenes.length + 1).padStart(4, "0")}`;
       const items = consolidar((req.items || []).map(it => ({ ...it, req_id: req.id })));
@@ -416,6 +424,9 @@ export default function Requisiciones() {
         <StatCard label="Aprobadas listas para OC" value={aprobadas} color={B.success} />
         <StatCard label="En proceso de compra" value={enCompra} color={B.sky} />
         <StatCard label="Gasto comprometido" value={COP(totalMes)} color={B.sand} />
+        <StatCard label="⚠ Aging > 30 días" value={agingCount}
+          sub={agingCount > 0 ? COP(agingMonto) : "todo al día"}
+          color={agingCount > 0 ? B.danger : B.success} />
       </div>
 
       {/* Tabs */}
@@ -726,35 +737,66 @@ function ReqCard({ req, reglas, onSelect }) {
 function TabAprobaciones({ reqs, reglas, onOpen, currentUser, reload }) {
   const aprobar = async (r, accion) => {
     if (!supabase) return;
+
+    // Control interno H-2: motivo obligatorio en rechazo (mínimo 10 chars)
+    let motivoRechazo = null;
+    if (accion === "rechazada") {
+      motivoRechazo = window.prompt(
+        "Motivo del rechazo (mínimo 10 caracteres, control de calidad):"
+      );
+      if (!motivoRechazo || motivoRechazo.trim().length < 10) {
+        alert("El motivo es obligatorio y debe tener al menos 10 caracteres. Rechazo cancelado.");
+        return;
+      }
+      motivoRechazo = motivoRechazo.trim();
+    }
+
+    // Control interno H-3: no aprobar con total $0
+    if (accion === "aprobada" && (!r.total || Number(r.total) <= 0)) {
+      alert("No se puede aprobar la requisición " + r.id + " con total $0. Valoriza los items primero.");
+      return;
+    }
+
     const aprobaciones = [...(r.aprobaciones || []), {
       quien: currentUser.nombre,
       rol: currentUser.rol,
       fecha: new Date().toLocaleString("es-CO"),
       accion,
+      motivo: motivoRechazo || null,
     }];
     const timeline = [...(r.timeline || []), {
       quien: currentUser.nombre,
       accion: accion === "rechazada" ? "Rechazada" : "Aprobada por " + currentUser.nombre,
       fecha: new Date().toLocaleString("es-CO"),
+      comentario: motivoRechazo || null,
     }];
 
     if (accion === "rechazada") {
       await supabase.from("requisiciones").update({
-        estado: "Rechazada", aprobaciones, timeline, updated_at: new Date().toISOString(),
+        estado: "Rechazada", aprobaciones, timeline,
+        rechazada_motivo: motivoRechazo,
+        updated_at: new Date().toISOString(),
       }).eq("id", r.id);
     } else {
-      // Verificar si necesita más aprobaciones
+      // Doble firma estricta para reqs nivel "direccion" (>= $10M):
+      // - gerente_general_* DEBE firmar (no se cuenta super_admin como gerente)
+      // - super_admin o admin DEBE firmar (la firma de control de gobierno)
+      // Esto matchea el trigger SQL req_aprobador_check.
       const nivel = r.nivel_aprobacion || "gerente_general";
-      const yaGerenteAprobo = aprobaciones.some(a => a.accion === "aprobada" && esGerenteGeneralRol(a.rol));
-      const yaDireccionAprobo = aprobaciones.some(a => a.accion === "aprobada" && (a.rol === "super_admin" || a.rol === "direccion"));
+      const yaGerenteAprobo   = aprobaciones.some(a => a.accion === "aprobada" && esGerenteGeneralRol(a.rol));
+      const yaDireccionAprobo = aprobaciones.some(a => a.accion === "aprobada" && (a.rol === "super_admin" || a.rol === "admin" || a.rol === "direccion"));
 
       let nuevoEstado = "Pendiente";
-      if (nivel === "gerente_general" && yaGerenteAprobo) {
-        nuevoEstado = "Aprobada"; // Gerente aprobó, pasa a compras
-      } else if (nivel === "direccion" && yaGerenteAprobo && yaDireccionAprobo) {
-        nuevoEstado = "Aprobada"; // Ambos aprobaron, pasa a compras
-      } else if (nivel === "direccion" && yaGerenteAprobo && !yaDireccionAprobo) {
-        nuevoEstado = "Pendiente"; // Gerente aprobó, falta dirección
+      if (nivel === "gerente_general") {
+        // <$10M: alcanza con gerente_general (o super_admin que cubre por jerarquía)
+        if (yaGerenteAprobo || aprobaciones.some(a => a.accion === "aprobada" && (a.rol === "super_admin" || a.rol === "admin"))) {
+          nuevoEstado = "Aprobada";
+        }
+      } else if (nivel === "direccion") {
+        // >=$10M: doble firma obligatoria — ambas firmas presentes
+        if (yaGerenteAprobo && yaDireccionAprobo) {
+          nuevoEstado = "Aprobada";
+        }
       }
 
       await supabase.from("requisiciones").update({
@@ -794,9 +836,10 @@ function TabAprobaciones({ reqs, reglas, onOpen, currentUser, reload }) {
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
         {reqs.map(r => {
           const nivel = r.nivel_aprobacion || "gerente_general";
-          const yaGerenteAprobo = (r.aprobaciones || []).some(a => a.accion === "aprobada" && esGerenteGeneralRol(a.rol));
+          const yaGerenteAprobo   = (r.aprobaciones || []).some(a => a.accion === "aprobada" && esGerenteGeneralRol(a.rol));
+          const yaDireccionAprobo = (r.aprobaciones || []).some(a => a.accion === "aprobada" && (a.rol === "super_admin" || a.rol === "admin" || a.rol === "direccion"));
           const reqDireccion = nivel === "direccion";
-          const esperaDireccion = reqDireccion && yaGerenteAprobo;
+          const esperaDireccion = reqDireccion && yaGerenteAprobo && !yaDireccionAprobo;
           const borderColor = reqDireccion ? B.warning : B.sky;
 
           return (
@@ -817,8 +860,12 @@ function TabAprobaciones({ reqs, reglas, onOpen, currentUser, reload }) {
                       {yaGerenteAprobo ? "✅ Gerente" : "⏳ Gerente"}
                     </span>
                     {reqDireccion && (
-                      <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 10, background: `${B.sand}22`, color: B.sand }}>
-                        {esperaDireccion ? "⏳ Dirección" : "— Dirección"}
+                      <span style={{
+                        fontSize: 10, padding: "2px 8px", borderRadius: 10,
+                        background: yaDireccionAprobo ? `${B.success}22` : `${B.sand}22`,
+                        color: yaDireccionAprobo ? B.success : B.sand,
+                      }}>
+                        {yaDireccionAprobo ? "✅ Dirección" : (esperaDireccion ? "⏳ Falta Dirección" : "— Dirección")}
                       </span>
                     )}
                     <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 10, background: `${B.navyLight}`, color: "rgba(255,255,255,0.3)" }}>
@@ -1205,12 +1252,53 @@ function TabRecibidas({ ordenes, reqs, reload, currentUser }) {
 
   const reabrir = async (oc) => {
     if (!window.confirm(`¿Reabrir OC ${oc.codigo}?\n\nVuelve a Recepciones para ajustar cantidades. Útil si se marcó como recibida por error.`)) return;
+
+    // Encontrar requisiciones origen (mismo patron que marcarRecibida).
+    const reqDeItems = (oc.items || [])
+      .flatMap(it => Array.isArray(it.req_ids) ? it.req_ids : (it.req_id ? [it.req_id] : []));
+    const reqIdsOrigen = Array.from(new Set([
+      ...((Array.isArray(oc.requisicion_ids) ? oc.requisicion_ids : []) || []),
+      ...(oc.requisicion_id ? [oc.requisicion_id] : []),
+      ...reqDeItems,
+    ].filter(Boolean)));
+
     const { error } = await supabase.from("ordenes_compra").update({
       estado: "recibida_parcial",
       recibida_at: null,
       updated_at: new Date().toISOString(),
     }).eq("id", oc.id);
     if (error) return alert("Error: " + error.message);
+
+    // Propagar el revert a las requisiciones origen.
+    // Si una req estaba 'Recibida' (marcada como completa) y tenia items
+    // en ESTA OC, ya no esta completa — volverla a 'Recibida Parcial'
+    // (asumiendo que tenia algun recibido; sino, queda en el estado anterior).
+    // No tocamos reqs en otros estados (En Compra, Aprobada, etc).
+    for (const reqId of reqIdsOrigen) {
+      const req = reqs.find(r => r.id === reqId);
+      if (!req) continue;
+      if (req.estado !== "Recibida") continue;
+
+      const itemsDeEsteReq = (oc.items || []).filter(it =>
+        it.req_id === reqId || (Array.isArray(it.req_ids) && it.req_ids.includes(reqId))
+      );
+      if (itemsDeEsteReq.length === 0) continue;
+
+      const algunRecibido = (Array.isArray(req.recibidos) ? req.recibidos : [])
+        .some(r => Number(r.cant_recibida) > 0);
+      const nuevoEstadoReq = algunRecibido ? "Recibida Parcial" : "En Compra";
+
+      await supabase.from("requisiciones").update({
+        estado: nuevoEstadoReq,
+        timeline: [...(req.timeline || []), {
+          quien: currentUser?.nombre || "—",
+          accion: `Revertida a ${nuevoEstadoReq} (OC ${oc.codigo} reabrió)`,
+          fecha: new Date().toLocaleString("es-CO"),
+          comentario: `OC ${oc.codigo} se reabrió — recepción de esta req queda parcial.`,
+        }],
+      }).eq("id", req.id);
+    }
+
     reload?.();
   };
 
@@ -1452,14 +1540,21 @@ function RecepcionOCModal({ oc, reqs, onClose, reload, currentUser, readOnly = f
     if (todoRecibido) nuevoEstado = "recibida";
     else if (algoRecibido) nuevoEstado = "recibida_parcial";
 
+    // Fecha de recepción ORIGINAL: solo se fija la primera vez. En re-guardados
+    // (ej. vincular productos a Loggro después) NO se sobreescribe — así la
+    // entrada a Loggro queda con la fecha real en que llegó la mercancía.
+    const fechaRecepcionOriginal = oc.fecha_recepcion || oc.recibida_at || new Date().toISOString();
+
     // 1. Actualizar la OC
     await supabase.from("ordenes_compra").update({
       estado: nuevoEstado,
-      recibidos: recibidos.map(r => ({ item_id: r.id, cant_recibida: r.cant_recibida })),
+      // Persistir loggro_id por ítem: así el detalle de OC sabe cuáles
+      // realmente subieron a Loggro (los que NO tienen link no suben).
+      recibidos: recibidos.map(r => ({ item_id: r.id, cant_recibida: r.cant_recibida, loggro_id: r.loggro_id || null, nombre: r.item })),
       notas_recibo: notas,
       factura_numero: numFactura.trim() || null,
       factura_fecha: fechaFactura || null,
-      fecha_recepcion: new Date().toISOString(),
+      fecha_recepcion: fechaRecepcionOriginal,
       recibida_por: currentUser.nombre,
     }).eq("id", oc.id);
 
@@ -1467,9 +1562,15 @@ function RecepcionOCModal({ oc, reqs, onClose, reload, currentUser, readOnly = f
     //    Cada req se evalúa por sus PROPIOS items: si todos sus items están
     //    completos → "Recibida"; si algunos → "Recibida Parcial"; si ninguno
     //    de sus items se recibió en esta entrega → no toca el estado.
-    const reqIdsOrigen = Array.isArray(oc.requisicion_ids) && oc.requisicion_ids.length > 0
-      ? oc.requisicion_ids
-      : (oc.requisicion_id ? [oc.requisicion_id] : []);
+    // En OC consolidadas requisicion_ids/requisicion_id están vacíos y el
+    // link a requisición vive en cada item (items[].req_ids). Unir todo.
+    const reqDeItems = (oc.items || [])
+      .flatMap(it => Array.isArray(it.req_ids) ? it.req_ids : (it.req_id ? [it.req_id] : []));
+    const reqIdsOrigen = Array.from(new Set([
+      ...((Array.isArray(oc.requisicion_ids) ? oc.requisicion_ids : []) || []),
+      ...(oc.requisicion_id ? [oc.requisicion_id] : []),
+      ...reqDeItems,
+    ].filter(Boolean)));
 
     for (const reqId of reqIdsOrigen) {
       const req = reqs.find(r => r.id === reqId);
@@ -1481,17 +1582,20 @@ function RecepcionOCModal({ oc, reqs, onClose, reload, currentUser, readOnly = f
       );
       if (itemsDeEsteReq.length === 0) continue;
 
-      // Lookup de cantidades recibidas por id de item (en esta entrega)
+      // Lookup de cantidades recibidas por id de item (en esta entrega).
+      // recibidos contiene el TOTAL acumulado del input (el form muestra el
+      // valor previo y el usuario edita ese mismo total — no es una delta).
+      // La OC se persiste con este valor absoluto (linea 1561). req.recibidos
+      // DEBE persistirse igual — el bug previo sumaba previos+actual, inflando
+      // 5→10→17 a cada re-save (audit rank 17).
       const recibidoPorId = new Map(recibidos.map(r => [r.id, Number(r.cant_recibida) || 0]));
       const totalEsperadoReq = itemsDeEsteReq.reduce((s, it) => s + Number(it.cant), 0);
       const totalRecibidoReq = itemsDeEsteReq.reduce((s, it) => s + (recibidoPorId.get(it.id) || 0), 0);
 
-      // Acumular contra recibidos previos de la req (si ya hubo recepción parcial antes)
-      const previos = Array.isArray(req.recibidos) ? req.recibidos : [];
-      const previosMap = new Map(previos.map(p => [p.item_id, Number(p.cant_recibida) || 0]));
+      // Valor ABSOLUTO del input — mismo que se persiste en la OC.
       const recibidosFinales = itemsDeEsteReq.map(it => ({
         item_id: it.id,
-        cant_recibida: (previosMap.get(it.id) || 0) + (recibidoPorId.get(it.id) || 0),
+        cant_recibida: recibidoPorId.get(it.id) || 0,
       }));
 
       // Estado final de la req
@@ -1539,9 +1643,17 @@ function RecepcionOCModal({ oc, reqs, onClose, reload, currentUser, readOnly = f
       }));
       await supabase.from("items_stock_locacion").upsert(upserts, { onConflict: "item_id,locacion_id" });
 
-      // Auditoría: 1 fila por item en items_ajustes
+      // Auditoría: 1 fila por item en items_ajustes.
+      // Audit rank 70: el id era 'AJ-{codigo}-{item}' (determinístico solo
+      // por OC + item). En recepciones parciales sucesivas del mismo item,
+      // el segundo upsert pisaba el primero — cantidad_antes/despues/diferencia
+      // reflejaban solo la ultima recepcion y auditoria de inventario
+      // imposible de reconstruir. Ahora incluimos timestamp para conservar
+      // una fila por recepcion. Idempotencia ante DOBLE-CLICK en el MISMO
+      // save (mismo timestamp) se mantiene gracias al onConflict.
+      const recepcionTs = Date.now();
       const ajustes = movimientos.map(m => ({
-        id: `AJ-${oc.codigo}-${m.item_id}`,
+        id: `AJ-${oc.codigo}-${m.item_id}-${recepcionTs}`,
         item_id: m.item_id,
         locacion_id: bodegaDestino,
         tipo: "manual",
@@ -1551,7 +1663,6 @@ function RecepcionOCModal({ oc, reqs, onClose, reload, currentUser, readOnly = f
         motivo: `Recepción ${oc.codigo}${oc.requisicion_id ? ` (Req ${oc.requisicion_id})` : ""}${numFactura ? ` · Factura ${numFactura}` : ""}`,
         usuario_email: (currentUser.email || currentUser.nombre || ""),
       }));
-      // upsert por id determinístico para que reintentos no dupliquen
       await supabase.from("items_ajustes").upsert(ajustes, { onConflict: "id" });
     }
 
@@ -1568,8 +1679,21 @@ function RecepcionOCModal({ oc, reqs, onClose, reload, currentUser, readOnly = f
             ingredient_id: r.loggro_id,
             quantity: Number(r.cant_recibida),
             cost: Number(r.precioU) || 0,
+            // Unidad de ORIGEN (factura/OC). El edge function la compara con
+            // la unidad del ingrediente en Loggro y convierte si difieren
+            // (ej. factura en KG, Loggro en Gr → ×1000, costo ÷1000).
+            unit: r.unidad || r.unidad_compra || null,
           }));
         const sinLoggroId = recibidos.filter(r => (Number(r.cant_recibida) || 0) > 0 && !r.loggro_id);
+        // Resolver el proveedor en Loggro: el id de Loggro vive en
+        // proveedores.loggro_id (NO existe oc.proveedor_loggro_id). Sin esto
+        // el movimiento Entrada-Compra quedaba SIN proveedor.
+        let provLoggroId = oc.proveedor_loggro_id || null;
+        if (!provLoggroId && oc.proveedor_id) {
+          const { data: prov } = await supabase
+            .from("proveedores").select("loggro_id").eq("id", oc.proveedor_id).maybeSingle();
+          provLoggroId = prov?.loggro_id || null;
+        }
         if (ingredientsPayload.length === 0) {
           alert("Ningún ítem recibido tiene loggro_id mapeado. No se puede registrar en Loggro.\n\nVincula los productos en el módulo Inventario → Productos → '🔗 Sync Loggro'.");
         } else {
@@ -1579,7 +1703,10 @@ function RecepcionOCModal({ oc, reqs, onClose, reload, currentUser, readOnly = f
             body: JSON.stringify({
               type: 1,
               isSubtracted: false,
-              provider_id: oc.proveedor_loggro_id || null,
+              provider_id: provLoggroId,
+              // La entrada a Loggro usa la fecha de recepción ORIGINAL (no la
+              // fecha en que se vincularon los productos / se re-guardó).
+              date: fechaRecepcionOriginal,
               note: `OC ${oc.codigo}${oc.requisicion_id ? ` · Req ${oc.requisicion_id}` : ""}${notas ? " · " + notas : ""}`,
               invoice: numFactura ? { number: numFactura, date: fechaFactura } : undefined,
               ingredients: ingredientsPayload,
@@ -1713,6 +1840,16 @@ function RecepcionOCModal({ oc, reqs, onClose, reload, currentUser, readOnly = f
                       ) : (
                         <div style={{ fontSize: 9, color: B.success, marginTop: 3, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
                           <span>🔗 Vinculado a Loggro: <strong>{nombreCatalogo}</strong></span>
+                          <select
+                            value=""
+                            onChange={e => e.target.value && vincularManual(i, e.target.value)}
+                            title="Cambiar el producto/ingrediente de Loggro vinculado"
+                            style={{ fontSize: 10, padding: "2px 4px", borderRadius: 4, background: B.navy, color: B.sand, border: `1px solid ${B.sand}55`, maxWidth: 200 }}>
+                            <option value="">✏️ Cambiar vínculo…</option>
+                            {catalogo.filter(c => c.loggro_id && c.id !== r.item_id).map(c => (
+                              <option key={c.id} value={c.id}>{c.nombre} {c.unidad ? `(${c.unidad})` : ""}</option>
+                            ))}
+                          </select>
                           {nombreDifiere && (
                             <button onClick={() => actualizarNombreProducto(i)}
                               disabled={actualizandoNombre === i}
@@ -2150,7 +2287,7 @@ function NewReqModal({ tipoInicial, areaInicial, onClose, onSave, proveedores, r
     }
     Promise.all([
       supabase.from("items_categorias").select("nombre, departamento").eq("activo", true),
-      supabase.from("items_catalogo").select("id, nombre, unidad, categoria").eq("activo", true).order("nombre"),
+      supabase.from("items_catalogo").select("id, nombre, unidad, categoria, precio_compra, loggro_id").eq("activo", true).order("nombre"),
     ]).then(([catR, itemR]) => {
       const catsDepto = (catR.data || []).filter(c => c.departamento === depto).map(c => c.nombre);
       setCatalogoCats(catsDepto);
@@ -2294,6 +2431,12 @@ function NewReqModal({ tipoInicial, areaInicial, onClose, onSave, proveedores, r
                       if (selectedItem) {
                         updateItem(i, "unidad", selectedItem.unidad || "Unidades");
                         updateItem(i, "item_catalogo_id", selectedItem.id);
+                        updateItem(i, "item_id", selectedItem.id);
+                        updateItem(i, "loggro_id", selectedItem.loggro_id || null);
+                        // Precio unitario = última compra (precio_compra del
+                        // catálogo, que se actualiza con cada factura aplicada).
+                        const ultimaCompra = Number(selectedItem.precio_compra) || 0;
+                        if (ultimaCompra > 0) updateItem(i, "precioU", ultimaCompra);
                       }
                     }}
                   />
@@ -2862,15 +3005,18 @@ function DetailModal({ req, onClose, onUpdate, onGenerarOC, proveedores, reglas,
                 {provsAsignados.length > 0 && (
                   <button disabled={splitting}
                     onClick={async () => {
-                      if (!confirm(`Generar/actualizar ${provsAsignados.length} OC${provsAsignados.length !== 1 ? "s" : ""}? (Se hace auto-merge si el proveedor tiene OC abierta)`)) return;
+                      if (!confirm(`Generar ${provsAsignados.length} OC${provsAsignados.length !== 1 ? "s" : ""} nueva${provsAsignados.length !== 1 ? "s" : ""}?`)) return;
                       setSplitting(true);
 
+                      // Key incluye precioU para no perder precios distintos
+                      // del mismo nombre+unidad (audit rank 18).
                       const consolidar = (lista) => {
                         const map = new Map();
                         for (const it of lista) {
                           const nombre = (it.nombre || it.item || "").trim();
                           const unidad = (it.unidad || "").toLowerCase();
-                          const key = `${nombre.toLowerCase()}|${unidad}`;
+                          const precioU = Math.round(Number(it.precioU) || 0);
+                          const key = `${nombre.toLowerCase()}|${unidad}|${precioU}`;
                           const reqIds = it.req_id ? [it.req_id] : (it.req_ids || []);
                           if (map.has(key)) {
                             const ex = map.get(key);
@@ -2880,8 +3026,8 @@ function DetailModal({ req, onClose, onUpdate, onGenerarOC, proveedores, reglas,
                           } else {
                             map.set(key, {
                               id: it.id, item: nombre, cant: Number(it.cant) || 0, unidad: it.unidad,
-                              precioU: Math.round(Number(it.precioU) || 0),
-                              subtotal: Math.round(Number(it.subtotal) || (Number(it.cant) || 0) * (Number(it.precioU) || 0)),
+                              precioU,
+                              subtotal: Math.round(Number(it.subtotal) || (Number(it.cant) || 0) * precioU),
                               req_ids: reqIds.length ? reqIds : [req.id],
                             });
                           }
@@ -2904,32 +3050,22 @@ function DetailModal({ req, onClose, onUpdate, onGenerarOC, proveedores, reglas,
                           subtotal: Math.round(Number(x.subtotal) || (Number(x.cant) || 0) * (Number(x.precioU) || 0)),
                           req_id: req.id,
                         }));
-                        // ¿Existe OC emitida para este proveedor?
-                        const existente = (ocsActuales || []).find(o => o.proveedor_id === pid);
-                        if (existente) {
-                          const merged = consolidar([...(existente.items || []), ...nuevos]);
-                          const subtotal = merged.reduce((s, it) => s + (Number(it.subtotal) || 0), 0);
-                          const { error } = await supabase.from("ordenes_compra").update({
-                            items: merged, subtotal, total: subtotal,
-                          }).eq("id", existente.id);
-                          if (error) { setSplitting(false); return alert("Error: " + error.message); }
-                          ocsGeneradas.push({ codigo: existente.codigo, idxs: g.items.map(x => x._idx), merge: true });
-                        } else {
-                          newCount++;
-                          const codigo = `OC-${new Date().getFullYear()}-${String((totalOcs || 0) + newCount).padStart(4, "0")}`;
-                          const items = consolidar(nuevos);
-                          const subtotal = items.reduce((s, it) => s + it.subtotal, 0);
-                          const { error } = await supabase.from("ordenes_compra").insert({
-                            codigo, requisicion_id: req.id,
-                            proveedor_id: prov.id, proveedor_nombre: prov.nombre,
-                            proveedor_nit: prov.nit || null, proveedor_email: prov.email || null, proveedor_telefono: prov.telefono || null,
-                            fecha_emision: todayStr(), items, subtotal, iva: 0, total: subtotal,
-                            estado: "emitida", emitida_por: currentUser.nombre,
-                            notas: `División de ${req.id} · ${items.length} ítems`,
-                          });
-                          if (error) { setSplitting(false); return alert("Error: " + error.message); }
-                          ocsGeneradas.push({ codigo, idxs: g.items.map(x => x._idx), merge: false });
-                        }
+                        // Siempre crear OC nueva (sin auto-merge — ver generarOC arriba).
+                        newCount++;
+                        const codigo = `OC-${new Date().getFullYear()}-${String((totalOcs || 0) + newCount).padStart(4, "0")}`;
+                        const items = consolidar(nuevos);
+                        const subtotal = items.reduce((s, it) => s + it.subtotal, 0);
+                        const { error } = await supabase.from("ordenes_compra").insert({
+                          codigo, requisicion_id: req.id,
+                          requisicion_ids: [req.id],
+                          proveedor_id: prov.id, proveedor_nombre: prov.nombre,
+                          proveedor_nit: prov.nit || null, proveedor_email: prov.email || null, proveedor_telefono: prov.telefono || null,
+                          fecha_emision: todayStr(), items, subtotal, iva: 0, total: subtotal,
+                          estado: "emitida", emitida_por: currentUser.nombre,
+                          notas: `División de ${req.id} · ${items.length} ítems`,
+                        });
+                        if (error) { setSplitting(false); return alert("Error: " + error.message); }
+                        ocsGeneradas.push({ codigo, idxs: g.items.map(x => x._idx), merge: false });
                       }
                       // Marcar items con oc_codigo en la requisición
                       const idxToOc = {};
@@ -3004,8 +3140,47 @@ function DetailModal({ req, onClose, onUpdate, onGenerarOC, proveedores, reglas,
             )}
             {puedeAprobar && (
               <>
-                <button onClick={() => advance("Aprobada", "Aprobada", { aprobador_id: currentUser.id, aprobador_nombre: currentUser.nombre, aprobada_at: new Date().toISOString() })} style={BTN(B.success)}>✓ Aprobar</button>
-                <button onClick={() => advance("Rechazada", "Rechazada", { rechazada_motivo: comment })} style={BTN(B.danger)}>✕ Rechazar</button>
+                <button
+                  onClick={() => {
+                    // Control interno H-3: no aprobar con total = 0
+                    if (!req.total || Number(req.total) <= 0) {
+                      alert("No se puede aprobar una requisición con total $0.\n\nValoriza los items antes (cada item debe tener precio unitario > 0).");
+                      return;
+                    }
+                    // Control interno H-1: registrar la aprobación en aprobaciones[]
+                    // para trazabilidad. El trigger DB exige al menos 1 entry.
+                    const nuevaAprobacion = {
+                      quien: currentUser.nombre,
+                      usuario_id: currentUser.id,
+                      rol: currentUser.rol,
+                      accion: "aprobada",
+                      fecha: new Date().toISOString(),
+                      comentario: comment || null,
+                      monto: req.total,
+                    };
+                    const aprobacionesActualizadas = [
+                      ...(Array.isArray(req.aprobaciones) ? req.aprobaciones : []),
+                      nuevaAprobacion,
+                    ];
+                    advance("Aprobada", "Aprobada", {
+                      aprobador_id: currentUser.id,
+                      aprobador_nombre: currentUser.nombre,
+                      aprobada_at: new Date().toISOString(),
+                      aprobaciones: aprobacionesActualizadas,
+                    });
+                  }}
+                  style={BTN(B.success)}>✓ Aprobar</button>
+                <button
+                  onClick={() => {
+                    // Control interno H-2: motivo obligatorio para rechazo, mínimo 10 chars
+                    const motivo = (comment || "").trim();
+                    if (motivo.length < 10) {
+                      alert("Para rechazar la requisición debes escribir un motivo de al menos 10 caracteres en el campo Comentario.\n\nEjemplos:\n• Precio fuera de presupuesto Q3\n• Falta cotización alternativa\n• Item ya disponible en bodega central");
+                      return;
+                    }
+                    advance("Rechazada", "Rechazada", { rechazada_motivo: motivo });
+                  }}
+                  style={BTN(B.danger)}>✕ Rechazar</button>
               </>
             )}
             {(req.estado === "En Compra" || req.estado === "Recibida Parcial") && (
@@ -3102,6 +3277,9 @@ export function TabMesaCompras({ reqs, ordenes, proveedores, currentUser, reload
           req_proveedor_id: r.proveedor_id, req_proveedor_nombre: r.proveedor_nombre || r.proveedor,
           item_idx: idx,
           item_id: it.id || `${r.id}-${idx}`,
+          // Link al catálogo / Loggro tal como viene en el ítem de la req.
+          cat_item_id: it.item_id || it.item_catalogo_id || null,
+          loggro_id: it.loggro_id || null,
           nombre: it.item || it.nombre,
           cant: Number(it.cant) || 0,
           unidad: it.unidad,
@@ -3118,6 +3296,60 @@ export function TabMesaCompras({ reqs, ordenes, proveedores, currentUser, reload
   const [search, setSearch] = useState("");
   const [asignarModal, setAsignarModal] = useState(false);
   const [cancelarModal, setCancelarModal] = useState(false);
+  // Catálogo (id, nombre, loggro_id) para mostrar/forzar el link a Loggro
+  // ANTES de recibir, así al recibir ya están vinculados.
+  const [catalogo, setCatalogo] = useState([]);
+  const [linkItem, setLinkItem] = useState(null); // ítem de mesa a vincular
+
+  useEffect(() => {
+    supabase.from("items_catalogo").select("id, nombre, loggro_id, unidad").eq("activo", true)
+      .then(({ data }) => setCatalogo(data || []));
+  }, []);
+
+  // ¿El ítem ya tiene link a Loggro? Directo (loggro_id en la req) o vía
+  // catálogo (por item_id o por nombre exacto) con loggro_id.
+  const norm = (s) => String(s || "").trim().toLowerCase();
+  // Devuelve el producto de catálogo al que está vinculado el ítem (o null).
+  const resolverCatalogo = (it) => {
+    if (it.cat_item_id) {
+      const byId = catalogo.find(c => c.id === it.cat_item_id);
+      if (byId) return byId;
+    }
+    if (it.loggro_id) {
+      const byLg = catalogo.find(c => c.loggro_id === it.loggro_id);
+      if (byLg) return byLg;
+    }
+    const byName = catalogo.find(c => norm(c.nombre) === norm(it.nombre) && c.loggro_id);
+    return byName || null;
+  };
+  const resolverLoggro = (it) => {
+    if (it.loggro_id) return it.loggro_id;
+    const cat = resolverCatalogo(it);
+    return cat?.loggro_id || null;
+  };
+
+  // Persistir el link (item_id catálogo + loggro_id) en el ítem de la req,
+  // para que la OC y la recepción lo hereden ya vinculado.
+  const vincularItemAReq = async (mesaItem, cat) => {
+    const req = reqs.find(r => r.id === mesaItem.req_id);
+    if (!req) return;
+    const nuevosItems = (req.items || []).map((it, idx) =>
+      idx === mesaItem.item_idx
+        ? { ...it, item_id: cat.id, loggro_id: cat.loggro_id || null }
+        : it);
+    const { error } = await supabase.from("requisiciones").update({
+      items: nuevosItems,
+      timeline: [...(req.timeline || []), {
+        quien: currentUser?.nombre || "—",
+        accion: `Ítem "${mesaItem.nombre}" vinculado a Loggro desde Mesa de Compras`,
+        fecha: new Date().toLocaleString("es-CO"),
+        comentario: `→ ${cat.nombre} (loggro ${cat.loggro_id || "—"})`,
+      }],
+    }).eq("id", req.id);
+    if (error) { alert("Error al vincular: " + error.message); return; }
+    setLinkItem(null);
+    reload();
+  };
 
   // Cancelar items seleccionados con motivo (duplicado / solicitante / otro)
   const cancelarItems = async (motivo, motivoTexto) => {
@@ -3275,7 +3507,33 @@ export function TabMesaCompras({ reqs, ordenes, proveedores, currentUser, reload
                     background: isSel(it) ? B.success + "15" : "transparent",
                   }}>
                   <input type="checkbox" checked={isSel(it)} onChange={() => {}} style={{ width: 16, height: 16, accentColor: B.success }} />
-                  <div style={{ fontSize: 13, color: B.white }}>{it.nombre}</div>
+                  <div style={{ fontSize: 13, color: B.white }}>
+                    {it.nombre}
+                    {(() => {
+                      const lg = resolverLoggro(it);
+                      const catLink = resolverCatalogo(it);
+                      return lg
+                        ? (
+                          <span style={{ marginLeft: 8, display: "inline-flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                            <span style={{ fontSize: 9, padding: "1px 6px", background: "#22c55e22", color: "#22c55e", borderRadius: 6, fontWeight: 700 }}>🔗 {catLink?.nombre || "Vinculado a Loggro"}</span>
+                            <button onClick={(e) => { e.stopPropagation(); setLinkItem(it); }}
+                              title="Cambiar el producto/ingrediente vinculado"
+                              style={{ fontSize: 9, padding: "1px 7px", borderRadius: 6, border: `1px solid ${B.sand}`, background: B.sand + "22", color: B.sand, fontWeight: 700, cursor: "pointer" }}>
+                              ✏️ Editar
+                            </button>
+                          </span>
+                        )
+                        : (
+                          <span style={{ marginLeft: 8, display: "inline-flex", gap: 6, alignItems: "center" }}>
+                            <span style={{ fontSize: 9, padding: "1px 6px", background: B.warning + "22", color: B.warning, borderRadius: 6, fontWeight: 700 }}>⚠️ Sin Loggro</span>
+                            <button onClick={(e) => { e.stopPropagation(); setLinkItem(it); }}
+                              style={{ fontSize: 9, padding: "1px 7px", borderRadius: 6, border: `1px solid ${B.sky}`, background: B.sky + "22", color: B.sky, fontWeight: 700, cursor: "pointer" }}>
+                              🔗 Vincular
+                            </button>
+                          </span>
+                        );
+                    })()}
+                  </div>
                   <div style={{ fontSize: 12, color: "rgba(255,255,255,0.55)", textAlign: "center" }}>{it.cant} {it.unidad || ""}</div>
                   <div style={{ fontSize: 12, color: "rgba(255,255,255,0.55)", textAlign: "right" }}>{COP(it.precioU)}</div>
                   <div style={{ fontSize: 13, fontWeight: 700, color: B.sand, textAlign: "right" }}>{COP(it.subtotal)}</div>
@@ -3306,7 +3564,60 @@ export function TabMesaCompras({ reqs, ordenes, proveedores, currentUser, reload
           onConfirm={cancelarItems}
         />
       )}
+
+      {linkItem && (
+        <LinkLoggroModal
+          mesaItem={linkItem}
+          catalogo={catalogo}
+          onClose={() => setLinkItem(null)}
+          onPick={(cat) => vincularItemAReq(linkItem, cat)}
+        />
+      )}
     </>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// LinkLoggroModal — vincular un ítem de Mesa de Compras a un producto del
+// catálogo que tenga loggro_id, para que llegue a la recepción ya enlazado.
+// ═══════════════════════════════════════════════════════════════════════════
+function LinkLoggroModal({ mesaItem, catalogo, onClose, onPick }) {
+  const [q, setQ] = useState(mesaItem?.nombre || "");
+  const norm = (s) => String(s || "").trim().toLowerCase();
+  const conLoggro = (catalogo || []).filter(c => c.loggro_id);
+  const res = q.trim()
+    ? conLoggro.filter(c => norm(c.nombre).includes(norm(q))).slice(0, 40)
+    : conLoggro.slice(0, 40);
+  return (
+    <div onClick={e => e.target === e.currentTarget && onClose()}
+      style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 1200, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: 24, overflowY: "auto" }}>
+      <div style={{ background: B.navy, borderRadius: 14, width: "100%", maxWidth: 560, border: `1px solid ${B.navyLight}`, color: B.white, marginTop: 30 }}>
+        <div style={{ padding: 16, borderBottom: `1px solid ${B.navyLight}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div>
+            <div style={{ fontSize: 15, fontWeight: 800 }}>🔗 Vincular a Loggro</div>
+            <div style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", marginTop: 3 }}>{mesaItem?.nombre}</div>
+          </div>
+          <button onClick={onClose} style={{ background: "transparent", border: "none", color: "#fff", fontSize: 20, cursor: "pointer" }}>×</button>
+        </div>
+        <div style={{ padding: 16 }}>
+          <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder="Buscar producto del catálogo (con Loggro)…"
+            style={{ ...IS, width: "100%", marginBottom: 12 }} />
+          {res.length === 0
+            ? <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", padding: 16, textAlign: "center" }}>Sin productos con Loggro que coincidan.</div>
+            : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 360, overflowY: "auto" }}>
+                {res.map(c => (
+                  <button key={c.id} onClick={() => onPick(c)}
+                    style={{ textAlign: "left", padding: "8px 12px", borderRadius: 8, border: `1px solid ${B.navyLight}`, background: B.navyMid, color: B.white, fontSize: 12, cursor: "pointer", display: "flex", justifyContent: "space-between", gap: 10 }}>
+                    <span>{c.nombre}</span>
+                    <span style={{ fontSize: 9, padding: "1px 6px", background: "#22c55e22", color: "#22c55e", borderRadius: 6, fontWeight: 700, whiteSpace: "nowrap" }}>🔗 {c.unidad || "—"}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -3335,13 +3646,16 @@ export function AsignarOCModal({ items, proveedores, ordenes, reqs, currentUser,
     setSaving(true);
     const prov = proveedores.find(p => p.id === provId);
 
-    // Consolidar items del mismo producto en una sola línea (suma cantidades)
+    // Consolidar items con mismo nombre + unidad + PRECIO. Si difiere el
+    // precio, quedan lineas separadas para no perder el precio nuevo
+    // (audit rank 18).
     const consolidar = (lista) => {
       const map = new Map();
       for (const it of lista) {
         const nombre = (it.nombre || it.item || "").trim();
         const unidad = (it.unidad || "").toLowerCase();
-        const key = `${nombre.toLowerCase()}|${unidad}`;
+        const precioU = Math.round(Number(it.precioU) || 0);
+        const key = `${nombre.toLowerCase()}|${unidad}|${precioU}`;
         const reqIds = it.req_id ? [it.req_id] : (it.req_ids || []);
         if (map.has(key)) {
           const ex = map.get(key);
@@ -3354,8 +3668,8 @@ export function AsignarOCModal({ items, proveedores, ordenes, reqs, currentUser,
             item: nombre,
             cant: Number(it.cant) || 0,
             unidad: it.unidad,
-            precioU: Math.round(Number(it.precioU) || 0),
-            subtotal: Math.round(Number(it.subtotal) || (Number(it.cant) || 0) * (Number(it.precioU) || 0)),
+            precioU,
+            subtotal: Math.round(Number(it.subtotal) || (Number(it.cant) || 0) * precioU),
             req_ids: reqIds,
           });
         }
@@ -3365,51 +3679,48 @@ export function AsignarOCModal({ items, proveedores, ordenes, reqs, currentUser,
 
     const ocItems = consolidar(items);
 
+    // Req IDs únicos consolidados — para poblar requisicion_ids jsonb
+    // y permitir trazabilidad OC → Req (control interno H-7)
+    const reqIdsConsolidados = [...new Set(items.map(i => i.req_id).filter(Boolean))];
+
     let ocIdFinal;
     let codigo;
     if (modo === "nueva") {
-      // Auto-merge: si ya hay OC emitida para este proveedor, agregar a esa
-      const ocAbierta = ordenes.find(o => o.estado === "emitida" && o.proveedor_id === prov.id);
-      if (ocAbierta) {
-        const merged = consolidar([...(ocAbierta.items || []), ...items]);
-        const subtotal = merged.reduce((s, it) => s + (Number(it.subtotal) || 0), 0);
-        const { error } = await supabase.from("ordenes_compra").update({
-          items: merged, subtotal, total: subtotal,
-        }).eq("id", ocAbierta.id);
-        if (error) { setSaving(false); return alert("Error: " + error.message); }
-        ocIdFinal = ocAbierta.id;
-        codigo = ocAbierta.codigo;
-      } else {
-        codigo = `OC-${new Date().getFullYear()}-${String(ordenes.length + 1).padStart(4, "0")}`;
-        const subtotal = ocItems.reduce((s, it) => s + it.subtotal, 0);
-        const { data, error } = await supabase.from("ordenes_compra").insert({
-          codigo,
-          proveedor_id: prov.id,
-          proveedor_nombre: prov.nombre,
-          proveedor_nit: prov.nit || null,
-          proveedor_email: prov.email || null,
-          proveedor_telefono: prov.telefono || null,
-          fecha_emision: todayStr(),
-          items: ocItems,
-          subtotal,
-          iva: 0,
-          total: subtotal,
-          estado: "emitida",
-          emitida_por: currentUser.nombre,
-          notas: `Consolidado desde ${[...new Set(items.map(i => i.req_id))].join(", ")}`,
-        }).select().single();
-        if (error) { setSaving(false); return alert("Error creando OC: " + error.message); }
-        ocIdFinal = data.id;
-      }
+      // Siempre crear OC nueva (sin auto-merge — ver generarOC arriba).
+      codigo = `OC-${new Date().getFullYear()}-${String(ordenes.length + 1).padStart(4, "0")}`;
+      const subtotal = ocItems.reduce((s, it) => s + it.subtotal, 0);
+      const { data, error } = await supabase.from("ordenes_compra").insert({
+        codigo,
+        proveedor_id: prov.id,
+        proveedor_nombre: prov.nombre,
+        proveedor_nit: prov.nit || null,
+        proveedor_email: prov.email || null,
+        proveedor_telefono: prov.telefono || null,
+        fecha_emision: todayStr(),
+        items: ocItems,
+        subtotal,
+        iva: 0,
+        total: subtotal,
+        estado: "emitida",
+        emitida_por: currentUser.nombre,
+        requisicion_ids: reqIdsConsolidados,
+        notas: `Consolidado desde ${reqIdsConsolidados.join(", ")}`,
+      }).select().single();
+      if (error) { setSaving(false); return alert("Error creando OC: " + error.message); }
+      ocIdFinal = data.id;
     } else {
       // Agregar a OC existente — consolidar con items ya presentes
       const oc = ordenes.find(o => o.id === ocId);
       const merged = consolidar([...(oc.items || []), ...items]);
       const subtotal = merged.reduce((s, it) => s + (Number(it.subtotal) || 0), 0);
+      const reqIdsPrev = Array.isArray(oc.requisicion_ids) ? oc.requisicion_ids
+                       : (oc.requisicion_id ? [oc.requisicion_id] : []);
+      const reqIdsAll = [...new Set([...reqIdsPrev, ...reqIdsConsolidados])];
       const { error } = await supabase.from("ordenes_compra").update({
         items: merged,
         subtotal,
         total: subtotal,
+        requisicion_ids: reqIdsAll,
       }).eq("id", ocId);
       if (error) { setSaving(false); return alert("Error actualizando OC: " + error.message); }
       ocIdFinal = ocId;

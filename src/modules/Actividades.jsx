@@ -47,7 +47,7 @@ const FORMAS_PAGO = [
 const EMPTY_ACT = {
   nombre: "", categoria: "Otro", descripcion: "",
   precio: "", precio_nino: "0", precio_tipo: "por_persona", duracion: "",
-  cupo_max: "", proveedor: "", activo: true, orden: "0",
+  cupo_max: "", proveedor: "", activo: true, orden: "0", self_service: false,
 };
 
 // ─── Catalogo Tab ─────────────────────────────────────────────────────────────
@@ -81,6 +81,7 @@ export function TabCatalogo() {
       proveedor:   a.proveedor || "",
       activo:      a.activo !== false,
       orden:       String(a.orden ?? "0"),
+      self_service: a.self_service === true,
     });
     setModal(a);
   };
@@ -88,19 +89,27 @@ export function TabCatalogo() {
 
   const save = async () => {
     if (!supabase || !form.nombre.trim()) return;
+    // Rechazar precios/cupos negativos. Antes un -100 se guardaba como
+    // tarifa visible al cliente — el booking engine la mostraba con "$ -100"
+    // y el operador no se daba cuenta hasta que alguien intentaba reservar.
+    const precio      = Math.max(0, Number(form.precio) || 0);
+    const precioNino  = Math.max(0, Number(form.precio_nino) || 0);
+    const cupoMaxNum  = form.cupo_max !== "" ? Math.max(0, Number(form.cupo_max) || 0) : null;
+    const orden       = Math.max(0, Number(form.orden) || 0);
     setSaving(true);
     const payload = {
       nombre:      form.nombre.trim(),
       categoria:   form.categoria,
       descripcion: form.descripcion || "",
-      precio:      Number(form.precio) || 0,
-      precio_nino: Number(form.precio_nino) || 0,
+      precio:      precio,
+      precio_nino: precioNino,
       duracion:    form.duracion || "",
-      cupo_max:    form.cupo_max !== "" ? Number(form.cupo_max) : null,
+      cupo_max:    cupoMaxNum,
       precio_tipo: form.precio_tipo || "por_persona",
       proveedor:   form.proveedor || null,
       activo:      form.activo,
-      orden:       Number(form.orden) || 0,
+      orden:       orden,
+      self_service: !!form.self_service,
     };
     let error;
     if (modal === "new") {
@@ -120,6 +129,10 @@ export function TabCatalogo() {
   const toggleActivo = async (id, current) => {
     await supabase.from("actividades").update({ activo: !current }).eq("id", id);
     setItems(prev => prev.map(a => a.id === id ? { ...a, activo: !current } : a));
+  };
+  const toggleSelfService = async (id, current) => {
+    await supabase.from("actividades").update({ self_service: !current }).eq("id", id);
+    setItems(prev => prev.map(a => a.id === id ? { ...a, self_service: !current } : a));
   };
 
   const del = async (id) => {
@@ -166,6 +179,11 @@ export function TabCatalogo() {
                     </span>
                   </div>
                   <div style={{ display: "flex", gap: 6 }}>
+                    <button onClick={() => toggleSelfService(a.id, a.self_service)}
+                      title="Mostrar en Self-Service (habitaciones y pool)"
+                      style={{ background: a.self_service ? B.sky + "22" : B.navyLight, color: a.self_service ? B.sky : "rgba(255,255,255,0.4)", border: "none", borderRadius: 7, padding: "4px 10px", fontSize: 11, cursor: "pointer" }}>
+                      {a.self_service ? "✓ Self-Service" : "Self-Service"}
+                    </button>
                     <button onClick={() => toggleActivo(a.id, a.activo)}
                       style={{ background: a.activo ? B.success + "22" : B.navyLight, color: a.activo ? B.success : "rgba(255,255,255,0.4)", border: "none", borderRadius: 7, padding: "4px 10px", fontSize: 11, cursor: "pointer" }}>
                       {a.activo ? "Activo" : "Inactivo"}
@@ -292,6 +310,12 @@ export function TabCatalogo() {
               <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, cursor: "pointer" }}>
                 <input type="checkbox" checked={form.activo} onChange={e => f("activo", e.target.checked)} />
                 Activo (visible en punto de venta)
+              </label>
+
+              {/* Self-Service */}
+              <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, cursor: "pointer", marginTop: 8 }}>
+                <input type="checkbox" checked={!!form.self_service} onChange={e => f("self_service", e.target.checked)} />
+                Mostrar en Self-Service (habitaciones y pool)
               </label>
             </div>
 

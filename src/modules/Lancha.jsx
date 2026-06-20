@@ -63,6 +63,22 @@ export default function Lancha() {
   const [capitanModal, setCapitanModal] = useState(null); // { edit? }
 
   const [loadErrors, setLoadErrors] = useState([]);
+  const [esSuper, setEsSuper] = useState(false); // solo super admin puede borrar viajes
+
+  // ¿El usuario es super admin? (roles.permisos["*"])
+  useEffect(() => {
+    (async () => {
+      try {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user?.email) return;
+        const { data: u } = await supabase.from("usuarios").select("rol_id").eq("email", user.email).maybeSingle();
+        if (!u?.rol_id) return;
+        const { data: rol } = await supabase.from("roles").select("permisos").eq("id", u.rol_id).maybeSingle();
+        if (rol?.permisos?.["*"]) setEsSuper(true);
+      } catch (_) { /* sin permiso de borrado */ }
+    })();
+  }, []);
+
   const load = useCallback(async () => {
     setLoading(true);
     setLoadErrors([]);
@@ -126,6 +142,16 @@ export default function Lancha() {
   }, [activeLancha]);
   useEffect(() => { load(); }, []); // eslint-disable-line
 
+  // Solo super admin: eliminar un zarpe (muelle_zarpes_flota) o llegada
+  // (muelle_llegadas) incorrecto. Recalcula los viajes al recargar.
+  const onEliminarViaje = useCallback(async (tabla, id, label) => {
+    if (!esSuper || !id) return;
+    if (!window.confirm(`¿Eliminar este registro (${label})?\n\nEsta acción no se puede deshacer y recalculará los viajes.`)) return;
+    const { error } = await supabase.from(tabla).delete().eq("id", id);
+    if (error) { alert("No se pudo eliminar:\n" + error.message); return; }
+    load();
+  }, [esSuper, load]);
+
   const lancha = lanchas.find(l => l.id === activeLancha);
   const bitacoraLancha = useMemo(() => bitacora.filter(b => b.lancha_id === activeLancha), [bitacora, activeLancha]);
   // Normaliza nombre: lowercase, sin tildes, colapsa letras repetidas.
@@ -147,15 +173,26 @@ export default function Lancha() {
   const capitanesLancha = useMemo(() => capitanes.filter(c => c.lancha_id === activeLancha), [capitanes, activeLancha]);
 
   // ─── Viajes computados por fecha ─────────────────────────────────────
-  // Lógica: cada llegada se parea con el siguiente zarpe del mismo barco.
-  // Si hay 2 llegadas seguidas → zarpe perdido. Si hay 2 zarpes seguidos
-  // → llegada perdida. # viajes = max(llegadas, zarpes) por día.
+  // Pareo Z→L (mismo para todas las lanchas): cada zarpe abre un viaje,
+  // la siguiente llegada lo cierra. El día funciona desde la perspectiva
+  // del muelle Bodeguita — al ver un Z, sabemos que el bote salió hacia
+  // su destino; al ver la próxima L, regresó. Ese par = 1 viaje completo.
+  //
+  // El campo `home_base` cambia solo la SEMÁNTICA visual:
+  //  - "cartagena" (Naturalle): Z = ida a Atolón · L = vuelta a Bodeguita.
+  //  - "atolon" (Castillete): Z = vuelta a Atolón (su casa) · L = ida a
+  //    Bodeguita (a recoger gente). Mecánicamente idéntico — solo cambia
+  //    el banner de regla en la UI.
+  //
+  // # viajes/día = max(llegadas, zarpes).
+  const homeBase = (lancha?.home_base || "cartagena").toLowerCase();
   const viajesPorFecha = useMemo(() => {
     const byDate = {}; // fecha → { llegadas: [{hora}], zarpes: [{hora}] }
     llegadasLancha.forEach(l => {
       const f = (l.fecha || "").slice(0, 10);
       if (!f) return;
       (byDate[f] ||= { llegadas: [], zarpes: [] }).llegadas.push({
+        id: l.id,
         hora: (l.hora_llegada || "").slice(0, 5),
         pax_a: l.pax_a || 0,
         pax_n: l.pax_n || 0,
@@ -165,6 +202,7 @@ export default function Lancha() {
       const f = (z.fecha || "").slice(0, 10);
       if (!f) return;
       (byDate[f] ||= { llegadas: [], zarpes: [] }).zarpes.push({
+        id: z.id,
         hora: (z.hora_zarpe || "").slice(0, 5),
         destino: z.destino,
         pax_a: z.pax_a || 0,
@@ -177,27 +215,33 @@ export default function Lancha() {
       const d = byDate[fecha];
       d.llegadas.sort((a, b) => a.hora.localeCompare(b.hora));
       d.zarpes.sort((a, b) => a.hora.localeCompare(b.hora));
-      // Pareo cronológico
-      const pares = [];
-      let pendienteA = null;
       const eventos = [
         ...d.llegadas.map(l => ({ ...l, tipo: "L" })),
         ...d.zarpes.map(z => ({ ...z, tipo: "Z" })),
       ].sort((a, b) => a.hora.localeCompare(b.hora));
+
+      // Pareo Z→L: cada Z abre un viaje, la siguiente L lo cierra.
+      //  - Otra Z antes de su L = llegada perdida en la previa.
+      //  - Una L sin Z pendiente = zarpe perdido en esa L (no se registró
+      //    el zarpe que la causó).
+      //  - Z pendiente al fin del día = viaje en curso (sin L de regreso aún).
+      const pares = [];
+      let pendienteZ = null;
       eventos.forEach(ev => {
-        if (ev.tipo === "L") {
-          if (pendienteA) pares.push({ llegada: pendienteA.hora, zarpe: null }); // zarpe perdido
-          pendienteA = ev;
-        } else {
-          if (pendienteA) {
-            pares.push({ llegada: pendienteA.hora, zarpe: ev.hora });
-            pendienteA = null;
+        if (ev.tipo === "Z") {
+          if (pendienteZ) pares.push({ llegada: null, zarpe: pendienteZ });
+          pendienteZ = ev;
+        } else { // L
+          if (pendienteZ) {
+            pares.push({ llegada: ev, zarpe: pendienteZ });
+            pendienteZ = null;
           } else {
-            pares.push({ llegada: null, zarpe: ev.hora }); // llegada perdida
+            pares.push({ llegada: ev, zarpe: null });
           }
         }
       });
-      if (pendienteA) pares.push({ llegada: pendienteA.hora, zarpe: null });
+      if (pendienteZ) pares.push({ llegada: null, zarpe: pendienteZ });
+
       const viajes = Math.max(d.llegadas.length, d.zarpes.length);
       return {
         fecha,
@@ -207,7 +251,7 @@ export default function Lancha() {
         pares,
       };
     });
-  }, [llegadasLancha, zarpesLancha]);
+  }, [llegadasLancha, zarpesLancha, homeBase]);
 
   // Costo por viaje (ida y vuelta) = 2 × costo_viaje_sencillo
   const costoPorViaje = useMemo(() => {
@@ -521,8 +565,10 @@ export default function Lancha() {
         <MotoresTab activeLancha={activeLancha} lanchas={lanchas} />
       )}
       {tab === "combustible" && (
-        <ListaEventos
+        <CombustibleTab
           items={bitacoraLancha.filter(b => b.tipo === "combustible")}
+          viajesPorFecha={viajesPorFecha}
+          costoPorViaje={costoPorViaje}
           onEdit={(e) => setModal({ tipo: "combustible", edit: e })}
           onDelete={borrarEvento}
         />
@@ -562,7 +608,7 @@ export default function Lancha() {
         />
       )}
       {tab === "viajes" && (
-        <ListaViajesComputados viajesPorFecha={viajesPorFecha} costoPorViaje={costoPorViaje} />
+        <ListaViajesComputados viajesPorFecha={viajesPorFecha} costoPorViaje={costoPorViaje} homeBase={homeBase} esSuper={esSuper} onEliminarViaje={onEliminarViaje} />
       )}
       {tab === "todos" && (
         <ListaEventos
@@ -930,6 +976,161 @@ function EventoRow({ item, onEdit, onDelete, onToggleResuelto, compact }) {
   );
 }
 
+// ─── Combustible: recargas con barra de autonomía ─────────────────────────
+// Cada recarga de $1.100.000 rinde ~4 viajes ida y vuelta (≈ $275.000 c/u).
+// La barra se llena a medida que los viajes consumen el combustible:
+//   · Viaje completo (zarpe + llegada) = 1 viaje
+//   · Tramo suelto (solo zarpe o solo llegada) = 0,5 viaje
+// El consumo de cada recarga cuenta los viajes desde su fecha/hora hasta
+// la siguiente recarga (o hasta ahora si es la más reciente).
+// El costo por viaje (ida+vuelta) viene parametrizado por embarcación
+// (`lancha.costo_viaje_sencillo * 2`) — el padre lo pasa vía prop.
+
+function fmtViajes(n) {
+  const r = Math.round(n * 10) / 10;
+  return (Number.isInteger(r) ? String(r) : r.toFixed(1)).replace(".", ",");
+}
+
+function CombustibleTab({ items, viajesPorFecha, costoPorViaje, onEdit, onDelete }) {
+  // Fallback defensivo: si el padre no nos pasa costoPorViaje (lancha sin
+  // costo_viaje_sencillo configurado en DB), asumimos $275K (valor histórico
+  // de Naturalle) para no dividir por 0.
+  const costoViajeEfectivo = Number(costoPorViaje) > 0 ? Number(costoPorViaje) : 275000;
+  // Consumo por día = número de ZARPES. Cada zarpe es 1 viaje ida y vuelta
+  // (el bote sale y regresa → consume 1). NO depende de emparejar la
+  // llegada de regreso (que a veces se registra con el nombre mal escrito
+  // y no matchea). Boca Chica ya viene excluido de zarpesLancha.
+  const consumoPorDia = useMemo(() => {
+    return (viajesPorFecha || []).map(d => ({
+      fecha:  (d.fecha || "").slice(0, 10),
+      viajes: Number(d.zarpes) || 0,
+    }));
+  }, [viajesPorFecha]);
+
+  // Recargas con consumo en DOS eras separadas por una fecha de corte:
+  //   · ANTES del corte (< FIFO_DESDE): lógica histórica de ventana de fecha.
+  //     Cada recarga consume los viajes en [su fecha, fecha siguiente recarga
+  //     o el corte). Queda congelada — no se re-organiza.
+  //   · DESDE el corte (≥ FIFO_DESDE): consumo FIFO — cada viaje consume
+  //     primero la recarga más antigua con cupo. Una recarga nueva no arranca
+  //     hasta que la anterior se agota.
+  // El corte (domingo 17-may-2026) lo pidió el usuario: las recargas previas
+  // ya estaban correctas, FIFO solo organiza de ahí en adelante.
+  const recargas = useMemo(() => {
+    const FIFO_DESDE = "2026-05-17";
+    const dOf = (r) => (r.fecha || "").slice(0, 10);
+    const asc = [...(items || [])].sort((a, b) =>
+      dOf(a).localeCompare(dOf(b)) || (a.hora || "").localeCompare(b.hora || "")
+    );
+    const recs = asc.map(r => ({
+      ...r,
+      _d: dOf(r),
+      capacidad: Math.max(1, Math.round(Number(r.costo_total || 0) / costoViajeEfectivo)),
+      consumido: 0,
+    }));
+    const viajesAsc = [...(consumoPorDia || [])]
+      .filter(x => x.fecha && x.viajes > 0)
+      .sort((a, b) => a.fecha.localeCompare(b.fecha));
+
+    // ── Era PRE-corte: ventana de fecha (lógica histórica congelada) ──
+    const recsPre = recs.filter(r => r._d < FIFO_DESDE);
+    recsPre.forEach((r, i) => {
+      const next = recsPre[i + 1];
+      const dEnd = next ? next._d : FIFO_DESDE;  // la ventana nunca pasa el corte
+      r.consumido = viajesAsc
+        .filter(x => x.fecha >= r._d && x.fecha < dEnd)
+        .reduce((s, x) => s + x.viajes, 0);
+    });
+
+    // ── Era FIFO: recargas y viajes desde el corte ──
+    const recsFifo  = recs.filter(r => r._d >= FIFO_DESDE);
+    const viajesFifo = viajesAsc.filter(x => x.fecha >= FIFO_DESDE);
+    for (const v of viajesFifo) {
+      let pend = v.viajes;
+      while (pend > 0) {
+        const idx = recsFifo.findIndex(rc => rc._d <= v.fecha && rc.consumido < rc.capacidad);
+        if (idx === -1) {
+          // Todas las recargas FIFO elegibles llenas → overflow a la última
+          // (señal de sobre-consumo: gastaste más de lo que recargaste)
+          let lastElig = null;
+          for (const rc of recsFifo) { if (rc._d <= v.fecha) lastElig = rc; }
+          if (!lastElig) break; // viaje sin recarga FIFO previa → no atribuible
+          lastElig.consumido += pend;
+          pend = 0;
+          break;
+        }
+        const rc = recsFifo[idx];
+        const toma = Math.min(rc.capacidad - rc.consumido, pend);
+        rc.consumido += toma;
+        pend -= toma;
+      }
+    }
+
+    // "ACTUAL" = la recarga FIFO más antigua con cupo (la que se consume hoy).
+    // Si todas las FIFO están llenas → la más reciente de todas.
+    const activaFifo = recsFifo.find(rc => rc.consumido < rc.capacidad);
+    const activaId = activaFifo?.id || recs[recs.length - 1]?.id;
+    return recs.map(r => {
+      const restante = Math.max(0, r.capacidad - r.consumido);
+      const pct = r.capacidad > 0 ? Math.min(100, (r.consumido / r.capacidad) * 100) : 0;
+      return { ...r, ts: `${r._d}T${(r.hora || "00:00").slice(0, 5)}`, restante, pct, activa: r.id === activaId };
+    }).reverse(); // más reciente primero
+  }, [items, consumoPorDia, costoViajeEfectivo]);
+
+  if (!recargas.length) {
+    return (
+      <div style={{ padding: 30, background: B.navyMid, borderRadius: 10, textAlign: "center", fontSize: 13, color: "rgba(255,255,255,0.3)" }}>
+        Sin recargas de combustible.
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      {recargas.map(r => {
+        const agotado = r.restante <= 0;
+        const bajo = !agotado && r.restante <= 1;
+        const barColor = agotado ? B.danger : bajo ? B.warning : B.success;
+        return (
+          <div key={r.id} style={{ background: B.navyMid, borderRadius: 12, padding: 16, border: r.activa ? `1px solid ${barColor}55` : "1px solid rgba(255,255,255,0.05)" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: "#fff" }}>
+                  {fmtFechaCorta(r.fecha)}
+                  {r.hora && <span style={{ color: "rgba(255,255,255,0.45)", fontWeight: 400 }}> · {fmtHora(r.hora)}</span>}
+                  {r.activa && <span style={{ marginLeft: 8, fontSize: 10, padding: "2px 8px", borderRadius: 4, background: B.sky + "33", color: B.sky, fontWeight: 700 }}>ACTUAL</span>}
+                </div>
+                <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginTop: 3, display: "flex", gap: 10, flexWrap: "wrap" }}>
+                  {r.costo_total && <strong style={{ color: B.success }}>{fmtCOP(r.costo_total)}</strong>}
+                  {r.galones && <span>· ⛽ {Number(r.galones).toFixed(1)} gal</span>}
+                  {r.proveedor && <span>· {r.proveedor}</span>}
+                </div>
+              </div>
+              <div style={{ display: "flex", gap: 6 }}>
+                {onEdit && <button onClick={() => onEdit(r)} style={{ background: "transparent", border: "none", color: "rgba(255,255,255,0.4)", fontSize: 14, cursor: "pointer" }}>✏️</button>}
+                {onDelete && <button onClick={() => onDelete(r.id)} style={{ background: "transparent", border: "none", color: "rgba(255,255,255,0.3)", fontSize: 14, cursor: "pointer" }}>✕</button>}
+              </div>
+            </div>
+
+            <div style={{ marginTop: 12 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, marginBottom: 5, flexWrap: "wrap", gap: 6 }}>
+                <span style={{ color: "rgba(255,255,255,0.6)" }}>{fmtViajes(r.consumido)} / {r.capacidad} viajes ida y vuelta</span>
+                <span style={{ color: barColor, fontWeight: 700 }}>
+                  {agotado ? "⚠️ Recargar combustible" : `Quedan ${fmtViajes(r.restante)} viaje${r.restante === 1 ? "" : "s"}`}
+                </span>
+              </div>
+              <div style={{ height: 16, background: "rgba(255,255,255,0.08)", borderRadius: 8, overflow: "hidden" }}>
+                <div style={{ width: `${r.pct}%`, height: "100%", background: barColor, borderRadius: 8, transition: "width .4s ease" }} />
+              </div>
+            </div>
+            {r.notas && <div style={{ fontSize: 11, color: "rgba(255,255,255,0.45)", marginTop: 8, fontStyle: "italic" }}>{r.notas}</div>}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 // ─── Lista de viajes (desde muelle_zarpes_flota) ───────────────────────────
 // ─── Lista de Viajes Computados ───────────────────────────────────────
 // Computa viajes a partir de muelle_llegadas + muelle_zarpes_flota usando:
@@ -938,7 +1139,7 @@ function EventoRow({ item, onEdit, onDelete, onToggleResuelto, compact }) {
 //   · Si hay 2 zarpes seguidos → llegada perdida (?? perdido)
 //   · # viajes = max(llegadas, zarpes)
 //   · Costo combustible (estimado) = viajes × costo_viaje_sencillo × 2
-function ListaViajesComputados({ viajesPorFecha, costoPorViaje }) {
+function ListaViajesComputados({ viajesPorFecha, costoPorViaje, homeBase = "cartagena", esSuper, onEliminarViaje }) {
   if (!viajesPorFecha.length) {
     return (
       <div style={{ padding: 30, background: B.navyMid, borderRadius: 10, textAlign: "center", fontSize: 13, color: "rgba(255,255,255,0.3)" }}>
@@ -955,9 +1156,14 @@ function ListaViajesComputados({ viajesPorFecha, costoPorViaje }) {
       {/* Banner de regla */}
       <div style={{ background: B.navy, border: `1px solid ${B.sand}33`, borderRadius: 10, padding: "10px 14px", marginBottom: 12, fontSize: 11, color: "rgba(255,255,255,0.65)", lineHeight: 1.55 }}>
         <strong style={{ color: B.sand }}>📐 Regla de viajes:</strong>
-        Cada viaje = ida y vuelta (Cartagena ↔ Atolón). Se calcula como{" "}
-        <code style={{ color: B.sky }}>max(llegadas registradas, zarpes registrados)</code> por día.
-        Eventos faltantes se infieren cuando hay 2 llegadas (zarpe perdido) o 2 zarpes seguidos (llegada perdida).
+        {homeBase === "atolon" ? (
+          <> Esta lancha duerme en <strong>Atolón</strong>. Cada viaje desde el muelle de Bodeguita ={" "}
+          <code style={{ color: "#a78bfa" }}>Z</code> (sale a Atolón) → <code style={{ color: B.sky }}>L</code> (regresa a recoger gente).</>
+        ) : (
+          <> Esta lancha duerme en <strong>Cartagena</strong>. Cada viaje ={" "}
+          <code style={{ color: "#a78bfa" }}>Z</code> (zarpa de Bodeguita a Atolón) → <code style={{ color: B.sky }}>L</code> (regresa a Bodeguita).</>
+        )}{" "}
+        Total = <code style={{ color: B.sand }}>max(llegadas, zarpes)</code> por día. Eventos sueltos se marcan como faltantes.
       </div>
 
       <div style={{ background: B.navyMid, borderRadius: 10, overflow: "hidden" }}>
@@ -979,14 +1185,26 @@ function ListaViajesComputados({ viajesPorFecha, costoPorViaje }) {
             <div style={{ display: "flex", flexWrap: "wrap", gap: 6, paddingLeft: 110 }}>
               {d.pares.map((p, i) => {
                 const incompleto = !p.llegada || !p.zarpe;
+                const delBtn = (ev, tabla, lbl) => (esSuper && ev?.id ? (
+                  <button onClick={() => onEliminarViaje(tabla, ev.id, `${lbl} ${ev.hora || ""} · ${fmtFechaCorta(d.fecha)}`)}
+                    title={`Eliminar ${lbl} (solo super admin)`}
+                    style={{ background: "transparent", border: "none", color: B.danger, fontSize: 11, fontWeight: 800, cursor: "pointer", padding: "0 2px", lineHeight: 1 }}>✕</button>
+                ) : null);
                 return (
                   <span key={i} style={{
                     fontSize: 10, padding: "3px 8px", borderRadius: 4,
                     background: incompleto ? B.danger + "22" : B.success + "18",
                     color: incompleto ? B.danger : "rgba(255,255,255,0.6)",
                     border: incompleto ? `1px dashed ${B.danger}55` : "1px solid transparent",
+                    display: "inline-flex", alignItems: "center", gap: 3,
                   }}>
-                    {p.llegada || "??"}→{p.zarpe || "??"}
+                    {/* Orden cronológico real del viaje: zarpe (sale) → llegada
+                        (regresa). Antes pintaba L→Z lo que dejaba las horas
+                        invertidas (L 13:50 antes que Z 10:07). 🛫 = zarpe,
+                        🛬 = llegada. */}
+                    🛫{p.zarpe?.hora || "??"}{delBtn(p.zarpe, "muelle_zarpes_flota", "zarpe")}
+                    →
+                    🛬{p.llegada?.hora || "??"}{delBtn(p.llegada, "muelle_llegadas", "llegada")}
                   </span>
                 );
               })}
@@ -1067,6 +1285,12 @@ function EventoModal({ tipo: tipoInicial, edit, onClose, onSave, capitanDefault 
   }
 
   async function handleSave() {
+    // Guard contra doble-click. El boton ya tiene disabled={saving||uploading}
+    // pero entre el primer onClick y el re-render con saving=true hay un
+    // microtask que un click muy rapido podia colarse — resultaba en dos
+    // INSERTs idénticos a lancha_bitacora (ej. dos cargas de combustible
+    // en el mismo timestamp).
+    if (saving) return;
     setSaving(true); setErr("");
     const error = await onSave(f);
     setSaving(false);
@@ -1224,6 +1448,7 @@ function ConfigLanchaModal({ lancha, onClose, onSaved }) {
     marina_costo_mensual: lancha.marina_costo_mensual || "",
     marina_proveedor: lancha.marina_proveedor || "",
     marina_activa: !!lancha.marina_activa,
+    home_base: lancha.home_base || "cartagena",
     foto_url: lancha.foto_url || "",
     notas: lancha.notas || "",
   });
@@ -1248,6 +1473,7 @@ function ConfigLanchaModal({ lancha, onClose, onSaved }) {
       capacidad_pax: f.capacidad_pax ? Number(f.capacidad_pax) : null,
       capacidad_tanque_gal: f.capacidad_tanque_gal ? Number(f.capacidad_tanque_gal) : null,
       ano: f.ano ? Number(f.ano) : null,
+      home_base: f.home_base || "cartagena",
       costo_viaje_sencillo: f.costo_viaje_sencillo ? Number(f.costo_viaje_sencillo) : 0,
       tarifa_alquiler_ida_vuelta: f.tarifa_alquiler_ida_vuelta ? Number(f.tarifa_alquiler_ida_vuelta) : 0,
       marina_costo_mensual: f.marina_costo_mensual ? Number(f.marina_costo_mensual) : 0,
@@ -1275,7 +1501,17 @@ function ConfigLanchaModal({ lancha, onClose, onSaved }) {
         <div><label style={LS}>Año</label><input type="number" value={f.ano} onChange={e => set("ano", e.target.value)} style={IS} /></div>
         <div><label style={LS}>Motor</label><input value={f.motor} onChange={e => set("motor", e.target.value)} placeholder="Ej: Yamaha 200HP" style={IS} /></div>
         <div><label style={LS}>Modelo</label><input value={f.modelo} onChange={e => set("modelo", e.target.value)} style={IS} /></div>
-        <div style={{ gridColumn: "1 / -1" }}><label style={LS}>Capitán principal</label><input value={f.capitan_default} onChange={e => set("capitan_default", e.target.value)} style={IS} /></div>
+        <div><label style={LS}>Capitán principal</label><input value={f.capitan_default} onChange={e => set("capitan_default", e.target.value)} style={IS} /></div>
+        <div>
+          <label style={LS}>Dónde duerme la lancha</label>
+          <select value={f.home_base} onChange={e => set("home_base", e.target.value)} style={IS}>
+            <option value="cartagena">Cartagena (zarpa→Atolón→regresa)</option>
+            <option value="atolon">Atolón (sale de Atolón→Cartagena→regresa)</option>
+          </select>
+          <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", marginTop: 4 }}>
+            Define el orden de eventos del viaje. Cambia el pareo llegada↔zarpe en la tab Viajes.
+          </div>
+        </div>
 
         <div style={{ gridColumn: "1 / -1", marginTop: 6, paddingTop: 14, borderTop: "1px solid rgba(255,255,255,0.08)" }}>
           <div style={{ fontSize: 11, color: B.sand, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em" }}>Costos operativos</div>

@@ -2,10 +2,23 @@ import { useState, useEffect, useCallback } from "react";
 import { B, todayStr } from "../brand";
 import { supabase } from "../lib/supabase";
 import { useMobile } from "../lib/useMobile";
+import { logAccion } from "../lib/logAccion";
 
 const IS = { width: "100%", padding: "10px 14px", borderRadius: 8, background: B.navyLight, border: `1px solid rgba(255,255,255,0.1)`, color: "#fff", fontSize: 13, outline: "none", boxSizing: "border-box", fontFamily: "inherit" };
 
 const fmtHora = (h) => h ? h.slice(0, 5) : "—";
+
+// "08:30" → "8:30 AM" · "16:30" → "4:30 PM"
+const fmtHora12 = (h) => {
+  if (!h || h === "—") return "—";
+  const [H, M] = String(h).slice(0, 5).split(":").map(Number);
+  if (isNaN(H)) return "—";
+  const ampm = H >= 12 ? "PM" : "AM";
+  const h12 = H % 12 === 0 ? 12 : H % 12;
+  return `${h12}:${String(M || 0).padStart(2, "0")} ${ampm}`;
+};
+// Las salidas se nombran por su HORA, no "Primera/Segunda Salida".
+const labelSalida = (s) => s ? `Salida ${fmtHora12(s.hora)}` : "Salida";
 
 // Departure times per salida
 const HORARIO_REGRESO = {
@@ -16,17 +29,33 @@ const HORARIO_REGRESO = {
 };
 
 // ─── Tarjeta de reserva individual ───────────────────────────────────────────
-function ReservaRow({ r, isMobile }) {
+const SEL = { background: B.navyLight, color: "#fff", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 8, fontSize: 11, padding: "4px 6px", outline: "none", maxWidth: 150 };
+
+function ReservaRow({ r, isMobile, salidas = [], embarcaciones = [], onReasignar, zarpado, onDragStart, onDragEnd, embsHoy = [], salidasOpen = [] }) {
   const emb = r.embarcacion_asignada;
+  const [editing, setEditing] = useState(false);
+  const propiaEmb = embarcaciones.find(x => x.nombre === emb)?.propiedad === "propia";
+  // Solo mostrar opciones que existen HOY y que son distintas a la actual.
+  const embNamesHoy = [...new Set((embsHoy || []).filter(Boolean))];
+  const otrasEmb = embNamesHoy.filter(n => n !== emb);
+  const otrasSal = (salidasOpen || []).filter(s => s.id !== r.salida_id);
+  const puedeCambiarEmb = otrasEmb.length > 0 || !emb;     // hay otro barco, o falta asignar
+  const puedeCambiarSal = otrasSal.length > 0;             // hay otra salida abierta
+  const hayAlternativas = puedeCambiarEmb || puedeCambiarSal;
   return (
-    <div style={{
+    <div
+      draggable={!zarpado}
+      onDragStart={!zarpado && onDragStart ? (e) => { e.dataTransfer.effectAllowed = "move"; onDragStart(r); } : undefined}
+      onDragEnd={onDragEnd}
+      style={{
       display: "flex", alignItems: "center", gap: 10, padding: "10px 14px",
-      borderBottom: "1px solid rgba(255,255,255,0.04)",
+      borderBottom: "1px solid rgba(255,255,255,0.04)", flexWrap: "wrap",
+      cursor: zarpado ? "default" : "grab",
     }}>
       <div style={{ width: 28, height: 28, borderRadius: "50%", background: B.navyLight, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, flexShrink: 0 }}>
         {r.estado === "check_in" || r.checkin_at ? "✓" : "·"}
       </div>
-      <div style={{ flex: 1, minWidth: 0 }}>
+      <div style={{ flex: 1, minWidth: 140 }}>
         <div style={{ fontWeight: 600, fontSize: 13, color: "#fff", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
           {r.nombre}
         </div>
@@ -36,9 +65,47 @@ function ReservaRow({ r, isMobile }) {
           {r.aliado_id && <span>· 🤝 Agencia</span>}
         </div>
       </div>
-      {emb && (
-        <div style={{ fontSize: 11, background: B.sky + "22", color: B.sky, padding: "3px 10px", borderRadius: 20, fontWeight: 600, whiteSpace: "nowrap", flexShrink: 0 }}>
-          ⛵ {emb}
+      {zarpado ? (
+        emb && (
+          <div style={{ fontSize: 11, background: B.sky + "22", color: B.sky, padding: "3px 10px", borderRadius: 20, fontWeight: 600, whiteSpace: "nowrap", flexShrink: 0 }}>
+            ⛵ {emb}
+          </div>
+        )
+      ) : editing ? (
+        <div style={{ display: "flex", gap: 6, alignItems: "center", flexShrink: 0, flexWrap: "wrap" }}>
+          {puedeCambiarEmb && (
+            <select value={emb || ""} title="Embarcación" autoFocus
+              onChange={e => onReasignar && onReasignar(r, { embarcacion_asignada: e.target.value || null })}
+              style={SEL}>
+              <option value="">⛵ Sin embarcación</option>
+              {embNamesHoy.map(n => {
+                const p = embarcaciones.find(x => x.nombre === n)?.propiedad === "propia";
+                return <option key={n} value={n}>{n}{p ? " ★" : ""}</option>;
+              })}
+            </select>
+          )}
+          {puedeCambiarSal && (
+            <select value={r.salida_id || ""} title="Horario / salida (solo abiertas)"
+              onChange={e => onReasignar && onReasignar(r, { salida_id: e.target.value })}
+              style={SEL}>
+              {salidasOpen.map(s => <option key={s.id} value={s.id}>Salida {fmtHora12(s.hora_regreso || HORARIO_REGRESO[s.id])}</option>)}
+            </select>
+          )}
+          {!hayAlternativas && (
+            <span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", fontStyle: "italic" }}>No hay otras opciones para hoy</span>
+          )}
+          <button onClick={() => setEditing(false)} title="Listo"
+            style={{ background: B.success, border: "none", color: "#fff", borderRadius: 8, fontSize: 11, padding: "5px 10px", fontWeight: 700, cursor: "pointer" }}>✓ Listo</button>
+        </div>
+      ) : (
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexShrink: 0 }}>
+          {emb
+            ? <span style={{ fontSize: 11, background: B.sky + "22", color: B.sky, padding: "3px 10px", borderRadius: 20, fontWeight: 600, whiteSpace: "nowrap" }}>⛵ {emb}{propiaEmb ? " ★" : ""}</span>
+            : <span style={{ fontSize: 11, background: B.warning + "22", color: B.warning, padding: "3px 10px", borderRadius: 20, fontWeight: 700, whiteSpace: "nowrap" }}>⚠ Sin embarcación</span>}
+          {hayAlternativas && (
+            <button onClick={() => setEditing(true)} title="Cambiar embarcación u horario"
+              style={{ background: "transparent", border: `1px solid ${B.navyLight}`, color: "rgba(255,255,255,0.7)", borderRadius: 8, fontSize: 11, padding: "4px 10px", cursor: "pointer", whiteSpace: "nowrap" }}>✎ Cambiar</button>
+          )}
         </div>
       )}
     </div>
@@ -46,7 +113,14 @@ function ReservaRow({ r, isMobile }) {
 }
 
 // ─── Bloque por salida ────────────────────────────────────────────────────────
-function SalidaBloque({ salida, reservas, zarpoAt, onZarpo, isMobile }) {
+function SalidaBloque({ salida, reservas, zarpoAt, onZarpo, isMobile, salidas = [], embarcacionesAll = [], onReasignar, onEditCap, embsHoy = [], salidasOpen = [] }) {
+  const capDe = (nombre) => {
+    const e = embarcacionesAll.find(x => x.nombre === nombre);
+    return e && e.capacidad != null ? Number(e.capacidad) : null;
+  };
+  const [dragR, setDragR] = useState(null);          // reserva en arrastre
+  const [overEmb, setOverEmb] = useState(undefined); // grupo bajo el cursor (drop highlight)
+  const [extraEmbs, setExtraEmbs] = useState([]);    // embarcaciones agregadas sin pax aún
   const horaRegreso = salida.hora_regreso || HORARIO_REGRESO[salida.id] || "—";
   const paxTotal = reservas.reduce((t, r) => t + (r.pax_a || r.pax || 1) + (r.pax_n || 0), 0);
   const conCheckin = reservas.filter(r => r.checkin_at || r.estado === "check_in").length;
@@ -60,6 +134,9 @@ function SalidaBloque({ salida, reservas, zarpoAt, onZarpo, isMobile }) {
   });
   const embarcaciones = Object.keys(embGrupos).filter(k => k !== "__sin__");
   const sinEmb = embGrupos["__sin__"] || [];
+  const paxDe = (rs) => (rs || []).reduce((t, r) => t + (r.pax_a || r.pax || 1) + (r.pax_n || 0), 0);
+  const paxSin = paxDe(sinEmb);
+  const paxAsig = paxTotal - paxSin;
 
   const zarpado = !!zarpoAt;
   const ahoraMin = (() => {
@@ -92,7 +169,7 @@ function SalidaBloque({ salida, reservas, zarpoAt, onZarpo, isMobile }) {
         <div>
           <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
             <span style={{ fontWeight: 800, fontSize: 18, fontFamily: "'Barlow Condensed',sans-serif", letterSpacing: 0.5, color: zarpado ? B.success : "#fff" }}>
-              {zarpado ? "✓ " : proxima ? "🔔 " : "⛵ "}{salida.nombre}
+              {zarpado ? "✓ " : proxima ? "🔔 " : "⛵ "}Salida {fmtHora12(horaRegreso)}
             </span>
             {proxima && !zarpado && (
               <span style={{ fontSize: 11, background: B.warning + "33", color: B.warning, padding: "2px 8px", borderRadius: 20, fontWeight: 700 }}>PRÓXIMA SALIDA</span>
@@ -102,11 +179,13 @@ function SalidaBloque({ salida, reservas, zarpoAt, onZarpo, isMobile }) {
             )}
           </div>
           <div style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", marginTop: 4, display: "flex", gap: 14, flexWrap: "wrap" }}>
-            <span>⛵ Sale del muelle: <strong style={{ color: B.sky }}>{salida.hora}</strong></span>
-            <span>🏠 Regresa a muelle: <strong style={{ color: zarpado ? B.success : B.sand }}>{horaRegreso}</strong></span>
+            <span>⛵ Hora de salida: <strong style={{ color: B.sky }}>{fmtHora12(horaRegreso)}</strong></span>
             <span>👥 {paxTotal} pax{reservas.length > 1 ? ` · ${reservas.length} reservas` : ""}</span>
             {conCheckin > 0 && <span style={{ color: B.success }}>✓ {conCheckin} con check-in</span>}
-            {embarcaciones.length > 0 && <span>⛵ {embarcaciones.join(", ")}</span>}
+            {embarcaciones.length > 0 && (
+              <span>⛵ {embarcaciones.map(e => `${e} (${paxDe(embGrupos[e])})`).join(" · ")}</span>
+            )}
+            {paxSin > 0 && <span style={{ color: B.warning }}>⚠ {paxSin} sin embarcación</span>}
           </div>
         </div>
 
@@ -128,35 +207,97 @@ function SalidaBloque({ salida, reservas, zarpoAt, onZarpo, isMobile }) {
         )}
       </div>
 
-      {/* Lista de clientes */}
+      {/* Lista de clientes — arrastra una tarjeta a otra embarcación */}
       <div>
-        {/* Por embarcación */}
-        {embarcaciones.map(emb => (
-          <div key={emb}>
-            <div style={{ padding: "8px 14px 4px", fontSize: 10, color: B.sky, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", background: B.sky + "08" }}>
-              ⛵ {emb} · {embGrupos[emb].reduce((t, r) => t + (r.pax_a || r.pax || 1) + (r.pax_n || 0), 0)} pax
-            </div>
-            {embGrupos[emb].map(r => <ReservaRow key={r.id} r={r} isMobile={isMobile} />)}
-          </div>
-        ))}
-
-        {/* Sin embarcacion asignada */}
-        {sinEmb.length > 0 && (
-          <div>
-            {embarcaciones.length > 0 && (
-              <div style={{ padding: "8px 14px 4px", fontSize: 10, color: "rgba(255,255,255,0.3)", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em" }}>
-                Sin embarcación asignada
+        {(() => {
+          const gruposVacios = extraEmbs.filter(e => !embarcaciones.includes(e));
+          const dropProps = (emb) => zarpado ? {} : {
+            onDragOver: (e) => { e.preventDefault(); if (overEmb !== emb) setOverEmb(emb); },
+            onDragLeave: () => setOverEmb(u => (u === emb ? undefined : u)),
+            onDrop: () => {
+              if (dragR && (dragR.embarcacion_asignada || null) !== (emb || null)) {
+                onReasignar(dragR, { embarcacion_asignada: emb });
+              }
+              setDragR(null); setOverEmb(undefined);
+            },
+          };
+          const startProps = {
+            onDragStart: setDragR,
+            onDragEnd: () => { setDragR(null); setOverEmb(undefined); },
+          };
+          const Grupo = ({ emb, rows }) => {
+            const paxEmb = rows.reduce((t, r) => t + (r.pax_a || r.pax || 1) + (r.pax_n || 0), 0);
+            const cap = capDe(emb);
+            const propia = embarcacionesAll.find(x => x.nombre === emb)?.propiedad === "propia";
+            const excede = cap != null && paxEmb > cap;
+            const isOver = overEmb === emb && dragR;
+            return (
+              <div key={emb} {...dropProps(emb)}
+                style={{ outline: isOver ? `2px dashed ${B.sky}` : "none", outlineOffset: -2, background: isOver ? B.sky + "10" : "transparent", transition: "background .1s" }}>
+                <div style={{ padding: "8px 14px 4px", fontSize: 10, color: excede ? B.danger : B.sky, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", background: (excede ? B.danger : B.sky) + "08", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                  <span>⛵ {emb}{propia ? " ★" : ""} · {paxEmb} pax{cap != null ? ` / cap ${cap}` : ""}{excede ? " ⚠ EXCEDE" : ""}</span>
+                  {!zarpado && onEditCap && (
+                    <button onClick={() => onEditCap(emb, cap)} title="Editar capacidad de esta embarcación"
+                      style={{ background: "transparent", border: "none", color: "rgba(255,255,255,0.45)", cursor: "pointer", fontSize: 11, padding: 0 }}>✎ capacidad</button>
+                  )}
+                </div>
+                {rows.length === 0
+                  ? <div style={{ padding: "12px 14px", fontSize: 11, color: "rgba(255,255,255,0.25)", fontStyle: "italic" }}>Arrastra pasajeros aquí…</div>
+                  : rows.map(r => <ReservaRow key={r.id} r={r} isMobile={isMobile} salidas={salidas} embarcaciones={embarcacionesAll} onReasignar={onReasignar} zarpado={zarpado} embsHoy={embsHoy} salidasOpen={salidasOpen} {...startProps} />)}
               </div>
-            )}
-            {sinEmb.map(r => <ReservaRow key={r.id} r={r} isMobile={isMobile} />)}
-          </div>
-        )}
+            );
+          };
+          return (
+            <>
+              {embarcaciones.map(emb => <Grupo key={emb} emb={emb} rows={embGrupos[emb]} />)}
+              {gruposVacios.map(emb => <Grupo key={emb} emb={emb} rows={[]} />)}
 
-        {reservas.length === 0 && (
-          <div style={{ padding: "16px 20px", fontSize: 12, color: "rgba(255,255,255,0.2)", fontStyle: "italic" }}>
-            Sin reservas para esta salida
-          </div>
-        )}
+              {/* Sin embarcación — también es zona de drop (para desasignar) */}
+              {(sinEmb.length > 0 || (!zarpado && embarcaciones.length > 0)) && (
+                <div {...dropProps(null)}
+                  style={{ outline: (overEmb === null && dragR) ? `2px dashed ${B.warning}` : "none", outlineOffset: -2, background: (overEmb === null && dragR) ? B.warning + "10" : "transparent" }}>
+                  {embarcaciones.length > 0 && (
+                    <div style={{ padding: "8px 14px 4px", fontSize: 10, color: "rgba(255,255,255,0.3)", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em" }}>
+                      Sin embarcación asignada
+                    </div>
+                  )}
+                  {sinEmb.length === 0
+                    ? <div style={{ padding: "10px 14px", fontSize: 11, color: "rgba(255,255,255,0.2)", fontStyle: "italic" }}>(suelta aquí para quitar embarcación)</div>
+                    : sinEmb.map(r => <ReservaRow key={r.id} r={r} isMobile={isMobile} salidas={salidas} embarcaciones={embarcacionesAll} onReasignar={onReasignar} zarpado={zarpado} embsHoy={embsHoy} salidasOpen={salidasOpen} {...startProps} />)}
+                </div>
+              )}
+
+              {/* Agregar embarcación a esta salida */}
+              {!zarpado && (
+                <div style={{ padding: "10px 14px", borderTop: "1px solid rgba(255,255,255,0.05)", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                  <span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)" }}>➕ Agregar embarcación:</span>
+                  <select value="" style={SEL}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      if (!v) return;
+                      if (v === "__manual__") {
+                        const n = window.prompt("Nombre de la embarcación (manual):");
+                        if (n && n.trim() && !embarcaciones.includes(n.trim())) setExtraEmbs(p => [...new Set([...p, n.trim()])]);
+                      } else if (!embarcaciones.includes(v)) {
+                        setExtraEmbs(p => [...new Set([...p, v])]);
+                      }
+                    }}>
+                    <option value="">— elegir —</option>
+                    {embarcacionesAll.filter(em => !embarcaciones.includes(em.nombre) && !extraEmbs.includes(em.nombre))
+                      .map(em => <option key={em.nombre} value={em.nombre}>{em.nombre}{em.propiedad === "propia" ? " ★" : ""}{em.capacidad != null ? ` (cap ${em.capacidad})` : ""}</option>)}
+                    <option value="__manual__">+ Otra (manual)…</option>
+                  </select>
+                </div>
+              )}
+
+              {reservas.length === 0 && extraEmbs.length === 0 && (
+                <div style={{ padding: "16px 20px", fontSize: 12, color: "rgba(255,255,255,0.2)", fontStyle: "italic" }}>
+                  Sin reservas para esta salida
+                </div>
+              )}
+            </>
+          );
+        })()}
       </div>
     </div>
   );
@@ -172,25 +313,30 @@ export default function MuelleSalidas() {
   const [zarpos,   setZarpos]   = useState({}); // { salida_id: hora_real }
   const [zarpesFlota, setZarpesFlota] = useState([]); // zarpes de Castillete/Naturalle
   const [lanchas, setLanchas] = useState([]); // para lookup de costo_viaje_sencillo
+  const [embarcacionesAll, setEmbarcacionesAll] = useState([]); // master: nombre, capacidad, propiedad
   const [loading,  setLoading]  = useState(false);
   const [modalZarpe, setModalZarpe] = useState(null); // { embarcacion }
+  const [expandidas, setExpandidas] = useState(() => new Set()); // salidas vacías expandidas a bloque
 
   const fetchData = useCallback(async () => {
     if (!supabase) return;
     setLoading(true);
-    const [{ data: sals }, { data: res }, { data: zrps }, { data: zfl }, { data: lch }] = await Promise.all([
+    const [{ data: sals }, { data: res }, { data: zrps }, { data: zfl }, { data: lch }, { data: embs }] = await Promise.all([
       supabase.from("salidas").select("id, nombre, hora, hora_regreso, activo").eq("activo", true).order("hora"),
       supabase.from("reservas")
         .select("id, nombre, salida_id, pax, pax_a, pax_n, estado, canal, aliado_id, checkin_at, embarcacion_asignada")
         .eq("fecha", fecha)
         .neq("estado", "cancelado")
+        .neq("estado", "no_show")
         .order("nombre"),
       supabase.from("muelle_salidas").select("salida_id, hora_real, estado").eq("fecha", fecha).eq("estado", "zarpo"),
       supabase.from("muelle_zarpes_flota").select("*").eq("fecha", fecha).order("hora_zarpe"),
       supabase.from("lanchas").select("nombre, costo_viaje_sencillo").eq("activo", true),
+      supabase.from("embarcaciones").select("nombre, capacidad, estado, propiedad").eq("estado", "activo").order("nombre"),
     ]);
     setSalidas(sals || []);
     setReservas(res || []);
+    setEmbarcacionesAll(embs || []);
     // Build zarpos map { salida_id → hora_real }
     const zm = {};
     (zrps || []).forEach(z => { zm[z.salida_id] = z.hora_real || true; });
@@ -246,6 +392,21 @@ export default function MuelleSalidas() {
     };
     if (data.odometro_foto_url) insertPayload.odometro_foto_url = data.odometro_foto_url;
     if (data.motores_horas) insertPayload.motores_horas = data.motores_horas;
+
+    // Anti-duplicado: no permitir dos zarpes de la misma embarcación, misma
+    // fecha y misma hora (cubre doble-tap, reintentos por conexión lenta y
+    // re-registrar un viaje que ya fue auto-creado al marcar la salida).
+    const { data: dup } = await supabase
+      .from("muelle_zarpes_flota")
+      .select("id")
+      .eq("embarcacion", insertPayload.embarcacion)
+      .eq("fecha", fecha)
+      .eq("hora_zarpe", insertPayload.hora_zarpe)
+      .limit(1);
+    if (dup && dup.length) {
+      return new Error(`Ya existe un zarpe de ${insertPayload.embarcacion} a las ${String(insertPayload.hora_zarpe).slice(0, 5)} en esta fecha. No se duplicó.`);
+    }
+
     const { error } = await supabase.from("muelle_zarpes_flota").insert(insertPayload);
     if (!error) {
       setModalZarpe(null);
@@ -258,6 +419,56 @@ export default function MuelleSalidas() {
     if (!supabase) return;
     if (!confirm("¿Eliminar este zarpe?")) return;
     await supabase.from("muelle_zarpes_flota").delete().eq("id", id);
+    fetchData();
+  };
+
+  // Reasignar embarcación y/o salida(horario) de una reserva. Valida cupo
+  // contra embarcaciones.capacidad y deja auditoría de quién lo hizo.
+  const reasignar = async (r, patch) => {
+    if (!supabase) return;
+    // Validar cupo si se está asignando una embarcación
+    const nuevaEmb = "embarcacion_asignada" in patch ? patch.embarcacion_asignada : r.embarcacion_asignada;
+    const nuevaSal = "salida_id" in patch ? patch.salida_id : r.salida_id;
+    if (nuevaEmb) {
+      const em = embarcacionesAll.find(x => x.nombre === nuevaEmb);
+      const cap = em && em.capacidad != null ? Number(em.capacidad) : null;
+      if (cap != null) {
+        const paxOtros = (reservas || [])
+          .filter(x => x.id !== r.id && x.salida_id === nuevaSal && x.embarcacion_asignada === nuevaEmb)
+          .reduce((t, x) => t + (x.pax_a || x.pax || 1) + (x.pax_n || 0), 0);
+        const paxEsta = (r.pax_a || r.pax || 1) + (r.pax_n || 0);
+        if (paxOtros + paxEsta > cap) {
+          alert(`⚠️ Sin cupo: ${nuevaEmb} tiene capacidad ${cap} y quedaría en ${paxOtros + paxEsta} pax para esa salida.\n\nAjusta la capacidad (✎) o usa otra embarcación.`);
+          return;
+        }
+      }
+    }
+    const datosAntes = { embarcacion_asignada: r.embarcacion_asignada || null, salida_id: r.salida_id };
+    const upd = { updated_at: new Date().toISOString(), ...patch };
+    const { error } = await supabase.from("reservas").update(upd).eq("id", r.id);
+    if (error) { alert("Error al reasignar: " + error.message); return; }
+    const accion = "salida_id" in patch && !("embarcacion_asignada" in patch) ? "cambiar_salida" : "reasignar_embarcacion";
+    logAccion({
+      modulo: "salidas", accion, tabla: "reservas", registroId: r.id,
+      datosAntes, datosDespues: { ...datosAntes, ...patch },
+      notas: `${r.nombre}: ${accion === "cambiar_salida"
+        ? `salida ${datosAntes.salida_id} → ${patch.salida_id}`
+        : `embarcación "${datosAntes.embarcacion_asignada || "—"}" → "${patch.embarcacion_asignada || "—"}"`}`,
+    });
+    fetchData();
+  };
+
+  // Editar capacidad de una embarcación (manual por embarcación) + auditoría.
+  const editarCapacidad = async (nombre, capActual) => {
+    if (!supabase) return;
+    const val = window.prompt(`Capacidad (pax) de "${nombre}":`, capActual != null ? String(capActual) : "");
+    if (val == null) return;
+    const cap = parseInt(val, 10);
+    if (isNaN(cap) || cap < 0) { alert("Capacidad inválida."); return; }
+    const { error } = await supabase.from("embarcaciones").update({ capacidad: cap, updated_at: new Date().toISOString() }).eq("nombre", nombre);
+    if (error) { alert("Error: " + error.message); return; }
+    logAccion({ modulo: "salidas", accion: "editar_capacidad_embarcacion", tabla: "embarcaciones", registroId: nombre,
+      datosAntes: { capacidad: capActual }, datosDespues: { capacidad: cap }, notas: `${nombre}: capacidad ${capActual ?? "—"} → ${cap}` });
     fetchData();
   };
 
@@ -276,6 +487,67 @@ export default function MuelleSalidas() {
       updated_at: new Date().toISOString(),
     }, { onConflict: "id" });
     setZarpos(prev => ({ ...prev, [salidaId]: horaReal }));
+
+    // Si la salida lleva embarcación(es) PROPIA(s), registrar también el
+    // zarpe en el módulo Lancha (muelle_zarpes_flota), una vez por embarcación.
+    try {
+      const salObj = (salidas || []).find(s => s.id === salidaId);
+      const resSal = (reservas || []).filter(r => r.salida_id === salidaId && r.embarcacion_asignada);
+      const porEmb = {};
+      resSal.forEach(r => { (porEmb[r.embarcacion_asignada] = porEmb[r.embarcacion_asignada] || []).push(r); });
+      for (const [emb, rs] of Object.entries(porEmb)) {
+        const meta = embarcacionesAll.find(x => x.nombre === emb);
+        if (!meta || meta.propiedad !== "propia") continue;
+        const marker = `[salida:${salidaId}]`;
+        const yaExiste = (zarpesFlota || []).some(z => z.embarcacion === emb && (z.notas || "").includes(marker));
+        if (yaExiste) continue;
+        const paxA = rs.reduce((t, r) => t + (r.pax_a || r.pax || 1), 0);
+        const paxN = rs.reduce((t, r) => t + (r.pax_n || 0), 0);
+        const costo = Number((lanchas.find(l => l.nombre === emb) || {}).costo_viaje_sencillo) || 0;
+        const zfId = `ZF-${Date.now().toString(36).toUpperCase()}-${emb.replace(/\W/g, "").slice(0, 4)}`;
+        await supabase.from("muelle_zarpes_flota").insert({
+          id: zfId, fecha, embarcacion: emb,
+          hora_zarpe: new Date().toTimeString().slice(0, 8),
+          motivo: "pasajeros",
+          pax_a: paxA, pax_n: paxN, costo_operativo: costo,
+          notas: `Auto desde Salidas · ${salObj ? labelSalida(salObj) : salidaId} ${marker}`,
+          boca_chica: false,
+        });
+        logAccion({ modulo: "salidas", accion: "zarpe_flota_auto", tabla: "muelle_zarpes_flota", registroId: zfId,
+          datosDespues: { embarcacion: emb, salida_id: salidaId, pax_a: paxA, pax_n: paxN, costo_operativo: costo },
+          notas: `Zarpe propia auto-registrado en Lancha: ${emb} (${salObj ? labelSalida(salObj) : salidaId})` });
+      }
+      fetchData();
+    } catch (e) { /* no romper el zarpado si falla el registro en Lancha */ }
+  };
+
+  const normHora = (h) => {
+    const m = String(h || "").trim().match(/^(\d{1,2}):(\d{2})$/);
+    if (!m) return null;
+    const H = Number(m[1]), M = Number(m[2]);
+    if (H > 23 || M > 59) return null;
+    return `${String(H).padStart(2, "0")}:${m[2]}`;
+  };
+
+  const agregarSalida = async () => {
+    if (!supabase) return;
+    const hIn = window.prompt("Hora de SALIDA del muelle (HH:MM, 24h). Ej: 14:00");
+    if (hIn == null) return;
+    const hora = normHora(hIn);
+    if (!hora) { alert("Hora inválida. Usa HH:MM 24h (ej. 14:00)."); return; }
+    const rIn = window.prompt("Hora de REGRESO al muelle (HH:MM, 24h). Ej: 20:00");
+    if (rIn == null) return;
+    const horaRegreso = normHora(rIn);
+    if (!horaRegreso) { alert("Hora de regreso inválida. Usa HH:MM 24h."); return; }
+    const id = `S-${Date.now().toString(36).toUpperCase()}`;
+    const { error } = await supabase.from("salidas").insert({
+      id, nombre: `Salida ${hora}`, hora, hora_regreso: horaRegreso, activo: true,
+    });
+    if (error) { alert("Error al crear salida: " + error.message); return; }
+    logAccion({ modulo: "salidas", accion: "crear_salida", tabla: "salidas", registroId: id,
+      datosDespues: { hora, hora_regreso: horaRegreso }, notas: `Nueva salida ${hora} → regreso ${horaRegreso}` });
+    setExpandidas(prev => new Set([...prev, id]));
+    fetchData();
   };
 
   // Salidas that have reservas today (or all if no reservas yet)
@@ -287,6 +559,15 @@ export default function MuelleSalidas() {
 
   const salidasConRes = (salidas || []).filter(s => reservasPorSalida[s.id]?.length > 0);
   const salidasVacias = (salidas || []).filter(s => !reservasPorSalida[s.id]?.length);
+  // Bloques completos = con reservas o expandidas manualmente (para asignar
+  // embarcaciones aunque no tengan reservas, ej. salida recién creada).
+  const salidasFull  = (salidas || []).filter(s => reservasPorSalida[s.id]?.length > 0 || expandidas.has(s.id));
+  const salidasChips = (salidas || []).filter(s => !reservasPorSalida[s.id]?.length && !expandidas.has(s.id));
+  // Opciones reales de HOY para el botón "Cambiar":
+  //  - embarcaciones efectivamente en uso hoy (asignadas a alguna reserva)
+  //  - salidas que están operando hoy y aún NO han zarpado (abiertas)
+  const embsHoy = [...new Set((reservas || []).map(r => r.embarcacion_asignada).filter(Boolean))];
+  const salidasOpen = salidasFull.filter(s => !zarpos[s.id]);
 
   // KPIs
   const totalPax    = reservas.reduce((t, r) => t + (r.pax_a || r.pax || 1) + (r.pax_n || 0), 0);
@@ -303,8 +584,14 @@ export default function MuelleSalidas() {
           <h2 style={{ margin: 0, fontSize: isMobile ? 20 : 24, fontWeight: 800, color: "#fff" }}>⛵ Salidas de Isla</h2>
           <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginTop: 4 }}>Programación automática de zarpes · Tierra Bomba</div>
         </div>
-        <input type="date" value={fecha} onChange={e => setFecha(e.target.value)}
-          style={{ ...IS, width: "auto", fontSize: 14, padding: "8px 14px" }} />
+        <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+          <button onClick={agregarSalida}
+            style={{ padding: "9px 16px", borderRadius: 10, border: "none", background: B.sky, color: B.navy, fontWeight: 800, fontSize: 13, cursor: "pointer", whiteSpace: "nowrap" }}>
+            ➕ Agregar salida
+          </button>
+          <input type="date" value={fecha} onChange={e => setFecha(e.target.value)}
+            style={{ ...IS, width: "auto", fontSize: 14, padding: "8px 14px" }} />
+        </div>
       </div>
 
       {/* KPIs */}
@@ -326,14 +613,14 @@ export default function MuelleSalidas() {
         <div style={{ textAlign: "center", padding: "50px 0", color: "rgba(255,255,255,0.3)", fontSize: 13 }}>Cargando...</div>
       ) : (
         <>
-          {salidasConRes.length === 0 && (
+          {salidasFull.length === 0 && (
             <div style={{ textAlign: "center", padding: "50px 0", color: "rgba(255,255,255,0.2)", fontSize: 14 }}>
               <div style={{ fontSize: 36, marginBottom: 12 }}>⛵</div>
               No hay reservas para este día
             </div>
           )}
 
-          {salidasConRes.map(sal => (
+          {salidasFull.map(sal => (
             <SalidaBloque
               key={sal.id}
               salida={sal}
@@ -341,6 +628,12 @@ export default function MuelleSalidas() {
               zarpoAt={zarpos[sal.id]}
               onZarpo={() => marcarZarpo(sal.id)}
               isMobile={isMobile}
+              salidas={salidas}
+              embarcacionesAll={embarcacionesAll}
+              onReasignar={reasignar}
+              onEditCap={editarCapacidad}
+              embsHoy={embsHoy}
+              salidasOpen={salidasOpen}
             />
           ))}
 
@@ -404,18 +697,26 @@ export default function MuelleSalidas() {
           </div>
 
           {/* Salidas sin reservas (colapsadas) */}
-          {salidasVacias.length > 0 && salidasConRes.length > 0 && (
-            <div style={{ marginTop: 8 }}>
-              <div style={{ fontSize: 11, color: "rgba(255,255,255,0.2)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 10 }}>Sin reservas hoy</div>
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                {salidasVacias.map(s => (
-                  <div key={s.id} style={{ background: "rgba(255,255,255,0.04)", borderRadius: 10, padding: "8px 14px", fontSize: 12, color: "rgba(255,255,255,0.25)" }}>
-                    {s.nombre} · {s.hora_regreso || HORARIO_REGRESO[s.id] || s.hora}
-                  </div>
-                ))}
-              </div>
+          <div style={{ marginTop: 8 }}>
+            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.2)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 10 }}>
+              {salidasChips.length > 0 ? "Sin reservas hoy · toca para asignar embarcaciones" : "Salidas"}
             </div>
-          )}
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+              <button onClick={agregarSalida}
+                title="Crear una salida con hora manual (la que quieras)"
+                style={{ background: B.sky, border: "none", borderRadius: 10, padding: "9px 16px", fontSize: 12, color: B.navy, fontWeight: 800, cursor: "pointer" }}>
+                ➕ Agregar salida (hora manual)
+              </button>
+              {salidasChips.map(s => (
+                <button key={s.id}
+                  onClick={() => setExpandidas(prev => new Set([...prev, s.id]))}
+                  title="Expandir para asignar embarcaciones"
+                  style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 10, padding: "8px 14px", fontSize: 12, color: "rgba(255,255,255,0.45)", cursor: "pointer" }}>
+                  ➕ Salida {fmtHora12(s.hora_regreso || HORARIO_REGRESO[s.id])}
+                </button>
+              ))}
+            </div>
+          </div>
         </>
       )}
 
@@ -465,6 +766,7 @@ function ModalZarpeFlota({ embarcacion, costoDefault = 0, onClose, onSave }) {
   const esLanchaPropia = esNaturalle || esCastillete;
 
   async function handleSave() {
+    if (saving) return; // anti doble-tap (móvil dispara antes del re-render)
     setSaving(true); setErr("");
     // Construir motores_horas
     const motoresHoras = {};

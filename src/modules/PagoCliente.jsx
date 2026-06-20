@@ -1,12 +1,13 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { B, COP } from "../brand";
 import { supabase } from "../lib/supabase";
-import { wompiCheckoutUrl, wompiTransactionStatus } from "../lib/wompi";
-import { crearSesionPago } from "../lib/internacional";
+import { wompiCheckoutUrl } from "../lib/wompi";
+import { crearSesionPago, getMerchantInternacional } from "../lib/internacional";
 import AvisoCargoInternacional from "../components/AvisoCargoInternacional";
 import AtolanTrack from "../lib/AtolanTrack";
 import { waSendConfirmacion } from "../lib/whatsapp";
 import ZohoPaymentWidget from "../components/ZohoPaymentWidget";
+import FacturaElectronicaForm, { FE_EMPTY, feValidate, fePayload } from "../lib/FacturaElectronicaForm.jsx";
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 function getReservaId() {
@@ -48,6 +49,42 @@ function qrUrl(data, size = 200) {
 function PagoOk({ reserva, salida }) {
   const zarpeLink = `https://atolon.co/zarpe-info?id=${reserva.id}`;
   const horaTexto = salida?.hora ? `Salida: ${salida.hora}${salida.hora_regreso ? ` · Regreso: ${salida.hora_regreso}` : ""}` : "";
+
+  // ── Facturación electrónica (movida post-pago para no inflar el step 2 del booking widget) ──
+  const yaTieneFE = !!reserva.factura_electronica;
+  const [feOpen,   setFeOpen]   = useState(false);
+  const [feForm,   setFeForm]   = useState({
+    ...FE_EMPTY,
+    factura_electronica: true,
+    fe_email:    reserva.email    || (reserva.contacto?.includes("@") ? reserva.contacto : ""),
+    fe_telefono: reserva.tel      || reserva.telefono || (reserva.contacto && !reserva.contacto.includes("@") ? reserva.contacto : ""),
+  });
+  const [feSaving, setFeSaving] = useState(false);
+  const [feSaved,  setFeSaved]  = useState(yaTieneFE);
+  const [feError,  setFeError]  = useState("");
+  const setFE = (k, v) => setFeForm(f => ({ ...f, [k]: v }));
+
+  const guardarFE = async () => {
+    const faltan = feValidate(feForm);
+    if (faltan.length) {
+      setFeError(`Falta llenar: ${faltan.map(f => f.replace(/^fe_/, "").replace(/_/g, " ")).join(", ")}`);
+      return;
+    }
+    setFeError("");
+    setFeSaving(true);
+    const { error } = await supabase
+      .from("reservas")
+      .update(fePayload(feForm))
+      .eq("id", reserva.id);
+    setFeSaving(false);
+    if (error) {
+      setFeError("No se pudo guardar. Intenta de nuevo.");
+      return;
+    }
+    setFeSaved(true);
+    setFeOpen(false);
+    AtolanTrack.evento("invoice_requested", { reserva_id: reserva.id, tipo_persona: feForm.fe_tipo_persona }, "post_payment");
+  };
 
   // Pre-compute dock arrival time (20 min before departure)
   let llegadaHora = null;
@@ -160,6 +197,61 @@ function PagoOk({ reserva, salida }) {
         <div style={{ marginTop: 8, fontSize: 12, color: B.sand }}>Abrir →</div>
       </a>
 
+      {/* Facturación electrónica DIAN — POST-pago, opcional */}
+      <div style={{ background: feSaved ? "rgba(52,211,153,0.06)" : "rgba(251,191,36,0.06)", border: `1px solid ${feSaved ? "rgba(52,211,153,0.25)" : "rgba(251,191,36,0.25)"}`, borderRadius: 14, padding: "16px 20px" }}>
+        {feSaved ? (
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <span style={{ fontSize: 22 }}>✅</span>
+            <div>
+              <div style={{ fontWeight: 700, fontSize: 14, color: B.success, marginBottom: 2 }}>
+                Factura electrónica solicitada
+              </div>
+              <div style={{ fontSize: 12, color: "rgba(255,255,255,0.55)", lineHeight: 1.5 }}>
+                Te llegará al correo registrado en 24-48h hábiles.
+              </div>
+            </div>
+          </div>
+        ) : !feOpen ? (
+          <>
+            <div style={{ display: "flex", alignItems: "flex-start", gap: 10, marginBottom: 10 }}>
+              <span style={{ fontSize: 22, marginTop: -2 }}>🧾</span>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontWeight: 700, fontSize: 14, color: B.white, marginBottom: 2 }}>
+                  ¿Necesitas factura electrónica DIAN?
+                </div>
+                <div style={{ fontSize: 12, color: "rgba(255,255,255,0.55)", lineHeight: 1.5 }}>
+                  Si requieres factura electrónica DIAN para tu empresa o gastos personales, ingresa los datos aquí.
+                </div>
+              </div>
+            </div>
+            <button onClick={() => setFeOpen(true)}
+              style={{ width: "100%", padding: "10px 0", borderRadius: 10, border: `1px solid rgba(251,191,36,0.4)`, background: "rgba(251,191,36,0.1)", color: "#fbbf24", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
+              Sí, requiero factura electrónica
+            </button>
+          </>
+        ) : (
+          <>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+              <div style={{ fontWeight: 700, fontSize: 14, color: B.white }}>🧾 Datos de facturación</div>
+              <button onClick={() => { setFeOpen(false); setFeError(""); }}
+                style={{ background: "none", border: "none", color: "rgba(255,255,255,0.5)", fontSize: 12, cursor: "pointer", padding: 0 }}>
+                Cancelar
+              </button>
+            </div>
+            <FacturaElectronicaForm form={feForm} set={setFE} editing={true} theme="dark" />
+            {feError && (
+              <div style={{ marginTop: 10, padding: "8px 12px", background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.3)", borderRadius: 8, fontSize: 12, color: B.danger }}>
+                {feError}
+              </div>
+            )}
+            <button onClick={guardarFE} disabled={feSaving}
+              style={{ width: "100%", marginTop: 12, padding: "12px 0", borderRadius: 10, border: "none", background: feSaving ? "rgba(251,191,36,0.4)" : "#fbbf24", color: "#1A2740", fontWeight: 700, fontSize: 14, cursor: feSaving ? "wait" : "pointer" }}>
+              {feSaving ? "Guardando..." : "Solicitar factura electrónica"}
+            </button>
+          </>
+        )}
+      </div>
+
       {/* WhatsApp save */}
       <a href={`https://wa.me/?text=${waMensaje}`} target="_blank" rel="noreferrer"
         style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, background: "#25D366", borderRadius: 14, padding: "14px 20px", textDecoration: "none", color: "#fff", fontWeight: 700, fontSize: 14 }}>
@@ -198,15 +290,18 @@ export default function PagoCliente() {
   const [procesando, setProcesando] = useState("");
 
   const secsLeft = useCountdown(reserva?.link_expira_at);
-  const expirado = secsLeft !== null && secsLeft === 0;
+  // Tratamos null (no cargado aun) como "sin expirar" para evitar
+  // flash de UI de expirado durante el primer render (null < 120 = true).
+  const expirado = secsLeft === 0;
   const yaPagado = reserva?.estado === "confirmado" || reserva?.estado === "pagado";
 
-  // Wompi redirige con ?id=TRANSACTION_ID después del pago
-  // Stripe redirige con ?stripe=ok después del pago
-  const params       = new URLSearchParams(window.location.search);
-  const wompiTxId    = params.get("id") || "";
-  const leadIdParam  = params.get("lead") || "";
-  const stripeOk     = params.get("stripe") === "ok";
+  // Wompi redirige con ?id=TRANSACTION_ID después del pago.
+  // Stripe redirige con ?session_id=cs_...
+  // NO confirmamos client-side — el webhook firmado es la unica autoridad.
+  // El cliente solo refetcha y muestra el estado real de la reserva.
+  const params         = new URLSearchParams(window.location.search);
+  const wompiTxId      = params.get("id") || "";
+  const stripeSessionId = params.get("session_id") || "";
 
   const fetchReserva = useCallback(async () => {
     if (!supabase || !reservaId) { setError("Link inválido"); setLoading(false); return; }
@@ -230,164 +325,93 @@ export default function PagoCliente() {
 
   useEffect(() => { fetchReserva(); }, [fetchReserva]);
 
-  // Cuando Wompi redirige de vuelta: verificar estado real de la transacción
+  // ─── Post-redirect del proveedor de pago ─────────────────────────────────
+  // NO confirmamos client-side. El webhook firmado (stripe-webhook /
+  // wompi-webhook / zoho-payments) es la unica autoridad para marcar
+  // reserva.estado=confirmado y poblar abono/saldo. Aca solo polleamos
+  // hasta que la reserva ya este confirmada y limpiamos la URL para que
+  // recargar no re-dispare nada.
+  const conversionTrackedRef = useRef(false);
   useEffect(() => {
-    if (!wompiTxId || !reservaId || !supabase) return;
-    (async () => {
-      const status = await wompiTransactionStatus(wompiTxId);
-      if (status === "APPROVED") {
-        const hoy = new Date().toLocaleDateString("en-CA", { timeZone: "America/Bogota" });
-        // Confirmar reserva
-        const { data: resData } = await supabase.from("reservas").select("total, lead_id, tipo, pax_a, pax_n, fecha").eq("id", reservaId).single();
-        await supabase.from("reservas").update({
-          estado: "confirmado", forma_pago: "wompi", saldo: 0, abono: resData?.total || 0,
-        }).eq("id", reservaId);
-        // Track real conversion (payment confirmed) — server-side for reliability
-        AtolanTrack.init().then(() => {
-          AtolanTrack.conversion(reservaId, resData?.total || 0, {
-            metodo_pago:  "wompi",
-            package_type: resData?.tipo,
-            adultos:      resData?.pax_a,
-            ninos:        resData?.pax_n,
-            fecha:        resData?.fecha,
-            monto_bruto:  resData?.total,
-          });
-          AtolanTrack.serverEvent("conversion_confirmed", { reserva_id: reservaId, monto: resData?.total, metodo: "wompi" }, "conversion");
-        });
-        // Cerrar lead en Comercial (URL param o lead_id guardado en la reserva)
-        const lid = leadIdParam || resData?.lead_id;
-        if (lid) {
-          await supabase.from("leads").update({
-            stage: "Cerrado Ganado",
-            ultimo_contacto: hoy,
-          }).eq("id", lid);
-        }
-        // Enviar email + WhatsApp de confirmación
-        const { data: res } = await supabase.from("reservas").select("*").eq("id", reservaId).single();
-        if (res?.contacto?.includes("@")) {
-          fetch("https://ncdyttgxuicyruathkxd.supabase.co/functions/v1/send-confirmation", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(res),
-          }).catch(() => {}); // fire and forget
-        }
-        // WhatsApp confirmación
-        if (res) waSendConfirmacion(res, salida).catch(() => {});
+    const tieneTrigger = !!(wompiTxId || stripeSessionId);
+    if (!tieneTrigger || !reservaId || !supabase) return;
 
-        // Abandoned Cart: marcar como recuperado si existe un cart vinculado
-        if (res?.email || res?.contacto) {
-          const emailBuscar = (res.email || res.contacto || "").toLowerCase().trim();
-          supabase.from("ac_carts").update({
-            estado: "recovered",
-            recovered_at: new Date().toISOString(),
-            reserva_id: reservaId,
-            updated_at: new Date().toISOString(),
-          }).eq("reserva_id", reservaId).then(() => {});
-          // También buscar por email + fecha (por si el cart no tiene reserva_id)
-          if (emailBuscar && resData?.fecha) {
-            supabase.from("ac_carts")
-              .select("id")
-              .eq("email", emailBuscar)
-              .eq("fecha_visita", resData.fecha)
-              .not("estado", "in", "(recovered,expired,unsubscribed)")
-              .limit(1)
-              .maybeSingle()
-              .then(({ data: matchCart }) => {
-                if (matchCart) {
-                  supabase.from("ac_carts").update({
-                    estado: "recovered",
-                    recovered_at: new Date().toISOString(),
-                    reserva_id: reservaId,
-                    updated_at: new Date().toISOString(),
-                  }).eq("id", matchCart.id).then(() => {});
-                  // Cancelar emails pendientes
-                  supabase.from("ac_email_queue").update({ estado: "cancelled" })
-                    .eq("cart_id", matchCart.id).eq("estado", "pending").then(() => {});
-                }
-              });
-          }
-        }
+    // Limpiar query params para que reload no re-dispare la logica.
+    try {
+      const u = new URL(window.location.href);
+      u.search = "";
+      window.history.replaceState({}, "", u.toString());
+    } catch { /* noop */ }
 
-        fetchReserva();
-      }
-    })();
-  }, [wompiTxId, reservaId, leadIdParam, fetchReserva]);
+    // Polleo cada 2s hasta 30s. El webhook tiene typically <5s.
+    let cancelado = false;
+    let intentos = 0;
+    const maxIntentos = 15;
 
-  // Cuando Stripe redirige de vuelta con ?stripe=ok
-  useEffect(() => {
-    if (!stripeOk || !reservaId || !supabase) return;
-    (async () => {
-      const hoy = new Date().toLocaleDateString("en-CA", { timeZone: "America/Bogota" });
-      const { data: resDataS } = await supabase.from("reservas").select("total, lead_id, tipo, pax_a, pax_n, fecha").eq("id", reservaId).single();
-      await supabase.from("reservas").update({
-        estado: "confirmado", forma_pago: "stripe", saldo: 0, abono: resDataS?.total || 0,
-      }).eq("id", reservaId);
-      // Track real conversion — server-side for reliability
-      AtolanTrack.init().then(() => {
-        AtolanTrack.conversion(reservaId, resDataS?.total || 0, {
-          metodo_pago:  "stripe",
-          package_type: resDataS?.tipo,
-          adultos:      resDataS?.pax_a,
-          ninos:        resDataS?.pax_n,
-          fecha:        resDataS?.fecha,
-          monto_bruto:  resDataS?.total,
-        });
-        AtolanTrack.serverEvent("conversion_confirmed", { reserva_id: reservaId, monto: resDataS?.total, metodo: "stripe" }, "conversion");
-      });
-      // Cerrar lead en Comercial
-      const lid = leadIdParam || resDataS?.lead_id;
-      if (lid) {
-        await supabase.from("leads").update({
-          stage: "Cerrado Ganado", ultimo_contacto: hoy,
-        }).eq("id", lid);
-      }
-      const { data: res } = await supabase.from("reservas").select("*").eq("id", reservaId).single();
-      if (res?.contacto?.includes("@")) {
-        fetch("https://ncdyttgxuicyruathkxd.supabase.co/functions/v1/send-confirmation", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(res),
-        }).catch(() => {});
-      }
-      // WhatsApp confirmación
-      if (res) waSendConfirmacion(res, salida).catch(() => {});
+    const poll = async () => {
+      if (cancelado) return;
+      intentos++;
+      const { data } = await supabase
+        .from("reservas")
+        .select("id, estado, total, abono, saldo, lead_id, tipo, pax_a, pax_n, fecha, email, contacto")
+        .eq("id", reservaId)
+        .single();
 
-      // Abandoned Cart: marcar como recuperado (Stripe)
-      supabase.from("ac_carts").update({
-        estado: "recovered",
-        recovered_at: new Date().toISOString(),
-        reserva_id: reservaId,
-        updated_at: new Date().toISOString(),
-      }).eq("reserva_id", reservaId).then(() => {});
-      if (resDataS?.fecha) {
-        const emailS = (res?.email || res?.contacto || "").toLowerCase().trim();
-        if (emailS) {
-          supabase.from("ac_carts").select("id")
-            .eq("email", emailS).eq("fecha_visita", resDataS.fecha)
-            .not("estado", "in", "(recovered,expired,unsubscribed)")
-            .limit(1).maybeSingle()
-            .then(({ data: mc }) => {
-              if (mc) {
-                supabase.from("ac_carts").update({ estado: "recovered", recovered_at: new Date().toISOString(), reserva_id: reservaId, updated_at: new Date().toISOString() }).eq("id", mc.id).then(() => {});
-                supabase.from("ac_email_queue").update({ estado: "cancelled" }).eq("cart_id", mc.id).eq("estado", "pending").then(() => {});
-              }
+      if (data?.estado === "confirmado" || data?.estado === "pagado") {
+        setReserva((prev) => ({ ...prev, ...data }));
+        // Tracking de conversion (lado cliente) — idempotente via ref
+        if (!conversionTrackedRef.current) {
+          conversionTrackedRef.current = true;
+          AtolanTrack.init().then(() => {
+            AtolanTrack.conversion(reservaId, data.total || 0, {
+              metodo_pago:  data.forma_pago || (wompiTxId ? "wompi" : "stripe"),
+              package_type: data.tipo,
+              adultos:      data.pax_a,
+              ninos:        data.pax_n,
+              fecha:        data.fecha,
+              monto_bruto:  data.total,
             });
+            AtolanTrack.serverEvent("conversion_confirmed",
+              { reserva_id: reservaId, monto: data.total }, "conversion");
+          }).catch(() => {});
         }
+        return;
       }
 
-      fetchReserva();
-    })();
-  }, [stripeOk, reservaId, fetchReserva]);
+      if (intentos < maxIntentos && !cancelado) {
+        setTimeout(poll, 2000);
+      }
+      // Si despues de 30s no se confirmo, mostramos estado actual.
+      // El usuario puede recargar manualmente. El webhook eventualmente
+      // confirmara — esta es solo la primera ventana post-redirect.
+    };
+
+    poll();
+    return () => { cancelado = true; };
+  }, [wompiTxId, stripeSessionId, reservaId]);
 
   const pagarWompi = async () => {
     if (!reserva) return;
+    // Re-fetch para evitar pagar una reserva ya pagada por otro canal o
+    // cuyo link expiro mientras el tab estaba abierto.
+    const { data: fresh } = await supabase.from("reservas")
+      .select("id, estado, total, saldo, link_expira_at, contacto, email").eq("id", reserva.id).single();
+    if (!fresh) { setError("Reserva no encontrada"); return; }
+    if (fresh.estado === "confirmado" || fresh.estado === "pagado") {
+      setReserva(prev => ({ ...prev, ...fresh }));
+      return;
+    }
+    if (fresh.link_expira_at && new Date(fresh.link_expira_at) < new Date()) {
+      setError("Este link ya expiró. Solicitá uno nuevo a la agencia.");
+      setReserva(prev => ({ ...prev, ...fresh }));
+      return;
+    }
     setProcesando("wompi");
-    // redirectUrl: página actual sin query params — Wompi agrega ?id=TX_ID al regresar
     const redirectUrl = window.location.href.split("?")[0];
     const url = await wompiCheckoutUrl({
-      referencia: reserva.id,
-      totalCOP: reserva.total,
-      email: reserva.contacto?.includes("@") ? reserva.contacto : "",
+      referencia: fresh.id,
+      totalCOP: Number(fresh.saldo) > 0 ? Number(fresh.saldo) : Number(fresh.total),
+      email: fresh.contacto?.includes("@") ? fresh.contacto : "",
       redirectUrl,
     });
     window.location.href = url;
@@ -398,21 +422,38 @@ export default function PagoCliente() {
 
   const pagarStripe = async () => {
     if (!reserva) return;
+    // Re-fetch: la fuente de verdad es la BD, no el state que puede
+    // estar stale si el tab estuvo abierto un rato.
+    const { data: fresh } = await supabase.from("reservas")
+      .select("id, estado, total, saldo, link_expira_at, tipo, fecha, nombre, contacto").eq("id", reserva.id).single();
+    if (!fresh) { setError("Reserva no encontrada"); return; }
+    if (fresh.estado === "confirmado" || fresh.estado === "pagado") {
+      setReserva(prev => ({ ...prev, ...fresh }));
+      return;
+    }
+    if (fresh.link_expira_at && new Date(fresh.link_expira_at) < new Date()) {
+      setError("Este link ya expiró. Solicitá uno nuevo a la agencia.");
+      setReserva(prev => ({ ...prev, ...fresh }));
+      return;
+    }
     setProcesando("stripe");
     try {
-      // Convertir COP a USD con tasa fallback 4200
+      // Tasa USD/COP fallback (4200). El verdadero blindaje contra fraude de
+      // monto es el webhook firmado que reconcilia amount_total contra
+      // reserva.total leido de DB (ver stripe-webhook + zoho-payments).
       const tasa = 4200;
-      const amountUSD = Math.ceil((reserva.total || 0) / tasa);
+      const totalACobrar = Number(fresh.saldo) > 0 ? Number(fresh.saldo) : Number(fresh.total);
+      const amountUSD = Math.ceil(totalACobrar / tasa);
       const session = await crearSesionPago({
         amount: amountUSD,
         currency: "USD",
-        reference: reserva.id,
-        description: `${reserva.tipo || "Atolón"} — ${reserva.fecha || ""}`,
-        nombre: reserva.nombre,
-        email: reserva.contacto?.includes("@") ? reserva.contacto : undefined,
-        fecha: reserva.fecha,
+        reference: fresh.id,
+        description: `${fresh.tipo || "Atolón"} — ${fresh.fecha || ""}`,
+        nombre: fresh.nombre,
+        email: fresh.contacto?.includes("@") ? fresh.contacto : undefined,
+        fecha: fresh.fecha,
         context: "reserva",
-        context_id: reserva.id,
+        context_id: fresh.id,
       });
       // Nuevo flujo: widget embebido (Zoho Pay) — abre modal con el widget
       if (session?.payments_session_id && session?.widget?.account_id) {

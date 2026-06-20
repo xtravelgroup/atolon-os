@@ -90,15 +90,21 @@ export default function HotelHabitaciones() {
   };
   useEffect(() => { load(); }, []);
 
+  // rank 114: agrupar habitaciones por categoria. Las habitaciones legacy
+  // pueden tener solo el nombre (sin categoria_id); intentamos resolver el
+  // id por nombre para mantener el mapa consistente — sino, el grouping
+  // mezcla habitaciones del mismo "Suite" en dos buckets distintos (uno
+  // bajo el uuid, otro bajo el string "Suite") y la UI muestra dos cards.
   const habsPorCat = useMemo(() => {
     const map = {};
+    const catByNombre = new Map(cats.map(c => [c.nombre, c.id]));
     habs.forEach(h => {
-      const k = h.categoria_id || h.categoria;
+      const k = h.categoria_id || catByNombre.get(h.categoria) || h.categoria;
       if (!map[k]) map[k] = [];
       map[k].push(h);
     });
     return map;
-  }, [habs]);
+  }, [habs, cats]);
 
   const totalHabs = habs.length;
   const activas = habs.filter(h => h.estado === "activa").length;

@@ -46,16 +46,22 @@ function EmbarcacionModal({ item, onClose, onSaved }) {
   const setPrecio = (ruta, val) => setForm(f => ({ ...f, precios: { ...f.precios, [ruta]: val } }));
 
   const save = async () => {
+    if (saving) return;
     if (!form.nombre.trim() || !form.capacidad) { setError("Nombre y capacidad son obligatorios"); return; }
     if (!form.id.trim()) { setError("ID de embarcación es obligatorio (ej: B001)"); return; }
+    // Validar capacidad > 0 y costo_renta >= 0. Antes una embarcacion con
+    // capacidad -5 o costo -1.000.000 entraba en DB y rompia los KPIs.
+    const cap = Number(form.capacidad);
+    if (!Number.isFinite(cap) || cap <= 0) { setError("Capacidad debe ser > 0"); return; }
+    const costo = Math.max(0, Number(form.costo_renta) || 0);
     setSaving(true); setError("");
     const payload = {
       nombre:         form.nombre.trim(),
       tipo:           form.tipo,
-      capacidad:      Number(form.capacidad) || 0,
+      capacidad:      cap,
       estado:         form.estado,
       propiedad:      form.propiedad,
-      costo_renta:    Number(form.costo_renta) || 0,
+      costo_renta:    costo,
       matricula:      form.matricula.trim() || null,
       capitan:        form.capitan.trim() || "",
       piloto_cedula:  form.piloto_cedula.trim() || null,
@@ -243,10 +249,20 @@ export function TabEmbarcaciones() {
 
   useEffect(() => { load(); }, [load]);
 
+  // Guard contra doble-click. Antes un toggle rapido enviaba dos UPDATE con
+  // el mismo item.estado leido del state local — el segundo "revertia" el
+  // primero y la UI quedaba desincronizada con DB.
+  const [togglingId, setTogglingId] = useState(null);
   const toggleEstado = async (item) => {
-    const next = item.estado === "activo" ? "inactivo" : "activo";
-    await supabase.from("embarcaciones").update({ estado: next, updated_at: new Date().toISOString() }).eq("id", item.id);
-    setItems(p => p.map(e => e.id === item.id ? { ...e, estado: next } : e));
+    if (togglingId === item.id) return;
+    setTogglingId(item.id);
+    try {
+      const next = item.estado === "activo" ? "inactivo" : "activo";
+      await supabase.from("embarcaciones").update({ estado: next, updated_at: new Date().toISOString() }).eq("id", item.id);
+      setItems(p => p.map(e => e.id === item.id ? { ...e, estado: next } : e));
+    } finally {
+      setTogglingId(null);
+    }
   };
 
   const activas      = items.filter(e => e.estado === "activo");

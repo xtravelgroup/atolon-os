@@ -389,6 +389,12 @@ verify_jwt = false
 # "failed" y eventualmente los desactive. Bug 2026-05-08.
 [functions.zoho-payments]
 verify_jwt = false
+# meta-capi: invocada internamente desde wompi-webhook / zoho-payments
+[functions.meta-capi]
+verify_jwt = false
+# contratistas-registro: registro express público de contratistas por evento
+[functions.contratistas-registro]
+verify_jwt = false
 # loggro-sync se llama desde cron jobs externos sin auth header
 [functions.loggro-sync]
 verify_jwt = false

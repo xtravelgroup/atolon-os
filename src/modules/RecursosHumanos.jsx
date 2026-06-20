@@ -3,6 +3,10 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { supabase } from "../lib/supabase";
 import { B, COP, todayStr, fmtFecha } from "../brand";
+import { HORAS_MES_LEGAL } from "../lib/nominaCalculator.js";
+
+// Tarifa hora ordinaria derivada del salario (misma base que usa la nómina).
+const tarifaDeSalario = (salario) => Math.round((Number(salario) || 0) / HORAS_MES_LEGAL);
 
 // ─── Constantes Legales Colombia 2026 ────────────────────────────────────────
 const SMMLV         = 1423500;   // Salario Mínimo Mensual Legal Vigente 2026
@@ -171,6 +175,7 @@ const EMPTY_EMP = {
   banco:"", cuenta_bancaria:"", tipo_cuenta:"ahorros",
   eps:"", fondo_pension:"", fondo_cesantias:"", arl:"Positiva",
   caja_compensacion:"Comfamiliar", nivel_riesgo_arl:1,
+  almuerzo_horas:1,
   activo:true, avatar_color: AVATAR_COLORS[0], notas:"", usuario_id:"",
 };
 
@@ -223,6 +228,8 @@ function EmpleadoModal({ emp, depts, empleados, usuarios, onSave, onClose }) {
       arl:                str(form.arl) || "Positiva",
       caja_compensacion:  str(form.caja_compensacion) || "Comfamiliar",
       nivel_riesgo_arl:   Number(form.nivel_riesgo_arl) || 1,
+      tarifa_hora:        tarifaDeSalario(form.salario_base),
+      almuerzo_horas:     Number(form.almuerzo_horas) === 0.5 ? 0.5 : 1,
       activo:             form.activo !== false,
       avatar_color:       form.avatar_color || AVATAR_COLORS[0],
       notas:              str(form.notas),
@@ -350,6 +357,9 @@ function EmpleadoModal({ emp, depts, empleados, usuarios, onSave, onClose }) {
         {tabM === "economia" && <>
           <Field label={`Salario Base (SMMLV = ${COP(SMMLV)})`}>
             <Inp type="number" value={form.salario_base} onChange={v => set("salario_base", v)} />
+            <div style={{ fontSize: 11, color: B.sky, marginTop: 4 }}>
+              🕒 Tarifa hora ordinaria = {COP(tarifaDeSalario(form.salario_base))} (salario ÷ 190.67 — base de recargos y extras)
+            </div>
             {Number(form.salario_base) <= 2 * SMMLV && (
               <div style={{ fontSize: 11, color: B.warning, marginTop: 4 }}>
                 ✓ Aplica auxilio de transporte {COP(AUX_TRANSPORTE)} — Total devengado {COP(Number(form.salario_base) + AUX_TRANSPORTE)}
@@ -365,6 +375,12 @@ function EmpleadoModal({ emp, depts, empleados, usuarios, onSave, onClose }) {
             <Sel value={form.modalidad_pago} onChange={v => set("modalidad_pago", v)}>
               <option value="quincenal">Quincenal</option>
               <option value="mensual">Mensual</option>
+            </Sel>
+          </Field>
+          <Field label="Almuerzo (se descuenta por día trabajado)" half>
+            <Sel value={form.almuerzo_horas} onChange={v => set("almuerzo_horas", v)}>
+              <option value={1}>1 hora</option>
+              <option value={0.5}>0.5 hora (media)</option>
             </Sel>
           </Field>
           <Field label="Banco" half><Inp value={form.banco} onChange={v => set("banco", v)} /></Field>

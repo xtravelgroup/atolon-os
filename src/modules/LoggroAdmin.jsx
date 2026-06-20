@@ -97,6 +97,12 @@ export default function LoggroAdmin() {
     setItems(prev => prev.map(i => i.id === item.id ? { ...i, menu_tipo: newTipo } : i));
   };
 
+  const setPrecio = async (item, nuevo) => {
+    const v = Number(nuevo) || 0;
+    await supabase.from("menu_items").update({ precio: v }).eq("id", item.id);
+    setItems(prev => prev.map(i => i.id === item.id ? { ...i, precio: v } : i));
+  };
+
   const bulkSet = async (cat, field, value) => {
     if (!confirm(`Aplicar ${field} = ${value} a todos los productos de "${cat}"?`)) return;
     const ids = items.filter(i => i.loggro_categoria === cat).map(i => i.id);
@@ -221,7 +227,29 @@ export default function LoggroAdmin() {
                   )}
                 </div>
                 <div style={{ color: "rgba(255,255,255,0.5)", fontSize: 11, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.loggro_categoria || "—"}</div>
-                <div style={{ textAlign: "right", color: B.success, fontWeight: 700 }}>{item.precio > 0 ? COP(item.precio) : "—"}</div>
+                <div style={{ textAlign: "right" }}>
+                  <input
+                    type="number"
+                    defaultValue={item.precio || ""}
+                    onBlur={e => {
+                      const v = Number(e.target.value) || 0;
+                      if (v !== (item.precio || 0)) setPrecio(item, v);
+                    }}
+                    placeholder="—"
+                    style={{
+                      background: item.precio > 0 ? "transparent" : B.warning + "11",
+                      border: `1px solid ${item.precio > 0 ? B.navyLight : B.warning + "55"}`,
+                      color: item.precio > 0 ? B.success : B.warning,
+                      fontWeight: 700,
+                      textAlign: "right",
+                      padding: "4px 8px",
+                      borderRadius: 6,
+                      fontSize: 12,
+                      width: "100%",
+                      maxWidth: 110,
+                    }}
+                  />
+                </div>
                 <div>
                   <select value={item.menu_tipo || ""} onChange={e => changeMenuTipo(item, e.target.value)}
                     style={{ background: B.navy, border: `1px solid ${B.navyLight}`, color: B.white, padding: "4px 8px", borderRadius: 6, fontSize: 11, cursor: "pointer", width: "100%" }}>

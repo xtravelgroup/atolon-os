@@ -36,7 +36,11 @@ const METODOS = [
   { key: "otros",         label: "Otros",          icon: "➕" },
 ];
 
-function parseCOP(v) { return parseInt(String(v).replace(/[^0-9-]/g, ""), 10) || 0; }
+// Solo digitos — el guion ya no pasa. Antes el regex era /[^0-9-]/g, que
+// preservaba el guion y permitia pegar/teclear valores negativos en inputs
+// type=number min=0 (audit rank 56). Las ventas/propinas no pueden ser
+// negativas en cierre de caja.
+function parseCOP(v) { return parseInt(String(v).replace(/[^0-9]/g, ""), 10) || 0; }
 function fmtFecha(d) {
   if (!d) return "—";
   const p = d.split("-");
@@ -564,6 +568,13 @@ export default function CierreCaja() {
   const [reservasDia,     setReservasDia]     = useState([]);
   const [loadingReservas, setLoadingReservas] = useState(false);
 
+  // Audit rank 52: el auto-fill de metodos pisaba ediciones manuales cada
+  // vez que cambiaba area/fecha/cajero. Si el cajero ajustaba efectivo por
+  // propina y luego cambiaba la fecha, el form se reseteaba sin warning.
+  // Ahora autoFilledRef marca combinaciones (cajero+fecha+area) ya pre-rellenadas.
+  // Solo auto-fillea la PRIMERA vez por combinacion. Si el usuario ya tocó
+  // los inputs (metodos !== iniciales), no pisamos.
+  const autoFilledRef = useRef(new Set());
   useEffect(() => {
     if (!supabase || area !== "pasadias" || !fecha || !cajero) {
       setReservasDia([]); return;
@@ -579,7 +590,16 @@ export default function CierreCaja() {
       .then(({ data }) => {
         const rows = data || [];
         setReservasDia(rows);
-        // Auto-llenar métodos desde las reservas (excluye CXC)
+
+        const comboKey = `${area}|${fecha}|${cajero}`;
+        // Si la combinacion ya fue auto-rellenada, NO pisamos. El usuario
+        // pudo haber editado a mano y no queremos perder eso.
+        if (autoFilledRef.current.has(comboKey)) {
+          setLoadingReservas(false);
+          return;
+        }
+        autoFilledRef.current.add(comboKey);
+
         const newM = initMetodos();
         rows.forEach(r => {
           const mk = FORMA_TO_METODO[r.forma_pago];
@@ -739,6 +759,61 @@ export default function CierreCaja() {
   const guardar = async () => {
     if (!supabase) return;
     if (!cajero.trim()) { setError("Ingresa el nombre del cajero."); return; }
+    // Control interno CC-H2: comprobante físico obligatorio
+    const fotosValidas = (photos || []).filter(p => p && p.url).length;
+    if (fotosValidas === 0) {
+      setError("Debes adjuntar al menos una foto del comprobante físico antes de cerrar la caja (control de auditoría).");
+      return;
+    }
+
+    // Audit rank 53: validar rango de fecha. Sin esto se puede backdatear
+    // alterando ingresos historicos ya conciliados, o tipear una fecha
+    // futura que contamine dashboards.
+    const hoyCo = new Date().toLocaleDateString("en-CA", { timeZone: "America/Bogota" });
+    if (fecha > hoyCo) {
+      setError("No se pueden cerrar cajas con fecha futura.");
+      return;
+    }
+    const diasAtras = Math.floor((new Date(hoyCo) - new Date(fecha)) / 86400000);
+    if (diasAtras > 7) {
+      const ok = window.confirm(
+        `Estás cerrando una caja de hace ${diasAtras} días (${fecha}). Esto puede alterar reportes ya conciliados. ` +
+        `¿Estás seguro de continuar?`
+      );
+      if (!ok) return;
+    }
+
+    // Audit rank 55: faltante de efectivo significativo requiere justificación
+    // por escrito. Sin esto los faltantes llegan a auditoría sin contexto.
+    const UMBRAL_FALTANTE = -50000; // -$50K, por encima de eso pedimos nota
+    if (diferencia < UMBRAL_FALTANTE && notas.trim().length < 10) {
+      setError(
+        `Faltante de ${COP(Math.abs(diferencia))} detectado. Las notas son obligatorias ` +
+        `(mínimo 10 caracteres explicando la razón del faltante).`
+      );
+      return;
+    }
+
+    // Audit rank 51: pre-check de duplicado (area, fecha, cajero).
+    // No hay UNIQUE constraint en DB todavia (requeriria migracion); este
+    // check evita doble-close desde UI. Race remoto multi-usuario queda
+    // como brecha conocida hasta que se aplique constraint.
+    const { data: existente } = await supabase.from("cierres_caja")
+      .select("id, total_ventas")
+      .eq("area", area)
+      .eq("fecha", fecha)
+      .eq("cajero_nombre", cajero.trim())
+      .limit(1)
+      .maybeSingle();
+    if (existente) {
+      setError(
+        `Ya existe un cierre para ${area} · ${fecha} · ${cajero.trim()} ` +
+        `(ID ${existente.id}, ${COP(existente.total_ventas)}). ` +
+        `Si necesitas corregirlo, anulá el anterior o pedile a Gerencia.`
+      );
+      return;
+    }
+
     setSaving(true);
     setError(null);
 
@@ -758,13 +833,19 @@ export default function CierreCaja() {
     }
 
     const id = `CC-${Date.now()}`;
+    // Audit rank 54: numCaja/numComp solo aplican a areas distintas de
+    // pasadias. Los inputs no se renderizan cuando area='pasadias' pero el
+    // state persiste si el usuario cambio de area sin recargar. Antes el
+    // insert escribia esos valores stale, clasificando mal el cierre en
+    // reportes filtrados por caja.
+    const esPasadias = area === "pasadias";
     const record = {
       id,
       fecha,
       area,
       cajero_nombre: cajero.trim(),
-      numero_caja: numCaja.trim() || null,
-      numero_comprobante: numComp.trim() || null,
+      numero_caja: esPasadias ? null : (numCaja.trim() || null),
+      numero_comprobante: esPasadias ? null : (numComp.trim() || null),
       comprobante_url: photos.find(p => p.url)?.url || null,
       comprobante_urls: photos.filter(p => p.url).map(p => p.url),
       usuario_email: email,
@@ -797,6 +878,9 @@ export default function CierreCaja() {
     setCajero(userNombre || ""); setNumCaja(""); setNumComp(""); setPhotos([]);
     setMetodos(initMetodos()); setOtrosList([]); setIncBase(""); setIncImpuesto("");
     setEfectivoContado(""); setNotas("");
+    // Olvidar combinaciones auto-rellenadas — el siguiente cierre del mismo
+    // (area, fecha, cajero) volvera a pre-rellenar.
+    autoFilledRef.current = new Set();
   };
 
   // ────────────────────────────────────────────────────────────────────────────
@@ -808,6 +892,10 @@ export default function CierreCaja() {
         <h2 style={{ margin: 0, fontSize: 22, fontWeight: 800 }}>💵 Cierre de Caja</h2>
         <div style={{ fontSize: 12, color: "rgba(255,255,255,0.35)", marginTop: 4 }}>Registro de ingresos por punto de venta</div>
       </div>
+
+      {/* Control interno CC-H1: alerta si hay más de 1 día sin cierre */}
+      <AlertaDiasSinCierre area={area} />
+
 
       {saved ? (
         /* ── Éxito ── */
@@ -1333,6 +1421,65 @@ export default function CierreCaja() {
         <HistorialCierres refresh={historialKey} area={area} userRol={userRol} userPermisos={userPermisos} />
       </div>
 
+    </div>
+  );
+}
+
+// ── Alerta CC-H1: días sin cierre por área ─────────────────────────────
+function AlertaDiasSinCierre({ area }) {
+  const [info, setInfo] = useState(null);
+  useEffect(() => {
+    if (!supabase) return;
+    supabase.from("cierres_caja")
+      .select("fecha, cajero_nombre, created_at")
+      .eq("area", area)
+      .order("fecha", { ascending: false })
+      .limit(1)
+      .then(({ data }) => {
+        const row = (data || [])[0];
+        if (!row) { setInfo({ dias: null, ultimoCajero: null, ultimaFecha: null }); return; }
+        const ultima = new Date(row.fecha);
+        const hoy = new Date();
+        hoy.setHours(0,0,0,0);
+        ultima.setHours(0,0,0,0);
+        const ms = hoy.getTime() - ultima.getTime();
+        const dias = Math.max(0, Math.round(ms / (24*3600*1000)));
+        setInfo({ dias, ultimoCajero: row.cajero_nombre, ultimaFecha: row.fecha });
+      });
+  }, [area]);
+
+  if (!info) return null;
+  const { dias, ultimoCajero, ultimaFecha } = info;
+  if (dias === null) {
+    return (
+      <div style={{
+        marginBottom: 20, padding: "12px 16px",
+        background: "rgba(232, 160, 32, 0.10)", border: "1px solid rgba(232, 160, 32, 0.4)",
+        borderRadius: 10, color: B.warning, fontSize: 13,
+      }}>
+        ⚠️ Esta área <strong>nunca</strong> ha tenido un cierre registrado.
+      </div>
+    );
+  }
+  if (dias <= 1) return null;
+  const critico = dias > 2;
+  return (
+    <div style={{
+      marginBottom: 20, padding: "14px 18px",
+      background: critico ? "rgba(214, 69, 69, 0.12)" : "rgba(232, 160, 32, 0.10)",
+      border: `1px solid ${critico ? "rgba(214,69,69,0.5)" : "rgba(232,160,32,0.4)"}`,
+      borderRadius: 10,
+      color: critico ? B.danger : B.warning,
+      fontSize: 13, lineHeight: 1.5,
+    }}>
+      <div style={{ fontWeight: 700, marginBottom: 4 }}>
+        {critico ? "🚨 ALERTA — días sin cierre" : "⚠️ Cierre atrasado"}
+      </div>
+      <div>
+        Han pasado <strong>{dias} días</strong> desde el último cierre del área <strong>{area}</strong>.
+        Último cierre: {new Date(ultimaFecha).toLocaleDateString("es-CO")} por <strong>{ultimoCajero}</strong>.
+        {critico && " Si hubo ventas en esos días, hay un agujero documental. Reporta a Gerencia."}
+      </div>
     </div>
   );
 }

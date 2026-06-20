@@ -231,10 +231,48 @@ Deno.serve(async (req) => {
       unsubscribe_link: unsubUrl,
     };
 
+    // rank 102: validar email antes de pegarle a Resend. Sin esto, un
+    // cart.email vacio/malformado consume un intento (incrementa contador),
+    // gasta una unidad del rate limit de Resend y deja log noise.
+    const emailStr = (cart.email as string ?? "").trim();
+    const emailValido = /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/.test(emailStr);
+    if (!emailValido) {
+      await supabase.from("ac_email_queue").update({
+        estado: "failed",
+        error_msg: "Email inválido o vacío en cart",
+        sent_at: now.toISOString(),
+      }).eq("id", item.id);
+      failed++;
+      continue;
+    }
+
     // Reemplazar variables en HTML y texto
     const bodyHtml  = replaceVars(tmpl.body_html as string ?? "", vars);
     const bodyTexto = replaceVars(tmpl.body_texto as string ?? "", vars);
     const asunto    = replaceVars(tmpl.asunto as string ?? "", vars);
+
+    // rank 101: claim atomico antes de enviar. Reservamos el item en estado
+    // "sending" (filtrando WHERE estado='pending') — solo el primer worker
+    // gana. Si dos crons se solapan, el segundo no entra al fetch. Si la
+    // function crashea entre el send y el update final, el item queda en
+    // "sending" y NO se reintenta automaticamente: un job operacional
+    // (no aqui) deberia inspeccionar items "sending" viejos.
+    const { data: claimed, error: claimErr } = await supabase
+      .from("ac_email_queue")
+      .update({
+        estado: "sending",
+        intentos: (item.intentos ?? 0) + 1,
+        updated_at: now.toISOString(),
+      })
+      .eq("id", item.id)
+      .eq("estado", "pending")
+      .select("id")
+      .maybeSingle();
+    if (claimErr || !claimed) {
+      // Otro worker se lo llevo (o ya cambio estado). Skip silencioso.
+      skipped++;
+      continue;
+    }
 
     // Enviar via Resend (con headers anti-spam completos)
     try {
@@ -244,15 +282,21 @@ Deno.serve(async (req) => {
       const listUnsub     = `<${unsubUrl}>, <mailto:bajas@atolon.co?subject=unsubscribe>`;
       const listUnsubPost = "List-Unsubscribe=One-Click";
 
+      // rank 102: AbortController con timeout 15s. Sin esto, un fetch a
+      // Resend que se cuelga consume todo el budget de la edge function.
+      const ctrl = new AbortController();
+      const ctrlTimer = setTimeout(() => ctrl.abort(), 15_000);
+
       const resendRes = await fetch("https://api.resend.com/emails", {
         method: "POST",
+        signal: ctrl.signal,
         headers: {
           "Authorization": `Bearer ${RESEND_KEY}`,
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
           from:     `${cfg.from_nombre ?? "Atolón Beach Club"} <${cfg.from_email ?? "reservas@atolon.co"}>`,
-          to:       [cart.email as string],
+          to:       [emailStr],
           reply_to: cfg.reply_to ?? "hola@atolon.co",
           subject:  asunto,
           html:     bodyHtml,
@@ -275,6 +319,7 @@ Deno.serve(async (req) => {
           ],
         }),
       });
+      clearTimeout(ctrlTimer);
 
       const resendData = await resendRes.json();
 
@@ -282,12 +327,12 @@ Deno.serve(async (req) => {
         throw new Error(resendData.message ?? "Resend error");
       }
 
-      // Marcar como enviado en la cola
+      // Marcar como enviado (transicion sending → sent). intentos ya se
+      // incremento en el claim.
       await supabase.from("ac_email_queue").update({
         estado:    "sent",
         sent_at:   now.toISOString(),
         resend_id: resendData.id ?? null,
-        intentos:  (item.intentos ?? 0) + 1,
       }).eq("id", item.id);
 
       // Actualizar estado del cart
@@ -315,15 +360,22 @@ Deno.serve(async (req) => {
       const errMsg = err instanceof Error ? err.message : String(err);
       console.error("Send error:", item.id, errMsg);
 
+      // Revertir el claim. intentos ya se incremento al hacer claim — si
+      // ya hubo 3 intentos (este incluido), failed; sino, pending para
+      // reintento.
+      const nuevoIntentos = (item.intentos ?? 0) + 1;
       await supabase.from("ac_email_queue").update({
-        intentos:  (item.intentos ?? 0) + 1,
         error_msg: errMsg.slice(0, 500),
-        // Si es el último intento, marcar como failed
-        estado:    (item.intentos ?? 0) >= 2 ? "failed" : "pending",
+        estado:    nuevoIntentos >= 3 ? "failed" : "pending",
       }).eq("id", item.id);
 
       failed++;
     }
+
+    // rank 102: pequeño delay entre envios para no saturar a Resend.
+    // Resend free permite ~10 req/s; este loop sin throttle podia enviar
+    // 50 mails en <1s y disparar 429s. 120ms ≈ 8 req/s.
+    await new Promise(r => setTimeout(r, 120));
   }
 
   return new Response(JSON.stringify({
