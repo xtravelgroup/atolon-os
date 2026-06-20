@@ -153,8 +153,14 @@ function TabDashboard({ ordenes, entregas, transportes, zarpes, reqs = [], setTa
   const today = todayStr();
   const month = today.slice(0, 7);
 
-  const ocAbiertas       = ordenes.filter(o => !["recibida", "cancelada"].includes(o.estado));
-  const ocMes            = ordenes.filter(o => (o.fecha_emision || "").startsWith(month));
+  // Estados que NO cuentan en KPIs financieros (no son obligación viva).
+  // Incluye "anulada" como defensa en profundidad — si se agrega más adelante
+  // ese estado a OCs, el KPI no rompe.
+  const ESTADOS_NO_CUENTAN = ["recibida", "cancelada", "anulada"];
+  const ocAbiertas       = ordenes.filter(o => !ESTADOS_NO_CUENTAN.includes(o.estado));
+  // ocMes ahora también excluye canceladas/anuladas — antes el "Total emitido
+  // del mes" inflaba con OCs que finalmente nunca generaron pasivo.
+  const ocMes            = ordenes.filter(o => (o.fecha_emision || "").startsWith(month) && !["cancelada", "anulada"].includes(o.estado));
   const totalAbierto     = ocAbiertas.reduce((s, o) => s + Number(o.total || 0), 0);
   const totalMes         = ocMes.reduce((s, o) => s + Number(o.total || 0), 0);
   const sinFactura       = ocAbiertas.filter(o => !o.factura_aplicada).length;
@@ -1656,9 +1662,11 @@ function EditarOCModal({ oc, ordenes = [], onClose, reload, currentUser }) {
   const [err, setErr] = useState("");
 
   useEffect(() => {
-    supabase.from("proveedores").select("id, nombre, nit, email, telefono").order("nombre")
-      .then(({ data }) => setProveedores(data || []));
-  }, []);
+    // Solo proveedores activos — no permitir reasignar OC a un proveedor
+    // desactivado. Conservar el actual aunque sea inactivo (no rompe el form).
+    supabase.from("proveedores").select("id, nombre, nit, email, telefono, activo").order("nombre")
+      .then(({ data }) => setProveedores((data || []).filter(p => p.activo !== false || p.id === oc.proveedor_id)));
+  }, [oc.proveedor_id]);
 
   const setItem = (idx, k, v) => setItems(arr => arr.map((it, i) => {
     if (i !== idx) return it;

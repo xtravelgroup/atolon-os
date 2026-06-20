@@ -70,11 +70,18 @@ async function authenticate(req: Request): Promise<{ ctx?: AuthCtx; error?: Resp
   if (!partner)                              return { error: err("UNAUTHORIZED", "Partner no existe", 401) };
   if (partner.estado !== "activo")           return { error: err("FORBIDDEN",    `Partner ${partner.estado}`, 403) };
 
-  // Rate limit: count requests in last minute
+  // Rate limit: count requests in last minute.
+  // Si la query falla (count=null && error), fail-CLOSED: bloqueamos.
+  // Antes (count ?? 0) interpretaba null como 0 — un error transitorio en
+  // la DB hacia bypass del rate limit completo.
   const since = new Date(Date.now() - 60_000).toISOString();
-  const { count } = await supabase.from("api_partner_logs")
+  const { count, error: countError } = await supabase.from("api_partner_logs")
     .select("id", { count: "exact", head: true })
     .eq("key_id", key.id).gte("ts", since);
+  if (countError) {
+    console.error("[partners-api] rate limit query failed:", countError.message);
+    return { error: err("RATE_LIMIT_CHECK_FAILED", "no se pudo verificar rate limit", 503) };
+  }
   if ((count ?? 0) >= (key.rate_limit_per_min || 60)) {
     return { error: err("RATE_LIMITED", `Excediste ${key.rate_limit_per_min} requests/min`, 429) };
   }

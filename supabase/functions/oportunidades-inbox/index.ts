@@ -65,10 +65,11 @@ serve(async (req) => {
     return json({ error: "Email de remitente inválido" }, 400);
   }
 
-  // Verificar duplicados por message_id
+  // Verificar duplicados por message_id (timeout 10s — antes podia colgar)
   const lookup = await fetch(`${SUPABASE_URL}/rest/v1/rh_postulaciones?email_message_id=eq.${encodeURIComponent(messageId)}&select=id`, {
     headers: { apikey: SERVICE_KEY, Authorization: `Bearer ${SERVICE_KEY}` },
-  }).then(r => r.json());
+    signal: AbortSignal.timeout(10_000),
+  }).then(r => r.json()).catch(() => []);
   if (Array.isArray(lookup) && lookup.length > 0) {
     return json({ ok: true, skipped: "duplicado", id: lookup[0].id });
   }
@@ -83,10 +84,13 @@ serve(async (req) => {
       const ext = (f.name.split(".").pop() || "bin").toLowerCase();
       const path = `inbox/${Date.now()}-${crypto.randomUUID().slice(0, 6)}.${ext}`;
       const buf = await f.arrayBuffer();
+      // Timeout 30s en upload — un attachment lento bloqueaba la edge
+      // function entera.
       const up = await fetch(`${SUPABASE_URL}/storage/v1/object/cv-postulaciones/${path}`, {
         method: "POST",
         headers: { apikey: SERVICE_KEY, Authorization: `Bearer ${SERVICE_KEY}`, "Content-Type": f.type || "application/octet-stream" },
         body: buf,
+        signal: AbortSignal.timeout(30_000),
       });
       if (up.ok) {
         attachmentsList.push({ nombre: f.name, url: path, mime: f.type, size: f.size });
@@ -105,6 +109,7 @@ serve(async (req) => {
   const codigo = `INBOX-${new Date().toISOString().slice(2, 10).replace(/-/g, "")}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
   const ins = await fetch(`${SUPABASE_URL}/rest/v1/rh_postulaciones`, {
     method: "POST",
+    signal: AbortSignal.timeout(10_000),
     headers: { apikey: SERVICE_KEY, Authorization: `Bearer ${SERVICE_KEY}`, "Content-Type": "application/json", Prefer: "return=representation" },
     body: JSON.stringify({
       codigo,

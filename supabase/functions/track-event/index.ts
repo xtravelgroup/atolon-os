@@ -53,7 +53,9 @@ Deno.serve(async (req) => {
     });
 
   } catch (err) {
-    return new Response(JSON.stringify({ error: err.message }), {
+    // No exponer err.message — puede revelar paths internos/SQL/env names.
+    console.error("[track-event] error:", err);
+    return new Response(JSON.stringify({ error: "internal_error" }), {
       status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }

@@ -464,7 +464,10 @@ export default function Resultados() {
       pasR[p.key] = {
         cantidad: all.reduce((s, r) => s + (Number(r.pax) || 0), 0)
                 + lleg.reduce((s, r) => s + (Number(r.pax_total) || 0), 0),
-        monto:    all.filter(r => r.estado !== "no_show").reduce((s, r) => s + (r.total || 0), 0)
+        // Excluir no_show + reembolsado + cancelada (Reportes.jsx usa el
+        // mismo set canónico — antes solo se filtraba no_show y los totales
+        // de Resultados diferían de Reportes para los mismos días).
+        monto:    all.filter(r => !["no_show", "reembolsado", "cancelada"].includes(r.estado)).reduce((s, r) => s + (r.total || 0), 0)
                 + lleg.reduce((s, r) => s + (Number(r.total_cobrado) || 0), 0),
       };
     });
@@ -482,7 +485,7 @@ export default function Resultados() {
       const montoPorGrupo = (g) => {
         const reservasDelGrupo = resLinked.filter(r => r.grupo_id === g.id);
         const montoReservas = reservasDelGrupo
-          .filter(r => r.estado !== "no_show")
+          .filter(r => !["no_show", "reembolsado", "cancelada"].includes(r.estado))
           .reduce((s, r) => s + (Number(r.total) || 0), 0);
         if (g.modalidad_pago === "organizador") {
           // El organizador paga la cotización + cualquier reserva extra
@@ -583,7 +586,7 @@ export default function Resultados() {
       const pasFuturos = [...(prRes.data || []), ...(prResB2b.data || [])];
       setProyPasadias({
         cantidad: pasFuturos.reduce((s, r) => s + (Number(r.pax) || 0), 0),
-        monto:    pasFuturos.filter(r => r.estado !== "no_show").reduce((s, r) => s + (r.total || 0), 0),
+        monto:    pasFuturos.filter(r => !["no_show", "reembolsado", "cancelada"].includes(r.estado)).reduce((s, r) => s + (r.total || 0), 0),
       });
 
       const grpFuturos = prGrp.data || [];

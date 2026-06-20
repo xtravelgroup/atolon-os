@@ -177,7 +177,8 @@ function TabTransportacion() {
   const del = async (item) => {
     if (!confirm(`¿Eliminar "${item.nombre}"?`)) return;
     await supabase.from("menu_items").delete().eq("id", item.id);
-    fetch();
+    // await el fetch para que el UI no muestre "Eliminado" antes de re-leer.
+    await fetch();
   };
 
   const activos = items.filter(i => i.activo).length;
@@ -432,7 +433,8 @@ function TabTransAcuatica() {
   const del = async (item) => {
     if (!confirm(`¿Eliminar "${item.nombre}"?`)) return;
     await supabase.from("menu_items").delete().eq("id", item.id);
-    fetch();
+    // await el fetch para que el UI no muestre "Eliminado" antes de re-leer.
+    await fetch();
   };
 
   const parseItem = (item) => {
@@ -687,14 +689,19 @@ function ItemModal({ item, menuTipo, onClose, onSaved, categorias }) {
 
   const save = async () => {
     if (!form.nombre.trim()) return;
+    // Rechazar precios negativos. Antes input type="number" sin min permitía
+    // -1000 y el menú aparecía con "Precio -$1000" en el booking engine
+    // hasta que alguien lo viera.
+    const precio = Math.max(0, Number(form.precio) || 0);
+    const orden  = Math.max(0, Number(form.orden) || 0);
     setSaving(true);
     const payload = {
       nombre:      form.nombre.trim(),
       descripcion: form.descripcion || "",
-      precio:      Number(form.precio) || 0,
+      precio:      precio,
       categoria:   form.categoria || "General",
       activo:      form.activo,
-      orden:       Number(form.orden) || 0,
+      orden:       orden,
       menu_tipo:   menuTipo,
       tiene_iva:   form.tiene_iva,
       room_service: !!form.room_service,

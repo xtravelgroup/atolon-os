@@ -175,7 +175,10 @@ export default function Horarios() {
   const duplicarSemana = async () => {
     if (!confirm(`Copiar los turnos de ${fmtRangoSemana(weekStart)} a la semana siguiente?`)) return;
     const rows = horarios.map(h => {
-      const old = new Date(h.fecha + "T12:00:00");
+      // Concatenar sin offset interpretaba la fecha como UTC, no como hora
+      // local. En Bogotá (UTC-5) eso desplazaba la fecha 5 horas y al sumar
+      // 7 días se podía caer en el día anterior. Forzar -05:00 (Bogotá).
+      const old = new Date(h.fecha + "T12:00:00-05:00");
       return {
         empleado_id: h.empleado_id,
         fecha: toISO(addDays(old, 7)),

@@ -69,8 +69,10 @@ export default async function handler(req, res) {
         return res.status(401).json({ error: "invalid_signature" });
       }
     } catch (sigErr) {
+      // No exponer sigErr.message al cliente — puede revelar detalles de la
+      // implementación (longitud de buffers, nombres de campos esperados, etc).
       console.error("[wompi-webhook] Error validando firma:", sigErr.message);
-      return res.status(400).json({ error: "signature_error", message: sigErr.message });
+      return res.status(400).json({ error: "signature_error" });
     }
   }
 

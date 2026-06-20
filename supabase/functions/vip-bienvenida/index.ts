@@ -227,7 +227,10 @@ Deno.serve(async (req) => {
     });
 
   } catch (e) {
-    return new Response(JSON.stringify({ error: String(e) }), {
+    // No exponer stack/mensaje crudo — puede revelar paths internos o
+    // nombres de env vars en mensajes de Deno.
+    console.error("[vip-bienvenida] error:", e);
+    return new Response(JSON.stringify({ error: "internal_error" }), {
       status: 500, headers: { ...corsHeaders, "content-type": "application/json" },
     });
   }

@@ -239,10 +239,57 @@ function ModalAgregar({ onClose, onCreated }) {
   const s = (k, v) => setF(p => ({ ...p, [k]: v }));
 
   const handleSave = async () => {
-    if (!f.nombre.trim()) return;
+    if (!f.nombre.trim()) {
+      setStatusMsg({ type: "err", text: "Nombre obligatorio." });
+      return;
+    }
+    // NIT obligatorio para proveedores nacionales — sin NIT no se puede
+    // emitir factura electrónica DIAN. Antes solo había un banner visual
+    // de advertencia sin enforcement: el operador creaba el proveedor
+    // pensando que era opcional y se trababa al facturar.
+    const tipoEsNacional = !f.tipo || f.tipo.toLowerCase().includes("nacional");
+    if (tipoEsNacional && !(f.nit || "").trim()) {
+      setStatusMsg({ type: "err", text: "NIT obligatorio para proveedores nacionales (requerido para facturación DIAN)." });
+      return;
+    }
+
+    // Detectar duplicados antes de insertar. Buscar match por NIT exacto
+    // (caso fuerte) o nombre similar (caso medio). Si hay match, mostrar
+    // warning y pedir confirmación — permite proceder si es legítimo
+    // (ej. dos sucursales del mismo NIT).
+    const nitNuevo = (f.nit || "").trim();
+    const nombreNuevo = f.nombre.trim();
+    const dupCandidates = [];
+    if (nitNuevo) {
+      const { data: porNit } = await supabase.from("proveedores")
+        .select("id, nombre, nit, activo").eq("nit", nitNuevo).limit(5);
+      (porNit || []).forEach(p => dupCandidates.push({ ...p, motivo: "mismo NIT" }));
+    }
+    if (nombreNuevo.length >= 4) {
+      const { data: porNombre } = await supabase.from("proveedores")
+        .select("id, nombre, nit, activo").ilike("nombre", `%${nombreNuevo.slice(0, Math.max(4, nombreNuevo.length - 2))}%`).limit(5);
+      (porNombre || []).forEach(p => {
+        if (!dupCandidates.find(d => d.id === p.id)) {
+          dupCandidates.push({ ...p, motivo: "nombre similar" });
+        }
+      });
+    }
+    if (dupCandidates.length > 0) {
+      const lista = dupCandidates.slice(0, 3).map(d =>
+        `  • ${d.nombre}${d.nit ? ` (NIT ${d.nit})` : ""} — ${d.motivo}${d.activo === false ? " [inactivo]" : ""}`
+      ).join("\n");
+      const ok = window.confirm(
+        `⚠️ POSIBLE DUPLICADO\n\nYa existen proveedores similares:\n${lista}${dupCandidates.length > 3 ? `\n... (+${dupCandidates.length - 3} más)` : ""}\n\n¿Crear igual? Confirma que NO es el mismo — duplicar proveedores ensucia facturación y conciliación de pagos.`
+      );
+      if (!ok) {
+        setStatusMsg({ type: "info", text: "Creación cancelada — usa el proveedor existente o ajusta nombre/NIT." });
+        return;
+      }
+    }
+
     setSaving(true);
     setStatusMsg(null);
-    const nuevo = { id: uid(), ...f };
+    const nuevo = { id: uid(), ...f, nit: nitNuevo, nombre: nombreNuevo };
     const { data, error } = await supabase.from("proveedores").insert(nuevo).select().single();
     if (error) { setSaving(false); setStatusMsg({ type: "err", text: "Error: " + error.message }); return; }
 

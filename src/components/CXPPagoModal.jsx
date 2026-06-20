@@ -50,9 +50,15 @@ export default function CXPPagoModal({ oc, onClose, currentUser, reload }) {
 
   const guardar = async () => {
     setError("");
+    if (saving) return; // guard contra doble-click
     const monto = Number(form.monto);
     if (!monto || monto <= 0) return setError("El monto debe ser mayor a 0.");
-    if (monto > saldo + 0.01) return setError(`El monto excede el saldo (${COP(saldo)}).`);
+    // Tolerancia de redondeo MUY estricta: 0.5 COP (medio centavo).
+    // Antes era 0.01 + sin chequear hacia arriba — un monto de saldo+1 COP pasaba
+    // como "centavito de redondeo" y generaba pago en exceso silencioso.
+    if (monto > saldo + 0.5) {
+      return setError(`El monto excede el saldo (${COP(saldo)}). Si querés registrar un pago superior, corregí el total de la OC primero.`);
+    }
 
     setSaving(true);
     try {
@@ -99,12 +105,23 @@ export default function CXPPagoModal({ oc, onClose, currentUser, reload }) {
     const { data: restantes } = await supabase.from("cxp_pagos").select("monto").eq("oc_id", oc.id);
     const nuevoTotal = (restantes || []).reduce((s, p) => s + Number(p.monto || 0), 0);
     const completa = nuevoTotal >= Number(oc.total || 0) - 0.01;
-    await supabase.from("ordenes_compra").update({
+    // pagada_at: si pasa de completa→incompleta, preservar el timestamp original
+    // (queda como histórico cuando la OC volvía a estar pagada en algún momento).
+    // Si sigue completa, conservar el pagada_at existente (no se sobreescribe).
+    // Si nunca estuvo completa, queda null.
+    const patch = {
       monto_pagado: nuevoTotal,
       pagada_completa: completa,
-      pagada_at: completa ? oc.pagada_at : null,
       estado: completa ? "pagada" : (oc.estado === "pagada" ? "recibida" : oc.estado),
-    }).eq("id", oc.id);
+    };
+    // No tocamos pagada_at si seguimos pagada (preservar el timestamp original).
+    // Si se revierte a no-pagada, dejamos pagada_at NULL para que un nuevo
+    // pago genere timestamp fresco (semánticamente: "esta fecha fue cuándo
+    // se completó EL CICLO ACTUAL").
+    if (!completa && oc.pagada_completa) {
+      patch.pagada_at = null;
+    }
+    await supabase.from("ordenes_compra").update(patch).eq("id", oc.id);
     await cargarPagos();
     reload?.();
   };
