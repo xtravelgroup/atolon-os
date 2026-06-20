@@ -428,6 +428,39 @@ export default function FacturaProveedorModal({ oc, onClose, reload, currentUser
   }));
   const ocItemsConLoggro = ocItemsResolved.filter(x => x.resolved?.loggro_id);
 
+  // Auto-resolver loggro_id cuando el catálogo se carga DESPUÉS del parser.
+  // El AI hace match item.factura ↔ item.OC pero el item de la OC no trae
+  // loggro_id directo. Esta resolución cierra el bucle: si el item de la
+  // factura tiene oc_idx (matcheó con OC) y no tiene loggro_id todavía,
+  // intentamos resolverlo via catalog by id/nombre del item OC. Solo actúa
+  // sobre items que NO tienen loggro_id (idempotente — no pisa los que ya
+  // están vinculados manual o por AI directo).
+  useEffect(() => {
+    if (Object.keys(catalogoById).length === 0 && Object.keys(catalogoByNombre).length === 0) return;
+    if (!data.items || data.items.length === 0) return;
+    setData(d => {
+      let changed = false;
+      const items = d.items.map(it => {
+        if (it.loggro_id) return it;            // ya vinculado, dejar
+        if (it.oc_idx == null) return it;       // no matcheó con OC, manual
+        const ocIt = oc.items?.[it.oc_idx];
+        if (!ocIt) return it;
+        const res = resolveOCItem(ocIt);
+        if (!res?.loggro_id) return it;
+        changed = true;
+        return {
+          ...it,
+          loggro_id: res.loggro_id,
+          item_id: res.item_id || it.item_id,
+          nombre_anterior: res.nombre_catalogo,
+          match_source: it.match_source || "auto_oc_catalog",
+        };
+      });
+      return changed ? { ...d, items } : d;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data.items, catalogoById, catalogoByNombre]);
+
   // Estado local del buscador en el catálogo Loggro completo (por nombre).
   // Indexado por idx del item de la factura para soportar varios abiertos.
   const [buscarLoggroTxt, setBuscarLoggroTxt] = useState({});
