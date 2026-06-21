@@ -889,7 +889,12 @@ export default function FacturaProveedorModal({ oc, onClose, reload, currentUser
         iva: facturaIva,
         consumo: data.consumo_total || 0,
         total: facturaTotal,
-        factura_data: parsed || null,
+        // Guardar items EDITADOS por el operador (con loggro_qty_override,
+        // vínculos manuales a Loggro, etc.) — antes se guardaba `parsed`
+        // (raw del AI) y los edits del operador se descartaban silenciosamente.
+        // RecepcionOCModal lee factura_data.items[].loggro_qty_override para
+        // entrar la cantidad correcta a Loggro.
+        factura_data: { ...(parsed || {}), items: data.items },
         factura_url: data.factura_url || null,
         aplicada: true,
         aplicada_at: new Date().toISOString(),
@@ -918,7 +923,12 @@ export default function FacturaProveedorModal({ oc, onClose, reload, currentUser
         factura_url: data.factura_url || null,
         factura_subtotal: sumSub,
         factura_iva: sumIva,
-        factura_data: parsed || null,
+        // Guardar items EDITADOS por el operador (con loggro_qty_override,
+        // vínculos manuales a Loggro, etc.) — antes se guardaba `parsed`
+        // (raw del AI) y los edits del operador se descartaban silenciosamente.
+        // RecepcionOCModal lee factura_data.items[].loggro_qty_override para
+        // entrar la cantidad correcta a Loggro.
+        factura_data: { ...(parsed || {}), items: data.items },
         factura_aplicada: true,
         factura_aplicada_at: new Date().toISOString(),
         factura_aplicada_por: aplicadaPor,
