@@ -75,6 +75,10 @@ export default function Items() {
     if (!cant || cant <= 0) return alert("Cantidad inválida");
     addToCart({
       item_id: item.id,
+      // CRITICAL: copiar loggro_id al carrito para que llegue a la requisición
+      // y de ahí a la OC. Sin esto, la cadena req → OC → recepción pierde la
+      // referencia a Loggro y el ingrediente no entra a inventario Restobar.
+      loggro_id: item.loggro_id || null,
       nombre: item.nombre,
       unidad: item.unidad || "Unidades",
       categoria: item.categoria,
@@ -1610,6 +1614,7 @@ function InventarioTab({
           if (!cantNum || cantNum <= 0) return alert("Cantidad inválida");
           addToCart({
             item_id: i.id,
+            loggro_id: i.loggro_id || null,  // CRITICAL: ver Items.jsx:76
             nombre: i.nombre,
             unidad: i.unidad || "Unidades",
             categoria: i.categoria,

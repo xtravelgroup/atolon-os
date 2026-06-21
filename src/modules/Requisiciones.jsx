@@ -2405,6 +2405,11 @@ function NewReqModal({ tipoInicial, areaInicial, onClose, onSave, proveedores, r
           id: uid(),
           item: c.nombre,
           item_id: c.item_id,
+          // CRITICAL: el carrito viene con item_id pero NO con loggro_id.
+          // Sin esto la req → OC → recepción pierde la referencia a Loggro
+          // y el ingrediente no entra a inventario Restobar (281 líneas
+          // afectadas en histórico antes del fix 2026-06-20).
+          loggro_id: c.loggro_id || null,
           cant: c.cant,
           unidad: c.unidad || "Unidades",
           precioU: c.precioU || 0,
