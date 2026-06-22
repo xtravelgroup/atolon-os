@@ -1681,6 +1681,153 @@ serve(async (req) => {
       return json({ ...payload, sospechoso: sospechoso || undefined, truncated: truncated || undefined });
     }
 
+    // GET /loggro-sync/consumo-recetas-rango?from=YYYY-MM-DD&to=YYYY-MM-DD
+    // Replica el "Historial de Inventario / Facturación" de Loggro: por cada
+    // factura del rango, expande la receta (1 nivel) de cada producto vendido
+    // y agrega los consumos por insumo. Usado por contabilidad para hacer el
+    // asiento mensual Inventario → Costo.
+    if (req.method === "GET" && path === "/consumo-recetas-rango") {
+      const from = url.searchParams.get("from");
+      const to   = url.searchParams.get("to");
+      if (!from || !to) return json({ error: "params from y to requeridos (YYYY-MM-DD)" }, 400);
+
+      const pageSize = 100;
+      const COTZ_OFFSET_MS = -5 * 3600 * 1000;
+      const dayOf = (ts: string) => new Date(new Date(ts).getTime() + COTZ_OFFSET_MS).toISOString().slice(0, 10);
+
+      // 1. Catálogo Loggro completo (products + ingredients) → mapa por id+nombre
+      const map: Record<string, any> = {};
+      const byNombre: Record<string, any> = {};
+      const addAll = async (path: string) => {
+        for (let p = 0; p < 20; p++) {
+          let arr: any[] = [];
+          try {
+            const d: any = await loggroGet(`${path}?pagination=true&limit=200&page=${p}`);
+            arr = d?.data || (Array.isArray(d) ? d : []) || [];
+          } catch (_e) { break; }
+          if (arr.length === 0) break;
+          for (const it of arr) {
+            if (it?._id) map[it._id] = it;
+            if (it?.name) byNombre[it.name.trim().toLowerCase()] = it;
+          }
+        }
+      };
+      await addAll("/products");
+      await addAll("/ingredients");
+
+      // 2. Facturas del rango (paginación inversa con binary search)
+      const loggroGetPage = async (page: number) => {
+        for (let a = 0; a < 3; a++) {
+          try {
+            const d: any = await loggroGet(`/invoices?pagination=true&limit=${pageSize}&page=${page}`);
+            return { ok: true, arr: d?.data || (Array.isArray(d) ? d : []) || [] };
+          } catch (_e) {
+            if (a === 2) return { ok: false, arr: [] as any[] };
+            await new Promise(r => setTimeout(r, 250 * Math.pow(3, a)));
+          }
+        }
+        return { ok: false, arr: [] as any[] };
+      };
+      let lo = 0, hi = 200, lastNonEmpty = 0;
+      while (lo <= hi) {
+        const mid = Math.floor((lo + hi) / 2);
+        const r = await loggroGetPage(mid);
+        if (!r.ok) return json({ ok: false, error: "Loggro no responde (sondeo)" }, 503);
+        if (r.arr.length > 0) { lastNonEmpty = mid; lo = mid + 1; } else { hi = mid - 1; }
+      }
+      const invs: any[] = [];
+      const seen = new Set<string>();
+      let stop = false;
+      for (let p = lastNonEmpty; p >= 0 && !stop; p -= 5) {
+        const pages = [p, p-1, p-2, p-3, p-4].filter(x => x >= 0);
+        const results = await Promise.all(pages.map(async pp => ({ pp, ...(await loggroGetPage(pp)) })));
+        if (results.some(r => !r.ok)) return json({ ok: false, error: "Loggro fallo descarga facturas" }, 503);
+        let allOlder = true;
+        for (const r of results) {
+          for (const inv of r.arr) {
+            if (!inv?._id || seen.has(inv._id)) continue;
+            seen.add(inv._id);
+            if (inv?.deletedInfo?.isDeleted) continue;
+            const d = dayOf(inv.createdOn);
+            if (d >= from) allOlder = false;
+            if (d >= from && d <= to) invs.push(inv);
+          }
+        }
+        if (allOlder && invs.length > 0) stop = true;
+      }
+
+      // 3. Expandir recetas: cada factura → productos → ingredients[] del producto
+      const getPrecio = (p: any) => Number(p?.locationsStock?.[0]?.avgCost) || Number(p?.locationsStock?.[0]?.pricePurchase) || Number(p?.pricePurchase) || 0;
+      const getUnit = (p: any) => p?.unit?.shortName || p?.unit?.name || "";
+
+      const movs: any[] = [];
+      let sinMatch = 0;
+      const sinMatchSet = new Set<string>();
+      for (const inv of invs) {
+        const fecha = new Date(new Date(inv.createdOn).getTime() + COTZ_OFFSET_MS).toISOString();
+        const numero = inv.number || inv.numberUnique || inv._id?.slice(-6);
+        for (const prod of (inv.products || [])) {
+          const nombre = (prod.name || "").trim();
+          const cant = Number(prod.quantity) || 0;
+          if (!nombre || cant <= 0) continue;
+          const pCat = byNombre[nombre.toLowerCase()];
+          if (!pCat) {
+            sinMatch++;
+            sinMatchSet.add(nombre);
+            continue;
+          }
+          const ings = pCat.ingredients || [];
+          if (ings.length === 0) {
+            const pu = getPrecio(pCat);
+            movs.push({ fecha, factura: numero, producto_base: pCat.name, insumo: pCat.name, unidad: getUnit(pCat), categoria: pCat.category?.name || "", cantidad_usada: cant, precio_unit: pu, total: cant * pu });
+            continue;
+          }
+          for (const def of ings) {
+            const ingObj = typeof def.ingredient === "string" ? map[def.ingredient] : def.ingredient;
+            const ingQty = Number(def.quantity) || 0;
+            if (!ingQty) continue;
+            const pu = getPrecio(ingObj);
+            const usada = cant * ingQty;
+            movs.push({
+              fecha,
+              factura: numero,
+              producto_base: pCat.name,
+              insumo: ingObj?.name || "(no encontrado)",
+              unidad: getUnit(ingObj),
+              categoria: ingObj?.category?.name || "Sin categoría",
+              cantidad_usada: usada,
+              precio_unit: pu,
+              total: usada * pu,
+            });
+          }
+        }
+      }
+
+      // 4. Agregado por insumo
+      const porInsumo: Record<string, any> = {};
+      for (const m of movs) {
+        const k = m.insumo + "|" + (m.unidad || "");
+        if (!porInsumo[k]) porInsumo[k] = { insumo: m.insumo, unidad: m.unidad, categoria: m.categoria, cantidad: 0, total: 0, movs: 0 };
+        porInsumo[k].cantidad += m.cantidad_usada;
+        porInsumo[k].total += m.total;
+        porInsumo[k].movs++;
+      }
+      const agregado = Object.values(porInsumo).sort((a: any, b: any) => b.total - a.total);
+
+      return json({
+        ok: true,
+        from, to,
+        facturas_procesadas: invs.length,
+        movimientos: movs.length,
+        insumos_unicos: agregado.length,
+        productos_sin_match: sinMatchSet.size,
+        productos_sin_match_lista: Array.from(sinMatchSet),
+        total_costo: movs.reduce((s, m) => s + m.total, 0),
+        agregado,
+        movimientos_detalle: movs.sort((a, b) => a.fecha.localeCompare(b.fecha)),
+      });
+    }
+
     // GET /loggro-sync/movimientos-inventario-rango?from=YYYY-MM-DD&to=YYYY-MM-DD
     // Descarga TODOS los movimientos de inventario de Loggro en el rango y los
     // agrupa por (tipo de movimiento, ingrediente). Es lo que el contador

@@ -15,6 +15,7 @@ const REPORTES = [
   { key: "ocupacion",    label: "Ocupación diaria",   icon: "📅", desc: "Pax por día · Ocupación vs. capacidad · Tendencia mensual" },
   { key: "cancelaciones",label: "Cancelaciones",      icon: "✕",  desc: "Reservas canceladas · Razón · Reembolsos" },
   { key: "ayb",          label: "Reportes A&B",       icon: "🍽️", desc: "Cortesías · Anulaciones · Descuentos del Restaurant/Bar (Loggro)" },
+  { key: "inv_costo",    label: "Inventario → Costo", icon: "📦", desc: "Historial de movimientos por Facturación de Loggro Restobar · Asiento contable mensual" },
 ];
 
 const firstOfMonth = () => {
@@ -54,6 +55,7 @@ export default function Reportes() {
       {tab === "ocupacion"     && <ReporteOcupacion />}
       {tab === "cancelaciones" && <ReporteCancelaciones />}
       {tab === "ayb"           && <ReporteAyB />}
+      {tab === "inv_costo"     && <ReporteInventarioCosto />}
     </div>
   );
 }
@@ -1842,6 +1844,227 @@ function ReporteTransacciones() {
       )}
 
       {openReservaId && <ReservaDetailModal reservaId={openReservaId} onClose={() => setOpenReservaId(null)} />}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// REPORTE: Inventario → Costo (asiento contable mensual)
+// ═══════════════════════════════════════════════════════════════════════════
+function ReporteInventarioCosto() {
+  const today = todayStr();
+  const inicioMesPasado = (() => {
+    const d = new Date();
+    d.setMonth(d.getMonth() - 1); d.setDate(1);
+    return d.toISOString().slice(0, 10);
+  })();
+  const finMesPasado = (() => {
+    const d = new Date();
+    d.setDate(0); // último día del mes anterior
+    return d.toISOString().slice(0, 10);
+  })();
+  const [from, setFrom] = useState(inicioMesPasado);
+  const [to, setTo]     = useState(finMesPasado);
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [progress, setProgress] = useState("");
+  const [err, setErr] = useState("");
+  const [vista, setVista] = useState("agregado"); // "agregado" | "detalle"
+
+  const generar = async () => {
+    if (!from || !to) { setErr("Selecciona ambas fechas"); return; }
+    if (from > to) { setErr("Fecha 'desde' debe ser menor o igual a 'hasta'"); return; }
+    setLoading(true); setErr(""); setData(null);
+    setProgress("Conectando a Loggro Restobar…");
+    try {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 240_000); // 4 min
+      setProgress("Descargando facturas y catálogo de Loggro…");
+      const res = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/loggro-sync/consumo-recetas-rango?from=${from}&to=${to}`,
+        { headers: { apikey: import.meta.env.VITE_SUPABASE_ANON_KEY, Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}` }, signal: ctrl.signal },
+      );
+      clearTimeout(timer);
+      const json = await res.json();
+      if (!json.ok) { setErr(json.error || "Error generando reporte"); setLoading(false); return; }
+      setData(json);
+      setProgress("");
+    } catch (e) {
+      setErr(e.name === "AbortError" ? "Timeout (más de 4 min). Reduce el rango de fechas." : e.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const exportarCSV = (filas, headers, nombre) => {
+    const csv = [
+      headers.map(h => `"${h}"`).join(","),
+      ...filas.map(row => headers.map((_, i) => {
+        const v = row[i];
+        return typeof v === "string" && (v.includes(",") || v.includes('"')) ? `"${v.replace(/"/g, '""')}"` : v ?? "";
+      }).join(",")),
+    ].join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = nombre; a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const exportarAgregado = () => {
+    if (!data?.agregado) return;
+    const filas = data.agregado.map(x => [
+      x.categoria || "Sin categoría", x.insumo, x.unidad || "",
+      Number(x.cantidad).toFixed(3), Math.round(x.total),
+    ]);
+    exportarCSV(filas, ["Categoría", "Insumo", "Unidad", "Cantidad usada", "Costo total (COP)"], `inventario_costo_agregado_${from}_${to}.csv`);
+  };
+  const exportarDetalle = () => {
+    if (!data?.movimientos_detalle) return;
+    const filas = data.movimientos_detalle.map(m => [
+      m.fecha.slice(0, 16).replace("T", " "),
+      m.factura || "", m.producto_base, m.insumo, m.unidad || "",
+      Number(m.cantidad_usada).toFixed(3), Math.round(m.precio_unit), Math.round(m.total),
+    ]);
+    exportarCSV(filas, ["Fecha", "Factura", "Producto Base", "Insumo", "Unidad", "Cantidad", "Precio unit", "Total"], `inventario_costo_detalle_${from}_${to}.csv`);
+  };
+
+  return (
+    <div style={{ background: B.navy, borderRadius: 12, padding: 24, border: `1px solid ${B.navyLight}` }}>
+      <div style={{ marginBottom: 16 }}>
+        <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontSize: 22, fontWeight: 800, color: B.sand }}>📦 Inventario → Costo</div>
+        <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginTop: 4, lineHeight: 1.5 }}>
+          Replica el "Historial de Inventario · Facturación" de Loggro. Por cada producto vendido en el rango, expande la receta y agrega el consumo por insumo.
+          Resultado: el monto que mueve contablemente de <b>Inventario</b> a <b>Costo de Mercancía Vendida</b> en el mes.
+        </div>
+      </div>
+
+      {/* Selector de fechas */}
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-end", marginBottom: 18 }}>
+        <div>
+          <label style={LS}>Desde</label>
+          <input type="date" value={from} onChange={e => setFrom(e.target.value)} max={today} style={{ ...IS, width: 160 }} />
+        </div>
+        <div>
+          <label style={LS}>Hasta</label>
+          <input type="date" value={to} onChange={e => setTo(e.target.value)} max={today} style={{ ...IS, width: 160 }} />
+        </div>
+        <button onClick={generar} disabled={loading} style={BTN(loading ? B.navyLight : B.success, B.navy)}>
+          {loading ? "Generando…" : "▶ Generar reporte"}
+        </button>
+      </div>
+
+      {progress && <div style={{ marginBottom: 12, padding: "8px 12px", background: B.sky + "11", color: B.sky, borderRadius: 6, fontSize: 12 }}>⏳ {progress}</div>}
+      {err && <div style={{ marginBottom: 12, padding: "8px 12px", background: B.danger + "22", color: B.danger, borderRadius: 6, fontSize: 12 }}>⚠ {err}</div>}
+
+      {data && (
+        <>
+          {/* KPIs */}
+          <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 18 }}>
+            <KpiBox label="Facturas procesadas" value={data.facturas_procesadas} color={B.sky} />
+            <KpiBox label="Movimientos generados" value={data.movimientos.toLocaleString("es-CO")} color={B.sand} />
+            <KpiBox label="Insumos únicos" value={data.insumos_unicos} color={B.success} />
+            <KpiBox label="Productos sin receta" value={data.productos_sin_match} color={data.productos_sin_match > 0 ? B.warning : "rgba(255,255,255,0.4)"} />
+            <KpiBox label="TOTAL COSTO (CMV)" value={COP(data.total_costo)} color={B.sand} highlight />
+          </div>
+
+          {/* Switch vista + export */}
+          <div style={{ display: "flex", gap: 10, marginBottom: 12, alignItems: "center", flexWrap: "wrap" }}>
+            <div style={{ display: "flex", gap: 4, background: B.navyMid, borderRadius: 8, padding: 3 }}>
+              <button onClick={() => setVista("agregado")} style={{ padding: "6px 12px", borderRadius: 6, border: "none", cursor: "pointer", background: vista === "agregado" ? B.sky : "transparent", color: vista === "agregado" ? B.navy : "rgba(255,255,255,0.6)", fontWeight: 700, fontSize: 12 }}>Por insumo</button>
+              <button onClick={() => setVista("detalle")} style={{ padding: "6px 12px", borderRadius: 6, border: "none", cursor: "pointer", background: vista === "detalle" ? B.sky : "transparent", color: vista === "detalle" ? B.navy : "rgba(255,255,255,0.6)", fontWeight: 700, fontSize: 12 }}>Detalle por movimiento</button>
+            </div>
+            <button onClick={vista === "agregado" ? exportarAgregado : exportarDetalle} style={BTN(B.sand, B.navy)}>
+              📥 Descargar CSV
+            </button>
+          </div>
+
+          {/* Tabla */}
+          {vista === "agregado" ? (
+            <div style={{ background: B.navyMid, borderRadius: 8, overflow: "hidden", maxHeight: 600, overflowY: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                <thead style={{ position: "sticky", top: 0, background: B.navyLight, zIndex: 1 }}>
+                  <tr>
+                    <th style={{ padding: "8px 10px", textAlign: "left", fontSize: 10, color: B.sand, textTransform: "uppercase" }}>Categoría</th>
+                    <th style={{ padding: "8px 10px", textAlign: "left", fontSize: 10, color: B.sand, textTransform: "uppercase" }}>Insumo</th>
+                    <th style={{ padding: "8px 10px", textAlign: "center", fontSize: 10, color: B.sand, textTransform: "uppercase" }}>Unidad</th>
+                    <th style={{ padding: "8px 10px", textAlign: "right", fontSize: 10, color: B.sand, textTransform: "uppercase" }}>Cantidad</th>
+                    <th style={{ padding: "8px 10px", textAlign: "right", fontSize: 10, color: B.sand, textTransform: "uppercase" }}>Costo total</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.agregado.map((x, i) => (
+                    <tr key={i} style={{ borderTop: `1px solid ${B.navyLight}` }}>
+                      <td style={{ padding: "6px 10px", color: "rgba(255,255,255,0.6)" }}>{x.categoria || "—"}</td>
+                      <td style={{ padding: "6px 10px", fontWeight: 600 }}>{x.insumo}</td>
+                      <td style={{ padding: "6px 10px", textAlign: "center", color: "rgba(255,255,255,0.5)" }}>{x.unidad || "—"}</td>
+                      <td style={{ padding: "6px 10px", textAlign: "right" }}>{Number(x.cantidad).toLocaleString("es-CO", { maximumFractionDigits: 3 })}</td>
+                      <td style={{ padding: "6px 10px", textAlign: "right", color: B.sand, fontWeight: 700 }}>{COP(x.total)}</td>
+                    </tr>
+                  ))}
+                  <tr style={{ background: B.sand + "22", borderTop: `2px solid ${B.sand}` }}>
+                    <td colSpan={4} style={{ padding: "10px", fontWeight: 800, color: B.sand }}>TOTAL</td>
+                    <td style={{ padding: "10px", textAlign: "right", fontWeight: 800, color: B.sand }}>{COP(data.total_costo)}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div style={{ background: B.navyMid, borderRadius: 8, overflow: "hidden", maxHeight: 600, overflowY: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
+                <thead style={{ position: "sticky", top: 0, background: B.navyLight, zIndex: 1 }}>
+                  <tr>
+                    {["Fecha", "Factura", "Producto Base", "Insumo", "Unidad", "Cantidad", "Precio U.", "Total"].map(h => (
+                      <th key={h} style={{ padding: "8px 10px", textAlign: ["Cantidad","Precio U.","Total"].includes(h) ? "right" : "left", fontSize: 10, color: B.sand, textTransform: "uppercase" }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.movimientos_detalle.slice(0, 2000).map((m, i) => (
+                    <tr key={i} style={{ borderTop: `1px solid ${B.navyLight}` }}>
+                      <td style={{ padding: "5px 10px", color: "rgba(255,255,255,0.5)", whiteSpace: "nowrap" }}>{m.fecha.slice(5, 16).replace("T", " ")}</td>
+                      <td style={{ padding: "5px 10px", color: "rgba(255,255,255,0.5)" }}>{m.factura}</td>
+                      <td style={{ padding: "5px 10px" }}>{m.producto_base}</td>
+                      <td style={{ padding: "5px 10px", fontWeight: 600 }}>{m.insumo}</td>
+                      <td style={{ padding: "5px 10px", color: "rgba(255,255,255,0.5)" }}>{m.unidad}</td>
+                      <td style={{ padding: "5px 10px", textAlign: "right" }}>{Number(m.cantidad_usada).toLocaleString("es-CO", { maximumFractionDigits: 3 })}</td>
+                      <td style={{ padding: "5px 10px", textAlign: "right" }}>{COP(m.precio_unit)}</td>
+                      <td style={{ padding: "5px 10px", textAlign: "right", color: B.sand, fontWeight: 600 }}>{COP(m.total)}</td>
+                    </tr>
+                  ))}
+                  {data.movimientos_detalle.length > 2000 && (
+                    <tr><td colSpan={8} style={{ padding: 10, textAlign: "center", color: "rgba(255,255,255,0.4)", fontStyle: "italic" }}>
+                      Mostrando primeros 2000 de {data.movimientos_detalle.length.toLocaleString("es-CO")} movimientos. Descarga CSV para verlos todos.
+                    </td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {/* Productos sin match — avisar al contador */}
+          {data.productos_sin_match > 0 && (
+            <div style={{ marginTop: 14, padding: 12, background: B.warning + "11", border: `1px solid ${B.warning}44`, borderRadius: 8, fontSize: 11, color: "rgba(255,255,255,0.7)" }}>
+              <div style={{ fontWeight: 700, color: B.warning, marginBottom: 6 }}>⚠ {data.productos_sin_match} producto(s) vendidos no tienen receta en el catálogo Loggro</div>
+              <div style={{ fontSize: 10, opacity: 0.8, marginBottom: 4 }}>Estos productos NO se cuentan en el costo total. Pide al equipo cargar sus recetas en Loggro:</div>
+              <div style={{ display: "flex", gap: 4, flexWrap: "wrap", maxHeight: 80, overflowY: "auto" }}>
+                {data.productos_sin_match_lista.map((n, i) => (
+                  <span key={i} style={{ fontSize: 10, padding: "2px 6px", background: B.navyLight, borderRadius: 4 }}>{n}</span>
+                ))}
+              </div>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+function KpiBox({ label, value, color, highlight }) {
+  return (
+    <div style={{ background: highlight ? B.sand + "11" : B.navyMid, border: `1px solid ${highlight ? B.sand + "55" : B.navyLight}`, borderRadius: 8, padding: "10px 14px", minWidth: 140, borderLeft: `3px solid ${color}` }}>
+      <div style={{ fontSize: 9, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: "0.05em", fontWeight: 600 }}>{label}</div>
+      <div style={{ fontSize: 18, fontWeight: 800, color, fontFamily: "'Barlow Condensed', sans-serif", marginTop: 2 }}>{value}</div>
     </div>
   );
 }
