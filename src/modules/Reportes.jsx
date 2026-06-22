@@ -1913,11 +1913,15 @@ function ReporteInventarioCosto() {
 
   const exportarAgregado = () => {
     if (!data?.agregado) return;
-    const filas = data.agregado.map(x => [
-      x.categoria || "Sin categoría", x.insumo, x.unidad || "",
-      Number(x.cantidad).toFixed(3), Math.round(x.total),
-    ]);
-    exportarCSV(filas, ["Categoría", "Insumo", "Unidad", "Cantidad usada", "Costo total (COP)"], `inventario_costo_agregado_${from}_${to}.csv`);
+    const filas = data.agregado.map(x => {
+      const cant = Number(x.cantidad) || 0;
+      const costoUnit = cant > 0 ? x.total / cant : 0;
+      return [
+        x.categoria || "Sin categoría", x.insumo, x.unidad || "",
+        cant.toFixed(3), Math.round(costoUnit * 100) / 100, Math.round(x.total),
+      ];
+    });
+    exportarCSV(filas, ["Categoría", "Insumo", "Unidad", "Cantidad usada", "Costo unitario (COP)", "Costo total (COP)"], `inventario_costo_agregado_${from}_${to}.csv`);
   };
   const exportarDetalle = () => {
     if (!data?.movimientos_detalle) return;
@@ -1989,21 +1993,27 @@ function ReporteInventarioCosto() {
                     <th style={{ padding: "8px 10px", textAlign: "left", fontSize: 10, color: B.sand, textTransform: "uppercase" }}>Insumo</th>
                     <th style={{ padding: "8px 10px", textAlign: "center", fontSize: 10, color: B.sand, textTransform: "uppercase" }}>Unidad</th>
                     <th style={{ padding: "8px 10px", textAlign: "right", fontSize: 10, color: B.sand, textTransform: "uppercase" }}>Cantidad</th>
+                    <th style={{ padding: "8px 10px", textAlign: "right", fontSize: 10, color: B.sand, textTransform: "uppercase" }}>Costo unit.</th>
                     <th style={{ padding: "8px 10px", textAlign: "right", fontSize: 10, color: B.sand, textTransform: "uppercase" }}>Costo total</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {data.agregado.map((x, i) => (
-                    <tr key={i} style={{ borderTop: `1px solid ${B.navyLight}` }}>
-                      <td style={{ padding: "6px 10px", color: "rgba(255,255,255,0.6)" }}>{x.categoria || "—"}</td>
-                      <td style={{ padding: "6px 10px", fontWeight: 600 }}>{x.insumo}</td>
-                      <td style={{ padding: "6px 10px", textAlign: "center", color: "rgba(255,255,255,0.5)" }}>{x.unidad || "—"}</td>
-                      <td style={{ padding: "6px 10px", textAlign: "right" }}>{Number(x.cantidad).toLocaleString("es-CO", { maximumFractionDigits: 3 })}</td>
-                      <td style={{ padding: "6px 10px", textAlign: "right", color: B.sand, fontWeight: 700 }}>{COP(x.total)}</td>
-                    </tr>
-                  ))}
+                  {data.agregado.map((x, i) => {
+                    const cant = Number(x.cantidad) || 0;
+                    const costoUnit = cant > 0 ? x.total / cant : 0;
+                    return (
+                      <tr key={i} style={{ borderTop: `1px solid ${B.navyLight}` }}>
+                        <td style={{ padding: "6px 10px", color: "rgba(255,255,255,0.6)" }}>{x.categoria || "—"}</td>
+                        <td style={{ padding: "6px 10px", fontWeight: 600 }}>{x.insumo}</td>
+                        <td style={{ padding: "6px 10px", textAlign: "center", color: "rgba(255,255,255,0.5)" }}>{x.unidad || "—"}</td>
+                        <td style={{ padding: "6px 10px", textAlign: "right" }}>{cant.toLocaleString("es-CO", { maximumFractionDigits: 3 })}</td>
+                        <td style={{ padding: "6px 10px", textAlign: "right", color: "rgba(255,255,255,0.7)" }}>{COP(costoUnit)}</td>
+                        <td style={{ padding: "6px 10px", textAlign: "right", color: B.sand, fontWeight: 700 }}>{COP(x.total)}</td>
+                      </tr>
+                    );
+                  })}
                   <tr style={{ background: B.sand + "22", borderTop: `2px solid ${B.sand}` }}>
-                    <td colSpan={4} style={{ padding: "10px", fontWeight: 800, color: B.sand }}>TOTAL</td>
+                    <td colSpan={5} style={{ padding: "10px", fontWeight: 800, color: B.sand }}>TOTAL</td>
                     <td style={{ padding: "10px", textAlign: "right", fontWeight: 800, color: B.sand }}>{COP(data.total_costo)}</td>
                   </tr>
                 </tbody>
