@@ -803,11 +803,16 @@ function TabAprobaciones({ reqs, reglas, onOpen, currentUser, reload }) {
     }];
 
     if (accion === "rechazada") {
-      await supabase.from("requisiciones").update({
+      const { error, count } = await supabase.from("requisiciones").update({
         estado: "Rechazada", aprobaciones, timeline,
         rechazada_motivo: motivoRechazo,
         updated_at: new Date().toISOString(),
-      }).eq("id", r.id);
+      }, { count: "exact" }).eq("id", r.id);
+      if (error) { alert(`Error al rechazar: ${error.message}`); return; }
+      if (count === 0) {
+        alert("⚠ No se pudo rechazar la requisición: el sistema rechazó el cambio sin afectar filas.\n\nPosibles causas:\n• Tu sesión expiró (cierra sesión y vuelve a entrar)\n• No tienes permiso para esta acción\n\nSi el problema persiste, escribe a soporte.");
+        return;
+      }
     } else {
       // Doble firma estricta para reqs nivel "direccion" (>= $10M):
       // - gerente_general_* DEBE firmar (no se cuenta super_admin como gerente)
@@ -830,13 +835,34 @@ function TabAprobaciones({ reqs, reglas, onOpen, currentUser, reload }) {
         }
       }
 
-      await supabase.from("requisiciones").update({
+      const { error, count } = await supabase.from("requisiciones").update({
         estado: nuevoEstado,
         aprobaciones,
         timeline,
+        aprobador_id: currentUser.id,
+        aprobador_nombre: currentUser.nombre,
         aprobada_at: nuevoEstado === "Aprobada" ? new Date().toISOString() : null,
         updated_at: new Date().toISOString(),
-      }).eq("id", r.id);
+      }, { count: "exact" }).eq("id", r.id);
+      if (error) {
+        // Si el trigger H-6 rechazó (matriz de aprobación), mostrar mensaje claro.
+        const msg = error.message || String(error);
+        if (msg.includes("H-6") || msg.includes("autoridad")) {
+          alert(`⛔ Tu rol "${currentUser.rol}" no tiene autoridad para aprobar este monto (${COP(r.total)}).\n\nDetalle: ${msg}`);
+        } else {
+          alert(`Error al aprobar: ${msg}`);
+        }
+        return;
+      }
+      if (count === 0) {
+        alert(
+          "⚠ No se pudo aprobar la requisición: el sistema rechazó el cambio sin afectar filas.\n\n" +
+          "Causa más común: tu sesión expiró. Sal del sistema (clic en tu nombre arriba a la derecha → Cerrar sesión) y vuelve a entrar.\n\n" +
+          "Si después de re-loguearte sigue fallando, escribe a soporte con esta info:\n" +
+          `· Usuario: ${currentUser.nombre}\n· Rol: ${currentUser.rol}\n· Requisición: ${r.id}\n· Monto: ${COP(r.total)}`
+        );
+        return;
+      }
     }
     reload();
   };
