@@ -572,17 +572,31 @@ function DetalleOCModal({ oc, onClose, onEditar, onFactura, onLogistica, onUnir,
                   <th style={{ padding: "4px 6px" }}>Ítem</th><th style={{ padding: "4px 6px" }}>Cant</th>
                   <th style={{ padding: "4px 6px" }}>Unid</th><th style={{ padding: "4px 6px", textAlign: "right" }}>Precio</th>
                   <th style={{ padding: "4px 6px", textAlign: "right" }}>Total</th>
+                  <th style={{ padding: "4px 6px" }}>Req origen</th>
                 </tr></thead>
                 <tbody>
-                  {items.map((it, i) => (
-                    <tr key={i} style={{ borderTop: `1px solid ${B.navyLight}55` }}>
-                      <td style={{ padding: "4px 6px" }}>{itemNombre(it)}</td>
-                      <td style={{ padding: "4px 6px" }}>{itemCant(it)}</td>
-                      <td style={{ padding: "4px 6px" }}>{it.unidad || "—"}</td>
-                      <td style={{ padding: "4px 6px", textAlign: "right" }}>{itemPrecio(it) ? COP(itemPrecio(it)) : "—"}</td>
-                      <td style={{ padding: "4px 6px", textAlign: "right", color: B.sand, fontWeight: 700 }}>{itemTotal(it) ? COP(itemTotal(it)) : "—"}</td>
-                    </tr>
-                  ))}
+                  {items.map((it, i) => {
+                    const reqIds = Array.isArray(it.req_ids) ? it.req_ids : (it.req_id ? [it.req_id] : []);
+                    return (
+                      <tr key={i} style={{ borderTop: `1px solid ${B.navyLight}55` }}>
+                        <td style={{ padding: "4px 6px" }}>
+                          {itemNombre(it)}
+                          {it.loggro_id && <span title={`Loggro ID: ${it.loggro_id}`} style={{ marginLeft: 6, fontSize: 9, padding: "1px 5px", background: B.sky + "22", color: B.sky, borderRadius: 4, fontWeight: 700 }}>🔗 Loggro</span>}
+                        </td>
+                        <td style={{ padding: "4px 6px" }}>{itemCant(it)}</td>
+                        <td style={{ padding: "4px 6px" }}>{it.unidad || "—"}</td>
+                        <td style={{ padding: "4px 6px", textAlign: "right" }}>{itemPrecio(it) ? COP(itemPrecio(it)) : "—"}</td>
+                        <td style={{ padding: "4px 6px", textAlign: "right", color: B.sand, fontWeight: 700 }}>{itemTotal(it) ? COP(itemTotal(it)) : "—"}</td>
+                        <td style={{ padding: "4px 6px", fontSize: 10 }}>
+                          {reqIds.length === 0 ? (
+                            <span style={{ color: B.warning }} title="Sin req origen (petty cash o item agregado directo a OC)">—</span>
+                          ) : reqIds.map((rid, j) => (
+                            <span key={j} style={{ display: "inline-block", background: B.navyLight, color: B.sand, padding: "1px 5px", borderRadius: 4, marginRight: 3, marginBottom: 2, fontWeight: 600 }}>{rid}</span>
+                          ))}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -801,12 +815,38 @@ function DetalleOCModal({ oc, onClose, onEditar, onFactura, onLogistica, onUnir,
           {/* 8. Historial de cambios */}
           {hist.length > 0 && (
             <Sec icon="🕓" titulo="Historial de cambios" color="rgba(255,255,255,0.4)" sub={`${hist.length} eventos`}>
-              {hist.slice().reverse().map((h, i) => (
-                <div key={i} style={{ padding: "5px 0", borderTop: i ? `1px solid ${B.navyLight}55` : "none" }}>
-                  <div style={{ color: "#fff", fontWeight: 600 }}>{h.tipo || h.evento || "cambio"} <span style={{ color: "rgba(255,255,255,0.4)", fontWeight: 400 }}>· {fdt(h.at || h.fecha)} {h.por ? "· " + h.por : ""}</span></div>
-                  {(h.resumen || h.detalle) && <div style={{ color: "rgba(255,255,255,0.6)", fontSize: 11 }}>{h.resumen || h.detalle}</div>}
-                </div>
-              ))}
+              {hist.slice().reverse().map((h, i) => {
+                const evento = h.tipo || h.evento || "cambio";
+                // Etiqueta legible por tipo de evento
+                const label = {
+                  merge_oc: "🔗 Unida con otra OC",
+                  merged_into: "🔗 Cancelada — unida a otra OC",
+                  edit_post_envio: "✏️ Items editados",
+                  item_devuelto_mesa: "↩ Item devuelto a mesa",
+                  cambio_proveedor: "🏢 Cambio de proveedor",
+                }[evento] || evento;
+                // Detalle contextual
+                let detalle = h.resumen || h.detalle || "";
+                if (evento === "merge_oc" && h.merged_from_codigo) {
+                  const nItems = Array.isArray(h.items_despues) ? h.items_despues.length : "?";
+                  const nAntes = Array.isArray(h.items_antes) ? h.items_antes.length : "?";
+                  detalle = `Unida con ${h.merged_from_codigo}. Items: ${nAntes} → ${nItems}. Delta: ${COP(h.delta_total || 0)}`;
+                } else if (evento === "merged_into" && h.merged_into_codigo) {
+                  detalle = `Consolidada dentro de ${h.merged_into_codigo}`;
+                } else if (evento === "edit_post_envio") {
+                  const nAntes = Array.isArray(h.items_antes) ? h.items_antes.length : "?";
+                  const nDespues = Array.isArray(h.items_despues) ? h.items_despues.length : "?";
+                  detalle = `Items: ${nAntes} → ${nDespues}. Delta total: ${COP(h.delta_total || 0)}`;
+                }
+                return (
+                  <div key={i} style={{ padding: "6px 0", borderTop: i ? `1px solid ${B.navyLight}55` : "none" }}>
+                    <div style={{ color: "#fff", fontWeight: 600, fontSize: 12 }}>
+                      {label} <span style={{ color: "rgba(255,255,255,0.4)", fontWeight: 400, fontSize: 11 }}>· {fdt(h.at || h.fecha)} {h.por ? "· " + h.por : ""}</span>
+                    </div>
+                    {detalle && <div style={{ color: "rgba(255,255,255,0.6)", fontSize: 11, marginTop: 2 }}>{detalle}</div>}
+                  </div>
+                );
+              })}
             </Sec>
           )}
         </div>
