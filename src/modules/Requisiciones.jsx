@@ -433,7 +433,7 @@ export default function Requisiciones() {
           ["solicitudes",  `📋 Solicitudes (${reqs.length})`],
           ["aprobaciones", `✅ Aprobaciones (${requierenAprobacion.length})`],
           ["ordenes",      `🧾 Órdenes de compra (${ordenes.length})`],
-          ["recepciones",  `📦 Recepciones (${ordenes.filter(o => !["cancelada", "recibida"].includes(o.estado)).length})`],
+          ["recepciones",  `📦 Recepciones (${ordenes.filter(o => !["cancelada", "recibida", "unida"].includes(o.estado)).length})`],
           ["recibidas",    `✅ Recibidas (${ordenes.filter(o => o.estado === "recibida").length})`],
           ["reglas",       `⚙ Reglas`],
           ["reportes",     `📊 Reportes`],
@@ -456,7 +456,7 @@ export default function Requisiciones() {
       ) : tab === "ordenes" ? (
         <TabOrdenes ordenes={ordenes} reload={load} />
       ) : tab === "recepciones" ? (
-        <TabRecepciones ordenes={ordenes.filter(o => !["cancelada", "recibida"].includes(o.estado))} reqs={reqs} reload={load} currentUser={currentUser} />
+        <TabRecepciones ordenes={ordenes.filter(o => !["cancelada", "recibida", "unida"].includes(o.estado))} reqs={reqs} reload={load} currentUser={currentUser} />
       ) : tab === "recibidas" ? (
         <TabRecibidas ordenes={ordenes.filter(o => o.estado === "recibida")} reqs={reqs} reload={load} currentUser={currentUser} />
       ) : tab === "reglas" ? (

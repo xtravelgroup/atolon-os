@@ -43,6 +43,7 @@ const OC_BADGE = {
 const OC_EDITABLE = (oc) => {
   if (!oc) return false;
   if (oc.estado === "cancelada") return false;
+  if (oc.estado === "unida") return false;  // ya consolidada dentro de otra OC
   return true;
 };
 
@@ -156,11 +157,13 @@ function TabDashboard({ ordenes, entregas, transportes, zarpes, reqs = [], setTa
   // Estados que NO cuentan en KPIs financieros (no son obligación viva).
   // Incluye "anulada" como defensa en profundidad — si se agrega más adelante
   // ese estado a OCs, el KPI no rompe.
-  const ESTADOS_NO_CUENTAN = ["recibida", "cancelada", "anulada"];
+  // "unida" también se excluye: sus items ya viven dentro de la OC destino,
+  // contarla sería doble.
+  const ESTADOS_NO_CUENTAN = ["recibida", "cancelada", "anulada", "unida"];
   const ocAbiertas       = ordenes.filter(o => !ESTADOS_NO_CUENTAN.includes(o.estado));
-  // ocMes ahora también excluye canceladas/anuladas — antes el "Total emitido
-  // del mes" inflaba con OCs que finalmente nunca generaron pasivo.
-  const ocMes            = ordenes.filter(o => (o.fecha_emision || "").startsWith(month) && !["cancelada", "anulada"].includes(o.estado));
+  // ocMes ahora también excluye canceladas/anuladas/unidas — antes el "Total
+  // emitido del mes" inflaba con OCs que finalmente nunca generaron pasivo.
+  const ocMes            = ordenes.filter(o => (o.fecha_emision || "").startsWith(month) && !["cancelada", "anulada", "unida"].includes(o.estado));
   const totalAbierto     = ocAbiertas.reduce((s, o) => s + Number(o.total || 0), 0);
   const totalMes         = ocMes.reduce((s, o) => s + Number(o.total || 0), 0);
   const sinFactura       = ocAbiertas.filter(o => !o.factura_aplicada).length;
@@ -252,9 +255,13 @@ function TabOrdenes({ ordenes, reload, currentUser }) {
 
   const filtradas = useMemo(() => {
     let list = ordenes;
-    if (filtroEstado === "abiertas") list = list.filter(o => !["recibida", "cancelada"].includes(o.estado));
+    // "unida" siempre se excluye de vistas de trabajo — sus items ya viven
+    // en la OC destino. Solo el filtro "unidas" (bitacora) las muestra.
+    if (filtroEstado === "abiertas") list = list.filter(o => !["recibida", "cancelada", "unida"].includes(o.estado));
     else if (filtroEstado === "cerradas") list = list.filter(o => ["recibida", "cancelada"].includes(o.estado));
-    else if (filtroEstado !== "todas") list = list.filter(o => o.estado === filtroEstado);
+    else if (filtroEstado === "unidas") list = list.filter(o => o.estado === "unida");
+    else if (filtroEstado === "todas") list = list.filter(o => o.estado !== "unida");
+    else list = list.filter(o => o.estado === filtroEstado);
     if (busqueda) {
       const q = busqueda.toLowerCase();
       list = list.filter(o =>
@@ -319,6 +326,7 @@ function TabOrdenes({ ordenes, reload, currentUser }) {
           <option value="recibida">Recibidas</option>
           <option value="cancelada">Canceladas</option>
           <option value="cerradas">Cerradas (recibida/cancelada)</option>
+          <option value="unidas">🔗 Unidas (bitácora)</option>
         </select>
       </div>
 
@@ -521,6 +529,16 @@ function DetalleOCModal({ oc, onClose, onEditar, onFactura, onLogistica, onUnir,
               {oc.factura_aplicada && <span style={{ background: B.success + "22", color: B.success, padding: "2px 8px", borderRadius: 12, fontSize: 10, fontWeight: 700 }}>📄 Facturada</span>}
               {oc.pagada_completa && <span style={{ background: B.success + "22", color: B.success, padding: "2px 8px", borderRadius: 12, fontSize: 10, fontWeight: 700 }}>💰 Pagada</span>}
             </div>
+            {/* Banner cuando esta OC fue absorbida por un merge — solo consulta */}
+            {oc.estado === "unida" && oc.merged_into_codigo && (
+              <div style={{ marginTop: 8, padding: "8px 12px", background: "#a78bfa22", border: `1px solid #a78bfa66`, borderRadius: 8, fontSize: 12, color: "#a78bfa" }}>
+                🔗 Esta OC fue <strong>consolidada dentro de {oc.merged_into_codigo}</strong>
+                {oc.merged_at && <span style={{ color: "rgba(255,255,255,0.5)" }}> · {fmtFecha(oc.merged_at.slice(0, 10))}</span>}
+                <div style={{ fontSize: 10, marginTop: 4, color: "rgba(255,255,255,0.6)" }}>
+                  Sus items siguen vivos dentro de la OC destino. Esta vista es solo bitácora — para trabajar sobre los items, abrí {oc.merged_into_codigo}.
+                </div>
+              </div>
+            )}
             <div style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", marginTop: 4 }}>
               {oc.proveedor_nombre || "Sin proveedor"} · emitida {fmtFecha((oc.fecha_emision || "").slice(0, 10))} · <span style={{ color: B.sand, fontWeight: 700 }}>{COP(oc.total || 0)}</span>
             </div>
@@ -1523,11 +1541,18 @@ function UnirOCModal({ oc, ordenes, onClose, reload, currentUser }) {
         },
       ];
 
-      // 1. Cancelar la fuente con guard de estado (evita doble-cancelacion si
-      //    otra ventana esta tocando la fuente al mismo tiempo)
+      // 1. Marcar la fuente como "unida" (NO "cancelada" — la OC fuente no
+      //    fue anulada, sus items siguen vivos dentro de la OC destino).
+      //    Estado "unida" hace que desaparezca de listados de trabajo pero
+      //    queda en bitacora (filtro "todas") para consulta historica.
+      //    Guard de estado evita doble-merge si otra ventana esta tocando
+      //    la fuente al mismo tiempo.
       const { error: e1, count: c1 } = await supabase.from("ordenes_compra").update({
-        estado: "cancelada",
-        notas: `${seleccionada.notas || ""}\n[${new Date().toLocaleString("es-CO")}] Unida con ${oc.codigo} (consolidada). Cancelada por ${currentUser?.nombre || "—"}`,
+        estado: "unida",
+        merged_into_oc_id: oc.id,
+        merged_into_codigo: oc.codigo,
+        merged_at: new Date().toISOString(),
+        notas: `${seleccionada.notas || ""}\n[${new Date().toLocaleString("es-CO")}] Consolidada dentro de ${oc.codigo} por ${currentUser?.nombre || "—"}`,
         cambios_historial: fuenteCambios,
         updated_at: new Date().toISOString(),
       }, { count: "exact" })
