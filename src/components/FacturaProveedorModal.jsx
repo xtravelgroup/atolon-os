@@ -320,6 +320,54 @@ function buildDataFromParsed(result, ocItems, factura_url) {
       item_id:              matchOc?.item_id || null,
     };
   });
+
+  // Agregar los items de la OC que el AI NO matcheó — quedan como
+  // "no_facturado" y el operador decide: (a) pone precio+cant si el
+  // proveedor sí los mandó pero el AI no los detectó, o (b) los deja
+  // en cant=0, entonces al aplicar la factura vuelven a la mesa de
+  // compra (reasignables a otro proveedor).
+  const ocIdxsCubiertos = new Set(itemsRich.filter(it => it.oc_idx != null).map(it => it.oc_idx));
+  const itemsSinFacturar = (items || []).map((ocIt, ocIdx) => {
+    if (ocIdxsCubiertos.has(ocIdx)) return null;
+    const cantOrig = Number(ocIt.cant) || 0;
+    const precioOrig = Number(ocIt.precioU) || 0;
+    return {
+      oc_idx: ocIdx,
+      ai_idx: null,
+      codigo_barras: ocIt.codigo_barras || null,
+      referencia_proveedor: ocIt.referencia_proveedor || null,
+      nombre: ocIt.item || ocIt.nombre || "—",
+      nombre_anterior: ocIt.item || ocIt.nombre || null,
+      cantidad_anterior: cantOrig,
+      loggro_id: ocIt.loggro_id || null,
+      cantidad_paquete: 0,             // ← 0: el operador debe llenar o dejarlo así
+      unidad_compra: ocIt.unidad || "UND",
+      unidades_por_paquete: Math.max(1, Number(ocIt.unidades_por_paquete) || 1),
+      unidad_individual: ocIt.unidad_individual || ocIt.unidad || "UND",
+      cantidad_individual_total: 0,
+      descuento_pct: 0, iva_pct: Number(ocIt.iva_pct) || 0,
+      precio_base_pack: precioOrig,
+      iva_valor_pack: 0, ico_valor_pack: 0, icl_valor_pack: 0, adv_valor_pack: 0,
+      precio_costo_pack: precioOrig,
+      precio_costo_unit_individual: precioOrig,
+      precio_final_pack: precioOrig,
+      subtotal_renglon: 0,
+      es_bonificacion: false,
+      requiere_revision: false,
+      es_nuevo_oc: false,
+      match_source: "oc_sin_match_ai",
+      cantidad: 0,
+      unidad: ocIt.unidad || "UND",
+      precio_costo_unit: precioOrig,
+      precio_unitario: precioOrig,
+      precio_anterior: precioOrig,
+      iva_valor_unit: 0, ico_valor_unit: 0, icl_valor_unit: 0, adv_valor_unit: 0,
+      iva: 0,
+      item_id: ocIt.item_id || null,
+      no_facturado: true,              // ← inicial: si operador lo deja en 0 al aplicar, vuelve a mesa
+    };
+  }).filter(Boolean);
+
   return {
     factura_numero:    result.factura_numero || "",
     factura_fecha:     result.factura_fecha || new Date().toISOString().slice(0, 10),
@@ -337,7 +385,7 @@ function buildDataFromParsed(result, ocItems, factura_url) {
     subtotal:          Number(result.subtotal_base) || 0,
     iva:               Number(result.iva_total) || 0,
     total:             Number(result.total) || 0,
-    items:             itemsRich,
+    items:             [...itemsRich, ...itemsSinFacturar],
     factura_url:       factura_url || null,
   };
 }
@@ -1087,6 +1135,60 @@ export default function FacturaProveedorModal({ oc, onClose, reload, currentUser
             });
           }
         } catch (_e) { /* best-effort: no romper la aplicación de la factura */ }
+      }
+
+      // 6b. Items NO FACTURADOS (cant=0) → devolver a la mesa de compra.
+      //     El operador confirmó con cant=0 que el proveedor NO mandó este
+      //     item. Se limpia oc_id/oc_codigo en la req origen y la req vuelve
+      //     a "Aprobada" si ya no le quedan items con OC. Trazabilidad queda
+      //     en cambios_historial + timeline de la req.
+      const noFacturadosOC = data.items.filter(f =>
+        f.oc_idx != null && (f.no_facturado || (Number(f.cantidad_paquete) || 0) === 0)
+      );
+      if (noFacturadosOC.length > 0) {
+        // Recopilar reqs afectadas (por req_ids en cada item de la OC)
+        const reqIdsPorItem = new Map();
+        for (const f of noFacturadosOC) {
+          const ocIt = ocItemsOriginal[f.oc_idx];
+          if (!ocIt) continue;
+          const rids = Array.isArray(ocIt.req_ids) ? ocIt.req_ids : (ocIt.req_id ? [ocIt.req_id] : []);
+          for (const rid of rids) {
+            if (!reqIdsPorItem.has(rid)) reqIdsPorItem.set(rid, []);
+            reqIdsPorItem.get(rid).push(ocIt);
+          }
+        }
+        for (const [rid, items] of reqIdsPorItem.entries()) {
+          const { data: reqRow } = await supabase.from("requisiciones")
+            .select("items, estado, timeline").eq("id", rid).maybeSingle();
+          if (!reqRow) continue;
+          const idsOC = new Set(items.map(x => x.id).filter(Boolean));
+          const nombresOC = new Set(items.map(x => (x.item || x.nombre || "").toLowerCase().trim()));
+          const nuevosItemsReq = (reqRow.items || []).map(it => {
+            const matchId = it.id && idsOC.has(it.id);
+            const matchNombre = !matchId && nombresOC.has((it.item || it.nombre || "").toLowerCase().trim()) && it.oc_id === oc.id;
+            if (matchId || matchNombre) {
+              const { oc_id, oc_codigo, ...rest } = it;
+              return rest;
+            }
+            return it;
+          });
+          const tieneItemsConOC = nuevosItemsReq.some(x => x.oc_id);
+          const nuevoEstadoReq = tieneItemsConOC ? reqRow.estado : "Aprobada";
+          await supabase.from("requisiciones").update({
+            items: nuevosItemsReq,
+            estado: nuevoEstadoReq,
+            timeline: [
+              ...(reqRow.timeline || []),
+              {
+                quien: aplicadaPor || currentUser?.nombre || "—",
+                accion: `${items.length} item(s) devueltos a mesa`,
+                fecha: new Date().toLocaleString("es-CO"),
+                comentario: `Factura ${data.factura_numero} · OC ${oc.codigo} · NO facturados por proveedor` + (nuevoEstadoReq !== reqRow.estado ? " · estado → Aprobada" : ""),
+              },
+            ],
+            updated_at: new Date().toISOString(),
+          }).eq("id", rid);
+        }
       }
 
       // Refrescar la lista de facturas y volver a ella (NO cerrar el modal:
