@@ -11,6 +11,7 @@ import { useBreakpoint } from "../lib/responsive.js";
 import FacturaProveedorModal from "../components/FacturaProveedorModal";
 import LogisticaOCModal from "../components/LogisticaOCModal";
 import EmailOCModal from "../components/EmailOCModal";
+import { descargarOCPDF } from "../lib/generarOCPDF";
 import CXPPagoModal from "../components/CXPPagoModal";
 import CotizacionRespuestaModal from "../components/CotizacionRespuestaModal";
 import { TabMesaCompras } from "./Requisiciones";
@@ -546,7 +547,11 @@ function DetalleOCModal({ oc, onClose, onEditar, onFactura, onLogistica, onUnir,
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
             {editable && <button onClick={() => onEditar(oc)} style={btnAccion(B.sand)} title="Editar items, cantidades, proveedor de la OC">✏️ Editar</button>}
             {editable && onUnir && <button onClick={() => onUnir(oc)} style={btnAccion("#a78bfa")} title="Unir esta OC con otra del mismo proveedor">🔗 Unir</button>}
-            {onEmail && <button onClick={() => onEmail(oc)} style={btnAccion(B.pink)} title="Enviar OC al proveedor por correo con PDF">📧 Email</button>}
+            <button onClick={async () => {
+              try { await descargarOCPDF(oc); }
+              catch (e) { alert("Error generando PDF: " + (e.message || e)); }
+            }} style={btnAccion(B.sky)} title="Descargar PDF de la OC (sin precios) para enviar al proveedor por WhatsApp u otro medio">📥 PDF</button>
+            {onEmail && <button onClick={() => onEmail(oc)} style={btnAccion(B.pink)} title="Enviar OC al proveedor por correo con PDF (sin precios)">📧 Email</button>}
             {onEnviada && (editable
               ? <button onClick={() => onEnviada(oc)} style={btnAccion(B.sky)} title="Marcar como enviada al proveedor — bloquea edición">📤 Enviada a proveedor</button>
               : <span style={{ ...btnAccion(B.success + "44"), cursor: "default", color: B.success }} title={`Enviada${oc.enviada_at ? " el " + fmtFecha(oc.enviada_at.slice(0,10)) : ""}`}>🔒 Enviada</span>
