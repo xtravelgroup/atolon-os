@@ -195,9 +195,20 @@ export default function CotizacionRespuestaModal({ oc, onClose, reload, currentU
     try {
       const newItems = items.map((it, i) => {
         const ocIt = oc.items[i] || {};
+        // Preservar nombre original de la requisición para trazabilidad.
+        // Si el proveedor renombra (ej. req 'CORONA 330 ML' → cotiz 'Cerveza
+        // Corona Botella 330ml'), guardamos ambos: nombre_original = req,
+        // nombre = proveedor. La relación con la req se mantiene por
+        // item_id/loggro_id/req_ids (que vienen en ...ocIt).
+        const nombreProveedor = (it.nombre || "").trim();
+        const nombrePrevio    = (ocIt.item || ocIt.nombre || "").trim();
+        const nombreOriginal  = ocIt.nombre_original || nombrePrevio;  // primera vez que se aprueba
+        const renombrado      = nombreProveedor && nombreOriginal && nombreProveedor !== nombreOriginal;
         return {
           ...ocIt,
-          item: it.nombre, nombre: it.nombre,
+          item: nombreProveedor, nombre: nombreProveedor,
+          nombre_original:  nombreOriginal || null,          // ← nombre de la requisición
+          nombre_proveedor: renombrado ? nombreProveedor : (ocIt.nombre_proveedor || null),
           cant: Number(it.cantidad) || 0,
           unidad: it.unidad,
           precioU: Number(it.precio_unitario) || 0,

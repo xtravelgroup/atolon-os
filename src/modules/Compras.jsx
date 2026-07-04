@@ -605,6 +605,11 @@ function DetalleOCModal({ oc, onClose, onEditar, onFactura, onLogistica, onUnir,
                         <td style={{ padding: "4px 6px" }}>
                           {itemNombre(it)}
                           {it.loggro_id && <span title={`Loggro ID: ${it.loggro_id}`} style={{ marginLeft: 6, fontSize: 9, padding: "1px 5px", background: B.sky + "22", color: B.sky, borderRadius: 4, fontWeight: 700 }}>🔗 Loggro</span>}
+                          {it.nombre_original && it.nombre_original.trim().toLowerCase() !== (itemNombre(it) || "").trim().toLowerCase() && (
+                            <div title="El proveedor renombró este item. Se mantiene el link a la requisición original por item_id/loggro_id." style={{ fontSize: 9, color: "rgba(255,255,255,0.45)", marginTop: 2 }}>
+                              📝 Req: <span style={{ color: B.sand }}>{it.nombre_original}</span>
+                            </div>
+                          )}
                         </td>
                         <td style={{ padding: "4px 6px" }}>{itemCant(it)}</td>
                         <td style={{ padding: "4px 6px" }}>{it.unidad || "—"}</td>

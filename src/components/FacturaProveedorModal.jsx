@@ -728,6 +728,14 @@ export default function FacturaProveedorModal({ oc, onClose, reload, currentUser
         const cantIndividual  = cantPaquete * unPorPack;
         const costoPack       = Number(f.precio_costo_pack) || 0;
         const precioUIndiv    = f.es_bonificacion ? 0 : Math.round(unPorPack > 0 ? costoPack / unPorPack : 0);
+        // Preservar nombre original de la requisición para trazabilidad.
+        // Si el proveedor factura con nombre distinto (ej. req 'CORONA 330 ML'
+        // → factura 'Cerveza Corona Botella 330ml'), guardamos ambos.
+        // La relación con la req se mantiene por item_id/loggro_id/req_ids.
+        const nombreFactura  = (f.nombre || "").trim();
+        const nombrePrevio   = (it.item || it.nombre || "").trim();
+        const nombreOriginal = it.nombre_original || nombrePrevio;  // primera vez
+        const renombrado     = nombreFactura && nombreOriginal && nombreFactura !== nombreOriginal;
         return {
           ...it,
           // El campo `cant` queda en unidades INDIVIDUALES (lo que va al inventario)
@@ -735,6 +743,11 @@ export default function FacturaProveedorModal({ oc, onClose, reload, currentUser
           unidad: f.unidad_individual || "UND",
           precioU: precioUIndiv,
           subtotal: Math.round(cantIndividual * precioUIndiv),
+          // Trazabilidad de renombrado (factura vs requisición)
+          item: nombreFactura || it.item,
+          nombre: nombreFactura || it.nombre,
+          nombre_original:  nombreOriginal || null,
+          nombre_proveedor: renombrado ? nombreFactura : (it.nombre_proveedor || null),
           // Empaque (audit + recepción)
           unidades_por_paquete: unPorPack,
           unidad_compra:        f.unidad_compra || "UND",
