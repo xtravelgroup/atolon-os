@@ -180,6 +180,7 @@ function EntregaSection({ oc, entrega, reload, currentUser }) {
           <select value={f.ubicacion} onChange={e => set("ubicacion", e.target.value)} style={IS}>
             <option value="Bodeguita">Bodeguita</option>
             <option value="Marina Santa Cruz">Marina Santa Cruz</option>
+            <option value="Muelle Punta Madero">Muelle Punta Madero</option>
             <option value="Otro">Otro</option>
           </select>
         </Field>
