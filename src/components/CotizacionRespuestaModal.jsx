@@ -131,10 +131,16 @@ export default function CotizacionRespuestaModal({ oc, onClose, reload, currentU
     }
   };
 
+  // IVA de la cotización — REFERENCIAL para calcular el total esperado.
+  // NO se persiste en oc.total/subtotal — la factura final trae el IVA
+  // real y ahí se ajusta. Solo va en cotizacion_resp_data como referencia.
+  const [ivaCotizPct, setIvaCotizPct] = useState(() => Number(oc.cotizacion_resp_data?.iva_pct) || 0);
   const subtotalNuevo  = items.reduce((s, it) => s + (Number(it.cantidad) || 0) * (Number(it.precio_unitario) || 0), 0);
   const subtotalOrig   = (oc.items || []).reduce((s, it) => s + (Number(it.cant) || 0) * (Number(it.precioU) || 0), 0);
+  const ivaMonto       = Math.round(subtotalNuevo * (ivaCotizPct / 100));
+  const totalConIva    = subtotalNuevo + ivaMonto;
   const delta          = subtotalNuevo - subtotalOrig;
-  const montoAnticipo  = Math.round(subtotalNuevo * (porcentajeAnt / 100));
+  const montoAnticipo  = Math.round(totalConIva * (porcentajeAnt / 100));
 
   // ── Diff detection ──────────────────────────────────────────────────
   // Detectar todos los cambios del proveedor vs la OC original. El usuario
@@ -222,7 +228,7 @@ export default function CotizacionRespuestaModal({ oc, onClose, reload, currentU
         subtotal: newSubtotal,
         total: newSubtotal,                       // sin IVA todavía (la factura final lo trae)
         cotizacion_resp_url:           archivo_url,
-        cotizacion_resp_data:          { ...parsed, items, tiempo_entrega: tiempoEntrega, condiciones_pago: condicionesPago },
+        cotizacion_resp_data:          { ...parsed, items, tiempo_entrega: tiempoEntrega, condiciones_pago: condicionesPago, iva_pct: ivaCotizPct || 0, iva_monto_referencial: ivaMonto, total_con_iva_referencial: totalConIva },
         cotizacion_resp_subida_at:     parsed?.cotizacion_resp_subida_at || new Date().toISOString(),
         cotizacion_resp_subida_por:    currentUser?.email || null,
         cotizacion_resp_aprobada:      true,
@@ -251,7 +257,7 @@ export default function CotizacionRespuestaModal({ oc, onClose, reload, currentU
     try {
       const { error: e } = await supabase.from("ordenes_compra").update({
         cotizacion_resp_url:        archivo_url,
-        cotizacion_resp_data:       { ...parsed, items, tiempo_entrega: tiempoEntrega, condiciones_pago: condicionesPago },
+        cotizacion_resp_data:       { ...parsed, items, tiempo_entrega: tiempoEntrega, condiciones_pago: condicionesPago, iva_pct: ivaCotizPct || 0, iva_monto_referencial: ivaMonto, total_con_iva_referencial: totalConIva },
         cotizacion_resp_subida_at:  parsed?.cotizacion_resp_subida_at || new Date().toISOString(),
         cotizacion_resp_subida_por: currentUser?.email || null,
         cotizacion_resp_notas:      notas || null,
@@ -436,9 +442,25 @@ export default function CotizacionRespuestaModal({ oc, onClose, reload, currentU
                     <td colSpan={6} style={{ padding: "10px", textAlign: "right", color: "rgba(255,255,255,0.6)" }}>Subtotal cotización</td>
                     <td style={{ padding: "10px", textAlign: "right", color: B.sand, fontWeight: 800, fontSize: 14 }}>{COP(subtotalNuevo)}</td>
                   </tr>
+                  {/* IVA referencial de la cotización — NO se persiste en OC.total.
+                      La factura final trae el IVA real y ahí se ajusta. */}
+                  <tr style={{ background: B.navyMid }}>
+                    <td colSpan={6} style={{ padding: "6px 10px", textAlign: "right", color: "rgba(255,255,255,0.5)" }}>
+                      IVA (referencial — no se persiste)
+                      <input type="number" min={0} max={100} step="0.01" value={ivaCotizPct}
+                        onChange={e => setIvaCotizPct(Math.min(100, Math.max(0, Number(e.target.value) || 0)))}
+                        style={{ marginLeft: 8, width: 60, padding: "3px 6px", background: B.navy, border: `1px solid ${B.navyLight}`, borderRadius: 4, color: "#fff", fontSize: 12, textAlign: "right" }} />
+                      <span style={{ marginLeft: 3, color: "rgba(255,255,255,0.4)" }}>%</span>
+                    </td>
+                    <td style={{ padding: "6px 10px", textAlign: "right", color: "rgba(255,255,255,0.7)", fontWeight: 600 }}>{COP(ivaMonto)}</td>
+                  </tr>
+                  <tr style={{ background: B.sand + "11", borderTop: `2px solid ${B.sand}55` }}>
+                    <td colSpan={6} style={{ padding: "10px", textAlign: "right", color: B.sand, fontWeight: 800 }}>Total cotización (con IVA)</td>
+                    <td style={{ padding: "10px", textAlign: "right", color: B.sand, fontWeight: 800, fontSize: 16 }}>{COP(totalConIva)}</td>
+                  </tr>
                   {Math.abs(delta) > 0.5 && (
                     <tr style={{ background: B.navyMid }}>
-                      <td colSpan={6} style={{ padding: "6px 10px", textAlign: "right", color: "rgba(255,255,255,0.5)" }}>Diferencia vs OC original</td>
+                      <td colSpan={6} style={{ padding: "6px 10px", textAlign: "right", color: "rgba(255,255,255,0.5)" }}>Diferencia subtotal vs OC original</td>
                       <td style={{ padding: "6px 10px", textAlign: "right", color: delta > 0 ? B.danger : B.success, fontWeight: 700 }}>{delta > 0 ? "+" : ""}{COP(delta)}</td>
                     </tr>
                   )}
@@ -461,7 +483,7 @@ export default function CotizacionRespuestaModal({ oc, onClose, reload, currentU
                   <div style={{ textAlign: "right" }}>
                     <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", fontWeight: 700 }}>Monto anticipo</div>
                     <div style={{ fontSize: 22, fontWeight: 800, color: B.warning, fontFamily: "'Barlow Condensed', sans-serif" }}>{COP(montoAnticipo)}</div>
-                    <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)" }}>de {COP(subtotalNuevo)} total</div>
+                    <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)" }}>de {COP(totalConIva)} total con IVA</div>
                   </div>
                 </div>
               )}
