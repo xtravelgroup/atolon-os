@@ -823,13 +823,19 @@ function TabAprobaciones({ reqs, reglas, onOpen, currentUser, reload }) {
       const yaDireccionAprobo = aprobaciones.some(a => a.accion === "aprobada" && (a.rol === "super_admin" || a.rol === "admin" || a.rol === "direccion"));
 
       let nuevoEstado = "Pendiente";
-      if (nivel === "gerente_general") {
+      // super_admin / admin / direccion tienen autoridad maxima: aprueban
+      // cualquier monto solos, incluidas requisiciones nivel direccion (>=$10M).
+      // Matchea el trigger SQL req_aprobador_check (migration 20260703140000).
+      const currentUserEsMaxAutoridad = ["super_admin", "admin", "direccion"].includes(currentUser.rol);
+      if (currentUserEsMaxAutoridad) {
+        nuevoEstado = "Aprobada";
+      } else if (nivel === "gerente_general") {
         // <$10M: alcanza con gerente_general (o super_admin que cubre por jerarquía)
         if (yaGerenteAprobo || aprobaciones.some(a => a.accion === "aprobada" && (a.rol === "super_admin" || a.rol === "admin"))) {
           nuevoEstado = "Aprobada";
         }
       } else if (nivel === "direccion") {
-        // >=$10M: doble firma obligatoria — ambas firmas presentes
+        // >=$10M por gerente_general: aún requiere doble firma (super_admin/admin)
         if (yaGerenteAprobo && yaDireccionAprobo) {
           nuevoEstado = "Aprobada";
         }
