@@ -1766,6 +1766,7 @@ serve(async (req) => {
       for (const inv of invs) {
         const fecha = new Date(new Date(inv.createdOn).getTime() + COTZ_OFFSET_MS).toISOString();
         const numero = inv.number || inv.numberUnique || inv._id?.slice(-6);
+        const tipo: "Cortesia" | "Facturacion" = "Facturacion";
         for (const prod of (inv.products || [])) {
           const nombre = (prod.name || "").trim();
           const cant = Number(prod.quantity) || 0;
@@ -1779,7 +1780,7 @@ serve(async (req) => {
           const ings = pCat.ingredients || [];
           if (ings.length === 0) {
             const pu = getPrecio(pCat);
-            movs.push({ fecha, factura: numero, producto_base: pCat.name, insumo: pCat.name, unidad: getUnit(pCat), categoria: pCat.category?.name || "", cantidad_usada: cant, precio_unit: pu, total: cant * pu });
+            movs.push({ fecha, factura: numero, tipo, producto_base: pCat.name, insumo: pCat.name, unidad: getUnit(pCat), categoria: pCat.category?.name || "", cantidad_usada: cant, precio_unit: pu, total: cant * pu });
             continue;
           }
           for (const def of ings) {
@@ -1791,6 +1792,7 @@ serve(async (req) => {
             movs.push({
               fecha,
               factura: numero,
+              tipo,
               producto_base: pCat.name,
               insumo: ingObj?.name || "(no encontrado)",
               unidad: getUnit(ingObj),
@@ -1803,26 +1805,116 @@ serve(async (req) => {
         }
       }
 
-      // 4. Agregado por insumo
+      // 3b. Descargar CORTESIAS del rango — vienen como orders con
+      //     complementary.isComplementary=true (NO como invoices).
+      //     Loggro las clasifica en /orders con campo `complementary`.
+      const allOrders: any[] = [];
+      const seenOrder = new Set<string>();
+      const MAX_ORDER_PAGES = 200;
+      let stopO = false;
+      for (let batchStart = 0; batchStart < MAX_ORDER_PAGES && !stopO; batchStart += 20) {
+        const batch = [];
+        for (let pp = batchStart; pp < batchStart + 20 && pp < MAX_ORDER_PAGES; pp++) {
+          batch.push(
+            loggroGet(`/orders?pagination=true&limit=100&page=${pp}`)
+              .then(d => ({ arr: d?.data || (Array.isArray(d) ? d : []) }))
+              .catch(() => ({ arr: [] }))
+          );
+        }
+        const results = await Promise.all(batch);
+        let emptyInBatch = 0;
+        results.forEach(r => {
+          if (r.arr.length === 0) emptyInBatch++;
+          for (const o of r.arr) {
+            if (o?._id && !seenOrder.has(o._id)) { seenOrder.add(o._id); allOrders.push(o); }
+          }
+        });
+        if (emptyInBatch >= 5) stopO = true;
+      }
+      // Filtrar por rango + solo cortesias
+      const cortesias = allOrders.filter((o: any) => {
+        if (!o?.complementary?.isComplementary) return false;
+        const ts = o?.createdOn;
+        if (!ts) return false;
+        const d = dayOf(ts);
+        return d >= from && d <= to;
+      });
+      // Expandir receta por cada order cortesia
+      for (const ord of cortesias) {
+        const fechaCortesia = ord?.complementary?.modifiedOn || ord?.modifiedOn || ord?.createdOn;
+        const fecha = new Date(new Date(fechaCortesia).getTime() + COTZ_OFFSET_MS).toISOString();
+        const nombreProducto = (ord?.product?.name || "").trim();
+        const cant = Number(ord?.quantity) || 0;
+        if (!nombreProducto || cant <= 0) continue;
+        const pCat = byNombre[nombreProducto.toLowerCase()] || map[ord?.product?._id];
+        if (!pCat) { sinMatch++; sinMatchSet.add(nombreProducto); continue; }
+        const numero = "CORT-" + (ord._id?.slice(-6) || "?");
+        const ings = pCat.ingredients || [];
+        if (ings.length === 0) {
+          const pu = getPrecio(pCat);
+          movs.push({ fecha, factura: numero, tipo: "Cortesia", producto_base: pCat.name, insumo: pCat.name, unidad: getUnit(pCat), categoria: pCat.category?.name || "", cantidad_usada: cant, precio_unit: pu, total: cant * pu });
+          continue;
+        }
+        for (const def of ings) {
+          const ingObj = typeof def.ingredient === "string" ? map[def.ingredient] : def.ingredient;
+          const ingQty = Number(def.quantity) || 0;
+          if (!ingQty) continue;
+          const pu = getPrecio(ingObj);
+          const usada = cant * ingQty;
+          movs.push({
+            fecha, factura: numero, tipo: "Cortesia",
+            producto_base: pCat.name,
+            insumo: ingObj?.name || "(no encontrado)",
+            unidad: getUnit(ingObj),
+            categoria: ingObj?.category?.name || "Sin categoría",
+            cantidad_usada: usada,
+            precio_unit: pu,
+            total: usada * pu,
+          });
+        }
+      }
+
+      // 4. Agregado por insumo + separado por tipo (Facturacion vs Cortesia)
       const porInsumo: Record<string, any> = {};
       for (const m of movs) {
         const k = m.insumo + "|" + (m.unidad || "");
-        if (!porInsumo[k]) porInsumo[k] = { insumo: m.insumo, unidad: m.unidad, categoria: m.categoria, cantidad: 0, total: 0, movs: 0 };
+        if (!porInsumo[k]) porInsumo[k] = {
+          insumo: m.insumo, unidad: m.unidad, categoria: m.categoria,
+          cantidad: 0, total: 0, movs: 0,
+          cantidad_facturacion: 0, total_facturacion: 0,
+          cantidad_cortesia: 0, total_cortesia: 0,
+        };
         porInsumo[k].cantidad += m.cantidad_usada;
         porInsumo[k].total += m.total;
         porInsumo[k].movs++;
+        if (m.tipo === "Cortesia") {
+          porInsumo[k].cantidad_cortesia += m.cantidad_usada;
+          porInsumo[k].total_cortesia += m.total;
+        } else {
+          porInsumo[k].cantidad_facturacion += m.cantidad_usada;
+          porInsumo[k].total_facturacion += m.total;
+        }
       }
       const agregado = Object.values(porInsumo).sort((a: any, b: any) => b.total - a.total);
+
+      const totalFacturacion = movs.filter(m => m.tipo === "Facturacion").reduce((s, m) => s + m.total, 0);
+      const totalCortesia = movs.filter(m => m.tipo === "Cortesia").reduce((s, m) => s + m.total, 0);
+      const movsFacturacion = movs.filter(m => m.tipo === "Facturacion").length;
+      const movsCortesia = movs.filter(m => m.tipo === "Cortesia").length;
 
       return json({
         ok: true,
         from, to,
         facturas_procesadas: invs.length,
         movimientos: movs.length,
+        movs_facturacion: movsFacturacion,
+        movs_cortesia: movsCortesia,
         insumos_unicos: agregado.length,
         productos_sin_match: sinMatchSet.size,
         productos_sin_match_lista: Array.from(sinMatchSet),
         total_costo: movs.reduce((s, m) => s + m.total, 0),
+        total_costo_facturacion: totalFacturacion,
+        total_costo_cortesia: totalCortesia,
         agregado,
         movimientos_detalle: movs.sort((a, b) => a.fecha.localeCompare(b.fecha)),
       });
