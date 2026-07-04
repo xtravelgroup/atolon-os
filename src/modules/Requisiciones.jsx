@@ -863,6 +863,17 @@ function TabAprobaciones({ reqs, reglas, onOpen, currentUser, reload }) {
         );
         return;
       }
+      // Feedback de estado tras firma exitosa. Doble firma (>=$10M) queda
+      // en "Pendiente" hasta que ambas partes firmen — antes esto no daba
+      // feedback y el usuario creía que el clic no había hecho nada.
+      if (nuevoEstado === "Pendiente" && nivel === "direccion") {
+        const falta = !yaGerenteAprobo ? "un gerente_general" : "un super_admin/admin";
+        alert(
+          `✓ Tu firma quedó registrada en ${r.id}.\n\n` +
+          `Esta requisición es nivel DIRECCIÓN (${COP(r.total)}) y requiere doble firma. ` +
+          `Falta la firma de ${falta} para pasar a "Aprobada".`
+        );
+      }
     }
     reload();
   };
