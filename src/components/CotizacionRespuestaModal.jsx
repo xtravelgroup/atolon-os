@@ -279,6 +279,15 @@ export default function CotizacionRespuestaModal({ oc, onClose, reload, currentU
               </div>
               <input type="file" accept="image/*,application/pdf" onChange={handleUpload}
                 style={{ background: B.sky, color: B.navy, padding: "10px 16px", borderRadius: 8, fontSize: 13, fontWeight: 700, cursor: "pointer", border: "none" }} />
+              <div style={{ marginTop: 14, fontSize: 11, color: "rgba(255,255,255,0.45)" }}>— o —</div>
+              <button
+                onClick={() => { setError(""); setProgress(""); setStep("review"); }}
+                style={{ marginTop: 10, background: "transparent", color: B.sand, padding: "10px 18px", borderRadius: 8, fontSize: 13, fontWeight: 700, cursor: "pointer", border: `1px solid ${B.sand}` }}>
+                ✏️ Cargar manual (sin archivo)
+              </button>
+              <div style={{ marginTop: 6, fontSize: 10, color: "rgba(255,255,255,0.4)" }}>
+                Trae los items de la OC. Escribes los precios que te dio el proveedor por teléfono/WhatsApp.
+              </div>
             </div>
             {error && <div style={{ marginTop: 12, padding: 10, background: B.danger + "22", color: "#fca5a5", borderRadius: 6, fontSize: 12 }}>{error}</div>}
           </>
