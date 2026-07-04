@@ -605,9 +605,20 @@ function DetalleOCModal({ oc, onClose, onEditar, onFactura, onLogistica, onUnir,
                         <td style={{ padding: "4px 6px" }}>
                           {itemNombre(it)}
                           {it.loggro_id && <span title={`Loggro ID: ${it.loggro_id}`} style={{ marginLeft: 6, fontSize: 9, padding: "1px 5px", background: B.sky + "22", color: B.sky, borderRadius: 4, fontWeight: 700 }}>🔗 Loggro</span>}
+                          {it.agregado_manual && (
+                            <span title={`Agregado manual — ${it.agregado_manual_motivo || "sin motivo"} · ${it.agregado_manual_por || "?"} · ${it.agregado_manual_at ? fmtFecha(it.agregado_manual_at.slice(0, 10)) : ""}`}
+                              style={{ marginLeft: 6, fontSize: 9, padding: "1px 5px", background: B.warning + "22", color: B.warning, borderRadius: 4, fontWeight: 700 }}>
+                              ⚠ Manual
+                            </span>
+                          )}
                           {it.nombre_original && it.nombre_original.trim().toLowerCase() !== (itemNombre(it) || "").trim().toLowerCase() && (
                             <div title="El proveedor renombró este item. Se mantiene el link a la requisición original por item_id/loggro_id." style={{ fontSize: 9, color: "rgba(255,255,255,0.45)", marginTop: 2 }}>
                               📝 Req: <span style={{ color: B.sand }}>{it.nombre_original}</span>
+                            </div>
+                          )}
+                          {it.agregado_manual && it.agregado_manual_motivo && (
+                            <div style={{ fontSize: 9, color: B.warning, marginTop: 2, fontStyle: "italic" }}>
+                              💬 {it.agregado_manual_motivo}
                             </div>
                           )}
                         </td>
@@ -1764,9 +1775,34 @@ function EditarOCModal({ oc, ordenes = [], onClose, reload, currentUser }) {
 
   const removeItem = (idx) => setItems(arr => arr.filter((_, i) => i !== idx));
 
-  const addItem = () => setItems(arr => [...arr, {
-    item: "", nombre: "", cant: 1, unidad: "und", precio_unit: 0, subtotal: 0,
-  }]);
+  // Agregar item manual a la OC — pide motivo (control de auditoria).
+  // Items agregados fuera de requisicion son "compras sin OC formal" -
+  // riesgo operativo. El motivo queda en el item y en cambios_historial
+  // para trazabilidad. Cancelar el prompt aborta la adicion.
+  const addItem = () => {
+    const motivo = window.prompt(
+      "¿Por qué se agrega este item manualmente (fuera de requisición)?\n\n" +
+      "Ejemplos:\n" +
+      "  · Item urgente que no estaba en la req original\n" +
+      "  · Bonificación del proveedor\n" +
+      "  · Corrección de la req\n\n" +
+      "El motivo queda registrado en el historial de la OC.",
+      ""
+    );
+    if (motivo === null) return; // canceló
+    const motivoLimpio = motivo.trim();
+    if (motivoLimpio.length < 5) {
+      alert("El motivo debe tener al menos 5 caracteres. No se agregó el item.");
+      return;
+    }
+    setItems(arr => [...arr, {
+      item: "", nombre: "", cant: 1, unidad: "und", precio_unit: 0, subtotal: 0,
+      agregado_manual: true,
+      agregado_manual_motivo: motivoLimpio,
+      agregado_manual_at: new Date().toISOString(),
+      agregado_manual_por: currentUser?.nombre || currentUser?.email || "—",
+    }]);
+  };
 
   const subtotal = items.reduce((s, it) => s + (Number(it.subtotal) || 0), 0);
 
