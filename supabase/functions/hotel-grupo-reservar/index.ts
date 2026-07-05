@@ -157,11 +157,13 @@ serve(async (req) => {
       huesped_id = newH.id;
     }
 
-    // 6) Crear estancia (el "codigo" visible es un prefijo del uuid).
+    // 6) Crear estancia. hotel_estancias.codigo es NOT NULL — generamos uno.
     const check_in_at = `${check_in}T15:00:00-05:00`;    // 3pm hora Colombia
     const check_out_at = `${check_out}T12:00:00-05:00`;  // 12m hora Colombia
+    const codigo = randCode();  // GRP-XXXXXX
 
     const { data: est, error: eErr } = await supa.from("hotel_estancias").insert({
+      codigo,
       huesped_id,
       grupo_id: grupo.id,
       categoria_preferida: categoria_id,     // se asigna habitacion en check-in
@@ -178,7 +180,6 @@ serve(async (req) => {
       created_by: `grupo:${grupo.slug}`,
     }).select("id").single();
     if (eErr) return json({ error: "Error creando reserva: " + eErr.message }, 500);
-    const codigo = String(est.id).slice(0, 8).toUpperCase();
 
     // 7) Incrementar contador de habitaciones_reservadas de forma atómica.
     //    Usamos RPC-lite via SQL directo. Si el cupo se llena, marcar 'agotado'.
