@@ -40,6 +40,7 @@ export default function Reclutamiento() {
   const [vacantes, setVacantes] = useState([]);
   const [postulaciones, setPostulaciones] = useState([]);
   const [departamentos, setDepartamentos] = useState([]);
+  const [posiciones, setPosiciones] = useState([]);
   const [loading, setLoading] = useState(true);
   const [editVacante, setEditVacante] = useState(null);    // null | "new" | vacante row
   const [verVacanteId, setVerVacanteId] = useState(null);  // vista pipeline de una vacante
@@ -48,14 +49,16 @@ export default function Reclutamiento() {
 
   const load = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
-    const [vR, pR, dR] = await Promise.all([
+    const [vR, pR, dR, posR] = await Promise.all([
       supabase.from("rh_vacantes").select("*").order("created_at", { ascending: false }),
       supabase.from("rh_postulaciones").select("*").order("created_at", { ascending: false }),
       supabase.from("rh_departamentos").select("id,nombre").then(r => r).catch(() => ({ data: [] })),
+      supabase.from("rh_posiciones").select("id, nombre, departamento_id, cupos").eq("activo", true).order("nombre").then(r => r).catch(() => ({ data: [] })),
     ]);
     setVacantes(vR.data || []);
     setPostulaciones(pR.data || []);
     setDepartamentos(dR.data || []);
+    setPosiciones(posR.data || []);
     if (!silent) setLoading(false);
   }, []);
   useEffect(() => { load(); }, [load]);
@@ -179,7 +182,7 @@ export default function Reclutamiento() {
       )}
 
       {editVacante && (
-        <VacanteModal vacante={editVacante === "new" ? null : editVacante} departamentos={departamentos}
+        <VacanteModal vacante={editVacante === "new" ? null : editVacante} departamentos={departamentos} posiciones={posiciones}
           onClose={() => setEditVacante(null)} onSaved={reload} />
       )}
     </div>
@@ -577,13 +580,14 @@ function PostulacionDetalle({ postulacion, vacante, onBack, onReload }) {
 }
 
 // ─── MODAL CREAR/EDITAR VACANTE ──────────────────────────────────────
-function VacanteModal({ vacante, departamentos, onClose, onSaved }) {
+function VacanteModal({ vacante, departamentos, posiciones = [], onClose, onSaved }) {
   const isEdit = !!vacante;
   const [f, setF] = useState({
     titulo: vacante?.titulo || "",
     codigo: vacante?.codigo || "",
     slug: vacante?.slug || "",
     departamento_id: vacante?.departamento_id || "",
+    posicion_id: vacante?.posicion_id || "",
     descripcion: vacante?.descripcion || "",
     responsabilidades: vacante?.responsabilidades || "",
     requisitos: vacante?.requisitos || "",
@@ -600,14 +604,32 @@ function VacanteModal({ vacante, departamentos, onClose, onSaved }) {
     publicada: vacante?.publicada ?? false,
     fecha_cierre: vacante?.fecha_cierre || "",
   });
+  // Modo del selector: "organigrama" (posición existente) o "nueva" (título libre).
+  const [modo, setModo] = useState(vacante?.posicion_id ? "organigrama" : (posiciones.length > 0 ? "organigrama" : "nueva"));
   const [saving, setSaving] = useState(false);
   const set = (k, v) => setF(s => ({ ...s, [k]: v }));
+
+  const pickPosicion = (posId) => {
+    if (!posId) {
+      setF(s => ({ ...s, posicion_id: "" }));
+      return;
+    }
+    const p = posiciones.find(x => x.id === posId);
+    if (!p) return;
+    setF(s => ({
+      ...s,
+      posicion_id: posId,
+      titulo: p.nombre,                       // el titulo se auto-carga del organigrama
+      departamento_id: p.departamento_id || s.departamento_id || "",
+    }));
+  };
 
   const guardar = async () => {
     if (!f.titulo.trim()) return alert("El título es obligatorio.");
     setSaving(true);
     const slug = f.slug || slugify(f.titulo) + "-" + uid8().toLowerCase().slice(0, 4);
     const codigo = f.codigo || `VAC-${new Date().getFullYear()}-${uid8().slice(0, 4)}`;
+    const posicionValida = f.posicion_id && posiciones.some(p => p.id === f.posicion_id);
     const payload = {
       ...f,
       slug, codigo,
@@ -616,6 +638,7 @@ function VacanteModal({ vacante, departamentos, onClose, onSaved }) {
       vacantes_qty: Number(f.vacantes_qty) || 1,
       fecha_cierre: f.fecha_cierre || null,
       departamento_id: f.departamento_id || null,
+      posicion_id: modo === "organigrama" && posicionValida ? f.posicion_id : null,
       updated_at: new Date().toISOString(),
     };
     let error;
@@ -648,9 +671,49 @@ function VacanteModal({ vacante, departamentos, onClose, onSaved }) {
         </div>
 
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          {/* Selector: posicion existente en el organigrama vs nueva */}
           <div>
-            <label style={LS}>Título *</label>
-            <input value={f.titulo} onChange={e => set("titulo", e.target.value)} style={IS} placeholder="Ej: Coordinador de Eventos" autoFocus />
+            <label style={LS}>Posición</label>
+            <div style={{ display: "flex", background: B.navyMid, borderRadius: 8, padding: 3, gap: 2, marginTop: 4, marginBottom: 8 }}>
+              <button type="button" onClick={() => setModo("organigrama")} disabled={posiciones.length === 0}
+                style={{ flex: 1, padding: "6px 12px", borderRadius: 6, border: "none",
+                  background: modo === "organigrama" ? B.sky : "transparent",
+                  color: modo === "organigrama" ? B.navy : posiciones.length === 0 ? "rgba(255,255,255,0.25)" : "rgba(255,255,255,0.6)",
+                  fontSize: 12, fontWeight: 700, cursor: posiciones.length === 0 ? "not-allowed" : "pointer" }}>
+                🌳 De organigrama {posiciones.length > 0 && `(${posiciones.length})`}
+              </button>
+              <button type="button" onClick={() => { setModo("nueva"); set("posicion_id", ""); }}
+                style={{ flex: 1, padding: "6px 12px", borderRadius: 6, border: "none",
+                  background: modo === "nueva" ? B.sky : "transparent",
+                  color: modo === "nueva" ? B.navy : "rgba(255,255,255,0.6)",
+                  fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+                ✨ Nueva posición
+              </button>
+            </div>
+            {modo === "organigrama" ? (
+              <select value={f.posicion_id} onChange={e => pickPosicion(e.target.value)} style={IS}>
+                <option value="">— Selecciona una posición del organigrama —</option>
+                {posiciones.map(p => {
+                  const dept = departamentos.find(d => d.id === p.departamento_id);
+                  return <option key={p.id} value={p.id}>{p.nombre}{dept ? ` — ${dept.nombre}` : ""}{p.cupos > 1 ? ` (${p.cupos} cupos)` : ""}</option>;
+                })}
+              </select>
+            ) : (
+              <input value={f.titulo} onChange={e => set("titulo", e.target.value)} style={IS}
+                placeholder="Ej: Coordinador de Eventos" autoFocus />
+            )}
+            {modo === "organigrama" && f.posicion_id && (
+              <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginTop: 4 }}>
+                Título auto-cargado: <b style={{ color: B.sand }}>{f.titulo}</b>
+              </div>
+            )}
+          </div>
+
+          <div>
+            <label style={LS}>Título de la vacante *</label>
+            <input value={f.titulo} onChange={e => set("titulo", e.target.value)} style={IS}
+              placeholder="Ej: Coordinador de Eventos"
+              disabled={modo === "organigrama" && !!f.posicion_id} />
           </div>
 
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
