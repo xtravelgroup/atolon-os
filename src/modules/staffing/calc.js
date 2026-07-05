@@ -21,7 +21,7 @@ export const DEFAULT_STAFFING_CONFIG = {
   ],
   roles: {
     mesPlaya:   { label: "Mesero Playa",       orden: 1, variable: "vip_pax",       min_apertura: 1, umbrales_pax: [{hasta:16,cant:1},{hasta:49,cant:2},{hasta:60,cant:3}], escalar_despues: {desde_pax:60,cada_pax:20,suma_cantidad:1} },
-    mesPool:    { label: "Mesero Pool",        orden: 2, variable: "exclusive_pax", min_apertura: 1, umbrales_pax: [{hasta:10,cant:1},{hasta:30,cant:2},{hasta:999,cant:3}] },
+    mesPool:    { label: "Mesero Piscina",     orden: 2, variable: "exclusive_pax", min_apertura: 1, umbrales_pax: [{hasta:10,cant:1},{hasta:23,cant:2},{hasta:36,cant:3}], escalar_despues: {desde_pax:36,cada_pax:12,suma_cantidad:1} },
     mesRest:    { label: "Mesero Restaurante", orden: 3, variable: "pax_total",     min_apertura: 1, umbrales_pax: [{hasta:80,cant:1},{hasta:999,cant:4}], delta_pico_movimiento: 1 },
     runnersBeb: { label: "Runner Bebidas",     orden: 4, variable: "pax_total",     umbrales_pax: [{hasta:60,cant:1},{hasta:80,cant:2},{hasta:999,cant:3}] },
     runnersCom: { label: "Runner Comida",      orden: 5, variable: "pax_total",     solo_pico: true, umbrales_pax: [{hasta:20,cant:0},{hasta:80,cant:1},{hasta:999,cant:2}] },
