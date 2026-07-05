@@ -14,6 +14,7 @@ const ROLES = [
   { key: "bartenders", icon: "🍸", label: "Bartender",          zona: "Bar",            noValle: "Restaurante + runners",                noPico: () => "BT1 rest · BT2 camas (si 2 BT)" },
   { key: "supervisor", icon: "👁️", label: "Supervisor",         zona: "Global",         noValle: "Coordinación total",                   noPico: () => "100% en piso" },
   { key: "hostess",    icon: "🌺", label: "Hostess",            zona: "Recepción",      noValle: "Camas + restaurante",                  noPico: () => "Escalonamiento restaurante" },
+  { key: "cajero",     icon: "💰", label: "Cajero",             zona: "Caja",           noValle: "1 fijo · turno 12:30–22:00",           noPico: () => "Sin cambio" },
 ];
 
 const BLOQUES = [

@@ -38,6 +38,7 @@ export const DEFAULT_STAFFING_CONFIG = {
     bartenders: { label: "Bartenders",         orden: 7, variable: "pax_total",     umbrales_pax: [{hasta:39,cant:1},{hasta:90,cant:2}], escalar_despues: {desde_pax:90,cada_pax:50,suma_cantidad:1} },
     supervisor: { label: "Supervisor",         orden: 8, variable: "pax_total",     umbrales_pax: [{hasta:999,cant:1}] },
     hostess:    { label: "Hostess",            orden: 9, variable: "pax_total",     umbrales_pax: [{hasta:20,cant:0},{hasta:80,cant:1},{hasta:999,cant:2}] },
+    cajero:     { label: "Cajero",             orden: 10, variable: "pax_total",    min_apertura: 1, umbrales_pax: [{hasta:999,cant:1}], turno_fijo: {entrada:"12:30",salida:"22:00"} },
   },
   // Auto-horarios servicio — regla dirección 2026-07-04.
   // Entrada = f(primer pasadía del día); salida = f(último pasadía del día).
@@ -62,6 +63,7 @@ export const DEFAULT_STAFFING_CONFIG = {
     mesPool: 1,
     mesRest: 1,
     bartenders: 1,
+    cajero: 1,
   },
 };
 
