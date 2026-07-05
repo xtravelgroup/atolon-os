@@ -9,8 +9,7 @@ const ROLES = [
   { key: "mesPlaya",   icon: "🏖️", label: "Mesero Playa",      zona: "Playa VIP",      noValle: "Ratio 1/20 pax VIP · bar a 50m",      noPico: (h) => h ? "−1 se mueve al restaurante" : "Sin cambio" },
   { key: "mesPool",    icon: "🏊", label: "Mesero Pool",        zona: "Pool Exclusive", noValle: "Ratio 1/10 pax Exclusive · bar a 20m", noPico: () => "Nunca se mueve al restaurante" },
   { key: "mesRest",    icon: "🍽️", label: "Mesero Restaurante", zona: "Restaurante",    noValle: "1 fijo (≤80 pax) · 4 fijos (100+)",   noPico: (h) => h ? "+1 viene de playa" : "Sin cambio" },
-  { key: "runnersBeb", icon: "🍹", label: "Runner Bebidas",     zona: "Pool + Playa",   noValle: "Activo todo el día",                   noPico: () => "Sin cambio" },
-  { key: "runnersCom", icon: "🥘", label: "Runner Comida",      zona: "Cocina → Todos", noValle: "Inactivo (fuera del pico)",             noPico: () => "Solo 12–3pm · Fuera: busser" },
+  { key: "runnersBeb", icon: "🏃", label: "Runners",            zona: "Playa + Piscina + Restaurante", noValle: "Arrancan a partir de 20 pax",           noPico: () => "Escalan con pax total" },
   { key: "bussers",    icon: "🧹", label: "Busser",             zona: "Todo el club",   noValle: "Limpieza + apoyo",                     noPico: () => "Apoyo entregas · sin limpieza" },
   { key: "bartenders", icon: "🍸", label: "Bartender",          zona: "Bar",            noValle: "Restaurante + runners",                noPico: () => "BT1 rest · BT2 camas (si 2 BT)" },
   { key: "supervisor", icon: "👁️", label: "Supervisor",         zona: "Global",         noValle: "Coordinación total",                   noPico: () => "100% en piso" },
@@ -630,7 +629,7 @@ export default function Staffing() {
                     </span>
                   )}
                   <span style={{ fontSize: 11, background: B.sky + "22", color: B.sky, border: `1px solid ${B.sky}44`, borderRadius: 6, padding: "3px 10px" }}>
-                    🥘 {staff.pico.runnersCom} Runner{staff.pico.runnersCom !== 1 ? "s" : ""} Comida activo{staff.pico.runnersCom !== 1 ? "s" : ""}
+                    🏃 {staff.pico.runnersBeb} Runner{staff.pico.runnersBeb !== 1 ? "s" : ""} activo{staff.pico.runnersBeb !== 1 ? "s" : ""}
                   </span>
                   <span style={{ fontSize: 11, background: B.success + "22", color: B.success, border: `1px solid ${B.success}44`, borderRadius: 6, padding: "3px 10px" }}>
                     🍽️ {staff.pico.mesRest} Mesero{staff.pico.mesRest !== 1 ? "s" : ""} Restaurante

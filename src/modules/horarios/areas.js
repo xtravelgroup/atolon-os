@@ -12,7 +12,6 @@ export const AREAS = [
   { key: "meseros.playa",       label: "Servicio › Playa",       deptNombre: "Meseros", actividadNombre: "Playa",          source: "staffing", staffingRole: "mesPlaya" },
   { key: "meseros.piscina",     label: "Servicio › Piscina",     deptNombre: "Meseros", actividadNombre: "Piscina",        source: "staffing", staffingRole: "mesPool" },
   { key: "meseros.restaurant",  label: "Servicio › Restaurant",  deptNombre: "Meseros", actividadNombre: "Restaurant",     source: "staffing", staffingRole: "mesRest" },
-  { key: "meseros.runners",     label: "Servicio › Runners Comida", deptNombre: "Meseros", actividadNombre: "Runners Comida", source: "staffing", staffingRole: "runnersCom" },
   { key: "playeros",            label: "Playeros",         deptNombre: "Playeros", source: "manual" },
   { key: "flota",               label: "Flota",            deptNombre: "Flota", source: "manual" },
   { key: "mantenimiento",       label: "Mantenimiento",    deptNombre: "Mantenimiento", source: "manual" },
