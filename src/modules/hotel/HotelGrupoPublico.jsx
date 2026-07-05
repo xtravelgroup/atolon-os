@@ -286,12 +286,9 @@ export default function HotelGrupoPublico() {
                     {cat?.descripcion && (
                       <div style={{ fontSize: 11, color: "rgba(255,255,255,0.55)" }}>{cat.descripcion}</div>
                     )}
-                    {fechasValidas && (
-                      <div style={{ fontSize: 11, marginTop: 4, color: agotado ? B.danger : d?.disponibles <= 2 ? B.warning : B.success, fontWeight: 700 }}>
-                        {dispLoading ? "Verificando disponibilidad…"
-                          : agotado ? "❌ Agotado en esas fechas"
-                          : d ? `✓ ${d.disponibles} de ${d.total} disponible${d.disponibles === 1 ? "" : "s"}`
-                          : ""}
+                    {fechasValidas && agotado && (
+                      <div style={{ fontSize: 11, marginTop: 4, color: B.danger, fontWeight: 700 }}>
+                        No disponible en esas fechas
                       </div>
                     )}
                   </div>
