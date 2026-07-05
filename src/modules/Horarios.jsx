@@ -82,7 +82,7 @@ export default function Horarios() {
     const ini = toISO(weekStart);
     const fin = toISO(addDays(weekStart, 6));
     const [eR, dR, pR, aR, hR] = await Promise.all([
-      supabase.from("rh_empleados").select("id, nombres, apellidos, cargo, departamento_id, activo, avatar_color").eq("activo", true).order("nombres"),
+      supabase.from("rh_empleados").select("id, nombres, apellidos, cargo, departamento_id, posicion_id, activo, avatar_color").eq("activo", true).order("nombres"),
       supabase.from("rh_departamentos").select("id, nombre, color, activo").eq("activo", true),
       supabase.from("rh_turno_plantillas").select("*").eq("activo", true).order("orden"),
       supabase.from("rh_actividades").select("*").eq("activo", true).order("orden"),
