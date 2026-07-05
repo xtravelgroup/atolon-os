@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback } from "react";
+import HotelGrupos from "./hotel/HotelGrupos";
 import { supabase } from "../lib/supabase";
 
 const B = {
@@ -134,18 +135,23 @@ export default function HotelReservas() {
           { k: "salidas",  l: `Salidas (${salidasHoy.length})` },
           { k: "todas",    l: "Todas" },
           { k: "historico", l: "Histórico" },
+          { k: "grupos",   l: "🎟️ Grupos" },
         ].map(t => (
           <button key={t.k} onClick={() => setTab(t.k)}
             style={BTN(tab === t.k ? B.hotel : B.navyMid)}>{t.l}</button>
         ))}
-        <select value={filtroEstado} onChange={e => setFiltroEstado(e.target.value)} style={{ ...IS, width: 160 }}>
-          <option value="">Todos los estados</option>
-          {ESTADOS.map(s => <option key={s.k} value={s.k}>{s.l}</option>)}
-        </select>
-        <input placeholder="Buscar…" value={search} onChange={e => setSearch(e.target.value)} style={{ ...IS, maxWidth: 260, flex: 1, minWidth: 180 }} />
+        {tab !== "grupos" && (<>
+          <select value={filtroEstado} onChange={e => setFiltroEstado(e.target.value)} style={{ ...IS, width: 160 }}>
+            <option value="">Todos los estados</option>
+            {ESTADOS.map(s => <option key={s.k} value={s.k}>{s.l}</option>)}
+          </select>
+          <input placeholder="Buscar…" value={search} onChange={e => setSearch(e.target.value)} style={{ ...IS, maxWidth: 260, flex: 1, minWidth: 180 }} />
+        </>)}
       </div>
 
-      {loading ? (
+      {tab === "grupos" && <HotelGrupos />}
+
+      {tab !== "grupos" && (loading ? (
         <div style={{ padding: 40, textAlign: "center", color: "rgba(255,255,255,0.4)" }}>Cargando…</div>
       ) : visibles.length === 0 ? (
         <div style={{ padding: 40, textAlign: "center", color: "rgba(255,255,255,0.4)", background: B.navyMid, borderRadius: 10 }}>
@@ -187,7 +193,7 @@ export default function HotelReservas() {
             );
           })}
         </div>
-      )}
+      ))}
 
       {showNew && (
         <ReservaModal
