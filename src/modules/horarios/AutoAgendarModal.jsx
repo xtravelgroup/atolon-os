@@ -20,6 +20,7 @@ export default function AutoAgendarModal({ dateISO, empleados, departamentos, ac
   const [aplicando, setAplicando] = useState(false);
   const [err, setErr] = useState(null);
   const [okMsg, setOkMsg] = useState(null);
+  const [posiciones, setPosiciones] = useState([]);
 
   // resolver actividad_id por nombre
   const actIdByName = useMemo(() => {
@@ -28,20 +29,25 @@ export default function AutoAgendarModal({ dateISO, empleados, departamentos, ac
     return m;
   }, [actividades]);
 
-  // cargar propuesta al abrir
+  // cargar propuesta + posiciones al abrir
   useEffect(() => {
     let cancel = false;
     (async () => {
       setLoading(true);
       try {
-        const p = await proposeSlots(supabase, dateISO);
+        const [p, posR] = await Promise.all([
+          proposeSlots(supabase, dateISO),
+          supabase.from("rh_posiciones").select("id, nombre, departamento_id, parent_id").eq("activo", true),
+        ]);
         if (cancel) return;
+        const pos = posR.data || [];
+        setPosiciones(pos);
         setPropuesta(p);
         // Pre-seleccionar candidatos por slot con menos horas.
         const preSel = {};
         p.slots.forEach((slot, idx) => {
           const cands = pickCandidatesForSlot(slot, {
-            empleados, departamentos, horariosSemana, dateISO,
+            empleados, departamentos, horariosSemana, dateISO, posiciones: pos,
           });
           preSel[idx] = cands.slice(0, slot.cantidad).map(e => e.id);
         });
@@ -62,12 +68,14 @@ export default function AutoAgendarModal({ dateISO, empleados, departamentos, ac
     return s;
   }, [seleccion]);
 
-  // candidatos disponibles para un slot (del depto correcto, no seleccionados en OTROS slots)
+  // candidatos disponibles para un slot (filtrados por posición del empleado
+  // matchea keywords del slot; fallback a depto). Excluye los ya seleccionados
+  // en OTROS slots.
   const candidatosSlot = useCallback((slot, slotIdx) => {
-    const cands = pickCandidatesForSlot(slot, { empleados, departamentos, horariosSemana, dateISO });
+    const cands = pickCandidatesForSlot(slot, { empleados, departamentos, horariosSemana, dateISO, posiciones });
     const propios = new Set(seleccion[slotIdx] || []);
     return cands.filter(e => propios.has(e.id) || !yaSeleccionados.has(e.id));
-  }, [empleados, departamentos, horariosSemana, dateISO, seleccion, yaSeleccionados]);
+  }, [empleados, departamentos, horariosSemana, dateISO, posiciones, seleccion, yaSeleccionados]);
 
   const cambiarSlotEmp = (slotIdx, posicion, empleado_id) => {
     setSeleccion(prev => {

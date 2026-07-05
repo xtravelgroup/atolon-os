@@ -21,14 +21,17 @@ import {
   getStaffingConfig,
 } from "../staffing/calc";
 
-// Mapeo rol → nombre de actividad (rh_actividades) + nombre de depto (rh_departamentos).
+// Mapeo rol → actividad (rh_actividades) + depto (rh_departamentos) + posiciones.
+// `posicionMatches`: keywords (case-insensitive) que deben aparecer en el nombre
+// de la posición del empleado para ser candidato. El auto-scheduler filtra
+// por posición primero (más específico) y cae a depto si no matchea nadie.
 export const SERVICE_ROLES = [
-  { rol: "mesPlaya",   actividadNombre: "Playa",      deptNombre: "Meseros", label: "Mesero Playa",       icon: "🏖️" },
-  { rol: "mesPool",    actividadNombre: "Piscina",    deptNombre: "Meseros", label: "Mesero Piscina",     icon: "🏊" },
-  { rol: "mesRest",    actividadNombre: "Restaurant", deptNombre: "Meseros", label: "Mesero Restaurante", icon: "🍽️" },
-  { rol: "runnersBeb", actividadNombre: "Runner Bar", deptNombre: "Bar",     label: "Runners",            icon: "🏃" },
-  { rol: "bartenders", actividadNombre: "Bartender",  deptNombre: "Bar",     label: "Bartender",          icon: "🍸" },
-  { rol: "cajero",     actividadNombre: "Cajero",     deptNombre: "Servicio",label: "Cajero",             icon: "💰" },
+  { rol: "mesPlaya",   actividadNombre: "Playa",      deptNombre: "Meseros", label: "Mesero Playa",       icon: "🏖️", posicionMatches: ["playa"] },
+  { rol: "mesPool",    actividadNombre: "Piscina",    deptNombre: "Meseros", label: "Mesero Piscina",     icon: "🏊", posicionMatches: ["piscina", "pool"] },
+  { rol: "mesRest",    actividadNombre: "Restaurant", deptNombre: "Meseros", label: "Mesero Restaurante", icon: "🍽️", posicionMatches: ["restaurant", "restaurante"] },
+  { rol: "runnersBeb", actividadNombre: "Runner Bar", deptNombre: "Bar",     label: "Runners",            icon: "🏃", posicionMatches: ["runner"] },
+  { rol: "bartenders", actividadNombre: "Bartender",  deptNombre: "Bar",     label: "Bartender",          icon: "🍸", posicionMatches: ["bartender"] },
+  { rol: "cajero",     actividadNombre: "Cajero",     deptNombre: "Servicio",label: "Cajero",             icon: "💰", posicionMatches: ["cajero", "caja"] },
 ];
 
 // Detecta primer y último pasadía del día consultando reservas → salidas.
@@ -78,6 +81,7 @@ export async function proposeSlots(supabase, dateISO) {
           rol: svc.rol,
           actividadNombre: svc.actividadNombre,
           deptNombre: svc.deptNombre,
+          posicionMatches: svc.posicionMatches || [],
           label: svc.label,
           icon: svc.icon,
           entrada: roleCfg.turno_fijo.entrada,
@@ -99,6 +103,7 @@ export async function proposeSlots(supabase, dateISO) {
             rol: svc.rol,
             actividadNombre: svc.actividadNombre,
             deptNombre: svc.deptNombre,
+            posicionMatches: svc.posicionMatches || [],
             label: `${svc.label} (${t.key})`,
             icon: svc.icon,
             entrada: t.entrada,
@@ -143,19 +148,34 @@ export async function proposeSlots(supabase, dateISO) {
   };
 }
 
-// Selecciona empleados para un slot. Filtra por depto matching + activos +
-// no ya asignados ese día. Ordena por horas-agendadas-esta-semana ascendente
-// (para balancear carga).
-//
-// Retorna el array ordenado. El caller decide cuántos tomar (slice(0, cantidad)).
+// Selecciona empleados para un slot. Filtro primario: posición del empleado
+// matchea keywords del slot (ej. "Mesero Playa" para slot Playa). Si no hay
+// nadie por posición, cae a filtro por departamento (backward compat con
+// empleados aún sin posición asignada). Además exige activos + no ya agendados
+// ese día. Ordena por horas-agendadas-esta-semana asc (balancear carga).
 export function pickCandidatesForSlot(slot, {
-  empleados, departamentos, horariosSemana, dateISO,
+  empleados, departamentos, horariosSemana, dateISO, posiciones = [],
 }) {
-  const dept = departamentos.find(d => d.nombre === slot.deptNombre);
-  if (!dept) return [];
+  // 1) Filtro por posición: empleado.posicion_id apunta a una posición cuyo
+  //    nombre contiene algún keyword del slot.
+  const kws = (slot.posicionMatches || []).map(k => k.toLowerCase());
+  const posIdsMatch = new Set(
+    posiciones
+      .filter(p => kws.some(kw => (p.nombre || "").toLowerCase().includes(kw)))
+      .map(p => p.id)
+  );
+  let candidatos = empleados.filter(e => e.activo && e.posicion_id && posIdsMatch.has(e.posicion_id));
 
-  // Empleados del depto activos.
-  const candidatos = empleados.filter(e => e.departamento_id === dept.id && e.activo);
+  // 2) Fallback: si nadie matcheó por posición, filtrar por departamento
+  //    (empleados legacy que aún no tienen posicion_id asignado).
+  if (candidatos.length === 0) {
+    const dept = departamentos.find(d => d.nombre === slot.deptNombre);
+    if (dept) {
+      candidatos = empleados.filter(e => e.activo && e.departamento_id === dept.id);
+    }
+  }
+
+  if (candidatos.length === 0) return [];
 
   // Excluir los que ya tienen horario ese día.
   const yaAsignadosHoy = new Set(
