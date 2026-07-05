@@ -121,17 +121,22 @@ serve(async (req) => {
     //  - Con habitacion_id ∈ habIds (asignadas)
     //  - O con categoria_preferida = categoria_id (sin asignar aún)
     // Solapamiento: check_in_at < check_out AND check_out_at > check_in.
+    // Excluimos las expiradas sin pagar (aunque el cron aún no las haya
+    // cancelado formalmente, ya liberan el inventario).
     const winEnd = `${check_out}T23:59:59`;
     const winIni = `${check_in}T00:00:00`;
+    const nowIso = new Date().toISOString();
     const { data: solapan } = await supa
       .from("hotel_estancias")
-      .select("id, habitacion_id, categoria_preferida, estado")
+      .select("id, habitacion_id, categoria_preferida, estado, expira_en, pagado_en")
       .in("estado", ["reservada", "in_house"])
       .lt("check_in_at", winEnd)
       .gt("check_out_at", winIni);
+    const noExpirada = (e: any) => !(e.expira_en && !e.pagado_en && e.expira_en < nowIso);
     const ocupadas = (solapan || []).filter((e: any) =>
-      (e.habitacion_id && habIds.has(e.habitacion_id)) ||
-      (!e.habitacion_id && e.categoria_preferida === categoria_id)
+      noExpirada(e) &&
+      ((e.habitacion_id && habIds.has(e.habitacion_id)) ||
+       (!e.habitacion_id && e.categoria_preferida === categoria_id))
     ).length;
     const disponibles = totalRooms - ocupadas;
     if (disponibles <= 0) {
@@ -162,6 +167,8 @@ serve(async (req) => {
     const check_out_at = `${check_out}T12:00:00-05:00`;  // 12m hora Colombia
     const codigo = randCode();  // GRP-XXXXXX
 
+    // TTL 30 min: se cancela automáticamente si no se paga en ese tiempo.
+    const expira_en = new Date(Date.now() + 30 * 60 * 1000).toISOString();
     const { data: est, error: eErr } = await supa.from("hotel_estancias").insert({
       codigo,
       huesped_id,
@@ -178,6 +185,7 @@ serve(async (req) => {
       canal: "grupo",
       solicitudes_especiales: notas || null,
       created_by: `grupo:${grupo.slug}`,
+      expira_en,
     }).select("id").single();
     if (eErr) return json({ error: "Error creando reserva: " + eErr.message }, 500);
 
@@ -202,6 +210,7 @@ serve(async (req) => {
       precio_noche: precioNoche,
       nacionalidad,
       grupo_nombre: grupo.nombre,
+      expira_en,
     });
   } catch (e) {
     console.error("[hotel-grupo-reservar] error:", e);

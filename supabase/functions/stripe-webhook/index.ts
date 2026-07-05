@@ -161,6 +161,7 @@ serve(async (req) => {
       pago_referencia: String(session.id),
       pagado_en: new Date().toISOString(),
       deposito: nuevoDeposito,
+      expira_en: null,  // ya pagó — cancelar el timeout
       updated_at: new Date().toISOString(),
     }).eq("id", est.id);
     console.log(`✓ Hotel estancia ${est.id} pagada (Stripe USD → COP ${cobradoCop})`);

@@ -195,100 +195,7 @@ export default function HotelGrupoPublico() {
   }
 
   if (confirmada) {
-    const irAWompi = async () => {
-      const url = await wompiCheckoutUrl({
-        referencia: `hotel_${confirmada.estancia_id}`,
-        totalCOP: confirmada.total,
-        email: f.email,
-        redirectUrl: `${window.location.origin}/reservar-grupo/${slug}?paid=${confirmada.codigo}`,
-      });
-      window.location.href = url;
-    };
-    const irAStripe = async () => {
-      try {
-        const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/create-stripe-session`;
-        const resp = await fetch(url, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            apikey: import.meta.env.VITE_SUPABASE_ANON_KEY,
-            Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
-          },
-          body: JSON.stringify({
-            hotel_estancia_id: confirmada.estancia_id,
-            nombre: f.nombre,
-            email: f.email,
-            fecha: f.check_in,
-            tipo: "Reserva Hotel Atolón",
-            back_url: `${window.location.origin}/reservar-grupo/${slug}`,
-          }),
-        });
-        const data = await resp.json();
-        if (!resp.ok || !data.url) throw new Error(data?.error || "No se pudo crear la sesión de pago");
-        window.location.href = data.url;
-      } catch (e) {
-        alert("Error iniciando pago internacional: " + (e.message || e));
-      }
-    };
-    return (
-      <div style={container}>
-        <div style={{ ...card, textAlign: "center", padding: 40 }}>
-          <div style={{ fontSize: 48, marginBottom: 12 }}>✅</div>
-          <div style={{ fontSize: 22, fontWeight: 800, color: B.success, marginBottom: 8 }}>Reserva creada</div>
-          <div style={{ color: B.white, fontSize: 14, marginBottom: 16 }}>
-            <b>{f.nombre}</b>, tu reserva quedó registrada. Completa el pago para confirmarla.
-          </div>
-          <div style={{ display: "grid", gap: 8, textAlign: "left", background: B.navy, padding: 16, borderRadius: 10, marginBottom: 16 }}>
-            <div><b>Código:</b> <span style={{ fontFamily: "monospace", color: B.sky }}>{confirmada.codigo}</span></div>
-            <div><b>Check-in:</b> {fmtFecha(f.check_in)}</div>
-            <div><b>Check-out:</b> {fmtFecha(f.check_out)}</div>
-            <div><b>Noches:</b> {confirmada.noches}</div>
-            <div><b>Precio/noche:</b> {COP(confirmada.precio_noche)}</div>
-            <div><b>Subtotal:</b> {COP(confirmada.subtotal ?? confirmada.total)}</div>
-            {confirmada.iva > 0 && <div><b>IVA 19%:</b> {COP(confirmada.iva)}</div>}
-            {confirmada.iva === 0 && confirmada.nacionalidad === "extranjero" && (
-              <div style={{ color: B.success }}>✓ Exento de IVA (extranjero)</div>
-            )}
-            <div style={{ fontSize: 16, fontWeight: 800, color: B.success }}>
-              <b>Total:</b> {COP(confirmada.total)}
-            </div>
-          </div>
-          <div style={{ fontSize: 13, color: B.sand, marginBottom: 10, fontWeight: 700 }}>Elige tu método de pago:</div>
-
-          <button onClick={irAWompi} style={{
-            width: "100%", padding: "14px 20px", borderRadius: 10, border: "none",
-            background: "linear-gradient(135deg, #7B2CBF, #5A189A)", color: "#fff",
-            fontSize: 15, fontWeight: 800, cursor: "pointer", marginBottom: 10,
-            boxShadow: "0 4px 12px rgba(123, 44, 191, 0.4)",
-            display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8,
-          }}>
-            <span style={{ textAlign: "left" }}>
-              🇨🇴 <b>Nacional (COP)</b>
-              <div style={{ fontSize: 10, fontWeight: 400, opacity: 0.85 }}>Wompi · PSE, Nequi, tarjeta CO</div>
-            </span>
-            <span>{COP(confirmada.total)}</span>
-          </button>
-
-          <button onClick={irAStripe} style={{
-            width: "100%", padding: "14px 20px", borderRadius: 10, border: "none",
-            background: "linear-gradient(135deg, #635BFF, #4338CA)", color: "#fff",
-            fontSize: 15, fontWeight: 800, cursor: "pointer", marginBottom: 12,
-            boxShadow: "0 4px 12px rgba(99, 91, 255, 0.4)",
-            display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8,
-          }}>
-            <span style={{ textAlign: "left" }}>
-              🌎 <b>Internacional (USD)</b>
-              <div style={{ fontSize: 10, fontWeight: 400, opacity: 0.85 }}>Stripe · Visa/Master internacional</div>
-            </span>
-            <span>~{COP(confirmada.total)}</span>
-          </button>
-
-          <div style={{ fontSize: 11, color: B.sand, lineHeight: 1.5 }}>
-            Pago 100% seguro. Recibirás confirmación por email en <b>{f.email}</b>.
-          </div>
-        </div>
-      </div>
-    );
+    return <ConfirmadaScreen confirmada={confirmada} f={f} slug={slug} />;
   }
 
   return (
@@ -483,6 +390,149 @@ export default function HotelGrupoPublico() {
 
       <div style={{ textAlign: "center", padding: "20px 0", fontSize: 11, color: "rgba(255,255,255,0.35)" }}>
         Al confirmar aceptas los términos del hotel. Powered by Atolón Beach Club · Cartagena
+      </div>
+    </div>
+  );
+}
+
+// ─── Confirmation screen: código + total + botones de pago + countdown 30 min
+function ConfirmadaScreen({ confirmada, f, slug }) {
+  const [secsLeft, setSecsLeft] = useState(() => {
+    if (!confirmada?.expira_en) return 30 * 60;
+    const ms = new Date(confirmada.expira_en).getTime() - Date.now();
+    return Math.max(0, Math.round(ms / 1000));
+  });
+  useEffect(() => {
+    const t = setInterval(() => setSecsLeft(s => Math.max(0, s - 1)), 1000);
+    return () => clearInterval(t);
+  }, []);
+  const mm = String(Math.floor(secsLeft / 60)).padStart(2, "0");
+  const ss = String(secsLeft % 60).padStart(2, "0");
+  const expirado = secsLeft <= 0;
+  const timerColor = secsLeft < 300 ? B.danger : secsLeft < 600 ? B.warning : B.sky;
+
+  const irAWompi = async () => {
+    if (expirado) return alert("La reserva expiró. Debes hacer una nueva.");
+    const url = await wompiCheckoutUrl({
+      referencia: `hotel_${confirmada.estancia_id}`,
+      totalCOP: confirmada.total,
+      email: f.email,
+      redirectUrl: `${window.location.origin}/reservar-grupo/${slug}?paid=${confirmada.codigo}`,
+    });
+    window.location.href = url;
+  };
+  const irAStripe = async () => {
+    if (expirado) return alert("La reserva expiró. Debes hacer una nueva.");
+    try {
+      const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/create-stripe-session`;
+      const resp = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          apikey: import.meta.env.VITE_SUPABASE_ANON_KEY,
+          Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+        },
+        body: JSON.stringify({
+          hotel_estancia_id: confirmada.estancia_id,
+          nombre: f.nombre,
+          email: f.email,
+          fecha: f.check_in,
+          tipo: "Reserva Hotel Atolón",
+          back_url: `${window.location.origin}/reservar-grupo/${slug}`,
+        }),
+      });
+      const data = await resp.json();
+      if (!resp.ok || !data.url) throw new Error(data?.error || "No se pudo crear la sesión de pago");
+      window.location.href = data.url;
+    } catch (e) {
+      alert("Error iniciando pago internacional: " + (e.message || e));
+    }
+  };
+
+  return (
+    <div style={container}>
+      <div style={{ ...card, textAlign: "center", padding: 40 }}>
+        <div style={{ fontSize: 48, marginBottom: 12 }}>{expirado ? "⌛" : "✅"}</div>
+        <div style={{ fontSize: 22, fontWeight: 800, color: expirado ? B.danger : B.success, marginBottom: 8 }}>
+          {expirado ? "Reserva expirada" : "Reserva creada"}
+        </div>
+        <div style={{ color: B.white, fontSize: 14, marginBottom: 16 }}>
+          {expirado
+            ? "No se recibió el pago a tiempo. Haz una nueva reserva para volver a intentarlo."
+            : <><b>{f.nombre}</b>, tu reserva quedó registrada. Completa el pago para confirmarla.</>}
+        </div>
+
+        {!expirado && (
+          <div style={{
+            padding: "10px 14px", borderRadius: 10, marginBottom: 14,
+            background: timerColor + "22", border: `1px solid ${timerColor}55`,
+            display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+          }}>
+            <span style={{ fontSize: 12, color: B.sand }}>⏰ La reserva expira en</span>
+            <span style={{ fontSize: 20, fontWeight: 900, color: timerColor, fontFamily: "monospace" }}>{mm}:{ss}</span>
+          </div>
+        )}
+
+        <div style={{ display: "grid", gap: 8, textAlign: "left", background: B.navy, padding: 16, borderRadius: 10, marginBottom: 16 }}>
+          <div><b>Código:</b> <span style={{ fontFamily: "monospace", color: B.sky }}>{confirmada.codigo}</span></div>
+          <div><b>Check-in:</b> {fmtFecha(f.check_in)}</div>
+          <div><b>Check-out:</b> {fmtFecha(f.check_out)}</div>
+          <div><b>Noches:</b> {confirmada.noches}</div>
+          <div><b>Precio/noche:</b> {COP(confirmada.precio_noche)}</div>
+          <div><b>Subtotal:</b> {COP(confirmada.subtotal ?? confirmada.total)}</div>
+          {confirmada.iva > 0 && <div><b>IVA 19%:</b> {COP(confirmada.iva)}</div>}
+          {confirmada.iva === 0 && confirmada.nacionalidad === "extranjero" && (
+            <div style={{ color: B.success }}>✓ Exento de IVA (extranjero)</div>
+          )}
+          <div style={{ fontSize: 16, fontWeight: 800, color: B.success }}>
+            <b>Total:</b> {COP(confirmada.total)}
+          </div>
+        </div>
+
+        {!expirado && (<>
+          <div style={{ fontSize: 13, color: B.sand, marginBottom: 10, fontWeight: 700 }}>Elige tu método de pago:</div>
+
+          <button onClick={irAWompi} style={{
+            width: "100%", padding: "14px 20px", borderRadius: 10, border: "none",
+            background: "linear-gradient(135deg, #7B2CBF, #5A189A)", color: "#fff",
+            fontSize: 15, fontWeight: 800, cursor: "pointer", marginBottom: 10,
+            boxShadow: "0 4px 12px rgba(123, 44, 191, 0.4)",
+            display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8,
+          }}>
+            <span style={{ textAlign: "left" }}>
+              🇨🇴 <b>Nacional (COP)</b>
+              <div style={{ fontSize: 10, fontWeight: 400, opacity: 0.85 }}>Wompi · PSE, Nequi, tarjeta CO</div>
+            </span>
+            <span>{COP(confirmada.total)}</span>
+          </button>
+
+          <button onClick={irAStripe} style={{
+            width: "100%", padding: "14px 20px", borderRadius: 10, border: "none",
+            background: "linear-gradient(135deg, #635BFF, #4338CA)", color: "#fff",
+            fontSize: 15, fontWeight: 800, cursor: "pointer", marginBottom: 12,
+            boxShadow: "0 4px 12px rgba(99, 91, 255, 0.4)",
+            display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8,
+          }}>
+            <span style={{ textAlign: "left" }}>
+              🌎 <b>Internacional (USD)</b>
+              <div style={{ fontSize: 10, fontWeight: 400, opacity: 0.85 }}>Stripe · Visa/Master internacional</div>
+            </span>
+            <span>~{COP(confirmada.total)}</span>
+          </button>
+
+          <div style={{ fontSize: 11, color: B.sand, lineHeight: 1.5 }}>
+            Pago 100% seguro. Recibirás confirmación por email en <b>{f.email}</b>.
+          </div>
+        </>)}
+
+        {expirado && (
+          <button onClick={() => window.location.reload()} style={{
+            width: "100%", padding: "14px 20px", borderRadius: 10, border: "none",
+            background: B.hotel, color: "#fff", fontSize: 15, fontWeight: 800, cursor: "pointer",
+          }}>
+            🔄 Hacer una nueva reserva
+          </button>
+        )}
       </div>
     </div>
   );

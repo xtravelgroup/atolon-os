@@ -373,6 +373,7 @@ serve(async (req) => {
             pago_referencia: txId,
             pagado_en: new Date().toISOString(),
             deposito: monto,
+            expira_en: null,  // ya pagó — cancelar el timeout
             updated_at: new Date().toISOString(),
           }).eq("id", est.id);
           console.log(`✓ Hotel estancia ${est.id} pagada (Wompi)`);
