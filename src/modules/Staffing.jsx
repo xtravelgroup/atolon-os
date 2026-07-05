@@ -8,7 +8,7 @@ import { calcStaff, setStaffingConfig, getStaffingConfig, DEFAULT_STAFFING_CONFI
 const ROLES = [
   { key: "mesPlaya",   icon: "🏖️", label: "Mesero Playa",      zona: "Playa VIP",      noValle: "Ratio 1/20 pax VIP · bar a 50m",      noPico: (h) => h ? "−1 se mueve al restaurante" : "Sin cambio" },
   { key: "mesPool",    icon: "🏊", label: "Mesero Pool",        zona: "Pool Exclusive", noValle: "Ratio 1/10 pax Exclusive · bar a 20m", noPico: () => "Nunca se mueve al restaurante" },
-  { key: "mesRest",    icon: "🍽️", label: "Mesero Restaurante", zona: "Restaurante",    noValle: "1 fijo (≤80 pax) · 4 fijos (100+)",   noPico: (h) => h ? "+1 viene de playa" : "Sin cambio" },
+  { key: "mesRest",    icon: "🍽️", label: "Mesero Restaurante", zona: "Restaurante",    noValle: "1 fijo (sin huéspedes)",              noPico: (h) => h ? "+1 viene de playa" : "Sin cambio" },
   { key: "runnersBeb", icon: "🏃", label: "Runners",            zona: "Playa + Piscina + Restaurante", noValle: "Arrancan a partir de 20 pax",           noPico: () => "Escalan con pax total" },
   { key: "bussers",    icon: "🧹", label: "Busser",             zona: "Todo el club",   noValle: "Limpieza + apoyo",                     noPico: () => "Apoyo entregas · sin limpieza" },
   { key: "bartenders", icon: "🍸", label: "Bartender",          zona: "Bar",            noValle: "Restaurante + runners",                noPico: () => "BT1 rest · BT2 camas (si 2 BT)" },
