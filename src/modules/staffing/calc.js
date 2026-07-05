@@ -29,6 +29,30 @@ export const DEFAULT_STAFFING_CONFIG = {
     supervisor: { label: "Supervisor",         orden: 8, variable: "pax_total",     umbrales_pax: [{hasta:999,cant:1}] },
     hostess:    { label: "Hostess",            orden: 9, variable: "pax_total",     umbrales_pax: [{hasta:20,cant:0},{hasta:80,cant:1},{hasta:999,cant:2}] },
   },
+  // Auto-horarios servicio — regla dirección 2026-07-04.
+  // Entrada = f(primer pasadía del día); salida = f(último pasadía del día).
+  // Aplica a Playa, Piscina y Restaurante (este último SOLO si no hay huéspedes).
+  // El Gerente de Servicio puede overridear en un turno específico.
+  turnos_servicio: {
+    entrada_por_primer_pasadia: [
+      { primer_pasadia: "08:30", entrada: "07:30" },
+      { primer_pasadia: "10:00", entrada: "09:00" },
+      { primer_pasadia: "11:30", entrada: "10:00" },
+    ],
+    salida_por_ultimo_pasadia: [
+      { ultimo_pasadia: "08:30", salida: "16:30" },
+      { ultimo_pasadia: "10:00", salida: "17:30" },
+      { ultimo_pasadia: "11:30", salida: "18:30" },
+    ],
+    restaurante_usa_horario_pasadias: true, // solo aplica si no hay huéspedes
+  },
+  // Mínimo diario garantizado — auto-scheduler debe cumplir aunque calcStaff dé menor.
+  minimo_diario: {
+    mesPlaya: 1,
+    mesPool: 1,
+    mesRest: 1,
+    bartenders: 1,
+  },
 };
 
 // Cache global — se hidrata desde BD al cargar el módulo Staffing.
@@ -85,6 +109,41 @@ function calcRolRaw(cfg, roleKey, totalPax, vipPax, excPax) {
   return umbralValor(r.umbrales_pax || [], variable, r.escalar_despues);
 }
 
+// Devuelve el horario de entrada según primer pasadía del día (HH:MM).
+// Busca match exacto; si no, el primer tier cuyo `primer_pasadia` >= input.
+export function entradaParaPrimerPasadia(primerPasadiaHHMM, cfg = null) {
+  const C = cfg || CURRENT_CONFIG;
+  const rules = C?.turnos_servicio?.entrada_por_primer_pasadia || [];
+  if (rules.length === 0 || !primerPasadiaHHMM) return null;
+  for (const r of rules) {
+    if (String(r.primer_pasadia) >= String(primerPasadiaHHMM)) return r.entrada;
+  }
+  return rules[rules.length - 1].entrada;
+}
+
+// Devuelve el horario de salida según último pasadía del día (HH:MM).
+export function salidaParaUltimoPasadia(ultimoPasadiaHHMM, cfg = null) {
+  const C = cfg || CURRENT_CONFIG;
+  const rules = C?.turnos_servicio?.salida_por_ultimo_pasadia || [];
+  if (rules.length === 0 || !ultimoPasadiaHHMM) return null;
+  for (const r of rules) {
+    if (String(r.ultimo_pasadia) >= String(ultimoPasadiaHHMM)) return r.salida;
+  }
+  return rules[rules.length - 1].salida;
+}
+
+// Aplica minimo_diario a los roles del resultado de calcStaff.
+export function aplicarMinimoDiario(applied, cfg = null) {
+  const C = cfg || CURRENT_CONFIG;
+  const min = C?.minimo_diario || {};
+  const out = { ...applied };
+  Object.keys(min).forEach(k => {
+    const m = Number(min[k]) || 0;
+    if ((out[k] || 0) < m) out[k] = m;
+  });
+  return out;
+}
+
 export function calcStaff(totalPax, vipPax, excPax, ovrMap = {}, cfg = null) {
   const C = cfg || CURRENT_CONFIG;
   const pax = Math.max(totalPax, C.apertura_minima_pax || 20);
@@ -111,6 +170,17 @@ export function calcStaff(totalPax, vipPax, excPax, ovrMap = {}, cfg = null) {
     const delta = r.delta_pico_movimiento || 0;
     pico[k] = hayMovimiento ? Math.max(0, base + delta) : base;
   });
+
+  // Aplicar mínimo diario si el club está operando (totalPax > 0 o hay override).
+  const clubOpera = totalPax > 0 || Object.keys(ovrMap).length > 0;
+  const min = (C.minimo_diario || {});
+  if (clubOpera) {
+    Object.keys(min).forEach(k => {
+      const m = Number(min[k]) || 0;
+      if ((valle[k] || 0) < m) valle[k] = m;
+      if ((pico[k] || 0) < m) pico[k] = m;
+    });
+  }
 
   const totalValle = Object.values(valle).reduce((s, v) => s + v, 0);
   const totalPico  = Object.values(pico).reduce((s, v) => s + v, 0);
