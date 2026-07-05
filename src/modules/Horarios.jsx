@@ -333,6 +333,9 @@ export default function Horarios() {
           />
         )}
         {departamentos
+          // Meseros + Bar quedan consolidados en la tab virtual "Servicio";
+          // no mostrarlos como tabs separados.
+          .filter(d => !["Meseros", "Bar"].includes(d.nombre))
           .filter(d => (contDept.get(d.id) || 0) > 0)
           .sort((a, b) => a.nombre.localeCompare(b.nombre))
           .map(d => (
