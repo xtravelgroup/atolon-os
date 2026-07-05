@@ -310,12 +310,21 @@ function EmpleadoModal({ emp, depts, empleados, usuarios, posiciones = [], onSav
           <Field label="Cargo · Posición *">
             <Sel value={form.posicion_id || ""} onChange={v => {
               const p = posiciones.find(x => x.id === v);
+              // Buscar ocupante de la posición padre para auto-cargar "Reporta a"
+              const parentPos = p?.parent_id ? posiciones.find(x => x.id === p.parent_id) : null;
+              const candJefes = parentPos
+                ? empleados.filter(e => e.posicion_id === parentPos.id && e.activo && e.id !== emp?.id)
+                : [];
+              const jefeAuto = candJefes[0]?.id || null;
               setForm(prev => ({
                 ...prev,
                 posicion_id: v || "",
                 cargo: p?.nombre || "",
                 // Auto-heredar departamento de la posición si el empleado no tenía uno.
                 departamento_id: p?.departamento_id || prev.departamento_id || "",
+                // Auto-cargar jefe desde el ocupante de la posición padre. El
+                // usuario puede cambiarlo manualmente en el campo "Reporta a".
+                jefe_id: jefeAuto || prev.jefe_id || "",
               }));
             }}>
               <option value="">— Selecciona una posición —</option>
@@ -348,6 +357,21 @@ function EmpleadoModal({ emp, depts, empleados, usuarios, posiciones = [], onSav
                 <option key={e.id} value={e.id}>{e.nombres} {e.apellidos} — {e.cargo}</option>
               ))}
             </Sel>
+            {(() => {
+              const p = posiciones.find(x => x.id === form.posicion_id);
+              const parentPos = p?.parent_id ? posiciones.find(x => x.id === p.parent_id) : null;
+              const ocupantesJefe = parentPos ? empleados.filter(e => e.posicion_id === parentPos.id && e.activo && e.id !== emp?.id) : [];
+              if (parentPos) {
+                return (
+                  <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginTop: 4 }}>
+                    Según organigrama: reporta a <b style={{ color: B.sand }}>{parentPos.nombre}</b>
+                    {ocupantesJefe.length === 0 && <span style={{ color: B.warning }}> · sin ocupante</span>}
+                    {ocupantesJefe.length > 1 && <span> · {ocupantesJefe.length} ocupantes</span>}
+                  </div>
+                );
+              }
+              return null;
+            })()}
           </Field>
           <Field label="Usuario del sistema" half>
             <Sel value={form.usuario_id || ""} onChange={v => set("usuario_id", v)}>
