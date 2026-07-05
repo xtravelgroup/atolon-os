@@ -343,6 +343,7 @@ const Pagos = lazy(() => import("./modules/Pagos"));
 const EmpleadoPortal = lazy(() => import("./modules/EmpleadoPortal"));
 const AgenciaPortal = lazy(() => import("./modules/AgenciaPortal"));
 const ReclutamientoPortal = lazy(() => import("./modules/ReclutamientoPortal"));
+const HotelGrupoPublico = lazy(() => import("./modules/hotel/HotelGrupoPublico"));
 const Reclutamiento = lazy(() => import("./modules/Reclutamiento"));
 const Comedor = lazy(() => import("./modules/Comedor"));
 const LasAmericasPortal = lazy(() => import("./modules/LasAmericasPortal"));
@@ -738,6 +739,7 @@ export default function App() {
   if (route === "empleados")      return <><EmpleadoPortal /><WhatsAppFloat phone={waPhone} /></>;
   if (route === "agencia" || route === "") return <><AgenciaPortal /><WhatsAppFloat phone={waPhone} /></>;
   if (route === "carreras" || route.startsWith("carreras/")) return <><ReclutamientoPortal /><WhatsAppFloat phone={waPhone} /></>;
+  if (route.startsWith("reservar-grupo/")) return <><HotelGrupoPublico /><WhatsAppFloat phone={waPhone} /></>;
   if (route === "booking/lasamericas" || route === "las-americas") return <LasAmericasPortal />;
   if (route === "gran-fondo" || route === "nairo") return <GranFondoNairo />;
   if (route === "booking" || route.startsWith("booking/")) return <><BookingPopup /><WhatsAppFloat phone={waPhone} /></>;
