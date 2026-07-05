@@ -41,10 +41,12 @@ export const DEFAULT_STAFFING_CONFIG = {
     cajero:     { label: "Cajero",             orden: 10, variable: "pax_total",    min_apertura: 1, umbrales_pax: [{hasta:999,cant:1}], turno_fijo: {entrada:"12:30",salida:"22:00"} },
   },
   // Auto-horarios servicio — regla dirección 2026-07-04.
-  // Entrada = f(primer pasadía del día); salida = f(último pasadía del día).
-  // Aplica a Playa, Piscina y Restaurante (este último SOLO si no hay huéspedes).
-  // El Gerente de Servicio puede overridear en un turno específico.
+  // ENTRADA: siempre 07:30 (auto-scheduler usa entrada_fija; el 1er grupo
+  //   puede llegar a las 7:30 así que arrancamos ahí. Cambios se hacen manual).
+  // SALIDA: varía por último pasadía del día.
+  // Aplica a Playa, Piscina y Restaurante (Restaurante solo si no hay huéspedes).
   turnos_servicio: {
+    entrada_fija: "07:30",
     entrada_por_primer_pasadia: [
       { primer_pasadia: "08:30", entrada: "07:30" },
       { primer_pasadia: "10:00", entrada: "09:00" },
@@ -128,10 +130,14 @@ function calcRolRaw(cfg, roleKey, totalPax, vipPax, excPax, huespedesPax = 0) {
   return umbralValor(r.umbrales_pax || [], variable, r.escalar_despues);
 }
 
-// Devuelve el horario de entrada según primer pasadía del día (HH:MM).
-// Busca match exacto; si no, el primer tier cuyo `primer_pasadia` >= input.
+// Devuelve el horario de entrada de servicio.
+// Si `turnos_servicio.entrada_fija` está seteado (regla actual: siempre 07:30),
+// retorna ese valor sin importar el primer pasadía. Si no, usa el tier lookup
+// como fallback (busca el primer tier cuyo `primer_pasadia` >= input).
 export function entradaParaPrimerPasadia(primerPasadiaHHMM, cfg = null) {
   const C = cfg || CURRENT_CONFIG;
+  const fija = C?.turnos_servicio?.entrada_fija;
+  if (fija) return fija;
   const rules = C?.turnos_servicio?.entrada_por_primer_pasadia || [];
   if (rules.length === 0 || !primerPasadiaHHMM) return null;
   for (const r of rules) {
