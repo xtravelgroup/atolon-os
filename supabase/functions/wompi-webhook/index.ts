@@ -359,6 +359,31 @@ serve(async (req) => {
       return jsonResp({ received: true, processed: false, reason: "evento ignorado" });
     }
 
+    // ── 1a0) Reservas de HOTEL GRUPO (prefix hotel_) ──
+    if (ref.startsWith("hotel_")) {
+      const estanciaId = ref.substring("hotel_".length);
+      const { data: est } = await SB.from("hotel_estancias")
+        .select("id, total, estado, grupo_id, huesped_id")
+        .eq("id", estanciaId).maybeSingle();
+      if (est) {
+        if (status === "APPROVED") {
+          await SB.from("hotel_estancias").update({
+            estado: "reservada",
+            pasarela_usada: "Wompi",
+            pago_referencia: txId,
+            pagado_en: new Date().toISOString(),
+            deposito: monto,
+            updated_at: new Date().toISOString(),
+          }).eq("id", est.id);
+          console.log(`✓ Hotel estancia ${est.id} pagada (Wompi)`);
+          return jsonResp({ received: true, processed: true, action: "hotel_confirmed", estancia_id: est.id });
+        }
+        if (status === "DECLINED" || status === "VOIDED" || status === "ERROR") {
+          return jsonResp({ received: true, processed: true, action: "hotel_declined", estancia_id: est.id });
+        }
+      }
+    }
+
     // ── 1aa) Buscar en juicy_cream_reservas (event-specific, prefix JC-) ──
     if (ref.startsWith("JC-")) {
       const { data: jcRows } = await SB.from("juicy_cream_reservas")

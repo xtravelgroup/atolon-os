@@ -7,6 +7,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { supabase } from "../../lib/supabase";
 import { B } from "../../brand";
+import { wompiCheckoutUrl } from "../../lib/wompi";
 
 const COP = (n) => `$${(Number(n) || 0).toLocaleString("es-CO")}`;
 const fmtFecha = (s) => s ? new Date(s + "T00:00:00").toLocaleDateString("es-CO", { weekday: "short", day: "2-digit", month: "long", year: "numeric" }) : "";
@@ -194,13 +195,22 @@ export default function HotelGrupoPublico() {
   }
 
   if (confirmada) {
+    const irAPagar = async () => {
+      const url = await wompiCheckoutUrl({
+        referencia: `hotel_${confirmada.estancia_id}`,
+        totalCOP: confirmada.total,
+        email: f.email,
+        redirectUrl: `${window.location.origin}/reservar-grupo/${slug}?paid=${confirmada.codigo}`,
+      });
+      window.location.href = url;
+    };
     return (
       <div style={container}>
         <div style={{ ...card, textAlign: "center", padding: 40 }}>
           <div style={{ fontSize: 48, marginBottom: 12 }}>✅</div>
-          <div style={{ fontSize: 22, fontWeight: 800, color: B.success, marginBottom: 8 }}>Reserva confirmada</div>
+          <div style={{ fontSize: 22, fontWeight: 800, color: B.success, marginBottom: 8 }}>Reserva creada</div>
           <div style={{ color: B.white, fontSize: 14, marginBottom: 16 }}>
-            Gracias, <b>{f.nombre}</b>. Recibirás la confirmación en <b>{f.email}</b>.
+            <b>{f.nombre}</b>, tu reserva quedó registrada. Completa el pago para confirmarla.
           </div>
           <div style={{ display: "grid", gap: 8, textAlign: "left", background: B.navy, padding: 16, borderRadius: 10, marginBottom: 16 }}>
             <div><b>Código:</b> <span style={{ fontFamily: "monospace", color: B.sky }}>{confirmada.codigo}</span></div>
@@ -217,8 +227,16 @@ export default function HotelGrupoPublico() {
               <b>Total:</b> {COP(confirmada.total)}
             </div>
           </div>
-          <div style={{ fontSize: 12, color: B.sand, lineHeight: 1.5 }}>
-            La empresa organizadora ({confirmada.grupo_nombre}) coordinará el pago contigo directamente. Guarda el código para tu check-in.
+          <button onClick={irAPagar} style={{
+            width: "100%", padding: "16px 24px", borderRadius: 10, border: "none",
+            background: "linear-gradient(135deg, #7B2CBF, #5A189A)", color: "#fff",
+            fontSize: 16, fontWeight: 800, cursor: "pointer", marginBottom: 12,
+            boxShadow: "0 4px 12px rgba(123, 44, 191, 0.4)",
+          }}>
+            💳 Pagar ahora con Wompi — {COP(confirmada.total)}
+          </button>
+          <div style={{ fontSize: 11, color: B.sand, lineHeight: 1.5 }}>
+            Pago seguro con tarjeta, PSE o Nequi. Recibirás confirmación por email en <b>{f.email}</b>.
           </div>
         </div>
       </div>
