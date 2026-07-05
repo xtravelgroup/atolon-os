@@ -85,7 +85,13 @@ serve(async (req) => {
     );
     if (!tarifa) return json({ error: "Categoría no disponible para este grupo" }, 400);
     const precioNoche = Number(tarifa.precio_noche);
-    const total = precioNoche * noches;
+    const subtotal = precioNoche * noches;
+    // IVA: Colombianos pagan 19%. Extranjeros con pasaporte están exentos
+    // según Ley 300 de 1996 (turismo).
+    const nacionalidad = (huesped.nacionalidad || "colombiano").toLowerCase();
+    const IVA_PCT = 0.19;
+    const iva = nacionalidad === "colombiano" ? Math.round(subtotal * IVA_PCT) : 0;
+    const total = subtotal + iva;
 
     // 4) Cupo del grupo (chequeo optimista — el update final protege race).
     if (grupo.cupo_habitaciones > 0 && (grupo.habitaciones_reservadas || 0) >= grupo.cupo_habitaciones) {
@@ -144,7 +150,8 @@ serve(async (req) => {
         email: emailNorm,
         telefono: huesped.telefono || null,
         documento: huesped.documento || null,
-        pais: huesped.pais || "Colombia",
+        pais: huesped.pais || (nacionalidad === "extranjero" ? null : "Colombia"),
+        nacionalidad,
       }).select("id").single();
       if (hErr) return json({ error: "Error creando huésped: " + hErr.message }, 500);
       huesped_id = newH.id;
@@ -186,10 +193,13 @@ serve(async (req) => {
     return json({
       ok: true,
       estancia_id: est.id,
-      codigo: est.codigo,
+      codigo,
+      subtotal,
+      iva,
       total,
       noches,
       precio_noche: precioNoche,
+      nacionalidad,
       grupo_nombre: grupo.nombre,
     });
   } catch (e) {

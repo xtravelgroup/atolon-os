@@ -44,6 +44,7 @@ export default function HotelGrupoPublico() {
     pax_adultos: 2,
     pax_ninos: 0,
     notas: "",
+    nacionalidad: "colombiano",
   });
   const [enviando, setEnviando] = useState(false);
   const [confirmada, setConfirmada] = useState(null);
@@ -79,7 +80,10 @@ export default function HotelGrupoPublico() {
   const tarifasDisp = tarifas.filter(t => t.disponible !== false && Number(t.precio_noche) > 0);
   const tarifaSel = tarifas.find(t => t.categoria_id === f.categoria_id);
   const noches = diffNoches(f.check_in, f.check_out);
-  const total = tarifaSel && noches > 0 ? Number(tarifaSel.precio_noche) * noches : 0;
+  const subtotal = tarifaSel && noches > 0 ? Number(tarifaSel.precio_noche) * noches : 0;
+  const IVA_PCT = 0.19;
+  const iva = f.nacionalidad === "colombiano" ? Math.round(subtotal * IVA_PCT) : 0;
+  const total = subtotal + iva;
 
   const set = (k, v) => setF(s => ({ ...s, [k]: v }));
 
@@ -158,6 +162,7 @@ export default function HotelGrupoPublico() {
             documento: f.documento,
             pax_adultos: f.pax_adultos,
             pax_ninos: f.pax_ninos,
+            nacionalidad: f.nacionalidad,
           },
           notas: f.notas,
         }),
@@ -203,6 +208,11 @@ export default function HotelGrupoPublico() {
             <div><b>Check-out:</b> {fmtFecha(f.check_out)}</div>
             <div><b>Noches:</b> {confirmada.noches}</div>
             <div><b>Precio/noche:</b> {COP(confirmada.precio_noche)}</div>
+            <div><b>Subtotal:</b> {COP(confirmada.subtotal ?? confirmada.total)}</div>
+            {confirmada.iva > 0 && <div><b>IVA 19%:</b> {COP(confirmada.iva)}</div>}
+            {confirmada.iva === 0 && confirmada.nacionalidad === "extranjero" && (
+              <div style={{ color: B.success }}>✓ Exento de IVA (extranjero)</div>
+            )}
             <div style={{ fontSize: 16, fontWeight: 800, color: B.success }}>
               <b>Total:</b> {COP(confirmada.total)}
             </div>
@@ -306,6 +316,36 @@ export default function HotelGrupoPublico() {
         <div style={{ fontSize: 18, fontWeight: 800, color: B.white, marginBottom: 14 }}>Datos del huésped</div>
         <div style={{ display: "grid", gap: 12 }}>
           <div>
+            <label style={label}>Nacionalidad *</label>
+            <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
+              {[
+                { k: "colombiano", l: "🇨🇴 Colombiano" },
+                { k: "extranjero", l: "🌎 Extranjero" },
+              ].map(o => {
+                const sel = f.nacionalidad === o.k;
+                return (
+                  <label key={o.k} style={{
+                    flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+                    padding: "10px 14px", borderRadius: 8, cursor: "pointer",
+                    background: sel ? B.hotel + "33" : B.navy,
+                    border: sel ? `2px solid ${B.hotel}` : `1px solid ${B.navyLight}`,
+                    fontWeight: 700, color: B.white, fontSize: 14,
+                  }}>
+                    <input type="radio" name="nacionalidad" checked={sel}
+                      onChange={() => set("nacionalidad", o.k)} style={{ margin: 0 }} />
+                    {o.l}
+                  </label>
+                );
+              })}
+            </div>
+            <div style={{ fontSize: 11, color: B.sand, marginTop: 4 }}>
+              {f.nacionalidad === "colombiano"
+                ? "Los residentes colombianos pagan 19% IVA."
+                : "Extranjeros con pasaporte están exentos de IVA (Ley 300 de 1996)."}
+            </div>
+          </div>
+
+          <div>
             <label style={label}>Nombre completo *</label>
             <input value={f.nombre} onChange={e => set("nombre", e.target.value)} style={input} placeholder="Ej: Juan Pérez" />
           </div>
@@ -344,8 +384,18 @@ export default function HotelGrupoPublico() {
       <div style={{ ...card, borderLeft: `4px solid ${B.hotel}` }}>
         <div style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 12, alignItems: "center" }}>
           <div>
-            <div style={{ fontSize: 13, color: B.sand }}>{noches} noche{noches !== 1 ? "s" : ""} × {tarifaSel ? COP(tarifaSel.precio_noche) : "—"}</div>
-            <div style={{ fontSize: 26, fontWeight: 900, color: B.white }}>{COP(total)}</div>
+            <div style={{ fontSize: 12, color: B.sand }}>
+              {noches} noche{noches !== 1 ? "s" : ""} × {tarifaSel ? COP(tarifaSel.precio_noche) : "—"} = <b style={{ color: B.white }}>{COP(subtotal)}</b>
+            </div>
+            {f.nacionalidad === "colombiano" && subtotal > 0 && (
+              <div style={{ fontSize: 12, color: B.sand }}>
+                IVA 19%: <b style={{ color: B.white }}>{COP(iva)}</b>
+              </div>
+            )}
+            {f.nacionalidad === "extranjero" && subtotal > 0 && (
+              <div style={{ fontSize: 11, color: B.success, marginTop: 2 }}>✓ Exento de IVA</div>
+            )}
+            <div style={{ fontSize: 26, fontWeight: 900, color: B.white, marginTop: 4 }}>{COP(total)}</div>
           </div>
           <button onClick={reservar} disabled={enviando || noches < 1 || !tarifaSel}
             style={{
