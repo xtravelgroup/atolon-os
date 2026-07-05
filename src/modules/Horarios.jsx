@@ -111,13 +111,14 @@ export default function Horarios() {
     const m = {}; actividades.forEach(a => { m[a.id] = a; }); return m;
   }, [actividades]);
 
-  // Grupo virtual "Servicio" = Meseros + Bar (para vista consolidada de servicio).
+  // Grupo virtual "Servicio" = Meseros + Bar + Servicio (dept real).
+  const SERVICIO_DEPTS = ["Meseros", "Bar", "Servicio"];
   const gruposVirtuales = useMemo(() => ({
     _servicio: {
       label: "Servicio",
       color: "#3b82f6",
       icon: "🍽️",
-      match: (dept) => dept && ["Meseros", "Bar"].includes(dept.nombre),
+      match: (dept) => dept && SERVICIO_DEPTS.includes(dept.nombre),
     },
   }), []);
 
@@ -151,11 +152,11 @@ export default function Horarios() {
     return Array.from(byDept.values()).sort((a, b) => a.dept.nombre.localeCompare(b.dept.nombre));
   }, [empleados, departamentos, searchQ, selectedDeptId, gruposVirtuales]);
 
-  // Conteo Servicio virtual (Meseros + Bar).
+  // Conteo Servicio virtual (Meseros + Bar + Servicio real).
   const contServicio = useMemo(
     () => empleados.filter(e => {
       const d = departamentos.find(x => x.id === e.departamento_id);
-      return d && ["Meseros", "Bar"].includes(d.nombre);
+      return d && SERVICIO_DEPTS.includes(d.nombre);
     }).length,
     [empleados, departamentos]
   );
@@ -333,9 +334,9 @@ export default function Horarios() {
           />
         )}
         {departamentos
-          // Meseros + Bar quedan consolidados en la tab virtual "Servicio";
-          // no mostrarlos como tabs separados.
-          .filter(d => !["Meseros", "Bar"].includes(d.nombre))
+          // Meseros + Bar + Servicio quedan consolidados en la tab virtual
+          // "Servicio"; no mostrarlos como tabs separados.
+          .filter(d => !SERVICIO_DEPTS.includes(d.nombre))
           .filter(d => (contDept.get(d.id) || 0) > 0)
           .sort((a, b) => a.nombre.localeCompare(b.nombre))
           .map(d => (
@@ -358,7 +359,7 @@ export default function Horarios() {
           horarios={horarios}
           weekStart={weekStart}
           filtroDeptNombres={
-            selectedDeptId === "_servicio" ? ["Meseros", "Bar"]
+            selectedDeptId === "_servicio" ? SERVICIO_DEPTS
             : deptSeleccionado ? [deptSeleccionado.nombre]
             : null
           }
