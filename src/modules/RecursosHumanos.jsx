@@ -582,6 +582,103 @@ function TabDepartamentos({ depts, empleados, onRefresh }) {
   );
 }
 
+// Sincroniza empleados desde Loggro Nómina → rh_empleados (via empleados_loggro).
+// Retorna { nuevos, actualizados, retirados, error }.
+async function syncLoggroToRH() {
+  // 1) Refrescar empleados_loggro desde Loggro API (edge function).
+  const { data: sess } = await supabase.auth.getSession();
+  const token = sess?.session?.access_token;
+  const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/loggro-nomina-sync/sync-vinculados`;
+  const resp = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token || import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+      apikey: import.meta.env.VITE_SUPABASE_ANON_KEY,
+    },
+  });
+  const syncResult = await resp.json().catch(() => ({}));
+  if (!resp.ok) throw new Error(syncResult?.error || `Loggro sync falló (${resp.status})`);
+
+  // 2) Leer todos los empleados_loggro actualizados.
+  const { data: loggros, error: lErr } = await supabase
+    .from("empleados_loggro")
+    .select("*");
+  if (lErr) throw lErr;
+
+  // 3) Leer rh_empleados existentes con loggro_id o cedula para matchear.
+  const { data: rhs, error: rErr } = await supabase
+    .from("rh_empleados")
+    .select("id, loggro_id, cedula, activo");
+  if (rErr) throw rErr;
+
+  const byLoggroId = new Map(rhs.filter(e => e.loggro_id).map(e => [e.loggro_id, e]));
+  const byCedula   = new Map(rhs.filter(e => e.cedula).map(e => [String(e.cedula).trim(), e]));
+
+  // Mapping tipo_contrato Loggro → Atolón.
+  const mapContrato = (v) => {
+    const s = String(v || "").toLowerCase();
+    if (s.includes("indefinid")) return "indefinido";
+    if (s.includes("fijo"))      return "termino_fijo";
+    if (s.includes("obra"))      return "obra_labor";
+    if (s.includes("prestac") || s.includes("servicios")) return "prestacion_servicios";
+    return "indefinido";
+  };
+
+  let nuevos = 0, actualizados = 0, retirados = 0;
+  for (const l of (loggros || [])) {
+    if (!l.loggro_id) continue;
+    const existente = byLoggroId.get(l.loggro_id) || byCedula.get(String(l.documento || "").trim());
+    const estaRetirado = !!l.fecha_retiro || l.estado === "retirado";
+    const payload = {
+      loggro_id:          l.loggro_id,
+      cedula:             l.documento || null,
+      nombres:            l.nombres || (l.nombre_completo || "").split(" ")[0] || "",
+      apellidos:          l.apellidos || (l.nombre_completo || "").split(" ").slice(1).join(" ") || "",
+      email:              l.email || null,
+      telefono:           l.telefono || null,
+      direccion:          l.direccion || null,
+      ciudad:             l.ciudad || null,
+      fecha_nacimiento:   l.fecha_nacimiento || null,
+      fecha_ingreso:      l.fecha_ingreso || null,
+      cargo:              l.cargo || "Sin cargo definido",
+      salario_base:       Number(l.salario_base) || 0,
+      tipo_contrato:      mapContrato(l.tipo_contrato),
+      banco:              l.banco || null,
+      cuenta_bancaria:    l.cuenta_bancaria || null,
+      eps:                l.eps || null,
+      fondo_pension:      l.fondo_pension || null,
+      fondo_cesantias:    l.fondo_cesantias || null,
+      arl:                l.arl || "Positiva",
+      caja_compensacion:  l.caja_compensacion || "Comfamiliar",
+      activo:             !estaRetirado,
+      updated_at:         new Date().toISOString(),
+    };
+
+    if (existente) {
+      // Update — preservar posicion_id, departamento_id, jefe_id, tarifa_hora
+      // asignados manualmente en Atolón (no vienen de Loggro).
+      const wasActive = existente.activo !== false;
+      const { error } = await supabase.from("rh_empleados").update(payload).eq("id", existente.id);
+      if (!error) {
+        actualizados++;
+        if (wasActive && estaRetirado) retirados++;
+      }
+    } else if (!estaRetirado) {
+      // Insert solo si no está retirado (no queremos crear empleados ya retirados).
+      const { error } = await supabase.from("rh_empleados").insert(payload);
+      if (!error) nuevos++;
+    }
+  }
+
+  return {
+    nuevos, actualizados, retirados,
+    loggroTotal: syncResult?.total || 0,
+    loggroNuevos: syncResult?.nuevos || 0,
+    loggroActualizados: syncResult?.actualizados || 0,
+  };
+}
+
 // ─── TAB: EMPLEADOS ───────────────────────────────────────────────────────────
 function TabEmpleados({ empleados, depts, posiciones = [], usuarios, onRefresh }) {
   const [search, setSearch] = useState("");
@@ -590,6 +687,24 @@ function TabEmpleados({ empleados, depts, posiciones = [], usuarios, onRefresh }
   const [filterActivo, setFilterActivo] = useState("activo");
   const [selected, setSelected] = useState(null);
   const [showModal, setShowModal] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [syncMsg, setSyncMsg] = useState(null);
+
+  const doSync = async () => {
+    if (syncing) return;
+    if (!confirm("Sincronizar empleados desde Loggro Nómina? Esto puede crear nuevos, actualizar existentes y marcar como inactivos los retirados.")) return;
+    setSyncing(true); setSyncMsg(null);
+    try {
+      const r = await syncLoggroToRH();
+      setSyncMsg(`✓ Loggro: ${r.loggroTotal} vinculados · Atolón: ${r.nuevos} nuevos, ${r.actualizados} actualizados, ${r.retirados} marcados inactivos.`);
+      await onRefresh();
+    } catch (e) {
+      setSyncMsg(`❌ Error: ${e.message || e}`);
+    } finally {
+      setSyncing(false);
+      setTimeout(() => setSyncMsg(null), 8000);
+    }
+  };
 
   const hoy = todayStr();
   const filtered = empleados.filter(e => {
@@ -654,8 +769,20 @@ function TabEmpleados({ empleados, depts, posiciones = [], usuarios, onRefresh }
           <option value="inactivo">Solo inactivos</option>
           <option value="todos">Todos</option>
         </Sel>
+        <button onClick={doSync} disabled={syncing} style={{ ...BTN(B.sky), color: B.navy, opacity: syncing ? 0.6 : 1, cursor: syncing ? "wait" : "pointer" }}>
+          {syncing ? "⏳ Sincronizando…" : "🔄 Sync Loggro"}
+        </button>
         <button onClick={openNew} style={BTN(B.success)}>+ Nuevo Empleado</button>
       </div>
+
+      {syncMsg && (
+        <div style={{
+          marginBottom: 14, padding: "10px 14px", borderRadius: 8, fontSize: 12,
+          background: syncMsg.startsWith("✓") ? B.success + "22" : B.danger + "22",
+          color: syncMsg.startsWith("✓") ? B.success : B.danger,
+          border: `1px solid ${syncMsg.startsWith("✓") ? B.success : B.danger}44`,
+        }}>{syncMsg}</div>
+      )}
 
       {/* Tabla */}
       <div style={{ background: B.navyMid, borderRadius: 14, overflow: "hidden" }}>
