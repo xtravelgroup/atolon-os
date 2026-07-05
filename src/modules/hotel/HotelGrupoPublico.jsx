@@ -195,7 +195,7 @@ export default function HotelGrupoPublico() {
   }
 
   if (confirmada) {
-    const irAPagar = async () => {
+    const irAWompi = async () => {
       const url = await wompiCheckoutUrl({
         referencia: `hotel_${confirmada.estancia_id}`,
         totalCOP: confirmada.total,
@@ -203,6 +203,32 @@ export default function HotelGrupoPublico() {
         redirectUrl: `${window.location.origin}/reservar-grupo/${slug}?paid=${confirmada.codigo}`,
       });
       window.location.href = url;
+    };
+    const irAStripe = async () => {
+      try {
+        const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/create-stripe-session`;
+        const resp = await fetch(url, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            apikey: import.meta.env.VITE_SUPABASE_ANON_KEY,
+            Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+          },
+          body: JSON.stringify({
+            hotel_estancia_id: confirmada.estancia_id,
+            nombre: f.nombre,
+            email: f.email,
+            fecha: f.check_in,
+            tipo: "Reserva Hotel Atolón",
+            back_url: `${window.location.origin}/reservar-grupo/${slug}`,
+          }),
+        });
+        const data = await resp.json();
+        if (!resp.ok || !data.url) throw new Error(data?.error || "No se pudo crear la sesión de pago");
+        window.location.href = data.url;
+      } catch (e) {
+        alert("Error iniciando pago internacional: " + (e.message || e));
+      }
     };
     return (
       <div style={container}>
@@ -227,16 +253,38 @@ export default function HotelGrupoPublico() {
               <b>Total:</b> {COP(confirmada.total)}
             </div>
           </div>
-          <button onClick={irAPagar} style={{
-            width: "100%", padding: "16px 24px", borderRadius: 10, border: "none",
+          <div style={{ fontSize: 13, color: B.sand, marginBottom: 10, fontWeight: 700 }}>Elige tu método de pago:</div>
+
+          <button onClick={irAWompi} style={{
+            width: "100%", padding: "14px 20px", borderRadius: 10, border: "none",
             background: "linear-gradient(135deg, #7B2CBF, #5A189A)", color: "#fff",
-            fontSize: 16, fontWeight: 800, cursor: "pointer", marginBottom: 12,
+            fontSize: 15, fontWeight: 800, cursor: "pointer", marginBottom: 10,
             boxShadow: "0 4px 12px rgba(123, 44, 191, 0.4)",
+            display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8,
           }}>
-            💳 Pagar ahora con Wompi — {COP(confirmada.total)}
+            <span style={{ textAlign: "left" }}>
+              🇨🇴 <b>Nacional (COP)</b>
+              <div style={{ fontSize: 10, fontWeight: 400, opacity: 0.85 }}>Wompi · PSE, Nequi, tarjeta CO</div>
+            </span>
+            <span>{COP(confirmada.total)}</span>
           </button>
+
+          <button onClick={irAStripe} style={{
+            width: "100%", padding: "14px 20px", borderRadius: 10, border: "none",
+            background: "linear-gradient(135deg, #635BFF, #4338CA)", color: "#fff",
+            fontSize: 15, fontWeight: 800, cursor: "pointer", marginBottom: 12,
+            boxShadow: "0 4px 12px rgba(99, 91, 255, 0.4)",
+            display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8,
+          }}>
+            <span style={{ textAlign: "left" }}>
+              🌎 <b>Internacional (USD)</b>
+              <div style={{ fontSize: 10, fontWeight: 400, opacity: 0.85 }}>Stripe · Visa/Master internacional</div>
+            </span>
+            <span>~{COP(confirmada.total)}</span>
+          </button>
+
           <div style={{ fontSize: 11, color: B.sand, lineHeight: 1.5 }}>
-            Pago seguro con tarjeta, PSE o Nequi. Recibirás confirmación por email en <b>{f.email}</b>.
+            Pago 100% seguro. Recibirás confirmación por email en <b>{f.email}</b>.
           </div>
         </div>
       </div>

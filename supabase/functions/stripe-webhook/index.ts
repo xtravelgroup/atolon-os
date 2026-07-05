@@ -123,9 +123,10 @@ serve(async (req) => {
 
   const meta = (session.metadata as Record<string, string>) || {};
   const reservaId = meta.reserva_id;
-  if (!reservaId) {
-    console.error("No reserva_id in metadata", meta);
-    return new Response(JSON.stringify({ received: true, warning: "no reserva_id" }), {
+  const hotelEstanciaId = meta.hotel_estancia_id;
+  if (!reservaId && !hotelEstanciaId) {
+    console.error("No reserva_id ni hotel_estancia_id in metadata", meta);
+    return new Response(JSON.stringify({ received: true, warning: "no target_id" }), {
       headers: { "Content-Type": "application/json" },
     });
   }
@@ -134,6 +135,36 @@ serve(async (req) => {
   if (paymentStatus !== "paid") {
     console.log(`Session not paid (${paymentStatus}), skipping`);
     return new Response(JSON.stringify({ received: true }), {
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  // ── Flujo HOTEL ESTANCIA (grupos) ────────────────────────────────────────
+  if (hotelEstanciaId) {
+    const { data: est, error: estErr } = await supabase
+      .from("hotel_estancias")
+      .select("id, total, deposito, estado, huesped_id, grupo_id")
+      .eq("id", hotelEstanciaId)
+      .single();
+    if (estErr || !est) {
+      console.error(`Estancia ${hotelEstanciaId} not found:`, estErr?.message);
+      return new Response(JSON.stringify({ received: true, warning: "estancia_not_found" }), {
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    const totalUsdCents = Number(session.amount_total) || 0;
+    const tasaUsd       = Number(meta.tasa_usd) || 4200;
+    const cobradoCop    = Math.round((totalUsdCents / 100) * tasaUsd);
+    const nuevoDeposito = Math.min(Number(est.total || 0), Number(est.deposito || 0) + cobradoCop);
+    await supabase.from("hotel_estancias").update({
+      pasarela_usada: "Stripe",
+      pago_referencia: String(session.id),
+      pagado_en: new Date().toISOString(),
+      deposito: nuevoDeposito,
+      updated_at: new Date().toISOString(),
+    }).eq("id", est.id);
+    console.log(`✓ Hotel estancia ${est.id} pagada (Stripe USD → COP ${cobradoCop})`);
+    return new Response(JSON.stringify({ received: true, hotel_estancia_id: est.id, cobrado_cop: cobradoCop }), {
       headers: { "Content-Type": "application/json" },
     });
   }
