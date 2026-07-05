@@ -20,7 +20,7 @@ export const DEFAULT_STAFFING_CONFIG = {
     { nombre: "Alto", hasta_pax: 999, color: "#EF4444" },
   ],
   roles: {
-    mesPlaya:   { label: "Mesero Playa",       orden: 1, variable: "vip_pax",       min_apertura: 1, pax_por_mesero: 20, max_valle: 3, fijo_pax_alto: 4, delta_pico_movimiento: -1 },
+    mesPlaya:   { label: "Mesero Playa",       orden: 1, variable: "vip_pax",       min_apertura: 1, umbrales_pax: [{hasta:16,cant:1},{hasta:49,cant:2},{hasta:60,cant:3}], escalar_despues: {desde_pax:60,cada_pax:20,suma_cantidad:1} },
     mesPool:    { label: "Mesero Pool",        orden: 2, variable: "exclusive_pax", min_apertura: 1, umbrales_pax: [{hasta:10,cant:1},{hasta:30,cant:2},{hasta:999,cant:3}] },
     mesRest:    { label: "Mesero Restaurante", orden: 3, variable: "pax_total",     min_apertura: 1, umbrales_pax: [{hasta:80,cant:1},{hasta:999,cant:4}], delta_pico_movimiento: 1 },
     runnersBeb: { label: "Runner Bebidas",     orden: 4, variable: "pax_total",     umbrales_pax: [{hasta:60,cant:1},{hasta:80,cant:2},{hasta:999,cant:3}] },
@@ -43,12 +43,25 @@ export function getStaffingConfig() {
 }
 
 // Aplicar umbrales_pax escalonados: encuentra el primer bucket cuyo `hasta` >= valor.
-function umbralValor(umbrales, valor) {
-  if (!Array.isArray(umbrales)) return 0;
+// Si el rol define `escalar_despues`, aplica una fórmula continua después del
+// último umbral (ej. mesPlaya: hasta 60 usa umbrales; después de 60 suma 1
+// mesero cada 20 pax → 80→4, 100→5, 120→6, etc.).
+function umbralValor(umbrales, valor, escalarDespues) {
+  if (!Array.isArray(umbrales) || umbrales.length === 0) return 0;
   for (const u of umbrales) {
     if (valor <= (Number(u.hasta) || 0)) return Number(u.cant) || 0;
   }
-  return Number(umbrales[umbrales.length - 1]?.cant) || 0;
+  const ultimo = umbrales[umbrales.length - 1];
+  const baseCant = Number(ultimo.cant) || 0;
+  if (escalarDespues && escalarDespues.cada_pax > 0) {
+    const desde = Number(escalarDespues.desde_pax) || Number(ultimo.hasta) || 0;
+    const excedente = valor - desde;
+    if (excedente > 0) {
+      const suma = Math.ceil(excedente / Number(escalarDespues.cada_pax)) * (Number(escalarDespues.suma_cantidad) || 1);
+      return baseCant + suma;
+    }
+  }
+  return baseCant;
 }
 
 // Calcular raw para un rol dado según su config.
@@ -64,13 +77,13 @@ function calcRolRaw(cfg, roleKey, totalPax, vipPax, excPax) {
   }
   // Si la variable específica es 0 y hay min_apertura → 0 (no hay demanda de ese rol).
   if (r.variable && r.variable !== "pax_total" && variable === 0 && !isApertura) return 0;
-  // Fórmula especial mesPlaya: min(max_valle, ceil(vip/pax_por_mesero)) hasta 80, luego fijo_pax_alto.
+  // Fórmula legacy mesPlaya (backward compat): min(max_valle, ceil(vip/pax_por_mesero)) hasta 80, luego fijo_pax_alto.
   if (r.pax_por_mesero) {
     if (pax > (cfg.movimiento_max_pax || 80)) return r.fijo_pax_alto || 4;
     return Math.min(r.max_valle || 3, Math.ceil(variable / r.pax_por_mesero));
   }
-  // Umbrales escalonados por variable.
-  return umbralValor(r.umbrales_pax || [], variable);
+  // Umbrales escalonados por variable (+ opcional escalar_despues para escala continua).
+  return umbralValor(r.umbrales_pax || [], variable, r.escalar_despues);
 }
 
 export function calcStaff(totalPax, vipPax, excPax, ovrMap = {}, cfg = null) {
