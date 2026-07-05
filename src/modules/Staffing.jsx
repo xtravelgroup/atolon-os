@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { B, todayStr } from "../brand";
 import { supabase } from "../lib/supabase";
 import { useMobile } from "../lib/useMobile";
-import { calcStaff } from "./staffing/calc";
+import { calcStaff, setStaffingConfig, getStaffingConfig, DEFAULT_STAFFING_CONFIG } from "./staffing/calc";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const ROLES = [
@@ -87,8 +87,49 @@ export default function Staffing() {
   const [ovrQty, setOvrQty]               = useState(0);
   const [ovrReason, setOvrReason]         = useState("");
   const [saving, setSaving]               = useState(false);
+  const [stCfg, setStCfg]                 = useState(getStaffingConfig());
+  const [reglasEdit, setReglasEdit]       = useState(null);   // JSON en edición
+  const [savingReglas, setSavingReglas]   = useState(false);
 
   const today = todayStr();
+
+  // Hidratar config desde BD al montar. Si falla, se queda con el DEFAULT.
+  useEffect(() => {
+    (async () => {
+      if (!supabase) return;
+      const { data } = await supabase.from("staffing_config").select("config").eq("id", "atolon").maybeSingle();
+      if (data?.config) {
+        setStaffingConfig(data.config);
+        setStCfg(data.config);
+      }
+    })();
+  }, []);
+
+  const guardarReglas = async () => {
+    if (!reglasEdit || !supabase) return;
+    let parsed;
+    try {
+      parsed = typeof reglasEdit === "string" ? JSON.parse(reglasEdit) : reglasEdit;
+    } catch (e) {
+      alert("JSON inválido: " + e.message);
+      return;
+    }
+    if (!parsed.roles || !parsed.umbrales_ocupacion) {
+      alert("Config debe tener 'roles' y 'umbrales_ocupacion'");
+      return;
+    }
+    setSavingReglas(true);
+    const { error } = await supabase.from("staffing_config").upsert({
+      id: "atolon", config: parsed, updated_at: new Date().toISOString(),
+    }, { onConflict: "id" });
+    setSavingReglas(false);
+    if (error) { alert("Error: " + error.message); return; }
+    setStaffingConfig(parsed);
+    setStCfg(parsed);
+    setReglasEdit(null);
+    fetchData(selDate);
+    alert("✓ Reglas de staffing guardadas. La calculadora ahora usa los nuevos umbrales.");
+  };
 
   const fetchData = useCallback(async (date) => {
     if (!supabase) { setLoading(false); return; }
@@ -306,6 +347,7 @@ export default function Staffing() {
     { key: "turnos",    label: "Turnos",     icon: "⏰" },
     { key: "semana",    label: "Semana",     icon: "📅" },
     { key: "ajustes",   label: "Ajustes",    icon: "⚙️" },
+    { key: "reglas",    label: "Guía",       icon: "📖" },
   ];
 
   // ── Tab: Dashboard ────────────────────────────────────────────────────────
@@ -893,6 +935,102 @@ export default function Staffing() {
           {view === "turnos"    && <TabTurnos />}
           {view === "semana"    && <TabSemana />}
           {view === "ajustes"   && <TabAjustes />}
+          {view === "reglas"    && (
+            <div style={{ background: B.navyMid, borderRadius: 12, padding: 20 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, marginBottom: 16, flexWrap: "wrap" }}>
+                <div>
+                  <div style={{ fontSize: 18, fontWeight: 800, color: B.sand }}>📖 Guía de staffing</div>
+                  <div style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", marginTop: 4, maxWidth: 640, lineHeight: 1.5 }}>
+                    Configuración de reglas de staffing por rol. Estos umbrales alimentan la calculadora de la pestaña "Dashboard". Cambios aquí actualizan de inmediato el sugerido para todas las fechas — no toca overrides ya guardados en fechas específicas.
+                  </div>
+                </div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  {reglasEdit == null ? (
+                    <button onClick={() => setReglasEdit(JSON.stringify(stCfg, null, 2))} style={{ background: B.sky, color: B.navy, border: "none", padding: "8px 16px", borderRadius: 8, fontWeight: 700, cursor: "pointer" }}>✏️ Editar</button>
+                  ) : (
+                    <>
+                      <button onClick={() => setReglasEdit(null)} style={{ background: "transparent", color: "rgba(255,255,255,0.6)", border: `1px solid ${B.navyLight}`, padding: "8px 14px", borderRadius: 8, fontWeight: 700, cursor: "pointer" }}>Cancelar</button>
+                      <button onClick={() => setReglasEdit(JSON.stringify(DEFAULT_STAFFING_CONFIG, null, 2))} style={{ background: "transparent", color: B.warning, border: `1px solid ${B.warning}55`, padding: "8px 14px", borderRadius: 8, fontWeight: 700, cursor: "pointer" }} title="Cargar valores del código (revierte cualquier edición previa)">↺ Reset default</button>
+                      <button onClick={guardarReglas} disabled={savingReglas} style={{ background: B.success, color: B.navy, border: "none", padding: "8px 16px", borderRadius: 8, fontWeight: 700, cursor: savingReglas ? "wait" : "pointer", opacity: savingReglas ? 0.6 : 1 }}>{savingReglas ? "Guardando..." : "💾 Guardar"}</button>
+                    </>
+                  )}
+                </div>
+              </div>
+
+              {reglasEdit == null ? (
+                <>
+                  <div style={{ marginBottom: 20, padding: 14, background: B.navy, borderRadius: 8 }}>
+                    <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", fontWeight: 700, marginBottom: 8 }}>Umbrales globales</div>
+                    <div style={{ display: "flex", gap: 24, flexWrap: "wrap", fontSize: 13 }}>
+                      <div>Apertura mínima: <b style={{ color: B.sand }}>{stCfg.apertura_minima_pax || 20} pax</b></div>
+                      <div>Movimiento (valle/pico) hasta: <b style={{ color: B.sand }}>{stCfg.movimiento_max_pax || 80} pax</b></div>
+                    </div>
+                  </div>
+
+                  <div style={{ marginBottom: 20 }}>
+                    <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", fontWeight: 700, marginBottom: 8 }}>Niveles de ocupación</div>
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                      {(stCfg.umbrales_ocupacion || []).map((u, i) => (
+                        <div key={i} style={{ padding: "6px 12px", borderRadius: 8, background: (u.color || "#666") + "22", border: `1px solid ${u.color || "#666"}55`, fontSize: 12 }}>
+                          <b style={{ color: u.color }}>{u.nombre}</b>
+                          <span style={{ color: "rgba(255,255,255,0.5)", marginLeft: 6 }}>hasta {u.hasta_pax} pax</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", fontWeight: 700, marginBottom: 8 }}>Roles y umbrales</div>
+                  <div style={{ overflow: "auto" }}>
+                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                      <thead>
+                        <tr style={{ background: B.navy, color: "rgba(255,255,255,0.5)" }}>
+                          <th style={{ padding: "8px 10px", textAlign: "left" }}>#</th>
+                          <th style={{ padding: "8px 10px", textAlign: "left" }}>Rol</th>
+                          <th style={{ padding: "8px 10px", textAlign: "left" }}>Depende de</th>
+                          <th style={{ padding: "8px 10px", textAlign: "left" }}>Reglas / umbrales</th>
+                          <th style={{ padding: "8px 10px", textAlign: "center" }}>Delta pico</th>
+                          <th style={{ padding: "8px 10px", textAlign: "center" }}>Apertura min</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {Object.entries(stCfg.roles || {})
+                          .sort((a, b) => (a[1].orden || 99) - (b[1].orden || 99))
+                          .map(([k, r]) => (
+                            <tr key={k} style={{ borderTop: `1px solid ${B.navyLight}` }}>
+                              <td style={{ padding: "8px 10px", color: "rgba(255,255,255,0.4)" }}>{r.orden}</td>
+                              <td style={{ padding: "8px 10px", fontWeight: 700, color: B.sand }}>{r.label}<br/><span style={{ fontSize: 10, color: "rgba(255,255,255,0.35)", fontWeight: 400 }}>{k}</span></td>
+                              <td style={{ padding: "8px 10px", color: "rgba(255,255,255,0.6)" }}>{r.variable === "vip_pax" ? "Pax VIP" : r.variable === "exclusive_pax" ? "Pax Exclusive" : "Pax total"}</td>
+                              <td style={{ padding: "8px 10px" }}>
+                                {r.pax_por_mesero
+                                  ? <>1 mesero por cada <b style={{ color: B.sky }}>{r.pax_por_mesero}</b> pax (cap {r.max_valle}); si {stCfg.movimiento_max_pax || 80}+ pax → fijo {r.fijo_pax_alto}</>
+                                  : (r.umbrales_pax || []).map((u, i) => (
+                                    <span key={i} style={{ marginRight: 12, whiteSpace: "nowrap", color: "rgba(255,255,255,0.7)" }}>hasta <b>{u.hasta}</b>→<b style={{ color: B.sky }}>{u.cant}</b></span>
+                                  ))}
+                                {r.solo_pico && <span style={{ marginLeft: 8, fontSize: 10, padding: "1px 6px", background: B.warning + "22", color: B.warning, borderRadius: 4 }}>solo pico</span>}
+                              </td>
+                              <td style={{ padding: "8px 10px", textAlign: "center", color: r.delta_pico_movimiento ? B.warning : "rgba(255,255,255,0.3)", fontWeight: 700 }}>
+                                {r.delta_pico_movimiento ? (r.delta_pico_movimiento > 0 ? `+${r.delta_pico_movimiento}` : r.delta_pico_movimiento) : "—"}
+                              </td>
+                              <td style={{ padding: "8px 10px", textAlign: "center", color: r.min_apertura ? B.sand : "rgba(255,255,255,0.3)", fontWeight: 700 }}>
+                                {r.min_apertura || "—"}
+                              </td>
+                            </tr>
+                          ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div style={{ marginBottom: 12, padding: "8px 12px", background: B.warning + "11", border: `1px solid ${B.warning}44`, borderRadius: 6, fontSize: 12, color: B.warning }}>
+                    ⚠ Edición avanzada — modificar el JSON directamente. Valida que sea JSON válido antes de guardar.
+                  </div>
+                  <textarea value={reglasEdit} onChange={e => setReglasEdit(e.target.value)}
+                    style={{ width: "100%", minHeight: 500, padding: 12, background: B.navy, border: `1px solid ${B.navyLight}`, borderRadius: 8, color: B.white, fontFamily: "monospace", fontSize: 12, lineHeight: 1.5, boxSizing: "border-box" }} />
+                </>
+              )}
+            </div>
+          )}
         </>
       )}
 

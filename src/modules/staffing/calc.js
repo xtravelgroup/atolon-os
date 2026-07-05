@@ -1,62 +1,104 @@
 // Shared staffing calculation — extraído de Staffing.jsx para reusar desde
 // otros módulos (ej: Horarios › Cobertura).
 //
-// calcStaff(totalPax, vipPax, excPax, ovrMap) → { valle, pico, totalValle,
-//   totalPico, hayMovimiento, raw, applied }
+// calcStaff(totalPax, vipPax, excPax, ovrMap, config?) → { valle, pico, ... }
 //
-// Roles: mesPlaya, mesPool, mesRest, runnersBeb, runnersCom, bussers,
-//        bartenders, supervisor, hostess.
-//
-// hayMovimiento = pax <= 80 && totalPax > 0. Pico = franja de movimiento
-// (aprox. 12:00–15:00 almuerzo). En valle runnersCom = 0; en pico se aplica
-// el cruce Playa→Restaurante cuando hayMovimiento.
+// La estructura de 9 roles + valle/pico + cruce Playa→Restaurante en
+// movimiento se mantiene en código. Los UMBRALES son configurables
+// desde staffing_config (JSONB) — ver setStaffingConfig() abajo.
+// Si config es null, se usa DEFAULT_STAFFING_CONFIG (misma que estaba
+// hardcoded antes).
 
-export function calcStaff(totalPax, vipPax, excPax, ovrMap = {}) {
-  const pax = Math.max(totalPax, 20); // apertura mínima
+export const DEFAULT_STAFFING_CONFIG = {
+  apertura_minima_pax: 20,
+  movimiento_max_pax: 80,
+  umbrales_ocupacion: [
+    { nombre: "Cerrado", hasta_pax: 0, color: "#6B7280" },
+    { nombre: "Apertura", hasta_pax: 20, color: "#94A3B8" },
+    { nombre: "Bajo", hasta_pax: 60, color: "#10B981" },
+    { nombre: "Medio", hasta_pax: 80, color: "#F59E0B" },
+    { nombre: "Alto", hasta_pax: 999, color: "#EF4444" },
+  ],
+  roles: {
+    mesPlaya:   { label: "Mesero Playa",       orden: 1, variable: "vip_pax",       min_apertura: 1, pax_por_mesero: 20, max_valle: 3, fijo_pax_alto: 4, delta_pico_movimiento: -1 },
+    mesPool:    { label: "Mesero Pool",        orden: 2, variable: "exclusive_pax", min_apertura: 1, umbrales_pax: [{hasta:10,cant:1},{hasta:30,cant:2},{hasta:999,cant:3}] },
+    mesRest:    { label: "Mesero Restaurante", orden: 3, variable: "pax_total",     min_apertura: 1, umbrales_pax: [{hasta:80,cant:1},{hasta:999,cant:4}], delta_pico_movimiento: 1 },
+    runnersBeb: { label: "Runner Bebidas",     orden: 4, variable: "pax_total",     umbrales_pax: [{hasta:60,cant:1},{hasta:80,cant:2},{hasta:999,cant:3}] },
+    runnersCom: { label: "Runner Comida",      orden: 5, variable: "pax_total",     solo_pico: true, umbrales_pax: [{hasta:20,cant:0},{hasta:80,cant:1},{hasta:999,cant:2}] },
+    bussers:    { label: "Bussers",            orden: 6, variable: "pax_total",     umbrales_pax: [{hasta:20,cant:0},{hasta:60,cant:1},{hasta:999,cant:2}] },
+    bartenders: { label: "Bartenders",         orden: 7, variable: "pax_total",     umbrales_pax: [{hasta:60,cant:1},{hasta:999,cant:2}] },
+    supervisor: { label: "Supervisor",         orden: 8, variable: "pax_total",     umbrales_pax: [{hasta:999,cant:1}] },
+    hostess:    { label: "Hostess",            orden: 9, variable: "pax_total",     umbrales_pax: [{hasta:20,cant:0},{hasta:80,cant:1},{hasta:999,cant:2}] },
+  },
+};
+
+// Cache global — se hidrata desde BD al cargar el módulo Staffing.
+// Antes de la hidratación, se usa DEFAULT (mismo comportamiento que hardcoded).
+let CURRENT_CONFIG = DEFAULT_STAFFING_CONFIG;
+export function setStaffingConfig(cfg) {
+  if (cfg && typeof cfg === "object") CURRENT_CONFIG = cfg;
+}
+export function getStaffingConfig() {
+  return CURRENT_CONFIG;
+}
+
+// Aplicar umbrales_pax escalonados: encuentra el primer bucket cuyo `hasta` >= valor.
+function umbralValor(umbrales, valor) {
+  if (!Array.isArray(umbrales)) return 0;
+  for (const u of umbrales) {
+    if (valor <= (Number(u.hasta) || 0)) return Number(u.cant) || 0;
+  }
+  return Number(umbrales[umbrales.length - 1]?.cant) || 0;
+}
+
+// Calcular raw para un rol dado según su config.
+function calcRolRaw(cfg, roleKey, totalPax, vipPax, excPax) {
+  const r = cfg.roles?.[roleKey];
+  if (!r) return 0;
+  const pax = Math.max(totalPax, cfg.apertura_minima_pax || 20);
   const isApertura = totalPax === 0;
+  const variable = r.variable === "vip_pax" ? vipPax : r.variable === "exclusive_pax" ? excPax : pax;
+  // Apertura: si hay min_apertura y no hay demanda de la variable, aplica el min.
+  if (isApertura) {
+    if (r.min_apertura != null) return r.min_apertura;
+  }
+  // Si la variable específica es 0 y hay min_apertura → 0 (no hay demanda de ese rol).
+  if (r.variable && r.variable !== "pax_total" && variable === 0 && !isApertura) return 0;
+  // Fórmula especial mesPlaya: min(max_valle, ceil(vip/pax_por_mesero)) hasta 80, luego fijo_pax_alto.
+  if (r.pax_por_mesero) {
+    if (pax > (cfg.movimiento_max_pax || 80)) return r.fijo_pax_alto || 4;
+    return Math.min(r.max_valle || 3, Math.ceil(variable / r.pax_por_mesero));
+  }
+  // Umbrales escalonados por variable.
+  return umbralValor(r.umbrales_pax || [], variable);
+}
 
-  const raw = {
-    mesPlaya:   isApertura ? 1 : vipPax === 0 ? 0 : (pax <= 80 ? Math.min(3, Math.ceil(vipPax / 20)) : 4),
-    mesPool:    isApertura ? 1 : excPax === 0 ? 0 : (excPax <= 10 ? 1 : excPax <= 30 ? 2 : 3),
-    mesRest:    pax <= 80 ? 1 : 4,
-    runnersBeb: pax <= 60 ? 1 : pax <= 80 ? 2 : 3,
-    runnersCom: pax <= 20 ? 0 : pax <= 80 ? 1 : 2,
-    bussers:    pax <= 20 ? 0 : pax <= 60 ? 1 : 2,
-    bartenders: pax <= 60 ? 1 : 2,
-    supervisor: 1,
-    hostess:    pax <= 20 ? 0 : pax <= 80 ? 1 : 2,
-  };
+export function calcStaff(totalPax, vipPax, excPax, ovrMap = {}, cfg = null) {
+  const C = cfg || CURRENT_CONFIG;
+  const pax = Math.max(totalPax, C.apertura_minima_pax || 20);
+  const raw = {};
+  Object.keys(C.roles || {}).forEach(k => {
+    raw[k] = calcRolRaw(C, k, totalPax, vipPax, excPax);
+  });
 
   const applied = {};
   Object.keys(raw).forEach(k => {
     applied[k] = ovrMap[k] !== undefined ? ovrMap[k] : raw[k];
   });
 
-  const hayMovimiento = pax <= 80 && totalPax > 0;
+  const hayMovimiento = pax <= (C.movimiento_max_pax || 80) && totalPax > 0;
 
-  const valle = {
-    mesPlaya:   applied.mesPlaya,
-    mesPool:    applied.mesPool,
-    mesRest:    applied.mesRest,
-    runnersBeb: applied.runnersBeb,
-    runnersCom: 0,
-    bussers:    applied.bussers,
-    bartenders: applied.bartenders,
-    supervisor: applied.supervisor,
-    hostess:    applied.hostess,
-  };
-
-  const pico = {
-    mesPlaya:   hayMovimiento ? Math.max(0, applied.mesPlaya - 1) : applied.mesPlaya,
-    mesPool:    applied.mesPool,
-    mesRest:    hayMovimiento ? applied.mesRest + 1 : applied.mesRest,
-    runnersBeb: applied.runnersBeb,
-    runnersCom: applied.runnersCom,
-    bussers:    applied.bussers,
-    bartenders: applied.bartenders,
-    supervisor: applied.supervisor,
-    hostess:    applied.hostess,
-  };
+  // Valle: cantidad base. Si un rol tiene solo_pico=true, en valle es 0.
+  const valle = {};
+  const pico = {};
+  Object.keys(C.roles || {}).forEach(k => {
+    const r = C.roles[k];
+    const base = applied[k];
+    valle[k] = r.solo_pico ? 0 : base;
+    // Pico: aplicar delta_pico_movimiento si hayMovimiento; si no, mantiene base.
+    const delta = r.delta_pico_movimiento || 0;
+    pico[k] = hayMovimiento ? Math.max(0, base + delta) : base;
+  });
 
   const totalValle = Object.values(valle).reduce((s, v) => s + v, 0);
   const totalPico  = Object.values(pico).reduce((s, v) => s + v, 0);
