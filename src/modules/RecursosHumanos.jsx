@@ -169,7 +169,7 @@ const DEPT_COLORS   = ["#8ECAE6","#4CAF7D","#E8A020","#F4C6D0","#C8B99A","#a78bf
 const EMPTY_EMP = {
   nombres:"", apellidos:"", cedula:"", fecha_nacimiento:"",
   email:"", telefono:"", direccion:"", ciudad:"Cartagena",
-  cargo:"", departamento_id:"", jefe_id:"", tipo_contrato:"indefinido",
+  cargo:"", departamento_id:"", posicion_id:"", jefe_id:"", tipo_contrato:"indefinido",
   fecha_ingreso:"", fecha_fin_contrato:"", periodo_prueba_fin:"",
   salario_base: SMMLV, modalidad_pago:"quincenal",
   banco:"", cuenta_bancaria:"", tipo_cuenta:"ahorros",
@@ -179,7 +179,7 @@ const EMPTY_EMP = {
   activo:true, avatar_color: AVATAR_COLORS[0], notas:"", usuario_id:"",
 };
 
-function EmpleadoModal({ emp, depts, empleados, usuarios, onSave, onClose }) {
+function EmpleadoModal({ emp, depts, empleados, usuarios, posiciones = [], onSave, onClose }) {
   const isNew = !emp?.id;
   const [form, setForm] = useState(isNew ? EMPTY_EMP : { ...EMPTY_EMP, ...emp });
   const [tabM, setTabM] = useState("personal");
@@ -211,6 +211,7 @@ function EmpleadoModal({ emp, depts, empleados, usuarios, onSave, onClose }) {
       ciudad:             str(form.ciudad) || "Cartagena",
       cargo:              form.cargo.trim(),
       departamento_id:    str(form.departamento_id) || null,
+      posicion_id:        str(form.posicion_id) || null,
       jefe_id:            str(form.jefe_id) || null,
       usuario_id:         str(form.usuario_id) || null,
       tipo_contrato:      str(form.tipo_contrato) || "indefinido",
@@ -307,6 +308,15 @@ function EmpleadoModal({ emp, depts, empleados, usuarios, onSave, onClose }) {
 
         {tabM === "laboral" && <>
           <Field label="Cargo *"><Inp value={form.cargo} onChange={v => set("cargo", v)} /></Field>
+          <Field label="Posición (organigrama)" half>
+            <Sel value={form.posicion_id || ""} onChange={v => set("posicion_id", v)}>
+              <option value="">Sin posición asignada</option>
+              {posiciones.map(p => {
+                const dept = depts.find(d => d.id === p.departamento_id);
+                return <option key={p.id} value={p.id}>{p.nombre}{dept ? ` — ${dept.nombre}` : ""}</option>;
+              })}
+            </Sel>
+          </Field>
           <Field label="Departamento" half>
             <Sel value={form.departamento_id || ""} onChange={v => set("departamento_id", v)}>
               <option value="">Sin departamento</option>
@@ -531,7 +541,7 @@ function TabDepartamentos({ depts, empleados, onRefresh }) {
 }
 
 // ─── TAB: EMPLEADOS ───────────────────────────────────────────────────────────
-function TabEmpleados({ empleados, depts, usuarios, onRefresh }) {
+function TabEmpleados({ empleados, depts, posiciones = [], usuarios, onRefresh }) {
   const [search, setSearch] = useState("");
   const [filterDept, setFilterDept] = useState("");
   const [filterContrato, setFilterContrato] = useState("");
@@ -658,7 +668,7 @@ function TabEmpleados({ empleados, depts, usuarios, onRefresh }) {
 
       {showModal && (
         <EmpleadoModal
-          emp={selected} depts={depts} empleados={empleados} usuarios={usuarios}
+          emp={selected} depts={depts} empleados={empleados} usuarios={usuarios} posiciones={posiciones}
           onSave={() => { setShowModal(false); onRefresh(); }}
           onClose={() => setShowModal(false)}
         />
@@ -722,12 +732,270 @@ function OrgNode({ emp, depts, childrenMap, expanded, onToggle, depth = 0 }) {
   );
 }
 
-function TabOrganigrama({ empleados, depts }) {
+// ─── TAB: POSICIONES ────────────────────────────────────────────────────────
+// CRUD de posiciones (puestos) para armar organigrama estructural. Cada
+// posición tiene padre opcional (jerarquía), depto, cupos y empleados asignados.
+function TabPosiciones({ posiciones, depts, empleados, onRefresh }) {
+  const [editing, setEditing] = useState(null); // {id?, nombre, parent_id, ...} o null
+  const [expanded, setExpanded] = useState(() => new Set(posiciones.map(p => p.id)));
+
+  const ocupantesByPos = useMemo(() => {
+    const m = new Map();
+    empleados.filter(e => e.activo && e.posicion_id).forEach(e => {
+      const arr = m.get(e.posicion_id) || [];
+      arr.push(e);
+      m.set(e.posicion_id, arr);
+    });
+    return m;
+  }, [empleados]);
+
+  const hijosByPadre = useMemo(() => {
+    const m = new Map();
+    posiciones.forEach(p => {
+      const key = p.parent_id || "_root";
+      const arr = m.get(key) || [];
+      arr.push(p);
+      m.set(key, arr);
+    });
+    // ordenar cada bucket por orden
+    m.forEach(arr => arr.sort((a, b) => (a.orden || 0) - (b.orden || 0) || a.nombre.localeCompare(b.nombre)));
+    return m;
+  }, [posiciones]);
+
+  const raices = hijosByPadre.get("_root") || [];
+
+  const toggle = (id) => setExpanded(prev => {
+    const next = new Set(prev);
+    next.has(id) ? next.delete(id) : next.add(id);
+    return next;
+  });
+
+  const nuevaPosicion = (parentId = null) => setEditing({
+    nombre: "", descripcion: "", departamento_id: "",
+    parent_id: parentId, cupos: 1, orden: 0, activo: true,
+  });
+
+  const remove = async (pos) => {
+    const cnt = (ocupantesByPos.get(pos.id) || []).length;
+    if (cnt > 0) {
+      if (!confirm(`Esta posición tiene ${cnt} ocupante(s). ¿Desasignar y eliminar?`)) return;
+    } else {
+      if (!confirm(`Eliminar posición "${pos.nombre}"?`)) return;
+    }
+    await supabase.from("rh_empleados").update({ posicion_id: null }).eq("posicion_id", pos.id);
+    const { error } = await supabase.from("rh_posiciones").delete().eq("id", pos.id);
+    if (error) { alert("Error: " + error.message); return; }
+    await onRefresh();
+  };
+
+  const renderNode = (pos, depth = 0) => {
+    const hijos = hijosByPadre.get(pos.id) || [];
+    const ocupantes = ocupantesByPos.get(pos.id) || [];
+    const dept = depts.find(d => d.id === pos.departamento_id);
+    const isExpanded = expanded.has(pos.id);
+    const cupoFalta = (pos.cupos || 1) - ocupantes.length;
+    return (
+      <div key={pos.id}>
+        <div style={{
+          display: "flex", alignItems: "center", gap: 10, padding: "10px 12px",
+          background: B.navyMid, borderRadius: 8, marginBottom: 6,
+          borderLeft: `4px solid ${dept?.color || B.sky}`,
+          marginLeft: depth * 24,
+        }}>
+          {hijos.length > 0 ? (
+            <button onClick={() => toggle(pos.id)} style={{ background: "none", border: "none", color: B.sand, cursor: "pointer", padding: 0, fontSize: 12 }}>
+              {isExpanded ? "▼" : "▶"}
+            </button>
+          ) : <span style={{ width: 12 }} />}
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+              <span style={{ fontWeight: 700, color: B.white, fontSize: 14 }}>{pos.nombre}</span>
+              {dept && <span style={{ fontSize: 10, color: dept.color, background: dept.color + "22", padding: "1px 8px", borderRadius: 6 }}>{dept.nombre}</span>}
+              <span style={{ fontSize: 10, color: cupoFalta > 0 ? B.warning : B.success, background: (cupoFalta > 0 ? B.warning : B.success) + "22", padding: "1px 8px", borderRadius: 6, fontWeight: 700 }}>
+                {ocupantes.length}/{pos.cupos || 1} {cupoFalta > 0 ? "· vacante" : ""}
+              </span>
+            </div>
+            {ocupantes.length > 0 && (
+              <div style={{ marginTop: 4, fontSize: 11, color: "rgba(255,255,255,0.55)" }}>
+                {ocupantes.map(e => `${e.nombres} ${e.apellidos}`).join(" · ")}
+              </div>
+            )}
+          </div>
+          <div style={{ display: "flex", gap: 4 }}>
+            <button onClick={() => nuevaPosicion(pos.id)} title="Agregar subordinado"
+              style={{ padding: "4px 10px", background: B.success + "33", color: B.success, border: "none", borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: "pointer" }}>+ Hijo</button>
+            <button onClick={() => setEditing({ ...pos })} title="Editar"
+              style={{ padding: "4px 10px", background: B.navyLight, color: B.white, border: "none", borderRadius: 6, fontSize: 11, cursor: "pointer" }}>✎</button>
+            <button onClick={() => remove(pos)} title="Eliminar"
+              style={{ padding: "4px 10px", background: B.danger + "22", color: B.danger, border: "none", borderRadius: 6, fontSize: 11, cursor: "pointer" }}>🗑</button>
+          </div>
+        </div>
+        {isExpanded && hijos.map(h => renderNode(h, depth + 1))}
+      </div>
+    );
+  };
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 16, alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+        <div>
+          <div style={{ fontSize: 12, color: B.sand }}>
+            {posiciones.length} posición(es) · {empleados.filter(e => e.activo && e.posicion_id).length} de {empleados.filter(e => e.activo).length} activos asignados
+          </div>
+        </div>
+        <button onClick={() => nuevaPosicion(null)}
+          style={{ padding: "8px 16px", background: B.success, color: B.navy, border: "none", borderRadius: 8, fontSize: 13, fontWeight: 800, cursor: "pointer" }}>
+          + Nueva posición raíz
+        </button>
+      </div>
+
+      {raices.length === 0 ? (
+        <div style={{ textAlign: "center", padding: 60, color: "rgba(255,255,255,0.35)" }}>
+          Sin posiciones aún. Crea la posición raíz (ej. Gerente General) para arrancar el organigrama.
+        </div>
+      ) : (
+        <div>{raices.map(r => renderNode(r, 0))}</div>
+      )}
+
+      {editing && (
+        <PosicionModal
+          posicion={editing}
+          posiciones={posiciones}
+          depts={depts}
+          onClose={() => setEditing(null)}
+          onSaved={async () => { setEditing(null); await onRefresh(); }}
+        />
+      )}
+    </div>
+  );
+}
+
+// Modal editor de posición
+function PosicionModal({ posicion, posiciones, depts, onClose, onSaved }) {
+  const [f, setF] = useState(posicion);
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState(null);
+  const isEdit = !!f.id;
+  const set = (k, v) => setF(prev => ({ ...prev, [k]: v }));
+
+  // Excluir esta pos y sus descendientes del selector de padre (para no crear ciclos).
+  const descendientesIds = useMemo(() => {
+    if (!f.id) return new Set();
+    const ids = new Set([f.id]);
+    let added = true;
+    while (added) {
+      added = false;
+      posiciones.forEach(p => {
+        if (ids.has(p.parent_id) && !ids.has(p.id)) { ids.add(p.id); added = true; }
+      });
+    }
+    return ids;
+  }, [f.id, posiciones]);
+
+  const padresValidos = posiciones.filter(p => !descendientesIds.has(p.id));
+
+  const save = async () => {
+    if (!f.nombre?.trim()) { setErr("Nombre requerido"); return; }
+    setSaving(true); setErr(null);
+    const payload = {
+      nombre: f.nombre.trim(),
+      descripcion: f.descripcion?.trim() || null,
+      departamento_id: f.departamento_id || null,
+      parent_id: f.parent_id || null,
+      nivel: f.nivel || 0,
+      orden: parseInt(f.orden, 10) || 0,
+      cupos: Math.max(1, parseInt(f.cupos, 10) || 1),
+      color: f.color || null,
+      icono: f.icono || null,
+      activo: f.activo !== false,
+      notas: f.notas || null,
+    };
+    const q = isEdit
+      ? supabase.from("rh_posiciones").update(payload).eq("id", f.id)
+      : supabase.from("rh_posiciones").insert(payload);
+    const { error } = await q;
+    setSaving(false);
+    if (error) { setErr(error.message); return; }
+    onSaved();
+  };
+
+  return (
+    <div onClick={e => e.target === e.currentTarget && onClose()}
+      style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 500, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+      <div style={{ background: B.navy, borderRadius: 12, border: `1px solid ${B.navyLight}`, width: "min(560px, 100%)", maxHeight: "90vh", overflowY: "auto", padding: 20 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+          <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontSize: 22, fontWeight: 800 }}>
+            {isEdit ? "Editar posición" : "Nueva posición"}
+          </div>
+          <button onClick={onClose} style={{ background: "none", border: "none", color: B.sand, fontSize: 22, cursor: "pointer" }}>×</button>
+        </div>
+
+        <div style={{ display: "grid", gap: 10 }}>
+          <div>
+            <label style={{ fontSize: 11, color: B.sand, fontWeight: 700 }}>Nombre *</label>
+            <input value={f.nombre || ""} onChange={e => set("nombre", e.target.value)} placeholder="ej. Gerente General"
+              style={{ width: "100%", padding: "8px 12px", background: B.navyMid, color: B.white, border: `1px solid ${B.navyLight}`, borderRadius: 6, fontSize: 13, outline: "none", marginTop: 4 }} />
+          </div>
+          <div>
+            <label style={{ fontSize: 11, color: B.sand, fontWeight: 700 }}>Descripción</label>
+            <textarea value={f.descripcion || ""} onChange={e => set("descripcion", e.target.value)} rows={2}
+              style={{ width: "100%", padding: "8px 12px", background: B.navyMid, color: B.white, border: `1px solid ${B.navyLight}`, borderRadius: 6, fontSize: 13, outline: "none", marginTop: 4, resize: "vertical" }} />
+          </div>
+          <div style={{ display: "grid", gap: 10, gridTemplateColumns: "1fr 1fr" }}>
+            <div>
+              <label style={{ fontSize: 11, color: B.sand, fontWeight: 700 }}>Departamento</label>
+              <select value={f.departamento_id || ""} onChange={e => set("departamento_id", e.target.value)}
+                style={{ width: "100%", padding: "8px 12px", background: B.navyMid, color: B.white, border: `1px solid ${B.navyLight}`, borderRadius: 6, fontSize: 13, outline: "none", marginTop: 4 }}>
+                <option value="">— Sin depto —</option>
+                {depts.map(d => <option key={d.id} value={d.id}>{d.nombre}</option>)}
+              </select>
+            </div>
+            <div>
+              <label style={{ fontSize: 11, color: B.sand, fontWeight: 700 }}>Reporta a</label>
+              <select value={f.parent_id || ""} onChange={e => set("parent_id", e.target.value)}
+                style={{ width: "100%", padding: "8px 12px", background: B.navyMid, color: B.white, border: `1px solid ${B.navyLight}`, borderRadius: 6, fontSize: 13, outline: "none", marginTop: 4 }}>
+                <option value="">— Sin jefe (raíz) —</option>
+                {padresValidos.map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}
+              </select>
+            </div>
+          </div>
+          <div style={{ display: "grid", gap: 10, gridTemplateColumns: "1fr 1fr" }}>
+            <div>
+              <label style={{ fontSize: 11, color: B.sand, fontWeight: 700 }}>Cupos</label>
+              <input type="number" min={1} value={f.cupos || 1} onChange={e => set("cupos", e.target.value)}
+                style={{ width: "100%", padding: "8px 12px", background: B.navyMid, color: B.white, border: `1px solid ${B.navyLight}`, borderRadius: 6, fontSize: 13, outline: "none", marginTop: 4 }} />
+              <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>Empleados que pueden ocupar esta posición</div>
+            </div>
+            <div>
+              <label style={{ fontSize: 11, color: B.sand, fontWeight: 700 }}>Orden (mismo nivel)</label>
+              <input type="number" value={f.orden || 0} onChange={e => set("orden", e.target.value)}
+                style={{ width: "100%", padding: "8px 12px", background: B.navyMid, color: B.white, border: `1px solid ${B.navyLight}`, borderRadius: 6, fontSize: 13, outline: "none", marginTop: 4 }} />
+            </div>
+          </div>
+        </div>
+
+        {err && <div style={{ marginTop: 10, padding: "8px 12px", background: B.danger + "22", color: B.danger, borderRadius: 6, fontSize: 12 }}>{err}</div>}
+
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16, paddingTop: 12, borderTop: `1px solid ${B.navyLight}` }}>
+          <button onClick={onClose} disabled={saving} style={{ padding: "8px 14px", background: B.navyLight, color: B.white, border: "none", borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Cancelar</button>
+          <button onClick={save} disabled={saving} style={{ padding: "8px 14px", background: B.success, color: B.navy, border: "none", borderRadius: 8, fontSize: 12, fontWeight: 800, cursor: saving ? "wait" : "pointer" }}>
+            {saving ? "Guardando…" : "Guardar"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function TabOrganigrama({ empleados, depts, posiciones = [] }) {
+  const hayPosiciones = posiciones.length > 0;
+  const [modo, setModo] = useState(hayPosiciones ? "posiciones" : "empleados");
   const [expanded, setExpanded] = useState(new Set());
   const [zoom, setZoom] = useState(1);
   const [filterDept, setFilterDept] = useState("");
 
-  const childrenMap = useMemo(() => {
+  // Árbol por empleados (legacy — jefe_id)
+  const childrenMapEmp = useMemo(() => {
     const m = {};
     empleados.forEach(e => {
       const key = e.jefe_id || "root";
@@ -737,7 +1005,25 @@ function TabOrganigrama({ empleados, depts }) {
     return m;
   }, [empleados]);
 
-  const roots = childrenMap["root"] || [];
+  // Árbol por posiciones (nuevo)
+  const childrenMapPos = useMemo(() => {
+    const m = {};
+    posiciones.forEach(p => {
+      const key = p.parent_id || "root";
+      if (!m[key]) m[key] = [];
+      m[key].push(p);
+    });
+    Object.values(m).forEach(arr => arr.sort((a, b) => (a.orden || 0) - (b.orden || 0)));
+    return m;
+  }, [posiciones]);
+
+  const ocupantesByPos = useMemo(() => {
+    const m = {};
+    empleados.filter(e => e.activo && e.posicion_id).forEach(e => {
+      (m[e.posicion_id] = m[e.posicion_id] || []).push(e);
+    });
+    return m;
+  }, [empleados]);
 
   const toggle = (id) => setExpanded(prev => {
     const next = new Set(prev);
@@ -746,23 +1032,35 @@ function TabOrganigrama({ empleados, depts }) {
   });
 
   const expandAll = () => {
-    const all = new Set(empleados.map(e => e.id));
-    setExpanded(all);
+    setExpanded(new Set(modo === "posiciones" ? posiciones.map(p => p.id) : empleados.map(e => e.id)));
   };
 
-  const filteredRoots = filterDept
-    ? roots.filter(e => e.departamento_id === filterDept)
-    : roots;
+  const empleadosRoots = childrenMapEmp["root"] || [];
+  const filteredEmpRoots = filterDept ? empleadosRoots.filter(e => e.departamento_id === filterDept) : empleadosRoots;
 
-  if (empleados.length === 0) {
+  const posRoots = childrenMapPos["root"] || [];
+  const filteredPosRoots = filterDept ? posRoots.filter(p => p.departamento_id === filterDept) : posRoots;
+
+  const sinDatos = (modo === "posiciones" ? posiciones.length : empleados.length) === 0;
+  if (sinDatos) {
     return <div style={{ textAlign: "center", padding: 60, color: "rgba(255,255,255,0.25)" }}>
-      Agrega empleados para ver el organigrama
+      {modo === "posiciones" ? "Crea posiciones en la tab Posiciones para armar el organigrama" : "Agrega empleados para ver el organigrama"}
     </div>;
   }
 
   return (
     <div>
       <div style={{ display: "flex", gap: 10, marginBottom: 20, alignItems: "center", flexWrap: "wrap" }}>
+        <div style={{ display: "flex", background: B.navyMid, borderRadius: 8, padding: 3, gap: 2 }}>
+          <button onClick={() => setModo("posiciones")} disabled={!hayPosiciones}
+            style={{ padding: "6px 12px", borderRadius: 6, border: "none", background: modo === "posiciones" ? B.sky : "transparent", color: modo === "posiciones" ? B.navy : hayPosiciones ? "rgba(255,255,255,0.6)" : "rgba(255,255,255,0.2)", fontSize: 12, fontWeight: 700, cursor: hayPosiciones ? "pointer" : "not-allowed" }}>
+            📋 Por Posiciones
+          </button>
+          <button onClick={() => setModo("empleados")}
+            style={{ padding: "6px 12px", borderRadius: 6, border: "none", background: modo === "empleados" ? B.sky : "transparent", color: modo === "empleados" ? B.navy : "rgba(255,255,255,0.6)", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+            👥 Por Empleados
+          </button>
+        </div>
         <Sel value={filterDept} onChange={setFilterDept}>
           <option value="">Todos los departamentos</option>
           {depts.map(d => <option key={d.id} value={d.id}>{d.nombre}</option>)}
@@ -779,15 +1077,74 @@ function TabOrganigrama({ empleados, depts }) {
       <div style={{ overflow: "auto", paddingBottom: 32 }}>
         <div style={{ transform: `scale(${zoom})`, transformOrigin: "top center", transition: "transform 0.2s",
           display: "flex", gap: 40, justifyContent: "center", paddingTop: 8, paddingBottom: 40 }}>
-          {filteredRoots.length === 0
-            ? <div style={{ color: "rgba(255,255,255,0.25)", fontSize: 13 }}>Sin empleados raíz</div>
-            : filteredRoots.map(e => (
-                <OrgNode key={e.id} emp={e} depts={depts} childrenMap={childrenMap}
-                  expanded={expanded} onToggle={toggle} />
-              ))
-          }
+          {modo === "posiciones" ? (
+            filteredPosRoots.length === 0
+              ? <div style={{ color: "rgba(255,255,255,0.25)", fontSize: 13 }}>Sin posiciones raíz</div>
+              : filteredPosRoots.map(p => (
+                  <OrgNodePos key={p.id} pos={p} depts={depts} childrenMap={childrenMapPos}
+                    ocupantes={ocupantesByPos} expanded={expanded} onToggle={toggle} />
+                ))
+          ) : (
+            filteredEmpRoots.length === 0
+              ? <div style={{ color: "rgba(255,255,255,0.25)", fontSize: 13 }}>Sin empleados raíz</div>
+              : filteredEmpRoots.map(e => (
+                  <OrgNode key={e.id} emp={e} depts={depts} childrenMap={childrenMapEmp}
+                    expanded={expanded} onToggle={toggle} />
+                ))
+          )}
         </div>
       </div>
+    </div>
+  );
+}
+
+// Nodo del organigrama por POSICIONES
+function OrgNodePos({ pos, depts, childrenMap, ocupantes, expanded, onToggle }) {
+  const hijos = childrenMap[pos.id] || [];
+  const empls = ocupantes[pos.id] || [];
+  const dept = depts.find(d => d.id === pos.departamento_id);
+  const isExpanded = expanded.has(pos.id);
+  const cupos = pos.cupos || 1;
+  const vacantes = cupos - empls.length;
+  const color = dept?.color || B.sky;
+  return (
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
+      <div style={{
+        background: B.navyMid, borderRadius: 10, borderTop: `4px solid ${color}`,
+        padding: "12px 14px", minWidth: 180, maxWidth: 240, textAlign: "center",
+        boxShadow: `0 2px 6px rgba(0,0,0,0.3)`,
+      }}>
+        <div style={{ fontWeight: 800, fontSize: 13, color: B.white, marginBottom: 4 }}>{pos.nombre}</div>
+        {dept && <div style={{ fontSize: 10, color: color, marginBottom: 6 }}>{dept.nombre}</div>}
+        {empls.length > 0 ? (
+          <div style={{ fontSize: 11, color: "rgba(255,255,255,0.75)" }}>
+            {empls.map(e => (
+              <div key={e.id} style={{ padding: "2px 0" }}>{e.nombres} {e.apellidos}</div>
+            ))}
+          </div>
+        ) : (
+          <div style={{ fontSize: 11, color: B.warning, fontStyle: "italic" }}>Vacante</div>
+        )}
+        {cupos > 1 && (
+          <div style={{ marginTop: 6, fontSize: 10, fontWeight: 700, color: vacantes > 0 ? B.warning : B.success }}>
+            {empls.length}/{cupos}{vacantes > 0 ? ` · ${vacantes} vacante${vacantes > 1 ? "s" : ""}` : ""}
+          </div>
+        )}
+        {hijos.length > 0 && (
+          <button onClick={() => onToggle(pos.id)}
+            style={{ marginTop: 8, padding: "3px 10px", background: B.navyLight, color: B.white, border: "none", borderRadius: 4, fontSize: 10, cursor: "pointer" }}>
+            {isExpanded ? "▲" : "▼"} {hijos.length} {hijos.length === 1 ? "subordinado" : "subordinados"}
+          </button>
+        )}
+      </div>
+      {isExpanded && hijos.length > 0 && (
+        <div style={{ display: "flex", gap: 24, marginTop: 20, paddingTop: 20, borderTop: `1px dashed ${B.navyLight}` }}>
+          {hijos.map(h => (
+            <OrgNodePos key={h.id} pos={h} depts={depts} childrenMap={childrenMap}
+              ocupantes={ocupantes} expanded={expanded} onToggle={onToggle} />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -1809,6 +2166,7 @@ export default function RecursosHumanos() {
   const [tab, setTab]         = useState("empleados");
   const [empleados, setEmpleados] = useState([]);
   const [depts, setDepts]     = useState([]);
+  const [posiciones, setPosiciones] = useState([]);
   const [asistencia, setAsistencia] = useState([]);
   const [usuarios, setUsuarios] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -1817,14 +2175,16 @@ export default function RecursosHumanos() {
     if (!supabase) { setLoading(false); return; }
     const hoy = todayStr();
     const mesIni = hoy.slice(0, 7) + "-01";
-    const [eR, dR, aR, uR] = await Promise.all([
+    const [eR, dR, pR, aR, uR] = await Promise.all([
       supabase.from("rh_empleados").select("*").order("apellidos"),
       supabase.from("rh_departamentos").select("*").eq("activo", true).order("nombre"),
+      supabase.from("rh_posiciones").select("*").eq("activo", true).order("nivel").order("orden"),
       supabase.from("rh_asistencia").select("*").gte("fecha", mesIni).order("fecha", { ascending: false }),
       supabase.from("usuarios").select("id, nombre, email, rol_id, activo").eq("activo", true).order("nombre"),
     ]);
     setEmpleados(eR.data || []);
     setDepts(dR.data || []);
+    setPosiciones(pR.data || []);
     setAsistencia(aR.data || []);
     setUsuarios(uR.data || []);
     setLoading(false);
@@ -1841,6 +2201,7 @@ export default function RecursosHumanos() {
   const TABS = [
     { key: "empleados",     label: "👥 Empleados" },
     { key: "organigrama",   label: "🌳 Organigrama" },
+    { key: "posiciones",    label: "📋 Posiciones" },
     { key: "horarios",      label: "🗓 Horarios" },
     { key: "asistencia",    label: "📅 Asistencia" },
     { key: "nomina",        label: "💰 Nómina" },
@@ -1890,8 +2251,9 @@ export default function RecursosHumanos() {
         </div>
       ) : (
         <>
-          {tab === "empleados"     && <TabEmpleados    empleados={empleados} depts={depts} usuarios={usuarios} onRefresh={load} />}
-          {tab === "organigrama"   && <TabOrganigrama  empleados={empleados} depts={depts} />}
+          {tab === "empleados"     && <TabEmpleados    empleados={empleados} depts={depts} posiciones={posiciones} usuarios={usuarios} onRefresh={load} />}
+          {tab === "organigrama"   && <TabOrganigrama  empleados={empleados} depts={depts} posiciones={posiciones} />}
+          {tab === "posiciones"    && <TabPosiciones   posiciones={posiciones} depts={depts} empleados={empleados} onRefresh={load} />}
           {tab === "horarios"      && <TabHorarios     empleados={empleados.map(e => ({ ...e, departamento_nombre: depts.find(d => d.id === e.departamento_id)?.nombre }))} />}
           {tab === "nomina"        && <TabNomina       empleados={empleados} />}
           {tab === "asistencia"    && <TabAsistencia   empleados={empleados} asistencia={asistencia} onRefresh={load} />}
