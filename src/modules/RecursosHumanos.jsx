@@ -307,15 +307,33 @@ function EmpleadoModal({ emp, depts, empleados, usuarios, posiciones = [], onSav
         </>}
 
         {tabM === "laboral" && <>
-          <Field label="Cargo *"><Inp value={form.cargo} onChange={v => set("cargo", v)} /></Field>
-          <Field label="Posición (organigrama)" half>
-            <Sel value={form.posicion_id || ""} onChange={v => set("posicion_id", v)}>
-              <option value="">Sin posición asignada</option>
+          <Field label="Cargo · Posición *">
+            <Sel value={form.posicion_id || ""} onChange={v => {
+              const p = posiciones.find(x => x.id === v);
+              setForm(prev => ({
+                ...prev,
+                posicion_id: v || "",
+                cargo: p?.nombre || "",
+                // Auto-heredar departamento de la posición si el empleado no tenía uno.
+                departamento_id: p?.departamento_id || prev.departamento_id || "",
+              }));
+            }}>
+              <option value="">— Selecciona una posición —</option>
               {posiciones.map(p => {
                 const dept = depts.find(d => d.id === p.departamento_id);
                 return <option key={p.id} value={p.id}>{p.nombre}{dept ? ` — ${dept.nombre}` : ""}</option>;
               })}
             </Sel>
+            {posiciones.length === 0 && (
+              <div style={{ fontSize: 11, color: B.warning, marginTop: 4 }}>
+                ⚠ No hay posiciones creadas. Ve a la tab Posiciones para crearlas.
+              </div>
+            )}
+            {form.cargo && !form.posicion_id && (
+              <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginTop: 4 }}>
+                Cargo actual: <b style={{ color: B.sand }}>{form.cargo}</b> (sin posición asignada)
+              </div>
+            )}
           </Field>
           <Field label="Departamento" half>
             <Sel value={form.departamento_id || ""} onChange={v => set("departamento_id", v)}>
