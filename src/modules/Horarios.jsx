@@ -62,6 +62,7 @@ export default function Horarios() {
   const [cellMenu, setCellMenu] = useState(null); // {empId, fecha, event}
   const [searchQ, setSearchQ] = useState("");
   const [vista, setVista] = useState("planilla"); // "planilla" | "cobertura"
+  const [selectedDeptId, setSelectedDeptId] = useState(null); // null = Todos
   const [semanalEmp, setSemanalEmp] = useState(null); // empleado para editar semana completa
 
   const dias = useMemo(() =>
@@ -112,6 +113,7 @@ export default function Horarios() {
   const grupos = useMemo(() => {
     const q = searchQ.toLowerCase().trim();
     const filtered = empleados.filter(e => {
+      if (selectedDeptId && (e.departamento_id || "_sin_dept") !== selectedDeptId) return false;
       if (!q) return true;
       const nombre = `${e.nombres} ${e.apellidos}`.toLowerCase();
       return nombre.includes(q) || (e.cargo || "").toLowerCase().includes(q);
@@ -129,7 +131,23 @@ export default function Horarios() {
       byDept.get(key).empleados.push(e);
     });
     return Array.from(byDept.values()).sort((a, b) => a.dept.nombre.localeCompare(b.dept.nombre));
-  }, [empleados, departamentos, searchQ]);
+  }, [empleados, departamentos, searchQ, selectedDeptId]);
+
+  // Contadores para tab bar (empleados activos por depto).
+  const contDept = useMemo(() => {
+    const m = new Map();
+    empleados.forEach(e => {
+      const k = e.departamento_id || "_sin_dept";
+      m.set(k, (m.get(k) || 0) + 1);
+    });
+    return m;
+  }, [empleados]);
+
+  // Depto seleccionado (para etiquetas y filtro en Cobertura).
+  const deptSeleccionado = useMemo(
+    () => selectedDeptId ? departamentos.find(d => d.id === selectedDeptId) : null,
+    [selectedDeptId, departamentos]
+  );
 
   // ─── Asignar turno ──────────────────────────────────────────────────────
   const asignar = async (empleado_id, fecha, plantilla_id, extra = {}) => {
@@ -267,6 +285,33 @@ export default function Horarios() {
         </div>
       </div>
 
+      {/* Tabs por departamento */}
+      <div style={{
+        display: "flex", gap: 6, overflowX: "auto", padding: "4px 0 12px",
+        borderBottom: `1px solid ${B.navyLight}`, marginBottom: 14,
+        scrollbarWidth: "thin",
+      }}>
+        <DeptTab
+          nombre="Todos" color={B.sky}
+          count={empleados.length}
+          selected={selectedDeptId === null}
+          onClick={() => setSelectedDeptId(null)}
+        />
+        {departamentos
+          .filter(d => (contDept.get(d.id) || 0) > 0)
+          .sort((a, b) => a.nombre.localeCompare(b.nombre))
+          .map(d => (
+            <DeptTab
+              key={d.id}
+              nombre={d.nombre}
+              color={d.color || B.sky}
+              count={contDept.get(d.id) || 0}
+              selected={selectedDeptId === d.id}
+              onClick={() => setSelectedDeptId(d.id)}
+            />
+          ))}
+      </div>
+
       {vista === "cobertura" ? (
         <VistaCobertura
           empleados={empleados}
@@ -274,6 +319,7 @@ export default function Horarios() {
           actividades={actividades}
           horarios={horarios}
           weekStart={weekStart}
+          filtroDeptNombre={deptSeleccionado?.nombre || null}
         />
       ) : (<>
       {/* Plantillas arrastrables */}
@@ -561,6 +607,27 @@ function CellMenu({ empId, fecha, current, plantillas, actividades, empleados, p
         </div>
       </div>
     </div>
+  );
+}
+
+// ─── Tab por departamento ─────────────────────────────────────────────────
+function DeptTab({ nombre, color, count, selected, onClick }) {
+  return (
+    <button onClick={onClick} style={{
+      padding: "8px 14px", borderRadius: 8, border: "none",
+      background: selected ? color : `${color}22`,
+      color: selected ? B.navy : color,
+      fontSize: 12, fontWeight: 700, cursor: "pointer",
+      whiteSpace: "nowrap", display: "flex", alignItems: "center", gap: 6,
+      borderBottom: selected ? `2px solid ${color}` : `2px solid transparent`,
+      minHeight: 36,
+    }}>
+      <span>{nombre}</span>
+      <span style={{
+        background: selected ? "rgba(0,0,0,0.15)" : `${color}33`,
+        padding: "1px 7px", borderRadius: 10, fontSize: 10, fontWeight: 800,
+      }}>{count}</span>
+    </button>
   );
 }
 

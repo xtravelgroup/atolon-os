@@ -25,7 +25,7 @@ const overlaps = (a1, a2, b1, b2) => {
   return Math.max(a1, b1) < Math.min(a2, b2);
 };
 
-export default function VistaCobertura({ empleados, departamentos, actividades, horarios, weekStart }) {
+export default function VistaCobertura({ empleados, departamentos, actividades, horarios, weekStart, filtroDeptNombre = null }) {
   // diaIdx 0..6 (Lun..Dom)
   const [diaIdx, setDiaIdx] = useState(() => {
     const today = new Date();
@@ -77,14 +77,16 @@ export default function VistaCobertura({ empleados, departamentos, actividades, 
     return demandaMap[`${area.key}|${diaIdx}|${franja.key}`] || 0;
   }, [staffing, demandaMap, diaIdx]);
 
-  // resolver deptId y actividadId por nombre
+  // resolver deptId y actividadId por nombre. Si filtroDeptNombre está, filtra.
   const areasResolved = useMemo(() => {
-    return AREAS.map(a => {
-      const dept = departamentos.find(d => d.nombre === a.deptNombre);
-      const act = a.actividadNombre ? actividades.find(x => x.nombre === a.actividadNombre) : null;
-      return { ...a, deptId: dept?.id, actId: act?.id, deptColor: dept?.color };
-    });
-  }, [departamentos, actividades]);
+    return AREAS
+      .filter(a => !filtroDeptNombre || a.deptNombre === filtroDeptNombre)
+      .map(a => {
+        const dept = departamentos.find(d => d.nombre === a.deptNombre);
+        const act = a.actividadNombre ? actividades.find(x => x.nombre === a.actividadNombre) : null;
+        return { ...a, deptId: dept?.id, actId: act?.id, deptColor: dept?.color };
+      });
+  }, [departamentos, actividades, filtroDeptNombre]);
 
   // índice: empleado -> dept
   const empDept = useMemo(() => {
