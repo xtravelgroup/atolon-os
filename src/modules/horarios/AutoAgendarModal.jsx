@@ -78,27 +78,42 @@ export default function AutoAgendarModal({ dateISO, empleados, departamentos, ac
     return () => { cancel = true; };
   }, [dateISO, empleados, departamentos, horariosSemana, actividades]);
 
-  // empleados YA asignados globalmente en la selección (no repetir en otro slot).
-  const yaSeleccionados = useMemo(() => {
-    const s = new Set();
-    Object.values(seleccion).forEach(arr => (arr || []).forEach(id => s.add(id)));
-    return s;
+  // candidatos disponibles para un slot: TODOS los que matchean por posición
+  // (o dept fallback), sin excluir los usados en otros slots — el usuario
+  // puede moverlos libremente. La marca "en Otro Slot" se muestra en el
+  // <option> y al elegir se auto-remueve del slot anterior.
+  const candidatosSlot = useCallback((slot) => {
+    return pickCandidatesForSlot(slot, { empleados, departamentos, horariosSemana, dateISO, posiciones });
+  }, [empleados, departamentos, horariosSemana, dateISO, posiciones]);
+
+  // Para cada empleado, en qué slotIdx está actualmente (o null).
+  const slotByEmp = useMemo(() => {
+    const m = {};
+    Object.entries(seleccion).forEach(([idx, arr]) => {
+      (arr || []).forEach(id => { if (id) m[id] = Number(idx); });
+    });
+    return m;
   }, [seleccion]);
 
-  // candidatos disponibles para un slot (filtrados por posición del empleado
-  // matchea keywords del slot; fallback a depto). Excluye los ya seleccionados
-  // en OTROS slots.
-  const candidatosSlot = useCallback((slot, slotIdx) => {
-    const cands = pickCandidatesForSlot(slot, { empleados, departamentos, horariosSemana, dateISO, posiciones });
-    const propios = new Set(seleccion[slotIdx] || []);
-    return cands.filter(e => propios.has(e.id) || !yaSeleccionados.has(e.id));
-  }, [empleados, departamentos, horariosSemana, dateISO, posiciones, seleccion, yaSeleccionados]);
-
+  // Cambia un empleado en (slotIdx, posición). Si el empleado ya estaba en
+  // otro slot, lo quita de allá.
   const cambiarSlotEmp = (slotIdx, posicion, empleado_id) => {
     setSeleccion(prev => {
-      const arr = [...(prev[slotIdx] || [])];
+      const next = { ...prev };
+      // Remover el empleado de cualquier otro slot donde estuviera.
+      if (empleado_id) {
+        Object.keys(next).forEach(k => {
+          if (Number(k) === slotIdx) return;
+          const arr = next[k] || [];
+          if (arr.includes(empleado_id)) {
+            next[k] = arr.map(id => id === empleado_id ? null : id);
+          }
+        });
+      }
+      const arr = [...(next[slotIdx] || [])];
       arr[posicion] = empleado_id || null;
-      return { ...prev, [slotIdx]: arr };
+      next[slotIdx] = arr;
+      return next;
     });
   };
 
@@ -185,8 +200,11 @@ export default function AutoAgendarModal({ dateISO, empleados, departamentos, ac
                 <SlotEditor
                   key={idx}
                   slot={slot}
+                  slotIdx={idx}
+                  slotsAll={propuesta.slots}
                   seleccion={seleccion[idx] || []}
-                  candidatos={candidatosSlot(slot, idx)}
+                  candidatos={candidatosSlot(slot)}
+                  slotByEmp={slotByEmp}
                   empById={empById}
                   onChange={(pos, empId) => cambiarSlotEmp(idx, pos, empId)}
                 />
@@ -221,8 +239,13 @@ export default function AutoAgendarModal({ dateISO, empleados, departamentos, ac
   );
 }
 
-function SlotEditor({ slot, seleccion, candidatos, empById, onChange }) {
+function SlotEditor({ slot, slotIdx, slotsAll = [], seleccion, candidatos, slotByEmp = {}, empById, onChange }) {
   const slots = Array.from({ length: slot.cantidad }, (_, i) => i);
+  const slotLabelById = (id) => {
+    const otroIdx = slotByEmp[id];
+    if (otroIdx === undefined || otroIdx === slotIdx) return "";
+    return slotsAll[otroIdx]?.label || "";
+  };
   return (
     <div style={{
       background: B.navyMid, borderRadius: 8, padding: 12, marginBottom: 10,
@@ -258,11 +281,14 @@ function SlotEditor({ slot, seleccion, candidatos, empById, onChange }) {
               )}
               {candidatos
                 .filter(c => c.id !== empId)
-                .map(c => (
-                  <option key={c.id} value={c.id}>
-                    {c.nombres} {c.apellidos}{c.cargo ? ` · ${c.cargo}` : ""}
-                  </option>
-                ))
+                .map(c => {
+                  const otroSlot = slotLabelById(c.id);
+                  return (
+                    <option key={c.id} value={c.id}>
+                      {c.nombres} {c.apellidos}{c.cargo ? ` · ${c.cargo}` : ""}{otroSlot ? ` [en ${otroSlot}]` : ""}
+                    </option>
+                  );
+                })
               }
             </select>
           );
