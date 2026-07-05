@@ -87,9 +87,49 @@ serve(async (req) => {
     const precioNoche = Number(tarifa.precio_noche);
     const total = precioNoche * noches;
 
-    // 4) Cupo — chequeo optimista (SQL atomic increment abajo protege contra race).
+    // 4) Cupo del grupo (chequeo optimista — el update final protege race).
     if (grupo.cupo_habitaciones > 0 && (grupo.habitaciones_reservadas || 0) >= grupo.cupo_habitaciones) {
       return json({ error: "Cupo del grupo agotado" }, 400);
+    }
+
+    // 4b) DISPONIBILIDAD REAL: habitaciones activas de la categoría vs estancias
+    //     que solapan con [check_in, check_out).
+    const { count: totalRooms } = await supa
+      .from("hotel_habitaciones")
+      .select("id", { count: "exact", head: true })
+      .eq("categoria_id", categoria_id)
+      .eq("estado", "activa");
+    if (!totalRooms || totalRooms === 0) {
+      return json({ error: "No hay habitaciones de esta categoría configuradas" }, 400);
+    }
+
+    // Cargar habitaciones de la categoría (para chequear ocupación por habitacion_id).
+    const { data: habsCat } = await supa
+      .from("hotel_habitaciones")
+      .select("id")
+      .eq("categoria_id", categoria_id)
+      .eq("estado", "activa");
+    const habIds = new Set((habsCat || []).map((h: any) => h.id));
+
+    // Estancias en la ventana [check_in, check_out) que consumen inventario:
+    //  - Con habitacion_id ∈ habIds (asignadas)
+    //  - O con categoria_preferida = categoria_id (sin asignar aún)
+    // Solapamiento: check_in_at < check_out AND check_out_at > check_in.
+    const winEnd = `${check_out}T23:59:59`;
+    const winIni = `${check_in}T00:00:00`;
+    const { data: solapan } = await supa
+      .from("hotel_estancias")
+      .select("id, habitacion_id, categoria_preferida, estado")
+      .in("estado", ["reservada", "in_house"])
+      .lt("check_in_at", winEnd)
+      .gt("check_out_at", winIni);
+    const ocupadas = (solapan || []).filter((e: any) =>
+      (e.habitacion_id && habIds.has(e.habitacion_id)) ||
+      (!e.habitacion_id && e.categoria_preferida === categoria_id)
+    ).length;
+    const disponibles = totalRooms - ocupadas;
+    if (disponibles <= 0) {
+      return json({ error: "No hay habitaciones disponibles de esta categoría en esas fechas" }, 400);
     }
 
     // 5) Upsert huesped por email (match sin crear duplicados).

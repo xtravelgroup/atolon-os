@@ -47,6 +47,8 @@ export default function HotelGrupoPublico() {
   });
   const [enviando, setEnviando] = useState(false);
   const [confirmada, setConfirmada] = useState(null);
+  const [disponibilidad, setDisponibilidad] = useState({}); // {categoria_id: {total, ocupadas, disponibles}}
+  const [dispLoading, setDispLoading] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -80,6 +82,52 @@ export default function HotelGrupoPublico() {
   const total = tarifaSel && noches > 0 ? Number(tarifaSel.precio_noche) * noches : 0;
 
   const set = (k, v) => setF(s => ({ ...s, [k]: v }));
+
+  // Recalcular disponibilidad cuando cambian fechas.
+  useEffect(() => {
+    if (!grupo || !f.check_in || !f.check_out || diffNoches(f.check_in, f.check_out) < 1) {
+      setDisponibilidad({});
+      return;
+    }
+    let cancel = false;
+    (async () => {
+      setDispLoading(true);
+      const catIds = tarifasDisp.map(t => t.categoria_id);
+      if (catIds.length === 0) { setDispLoading(false); return; }
+      const winEnd = `${f.check_out}T23:59:59`;
+      const winIni = `${f.check_in}T00:00:00`;
+      const [hR, eR] = await Promise.all([
+        supabase.from("hotel_habitaciones").select("id, categoria_id").in("categoria_id", catIds).eq("estado", "activa"),
+        supabase.from("hotel_estancias").select("id, habitacion_id, categoria_preferida, estado")
+          .in("estado", ["reservada", "in_house"])
+          .lt("check_in_at", winEnd)
+          .gt("check_out_at", winIni),
+      ]);
+      if (cancel) return;
+      const habsByCat = {};
+      const habCatMap = new Map();
+      (hR.data || []).forEach(h => {
+        habsByCat[h.categoria_id] = (habsByCat[h.categoria_id] || 0) + 1;
+        habCatMap.set(h.id, h.categoria_id);
+      });
+      const ocupPorCat = {};
+      (eR.data || []).forEach(e => {
+        let cat = null;
+        if (e.habitacion_id && habCatMap.has(e.habitacion_id)) cat = habCatMap.get(e.habitacion_id);
+        else if (!e.habitacion_id && e.categoria_preferida) cat = e.categoria_preferida;
+        if (cat) ocupPorCat[cat] = (ocupPorCat[cat] || 0) + 1;
+      });
+      const disp = {};
+      catIds.forEach(cId => {
+        const total = habsByCat[cId] || 0;
+        const ocup = ocupPorCat[cId] || 0;
+        disp[cId] = { total, ocupadas: ocup, disponibles: Math.max(0, total - ocup) };
+      });
+      setDisponibilidad(disp);
+      setDispLoading(false);
+    })();
+    return () => { cancel = true; };
+  }, [grupo, f.check_in, f.check_out, tarifasDisp.length]);
 
   const reservar = async () => {
     setErr(null);
@@ -210,22 +258,41 @@ export default function HotelGrupoPublico() {
           <div style={{ color: B.warning }}>Sin categorías disponibles.</div>
         ) : (
           <div style={{ display: "grid", gap: 8 }}>
+            {(!f.check_in || !f.check_out || noches < 1) && (
+              <div style={{ fontSize: 12, color: B.sand, padding: "8px 12px", background: B.navy, borderRadius: 6 }}>
+                Selecciona fechas de check-in y check-out para ver disponibilidad.
+              </div>
+            )}
             {tarifasDisp.map(t => {
               const cat = categorias.find(c => c.id === t.categoria_id);
               const sel = f.categoria_id === t.categoria_id;
+              const d = disponibilidad[t.categoria_id];
+              const fechasValidas = f.check_in && f.check_out && noches >= 1;
+              const agotado = fechasValidas && d && d.disponibles <= 0;
+              const disabled = agotado || (!fechasValidas);
               return (
                 <label key={t.id} style={{
-                  display: "flex", alignItems: "center", gap: 10, cursor: "pointer",
+                  display: "flex", alignItems: "center", gap: 10,
+                  cursor: disabled ? "not-allowed" : "pointer",
                   padding: "12px 14px", borderRadius: 8,
                   background: sel ? B.hotel + "33" : B.navy,
                   border: sel ? `2px solid ${B.hotel}` : `1px solid ${B.navyLight}`,
+                  opacity: agotado ? 0.5 : 1,
                 }}>
-                  <input type="radio" name="categoria" checked={sel}
-                    onChange={() => set("categoria_id", t.categoria_id)} />
+                  <input type="radio" name="categoria" checked={sel} disabled={disabled}
+                    onChange={() => !disabled && set("categoria_id", t.categoria_id)} />
                   <div style={{ flex: 1 }}>
                     <div style={{ fontWeight: 700, color: B.white, fontSize: 14 }}>{cat?.nombre || "—"}</div>
                     {cat?.descripcion && (
                       <div style={{ fontSize: 11, color: "rgba(255,255,255,0.55)" }}>{cat.descripcion}</div>
+                    )}
+                    {fechasValidas && (
+                      <div style={{ fontSize: 11, marginTop: 4, color: agotado ? B.danger : d?.disponibles <= 2 ? B.warning : B.success, fontWeight: 700 }}>
+                        {dispLoading ? "Verificando disponibilidad…"
+                          : agotado ? "❌ Agotado en esas fechas"
+                          : d ? `✓ ${d.disponibles} de ${d.total} disponible${d.disponibles === 1 ? "" : "s"}`
+                          : ""}
+                      </div>
                     )}
                   </div>
                   <div style={{ fontWeight: 800, color: B.hotel, fontSize: 16 }}>
