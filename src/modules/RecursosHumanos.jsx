@@ -1,6 +1,6 @@
 // RecursosHumanos.jsx — Módulo RRHH Atolon Beach Club
 // Legislación: Código Sustantivo del Trabajo (Colombia)
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef, useLayoutEffect } from "react";
 import { supabase } from "../lib/supabase";
 import { B, COP, todayStr, fmtFecha } from "../brand";
 import { HORAS_MES_LEGAL } from "../lib/nominaCalculator.js";
@@ -1165,7 +1165,10 @@ function TabOrganigrama({ empleados, depts, posiciones = [] }) {
   const [modo, setModo] = useState(hayPosiciones ? "posiciones" : "empleados");
   const [expanded, setExpanded] = useState(new Set());
   const [zoom, setZoom] = useState(1);
+  const [autoFit, setAutoFit] = useState(true);
   const [filterDept, setFilterDept] = useState("");
+  const containerRef = useRef(null);
+  const treeRef = useRef(null);
 
   // Árbol por empleados (legacy — jefe_id)
   const childrenMapEmp = useMemo(() => {
@@ -1215,6 +1218,43 @@ function TabOrganigrama({ empleados, depts, posiciones = [] }) {
   const filteredPosRoots = filterDept ? posRoots.filter(p => p.departamento_id === filterDept) : posRoots;
 
   const sinDatos = (modo === "posiciones" ? posiciones.length : empleados.length) === 0;
+
+  // Auto-fit: calcula zoom para que el arbol quepa en el ancho del contenedor.
+  // Se recalcula al cambiar data, filtro, modo, expandido o al redimensionar
+  // la ventana. Si el user usa +/-, se desactiva; el boton "🔲 Ajustar" reactiva.
+  const recalcFit = useCallback(() => {
+    const container = containerRef.current;
+    const tree = treeRef.current;
+    if (!container || !tree) return;
+    const cw = container.clientWidth;
+    // scrollWidth NO refleja transform:scale — es el layout width natural.
+    const tw = tree.scrollWidth;
+    if (!cw || !tw) return;
+    if (tw > cw) {
+      const target = Math.max(0.35, Math.min(1, cw / tw));
+      setZoom(prev => (Math.abs(prev - target) > 0.01 ? target : prev));
+    } else {
+      setZoom(prev => (prev !== 1 ? 1 : prev));
+    }
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!autoFit || sinDatos) return;
+    recalcFit();
+  }, [autoFit, sinDatos, recalcFit, posiciones, empleados, expanded, filterDept, modo]);
+
+  useEffect(() => {
+    if (!autoFit) return;
+    const onResize = () => recalcFit();
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, [autoFit, recalcFit]);
+
+  const manualZoom = (delta) => {
+    setAutoFit(false);
+    setZoom(z => Math.max(0.35, Math.min(1.5, z + delta)));
+  };
+
   if (sinDatos) {
     return <div style={{ textAlign: "center", padding: 60, color: "rgba(255,255,255,0.25)" }}>
       {modo === "posiciones" ? "Crea posiciones en la tab Posiciones para armar el organigrama" : "Agrega empleados para ver el organigrama"}
@@ -1241,14 +1281,18 @@ function TabOrganigrama({ empleados, depts, posiciones = [] }) {
         <button onClick={expandAll} style={{ ...BTN(B.navyLight), border: `1px solid ${B.navyLight}` }}>Expandir todo</button>
         <button onClick={() => setExpanded(new Set())} style={{ ...BTN(B.navyLight), border: `1px solid ${B.navyLight}` }}>Colapsar todo</button>
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8 }}>
-          <button onClick={() => setZoom(z => Math.max(0.4, z - 0.1))} style={{ ...BTN(B.navyLight), padding: "6px 12px" }}>−</button>
+          <button onClick={() => { setAutoFit(true); }} title="Auto ajustar al ancho de la pantalla"
+            style={{ ...BTN(autoFit ? B.sky : B.navyLight), padding: "6px 12px", color: autoFit ? B.navy : B.white }}>
+            🔲 Ajustar
+          </button>
+          <button onClick={() => manualZoom(-0.1)} style={{ ...BTN(B.navyLight), padding: "6px 12px" }}>−</button>
           <span style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", width: 40, textAlign: "center" }}>{Math.round(zoom * 100)}%</span>
-          <button onClick={() => setZoom(z => Math.min(1.5, z + 0.1))} style={{ ...BTN(B.navyLight), padding: "6px 12px" }}>+</button>
+          <button onClick={() => manualZoom(0.1)} style={{ ...BTN(B.navyLight), padding: "6px 12px" }}>+</button>
         </div>
       </div>
 
-      <div style={{ overflow: "auto", paddingBottom: 32 }}>
-        <div style={{ transform: `scale(${zoom})`, transformOrigin: "top center", transition: "transform 0.2s",
+      <div ref={containerRef} style={{ overflow: "auto", paddingBottom: 32 }}>
+        <div ref={treeRef} style={{ transform: `scale(${zoom})`, transformOrigin: "top center", transition: "transform 0.2s",
           display: "flex", gap: 40, justifyContent: "center", paddingTop: 8, paddingBottom: 40 }}>
           {modo === "posiciones" ? (
             filteredPosRoots.length === 0
