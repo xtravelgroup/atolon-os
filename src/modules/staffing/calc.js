@@ -22,7 +22,17 @@ export const DEFAULT_STAFFING_CONFIG = {
   roles: {
     mesPlaya:   { label: "Mesero Playa",       orden: 1, variable: "vip_pax",       min_apertura: 1, umbrales_pax: [{hasta:16,cant:1},{hasta:49,cant:2},{hasta:60,cant:3}], escalar_despues: {desde_pax:60,cada_pax:20,suma_cantidad:1} },
     mesPool:    { label: "Mesero Piscina",     orden: 2, variable: "exclusive_pax", min_apertura: 1, umbrales_pax: [{hasta:10,cant:1},{hasta:23,cant:2},{hasta:36,cant:3}], escalar_despues: {desde_pax:36,cada_pax:12,suma_cantidad:1} },
-    mesRest:    { label: "Mesero Restaurante", orden: 3, variable: "pax_total",     min_apertura: 1, umbrales_pax: [{hasta:999,cant:1}], delta_pico_movimiento: 1 },
+    mesRest:    { label: "Mesero Restaurante", orden: 3, variable: "pax_total",     min_apertura: 1, umbrales_pax: [{hasta:999,cant:1}], delta_pico_movimiento: 1,
+      regla_con_huespedes: {
+        variable: "huespedes_pax",
+        umbrales_por_turno: [{hasta:9,cant:1},{hasta:19,cant:2},{hasta:40,cant:3}],
+        escalar_despues_por_turno: {desde_pax:40,cada_pax:20,suma_cantidad:1},
+        turnos: [
+          {key:"T1",entrada:"06:30",salida:"15:00"},
+          {key:"T2",entrada:"12:30",salida:"22:00"},
+        ],
+      },
+    },
     runnersBeb: { label: "Runners",            orden: 4, variable: "pax_total",     umbrales_pax: [{hasta:19,cant:0},{hasta:39,cant:1},{hasta:79,cant:2},{hasta:130,cant:3}], escalar_despues: {desde_pax:130,cada_pax:50,suma_cantidad:1} },
     bussers:    { label: "Bussers",            orden: 6, variable: "pax_total",     umbrales_pax: [{hasta:20,cant:0},{hasta:60,cant:1},{hasta:999,cant:2}] },
     bartenders: { label: "Bartenders",         orden: 7, variable: "pax_total",     umbrales_pax: [{hasta:39,cant:1},{hasta:90,cant:2}], escalar_despues: {desde_pax:90,cada_pax:50,suma_cantidad:1} },
@@ -88,12 +98,19 @@ function umbralValor(umbrales, valor, escalarDespues) {
 }
 
 // Calcular raw para un rol dado según su config.
-function calcRolRaw(cfg, roleKey, totalPax, vipPax, excPax) {
+function calcRolRaw(cfg, roleKey, totalPax, vipPax, excPax, huespedesPax = 0) {
   const r = cfg.roles?.[roleKey];
   if (!r) return 0;
   const pax = Math.max(totalPax, cfg.apertura_minima_pax || 20);
-  const isApertura = totalPax === 0;
-  const variable = r.variable === "vip_pax" ? vipPax : r.variable === "exclusive_pax" ? excPax : pax;
+  const isApertura = totalPax === 0 && huespedesPax === 0;
+  // Rama con huéspedes: si el rol tiene regla_con_huespedes y hay huéspedes, usarla.
+  if (r.regla_con_huespedes && huespedesPax > 0) {
+    const rh = r.regla_con_huespedes;
+    const perTurno = umbralValor(rh.umbrales_por_turno || [], huespedesPax, rh.escalar_despues_por_turno);
+    const numTurnos = Array.isArray(rh.turnos) ? rh.turnos.length : 1;
+    return perTurno * numTurnos;
+  }
+  const variable = r.variable === "vip_pax" ? vipPax : r.variable === "exclusive_pax" ? excPax : r.variable === "huespedes_pax" ? huespedesPax : pax;
   // Apertura: si hay min_apertura y no hay demanda de la variable, aplica el min.
   if (isApertura) {
     if (r.min_apertura != null) return r.min_apertura;
@@ -144,12 +161,12 @@ export function aplicarMinimoDiario(applied, cfg = null) {
   return out;
 }
 
-export function calcStaff(totalPax, vipPax, excPax, ovrMap = {}, cfg = null) {
+export function calcStaff(totalPax, vipPax, excPax, ovrMap = {}, cfg = null, huespedesPax = 0) {
   const C = cfg || CURRENT_CONFIG;
   const pax = Math.max(totalPax, C.apertura_minima_pax || 20);
   const raw = {};
   Object.keys(C.roles || {}).forEach(k => {
-    raw[k] = calcRolRaw(C, k, totalPax, vipPax, excPax);
+    raw[k] = calcRolRaw(C, k, totalPax, vipPax, excPax, huespedesPax);
   });
 
   const applied = {};
@@ -189,23 +206,33 @@ export function calcStaff(totalPax, vipPax, excPax, ovrMap = {}, cfg = null) {
 }
 
 // Fetch reservas + overrides para una fecha, correr calcStaff, devolver todo.
-// Retorna: { totalPax, vipPax, excPax, overrides, valle, pico, hayMovimiento,
-//   totalValle, totalPico, raw, applied }
+// Retorna: { totalPax, vipPax, excPax, huespedesPax, overrides, valle, pico,
+//   hayMovimiento, totalValle, totalPico, raw, applied }
 export async function fetchStaffingForDate(supabase, dateISO) {
   if (!supabase || !dateISO) {
-    return { totalPax: 0, vipPax: 0, excPax: 0, overrides: [], valle: {}, pico: {}, hayMovimiento: false, totalValle: 0, totalPico: 0, raw: {}, applied: {} };
+    return { totalPax: 0, vipPax: 0, excPax: 0, huespedesPax: 0, overrides: [], valle: {}, pico: {}, hayMovimiento: false, totalValle: 0, totalPico: 0, raw: {}, applied: {} };
   }
-  const [resR, ovrR, proyR] = await Promise.all([
+  const [resR, ovrR, proyR, estR] = await Promise.all([
     supabase.from("reservas")
       .select("tipo, pax, estado")
       .eq("fecha", dateISO)
       .in("estado", ["confirmado", "pendiente"]),
     supabase.from("staffing_overrides").select("*").eq("date", dateISO),
     supabase.from("staffing_proyecciones").select("*").eq("date", dateISO).maybeSingle(),
+    supabase.from("hotel_estancias")
+      .select("pax_adultos, pax_ninos, check_in_at, check_out_at, estado")
+      .in("estado", ["reservada", "in_house"])
+      .lte("check_in_at", dateISO + "T23:59:59")
+      .gt("check_out_at", dateISO + "T00:00:00"),
   ]);
 
   const reservas = resR.data || [];
   const overrides = ovrR.data || [];
+  const estancias = estR?.data || [];
+  const huespedesPax = estancias.reduce(
+    (s, e) => s + (Number(e.pax_adultos) || 0) + (Number(e.pax_ninos) || 0),
+    0
+  );
 
   const totalPaxReal = reservas.reduce((s, r) => s + (r.pax || 0), 0);
   const vipPaxReal = reservas
@@ -226,6 +253,6 @@ export async function fetchStaffingForDate(supabase, dateISO) {
   const ovrMap = {};
   overrides.forEach(o => { ovrMap[o.role] = o.quantity_override; });
 
-  const staff = calcStaff(totalPax, vipPax, excPax, ovrMap);
-  return { totalPax, vipPax, excPax, overrides, ...staff };
+  const staff = calcStaff(totalPax, vipPax, excPax, ovrMap, null, huespedesPax);
+  return { totalPax, vipPax, excPax, huespedesPax, overrides, ...staff };
 }
