@@ -896,12 +896,16 @@ function PosicionModal({ posicion, posiciones, depts, onClose, onSaved }) {
 
   const save = async () => {
     if (!f.nombre?.trim()) { setErr("Nombre requerido"); return; }
+    // Validar depto y parent contra data actual: si no existen ya (fueron
+    // borrados o el UI está desactualizado), enviar null para evitar FK error.
+    const deptValido = f.departamento_id && depts.some(d => d.id === f.departamento_id);
+    const parentValido = f.parent_id && posiciones.some(p => p.id === f.parent_id);
     setSaving(true); setErr(null);
     const payload = {
       nombre: f.nombre.trim(),
       descripcion: f.descripcion?.trim() || null,
-      departamento_id: f.departamento_id || null,
-      parent_id: f.parent_id || null,
+      departamento_id: deptValido ? f.departamento_id : null,
+      parent_id: parentValido ? f.parent_id : null,
       nivel: f.nivel || 0,
       orden: parseInt(f.orden, 10) || 0,
       cupos: Math.max(1, parseInt(f.cupos, 10) || 1),
