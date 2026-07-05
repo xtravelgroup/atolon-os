@@ -26,9 +26,9 @@ import {
 // de la posición del empleado para ser candidato. El auto-scheduler filtra
 // por posición primero (más específico) y cae a depto si no matchea nadie.
 export const SERVICE_ROLES = [
-  { rol: "mesPlaya",   actividadNombre: "Playa",      deptNombre: "Meseros", label: "Mesero Playa",       icon: "🏖️", posicionMatches: ["playa"] },
-  { rol: "mesPool",    actividadNombre: "Piscina",    deptNombre: "Meseros", label: "Mesero Piscina",     icon: "🏊", posicionMatches: ["piscina", "pool"] },
-  { rol: "mesRest",    actividadNombre: "Restaurant", deptNombre: "Meseros", label: "Mesero Restaurante", icon: "🍽️", posicionMatches: ["restaurant", "restaurante"] },
+  { rol: "mesPlaya",   actividadNombre: "Playa",      deptNombre: "Meseros", label: "Mesero Playa",       icon: "🏖️", posicionMatches: ["playa", "mesero"] },
+  { rol: "mesPool",    actividadNombre: "Piscina",    deptNombre: "Meseros", label: "Mesero Piscina",     icon: "🏊", posicionMatches: ["piscina", "pool", "mesero"] },
+  { rol: "mesRest",    actividadNombre: "Restaurant", deptNombre: "Meseros", label: "Mesero Restaurante", icon: "🍽️", posicionMatches: ["restaurant", "restaurante", "mesero"] },
   { rol: "runnersBeb", actividadNombre: "Runner Bar", deptNombre: "Bar",     label: "Runners",            icon: "🏃", posicionMatches: ["runner"] },
   { rol: "bartenders", actividadNombre: "Bartender",  deptNombre: "Bar",     label: "Bartender",          icon: "🍸", posicionMatches: ["bartender"] },
   { rol: "cajero",     actividadNombre: "Cajero",     deptNombre: "Servicio",label: "Cajero",             icon: "💰", posicionMatches: ["cajero", "caja"] },
