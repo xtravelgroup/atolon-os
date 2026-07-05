@@ -31,7 +31,7 @@ export const SERVICE_ROLES = [
   { rol: "mesRest",    actividadNombre: "Restaurant", deptNombre: "Meseros", label: "Mesero Restaurante", icon: "🍽️", posicionMatches: ["restaurant", "restaurante", "mesero"] },
   { rol: "runnersBeb", actividadNombre: "Runner Bar", deptNombre: "Bar",     label: "Runners",            icon: "🏃", posicionMatches: ["runner"] },
   { rol: "bartenders", actividadNombre: "Bartender",  deptNombre: "Bar",     label: "Bartender",          icon: "🍸", posicionMatches: ["bartender"] },
-  { rol: "cajero",     actividadNombre: "Cajero",     deptNombre: "Servicio",label: "Cajero",             icon: "💰", posicionMatches: ["cajero", "caja"] },
+  { rol: "cajero",     actividadNombre: "Cajero",     deptNombre: "Servicio",label: "Cajero",             icon: "💰", posicionMatches: ["cajero", "caja"], strict: true },
 ];
 
 // Detecta primer y último pasadía del día consultando reservas → salidas.
@@ -82,6 +82,7 @@ export async function proposeSlots(supabase, dateISO) {
           actividadNombre: svc.actividadNombre,
           deptNombre: svc.deptNombre,
           posicionMatches: svc.posicionMatches || [],
+          strict: !!svc.strict,
           label: svc.label,
           icon: svc.icon,
           entrada: roleCfg.turno_fijo.entrada,
@@ -149,10 +150,13 @@ export async function proposeSlots(supabase, dateISO) {
 }
 
 // Selecciona empleados para un slot. Filtro primario: posición del empleado
-// matchea keywords del slot (ej. "Mesero Playa" para slot Playa). Si no hay
-// nadie por posición, cae a filtro por departamento (backward compat con
-// empleados aún sin posición asignada). Además exige activos + no ya agendados
-// ese día. Ordena por horas-agendadas-esta-semana asc (balancear carga).
+// matchea keywords del slot (ej. "Mesero Playa" para slot Playa). Si el slot
+// no es `strict`, cae a filtro por departamento cuando nadie matchea por
+// posición (backward compat con empleados sin posición aún).
+//
+// NO excluye a los ya agendados hoy — la exclusión se maneja en el modal
+// (empleados en otros slots) para permitir "re-agendar" sobre turnos previos
+// del mismo empleado en la misma actividad.
 export function pickCandidatesForSlot(slot, {
   empleados, departamentos, horariosSemana, dateISO, posiciones = [],
 }) {
@@ -166,9 +170,9 @@ export function pickCandidatesForSlot(slot, {
   );
   let candidatos = empleados.filter(e => e.activo && e.posicion_id && posIdsMatch.has(e.posicion_id));
 
-  // 2) Fallback: si nadie matcheó por posición, filtrar por departamento
-  //    (empleados legacy que aún no tienen posicion_id asignado).
-  if (candidatos.length === 0) {
+  // 2) Fallback: si el slot NO es strict y nadie matcheó por posición,
+  //    filtrar por departamento (empleados legacy sin posicion_id).
+  if (candidatos.length === 0 && !slot.strict) {
     const dept = departamentos.find(d => d.nombre === slot.deptNombre);
     if (dept) {
       candidatos = empleados.filter(e => e.activo && e.departamento_id === dept.id);
@@ -177,11 +181,8 @@ export function pickCandidatesForSlot(slot, {
 
   if (candidatos.length === 0) return [];
 
-  // Excluir los que ya tienen horario ese día.
-  const yaAsignadosHoy = new Set(
-    horariosSemana.filter(h => h.fecha === dateISO).map(h => h.empleado_id)
-  );
-  const disponibles = candidatos.filter(e => !yaAsignadosHoy.has(e.id));
+  // Ordenar por horas-semana asc (menor carga primero) para balancear.
+  const disponibles = candidatos;
 
   // Ordenar por horas semanales ascendente (menor carga primero).
   const horasPorEmp = {};

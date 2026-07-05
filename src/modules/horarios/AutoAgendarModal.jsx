@@ -43,13 +43,30 @@ export default function AutoAgendarModal({ dateISO, empleados, departamentos, ac
         const pos = posR.data || [];
         setPosiciones(pos);
         setPropuesta(p);
-        // Pre-seleccionar candidatos por slot con menos horas.
+        // Pre-select: priorizar los que YA tienen turno del día en la
+        // actividad correcta (preserva agendamientos previos), luego los que
+        // menos horas tienen. No duplicar empleados entre slots.
+        const actIdByName = {};
+        (actividades || []).forEach(a => { actIdByName[a.nombre] = a.id; });
+        const usadosHoyGlobal = new Set();
         const preSel = {};
         p.slots.forEach((slot, idx) => {
           const cands = pickCandidatesForSlot(slot, {
             empleados, departamentos, horariosSemana, dateISO, posiciones: pos,
           });
-          preSel[idx] = cands.slice(0, slot.cantidad).map(e => e.id);
+          const actId = actIdByName[slot.actividadNombre];
+          const yaEnEsteSlot = new Set(
+            horariosSemana
+              .filter(h => h.fecha === dateISO && h.tipo === "turno" && h.actividad_id === actId)
+              .map(h => h.empleado_id)
+          );
+          const prioridad = [
+            ...cands.filter(e => yaEnEsteSlot.has(e.id) && !usadosHoyGlobal.has(e.id)),
+            ...cands.filter(e => !yaEnEsteSlot.has(e.id) && !usadosHoyGlobal.has(e.id)),
+          ];
+          const elegidos = prioridad.slice(0, slot.cantidad).map(e => e.id);
+          elegidos.forEach(id => usadosHoyGlobal.add(id));
+          preSel[idx] = elegidos;
         });
         setSeleccion(preSel);
       } catch (e) {
@@ -59,7 +76,7 @@ export default function AutoAgendarModal({ dateISO, empleados, departamentos, ac
       }
     })();
     return () => { cancel = true; };
-  }, [dateISO, empleados, departamentos, horariosSemana]);
+  }, [dateISO, empleados, departamentos, horariosSemana, actividades]);
 
   // empleados YA asignados globalmente en la selección (no repetir en otro slot).
   const yaSeleccionados = useMemo(() => {
