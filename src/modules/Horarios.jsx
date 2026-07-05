@@ -111,11 +111,27 @@ export default function Horarios() {
     const m = {}; actividades.forEach(a => { m[a.id] = a; }); return m;
   }, [actividades]);
 
+  // Grupo virtual "Servicio" = Meseros + Bar (para vista consolidada de servicio).
+  const gruposVirtuales = useMemo(() => ({
+    _servicio: {
+      label: "Servicio",
+      color: "#3b82f6",
+      icon: "🍽️",
+      match: (dept) => dept && ["Meseros", "Bar"].includes(dept.nombre),
+    },
+  }), []);
+
   // Empleados agrupados por departamento
   const grupos = useMemo(() => {
     const q = searchQ.toLowerCase().trim();
+    const virtual = selectedDeptId && gruposVirtuales[selectedDeptId];
     const filtered = empleados.filter(e => {
-      if (selectedDeptId && (e.departamento_id || "_sin_dept") !== selectedDeptId) return false;
+      if (virtual) {
+        const dept = departamentos.find(d => d.id === e.departamento_id);
+        if (!virtual.match(dept)) return false;
+      } else if (selectedDeptId && (e.departamento_id || "_sin_dept") !== selectedDeptId) {
+        return false;
+      }
       if (!q) return true;
       const nombre = `${e.nombres} ${e.apellidos}`.toLowerCase();
       return nombre.includes(q) || (e.cargo || "").toLowerCase().includes(q);
@@ -133,7 +149,16 @@ export default function Horarios() {
       byDept.get(key).empleados.push(e);
     });
     return Array.from(byDept.values()).sort((a, b) => a.dept.nombre.localeCompare(b.dept.nombre));
-  }, [empleados, departamentos, searchQ, selectedDeptId]);
+  }, [empleados, departamentos, searchQ, selectedDeptId, gruposVirtuales]);
+
+  // Conteo Servicio virtual (Meseros + Bar).
+  const contServicio = useMemo(
+    () => empleados.filter(e => {
+      const d = departamentos.find(x => x.id === e.departamento_id);
+      return d && ["Meseros", "Bar"].includes(d.nombre);
+    }).length,
+    [empleados, departamentos]
+  );
 
   // Contadores para tab bar (empleados activos por depto).
   const contDept = useMemo(() => {
@@ -299,6 +324,14 @@ export default function Horarios() {
           selected={selectedDeptId === null}
           onClick={() => setSelectedDeptId(null)}
         />
+        {contServicio > 0 && (
+          <DeptTab
+            nombre="🍽️ Servicio" color="#3b82f6"
+            count={contServicio}
+            selected={selectedDeptId === "_servicio"}
+            onClick={() => setSelectedDeptId("_servicio")}
+          />
+        )}
         {departamentos
           .filter(d => (contDept.get(d.id) || 0) > 0)
           .sort((a, b) => a.nombre.localeCompare(b.nombre))
@@ -321,7 +354,11 @@ export default function Horarios() {
           actividades={actividades}
           horarios={horarios}
           weekStart={weekStart}
-          filtroDeptNombre={deptSeleccionado?.nombre || null}
+          filtroDeptNombres={
+            selectedDeptId === "_servicio" ? ["Meseros", "Bar"]
+            : deptSeleccionado ? [deptSeleccionado.nombre]
+            : null
+          }
         />
       ) : (<>
       {/* Plantillas arrastrables */}
