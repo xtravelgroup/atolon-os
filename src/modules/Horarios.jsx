@@ -8,6 +8,7 @@ import { useState, useEffect, useMemo, useCallback } from "react";
 import { supabase } from "../lib/supabase";
 import { B } from "../brand";
 import VistaCobertura from "./horarios/VistaCobertura";
+import AutoAgendarModal from "./horarios/AutoAgendarModal";
 
 // ─── Helpers de fechas ────────────────────────────────────────────────────
 const toISO = (d) => d.toLocaleDateString("en-CA", { timeZone: "America/Bogota" });
@@ -63,6 +64,7 @@ export default function Horarios() {
   const [searchQ, setSearchQ] = useState("");
   const [vista, setVista] = useState("planilla"); // "planilla" | "cobertura"
   const [selectedDeptId, setSelectedDeptId] = useState(null); // null = Todos
+  const [autoAgendarDate, setAutoAgendarDate] = useState(null); // fecha ISO o null
   const [semanalEmp, setSemanalEmp] = useState(null); // empleado para editar semana completa
 
   const dias = useMemo(() =>
@@ -374,7 +376,17 @@ export default function Horarios() {
                         <th style={thStyle}>Empleado</th>
                         {dias.map(d => (
                           <th key={d.iso} style={{ ...thStyle, textAlign: "center" }}>
-                            <div>{d.label}</div>
+                            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 4 }}>
+                              <span>{d.label}</span>
+                              <button
+                                onClick={() => setAutoAgendarDate(d.iso)}
+                                title="Auto-agendar Servicio para este día"
+                                style={{
+                                  padding: "1px 5px", background: B.sky + "33", color: B.sky,
+                                  border: `1px solid ${B.sky}55`, borderRadius: 4,
+                                  fontSize: 10, fontWeight: 700, cursor: "pointer",
+                                }}>⚡</button>
+                            </div>
                             <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", fontWeight: 500 }}>{d.dia}</div>
                           </th>
                         ))}
@@ -480,6 +492,19 @@ export default function Horarios() {
           onAsignar={(pid, extra) => { asignar(cellMenu.empId, cellMenu.fecha, pid, extra); setCellMenu(null); }}
           onBorrar={() => { asignar(cellMenu.empId, cellMenu.fecha, null); setCellMenu(null); }}
           onClose={() => setCellMenu(null)}
+        />
+      )}
+
+      {/* Modal auto-agendar */}
+      {autoAgendarDate && (
+        <AutoAgendarModal
+          dateISO={autoAgendarDate}
+          empleados={empleados}
+          departamentos={departamentos}
+          actividades={actividades}
+          horariosSemana={horarios}
+          onClose={() => setAutoAgendarDate(null)}
+          onSaved={load}
         />
       )}
 

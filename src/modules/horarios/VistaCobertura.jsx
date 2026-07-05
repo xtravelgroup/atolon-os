@@ -111,9 +111,33 @@ export default function VistaCobertura({ empleados, departamentos, actividades, 
 
   const cellColor = (x, y) => {
     if (y === 0) return { bg: "rgba(255,255,255,0.05)", fg: "rgba(255,255,255,0.35)", border: B.navyLight };
-    if (x >= y) return { bg: B.success + "22", fg: B.success, border: B.success };
-    return { bg: B.danger + "22", fg: B.danger, border: B.danger };
+    if (x < y) return { bg: B.danger + "22", fg: B.danger, border: B.danger };            // sub-staffed
+    if (x === y) return { bg: B.success + "22", fg: B.success, border: B.success };       // exacto
+    return { bg: B.warning + "22", fg: B.warning, border: B.warning };                    // over-staffed
   };
+
+  // Fase 3 — resumen del día por área de servicio (source:"staffing").
+  // Cuenta empleados con turno del día que cubren cada área, ignorando franjas.
+  const resumenServicio = useMemo(() => {
+    const items = [];
+    let hayUnder = false, hayOver = false;
+    areasResolved.forEach(area => {
+      if (area.source !== "staffing" || !area.deptId) return;
+      const necesitanValle = staffing?.valle?.[area.staffingRole] || 0;
+      const necesitanPico = staffing?.pico?.[area.staffingRole] || 0;
+      const necesitanMax = Math.max(necesitanValle, necesitanPico);
+      const asignados = horarios.filter(h =>
+        h.fecha === fechaSel && h.tipo === "turno" &&
+        empDept[h.empleado_id] === area.deptId &&
+        (!area.actId || h.actividad_id === area.actId)
+      ).length;
+      let estado = "ok";
+      if (asignados < necesitanMax) { estado = "under"; hayUnder = true; }
+      else if (asignados > necesitanMax) { estado = "over"; hayOver = true; }
+      items.push({ label: area.label, asignados, necesitanMax, estado });
+    });
+    return { items, hayUnder, hayOver };
+  }, [areasResolved, horarios, fechaSel, empDept, staffing]);
 
   const diaFecha = addDays(weekStart, diaIdx);
   const diaLabel = diaFecha.toLocaleDateString("es-CO", { day: "numeric", month: "short" });
@@ -147,7 +171,32 @@ export default function VistaCobertura({ empleados, departamentos, actividades, 
           <b style={{ color: B.white }}>{staffing.totalPax}</b>
           {staffing.vipPax > 0 && <> · VIP: <b style={{ color: B.white }}>{staffing.vipPax}</b></>}
           {staffing.excPax > 0 && <> · Exclusive: <b style={{ color: B.white }}>{staffing.excPax}</b></>}
+          {staffing.huespedesPax > 0 && <> · Huéspedes: <b style={{ color: B.white }}>{staffing.huespedesPax}</b></>}
           {staffing.hayMovimiento && <span style={{ color: B.warning, marginLeft: 8 }}>⚠ Movimiento 12–3pm</span>}
+        </div>
+      )}
+
+      {/* Fase 3 — Banner semáforo de cobertura Servicio */}
+      {resumenServicio.items.length > 0 && (
+        <div style={{
+          marginBottom: 14, padding: "10px 14px", borderRadius: 10,
+          background: resumenServicio.hayUnder ? B.danger + "18" : resumenServicio.hayOver ? B.warning + "18" : B.success + "18",
+          border: `1px solid ${resumenServicio.hayUnder ? B.danger : resumenServicio.hayOver ? B.warning : B.success}55`,
+        }}>
+          <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 12, fontSize: 12 }}>
+            <div style={{ fontWeight: 800, color: resumenServicio.hayUnder ? B.danger : resumenServicio.hayOver ? B.warning : B.success, fontSize: 13 }}>
+              {resumenServicio.hayUnder ? "🔴 Falta cobertura" : resumenServicio.hayOver ? "🟡 Sobre-staffing" : "🟢 Cobertura OK"}
+            </div>
+            {resumenServicio.items.map(it => (
+              <span key={it.label} style={{
+                padding: "3px 10px", borderRadius: 8, fontWeight: 700, fontSize: 11,
+                background: it.estado === "under" ? B.danger + "33" : it.estado === "over" ? B.warning + "33" : B.success + "33",
+                color: it.estado === "under" ? B.danger : it.estado === "over" ? B.warning : B.success,
+              }}>
+                {it.label}: {it.asignados}/{it.necesitanMax}
+              </span>
+            ))}
+          </div>
         </div>
       )}
 
