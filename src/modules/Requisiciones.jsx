@@ -1466,6 +1466,9 @@ function RecepcionOCModal({ oc, reqs, onClose, reload, currentUser, readOnly = f
     // Politica direccion 2026-07-09: cuando la factura ya se aplico, los items
     // con cant=0 (proveedor no los mando) se ocultan de la recepcion. Sin
     // factura aplicada aun, se muestran todos para permitir recepcion parcial.
+    // Los items manuales agregados desde la factura (agregado_post_factura=true)
+    // ya vienen con cant>0 asi que pasan naturalmente por el filtro y salen
+    // para recepcion.
     const items = oc.factura_aplicada
       ? (oc.items || []).filter(it => (Number(it.cant) || 0) > 0)
       : (oc.items || []);
