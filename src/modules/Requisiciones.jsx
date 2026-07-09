@@ -1792,12 +1792,17 @@ function RecepcionOCModal({ oc, reqs, onClose, reload, currentUser, readOnly = f
           }
         }
 
+        // Politica direccion 2026-07-05: si NO hay factura del proveedor
+        // cargada al recibir, subir a Loggro solo cantidades (cost=0). Cuando
+        // llegue la factura se actualiza el precio al aplicarla en
+        // FacturaProveedorModal.
+        const hayFactura = !!(numFactura && numFactura.trim());
         const ingredientsPayload = recibidos
           .filter(r => (Number(r.cant_recibida) || 0) > 0 && r.loggro_id)
           .map(r => ({
             ingredient_id: r.loggro_id,
             quantity: Number(r.cant_recibida),
-            cost: Number(r.precioU) || 0,
+            cost: hayFactura ? (Number(r.precioU) || 0) : 0,
             // Unidad de ORIGEN (factura/OC). El edge function la compara con
             // la unidad del ingrediente en Loggro y convierte si difieren
             // (ej. factura en KG, Loggro en Gr → ×1000, costo ÷1000). Si la
@@ -1938,8 +1943,13 @@ function RecepcionOCModal({ oc, reqs, onClose, reload, currentUser, readOnly = f
         {/* Datos de factura del proveedor + bodega destino */}
         <div style={{ background: B.navy, borderRadius: 10, padding: 14, marginBottom: 14, display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
           <div>
-            <label style={LS}>Nº factura proveedor</label>
-            <input value={numFactura} onChange={e => setNumFactura(e.target.value)} placeholder="Ej: F-12345" style={IS} />
+            <label style={LS}>Nº factura proveedor (opcional)</label>
+            <input value={numFactura} onChange={e => setNumFactura(e.target.value)} placeholder="Ej: F-12345 · deja vacío si no llegó" style={IS} />
+            <div style={{ fontSize: 10, color: numFactura?.trim() ? B.success : B.warning, marginTop: 3 }}>
+              {numFactura?.trim()
+                ? "✓ Loggro recibirá cantidades + precios"
+                : "⚠ Sin factura: Loggro recibe solo cantidades (precios se actualizan cuando cargues la factura)"}
+            </div>
           </div>
           <div>
             <label style={LS}>Fecha factura</label>
