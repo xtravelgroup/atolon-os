@@ -1232,10 +1232,14 @@ function TabRecepciones({ ordenes, reqs, reload, currentUser }) {
     <>
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
         {ordenes.map(oc => {
-          const totalLineas = (oc.items || []).length;
+          // Cuando factura aplicada, ignorar items con cant=0 (no llegaron).
+          const itemsVisibles = oc.factura_aplicada
+            ? (oc.items || []).filter(it => (Number(it.cant) || 0) > 0)
+            : (oc.items || []);
+          const totalLineas = itemsVisibles.length;
           const recibidos = oc.recibidos || [];
           const completas = recibidos.filter(rx => {
-            const item = (oc.items || []).find((it, i) => it.id === rx.item_id || i === rx.idx);
+            const item = itemsVisibles.find((it, i) => it.id === rx.item_id || i === rx.idx);
             return item && (Number(rx.cant_recibida) || 0) >= Number(item.cant);
           }).length;
           const badge = OC_BADGE[oc.estado] || { bg: B.navyLight, color: "rgba(255,255,255,0.5)", label: oc.estado };
@@ -1458,7 +1462,14 @@ function RecepcionOCModal({ oc, reqs, onClose, reload, currentUser, readOnly = f
     // _unitDstOverride: override manual de la unidad destino para Loggro.
     // Persistido en items[i].unidad_loggro_override de la OC (no afecta la
     // unidad original de la factura — solo cómo subimos a Loggro).
-    return (oc.items || []).map(it => ({
+    //
+    // Politica direccion 2026-07-09: cuando la factura ya se aplico, los items
+    // con cant=0 (proveedor no los mando) se ocultan de la recepcion. Sin
+    // factura aplicada aun, se muestran todos para permitir recepcion parcial.
+    const items = oc.factura_aplicada
+      ? (oc.items || []).filter(it => (Number(it.cant) || 0) > 0)
+      : (oc.items || []);
+    return items.map(it => ({
       ...it,
       cant_recibida: map[it.id] || 0,
       _unitDstOverride: it.unidad_loggro_override || "",
