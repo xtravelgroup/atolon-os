@@ -934,9 +934,13 @@ export default function FacturaProveedorModal({ oc, onClose, reload, currentUser
       const subtotalOC = itemsFinales.reduce((s, it) => s + (Number(it.subtotal) || 0), 0);
 
       // 4a. Upsert de ESTA factura en oc_facturas (independiente de las demás).
-      const facturaSubtotal = data.subtotal_base || usarSubtotal;
-      const facturaIva      = data.iva_total || usarIva;
-      const facturaTotal    = Number(data.total) || (facturaSubtotal + facturaIva);
+      // Recalculamos SIEMPRE desde los items editados por el operador — antes
+      // se persistia data.subtotal / data.total (raw del AI del PDF) y si el
+      // operador editaba cantidades, precios o quitaba items la suma real no
+      // coincidia con el total guardado. Politica IVA-incluido: total = subtotal.
+      const facturaSubtotal = subtotalCalc;
+      const facturaIva      = ivaCalc;
+      const facturaTotal    = facturaSubtotal + facturaIva;
       const aplicadaPor     = currentUser?.email || currentUser?.nombre || "sistema";
       const { error: efu } = await supabase.from("oc_facturas").upsert({
         id: facturaId,
