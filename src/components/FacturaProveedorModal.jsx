@@ -828,8 +828,16 @@ export default function FacturaProveedorModal({ oc, onClose, reload, currentUser
           .filter(it => it.agregado_post_factura && it.codigo_barras)
           .map(it => String(it.codigo_barras))
       );
+      // Un item se agrega a la OC como NUEVO si:
+      //   - es_nuevo_oc=true (marcado explicitamente por el operador o el AI), o
+      //   - oc_idx=null (no matcheo con ningun item de la OC), aunque el
+      //     operador lo haya vinculado manualmente al catalogo (match_source=
+      //     'vinculado_manual'). Este caso escapaba antes porque el vinculo
+      //     manual dejaba es_nuevo_oc=false → el item se perdia silenciosamente.
+      // Excluir los no_facturado y los ya presentes por codigo de barras.
       const itemsNuevosOC = data.items
-        .filter(f => f.es_nuevo_oc && (f.codigo_barras || (f.nombre && f.nombre.trim())))
+        .filter(f => (f.es_nuevo_oc || f.oc_idx == null) && !f.no_facturado)
+        .filter(f => (f.codigo_barras || (f.nombre && f.nombre.trim())))
         .filter(f => !(f.codigo_barras && cbYaEnOC.has(String(f.codigo_barras))))
         .map(f => {
         const unPorPack      = Math.max(1, Number(f.unidades_por_paquete) || 1);
