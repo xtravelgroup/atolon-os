@@ -619,13 +619,20 @@ export default function FacturaProveedorModal({ oc, onClose, reload, currentUser
     setData(d => ({ ...d, items: d.items.map((it, j) => j === i ? { ...it, [k]: v } : it) }));
   }
 
-  // Recalcular subtotales en vivo
-  const subtotalCalc = data.items.reduce((s, it) => s + (Number(it.cantidad) || 0) * (Number(it.precio_unitario) || 0), 0);
+  // Recalcular subtotales en vivo — usar cantidad_paquete × precio_costo_pack
+  // que es la fuente de verdad (unidad de compra del proveedor). Antes
+  // usabamos cantidad × precio_unitario que daba resultados distintos por
+  // items donde cantidad_paquete != cantidad o precio_unitario != precio_costo_pack.
+  // El display de la tabla ya usa esta formula (linea Subtotal costo).
+  const subtotalCalc = data.items.reduce((s, it) =>
+    s + (it.es_bonificacion ? 0 :
+      (Number(it.cantidad_paquete ?? it.cantidad) || 0) *
+      (Number(it.precio_costo_pack ?? it.precio_costo_unit) || 0)), 0);
   const ivaCalc      = data.items.reduce((s, it) => s + (Number(it.iva) || 0), 0) || Number(data.iva) || 0;
   const totalCalc    = subtotalCalc + ivaCalc;
-  const usarSubtotal = Number(data.subtotal) || subtotalCalc;
-  const usarIva      = Number(data.iva)      || ivaCalc;
-  const usarTotal    = Number(data.total)    || (usarSubtotal + usarIva);
+  const usarSubtotal = subtotalCalc;  // ignorar data.subtotal (raw AI puede tener errores)
+  const usarIva      = ivaCalc;
+  const usarTotal    = totalCalc;
 
   // ── Diff detection ──────────────────────────────────────────────────
   // Detectamos qué cambió contra la OC original. Solo para items que están
@@ -849,6 +856,7 @@ export default function FacturaProveedorModal({ oc, onClose, reload, currentUser
           factura_consumo_pack: (Number(f.ico_valor_pack) || 0) + (Number(f.icl_valor_pack) || 0) + (Number(f.adv_valor_pack) || 0),
           es_bonificacion:      !!f.es_bonificacion,
           requiere_revision:    !!f.requiere_revision,
+          motivo_manual:        f.motivo_manual || null,
         };
       });
 
@@ -1012,6 +1020,28 @@ export default function FacturaProveedorModal({ oc, onClose, reload, currentUser
         const dc = Math.floor((new Date(data.fecha_vencimiento) - new Date(data.factura_fecha || new Date())) / 86400000);
         if (dc >= 0) updateOC.dias_credito = dc;
       }
+      // Agregar entries a cambios_historial para items nuevos con motivo manual.
+      // Esto deja trazabilidad de por que un item que no estaba en la OC original
+      // se agrego al recibir la factura.
+      const itemsConMotivo = itemsNuevosOC.filter(x => x.motivo_manual);
+      if (itemsConMotivo.length > 0) {
+        const nowIso = new Date().toISOString();
+        const nuevasEntradas = itemsConMotivo.map(it => ({
+          fecha: nowIso,
+          quien: aplicadaPor,
+          accion: `Item manual agregado desde factura #${data.factura_numero || "-"}: "${it.item || it.nombre}"`,
+          motivo: it.motivo_manual,
+          detalle: {
+            item: it.item || it.nombre,
+            cantidad: it.cant,
+            precio_unit: it.precioU,
+            subtotal: it.subtotal,
+            factura_id: facturaId,
+          },
+        }));
+        updateOC.cambios_historial = [...(oc.cambios_historial || []), ...nuevasEntradas];
+      }
+
       const { error: e1 } = await supabase.from("ordenes_compra").update(updateOC).eq("id", oc.id);
       if (e1) throw e1;
 
@@ -1441,26 +1471,58 @@ export default function FacturaProveedorModal({ oc, onClose, reload, currentUser
             <div style={{ background: B.navy, borderRadius: 10, overflow: "hidden", marginBottom: 14 }}>
               <div style={{ padding: "10px 14px", borderBottom: `1px solid ${B.navyLight}`, fontSize: 11, color: B.sand, fontWeight: 700, textTransform: "uppercase", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <span>Precios reales por item ({data.items.length})</span>
-                <button onClick={() => {
-                  setData(d => ({
-                    ...d,
-                    items: [...d.items, {
-                      oc_idx: null, ai_idx: null,
-                      codigo_barras: null, referencia_proveedor: null,
-                      nombre: "", cantidad_paquete: 1, unidades_por_paquete: 1,
-                      unidad_compra: "UND", unidad_individual: "UND",
-                      precio_base_pack: 0, iva_pct: 0, iva_valor_pack: 0,
-                      ico_valor_pack: 0, icl_valor_pack: 0, adv_valor_pack: 0,
-                      precio_costo_pack: 0, precio_final_pack: 0, subtotal_renglon: 0,
-                      cantidad: 1, unidad: "UND", precio_costo_unit: 0,
-                      precio_unitario: 0, precio_anterior: 0, iva: 0,
-                      es_bonificacion: true, requiere_revision: false,
-                      es_nuevo_oc: true, item_id: null,
-                    }],
-                  }));
-                }} style={{ padding: "4px 10px", fontSize: 10, fontWeight: 700, borderRadius: 6, border: `1px solid ${B.success}`, background: B.success + "22", color: B.success, cursor: "pointer", textTransform: "none" }}>
-                  + 🎁 Agregar bonificación
-                </button>
+                <div style={{ display: "flex", gap: 6 }}>
+                  <button onClick={() => {
+                    const motivo = window.prompt(
+                      "Motivo del item nuevo (obligatorio):\n\n" +
+                      "Este item llegó en la factura pero no estaba en la OC original. Explica por qué:\n" +
+                      "• Proveedor incluyó producto extra\n" +
+                      "• Cambio de producto solicitado\n" +
+                      "• Muestra o degustación\n" +
+                      "• Otro (especificar)"
+                    );
+                    if (!motivo || !motivo.trim()) return;
+                    setData(d => ({
+                      ...d,
+                      items: [...d.items, {
+                        oc_idx: null, ai_idx: null,
+                        codigo_barras: null, referencia_proveedor: null,
+                        nombre: "", cantidad_paquete: 1, unidades_por_paquete: 1,
+                        unidad_compra: "UND", unidad_individual: "UND",
+                        precio_base_pack: 0, iva_pct: 0, iva_valor_pack: 0,
+                        ico_valor_pack: 0, icl_valor_pack: 0, adv_valor_pack: 0,
+                        precio_costo_pack: 0, precio_final_pack: 0, subtotal_renglon: 0,
+                        cantidad: 1, unidad: "UND", precio_costo_unit: 0,
+                        precio_unitario: 0, precio_anterior: 0, iva: 0,
+                        es_bonificacion: false, requiere_revision: true,
+                        es_nuevo_oc: true, item_id: null,
+                        motivo_manual: motivo.trim(),
+                      }],
+                    }));
+                  }} style={{ padding: "4px 10px", fontSize: 10, fontWeight: 700, borderRadius: 6, border: `1px solid ${B.sky}`, background: B.sky + "22", color: B.sky, cursor: "pointer", textTransform: "none" }}>
+                    + ➕ Item nuevo
+                  </button>
+                  <button onClick={() => {
+                    setData(d => ({
+                      ...d,
+                      items: [...d.items, {
+                        oc_idx: null, ai_idx: null,
+                        codigo_barras: null, referencia_proveedor: null,
+                        nombre: "", cantidad_paquete: 1, unidades_por_paquete: 1,
+                        unidad_compra: "UND", unidad_individual: "UND",
+                        precio_base_pack: 0, iva_pct: 0, iva_valor_pack: 0,
+                        ico_valor_pack: 0, icl_valor_pack: 0, adv_valor_pack: 0,
+                        precio_costo_pack: 0, precio_final_pack: 0, subtotal_renglon: 0,
+                        cantidad: 1, unidad: "UND", precio_costo_unit: 0,
+                        precio_unitario: 0, precio_anterior: 0, iva: 0,
+                        es_bonificacion: true, requiere_revision: false,
+                        es_nuevo_oc: true, item_id: null,
+                      }],
+                    }));
+                  }} style={{ padding: "4px 10px", fontSize: 10, fontWeight: 700, borderRadius: 6, border: `1px solid ${B.success}`, background: B.success + "22", color: B.success, cursor: "pointer", textTransform: "none" }}>
+                    + 🎁 Bonificación
+                  </button>
+                </div>
               </div>
               <table style={{ width: "100%", fontSize: 12, borderCollapse: "collapse" }}>
                 <thead>
@@ -1757,7 +1819,7 @@ export default function FacturaProveedorModal({ oc, onClose, reload, currentUser
                   </tr>
                   <tr style={{ background: B.navy }}>
                     <td colSpan={6} style={{ padding: "10px 8px", textAlign: "right", color: "#fff", fontSize: 13, fontWeight: 800 }}>TOTAL FACTURA</td>
-                    <td style={{ padding: "10px 8px", textAlign: "right", color: B.success, fontWeight: 800, fontSize: 14 }}>{COP(data.total || (usarSubtotal + usarIva))}</td>
+                    <td style={{ padding: "10px 8px", textAlign: "right", color: B.success, fontWeight: 800, fontSize: 14 }}>{COP(usarTotal)}</td>
                   </tr>
                 </tfoot>
               </table>
