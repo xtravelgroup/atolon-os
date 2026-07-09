@@ -1480,7 +1480,13 @@ function RecepcionOCModal({ oc, reqs, onClose, reload, currentUser, readOnly = f
   });
   const [notas, setNotas] = useState(oc.notas_recibo || "");
   const [numFactura, setNumFactura] = useState(oc.factura_numero || "");
-  const [fechaFactura, setFechaFactura] = useState(oc.factura_fecha || todayStr());
+  // Politica direccion 2026-07-09: la recepcion pregunta la FECHA DE RECEPCION
+  // (no la fecha de la factura). Esa fecha viaja a Loggro como la fecha del
+  // movimiento Entrada-Compra. La fecha de la factura queda en oc.factura_fecha
+  // desde el flujo de aplicar factura (FacturaProveedorModal), no se toca aqui.
+  const [fechaRecepcion, setFechaRecepcion] = useState(
+    (oc.fecha_recepcion || "").slice(0, 10) || todayStr()
+  );
   const [catalogo, setCatalogo] = useState([]); // catálogo completo para auto-link
   // El registro en Loggro es SIEMPRE automático para items con loggro_id.
   // No hay opción de desactivar — eliminamos el checkbox para que no dependa
@@ -1639,10 +1645,13 @@ function RecepcionOCModal({ oc, reqs, onClose, reload, currentUser, readOnly = f
     if (todoRecibido) nuevoEstado = "recibida";
     else if (algoRecibido) nuevoEstado = "recibida_parcial";
 
-    // Fecha de recepción ORIGINAL: solo se fija la primera vez. En re-guardados
-    // (ej. vincular productos a Loggro después) NO se sobreescribe — así la
-    // entrada a Loggro queda con la fecha real en que llegó la mercancía.
-    const fechaRecepcionOriginal = oc.fecha_recepcion || oc.recibida_at || new Date().toISOString();
+    // Fecha de recepción: el operador la selecciona en el modal (default hoy).
+    // Si ya existía una fecha_recepcion previa (por ej. recepción parcial anterior)
+    // se preserva salvo que el operador la haya cambiado explicitamente en el
+    // input. La fecha que viaja a Loggro es SIEMPRE esta.
+    const fechaRecepcionOriginal = fechaRecepcion
+      ? `${fechaRecepcion}T${(oc.fecha_recepcion || new Date().toISOString()).slice(11)}`
+      : (oc.fecha_recepcion || oc.recibida_at || new Date().toISOString());
 
     // Persistir el override de unidad por item en oc.items[] para que sea
     // recordado en futuras recepciones (ej. recepción parcial 1 con override,
@@ -1670,7 +1679,8 @@ function RecepcionOCModal({ oc, reqs, onClose, reload, currentUser, readOnly = f
       items: itemsActualizados,
       notas_recibo: notas,
       factura_numero: numFactura.trim() || null,
-      factura_fecha: fechaFactura || null,
+      // factura_fecha: NO se toca desde recepcion. Viene del flujo de aplicar
+      // factura (FacturaProveedorModal). Politica direccion 2026-07-09.
       fecha_recepcion: fechaRecepcionOriginal,
       recibida_por: currentUser.nombre,
     }).eq("id", oc.id);
@@ -1862,7 +1872,9 @@ function RecepcionOCModal({ oc, reqs, onClose, reload, currentUser, readOnly = f
               // fecha en que se vincularon los productos / se re-guardó).
               date: fechaRecepcionOriginal,
               note: `OC ${oc.codigo}${oc.requisicion_id ? ` · Req ${oc.requisicion_id}` : ""}${notas ? " · " + notas : ""}`,
-              invoice: numFactura ? { number: numFactura, date: fechaFactura } : undefined,
+              // invoice.date: fecha de la factura del proveedor (no la de recepcion).
+              // Viene de oc.factura_fecha (persistida al aplicar la factura).
+              invoice: numFactura ? { number: numFactura, date: oc.factura_fecha || null } : undefined,
               ingredients: ingredientsPayload,
             }),
           });
@@ -1955,8 +1967,11 @@ function RecepcionOCModal({ oc, reqs, onClose, reload, currentUser, readOnly = f
             </div>
           </div>
           <div>
-            <label style={LS}>Fecha factura</label>
-            <input type="date" value={fechaFactura} onChange={e => setFechaFactura(e.target.value)} style={IS} />
+            <label style={LS}>Fecha de recepción</label>
+            <input type="date" value={fechaRecepcion} onChange={e => setFechaRecepcion(e.target.value)} style={IS} />
+            <div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", marginTop: 3 }}>
+              Esta fecha viaja a Loggro como fecha del movimiento.
+            </div>
           </div>
           <div>
             <label style={LS}>Bodega destino</label>
