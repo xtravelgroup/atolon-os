@@ -2019,29 +2019,25 @@ function RecepcionOCModal({ oc, reqs, onClose, reload, currentUser, readOnly = f
                           <span style={{ fontSize: 9, color: B.warning, fontWeight: 700, padding: "1px 6px", borderRadius: 4, background: B.warning + "22" }}>
                             ⚠ Sin Loggro
                           </span>
-                          <select
-                            value=""
-                            onChange={e => e.target.value && vincularManual(i, e.target.value)}
-                            style={{ fontSize: 10, padding: "2px 4px", borderRadius: 4, background: B.navy, color: B.sky, border: `1px solid ${B.sky}55`, maxWidth: 200 }}>
-                            <option value="">🔗 Vincular a producto…</option>
-                            {catalogo.filter(c => c.loggro_id).map(c => (
-                              <option key={c.id} value={c.id}>{c.nombre} {c.unidad ? `(${c.unidad})` : ""}</option>
-                            ))}
-                          </select>
+                          <BuscadorLoggro
+                            catalogo={catalogo}
+                            excludeId={null}
+                            placeholder="🔗 Vincular a producto…"
+                            color={B.sky}
+                            onSelect={id => vincularManual(i, id)}
+                            preselNombre={r.item || r.nombre}
+                          />
                         </div>
                       ) : (
                         <div style={{ fontSize: 9, color: B.success, marginTop: 3, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
                           <span>🔗 Vinculado a Loggro: <strong>{nombreCatalogo}</strong></span>
-                          <select
-                            value=""
-                            onChange={e => e.target.value && vincularManual(i, e.target.value)}
-                            title="Cambiar el producto/ingrediente de Loggro vinculado"
-                            style={{ fontSize: 10, padding: "2px 4px", borderRadius: 4, background: B.navy, color: B.sand, border: `1px solid ${B.sand}55`, maxWidth: 200 }}>
-                            <option value="">✏️ Cambiar vínculo…</option>
-                            {catalogo.filter(c => c.loggro_id && c.id !== r.item_id).map(c => (
-                              <option key={c.id} value={c.id}>{c.nombre} {c.unidad ? `(${c.unidad})` : ""}</option>
-                            ))}
-                          </select>
+                          <BuscadorLoggro
+                            catalogo={catalogo}
+                            excludeId={r.item_id}
+                            placeholder="✏️ Cambiar vínculo…"
+                            color={B.sand}
+                            onSelect={id => vincularManual(i, id)}
+                          />
                           {nombreDifiere && (
                             <button onClick={() => actualizarNombreProducto(i)}
                               disabled={actualizandoNombre === i}
@@ -3807,6 +3803,98 @@ export function TabMesaCompras({ reqs, ordenes, proveedores, currentUser, reload
 // LinkLoggroModal — vincular un ítem de Mesa de Compras a un producto del
 // catálogo que tenga loggro_id, para que llegue a la recepción ya enlazado.
 // ═══════════════════════════════════════════════════════════════════════════
+// Combobox inline con buscador para vincular items a productos del catalogo
+// con Loggro. Reemplaza al <select> nativo en el modal de Recepcion donde el
+// operador solo podia navegar por primera letra. Ahora escribe y filtra.
+function BuscadorLoggro({ catalogo, excludeId, placeholder, color, onSelect, preselNombre }) {
+  const [q, setQ] = useState("");
+  const [open, setOpen] = useState(false);
+  const [hi, setHi] = useState(0);
+  const boxRef = useRef(null);
+
+  const norm = (s) => String(s || "").trim().toLowerCase();
+  const opciones = useMemo(() => {
+    const base = (catalogo || []).filter(c => c.loggro_id && c.id !== excludeId);
+    if (!q.trim()) return base.slice(0, 60);
+    const tokens = norm(q).split(/\s+/).filter(Boolean);
+    return base
+      .filter(c => tokens.every(t => norm(c.nombre).includes(t) || norm(c.categoria || "").includes(t)))
+      .slice(0, 60);
+  }, [catalogo, q, excludeId]);
+
+  useEffect(() => {
+    if (open && preselNombre && !q) setQ(preselNombre);
+  }, [open]); // eslint-disable-line
+
+  useEffect(() => { setHi(0); }, [q]);
+
+  useEffect(() => {
+    const onClickOutside = (e) => {
+      if (boxRef.current && !boxRef.current.contains(e.target)) setOpen(false);
+    };
+    if (open) document.addEventListener("mousedown", onClickOutside);
+    return () => document.removeEventListener("mousedown", onClickOutside);
+  }, [open]);
+
+  const pick = (c) => { onSelect(c.id); setQ(""); setOpen(false); };
+
+  const onKeyDown = (e) => {
+    if (e.key === "ArrowDown") { e.preventDefault(); setHi(h => Math.min(opciones.length - 1, h + 1)); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); setHi(h => Math.max(0, h - 1)); }
+    else if (e.key === "Enter" && opciones[hi]) { e.preventDefault(); pick(opciones[hi]); }
+    else if (e.key === "Escape") { setOpen(false); }
+  };
+
+  return (
+    <div ref={boxRef} style={{ position: "relative", display: "inline-block" }}>
+      <input
+        type="text"
+        value={q}
+        placeholder={placeholder}
+        onFocus={() => setOpen(true)}
+        onChange={e => { setQ(e.target.value); setOpen(true); }}
+        onKeyDown={onKeyDown}
+        style={{
+          fontSize: 10, padding: "3px 8px", borderRadius: 4,
+          background: B.navy, color, border: `1px solid ${color}55`,
+          minWidth: 200, outline: "none",
+        }} />
+      {open && opciones.length > 0 && (
+        <div style={{
+          position: "absolute", top: "100%", left: 0, marginTop: 2, zIndex: 50,
+          background: B.navyMid, border: `1px solid ${B.navyLight}`, borderRadius: 6,
+          maxHeight: 280, overflowY: "auto", minWidth: 260, width: "max-content", maxWidth: 400,
+          boxShadow: "0 4px 12px rgba(0,0,0,0.4)",
+        }}>
+          {opciones.map((c, idx) => (
+            <div key={c.id}
+              onMouseDown={e => { e.preventDefault(); pick(c); }}
+              onMouseEnter={() => setHi(idx)}
+              style={{
+                padding: "6px 10px", fontSize: 11, cursor: "pointer",
+                background: idx === hi ? B.sky + "33" : "transparent",
+                color: B.white, display: "flex", justifyContent: "space-between", gap: 8,
+                borderTop: idx > 0 ? `1px solid ${B.navyLight}55` : "none",
+              }}>
+              <span>{c.nombre}</span>
+              <span style={{ fontSize: 9, color: B.sand, whiteSpace: "nowrap" }}>{c.unidad || "—"}</span>
+            </div>
+          ))}
+        </div>
+      )}
+      {open && opciones.length === 0 && (
+        <div style={{
+          position: "absolute", top: "100%", left: 0, marginTop: 2, zIndex: 50,
+          background: B.navyMid, border: `1px solid ${B.navyLight}`, borderRadius: 6,
+          padding: "8px 12px", fontSize: 11, color: "rgba(255,255,255,0.5)", minWidth: 220,
+        }}>
+          Sin coincidencias.
+        </div>
+      )}
+    </div>
+  );
+}
+
 function LinkLoggroModal({ mesaItem, catalogo, onClose, onPick }) {
   const [q, setQ] = useState(mesaItem?.nombre || "");
   const norm = (s) => String(s || "").trim().toLowerCase();
