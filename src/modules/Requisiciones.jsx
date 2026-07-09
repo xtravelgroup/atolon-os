@@ -1206,13 +1206,16 @@ function TabRecepciones({ ordenes, reqs, reload, currentUser }) {
     });
   }, [ordenes]);
 
-  // Badges por estado de OC
+  // Badges por estado de OC. Nota: en la vista de Recepcion NO exponemos
+  // estados de pago (anticipo_pendiente, pagada, etc.) — se muestran como
+  // 'En curso' para mantener el foco operacional.
   const OC_BADGE = {
     emitida:            { bg: "#1E3566", color: B.sky,     label: "Emitida" },
     enviada:            { bg: "#1E3566", color: B.sky,     label: "Enviada al proveedor" },
     confirmada:         { bg: "#153322", color: B.success, label: "Confirmada" },
     ordenada:           { bg: "#153322", color: B.success, label: "Ordenada" },
-    pagada:             { bg: "#2A220A", color: B.warning, label: "Pagada" },
+    pagada:             { bg: "#153322", color: B.success, label: "En curso" },
+    anticipo_pendiente: { bg: "#1E3566", color: B.sky,     label: "En curso" },
     recibida_parcial:   { bg: "#1E3F2A", color: "#a3e635", label: "Recibida parcial" },
     recibida:           { bg: "#153322", color: "#6DD4A0", label: "Recibida" },
   };
@@ -1922,23 +1925,9 @@ function RecepcionOCModal({ oc, reqs, onClose, reload, currentUser, readOnly = f
           <button onClick={onClose} style={{ background: "none", border: "none", color: B.sand, fontSize: 20, cursor: "pointer" }}>×</button>
         </div>
 
-        {/* ⚠ Aviso informativo de anticipo pendiente (NO bloquea recepción).
-             Politica: si la mercancia llego se debe poder recibir aunque no se
-             haya pagado el anticipo o no exista factura. */}
-        {oc.anticipo_requerido && !oc.anticipo_pagado && (
-          <div style={{
-            background: `${B.warning}22`, border: `1px solid ${B.warning}55`, borderRadius: 10,
-            padding: "12px 14px", marginBottom: 14,
-          }}>
-            <div style={{ fontSize: 12, fontWeight: 800, color: B.warning, marginBottom: 4 }}>
-              ⚠ Recordatorio: anticipo pendiente de pago
-            </div>
-            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.75)" }}>
-              Esta OC tiene anticipo del <strong>{oc.anticipo_porcentaje || "?"}%</strong> ({(oc.anticipo_monto || 0).toLocaleString("es-CO")}) aún sin pagar.
-              Puedes recibir la mercancía; contabilidad debe conciliar el pago en <strong>Compras → Anticipos pendientes</strong>.
-            </div>
-          </div>
-        )}
+        {/* Politica direccion 2026-07-05: la vista de recepcion NO muestra
+             informacion de pago (anticipos, facturas pagadas, etc.). Recepcion
+             es operacion fisica; contabilidad concilia pagos aparte. */}
 
         {/* Datos de factura del proveedor + bodega destino */}
         <div style={{ background: B.navy, borderRadius: 10, padding: 14, marginBottom: 14, display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
