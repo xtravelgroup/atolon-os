@@ -1610,12 +1610,8 @@ function RecepcionOCModal({ oc, reqs, onClose, reload, currentUser, readOnly = f
   );
 
   const guardar = async () => {
-    // ── Fix #6: bloquear recepción si anticipo requerido y no pagado ──
-    if (oc.anticipo_requerido && !oc.anticipo_pagado) {
-      alert(`⛔ Esta OC requiere anticipo de ${oc.anticipo_porcentaje || "?"}% (${(oc.anticipo_monto || 0).toLocaleString("es-CO")}) y aún NO ha sido pagado.\n\nNo se puede registrar recepción hasta que Contabilidad marque el anticipo como pagado en la pestaña "Anticipos pendientes" del módulo Compras.`);
-      return;
-    }
-
+    // Politica: si la mercancia llego se debe poder recibir aunque el anticipo
+    // no este pagado o la factura no exista. Contabilidad concilia despues.
     setSaving(true);
     const totalEsperado = (oc.items || []).reduce((s, it) => s + Number(it.cant), 0);
     const totalRecibido = recibidos.reduce((s, r) => s + Number(r.cant_recibida || 0), 0);
@@ -1921,19 +1917,20 @@ function RecepcionOCModal({ oc, reqs, onClose, reload, currentUser, readOnly = f
           <button onClick={onClose} style={{ background: "none", border: "none", color: B.sand, fontSize: 20, cursor: "pointer" }}>×</button>
         </div>
 
-        {/* ⛔ Aviso de anticipo pendiente — bloquea recepción */}
+        {/* ⚠ Aviso informativo de anticipo pendiente (NO bloquea recepción).
+             Politica: si la mercancia llego se debe poder recibir aunque no se
+             haya pagado el anticipo o no exista factura. */}
         {oc.anticipo_requerido && !oc.anticipo_pagado && (
           <div style={{
-            background: `${B.danger}22`, border: `2px solid ${B.danger}`, borderRadius: 10,
-            padding: "14px 16px", marginBottom: 14,
+            background: `${B.warning}22`, border: `1px solid ${B.warning}55`, borderRadius: 10,
+            padding: "12px 14px", marginBottom: 14,
           }}>
-            <div style={{ fontSize: 13, fontWeight: 800, color: B.danger, marginBottom: 4 }}>
-              ⛔ Anticipo pendiente · No se puede recibir
+            <div style={{ fontSize: 12, fontWeight: 800, color: B.warning, marginBottom: 4 }}>
+              ⚠ Recordatorio: anticipo pendiente de pago
             </div>
-            <div style={{ fontSize: 12, color: "rgba(255,255,255,0.85)" }}>
-              Esta OC requiere anticipo del <strong>{oc.anticipo_porcentaje || "?"}%</strong> ({(oc.anticipo_monto || 0).toLocaleString("es-CO")}).
-              Contabilidad debe marcar el anticipo como pagado en
-              <strong> Compras → Anticipos pendientes</strong> antes de poder registrar la recepción.
+            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.75)" }}>
+              Esta OC tiene anticipo del <strong>{oc.anticipo_porcentaje || "?"}%</strong> ({(oc.anticipo_monto || 0).toLocaleString("es-CO")}) aún sin pagar.
+              Puedes recibir la mercancía; contabilidad debe conciliar el pago en <strong>Compras → Anticipos pendientes</strong>.
             </div>
           </div>
         )}
@@ -2117,9 +2114,8 @@ function RecepcionOCModal({ oc, reqs, onClose, reload, currentUser, readOnly = f
         <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
           <button onClick={onClose} style={BTN(B.navyLight)}>Cancelar</button>
           <button onClick={guardar}
-            disabled={saving || (oc.anticipo_requerido && !oc.anticipo_pagado)}
-            title={oc.anticipo_requerido && !oc.anticipo_pagado ? "Anticipo pendiente — no se puede recibir" : ""}
-            style={{ ...BTN(B.success), opacity: (oc.anticipo_requerido && !oc.anticipo_pagado) ? 0.4 : 1, cursor: (oc.anticipo_requerido && !oc.anticipo_pagado) ? "not-allowed" : "pointer" }}>
+            disabled={saving}
+            style={{ ...BTN(B.success), opacity: saving ? 0.6 : 1, cursor: saving ? "wait" : "pointer" }}>
             {saving ? "Guardando..." : "Guardar recepción"}
           </button>
         </div>
