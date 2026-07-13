@@ -449,6 +449,7 @@ function TabConsumoComedor({ fecha, consumo, items, userEmail, onReload }) {
   const [locacionId, setLocacionId] = useState("LOC-ALMACEN-COCINA");
   const [saving, setSaving] = useState(false);
   const [locaciones, setLocaciones] = useState([]);
+  const [editando, setEditando] = useState(null); // registro de comedor_consumo en edicion
   // Filas de la tabla: cada una es un item a cargar. Se preserva mientras el
   // modal esté abierto (multi-item batch).
   const [filas, setFilas] = useState(() => [
@@ -534,6 +535,40 @@ function TabConsumoComedor({ fecha, consumo, items, userEmail, onReload }) {
     setTimeout(onReload, 1200);
   };
 
+  // Anular (soft delete) un registro de consumo. Direccion 2026-07-13.
+  const borrarConsumo = async (c) => {
+    const motivo = window.prompt(
+      `Anular consumo:\n\n${itemsById[c.item_id]?.nombre || c.item_id}\n${Number(c.cantidad).toLocaleString("es-CO")} ${c.unidad || ""}\n\nMotivo (obligatorio):`
+    );
+    if (!motivo || !motivo.trim()) return;
+    const { error } = await supabase.from("comedor_consumo").update({
+      anulado: true,
+      anulado_por: userEmail,
+      anulado_at: new Date().toISOString(),
+      motivo_anulacion: motivo.trim(),
+    }).eq("id", c.id);
+    if (error) return alert("Error: " + error.message);
+    setTimeout(onReload, 500);
+  };
+
+  // Guardar edicion de un registro existente. Recalcula costo_total.
+  const guardarEdicion = async (patch) => {
+    if (!editando) return;
+    const qty = Number(patch.cantidad);
+    if (!qty || qty <= 0) return alert("Cantidad inválida");
+    const precio = Number(patch.precio_unitario ?? editando.precio_unitario) || 0;
+    const { error } = await supabase.from("comedor_consumo").update({
+      cantidad: qty,
+      comida: patch.comida || editando.comida,
+      notas: patch.notas?.trim() || null,
+      precio_unitario: precio,
+      costo_total: qty * precio,
+    }).eq("id", editando.id);
+    if (error) return alert("Error: " + error.message);
+    setEditando(null);
+    setTimeout(onReload, 500);
+  };
+
   return (
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, flexWrap: "wrap", gap: 8 }}>
@@ -573,7 +608,7 @@ function TabConsumoComedor({ fecha, consumo, items, userEmail, onReload }) {
                 {items.map(c => {
                   const it = itemsById[c.item_id];
                   return (
-                    <div key={c.id} style={{ display: "grid", gridTemplateColumns: "1fr 100px 100px 100px", gap: 10, padding: "10px 16px", borderTop: `1px solid ${B.navyLight}55`, fontSize: 12, alignItems: "center" }}>
+                    <div key={c.id} style={{ display: "grid", gridTemplateColumns: "1fr 100px 100px 100px 60px", gap: 10, padding: "10px 16px", borderTop: `1px solid ${B.navyLight}55`, fontSize: 12, alignItems: "center" }}>
                       <div>
                         <div style={{ fontWeight: 600, color: "#fff" }}>{it?.nombre || c.item_id}</div>
                         {c.notas && <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)" }}>{c.notas}</div>}
@@ -583,6 +618,12 @@ function TabConsumoComedor({ fecha, consumo, items, userEmail, onReload }) {
                       </div>
                       <div style={{ textAlign: "right", color: "rgba(255,255,255,0.55)" }}>{COPx(c.precio_unitario)}</div>
                       <div style={{ textAlign: "right", color: B.sky, fontWeight: 700 }}>{COPx(c.costo_total)}</div>
+                      <div style={{ display: "flex", gap: 4, justifyContent: "flex-end" }}>
+                        <button type="button" onClick={() => setEditando(c)} title="Editar"
+                          style={{ background: B.sky + "22", color: B.sky, border: "none", borderRadius: 4, padding: "3px 7px", cursor: "pointer", fontSize: 11 }}>✎</button>
+                        <button type="button" onClick={() => borrarConsumo(c)} title="Anular consumo"
+                          style={{ background: B.danger + "22", color: B.danger, border: "none", borderRadius: 4, padding: "3px 7px", cursor: "pointer", fontSize: 11 }}>🗑</button>
+                      </div>
                     </div>
                   );
                 })}
@@ -733,6 +774,96 @@ function TabConsumoComedor({ fecha, consumo, items, userEmail, onReload }) {
           </div>
         </div>
       )}
+
+      {/* Modal de edicion de un registro de consumo */}
+      {editando && (
+        <EditarConsumoModal
+          registro={editando}
+          item={itemsById[editando.item_id]}
+          onClose={() => setEditando(null)}
+          onSave={guardarEdicion}
+        />
+      )}
+    </div>
+  );
+}
+
+// ─── Modal de edicion de un registro de consumo ──────────────────────
+function EditarConsumoModal({ registro, item, onClose, onSave }) {
+  const [comida, setComida] = useState(registro.comida);
+  const [cantidad, setCantidad] = useState(String(registro.cantidad));
+  const [precioUnit, setPrecioUnit] = useState(String(registro.precio_unitario));
+  const [notas, setNotas] = useState(registro.notas || "");
+  const [saving, setSaving] = useState(false);
+
+  const costo = (Number(cantidad) || 0) * (Number(precioUnit) || 0);
+
+  const guardar = async () => {
+    setSaving(true);
+    await onSave({ comida, cantidad, precio_unitario: precioUnit, notas });
+    setSaving(false);
+  };
+
+  return (
+    <div onClick={e => e.target === e.currentTarget && onClose()}
+      style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 1100, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "40px 16px", overflowY: "auto" }}>
+      <div style={{ background: B.navy, borderRadius: 14, padding: 22, maxWidth: 480, width: "100%", color: "#fff", border: `1px solid ${B.navyLight}` }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 14 }}>
+          <div>
+            <div style={{ fontSize: 18, fontWeight: 800 }}>Editar consumo</div>
+            <div style={{ fontSize: 12, color: "rgba(255,255,255,0.55)", marginTop: 2 }}>
+              {item?.nombre || registro.item_id} · {item?.unidad || registro.unidad}
+            </div>
+          </div>
+          <button type="button" onClick={onClose} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.4)", fontSize: 22, cursor: "pointer" }}>×</button>
+        </div>
+
+        <div style={{ marginBottom: 12 }}>
+          <label style={LS}>Comida</label>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 6 }}>
+            {COMIDAS.map(c => (
+              <button key={c.k} type="button" onClick={() => setComida(c.k)}
+                style={{ padding: "8px", borderRadius: 8, border: comida === c.k ? `2px solid ${c.color}` : `1px solid ${B.navyLight}`,
+                  background: comida === c.k ? c.color + "22" : B.navyMid, color: comida === c.k ? c.color : "rgba(255,255,255,0.6)", cursor: "pointer", fontSize: 11, fontWeight: 700 }}>
+                {c.icon} {c.l}
+              </button>
+            ))}
+            <button type="button" onClick={() => setComida("general")}
+              style={{ padding: "8px", borderRadius: 8, border: comida === "general" ? `2px solid ${B.sky}` : `1px solid ${B.navyLight}`,
+                background: comida === "general" ? B.sky + "22" : B.navyMid, color: comida === "general" ? B.sky : "rgba(255,255,255,0.6)", cursor: "pointer", fontSize: 11, fontWeight: 700 }}>
+              📦 General
+            </button>
+          </div>
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 12 }}>
+          <div>
+            <label style={LS}>Cantidad ({item?.unidad || registro.unidad})</label>
+            <input type="number" value={cantidad} onChange={e => setCantidad(e.target.value)} step="0.01" min="0.01" autoFocus style={IS} />
+          </div>
+          <div>
+            <label style={LS}>Precio unitario</label>
+            <input type="number" value={precioUnit} onChange={e => setPrecioUnit(e.target.value)} step="0.01" min="0" style={IS} />
+          </div>
+        </div>
+
+        <div style={{ marginBottom: 12 }}>
+          <label style={LS}>Notas</label>
+          <input value={notas} onChange={e => setNotas(e.target.value)} style={IS} placeholder="(opcional)" />
+        </div>
+
+        <div style={{ background: B.navyMid, borderRadius: 8, padding: "10px 14px", marginBottom: 12, display: "flex", justifyContent: "space-between", fontSize: 13 }}>
+          <span style={{ color: "rgba(255,255,255,0.6)" }}>Costo total</span>
+          <strong style={{ color: B.sky, fontFamily: "'Barlow Condensed', sans-serif", fontSize: 20 }}>{COPx(costo)}</strong>
+        </div>
+
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+          <button type="button" onClick={onClose} style={BTN(B.navyLight)} disabled={saving}>Cancelar</button>
+          <button type="button" onClick={guardar} style={BTN(B.success)} disabled={saving}>
+            {saving ? "Guardando…" : "Guardar cambios"}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
