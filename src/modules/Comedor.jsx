@@ -516,20 +516,21 @@ function TabConsumoComedor({ fecha, consumo, items, userEmail, onReload }) {
       };
     });
     const { data: inserted, error } = await supabase
-      .from("comedor_consumo").insert(rows).select("id, item_id");
+      .from("comedor_consumo").insert(rows).select("id, item_id, comida");
     setSaving(false);
     if (error) return alert("Error: " + error.message);
-    // Sync a Loggro por cada uno con loggro_id (fire-and-forget)
+    // Sync a Loggro EN BATCH: un movimiento "Salida - Otro" por cada comida
+    // (desayuno / almuerzo / cena) que agrupe todos los items de esa comida.
+    // Antes disparaba una salida por cada consumo → 24 movimientos por dia;
+    // ahora son 3 (uno por comida). Direccion 2026-07-13.
     const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
-    (inserted || []).forEach(row => {
-      const it = itemsById[row.item_id];
-      if (it?.loggro_id) {
-        fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/loggro-sync/consumo-comedor-salida`, {
-          method: "POST",
-          headers: { apikey: anonKey, Authorization: `Bearer ${anonKey}`, "Content-Type": "application/json" },
-          body: JSON.stringify({ consumo_id: row.id }),
-        }).catch(() => {});
-      }
+    const comidasUsadas = [...new Set((inserted || []).map(r => r.comida))];
+    comidasUsadas.forEach(comida => {
+      fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/loggro-sync/consumo-comedor-salida-batch`, {
+        method: "POST",
+        headers: { apikey: anonKey, Authorization: `Bearer ${anonKey}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ fecha, comida }),
+      }).catch(() => {});
     });
     cerrarModal();
     setTimeout(onReload, 1200);

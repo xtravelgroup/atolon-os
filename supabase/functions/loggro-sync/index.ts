@@ -2685,6 +2685,116 @@ serve(async (req) => {
     }
 
     // ════════════════════════════════════════════════════════════════════
+    // POST /loggro-sync/consumo-comedor-salida-batch
+    // Body: { fecha: 'YYYY-MM-DD', comida: 'desayuno'|'almuerzo'|'cena'|'general' }
+    //
+    // Crea UN solo movimiento "Salida - Otro" (type=7) en Loggro que
+    // agrupa TODOS los consumos pendientes del comedor para esa fecha+comida.
+    // Un movimiento por comida en vez de 24 sueltos. Direccion 2026-07-13.
+    //
+    // - Si dos consumos apuntan al mismo loggro_id, se suman las cantidades.
+    // - Consumos sin loggro_id se marcan error y se saltan.
+    // - Consumos ya sincronizados (loggro_movement_id != null) se saltan.
+    // - Todos los consumos que entren en el movimiento quedan apuntando al
+    //   mismo loggro_movement_id (para poder revertir el grupo entero).
+    // ════════════════════════════════════════════════════════════════════
+    if (req.method === "POST" && path === "/consumo-comedor-salida-batch") {
+      const body = await req.json().catch(() => ({}));
+      const fecha = String(body?.fecha || "").slice(0, 10);
+      const comida = String(body?.comida || "");
+      if (!fecha || !comida) return json({ ok: false, error: "fecha y comida requeridos" }, 400);
+
+      const supaUrl = Deno.env.get("SUPABASE_URL");
+      const supaKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+      const sb = (p: string, init: RequestInit = {}) => fetch(`${supaUrl}/rest/v1/${p}`, {
+        ...init,
+        headers: { apikey: supaKey!, Authorization: `Bearer ${supaKey}`, "Content-Type": "application/json", Prefer: "return=representation", ...(init.headers || {}) },
+      }).then(r => r.json());
+
+      const consumos: any = await sb(`comedor_consumo?fecha=eq.${fecha}&comida=eq.${comida}&anulado=eq.false&loggro_movement_id=is.null&select=*`);
+      if (!Array.isArray(consumos) || consumos.length === 0) {
+        return json({ ok: true, skipped: "nada_pendiente", fecha, comida, count: 0 });
+      }
+
+      const itemIds = [...new Set(consumos.map((c: any) => c.item_id))];
+      const itemsFilter = itemIds.map((id: any) => `"${id}"`).join(",");
+      const items: any = await sb(`items_catalogo?id=in.(${itemsFilter})&select=id,nombre,loggro_id`);
+      const itemById = new Map((Array.isArray(items) ? items : []).map((it: any) => [it.id, it]));
+
+      const sumByLoggroId = new Map<string, { quantity: number; price: number; count: number; nombres: string[] }>();
+      const sinLoggro: string[] = [];
+      for (const c of consumos) {
+        const it: any = itemById.get(c.item_id);
+        if (!it?.loggro_id) {
+          sinLoggro.push(c.id);
+          await sb(`comedor_consumo?id=eq.${c.id}`, {
+            method: "PATCH",
+            body: JSON.stringify({ loggro_sync_status: "error", loggro_sync_error: "Item sin loggro_id", loggro_sync_at: new Date().toISOString() }),
+          });
+          continue;
+        }
+        const prev = sumByLoggroId.get(it.loggro_id) || { quantity: 0, price: 0, count: 0, nombres: [] };
+        prev.quantity += Number(c.cantidad) || 0;
+        prev.price = Number(c.precio_unitario) || prev.price;
+        prev.count++;
+        prev.nombres.push(it.nombre);
+        sumByLoggroId.set(it.loggro_id, prev);
+      }
+
+      if (sumByLoggroId.size === 0) {
+        return json({ ok: false, error: "Ningun item vinculado a Loggro", sin_loggro: sinLoggro }, 422);
+      }
+
+      const tipoLabel = comida === "desayuno" ? "Desayuno" : comida === "almuerzo" ? "Almuerzo" : comida === "cena" ? "Cena" : "Comedor";
+      const note = `Comedor ${fecha} — ${tipoLabel}`;
+      const { businessId, userId } = await getLoggroIdentity();
+      const fechaMovISO = new Date(`${fecha}T12:00:00.000Z`).toISOString();
+      const now = new Date().toISOString();
+      const ingredients = [...sumByLoggroId.entries()].map(([loggro_id, v]) => ({
+        ingredient: loggro_id,
+        quantity: v.quantity,
+        price: v.price,
+      }));
+
+      const movResult = await loggroRaw("POST", "/inventories", {
+        business: businessId, user: userId, date: fechaMovISO,
+        type: 7, isSubtracted: true, isProduction: false, isMoveTo: false, deleted: false,
+        note,
+        ingredients,
+        createdOn: now, modifiedOn: now,
+      });
+      if (!movResult.ok) {
+        const errStr = JSON.stringify(movResult.body || {}).slice(0, 500);
+        const idsFilter = consumos.map((c: any) => `"${c.id}"`).join(",");
+        await sb(`comedor_consumo?id=in.(${idsFilter})`, {
+          method: "PATCH",
+          body: JSON.stringify({ loggro_sync_status: "error", loggro_sync_error: errStr, loggro_sync_at: new Date().toISOString() }),
+        });
+        return json({ ok: false, error: "Loggro rechazó", loggro_response: movResult.body }, 502);
+      }
+      const movementId = movResult.body?._id || movResult.body?.id || null;
+
+      const idsIncluidos = consumos.filter((c: any) => {
+        const it: any = itemById.get(c.item_id);
+        return it?.loggro_id;
+      }).map((c: any) => c.id);
+      const idsFilter = idsIncluidos.map((id: string) => `"${id}"`).join(",");
+      await sb(`comedor_consumo?id=in.(${idsFilter})`, {
+        method: "PATCH",
+        body: JSON.stringify({ loggro_sync_status: "ok", loggro_movement_id: movementId, loggro_sync_error: null, loggro_sync_at: new Date().toISOString() }),
+      });
+
+      return json({
+        ok: true,
+        movement_id: movementId,
+        fecha, comida,
+        ingredientes: ingredients.length,
+        consumos_incluidos: idsIncluidos.length,
+        sin_loggro: sinLoggro.length,
+      });
+    }
+
+    // ════════════════════════════════════════════════════════════════════
     // POST /loggro-sync/consumo-evento-salida
     // Sincroniza un consumo de evento como "Salida - Otro" en Loggro.
     // Body: { consumo_id }
