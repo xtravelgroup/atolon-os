@@ -3729,6 +3729,17 @@ export default function Reservas() {
             };
           }
         }
+        // Override individual via permisos_extra (dirección 2026-07-11).
+        // Si el usuario tiene 'reservas_solo_ver' se fuerza modo solo-lectura
+        // sin importar los permisos del rol base. Usado para dar acceso view
+        // a usuarios cuyo rol tiene otros permisos que no queremos alterar.
+        const extras = Array.isArray(u?.permisos_extra) ? u.permisos_extra : [];
+        if (extras.includes("reservas_solo_ver")) {
+          __currentUserPerms = {
+            ver: true, crear: false, editar: false, eliminar: false,
+            ver_precios: __currentUserPerms.ver_precios !== false,
+          };
+        }
       }
       setUserEmail(em); // fuerza rerender de subcomponentes
     });
