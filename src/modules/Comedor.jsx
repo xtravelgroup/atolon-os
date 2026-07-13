@@ -608,13 +608,16 @@ function TabConsumoComedor({ fecha, consumo, items, userEmail, onReload }) {
                 {items.map(c => {
                   const it = itemsById[c.item_id];
                   return (
-                    <div key={c.id} style={{ display: "grid", gridTemplateColumns: "1fr 100px 100px 100px 60px", gap: 10, padding: "10px 16px", borderTop: `1px solid ${B.navyLight}55`, fontSize: 12, alignItems: "center" }}>
+                    <div key={c.id} style={{ display: "grid", gridTemplateColumns: "1fr 80px 60px 100px 100px 60px", gap: 10, padding: "10px 16px", borderTop: `1px solid ${B.navyLight}55`, fontSize: 12, alignItems: "center" }}>
                       <div>
                         <div style={{ fontWeight: 600, color: "#fff" }}>{it?.nombre || c.item_id}</div>
                         {c.notas && <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)" }}>{c.notas}</div>}
                       </div>
                       <div style={{ textAlign: "right", color: "#fff" }}>
-                        {Number(c.cantidad).toLocaleString("es-CO")} <span style={{ color: "rgba(255,255,255,0.4)", fontSize: 10 }}>{c.unidad || it?.unidad || ""}</span>
+                        {Number(c.cantidad).toLocaleString("es-CO")}
+                      </div>
+                      <div style={{ textAlign: "center", color: B.sand, fontSize: 10, fontWeight: 700, textTransform: "uppercase", background: B.navy, padding: "3px 6px", borderRadius: 4 }}>
+                        {c.unidad || it?.unidad || "—"}
                       </div>
                       <div style={{ textAlign: "right", color: "rgba(255,255,255,0.55)" }}>{COPx(c.precio_unitario)}</div>
                       <div style={{ textAlign: "right", color: B.sky, fontWeight: 700 }}>{COPx(c.costo_total)}</div>
