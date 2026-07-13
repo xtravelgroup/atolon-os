@@ -446,56 +446,84 @@ function TabMenu({ fecha, menus, userEmail, onReload }) {
 // ─── TAB CONSUMO (insumos del comedor) ───────────────────────────────
 function TabConsumoComedor({ fecha, consumo, items, userEmail, onReload }) {
   const [showPick, setShowPick] = useState(false);
-  const [search, setSearch] = useState("");
-  const [pickItem, setPickItem] = useState(null);
-  const [pickComida, setPickComida] = useState("almuerzo");
-  const [cantidad, setCantidad] = useState("1");
   const [locacionId, setLocacionId] = useState("LOC-ALMACEN-COCINA");
-  const [notas, setNotas] = useState("");
   const [saving, setSaving] = useState(false);
   const [locaciones, setLocaciones] = useState([]);
+  // Filas de la tabla: cada una es un item a cargar. Se preserva mientras el
+  // modal esté abierto (multi-item batch).
+  const [filas, setFilas] = useState(() => [
+    { item_id: "", comida: "almuerzo", cantidad: "", search: "", notas: "" },
+  ]);
 
   useEffect(() => {
     supabase.from("items_locaciones").select("id, nombre").then(({ data }) => setLocaciones(data || []));
   }, []);
 
-  const itemsFiltrados = items.filter(i => {
-    if (!search.trim()) return true;
-    const q = search.toLowerCase();
-    return `${i.nombre || ""} ${i.categoria || ""}`.toLowerCase().includes(q);
-  }).slice(0, 50);
+  // Politica direccion 2026-07-11: comedor solo carga Alimentos, no items de Bar.
+  const itemsAlimentos = useMemo(
+    () => items.filter(i => (i.categoria || "").toLowerCase() === "alimentos"),
+    [items]
+  );
 
   const itemsById = Object.fromEntries(items.map(i => [i.id, i]));
   const totalCosto = consumo.reduce((s, c) => s + (Number(c.costo_total) || 0), 0);
 
-  const registrar = async () => {
-    if (!pickItem) return;
-    const qty = Number(cantidad);
-    if (!qty || qty <= 0) return alert("Cantidad inválida");
-    setSaving(true);
-    const precio = Number(pickItem.precio_compra) || 0;
-    const { data: inserted } = await supabase.from("comedor_consumo").insert({
-      fecha, comida: pickComida, item_id: pickItem.id,
-      cantidad: qty, unidad: pickItem.unidad || null,
-      locacion_id: locacionId || null,
-      precio_unitario: precio, costo_total: qty * precio,
-      notas: notas.trim() || null, registrado_por: userEmail,
-    }).select().single();
-    setSaving(false);
+  const setFila = (idx, patch) => {
+    setFilas(prev => prev.map((f, i) => i === idx ? { ...f, ...patch } : f));
+  };
+  const agregarFila = () => {
+    // Mantener la ultima comida seleccionada como default de la nueva fila
+    const ult = filas[filas.length - 1] || {};
+    setFilas(prev => [...prev, { item_id: "", comida: ult.comida || "almuerzo", cantidad: "", search: "", notas: "" }]);
+  };
+  const quitarFila = (idx) => {
+    setFilas(prev => prev.length > 1 ? prev.filter((_, i) => i !== idx) : prev);
+  };
+
+  const totalPreview = filas.reduce((s, f) => {
+    const it = itemsById[f.item_id];
+    const precio = Number(it?.precio_compra) || 0;
+    return s + (Number(f.cantidad) || 0) * precio;
+  }, 0);
+
+  const cerrarModal = () => {
     setShowPick(false);
-    setPickItem(null);
-    setCantidad("1");
-    setNotas("");
-    setSearch("");
-    // Sync a Loggro como Salida - Otro
-    if (inserted?.id && pickItem.loggro_id) {
-      const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
-      fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/loggro-sync/consumo-comedor-salida`, {
-        method: "POST",
-        headers: { apikey: anonKey, Authorization: `Bearer ${anonKey}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ consumo_id: inserted.id }),
-      }).catch(() => {});
-    }
+    setFilas([{ item_id: "", comida: "almuerzo", cantidad: "", search: "", notas: "" }]);
+  };
+
+  const registrarTodo = async () => {
+    const validas = filas.filter(f => f.item_id && Number(f.cantidad) > 0);
+    if (validas.length === 0) return alert("Agrega al menos un item con cantidad válida.");
+    setSaving(true);
+    const rows = validas.map(f => {
+      const it = itemsById[f.item_id];
+      const precio = Number(it?.precio_compra) || 0;
+      const qty = Number(f.cantidad);
+      return {
+        fecha, comida: f.comida, item_id: f.item_id,
+        cantidad: qty, unidad: it?.unidad || null,
+        locacion_id: locacionId || null,
+        precio_unitario: precio, costo_total: qty * precio,
+        notas: f.notas?.trim() || null, registrado_por: userEmail,
+      };
+    });
+    const { data: inserted, error } = await supabase
+      .from("comedor_consumo").insert(rows).select("id, item_id");
+    setSaving(false);
+    if (error) return alert("Error: " + error.message);
+    // Sync a Loggro por cada uno con loggro_id (fire-and-forget)
+    const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+    (inserted || []).forEach(row => {
+      const it = itemsById[row.item_id];
+      if (it?.loggro_id) {
+        fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/loggro-sync/consumo-comedor-salida`, {
+          method: "POST",
+          headers: { apikey: anonKey, Authorization: `Bearer ${anonKey}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ consumo_id: row.id }),
+        }).catch(() => {});
+      }
+    });
+    cerrarModal();
     setTimeout(onReload, 1200);
   };
 
@@ -533,89 +561,136 @@ function TabConsumoComedor({ fecha, consumo, items, userEmail, onReload }) {
         </div>
       )}
 
-      {/* Modal de carga (igual patrón que open bar) */}
+      {/* Modal de carga masiva: tabla con multiples items, filtro solo Alimentos */}
       {showPick && (
-        <div onClick={() => setShowPick(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 1000, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "30px 16px", overflowY: "auto" }}>
-          <div onClick={e => e.stopPropagation()} style={{ background: B.navy, borderRadius: 16, padding: 22, maxWidth: 540, width: "100%", color: "#fff", border: `1px solid ${B.navyLight}` }}>
+        <div onClick={cerrarModal} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 1000, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "24px 16px", overflowY: "auto" }}>
+          <div onClick={e => e.stopPropagation()} style={{ background: B.navy, borderRadius: 16, padding: 22, maxWidth: 980, width: "100%", color: "#fff", border: `1px solid ${B.navyLight}` }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
-              <div style={{ fontSize: 18, fontWeight: 800 }}>+ Cargar consumo</div>
-              <button type="button" onClick={() => setShowPick(false)} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.4)", cursor: "pointer", fontSize: 22 }}>×</button>
+              <div>
+                <div style={{ fontSize: 18, fontWeight: 800 }}>+ Cargar consumo del comedor</div>
+                <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginTop: 2 }}>
+                  Solo items <b style={{ color: B.sky }}>Alimentos</b> · {itemsAlimentos.length} disponibles
+                </div>
+              </div>
+              <button type="button" onClick={cerrarModal} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.4)", cursor: "pointer", fontSize: 22 }}>×</button>
             </div>
+
             <div style={{ marginBottom: 12 }}>
-              <label style={LS}>Comida</label>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 6 }}>
-                {COMIDAS.map(c => (
-                  <button key={c.k} type="button" onClick={() => setPickComida(c.k)}
-                    style={{ padding: "8px", borderRadius: 8, border: pickComida === c.k ? `2px solid ${c.color}` : `1px solid ${B.navyLight}`,
-                      background: pickComida === c.k ? c.color + "22" : B.navyMid, color: pickComida === c.k ? c.color : "rgba(255,255,255,0.6)", cursor: "pointer", fontSize: 11, fontWeight: 700 }}>
-                    {c.icon} {c.l}
-                  </button>
-                ))}
-                <button type="button" onClick={() => setPickComida("general")}
-                  style={{ padding: "8px", borderRadius: 8, border: pickComida === "general" ? `2px solid ${B.sky}` : `1px solid ${B.navyLight}`,
-                    background: pickComida === "general" ? B.sky + "22" : B.navyMid, color: pickComida === "general" ? B.sky : "rgba(255,255,255,0.6)", cursor: "pointer", fontSize: 11, fontWeight: 700 }}>
-                  📦 General
+              <label style={LS}>Locación (descuenta de stock)</label>
+              <select value={locacionId} onChange={e => setLocacionId(e.target.value)} style={{ ...IS, maxWidth: 300 }}>
+                <option value="">— Sin descontar —</option>
+                {locaciones.map(l => <option key={l.id} value={l.id}>{l.nombre}</option>)}
+              </select>
+            </div>
+
+            {/* Tabla de items */}
+            <div style={{ background: B.navyMid, borderRadius: 10, padding: 8, marginBottom: 12 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 90px 100px 1.2fr 32px", gap: 8, padding: "6px 10px", fontSize: 10, color: B.sand, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5 }}>
+                <div>Item</div>
+                <div>Comida</div>
+                <div style={{ textAlign: "right" }}>Cantidad</div>
+                <div style={{ textAlign: "right" }}>Costo</div>
+                <div>Notas</div>
+                <div></div>
+              </div>
+              {filas.map((f, idx) => {
+                const it = itemsById[f.item_id];
+                const opciones = itemsAlimentos.filter(i => {
+                  if (!f.search?.trim()) return true;
+                  const q = f.search.toLowerCase();
+                  return `${i.nombre || ""}`.toLowerCase().includes(q);
+                }).slice(0, 30);
+                const costo = (Number(f.cantidad) || 0) * (Number(it?.precio_compra) || 0);
+                return (
+                  <div key={idx} style={{ display: "grid", gridTemplateColumns: "2fr 1fr 90px 100px 1.2fr 32px", gap: 8, padding: "6px 10px", borderTop: `1px solid ${B.navyLight}55`, alignItems: "center" }}>
+                    {/* Item picker con buscador inline */}
+                    <div>
+                      {it ? (
+                        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontSize: 12, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.nombre}</div>
+                            <div style={{ fontSize: 9, color: "rgba(255,255,255,0.4)" }}>{COPx(it.precio_compra || 0)}/{it.unidad || "und"}</div>
+                          </div>
+                          <button type="button" onClick={() => setFila(idx, { item_id: "", search: "" })}
+                            style={{ background: "none", border: "none", color: B.sky, fontSize: 10, cursor: "pointer" }}>✎</button>
+                        </div>
+                      ) : (
+                        <div style={{ position: "relative" }}>
+                          <input value={f.search} onChange={e => setFila(idx, { search: e.target.value })}
+                            placeholder="🔍 Buscar item…" autoFocus={idx === filas.length - 1 && !f.item_id}
+                            style={{ ...IS, padding: "6px 10px", fontSize: 11 }} />
+                          {f.search?.trim() && (
+                            <div style={{ position: "absolute", top: "100%", left: 0, right: 0, marginTop: 2, zIndex: 10, background: B.navyMid, border: `1px solid ${B.navyLight}`, borderRadius: 6, maxHeight: 220, overflowY: "auto", boxShadow: "0 4px 12px rgba(0,0,0,0.5)" }}>
+                              {opciones.length === 0 ? (
+                                <div style={{ padding: "8px 12px", fontSize: 11, color: "rgba(255,255,255,0.4)" }}>Sin coincidencias.</div>
+                              ) : opciones.map(i => (
+                                <button key={i.id} type="button"
+                                  onMouseDown={e => { e.preventDefault(); setFila(idx, { item_id: i.id, search: "" }); }}
+                                  style={{ display: "block", width: "100%", padding: "6px 10px", background: "transparent", border: "none", borderTop: `1px solid ${B.navyLight}44`, color: "#fff", cursor: "pointer", textAlign: "left", fontSize: 11 }}>
+                                  <div style={{ fontWeight: 700 }}>{i.nombre}</div>
+                                  <div style={{ fontSize: 9, color: "rgba(255,255,255,0.5)" }}>Stock: {Number(i.stock_actual || 0).toLocaleString("es-CO")} {i.unidad || ""} · {COPx(i.precio_compra || 0)}/u</div>
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                    {/* Comida */}
+                    <div>
+                      <select value={f.comida} onChange={e => setFila(idx, { comida: e.target.value })} style={{ ...IS, padding: "6px 8px", fontSize: 11 }}>
+                        {COMIDAS.map(c => <option key={c.k} value={c.k}>{c.icon} {c.l}</option>)}
+                        <option value="general">📦 General</option>
+                      </select>
+                    </div>
+                    {/* Cantidad */}
+                    <div>
+                      <input type="number" value={f.cantidad} onChange={e => setFila(idx, { cantidad: e.target.value })}
+                        step="0.01" min="0" placeholder="0"
+                        style={{ ...IS, padding: "6px 8px", fontSize: 11, textAlign: "right" }} />
+                    </div>
+                    {/* Costo (calculado) */}
+                    <div style={{ textAlign: "right", color: B.sky, fontWeight: 700, fontSize: 12 }}>
+                      {COPx(costo)}
+                    </div>
+                    {/* Notas */}
+                    <div>
+                      <input value={f.notas} onChange={e => setFila(idx, { notas: e.target.value })}
+                        placeholder="(opcional)"
+                        style={{ ...IS, padding: "6px 8px", fontSize: 11 }} />
+                    </div>
+                    {/* Quitar */}
+                    <div>
+                      <button type="button" onClick={() => quitarFila(idx)} disabled={filas.length === 1}
+                        title="Quitar fila"
+                        style={{ background: B.danger + "22", color: B.danger, border: "none", borderRadius: 4, padding: "4px 6px", cursor: filas.length === 1 ? "not-allowed" : "pointer", fontSize: 12, opacity: filas.length === 1 ? 0.3 : 1 }}>🗑</button>
+                    </div>
+                  </div>
+                );
+              })}
+              <div style={{ padding: "8px 10px", borderTop: `1px solid ${B.navyLight}55` }}>
+                <button type="button" onClick={agregarFila}
+                  style={{ background: B.sky + "22", color: B.sky, border: `1px dashed ${B.sky}66`, borderRadius: 6, padding: "6px 12px", cursor: "pointer", fontSize: 11, fontWeight: 700 }}>
+                  + Agregar item
                 </button>
               </div>
             </div>
 
-            {!pickItem ? (
-              <>
-                <input value={search} onChange={e => setSearch(e.target.value)} placeholder="🔍 Buscar producto…" autoFocus
-                  style={{ ...IS, marginBottom: 8 }} />
-                <div style={{ background: B.navyMid, borderRadius: 8, maxHeight: 320, overflowY: "auto" }}>
-                  {itemsFiltrados.map(i => (
-                    <button key={i.id} type="button" onClick={() => setPickItem(i)}
-                      style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "8px 12px", background: "transparent", border: "none", borderBottom: `1px solid ${B.navyLight}`, color: "#fff", cursor: "pointer", textAlign: "left" }}>
-                      <div style={{ width: 36, height: 36, borderRadius: 6, background: i.foto_url ? `url(${i.foto_url}) center/cover` : B.navyLight, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14 }}>
-                        {!i.foto_url && "📦"}
-                      </div>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontSize: 12, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{i.nombre}</div>
-                        <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)" }}>{i.categoria || "—"} · Stock: {Number(i.stock_actual || 0).toLocaleString("es-CO")} {i.unidad || ""} · {COPx(i.precio_compra || 0)}/u</div>
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              </>
-            ) : (
-              <>
-                <button type="button" onClick={() => setPickItem(null)} style={{ background: "none", border: "none", color: B.sky, fontSize: 11, cursor: "pointer", marginBottom: 10, padding: 0 }}>← Cambiar producto</button>
-                <div style={{ background: B.navyMid, borderRadius: 10, padding: 14, marginBottom: 12 }}>
-                  <div style={{ fontSize: 14, fontWeight: 700 }}>{pickItem.nombre}</div>
-                  <div style={{ fontSize: 11, color: "rgba(255,255,255,0.45)", marginTop: 2 }}>
-                    {pickItem.categoria || "—"} · Stock: {Number(pickItem.stock_actual || 0).toLocaleString("es-CO")} {pickItem.unidad || ""} · {COPx(pickItem.precio_compra || 0)} c/u
-                  </div>
-                </div>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr", gap: 10, marginBottom: 10 }}>
-                  <div>
-                    <label style={LS}>Cantidad</label>
-                    <input type="number" value={cantidad} onChange={e => setCantidad(e.target.value)} step="0.01" min="0.01" autoFocus style={IS} />
-                  </div>
-                  <div>
-                    <label style={LS}>Locación</label>
-                    <select value={locacionId} onChange={e => setLocacionId(e.target.value)} style={IS}>
-                      <option value="">— Sin descontar —</option>
-                      {locaciones.map(l => <option key={l.id} value={l.id}>{l.nombre}</option>)}
-                    </select>
-                  </div>
-                </div>
-                <div style={{ marginBottom: 10 }}>
-                  <label style={LS}>Notas</label>
-                  <input value={notas} onChange={e => setNotas(e.target.value)} style={IS} />
-                </div>
-                <div style={{ background: B.navy, borderRadius: 8, padding: "10px 14px", marginBottom: 12, display: "flex", justifyContent: "space-between", fontSize: 13 }}>
-                  <span style={{ color: "rgba(255,255,255,0.6)" }}>Costo</span>
-                  <strong style={{ color: B.sky, fontFamily: "'Barlow Condensed', sans-serif", fontSize: 18 }}>
-                    {COPx((Number(cantidad) || 0) * (Number(pickItem.precio_compra) || 0))}
-                  </strong>
-                </div>
-                <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
-                  <button type="button" onClick={() => setShowPick(false)} style={BTN(B.navyLight)} disabled={saving}>Cancelar</button>
-                  <button type="button" onClick={registrar} style={BTN(B.success)} disabled={saving}>{saving ? "Registrando…" : "Registrar"}</button>
-                </div>
-              </>
-            )}
+            {/* Footer con total + acciones */}
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+              <div style={{ background: B.navy, borderRadius: 8, padding: "10px 14px", fontSize: 13 }}>
+                <span style={{ color: "rgba(255,255,255,0.6)" }}>Total del batch: </span>
+                <strong style={{ color: B.sky, fontFamily: "'Barlow Condensed', sans-serif", fontSize: 20, marginLeft: 6 }}>
+                  {COPx(totalPreview)}
+                </strong>
+              </div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button type="button" onClick={cerrarModal} style={BTN(B.navyLight)} disabled={saving}>Cancelar</button>
+                <button type="button" onClick={registrarTodo} style={BTN(B.success)} disabled={saving}>
+                  {saving ? "Registrando…" : `Registrar ${filas.filter(f => f.item_id && Number(f.cantidad) > 0).length} item(s)`}
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}
