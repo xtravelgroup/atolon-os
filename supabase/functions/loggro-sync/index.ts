@@ -2659,7 +2659,7 @@ serve(async (req) => {
       const now = new Date().toISOString();
       const movResult = await loggroRaw("POST", "/inventories", {
         business: businessId, user: userId, date: now,
-        type: 11, isSubtracted: true, isProduction: false, isMoveTo: false, deleted: false,
+        type: 7, isSubtracted: true, isProduction: false, isMoveTo: false, deleted: false,
         note,
         ingredients: [{ ingredient: item.loggro_id, quantity: Number(c.cantidad), price: Number(c.precio_unitario) || 0 }],
         createdOn: now, modifiedOn: now,
@@ -2734,14 +2734,15 @@ serve(async (req) => {
       const tipoLabel = c.tipo === "openbar" ? "Open Bar" : c.tipo === "cocina_buffet" ? "Buffet" : c.tipo === "cocina_paquete" ? "Paquete" : "Otro";
       const note = `Consumo evento "${eventoNombre}" — ${tipoLabel}${c.servicio_descripcion ? ` (${c.servicio_descripcion})` : ""}${c.notas ? ` · ${c.notas}` : ""}`;
 
-      // 4. Crear movimiento en Loggro (type=11 + isSubtracted=true = Salida - Otro)
+      // 4. Crear movimiento en Loggro (type=7 + isSubtracted=true = Salida - Otro)
+      // Nota: type=11 es "Inventario a cero" — usábamos ese por error.
       const { businessId, userId } = await getLoggroIdentity();
       const now = new Date().toISOString();
       const movResult = await loggroRaw("POST", "/inventories", {
         business: businessId,
         user: userId,
         date: now,
-        type: 11,
+        type: 7,
         isSubtracted: true,
         isProduction: false,
         isMoveTo: false,
