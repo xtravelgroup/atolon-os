@@ -585,7 +585,7 @@ function TabConsumoComedor({ fecha, consumo, items, userEmail, onReload }) {
 
             {/* Tabla de items */}
             <div style={{ background: B.navyMid, borderRadius: 10, padding: 8, marginBottom: 12 }}>
-              <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 90px 100px 1.2fr 32px", gap: 8, padding: "6px 10px", fontSize: 10, color: B.sand, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 130px 100px 1.2fr 32px", gap: 8, padding: "6px 10px", fontSize: 10, color: B.sand, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5 }}>
                 <div>Item</div>
                 <div>Comida</div>
                 <div style={{ textAlign: "right" }}>Cantidad</div>
@@ -602,7 +602,7 @@ function TabConsumoComedor({ fecha, consumo, items, userEmail, onReload }) {
                 }).slice(0, 30);
                 const costo = (Number(f.cantidad) || 0) * (Number(it?.precio_compra) || 0);
                 return (
-                  <div key={idx} style={{ display: "grid", gridTemplateColumns: "2fr 1fr 90px 100px 1.2fr 32px", gap: 8, padding: "6px 10px", borderTop: `1px solid ${B.navyLight}55`, alignItems: "center" }}>
+                  <div key={idx} style={{ display: "grid", gridTemplateColumns: "2fr 1fr 130px 100px 1.2fr 32px", gap: 8, padding: "6px 10px", borderTop: `1px solid ${B.navyLight}55`, alignItems: "center" }}>
                     {/* Item picker con buscador inline */}
                     <div>
                       {it ? (
@@ -643,11 +643,19 @@ function TabConsumoComedor({ fecha, consumo, items, userEmail, onReload }) {
                         <option value="general">📦 General</option>
                       </select>
                     </div>
-                    {/* Cantidad */}
-                    <div>
+                    {/* Cantidad + unidad (badge visible para evitar confusion Kg vs Gr, Lt vs Ml, etc.) */}
+                    <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
                       <input type="number" value={f.cantidad} onChange={e => setFila(idx, { cantidad: e.target.value })}
                         step="0.01" min="0" placeholder="0"
-                        style={{ ...IS, padding: "6px 8px", fontSize: 11, textAlign: "right" }} />
+                        style={{ ...IS, padding: "6px 8px", fontSize: 11, textAlign: "right", flex: 1, minWidth: 0 }} />
+                      <span style={{
+                        fontSize: 10, fontWeight: 800, padding: "3px 7px", borderRadius: 4,
+                        background: it ? B.warning + "33" : B.navyLight,
+                        color: it ? B.warning : "rgba(255,255,255,0.35)",
+                        whiteSpace: "nowrap", minWidth: 32, textAlign: "center",
+                      }} title={it ? `Unidad: ${it.unidad || "sin definir"}` : "Selecciona el item primero"}>
+                        {it?.unidad || "—"}
+                      </span>
                     </div>
                     {/* Costo (calculado) */}
                     <div style={{ textAlign: "right", color: B.sky, fontWeight: 700, fontSize: 12 }}>
