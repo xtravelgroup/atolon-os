@@ -548,20 +548,44 @@ function TabConsumoComedor({ fecha, consumo, items, userEmail, onReload }) {
           Sin consumo registrado para este día.
         </div>
       ) : (
-        <div style={{ background: B.navyMid, borderRadius: 12, overflow: "hidden" }}>
-          {consumo.map(c => {
-            const it = itemsById[c.item_id];
-            const cm = COMIDAS.find(x => x.k === c.comida);
+        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          {/* Agrupado por desayuno → almuerzo → cena → general (direccion 2026-07-13) */}
+          {[...COMIDAS, { k: "general", l: "General", icon: "📦", color: B.sky }].map(cm => {
+            const items = consumo.filter(c => c.comida === cm.k);
+            if (items.length === 0) return null;
+            const subtotal = items.reduce((s, c) => s + (Number(c.costo_total) || 0), 0);
             return (
-              <div key={c.id} style={{ display: "grid", gridTemplateColumns: "30px 1fr 70px 100px 100px", gap: 10, padding: "10px 14px", borderTop: `1px solid ${B.navyLight}`, fontSize: 12, alignItems: "center" }}>
-                <div style={{ fontSize: 16 }}>{cm?.icon || "🍴"}</div>
-                <div>
-                  <div style={{ fontWeight: 600, color: "#fff" }}>{it?.nombre || c.item_id}</div>
-                  <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)" }}>{cm?.l || ""}{c.notas ? ` · ${c.notas}` : ""}</div>
+              <div key={cm.k} style={{ background: B.navyMid, borderRadius: 12, overflow: "hidden", borderLeft: `4px solid ${cm.color}` }}>
+                {/* Header del grupo con icono + total */}
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 16px", background: `${cm.color}18`, borderBottom: `1px solid ${B.navyLight}` }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <span style={{ fontSize: 18 }}>{cm.icon}</span>
+                    <span style={{ fontSize: 14, fontWeight: 800, color: "#fff", textTransform: "uppercase", letterSpacing: 0.5 }}>{cm.l}</span>
+                    <span style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", background: B.navy, padding: "2px 8px", borderRadius: 10 }}>
+                      {items.length} item{items.length !== 1 ? "s" : ""}
+                    </span>
+                  </div>
+                  <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontSize: 18, fontWeight: 800, color: cm.color }}>
+                    {COPx(subtotal)}
+                  </div>
                 </div>
-                <div style={{ textAlign: "right", color: "#fff" }}>{Number(c.cantidad).toLocaleString("es-CO")}</div>
-                <div style={{ textAlign: "right", color: "rgba(255,255,255,0.55)" }}>{COPx(c.precio_unitario)}</div>
-                <div style={{ textAlign: "right", color: B.sky, fontWeight: 700 }}>{COPx(c.costo_total)}</div>
+                {/* Items del grupo */}
+                {items.map(c => {
+                  const it = itemsById[c.item_id];
+                  return (
+                    <div key={c.id} style={{ display: "grid", gridTemplateColumns: "1fr 100px 100px 100px", gap: 10, padding: "10px 16px", borderTop: `1px solid ${B.navyLight}55`, fontSize: 12, alignItems: "center" }}>
+                      <div>
+                        <div style={{ fontWeight: 600, color: "#fff" }}>{it?.nombre || c.item_id}</div>
+                        {c.notas && <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)" }}>{c.notas}</div>}
+                      </div>
+                      <div style={{ textAlign: "right", color: "#fff" }}>
+                        {Number(c.cantidad).toLocaleString("es-CO")} <span style={{ color: "rgba(255,255,255,0.4)", fontSize: 10 }}>{c.unidad || it?.unidad || ""}</span>
+                      </div>
+                      <div style={{ textAlign: "right", color: "rgba(255,255,255,0.55)" }}>{COPx(c.precio_unitario)}</div>
+                      <div style={{ textAlign: "right", color: B.sky, fontWeight: 700 }}>{COPx(c.costo_total)}</div>
+                    </div>
+                  );
+                })}
               </div>
             );
           })}
