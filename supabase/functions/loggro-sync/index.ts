@@ -2656,9 +2656,14 @@ serve(async (req) => {
       const tipoLabel = c.comida === "desayuno" ? "Desayuno" : c.comida === "almuerzo" ? "Almuerzo" : c.comida === "cena" ? "Cena" : "Comedor";
       const note = `Comedor ${c.fecha} — ${tipoLabel}${c.notas ? ` · ${c.notas}` : ""}`;
       const { businessId, userId } = await getLoggroIdentity();
+      // Fecha del movimiento = fecha del consumo (no la fecha de hoy).
+      // c.fecha viene como 'YYYY-MM-DD' — la anclamos a mediodia UTC para
+      // evitar que Loggro la re-interprete en otro huso y quede en el dia
+      // anterior/posterior.
+      const fechaMovISO = new Date(`${String(c.fecha).slice(0,10)}T12:00:00.000Z`).toISOString();
       const now = new Date().toISOString();
       const movResult = await loggroRaw("POST", "/inventories", {
-        business: businessId, user: userId, date: now,
+        business: businessId, user: userId, date: fechaMovISO,
         type: 7, isSubtracted: true, isProduction: false, isMoveTo: false, deleted: false,
         note,
         ingredients: [{ ingredient: item.loggro_id, quantity: Number(c.cantidad), price: Number(c.precio_unitario) || 0 }],
@@ -2738,10 +2743,14 @@ serve(async (req) => {
       // Nota: type=11 es "Inventario a cero" — usábamos ese por error.
       const { businessId, userId } = await getLoggroIdentity();
       const now = new Date().toISOString();
+      // Fecha del movimiento = fecha del evento si existe, sino la de creacion
+      // del consumo. Anclada a mediodia UTC para evitar corrimientos de huso.
+      const fechaBase = evento?.fecha || c.created_at || c.fecha || now;
+      const fechaMovISO = new Date(`${String(fechaBase).slice(0,10)}T12:00:00.000Z`).toISOString();
       const movResult = await loggroRaw("POST", "/inventories", {
         business: businessId,
         user: userId,
-        date: now,
+        date: fechaMovISO,
         type: 7,
         isSubtracted: true,
         isProduction: false,
