@@ -459,11 +459,18 @@ function TabConsumoComedor({ fecha, consumo, items, userEmail, onReload }) {
     supabase.from("items_locaciones").select("id, nombre").then(({ data }) => setLocaciones(data || []));
   }, []);
 
-  // Politica direccion 2026-07-11: comedor solo carga Alimentos, no items de Bar.
-  const itemsAlimentos = useMemo(
-    () => items.filter(i => (i.categoria || "").toLowerCase() === "alimentos"),
-    [items]
-  );
+  // Politica direccion 2026-07-11: comedor solo carga productos de COCINA.
+  // Excluimos todo lo que sea de Bar (licores, cerveza, vino, shots, etc.) via
+  // blacklist de keywords en categoria. Se prefiere blacklist para no dejar
+  // fuera categorias nuevas de cocina que se creen en el futuro.
+  const itemsAlimentos = useMemo(() => {
+    const excluir = ["bar", "licor", "ron", "tequila", "mezcal", "vodka", "gin", "whisky", "bourbon", "cerveza", "vino", "espumoso", "shot"];
+    return items.filter(i => {
+      const cat = (i.categoria || "").toLowerCase();
+      if (!cat) return false;                                        // sin categoria → no mostrar
+      return !excluir.some(kw => cat.includes(kw));
+    });
+  }, [items]);
 
   const itemsById = Object.fromEntries(items.map(i => [i.id, i]));
   const totalCosto = consumo.reduce((s, c) => s + (Number(c.costo_total) || 0), 0);
@@ -569,7 +576,7 @@ function TabConsumoComedor({ fecha, consumo, items, userEmail, onReload }) {
               <div>
                 <div style={{ fontSize: 18, fontWeight: 800 }}>+ Cargar consumo del comedor</div>
                 <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginTop: 2 }}>
-                  Solo items <b style={{ color: B.sky }}>Alimentos</b> · {itemsAlimentos.length} disponibles
+                  Solo productos de <b style={{ color: B.sky }}>Cocina</b> · {itemsAlimentos.length} disponibles
                 </div>
               </div>
               <button type="button" onClick={cerrarModal} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.4)", cursor: "pointer", fontSize: 22 }}>×</button>
