@@ -3,6 +3,7 @@ import { supabase } from "../lib/supabase";
 import { wompiCheckoutUrl } from "../lib/wompi";
 import { crearSesionPago } from "../lib/internacional";
 import FacturaElectronicaForm, { FacturaElectronicaToggle, FE_EMPTY, feValidate, fePayload } from "../lib/FacturaElectronicaForm.jsx";
+import { registrarConsentimientoReserva } from "../lib/registrarConsentimiento";
 
 // ── Brand ────────────────────────────────────────────────────────────────────
 const AMARILLO  = "#FFD100";
@@ -333,6 +334,8 @@ export default function GranFondoNairo() {
         ...fePayload(form),
       });
       if (insErr) { setError("Error al guardar. Intenta de nuevo."); setSaving(false); return; }
+      // Captura IP + consentimiento del cliente (evidencia para chargebacks).
+      registrarConsentimientoReserva(reservaId, form.email.trim() || null, { canal: "gran_fondo_nairo" });
     }
 
     let url = "";

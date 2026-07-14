@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { supabase } from "../lib/supabase";
 import { wompiCheckoutUrl } from "../lib/wompi";
 import FacturaElectronicaForm, { FacturaElectronicaToggle, FE_EMPTY, feValidate, fePayload } from "../lib/FacturaElectronicaForm.jsx";
+import { registrarConsentimientoReserva } from "../lib/registrarConsentimiento";
 
 // ── Paleta ────────────────────────────────────────────────────────────────────
 const ROSA      = "#F472B6";
@@ -309,6 +310,8 @@ export default function DiaDeLaMadre() {
         ...fePayload(form),
       });
       if (insErr) { setError("Error al guardar. Intenta de nuevo."); setSaving(false); return; }
+      // Captura IP + consentimiento del cliente (evidencia para chargebacks).
+      registrarConsentimientoReserva(reservaId, form.email.trim() || null, { canal: "dia_de_la_madre" });
     }
     const url = await wompiCheckoutUrl({
       referencia: reservaId,

@@ -6,6 +6,7 @@ import { useState, useEffect, useRef } from "react";
 import { COP } from "../brand";
 import { supabase } from "../lib/supabase";
 import { wompiCheckoutUrl } from "../lib/wompi";
+import { registrarConsentimientoReserva } from "../lib/registrarConsentimiento";
 import AtolanTrack from "../lib/AtolanTrack";
 import { gtmViewItem, gtmBeginCheckout, gtmAddPaymentInfo, gtmAbandon } from "../lib/gtm";
 // FacturaElectronicaForm + Toggle: en mobile se renderizan dentro del step 2
@@ -918,9 +919,7 @@ export default function BookingPopup() {
 
       // Registrar consentimiento + IP + user-agent del cliente (evidencia de
       // autorización para chargebacks). Server-side toma la IP real. Fire-and-forget.
-      supabase.functions.invoke("registrar-consentimiento", {
-        body: { reserva_id: reservaId, email: form.email, identif: form.identif || null, user_agent: navigator.userAgent, canal: (grupoEvt || grupoQ) ? "web_grupo" : "web_booking" },
-      }).then(() => {}).catch(() => {});
+      registrarConsentimientoReserva(reservaId, form.email, { identif: form.identif, canal: (grupoEvt || grupoQ) ? "web_grupo" : "web_booking" });
     }
     // Track payment attempt (enriched)
     AtolanTrack.evento("payment_attempt", {
