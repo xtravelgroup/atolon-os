@@ -16,8 +16,11 @@ const fmtDT = (v) => {
 const fmtD = (v) => (v ? String(v).slice(0, 10) : "—");
 
 // ── Carga de todos los insumos ────────────────────────────────────────────
+// Envuelve una consulta para que un fallo NO aborte el expediente (devuelve fallback).
+const safe = async (fn, fallback = null) => { try { return await fn(); } catch { return fallback; } };
+
 async function cargarDatos(reservaId) {
-  const { data: r } = await supabase.from("reservas").select("*").eq("id", reservaId).single();
+  const { data: r } = await supabase.from("reservas").select("*").eq("id", reservaId).maybeSingle();
   if (!r) throw new Error("Reserva no encontrada: " + reservaId);
 
   // Transacción Wompi: por referencia_pago o por el id de la reserva; se toma la más reciente aprobada.
@@ -26,14 +29,14 @@ async function cargarDatos(reservaId) {
   if (Array.isArray(r.pagos)) r.pagos.forEach((p) => { [p.id, p.reference_id, p.reference, p.transaction_id].forEach((x) => x && refs.push(String(x))); });
   let wompi = null;
   if (refs.length) {
-    const { data: ws } = await supabase.from("wompi_eventos_log").select("*").or(`referencia.in.(${refs.join(",")}),transaction_id.in.(${refs.join(",")})`).order("created_at", { ascending: false });
+    const ws = await safe(async () => (await supabase.from("wompi_eventos_log").select("*").or(`referencia.in.(${refs.join(",")}),transaction_id.in.(${refs.join(",")})`).order("created_at", { ascending: false })).data, []);
     wompi = (ws || []).find((w) => w.status === "APPROVED") || (ws || [])[0] || null;
   }
   // Respaldo SEGURO: por email del titular en la transacción (mismo cliente).
   if (!wompi) {
     const em = (r.email || r.contacto || "").toLowerCase();
     if (em) {
-      const { data: byEmail } = await supabase.from("wompi_eventos_log").select("*").eq("raw->data->transaction->>customer_email", em).order("created_at", { ascending: false });
+      const byEmail = await safe(async () => (await supabase.from("wompi_eventos_log").select("*").eq("raw->data->transaction->>customer_email", em).order("created_at", { ascending: false })).data, []);
       wompi = (byEmail || []).find((w) => w.status === "APPROVED") || (byEmail || [])[0] || null;
     }
   }
@@ -42,26 +45,26 @@ async function cargarDatos(reservaId) {
   let consent = null;
   const email = (r.email || r.contacto || "").toLowerCase();
   if (email) {
-    const { data: cs } = await supabase.from("habeas_data_consents").select("*").eq("titular_email", email).order("otorgado_at", { ascending: false }).limit(1);
+    const cs = await safe(async () => (await supabase.from("habeas_data_consents").select("*").eq("titular_email", email).order("otorgado_at", { ascending: false }).limit(1)).data, []);
     consent = (cs || [])[0] || null;
   }
 
   // Zarpe del día: por fecha + salida.
   let zarpe = null;
   if (r.fecha && r.salida_id) {
-    const { data: zs } = await supabase.from("zarpes_log").select("*").eq("fecha", r.fecha).eq("salida_id", r.salida_id).order("created_at", { ascending: false }).limit(1);
+    const zs = await safe(async () => (await supabase.from("zarpes_log").select("*").eq("fecha", r.fecha).eq("salida_id", r.salida_id).order("created_at", { ascending: false }).limit(1)).data, []);
     zarpe = (zs || [])[0] || null;
   }
 
   // Política/términos que aceptó (por versión del consentimiento, o la vigente más reciente).
-  let policy = null;
-  {
+  const policy = await safe(async () => {
     let pq = supabase.from("habeas_data_policy").select("*");
     if (consent?.version_politica) pq = pq.eq("version", consent.version_politica);
     const { data: ps } = await pq.order("vigente_desde", { ascending: false }).limit(1);
-    policy = (ps || [])[0] || null;
-    if (!policy) { const { data: p2 } = await supabase.from("habeas_data_policy").select("*").order("vigente_desde", { ascending: false }).limit(1); policy = (p2 || [])[0] || null; }
-  }
+    if (ps && ps[0]) return ps[0];
+    const { data: p2 } = await supabase.from("habeas_data_policy").select("*").order("vigente_desde", { ascending: false }).limit(1);
+    return (p2 || [])[0] || null;
+  }, null);
   return { r, wompi, consent, zarpe, policy };
 }
 
@@ -135,7 +138,32 @@ export async function generarChargebackPDF(reservaId) {
   kv("Fecha del servicio", fmtD(r.fecha));
   kv("Monto de la compra", fmtCOP(r.total));
   kv("Pagado / Abono", fmtCOP(r.abono));
-  y += 4;
+  y += 3;
+
+  // ── Resumen de evidencia incluida (para que el banco vea qué se aporta) ──
+  const tienePasajeros = Array.isArray(r.pasajeros) && r.pasajeros.length > 0;
+  const tieneIP = !!(consent?.ip_origen || r.ip_reserva);
+  const checklist = [
+    ["Transacción de pago (pasarela)", !!wompi],
+    ["IP / autorización del cliente", tieneIP],
+    ["Confirmación con datos y pasaportes", tienePasajeros],
+    ["Zarpe del día (manifiesto)", !!zarpe],
+    ["Términos y política aceptada", !!policy],
+  ];
+  ensure(8 + checklist.length * 5.5);
+  doc.setFont("helvetica", "bold"); doc.setFontSize(9.5); doc.setTextColor(...NAVY);
+  doc.text("Evidencia incluida en este expediente", M, y); y += 5.5;
+  checklist.forEach(([label, ok]) => {
+    if (ok) doc.setTextColor(30, 122, 87); else doc.setTextColor(150, 90, 40);
+    doc.setFont("helvetica", "bold"); doc.setFontSize(9.5);
+    doc.text(ok ? "✓" : "✗", M, y);
+    doc.setFont("helvetica", "normal"); doc.setTextColor(40, 40, 40);
+    doc.text(`${label}${ok ? "" : "  —  no disponible en el sistema"}`, M + 6, y);
+    y += 5.5;
+  });
+  const faltan = checklist.filter(([, ok]) => !ok).length;
+  if (faltan > 0) { y += 1; note("Este expediente se genera con la información disponible. Los ítems marcados no se encontraron registrados para esta reserva."); }
+  y += 3; doc.setTextColor(20, 20, 20);
 
   // ── 1) Compra + autorización + IP ──
   sectionTitle(1, "COMPRA, AUTORIZACIÓN DEL CLIENTE E IP");
