@@ -52,12 +52,32 @@ async function cargarDatos(reservaId) {
     const { data: zs } = await supabase.from("zarpes_log").select("*").eq("fecha", r.fecha).eq("salida_id", r.salida_id).order("created_at", { ascending: false }).limit(1);
     zarpe = (zs || [])[0] || null;
   }
-  return { r, wompi, consent, zarpe };
+
+  // Política/términos que aceptó (por versión del consentimiento, o la vigente más reciente).
+  let policy = null;
+  {
+    let pq = supabase.from("habeas_data_policy").select("*");
+    if (consent?.version_politica) pq = pq.eq("version", consent.version_politica);
+    const { data: ps } = await pq.order("vigente_desde", { ascending: false }).limit(1);
+    policy = (ps || [])[0] || null;
+    if (!policy) { const { data: p2 } = await supabase.from("habeas_data_policy").select("*").order("vigente_desde", { ascending: false }).limit(1); policy = (p2 || [])[0] || null; }
+  }
+  return { r, wompi, consent, zarpe, policy };
+}
+
+// Descarga una imagen (comprobante) y la devuelve como dataURL para incrustarla; null si no es imagen o falla.
+async function fetchImageDataURL(url) {
+  try {
+    const res = await fetch(url);
+    const blob = await res.blob();
+    if (!blob.type || !blob.type.startsWith("image/")) return null;
+    return await new Promise((resolve) => { const fr = new FileReader(); fr.onload = () => resolve(fr.result); fr.onerror = () => resolve(null); fr.readAsDataURL(blob); });
+  } catch { return null; }
 }
 
 // ── Construcción del PDF ───────────────────────────────────────────────────
 export async function generarChargebackPDF(reservaId) {
-  const { r, wompi, consent, zarpe } = await cargarDatos(reservaId);
+  const { r, wompi, consent, zarpe, policy } = await cargarDatos(reservaId);
   const { default: jsPDF } = await import("jspdf");
   const doc = new jsPDF({ unit: "mm", format: "a4" });
   const W = doc.internal.pageSize.getWidth();
@@ -143,6 +163,18 @@ export async function generarChargebackPDF(reservaId) {
   } else {
     note("No se encontró registro de consentimiento/IP asociado al email del cliente.");
   }
+  // Comprobante de pago (si existe).
+  if (r.comprobante_url) {
+    kv("Comprobante de pago", r.comprobante_url);
+    const img = await fetchImageDataURL(r.comprobante_url);
+    if (img) {
+      try {
+        const props = doc.getImageProperties(img);
+        const w = 85, h = Math.min(120, (props.height / props.width) * w);
+        ensure(h + 4); doc.addImage(img, M, y, w, h); y += h + 4;
+      } catch { /* si no se puede incrustar, queda la URL */ }
+    }
+  }
   y += 3;
 
   // ── 2) Confirmación con pasaportes / datos de personas ──
@@ -188,6 +220,32 @@ export async function generarChargebackPDF(reservaId) {
     }
   } else {
     note("No se encontró un zarpe generado para la fecha y salida de esta reserva.");
+  }
+  y += 3;
+
+  // ── 4) Términos, política de cancelación y tratamiento de datos ──
+  sectionTitle(4, "TÉRMINOS, POLÍTICA DE CANCELACIÓN Y TRATAMIENTO DE DATOS ACEPTADOS");
+  note('Declaración aceptada por el cliente al momento de la compra: "Al continuar, acepto los términos y condiciones. Pago seguro · Aplica política de cancelación / política de no reembolso."');
+  if (consent) {
+    kv("Aceptado el", fmtDT(consent.otorgado_at));
+    kv("Desde IP", consent.ip_origen || "—");
+    kv("Dispositivo", consent.user_agent || "—");
+  } else {
+    note("No hay registro del momento/IP de aceptación para este cliente.");
+  }
+  if (policy) {
+    kv("Versión de la política", policy.version || "—");
+    kv("Encargado del tratamiento", policy.encargado_tratamiento || "—");
+    kv("Contacto encargado", [policy.encargado_email, policy.encargado_telefono].filter(Boolean).join(" · ") || "—");
+    kv("Registro RNBD", policy.registro_rnbd_numero || "—");
+    if (policy.texto_politica) {
+      y += 1; note("Extracto de la política vigente aceptada:");
+      doc.setFont("helvetica", "normal"); doc.setFontSize(8); doc.setTextColor(60, 60, 60);
+      doc.splitTextToSize(String(policy.texto_politica).slice(0, 2000), W - 2 * M).forEach((line) => { ensure(4); doc.text(line, M, y); y += 4; });
+      doc.setTextColor(20, 20, 20);
+    }
+  } else {
+    note("No se encontró el texto de la política registrada en el sistema.");
   }
 
   // ── Pie de página con numeración ──
