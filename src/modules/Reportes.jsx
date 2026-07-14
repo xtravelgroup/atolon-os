@@ -1,6 +1,10 @@
 import React, { useState, useEffect, useMemo, useCallback } from "react";
 import { supabase } from "../lib/supabase";
 import { B, COP, todayStr } from "../brand";
+import { generarChargebackPDF } from "../lib/generarChargebackPDF";
+
+// Proveedores de pago con tarjeta (los que pueden generar contracargo/chargeback).
+const CARD_PROVIDERS = ["Wompi", "stripe", "Datafono", "zoho_pay"];
 
 const BTN = (bg, color = "#fff") => ({ padding: "8px 14px", borderRadius: 8, border: "none", background: bg, color, cursor: "pointer", fontWeight: 700, fontSize: 12 });
 const IS = { width: "100%", padding: "9px 12px", borderRadius: 8, background: B.navyLight, border: `1px solid ${B.navyLight}`, color: "#fff", fontSize: 13, outline: "none", boxSizing: "border-box" };
@@ -1598,6 +1602,15 @@ function ReporteTransacciones() {
   const [loading, setLoading] = useState(true);
   const [transacciones, setTransacciones] = useState([]);
   const [openReservaId, setOpenReservaId] = useState(null);
+  const [cbBusy, setCbBusy] = useState(null); // reserva_id en proceso de expediente
+
+  const descargarExpediente = async (e, reservaId) => {
+    e.stopPropagation();
+    setCbBusy(reservaId);
+    try { await generarChargebackPDF(reservaId); }
+    catch (err) { alert("No se pudo generar el expediente: " + (err?.message || err)); }
+    finally { setCbBusy(null); }
+  };
 
   const load = useCallback(async () => {
     if (!supabase) return;
@@ -1796,7 +1809,7 @@ function ReporteTransacciones() {
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
               <thead style={{ position: "sticky", top: 0, background: B.navyLight }}>
                 <tr>
-                  {["Fecha", "Reserva", "Cliente", "Monto", "Proveedor", "Canal", "Referencia", "Estado"].map(h => (
+                  {["Fecha", "Reserva", "Cliente", "Monto", "Proveedor", "Canal", "Referencia", "Estado", "Chargeback"].map(h => (
                     <th key={h} style={{ padding: "10px 12px", textAlign: "left", fontSize: 10, color: B.sand, textTransform: "uppercase", letterSpacing: 1, fontWeight: 700 }}>{h}</th>
                   ))}
                 </tr>
@@ -1831,6 +1844,19 @@ function ReporteTransacciones() {
                       <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 8, background: t.estado === "confirmado" ? B.success + "22" : B.navyLight, color: t.estado === "confirmado" ? B.success : "rgba(255,255,255,0.5)", fontWeight: 600 }}>
                         {t.estado}
                       </span>
+                    </td>
+                    <td style={{ padding: "8px 12px" }}>
+                      {CARD_PROVIDERS.includes(t.proveedor) ? (
+                        <button
+                          onClick={(e) => descargarExpediente(e, t.reserva_id)}
+                          disabled={cbBusy === t.reserva_id}
+                          title="Descargar expediente para el banco (compra+IP, confirmación con pasaportes y zarpe del día)"
+                          style={{ ...BTN(B.pink || "#B4493D"), fontSize: 10, padding: "5px 10px", opacity: cbBusy === t.reserva_id ? 0.6 : 1, whiteSpace: "nowrap" }}>
+                          {cbBusy === t.reserva_id ? "Generando…" : "📄 Banco"}
+                        </button>
+                      ) : (
+                        <span style={{ fontSize: 10, color: "rgba(255,255,255,0.25)" }}>—</span>
+                      )}
                     </td>
                   </tr>
                 ))}
