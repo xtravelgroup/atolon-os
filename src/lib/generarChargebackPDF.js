@@ -22,10 +22,20 @@ async function cargarDatos(reservaId) {
 
   // Transacción Wompi: por referencia_pago o por el id de la reserva; se toma la más reciente aprobada.
   const refs = [r.referencia_pago, r.id].filter(Boolean);
+  // Referencias adicionales guardadas en pagos[] (id / reference_id de la pasarela).
+  if (Array.isArray(r.pagos)) r.pagos.forEach((p) => { [p.id, p.reference_id, p.reference, p.transaction_id].forEach((x) => x && refs.push(String(x))); });
   let wompi = null;
   if (refs.length) {
-    const { data: ws } = await supabase.from("wompi_eventos_log").select("*").in("referencia", refs).order("created_at", { ascending: false });
+    const { data: ws } = await supabase.from("wompi_eventos_log").select("*").or(`referencia.in.(${refs.join(",")}),transaction_id.in.(${refs.join(",")})`).order("created_at", { ascending: false });
     wompi = (ws || []).find((w) => w.status === "APPROVED") || (ws || [])[0] || null;
+  }
+  // Respaldo SEGURO: por email del titular en la transacción (mismo cliente).
+  if (!wompi) {
+    const em = (r.email || r.contacto || "").toLowerCase();
+    if (em) {
+      const { data: byEmail } = await supabase.from("wompi_eventos_log").select("*").eq("raw->data->transaction->>customer_email", em).order("created_at", { ascending: false });
+      wompi = (byEmail || []).find((w) => w.status === "APPROVED") || (byEmail || [])[0] || null;
+    }
   }
 
   // Consentimiento (habeas data) con IP: por email del titular; el más reciente.
