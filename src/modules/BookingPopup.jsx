@@ -915,6 +915,12 @@ export default function BookingPopup() {
         lead_id:        leadId || null,
         ...fePayload(form),
       });
+
+      // Registrar consentimiento + IP + user-agent del cliente (evidencia de
+      // autorización para chargebacks). Server-side toma la IP real. Fire-and-forget.
+      supabase.functions.invoke("registrar-consentimiento", {
+        body: { reserva_id: reservaId, email: form.email, identif: form.identif || null, user_agent: navigator.userAgent, canal: (grupoEvt || grupoQ) ? "web_grupo" : "web_booking" },
+      }).then(() => {}).catch(() => {});
     }
     // Track payment attempt (enriched)
     AtolanTrack.evento("payment_attempt", {

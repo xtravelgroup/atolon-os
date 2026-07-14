@@ -156,12 +156,16 @@ export async function generarChargebackPDF(reservaId) {
   }
   if (consent) {
     kv("Consentimiento (Habeas Data)", `Otorgado ${fmtDT(consent.otorgado_at)}`);
-    kv("IP de origen del cliente", consent.ip_origen || "—");
-    kv("Dispositivo (User-Agent)", consent.user_agent || "—");
+    kv("IP de origen del cliente", consent.ip_origen || r.ip_reserva || "—");
+    kv("Dispositivo (User-Agent)", consent.user_agent || r.user_agent_reserva || "—");
     kv("Canal de captura", consent.canal_captura || "—");
     kv("Versión de política", consent.version_politica || "—");
+  } else if (r.ip_reserva) {
+    kv("IP al hacer la reserva", r.ip_reserva);
+    kv("Dispositivo (User-Agent)", r.user_agent_reserva || "—");
+    note("IP capturada en el momento de la reserva en la página (sin registro formal de consentimiento).");
   } else {
-    note("No se encontró registro de consentimiento/IP asociado al email del cliente.");
+    note("No se encontró registro de consentimiento/IP asociado a esta reserva.");
   }
   // Comprobante de pago (si existe).
   if (r.comprobante_url) {
