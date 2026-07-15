@@ -1785,7 +1785,10 @@ serve(async (req) => {
         if (key === "otros") otrosItems.push({ desc: pm, venta: val, propina: 0 });
         metodosData[key].venta += val;
       }
-      // Prorratear propinas
+      // Prorratear propinas — redondear a entero para respetar tipo integer en BD
+      for (const k of Object.keys(metodosData)) {
+        metodosData[k].venta = Math.round(metodosData[k].venta);
+      }
       if (totalVentas > 0 && totalPropinas > 0) {
         for (const k of Object.keys(metodosData)) {
           const share = metodosData[k].venta / totalVentas;
@@ -1795,7 +1798,9 @@ serve(async (req) => {
       } else {
         for (const k of Object.keys(metodosData)) metodosData[k].total = metodosData[k].venta;
       }
-      if (otrosItems.length > 0) metodosData.otros_items = otrosItems;
+      if (otrosItems.length > 0) {
+        metodosData.otros_items = otrosItems.map(oi => ({ ...oi, venta: Math.round(oi.venta), propina: Math.round(oi.propina) }));
+      }
 
       // 4) dry_run devuelve el payload sin insertar
       const totalGeneral = totalVentas + totalPropinas;
@@ -1831,9 +1836,9 @@ serve(async (req) => {
         numero_comprobante: null,
         usuario_email: "auto-loggro@sistema.atolon",
         metodos: metodosData,
-        total_ventas: totalVentas,
-        total_propinas: totalPropinas,
-        total_general: totalGeneral,
+        total_ventas: Math.round(totalVentas),
+        total_propinas: Math.round(totalPropinas),
+        total_general: Math.round(totalGeneral),
         efectivo_esperado: metodosData.efectivo.venta,
         efectivo_contado: metodosData.efectivo.venta,
         diferencia: 0,
