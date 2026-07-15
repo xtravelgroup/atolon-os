@@ -1,0 +1,608 @@
+Categoria,Insumo,Unidad,Cantidad
+facturacion,"Aceite Vegetal",ml,19600
+facturacion,"Limon",Gr,17235
+facturacion,"LECHE DE COCO",Ml,12850
+facturacion,"papas francesas",Gr,9900
+facturacion,"Filete de Tilapia",Gr,9750
+facturacion,"Piña",Gr,7230
+facturacion,"CAMARON",Gr,6920
+facturacion,"Tomate",Gr,6170
+facturacion,"TOCINO CARNUDO",Gr,6000
+facturacion,"Leche deslactosada",ml,5040
+facturacion,"pechuga de pollo",Gr,4800
+facturacion,"Cebolla blanca",Gr,4790
+facturacion,"salsa napolitana",Gr,4400
+facturacion,"Crema de coco",Ml,3960
+facturacion,"Fondo de pescado",Gr,3800
+facturacion,"Patilla",Gr,3700
+facturacion,"mejillones",Gr,3400
+facturacion,"Melon",Gr,3400
+facturacion,"Zumo de limon",Ml,3358
+facturacion,"LANGOSTA",Gr,3200
+facturacion,"PAPAYA",Gr,2900
+facturacion,"Agua",Ml,2870
+facturacion,"Cebolla Morada",Gr,2800
+facturacion,"Suero Costeño",Gr,2670
+facturacion,"masa de  yuca",Gr,2400
+facturacion,"Leche condensada",Gr,2240
+facturacion,"Arroz",Gr,2140
+facturacion,"Lechuga Crespa Verde",Gr,2130
+facturacion,"LOMO FINO",Gr,2100
+facturacion,"Hielo",Gr,2009
+facturacion,"LANGOSTINOS",Gr,2000
+facturacion,"Ajii jalapenos",Gr,2000
+facturacion,"Zanahoria",Gr,1670
+facturacion,"Mantequilla",Gr,1630
+facturacion,"mix de lechugas",Gr,1460
+facturacion,"GARBANZOS",Gr,1400
+facturacion,"Crema de leche",ml,1250
+facturacion,"Hogao",Gr,1110
+facturacion,"TUNA LOIN",Gr,1110
+facturacion,"Leche de tigre",Gr,1100
+facturacion,"PAPAS EN CASCOS",Gr,1100
+facturacion,"Zumo de corozo",Ml,1035
+facturacion,"Tocineta ahumada",Gr,990
+facturacion,"CEBOLLA CARAMELIZADA",Kg,990
+facturacion,"MAYONESA DE TRUFA",Kg,990
+facturacion,"GUATILA",Gr,990
+facturacion,"VINO BLANCO",Ml,970
+facturacion,"QUESO MOZARRELA BLOQUE",Gr,965
+facturacion,"Aceite de oliva",Ml,940
+facturacion,"Ajo",Gr,825
+facturacion,"repollo morado",Gr,810
+facturacion,"Pepino Cohombro",Gr,750
+facturacion,"Tomate Cherry",Gr,700
+facturacion,"Naranjas Frutas",Gr,645
+facturacion,"Cilantro",Gr,611
+facturacion,"AGUACHILE  VERDE",Ml,600
+facturacion,"Salsa de tomate",Gr,600
+facturacion,"Mayonesa Fruco",Gr,600
+facturacion,"fermento de ajo y cebolla",Ml,600
+facturacion,"Queso Costeño",Gr,500
+facturacion,"Queso Mozarella Tajado",Gr,495
+facturacion,"Cereza marrasquino",Gr,335
+facturacion,"AJI DULCE",Gr,305.5
+facturacion,"aguacate",Gr,300
+facturacion,"Hierba buena",Gr,260
+facturacion,"Sal",Gr,222.9999999999998
+facturacion,"TAHINI",Gr,210
+facturacion,"ZUQUINI VERDE",Gr,200
+facturacion,"ZUQUINI AMARILLO",Gr,200
+facturacion,"Confitado de corozo",Gr,200
+facturacion,"leche entera",Ml,200
+facturacion,"jamon colanta",Gr,165
+facturacion,"Pimenton rojo",Gr,160
+facturacion,"Herbabuena gr",Gr,150
+facturacion,"ESPARRAGO",Gr,150
+facturacion,"Coca Cola Original Botella 400ml",Unidad,143
+facturacion,"Pimenton verde",Gr,140
+facturacion,"Jugo de naranja",Ml,133
+facturacion,"CREMA DE AVELLANA",Gr,110
+facturacion,"Lychee Fruta Lata",Gr,100
+facturacion,"ARROZ DE COCO",Und,98
+facturacion,"Syrup Simple",Oz,95.5
+facturacion,"Paprika Badia",Gr,90
+facturacion,"jamon serrano",Gr,90
+facturacion,"VINAGRETA DE FINAS HIERVAS",Kg,90
+facturacion,"Agua Manantial 500ml",Unidad,77
+facturacion,"MANZANA VERDE",Gr,70
+facturacion,"Coca Cola Zero 330ml",,69
+facturacion,"AJI HABANERO",Gr,66
+facturacion,"sierra en posta",Und,65
+facturacion,"Soda Bretaña",Und,65
+facturacion,"AGUA CRISTAL 600 ML",Und,64
+facturacion,"Mojarra roja",Und,63
+facturacion,"PATACON POCHOCHO",Und,59
+facturacion,"Cerveza Corona",Unidad,59
+facturacion,"sofrito",Gr,56
+facturacion,"platanos",Und,50
+facturacion,"Smirnoff OZ",Oz,46.66666666666
+facturacion,"Cafe juan valdez capsula x 8",Und,41
+facturacion,"Pimienta Badia",Gr,40.800000000000026
+facturacion,"limonada natural",,38
+facturacion,"GELATINA SIN SABOR",Gr,35
+facturacion,"Hamburguesa Angus",Und,33
+facturacion,"Pan hamburguesa",Und,33
+facturacion,"HUEVOS",Und,33
+facturacion,"limonada de coco",,32
+facturacion,"buñuelos de yuca",Und,30
+facturacion,"LECHUGA CRESPA MORADA",Gr,30
+facturacion,"LECHUGA ROMANA",Gr,30
+facturacion,"QUESO CABRA",Gr,30
+facturacion,"Jugo de limon",Ml,30
+facturacion,"queso crema",Gr,30
+facturacion,"Espinacas",Gr,30
+facturacion,"Salsa de soya",Ml,30
+facturacion,"SEAWEED SALAD",Gr,30
+facturacion,"chocolate corona",Gr,30
+facturacion,"Agua Manantial 300 ml",,28
+facturacion,"Cerveza Costeñita",Unidad,25
+facturacion,"STELLA ARTOIS",,24
+facturacion,"Quatro 400ML",,21
+facturacion,"Pizza Pepperoni",,19
+facturacion,"COMIDA DE STAFF",,19
+facturacion,"brownie",Und,17
+facturacion,"Cerveza Aguila Light",Unidad,17
+facturacion,"CAFE AMERICANO",,17
+facturacion,"Jengibre",Gr,16
+facturacion,"Tonica INDI",,16
+facturacion,"Jose Cuervo Reposado 750ml",Unidad,15.680000000000001
+facturacion,"Soda Bretaña 300ml",Unidad,15.199999999999994
+facturacion,"Cocolada",,15
+facturacion,"Aceitunas",Gr,15
+facturacion,"Infusion de chile jalapeño",Ml,15
+facturacion,"ENSALADAS ENSALADA FRESCA",Und,14
+facturacion,"pulpa de maracuya",Und,13.5
+facturacion,"MANTEQUILLA PORCION",Und,11
+facturacion,"jugo de corozo",,11
+facturacion,"tortilla de maiz",Und,9.7
+facturacion,"Syrup de gengibre",Oz,9
+facturacion,"BASE DE COCTEL",,9
+facturacion,"masa pizza",Und,8.5
+facturacion,"limonada cerezada",,8
+facturacion,"desechables",Und,8
+facturacion,"ALMUERZO PERSONAL",,8
+facturacion,"Dorado Highball",,8
+facturacion,"Grey Goose 700ml OZ",Unidad,8
+facturacion,"COCA COLA NORMAL DE 400ML",Unidad,8
+facturacion,"HAMBURGUESA CON QUESO Y PAPAS + SODA",,8
+facturacion,"Jugo de sandia",Ml,7
+facturacion,"PESCADO EN POSTA + BEBIDA",,7
+facturacion,"Ginebra Tanqueray Ten",Unidad,6.3999999999999995
+facturacion,"Jugo de maracuya",Ml,6
+facturacion,"AJONJOLY",Gr,6
+facturacion,"bebidas hidratantes",Unidad,6
+facturacion,"Jose Cuervo Blanco 750ml",Unidad,5.320000000000003
+facturacion,"Redbull",,5
+facturacion,"Ginger Canada Dry 300ml",Und,5
+facturacion,"ACEITE DE AJO Y PEREJIL",Ml,5
+facturacion,"AZUCAR MICRO",Gr,5
+facturacion,"Licor Triple Sec 750ml",Unidad,4.640000000000003
+facturacion,"Ron Viejo de Caldas Tradicional 750ml",Unidad,4.560000000000002
+facturacion,"Espumoso Baron Rotberg 750ml",Unidad,4.200000000000001
+facturacion,"Aguardiente Antioqueño Azul 750ml",Unidad,4.08
+facturacion,"MASAJE 1 HRS",,4
+facturacion,"PARGO ROJO",Und,4
+facturacion,"Pizza Margarita",,4
+facturacion,"Jugo de piña",Ml,4
+facturacion,"Mini bar - Electrolic",,4
+facturacion,"GALLETAS DUCALES (TACO)",Und,3.5
+facturacion,"Don Julio Reposado 700ml",Unidad,3.371200000000001
+facturacion,"PASTA TEMPURA",Kg,3.2499999999999987
+facturacion,"Electrolit 625ml",,3
+facturacion,"MASAJE 30 MNTS",,3
+facturacion,"Coñac Hennessy VS Shot",,3
+facturacion,"PANCAKES NUTELLA",,3
+facturacion,"tocineta",,3
+facturacion,"Moet Chandon Brut 750ml",Unidad,3
+facturacion,"Aperol 750ml",Unidad,2.800000000000001
+facturacion,"Vodka Smirnoff Red 700ml",Unidad,2.7852500000000013
+facturacion,"Don Julio Blanco 700ml",Unidad,2.3428
+facturacion,"Aguardiente Amarillo 750ml",Unidad,2
+facturacion,"Aguardiente Antioqueño Verde 750ml",Unidad,2
+facturacion,"ZACAPA 23 750 ML",Und,2
+facturacion,"VINO TINTO RAMON BILBAO CRIANZA",Und,2
+facturacion,"Patillazo",,2
+facturacion,"Cerveza Heineken",Unidad,2
+facturacion,"Tonica OCEAN",,2
+facturacion,"Vodka Absolut 700ml",Unidad,2
+facturacion,"BURRATA",Unidad,2
+facturacion,"Kola Roman 400ml",,2
+facturacion,"Quatro Botella 400ml",Unidad,2
+facturacion,"Kola Roman Botella 400ml",Unidad,2
+facturacion,"COCA CORA 0(CERO)",Unidad,2
+facturacion,"Mini bar - Red bull",,2
+facturacion,"Tequila Jimador Shot",,2
+facturacion,"Ron Viejo de Caldas Blanco 750ml",Unidad,1.8800000000000003
+facturacion,"Buchanan 12 - 750ml",Unidad,1.6400000000000001
+facturacion,"Mezcal Union 700ml",Unidad,1.5426000000000006
+facturacion,"Ginebra Gordons 700ml",Unidad,1.5426000000000004
+facturacion,"Bulleit Bourbon 750ml",Unidad,1.3600000000000003
+facturacion,"MAYONESA CHIPOTLE",Kg,1.2200000000000006
+facturacion,"MASA DE CERDO",Kg,1.2
+facturacion,"CEBOLLA ENCURTIDA",Kg,1.0500000000000005
+facturacion,"Cinzano Splitz BT",,1
+facturacion,"Coco Frio",,1
+facturacion,"Chandon Extra Brut 750Ml BT",,1
+facturacion,"Espumoso Chandon Rose 750ml",Unidad,1
+facturacion,"Mezcal 400 Conejos 750ml",Unidad,1
+facturacion,"otros servicio",,1
+facturacion,"AROMATICA - TE INFUSION",,1
+facturacion,"TRANSPORTE MARITIMO",,1
+facturacion,"JARRA DE SANDIAA",,1
+facturacion,"Baileys 700ml",Unidad,0.857
+facturacion,"Ginebra Tanqueray Dry 700ml",Unidad,0.7713
+facturacion,"Johnnie Walker Black Label 700ml",Unidad,0.6856
+facturacion,"TOMATES  DESIDRATADOS",Kg,0.6
+facturacion,"Macallan 12  700 ml",Und,0.5142
+facturacion,"Vino Tinto Santa Carolina Reservado 750ml",Unidad,0.4
+facturacion,"PAN MASA MADRE",Unidad,0.4
+facturacion,"Ron Bacardi Añejo 700ml",Unidad,0.3428
+facturacion,"SALSA PESTO",Kg,0.30000000000000004
+facturacion,"Soho Licor de Lichee 700ml",Unidad,0.21425
+facturacion,"Ron Cachaza 51 - 965-ml",Und,0.1875
+facturacion,"Old Parr 12 - 750ml",Unidad,0.16
+facturacion,"Bulleit Rye 750ml",Unidad,0.16
+facturacion,"Cereza",Unidad,0.1
+facturacion,"DICTADOR 12 AÑOS 700 ML",Und,0.0857
+facturacion,"Campari 750ml",Unidad,0.04
+facturacion,"Bermut Martini Rosso 750ml",Unidad,0.04
+facturacion,"Bermut Martini Bianco 750ml",Unidad,0.04
+facturacion,"VINAGRETA FRUTOS ROJOS",Kg,0.03
+facturacion,"TOMILLO",Und,0.02
+cortesia,"papas francesas",Gr,12150
+cortesia,"pechuga de pollo",Gr,8650
+cortesia,"Crema de leche",ml,4570
+cortesia,"Limon",Gr,4555
+cortesia,"QUESO MOZARRELA BLOQUE",Gr,4490
+cortesia,"Leche condensada",Gr,4435
+cortesia,"salsa napolitana",Gr,4100
+cortesia,"LECHE DE COCO",Ml,2600
+cortesia,"Filete de Tilapia",Gr,2550
+cortesia,"Tomate",Gr,2360
+cortesia,"ARRACHERA",Gr,2300
+cortesia,"Aceite Vegetal",ml,2150
+cortesia,"CREMA DE AVELLANA",Gr,2050
+cortesia,"Tocineta ahumada",Gr,1950
+cortesia,"Agua",Ml,1900
+cortesia,"CAMARON",Gr,1880
+cortesia,"Piña",Gr,1820
+cortesia,"Patilla",Gr,1800
+cortesia,"Melon",Gr,1700
+cortesia,"PAPAYA",Gr,1600
+cortesia,"premezcla pancakes aunt jemima",Gr,1200
+cortesia,"TOCINO CARNUDO",Gr,1200
+cortesia,"Queso Mozarella Tajado",Gr,975
+cortesia,"Hielo",Gr,900
+cortesia,"Lechuga Crespa Verde",Gr,830
+cortesia,"sierra en posta",Und,806
+cortesia,"Fondo de pescado",Gr,800
+cortesia,"Zumo de limon",Ml,720
+cortesia,"mejillones",Gr,700
+cortesia,"repollo morado",Gr,650
+cortesia,"peperoni",Gr,600
+cortesia,"Leche entera",Ml,600
+cortesia,"GARBANZOS",Gr,600
+cortesia,"PAPAS EN CASCOS",Gr,600
+cortesia,"masa de  yuca",Gr,600
+cortesia,"MAYONESA DE TRUFA",Kg,494.7000000000001
+cortesia,"CEBOLLA CARAMELIZADA",Kg,494.7000000000001
+cortesia,"Arroz",Gr,480
+cortesia,"LANGOSTINOS",Gr,410
+cortesia,"LANGOSTA",Gr,400
+cortesia,"MAYONESA CHIPOTLE",Kg,390.11
+cortesia,"TUNA LOIN",Gr,370
+cortesia,"Cebolla blanca",Gr,360
+cortesia,"Cebolla Morada",Gr,320
+cortesia,"Mantequilla",Gr,305
+cortesia,"Cilantro",Gr,301
+cortesia,"Suero Costeño",Gr,300
+cortesia,"Cebolla roja",Gr,260
+cortesia,"GELATINA SIN SABOR",Gr,250
+cortesia,"AJI HABANERO",Gr,246
+cortesia,"Zanahoria",Gr,220
+cortesia,"Aceite de oliva",Ml,212
+cortesia,"VINO BLANCO",Ml,210
+cortesia,"Pimenton rojo",Gr,210
+cortesia,"ZUQUINI VERDE",Gr,200
+cortesia,"ZUQUINI AMARILLO",Gr,200
+cortesia,"CEBOLLA ENCURTIDA",Kg,180.87000000000003
+cortesia,"GUATILA",Gr,180
+cortesia,"Leche deslactosada",ml,180
+cortesia,"Herbabuena gr",Gr,150
+cortesia,"Pimenton verde",Gr,150
+cortesia,"Rugula",Gr,140
+cortesia,"LECHUGA ROMANA",Gr,130
+cortesia,"ACEITE DE AJO Y PEREJIL",Ml,125
+cortesia,"Crema de coco",Ml,120
+cortesia,"mix de lechugas",Gr,120
+cortesia,"Pepino Cohombro",Gr,110
+cortesia,"Tomate Cherry",Gr,110
+cortesia,"aguacate",Gr,100
+cortesia,"Leche de tigre",Gr,100
+cortesia,"Confitado de corozo",Gr,100
+cortesia,"harina de trigo",Gr,100
+cortesia,"Ajo",Gr,95
+cortesia,"brownie",Und,93
+cortesia,"zanahoria baby",Gr,90
+cortesia,"TAHINI",Gr,90
+cortesia,"jamon serrano",Gr,90
+cortesia,"jamon colanta",Gr,90
+cortesia,"patacón de pochocho",Und,75
+cortesia,"Pan hamburguesa",Und,65
+cortesia,"Hamburguesa Angus",Und,65
+cortesia,"GALLETAS DUCALES (TACO)",Und,62.5
+cortesia,"AJI DULCE",Gr,60.5
+cortesia,"Hogao",Gr,60
+cortesia,"Jugo de limon",Ml,60
+cortesia,"chocolate corona",Gr,55
+cortesia,"ESPARRAGO",Gr,50
+cortesia,"QUESO CHEDDAR",Gr,49
+cortesia,"Zumo de corozo",Ml,45
+cortesia,"ARROZ DE COCO",Und,40
+cortesia,"ARVEJA",Gr,40
+cortesia,"Sal",Gr,36.80000000000001
+cortesia,"LECHUGA CRESPA MORADA",Gr,30
+cortesia,"QUESO CABRA",Gr,30
+cortesia,"queso crema",Gr,30
+cortesia,"VINAGRETA DE FINAS HIERVAS",Kg,30
+cortesia,"Infusion de chile jalapeño",Ml,30
+cortesia,"ENSALADAS ENSALADA FRESCA",Und,28
+cortesia,"AZUCAR MICRO",Gr,25
+cortesia,"masa pizza",Und,24.5
+cortesia,"Paprika Badia",Gr,21
+cortesia,"MANZANA VERDE",Gr,20
+cortesia,"HUEVOS",Und,18
+cortesia,"Naranjas Frutas",Gr,15
+cortesia,"Cafe juan valdez capsula x 8",Und,14
+cortesia,"Agua Manantial 300 ml",,14
+cortesia,"sofrito",Gr,14
+cortesia,"Syrup Simple",Oz,13.5
+cortesia,"Coca Cola Original Botella 400ml",Unidad,13
+cortesia,"Queso parmesano bloque",Gr,10
+cortesia,"Espinacas",Gr,10
+cortesia,"Salsa de soya",Ml,10
+cortesia,"SEAWEED SALAD",Gr,10
+cortesia,"Cereza marrasquino",Gr,10
+cortesia,"Hierba buena",Gr,10
+cortesia,"Coca Cola Zero 330ml",,9
+cortesia,"ALBAHACA",Gr,8
+cortesia,"STELLA ARTOIS",,7
+cortesia,"Pimienta Badia",Gr,6.8999999999999995
+cortesia,"MANTEQUILLA PORCION",Und,6
+cortesia,"buñuelos de yuca",Und,6
+cortesia,"limonada cerezada",,5
+cortesia,"Mojarra roja",Und,5
+cortesia,"PATACON POCHOCHO",Und,5
+cortesia,"limonada natural",,5
+cortesia,"tortilla de maiz",Und,4.900000000000001
+cortesia,"Huevos",Und,4
+cortesia,"Pie de limon",Und,4
+cortesia,"limonada de coco",,4
+cortesia,"Jugo de sandia",Ml,4
+cortesia,"Jengibre",Gr,4
+cortesia,"platanos",Und,3.5
+cortesia,"levadura",Gr,3
+cortesia,"pulpa de maracuya",Und,2.5
+cortesia,"Ron Viejo de Caldas Blanco 750ml",Unidad,2.4800000000000004
+cortesia,"PASTA TEMPURA",Kg,2.15
+cortesia,"AJONJOLY",Gr,2
+cortesia,"Jugo de maracuya",Ml,2
+cortesia,"jugo de corozo",,2
+cortesia,"Azucar Aro",Gr,2
+cortesia,"EMPANADAS  DE CARNE ",Unidad,1.7999999999999998
+cortesia,"Jose Cuervo Blanco 750ml",Unidad,1.7600000000000002
+cortesia,"TOMATES  DESIDRATADOS",Kg,1.2
+cortesia,"Don Julio Reposado 700ml",Unidad,1.0857
+cortesia,"cinzano cortesía",,1
+cortesia,"Cocolada",,1
+cortesia,"Cerveza Aguila Light",Unidad,1
+cortesia,"PANCAKES NUTELLA",,1
+cortesia,"Jugo de piña",Ml,1
+cortesia,"Agua Manantial 500ml",Unidad,1
+cortesia,"BURRATA",Unidad,1
+cortesia,"Gnocchis de papa a la gorgonzola",,1
+cortesia,"Jugo de naranja",Ml,1
+cortesia,"Quatro 400ML",,1
+cortesia,"Pizza Vegetariana",,1
+cortesia,"Redbull",,1
+cortesia,"Espumoso Chandon Brut",Unidad,1
+cortesia,"Licor Triple Sec 750ml",Unidad,0.92
+cortesia,"Pan tajado",Unidad,0.6200000000000001
+cortesia,"PAN BAGUETTE",Und,0.6000000000000001
+cortesia,"PAN MOGOLLA",Und,0.6000000000000001
+cortesia,"Soda Bretaña 300ml",Unidad,0.5
+cortesia,"Campari 750ml",Unidad,0.32
+cortesia,"DEDITOS ",Unidad,0.30000000000000004
+cortesia,"SALSA PESTO",Kg,0.30000000000000004
+cortesia,"MASA DE CERDO",Kg,0.3
+cortesia,"PAN MASA MADRE",Unidad,0.2
+cortesia,"CARIMAÑOLAS",Unidad,0.12
+cortesia,"Mezcal Union 700ml",Unidad,0.0857
+cortesia,"ADEREZO CESAR",Gr,0.08
+cortesia,"Ron Viejo de Caldas Tradicional 750ml",Unidad,0.08
+cortesia,"VINAGRETA FRUTOS ROJOS",Kg,0.03
+consumo_interno,"papas francesas",Gr,4200
+consumo_interno,"Limon",Gr,1580
+consumo_interno,"Aceite Vegetal",ml,1350
+consumo_interno,"CAMARON",Gr,1300
+consumo_interno,"pechuga de pollo",Gr,1100
+consumo_interno,"TOCINO CARNUDO",Gr,800
+consumo_interno,"salsa napolitana",Gr,750
+consumo_interno,"Tomate",Gr,570
+consumo_interno,"LOMO FINO",Gr,500
+consumo_interno,"Filete de Tilapia",Gr,450
+consumo_interno,"Tocineta ahumada",Gr,420
+consumo_interno,"CEBOLLA CARAMELIZADA",Kg,420
+consumo_interno,"MAYONESA DE TRUFA",Kg,420
+consumo_interno,"Pasta Penne",Gr,390
+consumo_interno,"repollo morado",Gr,350
+consumo_interno,"masa de  yuca",Gr,300
+consumo_interno,"Lechuga Crespa Verde",Gr,260
+consumo_interno,"QUESO MOZARRELA BLOQUE",Gr,260
+consumo_interno,"Hielo",Gr,227
+consumo_interno,"Queso Mozarella Tajado",Gr,210
+consumo_interno,"Cebolla blanca",Gr,210
+consumo_interno,"Suero Costeño",Gr,180
+consumo_interno,"Mantequilla",Gr,150
+consumo_interno,"Cebolla Morada",Gr,120
+consumo_interno,"Leche de tigre",Gr,100
+consumo_interno,"Leche condensada",Gr,100
+consumo_interno,"Crema de leche",ml,100
+consumo_interno,"Patilla",Gr,100
+consumo_interno,"Melon",Gr,100
+consumo_interno,"Piña",Gr,100
+consumo_interno,"Cilantro",Gr,84
+consumo_interno,"Tomate Cherry",Gr,60
+consumo_interno,"CREMA DE AVELLANA",Gr,60
+consumo_interno,"Agua",Ml,60
+consumo_interno,"jamon colanta",Gr,60
+consumo_interno,"AJI DULCE",Gr,40.5
+consumo_interno,"Naranjas Frutas",Gr,40
+consumo_interno,"Pepino Cohombro",Gr,40
+consumo_interno,"Cafe juan valdez capsula x 8",Und,36
+consumo_interno,"CEBOLLA ENCURTIDA",Kg,30.320000000000004
+consumo_interno,"MAYONESA CHIPOTLE",Kg,30.230000000000008
+consumo_interno,"Hogao",Gr,30
+consumo_interno,"GUATILA",Gr,30
+consumo_interno,"Ajo",Gr,30
+consumo_interno,"Queso parmesano bloque",Gr,30
+consumo_interno,"Zumo de limon",Ml,30
+consumo_interno,"jamon serrano",Gr,30
+consumo_interno,"LECHUGA CRESPA MORADA",Gr,20
+consumo_interno,"LECHUGA ROMANA",Gr,20
+consumo_interno,"mix de lechugas",Gr,20
+consumo_interno,"pepino europeo",Gr,20
+consumo_interno,"Vinagre balsamico",Ml,20
+consumo_interno,"Coca Cola Original Botella 400ml",Unidad,17
+consumo_interno,"Coca Cola Zero 330ml",,15
+consumo_interno,"Soda Bretaña",Und,15
+consumo_interno,"Hamburguesa Angus",Und,14
+consumo_interno,"Pan hamburguesa",Und,14
+consumo_interno,"Sal",Gr,10.399999999999999
+consumo_interno,"GELATINA SIN SABOR",Gr,10
+consumo_interno,"queso crema",Gr,10
+consumo_interno,"Cerveza Costeñita",Unidad,10
+consumo_interno,"Agua Manantial 300 ml",,9
+consumo_interno,"sofrito",Gr,7
+consumo_interno,"AJI HABANERO",Gr,6
+consumo_interno,"limonada natural",,6
+consumo_interno,"Aceite de oliva",Ml,6
+consumo_interno,"Pizza Pepperoni",,5
+consumo_interno,"ARROZ DE COCO",Und,5
+consumo_interno,"Agua Manantial 500ml",Unidad,5
+consumo_interno,"AZUCAR MICRO",Gr,5
+consumo_interno,"Mojarra roja",Und,4
+consumo_interno,"PATACON POCHOCHO",Und,4
+consumo_interno,"sierra en posta",Und,4
+consumo_interno,"buñuelos de yuca",Und,4
+consumo_interno,"Vino Rosado Muga",Und,3
+consumo_interno,"Jugo de sandia",Ml,3
+consumo_interno,"Don Julio Blanco 700ml",Unidad,2
+consumo_interno,"masa pizza",Und,2
+consumo_interno,"Syrup Simple",Oz,2
+consumo_interno,"Jengibre",Gr,2
+consumo_interno,"Kola Roman 400ml",,2
+consumo_interno,"tortilla de maiz",Und,1.7
+consumo_interno,"Pimienta Badia",Gr,1.5000000000000002
+consumo_interno,"platanos",Und,1
+consumo_interno,"Jugo de maracuya",Ml,1
+consumo_interno,"GALLETAS DUCALES (TACO)",Und,1
+consumo_interno,"STELLA ARTOIS",,1
+consumo_interno,"Jugo de naranja",Ml,1
+consumo_interno,"tocineta",,1
+consumo_interno,"VINO TINTO RAMON BILBAO CRIANZA",Und,1
+consumo_interno,"Mezcal 400 Conejos 750ml",Unidad,1
+consumo_interno,"Electrolit 625ml",,1
+consumo_interno,"PAN MASA MADRE",Unidad,0.8999999999999999
+consumo_interno,"Soda Bretaña 300ml",Unidad,0.8
+consumo_interno,"Espumoso Baron Rotberg 750ml",Unidad,0.48
+consumo_interno,"PASTA TEMPURA",Kg,0.39999999999999997
+consumo_interno,"Don Julio Reposado 700ml",Unidad,0.3428
+consumo_interno,"Aperol 750ml",Unidad,0.32
+consumo_interno,"Campari 750ml",Unidad,0.32
+consumo_interno,"Don Julio 70 - 700ml",Unidad,0.2571
+consumo_interno,"MASA DE CERDO",Kg,0.15
+consumo_interno,"SALSA PESTO",Kg,0.1
+consumo_interno,"TOMATES  DESIDRATADOS",Kg,0.1
+consumo_interno,"PATRON",Unidad,0.0857
+anulacion,"papas francesas",Gr,1800
+anulacion,"Aceite Vegetal",ml,1400
+anulacion,"Agua",Ml,900
+anulacion,"Hielo",Gr,540
+anulacion,"CAMARON",Gr,450
+anulacion,"Limon",Gr,450
+anulacion,"LECHE DE COCO",Ml,400
+anulacion,"TOCINO CARNUDO",Gr,400
+anulacion,"LANGOSTA",Gr,400
+anulacion,"Tomate",Gr,380
+anulacion,"Piña",Gr,320
+anulacion,"Filete de Tilapia",Gr,300
+anulacion,"TUNA LOIN",Gr,250
+anulacion,"Cebolla Morada",Gr,240
+anulacion,"Lechuga Crespa Verde",Gr,210
+anulacion,"AGUACHILE  VERDE",Ml,200
+anulacion,"Melon",Gr,200
+anulacion,"Patilla",Gr,200
+anulacion,"PAPAYA",Gr,200
+anulacion,"Tocineta ahumada",Gr,180
+anulacion,"CEBOLLA CARAMELIZADA",Kg,180
+anulacion,"MAYONESA DE TRUFA",Kg,180
+anulacion,"Suero Costeño",Gr,150
+anulacion,"Cebolla blanca",Gr,150
+anulacion,"Crema de coco",Ml,120
+anulacion,"Leche deslactosada",ml,120
+anulacion,"Pepino Cohombro",Gr,120
+anulacion,"mix de lechugas",Gr,120
+anulacion,"Zanahoria",Gr,110
+anulacion,"Zumo de limon",Ml,106
+anulacion,"Hogao",Gr,90
+anulacion,"Mantequilla",Gr,90
+anulacion,"Queso Mozarella Tajado",Gr,90
+anulacion,"Herbabuena gr",Gr,90
+anulacion,"Leche condensada",Gr,60
+anulacion,"GUATILA",Gr,60
+anulacion,"ZUQUINI VERDE",Gr,50
+anulacion,"ZUQUINI AMARILLO",Gr,50
+anulacion,"ESPARRAGO",Gr,50
+anulacion,"VINO BLANCO",Ml,50
+anulacion,"repollo morado",Gr,50
+anulacion,"Zumo de corozo",Ml,45
+anulacion,"CREMA DE AVELLANA",Gr,40
+anulacion,"VINAGRETA DE FINAS HIERVAS",Kg,30
+anulacion,"Crema de leche",ml,30
+anulacion,"Smirnoff OZ",Oz,23.33333333333
+anulacion,"AJI DULCE",Gr,20
+anulacion,"Tonica INDI",,17
+anulacion,"Cilantro",Gr,16
+anulacion,"Naranjas Frutas",Gr,15
+anulacion,"Sal",Gr,14.4
+anulacion,"Coca Cola Zero 330ml",,10
+anulacion,"Cereza marrasquino",Gr,10
+anulacion,"Aceite de oliva",Ml,10
+anulacion,"Ajo",Gr,10
+anulacion,"EMPANADAS  DE CARNE ",Unidad,9
+anulacion,"ARROZ DE COCO",Und,7
+anulacion,"Syrup Simple",Oz,6.5
+anulacion,"Hamburguesa Angus",Und,6
+anulacion,"Pan hamburguesa",Und,6
+anulacion,"Mojarra roja",Und,5
+anulacion,"PATACON POCHOCHO",Und,5
+anulacion,"sierra en posta",Und,5
+anulacion,"limonada natural",,4
+anulacion,"otros servicio",,4
+anulacion,"Pimienta Badia",Gr,3.2
+anulacion,"AGUA CRISTAL 600 ML",Und,3
+anulacion,"Pizza Pepperoni",,3
+anulacion,"platanos",Und,3
+anulacion,"PAN BAGUETTE",Und,3
+anulacion,"PAN MOGOLLA",Und,3
+anulacion,"Pan tajado",Unidad,3
+anulacion,"TRANSPORTE MARITIMO",,3
+anulacion,"brownie",Und,2
+anulacion,"Coca Cola Original Botella 400ml",Unidad,2
+anulacion,"GINEBRA BOMBAY BT",,2
+anulacion,"Jugo de piña",Ml,2
+anulacion,"buñuelos de yuca",Und,2
+anulacion,"DEDITOS ",Unidad,1.5
+anulacion,"desechables",Und,1
+anulacion,"ZACAPA 23 AÑOS BT",,1
+anulacion,"Kola Roman 400ml",,1
+anulacion,"Agua Manantial 500ml",Unidad,1
+anulacion,"Caja de pizza",Und,1
+anulacion,"Cerveza Aguila Light",Unidad,1
+anulacion,"limonada de coco",,1
+anulacion,"Jugo de naranja",Ml,1
+anulacion,"yuca para personal",Kg,1
+anulacion,"tortilla de maiz",Und,0.6000000000000001
+anulacion,"CARIMAÑOLAS",Unidad,0.6
+anulacion,"Macallan 12  700 ml",Und,0.2571
+anulacion,"Ron Viejo de Caldas Tradicional 750ml",Unidad,0.24
+anulacion,"PASTA TEMPURA",Kg,0.15000000000000002
+anulacion,"Licor Triple Sec 750ml",Unidad,0.12
+anulacion,"Ginebra Gordons 700ml",Unidad,0.0857
+anulacion,"Vodka Smirnoff Red 700ml",Unidad,0.0857
+anulacion,"Mezcal Union 700ml",Unidad,0.0857
+anulacion,"Jose Cuervo Reposado 750ml",Unidad,0.08
+anulacion,"CEBOLLA ENCURTIDA",Kg,0.05
+anulacion,"MAYONESA CHIPOTLE",Kg,0.03

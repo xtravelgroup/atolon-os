@@ -1,0 +1,426 @@
+Categoria,Producto,Cantidad,Valor_COP
+facturacion,"COCA COLA",128,1408000
+facturacion,"CLUB COLOMBIA Cerveza",112,1680000
+facturacion,"Agua Manantial 500ML",71,781000
+facturacion,"Coca Cola Zero 330ml",69,759000
+facturacion,"AGUA CRISTAL 600 ML",64,704000
+facturacion,"PESCADO FRITO",59,3422000
+facturacion,"CORONA",59,1062000
+facturacion,"SODA PREMIUM MICHELADA",52,728000
+facturacion,"MARGARITA",49,2695000
+facturacion,"PIÑACOLADA",42,2310000
+facturacion,"CAFE ESPRESSO",39,390000
+facturacion,"CLUB COLOMBIA MICHELADA",38,684000
+facturacion,"ENTRADA DE PATACONES",37,888000
+facturacion,"AGUA MANANTIAL CON GAS 300ml",35,280000
+facturacion,"APEROL SPRITZ",35,1925000
+facturacion,"ATOLON BURGUER",33,1914000
+facturacion,"CHICHARRON DE CERDO Y CROQUETAS DE YUCA",30,1155000
+facturacion,"LIMONADA DE COCO",30,540000
+facturacion,"ALOJAMIENTO PORCION FRUTA",29,29
+facturacion,"SODA PREMIUM",28,308000
+facturacion,"Agua Manantial 300 ml",28,224000
+facturacion,"LIMONADA NATURAL",27,351000
+facturacion,"CORONA MICHELADA",26,468000
+facturacion,"COSTEÑITA",25,300000
+facturacion,"STELLA ARTOIS",24,432000
+facturacion,"FILETE DE PESCADO CON ARROZ CREMOSO",22,1430000
+facturacion,"Quatro 400ML",21,231000
+facturacion,"PIÑACOLADA S/A",21,630000
+facturacion,"PAPAS A LA FRANCESA TRUFADAS TRUFADAS",20,360000
+facturacion,"PIZZA PEPPERONI",19,912000
+facturacion,"ARROZ CALDOSO DE MARISCOS",19,1862000
+facturacion,"COMIDA DE STAFF",19,475000
+facturacion,"MEZCALITA TIERRA BOMBA",18,990000
+facturacion,"PALOMA",18,990000
+facturacion,"BEBIDAS JUGO DE NARANJA",18,18
+facturacion,"AGUILA LIGHT",17,255000
+facturacion,"OLD FASHION",17,935000
+facturacion,"PAPAS A LA FRANCESA TRUFADAS SIN TRUFAR",17,306000
+facturacion,"CAFE AMERICANO",17,153000
+facturacion,"JUGOS TROPICALES - MARACUYA",16,208000
+facturacion,"Tonica INDI",16,320000
+facturacion,"JUGOS TROPICALES - COROZO",16,208000
+facturacion,"DON JULIO REPOSADO SHOT",16,1000000
+facturacion,"HUEVOS AL GUSTO CON TOMATE Y CEBOLLA",16,16
+facturacion,"BROWNIE",15,480000
+facturacion,"Cocolada",15,825000
+facturacion,"ENCOCADO DE LANGOSTINO",15,982500
+facturacion,"MARGARITA DE MARACUYÁ",15,825000
+facturacion,"LONG ISLAND ICE TEA",15,825000
+facturacion,"Adicion de suero",14,70000
+facturacion,"HUEVOS AL GUSTO JAMON Y QUESO",14,14
+facturacion,"ZUMO DE LIMON",13,52000
+facturacion,"TACOS DE PESCADO",13,624000
+facturacion,"JUGO DE NARANJA",13,36009
+facturacion,"SUPREMA DE POLLO",12,672000
+facturacion,"MOJITO",12,660000
+facturacion,"COCTEL DE CAMARON",12,720000
+facturacion,"CEVICHE TIERRA BOMBA",11,704000
+facturacion,"limonada natural",11,143000
+facturacion,"TACOS DE CAMARON",11,572000
+facturacion,"OMELET ATOLON",11,105008
+facturacion,"jugo de corozo",11,99000
+facturacion,"GINGER ALE CANADA DRY",10,110000
+facturacion,"MOSCOW MULE",9,495000
+facturacion,"STELLA ARTOIS MICHELADA",9,162000
+facturacion,"TANQUERAY LONDON SHOTS",9,337500
+facturacion,"ENTRAÑA PAPAS A LA FRANCESA",9,779400
+facturacion,"BASE DE COCTEL",9,180000
+facturacion,"EMPAQUE DESECHABLE",8,20000
+facturacion,"AGUILA LIGHT MICHELADA",8,144000
+facturacion,"ALMUERZO PERSONAL",8,120000
+facturacion,"TACOS DE ENTRAÑA",8,520000
+facturacion,"SODA SABORIZADA SODA CEREZADA",8,144000
+facturacion,"CARIMAÑOLAS DE CERDO Y GENJIBRE",8,240000
+facturacion,"CLUB COLOMBIA CON CLAMATO",8,240000
+facturacion,"Dorado Highball",8,440000
+facturacion,"TANQUERAY TEN SHOTS",8,384000
+facturacion,"BUCHANAN'S 12 AÑOS SHOT",8,440000
+facturacion,"MICHELADA",8,24000
+facturacion,"JOHNNIE WALKER BLACK LABEL SHOT",8,440000
+facturacion,"HUEVOS AL GUSTO REVUELTOS",8,8
+facturacion,"HAMBURGUESA CON QUESO Y PAPAS + SODA",8,308000
+facturacion,"LIMONADA CEREZADA",7,112000
+facturacion,"PIE DE LIMON",7,224000
+facturacion,"jugo de sandia",7,63000
+facturacion,"HUMMUS MEDITERANEO",7,273000
+facturacion,"PESCADO EN POSTA + BEBIDA",7,269500
+facturacion,"BEBIDAS CAFE",7,7
+facturacion,"PESCADO EN POSTA EN SALSA CRIOLLA",6,360000
+facturacion,"AGUACHILE DE CAMARON",6,276000
+facturacion,"jugo de maracuya",6,54000
+facturacion,"MACALLAN 12 SHOT",6,549000
+facturacion,"PECHUGA DE POLLO A LA PARRILLA CON ARROZ + BEBIDA",6,150000
+facturacion,"BEBIDAS CAFE CON LECHE",6,6
+facturacion,"LANGOSTA A LA PARRILLA",5,550000
+facturacion,"Redbull",5,100000
+facturacion,"LIMONADA HIERBA BUENA",5,65000
+facturacion,"HUEVOS AL GUSTO HUEVOS REVUELTOS TOMATE Y CEBOLLA",5,149500
+facturacion,"COROZMOPOLITAN",5,275000
+facturacion,"HUEVOS AL GUSTO FRITOS",5,5
+facturacion,"Porción de fruta (V)",5,50000
+facturacion,"PESCADO EN SALSA CRIOLLA MOJARRA",4,232000
+facturacion,"BACARDI AÑEJO SHOT",4,106000
+facturacion,"ZACAPA 23 AÑOS SHOT",4,306000
+facturacion,"JUGOS TROPICALES - PIÑA",4,52000
+facturacion,"AGUARDIENTE ANTIOQUEÑO AZUL BT",4,1060000
+facturacion,"DON JULIO BLANCO SHOT",4,260000
+facturacion,"MASAJE 1 HRS",4,1000000
+facturacion,"PESCADO PARGO FRITO",4,392000
+facturacion,"PIZZA MARGARITA",4,160000
+facturacion,"Grey Goose Shot",4,234000
+facturacion,"jugo de piña",4,36000
+facturacion,"Mini bar - Electrolic",4,80000
+facturacion,"ARROZ PORCION",3,30000
+facturacion,"CHILAQUILES CHILAQUILES CON HUEVOS",3,105000
+facturacion,"Electrolit 625ml",3,60000
+facturacion,"COCO-LOCO",3,165000
+facturacion,"CAIPIRINHA",3,165000
+facturacion,"MASAJE 30 MNTS",3,450000
+facturacion,"ATOLON  PIZZA",3,156000
+facturacion,"ATUN POKE BOWL",3,156000
+facturacion,"Coñac Hennessy VS Shot",3,210000
+facturacion,"STEAK DE ATUN SASHIMI",3,216000
+facturacion,"VEGETALES A LA PARILLA",3,37500
+facturacion,"ENSALADA CESAR CON POLLO",3,132000
+facturacion,"PANCAKES NUTELLA",3,120000
+facturacion,"HUEVOS AL GUSTO HUEVOS  JAMON Y QUESO",3,89700
+facturacion,"tocineta",3,47700
+facturacion,"MOET BRUT IMPERIAL BT",3,3900000
+facturacion,"ADICION DE MAYONESA CHIPLOTE",2,6000
+facturacion,"SODA SABORIZADA SODA FRUTOS ROJOS",2,36000
+facturacion,"AGUARDIENTE MANZANARES BT",2,530000
+facturacion,"HUEVOS AL GUSTO HUEVOS FRITOS",2,59800
+facturacion,"OLD PARR 12 AÑOS SHOT",2,91600
+facturacion,"LIMONADA MINERAL",2,26000
+facturacion,"limonada de coco",2,36000
+facturacion,"AGUARDIENTE ANTIOQUEÑO VERDE BT",2,530000
+facturacion,"RAMON BILBAO",2,400000
+facturacion,"BULLEIT REY SHOTS",2,84000
+facturacion,"Patillazo",2,110000
+facturacion,"smirnoff Shot",2,58000
+facturacion,"HEINEKEN",2,36000
+facturacion,"DON JULIO REPOSADO BT",2,1500000
+facturacion,"adicion queso costeño",2,12000
+facturacion,"LANGOSTA A LA PARRILLA VIP PASS PASADIA",2,160000
+facturacion,"DON JULIO BLANCO BT",2,1300000
+facturacion,"HOOKAH MANZANA",2,500000
+facturacion,"Tonica OCEAN",2,40000
+facturacion,"Brownie",2,64000
+facturacion,"Jarra de maracuya",2,80000
+facturacion,"Vodka Smirnoff Red 700ML BT",2,580000
+facturacion,"SALSA - CHILE HABANERO",2,6000
+facturacion,"COPA VINO TINTO SANTA CAROLINA",2,66000
+facturacion,"Vodka Absolut BT",2,600000
+facturacion,"BURRATA Y CONFITURA DE COROZO CON PAN MASA MADRE",2,120000
+facturacion,"Kola Roman 400ml",2,22000
+facturacion,"CHILAQUILES CHILAQUILES ROJO",2,60000
+facturacion,"LOMO A LA PIMIENTA",2,177200
+facturacion,"CORONA CON CLAMATO",2,66000
+facturacion,"HUEVOS AL GUSTO HUEVOS REVUELTOS",2,59800
+facturacion,"MINI BAR QUATRO",2,22000
+facturacion,"MINI BAR KOLA ROMAN",2,22000
+facturacion,"Mini bar - Cocacola cero",2,22000
+facturacion,"Mini bar- Cocacola",2,22000
+facturacion,"Mini bar - Red bull",2,40000
+facturacion,"HOTCAKES MEZCLA TRADICIONAL",2,2
+facturacion,"Tequila Jimador Shot",2,60000
+facturacion,"ADICION DE HOGAO",1,3000
+facturacion,"SODA SABORIZADA SODA MARACUYÁ",1,18000
+facturacion,"Adicion de queso costeño",1,6000
+facturacion,"NEGRONI",1,55000
+facturacion,"DRY MARTINI",1,55000
+facturacion,"DICTADOR 12 AÑOS SHOT",1,48500
+facturacion,"PIZZA VEGETARIANA VIP PASS PASADIA",1,1
+facturacion,"ATOLON SALAD",1,33000
+facturacion,"VIP EXCLUSIVE LANGOSTA A LA PARRILLA",1,60000
+facturacion,"MARGARITA PICANTE",1,55000
+facturacion,"TEQUILA SUNRISE",1,45000
+facturacion,"limonada cerezada",1,16000
+facturacion,"Cinzano Splitz BT",1,190000
+facturacion,"ESPRESSO DOBLE",1,15000
+facturacion,"JUGOS  - MARACUYA EN LECHE",1,14000
+facturacion,"Coco Frio",1,20000
+facturacion,"VIEJO CALDAS SHOT",1,35000
+facturacion,"MOJITO GINGER",1,25000
+facturacion,"Chandon Extra Brut 750Ml BT",1,320000
+facturacion,"CHANDON  ROSE BT",1,350000
+facturacion,"MOJITO COLOMBIANO",1,55000
+facturacion,"MEZCAL 400 CONEJOS BT",1,620000
+facturacion,"ADICION CHILAQUILES ADICION POLLO",1,7000
+facturacion,"Adicion de Nutela",1,8000
+facturacion,"PIZZA NUTELLA",1,48000
+facturacion,"ENTRAÑA VEGETALES A LA PARRILA",1,86600
+facturacion,"CHOCOLATE",1,11000
+facturacion,"BAYLEIS SHOT",1,35000
+facturacion,"BUCHANAN'S 12 AÑOS BT",1,550000
+facturacion,"otros servicio",1,168000
+facturacion,"AROMATICA - TE INFUSION",1,10000
+facturacion,"ENTRAÑA ESPINACA A LA CREMA",1,86600
+facturacion,"JUGOS - Guanabana en agua",1,9000
+facturacion,"JUGOS - Guanabana en leche",1,12000
+facturacion,"TRANSPORTE MARITIMO",1,900000
+facturacion,"JARRA DE SANDIAA",1,40000
+facturacion,"Jarra de Piña",1,35000
+facturacion,"AGUILA LIGHT CON CLAMATO",1,30000
+cortesia,"PIE DE LIMON VIP PASS PASADIA",125,0
+cortesia,"PESCADO FRITO VIP PASS PASADIA MOJARRA",119,0
+cortesia,"BROWNIE VIP PASS PASADIA",82,0
+cortesia,"POSTA VIP PASS PASADIA SALSA CRIOLLA",59,0
+cortesia,"HAMBURGUESA ATOLON VIP PASS PASADIA",49,0
+cortesia,"SUPREMA DE POLLO A LA PARRILLA VIP PASS PASADIA",25,0
+cortesia,"ATOLON BURGUER",16,0
+cortesia,"ALOJAMIENTO PORCION FRUTA",16,0
+cortesia,"BEBIDAS JUGO DE NARANJA",16,0
+cortesia,"MARGARITA",15,0
+cortesia,"Agua Manantial 300 ml",14,0
+cortesia,"COCA COLA",13,0
+cortesia,"POSTA VIP PASS PASADIA SIERRA FRITA",12,0
+cortesia,"CAFE ESPRESSO",12,0
+cortesia,"BROWNIE VIP EXCLUSIVE PASADIA",11,0
+cortesia,"PIZZA PEPERONI VIP PASS PASADIA",10,0
+cortesia,"Coca Cola Zero 330ml",9,0
+cortesia,"TACOS DE ENTRAÑA VIP EXCLUSIVE",8,0
+cortesia,"HUEVOS AL GUSTO JAMON Y QUESO",7,0
+cortesia,"STELLA ARTOIS",7,0
+cortesia,"TACOS DE CAMARON VIP EXCLUSIVE",7,0
+cortesia,"PESCADO FRITO VIP EXCLUSIVE MOJARRA",7,0
+cortesia,"OMELET ATOLON",6,0
+cortesia,"HUEVOS AL GUSTO FRITOS",6,0
+cortesia,"TACOS DE PESCADO VIP EXCLUSIVE",6,0
+cortesia,"CHICHARRON DE CERDO Y CROQUETAS DE YUCA",6,0
+cortesia,"MARGARITA DE MARACUYÁ",5,0
+cortesia,"LIMONADA CEREZADA",5,0
+cortesia,"LIMONADA HIERBA BUENA",5,0
+cortesia,"PESCADO FRITO",5,0
+cortesia,"LIMONADA NATURAL",5,0
+cortesia,"MEGA TRAVEL LIMONADA NATURAL",4,0
+cortesia,"PANCAKES DE NUTELLA VIP EXCLUSIVE",4,0
+cortesia,"PIE DE LIMON VIP EXCLUSIVE",4,0
+cortesia,"PIZZA MARGARITA VIP PASS PASADIA",4,0
+cortesia,"JUGOS TROPICALES - MARACUYA",4,0
+cortesia,"HUEVOS AL GUSTO REVUELTOS",4,0
+cortesia,"jugo de sandia",4,0
+cortesia,"CAMPARI SHOT",4,0
+cortesia,"SODA PREMIUM MICHELADA",4,0
+cortesia,"MEGA TRAVEL AGUA MANANTIAL",3,0
+cortesia,"FILETE DE PESCADO CON ARROZ CREMOSO DE COCO Y ENCURTIDOS VIP EXCLUSIVE PASADIA",3,0
+cortesia,"HUMMUS MEDITERANEO",3,0
+cortesia,"HUEVOS AL GUSTO CON TOMATE Y CEBOLLA",3,0
+cortesia,"CANASTA DE PAN Y FRITOS TIPICOS",3,0
+cortesia,"ATOLON  PIZZA",3,0
+cortesia,"LIMONADA DE COCO",3,0
+cortesia,"PAPAS A LA FRANCESA TRUFADAS SIN TRUFAR",3,0
+cortesia,"PIZZA VEGETARIANA VIP PASS PASADIA",3,0
+cortesia,"HUEVOS AL GUSTO HUEVOS REVUELTOS TOMATE Y CEBOLLA",3,0
+cortesia,"MEGA TRAVEL COCA COLA",3,0
+cortesia,"BEBIDAS CAFE",3,0
+cortesia,"BEBIDAS CAFE CON LECHE",3,0
+cortesia,"VIEJO CALDAS SHOT",3,0
+cortesia,"PIZZA PEPPERONI VIP EXCLUSIVE",2,0
+cortesia,"jugo de maracuya",2,0
+cortesia,"AGUILA LIGHT MICHELADA",2,0
+cortesia,"ARROZ CALDOSO DE MARISCOS",2,0
+cortesia,"TACOS DE CAMARON",2,0
+cortesia,"ARROZ CALDOSO DE MARISCO VIP EXCLUSIVE PASADIA",2,0
+cortesia,"jugo de corozo",2,0
+cortesia,"ENTRADA DE PATACONES",2,0
+cortesia,"ENTRAÑA  VIP EXCLUSIVE",2,0
+cortesia,"SUPREMA DE POLLO A LA PARRILLA VIP NEXCLUSIVE",2,0
+cortesia,"PESCADO EN POSTA VIP EXCLUSIVE SIERRA FRITA",2,0
+cortesia,"PAN PITA",2,0
+cortesia,"FILETE DE PESCADO CON ARROZ CREMOSO",2,0
+cortesia,"CHILAQUILES CHILAQUILES CON HUEVOS",2,0
+cortesia,"ENCOCADO DE LANGOSTINO Y MEJILLONES VIP EXCLUSIVE PASADIA",2,0
+cortesia,"PESCADO EN POSTA FRITO",2,0
+cortesia,"CARIMAÑOLAS DE CERDO Y GENJIBRE",2,0
+cortesia,"CHILAQUILES CHILAQUILES CON POLLO",2,0
+cortesia,"MARGARITA PICANTE",2,0
+cortesia,"cinzano cortesía",1,0
+cortesia,"ATOLON SALAD VIP EXCLUSIVE PASADIA",1,0
+cortesia,"ENSALADA CESAR VIP EXCLUSIVE PASADIA",1,0
+cortesia,"ATUN POKE BOWL",1,0
+cortesia,"MEZCALITA TIERRA BOMBA",1,0
+cortesia,"CEVICHE TIERRA BOMBA",1,0
+cortesia,"limonada de coco",1,0
+cortesia,"COSTEÑITA MICHELADA",1,0
+cortesia,"LANGOSTA A LA PARRILLA",1,0
+cortesia,"PESCADO EN POSTA EN SALSA CRIOLLA",1,0
+cortesia,"ENCOCADO DE LANGOSTINO",1,0
+cortesia,"PIÑACOLADA",1,0
+cortesia,"Cocolada",1,0
+cortesia,"AGUILA LIGHT",1,0
+cortesia,"PIZZA NUTELLA",1,0
+cortesia,"SUPREMA DE POLLO",1,0
+cortesia,"PIÑACOLADA S/A",1,0
+cortesia,"DON JULIO REPOSADO BT",1,0
+cortesia,"PANCAKES NUTELLA",1,0
+cortesia,"jugo de piña",1,0
+cortesia,"ESPRESSO DOBLE",1,0
+cortesia,"Agua Manantial 500ML",1,0
+cortesia,"BURRATA, CONFITURA DE COROZO Y PAN DE MASA MADRE VIP EXCLUSIVE PASADIA",1,0
+cortesia,"GNOCCHIS DE PAPA A LA GORGONZOLA",1,0
+cortesia,"TACOS DE PESCADO",1,0
+cortesia,"STEAK DE ATUN SASHIMI",1,0
+cortesia,"VEGETALES A LA PARILLA",1,0
+cortesia,"Porción de fruta (V)",1,0
+cortesia,"JUGOS TROPICALES - SANDIA",1,0
+cortesia,"MOJITO",1,0
+cortesia,"ENSALADA CESAR CON POLLO",1,0
+cortesia,"CORONA MICHELADA",1,0
+cortesia,"CHILAQUILES CHILAQUILES ROJO",1,0
+cortesia,"JUGO DE NARANJA",1,0
+cortesia,"JUGOS TROPICALES - COROZO",1,0
+cortesia,"Quatro 400ML",1,0
+cortesia,"PIZZA VEGETARIANA",1,0
+cortesia,"DON JULIO REPOSADO SHOT",1,0
+cortesia,"Redbull",1,0
+cortesia,"CHANDON  BRUT EXCLUSIVE",1,0
+consumo_interno,"CAFE ESPRESSO",28,0
+consumo_interno,"COCA COLA",17,0
+consumo_interno,"Coca Cola Zero 330ml",15,0
+consumo_interno,"ATOLON BURGUER",14,0
+consumo_interno,"SODA PREMIUM",14,0
+consumo_interno,"COSTEÑITA",10,0
+consumo_interno,"Agua Manantial 300 ml",9,0
+consumo_interno,"HUEVOS AL GUSTO HUEVOS REVUELTOS TOMATE Y CEBOLLA",8,0
+consumo_interno,"TACOS DE CAMARON",6,0
+consumo_interno,"PIZZA PEPPERONI",5,0
+consumo_interno,"Agua Manantial 500ML",5,0
+consumo_interno,"APEROL SPRITZ",4,0
+consumo_interno,"PESCADO FRITO",4,0
+consumo_interno,"CAMPARI SHOT",4,0
+consumo_interno,"ESPRESSO DOBLE",4,0
+consumo_interno,"AREPAS AREPAS",4,0
+consumo_interno,"CHICHARRON DE CERDO Y CROQUETAS DE YUCA",4,0
+consumo_interno,"DON JULIO REPOSADO SHOT",4,0
+consumo_interno,"LIMONADA NATURAL",3,0
+consumo_interno,"DON JULIO 70 SHOT",3,0
+consumo_interno,"limonada natural",3,0
+consumo_interno,"MUGA RIOJA VINO ROSE   BT",3,0
+consumo_interno,"jugo de sandia",3,0
+consumo_interno,"ENTRAÑA PURE DE BATATA",2,0
+consumo_interno,"ADICION DE ENSALADA",2,0
+consumo_interno,"PASTAS CON CAMARRONES",2,0
+consumo_interno,"PIE DE LIMON",2,0
+consumo_interno,"DON JULIO BLANCO BT",2,0
+consumo_interno,"LOMO A LA PIMIENTA",2,0
+consumo_interno,"SUPREMA DE POLLO",2,0
+consumo_interno,"PAPAS A LA FRANCESA TRUFADAS SIN TRUFAR",2,0
+consumo_interno,"Kola Roman 400ml",2,0
+consumo_interno,"ENTRADA DE PATACONES",1,0
+consumo_interno,"TACOS DE PESCADO VIP EXCLUSIVE",1,0
+consumo_interno,"JUGOS TROPICALES - MARACUYA",1,0
+consumo_interno,"CEVICHE TIERRA BOMBA",1,0
+consumo_interno,"jugo de maracuya",1,0
+consumo_interno,"ADICION DE MAYONESA CHIPLOTE",1,0
+consumo_interno,"PAPAS A LA FRANCESA TRUFADAS TRUFADAS",1,0
+consumo_interno,"PASTAS CON POLLO",1,0
+consumo_interno,"COSTEÑITA MICHELADA",1,0
+consumo_interno,"STELLA ARTOIS",1,0
+consumo_interno,"TACOS DE PESCADO",1,0
+consumo_interno,"PIZZA NUTELLA",1,0
+consumo_interno,"PATRON SHOT",1,0
+consumo_interno,"LIMONADA MINERAL",1,0
+consumo_interno,"CHILAQUILES CHILAQUILES CON ENTRAÑA",1,0
+consumo_interno,"JUGO DE NARANJA",1,0
+consumo_interno,"CHILAQUILES CHILAQUILES CON HUEVOS",1,0
+consumo_interno,"HUEVOS AL GUSTO JAMON Y QUESO",1,0
+consumo_interno,"tocineta",1,0
+consumo_interno,"CHILAQUILES CHILAQUILES CON POLLO",1,0
+consumo_interno,"RAMON BILBAO",1,0
+consumo_interno,"SODA PREMIUM MICHELADA",1,0
+consumo_interno,"Porción de fruta (V)",1,0
+consumo_interno,"SANDWICH JAMON Y QUESO",1,0
+consumo_interno,"MEZCAL 400 CONEJOS BT",1,0
+consumo_interno,"CARIMAÑOLAS DE CERDO Y GENJIBRE",1,0
+consumo_interno,"ARROZ PORCION",1,0
+consumo_interno,"ATOLON  PIZZA",1,0
+consumo_interno,"JUGOS - Guanabana en agua",1,0
+consumo_interno,"JUGOS TROPICALES - PIÑA",1,0
+consumo_interno,"Electrolit 625ml",1,0
+anulacion,"Tonica INDI",17,340000
+anulacion,"CANASTA DE PAN Y FRITOS TIPICOS",15,0
+anulacion,"Coca Cola Zero 330ml",10,110000
+anulacion,"ATOLON BURGUER",6,348000
+anulacion,"PESCADO FRITO",5,290000
+anulacion,"LIMONADA NATURAL",4,52000
+anulacion,"otros servicio",4,243149
+anulacion,"AGUA CRISTAL 600 ML",3,33000
+anulacion,"PIZZA PEPPERONI",3,144000
+anulacion,"ENTRADA DE PATACONES",3,72000
+anulacion,"MACALLAN 12 SHOT",3,274500
+anulacion,"LIMONADA HIERBA BUENA",3,39000
+anulacion,"TRANSPORTE MARITIMO",3,1040000
+anulacion,"BROWNIE VIP PASS PASADIA",2,2
+anulacion,"PIÑACOLADA",2,110000
+anulacion,"GINEBRA BOMBAY BT",2,930000
+anulacion,"AGUACHILE DE CAMARON",2,92000
+anulacion,"jugo de piña",2,18000
+anulacion,"SODA PREMIUM MICHELADA",2,28000
+anulacion,"FILETE DE PESCADO CON ARROZ CREMOSO",2,130000
+anulacion,"CHICHARRON DE CERDO Y CROQUETAS DE YUCA",2,77000
+anulacion,"ALOJAMIENTO PORCION FRUTA",2,2
+anulacion,"STEAK DE ATUN SASHIMI",1,72000
+anulacion,"EMPAQUE DESECHABLE",1,2500
+anulacion,"LONG ISLAND ICE TEA",1,55000
+anulacion,"ENTRAÑA PAPAS A LA FRANCESA",1,86600
+anulacion,"MEZCALITA TIERRA BOMBA",1,55000
+anulacion,"ZACAPA 23 AÑOS BT",1,765000
+anulacion,"Kola Roman 400ml",1,11000
+anulacion,"VEGETALES A LA PARILLA",1,12500
+anulacion,"Agua Manantial 500ML",1,11000
+anulacion,"Caja de pizza",1,2500
+anulacion,"AGUILA LIGHT",1,15000
+anulacion,"JUGOS TROPICALES - PIÑA",1,13000
+anulacion,"JUGOS TROPICALES - MARACUYA",1,13000
+anulacion,"CLUB COLOMBIA MICHELADA",1,18000
+anulacion,"limonada de coco",1,18000
+anulacion,"LANGOSTA A LA PARRILLA",1,110000
+anulacion,"TACOS DE CAMARON",1,52000
+anulacion,"JUGO DE NARANJA",1,9000
+anulacion,"YUCA PERSONAL",1,0
+anulacion,"MEGA TRAVEL SODA MICHELADA",1,1
+anulacion,"COCA COLA",1,11000
+anulacion,"Vodka Smirnoff Red 700ML BT",1,290000

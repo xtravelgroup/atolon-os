@@ -658,6 +658,37 @@ export default function CierreCaja() {
   const [parseStatus, setParseStatus] = useState(null); // null | "parsing" | "ok" | "fail"
   const [parseMsg, setParseMsg]       = useState("");
 
+  // Auto-generar cierre A&B desde Loggro (direccion 2026-07-13).
+  // Llama al endpoint /loggro-sync/cierre-caja-auto que lee las facturas
+  // del dia, agrupa por metodo de pago, prorratea propinas y crea el
+  // registro en cierres_caja sin necesidad del cajero.
+  const [autoGenLoading, setAutoGenLoading] = useState(false);
+  const [autoGenMsg, setAutoGenMsg] = useState(null);
+  const autoGenerarDesdeLoggro = async () => {
+    if (!fecha) { setAutoGenMsg({ tipo: "error", texto: "Selecciona una fecha" }); return; }
+    if (!confirm(`Generar cierre de caja A&B para ${fecha} automáticamente desde Loggro Restobar?\n\nEsto lee todas las facturas del día, agrupa por método de pago y crea el registro sin intervención del cajero.`)) return;
+    setAutoGenLoading(true);
+    setAutoGenMsg(null);
+    try {
+      const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+      const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/loggro-sync/cierre-caja-auto`;
+      const r = await fetch(url, {
+        method: "POST",
+        headers: { apikey: anonKey, Authorization: `Bearer ${anonKey}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ fecha }),
+      });
+      const j = await r.json();
+      if (!j.ok) { setAutoGenMsg({ tipo: "error", texto: j.error || "Error al generar" }); setAutoGenLoading(false); return; }
+      if (j.ya_existe) { setAutoGenMsg({ tipo: "warn", texto: `Ya existe cierre auto para esta fecha (${j.cierre_id})` }); setAutoGenLoading(false); return; }
+      setAutoGenMsg({ tipo: "ok", texto: `Cierre creado: ${j.cierre_id} · Ventas $${(j.resumen?.total_ventas || 0).toLocaleString("es-CO")} · Propinas $${(j.resumen?.total_propinas || 0).toLocaleString("es-CO")} · ${j.tickets} tickets` });
+      setHistorialKey(k => k + 1);
+    } catch (e) {
+      setAutoGenMsg({ tipo: "error", texto: e.message });
+    } finally {
+      setAutoGenLoading(false);
+    }
+  };
+
   const MAX_PHOTOS = 3;
 
   const addPhoto = async (f) => {
@@ -954,6 +985,31 @@ export default function CierreCaja() {
             </div>
           ) : (
             <div style={{ background: B.navyMid, borderRadius: 14, padding: "18px 20px", marginBottom: 20, border: "1px solid rgba(255,255,255,0.07)" }}>
+              {area === "ayb" && (
+                <div style={{ marginBottom: 18, padding: "14px 16px", background: B.sky + "15", borderRadius: 10, border: `1px solid ${B.sky}44` }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                      <span style={{ fontSize: 24 }}>🤖</span>
+                      <div>
+                        <div style={{ fontSize: 13, fontWeight: 700, color: "#fff" }}>Cierre automático desde Loggro Restobar</div>
+                        <div style={{ fontSize: 11, color: "rgba(255,255,255,0.6)", marginTop: 2 }}>Lee las facturas del día, agrupa por método de pago y crea el cierre sin intervención del cajero.</div>
+                      </div>
+                    </div>
+                    <button type="button" onClick={autoGenerarDesdeLoggro} disabled={autoGenLoading || !fecha}
+                      style={{ padding: "10px 18px", borderRadius: 8, border: "none", background: autoGenLoading ? "rgba(255,255,255,0.15)" : B.sky, color: autoGenLoading ? "rgba(255,255,255,0.5)" : "#fff", fontWeight: 700, cursor: autoGenLoading ? "wait" : "pointer", fontSize: 13, minHeight: 44 }}>
+                      {autoGenLoading ? "Generando..." : "Auto-generar cierre"}
+                    </button>
+                  </div>
+                  {autoGenMsg && (
+                    <div style={{ marginTop: 10, padding: "8px 12px", borderRadius: 6, fontSize: 12,
+                      background: autoGenMsg.tipo === "ok" ? "#16a34a22" : autoGenMsg.tipo === "warn" ? "#f59e0b22" : "#ef444422",
+                      color: autoGenMsg.tipo === "ok" ? "#4ade80" : autoGenMsg.tipo === "warn" ? "#fbbf24" : "#fca5a5",
+                      border: `1px solid ${autoGenMsg.tipo === "ok" ? "#16a34a55" : autoGenMsg.tipo === "warn" ? "#f59e0b55" : "#ef444455"}` }}>
+                      {autoGenMsg.texto}
+                    </div>
+                  )}
+                </div>
+              )}
               <div style={{ fontSize: 12, color: B.sand, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 16 }}>Datos del comprobante</div>
               <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr 1fr 1fr", gap: 14 }}>
                 <div>

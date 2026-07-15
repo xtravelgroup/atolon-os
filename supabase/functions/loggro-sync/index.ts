@@ -1681,6 +1681,172 @@ serve(async (req) => {
       return json({ ...payload, sospechoso: sospechoso || undefined, truncated: truncated || undefined });
     }
 
+    // ════════════════════════════════════════════════════════════════════
+    // POST /loggro-sync/cierre-caja-auto
+    // Body: { fecha: 'YYYY-MM-DD', cajero_nombre?: string, dry_run?: bool }
+    //
+    // Genera el cierre de caja area='ayb' automatico a partir de Loggro
+    // Restobar. No requiere intervención del cajero — lee ventas + métodos
+    // + propinas del día y crea el registro directamente en cierres_caja.
+    //
+    // Idempotente: si ya existe cierre para (ayb, fecha, cajero) devuelve el existente.
+    // Direccion 2026-07-13.
+    // ════════════════════════════════════════════════════════════════════
+    if (req.method === "POST" && path === "/cierre-caja-auto") {
+      const body = await req.json().catch(() => ({}));
+      const fecha = String(body?.fecha || "").slice(0, 10);
+      const cajeroNombre = String(body?.cajero_nombre || "Sistema (Auto Loggro)").trim();
+      const dryRun = body?.dry_run === true;
+      if (!fecha) return json({ ok: false, error: "fecha requerida (YYYY-MM-DD)" }, 400);
+
+      // 1) Traer totales del día via el mismo helper interno que cierre-caja-rango
+      const COTZ_OFFSET_MS = -5 * 3600 * 1000;
+      const dayOf = (ts: string) => new Date(new Date(ts).getTime() + COTZ_OFFSET_MS).toISOString().slice(0, 10);
+      const pageSize = 100;
+      // Sondeo binario para última página
+      const loggroGetPage = async (page: number) => {
+        for (let a = 0; a < 3; a++) {
+          try {
+            const d: any = await loggroGet(`/invoices?pagination=true&limit=${pageSize}&page=${page}`);
+            return { ok: true, arr: d?.data || (Array.isArray(d) ? d : []) || [] };
+          } catch {
+            if (a === 2) return { ok: false, arr: [] as any[] };
+            await new Promise(r => setTimeout(r, 250 * Math.pow(3, a)));
+          }
+        }
+        return { ok: false, arr: [] as any[] };
+      };
+      let lo = 0, hi = 200, lastNonEmpty = 0;
+      while (lo <= hi) {
+        const mid = Math.floor((lo + hi) / 2);
+        const r = await loggroGetPage(mid);
+        if (!r.ok) return json({ ok: false, error: "Loggro no responde (sondeo)" }, 503);
+        if (r.arr.length > 0) { lastNonEmpty = mid; lo = mid + 1; } else { hi = mid - 1; }
+      }
+      const allInvoices: any[] = [];
+      const seen = new Set<string>();
+      let stop = false;
+      for (let p = lastNonEmpty; p >= 0 && !stop; p -= 5) {
+        const pages = [p, p-1, p-2, p-3, p-4].filter(x => x >= 0);
+        const rs = await Promise.all(pages.map(async pp => ({ pp, ...(await loggroGetPage(pp)) })));
+        if (rs.some(r => !r.ok)) return json({ ok: false, error: "Descarga falló" }, 503);
+        let allOlder = true;
+        for (const r of rs) {
+          for (const inv of r.arr) {
+            if (!inv?._id || seen.has(inv._id)) continue;
+            seen.add(inv._id);
+            allInvoices.push(inv);
+            const d = dayOf(inv.createdOn);
+            if (d >= fecha) allOlder = false;
+          }
+        }
+        if (allOlder && allInvoices.length > 0) stop = true;
+      }
+
+      // 2) Filtrar y agregar por método
+      let totalVentas = 0, totalPropinas = 0, tickets = 0, anuladas = 0;
+      const ventasPorMetodo: Record<string, number> = {};
+      for (const inv of allInvoices) {
+        const ts = inv?.createdOn;
+        if (!ts) continue;
+        if (dayOf(ts) !== fecha) continue;
+        if (inv?.deletedInfo?.isDeleted) { anuladas += Number(inv?.total) || 0; continue; }
+        const total = Number(inv?.total) || 0;
+        const tip = Number(inv?.tip) || 0;
+        totalVentas += total;
+        totalPropinas += tip;
+        tickets++;
+        const pmv = inv?.paid?.paymentMethodValue || [];
+        if (pmv.length > 0) {
+          for (const pay of pmv) {
+            const pm = (pay?.paymentMethod || "Desconocido").trim();
+            ventasPorMetodo[pm] = (ventasPorMetodo[pm] || 0) + (Number(pay?.value) || 0);
+          }
+        } else {
+          const pm = (inv?.paymentMethod || "Desconocido").trim();
+          ventasPorMetodo[pm] = (ventasPorMetodo[pm] || 0) + total;
+        }
+      }
+
+      // 3) Mapear a nuestros métodos y prorratear propinas proporcionalmente
+      const METODO_MAP: Record<string, string> = {
+        "Datafono": "datafono",
+        "Datáfono": "datafono",
+        "Efectivo": "efectivo",
+        "Transferencia": "transferencia",
+        "Link de pago": "link_pago",
+        "Link": "link_pago",
+        "Resort Credit": "resort_credit",
+      };
+      const metodosData: Record<string, any> = { datafono: {venta:0,propina:0,total:0}, efectivo: {venta:0,propina:0,total:0}, link_pago: {venta:0,propina:0,total:0}, resort_credit: {venta:0,propina:0,total:0}, transferencia: {venta:0,propina:0,total:0}, otros: {venta:0,propina:0,total:0} };
+      const otrosItems: Array<{desc:string, venta:number, propina:number}> = [];
+      for (const [pm, val] of Object.entries(ventasPorMetodo)) {
+        const key = METODO_MAP[pm] || "otros";
+        if (key === "otros") otrosItems.push({ desc: pm, venta: val, propina: 0 });
+        metodosData[key].venta += val;
+      }
+      // Prorratear propinas
+      if (totalVentas > 0 && totalPropinas > 0) {
+        for (const k of Object.keys(metodosData)) {
+          const share = metodosData[k].venta / totalVentas;
+          metodosData[k].propina = Math.round(totalPropinas * share);
+          metodosData[k].total = metodosData[k].venta + metodosData[k].propina;
+        }
+      } else {
+        for (const k of Object.keys(metodosData)) metodosData[k].total = metodosData[k].venta;
+      }
+      if (otrosItems.length > 0) metodosData.otros_items = otrosItems;
+
+      // 4) dry_run devuelve el payload sin insertar
+      const totalGeneral = totalVentas + totalPropinas;
+      if (dryRun) {
+        return json({
+          ok: true, dry_run: true, fecha,
+          tickets, anuladas, ventas_por_metodo_loggro: ventasPorMetodo,
+          resumen: { total_ventas: totalVentas, total_propinas: totalPropinas, total_general: totalGeneral },
+          metodos: metodosData,
+        });
+      }
+
+      // 5) Insertar en cierres_caja (idempotente por (area, fecha, cajero_nombre))
+      const supaUrl = Deno.env.get("SUPABASE_URL");
+      const supaKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+      const sbFetch = (p: string, init: RequestInit = {}) => fetch(`${supaUrl}/rest/v1/${p}`, {
+        ...init,
+        headers: { apikey: supaKey!, Authorization: `Bearer ${supaKey}`, "Content-Type": "application/json", Prefer: "return=representation", ...(init.headers || {}) },
+      }).then(r => r.json());
+
+      const existentes: any = await sbFetch(`cierres_caja?area=eq.ayb&fecha=eq.${fecha}&cajero_nombre=eq.${encodeURIComponent(cajeroNombre)}&select=id,total_ventas`);
+      if (Array.isArray(existentes) && existentes.length > 0) {
+        return json({ ok: true, ya_existe: true, cierre_id: existentes[0].id, cierre_total: existentes[0].total_ventas });
+      }
+
+      const id = `CC-AUTO-${fecha.replaceAll("-","")}-${Date.now()}`;
+      const record = {
+        id,
+        fecha,
+        area: "ayb",
+        cajero_nombre: cajeroNombre,
+        numero_caja: null,
+        numero_comprobante: null,
+        usuario_email: "auto-loggro@sistema.atolon",
+        metodos: metodosData,
+        total_ventas: totalVentas,
+        total_propinas: totalPropinas,
+        total_general: totalGeneral,
+        efectivo_esperado: metodosData.efectivo.venta,
+        efectivo_contado: metodosData.efectivo.venta,
+        diferencia: 0,
+        notas: `Generado automáticamente desde Loggro Restobar (${tickets} tickets, ${anuladas > 0 ? `${anuladas} anuladas`: "0 anuladas"}). Sin intervención del cajero.`,
+        estado: "cerrado",
+      };
+      const inserted: any = await sbFetch("cierres_caja", { method: "POST", body: JSON.stringify(record) });
+      if (inserted?.code || inserted?.message) {
+        return json({ ok: false, error: "Insert falló", detalle: inserted }, 500);
+      }
+      return json({ ok: true, cierre_id: id, fecha, tickets, resumen: { total_ventas: totalVentas, total_propinas: totalPropinas, total_general: totalGeneral }, metodos: metodosData });
+    }
+
     // GET /loggro-sync/consumo-recetas-rango?from=YYYY-MM-DD&to=YYYY-MM-DD
     // Replica el "Historial de Inventario / Facturación" de Loggro: por cada
     // factura del rango, expande la receta (1 nivel) de cada producto vendido
