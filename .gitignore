@@ -28,3 +28,10 @@ dist-ssr
 print-agent/.env
 print-agent/dist/
 print-agent/node_modules/
+
+# Excel lock files
+~$*
+# Loggro exports (mantener fuera del repo — son output puntuales)
+loggro_*.csv
+loggro_*.xlsx
+loggro_*.json
