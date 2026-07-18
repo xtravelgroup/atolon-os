@@ -38,10 +38,22 @@ export default function Almacenes() {
     let cancelled = false;
     (async () => {
       setLoading(true);
+      // Paginar items_stock_locacion (pasa de 1000 filas y Supabase trunca)
+      const traerStock = async () => {
+        const rows = [];
+        const PAGE = 1000;
+        for (let f = 0; ; f += PAGE) {
+          const { data, error } = await supabase.from("items_stock_locacion").select("*").range(f, f + PAGE - 1);
+          if (error || !data || data.length === 0) break;
+          rows.push(...data);
+          if (data.length < PAGE) break;
+        }
+        return rows;
+      };
       const [locRes, itemsRes, stockRes, movsRes] = await Promise.all([
         supabase.from("items_locaciones").select("*").eq("activa", true).order("nombre"),
         supabase.from("items_catalogo").select("id, nombre, unidad, categoria, precio_compra, locacion_default_id").eq("activo", true).order("nombre"),
-        supabase.from("items_stock_locacion").select("*"),
+        traerStock().then(rows => ({ data: rows })),
         // Últimas 100 transferencias entre locaciones (via movimientos_inventario_atolon)
         supabase.from("movimientos_inventario_atolon")
           .select("id, tipo, item_id, cantidad, unidad, almacen_id, origen_tipo, origen_id, fecha, usuario_email, notas")

@@ -59,13 +59,22 @@ export default function Transferencias() {
 
   const cargar = useCallback(async () => {
     if (!supabase) return;
-    const [iR, sR] = await Promise.all([
+    const traerStock = async () => {
+      const rows = []; const PAGE = 1000;
+      for (let f = 0; ; f += PAGE) {
+        const { data, error } = await supabase.from("items_stock_locacion").select("item_id, locacion_id, cantidad").range(f, f + PAGE - 1);
+        if (error || !data || data.length === 0) break;
+        rows.push(...data); if (data.length < PAGE) break;
+      }
+      return rows;
+    };
+    const [iR, sRows] = await Promise.all([
       supabase.from("items_catalogo").select("id, nombre, codigo, categoria, unidad").eq("activo", true).order("nombre"),
-      supabase.from("items_stock_locacion").select("item_id, locacion_id, cantidad"),
+      traerStock(),
     ]);
     setItems(iR.data || []);
     const map = {};
-    (sR.data || []).forEach(s => { map[`${s.item_id}|${s.locacion_id}`] = Number(s.cantidad) || 0; });
+    sRows.forEach(s => { map[`${s.item_id}|${s.locacion_id}`] = Number(s.cantidad) || 0; });
     setStockPorLoc(map);
     setCantidades({});
   }, []);

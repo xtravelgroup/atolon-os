@@ -1479,13 +1479,27 @@ function InventarioTab({
 
   const loadLocaciones = useCallback(async () => {
     if (!supabase) return;
-    const [lR, sR] = await Promise.all([
+    // Paginar items_stock_locacion: pasa de 1000 filas y Supabase trunca.
+    const traerStock = async () => {
+      const rows = [];
+      const PAGE = 1000;
+      for (let from = 0; ; from += PAGE) {
+        const { data, error } = await supabase.from("items_stock_locacion")
+          .select("item_id, locacion_id, cantidad")
+          .range(from, from + PAGE - 1);
+        if (error || !data || data.length === 0) break;
+        rows.push(...data);
+        if (data.length < PAGE) break;
+      }
+      return rows;
+    };
+    const [lR, sRows] = await Promise.all([
       supabase.from("items_locaciones").select("*").eq("activa", true).order("orden"),
-      supabase.from("items_stock_locacion").select("item_id, locacion_id, cantidad"),
+      traerStock(),
     ]);
     setLocaciones(lR.data || []);
     const map = {};
-    (sR.data || []).forEach(s => { map[`${s.item_id}|${s.locacion_id}`] = Number(s.cantidad) || 0; });
+    sRows.forEach(s => { map[`${s.item_id}|${s.locacion_id}`] = Number(s.cantidad) || 0; });
     setStockPorLoc(map);
   }, []);
   useEffect(() => { loadLocaciones(); }, [loadLocaciones]);
@@ -3225,13 +3239,29 @@ function InventarioGeneralTab({ items, categorias, catIconMap, catColorMap }) {
 
   const load = useCallback(async () => {
     if (!supabase) return;
-    const [lR, sR] = await Promise.all([
+    // items_stock_locacion tiene ~1.6K+ filas; Supabase retorna max 1000 por
+    // defecto. Paginar hasta traer todo para no truncar silenciosamente.
+    const traerStock = async () => {
+      const rows = [];
+      const PAGE = 1000;
+      for (let from = 0; ; from += PAGE) {
+        const { data, error } = await supabase.from("items_stock_locacion")
+          .select("item_id, locacion_id, cantidad")
+          .range(from, from + PAGE - 1);
+        if (error) break;
+        if (!data || data.length === 0) break;
+        rows.push(...data);
+        if (data.length < PAGE) break;
+      }
+      return rows;
+    };
+    const [lR, sRows] = await Promise.all([
       supabase.from("items_locaciones").select("*").eq("activa", true).order("orden"),
-      supabase.from("items_stock_locacion").select("item_id, locacion_id, cantidad"),
+      traerStock(),
     ]);
     setLocaciones(lR.data || []);
     const map = {};
-    (sR.data || []).forEach(s => { map[`${s.item_id}|${s.locacion_id}`] = Number(s.cantidad) || 0; });
+    sRows.forEach(s => { map[`${s.item_id}|${s.locacion_id}`] = Number(s.cantidad) || 0; });
     setStockPorLoc(map);
   }, []);
   useEffect(() => { load(); }, [load]);
