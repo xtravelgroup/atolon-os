@@ -71,6 +71,30 @@ export default function Homologacion() {
   const [errorMsg, setErrorMsg] = useState(null);
   const [linking, setLinking] = useState(null); // { loggro_it | atolon_it }
   const [refreshTick, setRefreshTick] = useState(0);
+  const [syncBusy, setSyncBusy] = useState(false);
+  const [syncMsg, setSyncMsg] = useState(null);
+  const [syncFecha, setSyncFecha] = useState(new Date(Date.now() - 24*3600*1000).toISOString().slice(0,10));
+
+  const syncVentasRestobar = async () => {
+    if (!confirm(`Descontar stock por ventas Restobar del ${syncFecha}?\n\nAtolón OS leerá las órdenes de Loggro del día, expandirá recetas y descontará ingredientes. Es idempotente — no crea duplicados.`)) return;
+    setSyncBusy(true); setSyncMsg(null);
+    try {
+      const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+      const r = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/loggro-sync/ventas-restobar-descontar`, {
+        method: "POST",
+        headers: { apikey: anonKey, Authorization: `Bearer ${anonKey}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ fecha: syncFecha }),
+      });
+      const j = await r.json();
+      if (!j.ok) { setSyncMsg({ tipo: "error", texto: j.error || "Error" }); return; }
+      setSyncMsg({ tipo: "ok", texto: `✅ ${j.orders_procesadas} orders · ${j.movimientos_insertados} movs nuevos · ${j.movimientos_ya_existian} ya existían · ${j.items_stock_actualizado} items actualizados · ${j.productos_sin_receta} productos sin receta · ${j.ingredientes_sin_atolon} ingredientes sin Atolón` });
+      setRefreshTick(t => t + 1);
+    } catch (e) {
+      setSyncMsg({ tipo: "error", texto: e.message });
+    } finally {
+      setSyncBusy(false);
+    }
+  };
 
   // Carga
   useEffect(() => {
@@ -283,8 +307,22 @@ export default function Homologacion() {
             Esto habilita que las ventas de Loggro descuenten stock automáticamente.
           </div>
         </div>
-        <button onClick={() => setRefreshTick(t => t + 1)} style={BTN_SEC}>↻ Refrescar</button>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <input type="date" value={syncFecha} onChange={e => setSyncFecha(e.target.value)} style={{ ...IS, width: 150 }} />
+          <button onClick={syncVentasRestobar} disabled={syncBusy} style={{ ...BTN_PRIM, opacity: syncBusy ? 0.6 : 1, cursor: syncBusy ? "wait" : "pointer" }}>
+            {syncBusy ? "Sincronizando..." : "⚡ Descontar ventas del día"}
+          </button>
+          <button onClick={() => setRefreshTick(t => t + 1)} style={BTN_SEC}>↻ Refrescar</button>
+        </div>
       </div>
+      {syncMsg && (
+        <div style={{ padding: "10px 14px", borderRadius: 8, marginBottom: 14, fontSize: 12,
+          background: syncMsg.tipo === "ok" ? "#4ade8022" : "#ef444422",
+          color: syncMsg.tipo === "ok" ? "#4ade80" : "#fca5a5",
+          border: `1px solid ${syncMsg.tipo === "ok" ? "#4ade8055" : "#ef444455"}` }}>
+          {syncMsg.texto}
+        </div>
+      )}
 
       {errorMsg && (
         <div style={{ padding: 12, background: "#ef444422", border: "1px solid #ef444455", borderRadius: 8, marginBottom: 16, color: "#fca5a5" }}>
