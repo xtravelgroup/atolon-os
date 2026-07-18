@@ -47,10 +47,16 @@ async function fetchLoggroCatalog() {
     fetchPath("/products"),
     fetchPath("/ingredients"),
   ]);
-  // Dedup por _id (products y ingredients pueden solaparse)
+  // Etiquetar cada item con su tipo Loggro. Un mismo _id puede estar en ambos
+  // endpoints (un producto tambien usado como ingrediente) — en ese caso
+  // marcamos como 'ambos' porque para el POS es producto vendible Y
+  // materia prima para otras recetas.
   const map = new Map();
-  for (const it of [...products, ...ingredients]) {
-    if (it?._id && !map.has(it._id)) map.set(it._id, it);
+  for (const it of products) if (it?._id) map.set(it._id, { ...it, __tipo: "producto" });
+  for (const it of ingredients) {
+    if (!it?._id) continue;
+    if (map.has(it._id)) map.set(it._id, { ...map.get(it._id), __tipo: "ambos" });
+    else map.set(it._id, { ...it, __tipo: "ingrediente" });
   }
   return [...map.values()];
 }
@@ -60,6 +66,7 @@ export default function Homologacion() {
   const [items, setItems]     = useState([]);   // items_catalogo de Atolón
   const [loggro, setLoggro]   = useState([]);   // catálogo Loggro
   const [tab, setTab]         = useState("resumen");
+  const [tipoFiltro, setTipoFiltro] = useState("todos"); // todos | producto | ingrediente
   const [search, setSearch]   = useState("");
   const [errorMsg, setErrorMsg] = useState(null);
   const [linking, setLinking] = useState(null); // { loggro_it | atolon_it }
@@ -103,7 +110,33 @@ export default function Homologacion() {
     return m;
   }, [items]);
 
-  // Buckets
+  // Filtro por tipo: 'todos' | 'producto' | 'ingrediente'
+  // Un item 'ambos' pasa en cualquier filtro (es producto Y ingrediente).
+  const pasaFiltroTipo = useCallback((loggroItem) => {
+    if (tipoFiltro === "todos") return true;
+    const t = loggroItem.__tipo;
+    if (tipoFiltro === "producto") return t === "producto" || t === "ambos";
+    if (tipoFiltro === "ingrediente") return t === "ingrediente" || t === "ambos";
+    return true;
+  }, [tipoFiltro]);
+
+  // Counts totales de tipos (para chips)
+  const tipoCounts = useMemo(() => {
+    let productos = 0, ingredientes = 0, ambos = 0;
+    for (const l of loggro) {
+      if (l.__tipo === "producto") productos++;
+      else if (l.__tipo === "ingrediente") ingredientes++;
+      else if (l.__tipo === "ambos") ambos++;
+    }
+    return {
+      productos: productos + ambos,     // Un 'ambos' cuenta como producto
+      ingredientes: ingredientes + ambos, // Y como ingrediente
+      ambos,
+      total: loggro.length,
+    };
+  }, [loggro]);
+
+  // Buckets — aplican el filtro por tipo sobre los items de Loggro
   const buckets = useMemo(() => {
     const vinculados = [];   // Loggro id existe en Atolón
     const soloLoggro = [];   // Loggro item que no tiene par en Atolón por loggro_id
@@ -120,6 +153,7 @@ export default function Homologacion() {
 
     for (const l of loggro) {
       if (!l?._id) continue;
+      if (!pasaFiltroTipo(l)) continue;
       const atolonMatch = atolonByLoggroId.get(l._id);
       if (atolonMatch) {
         vinculados.push({ loggro: l, atolon: atolonMatch });
@@ -128,7 +162,7 @@ export default function Homologacion() {
       }
     }
     return { vinculados, soloLoggro, soloAtolon, duplicadosLoggro };
-  }, [items, loggro, atolonByLoggroId]);
+  }, [items, loggro, atolonByLoggroId, pasaFiltroTipo]);
 
   // Sugerencias fuzzy para un item Loggro sin vincular
   const sugerenciasParaLoggro = useCallback((loggroItem) => {
@@ -197,20 +231,40 @@ export default function Homologacion() {
     setRefreshTick(t => t + 1);
   };
 
-  // KPIs para resumen
+  // KPIs para resumen — se muestran globales (independiente del filtro tipo)
   const kpis = useMemo(() => {
-    const total = loggro.length + buckets.soloAtolon.length;
-    const vinc = buckets.vinculados.length;
+    let vincProductos = 0, vincIngredientes = 0;
+    let soloLogProductos = 0, soloLogIngredientes = 0;
+    for (const l of loggro) {
+      const yaVinculado = atolonByLoggroId.has(l._id);
+      const esProducto = l.__tipo === "producto" || l.__tipo === "ambos";
+      const esIngrediente = l.__tipo === "ingrediente" || l.__tipo === "ambos";
+      if (yaVinculado) {
+        if (esProducto) vincProductos++;
+        if (esIngrediente) vincIngredientes++;
+      } else {
+        if (esProducto) soloLogProductos++;
+        if (esIngrediente) soloLogIngredientes++;
+      }
+    }
+    const totalProds = vincProductos + soloLogProductos;
+    const totalIngs = vincIngredientes + soloLogIngredientes;
     return {
       loggro_total: loggro.length,
       atolon_total: items.length,
-      vinculados: vinc,
-      solo_loggro: buckets.soloLoggro.length,
+      vinculados_total: vincProductos + vincIngredientes - tipoCounts.ambos, // no doble contar
+      productos_total: totalProds,
+      productos_vinc: vincProductos,
+      productos_pend: soloLogProductos,
+      ingredientes_total: totalIngs,
+      ingredientes_vinc: vincIngredientes,
+      ingredientes_pend: soloLogIngredientes,
       solo_atolon: buckets.soloAtolon.length,
       duplicados: buckets.duplicadosLoggro.size,
-      cobertura_loggro: loggro.length > 0 ? (vinc / loggro.length * 100).toFixed(1) : "0",
+      cobertura_productos: totalProds > 0 ? (vincProductos / totalProds * 100).toFixed(0) : "0",
+      cobertura_ingredientes: totalIngs > 0 ? (vincIngredientes / totalIngs * 100).toFixed(0) : "0",
     };
-  }, [loggro, items, buckets]);
+  }, [loggro, items, buckets, atolonByLoggroId, tipoCounts.ambos]);
 
   // Filtro búsqueda
   const q = normalize(search);
@@ -238,15 +292,24 @@ export default function Homologacion() {
         </div>
       )}
 
-      {/* KPIs */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 10, marginBottom: 20 }}>
-        <Kpi label="Loggro total" value={kpis.loggro_total} color={B.sand} />
-        <Kpi label="Atolón total" value={kpis.atolon_total} color={B.sky} />
-        <Kpi label="Vinculados" value={kpis.vinculados} color="#4ade80" />
-        <Kpi label="Solo en Loggro" value={kpis.solo_loggro} color="#fbbf24" />
-        <Kpi label="Solo en Atolón" value={kpis.solo_atolon} color="#a78bfa" />
-        <Kpi label="Cobertura Loggro" value={`${kpis.cobertura_loggro}%`} color="#4ade80" />
+      {/* KPIs — separados por Productos e Ingredientes */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10, marginBottom: 12 }}>
+        <Kpi label="🍽️ Productos vinculados" value={`${kpis.productos_vinc} / ${kpis.productos_total}`} color="#38bdf8" sub={`${kpis.cobertura_productos}% cobertura`} />
+        <Kpi label="🥕 Ingredientes vinculados" value={`${kpis.ingredientes_vinc} / ${kpis.ingredientes_total}`} color="#fbbf24" sub={`${kpis.cobertura_ingredientes}% cobertura`} />
+        <Kpi label="Solo en Atolón" value={kpis.solo_atolon} color="#a78bfa" sub="sin loggro_id" />
+        <Kpi label="Loggro items totales" value={kpis.loggro_total} color={B.sand} />
+        <Kpi label="Atolón items totales" value={kpis.atolon_total} color={B.sky} />
       </div>
+
+      {/* Filtro tipo: Todos / Productos / Ingredientes */}
+      {tab !== "resumen" && tab !== "solo_atolon" && tab !== "duplicados" && (
+        <div style={{ display: "flex", gap: 8, marginBottom: 12, alignItems: "center", flexWrap: "wrap" }}>
+          <span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: 0.5, marginRight: 4 }}>Tipo Loggro:</span>
+          <TipoChip active={tipoFiltro==="todos"} onClick={() => setTipoFiltro("todos")} count={tipoCounts.total}>Todos</TipoChip>
+          <TipoChip active={tipoFiltro==="producto"} onClick={() => setTipoFiltro("producto")} count={tipoCounts.productos} icon="🍽️">Productos</TipoChip>
+          <TipoChip active={tipoFiltro==="ingrediente"} onClick={() => setTipoFiltro("ingrediente")} count={tipoCounts.ingredientes} icon="🥕">Ingredientes</TipoChip>
+        </div>
+      )}
 
       {/* Tabs */}
       <div style={{ display: "flex", gap: 6, marginBottom: 14, borderBottom: `1px solid ${B.navyLight}`, flexWrap: "wrap" }}>
@@ -270,16 +333,30 @@ export default function Homologacion() {
       {tab === "resumen" && (
         <div style={{ background: B.navyMid, borderRadius: 12, padding: 20 }}>
           <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 12 }}>Diagnóstico</div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 16, marginBottom: 20 }}>
+            <div style={{ background: "#38bdf822", borderLeft: "3px solid #38bdf8", borderRadius: 8, padding: 14 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: "#38bdf8", marginBottom: 8 }}>🍽️ Productos (vendibles en POS)</div>
+              <div style={{ fontSize: 13, color: "rgba(255,255,255,0.7)", lineHeight: 1.7 }}>
+                <div><b>{kpis.productos_vinc}</b> de <b>{kpis.productos_total}</b> vinculados <span style={{ color: "#4ade80" }}>({kpis.cobertura_productos}%)</span></div>
+                <div><b>{kpis.productos_pend}</b> productos sin vincular</div>
+              </div>
+            </div>
+            <div style={{ background: "#fbbf2422", borderLeft: "3px solid #fbbf24", borderRadius: 8, padding: 14 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: "#fbbf24", marginBottom: 8 }}>🥕 Ingredientes (materias primas)</div>
+              <div style={{ fontSize: 13, color: "rgba(255,255,255,0.7)", lineHeight: 1.7 }}>
+                <div><b>{kpis.ingredientes_vinc}</b> de <b>{kpis.ingredientes_total}</b> vinculados <span style={{ color: "#4ade80" }}>({kpis.cobertura_ingredientes}%)</span></div>
+                <div><b>{kpis.ingredientes_pend}</b> ingredientes sin vincular</div>
+              </div>
+            </div>
+          </div>
           <ul style={{ margin: 0, paddingLeft: 20, lineHeight: 1.8, color: "rgba(255,255,255,0.7)", fontSize: 13 }}>
-            <li><b>{kpis.vinculados}</b> productos de Loggro tienen su par en Atolón OS <span style={{ color: "#4ade80" }}>({kpis.cobertura_loggro}% cobertura)</span>.</li>
-            <li><b>{kpis.solo_loggro}</b> productos existen en Loggro pero <b>no en Atolón</b>. Si se venden, Atolón no puede descontar stock.</li>
             <li><b>{kpis.solo_atolon}</b> items de Atolón <b>no tienen loggro_id</b>. No se descuentan cuando se vende algo relacionado.</li>
             {kpis.duplicados > 0 && (
               <li style={{ color: "#fca5a5" }}><b>{kpis.duplicados}</b> loggro_id están usados por más de un item de Atolón — <b>fusionar</b> los duplicados.</li>
             )}
           </ul>
-          <div style={{ marginTop: 20, fontSize: 12, color: "rgba(255,255,255,0.5)" }}>
-            Usa los tabs para trabajar cada categoría. Los tabs "Solo Loggro" y "Solo Atolón" traen sugerencias de matching por similitud de nombre.
+          <div style={{ marginTop: 16, fontSize: 12, color: "rgba(255,255,255,0.5)" }}>
+            Usa el filtro <b>🍽️ Productos / 🥕 Ingredientes</b> arriba de los tabs para trabajar cada tipo por separado. Loggro considera un mismo item como "ambos" cuando se vende Y se usa como componente de otras recetas.
           </div>
         </div>
       )}
@@ -312,12 +389,41 @@ export default function Homologacion() {
 
 // ─── Componentes auxiliares ───────────────────────────────────────────────
 
-function Kpi({ label, value, color }) {
+function Kpi({ label, value, color, sub }) {
   return (
     <div style={{ background: B.navyMid, borderRadius: 10, padding: "14px 16px", borderLeft: `3px solid ${color}` }}>
       <div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4 }}>{label}</div>
       <div style={{ fontSize: 22, fontWeight: 800, color }}>{value}</div>
+      {sub && <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>{sub}</div>}
     </div>
+  );
+}
+
+function TipoChip({ active, onClick, children, count, icon }) {
+  return (
+    <button onClick={onClick} style={{
+      padding: "6px 12px", borderRadius: 20, border: `1px solid ${active ? B.sky : "rgba(255,255,255,0.15)"}`,
+      background: active ? B.sky + "22" : "transparent",
+      color: active ? B.sky : "rgba(255,255,255,0.6)",
+      fontWeight: active ? 700 : 500, cursor: "pointer", fontSize: 12,
+      display: "inline-flex", alignItems: "center", gap: 6,
+    }}>
+      {icon && <span>{icon}</span>}
+      {children}
+      {count !== undefined && <span style={{ fontSize: 10, background: active ? B.sky + "44" : "rgba(255,255,255,0.1)", padding: "2px 6px", borderRadius: 10 }}>{count}</span>}
+    </button>
+  );
+}
+
+function TipoBadge({ tipo }) {
+  if (!tipo) return null;
+  const cfg = tipo === "producto" ? { icon: "🍽️", label: "Producto", color: "#38bdf8" }
+    : tipo === "ingrediente" ? { icon: "🥕", label: "Ingrediente", color: "#fbbf24" }
+    : { icon: "🍽️🥕", label: "Ambos", color: "#a78bfa" };
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 3, fontSize: 9, background: cfg.color + "22", color: cfg.color, padding: "1px 6px", borderRadius: 8, border: `1px solid ${cfg.color}44` }}>
+      <span>{cfg.icon}</span> {cfg.label}
+    </span>
   );
 }
 
@@ -344,7 +450,10 @@ function VinculadosTab({ items, onDesvincular }) {
       {items.slice(0, 500).map(({ loggro, atolon }) => (
         <div key={atolon.id} style={{ display: "grid", gridTemplateColumns: "1fr 1fr 100px 120px", gap: 10, padding: "10px 16px", borderTop: `1px solid ${B.navyLight}55`, fontSize: 12, alignItems: "center" }}>
           <div>
-            <div style={{ fontWeight: 600 }}>{loggro.name}</div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 2 }}>
+              <div style={{ fontWeight: 600 }}>{loggro.name}</div>
+              <TipoBadge tipo={loggro.__tipo} />
+            </div>
             <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)" }}>{loggro.category?.name} · {loggro.unit?.name || loggro.unit?.shortName}</div>
           </div>
           <div>
@@ -376,7 +485,10 @@ function SoloLoggroTab({ items, sugerenciasFn, onVincular, onCrear }) {
           <div onClick={() => setExpanded(expanded === l._id ? null : l._id)}
             style={{ display: "grid", gridTemplateColumns: "1fr 200px 200px 100px", gap: 10, padding: "10px 16px", borderTop: `1px solid ${B.navyLight}55`, fontSize: 12, alignItems: "center", cursor: "pointer" }}>
             <div>
-              <div style={{ fontWeight: 600 }}>{l.name}</div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 2 }}>
+                <div style={{ fontWeight: 600 }}>{l.name}</div>
+                <TipoBadge tipo={l.__tipo} />
+              </div>
               <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)" }}>id: {l._id}</div>
             </div>
             <div style={{ color: "rgba(255,255,255,0.6)" }}>{l.category?.name || "—"}</div>
