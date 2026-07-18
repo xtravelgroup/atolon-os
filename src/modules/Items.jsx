@@ -28,7 +28,7 @@ export default function Items() {
   const [showModal, setShowModal] = useState(null); // null | "new" | item object
   const [detail, setDetail] = useState(null);
   const [deletingId, setDeletingId] = useState(null);
-  const [tab, setTab] = useState("inventario"); // "inventario" | "catalogo" | "categorias" | "conteos"
+  const [tab, setTab] = useState("general"); // "general" | "bar" | "cocina" | "inventario" | "catalogo" | "categorias" | "conteos"
   const [invSearch, setInvSearch] = useState("");
   const [invCatFilter, setInvCatFilter] = useState("todos");
   const [invFilter, setInvFilter] = useState("todos"); // "todos" | "con_stock" | "bajo_min" | "negativo"
