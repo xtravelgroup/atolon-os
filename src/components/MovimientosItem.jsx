@@ -44,6 +44,7 @@ export default function MovimientosItem({ itemId, unidad, stockActual }) {
     salida_comedor: { emoji: "🍴", label: "Comedor", color: "#a78bfa" },
     salida_evento: { emoji: "🎉", label: "Evento", color: "#ec4899" },
     salida_cortesia: { emoji: "🎁", label: "Cortesía", color: "#fbbf24" },
+    salida_incluido: { emoji: "🎟️", label: "Incluido en pase", color: "#c084fc" },
     salida_interno: { emoji: "👷", label: "Consumo interno", color: "#38bdf8" },
     salida_ajuste: { emoji: "➖", label: "Ajuste -", color: "#ef4444" },
     salida_merma: { emoji: "🗑️", label: "Merma", color: "#ef4444" },

@@ -2933,6 +2933,18 @@ serve(async (req) => {
       // almacen_default_id), NO por la mesa. Comida sale de Cocina, bebida
       // sale de Bar. Del Bar fisicamente se mueven cosas via transferencia
       // manual, no via cada venta.
+
+      // Regla direccion 2026-07-18: los productos que son parte de VIP PASS
+      // o VIP EXCLUSIVE PASS se consideran 'incluidos' en el pase, no
+      // cortesia (el cliente pago por el pase). Detectamos por nombre del
+      // producto o categoria Loggro.
+      const esProductoVIPIncluido = (productName: string, pCat: any): boolean => {
+        const n = String(productName || "").toUpperCase();
+        if (/VIP PASS PASADIA|VIP EXCLUSIVE PASADIA/.test(n)) return true;
+        const catName = String(pCat?.category?.name || "").toUpperCase();
+        if (catName === "VIP PASS MENU" || catName === "VIP EXCLUSIVE MENU") return true;
+        return false;
+      };
       const STATUS_TO_TIPO: Record<string, string> = {
         "Pagada": "salida_venta_restobar",
         "Por Pagar": "salida_venta_restobar",
@@ -2950,13 +2962,18 @@ serve(async (req) => {
       let sinAlmacenDefault = 0;
       const sinAlmacenSet = new Set<string>();
       for (const o of orders) {
-        const tipo = STATUS_TO_TIPO[o.status || ""];
+        let tipo = STATUS_TO_TIPO[o.status || ""];
         if (!tipo) continue; // Espera, Cancelada, etc. no descuentan
         const productName = (o.product?.name || "").trim();
         const cant = Number(o.quantity) || 0;
         if (!productName || cant <= 0) continue;
         const mesaNom = o.table?.name || "";
         const pCat = byName[productName.toLowerCase()] || loggroMap[o.product?._id];
+        // Override: si el producto es VIP PASS/EXCLUSIVE (por nombre o categoria),
+        // clasificar como 'incluido' aunque venga como Cortesia en Loggro.
+        if (tipo === "salida_cortesia" && esProductoVIPIncluido(productName, pCat)) {
+          tipo = "salida_incluido";
+        }
         if (!pCat) { productosSinReceta++; sinRecetaSet.add(productName); continue; }
         const ings = pCat.ingredients || [];
         if (ings.length === 0) {
