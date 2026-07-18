@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { B, COP, fmtFecha } from "../brand";
 import { supabase } from "../lib/supabase";
 import { logAccion } from "../lib/logAccion";
@@ -8,13 +8,23 @@ const LS = { display: "block", fontSize: 11, color: B.sand, marginBottom: 5, tex
 const BTN_PRIM = { padding: "8px 14px", borderRadius: 8, border: "none", background: B.sky, color: "#fff", cursor: "pointer", fontWeight: 700, fontSize: 12 };
 const BTN_SEC  = { padding: "8px 14px", borderRadius: 8, border: `1px solid ${B.navyLight}`, background: "transparent", color: "rgba(255,255,255,0.7)", cursor: "pointer", fontWeight: 600, fontSize: 12 };
 
+// ─── Locaciones "principales" a mostrar como columnas en Stock ────
+// El resto (mini bares por habitación) queda accesible con filtro.
+const LOCS_PRINCIPALES = [
+  "LOC-ALMACEN-COCINA",
+  "LOC-ALMACEN-BAR",
+  "LOC-BAR",
+  "LOC-BEACHCLUB",
+  "LOC-EVENTOS",
+  "LOC-HOTEL",
+];
+
 export default function Almacenes() {
   const [tab, setTab] = useState("stock");
-  const [almacenes, setAlmacenes] = useState([]);
+  const [locaciones, setLocaciones] = useState([]);
   const [items, setItems] = useState([]);
   const [stockRows, setStockRows] = useState([]);
-  const [transfers, setTransfers] = useState([]);
-  const [mesaMapping, setMesaMapping] = useState([]);
+  const [movs, setMovs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshTick, setRefreshTick] = useState(0);
   const [showNewTransfer, setShowNewTransfer] = useState(false);
@@ -28,42 +38,58 @@ export default function Almacenes() {
     let cancelled = false;
     (async () => {
       setLoading(true);
-      const [almRes, itemsRes, stockRes, transfRes, mapRes] = await Promise.all([
-        supabase.from("almacenes").select("*").eq("activo", true).order("orden"),
-        supabase.from("items_catalogo").select("id, nombre, unidad, categoria, precio_compra").eq("activo", true).order("nombre"),
-        supabase.from("items_stock_almacen").select("*"),
-        supabase.from("transferencias_almacen").select("*").order("created_at", { ascending: false }).limit(100),
-        supabase.from("mesa_almacen_mapping").select("*").order("prioridad", { ascending: false }),
+      const [locRes, itemsRes, stockRes, movsRes] = await Promise.all([
+        supabase.from("items_locaciones").select("*").eq("activa", true).order("nombre"),
+        supabase.from("items_catalogo").select("id, nombre, unidad, categoria, precio_compra, locacion_default_id").eq("activo", true).order("nombre"),
+        supabase.from("items_stock_locacion").select("*"),
+        // Últimas 100 transferencias entre locaciones (via movimientos_inventario_atolon)
+        supabase.from("movimientos_inventario_atolon")
+          .select("id, tipo, item_id, cantidad, unidad, almacen_id, origen_tipo, origen_id, fecha, usuario_email, notas")
+          .in("tipo", ["salida_transferencia", "entrada_transferencia"])
+          .eq("anulado", false)
+          .order("fecha", { ascending: false })
+          .limit(200),
       ]);
       if (cancelled) return;
-      setAlmacenes(almRes.data || []);
+      setLocaciones(locRes.data || []);
       setItems(itemsRes.data || []);
       setStockRows(stockRes.data || []);
-      setTransfers(transfRes.data || []);
-      setMesaMapping(mapRes.data || []);
+      setMovs(movsRes.data || []);
       setLoading(false);
     })();
     return () => { cancelled = true; };
   }, [refreshTick]);
 
   const itemsById = useMemo(() => new Map(items.map(i => [i.id, i])), [items]);
-  const almById   = useMemo(() => new Map(almacenes.map(a => [a.id, a])), [almacenes]);
-
-  // Stock por (item, almacen) mapeado
+  const locById   = useMemo(() => new Map(locaciones.map(l => [l.id, l])), [locaciones]);
   const stockMap = useMemo(() => {
     const m = new Map();
-    for (const r of stockRows) m.set(`${r.item_id}|${r.almacen_id}`, r);
+    for (const r of stockRows) m.set(`${r.item_id}|${r.locacion_id}`, r);
     return m;
   }, [stockRows]);
-
-  const stockPorAlmacen = useMemo(() => {
+  const stockPorLoc = useMemo(() => {
     const m = new Map();
     for (const r of stockRows) {
-      if (!m.has(r.almacen_id)) m.set(r.almacen_id, []);
-      m.get(r.almacen_id).push(r);
+      if (!m.has(r.locacion_id)) m.set(r.locacion_id, []);
+      m.get(r.locacion_id).push(r);
     }
     return m;
   }, [stockRows]);
+
+  // Agrupar movs por origen_id (transferencia)
+  const transferencias = useMemo(() => {
+    const map = new Map();
+    for (const m of movs) {
+      if (m.origen_tipo !== "transferencia_manual" && m.origen_tipo !== "transferencias_locacion") continue;
+      if (!map.has(m.origen_id)) map.set(m.origen_id, { id: m.origen_id, fecha: m.fecha, usuario: m.usuario_email, items: [], origen: null, destino: null });
+      const t = map.get(m.origen_id);
+      if (m.tipo === "salida_transferencia") t.origen = m.almacen_id;
+      else if (m.tipo === "entrada_transferencia") t.destino = m.almacen_id;
+      const existing = t.items.find(x => x.item_id === m.item_id);
+      if (!existing) t.items.push({ item_id: m.item_id, cantidad: m.cantidad, unidad: m.unidad });
+    }
+    return [...map.values()].sort((a, b) => (b.fecha || "").localeCompare(a.fecha || ""));
+  }, [movs]);
 
   if (loading) return <div style={{ padding: 40, color: "#fff", textAlign: "center" }}>Cargando almacenes…</div>;
 
@@ -71,9 +97,9 @@ export default function Almacenes() {
     <div style={{ maxWidth: 1400, margin: "0 auto", padding: 20, color: "#fff" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20, flexWrap: "wrap", gap: 10 }}>
         <div>
-          <div style={{ fontSize: 22, fontWeight: 800 }}>🏬 Almacenes</div>
+          <div style={{ fontSize: 22, fontWeight: 800 }}>🏬 Almacenes y Locaciones</div>
           <div style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", marginTop: 4 }}>
-            Stock por ubicación física + transferencias entre almacenes.
+            Stock por ubicación física + transferencias manuales entre locaciones.
           </div>
         </div>
         <div style={{ display: "flex", gap: 8 }}>
@@ -84,16 +110,16 @@ export default function Almacenes() {
         </div>
       </div>
 
-      {/* KPIs almacenes */}
+      {/* KPIs por locación principal */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10, marginBottom: 20 }}>
-        {almacenes.map(a => {
-          const rows = stockPorAlmacen.get(a.id) || [];
-          const total = rows.reduce((s, r) => s + (Number(r.cantidad) || 0) * (Number(itemsById.get(r.item_id)?.precio_compra) || 0), 0);
+        {locaciones.filter(l => LOCS_PRINCIPALES.includes(l.id)).map(l => {
+          const rows = stockPorLoc.get(l.id) || [];
           const conStock = rows.filter(r => Number(r.cantidad) > 0).length;
+          const total = rows.reduce((s, r) => s + (Number(r.cantidad) || 0) * (Number(itemsById.get(r.item_id)?.precio_compra) || 0), 0);
           return (
-            <div key={a.id} style={{ background: B.navyMid, borderRadius: 10, padding: 14, borderLeft: `3px solid ${a.color || B.sky}` }}>
-              <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: 0.5 }}>{a.icon} {a.nombre}</div>
-              <div style={{ fontSize: 18, fontWeight: 800, color: a.color || B.sky, marginTop: 4 }}>{conStock}</div>
+            <div key={l.id} style={{ background: B.navyMid, borderRadius: 10, padding: 14, borderLeft: `3px solid ${B.sky}` }}>
+              <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: 0.5 }}>{l.icono || "📍"} {l.nombre}</div>
+              <div style={{ fontSize: 18, fontWeight: 800, color: B.sky, marginTop: 4 }}>{conStock}</div>
               <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>items con stock · {COP(total)}</div>
             </div>
           );
@@ -102,26 +128,21 @@ export default function Almacenes() {
 
       {/* Tabs */}
       <div style={{ display: "flex", gap: 6, marginBottom: 14, borderBottom: `1px solid ${B.navyLight}`, flexWrap: "wrap" }}>
-        <TabBtn active={tab==="stock"} onClick={() => setTab("stock")}>📦 Stock por almacén</TabBtn>
-        <TabBtn active={tab==="transferencias"} onClick={() => setTab("transferencias")} count={transfers.length}>🔁 Transferencias</TabBtn>
-        <TabBtn active={tab==="almacenes"} onClick={() => setTab("almacenes")} count={almacenes.length}>🏬 Gestionar almacenes</TabBtn>
+        <TabBtn active={tab==="stock"} onClick={() => setTab("stock")}>📦 Stock por locación</TabBtn>
+        <TabBtn active={tab==="transferencias"} onClick={() => setTab("transferencias")} count={transferencias.length}>🔁 Transferencias</TabBtn>
       </div>
 
       {tab === "stock" && (
-        <StockTab almacenes={almacenes} items={items} itemsById={itemsById} stockMap={stockMap} />
+        <StockTab locaciones={locaciones} items={items} itemsById={itemsById} stockMap={stockMap} />
       )}
 
       {tab === "transferencias" && (
-        <TransferenciasTab transfers={transfers} almById={almById} itemsById={itemsById} />
-      )}
-
-      {tab === "almacenes" && (
-        <AlmacenesTab almacenes={almacenes} onReload={() => setRefreshTick(t => t + 1)} />
+        <TransferenciasTab transferencias={transferencias} locById={locById} itemsById={itemsById} />
       )}
 
       {showNewTransfer && (
         <NewTransferModal
-          almacenes={almacenes} items={items} itemsById={itemsById}
+          locaciones={locaciones} items={items} itemsById={itemsById}
           stockMap={stockMap} userEmail={userEmail}
           onClose={() => setShowNewTransfer(false)}
           onSaved={() => { setShowNewTransfer(false); setRefreshTick(t => t + 1); }}
@@ -147,34 +168,47 @@ function TabBtn({ active, onClick, children, count }) {
   );
 }
 
-function StockTab({ almacenes, items, itemsById, stockMap }) {
+function StockTab({ locaciones, items, itemsById, stockMap }) {
   const [search, setSearch] = useState("");
-  const [almacenFiltro, setAlmacenFiltro] = useState("todos");
+  const [locFiltro, setLocFiltro] = useState("todos");
   const [soloConStock, setSoloConStock] = useState(true);
+
+  // Columnas: siempre principales + si el filtro es específico, esa columna
+  const columnasLoc = useMemo(() => {
+    const principales = locaciones.filter(l => LOCS_PRINCIPALES.includes(l.id));
+    if (locFiltro === "todos" || principales.find(l => l.id === locFiltro)) return principales;
+    const extra = locaciones.find(l => l.id === locFiltro);
+    return extra ? [extra, ...principales] : principales;
+  }, [locaciones, locFiltro]);
 
   const rows = useMemo(() => {
     const q = search.toLowerCase().trim();
     return items.filter(it => !q || it.nombre.toLowerCase().includes(q) || (it.categoria || "").toLowerCase().includes(q))
       .map(it => {
-        const perAlm = almacenes.map(a => {
-          const r = stockMap.get(`${it.id}|${a.id}`);
-          return { almacen: a, cantidad: Number(r?.cantidad) || 0 };
+        const perLoc = columnasLoc.map(l => {
+          const r = stockMap.get(`${it.id}|${l.id}`);
+          return { loc: l, cantidad: Number(r?.cantidad) || 0 };
         });
-        const total = perAlm.reduce((s, x) => s + x.cantidad, 0);
-        return { item: it, perAlm, total };
+        // Total: sumar todo el stock en TODAS las locaciones, no solo columnas visibles
+        let total = 0;
+        for (const l of locaciones) {
+          const r = stockMap.get(`${it.id}|${l.id}`);
+          if (r) total += Number(r.cantidad) || 0;
+        }
+        return { item: it, perLoc, total };
       })
-      .filter(r => almacenFiltro === "todos" || r.perAlm.find(x => x.almacen.id === almacenFiltro && x.cantidad > 0))
+      .filter(r => locFiltro === "todos" || r.perLoc.find(x => x.loc.id === locFiltro && x.cantidad > 0))
       .filter(r => !soloConStock || r.total > 0)
       .sort((a, b) => a.item.nombre.localeCompare(b.item.nombre, "es"));
-  }, [items, almacenes, stockMap, search, almacenFiltro, soloConStock]);
+  }, [items, locaciones, stockMap, search, locFiltro, soloConStock, columnasLoc]);
 
   return (
     <div>
       <div style={{ display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap" }}>
         <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Buscar item..." style={{ ...IS, maxWidth: 300 }} />
-        <select value={almacenFiltro} onChange={e => setAlmacenFiltro(e.target.value)} style={{ ...IS, maxWidth: 220 }}>
-          <option value="todos">Todos los almacenes</option>
-          {almacenes.map(a => <option key={a.id} value={a.id}>{a.icon} {a.nombre}</option>)}
+        <select value={locFiltro} onChange={e => setLocFiltro(e.target.value)} style={{ ...IS, maxWidth: 240 }}>
+          <option value="todos">Todas las locaciones</option>
+          {locaciones.map(l => <option key={l.id} value={l.id}>{l.icono || "📍"} {l.nombre}</option>)}
         </select>
         <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "rgba(255,255,255,0.7)" }}>
           <input type="checkbox" checked={soloConStock} onChange={e => setSoloConStock(e.target.checked)} />
@@ -183,19 +217,19 @@ function StockTab({ almacenes, items, itemsById, stockMap }) {
       </div>
 
       <div style={{ background: B.navyMid, borderRadius: 10, overflow: "hidden" }}>
-        <div style={{ display: "grid", gridTemplateColumns: `2fr repeat(${almacenes.length}, 1fr) 100px`, gap: 8, padding: "10px 14px", fontSize: 11, color: B.sand, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5, borderBottom: `1px solid ${B.navyLight}`, alignItems: "center" }}>
+        <div style={{ display: "grid", gridTemplateColumns: `2fr repeat(${columnasLoc.length}, 1fr) 100px`, gap: 8, padding: "10px 14px", fontSize: 11, color: B.sand, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5, borderBottom: `1px solid ${B.navyLight}`, alignItems: "center" }}>
           <div>Item</div>
-          {almacenes.map(a => <div key={a.id} style={{ textAlign: "right", color: a.color }}>{a.icon} {a.nombre.length > 12 ? a.nombre.slice(0, 12) + "..." : a.nombre}</div>)}
+          {columnasLoc.map(l => <div key={l.id} style={{ textAlign: "right" }}>{l.icono || "📍"} {(l.nombre || "").length > 14 ? l.nombre.slice(0, 14) + "..." : l.nombre}</div>)}
           <div style={{ textAlign: "right" }}>Total</div>
         </div>
         {rows.slice(0, 500).map(r => (
-          <div key={r.item.id} style={{ display: "grid", gridTemplateColumns: `2fr repeat(${almacenes.length}, 1fr) 100px`, gap: 8, padding: "8px 14px", borderTop: `1px solid ${B.navyLight}55`, fontSize: 12, alignItems: "center" }}>
+          <div key={r.item.id} style={{ display: "grid", gridTemplateColumns: `2fr repeat(${columnasLoc.length}, 1fr) 100px`, gap: 8, padding: "8px 14px", borderTop: `1px solid ${B.navyLight}55`, fontSize: 12, alignItems: "center" }}>
             <div>
               <div style={{ fontWeight: 600 }}>{r.item.nombre}</div>
               <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)" }}>{r.item.categoria} · {r.item.unidad}</div>
             </div>
-            {r.perAlm.map(x => (
-              <div key={x.almacen.id} style={{ textAlign: "right", color: x.cantidad > 0 ? "#fff" : "rgba(255,255,255,0.25)" }}>
+            {r.perLoc.map(x => (
+              <div key={x.loc.id} style={{ textAlign: "right", color: x.cantidad > 0 ? "#fff" : "rgba(255,255,255,0.25)" }}>
                 {x.cantidad > 0 ? Number(x.cantidad).toLocaleString("es-CO", { maximumFractionDigits: 2 }) : "—"}
               </div>
             ))}
@@ -210,57 +244,40 @@ function StockTab({ almacenes, items, itemsById, stockMap }) {
   );
 }
 
-function TransferenciasTab({ transfers, almById, itemsById }) {
+function TransferenciasTab({ transferencias, locById, itemsById }) {
   const [expandedId, setExpandedId] = useState(null);
 
-  const badge = (estado) => {
-    const cfg = {
-      borrador:      { color: "#888", bg: "#88888822", label: "Borrador" },
-      en_transito:   { color: "#fbbf24", bg: "#fbbf2422", label: "En tránsito" },
-      recibida:      { color: "#22c55e", bg: "#22c55e22", label: "Recibida" },
-      cancelada:     { color: "#ef4444", bg: "#ef444422", label: "Cancelada" },
-    }[estado] || { color: "#888", bg: "#88888822", label: estado };
-    return <span style={{ fontSize: 10, padding: "2px 8px", background: cfg.bg, color: cfg.color, borderRadius: 10, border: `1px solid ${cfg.color}44` }}>{cfg.label}</span>;
-  };
-
-  if (transfers.length === 0) {
+  if (transferencias.length === 0) {
     return <div style={{ padding: 30, textAlign: "center", color: "rgba(255,255,255,0.4)", background: B.navyMid, borderRadius: 10 }}>
       Sin transferencias todavía. Click en "+ Nueva transferencia" arriba.
     </div>;
   }
   return (
     <div style={{ background: B.navyMid, borderRadius: 10, overflow: "hidden" }}>
-      {transfers.map(t => {
-        const origen = almById.get(t.almacen_origen_id);
-        const destino = almById.get(t.almacen_destino_id);
-        const nItems = Array.isArray(t.items) ? t.items.length : 0;
+      {transferencias.map(t => {
+        const origen = locById.get(t.origen);
+        const destino = locById.get(t.destino);
         return (
           <div key={t.id}>
             <div onClick={() => setExpandedId(expandedId === t.id ? null : t.id)}
               style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 100px 100px", gap: 10, padding: "12px 16px", borderTop: `1px solid ${B.navyLight}55`, fontSize: 12, cursor: "pointer", alignItems: "center" }}>
               <div>
-                <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)" }}>{fmtFecha(t.created_at)} · {t.id}</div>
-                <div style={{ marginTop: 3 }}>{badge(t.estado)}</div>
+                <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)" }}>{fmtFecha(t.fecha)}</div>
+                <div style={{ fontSize: 10, color: "rgba(255,255,255,0.3)", marginTop: 2 }}>{t.usuario}</div>
               </div>
-              <div style={{ color: "rgba(255,255,255,0.7)" }}>{origen?.icon} {origen?.nombre || t.almacen_origen_id}</div>
-              <div style={{ color: "rgba(255,255,255,0.7)" }}>→ {destino?.icon} {destino?.nombre || t.almacen_destino_id}</div>
-              <div style={{ textAlign: "right", color: B.sky, fontWeight: 700 }}>{nItems} items</div>
+              <div style={{ color: "rgba(255,255,255,0.7)" }}>{origen?.icono || "📍"} {origen?.nombre || t.origen}</div>
+              <div style={{ color: "rgba(255,255,255,0.7)" }}>→ {destino?.icono || "📍"} {destino?.nombre || t.destino}</div>
+              <div style={{ textAlign: "right", color: B.sky, fontWeight: 700 }}>{t.items.length} items</div>
               <div style={{ textAlign: "right", fontSize: 16, color: B.sky }}>{expandedId === t.id ? "▲" : "▼"}</div>
             </div>
             {expandedId === t.id && (
               <div style={{ background: B.navy, padding: "14px 20px", borderTop: `1px solid ${B.navyLight}` }}>
-                {(t.items || []).map((it, i) => (
+                {t.items.map((it, i) => (
                   <div key={i} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", fontSize: 12, borderBottom: `1px solid ${B.navyLight}44` }}>
                     <div>{itemsById.get(it.item_id)?.nombre || it.item_id}</div>
                     <div style={{ color: B.sky, fontWeight: 700 }}>{it.cantidad} {it.unidad}</div>
                   </div>
                 ))}
-                {t.notas && <div style={{ marginTop: 10, fontSize: 11, color: "rgba(255,255,255,0.5)" }}>Nota: {t.notas}</div>}
-                <div style={{ marginTop: 10, fontSize: 10, color: "rgba(255,255,255,0.4)", display: "flex", gap: 12 }}>
-                  <div>Solicitó: {t.solicitado_por || "—"}</div>
-                  {t.enviado_por && <div>Envió: {t.enviado_por}</div>}
-                  {t.recibido_por && <div>Recibió: {t.recibido_por}</div>}
-                </div>
               </div>
             )}
           </div>
@@ -270,103 +287,15 @@ function TransferenciasTab({ transfers, almById, itemsById }) {
   );
 }
 
-function AlmacenesTab({ almacenes, onReload }) {
-  const [editando, setEditando] = useState(null);
-  const [nuevo, setNuevo] = useState(false);
-  return (
-    <div>
-      <div style={{ marginBottom: 14 }}>
-        <button style={BTN_PRIM} onClick={() => setNuevo(true)}>+ Nuevo almacén</button>
-      </div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 12 }}>
-        {almacenes.map(a => (
-          <div key={a.id} style={{ background: B.navyMid, borderRadius: 10, padding: 16, borderLeft: `3px solid ${a.color || B.sky}` }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-              <div>
-                <div style={{ fontSize: 20 }}>{a.icon} {a.nombre}</div>
-                <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginTop: 4 }}>{a.tipo} · {a.ubicacion || "sin ubicación"}</div>
-                {a.responsable_email && <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginTop: 4 }}>👤 {a.responsable_email}</div>}
-              </div>
-              <button style={BTN_SEC} onClick={() => setEditando(a)}>✏️</button>
-            </div>
-            <div style={{ marginTop: 10, fontSize: 10, color: "rgba(255,255,255,0.3)" }}>id: {a.id}</div>
-          </div>
-        ))}
-      </div>
-      {(editando || nuevo) && (
-        <AlmacenModal almacen={editando} onClose={() => { setEditando(null); setNuevo(false); }} onSaved={() => { setEditando(null); setNuevo(false); onReload(); }} />
-      )}
-    </div>
-  );
-}
-
-function AlmacenModal({ almacen, onClose, onSaved }) {
-  const isNew = !almacen?.id;
-  const [form, setForm] = useState({
-    id: almacen?.id || `ALM-${Math.random().toString(36).slice(2, 6).toUpperCase()}`,
-    nombre: almacen?.nombre || "",
-    tipo: almacen?.tipo || "bodega",
-    ubicacion: almacen?.ubicacion || "",
-    responsable_email: almacen?.responsable_email || "",
-    color: almacen?.color || "#a78bfa",
-    icon: almacen?.icon || "🏬",
-    orden: almacen?.orden ?? 100,
-  });
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState(null);
-  const save = async () => {
-    if (!form.nombre.trim()) { setErr("Nombre requerido"); return; }
-    setBusy(true); setErr(null);
-    const payload = { ...form, updated_at: new Date().toISOString() };
-    const { error } = isNew
-      ? await supabase.from("almacenes").insert(payload)
-      : await supabase.from("almacenes").update(payload).eq("id", almacen.id);
-    if (error) { setErr(error.message); setBusy(false); return; }
-    logAccion({ modulo: "almacenes", accion: isNew ? "crear_almacen" : "editar_almacen", tabla: "almacenes", registroId: form.id, datosDespues: payload });
-    onSaved();
-  };
-  return (
-    <div onClick={e => e.target === e.currentTarget && onClose()} style={{ position: "fixed", inset: 0, zIndex: 1000, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
-      <div style={{ background: B.navyMid, borderRadius: 16, padding: 24, width: 480, maxWidth: "95vw" }}>
-        <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 16 }}>{isNew ? "🏬 Nuevo almacén" : "✏️ Editar " + almacen.nombre}</div>
-        <div style={{ display: "grid", gap: 12 }}>
-          <div><label style={LS}>Nombre</label><input value={form.nombre} onChange={e => setForm(f => ({ ...f, nombre: e.target.value }))} style={IS} /></div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-            <div><label style={LS}>Tipo</label>
-              <select value={form.tipo} onChange={e => setForm(f => ({ ...f, tipo: e.target.value }))} style={IS}>
-                <option value="bodega">Bodega</option><option value="cocina">Cocina</option>
-                <option value="bar">Bar</option><option value="muelle">Muelle</option><option value="otro">Otro</option>
-              </select>
-            </div>
-            <div><label style={LS}>Ubicación</label><input value={form.ubicacion} onChange={e => setForm(f => ({ ...f, ubicacion: e.target.value }))} style={IS} placeholder="Isla, Playa, etc" /></div>
-          </div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
-            <div><label style={LS}>Icon</label><input value={form.icon} onChange={e => setForm(f => ({ ...f, icon: e.target.value }))} style={IS} maxLength={4} /></div>
-            <div><label style={LS}>Color</label><input type="color" value={form.color} onChange={e => setForm(f => ({ ...f, color: e.target.value }))} style={{ ...IS, padding: 3, height: 40 }} /></div>
-            <div><label style={LS}>Orden</label><input type="number" value={form.orden} onChange={e => setForm(f => ({ ...f, orden: Number(e.target.value) }))} style={IS} /></div>
-          </div>
-          <div><label style={LS}>Responsable (email)</label><input value={form.responsable_email} onChange={e => setForm(f => ({ ...f, responsable_email: e.target.value }))} style={IS} /></div>
-        </div>
-        {err && <div style={{ marginTop: 10, padding: 10, background: "#ef444422", color: "#fca5a5", borderRadius: 8, fontSize: 12 }}>{err}</div>}
-        <div style={{ display: "flex", gap: 10, marginTop: 20, justifyContent: "flex-end" }}>
-          <button style={BTN_SEC} onClick={onClose}>Cancelar</button>
-          <button style={BTN_PRIM} onClick={save} disabled={busy}>{busy ? "Guardando..." : "Guardar"}</button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function NewTransferModal({ almacenes, items, itemsById, stockMap, userEmail, onClose, onSaved }) {
+function NewTransferModal({ locaciones, items, itemsById, stockMap, userEmail, onClose, onSaved }) {
   const [origen, setOrigen] = useState("");
   const [destino, setDestino] = useState("");
-  const [selectedItems, setSelectedItems] = useState([]); // [{ item_id, cantidad, unidad }]
+  const [selectedItems, setSelectedItems] = useState([]);
   const [search, setSearch] = useState("");
   const [notas, setNotas] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
 
-  // Items disponibles con stock > 0 en el origen
   const availableItems = useMemo(() => {
     if (!origen) return [];
     return items
@@ -380,10 +309,9 @@ function NewTransferModal({ almacenes, items, itemsById, stockMap, userEmail, on
   }, [items, stockMap, origen, search]);
 
   const addItem = (item, disponible) => {
-    setSelectedItems(prev => {
-      if (prev.find(x => x.item_id === item.id)) return prev;
-      return [...prev, { item_id: item.id, cantidad: 0, unidad: item.unidad, disponible }];
-    });
+    setSelectedItems(prev => prev.find(x => x.item_id === item.id)
+      ? prev
+      : [...prev, { item_id: item.id, cantidad: 0, unidad: item.unidad, disponible }]);
   };
   const updateCant = (id, cant) => setSelectedItems(prev => prev.map(x => x.item_id === id ? { ...x, cantidad: cant } : x));
   const removeItem = (id) => setSelectedItems(prev => prev.filter(x => x.item_id !== id));
@@ -395,94 +323,78 @@ function NewTransferModal({ almacenes, items, itemsById, stockMap, userEmail, on
     if (validos.length === 0) { setErr("Agrega al menos un item con cantidad > 0"); return; }
     for (const x of validos) {
       if (Number(x.cantidad) > Number(x.disponible)) {
-        const nom = itemsById.get(x.item_id)?.nombre || x.item_id;
-        setErr(`${nom}: cantidad ${x.cantidad} supera stock disponible ${x.disponible}`);
+        setErr(`${itemsById.get(x.item_id)?.nombre || x.item_id}: cantidad ${x.cantidad} supera disponible ${x.disponible}`);
         return;
       }
     }
     setBusy(true); setErr(null);
 
-    const id = `TRF-${Date.now()}`;
+    const transferId = `TRF-${Date.now()}`;
     const nowIso = new Date().toISOString();
-    const itemsPayload = validos.map(x => ({
-      item_id: x.item_id, cantidad: Number(x.cantidad), unidad: x.unidad,
-    }));
 
-    // Insert transferencia como 'recibida' — modelo simple: envío + recepción inmediato.
-    // (Si en el futuro queremos flujo 'en_transito', cambiar aquí.)
-    const { error: trfErr } = await supabase.from("transferencias_almacen").insert({
-      id, almacen_origen_id: origen, almacen_destino_id: destino, items: itemsPayload,
-      estado: "recibida",
-      fecha_solicitud: nowIso, fecha_envio: nowIso, fecha_recepcion: nowIso,
-      solicitado_por: userEmail, enviado_por: userEmail, recibido_por: userEmail,
-      notas: notas.trim() || null, updated_at: nowIso,
-    });
-    if (trfErr) { setErr("Error creando transferencia: " + trfErr.message); setBusy(false); return; }
-
-    // Registrar 2 movimientos + actualizar items_stock_almacen por cada item
-    const origenNom = almacenes.find(a => a.id === origen)?.nombre || origen;
-    const destinoNom = almacenes.find(a => a.id === destino)?.nombre || destino;
+    // Insertar 2 movs por item (salida en origen, entrada en destino)
     const movs = [];
     for (const x of validos) {
-      const nomIt = itemsById.get(x.item_id)?.nombre || x.item_id;
+      const it = itemsById.get(x.item_id);
       movs.push(
-        { id: `MOV-TRF-${Date.now()}-${x.item_id}-out`, tipo: "salida_transferencia", item_id: x.item_id,
+        { id: `MOV-TRF-${transferId}-${x.item_id}-out`, tipo: "salida_transferencia", item_id: x.item_id,
           cantidad: Number(x.cantidad), unidad: x.unidad, almacen_id: origen,
-          origen_tipo: "transferencias_almacen", origen_id: id, fecha: nowIso,
-          usuario_email: userEmail, notas: `Transferencia ${origenNom} → ${destinoNom} · ${nomIt}` },
-        { id: `MOV-TRF-${Date.now()}-${x.item_id}-in`, tipo: "entrada_transferencia", item_id: x.item_id,
+          origen_tipo: "transferencia_manual", origen_id: transferId, fecha: nowIso,
+          usuario_email: userEmail, notas: notas.trim() || `Transferencia manual → ${it?.nombre}` },
+        { id: `MOV-TRF-${transferId}-${x.item_id}-in`, tipo: "entrada_transferencia", item_id: x.item_id,
           cantidad: Number(x.cantidad), unidad: x.unidad, almacen_id: destino,
-          origen_tipo: "transferencias_almacen", origen_id: id, fecha: nowIso,
-          usuario_email: userEmail, notas: `Transferencia ${origenNom} → ${destinoNom} · ${nomIt}` },
+          origen_tipo: "transferencia_manual", origen_id: transferId, fecha: nowIso,
+          usuario_email: userEmail, notas: notas.trim() || `Transferencia manual ← ${it?.nombre}` },
       );
     }
     const { error: movErr } = await supabase.from("movimientos_inventario_atolon").insert(movs);
-    if (movErr) { setErr("Movs insertados con errores: " + movErr.message); setBusy(false); return; }
+    if (movErr) { setErr("Error insertando movimientos: " + movErr.message); setBusy(false); return; }
 
-    // Actualizar items_stock_almacen — restar en origen, sumar en destino
+    // Actualizar items_stock_locacion — restar origen, sumar destino
     for (const x of validos) {
       const cant = Number(x.cantidad);
-      // Origen: leer y actualizar
-      const { data: rowOrig } = await supabase.from("items_stock_almacen").select("cantidad").eq("item_id", x.item_id).eq("almacen_id", origen).single();
-      await supabase.from("items_stock_almacen").update({
-        cantidad: (Number(rowOrig?.cantidad) || 0) - cant,
-        updated_at: nowIso,
-      }).eq("item_id", x.item_id).eq("almacen_id", origen);
-      // Destino: upsert
-      const { data: rowDest } = await supabase.from("items_stock_almacen").select("cantidad").eq("item_id", x.item_id).eq("almacen_id", destino).maybeSingle();
+      const { data: rowOrig } = await supabase.from("items_stock_locacion")
+        .select("cantidad").eq("item_id", x.item_id).eq("locacion_id", origen).single();
+      await supabase.from("items_stock_locacion").update({
+        cantidad: (Number(rowOrig?.cantidad) || 0) - cant, updated_at: nowIso,
+      }).eq("item_id", x.item_id).eq("locacion_id", origen);
+
+      const { data: rowDest } = await supabase.from("items_stock_locacion")
+        .select("cantidad").eq("item_id", x.item_id).eq("locacion_id", destino).maybeSingle();
       if (rowDest) {
-        await supabase.from("items_stock_almacen").update({
+        await supabase.from("items_stock_locacion").update({
           cantidad: (Number(rowDest.cantidad) || 0) + cant, updated_at: nowIso,
-        }).eq("item_id", x.item_id).eq("almacen_id", destino);
+        }).eq("item_id", x.item_id).eq("locacion_id", destino);
       } else {
-        await supabase.from("items_stock_almacen").insert({
-          item_id: x.item_id, almacen_id: destino, cantidad: cant, updated_at: nowIso,
+        await supabase.from("items_stock_locacion").insert({
+          item_id: x.item_id, locacion_id: destino, cantidad: cant, updated_at: nowIso,
         });
       }
     }
 
-    logAccion({ modulo: "almacenes", accion: "crear_transferencia", tabla: "transferencias_almacen", registroId: id, datosDespues: { origen, destino, items: itemsPayload } });
+    logAccion({ modulo: "almacenes", accion: "transferencia_manual", tabla: "movimientos_inventario_atolon", registroId: transferId,
+      datosDespues: { origen, destino, items: validos.map(x => ({ item_id: x.item_id, cantidad: Number(x.cantidad) })) } });
     onSaved();
   };
 
   return (
     <div onClick={e => e.target === e.currentTarget && onClose()} style={{ position: "fixed", inset: 0, zIndex: 1000, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16, overflowY: "auto" }}>
       <div style={{ background: B.navyMid, borderRadius: 16, padding: 24, width: 720, maxWidth: "95vw", maxHeight: "90vh", overflowY: "auto" }}>
-        <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 16 }}>🔁 Nueva transferencia entre almacenes</div>
+        <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 16 }}>🔁 Nueva transferencia manual</div>
 
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
           <div>
-            <label style={LS}>Almacén origen</label>
+            <label style={LS}>Locación origen</label>
             <select value={origen} onChange={e => { setOrigen(e.target.value); setSelectedItems([]); }} style={IS}>
               <option value="">— Seleccionar —</option>
-              {almacenes.map(a => <option key={a.id} value={a.id}>{a.icon} {a.nombre}</option>)}
+              {locaciones.map(l => <option key={l.id} value={l.id}>{l.icono || "📍"} {l.nombre}</option>)}
             </select>
           </div>
           <div>
-            <label style={LS}>Almacén destino</label>
+            <label style={LS}>Locación destino</label>
             <select value={destino} onChange={e => setDestino(e.target.value)} style={IS}>
               <option value="">— Seleccionar —</option>
-              {almacenes.filter(a => a.id !== origen).map(a => <option key={a.id} value={a.id}>{a.icon} {a.nombre}</option>)}
+              {locaciones.filter(l => l.id !== origen).map(l => <option key={l.id} value={l.id}>{l.icono || "📍"} {l.nombre}</option>)}
             </select>
           </div>
         </div>
@@ -551,141 +463,6 @@ function NewTransferModal({ almacenes, items, itemsById, stockMap, userEmail, on
           <button style={BTN_PRIM} onClick={ejecutar} disabled={busy}>
             {busy ? "Ejecutando..." : "Ejecutar transferencia"}
           </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ─── MapeoTab: mesa Loggro → almacén Atolón ─────────────────────────
-
-function MapeoTab({ mapping, almacenes, onReload }) {
-  const [editando, setEditando] = useState(null);
-  const [nuevo, setNuevo] = useState(false);
-  const almById = useMemo(() => new Map(almacenes.map(a => [a.id, a])), [almacenes]);
-
-  const eliminar = async (id) => {
-    if (!confirm("Eliminar este mapeo?")) return;
-    const { error } = await supabase.from("mesa_almacen_mapping").delete().eq("id", id);
-    if (error) { alert(error.message); return; }
-    logAccion({ modulo: "almacenes", accion: "eliminar_mapeo", tabla: "mesa_almacen_mapping", registroId: id });
-    onReload();
-  };
-
-  return (
-    <div>
-      <div style={{ background: B.navyMid, borderRadius: 10, padding: 16, marginBottom: 14 }}>
-        <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>Cómo funciona</div>
-        <div style={{ fontSize: 12, color: "rgba(255,255,255,0.6)", lineHeight: 1.6 }}>
-          Cuando Loggro registra una venta, Atolón OS decide de qué almacén descontar los ingredientes según la mesa.
-          Los patrones usan sintaxis SQL <code style={{ background: B.navy, padding: "1px 5px", borderRadius: 3 }}>LIKE</code> — <code>%</code> = cualquier texto,
-          <code>_</code> = un carácter. Ejemplo: <code>PS%</code> matchea PS11, PS12, etc.
-          El de <b>mayor prioridad</b> gana. Un patrón <code>%</code> con prioridad 0 sirve de fallback.
-        </div>
-      </div>
-
-      <div style={{ marginBottom: 14 }}>
-        <button style={BTN_PRIM} onClick={() => setNuevo(true)}>+ Nuevo mapeo</button>
-      </div>
-
-      <div style={{ background: B.navyMid, borderRadius: 10, overflow: "hidden" }}>
-        <div style={{ display: "grid", gridTemplateColumns: "80px 200px 1fr 200px 100px 80px", gap: 10, padding: "10px 16px", fontSize: 11, color: B.sand, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5, borderBottom: `1px solid ${B.navyLight}` }}>
-          <div>Prioridad</div><div>Patrón mesa</div><div>Notas</div><div>Almacén destino</div><div>Estado</div><div></div>
-        </div>
-        {mapping.map(m => {
-          const alm = almById.get(m.almacen_id);
-          return (
-            <div key={m.id} style={{ display: "grid", gridTemplateColumns: "80px 200px 1fr 200px 100px 80px", gap: 10, padding: "10px 16px", borderTop: `1px solid ${B.navyLight}55`, fontSize: 12, alignItems: "center" }}>
-              <div style={{ fontWeight: 700, color: m.prioridad >= 100 ? B.sky : "rgba(255,255,255,0.5)" }}>{m.prioridad}</div>
-              <div style={{ fontFamily: "monospace", fontWeight: 700, color: "#fbbf24" }}>{m.mesa_pattern}</div>
-              <div style={{ color: "rgba(255,255,255,0.6)", fontSize: 11 }}>{m.notas || "—"}</div>
-              <div style={{ color: alm?.color || "#fff" }}>{alm ? `${alm.icon} ${alm.nombre}` : m.almacen_id}</div>
-              <div>
-                <span style={{ fontSize: 10, padding: "2px 8px", background: m.activo ? "#22c55e22" : "#88888822", color: m.activo ? "#22c55e" : "#888", borderRadius: 10 }}>
-                  {m.activo ? "Activo" : "Inactivo"}
-                </span>
-              </div>
-              <div style={{ display: "flex", gap: 4, justifyContent: "flex-end" }}>
-                <button style={{ ...BTN_SEC, padding: "4px 8px", fontSize: 11 }} onClick={() => setEditando(m)}>✏️</button>
-                <button style={{ ...BTN_SEC, padding: "4px 8px", fontSize: 11, color: "#fca5a5" }} onClick={() => eliminar(m.id)}>🗑</button>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-
-      {(editando || nuevo) && (
-        <MapeoModal mapeo={editando} almacenes={almacenes} onClose={() => { setEditando(null); setNuevo(false); }} onSaved={() => { setEditando(null); setNuevo(false); onReload(); }} />
-      )}
-    </div>
-  );
-}
-
-function MapeoModal({ mapeo, almacenes, onClose, onSaved }) {
-  const isNew = !mapeo?.id;
-  const [form, setForm] = useState({
-    id: mapeo?.id || `MAP-${Math.random().toString(36).slice(2, 6).toUpperCase()}`,
-    mesa_pattern: mapeo?.mesa_pattern || "",
-    almacen_id: mapeo?.almacen_id || almacenes[0]?.id || "",
-    prioridad: mapeo?.prioridad ?? 100,
-    notas: mapeo?.notas || "",
-    activo: mapeo?.activo ?? true,
-  });
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState(null);
-
-  const save = async () => {
-    if (!form.mesa_pattern.trim()) { setErr("Patrón de mesa requerido"); return; }
-    if (!form.almacen_id) { setErr("Selecciona un almacén"); return; }
-    setBusy(true); setErr(null);
-    const payload = { ...form, updated_at: new Date().toISOString() };
-    const { error } = isNew
-      ? await supabase.from("mesa_almacen_mapping").insert(payload)
-      : await supabase.from("mesa_almacen_mapping").update(payload).eq("id", mapeo.id);
-    if (error) { setErr(error.message); setBusy(false); return; }
-    logAccion({ modulo: "almacenes", accion: isNew ? "crear_mapeo" : "editar_mapeo", tabla: "mesa_almacen_mapping", registroId: form.id, datosDespues: payload });
-    onSaved();
-  };
-
-  return (
-    <div onClick={e => e.target === e.currentTarget && onClose()} style={{ position: "fixed", inset: 0, zIndex: 1000, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
-      <div style={{ background: B.navyMid, borderRadius: 16, padding: 24, width: 480, maxWidth: "95vw" }}>
-        <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 16 }}>{isNew ? "🎯 Nuevo mapeo" : "✏️ Editar mapeo"}</div>
-        <div style={{ display: "grid", gap: 12 }}>
-          <div>
-            <label style={LS}>Patrón mesa (SQL LIKE)</label>
-            <input value={form.mesa_pattern} onChange={e => setForm(f => ({ ...f, mesa_pattern: e.target.value }))} style={{ ...IS, fontFamily: "monospace" }} placeholder="ej. PS%, C%, HB%, %" />
-            <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", marginTop: 4 }}>% = cualquier texto · _ = un carácter · exacto = "PS11"</div>
-          </div>
-          <div>
-            <label style={LS}>Almacén destino</label>
-            <select value={form.almacen_id} onChange={e => setForm(f => ({ ...f, almacen_id: e.target.value }))} style={IS}>
-              {almacenes.map(a => <option key={a.id} value={a.id}>{a.icon} {a.nombre}</option>)}
-            </select>
-          </div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-            <div>
-              <label style={LS}>Prioridad</label>
-              <input type="number" value={form.prioridad} onChange={e => setForm(f => ({ ...f, prioridad: Number(e.target.value) }))} style={IS} />
-              <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", marginTop: 4 }}>Mayor gana. Usa 0 para fallback</div>
-            </div>
-            <div>
-              <label style={LS}>Activo</label>
-              <select value={form.activo ? "1" : "0"} onChange={e => setForm(f => ({ ...f, activo: e.target.value === "1" }))} style={IS}>
-                <option value="1">Sí</option>
-                <option value="0">No</option>
-              </select>
-            </div>
-          </div>
-          <div>
-            <label style={LS}>Notas</label>
-            <input value={form.notas} onChange={e => setForm(f => ({ ...f, notas: e.target.value }))} style={IS} placeholder="Descripción del mapeo" />
-          </div>
-        </div>
-        {err && <div style={{ marginTop: 10, padding: 10, background: "#ef444422", color: "#fca5a5", borderRadius: 8, fontSize: 12 }}>{err}</div>}
-        <div style={{ display: "flex", gap: 10, marginTop: 20, justifyContent: "flex-end" }}>
-          <button style={BTN_SEC} onClick={onClose}>Cancelar</button>
-          <button style={BTN_PRIM} onClick={save} disabled={busy}>{busy ? "Guardando..." : "Guardar"}</button>
         </div>
       </div>
     </div>

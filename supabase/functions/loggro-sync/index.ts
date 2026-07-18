@@ -2902,7 +2902,7 @@ serve(async (req) => {
       // 2) Mapa loggro_id -> items_catalogo Atolon (incluye almacen_default_id
       // porque el descuento va al almacen del ITEM, no de la mesa. Direccion
       // 2026-07-18: la comida sale de Cocina, la bebida sale de Bar. Punto.)
-      const itemsRes: any = await sbFetch(`items_catalogo?select=id,nombre,loggro_id,stock_actual,unidad,almacen_default_id,precio_compra&loggro_id=not.is.null`);
+      const itemsRes: any = await sbFetch(`items_catalogo?select=id,nombre,loggro_id,stock_actual,unidad,locacion_default_id,precio_compra&loggro_id=not.is.null`);
       const atolonByLoggro = new Map();
       for (const it of (Array.isArray(itemsRes) ? itemsRes : [])) atolonByLoggro.set(it.loggro_id, it);
 
@@ -2963,7 +2963,7 @@ serve(async (req) => {
           // Producto simple (bebida, ingrediente puro) — descuenta a si mismo si tiene item Atolon
           const atolonIt = atolonByLoggro.get(pCat._id);
           if (!atolonIt) { ingredientesSinAtolon++; sinAtolonSet.add(pCat.name); continue; }
-          const almacenId = atolonIt.almacen_default_id;
+          const almacenId = atolonIt.locacion_default_id;
           if (!almacenId) { sinAlmacenDefault++; sinAlmacenSet.add(atolonIt.nombre || atolonIt.id); continue; }
           const totalQty = cant;
           movimientos.push({
@@ -2992,7 +2992,7 @@ serve(async (req) => {
           if (!ingId || !ingQty) continue;
           const atolonIt = atolonByLoggro.get(ingId);
           if (!atolonIt) { ingredientesSinAtolon++; sinAtolonSet.add(ingObj?.name || ingId); continue; }
-          const almacenId = atolonIt.almacen_default_id;
+          const almacenId = atolonIt.locacion_default_id;
           if (!almacenId) { sinAlmacenDefault++; sinAlmacenSet.add(atolonIt.nombre || atolonIt.id); continue; }
           const totalQty = cant * ingQty;
           movimientos.push({
@@ -3057,7 +3057,7 @@ serve(async (req) => {
         else if (res?.code || res?.message) insertErrors.push(res);
       }
 
-      // 6) Update items_stock_almacen con los deltas por (item, almacen).
+      // 6) Update items_stock_locacion con los deltas por (item, almacen).
       // Recalculamos SOLO por los movimientos realmente insertados en este run
       // (los skips ya fueron aplicados en runs anteriores).
       let stockActualizados = 0;
@@ -3075,29 +3075,29 @@ serve(async (req) => {
           if (delta === 0) continue;
           const [itemId, almacenId] = key.split("|");
           // Leer stock actual en ese almacén (o 0)
-          const rows: any = await sbFetch(`items_stock_almacen?item_id=eq.${encodeURIComponent(itemId)}&almacen_id=eq.${encodeURIComponent(almacenId)}&select=cantidad`);
+          const rows: any = await sbFetch(`items_stock_locacion?item_id=eq.${encodeURIComponent(itemId)}&locacion_id=eq.${encodeURIComponent(almacenId)}&select=cantidad`);
           const cur = Array.isArray(rows) && rows[0] ? Number(rows[0].cantidad) || 0 : 0;
           const nuevo = cur + delta;
           if (Array.isArray(rows) && rows[0]) {
-            await sbFetch(`items_stock_almacen?item_id=eq.${encodeURIComponent(itemId)}&almacen_id=eq.${encodeURIComponent(almacenId)}`, {
+            await sbFetch(`items_stock_locacion?item_id=eq.${encodeURIComponent(itemId)}&locacion_id=eq.${encodeURIComponent(almacenId)}`, {
               method: "PATCH",
               body: JSON.stringify({ cantidad: nuevo, updated_at: new Date().toISOString() }),
             });
           } else {
             // No existía la fila (item nunca tuvo stock en ese almacén) — la creamos con el delta.
-            await sbFetch(`items_stock_almacen`, {
+            await sbFetch(`items_stock_locacion`, {
               method: "POST",
-              body: JSON.stringify({ item_id: itemId, almacen_id: almacenId, cantidad: nuevo, updated_at: new Date().toISOString() }),
+              body: JSON.stringify({ item_id: itemId, locacion_id: almacenId, cantidad: nuevo, updated_at: new Date().toISOString() }),
             });
           }
           stockActualizados++;
         }
 
-        // Mantener items_catalogo.stock_actual = SUMA de items_stock_almacen para los items afectados
+        // Mantener items_catalogo.stock_actual = SUMA de items_stock_locacion para los items afectados
         // (útil mientras otros modulos siguen consumiendo items_catalogo.stock_actual).
         const itemsAfectados = new Set([...deltasReales.keys()].map(k => k.split("|")[0]));
         for (const itemId of itemsAfectados) {
-          const stocks: any = await sbFetch(`items_stock_almacen?item_id=eq.${encodeURIComponent(itemId)}&select=cantidad`);
+          const stocks: any = await sbFetch(`items_stock_locacion?item_id=eq.${encodeURIComponent(itemId)}&select=cantidad`);
           const total = (Array.isArray(stocks) ? stocks : []).reduce((s: number, r: any) => s + (Number(r.cantidad) || 0), 0);
           await sbFetch(`items_catalogo?id=eq.${encodeURIComponent(itemId)}`, {
             method: "PATCH",
