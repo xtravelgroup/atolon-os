@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from "react"
 import { B, COP, fmtFecha, todayStr } from "../brand";
 import { supabase } from "../lib/supabase";
 import { getCart, addToCart, clearCart, onCartChange } from "../lib/requisicionCart";
+import MovimientosItem from "../components/MovimientosItem";
 
 // ─── Constantes ──────────────────────────────────────────────────────────────
 const UNIDADES = ["Unidades", "Kg", "Gramos", "Litros", "Galones", "Cajas", "Paquetes", "Bolsas", "Metros", "Rollos", "Pares"];
@@ -1202,9 +1203,11 @@ function DetailPanel({ item, provs, proveedoresAll, catIconMap, catColorMap, onE
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// MOVIMIENTOS DEL ITEM — Historial desde movimientos_inventario_atolon
+// MOVIMIENTOS DEL ITEM — se movio a src/components/MovimientosItem.jsx
+// para reusarlo desde Almacenes tambien. La funcion vieja queda como
+// _MovimientosItem_legacy por si hay una referencia perdida.
 // ═══════════════════════════════════════════════════════════════════════════
-function MovimientosItem({ itemId, unidad, stockActual }) {
+function _MovimientosItem_legacy({ itemId, unidad, stockActual }) {
   const [movs, setMovs] = useState(null);
   const [expanded, setExpanded] = useState(false);
   const [days, setDays] = useState(30);

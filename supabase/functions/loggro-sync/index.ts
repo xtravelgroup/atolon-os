@@ -2963,8 +2963,12 @@ serve(async (req) => {
           // Producto simple (bebida, ingrediente puro) — descuenta a si mismo si tiene item Atolon
           const atolonIt = atolonByLoggro.get(pCat._id);
           if (!atolonIt) { ingredientesSinAtolon++; sinAtolonSet.add(pCat.name); continue; }
-          const almacenId = atolonIt.locacion_default_id;
-          if (!almacenId) { sinAlmacenDefault++; sinAlmacenSet.add(atolonIt.nombre || atolonIt.id); continue; }
+          // Regla operativa: las ventas de bar salen del Bar fisico (LOC-BAR),
+          // no del Almacen Bar. El Almacen Bar es solo bodega — se transfiere
+          // manualmente al Bar. La cocina si sale directo del Almacen Cocina.
+          const defaultLoc = atolonIt.locacion_default_id;
+          if (!defaultLoc) { sinAlmacenDefault++; sinAlmacenSet.add(atolonIt.nombre || atolonIt.id); continue; }
+          const almacenId = defaultLoc === "LOC-ALMACEN-BAR" ? "LOC-BAR" : defaultLoc;
           const totalQty = cant;
           movimientos.push({
             id: `MOV-${crypto.randomUUID().slice(0, 8)}`,
@@ -2992,8 +2996,12 @@ serve(async (req) => {
           if (!ingId || !ingQty) continue;
           const atolonIt = atolonByLoggro.get(ingId);
           if (!atolonIt) { ingredientesSinAtolon++; sinAtolonSet.add(ingObj?.name || ingId); continue; }
-          const almacenId = atolonIt.locacion_default_id;
-          if (!almacenId) { sinAlmacenDefault++; sinAlmacenSet.add(atolonIt.nombre || atolonIt.id); continue; }
+          // Regla operativa: las ventas de bar salen del Bar fisico (LOC-BAR),
+          // no del Almacen Bar. El Almacen Bar es solo bodega — se transfiere
+          // manualmente al Bar. La cocina si sale directo del Almacen Cocina.
+          const defaultLoc = atolonIt.locacion_default_id;
+          if (!defaultLoc) { sinAlmacenDefault++; sinAlmacenSet.add(atolonIt.nombre || atolonIt.id); continue; }
+          const almacenId = defaultLoc === "LOC-ALMACEN-BAR" ? "LOC-BAR" : defaultLoc;
           const totalQty = cant * ingQty;
           movimientos.push({
             id: `MOV-${crypto.randomUUID().slice(0, 8)}`,
@@ -3117,7 +3125,7 @@ serve(async (req) => {
         productos_sin_receta_lista: [...sinRecetaSet].slice(0, 20),
         ingredientes_sin_atolon: ingredientesSinAtolon,
         ingredientes_sin_atolon_lista: [...sinAtolonSet].slice(0, 20),
-        orders_sin_almacen: sinAlmacen,
+        orders_sin_almacen: sinAlmacenDefault,
         mesas_sin_mapping: [...sinAlmacenSet].slice(0, 20),
         insert_errors: insertErrors.slice(0, 3),
       });

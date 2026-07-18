@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from "react";
 import { B, COP, fmtFecha } from "../brand";
 import { supabase } from "../lib/supabase";
 import { logAccion } from "../lib/logAccion";
+import MovimientosItem from "../components/MovimientosItem";
 
 const IS = { width: "100%", padding: "9px 12px", borderRadius: 8, background: B.navyLight, border: `1px solid ${B.navyLight}`, color: B.white, fontSize: 13, outline: "none", boxSizing: "border-box" };
 const LS = { display: "block", fontSize: 11, color: B.sand, marginBottom: 5, textTransform: "uppercase", letterSpacing: "0.06em" };
@@ -103,6 +104,8 @@ export default function Almacenes() {
     return [...map.values()].sort((a, b) => (b.fecha || "").localeCompare(a.fecha || ""));
   }, [movs]);
 
+  const [detalleItem, setDetalleItem] = useState(null);
+
   if (loading) return <div style={{ padding: 40, color: "#fff", textAlign: "center" }}>Cargando almacenes…</div>;
 
   return (
@@ -145,7 +148,11 @@ export default function Almacenes() {
       </div>
 
       {tab === "stock" && (
-        <StockTab locaciones={locaciones} items={items} itemsById={itemsById} stockMap={stockMap} />
+        <StockTab locaciones={locaciones} items={items} itemsById={itemsById} stockMap={stockMap} onClickItem={setDetalleItem} />
+      )}
+
+      {detalleItem && (
+        <ItemDetailModal item={detalleItem} locaciones={locaciones} stockMap={stockMap} onClose={() => setDetalleItem(null)} />
       )}
 
       {tab === "transferencias" && (
@@ -180,7 +187,7 @@ function TabBtn({ active, onClick, children, count }) {
   );
 }
 
-function StockTab({ locaciones, items, itemsById, stockMap }) {
+function StockTab({ locaciones, items, itemsById, stockMap, onClickItem }) {
   const [search, setSearch] = useState("");
   const [locFiltro, setLocFiltro] = useState("todos");
   const [soloConStock, setSoloConStock] = useState(true);
@@ -235,7 +242,10 @@ function StockTab({ locaciones, items, itemsById, stockMap }) {
           <div style={{ textAlign: "right" }}>Total</div>
         </div>
         {rows.slice(0, 500).map(r => (
-          <div key={r.item.id} style={{ display: "grid", gridTemplateColumns: `2fr repeat(${columnasLoc.length}, 1fr) 100px`, gap: 8, padding: "8px 14px", borderTop: `1px solid ${B.navyLight}55`, fontSize: 12, alignItems: "center" }}>
+          <div key={r.item.id} onClick={() => onClickItem && onClickItem(r.item)}
+            style={{ display: "grid", gridTemplateColumns: `2fr repeat(${columnasLoc.length}, 1fr) 100px`, gap: 8, padding: "8px 14px", borderTop: `1px solid ${B.navyLight}55`, fontSize: 12, alignItems: "center", cursor: onClickItem ? "pointer" : "default", transition: "background 0.1s" }}
+            onMouseEnter={e => e.currentTarget.style.background = "rgba(255,255,255,0.03)"}
+            onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
             <div>
               <div style={{ fontWeight: 600 }}>{r.item.nombre}</div>
               <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)" }}>{r.item.categoria} · {r.item.unidad}</div>
@@ -476,6 +486,63 @@ function NewTransferModal({ locaciones, items, itemsById, stockMap, userEmail, o
             {busy ? "Ejecutando..." : "Ejecutar transferencia"}
           </button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── ItemDetailModal: panel lateral igual al de Items.jsx ─────────
+function ItemDetailModal({ item, locaciones, stockMap, onClose }) {
+  const stockPorLoc = locaciones
+    .map(l => ({ loc: l, cantidad: Number(stockMap.get(`${item.id}|${l.id}`)?.cantidad) || 0 }))
+    .filter(x => x.cantidad !== 0)
+    .sort((a, b) => Math.abs(b.cantidad) - Math.abs(a.cantidad));
+  const total = stockPorLoc.reduce((s, x) => s + x.cantidad, 0);
+
+  return (
+    <div onClick={e => e.target === e.currentTarget && onClose()}
+      style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 1000, display: "flex", justifyContent: "flex-end" }}>
+      <div style={{ width: 520, maxWidth: "95vw", height: "100vh", overflowY: "auto", background: B.navyMid, padding: 24, borderLeft: `3px solid ${B.sky}` }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 18 }}>
+          <div>
+            <span style={{ padding: "3px 10px", borderRadius: 20, fontSize: 10, fontWeight: 600, background: B.sky + "22", color: B.sky }}>
+              {item.categoria}
+            </span>
+            <h2 style={{ fontSize: 22, fontWeight: 900, fontFamily: "'Barlow Condensed', sans-serif", margin: "8px 0 0" }}>{item.nombre}</h2>
+            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginTop: 4 }}>Unidad: {item.unidad} · ID: {item.id}</div>
+          </div>
+          <button onClick={onClose} style={{ background: "none", border: "none", color: B.sand, fontSize: 22, cursor: "pointer" }}>×</button>
+        </div>
+
+        {/* Stock por locación */}
+        <div style={{ marginBottom: 20 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: B.sand, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 10 }}>
+            Stock por locación
+          </div>
+          {stockPorLoc.length === 0 ? (
+            <div style={{ padding: 16, textAlign: "center", background: B.navy, borderRadius: 8, color: "rgba(255,255,255,0.4)", fontSize: 12 }}>
+              Sin stock en ninguna locación
+            </div>
+          ) : (
+            <div style={{ background: B.navy, borderRadius: 8, padding: 4 }}>
+              {stockPorLoc.map(x => (
+                <div key={x.loc.id} style={{ display: "flex", justifyContent: "space-between", padding: "8px 10px", fontSize: 12, borderBottom: `1px solid ${B.navyLight}44` }}>
+                  <div>{x.loc.icono || "📍"} {x.loc.nombre}</div>
+                  <div style={{ fontWeight: 700, color: x.cantidad < 0 ? "#fca5a5" : "#fff" }}>
+                    {Number(x.cantidad).toLocaleString("es-CO", { maximumFractionDigits: 3 })} {item.unidad}
+                  </div>
+                </div>
+              ))}
+              <div style={{ display: "flex", justifyContent: "space-between", padding: "10px 10px", fontSize: 13, fontWeight: 800, color: B.sky }}>
+                <div>Total</div>
+                <div>{Number(total).toLocaleString("es-CO", { maximumFractionDigits: 3 })} {item.unidad}</div>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Historial de movimientos */}
+        <MovimientosItem itemId={item.id} unidad={item.unidad} stockActual={total} />
       </div>
     </div>
   );
