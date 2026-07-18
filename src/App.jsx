@@ -399,6 +399,7 @@ const ZarpesLog = lazy(() => import("./modules/ZarpesLog"));
 const Proveedores = lazy(() => import("./modules/Proveedores"));
 const Items = lazy(() => import("./modules/Items"));
 const HacerInventario = lazy(() => import("./modules/HacerInventario"));
+const Homologacion = lazy(() => import("./modules/Homologacion"));
 const Transferencias = lazy(() => import("./modules/Transferencias"));
 const EscanearProductos = lazy(() => import("./modules/EscanearProductos"));
 const LoggroAdmin = lazy(() => import("./modules/LoggroAdmin"));
@@ -441,6 +442,7 @@ const MODULE_MAP = {
   pagos: <Pagos />,
   items: <Items />,
   hacer_inventario: <HacerInventario />,
+  homologacion: <Homologacion />,
   transferencias: <Transferencias />,
   loggro: <LoggroAdmin />,
   hotel_folios: <HotelFolios />,
