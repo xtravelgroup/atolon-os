@@ -3,6 +3,7 @@ import { B, COP, fmtFecha, todayStr } from "../brand";
 import { supabase } from "../lib/supabase";
 import { getCart, addToCart, clearCart, onCartChange } from "../lib/requisicionCart";
 import MovimientosItem from "../components/MovimientosItem";
+import ItemDetailModal from "../components/ItemDetailModal";
 
 // ─── Constantes ──────────────────────────────────────────────────────────────
 const UNIDADES = ["Unidades", "Kg", "Gramos", "Litros", "Galones", "Cajas", "Paquetes", "Bolsas", "Metros", "Rollos", "Pares"];
@@ -3239,6 +3240,7 @@ function InventarioGeneralTab({ items, categorias, catIconMap, catColorMap }) {
   const [syncing, setSyncing] = useState(false);
   const [syncMsg, setSyncMsg] = useState(null);
   const [ajusteModal, setAjusteModal] = useState(null); // { fila } | null
+  const [detalleItem, setDetalleItem] = useState(null); // item para el detail modal
 
   const load = useCallback(async () => {
     if (!supabase) return;
@@ -3420,7 +3422,10 @@ function InventarioGeneralTab({ items, categorias, catIconMap, catColorMap }) {
             ) : filasFiltradas.map(f => {
               const cat = categorias.find(c => c.id === f.item.categoria);
               return (
-                <tr key={f.item.id} style={{ borderTop: "1px solid rgba(255,255,255,0.04)" }}>
+                <tr key={f.item.id} onClick={() => setDetalleItem(f.item)}
+                  style={{ borderTop: "1px solid rgba(255,255,255,0.04)", cursor: "pointer", transition: "background 0.1s" }}
+                  onMouseEnter={e => e.currentTarget.style.background = "rgba(255,255,255,0.03)"}
+                  onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
                   <td style={{ padding: "11px 14px" }}>
                     <div style={{ fontWeight: 700, color: "#fff" }}>{f.item.nombre}</div>
                     {f.item.codigo && <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>{f.item.codigo}</div>}
@@ -3452,7 +3457,7 @@ function InventarioGeneralTab({ items, categorias, catIconMap, catColorMap }) {
                   </td>
                   <td style={{ padding: "11px 14px", textAlign: "right" }}>
                     {f.diff !== null && f.diff !== 0 && (
-                      <button onClick={() => setAjusteModal({ fila: f })}
+                      <button onClick={e => { e.stopPropagation(); setAjusteModal({ fila: f }); }}
                         style={{ padding: "5px 10px", borderRadius: 6, border: `1px solid ${B.warning}`, background: B.warning + "22", color: B.warning, fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
                         🔧 Ajustar
                       </button>
@@ -3475,8 +3480,13 @@ function InventarioGeneralTab({ items, categorias, catIconMap, catColorMap }) {
         />
       )}
 
+      {detalleItem && (
+        <ItemDetailModal item={detalleItem} locaciones={locaciones} stockMap={stockPorLoc}
+          onClose={() => setDetalleItem(null)} />
+      )}
+
       <div style={{ marginTop: 14, padding: 12, background: B.navy, borderRadius: 8, fontSize: 11, color: "rgba(255,255,255,0.45)", lineHeight: 1.5 }}>
-        ℹ️ Click en <strong>🔧 Ajustar</strong> en cualquier fila con diferencia para corregir. Cada ajuste queda registrado en
+        ℹ️ Click en cualquier fila para ver el <strong>detalle e historial de movimientos</strong>. Click en <strong>🔧 Ajustar</strong> para corregir diferencias vs Loggro. Cada ajuste queda registrado en
         <code style={{ background: "rgba(255,255,255,0.1)", padding: "1px 5px", borderRadius: 3, marginLeft: 4 }}>items_ajustes</code>
         con usuario, fecha, motivo y stock antes/después.
       </div>

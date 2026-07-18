@@ -3,6 +3,7 @@ import { B, COP, fmtFecha } from "../brand";
 import { supabase } from "../lib/supabase";
 import { logAccion } from "../lib/logAccion";
 import MovimientosItem from "../components/MovimientosItem";
+import ItemDetailModal from "../components/ItemDetailModal";
 
 const IS = { width: "100%", padding: "9px 12px", borderRadius: 8, background: B.navyLight, border: `1px solid ${B.navyLight}`, color: B.white, fontSize: 13, outline: "none", boxSizing: "border-box" };
 const LS = { display: "block", fontSize: 11, color: B.sand, marginBottom: 5, textTransform: "uppercase", letterSpacing: "0.06em" };
@@ -491,8 +492,11 @@ function NewTransferModal({ locaciones, items, itemsById, stockMap, userEmail, o
   );
 }
 
-// ─── ItemDetailModal: panel lateral igual al de Items.jsx ─────────
-function ItemDetailModal({ item, locaciones, stockMap, onClose }) {
+// ─── ItemDetailModal se movio a src/components/ItemDetailModal.jsx
+//    (reusado desde Items.jsx tambien). Version local queda con nombre
+//    distinto para no chocar con el import.
+// eslint-disable-next-line no-unused-vars
+function _ItemDetailModal_legacy({ item, locaciones, stockMap, onClose }) {
   const stockPorLoc = locaciones
     .map(l => ({ loc: l, cantidad: Number(stockMap.get(`${item.id}|${l.id}`)?.cantidad) || 0 }))
     .filter(x => x.cantidad !== 0)
