@@ -1567,7 +1567,7 @@ function RecepcionOCModal({ oc, reqs, onClose, reload, currentUser, readOnly = f
 
     // Cargar TODO el catálogo para enriquecer + permitir vincular manualmente
     // ítems que no se puedan matchear por nombre exacto/parcial.
-    supabase.from("items_catalogo").select("id, nombre, loggro_id, unidad")
+    supabase.from("items_catalogo").select("id, nombre, loggro_id, unidad, locacion_default_id")
       .order("nombre")
       .then(({ data }) => setCatalogo(data || []));
   }, [oc.id, oc.requisicion_id]);
@@ -1754,43 +1754,83 @@ function RecepcionOCModal({ oc, reqs, onClose, reload, currentUser, readOnly = f
       .map(r => ({ item_id: r.item_id, cant: Number(r.cant_recibida), nombre: r.item }));
 
     if (movimientos.length > 0) {
-      // Leer stock actual de las bodegas afectadas para hacer suma idempotente
+      // Cada item va a su locacion_default_id (Almacen Cocina / Almacen Bar
+      // segun la clasificacion del item en items_catalogo). Direccion
+      // 2026-07-18: la comida va a Cocina, la bebida va a Bar, punto.
+      // Fallback al bodegaDestino global si algun item no tiene default.
       const itemIds = movimientos.map(m => m.item_id);
-      const { data: stockActual } = await supabase.from("items_stock_locacion")
-        .select("item_id, cantidad")
-        .eq("locacion_id", bodegaDestino)
-        .in("item_id", itemIds);
-      const stockMap = Object.fromEntries((stockActual || []).map(s => [s.item_id, Number(s.cantidad) || 0]));
+      const { data: catalogoRows } = await supabase.from("items_catalogo")
+        .select("id, nombre, unidad, locacion_default_id, precio_compra")
+        .in("id", itemIds);
+      const itemMeta = Object.fromEntries((catalogoRows || []).map(r => [r.id, r]));
 
-      const upserts = movimientos.map(m => ({
+      // Determinar locacion destino por item
+      const movsConLoc = movimientos.map(m => ({
+        ...m,
+        locacion_id: itemMeta[m.item_id]?.locacion_default_id || bodegaDestino,
+        unidad: itemMeta[m.item_id]?.unidad || null,
+        precio_compra: Number(itemMeta[m.item_id]?.precio_compra) || 0,
+      }));
+
+      // Leer stock actual por (item, locacion) para hacer suma idempotente.
+      // Como pueden ser locaciones distintas, agrupamos por locacion_id.
+      const porLocacion = movsConLoc.reduce((acc, m) => {
+        (acc[m.locacion_id] ||= []).push(m);
+        return acc;
+      }, {});
+
+      const stockMap = {}; // "itemId|locacionId" → cantidad actual
+      for (const [locId, arr] of Object.entries(porLocacion)) {
+        const { data: stockActual } = await supabase.from("items_stock_locacion")
+          .select("item_id, cantidad")
+          .eq("locacion_id", locId)
+          .in("item_id", arr.map(m => m.item_id));
+        for (const s of (stockActual || [])) stockMap[`${s.item_id}|${locId}`] = Number(s.cantidad) || 0;
+      }
+
+      const upserts = movsConLoc.map(m => ({
         item_id: m.item_id,
-        locacion_id: bodegaDestino,
-        cantidad: (stockMap[m.item_id] || 0) + m.cant,
+        locacion_id: m.locacion_id,
+        cantidad: (stockMap[`${m.item_id}|${m.locacion_id}`] || 0) + m.cant,
         updated_at: new Date().toISOString(),
       }));
       await supabase.from("items_stock_locacion").upsert(upserts, { onConflict: "item_id,locacion_id" });
 
-      // Auditoría: 1 fila por item en items_ajustes.
-      // Audit rank 70: el id era 'AJ-{codigo}-{item}' (determinístico solo
-      // por OC + item). En recepciones parciales sucesivas del mismo item,
-      // el segundo upsert pisaba el primero — cantidad_antes/despues/diferencia
-      // reflejaban solo la ultima recepcion y auditoria de inventario
-      // imposible de reconstruir. Ahora incluimos timestamp para conservar
-      // una fila por recepcion. Idempotencia ante DOBLE-CLICK en el MISMO
-      // save (mismo timestamp) se mantiene gracias al onConflict.
+      // Auditoría en items_ajustes (mantiene compatibilidad con auditoria historica)
       const recepcionTs = Date.now();
-      const ajustes = movimientos.map(m => ({
+      const ajustes = movsConLoc.map(m => ({
         id: `AJ-${oc.codigo}-${m.item_id}-${recepcionTs}`,
         item_id: m.item_id,
-        locacion_id: bodegaDestino,
+        locacion_id: m.locacion_id,
         tipo: "manual",
-        cantidad_antes: stockMap[m.item_id] || 0,
-        cantidad_despues: (stockMap[m.item_id] || 0) + m.cant,
+        cantidad_antes: stockMap[`${m.item_id}|${m.locacion_id}`] || 0,
+        cantidad_despues: (stockMap[`${m.item_id}|${m.locacion_id}`] || 0) + m.cant,
         diferencia: m.cant,
         motivo: `Recepción ${oc.codigo}${oc.requisicion_id ? ` (Req ${oc.requisicion_id})` : ""}${numFactura ? ` · Factura ${numFactura}` : ""}`,
         usuario_email: (currentUser.email || currentUser.nombre || ""),
       }));
       await supabase.from("items_ajustes").upsert(ajustes, { onConflict: "id" });
+
+      // Y tambien registrar en movimientos_inventario_atolon (historial unificado)
+      // como entrada_compra, con almacen_id = locacion destino.
+      const movsInv = movsConLoc.map(m => ({
+        id: `MOV-OC-${oc.id?.slice?.(0, 8) || oc.codigo}-${m.item_id}-${recepcionTs}`,
+        tipo: "entrada_compra",
+        item_id: m.item_id,
+        cantidad: m.cant,
+        unidad: m.unidad,
+        precio_unit: m.precio_compra,
+        almacen_id: m.locacion_id,
+        origen_tipo: "ordenes_compra",
+        origen_id: oc.id,
+        fecha: fechaRecepcionOriginal || new Date().toISOString(),
+        usuario_email: (currentUser.email || currentUser.nombre || ""),
+        notas: `Recepción OC ${oc.codigo} — ${m.nombre}${numFactura ? ` · Factura ${numFactura}` : ""}`,
+      }));
+      // No fallar la recepcion si hay conflicto de id (double-click); log y sigue.
+      try { await supabase.from("movimientos_inventario_atolon").insert(movsInv); } catch (e) {
+        console.warn("[recepcion] mov_inv insert:", e?.message);
+      }
     }
 
     const sinItemIdAdvertencia = recibidos.filter(r => Number(r.cant_recibida) > 0 && !r.item_id);
@@ -1955,7 +1995,7 @@ function RecepcionOCModal({ oc, reqs, onClose, reload, currentUser, readOnly = f
              informacion de pago (anticipos, facturas pagadas, etc.). Recepcion
              es operacion fisica; contabilidad concilia pagos aparte. */}
 
-        {/* Datos de factura del proveedor + bodega destino */}
+        {/* Datos de factura del proveedor + bodega fallback */}
         <div style={{ background: B.navy, borderRadius: 10, padding: 14, marginBottom: 14, display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
           <div>
             <label style={LS}>Nº factura proveedor (opcional)</label>
@@ -1974,7 +2014,7 @@ function RecepcionOCModal({ oc, reqs, onClose, reload, currentUser, readOnly = f
             </div>
           </div>
           <div>
-            <label style={LS}>Bodega destino</label>
+            <label style={LS}>Almacén fallback (si item sin default)</label>
             <select value={bodegaDestino} onChange={e => setBodegaDestino(e.target.value)} style={IS}>
               {locaciones.map(l => (
                 <option key={l.id} value={l.id}>
@@ -1982,6 +2022,9 @@ function RecepcionOCModal({ oc, reqs, onClose, reload, currentUser, readOnly = f
                 </option>
               ))}
             </select>
+            <div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", marginTop: 3 }}>
+              Cada item entra a <b>SU almacén default</b> (Cocina o Bar). Este fallback aplica solo si un item aún no tiene default clasificado.
+            </div>
           </div>
         </div>
 
@@ -2010,10 +2053,21 @@ function RecepcionOCModal({ oc, reqs, onClose, reload, currentUser, readOnly = f
                 const nombreCatalogo = cat?.nombre || "";
                 const nombreOC = (r.nombre || r.item || "").trim();
                 const nombreDifiere = !!r.item_id && nombreCatalogo && nombreOC && nombreCatalogo !== nombreOC;
+                // Almacén destino determinado por el item (locacion_default_id)
+                // Fallback al bodegaDestino global si el item no tiene default.
+                const locDefault = cat?.locacion_default_id || null;
+                const locDestino = locDefault || bodegaDestino;
+                const locInfo = locaciones.find(l => l.id === locDestino);
+                const badgeColor = locDefault ? "#22c55e" : "#fbbf24"; // verde si viene del default, amarillo si es fallback
                 return (
                   <tr key={i} style={{ borderTop: `1px solid ${B.navyLight}` }}>
                     <td style={{ padding: "10px 12px", fontSize: 12 }}>
-                      <div>{r.item}</div>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                        <span>{r.item}</span>
+                        <span style={{ fontSize: 9, fontWeight: 700, padding: "2px 8px", borderRadius: 10, background: badgeColor + "22", color: badgeColor, border: `1px solid ${badgeColor}55` }}>
+                          → {locInfo?.icono || "📦"} {locInfo?.nombre || locDestino}{!locDefault ? " (fallback)" : ""}
+                        </span>
+                      </div>
                       {sinLoggro ? (
                         <div style={{ marginTop: 4, display: "flex", alignItems: "center", gap: 6 }}>
                           <span style={{ fontSize: 9, color: B.warning, fontWeight: 700, padding: "1px 6px", borderRadius: 4, background: B.warning + "22" }}>
