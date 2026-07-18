@@ -2340,6 +2340,73 @@ serve(async (req) => {
     }
 
     // ════════════════════════════════════════════════════════════════════
+    // POST /loggro-sync/migrar-unidad
+    // Body: { from_unit_id, to_unit_id, dry_run? }
+    //
+    // Migra todos los ingredients y products que usaban la unidad from_unit_id
+    // para que apunten a to_unit_id. Al final elimina la unidad from_unit_id.
+    // Uso: unificar duplicados (ej: 'Unidad' -> 'Und', 'ml' -> 'Ml').
+    // ════════════════════════════════════════════════════════════════════
+    if (req.method === "POST" && path === "/migrar-unidad") {
+      const body = await req.json().catch(() => ({}));
+      const from = String(body?.from_unit_id || "");
+      const to = String(body?.to_unit_id || "");
+      const dryRun = body?.dry_run === true;
+      if (!from || !to) return json({ ok: false, error: "from_unit_id y to_unit_id requeridos" }, 400);
+      if (from === to) return json({ ok: false, error: "from y to iguales" }, 400);
+
+      // Descargar target unit (nombre)
+      const toUnit = await loggroGet(`/units/${to}`).catch(() => null);
+
+      // Descargar ingredients + products
+      const cats: { ings: any[]; prods: any[] } = { ings: [], prods: [] };
+      for (const key of ["ings","prods"] as const) {
+        const path = key === "ings" ? "/ingredients" : "/products";
+        for (let p = 0; p < 20; p++) {
+          const d: any = await loggroGet(`${path}?pagination=true&limit=200&page=${p}`);
+          const arr = d?.data || [];
+          if (!arr.length) break;
+          cats[key].push(...arr);
+        }
+      }
+
+      // Filtrar los que usan from unit
+      const ingsAf = cats.ings.filter((x: any) => x.unit?._id === from);
+      const prodsAf = cats.prods.filter((x: any) => x.unit?._id === from);
+      if (dryRun) {
+        return json({ ok: true, dry_run: true, from, to, ingredientes_afectados: ingsAf.length, productos_afectados: prodsAf.length, to_unit_name: toUnit?.name });
+      }
+
+      let okI = 0, failI = 0, okP = 0, failP = 0;
+      const errores: any[] = [];
+      for (const it of ingsAf) {
+        const payload = { ...it, unit: toUnit || { _id: to }, modifiedOn: new Date().toISOString() };
+        const r = await loggroRaw("POST", "/ingredients", payload);
+        if (r.ok) okI++; else { failI++; if (errores.length < 5) errores.push({ id: it._id, name: it.name, err: typeof r.body === "string" ? r.body.slice(0,100) : r.body }); }
+      }
+      for (const it of prodsAf) {
+        const payload = { ...it, unit: toUnit || { _id: to }, modifiedOn: new Date().toISOString() };
+        const r = await loggroRaw("POST", "/products", payload);
+        if (r.ok) okP++; else { failP++; if (errores.length < 10) errores.push({ id: it._id, name: it.name, err: typeof r.body === "string" ? r.body.slice(0,100) : r.body }); }
+      }
+
+      // Intentar eliminar la unidad from (solo si no quedan referencias)
+      let unitDelete: any = { attempted: false };
+      if (failI === 0 && failP === 0) {
+        const del = await loggroRaw("DELETE", `/units/${from}`);
+        unitDelete = { attempted: true, status: del.status, ok: del.ok };
+      }
+
+      return json({
+        ok: true, from, to, to_unit_name: toUnit?.name,
+        ingredientes: { afectados: ingsAf.length, ok: okI, fail: failI },
+        productos: { afectados: prodsAf.length, ok: okP, fail: failP },
+        errores: errores.slice(0, 10),
+        unit_delete: unitDelete,
+      });
+    }
+
+    // ════════════════════════════════════════════════════════════════════
     // POST /loggro-sync/eliminar-ingrediente
     // Body: { ingredient_id: string }
     // Intenta DELETE /ingredients/{id}. Si no responde ok, prueba
