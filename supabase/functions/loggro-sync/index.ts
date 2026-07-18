@@ -2256,6 +2256,89 @@ serve(async (req) => {
       return json({ ok: false, error: "Ningún path POST respondió OK", intentos }, 502);
     }
 
+    // ════════════════════════════════════════════════════════════════════
+    // POST /loggro-sync/remover-ingrediente-de-productos
+    // Body: { ingredient_id: string, dry_run?: bool }
+    //
+    // Descarga TODOS los products de Loggro, encuentra los que tengan el
+    // ingredient_id en su receta (ingredients[]), lo remueve y hace POST del
+    // producto actualizado a /products.
+    //
+    // dry_run devuelve la lista sin aplicar. Uso: limpieza masiva cuando un
+    // ingrediente ya no se debe descontar automaticamente en ventas.
+    // ════════════════════════════════════════════════════════════════════
+    if (req.method === "POST" && path === "/remover-ingrediente-de-productos") {
+      const body = await req.json().catch(() => ({}));
+      const ingredientId = String(body?.ingredient_id || "");
+      const dryRun = body?.dry_run === true;
+      if (!ingredientId) return json({ ok: false, error: "ingredient_id requerido" }, 400);
+
+      // Descargar todos los productos
+      const productos: any[] = [];
+      for (let p = 0; p < 20; p++) {
+        try {
+          const d: any = await loggroGet(`/products?pagination=true&limit=200&page=${p}`);
+          const arr = d?.data || (Array.isArray(d) ? d : []) || [];
+          if (arr.length === 0) break;
+          productos.push(...arr);
+        } catch { break; }
+      }
+
+      // Filtrar los que tienen este ingrediente
+      const afectados: any[] = [];
+      for (const prod of productos) {
+        const ings = Array.isArray(prod.ingredients) ? prod.ingredients : [];
+        const tiene = ings.some((def: any) => {
+          const id = typeof def.ingredient === "string" ? def.ingredient : def.ingredient?._id;
+          return id === ingredientId;
+        });
+        if (tiene) {
+          const cantidad = ings.find((def: any) => {
+            const id = typeof def.ingredient === "string" ? def.ingredient : def.ingredient?._id;
+            return id === ingredientId;
+          })?.quantity || 0;
+          afectados.push({ _id: prod._id, name: prod.name, categoria: prod.category?.name, cantidad_removida: cantidad, ings_antes: ings.length });
+        }
+      }
+
+      if (dryRun) {
+        return json({
+          ok: true, dry_run: true, ingredient_id: ingredientId,
+          productos_totales: productos.length,
+          productos_afectados: afectados.length,
+          detalle: afectados,
+        });
+      }
+
+      // Ejecutar: para cada afectado, hacer POST /products con ingredients filtrado
+      const resultados: any[] = [];
+      let ok = 0, fail = 0;
+      for (const prod of productos) {
+        const ings = Array.isArray(prod.ingredients) ? prod.ingredients : [];
+        const filtrados = ings.filter((def: any) => {
+          const id = typeof def.ingredient === "string" ? def.ingredient : def.ingredient?._id;
+          return id !== ingredientId;
+        });
+        if (filtrados.length === ings.length) continue; // no cambio
+
+        // Preparar body: enviar producto completo con ingredients modificado.
+        // Pirpos acepta POST /products con _id — funciona como upsert.
+        const payload = { ...prod, ingredients: filtrados, modifiedOn: new Date().toISOString() };
+        const r = await loggroRaw("POST", "/products", payload);
+        if (r.ok) { ok++; resultados.push({ _id: prod._id, name: prod.name, status: "ok" }); }
+        else { fail++; resultados.push({ _id: prod._id, name: prod.name, status: "fail", detalle: typeof r.body === "string" ? r.body.slice(0, 150) : r.body }); }
+      }
+
+      return json({
+        ok: true, ingredient_id: ingredientId,
+        productos_totales: productos.length,
+        productos_afectados: afectados.length,
+        actualizados_ok: ok,
+        actualizados_fail: fail,
+        resultados: resultados.slice(0, 50),
+      });
+    }
+
     // GET /loggro-sync/providers — listar proveedores de Restobar
     // Prueba varios paths comunes y devuelve el que funcione.
     if (req.method === "GET" && path === "/providers") {
