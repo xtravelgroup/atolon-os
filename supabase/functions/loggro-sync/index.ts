@@ -2339,6 +2339,35 @@ serve(async (req) => {
       });
     }
 
+    // ════════════════════════════════════════════════════════════════════
+    // POST /loggro-sync/eliminar-ingrediente
+    // Body: { ingredient_id: string }
+    // Intenta DELETE /ingredients/{id}. Si no responde ok, prueba
+    // PATCH con deleted=true. Retorna el resultado.
+    // ════════════════════════════════════════════════════════════════════
+    if (req.method === "POST" && path === "/eliminar-ingrediente") {
+      const body = await req.json().catch(() => ({}));
+      const id = String(body?.ingredient_id || "");
+      if (!id) return json({ ok: false, error: "ingredient_id requerido" }, 400);
+      const intentos: any[] = [];
+      // 1) DELETE directo
+      let r = await loggroRaw("DELETE", `/ingredients/${id}`);
+      intentos.push({ metodo: "DELETE", status: r.status, body_preview: typeof r.body === "string" ? r.body.slice(0, 150) : r.body });
+      if (r.ok) return json({ ok: true, metodo: "DELETE", ingredient_id: id, intentos });
+      // 2) PATCH deleted=true
+      r = await loggroRaw("PATCH", `/ingredients/${id}`, { deleted: true });
+      intentos.push({ metodo: "PATCH deleted=true", status: r.status, body_preview: typeof r.body === "string" ? r.body.slice(0, 150) : r.body });
+      if (r.ok) return json({ ok: true, metodo: "PATCH deleted=true", ingredient_id: id, intentos });
+      // 3) POST /ingredients con deleted=true (upsert)
+      const cur = await loggroGet(`/ingredients/${id}`).catch(() => null);
+      if (cur) {
+        r = await loggroRaw("POST", "/ingredients", { ...cur, deleted: true, isActive: false, modifiedOn: new Date().toISOString() });
+        intentos.push({ metodo: "POST upsert deleted=true", status: r.status, body_preview: typeof r.body === "string" ? r.body.slice(0, 150) : r.body });
+        if (r.ok) return json({ ok: true, metodo: "POST upsert deleted=true", ingredient_id: id, intentos });
+      }
+      return json({ ok: false, error: "Ningun metodo funciono", intentos }, 502);
+    }
+
     // GET /loggro-sync/providers — listar proveedores de Restobar
     // Prueba varios paths comunes y devuelve el que funcione.
     if (req.method === "GET" && path === "/providers") {
