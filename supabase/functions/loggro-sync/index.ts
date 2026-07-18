@@ -2899,8 +2899,10 @@ serve(async (req) => {
         }
       }
 
-      // 2) Mapa loggro_id -> items_catalogo Atolon
-      const itemsRes: any = await sbFetch(`items_catalogo?select=id,nombre,loggro_id,stock_actual,unidad&loggro_id=not.is.null`);
+      // 2) Mapa loggro_id -> items_catalogo Atolon (incluye almacen_default_id
+      // porque el descuento va al almacen del ITEM, no de la mesa. Direccion
+      // 2026-07-18: la comida sale de Cocina, la bebida sale de Bar. Punto.)
+      const itemsRes: any = await sbFetch(`items_catalogo?select=id,nombre,loggro_id,stock_actual,unidad,almacen_default_id,precio_compra&loggro_id=not.is.null`);
       const atolonByLoggro = new Map();
       for (const it of (Array.isArray(itemsRes) ? itemsRes : [])) atolonByLoggro.set(it.loggro_id, it);
 
@@ -2927,6 +2929,10 @@ serve(async (req) => {
       }
 
       // 4) Categorizar order lines por tipo y expandir receta
+      // Direccion 2026-07-18: el almacen se determina por el ITEM (su
+      // almacen_default_id), NO por la mesa. Comida sale de Cocina, bebida
+      // sale de Bar. Del Bar fisicamente se mueven cosas via transferencia
+      // manual, no via cada venta.
       const STATUS_TO_TIPO: Record<string, string> = {
         "Pagada": "salida_venta_restobar",
         "Por Pagar": "salida_venta_restobar",
@@ -2934,18 +2940,22 @@ serve(async (req) => {
         "Interno": "salida_interno",
       };
       const movimientos: any[] = [];
-      const stockUpdates = new Map<string, number>(); // item_id atolon → delta acumulado (negativo)
+      // Ahora los deltas se acumulan por (item, almacén).
+      const stockPorAlmacen = new Map<string, number>(); // "item_id|almacen_id" → delta
       let productosSinReceta = 0;
       let ingredientesSinAtolon = 0;
       const sinRecetaSet = new Set<string>();
       const sinAtolonSet = new Set<string>();
 
+      let sinAlmacenDefault = 0;
+      const sinAlmacenSet = new Set<string>();
       for (const o of orders) {
         const tipo = STATUS_TO_TIPO[o.status || ""];
         if (!tipo) continue; // Espera, Cancelada, etc. no descuentan
         const productName = (o.product?.name || "").trim();
         const cant = Number(o.quantity) || 0;
         if (!productName || cant <= 0) continue;
+        const mesaNom = o.table?.name || "";
         const pCat = byName[productName.toLowerCase()] || loggroMap[o.product?._id];
         if (!pCat) { productosSinReceta++; sinRecetaSet.add(productName); continue; }
         const ings = pCat.ingredients || [];
@@ -2953,6 +2963,8 @@ serve(async (req) => {
           // Producto simple (bebida, ingrediente puro) — descuenta a si mismo si tiene item Atolon
           const atolonIt = atolonByLoggro.get(pCat._id);
           if (!atolonIt) { ingredientesSinAtolon++; sinAtolonSet.add(pCat.name); continue; }
+          const almacenId = atolonIt.almacen_default_id;
+          if (!almacenId) { sinAlmacenDefault++; sinAlmacenSet.add(atolonIt.nombre || atolonIt.id); continue; }
           const totalQty = cant;
           movimientos.push({
             id: `MOV-${crypto.randomUUID().slice(0, 8)}`,
@@ -2961,14 +2973,16 @@ serve(async (req) => {
             cantidad: totalQty,
             unidad: atolonIt.unidad,
             precio_unit: Number(o.unit_price) || 0,
+            almacen_id: almacenId,
             origen_tipo: "loggro_order",
             origen_id: o._id,
             loggro_ref: `order:${o._id}:${pCat._id}`,
             fecha: o.createdOn,
             usuario_email: "auto-loggro@sistema.atolon",
-            notas: `Venta Loggro: ${productName} x${cant} (mesa ${o.table?.name || "?"})`,
+            notas: `Venta Loggro: ${productName} x${cant} (mesa ${mesaNom || "?"})`,
           });
-          stockUpdates.set(atolonIt.id, (stockUpdates.get(atolonIt.id) || 0) - totalQty);
+          const key = `${atolonIt.id}|${almacenId}`;
+          stockPorAlmacen.set(key, (stockPorAlmacen.get(key) || 0) - totalQty);
           continue;
         }
         for (const def of ings) {
@@ -2978,6 +2992,8 @@ serve(async (req) => {
           if (!ingId || !ingQty) continue;
           const atolonIt = atolonByLoggro.get(ingId);
           if (!atolonIt) { ingredientesSinAtolon++; sinAtolonSet.add(ingObj?.name || ingId); continue; }
+          const almacenId = atolonIt.almacen_default_id;
+          if (!almacenId) { sinAlmacenDefault++; sinAlmacenSet.add(atolonIt.nombre || atolonIt.id); continue; }
           const totalQty = cant * ingQty;
           movimientos.push({
             id: `MOV-${crypto.randomUUID().slice(0, 8)}`,
@@ -2986,27 +3002,38 @@ serve(async (req) => {
             cantidad: totalQty,
             unidad: atolonIt.unidad,
             precio_unit: Number(atolonIt.precio_compra) || 0,
+            almacen_id: almacenId,
             origen_tipo: "loggro_order",
             origen_id: o._id,
             loggro_ref: `order:${o._id}:${ingId}`,
             fecha: o.createdOn,
             usuario_email: "auto-loggro@sistema.atolon",
-            notas: `Receta ${productName} (${ingObj?.name}) x${cant}`,
+            notas: `Receta ${productName} (${ingObj?.name}) x${cant} — mesa ${mesaNom || "?"}`,
           });
-          stockUpdates.set(atolonIt.id, (stockUpdates.get(atolonIt.id) || 0) - totalQty);
+          const key = `${atolonIt.id}|${almacenId}`;
+          stockPorAlmacen.set(key, (stockPorAlmacen.get(key) || 0) - totalQty);
         }
       }
 
       if (dryRun) {
+        // Contar items afectados por almacen
+        const porAlmacen: Record<string, number> = {};
+        for (const [key] of stockPorAlmacen) {
+          const alm = key.split("|")[1];
+          porAlmacen[alm] = (porAlmacen[alm] || 0) + 1;
+        }
         return json({
           ok: true, dry_run: true, fecha,
           orders_procesadas: orders.length,
           movimientos_a_crear: movimientos.length,
-          items_afectados: stockUpdates.size,
+          combinaciones_item_almacen: stockPorAlmacen.size,
+          movs_por_almacen: porAlmacen,
           productos_sin_receta: productosSinReceta,
           productos_sin_receta_lista: [...sinRecetaSet].slice(0, 20),
           ingredientes_sin_atolon: ingredientesSinAtolon,
           ingredientes_sin_atolon_lista: [...sinAtolonSet].slice(0, 20),
+          items_sin_almacen_default: sinAlmacenDefault,
+          items_sin_almacen_default_lista: [...sinAlmacenSet].slice(0, 20),
           preview_movs: movimientos.slice(0, 20),
         });
       }
@@ -3030,25 +3057,52 @@ serve(async (req) => {
         else if (res?.code || res?.message) insertErrors.push(res);
       }
 
-      // 6) Update items_catalogo.stock_actual con los deltas (solo por los realmente insertados)
-      // Simplificacion: para evitar doble descuento, cuando un mov ya existia (skip), su delta no se aplica.
-      // Recalculamos por seguridad: leemos los movimientos insertados de este llamado y sumamos.
-      // Version pragmatica: aplicamos todos los deltas y confiamos en la idempotencia del unique index
-      // (si ya se corrio antes, en teoria el batch anterior ya aplico el descuento). Para el primer run
-      // esto es correcto. Para runs subsecuentes con nuevos movimientos, tambien.
+      // 6) Update items_stock_almacen con los deltas por (item, almacen).
+      // Recalculamos SOLO por los movimientos realmente insertados en este run
+      // (los skips ya fueron aplicados en runs anteriores).
       let stockActualizados = 0;
       if (insertados > 0) {
-        for (const [itemId, delta] of stockUpdates.entries()) {
+        // Filtrar el mapa a solo los movimientos que sí se insertaron.
+        const nuevosRefs = new Set(nuevos.map((m: any) => m.loggro_ref));
+        const deltasReales = new Map<string, number>();
+        for (const m of movimientos) {
+          if (!nuevosRefs.has(m.loggro_ref)) continue;
+          const key = `${m.item_id}|${m.almacen_id}`;
+          deltasReales.set(key, (deltasReales.get(key) || 0) - Number(m.cantidad));
+        }
+
+        for (const [key, delta] of deltasReales.entries()) {
           if (delta === 0) continue;
-          // Query actual + update: no atomico pero suficiente para batch nocturno.
-          const rows: any = await sbFetch(`items_catalogo?id=eq.${encodeURIComponent(itemId)}&select=stock_actual`);
-          const cur = Array.isArray(rows) && rows[0] ? Number(rows[0].stock_actual) || 0 : 0;
-          const nuevo = cur + delta; // delta ya es negativo
+          const [itemId, almacenId] = key.split("|");
+          // Leer stock actual en ese almacén (o 0)
+          const rows: any = await sbFetch(`items_stock_almacen?item_id=eq.${encodeURIComponent(itemId)}&almacen_id=eq.${encodeURIComponent(almacenId)}&select=cantidad`);
+          const cur = Array.isArray(rows) && rows[0] ? Number(rows[0].cantidad) || 0 : 0;
+          const nuevo = cur + delta;
+          if (Array.isArray(rows) && rows[0]) {
+            await sbFetch(`items_stock_almacen?item_id=eq.${encodeURIComponent(itemId)}&almacen_id=eq.${encodeURIComponent(almacenId)}`, {
+              method: "PATCH",
+              body: JSON.stringify({ cantidad: nuevo, updated_at: new Date().toISOString() }),
+            });
+          } else {
+            // No existía la fila (item nunca tuvo stock en ese almacén) — la creamos con el delta.
+            await sbFetch(`items_stock_almacen`, {
+              method: "POST",
+              body: JSON.stringify({ item_id: itemId, almacen_id: almacenId, cantidad: nuevo, updated_at: new Date().toISOString() }),
+            });
+          }
+          stockActualizados++;
+        }
+
+        // Mantener items_catalogo.stock_actual = SUMA de items_stock_almacen para los items afectados
+        // (útil mientras otros modulos siguen consumiendo items_catalogo.stock_actual).
+        const itemsAfectados = new Set([...deltasReales.keys()].map(k => k.split("|")[0]));
+        for (const itemId of itemsAfectados) {
+          const stocks: any = await sbFetch(`items_stock_almacen?item_id=eq.${encodeURIComponent(itemId)}&select=cantidad`);
+          const total = (Array.isArray(stocks) ? stocks : []).reduce((s: number, r: any) => s + (Number(r.cantidad) || 0), 0);
           await sbFetch(`items_catalogo?id=eq.${encodeURIComponent(itemId)}`, {
             method: "PATCH",
-            body: JSON.stringify({ stock_actual: nuevo, updated_at: new Date().toISOString() }),
+            body: JSON.stringify({ stock_actual: total, updated_at: new Date().toISOString() }),
           });
-          stockActualizados++;
         }
       }
 
@@ -3058,11 +3112,13 @@ serve(async (req) => {
         movimientos_a_procesar: movimientos.length,
         movimientos_ya_existian: existentes.size,
         movimientos_insertados: insertados,
-        items_stock_actualizado: stockActualizados,
+        stock_almacen_actualizado: stockActualizados,
         productos_sin_receta: productosSinReceta,
         productos_sin_receta_lista: [...sinRecetaSet].slice(0, 20),
         ingredientes_sin_atolon: ingredientesSinAtolon,
         ingredientes_sin_atolon_lista: [...sinAtolonSet].slice(0, 20),
+        orders_sin_almacen: sinAlmacen,
+        mesas_sin_mapping: [...sinAlmacenSet].slice(0, 20),
         insert_errors: insertErrors.slice(0, 3),
       });
     }

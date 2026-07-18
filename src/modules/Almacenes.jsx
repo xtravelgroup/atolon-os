@@ -14,6 +14,7 @@ export default function Almacenes() {
   const [items, setItems] = useState([]);
   const [stockRows, setStockRows] = useState([]);
   const [transfers, setTransfers] = useState([]);
+  const [mesaMapping, setMesaMapping] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshTick, setRefreshTick] = useState(0);
   const [showNewTransfer, setShowNewTransfer] = useState(false);
@@ -27,17 +28,19 @@ export default function Almacenes() {
     let cancelled = false;
     (async () => {
       setLoading(true);
-      const [almRes, itemsRes, stockRes, transfRes] = await Promise.all([
+      const [almRes, itemsRes, stockRes, transfRes, mapRes] = await Promise.all([
         supabase.from("almacenes").select("*").eq("activo", true).order("orden"),
         supabase.from("items_catalogo").select("id, nombre, unidad, categoria, precio_compra").eq("activo", true).order("nombre"),
         supabase.from("items_stock_almacen").select("*"),
         supabase.from("transferencias_almacen").select("*").order("created_at", { ascending: false }).limit(100),
+        supabase.from("mesa_almacen_mapping").select("*").order("prioridad", { ascending: false }),
       ]);
       if (cancelled) return;
       setAlmacenes(almRes.data || []);
       setItems(itemsRes.data || []);
       setStockRows(stockRes.data || []);
       setTransfers(transfRes.data || []);
+      setMesaMapping(mapRes.data || []);
       setLoading(false);
     })();
     return () => { cancelled = true; };
@@ -548,6 +551,141 @@ function NewTransferModal({ almacenes, items, itemsById, stockMap, userEmail, on
           <button style={BTN_PRIM} onClick={ejecutar} disabled={busy}>
             {busy ? "Ejecutando..." : "Ejecutar transferencia"}
           </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── MapeoTab: mesa Loggro → almacén Atolón ─────────────────────────
+
+function MapeoTab({ mapping, almacenes, onReload }) {
+  const [editando, setEditando] = useState(null);
+  const [nuevo, setNuevo] = useState(false);
+  const almById = useMemo(() => new Map(almacenes.map(a => [a.id, a])), [almacenes]);
+
+  const eliminar = async (id) => {
+    if (!confirm("Eliminar este mapeo?")) return;
+    const { error } = await supabase.from("mesa_almacen_mapping").delete().eq("id", id);
+    if (error) { alert(error.message); return; }
+    logAccion({ modulo: "almacenes", accion: "eliminar_mapeo", tabla: "mesa_almacen_mapping", registroId: id });
+    onReload();
+  };
+
+  return (
+    <div>
+      <div style={{ background: B.navyMid, borderRadius: 10, padding: 16, marginBottom: 14 }}>
+        <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>Cómo funciona</div>
+        <div style={{ fontSize: 12, color: "rgba(255,255,255,0.6)", lineHeight: 1.6 }}>
+          Cuando Loggro registra una venta, Atolón OS decide de qué almacén descontar los ingredientes según la mesa.
+          Los patrones usan sintaxis SQL <code style={{ background: B.navy, padding: "1px 5px", borderRadius: 3 }}>LIKE</code> — <code>%</code> = cualquier texto,
+          <code>_</code> = un carácter. Ejemplo: <code>PS%</code> matchea PS11, PS12, etc.
+          El de <b>mayor prioridad</b> gana. Un patrón <code>%</code> con prioridad 0 sirve de fallback.
+        </div>
+      </div>
+
+      <div style={{ marginBottom: 14 }}>
+        <button style={BTN_PRIM} onClick={() => setNuevo(true)}>+ Nuevo mapeo</button>
+      </div>
+
+      <div style={{ background: B.navyMid, borderRadius: 10, overflow: "hidden" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "80px 200px 1fr 200px 100px 80px", gap: 10, padding: "10px 16px", fontSize: 11, color: B.sand, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5, borderBottom: `1px solid ${B.navyLight}` }}>
+          <div>Prioridad</div><div>Patrón mesa</div><div>Notas</div><div>Almacén destino</div><div>Estado</div><div></div>
+        </div>
+        {mapping.map(m => {
+          const alm = almById.get(m.almacen_id);
+          return (
+            <div key={m.id} style={{ display: "grid", gridTemplateColumns: "80px 200px 1fr 200px 100px 80px", gap: 10, padding: "10px 16px", borderTop: `1px solid ${B.navyLight}55`, fontSize: 12, alignItems: "center" }}>
+              <div style={{ fontWeight: 700, color: m.prioridad >= 100 ? B.sky : "rgba(255,255,255,0.5)" }}>{m.prioridad}</div>
+              <div style={{ fontFamily: "monospace", fontWeight: 700, color: "#fbbf24" }}>{m.mesa_pattern}</div>
+              <div style={{ color: "rgba(255,255,255,0.6)", fontSize: 11 }}>{m.notas || "—"}</div>
+              <div style={{ color: alm?.color || "#fff" }}>{alm ? `${alm.icon} ${alm.nombre}` : m.almacen_id}</div>
+              <div>
+                <span style={{ fontSize: 10, padding: "2px 8px", background: m.activo ? "#22c55e22" : "#88888822", color: m.activo ? "#22c55e" : "#888", borderRadius: 10 }}>
+                  {m.activo ? "Activo" : "Inactivo"}
+                </span>
+              </div>
+              <div style={{ display: "flex", gap: 4, justifyContent: "flex-end" }}>
+                <button style={{ ...BTN_SEC, padding: "4px 8px", fontSize: 11 }} onClick={() => setEditando(m)}>✏️</button>
+                <button style={{ ...BTN_SEC, padding: "4px 8px", fontSize: 11, color: "#fca5a5" }} onClick={() => eliminar(m.id)}>🗑</button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {(editando || nuevo) && (
+        <MapeoModal mapeo={editando} almacenes={almacenes} onClose={() => { setEditando(null); setNuevo(false); }} onSaved={() => { setEditando(null); setNuevo(false); onReload(); }} />
+      )}
+    </div>
+  );
+}
+
+function MapeoModal({ mapeo, almacenes, onClose, onSaved }) {
+  const isNew = !mapeo?.id;
+  const [form, setForm] = useState({
+    id: mapeo?.id || `MAP-${Math.random().toString(36).slice(2, 6).toUpperCase()}`,
+    mesa_pattern: mapeo?.mesa_pattern || "",
+    almacen_id: mapeo?.almacen_id || almacenes[0]?.id || "",
+    prioridad: mapeo?.prioridad ?? 100,
+    notas: mapeo?.notas || "",
+    activo: mapeo?.activo ?? true,
+  });
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+
+  const save = async () => {
+    if (!form.mesa_pattern.trim()) { setErr("Patrón de mesa requerido"); return; }
+    if (!form.almacen_id) { setErr("Selecciona un almacén"); return; }
+    setBusy(true); setErr(null);
+    const payload = { ...form, updated_at: new Date().toISOString() };
+    const { error } = isNew
+      ? await supabase.from("mesa_almacen_mapping").insert(payload)
+      : await supabase.from("mesa_almacen_mapping").update(payload).eq("id", mapeo.id);
+    if (error) { setErr(error.message); setBusy(false); return; }
+    logAccion({ modulo: "almacenes", accion: isNew ? "crear_mapeo" : "editar_mapeo", tabla: "mesa_almacen_mapping", registroId: form.id, datosDespues: payload });
+    onSaved();
+  };
+
+  return (
+    <div onClick={e => e.target === e.currentTarget && onClose()} style={{ position: "fixed", inset: 0, zIndex: 1000, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+      <div style={{ background: B.navyMid, borderRadius: 16, padding: 24, width: 480, maxWidth: "95vw" }}>
+        <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 16 }}>{isNew ? "🎯 Nuevo mapeo" : "✏️ Editar mapeo"}</div>
+        <div style={{ display: "grid", gap: 12 }}>
+          <div>
+            <label style={LS}>Patrón mesa (SQL LIKE)</label>
+            <input value={form.mesa_pattern} onChange={e => setForm(f => ({ ...f, mesa_pattern: e.target.value }))} style={{ ...IS, fontFamily: "monospace" }} placeholder="ej. PS%, C%, HB%, %" />
+            <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", marginTop: 4 }}>% = cualquier texto · _ = un carácter · exacto = "PS11"</div>
+          </div>
+          <div>
+            <label style={LS}>Almacén destino</label>
+            <select value={form.almacen_id} onChange={e => setForm(f => ({ ...f, almacen_id: e.target.value }))} style={IS}>
+              {almacenes.map(a => <option key={a.id} value={a.id}>{a.icon} {a.nombre}</option>)}
+            </select>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            <div>
+              <label style={LS}>Prioridad</label>
+              <input type="number" value={form.prioridad} onChange={e => setForm(f => ({ ...f, prioridad: Number(e.target.value) }))} style={IS} />
+              <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", marginTop: 4 }}>Mayor gana. Usa 0 para fallback</div>
+            </div>
+            <div>
+              <label style={LS}>Activo</label>
+              <select value={form.activo ? "1" : "0"} onChange={e => setForm(f => ({ ...f, activo: e.target.value === "1" }))} style={IS}>
+                <option value="1">Sí</option>
+                <option value="0">No</option>
+              </select>
+            </div>
+          </div>
+          <div>
+            <label style={LS}>Notas</label>
+            <input value={form.notas} onChange={e => setForm(f => ({ ...f, notas: e.target.value }))} style={IS} placeholder="Descripción del mapeo" />
+          </div>
+        </div>
+        {err && <div style={{ marginTop: 10, padding: 10, background: "#ef444422", color: "#fca5a5", borderRadius: 8, fontSize: 12 }}>{err}</div>}
+        <div style={{ display: "flex", gap: 10, marginTop: 20, justifyContent: "flex-end" }}>
+          <button style={BTN_SEC} onClick={onClose}>Cancelar</button>
+          <button style={BTN_PRIM} onClick={save} disabled={busy}>{busy ? "Guardando..." : "Guardar"}</button>
         </div>
       </div>
     </div>
