@@ -2340,6 +2340,68 @@ serve(async (req) => {
     }
 
     // ════════════════════════════════════════════════════════════════════
+    // POST /loggro-sync/reemplazar-ingrediente-en-productos
+    // Body: { from_ingredient_id, to_ingredient_id, dry_run? }
+    //
+    // Recorre productos y reemplaza referencias a from_ingredient_id por
+    // to_ingredient_id, preservando cantidad y otros campos de la linea de
+    // receta. Util para consolidar ingredientes duplicados sin perder recetas.
+    // ════════════════════════════════════════════════════════════════════
+    if (req.method === "POST" && path === "/reemplazar-ingrediente-en-productos") {
+      const body = await req.json().catch(() => ({}));
+      const fromId = String(body?.from_ingredient_id || "");
+      const toId = String(body?.to_ingredient_id || "");
+      const dryRun = body?.dry_run === true;
+      if (!fromId || !toId) return json({ ok: false, error: "from_ingredient_id y to_ingredient_id requeridos" }, 400);
+      if (fromId === toId) return json({ ok: false, error: "from y to iguales" }, 400);
+
+      const productos: any[] = [];
+      for (let p = 0; p < 20; p++) {
+        try {
+          const d: any = await loggroGet(`/products?pagination=true&limit=200&page=${p}`);
+          const arr = d?.data || (Array.isArray(d) ? d : []) || [];
+          if (arr.length === 0) break;
+          productos.push(...arr);
+        } catch { break; }
+      }
+
+      const afectados: any[] = [];
+      for (const prod of productos) {
+        const ings = Array.isArray(prod.ingredients) ? prod.ingredients : [];
+        const linea = ings.find((def: any) => {
+          const id = typeof def.ingredient === "string" ? def.ingredient : def.ingredient?._id;
+          return id === fromId;
+        });
+        if (linea) afectados.push({ _id: prod._id, name: prod.name, cantidad: linea.quantity, ings_total: ings.length });
+      }
+
+      if (dryRun) {
+        return json({ ok: true, dry_run: true, from_ingredient_id: fromId, to_ingredient_id: toId, productos_afectados: afectados.length, detalle: afectados });
+      }
+
+      const resultados: any[] = [];
+      let ok = 0, fail = 0;
+      for (const prod of productos) {
+        const ings = Array.isArray(prod.ingredients) ? prod.ingredients : [];
+        let cambio = false;
+        const nuevos = ings.map((def: any) => {
+          const id = typeof def.ingredient === "string" ? def.ingredient : def.ingredient?._id;
+          if (id !== fromId) return def;
+          cambio = true;
+          // Preservar todos los campos de la linea, solo reemplazar ingredient
+          return { ...def, ingredient: toId };
+        });
+        if (!cambio) continue;
+        const payload = { ...prod, ingredients: nuevos, modifiedOn: new Date().toISOString() };
+        const r = await loggroRaw("POST", "/products", payload);
+        if (r.ok) { ok++; resultados.push({ _id: prod._id, name: prod.name, status: "ok" }); }
+        else { fail++; resultados.push({ _id: prod._id, name: prod.name, status: "fail", detalle: typeof r.body === "string" ? r.body.slice(0, 150) : r.body }); }
+      }
+
+      return json({ ok: true, from_ingredient_id: fromId, to_ingredient_id: toId, productos_afectados: afectados.length, actualizados_ok: ok, actualizados_fail: fail, resultados });
+    }
+
+    // ════════════════════════════════════════════════════════════════════
     // POST /loggro-sync/migrar-unidad
     // Body: { from_unit_id, to_unit_id, dry_run? }
     //
