@@ -84,14 +84,29 @@ async function autorizarTerminal(sn, ipOrigen) {
 }
 
 // ── Read raw body (text/plain con tabs) ──────────────────────────────
+// El terminal ZK a veces manda binary (Buffer) — antes se serializaba con
+// JSON.stringify(buffer) → {"type":"Buffer","data":[73,68,...]} y perdíamos
+// el texto real. Decodifico como UTF-8 explícito.
 function readRawBody(req) {
-  // Vercel Node runtime: req.body puede venir ya como string si Content-Type es text/plain.
   if (typeof req.body === "string") return Promise.resolve(req.body);
-  if (req.body && typeof req.body === "object") return Promise.resolve(JSON.stringify(req.body));
+  if (Buffer.isBuffer(req.body)) return Promise.resolve(req.body.toString("utf8"));
+  if (req.body && typeof req.body === "object") {
+    // Vercel puede parsear form-urlencoded/JSON antes de entregarnos req.body.
+    // Reconstruimos algo utilizable para URLSearchParams.
+    if (req.body.type === "Buffer" && Array.isArray(req.body.data)) {
+      return Promise.resolve(Buffer.from(req.body.data).toString("utf8"));
+    }
+    // form-urlencoded parseado → convertir de vuelta a query string
+    try {
+      return Promise.resolve(new URLSearchParams(req.body).toString());
+    } catch {
+      return Promise.resolve(JSON.stringify(req.body));
+    }
+  }
   return new Promise((resolve, reject) => {
-    let data = "";
-    req.on("data", c => { data += c; });
-    req.on("end", () => resolve(data));
+    const chunks = [];
+    req.on("data", c => chunks.push(Buffer.isBuffer(c) ? c : Buffer.from(c)));
+    req.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
     req.on("error", reject);
   });
 }
