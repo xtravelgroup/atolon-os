@@ -3008,18 +3008,33 @@ function InventarioGeneralTab({ items, categorias, catIconMap, catColorMap }) {
   const sinLoggro = filasFiltradas.filter(f => !f.item.loggro_id).length;
 
   async function syncLoggro() {
-    if (!confirm("Sincronizar stock actual desde Loggro?\n\nEsto traerá el stock más reciente de Loggro para todos los productos enlazados.")) return;
+    if (!confirm("Sincronizar TODO desde Loggro hasta este momento?\n\n• Snapshot de stock actual\n• Ventas del día de hoy (descuenta ingredientes por receta)\n\nEs idempotente — puedes correrlo cuantas veces quieras.")) return;
     setSyncing(true); setSyncMsg(null);
+    const SUPA = import.meta.env.VITE_SUPABASE_URL;
+    const ANON = import.meta.env.VITE_SUPABASE_ANON_KEY;
+    const headers = { "Content-Type": "application/json", Authorization: `Bearer ${ANON}` };
+    // Fecha de HOY en Bogotá (UTC-5)
+    const bogota = new Date(Date.now() - 5 * 3600 * 1000).toISOString().slice(0, 10);
     try {
-      const res = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/loggro-sync/sync-ingredients`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}` },
-        body: JSON.stringify({ updateExisting: true }),
+      // 1) Snapshot de stock
+      const r1 = await fetch(`${SUPA}/functions/v1/loggro-sync/sync-ingredients`, {
+        method: "POST", headers, body: JSON.stringify({ updateExisting: true }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Error en sync");
-      setSyncMsg({ type: "ok", text: `✓ ${data.synced || 0} ítems actualizados desde Loggro` });
-      setTimeout(() => window.location.reload(), 1000);
+      const d1 = await r1.json();
+      if (!r1.ok) throw new Error(d1.error || "sync-ingredients falló");
+
+      // 2) Ventas del día (idempotente por loggro_ref)
+      const r2 = await fetch(`${SUPA}/functions/v1/loggro-sync/ventas-restobar-descontar`, {
+        method: "POST", headers, body: JSON.stringify({ fecha: bogota }),
+      });
+      const d2 = await r2.json();
+      if (!r2.ok) throw new Error(d2.error || "ventas-restobar-descontar falló");
+
+      const stockN = d1.synced || 0;
+      const movsN = d2.movimientos_insertados ?? d2.inserted ?? d2.movs ?? 0;
+      const ordersN = d2.orders_procesadas ?? d2.orders ?? 0;
+      setSyncMsg({ type: "ok", text: `✓ ${stockN} stock actualizado · ${movsN} movimientos nuevos de ${ordersN} órdenes de hoy (${bogota})` });
+      setTimeout(() => window.location.reload(), 1500);
     } catch (e) {
       setSyncMsg({ type: "err", text: `Error: ${e.message}` });
     } finally {
