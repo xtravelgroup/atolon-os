@@ -40,6 +40,7 @@ export default function Items() {
   const [sortBy, setSortBy] = useState("nombre"); // "nombre" | "categoria" | "unidad" | "precio"
   const [sortDir, setSortDir] = useState("asc");
   const [showBulkSearch, setShowBulkSearch] = useState(false);
+  const [showBulkMinMax, setShowBulkMinMax] = useState(false);
   const [showQR, setShowQR] = useState(false);
 
   // Build lookup maps from dynamic categorias
@@ -248,6 +249,9 @@ export default function Items() {
               </button>
               <button onClick={() => setShowBulkSearch(true)} style={{ ...BTN(B.navyLight), color: "#4ade80", border: `1px solid #4ade8044` }}>
                 🔍 Buscar códigos
+              </button>
+              <button onClick={() => setShowBulkMinMax(true)} style={{ ...BTN(B.navyLight), color: "#facc15", border: `1px solid #facc1544` }}>
+                📊 Editar Min/Max
               </button>
               <button onClick={() => setShowQR(true)} style={{ ...BTN(B.navyLight), color: B.sand, border: `1px solid ${B.sand}44` }}>
                 📱 QR Escaneo
@@ -653,6 +657,16 @@ export default function Items() {
           items={items.filter(i => i.activo !== false && !i.codigo)}
           onClose={() => setShowBulkSearch(false)}
           onDone={() => { setShowBulkSearch(false); load(); }}
+        />
+      )}
+
+      {/* Bulk edit Min/Max */}
+      {showBulkMinMax && (
+        <BulkMinMaxModal
+          items={items.filter(i => i.activo !== false)}
+          catNames={catNames}
+          onClose={() => setShowBulkMinMax(false)}
+          onDone={() => { setShowBulkMinMax(false); load(); }}
         />
       )}
 
@@ -2296,6 +2310,135 @@ function ConteosTab() {
           })}
         </div>
       )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// BULK MIN/MAX — editar stock_minimo y stock_maximo de todos los items
+// en una sola vista. Filtro por categoría + búsqueda + sticky guardar.
+// ═══════════════════════════════════════════════════════════════════════════
+function BulkMinMaxModal({ items, catNames, onClose, onDone }) {
+  const [q, setQ] = useState("");
+  const [catFilter, setCatFilter] = useState("todas");
+  const [edits, setEdits] = useState({}); // id → { min, max }
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState(null);
+
+  const filtered = useMemo(() => {
+    const s = q.trim().toLowerCase();
+    return items
+      .filter(i => catFilter === "todas" || i.categoria === catFilter)
+      .filter(i => !s || (i.nombre || "").toLowerCase().includes(s) || (i.codigo || "").toLowerCase().includes(s))
+      .sort((a, b) => (a.nombre || "").localeCompare(b.nombre || "", "es"));
+  }, [items, q, catFilter]);
+
+  const setField = (id, key, val) => {
+    setEdits(prev => ({
+      ...prev,
+      [id]: { ...(prev[id] || {}), [key]: val === "" ? "" : Number(val) },
+    }));
+  };
+
+  const guardar = async () => {
+    const cambios = Object.entries(edits).filter(([, v]) => v.min !== undefined || v.max !== undefined);
+    if (cambios.length === 0) { setMsg({ type: "err", text: "Sin cambios para guardar" }); return; }
+    setSaving(true); setMsg(null);
+    try {
+      for (const [id, v] of cambios) {
+        const patch = { updated_at: new Date().toISOString() };
+        if (v.min !== undefined) patch.stock_minimo = v.min === "" ? null : Number(v.min);
+        if (v.max !== undefined) patch.stock_maximo = v.max === "" ? null : Number(v.max);
+        await supabase.from("items_catalogo").update(patch).eq("id", id);
+      }
+      setMsg({ type: "ok", text: `✓ ${cambios.length} items actualizados` });
+      setEdits({});
+      setTimeout(() => onDone(), 800);
+    } catch (e) {
+      setMsg({ type: "err", text: "Error: " + e.message });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const cambiosCount = Object.keys(edits).length;
+
+  return (
+    <div onClick={e => e.target === e.currentTarget && onClose()}
+      style={{ position: "fixed", inset: 0, zIndex: 1200, background: "rgba(0,0,0,0.75)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+      <div style={{ background: B.navyMid, borderRadius: 16, width: "100%", maxWidth: 900, maxHeight: "90vh", display: "flex", flexDirection: "column", border: `1px solid ${B.navyLight}` }}>
+        <div style={{ padding: "20px 24px", borderBottom: `1px solid ${B.navyLight}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div>
+            <div style={{ fontSize: 18, fontWeight: 800, fontFamily: "'Barlow Condensed', sans-serif" }}>📊 Editar Min/Max masivo</div>
+            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>{filtered.length} items · {cambiosCount} con cambios</div>
+          </div>
+          <button onClick={onClose} style={{ background: "none", border: "none", color: B.sand, fontSize: 22, cursor: "pointer" }}>×</button>
+        </div>
+
+        <div style={{ padding: "12px 24px", borderBottom: `1px solid ${B.navyLight}`, display: "flex", gap: 10, flexWrap: "wrap" }}>
+          <input value={q} onChange={e => setQ(e.target.value)} placeholder="🔎 Buscar por nombre o código…"
+            style={{ flex: 1, minWidth: 240, padding: "8px 12px", borderRadius: 8, background: B.navy, border: `1px solid ${B.navyLight}`, color: "#fff", fontSize: 13 }} />
+          <select value={catFilter} onChange={e => setCatFilter(e.target.value)}
+            style={{ padding: "8px 12px", borderRadius: 8, background: B.navy, border: `1px solid ${B.navyLight}`, color: "#fff", fontSize: 13, minWidth: 180 }}>
+            <option value="todas">Todas las categorías</option>
+            {catNames.map(c => <option key={c} value={c}>{c}</option>)}
+          </select>
+        </div>
+
+        <div style={{ overflowY: "auto", flex: 1, padding: "8px 24px" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+            <thead style={{ position: "sticky", top: 0, background: B.navyMid, zIndex: 1 }}>
+              <tr>
+                <th style={{ textAlign: "left", padding: "10px 8px", color: B.sand, fontSize: 10, textTransform: "uppercase", letterSpacing: "0.06em" }}>Producto</th>
+                <th style={{ textAlign: "right", padding: "10px 8px", color: B.sand, fontSize: 10, textTransform: "uppercase", letterSpacing: "0.06em", width: 70 }}>Unidad</th>
+                <th style={{ textAlign: "right", padding: "10px 8px", color: B.sand, fontSize: 10, textTransform: "uppercase", letterSpacing: "0.06em", width: 110 }}>Mínimo</th>
+                <th style={{ textAlign: "right", padding: "10px 8px", color: B.sand, fontSize: 10, textTransform: "uppercase", letterSpacing: "0.06em", width: 110 }}>Máximo</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map(it => {
+                const e = edits[it.id] || {};
+                const min = e.min !== undefined ? e.min : (it.stock_minimo ?? "");
+                const max = e.max !== undefined ? e.max : (it.stock_maximo ?? "");
+                const dirty = e.min !== undefined || e.max !== undefined;
+                return (
+                  <tr key={it.id} style={{ borderTop: `1px solid ${B.navyLight}44`, background: dirty ? "rgba(250,204,21,0.06)" : "transparent" }}>
+                    <td style={{ padding: "6px 8px" }}>
+                      <div>{it.nombre}</div>
+                      <div style={{ fontSize: 10, color: "rgba(255,255,255,0.35)" }}>{it.categoria}</div>
+                    </td>
+                    <td style={{ padding: "6px 8px", textAlign: "right", color: "rgba(255,255,255,0.5)" }}>{it.unidad}</td>
+                    <td style={{ padding: "6px 8px" }}>
+                      <input type="number" min="0" step="any" value={min}
+                        onChange={ev => setField(it.id, "min", ev.target.value)}
+                        style={{ width: "100%", padding: "5px 8px", background: B.navy, border: `1px solid ${dirty ? "#facc15" : B.navyLight}`, borderRadius: 6, color: "#fff", fontSize: 12, textAlign: "right", boxSizing: "border-box" }} />
+                    </td>
+                    <td style={{ padding: "6px 8px" }}>
+                      <input type="number" min="0" step="any" value={max}
+                        onChange={ev => setField(it.id, "max", ev.target.value)}
+                        style={{ width: "100%", padding: "5px 8px", background: B.navy, border: `1px solid ${dirty ? "#facc15" : B.navyLight}`, borderRadius: 6, color: "#fff", fontSize: 12, textAlign: "right", boxSizing: "border-box" }} />
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+
+        <div style={{ padding: "14px 24px", borderTop: `1px solid ${B.navyLight}`, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
+          {msg && (
+            <div style={{ fontSize: 12, color: msg.type === "ok" ? "#4ade80" : "#fca5a5" }}>{msg.text}</div>
+          )}
+          <div style={{ flex: 1 }} />
+          <button onClick={onClose} disabled={saving} style={{ padding: "9px 16px", borderRadius: 8, border: `1px solid ${B.navyLight}`, background: "transparent", color: "rgba(255,255,255,0.6)", cursor: "pointer", fontSize: 13, fontWeight: 600 }}>
+            Cancelar
+          </button>
+          <button onClick={guardar} disabled={saving || cambiosCount === 0}
+            style={{ padding: "9px 20px", borderRadius: 8, border: "none", background: "#facc15", color: B.navy, cursor: (saving || cambiosCount === 0) ? "default" : "pointer", fontSize: 13, fontWeight: 700, opacity: (saving || cambiosCount === 0) ? 0.5 : 1 }}>
+            {saving ? "Guardando…" : `💾 Guardar ${cambiosCount} cambio${cambiosCount !== 1 ? "s" : ""}`}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
