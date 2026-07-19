@@ -1591,29 +1591,30 @@ function RecepcionOCModal({ oc, reqs, onClose, reload, currentUser, readOnly = f
         // item_id apunta a algo sin loggro → seguimos a match por nombre
       }
 
-      const nombreItem = norm(r.nombre || r.item);
-      if (!nombreItem) return r;
+      // Probar nombres en orden: nombre_original (nombre real de la mesa de
+      // compra), luego nombre (proveedor), luego item (legacy). Es comun que
+      // el proveedor renombre en la factura y el nombre_original conserve el
+      // link con el catalogo.
+      const nombres = [r.nombre_original, r.nombre, r.item].filter(Boolean).map(norm);
+      if (nombres.length === 0) return r;
 
-      // B) Match por nombre en catalogo QUE TENGA loggro_id
-      const conLoggro = catalogo.filter(c => c.loggro_id);
-      let match = conLoggro.find(c => norm(c.nombre) === nombreItem);
-      if (!match) match = conLoggro.find(c => {
-        const cn = norm(c.nombre);
-        return cn.length >= 4 && nombreItem.includes(cn);
-      });
-      if (!match) match = conLoggro.find(c => {
-        const cn = norm(c.nombre);
-        return nombreItem.length >= 4 && cn.includes(nombreItem);
-      });
+      const tryMatch = (pool) => {
+        for (const nombreItem of nombres) {
+          let m = pool.find(c => norm(c.nombre) === nombreItem);
+          if (m) return m;
+          m = pool.find(c => { const cn = norm(c.nombre); return cn.length >= 4 && nombreItem.includes(cn); });
+          if (m) return m;
+          m = pool.find(c => { const cn = norm(c.nombre); return nombreItem.length >= 4 && cn.includes(nombreItem); });
+          if (m) return m;
+        }
+        return null;
+      };
 
-      // C) Si no hay match con loggro, aceptar sin loggro (solo linkea item_id)
-      if (!match) {
-        match = catalogo.find(c => norm(c.nombre) === nombreItem);
-        if (!match) match = catalogo.find(c => {
-          const cn = norm(c.nombre);
-          return cn.length >= 4 && nombreItem.includes(cn);
-        });
-      }
+      // B) Match por nombre PRIORIZANDO catalogo con loggro_id
+      let match = tryMatch(catalogo.filter(c => c.loggro_id));
+
+      // C) Fallback: match sin exigir loggro_id (al menos linkea item_id)
+      if (!match) match = tryMatch(catalogo);
 
       if (match) {
         return {
