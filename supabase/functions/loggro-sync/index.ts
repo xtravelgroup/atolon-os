@@ -4322,6 +4322,40 @@ serve(async (req) => {
       return json({ ok: r.ok, status: r.status, ingredientes_actualizados: tocados, body: r.body });
     }
 
+    // ════════════════════════════════════════════════════════════════════
+    // POST /loggro-sync/desactivar-productos
+    // Body: { ids: string[] }
+    //
+    // Desactiva (isActive=false) los productos por lista de _id. Preserva
+    // toda la data del producto (para reactivar solo cambiando isActive=true).
+    // Uso: bulk cleanup de categorías/menús que ya no se venden.
+    // ════════════════════════════════════════════════════════════════════
+    if (req.method === "POST" && path === "/desactivar-productos") {
+      const body = await req.json().catch(() => ({}));
+      const ids = Array.isArray(body?.ids) ? body.ids.map((x: any) => String(x)) : [];
+      if (!ids.length) return json({ ok: false, error: "ids[] requerido" }, 400);
+      const setActive = body?.set_active === true; // reactivar si viene true
+      const target = setActive ? true : false;
+
+      const resultados: any[] = [];
+      let ok = 0, fail = 0, skip = 0;
+      for (const id of ids) {
+        try {
+          const prod = await loggroGet(`/products/${id}`);
+          if (!prod || !prod._id) { fail++; resultados.push({ id, status: "not_found" }); continue; }
+          if (prod.isActive === target) { skip++; resultados.push({ id, name: prod.name, status: "already", isActive: target }); continue; }
+          const payload = { ...prod, isActive: target, modifiedOn: new Date().toISOString() };
+          const r = await loggroRaw("POST", "/products", payload);
+          if (r.ok) { ok++; resultados.push({ id, name: prod.name, status: "ok", isActive: target }); }
+          else { fail++; resultados.push({ id, name: prod.name, status: "fail", detalle: typeof r.body === "string" ? r.body.slice(0, 200) : r.body }); }
+        } catch (e) {
+          fail++;
+          resultados.push({ id, status: "error", error: String(e instanceof Error ? e.message : e).slice(0, 200) });
+        }
+      }
+      return json({ ok: fail === 0, total: ids.length, actualizados: ok, sin_cambio: skip, fallidos: fail, target_isActive: target, resultados });
+    }
+
     if (req.method === "POST" && path === "/create-inventory-movement") {
       const body = await req.json().catch(() => ({}));
       const strictMode = body.strict !== false; // default true; cliente puede pasar strict=false para forzar
