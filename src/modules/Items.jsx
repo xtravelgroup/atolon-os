@@ -3304,6 +3304,26 @@ function AjusteStockModal({ fila, locaciones, stockPorLoc, onClose, onSaved }) {
           cantidad_antes: stockActualLoc, cantidad_despues: nuevoStockLoc,
           diferencia: ajuste, motivo: motivo.trim(), usuario_email: userEmail,
         });
+        // Ademas del ajuste, registrar mov en el historial oficial (auditoria
+        // 2026-07-18: los ajustes eran invisibles en MovimientosItem).
+        try {
+          await supabase.from("movimientos_inventario_atolon").insert({
+            id: `MOV-${ajusteId}`,
+            tipo: ajuste >= 0 ? "entrada_ajuste" : "salida_ajuste",
+            item_id: f.item.id,
+            cantidad: Math.abs(ajuste),
+            unidad: f.item.unidad || null,
+            almacen_id: locId,
+            origen_tipo: "ajuste_loggro_a_atolon",
+            origen_id: ajusteId,
+            fecha: new Date().toISOString(),
+            usuario_email: userEmail,
+            notas: `Ajuste ↔ Loggro: ${motivo.trim()}`,
+          });
+        } catch (movErr) {
+          // No bloquear el ajuste si el mov falla — items_ajustes ya quedo.
+          console.warn("[AjusteStock] mov insert fail:", movErr);
+        }
       } else {
         // Forzar Atolón como verdad → llamar a Loggro para actualizar (si tiene loggro_id)
         if (!f.item.loggro_id) throw new Error("Producto no enlazado a Loggro");

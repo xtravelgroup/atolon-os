@@ -1642,11 +1642,12 @@ function RecepcionOCModal({ oc, reqs, onClose, reload, currentUser, readOnly = f
     supabase.from("oc_facturas").select("factura_data").eq("oc_id", oc.id)
       .then(({ data }) => {
         const rows = data || [];
-        if (rows.length === 0 && !oc.factura_data) return;
-        const facturaItems = [
-          ...rows.flatMap(r => r.factura_data?.items || []),
-          ...(oc.factura_data?.items || []),
-        ];
+        // Fuente unica: oc_facturas.factura_data. Auditoria 2026-07-18: antes
+        // combinabamos con oc.factura_data (espejo de la ULTIMA factura aplicada)
+        // → un mismo item podia aparecer 2x → cantidad Loggro duplicada. Si
+        // oc_facturas esta vacio (raro), caemos a oc.factura_data como fallback.
+        let facturaItems = rows.flatMap(r => r.factura_data?.items || []);
+        if (facturaItems.length === 0) facturaItems = oc.factura_data?.items || [];
         if (facturaItems.length === 0) return;
         const norm = s => String(s || "").trim().toLowerCase();
         const findFactura = (r) => {
@@ -2022,9 +2023,21 @@ function RecepcionOCModal({ oc, reqs, onClose, reload, currentUser, readOnly = f
               alert("⚠️ Recepción guardada, pero falló el registro en Loggro:\n" + (data.error || JSON.stringify(data).slice(0, 200)));
             }
           } else {
-            // Guardar el movement_id en la OC
+            // Guardar el movement_id en la OC. Auditoria 2026-07-18: cada
+            // recepcion parcial genera un movement_id independiente. Antes
+            // sobreescribiamos loggro_movement_id → parcial #2 pisaba #1 y al
+            // aplicar factura solo se actualizaba costos del ultimo. Ahora se
+            // acumulan en loggro_movement_ids[] y loggro_movement_id queda como
+            // "ultimo" solo por compat.
+            const previosIds = Array.isArray(oc.loggro_movement_ids) ? oc.loggro_movement_ids : [];
+            const nuevoEntry = {
+              id: data.movement_id,
+              fecha: fechaRecepcionOriginal || new Date().toISOString(),
+              cantidad_items: ingredientsPayload.length,
+            };
             await supabase.from("ordenes_compra").update({
-              loggro_movement_id: data.movement_id,
+              loggro_movement_id: data.movement_id, // legacy, ultimo movement
+              loggro_movement_ids: [...previosIds, nuevoEntry],
             }).eq("id", oc.id);
 
             // Construir mensaje informativo: conversiones aplicadas + advertencias + items sin loggro_id

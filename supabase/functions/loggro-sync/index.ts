@@ -3214,11 +3214,24 @@ serve(async (req) => {
         if (catName === "VIP PASS MENU" || catName === "VIP EXCLUSIVE MENU") return true;
         return false;
       };
-      const STATUS_TO_TIPO: Record<string, string> = {
-        "Pagada": "salida_venta_restobar",
-        "Por Pagar": "salida_venta_restobar",
-        "Cortesia": "salida_cortesia",
-        "Interno": "salida_interno",
+      // Categorizacion (auditoria 2026-07-18):
+      //   1. VIP PASS/EXCLUSIVE (por nombre o categoria) → salida_incluido SIEMPRE
+      //      (antes solo aplicaba desde Cortesia; ventas Pagadas quedaban como
+      //      restobar aunque el producto sea parte del pase todo-incluido).
+      //   2. Cortesia (status="Cortesia" O complementary.isComplementary=true) →
+      //      salida_cortesia. Antes solo se leia status="Cortesia" — si Loggro
+      //      dejaba status="Pagada" con isComplementary=true se cobraba como venta.
+      //   3. Interno (status="Interno") → salida_interno.
+      //   4. Pagada / Por Pagar → salida_venta_restobar.
+      //   5. Cualquier otro (Espera, Cancelada, null) → skip.
+      const categorizarOrder = (o: any, pCat: any, productName: string): string | null => {
+        if (esProductoVIPIncluido(productName, pCat)) return "salida_incluido";
+        if (o.complementary?.isComplementary === true) return "salida_cortesia";
+        const st = o.status || "";
+        if (st === "Cortesia") return "salida_cortesia";
+        if (st === "Interno") return "salida_interno";
+        if (st === "Pagada" || st === "Por Pagar") return "salida_venta_restobar";
+        return null;
       };
       const movimientos: any[] = [];
       // Ahora los deltas se acumulan por (item, almacén).
@@ -3231,18 +3244,13 @@ serve(async (req) => {
       let sinAlmacenDefault = 0;
       const sinAlmacenSet = new Set<string>();
       for (const o of orders) {
-        let tipo = STATUS_TO_TIPO[o.status || ""];
-        if (!tipo) continue; // Espera, Cancelada, etc. no descuentan
         const productName = (o.product?.name || "").trim();
         const cant = Number(o.quantity) || 0;
         if (!productName || cant <= 0) continue;
         const mesaNom = o.table?.name || "";
         const pCat = byName[productName.toLowerCase()] || loggroMap[o.product?._id];
-        // Override: si el producto es VIP PASS/EXCLUSIVE (por nombre o categoria),
-        // clasificar como 'incluido' aunque venga como Cortesia en Loggro.
-        if (tipo === "salida_cortesia" && esProductoVIPIncluido(productName, pCat)) {
-          tipo = "salida_incluido";
-        }
+        const tipo = categorizarOrder(o, pCat, productName);
+        if (!tipo) continue; // Espera, Cancelada, etc. no descuentan
         if (!pCat) { productosSinReceta++; sinRecetaSet.add(productName); continue; }
         const ings = pCat.ingredients || [];
         if (ings.length === 0) {
@@ -3334,9 +3342,17 @@ serve(async (req) => {
 
       // 5) Insert movimientos con manejo de duplicados
       // Estrategia: primero traer los loggro_ref ya existentes; filtrar; insertar el resto.
+      // Paginamos el pre-check en batches de 500 (era slice(0, 500) que dejaba pasar
+      // duplicados cuando un dia genera mas de 500 movs).
       const allRefs = movimientos.map(m => m.loggro_ref);
-      const existRes: any = await sbFetch(`movimientos_inventario_atolon?select=loggro_ref&loggro_ref=in.(${allRefs.slice(0, 500).map(r => `"${r}"`).join(",")})&anulado=eq.false&limit=1000`).catch(() => []);
-      const existentes = new Set((Array.isArray(existRes) ? existRes : []).map((r: any) => r.loggro_ref));
+      const existentes = new Set<string>();
+      for (let i = 0; i < allRefs.length; i += 500) {
+        const chunk = allRefs.slice(i, i + 500);
+        const res: any = await sbFetch(
+          `movimientos_inventario_atolon?select=loggro_ref&loggro_ref=in.(${chunk.map(r => `"${r}"`).join(",")})&anulado=eq.false&limit=1000`
+        ).catch(() => []);
+        for (const r of (Array.isArray(res) ? res : [])) existentes.add(r.loggro_ref);
+      }
       const nuevos = movimientos.filter(m => !existentes.has(m.loggro_ref));
 
       let insertados = 0;

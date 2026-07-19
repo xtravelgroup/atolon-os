@@ -1155,28 +1155,35 @@ export default function FacturaProveedorModal({ oc, onClose, reload, currentUser
         }
       }
 
-      // 5. Si la OC YA tenía movimiento en Loggro (se recibió ANTES de tener
-      //    precio → entró con costo $0), re-empujar el costo correcto a ese
-      //    movimiento. Solo corrige precio, cantidad intacta → NO duplica
-      //    inventario. Best-effort: si falla, NO rompe la factura.
-      if (oc.loggro_movement_id) {
-        try {
-          const costos = {};
-          for (const f of facturados) {
-            if (f.es_bonificacion || !f.loggro_id) continue;
-            const unPP = Math.max(1, Number(f.unidades_por_paquete) || 1);
-            const cPack = Number(f.precio_costo_pack) || 0;
-            const pIndiv = unPP > 0 ? Math.round(cPack / unPP) : 0;
-            if (pIndiv > 0) costos[f.loggro_id] = pIndiv;
+      // 5. Si la OC YA tenía movimientos en Loggro (recepciones previas que
+      //    entraron con costo $0), re-empujar el costo correcto a CADA
+      //    movement_id. Auditoria 2026-07-18: antes solo se corregia el ultimo
+      //    (loggro_movement_id) → recepciones parciales previas quedaban con
+      //    cost=0 para siempre. Ahora iteramos loggro_movement_ids[] (backfilled
+      //    para OCs viejas). Best-effort por movement.
+      const movementIds = Array.isArray(oc.loggro_movement_ids) && oc.loggro_movement_ids.length > 0
+        ? oc.loggro_movement_ids.map(x => (typeof x === "string" ? x : x?.id)).filter(Boolean)
+        : (oc.loggro_movement_id ? [oc.loggro_movement_id] : []);
+      if (movementIds.length > 0) {
+        const costos = {};
+        for (const f of facturados) {
+          if (f.es_bonificacion || !f.loggro_id) continue;
+          const unPP = Math.max(1, Number(f.unidades_por_paquete) || 1);
+          const cPack = Number(f.precio_costo_pack) || 0;
+          const pIndiv = unPP > 0 ? Math.round(cPack / unPP) : 0;
+          if (pIndiv > 0) costos[f.loggro_id] = pIndiv;
+        }
+        if (Object.keys(costos).length > 0) {
+          for (const mvId of movementIds) {
+            try {
+              await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/loggro-sync/update-movement-costs`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json", apikey: import.meta.env.VITE_SUPABASE_ANON_KEY, Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}` },
+                body: JSON.stringify({ movement_id: mvId, costs: costos }),
+              });
+            } catch (_e) { /* best-effort por movement */ }
           }
-          if (Object.keys(costos).length > 0) {
-            await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/loggro-sync/update-movement-costs`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json", apikey: import.meta.env.VITE_SUPABASE_ANON_KEY, Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}` },
-              body: JSON.stringify({ movement_id: oc.loggro_movement_id, costs: costos }),
-            });
-          }
-        } catch (_e) { /* best-effort: no romper la aplicación de la factura */ }
+        }
       }
 
       // 6b. Items NO FACTURADOS (cant=0) → devolver a la mesa de compra.
