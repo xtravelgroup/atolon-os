@@ -3046,33 +3046,57 @@ function InventarioGeneralTab({ items, categorias, catIconMap, catColorMap }) {
   const sinLoggro = filasFiltradas.filter(f => !f.item.loggro_id).length;
 
   async function syncLoggro() {
-    if (!confirm("Sincronizar TODO desde Loggro hasta este momento?\n\n• Snapshot de stock actual\n• Ventas del día de hoy (descuenta ingredientes por receta)\n\nEs idempotente — puedes correrlo cuantas veces quieras.")) return;
+    // Auditoria 2026-07-18: ademas del cron diario, cuando el usuario da click
+    // procesamos los ultimos 14 dias para llenar cualquier gap (endpoint es
+    // idempotente por loggro_ref).
+    const DIAS_BACKFILL = 14;
+    if (!confirm(`Sincronizar Loggro?\n\n• Snapshot de stock actual\n• Ventas: hoy + últimos ${DIAS_BACKFILL} días (rellena gaps)\n\nCorre en segundo plano; es idempotente.`)) return;
     setSyncing(true); setSyncMsg(null);
     const SUPA = import.meta.env.VITE_SUPABASE_URL;
     const ANON = import.meta.env.VITE_SUPABASE_ANON_KEY;
     const headers = { "Content-Type": "application/json", Authorization: `Bearer ${ANON}` };
-    // Fecha de HOY en Bogotá (UTC-5)
-    const bogota = new Date(Date.now() - 5 * 3600 * 1000).toISOString().slice(0, 10);
+
+    // Bogotá (UTC-5) — construir fechas descendentes: hoy, ayer, antier, …
+    const fmt = (d) => d.toISOString().slice(0, 10);
+    const hoyBogota = new Date(Date.now() - 5 * 3600 * 1000);
+    const fechas = [];
+    for (let i = 0; i <= DIAS_BACKFILL; i++) {
+      const d = new Date(hoyBogota.getTime() - i * 24 * 3600 * 1000);
+      fechas.push(fmt(d));
+    }
+
     try {
-      // 1) Snapshot de stock
+      // 1) Snapshot de stock actual
+      setSyncMsg({ type: "info", text: "⟳ Snapshot de stock…" });
       const r1 = await fetch(`${SUPA}/functions/v1/loggro-sync/sync-ingredients`, {
         method: "POST", headers, body: JSON.stringify({ updateExisting: true }),
       });
       const d1 = await r1.json();
       if (!r1.ok) throw new Error(d1.error || "sync-ingredients falló");
-
-      // 2) Ventas del día (idempotente por loggro_ref)
-      const r2 = await fetch(`${SUPA}/functions/v1/loggro-sync/ventas-restobar-descontar`, {
-        method: "POST", headers, body: JSON.stringify({ fecha: bogota }),
-      });
-      const d2 = await r2.json();
-      if (!r2.ok) throw new Error(d2.error || "ventas-restobar-descontar falló");
-
       const stockN = d1.synced || 0;
-      const movsN = d2.movimientos_insertados ?? d2.inserted ?? d2.movs ?? 0;
-      const ordersN = d2.orders_procesadas ?? d2.orders ?? 0;
-      setSyncMsg({ type: "ok", text: `✓ ${stockN} stock actualizado · ${movsN} movimientos nuevos de ${ordersN} órdenes de hoy (${bogota})` });
-      setTimeout(() => window.location.reload(), 1500);
+
+      // 2) Ventas: recorrer fechas descendentes (hoy → 14 días atrás)
+      let totMovs = 0, totOrders = 0, diasProcesados = 0, diasConGaps = 0;
+      for (const fecha of fechas) {
+        setSyncMsg({ type: "info", text: `⟳ Procesando ${fecha}… (${diasProcesados + 1}/${fechas.length})` });
+        try {
+          const r = await fetch(`${SUPA}/functions/v1/loggro-sync/ventas-restobar-descontar`, {
+            method: "POST", headers, body: JSON.stringify({ fecha }),
+          });
+          const d = await r.json();
+          if (r.ok) {
+            const movs = d.movimientos_insertados ?? 0;
+            const orders = d.orders_procesadas ?? 0;
+            totMovs += movs;
+            totOrders += orders;
+            if (movs > 0) diasConGaps++;
+          }
+        } catch { /* seguir con siguiente fecha */ }
+        diasProcesados++;
+      }
+      const gapsMsg = diasConGaps > 0 ? ` · rellenó gaps en ${diasConGaps} día${diasConGaps !== 1 ? "s" : ""}` : "";
+      setSyncMsg({ type: "ok", text: `✓ ${stockN} stock · ${totMovs} movs nuevos de ${totOrders} órdenes en ${diasProcesados} días${gapsMsg}` });
+      setTimeout(() => window.location.reload(), 2000);
     } catch (e) {
       setSyncMsg({ type: "err", text: `Error: ${e.message}` });
     } finally {
@@ -3312,41 +3336,57 @@ function AjusteStockModal({ fila, locaciones, stockPorLoc, onClose, onSaved }) {
           console.warn("[AjusteStock] mov insert fail:", movErr);
         }
       } else {
-        // Forzar Atolón como verdad → llamar a Loggro para actualizar (si tiene loggro_id)
+        // Forzar Atolón como verdad → crear un movimiento Entrada-Ajuste o
+        // Salida-Otro en Loggro para que su stock coincida con Atolón.
+        // Auditoria 2026-07-18: antes intentaba /update-stock que no existe.
+        // Ahora usamos /ajuste-stock-ingrediente (crea movimiento type=3 o
+        // type=7 en Loggro con el delta).
         if (!f.item.loggro_id) throw new Error("Producto no enlazado a Loggro");
+        const stockLoggroActual = Number(f.loggro) || 0;
+        const stockAtolonObjetivo = Number(f.atolon) || 0;
+        const delta = stockAtolonObjetivo - stockLoggroActual;
+        if (Math.abs(delta) < 0.0001) {
+          setErr("No hay diferencia de stock — no se requiere ajuste");
+          setSaving(false);
+          return;
+        }
+        const tipo = delta > 0 ? "entrada" : "salida";
+        const cantidad = Math.abs(delta);
         try {
-          const res = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/loggro-sync/update-stock`, {
+          const res = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/loggro-sync/ajuste-stock-ingrediente`, {
             method: "POST",
             headers: { "Content-Type": "application/json", Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}` },
-            body: JSON.stringify({ loggro_id: f.item.loggro_id, stock: f.atolon }),
+            body: JSON.stringify({
+              ingredient_id: f.item.loggro_id,
+              cantidad, tipo,
+              nota: `Atolón OS · ${motivo.trim()}`,
+            }),
           });
           const data = await res.json().catch(() => ({}));
           await supabase.from("items_ajustes").insert({
             id: ajusteId, item_id: f.item.id, locacion_id: null,
             tipo: "atolon_a_loggro",
-            cantidad_antes: f.loggro || 0, cantidad_despues: f.atolon,
-            diferencia: f.diff, motivo: motivo.trim(), usuario_email: userEmail,
+            cantidad_antes: stockLoggroActual, cantidad_despues: stockAtolonObjetivo,
+            diferencia: delta, motivo: motivo.trim(), usuario_email: userEmail,
             loggro_response: data,
           });
-          if (!res.ok) {
-            // Edge function puede no existir aún. Registramos el intento, dejamos
-            // mensaje claro y NO interrumpimos al usuario.
-            setErr(`Registro local OK. Sync a Loggro pendiente: ${data?.error || res.statusText}. Edge function 'loggro-sync/update-stock' no implementada todavía.`);
+          if (!res.ok || !data?.ok) {
+            setErr(`Registro local OK. Sync a Loggro falló: ${data?.error || res.statusText}`);
             setSaving(false);
             return;
           }
-          // Si el endpoint existe y respondió OK, reflejamos en items_catalogo
-          await supabase.from("items_catalogo").update({ stock_actual: f.atolon }).eq("id", f.item.id);
+          // Reflejar el nuevo stock en items_catalogo (sera sobrescrito por
+          // proximo sync-ingredients, pero mientras tanto queda consistente).
+          await supabase.from("items_catalogo").update({ stock_actual: stockAtolonObjetivo }).eq("id", f.item.id);
         } catch (apiErr) {
-          // Sin endpoint disponible: log local, dejamos pendiente
           await supabase.from("items_ajustes").insert({
             id: ajusteId, item_id: f.item.id, locacion_id: null,
             tipo: "atolon_a_loggro",
-            cantidad_antes: f.loggro || 0, cantidad_despues: f.atolon,
-            diferencia: f.diff, motivo: motivo.trim() + " [PENDIENTE SYNC LOGGRO]",
+            cantidad_antes: stockLoggroActual, cantidad_despues: stockAtolonObjetivo,
+            diferencia: delta, motivo: motivo.trim() + " [ERROR SYNC LOGGRO]",
             usuario_email: userEmail,
           });
-          setErr(`Registrado localmente. Sync manual a Loggro pendiente (endpoint no disponible).`);
+          setErr(`Registrado localmente. Sync a Loggro falló: ${apiErr.message}`);
           setSaving(false);
           return;
         }

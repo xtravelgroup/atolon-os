@@ -1828,13 +1828,27 @@ serve(async (req) => {
         metodosData.otros_items = otrosItems.map(oi => ({ ...oi, venta: Math.round(oi.venta), propina: Math.round(oi.propina) }));
       }
 
-      // 4) dry_run devuelve el payload sin insertar
-      const totalGeneral = totalVentas + totalPropinas;
+      // 4) Excluir Resort Credit del total A&B (auditoria 2026-07-18).
+      //    RC es un vale/consumo del huesped, no venta neta. Aparece VISIBLE
+      //    en metodos.resort_credit para que el operador lo vea, pero el
+      //    total_ventas/total_general lo excluye — mismo criterio que el
+      //    cierre manual (CierreCaja.jsx:648).
+      const resortCreditVenta = Number(metodosData.resort_credit?.venta) || 0;
+      const resortCreditPropina = Number(metodosData.resort_credit?.propina) || 0;
+      const totalVentasAyB = totalVentas - resortCreditVenta;
+      const totalPropinasAyB = totalPropinas - resortCreditPropina;
+      const totalGeneral = totalVentasAyB + totalPropinasAyB;
       if (dryRun) {
         return json({
           ok: true, dry_run: true, fecha,
           tickets, anuladas, ventas_por_metodo_loggro: ventasPorMetodo,
-          resumen: { total_ventas: totalVentas, total_propinas: totalPropinas, total_general: totalGeneral },
+          resumen: {
+            total_ventas: totalVentasAyB,
+            total_propinas: totalPropinasAyB,
+            total_general: totalGeneral,
+            resort_credit_venta: resortCreditVenta,
+            resort_credit_propina: resortCreditPropina,
+          },
           metodos: metodosData,
         });
       }
@@ -1862,8 +1876,10 @@ serve(async (req) => {
         numero_comprobante: null,
         usuario_email: "auto-loggro@sistema.atolon",
         metodos: metodosData,
-        total_ventas: Math.round(totalVentas),
-        total_propinas: Math.round(totalPropinas),
+        // Total EXCLUYE Resort Credit (RC va en metodos como referencia
+        // pero no como ingreso neto A&B — mismo criterio que cierre manual).
+        total_ventas: Math.round(totalVentasAyB),
+        total_propinas: Math.round(totalPropinasAyB),
         total_general: Math.round(totalGeneral),
         efectivo_esperado: metodosData.efectivo.venta,
         efectivo_contado: metodosData.efectivo.venta,
