@@ -3428,61 +3428,97 @@ serve(async (req) => {
           stockPorAlmacen.set(key, (stockPorAlmacen.get(key) || 0) - totalQty);
           continue;
         }
+        // Expansion RECURSIVA de recetas — auditoria 2026-07-18. Loggro
+        // permite recetas de N niveles (ej. CEBOLLA CARAMELIZADA es una
+        // sub-receta con cebolla + aceite + azucar como ingredientes). Antes
+        // solo expandiamos 1 nivel → los ingredientes intermedios quedaban
+        // como "sin Atolon" y sus componentes reales NUNCA descontaban.
+        // Ahora recorremos hasta 5 niveles, detectando ciclos.
+        const MAX_DEPTH = 5;
+        const expandRecipe = (loggroId: string, qtyEnUnidadDeIngObj: number, depth: number, visited: Set<string>, path: string) => {
+          if (depth > MAX_DEPTH) {
+            ingredientesSinAtolon++;
+            sinAtolonSet.add(`${path} [loop_max_depth]`);
+            return;
+          }
+          if (visited.has(loggroId)) {
+            ingredientesSinAtolon++;
+            sinAtolonSet.add(`${path} [ciclo]`);
+            return;
+          }
+          const nextVisited = new Set(visited); nextVisited.add(loggroId);
+          const ingObj = loggroMap[loggroId];
+          if (!ingObj) { ingredientesSinAtolon++; sinAtolonSet.add(`${path}:${loggroId}`); return; }
+          const nombre = ingObj.name || loggroId;
+          const atolonIt = atolonByLoggro.get(loggroId);
+          if (atolonIt) {
+            // LEAF: descontar del stock Atolón. Convertir la unidad del
+            // ingObj (Loggro) a la de Atolón.
+            const defaultLoc = atolonIt.locacion_default_id;
+            if (!defaultLoc) { sinAlmacenDefault++; sinAlmacenSet.add(atolonIt.nombre || atolonIt.id); return; }
+            const almacenId = defaultLoc === "LOC-ALMACEN-BAR" ? "LOC-BAR" : defaultLoc;
+            const loggroUnit = ingObj?.unit?.name || null;
+            const atolonUnit = atolonIt.unidad;
+            const nLoggro = loggroUnit ? normalizarUnidad(loggroUnit) : null;
+            const nAtolon = atolonUnit ? normalizarUnidad(atolonUnit) : null;
+            if (nLoggro && nAtolon && nLoggro.base !== nAtolon.base) {
+              ingredientesIncompatibles++;
+              incompatiblesSet.add(`${nombre}: Loggro=${loggroUnit} vs Atolon=${atolonUnit}`);
+              return;
+            }
+            const factor = factorConversion(loggroUnit || "", atolonUnit || "");
+            if (factor !== 1) {
+              conversionesAplicadas++;
+              if (conversionesLog.length < 5) conversionesLog.push({
+                ingrediente: nombre, loggro_unidad: loggroUnit, atolon_unidad: atolonUnit, factor, qty_original: qtyEnUnidadDeIngObj, qty_final: qtyEnUnidadDeIngObj * factor,
+              });
+            }
+            const totalQty = qtyEnUnidadDeIngObj * factor;
+            movimientos.push({
+              id: `MOV-${crypto.randomUUID().slice(0, 8)}`,
+              tipo,
+              item_id: atolonIt.id,
+              cantidad: totalQty,
+              unidad: atolonIt.unidad,
+              precio_unit: Number(atolonIt.precio_compra) || 0,
+              almacen_id: almacenId,
+              origen_tipo: "loggro_order",
+              origen_id: o._id,
+              loggro_ref: `order:${o._id}:${loggroId}`,
+              fecha: o.createdOn,
+              usuario_email: "auto-loggro@sistema.atolon",
+              notas: `${productName} · ${path}${path && "→"}${nombre} x${cant} — mesa ${mesaNom || "?"}`,
+            });
+            const key = `${atolonIt.id}|${almacenId}`;
+            stockPorAlmacen.set(key, (stockPorAlmacen.get(key) || 0) - totalQty);
+            return;
+          }
+          // No es leaf: buscar sub-receta
+          const subIngs = ingObj.ingredients || [];
+          if (subIngs.length === 0) {
+            // Huerfano real: no esta en Atolon y no tiene sub-receta
+            ingredientesSinAtolon++;
+            sinAtolonSet.add(nombre);
+            return;
+          }
+          // Recurse: cada subDef.quantity es lo que se necesita del sub-ingrediente
+          // por 1 unidad de ingObj (en la unidad nativa del sub-ingrediente).
+          for (const subDef of subIngs) {
+            const subId = typeof subDef.ingredient === "string" ? subDef.ingredient : subDef.ingredient?._id;
+            const subQty = Number(subDef.quantity) || 0;
+            if (!subId || !subQty) continue;
+            expandRecipe(subId, qtyEnUnidadDeIngObj * subQty, depth + 1, nextVisited, path ? `${path}→${nombre}` : nombre);
+          }
+        };
+
         for (const def of ings) {
           const ingObj = typeof def.ingredient === "string" ? loggroMap[def.ingredient] : def.ingredient;
           const ingId = ingObj?._id || (typeof def.ingredient === "string" ? def.ingredient : null);
           const ingQty = Number(def.quantity) || 0;
           if (!ingId || !ingQty) continue;
-          const atolonIt = atolonByLoggro.get(ingId);
-          if (!atolonIt) { ingredientesSinAtolon++; sinAtolonSet.add(ingObj?.name || ingId); continue; }
-          // Regla operativa: las ventas de bar salen del Bar fisico (LOC-BAR),
-          // no del Almacen Bar. El Almacen Bar es solo bodega — se transfiere
-          // manualmente al Bar. La cocina si sale directo del Almacen Cocina.
-          const defaultLoc = atolonIt.locacion_default_id;
-          if (!defaultLoc) { sinAlmacenDefault++; sinAlmacenSet.add(atolonIt.nombre || atolonIt.id); continue; }
-          const almacenId = defaultLoc === "LOC-ALMACEN-BAR" ? "LOC-BAR" : defaultLoc;
-          // Conversion Loggro receta → unidad Atolon. Ej: receta 500 Gr,
-          // ingrediente Atolon en Kg → totalQty = 500 * factor(Gr→Kg) = 0.5.
-          const loggroUnit = ingObj?.unit?.name || null;
-          const atolonUnit = atolonIt.unidad;
-          const factor = factorConversion(loggroUnit || "", atolonUnit || "");
-          // Bloquear si las unidades son de bases distintas y ambas se
-          // reconocen (PESO vs VOL, VOL vs UNIDAD, etc.) — sin conversion
-          // posible el descuento seria erroneo.
-          const nLoggro = loggroUnit ? normalizarUnidad(loggroUnit) : null;
-          const nAtolon = atolonUnit ? normalizarUnidad(atolonUnit) : null;
-          if (nLoggro && nAtolon && nLoggro.base !== nAtolon.base) {
-            ingredientesIncompatibles++;
-            incompatiblesSet.add(`${ingObj?.name || ingId}: Loggro=${loggroUnit} vs Atolon=${atolonUnit}`);
-            continue;
-          }
-          if (factor !== 1) {
-            conversionesAplicadas++;
-            if (conversionesLog.length < 5) conversionesLog.push({
-              ingrediente: ingObj?.name || ingId,
-              loggro_receta: `${ingQty} ${loggroUnit}`,
-              atolon_unidad: atolonUnit, factor,
-              cantidad_final: cant * ingQty * factor,
-            });
-          }
-          const totalQty = cant * ingQty * factor;
-          movimientos.push({
-            id: `MOV-${crypto.randomUUID().slice(0, 8)}`,
-            tipo,
-            item_id: atolonIt.id,
-            cantidad: totalQty,
-            unidad: atolonIt.unidad,
-            precio_unit: Number(atolonIt.precio_compra) || 0,
-            almacen_id: almacenId,
-            origen_tipo: "loggro_order",
-            origen_id: o._id,
-            loggro_ref: `order:${o._id}:${ingId}`,
-            fecha: o.createdOn,
-            usuario_email: "auto-loggro@sistema.atolon",
-            notas: `Receta ${productName} (${ingObj?.name}) x${cant} — mesa ${mesaNom || "?"}`,
-          });
-          const key = `${atolonIt.id}|${almacenId}`;
-          stockPorAlmacen.set(key, (stockPorAlmacen.get(key) || 0) - totalQty);
+          // Entrada al arbol recursivo. cant = # de platos vendidos.
+          // ingQty = amount del ingrediente por plato (en unidad del ingrediente).
+          expandRecipe(ingId, cant * ingQty, 0, new Set(), productName);
         }
       }
 
