@@ -20,6 +20,7 @@ const REPORTES = [
   { key: "cancelaciones",label: "Cancelaciones",      icon: "✕",  desc: "Reservas canceladas · Razón · Reembolsos" },
   { key: "ayb",          label: "Reportes A&B",       icon: "🍽️", desc: "Cortesías · Anulaciones · Descuentos del Restaurant/Bar (Loggro)" },
   { key: "inv_costo",    label: "Inventario → Costo", icon: "📦", desc: "Historial de movimientos por Facturación de Loggro Restobar · Asiento contable mensual" },
+  { key: "comedor",      label: "Comedor Staff",     icon: "🍴", desc: "Subsidio, costo por comida, ranking empleados, comidas servidas por día" },
 ];
 
 const firstOfMonth = () => {
@@ -60,6 +61,121 @@ export default function Reportes() {
       {tab === "cancelaciones" && <ReporteCancelaciones />}
       {tab === "ayb"           && <ReporteAyB />}
       {tab === "inv_costo"     && <ReporteInventarioCosto />}
+      {tab === "comedor"       && <ReporteComedor />}
+    </div>
+  );
+}
+
+// ─── REPORTE COMEDOR STAFF ──────────────────────────────────────────────────
+// KPIs: subsidio, cost per meal, ranking empleados, tendencia por día.
+function ReporteComedor() {
+  const hoy = new Date().toISOString().slice(0, 10);
+  const [fechaIni, setFechaIni] = useState(new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10));
+  const [fechaFin, setFechaFin] = useState(hoy);
+  const [loading, setLoading] = useState(true);
+  const [consumos, setConsumos] = useState([]);
+  const [registros, setRegistros] = useState([]);
+
+  useEffect(() => {
+    setLoading(true);
+    Promise.all([
+      supabase.from("comedor_consumo").select("*").gte("fecha", fechaIni).lte("fecha", fechaFin),
+      supabase.from("comedor_registros").select("*").gte("fecha", fechaIni).lte("fecha", fechaFin),
+    ]).then(([r1, r2]) => {
+      setConsumos(r1.data || []);
+      setRegistros(r2.data || []);
+      setLoading(false);
+    });
+  }, [fechaIni, fechaFin]);
+
+  const kpis = useMemo(() => {
+    const costoTotal = consumos.reduce((s, c) => s + (Number(c.costo_total) || 0), 0);
+    const cobradoTotal = registros.reduce((s, r) => s + (Number(r.monto_cobrado) || 0), 0);
+    const subsidio = costoTotal - cobradoTotal;
+    const comidas = registros.length;
+    const costoPorComida = comidas > 0 ? costoTotal / comidas : 0;
+    return { costoTotal, cobradoTotal, subsidio, comidas, costoPorComida };
+  }, [consumos, registros]);
+
+  const rankingEmpleados = useMemo(() => {
+    const m = new Map();
+    for (const r of registros) {
+      const k = r.empleado_nombre || r.empleado_id || "?";
+      const cur = m.get(k) || { nombre: k, comidas: 0, cobrado: 0 };
+      cur.comidas++;
+      cur.cobrado += Number(r.monto_cobrado) || 0;
+      m.set(k, cur);
+    }
+    return [...m.values()].sort((a, b) => b.comidas - a.comidas).slice(0, 20);
+  }, [registros]);
+
+  const porDia = useMemo(() => {
+    const m = new Map();
+    for (const c of consumos) {
+      const k = String(c.fecha).slice(0, 10);
+      m.set(k, (m.get(k) || 0) + (Number(c.costo_total) || 0));
+    }
+    return [...m.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+  }, [consumos]);
+
+  const exportar = () => {
+    const rows = [["Fecha", "Empleado", "Comida", "Monto cobrado"]];
+    for (const r of registros) rows.push([r.fecha, r.empleado_nombre || r.empleado_id, r.comida, r.monto_cobrado]);
+    exportCSV(`comedor_${fechaIni}_${fechaFin}.csv`, rows);
+  };
+
+  return (
+    <div>
+      <FiltroFechas fechaIni={fechaIni} setFechaIni={setFechaIni} fechaFin={fechaFin} setFechaFin={setFechaFin} onExport={exportar} />
+      {loading ? <div style={{ padding: 40, color: "rgba(255,255,255,0.3)" }}>Cargando…</div> : (
+        <>
+          <KPIRow items={[
+            { label: "Costo total insumos", value: `$${Math.round(kpis.costoTotal).toLocaleString("es-CO")}`, color: "#f97316" },
+            { label: "Cobrado a empleados", value: `$${Math.round(kpis.cobradoTotal).toLocaleString("es-CO")}`, color: "#22c55e" },
+            { label: "Subsidio empresa", value: `$${Math.round(kpis.subsidio).toLocaleString("es-CO")}`, color: kpis.subsidio > 0 ? "#facc15" : "#22c55e" },
+            { label: "Comidas servidas", value: kpis.comidas.toLocaleString("es-CO"), color: "#38bdf8" },
+            { label: "Costo / comida", value: `$${Math.round(kpis.costoPorComida).toLocaleString("es-CO")}`, color: "#a78bfa" },
+          ]} />
+
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginTop: 20 }}>
+            <div style={{ background: B.navyMid, borderRadius: 12, padding: 16 }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: B.sand, marginBottom: 10 }}>👥 Ranking empleados</div>
+              {rankingEmpleados.length === 0 ? <div style={{ color: "rgba(255,255,255,0.3)", fontSize: 12 }}>Sin registros</div> : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  {rankingEmpleados.map((e, i) => (
+                    <div key={e.nombre} style={{ display: "grid", gridTemplateColumns: "20px 1fr 60px 90px", gap: 6, alignItems: "center", fontSize: 12, padding: "4px 6px", background: i < 3 ? "rgba(56,189,248,0.06)" : "transparent", borderRadius: 4 }}>
+                      <span style={{ color: "rgba(255,255,255,0.4)" }}>{i + 1}</span>
+                      <span>{e.nombre}</span>
+                      <span style={{ textAlign: "right", color: B.sky }}>{e.comidas}</span>
+                      <span style={{ textAlign: "right", color: B.success, fontSize: 11 }}>${e.cobrado.toLocaleString("es-CO")}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div style={{ background: B.navyMid, borderRadius: 12, padding: 16 }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: B.sand, marginBottom: 10 }}>📅 Costo por día</div>
+              {porDia.length === 0 ? <div style={{ color: "rgba(255,255,255,0.3)", fontSize: 12 }}>Sin registros</div> : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                  {porDia.map(([fecha, costo]) => {
+                    const max = Math.max(...porDia.map(x => x[1]));
+                    const pct = max > 0 ? (costo / max) * 100 : 0;
+                    return (
+                      <div key={fecha} style={{ display: "grid", gridTemplateColumns: "80px 1fr 90px", gap: 6, alignItems: "center", fontSize: 11 }}>
+                        <span style={{ color: "rgba(255,255,255,0.5)" }}>{fecha.slice(5)}</span>
+                        <div style={{ background: "rgba(249,115,22,0.15)", height: 12, borderRadius: 2, position: "relative" }}>
+                          <div style={{ width: `${pct}%`, height: "100%", background: "#f97316", borderRadius: 2 }} />
+                        </div>
+                        <span style={{ textAlign: "right", color: "#f97316" }}>${Math.round(costo).toLocaleString("es-CO")}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }

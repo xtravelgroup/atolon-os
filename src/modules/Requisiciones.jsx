@@ -360,29 +360,37 @@ export default function Requisiciones() {
     // consolidan — quedan como lineas separadas en la OC para preservar
     // el precio real de cada item (audit rank 18). Antes la key era
     // nombre|unidad y el precio del primero ganaba silenciosamente.
+    // Auditoria 2026-07-18: key por item_id cuando existe (evita fusion de
+    // dos items distintos con mismo nombre). Fallback a nombre|unidad|precioU
+    // para items sin item_id. Alineado con Fase 2.5 (AsignarOCModal).
     const consolidar = (lista) => {
       const map = new Map();
       for (const it of lista) {
         const nombre = (it.nombre || it.item || "").trim();
         const unidad = (it.unidad || "").toLowerCase();
         const precioU = Math.round(Number(it.precioU) || 0);
-        const key = `${nombre.toLowerCase()}|${unidad}|${precioU}`;
+        const itemId = it.item_id || it.item_catalogo_id || null;
+        const loggroId = it.loggro_id || null;
+        const key = itemId
+          ? `id:${itemId}|${precioU}`
+          : `n:${nombre.toLowerCase()}|${unidad}|${precioU}`;
         const reqIds = it.req_id ? [it.req_id] : (it.req_ids || []);
         if (map.has(key)) {
           const ex = map.get(key);
           ex.cant = Number(ex.cant) + (Number(it.cant) || 0);
           ex.subtotal = Math.round(ex.cant * Number(ex.precioU));
           ex.req_ids = [...new Set([...(ex.req_ids || []), ...reqIds])];
+          if (!ex.item_id && itemId) ex.item_id = itemId;
+          if (!ex.loggro_id && loggroId) ex.loggro_id = loggroId;
         } else {
           map.set(key, {
             id: it.id, item: nombre, cant: Number(it.cant) || 0, unidad: it.unidad,
-            // Preservar referencias al catálogo para que la recepción pueda
-            // sumar al stock local sin tener que cruzar con la requisición
-            item_id: it.item_id || it.item_catalogo_id || null,
-            loggro_id: it.loggro_id || null,
+            item_id: itemId,
+            loggro_id: loggroId,
             precioU,
             subtotal: Math.round(Number(it.subtotal) || (Number(it.cant) || 0) * precioU),
             req_ids: reqIds.length ? reqIds : [req.id],
+            nombre_original: it.nombre_original || nombre,
           });
         }
       }

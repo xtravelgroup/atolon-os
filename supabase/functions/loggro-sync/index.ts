@@ -1774,13 +1774,25 @@ serve(async (req) => {
       }
 
       // 2) Filtrar y agregar por método
+      // Auditoria 2026-07-18: guardar listas auditables de anuladas.
       let totalVentas = 0, totalPropinas = 0, tickets = 0, anuladas = 0;
       const ventasPorMetodo: Record<string, number> = {};
+      const anuladasLista: Array<{ invoice_num: string; total: number; hora: string; motivo?: string }> = [];
       for (const inv of allInvoices) {
         const ts = inv?.createdOn;
         if (!ts) continue;
         if (dayOf(ts) !== fecha) continue;
-        if (inv?.deletedInfo?.isDeleted) { anuladas += Number(inv?.total) || 0; continue; }
+        if (inv?.deletedInfo?.isDeleted) {
+          const total = Number(inv?.total) || 0;
+          anuladas += total;
+          anuladasLista.push({
+            invoice_num: inv?.invoiceNumber || inv?._id?.slice(0, 8) || "?",
+            total,
+            hora: String(ts).slice(11, 16),
+            motivo: inv?.deletedInfo?.reason || undefined,
+          });
+          continue;
+        }
         const total = Number(inv?.total) || 0;
         const tip = Number(inv?.tip) || 0;
         totalVentas += total;
@@ -1871,6 +1883,20 @@ serve(async (req) => {
       }
 
       const id = `CC-AUTO-${fecha.replaceAll("-","")}-${Date.now()}`;
+      // Auditoria 2026-07-18: guardar anuladas dentro de metodos para
+      // trazabilidad. El campo metodos es jsonb, admite estructura arbitraria.
+      const metodosConAnuladas = {
+        ...metodosData,
+        anuladas: {
+          total: Math.round(anuladas),
+          count: anuladasLista.length,
+          lista: anuladasLista.slice(0, 50),
+        },
+        resort_credit_info: {
+          venta_excluida_del_total: Math.round(resortCreditVenta),
+          propina_excluida_del_total: Math.round(resortCreditPropina),
+        },
+      };
       const record = {
         id,
         fecha,
@@ -1879,7 +1905,7 @@ serve(async (req) => {
         numero_caja: null,
         numero_comprobante: null,
         usuario_email: "auto-loggro@sistema.atolon",
-        metodos: metodosData,
+        metodos: metodosConAnuladas,
         // Total EXCLUYE Resort Credit (RC va en metodos como referencia
         // pero no como ingreso neto A&B — mismo criterio que cierre manual).
         total_ventas: Math.round(totalVentasAyB),
@@ -1888,7 +1914,7 @@ serve(async (req) => {
         efectivo_esperado: metodosData.efectivo.venta,
         efectivo_contado: metodosData.efectivo.venta,
         diferencia: 0,
-        notas: `Generado automáticamente desde Loggro Restobar (${tickets} tickets, ${anuladas > 0 ? `${anuladas} anuladas`: "0 anuladas"}). Sin intervención del cajero.`,
+        notas: `Auto Loggro Restobar. ${tickets} tickets. Anuladas: ${anuladasLista.length} (${anuladas.toLocaleString("es-CO")}). Resort Credit: ${resortCreditVenta.toLocaleString("es-CO")} (excluido del total).`,
         estado: "cerrado",
       };
       const inserted: any = await sbFetch("cierres_caja", { method: "POST", body: JSON.stringify(record) });
@@ -2382,6 +2408,71 @@ serve(async (req) => {
         actualizados_ok: ok,
         actualizados_fail: fail,
         resultados: resultados.slice(0, 50),
+      });
+    }
+
+    // ════════════════════════════════════════════════════════════════════
+    // GET /loggro-sync/auditar-unidades-ingredientes
+    // Escanea todos los ingredientes de Loggro y compara sus unidades con
+    // las de items_catalogo (por loggro_id). Reporta:
+    //   - unidad Loggro no reconocida
+    //   - unidad Loggro / Atolon en bases distintas (peso vs vol, riesgo bloqueo)
+    //   - unidad Loggro sin sync con Atolon (mismo item, distinta unidad)
+    // No modifica nada — solo diagnostica.
+    // ════════════════════════════════════════════════════════════════════
+    if (req.method === "GET" && path === "/auditar-unidades-ingredientes") {
+      const ingredientes: any[] = [];
+      for (let p = 0; p < 20; p++) {
+        try {
+          const d: any = await loggroGet(`/ingredients?pagination=true&limit=200&page=${p}`);
+          const arr = d?.data || (Array.isArray(d) ? d : []) || [];
+          if (arr.length === 0) break;
+          ingredientes.push(...arr);
+        } catch { break; }
+      }
+
+      const supaUrl = Deno.env.get("SUPABASE_URL");
+      const supaKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+      const atolonRes: any = await fetch(`${supaUrl}/rest/v1/items_catalogo?select=id,nombre,unidad,loggro_id&loggro_id=not.is.null&activo=eq.true`, {
+        headers: { apikey: supaKey!, Authorization: `Bearer ${supaKey}` },
+      }).then(r => r.json());
+      const atolonByLoggro = new Map<string, any>();
+      for (const it of (Array.isArray(atolonRes) ? atolonRes : [])) atolonByLoggro.set(it.loggro_id, it);
+
+      const unidadDesconocida: any[] = [];
+      const basesDistintas: any[] = [];
+      const unidadDivergente: any[] = [];
+      for (const ing of ingredientes) {
+        const uLoggro = ing.unit?.name || null;
+        const nLoggro = uLoggro ? normalizarUnidad(uLoggro) : null;
+        if (uLoggro && !nLoggro) {
+          unidadDesconocida.push({ loggro_id: ing._id, nombre: ing.name, unidad_loggro: uLoggro });
+        }
+        const at = atolonByLoggro.get(ing._id);
+        if (!at || !at.unidad) continue;
+        const nAt = normalizarUnidad(at.unidad);
+        if (nLoggro && nAt && nLoggro.base !== nAt.base) {
+          basesDistintas.push({
+            loggro_id: ing._id, nombre: ing.name,
+            unidad_loggro: uLoggro, unidad_atolon: at.unidad,
+            base_loggro: nLoggro.base, base_atolon: nAt.base,
+          });
+        }
+        if (nLoggro && nAt && nLoggro.base === nAt.base && uLoggro?.toLowerCase() !== at.unidad?.toLowerCase()) {
+          unidadDivergente.push({
+            loggro_id: ing._id, nombre: ing.name,
+            unidad_loggro: uLoggro, unidad_atolon: at.unidad,
+            factor: nLoggro.factor / nAt.factor,
+          });
+        }
+      }
+      return json({
+        ok: true,
+        total_ingredientes_loggro: ingredientes.length,
+        con_link_atolon: atolonByLoggro.size,
+        unidad_desconocida: { count: unidadDesconocida.length, lista: unidadDesconocida.slice(0, 30) },
+        bases_distintas: { count: basesDistintas.length, lista: basesDistintas.slice(0, 30) },
+        unidad_divergente_convertible: { count: unidadDivergente.length, lista: unidadDivergente.slice(0, 30) },
       });
     }
 
@@ -3290,6 +3381,13 @@ serve(async (req) => {
 
       let sinAlmacenDefault = 0;
       const sinAlmacenSet = new Set<string>();
+      // Auditoria 2026-07-18: bug 1000× — si receta Loggro es en Gr pero
+      // ingrediente Atolon es en Kg, sin conversion descontariamos 1000×
+      // la cantidad real. Ahora usamos factorConversion() sobre cada linea.
+      let conversionesAplicadas = 0;
+      const conversionesLog: any[] = [];
+      let ingredientesIncompatibles = 0;
+      const incompatiblesSet = new Set<string>();
       for (const o of orders) {
         const productName = (o.product?.name || "").trim();
         const cant = Number(o.quantity) || 0;
@@ -3343,7 +3441,31 @@ serve(async (req) => {
           const defaultLoc = atolonIt.locacion_default_id;
           if (!defaultLoc) { sinAlmacenDefault++; sinAlmacenSet.add(atolonIt.nombre || atolonIt.id); continue; }
           const almacenId = defaultLoc === "LOC-ALMACEN-BAR" ? "LOC-BAR" : defaultLoc;
-          const totalQty = cant * ingQty;
+          // Conversion Loggro receta → unidad Atolon. Ej: receta 500 Gr,
+          // ingrediente Atolon en Kg → totalQty = 500 * factor(Gr→Kg) = 0.5.
+          const loggroUnit = ingObj?.unit?.name || null;
+          const atolonUnit = atolonIt.unidad;
+          const factor = factorConversion(loggroUnit || "", atolonUnit || "");
+          // Bloquear si las unidades son de bases distintas y ambas se
+          // reconocen (PESO vs VOL, VOL vs UNIDAD, etc.) — sin conversion
+          // posible el descuento seria erroneo.
+          const nLoggro = loggroUnit ? normalizarUnidad(loggroUnit) : null;
+          const nAtolon = atolonUnit ? normalizarUnidad(atolonUnit) : null;
+          if (nLoggro && nAtolon && nLoggro.base !== nAtolon.base) {
+            ingredientesIncompatibles++;
+            incompatiblesSet.add(`${ingObj?.name || ingId}: Loggro=${loggroUnit} vs Atolon=${atolonUnit}`);
+            continue;
+          }
+          if (factor !== 1) {
+            conversionesAplicadas++;
+            if (conversionesLog.length < 5) conversionesLog.push({
+              ingrediente: ingObj?.name || ingId,
+              loggro_receta: `${ingQty} ${loggroUnit}`,
+              atolon_unidad: atolonUnit, factor,
+              cantidad_final: cant * ingQty * factor,
+            });
+          }
+          const totalQty = cant * ingQty * factor;
           movimientos.push({
             id: `MOV-${crypto.randomUUID().slice(0, 8)}`,
             tipo,
@@ -3469,6 +3591,10 @@ serve(async (req) => {
         ingredientes_sin_atolon_lista: [...sinAtolonSet].slice(0, 20),
         orders_sin_almacen: sinAlmacenDefault,
         mesas_sin_mapping: [...sinAlmacenSet].slice(0, 20),
+        conversiones_unidad_aplicadas: conversionesAplicadas,
+        conversiones_ejemplos: conversionesLog,
+        ingredientes_unidad_incompatible: ingredientesIncompatibles,
+        ingredientes_incompatibles_lista: [...incompatiblesSet].slice(0, 10),
         insert_errors: insertErrors.slice(0, 3),
       });
     }
