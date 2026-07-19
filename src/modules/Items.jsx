@@ -1577,6 +1577,14 @@ function InventarioTab({
   const stockTotalNuestro = (item_id) => locaciones.reduce((s, l) => s + stockEnLoc(item_id, l.id), 0);
   // "bar-combinado" es un pseudo-filtro que suma LOC-BAR + LOC-ALMACEN-BAR
   const LOC_BAR_COMBO = ["LOC-BAR", "LOC-ALMACEN-BAR"];
+  // Locaciones que solo deben mostrar items del grupo indicado. Se aplica
+  // como filtro adicional sobre la fila stockPorLoc para evitar que items
+  // con setup accidental (stock 0) en otra bodega se cuelen.
+  const GRUPO_POR_LOCACION = {
+    "LOC-BAR": "Bar",
+    "LOC-ALMACEN-BAR": "Bar",
+    "LOC-ALMACEN-COCINA": "Alimentos",
+  };
   const stockBarCombo = (item_id) => LOC_BAR_COMBO.reduce((s, id) => s + stockEnLoc(item_id, id), 0);
   const hasStockRowBarCombo = (item_id) => LOC_BAR_COMBO.some(id => stockPorLoc[`${item_id}|${id}`] !== undefined);
   // Mapa categoría → grupo macro (Alimentos/Bar/Otros). Se usa para reforzar
@@ -1604,6 +1612,12 @@ function InventarioTab({
       );
     } else if (locFilter !== "todos") {
       list = list.filter(i => stockPorLoc[`${i.id}|${locFilter}`] !== undefined);
+      // Locaciones dedicadas a un grupo: refuerzan el filtro por categoría.
+      // Evita ver items de cocina en Bar y viceversa cuando hay fila con stock 0.
+      const grupoEsperado = GRUPO_POR_LOCACION[locFilter];
+      if (grupoEsperado) {
+        list = list.filter(i => grupoPorCategoria[i.categoria] === grupoEsperado);
+      }
     }
 
     if (invCatFilter !== "todos") list = list.filter(i => i.categoria === invCatFilter);
