@@ -34,8 +34,8 @@ export default function Items() {
   const [invSearch, setInvSearch] = useState("");
   const [invCatFilter, setInvCatFilter] = useState("todos");
   const [invFilter, setInvFilter] = useState("todos"); // "todos" | "con_stock" | "bajo_min" | "negativo"
-  const [invSortBy, setInvSortBy] = useState("valor"); // "valor" | "stock" | "nombre" | "categoria"
-  const [invSortDir, setInvSortDir] = useState("desc");
+  const [invSortBy, setInvSortBy] = useState("nombre"); // "valor" | "stock" | "nombre" | "categoria"
+  const [invSortDir, setInvSortDir] = useState("asc");
   const [showCatModal, setShowCatModal] = useState(null); // null | "new" | cat object
   const [sortBy, setSortBy] = useState("nombre"); // "nombre" | "categoria" | "unidad" | "precio"
   const [sortDir, setSortDir] = useState("asc");
@@ -3206,8 +3206,15 @@ function InventarioGeneralTab({ items, categorias, catIconMap, catColorMap }) {
     });
   }, [items, stockAtolon]);
 
+  const [sortBy, setSortBy] = useState("nombre"); // nombre|categoria|unidad|atolon|loggro|diff
+  const [sortDir, setSortDir] = useState("asc");
+  const toggleSort = (k) => {
+    if (sortBy === k) setSortDir(d => d === "asc" ? "desc" : "asc");
+    else { setSortBy(k); setSortDir("asc"); }
+  };
+
   const filasFiltradas = useMemo(() => {
-    return filas.filter(f => {
+    const list = filas.filter(f => {
       const q = search.trim().toLowerCase();
       if (q && !((f.item.nombre || "").toLowerCase().includes(q) || (f.item.codigo || "").toLowerCase().includes(q))) return false;
       if (catFilter !== "todas" && f.item.categoria !== catFilter) return false;
@@ -3221,7 +3228,21 @@ function InventarioGeneralTab({ items, categorias, catIconMap, catColorMap }) {
       if (diffFilter === "solo_atolon" && f.item.loggro_id) return false;
       return true;
     });
-  }, [filas, search, catFilter, grupoFilter, diffFilter, grupoPorCategoria]);
+    const sorted = [...list].sort((a, b) => {
+      let va, vb;
+      if (sortBy === "nombre") { va = (a.item.nombre || "").toLowerCase(); vb = (b.item.nombre || "").toLowerCase(); }
+      else if (sortBy === "categoria") { va = (a.item.categoria || "").toLowerCase(); vb = (b.item.categoria || "").toLowerCase(); }
+      else if (sortBy === "unidad") { va = (a.item.unidad || "").toLowerCase(); vb = (b.item.unidad || "").toLowerCase(); }
+      else if (sortBy === "atolon") { va = Number(a.atolon) || 0; vb = Number(b.atolon) || 0; }
+      else if (sortBy === "loggro") { va = Number(a.loggro) || 0; vb = Number(b.loggro) || 0; }
+      else if (sortBy === "diff") { va = Number(a.diff) || 0; vb = Number(b.diff) || 0; }
+      else { va = (a.item.nombre || "").toLowerCase(); vb = (b.item.nombre || "").toLowerCase(); }
+      if (va < vb) return sortDir === "asc" ? -1 : 1;
+      if (va > vb) return sortDir === "asc" ? 1 : -1;
+      return 0;
+    });
+    return sorted;
+  }, [filas, search, catFilter, grupoFilter, diffFilter, grupoPorCategoria, sortBy, sortDir]);
 
   const totalAtolon = filasFiltradas.reduce((s, f) => s + f.atolon, 0);
   const totalLoggro = filasFiltradas.reduce((s, f) => s + (f.loggro || 0), 0);
@@ -3370,8 +3391,26 @@ function InventarioGeneralTab({ items, categorias, catIconMap, catColorMap }) {
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, minWidth: 720 }}>
           <thead>
             <tr style={{ background: B.navyLight }}>
-              {["Producto", "Categoría", "Unidad", "Atolón (Σ)", "Loggro", "Diferencia", "Estado", ""].map((h, i) => (
-                <th key={h + i} style={{ padding: "11px 14px", textAlign: i < 3 ? "left" : "right", fontWeight: 700, color: "rgba(255,255,255,0.6)", fontSize: 11, textTransform: "uppercase", letterSpacing: "0.04em" }}>{h}</th>
+              {[
+                { label: "Producto",    key: "nombre",    align: "left" },
+                { label: "Categoría",   key: "categoria", align: "left" },
+                { label: "Unidad",      key: "unidad",    align: "left" },
+                { label: "Atolón (Σ)",  key: "atolon",    align: "right" },
+                { label: "Loggro",      key: "loggro",    align: "right" },
+                { label: "Diferencia",  key: "diff",      align: "right" },
+                { label: "Estado",      key: null,        align: "right" },
+                { label: "",            key: null,        align: "right" },
+              ].map((h, i) => (
+                <th key={h.label + i}
+                  onClick={h.key ? () => toggleSort(h.key) : undefined}
+                  style={{
+                    padding: "11px 14px", textAlign: h.align, fontWeight: 700,
+                    color: sortBy === h.key ? B.sky : "rgba(255,255,255,0.6)",
+                    fontSize: 11, textTransform: "uppercase", letterSpacing: "0.04em",
+                    cursor: h.key ? "pointer" : "default", userSelect: "none",
+                  }}>
+                  {h.label} {h.key && sortBy === h.key && (sortDir === "asc" ? " ▲" : " ▼")}
+                </th>
               ))}
             </tr>
           </thead>
