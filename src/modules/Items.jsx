@@ -458,7 +458,7 @@ export default function Items() {
         const cats = categorias.filter(c => c.activo !== false).sort((a, b) => (a.orden || 0) - (b.orden || 0));
         const grupos = [
           { k: "Alimentos", l: "🍽️ Alimentos", c: "#f97316" },
-          { k: "Bar",       l: "🍹 Bar",       c: "#38bdf8" },
+          { k: "Bar",       l: "🍹 Bebidas",   c: "#38bdf8" },
           { k: "Otros",     l: "📦 Otros",     c: "#94a3b8" },
         ];
         return (
@@ -1407,7 +1407,7 @@ function CatModal({ cat, isNew = false, onSave, onDelete, onClose }) {
             <div style={{ display: "flex", gap: 8 }}>
               {[
                 { k: "Alimentos", l: "🍽️ Alimentos", c: "#f97316" },
-                { k: "Bar",       l: "🍹 Bar",       c: "#38bdf8" },
+                { k: "Bar",       l: "🍹 Bebidas",   c: "#38bdf8" },
                 { k: "Otros",     l: "📦 Otros",     c: "#94a3b8" },
               ].map(g => (
                 <button key={g.k} onClick={() => set("grupo", g.k)} style={{
@@ -3065,7 +3065,7 @@ function InventarioGeneralTab({ items, categorias, catIconMap, catColorMap }) {
         {[
           { k: "todos",     l: "🌐 Todos",     c: B.sky    },
           { k: "Alimentos", l: "🍽️ Alimentos", c: "#f97316" },
-          { k: "Bar",       l: "🍹 Bar",       c: "#38bdf8" },
+          { k: "Bar",       l: "🍹 Bebidas",   c: "#38bdf8" },
           { k: "Otros",     l: "📦 Otros",     c: "#94a3b8" },
         ].map(g => {
           const active = grupoFilter === g.k;
