@@ -53,8 +53,58 @@ function getPeriodos() {
     { key: "mes",    label: "Mes",    desde: mesIni(),    hasta: hoyStr   },
   ];
 }
-// Para el render de la tabla (labels de columnas) — se recalcula en cada render
-const PERIODOS = getPeriodos();
+
+// Helpers para períodos custom: día, semana, mes de una fecha ancla arbitraria.
+function fmtDate(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+function semanaRango(fechaStr) {
+  // Semana lunes-domingo que contiene fechaStr
+  const d = new Date(fechaStr + "T12:00:00-05:00");
+  const dow = d.getDay(); // 0=dom
+  const diasAtras = dow === 0 ? 6 : dow - 1;
+  const lunes = new Date(d); lunes.setDate(d.getDate() - diasAtras);
+  const domingo = new Date(lunes); domingo.setDate(lunes.getDate() + 6);
+  return { desde: fmtDate(lunes), hasta: fmtDate(domingo) };
+}
+function mesRango(fechaStr) {
+  const d = new Date(fechaStr + "T12:00:00-05:00");
+  const desde = new Date(d.getFullYear(), d.getMonth(), 1);
+  const hasta = new Date(d.getFullYear(), d.getMonth() + 1, 0);
+  return { desde: fmtDate(desde), hasta: fmtDate(hasta) };
+}
+function nombreMes(fechaStr) {
+  return new Date(fechaStr + "T12:00:00-05:00")
+    .toLocaleDateString("es-CO", { month: "long", year: "numeric", timeZone: "America/Bogota" });
+}
+function fmtLabelFecha(fechaStr) {
+  return new Date(fechaStr + "T12:00:00-05:00")
+    .toLocaleDateString("es-CO", { day: "numeric", month: "short", year: "numeric", timeZone: "America/Bogota" });
+}
+
+// Construye los períodos según el filtro seleccionado.
+// tipo="actual": 4 columnas relativas (Ayer/Hoy/Semana/Mes).
+// tipo="dia"|"semana"|"mes": 4 default + 1 custom al final. Los tabs no-Resultados
+//   (Proyecciones/Flujo) siguen usando .mes; la tabla de Resultados muestra
+//   solo la columna custom cuando el filtro no es "actual".
+function buildPeriodos(tipo, fechaAncla) {
+  const base = getPeriodos();
+  if (tipo === "actual" || !fechaAncla) return base;
+  let custom;
+  if (tipo === "dia") {
+    custom = { key: "custom", label: fmtLabelFecha(fechaAncla), desde: fechaAncla, hasta: fechaAncla };
+  } else if (tipo === "semana") {
+    const { desde, hasta } = semanaRango(fechaAncla);
+    custom = { key: "custom", label: `Semana ${desde.slice(5)} → ${hasta.slice(5)}`, desde, hasta };
+  } else if (tipo === "mes") {
+    const { desde, hasta } = mesRango(fechaAncla);
+    custom = { key: "custom", label: nombreMes(fechaAncla), desde, hasta };
+  }
+  return custom ? [...base, custom] : base;
+}
 
 // ─── Tabla de Proyecciones ───────────────────────────────────────────────────
 function TablaProyeccion({ titulo, icono, color, real, proyectado, loading, cantLabel = "Cantidad", isMobile }) {
@@ -145,9 +195,11 @@ function TablaProyeccion({ titulo, icono, color, real, proyectado, loading, cant
 }
 
 // ─── Tabla de métricas ────────────────────────────────────────────────────────
-function TablaMetricas({ titulo, icono, color, datos, loading, cantLabel = "Cantidad", hideCant = false, isMobile }) {
+function TablaMetricas({ titulo, icono, color, datos, loading, cantLabel = "Cantidad", hideCant = false, isMobile, periodos }) {
+  const PERIODOS = periodos || getPeriodos();
+  const nCols = PERIODOS.length;
 
-  // Mobile: 4-column grid (Ayer | Hoy | Semana | Mes) — fits without scroll
+  // Mobile: grid con N columnas (1 en modo custom, 4 en modo actual)
   if (isMobile) {
     return (
       <div style={{ background: B.navyMid, borderRadius: 14, overflow: "hidden", marginBottom: 14 }}>
@@ -155,7 +207,7 @@ function TablaMetricas({ titulo, icono, color, datos, loading, cantLabel = "Cant
           <span style={{ fontSize: 18 }}>{icono}</span>
           <span style={{ fontSize: 15, fontWeight: 800, color: B.white }}>{titulo}</span>
         </div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 0 }}>
+        <div style={{ display: "grid", gridTemplateColumns: `repeat(${nCols}, 1fr)`, gap: 0 }}>
           {PERIODOS.map(p => (
             <div key={p.key} style={{ padding: "10px 6px", textAlign: "center", borderRight: `1px solid ${B.navyLight}` }}>
               <div style={{ fontSize: 10, fontWeight: 800, color: color, textTransform: "uppercase", letterSpacing: "0.04em" }}>{p.label}</div>
@@ -191,7 +243,7 @@ function TablaMetricas({ titulo, icono, color, datos, loading, cantLabel = "Cant
         <span style={{ fontSize: 22 }}>{icono}</span>
         <div style={{ fontSize: 17, fontWeight: 800, color: B.white }}>{titulo}</div>
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: "160px repeat(4, 1fr)" }}>
+      <div style={{ display: "grid", gridTemplateColumns: `160px repeat(${nCols}, 1fr)` }}>
         <div style={{ padding: "10px 20px", background: B.navy, borderBottom: `1px solid ${B.navyLight}` }} />
         {PERIODOS.map(p => (
           <div key={p.key} style={{ padding: "10px 16px", background: B.navy, borderBottom: `1px solid ${B.navyLight}`, textAlign: "center" }}>
@@ -243,6 +295,17 @@ export default function Resultados() {
   const [tab,        setTab]        = useState("resultados");
   const [loading,    setLoading]    = useState(true);
   const [updatedAt,  setUpdatedAt]  = useState(null);
+  // Filtro de período: "actual" mantiene las 4 columnas (Ayer/Hoy/Semana/Mes).
+  // "dia" | "semana" | "mes" reemplaza por 1 columna anclada en filtroFecha.
+  const [filtroTipo,  setFiltroTipo]  = useState("actual");
+  const [filtroFecha, setFiltroFecha] = useState(hoy());
+  // Períodos derivados del filtro — feeds al cargar() y a las tablas.
+  const periodosActivos = buildPeriodos(filtroTipo, filtroFecha);
+  // Qué columnas mostrar en la tabla de Resultados: si filtroTipo != actual,
+  // solo la última (custom); si actual, los 4 clásicos.
+  const periodosMostrar = filtroTipo === "actual"
+    ? periodosActivos
+    : [periodosActivos[periodosMostrar.length - 1]];
   const [pasadias,   setPasadias]   = useState(null);
   const [grupos,     setGrupos]     = useState(null);
   const [eventos,    setEventos]    = useState(null);
@@ -348,7 +411,7 @@ export default function Resultados() {
     setLoading(true);
 
     // Recalcular fechas frescas en cada carga (evita que queden congeladas si la página se deja abierta)
-    const periodos = getPeriodos();
+    const periodos = buildPeriodos(filtroTipo, filtroFecha);
     const hoyStr   = hoy(); // tope máximo — nunca mostrar fechas futuras
 
     // Optimización 2026-05: antes corríamos 4 períodos × 8 categorías = 32 queries
@@ -729,7 +792,7 @@ export default function Resultados() {
 
     setUpdatedAt(new Date());
     setLoading(false);
-  }, []);
+  }, [filtroTipo, filtroFecha]);
 
   useEffect(() => { cargar(); }, [cargar]);
 
@@ -816,6 +879,58 @@ export default function Resultados() {
           </button>
         ))}
       </div>
+
+      {/* Filtro de período — solo aplica al tab de Resultados
+          (proyecciones/flujo/eventos usan hoy() como ancla siempre) */}
+      {tab === "resultados" && (
+        <div style={{
+          background: B.navyMid, borderRadius: 12, padding: isMobile ? 10 : "12px 16px",
+          marginBottom: 20, display: "flex", flexDirection: isMobile ? "column" : "row",
+          gap: 10, alignItems: isMobile ? "stretch" : "center", flexWrap: "wrap",
+        }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: "0.08em" }}>
+            Ver:
+          </div>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            {[
+              { key: "actual",  label: "🕒 Actual (Ayer/Hoy/Semana/Mes)" },
+              { key: "dia",     label: "📅 Un día" },
+              { key: "semana",  label: "📆 Una semana" },
+              { key: "mes",     label: "🗓 Un mes" },
+            ].map(f => (
+              <button key={f.key} onClick={() => setFiltroTipo(f.key)}
+                style={{
+                  padding: "7px 12px", borderRadius: 8, border: "none", cursor: "pointer",
+                  fontSize: 11, fontWeight: 700,
+                  background: filtroTipo === f.key ? B.sky : B.navy,
+                  color:      filtroTipo === f.key ? B.navy : "rgba(255,255,255,0.55)",
+                  transition: "all 0.15s",
+                }}>
+                {f.label}
+              </button>
+            ))}
+          </div>
+          {filtroTipo !== "actual" && (
+            <div style={{ display: "flex", gap: 8, alignItems: "center", marginLeft: isMobile ? 0 : "auto" }}>
+              <input type={filtroTipo === "mes" ? "month" : "date"}
+                value={filtroTipo === "mes" ? filtroFecha.slice(0, 7) : filtroFecha}
+                onChange={e => {
+                  const v = e.target.value;
+                  setFiltroFecha(filtroTipo === "mes" ? `${v}-01` : v);
+                }}
+                max={filtroTipo === "mes" ? hoy().slice(0, 7) : hoy()}
+                style={{
+                  padding: "8px 12px", borderRadius: 8, border: `1px solid ${B.navyLight}`,
+                  background: B.navy, color: B.white, fontSize: 13, fontFamily: "inherit",
+                  colorScheme: "dark",
+                }} />
+              <span style={{ fontSize: 11, color: B.sky, fontWeight: 600 }}>
+                {periodosMostrar[0]?.label}
+              </span>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* ══ TAB PROYECCIONES ══ */}
       {tab === "proyecciones" && (() => {
@@ -962,6 +1077,7 @@ export default function Resultados() {
         loading={loading}
         cantLabel="Pasajeros"
         isMobile={isMobile}
+        periodos={periodosMostrar}
       />
 
       <TablaMetricas
@@ -972,6 +1088,7 @@ export default function Resultados() {
         loading={loading}
         cantLabel="Pasajeros"
         isMobile={isMobile}
+        periodos={periodosMostrar}
       />
 
       <TablaMetricas
@@ -981,6 +1098,7 @@ export default function Resultados() {
         datos={eventos}
         loading={loading}
         isMobile={isMobile}
+        periodos={periodosMostrar}
       />
 
       <TablaMetricas
@@ -991,6 +1109,7 @@ export default function Resultados() {
         loading={loading}
         hideCant
         isMobile={isMobile}
+        periodos={periodosMostrar}
       />
       <div style={{ marginTop: -14, marginBottom: 18, paddingInline: 16, fontSize: 10, color: "rgba(255,255,255,0.35)", textAlign: "right" }}>
         📊 Fuente: Loggro Restobar
@@ -1004,6 +1123,7 @@ export default function Resultados() {
         loading={loading}
         cantLabel="Actividades"
         isMobile={isMobile}
+        periodos={periodosMostrar}
       />
       <div style={{ marginTop: -14, marginBottom: 18, paddingInline: 16, fontSize: 10, color: "rgba(255,255,255,0.35)", textAlign: "right" }}>
         ✨ Actividades, masajes, transporte, spa
@@ -1017,8 +1137,8 @@ export default function Resultados() {
               <div style={{ padding: "10px 16px", display: "flex", alignItems: "center" }}>
                 <span style={{ fontSize: 12, color: B.white, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.05em" }}>💰 Total</span>
               </div>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 0 }}>
-                {PERIODOS.map(p => {
+              <div style={{ display: "grid", gridTemplateColumns: `repeat(${periodosMostrar.length}, 1fr)`, gap: 0 }}>
+                {periodosMostrar.map(p => {
                   const total = (pasadias?.[p.key]?.monto || 0) + (grupos?.[p.key]?.monto || 0) + (eventos?.[p.key]?.monto || 0) + (ayb?.[p.key]?.monto || 0) + (otros?.[p.key]?.monto || 0);
                   return (
                     <div key={p.key} style={{ padding: "8px 6px", textAlign: "center", borderRight: `1px solid ${B.navyLight}` }}>
@@ -1032,11 +1152,11 @@ export default function Resultados() {
               </div>
             </div>
           ) : (
-            <div style={{ display: "grid", gridTemplateColumns: "160px repeat(4, 1fr)" }}>
+            <div style={{ display: "grid", gridTemplateColumns: `160px repeat(${periodosMostrar.length}, 1fr)` }}>
               <div style={{ padding: "16px 20px", display: "flex", alignItems: "center" }}>
                 <span style={{ fontSize: 13, color: B.white, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.05em" }}>💰 Total</span>
               </div>
-              {PERIODOS.map(p => {
+              {periodosMostrar.map(p => {
                 // Incluir "Otros" para que coincida con totalMes (header) y la
                 // versión mobile. Antes faltaba y daba un total $780K menor.
                 const total = (pasadias?.[p.key]?.monto || 0) + (grupos?.[p.key]?.monto || 0) + (eventos?.[p.key]?.monto || 0) + (ayb?.[p.key]?.monto || 0) + (otros?.[p.key]?.monto || 0);
