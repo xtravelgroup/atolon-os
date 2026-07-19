@@ -571,13 +571,17 @@ serve(async (req) => {
         // locationsStock puede ser un array (multi-ubicación) o un objeto único (una sola ubicación).
         const rawLS = ing.locationsStock;
         const lsArr: any[] = Array.isArray(rawLS) ? rawLS : (rawLS && typeof rawLS === "object" ? [rawLS] : []);
-        const stockTotal = lsArr.reduce((s, x) => s + (Number(x?.stock) || 0), 0);
+        const stockLoggro = lsArr.reduce((s, x) => s + (Number(x?.stock) || 0), 0) || Number(ing.stock) || 0;
         const stockMinTotal = lsArr.reduce((s, x) => s + (Number(x?.stockMinimum) || 0), 0);
         const main = lsArr.find(x => x?.isMain) || lsArr[0] || {};
         const precioLoggro = Number(main.pricePurchase) || Number(ing.pricePurchase) || 0;
         const precioExistente = existentes.get(ing._id) || 0;
         // Preservar el existente si Loggro trae 0 y ya teniamos un precio real.
         const precioCompra = precioLoggro > 0 ? precioLoggro : precioExistente;
+        // Auditoria 2026-07-18: stock_actual ES DERIVADO (trigger recalcular_stock_actual
+        // desde items_stock_locacion). sync-ingredients ya NO sobrescribe stock_actual;
+        // guarda el snapshot de Loggro en stock_loggro_ref para comparacion visual.
+        // Atolon = verdad; Loggro solo lee ventas via /orders.
         return {
           loggro_id: ing._id,
           nombre: ing.name || "Sin nombre",
@@ -585,7 +589,7 @@ serve(async (req) => {
           categoria: catName,
           unidad,
           precio_compra: precioCompra,
-          stock_actual: stockTotal || Number(ing.stock) || 0,
+          stock_loggro_ref: stockLoggro,
           stock_minimo: stockMinTotal || Number(ing.stockMinimum) || 0,
           activo: ing.deleted !== true,
           raw: ing,
@@ -3077,8 +3081,9 @@ serve(async (req) => {
         if (updRes.ok) actualizados++;
       }
 
-      // 7) También actualizar items_catalogo.stock_actual con los valores de Loggro
-      //    (para que la vista "Inventario General" cuadre sin sync extra)
+      // 7) Actualizar stock_loggro_ref (snapshot Loggro para comparacion).
+      //    Auditoria 2026-07-18: stock_actual es derivado del trigger sobre
+      //    items_stock_locacion; NO se sobrescribe desde aqui.
       for (const c of cats) {
         const lg = loggroStock[c.loggro_id];
         if (lg === undefined) continue;
@@ -3088,7 +3093,7 @@ serve(async (req) => {
             apikey: supaKey, Authorization: `Bearer ${supaKey}`,
             "Content-Type": "application/json", Prefer: "return=minimal",
           },
-          body: JSON.stringify({ stock_actual: lg, updated_at: new Date().toISOString() }),
+          body: JSON.stringify({ stock_loggro_ref: lg, updated_at: new Date().toISOString() }),
         });
       }
 
@@ -3445,17 +3450,10 @@ serve(async (req) => {
           stockActualizados++;
         }
 
-        // Mantener items_catalogo.stock_actual = SUMA de items_stock_locacion para los items afectados
-        // (útil mientras otros modulos siguen consumiendo items_catalogo.stock_actual).
-        const itemsAfectados = new Set([...deltasReales.keys()].map(k => k.split("|")[0]));
-        for (const itemId of itemsAfectados) {
-          const stocks: any = await sbFetch(`items_stock_locacion?item_id=eq.${encodeURIComponent(itemId)}&select=cantidad`);
-          const total = (Array.isArray(stocks) ? stocks : []).reduce((s: number, r: any) => s + (Number(r.cantidad) || 0), 0);
-          await sbFetch(`items_catalogo?id=eq.${encodeURIComponent(itemId)}`, {
-            method: "PATCH",
-            body: JSON.stringify({ stock_actual: total, updated_at: new Date().toISOString() }),
-          });
-        }
+        // Auditoria 2026-07-18: stock_actual es DERIVADO — el trigger
+        // recalcular_stock_actual (DB) mantiene la suma consistente cada vez
+        // que cambia items_stock_locacion. Este loop de PATCH manual ya no
+        // hace falta.
       }
 
       return json({

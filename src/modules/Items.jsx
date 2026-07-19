@@ -3016,8 +3016,10 @@ function InventarioGeneralTab({ items, categorias, catIconMap, catColorMap }) {
   const filas = useMemo(() => {
     const activos = items.filter(i => i.activo !== false);
     return activos.map(i => {
+      // Auditoria 2026-07-18: atolon = suma de items_stock_locacion (verdad).
+      // Loggro es solo REFERENCIA (stock_loggro_ref, snapshot informativo).
       const atolon = stockAtolon(i.id);
-      const loggro = i.loggro_id ? Number(i.stock_actual) || 0 : null;
+      const loggro = i.loggro_id ? Number(i.stock_loggro_ref ?? i.stock_actual) || 0 : null;
       const diff = loggro != null ? atolon - loggro : null;
       return { item: i, atolon, loggro, diff };
     });
@@ -3262,7 +3264,7 @@ function InventarioGeneralTab({ items, categorias, catIconMap, catColorMap }) {
       )}
 
       <div style={{ marginTop: 14, padding: 12, background: B.navy, borderRadius: 8, fontSize: 11, color: "rgba(255,255,255,0.45)", lineHeight: 1.5 }}>
-        ℹ️ Click en cualquier fila para ver el <strong>detalle e historial de movimientos</strong>. Click en <strong>🔧 Ajustar</strong> para corregir diferencias vs Loggro. Cada ajuste queda registrado en
+        ℹ️ Click en cualquier fila para ver el <strong>detalle e historial de movimientos</strong>. Click en <strong>🔧 Ajustar</strong> para corregir el stock físico por conteo. Cada ajuste queda registrado en
         <code style={{ background: "rgba(255,255,255,0.1)", padding: "1px 5px", borderRadius: 3, marginLeft: 4 }}>items_ajustes</code>
         con usuario, fecha, motivo y stock antes/después.
       </div>
@@ -3271,125 +3273,70 @@ function InventarioGeneralTab({ items, categorias, catIconMap, catColorMap }) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// MODAL AJUSTE DE STOCK (Loggro ↔ Atolón)
+// MODAL AJUSTE DE STOCK — Atolón es fuente de verdad
+// Corrige el stock físico en una bodega específica. El total (stock_actual)
+// se recalcula automático por trigger DB sobre items_stock_locacion.
+// Loggro NO se toca: solo lee ventas via /orders.
 // ═══════════════════════════════════════════════════════════════════════════
 function AjusteStockModal({ fila, locaciones, stockPorLoc, onClose, onSaved }) {
   // Recepción primero para defaults sensatos
   const recepcion = locaciones.filter(l => l.es_recepcion);
   const defaultLoc = recepcion[0]?.id || locaciones[0]?.id || "";
-  const [direccion, setDireccion] = useState("loggro_a_atolon"); // loggro_a_atolon | atolon_a_loggro
   const [locId, setLocId] = useState(defaultLoc);
+  const [cantNueva, setCantNueva] = useState("");
   const [motivo, setMotivo] = useState("");
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState("");
 
   const f = fila;
   const stockEnLoc = (loc_id) => Number(stockPorLoc[`${f.item.id}|${loc_id}`]) || 0;
+  const stockActualLoc = stockEnLoc(locId);
+  const cantNum = cantNueva === "" ? null : Number(cantNueva);
+  const ajuste = cantNum != null ? cantNum - stockActualLoc : null;
 
   async function aplicar() {
     if (motivo.trim().length < 10) { setErr("Justificación obligatoria (mínimo 10 caracteres)"); return; }
+    if (!locId) { setErr("Selecciona una bodega"); return; }
+    if (cantNum == null || isNaN(cantNum) || cantNum < 0) { setErr("Cantidad inválida"); return; }
     setSaving(true); setErr("");
     try {
       const { data: { session } } = await supabase.auth.getSession();
       const userEmail = session?.user?.email || "sistema";
       const ajusteId = `AJ-${Date.now().toString(36).toUpperCase()}`;
 
-      if (direccion === "loggro_a_atolon") {
-        // Aceptar Loggro como verdad → modificar stock en bodega elegida para que la suma cuadre
-        if (!locId) throw new Error("Selecciona una bodega para aplicar el ajuste");
-        const stockActualLoc = stockEnLoc(locId);
-        // diff = atolon - loggro. Si diff > 0 (sobra en Atolón) → restar a la bodega.
-        // Si diff < 0 (falta en Atolón) → sumar a la bodega.
-        const ajuste = -f.diff; // signo opuesto a la diferencia
-        const nuevoStockLoc = Math.max(0, stockActualLoc + ajuste);
+      // Auditoria 2026-07-18 — MODELO NUEVO: Atolon es fuente de verdad; no
+      // sincronizamos stock a Loggro. Este modal solo corrige el stock fisico
+      // en la bodega. items_catalogo.stock_actual se recalcula automatico por
+      // trigger sobre items_stock_locacion.
+      const { error: e1 } = await supabase.from("items_stock_locacion").upsert({
+        item_id: f.item.id, locacion_id: locId, cantidad: cantNum,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: "item_id,locacion_id" });
+      if (e1) throw e1;
 
-        const { error: e1 } = await supabase.from("items_stock_locacion").upsert({
-          item_id: f.item.id, locacion_id: locId, cantidad: nuevoStockLoc,
-          updated_at: new Date().toISOString(),
-        }, { onConflict: "item_id,locacion_id" });
-        if (e1) throw e1;
-
-        await supabase.from("items_ajustes").insert({
-          id: ajusteId, item_id: f.item.id, locacion_id: locId,
-          tipo: "loggro_a_atolon",
-          cantidad_antes: stockActualLoc, cantidad_despues: nuevoStockLoc,
-          diferencia: ajuste, motivo: motivo.trim(), usuario_email: userEmail,
+      await supabase.from("items_ajustes").insert({
+        id: ajusteId, item_id: f.item.id, locacion_id: locId,
+        tipo: "ajuste_fisico",
+        cantidad_antes: stockActualLoc, cantidad_despues: cantNum,
+        diferencia: ajuste, motivo: motivo.trim(), usuario_email: userEmail,
+      });
+      // Registrar mov oficial (evita ajustes fantasma en el historial)
+      try {
+        await supabase.from("movimientos_inventario_atolon").insert({
+          id: `MOV-${ajusteId}`,
+          tipo: ajuste >= 0 ? "entrada_ajuste" : "salida_ajuste",
+          item_id: f.item.id,
+          cantidad: Math.abs(ajuste),
+          unidad: f.item.unidad || null,
+          almacen_id: locId,
+          origen_tipo: "ajuste_fisico",
+          origen_id: ajusteId,
+          fecha: new Date().toISOString(),
+          usuario_email: userEmail,
+          notas: `Ajuste físico: ${motivo.trim()}`,
         });
-        // Ademas del ajuste, registrar mov en el historial oficial (auditoria
-        // 2026-07-18: los ajustes eran invisibles en MovimientosItem).
-        try {
-          await supabase.from("movimientos_inventario_atolon").insert({
-            id: `MOV-${ajusteId}`,
-            tipo: ajuste >= 0 ? "entrada_ajuste" : "salida_ajuste",
-            item_id: f.item.id,
-            cantidad: Math.abs(ajuste),
-            unidad: f.item.unidad || null,
-            almacen_id: locId,
-            origen_tipo: "ajuste_loggro_a_atolon",
-            origen_id: ajusteId,
-            fecha: new Date().toISOString(),
-            usuario_email: userEmail,
-            notas: `Ajuste ↔ Loggro: ${motivo.trim()}`,
-          });
-        } catch (movErr) {
-          // No bloquear el ajuste si el mov falla — items_ajustes ya quedo.
-          console.warn("[AjusteStock] mov insert fail:", movErr);
-        }
-      } else {
-        // Forzar Atolón como verdad → crear un movimiento Entrada-Ajuste o
-        // Salida-Otro en Loggro para que su stock coincida con Atolón.
-        // Auditoria 2026-07-18: antes intentaba /update-stock que no existe.
-        // Ahora usamos /ajuste-stock-ingrediente (crea movimiento type=3 o
-        // type=7 en Loggro con el delta).
-        if (!f.item.loggro_id) throw new Error("Producto no enlazado a Loggro");
-        const stockLoggroActual = Number(f.loggro) || 0;
-        const stockAtolonObjetivo = Number(f.atolon) || 0;
-        const delta = stockAtolonObjetivo - stockLoggroActual;
-        if (Math.abs(delta) < 0.0001) {
-          setErr("No hay diferencia de stock — no se requiere ajuste");
-          setSaving(false);
-          return;
-        }
-        const tipo = delta > 0 ? "entrada" : "salida";
-        const cantidad = Math.abs(delta);
-        try {
-          const res = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/loggro-sync/ajuste-stock-ingrediente`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json", Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}` },
-            body: JSON.stringify({
-              ingredient_id: f.item.loggro_id,
-              cantidad, tipo,
-              nota: `Atolón OS · ${motivo.trim()}`,
-            }),
-          });
-          const data = await res.json().catch(() => ({}));
-          await supabase.from("items_ajustes").insert({
-            id: ajusteId, item_id: f.item.id, locacion_id: null,
-            tipo: "atolon_a_loggro",
-            cantidad_antes: stockLoggroActual, cantidad_despues: stockAtolonObjetivo,
-            diferencia: delta, motivo: motivo.trim(), usuario_email: userEmail,
-            loggro_response: data,
-          });
-          if (!res.ok || !data?.ok) {
-            setErr(`Registro local OK. Sync a Loggro falló: ${data?.error || res.statusText}`);
-            setSaving(false);
-            return;
-          }
-          // Reflejar el nuevo stock en items_catalogo (sera sobrescrito por
-          // proximo sync-ingredients, pero mientras tanto queda consistente).
-          await supabase.from("items_catalogo").update({ stock_actual: stockAtolonObjetivo }).eq("id", f.item.id);
-        } catch (apiErr) {
-          await supabase.from("items_ajustes").insert({
-            id: ajusteId, item_id: f.item.id, locacion_id: null,
-            tipo: "atolon_a_loggro",
-            cantidad_antes: stockLoggroActual, cantidad_despues: stockAtolonObjetivo,
-            diferencia: delta, motivo: motivo.trim() + " [ERROR SYNC LOGGRO]",
-            usuario_email: userEmail,
-          });
-          setErr(`Registrado localmente. Sync a Loggro falló: ${apiErr.message}`);
-          setSaving(false);
-          return;
-        }
+      } catch (movErr) {
+        console.warn("[AjusteStock] mov insert fail:", movErr);
       }
       setSaving(false);
       onSaved();
@@ -3408,63 +3355,45 @@ function AjusteStockModal({ fila, locaciones, stockPorLoc, onClose, onSaved }) {
           {f.item.nombre} {f.item.codigo && `· ${f.item.codigo}`}
         </div>
 
-        {/* Comparación actual */}
-        <div style={{ background: B.navy, borderRadius: 10, padding: 12, marginBottom: 16, display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, fontSize: 12 }}>
+        {/* Estado actual (Atolón es la verdad; Loggro solo referencia) */}
+        <div style={{ background: B.navy, borderRadius: 10, padding: 12, marginBottom: 16, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, fontSize: 12 }}>
           <div>
-            <div style={{ color: "rgba(255,255,255,0.4)", fontSize: 10, textTransform: "uppercase" }}>Atolón (Σ)</div>
+            <div style={{ color: "rgba(255,255,255,0.4)", fontSize: 10, textTransform: "uppercase" }}>Atolón (Σ bodegas)</div>
             <div style={{ color: B.success, fontWeight: 800, fontSize: 16, marginTop: 2 }}>{f.atolon.toLocaleString("es-CO")}</div>
           </div>
           <div>
-            <div style={{ color: "rgba(255,255,255,0.4)", fontSize: 10, textTransform: "uppercase" }}>Loggro</div>
-            <div style={{ color: "#22c55e", fontWeight: 800, fontSize: 16, marginTop: 2 }}>{(f.loggro || 0).toLocaleString("es-CO")}</div>
-          </div>
-          <div>
-            <div style={{ color: "rgba(255,255,255,0.4)", fontSize: 10, textTransform: "uppercase" }}>Diferencia</div>
-            <div style={{ color: B.danger, fontWeight: 800, fontSize: 16, marginTop: 2 }}>{f.diff > 0 ? "+" : ""}{f.diff}</div>
+            <div style={{ color: "rgba(255,255,255,0.4)", fontSize: 10, textTransform: "uppercase" }}>Loggro (ref.)</div>
+            <div style={{ color: "#94a3b8", fontWeight: 600, fontSize: 14, marginTop: 4 }}>{(f.loggro || 0).toLocaleString("es-CO")}</div>
           </div>
         </div>
 
-        {/* Dirección del ajuste */}
+        {/* Selector de bodega + cantidad nueva */}
         <div style={{ marginBottom: 14 }}>
-          <div style={{ fontSize: 11, color: B.sand, fontWeight: 700, textTransform: "uppercase", marginBottom: 8 }}>¿Cuál es la verdad?</div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            <label style={{ display: "flex", gap: 10, padding: 12, background: direccion === "loggro_a_atolon" ? B.sky + "22" : B.navy, border: `1px solid ${direccion === "loggro_a_atolon" ? B.sky : B.navyLight}`, borderRadius: 8, cursor: "pointer" }}>
-              <input type="radio" checked={direccion === "loggro_a_atolon"} onChange={() => setDireccion("loggro_a_atolon")} />
-              <div>
-                <div style={{ fontSize: 13, fontWeight: 700 }}>📥 Aceptar Loggro como verdad</div>
-                <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginTop: 2 }}>
-                  Ajusta el stock de Atolón ({f.diff > 0 ? "resta" : "suma"} {Math.abs(f.diff)}) en una bodega para que coincida con Loggro.
-                </div>
-              </div>
-            </label>
-            <label style={{ display: "flex", gap: 10, padding: 12, background: direccion === "atolon_a_loggro" ? B.warning + "22" : B.navy, border: `1px solid ${direccion === "atolon_a_loggro" ? B.warning : B.navyLight}`, borderRadius: 8, cursor: "pointer" }}>
-              <input type="radio" checked={direccion === "atolon_a_loggro"} onChange={() => setDireccion("atolon_a_loggro")} />
-              <div>
-                <div style={{ fontSize: 13, fontWeight: 700 }}>📤 Forzar Atolón como verdad</div>
-                <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginTop: 2 }}>
-                  Envía a Loggro el stock de Atolón ({f.atolon}). El registro queda pendiente si el endpoint no está disponible.
-                </div>
-              </div>
-            </label>
-          </div>
+          <label style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", fontWeight: 600, textTransform: "uppercase", display: "block", marginBottom: 4 }}>
+            Bodega
+          </label>
+          <select value={locId} onChange={e => { setLocId(e.target.value); setCantNueva(""); }}
+            style={{ width: "100%", padding: "10px 12px", borderRadius: 8, background: B.navy, border: `1px solid ${B.navyLight}`, color: "#fff", fontSize: 13 }}>
+            {locaciones.map(l => (
+              <option key={l.id} value={l.id}>
+                {l.icono || "📦"} {l.nombre} (actual: {stockEnLoc(l.id)})
+              </option>
+            ))}
+          </select>
         </div>
-
-        {/* Selector de bodega (solo si loggro_a_atolon) */}
-        {direccion === "loggro_a_atolon" && (
-          <div style={{ marginBottom: 14 }}>
-            <label style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", fontWeight: 600, textTransform: "uppercase", display: "block", marginBottom: 4 }}>
-              Bodega donde aplicar el ajuste
-            </label>
-            <select value={locId} onChange={e => setLocId(e.target.value)}
-              style={{ width: "100%", padding: "10px 12px", borderRadius: 8, background: B.navy, border: `1px solid ${B.navyLight}`, color: "#fff", fontSize: 13 }}>
-              {locaciones.map(l => (
-                <option key={l.id} value={l.id}>
-                  {l.icono || "📦"} {l.nombre} (actual: {stockEnLoc(l.id)})
-                </option>
-              ))}
-            </select>
-          </div>
-        )}
+        <div style={{ marginBottom: 14 }}>
+          <label style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", fontWeight: 600, textTransform: "uppercase", display: "block", marginBottom: 4 }}>
+            Nueva cantidad en esta bodega
+          </label>
+          <input type="number" min="0" step="any" value={cantNueva} onChange={e => setCantNueva(e.target.value)}
+            placeholder={`Actual: ${stockActualLoc}`}
+            style={{ width: "100%", padding: "10px 12px", borderRadius: 8, background: B.navy, border: `1px solid ${B.navyLight}`, color: "#fff", fontSize: 14, boxSizing: "border-box" }} />
+          {ajuste != null && ajuste !== 0 && (
+            <div style={{ fontSize: 11, marginTop: 6, color: ajuste > 0 ? B.success : B.danger }}>
+              Ajuste: {ajuste > 0 ? "+" : ""}{ajuste} ({stockActualLoc} → {cantNum}) {f.item.unidad}
+            </div>
+          )}
+        </div>
 
         {/* Justificación */}
         <div style={{ marginBottom: 16 }}>
