@@ -25,6 +25,7 @@ export default function Items() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [catFilter, setCatFilter] = useState("todos");
+  const [grupoCatFilter, setGrupoCatFilter] = useState("todos"); // todos | Alimentos | Bar | Otros
   const [showModal, setShowModal] = useState(null); // null | "new" | item object
   const [detail, setDetail] = useState(null);
   const [deletingId, setDeletingId] = useState(null);
@@ -104,8 +105,16 @@ export default function Items() {
     return Math.min(...provs.map(p => p.precio));
   }, [provsForItem]);
 
+  // Map categoría → grupo (Alimentos/Bar/Otros) — para filtrar por grupo macro
+  const grupoDeCategoria = useMemo(() => {
+    const m = {};
+    (categorias || []).forEach(c => { m[c.nombre] = c.grupo || "Otros"; });
+    return m;
+  }, [categorias]);
+
   const filtered = useMemo(() => {
     let list = items.filter(i => i.activo !== false);
+    if (grupoCatFilter !== "todos") list = list.filter(i => (grupoDeCategoria[i.categoria] || "Otros") === grupoCatFilter);
     if (catFilter !== "todos") list = list.filter(i => i.categoria === catFilter);
     if (search) {
       const s = search.toLowerCase();
@@ -125,7 +134,7 @@ export default function Items() {
       return 0;
     });
     return list;
-  }, [items, catFilter, search, sortBy, sortDir, precioMejor]);
+  }, [items, catFilter, grupoCatFilter, grupoDeCategoria, search, sortBy, sortDir, precioMejor]);
 
   // ── KPIs ──────────────────────────────────────────────────────────────────
   const totalItems = items.filter(i => i.activo !== false).length;
@@ -301,26 +310,51 @@ export default function Items() {
         ))}
       </div>
 
-      {/* Categorías chips */}
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 16 }}>
-        <button onClick={() => setCatFilter("todos")} style={{
-          padding: "6px 14px", borderRadius: 20, border: `1px solid ${catFilter === "todos" ? B.sky : B.navyLight}`,
-          background: catFilter === "todos" ? B.sky + "22" : B.navyMid, color: catFilter === "todos" ? B.sky : "rgba(255,255,255,0.5)",
-          cursor: "pointer", fontSize: 12, fontWeight: 600,
-        }}>Todos ({totalItems})</button>
-        {catNames.map(c => {
-          const cnt = catCounts[c] || 0;
-          if (cnt === 0) return null;
-          const active = catFilter === c;
-          const clr = catColorMap[c] || "#fff";
+      {/* Chips de grupo macro (Alimentos / Bebidas / Otros) */}
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
+        {[
+          { k: "todos",     l: "🌐 Todos",     c: B.sky     },
+          { k: "Alimentos", l: "🍽️ Alimentos", c: "#f97316" },
+          { k: "Bar",       l: "🍹 Bebidas",   c: "#38bdf8" },
+          { k: "Otros",     l: "📦 Otros",     c: "#94a3b8" },
+        ].map(g => {
+          const active = grupoCatFilter === g.k;
+          const cnt = g.k === "todos"
+            ? totalItems
+            : items.filter(i => i.activo !== false && (grupoDeCategoria[i.categoria] || "Otros") === g.k).length;
           return (
-            <button key={c} onClick={() => setCatFilter(active ? "todos" : c)} style={{
-              padding: "6px 14px", borderRadius: 20, border: `1px solid ${active ? clr : B.navyLight}`,
-              background: active ? clr + "22" : B.navyMid, color: active ? clr : "rgba(255,255,255,0.5)",
-              cursor: "pointer", fontSize: 12, fontWeight: 600,
-            }}>{catIconMap[c]} {c} ({cnt})</button>
+            <button key={g.k} onClick={() => { setGrupoCatFilter(g.k); setCatFilter("todos"); }}
+              style={{
+                padding: "8px 16px", borderRadius: 22, border: `1px solid ${active ? g.c : B.navyLight}`,
+                background: active ? g.c + "22" : B.navyMid, color: active ? g.c : "rgba(255,255,255,0.55)",
+                cursor: "pointer", fontSize: 13, fontWeight: 700, transition: "all 0.15s",
+              }}>{g.l} ({cnt})</button>
           );
         })}
+      </div>
+
+      {/* Chips de subcategoría (filtradas por el grupo activo) */}
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 16, paddingLeft: 8, borderLeft: `2px solid ${B.navyLight}`, marginLeft: 4 }}>
+        <button onClick={() => setCatFilter("todos")} style={{
+          padding: "5px 12px", borderRadius: 16, border: `1px solid ${catFilter === "todos" ? B.sky : B.navyLight}`,
+          background: catFilter === "todos" ? B.sky + "22" : B.navyMid, color: catFilter === "todos" ? B.sky : "rgba(255,255,255,0.45)",
+          cursor: "pointer", fontSize: 11, fontWeight: 600,
+        }}>Todas las subcategorías</button>
+        {catNames
+          .filter(c => grupoCatFilter === "todos" || (grupoDeCategoria[c] || "Otros") === grupoCatFilter)
+          .map(c => {
+            const cnt = catCounts[c] || 0;
+            if (cnt === 0) return null;
+            const active = catFilter === c;
+            const clr = catColorMap[c] || "#fff";
+            return (
+              <button key={c} onClick={() => setCatFilter(active ? "todos" : c)} style={{
+                padding: "5px 12px", borderRadius: 16, border: `1px solid ${active ? clr : B.navyLight}`,
+                background: active ? clr + "22" : B.navyMid, color: active ? clr : "rgba(255,255,255,0.45)",
+                cursor: "pointer", fontSize: 11, fontWeight: 600,
+              }}>{catIconMap[c]} {c} ({cnt})</button>
+            );
+          })}
       </div>
 
       {/* Search */}
