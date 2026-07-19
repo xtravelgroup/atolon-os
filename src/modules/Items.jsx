@@ -264,7 +264,6 @@ export default function Items() {
               🔄 Sync Loggro
             </button>
           )}
-          {tab === "categorias" && <button onClick={() => setShowCatModal("new")} style={BTN(B.sky, B.navy)}>+ Nueva Categoría</button>}
         </div>
       </div>
 
@@ -456,55 +455,65 @@ export default function Items() {
       {tab === "categorias" && (() => {
         const cats = categorias.filter(c => c.activo !== false).sort((a, b) => (a.orden || 0) - (b.orden || 0));
         const grupos = [
-          { k: "alimentos", l: "🍽️ Alimentos", c: "#f97316" },
-          { k: "bebidas",   l: "🍹 Bebidas",   c: "#38bdf8" },
-          { k: "otros",     l: "📦 Otros",     c: "#94a3b8" },
+          { k: "Alimentos", l: "🍽️ Alimentos", c: "#f97316" },
+          { k: "Bar",       l: "🍹 Bar",       c: "#38bdf8" },
+          { k: "Otros",     l: "📦 Otros",     c: "#94a3b8" },
         ];
-        if (cats.length === 0) {
-          return <div style={{ textAlign: "center", padding: 60, color: "rgba(255,255,255,0.25)", fontSize: 14 }}>No hay categorías. Crea la primera.</div>;
-        }
         return (
-          <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 28 }}>
             {grupos.map(g => {
-              const catsGrupo = cats.filter(c => (c.grupo || "otros") === g.k);
-              if (catsGrupo.length === 0) return null;
+              const subs = cats.filter(c => (c.grupo || "Otros") === g.k);
               return (
-                <div key={g.k}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12, paddingBottom: 8, borderBottom: `2px solid ${g.c}33` }}>
-                    <span style={{ fontSize: 18, fontWeight: 800, color: g.c }}>{g.l}</span>
-                    <span style={{ fontSize: 11, padding: "2px 10px", borderRadius: 10, background: g.c + "22", color: g.c, fontWeight: 700 }}>
-                      {catsGrupo.length} categoría{catsGrupo.length !== 1 ? "s" : ""}
+                <div key={g.k} style={{ background: B.navyMid, borderRadius: 16, border: `1px solid ${g.c}33`, overflow: "hidden" }}>
+                  {/* Header del grupo */}
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "14px 18px", background: `${g.c}11`, borderBottom: `1px solid ${g.c}22` }}>
+                    <span style={{ fontSize: 20, fontWeight: 800, color: g.c }}>{g.l}</span>
+                    <span style={{ fontSize: 11, padding: "3px 10px", borderRadius: 10, background: g.c + "22", color: g.c, fontWeight: 700 }}>
+                      {subs.length} subcategoría{subs.length !== 1 ? "s" : ""}
                     </span>
+                    <div style={{ flex: 1 }} />
+                    <button
+                      onClick={() => setShowCatModal({ __new: true, grupo: g.k })}
+                      style={{
+                        padding: "6px 12px", borderRadius: 8, border: `1px solid ${g.c}`, background: g.c + "22", color: g.c,
+                        fontSize: 12, fontWeight: 700, cursor: "pointer",
+                      }}
+                    >
+                      + Agregar subcategoría
+                    </button>
                   </div>
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 12 }}>
-                    {catsGrupo.map(cat => (
-                      <div key={cat.id} onClick={() => setShowCatModal(cat)}
-                        style={{
-                          background: B.navyMid, borderRadius: 14, padding: "16px 18px", cursor: "pointer",
-                          border: `1px solid ${B.navyLight}`, transition: "all 0.15s",
-                          display: "flex", alignItems: "center", gap: 14,
-                        }}
-                        onMouseEnter={e => { e.currentTarget.style.borderColor = cat.color || FALLBACK_COLOR; }}
-                        onMouseLeave={e => { e.currentTarget.style.borderColor = B.navyLight; }}
-                      >
-                        <div style={{ width: 44, height: 44, borderRadius: 10, background: `${cat.color || FALLBACK_COLOR}22`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22 }}>
-                          {cat.icon || FALLBACK_ICON}
-                        </div>
-                        <div style={{ flex: 1 }}>
-                          <div style={{ fontSize: 14, fontWeight: 700 }}>{cat.nombre}</div>
-                          <div style={{ display: "flex", gap: 6, alignItems: "center", marginTop: 4, flexWrap: "wrap" }}>
-                            <span style={{ fontSize: 10, padding: "1px 6px", borderRadius: 4, background: cat.departamento === "Bar" ? "#a78bfa22" : "#f59e0b22", color: cat.departamento === "Bar" ? "#a78bfa" : "#f59e0b", fontWeight: 600 }}>
-                              {cat.departamento === "Bar" ? "🍹 Bar" : "🍳 Cocina"}
-                            </span>
-                            <span style={{ fontSize: 10, color: "rgba(255,255,255,0.35)" }}>
-                              {(catCounts[cat.nombre] || 0)} productos
-                            </span>
+
+                  {/* Grid de subcategorías */}
+                  {subs.length === 0 ? (
+                    <div style={{ padding: 24, textAlign: "center", color: "rgba(255,255,255,0.3)", fontSize: 13 }}>
+                      Sin subcategorías. Presiona "+ Agregar subcategoría" para crear la primera.
+                    </div>
+                  ) : (
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 12, padding: 16 }}>
+                      {subs.map(cat => (
+                        <div key={cat.id} onClick={() => setShowCatModal(cat)}
+                          style={{
+                            background: B.navy, borderRadius: 12, padding: "14px 16px", cursor: "pointer",
+                            border: `1px solid ${B.navyLight}`, transition: "all 0.15s",
+                            display: "flex", alignItems: "center", gap: 12,
+                          }}
+                          onMouseEnter={e => { e.currentTarget.style.borderColor = cat.color || FALLBACK_COLOR; }}
+                          onMouseLeave={e => { e.currentTarget.style.borderColor = B.navyLight; }}
+                        >
+                          <div style={{ width: 40, height: 40, borderRadius: 10, background: `${cat.color || FALLBACK_COLOR}22`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20 }}>
+                            {cat.icon || FALLBACK_ICON}
                           </div>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontSize: 13, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{cat.nombre}</div>
+                            <div style={{ fontSize: 10, color: "rgba(255,255,255,0.35)", marginTop: 3 }}>
+                              {(catCounts[cat.nombre] || 0)} producto{(catCounts[cat.nombre] || 0) !== 1 ? "s" : ""}
+                            </div>
+                          </div>
+                          <div style={{ width: 10, height: 10, borderRadius: 3, background: cat.color || FALLBACK_COLOR }} />
                         </div>
-                        <div style={{ width: 12, height: 12, borderRadius: 4, background: cat.color || FALLBACK_COLOR }} />
-                      </div>
-                    ))}
-                  </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               );
             })}
@@ -518,10 +527,11 @@ export default function Items() {
       {/* Categoría Modal */}
       {showCatModal && (
         <CatModal
-          cat={showCatModal === "new" ? null : showCatModal}
+          cat={showCatModal?.__new ? { grupo: showCatModal.grupo } : showCatModal}
+          isNew={!!showCatModal?.__new}
           onSave={async (form) => {
             if (!supabase) return;
-            const payload = { nombre: form.nombre, icon: form.icon, color: form.color, orden: form.orden, departamento: form.departamento, grupo: form.grupo || "otros" };
+            const payload = { nombre: form.nombre, icon: form.icon, color: form.color, orden: form.orden, departamento: form.departamento, grupo: form.grupo || "Otros" };
             if (form.id) {
               await supabase.from("items_categorias").update(payload).eq("id", form.id);
             } else {
@@ -1330,15 +1340,15 @@ function _MovimientosItem_legacy({ itemId, unidad, stockActual }) {
 const EMOJI_OPTIONS = ["📦", "🍳", "🍹", "🛏️", "🔧", "📊", "📒", "🚤", "🧹", "⚡", "🎨", "🏗️", "💊", "🧪", "🖥️", "👕", "🚿", "🌿", "🔌", "🍽️"];
 const COLOR_OPTIONS = ["#f59e0b", "#a78bfa", "#34d399", "#f97316", "#38bdf8", "#fbbf24", "#06b6d4", "#888888", "#ef4444", "#ec4899", "#8b5cf6", "#14b8a6"];
 
-function CatModal({ cat, onSave, onDelete, onClose }) {
+function CatModal({ cat, isNew = false, onSave, onDelete, onClose }) {
   const [form, setForm] = useState({
-    id: cat?.id || null,
-    nombre: cat?.nombre || "",
+    id: isNew ? null : (cat?.id || null),
+    nombre: isNew ? "" : (cat?.nombre || ""),
     icon: cat?.icon || "📦",
     color: cat?.color || "#888888",
     orden: cat?.orden || 0,
-    departamento: cat?.departamento || "Cocina",
-    grupo: cat?.grupo || "alimentos",
+    departamento: cat?.departamento || (cat?.grupo === "Bar" ? "Bar" : "Cocina"),
+    grupo: cat?.grupo || "Alimentos",
   });
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
@@ -1347,7 +1357,7 @@ function CatModal({ cat, onSave, onDelete, onClose }) {
       <div style={{ background: B.navyMid, borderRadius: 16, padding: 28, width: 440, maxWidth: "95vw", border: `1px solid ${B.navyLight}` }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18 }}>
           <span style={{ fontSize: 17, fontWeight: 700, fontFamily: "'Barlow Condensed', sans-serif" }}>
-            {cat ? "✏️ Editar Categoría" : "🏷️ Nueva Categoría"}
+            {isNew ? `🏷️ Nueva subcategoría en ${form.grupo}` : "✏️ Editar Subcategoría"}
           </span>
           <button onClick={onClose} style={{ background: "none", border: "none", color: B.sand, fontSize: 20, cursor: "pointer" }}>×</button>
         </div>
@@ -1369,12 +1379,12 @@ function CatModal({ cat, onSave, onDelete, onClose }) {
             <input value={form.nombre} onChange={e => set("nombre", e.target.value)} placeholder="Ej: Alimentos" style={IS} autoFocus />
           </div>
           <div>
-            <label style={LS}>Grupo (clasificación principal)</label>
+            <label style={LS}>Grupo</label>
             <div style={{ display: "flex", gap: 8 }}>
               {[
-                { k: "alimentos", l: "🍽️ Alimentos", c: "#f97316" },
-                { k: "bebidas",   l: "🍹 Bebidas",   c: "#38bdf8" },
-                { k: "otros",     l: "📦 Otros",     c: "#94a3b8" },
+                { k: "Alimentos", l: "🍽️ Alimentos", c: "#f97316" },
+                { k: "Bar",       l: "🍹 Bar",       c: "#38bdf8" },
+                { k: "Otros",     l: "📦 Otros",     c: "#94a3b8" },
               ].map(g => (
                 <button key={g.k} onClick={() => set("grupo", g.k)} style={{
                   flex: 1, padding: "9px 10px", borderRadius: 8, fontWeight: 700, fontSize: 12, cursor: "pointer",
