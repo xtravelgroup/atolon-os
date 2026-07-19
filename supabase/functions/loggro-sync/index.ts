@@ -2345,15 +2345,20 @@ serve(async (req) => {
       const dryRun = body?.dry_run === true;
       if (!ingredientId) return json({ ok: false, error: "ingredient_id requerido" }, 400);
 
-      // Descargar todos los productos
+      // Descargar productos + ingredientes (auditoria 2026-07-18: antes solo
+      // productos, dejando fantasmas en sub-recetas de ingredientes).
       const productos: any[] = [];
-      for (let p = 0; p < 20; p++) {
-        try {
-          const d: any = await loggroGet(`/products?pagination=true&limit=200&page=${p}`);
-          const arr = d?.data || (Array.isArray(d) ? d : []) || [];
-          if (arr.length === 0) break;
-          productos.push(...arr);
-        } catch { break; }
+      for (const source of ["/products", "/ingredients"]) {
+        for (let p = 0; p < 20; p++) {
+          try {
+            const d: any = await loggroGet(`${source}?pagination=true&limit=200&page=${p}`);
+            const arr = d?.data || (Array.isArray(d) ? d : []) || [];
+            if (arr.length === 0) break;
+            // Marcar el "tipo" para saber en cual endpoint hacer POST
+            for (const it of arr) it.__loggroSource = source;
+            productos.push(...arr);
+          } catch { break; }
+        }
       }
 
       // Filtrar los que tienen este ingrediente
@@ -2393,10 +2398,12 @@ serve(async (req) => {
         });
         if (filtrados.length === ings.length) continue; // no cambio
 
-        // Preparar body: enviar producto completo con ingredients modificado.
-        // Pirpos acepta POST /products con _id — funciona como upsert.
-        const payload = { ...prod, ingredients: filtrados, modifiedOn: new Date().toISOString() };
-        const r = await loggroRaw("POST", "/products", payload);
+        // Preparar body: enviar item completo con ingredients modificado.
+        // Pirpos acepta POST /products y /ingredients con _id como upsert.
+        const target = prod.__loggroSource || "/products";
+        const { __loggroSource, ...prodClean } = prod;
+        const payload = { ...prodClean, ingredients: filtrados, modifiedOn: new Date().toISOString() };
+        const r = await loggroRaw("POST", target, payload);
         if (r.ok) { ok++; resultados.push({ _id: prod._id, name: prod.name, status: "ok" }); }
         else { fail++; resultados.push({ _id: prod._id, name: prod.name, status: "fail", detalle: typeof r.body === "string" ? r.body.slice(0, 150) : r.body }); }
       }
@@ -3461,11 +3468,17 @@ serve(async (req) => {
           continue;
         }
         // Expansion RECURSIVA de recetas — auditoria 2026-07-18. Loggro
-        // permite recetas de N niveles (ej. CEBOLLA CARAMELIZADA es una
-        // sub-receta con cebolla + aceite + azucar como ingredientes). Antes
-        // solo expandiamos 1 nivel → los ingredientes intermedios quedaban
-        // como "sin Atolon" y sus componentes reales NUNCA descontaban.
-        // Ahora recorremos hasta 5 niveles, detectando ciclos.
+        // permite recetas de N niveles. Recorremos hasta 5 niveles,
+        // detectando ciclos.
+        //
+        // GUARDA DEFENSIVA 2026-07-19: sub-recetas Loggro tienen unidades
+        // mal configuradas (ej. Fondo de pescado en Gr con qty=2000 por gr,
+        // debe ser Kg). Sin corregir en Loggro, la expansion multiplica
+        // 1000× o mas. Guarda: si el totalQty final para un ingrediente
+        // en un solo pedido supera 50,000 (unidad indeterminada), skip el
+        // descuento y reportar como "cantidad_sospechosa" en vez de aplicar.
+        const MAX_QTY_SOSPECHOSA = 50000;
+        const cantidadesSospechosas: any[] = [];
         const MAX_DEPTH = 5;
         const expandRecipe = (loggroId: string, qtyEnUnidadDeIngObj: number, depth: number, visited: Set<string>, path: string) => {
           if (depth > MAX_DEPTH) {
@@ -3531,6 +3544,15 @@ serve(async (req) => {
               });
             }
             const totalQty = qtyEnUnidadDeIngObj * factor;
+            // Guarda defensiva: sub-receta con unidad mal configurada en Loggro
+            if (Math.abs(totalQty) > MAX_QTY_SOSPECHOSA) {
+              cantidadesSospechosas.push({
+                producto: productName, path, ingrediente: nombre,
+                qty: totalQty, unidad: atolonIt.unidad,
+                cant_platos: cant,
+              });
+              return;
+            }
             movimientos.push({
               id: `MOV-${crypto.randomUUID().slice(0, 8)}`,
               tipo,
@@ -3650,26 +3672,29 @@ serve(async (req) => {
 
       let insertados = 0;
       let insertErrors: any[] = [];
+      // Auditoria 2026-07-19: acumular los loggro_ref REALMENTE insertados
+      // (no los que se intentaron). Antes se aplicaba delta a todos los
+      // "nuevos" aunque el POST fallara → doble descuento en re-runs.
+      const refsInsertadas = new Set<string>();
       for (let i = 0; i < nuevos.length; i += 200) {
         const batch = nuevos.slice(i, i + 200);
         const res: any = await sbFetch("movimientos_inventario_atolon", {
           method: "POST",
           body: JSON.stringify(batch),
         });
-        if (Array.isArray(res)) insertados += res.length;
-        else if (res?.code || res?.message) insertErrors.push(res);
+        if (Array.isArray(res)) {
+          insertados += res.length;
+          for (const r of res) if (r?.loggro_ref) refsInsertadas.add(r.loggro_ref);
+        } else if (res?.code || res?.message) insertErrors.push(res);
       }
 
       // 6) Update items_stock_locacion con los deltas por (item, almacen).
-      // Recalculamos SOLO por los movimientos realmente insertados en este run
-      // (los skips ya fueron aplicados en runs anteriores).
+      // Recalculamos SOLO por los movimientos realmente insertados en este run.
       let stockActualizados = 0;
       if (insertados > 0) {
-        // Filtrar el mapa a solo los movimientos que sí se insertaron.
-        const nuevosRefs = new Set(nuevos.map((m: any) => m.loggro_ref));
         const deltasReales = new Map<string, number>();
         for (const m of movimientos) {
-          if (!nuevosRefs.has(m.loggro_ref)) continue;
+          if (!refsInsertadas.has(m.loggro_ref)) continue;
           const key = `${m.item_id}|${m.almacen_id}`;
           deltasReales.set(key, (deltasReales.get(key) || 0) - Number(m.cantidad));
         }
@@ -3719,6 +3744,8 @@ serve(async (req) => {
         conversiones_ejemplos: conversionesLog,
         ingredientes_unidad_incompatible: ingredientesIncompatibles,
         ingredientes_incompatibles_lista: [...incompatiblesSet].slice(0, 10),
+        cantidades_sospechosas_bloqueadas: cantidadesSospechosas.length,
+        cantidades_sospechosas_ejemplos: cantidadesSospechosas.slice(0, 10),
         insert_errors: insertErrors.slice(0, 3),
       });
     }
