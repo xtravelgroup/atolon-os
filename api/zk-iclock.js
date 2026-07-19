@@ -281,7 +281,7 @@ export default async function handler(req, res) {
 
     if (req.method === "GET" && opPath === "/getrequest") {
       const cmds = await pgSelect("zk_terminal_commands", {
-        select: "id,command",
+        select: "id,short_id,command",
         terminal_sn: `eq.${terminalSn}`,
         status: "eq.pending",
         order: "created_at.asc",
@@ -294,7 +294,11 @@ export default async function handler(req, res) {
         status: "sent",
         sent_at: new Date().toISOString(),
       });
-      return res.status(200).send(`C:${cmd.id}:${cmd.command}`);
+      // Enviamos short_id (numérico corto) — el terminal MB10-VL trunca
+      // IDs largos como UUIDs a 35 chars y corrompe el ACK. Con IDs cortos
+      // el firmware parsea limpio y devuelve el ID intacto en /devicecmd.
+      const cmdId = cmd.short_id != null ? cmd.short_id : cmd.id;
+      return res.status(200).send(`C:${cmdId}:${cmd.command}`);
     }
 
     if (req.method === "POST" && opPath === "/cdata") {
@@ -313,7 +317,10 @@ export default async function handler(req, res) {
       const cmdId = params.get("ID");
       const ret   = params.get("Return");
       if (cmdId) {
-        await pgUpdate("zk_terminal_commands", { id: cmdId }, {
+        // El ID que recibimos es short_id (numérico corto). Update por esa columna.
+        const isNumeric = /^\d+$/.test(cmdId);
+        const whereClause = isNumeric ? { short_id: cmdId } : { id: cmdId };
+        await pgUpdate("zk_terminal_commands", whereClause, {
           status: ret === "0" ? "done" : "failed",
           ack_at: new Date().toISOString(),
           result: rawBody?.slice(0, 500),
