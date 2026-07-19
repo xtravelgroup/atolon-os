@@ -2407,6 +2407,34 @@ serve(async (req) => {
     }
 
     // ════════════════════════════════════════════════════════════════════
+    // POST /loggro-sync/ajuste-stock-ingrediente
+    // Body: { ingredient_id, cantidad, nota?, tipo? ('entrada' | 'salida') }
+    // Crea un movimiento Entrada-Ajuste (type=3) o Salida-Otro (type=7)
+    // sobre un solo ingrediente. Utilizado para reconciliar stock manualmente
+    // entre Atolón y Loggro (ej. consolidaciones de duplicados).
+    // ════════════════════════════════════════════════════════════════════
+    if (req.method === "POST" && path === "/ajuste-stock-ingrediente") {
+      const body = await req.json().catch(() => ({}));
+      const ingredientId = String(body?.ingredient_id || "");
+      const cantidad = Number(body?.cantidad);
+      const tipo = String(body?.tipo || "entrada");
+      const nota = String(body?.nota || "Ajuste manual desde Atolón OS");
+      if (!ingredientId) return json({ ok: false, error: "ingredient_id requerido" }, 400);
+      if (!(cantidad > 0)) return json({ ok: false, error: "cantidad debe ser > 0" }, 400);
+      const t = tipo === "salida" ? 7 : 3;
+      const now = new Date().toISOString();
+      const { businessId, userId } = await getLoggroIdentity();
+      const result = await loggroRaw("POST", "/inventories", {
+        business: businessId, user: userId, date: now,
+        type: t, isSubtracted: tipo === "salida", isProduction: false, isMoveTo: false,
+        deleted: false, note: nota,
+        ingredients: [{ ingredient: ingredientId, quantity: cantidad, price: 0 }],
+        createdOn: now, modifiedOn: now,
+      });
+      return json({ ok: result.ok, tipo, cantidad, movement_id: result.body?._id || null, loggro_response: result.ok ? undefined : result.body }, result.ok ? 200 : 502);
+    }
+
+    // ════════════════════════════════════════════════════════════════════
     // POST /loggro-sync/eliminar-ingrediente
     // Body: { ingredient_id: string }
     // Intenta DELETE /ingredients/{id}. Si no responde ok, prueba
