@@ -664,7 +664,7 @@ export default function Items() {
       {showBulkMinMax && (
         <BulkMinMaxModal
           items={items.filter(i => i.activo !== false)}
-          catNames={catNames}
+          categorias={categorias}
           onClose={() => setShowBulkMinMax(false)}
           onDone={() => { setShowBulkMinMax(false); load(); }}
         />
@@ -2318,20 +2318,47 @@ function ConteosTab() {
 // BULK MIN/MAX — editar stock_minimo y stock_maximo de todos los items
 // en una sola vista. Filtro por categoría + búsqueda + sticky guardar.
 // ═══════════════════════════════════════════════════════════════════════════
-function BulkMinMaxModal({ items, catNames, onClose, onDone }) {
+function BulkMinMaxModal({ items, categorias, onClose, onDone }) {
   const [q, setQ] = useState("");
   const [catFilter, setCatFilter] = useState("todas");
   const [edits, setEdits] = useState({}); // id → { min, max }
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState(null);
 
+  // Map categoria → grupo (Alimentos / Bar / Otros)
+  const grupoDeCategoria = useMemo(() => {
+    const m = {};
+    (categorias || []).forEach(c => { m[c.nombre] = c.grupo || "Otros"; });
+    return m;
+  }, [categorias]);
+
+  // Subcategorías agrupadas por grupo (para dropdown)
+  const catsPorGrupo = useMemo(() => {
+    const activas = (categorias || []).filter(c => c.activo !== false);
+    const g = { Alimentos: [], Bar: [], Otros: [] };
+    for (const c of activas) {
+      const gr = c.grupo || "Otros";
+      if (!g[gr]) g[gr] = [];
+      g[gr].push(c.nombre);
+    }
+    return g;
+  }, [categorias]);
+
   const filtered = useMemo(() => {
     const s = q.trim().toLowerCase();
     return items
-      .filter(i => catFilter === "todas" || i.categoria === catFilter)
+      .filter(i => {
+        if (catFilter === "todas") return true;
+        // Grupos macro: "grupo:Alimentos", "grupo:Bar", "grupo:Otros"
+        if (catFilter.startsWith("grupo:")) {
+          const gr = catFilter.slice(6);
+          return (grupoDeCategoria[i.categoria] || "Otros") === gr;
+        }
+        return i.categoria === catFilter;
+      })
       .filter(i => !s || (i.nombre || "").toLowerCase().includes(s) || (i.codigo || "").toLowerCase().includes(s))
       .sort((a, b) => (a.nombre || "").localeCompare(b.nombre || "", "es"));
-  }, [items, q, catFilter]);
+  }, [items, q, catFilter, grupoDeCategoria]);
 
   const setField = (id, key, val) => {
     setEdits(prev => ({
@@ -2379,9 +2406,20 @@ function BulkMinMaxModal({ items, catNames, onClose, onDone }) {
           <input value={q} onChange={e => setQ(e.target.value)} placeholder="🔎 Buscar por nombre o código…"
             style={{ flex: 1, minWidth: 240, padding: "8px 12px", borderRadius: 8, background: B.navy, border: `1px solid ${B.navyLight}`, color: "#fff", fontSize: 13 }} />
           <select value={catFilter} onChange={e => setCatFilter(e.target.value)}
-            style={{ padding: "8px 12px", borderRadius: 8, background: B.navy, border: `1px solid ${B.navyLight}`, color: "#fff", fontSize: 13, minWidth: 180 }}>
+            style={{ padding: "8px 12px", borderRadius: 8, background: B.navy, border: `1px solid ${B.navyLight}`, color: "#fff", fontSize: 13, minWidth: 220 }}>
             <option value="todas">Todas las categorías</option>
-            {catNames.map(c => <option key={c} value={c}>{c}</option>)}
+            <option value="grupo:Alimentos">🍽️ TODO Alimentos</option>
+            <option value="grupo:Bar">🍹 TODO Bebidas</option>
+            <option value="grupo:Otros">📦 TODO Otros</option>
+            <optgroup label="── Alimentos ──">
+              {(catsPorGrupo.Alimentos || []).map(c => <option key={c} value={c}>{c}</option>)}
+            </optgroup>
+            <optgroup label="── Bebidas ──">
+              {(catsPorGrupo.Bar || []).map(c => <option key={c} value={c}>{c}</option>)}
+            </optgroup>
+            <optgroup label="── Otros ──">
+              {(catsPorGrupo.Otros || []).map(c => <option key={c} value={c}>{c}</option>)}
+            </optgroup>
           </select>
         </div>
 
