@@ -305,7 +305,7 @@ export default function Resultados() {
   // solo la última (custom); si actual, los 4 clásicos.
   const periodosMostrar = filtroTipo === "actual"
     ? periodosActivos
-    : [periodosActivos[periodosMostrar.length - 1]];
+    : [periodosActivos[periodosActivos.length - 1]];
   const [pasadias,   setPasadias]   = useState(null);
   const [grupos,     setGrupos]     = useState(null);
   const [eventos,    setEventos]    = useState(null);
