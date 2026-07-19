@@ -1890,6 +1890,29 @@ function EditarOCModal({ oc, ordenes = [], onClose, reload, currentUser }) {
       };
       const cambiosNuevos = [...(Array.isArray(oc.cambios_historial) ? oc.cambios_historial : []), cambioEntry];
 
+      // Cascada: si se removieron items, filtrar factura_data, cotizacion_resp_data
+      // y recibidos para que no queden lineas huerfanas. Match por item_id (fuente
+      // primaria) o por nombre normalizado como fallback.
+      const norm = s => String(s || "").trim().toLowerCase();
+      const keepIds = new Set(items.map(x => x.item_id).filter(Boolean));
+      const keepNames = new Set(items.map(x => norm(x.nombre)).filter(Boolean));
+      const keepItem = (x) => {
+        if (x?.item_id && keepIds.has(x.item_id)) return true;
+        if (x?.nombre && keepNames.has(norm(x.nombre))) return true;
+        if (x?.descripcion && keepNames.has(norm(x.descripcion))) return true;
+        return false;
+      };
+
+      const facturaDataLimpia = oc.factura_data
+        ? { ...oc.factura_data, items: (oc.factura_data.items || []).filter(keepItem) }
+        : oc.factura_data;
+      const cotizacionRespLimpia = oc.cotizacion_resp_data
+        ? { ...oc.cotizacion_resp_data, items: (oc.cotizacion_resp_data.items || []).filter(keepItem) }
+        : oc.cotizacion_resp_data;
+      const recibidosLimpios = Array.isArray(oc.recibidos)
+        ? oc.recibidos.filter(keepItem)
+        : oc.recibidos;
+
       const updates = {
         items,
         subtotal,
@@ -1902,6 +1925,9 @@ function EditarOCModal({ oc, ordenes = [], onClose, reload, currentUser }) {
         fecha_emision: fechaEmision || oc.fecha_emision,
         notas: (notas || "") + `\n[${new Date().toLocaleString("es-CO")}] Editada por ${currentUser?.nombre || "—"}`,
         cambios_historial: cambiosNuevos,
+        factura_data: facturaDataLimpia,
+        cotizacion_resp_data: cotizacionRespLimpia,
+        recibidos: recibidosLimpios,
         updated_at: new Date().toISOString(),
       };
       if (cancelarOC) {
