@@ -49,6 +49,7 @@ const METODO_ICON = {
 
 export default function AsistenciaZK() {
   const { isMobile } = useBreakpoint();
+  const [tab, setTab] = useState("asistencia"); // asistencia | enrolamiento
   const [fecha, setFecha] = useState(todayBog());
   const [punches, setPunches] = useState([]);
   const [empleados, setEmpleados] = useState([]);
@@ -140,10 +141,39 @@ export default function AsistenciaZK() {
             Punches en tiempo real desde el terminal del muelle
           </div>
         </div>
-        <input type="date" value={fecha} onChange={e => setFecha(e.target.value)}
-          style={{ padding: "8px 12px", borderRadius: 8, border: `1px solid ${B.navyLight}`, background: B.navyMid, color: B.white, fontSize: 13 }} />
+        {tab === "asistencia" && (
+          <input type="date" value={fecha} onChange={e => setFecha(e.target.value)}
+            style={{ padding: "8px 12px", borderRadius: 8, border: `1px solid ${B.navyLight}`, background: B.navyMid, color: B.white, fontSize: 13 }} />
+        )}
       </div>
 
+      {/* Tabs */}
+      <div style={{ display: "flex", gap: 4, marginBottom: 16, borderBottom: `1px solid ${B.navyLight}` }}>
+        {[
+          ["asistencia",   "📅 Asistencia del día"],
+          ["enrolamiento", "👤 Enrolamiento"],
+        ].map(([k, l]) => (
+          <button key={k} onClick={() => setTab(k)}
+            style={{
+              padding: "10px 16px",
+              background: "transparent",
+              border: "none",
+              borderBottom: `2px solid ${tab === k ? B.sky : "transparent"}`,
+              color: tab === k ? B.sky : "rgba(255,255,255,0.5)",
+              fontSize: 13,
+              fontWeight: 700,
+              cursor: "pointer",
+              transition: "all 120ms",
+            }}>
+            {l}
+          </button>
+        ))}
+      </div>
+
+      {tab === "enrolamiento" ? (
+        <TabEnrolamiento empleados={empleados} onReload={cargar} isMobile={isMobile} />
+      ) : (
+      <>
       {/* KPIs */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 10, marginBottom: 16 }}>
         {[
@@ -195,6 +225,8 @@ export default function AsistenciaZK() {
           onClose={() => setLinkModal(null)}
           onSaved={() => { setLinkModal(null); cargar(); }}
         />
+      )}
+      </>
       )}
     </div>
   );
@@ -257,6 +289,274 @@ function FilaEmpleado({ fila, onLink, onReload }) {
               {p.workcode && <span style={{ color: "rgba(255,255,255,0.4)" }}>WC: {p.workcode}</span>}
             </div>
           ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Tab Enrolamiento: mapear cada empleado a su PIN del terminal ──────
+// Convención: cédula = PIN. El endpoint zk-iclock hace fallback por
+// cédula si zk_user_id no matchea, así que setear zk_user_id = cedula
+// deja el matcheo redundante y explícito.
+function TabEnrolamiento({ empleados, onReload, isMobile }) {
+  const [filtro, setFiltro] = useState("");
+  const [saving, setSaving] = useState({});
+  const [editando, setEditando] = useState(null); // {id, valor}
+  const [confirmMasivo, setConfirmMasivo] = useState(false);
+
+  const stats = useMemo(() => {
+    const total = empleados.length;
+    const enrolados = empleados.filter(e => e.zk_user_id).length;
+    const cedulaMatch = empleados.filter(e => e.zk_user_id && e.zk_user_id === e.cedula).length;
+    const pinCustom = empleados.filter(e => e.zk_user_id && e.zk_user_id !== e.cedula).length;
+    return { total, enrolados, pendientes: total - enrolados, cedulaMatch, pinCustom };
+  }, [empleados]);
+
+  const lista = useMemo(() => {
+    const q = filtro.trim().toLowerCase();
+    return empleados
+      .filter(e => {
+        if (!q) return true;
+        const s = [e.nombres, e.apellidos, e.cedula, e.zk_user_id, e.cargo]
+          .map(x => String(x || "").toLowerCase()).join(" ");
+        return s.includes(q);
+      })
+      .sort((a, b) => {
+        // Pendientes primero, luego alfabético
+        const ap = !a.zk_user_id, bp = !b.zk_user_id;
+        if (ap !== bp) return ap ? -1 : 1;
+        return (a.nombres || "").localeCompare(b.nombres || "");
+      });
+  }, [empleados, filtro]);
+
+  const guardarPin = async (empId, pin) => {
+    setSaving(s => ({ ...s, [empId]: true }));
+    try {
+      const emp = empleados.find(e => e.id === empId);
+      const valor = String(pin || "").trim() || null;
+      const { error: e1 } = await supabase.from("rh_empleados")
+        .update({ zk_user_id: valor }).eq("id", empId);
+      if (e1) throw e1;
+      // Backfill punches existentes con ese PIN
+      if (valor) {
+        await supabase.from("asistencia_zk").update({
+          empleado_id: empId,
+          cedula: emp?.cedula || null,
+          nombre_snapshot: emp ? `${emp.nombres || ""} ${emp.apellidos || ""}`.trim() : null,
+        }).eq("zk_user_id", valor);
+      }
+      await onReload();
+      setEditando(null);
+    } catch (err) {
+      alert("Error: " + (err.message || err));
+    } finally {
+      setSaving(s => ({ ...s, [empId]: false }));
+    }
+  };
+
+  const autoMapearMasivo = async () => {
+    setConfirmMasivo(false);
+    const pendientes = empleados.filter(e => !e.zk_user_id && e.cedula);
+    if (!pendientes.length) return;
+    let ok = 0, err = 0;
+    for (const emp of pendientes) {
+      try {
+        const { error } = await supabase.from("rh_empleados")
+          .update({ zk_user_id: emp.cedula }).eq("id", emp.id);
+        if (error) throw error;
+        // Backfill
+        await supabase.from("asistencia_zk").update({
+          empleado_id: emp.id,
+          cedula: emp.cedula,
+          nombre_snapshot: `${emp.nombres || ""} ${emp.apellidos || ""}`.trim(),
+        }).eq("zk_user_id", emp.cedula);
+        ok++;
+      } catch { err++; }
+    }
+    await onReload();
+    alert(`✓ ${ok} empleados mapeados${err ? ` · ${err} errores` : ""}`);
+  };
+
+  const progresoPct = stats.total ? Math.round((stats.enrolados / stats.total) * 100) : 0;
+
+  return (
+    <div>
+      {/* Instrucciones */}
+      <div style={{ background: B.navyMid, borderLeft: `3px solid ${B.sky}`, borderRadius: 8, padding: 14, marginBottom: 14, fontSize: 12, lineHeight: 1.5 }}>
+        <div style={{ fontSize: 13, fontWeight: 700, color: B.sky, marginBottom: 6 }}>
+          Convención: cédula = PIN del reloj
+        </div>
+        <div style={{ color: "rgba(255,255,255,0.7)" }}>
+          En el terminal, cada empleado debe estar enrolado con su <strong style={{ color: B.sand }}>cédula como N° de usuario</strong>.
+          Con eso, cada marca se vincula al empleado correcto automáticamente. Si algún empleado tiene un PIN diferente en el reloj, edítalo abajo.
+        </div>
+      </div>
+
+      {/* KPIs + Progreso */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 10, marginBottom: 12 }}>
+        {[
+          { l: "Total activos",   v: stats.total,        c: B.sky },
+          { l: "Enrolados",       v: stats.enrolados,    c: B.success },
+          { l: "Pendientes",      v: stats.pendientes,   c: stats.pendientes > 0 ? B.warning : "rgba(255,255,255,0.3)" },
+          { l: "Cédula = PIN",    v: stats.cedulaMatch,  c: B.sand },
+          { l: "PIN distinto",    v: stats.pinCustom,    c: stats.pinCustom > 0 ? B.warning : "rgba(255,255,255,0.3)" },
+        ].map(k => (
+          <div key={k.l} style={{ background: B.navyMid, borderRadius: 10, padding: 10, borderLeft: `3px solid ${k.c}` }}>
+            <div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", textTransform: "uppercase" }}>{k.l}</div>
+            <div style={{ fontSize: 20, fontWeight: 800, color: k.c, marginTop: 2 }}>{k.v}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Barra de progreso */}
+      <div style={{ marginBottom: 14 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "rgba(255,255,255,0.5)", marginBottom: 4 }}>
+          <span>Progreso de enrolamiento</span>
+          <span style={{ color: B.success, fontWeight: 700 }}>{progresoPct}%</span>
+        </div>
+        <div style={{ height: 6, background: B.navyMid, borderRadius: 3, overflow: "hidden" }}>
+          <div style={{ height: "100%", width: `${progresoPct}%`, background: B.success, transition: "width 200ms" }} />
+        </div>
+      </div>
+
+      {/* Acciones + búsqueda */}
+      <div style={{ display: "flex", gap: 10, marginBottom: 14, flexDirection: isMobile ? "column" : "row" }}>
+        <input type="text" placeholder="Buscar empleado / cédula / PIN..."
+          value={filtro} onChange={e => setFiltro(e.target.value)}
+          style={{ flex: 1, padding: "10px 14px", borderRadius: 8, border: `1px solid ${B.navyLight}`, background: B.navyMid, color: B.white, fontSize: 13, boxSizing: "border-box" }} />
+        {stats.pendientes > 0 && (
+          <button onClick={() => setConfirmMasivo(true)}
+            style={{ padding: "10px 16px", borderRadius: 8, border: "none", background: B.success, color: B.navy, fontSize: 13, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>
+            ⚡ Auto-mapear {stats.pendientes} pendientes (cédula → PIN)
+          </button>
+        )}
+      </div>
+
+      {/* Lista */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+        {lista.map(emp => {
+          const enrolado = !!emp.zk_user_id;
+          const cedulaMatch = enrolado && emp.zk_user_id === emp.cedula;
+          const isEditing = editando?.id === emp.id;
+          const isSaving = !!saving[emp.id];
+          return (
+            <div key={emp.id} style={{
+              background: B.navyMid,
+              borderRadius: 8,
+              borderLeft: `3px solid ${enrolado ? (cedulaMatch ? B.success : B.warning) : "rgba(255,255,255,0.15)"}`,
+              padding: "12px 14px",
+              display: "grid",
+              gridTemplateColumns: isMobile ? "1fr" : "1fr auto auto",
+              gap: 10,
+              alignItems: "center",
+              opacity: enrolado ? 1 : 0.85,
+            }}>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: 14, fontWeight: 700, color: B.white, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                  {emp.nombres} {emp.apellidos}
+                </div>
+                <div style={{ fontSize: 11, color: "rgba(255,255,255,0.45)", marginTop: 2, display: "flex", gap: 10, flexWrap: "wrap" }}>
+                  <span>🆔 {emp.cedula || "sin cédula"}</span>
+                  {emp.cargo && <span>· {emp.cargo}</span>}
+                </div>
+              </div>
+
+              {isEditing ? (
+                <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                  <input type="text" autoFocus value={editando.valor}
+                    onChange={e => setEditando({ ...editando, valor: e.target.value })}
+                    onKeyDown={e => {
+                      if (e.key === "Enter") guardarPin(emp.id, editando.valor);
+                      if (e.key === "Escape") setEditando(null);
+                    }}
+                    placeholder={emp.cedula || "PIN"}
+                    style={{ width: 130, padding: "6px 10px", borderRadius: 6, background: B.navy, border: `1px solid ${B.sky}`, color: B.white, fontFamily: "monospace", fontSize: 13 }} />
+                  <button onClick={() => guardarPin(emp.id, editando.valor)} disabled={isSaving}
+                    style={{ padding: "6px 10px", borderRadius: 6, border: "none", background: B.success, color: B.navy, fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
+                    {isSaving ? "..." : "✓"}
+                  </button>
+                  <button onClick={() => setEditando(null)}
+                    style={{ padding: "6px 10px", borderRadius: 6, border: `1px solid ${B.navyLight}`, background: "transparent", color: "rgba(255,255,255,0.5)", fontSize: 11, cursor: "pointer" }}>
+                    ✕
+                  </button>
+                </div>
+              ) : (
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  {enrolado ? (
+                    <div style={{
+                      fontFamily: "monospace",
+                      background: B.navy,
+                      color: cedulaMatch ? B.success : B.warning,
+                      padding: "5px 10px",
+                      borderRadius: 6,
+                      fontSize: 13,
+                      fontWeight: 700,
+                      border: `1px solid ${cedulaMatch ? B.success + "44" : B.warning + "44"}`,
+                    }}>
+                      PIN {emp.zk_user_id}
+                    </div>
+                  ) : (
+                    <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", fontStyle: "italic" }}>
+                      sin PIN
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {!isEditing && (
+                <div style={{ display: "flex", gap: 6 }}>
+                  {!enrolado && emp.cedula && (
+                    <button onClick={() => guardarPin(emp.id, emp.cedula)} disabled={isSaving}
+                      style={{ padding: "6px 10px", borderRadius: 6, border: `1px solid ${B.success}44`, background: B.success + "22", color: B.success, fontSize: 11, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>
+                      {isSaving ? "..." : `Usar cédula`}
+                    </button>
+                  )}
+                  <button onClick={() => setEditando({ id: emp.id, valor: emp.zk_user_id || emp.cedula || "" })}
+                    style={{ padding: "6px 10px", borderRadius: 6, border: `1px solid ${B.navyLight}`, background: "transparent", color: B.sky, fontSize: 11, fontWeight: 600, cursor: "pointer" }}>
+                    {enrolado ? "✏ Editar" : "PIN custom"}
+                  </button>
+                  {enrolado && (
+                    <button onClick={() => { if (confirm(`Quitar PIN de ${emp.nombres}?`)) guardarPin(emp.id, ""); }}
+                      style={{ padding: "6px 10px", borderRadius: 6, border: `1px solid ${B.danger}44`, background: "transparent", color: B.danger, fontSize: 11, fontWeight: 600, cursor: "pointer" }}>
+                      Quitar
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
+        {!lista.length && (
+          <div style={{ padding: 40, textAlign: "center", background: B.navyMid, borderRadius: 10, color: "rgba(255,255,255,0.4)", fontSize: 13 }}>
+            {filtro ? "Sin resultados." : "No hay empleados activos."}
+          </div>
+        )}
+      </div>
+
+      {/* Confirmación masivo */}
+      {confirmMasivo && (
+        <div onClick={e => e.target === e.currentTarget && setConfirmMasivo(false)}
+          style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.75)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+          <div style={{ background: B.navyMid, borderRadius: 14, padding: 24, width: 460, maxWidth: "100%" }}>
+            <div style={{ fontSize: 18, fontWeight: 800, marginBottom: 8 }}>⚡ Auto-mapear masivo</div>
+            <div style={{ fontSize: 13, color: "rgba(255,255,255,0.7)", marginBottom: 16, lineHeight: 1.5 }}>
+              Voy a poner <code style={{ color: B.sand }}>zk_user_id = cédula</code> en los <strong style={{ color: B.warning }}>{stats.pendientes}</strong> empleados que aún no tienen PIN asignado.
+              Los punches existentes con esa cédula como PIN se re-vinculan automáticamente.
+              <br /><br />
+              <strong style={{ color: B.sky }}>Importante:</strong> asegúrate que en el reloj esos empleados estén enrolados con la cédula como N° de usuario.
+            </div>
+            <div style={{ display: "flex", gap: 10 }}>
+              <button onClick={() => setConfirmMasivo(false)}
+                style={{ flex: 1, padding: 11, borderRadius: 8, border: `1px solid ${B.navyLight}`, background: "transparent", color: "rgba(255,255,255,0.6)", cursor: "pointer" }}>
+                Cancelar
+              </button>
+              <button onClick={autoMapearMasivo}
+                style={{ flex: 2, padding: 11, borderRadius: 8, border: "none", background: B.success, color: B.navy, fontWeight: 700, cursor: "pointer" }}>
+                ✓ Sí, mapear {stats.pendientes} empleados
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>
