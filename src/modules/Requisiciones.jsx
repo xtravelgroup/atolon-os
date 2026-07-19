@@ -30,6 +30,17 @@ const ROLES_APROBADOR = ["auto", "ventas", "operador", "gerente_general_op", "ge
 // "gerente_general_1775236379654" que se crean desde el módulo de roles)
 const esGerenteGeneralRol = (rol) => typeof rol === "string" && rol.startsWith("gerente_general");
 
+// Roles que pueden VER todas las requisiciones (no solo las propias):
+// aprobadores + roles operativos de la mesa de compras.
+// Los demás solo ven las que ellos mismos solicitaron.
+const puedeVerTodasReqs = (rol) => {
+  if (!rol) return false;
+  if (rol === "super_admin" || rol === "admin" || rol === "direccion") return true;
+  if (esGerenteGeneralRol(rol)) return true;
+  if (rol.startsWith("compras") || rol.startsWith("gerente_compras")) return true;
+  return false;
+};
+
 const IS = { width: "100%", padding: "9px 12px", borderRadius: 8, background: B.navyLight, border: `1px solid ${B.navyLight}`, color: B.white, fontSize: 13, outline: "none", boxSizing: "border-box" };
 const LS = { display: "block", fontSize: 11, color: B.sand, marginBottom: 5, textTransform: "uppercase", letterSpacing: "0.06em" };
 const BTN = (bg, color = "#fff") => ({ padding: "8px 14px", borderRadius: 8, border: "none", background: bg, color, cursor: "pointer", fontWeight: 700, fontSize: 12 });
@@ -146,8 +157,15 @@ export default function Requisiciones() {
   const load = useCallback(async () => {
     if (!supabase) return;
     setLoading(true);
+    // Filtro de acceso: quienes NO son aprobadores/compras solo ven sus
+    // propias requisiciones. Requiere currentUser cargado; si no lo esta
+    // aun, load() se re-ejecuta cuando cambia currentUser (useEffect abajo).
+    let reqsQuery = supabase.from("requisiciones").select("*").order("fecha", { ascending: false });
+    if (currentUser?.id && !puedeVerTodasReqs(currentUser.rol)) {
+      reqsQuery = reqsQuery.eq("solicitante_id", currentUser.id);
+    }
     const [rR, rgR, pR, oR, uR] = await Promise.all([
-      supabase.from("requisiciones").select("*").order("fecha", { ascending: false }),
+      reqsQuery,
       supabase.from("req_reglas_aprobacion").select("*").order("orden"),
       supabase.from("proveedores").select("id, nombre, nit, telefono, email").order("nombre"),
       supabase.from("ordenes_compra").select("*").order("created_at", { ascending: false }),
@@ -173,7 +191,7 @@ export default function Requisiciones() {
     setOrdenes(oR.data || []);
     setUsuarios(uR.data || []);
     setLoading(false);
-  }, []);
+  }, [currentUser?.id, currentUser?.rol]);
   useEffect(() => { load(); }, [load]);
 
   // Realtime
