@@ -1628,6 +1628,55 @@ function RecepcionOCModal({ oc, reqs, onClose, reload, currentUser, readOnly = f
     }));
   }, [catalogo]);
 
+  // Enriquecer desde factura(s) aplicada(s): unidad y cantidad post-edicion del
+  // operador manda sobre la unidad/cant original de la OC.
+  //   - unidad_factura → se usa en el UI de "Pedido: X UND" y se envia a Loggro
+  //   - cant_factura (override o cantidad simple) → se usa como cant_recibida
+  //     inicial si no habia una recepcion previa
+  useEffect(() => {
+    if (!supabase) return;
+    supabase.from("oc_facturas").select("factura_data").eq("oc_id", oc.id)
+      .then(({ data }) => {
+        const rows = data || [];
+        if (rows.length === 0 && !oc.factura_data) return;
+        // Combinar items de todas las facturas aplicadas (por si hay varias)
+        const facturaItems = [
+          ...rows.flatMap(r => r.factura_data?.items || []),
+          ...(oc.factura_data?.items || []),
+        ];
+        if (facturaItems.length === 0) return;
+        const norm = s => String(s || "").trim().toLowerCase();
+        const findFactura = (r) => {
+          if (r.item_id) {
+            const f = facturaItems.find(fi => fi.item_id === r.item_id);
+            if (f) return f;
+          }
+          if (r.loggro_id) {
+            const f = facturaItems.find(fi => fi.loggro_id === r.loggro_id);
+            if (f) return f;
+          }
+          const rn = norm(r.nombre || r.item);
+          if (rn) return facturaItems.find(fi => norm(fi.nombre || fi.descripcion) === rn);
+          return null;
+        };
+        setRecibidos(prev => prev.map(r => {
+          const fi = findFactura(r);
+          if (!fi) return r;
+          const unidadFactura = fi.unidad || null;
+          const cantFactura = fi.loggro_qty_override != null
+            ? Number(fi.loggro_qty_override)
+            : (fi.cantidad != null ? Number(fi.cantidad) : null);
+          const patch = {};
+          if (unidadFactura && unidadFactura !== r.unidad) patch.unidad = unidadFactura;
+          // Solo pre-cargar cant_recibida si no se habia recibido nada aun
+          if (cantFactura != null && !r.cant_recibida) patch.cant_recibida = cantFactura;
+          // Si la factura cambio la unidad y hay cant fijada, ajustar cant tambien
+          if (unidadFactura && cantFactura != null) patch.cant = cantFactura;
+          return Object.keys(patch).length ? { ...r, ...patch } : r;
+        }));
+      });
+  }, [oc.id]);
+
   // Enriquecer también via la requisición (si existe) — fuente alterna
   useEffect(() => {
     if (!oc.requisicion_id) return;
