@@ -2927,13 +2927,13 @@ function InventarioGeneralTab({ items, categorias, catIconMap, catColorMap }) {
   const [stockPorLoc, setStockPorLoc] = useState({});
   const [search, setSearch] = useState("");
   const [catFilter, setCatFilter] = useState("todas");
-  const [grupoFilter, setGrupoFilter] = useState("todos"); // todos | alimentos | bebidas | otros
+  const [grupoFilter, setGrupoFilter] = useState("todos"); // todos | Alimentos | Bar | Otros
   const [diffFilter, setDiffFilter] = useState("todos");
 
-  // Map nombre de categoría → grupo (alimentos/bebidas/otros)
+  // Map nombre de categoría → grupo (Alimentos/Bar/Otros)
   const grupoPorCategoria = useMemo(() => {
     const m = {};
-    (categorias || []).forEach(c => { m[c.nombre] = c.grupo || "otros"; });
+    (categorias || []).forEach(c => { m[c.nombre] = c.grupo || "Otros"; });
     return m;
   }, [categorias]);
   const [syncing, setSyncing] = useState(false);
@@ -2991,7 +2991,7 @@ function InventarioGeneralTab({ items, categorias, catIconMap, catColorMap }) {
       if (q && !((f.item.nombre || "").toLowerCase().includes(q) || (f.item.codigo || "").toLowerCase().includes(q))) return false;
       if (catFilter !== "todas" && f.item.categoria !== catFilter) return false;
       if (grupoFilter !== "todos") {
-        const grupo = grupoPorCategoria[f.item.categoria] || "otros";
+        const grupo = grupoPorCategoria[f.item.categoria] || "Otros";
         if (grupo !== grupoFilter) return false;
       }
       if (diffFilter === "con_diff" && (f.diff === null || f.diff === 0)) return false;
@@ -3060,13 +3060,13 @@ function InventarioGeneralTab({ items, categorias, catIconMap, catColorMap }) {
         </div>
       )}
 
-      {/* Chips de grupo macro: Alimentos / Bebidas / Otros */}
+      {/* Chips de grupo macro: Alimentos / Bar / Otros */}
       <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
         {[
           { k: "todos",     l: "🌐 Todos",     c: B.sky    },
-          { k: "alimentos", l: "🍽️ Alimentos", c: "#f97316" },
-          { k: "bebidas",   l: "🍹 Bebidas",   c: "#38bdf8" },
-          { k: "otros",     l: "📦 Otros",     c: "#94a3b8" },
+          { k: "Alimentos", l: "🍽️ Alimentos", c: "#f97316" },
+          { k: "Bar",       l: "🍹 Bar",       c: "#38bdf8" },
+          { k: "Otros",     l: "📦 Otros",     c: "#94a3b8" },
         ].map(g => {
           const active = grupoFilter === g.k;
           return (
@@ -3090,7 +3090,7 @@ function InventarioGeneralTab({ items, categorias, catIconMap, catColorMap }) {
           <option value="todas">Todas las categorías</option>
           {categorias
             .filter(c => c.activo !== false)
-            .filter(c => grupoFilter === "todos" || (c.grupo || "otros") === grupoFilter)
+            .filter(c => grupoFilter === "todos" || (c.grupo || "Otros") === grupoFilter)
             .map(c => (
               <option key={c.id} value={c.nombre}>{c.icono || "📁"} {c.nombre}</option>
             ))}
