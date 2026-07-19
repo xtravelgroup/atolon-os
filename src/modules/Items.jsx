@@ -148,6 +148,8 @@ export default function Items() {
       categoria: form.categoria,
       unidad: form.unidad || "Unidades",
       foto_url: form.foto_url || null,
+      stock_minimo: form.stock_minimo === "" || form.stock_minimo == null ? null : Number(form.stock_minimo),
+      stock_maximo: form.stock_maximo === "" || form.stock_maximo == null ? null : Number(form.stock_maximo),
       activo: true,
       updated_at: new Date().toISOString(),
     };
@@ -665,6 +667,8 @@ function ItemModal({ item, proveedoresAll, existingProvs, catNames, onSave, onCl
     foto_url: item?.foto_url || "",
     loggro_id: item?.loggro_id || null,
     precio_compra: item?.precio_compra || 0,
+    stock_minimo: item?.stock_minimo ?? "",
+    stock_maximo: item?.stock_maximo ?? "",
   });
   const [loggroSyncOpen, setLoggroSyncOpen] = useState(false);
   const [loggroSyncing, setLoggroSyncing] = useState(false);
@@ -753,6 +757,26 @@ function ItemModal({ item, proveedoresAll, existingProvs, catNames, onSave, onCl
           <div>
             <label style={LS}>Foto URL</label>
             <input value={form.foto_url} onChange={e => set("foto_url", e.target.value)} placeholder="https://..." style={IS} />
+          </div>
+          <div>
+            <label style={LS}>Stock mínimo <span style={{ color: "rgba(255,255,255,0.35)", fontWeight: 400 }}>({form.unidad})</span></label>
+            <input
+              type="number" min="0" step="any"
+              value={form.stock_minimo}
+              onChange={e => set("stock_minimo", e.target.value)}
+              placeholder="0"
+              style={IS}
+            />
+          </div>
+          <div>
+            <label style={LS}>Stock máximo <span style={{ color: "rgba(255,255,255,0.35)", fontWeight: 400 }}>({form.unidad})</span></label>
+            <input
+              type="number" min="0" step="any"
+              value={form.stock_maximo}
+              onChange={e => set("stock_maximo", e.target.value)}
+              placeholder="0"
+              style={IS}
+            />
           </div>
           <div style={{ gridColumn: "1 / -1" }}>
             <label style={LS}>Descripción</label>
