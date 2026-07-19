@@ -1629,18 +1629,20 @@ function RecepcionOCModal({ oc, reqs, onClose, reload, currentUser, readOnly = f
     }));
   }, [catalogo]);
 
-  // Enriquecer desde factura(s) aplicada(s): unidad y cantidad post-edicion del
-  // operador manda sobre la unidad/cant original de la OC.
-  //   - unidad_factura → se usa en el UI de "Pedido: X UND" y se envia a Loggro
-  //   - cant_factura (override o cantidad simple) → se usa como cant_recibida
-  //     inicial si no habia una recepcion previa
+  // Enriquecer desde factura(s) aplicada(s):
+  //   - Si el item tiene loggro_qty_override → esa es la cantidad que entra a
+  //     Loggro y la unidad es la del catalogo (Loggro), NO la de la factura.
+  //     Ej: factura viene en KL pero el ingrediente en Loggro es Und y el
+  //     operador definio 40 → UI muestra "40 Und".
+  //   - Sin override → usar cantidad y unidad de la factura tal cual.
+  //   - Depende de catalogo ya cargado para poder resolver la unidad Loggro.
   useEffect(() => {
     if (!supabase) return;
+    if (catalogo.length === 0) return;
     supabase.from("oc_facturas").select("factura_data").eq("oc_id", oc.id)
       .then(({ data }) => {
         const rows = data || [];
         if (rows.length === 0 && !oc.factura_data) return;
-        // Combinar items de todas las facturas aplicadas (por si hay varias)
         const facturaItems = [
           ...rows.flatMap(r => r.factura_data?.items || []),
           ...(oc.factura_data?.items || []),
@@ -1663,20 +1665,27 @@ function RecepcionOCModal({ oc, reqs, onClose, reload, currentUser, readOnly = f
         setRecibidos(prev => prev.map(r => {
           const fi = findFactura(r);
           if (!fi) return r;
-          const unidadFactura = fi.unidad || null;
-          const cantFactura = fi.loggro_qty_override != null
+          const catEntry = r.item_id ? catalogo.find(c => c.id === r.item_id) : null;
+          const unidadCatalogo = catEntry?.unidad || null;
+
+          const tieneOverride = fi.loggro_qty_override != null;
+          const cantFinal = tieneOverride
             ? Number(fi.loggro_qty_override)
             : (fi.cantidad != null ? Number(fi.cantidad) : null);
+          // Si hay override, la unidad viene del catalogo (asi es como Loggro
+          // interpretara la cantidad). Sin override, usar la de la factura.
+          const unidadFinal = tieneOverride
+            ? (unidadCatalogo || fi.unidad || r.unidad)
+            : (fi.unidad || r.unidad);
+
           const patch = {};
-          if (unidadFactura && unidadFactura !== r.unidad) patch.unidad = unidadFactura;
-          // Solo pre-cargar cant_recibida si no se habia recibido nada aun
-          if (cantFactura != null && !r.cant_recibida) patch.cant_recibida = cantFactura;
-          // Si la factura cambio la unidad y hay cant fijada, ajustar cant tambien
-          if (unidadFactura && cantFactura != null) patch.cant = cantFactura;
+          if (unidadFinal && unidadFinal !== r.unidad) patch.unidad = unidadFinal;
+          if (cantFinal != null && cantFinal !== r.cant) patch.cant = cantFinal;
+          if (cantFinal != null && !r.cant_recibida) patch.cant_recibida = cantFinal;
           return Object.keys(patch).length ? { ...r, ...patch } : r;
         }));
       });
-  }, [oc.id]);
+  }, [oc.id, catalogo]);
 
   // Enriquecer también via la requisición (si existe) — fuente alterna
   useEffect(() => {
