@@ -1579,6 +1579,14 @@ function InventarioTab({
   const LOC_BAR_COMBO = ["LOC-BAR", "LOC-ALMACEN-BAR"];
   const stockBarCombo = (item_id) => LOC_BAR_COMBO.reduce((s, id) => s + stockEnLoc(item_id, id), 0);
   const hasStockRowBarCombo = (item_id) => LOC_BAR_COMBO.some(id => stockPorLoc[`${item_id}|${id}`] !== undefined);
+  // Mapa categoría → grupo macro (Alimentos/Bar/Otros). Se usa para reforzar
+  // el filtro de bodega: aunque un item tenga fila en LOC-BAR por accidente,
+  // si su categoría no es del grupo Bar, no debe aparecer al filtrar Bar.
+  const grupoPorCategoria = useMemo(() => {
+    const m = {};
+    (categorias || []).forEach(c => { m[c.nombre] = c.grupo || "Otros"; });
+    return m;
+  }, [categorias]);
 
   const filtered = useMemo(() => {
     let list = activos;
@@ -1587,7 +1595,13 @@ function InventarioTab({
     // fila en items_stock_locacion para esa bodega (es decir, items que se
     // gestionan en ese lugar). Evita mostrar bebidas en Cocina, etc.
     if (locFilter === "bar-combinado") {
-      list = list.filter(i => hasStockRowBarCombo(i.id));
+      // Doble filtro: fila en LOC-BAR/LOC-ALMACEN-BAR + categoría del grupo Bar.
+      // Antes bastaba con tener fila, y items de cocina con setup accidental
+      // en LOC-BAR (stock 0) se colaban en la vista.
+      list = list.filter(i =>
+        hasStockRowBarCombo(i.id) &&
+        grupoPorCategoria[i.categoria] === "Bar"
+      );
     } else if (locFilter !== "todos") {
       list = list.filter(i => stockPorLoc[`${i.id}|${locFilter}`] !== undefined);
     }
@@ -1619,7 +1633,7 @@ function InventarioTab({
       return 0;
     });
     return list;
-  }, [activos, invSearch, invCatFilter, invFilter, invSortBy, invSortDir, locFilter, stockPorLoc]);
+  }, [activos, invSearch, invCatFilter, invFilter, invSortBy, invSortDir, locFilter, stockPorLoc, grupoPorCategoria]);
 
   const toggleSort = (k) => {
     if (invSortBy === k) setInvSortDir(d => d === "asc" ? "desc" : "asc");
