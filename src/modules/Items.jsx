@@ -1560,6 +1560,10 @@ function InventarioTab({
 
   const stockEnLoc = (item_id, loc_id) => Number(stockPorLoc[`${item_id}|${loc_id}`]) || 0;
   const stockTotalNuestro = (item_id) => locaciones.reduce((s, l) => s + stockEnLoc(item_id, l.id), 0);
+  // "bar-combinado" es un pseudo-filtro que suma LOC-BAR + LOC-ALMACEN-BAR
+  const LOC_BAR_COMBO = ["LOC-BAR", "LOC-ALMACEN-BAR"];
+  const stockBarCombo = (item_id) => LOC_BAR_COMBO.reduce((s, id) => s + stockEnLoc(item_id, id), 0);
+  const hasStockRowBarCombo = (item_id) => LOC_BAR_COMBO.some(id => stockPorLoc[`${item_id}|${id}`] !== undefined);
 
   const filtered = useMemo(() => {
     let list = activos;
@@ -1567,7 +1571,9 @@ function InventarioTab({
     // Si se filtra por una bodega específica, mostrar SOLO items que tienen
     // fila en items_stock_locacion para esa bodega (es decir, items que se
     // gestionan en ese lugar). Evita mostrar bebidas en Cocina, etc.
-    if (locFilter !== "todos") {
+    if (locFilter === "bar-combinado") {
+      list = list.filter(i => hasStockRowBarCombo(i.id));
+    } else if (locFilter !== "todos") {
       list = list.filter(i => stockPorLoc[`${i.id}|${locFilter}`] !== undefined);
     }
 
@@ -1576,8 +1582,11 @@ function InventarioTab({
       const s = invSearch.toLowerCase();
       list = list.filter(i => i.nombre?.toLowerCase().includes(s) || i.codigo?.toLowerCase().includes(s));
     }
-    // Stock según locación seleccionada (Todas = suma de nuestros depósitos)
-    const stockDe = (i) => locFilter === "todos" ? stockTotalNuestro(i.id) : stockEnLoc(i.id, locFilter);
+    // Stock según locación seleccionada
+    const stockDe = (i) =>
+      locFilter === "todos"          ? stockTotalNuestro(i.id) :
+      locFilter === "bar-combinado"  ? stockBarCombo(i.id) :
+      stockEnLoc(i.id, locFilter);
     if (invFilter === "con_stock") list = list.filter(i => stockDe(i) > 0);
     else if (invFilter === "bajo_min") list = list.filter(i => stockDe(i) > 0 && Number(i.stock_minimo || 0) > 0 && stockDe(i) <= Number(i.stock_minimo));
     else if (invFilter === "negativo") list = list.filter(i => stockDe(i) < 0);
@@ -1721,16 +1730,22 @@ function InventarioTab({
             {filtered.length === 0 ? (
               <tr><td colSpan={8} style={{ padding: 40, textAlign: "center", color: "rgba(255,255,255,0.3)" }}>Sin ítems que mostrar</td></tr>
             ) : filtered.map(i => {
-              const stock = locFilter === "todos" ? stockTotalNuestro(i.id) : stockEnLoc(i.id, locFilter);
+              const stock =
+                locFilter === "todos"          ? stockTotalNuestro(i.id) :
+                locFilter === "bar-combinado"  ? stockBarCombo(i.id) :
+                stockEnLoc(i.id, locFilter);
               const loggroStock = Number(i.stock_actual) || 0;
               const diff = locFilter === "todos" ? (stock - loggroStock) : 0;
               const min = Number(i.stock_minimo) || 0;
               const precio = Number(i.precio_compra) || 0;
               const valor = stock * precio;
-              // Desglose por locación cuando se ven "Todas"
-              const desglose = locFilter === "todos"
-                ? locaciones.map(loc => ({ loc, cant: stockEnLoc(i.id, loc.id) })).filter(x => x.cant !== 0)
-                : null;
+              // Desglose por locación cuando se ven "Todas" o "Bar + Almacén Bar"
+              const desglose =
+                locFilter === "todos"          ? locaciones.map(loc => ({ loc, cant: stockEnLoc(i.id, loc.id) })).filter(x => x.cant !== 0) :
+                locFilter === "bar-combinado"  ? LOC_BAR_COMBO
+                    .map(id => ({ loc: locaciones.find(l => l.id === id), cant: stockEnLoc(i.id, id) }))
+                    .filter(x => x.loc && x.cant !== 0) :
+                null;
               const color = stockColor(stock, min);
               const cc = catColorMap[i.categoria] || "#888";
               return (
@@ -2602,7 +2617,11 @@ function LocacionesSelector({ locaciones, locFilter, setLocFilter, onAdd }) {
     <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 14, alignItems: "center", background: B.navyMid, padding: "10px 14px", borderRadius: 10, border: `1px solid ${B.navyLight}` }}>
       <span style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", marginRight: 4 }}>📍 Locación:</span>
 
-      {[{ id: "todos", nombre: "Todas", icono: "🌐" }, ...principales].map(loc => {
+      {[
+        { id: "todos", nombre: "Todas", icono: "🌐" },
+        { id: "bar-combinado", nombre: "Bar + Almacén Bar", icono: "🍹" },
+        ...principales,
+      ].map(loc => {
         const active = locFilter === loc.id;
         const isMinibarParent = loc.id === "LOC-MINIBAR";
         // Si es el botón "Mini Bar" genérico, marcar activo si hay una habitación seleccionada
