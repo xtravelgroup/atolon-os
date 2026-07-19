@@ -3309,9 +3309,28 @@ serve(async (req) => {
       // 2) Mapa loggro_id -> items_catalogo Atolon (incluye almacen_default_id
       // porque el descuento va al almacen del ITEM, no de la mesa. Direccion
       // 2026-07-18: la comida sale de Cocina, la bebida sale de Bar. Punto.)
-      const itemsRes: any = await sbFetch(`items_catalogo?select=id,nombre,loggro_id,stock_actual,unidad,locacion_default_id,precio_compra&loggro_id=not.is.null`);
+      // Cargar TODOS los items activos (no solo con loggro_id) para poder
+      // hacer fallback por nombre — algunos productos Loggro (Electrolit,
+      // Colgate) no estan linkeados por loggro_id pero SI existen en Atolon
+      // como items independientes con el mismo nombre.
+      const itemsRes: any = await sbFetch(`items_catalogo?select=id,nombre,loggro_id,stock_actual,unidad,locacion_default_id,precio_compra&activo=eq.true`);
       const atolonByLoggro = new Map();
-      for (const it of (Array.isArray(itemsRes) ? itemsRes : [])) atolonByLoggro.set(it.loggro_id, it);
+      const atolonByNombre = new Map<string, any>();
+      for (const it of (Array.isArray(itemsRes) ? itemsRes : [])) {
+        if (it.loggro_id) atolonByLoggro.set(it.loggro_id, it);
+        const n = String(it.nombre || "").trim().toLowerCase();
+        if (n && !atolonByNombre.has(n)) atolonByNombre.set(n, it);
+      }
+      // Fallback: si un product Loggro (Electrolit, Colgate) no tiene link
+      // directo por loggro_id, buscar por nombre entre items ya linkeados
+      // (usualmente hay un ingrediente Loggro con mismo nombre que si esta
+      // linkeado en Atolon). Auditoria 2026-07-18.
+      const resolverAtolon = (loggroId: string, nombreLoggro: string) => {
+        const porId = atolonByLoggro.get(loggroId);
+        if (porId) return porId;
+        const n = String(nombreLoggro || "").trim().toLowerCase();
+        return n ? atolonByNombre.get(n) : null;
+      };
 
       // 3) /orders del dia
       const COTZ = -5 * 3600 * 1000;
@@ -3398,9 +3417,22 @@ serve(async (req) => {
         if (!tipo) continue; // Espera, Cancelada, etc. no descuentan
         if (!pCat) { productosSinReceta++; sinRecetaSet.add(productName); continue; }
         const ings = pCat.ingredients || [];
-        if (ings.length === 0) {
+        // Auditoria 2026-07-18: caso especial — el producto tiene UNA sola
+        // linea de receta que se auto-referencia (ej. Electrolit → Electrolit
+        // qty=1). Patron Loggro para bebidas/snacks embotellados que descuentan
+        // 1 del propio stock. Tratar igual que producto simple.
+        const soloAutoRef = ings.length === 1 && (() => {
+          const d = ings[0];
+          const subId = typeof d.ingredient === "string" ? d.ingredient : d.ingredient?._id;
+          return subId === pCat._id;
+        })();
+        // Skip productos de servicio (transporte, castillete) que no tienen
+        // inventario (auditoria 2026-07-18 fix C).
+        const esServicio = /^(transporte|castillete)/i.test(productName);
+        if (esServicio) continue;
+        if (ings.length === 0 || soloAutoRef) {
           // Producto simple (bebida, ingrediente puro) — descuenta a si mismo si tiene item Atolon
-          const atolonIt = atolonByLoggro.get(pCat._id);
+          const atolonIt = resolverAtolon(pCat._id, pCat.name);
           if (!atolonIt) { ingredientesSinAtolon++; sinAtolonSet.add(pCat.name); continue; }
           // Regla operativa: las ventas de bar salen del Bar fisico (LOC-BAR),
           // no del Almacen Bar. El Almacen Bar es solo bodega — se transfiere
@@ -3448,9 +3480,34 @@ serve(async (req) => {
           }
           const nextVisited = new Set(visited); nextVisited.add(loggroId);
           const ingObj = loggroMap[loggroId];
-          if (!ingObj) { ingredientesSinAtolon++; sinAtolonSet.add(`${path}:${loggroId}`); return; }
+          // Auditoria 2026-07-18: si el ingrediente no viene en el listing de
+          // Loggro (categoria inactiva, filtro onlyIngredient, etc.) pero SI
+          // esta en Atolon linkeado por loggro_id → tratarlo como leaf directo.
+          // Sin esto, ingredientes que existen en Atolon quedan como huerfanos
+          // solo porque su categoria Loggro esta desactivada.
+          if (!ingObj) {
+            const fallbackAt = atolonByLoggro.get(loggroId);
+            if (fallbackAt) {
+              const defaultLoc = fallbackAt.locacion_default_id;
+              if (!defaultLoc) { sinAlmacenDefault++; sinAlmacenSet.add(fallbackAt.nombre || fallbackAt.id); return; }
+              const almacenId = defaultLoc === "LOC-ALMACEN-BAR" ? "LOC-BAR" : defaultLoc;
+              movimientos.push({
+                id: `MOV-${crypto.randomUUID().slice(0, 8)}`,
+                tipo, item_id: fallbackAt.id, cantidad: qtyEnUnidadDeIngObj,
+                unidad: fallbackAt.unidad, precio_unit: Number(fallbackAt.precio_compra) || 0,
+                almacen_id: almacenId, origen_tipo: "loggro_order", origen_id: o._id,
+                loggro_ref: `order:${o._id}:${loggroId}`, fecha: o.createdOn,
+                usuario_email: "auto-loggro@sistema.atolon",
+                notas: `${productName} · ${path}→${fallbackAt.nombre} x${cant} — mesa ${mesaNom || "?"}`,
+              });
+              const key = `${fallbackAt.id}|${almacenId}`;
+              stockPorAlmacen.set(key, (stockPorAlmacen.get(key) || 0) - qtyEnUnidadDeIngObj);
+              return;
+            }
+            ingredientesSinAtolon++; sinAtolonSet.add(`${path}:${loggroId}`); return;
+          }
           const nombre = ingObj.name || loggroId;
-          const atolonIt = atolonByLoggro.get(loggroId);
+          const atolonIt = resolverAtolon(loggroId, ingObj.name);
           if (atolonIt) {
             // LEAF: descontar del stock Atolón. Convertir la unidad del
             // ingObj (Loggro) a la de Atolón.
@@ -3516,6 +3573,37 @@ serve(async (req) => {
           const ingId = ingObj?._id || (typeof def.ingredient === "string" ? def.ingredient : null);
           const ingQty = Number(def.quantity) || 0;
           if (!ingId || !ingQty) continue;
+          // Auto-referencia del producto → descuenta como leaf del propio pCat.
+          // Auditoria 2026-07-18: patron Loggro comun para bebidas/snacks
+          // embotellados (Electrolit, CLUB COLOMBIA, Colgate, etc.). En vez de
+          // recursar con ciclo, tratar como descuento directo del producto en
+          // Atolon (linkeado por loggro_id del producto Loggro).
+          if (ingId === pCat._id) {
+            const atolonIt = resolverAtolon(pCat._id, pCat.name);
+            if (!atolonIt) { ingredientesSinAtolon++; sinAtolonSet.add(pCat.name); continue; }
+            const defaultLoc = atolonIt.locacion_default_id;
+            if (!defaultLoc) { sinAlmacenDefault++; sinAlmacenSet.add(atolonIt.nombre || atolonIt.id); continue; }
+            const almacenId = defaultLoc === "LOC-ALMACEN-BAR" ? "LOC-BAR" : defaultLoc;
+            const totalQty = cant * ingQty;
+            movimientos.push({
+              id: `MOV-${crypto.randomUUID().slice(0, 8)}`,
+              tipo,
+              item_id: atolonIt.id,
+              cantidad: totalQty,
+              unidad: atolonIt.unidad,
+              precio_unit: Number(atolonIt.precio_compra) || Number(o.unit_price) || 0,
+              almacen_id: almacenId,
+              origen_tipo: "loggro_order",
+              origen_id: o._id,
+              loggro_ref: `order:${o._id}:${pCat._id}`,
+              fecha: o.createdOn,
+              usuario_email: "auto-loggro@sistema.atolon",
+              notas: `Venta Loggro (auto-ref): ${productName} x${cant} (mesa ${mesaNom || "?"})`,
+            });
+            const key = `${atolonIt.id}|${almacenId}`;
+            stockPorAlmacen.set(key, (stockPorAlmacen.get(key) || 0) - totalQty);
+            continue;
+          }
           // Entrada al arbol recursivo. cant = # de platos vendidos.
           // ingQty = amount del ingrediente por plato (en unidad del ingrediente).
           expandRecipe(ingId, cant * ingQty, 0, new Set(), productName);
