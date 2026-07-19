@@ -1892,13 +1892,21 @@ function EditarOCModal({ oc, ordenes = [], onClose, reload, currentUser }) {
 
       // Cascada: si se removieron items, filtrar factura_data, cotizacion_resp_data
       // y recibidos para que no queden lineas huerfanas. Match por item_id (fuente
-      // primaria) o por nombre normalizado como fallback.
+      // primaria) o por nombre/nombre_original normalizado como fallback (auditoria
+      // 2026-07-18: nombre_original conserva el nombre del catalogo cuando el
+      // proveedor renombra).
       const norm = s => String(s || "").trim().toLowerCase();
       const keepIds = new Set(items.map(x => x.item_id).filter(Boolean));
-      const keepNames = new Set(items.map(x => norm(x.nombre)).filter(Boolean));
+      const keepNames = new Set([
+        ...items.map(x => norm(x.nombre)),
+        ...items.map(x => norm(x.nombre_original)),
+        ...items.map(x => norm(x.nombre_proveedor)),
+      ].filter(Boolean));
       const keepItem = (x) => {
         if (x?.item_id && keepIds.has(x.item_id)) return true;
         if (x?.nombre && keepNames.has(norm(x.nombre))) return true;
+        if (x?.nombre_original && keepNames.has(norm(x.nombre_original))) return true;
+        if (x?.nombre_anterior && keepNames.has(norm(x.nombre_anterior))) return true;
         if (x?.descripcion && keepNames.has(norm(x.descripcion))) return true;
         return false;
       };

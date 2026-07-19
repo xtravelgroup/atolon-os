@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { B, COP, fmtFecha } from "../brand";
 import { supabase } from "../lib/supabase";
+import { transferirStock } from "../lib/inventario";
 import { logAccion } from "../lib/logAccion";
 import MovimientosItem from "../components/MovimientosItem";
 import ItemDetailModal from "../components/ItemDetailModal";
@@ -352,51 +353,34 @@ function NewTransferModal({ locaciones, items, itemsById, stockMap, userEmail, o
     }
     setBusy(true); setErr(null);
 
-    const transferId = `TRF-${Date.now()}`;
-    const nowIso = new Date().toISOString();
-
-    // Insertar 2 movs por item (salida en origen, entrada en destino)
-    const movs = [];
-    for (const x of validos) {
-      const it = itemsById.get(x.item_id);
-      movs.push(
-        { id: `MOV-TRF-${transferId}-${x.item_id}-out`, tipo: "salida_transferencia", item_id: x.item_id,
-          cantidad: Number(x.cantidad), unidad: x.unidad, almacen_id: origen,
-          origen_tipo: "transferencia_manual", origen_id: transferId, fecha: nowIso,
-          usuario_email: userEmail, notas: notas.trim() || `Transferencia manual → ${it?.nombre}` },
-        { id: `MOV-TRF-${transferId}-${x.item_id}-in`, tipo: "entrada_transferencia", item_id: x.item_id,
-          cantidad: Number(x.cantidad), unidad: x.unidad, almacen_id: destino,
-          origen_tipo: "transferencia_manual", origen_id: transferId, fecha: nowIso,
-          usuario_email: userEmail, notas: notas.trim() || `Transferencia manual ← ${it?.nombre}` },
-      );
-    }
-    const { error: movErr } = await supabase.from("movimientos_inventario_atolon").insert(movs);
-    if (movErr) { setErr("Error insertando movimientos: " + movErr.message); setBusy(false); return; }
-
-    // Actualizar items_stock_locacion — restar origen, sumar destino
-    for (const x of validos) {
-      const cant = Number(x.cantidad);
-      const { data: rowOrig } = await supabase.from("items_stock_locacion")
-        .select("cantidad").eq("item_id", x.item_id).eq("locacion_id", origen).single();
-      await supabase.from("items_stock_locacion").update({
-        cantidad: (Number(rowOrig?.cantidad) || 0) - cant, updated_at: nowIso,
-      }).eq("item_id", x.item_id).eq("locacion_id", origen);
-
-      const { data: rowDest } = await supabase.from("items_stock_locacion")
-        .select("cantidad").eq("item_id", x.item_id).eq("locacion_id", destino).maybeSingle();
-      if (rowDest) {
-        await supabase.from("items_stock_locacion").update({
-          cantidad: (Number(rowDest.cantidad) || 0) + cant, updated_at: nowIso,
-        }).eq("item_id", x.item_id).eq("locacion_id", destino);
-      } else {
-        await supabase.from("items_stock_locacion").insert({
-          item_id: x.item_id, locacion_id: destino, cantidad: cant, updated_at: nowIso,
+    // Cada transferencia va por la funcion unificada transferirStock (atomica
+    // via RPC ajustar_stock_locacion). Auditoria 2026-07-18: antes escribiamos
+    // movs + stock_locacion inline con SELECT+UPDATE no atomico.
+    try {
+      const transferIds = [];
+      for (const x of validos) {
+        const it = itemsById.get(x.item_id);
+        const { transferId } = await transferirStock({
+          itemId: x.item_id,
+          origen,
+          destino,
+          cantidad: Number(x.cantidad),
+          unidad: x.unidad,
+          motivo: notas.trim() || `Transferencia manual · ${it?.nombre || x.item_id}`,
+          usuarioEmail: userEmail,
         });
+        transferIds.push(transferId);
       }
+      logAccion({
+        modulo: "almacenes", accion: "transferencia_manual",
+        tabla: "movimientos_inventario_atolon", registroId: transferIds.join(","),
+        datosDespues: { origen, destino, items: validos.map(x => ({ item_id: x.item_id, cantidad: Number(x.cantidad) })) },
+      });
+    } catch (e) {
+      setErr("Error en transferencia: " + e.message);
+      setBusy(false);
+      return;
     }
-
-    logAccion({ modulo: "almacenes", accion: "transferencia_manual", tabla: "movimientos_inventario_atolon", registroId: transferId,
-      datosDespues: { origen, destino, items: validos.map(x => ({ item_id: x.item_id, cantidad: Number(x.cantidad) })) } });
     onSaved();
   };
 

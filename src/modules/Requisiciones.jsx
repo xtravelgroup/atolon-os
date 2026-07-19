@@ -36,6 +36,34 @@ const BTN = (bg, color = "#fff") => ({ padding: "8px 14px", borderRadius: 8, bor
 
 function uid() { return Math.random().toString(36).slice(2, 11); }
 
+// Genera un codigo OC unico usando la RPC server-side siguiente_codigo_oc.
+// Retorna null si falla — el caller decide fallback (usualmente propagar error).
+// Auditoria 2026-07-18: antes se generaba client-side con ordenes.length+1 →
+// colision concurrente entre usuarios. Ahora hay UNIQUE INDEX en DB + esta RPC.
+async function generarCodigoOC() {
+  const { data, error } = await supabase.rpc("siguiente_codigo_oc");
+  if (error || !data) throw new Error("No se pudo generar codigo OC: " + (error?.message || "sin data"));
+  return data;
+}
+
+// Inserta una OC con retry ante violacion de unique index (23505). Necesario
+// cuando dos usuarios generan OC simultaneamente y ambos obtienen el mismo
+// codigo antes de que uno inserte.
+async function insertOCConCodigo(payload, maxRetries = 5) {
+  for (let i = 0; i < maxRetries; i++) {
+    const codigo = await generarCodigoOC();
+    const { data, error } = await supabase
+      .from("ordenes_compra")
+      .insert({ ...payload, codigo })
+      .select()
+      .single();
+    if (!error) return { data, codigo };
+    if (error.code !== "23505") throw error; // no es duplicado — burbujear
+    await new Promise(r => setTimeout(r, 30 + Math.random() * 50)); // jitter y retry
+  }
+  throw new Error("No se pudo generar codigo OC unico despues de " + maxRetries + " intentos");
+}
+
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 function Badge({ text, bg, color }) {
   return (
@@ -366,24 +394,28 @@ export default function Requisiciones() {
 
     let codigo, ocData;
     {
-      // ── Nueva OC ──
-      codigo = `OC-${new Date().getFullYear()}-${String(ordenes.length + 1).padStart(4, "0")}`;
+      // ── Nueva OC ── codigo generado via RPC server-side con retry (unique idx)
       const items = consolidar((req.items || []).map(it => ({ ...it, req_id: req.id })));
       const subtotal = items.reduce((s, it) => s + (Number(it.subtotal) || 0), 0);
-      const { data, error } = await supabase.from("ordenes_compra").insert({
-        codigo, requisicion_id: req.id,
-        requisicion_ids: [req.id],
-        proveedor_id: provId || null, proveedor_nombre: provNombre || "—",
-        proveedor_nit: prov?.nit || null,
-        proveedor_email: prov?.email || null,
-        proveedor_telefono: prov?.telefono || null,
-        fecha_emision: todayStr(), fecha_entrega: req.fechaNecesaria || null,
-        items, subtotal, iva: 0, total: subtotal,
-        estado: "emitida", emitida_por: currentUser.nombre,
-        notas: req.justificacion || "",
-      }).select().single();
-      if (error) { alert("Error: " + error.message); return; }
-      ocData = data;
+      try {
+        const res = await insertOCConCodigo({
+          requisicion_id: req.id,
+          requisicion_ids: [req.id],
+          proveedor_id: provId || null, proveedor_nombre: provNombre || "—",
+          proveedor_nit: prov?.nit || null,
+          proveedor_email: prov?.email || null,
+          proveedor_telefono: prov?.telefono || null,
+          fecha_emision: todayStr(), fecha_entrega: req.fechaNecesaria || null,
+          items, subtotal, iva: 0, total: subtotal,
+          estado: "emitida", emitida_por: currentUser.nombre,
+          notas: req.justificacion || "",
+        });
+        codigo = res.codigo;
+        ocData = res.data;
+      } catch (e) {
+        alert("Error: " + e.message);
+        return;
+      }
     }
 
     // Marcar ítems de la requisición con oc_id y estado
@@ -3426,19 +3458,24 @@ function DetailModal({ req, onClose, onUpdate, onGenerarOC, proveedores, reglas,
                         }));
                         // Siempre crear OC nueva (sin auto-merge — ver generarOC arriba).
                         newCount++;
-                        const codigo = `OC-${new Date().getFullYear()}-${String((totalOcs || 0) + newCount).padStart(4, "0")}`;
                         const items = consolidar(nuevos);
                         const subtotal = items.reduce((s, it) => s + it.subtotal, 0);
-                        const { error } = await supabase.from("ordenes_compra").insert({
-                          codigo, requisicion_id: req.id,
-                          requisicion_ids: [req.id],
-                          proveedor_id: prov.id, proveedor_nombre: prov.nombre,
-                          proveedor_nit: prov.nit || null, proveedor_email: prov.email || null, proveedor_telefono: prov.telefono || null,
-                          fecha_emision: todayStr(), items, subtotal, iva: 0, total: subtotal,
-                          estado: "emitida", emitida_por: currentUser.nombre,
-                          notas: `División de ${req.id} · ${items.length} ítems`,
-                        });
-                        if (error) { setSplitting(false); return alert("Error: " + error.message); }
+                        let codigo;
+                        try {
+                          const res = await insertOCConCodigo({
+                            requisicion_id: req.id,
+                            requisicion_ids: [req.id],
+                            proveedor_id: prov.id, proveedor_nombre: prov.nombre,
+                            proveedor_nit: prov.nit || null, proveedor_email: prov.email || null, proveedor_telefono: prov.telefono || null,
+                            fecha_emision: todayStr(), items, subtotal, iva: 0, total: subtotal,
+                            estado: "emitida", emitida_por: currentUser.nombre,
+                            notas: `División de ${req.id} · ${items.length} ítems`,
+                          });
+                          codigo = res.codigo;
+                        } catch (e) {
+                          setSplitting(false);
+                          return alert("Error: " + e.message);
+                        }
                         ocsGeneradas.push({ codigo, idxs: g.items.map(x => x._idx), merge: false });
                       }
                       // Marcar items con oc_codigo en la requisición
@@ -4115,28 +4152,44 @@ export function AsignarOCModal({ items, proveedores, ordenes, reqs, currentUser,
     // Consolidar items con mismo nombre + unidad + PRECIO. Si difiere el
     // precio, quedan lineas separadas para no perder el precio nuevo
     // (audit rank 18).
+    // Consolidar por (item_id|precioU) cuando hay item_id — evita fusionar dos
+    // productos distintos con mismo nombre. Fallback a (nombre|unidad|precioU)
+    // para items sin item_id. Auditoria 2026-07-18: antes solo por nombre →
+    // se perdian item_id y loggro_id al asignar desde Mesa (PATH A los
+    // preservaba, PATH B no).
     const consolidar = (lista) => {
       const map = new Map();
       for (const it of lista) {
         const nombre = (it.nombre || it.item || "").trim();
         const unidad = (it.unidad || "").toLowerCase();
         const precioU = Math.round(Number(it.precioU) || 0);
-        const key = `${nombre.toLowerCase()}|${unidad}|${precioU}`;
+        const itemId = it.item_id || null;
+        const loggroId = it.loggro_id || null;
+        const key = itemId
+          ? `id:${itemId}|${precioU}`
+          : `n:${nombre.toLowerCase()}|${unidad}|${precioU}`;
         const reqIds = it.req_id ? [it.req_id] : (it.req_ids || []);
         if (map.has(key)) {
           const ex = map.get(key);
           ex.cant = Number(ex.cant) + (Number(it.cant) || 0);
           ex.subtotal = Math.round(ex.cant * Number(ex.precioU));
           ex.req_ids = [...new Set([...(ex.req_ids || []), ...reqIds])];
+          // Preservar item_id/loggro_id si aparece en una fusion posterior
+          if (!ex.item_id && itemId) ex.item_id = itemId;
+          if (!ex.loggro_id && loggroId) ex.loggro_id = loggroId;
         } else {
           map.set(key, {
-            id: it.item_id || it.id,
-            item: nombre,
+            id: it.id || itemId,
+            item_id: itemId,
+            loggro_id: loggroId,
+            nombre,
+            item: nombre, // legacy alias
             cant: Number(it.cant) || 0,
             unidad: it.unidad,
             precioU,
             subtotal: Math.round(Number(it.subtotal) || (Number(it.cant) || 0) * precioU),
             req_ids: reqIds,
+            nombre_original: it.nombre_original || nombre,
           });
         }
       }
@@ -4152,28 +4205,31 @@ export function AsignarOCModal({ items, proveedores, ordenes, reqs, currentUser,
     let ocIdFinal;
     let codigo;
     if (modo === "nueva") {
-      // Siempre crear OC nueva (sin auto-merge — ver generarOC arriba).
-      codigo = `OC-${new Date().getFullYear()}-${String(ordenes.length + 1).padStart(4, "0")}`;
+      // Siempre crear OC nueva (sin auto-merge). Codigo generado via RPC.
       const subtotal = ocItems.reduce((s, it) => s + it.subtotal, 0);
-      const { data, error } = await supabase.from("ordenes_compra").insert({
-        codigo,
-        proveedor_id: prov.id,
-        proveedor_nombre: prov.nombre,
-        proveedor_nit: prov.nit || null,
-        proveedor_email: prov.email || null,
-        proveedor_telefono: prov.telefono || null,
-        fecha_emision: todayStr(),
-        items: ocItems,
-        subtotal,
-        iva: 0,
-        total: subtotal,
-        estado: "emitida",
-        emitida_por: currentUser.nombre,
-        requisicion_ids: reqIdsConsolidados,
-        notas: `Consolidado desde ${reqIdsConsolidados.join(", ")}`,
-      }).select().single();
-      if (error) { setSaving(false); return alert("Error creando OC: " + error.message); }
-      ocIdFinal = data.id;
+      try {
+        const res = await insertOCConCodigo({
+          proveedor_id: prov.id,
+          proveedor_nombre: prov.nombre,
+          proveedor_nit: prov.nit || null,
+          proveedor_email: prov.email || null,
+          proveedor_telefono: prov.telefono || null,
+          fecha_emision: todayStr(),
+          items: ocItems,
+          subtotal,
+          iva: 0,
+          total: subtotal,
+          estado: "emitida",
+          emitida_por: currentUser.nombre,
+          requisicion_ids: reqIdsConsolidados,
+          notas: `Consolidado desde ${reqIdsConsolidados.join(", ")}`,
+        });
+        codigo = res.codigo;
+        ocIdFinal = res.data.id;
+      } catch (e) {
+        setSaving(false);
+        return alert("Error creando OC: " + e.message);
+      }
     } else {
       // Agregar a OC existente — consolidar con items ya presentes
       const oc = ordenes.find(o => o.id === ocId);

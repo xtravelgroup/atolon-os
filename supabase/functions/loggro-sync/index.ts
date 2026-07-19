@@ -546,6 +546,25 @@ serve(async (req) => {
       }
 
       const SB = sb();
+
+      // Preservar precio_compra existente cuando Loggro devuelve 0. Auditoria
+      // 2026-07-18: sync sobrescribia precio_compra con 0 aunque el operador
+      // hubiera cargado el precio real via factura → costeo se rompia hasta
+      // la proxima recepcion. Ahora leemos precios actuales por loggro_id y
+      // solo sobreescribimos cuando Loggro trae un valor > 0.
+      const loggroIds = all.map((ing: any) => ing._id).filter(Boolean);
+      const existentes = new Map<string, number>();
+      const CHUNK = 500;
+      for (let i = 0; i < loggroIds.length; i += CHUNK) {
+        const chunk = loggroIds.slice(i, i + CHUNK);
+        const { data: rows } = await SB.from("items_catalogo")
+          .select("loggro_id, precio_compra")
+          .in("loggro_id", chunk);
+        for (const r of (rows || [])) {
+          existentes.set(r.loggro_id, Number(r.precio_compra) || 0);
+        }
+      }
+
       const rows = all.map((ing: any) => {
         const catName = ing.category?.name || "Otros";
         const unidad = ing.unit?.name || "Und";
@@ -555,7 +574,10 @@ serve(async (req) => {
         const stockTotal = lsArr.reduce((s, x) => s + (Number(x?.stock) || 0), 0);
         const stockMinTotal = lsArr.reduce((s, x) => s + (Number(x?.stockMinimum) || 0), 0);
         const main = lsArr.find(x => x?.isMain) || lsArr[0] || {};
-        const precioCompra = Number(main.pricePurchase) || Number(ing.pricePurchase) || 0;
+        const precioLoggro = Number(main.pricePurchase) || Number(ing.pricePurchase) || 0;
+        const precioExistente = existentes.get(ing._id) || 0;
+        // Preservar el existente si Loggro trae 0 y ya teniamos un precio real.
+        const precioCompra = precioLoggro > 0 ? precioLoggro : precioExistente;
         return {
           loggro_id: ing._id,
           nombre: ing.name || "Sin nombre",
@@ -576,7 +598,11 @@ serve(async (req) => {
       for (let i = 0; i < rows.length; i += batchSize) {
         await SB.from("items_catalogo").upsert(rows.slice(i, i + batchSize), { onConflict: "loggro_id" });
       }
-      return json({ synced: rows.length, total_loggro: all.length });
+      const preservados = rows.filter(r => {
+        const ex = existentes.get(r.loggro_id) || 0;
+        return ex > 0 && r.precio_compra === ex;
+      }).length;
+      return json({ synced: rows.length, total_loggro: all.length, precios_preservados: preservados });
     }
 
     // ═══ Link menu_items existentes a productos Loggro por NOMBRE ════════

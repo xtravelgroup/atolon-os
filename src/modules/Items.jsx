@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { B, COP, fmtFecha, todayStr } from "../brand";
 import { supabase } from "../lib/supabase";
+import { transferirStock } from "../lib/inventario";
 import { getCart, addToCart, clearCart, onCartChange } from "../lib/requisicionCart";
 import MovimientosItem from "../components/MovimientosItem";
 import ItemDetailModal from "../components/ItemDetailModal";
@@ -2772,19 +2773,13 @@ function TransferenciaModal({ item, locaciones, stockEnLoc, onClose, onSaved }) 
     try {
       const { data: { session } } = await supabase.auth.getSession();
       const email = session?.user?.email || "sistema";
-      const stockTo = stockEnLoc(item.id, toLoc);
-      await supabase.from("items_stock_locacion").upsert({
-        item_id: item.id, locacion_id: fromLoc,
-        cantidad: stockFrom - cantNum, updated_at: new Date().toISOString(),
-      }, { onConflict: "item_id,locacion_id" });
-      await supabase.from("items_stock_locacion").upsert({
-        item_id: item.id, locacion_id: toLoc,
-        cantidad: stockTo + cantNum, updated_at: new Date().toISOString(),
-      }, { onConflict: "item_id,locacion_id" });
-      await supabase.from("items_transferencias").insert({
-        id: `TR-${Date.now()}`, item_id: item.id,
-        from_locacion_id: fromLoc, to_locacion_id: toLoc,
-        cantidad: cantNum, motivo: motivo || null, usuario_email: email,
+      // Auditoria 2026-07-18: antes solo escribiamos items_stock_locacion +
+      // items_transferencias, sin movs → MovimientosItem no reflejaba estas
+      // transferencias. Ahora todo va por transferirStock (RPC atomica).
+      await transferirStock({
+        itemId: item.id, origen: fromLoc, destino: toLoc,
+        cantidad: cantNum, unidad: item.unidad,
+        motivo: motivo || null, usuarioEmail: email,
       });
       onSaved();
     } catch (e) { setErr(e.message); }
@@ -2803,23 +2798,15 @@ function TransferenciaModal({ item, locaciones, stockEnLoc, onClose, onSaved }) 
     try {
       const { data: { session } } = await supabase.auth.getSession();
       const email = session?.user?.email || "sistema";
-      // Restar todo de origen en una sola operación
-      await supabase.from("items_stock_locacion").upsert({
-        item_id: item.id, locacion_id: fromLoc,
-        cantidad: stockFrom - total, updated_at: new Date().toISOString(),
-      }, { onConflict: "item_id,locacion_id" });
-      // Sumar a cada destino + registrar 1 transferencia por destino
+      // Ejecutar cada transferencia individualmente via la RPC atomica.
+      // Cada destino queda como un TRF separado en items_transferencias +
+      // sus 2 movs (salida en fromLoc + entrada en el destino).
+      const motivoBase = motivo || `Distribución masiva (${movs.length} destinos)`;
       for (const m of movs) {
-        const stockTo = stockEnLoc(item.id, m.loc);
-        await supabase.from("items_stock_locacion").upsert({
-          item_id: item.id, locacion_id: m.loc,
-          cantidad: stockTo + m.cant, updated_at: new Date().toISOString(),
-        }, { onConflict: "item_id,locacion_id" });
-        await supabase.from("items_transferencias").insert({
-          id: `TR-${Date.now()}-${m.loc.slice(-6)}`,
-          item_id: item.id, from_locacion_id: fromLoc, to_locacion_id: m.loc,
-          cantidad: m.cant, motivo: motivo || `Distribución masiva (${movs.length} destinos)`,
-          usuario_email: email,
+        await transferirStock({
+          itemId: item.id, origen: fromLoc, destino: m.loc,
+          cantidad: m.cant, unidad: item.unidad,
+          motivo: motivoBase, usuarioEmail: email,
         });
       }
       onSaved();
