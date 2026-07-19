@@ -1572,31 +1572,57 @@ function RecepcionOCModal({ oc, reqs, onClose, reload, currentUser, readOnly = f
       .then(({ data }) => setCatalogo(data || []));
   }, [oc.id, oc.requisicion_id]);
 
-  // Enriquecer recibidos cuando catalogo cargue: 3 niveles de match
-  // 1) Exact match (case-insensitive)
-  // 2) Substring match (catálogo contenido en nombre OC, o viceversa)
-  // 3) Si no hay match, queda sin loggro_id y el usuario podrá vincular manual
+  // Enriquecer recibidos cuando catalogo cargue. Estrategia en orden:
+  //   A) Si r.item_id apunta a un item de catalogo con loggro_id → usar ese loggro_id
+  //   B) Match por nombre (exact / substring / substring inverso) contra items
+  //      del catalogo QUE TENGAN loggro_id — priorizamos entradas linkeadas
+  //   C) Fallback: mismo match por nombre pero permitiendo entradas sin loggro
+  //      (asi al menos el item_id queda ligado al catalogo)
   useEffect(() => {
     if (catalogo.length === 0) return;
     const norm = (s) => (s || "").toLowerCase().trim();
     setRecibidos(prev => prev.map(r => {
       if (r.item_id && r.loggro_id) return r;
+
+      // A) item_id ya set → buscar el catalogo entry y tomar su loggro_id
+      if (r.item_id && !r.loggro_id) {
+        const cat = catalogo.find(c => c.id === r.item_id);
+        if (cat?.loggro_id) return { ...r, loggro_id: cat.loggro_id };
+        // item_id apunta a algo sin loggro → seguimos a match por nombre
+      }
+
       const nombreItem = norm(r.nombre || r.item);
       if (!nombreItem) return r;
-      // 1) Exact match
-      let match = catalogo.find(c => norm(c.nombre) === nombreItem);
-      // 2) Substring: nombre catálogo contenido en nombre OC (e.g. ARRACHERA en ARRACHERA CAB)
-      if (!match) match = catalogo.find(c => {
+
+      // B) Match por nombre en catalogo QUE TENGA loggro_id
+      const conLoggro = catalogo.filter(c => c.loggro_id);
+      let match = conLoggro.find(c => norm(c.nombre) === nombreItem);
+      if (!match) match = conLoggro.find(c => {
         const cn = norm(c.nombre);
         return cn.length >= 4 && nombreItem.includes(cn);
       });
-      // 3) Substring inverso: nombre OC contenido en catálogo
-      if (!match) match = catalogo.find(c => {
+      if (!match) match = conLoggro.find(c => {
         const cn = norm(c.nombre);
         return nombreItem.length >= 4 && cn.includes(nombreItem);
       });
+
+      // C) Si no hay match con loggro, aceptar sin loggro (solo linkea item_id)
+      if (!match) {
+        match = catalogo.find(c => norm(c.nombre) === nombreItem);
+        if (!match) match = catalogo.find(c => {
+          const cn = norm(c.nombre);
+          return cn.length >= 4 && nombreItem.includes(cn);
+        });
+      }
+
       if (match) {
-        return { ...r, item_id: r.item_id || match.id, loggro_id: r.loggro_id || match.loggro_id };
+        return {
+          ...r,
+          // Si el nuevo match tiene loggro_id, sobreescribimos item_id
+          // tambien para que ambos apunten al mismo catalogo entry
+          item_id: match.loggro_id ? match.id : (r.item_id || match.id),
+          loggro_id: r.loggro_id || match.loggro_id || null,
+        };
       }
       return r;
     }));
