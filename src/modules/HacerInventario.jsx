@@ -11,6 +11,7 @@ export default function HacerInventario() {
   const [locaciones, setLocaciones] = useState([]);
   const [locId, setLocId] = useState("");
   const [items, setItems] = useState([]);
+  const [categorias, setCategorias] = useState([]); // items_categorias: nombre → grupo
   const [stockPorLoc, setStockPorLoc] = useState({});
   const [conteos, setConteos] = useState({}); // { item_id: cantidad_contada }
   const [search, setSearch] = useState("");
@@ -76,11 +77,15 @@ export default function HacerInventario() {
       }
       return rows;
     };
-    const [iR, sRows] = await Promise.all([
+    const [iR, sRows, cR] = await Promise.all([
       supabase.from("items_catalogo").select("id, nombre, codigo, categoria, unidad").eq("activo", true).order("nombre"),
       traerStock(),
+      // Categorías con grupo macro (Alimentos/Bar/Otros) — necesario para
+      // filtrar por bodega: LOC-ALMACEN-BAR solo muestra items del grupo Bar.
+      supabase.from("items_categorias").select("nombre, grupo"),
     ]);
     setItems(iR.data || []);
+    setCategorias(cR.data || []);
     const map = {};
     sRows.forEach(s => { map[`${s.item_id}|${s.locacion_id}`] = Number(s.cantidad) || 0; });
     setStockPorLoc(map);
@@ -179,11 +184,33 @@ export default function HacerInventario() {
     return Array.from(set).sort();
   }, [items]);
 
-  // Items que pertenecen a la bodega activa (tienen fila en items_stock_locacion para locId)
+  // Mapa nombre_categoria → grupo (Alimentos / Bar / Otros)
+  const grupoPorCategoria = useMemo(() => {
+    const m = {};
+    categorias.forEach(c => { m[c.nombre] = c.grupo || "Otros"; });
+    return m;
+  }, [categorias]);
+
+  // Bodegas dedicadas a un grupo específico — usamos esto como filtro de
+  // refuerzo para que aparezcan solo items del grupo correcto de la bodega,
+  // aunque haya filas stockPorLoc históricas con cantidad 0 de otro grupo.
+  const GRUPO_POR_LOCACION = {
+    "LOC-BAR": "Bar",
+    "LOC-ALMACEN-BAR": "Bar",
+    "LOC-ALMACEN-COCINA": "Alimentos",
+  };
+
+  // Items que pertenecen a la bodega activa: tienen fila en items_stock_locacion
+  // Y (si la bodega es dedicada a un grupo) la categoría coincide con ese grupo.
   const itemsBodega = useMemo(() => {
     if (!locId) return [];
-    return items.filter(i => stockPorLoc[`${i.id}|${locId}`] !== undefined);
-  }, [items, stockPorLoc, locId]);
+    const grupoEsperado = GRUPO_POR_LOCACION[locId];
+    return items.filter(i => {
+      if (stockPorLoc[`${i.id}|${locId}`] === undefined) return false;
+      if (grupoEsperado && grupoPorCategoria[i.categoria] !== grupoEsperado) return false;
+      return true;
+    });
+  }, [items, stockPorLoc, locId, grupoPorCategoria]);
 
   const filtered = useMemo(() => {
     let list;
@@ -192,8 +219,11 @@ export default function HacerInventario() {
       // (un item pudo haberse contado aunque no esté oficialmente en esta bodega)
       list = items.filter(i => conteos[i.id] !== undefined && conteos[i.id] !== "");
     } else {
-      // Por defecto trabajamos con los items asignados a esta bodega
-      list = itemsBodega.length > 0 ? itemsBodega : items;
+      // Por defecto trabajamos con SOLO los items asignados a esta bodega.
+      // Antes había un fallback a `items` (todos) cuando itemsBodega venía
+      // vacío — eso hacía que aparecieran productos de cocina al hacer
+      // inventario del bar. Se elimina: si la bodega no tiene items, lista vacía.
+      list = itemsBodega;
       if (filterModo === "pendientes") list = list.filter(i => conteos[i.id] === undefined || conteos[i.id] === "");
     }
     if (catFilter !== "todos") list = list.filter(i => i.categoria === catFilter);
