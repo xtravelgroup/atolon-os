@@ -63,6 +63,8 @@ export default function PoolService() {
   const [items, setItems]     = useState([]);
   const [pedidos, setPedidos] = useState([]);
   const [reservasHoy, setReservasHoy] = useState([]); // reservas/pasadías del día
+  const [meseros, setMeseros] = useState([]);         // empleados con portal_mesero=true
+  const [meseroSel, setMeseroSel] = useState(""); // loggro_id del mesero elegido para el pedido
   const [loading, setLoading] = useState(true);
   // Tab por defecto = "nuevo" → muestra el plano de la piscina como landing.
   // Los meseros entran y lo primero que ven es el floor plan para tocar la mesa.
@@ -70,7 +72,7 @@ export default function PoolService() {
 
   const load = async () => {
     setLoading(true);
-    const [a, i, p, rh, ll] = await Promise.all([
+    const [a, i, p, rh, ll, ms] = await Promise.all([
       supabase.from("pool_service_areas").select("*").eq("activo", true).order("orden").order("nombre"),
       // Pool Service usa los menús "restaurant" y "bebidas" del módulo de Productos
       // — fuente única de verdad, ya sincronizado con Loggro. Aquí NO se gestiona
@@ -99,6 +101,12 @@ export default function PoolService() {
         .eq("tipo", "a_consumo")
         .neq("estado", "cancelado")
         .order("hora_llegada"),
+      // Meseros habilitados — para atribuir el pedido en Loggro con `seller`.
+      // Sin esto, todo cae al usuario que hizo login (ej. "Eric" admin).
+      supabase.from("empleados_loggro")
+        .select("id, loggro_id, nombre_completo, nombres, apellidos")
+        .eq("portal_mesero", true)
+        .order("nombre_completo"),
     ]);
     setAreas(a.data || []);
     setItems(i.data || []);
@@ -116,6 +124,7 @@ export default function PoolService() {
       telefono: null,
     }));
     setReservasHoy([...(rh.data || []), ...llegadasMapped]);
+    setMeseros(ms.data || []);
     setLoading(false);
   };
   useEffect(() => { load(); }, []);
@@ -161,11 +170,21 @@ export default function PoolService() {
   // Para spots de Piscina: usa floorplan_spots.loggro_mesa_id como destino.
   // Si el spot no tiene mapeo a Loggro, alerta al operador para que lo
   // configure (Floor Plan → spot → "Mesa Loggro").
-  const enviarALoggro = async (pedido) => {
+  const enviarALoggro = async (pedido, meseroOverride) => {
     if (!pedido?.spot_id) {
       alert("Este pedido no tiene un spot del floor plan asignado.\nNo se puede enviar a Loggro.");
       return;
     }
+    // Mesero atribuido: viene del pedido (guardado) o del override que pasa
+    // NuevoPedido después del insert. Solo mandamos seller si es ObjectId
+    // 24-hex — cédulas no son válidas y disparan warning en el endpoint.
+    const mesero = meseroOverride || meseros.find(m => m.id === pedido.mesero_id) || null;
+    const sellerId = mesero?.loggro_id;
+    const sellerObjectId = (typeof sellerId === "string" && /^[0-9a-fA-F]{24}$/.test(sellerId))
+      ? sellerId : undefined;
+    const meseroNombre = mesero?.nombre_completo
+      || [mesero?.nombres, mesero?.apellidos].filter(Boolean).join(" ").trim()
+      || null;
     // 1) Resolver loggro_mesa_id desde floorplan_spots
     const { data: spot, error: spotErr } = await supabase.from("floorplan_spots")
       .select("id, loggro_mesa_id").eq("id", pedido.spot_id).maybeSingle();
@@ -207,9 +226,11 @@ export default function PoolService() {
         },
         body: JSON.stringify({
           mesaId:    spot.loggro_mesa_id,
+          seller:    sellerObjectId,
           // Por privacidad: NO enviamos el nombre del huésped a Loggro.
           // El nombre vive sólo en Pool Service (floorplan_asignaciones).
-          groupName: `Pool Service · ${pedido.spot_id}`,
+          // Sí incluimos el nombre del mesero para trazabilidad en comanda.
+          groupName: `Pool · ${pedido.spot_id}${meseroNombre ? " · " + meseroNombre : ""}`,
           items,
         }),
       });
@@ -276,7 +297,7 @@ export default function PoolService() {
         <Kanban pedidos={pedidos} cambiarEstado={cambiarEstado} enviarALoggro={enviarALoggro} isMobile={isMobile} />
       )}
       {tab === "nuevo" && (
-        <NuevoPedido areas={areas} items={items} reservasHoy={reservasHoy} onSaved={() => { setTab("pedidos"); load(); }} enviarALoggro={enviarALoggro} isMobile={isMobile} />
+        <NuevoPedido areas={areas} items={items} reservasHoy={reservasHoy} meseros={meseros} meseroSel={meseroSel} setMeseroSel={setMeseroSel} onSaved={() => { setTab("pedidos"); load(); }} enviarALoggro={enviarALoggro} isMobile={isMobile} />
       )}
       {tab === "areas" && (
         <AreasManager areas={areas} onChanged={load} />
@@ -637,7 +658,7 @@ function todayBogota() {
   return new Date().toLocaleString("en-CA", { timeZone: "America/Bogota" }).slice(0, 10);
 }
 
-function NuevoPedido({ areas, items, reservasHoy = [], onSaved, enviarALoggro, isMobile }) {
+function NuevoPedido({ areas, items, reservasHoy = [], meseros = [], meseroSel = "", setMeseroSel, onSaved, enviarALoggro, isMobile }) {
   // Flujo: 1) mesero toca el spot en el floor plan → 2) llena pedido → 3) envía.
   // El spot puede ser de la Piscina (floorplan_spots) o un área tradicional
   // (pool_service_areas) para zonas que aún no tienen floor plan visual (beach, cabañas).
@@ -790,7 +811,12 @@ function NuevoPedido({ areas, items, reservasHoy = [], onSaved, enviarALoggro, i
   const guardar = async ({ enviarLoggro = false } = {}) => {
     if (!destinoOk)           return alert("Selecciona un spot (cama / PS) o un área");
     if (carrito.length === 0) return alert("Agrega al menos un ítem");
+    if (enviarLoggro && !meseroSel) return alert("Selecciona el mesero que toma la orden");
     setSaving(true);
+    const meseroObj = meseros.find(m => m.id === meseroSel) || null;
+    const meseroNombre = meseroObj?.nombre_completo
+      || [meseroObj?.nombres, meseroObj?.apellidos].filter(Boolean).join(" ").trim()
+      || null;
     const codigo = `PS-${Date.now()}`;
     const payload = {
       codigo,
@@ -801,7 +827,8 @@ function NuevoPedido({ areas, items, reservasHoy = [], onSaved, enviarALoggro, i
       total:       subtotal,
       notas:       notas || null,
       estado:      "recibido",
-      creado_por:  "staff",
+      creado_por:  meseroNombre || "staff",
+      mesero_id:   meseroSel || null,
       reserva_id:  reservaSelId || asignSel?.reserva_id || null,
     };
     if (spotSel) {
@@ -827,8 +854,10 @@ function NuevoPedido({ areas, items, reservasHoy = [], onSaved, enviarALoggro, i
 
     // Si el operador pulsó "Crear y enviar a Loggro", dispara el envío a cocina.
     // Sólo aplica para spots (los de área tradicional usan el flujo legacy).
+    // Pasamos el objeto mesero como override — el pedido recién insertado
+    // ya trae mesero_id, pero el override evita otra query.
     if (enviarLoggro && inserted && spotSel && typeof enviarALoggro === "function") {
-      await enviarALoggro(inserted);
+      await enviarALoggro(inserted, meseroObj);
     }
     setSaving(false);
     onSaved?.();
@@ -915,6 +944,31 @@ function NuevoPedido({ areas, items, reservasHoy = [], onSaved, enviarALoggro, i
           )}
         </div>
       </div>
+
+      {/* Mesero que toma la orden — obligatorio para atribuir la venta en Loggro.
+          Sin esto todo se factura al usuario admin logueado (Eric) en el POS. */}
+      {meseros.length > 0 && (
+        <div style={{
+          background: meseroSel ? B.navyMid : "rgba(232,160,32,0.14)",
+          border: `1.5px solid ${meseroSel ? B.navyLight : B.warning}`,
+          borderRadius: 10, padding: "10px 14px", marginBottom: 12,
+          display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap",
+        }}>
+          <div style={{ fontSize: 11, color: meseroSel ? "rgba(255,255,255,0.5)" : B.warning, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.06em", minWidth: 80 }}>
+            🧑‍🍳 Mesero {!meseroSel && "*"}
+          </div>
+          <select value={meseroSel} onChange={e => setMeseroSel?.(e.target.value)}
+            style={{ ...IS, flex: 1, minWidth: 200 }}>
+            <option value="">— ¿Quién toma la orden? —</option>
+            {meseros.map(m => {
+              const nombre = m.nombre_completo
+                || [m.nombres, m.apellidos].filter(Boolean).join(" ").trim()
+                || m.loggro_id;
+              return <option key={m.id} value={m.id}>{nombre}</option>;
+            })}
+          </select>
+        </div>
+      )}
 
       {/* Aviso de alergias / restricciones — full width, MUY visible */}
       {yaAsignado && asignSel?.notas && (
