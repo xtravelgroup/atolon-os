@@ -11,7 +11,7 @@ export default function HacerInventario() {
   const [locaciones, setLocaciones] = useState([]);
   const [locId, setLocId] = useState("");
   const [items, setItems] = useState([]);
-  const [categorias, setCategorias] = useState([]); // items_categorias: nombre → grupo
+  const [categoriasCatalogo, setCategoriasCatalogo] = useState([]); // items_categorias: nombre → grupo
   const [stockPorLoc, setStockPorLoc] = useState({});
   const [conteos, setConteos] = useState({}); // { item_id: cantidad_contada }
   const [search, setSearch] = useState("");
@@ -85,7 +85,7 @@ export default function HacerInventario() {
       supabase.from("items_categorias").select("nombre, grupo"),
     ]);
     setItems(iR.data || []);
-    setCategorias(cR.data || []);
+    setCategoriasCatalogo(cR.data || []);
     const map = {};
     sRows.forEach(s => { map[`${s.item_id}|${s.locacion_id}`] = Number(s.cantidad) || 0; });
     setStockPorLoc(map);
@@ -187,9 +187,9 @@ export default function HacerInventario() {
   // Mapa nombre_categoria → grupo (Alimentos / Bar / Otros)
   const grupoPorCategoria = useMemo(() => {
     const m = {};
-    categorias.forEach(c => { m[c.nombre] = c.grupo || "Otros"; });
+    categoriasCatalogo.forEach(c => { m[c.nombre] = c.grupo || "Otros"; });
     return m;
-  }, [categorias]);
+  }, [categoriasCatalogo]);
 
   // Bodegas dedicadas a un grupo específico — usamos esto como filtro de
   // refuerzo para que aparezcan solo items del grupo correcto de la bodega,
