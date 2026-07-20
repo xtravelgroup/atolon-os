@@ -19,6 +19,9 @@ const ESTADOS = {
   libre:      { color: B.success,  bg: B.success + "22", icon: "○" },
   reservado:  { color: B.sky,      bg: B.sky + "22",     icon: "⏰" },
   ocupado:    { color: B.danger,   bg: B.danger + "22",  icon: "●" },
+  // Alias "ocupada" (MeseroPortal escribe así). Sin esto el picker pinta
+  // la cama como libre aunque tenga huésped, y esconde el badge de estado.
+  ocupada:    { color: B.danger,   bg: B.danger + "22",  icon: "●" },
   limpieza:   { color: B.warning,  bg: B.warning + "22", icon: "✧" },
   bloqueado:  { color: B.muted,    bg: B.navyLight,      icon: "✕" },
 };
@@ -113,7 +116,7 @@ export default function PoolFloorPlanPicker({
   // scroll horizontal — el mesero reconoce la ubicación física aunque sea chico.
   const isLg = size === "lg";
   const SIZES = isMobile
-    ? { camaW: 40,  camaH: 44, gap: 4,  pad: 8,  poolH: 260, fontSpot: 9,  fontHuesped: 0  }
+    ? { camaW: 44,  camaH: 52, gap: 4,  pad: 8,  poolH: 300, fontSpot: 9,  fontHuesped: 7  }
     : isLg
     ? { camaW: 100, camaH: 76, gap: 10, pad: 24, poolH: 480, fontSpot: 16, fontHuesped: 11 }
     : { camaW: 60,  camaH: 50, gap: 6,  pad: 16, poolH: 340, fontSpot: 11, fontHuesped: 9  };
@@ -353,15 +356,16 @@ function Spot({ spot, asign, selected, showEstadoColor, onClick, sizes }) {
       <div style={{ fontSize: SZ.fontSpot, fontWeight: 800, color: showEstadoColor ? cfg.color : B.white, letterSpacing: "0.04em" }}>
         {spot.id}
       </div>
-      {/* Nombre del huésped — oculto en teléfono (fontHuesped=0): no hay espacio
-          a 40px de ancho. El badge de estado en la esquina ya indica ocupación. */}
+      {/* Nombre del huésped. En móvil (fontHuesped~7) solo primer nombre para
+          que quepa a 44px de ancho; en desktop nombre completo con ellipsis. */}
       {asign?.huesped && SZ.fontHuesped > 0 && (
         <div style={{
           fontSize: SZ.fontHuesped, color: B.white, marginTop: 2,
-          maxWidth: SZ.camaW - 8,
+          maxWidth: SZ.camaW - 4,
           overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+          fontWeight: 600,
         }}>
-          👤 {asign.huesped}
+          {SZ.fontHuesped < 9 ? asign.huesped.split(" ")[0] : `👤 ${asign.huesped}`}
         </div>
       )}
       {/* Badge de estado en la esquina cuando no es libre */}
