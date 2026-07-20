@@ -70,7 +70,7 @@ export default function PoolService() {
 
   const load = async () => {
     setLoading(true);
-    const [a, i, p, rh] = await Promise.all([
+    const [a, i, p, rh, ll] = await Promise.all([
       supabase.from("pool_service_areas").select("*").eq("activo", true).order("orden").order("nombre"),
       // Pool Service usa los menús "restaurant" y "bebidas" del módulo de Productos
       // — fuente única de verdad, ya sincronizado con Loggro. Aquí NO se gestiona
@@ -91,11 +91,31 @@ export default function PoolService() {
         .eq("fecha", todayBogota())
         .in("estado", ["confirmado", "check_in", "pendiente"])
         .order("nombre"),
+      // Llegadas "a consumo": embarcaciones privadas o walk-ins que llegan al muelle
+      // y consumen en el club. No están en `reservas` — viven en muelle_llegadas.
+      supabase.from("muelle_llegadas")
+        .select("id, embarcacion_nombre, pax_total, pax_a, pax_n, tipo, estado, matricula, hora_llegada")
+        .eq("fecha", todayBogota())
+        .eq("tipo", "a_consumo")
+        .neq("estado", "cancelado")
+        .order("hora_llegada"),
     ]);
     setAreas(a.data || []);
     setItems(i.data || []);
     setPedidos(p.data || []);
-    setReservasHoy(rh.data || []);
+    // Unificar reservas + llegadas a_consumo al shape que el selector espera.
+    // Las llegadas se mapean con id, nombre = embarcacion o "Walk-in", pax, etc.
+    const llegadasMapped = (ll.data || []).map(l => ({
+      id: l.id,
+      nombre: l.embarcacion_nombre || `Walk-in ${l.matricula || l.hora_llegada || ""}`.trim(),
+      pax: l.pax_total || 0,
+      pax_a: l.pax_a || l.pax_total || 0,
+      pax_n: l.pax_n || 0,
+      tipo: "A Consumo",
+      estado: l.estado,
+      telefono: null,
+    }));
+    setReservasHoy([...(rh.data || []), ...llegadasMapped]);
     setLoading(false);
   };
   useEffect(() => { load(); }, []);
