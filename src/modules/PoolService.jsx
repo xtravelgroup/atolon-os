@@ -655,13 +655,38 @@ function NuevoPedido({ areas, items, reservasHoy = [], onSaved, enviarALoggro, i
   // Pre-llenar huésped/pax/notas cuando el mesero elige un spot ya asignado.
   // Las notas (alergias / restricciones) deben quedar visibles para que el mesero
   // las recuerde antes de tomar la orden — ver banner prominente al inicio del menú.
-  const handleSelectSpot = (spot, asign) => {
+  //
+  // Siempre re-fetch la asignación del spot para el día actual: garantiza que
+  // el mesero vea el nombre aunque el picker haya cargado tarde, o aunque la
+  // cama se haya ocupado desde otra pantalla (MeseroPortal, FloorPlan).
+  const handleSelectSpot = async (spot, asignHint) => {
     setSpotSel(spot);
-    setAsignSel(asign || null);
-    setAreaId("");  // si elige spot, ignorar área tradicional
-    if (asign?.huesped) setHuesped(asign.huesped);
-    if (asign?.pax > 0) setPax(asign.pax);
-    if (asign?.notas)   setNotas(asign.notas);
+    setAreaId("");
+    // Usar el hint del picker de inmediato para UI instantánea.
+    if (asignHint) {
+      setAsignSel(asignHint);
+      if (asignHint.huesped) setHuesped(asignHint.huesped);
+      if (asignHint.pax > 0) setPax(asignHint.pax);
+      if (asignHint.notas)   setNotas(asignHint.notas);
+    }
+    // Luego reconciliar con la BD (por si venía stale/undefined).
+    try {
+      const { data } = await supabase.from("floorplan_asignaciones")
+        .select("*")
+        .eq("spot_id", spot.id)
+        .eq("fecha", todayBogota())
+        .order("updated_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (data) {
+        setAsignSel(data);
+        if (data.huesped) setHuesped(data.huesped);
+        if (data.pax > 0) setPax(data.pax);
+        if (data.notas)   setNotas(data.notas);
+      } else if (!asignHint) {
+        setAsignSel(null);
+      }
+    } catch { /* silent — el hint ya cubre el caso feliz */ }
   };
 
   const cats = useMemo(() => sortCats(Array.from(new Set(items.map(i => i.categoria).filter(Boolean)))), [items]);
@@ -866,8 +891,26 @@ function NuevoPedido({ areas, items, reservasHoy = [], onSaved, enviarALoggro, i
           <div style={{ fontSize: 10, color: B.pool, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 700 }}>Pedido para</div>
           <div style={{ fontSize: 20, color: B.sand, fontWeight: 800, letterSpacing: "0.05em" }}>{destinoLabel}</div>
           {yaAsignado && (
-            <div style={{ fontSize: 14, color: "#fff", fontWeight: 700, marginTop: 4 }}>
-              👤 {asignSel.huesped}{asignSel.pax > 0 ? ` · ${asignSel.pax} pax` : ""}
+            <div style={{
+              marginTop: 6,
+              padding: "6px 12px",
+              background: "rgba(142,202,230,0.14)",
+              border: `1px solid ${B.pool}44`,
+              borderRadius: 8,
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 8,
+              fontSize: 16,
+              color: B.pool,
+              fontWeight: 800,
+              letterSpacing: "0.01em",
+            }}>
+              👤 {asignSel.huesped}
+              {asignSel.pax > 0 && (
+                <span style={{ fontSize: 12, color: "rgba(255,255,255,0.6)", fontWeight: 600 }}>
+                  · {asignSel.pax} pax
+                </span>
+              )}
             </div>
           )}
         </div>
