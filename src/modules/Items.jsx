@@ -1751,7 +1751,12 @@ function InventarioTab({
                 { k: "nombre", label: "Ítem" },
                 { k: "categoria", label: "Categoría" },
                 { k: null, label: "Unidad" },
-                { k: "stock", label: "Stock actual", right: true },
+                { k: "stock", label: locFilter === "bar-combinado" ? "Total" : "Stock actual", right: true },
+                // Solo en "Bar + Almacén Bar" agregamos las 2 columnas separadas.
+                ...(locFilter === "bar-combinado" ? [
+                  { k: null, label: "🍸 Bar", right: true },
+                  { k: null, label: "📦 Almacén Bar", right: true },
+                ] : []),
                 { k: null, label: "Mín", right: true },
                 { k: null, label: "Precio compra", right: true },
                 { k: "valor", label: "Valor total", right: true },
@@ -1771,7 +1776,7 @@ function InventarioTab({
           </thead>
           <tbody>
             {filtered.length === 0 ? (
-              <tr><td colSpan={8} style={{ padding: 40, textAlign: "center", color: "rgba(255,255,255,0.3)" }}>Sin ítems que mostrar</td></tr>
+              <tr><td colSpan={locFilter === "bar-combinado" ? 10 : 8} style={{ padding: 40, textAlign: "center", color: "rgba(255,255,255,0.3)" }}>Sin ítems que mostrar</td></tr>
             ) : filtered.map(i => {
               const stock =
                 locFilter === "todos"          ? stockTotalNuestro(i.id) :
@@ -1814,6 +1819,22 @@ function InventarioTab({
                       </div>
                     )}
                   </td>
+                  {/* Columnas separadas Bar / Almacén Bar cuando el filtro es el combo */}
+                  {locFilter === "bar-combinado" && (() => {
+                    const stBar = stockEnLoc(i.id, "LOC-BAR");
+                    const stAlm = stockEnLoc(i.id, "LOC-ALMACEN-BAR");
+                    const cellStyle = (v) => ({
+                      padding: "11px 14px", textAlign: "right",
+                      fontWeight: 600, fontFamily: "'Barlow Condensed', sans-serif", fontSize: 14,
+                      color: v > 0 ? B.white : v < 0 ? B.danger : "rgba(255,255,255,0.25)",
+                    });
+                    return (
+                      <>
+                        <td style={cellStyle(stBar)}>{stBar.toFixed(2)}</td>
+                        <td style={cellStyle(stAlm)}>{stAlm.toFixed(2)}</td>
+                      </>
+                    );
+                  })()}
                   <td style={{ padding: "11px 14px", textAlign: "right", fontSize: 12, color: min > 0 ? "rgba(255,255,255,0.5)" : "rgba(255,255,255,0.2)" }}>
                     {min > 0 ? min.toFixed(0) : "—"}
                   </td>
