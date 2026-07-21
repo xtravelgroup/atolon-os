@@ -410,7 +410,7 @@ function NuevaReserva({ agencia, user, onCreated, vistaPrecios = "ambos" }) {
     const ext = file.name.split(".").pop();
     const path = `comp-${Date.now()}.${ext}`;
     const { data, error } = await supabase.storage.from("comprobantes").upload(path, file, { upsert: true });
-    if (error) { setMsg("Error subiendo comprobante"); setUploadingComp(false); return; }
+    if (error) { setMsg("Error subiendo comprobante: " + (error.message || error)); setUploadingComp(false); return; }
     const { data: urlData } = supabase.storage.from("comprobantes").getPublicUrl(path);
     setUploadingComp(false);
     handleSave("transferencia_comprobante", { comprob_url: urlData.publicUrl });
@@ -1073,7 +1073,13 @@ function HistorialReservas({ agencia, vendedorId }) {
     const ext = file.name.split(".").pop();
     const path = `comp-${reserva.id}-${Date.now()}.${ext}`;
     const { error: upErr } = await supabase.storage.from("comprobantes").upload(path, file, { upsert: true });
-    if (upErr) { alert("Error subiendo el comprobante"); setUploading(null); return; }
+    if (upErr) {
+      // Antes decía solo "Error subiendo el comprobante" — sin pista para
+      // diagnosticar (permission denied, bucket size limit, mime type, etc.).
+      alert("Error subiendo el comprobante: " + (upErr.message || upErr));
+      setUploading(null);
+      return;
+    }
     const { data: urlData } = supabase.storage.from("comprobantes").getPublicUrl(path);
     await supabase.from("reservas").update({
       comprobante_url: urlData.publicUrl,
