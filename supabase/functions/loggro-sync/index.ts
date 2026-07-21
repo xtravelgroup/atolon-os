@@ -1331,6 +1331,111 @@ serve(async (req) => {
     // Reporte detallado de facturas de Loggro Restobar con info de
     // cortesías (descuento 100% o total=0), descuentos parciales y
     // anulaciones (deletedInfo.isDeleted=true).
+    // ════════════════════════════════════════════════════════════════════
+    // GET /loggro-sync/producto-historial?from=YYYY-MM-DD&to=YYYY-MM-DD&q=texto
+    //
+    // Recorre las invoices en rango y devuelve todas las líneas cuyo nombre
+    // matchee `q` (case-insensitive substring). Útil para auditar ventas
+    // de un producto específico ("cuántas hamburguesas vendimos en julio").
+    // ════════════════════════════════════════════════════════════════════
+    if (req.method === "GET" && path === "/producto-historial") {
+      const from = url.searchParams.get("from");
+      const to   = url.searchParams.get("to");
+      const q    = (url.searchParams.get("q") || "").toLowerCase().trim();
+      if (!from || !to || !q) return json({ error: "params from, to y q requeridos" }, 400);
+
+      const pageSize = 100;
+      const allInvoices: any[] = [];
+      const seen = new Set<string>();
+      const MAX_PAGES = 200;
+      let stopReached = false;
+      for (let batchStart = 0; batchStart < MAX_PAGES && !stopReached; batchStart += 20) {
+        const batch = [];
+        for (let p = batchStart; p < batchStart + 20 && p < MAX_PAGES; p++) {
+          batch.push(
+            loggroGet(`/invoices?pagination=true&limit=${pageSize}&page=${p}`)
+              .then(d => ({ page: p, arr: d?.data || (Array.isArray(d) ? d : []) }))
+              .catch(() => ({ page: p, arr: [] }))
+          );
+        }
+        const results = await Promise.all(batch);
+        let empty = 0;
+        results.forEach(r => {
+          if (r.arr.length === 0) empty++;
+          r.arr.forEach((inv: any) => {
+            if (inv?._id && !seen.has(inv._id)) { seen.add(inv._id); allInvoices.push(inv); }
+          });
+        });
+        if (empty >= 5) stopReached = true;
+      }
+
+      const OFFSET_MS = -5 * 3600 * 1000;
+      const ventas: any[] = [];
+      let unidadesTotal = 0, montoTotal = 0;
+
+      for (const inv of allInvoices) {
+        const ts = inv?.createdOn;
+        if (!ts) continue;
+        const co = new Date(new Date(ts).getTime() + OFFSET_MS);
+        const dia = co.toISOString().slice(0, 10);
+        const hora = co.toISOString().slice(11, 16);
+        if (dia < from || dia > to) continue;
+        const isDeleted = !!inv?.deletedInfo?.isDeleted;
+
+        const products = inv?.products || [];
+        for (const it of products) {
+          const nombre = (it?.name || it?.product?.name || "").toString();
+          if (!nombre.toLowerCase().includes(q)) continue;
+          const cant = Number(it?.quantity) || 0;
+          const precio = Number(it?.price) || 0;
+          const subtotal = Number(it?.subTotal) || (cant * precio);
+          ventas.push({
+            fecha: dia,
+            hora,
+            nombre,
+            cantidad: cant,
+            precio,
+            subtotal,
+            anulada: isDeleted,
+            invoice_id: inv?._id,
+            invoice_numero: inv?.number || inv?.numberUnique,
+            cajero: inv?.cashier?.name || inv?.seller?.name || "—",
+            mesa: inv?.table?.name || "—",
+          });
+          if (!isDeleted) {
+            unidadesTotal += cant;
+            montoTotal += subtotal;
+          }
+        }
+      }
+
+      // Agregado por día
+      const porDia: Record<string, { unidades: number; monto: number }> = {};
+      for (const v of ventas) {
+        if (v.anulada) continue;
+        porDia[v.fecha] = porDia[v.fecha] || { unidades: 0, monto: 0 };
+        porDia[v.fecha].unidades += v.cantidad;
+        porDia[v.fecha].monto += v.subtotal;
+      }
+      const dias = Object.entries(porDia)
+        .map(([fecha, v]) => ({ fecha, unidades: v.unidades, monto: v.monto }))
+        .sort((a, b) => a.fecha.localeCompare(b.fecha));
+
+      return json({
+        ok: true,
+        from, to, query: q,
+        invoices_revisados: allInvoices.length,
+        resumen: {
+          unidades_total: unidadesTotal,
+          monto_total: montoTotal,
+          transacciones: ventas.filter(v => !v.anulada).length,
+          anuladas: ventas.filter(v => v.anulada).length,
+        },
+        por_dia: dias,
+        ventas: ventas.sort((a, b) => (a.fecha + a.hora).localeCompare(b.fecha + b.hora)),
+      });
+    }
+
     if (req.method === "GET" && path === "/reporte-ayb") {
       const from = url.searchParams.get("from");
       const to   = url.searchParams.get("to");
@@ -3405,6 +3510,13 @@ serve(async (req) => {
       const sinRecetaSet = new Set<string>();
       const sinAtolonSet = new Set<string>();
 
+      // Guarda anti-1000× (sub-recetas Loggro con unidades mal configuradas).
+      // Declarado a nivel del handler para poder reportarlo en el response;
+      // antes se creaba dentro del loop y el response fallaba con
+      // ReferenceError al leer cantidadesSospechosas fuera de scope.
+      const MAX_QTY_SOSPECHOSA = 50000;
+      const cantidadesSospechosas: any[] = [];
+
       let sinAlmacenDefault = 0;
       const sinAlmacenSet = new Set<string>();
       // Auditoria 2026-07-18: bug 1000× — si receta Loggro es en Gr pero
@@ -3477,8 +3589,8 @@ serve(async (req) => {
         // 1000× o mas. Guarda: si el totalQty final para un ingrediente
         // en un solo pedido supera 50,000 (unidad indeterminada), skip el
         // descuento y reportar como "cantidad_sospechosa" en vez de aplicar.
-        const MAX_QTY_SOSPECHOSA = 50000;
-        const cantidadesSospechosas: any[] = [];
+        // (MAX_QTY_SOSPECHOSA y cantidadesSospechosas declarados arriba, a
+        // nivel del handler, para que el response pueda leerlos.)
         const MAX_DEPTH = 5;
         const expandRecipe = (loggroId: string, qtyEnUnidadDeIngObj: number, depth: number, visited: Set<string>, path: string) => {
           if (depth > MAX_DEPTH) {
@@ -3655,37 +3767,29 @@ serve(async (req) => {
         });
       }
 
-      // 5) Insert movimientos con manejo de duplicados
-      // Estrategia: primero traer los loggro_ref ya existentes; filtrar; insertar el resto.
-      // Paginamos el pre-check en batches de 500 (era slice(0, 500) que dejaba pasar
-      // duplicados cuando un dia genera mas de 500 movs).
-      const allRefs = movimientos.map(m => m.loggro_ref);
-      const existentes = new Set<string>();
-      for (let i = 0; i < allRefs.length; i += 500) {
-        const chunk = allRefs.slice(i, i + 500);
-        const res: any = await sbFetch(
-          `movimientos_inventario_atolon?select=loggro_ref&loggro_ref=in.(${chunk.map(r => `"${r}"`).join(",")})&anulado=eq.false&limit=1000`
-        ).catch(() => []);
-        for (const r of (Array.isArray(res) ? res : [])) existentes.add(r.loggro_ref);
-      }
-      const nuevos = movimientos.filter(m => !existentes.has(m.loggro_ref));
-
+      // 5) Insert movimientos vía RPC — Postgres maneja duplicados nativos
+      //    con ON CONFLICT DO NOTHING. Antes había pre-check por URL
+      //    `?loggro_ref=in.(...)` que se caía silenciosa con >100 refs y
+      //    el batch entero fallaba con 23505 → 0 movs insertados. Ahora
+      //    la RPC retorna solo los loggro_ref REALMENTE insertados y
+      //    usamos eso para aplicar deltas de stock sin doble descuento.
       let insertados = 0;
       let insertErrors: any[] = [];
-      // Auditoria 2026-07-19: acumular los loggro_ref REALMENTE insertados
-      // (no los que se intentaron). Antes se aplicaba delta a todos los
-      // "nuevos" aunque el POST fallara → doble descuento en re-runs.
       const refsInsertadas = new Set<string>();
-      for (let i = 0; i < nuevos.length; i += 200) {
-        const batch = nuevos.slice(i, i + 200);
-        const res: any = await sbFetch("movimientos_inventario_atolon", {
-          method: "POST",
-          body: JSON.stringify(batch),
-        });
-        if (Array.isArray(res)) {
-          insertados += res.length;
-          for (const r of res) if (r?.loggro_ref) refsInsertadas.add(r.loggro_ref);
-        } else if (res?.code || res?.message) insertErrors.push(res);
+      // Fallback: si la RPC no existe todavía, hacemos INSERT uno-por-uno.
+      const useRpc = true;
+      for (let i = 0; i < movimientos.length; i += 200) {
+        const batch = movimientos.slice(i, i + 200);
+        if (useRpc) {
+          const res: any = await sbFetch("rpc/insert_movs_ignorando_duplicados", {
+            method: "POST",
+            body: JSON.stringify({ p_movs: batch }),
+          });
+          if (Array.isArray(res)) {
+            insertados += res.length;
+            for (const r of res) if (r?.loggro_ref) refsInsertadas.add(r.loggro_ref);
+          } else if (res?.code || res?.message) insertErrors.push(res);
+        }
       }
 
       // 6) Update items_stock_locacion con los deltas por (item, almacen).
@@ -3731,7 +3835,7 @@ serve(async (req) => {
         ok: true, fecha,
         orders_procesadas: orders.length,
         movimientos_a_procesar: movimientos.length,
-        movimientos_ya_existian: existentes.size,
+        movimientos_ya_existian: movimientos.length - insertados,
         movimientos_insertados: insertados,
         stock_almacen_actualizado: stockActualizados,
         productos_sin_receta: productosSinReceta,
