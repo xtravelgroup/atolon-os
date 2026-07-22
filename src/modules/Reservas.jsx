@@ -3155,6 +3155,7 @@ function TabCalendario({ salidas, cierres, embarcaciones }) {
         if ((cierre.salidas || []).includes(s.id)) return false;
       }
       if (!s.auto_apertura) return true;
+      if ((resDia[s.id] || 0) > 0) return true;
       return autoAperturaCheck(s, resDia);
     });
   };
@@ -3169,6 +3170,7 @@ function TabCalendario({ salidas, cierres, embarcaciones }) {
       if ((cierre.salidas || []).includes(s.id)) return false;
     }
     if (!s.auto_apertura) return true;
+    if ((resDia[salidaId] || 0) > 0) return true;
     return autoAperturaCheck(s, resDia);
   };
 
