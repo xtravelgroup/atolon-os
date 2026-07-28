@@ -778,11 +778,22 @@ export default function FacturaProveedorModal({ oc, onClose, reload, currentUser
       const itemsActualizados = ocItemsOriginal.map((it, i) => {
         const f = data.items.find(x => x.oc_idx === i && !x.no_facturado);
         if (!f) return it;
-        const unPorPack       = Math.max(1, Number(f.unidades_por_paquete) || 1);
         const cantPaquete     = Number(f.cantidad_paquete) || Number(it.cant) || 0;
-        const cantIndividual  = cantPaquete * unPorPack;
         const costoPack       = Number(f.precio_costo_pack) || 0;
-        const precioUIndiv    = f.es_bonificacion ? 0 : Math.round(unPorPack > 0 ? costoPack / unPorPack : 0);
+        // Si el operador ingresó una cantidad en el input Loggro ("Restobar: X gr"),
+        // ese valor es la cantidad real en unidades de almacén (gr/ml/und). Se
+        // usa como cant_individual y unidades_por_paquete se deriva de ahí para
+        // que precio_por_unidad = costo_pack / (cant_ind / cant_paquete). Sin
+        // override, se usa el campo "unidades por paquete" que el operador puso
+        // (default 1).
+        const overrideQty = f.loggro_qty_override != null && f.loggro_qty_override !== ""
+          ? Number(f.loggro_qty_override) : null;
+        const unPorPack       = overrideQty != null && cantPaquete > 0
+          ? overrideQty / cantPaquete
+          : Math.max(1, Number(f.unidades_por_paquete) || 1);
+        const cantIndividual  = overrideQty != null ? overrideQty : cantPaquete * unPorPack;
+        const precioUIndiv    = f.es_bonificacion ? 0
+          : (unPorPack > 0 ? costoPack / unPorPack : 0);
         // Preservar nombre original de la requisición para trazabilidad.
         // Si el proveedor factura con nombre distinto (ej. req 'CORONA 330 ML'
         // → factura 'Cerveza Corona Botella 330ml'), guardamos ambos.
@@ -791,13 +802,23 @@ export default function FacturaProveedorModal({ oc, onClose, reload, currentUser
         const nombrePrevio   = (it.item || it.nombre || "").trim();
         const nombreOriginal = it.nombre_original || nombrePrevio;  // primera vez
         const renombrado     = nombreFactura && nombreOriginal && nombreFactura !== nombreOriginal;
+        // Si el precio por unidad es < 10, redondear a 4 decimales para no perder
+        // precisión (ej. $0.94/gr). Si es entero grande, redondear a entero.
+        const precioURedondeado = precioUIndiv < 10
+          ? Math.round(precioUIndiv * 10000) / 10000
+          : Math.round(precioUIndiv);
+        // Subtotal: el importe pagado por este ítem NO cambia con la conversión,
+        // sigue siendo cantidad_paquete × costo_pack. Calcularlo desde precioU y
+        // cantIndividual redondeados puede introducir drift, así que lo tomamos
+        // directo del paquete.
+        const subtotalIndiv = Math.round(cantPaquete * costoPack);
         return {
           ...it,
           // El campo `cant` queda en unidades INDIVIDUALES (lo que va al inventario)
           cant: cantIndividual,
-          unidad: f.unidad_individual || "UND",
-          precioU: precioUIndiv,
-          subtotal: Math.round(cantIndividual * precioUIndiv),
+          unidad: f.unidad_individual || (overrideQty != null ? (f.unidad_compra || "UND") : "UND"),
+          precioU: precioURedondeado,
+          subtotal: subtotalIndiv,
           // Trazabilidad de renombrado (factura vs requisición)
           item: nombreFactura || it.item,
           nombre: nombreFactura || it.nombre,
@@ -840,17 +861,27 @@ export default function FacturaProveedorModal({ oc, onClose, reload, currentUser
         .filter(f => (f.codigo_barras || (f.nombre && f.nombre.trim())))
         .filter(f => !(f.codigo_barras && cbYaEnOC.has(String(f.codigo_barras))))
         .map(f => {
-        const unPorPack      = Math.max(1, Number(f.unidades_por_paquete) || 1);
         const cantPaquete    = Number(f.cantidad_paquete) || Number(f.cantidad) || 0;
-        const cantIndividual = cantPaquete * unPorPack;
         const costoPack      = Number(f.precio_costo_pack) || 0;
-        const precioUIndiv   = f.es_bonificacion ? 0 : Math.round(unPorPack > 0 ? costoPack / unPorPack : 0);
+        // Mismo comportamiento que items matcheados: loggro_qty_override manda.
+        const overrideQty = f.loggro_qty_override != null && f.loggro_qty_override !== ""
+          ? Number(f.loggro_qty_override) : null;
+        const unPorPack      = overrideQty != null && cantPaquete > 0
+          ? overrideQty / cantPaquete
+          : Math.max(1, Number(f.unidades_por_paquete) || 1);
+        const cantIndividual = overrideQty != null ? overrideQty : cantPaquete * unPorPack;
+        const precioUIndiv   = f.es_bonificacion ? 0
+          : (unPorPack > 0 ? costoPack / unPorPack : 0);
+        const precioURedondeado = precioUIndiv < 10
+          ? Math.round(precioUIndiv * 10000) / 10000
+          : Math.round(precioUIndiv);
+        const subtotalIndiv = Math.round(cantPaquete * costoPack);
         return {
           item: f.nombre, nombre: f.nombre,
           cant: cantIndividual,
-          unidad: f.unidad_individual || "UND",
-          precioU: precioUIndiv,
-          subtotal: Math.round(cantIndividual * precioUIndiv),
+          unidad: f.unidad_individual || (overrideQty != null ? (f.unidad_compra || "UND") : "UND"),
+          precioU: precioURedondeado,
+          subtotal: subtotalIndiv,
           item_id: null,
           codigo_barras: f.codigo_barras,
           referencia_proveedor: f.referencia_proveedor,
@@ -881,9 +912,17 @@ export default function FacturaProveedorModal({ oc, onClose, reload, currentUser
         const cb = (f.codigo_barras || "").trim();
         const nombre = (f.nombre || "").trim();
         if (!cb && !nombre) continue;
-        const unPorPack    = Math.max(1, Number(f.unidades_por_paquete) || 1);
+        const cantPaqueteF = Number(f.cantidad_paquete) || Number(f.cantidad) || 0;
+        const overrideQty  = f.loggro_qty_override != null && f.loggro_qty_override !== ""
+          ? Number(f.loggro_qty_override) : null;
+        const unPorPack    = overrideQty != null && cantPaqueteF > 0
+          ? overrideQty / cantPaqueteF
+          : Math.max(1, Number(f.unidades_por_paquete) || 1);
         const costoPack    = Number(f.precio_costo_pack) || 0;
-        const precioUIndiv = unPorPack > 0 ? Math.round(costoPack / unPorPack) : 0;
+        const precioUIndivRaw = unPorPack > 0 ? costoPack / unPorPack : 0;
+        const precioUIndiv = precioUIndivRaw < 10
+          ? Math.round(precioUIndivRaw * 10000) / 10000
+          : Math.round(precioUIndivRaw);
 
         // Match inteligente vía RPC: codigo_barras → codigo → nombre similar
         const { data: matches } = await supabase.rpc("find_item_match", {
@@ -1059,15 +1098,23 @@ export default function FacturaProveedorModal({ oc, onClose, reload, currentUser
       for (const f of facturados) {
         if (f.es_bonificacion) continue;
         if (f.item_id && !f.codigo_barras) {
-          const unPorPack    = Math.max(1, Number(f.unidades_por_paquete) || 1);
+          const cantPaqueteF = Number(f.cantidad_paquete) || Number(f.cantidad) || 0;
+          const overrideQty  = f.loggro_qty_override != null && f.loggro_qty_override !== ""
+            ? Number(f.loggro_qty_override) : null;
+          const unPorPack    = overrideQty != null && cantPaqueteF > 0
+            ? overrideQty / cantPaqueteF
+            : Math.max(1, Number(f.unidades_por_paquete) || 1);
           const costoPack    = Number(f.precio_costo_pack) || 0;
-          const precioUIndiv = unPorPack > 0 ? Math.round(costoPack / unPorPack) : 0;
+          const precioUIndivRaw = unPorPack > 0 ? costoPack / unPorPack : 0;
+          const precioUIndiv = precioUIndivRaw < 10
+            ? Math.round(precioUIndivRaw * 10000) / 10000
+            : Math.round(precioUIndivRaw);
           if (precioUIndiv > 0) {
             await supabase.from("items_catalogo").update({
               precio_compra:        precioUIndiv,
               unidades_por_paquete: unPorPack,
               unidad_compra:        f.unidad_compra || null,
-              unidad_individual:    f.unidad_individual || "UND",
+              unidad_individual:    f.unidad_individual || (overrideQty != null ? (f.unidad_compra || "UND") : "UND"),
               updated_at:           new Date().toISOString(),
             }).eq("id", f.item_id);
           }
@@ -1089,9 +1136,17 @@ export default function FacturaProveedorModal({ oc, onClose, reload, currentUser
             realItemId = cat?.id || null;
           }
           if (!realItemId) continue;
-          const unPorPack    = Math.max(1, Number(f.unidades_por_paquete) || 1);
+          const cantPaqueteF = Number(f.cantidad_paquete) || Number(f.cantidad) || 0;
+          const overrideQty  = f.loggro_qty_override != null && f.loggro_qty_override !== ""
+            ? Number(f.loggro_qty_override) : null;
+          const unPorPack    = overrideQty != null && cantPaqueteF > 0
+            ? overrideQty / cantPaqueteF
+            : Math.max(1, Number(f.unidades_por_paquete) || 1);
           const costoPack    = Number(f.precio_costo_pack) || 0;
-          const precioUIndiv = unPorPack > 0 ? Math.round(costoPack / unPorPack) : 0;
+          const precioUIndivRaw = unPorPack > 0 ? costoPack / unPorPack : 0;
+          const precioUIndiv = precioUIndivRaw < 10
+            ? Math.round(precioUIndivRaw * 10000) / 10000
+            : Math.round(precioUIndivRaw);
           if (precioUIndiv <= 0) continue;
 
           // ¿Ya existe la relación con este proveedor?
