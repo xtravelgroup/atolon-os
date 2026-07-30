@@ -4380,7 +4380,14 @@ export default function Reservas() {
           const labelDia = tabDia === "hoy" ? "HOY" : "MAÑANA";
           const fechaFormateada = new Date(fechaStr + "T12:00:00").toLocaleDateString("es-CO", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
 
-          const activas = reservas.filter(r => r.estado !== "cancelado");
+          // Reservas activas — SIN las que pertenecen a un grupo del día (evita
+          // doble conteo: grupoPaxTotal ya las suma vía paxReservas). Antes esto
+          // hacía que el documento mostrara 104 en vez de 75 cuando había un
+          // grupo con muchas reservas individuales.
+          const gruposIdsSet = new Set(grupos.map(g => g.id));
+          const activas = reservas.filter(r =>
+            r.estado !== "cancelado" && !(r.grupo_id && gruposIdsSet.has(r.grupo_id))
+          );
           const paxRes = activas.reduce((s, r) => s + (r.pax || 0), 0);
           const paxGrupos = grupos.reduce((s, g) => s + grupoPaxTotal(g, reservas), 0);
           const paxLlegadas = llegadasDiaAll.reduce((s, l) => s + (l.pax_total || 0), 0);
