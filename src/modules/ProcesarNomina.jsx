@@ -74,14 +74,19 @@ function MarcacionesGrid({ empleado, periodo, ventana, marcaciones, horariosProg
   const norm = (t) => (t ? String(t).slice(0, 5) : "");
   const seed = () => {
     const m = {};
-    for (const d of dias) m[d] = { entrada: "", salida: "" };
+    for (const d of dias) m[d] = { entrada: "", salida: "", entrada_2: "", salida_2: "" };
     for (const r of marcaciones) {
-      if (m[r.fecha]) m[r.fecha] = { entrada: norm(r.entrada), salida: norm(r.salida) };
+      if (m[r.fecha]) m[r.fecha] = {
+        entrada:   norm(r.entrada),
+        salida:    norm(r.salida),
+        entrada_2: norm(r.entrada_2),
+        salida_2:  norm(r.salida_2),
+      };
     }
     return m;
   };
   const [grid, setGrid] = useState(seed);
-  const [initialGrid] = useState(seed);   // snapshot original — para detectar cambios
+  const [initialGrid] = useState(seed);
   const [guardando, setGuardando] = useState(false);
   const [motivoOpen, setMotivoOpen] = useState(false);
   const [motivo, setMotivo] = useState("");
@@ -89,22 +94,35 @@ function MarcacionesGrid({ empleado, periodo, ventana, marcaciones, horariosProg
   const almuerzo = empleado?.almuerzo_horas == null ? 1 : Number(empleado.almuerzo_horas);
   const DOW = ["Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"];
 
-  // Índice de horarios programados por fecha (rh_horarios)
+  // Índice de horarios programados por fecha (rh_horarios) — puede haber 2 turnos.
   const horByFecha = useMemo(() => {
     const m = {};
-    for (const h of horariosProgramados) m[h.fecha] = h;
+    for (const h of horariosProgramados) {
+      if (!h.hora_ini) continue;   // ignorar descansos sin horas
+      if (!m[h.fecha]) m[h.fecha] = [];
+      m[h.fecha].push(h);
+    }
     return m;
   }, [horariosProgramados]);
 
   const set = (fecha, campo, val) => setGrid(g => ({ ...g, [fecha]: { ...g[fecha], [campo]: val } }));
+  // Para el desglose (horas de nómina), expandimos turnos partidos en 2 "filas
+  // sintéticas" por día para que calcularHorasDia procese ambos bloques.
   const filas = dias.map(f => ({ fecha: f, ...grid[f] }));
-  const desg = desglosarPeriodo(filas, tarifa, undefined, almuerzo);
+  const filasParaCalculo = filas.flatMap(f => {
+    const out = [{ fecha: f.fecha, entrada: f.entrada, salida: f.salida }];
+    if (f.entrada_2 && f.salida_2) out.push({ fecha: f.fecha, entrada: f.entrada_2, salida: f.salida_2 });
+    return out;
+  });
+  const desg = desglosarPeriodo(filasParaCalculo, tarifa, undefined, almuerzo);
 
   // ¿Hubo cambios vs snapshot original?
   const cambios = dias.reduce((c, d) => {
-    const a = initialGrid[d] || { entrada: "", salida: "" };
-    const b = grid[d] || { entrada: "", salida: "" };
-    return c + ((a.entrada !== b.entrada || a.salida !== b.salida) ? 1 : 0);
+    const a = initialGrid[d] || {};
+    const b = grid[d] || {};
+    const diff = (a.entrada !== b.entrada) || (a.salida !== b.salida) ||
+                 (a.entrada_2 !== b.entrada_2) || (a.salida_2 !== b.salida_2);
+    return c + (diff ? 1 : 0);
   }, 0);
 
   const iniciarGuardar = () => {
@@ -146,16 +164,34 @@ function MarcacionesGrid({ empleado, periodo, ventana, marcaciones, horariosProg
         {filas.map(f => {
           const d = new Date(f.fecha + "T12:00:00");
           const fest = FESTIVOS_CO_2026.has(f.fecha);
-          const pre = (f.entrada && f.salida)
+          const preB1 = (f.entrada && f.salida)
             ? calcularHorasDia({ fecha: f.fecha, entrada: f.entrada, salida: f.salida, almuerzoHoras: almuerzo })
             : null;
-          const prog = horByFecha[f.fecha];
-          const progIn = norm(prog?.hora_ini);
-          const progOut = norm(prog?.hora_fin);
-          const dIn = diffMin(progIn, f.entrada);   // + = tarde en entrar
-          const dOut = diffMin(progOut, f.salida);  // + = tarde en salir (extra), − = salió antes
+          const preB2 = (f.entrada_2 && f.salida_2)
+            ? calcularHorasDia({ fecha: f.fecha, entrada: f.entrada_2, salida: f.salida_2, almuerzoHoras: 0 })
+            : null;
+          const horasDia = (preB1?.horas || 0) + (preB2?.horas || 0);
+          // Horarios programados: pueden ser 1 o 2 rows en rh_horarios para el mismo día
+          const progAll = (horByFecha[f.fecha] || []).slice().sort((a, b) => (a.hora_ini || "").localeCompare(b.hora_ini || ""));
+          const prog1 = progAll[0];
+          const prog2 = progAll[1];
+          const p1In = norm(prog1?.hora_ini), p1Out = norm(prog1?.hora_fin);
+          const p2In = norm(prog2?.hora_ini), p2Out = norm(prog2?.hora_fin);
+          const dIn1 = diffMin(p1In, f.entrada), dOut1 = diffMin(p1Out, f.salida);
+          const dIn2 = diffMin(p2In, f.entrada_2), dOut2 = diffMin(p2Out, f.salida_2);
+          const tieneBloque2 = !!(f.entrada_2 || f.salida_2 || prog2);
+
+          const renderDelta = (v, tipoIn) => {
+            if (v == null) return null;
+            const color = Math.abs(v) <= 5 ? B.success
+              : tipoIn ? (v > 15 ? B.danger : B.warning)
+              : (v < -15 ? B.danger : v > 30 ? B.sky : B.warning);
+            return <span style={{ color }}>{tipoIn ? "Entrada" : "Salida"} {fmtDelta(v)}</span>;
+          };
+
           return (
             <div key={f.fecha} style={{ padding: "6px 0", borderBottom: `1px solid ${B.navyLight}33` }}>
+              {/* Bloque 1 */}
               <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                 <div style={{ width: 64, fontSize: 11, color: fest ? B.warning : "rgba(255,255,255,0.7)" }}>
                   {DOW[d.getDay()]} {d.getDate()}{fest ? " •" : ""}
@@ -166,34 +202,57 @@ function MarcacionesGrid({ empleado, periodo, ventana, marcaciones, horariosProg
                 <input type="time" value={f.salida} onChange={e => set(f.fecha, "salida", e.target.value)}
                   disabled={bloqueado}
                   style={{ ...IS, width: 96, padding: "6px 8px", opacity: bloqueado ? 0.7 : 1 }} />
-                <div style={{ flex: 1, textAlign: "right", fontSize: 11, color: pre ? B.success : "rgba(255,255,255,0.25)" }}>
-                  {pre ? `${pre.horas}h${pre.horas_nocturnas ? ` · ${pre.horas_nocturnas}h noct` : ""}` : "—"}
+                <div style={{ flex: 1, textAlign: "right", fontSize: 11, color: horasDia > 0 ? B.success : "rgba(255,255,255,0.25)" }}>
+                  {horasDia > 0 ? `${horasDia.toFixed(2)}h${(preB1?.horas_nocturnas || preB2?.horas_nocturnas) ? ` · ${((preB1?.horas_nocturnas || 0) + (preB2?.horas_nocturnas || 0)).toFixed(2)}h noct` : ""}` : "—"}
                 </div>
               </div>
-              {/* Horario programado + desviación */}
-              {(progIn && progOut) ? (
+              {(p1In && p1Out) ? (
                 <div style={{ paddingLeft: 70, fontSize: 10, color: "rgba(255,255,255,0.45)", display: "flex", gap: 12, flexWrap: "wrap", marginTop: 2 }}>
-                  <span>📋 Programado {progIn}–{progOut}{prog.tipo ? ` (${prog.tipo})` : ""}</span>
-                  {(f.entrada || f.salida) && (
-                    <>
-                      {dIn != null && (
-                        <span style={{ color: Math.abs(dIn) <= 5 ? B.success : dIn > 15 ? B.danger : B.warning }}>
-                          Entrada {fmtDelta(dIn)}
-                        </span>
-                      )}
-                      {dOut != null && (
-                        <span style={{ color: Math.abs(dOut) <= 5 ? B.success : dOut < -15 ? B.danger : dOut > 30 ? B.sky : B.warning }}>
-                          Salida {fmtDelta(dOut)}
-                        </span>
-                      )}
-                    </>
-                  )}
+                  <span>📋 Programado {p1In}–{p1Out}{prog1.tipo ? ` (${prog1.tipo})` : ""}</span>
+                  {(f.entrada || f.salida) && (<>{renderDelta(dIn1, true)}{renderDelta(dOut1, false)}</>)}
                 </div>
               ) : (
                 <div style={{ paddingLeft: 70, fontSize: 10, color: "rgba(255,255,255,0.25)", marginTop: 2 }}>
                   📋 Sin horario programado
                 </div>
               )}
+
+              {/* Bloque 2 (turno partido) — solo si existe o si hay botón para agregarlo */}
+              {tieneBloque2 ? (
+                <div style={{ marginTop: 4 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <div style={{ width: 64, fontSize: 10, color: "rgba(255,255,255,0.4)", paddingLeft: 6 }}>
+                      ↳ 2° turno
+                    </div>
+                    <input type="time" value={f.entrada_2 || ""} onChange={e => set(f.fecha, "entrada_2", e.target.value)}
+                      disabled={bloqueado}
+                      style={{ ...IS, width: 96, padding: "6px 8px", opacity: bloqueado ? 0.7 : 1, borderColor: B.sky + "55" }} />
+                    <input type="time" value={f.salida_2 || ""} onChange={e => set(f.fecha, "salida_2", e.target.value)}
+                      disabled={bloqueado}
+                      style={{ ...IS, width: 96, padding: "6px 8px", opacity: bloqueado ? 0.7 : 1, borderColor: B.sky + "55" }} />
+                    {!bloqueado && (f.entrada_2 || f.salida_2) && (
+                      <button onClick={() => { set(f.fecha, "entrada_2", ""); set(f.fecha, "salida_2", ""); }}
+                        title="Quitar 2° turno"
+                        style={{ background: "transparent", border: "none", color: "rgba(255,255,255,0.35)", fontSize: 14, cursor: "pointer", padding: "2px 6px" }}>×</button>
+                    )}
+                    <div style={{ flex: 1 }} />
+                  </div>
+                  {(p2In && p2Out) && (
+                    <div style={{ paddingLeft: 70, fontSize: 10, color: "rgba(255,255,255,0.45)", display: "flex", gap: 12, flexWrap: "wrap", marginTop: 2 }}>
+                      <span>📋 Programado {p2In}–{p2Out}{prog2.tipo ? ` (${prog2.tipo})` : ""}</span>
+                      {(f.entrada_2 || f.salida_2) && (<>{renderDelta(dIn2, true)}{renderDelta(dOut2, false)}</>)}
+                    </div>
+                  )}
+                </div>
+              ) : !bloqueado ? (
+                <div style={{ paddingLeft: 70, marginTop: 2 }}>
+                  <button onClick={() => { set(f.fecha, "entrada_2", "00:00"); set(f.fecha, "salida_2", "00:00"); }}
+                    title="Agregar 2° turno (turno partido)"
+                    style={{ background: "transparent", border: `1px dashed ${B.navyLight}`, borderRadius: 6, padding: "2px 10px", fontSize: 10, color: "rgba(255,255,255,0.4)", cursor: "pointer" }}>
+                    + 2° turno
+                  </button>
+                </div>
+              ) : null}
             </div>
           );
         })}
@@ -612,30 +671,49 @@ export default function ProcesarNomina() {
     if (zkRes.error) console.error("Error cargando asistencia_zk:", zkRes.error);
 
     // Unir marcas ZK con rh_marcaciones editadas.
-    // Regla: rh_marcaciones manda (representa edición/ajuste del supervisor).
-    // Para (emp, fecha) sin edición manual, sintetizar { entrada: min(hora),
-    // salida: max(hora) } desde asistencia_zk. Si solo hay 1 punch en el día,
-    // dejamos entrada=hora y salida vacía (día incompleto — el supervisor debe
-    // completar manualmente).
+    // - rh_marcaciones manda si existe (edición del supervisor)
+    // - Sin edición: sintetizar desde asistencia_zk agrupando punches por gap.
+    //   Un gap >90 min separa bloques (turno partido). Ej: 08:00, 08:05, 12:00,
+    //   15:00, 19:00 → bloque1 [08:00-12:00], bloque2 [15:00-19:00].
+    //   Con 1 solo punch: entrada=hora, salida vacía (día incompleto).
+    const GAP_MIN_TURNO_PARTIDO = 90;
+    const toMin = (h) => { const [H, M] = String(h).split(":").map(Number); return H * 60 + M; };
     const rhKeys = new Set((marcsRes.data || []).map(m => `${m.empleado_id}|${m.fecha}`));
-    const zkByKey = {};
+
+    // Agrupar todos los punches por (empleado, fecha), ordenados por hora.
+    const punchesByKey = {};
     for (const z of (zkRes.data || [])) {
       const k = `${z.empleado_id}|${z.fecha}`;
-      if (rhKeys.has(k)) continue;                  // supervisor ya editó → no pisar
-      const h = String(z.hora || "").slice(0, 5);   // "HH:MM"
+      if (rhKeys.has(k)) continue;
+      const h = String(z.hora || "").slice(0, 5);
       if (!h) continue;
-      if (!zkByKey[k]) zkByKey[k] = { empleado_id: z.empleado_id, fecha: z.fecha, entrada: h, salida: h, origen: "reloj" };
-      else {
-        if (h < zkByKey[k].entrada) zkByKey[k].entrada = h;
-        if (h > zkByKey[k].salida)  zkByKey[k].salida  = h;
-      }
+      if (!punchesByKey[k]) punchesByKey[k] = { empleado_id: z.empleado_id, fecha: z.fecha, punches: [] };
+      punchesByKey[k].punches.push(h);
     }
-    const zkSintetizadas = Object.values(zkByKey).map(x => ({
-      ...x,
-      // Si solo hay 1 punch (entrada==salida), dejamos salida vacía para no
-      // computar 0h + falsa "salida temprana". Supervisor debe corregir.
-      salida: x.entrada === x.salida ? "" : x.salida,
-    }));
+
+    const zkSintetizadas = [];
+    for (const k of Object.keys(punchesByKey)) {
+      const { empleado_id, fecha, punches } = punchesByKey[k];
+      const ordenados = [...new Set(punches)].sort();
+      if (ordenados.length === 0) continue;
+      // Partir en bloques por gap >= GAP_MIN_TURNO_PARTIDO
+      const bloques = [[ordenados[0]]];
+      for (let i = 1; i < ordenados.length; i++) {
+        const gap = toMin(ordenados[i]) - toMin(ordenados[i - 1]);
+        if (gap >= GAP_MIN_TURNO_PARTIDO) bloques.push([ordenados[i]]);
+        else bloques[bloques.length - 1].push(ordenados[i]);
+      }
+      const b1 = bloques[0];
+      const b2 = bloques[1] || null;
+      zkSintetizadas.push({
+        empleado_id, fecha,
+        entrada: b1[0],
+        salida: b1.length > 1 ? b1[b1.length - 1] : "",
+        entrada_2: b2 ? b2[0] : null,
+        salida_2: b2 && b2.length > 1 ? b2[b2.length - 1] : (b2 ? "" : null),
+        origen: "reloj",
+      });
+    }
     const marcacionesUnificadas = [...(marcsRes.data || []), ...zkSintetizadas];
 
     setEmpleados(empsRes.data || []);
@@ -847,13 +925,15 @@ export default function ProcesarNomina() {
         .map(f => ({
           empleado_id: empleadoId, fecha: f.fecha,
           entrada: f.entrada, salida: f.salida,
+          entrada_2: f.entrada_2 || null,
+          salida_2:  f.salida_2  || null,
           periodo: periodo.etiqueta, updated_at: nowIso,
           editado_por: currentUser.email || null,
           editado_at: nowIso,
           motivo_edicion: motivo.trim(),
           origen: "ajuste_supervisor",
         }));
-      const vacias = filas.filter(f => !f.entrada && !f.salida).map(f => f.fecha);
+      const vacias = filas.filter(f => !f.entrada && !f.salida && !f.entrada_2 && !f.salida_2).map(f => f.fecha);
       if (llenas.length) {
         const { error } = await supabase.from("rh_marcaciones")
           .upsert(llenas, { onConflict: "empleado_id,fecha" });
