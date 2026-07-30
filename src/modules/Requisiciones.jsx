@@ -31,9 +31,12 @@ const ROLES_APROBADOR = ["auto", "ventas", "operador", "gerente_general_op", "ge
 const esGerenteGeneralRol = (rol) => typeof rol === "string" && rol.startsWith("gerente_general");
 
 // Roles que pueden VER todas las requisiciones (no solo las propias):
-// aprobadores + roles operativos de la mesa de compras.
+// aprobadores + roles operativos de la mesa de compras + cualquier usuario
+// con acceso al módulo `compras` (es la mesa que gestiona las OCs, necesita
+// ver todas las reqs aunque el rol_id sea genérico como "operador").
 // Los demás solo ven las que ellos mismos solicitaron.
-const puedeVerTodasReqs = (rol) => {
+const puedeVerTodasReqs = (rol, modulos) => {
+  if (Array.isArray(modulos) && modulos.includes("compras")) return true;
   if (!rol) return false;
   if (rol === "super_admin" || rol === "admin" || rol === "direccion") return true;
   if (esGerenteGeneralRol(rol)) return true;
@@ -148,8 +151,8 @@ export default function Requisiciones() {
     if (!supabase) return;
     supabase.auth.getUser().then(async ({ data }) => {
       if (data?.user) {
-        const { data: u } = await supabase.from("usuarios").select("id, nombre, rol_id").eq("email", data.user.email).maybeSingle();
-        if (u) setCurrentUser({ id: u.id, nombre: u.nombre, rol: u.rol_id });
+        const { data: u } = await supabase.from("usuarios").select("id, nombre, rol_id, modulos").eq("email", data.user.email).maybeSingle();
+        if (u) setCurrentUser({ id: u.id, nombre: u.nombre, rol: u.rol_id, modulos: u.modulos || [] });
       }
     });
   }, []);
@@ -161,7 +164,7 @@ export default function Requisiciones() {
     // propias requisiciones. Requiere currentUser cargado; si no lo esta
     // aun, load() se re-ejecuta cuando cambia currentUser (useEffect abajo).
     let reqsQuery = supabase.from("requisiciones").select("*").order("fecha", { ascending: false });
-    if (currentUser?.id && !puedeVerTodasReqs(currentUser.rol)) {
+    if (currentUser?.id && !puedeVerTodasReqs(currentUser.rol, currentUser.modulos)) {
       reqsQuery = reqsQuery.eq("solicitante_id", currentUser.id);
     }
     const [rR, rgR, pR, oR, uR] = await Promise.all([

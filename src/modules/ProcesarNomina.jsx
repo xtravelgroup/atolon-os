@@ -235,7 +235,7 @@ function MarcacionesGrid({ empleado, periodo, ventana, marcaciones, horariosProg
   );
 }
 
-function DetalleDrawer({ empleado, calc, onClose, onAddNovedad, onDeleteNovedad, allNovedades, periodo, ventana, marcaciones = [], horariosProgramados = [], bloqueado = false, onSaveMarcaciones }) {
+function DetalleDrawer({ empleado, calc, onClose, onAddNovedad, onDeleteNovedad, allNovedades, periodo, ventana, marcaciones = [], horariosProgramados = [], bloqueado = false, esAdmin = false, onSaveMarcaciones }) {
   if (!empleado || !calc) return null;
   const novedadesDelEmpleado = allNovedades.filter(n => n.empleado_loggro_id === empleado.id);
   return (
@@ -246,7 +246,7 @@ function DetalleDrawer({ empleado, calc, onClose, onAddNovedad, onDeleteNovedad,
             <div style={{ fontSize: 11, color: B.sand, textTransform: "uppercase", letterSpacing: 1 }}>{empleado.cargo || "—"}</div>
             <div style={{ fontSize: 22, fontWeight: 700, color: B.white }}>{empleado.nombres} {empleado.apellidos}</div>
             <div style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", marginTop: 4 }}>
-              CC: {empleado.cedula || "—"} · Salario base: {COP(empleado.salario_base)} / mes
+              CC: {empleado.cedula || "—"}{esAdmin ? ` · Salario base: ${COP(empleado.salario_base)} / mes` : ""}
             </div>
           </div>
           <button onClick={onClose} style={{ background: "none", border: "none", color: B.white, fontSize: 22, cursor: "pointer" }}>×</button>
@@ -265,7 +265,8 @@ function DetalleDrawer({ empleado, calc, onClose, onAddNovedad, onDeleteNovedad,
           />
         )}
 
-        {/* DEVENGADO */}
+        {/* DEVENGADO — solo admin */}
+        {esAdmin && (
         <div style={{ background: B.navyMid, borderRadius: 12, padding: 16, marginBottom: 14 }}>
           <div style={{ fontSize: 11, color: B.success, textTransform: "uppercase", letterSpacing: 1, fontWeight: 700, marginBottom: 12 }}>✓ Devengado</div>
           <Row
@@ -329,8 +330,10 @@ function DetalleDrawer({ empleado, calc, onClose, onAddNovedad, onDeleteNovedad,
           )}
           <Total label="Subtotal devengado" value={COP(calc.devengado.subtotal)} color={B.success} />
         </div>
+        )}
 
-        {/* DEDUCCIONES */}
+        {/* DEDUCCIONES — solo admin */}
+        {esAdmin && (
         <div style={{ background: B.navyMid, borderRadius: 12, padding: 16, marginBottom: 14 }}>
           <div style={{ fontSize: 11, color: B.warning, textTransform: "uppercase", letterSpacing: 1, fontWeight: 700, marginBottom: 12 }}>− Deducciones</div>
           <Row label="Aporte salud (4%)" value={"− " + COP(calc.deducciones.aporte_salud)} />
@@ -347,14 +350,30 @@ function DetalleDrawer({ empleado, calc, onClose, onAddNovedad, onDeleteNovedad,
           )}
           <Total label="Subtotal deducciones" value={"− " + COP(calc.deducciones.subtotal)} color={B.warning} />
         </div>
+        )}
 
-        {/* NETO */}
-        <div style={{ background: B.sand + "11", border: `2px solid ${B.sand}`, borderRadius: 12, padding: 20, marginBottom: 14 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-            <span style={{ fontSize: 14, color: B.sand, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1 }}>Neto a pagar</span>
-            <span style={{ fontSize: 32, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 800, color: B.sand }}>{COP(calc.neto)}</span>
+        {/* NETO — solo admin */}
+        {esAdmin && (
+          <div style={{ background: B.sand + "11", border: `2px solid ${B.sand}`, borderRadius: 12, padding: 20, marginBottom: 14 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+              <span style={{ fontSize: 14, color: B.sand, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1 }}>Neto a pagar</span>
+              <span style={{ fontSize: 32, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 800, color: B.sand }}>{COP(calc.neto)}</span>
+            </div>
           </div>
-        </div>
+        )}
+
+        {/* Resumen para supervisor (solo horas y días) */}
+        {!esAdmin && (
+          <div style={{ background: B.navyMid, borderRadius: 12, padding: 16, marginBottom: 14 }}>
+            <div style={{ fontSize: 11, color: B.sky, textTransform: "uppercase", letterSpacing: 1, fontWeight: 700, marginBottom: 12 }}>📊 Resumen del período</div>
+            <Row label="Días trabajados" value={`${calc.dias_trabajados}`} />
+            <Row label="Horas totales (marcaciones)" value={`${calc.marcaciones?.horas || 0} h`} />
+            <Row label="Horas ordinarias" value={`${calc.marcaciones?.horas_ordinarias || 0} h`} />
+            <Row label="Horas extra" value={`${calc.marcaciones?.horas_extra || 0} h`} muted={(calc.marcaciones?.horas_extra || 0) === 0} />
+            <Row label="Horas nocturnas" value={`${calc.marcaciones?.horas_nocturnas || 0} h`} muted={(calc.marcaciones?.horas_nocturnas || 0) === 0} />
+            <Row label="Faltas" value={calc.dias_no_trabajados > 0 ? `${calc.dias_no_trabajados} día(s)` : "—"} muted={calc.dias_no_trabajados === 0} />
+          </div>
+        )}
 
         {/* INFORMATIVO */}
         {calc.informativo.length > 0 && (
@@ -985,43 +1004,62 @@ export default function ProcesarNomina() {
         </div>
       )}
 
-      {/* KPIs */}
+      {/* KPIs — solo admin ve montos. Supervisor solo ve empleados + horas. */}
       <div style={{ display: "flex", flexWrap: "wrap", gap: 12, marginBottom: 20 }}>
         <Kpi label="Empleados activos" value={empleadosFiltrados.length} color={B.sky} />
-        <Kpi label="Salario ordinario" value={COP(totales.base)} sub="95.33 h/quincena × empleados" />
-        <Kpi label="Aux. transporte" value={COP(totales.aux)} sub={`${AUX_TRANSPORTE_2026.toLocaleString("es-CO")} máx/mes`} />
-        <Kpi label="Novedades + (bonos/extras)" value={COP(totales.extras)} color={B.success} />
-        <Kpi label="Novedades − (descuentos)" value={COP(totales.descuentos)} color={B.warning} />
-        <Kpi label="NETO A PAGAR" value={COP(totales.neto)} color={B.sand} sub={`Devengado ${COP(totales.devengado)} − Deducciones ${COP(totales.deducciones)}`} />
+        {(() => {
+          const totHoras = empleadosFiltrados.reduce((s, x) => s + (x.calc.marcaciones?.horas || 0), 0);
+          const totExtra = empleadosFiltrados.reduce((s, x) => s + (x.calc.marcaciones?.horas_extra || 0), 0);
+          const totFaltas = empleadosFiltrados.reduce((s, x) => s + (x.calc.dias_no_trabajados || 0), 0);
+          return (
+            <>
+              <Kpi label="Horas totales" value={`${totHoras.toFixed(1)} h`} sub={`${totExtra.toFixed(1)}h extra`} color={B.sand} />
+              <Kpi label="Faltas" value={`${totFaltas} día(s)`} color={totFaltas > 0 ? B.warning : B.success} />
+            </>
+          );
+        })()}
+        {esAdmin && (
+          <>
+            <Kpi label="Salario ordinario" value={COP(totales.base)} sub="95.33 h/quincena × empleados" />
+            <Kpi label="Aux. transporte" value={COP(totales.aux)} sub={`${AUX_TRANSPORTE_2026.toLocaleString("es-CO")} máx/mes`} />
+            <Kpi label="Novedades + (bonos/extras)" value={COP(totales.extras)} color={B.success} />
+            <Kpi label="Novedades − (descuentos)" value={COP(totales.descuentos)} color={B.warning} />
+            <Kpi label="NETO A PAGAR" value={COP(totales.neto)} color={B.sand} sub={`Devengado ${COP(totales.devengado)} − Deducciones ${COP(totales.deducciones)}`} />
+          </>
+        )}
       </div>
 
-      {/* Filtros + acción */}
+      {/* Filtros + acción (guardar nómina consolidada solo admin) */}
       <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center", marginBottom: 14 }}>
         <input type="search" placeholder="🔍 Buscar por nombre, cédula, cargo…" value={search} onChange={e => setSearch(e.target.value)}
           style={{ ...IS, flex: "1 1 280px", maxWidth: 440 }} />
-        <button onClick={procesarYGuardar} disabled={saving || loading || empleadosFiltrados.length === 0} style={{
-          background: saving ? B.navyLight : B.success, color: B.white, border: "none", borderRadius: 10,
-          padding: "10px 20px", cursor: saving ? "not-allowed" : "pointer", fontWeight: 700, fontSize: 13,
-          opacity: saving ? 0.6 : 1,
-        }}>
-          {saving ? "Guardando…" : `💾 Guardar nómina (${empleadosFiltrados.length})`}
-        </button>
+        {esAdmin && (
+          <button onClick={procesarYGuardar} disabled={saving || loading || empleadosFiltrados.length === 0} style={{
+            background: saving ? B.navyLight : B.success, color: B.white, border: "none", borderRadius: 10,
+            padding: "10px 20px", cursor: saving ? "not-allowed" : "pointer", fontWeight: 700, fontSize: 13,
+            opacity: saving ? 0.6 : 1,
+          }}>
+            {saving ? "Guardando…" : `💾 Guardar nómina (${empleadosFiltrados.length})`}
+          </button>
+        )}
       </div>
 
-      {/* Tabla */}
+      {/* Tabla — supervisor ve solo horas/faltas; admin ve montos completos */}
       {loading ? (
         <div style={{ textAlign: "center", padding: 40, color: B.sand }}>Cargando…</div>
       ) : empleadosFiltrados.length === 0 ? (
         <div style={{ background: B.navyMid, borderRadius: 12, padding: 40, textAlign: "center", color: "rgba(255,255,255,0.55)" }}>
           Sin empleados que coincidan.
         </div>
-      ) : (
+      ) : esAdmin ? (
+        // ── Vista admin: tabla completa con montos ──
         <div style={{ background: B.navyMid, borderRadius: 12, overflow: "hidden", overflowX: "auto" }}>
           <table width="100%" cellPadding={0} cellSpacing={0} style={{ fontSize: 13, minWidth: 760 }}>
             <thead>
               <tr style={{ background: "rgba(255,255,255,0.04)" }}>
                 <th style={thStyle}>Empleado</th>
                 <th style={thStyle}>Cargo</th>
+                <th style={{ ...thStyle, textAlign: "right" }}>Horas</th>
                 <th style={{ ...thStyle, textAlign: "right" }}>Base período</th>
                 <th style={{ ...thStyle, textAlign: "right" }}>Aux. transp.</th>
                 <th style={{ ...thStyle, textAlign: "right" }}>Novedades +</th>
@@ -1042,6 +1080,10 @@ export default function ProcesarNomina() {
                     <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)" }}>CC: {empleado.cedula || "—"}</div>
                   </td>
                   <td style={{ ...tdStyle, color: "rgba(255,255,255,0.6)" }}>{empleado.cargo || "—"}</td>
+                  <td style={{ ...tdStyle, textAlign: "right", color: B.sky }}>
+                    {calc.marcaciones?.horas || 0}h
+                    {(calc.marcaciones?.horas_extra || 0) > 0 && <div style={{ fontSize: 10, color: B.sand }}>+{calc.marcaciones.horas_extra}h ex</div>}
+                  </td>
                   <td style={{ ...tdStyle, textAlign: "right", color: calc.dias_no_trabajados > 0 ? B.warning : B.white }}>
                     {COP(calc.devengado.salario_base_periodo)}
                     {calc.dias_no_trabajados > 0 && <div style={{ fontSize: 10, color: B.warning }}>−{calc.dias_no_trabajados} falta(s)</div>}
@@ -1066,6 +1108,7 @@ export default function ProcesarNomina() {
             <tfoot>
               <tr style={{ background: "rgba(200,185,154,0.05)", borderTop: `2px solid ${B.sand}` }}>
                 <td style={{ ...tdStyle, fontWeight: 700 }} colSpan={2}>TOTAL {empleadosFiltrados.length} empl.</td>
+                <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: B.sky }}>{empleadosFiltrados.reduce((s, x) => s + (x.calc.marcaciones?.horas || 0), 0).toFixed(1)}h</td>
                 <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700 }}>{COP(totales.base)}</td>
                 <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700 }}>{COP(totales.aux)}</td>
                 <td style={{ ...tdStyle, textAlign: "right", color: B.success, fontWeight: 700 }}>+{COP(totales.extras)}</td>
@@ -1074,6 +1117,61 @@ export default function ProcesarNomina() {
                 <td style={{ ...tdStyle, textAlign: "right", fontWeight: 800, color: B.sand, fontFamily: "'Barlow Condensed', sans-serif", fontSize: 18 }}>
                   {COP(totales.neto)}
                 </td>
+                <td></td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      ) : (
+        // ── Vista supervisor: solo horas, sin ningún monto ──
+        <div style={{ background: B.navyMid, borderRadius: 12, overflow: "hidden", overflowX: "auto" }}>
+          <table width="100%" cellPadding={0} cellSpacing={0} style={{ fontSize: 13, minWidth: 560 }}>
+            <thead>
+              <tr style={{ background: "rgba(255,255,255,0.04)" }}>
+                <th style={thStyle}>Empleado</th>
+                <th style={thStyle}>Cargo</th>
+                <th style={{ ...thStyle, textAlign: "right" }}>Días trabajados</th>
+                <th style={{ ...thStyle, textAlign: "right" }}>Horas ordinarias</th>
+                <th style={{ ...thStyle, textAlign: "right" }}>Horas extra</th>
+                <th style={{ ...thStyle, textAlign: "right" }}>Faltas</th>
+                <th style={thStyle}></th>
+              </tr>
+            </thead>
+            <tbody>
+              {empleadosFiltrados.map(({ empleado, calc }) => {
+                const horas = calc.marcaciones?.horas || 0;
+                const hOrd = calc.marcaciones?.horas_ordinarias || 0;
+                const hExt = calc.marcaciones?.horas_extra || 0;
+                return (
+                  <tr key={empleado.id} onClick={() => setDetalleEmpleado(empleado)}
+                    style={{ borderTop: `1px solid ${B.navyLight}33`, cursor: "pointer" }}
+                    onMouseEnter={e => e.currentTarget.style.background = "rgba(255,255,255,0.03)"}
+                    onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                    <td style={{ ...tdStyle, fontWeight: 600 }}>
+                      {empleado.nombres} {empleado.apellidos}
+                      <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)" }}>CC: {empleado.cedula || "—"}</div>
+                    </td>
+                    <td style={{ ...tdStyle, color: "rgba(255,255,255,0.6)" }}>{empleado.cargo || "—"}</td>
+                    <td style={{ ...tdStyle, textAlign: "right" }}>{calc.dias_trabajados}</td>
+                    <td style={{ ...tdStyle, textAlign: "right", color: B.sky }}>{hOrd}h</td>
+                    <td style={{ ...tdStyle, textAlign: "right", color: hExt > 0 ? B.sand : "rgba(255,255,255,0.3)" }}>
+                      {hExt > 0 ? `+${hExt}h` : "—"}
+                    </td>
+                    <td style={{ ...tdStyle, textAlign: "right", color: calc.dias_no_trabajados > 0 ? B.warning : "rgba(255,255,255,0.3)" }}>
+                      {calc.dias_no_trabajados > 0 ? `${calc.dias_no_trabajados} día(s)` : "—"}
+                    </td>
+                    <td style={{ ...tdStyle, color: B.sky }}>→</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+            <tfoot>
+              <tr style={{ background: "rgba(200,185,154,0.05)", borderTop: `2px solid ${B.sand}` }}>
+                <td style={{ ...tdStyle, fontWeight: 700 }} colSpan={2}>TOTAL {empleadosFiltrados.length} empl.</td>
+                <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700 }}>{empleadosFiltrados.reduce((s, x) => s + x.calc.dias_trabajados, 0)}</td>
+                <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: B.sky }}>{empleadosFiltrados.reduce((s, x) => s + (x.calc.marcaciones?.horas_ordinarias || 0), 0).toFixed(1)}h</td>
+                <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: B.sand }}>+{empleadosFiltrados.reduce((s, x) => s + (x.calc.marcaciones?.horas_extra || 0), 0).toFixed(1)}h</td>
+                <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: B.warning }}>{empleadosFiltrados.reduce((s, x) => s + x.calc.dias_no_trabajados, 0)}</td>
                 <td></td>
               </tr>
             </tfoot>
@@ -1092,6 +1190,7 @@ export default function ProcesarNomina() {
           marcaciones={marcaciones.filter(m => m.empleado_id === detalleEmpleado.id)}
           horariosProgramados={horarios.filter(h => h.empleado_id === detalleEmpleado.id)}
           bloqueado={empleadoBloqueado(detalleEmpleado.id)}
+          esAdmin={esAdmin}
           onSaveMarcaciones={handleSaveMarcaciones}
           onClose={() => setDetalleEmpleado(null)}
           onAddNovedad={() => setAddNovedadEmp(detalleEmpleado)}
