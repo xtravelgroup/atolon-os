@@ -572,7 +572,7 @@ export default function ProcesarNomina() {
     if (!supabase) return;
     setLoading(true);
     const ven = ventanaDe(periodo);
-    const [empsRes, novsRes, marcsRes, deptosRes, aprobsRes, horsRes] = await Promise.all([
+    const [empsRes, novsRes, marcsRes, deptosRes, aprobsRes, horsRes, zkRes] = await Promise.all([
       supabase.from("rh_empleados")
         .select("id, nombres, apellidos, cedula, cargo, departamento_id, salario_base, tarifa_hora, modalidad_calculo, almuerzo_horas, activo")
         .eq("activo", true)
@@ -581,7 +581,7 @@ export default function ProcesarNomina() {
       supabase.from("empleados_loggro_novedades")
         .select("*")
         .or(`fecha_inicio.lte.${ven.hasta},fecha_fin.gte.${ven.desde}`),
-      // Marcaciones (entrada/salida) en la ventana del período (26→10 / 11→25).
+      // Marcaciones EDITADAS por supervisor (ajustes manuales)
       supabase.from("rh_marcaciones")
         .select("*")
         .gte("fecha", ven.desde)
@@ -593,6 +593,15 @@ export default function ProcesarNomina() {
         .select("empleado_id, fecha, hora_ini, hora_fin, tipo")
         .gte("fecha", ven.desde)
         .lte("fecha", ven.hasta),
+      // Marcas del reloj biométrico (fuente primaria). Se agrupan por
+      // (empleado, fecha) → min=entrada, max=salida. Si el supervisor edita,
+      // el registro en rh_marcaciones tiene precedencia.
+      supabase.from("asistencia_zk")
+        .select("empleado_id, fecha, hora")
+        .gte("fecha", ven.desde)
+        .lte("fecha", ven.hasta)
+        .not("empleado_id", "is", null)
+        .order("hora"),
     ]);
     if (empsRes.error) console.error("Error cargando empleados:", empsRes.error);
     if (novsRes.error) console.error("Error cargando novedades:", novsRes.error);
@@ -600,9 +609,38 @@ export default function ProcesarNomina() {
     if (deptosRes.error) console.error("Error cargando departamentos:", deptosRes.error);
     if (aprobsRes.error) console.error("Error cargando aprobaciones:", aprobsRes.error);
     if (horsRes.error) console.error("Error cargando horarios:", horsRes.error);
+    if (zkRes.error) console.error("Error cargando asistencia_zk:", zkRes.error);
+
+    // Unir marcas ZK con rh_marcaciones editadas.
+    // Regla: rh_marcaciones manda (representa edición/ajuste del supervisor).
+    // Para (emp, fecha) sin edición manual, sintetizar { entrada: min(hora),
+    // salida: max(hora) } desde asistencia_zk. Si solo hay 1 punch en el día,
+    // dejamos entrada=hora y salida vacía (día incompleto — el supervisor debe
+    // completar manualmente).
+    const rhKeys = new Set((marcsRes.data || []).map(m => `${m.empleado_id}|${m.fecha}`));
+    const zkByKey = {};
+    for (const z of (zkRes.data || [])) {
+      const k = `${z.empleado_id}|${z.fecha}`;
+      if (rhKeys.has(k)) continue;                  // supervisor ya editó → no pisar
+      const h = String(z.hora || "").slice(0, 5);   // "HH:MM"
+      if (!h) continue;
+      if (!zkByKey[k]) zkByKey[k] = { empleado_id: z.empleado_id, fecha: z.fecha, entrada: h, salida: h, origen: "reloj" };
+      else {
+        if (h < zkByKey[k].entrada) zkByKey[k].entrada = h;
+        if (h > zkByKey[k].salida)  zkByKey[k].salida  = h;
+      }
+    }
+    const zkSintetizadas = Object.values(zkByKey).map(x => ({
+      ...x,
+      // Si solo hay 1 punch (entrada==salida), dejamos salida vacía para no
+      // computar 0h + falsa "salida temprana". Supervisor debe corregir.
+      salida: x.entrada === x.salida ? "" : x.salida,
+    }));
+    const marcacionesUnificadas = [...(marcsRes.data || []), ...zkSintetizadas];
+
     setEmpleados(empsRes.data || []);
     setNovedades(novsRes.data || []);
-    setMarcaciones(marcsRes.data || []);
+    setMarcaciones(marcacionesUnificadas);
     setDepartamentos(deptosRes.data || []);
     setAprobaciones(aprobsRes.data || []);
     setHorarios(horsRes.data || []);
