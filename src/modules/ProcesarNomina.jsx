@@ -54,7 +54,20 @@ function Kpi({ label, value, sub, color }) {
 }
 
 // ── Drawer detalle empleado ──────────────────────────────────────────────────
-function MarcacionesGrid({ empleado, periodo, ventana, marcaciones, onSave }) {
+// Diferencia en minutos entre dos "HH:MM" (b-a). null si alguno falta.
+function diffMin(a, b) {
+  if (!a || !b) return null;
+  const [ha, ma] = a.split(":").map(Number);
+  const [hb, mb] = b.split(":").map(Number);
+  return (hb * 60 + mb) - (ha * 60 + ma);
+}
+function fmtDelta(min) {
+  if (min == null) return null;
+  const s = min > 0 ? "+" : (min < 0 ? "−" : "");
+  return `${s}${Math.abs(min)}min`;
+}
+
+function MarcacionesGrid({ empleado, periodo, ventana, marcaciones, horariosProgramados = [], bloqueado = false, onSave }) {
   // Las marcaciones se capturan en la ventana del período (Pago 15 = 26→10,
   // Pago 30 = 11→25), no en la quincena calendario.
   const dias = diasDelPeriodo(ventana.desde, ventana.hasta);
@@ -68,28 +81,59 @@ function MarcacionesGrid({ empleado, periodo, ventana, marcaciones, onSave }) {
     return m;
   };
   const [grid, setGrid] = useState(seed);
+  const [initialGrid] = useState(seed);   // snapshot original — para detectar cambios
   const [guardando, setGuardando] = useState(false);
+  const [motivoOpen, setMotivoOpen] = useState(false);
+  const [motivo, setMotivo] = useState("");
   const tarifa = tarifaHoraEmpleado(empleado);
   const almuerzo = empleado?.almuerzo_horas == null ? 1 : Number(empleado.almuerzo_horas);
   const DOW = ["Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"];
 
+  // Índice de horarios programados por fecha (rh_horarios)
+  const horByFecha = useMemo(() => {
+    const m = {};
+    for (const h of horariosProgramados) m[h.fecha] = h;
+    return m;
+  }, [horariosProgramados]);
+
   const set = (fecha, campo, val) => setGrid(g => ({ ...g, [fecha]: { ...g[fecha], [campo]: val } }));
   const filas = dias.map(f => ({ fecha: f, ...grid[f] }));
-  // La hora extra depende del acumulado SEMANAL → el dinero se calcula a
-  // nivel período, no por día. Aquí solo previsualizamos horas + adicionales.
   const desg = desglosarPeriodo(filas, tarifa, undefined, almuerzo);
 
-  const guardar = async () => {
+  // ¿Hubo cambios vs snapshot original?
+  const cambios = dias.reduce((c, d) => {
+    const a = initialGrid[d] || { entrada: "", salida: "" };
+    const b = grid[d] || { entrada: "", salida: "" };
+    return c + ((a.entrada !== b.entrada || a.salida !== b.salida) ? 1 : 0);
+  }, 0);
+
+  const iniciarGuardar = () => {
+    if (bloqueado) return;
+    if (cambios === 0) {
+      alert("No hay cambios que guardar.");
+      return;
+    }
+    setMotivo("");
+    setMotivoOpen(true);
+  };
+
+  const confirmarGuardar = async () => {
+    if (!motivo || motivo.trim().length < 3) {
+      alert("Escribe la razón del cambio (mínimo 3 caracteres).");
+      return;
+    }
     setGuardando(true);
-    await onSave(empleado.id, filas);
+    const ok = await onSave(empleado.id, filas, motivo.trim());
     setGuardando(false);
+    if (ok) setMotivoOpen(false);
   };
 
   return (
-    <div style={{ background: B.navyMid, borderRadius: 12, padding: 16, marginBottom: 14 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+    <div style={{ background: B.navyMid, borderRadius: 12, padding: 16, marginBottom: 14, opacity: bloqueado ? 0.85 : 1 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4, flexWrap: "wrap", gap: 6 }}>
         <div style={{ fontSize: 11, color: B.sky, textTransform: "uppercase", letterSpacing: 1, fontWeight: 700 }}>
           🕑 Marcaciones · {periodo.etiqueta}
+          {bloqueado && <span style={{ marginLeft: 8, background: B.warning + "33", color: B.warning, padding: "2px 7px", borderRadius: 6, fontSize: 10 }}>🔒 Aprobado</span>}
         </div>
         <div style={{ fontSize: 12, color: B.sand, fontWeight: 700 }}>
           {desg.horas_ordinarias}h ord · {desg.horas_extra}h extra
@@ -101,35 +145,97 @@ function MarcacionesGrid({ empleado, periodo, ventana, marcaciones, onSave }) {
       <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
         {filas.map(f => {
           const d = new Date(f.fecha + "T12:00:00");
-          const fest = FESTIVOS_CO_2026.has(f.fecha); // domingos = día normal (sin recargo)
+          const fest = FESTIVOS_CO_2026.has(f.fecha);
           const pre = (f.entrada && f.salida)
             ? calcularHorasDia({ fecha: f.fecha, entrada: f.entrada, salida: f.salida, almuerzoHoras: almuerzo })
             : null;
+          const prog = horByFecha[f.fecha];
+          const progIn = norm(prog?.hora_ini);
+          const progOut = norm(prog?.hora_fin);
+          const dIn = diffMin(progIn, f.entrada);   // + = tarde en entrar
+          const dOut = diffMin(progOut, f.salida);  // + = tarde en salir (extra), − = salió antes
           return (
-            <div key={f.fecha} style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 0", borderBottom: `1px solid ${B.navyLight}33` }}>
-              <div style={{ width: 64, fontSize: 11, color: fest ? B.warning : "rgba(255,255,255,0.7)" }}>
-                {DOW[d.getDay()]} {d.getDate()}{fest ? " •" : ""}
+            <div key={f.fecha} style={{ padding: "6px 0", borderBottom: `1px solid ${B.navyLight}33` }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <div style={{ width: 64, fontSize: 11, color: fest ? B.warning : "rgba(255,255,255,0.7)" }}>
+                  {DOW[d.getDay()]} {d.getDate()}{fest ? " •" : ""}
+                </div>
+                <input type="time" value={f.entrada} onChange={e => set(f.fecha, "entrada", e.target.value)}
+                  disabled={bloqueado}
+                  style={{ ...IS, width: 96, padding: "6px 8px", opacity: bloqueado ? 0.7 : 1 }} />
+                <input type="time" value={f.salida} onChange={e => set(f.fecha, "salida", e.target.value)}
+                  disabled={bloqueado}
+                  style={{ ...IS, width: 96, padding: "6px 8px", opacity: bloqueado ? 0.7 : 1 }} />
+                <div style={{ flex: 1, textAlign: "right", fontSize: 11, color: pre ? B.success : "rgba(255,255,255,0.25)" }}>
+                  {pre ? `${pre.horas}h${pre.horas_nocturnas ? ` · ${pre.horas_nocturnas}h noct` : ""}` : "—"}
+                </div>
               </div>
-              <input type="time" value={f.entrada} onChange={e => set(f.fecha, "entrada", e.target.value)}
-                style={{ ...IS, width: 96, padding: "6px 8px" }} />
-              <input type="time" value={f.salida} onChange={e => set(f.fecha, "salida", e.target.value)}
-                style={{ ...IS, width: 96, padding: "6px 8px" }} />
-              <div style={{ flex: 1, textAlign: "right", fontSize: 11, color: pre ? B.success : "rgba(255,255,255,0.25)" }}>
-                {pre ? `${pre.horas}h${pre.horas_nocturnas ? ` · ${pre.horas_nocturnas}h noct` : ""}` : "—"}
-              </div>
+              {/* Horario programado + desviación */}
+              {(progIn && progOut) ? (
+                <div style={{ paddingLeft: 70, fontSize: 10, color: "rgba(255,255,255,0.45)", display: "flex", gap: 12, flexWrap: "wrap", marginTop: 2 }}>
+                  <span>📋 Programado {progIn}–{progOut}{prog.tipo ? ` (${prog.tipo})` : ""}</span>
+                  {(f.entrada || f.salida) && (
+                    <>
+                      {dIn != null && (
+                        <span style={{ color: Math.abs(dIn) <= 5 ? B.success : dIn > 15 ? B.danger : B.warning }}>
+                          Entrada {fmtDelta(dIn)}
+                        </span>
+                      )}
+                      {dOut != null && (
+                        <span style={{ color: Math.abs(dOut) <= 5 ? B.success : dOut < -15 ? B.danger : dOut > 30 ? B.sky : B.warning }}>
+                          Salida {fmtDelta(dOut)}
+                        </span>
+                      )}
+                    </>
+                  )}
+                </div>
+              ) : (
+                <div style={{ paddingLeft: 70, fontSize: 10, color: "rgba(255,255,255,0.25)", marginTop: 2 }}>
+                  📋 Sin horario programado
+                </div>
+              )}
             </div>
           );
         })}
       </div>
-      <button onClick={guardar} disabled={guardando}
-        style={{ width: "100%", marginTop: 12, background: guardando ? B.navyLight : B.sky, color: B.navy, border: "none", borderRadius: 10, padding: "11px 18px", cursor: "pointer", fontWeight: 700, fontSize: 13 }}>
-        {guardando ? "Guardando…" : "💾 Guardar marcaciones"}
-      </button>
+      {!bloqueado && (
+        <button onClick={iniciarGuardar} disabled={guardando || cambios === 0}
+          style={{ width: "100%", marginTop: 12, background: (guardando || cambios === 0) ? B.navyLight : B.sky, color: B.navy, border: "none", borderRadius: 10, padding: "11px 18px", cursor: (guardando || cambios === 0) ? "not-allowed" : "pointer", fontWeight: 700, fontSize: 13, opacity: (guardando || cambios === 0) ? 0.6 : 1 }}>
+          {guardando ? "Guardando…" : cambios === 0 ? "Sin cambios" : `💾 Guardar (${cambios} día${cambios===1?"":"s"} modificado${cambios===1?"":"s"})`}
+        </button>
+      )}
+
+      {/* Modal motivo del cambio */}
+      {motivoOpen && (
+        <div onClick={() => !guardando && setMotivoOpen(false)}
+             style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 1100, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+          <div onClick={e => e.stopPropagation()}
+               style={{ background: B.navy, borderRadius: 14, padding: 24, width: "min(480px, 100%)", border: `1px solid ${B.navyLight}` }}>
+            <div style={{ fontSize: 15, fontWeight: 700, color: B.sand, marginBottom: 6 }}>Razón del cambio</div>
+            <div style={{ fontSize: 12, color: "rgba(255,255,255,0.55)", marginBottom: 14 }}>
+              Vas a modificar {cambios} día{cambios===1?"":"s"} de {empleado.nombres} {empleado.apellidos}. La razón queda auditada.
+            </div>
+            <textarea autoFocus value={motivo} onChange={e => setMotivo(e.target.value)}
+              placeholder="Ej: 'Se olvidó marcar entrada — validé cámara y turno programado'"
+              style={{ ...IS, minHeight: 80, resize: "vertical", padding: 10 }} />
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 14 }}>
+              <button onClick={() => setMotivoOpen(false)} disabled={guardando}
+                style={{ background: "transparent", color: B.white, border: `1px solid ${B.navyLight}`, borderRadius: 8, padding: "8px 16px", cursor: "pointer", fontSize: 13 }}>
+                Cancelar
+              </button>
+              <button onClick={confirmarGuardar} disabled={guardando}
+                style={{ background: guardando ? B.navyLight : B.sky, color: B.navy, border: "none", borderRadius: 8, padding: "8px 20px", cursor: guardando ? "not-allowed" : "pointer", fontWeight: 700, fontSize: 13 }}>
+                {guardando ? "Guardando…" : "✓ Confirmar y guardar"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
-function DetalleDrawer({ empleado, calc, onClose, onAddNovedad, onDeleteNovedad, allNovedades, periodo, ventana, marcaciones = [], onSaveMarcaciones }) {
+function DetalleDrawer({ empleado, calc, onClose, onAddNovedad, onDeleteNovedad, allNovedades, periodo, ventana, marcaciones = [], horariosProgramados = [], bloqueado = false, onSaveMarcaciones }) {
   if (!empleado || !calc) return null;
   const novedadesDelEmpleado = allNovedades.filter(n => n.empleado_loggro_id === empleado.id);
   return (
@@ -153,6 +259,8 @@ function DetalleDrawer({ empleado, calc, onClose, onAddNovedad, onDeleteNovedad,
             periodo={periodo}
             ventana={ventana}
             marcaciones={marcaciones}
+            horariosProgramados={horariosProgramados}
+            bloqueado={bloqueado}
             onSave={onSaveMarcaciones}
           />
         )}
@@ -382,25 +490,60 @@ function AddNovedadModal({ empleado, periodo, onSave, onClose }) {
 }
 
 // ── Main module ──────────────────────────────────────────────────────────────
+// Clave única del período para nomina_aprobaciones.
+// "YYYY-MM-Q1" = pago 15 del mes (cubre 26/mes-1 → 10/mes)
+// "YYYY-MM-Q2" = pago 30 del mes (cubre 11 → 25)
+function periodoKeyOf(periodo) {
+  if (!periodo?.anio || periodo?.mes == null || !periodo?.numero) {
+    return `custom-${periodo?.desde || ""}-${periodo?.hasta || ""}`;
+  }
+  const mm = String(periodo.mes + 1).padStart(2, "0");
+  return `${periodo.anio}-${mm}-Q${periodo.numero}`;
+}
+
+const ADMIN_ROLES = new Set(["super_admin", "admin", "direccion", "administrador"]);
+
 export default function ProcesarNomina() {
   const isMobile = useMobile();
   const [empleados, setEmpleados] = useState([]);
   const [novedades, setNovedades] = useState([]);
   const [marcaciones, setMarcaciones] = useState([]);
+  const [horarios, setHorarios] = useState([]);
+  const [departamentos, setDepartamentos] = useState([]);
+  const [aprobaciones, setAprobaciones] = useState([]);
+  const [currentUser, setCurrentUser] = useState({ email: "", rol: null });
+  const [deptoFiltro, setDeptoFiltro] = useState("");   // "" = todos (solo admin)
   const [loading, setLoading] = useState(true);
   const [periodo, setPeriodo] = useState(() => quincenaActual());
   const [detalleEmpleado, setDetalleEmpleado] = useState(null);
   const [addNovedadEmp, setAddNovedadEmp] = useState(null);
   const [search, setSearch] = useState("");
   const [saving, setSaving] = useState(false);
+  const [aprobando, setAprobando] = useState(false);
 
   const ventana = useMemo(() => ventanaDe(periodo), [periodo]);
+  const periodoKey = useMemo(() => periodoKeyOf(periodo), [periodo]);
+  const esAdmin = ADMIN_ROLES.has(String(currentUser.rol || "").toLowerCase());
+
+  // Cargar usuario actual + rol (una vez)
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const { data: sess } = await supabase.auth.getSession();
+      const email = sess?.session?.user?.email || "";
+      if (!email) return;
+      const { data: u } = await supabase.from("usuarios").select("rol_id, nombre").eq("email", email).maybeSingle();
+      if (cancelled) return;
+      setCurrentUser({ email, rol: u?.rol_id || null, nombre: u?.nombre || "" });
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   const fetchData = useCallback(async () => {
     if (!supabase) return;
     setLoading(true);
     const ven = ventanaDe(periodo);
-    const [empsRes, novsRes, marcsRes] = await Promise.all([
+    const [empsRes, novsRes, marcsRes, deptosRes, aprobsRes, horsRes] = await Promise.all([
       supabase.from("rh_empleados")
         .select("id, nombres, apellidos, cedula, cargo, departamento_id, salario_base, tarifa_hora, modalidad_calculo, almuerzo_horas, activo")
         .eq("activo", true)
@@ -414,13 +557,26 @@ export default function ProcesarNomina() {
         .select("*")
         .gte("fecha", ven.desde)
         .lte("fecha", ven.hasta),
+      supabase.from("rh_departamentos").select("id, nombre, supervisor_email").order("nombre"),
+      supabase.from("nomina_aprobaciones").select("*").eq("periodo_key", periodoKeyOf(periodo)),
+      // Horarios programados en la misma ventana (para comparar contra marcaciones)
+      supabase.from("rh_horarios")
+        .select("empleado_id, fecha, hora_ini, hora_fin, tipo")
+        .gte("fecha", ven.desde)
+        .lte("fecha", ven.hasta),
     ]);
     if (empsRes.error) console.error("Error cargando empleados:", empsRes.error);
     if (novsRes.error) console.error("Error cargando novedades:", novsRes.error);
     if (marcsRes.error) console.error("Error cargando marcaciones:", marcsRes.error);
+    if (deptosRes.error) console.error("Error cargando departamentos:", deptosRes.error);
+    if (aprobsRes.error) console.error("Error cargando aprobaciones:", aprobsRes.error);
+    if (horsRes.error) console.error("Error cargando horarios:", horsRes.error);
     setEmpleados(empsRes.data || []);
     setNovedades(novsRes.data || []);
     setMarcaciones(marcsRes.data || []);
+    setDepartamentos(deptosRes.data || []);
+    setAprobaciones(aprobsRes.data || []);
+    setHorarios(horsRes.data || []);
     setLoading(false);
   }, [periodo.desde, periodo.hasta]);
 
@@ -442,15 +598,106 @@ export default function ProcesarNomina() {
     });
   }, [empleados, novedades, marcaciones, periodo, ventana]);
 
-  // Filtros
+  // Departamentos visibles según rol/supervisor
+  // - super_admin/admin/direccion → todos
+  // - resto → solo aquellos donde supervisor_email = mi email
+  const deptosVisibles = useMemo(() => {
+    if (esAdmin) return departamentos;
+    const em = String(currentUser.email || "").toLowerCase();
+    return departamentos.filter(d => String(d.supervisor_email || "").toLowerCase() === em);
+  }, [departamentos, esAdmin, currentUser.email]);
+
+  const deptosVisiblesIds = useMemo(() => new Set(deptosVisibles.map(d => d.id)), [deptosVisibles]);
+
+  // Aprobaciones indexadas por departamento_id
+  const aprobPorDepto = useMemo(() => {
+    const m = {};
+    for (const a of aprobaciones) m[a.departamento_id] = a;
+    return m;
+  }, [aprobaciones]);
+
+  // Filtros: por depto (según rol) + búsqueda + selector manual (admin)
   const empleadosFiltrados = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return nominaPorEmpleado;
-    return nominaPorEmpleado.filter(({ empleado: e }) => {
-      const haystack = `${e.nombres} ${e.apellidos} ${e.cargo || ""} ${e.cedula || ""}`.toLowerCase();
-      return haystack.includes(q);
+    let base = nominaPorEmpleado.filter(({ empleado: e }) => {
+      // Si NO es admin, solo empleados de sus deptos supervisados
+      if (!esAdmin && !deptosVisiblesIds.has(e.departamento_id)) return false;
+      // Admin puede filtrar por depto opcional
+      if (deptoFiltro && e.departamento_id !== deptoFiltro) return false;
+      return true;
     });
-  }, [nominaPorEmpleado, search]);
+    if (q) {
+      base = base.filter(({ empleado: e }) => {
+        const haystack = `${e.nombres} ${e.apellidos} ${e.cargo || ""} ${e.cedula || ""}`.toLowerCase();
+        return haystack.includes(q);
+      });
+    }
+    return base;
+  }, [nominaPorEmpleado, search, esAdmin, deptosVisiblesIds, deptoFiltro]);
+
+  // Departamento "activo" para las acciones (aprobar/desaprobar).
+  // Si el operador filtra por uno específico → ese. Si es supervisor de solo 1 → ese.
+  const deptoActivoId = deptoFiltro || (deptosVisibles.length === 1 ? deptosVisibles[0].id : "");
+  const deptoActivo = departamentos.find(d => d.id === deptoActivoId);
+  const aprobActiva = deptoActivoId ? aprobPorDepto[deptoActivoId] : null;
+  const deptoAprobado = aprobActiva?.estado === "aprobado";
+  const puedeAprobar = !!deptoActivoId && !deptoAprobado &&
+    (esAdmin || (deptoActivo && String(deptoActivo.supervisor_email || "").toLowerCase() === String(currentUser.email || "").toLowerCase()));
+
+  // Aprobar / Desaprobar
+  const handleAprobar = async () => {
+    if (!deptoActivoId || aprobando) return;
+    if (!confirm(`¿Aprobar nómina del departamento "${deptoActivo?.nombre}" para ${periodo.etiqueta}?\n\nDespués de aprobar, no se podrán editar marcaciones ni novedades hasta que un administrador desapruebe.`)) return;
+    setAprobando(true);
+    try {
+      const nowIso = new Date().toISOString();
+      const { error } = await supabase.from("nomina_aprobaciones").upsert({
+        periodo_key: periodoKey,
+        departamento_id: deptoActivoId,
+        estado: "aprobado",
+        supervisor_email: currentUser.email,
+        aprobado_at: nowIso,
+        desaprobado_por: null,
+        desaprobado_at: null,
+        updated_at: nowIso,
+      }, { onConflict: "periodo_key,departamento_id" });
+      if (error) throw error;
+      logAccion({ modulo: "nomina", accion: "aprobar_depto", tabla: "nomina_aprobaciones",
+                  registroId: `${periodoKey}_${deptoActivoId}`,
+                  notas: `${deptoActivo?.nombre} · ${periodo.etiqueta}` });
+      await fetchData();
+    } catch (e) {
+      alert(`❌ Error al aprobar: ${e.message || e}`);
+    } finally {
+      setAprobando(false);
+    }
+  };
+
+  const handleDesaprobar = async () => {
+    if (!deptoActivoId || !esAdmin || aprobando) return;
+    if (!confirm(`¿Desaprobar la nómina del departamento "${deptoActivo?.nombre}"?\n\nEl supervisor volverá a poder editar marcaciones y novedades.`)) return;
+    setAprobando(true);
+    try {
+      const nowIso = new Date().toISOString();
+      const { error } = await supabase.from("nomina_aprobaciones").upsert({
+        periodo_key: periodoKey,
+        departamento_id: deptoActivoId,
+        estado: "borrador",
+        desaprobado_por: currentUser.email,
+        desaprobado_at: nowIso,
+        updated_at: nowIso,
+      }, { onConflict: "periodo_key,departamento_id" });
+      if (error) throw error;
+      logAccion({ modulo: "nomina", accion: "desaprobar_depto", tabla: "nomina_aprobaciones",
+                  registroId: `${periodoKey}_${deptoActivoId}`,
+                  notas: `${deptoActivo?.nombre} · ${periodo.etiqueta}` });
+      await fetchData();
+    } catch (e) {
+      alert(`❌ Error al desaprobar: ${e.message || e}`);
+    } finally {
+      setAprobando(false);
+    }
+  };
 
   // Totales generales
   const totales = useMemo(() => {
@@ -467,9 +714,22 @@ export default function ProcesarNomina() {
     return t;
   }, [empleadosFiltrados]);
 
+  // Bloqueo por aprobación: si el depto del empleado está aprobado,
+  // no se puede editar marcaciones ni novedades hasta que admin desapruebe.
+  const empleadoBloqueado = (empleadoId) => {
+    const emp = empleados.find(e => e.id === empleadoId);
+    if (!emp) return false;
+    const a = aprobPorDepto[emp.departamento_id];
+    return a?.estado === "aprobado";
+  };
+
   // Agregar novedad
   const handleAddNovedad = async (novedadData) => {
     try {
+      if (empleadoBloqueado(novedadData.empleado_loggro_id)) {
+        alert("Este departamento ya está aprobado para el período. Un administrador debe desaprobar antes de editar.");
+        return;
+      }
       const { error } = await supabase.from("empleados_loggro_novedades").insert({
         ...novedadData,
         loggro_novedad_id: `MAN-${Date.now()}`,
@@ -487,6 +747,10 @@ export default function ProcesarNomina() {
   };
 
   const handleDeleteNovedad = async (novedad) => {
+    if (empleadoBloqueado(novedad.empleado_loggro_id)) {
+      alert("Este departamento ya está aprobado para el período. Un administrador debe desaprobar antes de editar.");
+      return;
+    }
     if (!confirm(`¿Eliminar novedad "${NOVEDAD_TIPOS[novedad.tipo]?.label || novedad.tipo}" de ${COP(novedad.valor)}?`)) return;
     try {
       const { error } = await supabase.from("empleados_loggro_novedades").delete().eq("id", novedad.id);
@@ -497,15 +761,30 @@ export default function ProcesarNomina() {
     }
   };
 
-  // Guardar las marcaciones (entrada/salida) de un empleado para la quincena.
-  const handleSaveMarcaciones = async (empleadoId, filas) => {
+  // Guardar marcaciones — con motivo obligatorio si hay cambios y auditoría.
+  // `motivo` viene del modal de MarcacionesGrid; si es null (nunca debería para
+  // ediciones), no se guarda.
+  const handleSaveMarcaciones = async (empleadoId, filas, motivo) => {
     try {
+      if (empleadoBloqueado(empleadoId)) {
+        alert("Este departamento ya está aprobado para el período. Un administrador debe desaprobar antes de editar.");
+        return false;
+      }
+      if (!motivo || String(motivo).trim().length < 3) {
+        alert("Debes escribir la razón del cambio (mínimo 3 caracteres).");
+        return false;
+      }
+      const nowIso = new Date().toISOString();
       const llenas = filas
         .filter(f => f.entrada && f.salida)
         .map(f => ({
           empleado_id: empleadoId, fecha: f.fecha,
           entrada: f.entrada, salida: f.salida,
-          periodo: periodo.etiqueta, updated_at: new Date().toISOString(),
+          periodo: periodo.etiqueta, updated_at: nowIso,
+          editado_por: currentUser.email || null,
+          editado_at: nowIso,
+          motivo_edicion: motivo.trim(),
+          origen: "ajuste_supervisor",
         }));
       const vacias = filas.filter(f => !f.entrada && !f.salida).map(f => f.fecha);
       if (llenas.length) {
@@ -519,8 +798,9 @@ export default function ProcesarNomina() {
         if (error) throw error;
       }
       await fetchData();
-      logAccion({ modulo: "nomina", accion: "guardar_marcaciones", tabla: "rh_marcaciones",
-                  registroId: empleadoId, notas: `${llenas.length} día(s) · ${periodo.etiqueta}` });
+      logAccion({ modulo: "nomina", accion: "editar_marcaciones", tabla: "rh_marcaciones",
+                  registroId: empleadoId,
+                  notas: `${llenas.length} día(s) · ${periodo.etiqueta} · Motivo: ${motivo.slice(0,80)}` });
       return true;
     } catch (e) {
       alert(`❌ Error guardando marcaciones: ${e.message || e}`);
@@ -623,6 +903,77 @@ export default function ProcesarNomina() {
           <b style={{ color: B.white }}>{ventana.desde} → {ventana.hasta}</b>
         </div>
       </div>
+
+      {/* Departamento + Aprobación */}
+      {(deptosVisibles.length > 0 || esAdmin) && (
+        <div style={{ background: B.navyMid, borderRadius: 12, padding: 16, marginBottom: 18, display: "flex", flexWrap: "wrap", gap: 12, alignItems: "flex-end" }}>
+          <div style={{ flex: "1 1 260px" }}>
+            <label style={LS}>Departamento</label>
+            {esAdmin ? (
+              <select value={deptoFiltro} onChange={e => setDeptoFiltro(e.target.value)} style={{ ...IS, width: "100%" }}>
+                <option value="">Todos los departamentos</option>
+                {departamentos.map(d => {
+                  const a = aprobPorDepto[d.id];
+                  const est = a?.estado === "aprobado" ? " · ✅ Aprobado" : " · ⏳ Pendiente";
+                  return <option key={d.id} value={d.id}>{d.nombre}{est}</option>;
+                })}
+              </select>
+            ) : deptosVisibles.length > 1 ? (
+              <select value={deptoFiltro} onChange={e => setDeptoFiltro(e.target.value)} style={{ ...IS, width: "100%" }}>
+                <option value="">Todos mis departamentos</option>
+                {deptosVisibles.map(d => {
+                  const a = aprobPorDepto[d.id];
+                  const est = a?.estado === "aprobado" ? " · ✅ Aprobado" : " · ⏳ Pendiente";
+                  return <option key={d.id} value={d.id}>{d.nombre}{est}</option>;
+                })}
+              </select>
+            ) : (
+              <div style={{ ...IS, background: "transparent", padding: "9px 12px" }}>
+                {deptosVisibles[0]?.nombre || "(sin departamentos asignados)"}
+              </div>
+            )}
+          </div>
+
+          {/* Estado de aprobación del depto activo */}
+          {deptoActivoId && (
+            <div style={{ flex: "1 1 280px" }}>
+              <label style={LS}>Estado</label>
+              <div style={{
+                padding: "9px 12px", borderRadius: 8,
+                background: deptoAprobado ? B.success + "22" : B.warning + "18",
+                border: `1px solid ${deptoAprobado ? B.success + "66" : B.warning + "44"}`,
+                fontSize: 12, color: deptoAprobado ? B.success : B.warning,
+              }}>
+                {deptoAprobado
+                  ? <>✅ Aprobado por <b>{aprobActiva.supervisor_email}</b> · {new Date(aprobActiva.aprobado_at).toLocaleString("es-CO")}</>
+                  : <>⏳ Pendiente de aprobación</>}
+              </div>
+            </div>
+          )}
+
+          {/* Botones aprobar / desaprobar */}
+          <div style={{ display: "flex", gap: 8 }}>
+            {puedeAprobar && (
+              <button onClick={handleAprobar} disabled={aprobando}
+                style={{ background: aprobando ? B.navyLight : B.success, color: B.white, border: "none", borderRadius: 10, padding: "10px 18px", cursor: aprobando ? "not-allowed" : "pointer", fontWeight: 700, fontSize: 13, opacity: aprobando ? 0.6 : 1 }}>
+                {aprobando ? "…" : "✓ Aprobar nómina"}
+              </button>
+            )}
+            {esAdmin && deptoAprobado && (
+              <button onClick={handleDesaprobar} disabled={aprobando}
+                style={{ background: aprobando ? B.navyLight : B.warning, color: B.navy, border: "none", borderRadius: 10, padding: "10px 18px", cursor: aprobando ? "not-allowed" : "pointer", fontWeight: 700, fontSize: 13, opacity: aprobando ? 0.6 : 1 }}>
+                {aprobando ? "…" : "↺ Desaprobar"}
+              </button>
+            )}
+          </div>
+
+          {!esAdmin && deptosVisibles.length === 0 && (
+            <div style={{ flexBasis: "100%", fontSize: 12, color: B.warning }}>
+              ⚠️ No tienes departamentos asignados como supervisor. Contacta al administrador.
+            </div>
+          )}
+        </div>
+      )}
 
       {/* KPIs */}
       <div style={{ display: "flex", flexWrap: "wrap", gap: 12, marginBottom: 20 }}>
@@ -729,6 +1080,8 @@ export default function ProcesarNomina() {
           periodo={periodo}
           ventana={ventana}
           marcaciones={marcaciones.filter(m => m.empleado_id === detalleEmpleado.id)}
+          horariosProgramados={horarios.filter(h => h.empleado_id === detalleEmpleado.id)}
+          bloqueado={empleadoBloqueado(detalleEmpleado.id)}
           onSaveMarcaciones={handleSaveMarcaciones}
           onClose={() => setDetalleEmpleado(null)}
           onAddNovedad={() => setAddNovedadEmp(detalleEmpleado)}
