@@ -501,7 +501,17 @@ function periodoKeyOf(periodo) {
   return `${periodo.anio}-${mm}-Q${periodo.numero}`;
 }
 
-const ADMIN_ROLES = new Set(["super_admin", "admin", "direccion", "administrador"]);
+// Roles que pueden correr TODA la nómina (ven todos los deptos y pueden
+// aprobar/desaprobar cualquiera). El resto solo ve deptos donde figuran
+// como supervisor_email. Los rol_id de "gerente general" traen sufijo
+// numérico en Loggro — matcheamos por prefijo.
+const ROLES_ADMIN_EXACTOS = new Set(["super_admin", "admin", "administrador", "contabilidad", "direccion"]);
+const ROLES_ADMIN_PREFIJOS = ["gerente_general"];
+function esRolAdmin(rolId) {
+  const r = String(rolId || "").toLowerCase();
+  if (ROLES_ADMIN_EXACTOS.has(r)) return true;
+  return ROLES_ADMIN_PREFIJOS.some(p => r.startsWith(p));
+}
 
 export default function ProcesarNomina() {
   const isMobile = useMobile();
@@ -523,7 +533,7 @@ export default function ProcesarNomina() {
 
   const ventana = useMemo(() => ventanaDe(periodo), [periodo]);
   const periodoKey = useMemo(() => periodoKeyOf(periodo), [periodo]);
-  const esAdmin = ADMIN_ROLES.has(String(currentUser.rol || "").toLowerCase());
+  const esAdmin = esRolAdmin(currentUser.rol);
 
   // Cargar usuario actual + rol (una vez)
   useEffect(() => {

@@ -472,10 +472,10 @@ function EmpleadoModal({ emp, depts, empleados, usuarios, posiciones = [], onSav
 }
 
 // ─── TAB: DEPARTAMENTOS ───────────────────────────────────────────────────────
-function TabDepartamentos({ depts, empleados, onRefresh }) {
+function TabDepartamentos({ depts, empleados, usuarios = [], onRefresh }) {
   const [showModal, setShowModal] = useState(false);
   const [editDept, setEditDept] = useState(null);
-  const [form, setForm] = useState({ nombre: "", descripcion: "", color: DEPT_COLORS[0], jefe_id: "" });
+  const [form, setForm] = useState({ nombre: "", descripcion: "", color: DEPT_COLORS[0], jefe_id: "", supervisor_email: "" });
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
   const headcountMap = useMemo(() => {
@@ -486,12 +486,18 @@ function TabDepartamentos({ depts, empleados, onRefresh }) {
     return m;
   }, [empleados]);
 
-  const openNew = () => { setEditDept(null); setForm({ nombre: "", descripcion: "", color: DEPT_COLORS[0], jefe_id: "" }); setShowModal(true); };
-  const openEdit = (d) => { setEditDept(d); setForm({ nombre: d.nombre, descripcion: d.descripcion||"", color: d.color, jefe_id: d.jefe_id||"" }); setShowModal(true); };
+  const openNew = () => { setEditDept(null); setForm({ nombre: "", descripcion: "", color: DEPT_COLORS[0], jefe_id: "", supervisor_email: "" }); setShowModal(true); };
+  const openEdit = (d) => { setEditDept(d); setForm({ nombre: d.nombre, descripcion: d.descripcion||"", color: d.color, jefe_id: d.jefe_id||"", supervisor_email: d.supervisor_email||"" }); setShowModal(true); };
 
   const save = async () => {
     if (!form.nombre) return alert("Nombre del departamento es obligatorio");
-    const payload = { ...form, jefe_id: form.jefe_id || null };
+    const payload = {
+      nombre: form.nombre,
+      descripcion: form.descripcion || null,
+      color: form.color,
+      jefe_id: form.jefe_id || null,
+      supervisor_email: form.supervisor_email || null,
+    };
     const { error } = editDept
       ? await supabase.from("rh_departamentos").update(payload).eq("id", editDept.id)
       : await supabase.from("rh_departamentos").insert(payload);
@@ -503,6 +509,11 @@ function TabDepartamentos({ depts, empleados, onRefresh }) {
   const jefeName = (d) => {
     const e = empleados.find(x => x.id === d.jefe_id);
     return e ? `${e.nombres} ${e.apellidos}` : "—";
+  };
+  const supervisorNombre = (email) => {
+    if (!email) return null;
+    const u = usuarios.find(x => (x.email || "").toLowerCase() === email.toLowerCase());
+    return u?.nombre || email;
   };
 
   return (
@@ -527,6 +538,9 @@ function TabDepartamentos({ depts, empleados, onRefresh }) {
             <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12 }}>
               <span style={{ color: "rgba(255,255,255,0.5)" }}>👤 {headcountMap[d.id] || 0} empleados</span>
               <span style={{ color: d.color }}>Jefe: {jefeName(d)}</span>
+            </div>
+            <div style={{ marginTop: 6, fontSize: 11, color: d.supervisor_email ? "rgba(255,255,255,0.55)" : "rgba(255,255,255,0.3)" }}>
+              💵 Supervisor nómina: {supervisorNombre(d.supervisor_email) || "(sin asignar)"}
             </div>
           </div>
         ))}
@@ -570,6 +584,18 @@ function TabDepartamentos({ depts, empleados, onRefresh }) {
                   <option key={e.id} value={e.id}>{e.nombres} {e.apellidos}</option>
                 ))}
               </Sel>
+            </div>
+            <div style={{ gridColumn: "span 2" }}>
+              <label style={LS}>Supervisor de Nómina (quien aprueba en Procesar Nómina)</label>
+              <Sel value={form.supervisor_email || ""} onChange={v => set("supervisor_email", v)}>
+                <option value="">Sin supervisor de nómina</option>
+                {usuarios.map(u => (
+                  <option key={u.id} value={u.email}>{u.nombre} · {u.email}</option>
+                ))}
+              </Sel>
+              <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", marginTop: 4 }}>
+                Este usuario verá los empleados de este depto en Procesar Nómina y podrá aprobar la quincena.
+              </div>
             </div>
           </div>
           <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 20 }}>
@@ -2185,7 +2211,7 @@ export default function RecursosHumanos() {
           {tab === "horarios"      && <TabHorarios     empleados={empleados.map(e => ({ ...e, departamento_nombre: depts.find(d => d.id === e.departamento_id)?.nombre }))} />}
           {tab === "nomina"        && <TabNomina       empleados={empleados} />}
           {tab === "asistencia"    && <TabAsistencia   empleados={empleados} asistencia={asistencia} onRefresh={load} />}
-          {tab === "departamentos" && <TabDepartamentos depts={depts} empleados={empleados} onRefresh={load} />}
+          {tab === "departamentos" && <TabDepartamentos depts={depts} empleados={empleados} usuarios={usuarios} onRefresh={load} />}
         </>
       )}
     </div>
