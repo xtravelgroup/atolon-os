@@ -2888,8 +2888,17 @@ function TabCalendario({ salidas, cierres, embarcaciones }) {
       const grupoIdsPorDia = {};
       (evR.data || []).forEach(g => {
         if (!g.fecha) return;
-        if (!grupoIdsPorDia[g.fecha]) grupoIdsPorDia[g.fecha] = new Set();
-        grupoIdsPorDia[g.fecha].add(g.id);
+        // Solo excluir reservas del bulk si el grupo aporta pax al conteo:
+        //  - salidas_grupo con personas > 0 (se suma en grupoPax[sg.id])
+        //  - comparte_lancha_pasadias con salida_compartida_id (suma abajo)
+        //  - pasadias_org con reserva_id (se referencia por id)
+        const salidasConPax = (g.salidas_grupo || []).some(sg => (Number(sg.personas) || 0) > 0);
+        const comparteLancha = !!(g.comparte_lancha_pasadias && g.salida_compartida_id);
+        const orgConReservas = (g.pasadias_org || []).some(p => p?.reserva_id);
+        if (salidasConPax || comparteLancha || orgConReservas) {
+          if (!grupoIdsPorDia[g.fecha]) grupoIdsPorDia[g.fecha] = new Set();
+          grupoIdsPorDia[g.fecha].add(g.id);
+        }
         (g.pasadias_org || []).forEach(p => {
           if (!p?.reserva_id) return;
           if (!reservasReferenciadasPorDia[g.fecha]) reservasReferenciadasPorDia[g.fecha] = new Set();
