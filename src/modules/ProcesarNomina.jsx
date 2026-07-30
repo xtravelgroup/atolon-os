@@ -672,15 +672,20 @@ export default function ProcesarNomina() {
 
     // Unir marcas ZK con rh_marcaciones editadas.
     // - rh_marcaciones manda si existe (edición del supervisor)
-    // - Sin edición: sintetizar desde asistencia_zk agrupando punches por gap.
-    //   Un gap >90 min separa bloques (turno partido). Ej: 08:00, 08:05, 12:00,
-    //   15:00, 19:00 → bloque1 [08:00-12:00], bloque2 [15:00-19:00].
-    //   Con 1 solo punch: entrada=hora, salida vacía (día incompleto).
+    // - Sin edición: sintetizar desde asistencia_zk.
+    //
+    // Regla para detectar TURNO PARTIDO:
+    //   - Necesita HABER ENTRADO, SALIDO y VUELTO A ENTRAR el mismo día.
+    //   - Es decir: mínimo 3 punches, agrupables en 2 bloques donde el 1er
+    //     bloque tenga entrada y salida (≥2 punches) Y exista al menos 1 punch
+    //     tras un gap grande (la re-entrada).
+    //   - 2 punches simples (aunque estén separados) = 1 solo turno (entrada=min,
+    //     salida=max). Es lo normal: entró en la mañana y salió en la tarde.
+    //   - 1 punch = día incompleto (entrada=hora, salida vacía).
     const GAP_MIN_TURNO_PARTIDO = 90;
     const toMin = (h) => { const [H, M] = String(h).split(":").map(Number); return H * 60 + M; };
     const rhKeys = new Set((marcsRes.data || []).map(m => `${m.empleado_id}|${m.fecha}`));
 
-    // Agrupar todos los punches por (empleado, fecha), ordenados por hora.
     const punchesByKey = {};
     for (const z of (zkRes.data || [])) {
       const k = `${z.empleado_id}|${z.fecha}`;
@@ -696,23 +701,51 @@ export default function ProcesarNomina() {
       const { empleado_id, fecha, punches } = punchesByKey[k];
       const ordenados = [...new Set(punches)].sort();
       if (ordenados.length === 0) continue;
-      // Partir en bloques por gap >= GAP_MIN_TURNO_PARTIDO
-      const bloques = [[ordenados[0]]];
-      for (let i = 1; i < ordenados.length; i++) {
-        const gap = toMin(ordenados[i]) - toMin(ordenados[i - 1]);
-        if (gap >= GAP_MIN_TURNO_PARTIDO) bloques.push([ordenados[i]]);
-        else bloques[bloques.length - 1].push(ordenados[i]);
+
+      // Caso 1 punch: día incompleto
+      if (ordenados.length === 1) {
+        zkSintetizadas.push({ empleado_id, fecha, entrada: ordenados[0], salida: "", entrada_2: null, salida_2: null, origen: "reloj" });
+        continue;
       }
-      const b1 = bloques[0];
-      const b2 = bloques[1] || null;
-      zkSintetizadas.push({
-        empleado_id, fecha,
-        entrada: b1[0],
-        salida: b1.length > 1 ? b1[b1.length - 1] : "",
-        entrada_2: b2 ? b2[0] : null,
-        salida_2: b2 && b2.length > 1 ? b2[b2.length - 1] : (b2 ? "" : null),
-        origen: "reloj",
-      });
+
+      // ¿Hay evidencia de turno partido? Necesitamos al menos 3 punches Y un
+      // gap grande que deje ≥2 punches en b1 (entrada+salida) y ≥1 en b2 (re-entrada).
+      // Escanear gaps y elegir el mayor >= GAP_MIN_TURNO_PARTIDO como divisoria.
+      let splitIdx = -1;   // ordenados[splitIdx] es el 1er punch del bloque 2
+      let mayorGap = 0;
+      if (ordenados.length >= 3) {
+        for (let i = 1; i < ordenados.length; i++) {
+          const gap = toMin(ordenados[i]) - toMin(ordenados[i - 1]);
+          if (gap >= GAP_MIN_TURNO_PARTIDO && gap > mayorGap && i >= 2) {
+            mayorGap = gap;
+            splitIdx = i;
+          }
+        }
+      }
+
+      if (splitIdx > 0) {
+        // Turno partido: b1 = ordenados[0..splitIdx-1], b2 = ordenados[splitIdx..fin]
+        const b1 = ordenados.slice(0, splitIdx);
+        const b2 = ordenados.slice(splitIdx);
+        zkSintetizadas.push({
+          empleado_id, fecha,
+          entrada: b1[0],
+          salida:  b1[b1.length - 1],
+          entrada_2: b2[0],
+          salida_2:  b2.length > 1 ? b2[b2.length - 1] : "",  // 2do bloque en curso
+          origen: "reloj",
+        });
+      } else {
+        // 1 solo turno: min = entrada, max = salida (aunque el gap sea grande,
+        // como 08:00 y 17:00 sin punches intermedios → entró y salió normal).
+        zkSintetizadas.push({
+          empleado_id, fecha,
+          entrada: ordenados[0],
+          salida:  ordenados[ordenados.length - 1],
+          entrada_2: null, salida_2: null,
+          origen: "reloj",
+        });
+      }
     }
     const marcacionesUnificadas = [...(marcsRes.data || []), ...zkSintetizadas];
 
