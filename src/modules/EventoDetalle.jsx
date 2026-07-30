@@ -3392,7 +3392,7 @@ function TabServicios({ items, onChange, pasadiasOrg = [], onChangePasadias, cat
 
 // ─── PAGOS ────────────────────────────────────────────────────────────────────
 const FORMAS_PAGO_GRUPO = ["Transferencia", "Efectivo", "Datafono", "Wompi", "Zelle", "Cheque"];
-const EMPTY_PAGO = { id: "", monto: "", forma_pago: "Transferencia", fecha: "", notas: "", registrado_por: "", comprobante_url: "" };
+const EMPTY_PAGO = { id: "", monto: "", propina: "", forma_pago: "Transferencia", fecha: "", notas: "", registrado_por: "", comprobante_url: "" };
 
 function TabPagos({ pagos = [], onChange, totalGrupo = 0, eventoId = null, descuento = 0, onChangeDescuento = null }) {
   const [showForm, setShowForm] = useState(false);
@@ -3439,9 +3439,10 @@ function TabPagos({ pagos = [], onChange, totalGrupo = 0, eventoId = null, descu
     const monto = Number(form.monto);
     if (!Number.isFinite(monto) || monto <= 0) return;
     if (!form.forma_pago) return;
+    const propina = Math.max(0, Number(form.propina) || 0);
     setSaving(true);
     const isNew = !form.id;
-    const pago = { ...form, id: form.id || `PAG-${Date.now()}`, monto, fecha: form.fecha || new Date().toISOString().slice(0,10) };
+    const pago = { ...form, id: form.id || `PAG-${Date.now()}`, monto, propina, fecha: form.fecha || new Date().toISOString().slice(0,10) };
     onChange([...pagos, pago]);
     // Audit trail (fire-and-forget). Pagos de evento se editan localmente
     // en evento.pagos[] sin trail propio — antes nada quedaba registrado.
@@ -3535,7 +3536,12 @@ function TabPagos({ pagos = [], onChange, totalGrupo = 0, eventoId = null, descu
                   </a>
                 )}
               </div>
-              <div style={{ fontSize: 18, fontWeight: 800, color: B.success, fontFamily: "'Barlow Condensed', sans-serif", flexShrink: 0 }}>{COP(p.monto)}</div>
+              <div style={{ textAlign: "right", flexShrink: 0 }}>
+                <div style={{ fontSize: 18, fontWeight: 800, color: B.success, fontFamily: "'Barlow Condensed', sans-serif" }}>{COP(p.monto)}</div>
+                {Number(p.propina) > 0 && (
+                  <div style={{ fontSize: 11, color: B.sand, marginTop: 2 }}>+ propina {COP(p.propina)}</div>
+                )}
+              </div>
               <button onClick={() => eliminar(p.id)} style={{ ...BTN(B.danger + "22"), padding: "3px 8px", fontSize: 11, color: B.danger, flexShrink: 0 }}>✕</button>
             </div>
           );
@@ -3567,9 +3573,10 @@ function TabPagos({ pagos = [], onChange, totalGrupo = 0, eventoId = null, descu
 
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
             <div><label style={LS}>Monto</label><Inp type="number" value={form.monto} onChange={v => set("monto", v)} placeholder="0" /></div>
+            <div><label style={LS}>Propina (opcional)</label><Inp type="number" value={form.propina} onChange={v => set("propina", v)} placeholder="0" /></div>
             <div><label style={LS}>Fecha</label><Inp type="date" value={form.fecha} onChange={v => set("fecha", v)} /></div>
             <div><label style={LS}>Notas</label><Inp value={form.notas} onChange={v => set("notas", v)} placeholder="Referencia, banco..." /></div>
-            <div><label style={LS}>Registrado por</label><Inp value={form.registrado_por} onChange={v => set("registrado_por", v)} /></div>
+            <div style={{ gridColumn: "span 2" }}><label style={LS}>Registrado por</label><Inp value={form.registrado_por} onChange={v => set("registrado_por", v)} /></div>
           </div>
 
           {/* Comprobante de pago */}

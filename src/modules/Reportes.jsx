@@ -2235,6 +2235,7 @@ function ReportePropinas() {
   const [loading, setLoading] = useState(true);
   const [loggro, setLoggro] = useState(null);      // respuesta cierre-caja-rango
   const [cajasEv, setCajasEv] = useState([]);      // rows cajas_evento_ventas
+  const [propEventos, setPropEventos] = useState([]);   // {evento, fecha, propina, forma_pago}
   const [error, setError] = useState(null);
 
   const cargar = useCallback(async () => {
@@ -2243,7 +2244,7 @@ function ReportePropinas() {
     try {
       const auth = { apikey: import.meta.env.VITE_SUPABASE_ANON_KEY, Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}` };
       const base = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/loggro-sync`;
-      const [logR, cajR] = await Promise.all([
+      const [logR, cajR, evR] = await Promise.all([
         fetch(`${base}/cierre-caja-rango?from=${fechaIni}&to=${fechaFin}`, { headers: auth })
           .then(r => r.json()).catch(() => null),
         supabase.from("cajas_evento_ventas")
@@ -2252,10 +2253,38 @@ function ReportePropinas() {
           .lte("created_at", `${fechaFin}T23:59:59`)
           .neq("estado", "anulada")
           .gt("propina", 0),
+        // Eventos/grupos: cada pago (dentro del array pagos) puede llevar propina.
+        // Filtramos por fecha del evento; luego expandimos el jsonb en cliente
+        // sumando solo pagos cuya fecha caiga dentro del rango.
+        supabase.from("eventos")
+          .select("id, nombre, categoria, stage, fecha, pagos")
+          .in("stage", ["Confirmado", "Realizado"])
+          .not("pagos", "is", null),
       ]);
       setLoggro(logR?.ok ? logR : null);
       if (logR && !logR.ok) setError(logR.error || "Loggro no respondió");
       setCajasEv(cajR.data || []);
+
+      // Expandir pagos con propina > 0 dentro del rango
+      const propsEv = [];
+      for (const ev of (evR.data || [])) {
+        for (const p of (ev.pagos || [])) {
+          const prop = Number(p.propina) || 0;
+          if (prop <= 0) continue;
+          const fPago = p.fecha || ev.fecha;
+          if (!fPago) continue;
+          if (fPago < fechaIni || fPago > fechaFin) continue;
+          propsEv.push({
+            evento_id: ev.id,
+            evento_nombre: ev.nombre,
+            categoria: ev.categoria,
+            fecha: fPago,
+            forma_pago: p.forma_pago || "—",
+            propina: prop,
+          });
+        }
+      }
+      setPropEventos(propsEv);
     } catch (e) {
       setError(String(e.message || e));
     } finally {
@@ -2266,9 +2295,10 @@ function ReportePropinas() {
   useEffect(() => { cargar(); }, [cargar]);
 
   // ── Agregados ─────────────────────────────────────────────────────────
-  const propinasLoggro = Number(loggro?.resumen?.total_propinas || 0);
-  const propinasCajas  = cajasEv.reduce((s, v) => s + Number(v.propina || 0), 0);
-  const propinasTotal  = propinasLoggro + propinasCajas;
+  const propinasLoggro   = Number(loggro?.resumen?.total_propinas || 0);
+  const propinasCajas    = cajasEv.reduce((s, v) => s + Number(v.propina || 0), 0);
+  const propinasEventos  = propEventos.reduce((s, v) => s + Number(v.propina || 0), 0);
+  const propinasTotal    = propinasLoggro + propinasCajas + propinasEventos;
 
   // Cajas express agrupadas por cajero (con desglose ef/tj)
   const cajerosCajas = useMemo(() => {
@@ -2306,40 +2336,55 @@ function ReportePropinas() {
     return Object.entries(m).map(([fecha, propinas]) => ({ fecha, propinas })).sort((a, b) => a.fecha.localeCompare(b.fecha));
   }, [cajasEv]);
 
-  // Días combinados (para tabla del calendario)
+  // Días combinados (para tabla del calendario) — 3 fuentes
   const diasCombinados = useMemo(() => {
     const m = {};
-    for (const d of loggroPorDia) {
-      if (!m[d.fecha]) m[d.fecha] = { fecha: d.fecha, loggro: 0, cajas: 0 };
-      m[d.fecha].loggro = d.propinas;
+    const ensure = (f) => { if (!m[f]) m[f] = { fecha: f, loggro: 0, cajas: 0, eventos: 0 }; return m[f]; };
+    for (const d of loggroPorDia) ensure(d.fecha).loggro = d.propinas;
+    for (const d of cajasPorDia)  ensure(d.fecha).cajas  = d.propinas;
+    for (const p of propEventos)  ensure(p.fecha).eventos += Number(p.propina || 0);
+    return Object.values(m)
+      .map(d => ({ ...d, total: d.loggro + d.cajas + d.eventos }))
+      .sort((a, b) => a.fecha.localeCompare(b.fecha));
+  }, [loggroPorDia, cajasPorDia, propEventos]);
+
+  // Agrupar propinas de eventos por evento (para tabla dedicada)
+  const eventosAgg = useMemo(() => {
+    const m = {};
+    for (const p of propEventos) {
+      if (!m[p.evento_id]) m[p.evento_id] = { evento_id: p.evento_id, evento_nombre: p.evento_nombre, categoria: p.categoria, pagos: 0, total: 0, ultima_fecha: p.fecha };
+      m[p.evento_id].pagos += 1;
+      m[p.evento_id].total += Number(p.propina || 0);
+      if (p.fecha > m[p.evento_id].ultima_fecha) m[p.evento_id].ultima_fecha = p.fecha;
     }
-    for (const d of cajasPorDia) {
-      if (!m[d.fecha]) m[d.fecha] = { fecha: d.fecha, loggro: 0, cajas: 0 };
-      m[d.fecha].cajas = d.propinas;
-    }
-    return Object.values(m).map(d => ({ ...d, total: d.loggro + d.cajas })).sort((a, b) => a.fecha.localeCompare(b.fecha));
-  }, [loggroPorDia, cajasPorDia]);
+    return Object.values(m).sort((a, b) => b.total - a.total);
+  }, [propEventos]);
 
   // Export CSV
   const exportarCSV = () => {
     const csv = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
     const filas = [
-      ["REPORTE DE PROPINAS", "", "", ""],
-      [`Rango: ${fechaIni} → ${fechaFin}`, "", "", ""],
-      ["", "", "", ""],
-      ["TOTALES", "", "", ""],
-      ["Fuente", "Total", "", ""],
-      ["Loggro Restobar", propinasLoggro, "", ""],
-      ["Cajas Express Eventos", propinasCajas, "", ""],
-      ["TOTAL GENERAL", propinasTotal, "", ""],
-      ["", "", "", ""],
-      ["POR CAJERO (Cajas Express)", "", "", ""],
+      ["REPORTE DE PROPINAS", "", "", "", ""],
+      [`Rango: ${fechaIni} → ${fechaFin}`, "", "", "", ""],
+      ["", "", "", "", ""],
+      ["TOTALES", "", "", "", ""],
+      ["Fuente", "Total", "", "", ""],
+      ["Loggro Restobar", propinasLoggro, "", "", ""],
+      ["Cajas Express Eventos", propinasCajas, "", "", ""],
+      ["Pagos de Eventos/Grupos", propinasEventos, "", "", ""],
+      ["TOTAL GENERAL", propinasTotal, "", "", ""],
+      ["", "", "", "", ""],
+      ["POR CAJERO (Cajas Express)", "", "", "", ""],
       ["Cajero", "Tx", "Efectivo", "Tarjeta", "Total"],
       ...cajerosCajas.map(c => [c.cajero, c.tx, c.efectivo, c.tarjeta, c.total]),
       ["", "", "", "", ""],
+      ["POR EVENTO/GRUPO (pagos con propina)", "", "", "", ""],
+      ["Evento", "Categoría", "Última fecha", "Pagos", "Propina total"],
+      ...eventosAgg.map(e => [e.evento_nombre, e.categoria || "", e.ultima_fecha, e.pagos, e.total]),
+      ["", "", "", "", ""],
       ["POR DÍA", "", "", "", ""],
-      ["Fecha", "Loggro", "Cajas Eventos", "Total"],
-      ...diasCombinados.map(d => [d.fecha, d.loggro, d.cajas, d.total]),
+      ["Fecha", "Loggro", "Cajas Eventos", "Pagos Eventos", "Total"],
+      ...diasCombinados.map(d => [d.fecha, d.loggro, d.cajas, d.eventos, d.total]),
     ];
     const contenido = filas.map(r => r.map(csv).join(",")).join("\n");
     const blob = new Blob([contenido], { type: "text/csv;charset=utf-8;" });
@@ -2386,7 +2431,7 @@ function ReportePropinas() {
             <KpiBox label="Total Propinas" value={COP(propinasTotal)} color={B.sand} highlight />
             <KpiBox label="Loggro Restobar" value={COP(propinasLoggro)} color="#fb923c" />
             <KpiBox label="Cajas Express" value={COP(propinasCajas)} color={B.sky} />
-            <KpiBox label="Cajeros (Cajas Ev.)" value={cajerosCajas.length} color={B.success} />
+            <KpiBox label="Pagos Eventos/Grupos" value={COP(propinasEventos)} color={B.success} />
           </div>
 
           {/* Por cajero (cajas express) */}
@@ -2435,7 +2480,51 @@ function ReportePropinas() {
             )}
           </div>
 
-          {/* Por día (Loggro + Cajas) */}
+          {/* Por evento/grupo (pagos con propina) */}
+          <div style={{ marginBottom: 24 }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: B.success, marginBottom: 10, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+              Pagos de Eventos / Grupos · Por evento
+            </div>
+            {eventosAgg.length === 0 ? (
+              <div style={{ padding: 20, textAlign: "center", color: "rgba(255,255,255,0.4)", background: B.navyMid, borderRadius: 8, fontSize: 12 }}>
+                Ningún evento/grupo registró propinas en sus pagos durante el período. Al registrar un pago, ahora hay campo "Propina (opcional)" en EventoDetalle → Tab Pagos.
+              </div>
+            ) : (
+              <div style={{ background: B.navyMid, borderRadius: 8, overflow: "hidden", overflowX: "auto" }}>
+                <table width="100%" cellPadding={0} cellSpacing={0} style={{ fontSize: 12, minWidth: 520 }}>
+                  <thead>
+                    <tr style={{ background: "rgba(255,255,255,0.04)" }}>
+                      <th style={{ padding: "8px 12px", textAlign: "left", fontSize: 10, color: B.sand, textTransform: "uppercase", letterSpacing: 1 }}>Evento</th>
+                      <th style={{ padding: "8px 12px", textAlign: "left", fontSize: 10, color: B.sand, textTransform: "uppercase", letterSpacing: 1 }}>Categoría</th>
+                      <th style={{ padding: "8px 12px", textAlign: "left", fontSize: 10, color: B.sand, textTransform: "uppercase", letterSpacing: 1 }}>Última fecha</th>
+                      <th style={{ padding: "8px 12px", textAlign: "right", fontSize: 10, color: B.sand, textTransform: "uppercase", letterSpacing: 1 }}>Pagos</th>
+                      <th style={{ padding: "8px 12px", textAlign: "right", fontSize: 10, color: B.sand, textTransform: "uppercase", letterSpacing: 1 }}>Propina total</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {eventosAgg.map(e => (
+                      <tr key={e.evento_id} style={{ borderTop: `1px solid ${B.navyLight}33` }}>
+                        <td style={{ padding: "8px 12px", fontWeight: 600 }}>{e.evento_nombre}</td>
+                        <td style={{ padding: "8px 12px", color: "rgba(255,255,255,0.6)", textTransform: "capitalize" }}>{e.categoria || "—"}</td>
+                        <td style={{ padding: "8px 12px", color: "rgba(255,255,255,0.5)" }}>{e.ultima_fecha}</td>
+                        <td style={{ padding: "8px 12px", textAlign: "right", color: "rgba(255,255,255,0.6)" }}>{e.pagos}</td>
+                        <td style={{ padding: "8px 12px", textAlign: "right", fontWeight: 700, color: B.sand }}>{COP(e.total)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <tr style={{ background: B.sand + "10", borderTop: `2px solid ${B.sand}` }}>
+                      <td style={{ padding: "8px 12px", fontWeight: 800 }} colSpan={3}>TOTAL</td>
+                      <td style={{ padding: "8px 12px", textAlign: "right", fontWeight: 800 }}>{eventosAgg.reduce((s, e) => s + e.pagos, 0)}</td>
+                      <td style={{ padding: "8px 12px", textAlign: "right", fontWeight: 800, color: B.sand, fontSize: 14 }}>{COP(propinasEventos)}</td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            )}
+          </div>
+
+          {/* Por día (3 fuentes) */}
           <div>
             <div style={{ fontSize: 13, fontWeight: 700, color: "#fb923c", marginBottom: 10, textTransform: "uppercase", letterSpacing: "0.05em" }}>
               Consolidado por día
@@ -2446,12 +2535,13 @@ function ReportePropinas() {
               </div>
             ) : (
               <div style={{ background: B.navyMid, borderRadius: 8, overflow: "hidden", overflowX: "auto" }}>
-                <table width="100%" cellPadding={0} cellSpacing={0} style={{ fontSize: 12, minWidth: 480 }}>
+                <table width="100%" cellPadding={0} cellSpacing={0} style={{ fontSize: 12, minWidth: 560 }}>
                   <thead>
                     <tr style={{ background: "rgba(255,255,255,0.04)" }}>
                       <th style={{ padding: "8px 12px", textAlign: "left", fontSize: 10, color: B.sand, textTransform: "uppercase", letterSpacing: 1 }}>Fecha</th>
                       <th style={{ padding: "8px 12px", textAlign: "right", fontSize: 10, color: B.sand, textTransform: "uppercase", letterSpacing: 1 }}>Loggro</th>
                       <th style={{ padding: "8px 12px", textAlign: "right", fontSize: 10, color: B.sand, textTransform: "uppercase", letterSpacing: 1 }}>Cajas Eventos</th>
+                      <th style={{ padding: "8px 12px", textAlign: "right", fontSize: 10, color: B.sand, textTransform: "uppercase", letterSpacing: 1 }}>Pagos Eventos</th>
                       <th style={{ padding: "8px 12px", textAlign: "right", fontSize: 10, color: B.sand, textTransform: "uppercase", letterSpacing: 1 }}>Total</th>
                     </tr>
                   </thead>
@@ -2461,6 +2551,7 @@ function ReportePropinas() {
                         <td style={{ padding: "8px 12px" }}>{d.fecha}</td>
                         <td style={{ padding: "8px 12px", textAlign: "right", color: d.loggro > 0 ? "#fb923c" : "rgba(255,255,255,0.3)" }}>{d.loggro > 0 ? COP(d.loggro) : "—"}</td>
                         <td style={{ padding: "8px 12px", textAlign: "right", color: d.cajas > 0 ? B.sky : "rgba(255,255,255,0.3)" }}>{d.cajas > 0 ? COP(d.cajas) : "—"}</td>
+                        <td style={{ padding: "8px 12px", textAlign: "right", color: d.eventos > 0 ? B.success : "rgba(255,255,255,0.3)" }}>{d.eventos > 0 ? COP(d.eventos) : "—"}</td>
                         <td style={{ padding: "8px 12px", textAlign: "right", fontWeight: 700, color: B.sand }}>{COP(d.total)}</td>
                       </tr>
                     ))}
@@ -2470,6 +2561,7 @@ function ReportePropinas() {
                       <td style={{ padding: "8px 12px", fontWeight: 800 }}>TOTAL</td>
                       <td style={{ padding: "8px 12px", textAlign: "right", fontWeight: 800, color: "#fb923c" }}>{COP(propinasLoggro)}</td>
                       <td style={{ padding: "8px 12px", textAlign: "right", fontWeight: 800, color: B.sky }}>{COP(propinasCajas)}</td>
+                      <td style={{ padding: "8px 12px", textAlign: "right", fontWeight: 800, color: B.success }}>{COP(propinasEventos)}</td>
                       <td style={{ padding: "8px 12px", textAlign: "right", fontWeight: 800, color: B.sand, fontSize: 14 }}>{COP(propinasTotal)}</td>
                     </tr>
                   </tfoot>
