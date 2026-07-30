@@ -16,6 +16,7 @@ const REPORTES = [
   { key: "cortesias",    label: "Cortesías",         icon: "🎁", desc: "Reservas entregadas como cortesía · Quién autoriza · Motivo · Impacto" },
   { key: "ventas",       label: "Ventas por periodo", icon: "📊", desc: "Ingresos por producto, canal, aliado B2B, vendedor" },
   { key: "pagos",        label: "Pagos por método",   icon: "💳", desc: "Desglose de pagos por Efectivo / Datáfono / Transferencia / Wompi / CXC" },
+  { key: "propinas",     label: "Propinas",           icon: "💰", desc: "Propinas consolidadas · Restobar Loggro + Cajas Express de eventos · Por cajero y día" },
   { key: "ocupacion",    label: "Ocupación diaria",   icon: "📅", desc: "Pax por día · Ocupación vs. capacidad · Tendencia mensual" },
   { key: "cancelaciones",label: "Cancelaciones",      icon: "✕",  desc: "Reservas canceladas · Razón · Reembolsos" },
   { key: "ayb",          label: "Reportes A&B",       icon: "🍽️", desc: "Cortesías · Anulaciones · Descuentos del Restaurant/Bar (Loggro)" },
@@ -57,6 +58,7 @@ export default function Reportes() {
       {tab === "cortesias"     && <ReporteCortesias />}
       {tab === "ventas"        && <ReporteVentas />}
       {tab === "pagos"         && <ReportePagosPorMetodo />}
+      {tab === "propinas"      && <ReportePropinas />}
       {tab === "ocupacion"     && <ReporteOcupacion />}
       {tab === "cancelaciones" && <ReporteCancelaciones />}
       {tab === "ayb"           && <ReporteAyB />}
@@ -2217,6 +2219,266 @@ function KpiBox({ label, value, color, highlight }) {
     <div style={{ background: highlight ? B.sand + "11" : B.navyMid, border: `1px solid ${highlight ? B.sand + "55" : B.navyLight}`, borderRadius: 8, padding: "10px 14px", minWidth: 140, borderLeft: `3px solid ${color}` }}>
       <div style={{ fontSize: 9, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: "0.05em", fontWeight: 600 }}>{label}</div>
       <div style={{ fontSize: 18, fontWeight: 800, color, fontFamily: "'Barlow Condensed', sans-serif", marginTop: 2 }}>{value}</div>
+    </div>
+  );
+}
+
+// ─── REPORTE PROPINAS ───────────────────────────────────────────────────────
+// Consolida propinas de dos fuentes:
+//   1. Loggro Restobar (via /cierre-caja-rango) — propinas por día del POS
+//   2. Cajas Express de eventos (cajas_evento_ventas) — propinas por cajero
+// Muestra desglose por cajero (cajas express) y por día (Loggro + eventos).
+function ReportePropinas() {
+  const hoy = todayStr();
+  const [fechaIni, setFechaIni] = useState(firstOfMonth());
+  const [fechaFin, setFechaFin] = useState(hoy);
+  const [loading, setLoading] = useState(true);
+  const [loggro, setLoggro] = useState(null);      // respuesta cierre-caja-rango
+  const [cajasEv, setCajasEv] = useState([]);      // rows cajas_evento_ventas
+  const [error, setError] = useState(null);
+
+  const cargar = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const auth = { apikey: import.meta.env.VITE_SUPABASE_ANON_KEY, Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}` };
+      const base = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/loggro-sync`;
+      const [logR, cajR] = await Promise.all([
+        fetch(`${base}/cierre-caja-rango?from=${fechaIni}&to=${fechaFin}`, { headers: auth })
+          .then(r => r.json()).catch(() => null),
+        supabase.from("cajas_evento_ventas")
+          .select("caja_id, cajero_nombre, metodo_pago, propina, estado, created_at")
+          .gte("created_at", `${fechaIni}T00:00:00`)
+          .lte("created_at", `${fechaFin}T23:59:59`)
+          .neq("estado", "anulada")
+          .gt("propina", 0),
+      ]);
+      setLoggro(logR?.ok ? logR : null);
+      if (logR && !logR.ok) setError(logR.error || "Loggro no respondió");
+      setCajasEv(cajR.data || []);
+    } catch (e) {
+      setError(String(e.message || e));
+    } finally {
+      setLoading(false);
+    }
+  }, [fechaIni, fechaFin]);
+
+  useEffect(() => { cargar(); }, [cargar]);
+
+  // ── Agregados ─────────────────────────────────────────────────────────
+  const propinasLoggro = Number(loggro?.resumen?.total_propinas || 0);
+  const propinasCajas  = cajasEv.reduce((s, v) => s + Number(v.propina || 0), 0);
+  const propinasTotal  = propinasLoggro + propinasCajas;
+
+  // Cajas express agrupadas por cajero (con desglose ef/tj)
+  const cajerosCajas = useMemo(() => {
+    const m = {};
+    for (const v of cajasEv) {
+      const c = v.cajero_nombre || "(sin cajero)";
+      if (!m[c]) m[c] = { cajero: c, efectivo: 0, tarjeta: 0, total: 0, tx: 0 };
+      const val = Number(v.propina || 0);
+      m[c].total += val;
+      m[c].tx += 1;
+      if (v.metodo_pago === "efectivo") m[c].efectivo += val;
+      else if (v.metodo_pago === "tarjeta") m[c].tarjeta += val;
+      else m[c].tarjeta += val;
+    }
+    return Object.values(m).sort((a, b) => b.total - a.total);
+  }, [cajasEv]);
+
+  // Loggro por día
+  const loggroPorDia = useMemo(() => {
+    if (!loggro?.por_dia) return [];
+    return Object.entries(loggro.por_dia)
+      .filter(([, d]) => (d.propinas || 0) > 0)
+      .map(([fecha, d]) => ({ fecha, propinas: Number(d.propinas || 0), ventas: Number(d.ventas || 0), tickets: Number(d.tickets || 0) }))
+      .sort((a, b) => a.fecha.localeCompare(b.fecha));
+  }, [loggro]);
+
+  // Cajas express por día
+  const cajasPorDia = useMemo(() => {
+    const m = {};
+    for (const v of cajasEv) {
+      const dia = String(v.created_at || "").slice(0, 10);
+      if (!m[dia]) m[dia] = 0;
+      m[dia] += Number(v.propina || 0);
+    }
+    return Object.entries(m).map(([fecha, propinas]) => ({ fecha, propinas })).sort((a, b) => a.fecha.localeCompare(b.fecha));
+  }, [cajasEv]);
+
+  // Días combinados (para tabla del calendario)
+  const diasCombinados = useMemo(() => {
+    const m = {};
+    for (const d of loggroPorDia) {
+      if (!m[d.fecha]) m[d.fecha] = { fecha: d.fecha, loggro: 0, cajas: 0 };
+      m[d.fecha].loggro = d.propinas;
+    }
+    for (const d of cajasPorDia) {
+      if (!m[d.fecha]) m[d.fecha] = { fecha: d.fecha, loggro: 0, cajas: 0 };
+      m[d.fecha].cajas = d.propinas;
+    }
+    return Object.values(m).map(d => ({ ...d, total: d.loggro + d.cajas })).sort((a, b) => a.fecha.localeCompare(b.fecha));
+  }, [loggroPorDia, cajasPorDia]);
+
+  // Export CSV
+  const exportarCSV = () => {
+    const csv = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+    const filas = [
+      ["REPORTE DE PROPINAS", "", "", ""],
+      [`Rango: ${fechaIni} → ${fechaFin}`, "", "", ""],
+      ["", "", "", ""],
+      ["TOTALES", "", "", ""],
+      ["Fuente", "Total", "", ""],
+      ["Loggro Restobar", propinasLoggro, "", ""],
+      ["Cajas Express Eventos", propinasCajas, "", ""],
+      ["TOTAL GENERAL", propinasTotal, "", ""],
+      ["", "", "", ""],
+      ["POR CAJERO (Cajas Express)", "", "", ""],
+      ["Cajero", "Tx", "Efectivo", "Tarjeta", "Total"],
+      ...cajerosCajas.map(c => [c.cajero, c.tx, c.efectivo, c.tarjeta, c.total]),
+      ["", "", "", "", ""],
+      ["POR DÍA", "", "", "", ""],
+      ["Fecha", "Loggro", "Cajas Eventos", "Total"],
+      ...diasCombinados.map(d => [d.fecha, d.loggro, d.cajas, d.total]),
+    ];
+    const contenido = filas.map(r => r.map(csv).join(",")).join("\n");
+    const blob = new Blob([contenido], { type: "text/csv;charset=utf-8;" });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = `propinas_${fechaIni}_${fechaFin}.csv`;
+    link.click();
+  };
+
+  return (
+    <div style={{ background: B.navy, borderRadius: 12, padding: 24 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 20, flexWrap: "wrap", gap: 12 }}>
+        <div>
+          <div style={{ fontSize: 20, fontWeight: 800, fontFamily: "'Barlow Condensed', sans-serif" }}>💰 Reporte de Propinas</div>
+          <div style={{ fontSize: 12, color: "rgba(255,255,255,0.45)", marginTop: 4 }}>
+            Consolidado de <b style={{ color: "#fb923c" }}>Loggro Restobar</b> + <b style={{ color: B.sky }}>Cajas Express de eventos</b>
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: 12, alignItems: "flex-end" }}>
+          <div>
+            <label style={LS}>Desde</label>
+            <input type="date" value={fechaIni} onChange={e => setFechaIni(e.target.value)} style={{ ...IS, width: 160 }} />
+          </div>
+          <div>
+            <label style={LS}>Hasta</label>
+            <input type="date" value={fechaFin} onChange={e => setFechaFin(e.target.value)} style={{ ...IS, width: 160 }} />
+          </div>
+          <button onClick={exportarCSV} style={BTN(B.sky)}>📥 CSV</button>
+        </div>
+      </div>
+
+      {loading ? (
+        <div style={{ textAlign: "center", padding: 40, color: B.sand }}>Cargando…</div>
+      ) : (
+        <>
+          {error && (
+            <div style={{ background: B.warning + "22", border: `1px solid ${B.warning}55`, borderRadius: 8, padding: "10px 14px", marginBottom: 14, fontSize: 12, color: B.warning }}>
+              ⚠️ Loggro respondió con error: {error}. Los datos de Cajas Express sí se cargaron.
+            </div>
+          )}
+
+          {/* KPIs */}
+          <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 20 }}>
+            <KpiBox label="Total Propinas" value={COP(propinasTotal)} color={B.sand} highlight />
+            <KpiBox label="Loggro Restobar" value={COP(propinasLoggro)} color="#fb923c" />
+            <KpiBox label="Cajas Express" value={COP(propinasCajas)} color={B.sky} />
+            <KpiBox label="Cajeros (Cajas Ev.)" value={cajerosCajas.length} color={B.success} />
+          </div>
+
+          {/* Por cajero (cajas express) */}
+          <div style={{ marginBottom: 24 }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: B.sky, marginBottom: 10, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+              Cajas Express de Eventos · Por cajero
+            </div>
+            {cajerosCajas.length === 0 ? (
+              <div style={{ padding: 20, textAlign: "center", color: "rgba(255,255,255,0.4)", background: B.navyMid, borderRadius: 8, fontSize: 12 }}>
+                Sin propinas en cajas express del período.
+              </div>
+            ) : (
+              <div style={{ background: B.navyMid, borderRadius: 8, overflow: "hidden", overflowX: "auto" }}>
+                <table width="100%" cellPadding={0} cellSpacing={0} style={{ fontSize: 12, minWidth: 520 }}>
+                  <thead>
+                    <tr style={{ background: "rgba(255,255,255,0.04)" }}>
+                      <th style={{ padding: "8px 12px", textAlign: "left", fontSize: 10, color: B.sand, textTransform: "uppercase", letterSpacing: 1 }}>Cajero</th>
+                      <th style={{ padding: "8px 12px", textAlign: "right", fontSize: 10, color: B.sand, textTransform: "uppercase", letterSpacing: 1 }}>Tx</th>
+                      <th style={{ padding: "8px 12px", textAlign: "right", fontSize: 10, color: B.sand, textTransform: "uppercase", letterSpacing: 1 }}>Efectivo</th>
+                      <th style={{ padding: "8px 12px", textAlign: "right", fontSize: 10, color: B.sand, textTransform: "uppercase", letterSpacing: 1 }}>Tarjeta</th>
+                      <th style={{ padding: "8px 12px", textAlign: "right", fontSize: 10, color: B.sand, textTransform: "uppercase", letterSpacing: 1 }}>Total</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {cajerosCajas.map(c => (
+                      <tr key={c.cajero} style={{ borderTop: `1px solid ${B.navyLight}33` }}>
+                        <td style={{ padding: "8px 12px", fontWeight: 600 }}>{c.cajero}</td>
+                        <td style={{ padding: "8px 12px", textAlign: "right", color: "rgba(255,255,255,0.6)" }}>{c.tx}</td>
+                        <td style={{ padding: "8px 12px", textAlign: "right", color: c.efectivo > 0 ? "#fff" : "rgba(255,255,255,0.3)" }}>{c.efectivo > 0 ? COP(c.efectivo) : "—"}</td>
+                        <td style={{ padding: "8px 12px", textAlign: "right", color: c.tarjeta > 0 ? "#fff" : "rgba(255,255,255,0.3)" }}>{c.tarjeta > 0 ? COP(c.tarjeta) : "—"}</td>
+                        <td style={{ padding: "8px 12px", textAlign: "right", fontWeight: 700, color: B.sand }}>{COP(c.total)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <tr style={{ background: B.sand + "10", borderTop: `2px solid ${B.sand}` }}>
+                      <td style={{ padding: "8px 12px", fontWeight: 800 }}>TOTAL</td>
+                      <td style={{ padding: "8px 12px", textAlign: "right", fontWeight: 800 }}>{cajerosCajas.reduce((s, c) => s + c.tx, 0)}</td>
+                      <td style={{ padding: "8px 12px", textAlign: "right", fontWeight: 800 }}>{COP(cajerosCajas.reduce((s, c) => s + c.efectivo, 0))}</td>
+                      <td style={{ padding: "8px 12px", textAlign: "right", fontWeight: 800 }}>{COP(cajerosCajas.reduce((s, c) => s + c.tarjeta, 0))}</td>
+                      <td style={{ padding: "8px 12px", textAlign: "right", fontWeight: 800, color: B.sand, fontSize: 14 }}>{COP(propinasCajas)}</td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            )}
+          </div>
+
+          {/* Por día (Loggro + Cajas) */}
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 700, color: "#fb923c", marginBottom: 10, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+              Consolidado por día
+            </div>
+            {diasCombinados.length === 0 ? (
+              <div style={{ padding: 20, textAlign: "center", color: "rgba(255,255,255,0.4)", background: B.navyMid, borderRadius: 8, fontSize: 12 }}>
+                Sin propinas en el período.
+              </div>
+            ) : (
+              <div style={{ background: B.navyMid, borderRadius: 8, overflow: "hidden", overflowX: "auto" }}>
+                <table width="100%" cellPadding={0} cellSpacing={0} style={{ fontSize: 12, minWidth: 480 }}>
+                  <thead>
+                    <tr style={{ background: "rgba(255,255,255,0.04)" }}>
+                      <th style={{ padding: "8px 12px", textAlign: "left", fontSize: 10, color: B.sand, textTransform: "uppercase", letterSpacing: 1 }}>Fecha</th>
+                      <th style={{ padding: "8px 12px", textAlign: "right", fontSize: 10, color: B.sand, textTransform: "uppercase", letterSpacing: 1 }}>Loggro</th>
+                      <th style={{ padding: "8px 12px", textAlign: "right", fontSize: 10, color: B.sand, textTransform: "uppercase", letterSpacing: 1 }}>Cajas Eventos</th>
+                      <th style={{ padding: "8px 12px", textAlign: "right", fontSize: 10, color: B.sand, textTransform: "uppercase", letterSpacing: 1 }}>Total</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {diasCombinados.map(d => (
+                      <tr key={d.fecha} style={{ borderTop: `1px solid ${B.navyLight}33` }}>
+                        <td style={{ padding: "8px 12px" }}>{d.fecha}</td>
+                        <td style={{ padding: "8px 12px", textAlign: "right", color: d.loggro > 0 ? "#fb923c" : "rgba(255,255,255,0.3)" }}>{d.loggro > 0 ? COP(d.loggro) : "—"}</td>
+                        <td style={{ padding: "8px 12px", textAlign: "right", color: d.cajas > 0 ? B.sky : "rgba(255,255,255,0.3)" }}>{d.cajas > 0 ? COP(d.cajas) : "—"}</td>
+                        <td style={{ padding: "8px 12px", textAlign: "right", fontWeight: 700, color: B.sand }}>{COP(d.total)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <tr style={{ background: B.sand + "10", borderTop: `2px solid ${B.sand}` }}>
+                      <td style={{ padding: "8px 12px", fontWeight: 800 }}>TOTAL</td>
+                      <td style={{ padding: "8px 12px", textAlign: "right", fontWeight: 800, color: "#fb923c" }}>{COP(propinasLoggro)}</td>
+                      <td style={{ padding: "8px 12px", textAlign: "right", fontWeight: 800, color: B.sky }}>{COP(propinasCajas)}</td>
+                      <td style={{ padding: "8px 12px", textAlign: "right", fontWeight: 800, color: B.sand, fontSize: 14 }}>{COP(propinasTotal)}</td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            )}
+          </div>
+        </>
+      )}
     </div>
   );
 }
