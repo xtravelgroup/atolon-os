@@ -284,9 +284,7 @@ function buildDataFromParsed(result, ocItems, factura_url) {
       codigo_barras:        aiItem.codigo_barras || null,
       referencia_proveedor: aiItem.referencia_proveedor || null,
       nombre:               aiItem.nombre || matchOc?.item || matchOc?.nombre || "—",
-      nombre_anterior:      matchOc ? (matchOc.item || matchOc.nombre) : null,
       cantidad_anterior:    matchOc ? (Number(matchOc.cant) || 0) : null,
-      loggro_id:            matchOc?.loggro_id || null,
       cantidad_paquete:     cantPack,
       unidad_compra:        aiItem.unidad_compra || matchOc?.unidad || "UND",
       unidades_por_paquete: unPorPack,
@@ -306,7 +304,6 @@ function buildDataFromParsed(result, ocItems, factura_url) {
       es_bonificacion:      esBonif,
       requiere_revision:    !!aiItem.requiere_revision,
       es_nuevo_oc:          !matchOc,
-      match_source:         matchSource, // "ai" | "heur_nombre_85" | "heur_barcode_100" | "heur_ref_proveedor_95" | null
       cantidad:             cantPack,
       unidad:               aiItem.unidad_compra || matchOc?.unidad || "UND",
       precio_costo_unit:    costoPack,
@@ -317,7 +314,18 @@ function buildDataFromParsed(result, ocItems, factura_url) {
       icl_valor_unit:       Number(aiItem.icl_valor_pack ?? aiItem.icl_valor_unit) || 0,
       adv_valor_unit:       Number(aiItem.adv_valor_pack ?? aiItem.adv_valor_unit) || 0,
       iva:                  cantPack * ivaPack,
-      item_id:              matchOc?.item_id || null,
+      item_id:              aiItem.item_id ?? matchOc?.item_id ?? null,
+      // Ediciones del operador (persisten al re-abrir "Revisar"): la conversión
+      // Loggro (loggro_qty_override), vínculo manual, unit override, etc.
+      // Antes: buildDataFromParsed las descartaba porque solo miraba campos
+      // "crudos" del AI → al reabrir, el input "Restobar: X gr" volvía a "?".
+      loggro_qty_override:  aiItem.loggro_qty_override ?? null,
+      loggro_id:            aiItem.loggro_id ?? matchOc?.loggro_id ?? null,
+      unit_dst_override:    aiItem.unit_dst_override ?? null,
+      nombre_anterior:      aiItem.nombre_anterior ?? (matchOc ? (matchOc.item || matchOc.nombre) : null),
+      match_source:         aiItem.match_source ?? matchSource,
+      no_facturado:         !!aiItem.no_facturado,
+      motivo_manual:        aiItem.motivo_manual ?? null,
     };
   });
 
