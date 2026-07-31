@@ -477,6 +477,47 @@ function ReporteFacturacionDiaria() {
         )}
       </Seccion>
 
+      {/* SECCIÓN 3.5: Otros ingresos MUELLE (After Island / Huéspedes cobrados sin reserva) */}
+      {muelle.length > 0 && (
+        <Seccion titulo="🛥️ Otros ingresos · Muelle (sin reserva)" color={B.sky} count={muelle.length} total={totalMuelle}>
+          <table style={tablaStyle}>
+            <thead><tr style={trHeader}>
+              <th style={th}>ID</th>
+              <th style={th}>Cliente / Embarcación</th>
+              <th style={th}>Tipo doc</th>
+              <th style={th}>Número doc</th>
+              <th style={th}>Razón social / Nombre</th>
+              <th style={{ ...th, textAlign: "right" }}>Total</th>
+              <th style={th}>Forma pago</th>
+              <th style={th}>Canal</th>
+              <th style={th}>Acción</th>
+            </tr></thead>
+            <tbody>
+              {muelle.map(m => (
+                <tr key={m.id} style={trBody}>
+                  <td style={{ ...td, fontFamily: "monospace", fontSize: 11 }}>{m.id}</td>
+                  <td style={td}>
+                    {m.embarcacion_nombre || "—"}
+                    <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)" }}>
+                      {m.tipo?.replace(/_/g, " ")} · {m.pax_total} pax
+                    </div>
+                  </td>
+                  <td style={{ ...td, color: "rgba(255,255,255,0.3)" }}>—</td>
+                  <td style={{ ...td, color: "rgba(255,255,255,0.3)" }}>—</td>
+                  <td style={td}>{m.embarcacion_nombre || "—"}</td>
+                  <td style={{ ...td, textAlign: "right", fontWeight: 700 }}>{COP(m.total_cobrado)}</td>
+                  <td style={td}>Efectivo</td>
+                  <td style={td}>Muelle</td>
+                  <td style={{ ...td, fontSize: 11, color: "rgba(255,255,255,0.5)" }}>
+                    {m.notas ? m.notas.slice(0, 40) + (m.notas.length > 40 ? "…" : "") : "—"}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </Seccion>
+      )}
+
       {/* SECCIÓN 4: Eventos */}
       {eventos.length > 0 && (
         <Seccion titulo="🎉 Eventos / Grupos" color="#a78bfa" count={eventos.length} total={totalEventos}>
@@ -530,53 +571,26 @@ function ReporteFacturacionDiaria() {
         )}
       </Seccion>
 
-      {/* SECCIÓN 6: Otros (muelle, actividades) */}
-      {(muelle.length > 0 || actividades.length > 0) && (
-        <Seccion titulo="🛥️ Otros ingresos (Muelle + Actividades)" color={B.sky} count={muelle.length + actividades.length} total={totalMuelle + totalActividades}>
-          {muelle.length > 0 && (
-            <>
-              <div style={{ padding: "8px 14px", fontSize: 11, color: B.sand, fontWeight: 700, textTransform: "uppercase" }}>Muelle</div>
-              <table style={tablaStyle}>
-                <thead><tr style={trHeader}>
-                  <th style={th}>Embarcación</th><th style={th}>Tipo</th><th style={th}>Pax</th>
-                  <th style={th}>Notas</th><th style={{ ...th, textAlign: "right" }}>Total</th>
-                </tr></thead>
-                <tbody>
-                  {muelle.map(m => (
-                    <tr key={m.id} style={trBody}>
-                      <td style={td}>{m.embarcacion_nombre || m.id}</td>
-                      <td style={td}>{m.tipo}</td>
-                      <td style={td}>{m.pax_total}</td>
-                      <td style={td}>{m.notas || "—"}</td>
-                      <td style={{ ...td, textAlign: "right", fontWeight: 700 }}>{COP(m.total_cobrado)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </>
-          )}
-          {actividades.length > 0 && (
-            <>
-              <div style={{ padding: "8px 14px", fontSize: 11, color: B.sand, fontWeight: 700, textTransform: "uppercase" }}>Actividades</div>
-              <table style={tablaStyle}>
-                <thead><tr style={trHeader}>
-                  <th style={th}>ID</th><th style={th}>Cliente</th><th style={th}>Actividad</th>
-                  <th style={th}>Forma pago</th><th style={{ ...th, textAlign: "right" }}>Total</th>
-                </tr></thead>
-                <tbody>
-                  {actividades.map(a => (
-                    <tr key={a.id} style={trBody}>
-                      <td style={td}>{a.id}</td>
-                      <td style={td}>{a.cliente}</td>
-                      <td style={td}>{a.actividad}</td>
-                      <td style={td}>{a.forma_pago}</td>
-                      <td style={{ ...td, textAlign: "right", fontWeight: 700 }}>{COP(a.total)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </>
-          )}
+      {/* SECCIÓN 6: Actividades (muelle ya se mostró arriba, junto a Otras reservas) */}
+      {actividades.length > 0 && (
+        <Seccion titulo="🎯 Actividades" color={B.sand} count={actividades.length} total={totalActividades}>
+          <table style={tablaStyle}>
+            <thead><tr style={trHeader}>
+              <th style={th}>ID</th><th style={th}>Cliente</th><th style={th}>Actividad</th>
+              <th style={th}>Forma pago</th><th style={{ ...th, textAlign: "right" }}>Total</th>
+            </tr></thead>
+            <tbody>
+              {actividades.map(a => (
+                <tr key={a.id} style={trBody}>
+                  <td style={td}>{a.id}</td>
+                  <td style={td}>{a.cliente}</td>
+                  <td style={td}>{a.actividad}</td>
+                  <td style={td}>{a.forma_pago}</td>
+                  <td style={{ ...td, textAlign: "right", fontWeight: 700 }}>{COP(a.total)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </Seccion>
       )}
 
