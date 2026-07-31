@@ -47,36 +47,84 @@ const METODO_ICON = {
   "huella+pin": "👆🔢",
 };
 
+// Roles que pueden ver TODOS los empleados (no solo los de sus deptos).
+const ROLES_ADMIN_EXACTOS = new Set(["super_admin", "admin", "administrador", "contabilidad", "direccion"]);
+const ROLES_ADMIN_PREFIJOS = ["gerente_general"];
+function esRolAdmin(rolId) {
+  const r = String(rolId || "").toLowerCase();
+  if (ROLES_ADMIN_EXACTOS.has(r)) return true;
+  return ROLES_ADMIN_PREFIJOS.some(p => r.startsWith(p));
+}
+
 export default function AsistenciaZK() {
   const { isMobile } = useBreakpoint();
   const [tab, setTab] = useState("asistencia"); // asistencia | enrolamiento
   const [fecha, setFecha] = useState(todayBog());
   const [punches, setPunches] = useState([]);
   const [empleados, setEmpleados] = useState([]);
+  const [departamentos, setDepartamentos] = useState([]);
+  const [currentUser, setCurrentUser] = useState({ email: "", rol: null });
   const [loading, setLoading] = useState(true);
   const [filtroEmpleado, setFiltroEmpleado] = useState("");
   const [linkModal, setLinkModal] = useState(null); // zk_user_id huérfano
 
+  const esAdmin = esRolAdmin(currentUser.rol);
+
+  // Cargar usuario actual (una vez)
+  useEffect(() => {
+    (async () => {
+      const { data: sess } = await supabase.auth.getSession();
+      const email = sess?.session?.user?.email || "";
+      if (!email) return;
+      const { data: u } = await supabase.from("usuarios").select("rol_id, nombre").eq("email", email).maybeSingle();
+      setCurrentUser({ email, rol: u?.rol_id || null });
+    })();
+  }, []);
+
   const cargar = useCallback(async () => {
     setLoading(true);
-    const [pR, eR] = await Promise.all([
+    const [pR, eR, dR] = await Promise.all([
       supabase.from("asistencia_zk")
         .select("*").eq("fecha", fecha)
         .order("timestamp", { ascending: true }),
       supabase.from("rh_empleados")
-        .select("id, nombres, apellidos, cedula, cargo, zk_user_id")
+        .select("id, nombres, apellidos, cedula, cargo, departamento_id, zk_user_id")
         .eq("activo", true).order("nombres"),
+      supabase.from("rh_departamentos").select("id, nombre, supervisor_email"),
     ]);
     setPunches(pR.data || []);
     setEmpleados(eR.data || []);
+    setDepartamentos(dR.data || []);
     setLoading(false);
   }, [fecha]);
   useEffect(() => { cargar(); }, [cargar]);
+
+  // Empleados visibles según rol: supervisor solo ve los de sus deptos.
+  const deptosVisiblesIds = useMemo(() => {
+    if (esAdmin) return null; // null = todos
+    const em = String(currentUser.email || "").toLowerCase();
+    const ids = departamentos
+      .filter(d => String(d.supervisor_email || "").toLowerCase() === em)
+      .map(d => d.id);
+    return new Set(ids);
+  }, [departamentos, esAdmin, currentUser.email]);
+  const empleadosVisibles = useMemo(() => {
+    if (!deptosVisiblesIds) return empleados;
+    return empleados.filter(e => e.departamento_id && deptosVisiblesIds.has(e.departamento_id));
+  }, [empleados, deptosVisiblesIds]);
+  const idsEmpleadosVisibles = useMemo(() => new Set(empleadosVisibles.map(e => e.id)), [empleadosVisibles]);
 
   // Agrupar punches por empleado (o por zk_user_id si huérfano)
   const filas = useMemo(() => {
     const map = new Map();
     for (const p of punches) {
+      // Supervisor: excluir empleados fuera de sus deptos. Admin ve todo.
+      if (deptosVisiblesIds) {
+        if (p.empleado_id && !idsEmpleadosVisibles.has(p.empleado_id)) continue;
+        // Los huérfanos (sin empleado_id) los oculta también al supervisor —
+        // solo admin los ve para enlazarlos manualmente.
+        if (!p.empleado_id) continue;
+      }
       const key = p.empleado_id || `ZK:${p.zk_user_id}`;
       if (!map.has(key)) {
         map.set(key, {
@@ -119,7 +167,7 @@ export default function AsistenciaZK() {
       );
     }
     return arr;
-  }, [punches, empleados, filtroEmpleado]);
+  }, [punches, empleados, filtroEmpleado, deptosVisiblesIds, idsEmpleadosVisibles]);
 
   // KPIs del día
   const kpis = useMemo(() => {
@@ -171,7 +219,7 @@ export default function AsistenciaZK() {
       </div>
 
       {tab === "enrolamiento" ? (
-        <TabEnrolamiento empleados={empleados} onReload={cargar} isMobile={isMobile} />
+        <TabEnrolamiento empleados={empleadosVisibles} onReload={cargar} isMobile={isMobile} />
       ) : (
       <>
       {/* KPIs */}
@@ -211,7 +259,7 @@ export default function AsistenciaZK() {
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           {filas.map(fila => (
-            <FilaEmpleado key={fila.key} fila={fila} empleados={empleados}
+            <FilaEmpleado key={fila.key} fila={fila} empleados={empleadosVisibles}
               onLink={() => setLinkModal(fila)}
               onReload={cargar} />
           ))}
@@ -221,7 +269,7 @@ export default function AsistenciaZK() {
       {linkModal && (
         <LinkModal
           fila={linkModal}
-          empleados={empleados}
+          empleados={empleadosVisibles}
           onClose={() => setLinkModal(null)}
           onSaved={() => { setLinkModal(null); cargar(); }}
         />
