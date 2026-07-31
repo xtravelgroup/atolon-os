@@ -260,6 +260,13 @@ function ReporteFacturacionDiaria() {
   const yaEmitidas = reservasConFE.filter(r => r.fe_estado === "emitida");
 
   // Marcar reserva como FE emitida
+  // Abrir el detalle de una reserva en el módulo Reservas (evento global)
+  const abrirReserva = (reservaId) => {
+    window.dispatchEvent(new CustomEvent("atolon-navigate", {
+      detail: { modulo: "reservas", reservaId },
+    }));
+  };
+
   const marcarEmitida = async (id, numeroFactura, tipo = "reserva") => {
     if (!numeroFactura?.trim()) return alert("Ingresá el número de factura");
     const tabla = tipo === "muelle" ? "muelle_llegadas" : "reservas";
@@ -393,7 +400,12 @@ function ReporteFacturacionDiaria() {
             <tbody>
               {pendientesEmitir.map(r => (
                 <tr key={r.id} style={trBody}>
-                  <td style={td}>{r.id}</td>
+                  <td style={td}>
+                    <button onClick={() => abrirReserva(r.id)} title="Abrir reserva"
+                      style={{ background: "none", border: "none", padding: 0, cursor: "pointer", color: B.sky, textDecoration: "underline", fontFamily: "inherit", fontSize: "inherit" }}>
+                      {r.id}
+                    </button>
+                  </td>
                   <td style={td}>{r.nombre}</td>
                   <td style={{ ...td, fontWeight: 700, color: B.sky }}>{r.fe_tipo_documento}</td>
                   <td style={td}>{r.fe_numero_documento}</td>
@@ -424,7 +436,12 @@ function ReporteFacturacionDiaria() {
             <tbody>
               {yaEmitidas.map(r => (
                 <tr key={r.id} style={trBody}>
-                  <td style={td}>{r.id}</td>
+                  <td style={td}>
+                    <button onClick={() => abrirReserva(r.id)} title="Abrir reserva"
+                      style={{ background: "none", border: "none", padding: 0, cursor: "pointer", color: B.sky, textDecoration: "underline", fontFamily: "inherit", fontSize: "inherit" }}>
+                      {r.id}
+                    </button>
+                  </td>
                   <td style={td}>{r.nombre}</td>
                   <td style={td}>{r.fe_tipo_documento} {r.fe_numero_documento}</td>
                   <td style={{ ...td, fontWeight: 700, color: B.success }}>{r.fe_numero_factura}</td>
@@ -452,7 +469,12 @@ function ReporteFacturacionDiaria() {
             <tbody>
               {reservasSinFE.map(r => (
                 <tr key={r.id} style={trBody}>
-                  <td style={td}>{r.id}</td>
+                  <td style={td}>
+                    <button onClick={() => abrirReserva(r.id)} title="Abrir reserva"
+                      style={{ background: "none", border: "none", padding: 0, cursor: "pointer", color: B.sky, textDecoration: "underline", fontFamily: "inherit", fontSize: "inherit" }}>
+                      {r.id}
+                    </button>
+                  </td>
                   <td style={td}>{r.nombre}</td>
                   <td style={td}>{r.tipo}</td>
                   <td style={td}>{r.pax_a || r.pax || 0}{r.pax_n ? `+${r.pax_n}N` : ""}</td>
