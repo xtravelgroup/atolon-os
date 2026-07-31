@@ -143,8 +143,8 @@ export default function NominaPorDia() {
   const deptosVisiblesIds = useMemo(() => new Set(deptosVisibles.map(d => d.id)), [deptosVisibles]);
 
   // Selecciona un trabajador extra del catálogo → pre-llena el form.
-  // Guardamos su id en empleado_loggro_id (columna existente) para trazar
-  // qué trabajador fue; la BD no tiene FK, solo referencia informativa.
+  // Solo datos identificatorios; la tarifa/día se define en cada solicitud
+  // porque varía (evento distinto, cargo diferente, mercado, etc.).
   const selectTrabExtra = (t) => {
     setForm(f => ({
       ...f,
@@ -152,13 +152,12 @@ export default function NominaPorDia() {
       nombre: t.nombre,
       documento: t.documento || "",
       cargo: t.cargo || "",
-      valor_dia: t.tarifa_dia_default != null ? String(t.tarifa_dia_default) : f.valor_dia,
     }));
   };
 
   // Crear/editar trabajador extra
-  const abrirNuevoTrab = () => setTrabForm({ id: null, nombre: "", documento: "", cargo: "", tarifa_dia_default: "", telefono: "", notas: "" });
-  const abrirEditarTrab = (t) => setTrabForm({ id: t.id, nombre: t.nombre, documento: t.documento || "", cargo: t.cargo || "", tarifa_dia_default: t.tarifa_dia_default != null ? String(t.tarifa_dia_default) : "", telefono: t.telefono || "", notas: t.notas || "" });
+  const abrirNuevoTrab = () => setTrabForm({ id: null, nombre: "", documento: "", cargo: "", telefono: "", notas: "" });
+  const abrirEditarTrab = (t) => setTrabForm({ id: t.id, nombre: t.nombre, documento: t.documento || "", cargo: t.cargo || "", telefono: t.telefono || "", notas: t.notas || "" });
 
   const guardarTrab = async () => {
     if (!trabForm) return;
@@ -169,7 +168,6 @@ export default function NominaPorDia() {
       nombre,
       documento: trabForm.documento?.trim() || null,
       cargo: trabForm.cargo?.trim() || null,
-      tarifa_dia_default: trabForm.tarifa_dia_default ? Number(trabForm.tarifa_dia_default) : null,
       telefono: trabForm.telefono?.trim() || null,
       notas: trabForm.notas?.trim() || null,
       updated_at: new Date().toISOString(),
@@ -592,7 +590,7 @@ export default function NominaPorDia() {
                       <option value="">— Escribir manualmente —</option>
                       {trabExtra.map(t => (
                         <option key={t.id} value={t.id}>
-                          {t.nombre}{t.cargo ? ` · ${t.cargo}` : ""}{t.tarifa_dia_default ? ` · ${COP(t.tarifa_dia_default)}/día` : ""}
+                          {t.nombre}{t.cargo ? ` · ${t.cargo}` : ""}{t.documento ? ` · CC ${t.documento}` : ""}
                         </option>
                       ))}
                     </select>
@@ -773,15 +771,9 @@ export default function NominaPorDia() {
               <input value={trabForm.telefono} onChange={e => setTrabForm(f => ({ ...f, telefono: e.target.value }))} style={IS} />
             </div>
           </div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
-            <div>
-              <label style={LS}>Cargo típico</label>
-              <input value={trabForm.cargo} onChange={e => setTrabForm(f => ({ ...f, cargo: e.target.value }))} placeholder="Ej: mesero refuerzo" style={IS} />
-            </div>
-            <div>
-              <label style={LS}>Tarifa día (default)</label>
-              <input type="number" step="0.01" value={trabForm.tarifa_dia_default} onChange={e => setTrabForm(f => ({ ...f, tarifa_dia_default: e.target.value }))} placeholder="0" style={IS} />
-            </div>
+          <div style={{ marginBottom: 12 }}>
+            <label style={LS}>Cargo típico</label>
+            <input value={trabForm.cargo} onChange={e => setTrabForm(f => ({ ...f, cargo: e.target.value }))} placeholder="Ej: mesero refuerzo, oficios varios..." style={IS} />
           </div>
           <div style={{ marginBottom: 16 }}>
             <label style={LS}>Notas</label>
