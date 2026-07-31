@@ -73,8 +73,11 @@ const emptyForm = {
 
 export default function NominaPorDia() {
   const [registros, setRegistros] = useState([]);
-  const [empleadosLoggro, setEmpleadosLoggro] = useState([]);
+  const [trabExtra, setTrabExtra] = useState([]);   // catálogo de trabajadores extra
   const [departamentos, setDepartamentos] = useState([]);
+  // Modal nuevo/editar trabajador extra
+  const [trabForm, setTrabForm] = useState(null);   // null = cerrado; obj = abierto
+  const [savingTrab, setSavingTrab] = useState(false);
   const [currentUser, setCurrentUser] = useState({ email: "", rol: null });
   const [loading, setLoading] = useState(true);
   const [rangeFrom, setRangeFrom] = useState(startOfMonth());
@@ -111,16 +114,20 @@ export default function NominaPorDia() {
 
   const fetchAll = useCallback(async () => {
     setLoading(true);
-    const [regR, empR, depR] = await Promise.all([
+    const [regR, trabR, depR] = await Promise.all([
       supabase.from("nomina_por_dia").select("*")
         .gte("fecha", rangeFrom).lte("fecha", rangeTo)
         .order("fecha", { ascending: false }),
-      supabase.from("empleados_loggro")
-        .select("id, nombre_completo, documento, cargo, departamento").order("nombre_completo"),
+      // Catálogo de trabajadores EXTRA (eventuales/por día). NO son empleados
+      // de nómina fija — solo aparece aquí lo que se agrega desde el botón
+      // "Nuevo trabajador".
+      supabase.from("trabajadores_extra")
+        .select("id, nombre, documento, cargo, tarifa_dia_default, telefono, notas, activo")
+        .eq("activo", true).order("nombre"),
       supabase.from("rh_departamentos").select("id, nombre, supervisor_email").order("nombre"),
     ]);
     setRegistros(regR.data || []);
-    setEmpleadosLoggro(empR.data || []);
+    setTrabExtra(trabR.data || []);
     setDepartamentos(depR.data || []);
     setLoading(false);
   }, [rangeFrom, rangeTo]);
@@ -135,15 +142,62 @@ export default function NominaPorDia() {
   }, [departamentos, esAdmin, currentUser.email]);
   const deptosVisiblesIds = useMemo(() => new Set(deptosVisibles.map(d => d.id)), [deptosVisibles]);
 
-  const selectEmpleado = (emp) => {
+  // Selecciona un trabajador extra del catálogo → pre-llena el form.
+  // Guardamos su id en empleado_loggro_id (columna existente) para trazar
+  // qué trabajador fue; la BD no tiene FK, solo referencia informativa.
+  const selectTrabExtra = (t) => {
     setForm(f => ({
       ...f,
-      empleado_loggro_id: emp.id,
-      nombre: emp.nombre_completo,
-      documento: emp.documento,
-      cargo: emp.cargo || "",
-      area: emp.departamento || "",
+      empleado_loggro_id: t.id,
+      nombre: t.nombre,
+      documento: t.documento || "",
+      cargo: t.cargo || "",
+      valor_dia: t.tarifa_dia_default != null ? String(t.tarifa_dia_default) : f.valor_dia,
     }));
+  };
+
+  // Crear/editar trabajador extra
+  const abrirNuevoTrab = () => setTrabForm({ id: null, nombre: "", documento: "", cargo: "", tarifa_dia_default: "", telefono: "", notas: "" });
+  const abrirEditarTrab = (t) => setTrabForm({ id: t.id, nombre: t.nombre, documento: t.documento || "", cargo: t.cargo || "", tarifa_dia_default: t.tarifa_dia_default != null ? String(t.tarifa_dia_default) : "", telefono: t.telefono || "", notas: t.notas || "" });
+
+  const guardarTrab = async () => {
+    if (!trabForm) return;
+    const nombre = String(trabForm.nombre || "").trim();
+    if (!nombre) return alert("Nombre requerido");
+    setSavingTrab(true);
+    const payload = {
+      nombre,
+      documento: trabForm.documento?.trim() || null,
+      cargo: trabForm.cargo?.trim() || null,
+      tarifa_dia_default: trabForm.tarifa_dia_default ? Number(trabForm.tarifa_dia_default) : null,
+      telefono: trabForm.telefono?.trim() || null,
+      notas: trabForm.notas?.trim() || null,
+      updated_at: new Date().toISOString(),
+    };
+    let error;
+    if (trabForm.id) {
+      ({ error } = await supabase.from("trabajadores_extra").update(payload).eq("id", trabForm.id));
+    } else {
+      payload.created_by = currentUser.email || null;
+      ({ error } = await supabase.from("trabajadores_extra").insert(payload));
+    }
+    setSavingTrab(false);
+    if (error) {
+      if (String(error.message || "").includes("duplicate") || error.code === "23505") {
+        return alert("Ya existe un trabajador con ese documento.");
+      }
+      return alert("Error: " + error.message);
+    }
+    logAccion({ modulo: "nomina_por_dia", accion: trabForm.id ? "editar_trabajador_extra" : "crear_trabajador_extra",
+                tabla: "trabajadores_extra", registroId: trabForm.id || nombre, notas: nombre });
+    setTrabForm(null);
+    fetchAll();
+  };
+
+  const desactivarTrab = async (t) => {
+    if (!confirm(`¿Desactivar a "${t.nombre}" del catálogo? Los registros históricos se conservan.`)) return;
+    await supabase.from("trabajadores_extra").update({ activo: false, updated_at: new Date().toISOString() }).eq("id", t.id);
+    fetchAll();
   };
 
   // Crear/editar solicitud
@@ -355,10 +409,17 @@ export default function NominaPorDia() {
           </div>
         </div>
         {puedeCrear && (
-          <button onClick={() => { setEditing(null); setForm({ ...emptyForm, fecha: today(), departamento_id: deptosVisibles.length === 1 ? deptosVisibles[0].id : "" }); setShowForm(true); }}
-            style={{ padding: "10px 20px", borderRadius: 8, border: "none", background: B.sky, color: B.navy, fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
-            + Solicitar personal
-          </button>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button onClick={() => { setEditing(null); setForm({ ...emptyForm, fecha: today(), departamento_id: deptosVisibles.length === 1 ? deptosVisibles[0].id : "" }); setShowForm(true); }}
+              style={{ padding: "10px 20px", borderRadius: 8, border: "none", background: B.sky, color: B.navy, fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
+              + Solicitar personal
+            </button>
+            <button onClick={abrirNuevoTrab}
+              title="Registrar un trabajador extra (eventual) en el catálogo"
+              style={{ padding: "10px 20px", borderRadius: 8, border: `1px solid ${B.sand}`, background: "transparent", color: B.sand, fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
+              👥 Nuevo trabajador
+            </button>
+          </div>
         )}
         {!puedeCrear && (
           <div style={{ fontSize: 12, color: B.warning }}>⚠ No tienes departamentos asignados como supervisor.</div>
@@ -522,14 +583,30 @@ export default function NominaPorDia() {
               <button onClick={() => setShowForm(false)} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.4)", fontSize: 20, cursor: "pointer" }}>✕</button>
             </div>
             <div style={{ padding: "16px 24px" }}>
-              {empleadosLoggro.length > 0 && !editing && (
+              {!editing && (
                 <div style={{ marginBottom: 14 }}>
-                  <label style={LS}>Empleado del catálogo (opcional)</label>
-                  <select onChange={e => { const emp = empleadosLoggro.find(x => x.id === e.target.value); if (emp) selectEmpleado(emp); }}
-                    value={form.empleado_loggro_id || ""} style={IS}>
-                    <option value="">— Escribir manualmente —</option>
-                    {empleadosLoggro.map(e => <option key={e.id} value={e.id}>{e.nombre_completo} · {e.cargo || "—"}</option>)}
-                  </select>
+                  <label style={LS}>Trabajador extra del catálogo (opcional)</label>
+                  <div style={{ display: "flex", gap: 6 }}>
+                    <select onChange={e => { const t = trabExtra.find(x => x.id === e.target.value); if (t) selectTrabExtra(t); }}
+                      value={form.empleado_loggro_id || ""} style={{ ...IS, flex: 1 }}>
+                      <option value="">— Escribir manualmente —</option>
+                      {trabExtra.map(t => (
+                        <option key={t.id} value={t.id}>
+                          {t.nombre}{t.cargo ? ` · ${t.cargo}` : ""}{t.tarifa_dia_default ? ` · ${COP(t.tarifa_dia_default)}/día` : ""}
+                        </option>
+                      ))}
+                    </select>
+                    <button onClick={abrirNuevoTrab} type="button"
+                      title="Agregar nuevo trabajador al catálogo"
+                      style={{ padding: "0 14px", borderRadius: 8, background: B.sand + "22", border: `1px solid ${B.sand}55`, color: B.sand, fontSize: 12, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>
+                      + Nuevo
+                    </button>
+                  </div>
+                  {trabExtra.length === 0 && (
+                    <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", marginTop: 4 }}>
+                      Aún no hay trabajadores extra registrados. Usa "+ Nuevo" para crear el primero.
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -672,6 +749,56 @@ export default function NominaPorDia() {
           <div style={{ display: "flex", gap: 10 }}>
             <button onClick={() => setEjecutar(null)} style={{ flex: 1, padding: 12, borderRadius: 8, border: `1px solid ${B.navyLight}`, background: "transparent", color: "rgba(255,255,255,0.55)", cursor: "pointer" }}>Cancelar</button>
             <button onClick={confirmarEjecutar} style={{ flex: 2, padding: 12, borderRadius: 8, border: "none", background: B.sky, color: B.navy, fontWeight: 700, cursor: "pointer" }}>✅ Confirmar ejecución</button>
+          </div>
+        </ModalCentrado>
+      )}
+
+      {/* Modal TRABAJADOR EXTRA */}
+      {trabForm && (
+        <ModalCentrado onClose={() => !savingTrab && setTrabForm(null)} title={trabForm.id ? "Editar trabajador" : "Nuevo trabajador extra"}>
+          <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginBottom: 14 }}>
+            Catálogo de personal eventual (por día). No mezclar con nómina fija.
+          </div>
+          <div style={{ marginBottom: 12 }}>
+            <label style={LS}>Nombre completo *</label>
+            <input value={trabForm.nombre} onChange={e => setTrabForm(f => ({ ...f, nombre: e.target.value }))} style={IS} autoFocus />
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
+            <div>
+              <label style={LS}>Documento</label>
+              <input value={trabForm.documento} onChange={e => setTrabForm(f => ({ ...f, documento: e.target.value }))} placeholder="CC / pasaporte" style={IS} />
+            </div>
+            <div>
+              <label style={LS}>Teléfono</label>
+              <input value={trabForm.telefono} onChange={e => setTrabForm(f => ({ ...f, telefono: e.target.value }))} style={IS} />
+            </div>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
+            <div>
+              <label style={LS}>Cargo típico</label>
+              <input value={trabForm.cargo} onChange={e => setTrabForm(f => ({ ...f, cargo: e.target.value }))} placeholder="Ej: mesero refuerzo" style={IS} />
+            </div>
+            <div>
+              <label style={LS}>Tarifa día (default)</label>
+              <input type="number" step="0.01" value={trabForm.tarifa_dia_default} onChange={e => setTrabForm(f => ({ ...f, tarifa_dia_default: e.target.value }))} placeholder="0" style={IS} />
+            </div>
+          </div>
+          <div style={{ marginBottom: 16 }}>
+            <label style={LS}>Notas</label>
+            <textarea rows={2} value={trabForm.notas} onChange={e => setTrabForm(f => ({ ...f, notas: e.target.value }))}
+              placeholder="Contacto, referencias, especialidad..." style={{ ...IS, resize: "vertical" }} />
+          </div>
+          <div style={{ display: "flex", gap: 10 }}>
+            <button onClick={() => setTrabForm(null)} disabled={savingTrab}
+              style={{ flex: 1, padding: 12, borderRadius: 8, border: `1px solid ${B.navyLight}`, background: "transparent", color: "rgba(255,255,255,0.55)", cursor: savingTrab ? "not-allowed" : "pointer" }}>Cancelar</button>
+            {trabForm.id && (
+              <button onClick={() => { desactivarTrab({ id: trabForm.id, nombre: trabForm.nombre }); setTrabForm(null); }} disabled={savingTrab}
+                style={{ padding: "12px 18px", borderRadius: 8, border: "none", background: B.danger + "22", color: B.danger, fontWeight: 700, cursor: savingTrab ? "not-allowed" : "pointer" }}>Desactivar</button>
+            )}
+            <button onClick={guardarTrab} disabled={savingTrab}
+              style={{ flex: 2, padding: 12, borderRadius: 8, border: "none", background: savingTrab ? B.navyLight : B.sand, color: B.navy, fontWeight: 700, cursor: savingTrab ? "default" : "pointer" }}>
+              {savingTrab ? "Guardando…" : trabForm.id ? "Guardar cambios" : "+ Agregar al catálogo"}
+            </button>
           </div>
         </ModalCentrado>
       )}
