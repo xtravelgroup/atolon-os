@@ -199,15 +199,16 @@ export default function NominaPorDia() {
   };
 
   // Crear/editar solicitud
+  // El supervisor NO pone montos — solo qué persona, qué día, cuántas horas
+  // planificadas y justificación. El admin define valor_dia/transporte/bonif
+  // al aprobar.
   const guardarSolicitud = async () => {
     if (!form.nombre.trim()) return alert("Nombre es requerido");
-    if (!form.valor_dia || Number(form.valor_dia) <= 0) return alert("Valor del día debe ser mayor a 0");
     if (!esAdmin && !form.departamento_id) return alert("Selecciona el departamento de la solicitud");
     if (!esAdmin && !deptosVisiblesIds.has(form.departamento_id)) {
       return alert("Solo puedes solicitar personal para tus departamentos.");
     }
     setSaving(true);
-    const totalEstim = (Number(form.valor_dia) || 0) + (Number(form.transporte) || 0) + (Number(form.bonificacion) || 0);
     const horasSol = Number(form.horas_solicitadas) || 0;
     const nowIso = new Date().toISOString();
     const payload = {
@@ -218,12 +219,14 @@ export default function NominaPorDia() {
       cargo: form.cargo || null,
       area: form.area || null,
       departamento_id: form.departamento_id || null,
-      valor_dia: Number(form.valor_dia) || 0,
+      // Montos se definen en la APROBACIÓN, no en la solicitud.
+      // Al crear van en 0; el admin los completa al aprobar.
+      valor_dia: 0,
       horas_solicitadas: horasSol,
       horas: editing ? undefined : 0,     // horas reales se llenan al ejecutar
-      transporte: Number(form.transporte) || 0,
-      bonificacion: Number(form.bonificacion) || 0,
-      total: totalEstim,
+      transporte: 0,
+      bonificacion: 0,
+      total: 0,
       metodo_pago: form.metodo_pago,
       notas: form.notas || null,
       updated_at: nowIso,
@@ -642,36 +645,8 @@ export default function NominaPorDia() {
                 </div>
               </div>
 
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginBottom: 12 }}>
-                <div>
-                  <label style={LS}>Valor día *</label>
-                  <input type="number" step="0.01" value={form.valor_dia} onChange={e => setForm(f => ({ ...f, valor_dia: e.target.value }))} placeholder="0" style={IS} />
-                </div>
-                <div>
-                  <label style={LS}>Transporte</label>
-                  <input type="number" step="0.01" value={form.transporte} onChange={e => setForm(f => ({ ...f, transporte: e.target.value }))} style={IS} />
-                </div>
-                <div>
-                  <label style={LS}>Bonificación</label>
-                  <input type="number" step="0.01" value={form.bonificacion} onChange={e => setForm(f => ({ ...f, bonificacion: e.target.value }))} style={IS} />
-                </div>
-              </div>
-
-              <div style={{ background: B.navy, borderRadius: 8, padding: "10px 14px", marginBottom: 12, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <span style={{ fontSize: 12, color: B.sand }}>TOTAL ESTIMADO</span>
-                <span style={{ fontSize: 18, fontWeight: 800, color: B.sand }}>
-                  {COP((Number(form.valor_dia) || 0) + (Number(form.transporte) || 0) + (Number(form.bonificacion) || 0))}
-                </span>
-              </div>
-
-              <div style={{ marginBottom: 12 }}>
-                <label style={LS}>Método de pago (referencial)</label>
-                <select value={form.metodo_pago} onChange={e => setForm(f => ({ ...f, metodo_pago: e.target.value }))} style={IS}>
-                  <option value="efectivo">Efectivo</option>
-                  <option value="transferencia">Transferencia</option>
-                  <option value="nequi">Nequi / Daviplata</option>
-                  <option value="otro">Otro</option>
-                </select>
+              <div style={{ background: B.sky + "11", border: `1px solid ${B.sky}33`, borderRadius: 8, padding: "10px 14px", marginBottom: 12, fontSize: 11, color: "rgba(255,255,255,0.65)" }}>
+                💡 Los montos (valor día, transporte, bonificación) los define el aprobador al revisar la solicitud.
               </div>
 
               <div style={{ marginBottom: 16 }}>
