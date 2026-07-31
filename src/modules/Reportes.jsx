@@ -200,6 +200,7 @@ function ReporteFacturacionDiaria() {
   const [aybData, setAybData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [showEmitirModal, setShowEmitirModal] = useState(null); // reserva object
+  const [vincularMuelle, setVincularMuelle] = useState(null);   // llegada a vincular
 
   const cargar = useCallback(async () => {
     setLoading(true);
@@ -265,6 +266,64 @@ function ReporteFacturacionDiaria() {
     window.dispatchEvent(new CustomEvent("atolon-navigate", {
       detail: { modulo: "reservas", reservaId },
     }));
+  };
+
+  // Vincular una llegada de muelle a una reserva existente.
+  // Además de setear reserva_id en la llegada, actualiza la reserva:
+  //   - nombre_embarcacion (si estaba null)
+  //   - checkin_at (con la hora_llegada del muelle)
+  //   - pagos[] += nueva entrada con el cobro
+  //   - abono / saldo
+  //   - notas: registro auditable
+  const vincularLlegadaAReserva = async (llegada, reservaId) => {
+    if (!llegada || !reservaId) return;
+    try {
+      const { data: r, error: er } = await supabase.from("reservas")
+        .select("id, nombre_embarcacion, checkin_at, pagos, abono, total, notas")
+        .eq("id", reservaId).single();
+      if (er) throw er;
+
+      const cobro = Number(llegada.total_cobrado) || 0;
+      const pagosExist = Array.isArray(r.pagos) ? r.pagos : [];
+      const yaRegistrado = pagosExist.some(p => p.id === `PAG-MUELLE-${llegada.id}`);
+      const nuevosPagos = yaRegistrado ? pagosExist : [
+        ...pagosExist,
+        {
+          id: `PAG-MUELLE-${llegada.id}`,
+          fecha: llegada.fecha,
+          monto: cobro,
+          forma_pago: "Efectivo",
+          registrado_por: `Muelle (${llegada.embarcacion_nombre || ""})`.trim(),
+          notas: `Pago recibido al llegar · Vinculado a llegada ${llegada.id}`,
+        },
+      ];
+      const nuevoAbono = yaRegistrado ? Number(r.abono) || 0 : (Number(r.abono) || 0) + cobro;
+      const nuevoSaldo = Math.max(0, (Number(r.total) || 0) - nuevoAbono);
+      const notaAudit = `\n\n[VINCULADO ${new Date().toISOString().slice(0,10)}] Pago ${cobro.toLocaleString("es-CO")} recibido en muelle vía ${llegada.embarcacion_nombre || "—"}${llegada.hora_llegada ? " a las " + llegada.hora_llegada.slice(0,5) : ""}. Llegada ${llegada.id}.`;
+
+      const upd = {
+        nombre_embarcacion: r.nombre_embarcacion || llegada.embarcacion_nombre || null,
+        pagos: nuevosPagos,
+        abono: nuevoAbono,
+        saldo: nuevoSaldo,
+        notas: (r.notas || "") + (yaRegistrado ? "" : notaAudit),
+      };
+      if (!r.checkin_at && llegada.hora_llegada) {
+        upd.checkin_at = `${llegada.fecha}T${llegada.hora_llegada}-05:00`;
+      }
+      const { error: eu } = await supabase.from("reservas").update(upd).eq("id", reservaId);
+      if (eu) throw eu;
+
+      const { error: em } = await supabase.from("muelle_llegadas")
+        .update({ reserva_id: reservaId }).eq("id", llegada.id);
+      if (em) throw em;
+
+      setVincularMuelle(null);
+      cargar();
+      alert(`✓ Vinculada llegada ${llegada.id} a reserva ${reservaId}\n\n${cobro.toLocaleString("es-CO")} agregado como pago · Embarcación: ${llegada.embarcacion_nombre}`);
+    } catch (e) {
+      alert("Error al vincular: " + (e.message || e));
+    }
   };
 
   const marcarEmitida = async (id, numeroFactura, tipo = "reserva") => {
@@ -533,16 +592,22 @@ function ReporteFacturacionDiaria() {
                   <td style={td}>Efectivo</td>
                   <td style={td}>Muelle</td>
                   <td style={td}>
-                    {m.fe_estado === "emitida" ? (
-                      <span style={{ fontWeight: 700, color: B.success }}>
-                        ✓ {m.fe_numero_factura}
-                        {m.fe_emitida_at && <span style={{ color: "rgba(255,255,255,0.4)", fontWeight: 400, marginLeft: 6 }}>{new Date(m.fe_emitida_at).toLocaleDateString("es-CO")}</span>}
-                      </span>
-                    ) : (
-                      <button onClick={() => setShowEmitirModal({ ...m, __tipo: "muelle", nombre: m.embarcacion_nombre })} style={{ ...BTN(B.success), fontSize: 11, padding: "4px 10px" }}>
-                        ✓ Marcar emitida
+                    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                      {m.fe_estado === "emitida" ? (
+                        <span style={{ fontWeight: 700, color: B.success, fontSize: 11 }}>
+                          ✓ {m.fe_numero_factura}
+                          {m.fe_emitida_at && <span style={{ color: "rgba(255,255,255,0.4)", fontWeight: 400, marginLeft: 6 }}>{new Date(m.fe_emitida_at).toLocaleDateString("es-CO")}</span>}
+                        </span>
+                      ) : (
+                        <button onClick={() => setShowEmitirModal({ ...m, __tipo: "muelle", nombre: m.embarcacion_nombre })} style={{ ...BTN(B.success), fontSize: 11, padding: "4px 10px" }}>
+                          ✓ Marcar emitida
+                        </button>
+                      )}
+                      <button onClick={() => setVincularMuelle(m)} style={{ ...BTN(B.sky), fontSize: 10, padding: "3px 8px" }}
+                        title="Vincular esta llegada a una reserva existente">
+                        🔗 Vincular reserva
                       </button>
-                    )}
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -631,6 +696,13 @@ function ReporteFacturacionDiaria() {
       {showEmitirModal && (
         <EmitirFEModal reserva={showEmitirModal} onClose={() => setShowEmitirModal(null)} onConfirm={(num) => marcarEmitida(showEmitirModal.id, num, showEmitirModal.__tipo || "reserva")} />
       )}
+      {vincularMuelle && (
+        <VincularReservaModal
+          llegada={vincularMuelle}
+          onClose={() => setVincularMuelle(null)}
+          onConfirm={(reservaId) => vincularLlegadaAReserva(vincularMuelle, reservaId)}
+        />
+      )}
     </div>
   );
 }
@@ -662,6 +734,143 @@ function Seccion({ titulo, color, count, total, children }) {
         <div style={{ fontSize: 14, fontWeight: 800, color, fontFamily: "'Barlow Condensed', sans-serif" }}>{COP(total)}</div>
       </div>
       <div style={{ overflowX: "auto" }}>{children}</div>
+    </div>
+  );
+}
+
+// ─── VINCULAR LLEGADA MUELLE ↔ RESERVA ───────────────────────────────────
+// Muestra un buscador de reservas del mismo día (o cercanas), sugiere las que
+// tengan pax igual al de la llegada como matches probables, y permite
+// seleccionar para hacer el vínculo con actualización completa.
+function VincularReservaModal({ llegada, onClose, onConfirm }) {
+  const [candidatas, setCandidatas] = useState([]);
+  const [busqueda, setBusqueda] = useState("");
+  const [seleccion, setSeleccion] = useState("");
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!llegada) return;
+    setLoading(true);
+    // Buscar reservas de la misma fecha (± 1 día por si el operador
+    // registró la llegada al día siguiente).
+    const fecha = llegada.fecha;
+    const d = new Date(fecha + "T12:00:00");
+    const dAntes = new Date(d.getTime() - 86400000).toISOString().slice(0, 10);
+    const dDespues = new Date(d.getTime() + 86400000).toISOString().slice(0, 10);
+    supabase.from("reservas")
+      .select("id, fecha, nombre, tipo, pax, total, abono, saldo, estado, canal, nombre_embarcacion")
+      .gte("fecha", dAntes).lte("fecha", dDespues)
+      .neq("estado", "cancelado")
+      .order("fecha", { ascending: false }).order("nombre")
+      .then(({ data }) => {
+        setCandidatas(data || []);
+        setLoading(false);
+      });
+  }, [llegada?.id]);
+
+  const filtradas = useMemo(() => {
+    const q = busqueda.trim().toLowerCase();
+    let list = candidatas;
+    if (q) {
+      list = list.filter(r =>
+        (r.nombre || "").toLowerCase().includes(q) ||
+        (r.id || "").toLowerCase().includes(q)
+      );
+    }
+    // Marcar sugeridas: mismo pax + saldo pendiente igual al cobrado
+    const cobro = Number(llegada?.total_cobrado) || 0;
+    return list.map(r => {
+      let score = 0;
+      if (r.pax === llegada.pax_total) score += 2;
+      const saldo = Number(r.saldo) || (Number(r.total) - Number(r.abono || 0));
+      if (Math.abs(saldo - cobro) < 100) score += 3;
+      if (Math.abs(Number(r.total) - cobro) < 100) score += 1;
+      return { ...r, __score: score };
+    }).sort((a, b) => b.__score - a.__score);
+  }, [candidatas, busqueda, llegada]);
+
+  if (!llegada) return null;
+
+  const sel = filtradas.find(r => r.id === seleccion);
+
+  return (
+    <div onClick={e => e.target === e.currentTarget && onClose()}
+      style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.75)", zIndex: 1100, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+      <div style={{ background: B.navyMid, borderRadius: 14, width: 640, maxWidth: "100%", maxHeight: "90vh", overflowY: "auto", border: `1px solid ${B.navyLight}` }}>
+        <div style={{ padding: "18px 24px", borderBottom: `1px solid ${B.navyLight}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <h3 style={{ margin: 0, fontSize: 17, fontWeight: 700, color: B.white }}>🔗 Vincular llegada a reserva</h3>
+          <button onClick={onClose} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.4)", fontSize: 20, cursor: "pointer" }}>✕</button>
+        </div>
+        <div style={{ padding: "16px 24px" }}>
+          <div style={{ background: B.navy, borderRadius: 8, padding: "10px 14px", marginBottom: 14, fontSize: 12 }}>
+            <div style={{ color: B.sand, fontWeight: 700, marginBottom: 4 }}>🛥️ {llegada.embarcacion_nombre} · {llegada.pax_total} pax · {COP(llegada.total_cobrado)}</div>
+            <div style={{ color: "rgba(255,255,255,0.5)", fontSize: 11 }}>
+              {llegada.fecha} · {llegada.hora_llegada?.slice(0,5)} · Tipo {llegada.tipo?.replace(/_/g, " ")}
+            </div>
+          </div>
+
+          <label style={{ fontSize: 11, color: B.sand, marginBottom: 6, display: "block", textTransform: "uppercase", letterSpacing: 1 }}>Buscar reserva del día</label>
+          <input autoFocus value={busqueda} onChange={e => setBusqueda(e.target.value)}
+            placeholder="Nombre o ID de reserva…"
+            style={{ width: "100%", padding: "9px 12px", borderRadius: 8, background: B.navy, border: `1px solid ${B.navyLight}`, color: "#fff", fontSize: 13, boxSizing: "border-box", marginBottom: 12 }} />
+
+          {loading ? (
+            <div style={{ textAlign: "center", padding: 20, color: B.sand }}>Cargando…</div>
+          ) : (
+            <div style={{ maxHeight: 320, overflowY: "auto", border: `1px solid ${B.navyLight}`, borderRadius: 8 }}>
+              {filtradas.length === 0 ? (
+                <div style={{ padding: 20, textAlign: "center", color: "rgba(255,255,255,0.4)", fontSize: 12 }}>Sin reservas coincidentes</div>
+              ) : filtradas.map(r => {
+                const saldo = Number(r.saldo) || (Number(r.total) - Number(r.abono || 0));
+                const isSel = seleccion === r.id;
+                const isSug = r.__score >= 3;
+                return (
+                  <div key={r.id} onClick={() => setSeleccion(r.id)}
+                    style={{
+                      padding: "10px 14px", borderBottom: `1px solid ${B.navyLight}33`, cursor: "pointer",
+                      background: isSel ? B.sky + "22" : (isSug ? B.success + "10" : "transparent"),
+                    }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontWeight: 700, fontSize: 13 }}>
+                          {isSug && <span style={{ color: B.success, marginRight: 6 }}>★</span>}
+                          {r.nombre}
+                        </div>
+                        <div style={{ fontSize: 11, color: "rgba(255,255,255,0.55)" }}>
+                          {r.id} · {r.tipo} · {r.pax} pax · {r.canal || "—"} · {r.fecha}
+                        </div>
+                      </div>
+                      <div style={{ textAlign: "right", fontSize: 11 }}>
+                        <div style={{ color: B.sand, fontWeight: 700 }}>{COP(r.total)}</div>
+                        <div style={{ color: saldo > 0 ? B.warning : B.success }}>
+                          {saldo > 0 ? `Saldo: ${COP(saldo)}` : "✓ Pagada"}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {sel && (
+            <div style={{ background: B.sky + "11", border: `1px solid ${B.sky}55`, padding: "10px 14px", borderRadius: 8, marginTop: 14, fontSize: 12 }}>
+              Al confirmar: la llegada quedará vinculada a <b>{sel.nombre}</b>, se agregará un pago de <b>{COP(llegada.total_cobrado)}</b> a la reserva, se marcará el check-in y el nombre de la embarcación.
+            </div>
+          )}
+
+          <div style={{ display: "flex", gap: 10, marginTop: 16 }}>
+            <button onClick={onClose}
+              style={{ flex: 1, padding: 12, borderRadius: 8, border: `1px solid ${B.navyLight}`, background: "transparent", color: "rgba(255,255,255,0.55)", cursor: "pointer" }}>
+              Cancelar
+            </button>
+            <button onClick={() => sel && onConfirm(sel.id)} disabled={!sel}
+              style={{ flex: 2, padding: 12, borderRadius: 8, border: "none", background: sel ? B.sky : B.navyLight, color: B.navy, fontWeight: 700, cursor: sel ? "pointer" : "not-allowed", opacity: sel ? 1 : 0.5 }}>
+              🔗 Vincular
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
