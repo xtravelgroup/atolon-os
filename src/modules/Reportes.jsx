@@ -218,7 +218,7 @@ function ReporteFacturacionDiaria() {
           .in("stage", ["Confirmado", "Realizado"])
           .in("categoria", ["grupo", "evento"]),
         supabase.from("muelle_llegadas")
-          .select("id, fecha, total_cobrado, pax_total, tipo, reserva_id, notas, embarcacion_nombre")
+          .select("id, fecha, total_cobrado, pax_total, tipo, reserva_id, notas, embarcacion_nombre, fe_estado, fe_numero_factura, fe_emitida_at")
           .eq("fecha", fecha)
           .gt("total_cobrado", 0)
           .neq("tipo", "lancha_atolon"),
@@ -260,13 +260,14 @@ function ReporteFacturacionDiaria() {
   const yaEmitidas = reservasConFE.filter(r => r.fe_estado === "emitida");
 
   // Marcar reserva como FE emitida
-  const marcarEmitida = async (reservaId, numeroFactura) => {
+  const marcarEmitida = async (id, numeroFactura, tipo = "reserva") => {
     if (!numeroFactura?.trim()) return alert("Ingresá el número de factura");
-    const { error } = await supabase.from("reservas").update({
+    const tabla = tipo === "muelle" ? "muelle_llegadas" : "reservas";
+    const { error } = await supabase.from(tabla).update({
       fe_estado: "emitida",
       fe_numero_factura: numeroFactura.trim(),
       fe_emitida_at: new Date().toISOString(),
-    }).eq("id", reservaId);
+    }).eq("id", id);
     if (error) return alert("Error: " + error.message);
     setShowEmitirModal(null);
     cargar();
@@ -500,6 +501,7 @@ function ReporteFacturacionDiaria() {
                     {m.embarcacion_nombre || "—"}
                     <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)" }}>
                       {m.tipo?.replace(/_/g, " ")} · {m.pax_total} pax
+                      {m.notas && <> · <span style={{ color: "rgba(255,255,255,0.55)" }}>{m.notas.slice(0, 30)}{m.notas.length > 30 ? "…" : ""}</span></>}
                     </div>
                   </td>
                   <td style={{ ...td, color: "rgba(255,255,255,0.3)" }}>—</td>
@@ -508,8 +510,17 @@ function ReporteFacturacionDiaria() {
                   <td style={{ ...td, textAlign: "right", fontWeight: 700 }}>{COP(m.total_cobrado)}</td>
                   <td style={td}>Efectivo</td>
                   <td style={td}>Muelle</td>
-                  <td style={{ ...td, fontSize: 11, color: "rgba(255,255,255,0.5)" }}>
-                    {m.notas ? m.notas.slice(0, 40) + (m.notas.length > 40 ? "…" : "") : "—"}
+                  <td style={td}>
+                    {m.fe_estado === "emitida" ? (
+                      <span style={{ fontWeight: 700, color: B.success }}>
+                        ✓ {m.fe_numero_factura}
+                        {m.fe_emitida_at && <span style={{ color: "rgba(255,255,255,0.4)", fontWeight: 400, marginLeft: 6 }}>{new Date(m.fe_emitida_at).toLocaleDateString("es-CO")}</span>}
+                      </span>
+                    ) : (
+                      <button onClick={() => setShowEmitirModal({ ...m, __tipo: "muelle", nombre: m.embarcacion_nombre })} style={{ ...BTN(B.success), fontSize: 11, padding: "4px 10px" }}>
+                        ✓ Marcar emitida
+                      </button>
+                    )}
                   </td>
                 </tr>
               ))}
@@ -596,7 +607,7 @@ function ReporteFacturacionDiaria() {
 
       {/* Modal: marcar como emitida */}
       {showEmitirModal && (
-        <EmitirFEModal reserva={showEmitirModal} onClose={() => setShowEmitirModal(null)} onConfirm={(num) => marcarEmitida(showEmitirModal.id, num)} />
+        <EmitirFEModal reserva={showEmitirModal} onClose={() => setShowEmitirModal(null)} onConfirm={(num) => marcarEmitida(showEmitirModal.id, num, showEmitirModal.__tipo || "reserva")} />
       )}
     </div>
   );
