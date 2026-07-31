@@ -888,11 +888,16 @@ export default function FacturaProveedorModal({ oc, onClose, reload, currentUser
       //     'vinculado_manual'). Este caso escapaba antes porque el vinculo
       //     manual dejaba es_nuevo_oc=false → el item se perdia silenciosamente.
       // Excluir los no_facturado y los ya presentes por codigo de barras.
+      // Aceptar item con nombre_anterior si nombre está vacío (caso vinculo
+      // manual a catálogo — el operador solo eligió item existente sin
+      // renombrar, entonces el input nombre queda "" pero nombre_anterior
+      // trae el label del catálogo). Antes: filtro descartaba silenciosamente.
       const itemsNuevosOC = data.items
         .filter(f => (f.es_nuevo_oc || f.oc_idx == null) && !f.no_facturado)
-        .filter(f => (f.codigo_barras || (f.nombre && f.nombre.trim())))
+        .filter(f => (f.codigo_barras || (f.nombre && f.nombre.trim()) || (f.nombre_anterior && f.nombre_anterior.trim())))
         .filter(f => !(f.codigo_barras && cbYaEnOC.has(String(f.codigo_barras))))
         .map(f => {
+        const nombreItem     = (f.nombre && f.nombre.trim()) || (f.nombre_anterior && f.nombre_anterior.trim()) || "";
         const cantPaquete    = Number(f.cantidad_paquete) || Number(f.cantidad) || 0;
         const costoPack      = Number(f.precio_costo_pack) || 0;
         // Mismo comportamiento que items matcheados: loggro_qty_override manda.
@@ -907,12 +912,16 @@ export default function FacturaProveedorModal({ oc, onClose, reload, currentUser
         const precioURedondeado = redondearPrecioU(precioUIndiv, cantIndividual, cantPaquete * costoPack);
         const subtotalIndiv = Math.round(cantPaquete * costoPack);
         return {
-          item: f.nombre, nombre: f.nombre,
+          item: nombreItem, nombre: nombreItem,
           cant: cantIndividual,
           unidad: f.unidad_individual || (overrideQty != null ? (f.unidad_compra || "UND") : "UND"),
           precioU: precioURedondeado,
           subtotal: subtotalIndiv,
-          item_id: null,
+          // Preservar vínculos ya resueltos (item_id / loggro_id) si el
+          // operador los eligió al vincular manualmente en la factura.
+          // Antes se forzaban a null y el POST a Loggro perdía el vínculo.
+          item_id: f.item_id || null,
+          loggro_id: f.loggro_id || null,
           codigo_barras: f.codigo_barras,
           referencia_proveedor: f.referencia_proveedor,
           unidades_por_paquete: unPorPack,
