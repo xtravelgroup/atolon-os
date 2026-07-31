@@ -218,7 +218,7 @@ function ReporteFacturacionDiaria() {
           .in("stage", ["Confirmado", "Realizado"])
           .in("categoria", ["grupo", "evento"]),
         supabase.from("muelle_llegadas")
-          .select("id, fecha, total_cobrado, pax_total, tipo, reserva_id, observaciones")
+          .select("id, fecha, total_cobrado, pax_total, tipo, reserva_id, notas, embarcacion_nombre")
           .eq("fecha", fecha)
           .gt("total_cobrado", 0)
           .neq("tipo", "lancha_atolon"),
@@ -538,16 +538,16 @@ function ReporteFacturacionDiaria() {
               <div style={{ padding: "8px 14px", fontSize: 11, color: B.sand, fontWeight: 700, textTransform: "uppercase" }}>Muelle</div>
               <table style={tablaStyle}>
                 <thead><tr style={trHeader}>
-                  <th style={th}>ID</th><th style={th}>Tipo</th><th style={th}>Pax</th>
+                  <th style={th}>Embarcación</th><th style={th}>Tipo</th><th style={th}>Pax</th>
                   <th style={th}>Notas</th><th style={{ ...th, textAlign: "right" }}>Total</th>
                 </tr></thead>
                 <tbody>
                   {muelle.map(m => (
                     <tr key={m.id} style={trBody}>
-                      <td style={td}>{m.id}</td>
+                      <td style={td}>{m.embarcacion_nombre || m.id}</td>
                       <td style={td}>{m.tipo}</td>
                       <td style={td}>{m.pax_total}</td>
-                      <td style={td}>{m.observaciones || "—"}</td>
+                      <td style={td}>{m.notas || "—"}</td>
                       <td style={{ ...td, textAlign: "right", fontWeight: 700 }}>{COP(m.total_cobrado)}</td>
                     </tr>
                   ))}
