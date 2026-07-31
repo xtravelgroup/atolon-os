@@ -37,6 +37,30 @@ function convertir(qty, origen, destino) {
   return qty * f;
 }
 
+// Redondeo del precio unitario preservando el total real de la línea.
+// Si redondear a entero causa drift > $1 respecto al total real, guarda 4
+// decimales. Esto pasa cuando la conversión genera cant grande (6 UND → 6000 gr)
+// y el precio unitario pequeño (36.509/gr → Math.round → 37 → 6000×37 = $222,000
+// vs total real $219,054, drift $2,946). Con 4 decimales: 36.509 × 6000 =
+// $219,054 exacto.
+function redondearPrecioU(precioU, cantidad, totalReal) {
+  const p = Number(precioU) || 0;
+  if (p <= 0) return 0;
+  const cant = Number(cantidad) || 0;
+  const total = Math.round(Number(totalReal) || 0);
+  // Sub-peso siempre 4 decimales (ej. $0.036/gr)
+  if (p < 10) return Math.round(p * 10000) / 10000;
+  const redondeado = Math.round(p);
+  // Si redondear a entero mantiene el total real (±$1), usar entero (más limpio)
+  if (cant > 0 && total > 0) {
+    const totalConEntero = Math.round(cant * redondeado);
+    if (Math.abs(totalConEntero - total) <= 1) return redondeado;
+    // Drift > $1 → preservar decimales
+    return Math.round(p * 10000) / 10000;
+  }
+  return redondeado;
+}
+
 function blankData() {
   return {
     factura_numero: "",
@@ -810,11 +834,11 @@ export default function FacturaProveedorModal({ oc, onClose, reload, currentUser
         const nombrePrevio   = (it.item || it.nombre || "").trim();
         const nombreOriginal = it.nombre_original || nombrePrevio;  // primera vez
         const renombrado     = nombreFactura && nombreOriginal && nombreFactura !== nombreOriginal;
-        // Si el precio por unidad es < 10, redondear a 4 decimales para no perder
-        // precisión (ej. $0.94/gr). Si es entero grande, redondear a entero.
-        const precioURedondeado = precioUIndiv < 10
-          ? Math.round(precioUIndiv * 10000) / 10000
-          : Math.round(precioUIndiv);
+        // Redondeo del precio unitario: si redondear a entero causa drift > $1
+        // respecto al total real de la línea, preservar 4 decimales. Esto ocurre
+        // cuando la conversión genera cant grande (ej. 6 UND → 6000 gr): 36.509/gr
+        // → Math.round → 37 → 6000 × 37 = $222,000 (real $219,054, drift $2,946).
+        const precioURedondeado = redondearPrecioU(precioUIndiv, cantIndividual, cantPaquete * costoPack);
         // Subtotal: el importe pagado por este ítem NO cambia con la conversión,
         // sigue siendo cantidad_paquete × costo_pack. Calcularlo desde precioU y
         // cantIndividual redondeados puede introducir drift, así que lo tomamos
@@ -880,9 +904,7 @@ export default function FacturaProveedorModal({ oc, onClose, reload, currentUser
         const cantIndividual = overrideQty != null ? overrideQty : cantPaquete * unPorPack;
         const precioUIndiv   = f.es_bonificacion ? 0
           : (unPorPack > 0 ? costoPack / unPorPack : 0);
-        const precioURedondeado = precioUIndiv < 10
-          ? Math.round(precioUIndiv * 10000) / 10000
-          : Math.round(precioUIndiv);
+        const precioURedondeado = redondearPrecioU(precioUIndiv, cantIndividual, cantPaquete * costoPack);
         const subtotalIndiv = Math.round(cantPaquete * costoPack);
         return {
           item: f.nombre, nombre: f.nombre,
@@ -928,9 +950,8 @@ export default function FacturaProveedorModal({ oc, onClose, reload, currentUser
           : Math.max(1, Number(f.unidades_por_paquete) || 1);
         const costoPack    = Number(f.precio_costo_pack) || 0;
         const precioUIndivRaw = unPorPack > 0 ? costoPack / unPorPack : 0;
-        const precioUIndiv = precioUIndivRaw < 10
-          ? Math.round(precioUIndivRaw * 10000) / 10000
-          : Math.round(precioUIndivRaw);
+        const cantIndividualCat = overrideQty != null ? overrideQty : cantPaqueteF * unPorPack;
+        const precioUIndiv = redondearPrecioU(precioUIndivRaw, cantIndividualCat, cantPaqueteF * costoPack);
 
         // Match inteligente vía RPC: codigo_barras → codigo → nombre similar
         const { data: matches } = await supabase.rpc("find_item_match", {
