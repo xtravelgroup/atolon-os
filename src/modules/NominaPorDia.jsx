@@ -589,7 +589,10 @@ export default function NominaPorDia() {
                             <button onClick={() => abrirEjecutar(r)} title="Marcar ejecutado" style={btnMini(B.sky)}>✅ Ejecutar</button>
                           )}
                           {r.estado === "aprobado" && esAdmin && (
-                            <button onClick={() => desaprobar(r)} title="Desaprobar" style={btnMini(B.warning, B.navy)}>↺</button>
+                            <>
+                              <button onClick={() => abrirAprobar(r)} title="Ajustar montos aprobados (valor, transporte, bonificación)" style={btnMini(B.navyLight, "rgba(255,255,255,0.6)")}>✎</button>
+                              <button onClick={() => desaprobar(r)} title="Desaprobar (vuelve a solicitado)" style={btnMini(B.warning, B.navy)}>↺</button>
+                            </>
                           )}
                           {/* Estado ejecutado — admin puede editar (mientras no esté pagado) */}
                           {r.estado === "ejecutado" && !r.pagado && esAdmin && (
@@ -722,11 +725,14 @@ export default function NominaPorDia() {
         </div>
       )}
 
-      {/* Modal APROBAR */}
+      {/* Modal APROBAR (o ajustar si ya está aprobado) */}
       {aprobar && (
-        <ModalCentrado onClose={() => setAprobar(null)} title={`Aprobar: ${aprobar.nombre}`}>
+        <ModalCentrado onClose={() => setAprobar(null)} title={`${aprobar.estado === "aprobado" ? "Ajustar aprobación" : "Aprobar"}: ${aprobar.nombre}`}>
           <div style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", marginBottom: 14 }}>
             {aprobar.fecha} · {aprobar.cargo || "—"} · Solicitado por {aprobar.solicitado_por || "—"}
+            {aprobar.estado === "aprobado" && (
+              <span style={{ marginLeft: 8, color: B.sky }}>· Ya aprobado por {aprobar.aprobado_por || "—"}</span>
+            )}
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
             <div><label style={LS}>Valor día</label><input type="number" step="0.01" value={aprobForm.valor_dia} onChange={e => setAprobForm(f => ({ ...f, valor_dia: e.target.value }))} style={IS} /></div>
@@ -747,7 +753,9 @@ export default function NominaPorDia() {
           </div>
           <div style={{ display: "flex", gap: 10 }}>
             <button onClick={() => setAprobar(null)} style={{ flex: 1, padding: 12, borderRadius: 8, border: `1px solid ${B.navyLight}`, background: "transparent", color: "rgba(255,255,255,0.55)", cursor: "pointer" }}>Cancelar</button>
-            <button onClick={confirmarAprobar} style={{ flex: 2, padding: 12, borderRadius: 8, border: "none", background: B.success, color: "#fff", fontWeight: 700, cursor: "pointer" }}>✓ Aprobar</button>
+            <button onClick={confirmarAprobar} style={{ flex: 2, padding: 12, borderRadius: 8, border: "none", background: B.success, color: "#fff", fontWeight: 700, cursor: "pointer" }}>
+              {aprobar.estado === "aprobado" ? "✓ Guardar cambios" : "✓ Aprobar"}
+            </button>
           </div>
         </ModalCentrado>
       )}
