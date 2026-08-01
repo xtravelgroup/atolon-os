@@ -7,6 +7,7 @@
 //   accion = "marcar_factura"  → cxp_pagos + ordenes_compra.monto_pagado
 //   accion = "marcar_gasto"    → pagos_otros.*
 //   accion = "marcar_comision" → comisiones_semanas.*
+//   accion = "marcar_nomina_dia" → nomina_por_dia.pagado + campos de pago
 
 import { useState } from "react";
 import { B } from "../brand";
@@ -72,7 +73,7 @@ export default function MarcarPagadoModal({ pago, currentUser, onClose, onSaved 
     setSaving(true);
     setErr("");
     try {
-      const refId = pago.oc?.id || pago.gasto?.id || pago.comision?.id || `PAGO-${Date.now()}`;
+      const refId = pago.oc?.id || pago.gasto?.id || pago.comision?.id || pago.nominaDia?.id || `PAGO-${Date.now()}`;
       const comprobante_url = comprobante ? await subirComprobante(refId) : null;
       const pagoTs = fechaPagoToTimestamp();
 
@@ -130,6 +131,20 @@ export default function MarcarPagadoModal({ pago, currentUser, onClose, onSaved 
           pago_cuenta_origen:   cuentaOrigen.trim() || null,
           pago_comprobante_url: comprobante_url,
         }).eq("id", pago.comision.id);
+      } else if (pago.accion === "marcar_nomina_dia") {
+        // Nómina por día: marcar como pagado, guardar trazabilidad del pago.
+        // Antes se toggleaba manualmente desde el módulo Nómina por Día — ya no:
+        // el pago SIEMPRE fluye desde acá (Pagos → confirmar pago).
+        await supabase.from("nomina_por_dia").update({
+          pagado:           true,
+          pagado_at:        pagoTs,
+          pagado_por:       currentUser?.email || null,
+          referencia_pago:  referencia.trim(),
+          metodo_pago:      metodo,
+          cuenta_origen:    cuentaOrigen.trim() || null,
+          comprobante_url:  comprobante_url,
+          updated_at:       new Date().toISOString(),
+        }).eq("id", pago.nominaDia.id);
       }
       onSaved?.();
     } catch (e) {

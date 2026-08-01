@@ -252,7 +252,8 @@ export default function NominaPorDia() {
   };
 
   const editar = (r) => {
-    if (r.estado === "ejecutado") return alert("Este registro ya fue ejecutado. No se puede editar.");
+    if (r.estado === "ejecutado" && !esAdmin) return alert("Este registro ya fue ejecutado. Solo admin puede modificar el valor del pago.");
+    if (r.estado === "ejecutado" && r.pagado) return alert("Este registro ya fue pagado. No se puede modificar.");
     if (r.estado === "aprobado" && !esAdmin) return alert("Ya está aprobado. Solo un admin puede modificarlo.");
     setEditing(r.id);
     setForm({
@@ -539,14 +540,14 @@ export default function NominaPorDia() {
                         )}
                         {r.estado === "ejecutado" && (
                           <>
-                            <button onClick={() => togglePagado(r)} disabled={!esAdmin}
-                              style={{ marginTop: 4, display: "block", fontSize: 9, padding: "2px 8px", borderRadius: 20,
+                            {/* Badge de estado de pago — read-only. El pago se marca desde el módulo Pagos. */}
+                            <div style={{ marginTop: 4, fontSize: 9, padding: "2px 8px", borderRadius: 20,
                                 background: r.pagado ? B.success + "33" : B.warning + "33",
                                 color: r.pagado ? B.success : B.warning,
-                                fontWeight: 700, letterSpacing: 1, textTransform: "uppercase",
-                                border: "none", cursor: esAdmin ? "pointer" : "default", opacity: esAdmin ? 1 : 0.7 }}>
-                              {r.pagado ? "Pagado" : "Sin pagar"}
-                            </button>
+                                fontWeight: 700, letterSpacing: 1, textTransform: "uppercase", textAlign: "center" }}
+                                title={r.pagado ? `Pagado ${r.pagado_at?.slice(0,10) || ""} · Ref: ${r.referencia_pago || "—"}` : "Aparece en módulo Pagos → Por pagar"}>
+                              {r.pagado ? "✓ Pagado" : "⏳ Por pagar"}
+                            </div>
                             {r.cuenta_cobro_url ? (
                               <a href={r.cuenta_cobro_url} target="_blank" rel="noreferrer"
                                 style={{ marginTop: 4, display: "block", fontSize: 9, padding: "2px 8px", borderRadius: 20,
@@ -590,13 +591,19 @@ export default function NominaPorDia() {
                           {r.estado === "aprobado" && esAdmin && (
                             <button onClick={() => desaprobar(r)} title="Desaprobar" style={btnMini(B.warning, B.navy)}>↺</button>
                           )}
+                          {/* Estado ejecutado — admin puede editar (mientras no esté pagado) */}
+                          {r.estado === "ejecutado" && !r.pagado && esAdmin && (
+                            <button onClick={() => editar(r)} title="Editar (ajustar valor/horas)" style={btnMini(B.navyLight, "rgba(255,255,255,0.6)")}>✎</button>
+                          )}
                           {/* Estado ejecutado o rechazado — solo admin puede eliminar */}
                           {(r.estado === "ejecutado" || r.estado === "rechazado") && esAdmin && (
                             <button onClick={async () => {
+                              if (r.pagado) return alert("Ya fue pagado. No se puede eliminar.");
                               if (!confirm(`¿Eliminar registro de ${r.nombre}?`)) return;
                               await supabase.from("nomina_por_dia").delete().eq("id", r.id);
                               fetchAll();
-                            }} title="Eliminar" style={btnMini(B.navyLight, B.danger)}>🗑</button>
+                            }} title={r.pagado ? "Ya pagado, no eliminable" : "Eliminar"} style={btnMini(B.navyLight, B.danger)}
+                            disabled={r.pagado}>🗑</button>
                           )}
                           {r.estado === "rechazado" && (soySupervisor || esAdmin) && (
                             <button onClick={async () => {

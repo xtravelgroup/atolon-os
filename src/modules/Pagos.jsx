@@ -32,6 +32,7 @@ export default function Pagos() {
   const [recurrentes, setRecurrentes] = useState([]);
   const [otros, setOtros] = useState([]);
   const [nominas, setNominas] = useState([]);
+  const [nominasDia, setNominasDia] = useState([]); // nomina_por_dia ejecutadas y pendientes de pago
   const [extractos, setExtractos] = useState([]);
   const [comisiones, setComisiones] = useState([]);
 
@@ -46,11 +47,13 @@ export default function Pagos() {
 
   const reload = async () => {
     setLoading(true);
-    const [oc, rec, ot, nom, ext, com] = await Promise.all([
+    const [oc, rec, ot, nom, nomD, ext, com] = await Promise.all([
       supabase.from("ordenes_compra").select("*").order("created_at", { ascending: false }),
       supabase.from("pagos_recurrentes").select("*").order("dia_pago"),
       supabase.from("pagos_otros").select("*").order("fecha_vencimiento", { ascending: true, nullsFirst: false }),
       supabase.from("nomina").select("*").order("fecha_pago", { ascending: false }).limit(50).then(r => r).catch(() => ({ data: [] })),
+      // Nómina por día: solo las EJECUTADAS y no pagadas — aparecen en el listado por pagar.
+      supabase.from("nomina_por_dia").select("*").eq("estado", "ejecutado").eq("pagado", false).order("fecha", { ascending: true }).then(r => r).catch(() => ({ data: [] })),
       supabase.from("banco_extractos").select("*").order("fecha_fin", { ascending: false }).limit(20),
       supabase.from("comisiones_semanas").select("*").order("semana_fin", { ascending: false }).then(r => r).catch(() => ({ data: [] })),
     ]);
@@ -58,6 +61,7 @@ export default function Pagos() {
     setRecurrentes(rec.data || []);
     setOtros(ot.data || []);
     setNominas(nom.data || []);
+    setNominasDia(nomD.data || []);
     setExtractos(ext.data || []);
     setComisiones(com.data || []);
     setLoading(false);
@@ -97,7 +101,7 @@ export default function Pagos() {
       {loading
         ? <Loading />
         : tab === "dashboard"    ? <TabDashboard ordenes={ordenes} otros={otros} recurrentes={recurrentes} nominas={nominas} comisiones={comisiones} setTab={setTab} />
-        : tab === "porpagar"     ? <TabPorPagar ordenes={ordenes} otros={otros} comisiones={comisiones} reload={reload} currentUser={currentUser} />
+        : tab === "porpagar"     ? <TabPorPagar ordenes={ordenes} otros={otros} comisiones={comisiones} nominasDia={nominasDia} reload={reload} currentUser={currentUser} />
         : tab === "recurrentes"  ? <TabRecurrentes recurrentes={recurrentes} reload={reload} currentUser={currentUser} />
         : tab === "gastos"       ? <TabGastos otros={otros} reload={reload} currentUser={currentUser} />
         : tab === "calendario"   ? <TabCalendario ordenes={ordenes} otros={otros} />
@@ -213,8 +217,8 @@ function TabDashboard({ ordenes, otros, recurrentes, nominas, comisiones = [], s
 // ════════════════════════════════════════════════════════════════════════
 // TAB POR PAGAR — consolida anticipos + facturas + gastos
 // ════════════════════════════════════════════════════════════════════════
-function TabPorPagar({ ordenes, otros, comisiones = [], reload, currentUser }) {
-  const [filtro, setFiltro] = useState("todos"); // todos | anticipos | facturas | gastos | comisiones | vencidos | proximos
+function TabPorPagar({ ordenes, otros, comisiones = [], nominasDia = [], reload, currentUser }) {
+  const [filtro, setFiltro] = useState("todos"); // todos | anticipos | facturas | gastos | comisiones | nomina_dia | vencidos | proximos
   const [pagoActivo, setPagoActivo] = useState(null);  // pago siendo marcado como pagado
   const [ocVer, setOcVer] = useState(null);            // OC abierta en visor read-only
   const today = todayStr();
@@ -259,9 +263,18 @@ function TabPorPagar({ ordenes, otros, comisiones = [], reload, currentUser }) {
       vence: c.aprobado_at?.slice(0, 10),  // referencia: cuando se aprobó
       comision: c, accion: "marcar_comision",
     }));
+    // Nómina por día — ejecutadas y sin pagar
+    (nominasDia || []).forEach(n => list.push({
+      tipo: "nomina_dia", icon: "👷", color: "#f472b6",
+      ref: `${n.fecha} · ${n.cargo || "—"}${n.cuenta_cobro_url ? " · 📄" : ""}`,
+      proveedor: n.nombre || "—",
+      monto: Number(n.total || 0),
+      vence: n.fecha,
+      nominaDia: n, accion: "marcar_nomina_dia",
+    }));
 
     return list;
-  }, [ordenes, otros, comisiones]);
+  }, [ordenes, otros, comisiones, nominasDia]);
 
   const filtrados = items.filter(x => {
     if (filtro === "todos") return true;
@@ -269,6 +282,7 @@ function TabPorPagar({ ordenes, otros, comisiones = [], reload, currentUser }) {
     if (filtro === "facturas")   return x.tipo === "factura";
     if (filtro === "gastos")     return x.tipo === "gasto";
     if (filtro === "comisiones") return x.tipo === "comision";
+    if (filtro === "nomina_dia") return x.tipo === "nomina_dia";
     if (filtro === "vencidos")  return x.vence && x.vence < today;
     if (filtro === "proximos")  return x.vence && x.vence >= today && x.vence <= en7;
     return true;
@@ -295,6 +309,7 @@ function TabPorPagar({ ordenes, otros, comisiones = [], reload, currentUser }) {
           ["facturas",   `📄 Facturas`],
           ["gastos",     `💸 Gastos`],
           ["comisiones", `🤝 Comisiones`],
+          ["nomina_dia", `👷 Nómina día`],
         ].map(([k, l]) => (
           <button key={k} onClick={() => setFiltro(k)}
             style={{
