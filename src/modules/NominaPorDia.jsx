@@ -290,22 +290,30 @@ export default function NominaPorDia() {
     if (!aprobar) return;
     const totalEstim = (Number(aprobForm.valor_dia) || 0) + (Number(aprobForm.transporte) || 0) + (Number(aprobForm.bonificacion) || 0);
     const nowIso = new Date().toISOString();
-    const { error } = await supabase.from("nomina_por_dia").update({
-      estado: "aprobado",
+    // Preservar estado si ya estaba aprobado o ejecutado (ajuste posterior).
+    // Solo pasa a 'aprobado' cuando viene de 'solicitado'.
+    const nuevoEstado = aprobar.estado === "solicitado" ? "aprobado" : aprobar.estado;
+    const payload = {
+      estado: nuevoEstado,
       valor_dia: Number(aprobForm.valor_dia) || 0,
       horas_solicitadas: Number(aprobForm.horas_solicitadas) || 0,
       transporte: Number(aprobForm.transporte) || 0,
       bonificacion: Number(aprobForm.bonificacion) || 0,
       total: totalEstim,
-      aprobado_por: currentUser.email,
-      aprobado_at: nowIso,
-      notas_aprobacion: aprobForm.notas_aprobacion || null,
+      notas_aprobacion: aprobForm.notas_aprobacion || aprobar.notas_aprobacion || null,
       motivo_rechazo: null,
       updated_at: nowIso,
-    }).eq("id", aprobar.id);
+    };
+    // Solo tocar aprobado_por/at en la aprobación inicial.
+    if (aprobar.estado === "solicitado") {
+      payload.aprobado_por = currentUser.email;
+      payload.aprobado_at = nowIso;
+    }
+    const { error } = await supabase.from("nomina_por_dia").update(payload).eq("id", aprobar.id);
     if (error) return alert("Error: " + error.message);
-    logAccion({ modulo: "nomina_por_dia", accion: "aprobar", tabla: "nomina_por_dia",
-                registroId: aprobar.id, notas: `${aprobar.nombre} · ${aprobar.fecha}` });
+    const accion = aprobar.estado === "solicitado" ? "aprobar" : (aprobar.estado === "ejecutado" ? "ajustar_ejecutado" : "ajustar_aprobado");
+    logAccion({ modulo: "nomina_por_dia", accion, tabla: "nomina_por_dia",
+                registroId: aprobar.id, notas: `${aprobar.nombre} · ${aprobar.fecha} · Total ${COP(totalEstim)}` });
     setAprobar(null);
     fetchAll();
   };
@@ -594,9 +602,10 @@ export default function NominaPorDia() {
                               <button onClick={() => desaprobar(r)} title="Desaprobar (vuelve a solicitado)" style={btnMini(B.warning, B.navy)}>↺</button>
                             </>
                           )}
-                          {/* Estado ejecutado — admin puede editar (mientras no esté pagado) */}
+                          {/* Estado ejecutado — admin puede ajustar valor/transporte/bonificación
+                              mientras no esté pagado. Usa el mismo modal de aprobación (preserva estado). */}
                           {r.estado === "ejecutado" && !r.pagado && esAdmin && (
-                            <button onClick={() => editar(r)} title="Editar (ajustar valor/horas)" style={btnMini(B.navyLight, "rgba(255,255,255,0.6)")}>✎</button>
+                            <button onClick={() => abrirAprobar(r)} title="Ajustar valor del pago (mantiene estado ejecutado)" style={btnMini(B.navyLight, "rgba(255,255,255,0.6)")}>✎</button>
                           )}
                           {/* Estado ejecutado o rechazado — solo admin puede eliminar */}
                           {(r.estado === "ejecutado" || r.estado === "rechazado") && esAdmin && (
@@ -725,13 +734,20 @@ export default function NominaPorDia() {
         </div>
       )}
 
-      {/* Modal APROBAR (o ajustar si ya está aprobado) */}
+      {/* Modal APROBAR (o ajustar si ya está aprobado / ejecutado) */}
       {aprobar && (
-        <ModalCentrado onClose={() => setAprobar(null)} title={`${aprobar.estado === "aprobado" ? "Ajustar aprobación" : "Aprobar"}: ${aprobar.nombre}`}>
+        <ModalCentrado onClose={() => setAprobar(null)} title={`${
+          aprobar.estado === "ejecutado" ? "Ajustar pago" :
+          aprobar.estado === "aprobado"  ? "Ajustar aprobación" :
+          "Aprobar"
+        }: ${aprobar.nombre}`}>
           <div style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", marginBottom: 14 }}>
             {aprobar.fecha} · {aprobar.cargo || "—"} · Solicitado por {aprobar.solicitado_por || "—"}
             {aprobar.estado === "aprobado" && (
               <span style={{ marginLeft: 8, color: B.sky }}>· Ya aprobado por {aprobar.aprobado_por || "—"}</span>
+            )}
+            {aprobar.estado === "ejecutado" && (
+              <span style={{ marginLeft: 8, color: B.success }}>· Ya ejecutado por {aprobar.ejecutado_por || "—"} ({aprobar.horas || 0}h reales)</span>
             )}
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
@@ -754,7 +770,7 @@ export default function NominaPorDia() {
           <div style={{ display: "flex", gap: 10 }}>
             <button onClick={() => setAprobar(null)} style={{ flex: 1, padding: 12, borderRadius: 8, border: `1px solid ${B.navyLight}`, background: "transparent", color: "rgba(255,255,255,0.55)", cursor: "pointer" }}>Cancelar</button>
             <button onClick={confirmarAprobar} style={{ flex: 2, padding: 12, borderRadius: 8, border: "none", background: B.success, color: "#fff", fontWeight: 700, cursor: "pointer" }}>
-              {aprobar.estado === "aprobado" ? "✓ Guardar cambios" : "✓ Aprobar"}
+              {aprobar.estado === "solicitado" ? "✓ Aprobar" : "✓ Guardar cambios"}
             </button>
           </div>
         </ModalCentrado>
