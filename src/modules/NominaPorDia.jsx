@@ -368,6 +368,30 @@ export default function NominaPorDia() {
     fetchAll();
   };
 
+  // Subir cuenta de cobro (PDF/imagen). Solo cuando el registro ya esta ejecutado.
+  // El trabajador extra entrega el documento y contabilidad lo adjunta aqui para
+  // respaldar el pago.
+  const subirCuentaCobro = async (r, file) => {
+    if (!file) return;
+    if (r.estado !== "ejecutado") return alert("Solo se puede cargar cuenta de cobro para registros ejecutados.");
+    const ext = (file.name.split(".").pop() || "pdf").toLowerCase();
+    const path = `nomina-dia/${r.id}/cuenta-cobro-${Date.now()}.${ext}`;
+    const { error: upErr } = await supabase.storage.from("comprobantes").upload(path, file, { upsert: true, contentType: file.type || undefined });
+    if (upErr) return alert("Error subiendo archivo: " + upErr.message);
+    const { data: pub } = supabase.storage.from("comprobantes").getPublicUrl(path);
+    const nowIso = new Date().toISOString();
+    const { error: dbErr } = await supabase.from("nomina_por_dia").update({
+      cuenta_cobro_url: pub.publicUrl,
+      cuenta_cobro_at: nowIso,
+      cuenta_cobro_por: currentUser.email,
+      updated_at: nowIso,
+    }).eq("id", r.id);
+    if (dbErr) return alert("Error guardando URL: " + dbErr.message);
+    logAccion({ modulo: "nomina_por_dia", accion: "subir_cuenta_cobro", tabla: "nomina_por_dia",
+                registroId: r.id, notas: `${r.nombre} · ${r.fecha}` });
+    fetchAll();
+  };
+
   // Filtros
   const filtered = useMemo(() => {
     const q = search.toLowerCase().trim();
@@ -514,14 +538,34 @@ export default function NominaPorDia() {
                           </div>
                         )}
                         {r.estado === "ejecutado" && (
-                          <button onClick={() => togglePagado(r)} disabled={!esAdmin}
-                            style={{ marginTop: 4, display: "block", fontSize: 9, padding: "2px 8px", borderRadius: 20,
-                              background: r.pagado ? B.success + "33" : B.warning + "33",
-                              color: r.pagado ? B.success : B.warning,
-                              fontWeight: 700, letterSpacing: 1, textTransform: "uppercase",
-                              border: "none", cursor: esAdmin ? "pointer" : "default", opacity: esAdmin ? 1 : 0.7 }}>
-                            {r.pagado ? "Pagado" : "Sin pagar"}
-                          </button>
+                          <>
+                            <button onClick={() => togglePagado(r)} disabled={!esAdmin}
+                              style={{ marginTop: 4, display: "block", fontSize: 9, padding: "2px 8px", borderRadius: 20,
+                                background: r.pagado ? B.success + "33" : B.warning + "33",
+                                color: r.pagado ? B.success : B.warning,
+                                fontWeight: 700, letterSpacing: 1, textTransform: "uppercase",
+                                border: "none", cursor: esAdmin ? "pointer" : "default", opacity: esAdmin ? 1 : 0.7 }}>
+                              {r.pagado ? "Pagado" : "Sin pagar"}
+                            </button>
+                            {r.cuenta_cobro_url ? (
+                              <a href={r.cuenta_cobro_url} target="_blank" rel="noreferrer"
+                                style={{ marginTop: 4, display: "block", fontSize: 9, padding: "2px 8px", borderRadius: 20,
+                                  background: B.sky + "33", color: B.sky, fontWeight: 700, letterSpacing: 1,
+                                  textTransform: "uppercase", textDecoration: "none", textAlign: "center" }}
+                                title="Ver cuenta de cobro cargada">
+                                📄 Cuenta cobro
+                              </a>
+                            ) : (
+                              <label style={{ marginTop: 4, display: "block", fontSize: 9, padding: "2px 8px", borderRadius: 20,
+                                background: "rgba(255,255,255,0.06)", color: "rgba(255,255,255,0.6)", fontWeight: 700, letterSpacing: 1,
+                                textTransform: "uppercase", cursor: "pointer", textAlign: "center", border: `1px dashed ${B.navyLight}` }}
+                                title="Subir PDF/imagen de la cuenta de cobro">
+                                + Cuenta cobro
+                                <input type="file" accept="application/pdf,image/*" style={{ display: "none" }}
+                                  onChange={e => subirCuentaCobro(r, e.target.files?.[0])} />
+                              </label>
+                            )}
+                          </>
                         )}
                       </td>
                       <td style={{ padding: "10px" }}>
