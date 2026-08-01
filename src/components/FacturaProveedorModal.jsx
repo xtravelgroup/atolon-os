@@ -1116,13 +1116,9 @@ export default function FacturaProveedorModal({ oc, onClose, reload, currentUser
           quien: aplicadaPor,
           accion: `Item manual agregado desde factura #${data.factura_numero || "-"}: "${it.item || it.nombre}"`,
           motivo: it.motivo_manual,
-          detalle: {
-            item: it.item || it.nombre,
-            cantidad: it.cant,
-            precio_unit: it.precioU,
-            subtotal: it.subtotal,
-            factura_id: facturaId,
-          },
+          // detalle debe ser string — algunos componentes de historial renderizan
+          // el campo directo y un objeto rompe React (#31).
+          detalle: `Cant: ${it.cant} · $${(Number(it.precioU) || 0).toLocaleString("es-CO")} · Subtotal: $${(Number(it.subtotal) || 0).toLocaleString("es-CO")} · Factura: ${facturaId}`,
         }));
         updateOC.cambios_historial = [...(oc.cambios_historial || []), ...nuevasEntradas];
       }
