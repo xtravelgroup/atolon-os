@@ -266,10 +266,11 @@ function TabPorPagar({ ordenes, otros, comisiones = [], nominasDia = [], reload,
     // Nómina por día — ejecutadas y sin pagar
     (nominasDia || []).forEach(n => list.push({
       tipo: "nomina_dia", icon: "👷", color: "#f472b6",
-      ref: `${n.fecha} · ${n.cargo || "—"}${n.cuenta_cobro_url ? " · 📄" : ""}`,
+      ref: `${n.fecha} · ${n.cargo || "—"}`,
       proveedor: n.nombre || "—",
       monto: Number(n.total || 0),
       vence: n.fecha,
+      cuenta_cobro_url: n.cuenta_cobro_url || null,
       nominaDia: n, accion: "marcar_nomina_dia",
     }));
 
@@ -369,10 +370,20 @@ function TabPorPagar({ ordenes, otros, comisiones = [], nominasDia = [], reload,
                   </div>
                   <div style={{ textAlign: "right" }} onClick={e => e.stopPropagation()}>
                     <div style={{ fontSize: 16, fontWeight: 800, color: B.sand, fontFamily: "'Barlow Condensed', sans-serif" }}>{COP(x.monto)}</div>
-                    <button onClick={(e) => { e.stopPropagation(); marcarPagado(x); }}
-                      style={{ marginTop: 6, padding: "5px 12px", borderRadius: 6, border: "none", background: B.success, color: B.navy, fontSize: 11, fontWeight: 800, cursor: "pointer" }}>
-                      💸 Marcar pagado
-                    </button>
+                    <div style={{ display: "flex", gap: 6, justifyContent: "flex-end", alignItems: "center", marginTop: 6 }}>
+                      {x.cuenta_cobro_url && (
+                        <a href={x.cuenta_cobro_url} target="_blank" rel="noreferrer"
+                          onClick={e => e.stopPropagation()}
+                          title="Ver cuenta de cobro"
+                          style={{ padding: "5px 10px", borderRadius: 6, border: `1px solid ${B.sky}`, background: B.sky + "22", color: B.sky, fontSize: 11, fontWeight: 800, textDecoration: "none" }}>
+                          📄 Cuenta cobro
+                        </a>
+                      )}
+                      <button onClick={(e) => { e.stopPropagation(); marcarPagado(x); }}
+                        style={{ padding: "5px 12px", borderRadius: 6, border: "none", background: B.success, color: B.navy, fontSize: 11, fontWeight: 800, cursor: "pointer" }}>
+                        💸 Marcar pagado
+                      </button>
+                    </div>
                   </div>
                 </div>
               );
