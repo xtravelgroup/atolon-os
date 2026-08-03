@@ -232,6 +232,8 @@ function TabPorPagar({ ordenes, otros, comisiones = [], nominasDia = [], reload,
       ref: o.codigo, proveedor: o.proveedor_nombre || "—",
       monto: Number(o.anticipo_monto || 0),
       vence: o.anticipo_solicitado_at?.slice(0, 10),
+      cotizacion_url: o.cotizacion_resp_url || null,
+      factura_url: o.factura_url || null,
       oc: o, accion: "marcar_anticipo",
     }));
     // Facturas
@@ -243,6 +245,8 @@ function TabPorPagar({ ordenes, otros, comisiones = [], nominasDia = [], reload,
         proveedor: o.proveedor_nombre || "—",
         monto: saldo,
         vence: o.fecha_vencimiento_pago,
+        cotizacion_url: o.cotizacion_resp_url || null,
+        factura_url: o.factura_url || null,
         oc: o, accion: "marcar_factura",
       });
     });
@@ -370,7 +374,23 @@ function TabPorPagar({ ordenes, otros, comisiones = [], nominasDia = [], reload,
                   </div>
                   <div style={{ textAlign: "right" }} onClick={e => e.stopPropagation()}>
                     <div style={{ fontSize: 16, fontWeight: 800, color: B.sand, fontFamily: "'Barlow Condensed', sans-serif" }}>{COP(x.monto)}</div>
-                    <div style={{ display: "flex", gap: 6, justifyContent: "flex-end", alignItems: "center", marginTop: 6 }}>
+                    <div style={{ display: "flex", gap: 6, justifyContent: "flex-end", alignItems: "center", marginTop: 6, flexWrap: "wrap" }}>
+                      {x.cotizacion_url && (
+                        <a href={x.cotizacion_url} target="_blank" rel="noreferrer"
+                          onClick={e => e.stopPropagation()}
+                          title="Ver cotización del proveedor"
+                          style={{ padding: "5px 10px", borderRadius: 6, border: `1px solid ${B.warning}`, background: B.warning + "22", color: B.warning, fontSize: 11, fontWeight: 800, textDecoration: "none" }}>
+                          📋 Cotización
+                        </a>
+                      )}
+                      {x.factura_url && (
+                        <a href={x.factura_url} target="_blank" rel="noreferrer"
+                          onClick={e => e.stopPropagation()}
+                          title="Ver factura del proveedor"
+                          style={{ padding: "5px 10px", borderRadius: 6, border: `1px solid ${B.sand}`, background: B.sand + "22", color: B.sand, fontSize: 11, fontWeight: 800, textDecoration: "none" }}>
+                          🧾 Factura
+                        </a>
+                      )}
                       {x.cuenta_cobro_url && (
                         <a href={x.cuenta_cobro_url} target="_blank" rel="noreferrer"
                           onClick={e => e.stopPropagation()}
