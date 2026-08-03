@@ -244,7 +244,7 @@ export default function NominaPorDia() {
     if (error) return alert("Error: " + error.message);
     logAccion({ modulo: "nomina_por_dia", accion: editing ? "editar_solicitud" : "crear_solicitud",
                 tabla: "nomina_por_dia", registroId: editing || form.nombre,
-                notas: `${form.fecha} · ${form.nombre} · ${COP(totalEstim)}` });
+                notas: `${form.fecha} · ${form.nombre} · ${horasSol}h` });
     setShowForm(false);
     setEditing(null);
     setForm(emptyForm);
