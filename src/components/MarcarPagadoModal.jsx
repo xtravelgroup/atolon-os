@@ -153,7 +153,7 @@ export default function MarcarPagadoModal({ pago, currentUser, onClose, onSaved 
           updated_at:      new Date().toISOString(),
         }).eq("id", pago.gasto.id);
       } else if (pago.accion === "marcar_comision") {
-        await supabase.from("comisiones_semanas").update({
+        const { data: upd, error: upErr } = await supabase.from("comisiones_semanas").update({
           estado:               "ejecutado",
           ejecutado_at:         pagoTs,
           ejecutado_por:        currentUser?.email || null,
@@ -163,7 +163,9 @@ export default function MarcarPagadoModal({ pago, currentUser, onClose, onSaved 
           pago_comprobante_url: comprobante_url,
           pago_retencion:       retencionNum,
           pago_monto_neto:      montoNeto,
-        }).eq("id", pago.comision.id);
+        }).eq("id", pago.comision.id).select("id");
+        if (upErr) throw upErr;
+        if (!upd || upd.length === 0) throw new Error("No se aplicó el pago (permisos o comisión no encontrada). Contacta al administrador.");
       } else if (pago.accion === "marcar_nomina_dia") {
         // Nómina por día: marcar como pagado, guardar trazabilidad del pago.
         // Antes se toggleaba manualmente desde el módulo Nómina por Día — ya no:
