@@ -80,8 +80,16 @@ export default function HotelGrupoPublico() {
   const tarifas = grupo?.hotel_grupos_tarifas || [];
   const tarifasDisp = tarifas.filter(t => t.disponible !== false && Number(t.precio_noche) > 0);
   const tarifaSel = tarifas.find(t => t.categoria_id === f.categoria_id);
+  const catSel = categorias.find(c => c.id === f.categoria_id);
+  const capIncluida = Math.max(1, Number(catSel?.capacidad_incluida) || 2);
+  const capMaxima   = Math.max(capIncluida, Number(catSel?.capacidad_maxima) || capIncluida);
+  const precioPaxExtra = Math.max(0, Number(catSel?.precio_persona_adicional) || 0);
+  const paxTotal = Number(f.pax_adultos || 0) + Number(f.pax_ninos || 0);
+  const paxExtra = Math.max(0, paxTotal - capIncluida);
+  const excedeCapMax = paxTotal > capMaxima;
   const noches = diffNoches(f.check_in, f.check_out);
-  const subtotal = tarifaSel && noches > 0 ? Number(tarifaSel.precio_noche) * noches : 0;
+  const cargoExtra = paxExtra * precioPaxExtra * noches;
+  const subtotal = tarifaSel && noches > 0 ? Number(tarifaSel.precio_noche) * noches + cargoExtra : 0;
   const IVA_PCT = 0.19;
   const iva = f.nacionalidad === "colombiano" ? Math.round(subtotal * IVA_PCT) : 0;
   const total = subtotal + iva;
@@ -358,8 +366,23 @@ export default function HotelGrupoPublico() {
         <div style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 12, alignItems: "center" }}>
           <div>
             <div style={{ fontSize: 12, color: B.sand }}>
-              {noches} noche{noches !== 1 ? "s" : ""} × {tarifaSel ? COP(tarifaSel.precio_noche) : "—"} = <b style={{ color: B.white }}>{COP(subtotal)}</b>
+              {noches} noche{noches !== 1 ? "s" : ""} × {tarifaSel ? COP(tarifaSel.precio_noche) : "—"} = <b style={{ color: B.white }}>{COP(tarifaSel && noches > 0 ? Number(tarifaSel.precio_noche) * noches : 0)}</b>
             </div>
+            {catSel && (
+              <div style={{ fontSize: 11, color: "rgba(255,255,255,0.55)", marginTop: 2 }}>
+                Incluye {capIncluida} pax {precioPaxExtra > 0 && `· ${COP(precioPaxExtra)}/pax extra/noche`} · Máx {capMaxima}
+              </div>
+            )}
+            {paxExtra > 0 && !excedeCapMax && precioPaxExtra > 0 && (
+              <div style={{ fontSize: 12, color: B.warning, marginTop: 4 }}>
+                + {paxExtra} pax adicional{paxExtra > 1 ? "es" : ""} × {noches} noche{noches !== 1 ? "s" : ""} × {COP(precioPaxExtra)} = <b>{COP(cargoExtra)}</b>
+              </div>
+            )}
+            {excedeCapMax && (
+              <div style={{ fontSize: 12, color: B.danger, marginTop: 4, fontWeight: 700 }}>
+                ⚠ Esta habitación admite máximo {capMaxima} personas. Selecciona una más grande.
+              </div>
+            )}
             {f.nacionalidad === "colombiano" && subtotal > 0 && (
               <div style={{ fontSize: 12, color: B.sand }}>
                 IVA 19%: <b style={{ color: B.white }}>{COP(iva)}</b>
@@ -370,7 +393,7 @@ export default function HotelGrupoPublico() {
             )}
             <div style={{ fontSize: 26, fontWeight: 900, color: B.white, marginTop: 4 }}>{COP(total)}</div>
           </div>
-          <button onClick={reservar} disabled={enviando || noches < 1 || !tarifaSel}
+          <button onClick={reservar} disabled={enviando || noches < 1 || !tarifaSel || excedeCapMax}
             style={{
               padding: "14px 28px", borderRadius: 10, border: "none",
               background: B.hotel, color: B.white,

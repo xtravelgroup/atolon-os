@@ -85,7 +85,25 @@ serve(async (req) => {
     );
     if (!tarifa) return json({ error: "Categoría no disponible para este grupo" }, 400);
     const precioNoche = Number(tarifa.precio_noche);
-    const subtotal = precioNoche * noches;
+
+    // 3b) Cargar reglas de capacidad de la categoría
+    const { data: cat } = await supa.from("hotel_categorias")
+      .select("capacidad_incluida, capacidad_maxima, precio_persona_adicional, nombre")
+      .eq("id", categoria_id).maybeSingle();
+    const capIncluida  = Math.max(1, Number(cat?.capacidad_incluida) || 2);
+    const capMaxima    = Math.max(capIncluida, Number(cat?.capacidad_maxima) || capIncluida);
+    const precioPaxExtra = Math.max(0, Number(cat?.precio_persona_adicional) || 0);
+
+    const paxA = Math.max(1, parseInt(huesped.pax_adultos || 2, 10));
+    const paxN = Math.max(0, parseInt(huesped.pax_ninos || 0, 10));
+    const paxTotal = paxA + paxN;
+    if (paxTotal > capMaxima) {
+      return json({ error: `Esta categoría admite máximo ${capMaxima} personas. Selecciona una habitación más grande.` }, 400);
+    }
+    const paxExtra = Math.max(0, paxTotal - capIncluida);
+    const cargoExtra = paxExtra * precioPaxExtra * noches;
+
+    const subtotal = precioNoche * noches + cargoExtra;
     // IVA: Colombianos pagan 19%. Extranjeros con pasaporte están exentos
     // según Ley 300 de 1996 (turismo).
     const nacionalidad = (huesped.nacionalidad || "colombiano").toLowerCase();
@@ -208,6 +226,11 @@ serve(async (req) => {
       total,
       noches,
       precio_noche: precioNoche,
+      cargo_extra: cargoExtra,
+      pax_extra: paxExtra,
+      precio_persona_adicional: precioPaxExtra,
+      capacidad_incluida: capIncluida,
+      capacidad_maxima: capMaxima,
       nacionalidad,
       grupo_nombre: grupo.nombre,
       expira_en,
