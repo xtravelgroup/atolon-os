@@ -4,6 +4,10 @@ const SUPA_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok");
   const supa = createClient(SUPA_URL, SUPA_KEY);
-  const { data } = await supa.from("pasadias_precios").select("*");
-  return new Response(JSON.stringify({ precios: data || [] }), { headers: { "content-type": "application/json", "Access-Control-Allow-Origin": "*" } });
+  const { data } = await supa.from("pasadias")
+    .select("id, nombre, precio, precio_nino, incluye, min_pax, descripcion")
+    .eq("activo", true).eq("web_publica", true).order("orden");
+  return new Response(JSON.stringify({ precios: data || [] }), {
+    headers: { "content-type": "application/json", "Access-Control-Allow-Origin": "*" },
+  });
 });

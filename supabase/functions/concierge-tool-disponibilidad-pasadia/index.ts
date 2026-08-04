@@ -11,7 +11,8 @@ Deno.serve(async (req) => {
     if (!fecha) return json({ error: "fecha requerida (YYYY-MM-DD)" }, 400);
     const supa = createClient(SUPA_URL, SUPA_KEY);
     const [{ data: precios }, { data: reservas }, { data: config }] = await Promise.all([
-      supa.from("pasadias_precios").select("*"),
+      supa.from("pasadias").select("id, nombre, precio, precio_nino, incluye, min_pax")
+        .eq("activo", true).eq("web_publica", true).order("orden"),
       supa.from("reservas").select("pax").eq("fecha", fecha).neq("estado", "cancelado"),
       supa.from("config").select("*").eq("clave", "cupo_isla").maybeSingle(),
     ]);
@@ -24,8 +25,12 @@ Deno.serve(async (req) => {
       hay_disponibilidad: disponibles >= pax_total,
       pax_solicitados: pax_total,
       opciones: (precios || []).map((p: any) => ({
-        tipo: p.tipo, precio_adulto: p.precio_adulto, precio_nino: p.precio_nino,
-        subtotal: (Number(p.precio_adulto) * pax_adultos) + (Number(p.precio_nino) * pax_ninos),
+        tipo: p.nombre,
+        precio_adulto: p.precio,
+        precio_nino: p.precio_nino,
+        incluye: p.incluye,
+        min_pax: p.min_pax,
+        subtotal: (Number(p.precio) * pax_adultos) + (Number(p.precio_nino) * pax_ninos),
       })),
     });
   } catch (e: any) { return json({ error: e.message }, 500); }

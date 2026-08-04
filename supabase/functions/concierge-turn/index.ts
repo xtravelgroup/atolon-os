@@ -49,7 +49,12 @@ Deno.serve(async (req) => {
       long: "Puedes ser detallado pero relevante.",
       default: "Sé breve pero completo.",
     } as any)[agent.message_length] || "";
+    // Fecha actual en zona horaria del agente (evita que el modelo defaultee al año de entrenamiento)
+    const tz = agent.idioma_default === "es" ? "America/Bogota" : "UTC";
+    const hoy = new Date().toLocaleDateString("es-CO", { weekday: "long", year: "numeric", month: "long", day: "numeric", timeZone: tz });
+    const hoyISO = new Date().toLocaleDateString("en-CA", { timeZone: tz });
     const system = [
+      `HOY es ${hoy} (${hoyISO}). Cuando el cliente diga fechas relativas ("mañana", "el sábado", "el 15") interpreta con base en HOY. Nunca uses años pasados.\n\n`,
       agent.custom_instructions || "",
       "\n\nESTILO:", styleHint, agent.usa_emoji ? "Puedes usar emojis." : "No uses emojis.",
       agent.assistant_name ? `\nTu nombre es: ${agent.assistant_name}.` : "",
