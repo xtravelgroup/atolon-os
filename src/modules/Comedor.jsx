@@ -11,10 +11,15 @@ import { useMobile } from "../lib/useMobile";
 const todayStr = () => new Date().toLocaleDateString("en-CA", { timeZone: "America/Bogota" });
 const fmtFecha = (d) => d ? new Date(d + "T12:00:00").toLocaleDateString("es-CO", { weekday: "long", day: "2-digit", month: "long" }) : "";
 const COMIDAS = [
-  { k: "desayuno",  l: "Desayuno",     icon: "🌅", color: "#fbbf24", franja: "06:00–10:00" },
-  { k: "almuerzo",  l: "Almuerzo",     icon: "🌞", color: "#22c55e", franja: "12:00–14:00" },
-  { k: "cena",      l: "Cena",         icon: "🌙", color: "#a78bfa", franja: "18:00–21:00" },
-  { k: "agua_cafe", l: "Agua y Café",  icon: "☕", color: "#38bdf8", franja: "todo el día" },
+  { k: "desayuno", l: "Desayuno", icon: "🌅", color: "#fbbf24", franja: "06:00–10:00" },
+  { k: "almuerzo", l: "Almuerzo", icon: "🌞", color: "#22c55e", franja: "12:00–14:00" },
+  { k: "cena",     l: "Cena",     icon: "🌙", color: "#a78bfa", franja: "18:00–21:00" },
+];
+// Solo para la sección Consumo (insumos usados en preparar café/agua para el personal).
+// NO aplica a comensales/registro/menú/precios.
+const COMIDAS_CONSUMO = [
+  ...COMIDAS,
+  { k: "agua_cafe", l: "Agua y Café", icon: "☕", color: "#38bdf8", franja: "todo el día" },
 ];
 const BTN = (bg, color = "#fff") => ({ padding: "8px 14px", borderRadius: 8, border: "none", background: bg, color, cursor: "pointer", fontWeight: 700, fontSize: 12 });
 const IS  = { width: "100%", padding: "9px 12px", borderRadius: 8, background: B.navyLight, border: `1px solid ${B.navyLight}`, color: "#fff", fontSize: 13, outline: "none", boxSizing: "border-box" };
@@ -586,8 +591,8 @@ function TabConsumoComedor({ fecha, consumo, items, userEmail, onReload }) {
         </div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-          {/* Agrupado por desayuno → almuerzo → cena → general (direccion 2026-07-13) */}
-          {[...COMIDAS, { k: "general", l: "General", icon: "📦", color: B.sky }].map(cm => {
+          {/* Agrupado por desayuno → almuerzo → cena → agua_cafe → general */}
+          {[...COMIDAS_CONSUMO, { k: "general", l: "General", icon: "📦", color: B.sky }].map(cm => {
             const items = consumo.filter(c => c.comida === cm.k);
             if (items.length === 0) return null;
             const subtotal = items.reduce((s, c) => s + (Number(c.costo_total) || 0), 0);
@@ -716,7 +721,7 @@ function TabConsumoComedor({ fecha, consumo, items, userEmail, onReload }) {
                     {/* Comida */}
                     <div>
                       <select value={f.comida} onChange={e => setFila(idx, { comida: e.target.value })} style={{ ...IS, padding: "6px 8px", fontSize: 11 }}>
-                        {COMIDAS.map(c => <option key={c.k} value={c.k}>{c.icon} {c.l}</option>)}
+                        {COMIDAS_CONSUMO.map(c => <option key={c.k} value={c.k}>{c.icon} {c.l}</option>)}
                         <option value="general">📦 General</option>
                       </select>
                     </div>
@@ -825,8 +830,8 @@ function EditarConsumoModal({ registro, item, onClose, onSave }) {
 
         <div style={{ marginBottom: 12 }}>
           <label style={LS}>Comida</label>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 6 }}>
-            {COMIDAS.map(c => (
+          <div style={{ display: "grid", gridTemplateColumns: `repeat(${COMIDAS_CONSUMO.length + 1}, 1fr)`, gap: 6 }}>
+            {COMIDAS_CONSUMO.map(c => (
               <button key={c.k} type="button" onClick={() => setComida(c.k)}
                 style={{ padding: "8px", borderRadius: 8, border: comida === c.k ? `2px solid ${c.color}` : `1px solid ${B.navyLight}`,
                   background: comida === c.k ? c.color + "22" : B.navyMid, color: comida === c.k ? c.color : "rgba(255,255,255,0.6)", cursor: "pointer", fontSize: 11, fontWeight: 700 }}>
