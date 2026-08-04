@@ -83,12 +83,18 @@ export default function HotelGrupoPublico() {
   const catSel = categorias.find(c => c.id === f.categoria_id);
   const capIncluida = Math.max(1, Number(catSel?.capacidad_incluida) || 2);
   const capMaxima   = Math.max(capIncluida, Number(catSel?.capacidad_maxima) || capIncluida);
-  const precioPaxExtra = Math.max(0, Number(catSel?.precio_persona_adicional) || 0);
-  const paxTotal = Number(f.pax_adultos || 0) + Number(f.pax_ninos || 0);
-  const paxExtra = Math.max(0, paxTotal - capIncluida);
+  const precioAdultoExtra = Math.max(0, Number(catSel?.precio_persona_adicional) || 0);
+  const precioNinoExtra   = Math.max(0, Number(catSel?.precio_nino_adicional) || 0);
+  const paxA = Number(f.pax_adultos || 0);
+  const paxN = Number(f.pax_ninos || 0);
+  const paxTotal = paxA + paxN;
+  const paxExtraAdultos = Math.max(0, paxA - capIncluida);
+  const paxExtraNinos   = paxN;
   const excedeCapMax = paxTotal > capMaxima;
   const noches = diffNoches(f.check_in, f.check_out);
-  const cargoExtra = paxExtra * precioPaxExtra * noches;
+  const cargoAdultosExtra = paxExtraAdultos * precioAdultoExtra * noches;
+  const cargoNinosExtra   = paxExtraNinos   * precioNinoExtra   * noches;
+  const cargoExtra = cargoAdultosExtra + cargoNinosExtra;
   const subtotal = tarifaSel && noches > 0 ? Number(tarifaSel.precio_noche) * noches + cargoExtra : 0;
   const IVA_PCT = 0.19;
   const iva = f.nacionalidad === "colombiano" ? Math.round(subtotal * IVA_PCT) : 0;
@@ -279,12 +285,15 @@ export default function HotelGrupoPublico() {
                     )}
                     {cat && (
                       <div style={{ fontSize: 11, color: B.sand, marginTop: 4, display: "flex", flexWrap: "wrap", gap: 8 }}>
-                        <span>👥 Incluye {cat.capacidad_incluida || 2} pax</span>
+                        <span>👥 Incluye {cat.capacidad_incluida || 2} adultos</span>
                         {Number(cat.capacidad_maxima) > Number(cat.capacidad_incluida) && (
                           <span>· Máx {cat.capacidad_maxima}</span>
                         )}
                         {Number(cat.precio_persona_adicional) > 0 && (
-                          <span>· ➕ {COP(cat.precio_persona_adicional)}/pax extra</span>
+                          <span>· ➕ {COP(cat.precio_persona_adicional)}/adulto extra</span>
+                        )}
+                        {Number(cat.precio_nino_adicional) > 0 && (
+                          <span>· 🧒 {COP(cat.precio_nino_adicional)}/niño</span>
                         )}
                       </div>
                     )}
@@ -386,12 +395,20 @@ export default function HotelGrupoPublico() {
             </div>
             {catSel && (
               <div style={{ fontSize: 11, color: "rgba(255,255,255,0.55)", marginTop: 2 }}>
-                Incluye {capIncluida} pax {precioPaxExtra > 0 && `· ${COP(precioPaxExtra)}/pax extra/noche`} · Máx {capMaxima}
+                Incluye {capIncluida} adultos
+                {precioAdultoExtra > 0 && ` · ${COP(precioAdultoExtra)}/adulto extra`}
+                {precioNinoExtra > 0 && ` · ${COP(precioNinoExtra)}/niño (<12)`}
+                {" · Máx "}{capMaxima}
               </div>
             )}
-            {paxExtra > 0 && !excedeCapMax && precioPaxExtra > 0 && (
+            {paxExtraAdultos > 0 && !excedeCapMax && precioAdultoExtra > 0 && (
               <div style={{ fontSize: 12, color: B.warning, marginTop: 4 }}>
-                + {paxExtra} pax adicional{paxExtra > 1 ? "es" : ""} × {noches} noche{noches !== 1 ? "s" : ""} × {COP(precioPaxExtra)} = <b>{COP(cargoExtra)}</b>
+                + {paxExtraAdultos} adulto{paxExtraAdultos > 1 ? "s" : ""} extra × {noches} noche{noches !== 1 ? "s" : ""} × {COP(precioAdultoExtra)} = <b>{COP(cargoAdultosExtra)}</b>
+              </div>
+            )}
+            {paxExtraNinos > 0 && !excedeCapMax && precioNinoExtra > 0 && (
+              <div style={{ fontSize: 12, color: B.warning, marginTop: 4 }}>
+                + {paxExtraNinos} niño{paxExtraNinos > 1 ? "s" : ""} × {noches} noche{noches !== 1 ? "s" : ""} × {COP(precioNinoExtra)} = <b>{COP(cargoNinosExtra)}</b>
               </div>
             )}
             {excedeCapMax && (

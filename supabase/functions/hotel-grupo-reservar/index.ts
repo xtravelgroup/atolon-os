@@ -88,11 +88,12 @@ serve(async (req) => {
 
     // 3b) Cargar reglas de capacidad de la categoría
     const { data: cat } = await supa.from("hotel_categorias")
-      .select("capacidad_incluida, capacidad_maxima, precio_persona_adicional, nombre")
+      .select("capacidad_incluida, capacidad_maxima, precio_persona_adicional, precio_nino_adicional, nombre")
       .eq("id", categoria_id).maybeSingle();
     const capIncluida  = Math.max(1, Number(cat?.capacidad_incluida) || 2);
     const capMaxima    = Math.max(capIncluida, Number(cat?.capacidad_maxima) || capIncluida);
-    const precioPaxExtra = Math.max(0, Number(cat?.precio_persona_adicional) || 0);
+    const precioAdultoExtra = Math.max(0, Number(cat?.precio_persona_adicional) || 0);
+    const precioNinoExtra   = Math.max(0, Number(cat?.precio_nino_adicional) || 0);
 
     const paxA = Math.max(1, parseInt(huesped.pax_adultos || 2, 10));
     const paxN = Math.max(0, parseInt(huesped.pax_ninos || 0, 10));
@@ -100,8 +101,13 @@ serve(async (req) => {
     if (paxTotal > capMaxima) {
       return json({ error: `Esta categoría admite máximo ${capMaxima} personas. Selecciona una habitación más grande.` }, 400);
     }
-    const paxExtra = Math.max(0, paxTotal - capIncluida);
-    const cargoExtra = paxExtra * precioPaxExtra * noches;
+    // Adultos extras: los que exceden la capacidad incluida.
+    // Niños extras: TODOS los niños (menores de 12 no cuentan en la capacidad base — es la política estándar hotelera).
+    const paxExtraAdultos = Math.max(0, paxA - capIncluida);
+    const paxExtraNinos   = paxN;
+    const cargoAdultosExtra = paxExtraAdultos * precioAdultoExtra * noches;
+    const cargoNinosExtra   = paxExtraNinos   * precioNinoExtra   * noches;
+    const cargoExtra = cargoAdultosExtra + cargoNinosExtra;
 
     const subtotal = precioNoche * noches + cargoExtra;
     // IVA: Colombianos pagan 19%. Extranjeros con pasaporte están exentos
@@ -227,8 +233,12 @@ serve(async (req) => {
       noches,
       precio_noche: precioNoche,
       cargo_extra: cargoExtra,
-      pax_extra: paxExtra,
-      precio_persona_adicional: precioPaxExtra,
+      cargo_adultos_extra: cargoAdultosExtra,
+      cargo_ninos_extra: cargoNinosExtra,
+      pax_extra_adultos: paxExtraAdultos,
+      pax_extra_ninos:   paxExtraNinos,
+      precio_persona_adicional: precioAdultoExtra,
+      precio_nino_adicional:    precioNinoExtra,
       capacidad_incluida: capIncluida,
       capacidad_maxima: capMaxima,
       nacionalidad,

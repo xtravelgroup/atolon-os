@@ -59,7 +59,7 @@ function findMesaMatch(hab, mesas) {
 }
 
 const EMPTY_CAT = {
-  nombre: "", capacidad_incluida: 2, capacidad_maxima: 2, precio_persona_adicional: 0,
+  nombre: "", capacidad_incluida: 2, capacidad_maxima: 2, precio_persona_adicional: 0, precio_nino_adicional: 0,
   camas: [{ cantidad: 1, tipo: "King" }],
   descripcion: "",
   _cantidad: 1, _prefijo: "",
@@ -126,6 +126,7 @@ export default function HotelHabitaciones() {
       capacidad_incluida: Number(catForm.capacidad_incluida) || 0,
       capacidad_maxima: Number(catForm.capacidad_maxima) || 0,
       precio_persona_adicional: Math.max(0, Number(catForm.precio_persona_adicional) || 0),
+      precio_nino_adicional:    Math.max(0, Number(catForm.precio_nino_adicional) || 0),
       camas: (catForm.camas || []).filter(c => c.tipo && Number(c.cantidad) > 0).map(c => ({ cantidad: Number(c.cantidad), tipo: c.tipo })),
       descripcion: catForm.descripcion || "",
       updated_at: new Date().toISOString(),
@@ -346,10 +347,20 @@ export default function HotelHabitaciones() {
                   <div style={{ fontSize: 10, color: "rgba(255,255,255,0.35)", marginTop: 3 }}>Pax máximo permitido</div>
                 </div>
                 <div>
-                  <label style={LS}>$ Persona adicional</label>
+                  <label style={LS}>$ Adulto adicional</label>
                   <input type="number" min="0" step="1000" value={catForm.precio_persona_adicional || 0}
                     onChange={e => setCF("precio_persona_adicional", e.target.value)} style={IS} placeholder="0" />
-                  <div style={{ fontSize: 10, color: "rgba(255,255,255,0.35)", marginTop: 3 }}>Cargo por noche por pax extra</div>
+                  <div style={{ fontSize: 10, color: "rgba(255,255,255,0.35)", marginTop: 3 }}>Cargo/noche por adulto extra</div>
+                </div>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 12 }}>
+                <div>
+                  <label style={LS}>$ Niño adicional (&lt;12 años)</label>
+                  <input type="number" min="0" step="1000" value={catForm.precio_nino_adicional || 0}
+                    onChange={e => setCF("precio_nino_adicional", e.target.value)} style={IS} placeholder="0" />
+                  <div style={{ fontSize: 10, color: "rgba(255,255,255,0.35)", marginTop: 3 }}>
+                    Los niños siempre son adicionales (no ocupan la capacidad incluida)
+                  </div>
                 </div>
               </div>
 
@@ -486,7 +497,10 @@ export default function HotelHabitaciones() {
                         <span>👥 {c.capacidad_incluida}{c.capacidad_maxima > c.capacidad_incluida ? ` (máx. ${c.capacidad_maxima})` : ""}</span>
                         <span>🛏 {camasLabel(c.camas)}</span>
                         {Number(c.precio_persona_adicional) > 0 && (
-                          <span>➕ ${Number(c.precio_persona_adicional).toLocaleString("es-CO")}/pax extra</span>
+                          <span>➕ ${Number(c.precio_persona_adicional).toLocaleString("es-CO")}/adulto extra</span>
+                        )}
+                        {Number(c.precio_nino_adicional) > 0 && (
+                          <span>🧒 ${Number(c.precio_nino_adicional).toLocaleString("es-CO")}/niño</span>
                         )}
                       </div>
                       {c.descripcion && <div style={{ fontSize: 10, color: "rgba(255,255,255,0.3)", marginTop: 2, fontStyle: "italic" }}>{c.descripcion}</div>}
