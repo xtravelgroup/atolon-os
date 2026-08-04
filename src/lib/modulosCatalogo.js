@@ -69,6 +69,7 @@ export const GRUPOS_NAV = [
       { key: "vip",                label: "Society",   icon: "✦"  },
       { key: "carrito_abandonado", label: "Carritos",  icon: "🛒" },
       { key: "whatsapp_chat",      label: "WhatsApp",  icon: "💬" },
+      { key: "concierge_ai",       label: "Concierge AI", icon: "🤖" },
     ],
   },
   {

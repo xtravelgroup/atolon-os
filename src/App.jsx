@@ -375,6 +375,7 @@ const CarritoAbandonado = lazy(() => import("./modules/CarritoAbandonado"));
 const WhatsAppChat = lazy(() => import("./modules/WhatsAppChat"));
 const Metas = lazy(() => import("./modules/Metas"));
 const Comisiones = lazy(() => import("./modules/Comisiones"));
+const AtolonConcierge = lazy(() => import("./modules/AtolonConcierge"));
 const Resultados = lazy(() => import("./modules/Resultados"));
 const ResultadosViewer = lazy(() => import("./modules/ResultadosViewer"));
 const TrackViewer = lazy(() => import("./modules/TrackViewer"));
@@ -471,6 +472,7 @@ const MODULE_MAP = {
   whatsapp_chat: <WhatsAppChat />,
   metas: <Metas />,
   comisiones: <Comisiones />,
+  concierge_ai: <AtolonConcierge />,
   resultados: <Resultados />,
   rrhh: <RecursosHumanos />,
   reclutamiento: <Reclutamiento />,

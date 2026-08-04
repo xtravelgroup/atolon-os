@@ -1,0 +1,140 @@
+import { useEffect, useState } from "react";
+import { supabase } from "../../lib/supabase";
+import { B } from "../../brand";
+import { CARD, HEADER, IS, LS, BTN, TAG, EMPTY } from "./_shared.jsx";
+
+export default function KnowledgeBase({ tenantId }) {
+  const [items, setItems] = useState([]);
+  const [showAdd, setShowAdd] = useState(null); // 'text' | 'url' | 'file'
+  const [form, setForm] = useState({ nombre: "", contenido: "", url: "", scope: "tenant" });
+  const [file, setFile] = useState(null);
+  const [saving, setSaving] = useState(false);
+
+  const load = () => supabase.from("ai_knowledge_base").select("*").eq("tenant_id", tenantId).order("created_at", { ascending: false }).then(({ data }) => setItems(data || []));
+  useEffect(() => { load(); }, [tenantId]);
+
+  const totalTokens = items.reduce((s, i) => s + (i.tokens || 0), 0);
+
+  const guardar = async () => {
+    if (!form.nombre.trim()) { alert("Nombre requerido"); return; }
+    setSaving(true);
+    let file_url = null;
+    if (showAdd === "file" && file) {
+      const ext = file.name.split(".").pop();
+      const path = `kb/${tenantId}/${Date.now()}.${ext}`;
+      const { error } = await supabase.storage.from("comprobantes").upload(path, file);
+      if (!error) file_url = supabase.storage.from("comprobantes").getPublicUrl(path).data.publicUrl;
+    }
+    const id = `KB-${Date.now()}`;
+    const row = {
+      id, tenant_id: tenantId, nombre: form.nombre.trim(), tipo: showAdd, scope: form.scope,
+      contenido: showAdd === "text" ? form.contenido : null,
+      url: showAdd === "url" ? form.url : null,
+      file_url,
+      tokens: showAdd === "text" ? Math.ceil((form.contenido || "").length / 4) : 0,
+    };
+    await supabase.from("ai_knowledge_base").insert(row);
+    setShowAdd(null); setForm({ nombre: "", contenido: "", url: "", scope: "tenant" }); setFile(null);
+    setSaving(false); load();
+  };
+
+  const toggle = async (r) => {
+    await supabase.from("ai_knowledge_base").update({ activo: !r.activo }).eq("id", r.id);
+    load();
+  };
+  const borrar = async (r) => {
+    if (!confirm(`Eliminar "${r.nombre}"?`)) return;
+    await supabase.from("ai_knowledge_base").delete().eq("id", r.id);
+    load();
+  };
+
+  return (
+    <div style={{ padding: 20 }}>
+      <HEADER title="📚 Knowledge Base" subtitle={`RAG Storage: ${totalTokens.toLocaleString("es-CO")} / 500,000 tokens`} />
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 12, marginBottom: 20 }}>
+        <button onClick={() => setShowAdd("url")} style={{ ...CARD, cursor: "pointer", textAlign: "center", border: `1px dashed ${B.navyLight}` }}>
+          <div style={{ fontSize: 24 }}>🔗</div>
+          <div style={{ fontSize: 12, color: "#fff", fontWeight: 700, marginTop: 6 }}>Add URL</div>
+        </button>
+        <button onClick={() => setShowAdd("file")} style={{ ...CARD, cursor: "pointer", textAlign: "center", border: `1px dashed ${B.navyLight}` }}>
+          <div style={{ fontSize: 24 }}>📄</div>
+          <div style={{ fontSize: 12, color: "#fff", fontWeight: 700, marginTop: 6 }}>Add Files</div>
+        </button>
+        <button onClick={() => setShowAdd("text")} style={{ ...CARD, cursor: "pointer", textAlign: "center", border: `1px dashed ${B.navyLight}` }}>
+          <div style={{ fontSize: 24 }}>🅣</div>
+          <div style={{ fontSize: 12, color: "#fff", fontWeight: 700, marginTop: 6 }}>Add Text</div>
+        </button>
+      </div>
+      {items.length === 0 ? <EMPTY text="Aún no hay contenido en la KB. Agrega texto, URLs o archivos para que el agente los use." /> : (
+        <div style={CARD}>
+          <table style={{ width: "100%", fontSize: 12 }}>
+            <thead>
+              <tr style={{ color: B.sand, textTransform: "uppercase", fontSize: 10, letterSpacing: 1, textAlign: "left" }}>
+                <th style={{ padding: 8 }}>Nombre</th><th>Tipo</th><th>Scope</th><th>Tokens</th><th>Activo</th><th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.map(r => (
+                <tr key={r.id} style={{ borderTop: `1px solid ${B.navyLight}`, color: "#fff" }}>
+                  <td style={{ padding: 10 }}>{r.nombre}</td>
+                  <td>{TAG(B.sky, r.tipo)}</td>
+                  <td>{TAG(r.scope === "global" ? "#a78bfa" : B.sand, r.scope)}</td>
+                  <td>{r.tokens?.toLocaleString("es-CO") || 0}</td>
+                  <td><input type="checkbox" checked={r.activo} onChange={() => toggle(r)} /></td>
+                  <td style={{ textAlign: "right" }}>
+                    <button onClick={() => borrar(r)} style={{ background: "transparent", border: "none", color: B.danger, cursor: "pointer", fontSize: 14 }}>🗑</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {showAdd && (
+        <div onClick={e => e.target === e.currentTarget && setShowAdd(null)}
+          style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20, zIndex: 100 }}>
+          <div style={{ background: B.navyMid, borderRadius: 14, padding: 22, maxWidth: 640, width: "100%" }}>
+            <div style={{ fontSize: 18, fontWeight: 800, color: "#fff", marginBottom: 14 }}>
+              Agregar {showAdd === "text" ? "texto" : showAdd === "url" ? "URL" : "archivo"} a la KB
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              <div>
+                <label style={LS}>Nombre</label>
+                <input value={form.nombre} onChange={e => setForm({ ...form, nombre: e.target.value })} style={IS} />
+              </div>
+              {showAdd === "text" && (
+                <div>
+                  <label style={LS}>Contenido</label>
+                  <textarea value={form.contenido} onChange={e => setForm({ ...form, contenido: e.target.value })} rows={10} style={{ ...IS, fontFamily: "monospace" }} />
+                </div>
+              )}
+              {showAdd === "url" && (
+                <div>
+                  <label style={LS}>URL</label>
+                  <input value={form.url} onChange={e => setForm({ ...form, url: e.target.value })} placeholder="https://…" style={IS} />
+                </div>
+              )}
+              {showAdd === "file" && (
+                <div>
+                  <label style={LS}>Archivo (PDF/DOCX/TXT)</label>
+                  <input type="file" accept=".pdf,.txt,.md,.docx" onChange={e => setFile(e.target.files?.[0])} style={IS} />
+                </div>
+              )}
+              <div>
+                <label style={LS}>Scope</label>
+                <select value={form.scope} onChange={e => setForm({ ...form, scope: e.target.value })} style={IS}>
+                  <option value="tenant">Solo este tenant</option>
+                  <option value="global">Global (todos los tenants)</option>
+                </select>
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 16 }}>
+              <button onClick={() => setShowAdd(null)} style={BTN(B.navyLight)}>Cancelar</button>
+              <button onClick={guardar} disabled={saving} style={BTN(B.success)}>{saving ? "…" : "💾 Guardar"}</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
