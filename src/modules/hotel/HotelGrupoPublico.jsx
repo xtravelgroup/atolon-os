@@ -277,14 +277,30 @@ export default function HotelGrupoPublico() {
                     {cat?.descripcion && (
                       <div style={{ fontSize: 11, color: "rgba(255,255,255,0.55)" }}>{cat.descripcion}</div>
                     )}
+                    {cat && (
+                      <div style={{ fontSize: 11, color: B.sand, marginTop: 4, display: "flex", flexWrap: "wrap", gap: 8 }}>
+                        <span>👥 Incluye {cat.capacidad_incluida || 2} pax</span>
+                        {Number(cat.capacidad_maxima) > Number(cat.capacidad_incluida) && (
+                          <span>· Máx {cat.capacidad_maxima}</span>
+                        )}
+                        {Number(cat.precio_persona_adicional) > 0 && (
+                          <span>· ➕ {COP(cat.precio_persona_adicional)}/pax extra</span>
+                        )}
+                      </div>
+                    )}
                     {fechasValidas && agotado && (
                       <div style={{ fontSize: 11, marginTop: 4, color: B.danger, fontWeight: 700 }}>
                         No disponible en esas fechas
                       </div>
                     )}
                   </div>
-                  <div style={{ fontWeight: 800, color: B.hotel, fontSize: 16 }}>
-                    {COP(t.precio_noche)}<span style={{ fontSize: 11, color: "rgba(255,255,255,0.5)" }}> /noche</span>
+                  <div style={{ textAlign: "right" }}>
+                    <div style={{ fontWeight: 800, color: B.hotel, fontSize: 16 }}>
+                      {COP(t.precio_noche)}<span style={{ fontSize: 11, color: "rgba(255,255,255,0.5)" }}> /noche</span>
+                    </div>
+                    <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)" }}>
+                      base {cat?.capacidad_incluida || 2} pax
+                    </div>
                   </div>
                 </label>
               );
