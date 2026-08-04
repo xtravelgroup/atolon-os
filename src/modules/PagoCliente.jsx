@@ -283,6 +283,11 @@ function LinkExpirado() {
 }
 
 // ─── componente principal ───────────────────────────────────────────────────
+// Versión de los términos y condiciones. Subir si cambia el texto.
+const TERMINOS_VERSION = "1.0-2026-08";
+// Umbral de identificación requerida (COP)
+const UMBRAL_ID_COP = 5_000_000;
+
 export default function PagoCliente() {
   const reservaId = getReservaId();
   const [reserva, setReserva] = useState(null);
@@ -290,6 +295,15 @@ export default function PagoCliente() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [procesando, setProcesando] = useState("");
+
+  // ── Anti-chargeback: T&C, ID y captura de contexto ───────────────────────
+  const [autoriza, setAutoriza] = useState(false);
+  const [mostrarTerminos, setMostrarTerminos] = useState(false);
+  const [idNumero, setIdNumero] = useState("");
+  const [idTipo, setIdTipo] = useState("CC");
+  const [idFile, setIdFile] = useState(null);
+  const [idUploading, setIdUploading] = useState(false);
+  const [idUploadedUrl, setIdUploadedUrl] = useState("");
 
   const secsLeft = useCountdown(reserva?.link_expira_at);
   // Tratamos null (no cargado aun) como "sin expirar" para evitar
@@ -392,6 +406,76 @@ export default function PagoCliente() {
     return () => { cancelado = true; };
   }, [wompiTxId, stripeSessionId, reservaId]);
 
+  // Captura de evidencia anti-chargeback: IP, user-agent, T&C, foto ID.
+  // Se ejecuta ANTES de redirigir al PSP. Retorna true si todo OK.
+  const capturarAutorizacion = async (fresh) => {
+    const monto = Number(fresh.saldo) > 0 ? Number(fresh.saldo) : Number(fresh.total);
+    // Validar checkbox
+    if (!autoriza) {
+      setError("Debes aceptar los términos y condiciones para continuar.");
+      window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" });
+      return false;
+    }
+    // Validar ID para montos altos
+    if (monto >= UMBRAL_ID_COP) {
+      if (!idUploadedUrl) { setError("Para montos mayores a $5.000.000 COP debes subir foto de tu documento."); return false; }
+      if (!idNumero.trim()) { setError("Ingresa el número de tu documento."); return false; }
+    }
+    // IP
+    let ip = null;
+    try {
+      const r = await fetch("https://api.ipify.org?format=json");
+      if (r.ok) ip = (await r.json()).ip;
+    } catch {}
+    // Geo (opcional, requiere permiso)
+    let geo = null;
+    try {
+      geo = await new Promise((res) => {
+        if (!navigator.geolocation) return res(null);
+        navigator.geolocation.getCurrentPosition(
+          p => res({ lat: p.coords.latitude, lon: p.coords.longitude, acc: p.coords.accuracy }),
+          () => res(null),
+          { timeout: 3000, maximumAge: 60_000 }
+        );
+      });
+    } catch {}
+    const patch = {
+      autorizacion_at: new Date().toISOString(),
+      autorizacion_ip: ip,
+      autorizacion_user_agent: navigator.userAgent,
+      autorizacion_terminos_version: TERMINOS_VERSION,
+      autorizacion_referer: document.referrer || null,
+      autorizacion_geo: geo,
+      autorizacion_locale: navigator.language,
+      autorizacion_timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    };
+    if (monto >= UMBRAL_ID_COP) {
+      patch.autorizacion_id_url = idUploadedUrl;
+      patch.autorizacion_id_numero = idNumero.trim();
+      patch.autorizacion_id_tipo = idTipo;
+    }
+    await supabase.from("reservas").update(patch).eq("id", fresh.id);
+    setError("");
+    return true;
+  };
+
+  const subirIdFile = async (file) => {
+    if (!file) return;
+    if (file.size > 10 * 1024 * 1024) { setError("Foto muy pesada (máx 10MB)"); return; }
+    setIdUploading(true); setError("");
+    try {
+      const ext = file.name.split(".").pop() || "jpg";
+      const path = `id-cliente/${reservaId}-${Date.now()}.${ext}`;
+      const { error: upErr } = await supabase.storage.from("comprobantes").upload(path, file, { cacheControl: "3600", upsert: false });
+      if (upErr) throw upErr;
+      const { data: pub } = supabase.storage.from("comprobantes").getPublicUrl(path);
+      setIdUploadedUrl(pub.publicUrl);
+      setIdFile(file);
+    } catch (e) {
+      setError("No se pudo subir la foto: " + (e.message || e));
+    } finally { setIdUploading(false); }
+  };
+
   const pagarWompi = async () => {
     if (!reserva) return;
     // Re-fetch para evitar pagar una reserva ya pagada por otro canal o
@@ -408,6 +492,7 @@ export default function PagoCliente() {
       setReserva(prev => ({ ...prev, ...fresh }));
       return;
     }
+    if (!(await capturarAutorizacion(fresh))) return;
     setProcesando("wompi");
     const redirectUrl = window.location.href.split("?")[0];
     const url = await wompiCheckoutUrl({
@@ -438,6 +523,7 @@ export default function PagoCliente() {
       setReserva(prev => ({ ...prev, ...fresh }));
       return;
     }
+    if (!(await capturarAutorizacion(fresh))) return;
     setProcesando("stripe");
     try {
       // Tasa USD/COP fallback (4200). El verdadero blindaje contra fraude de
@@ -562,12 +648,60 @@ export default function PagoCliente() {
         </div>
       </div>
 
+      {/* ── Anti-chargeback: T&C + autorización + ID (montos altos) ── */}
+      {(() => {
+        const montoActual = Number(reserva.saldo) > 0 ? Number(reserva.saldo) : Number(reserva.total);
+        const requiereId = montoActual >= UMBRAL_ID_COP;
+        return (
+          <div style={{ marginBottom: 20 }}>
+            {requiereId && (
+              <div style={{ background: B.warning + "18", border: `1px solid ${B.warning}55`, borderRadius: 12, padding: "14px 16px", marginBottom: 14 }}>
+                <div style={{ fontSize: 12, fontWeight: 800, color: B.warning, textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>
+                  📷 Verificación de identidad requerida
+                </div>
+                <div style={{ fontSize: 12, color: "rgba(255,255,255,0.7)", marginBottom: 10, lineHeight: 1.5 }}>
+                  Por seguridad, para transacciones superiores a $5.000.000 COP necesitamos foto de tu documento de identidad.
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "auto 1fr", gap: 8, marginBottom: 10 }}>
+                  <select value={idTipo} onChange={e => setIdTipo(e.target.value)}
+                    style={{ padding: "8px 10px", borderRadius: 8, background: B.navy, border: `1px solid ${B.navyLight}`, color: "#fff", fontSize: 13 }}>
+                    <option value="CC">CC</option><option value="CE">CE</option>
+                    <option value="Pasaporte">Pasaporte</option><option value="NIT">NIT</option>
+                  </select>
+                  <input value={idNumero} onChange={e => setIdNumero(e.target.value)} placeholder="Número de documento"
+                    style={{ padding: "8px 12px", borderRadius: 8, background: B.navy, border: `1px solid ${B.navyLight}`, color: "#fff", fontSize: 13 }} />
+                </div>
+                <input type="file" accept="image/*" capture="environment" onChange={e => subirIdFile(e.target.files?.[0])} disabled={idUploading}
+                  style={{ width: "100%", padding: "8px 10px", borderRadius: 8, background: B.navy, border: `1px solid ${B.navyLight}`, color: "#fff", fontSize: 12 }} />
+                {idUploading && <div style={{ fontSize: 11, color: B.sky, marginTop: 6 }}>⏳ Subiendo…</div>}
+                {idUploadedUrl && <div style={{ fontSize: 11, color: B.success, marginTop: 6 }}>✅ Documento cargado</div>}
+              </div>
+            )}
+            <div style={{ background: B.navy, border: `1px solid ${B.navyLight}`, borderRadius: 12, padding: "12px 14px" }}>
+              <label style={{ display: "flex", gap: 10, alignItems: "flex-start", cursor: "pointer" }}>
+                <input type="checkbox" checked={autoriza} onChange={e => setAutoriza(e.target.checked)}
+                  style={{ width: 20, height: 20, marginTop: 2, cursor: "pointer", accentColor: B.success, flexShrink: 0 }} />
+                <span style={{ fontSize: 12, color: "rgba(255,255,255,0.85)", lineHeight: 1.5 }}>
+                  Confirmo que soy el titular de la tarjeta o método de pago, <strong style={{ color: "#fff" }}>autorizo expresamente</strong> el cargo por{" "}
+                  <strong style={{ color: B.sand }}>{COP(Number(reserva.saldo) > 0 ? reserva.saldo : reserva.total)}</strong> a favor de <strong>X Travel Group SAS</strong> (Atolón Beach Club) y acepto los{" "}
+                  <span onClick={(e) => { e.preventDefault(); setMostrarTerminos(true); }}
+                    style={{ color: B.sky, textDecoration: "underline", cursor: "pointer" }}>términos y condiciones</span>.
+                </span>
+              </label>
+              <div style={{ marginTop: 8, fontSize: 10, color: "rgba(255,255,255,0.35)", paddingLeft: 30 }}>
+                Al continuar registramos tu IP, dispositivo y fecha/hora como evidencia de esta autorización.
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Opciones de pago */}
       <p style={{ fontSize: 12, color: "rgba(255,255,255,0.35)", textTransform: "uppercase", letterSpacing: 1, marginBottom: 14 }}>Selecciona tu método de pago</p>
 
       <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
         {/* Tarjeta Colombia — Wompi */}
-        <button onClick={pagarWompi} disabled={!!procesando}
+        <button onClick={pagarWompi} disabled={!!procesando || !autoriza}
           style={{ display: "flex", alignItems: "center", gap: 16, padding: "18px 20px", background: procesando === "wompi" ? "#5B4CF5" + "33" : B.navy, border: `2px solid ${procesando === "wompi" ? "#5B4CF5" : B.navyLight}`, borderRadius: 14, cursor: procesando ? "default" : "pointer", width: "100%", color: B.white, textAlign: "left" }}>
           <div style={{ width: 44, height: 44, borderRadius: 10, background: "#5B4CF5", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, fontWeight: 900, color: "#fff", flexShrink: 0 }}>W</div>
           <div style={{ flex: 1 }}>
@@ -578,7 +712,7 @@ export default function PagoCliente() {
         </button>
 
         {/* Tarjeta Internacional — Stripe */}
-        <button onClick={pagarStripe} disabled={!!procesando}
+        <button onClick={pagarStripe} disabled={!!procesando || !autoriza}
           style={{ display: "flex", alignItems: "center", gap: 16, padding: "18px 20px", background: procesando === "stripe" ? "#635BFF" + "33" : B.navy, border: `2px solid ${procesando === "stripe" ? "#635BFF" : B.navyLight}`, borderRadius: 14, cursor: procesando ? "default" : "pointer", width: "100%", color: B.white, textAlign: "left" }}>
           <div style={{ width: 44, height: 44, borderRadius: 10, background: "#635BFF", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22, flexShrink: 0 }}>S</div>
           <div style={{ flex: 1 }}>
@@ -591,9 +725,50 @@ export default function PagoCliente() {
         <AvisoCargoInternacional lang="es" />
       </div>
 
+      {error && (
+        <div style={{ marginTop: 14, padding: 12, background: B.danger + "22", border: `1px solid ${B.danger}`, borderRadius: 8, color: B.danger, fontSize: 12 }}>
+          ⚠ {error}
+        </div>
+      )}
+
       <p style={{ marginTop: 20, fontSize: 11, color: "rgba(255,255,255,0.2)", textAlign: "center" }}>
         Pago seguro · Atolon Beach Club SAS · NIT 901.873.457
       </p>
+
+      {mostrarTerminos && (
+        <div onClick={(e) => e.target === e.currentTarget && setMostrarTerminos(false)}
+          style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.85)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20, zIndex: 10000 }}>
+          <div style={{ background: "#fff", borderRadius: 14, padding: 24, maxWidth: 640, width: "100%", maxHeight: "85vh", overflowY: "auto", color: "#111" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 14 }}>
+              <h2 style={{ margin: 0, fontSize: 20 }}>Términos y Condiciones de Pago</h2>
+              <button onClick={() => setMostrarTerminos(false)} style={{ background: "none", border: "none", fontSize: 22, cursor: "pointer", color: "#666" }}>×</button>
+            </div>
+            <div style={{ fontSize: 12, color: "#666", marginBottom: 14 }}>Versión {TERMINOS_VERSION} · Atolon Beach Club — X Travel Group SAS · NIT 901.873.457</div>
+            <div style={{ fontSize: 13, lineHeight: 1.6, color: "#222" }}>
+              <p><strong>1. Autorización expresa del cargo.</strong> Al marcar el consentimiento y proceder con el pago, el cliente declara ser el titular legítimo de la tarjeta o método de pago utilizado, y autoriza de forma expresa e irrevocable a X Travel Group SAS a debitar el monto indicado.</p>
+              <p><strong>2. Naturaleza del servicio.</strong> El pago corresponde a servicios turísticos, de hospedaje, alimentación, eventos o experiencias contratadas con Atolón Beach Club. Los servicios están sujetos a disponibilidad y a las condiciones específicas de cada producto.</p>
+              <p><strong>3. Política de cancelación y reembolsos.</strong> Las cancelaciones deben notificarse por escrito. Cancelaciones con más de 72h de anticipación: reembolso del 100% menos comisión bancaria (~5%). Entre 24-72h: se retiene el 50%. Menos de 24h o no-show: no hay reembolso. Eventos y grupos: no reembolsables una vez confirmados. Reembolsos aprobados se procesan en 5-15 días hábiles al mismo medio de pago.</p>
+              <p><strong>4. Ausencia por causas de fuerza mayor.</strong> En caso de mal clima que impida operar, ofrecemos reprogramación sin costo hasta por 6 meses. No aplica reembolso monetario.</p>
+              <p><strong>5. Aceptación de riesgos.</strong> El cliente acepta que las actividades náuticas y en isla implican riesgos inherentes. Debe declarar condiciones médicas relevantes antes del embarque.</p>
+              <p><strong>6. Verificación de identidad.</strong> Para transacciones superiores a $5.000.000 COP se requiere copia de documento de identidad del titular del pago como medida antifraude.</p>
+              <p><strong>7. Evidencia de la transacción.</strong> El cliente entiende y acepta que para propósitos de prevención de fraude y disputas de tarjeta, X Travel Group SAS registra fecha/hora, dirección IP, dispositivo, ubicación (si se autoriza) y esta aceptación de términos como evidencia de la autorización de compra.</p>
+              <p><strong>8. Disputas y chargebacks.</strong> Cualquier disputa debe canalizarse primero con nuestro equipo de servicio al cliente ({" "}
+                <a href="mailto:hola@atoloncartagena.com">hola@atoloncartagena.com</a>). Los chargebacks improcedentes serán defendidos con la evidencia recolectada bajo esta autorización, y podrán generar costos legales a cargo del cliente.</p>
+              <p><strong>9. Tratamiento de datos.</strong> Los datos personales se procesan conforme a la política de privacidad publicada en www.atolon.co. El titular puede ejercer los derechos de la Ley 1581 de 2012 escribiendo a datos@atoloncartagena.com.</p>
+              <p><strong>10. Cargo internacional.</strong> Cuando se paga con tarjeta internacional, el cargo puede aparecer a nombre de "X Travel Group" y la moneda podrá presentarse en USD según la tarifa vigente.</p>
+              <p style={{ marginTop: 20, fontSize: 11, color: "#888", borderTop: "1px solid #eee", paddingTop: 12 }}>
+                Al hacer click en cualquiera de los botones de pago, el cliente reconoce haber leído y aceptado íntegramente estos términos.
+              </p>
+            </div>
+            <div style={{ marginTop: 16, textAlign: "right" }}>
+              <button onClick={() => setMostrarTerminos(false)}
+                style={{ padding: "10px 20px", background: "#111", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer", fontWeight: 700 }}>
+                Cerrar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
