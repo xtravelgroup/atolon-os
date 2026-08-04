@@ -11,10 +11,12 @@ import FacturaElectronicaForm, { FE_EMPTY, feValidate, fePayload } from "../lib/
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 function getReservaId() {
-  // /pago/R-1234567  or  /pago/WEB-xxx  or  /pago?id=R-1234567  or  /pago?reserva=WEB-xxx
+  // /pago/R-1234567  or  /pago/WEB-xxx  or  /pago/EVBAL-xxx  or  /pago?id=R-1234567  or  /pago?reserva=WEB-xxx
+  // Prefijos válidos: R- (reserva), WEB- (reserva web), EVBAL- (balance grupo/evento),
+  // AB- (abono), CXC- (cxc), y cualquier otro que la BD tenga registrado como reserva.
   const parts = window.location.pathname.split("/");
   const fromPath = parts[parts.length - 1];
-  if (fromPath && (fromPath.startsWith("R-") || fromPath.startsWith("WEB-"))) return fromPath;
+  if (fromPath && /^(R-|WEB-|EVBAL-|AB-|CXC-|GRP-|EVT-)/.test(fromPath)) return fromPath;
   const p = new URLSearchParams(window.location.search);
   return p.get("reserva") || p.get("id") || "";
 }
