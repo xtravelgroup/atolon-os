@@ -11,9 +11,10 @@ import { useMobile } from "../lib/useMobile";
 const todayStr = () => new Date().toLocaleDateString("en-CA", { timeZone: "America/Bogota" });
 const fmtFecha = (d) => d ? new Date(d + "T12:00:00").toLocaleDateString("es-CO", { weekday: "long", day: "2-digit", month: "long" }) : "";
 const COMIDAS = [
-  { k: "desayuno", l: "Desayuno", icon: "🌅", color: "#fbbf24", franja: "06:00–10:00" },
-  { k: "almuerzo", l: "Almuerzo", icon: "🌞", color: "#22c55e", franja: "12:00–14:00" },
-  { k: "cena",     l: "Cena",     icon: "🌙", color: "#a78bfa", franja: "18:00–21:00" },
+  { k: "desayuno",  l: "Desayuno",     icon: "🌅", color: "#fbbf24", franja: "06:00–10:00" },
+  { k: "almuerzo",  l: "Almuerzo",     icon: "🌞", color: "#22c55e", franja: "12:00–14:00" },
+  { k: "cena",      l: "Cena",         icon: "🌙", color: "#a78bfa", franja: "18:00–21:00" },
+  { k: "agua_cafe", l: "Agua y Café",  icon: "☕", color: "#38bdf8", franja: "todo el día" },
 ];
 const BTN = (bg, color = "#fff") => ({ padding: "8px 14px", borderRadius: 8, border: "none", background: bg, color, cursor: "pointer", fontWeight: 700, fontSize: 12 });
 const IS  = { width: "100%", padding: "9px 12px", borderRadius: 8, background: B.navyLight, border: `1px solid ${B.navyLight}`, color: "#fff", fontSize: 13, outline: "none", boxSizing: "border-box" };
