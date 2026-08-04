@@ -29,9 +29,32 @@ export default function MarcarPagadoModal({ pago, currentUser, onClose, onSaved 
   const [err, setErr] = useState("");
 
   const esComision = pago.accion === "marcar_comision";
+  const esNominaDia = pago.accion === "marcar_nomina_dia";
   const montoBruto = Number(pago.monto) || 0;
   const retencionNum = Number(retencion) || 0;
   const montoNeto = Math.max(0, montoBruto - retencionNum);
+
+  // Documentos y datos capturados al aprobar (comision) / solicitar (nomina)
+  const docs = esComision ? [
+    { label: "Cuenta de cobro", url: pago.comision?.cuenta_cobro_url, icon: "📄" },
+    { label: "RUT",             url: pago.comision?.rut_url,           icon: "📋" },
+    { label: "Cert. bancaria",  url: pago.comision?.cert_bancaria_url, icon: "🏦" },
+  ].filter(d => d.url) : esNominaDia ? [
+    { label: "Cuenta de cobro", url: pago.nominaDia?.cuenta_cobro_url, icon: "📄" },
+  ].filter(d => d.url) : [];
+
+  const meta = esComision ? [
+    ["Aliado",       pago.comision?.aliado_nombre],
+    ["Semana",       pago.comision?.semana_inicio && pago.comision?.semana_fin ? `${pago.comision.semana_inicio} → ${pago.comision.semana_fin}` : null],
+    ["Aprobado por", pago.comision?.aprobado_por],
+    ["Aprobado el",  pago.comision?.aprobado_at ? new Date(pago.comision.aprobado_at).toLocaleString("es-CO") : null],
+    ["Notas",        pago.comision?.notas],
+  ].filter(([, v]) => v) : esNominaDia ? [
+    ["Empleado", pago.nominaDia?.nombre],
+    ["Fecha",    pago.nominaDia?.fecha],
+    ["Cargo",    pago.nominaDia?.cargo],
+    ["Notas",    pago.nominaDia?.notas],
+  ].filter(([, v]) => v) : [];
 
   const handleFile = (e) => {
     const f = e.target.files?.[0];
@@ -179,6 +202,34 @@ export default function MarcarPagadoModal({ pago, currentUser, onClose, onSaved 
         </div>
 
         <div style={{ padding: 22, display: "flex", flexDirection: "column", gap: 14 }}>
+          {(docs.length > 0 || meta.length > 0) && (
+            <div style={{ background: B.navy, borderRadius: 8, padding: 12, border: `1px solid ${B.navyLight}` }}>
+              <div style={{ fontSize: 11, color: B.sand, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 700, marginBottom: 8 }}>
+                Información de la {esComision ? "aprobación" : "solicitud"}
+              </div>
+              {meta.length > 0 && (
+                <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 4, marginBottom: docs.length > 0 ? 10 : 0 }}>
+                  {meta.map(([k, v]) => (
+                    <div key={k} style={{ display: "flex", gap: 8, fontSize: 12 }}>
+                      <span style={{ minWidth: 96, color: "rgba(255,255,255,0.45)" }}>{k}:</span>
+                      <span style={{ color: "#fff", wordBreak: "break-word" }}>{String(v)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {docs.length > 0 && (
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                  {docs.map(d => (
+                    <a key={d.label} href={d.url} target="_blank" rel="noreferrer"
+                      style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 10px", background: B.sky + "22", color: B.sky, borderRadius: 6, fontSize: 11, fontWeight: 700, textDecoration: "none", border: `1px solid ${B.sky}44` }}>
+                      <span>{d.icon}</span> {d.label} ↗
+                    </a>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
           <div>
             <label style={LS}>Referencia del pago *</label>
             <input value={referencia} onChange={e => setReferencia(e.target.value)}
