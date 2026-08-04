@@ -1973,6 +1973,7 @@ function ReporteTransacciones() {
   const [fechaIni, setFechaIni] = useState(firstOfMonth());
   const [fechaFin, setFechaFin] = useState(todayStr());
   const [proveedor, setProveedor] = useState("todos");
+  const [canal, setCanal] = useState("todos");
   const [loading, setLoading] = useState(true);
   const [transacciones, setTransacciones] = useState([]);
   const [openReservaId, setOpenReservaId] = useState(null);
@@ -2040,11 +2041,24 @@ function ReporteTransacciones() {
   }, [fechaIni, fechaFin]);
   useEffect(() => { load(); }, [load]);
 
-  // Filtro por proveedor
+  // Canales únicos (para el select)
+  const canales = useMemo(() => {
+    const s = new Set();
+    transacciones.forEach(t => { if (t.canal) s.add(t.canal); });
+    return Array.from(s).sort();
+  }, [transacciones]);
+
+  // Filtros por proveedor y canal
   const filtered = useMemo(() => {
-    if (proveedor === "todos") return transacciones;
-    return transacciones.filter(t => (t.proveedor || "").toLowerCase() === proveedor.toLowerCase());
-  }, [transacciones, proveedor]);
+    return transacciones.filter(t => {
+      if (proveedor !== "todos" && (t.proveedor || "").toLowerCase() !== proveedor.toLowerCase()) return false;
+      if (canal !== "todos") {
+        if (canal === "__sin__") { if (t.canal) return false; }
+        else if ((t.canal || "") !== canal) return false;
+      }
+      return true;
+    });
+  }, [transacciones, proveedor, canal]);
 
   // Stats por proveedor
   const stats = useMemo(() => {
@@ -2126,6 +2140,14 @@ function ReporteTransacciones() {
             <option value="SKY">SKY</option>
             <option value="CXC">CXC</option>
             <option value="Cortesía">Cortesía</option>
+          </select>
+        </div>
+        <div style={{ minWidth: 160 }}>
+          <label style={LS}>Canal</label>
+          <select value={canal} onChange={e => setCanal(e.target.value)} style={IS}>
+            <option value="todos">Todos</option>
+            {canales.map(c => <option key={c} value={c}>{c}</option>)}
+            <option value="__sin__">Sin canal</option>
           </select>
         </div>
         <button onClick={exportCSV} disabled={filtered.length === 0} style={{ ...BTN(B.success), opacity: filtered.length === 0 ? 0.4 : 1 }}>
