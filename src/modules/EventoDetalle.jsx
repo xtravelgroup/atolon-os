@@ -3394,12 +3394,13 @@ function TabServicios({ items, onChange, pasadiasOrg = [], onChangePasadias, cat
 const FORMAS_PAGO_GRUPO = ["Transferencia", "Efectivo", "Datafono", "Wompi", "Zelle", "Cheque"];
 const EMPTY_PAGO = { id: "", monto: "", propina: "", forma_pago: "Transferencia", fecha: "", notas: "", registrado_por: "", comprobante_url: "" };
 
-function TabPagos({ pagos = [], onChange, totalGrupo = 0, eventoId = null, descuento = 0, onChangeDescuento = null }) {
+function TabPagos({ pagos = [], onChange, totalGrupo = 0, eventoId = null, descuento = 0, onChangeDescuento = null, evento = null }) {
   const [showForm, setShowForm] = useState(false);
   const [form, setForm]         = useState(EMPTY_PAGO);
   const [uploading, setUploading] = useState(false);
   const [uploadErr, setUploadErr] = useState("");
   const [saving,    setSaving]    = useState(false);
+  const [showLinkPago, setShowLinkPago] = useState(false);
   // Buffer local del input descuento — confirma con onBlur para no
   // disparar updates al evento en cada keystroke.
   const [descBuf, setDescBuf] = useState(String(Math.max(0, Number(descuento) || 0)));
@@ -3500,7 +3501,7 @@ function TabPagos({ pagos = [], onChange, totalGrupo = 0, eventoId = null, descu
         </div>
       )}
       {/* Resumen */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginBottom: 24 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginBottom: 14 }}>
         {[
           { label: "Total Grupo", val: totalGrupo, color: "rgba(255,255,255,0.6)" },
           { label: "Total Pagado", val: totalPagado, color: B.success },
@@ -3512,6 +3513,23 @@ function TabPagos({ pagos = [], onChange, totalGrupo = 0, eventoId = null, descu
           </div>
         ))}
       </div>
+
+      {/* Botón: crear link de pago (Wompi/Zoho) para que el cliente pague el saldo */}
+      {saldo > 0 && eventoId && (
+        <div style={{ marginBottom: 20, display: "flex", justifyContent: "flex-end" }}>
+          <button type="button" onClick={() => setShowLinkPago(true)}
+            style={{ ...BTN(B.sky), fontSize: 13, padding: "10px 18px", fontWeight: 700 }}>
+            🔗 Crear link de pago para el cliente
+          </button>
+        </div>
+      )}
+      {showLinkPago && (
+        <LinkPagoEventoModal
+          evento={evento}
+          saldoDefault={saldo}
+          onClose={() => setShowLinkPago(false)}
+        />
+      )}
 
       {/* Lista de pagos */}
       <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 16 }}>
@@ -4736,7 +4754,7 @@ export default function EventoDetalle({ evento: inicial, canEdit = true, onBack,
         // refleje promociones sin tener que reducir manualmente el valor base.
         const descuento      = Math.max(0, Number(evento.descuento) || 0);
         const totalGrupo     = Math.max(0, base + (Number(evento.valor_extras)||0) + totalServicios - descuento);
-        return <TabPagos pagos={evento.pagos||[]} onChange={v => updateLocal("pagos", v)} totalGrupo={totalGrupo} eventoId={evento.id} descuento={evento.descuento || 0} onChangeDescuento={vistaOperativa ? null : (v => updateLocal("descuento", v))} />;
+        return <TabPagos pagos={evento.pagos||[]} onChange={v => updateLocal("pagos", v)} totalGrupo={totalGrupo} eventoId={evento.id} descuento={evento.descuento || 0} onChangeDescuento={vistaOperativa ? null : (v => updateLocal("descuento", v))} evento={evento} />;
       })()}
       {tab === "transporte"&& <TabTransporte items={evento.transporte_detalle||[]} onChange={v => updateLocal("transporte_detalle", v)} embarcacionesEvento={evento.embarcaciones_evento||[]} onChangeEmbarcaciones={v => updateLocal("embarcaciones_evento", v)} timelineItems={evento.timeline_items||[]} evento={evento} updateLocal={updateLocal} />}
       {tab === "contactos" && <TabContactos  items={evento.contactos_rapidos||[]}         onChange={v => updateLocal("contactos_rapidos", v)} />}
@@ -6355,6 +6373,183 @@ function GastoServicioModal({ evento, editing, proveedores, servicios, onClose, 
             {saving ? "Guardando…" : isEdit ? "Guardar cambios" : "Registrar gasto"}
           </button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Modal: Crear link de pago (Wompi/Zoho/Stripe) para balance de evento ─
+// Genera una "reserva-espejo" con evento_id_balance ligado al evento.
+// El cliente paga por el checkout normal (/pago/{id}) con Wompi/Zoho/Stripe.
+// Un trigger DB copia el pago al evento.pagos[] al confirmarse.
+function LinkPagoEventoModal({ evento, saldoDefault, onClose }) {
+  const [monto, setMonto] = useState(String(saldoDefault || 0));
+  const [nombre, setNombre] = useState(evento?.contacto_nombre || evento?.nombre || "");
+  const [email,  setEmail]  = useState(evento?.contacto_email || "");
+  const [telefono, setTelefono] = useState(evento?.contacto_telefono || evento?.telefono || "");
+  const [expDias, setExpDias] = useState(7);
+  const [creando, setCreando] = useState(false);
+  const [linkGen, setLinkGen] = useState("");
+  const [reservaId, setReservaId] = useState("");
+  const [err, setErr] = useState("");
+  const [copied, setCopied] = useState(false);
+
+  const crear = async () => {
+    setErr("");
+    const m = Number(monto);
+    if (!Number.isFinite(m) || m <= 0) { setErr("El monto debe ser mayor a 0"); return; }
+    if (!nombre.trim()) { setErr("Nombre requerido"); return; }
+    if (!telefono.trim() && !email.trim()) { setErr("Al menos teléfono o email"); return; }
+    setCreando(true);
+    try {
+      const id = `EVBAL-${Date.now()}`;
+      const expira = new Date(Date.now() + Number(expDias) * 864e5).toISOString();
+      const { error } = await supabase.from("reservas").insert({
+        id,
+        evento_id_balance: evento.id,
+        nombre: `Balance grupo · ${evento.nombre || evento.id}`,
+        email: email.trim() || null,
+        telefono: telefono.trim() || null,
+        contacto: email.trim() || telefono.trim(),
+        fecha: (evento.fecha || new Date().toISOString().slice(0,10)).slice(0,10),
+        tipo: "Balance Grupo",
+        pax: Number(evento.pax_total) || 1,
+        pax_a: Number(evento.pax_total) || 1,
+        pax_n: 0,
+        total: m,
+        abono: 0,
+        saldo: m,
+        estado: "pendiente_pago",
+        forma_pago: "link_pago",
+        canal: "eventos_admin",
+        source: "eventos",
+        link_expira_at: expira,
+        notas: `Link de pago generado desde Evento ${evento.id}. Contacto: ${nombre}.`,
+      });
+      if (error) throw error;
+      const url = `https://www.atolon.co/pago/${id}`;
+      setReservaId(id);
+      setLinkGen(url);
+      logAccion({
+        modulo: "eventos",
+        accion: "crear_link_pago_balance",
+        tabla: "eventos",
+        registroId: evento.id,
+        datosDespues: { reserva_id: id, monto: m, expira },
+      });
+    } catch (e) {
+      setErr("Error: " + (e.message || e));
+    } finally {
+      setCreando(false);
+    }
+  };
+
+  const copiar = () => {
+    navigator.clipboard.writeText(linkGen);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  const enviarWA = () => {
+    const num = (telefono || "").replace(/\D/g, "");
+    const cop = new Intl.NumberFormat("es-CO").format(Number(monto));
+    const msg = encodeURIComponent(
+      `Hola ${nombre.split(" ")[0]}, te compartimos el link para pagar el balance de tu evento en Atolón Beach Club por $${cop} COP: ${linkGen}\n\nEl link vence en ${expDias} días. Puedes pagar con tarjeta de crédito, débito o transferencia via Wompi/Zoho Pay. 🌴`
+    );
+    window.open(`https://wa.me/${num}?text=${msg}`, "_blank");
+  };
+
+  return (
+    <div onClick={e => e.target === e.currentTarget && onClose()}
+      style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.75)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20, zIndex: 1000 }}>
+      <div style={{ background: B.navyMid, borderRadius: 14, padding: 24, maxWidth: 560, width: "100%", color: "#fff" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
+          <div>
+            <div style={{ fontSize: 18, fontWeight: 800 }}>🔗 Crear link de pago</div>
+            <div style={{ fontSize: 12, color: "rgba(255,255,255,0.55)", marginTop: 2 }}>
+              El cliente podrá pagar con Wompi, Zoho Pay o Stripe. Cuando el pago se confirme,
+              se agregará automáticamente al evento.
+            </div>
+          </div>
+          <button onClick={onClose} style={{ background: "transparent", border: "none", color: "#fff", fontSize: 22, cursor: "pointer" }}>×</button>
+        </div>
+
+        {!linkGen ? (
+          <>
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              <div>
+                <label style={LS}>Monto a cobrar (COP) *</label>
+                <input type="number" min="1" step="1000" value={monto} onChange={e => setMonto(e.target.value)}
+                  style={{ width: "100%", padding: "10px 14px", borderRadius: 8, background: B.navy, border: `1px solid ${B.navyLight}`, color: "#fff", fontSize: 15, outline: "none", boxSizing: "border-box" }} />
+                <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginTop: 4 }}>
+                  Sugerido: saldo pendiente <strong style={{ color: B.sky }}>{COP(saldoDefault)}</strong>
+                </div>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                <div>
+                  <label style={LS}>Nombre del pagador *</label>
+                  <input value={nombre} onChange={e => setNombre(e.target.value)}
+                    style={{ width: "100%", padding: "10px 12px", borderRadius: 8, background: B.navy, border: `1px solid ${B.navyLight}`, color: "#fff", fontSize: 13, outline: "none", boxSizing: "border-box" }} />
+                </div>
+                <div>
+                  <label style={LS}>Link vence en (días)</label>
+                  <input type="number" min="1" max="60" value={expDias} onChange={e => setExpDias(e.target.value)}
+                    style={{ width: "100%", padding: "10px 12px", borderRadius: 8, background: B.navy, border: `1px solid ${B.navyLight}`, color: "#fff", fontSize: 13, outline: "none", boxSizing: "border-box" }} />
+                </div>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                <div>
+                  <label style={LS}>Email</label>
+                  <input value={email} onChange={e => setEmail(e.target.value)} placeholder="cliente@correo.com"
+                    style={{ width: "100%", padding: "10px 12px", borderRadius: 8, background: B.navy, border: `1px solid ${B.navyLight}`, color: "#fff", fontSize: 13, outline: "none", boxSizing: "border-box" }} />
+                </div>
+                <div>
+                  <label style={LS}>Teléfono (para WhatsApp)</label>
+                  <input value={telefono} onChange={e => setTelefono(e.target.value)} placeholder="+57 300 123 4567"
+                    style={{ width: "100%", padding: "10px 12px", borderRadius: 8, background: B.navy, border: `1px solid ${B.navyLight}`, color: "#fff", fontSize: 13, outline: "none", boxSizing: "border-box" }} />
+                </div>
+              </div>
+            </div>
+            {err && <div style={{ marginTop: 12, padding: 10, background: B.danger + "22", color: B.danger, borderRadius: 8, fontSize: 12 }}>⚠ {err}</div>}
+            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 18 }}>
+              <button onClick={onClose} style={{ padding: "10px 16px", borderRadius: 8, border: `1px solid ${B.navyLight}`, background: "transparent", color: "rgba(255,255,255,0.7)", cursor: "pointer", fontSize: 13 }}>Cancelar</button>
+              <button onClick={crear} disabled={creando}
+                style={{ padding: "10px 20px", borderRadius: 8, border: "none", background: creando ? B.navyLight : B.success, color: "#fff", cursor: "pointer", fontWeight: 800, fontSize: 13 }}>
+                {creando ? "Generando…" : "🔗 Generar link"}
+              </button>
+            </div>
+          </>
+        ) : (
+          <div>
+            <div style={{ padding: 14, background: B.success + "22", border: `1px solid ${B.success}`, borderRadius: 10, marginBottom: 14 }}>
+              <div style={{ fontSize: 13, color: B.success, fontWeight: 800, marginBottom: 4 }}>✅ Link generado</div>
+              <div style={{ fontSize: 11, color: "rgba(255,255,255,0.65)" }}>Ref: {reservaId} · Vence en {expDias} días</div>
+            </div>
+            <div style={{ display: "flex", gap: 6, marginBottom: 14 }}>
+              <input value={linkGen} readOnly onClick={e => e.target.select()}
+                style={{ flex: 1, padding: "10px 12px", borderRadius: 8, background: B.navy, border: `1px solid ${B.navyLight}`, color: B.sky, fontSize: 12, fontFamily: "monospace", outline: "none" }} />
+              <button onClick={copiar}
+                style={{ padding: "10px 16px", borderRadius: 8, border: "none", background: copied ? B.success : B.sky, color: B.navy, cursor: "pointer", fontWeight: 700, fontSize: 12 }}>
+                {copied ? "✓ Copiado" : "📋 Copiar"}
+              </button>
+            </div>
+            {telefono && (
+              <button onClick={enviarWA}
+                style={{ width: "100%", padding: "12px", borderRadius: 8, border: "none", background: "#25D366", color: "#fff", cursor: "pointer", fontWeight: 800, fontSize: 13, marginBottom: 10 }}>
+                📱 Enviar por WhatsApp a {telefono}
+              </button>
+            )}
+            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", padding: 10, background: B.navy, borderRadius: 8 }}>
+              💡 El cliente verá el checkout con Wompi, Zoho Pay y Stripe. Cuando pague, el monto se agregará automáticamente a los pagos del evento.
+            </div>
+            <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 14 }}>
+              <button onClick={onClose}
+                style={{ padding: "10px 20px", borderRadius: 8, border: "none", background: B.navyLight, color: "#fff", cursor: "pointer", fontWeight: 700, fontSize: 13 }}>
+                Listo
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
