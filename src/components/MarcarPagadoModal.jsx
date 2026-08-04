@@ -24,8 +24,14 @@ export default function MarcarPagadoModal({ pago, currentUser, onClose, onSaved 
   const [fechaPago, setFechaPago] = useState(todayISO());
   const [comprobante, setComprobante] = useState(null);
   const [comprobantePreview, setPreview] = useState("");
+  const [retencion, setRetencion] = useState("");
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState("");
+
+  const esComision = pago.accion === "marcar_comision";
+  const montoBruto = Number(pago.monto) || 0;
+  const retencionNum = Number(retencion) || 0;
+  const montoNeto = Math.max(0, montoBruto - retencionNum);
 
   const handleFile = (e) => {
     const f = e.target.files?.[0];
@@ -70,6 +76,8 @@ export default function MarcarPagadoModal({ pago, currentUser, onClose, onSaved 
   const guardar = async () => {
     if (!referencia.trim()) { setErr("La referencia del pago es requerida."); return; }
     if (!fechaPago)         { setErr("La fecha de pago es requerida."); return; }
+    if (esComision && retencionNum < 0) { setErr("La retención no puede ser negativa."); return; }
+    if (esComision && retencionNum > montoBruto) { setErr("La retención no puede ser mayor al monto bruto."); return; }
     setSaving(true);
     setErr("");
     try {
@@ -130,6 +138,8 @@ export default function MarcarPagadoModal({ pago, currentUser, onClose, onSaved 
           pago_metodo:          metodo,
           pago_cuenta_origen:   cuentaOrigen.trim() || null,
           pago_comprobante_url: comprobante_url,
+          pago_retencion:       retencionNum,
+          pago_monto_neto:      montoNeto,
         }).eq("id", pago.comision.id);
       } else if (pago.accion === "marcar_nomina_dia") {
         // Nómina por día: marcar como pagado, guardar trazabilidad del pago.
@@ -185,6 +195,32 @@ export default function MarcarPagadoModal({ pago, currentUser, onClose, onSaved 
               {fechaPago === todayISO() ? "Pago de hoy" : `Pago retroactivo — ${new Date(fechaPago + "T12:00:00").toLocaleDateString("es-CO", { day: "2-digit", month: "long", year: "numeric" })}`}
             </div>
           </div>
+
+          {esComision && (
+            <div style={{ background: B.navy, borderRadius: 8, padding: 12, border: `1px solid ${B.navyLight}` }}>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 8 }}>
+                <div>
+                  <label style={LS}>Monto bruto</label>
+                  <div style={{ padding: "10px 14px", background: B.navyLight, borderRadius: 8, color: "rgba(255,255,255,0.6)", fontSize: 13 }}>
+                    {COP(montoBruto)}
+                  </div>
+                </div>
+                <div>
+                  <label style={LS}>Retención *</label>
+                  <input type="number" min="0" step="0.01" value={retencion}
+                    onChange={e => setRetencion(e.target.value)} placeholder="0" style={IS} />
+                </div>
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 4px", borderTop: `1px solid ${B.navyLight}` }}>
+                <div style={{ fontSize: 11, color: B.sand, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 700 }}>
+                  Neto a pagar
+                </div>
+                <div style={{ fontSize: 18, fontWeight: 800, color: B.success }}>
+                  {COP(montoNeto)}
+                </div>
+              </div>
+            </div>
+          )}
 
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
             <div>
