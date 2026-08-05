@@ -56,6 +56,7 @@ export const GRUPOS_NAV = [
       { key: "hotel_roomservice",   label: "Room Service",    icon: "🛎️" },
       { key: "hotel_minibar",       label: "Mini Bar",        icon: "🥂" },
       { key: "hotel_tarifas",       label: "Tarifas",         icon: "💲" },
+      { key: "hotel_integraciones", label: "Integraciones",   icon: "🔌" },
     ],
   },
   {
