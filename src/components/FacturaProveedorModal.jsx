@@ -157,7 +157,7 @@ function findBestOcMatch(facItem, ocItems, takenIndices) {
 // parser falla: traemos todo lo que está en la OC para que solo revise cantidades
 // y precios contra la factura física, sin tener que tipear todos los items.
 function buildDataFromOC(oc, factura_url) {
-  const items = (oc.items || []).map((it, idx) => {
+  const items = (oc.items || []).filter(it => !it.devuelto_a_mesa).map((it, idx) => {
     const cant       = Number(it.cant || it.cantidad) || 0;
     const precioU    = Number(it.precioU || it.precio_unitario) || 0;
     const ivaPct     = Number(it.iva_pct) || 0;

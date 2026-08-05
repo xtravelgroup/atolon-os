@@ -1816,21 +1816,64 @@ function EditarOCModal({ oc, ordenes = [], onClose, reload, currentUser }) {
     const reqIds = Array.isArray(item.req_ids) ? item.req_ids : (item.req_id ? [item.req_id] : []);
     const motivo = prompt(
       `¿Devolver "${item.item || item.nombre}" a la mesa de compra?\n\n` +
-      `Motivo (queda en historial):`,
+      `Motivo (queda en historial):\n\n` +
+      `⚠ Al confirmar: el item se quita de la OC, se elimina de la cotización\n` +
+      `y factura si existían, y no aparecerá en recepción.`,
       "Proveedor no tiene este item"
     );
     if (motivo === null) return;
 
-    // 1) Quitarlo de items local — queda persistido al darle Guardar
+    // 1) Quitarlo de items local (visual inmediato)
     const newItems = items.filter((_, i) => i !== idx);
     setItems(newItems);
 
-    // 2) Marcar en cambios_historial al guardar (lo hacemos dentro de guardar)
-    // Para no perder el motivo, lo guardamos en una nota local
-    setNotas(n => `${n || ""}\n[${new Date().toLocaleString("es-CO")}] Devuelto a mesa: "${item.item || item.nombre}" — ${motivo}`);
+    const norm = s => String(s || "").trim().toLowerCase();
+    const isThisItem = (x) => {
+      if (x?.item_id && item.item_id && x.item_id === item.item_id) return true;
+      const names = [item.item, item.nombre, item.nombre_original, item.nombre_anterior].filter(Boolean).map(norm);
+      const xNames = [x?.nombre, x?.item, x?.nombre_original, x?.nombre_anterior, x?.descripcion].filter(Boolean).map(norm);
+      return xNames.some(n => names.includes(n));
+    };
 
-    // 3) Para cada req_id, limpiar oc_id de ese item y poner req en "Aprobada"
-    //    si ya no le quedan items con oc_id (o sea, todos volvieron a la mesa)
+    // 2) Limpiar factura_data, cotización y recibidos (cascada inmediata)
+    const facturaDataLimpia = oc.factura_data
+      ? { ...oc.factura_data, items: (oc.factura_data.items || []).filter(x => !isThisItem(x)) }
+      : oc.factura_data;
+    const cotizacionRespLimpia = oc.cotizacion_resp_data
+      ? { ...oc.cotizacion_resp_data, items: (oc.cotizacion_resp_data.items || []).filter(x => !isThisItem(x)) }
+      : oc.cotizacion_resp_data;
+    const recibidosLimpios = Array.isArray(oc.recibidos)
+      ? oc.recibidos.filter(x => !isThisItem(x))
+      : oc.recibidos;
+
+    // 3) Persistir inmediato: OC actualizada + audit + notas
+    const nuevoSubtotal = newItems.reduce((s, it) => s + (Number(it.subtotal) || 0), 0);
+    const nuevaNota = `${notas || ""}\n[${new Date().toLocaleString("es-CO")}] Devuelto a mesa: "${item.item || item.nombre}" — ${motivo}`;
+    setNotas(nuevaNota);
+    const cambioEntry = {
+      evento: "devolver_a_mesa",
+      at: new Date().toISOString(),
+      por: currentUser?.email || currentUser?.nombre || "—",
+      item: item.item || item.nombre,
+      motivo,
+    };
+    const cambiosNuevos = [...(Array.isArray(oc.cambios_historial) ? oc.cambios_historial : []), cambioEntry];
+
+    const { error: ocErr } = await supabase.from("ordenes_compra").update({
+      items: newItems,
+      subtotal: nuevoSubtotal,
+      total: nuevoSubtotal,
+      factura_data: facturaDataLimpia,
+      cotizacion_resp_data: cotizacionRespLimpia,
+      recibidos: recibidosLimpios,
+      cambios_historial: cambiosNuevos,
+      notas: nuevaNota,
+      updated_at: new Date().toISOString(),
+    }).eq("id", oc.id);
+    if (ocErr) { alert("Error al devolver: " + ocErr.message); return; }
+
+    // 4) Para cada req_id, limpiar oc_id de ese item y poner req en "Aprobada"
+    //    si ya no le quedan items con oc_id (todos volvieron a la mesa)
     for (const reqId of reqIds) {
       const { data: req } = await supabase.from("requisiciones").select("items, estado, timeline").eq("id", reqId).maybeSingle();
       if (!req) continue;
