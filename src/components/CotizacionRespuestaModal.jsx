@@ -252,6 +252,62 @@ export default function CotizacionRespuestaModal({ oc, onClose, reload, currentU
     }
   };
 
+  const rechazarYNueva = async () => {
+    if (oc.cotizacion_resp_aprobada) {
+      alert("Esta cotización ya está aprobada. Para cambiarla debes primero desaprobarla desde la OC (o cancelar la OC y crear una nueva).");
+      return;
+    }
+    const motivo = prompt(
+      "¿Rechazar esta cotización y pedir una nueva al proveedor?\n\n" +
+      "Motivo (queda en historial):\n\n" +
+      "⚠ Se archiva la cotización actual con su archivo/precios y se limpia\n" +
+      "para que puedas cargar la nueva versión.",
+      "Proveedor cambió condiciones — pedir nueva versión"
+    );
+    if (motivo === null) return;
+    setStep("approving"); setError("");
+    try {
+      const snapshot = {
+        rechazada_at: new Date().toISOString(),
+        rechazada_por: currentUser?.email || null,
+        motivo,
+        url: oc.cotizacion_resp_url || archivo_url || null,
+        data: oc.cotizacion_resp_data || parsed || { items },
+        subida_at: oc.cotizacion_resp_subida_at || null,
+        subida_por: oc.cotizacion_resp_subida_por || null,
+        notas: oc.cotizacion_resp_notas || notas || null,
+      };
+      const historial = [...(Array.isArray(oc.cotizacion_resp_historial) ? oc.cotizacion_resp_historial : []), snapshot];
+      const cambioEntry = {
+        evento: "rechazar_cotizacion",
+        at: new Date().toISOString(),
+        por: currentUser?.email || currentUser?.nombre || "—",
+        motivo,
+      };
+      const cambiosNuevos = [...(Array.isArray(oc.cambios_historial) ? oc.cambios_historial : []), cambioEntry];
+
+      const { error: e } = await supabase.from("ordenes_compra").update({
+        cotizacion_resp_historial:    historial,
+        cotizacion_resp_url:          null,
+        cotizacion_resp_data:         null,
+        cotizacion_resp_subida_at:    null,
+        cotizacion_resp_subida_por:   null,
+        cotizacion_resp_aprobada:     false,
+        cotizacion_resp_aprobada_at:  null,
+        cotizacion_resp_aprobada_por: null,
+        cotizacion_resp_notas:        `Cotización rechazada ${new Date().toLocaleString("es-CO")}: ${motivo}`,
+        cambios_historial:            cambiosNuevos,
+        updated_at:                   new Date().toISOString(),
+      }).eq("id", oc.id);
+      if (e) throw e;
+      reload?.();
+      onClose();
+    } catch (e) {
+      setError(String(e?.message || e));
+      setStep("review");
+    }
+  };
+
   const guardarSinAprobar = async () => {
     setStep("approving"); setError("");
     try {
@@ -288,6 +344,22 @@ export default function CotizacionRespuestaModal({ oc, onClose, reload, currentU
 
         {step === "upload" && (
           <>
+            {Array.isArray(oc.cotizacion_resp_historial) && oc.cotizacion_resp_historial.length > 0 && (
+              <div style={{ marginBottom: 14, padding: 12, background: B.warning + "18", border: `1px solid ${B.warning}55`, borderRadius: 10 }}>
+                <div style={{ fontSize: 12, fontWeight: 800, color: B.warning, marginBottom: 6 }}>
+                  📋 {oc.cotizacion_resp_historial.length} cotización(es) rechazada(s) previamente
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  {oc.cotizacion_resp_historial.map((h, i) => (
+                    <div key={i} style={{ fontSize: 11, color: "rgba(255,255,255,0.7)", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                      <span style={{ color: "rgba(255,255,255,0.4)" }}>#{i + 1} · {new Date(h.rechazada_at).toLocaleString("es-CO")}</span>
+                      <span>· {h.motivo}</span>
+                      {h.url && <a href={h.url} target="_blank" rel="noreferrer" style={{ color: B.sky, textDecoration: "none" }}>📎 ver</a>}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
             <div style={{ background: B.navy, border: `2px dashed ${B.navyLight}`, borderRadius: 12, padding: 30, textAlign: "center" }}>
               <div style={{ fontSize: 38, marginBottom: 8 }}>📄</div>
               <div style={{ fontSize: 13, color: "rgba(255,255,255,0.6)", marginBottom: 14 }}>
@@ -501,13 +573,21 @@ export default function CotizacionRespuestaModal({ oc, onClose, reload, currentU
               </a>
             )}
 
-            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
-              <button onClick={onClose} style={btnSec}>Cancelar</button>
-              <button onClick={guardarSinAprobar} style={{ ...btnSec, borderColor: B.sky, color: B.sky }}>💾 Guardar borrador</button>
-              <button onClick={aprobar}
-                style={{ padding: "11px 22px", borderRadius: 8, border: "none", background: B.success, color: B.navy, fontSize: 13, cursor: "pointer", fontWeight: 800 }}>
-                {requiereAnticipo ? "✓ Aprobar y enviar a Contabilidad" : "✓ Aprobar cotización"}
+            <div style={{ display: "flex", gap: 10, justifyContent: "space-between", alignItems: "center", flexWrap: "wrap" }}>
+              <button onClick={rechazarYNueva}
+                disabled={!oc.cotizacion_resp_data && !parsed}
+                title="Archivar esta cotización y pedir una nueva al proveedor"
+                style={{ padding: "11px 18px", borderRadius: 8, border: `1px solid ${B.warning}`, background: "transparent", color: B.warning, fontSize: 13, cursor: (!oc.cotizacion_resp_data && !parsed) ? "not-allowed" : "pointer", fontWeight: 700, opacity: (!oc.cotizacion_resp_data && !parsed) ? 0.4 : 1 }}>
+                🔄 Rechazar y pedir nueva
               </button>
+              <div style={{ display: "flex", gap: 10 }}>
+                <button onClick={onClose} style={btnSec}>Cancelar</button>
+                <button onClick={guardarSinAprobar} style={{ ...btnSec, borderColor: B.sky, color: B.sky }}>💾 Guardar borrador</button>
+                <button onClick={aprobar}
+                  style={{ padding: "11px 22px", borderRadius: 8, border: "none", background: B.success, color: B.navy, fontSize: 13, cursor: "pointer", fontWeight: 800 }}>
+                  {requiereAnticipo ? "✓ Aprobar y enviar a Contabilidad" : "✓ Aprobar cotización"}
+                </button>
+              </div>
             </div>
             <div style={{ marginTop: 10, fontSize: 11, color: "rgba(255,255,255,0.4)", textAlign: "right" }}>
               {requiereAnticipo ? "Aparecerá en Compras → Cuentas x Pagar → Anticipos" : "Pasa a estado 'confirmada' lista para recibir."}
