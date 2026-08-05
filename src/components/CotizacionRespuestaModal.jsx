@@ -253,15 +253,27 @@ export default function CotizacionRespuestaModal({ oc, onClose, reload, currentU
   };
 
   const rechazarYNueva = async () => {
-    if (oc.cotizacion_resp_aprobada) {
-      alert("Esta cotización ya está aprobada. Para cambiarla debes primero desaprobarla desde la OC (o cancelar la OC y crear una nueva).");
+    // Solo bloqueamos si YA hubo movimiento de dinero o mercancía —
+    // en ese caso hay que cancelar la OC entera (no solo la cotización).
+    const anticipoPagado   = !!oc.anticipo_pagado;
+    const yaHayPago        = Number(oc.monto_pagado) > 0;
+    const yaRecibida       = !!oc.recibida_completa || (Array.isArray(oc.recibidos) && oc.recibidos.length > 0);
+    const facturaAplicada  = !!oc.factura_data?.aplicada || Array.isArray(oc.loggro_movement_ids) && oc.loggro_movement_ids.length > 0;
+    if (anticipoPagado || yaHayPago || yaRecibida || facturaAplicada) {
+      alert(
+        "Esta cotización ya tuvo movimiento (anticipo pagado, factura aplicada o mercancía recibida).\n\n" +
+        "No se puede rechazar solo la cotización. Debes cancelar la OC completa y crear una nueva."
+      );
       return;
     }
+
+    const eraAprobada = !!oc.cotizacion_resp_aprobada;
     const motivo = prompt(
       "¿Rechazar esta cotización y pedir una nueva al proveedor?\n\n" +
       "Motivo (queda en historial):\n\n" +
-      "⚠ Se archiva la cotización actual con su archivo/precios y se limpia\n" +
-      "para que puedas cargar la nueva versión.",
+      (eraAprobada
+        ? "⚠ Esta cotización estaba aprobada. Se archivará y la OC volverá a estado 'emitida'\n(sin anticipo ni confirmación) para permitir la nueva versión.\n"
+        : "⚠ Se archiva la cotización actual con su archivo/precios y se limpia\npara que puedas cargar la nueva versión.\n"),
       "Proveedor cambió condiciones — pedir nueva versión"
     );
     if (motivo === null) return;
@@ -271,6 +283,7 @@ export default function CotizacionRespuestaModal({ oc, onClose, reload, currentU
         rechazada_at: new Date().toISOString(),
         rechazada_por: currentUser?.email || null,
         motivo,
+        era_aprobada: eraAprobada,
         url: oc.cotizacion_resp_url || archivo_url || null,
         data: oc.cotizacion_resp_data || parsed || { items },
         subida_at: oc.cotizacion_resp_subida_at || null,
@@ -282,11 +295,15 @@ export default function CotizacionRespuestaModal({ oc, onClose, reload, currentU
         evento: "rechazar_cotizacion",
         at: new Date().toISOString(),
         por: currentUser?.email || currentUser?.nombre || "—",
+        era_aprobada: eraAprobada,
         motivo,
       };
       const cambiosNuevos = [...(Array.isArray(oc.cambios_historial) ? oc.cambios_historial : []), cambioEntry];
 
-      const { error: e } = await supabase.from("ordenes_compra").update({
+      // Si estaba en 'confirmada' o 'anticipo_pendiente', volvemos a 'emitida'
+      // para que compras pueda cargar la nueva versión limpia.
+      const estadoResetear = ["confirmada", "anticipo_pendiente"].includes(oc.estado);
+      const updates = {
         cotizacion_resp_historial:    historial,
         cotizacion_resp_url:          null,
         cotizacion_resp_data:         null,
@@ -297,8 +314,14 @@ export default function CotizacionRespuestaModal({ oc, onClose, reload, currentU
         cotizacion_resp_aprobada_por: null,
         cotizacion_resp_notas:        `Cotización rechazada ${new Date().toLocaleString("es-CO")}: ${motivo}`,
         cambios_historial:            cambiosNuevos,
+        anticipo_requerido:           false,
+        anticipo_porcentaje:          null,
+        anticipo_monto:               0,
+        anticipo_solicitado_at:       null,
         updated_at:                   new Date().toISOString(),
-      }).eq("id", oc.id);
+      };
+      if (estadoResetear) updates.estado = "emitida";
+      const { error: e } = await supabase.from("ordenes_compra").update(updates).eq("id", oc.id);
       if (e) throw e;
       reload?.();
       onClose();
