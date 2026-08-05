@@ -253,35 +253,49 @@ export default function CotizacionRespuestaModal({ oc, onClose, reload, currentU
   };
 
   const rechazarYNueva = async () => {
-    // Solo bloqueamos si YA hubo movimiento de dinero real o factura Loggro.
-    // La mercancía recibida NO bloquea — muchas veces el proveedor manda una
-    // cotización actualizada con los precios/nombres reales de lo que llegó
-    // y hay que reemplazar la vieja para dejar el registro correcto.
-    const anticipoPagado   = !!oc.anticipo_pagado;
-    const yaHayPago        = Number(oc.monto_pagado) > 0;
-    const facturaAplicada  = !!oc.factura_data?.aplicada || (Array.isArray(oc.loggro_movement_ids) && oc.loggro_movement_ids.length > 0);
-    if (anticipoPagado || yaHayPago || facturaAplicada) {
+    // Bloqueo DURO solo si ya hubo movimiento de dinero real (anticipo/pago).
+    // Loggro/recepción NO bloquea — el usuario puede necesitar reemplazar la
+    // cotización porque el proveedor mandó una nueva con precios reales o
+    // se detectó un error en la carga original.
+    const anticipoPagado = !!oc.anticipo_pagado;
+    const yaHayPago      = Number(oc.monto_pagado) > 0;
+    if (anticipoPagado || yaHayPago) {
       alert(
-        "Esta cotización ya se pagó o la factura se aplicó en Loggro.\n\n" +
-        "No se puede rechazar solo la cotización — los movimientos de dinero/inventario\n" +
-        "ya están consolidados. Debes cancelar la OC completa y crear una nueva."
+        "Esta OC ya tiene pagos aplicados (anticipo o factura pagada).\n\n" +
+        "No se puede rechazar solo la cotización — el dinero ya salió.\n" +
+        "Debes cancelar la OC completa y crear una nueva."
       );
       return;
     }
 
-    const eraAprobada = !!oc.cotizacion_resp_aprobada;
-    const yaRecibida  = !!oc.pagada_completa || oc.estado === "recibida" ||
-                        (Array.isArray(oc.recibidos) && oc.recibidos.length > 0);
+    const eraAprobada     = !!oc.cotizacion_resp_aprobada;
+    const yaRecibida      = !!oc.pagada_completa || oc.estado === "recibida" ||
+                            (Array.isArray(oc.recibidos) && oc.recibidos.length > 0);
+    const yaEnLoggro      = Array.isArray(oc.loggro_movement_ids) && oc.loggro_movement_ids.length > 0;
+    const facturaAplicada = !!oc.factura_data?.aplicada;
+    const advertencia = [];
+    if (yaEnLoggro || facturaAplicada) {
+      advertencia.push(
+        "⚠ Los movimientos ya cargados en Loggro NO se van a modificar —\n" +
+        "  siguen con los precios/cantidades originales. Si necesitas ajustar\n" +
+        "  Loggro, hazlo aparte desde 'Corregir movimiento' o borra el movimiento\n" +
+        "  y vuelve a aplicar la nueva factura."
+      );
+    }
+    if (yaRecibida && !yaEnLoggro) {
+      advertencia.push(
+        "⚠ La mercancía ya fue recibida. La recepción física queda intacta."
+      );
+    }
+    if (eraAprobada) {
+      advertencia.push(
+        "⚠ Esta cotización estaba aprobada — se archivará como referencia."
+      );
+    }
     const motivo = prompt(
       "¿Rechazar esta cotización y pedir una nueva al proveedor?\n\n" +
       "Motivo (queda en historial):\n\n" +
-      (yaRecibida
-        ? "⚠ La mercancía ya fue recibida. Rechazar la cotización solo actualiza los\n" +
-          "precios/nombres de referencia; la recepción física queda intacta y podrás\n" +
-          "cargar la nueva versión de la cotización.\n"
-        : eraAprobada
-          ? "⚠ Esta cotización estaba aprobada. Se archivará y la OC volverá a estado 'emitida'\n(sin anticipo ni confirmación) para permitir la nueva versión.\n"
-          : "⚠ Se archiva la cotización actual con su archivo/precios y se limpia\npara que puedas cargar la nueva versión.\n"),
+      (advertencia.length > 0 ? advertencia.join("\n\n") + "\n" : "Se archiva la cotización actual y se limpia para cargar la nueva.\n"),
       "Proveedor cambió condiciones — pedir nueva versión"
     );
     if (motivo === null) return;
@@ -293,6 +307,7 @@ export default function CotizacionRespuestaModal({ oc, onClose, reload, currentU
         motivo,
         era_aprobada: eraAprobada,
         estaba_recibida: yaRecibida,
+        ya_en_loggro: yaEnLoggro,
         url: oc.cotizacion_resp_url || archivo_url || null,
         data: oc.cotizacion_resp_data || parsed || { items },
         subida_at: oc.cotizacion_resp_subida_at || null,
