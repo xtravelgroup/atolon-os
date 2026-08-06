@@ -953,11 +953,18 @@ export default function ProcesarNomina() {
         return false;
       }
       const nowIso = new Date().toISOString();
+      // Guardar cualquier fila con AL MENOS entrada o salida (permite corrección
+      // parcial: registra solo la entrada de hoy y la salida se completa después).
+      // Antes se requería AMBAS → si el usuario corregía solo entrada, la fila
+      // quedaba en limbo (no entraba a `llenas` ni a `vacias`) y el save era
+      // silencioso — el modal cerraba, motivo se guardaba en logAccion, pero la
+      // marcación no se persistía en rh_marcaciones.
       const llenas = filas
-        .filter(f => f.entrada && f.salida)
+        .filter(f => f.entrada || f.salida || f.entrada_2 || f.salida_2)
         .map(f => ({
           empleado_id: empleadoId, fecha: f.fecha,
-          entrada: f.entrada, salida: f.salida,
+          entrada: f.entrada || null,
+          salida:  f.salida  || null,
           entrada_2: f.entrada_2 || null,
           salida_2:  f.salida_2  || null,
           periodo: periodo.etiqueta, updated_at: nowIso,

@@ -2268,6 +2268,53 @@ serve(async (req) => {
       });
     }
 
+    // GET /loggro-sync/movimiento-por-nota?nota=<substr>&max_pages=20
+    // Busca movimientos de Loggro cuya .note contenga el string dado. Sirve
+    // para inspeccionar los movs creados por una OC específica de Atolón
+    // (por convención se guardan como note="OC OC-2026-XXXX").
+    if (req.method === "GET" && path === "/movimiento-por-nota") {
+      const nota = url.searchParams.get("nota");
+      const maxPages = Number(url.searchParams.get("max_pages")) || 20;
+      if (!nota) return json({ error: "param nota requerido" }, 400);
+      const found: any[] = [];
+      const seen = new Set<string>();
+      for (let p = 0; p < maxPages; p++) {
+        let arr: any[] = [];
+        try {
+          const d: any = await loggroGet(`/inventories?pagination=true&limit=100&page=${p}`);
+          arr = d?.data || (Array.isArray(d) ? d : []) || [];
+        } catch (e) { return json({ ok: false, error: `page ${p}: ${(e as Error).message}`, found }, 503); }
+        if (arr.length === 0) break;
+        for (const m of arr) {
+          if (!m?._id || seen.has(m._id)) continue;
+          seen.add(m._id);
+          const note = String(m.note || "");
+          if (note.includes(nota)) {
+            found.push({
+              _id: m._id,
+              date: m.date,
+              type: m.type,
+              typeName: m.typeName,
+              provider: m.provider?.name,
+              note: m.note,
+              deleted: m.deleted,
+              totalCost: m.totalCost,
+              ingredients: (m.ingredients || []).map((it: any) => ({
+                ingredient_id: it.ingredient?._id,
+                nombre: it.ingredient?.name,
+                unidad: it.ingredient?.unit?.shortName || it.ingredient?.unit?.name,
+                cantidad: it.quantity,
+                precio_unitario: it.price,
+                costo_total: (Number(it.quantity) || 0) * (Number(it.price) || 0),
+                locacion: it.locationStock?.name,
+              })),
+            });
+          }
+        }
+      }
+      return json({ ok: true, nota, encontrados: found.length, movimientos: found });
+    }
+
     // GET /loggro-sync/movimientos-inventario-rango?from=YYYY-MM-DD&to=YYYY-MM-DD
     // Descarga TODOS los movimientos de inventario de Loggro en el rango y los
     // agrupa por (tipo de movimiento, ingrediente). Es lo que el contador
