@@ -452,7 +452,7 @@ serve(async (req) => {
 
     // ── 1b) Reservas web (legacy) ────────────────────────────────────
     const { data: reservas } = await SB.from("reservas")
-      .select("id, total, abono, estado, nombre, telefono, contacto, email, fecha, pax, tipo, salida_id, lead_id, notas")
+      .select("id, total, abono, estado, nombre, telefono, contacto, email, fecha, pax, tipo, salida_id, lead_id, notas, notas_club")
       .eq("id", ref)
       .limit(1);
     const reserva = reservas?.[0];
@@ -491,7 +491,16 @@ serve(async (req) => {
           return jsonResp({ received: true, skipped: "already_confirmed" });
         }
 
-        const { error: updErr } = await SB.from("reservas").update({
+        // Guard: aceptar pendiente_pago (flujo normal) o cancelado (revivir).
+        // Los links Wompi siguen activos aunque el link_expira_at haya expirado
+        // en Atolón — si el cliente paga despues, hay que revivir la reserva
+        // en vez de ignorar el pago (bug 2026-08-07: cliente pagó $640K post
+        // auto-cancel y la reserva quedo cancelada sin nadie enterado).
+        const revivida = reserva.estado === "cancelado";
+        const notaRevivir = revivida
+          ? `\nRevivida por webhook Wompi ${new Date().toISOString().slice(0,10)}: pago llego despues del auto-cancel por link expirado.`
+          : "";
+        const updatePayload: Record<string, unknown> = {
           abono:       monto,
           saldo:       Math.max(0, totalReserva - monto),
           estado:      "confirmado",
@@ -499,9 +508,14 @@ serve(async (req) => {
           fecha_pago:  fechaPago,
           referencia_pago: txId,
           updated_at:  new Date().toISOString(),
-        })
+        };
+        if (revivida) {
+          updatePayload.link_expira_at = null;
+          updatePayload.notas_club = ((reserva as any).notas_club || "") + notaRevivir;
+        }
+        const { error: updErr } = await SB.from("reservas").update(updatePayload)
           .eq("id", reserva.id)
-          .eq("estado", "pendiente_pago"); // guard: solo desde pendiente_pago
+          .in("estado", ["pendiente_pago", "cancelado"]);
 
         if (updErr) {
           console.error(`[wompi-webhook] Update reserva fallo: ${updErr.message}`);

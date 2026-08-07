@@ -15,7 +15,7 @@ export default function MovimientosItem({ itemId, unidad, stockActual }) {
       setMovs(null);
       const desde = new Date(Date.now() - days * 24 * 3600 * 1000).toISOString();
       const { data } = await supabase.from("movimientos_inventario_atolon")
-        .select("id, tipo, cantidad, unidad, precio_unit, fecha, usuario_email, notas, origen_tipo, almacen_id, anulado")
+        .select("id, tipo, cantidad, unidad, precio_unit, fecha, created_at, usuario_email, notas, origen_tipo, origen_id, almacen_id, anulado")
         .eq("item_id", itemId).eq("anulado", false)
         .gte("fecha", desde).order("fecha", { ascending: false }).limit(200);
       if (!cancelled) setMovs(data || []);
@@ -104,15 +104,42 @@ export default function MovimientosItem({ itemId, unidad, stockActual }) {
             {movs.slice(0, expanded ? movs.length : 8).map(m => {
               const cfg = TIPO_LABEL[m.tipo] || { emoji: "•", label: m.tipo, color: "#888" };
               const esEntrada = String(m.tipo).startsWith("entrada");
+              // Extraer código OC desde notas ("Recepción OC OC-2026-0316 — ...")
+              const ocMatch = String(m.notas || "").match(/OC-\d{4}-\d+/);
+              const ocCodigo = ocMatch ? ocMatch[0] : null;
+              // Extraer factura si viene ("· Factura F-123")
+              const facMatch = String(m.notas || "").match(/Factura\s+([^\s·\[]+)/i);
+              const facturaNum = facMatch ? facMatch[1] : null;
+              // Fecha del evento (fecha de recepción) y fecha de registro (created_at).
+              // Se muestran juntas solo si difieren en más de 12h (asi se distinguen
+              // recepciones recientes de backfills posteriores).
+              const fEvento = m.fecha ? new Date(m.fecha) : null;
+              const fReg = m.created_at ? new Date(m.created_at) : null;
+              const mostrarReg = fEvento && fReg && Math.abs(fReg - fEvento) > 12 * 3600 * 1000;
               return (
                 <div key={m.id} style={{ display: "grid", gridTemplateColumns: "1fr 90px", gap: 8, padding: "8px 12px", borderBottom: `1px solid ${B.navyLight}44`, fontSize: 11, alignItems: "center" }}>
                   <div>
                     <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-                      <span style={{ fontSize: 10, color: cfg.color }}>{cfg.emoji} {cfg.label}</span>
-                      <span style={{ fontSize: 9, color: "rgba(255,255,255,0.35)" }}>{fmtFecha(m.fecha)}</span>
+                      <span style={{ fontSize: 10, color: cfg.color, fontWeight: 700 }}>{cfg.emoji} {cfg.label}</span>
+                      {ocCodigo && (
+                        <span style={{ fontSize: 10, color: B.sky, background: B.sky + "22", padding: "2px 7px", borderRadius: 6, fontWeight: 700, border: `1px solid ${B.sky}44` }}>
+                          📄 {ocCodigo}
+                        </span>
+                      )}
+                      {facturaNum && (
+                        <span style={{ fontSize: 9, color: "#a78bfa", background: "#a78bfa22", padding: "1px 6px", borderRadius: 6 }}>
+                          Fact. {facturaNum}
+                        </span>
+                      )}
                       {m.almacen_id && <span style={{ fontSize: 9, color: "rgba(255,255,255,0.4)", background: "rgba(255,255,255,0.08)", padding: "1px 6px", borderRadius: 6 }}>{m.almacen_id.replace("LOC-","")}</span>}
                     </div>
-                    {m.notas && <div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", marginTop: 2 }}>{m.notas.slice(0, 80)}</div>}
+                    <div style={{ display: "flex", gap: 8, marginTop: 3, fontSize: 9, color: "rgba(255,255,255,0.5)" }}>
+                      <span>📅 Evento: {fmtFecha(m.fecha)}</span>
+                      {mostrarReg && <span>· 🕒 Registrado: {fmtFecha(m.created_at)}</span>}
+                    </div>
+                    {m.notas && !ocCodigo && (
+                      <div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", marginTop: 2 }}>{m.notas.slice(0, 120)}</div>
+                    )}
                   </div>
                   <div style={{ textAlign: "right", fontWeight: 700, color: esEntrada ? "#22c55e" : "#ef4444", fontSize: 13 }}>
                     {esEntrada ? "+" : "−"}{fmtN(m.cantidad)}

@@ -1896,27 +1896,51 @@ function RecepcionOCModal({ oc, reqs, onClose, reload, currentUser, readOnly = f
     // 2b. Sumar stock al inventario local en la bodega de recepción.
     //     SIEMPRE se hace (independiente del checkbox de Loggro), porque la
     //     mercancía físicamente llegó y debe quedar trazable en bodega.
+    //     IMPORTANTE: r.item_id puede ser un ID temporal del carrito (ej.
+    //     "w5z8d322o") en vez del ID real del catálogo ("ITEM-xxx"). Resolver
+    //     via loggro_id o nombre para no dejar el mov huerfano.
+    const norm2 = (s) => String(s || "").toLowerCase().trim();
+    const catById2      = new Map((catalogo || []).map(c => [c.id, c]));
+    const catByLoggro2  = new Map((catalogo || []).filter(c => c.loggro_id).map(c => [c.loggro_id, c]));
+    const catByNombre2  = new Map((catalogo || []).map(c => [norm2(c.nombre), c]));
+    const resolverCat = (r) => {
+      if (r.item_id && catById2.has(r.item_id)) return catById2.get(r.item_id);
+      if (r.loggro_id && catByLoggro2.has(r.loggro_id)) return catByLoggro2.get(r.loggro_id);
+      for (const n of [r.nombre_original, r.nombre, r.item]) {
+        if (!n) continue;
+        const k = norm2(n);
+        if (catByNombre2.has(k)) return catByNombre2.get(k);
+      }
+      return null;
+    };
+
     const movimientos = recibidos
-      .filter(r => Number(r.cant_recibida) > 0 && r.item_id)
-      .map(r => ({ item_id: r.item_id, cant: Number(r.cant_recibida), nombre: r.item }));
+      .filter(r => Number(r.cant_recibida) > 0)
+      .map(r => {
+        const cat = resolverCat(r);
+        return {
+          item_id: cat?.id || r.item_id, // si no hay match, usar lo que venga (mov queda huerfano pero visible)
+          cant: Number(r.cant_recibida),
+          nombre: r.item || cat?.nombre,
+          _cat: cat, // meta ya resuelta
+        };
+      })
+      .filter(m => m.item_id);
 
     if (movimientos.length > 0) {
       // Cada item va a su locacion_default_id (Almacen Cocina / Almacen Bar
       // segun la clasificacion del item en items_catalogo). Direccion
       // 2026-07-18: la comida va a Cocina, la bebida va a Bar, punto.
       // Fallback al bodegaDestino global si algun item no tiene default.
-      const itemIds = movimientos.map(m => m.item_id);
-      const { data: catalogoRows } = await supabase.from("items_catalogo")
-        .select("id, nombre, unidad, locacion_default_id, precio_compra")
-        .in("id", itemIds);
-      const itemMeta = Object.fromEntries((catalogoRows || []).map(r => [r.id, r]));
-
-      // Determinar locacion destino por item
+      // Usamos el _cat ya resuelto (que incluye items con id temporal linkeados
+      // por loggro_id o nombre) para no perder mercancia por drift de item_id.
       const movsConLoc = movimientos.map(m => ({
-        ...m,
-        locacion_id: itemMeta[m.item_id]?.locacion_default_id || bodegaDestino,
-        unidad: itemMeta[m.item_id]?.unidad || null,
-        precio_compra: Number(itemMeta[m.item_id]?.precio_compra) || 0,
+        item_id: m.item_id,
+        cant: m.cant,
+        nombre: m.nombre,
+        locacion_id: m._cat?.locacion_default_id || bodegaDestino,
+        unidad: m._cat?.unidad || null,
+        precio_compra: Number(m._cat?.precio_compra) || 0,
       }));
 
       // Leer stock actual por (item, locacion) para hacer suma idempotente.
@@ -1974,9 +1998,14 @@ function RecepcionOCModal({ oc, reqs, onClose, reload, currentUser, readOnly = f
         usuario_email: (currentUser.email || currentUser.nombre || ""),
         notas: `Recepción OC ${oc.codigo} — ${m.nombre}${numFactura ? ` · Factura ${numFactura}` : ""}`,
       }));
-      // No fallar la recepcion si hay conflicto de id (double-click); log y sigue.
-      try { await supabase.from("movimientos_inventario_atolon").insert(movsInv); } catch (e) {
-        console.warn("[recepcion] mov_inv insert:", e?.message);
+      // Insert historial unificado. Si falla por conflicto (double-click), lo
+      // toleramos silenciosamente; cualquier otro error se muestra al operador
+      // para no perder trazabilidad (bug 2026-08: RLS bloqueaba en silencio y
+      // nadie se daba cuenta hasta auditar movimientos).
+      const { error: movsErr } = await supabase
+        .from("movimientos_inventario_atolon").insert(movsInv);
+      if (movsErr && !/duplicate key|unique constraint/i.test(movsErr.message || "")) {
+        alert("⚠️ El stock se sumó, pero el registro en el historial de movimientos falló: " + movsErr.message);
       }
     }
 

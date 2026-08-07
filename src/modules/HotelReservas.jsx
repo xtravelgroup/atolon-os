@@ -167,6 +167,8 @@ export default function HotelReservas() {
             const hab = habById[r.habitacion_id];
             const est = ESTADOS.find(e => e.k === r.estado) || ESTADOS[0];
             const noches = r.check_in_at && r.check_out_at ? diffDays(r.check_in_at, r.check_out_at) : "—";
+            // Contar habitaciones del grupo (folio compartido) para mostrar el badge.
+            const grupoCount = r.booking_group_id ? visibles.filter(x => x.booking_group_id === r.booking_group_id).length : 0;
             return (
               <div key={r.id} onClick={() => setOpenId(r.id)} style={{
                 display: "grid", gridTemplateColumns: "110px 1fr 100px 100px 80px 110px 100px 80px",
@@ -176,6 +178,12 @@ export default function HotelReservas() {
                 <div style={{ fontFamily: "monospace", fontSize: 11, color: B.sky }}>{r.codigo}</div>
                 <div style={{ fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                   {nombreHuesped(h)} {h?.vip && "⭐"}
+                  {grupoCount > 1 && (
+                    <span title={`${grupoCount} habitaciones en la misma reserva (folio único)`}
+                      style={{ marginLeft: 6, fontSize: 9, padding: "2px 6px", borderRadius: 4, background: B.hotel + "33", color: B.hotel, fontWeight: 700 }}>
+                      🏨×{grupoCount}
+                    </span>
+                  )}
                 </div>
                 <div>{fmtFecha(r.check_in_at)}</div>
                 <div>{fmtFecha(r.check_out_at)}</div>
@@ -229,9 +237,12 @@ function ReservaModal({ huespedes, habitaciones, tarifas, categorias, reservas, 
     check_in_at: todayStr(),
     check_out_at: addDaysStr(todayStr(), 1),
     categoria_preferida: "",
-    habitacion_id: "",
-    tarifa_id: "",
-    precio_noche: 0,
+    // Selección múltiple: array de habitaciones cada una con su tarifa y precio.
+    // Formato: [{ habitacion_id, tarifa_id, precio_noche }]
+    // Si el array queda vacío, la reserva queda "sin asignar" (1 habitación
+    // sin habitacion_id, asignar al check-in). Con más de 1, se crean N filas
+    // en hotel_estancias vinculadas por grupo_id compartido.
+    habitaciones_sel: [],
     deposito: 0,
     pax_adultos: 2,
     pax_ninos: 0,
@@ -246,10 +257,26 @@ function ReservaModal({ huespedes, habitaciones, tarifas, categorias, reservas, 
 
   const set = (k, v) => setF(p => ({ ...p, [k]: v }));
   const noches = diffDays(f.check_in_at, f.check_out_at);
-  const total = Number(f.precio_noche || 0) * noches;
+  const total = f.habitaciones_sel.reduce(
+    (s, x) => s + (Number(x.precio_noche) || 0) * noches, 0
+  );
   const saldo = total - Number(f.deposito || 0);
 
-  // Habitaciones disponibles (sin solapamiento + categoría si aplica)
+  const toggleHab = (habId) => setF(p => {
+    const existente = p.habitaciones_sel.find(x => x.habitacion_id === habId);
+    if (existente) {
+      return { ...p, habitaciones_sel: p.habitaciones_sel.filter(x => x.habitacion_id !== habId) };
+    }
+    return { ...p, habitaciones_sel: [...p.habitaciones_sel, { habitacion_id: habId, tarifa_id: "", precio_noche: 0 }] };
+  });
+  const updateHabRow = (habId, patch) => setF(p => ({
+    ...p,
+    habitaciones_sel: p.habitaciones_sel.map(x => x.habitacion_id === habId ? { ...x, ...patch } : x),
+  }));
+
+  // Habitaciones disponibles (sin solapamiento + categoría si aplica).
+  // Excluye las que ya están seleccionadas en la reserva actual — se marcan
+  // aparte para poder quitarlas.
   const disponibles = useMemo(() => {
     return habitaciones.filter(hab => {
       if (f.categoria_preferida && hab.categoria !== f.categoria_preferida) return false;
@@ -275,25 +302,24 @@ function ReservaModal({ huespedes, habitaciones, tarifas, categorias, reservas, 
     d.setDate(d.getDate() - 1);
     return d.toISOString().slice(0, 10);
   }, [f.check_in_at, f.check_out_at]);
-  const tarifasAplicables = useMemo(() => {
+  // Devuelve tarifas aplicables PARA UNA habitación específica (cuando se
+  // seleccionan varias en la misma reserva, cada una puede tener categoría
+  // distinta y por ende tarifa distinta). Si habId es null, filtra solo por
+  // vigencia/noches/categoría preferida.
+  const tarifasPara = (habId) => {
     return tarifas.filter(t => {
-      // rank 114: la habitacion guarda categoria como NOMBRE (string), pero
-      // este find comparaba c.id === h.categoria (uuid vs string), por lo
-      // que nunca matcheaba via habitacion. Soportamos ambos: categoria_id
-      // (cuando existe) o categoria nombre.
-      const hab = habitaciones.find(h => h.id === f.habitacion_id);
+      const hab = habitaciones.find(h => h.id === habId);
       const cat = categorias.find(c =>
         c.nombre === f.categoria_preferida ||
         (hab && (c.id === hab.categoria_id || c.nombre === hab.categoria))
       );
       if (t.categoria && cat && t.categoria !== cat.nombre) return false;
-      // Vigencia debe abarcar el rango completo: primera y ultima noche.
       if (t.vigencia_desde && f.check_in_at < t.vigencia_desde) return false;
       if (t.vigencia_hasta && checkOutMinusOne > t.vigencia_hasta) return false;
       if (t.min_noches > noches) return false;
       return true;
     });
-  }, [tarifas, f.categoria_preferida, f.habitacion_id, f.check_in_at, checkOutMinusOne, habitaciones, categorias, noches]);
+  };
 
   const huespedesFiltrados = huespedes
     .filter(h => {
@@ -312,14 +338,15 @@ function ReservaModal({ huespedes, habitaciones, tarifas, categorias, reservas, 
 
     setSaving(true); setErr("");
     try {
-      // Re-validar overlap server-side antes del INSERT — la lista 'disponibles'
-      // del state local puede estar stale si dos canales (web/recepción/OTA)
-      // crearon reservas en la misma habitacion mientras el modal estaba abierto.
-      if (f.habitacion_id) {
+      // Re-validar overlap server-side por CADA habitación seleccionada —
+      // la lista 'disponibles' del state local puede estar stale si otros
+      // canales tomaron habitaciones mientras el modal estaba abierto.
+      if (f.habitaciones_sel.length > 0) {
+        const habIds = f.habitaciones_sel.map(x => x.habitacion_id);
         const { data: conflicts } = await supabase
           .from("hotel_estancias")
-          .select("id, codigo, check_in_at, check_out_at, estado")
-          .eq("habitacion_id", f.habitacion_id)
+          .select("id, codigo, habitacion_id, check_in_at, check_out_at, estado")
+          .in("habitacion_id", habIds)
           .in("estado", ["reservada", "in_house"]);
         const nuevoIn  = new Date(f.check_in_at  + "T15:00:00").toISOString();
         const nuevoOut = new Date(f.check_out_at + "T12:00:00").toISOString();
@@ -329,8 +356,9 @@ function ReservaModal({ huespedes, habitaciones, tarifas, categorias, reservas, 
           new Date(nuevoIn) < new Date(r.check_out_at)
         );
         if (conflict) {
+          const habConflicto = habitaciones.find(h => h.id === conflict.habitacion_id);
           setSaving(false);
-          setErr(`La habitación ya está reservada (${conflict.codigo}) entre ${conflict.check_in_at.slice(0,10)} y ${conflict.check_out_at.slice(0,10)}. Otro usuario la tomó mientras armabas esta reserva.`);
+          setErr(`La habitación ${habConflicto?.numero || conflict.habitacion_id} ya está reservada (${conflict.codigo}) entre ${conflict.check_in_at.slice(0,10)} y ${conflict.check_out_at.slice(0,10)}. Otro usuario la tomó mientras armabas esta reserva.`);
           return;
         }
       }
@@ -349,28 +377,55 @@ function ReservaModal({ huespedes, habitaciones, tarifas, categorias, reservas, 
         huesped_id = data.id;
       }
 
-      const { error: errE } = await supabase.from("hotel_estancias").insert({
-        codigo: uid(),
+      // Multi-habitación: crear N filas en hotel_estancias, todas con el mismo
+      // grupo_id (solo si hay >1 habitación), mismas fechas y mismo huésped.
+      // Cada fila tiene su propia habitacion_id, tarifa y precio_noche.
+      // Con 0 habitaciones seleccionadas se crea 1 sola fila "sin asignar"
+      // (habitacion_id=null) para el flujo legacy de asignar-al-checkin.
+      const filas = f.habitaciones_sel.length > 0
+        ? f.habitaciones_sel
+        : [{ habitacion_id: null, tarifa_id: null, precio_noche: 0 }];
+
+      const baseFila = {
         huesped_id,
-        habitacion_id: f.habitacion_id || null,
         categoria_preferida: f.categoria_preferida || null,
         check_in_at: new Date(f.check_in_at + "T15:00:00").toISOString(),
         check_out_at: new Date(f.check_out_at + "T12:00:00").toISOString(),
         pax_adultos: Number(f.pax_adultos) || 1,
         pax_ninos: Number(f.pax_ninos) || 0,
         estado: f.estado,
-        tarifa_id: f.tarifa_id || null,
-        precio_noche: Number(f.precio_noche) || 0,
-        total,
-        deposito: Number(f.deposito) || 0,
         canal: f.canal,
         solicitudes_especiales: f.solicitudes_especiales.trim() || null,
         notas: f.notas.trim() || null,
-      });
-      if (errE) throw errE;
+      };
+      // booking_group_id: identifica multi-habitaciones de la misma reserva
+      // (folio único, mismo huésped). Es distinto de grupo_id, que es FK a
+      // hotel_grupos (bodas, corporativos). Con 1 sola habitación queda null.
+      const bookingGroupId = filas.length > 1 ? `BG-${Date.now()}-${Math.random().toString(36).slice(2, 8)}` : null;
+      // Depósito va a la primera fila (el folio primario del grupo).
+      const rows = filas.map((r, idx) => ({
+        ...baseFila,
+        codigo:            uid(),
+        habitacion_id:     r.habitacion_id || null,
+        tarifa_id:         r.tarifa_id || null,
+        precio_noche:      Number(r.precio_noche) || 0,
+        total:             (Number(r.precio_noche) || 0) * noches,
+        deposito:          idx === 0 ? (Number(f.deposito) || 0) : 0,
+        booking_group_id:  bookingGroupId,
+      }));
+
+      console.log("[HotelReservas] Insertando estancias:", rows);
+      const { data: insertadas, error: errE } = await supabase
+        .from("hotel_estancias").insert(rows).select();
+      if (errE) {
+        console.error("[HotelReservas] Insert error:", errE, "payload:", rows);
+        throw errE;
+      }
+      console.log(`[HotelReservas] ✓ ${insertadas?.length || 0} estancias creadas`);
       onSaved();
     } catch (e) {
-      setErr(e.message);
+      const detail = [e.message, e.details, e.hint].filter(Boolean).join(" · ");
+      setErr(detail || String(e));
     } finally {
       setSaving(false);
     }
@@ -458,24 +513,40 @@ function ReservaModal({ huespedes, habitaciones, tarifas, categorias, reservas, 
             </div>
           </div>
 
-          <label style={LS}>Habitación ({disponibles.length} disponibles)</label>
-          <div style={{ maxHeight: 180, overflowY: "auto", background: B.navyLight, borderRadius: 8, padding: 6 }}>
-            <div onClick={() => set("habitacion_id", "")} style={{
-              padding: 8, fontSize: 12, cursor: "pointer", borderRadius: 6,
-              background: !f.habitacion_id ? B.hotel + "33" : "transparent",
-            }}>
-              Sin asignar (asignar al check-in)
-            </div>
-            {disponibles.map(h => (
-              <div key={h.id} onClick={() => set("habitacion_id", h.id)} style={{
-                padding: 8, fontSize: 12, cursor: "pointer", borderRadius: 6,
-                background: f.habitacion_id === h.id ? B.hotel + "33" : "transparent",
-                display: "flex", justifyContent: "space-between",
-              }}>
-                <span>🚪 <b>{h.numero}</b> · {h.categoria}</span>
-                <span style={{ color: "rgba(255,255,255,0.5)" }}>Cap {h.capacidad}</span>
+          <label style={LS}>
+            Habitaciones ({disponibles.length} disponibles · {f.habitaciones_sel.length} seleccionadas)
+          </label>
+          <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", marginBottom: 4 }}>
+            Toca varias para reservar múltiples habitaciones en la misma estancia (mismo huésped, mismas fechas, folio único).
+          </div>
+          <div style={{ maxHeight: 220, overflowY: "auto", background: B.navyLight, borderRadius: 8, padding: 6 }}>
+            {f.habitaciones_sel.length === 0 && (
+              <div style={{ padding: 8, fontSize: 11, color: "rgba(255,255,255,0.5)", fontStyle: "italic" }}>
+                Sin selección → reserva quedará "sin asignar" (asignar al check-in).
               </div>
-            ))}
+            )}
+            {disponibles.map(h => {
+              const seleccionada = f.habitaciones_sel.some(x => x.habitacion_id === h.id);
+              return (
+                <div key={h.id} onClick={() => toggleHab(h.id)} style={{
+                  padding: 8, fontSize: 12, cursor: "pointer", borderRadius: 6,
+                  background: seleccionada ? B.hotel + "33" : "transparent",
+                  display: "flex", justifyContent: "space-between", alignItems: "center",
+                  marginBottom: 2,
+                }}>
+                  <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <span style={{
+                      display: "inline-block", width: 16, height: 16, borderRadius: 3,
+                      border: `2px solid ${seleccionada ? B.hotel : "rgba(255,255,255,0.3)"}`,
+                      background: seleccionada ? B.hotel : "transparent",
+                      color: "#fff", fontSize: 11, textAlign: "center", lineHeight: "13px", fontWeight: 700,
+                    }}>{seleccionada ? "✓" : ""}</span>
+                    🚪 <b>{h.numero}</b> · {h.categoria}
+                  </span>
+                  <span style={{ color: "rgba(255,255,255,0.5)" }}>Cap {h.capacidad}</span>
+                </div>
+              );
+            })}
           </div>
         </div>
       )}
@@ -483,33 +554,67 @@ function ReservaModal({ huespedes, habitaciones, tarifas, categorias, reservas, 
       {paso === 3 && (
         <div>
           <div style={{ fontWeight: 700, marginBottom: 10 }}>3. Tarifa y pago</div>
-          <label style={LS}>Tarifa</label>
-          <div style={{ maxHeight: 180, overflowY: "auto", background: B.navyLight, borderRadius: 8, padding: 6, marginBottom: 10 }}>
-            {tarifasAplicables.length === 0 ? (
-              <div style={{ padding: 10, fontSize: 12, color: "rgba(255,255,255,0.5)" }}>Sin tarifas aplicables — puedes fijar precio manual</div>
-            ) : tarifasAplicables.map(t => (
-              <div key={t.id} onClick={() => { set("tarifa_id", t.id); set("precio_noche", t.precio_base); }} style={{
-                padding: 8, fontSize: 12, cursor: "pointer", borderRadius: 6,
-                display: "flex", justifyContent: "space-between", alignItems: "center",
-                background: f.tarifa_id === t.id ? B.hotel + "33" : "transparent",
-              }}>
-                <div>
-                  <div style={{ fontWeight: 600 }}>{t.nombre}</div>
-                  <div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)" }}>{t.tipo}{t.incluye_desayuno ? " · ☕" : ""}</div>
-                </div>
-                <div style={{ fontWeight: 700, color: B.success }}>{fmtCOP(t.precio_base)}</div>
-              </div>
-            ))}
-          </div>
 
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 10 }}>
-            <div><label style={LS}>Precio / noche</label><input type="number" value={f.precio_noche} onChange={e => set("precio_noche", e.target.value)} style={IS} /></div>
-            <div><label style={LS}>Depósito</label><input type="number" value={f.deposito} onChange={e => set("deposito", e.target.value)} style={IS} /></div>
+          {f.habitaciones_sel.length === 0 ? (
+            <div style={{ padding: 12, background: B.warning + "22", color: B.warning, borderRadius: 8, fontSize: 12, marginBottom: 10 }}>
+              Reserva sin habitación asignada. Podrás fijar tarifa manual abajo.
+            </div>
+          ) : (
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ fontSize: 11, color: B.sand, fontWeight: 700, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em" }}>
+                Tarifa por habitación
+              </div>
+              {f.habitaciones_sel.map((row) => {
+                const hab = habitaciones.find(h => h.id === row.habitacion_id);
+                const opciones = tarifasPara(row.habitacion_id);
+                return (
+                  <div key={row.habitacion_id} style={{ background: B.navyLight, borderRadius: 8, padding: 10, marginBottom: 8 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                      <div style={{ fontWeight: 700, fontSize: 13 }}>🚪 {hab?.numero} · {hab?.categoria}</div>
+                      <button onClick={() => toggleHab(row.habitacion_id)}
+                        style={{ background: "transparent", border: "none", color: B.danger, fontSize: 11, cursor: "pointer" }}>
+                        Quitar
+                      </button>
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 8 }}>
+                      <select value={row.tarifa_id || ""}
+                        onChange={e => {
+                          const t = opciones.find(x => x.id === e.target.value);
+                          updateHabRow(row.habitacion_id, {
+                            tarifa_id: e.target.value || null,
+                            precio_noche: t ? t.precio_base : row.precio_noche,
+                          });
+                        }} style={IS}>
+                        <option value="">— Manual —</option>
+                        {opciones.map(t => (
+                          <option key={t.id} value={t.id}>
+                            {t.nombre} · {fmtCOP(t.precio_base)}{t.incluye_desayuno ? " ☕" : ""}
+                          </option>
+                        ))}
+                      </select>
+                      <input type="number" value={row.precio_noche}
+                        onChange={e => updateHabRow(row.habitacion_id, { precio_noche: e.target.value })}
+                        placeholder="Precio/noche" style={IS} />
+                    </div>
+                    <div style={{ marginTop: 6, fontSize: 11, color: "rgba(255,255,255,0.6)", textAlign: "right" }}>
+                      Subtotal: <strong style={{ color: B.success }}>{fmtCOP((Number(row.precio_noche) || 0) * noches)}</strong>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          <div style={{ marginBottom: 10 }}>
+            <label style={LS}>Depósito (folio único del grupo)</label>
+            <input type="number" value={f.deposito} onChange={e => set("deposito", e.target.value)} style={IS} />
           </div>
 
           <div style={{ background: B.navyLight, padding: 12, borderRadius: 8, marginBottom: 10 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}><span>Noches</span><span>{noches}</span></div>
-            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}><span>Precio / noche</span><span>{fmtCOP(f.precio_noche)}</span></div>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}>
+              <span>Habitaciones × Noches</span>
+              <span>{f.habitaciones_sel.length} × {noches}</span>
+            </div>
             <div style={{ display: "flex", justifyContent: "space-between", fontSize: 15, fontWeight: 800, marginTop: 6, paddingTop: 6, borderTop: "1px solid rgba(255,255,255,0.1)" }}>
               <span>Total</span><span style={{ color: B.success }}>{fmtCOP(total)}</span>
             </div>
