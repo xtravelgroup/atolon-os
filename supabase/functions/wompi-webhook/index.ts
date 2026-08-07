@@ -422,6 +422,41 @@ serve(async (req) => {
       }
     }
 
+    // ── 1a-hotel) Reservas de habitación de hotel (codigo HTL-*) ──
+    // El link de pago para hotel se genera con reference = hotel_estancias.codigo
+    // (formato HTL-XXX). Aqui detectamos y actualizamos la reserva de hotel.
+    if (typeof ref === "string" && ref.startsWith("HTL-")) {
+      const { data: estancias } = await SB.from("hotel_estancias")
+        .select("id, codigo, total, deposito, estado, booking_group_id")
+        .eq("codigo", ref).limit(1);
+      const est = estancias?.[0];
+      if (est) {
+        if (status === "APPROVED") {
+          const totalReserva = Number(est.total || 0);
+          const nuevoDeposito = Math.min(totalReserva, Number(est.deposito || 0) + monto);
+          const upd: Record<string, unknown> = {
+            deposito:        nuevoDeposito,
+            pago_referencia: txId,
+            pagado_en:       new Date().toISOString(),
+            pasarela_usada:  "Wompi",
+            expira_en:       null,
+            updated_at:      new Date().toISOString(),
+          };
+          if (est.estado === "cancelada") upd.estado = "reservada";
+          await SB.from("hotel_estancias").update(upd).eq("id", est.id);
+          console.log(`✓ Hotel ${est.codigo} pago Wompi ${monto} → deposito ${nuevoDeposito}/${totalReserva}`);
+          if (logRowId) {
+            await SB.from("wompi_eventos_log").update({ processed_at: new Date().toISOString() })
+              .eq("id", logRowId).then(() => {}).catch(() => {});
+          }
+          return jsonResp({ received: true, processed: true, action: "hotel_paid", reserva_id: est.id });
+        }
+        if (status === "DECLINED" || status === "VOIDED" || status === "ERROR") {
+          return jsonResp({ received: true, processed: true, action: "hotel_declined", reserva_id: est.id });
+        }
+      }
+    }
+
     // ── 1a) Buscar primero en reservas_pasadia (Tatiana / Visito.AI) ──
     const { data: reservasP } = await SB.from("reservas_pasadia")
       .select("id, total_cop, estado, cliente_nombre, cliente_telefono, cliente_email, fecha, num_personas, producto, idioma, horario_salida")

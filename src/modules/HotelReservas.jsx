@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback } from "react";
 import HotelGrupos from "./hotel/HotelGrupos";
 import { supabase } from "../lib/supabase";
+import { wompiCheckoutUrl } from "../lib/wompi";
 
 const B = {
   navy: "#0D1B3E", navyMid: "#172554", navyLight: "#1e293b",
@@ -655,6 +656,7 @@ function DetalleModal({ reserva, huesped, habitacion, onClose, onChanged }) {
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
   const [confirmDel, setConfirmDel] = useState(false);
+  const [linkModal, setLinkModal] = useState(false);
   const est = ESTADOS.find(e => e.k === reserva.estado) || ESTADOS[0];
   const noches = diffDays(reserva.check_in_at, reserva.check_out_at);
   const saldo = Number(reserva.total || 0) - Number(reserva.deposito || 0);
@@ -788,9 +790,24 @@ function DetalleModal({ reserva, huesped, habitacion, onClose, onChanged }) {
         {(reserva.estado === "cancelada" || reserva.estado === "no_show") && (
           <button onClick={() => cambiarEstado("reservada")} disabled={loading} style={BTN(B.sky, B.navy)}>↩ Reactivar</button>
         )}
+        {saldo > 0 && reserva.estado !== "cancelada" && (
+          <button onClick={() => setLinkModal(true)} disabled={loading} style={BTN(B.sky, B.navy)}>
+            🔗 Link de pago
+          </button>
+        )}
       </div>
 
       {err && <div style={{ marginTop: 12, padding: 10, background: "rgba(239,68,68,0.15)", color: B.danger, borderRadius: 8, fontSize: 12 }}>{err}</div>}
+
+      {linkModal && (
+        <LinkPagoHotelModal
+          reserva={reserva}
+          huesped={huesped}
+          saldoDefault={saldo}
+          onClose={() => setLinkModal(false)}
+          onSaved={() => { setLinkModal(false); onChanged(); }}
+        />
+      )}
 
       <div style={{ display: "flex", gap: 10, marginTop: 16, justifyContent: "space-between" }}>
         {!confirmDel ? (
@@ -819,6 +836,147 @@ function InfoBox({ l, v, alert }) {
       <div style={{ fontSize: 13, marginTop: 2 }}>{v}</div>
       {alert && <div style={{ fontSize: 10, color: B.warning, marginTop: 4 }}>⚠ {alert}</div>}
     </div>
+  );
+}
+
+// ─── Modal Link de Pago (Wompi) ─────────────────────────────────────────────
+// Genera un checkout Wompi para cobrar la reserva (deposito, saldo o total).
+// Al confirmarse el pago via wompi-webhook, la reserva se actualiza sola —
+// aca solo persistimos el link y expiracion para trazabilidad.
+function LinkPagoHotelModal({ reserva, huesped, saldoDefault, onClose, onSaved }) {
+  const [monto, setMonto] = useState(saldoDefault || 0);
+  const [horasVigencia, setHorasVigencia] = useState(24);
+  const [link, setLink] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState("");
+  const [copiado, setCopiado] = useState(false);
+
+  const email = huesped?.email || "";
+  const nombre = nombreHuesped(huesped);
+  const telefono = huesped?.telefono || "";
+
+  async function generar() {
+    if (!monto || monto <= 0) { setErr("Monto debe ser mayor a 0"); return; }
+    setSaving(true); setErr("");
+    try {
+      const redirect = `https://www.atolon.co/pago?reserva=${encodeURIComponent(reserva.codigo)}`;
+      const url = await wompiCheckoutUrl({
+        referencia: reserva.codigo,
+        totalCOP: Number(monto),
+        email,
+        redirectUrl: redirect,
+      });
+      const expira = new Date(Date.now() + horasVigencia * 3600 * 1000).toISOString();
+
+      // Persistir en la reserva para trazabilidad (link + expira).
+      const { error } = await supabase.from("hotel_estancias").update({
+        expira_en: expira,
+        updated_at: new Date().toISOString(),
+      }).eq("id", reserva.id);
+      if (error) throw error;
+
+      setLink(url);
+    } catch (e) {
+      setErr(e.message || String(e));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function copiar() {
+    try { await navigator.clipboard.writeText(link); setCopiado(true); setTimeout(() => setCopiado(false), 2000); }
+    catch { setErr("No se pudo copiar al portapapeles"); }
+  }
+
+  const waLink = () => {
+    if (!telefono) return null;
+    const tel = String(telefono).replace(/\D/g, "");
+    const t = tel.length === 10 ? `57${tel}` : tel;
+    const msg = encodeURIComponent(
+      `Hola ${nombre || ""}, aqui el link para completar el pago de tu reserva ${reserva.codigo} en Atolon Beach Club:\n\n${link}\n\nMonto: ${fmtCOP(monto)} COP\nVence en ${horasVigencia}h.`
+    );
+    return `https://wa.me/${t}?text=${msg}`;
+  };
+  const mailtoLink = () => {
+    if (!email) return null;
+    const subject = encodeURIComponent(`Link de pago — Atolon Beach Club (${reserva.codigo})`);
+    const body = encodeURIComponent(
+      `Hola ${nombre || ""},\n\nAqui el link para completar el pago de tu reserva:\n\n${link}\n\nReserva: ${reserva.codigo}\nMonto: ${fmtCOP(monto)} COP\nVence: en ${horasVigencia} horas.\n\nGracias,\nAtolon Beach Club`
+    );
+    return `mailto:${email}?subject=${subject}&body=${body}`;
+  };
+
+  return (
+    <Overlay onClose={onClose}>
+      <div style={{ fontSize: 18, fontWeight: 800, marginBottom: 4 }}>🔗 Link de pago Wompi</div>
+      <div style={{ fontSize: 12, color: "rgba(255,255,255,0.55)", marginBottom: 16 }}>
+        Reserva <b>{reserva.codigo}</b> · {nombre || "—"}
+      </div>
+
+      {!link ? (
+        <>
+          <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 10, marginBottom: 10 }}>
+            <div>
+              <label style={LS}>Monto a cobrar (COP)</label>
+              <input type="number" value={monto} onChange={e => setMonto(Number(e.target.value))}
+                min="1" style={IS} />
+              <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", marginTop: 4 }}>
+                Total reserva: {fmtCOP(reserva.total)} · Depósito: {fmtCOP(reserva.deposito)} · Saldo: {fmtCOP(saldoDefault)}
+              </div>
+            </div>
+            <div>
+              <label style={LS}>Vigencia (horas)</label>
+              <input type="number" value={horasVigencia} onChange={e => setHorasVigencia(Number(e.target.value))}
+                min="1" max="720" style={IS} />
+            </div>
+          </div>
+
+          <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
+            <button onClick={() => setMonto(saldoDefault)} style={BTN(B.navyLight)}>Saldo pendiente</button>
+            <button onClick={() => setMonto(reserva.total)} style={BTN(B.navyLight)}>Total</button>
+            <button onClick={() => setMonto(Math.round(Number(reserva.total || 0) * 0.5))} style={BTN(B.navyLight)}>50% depósito</button>
+          </div>
+
+          {err && <div style={{ padding: 10, background: "rgba(239,68,68,0.15)", color: B.danger, borderRadius: 8, fontSize: 12, marginBottom: 10 }}>{err}</div>}
+
+          <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+            <button onClick={onClose} style={BTN(B.navyLight)}>Cancelar</button>
+            <button onClick={generar} disabled={saving} style={BTN(B.success)}>
+              {saving ? "Generando…" : "🔗 Generar link"}
+            </button>
+          </div>
+        </>
+      ) : (
+        <>
+          <div style={{ background: B.navyLight, padding: 12, borderRadius: 8, marginBottom: 12, fontSize: 11, wordBreak: "break-all", fontFamily: "monospace", color: B.sky }}>
+            {link}
+          </div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
+            <button onClick={copiar} style={BTN(B.sky, B.navy)}>{copiado ? "✓ Copiado" : "📋 Copiar link"}</button>
+            {waLink() && (
+              <a href={waLink()} target="_blank" rel="noopener noreferrer" style={{ textDecoration: "none" }}>
+                <button style={BTN("#25D366", "#fff")}>📱 Enviar por WhatsApp</button>
+              </a>
+            )}
+            {mailtoLink() && (
+              <a href={mailtoLink()} style={{ textDecoration: "none" }}>
+                <button style={BTN(B.sand, B.navy)}>✉️ Enviar por email</button>
+              </a>
+            )}
+            <a href={link} target="_blank" rel="noopener noreferrer" style={{ textDecoration: "none" }}>
+              <button style={BTN(B.navyLight)}>🌐 Abrir checkout</button>
+            </a>
+          </div>
+          <div style={{ padding: 10, background: "rgba(95,207,128,0.1)", borderRadius: 8, fontSize: 11, color: B.success, marginBottom: 12 }}>
+            ✓ Link generado. Cuando el cliente pague, la reserva se actualizará automáticamente vía webhook Wompi.
+            Monto: <b>{fmtCOP(monto)}</b> · Vence en <b>{horasVigencia}h</b>.
+          </div>
+          <div style={{ display: "flex", justifyContent: "flex-end" }}>
+            <button onClick={onSaved} style={BTN(B.hotel)}>Listo</button>
+          </div>
+        </>
+      )}
+    </Overlay>
   );
 }
 
