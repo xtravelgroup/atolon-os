@@ -424,7 +424,9 @@ serve(async (req) => {
 
     // ── 1a-hotel) Reservas de habitación de hotel (codigo HTL-*) ──
     // El link de pago para hotel se genera con reference = hotel_estancias.codigo
-    // (formato HTL-XXX). Aqui detectamos y actualizamos la reserva de hotel.
+    // (formato HTL-XXX). Si la estancia tiene booking_group_id, el pago se
+    // distribuye proporcionalmente entre TODAS las estancias del grupo (folio
+    // único multi-habitación) para que el saldo agregado quede consistente.
     if (typeof ref === "string" && ref.startsWith("HTL-")) {
       const { data: estancias } = await SB.from("hotel_estancias")
         .select("id, codigo, total, deposito, estado, booking_group_id")
@@ -432,19 +434,47 @@ serve(async (req) => {
       const est = estancias?.[0];
       if (est) {
         if (status === "APPROVED") {
-          const totalReserva = Number(est.total || 0);
-          const nuevoDeposito = Math.min(totalReserva, Number(est.deposito || 0) + monto);
-          const upd: Record<string, unknown> = {
-            deposito:        nuevoDeposito,
-            pago_referencia: txId,
-            pagado_en:       new Date().toISOString(),
-            pasarela_usada:  "Wompi",
-            expira_en:       null,
-            updated_at:      new Date().toISOString(),
-          };
-          if (est.estado === "cancelada") upd.estado = "reservada";
-          await SB.from("hotel_estancias").update(upd).eq("id", est.id);
-          console.log(`✓ Hotel ${est.codigo} pago Wompi ${monto} → deposito ${nuevoDeposito}/${totalReserva}`);
+          if (est.booking_group_id) {
+            // Multi-habitación: prorratear el pago según el total de cada estancia.
+            const { data: hermanas } = await SB.from("hotel_estancias")
+              .select("id, codigo, total, deposito, estado")
+              .eq("booking_group_id", est.booking_group_id);
+            const totGrupo = (hermanas || []).reduce((s, r) => s + (Number(r.total) || 0), 0);
+            let repartido = 0;
+            for (let i = 0; i < (hermanas || []).length; i++) {
+              const h = hermanas![i];
+              const share = totGrupo > 0
+                ? (i === hermanas!.length - 1 ? monto - repartido : Math.round(monto * (Number(h.total) || 0) / totGrupo))
+                : (i === 0 ? monto : 0);
+              repartido += share;
+              const nuevoDep = Number(h.deposito || 0) + share;
+              const upd: Record<string, unknown> = {
+                deposito:        nuevoDep,
+                pago_referencia: txId,
+                pagado_en:       new Date().toISOString(),
+                pasarela_usada:  "Wompi",
+                expira_en:       null,
+                updated_at:      new Date().toISOString(),
+              };
+              if (h.estado === "cancelada") upd.estado = "reservada";
+              await SB.from("hotel_estancias").update(upd).eq("id", h.id);
+            }
+            console.log(`✓ Hotel grupo ${est.booking_group_id} pago Wompi ${monto} distribuido en ${hermanas?.length || 0} habs`);
+          } else {
+            const totalReserva = Number(est.total || 0);
+            const nuevoDeposito = Number(est.deposito || 0) + monto;
+            const upd: Record<string, unknown> = {
+              deposito:        nuevoDeposito,
+              pago_referencia: txId,
+              pagado_en:       new Date().toISOString(),
+              pasarela_usada:  "Wompi",
+              expira_en:       null,
+              updated_at:      new Date().toISOString(),
+            };
+            if (est.estado === "cancelada") upd.estado = "reservada";
+            await SB.from("hotel_estancias").update(upd).eq("id", est.id);
+            console.log(`✓ Hotel ${est.codigo} pago Wompi ${monto} → deposito ${nuevoDeposito}/${totalReserva}`);
+          }
           if (logRowId) {
             await SB.from("wompi_eventos_log").update({ processed_at: new Date().toISOString() })
               .eq("id", logRowId).then(() => {}).catch(() => {});

@@ -657,9 +657,26 @@ function DetalleModal({ reserva, huesped, habitacion, onClose, onChanged }) {
   const [err, setErr] = useState("");
   const [confirmDel, setConfirmDel] = useState(false);
   const [linkModal, setLinkModal] = useState(false);
+  // Si la reserva pertenece a un grupo (multi-habitación con folio único),
+  // cargar todas las estancias hermanas para calcular total/depósito/saldo
+  // agregado — el link de pago debe cobrar el saldo COMPLETO, no el de una
+  // sola habitación.
+  const [grupoRows, setGrupoRows] = useState(null);
+  useEffect(() => {
+    if (!reserva.booking_group_id) { setGrupoRows(null); return; }
+    supabase.from("hotel_estancias")
+      .select("id, codigo, total, deposito, precio_noche, habitacion_id")
+      .eq("booking_group_id", reserva.booking_group_id)
+      .then(({ data }) => setGrupoRows(data || []));
+  }, [reserva.booking_group_id]);
+
   const est = ESTADOS.find(e => e.k === reserva.estado) || ESTADOS[0];
   const noches = diffDays(reserva.check_in_at, reserva.check_out_at);
-  const saldo = Number(reserva.total || 0) - Number(reserva.deposito || 0);
+  // Totales agregados del grupo (cae a la reserva individual si no hay grupo)
+  const totalGrupo    = grupoRows ? grupoRows.reduce((s, r) => s + (Number(r.total) || 0), 0)    : Number(reserva.total || 0);
+  const depositoGrupo = grupoRows ? grupoRows.reduce((s, r) => s + (Number(r.deposito) || 0), 0) : Number(reserva.deposito || 0);
+  const saldo = totalGrupo - depositoGrupo;
+  const esGrupo = grupoRows && grupoRows.length > 1;
 
   async function cambiarEstado(nuevoEstado) {
     // rank 116: no permitir transicion a in_house sin habitacion_id. Una
@@ -753,13 +770,26 @@ function DetalleModal({ reserva, huesped, habitacion, onClose, onChanged }) {
       </div>
 
       <div style={{ background: B.navyLight, padding: 12, borderRadius: 8, marginBottom: 14 }}>
+        {esGrupo && (
+          <div style={{ fontSize: 10, color: B.hotel, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 700 }}>
+            🏨×{grupoRows.length} · Folio único (multi-habitación)
+          </div>
+        )}
         <div style={{ display: "flex", justifyContent: "space-between", fontSize: 15, fontWeight: 800 }}>
-          <span>Total</span><span style={{ color: B.success }}>{fmtCOP(reserva.total)}</span>
+          <span>Total{esGrupo ? " del grupo" : ""}</span>
+          <span style={{ color: B.success }}>{fmtCOP(totalGrupo)}</span>
         </div>
-        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12 }}><span>Depósito</span><span>{fmtCOP(reserva.deposito)}</span></div>
+        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12 }}>
+          <span>Depósito{esGrupo ? " del grupo" : ""}</span><span>{fmtCOP(depositoGrupo)}</span>
+        </div>
         <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, fontWeight: 700, color: saldo > 0 ? B.warning : B.success }}>
-          <span>Saldo</span><span>{fmtCOP(saldo)}</span>
+          <span>Saldo{esGrupo ? " del grupo" : ""}</span><span>{fmtCOP(saldo)}</span>
         </div>
+        {esGrupo && (
+          <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginTop: 8, paddingTop: 8, borderTop: "1px solid rgba(255,255,255,0.08)" }}>
+            Habitaciones del grupo: {grupoRows.length} · Esta reserva: {fmtCOP(reserva.total)}
+          </div>
+        )}
       </div>
 
       {reserva.solicitudes_especiales && (
@@ -804,6 +834,10 @@ function DetalleModal({ reserva, huesped, habitacion, onClose, onChanged }) {
           reserva={reserva}
           huesped={huesped}
           saldoDefault={saldo}
+          totalGrupo={totalGrupo}
+          depositoGrupo={depositoGrupo}
+          esGrupo={esGrupo}
+          grupoCount={grupoRows?.length || 1}
           onClose={() => setLinkModal(false)}
           onSaved={() => { setLinkModal(false); onChanged(); }}
         />
@@ -843,7 +877,9 @@ function InfoBox({ l, v, alert }) {
 // Genera un checkout Wompi para cobrar la reserva (deposito, saldo o total).
 // Al confirmarse el pago via wompi-webhook, la reserva se actualiza sola —
 // aca solo persistimos el link y expiracion para trazabilidad.
-function LinkPagoHotelModal({ reserva, huesped, saldoDefault, onClose, onSaved }) {
+function LinkPagoHotelModal({ reserva, huesped, saldoDefault, totalGrupo, depositoGrupo, esGrupo, grupoCount, onClose, onSaved }) {
+  const totalRef  = Number(totalGrupo ?? reserva.total ?? 0);
+  const depoRef   = Number(depositoGrupo ?? reserva.deposito ?? 0);
   const [monto, setMonto] = useState(saldoDefault || 0);
   const [horasVigencia, setHorasVigencia] = useState(24);
   const [link, setLink] = useState("");
@@ -911,6 +947,11 @@ function LinkPagoHotelModal({ reserva, huesped, saldoDefault, onClose, onSaved }
       <div style={{ fontSize: 18, fontWeight: 800, marginBottom: 4 }}>🔗 Link de pago Wompi</div>
       <div style={{ fontSize: 12, color: "rgba(255,255,255,0.55)", marginBottom: 16 }}>
         Reserva <b>{reserva.codigo}</b> · {nombre || "—"}
+        {esGrupo && (
+          <span style={{ marginLeft: 8, fontSize: 10, padding: "2px 6px", borderRadius: 4, background: B.hotel + "33", color: B.hotel, fontWeight: 700 }}>
+            🏨×{grupoCount} folio único
+          </span>
+        )}
       </div>
 
       {!link ? (
@@ -921,7 +962,7 @@ function LinkPagoHotelModal({ reserva, huesped, saldoDefault, onClose, onSaved }
               <input type="number" value={monto} onChange={e => setMonto(Number(e.target.value))}
                 min="1" style={IS} />
               <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", marginTop: 4 }}>
-                Total reserva: {fmtCOP(reserva.total)} · Depósito: {fmtCOP(reserva.deposito)} · Saldo: {fmtCOP(saldoDefault)}
+                {esGrupo ? "Total grupo" : "Total"}: {fmtCOP(totalRef)} · Depósito: {fmtCOP(depoRef)} · Saldo: {fmtCOP(saldoDefault)}
               </div>
             </div>
             <div>
@@ -931,10 +972,16 @@ function LinkPagoHotelModal({ reserva, huesped, saldoDefault, onClose, onSaved }
             </div>
           </div>
 
-          <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
-            <button onClick={() => setMonto(saldoDefault)} style={BTN(B.navyLight)}>Saldo pendiente</button>
-            <button onClick={() => setMonto(reserva.total)} style={BTN(B.navyLight)}>Total</button>
-            <button onClick={() => setMonto(Math.round(Number(reserva.total || 0) * 0.5))} style={BTN(B.navyLight)}>50% depósito</button>
+          <div style={{ display: "flex", gap: 6, marginBottom: 12, flexWrap: "wrap" }}>
+            <button onClick={() => setMonto(saldoDefault)} style={BTN(B.navyLight)}>
+              Saldo{esGrupo ? " grupo" : ""}
+            </button>
+            <button onClick={() => setMonto(totalRef)} style={BTN(B.navyLight)}>
+              Total{esGrupo ? " grupo" : ""}
+            </button>
+            <button onClick={() => setMonto(Math.round(totalRef * 0.5))} style={BTN(B.navyLight)}>
+              50% depósito
+            </button>
           </div>
 
           {err && <div style={{ padding: 10, background: "rgba(239,68,68,0.15)", color: B.danger, borderRadius: 8, fontSize: 12, marginBottom: 10 }}>{err}</div>}
