@@ -1029,10 +1029,15 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
     if (!supabase || saving) return;
     setSaving(true);
     const nuevaExpira = new Date(Date.now() + Number(regenMinutos) * 60 * 1000).toISOString();
+    // URL de la landing page interna que redirige a Wompi. Se guarda en la
+    // columna link_pago para que quede persistido (y el operador lo pueda
+    // volver a copiar aunque cierre el modal).
+    const url = `${window.location.origin}/pago?reserva=${r0.id}`;
     const { error } = await supabase.from("reservas").update({
       estado: "pendiente_pago",
       link_expira_at: nuevaExpira,
       forma_pago: "link_pago",
+      link_pago: url,
       notas: (r0.notas ? r0.notas + "\n" : "") + `Link regenerado el ${new Date().toLocaleString("es-CO")} — expira en ${regenMinutos} min`,
     }).eq("id", r0.id);
     setSaving(false);
@@ -1040,11 +1045,15 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
     logAccion({ modulo: "reservas", accion: "regenerar_link_pago", tabla: "reservas", registroId: r0.id,
       datosAntes: { estado: r0.estado }, datosDespues: { estado: "pendiente_pago", link_expira_at: nuevaExpira },
       notas: `Link regenerado · vigencia ${regenMinutos} min` });
-    const url = `${window.location.origin}/pago?reserva=${r0.id}`;
+    // Orden importa: primero mostrar el modal con el link (state local),
+    // DESPUES notificar al padre. Si onUpdated re-renderiza este componente
+    // y perdemos linkRegenerado, el usuario no ve el link. Con esto seguro
+    // se renderiza al menos una vez antes de cualquier remount.
     setLinkRegenerado(url);
     setShowRegenModal(false);
     set("estado", "pendiente_pago");
-    onUpdated();
+    // Diferir onUpdated para que React alcance a renderizar el modal del link
+    setTimeout(() => onUpdated(), 0);
   };
 
   const handleCambioFecha = async () => {
