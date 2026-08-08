@@ -9,6 +9,179 @@ import { waSendConfirmacion } from "../lib/whatsapp";
 import ZohoPaymentWidget from "../components/ZohoPaymentWidget";
 import FacturaElectronicaForm, { FE_EMPTY, feValidate, fePayload } from "../lib/FacturaElectronicaForm.jsx";
 
+// ─── i18n ───────────────────────────────────────────────────────────────────
+// Traducciones ES/EN para la pagina publica de pago. El idioma inicial
+// viene de ?lang=en en la URL, o de localStorage. El toggle esta arriba
+// a la derecha del layout principal.
+const T = {
+  es: {
+    linkExpirado: "Link expirado",
+    linkExpiradoMsg: "El tiempo para completar el pago ha vencido.",
+    contactaAgencia: "Contacta a la agencia para generar un nuevo link.",
+    linkInvalido: "Link inválido",
+    linkInvalidoMsg: "El identificador de reserva no está en el formato esperado.",
+    reservaNoEncontrada: "Reserva no encontrada",
+    reservaNoEncontradaMsg: "No pudimos encontrar tu reserva. Verificá el link o contactá a la agencia.",
+    yaExpirado: "Este link ya expiró. Solicitá uno nuevo a la agencia.",
+    intentarDeNuevo: "Intentar de nuevo",
+    cargando: "Cargando…",
+    pagoConfirmado: "¡Pago confirmado!",
+    pagoConfirmadoMsg: "Tu reserva quedó lista. Guardá este comprobante.",
+    reserva: "Reserva",
+    fecha: "Fecha",
+    salida: "Salida",
+    personas: "Personas",
+    total: "Total",
+    monto: "Monto a pagar",
+    saldoPendiente: "Saldo pendiente",
+    metodoDePago: "Método de pago",
+    pagarConWompi: "Pagar con Wompi (COP)",
+    pagarInternacional: "Pagar con tarjeta internacional (USD)",
+    procesando: "Procesando…",
+    aceptoTerminos: "Acepto los términos y condiciones y autorizo el cargo a mi tarjeta.",
+    verTerminos: "Ver términos y condiciones",
+    debeAceptarTerminos: "Debes aceptar los términos y condiciones para continuar.",
+    tipoDocumento: "Tipo de documento",
+    numeroDocumento: "Número de documento",
+    ingresaDocumento: "Ingresa el número de tu documento.",
+    fotoDocumento: "Foto de tu documento",
+    fotoRequerida: "Para montos mayores a $5.000.000 COP debes subir foto de tu documento.",
+    fotoMuyPesada: "Foto muy pesada (máx 10MB)",
+    subiendo: "Subiendo…",
+    solicitarFactura: "Solicitar factura electrónica",
+    tiempoRestante: "Tiempo para pagar",
+    idioma: "Idioma",
+    error: "Error",
+    // PagoOk
+    nombre: "Nombre",
+    hora: "Hora",
+    regreso: "Regreso",
+    pasadia: "Pasadía",
+    horaLlegadaMuelle: "Hora Llegada Muelle",
+    totalPagado: "Total pagado",
+    mostrarQR: "Muestra este QR al llegar al muelle",
+    infoEmbarque: "🚢 Información de embarque",
+    muelleBodeguita: "Muelle de La Bodeguita — Puerta 1",
+    llegar20min: "Llegar 20 minutos antes de la salida",
+    impuestoMuelle: "Impuesto de muelle",
+    noIncluido: "no incluido",
+    traerDocumento: "Traer documento de identidad original",
+    noAlimentos: "No se permite el ingreso de alimentos ni bebidas a Atolón Beach Club",
+    completaDatos: "📄 Completa tus datos de zarpe",
+    // Pago principal
+    resumen: "Resumen de tu reserva",
+    detalles: "Detalles",
+    autorizacionTarjeta: "Autorización de cargo",
+    yoAutorizo: "Yo, titular de la tarjeta, autorizo a Atolón Beach Club a realizar el cargo por el monto arriba indicado. Entiendo que la reserva es NO REEMBOLSABLE si cancelo menos de 48h antes.",
+  },
+  en: {
+    linkExpirado: "Link expired",
+    linkExpiradoMsg: "The time to complete the payment has expired.",
+    contactaAgencia: "Contact the agency to generate a new link.",
+    linkInvalido: "Invalid link",
+    linkInvalidoMsg: "The reservation identifier is not in the expected format.",
+    reservaNoEncontrada: "Reservation not found",
+    reservaNoEncontradaMsg: "We couldn't find your reservation. Check the link or contact the agency.",
+    yaExpirado: "This link has already expired. Please request a new one from the agency.",
+    intentarDeNuevo: "Try again",
+    cargando: "Loading…",
+    pagoConfirmado: "Payment confirmed!",
+    pagoConfirmadoMsg: "Your reservation is ready. Keep this receipt.",
+    reserva: "Reservation",
+    fecha: "Date",
+    salida: "Departure",
+    personas: "Guests",
+    total: "Total",
+    monto: "Amount to pay",
+    saldoPendiente: "Pending balance",
+    metodoDePago: "Payment method",
+    pagarConWompi: "Pay with Wompi (COP)",
+    pagarInternacional: "Pay with international card (USD)",
+    procesando: "Processing…",
+    aceptoTerminos: "I accept the terms and conditions and authorize the charge to my card.",
+    verTerminos: "View terms and conditions",
+    debeAceptarTerminos: "You must accept the terms and conditions to continue.",
+    tipoDocumento: "ID type",
+    numeroDocumento: "ID number",
+    ingresaDocumento: "Enter your ID number.",
+    fotoDocumento: "ID photo",
+    fotoRequerida: "For amounts over $5,000,000 COP you must upload a photo of your ID.",
+    fotoMuyPesada: "Photo too large (max 10MB)",
+    subiendo: "Uploading…",
+    solicitarFactura: "Request electronic invoice",
+    tiempoRestante: "Time to pay",
+    idioma: "Language",
+    error: "Error",
+    nombre: "Name",
+    hora: "Time",
+    regreso: "Return",
+    pasadia: "Package",
+    horaLlegadaMuelle: "Pier arrival time",
+    totalPagado: "Total paid",
+    mostrarQR: "Show this QR when you arrive at the pier",
+    infoEmbarque: "🚢 Boarding information",
+    muelleBodeguita: "La Bodeguita Pier — Gate 1",
+    llegar20min: "Arrive 20 minutes before departure",
+    impuestoMuelle: "Pier tax",
+    noIncluido: "not included",
+    traerDocumento: "Bring your original ID",
+    noAlimentos: "Food and drinks are not allowed inside Atolón Beach Club",
+    completaDatos: "📄 Complete your embarkation info",
+    resumen: "Your reservation",
+    detalles: "Details",
+    autorizacionTarjeta: "Card authorization",
+    yoAutorizo: "I, the cardholder, authorize Atolón Beach Club to charge the amount above. I understand this reservation is NON-REFUNDABLE if cancelled less than 48h before.",
+  },
+};
+
+function useIdioma() {
+  const detectar = () => {
+    try {
+      const p = new URLSearchParams(window.location.search);
+      const q = (p.get("lang") || "").toLowerCase();
+      if (q === "en" || q === "es") return q;
+      const saved = localStorage.getItem("pago_lang");
+      if (saved === "en" || saved === "es") return saved;
+      // Auto por navegador si no hay preferencia
+      const nav = (navigator.language || "es").toLowerCase();
+      return nav.startsWith("en") ? "en" : "es";
+    } catch { return "es"; }
+  };
+  const [lang, setLangState] = useState(detectar);
+  const setLang = (l) => {
+    setLangState(l);
+    try { localStorage.setItem("pago_lang", l); } catch {}
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.set("lang", l);
+      window.history.replaceState(null, "", url.toString());
+    } catch {}
+  };
+  return [lang, setLang, T[lang] || T.es];
+}
+
+function LangToggle({ lang, setLang }) {
+  return (
+    <div style={{
+      position: "absolute", top: 12, right: 12, zIndex: 10,
+      display: "flex", gap: 2, background: "rgba(255,255,255,0.06)",
+      borderRadius: 100, padding: 3, border: "1px solid rgba(255,255,255,0.08)",
+    }}>
+      {["es", "en"].map(l => (
+        <button key={l} onClick={() => setLang(l)}
+          style={{
+            padding: "5px 12px", background: lang === l ? B.sand : "transparent",
+            color: lang === l ? B.navy : "rgba(255,255,255,0.55)",
+            border: "none", borderRadius: 100, fontSize: 11, fontWeight: 700,
+            cursor: "pointer", letterSpacing: "0.05em", textTransform: "uppercase",
+          }}>
+          {l === "es" ? "🇨🇴 ES" : "🇺🇸 EN"}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 // ─── helpers ────────────────────────────────────────────────────────────────
 function getReservaId() {
   // /pago/R-1234567  or  /pago/WEB-xxx  or  /pago/EVBAL-xxx  or  /pago?id=R-1234567  or  /pago?reserva=WEB-xxx
@@ -48,7 +221,7 @@ function qrUrl(data, size = 200) {
 }
 
 // ─── pantalla: Pago Completado ──────────────────────────────────────────────
-function PagoOk({ reserva, salida }) {
+function PagoOk({ reserva, salida, t = T.es }) {
   const zarpeLink = `https://atolon.co/zarpe-info?id=${reserva.id}`;
   const horaTexto = salida?.hora ? `Salida: ${salida.hora}${salida.hora_regreso ? ` · Regreso: ${salida.hora_regreso}` : ""}` : "";
 
@@ -114,8 +287,8 @@ function PagoOk({ reserva, salida }) {
       {/* Success header */}
       <div style={{ textAlign: "center", padding: "20px 0 8px" }}>
         <div style={{ fontSize: 56, marginBottom: 12 }}>✅</div>
-        <h2 style={{ fontFamily: "'Barlow Condensed', sans-serif", fontSize: 28, marginBottom: 6, color: B.success }}>¡Pago recibido!</h2>
-        <p style={{ color: "rgba(255,255,255,0.5)", fontSize: 14 }}>Tu reserva está confirmada</p>
+        <h2 style={{ fontFamily: "'Barlow Condensed', sans-serif", fontSize: 28, marginBottom: 6, color: B.success }}>{t.pagoConfirmado}</h2>
+        <p style={{ color: "rgba(255,255,255,0.5)", fontSize: 14 }}>{t.pagoConfirmadoMsg}</p>
       </div>
 
       {/* Aviso del nombre del cargo — solo cuando pagó con tarjeta internacional */}
@@ -144,48 +317,48 @@ function PagoOk({ reserva, salida }) {
           />
         </div>
         <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontSize: 20, fontWeight: 700, letterSpacing: 2, color: B.sand }}>{reserva.id}</div>
-        <div style={{ fontSize: 11, color: "rgba(255,255,255,0.3)", marginTop: 4 }}>Muestra este QR al llegar al muelle</div>
+        <div style={{ fontSize: 11, color: "rgba(255,255,255,0.3)", marginTop: 4 }}>{t.mostrarQR}</div>
       </div>
 
       {/* Reservation summary */}
       <div style={{ background: B.navyMid, borderRadius: 14, padding: 18, fontSize: 13, lineHeight: 2.2 }}>
-        <div style={{ display: "flex", justifyContent: "space-between" }}><span style={{ color: B.sand }}>Nombre</span><span style={{ fontWeight: 600 }}>{reserva.nombre}</span></div>
-        <div style={{ display: "flex", justifyContent: "space-between" }}><span style={{ color: B.sand }}>Fecha</span><span style={{ textTransform: "capitalize" }}>{new Date(reserva.fecha + "T12:00:00").toLocaleDateString("es-CO", { weekday: "short", day: "numeric", month: "long" })}</span></div>
+        <div style={{ display: "flex", justifyContent: "space-between" }}><span style={{ color: B.sand }}>{t.nombre}</span><span style={{ fontWeight: 600 }}>{reserva.nombre}</span></div>
+        <div style={{ display: "flex", justifyContent: "space-between" }}><span style={{ color: B.sand }}>{t.fecha}</span><span style={{ textTransform: "capitalize" }}>{new Date(reserva.fecha + "T12:00:00").toLocaleDateString(t === T.en ? "en-US" : "es-CO", { weekday: "short", day: "numeric", month: "long" })}</span></div>
         {llegadaHora && (
           <div style={{ display: "flex", justifyContent: "space-between" }}>
-            <span style={{ color: B.sand }}>Hora Llegada Muelle</span>
+            <span style={{ color: B.sand }}>{t.horaLlegadaMuelle}</span>
             <span style={{ fontWeight: 700, color: B.sand }}>{llegadaHora}</span>
           </div>
         )}
         {salida?.hora && (
           <div style={{ display: "flex", justifyContent: "space-between" }}>
-            <span style={{ color: B.sand }}>Salida</span>
+            <span style={{ color: B.sand }}>{t.salida}</span>
             <span style={{ fontWeight: 700, color: B.sky }}>{salida.hora}</span>
           </div>
         )}
         {salida?.hora_regreso && (
           <div style={{ display: "flex", justifyContent: "space-between" }}>
-            <span style={{ color: B.sand }}>Regreso</span>
+            <span style={{ color: B.sand }}>{t.regreso}</span>
             <span style={{ fontWeight: 700, color: B.sky }}>{salida.hora_regreso}</span>
           </div>
         )}
-        <div style={{ display: "flex", justifyContent: "space-between" }}><span style={{ color: B.sand }}>Pasadía</span><span>{reserva.tipo}</span></div>
-        <div style={{ display: "flex", justifyContent: "space-between" }}><span style={{ color: B.sand }}>Personas</span><span>{reserva.pax}</span></div>
+        <div style={{ display: "flex", justifyContent: "space-between" }}><span style={{ color: B.sand }}>{t.pasadia}</span><span>{reserva.tipo}</span></div>
+        <div style={{ display: "flex", justifyContent: "space-between" }}><span style={{ color: B.sand }}>{t.personas}</span><span>{reserva.pax}</span></div>
         <div style={{ display: "flex", justifyContent: "space-between", borderTop: `1px solid ${B.navyLight}`, paddingTop: 8, marginTop: 4 }}>
-          <span style={{ fontWeight: 700 }}>Total pagado</span>
+          <span style={{ fontWeight: 700 }}>{t.totalPagado}</span>
           <span style={{ fontWeight: 700, color: B.success, fontFamily: "'Barlow Condensed', sans-serif", fontSize: 17 }}>{COP(reserva.total)}</span>
         </div>
       </div>
 
       {/* Embarkation info */}
       <div style={{ background: "rgba(52,211,153,0.06)", borderRadius: 14, padding: 18, border: "1px solid rgba(52,211,153,0.2)" }}>
-        <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 10, color: B.success }}>🚢 Información de embarque</div>
+        <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 10, color: B.success }}>{t.infoEmbarque}</div>
         <div style={{ fontSize: 13, lineHeight: 2.3, color: "rgba(255,255,255,0.8)" }}>
-          <div>📍 <strong>Muelle de La Bodeguita — Puerta 1</strong></div>
-          <div>⏰ Llegar <strong>20 minutos antes</strong> de la salida</div>
-          <div>💵 Impuesto de muelle: <strong style={{ color: B.sand }}>COP 18.000</strong> (no incluido)</div>
-          <div>🆔 Traer documento de identidad original</div>
-          <div style={{ color: B.danger, fontWeight: 600 }}>🚫 No se permite el ingreso de alimentos ni bebidas a Atolón Beach Club</div>
+          <div>📍 <strong>{t.muelleBodeguita}</strong></div>
+          <div>⏰ {t.llegar20min}</div>
+          <div>💵 {t.impuestoMuelle}: <strong style={{ color: B.sand }}>COP 18.000</strong> ({t.noIncluido})</div>
+          <div>🆔 {t.traerDocumento}</div>
+          <div style={{ color: B.danger, fontWeight: 600 }}>🚫 {t.noAlimentos}</div>
         </div>
       </div>
 
@@ -269,14 +442,14 @@ function PagoOk({ reserva, salida }) {
 }
 
 // ─── pantalla: Link Expirado ────────────────────────────────────────────────
-function LinkExpirado() {
+function LinkExpirado({ t }) {
   return (
     <div style={{ textAlign: "center", padding: "60px 20px" }}>
       <div style={{ fontSize: 64, marginBottom: 16 }}>⏱️</div>
-      <h2 style={{ fontFamily: "'Barlow Condensed', sans-serif", fontSize: 30, color: B.danger, marginBottom: 12 }}>Link expirado</h2>
+      <h2 style={{ fontFamily: "'Barlow Condensed', sans-serif", fontSize: 30, color: B.danger, marginBottom: 12 }}>{t.linkExpirado}</h2>
       <p style={{ color: "rgba(255,255,255,0.4)", fontSize: 14 }}>
-        El tiempo para completar el pago ha vencido.<br />
-        Contacta a la agencia para generar un nuevo link.
+        {t.linkExpiradoMsg}<br />
+        {t.contactaAgencia}
       </p>
     </div>
   );
@@ -289,6 +462,7 @@ const TERMINOS_VERSION = "1.0-2026-08";
 const UMBRAL_ID_COP = 5_000_000;
 
 export default function PagoCliente() {
+  const [lang, setLang, t] = useIdioma();
   const reservaId = getReservaId();
   const [reserva, setReserva] = useState(null);
   const [salida,  setSalida]  = useState(null);
@@ -564,7 +738,8 @@ export default function PagoCliente() {
 
   // ── Layout wrapper ──────────────────────────────────────────────────────
   const wrap = (content) => (
-    <div style={{ minHeight: "100vh", background: B.navy, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 20 }}>
+    <div style={{ minHeight: "100vh", background: B.navy, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 20, position: "relative" }}>
+      <LangToggle lang={lang} setLang={setLang} />
       {/* Header */}
       <div style={{ textAlign: "center", marginBottom: 32 }}>
         <img src="/atolon-logo-white.png" alt="Atolon Beach Club" style={{ height: 52, objectFit: "contain", display: "block", margin: "0 auto" }} />
@@ -605,17 +780,23 @@ export default function PagoCliente() {
     </div>
   );
 
-  if (loading) return wrap(<div style={{ textAlign: "center", color: "rgba(255,255,255,0.4)", padding: 40 }}>Cargando...</div>);
-  if (error) return wrap(<div style={{ textAlign: "center", color: B.danger, padding: 40 }}>{error}</div>);
-  if (yaPagado) return wrap(<PagoOk reserva={reserva} salida={salida} />);
-  if (expirado) return wrap(<LinkExpirado />);
+  if (loading) return wrap(<div style={{ textAlign: "center", color: "rgba(255,255,255,0.4)", padding: 40 }}>{t.cargando}</div>);
+  if (error) {
+    // Traducir errores comunes
+    const msg = error === "Link inválido" ? t.linkInvalido
+              : error === "Reserva no encontrada" ? t.reservaNoEncontrada
+              : error;
+    return wrap(<div style={{ textAlign: "center", color: B.danger, padding: 40 }}>{msg}</div>);
+  }
+  if (yaPagado) return wrap(<PagoOk reserva={reserva} salida={salida} t={t} />);
+  if (expirado) return wrap(<LinkExpirado t={t} />);
 
   return wrap(
     <div>
       {/* Countdown */}
       {reserva.link_expira_at && (
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: secsLeft < 120 ? B.danger + "22" : B.success + "15", borderRadius: 10, padding: "10px 16px", marginBottom: 24, border: `1px solid ${secsLeft < 120 ? B.danger + "44" : B.success + "33"}` }}>
-          <span style={{ fontSize: 13, color: "rgba(255,255,255,0.5)" }}>Tiempo para pagar</span>
+          <span style={{ fontSize: 13, color: "rgba(255,255,255,0.5)" }}>{t.tiempoRestante}</span>
           <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontSize: 26, fontWeight: 700, color: secsLeft < 120 ? B.danger : B.success }}>{fmtTime(secsLeft)}</span>
         </div>
       )}
