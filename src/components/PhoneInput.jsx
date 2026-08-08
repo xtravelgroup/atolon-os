@@ -134,7 +134,7 @@ export default function PhoneInput({
           value={national}
           onChange={handleNat}
           onBlur={handleBlur}
-          placeholder={placeholder}
+          placeholder={String(placeholder || "").replace(/^\+\d{1,4}\s*/, "")}
           required={required}
           disabled={disabled}
           autoFocus={autoFocus}
