@@ -13,6 +13,7 @@
 //     ve todos los deptos, puede desaprobar/rechazar/pagar.
 
 import { useState, useEffect, useMemo, useCallback } from "react";
+import PhoneInput from "../components/PhoneInput.jsx";
 import { supabase } from "../lib/supabase";
 import { B, COP } from "../brand";
 import { logAccion } from "../lib/logAccion";
@@ -818,7 +819,7 @@ export default function NominaPorDia() {
             </div>
             <div>
               <label style={LS}>Teléfono</label>
-              <input value={trabForm.telefono} onChange={e => setTrabForm(f => ({ ...f, telefono: e.target.value }))} style={IS} />
+              <PhoneInput value={trabForm.telefono} onChange={v => setTrabForm(f => ({ ...f, telefono: v }))} inputStyle={IS} placeholder="+57 300 000 0000" />
             </div>
           </div>
           <div style={{ marginBottom: 12 }}>

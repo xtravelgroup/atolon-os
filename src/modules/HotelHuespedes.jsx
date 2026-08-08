@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback } from "react";
+import PhoneInput from "../components/PhoneInput.jsx";
 import { supabase } from "../lib/supabase";
 
 const B = {
@@ -240,7 +241,7 @@ function HuespedModal({ huesped, onClose, onSaved }) {
         </div>
         <div><label style={LS}>Fecha de nacimiento</label><input type="date" value={f.fecha_nacimiento} onChange={e => set("fecha_nacimiento", e.target.value)} style={IS} /></div>
         <div><label style={LS}>Email</label><input type="email" value={f.email} onChange={e => set("email", e.target.value)} style={IS} /></div>
-        <div><label style={LS}>Teléfono</label><input value={f.telefono} onChange={e => set("telefono", e.target.value)} style={IS} /></div>
+        <div><label style={LS}>Teléfono</label><PhoneInput value={f.telefono} onChange={v => set("telefono", v)} inputStyle={IS} placeholder="+57 300 000 0000" /></div>
         <div><label style={LS}>Nacionalidad</label><input value={f.nacionalidad} onChange={e => set("nacionalidad", e.target.value)} style={IS} /></div>
         <div><label style={LS}>Ciudad</label><input value={f.ciudad} onChange={e => set("ciudad", e.target.value)} style={IS} /></div>
         <div style={{ gridColumn: "1 / -1" }}><label style={LS}>Dirección</label><input value={f.direccion} onChange={e => set("direccion", e.target.value)} style={IS} /></div>

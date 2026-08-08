@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import PhoneInput from "../components/PhoneInput.jsx";
 import { B, COP, fmtFecha, todayStr } from "../brand";
 import { supabase } from "../lib/supabase";
 import { getCart, clearCart } from "../lib/requisicionCart";
@@ -3713,7 +3714,7 @@ function ProveedorRapidoModal({ onClose, reload }) {
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
           <div><label style={LS}>Nombre *</label><input value={form.nombre} onChange={e => set("nombre", e.target.value)} style={IS} autoFocus /></div>
           <div><label style={LS}>NIT</label><input value={form.nit} onChange={e => set("nit", e.target.value)} style={IS} /></div>
-          <div><label style={LS}>Teléfono</label><input value={form.telefono} onChange={e => set("telefono", e.target.value)} style={IS} /></div>
+          <div><label style={LS}>Teléfono</label><PhoneInput value={form.telefono} onChange={v => set("telefono", v)} inputStyle={IS} placeholder="+57 300 000 0000" /></div>
           <div><label style={LS}>Email</label><input value={form.email} onChange={e => set("email", e.target.value)} style={IS} /></div>
         </div>
         <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 18 }}>

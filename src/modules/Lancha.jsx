@@ -8,6 +8,7 @@
 //   · Configuración de la lancha
 
 import { useState, useEffect, useMemo, useCallback } from "react";
+import PhoneInput from "../components/PhoneInput.jsx";
 import { supabase } from "../lib/supabase";
 import { B } from "../brand";
 import CostosFlotaTab from "../components/CostosFlotaTab";
@@ -1811,7 +1812,7 @@ function CapitanModal({ edit, lancha, empleados = [], capitanesAsignados = [], o
           <>
             <div><label style={LS}>Nombre completo</label><input value={f.nombre} onChange={e => set("nombre", e.target.value)} style={IS} /></div>
             <div><label style={LS}>Documento</label><input value={f.documento} onChange={e => set("documento", e.target.value)} style={IS} /></div>
-            <div><label style={LS}>Teléfono</label><input value={f.telefono} onChange={e => set("telefono", e.target.value)} style={IS} /></div>
+            <div><label style={LS}>Teléfono</label><PhoneInput value={f.telefono} onChange={v => set("telefono", v)} inputStyle={IS} placeholder="+57 300 000 0000" /></div>
             <div><label style={LS}>Email</label><input value={f.email} onChange={e => set("email", e.target.value)} style={IS} /></div>
           </>
         )}

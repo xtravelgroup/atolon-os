@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { B, COP } from "../brand";
 import { supabase } from "../lib/supabase";
+import PhoneInput from "../components/PhoneInput.jsx";
 
 const IS = { width: "100%", padding: "10px 14px", borderRadius: 8, background: B.navy, border: `1px solid ${B.navyLight}`, color: "#fff", fontSize: 13, outline: "none", boxSizing: "border-box" };
 const LS = { fontSize: 11, color: B.sand, display: "block", marginBottom: 5, textTransform: "uppercase", letterSpacing: "0.06em" };
@@ -153,7 +154,7 @@ function NuevoMiembroModal({ onClose, onCreated, totalMiembros }) {
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
           <div><label style={LS}>Nombre completo *</label><input value={form.nombre} onChange={e => set("nombre", e.target.value)} style={IS} placeholder="Nombre del miembro" /></div>
           <div><label style={LS}>Email *</label><input value={form.email} onChange={e => set("email", e.target.value)} style={IS} placeholder="email@ejemplo.com" /></div>
-          <div><label style={LS}>Teléfono</label><input value={form.telefono} onChange={e => set("telefono", e.target.value)} style={IS} placeholder="+57 300 000 0000" /></div>
+          <div><label style={LS}>Teléfono</label><PhoneInput value={form.telefono} onChange={v => set("telefono", v)} inputStyle={IS} placeholder="+57 300 000 0000" /></div>
           <div><label style={LS}>Cédula</label><input value={form.cedula} onChange={e => set("cedula", e.target.value)} style={IS} placeholder="1234567890" /></div>
           <div>
             <label style={LS}>Nivel</label>
@@ -433,7 +434,7 @@ function DetailView({ miembro: initialMiembro, onBack, onRefreshList }) {
           {editing ? (
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
               <div><label style={LS}>Nombre</label><input value={editForm.nombre} onChange={e => setEditForm(f => ({ ...f, nombre: e.target.value }))} style={IS} /></div>
-              <div><label style={LS}>Teléfono</label><input value={editForm.telefono} onChange={e => setEditForm(f => ({ ...f, telefono: e.target.value }))} style={IS} /></div>
+              <div><label style={LS}>Teléfono</label><PhoneInput value={editForm.telefono} onChange={v => setEditForm(f => ({ ...f, telefono: v }))} inputStyle={IS} placeholder="+57 300 000 0000" /></div>
               <div><label style={LS}>Cédula</label><input value={editForm.cedula} onChange={e => setEditForm(f => ({ ...f, cedula: e.target.value }))} style={IS} /></div>
               <div>
                 <label style={LS}>Nivel</label>

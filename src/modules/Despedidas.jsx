@@ -5,6 +5,7 @@
 //   /despedidas/:codigo    → página del grupo (ver miembros + unirse)
 
 import { useState, useEffect, useCallback } from "react";
+import PhoneInput from "../components/PhoneInput.jsx";
 import { supabase } from "../lib/supabase";
 
 const C = {
@@ -302,7 +303,7 @@ function CrearGrupo() {
             </div>
             <div>
               <label style={LS}>WhatsApp</label>
-              <input value={form.organizador_telefono} onChange={e => set("organizador_telefono", e.target.value)} placeholder="+57 300..." style={IS} />
+              <PhoneInput value={form.organizador_telefono} onChange={v => set("organizador_telefono", v)} placeholder="+57 300 000 0000" inputStyle={IS} />
             </div>
           </div>
 
@@ -558,7 +559,7 @@ function GrupoDetalle({ codigo }) {
                 </div>
                 <div>
                   <label style={LS}>WhatsApp</label>
-                  <input value={form.telefono} onChange={e => setForm(f => ({ ...f, telefono: e.target.value }))} placeholder="+57..." style={IS} />
+                  <PhoneInput value={form.telefono} onChange={v => setForm(f => ({ ...f, telefono: v }))} placeholder="+57 300 000 0000" inputStyle={IS} />
                 </div>
               </div>
               <div style={{ display: "flex", gap: 10 }}>

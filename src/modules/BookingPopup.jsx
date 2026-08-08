@@ -13,6 +13,8 @@ import { gtmViewItem, gtmBeginCheckout, gtmAddPaymentInfo, gtmAbandon } from "..
 // (UX original). En desktop la captura se movió a la pantalla post-pago.
 import FacturaElectronicaForm, { FacturaElectronicaToggle, FE_EMPTY, fePayload } from "../lib/FacturaElectronicaForm.jsx";
 import ZohoPaymentWidget from "../components/ZohoPaymentWidget.jsx";
+import PhoneInput from "../components/PhoneInput.jsx";
+import { normalizarTelefono } from "../lib/telefono.js";
 import { crearSesionPago, getMerchantInternacional } from "../lib/internacional";
 import { useBreakpoint } from "../lib/responsive";
 
@@ -781,11 +783,10 @@ export default function BookingPopup() {
     if (!form.nombre.trim()) e.nombre = isEN ? "Required" : "Campo requerido";
     if (!form.email.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email))
       e.email = isEN ? "Valid email required" : "Email inválido";
-    // Contamos dígitos en vez de validar formato — autofill/paste pueden
-    // introducir caracteres invisibles (NBSP, zero-width) que rompen la regex.
-    const digitosTelPopup = (form.telefono || "").replace(/\D/g, "");
-    if (!form.telefono.trim() || digitosTelPopup.length < 7)
-      e.telefono = isEN ? "Valid phone required" : "Teléfono inválido";
+    // Validación E.164: exige código de país para que Meta WA entregue.
+    const parsedTelPopup = normalizarTelefono(form.telefono);
+    if (!form.telefono.trim() || !parsedTelPopup.valid)
+      e.telefono = isEN ? "Include country code, e.g. +57 300 000 0000" : "Incluye el código de país. Ej: +57 300 000 0000";
     setErrors(e);
     if (Object.keys(e).length > 0) {
       AtolanTrack.evento("form_error", { fields: Object.keys(e), paso: step }, "booking");
@@ -1687,26 +1688,47 @@ export default function BookingPopup() {
             { key: "nombre",   label: isEN ? "Full name" : "Nombre completo",     type: "text",  placeholder: isEN ? "John Smith" : "Juan García" },
             { key: "email",    label: isEN ? "Email" : "Correo electrónico",      type: "email", placeholder: "correo@ejemplo.com" },
             { key: "telefono", label: isEN ? "Phone" : "Teléfono / WhatsApp",     type: "tel",   placeholder: "+57 300 000 0000" },
-          ].map(({ key, label, type, placeholder }) => (
-            <div key={key} style={{ marginBottom: isDesktop ? 12 : 16 }}>
-              <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: C.text, marginBottom: isDesktop ? 4 : 5, textTransform: "uppercase", letterSpacing: "0.04em" }}>{label}</label>
-              <input
-                type={type}
-                value={form[key]}
-                placeholder={placeholder}
-                onChange={e => { setForm(f => ({ ...f, [key]: e.target.value })); setErrors(er => ({ ...er, [key]: null })); }}
-                style={{
-                  width: "100%", padding: isDesktop ? "10px 14px" : "11px 14px", borderRadius: 8,
-                  border: `1.5px solid ${errors[key] ? C.danger : C.border}`,
-                  fontSize: 14, color: C.text, background: C.bg, outline: "none", boxSizing: "border-box",
-                  transition: "border-color 0.15s",
-                }}
-                onFocus={e => e.target.style.borderColor = C.accent}
-                onBlur={e => e.target.style.borderColor = errors[key] ? C.danger : C.border}
-              />
-              {errors[key] && <div style={{ fontSize: 11, color: C.danger, marginTop: 3 }}>{errors[key]}</div>}
-            </div>
-          ))}
+          ].map(({ key, label, type, placeholder }) => {
+            if (key === "telefono") {
+              return (
+                <div key={key} style={{ marginBottom: isDesktop ? 12 : 16 }}>
+                  <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: C.text, marginBottom: isDesktop ? 4 : 5, textTransform: "uppercase", letterSpacing: "0.04em" }}>{label}</label>
+                  <PhoneInput
+                    value={form.telefono}
+                    onChange={v => { setForm(f => ({ ...f, telefono: v })); setErrors(er => ({ ...er, telefono: null })); }}
+                    placeholder={placeholder}
+                    inputStyle={{
+                      width: "100%", padding: isDesktop ? "10px 14px" : "11px 14px", borderRadius: 8,
+                      border: `1.5px solid ${errors.telefono ? C.danger : C.border}`,
+                      fontSize: 14, color: C.text, background: C.bg, outline: "none", boxSizing: "border-box",
+                      transition: "border-color 0.15s",
+                    }}
+                  />
+                  {errors[key] && <div style={{ fontSize: 11, color: C.danger, marginTop: 3 }}>{errors[key]}</div>}
+                </div>
+              );
+            }
+            return (
+              <div key={key} style={{ marginBottom: isDesktop ? 12 : 16 }}>
+                <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: C.text, marginBottom: isDesktop ? 4 : 5, textTransform: "uppercase", letterSpacing: "0.04em" }}>{label}</label>
+                <input
+                  type={type}
+                  value={form[key]}
+                  placeholder={placeholder}
+                  onChange={e => { setForm(f => ({ ...f, [key]: e.target.value })); setErrors(er => ({ ...er, [key]: null })); }}
+                  style={{
+                    width: "100%", padding: isDesktop ? "10px 14px" : "11px 14px", borderRadius: 8,
+                    border: `1.5px solid ${errors[key] ? C.danger : C.border}`,
+                    fontSize: 14, color: C.text, background: C.bg, outline: "none", boxSizing: "border-box",
+                    transition: "border-color 0.15s",
+                  }}
+                  onFocus={e => e.target.style.borderColor = C.accent}
+                  onBlur={e => e.target.style.borderColor = errors[key] ? C.danger : C.border}
+                />
+                {errors[key] && <div style={{ fontSize: 11, color: C.danger, marginTop: 3 }}>{errors[key]}</div>}
+              </div>
+            );
+          })}
 
           <div style={{ marginBottom: isDesktop ? 12 : 20 }}>
             <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: C.text, marginBottom: isDesktop ? 4 : 5, textTransform: "uppercase", letterSpacing: "0.04em" }}>{isEN ? "Notes / special requests (optional)" : "Notas / solicitudes especiales (opcional)"}</label>

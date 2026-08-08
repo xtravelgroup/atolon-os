@@ -4,6 +4,7 @@
 // entrarán a /reservar-grupo/:slug para hacer su reserva (Fase B).
 
 import { useState, useEffect, useMemo, useCallback } from "react";
+import PhoneInput from "../../components/PhoneInput.jsx";
 import { supabase } from "../../lib/supabase";
 import { B } from "../../brand";
 
@@ -360,7 +361,7 @@ function GrupoModal({ grupo, categorias, onClose, onSaved }) {
             <div style={{ display: "grid", gap: 8, gridTemplateColumns: "1fr 1fr 1fr" }}>
               <input value={f.contacto_nombre} onChange={e => set("contacto_nombre", e.target.value)} style={IS} placeholder="Nombre" />
               <input type="email" value={f.contacto_email} onChange={e => set("contacto_email", e.target.value)} style={IS} placeholder="Email" />
-              <input value={f.contacto_telefono} onChange={e => set("contacto_telefono", e.target.value)} style={IS} placeholder="Teléfono" />
+              <PhoneInput value={f.contacto_telefono} onChange={v => set("contacto_telefono", v)} inputStyle={IS} placeholder="+57 300 000 0000" />
             </div>
           </div>
 

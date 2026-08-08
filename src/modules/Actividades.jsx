@@ -3,6 +3,8 @@ import { useState, useEffect } from "react";
 import { B, COP, todayStr } from "../brand";
 import { supabase } from "../lib/supabase";
 import { AcknowledgeModal, AcknowledgeRecibo, DISCLAIMER_TEXT } from "../lib/AcknowledgeModal";
+import PhoneInput from "../components/PhoneInput.jsx";
+import { normalizarTelefono } from "../lib/telefono.js";
 
 const IS = { width: "100%", padding: "9px 12px", borderRadius: 8, background: B.navy, border: `1px solid ${B.navyLight}`, color: B.white, fontSize: 13, outline: "none", boxSizing: "border-box" };
 const LS = { fontSize: 11, color: B.sand, display: "block", marginBottom: 5, textTransform: "uppercase", letterSpacing: "0.06em" };
@@ -652,7 +654,7 @@ function TabVender() {
             </div>
             <div>
               <label style={LS}>Teléfono</label>
-              <input value={cliente.telefono} onChange={e => cg("telefono", e.target.value)} style={IS} placeholder="+57..." />
+              <PhoneInput value={cliente.telefono} onChange={v => cg("telefono", v)} inputStyle={IS} placeholder="+57 300 000 0000" />
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
               <div>

@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback } from "react";
 import HotelGrupos from "./hotel/HotelGrupos";
 import { supabase } from "../lib/supabase";
 import { wompiCheckoutUrl } from "../lib/wompi";
+import PhoneInput from "../components/PhoneInput.jsx";
 
 const B = {
   navy: "#0D1B3E", navyMid: "#172554", navyLight: "#1e293b",
@@ -480,7 +481,7 @@ function ReservaModal({ huespedes, habitaciones, tarifas, categorias, reservas, 
                   <input value={f.documento} onChange={e => set("documento", e.target.value)} style={IS} />
                 </div>
               </div>
-              <div><label style={LS}>Teléfono</label><input value={f.telefono} onChange={e => set("telefono", e.target.value)} style={IS} /></div>
+              <div><label style={LS}>Teléfono</label><PhoneInput value={f.telefono} onChange={v => set("telefono", v)} inputStyle={IS} placeholder="+57 300 000 0000" /></div>
               <div style={{ gridColumn: "1 / -1" }}><label style={LS}>Email</label><input value={f.email} onChange={e => set("email", e.target.value)} style={IS} /></div>
             </div>
           )}

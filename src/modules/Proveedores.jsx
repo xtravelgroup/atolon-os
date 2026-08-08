@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import PhoneInput from "../components/PhoneInput.jsx";
 import { B, COP } from "../brand";
 import { supabase } from "../lib/supabase";
 
@@ -38,7 +39,7 @@ function ContactoForm({ onSave, onCancel }) {
     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr auto auto", gap: 8, alignItems: "end", marginTop: 10, padding: 10, background: B.navyLight + "33", borderRadius: 8 }}>
       <div><label style={{ ...LS, fontSize: 10 }}>Nombre</label><input value={f.nombre} onChange={e => s("nombre", e.target.value)} style={ISsm} placeholder="Nombre" /></div>
       <div><label style={{ ...LS, fontSize: 10 }}>Cargo</label><input value={f.cargo} onChange={e => s("cargo", e.target.value)} style={ISsm} placeholder="Cargo" /></div>
-      <div><label style={{ ...LS, fontSize: 10 }}>Teléfono</label><input value={f.telefono} onChange={e => s("telefono", e.target.value)} style={ISsm} placeholder="+57..." /></div>
+      <div><label style={{ ...LS, fontSize: 10 }}>Teléfono</label><PhoneInput value={f.telefono} onChange={v => s("telefono", v)} inputStyle={ISsm} placeholder="+57 300 000 0000" /></div>
       <div><label style={{ ...LS, fontSize: 10 }}>Email</label><input value={f.email} onChange={e => s("email", e.target.value)} style={ISsm} placeholder="email" /></div>
       <div style={{ display: "flex", alignItems: "center", gap: 4, paddingBottom: 2 }}>
         <input type="checkbox" checked={f.es_principal} onChange={e => s("es_principal", e.target.checked)} />
@@ -130,7 +131,7 @@ function FichaProveedor({ proveedor, onBack, onUpdate }) {
             </div>
             <div>
               <label style={LS}>Teléfono</label>
-              <input value={p.telefono || ""} onChange={e => s("telefono", e.target.value)} style={IS} placeholder="+57 300..." />
+              <PhoneInput value={p.telefono || ""} onChange={v => s("telefono", v)} inputStyle={IS} placeholder="+57 300 000 0000" />
             </div>
             <div>
               <label style={LS}>Email</label>
@@ -351,7 +352,7 @@ function ModalAgregar({ onClose, onCreated }) {
             </div>
             <div>
               <label style={LS}>Teléfono</label>
-              <input value={f.telefono} onChange={e => s("telefono", e.target.value)} style={IS} placeholder="+57 300..." />
+              <PhoneInput value={f.telefono} onChange={v => s("telefono", v)} inputStyle={IS} placeholder="+57 300 000 0000" />
             </div>
             <div>
               <label style={LS}>Email</label>

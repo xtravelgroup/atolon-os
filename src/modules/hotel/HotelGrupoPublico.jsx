@@ -8,6 +8,7 @@ import { useState, useEffect, useMemo } from "react";
 import { supabase } from "../../lib/supabase";
 import { B } from "../../brand";
 import { wompiCheckoutUrl } from "../../lib/wompi";
+import PhoneInput from "../../components/PhoneInput.jsx";
 
 const COP = (n) => `$${(Number(n) || 0).toLocaleString("es-CO")}`;
 const fmtFecha = (s) => s ? new Date(s + "T00:00:00").toLocaleDateString("es-CO", { weekday: "short", day: "2-digit", month: "long", year: "numeric" }) : "";
@@ -362,7 +363,7 @@ export default function HotelGrupoPublico() {
             </div>
             <div>
               <label style={label}>Teléfono</label>
-              <input value={f.telefono} onChange={e => set("telefono", e.target.value)} style={input} placeholder="+57 300 000 0000" />
+              <PhoneInput value={f.telefono} onChange={v => set("telefono", v)} inputStyle={input} placeholder="+57 300 000 0000" />
             </div>
           </div>
           <div style={{ display: "grid", gap: 12, gridTemplateColumns: "1fr 1fr 1fr" }}>

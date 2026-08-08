@@ -8,6 +8,7 @@
 //   4. Solicitudes — ARCO + supresión + portabilidad + SLA tracker
 
 import { useEffect, useMemo, useState } from "react";
+import PhoneInput from "../components/PhoneInput.jsx";
 import { supabase } from "../lib/supabase";
 import { B } from "../brand";
 import { useBreakpoint } from "../lib/responsive";
@@ -274,7 +275,7 @@ function PoliticaForm({ isMobile, policy, onSaved }) {
         </div>
         <div>
           <label style={labelStyle}>Teléfono</label>
-          <input value={f.encargado_telefono} onChange={e => upd("encargado_telefono", e.target.value)} style={inputStyle({ isMobile })} />
+          <PhoneInput value={f.encargado_telefono} onChange={v => upd("encargado_telefono", v)} inputStyle={inputStyle({ isMobile })} placeholder="+57 300 000 0000" />
         </div>
       </div>
 

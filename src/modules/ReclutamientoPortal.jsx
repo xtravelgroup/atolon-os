@@ -1,6 +1,7 @@
 // ReclutamientoPortal.jsx — Portal público en /carreras
 // Lista vacantes publicadas + formulario de aplicación
 import { useState, useEffect } from "react";
+import PhoneInput from "../components/PhoneInput.jsx";
 import { supabase } from "../lib/supabase";
 import { B } from "../brand";
 
@@ -277,7 +278,7 @@ function FormularioPostulacion({ vacante }) {
           <input type="email" value={f.email} onChange={e => set("email", e.target.value)} style={FS} required />
         </Field>
         <Field label="Teléfono *">
-          <input value={f.telefono} onChange={e => set("telefono", e.target.value)} style={FS} placeholder="+57 300 ..." required />
+          <PhoneInput value={f.telefono} onChange={v => set("telefono", v)} inputStyle={FS} placeholder="+57 300 000 0000" required />
         </Field>
         <Field label="Ciudad">
           <input value={f.ciudad} onChange={e => set("ciudad", e.target.value)} style={FS} />

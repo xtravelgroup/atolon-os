@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import PhoneInput from "../components/PhoneInput.jsx";
 import { B, COP, PASADIAS, fmtFecha } from "../brand";
 import { supabase } from "../lib/supabase";
 import { getCatalogo } from "../lib/catalogoCache";
@@ -22,7 +23,7 @@ function ContactoInlineForm({ onSave, onCancel }) {
     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr auto auto", gap: 8, alignItems: "end", marginTop: 10, padding: 10, background: B.navyLight + "44", borderRadius: 8 }}>
       <div><label style={{ ...LS, fontSize: 10 }}>Nombre</label><input value={f.nombre} onChange={e => s("nombre", e.target.value)} style={ISsm} placeholder="Nombre" /></div>
       <div><label style={{ ...LS, fontSize: 10 }}>Cargo</label><input value={f.cargo} onChange={e => s("cargo", e.target.value)} style={ISsm} placeholder="Cargo" /></div>
-      <div><label style={{ ...LS, fontSize: 10 }}>Telefono</label><input value={f.telefono} onChange={e => s("telefono", e.target.value)} style={ISsm} placeholder="+57..." /></div>
+      <div><label style={{ ...LS, fontSize: 10 }}>Telefono</label><PhoneInput value={f.telefono} onChange={v => s("telefono", v)} inputStyle={ISsm} placeholder="+57 300 000 0000" /></div>
       <div><label style={{ ...LS, fontSize: 10 }}>Email</label><input value={f.email} onChange={e => s("email", e.target.value)} style={ISsm} placeholder="email" /></div>
       <div style={{ display: "flex", alignItems: "center", gap: 4, paddingBottom: 2 }}>
         <input type="checkbox" checked={f.es_principal} onChange={e => s("es_principal", e.target.checked)} />
@@ -3604,7 +3605,7 @@ function LocacionModal({ onClose, onSave }) {
           <div><label style={LS}>Direccion</label><input value={f.direccion} onChange={e => s("direccion", e.target.value)} placeholder="Cra 5 #34-12" style={IS} /></div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
             <div><label style={LS}>Ciudad</label><input value={f.ciudad} onChange={e => s("ciudad", e.target.value)} placeholder="Cartagena" style={IS} /></div>
-            <div><label style={LS}>Telefono</label><input value={f.telefono} onChange={e => s("telefono", e.target.value)} placeholder="+57..." style={IS} /></div>
+            <div><label style={LS}>Telefono</label><PhoneInput value={f.telefono} onChange={v => s("telefono", v)} placeholder="+57 300 000 0000" inputStyle={IS} /></div>
           </div>
           <div><label style={LS}>Notas</label><textarea value={f.notas} onChange={e => s("notas", e.target.value)} rows={2} style={{ ...IS, resize: "vertical" }} /></div>
         </div>
@@ -3672,7 +3673,7 @@ function SolicitudCreditoModal({ aliado, saving, onClose, onSubmit }) {
           </div>
           <div style={{ marginBottom: 12 }}>
             <label style={LS}>Teléfono</label>
-            <input value={f.tel} onChange={e => s("tel", e.target.value)} style={IS} />
+            <PhoneInput value={f.tel} onChange={v => s("tel", v)} inputStyle={IS} placeholder="+57 300 000 0000" />
           </div>
           <div style={{ marginBottom: 12 }}>
             <label style={LS}>Email</label>
@@ -3895,7 +3896,7 @@ function NuevoAliadoModal({ onClose, onSave }) {
           <div style={{ gridColumn: "1 / -1", marginBottom: 14 }}><label style={LS}>Nombre del Aliado</label><input value={f.nombre} onChange={e => s("nombre", e.target.value)} placeholder="Nombre de la empresa" style={IS} /></div>
           <div style={{ marginBottom: 14 }}><label style={LS}>Tipo</label><select value={f.tipo} onChange={e => s("tipo", e.target.value)} style={IS}><option value="Hotel">Hotel</option><option value="Agencia">Agencia</option><option value="Empresa">Empresa</option><option value="Freelance">Freelance</option><option value="Event Planner">Event Planner</option></select></div>
           <div style={{ marginBottom: 14 }}><label style={LS}>Contacto</label><input value={f.contacto} onChange={e => s("contacto", e.target.value)} placeholder="Nombre del contacto" style={IS} /></div>
-          <div style={{ marginBottom: 14 }}><label style={LS}>Telefono</label><input value={f.tel} onChange={e => s("tel", e.target.value)} placeholder="+57 ..." style={IS} /></div>
+          <div style={{ marginBottom: 14 }}><label style={LS}>Telefono</label><PhoneInput value={f.tel} onChange={v => s("tel", v)} placeholder="+57 300 000 0000" inputStyle={IS} /></div>
           <div style={{ marginBottom: 14 }}><label style={LS}>Email</label><input value={f.email} onChange={e => s("email", e.target.value)} placeholder="email@aliado.com" style={IS} /></div>
           <div style={{ marginBottom: 14 }}><label style={LS}>RUT</label><input value={f.rut} onChange={e => s("rut", e.target.value)} placeholder="NIT o RUT" style={IS} /></div>
           <div style={{ marginBottom: 14 }}><label style={LS}>RNT</label><input value={f.rnt} onChange={e => s("rnt", e.target.value)} placeholder="Registro Nacional de Turismo" style={IS} /></div>

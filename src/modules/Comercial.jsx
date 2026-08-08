@@ -5,6 +5,7 @@ const TIPOS_PASADIA = ["— Sin especificar —", ...PASADIAS.map(p => p.tipo)];
 const HORAS = ["08:30", "10:00", "11:30", "13:00"];
 import { supabase } from "../lib/supabase";
 import FacturaElectronicaForm, { FacturaElectronicaToggle, FE_EMPTY, feValidate, fePayload } from "../lib/FacturaElectronicaForm.jsx";
+import PhoneInput from "../components/PhoneInput.jsx";
 import { crearSesionPago } from "../lib/internacional";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -587,6 +588,7 @@ function LeadDetail({ lead, onClose, onUpdateEtapa }) {
         total: totalCalc, saldo: totalCalc, abono: 0,
         grupo_id: rForm.grupo_id || null,
         canal: rForm.grupo_id ? "GRUPO" : (rForm.canal || reservaLinked.canal || "WEB"),
+        idioma: reservaLinked.idioma || "es",
         aliado_id: rForm.aliado_id || grupoSeleccionado?.aliado_id || reservaLinked.aliado_id || null,
         vendedor: rForm.vendedor || reservaLinked.vendedor || null,
         notas: rForm.notas || reservaLinked.notas || null,
@@ -603,6 +605,7 @@ function LeadDetail({ lead, onClose, onUpdateEtapa }) {
       const reservaData = {
         id: newId, fecha: rForm.fecha, salida_id: rForm.salida_id,
         tipo: rForm.tipo, canal: rForm.grupo_id ? "GRUPO" : (rForm.canal || "WEB"),
+        idioma: reservaLinked?.idioma || "es",
         nombre: rForm.nombre, contacto: rForm.email || "", email: rForm.email || "", telefono: rForm.telefono || "",
         pax: paxTotal, pax_a: paxA, pax_n: paxN, precio_u: precioU,
         descuento_agencia: descAg, descuento_general: descGen,
@@ -766,8 +769,8 @@ function LeadDetail({ lead, onClose, onUpdateEtapa }) {
                   </div>
                   <div>
                     <label style={{ fontSize: 10, color: B.sand, textTransform: "uppercase", letterSpacing: "0.06em", display:"block", marginBottom:4 }}>Teléfono / WhatsApp</label>
-                    <input type="tel" value={rForm.telefono} onChange={e => setRForm(f => ({ ...f, telefono: e.target.value }))}
-                      style={{ width:"100%", padding:"8px 10px", borderRadius:8, background:B.navyLight, border:`1px solid ${B.navyLight}`, color:B.white, fontSize:13, outline:"none", boxSizing:"border-box" }} />
+                    <PhoneInput value={rForm.telefono} onChange={v => setRForm(f => ({ ...f, telefono: v }))} placeholder="+57 300 000 0000"
+                      inputStyle={{ width:"100%", padding:"8px 10px", borderRadius:8, background:B.navyLight, border:`1px solid ${B.navyLight}`, color:B.white, fontSize:13, outline:"none", boxSizing:"border-box" }} />
                   </div>
                   <div>
                     <label style={{ fontSize: 10, color: B.sand, textTransform: "uppercase", letterSpacing: "0.06em", display:"block", marginBottom:4 }}>Tipo de Pasadía</label>

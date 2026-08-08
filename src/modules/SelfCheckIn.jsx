@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { supabase } from "../lib/supabase";
 import { wompiCheckoutUrl } from "../lib/wompi";
+import PhoneInput from "../components/PhoneInput.jsx";
 
 const NACS = [
   // Prioritarias
@@ -688,8 +689,7 @@ export default function SelfCheckIn() {
               {faltaTel && (
                 <div>
                   <label style={LS}>{t.phone}</label>
-                  <input value={telefono} onChange={e => setTelefono(e.target.value)}
-                    style={IS} placeholder={t.phonePlaceholder} inputMode="tel" type="tel" autoComplete="tel" />
+                  <PhoneInput value={telefono} onChange={setTelefono} placeholder={t.phonePlaceholder} inputStyle={IS} />
                 </div>
               )}
               {faltaEmail && (

@@ -6,6 +6,7 @@ import { useMobile } from "../lib/useMobile";
 import { wompiCheckoutUrl } from "../lib/wompi";
 import EventoDetalle from "./EventoDetalle";
 import FacturaElectronicaForm, { FacturaElectronicaToggle, FE_EMPTY, feValidate, fePayload } from "../lib/FacturaElectronicaForm.jsx";
+import PhoneInput from "../components/PhoneInput.jsx";
 
 const STAGES       = ["Consulta", "Cotizado", "Confirmado", "Realizado", "Perdido"];
 const TIPOS_EVT    = ["Matrimonio", "Cumpleaños", "Corporativo", "Despedida de Solteros", "Aniversario", "Grado", "Otro"];
@@ -1090,7 +1091,7 @@ export function EventoModal({ evento, categoria, salidas, aliados, vendedores, o
             </div>
             <div>
               <label style={LS}>Teléfono / WhatsApp</label>
-              <input value={form.tel} onChange={e => set("tel", e.target.value)} style={IS} placeholder="+57 300 000 0000" />
+              <PhoneInput value={form.tel} onChange={v => set("tel", v)} inputStyle={IS} placeholder="+57 300 000 0000" />
             </div>
           </div>
 

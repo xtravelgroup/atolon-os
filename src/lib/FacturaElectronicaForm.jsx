@@ -2,6 +2,8 @@
 // Componente reutilizable para capturar datos de FE en cualquier flujo
 // (Reservas internas, BookingPopup web, AgenciaPortal B2B, etc.)
 
+import PhoneInput from "../components/PhoneInput.jsx";
+
 export const FE_TIPO_DOC_NATURAL = ["CC", "CE", "Pasaporte", "TI", "RC", "PEP"];
 export const FE_TIPO_DOC_JURIDICA = ["NIT"];
 export const FE_REGIMENES = [
@@ -160,7 +162,7 @@ export default function FacturaElectronicaForm({ form, set, editing = true, them
           </div>
           <div>
             <label style={LS}>Teléfono *</label>
-            <input style={IS} value={form.fe_telefono || ""} onChange={e => set("fe_telefono", e.target.value)} placeholder="+57 300 000 0000" />
+            <PhoneInput value={form.fe_telefono || ""} onChange={v => set("fe_telefono", v)} placeholder="+57 300 000 0000" inputStyle={IS} />
           </div>
           <div style={{ gridColumn: "1 / -1" }}>
             <label style={LS}>Dirección *</label>

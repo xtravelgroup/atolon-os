@@ -3,6 +3,8 @@ import { B, COP, PASADIAS, todayStr, fmtFecha } from "../brand";
 import { supabase } from "../lib/supabase";
 import { useMobile } from "../lib/useMobile";
 import { logAccion } from "../lib/logAccion";
+import PhoneInput from "../components/PhoneInput.jsx";
+import { normalizarTelefono } from "../lib/telefono.js";
 
 const fmtHora = (ts) => {
   if (!ts) return "";
@@ -148,7 +150,7 @@ function paxPorSalida(reservas, salidas, grupos = []) {
 
 const EMPTY_FORM = {
   nombre: "", contacto: "", telefono: "", fecha: "", tipo: PASADIAS[0]?.tipo || "", pax_a: 1, pax_n: 0,
-  salida_id: "", canal: "WhatsApp", precio: PASADIAS[0]?.precio || 0, precio_nino: 0,
+  salida_id: "", canal: "WhatsApp", idioma: "es", precio: PASADIAS[0]?.precio || 0, precio_nino: 0,
   abono: 0, forma_pago: "Sin definir", fecha_pago: "", aliado_id: "", vendedor: "Sin asignar",
   notas: "", notas_club: "",
   nombre_embarcacion: "", hora_llegada: "",
@@ -323,7 +325,7 @@ function FacturaElectronicaForm({ form, set, editing = true }) {
           </div>
           <div>
             <label style={LS_LOCAL}>Teléfono *</label>
-            <input style={IS_LOCAL} value={form.fe_telefono} onChange={e => set("fe_telefono", e.target.value)} placeholder="+57 300 000 0000" />
+            <PhoneInput value={form.fe_telefono} onChange={v => set("fe_telefono", v)} placeholder="+57 300 000 0000" inputStyle={IS_LOCAL} />
           </div>
           <div style={{ gridColumn: "1 / -1" }}>
             <label style={LS_LOCAL}>Dirección *</label>
@@ -374,6 +376,7 @@ function formFromReserva(r0) {
     salida_id: r0.salida    || r0.salida_id || "",
     tipo:      r0.tipo      || "",
     canal:     r0.canal     || "",
+    idioma:    r0.idioma    || "es",
     pax_a:     r0.pax_a     ?? r0.pax ?? 1,
     pax_n:     r0.pax_n     ?? 0,
     abono:     r0.abono     || 0,
@@ -620,6 +623,7 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
       salida_id: form.salida_id || null,
       tipo:      form.tipo,
       canal:     form.canal,
+      idioma:    form.idioma || "es",
       pax_a:     Number(form.pax_a),
       pax_n:     Number(form.pax_n),
       pax,
@@ -1263,7 +1267,7 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
                 </div>
                 <div>
                   <label style={LS}>Teléfono / WhatsApp</label>
-                  {editing ? <input style={IS} value={form.telefono} onChange={e => set("telefono", e.target.value)} placeholder="+57 300 000 0000" /> :
+                  {editing ? <PhoneInput value={form.telefono} onChange={v => set("telefono", v)} placeholder="+57 300 000 0000" inputStyle={IS} /> :
                     <div style={{ fontSize: 14, color: r0.telefono ? B.white : "rgba(255,255,255,0.3)" }}>{r0.telefono || "—"}</div>}
                 </div>
                 <div>
@@ -1273,6 +1277,15 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
                       {CANALES.map(c => <option key={c} value={c}>{c}</option>)}
                     </select>
                   ) : <div style={{ fontSize: 14 }}>{r0.canal || "—"}</div>}
+                </div>
+                <div>
+                  <label style={LS}>Idioma WhatsApp</label>
+                  {editing ? (
+                    <select style={IS} value={form.idioma} onChange={e => set("idioma", e.target.value)}>
+                      <option value="es">🇨🇴 Español</option>
+                      <option value="en">🇺🇸 English</option>
+                    </select>
+                  ) : <div style={{ fontSize: 14 }}>{r0.idioma === "en" ? "🇺🇸 English" : "🇨🇴 Español"}</div>}
                 </div>
                 <div>
                   <label style={LS}>Tipo de pase</label>
@@ -2368,8 +2381,8 @@ function ReservaModal({ onClose, onSave, isMobile, salidaList = [], aliadoList =
     // (zero-width space, NBSP, etc.) que invalidan la regex aunque el usuario
     // vea un número válido en pantalla.
     if (form.canal !== "B2B") {
-      const digitos = (form.telefono || "").replace(/\D/g, "");
-      if (digitos.length < 7) e.telefono = "Teléfono requerido";
+      const parsed = normalizarTelefono(form.telefono);
+      if (!parsed.valid) e.telefono = "Incluye código de país. Ej: +57 300 000 0000";
     }
     if (!form.fecha)         e.fecha = "Requerido";
     if (cierreFecha?.tipo === "total") e.fecha = "Fecha cerrada — no se pueden crear reservas";
@@ -2453,13 +2466,20 @@ function ReservaModal({ onClose, onSave, isMobile, salidaList = [], aliadoList =
           </div>
           <div style={FS}>
             <label style={LS}>Teléfono / WhatsApp *</label>
-            <input style={IS(errors.telefono)} value={form.telefono} onChange={e => set("telefono", e.target.value)} placeholder="+57 300 000 0000" />
+            <PhoneInput value={form.telefono} onChange={v => set("telefono", v)} placeholder="+57 300 000 0000" inputStyle={IS(errors.telefono)} />
             {errors.telefono && <span style={{ fontSize: 11, color: B.danger }}>{errors.telefono}</span>}
           </div>
           <div style={FS}>
             <label style={LS}>Canal</label>
             <select style={IS()} value={form.canal} onChange={e => set("canal", e.target.value)}>
               {CANALES.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+          </div>
+          <div style={FS}>
+            <label style={LS}>Idioma WhatsApp</label>
+            <select style={IS()} value={form.idioma} onChange={e => set("idioma", e.target.value)}>
+              <option value="es">🇨🇴 Español</option>
+              <option value="en">🇺🇸 English</option>
             </select>
           </div>
           <div style={FS}>

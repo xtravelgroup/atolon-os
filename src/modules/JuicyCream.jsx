@@ -13,6 +13,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "../lib/supabase";
 import { wompiCheckoutUrl } from "../lib/wompi";
+import PhoneInput from "../components/PhoneInput.jsx";
+import { normalizarTelefono } from "../lib/telefono.js";
 import { crearSesionPago } from "../lib/internacional";
 import ZohoPaymentWidget from "../components/ZohoPaymentWidget.jsx";
 
@@ -1118,10 +1120,10 @@ function CheckoutModal({ item, onClose, onConfirmar }) {
 
   // Wompi (tarjeta nacional): redirige al checkout hospedado de Wompi.
   async function pagarWompi() {
-    const digitos = (form.telefono || "").replace(/\D/g, "");
+    const telParsed = normalizarTelefono(form.telefono);
     const email = (form.email || "").trim();
     const emailValido = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
-    if (!form.nombre.trim() || digitos.length < 7 || !emailValido) {
+    if (!form.nombre.trim() || !telParsed.valid || !emailValido) {
       alert("Nombre, email y teléfono (mínimo 7 dígitos) son requeridos");
       return;
     }
@@ -1149,10 +1151,10 @@ function CheckoutModal({ item, onClose, onConfirmar }) {
 
   // Tarjeta internacional (Zoho Pay): abre widget embebido o redirige.
   async function pagarInternacional() {
-    const digitos = (form.telefono || "").replace(/\D/g, "");
+    const telParsed = normalizarTelefono(form.telefono);
     const email = (form.email || "").trim();
     const emailValido = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
-    if (!form.nombre.trim() || digitos.length < 7 || !emailValido) {
+    if (!form.nombre.trim() || !telParsed.valid || !emailValido) {
       alert("Nombre, email y teléfono (mínimo 7 dígitos) son requeridos");
       return;
     }
@@ -1242,7 +1244,20 @@ function CheckoutModal({ item, onClose, onConfirmar }) {
 
       <div style={{ display: "grid", gap: 10, marginBottom: 14 }}>
         <Field label="Nombre completo *" value={form.nombre} onChange={v => setF("nombre", v)} />
-        <Field label="Teléfono *"        value={form.telefono} onChange={v => setF("telefono", v)} type="tel" placeholder="+57 300 000 0000" />
+        <div>
+          <Label>Teléfono *</Label>
+          <PhoneInput
+            value={form.telefono}
+            onChange={v => setF("telefono", v)}
+            placeholder="+57 300 000 0000"
+            inputStyle={{
+              width: "100%", padding: "11px 14px",
+              background: "#fff", border: `1.5px solid ${C.borderMid}`, borderRadius: 4,
+              color: C.text, fontSize: 14, outline: "none", boxSizing: "border-box",
+              fontFamily: "inherit",
+            }}
+          />
+        </div>
         <Field label="Email *"           value={form.email} onChange={v => setF("email", v)} type="email" />
         <Field label="Cédula"            value={form.cedula} onChange={v => setF("cedula", v)} />
       </div>

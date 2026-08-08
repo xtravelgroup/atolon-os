@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import PhoneInput from "../components/PhoneInput.jsx";
 import { B } from "../brand";
 import { supabase } from "../lib/supabase";
 import * as printLib from "../lib/print";
@@ -280,7 +281,7 @@ export default function Configuracion() {
             </div>
             <div>
               <label style={LS}>Teléfono</label>
-              <input value={negocio.telefono} onChange={e => setNegocio(n => ({ ...n, telefono: e.target.value }))} style={IS} placeholder="+57 300 000 0000" />
+              <PhoneInput value={negocio.telefono} onChange={v => setNegocio(n => ({ ...n, telefono: v }))} inputStyle={IS} placeholder="+57 300 000 0000" />
             </div>
             <div>
               <label style={{ ...LS, display: "flex", alignItems: "center", gap: 6 }}>
@@ -1507,7 +1508,7 @@ function PrintAgentCard({ config }) {
             </div>
             <div>
               <label style={LS}>Teléfono</label>
-              <input value={empresa.telefono} onChange={e => setEmpresa({ ...empresa, telefono: e.target.value })} style={IS} placeholder="+57 300 ..." />
+              <PhoneInput value={empresa.telefono} onChange={v => setEmpresa({ ...empresa, telefono: v })} inputStyle={IS} placeholder="+57 300 000 0000" />
             </div>
           </div>
         </div>

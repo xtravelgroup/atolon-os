@@ -1,5 +1,7 @@
 import { useState } from "react";
 import { B, COP, PASADIAS } from "../brand";
+import PhoneInput from "../components/PhoneInput.jsx";
+import { normalizarTelefono } from "../lib/telefono.js";
 
 // ─── Translations ────────────────────────────────────────────────────────────
 const T = {
@@ -505,12 +507,11 @@ export default function BookingWidget() {
     } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) {
       e.email = t.invalidEmail;
     }
-    // Contamos dígitos en vez de validar formato — autofill/paste pueden
-    // introducir caracteres invisibles (NBSP, zero-width) que rompen la regex.
-    const digitosTel = (form.telefono || "").replace(/\D/g, "");
+    // Validación E.164: exige código de país para que Meta WA entregue.
+    const parsedTel = normalizarTelefono(form.telefono);
     if (!form.telefono.trim()) {
       e.telefono = t.required;
-    } else if (digitosTel.length < 7) {
+    } else if (!parsedTel.valid) {
       e.telefono = t.invalidPhone;
     }
     setErrors(e);
@@ -642,34 +643,53 @@ export default function BookingWidget() {
           { key: "email",    label: t.email,    type: "email", multi: false },
           { key: "telefono", label: t.telefono, type: "tel",   multi: false },
           { key: "notas",    label: t.notas,    type: "text",  multi: true  },
-        ].map(({ key, label, type, multi }) => (
-          <div key={key} style={s.field}>
-            <label style={s.label}>{label}</label>
-            {multi ? (
-              <textarea
-                value={form[key]}
-                placeholder=""
-                onChange={e => {
-                  setForm(f => ({ ...f, [key]: e.target.value }));
-                  if (errors[key]) setErrors(er => ({ ...er, [key]: null }));
-                }}
-                style={s.textarea(!!errors[key])}
-              />
-            ) : (
-              <input
-                type={type}
-                value={form[key]}
-                onChange={e => {
-                  setForm(f => ({ ...f, [key]: e.target.value }));
-                  if (errors[key]) setErrors(er => ({ ...er, [key]: null }));
-                }}
-                style={s.input(!!errors[key])}
-                autoComplete={key === "email" ? "email" : key === "telefono" ? "tel" : "name"}
-              />
-            )}
-            {errors[key] && <div style={s.errorText}>{errors[key]}</div>}
-          </div>
-        ))}
+        ].map(({ key, label, type, multi }) => {
+          if (key === "telefono") {
+            return (
+              <div key={key} style={s.field}>
+                <label style={s.label}>{label}</label>
+                <PhoneInput
+                  value={form.telefono}
+                  onChange={v => {
+                    setForm(f => ({ ...f, telefono: v }));
+                    if (errors.telefono) setErrors(er => ({ ...er, telefono: null }));
+                  }}
+                  placeholder="+57 300 123 4567"
+                  inputStyle={s.input(!!errors.telefono)}
+                />
+                {errors[key] && <div style={s.errorText}>{errors[key]}</div>}
+              </div>
+            );
+          }
+          return (
+            <div key={key} style={s.field}>
+              <label style={s.label}>{label}</label>
+              {multi ? (
+                <textarea
+                  value={form[key]}
+                  placeholder=""
+                  onChange={e => {
+                    setForm(f => ({ ...f, [key]: e.target.value }));
+                    if (errors[key]) setErrors(er => ({ ...er, [key]: null }));
+                  }}
+                  style={s.textarea(!!errors[key])}
+                />
+              ) : (
+                <input
+                  type={type}
+                  value={form[key]}
+                  onChange={e => {
+                    setForm(f => ({ ...f, [key]: e.target.value }));
+                    if (errors[key]) setErrors(er => ({ ...er, [key]: null }));
+                  }}
+                  style={s.input(!!errors[key])}
+                  autoComplete={key === "email" ? "email" : "name"}
+                />
+              )}
+              {errors[key] && <div style={s.errorText}>{errors[key]}</div>}
+            </div>
+          );
+        })}
       </div>
     );
   }

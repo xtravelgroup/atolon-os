@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import PhoneInput from "../components/PhoneInput.jsx";
 import { B, fmtFecha } from "../brand";
 import { supabase } from "../lib/supabase";
 import { GRUPOS_NAV, BOTTOM_NAV, TODOS_MODULOS } from "../lib/modulosCatalogo";
@@ -260,7 +261,7 @@ function UsuarioModal({ usuario, roles, onClose, onSaved }) {
             </div>
             <div>
               <label style={LS}>Teléfono</label>
-              <input type="tel" value={f.telefono} onChange={e => upd("telefono", e.target.value)} placeholder="+57 300 000 0000" style={IS} />
+              <PhoneInput value={f.telefono} onChange={v => upd("telefono", v)} placeholder="+57 300 000 0000" inputStyle={IS} />
             </div>
           </div>
         </div>

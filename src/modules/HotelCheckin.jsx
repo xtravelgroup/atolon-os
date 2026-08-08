@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { B, COP, fmtFecha } from "../brand";
 import { supabase } from "../lib/supabase";
+import PhoneInput from "../components/PhoneInput.jsx";
 
 const IS = { width: "100%", padding: "9px 12px", borderRadius: 8, background: B.navyLight, border: `1px solid ${B.navyLight}`, color: B.white, fontSize: 13, outline: "none", boxSizing: "border-box" };
 const LS = { display: "block", fontSize: 11, color: B.sand, marginBottom: 5, textTransform: "uppercase", letterSpacing: "0.06em" };
@@ -383,7 +384,7 @@ function NuevoCheckinModal({ habsLibres, huespedes, onClose, onSaved }) {
               </div>
               <div>
                 <label style={LS}>Teléfono</label>
-                <input value={form.telefono} onChange={e => set("telefono", e.target.value)} placeholder="+57..." style={IS} />
+                <PhoneInput value={form.telefono} onChange={v => set("telefono", v)} placeholder="+57 300 000 0000" inputStyle={IS} />
               </div>
               <div>
                 <label style={LS}>Nacionalidad</label>

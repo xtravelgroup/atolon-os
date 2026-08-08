@@ -7,6 +7,7 @@ import { supabase } from "../lib/supabase";
 import { wompiCheckoutUrl, WOMPI_INTEGRITY_KEY } from "../lib/wompi";
 import { asignarPuntosReserva, getSaldoPuntos, getRankingAgencia, getPuntosConfig } from "../lib/puntos";
 import FacturaElectronicaForm, { FacturaElectronicaToggle, FE_EMPTY, feValidate, fePayload } from "../lib/FacturaElectronicaForm.jsx";
+import PhoneInput from "../components/PhoneInput.jsx";
 
 const IS = { width: "100%", padding: "10px 14px", borderRadius: 8, background: B.navy, border: `1px solid ${B.navyLight}`, color: B.white, fontSize: 13, outline: "none", boxSizing: "border-box" };
 const LS = { fontSize: 11, color: B.sand, display: "block", marginBottom: 5, textTransform: "uppercase", letterSpacing: "0.06em" };
@@ -714,8 +715,8 @@ function NuevaReserva({ agencia, user, onCreated, vistaPrecios = "ambos" }) {
               <input value={form.nombre} onChange={e => setForm(f => ({ ...f, nombre: e.target.value }))} placeholder="Nombre completo" style={IS} />
             </div>
             <div style={{ marginBottom: 14 }}>
-              <label style={LS}>Contacto / Telefono</label>
-              <input value={form.contacto} onChange={e => setForm(f => ({ ...f, contacto: e.target.value }))} placeholder="+57..." style={IS} />
+              <label style={LS}>Contacto / Teléfono</label>
+              <PhoneInput value={form.contacto} onChange={v => setForm(f => ({ ...f, contacto: v }))} placeholder="+57 300 000 0000" inputStyle={IS} />
             </div>
             <div style={{ gridColumn: "1 / -1", marginBottom: 14 }}>
               <label style={LS}>Notas</label>
@@ -1909,7 +1910,7 @@ function PreferenciasAgencia({ agencia, onSaved, vendedor }) {
               </div>
               <div>
                 <label style={LS_pref}>Teléfono</label>
-                <input value={datos.tel} onChange={e => setDatos(d => ({ ...d, tel: e.target.value }))} style={IS_pref} placeholder="+57 300 000 0000" />
+                <PhoneInput value={datos.tel} onChange={v => setDatos(d => ({ ...d, tel: v }))} inputStyle={IS_pref} placeholder="+57 300 000 0000" />
               </div>
               <div style={{ gridColumn: "1 / -1" }}>
                 <label style={LS_pref}>Email</label>

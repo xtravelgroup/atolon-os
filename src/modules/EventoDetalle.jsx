@@ -11,6 +11,7 @@ import { useMobile } from "../lib/useMobile";
 import GrupoCotizacionModal from "./grupos/GrupoCotizacionModal";
 import InstructivoContratistasPDF from "./eventos/InstructivoContratistasPDF";
 import FacturaElectronicaForm, { FacturaElectronicaToggle, FE_EMPTY, feValidate, fePayload } from "../lib/FacturaElectronicaForm.jsx";
+import PhoneInput from "../components/PhoneInput.jsx";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 const IS  = { background: "#1E3566", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 8, padding: "9px 12px", color: "#fff", fontSize: 13, width: "100%", outline: "none", boxSizing: "border-box" };
@@ -1874,7 +1875,7 @@ function TabContratistas({ items, onChange, eventoId, evento }) {
             </div>
             {/* Datos legales / contacto de empresa (vienen del registro express o se llenan a mano) */}
             <div><label style={LS}>NIT</label><Inp value={form.nit || ""} onChange={v => set("nit", v)} placeholder="900123456-7" /></div>
-            <div><label style={LS}>Teléfono</label><Inp value={form.telefono || ""} onChange={v => set("telefono", v)} placeholder="+57 300..." /></div>
+            <div><label style={LS}>Teléfono</label><PhoneInput value={form.telefono || ""} onChange={v => set("telefono", v)} placeholder="+57 300 000 0000" inputStyle={IS} /></div>
             <div style={{ gridColumn: "span 2" }}><label style={LS}>Dirección</label><Inp value={form.direccion || ""} onChange={v => set("direccion", v)} placeholder="Calle 1 # 2-3, Cartagena" /></div>
             {/* RUT — ver el cargado o reemplazar */}
             <div style={{ gridColumn: "span 2" }}>
@@ -2047,7 +2048,7 @@ function TabContactos({ items, onChange }) {
               </Sel>
             </div>
             <div><label style={LS}>Empresa</label><Inp value={form.empresa} onChange={v => set("empresa", v)} /></div>
-            <div><label style={LS}>Teléfono</label><Inp value={form.telefono} onChange={v => set("telefono", v)} placeholder="+57 300..." /></div>
+            <div><label style={LS}>Teléfono</label><PhoneInput value={form.telefono} onChange={v => set("telefono", v)} placeholder="+57 300 000 0000" inputStyle={IS} /></div>
             <div><label style={LS}>Email</label><Inp type="email" value={form.email} onChange={v => set("email", v)} /></div>
             <div style={{ gridColumn: "span 2" }}><label style={LS}>Notas</label><Inp value={form.notas} onChange={v => set("notas", v)} /></div>
           </div>
@@ -2810,7 +2811,7 @@ function CortesiaButton({ pasadiasMap, onAdd }) {
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginBottom: 18 }}>
           <div>
             <label style={LBL}>Teléfono</label>
-            <input value={telefono} onChange={e => setTelefono(e.target.value)} placeholder="+57..." style={FS} />
+            <PhoneInput value={telefono} onChange={setTelefono} placeholder="+57 300 000 0000" inputStyle={FS} />
           </div>
           <div>
             <label style={LBL}>Correo</label>
@@ -6505,8 +6506,8 @@ function LinkPagoEventoModal({ evento, saldoDefault, onClose }) {
                 </div>
                 <div>
                   <label style={LS}>Teléfono (para WhatsApp)</label>
-                  <input value={telefono} onChange={e => setTelefono(e.target.value)} placeholder="+57 300 123 4567"
-                    style={{ width: "100%", padding: "10px 12px", borderRadius: 8, background: B.navy, border: `1px solid ${B.navyLight}`, color: "#fff", fontSize: 13, outline: "none", boxSizing: "border-box" }} />
+                  <PhoneInput value={telefono} onChange={setTelefono} placeholder="+57 300 123 4567"
+                    inputStyle={{ width: "100%", padding: "10px 12px", borderRadius: 8, background: B.navy, border: `1px solid ${B.navyLight}`, color: "#fff", fontSize: 13, outline: "none", boxSizing: "border-box" }} />
                 </div>
               </div>
             </div>
