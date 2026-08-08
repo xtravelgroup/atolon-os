@@ -420,37 +420,57 @@ function LeadDetail({ lead, onClose, onUpdateEtapa }) {
   const setFE = (k, v) => setRForm(f => ({ ...f, [k]: v }));
   const [grupos, setGrupos] = useState([]);
 
-  // Fetch linked reservation — update form with its data when it arrives
+  // Fetch linked reservation — update form with its data when it arrives.
+  // Refetch tambien cuando cambia el lead.stage (para que al mover a
+  // "Contactado" el modal siga mostrando la reserva vinculada). Además, si
+  // no encuentra por lead_id, intenta por email/telefono como fallback
+  // (algunos leads viejos perdieron el lead_id en las reservas).
   useEffect(() => {
     if (!supabase || !lead.id) return;
+    const applyRows = (rows) => {
+      if (!rows.length) { setReservaLinked(null); return false; }
+      // Preferir una reserva activa/pagada; si todas canceladas, la más reciente
+      const data = rows.find(r => ["confirmado", "check_in", "no_show"].includes(r.estado))
+                || rows.find(r => r.estado !== "cancelado")
+                || rows[0];
+      setReservaLinked(data);
+      setRForm(f => ({
+        ...f,
+        nombre:    data.nombre   || f.nombre,
+        email:     data.email    || data.contacto || f.email,
+        telefono:  data.telefono || f.telefono,
+        tipo:      data.tipo     || f.tipo,
+        fecha:     data.fecha    ? data.fecha.slice(0,10) : f.fecha,
+        salida_id: data.salida_id || f.salida_id,
+        pax:       data.pax      || f.pax,
+      }));
+      return true;
+    };
     // OJO: NO usar .maybeSingle() — un lead puede tener VARIAS reservas
     // (típico en GRUPO: 1 lead/evento = N reservas). maybeSingle() devuelve
     // null cuando hay >1 → mostraba "sin reserva vinculada" falsamente.
     supabase.from("reservas")
-      .select("id,nombre,fecha,tipo,pax,total,estado,salida_id,link_pago,forma_pago,email,contacto,telefono,created_at")
+      .select("id,nombre,fecha,tipo,pax,total,estado,salida_id,link_pago,forma_pago,email,contacto,telefono,created_at,lead_id")
       .eq("lead_id", lead.id)
       .order("created_at", { ascending: false })
-      .then((res) => {
-        const rows = res.data || [];
-        if (!rows.length) return;
-        // Preferir una reserva activa/pagada; si todas canceladas, la más reciente
-        const data = rows.find(r => ["confirmado", "check_in", "no_show"].includes(r.estado))
-                  || rows.find(r => r.estado !== "cancelado")
-                  || rows[0];
-        setReservaLinked(data);
-        // Pre-fill form with reservation data (more complete than lead)
-        setRForm(f => ({
-          ...f,
-          nombre:    data.nombre   || f.nombre,
-          email:     data.email    || data.contacto || f.email,
-          telefono:  data.telefono || f.telefono,
-          tipo:      data.tipo     || f.tipo,
-          fecha:     data.fecha    ? data.fecha.slice(0,10) : f.fecha,
-          salida_id: data.salida_id || f.salida_id,
-          pax:       data.pax      || f.pax,
-        }));
+      .then(async ({ data }) => {
+        const rows = data || [];
+        if (rows.length) { applyRows(rows); return; }
+        // Fallback: buscar por email/telefono del lead cuando lead_id se perdió.
+        const email = (lead.email || lead.contacto || "").trim();
+        const tel   = String(lead.telefono || "").replace(/\D/g, "");
+        const filtros = [];
+        if (email) filtros.push(`email.ilike.${email}`, `contacto.ilike.${email}`);
+        if (tel && tel.length >= 7) filtros.push(`telefono.ilike.%${tel}%`);
+        if (!filtros.length) return;
+        const { data: byMatch } = await supabase.from("reservas")
+          .select("id,nombre,fecha,tipo,pax,total,estado,salida_id,link_pago,forma_pago,email,contacto,telefono,created_at,lead_id")
+          .or(filtros.join(","))
+          .order("created_at", { ascending: false })
+          .limit(5);
+        applyRows(byMatch || []);
       });
-  }, [lead.id]);
+  }, [lead.id, lead.stage, lead.email, lead.telefono]);
 
   const IS = { background: "#0D1B3E", border: `1px solid ${B.navyLight}`, borderRadius: 8, color: B.white, padding: "8px 12px", fontSize: 14, width: "100%", boxSizing: "border-box", outline: "none" };
 
@@ -463,7 +483,9 @@ function LeadDetail({ lead, onClose, onUpdateEtapa }) {
     if (e === "Cerrado Ganado") { setPendingEtapa(e); return; }
     setUpdatingEtapa(true);
     try { await onUpdateEtapa(lead.id, e, null); } finally { setUpdatingEtapa(false); }
-    onClose();
+    // NO cerrar el modal — el operador puede querer seguir viendo la reserva
+    // vinculada, agregar notas o generar link de pago tras cambiar la etapa.
+    // Antes: onClose() cerraba y perdias la vista del lead.
   };
 
   const confirmCerrado = async () => {
