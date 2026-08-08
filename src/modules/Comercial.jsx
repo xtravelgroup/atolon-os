@@ -1191,6 +1191,11 @@ export default function Comercial() {
     // Esperar fetchLeads para que el caller pueda await este flujo completo
     // y la UI no muestre estado stale entre el update y el refresh.
     await fetchLeads();
+    // Optimistic UI: actualizar selectedLead inmediatamente para que el
+    // LeadDetail refleje la nueva etapa sin esperar a que fetchLeads
+    // propague el nuevo array. Antes: al mover a "Contactado" los botones
+    // seguian mostrando "Nuevo" resaltado y parecia "no pasa nada".
+    setSelectedLead(prev => prev && prev.id === id ? { ...prev, stage: newStage, ultimo_contacto: hoyBogota() } : prev);
   }
 
   const vendorStats = buildVendorStats(leads);
