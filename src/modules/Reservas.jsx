@@ -1282,10 +1282,10 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
                   <label style={LS}>Idioma WhatsApp</label>
                   {editing ? (
                     <select style={IS} value={form.idioma} onChange={e => set("idioma", e.target.value)}>
-                      <option value="es">🇨🇴 Español</option>
-                      <option value="en">🇺🇸 English</option>
+                      <option value="es">Español</option>
+                      <option value="en">English</option>
                     </select>
-                  ) : <div style={{ fontSize: 14 }}>{r0.idioma === "en" ? "🇺🇸 English" : "🇨🇴 Español"}</div>}
+                  ) : <div style={{ fontSize: 14 }}>{r0.idioma === "en" ? "English" : "Español"}</div>}
                 </div>
                 <div>
                   <label style={LS}>Tipo de pase</label>

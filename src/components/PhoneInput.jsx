@@ -2,38 +2,38 @@ import React, { useState, useEffect, useMemo } from "react";
 import { B } from "../brand.js";
 import { normalizarTelefono } from "../lib/telefono.js";
 
-// Países más comunes en el tráfico de Atolón Beach Club (turistas + LatAm).
-// Colombia primero. Ordenados por probabilidad. El resto va bajo "Otro pais".
+// Códigos de país más comunes en el tráfico de Atolón Beach Club.
+// Sin banderas — solo el código y el nombre del país. Colombia default.
 const COUNTRIES = [
-  { code: "57",  flag: "🇨🇴", name: "Colombia" },
-  { code: "1",   flag: "🇺🇸", name: "USA / Canadá" },
-  { code: "52",  flag: "🇲🇽", name: "México" },
-  { code: "51",  flag: "🇵🇪", name: "Perú" },
-  { code: "58",  flag: "🇻🇪", name: "Venezuela" },
-  { code: "593", flag: "🇪🇨", name: "Ecuador" },
-  { code: "56",  flag: "🇨🇱", name: "Chile" },
-  { code: "54",  flag: "🇦🇷", name: "Argentina" },
-  { code: "55",  flag: "🇧🇷", name: "Brasil" },
-  { code: "34",  flag: "🇪🇸", name: "España" },
-  { code: "44",  flag: "🇬🇧", name: "UK" },
-  { code: "33",  flag: "🇫🇷", name: "Francia" },
-  { code: "49",  flag: "🇩🇪", name: "Alemania" },
-  { code: "39",  flag: "🇮🇹", name: "Italia" },
-  { code: "31",  flag: "🇳🇱", name: "Países Bajos" },
-  { code: "506", flag: "🇨🇷", name: "Costa Rica" },
-  { code: "507", flag: "🇵🇦", name: "Panamá" },
-  { code: "502", flag: "🇬🇹", name: "Guatemala" },
-  { code: "503", flag: "🇸🇻", name: "El Salvador" },
-  { code: "504", flag: "🇭🇳", name: "Honduras" },
-  { code: "505", flag: "🇳🇮", name: "Nicaragua" },
-  { code: "591", flag: "🇧🇴", name: "Bolivia" },
-  { code: "595", flag: "🇵🇾", name: "Paraguay" },
-  { code: "598", flag: "🇺🇾", name: "Uruguay" },
-  { code: "61",  flag: "🇦🇺", name: "Australia" },
-  { code: "81",  flag: "🇯🇵", name: "Japón" },
-  { code: "82",  flag: "🇰🇷", name: "Corea del Sur" },
-  { code: "86",  flag: "🇨🇳", name: "China" },
-  { code: "OTHER", flag: "🌐", name: "Otro país" },
+  { code: "57",  name: "Colombia" },
+  { code: "1",   name: "USA / Canadá" },
+  { code: "52",  name: "México" },
+  { code: "51",  name: "Perú" },
+  { code: "58",  name: "Venezuela" },
+  { code: "593", name: "Ecuador" },
+  { code: "56",  name: "Chile" },
+  { code: "54",  name: "Argentina" },
+  { code: "55",  name: "Brasil" },
+  { code: "34",  name: "España" },
+  { code: "44",  name: "UK" },
+  { code: "33",  name: "Francia" },
+  { code: "49",  name: "Alemania" },
+  { code: "39",  name: "Italia" },
+  { code: "31",  name: "Países Bajos" },
+  { code: "506", name: "Costa Rica" },
+  { code: "507", name: "Panamá" },
+  { code: "502", name: "Guatemala" },
+  { code: "503", name: "El Salvador" },
+  { code: "504", name: "Honduras" },
+  { code: "505", name: "Nicaragua" },
+  { code: "591", name: "Bolivia" },
+  { code: "595", name: "Paraguay" },
+  { code: "598", name: "Uruguay" },
+  { code: "61",  name: "Australia" },
+  { code: "81",  name: "Japón" },
+  { code: "82",  name: "Corea del Sur" },
+  { code: "86",  name: "China" },
+  { code: "OTHER", name: "Otro país" },
 ];
 
 // Uso mínimo:
@@ -151,8 +151,8 @@ export default function PhoneInput({
           style={{
             ...baseCtl,
             flex: "0 0 auto",
-            minWidth: 110,
-            maxWidth: 130,
+            minWidth: 80,
+            maxWidth: 110,
             appearance: "auto",
             paddingRight: 6,
             cursor: disabled ? "not-allowed" : "pointer",
@@ -160,7 +160,7 @@ export default function PhoneInput({
         >
           {COUNTRIES.map(c => (
             <option key={c.code} value={c.code}>
-              {c.flag} {c.code === "OTHER" ? "Otro" : `+${c.code}`}
+              {c.code === "OTHER" ? "Otro país" : `+${c.code} (${c.name})`}
             </option>
           ))}
         </select>
