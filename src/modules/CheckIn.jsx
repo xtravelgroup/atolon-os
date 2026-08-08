@@ -405,8 +405,12 @@ function EmbarcacionRentadaModal({ onClose, onSaved }) {
     capacidad: "",
     tipo: "",
     capitan: "",
+    piloto_cedula: "",
     matricula: "",
     piloto_celular: "",
+    piloto2_nombre: "",
+    piloto2_cedula: "",
+    piloto2_celular: "",
     costo_renta: "",
     notas: "",
   });
@@ -418,6 +422,12 @@ function EmbarcacionRentadaModal({ onClose, onSaved }) {
     setErr("");
     if (!f.nombre.trim()) { setErr("El nombre de la embarcación es obligatorio."); return; }
     if (!f.capacidad || Number(f.capacidad) <= 0) { setErr("La capacidad debe ser mayor a 0 (necesaria para asignar pax)."); return; }
+    // DIMAR / Capitanía de Puerto exige piloto y 2do piloto identificados
+    // para zarpar. Sin estos datos no se puede autorizar el zarpe.
+    if (!f.capitan.trim()) { setErr("El nombre del capitán/piloto principal es obligatorio para zarpar."); return; }
+    if (!f.piloto_cedula.trim()) { setErr("La cédula del capitán/piloto principal es obligatoria para zarpar."); return; }
+    if (!f.piloto2_nombre.trim()) { setErr("El nombre del segundo piloto es obligatorio para zarpar (norma Capitanía de Puerto)."); return; }
+    if (!f.piloto2_cedula.trim()) { setErr("La cédula del segundo piloto es obligatoria para zarpar."); return; }
     setSaving(true);
     try {
       // ID corto y legible: EMB-RENT-<timestamp36>
@@ -429,9 +439,13 @@ function EmbarcacionRentadaModal({ onClose, onSaved }) {
         capacidad: Number(f.capacidad),
         propiedad: "rentada",
         estado: "activo",
-        capitan: f.capitan.trim() || null,
+        capitan: f.capitan.trim(),
+        piloto_cedula: f.piloto_cedula.trim(),
         matricula: f.matricula.trim() || null,
         piloto_celular: f.piloto_celular.trim() || null,
+        piloto2_nombre: f.piloto2_nombre.trim(),
+        piloto2_cedula: f.piloto2_cedula.trim(),
+        piloto2_celular: f.piloto2_celular.trim() || null,
         costo_renta: f.costo_renta ? Number(f.costo_renta) : null,
         notas: f.notas.trim() || null,
       };
@@ -479,16 +493,6 @@ function EmbarcacionRentadaModal({ onClose, onSaved }) {
               placeholder="Lancha rápida, Yate..." style={IS} />
           </div>
           <div>
-            <label style={LS}>Capitán / Piloto</label>
-            <input value={f.capitan} onChange={e => set("capitan", e.target.value)}
-              placeholder="Nombre del capitán" style={IS} />
-          </div>
-          <div>
-            <label style={LS}>Celular del capitán</label>
-            <input value={f.piloto_celular} onChange={e => set("piloto_celular", e.target.value)}
-              placeholder="300 1234567" style={IS} />
-          </div>
-          <div>
             <label style={LS}>Matrícula</label>
             <input value={f.matricula} onChange={e => set("matricula", e.target.value)}
               placeholder="CP-XXXXXX-X" style={IS} />
@@ -498,6 +502,51 @@ function EmbarcacionRentadaModal({ onClose, onSaved }) {
             <input type="number" min="0" value={f.costo_renta}
               onChange={e => set("costo_renta", e.target.value)} placeholder="Ej: 800000" style={IS} />
           </div>
+
+          {/* Datos requeridos por Capitanía de Puerto para autorizar el zarpe.
+              Se separan visualmente para que el operador entienda por qué son
+              obligatorios (antes se llenaban opcionales y se olvidaban). */}
+          <div style={{ gridColumn: "1 / -1", marginTop: 6, paddingTop: 10, borderTop: `1px solid ${B.navyLight}` }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: B.sand, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 }}>
+              👨‍✈️ Tripulación (requerida para zarpar)
+            </div>
+            <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", marginBottom: 10 }}>
+              Capitanía de Puerto exige nombre + cédula del piloto y del 2do piloto para autorizar el zarpe.
+            </div>
+          </div>
+          <div>
+            <label style={LS}>Nombre del capitán / piloto *</label>
+            <input value={f.capitan} onChange={e => set("capitan", e.target.value)}
+              placeholder="Nombre completo" style={IS} />
+          </div>
+          <div>
+            <label style={LS}>Cédula del capitán *</label>
+            <input value={f.piloto_cedula} onChange={e => set("piloto_cedula", e.target.value)}
+              placeholder="Ej: 1234567890" style={IS} />
+          </div>
+          <div>
+            <label style={LS}>Celular del capitán</label>
+            <input value={f.piloto_celular} onChange={e => set("piloto_celular", e.target.value)}
+              placeholder="300 1234567" style={IS} />
+          </div>
+          <div />
+          <div>
+            <label style={LS}>Nombre del 2do piloto *</label>
+            <input value={f.piloto2_nombre} onChange={e => set("piloto2_nombre", e.target.value)}
+              placeholder="Nombre completo" style={IS} />
+          </div>
+          <div>
+            <label style={LS}>Cédula del 2do piloto *</label>
+            <input value={f.piloto2_cedula} onChange={e => set("piloto2_cedula", e.target.value)}
+              placeholder="Ej: 1234567890" style={IS} />
+          </div>
+          <div>
+            <label style={LS}>Celular del 2do piloto</label>
+            <input value={f.piloto2_celular} onChange={e => set("piloto2_celular", e.target.value)}
+              placeholder="300 1234567" style={IS} />
+          </div>
+          <div />
+
           <div style={{ gridColumn: "1 / -1" }}>
             <label style={LS}>Notas</label>
             <input value={f.notas} onChange={e => set("notas", e.target.value)}
