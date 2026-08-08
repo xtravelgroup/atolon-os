@@ -1198,7 +1198,12 @@ export default function Comercial() {
     // LeadDetail refleje la nueva etapa sin esperar a que fetchLeads
     // propague el nuevo array. Antes: al mover a "Contactado" los botones
     // seguian mostrando "Nuevo" resaltado y parecia "no pasa nada".
-    setSelectedLead(prev => prev && prev.id === id ? { ...prev, stage: newStage, ultimo_contacto: hoyBogota() } : prev);
+    // IMPORTANTE: actualizar tanto `stage` (BD) como `etapa` (UI-mapped) —
+    // el LeadDetail compara `e === lead.etapa` para resaltar el botón activo.
+    // Si solo actualizamos stage, el UI sigue mostrando la etapa vieja.
+    setSelectedLead(prev => prev && prev.id === id
+      ? { ...prev, stage: newStage, etapa: newStage, ultimo_contacto: hoyBogota() }
+      : prev);
   }
 
   const vendorStats = buildVendorStats(leads);
