@@ -1045,14 +1045,25 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
     logAccion({ modulo: "reservas", accion: "regenerar_link_pago", tabla: "reservas", registroId: r0.id,
       datosAntes: { estado: r0.estado }, datosDespues: { estado: "pendiente_pago", link_expira_at: nuevaExpira },
       notas: `Link regenerado · vigencia ${regenMinutos} min` });
-    // Orden importa: primero mostrar el modal con el link (state local),
-    // DESPUES notificar al padre. Si onUpdated re-renderiza este componente
-    // y perdemos linkRegenerado, el usuario no ve el link. Con esto seguro
-    // se renderiza al menos una vez antes de cualquier remount.
+
+    // Copia inmediata al portapapeles (best-effort, requiere HTTPS + gesture).
+    let copiado = false;
+    try {
+      await navigator.clipboard.writeText(url);
+      copiado = true;
+    } catch { /* clipboard no disponible — el usuario copia del alert/modal */ }
+
+    // Alert BLOQUEANTE con el link — a prueba de re-renders/remounts. Si el
+    // modal se cierra solo (bug histórico: onUpdated desmontaba el componente
+    // antes de que React pintara el modal), al menos el alert queda visible
+    // hasta que el operador lo cierre y pueda copiar el URL manualmente.
+    const prefix = copiado ? "✓ Link copiado al portapapeles.\n\n" : "";
+    alert(`${prefix}Nuevo link de pago (vigencia ${regenMinutos} min):\n\n${url}\n\nEl link queda guardado en la reserva; podés reabrirla y volver a copiarlo cuando quieras.`);
+
+    // Modal opcional (si sobrevive al re-render — fallback visual)
     setLinkRegenerado(url);
     setShowRegenModal(false);
     set("estado", "pendiente_pago");
-    // Diferir onUpdated para que React alcance a renderizar el modal del link
     setTimeout(() => onUpdated(), 0);
   };
 
@@ -1175,6 +1186,45 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
               </>
             )}
           </div>
+
+          {/* Banner permanente del link de pago (siempre visible si hay uno guardado
+              y no ha vencido). El operador puede copiar/reenviar sin depender del modal
+              de "Nuevo link" que podia cerrarse solo por re-renders del padre. */}
+          {r0.link_pago && r0.link_expira_at && new Date(r0.link_expira_at) > new Date() && (
+            <div style={{ margin: "12px 0", padding: 12, background: B.sky + "15", border: `1px solid ${B.sky}44`, borderRadius: 10 }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 8 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: B.sky, textTransform: "uppercase", letterSpacing: "0.06em" }}>
+                  🔗 Link de pago activo · vence {new Date(r0.link_expira_at).toLocaleString("es-CO", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}
+                </div>
+              </div>
+              <div style={{ background: B.navy, padding: "8px 10px", borderRadius: 6, fontSize: 11, color: B.sky, fontFamily: "monospace", wordBreak: "break-all", marginBottom: 8 }}>
+                {r0.link_pago}
+              </div>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                <button onClick={() => { navigator.clipboard?.writeText(r0.link_pago); alert("✓ Link copiado"); }}
+                  style={{ padding: "6px 12px", background: B.navyLight, border: "none", borderRadius: 6, color: B.white, fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
+                  📋 Copiar
+                </button>
+                {r0.telefono && (
+                  <a href={`https://wa.me/${String(r0.telefono).replace(/\D/g, "").replace(/^(\d{10})$/, "57$1")}?text=${encodeURIComponent(`Hola 👋 Aquí tu link de pago para Atolón Beach Club:\n\n${r0.link_pago}`)}`}
+                    target="_blank" rel="noreferrer"
+                    style={{ padding: "6px 12px", background: "#25D366", borderRadius: 6, color: "#fff", fontSize: 11, fontWeight: 700, textDecoration: "none" }}>
+                    📱 WhatsApp
+                  </a>
+                )}
+                {(r0.email || r0.contacto) && (
+                  <a href={`mailto:${r0.email || r0.contacto}?subject=${encodeURIComponent(`Link de pago — Atolón Beach Club (${r0.id})`)}&body=${encodeURIComponent(`Hola,\n\nAquí el link para completar el pago de tu reserva:\n\n${r0.link_pago}\n\nReserva: ${r0.id}\n\nGracias,\nAtolón Beach Club`)}`}
+                    style={{ padding: "6px 12px", background: B.sand, borderRadius: 6, color: B.navy, fontSize: 11, fontWeight: 700, textDecoration: "none" }}>
+                    ✉️ Email
+                  </a>
+                )}
+                <a href={r0.link_pago} target="_blank" rel="noreferrer"
+                  style={{ padding: "6px 12px", background: B.navyLight, borderRadius: 6, color: B.white, fontSize: 11, fontWeight: 700, textDecoration: "none" }}>
+                  🌐 Abrir
+                </a>
+              </div>
+            </div>
+          )}
 
           {/* Tabs */}
           <div style={{ display: "flex", gap: 0, borderBottom: `1px solid ${B.navyLight}` }}>
