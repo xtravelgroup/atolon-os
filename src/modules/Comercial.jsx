@@ -414,9 +414,21 @@ function LeadDetail({ lead, onClose, onUpdateEtapa }) {
     fecha:     lead.fechaVisita || parsedFromNotas.fecha || hoyBogota(),
     salida_id: "",
     pax:       lead.pax > 0 ? lead.pax : (parsedFromNotas.pax || 2),
+    pax_a:     lead.pax > 0 ? lead.pax : (parsedFromNotas.pax || 2),
+    pax_n:     0,
+    precio_u:  0,           // override manual (0 = usa precio del catálogo)
+    descuento_agencia: 0,
+    descuento_general: 0,
+    aliado_id: "",
+    vendedor:  lead.vendedor || "",
+    canal:     lead.canal    || "WEB",
+    notas:     lead.notas    || "",
+    notas_club:"",
     grupo_id:  "",
     ...FE_EMPTY,
   });
+  // Aliados/agencias para el dropdown (cuando la reserva viene de una agencia)
+  const [aliados, setAliados] = useState([]);
   const setFE = (k, v) => setRForm(f => ({ ...f, [k]: v }));
   const [grupos, setGrupos] = useState([]);
 
@@ -443,14 +455,25 @@ function LeadDetail({ lead, onClose, onUpdateEtapa }) {
         fecha:     data.fecha    ? data.fecha.slice(0,10) : f.fecha,
         salida_id: data.salida_id || f.salida_id,
         pax:       data.pax      || f.pax,
+        pax_a:     data.pax_a    ?? data.pax    ?? f.pax_a,
+        pax_n:     data.pax_n    ?? 0,
+        precio_u:  Number(data.precio_u) || 0,
+        descuento_agencia: Number(data.descuento_agencia) || 0,
+        descuento_general: Number(data.descuento_general) || 0,
+        aliado_id: data.aliado_id || "",
+        vendedor:  data.vendedor  || f.vendedor,
+        canal:     data.canal     || f.canal,
+        notas:     data.notas     || f.notas,
+        notas_club:data.notas_club|| f.notas_club,
       }));
       return true;
     };
     // OJO: NO usar .maybeSingle() — un lead puede tener VARIAS reservas
     // (típico en GRUPO: 1 lead/evento = N reservas). maybeSingle() devuelve
     // null cuando hay >1 → mostraba "sin reserva vinculada" falsamente.
+    const SELECT_FIELDS = "id,nombre,fecha,tipo,pax,pax_a,pax_n,precio_u,total,estado,salida_id,link_pago,forma_pago,email,contacto,telefono,canal,vendedor,aliado_id,descuento_agencia,descuento_general,notas,notas_club,created_at,lead_id";
     supabase.from("reservas")
-      .select("id,nombre,fecha,tipo,pax,total,estado,salida_id,link_pago,forma_pago,email,contacto,telefono,created_at,lead_id")
+      .select(SELECT_FIELDS)
       .eq("lead_id", lead.id)
       .order("created_at", { ascending: false })
       .then(async ({ data }) => {
@@ -464,13 +487,20 @@ function LeadDetail({ lead, onClose, onUpdateEtapa }) {
         if (tel && tel.length >= 7) filtros.push(`telefono.ilike.%${tel}%`);
         if (!filtros.length) return;
         const { data: byMatch } = await supabase.from("reservas")
-          .select("id,nombre,fecha,tipo,pax,total,estado,salida_id,link_pago,forma_pago,email,contacto,telefono,created_at,lead_id")
+          .select(SELECT_FIELDS)
           .or(filtros.join(","))
           .order("created_at", { ascending: false })
           .limit(5);
         applyRows(byMatch || []);
       });
   }, [lead.id, lead.stage, lead.email, lead.telefono]);
+
+  // Cargar aliados/agencias para el dropdown (solo cuando se abre Terminar)
+  useEffect(() => {
+    if (!supabase || !showTerminar || aliados.length) return;
+    supabase.from("aliados_b2b").select("id, nombre").order("nombre")
+      .then(({ data }) => setAliados(data || []));
+  }, [showTerminar]);
 
   const IS = { background: "#0D1B3E", border: `1px solid ${B.navyLight}`, borderRadius: 8, color: B.white, padding: "8px 12px", fontSize: 14, width: "100%", boxSizing: "border-box", outline: "none" };
 
@@ -511,7 +541,14 @@ function LeadDetail({ lead, onClose, onUpdateEtapa }) {
       .then(({ data }) => { if (data) setGrupos(data); });
   }, [showTerminar]);
 
-  const rTotal = (PASADIAS.find(p => p.tipo === rForm.tipo)?.precio || 0) * Number(rForm.pax || 0);
+  // Total refleja override de precio + descuentos + pax_a + pax_n (no solo pax).
+  // Antes solo era precio_catalogo * pax; ahora si el operador cambio el precio
+  // o metio descuentos, el total del preview cuadra con el que se persiste.
+  const _rPaxTotal = (Number(rForm.pax_a) || 0) + (Number(rForm.pax_n) || 0) || Number(rForm.pax) || 0;
+  const _rPrecio   = Number(rForm.precio_u) > 0 ? Number(rForm.precio_u) : (PASADIAS.find(p => p.tipo === rForm.tipo)?.precio || 0);
+  const _rSubtotal = _rPrecio * _rPaxTotal;
+  const _rDesc     = (Number(rForm.descuento_agencia) || 0) + (Number(rForm.descuento_general) || 0);
+  const rTotal     = Math.max(0, _rSubtotal - _rDesc);
 
   // ── Guardar cambios en reserva existente (o crear nueva) ───────────────────
   async function upsertReserva() {
@@ -527,21 +564,37 @@ function LeadDetail({ lead, onClose, onUpdateEtapa }) {
 
     const grupoSeleccionado = grupos.find(g => g.id === rForm.grupo_id) || null;
 
+    // precio_u override: si el operador puso >0 en el form, usa ese; sino cae al del catálogo.
+    const precioU = Number(rForm.precio_u) > 0 ? Number(rForm.precio_u) : pasadia.precio;
+    const paxA = Math.max(0, Number(rForm.pax_a) || pax);
+    const paxN = Math.max(0, Number(rForm.pax_n) || 0);
+    const paxTotal = paxA + paxN;
+    const descAg = Math.max(0, Number(rForm.descuento_agencia) || 0);
+    const descGen = Math.max(0, Number(rForm.descuento_general) || 0);
+    const subtotal = precioU * paxTotal;
+    const totalCalc = Math.max(0, subtotal - descAg - descGen);
+
     if (reservaLinked) {
       // Update existing
       await supabase.from("reservas").update({
         nombre: rForm.nombre, email: rForm.email, contacto: rForm.email,
         telefono: rForm.telefono, tipo: rForm.tipo,
         fecha: rForm.fecha, salida_id: rForm.salida_id,
-        pax, pax_a: pax, precio_u: pasadia.precio,
-        total, saldo: total, abono: 0,
+        pax: paxTotal, pax_a: paxA, pax_n: paxN,
+        precio_u: precioU,
+        descuento_agencia: descAg,
+        descuento_general: descGen,
+        total: totalCalc, saldo: totalCalc, abono: 0,
         grupo_id: rForm.grupo_id || null,
-        canal: rForm.grupo_id ? "GRUPO" : (reservaLinked.canal || "WEB"),
-        aliado_id: grupoSeleccionado?.aliado_id || reservaLinked.aliado_id || null,
+        canal: rForm.grupo_id ? "GRUPO" : (rForm.canal || reservaLinked.canal || "WEB"),
+        aliado_id: rForm.aliado_id || grupoSeleccionado?.aliado_id || reservaLinked.aliado_id || null,
+        vendedor: rForm.vendedor || reservaLinked.vendedor || null,
+        notas: rForm.notas || reservaLinked.notas || null,
+        notas_club: rForm.notas_club || reservaLinked.notas_club || null,
         updated_at: new Date().toISOString(),
         ...fePayload(rForm),
       }).eq("id", reservaLinked.id);
-      const updated = { ...reservaLinked, nombre: rForm.nombre, email: rForm.email, telefono: rForm.telefono, tipo: rForm.tipo, fecha: rForm.fecha, salida_id: rForm.salida_id, pax, total, grupo_id: rForm.grupo_id || null };
+      const updated = { ...reservaLinked, nombre: rForm.nombre, email: rForm.email, telefono: rForm.telefono, tipo: rForm.tipo, fecha: rForm.fecha, salida_id: rForm.salida_id, pax: paxTotal, pax_a: paxA, pax_n: paxN, total: totalCalc, grupo_id: rForm.grupo_id || null };
       setReservaLinked(updated);
       return updated;
     } else {
@@ -549,15 +602,19 @@ function LeadDetail({ lead, onClose, onUpdateEtapa }) {
       const newId = `WEB-${Date.now()}`;
       const reservaData = {
         id: newId, fecha: rForm.fecha, salida_id: rForm.salida_id,
-        tipo: rForm.tipo, canal: rForm.grupo_id ? "GRUPO" : "WEB",
+        tipo: rForm.tipo, canal: rForm.grupo_id ? "GRUPO" : (rForm.canal || "WEB"),
         nombre: rForm.nombre, contacto: rForm.email || "", email: rForm.email || "", telefono: rForm.telefono || "",
-        pax, pax_a: pax, pax_n: 0, precio_u: pasadia.precio,
-        total, abono: 0, saldo: total, estado: "pendiente_pago", forma_pago: "stripe",
+        pax: paxTotal, pax_a: paxA, pax_n: paxN, precio_u: precioU,
+        descuento_agencia: descAg, descuento_general: descGen,
+        total: totalCalc, abono: 0, saldo: totalCalc, estado: "pendiente_pago", forma_pago: "stripe",
         lead_id: lead.id, qr_code: `ATOLON-${newId}`,
         grupo_id: rForm.grupo_id || null,
-        aliado_id: grupoSeleccionado?.aliado_id || null,
+        aliado_id: rForm.aliado_id || grupoSeleccionado?.aliado_id || null,
+        vendedor: rForm.vendedor || null,
+        notas: rForm.notas || null,
+        notas_club: rForm.notas_club || null,
         extras_solicitados: [], pasajeros: [],
-        precio_neto: 0, credito_generado: "0", descuento_agencia: 0,
+        precio_neto: 0, credito_generado: "0",
         created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
         ...fePayload(rForm),
       };
@@ -720,8 +777,21 @@ function LeadDetail({ lead, onClose, onUpdateEtapa }) {
                     </select>
                   </div>
                   <div>
-                    <label style={{ fontSize: 10, color: B.sand, textTransform: "uppercase", letterSpacing: "0.06em", display:"block", marginBottom:4 }}>Personas</label>
-                    <input type="number" min="1" value={rForm.pax} onChange={e => setRForm(f => ({ ...f, pax: e.target.value }))}
+                    <label style={{ fontSize: 10, color: B.sand, textTransform: "uppercase", letterSpacing: "0.06em", display:"block", marginBottom:4 }}>Adultos</label>
+                    <input type="number" min="1" value={rForm.pax_a}
+                      onChange={e => {
+                        const v = Number(e.target.value) || 0;
+                        setRForm(f => ({ ...f, pax_a: v, pax: v + (Number(f.pax_n)||0) }));
+                      }}
+                      style={{ width:"100%", padding:"8px 10px", borderRadius:8, background:B.navyLight, border:`1px solid ${B.navyLight}`, color:B.white, fontSize:13, outline:"none", boxSizing:"border-box" }} />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 10, color: B.sand, textTransform: "uppercase", letterSpacing: "0.06em", display:"block", marginBottom:4 }}>Niños</label>
+                    <input type="number" min="0" value={rForm.pax_n}
+                      onChange={e => {
+                        const v = Number(e.target.value) || 0;
+                        setRForm(f => ({ ...f, pax_n: v, pax: (Number(f.pax_a)||0) + v }));
+                      }}
                       style={{ width:"100%", padding:"8px 10px", borderRadius:8, background:B.navyLight, border:`1px solid ${B.navyLight}`, color:B.white, fontSize:13, outline:"none", boxSizing:"border-box" }} />
                   </div>
                   <div>
@@ -756,6 +826,66 @@ function LeadDetail({ lead, onClose, onUpdateEtapa }) {
                       </select>
                     </div>
                   )}
+
+                  {/* Campos avanzados: canal, agencia, vendedor, precio, descuentos, notas.
+                      Antes solo estaba nombre/email/tel/tipo/pax/fecha/salida — al terminar
+                      la reserva los otros campos se perdian con default. Ahora paridad con
+                      el modal "Nueva Reserva" de Reservas.jsx. */}
+                  <div>
+                    <label style={{ fontSize: 10, color: B.sand, textTransform: "uppercase", letterSpacing: "0.06em", display:"block", marginBottom:4 }}>Canal</label>
+                    <select value={rForm.canal} onChange={e => setRForm(f => ({ ...f, canal: e.target.value }))}
+                      style={{ width:"100%", padding:"8px 10px", borderRadius:8, background:B.navyLight, border:`1px solid ${B.navyLight}`, color:B.white, fontSize:12, outline:"none" }}>
+                      {["WEB","AGENCIA","GRUPO","CORTESIA","EVENTO","DIRECTO","WA","IG","OTRO"].map(c => <option key={c} value={c}>{c}</option>)}
+                    </select>
+                  </div>
+                  {aliados.length > 0 && (
+                    <div>
+                      <label style={{ fontSize: 10, color: B.sand, textTransform: "uppercase", letterSpacing: "0.06em", display:"block", marginBottom:4 }}>Aliado / Agencia</label>
+                      <select value={rForm.aliado_id} onChange={e => setRForm(f => ({ ...f, aliado_id: e.target.value }))}
+                        style={{ width:"100%", padding:"8px 10px", borderRadius:8, background:B.navyLight, border:`1px solid ${B.navyLight}`, color:B.white, fontSize:12, outline:"none" }}>
+                        <option value="">— Sin agencia —</option>
+                        {aliados.map(a => <option key={a.id} value={a.id}>{a.nombre}</option>)}
+                      </select>
+                    </div>
+                  )}
+                  <div>
+                    <label style={{ fontSize: 10, color: B.sand, textTransform: "uppercase", letterSpacing: "0.06em", display:"block", marginBottom:4 }}>Vendedor</label>
+                    <input value={rForm.vendedor} onChange={e => setRForm(f => ({ ...f, vendedor: e.target.value }))}
+                      placeholder="Nombre del vendedor"
+                      style={{ width:"100%", padding:"8px 10px", borderRadius:8, background:B.navyLight, border:`1px solid ${B.navyLight}`, color:B.white, fontSize:13, outline:"none", boxSizing:"border-box" }} />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 10, color: B.sand, textTransform: "uppercase", letterSpacing: "0.06em", display:"block", marginBottom:4 }}>Precio/pax (COP) · 0 = catálogo</label>
+                    <input type="number" min="0" value={rForm.precio_u}
+                      onChange={e => setRForm(f => ({ ...f, precio_u: e.target.value }))}
+                      placeholder={String((PASADIAS.find(p => p.tipo === rForm.tipo)?.precio || 0))}
+                      style={{ width:"100%", padding:"8px 10px", borderRadius:8, background:B.navyLight, border:`1px solid ${B.navyLight}`, color:B.white, fontSize:13, outline:"none", boxSizing:"border-box" }} />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 10, color: B.sand, textTransform: "uppercase", letterSpacing: "0.06em", display:"block", marginBottom:4 }}>Desc. agencia (COP)</label>
+                    <input type="number" min="0" value={rForm.descuento_agencia}
+                      onChange={e => setRForm(f => ({ ...f, descuento_agencia: e.target.value }))}
+                      style={{ width:"100%", padding:"8px 10px", borderRadius:8, background:B.navyLight, border:`1px solid ${B.navyLight}`, color:B.white, fontSize:13, outline:"none", boxSizing:"border-box" }} />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 10, color: B.sand, textTransform: "uppercase", letterSpacing: "0.06em", display:"block", marginBottom:4 }}>Desc. general (COP)</label>
+                    <input type="number" min="0" value={rForm.descuento_general}
+                      onChange={e => setRForm(f => ({ ...f, descuento_general: e.target.value }))}
+                      style={{ width:"100%", padding:"8px 10px", borderRadius:8, background:B.navyLight, border:`1px solid ${B.navyLight}`, color:B.white, fontSize:13, outline:"none", boxSizing:"border-box" }} />
+                  </div>
+                  <div style={{ gridColumn: "1 / -1" }}>
+                    <label style={{ fontSize: 10, color: B.sand, textTransform: "uppercase", letterSpacing: "0.06em", display:"block", marginBottom:4 }}>Notas (visibles para el cliente)</label>
+                    <textarea value={rForm.notas} onChange={e => setRForm(f => ({ ...f, notas: e.target.value }))}
+                      rows={2}
+                      style={{ width:"100%", padding:"8px 10px", borderRadius:8, background:B.navyLight, border:`1px solid ${B.navyLight}`, color:B.white, fontSize:13, outline:"none", boxSizing:"border-box", resize:"vertical", fontFamily:"inherit" }} />
+                  </div>
+                  <div style={{ gridColumn: "1 / -1" }}>
+                    <label style={{ fontSize: 10, color: B.warning, textTransform: "uppercase", letterSpacing: "0.06em", display:"block", marginBottom:4 }}>🔒 Notas internas del club (alergias, discapacidad, VIP)</label>
+                    <textarea value={rForm.notas_club} onChange={e => setRForm(f => ({ ...f, notas_club: e.target.value }))}
+                      rows={2}
+                      placeholder="Solo visibles para el club — recepción, cocina, muelle"
+                      style={{ width:"100%", padding:"8px 10px", borderRadius:8, background:"#2A1E14", border:`1px solid ${B.warning}44`, color:B.white, fontSize:13, outline:"none", boxSizing:"border-box", resize:"vertical", fontFamily:"inherit" }} />
+                  </div>
                 </div>
 
                 {/* Facturación electrónica */}
