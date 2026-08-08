@@ -5,6 +5,8 @@ import { useMobile } from "../lib/useMobile";
 import { logAccion } from "../lib/logAccion";
 import PhoneInput from "../components/PhoneInput.jsx";
 import { normalizarTelefono } from "../lib/telefono.js";
+import { waSendConfirmacion } from "../lib/whatsapp";
+import { SALIDAS } from "../brand";
 
 const fmtHora = (ts) => {
   if (!ts) return "";
@@ -680,7 +682,15 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
     }
 
     setNotaMod("");
-    if (form.estado === "confirmado") await upsertCliente({ ...r0, ...form, pax: Number(form.pax_a) + Number(form.pax_n) });
+    if (form.estado === "confirmado") {
+      await upsertCliente({ ...r0, ...form, pax: Number(form.pax_a) + Number(form.pax_n) });
+      // Dispara WA confirmación si acaba de cambiar a confirmado (idempotente)
+      const reservaConfirmada = { ...r0, ...form, id: r0.id, pax: Number(form.pax_a) + Number(form.pax_n) };
+      const salida = SALIDAS.find(s => s.id === (form.salida_id || r0.salida_id));
+      waSendConfirmacion(reservaConfirmada, salida).catch(e =>
+        console.warn("[save-detalle] WA confirmación falló:", e)
+      );
+    }
     setSaving(false);
     setEdit(false);
     onUpdated();
@@ -931,7 +941,14 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
     if (r0.estado === "confirmado") return;
     await supabase.from("reservas").update({ estado }).eq("id", r0.id);
     set("estado", estado);
-    if (estado === "confirmado") await upsertCliente({ ...r0, estado: "confirmado" });
+    if (estado === "confirmado") {
+      await upsertCliente({ ...r0, estado: "confirmado" });
+      // Fire-and-forget WA confirmación (idempotente vía whatsapp_logs)
+      const salida = SALIDAS.find(s => s.id === r0.salida_id);
+      waSendConfirmacion({ ...r0, estado: "confirmado" }, salida).catch(e =>
+        console.warn("[handleEstado] WA confirmación falló:", e)
+      );
+    }
     onUpdated();
   };
 
@@ -4286,6 +4303,13 @@ export default function Reservas() {
     await supabase.from("reservas").insert(row);
     logAccion({ modulo: "reservas", accion: "crear_reserva", tabla: "reservas", registroId: row.id,
       datosDespues: row, notas: `Canal: ${row.canal} · ${row.pax} pax · ${COP(row.total)}` });
+    // Si nace confirmada (cortesía, walk-in con pago total, etc.) → WA confirmación
+    if (row.estado === "confirmado") {
+      const salida = SALIDAS.find(s => s.id === row.salida_id);
+      waSendConfirmacion(row, salida).catch(e =>
+        console.warn("[nueva-reserva] WA confirmación falló:", e)
+      );
+    }
     fetchReservas();
     return reservaId;
   };
@@ -4344,6 +4368,13 @@ export default function Reservas() {
         stage: "Cerrado Ganado",
         ultimo_contacto: new Date().toLocaleDateString("en-CA", { timeZone: "America/Bogota" }),
       }).eq("id", r.lead_id);
+    }
+    // Fire-and-forget WA confirmación (idempotente vía whatsapp_logs)
+    if (nextEstado === "confirmado") {
+      const salida = SALIDAS.find(s => s.id === r.salida_id);
+      waSendConfirmacion({ ...r, estado: "confirmado" }, salida).catch(e =>
+        console.warn("[toggleEstado] WA confirmación falló:", e)
+      );
     }
     fetchReservas();
   };

@@ -37,25 +37,58 @@ export async function sendWhatsApp(to, template, params = [], lang = "es") {
 // ── Helpers por tipo de mensaje ──────────────────────────────────────────────
 
 /**
- * Confirmación de reserva (se llama al confirmar pago).
+ * Confirmación de reserva. Se llama al confirmar pago (webhooks) o al
+ * cambiar el estado a 'confirmado' desde staff (módulo Reservas).
+ *
+ * Idempotencia: consulta whatsapp_logs y skip si ya se envió confirmación
+ * para esta reserva (evita duplicados en múltiples ediciones).
+ *
+ * Precio: NUNCA se muestra el total pagado — política definida por Eric.
+ * En {{5}} va "—" en lugar del monto para no revelar precios reales
+ * (importante para reservas B2B/Agencia donde el neto ≠ precio público).
  *
  * Templates en orden de preferencia (cascade fallback):
- * 1. "confirmacion_pasadia_atolon" (es) — 7 vars genérica para cualquier tipo de
- *    pasadía (VIP, Exclusive, etc.). Botones: URL "Ver confirmación" +
- *    teléfono Atolón. Variable button: {{1}} = reserva_id.
+ * 1. "confirmacion_pasadia_atolon" (es) — 7 vars genérica.
  * 2. "vip_pass_confirmacion" (es) — 6 vars, específica VIP Pass.
  * 3. "confirmacionvip" (es_CO) — sin variables, fallback aprobado.
  */
 export async function waSendConfirmacion(reserva, salida) {
   const telefono = reserva.telefono || reserva.contacto;
-  if (!telefono || !telefono.match(/\d{7,}/)) return;
+  if (!telefono || !telefono.match(/\d{7,}/)) return { skipped: "sin_telefono" };
 
-  const nombre = reserva.nombre?.split(" ")[0] || reserva.nombre;
+  // Idempotencia: si ya se envió un template de confirmación para esta reserva
+  // (status = sent), NO reenviar. Evita duplicados al editar la reserva.
+  if (reserva.id && supabase) {
+    try {
+      const { data: prev } = await supabase
+        .from("whatsapp_logs")
+        .select("id, template")
+        .eq("reserva_id", reserva.id)
+        .in("template", [
+          "confirmacion_pasadia_atolon",
+          "vip_pass_confirmacion",
+          "confirmacionvip",
+          "confirmacion_pasadia_atolon_en",
+          "vip_pass_confirmacion_en",
+        ])
+        .eq("status", "sent")
+        .limit(1);
+      if (prev && prev.length > 0) {
+        return { skipped: "ya_enviado", template_used: prev[0].template };
+      }
+    } catch (e) {
+      // Si el query falla no bloqueamos el envío — mejor duplicar que perder.
+      console.warn("[waSendConfirmacion] idempotency check failed:", e);
+    }
+  }
+
+  const nombre = reserva.nombre?.split(" ")[0] || reserva.nombre || "";
   const fecha  = new Date(reserva.fecha + "T12:00:00").toLocaleDateString("es-CO", {
     weekday: "long", day: "numeric", month: "long",
   });
 
-  const totalCOP   = `$${Number(reserva.total || 0).toLocaleString("es-CO")} COP`;
+  // Precio SIEMPRE oculto — política. Meta rechaza params vacíos, usamos "—".
+  const totalCOP   = "—";
   const horaSalida = salida?.hora || "Ver confirmación";
   const tipo       = reserva.tipo || "Pasadía";
 
