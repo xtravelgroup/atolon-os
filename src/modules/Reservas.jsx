@@ -1051,14 +1051,17 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
     try {
       await navigator.clipboard.writeText(url);
       copiado = true;
-    } catch { /* clipboard no disponible — el usuario copia del alert/modal */ }
+    } catch { /* clipboard no disponible — el usuario copia del prompt */ }
 
-    // Alert BLOQUEANTE con el link — a prueba de re-renders/remounts. Si el
-    // modal se cierra solo (bug histórico: onUpdated desmontaba el componente
-    // antes de que React pintara el modal), al menos el alert queda visible
-    // hasta que el operador lo cierre y pueda copiar el URL manualmente.
-    const prefix = copiado ? "✓ Link copiado al portapapeles.\n\n" : "";
-    alert(`${prefix}Nuevo link de pago (vigencia ${regenMinutos} min):\n\n${url}\n\nEl link queda guardado en la reserva; podés reabrirla y volver a copiarlo cuando quieras.`);
+    // prompt() BLOQUEANTE con el link SELECCIONABLE — el alert() de navegador
+    // no permite seleccionar/copiar el texto, causando que el operador viera
+    // el link pero no pudiera copiarlo. prompt() muestra un input con el
+    // valor pre-cargado que se puede seleccionar con Cmd+A y copiar.
+    const prefix = copiado ? "✓ Link copiado al portapapeles automáticamente.\n\n" : "";
+    window.prompt(
+      `${prefix}Link de pago (vigencia ${regenMinutos} min). Presiona Cmd+C para copiarlo. También queda guardado en la reserva para reenviarlo después.`,
+      url
+    );
 
     // Modal opcional (si sobrevive al re-render — fallback visual)
     setLinkRegenerado(url);
