@@ -626,13 +626,19 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
     const netoRef = (form.aliado_id && conveniosMap[form.aliado_id]?.[(form.tipo || "").toLowerCase()])
                   || pasRef?.precio_neto_agencia || 0;
 
+    // Guard: si el tipo es sin_embarcacion (After Island, etc.) NUNCA guardar
+    // salida_id ni hora_llegada — vienen en su propia embarcación.
+    const pasGuard = pasadiaList.find(p => p.tipo.toLowerCase() === (form.tipo || "").toLowerCase());
+    const forzarSinSalida = pasGuard?.sin_embarcacion === true;
+
     const { error: updErr } = await supabase.from("reservas").update({
       nombre:    form.nombre.trim(),
       contacto:  form.contacto.trim(),
       email:     emailUpd,
       telefono:  form.telefono.trim() || null,
       fecha:     form.fecha,
-      salida_id: form.salida_id || null,
+      salida_id: forzarSinSalida ? null : (form.salida_id || null),
+      hora_llegada: forzarSinSalida ? null : (form.hora_llegada || null),
       tipo:      form.tipo,
       canal:     form.canal,
       idioma:    form.idioma || "es",
@@ -651,8 +657,8 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
       fecha_pago: form.fecha_pago || null,
       vendedor:   form.vendedor !== "Sin asignar" ? form.vendedor : null,
       aliado_id:  form.aliado_id || null,
-      nombre_embarcacion: form.nombre_embarcacion || null,
-      hora_llegada: form.hora_llegada || null,
+      nombre_embarcacion: forzarSinSalida ? null : (form.nombre_embarcacion || null),
+      // hora_llegada ya está seteada arriba con el guard forzarSinSalida
       notas_club: form.notas_club?.trim() || null,
       // Facturación electrónica
       factura_electronica:  !!form.factura_electronica,
@@ -4264,10 +4270,14 @@ export default function Reservas() {
     const abono  = (isCortesia || isLink || sinDefinir) ? 0 : (form.forma_pago === "CXC" ? 0 : (Number(form.abono) || 0));
     const reservaId = `R-${Date.now()}`;
     const emailVal = form.contacto?.trim().includes("@") ? form.contacto.trim() : null;
+    // Guard: pasadías sin_embarcacion (After Island, etc.) NUNCA guardan
+    // salida_id + hora_llegada + nombre_embarcacion — vienen en su propia lancha.
+    const pasGuard = pasadiaList.find(p => p.tipo.toLowerCase() === (form.tipo || "").toLowerCase());
+    const forzarSinSalida = pasGuard?.sin_embarcacion === true;
     const row = {
       id:         reservaId,
       fecha:      form.fecha || (tabDia === "manana" ? tomorrow : today),
-      salida_id:  form.salida_id || null,
+      salida_id:  forzarSinSalida ? null : (form.salida_id || null),
       tipo:       form.tipo,
       canal:      form.canal,
       nombre:     form.nombre.trim(),
@@ -4291,8 +4301,8 @@ export default function Reservas() {
       notas:           (form.notas || "") + (Array.isArray(form.edades_ninos) && form.edades_ninos.filter(e => e !== "").length > 0 ? ` · Edades niños: ${form.edades_ninos.filter(e => e !== "").join(", ")}` : ""),
       notas_club:      (form.notas_club || "").trim() || null,
       fecha_pago:      isCortesia ? todayStr() : (form.fecha_pago || null),
-      nombre_embarcacion: form.nombre_embarcacion || null,
-      hora_llegada:    form.hora_llegada || null,
+      nombre_embarcacion: forzarSinSalida ? null : (form.nombre_embarcacion || null),
+      hora_llegada:    forzarSinSalida ? null : (form.hora_llegada || null),
       // Facturación electrónica
       factura_electronica: !!form.factura_electronica,
       fe_tipo_persona:     form.factura_electronica ? form.fe_tipo_persona : null,
