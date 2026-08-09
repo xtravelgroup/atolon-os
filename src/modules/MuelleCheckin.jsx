@@ -683,8 +683,25 @@ function ModalCobro({ llegada, onClose, onSaved }) {
     pax_n: llegada.pax_n ?? 0,
     hora_llegada: llegada.hora_llegada || "",
     notas: llegada.notas || "",
+    reserva_id: llegada.reserva_id || "",
   });
   const sf = (k, v) => setF(p => ({ ...p, [k]: v }));
+
+  // Reservas del día candidatas para vincular (After Island / Restaurante,
+  // sin embarcación Atolón). Incluye la ya vinculada aunque otra llegada
+  // haya tomado el spot, para no perderla del dropdown al editar.
+  const [reservasVinculables, setReservasVinculables] = useState([]);
+  useEffect(() => {
+    if (!supabase || !llegada.fecha) return;
+    (async () => {
+      const { data } = await supabase.from("reservas")
+        .select("id, nombre, tipo, pax, pax_a, pax_n, nombre_embarcacion, canal, estado, aliado_id")
+        .eq("fecha", llegada.fecha)
+        .neq("estado", "cancelado")
+        .or("tipo.ilike.%after%,tipo.ilike.%restaurant%,tipo.ilike.%a consumo%,tipo.ilike.%consumo%");
+      setReservasVinculables(data || []);
+    })();
+  }, [llegada.fecha]);
 
   const monto = esAfterIsland ? Number(f.pax_a) * PRECIO_AFTER_A + Number(f.pax_n) * PRECIO_AFTER_N : 0;
   const [cobro, setCobro] = useState({ email: "", linkUrl: "", linkGenerado: false });
@@ -717,6 +734,7 @@ function ModalCobro({ llegada, onClose, onSaved }) {
       pax_total: Number(f.pax_a) + Number(f.pax_n),
       hora_llegada: f.hora_llegada || null,
       notas: f.notas || null,
+      reserva_id: f.reserva_id || null,
     }).eq("id", llegada.id);
     setSaving(false);
     // Si es after_island, continuar a cobro; si no, guardar y cerrar
@@ -838,9 +856,27 @@ function ModalCobro({ llegada, onClose, onSaved }) {
                 <label style={LS}>Hora estimada de llegada</label>
                 <input type="time" value={f.hora_llegada} onChange={e => sf("hora_llegada", e.target.value)} style={IS} />
               </div>
-              <div style={{ gridColumn: "1 / -1", marginBottom: 4 }}>
+              <div style={{ gridColumn: "1 / -1", marginBottom: 14 }}>
                 <label style={LS}>Notas</label>
                 <input value={f.notas} onChange={e => sf("notas", e.target.value)} placeholder="Observaciones..." style={IS} />
+              </div>
+              <div style={{ gridColumn: "1 / -1", marginBottom: 4 }}>
+                <label style={LS}>
+                  Vincular a reserva {f.reserva_id ? <span style={{ color: B.success }}>· vinculada</span> : <span style={{ color: B.sand, opacity: 0.7 }}>· opcional (evita conteo doble)</span>}
+                </label>
+                <select value={f.reserva_id} onChange={e => sf("reserva_id", e.target.value)} style={IS}>
+                  <option value="">— Sin vincular —</option>
+                  {reservasVinculables.map(r => (
+                    <option key={r.id} value={r.id}>
+                      {r.nombre} · {r.tipo} · {r.pax}p{r.nombre_embarcacion ? ` · ${r.nombre_embarcacion}` : ""}{r.canal === "B2B" ? " · B2B" : ""}
+                    </option>
+                  ))}
+                </select>
+                {reservasVinculables.length === 0 && (
+                  <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", marginTop: 4 }}>
+                    No hay reservas de After Island / Restaurante / A Consumo para el {llegada.fecha}
+                  </div>
+                )}
               </div>
             </div>
 
