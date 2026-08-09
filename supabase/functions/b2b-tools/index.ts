@@ -98,14 +98,16 @@ async function checkAvailability(supa: any, aliado_id: string, params: any) {
   if (!fecha) throw new Error("fecha_required");
   const paxNum = Math.max(1, Number(pax) || 1);
 
-  // Cupos por salida + cierres + config real de BD + aliado
-  const [{ data: reservas }, { data: cierres }, { data: aliado }, { data: salidasCfg }] = await Promise.all([
+  // Cupos por salida + cierres + config real de BD + aliado + pases reales
+  const [{ data: reservas }, { data: cierres }, { data: aliado }, { data: salidasCfg }, { data: pasadias }] = await Promise.all([
     supa.from("reservas").select("salida_id, pax")
       .eq("fecha", fecha)
       .in("estado", ["confirmado", "pendiente", "pendiente_pago", "check_in"]),
     supa.from("cierres_fecha").select("tipo, salida_id").eq("fecha", fecha),
     supa.from("aliados_b2b").select("comision").eq("id", aliado_id).maybeSingle(),
     supa.from("salidas").select("id, hora, hora_regreso, capacidad_total, activo, auto_apertura, auto_umbral, orden").eq("activo", true).order("orden"),
+    supa.from("pasadias").select("nombre, precio, precio_neto_agencia, precio_nino, precio_neto_nino, sin_embarcacion")
+      .eq("activo", true).eq("web_publica", true).eq("sin_embarcacion", false).order("orden"),
   ]);
 
   const cierreTotal = (cierres || []).some((c: any) => c.tipo === "total");
@@ -148,12 +150,22 @@ async function checkAvailability(supa: any, aliado_id: string, params: any) {
     };
   }).filter((s: any) => s.caben_las_personas);
 
-  // Precios netos (público × (1 - comisión))
-  const pases = [
-    { tipo: "VIP Pass",          precio_publico: 320000 },
-    { tipo: "Exclusive Pass",    precio_publico: 590000 },
-    { tipo: "Atolon Experience", precio_publico: 1100000 },
-  ].map(p => ({ tipo: p.tipo, precio_neto: Math.round(p.precio_publico * (1 - comision / 100)) }));
+  // Precios REALES desde tabla pasadias — con precio_publico y precio_neto_agencia
+  // FIJOS por pasadía (NO calculados con % comisión). El campo comision del aliado
+  // solo aplica cuando no hay precio_neto_agencia configurado.
+  const pases = (pasadias || []).map((p: any) => {
+    const publico = Number(p.precio) || 0;
+    const netoFijo = Number(p.precio_neto_agencia) || 0;
+    const netoAgencia = netoFijo > 0 ? netoFijo : Math.round(publico * (1 - comision / 100));
+    return {
+      tipo: p.nombre,
+      precio_publico: publico,
+      precio_neto_agencia: netoAgencia,
+    };
+  }).filter((p: any) =>
+    p.precio_publico > 0
+    && !/impuesto|muelle|transporte|staff|hu[eé]sped|inspecci[oó]n|blue apple|mesa|nairo|flamante|consumo|cama de playa|coctail/i.test(p.tipo)
+  );
 
   return {
     disponible_para_pax: salidas_abiertas.length > 0,
@@ -162,7 +174,7 @@ async function checkAvailability(supa: any, aliado_id: string, params: any) {
     salidas_abiertas,
     pases,
     comision_pct: comision,
-    nota: "USA EXACTAMENTE los valores hora_salida y hora_regreso de cada salida. NO inventes horarios. NO menciones cupos numéricos.",
+    nota: "REGLAS: (1) Usa EXACTAMENTE los valores hora_salida y hora_regreso — NO inventes. (2) NO menciones cupos numéricos. (3) Por default muestra SOLO precio_publico — NUNCA menciones neto ni comisión. Al final pregunta: '¿Quieres que te comparta también los precios netos para tu agencia?' Solo si dicen sí muestras precio_neto_agencia.",
   };
 }
 
