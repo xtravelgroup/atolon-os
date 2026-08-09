@@ -497,6 +497,16 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
       if (k === "tipo" || k === "pax_a" || k === "pax_n" || k === "aliado_id") {
         nf.total = recalcTotal(nf, precioMode);
       }
+      // Al cambiar a un pasadía sin_embarcacion (After Island, etc.), limpiar
+      // salida_id + hora_llegada — vienen en su propia embarcación y no toman
+      // cupo del muelle.
+      if (k === "tipo") {
+        const nuevaPas = pasadiaList.find(p => p.tipo.toLowerCase() === (v || "").toLowerCase());
+        if (nuevaPas?.sin_embarcacion === true) {
+          nf.salida_id = "";
+          nf.hora_llegada = "";
+        }
+      }
       return nf;
     });
   };
@@ -2299,6 +2309,14 @@ function ReservaModal({ onClose, onSave, isMobile, salidaList = [], aliadoList =
       if (k === "tipo") {
         next.precio      = calcPrecio(v, f.aliado_id, precioMode);
         next.precio_nino = calcPrecioNino(v, f.aliado_id, precioMode);
+        // Al cambiar a un pasadía sin_embarcacion (After Island, etc.), limpiar
+        // salida_id + hora_llegada — vienen en su propia embarcación y no
+        // toman cupo del muelle.
+        const nuevaPas = pasadiaList.find(p => p.tipo.toLowerCase() === (v || "").toLowerCase());
+        if (nuevaPas?.sin_embarcacion === true) {
+          next.salida_id = "";
+          next.hora_llegada = "";
+        }
       }
       if (k === "aliado_id") {
         const aliado = aliadoList.find(a => a.id === v);
