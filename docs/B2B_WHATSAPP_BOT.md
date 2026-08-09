@@ -5,6 +5,15 @@ registradas en `aliados_b2b`. El bot reconoce al agente por su número de
 teléfono, le permite consultar disponibilidad, precios netos, crear
 reservas, generar links de pago y ver saldo de puntos — todo por chat.
 
+## 📱 Número asignado
+
+**Actual (temporal)**: **+1 (786) 705-7550** — número US disponible
+libre en Atolón/IHT/Minivac (verificado).
+
+**Futuro (3-6 meses)**: migrar a número local colombiano para mejor
+percepción de las agencias LatAm. Cuando se haga el switch, solo hay
+que hacer UPDATE en `ai_channels.config.phone_number_id`.
+
 ## 🔧 Setup Meta Business (a cargo del owner del proyecto)
 
 Este bot funciona con un **número WhatsApp Business dedicado** distinto
@@ -13,10 +22,13 @@ ni verificar números en Meta — este proceso es 100% manual del owner.
 
 ### Pasos (proceso ~1-2 semanas total con aprobaciones)
 
-1. **Conseguir el número**
-   - Comprar un número Twilio/Vonage o usar un móvil físico dedicado.
+1. **Número: +1 (786) 705-7550** (ya asignado)
    - REQUISITO CRÍTICO: el número **NO puede estar activo** en WhatsApp
-     personal (si lo está, borrarlo del app primero, esperar 24h).
+     personal (si alguien lo tiene en su app personal, borrarlo primero
+     y esperar 24h antes de registrarlo en Business).
+   - Este es un número US virtual — perfecto para bot outbound. Cuando
+     el volumen justifique un número CO local, se migra sin tocar
+     código (solo update de config).
 
 2. **Meta Business Manager** → Configuración → Cuentas de WhatsApp
    - "Add phone number" en el mismo WABA existente **o** crear WABA
