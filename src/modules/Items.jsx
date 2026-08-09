@@ -3,7 +3,7 @@ import { B, COP, fmtFecha, todayStr } from "../brand";
 import { supabase } from "../lib/supabase";
 import { transferirStock } from "../lib/inventario";
 import { getCart, addToCart, clearCart, onCartChange } from "../lib/requisicionCart";
-import MovimientosItem from "../components/MovimientosItem";
+import KardexItem from "../components/KardexItem";
 import ItemDetailModal from "../components/ItemDetailModal";
 
 // ─── Constantes ──────────────────────────────────────────────────────────────
@@ -600,6 +600,8 @@ export default function Items() {
           catNames={catNames}
           onSave={saveItem}
           onClose={() => setShowModal(null)}
+          locaciones={locaciones}
+          stockMap={stockPorLoc}
         />
       )}
 
@@ -705,7 +707,7 @@ export default function Items() {
 // ═══════════════════════════════════════════════════════════════════════════
 // ITEM MODAL (New / Edit)
 // ═══════════════════════════════════════════════════════════════════════════
-function ItemModal({ item, proveedoresAll, existingProvs, catNames, onSave, onClose }) {
+function ItemModal({ item, proveedoresAll, existingProvs, catNames, onSave, onClose, locaciones = [], stockMap = null }) {
   const [form, setForm] = useState({
     id: item?.id || "new",
     nombre: item?.nombre || "",
@@ -1251,8 +1253,28 @@ function DetailPanel({ item, provs, proveedoresAll, catIconMap, catColorMap, onE
           )}
         </div>
 
-        {/* Historial de movimientos */}
-        <MovimientosItem itemId={item.id} unidad={item.unidad} stockActual={item.stock_actual} />
+        {/* Kardex con breakdown por bodega */}
+        {(() => {
+          const stockPorBodega = (stockMap && item?.id && locaciones.length > 0)
+            ? locaciones
+                .map(l => ({
+                  loc: l,
+                  cantidad: Number(stockMap.get?.(`${item.id}|${l.id}`)?.cantidad ?? stockMap[`${item.id}|${l.id}`]) || 0,
+                }))
+                .filter(x => x.cantidad !== 0)
+                .sort((a, b) => Math.abs(b.cantidad) - Math.abs(a.cantidad))
+            : null;
+          const totalPorBodega = stockPorBodega ? stockPorBodega.reduce((s, x) => s + x.cantidad, 0) : (item?.stock_actual ?? 0);
+          return (
+            <KardexItem
+              itemId={item.id}
+              unidad={item.unidad}
+              stockActual={totalPorBodega}
+              stockPorBodega={stockPorBodega}
+              locaciones={locaciones}
+            />
+          );
+        })()}
 
         {/* Actions */}
         <div style={{ display: "flex", gap: 10 }}>

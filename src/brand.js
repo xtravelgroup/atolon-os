@@ -23,7 +23,14 @@ export const colNowMins = () => {
   return h * 60 + m;
 };
 // Format YYYY-MM-DD → DD-MM-AAAA for display
-export const fmtFecha = (d) => { if (!d) return "\u2014"; const p = d.split("-"); return p.length === 3 ? `${p[2]}-${p[1]}-${p[0]}` : d; };
+export const fmtFecha = (d) => {
+  if (!d) return "\u2014";
+  // Antes hac\u00eda split("-") sobre el timestamp ISO completo y el DD quedaba
+  // como "04T22:46:17.505+00:00". Ahora tomamos los primeros 10 chars (YYYY-MM-DD).
+  const soloFecha = String(d).slice(0, 10);
+  const p = soloFecha.split("-");
+  return p.length === 3 ? `${p[2]}-${p[1]}-${p[0]}` : d;
+};
 
 export const PASADIAS = [
   { tipo: "VIP Pass", precio: 320000, web: true, minPax: 1 },
